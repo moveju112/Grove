@@ -1,0 +1,56 @@
+[package]
+name = "grove"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.93"
+description = "Grove: single-binary agent server with a shared web app"
+license = "Apache-2.0"
+publish = false
+
+[[bin]]
+name = "grove"
+path = "src/main.rs"
+
+[dependencies]
+axum = { version = "0.8", features = ["ws", "macros"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "sync", "time", "fs", "process", "io-util", "net"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
+tower-http = { version = "0.6", features = ["limit", "trace", "fs", "set-header"] }
+futures-util = "0.3"
+rusqlite = { version = "0.37", features = ["bundled", "backup", "functions"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1", features = ["v7", "v4"] }
+sha2 = "0.10"
+time = { version = "0.3", features = ["formatting", "parsing", "macros"] }
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+rand = "0.9"
+base64 = "0.22"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json"] }
+bytes = "1"
+regex = "1"
+globset = "0.4"
+ignore = "0.4"
+ts-rs = { version = "11", features = ["serde-json-impl"] }
+portable-pty = "0.9"
+ed25519-dalek = "2"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+chacha20poly1305 = "0.10"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+tempfile = "3"
+rusqlite = { version = "0.37", features = ["bundled", "backup", "functions"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "blocking"] }
+tokio-tungstenite = "0.30"
+
+[profile.release]
+lto = "thin"
+codegen-units = 4
+strip = "symbols"

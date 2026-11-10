@@ -1,0 +1,30 @@
+{
+  "name": "grove-web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "react-router dev",
+    "build": "react-router build && node scripts/stamp-sw.mjs",
+    "typecheck": "react-router typegen && tsc --noEmit",
+    "test": "vitest run",
+    "e2e": "playwright test"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.11.0",
+    "@xterm/xterm": "^6.0.0",
+    "react": "19.2.9",
+    "react-dom": "19.2.9",
+    "react-router": "7.18.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.64.1",
+    "@react-router/dev": "7.18.5",
+    "@types/node": "24.19.2",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "typescript": "5.9.3",
+    "vite": "6.4.5",
+    "vitest": "3.2.7"
+  }
+}

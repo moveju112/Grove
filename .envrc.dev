@@ -1,0 +1,4 @@
+# 이 저장소 전용 Rust 툴체인 환경. 사용: source .envrc.dev
+export CARGO_HOME="$PWD/.dev/cargo"
+export RUSTUP_HOME="$PWD/.dev/rustup"
+export PATH="$CARGO_HOME/bin:$PATH"

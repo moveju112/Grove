@@ -1,0 +1,1481 @@
+//! 턴 실행 루프·실행 소유권·취소·재시작 복구(RUN, MODEL-013/017, REC 일부).
+//!
+//! - 세션당 활성 턴은 하나(DB unique index). 실행 상태의 단일 원천은 DB `turns` 행이다.
+//! - 실행 소유권은 서버 프로세스 epoch로 표시한다. 다른 epoch의 running 턴은 재시작 시 interrupted.
+//! - 모델 중간 응답은 메모리 snapshot(Partials)이며 확정 답변만 메시지로 저장한다.
+//! - 자동 retry·replay를 하지 않는다. 도구 결과 불명은 unknown으로 남긴다.
+
+use crate::App;
+use crate::approvals::{self, TERMINAL};
+use crate::auth::Principal;
+use crate::error::{ApiError, ApiResult};
+use crate::events;
+use crate::idem;
+use crate::provider::{self, ChatMsg, ModelRequest, ToolCall, ToolDef};
+use axum::Json;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::Response;
+use rusqlite::{Connection, OptionalExtension, Row, params};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
+use tokio::sync::watch;
+
+pub const MAX_STEPS: i64 = 25;
+
+/// 실행 중 턴·도구 호출의 취소 신호 registry(메모리 전용).
+#[derive(Default)]
+pub struct Cancels {
+    map: Mutex<HashMap<String, watch::Sender<bool>>>,
+}
+
+impl Cancels {
+    pub fn register(&self, id: &str, tx: watch::Sender<bool>) {
+        self.map.lock().expect("cancels").insert(id.to_string(), tx);
+    }
+    /// 이미 등록되어 있으면 false(같은 턴의 중복 실행 방지).
+    pub fn register_unique(&self, id: &str, tx: watch::Sender<bool>) -> bool {
+        let mut m = self.map.lock().expect("cancels");
+        if m.contains_key(id) {
+            return false;
+        }
+        m.insert(id.to_string(), tx);
+        true
+    }
+    pub fn cancel(&self, id: &str) -> bool {
+        match self.map.lock().expect("cancels").get(id) {
+            Some(tx) => {
+                tx.send_replace(true);
+                true
+            }
+            None => false,
+        }
+    }
+    pub fn is_cancelled(&self, id: &str) -> bool {
+        self.map.lock().expect("cancels").get(id).is_some_and(|t| *t.borrow())
+    }
+    pub fn remove(&self, id: &str) {
+        self.map.lock().expect("cancels").remove(id);
+    }
+    pub fn cancel_all(&self) {
+        for tx in self.map.lock().expect("cancels").values() {
+            tx.send_replace(true);
+        }
+    }
+    pub fn active(&self) -> usize {
+        self.map.lock().expect("cancels").len()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+pub struct Turn {
+    pub id: String,
+    pub session_id: String,
+    pub status: String,
+    pub request_message_id: String,
+    pub profile_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub workflow_id: Option<String>,
+    pub tools_enabled: bool,
+    #[ts(type = "unknown")]
+    pub error: Value,
+    #[ts(type = "unknown")]
+    pub usage: Value,
+    pub step: i64,
+    pub created_at: String,
+    pub updated_at: String,
+    pub finished_at: Option<String>,
+    #[ts(type = "unknown")]
+    pub definition: Value,
+    /// 실패·중단된 요청을 사용자가 확인(포기·다시 실행)한 시각(RUN-019). null이면 아직 확인 전.
+    pub acknowledged_at: Option<String>,
+    /// 실행 슬롯 대기 중이면 대기 정보(FAIR-011). 다른 소유자의 상세는 개수로만.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional, type = "{ ahead: number; active: number; limit: number }")]
+    pub queue: Option<crate::fair::WaitInfo>,
+}
+
+const TCOLS: &str = "id, session_id, status, request_message_id, profile_id, agent_id, workflow_id, tools_enabled, error, usage, step, created_at, updated_at, finished_at, definition_snapshot, owner_epoch, acknowledged_at";
+
+fn turn_row(r: &Row) -> rusqlite::Result<(Turn, String)> {
+    let j = |i: usize| -> rusqlite::Result<Value> {
+        let s: Option<String> = r.get(i)?;
+        Ok(s.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null))
+    };
+    let mut def = j(14)?;
+    // 정의 원문은 크므로 목록 응답에서는 메타데이터만 보낸다.
+    for k in ["workflow", "agent"] {
+        if let Some(o) = def.get_mut(k).and_then(Value::as_object_mut) {
+            o.remove("body");
+        }
+    }
+    if let Some(a) = def.get_mut("instructions").and_then(Value::as_array_mut) {
+        for i in a {
+            if let Some(o) = i.as_object_mut() {
+                o.remove("body");
+            }
+        }
+    }
+    Ok((
+        Turn {
+            id: r.get(0)?,
+            session_id: r.get(1)?,
+            status: r.get(2)?,
+            request_message_id: r.get(3)?,
+            profile_id: r.get(4)?,
+            agent_id: r.get(5)?,
+            workflow_id: r.get(6)?,
+            tools_enabled: r.get(7)?,
+            error: j(8)?,
+            usage: j(9)?,
+            step: r.get(10)?,
+            created_at: r.get(11)?,
+            updated_at: r.get(12)?,
+            finished_at: r.get(13)?,
+            definition: def,
+            acknowledged_at: r.get(16)?,
+            queue: None,
+        },
+        r.get(15)?,
+    ))
+}
+
+pub fn get_turn(c: &Connection, id: &str) -> ApiResult<Turn> {
+    Ok(get_turn_epoch(c, id)?.0)
+}
+
+fn get_turn_epoch(c: &Connection, id: &str) -> ApiResult<(Turn, String)> {
+    c.query_row(&format!("SELECT {TCOLS} FROM turns WHERE id = ?1"), params![id], turn_row)
+        .optional()?
+        .ok_or_else(|| ApiError::not_found("턴이 없습니다"))
+}
+
+fn project_of(c: &Connection, session_id: &str) -> ApiResult<String> {
+    Ok(c.query_row("SELECT project_id FROM sessions WHERE id = ?1", params![session_id], |r| r.get(0))?)
+}
+
+/// 대기 시작·끝을 화면에 알린다(같은 turn.updated, queue 필드만 다름).
+fn emit_turn_queue(c: &Connection, now: &str, turn_id: &str, queue: Option<crate::fair::WaitInfo>) -> ApiResult<()> {
+    let mut t = get_turn(c, turn_id)?;
+    t.queue = queue;
+    let pid = project_of(c, &t.session_id)?;
+    events::append(c, now, "turn.updated", Some(&pid), Some(&t.session_id), &serde_json::to_value(&t)?)?;
+    Ok(())
+}
+
+fn emit_turn(c: &Connection, now: &str, turn_id: &str) -> ApiResult<Turn> {
+    let t = get_turn(c, turn_id)?;
+    let pid = project_of(c, &t.session_id)?;
+    events::append(c, now, "turn.updated", Some(&pid), Some(&t.session_id), &serde_json::to_value(&t)?)?;
+    Ok(t)
+}
+
+/// 조건부 종료 전이. 이미 다른 상태면 아무것도 하지 않는다.
+fn finish_turn(c: &Connection, now: &str, id: &str, from: &[&str], to: &str, error: Option<Value>) -> ApiResult<bool> {
+    let ph = from.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(",");
+    // 마지막 진행 시각(RUN-023): 종료 전 마지막 갱신 시각.
+    let last_progress: Option<String> = c.query_row("SELECT updated_at FROM turns WHERE id = ?1", params![id], |r| r.get(0)).optional()?;
+    let n = c.execute(
+        &format!("UPDATE turns SET status = ?2, error = COALESCE(error, ?3), updated_at = ?4, finished_at = ?4 WHERE id = ?1 AND status IN ({ph})"),
+        params![id, to, error.map(|e| e.to_string()), now],
+    )?;
+    if n > 0 {
+        // 미결 도구 요청은 같은 transaction에서 정리한다(실행 중인 것은 실행 경로가 기록).
+        let mut st = c.prepare("SELECT id FROM tool_calls WHERE turn_id = ?1 AND status IN ('pending_approval','awaiting_input','approved')")?;
+        let ids = st.query_map(params![id], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+        drop(st);
+        for cid in ids {
+            approvals::finish(
+                c,
+                now,
+                &cid,
+                &["pending_approval", "awaiting_input", "approved"],
+                "cancelled",
+                Some(json!({ "error": { "code": "turn_ended", "message": format!("턴이 {to} 상태로 끝나 실행하지 않았습니다") } })),
+            )?;
+        }
+        if to != "completed" {
+            record_end_cause(c, now, id, to, last_progress.as_deref())?;
+        }
+        emit_turn(c, now, id)?;
+        // 자식 에이전트 턴이면 결과를 부모 세션에 한 번 전달한다(같은 transaction).
+        crate::agents::on_turn_finished(c, now, id, to)?;
+        // 예약 실행 턴이면 실행 로그를 닫고 알림을 남긴다(같은 transaction).
+        crate::schedules::on_turn_finished(c, now, id, to)?;
+    }
+    Ok(n > 0)
+}
+
+/// 비정상 종료 원인(RUN-023): 원인 코드·메시지·발생 시각·마지막 진행 시각·적용 예산을 오류에 보존하고,
+/// 대화에 `turn_ended` note를 남겨 화면과 다음 모델 입력이 같은 원인을 보게 한다(사용자 취소·일반 중단으로 덮지 않음).
+fn record_end_cause(c: &Connection, now: &str, id: &str, to: &str, last_progress: Option<&str>) -> ApiResult<()> {
+    let (session_id, err, def): (String, Option<String>, String) =
+        c.query_row("SELECT session_id, error, definition_snapshot FROM turns WHERE id = ?1", params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    let mut e: Value = err.and_then(|s| serde_json::from_str(&s).ok()).filter(Value::is_object).unwrap_or_else(|| match to {
+        "cancelled" => json!({ "code": "cancelled", "message": "취소되었습니다" }),
+        _ => json!({ "code": "unknown", "message": "원인을 알 수 없이 끝났습니다" }),
+    });
+    e["at"] = json!(now);
+    if e["last_progress_at"].is_null() {
+        e["last_progress_at"] = json!(last_progress);
+    }
+    let def: Value = serde_json::from_str(&def).unwrap_or(Value::Null);
+    if !def["budget"].is_null() && e["code"].as_str().is_some_and(|c| c.contains("budget")) {
+        let mut b = def["budget"].clone();
+        if let Some(o) = b.as_object_mut() {
+            o.remove("pricing");
+        }
+        e["budget"] = b;
+    }
+    c.execute("UPDATE turns SET error = ?2 WHERE id = ?1", params![id, e.to_string()])?;
+    crate::sessions::append_message(c, now, &session_id, "note", &json!({ "type": "turn_ended", "status": to, "error": e }), Some(id), None)?;
+    Ok(())
+}
+
+/// 서버 시작 시 이전 프로세스의 실행 기록을 정리한다.
+/// - queued/running 턴: 모델 stream이 사라졌으므로 interrupted(자동 재실행 없음)
+/// - awaiting_approval 턴: 상태가 모두 DB에 있으므로 유지(승인 후 재개 가능, FLOW-07)
+/// - running 도구: 결과를 알 수 없으므로 unknown(자동 재실행 없음, RUN-018)
+/// - approved(미시작) 도구: 부작용이 시작되지 않았으므로 cancelled
+pub async fn recover_on_start(app: &App) -> ApiResult<()> {
+    let epoch = app.epoch.clone();
+    app.db
+        .call(move |c| {
+            let tx = c.transaction()?;
+            let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+            let mut st = tx.prepare("SELECT id, name FROM tool_calls WHERE status IN ('running','approved')")?;
+            let calls = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+            drop(st);
+            for (cid, name) in calls {
+                // 읽기 전용 도구는 부작용이 없으므로 결과 불명이 아니라 실패로 기록한다(RUN-017).
+                let read_only = crate::tools::spec(&name).is_some_and(|s| !crate::tools::needs_approval(s.effect));
+                if read_only {
+                    approvals::finish(
+                        &tx,
+                        &now,
+                        &cid,
+                        &["running"],
+                        "failed",
+                        Some(json!({ "error": { "code": "server_restart", "message": "읽기 도중 서버가 재시작되었습니다(부작용 없음)" } })),
+                    )?;
+                }
+                approvals::finish(
+                    &tx,
+                    &now,
+                    &cid,
+                    &["running"],
+                    "unknown",
+                    Some(json!({ "error": { "code": "server_restart", "message": "실행 중 서버가 종료되어 결과를 확인할 수 없습니다. 자동으로 다시 실행하지 않습니다" } })),
+                )?;
+                approvals::finish(
+                    &tx,
+                    &now,
+                    &cid,
+                    &["approved"],
+                    "cancelled",
+                    Some(json!({ "error": { "code": "server_restart", "message": "실행 전에 서버가 종료되었습니다" } })),
+                )?;
+            }
+            let mut st = tx.prepare("SELECT id FROM turns WHERE status IN ('queued','running') AND owner_epoch != ?1")?;
+            let turns = st.query_map(params![epoch], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
+            drop(st);
+            for tid in turns {
+                finish_turn(
+                    &tx,
+                    &now,
+                    &tid,
+                    &["queued", "running"],
+                    "interrupted",
+                    Some(json!({ "code": "server_restart", "message": "서버가 재시작되어 턴이 중단되었습니다. 자동으로 다시 실행하지 않습니다" })),
+                )?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await?;
+    // 재시작 전에 모든 승인 결정이 끝났던 대기 턴은 재개 가능 상태로 둔다(사용자 행동 없이 모델을 다시 부르지 않음).
+    Ok(())
+}
+
+/// 종료: 실행 중 턴과 도구에 취소를 알리고 짧게 정리를 기다린다. 기록은 각 실행 경로가 수행한다.
+pub async fn cancel_all_for_shutdown(app: &App) {
+    app.cancels.cancel_all();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while app.cancels.active() > 0 && Instant::now() < deadline {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+// ---------------- 모델 입력 구성 ----------------
+
+/// 저장된 메시지를 provider 공통 메시지로 바꾼다. 결과가 없는 tool call에는 중단 결과를 합성해 짝을 맞춘다.
+pub fn to_chat(history: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg> {
+    let mut out = vec![];
+    let mut pending: Vec<(String, String)> = vec![];
+    // 비동기 결과 note(백그라운드 작업·자식 에이전트)는 도구 결과를 기다리는 중에도 기록될 수 있다.
+    // 그 사이에 끼워 넣으면 tool call/result 짝이 깨지므로 미결 도구 결과가 모두 나온 뒤에 넣는다.
+    let mut deferred: Vec<String> = vec![];
+    let flush = |out: &mut Vec<ChatMsg>, pending: &mut Vec<(String, String)>, deferred: &mut Vec<String>| {
+        for (id, name) in pending.drain(..) {
+            out.push(ChatMsg::Tool { call_id: id, name, content: "{\"error\":\"결과가 기록되지 않았습니다(중단됨)\"}".into(), is_error: true });
+        }
+        for d in deferred.drain(..) {
+            push_user(out, &d);
+        }
+    };
+    for (role, content, model_input) in history {
+        let c = model_input.as_ref().unwrap_or(content);
+        match role.as_str() {
+            "user" => {
+                flush(&mut out, &mut pending, &mut deferred);
+                push_user(&mut out, c["text"].as_str().unwrap_or(""));
+            }
+            // 백그라운드 작업·자식 에이전트 결과는 다음 요청에서 모델이 볼 수 있게 user 쪽 문맥으로 넣는다(EXEC-011, AGENT-011).
+            "note" if c["type"] == "task_result" || c["type"] == "agent_result" => {
+                let text = if c["type"] == "task_result" {
+                    format!("[background task result]\n{}", crate::tasks::note_text(c))
+                } else {
+                    format!("[child agent result]\n{}", crate::agents::note_text(c))
+                };
+                if pending.is_empty() {
+                    push_user(&mut out, &text);
+                } else {
+                    deferred.push(text);
+                }
+            }
+            // 이전 요청이 비정상 종료된 원인(RUN-023). 다음 요청의 모델이 '사용자가 멈춤'과 '예산 초과' 등을 구분해 알게 한다.
+            "note" if c["type"] == "turn_ended" => {
+                let e = &c["error"];
+                let text = format!(
+                    "[previous request ended: status={}]\n{}",
+                    c["status"].as_str().unwrap_or(""),
+                    e
+                );
+                if pending.is_empty() {
+                    push_user(&mut out, &text);
+                } else {
+                    deferred.push(text);
+                }
+            }
+            "assistant" => {
+                flush(&mut out, &mut pending, &mut deferred);
+                let calls: Vec<ToolCall> = c["tool_calls"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(|t| ToolCall {
+                        id: t["id"].as_str().unwrap_or("").to_string(),
+                        name: t["name"].as_str().unwrap_or("").to_string(),
+                        arguments: t["arguments"].clone(),
+                    })
+                    .collect();
+                pending = calls.iter().map(|c| (c.id.clone(), c.name.clone())).collect();
+                out.push(ChatMsg::Assistant { text: c["text"].as_str().unwrap_or("").to_string(), tool_calls: calls });
+            }
+            "tool" => {
+                let pid = c["provider_call_id"].as_str().unwrap_or("").to_string();
+                if let Some(pos) = pending.iter().position(|(id, _)| *id == pid) {
+                    pending.remove(pos);
+                    let output = &c["output"];
+                    out.push(ChatMsg::Tool {
+                        call_id: pid,
+                        name: c["name"].as_str().unwrap_or("").to_string(),
+                        content: truncate_tool_output(&provider::tool_content_string(output)),
+                        is_error: c["is_error"].as_bool().unwrap_or(false),
+                    });
+                    if pending.is_empty() {
+                        for d in deferred.drain(..) {
+                            push_user(&mut out, &d);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    flush(&mut out, &mut pending, &mut deferred);
+    out
+}
+
+/// 연속 user 메시지를 허용하지 않는 provider가 있어 바로 앞이 user면 합친다.
+fn push_user(out: &mut Vec<ChatMsg>, text: &str) {
+    if let Some(ChatMsg::User { text: prev }) = out.last_mut() {
+        prev.push_str("\n\n");
+        prev.push_str(text);
+    } else {
+        out.push(ChatMsg::User { text: text.to_string() });
+    }
+}
+
+fn truncate_tool_output(s: &str) -> String {
+    const MAX: usize = 100 * 1024;
+    if s.len() <= MAX {
+        return s.to_string();
+    }
+    let mut end = MAX;
+    while !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}\n…(출력 {}바이트 중 {}바이트만 전달)", &s[..end], s.len(), end)
+}
+
+pub fn system_prompt(def: &Value, project_root: &str, tools_enabled: bool) -> String {
+    let mut parts = vec![];
+    if let Some(b) = def["workflow"]["body"].as_str() {
+        parts.push(b.trim().to_string());
+    }
+    if let Some(b) = def["agent"]["body"].as_str() {
+        parts.push(b.trim().to_string());
+    }
+    if let Some(name) = def["bot"]["name"].as_str() {
+        let mut s = format!("You are \"{name}\", a persistent assistant the user talks to directly.");
+        for (k, label) in [("persona", "Persona"), ("instructions", "Working instructions")] {
+            if let Some(t) = def["bot"][k].as_str().filter(|t| !t.trim().is_empty()) {
+                s.push_str(&format!("\n\n{label}:\n{}", t.trim()));
+            }
+        }
+        parts.push(s);
+    }
+    for inst in def["instructions"].as_array().into_iter().flatten() {
+        parts.push(format!(
+            "# Project instructions ({})\n{}",
+            inst["file"].as_str().unwrap_or(""),
+            inst["body"].as_str().unwrap_or("").trim()
+        ));
+    }
+    if let Some(lang) = def["language"].as_str().filter(|l| !l.trim().is_empty()) {
+        parts.push(format!("# Response language\nRespond in {lang}."));
+    }
+    if let Some(r) = def["goals_reminder"].as_str() {
+        parts.push(r.trim().to_string());
+    }
+    if def["agent_run"].is_object() {
+        parts.push(
+            "# Delegated task\nYou are a child agent working on a task delegated by a parent conversation. \
+             Your final answer in this turn is reported back to the parent verbatim, so end with a complete, self-contained result. \
+             Do not claim work as done unless you actually finished it."
+                .into(),
+        );
+    }
+    let mut env = format!("# Environment\nProject root: {project_root}\n");
+    if tools_enabled {
+        env.push_str("Paths in tool arguments are relative to the project root. Mutating tools (write, edit, shell) wait for the user's approval.\n");
+        match def["agents_available"].as_array() {
+            Some(a) if !a.is_empty() => {
+                env.push_str("Child agents available to the `agent` tool (agent_id — name: description):\n");
+                for d in a {
+                    env.push_str(&format!(
+                        "- {} — {}: {}\n",
+                        d["id"].as_str().unwrap_or(""),
+                        d["name"].as_str().unwrap_or(""),
+                        d["description"].as_str().unwrap_or("")
+                    ));
+                }
+                env.push_str("A spawned child is running until its result is reported; never report a running child's work as complete.\n");
+            }
+            Some(_) => env.push_str("Child agents cannot be spawned from this conversation (depth limit).\n"),
+            None => {}
+        }
+    }
+    parts.push(env);
+    parts.join("\n\n")
+}
+
+pub fn tool_defs() -> Vec<ToolDef> {
+    crate::tools::specs()
+        .into_iter()
+        .map(|s| ToolDef { name: s.name.to_string(), description: s.description.to_string(), schema: s.schema })
+        .collect()
+}
+
+// ---------------- 실행 루프 ----------------
+
+struct StepInput {
+    session_id: String,
+    profile_id: String,
+    /// 이 턴의 첫 모델 호출인지(자동 압축 판단용)
+    first_step: bool,
+    profile: crate::provider::Profile,
+    request: ModelRequest,
+    /// 사용자가 정한 시간 예산의 끝(없으면 제한 없음)
+    deadline: Option<time::OffsetDateTime>,
+}
+
+fn load_step(c: &Connection, turn_id: &str, epoch: &str) -> ApiResult<Option<StepInput>> {
+    let (t, owner) = get_turn_epoch(c, turn_id)?;
+    if t.status != "running" || owner != epoch {
+        return Ok(None);
+    }
+    let def: Value = c.query_row("SELECT definition_snapshot FROM turns WHERE id = ?1", params![turn_id], |r| {
+        let s: String = r.get(0)?;
+        Ok(serde_json::from_str(&s).unwrap_or(json!({})))
+    })?;
+    let s = crate::sessions::get(c, &t.session_id)?;
+    let root = crate::projects::active_root(c, &s.project_id)?;
+    let profile_id = t.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?;
+    let (mp, rp) = crate::models::runtime_profile(c, &profile_id)?;
+    let cli_backend = crate::provider::cli::is_cli(&rp.protocol);
+    let history = crate::sessions::history_for_model(c, &t.session_id)?;
+    let deadline = def["budget"]["max_minutes"]
+        .as_i64()
+        .and_then(|m| Some(crate::util::parse_time(&t.created_at)? + time::Duration::minutes(m)));
+    Ok(Some(StepInput {
+        deadline,
+        session_id: t.session_id.clone(),
+        profile_id: profile_id.clone(),
+        first_step: t.step == 0,
+        profile: rp,
+        request: ModelRequest {
+            system: system_prompt(&def, &root.to_string_lossy(), t.tools_enabled),
+            messages: to_chat(&history),
+            // CLI 백엔드는 자기 도구를 쓰므로 Grove 도구 목록을 보내지 않는다.
+            tools: if t.tools_enabled && !cli_backend { tool_defs() } else { vec![] },
+            max_tokens: mp.options["max_tokens"].as_u64().map(|v| v as u32),
+            temperature: mp.options["temperature"].as_f64(),
+            // 접수 때 고정한 추론 강도(UI-020). 없으면 auto.
+            effort: def["effort"].as_str().map(str::to_string),
+            // CLI 백엔드: 프로젝트 root에서 실행하고, 이 대화×프로필의 CLI 세션이 있으면 이어 쓴다.
+            cli: cli_backend
+                .then(|| -> ApiResult<_> {
+                    let resume = c
+                        .query_row("SELECT native_id FROM cli_sessions WHERE session_id = ?1 AND profile_id = ?2", params![t.session_id, profile_id], |r| r.get(0))
+                        .optional()?;
+                    Ok(crate::provider::cli::CliContext { cwd: root.clone(), resume })
+                })
+                .transpose()?,
+        },
+    }))
+}
+
+/// 턴을 진행한다. 같은 턴의 중복 실행은 cancel registry로 막는다.
+pub fn spawn_drive(app: &App, turn_id: String) {
+    let app = app.clone();
+    tokio::spawn(async move { drive(app, turn_id).await });
+}
+
+async fn drive(app: App, turn_id: String) {
+    let (cancel_tx, cancel_rx) = watch::channel(false);
+    if !app.cancels.register_unique(&turn_id, cancel_tx) {
+        return;
+    }
+    let session_id = drive_loop(&app, &turn_id, cancel_rx).await;
+    app.cancels.remove(&turn_id);
+    if let Some(s) = session_id {
+        app.partials.clear(&s);
+    }
+    app.notify_events().await;
+    // 끝났으면 대기 메시지(queue·interrupt)를 시작한다. 승인 대기로 멈춘 경우는 아무것도 하지 않는다.
+    crate::followups::after_turn(&app, &turn_id).await;
+    // 턴과 독립: 제목 생성 실패가 턴 결과에 영향을 주지 않는다.
+    crate::titles::after_turn(&app, &turn_id).await;
+}
+
+async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<bool>) -> Option<String> {
+    let mut session_for_partial = None;
+    let mut auto_compact_checked = false;
+    loop {
+        let (tid, epoch) = (turn_id.to_string(), app.epoch.clone());
+        // queued → running 전이(처음 시작)
+        let _ = app
+            .db
+            .call({
+                let tid = tid.clone();
+                let epoch = epoch.clone();
+                move |c| {
+                    let tx = c.transaction()?;
+                    let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+                    if tx.execute("UPDATE turns SET status = 'running', owner_epoch = ?2, updated_at = ?3 WHERE id = ?1 AND status = 'queued'", params![tid, epoch, now])? > 0 {
+                        emit_turn(&tx, &now, &tid)?;
+                    }
+                    // 모델 호출 경계: 실행 중 보낸 steer를 이번 요청에 넣는다(RUN-008, 반영과 삭제가 같은 transaction).
+                    crate::followups::apply_steers(&tx, &now, &tid)?;
+                    tx.commit()?;
+                    Ok(())
+                }
+            })
+            .await;
+        app.notify_events().await;
+        let step = app.db.call({
+            let tid = tid.clone();
+            move |c| load_step(c, &tid, &epoch)
+        });
+        let input = match step.await {
+            Ok(Some(i)) => i,
+            Ok(None) => return session_for_partial,
+            Err(e) => {
+                fail(app, turn_id, json!({ "code": e.code, "message": e.message })).await;
+                return session_for_partial;
+            }
+        };
+        session_for_partial = Some(input.session_id.clone());
+        if *cancel_rx.borrow() {
+            end_cancelled(app, turn_id, None).await;
+            return session_for_partial;
+        }
+        // 첫 모델 호출 전 자동 압축(CTX-004). 압축하면 이력이 바뀌므로 다시 불러온다.
+        if input.first_step && !auto_compact_checked {
+            auto_compact_checked = true;
+            crate::context::maybe_auto_compact(app, &input.session_id, &input.profile_id, &mut cancel_rx).await;
+            continue;
+        }
+        // 공정 실행 슬롯(FAIR-005~008): 모델 호출 한 번만 차지한다. 승인 대기·도구 실행 중에는 반환된 상태다.
+        let tid_q = turn_id.to_string();
+        let (owner, max_active) = match app
+            .db
+            .call(move |c| {
+                let o: String = c.query_row("SELECT owner_key FROM turns WHERE id = ?1", params![tid_q], |r| r.get(0))?;
+                let m = crate::settings::effective(c, "runs.max_active", None, None)?.as_i64().unwrap_or(4);
+                Ok((o, m.max(1) as usize))
+            })
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                fail(app, turn_id, json!({ "code": e.code, "message": e.message })).await;
+                return session_for_partial;
+            }
+        };
+        let waited = app.fair.counts().0 >= max_active;
+        // acquire future는 이 block 안에서 끝나야 cancel_rx 빌림이 풀린다(뒤의 provider 호출이 다시 쓴다).
+        let res = {
+            let acquiring = app.fair.acquire(&owner, turn_id, max_active, &mut cancel_rx);
+            tokio::pin!(acquiring);
+            // 곧바로 받지 못하면 대기 시작을 알린다(화면에 대기 이유 표시).
+            let got = tokio::select! {
+                r = &mut acquiring => Some(r),
+                _ = tokio::time::sleep(Duration::from_millis(20)), if waited => None,
+            };
+            match got {
+                Some(r) => r,
+                None => {
+                    let (tid_e, q) = (turn_id.to_string(), app.fair.waiting(turn_id));
+                    let _ = app.db.call(move |c| emit_turn_queue(c, &crate::util::fmt_time(time::OffsetDateTime::now_utc()), &tid_e, q)).await;
+                    app.notify_events().await;
+                    let r = acquiring.await;
+                    let tid_e = turn_id.to_string();
+                    let _ = app.db.call(move |c| emit_turn_queue(c, &crate::util::fmt_time(time::OffsetDateTime::now_utc()), &tid_e, None)).await;
+                    app.notify_events().await;
+                    r
+                }
+            }
+        };
+        let permit = match res {
+            Ok(p) => p,
+            Err(crate::fair::AcquireError::Cancelled) => {
+                end_cancelled(app, turn_id, None).await;
+                return session_for_partial;
+            }
+        };
+        // 모델 호출과 중간 snapshot
+        let partials = app.partials.clone();
+        let sid = input.session_id.clone();
+        let tid2 = turn_id.to_string();
+        let mut last = Instant::now() - Duration::from_secs(1);
+        let mut last_progress_at = None;
+        let mut on_delta = |o: &provider::ModelOutput| {
+            if !o.text.is_empty() || !o.reasoning.is_empty() || !o.tool_calls.is_empty() || !o.activity.is_empty() {
+                last_progress_at = Some(crate::util::fmt_time(time::OffsetDateTime::now_utc()));
+            }
+            if last.elapsed() >= Duration::from_millis(50) {
+                last = Instant::now();
+                partials.set(
+                    &sid,
+                    json!({ "turn_id": tid2, "text": o.text, "reasoning_chars": o.reasoning.chars().count(), "reasoning": reasoning_tail(&o.reasoning),
+                            "tool_calls": o.tool_calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>() }),
+                );
+            }
+        };
+        // 시간 예산(사용자 명시 시만): 남은 시간 안에 응답이 끝나지 않으면 진행 중 응답을 버리고 멈춘다.
+        let left = input.deadline.map(|d| (d - time::OffsetDateTime::now_utc()).max(time::Duration::ZERO));
+        let result = match left {
+            Some(l) => tokio::select! {
+                r = provider::stream(&input.profile, &input.request, &mut cancel_rx, &mut on_delta) => r,
+                _ = tokio::time::sleep(Duration::from_millis(l.whole_milliseconds().max(0) as u64)) => Err(provider::ProviderError::new("time_budget_exceeded", "요청 시간 예산을 넘었습니다")),
+            },
+            None => provider::stream(&input.profile, &input.request, &mut cancel_rx, &mut on_delta).await,
+        };
+        // 응답을 받으면 바로 반환한다(이후 도구 실행·승인 대기는 슬롯 없이). 오류·취소 경로도 여기서 반환된다.
+        drop(permit);
+        app.partials.clear(&input.session_id);
+        let out = match result {
+            Ok(o) => o,
+            Err(e) if e.code == "cancelled" => {
+                end_cancelled(app, turn_id, last_progress_at).await;
+                return session_for_partial;
+            }
+            Err(e) => {
+                let mut error = e.to_json();
+                error["last_progress_at"] = json!(last_progress_at);
+                error["settings"] = json!({ "provider_timeout_secs": input.profile.timeout.as_secs() });
+                fail(app, turn_id, error).await;
+                return session_for_partial;
+            }
+        };
+        if *cancel_rx.borrow() {
+            // 완료 직후 도착한 취소: 확정하지 않는다(중간 응답 비저장).
+            end_cancelled(app, turn_id, last_progress_at).await;
+            return session_for_partial;
+        }
+        // 확정: 답변 저장 + 도구 호출 계획을 한 transaction으로
+        let ttl = app.cfg.approval_ttl_secs;
+        let model = input.profile.model.clone();
+        let tid = turn_id.to_string();
+        let epoch = app.epoch.clone();
+        let committed = app
+            .db
+            .call(move |c| {
+                let tx = c.transaction()?;
+                let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+                let (t, owner) = get_turn_epoch(&tx, &tid)?;
+                if t.status != "running" || owner != epoch {
+                    return Ok(None);
+                }
+                let s = crate::sessions::get(&tx, &t.session_id)?;
+                let content = json!({
+                    "text": out.text,
+                    "tool_calls": out.tool_calls.iter().map(|c| json!({ "id": c.id, "name": c.name, "arguments": c.arguments })).collect::<Vec<_>>(),
+                    "model": model,
+                    "finish_reason": out.finish_reason,
+                    "usage": out.usage,
+                    "reasoning_chars": out.reasoning.chars().count(),
+                    // 표시 전용(UI-012). 모델 입력 재구성은 text·tool_calls만 쓰므로 다음 요청에 섞이지 않는다.
+                    "reasoning": reasoning_stored(&out.reasoning),
+                });
+                // CLI 백엔드가 자기 안에서 한 도구 활동은 표시 전용 note로 먼저 남긴다(Grove가 다시 실행하지 않음).
+                if !out.activity.is_empty() {
+                    crate::sessions::append_message(&tx, &now, &t.session_id, "note", &json!({ "type": "cli_activity", "items": out.activity }), Some(&tid), None)?;
+                }
+                crate::sessions::append_message(&tx, &now, &t.session_id, "assistant", &content, Some(&tid), None)?;
+                if let (Some(native), Some(pid)) = (&out.native_session, &t.profile_id) {
+                    tx.execute(
+                        "INSERT INTO cli_sessions (session_id, profile_id, native_id, updated_at) VALUES (?1, ?2, ?3, ?4) \
+                         ON CONFLICT(session_id, profile_id) DO UPDATE SET native_id = ?3, updated_at = ?4",
+                        params![t.session_id, pid, native, now],
+                    )?;
+                }
+                let mut usage: provider::Usage = serde_json::from_value(t.usage.clone()).unwrap_or_default();
+                usage.add(&out.usage);
+                let step = t.step + 1;
+                tx.execute("UPDATE turns SET usage = ?2, step = ?3, updated_at = ?4 WHERE id = ?1", params![tid, serde_json::to_string(&usage)?, step, now])?;
+                let limits = &t.definition["limits"];
+                // 예약 한도와 사용자 예산 중 작은 쪽. 어느 쪽인지 원인에 남긴다(RUN-023).
+                let caps = [("schedule", limits["max_total_tokens"].as_i64()), ("user", t.definition["budget"]["max_tokens"].as_i64())];
+                if let Some((src, max)) = caps.iter().filter_map(|(s, m)| m.map(|m| (*s, m))).min_by_key(|(_, m)| *m)
+                    && (usage.input_tokens + usage.output_tokens) as i64 > max
+                {
+                    // 남은 도구 호출은 계획하지 않는다(예산 초과 뒤 mutation 금지).
+                    finish_turn(&tx, &now, &tid, &["running"], "failed", Some(json!({ "code": "budget_exceeded", "source": src, "kind": "tokens", "message": format!("token 한도 {max}를 넘어 중단했습니다") })))?;
+                    tx.commit()?;
+                    return Ok(Some((false, vec![])));
+                }
+                let b = &t.definition["budget"];
+                if let Some(max) = b["max_cost_cents"].as_i64() {
+                    let cost = crate::usage::estimate_cost(&serde_json::to_value(&usage)?, &b["pricing"]);
+                    if cost * 100.0 > max as f64 {
+                        let cur = b["currency"].as_str().unwrap_or("USD");
+                        finish_turn(&tx, &now, &tid, &["running"], "failed", Some(json!({ "code": "budget_exceeded", "source": "user", "kind": "cost",
+                            "estimated_cost": cost, "currency": cur,
+                            "message": format!("비용 예산 {:.2} {cur}를 넘어(추정 {cost:.4} {cur}) 중단했습니다", max as f64 / 100.0) })))?;
+                        tx.commit()?;
+                        return Ok(Some((false, vec![])));
+                    }
+                }
+                if out.tool_calls.is_empty() {
+                    finish_turn(&tx, &now, &tid, &["running"], "completed", None)?;
+                    tx.commit()?;
+                    return Ok(Some((false, vec![])));
+                }
+                let root = crate::projects::active_root(&tx, &s.project_id)?;
+                let ttl = approvals::approval_ttl(&tx, ttl)?;
+                // 반복 감지(RUN-012)는 이번 호출을 만들기 전의 이력으로 판단한다.
+                let stuck = loop_guard(&tx, &tid, &out.tool_calls)?;
+                let mut approved = vec![];
+                let mut waiting = false;
+                let mut asking = false;
+                let allowed = limits["allowed_tools"].as_array();
+                for call in &out.tool_calls {
+                    let row = if allowed.is_some_and(|a| !a.iter().any(|n| n.as_str() == Some(call.name.as_str()))) {
+                        // 예약에 허용되지 않은 도구: 실행 없이 failed로 남긴다.
+                        approvals::create_call(&tx, &now, ttl, &s.id, &s.project_id, &root, Some(&tid), Some(&call.id), "__tool_not_allowed__", &json!({}))?
+                    } else if t.tools_enabled {
+                        approvals::create_call(&tx, &now, ttl, &s.id, &s.project_id, &root, Some(&tid), Some(&call.id), &call.name, &call.arguments)?
+                    } else {
+                        approvals::create_call(&tx, &now, ttl, &s.id, &s.project_id, &root, Some(&tid), Some(&call.id), "__tools_disabled__", &json!({}))?
+                    };
+                    match row.status.as_str() {
+                        "approved" => approved.push(row.id),
+                        "pending_approval" => waiting = true,
+                        // 질문: 사용자 답을 기다린다(턴은 사용자 대기 상태, 무엇을 기다리는지는 호출 상태로 구분).
+                        "awaiting_input" => {
+                            waiting = true;
+                            asking = true;
+                        }
+                        _ => {}
+                    }
+                }
+                if let Some(err) = stuck {
+                    // 만든 호출은 실행하지 않는다(finish_turn이 승인됨·대기 호출을 취소로 정리).
+                    finish_turn(&tx, &now, &tid, &["running"], "failed", Some(err))?;
+                    tx.commit()?;
+                    return Ok(Some((false, vec![])));
+                }
+                if step >= MAX_STEPS {
+                    finish_turn(&tx, &now, &tid, &["running"], "failed", Some(json!({ "code": "step_limit", "message": format!("도구 단계가 {MAX_STEPS}회를 넘어 중단했습니다") })))?;
+                    tx.commit()?;
+                    return Ok(Some((false, vec![])));
+                }
+                if asking && limits["on_approval"] == "fail" {
+                    // 사람이 없는 예약 실행: 질문에 답할 사람이 없으므로 기다리지 않고 실패로 끝낸다.
+                    finish_turn(&tx, &now, &tid, &["running"], "failed", Some(json!({ "code": "input_required", "message": "사용자 답이 필요한 질문이 있어 예약 정책에 따라 중단했습니다" })))?;
+                    tx.commit()?;
+                    return Ok(Some((false, vec![])));
+                }
+                if waiting && limits["on_approval"] == "fail" {
+                    // 사람이 없을 때 승인을 자동 우회하지 않는다: 대기 대신 실패로 끝낸다(AUTO-007).
+                    finish_turn(&tx, &now, &tid, &["running"], "failed", Some(json!({ "code": "approval_required", "message": "승인이 필요한 도구 호출이 있어 예약 정책에 따라 중단했습니다" })))?;
+                    tx.commit()?;
+                    return Ok(Some((false, vec![])));
+                }
+                if waiting {
+                    tx.execute("UPDATE turns SET status = 'awaiting_approval', updated_at = ?2 WHERE id = ?1", params![tid, now])?;
+                    emit_turn(&tx, &now, &tid)?;
+                }
+                tx.commit()?;
+                Ok(Some((waiting, approved)))
+            })
+            .await;
+        app.notify_events().await;
+        let (waiting, approved) = match committed {
+            Ok(Some(x)) => x,
+            Ok(None) => return session_for_partial,
+            Err(e) => {
+                fail(app, turn_id, json!({ "code": e.code, "message": e.message })).await;
+                return session_for_partial;
+            }
+        };
+        // 자동 허용(읽기 전용) 도구 실행
+        let handles: Vec<_> = approved.into_iter().map(|id| approvals::spawn_execute(app, id)).collect();
+        if waiting {
+            // 승인 대기: 루프를 끝내고, 모든 결정이 끝나면 maybe_resume이 다시 시작한다.
+            return session_for_partial;
+        }
+        for h in handles {
+            let _ = h.await;
+        }
+        let done = app.db.call({
+            let tid = turn_id.to_string();
+            move |c| Ok(get_turn(c, &tid)?.status)
+        });
+        match done.await.as_deref() {
+            Ok("running") => continue,
+            _ => return session_for_partial,
+        }
+    }
+}
+
+async fn fail(app: &App, turn_id: &str, error: Value) {
+    let tid = turn_id.to_string();
+    let _ = app
+        .db
+        .call(move |c| {
+            let tx = c.transaction()?;
+            let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+            finish_turn(&tx, &now, &tid, &["queued", "running", "awaiting_approval"], "failed", Some(error))?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await;
+    app.notify_events().await;
+}
+
+async fn end_cancelled(app: &App, turn_id: &str, last_progress_at: Option<String>) {
+    let tid = turn_id.to_string();
+    let shutting = app.is_shutting_down();
+    let _ = app
+        .db
+        .call(move |c| {
+            let tx = c.transaction()?;
+            let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+            if let Some(progress) = last_progress_at {
+                let cause = if shutting {
+                    json!({ "code": "server_shutdown", "message": "서버 종료로 중단되었습니다" })
+                } else {
+                    json!({ "code": "cancelled", "message": "취소되었습니다" })
+                };
+                tx.execute(
+                    "UPDATE turns SET error = json_set(COALESCE(error, ?3), '$.last_progress_at', ?2) WHERE id = ?1 AND status IN ('queued','running','awaiting_approval')",
+                    params![tid, progress, cause.to_string()],
+                )?;
+            }
+            if shutting {
+                finish_turn(&tx, &now, &tid, &["queued", "running"], "interrupted", Some(json!({ "code": "server_shutdown", "message": "서버 종료로 중단되었습니다" })))?;
+            } else {
+                finish_turn(&tx, &now, &tid, &["queued", "running", "awaiting_approval"], "cancelled", None)?;
+            }
+            tx.commit()?;
+            Ok(())
+        })
+        .await;
+    app.notify_events().await;
+    if !shutting {
+        crate::agents::cascade_cancel(app, turn_id).await;
+    }
+}
+
+/// 턴의 모든 도구 호출이 종료 상태가 되면 승인 대기 턴을 다시 실행한다(중복 재개 방지: 조건부 전이).
+pub async fn maybe_resume(app: &App, turn_id: &str) {
+    let tid = turn_id.to_string();
+    let epoch = app.epoch.clone();
+    let resumed = app
+        .db
+        .call(move |c| {
+            let tx = c.transaction()?;
+            let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+            let ph = TERMINAL.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(",");
+            let open: i64 = tx.query_row(&format!("SELECT COUNT(*) FROM tool_calls WHERE turn_id = ?1 AND status NOT IN ({ph})"), params![tid], |r| r.get(0))?;
+            if open > 0 {
+                return Ok(false);
+            }
+            let n = tx.execute(
+                "UPDATE turns SET status = 'running', owner_epoch = ?2, updated_at = ?3 WHERE id = ?1 AND status = 'awaiting_approval'",
+                params![tid, epoch, now],
+            )?;
+            if n > 0 {
+                emit_turn(&tx, &now, &tid)?;
+            }
+            tx.commit()?;
+            Ok(n > 0)
+        })
+        .await
+        .unwrap_or(false);
+    if resumed {
+        app.notify_events().await;
+        spawn_drive(app, turn_id.to_string());
+    }
+}
+
+// ---------------- API ----------------
+
+#[derive(Deserialize)]
+pub struct CreateTurn {
+    pub text: String,
+    pub profile_id: String,
+    pub agent_id: Option<String>,
+    pub tools: Option<bool>,
+    /// auto(기본)·low·medium·high
+    pub effort: Option<String>,
+}
+
+/// 접수한 턴에 추론 강도를 고정한다(같은 transaction). 이후 단계·승인 뒤 재개에도 같은 값을 쓴다.
+pub fn set_turn_effort(tx: &Connection, turn_id: &str, effort: Option<&str>) -> ApiResult<()> {
+    if let Some(e) = effort {
+        tx.execute("UPDATE turns SET definition_snapshot = json_set(definition_snapshot, '$.effort', ?2) WHERE id = ?1", params![turn_id, e])?;
+    }
+    Ok(())
+}
+
+pub async fn create(
+    State(app): State<App>,
+    p: Principal,
+    headers: HeaderMap,
+    Path(session_id): Path<String>,
+    Json(b): Json<CreateTurn>,
+) -> ApiResult<Response> {
+    crate::sessions::validate_text(&b.text)?;
+    let tools = b.tools.unwrap_or(false);
+    if tools && !app.cfg.enable_tool_loop {
+        return Err(ApiError::unsupported("이 서버에서는 모델 도구 실행이 꺼져 있습니다(GROVE_ENABLE_TOOL_LOOP=1)"));
+    }
+    let effort = provider::parse_effort(b.effort.as_deref()).map_err(ApiError::invalid)?;
+    let h = idem::body_hash("turn.create", &json!({ "s": session_id, "t": b.text, "p": b.profile_id, "a": b.agent_id, "tools": tools, "e": effort }));
+    let epoch = app.epoch.clone();
+    // 소유자 key는 서버가 인증 주체에서 정한다(FAIR-002). 브라우저 세션은 부모 기기 토큰으로 묶여 연결을 새로 만들어도 같다.
+    let owner = format!("token:{}", p.root_id);
+    let resp = idem::run(&app, &p, &headers, &h, move |tx, now| {
+        let (t, msg) = enqueue_turn(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), tools, None)?;
+        set_turn_effort(tx, &t.id, effort.as_deref())?;
+        let t = get_turn(tx, &t.id)?;
+        Ok((StatusCode::ACCEPTED, json!({ "turn": t, "message": msg })))
+    })
+    .await?;
+    kick_queued(&app).await;
+    Ok(resp)
+}
+
+/// 새 턴 접수(사용자 요청·자식 에이전트 공통). 사용자 메시지와 정의 snapshot을 같은 transaction에서 기록한다.
+/// 호출자는 commit 후 `kick_queued`로 실행을 시작한다.
+#[allow(clippy::too_many_arguments)]
+pub fn enqueue_turn(
+    tx: &Connection,
+    now: &str,
+    epoch: &str,
+    owner: &str,
+    session_id: &str,
+    text: &str,
+    profile_id: &str,
+    agent_id: Option<&str>,
+    tools: bool,
+    source: Option<&Value>,
+) -> ApiResult<(Turn, crate::sessions::Message)> {
+    let s = crate::sessions::get_active(tx, session_id)?;
+    crate::projects::active_root(tx, &s.project_id)?;
+    if s.active_turn.is_some() {
+        return Err(ApiError::busy("이 세션에서 이미 턴이 실행 중입니다"));
+    }
+    if s.unreviewed_unknown > 0 {
+        return Err(ApiError::conflict("unknown_pending_review", "결과 불명 작업을 먼저 검토하세요")
+            .with_details(json!({ "unreviewed_unknown": s.unreviewed_unknown })));
+    }
+    // 봇 대화면 요청의 프로필·에이전트 대신 봇 설정을 쓴다(BOT-005: 접수 시점 값으로 고정).
+    let bot = crate::bots::turn_binding(tx, session_id)?;
+    let (profile_id, agent_id) = match &bot {
+        Some((p, _)) => (p.as_str(), None),
+        None => (profile_id, agent_id),
+    };
+    crate::models::get_profile(tx, profile_id)?;
+    let wf_id = s.workflow_id.clone().unwrap_or_else(|| "default".into());
+    let wf = crate::definitions::resolve(tx, "workflow", &wf_id)?;
+    let mut def = json!({ "workflow": { "id": wf_id, "revision": wf.def.revision, "body_sha256": wf.def.body_sha256, "body": wf.def.body } });
+    if let Some(a) = agent_id {
+        let ad = crate::definitions::resolve(tx, "agent", a)?;
+        def["agent"] = json!({ "id": a, "revision": ad.def.revision, "body_sha256": ad.def.body_sha256, "body": ad.def.body });
+    }
+    if let Some((_, b)) = &bot {
+        def["bot"] = b.clone();
+    }
+    // 지침 파일·응답 언어는 턴 시작 시점 값으로 고정한다(실행 중 변경은 다음 턴부터).
+    let mode = crate::settings::effective(tx, "instructions.mode", Some(&s.project_id), Some(session_id))?;
+    let root = crate::projects::active_root(tx, &s.project_id)?;
+    def["instructions"] = crate::settings::load_instructions(&root, mode.as_str().unwrap_or("off"))
+        .into_iter()
+        .map(|(n, body)| json!({ "file": n, "sha256": crate::util::sha256_hex(body.as_bytes()), "body": body }))
+        .collect();
+    def["language"] = crate::settings::effective(tx, "output.language", Some(&s.project_id), Some(session_id))?;
+    // 사용자가 명시한 예산만 고정한다(0 = 제한 없음, RUN-021). 실행 중 설정 변경은 다음 요청부터.
+    let mut budget = json!({});
+    for (k, key) in [("max_tokens", "runs.budget.max_tokens"), ("max_minutes", "runs.budget.max_minutes")] {
+        if let Some(n) = crate::settings::effective(tx, key, Some(&s.project_id), Some(session_id))?.as_i64().filter(|n| *n > 0) {
+            budget[k] = json!(n);
+        }
+    }
+    // 비용 예산: 접수 시점 가격표를 고정한다. 가격표가 없으면 잴 수 없으므로 조용히 무시하지 않고 거절한다.
+    if let Some(n) = crate::settings::effective(tx, "runs.budget.max_cost_cents", Some(&s.project_id), Some(session_id))?.as_i64().filter(|n| *n > 0) {
+        let p = crate::models::get_profile(tx, profile_id)?;
+        let pricing = p.options.get("pricing").filter(|v| v.is_object()).cloned().ok_or_else(|| {
+            ApiError::invalid("비용 예산(runs.budget.max_cost_cents)을 쓰려면 이 모델 프로필에 가격표(options.pricing)를 설정하세요")
+        })?;
+        budget["max_cost_cents"] = json!(n);
+        budget["currency"] = pricing["currency"].clone();
+        budget["pricing"] = pricing;
+    }
+    if budget.as_object().is_some_and(|o| !o.is_empty()) {
+        def["budget"] = budget;
+    }
+    // 부모 에이전트가 보낸 지시 턴에만 위임 규칙을 넣는다. 사용자가 자식 대화에 직접 보낸 턴은 부모에 보고되지 않으므로 넣지 않는다.
+    if source.is_some_and(|s| s["kind"] == "agent_run")
+        && let Some(run) = crate::agents::run_by_child(tx, session_id)?
+    {
+        def["agent_run"] = json!({ "id": run.id, "depth": run.depth, "parent_session_id": run.parent_session_id });
+    }
+    if tools {
+        def["agents_available"] = crate::agents::available_for(tx, session_id)?;
+    }
+    // 미완료 Goal은 알림으로만 넣는다(자동 턴 없음, AGENT-018).
+    if let Some(r) = crate::goals::reminder(tx, session_id)? {
+        def["goals_reminder"] = json!(r);
+    }
+    // 접수 한도(FAIR-003): 넘치면 아무것도 기록하지 않고 거부한다(재시도 가능).
+    crate::fair::admit(tx, owner)?;
+    let tid = crate::util::new_id();
+    // 출처 보존(AGENT-010): 사람이 아니라 부모 에이전트·예약이 보낸 지시면 source를 남긴다.
+    let mut content = json!({ "text": text });
+    if let Some(src) = source {
+        let mut src = src.clone();
+        // 예약 실행 제약(허용 도구·token 한도·승인 정책)은 정의 snapshot에 고정한다(AUTO-005/007).
+        if let Some(l) = src.as_object_mut().and_then(|o| o.remove("limits")) {
+            def["limits"] = l;
+        }
+        content["source"] = src;
+    }
+    let msg = crate::sessions::append_message(tx, now, session_id, "user", &content, Some(&tid), None)?;
+    let ins = tx.execute(
+        "INSERT INTO turns (id, session_id, status, request_message_id, profile_id, agent_id, workflow_id, definition_snapshot, tools_enabled, owner_epoch, usage, created_at, updated_at, owner_key) \
+         VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6, ?7, ?8, ?9, '{}', ?10, ?10, ?11)",
+        params![tid, session_id, msg.id, profile_id, agent_id, wf_id, def.to_string(), tools, epoch, now, owner],
+    );
+    if let Err(rusqlite::Error::SqliteFailure(f, _)) = &ins
+        && f.code == rusqlite::ErrorCode::ConstraintViolation
+    {
+        return Err(ApiError::busy("이 세션에서 이미 턴이 실행 중입니다"));
+    }
+    ins?;
+    let t = emit_turn(tx, now, &tid)?;
+    Ok((t, msg))
+}
+
+/// queued 상태 턴을 시작한다(새 접수·재전송 모두 안전: drive가 중복을 막는다).
+pub async fn kick_queued(app: &App) {
+    let epoch = app.epoch.clone();
+    let ids: Vec<String> = app
+        .db
+        .call(move |c| {
+            let mut st = c.prepare("SELECT id FROM turns WHERE status = 'queued' AND owner_epoch = ?1 ORDER BY created_at")?;
+            let v = st.query_map(params![epoch], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
+            Ok(v)
+        })
+        .await
+        .unwrap_or_default();
+    for id in ids {
+        spawn_drive(app, id);
+    }
+}
+
+#[derive(Serialize)]
+pub struct TurnDetail {
+    #[serde(flatten)]
+    pub turn: Turn,
+    pub tool_calls: Vec<approvals::ToolCallRow>,
+    /// 경과 시간 분해(USAGE-008): 승인 대기·도구 실행·모델 대기와 처리
+    pub timing: Value,
+}
+
+pub async fn show(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<TurnDetail>> {
+    let now = app.clock.now();
+    let fair = app.fair.clone();
+    Ok(Json(
+        app.db
+            .call(move |c| {
+                Ok(TurnDetail { turn: { let mut t = get_turn(c, &id)?; t.queue = fair.waiting(&t.id); t }, tool_calls: approvals::list_for_turn(c, &id)?, timing: crate::usage::turn_timing(c, &id, now)? })
+            })
+            .await?,
+    ))
+}
+
+#[derive(Deserialize)]
+pub struct ListQuery {
+    pub limit: Option<i64>,
+}
+
+pub async fn list(State(app): State<App>, _p: Principal, Path(session_id): Path<String>, Query(q): Query<ListQuery>) -> ApiResult<Json<Vec<Turn>>> {
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let fair = app.fair.clone();
+    Ok(Json(
+        app.db
+            .call(move |c| {
+                let mut st = c.prepare(&format!("SELECT {TCOLS} FROM turns WHERE session_id = ?1 AND EXISTS (SELECT 1 FROM messages m WHERE m.id = turns.request_message_id AND m.rewound_at IS NULL) ORDER BY created_at DESC LIMIT ?2"))?;
+                let mut v = st.query_map(params![session_id, limit], turn_row)?.map(|r| r.map(|x| x.0)).collect::<Result<Vec<_>, _>>()?;
+                for t in &mut v {
+                    t.queue = fair.waiting(&t.id);
+                }
+                Ok(v)
+            })
+            .await?,
+    ))
+}
+
+const RETRYABLE_END: &[&str] = &["failed", "interrupted", "cancelled"];
+
+/// 끝난 요청 다시 실행(RUN-019). 그 대화의 가장 최근 요청이 실패·중단·취소로 끝났을 때만, 같은 글·프로필·에이전트·도구·강도로
+/// 새 요청을 만든다(출처 retry). 원래 요청은 확인한 것으로 표시한다. 같은 Idempotency-Key 재전송은 한 번만 만든다.
+pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
+    let h = idem::body_hash("turn.retry", &json!({ "id": id }));
+    let epoch = app.epoch.clone();
+    let owner = format!("token:{}", p.root_id);
+    let resp = idem::run(&app, &p, &headers, &h, move |tx, now| {
+        let old = get_turn(tx, &id)?;
+        let visible: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE id = ?1 AND rewound_at IS NULL)", params![old.request_message_id], |r| r.get(0))?;
+        if !visible {
+            return Err(ApiError::conflict("rewound", "되감은 요청은 다시 실행할 수 없습니다. 새 요청으로 보내세요"));
+        }
+        if !RETRYABLE_END.contains(&old.status.as_str()) {
+            return Err(ApiError::conflict("not_retryable", format!("실패·중단·취소된 요청만 다시 실행할 수 있습니다({})", old.status)));
+        }
+        let newer: i64 = tx.query_row("SELECT COUNT(*) FROM turns WHERE session_id = ?1 AND created_at > ?2 AND EXISTS (SELECT 1 FROM messages m WHERE m.id = turns.request_message_id AND m.rewound_at IS NULL)", params![old.session_id, old.created_at], |r| r.get(0))?;
+        if newer > 0 {
+            return Err(ApiError::conflict("not_latest", "이후에 다른 요청이 있어 다시 실행할 수 없습니다. 새 요청으로 보내세요"));
+        }
+        let text: String = tx.query_row("SELECT content FROM messages WHERE id = ?1", params![old.request_message_id], |r| r.get::<_, String>(0)).map(|c| {
+            serde_json::from_str::<Value>(&c).ok().and_then(|v| v["text"].as_str().map(str::to_string)).unwrap_or_default()
+        })?;
+        let profile = old.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없는 요청입니다"))?;
+        let src = json!({ "kind": "retry", "turn_id": old.id });
+        let (t, msg) = enqueue_turn(tx, now, &epoch, &owner, &old.session_id, &text, &profile, old.agent_id.as_deref(), old.tools_enabled, Some(&src))?;
+        set_turn_effort(tx, &t.id, old.definition["effort"].as_str())?;
+        tx.execute("UPDATE turns SET acknowledged_at = COALESCE(acknowledged_at, ?2) WHERE id = ?1", params![old.id, now])?;
+        emit_turn(tx, now, &old.id)?;
+        let t = get_turn(tx, &t.id)?;
+        Ok((StatusCode::ACCEPTED, json!({ "turn": t, "message": msg })))
+    })
+    .await?;
+    kick_queued(&app).await;
+    Ok(resp)
+}
+
+/// 실패·중단된 요청 확인(포기, RUN-019). 결과는 그대로 두고 배너만 닫는다.
+pub async fn acknowledge(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Turn>> {
+    let t = app
+        .db
+        .call(move |c| {
+            let tx = c.transaction()?;
+            let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+            let t = get_turn(&tx, &id)?;
+            if !RETRYABLE_END.contains(&t.status.as_str()) {
+                return Err(ApiError::conflict("not_finished_abnormally", format!("실패·중단·취소된 요청만 확인할 수 있습니다({})", t.status)));
+            }
+            tx.execute("UPDATE turns SET acknowledged_at = COALESCE(acknowledged_at, ?2) WHERE id = ?1", params![id, now])?;
+            let t = emit_turn(&tx, &now, &id)?;
+            tx.commit()?;
+            Ok(t)
+        })
+        .await?;
+    app.notify_events().await;
+    Ok(Json(t))
+}
+
+/// 턴 취소(MODEL-013). 대기 중이면 즉시 기록하고, 실행 중이면 실행 루프에 신호를 보낸다.
+pub async fn cancel(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<(StatusCode, Json<Value>)> {
+    let t = cancel_turn(&app, &id, CancelCause::UserStop).await?;
+    Ok((StatusCode::ACCEPTED, Json(json!({ "cancel_requested": true, "turn": t }))))
+}
+
+/// 취소 원인(RUN-023). 같은 '취소'라도 누가 왜 멈췄는지 구분해 남긴다.
+#[derive(Clone, Copy)]
+pub enum CancelCause {
+    /// 사용자가 중지를 눌렀다
+    UserStop,
+    /// 부모 에이전트의 턴이 취소되어 함께 멈췄다
+    ParentCancelled,
+    /// 사용자가 '중단하고 보내기'로 끼어들었다
+    Interrupt,
+}
+
+impl CancelCause {
+    fn json(self) -> Value {
+        match self {
+            CancelCause::UserStop => json!({ "code": "user_stop", "message": "사용자가 중지했습니다" }),
+            CancelCause::ParentCancelled => json!({ "code": "parent_cancelled", "message": "부모 에이전트의 요청이 취소되어 함께 멈췄습니다" }),
+            CancelCause::Interrupt => json!({ "code": "interrupted_by_user", "message": "사용자가 새 메시지로 끼어들어 멈췄습니다" }),
+        }
+    }
+}
+
+/// 취소 공통 경로(사용자·부모 에이전트). 이 턴이 띄운 자식 에이전트도 함께 취소한다(AGENT-008).
+pub async fn cancel_turn(app: &App, id: &str, cause: CancelCause) -> ApiResult<Turn> {
+    // 원인을 먼저 남긴다: 종료 기록(finish_turn)은 기존 원인을 덮지 않는다.
+    let (tid, e) = (id.to_string(), cause.json().to_string());
+    app.db
+        .call(move |c| {
+            c.execute(
+                "UPDATE turns SET error = COALESCE(error, ?2) WHERE id = ?1 AND status IN ('queued','running','awaiting_approval')",
+                params![tid, e],
+            )?;
+            Ok(())
+        })
+        .await?;
+    let t = cancel_turn_only(app, id).await?;
+    crate::agents::cascade_cancel(app, id).await;
+    Ok(t)
+}
+
+async fn cancel_turn_only(app: &App, id: &str) -> ApiResult<Turn> {
+    let app = app.clone();
+    let id = id.to_string();
+    let id2 = id.clone();
+    let t = app.db.call(move |c| get_turn(c, &id2)).await?;
+    match t.status.as_str() {
+        "queued" | "awaiting_approval" => {
+            let tid = id.clone();
+            app.db
+                .call(move |c| {
+                    let tx = c.transaction()?;
+                    let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+                    finish_turn(&tx, &now, &tid, &["queued", "awaiting_approval"], "cancelled", None)?;
+                    tx.commit()?;
+                    Ok(())
+                })
+                .await?;
+            cancel_running_calls(&app, &id).await;
+            app.cancels.cancel(&id);
+            app.notify_events().await;
+            // 실행 루프가 없는 상태에서 끝났으므로 여기서 다음 항목(interrupt)을 시작한다.
+            crate::followups::after_turn(&app, &id).await;
+        }
+        "running" => {
+            if !app.cancels.cancel(&id) {
+                // 실행 루프가 없는 running(이론상 없음): 중단으로 기록
+                let tid = id.clone();
+                app.db
+                    .call(move |c| {
+                        let tx = c.transaction()?;
+                        let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+                        finish_turn(&tx, &now, &tid, &["running"], "interrupted", Some(json!({ "code": "no_runner", "message": "실행 소유자가 없어 중단으로 기록했습니다" })))?;
+                        tx.commit()?;
+                        Ok(())
+                    })
+                    .await?;
+                app.notify_events().await;
+            }
+            cancel_running_calls(&app, &id).await;
+        }
+        s => {
+            return Err(ApiError::conflict("already_finished", format!("이미 끝난 턴입니다({s})")).with_details(json!({ "current": t })));
+        }
+    }
+    let id3 = id.clone();
+    app.db.call(move |c| get_turn(c, &id3)).await
+}
+
+async fn cancel_running_calls(app: &App, turn_id: &str) {
+    let tid = turn_id.to_string();
+    let ids: Vec<String> = app
+        .db
+        .call(move |c| {
+            let mut st = c.prepare("SELECT id FROM tool_calls WHERE turn_id = ?1 AND status = 'running'")?;
+            let v = st.query_map(params![tid], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
+            Ok(v)
+        })
+        .await
+        .unwrap_or_default();
+    for id in ids {
+        app.cancels.cancel(&id);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 도구 결과를 기다리는 사이 기록된 비동기 결과 note는 tool 짝을 깨지 않고 그 뒤에 들어간다.
+    #[test]
+    fn async_notes_are_deferred_until_pending_tool_results() {
+        let h = vec![
+            ("user".to_string(), json!({ "text": "go" }), None),
+            ("assistant".to_string(), json!({ "text": "", "tool_calls": [{ "id": "w1", "name": "agent", "arguments": {} }] }), None),
+            ("note".to_string(), json!({ "type": "agent_result", "run_id": "r1", "agent_id": "reviewer", "status": "completed", "text": "결과" }), None),
+            ("tool".to_string(), json!({ "provider_call_id": "w1", "name": "agent", "output": { "ok": true } }), None),
+            ("note".to_string(), json!({ "type": "task_result", "task_id": "t1", "command": "x", "status": "completed" }), None),
+            ("user".to_string(), json!({ "text": "다음" }), None),
+        ];
+        let out = to_chat(&h);
+        assert!(matches!(&out[1], ChatMsg::Assistant { .. }));
+        match &out[2] {
+            ChatMsg::Tool { call_id, is_error, .. } => {
+                assert_eq!(call_id, "w1");
+                assert!(!is_error, "합성된 중단 결과가 아니라 실제 결과");
+            }
+            o => panic!("{o:?}"),
+        }
+        // 미뤄진 agent note + task note + 다음 user가 하나의 user 메시지로 합쳐진다
+        match &out[3] {
+            ChatMsg::User { text } => {
+                assert!(text.contains("[child agent result]") && text.contains("[background task result]") && text.ends_with("다음"), "{text}");
+            }
+            o => panic!("{o:?}"),
+        }
+        assert_eq!(out.len(), 4);
+    }
+
+    #[test]
+    fn end_cause_is_preserved_after_pending_tool_results() {
+        let error = json!({
+            "code": "time_budget_exceeded", "message": "요청 시간 예산을 넘었습니다",
+            "at": "2026-11-10T06:00:05Z", "last_progress_at": "2026-11-10T06:00:04Z",
+            "budget": { "max_minutes": 1 }
+        });
+        let h = vec![
+            ("assistant".into(), json!({ "tool_calls": [{ "id": "w1", "name": "write", "arguments": {} }] }), None),
+            ("note".into(), json!({ "type": "turn_ended", "status": "failed", "error": error }), None),
+            ("tool".into(), json!({ "provider_call_id": "w1", "name": "write", "output": { "ok": true } }), None),
+            ("user".into(), json!({ "text": "다음" }), None),
+        ];
+        let out = to_chat(&h);
+        assert!(matches!(&out[1], ChatMsg::Tool { call_id, is_error: false, .. } if call_id == "w1"));
+        let ChatMsg::User { text } = &out[2] else { panic!("{out:?}") };
+        let detail = text.lines().nth(1).unwrap();
+        assert_eq!(serde_json::from_str::<Value>(detail).unwrap(), error);
+        assert!(text.ends_with("다음"));
+        assert_eq!(out.len(), 3);
+    }
+
+    #[test]
+    fn missing_tool_results_are_synthesized() {
+        let h = vec![
+            ("user".to_string(), json!({ "text": "q" }), None),
+            ("assistant".to_string(), json!({ "text": "", "tool_calls": [{ "id": "a", "name": "read", "arguments": {} }, { "id": "b", "name": "read", "arguments": {} }] }), None),
+            ("tool".to_string(), json!({ "provider_call_id": "b", "name": "read", "output": { "x": 1 }, "is_error": false }), None),
+            ("user".to_string(), json!({ "text": "next" }), None),
+        ];
+        let m = to_chat(&h);
+        assert_eq!(m.len(), 5);
+        assert!(matches!(&m[2], ChatMsg::Tool { call_id, .. } if call_id == "b"));
+        assert!(matches!(&m[3], ChatMsg::Tool { call_id, is_error: true, .. } if call_id == "a"));
+        assert!(matches!(&m[4], ChatMsg::User { .. }));
+    }
+}
+
+/// 같은 도구·같은 인자 호출이 이 턴에서 몇 번째면 무한 루프로 볼지.
+const LOOP_REPEAT: usize = 5;
+/// 같은 도구·같은 인자 호출이 연속 몇 번 실패한 뒤 또 오면 멈출지.
+const FAIL_REPEAT: usize = 3;
+
+/// 반복 감지(RUN-012). 이번 응답의 호출마다 이 턴의 이전 호출 중 이름·인자가 같은 것을 본다.
+/// - 같은 호출이 연속 FAIL_REPEAT번 실패했는데 또 부르면 repeated_tool_failure
+/// - 결과와 관계없이 같은 호출이 LOOP_REPEAT번째면 loop_detected
+fn loop_guard(c: &Connection, turn_id: &str, calls: &[provider::ToolCall]) -> ApiResult<Option<Value>> {
+    if calls.is_empty() {
+        return Ok(None);
+    }
+    let mut st = c.prepare("SELECT name, args, status FROM tool_calls WHERE turn_id = ?1 ORDER BY created_at, rowid")?;
+    let prior = st
+        .query_map(params![turn_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?)))?
+        .collect::<Result<Vec<_>, _>>()?;
+    for call in calls {
+        let same: Vec<&str> = prior
+            .iter()
+            .filter(|(n, a, _)| *n == call.name && serde_json::from_str::<Value>(a).is_ok_and(|v| v == call.arguments))
+            .map(|(_, _, s)| s.as_str())
+            .collect();
+        if same.len() + 1 >= LOOP_REPEAT {
+            return Ok(Some(json!({ "code": "loop_detected", "tool": call.name,
+                "message": format!("같은 도구 호출({})이 이 요청에서 {}번 반복되어 중단했습니다", call.name, same.len() + 1) })));
+        }
+        if same.len() >= FAIL_REPEAT && same[same.len() - FAIL_REPEAT..].iter().all(|s| *s == "failed") {
+            return Ok(Some(json!({ "code": "repeated_tool_failure", "tool": call.name,
+                "message": format!("같은 도구 호출({})이 연속 {FAIL_REPEAT}번 실패했는데 다시 시도해 중단했습니다", call.name) })));
+        }
+    }
+    Ok(None)
+}
+
+/// 저장하는 reasoning 상한(표시 전용). 넘으면 앞부분만 남긴다(전체 길이는 reasoning_chars).
+const REASONING_KEEP: usize = 20_000;
+/// 진행 중 표시용 reasoning 꼬리(snapshot 크기 제한).
+const REASONING_TAIL: usize = 2_000;
+
+fn reasoning_stored(r: &str) -> Option<String> {
+    (!r.is_empty()).then(|| r.chars().take(REASONING_KEEP).collect())
+}
+
+fn reasoning_tail(r: &str) -> String {
+    let n = r.chars().count();
+    r.chars().skip(n.saturating_sub(REASONING_TAIL)).collect()
+}
+
+#[cfg(test)]
+mod reasoning_tests {
+    use super::*;
+
+    #[test]
+    fn reasoning_is_capped_for_storage_and_partial() {
+        assert_eq!(reasoning_stored(""), None);
+        let long = "생".repeat(REASONING_KEEP + 5);
+        assert_eq!(reasoning_stored(&long).unwrap().chars().count(), REASONING_KEEP);
+        let t = reasoning_tail(&format!("앞{}", "뒤".repeat(REASONING_TAIL)));
+        assert_eq!(t.chars().count(), REASONING_TAIL);
+        assert!(!t.contains('앞'));
+        assert_eq!(reasoning_tail("짧음"), "짧음");
+    }
+}

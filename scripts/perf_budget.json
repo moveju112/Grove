@@ -1,0 +1,17 @@
+{
+  "_comment": "Grove 성능 예산(PERF-012, 019, 020). 기준선(Linux x86_64, 8 CPU, 2026-11-05)의 약 2~3배를 회귀 한도로 둔다. 초과하면 scripts/perf.py --check 가 실패한다.",
+  "start.warm_p95_ms": 50,
+  "start.cold_p95_ms": 200,
+  "idle_empty.rss_mb": 40,
+  "idle_empty.cpu_percent_10s": 0.5,
+  "sessions.50.rss_mb": 50,
+  "sessions.50.cpu_percent_5s": 0.5,
+  "latency.session_list.p95_ms": 10,
+  "latency.open_session_messages.p95_ms": 10,
+  "latency.recent.p95_ms": 10,
+  "latency.search_body.p95_ms": 50,
+  "active.10.local_overhead_p50_ms": 50,
+  "active.10.rss_mb": 64,
+  "cancel.p95_ms": 50,
+  "churn.rss_growth_mb": 16
+}

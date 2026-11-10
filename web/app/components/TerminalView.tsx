@@ -1,0 +1,164 @@
+import { FitAddon } from "@xterm/addon-fit";
+import { Terminal as XTerm } from "@xterm/xterm";
+import "@xterm/xterm/css/xterm.css";
+import { useEffect, useRef, useState } from "react";
+import { ApiError, api, rawGet } from "../api/client";
+
+type TerminalRow = { id: string; name: string; status: "running" | "exited" | "lost"; exit_code: number | null; reason: string | null; revision: number };
+
+const KEYS: [string, string][] = [
+    ["Esc", "\x1b"],
+    ["Tab", "\t"],
+    ["↑", "\x1b[A"],
+    ["↓", "\x1b[B"],
+    ["←", "\x1b[D"],
+    ["→", "\x1b[C"],
+];
+
+/// 터미널 탭. 실행 중이면 일회용 티켓으로 WebSocket에 붙고, 끝났으면 저장된 화면을 읽기 전용으로 보여 준다.
+export function TerminalView({ projectId, terminalId }: { projectId: string; terminalId: string }) {
+    const host = useRef<HTMLDivElement>(null);
+    const sock = useRef<WebSocket | null>(null);
+    const [row, setRow] = useState<TerminalRow | null>(null);
+    const [conn, setConn] = useState<"connecting" | "open" | "closed" | "readonly">("connecting");
+    const [err, setErr] = useState<string | null>(null);
+    const [ctrl, setCtrl] = useState(false);
+    const [alt, setAlt] = useState(false);
+    const mods = useRef({ ctrl: false, alt: false });
+    mods.current = { ctrl, alt };
+
+    const send = (data: string) => {
+        const s = sock.current;
+        if (s?.readyState === WebSocket.OPEN) s.send(JSON.stringify({ type: "input", data }));
+    };
+
+    useEffect(() => {
+        const term = new XTerm({ convertEol: false, cursorBlink: true, fontSize: 13, scrollback: 5000 });
+        const fit = new FitAddon();
+        term.loadAddon(fit);
+        term.open(host.current!);
+        fit.fit();
+        let closed = false;
+        let attempt = 0;
+
+        // 모바일 보조키(Ctrl/Alt)를 다음 입력 한 글자에 적용한다.
+        term.onData((d) => {
+            let out = d;
+            const m = mods.current;
+            if (m.ctrl && d.length === 1) {
+                const c = d.toUpperCase().charCodeAt(0);
+                if (c >= 64 && c <= 95) out = String.fromCharCode(c - 64);
+                setCtrl(false);
+            }
+            if (m.alt) {
+                out = "\x1b" + out;
+                setAlt(false);
+            }
+            send(out);
+        });
+        const resize = () => {
+            fit.fit();
+            const s = sock.current;
+            if (s?.readyState === WebSocket.OPEN) s.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+        };
+        const ro = new ResizeObserver(() => resize());
+        ro.observe(host.current!);
+
+        const showSaved = async () => {
+            const buf = await rawGet(`/terminals/${terminalId}/screen`);
+            term.reset();
+            term.write(new Uint8Array(buf));
+            setConn("readonly");
+        };
+
+        const connect = async () => {
+            if (closed) return;
+            setConn("connecting");
+            const list = await api.get<{ terminals: TerminalRow[] }>(`/projects/${projectId}/terminals`);
+            const r = list.terminals.find((t) => t.id === terminalId) ?? null;
+            setRow(r);
+            if (!r) {
+                setErr("터미널이 없습니다(삭제됨)");
+                return;
+            }
+            if (r.status !== "running") {
+                await showSaved();
+                return;
+            }
+            let url: string;
+            try {
+                url = (await api.post<{ url: string }>(`/terminals/${terminalId}/ticket`)).url;
+            } catch (e) {
+                if (e instanceof ApiError && e.code === "not_running") return void connect();
+                throw e;
+            }
+            const proto = location.protocol === "https:" ? "wss:" : "ws:";
+            const ws = new WebSocket(`${proto}//${location.host}${url}`);
+            ws.binaryType = "arraybuffer";
+            sock.current = ws;
+            let first = true;
+            ws.onopen = () => {
+                attempt = 0;
+                setConn("open");
+                ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            };
+            ws.onmessage = (ev) => {
+                if (typeof ev.data === "string") {
+                    const m = JSON.parse(ev.data) as { type: string; code?: number };
+                    if (m.type === "reset") first = true;
+                    if (m.type === "exit") void connect();
+                    return;
+                }
+                // 첫 binary(또는 reset 뒤)는 전체 snapshot이다: 화면을 비우고 다시 그린다.
+                if (first) {
+                    term.reset();
+                    first = false;
+                }
+                term.write(new Uint8Array(ev.data as ArrayBuffer));
+            };
+            ws.onclose = () => {
+                if (sock.current !== ws || closed) return;
+                sock.current = null;
+                setConn("closed");
+                // 끊기면 잠시 뒤 다시 붙는다(서버가 끝났으면 저장 화면으로 바뀐다).
+                attempt += 1;
+                setTimeout(() => void connect().catch(() => undefined), Math.min(8000, 500 * 2 ** attempt));
+            };
+        };
+        connect().catch((e) => setErr(e instanceof ApiError ? e.message : "연결 실패"));
+        return () => {
+            closed = true;
+            ro.disconnect();
+            sock.current?.close();
+            sock.current = null;
+            term.dispose();
+        };
+    }, [projectId, terminalId]);
+
+    const kill = async () => {
+        if (!confirm("터미널 프로세스를 종료할까요?")) return;
+        await api.post(`/terminals/${terminalId}/kill`);
+    };
+    const statusText =
+        conn === "open" ? "연결됨" : conn === "connecting" ? "연결 중…" : conn === "closed" ? "끊김 · 다시 연결 중" : row?.status === "lost" ? "서버 재시작으로 종료됨 · 화면만 복원" : `종료됨${row?.exit_code != null ? ` (코드 ${row.exit_code})` : ""}`;
+    return (
+        <div className="terminal-view" data-testid="terminal-view" data-conn={conn}>
+            <div className="inline small">
+                <strong>{row?.name ?? "터미널"}</strong>
+                <span className="muted" data-testid="terminal-status">{statusText}</span>
+                {row?.status === "running" && <button className="ghost small" onClick={() => void kill()}>종료</button>}
+            </div>
+            {err && <p className="err" role="alert">{err}</p>}
+            <div className="term-host" ref={host} />
+            {conn === "open" && (
+                <div className="term-keys" aria-label="보조 키">
+                    {KEYS.map(([label, seq]) => (
+                        <button key={label} className="chip" onClick={() => send(seq)}>{label}</button>
+                    ))}
+                    <button className={ctrl ? "chip on" : "chip"} aria-pressed={ctrl} onClick={() => setCtrl(!ctrl)}>Ctrl</button>
+                    <button className={alt ? "chip on" : "chip"} aria-pressed={alt} onClick={() => setAlt(!alt)}>Alt</button>
+                </div>
+            )}
+        </div>
+    );
+}

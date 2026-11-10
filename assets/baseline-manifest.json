@@ -1,0 +1,33 @@
+{
+  "source": "mixdog 1.4.1 (/home/ubuntu/project/paseodog/engine/node_modules/mixdog/src), paseodog base SHA 73416e27c452a9285611bf7fc33290e6d3b7cbec",
+  "files": {
+    "agents/advisor/AGENT.md": "b61354e7606f0d5a112ba8945e7cd99658f654d1b87baf6638b69f2918ce2ec9",
+    "agents/advisor/agent.json": "799c509d3fda9dcf242b712aa206f4a8b5eeb0697a0ab7b3b9551f5e06d8ad94",
+    "agents/context-compressor/AGENT.md": "e3a87c060f20a74d431b35d844200fe5ae314964b61724d73b8c318dfd911a30",
+    "agents/context-compressor/agent.json": "694e2e3ddfc3548778224468ede45d64d255d85ec528d61519c3ace106892ae5",
+    "agents/context-explorer/AGENT.md": "ae80aa2fb623c772f4ef36f5737ed846f06c68ad0b065fb07c0cd0877849210d",
+    "agents/context-explorer/agent.json": "a755e3ae7fea92dd8920728a417c18837bd09b6e57ecc8fbd0da4568d48c0b27",
+    "agents/failure-analyst/AGENT.md": "387c31070b95d7ce460e98d1df1e44aa040d64fbfcccf7e40c9c17a9e07dfcea",
+    "agents/failure-analyst/agent.json": "254363a22ab6ab6eaf68b3b7768a277332741e90c2e3ed7c4637c6c43f0c3f06",
+    "agents/front-worker/AGENT.md": "7c0ae91301b3a1a1bd5e6c3f29ccca61dffc8dd49d830f9591afd6b5b4238348",
+    "agents/front-worker/agent.json": "1192e9a94e1e31d6ab613726a611636bbdef5d15caf117c9a10cee9f4112cda6",
+    "agents/handoff-summarizer/AGENT.md": "294faec88249cfa7d70a92ea9da83c6fb5069a261ce15fbfe0f3d4a03b220530",
+    "agents/handoff-summarizer/agent.json": "2fcc57db366ef76857ef1700c2a733e1022b7916d313a6e7e299519776731511",
+    "agents/heavy-worker/AGENT.md": "eec5d59fd9d0fc398c521ed7424c02b88c126597baf23c394d3225e6fc78aad8",
+    "agents/heavy-worker/agent.json": "7c77bc99ad467835fd441dd56e73e052c831b56d12f756ebfcfe86d1e8fe29da",
+    "agents/maintainer/AGENT.md": "a4535580b6a9391d357290d55a3525b7fa0727806ae12925e2356425065fbe08",
+    "agents/maintainer/agent.json": "9b3df2bcb4063691fe9cdf0d1c21eac347f31f3f090e47f7004c76d63f8f5afe",
+    "agents/reviewer/AGENT.md": "66304eae3cd4212b58be4440aeb4274c63f7ce32ed8e406e47bd1fa437f3b4ae",
+    "agents/reviewer/agent.json": "256ef4da2929ac75542efe126e379756a65e1b382351e78409fc5a63976b993b",
+    "agents/security/AGENT.md": "ac379721eda2df3d91429e996e19bf0a5c0a13993cb205c2e04134bc1edee07e",
+    "agents/security/agent.json": "f8e461945c13ebdc4ee82d100f10cf8db7517194fef92b66853ed4de59f9ab3e",
+    "agents/title-generator/AGENT.md": "7f49a02ac254251600f80b085530e7887640264ee71f983f6ea91ed975ccd3bc",
+    "agents/title-generator/agent.json": "f924c65e8e842e0f2eb05596190401cc2501ff6364c5e937d3458d9763c1a08a",
+    "agents/worker/AGENT.md": "c738fb7662ee0a18bbf2449d6dc333b1df95121f08295046f9092c1d1be256e4",
+    "agents/worker/agent.json": "19352f57ee69324cb997ebfccc41f52479bcee6600bf9dfcb830c14eab49f5ff",
+    "agents/writer/AGENT.md": "bc333738ee8f67d86f7ca7c9c255c27089cc1ba67d51b862139d72f03fe2ca71",
+    "agents/writer/agent.json": "a0bd5ce43149922ea8a3cbf07c95f13f205b40c4229136106c7faba78f446263",
+    "workflows/default/WORKFLOW.md": "de965c18698d67926c2195d25244ec1417b7714fdd3a913ccd3c7acea05581ce",
+    "workflows/headless/WORKFLOW.md": "b48911bc9051bdd3beb76868ee44613d8c926c3d73b5b2c14f8c027402cf8ddc"
+  }
+}

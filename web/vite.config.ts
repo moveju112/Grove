@@ -1,0 +1,23 @@
+import { reactRouter } from "@react-router/dev/vite";
+import { defineConfig } from "vite";
+
+// 개발 시 /api는 로컬 Grove 서버로 전달한다.
+const env = (globalThis as { process?: { env: Record<string, string | undefined> } }).process?.env ?? {};
+const apiTarget = env.GROVE_DEV_API ?? "http://127.0.0.1:7740";
+
+export default defineConfig(({ mode }) => ({
+    plugins: mode === "test" ? [] : [reactRouter()],
+    server: {
+        proxy: {
+            "/api": { target: apiTarget, changeOrigin: false },
+        },
+    },
+    build: {
+        target: "es2022",
+        sourcemap: false,
+    },
+    test: {
+        include: ["app/**/*.test.ts"],
+        environment: "node",
+    },
+}));

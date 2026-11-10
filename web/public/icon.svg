@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Grove">
+  <rect width="64" height="64" rx="14" fill="#2f6b3f"/>
+  <path d="M32 54V30M32 30c0-8 5-13 13-14-1 8-5 13-13 14ZM32 36c0-7-4-11-11-12 1 7 4 11 11 12Z" fill="none" stroke="#e8f5ea" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M20 54V42M44 54V44" stroke="#9fd3ad" stroke-width="4" stroke-linecap="round"/>
+</svg>

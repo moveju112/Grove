@@ -1,0 +1,10 @@
+/target
+/.dev
+/web/node_modules
+/web/build
+/web/.react-router
+/web/test-results
+/web/playwright-report
+/artifacts
+/dist
+__pycache__/

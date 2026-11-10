@@ -1,0 +1,137 @@
+//! 프로젝트 제거(보관)와 실제 디렉터리 삭제 분리(PROJECT-003).
+mod common;
+
+use common::*;
+use reqwest::{Method, StatusCode};
+use serde_json::json;
+
+#[tokio::test]
+async fn archive_removes_from_list_but_never_touches_directory() {
+    let s = TestServer::start().await;
+    let p = s.create_project("keep").await;
+    let id = p["id"].as_str().unwrap().to_string();
+    let root = std::path::PathBuf::from(p["root_path"].as_str().unwrap());
+    std::fs::write(root.join("important.txt"), "data").unwrap();
+    let sid = s.create_session(&id).await["id"].as_str().unwrap().to_string();
+
+    let (st, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{id}"), json!({ "expected_revision": p["revision"], "archived": true })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    // 디렉터리·파일 그대로
+    assert_eq!(std::fs::read_to_string(root.join("important.txt")).unwrap(), "data");
+    // 목록에서 빠지고 보관 목록에 있음
+    let (_, list) = s.get("/api/v1/projects").await;
+    assert!(list.as_array().unwrap().iter().all(|x| x["id"] != id.as_str()));
+    let (_, arch) = s.get("/api/v1/projects?archived=true").await;
+    assert!(arch.as_array().unwrap().iter().any(|x| x["id"] == id.as_str()));
+    // 보관 중에는 실행 요청을 받지 않는다
+    let (st, _) = s.post(&format!("/api/v1/projects/{id}/sessions"), json!({})).await;
+    assert!(st.is_client_error());
+    // 같은 경로 재등록은 중복으로 거부(복원으로 되살린다)
+    let (st, e) = s.post("/api/v1/projects", json!({ "root_path": root })).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{e}");
+    // 복원하면 대화 이력도 그대로
+    let (st, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{id}"), json!({ "expected_revision": v["revision"], "archived": false })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let (st, sess) = s.get(&format!("/api/v1/sessions/{sid}")).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(sess["archived_at"].is_null());
+    // 디렉터리를 밖에서 지우면 프로젝트는 남고 사용 불가로 표시된다(서버가 지우거나 다시 만들지 않음)
+    std::fs::remove_dir_all(&root).unwrap();
+    let (_, pv) = s.get(&format!("/api/v1/projects/{id}")).await;
+    assert_eq!(pv["available"], false);
+    assert!(!root.exists());
+}
+
+#[tokio::test]
+async fn permanent_session_delete_requires_archive_title_and_no_dependents() {
+    use common::fixture::{self, Fixture};
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = s.fixture_profile(&f.base).await;
+    let p = s.create_project("del").await;
+    let pid = p["id"].as_str().unwrap().to_string();
+    let (_, sv) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({ "title": "지울 대화" })).await;
+    let sid = sv["id"].as_str().unwrap().to_string();
+    f.push(fixture::text("답"));
+    let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "질문", "profile_id": prof })).await;
+    s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
+    s.post(&format!("/api/v1/sessions/{sid}/goals"), json!({ "title": "g" })).await;
+    s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": sid })).await;
+    s.send(Method::PUT, &format!("/api/v1/drafts/session:{sid}"), json!({ "expected_revision": 0, "text": "초안", "device_name": "t" })).await;
+    // 분기 대화
+    let (_, fork) = s.post(&format!("/api/v1/sessions/{sid}/fork"), json!({ "from_seq": 1, "inherit_context": true })).await;
+    let fid = fork["id"].as_str().unwrap().to_string();
+
+    let del = |id: String, title: &'static str| {
+        let s = &s;
+        async move {
+            let (_, cur) = s.get(&format!("/api/v1/sessions/{id}")).await;
+            s.post(&format!("/api/v1/sessions/{id}/delete"), json!({ "expected_revision": cur["revision"], "confirm_title": title })).await
+        }
+    };
+    let archive = |id: String| {
+        let s = &s;
+        async move {
+            let (_, cur) = s.get(&format!("/api/v1/sessions/{id}")).await;
+            s.send(Method::PATCH, &format!("/api/v1/sessions/{id}"), json!({ "expected_revision": cur["revision"], "archived": true })).await
+        }
+    };
+    let (st, e) = del(sid.clone(), "지울 대화").await;
+    assert_eq!((st, e["error"]["code"].clone()), (StatusCode::CONFLICT, json!("not_archived")));
+    archive(sid.clone()).await;
+    let (st, _) = del(sid.clone(), "다른 제목").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, e) = del(sid.clone(), "지울 대화").await;
+    assert_eq!(e["error"]["details"]["reason"], "forks", "{st} {e}");
+    // 분기 대화 먼저 삭제
+    archive(fid.clone()).await;
+    let ftitle: &'static str = Box::leak(fork["title"].as_str().unwrap().to_string().into_boxed_str());
+    let (st, e) = del(fid.clone(), ftitle).await;
+    assert_eq!(st, StatusCode::OK, "{e}");
+    let (st, e) = del(sid.clone(), "지울 대화").await;
+    assert_eq!(st, StatusCode::OK, "{e}");
+    let (st, _) = s.get(&format!("/api/v1/sessions/{sid}")).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (_, hits) = s.get("/api/v1/sessions/search?q=%EC%A7%88%EB%AC%B8&body=true&status=archived").await;
+    assert_eq!(hits["total"], 0);
+    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+    for (table, col) in [("messages", "session_id"), ("turns", "session_id"), ("tool_calls", "session_id"), ("goals", "session_id"), ("events", "session_id"), ("recent_items", "resource_id")] {
+        let n: i64 = db.query_row(&format!("SELECT COUNT(*) FROM {table} WHERE {col} = ?1"), [&sid], |r| r.get(0)).unwrap();
+        assert_eq!(n, 0, "{table}에 남음");
+    }
+    let n: i64 = db.query_row("SELECT COUNT(*) FROM drafts WHERE resource_key = ?1", [format!("session:{sid}")], |r| r.get(0)).unwrap();
+    assert_eq!(n, 0);
+    let ok: String = db.query_row("PRAGMA foreign_key_check", [], |r| r.get(0)).unwrap_or_else(|_| "ok".into());
+    assert_eq!(ok, "ok");
+}
+
+#[tokio::test]
+async fn relink_moved_folder_keeps_history_and_rejects_conflicts() {
+    let s = TestServer::start().await;
+    let p = s.create_project("old").await;
+    let other = s.create_project("other").await;
+    let id = p["id"].as_str().unwrap().to_string();
+    let sid = s.create_session(&id).await["id"].as_str().unwrap().to_string();
+    let old = std::path::PathBuf::from(p["root_path"].as_str().unwrap());
+    let moved = s.dir.path().join("projects").join("moved");
+    std::fs::rename(&old, &moved).unwrap();
+    let (_, pv) = s.get(&format!("/api/v1/projects/{id}")).await;
+    assert_eq!(pv["available"], false);
+    // 실행 요청은 거부(경로 없음)
+    let (st, _) = s.post(&format!("/api/v1/projects/{id}/sessions"), json!({})).await;
+    assert_eq!(st, StatusCode::GONE);
+    // 없는 경로·다른 프로젝트 경로·오래된 revision 거부
+    let (st, _) = s.send(Method::PATCH, &format!("/api/v1/projects/{id}"), json!({ "expected_revision": pv["revision"], "root_path": "/no/such/dir" })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, e) = s.send(Method::PATCH, &format!("/api/v1/projects/{id}"), json!({ "expected_revision": pv["revision"], "root_path": other["root_path"] })).await;
+    assert_eq!((st, e["error"]["code"].clone()), (StatusCode::CONFLICT, json!("already_exists")));
+    // 다시 연결
+    let (st, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{id}"), json!({ "expected_revision": pv["revision"], "root_path": moved })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["available"], true);
+    assert_eq!(v["root_path"], std::fs::canonicalize(&moved).unwrap().to_string_lossy().as_ref());
+    let (st, _) = s.get(&format!("/api/v1/sessions/{sid}")).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, _) = s.post(&format!("/api/v1/projects/{id}/sessions"), json!({})).await;
+    assert_eq!(st, StatusCode::CREATED);
+}

@@ -1,0 +1,188 @@
+import { useState } from "react";
+import { ApiError, api } from "../api/client";
+import type { ModelProfile } from "../api/generated";
+import { useQuery } from "../state/store";
+import type { Opener } from "./Workspace";
+
+type Bot = {
+    id: string;
+    name: string;
+    description: string;
+    persona: string;
+    instructions: string;
+    profile_id: string | null;
+    project_id: string;
+    featured: boolean;
+    avatar_color: string;
+    status: "active" | "disabled" | "deleted";
+    home_session_id: string | null;
+    revision: number;
+    runnable: boolean;
+    home_status: "idle" | "running" | "awaiting_approval" | "awaiting_input";
+    unread: boolean;
+};
+type Project = { id: string; name: string };
+
+// 숨김은 이 기기 화면 상태일 뿐이다(서버 실행·다른 기기에 영향 없음).
+const HIDE_KEY = "grove.bots.hidden";
+const loadHidden = (): string[] => {
+    try {
+        return JSON.parse(localStorage.getItem(HIDE_KEY) ?? "[]") as string[];
+    } catch {
+        return [];
+    }
+};
+
+function Avatar({ b }: { b: Bot }) {
+    return (
+        <span className="avatar" style={{ background: b.avatar_color }} aria-hidden>
+            {[...b.name][0] ?? "?"}
+        </span>
+    );
+}
+
+type Form = { name: string; description: string; persona: string; instructions: string; profile_id: string; project_id: string; featured: boolean };
+
+function Editor({ bot, onDone }: { bot: Bot | null; onDone: () => void }) {
+    const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
+    const projects = useQuery<Project[]>("projects", () => api.get("/projects"));
+    const [f, setF] = useState<Form>({
+        name: bot?.name ?? "",
+        description: bot?.description ?? "",
+        persona: bot?.persona ?? "",
+        instructions: bot?.instructions ?? "",
+        profile_id: bot?.profile_id ?? "",
+        project_id: bot?.project_id ?? "",
+        featured: bot?.featured ?? false,
+    });
+    const [err, setErr] = useState<string | null>(null);
+    const projectId = f.project_id || projects.data?.[0]?.id || "";
+    const save = async () => {
+        setErr(null);
+        const body = { ...f, project_id: projectId, profile_id: f.profile_id || null };
+        try {
+            if (bot) await api.patch(`/bots/${bot.id}`, { ...body, expected_revision: bot.revision });
+            else await api.post("/bots", body);
+            onDone();
+        } catch (e) {
+            setErr(e instanceof ApiError ? (e.code === "revision_conflict" ? "다른 곳에서 먼저 바뀌었습니다. 다시 열어 수정하세요" : e.message) : "저장 실패");
+        }
+    };
+    return (
+        <form
+            className="stack bot-editor"
+            data-testid="bot-editor"
+            onSubmit={(e) => {
+                e.preventDefault();
+                void save();
+            }}
+        >
+            {err && <p className="err" role="alert">{err}</p>}
+            <input aria-label="봇 이름" placeholder="이름" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
+            <input aria-label="봇 설명" placeholder="설명" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
+            <textarea aria-label="persona" placeholder="persona(말투·성격)" rows={2} value={f.persona} onChange={(e) => setF({ ...f, persona: e.target.value })} />
+            <textarea aria-label="작업 지침" placeholder="작업 지침" rows={2} value={f.instructions} onChange={(e) => setF({ ...f, instructions: e.target.value })} />
+            <select aria-label="봇 모델" value={f.profile_id} onChange={(e) => setF({ ...f, profile_id: e.target.value })}>
+                <option value="">모델 미설정(실행 불가)</option>
+                {(profiles.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}
+            </select>
+            <select aria-label="봇 프로젝트" value={projectId} disabled={!!bot?.home_session_id} onChange={(e) => setF({ ...f, project_id: e.target.value })}>
+                {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+            <label className="check">
+                <input type="checkbox" checked={f.featured} onChange={(e) => setF({ ...f, featured: e.target.checked })} /> 대표 봇
+            </label>
+            <p className="muted small">저장만으로는 모델을 부르지 않습니다. 모델·persona 변경은 다음 요청부터 적용됩니다.</p>
+            <div className="inline">
+                <button type="submit" disabled={!f.name.trim() || !projectId}>{bot ? "저장" : "봇 만들기"}</button>
+                <button type="button" className="ghost" onClick={onDone}>닫기</button>
+            </div>
+        </form>
+    );
+}
+
+/// 봇 목록: 위임 역할과 별개로, 사용자가 직접 대화하는 상대.
+export function BotsPanel({ open }: { open: Opener }) {
+    const q = useQuery<{ bots: Bot[]; order_revision: number }>("bots", () => api.get("/bots"));
+    const [hidden, setHidden] = useState<string[]>(loadHidden);
+    const [showHidden, setShowHidden] = useState(false);
+    const [showDeleted, setShowDeleted] = useState(false);
+    const [editing, setEditing] = useState<Bot | "new" | null>(null);
+    const [err, setErr] = useState<string | null>(null);
+    const all = q.data?.bots ?? [];
+    const act = async (f: () => Promise<unknown>) => {
+        setErr(null);
+        try {
+            await f();
+        } catch (e) {
+            setErr(e instanceof ApiError ? (e.code === "revision_conflict" ? "다른 곳에서 먼저 바뀌었습니다. 최신 목록을 불러왔습니다" : e.message) : "봇 변경 실패");
+        }
+        q.reload();
+    };
+    const toggleHide = (id: string) => {
+        const next = hidden.includes(id) ? hidden.filter((x) => x !== id) : [...hidden, id];
+        localStorage.setItem(HIDE_KEY, JSON.stringify(next));
+        setHidden(next);
+    };
+    const visible = all.filter((b) => (showDeleted ? b.status === "deleted" : b.status !== "deleted") && (showHidden || !hidden.includes(b.id)));
+    const status = (b: Bot, action: string) => act(() => api.post(`/bots/${b.id}/status`, { expected_revision: b.revision, action }));
+    const enter = (b: Bot) =>
+        act(async () => {
+            const v = await api.post<Bot>(`/bots/${b.id}/home`);
+            const s = await api.get<{ last_message_seq: number }>(`/sessions/${v.home_session_id}`);
+            await api.post(`/bots/${b.id}/seen`, { seq: s.last_message_seq });
+            open({ kind: "session", project_id: v.project_id, resource_id: v.home_session_id!, title: v.name });
+        });
+    const moveUp = (i: number) => {
+        const ids = visible.map((b) => b.id);
+        [ids[i - 1], ids[i]] = [ids[i]!, ids[i - 1]!];
+        void act(() => api.post("/bots/order", { expected_revision: q.data?.order_revision ?? 0, ids }));
+    };
+    return (
+        <section className="bots" data-testid="bots-panel">
+            <h2>
+                봇 <button className="ghost small" onClick={() => setEditing("new")}>+ 봇</button>
+            </h2>
+            {err && <p className="err" role="alert">{err}</p>}
+            {editing && <Editor bot={editing === "new" ? null : editing} onDone={() => { setEditing(null); q.reload(); }} />}
+            <ul className="session-list">
+                {visible.map((b, i) => (
+                    <li key={b.id} data-testid="bot" data-status={b.status}>
+                        <button className="ghost bot-open" disabled={b.status === "deleted"} onClick={() => void enter(b)}>
+                            <Avatar b={b} />
+                            <span>
+                                {b.featured && <span aria-label="대표">★ </span>}
+                                {b.name}
+                                {b.unread && <span className="dot" aria-label="읽지 않음" data-testid="bot-unread" />}
+                            </span>
+                            {b.home_status === "running" && <span className="status running">실행 중</span>}
+                            {b.home_status === "awaiting_approval" && <span className="status awaiting_approval">승인 대기</span>}
+                            {b.home_status === "awaiting_input" && <span className="status awaiting_input">답변 대기</span>}
+                            {b.status === "disabled" && <span className="status">비활성</span>}
+                            {!b.runnable && b.status !== "deleted" && <span className="muted small">모델 없음</span>}
+                        </button>
+                        <details className="bot-actions">
+                            <summary aria-label={`${b.name} 관리`}>⋯</summary>
+                            {b.status !== "deleted" && <button className="ghost small" onClick={() => setEditing(b)}>편집</button>}
+                            {i > 0 && !showDeleted && <button className="ghost small" onClick={() => moveUp(i)}>위로</button>}
+                            <button className="ghost small" onClick={() => toggleHide(b.id)}>{hidden.includes(b.id) ? "이 기기에서 보이기" : "이 기기에서 숨기기"}</button>
+                            {b.status === "active" && <button className="ghost small" onClick={() => void status(b, "disable")}>비활성화</button>}
+                            {b.status === "disabled" && <button className="ghost small" onClick={() => void status(b, "enable")}>다시 켜기</button>}
+                            {b.status !== "deleted" && b.home_session_id && (
+                                <button className="ghost small" onClick={() => { if (confirm(`'${b.name}' 대화를 보관하고 새로 시작할까요?`)) void status(b, "reset"); }}>대화 초기화</button>
+                            )}
+                            {b.status !== "deleted" && (
+                                <button className="ghost small danger" onClick={() => { if (confirm(`'${b.name}'을 삭제할까요? 대화는 보관되고 복원할 수 있습니다.`)) void status(b, "delete"); }}>삭제</button>
+                            )}
+                            {b.status === "deleted" && <button className="ghost small" onClick={() => void status(b, "restore")}>복원</button>}
+                        </details>
+                    </li>
+                ))}
+            </ul>
+            <div className="inline small">
+                {hidden.length > 0 && <label className="check"><input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> 숨긴 봇 보기</label>}
+                <label className="check"><input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} /> 삭제된 봇</label>
+            </div>
+        </section>
+    );
+}
