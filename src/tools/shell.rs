@@ -44,8 +44,34 @@ pub fn plan(args: &Value, root: &Path) -> ToolResult<Planned> {
     Ok(Planned { target, precondition: None })
 }
 
+/// `exec.shell` 설정의 선택지(EXEC-001). 임의 실행 파일 대신 명령 전달 인자가 알려진 셸만 허용한다.
+pub const SHELL_CHOICES: &[&str] = &["default", "bash", "sh", "zsh", "pwsh", "powershell", "cmd"];
+
+/// OS 기본 셸 이름.
 fn shell_name() -> &'static str {
     if cfg!(windows) { "powershell" } else { "bash" }
+}
+
+/// 설정값을 실제 셸 이름으로. 알 수 없는 값은 OS 기본 셸이다.
+pub fn resolve_shell(choice: &str) -> &'static str {
+    SHELL_CHOICES.iter().copied().find(|c| *c == choice && *c != "default").unwrap_or_else(shell_name)
+}
+
+/// 셸별 실행 파일과 명령 전달 인자.
+fn shell_argv(shell: &str) -> (&'static str, &'static [&'static str]) {
+    match resolve_shell(shell) {
+        "sh" => ("sh", &["-c"]),
+        "zsh" => ("zsh", &["-c"]),
+        "pwsh" => ("pwsh", &["-NoProfile", "-NonInteractive", "-Command"]),
+        "powershell" => ("powershell", &["-NoProfile", "-NonInteractive", "-Command"]),
+        "cmd" => ("cmd", &["/D", "/S", "/C"]),
+        _ => ("bash", &["-c"]),
+    }
+}
+
+/// 대화형 터미널용 셸 실행 파일. `default`면 None(터미널의 로그인 셸 규칙을 따른다).
+pub fn interactive_program(choice: &str) -> Option<&'static str> {
+    (choice != "default" && SHELL_CHOICES.contains(&choice)).then(|| shell_argv(choice).0)
 }
 
 async fn capture<R: AsyncRead + Unpin>(mut r: R) -> (Vec<u8>, usize) {
@@ -94,16 +120,10 @@ pub fn is_sensitive_env(name: &str) -> bool {
     EXACT.contains(&n.as_str()) || PARTS.iter().any(|p| n.contains(p))
 }
 
-pub fn command(command: &str, cwd: &Path) -> tokio::process::Command {
-    let mut cmd = if cfg!(windows) {
-        let mut c = tokio::process::Command::new("powershell");
-        c.args(["-NoProfile", "-NonInteractive", "-Command", command]);
-        c
-    } else {
-        let mut c = tokio::process::Command::new("bash");
-        c.args(["-c", command]);
-        c
-    };
+pub fn command(shell: &str, command: &str, cwd: &Path) -> tokio::process::Command {
+    let (program, args) = shell_argv(shell);
+    let mut cmd = tokio::process::Command::new(program);
+    cmd.args(args).arg(command);
     cmd.current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     for (k, _) in std::env::vars_os() {
         if k.to_str().is_none_or(is_sensitive_env) {
@@ -120,7 +140,7 @@ pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver
     let cwd = resolve(root, planned.target["cwd"].as_str().unwrap_or("."))?;
     let command = planned.target["command"].as_str().unwrap_or("");
     let timeout = Duration::from_millis(planned.target["timeout_ms"].as_u64().unwrap_or(DEFAULT_TIMEOUT_MS));
-    let mut cmd = self::command(command, &cwd);
+    let mut cmd = self::command(planned.target["shell"].as_str().unwrap_or("default"), command, &cwd);
     let started = std::time::Instant::now();
     let mut child = cmd.spawn().map_err(|e| ToolError::new("spawn_failed", format!("셸 실행 실패: {e}")))?;
     let pid = child.id().unwrap_or(0);

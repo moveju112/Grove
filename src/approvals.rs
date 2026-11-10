@@ -201,7 +201,12 @@ pub fn create_call(
     let id = crate::util::new_id();
     let mut scope: Option<&str> = None;
     let (status, needs, target, pre, result) = match tools::plan(name, args, root) {
-        Ok((spec, planned)) => {
+        Ok((spec, mut planned)) => {
+            // 셸은 범위별 설정으로 정해 승인 대상에 고정한다. 승인 후 설정이 바뀌어도 승인한 셸로 실행한다(EXEC-001).
+            if spec.name == "shell" {
+                let choice = crate::settings::effective(c, "exec.shell", Some(project_id), Some(session_id))?;
+                planned.target["shell"] = json!(tools::shell::resolve_shell(choice.as_str().unwrap_or("default")));
+            }
             // agent 도구는 동작과 위임 정책으로 승인 여부를 정한다. None이면 정책상 금지.
             let base = if spec.name == "agent" {
                 crate::agents::approval_policy(c, project_id, session_id, &planned.target)?
@@ -384,6 +389,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 let s = crate::tasks::Spawn {
                     session_id: call.session_id.clone(),
                     call_id: Some(call.id.clone()),
+                    shell: call.target["shell"].as_str().unwrap_or("default").to_string(),
                     command: call.target["command"].as_str().unwrap_or("").to_string(),
                     cwd_rel: call.target["cwd"].as_str().unwrap_or(".").to_string(),
                     timeout_ms: call.target["timeout_ms"].as_u64().unwrap_or(tools::shell::MAX_BACKGROUND_TIMEOUT_MS),

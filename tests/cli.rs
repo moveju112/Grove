@@ -84,6 +84,83 @@ fn snapshot_and_restore_into_new_directory() {
     assert!(!d.path().join("r2").exists());
 }
 
+fn json_out(out: &std::process::Output) -> serde_json::Value {
+    serde_json::from_slice(&out.stdout).unwrap_or_else(|e| panic!("{e}: {}", String::from_utf8_lossy(&out.stdout)))
+}
+
+/// doctor·config·auth·pair 계약(ARCH-007)과 상태 단계 구분(ARCH-011).
+#[test]
+fn doctor_config_auth_and_pair_against_running_server() {
+    let d = tempfile::tempdir().unwrap();
+    let data = d.path().join("data");
+    let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+    let listen = format!("127.0.0.1:{port}");
+    let run = |args: &[&str]| grove().args(args).args(["--data-dir"]).arg(&data).args(["--listen", &listen]).output().unwrap();
+
+    // 서버 전: 데이터 디렉터리를 만들지 않고 각 단계를 따로 보고한다.
+    let out = run(&["doctor"]);
+    assert_eq!(out.status.code(), Some(1));
+    let v = json_out(&out);
+    assert_eq!(v["process"]["status"], "stopped");
+    assert_eq!(v["api"]["status"], "unreachable");
+    assert_eq!(v["auth"]["status"], "no_token");
+    assert_eq!(v["models"]["status"], "skipped");
+    assert!(!data.exists(), "doctor는 데이터 디렉터리를 만들지 않는다");
+    let out = run(&["config"]);
+    assert!(out.status.success());
+    let c = json_out(&out);
+    assert_eq!(c["listen"], listen);
+    assert_eq!(c["db_path"].as_str().unwrap(), data.join("grove.db").to_str().unwrap());
+    assert!(!c.to_string().contains("grv_"), "비밀값 미포함");
+
+    let mut server = grove().args(["serve", "--data-dir"]).arg(&data).args(["--listen", &listen]).stderr(std::process::Stdio::null()).spawn().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    loop {
+        let v = json_out(&run(&["doctor"]));
+        if v["api"]["status"] == "ready" && v["auth"]["status"] == "ok" {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "서버 준비 시간 초과: {v}");
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    let out = run(&["doctor"]);
+    let v = json_out(&out);
+    assert_eq!(v["process"]["status"], "running", "{v}");
+    assert_eq!(v["process"]["pid"], server.id());
+    assert_eq!(v["auth"]["kind"], "owner");
+    assert_eq!(v["models"]["status"], "none", "모델 프로필이 없으면 사용 불가로 따로 표시");
+    assert_eq!(v["healthy"], false);
+    assert_eq!(out.status.code(), Some(1));
+
+    // auth token은 token과 같은 값
+    let a = run(&["auth", "token"]);
+    let t = run(&["token"]);
+    assert!(a.status.success());
+    assert_eq!(a.stdout, t.stdout);
+    assert!(!run(&["auth", "nope"]).status.success());
+
+    // pair: 새 기기 토큰으로 인증되고, 소유자 토큰과 다르다
+    let out = run(&["pair", "폰"]);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let p = json_out(&out);
+    assert_eq!(p["name"], "폰");
+    let tok = p["token"].as_str().unwrap();
+    assert_ne!(tok, String::from_utf8_lossy(&t.stdout).trim());
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let who: serde_json::Value = rt.block_on(async {
+        reqwest::Client::new().get(format!("http://{listen}/api/v1/auth/whoami")).bearer_auth(tok).send().await.unwrap().json().await.unwrap()
+    });
+    assert_eq!(who["kind"], "device", "{who}");
+
+    server.kill().unwrap();
+    server.wait().unwrap();
+    let v = json_out(&run(&["doctor"]));
+    assert_eq!(v["process"]["status"], "stopped", "프로세스가 죽으면 잠금도 풀린다: {v}");
+    assert_eq!(v["api"]["status"], "unreachable");
+    assert_eq!(v["auth"]["status"], "skipped");
+    assert!(!run(&["pair"]).status.success(), "서버가 없으면 실패");
+}
+
 #[test]
 fn unlock_clears_lockouts() {
     let d = tempfile::tempdir().unwrap();

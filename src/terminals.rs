@@ -179,12 +179,13 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
         return Ok(r);
     }
     let pid = project_id.clone();
-    let (root, running) = app
+    let (root, running, choice) = app
         .db
         .call(move |c| {
             let root = crate::projects::active_root(c, &pid)?;
             let n: i64 = c.query_row("SELECT COUNT(*) FROM terminals WHERE status = 'running'", [], |r| r.get(0))?;
-            Ok((root, n))
+            let choice = crate::settings::effective(c, "exec.shell", Some(&pid), None)?;
+            Ok((root, n, choice.as_str().unwrap_or("default").to_string()))
         })
         .await?;
     if running >= MAX_RUNNING {
@@ -199,7 +200,8 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
         return Err(ApiError::invalid("이름은 100자 이하여야 합니다"));
     }
     let (cols, rows) = clamp_size(b.cols, b.rows);
-    let shell = default_shell();
+    // 사용자 지정 셸(EXEC-001). 기본값이면 OS·로그인 셸 규칙을 따른다.
+    let shell = crate::tools::shell::interactive_program(&choice).map(String::from).unwrap_or_else(default_shell);
     let id = crate::util::new_id();
 
     // PTY 생성은 blocking.

@@ -11,9 +11,13 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
 
 사용법:
   grove [serve] [--listen 주소:포트] [--data-dir 경로]   foreground 서버 실행(기본)
-  grove token [--data-dir 경로]                          소유자 토큰 출력
-  grove unlock [--data-dir 경로]                         브라우저 로그인 실패 잠금 해제
-  grove status [--listen 주소:포트]                      실행 중 서버 상태 확인
+  grove status [--listen 주소:포트]                      실행 중 서버 상태 확인(health)
+  grove doctor [--listen 주소:포트] [--data-dir 경로]    프로세스·API 준비·인증·모델 설정을 각각 진단(문제 있으면 종료 코드 1)
+  grove config [--listen 주소:포트] [--data-dir 경로]    실제 적용될 경로·주소·환경 설정 출력(비밀값 없음)
+  grove auth token [--data-dir 경로]                     소유자 토큰 출력(= grove token)
+  grove auth unlock [--data-dir 경로]                    브라우저 로그인 실패 잠금 해제(= grove unlock)
+  grove pair [이름] [--listen 주소:포트] [--data-dir 경로]
+                                                        실행 중 서버에서 새 기기 토큰 발급(원문은 이때 한 번만 출력)
   grove snapshot <대상 파일> [--data-dir 경로]           일관된 DB snapshot 생성
   grove restore <snapshot 파일> <새 데이터 디렉터리>     snapshot을 새 디렉터리로 복원·검증
   grove import paseo <원본 sessions 디렉터리> [--dry-run] [--data-dir 경로]
@@ -155,7 +159,24 @@ pub fn run(args: Vec<String>) -> i32 {
         "serve" if opts.positional.len() == 1 || opts.positional.is_empty() => serve(opts),
         "token" => token(opts),
         "unlock" => unlock(opts),
+        "auth" => match opts.positional.get(1).map(String::as_str) {
+            Some("token") => token(opts),
+            Some("unlock") => unlock(opts),
+            _ => Err(format!("auth 하위 명령은 token 또는 unlock입니다\n\n{HELP}")),
+        },
         "status" => status(opts),
+        "config" => config_cmd(opts),
+        "pair" => pair(opts),
+        "doctor" => {
+            return match doctor(opts) {
+                Ok(true) => 0,
+                Ok(false) => 1,
+                Err(e) => {
+                    eprintln!("오류: {e}");
+                    1
+                }
+            };
+        }
         "snapshot" => crate::backup::cli_snapshot(opts.positional.get(1).map(PathBuf::from), opts.data_dir),
         "import" if opts.positional.get(1).map(String::as_str) == Some("paseo") => {
             crate::import::cli(opts.positional.get(2).map(PathBuf::from), opts.data_dir, opts.dry_run)
@@ -211,6 +232,142 @@ fn status(opts: Opts) -> Result<(), String> {
         let body = buf.split("\r\n\r\n").nth(1).unwrap_or("");
         println!("{body}");
         Ok(())
+    })
+}
+
+/// 실제 적용될 실행 설정(ARCH-007, ARCH-009). 비밀값은 경로만 보여 준다.
+fn config_cmd(opts: Opts) -> Result<(), String> {
+    let cfg = Config::from_env(opts.data_dir, opts.listen)?;
+    print_json(Ok(serde_json::json!({
+        "data_dir": cfg.data_dir, "db_path": cfg.db_path(), "owner_token_file": cfg.data_dir.join("owner-token"),
+        "listen": cfg.listen.to_string(), "allowed_origins": cfg.allowed_origins, "allowed_hosts": cfg.allowed_hosts,
+        "tls_terminated": cfg.tls_terminated, "web_dir": cfg.web_dir, "enable_tool_loop": cfg.enable_tool_loop,
+        "approval_ttl_secs": cfg.approval_ttl_secs, "scheduler_tick_ms": cfg.scheduler_tick_ms,
+    })))
+}
+
+/// 같은 PC의 서버에 접속할 주소. 전체 주소 바인딩이면 loopback으로 접속한다.
+fn local_base(cfg: &Config) -> String {
+    let mut a = cfg.listen;
+    if a.ip().is_unspecified() {
+        a.set_ip(if a.is_ipv4() { std::net::Ipv4Addr::LOCALHOST.into() } else { std::net::Ipv6Addr::LOCALHOST.into() });
+    }
+    format!("http://{a}")
+}
+
+fn owner_token(cfg: &Config) -> Option<String> {
+    std::fs::read_to_string(cfg.data_dir.join("owner-token")).ok().map(|t| t.trim().to_string()).filter(|t| !t.is_empty())
+}
+
+/// 같은 데이터 디렉터리로 서버가 실행 중인가. 데이터 디렉터리를 만들거나 잠금 파일을 고치지 않는다.
+fn server_process(cfg: &Config) -> serde_json::Value {
+    let path = cfg.data_dir.join("grove.lock");
+    let Ok(f) = std::fs::File::open(&path) else {
+        return serde_json::json!({ "status": "stopped", "detail": "잠금 파일 없음" });
+    };
+    match f.try_lock_shared() {
+        Ok(()) => serde_json::json!({ "status": "stopped" }),
+        Err(std::fs::TryLockError::WouldBlock) => {
+            let pid = std::fs::read_to_string(&path).unwrap_or_default();
+            serde_json::json!({ "status": "running", "pid": pid.trim().parse::<u64>().ok() })
+        }
+        Err(std::fs::TryLockError::Error(e)) => serde_json::json!({ "status": "unknown", "detail": e.to_string() }),
+    }
+}
+
+/// 프로세스 존재·API 준비·인증 가능·모델 사용 가능 상태를 각각 진단한다(ARCH-007, ARCH-011).
+/// 모델은 유료 호출 없이 저장된 마지막 연결 확인 결과만 보고한다. 문제가 없으면 true.
+fn doctor(opts: Opts) -> Result<bool, String> {
+    let cfg = Config::from_env(opts.data_dir, opts.listen)?;
+    let base = local_base(&cfg);
+    let process = server_process(&cfg);
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    let report = rt.block_on(async {
+        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().map_err(|e| e.to_string())?;
+        let get = |path: &str, token: Option<&str>| {
+            let mut rb = client.get(format!("{base}/api/v1{path}"));
+            if let Some(t) = token {
+                rb = rb.bearer_auth(t);
+            }
+            async move {
+                let r = rb.send().await.map_err(|e| e.to_string())?;
+                let st = r.status();
+                let v: serde_json::Value = r.json().await.unwrap_or_default();
+                Ok::<_, String>((st, v))
+            }
+        };
+        let api = match get("/health", None).await {
+            Ok((_, v)) => serde_json::json!({ "status": v["status"], "version": v["version"], "protocol": v["protocol"], "schema": v["schema"] }),
+            Err(e) => serde_json::json!({ "status": "unreachable", "detail": e }),
+        };
+        let token = owner_token(&cfg);
+        let auth = match (&token, api["status"].as_str()) {
+            (None, _) => serde_json::json!({ "status": "no_token", "detail": "owner-token 파일이 없습니다. 서버를 한 번 실행하세요" }),
+            (_, Some("unreachable")) => serde_json::json!({ "status": "skipped", "detail": "API에 연결할 수 없습니다" }),
+            (Some(t), _) => match get("/auth/whoami", Some(t)).await {
+                Ok((st, v)) if st.is_success() => serde_json::json!({ "status": "ok", "kind": v["kind"] }),
+                Ok((st, v)) => serde_json::json!({ "status": "rejected", "http": st.as_u16(), "detail": v["error"]["message"] }),
+                Err(e) => serde_json::json!({ "status": "error", "detail": e }),
+            },
+        };
+        let models = match (&token, auth["status"].as_str()) {
+            (Some(t), Some("ok")) => match get("/model-profiles", Some(t)).await {
+                Ok((st, v)) if st.is_success() => {
+                    let list = v.as_array().cloned().unwrap_or_default();
+                    let ok = list.iter().filter(|p| p["last_check"]["ok"] == true).count();
+                    let failing = list.iter().filter(|p| p["last_check"]["ok"] == false).count();
+                    let status = if list.is_empty() {
+                        "none"
+                    } else if ok > 0 {
+                        "ok"
+                    } else if failing == list.len() {
+                        "failing"
+                    } else {
+                        "unverified"
+                    };
+                    serde_json::json!({ "status": status, "profiles": list.len(), "verified": ok, "failing": failing,
+                        "detail": "마지막 연결 확인 결과 기준(진단 중 모델을 호출하지 않음)" })
+                }
+                Ok((st, _)) => serde_json::json!({ "status": "error", "http": st.as_u16() }),
+                Err(e) => serde_json::json!({ "status": "error", "detail": e }),
+            },
+            _ => serde_json::json!({ "status": "skipped", "detail": "인증이 확인되지 않았습니다" }),
+        };
+        Ok::<_, String>(serde_json::json!({ "process": process, "api": api, "auth": auth, "models": models }))
+    })?;
+    let healthy = report["process"]["status"] == "running" && report["api"]["status"] == "ready" && report["auth"]["status"] == "ok" && report["models"]["status"] == "ok";
+    let mut out = report;
+    out["data_dir"] = serde_json::json!(cfg.data_dir);
+    out["listen"] = serde_json::json!(cfg.listen.to_string());
+    out["healthy"] = serde_json::json!(healthy);
+    println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
+    Ok(healthy)
+}
+
+/// 실행 중 서버에서 새 기기 토큰을 발급한다(ARCH-007). 원문 토큰은 이 출력에서만 볼 수 있다.
+fn pair(opts: Opts) -> Result<(), String> {
+    let name = opts.positional.get(1).cloned().unwrap_or_else(|| "새 기기".into());
+    let cfg = Config::from_env(opts.data_dir, opts.listen)?;
+    let token = owner_token(&cfg).ok_or("owner-token 파일이 없습니다. 서버를 한 번 실행하세요")?;
+    let base = local_base(&cfg);
+    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
+    rt.block_on(async {
+        let r = reqwest::Client::new()
+            .post(format!("{base}/api/v1/devices"))
+            .bearer_auth(&token)
+            .header("idempotency-key", crate::util::new_id())
+            .header(crate::web::PROTOCOL_HEADER, crate::PROTOCOL_VERSION.to_string())
+            .json(&serde_json::json!({ "name": name }))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| format!("{base}: 서버에 연결할 수 없습니다 ({e})"))?;
+        let st = r.status();
+        let v: serde_json::Value = r.json().await.unwrap_or_default();
+        if !st.is_success() {
+            return Err(format!("기기 등록 실패({}): {}", st.as_u16(), v["error"]["message"].as_str().unwrap_or("")));
+        }
+        print_json(Ok(serde_json::json!({ "id": v["id"], "name": v["name"], "token": v["token"], "server": base })))
     })
 }
 

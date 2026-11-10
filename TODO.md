@@ -622,11 +622,11 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] ARCH-004 데몬과 엔진 사이 JSON Lines·중복 세션 객체·별도 Node 프로세스 계층을 제거한다. 검증: `src/runner.rs`가 provider·도구를 같은 프로세스에서 직접 호출(Node·JSON Lines 없음), `tests/turns.rs`.
 - [x] ARCH-005 세션 ID, turn ID, tool call ID, event ID의 생성·소유권을 통일한다. 검증: `src/util.rs::new_id`(서버 생성 UUID v7)·DB 이벤트 seq, `tests/turns.rs`.
 - [x] ARCH-006 실행 상태와 UI 투영 상태를 분리하고 서버만 실행 상태를 변경한다. 검증: 실행 상태는 서버만 `turns`/`tool_calls`를 변경하고 UI는 이벤트로 재조회(`web/app/state/store.ts`), `tests/turns.rs`.
-- [ ] ARCH-007 CLI의 `serve/start/stop/status/doctor/version/config/auth/pair` 계약을 정의한다.
+- [x] ARCH-007 CLI의 `serve/start/stop/status/doctor/version/config/auth/pair` 계약을 정의한다. 검증: `src/cli.rs` 도움말·명령(`doctor` 문제 시 종료 코드 1, `config` 비밀값 없이 실제 적용 설정, `auth token|unlock`, `pair [이름]`은 실행 중 서버에서 기기 토큰 발급·원문 1회 출력). 실제 실행 파일로 서버 전·실행 중·강제 종료 후를 시험(`tests/cli.rs::doctor_config_auth_and_pair_against_running_server`, doctor는 데이터 디렉터리를 만들지 않음, 발급 토큰은 device로 인증).
 - [x] ARCH-008 foreground 서버와 background daemon이 동일한 초기화·종료 경로를 사용한다. 검증: `grove start`(process 방식)도 같은 `serve` 경로로 띄우고, 종료는 신호·관리 API 모두 `Server::stop` 한 경로(`scripts/test_update.py` start/stop, `cli::serve`).
 - [ ] ARCH-009 사용자별 데이터 경로·설정 경로·캐시 경로를 OS 규칙에 맞게 정의한다.
 - [x] ARCH-010 로컬 서버 중복 기동 방지, 잠금, stale lock, 포트 충돌을 처리한다. 검증: `tests/api.rs::second_server_on_same_data_dir_is_refused`, `port_conflict_is_reported`; OS 파일 잠금이라 프로세스 사망 시 stale lock 없음.
-- [ ] ARCH-011 프로세스 존재·API 준비·인증 가능·모델 사용 가능 상태를 각각 표시한다.
+- [x] ARCH-011 프로세스 존재·API 준비·인증 가능·모델 사용 가능 상태를 각각 표시한다. 검증: `grove doctor`가 `process`(데이터 디렉터리 잠금·pid)·`api`(health)·`auth`(소유자 토큰 whoami)·`models`(프로필별 마지막 연결 확인 결과, 진단 중 유료 호출 없음)를 따로 보고하고 앞 단계 실패 시 뒤 단계는 `skipped`(`tests/cli.rs`). 화면에서는 기존 연결 배너·프로필별 연결 확인 결과로 표시.
 - [x] ARCH-012 정상 종료 시 신규 작업 접수 중단, 실행 정리, 기록 flush, 연결 종료 순서를 보장한다. 검증: `Server::stop` 순서 = shutdown 신호(신규 접수 중단·SSE shutdown 이벤트) → 실행 턴 정리 → 작업·터미널 종료 → 연결 종료 대기(10s) → WAL TRUNCATE checkpoint. 재시작 시험(`tests/runner*`, `tests/schedules.rs`), 업데이트 정지(`scripts/test_update.py`).
 - [ ] ARCH-013 Linux signal과 Windows 종료 이벤트에 같은 종료 정책을 적용한다.
 - [x] ARCH-014 CPU 작업과 blocking I/O를 async executor에서 분리하고 무제한 thread 생성을 막는다. 검증: SQLite·파일 도구·PTY·관찰 작업은 `spawn_blocking`, blocking 스레드 최대 64(`cli::serve`), DB 쓰기는 연결 1개 직렬화.
@@ -886,7 +886,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 
 ## 13. 셸·백그라운드 작업·터미널
 
-- [ ] EXEC-001 Bash/PowerShell 등 OS별 기본 셸과 사용자 지정 셸을 지원한다.
+- [x] EXEC-001 Bash/PowerShell 등 OS별 기본 셸과 사용자 지정 셸을 지원한다. 검증: 서버·프로젝트 범위 설정 `exec.shell`(default·bash·sh·zsh·pwsh·powershell·cmd, 목록 밖 값 거부). 기본은 Linux bash·Windows PowerShell(터미널은 로그인 셸). 모델 셸은 계획 때 셸을 승인 대상에 고정해 승인 후 설정이 바뀌어도 승인한 셸로 실행하고, 사용자 작업·새 터미널도 설정을 따른다(`tests/tasks.rs::configured_shell_applies_and_is_fixed_at_approval`). Windows는 release 교차 빌드만 확인, 실제 Windows 실행은 TOOL-025·PC 검증에서 확인.
 - [x] EXEC-002 cwd·환경·stdin·stdout·stderr·exit code·signal을 관리한다. 검증: `tools::shell::tests::runs_and_captures`(cwd·stdin null·stdout/stderr·exit code·signal 기록).
 - [x] EXEC-003 대용량 stdout/stderr를 메모리 대신 제한된 buffer와 파일로 처리한다. 검증: `tests/tasks.rs::large_output_goes_to_bounded_file_not_memory`(10MB 출력, 파일 8MiB 상한·생략 바이트 표시).
 - [x] EXEC-004 foreground hold 후 background 전환과 즉시 background 실행을 구현한다. 검증: `tests/tasks.rs::model_shell_with_hold_detaches_and_result_reaches_next_turn`(hold 안 완료는 도구 결과, 초과는 task_id).

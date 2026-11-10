@@ -129,6 +129,57 @@ async fn shutdown_cancels_and_crash_leftovers_become_unknown() {
     assert_eq!(w["wait_timed_out"], false);
 }
 
+/// `exec.shell` 설정은 사용자 작업·모델 셸(즉시/백그라운드)·새 터미널에 적용되고,
+/// 승인 대상에 고정되어 승인 뒤 설정을 바꿔도 승인한 셸로 실행한다(EXEC-001).
+#[tokio::test]
+async fn configured_shell_applies_and_is_fixed_at_approval() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = s.fixture_profile(&f.base).await;
+    let p = s.create_project("sh").await;
+    let pid = p["id"].as_str().unwrap().to_string();
+    let sid = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    let put = |v: &'static str, rev: i64| {
+        let (s, pid) = (&s, pid.clone());
+        async move { s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/exec.shell"), json!({ "expected_revision": rev, "value": v })).await }
+    };
+    let (st, v) = put("fish", 0).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "목록 밖 셸은 거부: {v}");
+    let (st, v) = put("sh", 0).await;
+    assert!(st.is_success(), "{v}");
+    // 사용자 작업: `sh -c`의 $0은 sh
+    let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/tasks"), json!({ "command": "echo \"shell=$0\"" })).await;
+    let (_, w) = s.get(&format!("/api/v1/tasks/{}/wait?timeout_ms=10000", t["id"].as_str().unwrap())).await;
+    assert!(w["stdout_tail"].as_str().unwrap().contains("shell=sh"), "{w}");
+    // 모델 셸: 계획 때 sh로 고정, 승인 전에 설정을 bash로 바꿔도 sh로 실행(즉시·백그라운드 경로 모두)
+    for (i, args) in [json!({ "command": "echo \"shell=$0\"" }), json!({ "command": "echo \"shell=$0\"", "hold_ms": 5000 })].into_iter().enumerate() {
+        f.push(fixture::tool_calls(&[(&format!("c{i}"), "shell", args)]));
+        f.push(fixture::text("끝"));
+        let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "go", "profile_id": prof, "tools": true })).await;
+        let tid = v["turn"]["id"].as_str().unwrap().to_string();
+        let t = s.wait_status(&tid, "awaiting_approval").await;
+        let c = &t["tool_calls"][0];
+        assert_eq!(c["target"]["shell"], "sh", "{c}");
+        if i == 0 {
+            let (st, v) = put("bash", 1).await;
+            assert!(st.is_success(), "{v}");
+        }
+        s.post(&format!("/api/v1/tool-calls/{}/decision", c["id"].as_str().unwrap()), json!({ "decision": "approve", "expected_revision": c["revision"] })).await;
+        let t = s.wait_status(&tid, "completed").await;
+        let r = &t["tool_calls"][0]["result"];
+        let out = r["stdout"].as_str().or(r["stdout_tail"].as_str()).unwrap_or("");
+        assert!(out.contains("shell=sh"), "{r}");
+        if i == 0 {
+            // 되돌려 두 번째 호출도 sh로 계획되게 한다
+            put("sh", 2).await;
+        }
+    }
+    // 새 터미널도 설정을 따른다
+    let (st, term) = s.post(&format!("/api/v1/projects/{pid}/terminals"), json!({})).await;
+    assert!(st.is_success(), "{term}");
+    assert_eq!(term["shell"], "sh", "{term}");
+}
+
 /// 서버가 비정상 종료해 남은 작업 프로세스(분리된 setsid 자손 포함)는 재시작 때 표식으로 찾아 종료한다.
 /// 표식이 없거나 다른 작업 표식인 프로세스는 건드리지 않는다(EXEC-010).
 #[cfg(target_os = "linux")]

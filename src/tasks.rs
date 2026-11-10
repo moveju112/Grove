@@ -177,6 +177,8 @@ async fn pump<R: AsyncRead + Unpin>(mut r: R, path: PathBuf) -> u64 {
 pub struct Spawn {
     pub session_id: String,
     pub call_id: Option<String>,
+    /// `exec.shell` 선택값(EXEC-001). 승인된 도구 호출은 계획 때 고정한 값을 쓴다.
+    pub shell: String,
     pub command: String,
     pub cwd_rel: String,
     pub timeout_ms: u64,
@@ -212,7 +214,7 @@ pub async fn spawn(app: &App, s: Spawn) -> ApiResult<Task> {
     std::fs::create_dir_all(app.cfg.data_dir.join("tasks")).map_err(|e| ApiError::internal(format!("작업 로그 폴더: {e}")))?;
     let started = match resolve(&root, &s.cwd_rel) {
         // 작업 ID 표식: 서버가 비정상 종료한 뒤 재시작할 때 잔여 프로세스를 PID 재사용과 무관하게 찾는다(EXEC-010).
-        Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.command, &cwd)
+        Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.shell, &s.command, &cwd)
             .env(TASK_ENV, &id)
             .spawn()
             .map_err(|e| format!("셸 실행 실패: {e}")),
@@ -515,11 +517,12 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         return Ok(r);
     }
     let sid = session_id.clone();
-    let root = app
+    let (root, shell) = app
         .db
         .call(move |c| {
             let s = crate::sessions::get_active(c, &sid)?;
-            crate::projects::active_root(c, &s.project_id)
+            let shell = crate::settings::effective(c, "exec.shell", Some(&s.project_id), Some(&sid))?;
+            Ok((crate::projects::active_root(c, &s.project_id)?, crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string()))
         })
         .await?;
     let cwd = resolve(&root, b.cwd.as_deref().unwrap_or(".")).map_err(|e| ApiError::invalid(e.message))?;
@@ -528,7 +531,7 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     }
     let t = spawn(
         &app,
-        Spawn { session_id, call_id: None, command: b.command, cwd_rel: rel_display(&root, &cwd), timeout_ms: timeout, detached: true },
+        Spawn { session_id, call_id: None, shell, command: b.command, cwd_rel: rel_display(&root, &cwd), timeout_ms: timeout, detached: true },
     )
     .await?;
     let v = serde_json::to_value(&t)?;
