@@ -458,6 +458,79 @@ async fn running_turn_interrupted_by_restart_is_not_rerun() {
     assert_eq!(f.requests().len(), 1, "재시작 후 모델을 다시 부르지 않는다");
 }
 
+// RUN-024: 중단 시점의 미완료 범위(단계·도구 상태·계속 실행 중인 작업)를 기록하고 모델 입력에는 넣지 않는다.
+#[tokio::test]
+async fn end_scope_records_progress_and_running_tasks() {
+    let (s, f, prof, sid, _) = setup().await;
+    f.push(fixture::tool_calls(&[("b1", "shell", json!({ "command": "sleep 30", "hold_ms": 100 }))]));
+    f.push(fixture::hang_after("두 번째 응답 중"));
+    let v = start_turn(&s, &sid, &prof, "작업", true).await;
+    let tid = v["turn"]["id"].as_str().unwrap().to_string();
+    let t = s.wait_status(&tid, "awaiting_approval").await;
+    let c = &t["tool_calls"][0];
+    s.post(&format!("/api/v1/tool-calls/{}/decision", c["id"].as_str().unwrap()), json!({ "decision": "approve", "expected_revision": c["revision"] })).await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while f.requests().len() < 2 {
+        assert!(std::time::Instant::now() < deadline, "두 번째 모델 요청이 오지 않음");
+        tokio::time::sleep(std::time::Duration::from_millis(30)).await;
+    }
+    s.post(&format!("/api/v1/turns/{tid}/cancel"), json!({})).await;
+    let t = s.wait_turn(&tid, |t| t["status"] == "cancelled").await;
+    let scope = &t["error"]["scope"];
+    assert_eq!(scope["steps"], 1, "{t}");
+    assert_eq!(scope["tool_calls"], json!({ "succeeded": 1 }), "{t}");
+    let tasks = scope["running_tasks"].as_array().unwrap();
+    assert_eq!(tasks.len(), 1, "{t}");
+    assert_eq!(tasks[0]["command"], "sleep 30");
+    let (_, msgs) = s.get(&format!("/api/v1/sessions/{sid}/messages")).await;
+    let note = msgs["items"].as_array().unwrap().iter().find(|m| m["content"]["type"] == "turn_ended").unwrap().clone();
+    assert_eq!(note["content"]["error"], t["error"], "기록과 턴의 원인은 같다");
+    // 다음 요청의 모델 입력에 범위가 섞이지 않는다
+    f.push(fixture::text("ok"));
+    let v = start_turn(&s, &sid, &prof, "다음", false).await;
+    s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    let last = f.requests().last().unwrap()["messages"].to_string();
+    assert!(last.contains("previous request ended") && !last.contains("running_tasks"), "{last}");
+    s.post(&format!("/api/v1/tasks/{}/cancel", tasks[0]["id"].as_str().unwrap()), json!({})).await;
+}
+
+// RUN-023: stream 중 실제 진행 시각을 DB에 남기고, 강제 종료 뒤 복구에서도 그 시각을 중단 원인에 쓴다.
+#[tokio::test]
+async fn stream_progress_time_survives_forced_stop() {
+    let (mut s, f, prof, sid, _) = setup().await;
+    f.push(fixture::hang_after("진행 중"));
+    let v = start_turn(&s, &sid, &prof, "x", false).await;
+    let tid = v["turn"]["id"].as_str().unwrap().to_string();
+    s.wait_status(&tid, "running").await;
+    let db_path = s.data_dir().join("grove.db");
+    let read = |p: &std::path::Path, tid: &str| -> (Option<String>, String) {
+        let db = rusqlite::Connection::open(p).unwrap();
+        db.query_row("SELECT progress_at, updated_at FROM turns WHERE id = ?1", [tid], |r| Ok((r.get(0)?, r.get(1)?))).unwrap()
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let progress = loop {
+        if let (Some(p), _) = read(&db_path, &tid) {
+            break p;
+        }
+        assert!(std::time::Instant::now() < deadline, "stream 중 진행 시각이 기록되지 않음");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    };
+    s.stop().await;
+    // 강제 종료 흉내: 기록상 실행 중으로 남은 턴. 단계 갱신 시각은 진행 시각보다 이르다.
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    db.execute(
+        "UPDATE turns SET status = 'running', error = NULL, owner_epoch = 'dead-epoch', updated_at = '2000-01-01T00:00:00Z' WHERE id = ?1",
+        [&tid],
+    )
+    .unwrap();
+    db.execute("DELETE FROM messages WHERE turn_id = ?1 AND role = 'note'", [&tid]).unwrap();
+    drop(db);
+    s.restart().await;
+    let (_, t) = s.get(&format!("/api/v1/turns/{tid}")).await;
+    assert_eq!(t["status"], "interrupted", "{t}");
+    assert_eq!(t["error"]["last_progress_at"], progress, "단계 갱신 시각이 아니라 stream 진행 시각: {t}");
+}
+
 // RUN-023: provider timeout은 사용자 중지와 구별되고, 원인·시간·설정이 다음 모델 요청까지 유지된다.
 #[tokio::test]
 async fn provider_timeout_cause_survives_into_next_request() {

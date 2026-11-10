@@ -33,6 +33,12 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await expect(cause).toContainText("발생 시각:");
     await expect(cause).toContainText("마지막 진행:");
     await expect(cause).toContainText("적용 예산: 1 tokens");
+    // RUN-024: 미완료 범위와 다음 조치를 배너·기록에 보여 주고 새로고침 뒤에도 같다
+    await expect(cause.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계 · 최종 답변 없음 · 도구 호출 없음");
+    await expect(err.getByTestId("end-scope")).toContainText("다음 조치:");
+    await page.reload();
+    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await expect(err.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계");
 
     // RUN-019: 예산을 풀고 '다시 실행'하면 같은 글로 새 요청을 보낸다
     await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_tokens`, { expected_revision: 1, value: null });

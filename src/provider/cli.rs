@@ -227,8 +227,14 @@ impl Drop for GroupGuard {
 }
 
 pub async fn stream(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
+    stream_with(profile, req, on_delta, None).await
+}
+
+/// `program`은 시험에서 가짜 CLI 실행 파일을 쓰기 위한 덮어쓰기다(PATH를 바꾸지 않는다).
+async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>, program: Option<&std::path::Path>) -> Result<ModelOutput, ProviderError> {
     let new_session = uuid::Uuid::new_v4().to_string();
-    let (argv, prog) = args(profile, req, &new_session);
+    let (argv, name) = args(profile, req, &new_session);
+    let prog = program.map(|p| p.to_string_lossy().to_string()).unwrap_or(name);
     // 실행 문맥이 없으면(제목·요약) 빈 임시 디렉터리에서 실행한다.
     let scratch = match req.cli {
         Some(_) => None,
@@ -272,8 +278,24 @@ pub async fn stream(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>
     let mut out = ModelOutput::default();
     let mut final_text = None;
     let mut lines = BufReader::new(stdout).lines();
+    // 무진행 감시(RUN-022): 전체 실행 시간이 아니라 출력 줄 사이의 무응답 시간만 프로필 timeout으로 제한한다.
+    // 출력이 계속 오는 긴 작업은 끊지 않는다(HTTP provider의 read timeout과 같은 기준).
+    let idle = profile.timeout;
     let body = async {
-        while let Some(line) = lines.next_line().await.map_err(|e| ProviderError::new("cli_failed", e.to_string()))? {
+        loop {
+            let next = match tokio::time::timeout(idle, lines.next_line()).await {
+                Err(_) => {
+                    return Err(ProviderError {
+                        code: "idle_timeout",
+                        message: format!("{prog}가 {}초 동안 아무 출력도 없어 중단했습니다", idle.as_secs()),
+                        status: None,
+                        retryable: true,
+                        retry_after_secs: None,
+                    });
+                }
+                Ok(r) => r.map_err(|e| ProviderError::new("cli_failed", e.to_string()))?,
+            };
+            let Some(line) = next else { break };
             let Ok(e) = serde_json::from_str::<Value>(&line) else { continue };
             apply_event(&profile.protocol, &e, &mut out, &mut final_text)?;
             on_delta(&out);
@@ -283,15 +305,25 @@ pub async fn stream(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>
         }
         Ok::<(), ProviderError>(())
     };
-    match tokio::time::timeout(profile.timeout, body).await {
-        Err(_) => return Err(ProviderError { code: "timeout", message: format!("{prog}가 {}초 안에 끝나지 않았습니다", profile.timeout.as_secs()), status: None, retryable: true, retry_after_secs: None }),
-        Ok(r) => r?,
-    }
+    body.await?;
     let status = child.wait().await.map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
     let stderr_text = err_task.await.unwrap_or_default();
     if out.finish_reason.is_empty() {
+        // 결과 없이 끝난 프로세스는 일반 실패와 구분한다(RUN-023: 프로세스 종료 원인).
         let tail: String = stderr_text.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" / ");
-        return Err(ProviderError::new("cli_failed", format!("{prog}가 결과 없이 끝났습니다(종료 {status}): {tail}")));
+        #[cfg(unix)]
+        let sig = {
+            use std::os::unix::process::ExitStatusExt;
+            status.signal()
+        };
+        #[cfg(not(unix))]
+        let sig: Option<i32> = None;
+        let how = match (status.code(), sig) {
+            (_, Some(s)) => format!("신호 {s}"),
+            (Some(c), _) => format!("종료 코드 {c}"),
+            _ => status.to_string(),
+        };
+        return Err(ProviderError::new("cli_exited", format!("{prog} 프로세스가 결과 없이 끝났습니다({how}): {tail}")));
     }
     if let Some(t) = final_text {
         out.text = t;
@@ -394,5 +426,47 @@ mod tests {
         assert_eq!(o.activity[0]["kind"], "command");
         let e = apply_event("codex_cli", &json!({ "type": "turn.failed", "error": { "message": "quota" } }), &mut o, &mut f).unwrap_err();
         assert_eq!(e.code, "cli_failed");
+    }
+
+    /// 가짜 CLI 실행 파일. 인자는 무시하고 스크립트대로 stream-json 줄을 낸다.
+    #[cfg(unix)]
+    fn fake_cli(dir: &std::path::Path, script: &str) -> std::path::PathBuf {
+        use std::os::unix::fs::PermissionsExt;
+        let p = dir.join(format!("fake-{}", uuid::Uuid::new_v4()));
+        std::fs::write(&p, format!("#!/bin/bash\n{script}\n")).unwrap();
+        std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
+        p
+    }
+
+    /// 무진행 감시는 출력 사이 간격만 본다: 전체 시간이 timeout보다 길어도 출력이 계속 오면 끝까지 받고,
+    /// 출력이 멈추면 idle_timeout, 결과 없이 프로세스가 끝나면 cli_exited로 구분한다(RUN-022, RUN-023).
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn idle_watch_and_process_exit_are_distinct() {
+        let d = tempfile::tempdir().unwrap();
+        let mut p = prof("claude_code");
+        p.timeout = Duration::from_millis(800);
+        let mut r = req(None);
+        r.cli = None;
+        let ev = |t: &str| format!("echo '{{\"type\":\"assistant\",\"message\":{{\"content\":[{{\"type\":\"text\",\"text\":\"{t}\"}}]}}}}'");
+        // 0.3초 간격 출력 8번 = 2.4초(> timeout 0.8초) 뒤 결과
+        let steady = format!(
+            "echo '{{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"S\"}}'; for i in 1 2 3 4 5 6 7 8; do sleep 0.3; {}; done; \
+             echo '{{\"type\":\"result\",\"subtype\":\"success\",\"is_error\":false,\"result\":\"끝\",\"usage\":{{}}}}'",
+            ev("진행")
+        );
+        let started = std::time::Instant::now();
+        let o = stream_with(&p, &r, &mut |_| {}, Some(&fake_cli(d.path(), &steady))).await.expect("진행 중인 긴 작업은 끊지 않는다");
+        assert!(started.elapsed() > Duration::from_secs(2));
+        assert_eq!(o.text, "끝");
+        // 출력이 멈춤
+        let e = stream_with(&p, &r, &mut |_| {}, Some(&fake_cli(d.path(), &format!("{}; sleep 5", ev("시작"))))).await.unwrap_err();
+        assert_eq!(e.code, "idle_timeout", "{e:?}");
+        // 결과 없이 종료(종료 코드)·신호
+        let e = stream_with(&p, &r, &mut |_| {}, Some(&fake_cli(d.path(), "echo boom >&2; exit 3"))).await.unwrap_err();
+        assert_eq!(e.code, "cli_exited", "{e:?}");
+        assert!(e.message.contains("종료 코드 3") && e.message.contains("boom"), "{}", e.message);
+        let e = stream_with(&p, &r, &mut |_| {}, Some(&fake_cli(d.path(), "kill -9 $$"))).await.unwrap_err();
+        assert!(e.message.contains("신호 9"), "{}", e.message);
     }
 }

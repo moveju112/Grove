@@ -533,6 +533,10 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE sessions ADD COLUMN timeline_revision INTEGER NOT NULL DEFAULT 0;
     CREATE INDEX messages_visible_page ON messages(session_id, seq) WHERE rewound_at IS NULL;
     "#,
+    // 26: 모델 응답 stream의 마지막 실제 진행 시각(RUN-023). 서버가 강제 종료돼도 중단 원인에 남는다.
+    r#"
+    ALTER TABLE turns ADD COLUMN progress_at TEXT;
+    "#,
 ];
 
 #[cfg(test)]

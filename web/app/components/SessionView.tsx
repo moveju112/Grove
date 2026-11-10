@@ -381,6 +381,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                 <div className="turn-status err" role="alert" data-testid="turn-ended">
                     마지막 요청이 {lastTurn.status === "failed" ? "실패" : "중단"}했습니다: {(lastTurn.error as { message?: string })?.message ?? ""}
                     <span className="muted small"> (자동으로 다시 실행하지 않습니다)</span>
+                    {(lastTurn.error as { scope?: EndScopeData })?.scope && <EndScope s={(lastTurn.error as { scope: EndScopeData }).scope} />}
                     {/* RUN-019: 다시 실행(같은 글·설정)·새 요청 쓰기·포기(배너 닫기, 모든 기기) */}
                     <span className="inline">
                         <button className="ghost small" disabled={archived} onClick={() => void act(() => api.post(`/turns/${lastTurn.id}/retry`))}>
@@ -423,6 +424,7 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
                 code: string; message: string; at?: string; last_progress_at?: string;
                 budget?: { max_tokens?: number; max_minutes?: number; max_cost_cents?: number; currency?: string };
                 settings?: { provider_timeout_secs?: number };
+                scope?: EndScopeData;
             };
         };
         const e = r.error;
@@ -441,6 +443,7 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
                     </p>
                 )}
                 {e.settings?.provider_timeout_secs != null && <p>provider timeout: {e.settings.provider_timeout_secs}초</p>}
+                {e.scope && <EndScope s={e.scope} />}
             </details>
         );
     }
@@ -649,6 +652,45 @@ function ApprovalCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unkno
                 )}
                 <button className="ghost" onClick={() => void act(() => api.post(`/tool-calls/${c.id}/decision`, { decision: "deny", expected_revision: c.revision }))}>거부</button>
             </div>
+        </div>
+    );
+}
+
+type EndScopeData = { steps: number; tool_calls: Record<string, number>; running_tasks: { id: string; command: string }[] };
+
+// tool_calls.status 값(store.rs CHECK 제약)과 같은 이름.
+const CALL_STATUS: Record<string, string> = {
+    succeeded: "완료",
+    failed: "실패",
+    cancelled: "실행 안 함·취소",
+    denied: "거부",
+    expired: "승인 만료",
+    unknown: "결과 불명",
+    running: "실행 중(결과 미확정)",
+    approved: "승인됨(실행 전)",
+    pending_approval: "승인 대기",
+    awaiting_input: "답변 대기",
+};
+
+/// 중단 시점의 미완료 범위와 다음 조치(RUN-024). 서버가 기록한 값이라 새로고침·다른 기기에서도 같다.
+function EndScope({ s }: { s: EndScopeData }) {
+    const calls = Object.entries(s.tool_calls ?? {});
+    const unknown = (s.tool_calls?.unknown ?? 0) + (s.tool_calls?.running ?? 0);
+    const tasks = s.running_tasks ?? [];
+    return (
+        <div className="end-scope small" data-testid="end-scope">
+            <p>
+                진행 범위: 모델 응답 {s.steps}단계 · 최종 답변 없음
+                {calls.length > 0 ? ` · 도구 ${calls.map(([k, n]) => `${CALL_STATUS[k] ?? k} ${n}`).join(", ")}` : " · 도구 호출 없음"}
+            </p>
+            {tasks.length > 0 && (
+                <p>
+                    계속 실행 중인 백그라운드 작업 {tasks.length}개: {tasks.map((t) => <code key={t.id}>{t.command}</code>)} — 작업 목록에서 확인·취소할 수 있습니다
+                </p>
+            )}
+            <p>
+                다음 조치: {unknown > 0 ? "결과가 확정되지 않은 작업을 먼저 확인하세요. " : ""}같은 요청 다시 실행 · 새 요청 쓰기 · 닫기(포기)
+            </p>
         </div>
     );
 }

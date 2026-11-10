@@ -177,7 +177,15 @@ fn emit_turn(c: &Connection, now: &str, turn_id: &str) -> ApiResult<Turn> {
 fn finish_turn(c: &Connection, now: &str, id: &str, from: &[&str], to: &str, error: Option<Value>) -> ApiResult<bool> {
     let ph = from.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(",");
     // 마지막 진행 시각(RUN-023): 종료 전 마지막 갱신 시각.
-    let last_progress: Option<String> = c.query_row("SELECT updated_at FROM turns WHERE id = ?1", params![id], |r| r.get(0)).optional()?;
+    // stream 중 기록한 진행 시각과 마지막 단계 갱신 시각 중 늦은 쪽.
+    let last_progress: Option<String> = c
+        .query_row(
+            "SELECT CASE WHEN progress_at IS NOT NULL AND julianday(progress_at) > julianday(updated_at) THEN progress_at ELSE updated_at END \
+             FROM turns WHERE id = ?1",
+            params![id],
+            |r| r.get(0),
+        )
+        .optional()?;
     let n = c.execute(
         &format!("UPDATE turns SET status = ?2, error = COALESCE(error, ?3), updated_at = ?4, finished_at = ?4 WHERE id = ?1 AND status IN ({ph})"),
         params![id, to, error.map(|e| e.to_string()), now],
@@ -230,9 +238,30 @@ fn record_end_cause(c: &Connection, now: &str, id: &str, to: &str, last_progress
         }
         e["budget"] = b;
     }
+    // 미완료 범위(RUN-024). 화면 표시용이라 모델 입력을 만들 때(to_chat)는 뺀다.
+    e["scope"] = end_scope(c, id)?;
     c.execute("UPDATE turns SET error = ?2 WHERE id = ?1", params![id, e.to_string()])?;
     crate::sessions::append_message(c, now, &session_id, "note", &json!({ "type": "turn_ended", "status": to, "error": e }), Some(id), None)?;
     Ok(())
+}
+
+/// 중단 시점의 진행 범위: 끝낸 모델 응답 단계 수, 이 요청 도구 호출의 상태별 개수,
+/// 아직 실행 중인 호출(결과 미확정)과 이 요청이 시작해 계속 실행 중인 백그라운드 작업.
+fn end_scope(c: &Connection, turn_id: &str) -> ApiResult<Value> {
+    let steps: i64 = c.query_row("SELECT step FROM turns WHERE id = ?1", params![turn_id], |r| r.get(0))?;
+    let mut st = c.prepare("SELECT status, COUNT(*) FROM tool_calls WHERE turn_id = ?1 GROUP BY status ORDER BY status")?;
+    let mut calls = serde_json::Map::new();
+    for row in st.query_map(params![turn_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))? {
+        let (s, n) = row?;
+        calls.insert(s, json!(n));
+    }
+    let mut st = c.prepare(
+        "SELECT t.id, t.command FROM tasks t JOIN tool_calls k ON k.id = t.call_id WHERE k.turn_id = ?1 AND t.status = 'running' ORDER BY t.started_at",
+    )?;
+    let tasks = st
+        .query_map(params![turn_id], |r| Ok(json!({ "id": r.get::<_, String>(0)?, "command": r.get::<_, String>(1)? })))?
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({ "steps": steps, "tool_calls": calls, "running_tasks": tasks }))
 }
 
 /// 서버 시작 시 이전 프로세스의 실행 기록을 정리한다.
@@ -348,7 +377,11 @@ pub fn to_chat(history: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg> {
             }
             // 이전 요청이 비정상 종료된 원인(RUN-023). 다음 요청의 모델이 '사용자가 멈춤'과 '예산 초과' 등을 구분해 알게 한다.
             "note" if c["type"] == "turn_ended" => {
-                let e = &c["error"];
+                // 화면 표시용 미완료 범위(scope)는 모델 입력에 넣지 않는다(기존 입력 형식 유지).
+                let mut e = c["error"].clone();
+                if let Some(o) = e.as_object_mut() {
+                    o.remove("scope");
+                }
                 let text = format!(
                     "[previous request ended: status={}]\n{}",
                     c["status"].as_str().unwrap_or(""),
@@ -675,9 +708,28 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         let tid2 = turn_id.to_string();
         let mut last = Instant::now() - Duration::from_secs(1);
         let mut last_progress_at = None;
+        // 실제 진행 시각을 5초 간격으로 DB에 남긴다. 서버가 강제 종료돼도 중단 원인에 마지막 진행 시각이 남는다(RUN-023).
+        let progress = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        let progress_writer = {
+            let (app, tid, progress) = (app.clone(), turn_id.to_string(), progress.clone());
+            tokio::spawn(async move {
+                let mut written: Option<String> = None;
+                loop {
+                    tokio::time::sleep(Duration::from_secs(5)).await;
+                    let cur = progress.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    if cur.is_some() && cur != written {
+                        let (tid, at) = (tid.clone(), cur.clone());
+                        let _ = app.db.call(move |c| Ok(c.execute("UPDATE turns SET progress_at = ?2 WHERE id = ?1", params![tid, at])?)).await;
+                        written = cur;
+                    }
+                }
+            })
+        };
         let mut on_delta = |o: &provider::ModelOutput| {
             if !o.text.is_empty() || !o.reasoning.is_empty() || !o.tool_calls.is_empty() || !o.activity.is_empty() {
-                last_progress_at = Some(crate::util::fmt_time(time::OffsetDateTime::now_utc()));
+                let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+                *progress.lock().unwrap_or_else(|e| e.into_inner()) = Some(now.clone());
+                last_progress_at = Some(now);
             }
             if last.elapsed() >= Duration::from_millis(50) {
                 last = Instant::now();
@@ -697,6 +749,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             },
             None => provider::stream(&input.profile, &input.request, &mut cancel_rx, &mut on_delta).await,
         };
+        progress_writer.abort();
         // 응답을 받으면 바로 반환한다(이후 도구 실행·승인 대기는 슬롯 없이). 오류·취소 경로도 여기서 반환된다.
         drop(permit);
         app.partials.clear(&input.session_id);
