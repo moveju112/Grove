@@ -34,4 +34,17 @@ test("프로젝트 추가 대화상자에서 폴더를 둘러보고 새 폴더�
     await expect(dlg).toHaveCount(0);
     await expect(page.locator(".view-head h1").filter({ hasText: name })).toBeVisible();
     await expect(page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(name) })).toBeVisible();
+
+    // PROJECT-005: 별도 작업공간 생성 단계 없이 프로젝트 화면 입력창에서 바로 대화를 시작한다
+    const pv = page.locator(".project-view").filter({ has: page.locator("h1", { hasText: name }) });
+    await pv.getByLabel("보내기 방식").selectOption("save");
+    await pv.getByLabel("메시지 입력").fill("새 프로젝트 첫 메시지");
+    await pv.getByRole("button", { name: "보내기", exact: true }).click();
+    const view = page.getByTestId("session-view");
+    await expect(view.getByTestId("msg-user").filter({ hasText: "새 프로젝트 첫 메시지" })).toHaveCount(1);
+    const projects = await apiCall<{ id: string; name: string }[]>("GET", "/projects");
+    const p = projects.find((x) => x.name === name)!;
+    const sessions = await apiCall<{ items: { id: string }[] }>("GET", `/projects/${p.id}/sessions`);
+    expect(sessions.items).toHaveLength(1);
+    await expect(view).toHaveAttribute("data-session", sessions.items[0]!.id);
 });
