@@ -254,12 +254,14 @@ pub async fn stream(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>
         cmd.env("MAX_THINKING_TOKENS", super::effort_budget(e).to_string());
     }
     let tag = crate::util::new_id();
-    crate::procs::prepare(&mut cmd, &tag);
+    // 모델 런타임 자체라 셸 작업용 자원 한도는 적용하지 않는다.
+    let limits = crate::procs::Limits::default();
+    crate::procs::prepare(&mut cmd, &tag, limits);
     let mut child = cmd.spawn().map_err(|e| {
         let code = if e.kind() == std::io::ErrorKind::NotFound { "cli_not_found" } else { "cli_failed" };
         ProviderError::new(code, format!("{prog} 실행 실패: {e}"))
     })?;
-    let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag).map_err(|e| ProviderError::new("cli_failed", e))?);
+    let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ProviderError::new("cli_failed", e))?);
     let stdout = child.stdout.take().expect("stdout");
     let mut stderr = child.stderr.take().expect("stderr");
     let err_task = tokio::spawn(async move {

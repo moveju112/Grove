@@ -179,6 +179,8 @@ pub struct Spawn {
     pub call_id: Option<String>,
     /// `exec.shell` 선택값(EXEC-001). 승인된 도구 호출은 계획 때 고정한 값을 쓴다.
     pub shell: String,
+    /// 자원 한도(SEC-017). 승인된 도구 호출은 계획 때 고정한 값을 쓴다.
+    pub limits: crate::procs::Limits,
     pub command: String,
     pub cwd_rel: String,
     pub timeout_ms: u64,
@@ -214,10 +216,10 @@ pub async fn spawn(app: &App, s: Spawn) -> ApiResult<Task> {
     std::fs::create_dir_all(app.cfg.data_dir.join("tasks")).map_err(|e| ApiError::internal(format!("작업 로그 폴더: {e}")))?;
     let started = match resolve(&root, &s.cwd_rel) {
         // 작업 ID가 실행 표식이다: 재시작 때 잔여 프로세스를 PID 재사용과 무관하게 찾는다(EXEC-010).
-        Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.shell, &s.command, &cwd, &id)
+        Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.shell, &s.command, &cwd, &id, s.limits)
             .spawn()
             .map_err(|e| format!("셸 실행 실패: {e}"))
-            .and_then(|mut c| crate::procs::adopt(&mut c, &id).map(|o| (c, o))),
+            .and_then(|mut c| crate::procs::adopt(&mut c, &id, s.limits).map(|o| (c, o))),
         Ok(_) => Err("cwd 디렉터리가 없습니다".into()),
         Err(e) => Err(e.message),
     };
@@ -473,12 +475,13 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         return Ok(r);
     }
     let sid = session_id.clone();
-    let (root, shell) = app
+    let (root, shell, limits) = app
         .db
         .call(move |c| {
             let s = crate::sessions::get_active(c, &sid)?;
             let shell = crate::settings::effective(c, "exec.shell", Some(&s.project_id), Some(&sid))?;
-            Ok((crate::projects::active_root(c, &s.project_id)?, crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string()))
+            let limits = crate::procs::Limits::effective(c, Some(&s.project_id), Some(&sid))?;
+            Ok((crate::projects::active_root(c, &s.project_id)?, crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string(), limits))
         })
         .await?;
     let cwd = resolve(&root, b.cwd.as_deref().unwrap_or(".")).map_err(|e| ApiError::invalid(e.message))?;
@@ -487,7 +490,7 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     }
     let t = spawn(
         &app,
-        Spawn { session_id, call_id: None, shell, command: b.command, cwd_rel: rel_display(&root, &cwd), timeout_ms: timeout, detached: true },
+        Spawn { session_id, call_id: None, shell, limits, command: b.command, cwd_rel: rel_display(&root, &cwd), timeout_ms: timeout, detached: true },
     )
     .await?;
     let v = serde_json::to_value(&t)?;

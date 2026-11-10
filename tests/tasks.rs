@@ -180,6 +180,45 @@ async fn configured_shell_applies_and_is_fixed_at_approval() {
     assert_eq!(term["shell"], "sh", "{term}");
 }
 
+/// 메모리·CPU 한도 설정(기본 제한 없음)이 사용자 작업과 모델 셸에 적용된다(SEC-017).
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn memory_and_cpu_limits_apply_to_tasks_and_model_shell() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = s.fixture_profile(&f.base).await;
+    let p = s.create_project("lim").await;
+    let pid = p["id"].as_str().unwrap().to_string();
+    let sid = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    let run = |cmd: &'static str| {
+        let (s, sid) = (&s, sid.clone());
+        async move {
+            let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/tasks"), json!({ "command": cmd })).await;
+            s.get(&format!("/api/v1/tasks/{}/wait?timeout_ms=30000", t["id"].as_str().unwrap())).await.1
+        }
+    };
+    let alloc = "python3 -c 'x = bytearray(300 * 1024 * 1024); print(\"allocated\")'";
+    // 기본: 제한 없음
+    let w = run(alloc).await;
+    assert_eq!(w["status"], "completed", "{w}");
+    for (k, v) in [("exec.max_memory_mb", 100), ("exec.max_cpu_seconds", 1)] {
+        let (st, r) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/{k}"), json!({ "expected_revision": 0, "value": v })).await;
+        assert!(st.is_success(), "{r}");
+    }
+    let w = run(alloc).await;
+    assert_eq!(w["status"], "failed", "메모리 한도 초과 할당 실패: {w}");
+    assert!(w["stderr_tail"].as_str().unwrap().contains("MemoryError"), "{w}");
+    let w = run("while :; do :; done").await;
+    assert_eq!(w["status"], "failed", "CPU 시간 한도 초과 종료: {w}");
+    assert!(matches!(w["signal"].as_i64(), Some(24 | 9)), "SIGXCPU 또는 SIGKILL: {w}");
+    // 모델 셸: 승인 대상에 한도가 고정되어 보인다
+    f.push(fixture::tool_calls(&[("l1", "shell", json!({ "command": "true" }))]));
+    f.push(fixture::text("끝"));
+    let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "go", "profile_id": prof, "tools": true })).await;
+    let t = s.wait_status(v["turn"]["id"].as_str().unwrap(), "awaiting_approval").await;
+    assert_eq!(t["tool_calls"][0]["target"]["limits"], json!({ "memory_mb": 100, "cpu_seconds": 1 }), "{t}");
+}
+
 /// 서버가 비정상 종료해 남은 작업 프로세스(분리된 setsid 자손 포함)는 재시작 때 표식으로 찾아 종료한다.
 /// 표식이 없거나 다른 작업 표식인 프로세스는 건드리지 않는다(EXEC-010).
 #[cfg(target_os = "linux")]

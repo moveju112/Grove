@@ -108,7 +108,7 @@ pub fn is_sensitive_env(name: &str) -> bool {
 
 /// 셸 명령. stdin 없음, stdout/stderr pipe, 민감 환경변수 제거.
 /// 소유권 표식·process group·Job Object는 `procs::prepare`/`procs::adopt`가 맡는다(`tag`는 실행 표식).
-pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str) -> tokio::process::Command {
+pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str, limits: crate::procs::Limits) -> tokio::process::Command {
     let (program, args) = shell_argv(shell);
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).arg(command);
@@ -119,7 +119,7 @@ pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str) -> tokio::proc
         }
     }
     cmd.env("GROVE_SHELL", "1");
-    crate::procs::prepare(&mut cmd, tag);
+    crate::procs::prepare(&mut cmd, tag, limits);
     cmd
 }
 
@@ -128,10 +128,11 @@ pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver
     let command = planned.target["command"].as_str().unwrap_or("");
     let timeout = Duration::from_millis(planned.target["timeout_ms"].as_u64().unwrap_or(DEFAULT_TIMEOUT_MS));
     let tag = crate::util::new_id();
-    let mut cmd = self::command(planned.target["shell"].as_str().unwrap_or("default"), command, &cwd, &tag);
+    let limits = crate::procs::Limits::from_json(&planned.target["limits"]);
+    let mut cmd = self::command(planned.target["shell"].as_str().unwrap_or("default"), command, &cwd, &tag, limits);
     let started = std::time::Instant::now();
     let mut child = cmd.spawn().map_err(|e| ToolError::new("spawn_failed", format!("셸 실행 실패: {e}")))?;
-    let owned = crate::procs::adopt(&mut child, &tag).map_err(|e| ToolError::new("isolation_failed", e))?;
+    let owned = crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ToolError::new("isolation_failed", e))?;
     let out_h = tokio::spawn(capture(child.stdout.take().expect("stdout")));
     let err_h = tokio::spawn(capture(child.stderr.take().expect("stderr")));
     enum End {

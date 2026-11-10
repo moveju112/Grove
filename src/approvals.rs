@@ -206,6 +206,8 @@ pub fn create_call(
             if spec.name == "shell" {
                 let choice = crate::settings::effective(c, "exec.shell", Some(project_id), Some(session_id))?;
                 planned.target["shell"] = json!(tools::shell::resolve_shell(choice.as_str().unwrap_or("default")));
+                // 자원 한도도 승인 대상에 고정한다(SEC-017).
+                planned.target["limits"] = crate::procs::Limits::effective(c, Some(project_id), Some(session_id))?.to_json();
             }
             // agent 도구는 동작과 위임 정책으로 승인 여부를 정한다. None이면 정책상 금지.
             let base = if spec.name == "agent" {
@@ -390,6 +392,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                     session_id: call.session_id.clone(),
                     call_id: Some(call.id.clone()),
                     shell: call.target["shell"].as_str().unwrap_or("default").to_string(),
+                    limits: crate::procs::Limits::from_json(&call.target["limits"]),
                     command: call.target["command"].as_str().unwrap_or("").to_string(),
                     cwd_rel: call.target["cwd"].as_str().unwrap_or(".").to_string(),
                     timeout_ms: call.target["timeout_ms"].as_u64().unwrap_or(tools::shell::MAX_BACKGROUND_TIMEOUT_MS),
