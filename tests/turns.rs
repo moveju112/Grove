@@ -155,6 +155,28 @@ async fn provider_errors_are_normalized_and_retried_only_when_safe() {
     assert!(!t.to_string().contains("sk-test-secret"), "오류에 키가 노출되지 않는다");
 }
 
+/// RUN-025: 도구를 실행한 뒤 다음 모델 호출 stream이 끊기면 완료·사용자 취소가 아닌 transport 계열 실패로 끝나고,
+/// 이미 실행된 도구를 다시 실행하지 않는다. 진행 범위에 실행된 도구가 남는다.
+#[tokio::test]
+async fn stream_drop_after_tool_step_does_not_replay_tools() {
+    let (s, f, prof, sid, root) = setup().await;
+    f.push(fixture::tool_calls(&[("w1", "write", json!({ "path": "once.txt", "content": "1" }))]));
+    f.push(fixture::truncated());
+    let v = start_turn(&s, &sid, &prof, "써", true).await;
+    let tid = v["turn"]["id"].as_str().unwrap().to_string();
+    let t = s.wait_status(&tid, "awaiting_approval").await;
+    let c = &t["tool_calls"][0];
+    s.post(&format!("/api/v1/tool-calls/{}/decision", c["id"].as_str().unwrap()), json!({ "decision": "approve", "expected_revision": c["revision"] })).await;
+    let t = s.wait_status(&tid, "failed").await;
+    assert_eq!(t["error"]["code"], "stream_incomplete", "{t}");
+    assert_eq!(t["error"]["scope"]["tool_calls"], json!({ "succeeded": 1 }));
+    // 바깥에서 파일을 바꿔 둔다: 도구가 다시 실행되면 내용이 되돌아간다
+    std::fs::write(format!("{root}/once.txt"), "changed").unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(std::fs::read_to_string(format!("{root}/once.txt")).unwrap(), "changed", "실행된 도구를 재생하지 않는다");
+    assert_eq!(f.requests().len(), 2, "조각이 온 뒤 끊긴 호출은 자동 재시도하지 않는다");
+}
+
 /// 재시도 대기 중 취소하면 다시 보내지 않는다.
 #[tokio::test]
 async fn cancel_during_retry_wait_stops_retrying() {
