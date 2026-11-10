@@ -129,6 +129,58 @@ async fn shutdown_cancels_and_crash_leftovers_become_unknown() {
     assert_eq!(w["wait_timed_out"], false);
 }
 
+/// 서버가 비정상 종료해 남은 작업 프로세스(분리된 setsid 자손 포함)는 재시작 때 표식으로 찾아 종료한다.
+/// 표식이 없거나 다른 작업 표식인 프로세스는 건드리지 않는다(EXEC-010).
+#[cfg(target_os = "linux")]
+#[tokio::test]
+async fn crash_leftover_processes_are_reaped_by_task_marker_only() {
+    let (mut s, _pid, sid, _root) = setup().await;
+    let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/tasks"), json!({ "command": "sleep 30" })).await;
+    let id = t["id"].as_str().unwrap().to_string();
+    s.stop().await;
+    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+    db.execute("UPDATE tasks SET status = 'running', ended_at = NULL, result_message_id = NULL WHERE id = ?1", [&id]).unwrap();
+    drop(db);
+    // 비정상 종료 후 남은 프로세스 흉내: 해당 작업 표식을 물려받은 셸과 setsid로 떨어져 나간 손자.
+    let spawn = |env: Option<(&str, &str)>, script: &str| {
+        let mut c = std::process::Command::new("bash");
+        c.args(["-c", script]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null());
+        c.env_remove(grove::tasks::TASK_ENV);
+        if let Some((k, v)) = env {
+            c.env(k, v);
+        }
+        c.spawn().unwrap()
+    };
+    let mut leftover = spawn(Some((grove::tasks::TASK_ENV, &id)), "setsid sleep 30 & sleep 30");
+    let mut other = spawn(Some((grove::tasks::TASK_ENV, "other-task")), "sleep 30");
+    let mut plain = spawn(None, "sleep 30");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    let tagged = |id: &str| -> usize {
+        std::fs::read_dir("/proc")
+            .unwrap()
+            .flatten()
+            .filter(|e| {
+                std::fs::read(e.path().join("environ"))
+                    .map(|env| env.split(|b| *b == 0).any(|kv| kv == format!("{}={id}", grove::tasks::TASK_ENV).as_bytes()))
+                    .unwrap_or(false)
+            })
+            .count()
+    };
+    assert!(tagged(&id) >= 3, "셸·sleep·setsid 손자가 표식을 가짐");
+    s.restart().await;
+    assert_eq!(tagged(&id), 0, "표식이 일치하는 잔여 프로세스는 모두 종료");
+    leftover.wait().unwrap();
+    assert!(other.try_wait().unwrap().is_none(), "다른 작업 표식 프로세스는 유지");
+    assert!(plain.try_wait().unwrap().is_none(), "표식 없는 프로세스는 유지");
+    let (_, t) = s.get(&format!("/api/v1/tasks/{id}")).await;
+    assert_eq!(t["status"], "unknown", "부작용은 알 수 없으므로 성공·취소로 바꾸지 않는다");
+    let reason = t["reason"].as_str().unwrap();
+    assert!(reason.contains("재시작") && reason.contains("종료했습니다"), "{reason}");
+    other.kill().unwrap();
+    plain.kill().unwrap();
+    let _ = (other.wait(), plain.wait());
+}
+
 #[tokio::test]
 async fn model_shell_with_hold_detaches_and_result_reaches_next_turn() {
     let s = TestServer::start().await;

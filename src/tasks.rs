@@ -4,8 +4,8 @@
 //! - hard timeout(프로세스 종료)과 hold(호출자가 기다리는 시간)는 별개다.
 //! - 결과 기록: `detached`인 작업이 끝나면 같은 transaction에서 상태 전이와 함께 세션에 note를 한 번만 남긴다.
 //!   hold 중에 끝난 작업은 호출자(도구 결과)가 직접 결과를 받으므로 note를 남기지 않는다.
-//! - 재시작으로 확인할 수 없게 된 작업은 `unknown`으로 표시한다. 남아 있을 수 있는 프로세스는
-//!   PID 재사용 위험 때문에 자동으로 종료하지 않는다.
+//! - 재시작으로 확인할 수 없게 된 작업은 `unknown`으로 표시한다. 남은 프로세스는 PID가 아니라
+//!   작업 ID 환경변수 표식(`GROVE_TASK_ID`)으로 찾아 종료한다(Linux). 다른 OS는 아직 찾지 않는다.
 
 use crate::App;
 use crate::auth::Principal;
@@ -211,7 +211,11 @@ pub async fn spawn(app: &App, s: Spawn) -> ApiResult<Task> {
         .await?;
     std::fs::create_dir_all(app.cfg.data_dir.join("tasks")).map_err(|e| ApiError::internal(format!("작업 로그 폴더: {e}")))?;
     let started = match resolve(&root, &s.cwd_rel) {
-        Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.command, &cwd).spawn().map_err(|e| format!("셸 실행 실패: {e}")),
+        // 작업 ID 표식: 서버가 비정상 종료한 뒤 재시작할 때 잔여 프로세스를 PID 재사용과 무관하게 찾는다(EXEC-010).
+        Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.command, &cwd)
+            .env(TASK_ENV, &id)
+            .spawn()
+            .map_err(|e| format!("셸 실행 실패: {e}")),
         Ok(_) => Err("cwd 디렉터리가 없습니다".into()),
         Err(e) => Err(e.message),
     };
@@ -403,18 +407,71 @@ pub async fn run_with_hold(app: &App, s: Spawn, hold_ms: u64, mut cancel: watch:
     }
 }
 
+/// 작업 프로세스와 그 자손이 물려받는 작업 ID 환경변수.
+pub const TASK_ENV: &str = "GROVE_TASK_ID";
+
+/// 이전 서버가 비정상 종료해 남은 작업 프로세스를 종료하고 작업별 종료 개수를 돌려준다(EXEC-010).
+/// `GROVE_TASK_ID` 표식이 일치하는 프로세스만 대상이라 PID가 재사용된 다른 프로세스는 건드리지 않는다.
+/// 표식을 지운 자손(`env -i` 등)은 찾지 못한다.
+#[cfg(target_os = "linux")]
+pub fn reap_leftovers(ids: &[String]) -> HashMap<String, usize> {
+    let wanted: HashMap<Vec<u8>, &String> = ids.iter().map(|id| (format!("{TASK_ENV}={id}").into_bytes(), id)).collect();
+    let mut killed: HashMap<String, usize> = HashMap::new();
+    if wanted.is_empty() {
+        return killed;
+    }
+    let me = std::process::id();
+    // 종료 중 fork한 자식까지 잡도록 더 찾을 것이 없을 때까지 반복한다.
+    for _ in 0..20 {
+        let mut found = 0;
+        let Ok(dir) = std::fs::read_dir("/proc") else { break };
+        for e in dir.flatten() {
+            let Some(pid) = e.file_name().to_str().and_then(|s| s.parse::<u32>().ok()) else { continue };
+            if pid == me {
+                continue;
+            }
+            // 다른 사용자 프로세스·이미 끝난 프로세스는 읽기 실패로 건너뛴다.
+            let Ok(env) = std::fs::read(e.path().join("environ")) else { continue };
+            let Some(id) = env.split(|b| *b == 0).find_map(|kv| wanted.get(kv)) else { continue };
+            // SAFETY: 위에서 작업 표식을 확인한 프로세스에만 신호를 보낸다.
+            if unsafe { libc::kill(pid as i32, libc::SIGKILL) } == 0 {
+                *killed.entry((*id).clone()).or_default() += 1;
+                found += 1;
+            }
+        }
+        if found == 0 {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    killed
+}
+
+/// Linux 밖에서는 아직 잔여 프로세스를 찾지 않는다(Windows는 Job Object 도입 전까지 미지원).
+#[cfg(not(target_os = "linux"))]
+pub fn reap_leftovers(_ids: &[String]) -> HashMap<String, usize> {
+    HashMap::new()
+}
+
 /// 시작 시: 이전 프로세스에서 실행 중이던 작업은 결과를 확인할 수 없다(EXEC-013).
+/// 남은 프로세스는 표식으로 찾아 종료하되, 부작용 여부는 알 수 없으므로 상태는 unknown이다(EXEC-010).
 pub fn recover_on_start(c: &mut Connection, now: &str) -> ApiResult<usize> {
     let tx = c.transaction()?;
     let ids: Vec<String> = {
         let mut st = tx.prepare("SELECT id FROM tasks WHERE status = 'running'")?;
         st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?
     };
+    let killed = reap_leftovers(&ids);
     for id in &ids {
-        tx.execute(
-            "UPDATE tasks SET status = 'unknown', ended_at = ?2, reason = '서버가 재시작되어 결과를 확인할 수 없습니다. 프로세스가 남아 있을 수 있습니다' WHERE id = ?1",
-            params![id, now],
-        )?;
+        let reason = if cfg!(target_os = "linux") {
+            match killed.get(id) {
+                Some(n) => format!("서버가 재시작되어 결과를 확인할 수 없습니다. 남아 있던 프로세스 {n}개를 종료했습니다"),
+                None => "서버가 재시작되어 결과를 확인할 수 없습니다. 남은 프로세스는 없습니다".to_string(),
+            }
+        } else {
+            "서버가 재시작되어 결과를 확인할 수 없습니다. 프로세스가 남아 있을 수 있습니다".to_string()
+        };
+        tx.execute("UPDATE tasks SET status = 'unknown', ended_at = ?2, reason = ?3 WHERE id = ?1", params![id, now, reason])?;
         // 분리되지 않은 작업(도구 호출이 기다리던 중)도 결과가 어디에도 없으므로 note를 남긴다.
         tx.execute("UPDATE tasks SET detached = 1 WHERE id = ?1", params![id])?;
         let t = get(&tx, id)?;

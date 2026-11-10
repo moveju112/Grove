@@ -12,7 +12,7 @@ Paseo 데몬과 Mixdog 엔진의 제품·소유권·설정·수명 경계를 제
 사용자 요청에 따른 최신 엔진 기능의 일회성 추가 조사는 §1.1과 §15.1의 별도 고정 SHA를 기준으로 한다. 기존 조사 기준·기본 에이전트 원문을 교체하거나 upstream 추적을 재개하는 것은 아니다.
 제품명은 **Grove(그로브)**로 확정했다. 요청한 작업 디렉터리 `/home/ubuntu/project/paseodog_opus`는 유지한다.
 
-아직 개발을 시작하지 않았다. 체크박스는 해당 항목의 전체 완료 조건을 충족했을 때만 표시하며, 초기 기반 구현을 기능 전체 완료로 간주하지 않는다.
+개발 진행 중이다. 체크박스는 해당 항목의 전체 완료 조건을 충족했을 때만 표시하며, 초기 기반 구현을 기능 전체 완료로 간주하지 않는다.
 기존 PaseoDog 소스·서비스·데이터는 변경하지 않으며, 운영 배포와 유료 모델 호출은 별도 승인 없이 하지 않는다.
 
 ### 기능 묶음별 개발·검증 주기
@@ -895,7 +895,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] EXEC-007 hard timeout과 출력 대기 시간을 구분한다. 검증: `tests/tasks.rs::cancel_timeout_and_wait_timeout_are_distinct`(wait 시간 초과는 작업 유지, hard timeout은 종료).
 - [x] EXEC-008 종료 코드와 종료 신호·timeout·사용자 취소를 구분한다. 검증: `tools::shell::tests::runs_and_captures`, `timeout_kills_process_group`, `cancel_stops_command`.
 - [x] EXEC-009 task 소유 세션과 외부 프로세스 트리를 연결한다. 검증: `tasks` 행의 session_id·call_id·pid(process group), `tests/tasks.rs`(취소 시 그룹 전체 종료, call_id 연결).
-- [ ] EXEC-010 세션 종료·서버 종료·부모 사망 시 소유 프로세스 정리 정책을 적용한다.
+- [ ] EXEC-010 세션 종료·서버 종료·부모 사망 시 소유 프로세스 정리 정책을 적용한다. 진행: 세션 보관은 실행 중 작업이 있으면 거절(명시적 취소 필요), 서버 정상 종료는 작업 process group 취소(`tasks::stop_all`). Linux 비정상 종료: 작업 프로세스에 `GROVE_TASK_ID` 표식을 물려주고 재시작 때 표식이 일치하는 잔여 프로세스(setsid로 분리된 자손 포함)만 종료, 상태는 `unknown` 유지·종료 개수를 사유에 기록(`tests/tasks.rs::crash_leftover_processes_are_reaped_by_task_marker_only`). 남은 일: Windows 부모 사망 정리(Job Object), 표식을 지운 자손(`env -i`)은 찾지 못함.
 - [x] EXEC-011 백그라운드 완료 결과를 모델 호출 없이 원래 세션에 저장한다. 검증: `tests/tasks.rs`(note 1개, 다음 턴 모델 입력에 포함).
 - [x] EXEC-012 결과 기록의 중복 방지·클라이언트 재연결 전달을 구현한다. 검증: 상태 전이 guard로 note 1회(`tests/tasks.rs`), `message.created`·`task.changed` 이벤트 cursor 재전송.
 - [x] EXEC-013 재시작으로 결과를 확인할 수 없는 작업은 결과 불명으로 표시한다. 검증: `tests/tasks.rs::shutdown_cancels_and_crash_leftovers_become_unknown`.
