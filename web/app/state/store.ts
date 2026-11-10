@@ -121,6 +121,9 @@ export function applyEvent(e: EventRecord) {
             }
             invalidate("recent");
             break;
+        case "file_changes.updated":
+            if (sid) invalidate(`changes:${sid}`);
+            break;
         case "session.created":
         case "session.updated":
             if (pid) invalidate(`sessions:${pid}`);

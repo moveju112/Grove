@@ -7,6 +7,7 @@ import type { Definition, Message, MessagePage, ModelProfile, RecentItem, Sessio
 import { useLive, useQuery } from "../state/store";
 import { Composer, type FollowKind, type RunCommand, type SendOptions } from "./Composer";
 import { AgentRunsPanel } from "./AgentRunsPanel";
+import { ChangesPanel } from "./ChangesPanel";
 import { ContextMeter } from "./ContextMeter";
 import { GoalsPanel } from "./GoalsPanel";
 import { TasksPanel } from "./TasksPanel";
@@ -357,6 +358,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             <GoalsPanel sessionId={sessionId} disabled={archived} />
             <AgentRunsPanel sessionId={sessionId} projectId={projectId} open={open} onError={setErr} />
             <TasksPanel sessionId={sessionId} disabled={archived} />
+            <ChangesPanel sessionId={sessionId} disabled={archived} />
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
             {pending.map((c) => <ApprovalCard key={c.id} c={c} act={act} />)}
             {unknown.map((c) => <UnknownCard key={c.id} c={c} act={act} />)}

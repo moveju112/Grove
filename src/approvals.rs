@@ -371,6 +371,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 app.cancels.cancel(&call.id);
             }
         }
+        let mut file_recs: Vec<crate::changes::Rec> = vec![];
         let outcome = match root {
             Err(e) => Err(tools::ToolError::new("project_unavailable", e.message)),
             Ok(_) if call.name == "agent" => crate::agents::execute_tool(&app, &call, cancel_rx).await,
@@ -402,12 +403,28 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
             }
             Ok(root) => {
                 let planned = Planned { target: call.target.clone(), precondition: call.precondition.clone() };
-                tools::execute(&call.name, &call.args, &planned, &root, cancel_rx).await
+                // 파일 편집 도구: 실행 직전 상태를 읽어 두고, 성공하면 변경 이력으로 남긴다(GIT-011).
+                let paths = crate::changes::affected_paths(&call.name, &call.target, call.precondition.as_ref());
+                let before = (!paths.is_empty()).then(|| {
+                    let r = root.clone();
+                    tokio::task::spawn_blocking(move || crate::changes::capture(&r, &paths))
+                });
+                let before = match before {
+                    Some(h) => h.await.ok(),
+                    None => None,
+                };
+                let r = tools::execute(&call.name, &call.args, &planned, &root, cancel_rx).await;
+                if let (Ok(_), Some(b)) = (&r, before) {
+                    let dd = app.cfg.data_dir.clone();
+                    file_recs = tokio::task::spawn_blocking(move || crate::changes::finalize(&dd, b)).await.unwrap_or_default();
+                }
+                r
             }
         };
         app.cancels.remove(&call.id);
         let id = call.id.clone();
         let turn = call.turn_id.clone();
+        let (sid, tool, turn_for_rec) = (call.session_id.clone(), call.name.clone(), call.turn_id.clone());
         let _ = app
             .db
             .call(move |c| {
@@ -418,7 +435,9 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                     Err(e) if e.code == "cancelled" => ("cancelled", e.to_json()),
                     Err(e) => ("failed", e.to_json()),
                 };
-                finish(&tx, &now, &id, &["running"], to, Some(result))?;
+                if finish(&tx, &now, &id, &["running"], to, Some(result))?.is_some() {
+                    crate::changes::insert(&tx, &now, &sid, turn_for_rec.as_deref(), &id, &tool, &file_recs)?;
+                }
                 tx.commit()?;
                 Ok(())
             })

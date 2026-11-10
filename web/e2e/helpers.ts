@@ -1,4 +1,10 @@
-import { type Page, expect } from "@playwright/test";
+import { type Locator, type Page, expect } from "@playwright/test";
+
+/// `<details>`가 닫혀 있을 때만 연다(이미 열려 있으면 그대로). summary를 무조건 누르면 열린 패널이 닫힌다.
+export async function openDetails(details: Locator) {
+    if (!(await details.evaluate((d) => (d as HTMLDetailsElement).open))) await details.locator("summary").first().click();
+    await expect(details).toHaveAttribute("open", "");
+}
 import { readFileSync } from "node:fs";
 import { STATE } from "./global-setup";
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
+import { useAutoOpen } from "../state/autoOpen";
 import { useQuery } from "../state/store";
 
 export type TaskRow = {
@@ -32,6 +33,8 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
     const [view, setView] = useState<string | null>(null);
     const list = tasks.data?.tasks ?? [];
     const running = list.filter((t) => t.status === "running");
+    // 실행 중인 작업이 생기면 열고, 끝나도 사용자가 연 패널을 닫지 않는다.
+    const details = useAutoOpen(running.length > 0);
     const act = async (f: () => Promise<unknown>) => {
         setErr(null);
         try {
@@ -42,7 +45,7 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
         tasks.reload();
     };
     return (
-        <details className="tasks" data-testid="tasks-panel" open={running.length > 0 || undefined}>
+        <details className="tasks" data-testid="tasks-panel" {...details}>
             <summary>
                 백그라운드 작업 {running.length > 0 ? <strong>· 실행 중 {running.length}</strong> : list.length > 0 ? `· ${list.length}` : ""}
             </summary>

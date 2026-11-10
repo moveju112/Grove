@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { ApiError, api } from "../api/client";
+import { useAutoOpen } from "../state/autoOpen";
 import { useQuery } from "../state/store";
 
 type Goal = { id: string; title: string; status: "pending" | "in_progress" | "done" | "cancelled"; revision: number };
@@ -13,6 +14,8 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
     const [optimistic, setOptimistic] = useState<Record<string, boolean>>({});
     const goals = q.data?.goals ?? [];
     const open = goals.filter((g) => g.status === "pending" || g.status === "in_progress").length;
+    // 남은 Goal이 생기면 열고, 모두 끝나도 사용자가 연 목록을 닫지 않는다.
+    const details = useAutoOpen(open > 0);
     const act = async (f: () => Promise<unknown>) => {
         setErr(null);
         try {
@@ -28,7 +31,7 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
         void act(() => api.post(`/sessions/${sessionId}/goals/reorder`, { ids }));
     };
     return (
-        <details className="goals" data-testid="goals-panel" open={open > 0 || undefined}>
+        <details className="goals" data-testid="goals-panel" {...details}>
             <summary>Goal {goals.length > 0 ? `· 남은 ${open}/${goals.length}` : ""}</summary>
             {err && <p className="err" role="alert">{err}</p>}
             <ul className="session-list">

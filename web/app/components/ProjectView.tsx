@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { Project, Session, SessionPage } from "../api/generated";
+import { useAutoOpen } from "../state/autoOpen";
 import { useQuery } from "../state/store";
 import { Composer, type SendOptions } from "./Composer";
 import { GitPanel } from "./GitPanel";
@@ -150,8 +151,10 @@ function TerminalList({ projectId, open }: { projectId: string; open: Opener }) 
         list.reload();
     };
     const terms = list.data?.terminals ?? [];
+    // 실행 중인 터미널이 생기면 열고, 모두 끝나도 사용자가 연 목록을 닫지 않는다.
+    const details = useAutoOpen(terms.some((t) => t.status === "running"));
     return (
-        <details className="terminals" data-testid="terminal-list" open={terms.some((t) => t.status === "running") || undefined}>
+        <details className="terminals" data-testid="terminal-list" {...details}>
             <summary>터미널 {terms.length > 0 ? `· ${terms.length}` : ""}</summary>
             <button className="ghost small" onClick={() => void create()}>새 터미널</button>
             {err && <p className="err" role="alert">{err}</p>}

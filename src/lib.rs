@@ -20,6 +20,7 @@ pub mod followups;
 pub mod goals;
 pub mod idem;
 pub mod models;
+pub mod changes;
 pub mod procs;
 pub mod projects;
 pub mod provider;
@@ -177,6 +178,11 @@ pub fn router(app: App) -> Router {
         .route("/agent-runs/{id}", get(agents::show))
         .route("/agent-runs/{id}/cancel", post(agents::cancel))
         .route("/sessions/{id}/tasks", get(tasks::list).post(tasks::start))
+        .route("/sessions/{id}/file-changes", get(changes::list))
+        .route("/sessions/{id}/file-changes/undo", post(changes::undo))
+        .route("/sessions/{id}/file-changes/redo", post(changes::redo))
+        .route("/sessions/{id}/review", get(changes::review))
+        .route("/file-changes/{id}/diff", get(changes::diff))
         .route("/tasks/{id}", get(tasks::show))
         .route("/tasks/{id}/output", get(tasks::output))
         .route("/tasks/{id}/wait", get(tasks::wait))

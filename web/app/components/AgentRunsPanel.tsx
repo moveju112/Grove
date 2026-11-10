@@ -1,4 +1,5 @@
 import { ApiError, api } from "../api/client";
+import { useAutoOpen } from "../state/autoOpen";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 
@@ -39,6 +40,8 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
         }
         q.reload();
     };
+    // 진행 중인 작업이 생기면 열고, 끝나도 사용자가 연 목록을 닫지 않는다(hook은 조기 반환 전에 호출).
+    const details = useAutoOpen(runs.some((r) => r.status === "running"));
     if (!parent && runs.length === 0) return null;
     return (
         <div className="agent-runs" data-testid="agent-runs">
@@ -49,7 +52,7 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
                 </p>
             )}
             {runs.length > 0 && (
-                <details open={runs.some((r) => r.status === "running") || undefined}>
+                <details {...details}>
                     <summary>
                         맡긴 작업 {runs.length}
                         {runs.some((r) => r.status === "running") && <strong> · 진행 중 {runs.filter((r) => r.status === "running").length}</strong>}

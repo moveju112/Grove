@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openDetails, script, state } from "./helpers";
 
 test("CSP·보안 헤더와 PWA manifest를 제공한다", async ({ request }) => {
     const r = await request.get("/");
@@ -164,8 +164,9 @@ test("자식 에이전트 위임을 승인하면 자식 대화가 생기고 결�
     await expect(view.getByTestId("msg-agent-result")).toHaveCount(1, { timeout: 15_000 });
     await expect(view.getByTestId("msg-agent-result")).toContainText("자식 검토 결과: 이상 없음");
     const runs = view.getByTestId("agent-runs");
-    await runs.locator("summary").click();
+    // 진행 중에 자동으로 열린 목록은 끝나도 열린 채 남는다. 상태가 확정된 뒤 닫혀 있을 때만 연다.
     await expect(runs.getByTestId("agent-run").first()).toHaveAttribute("data-status", "completed");
+    await openDetails(runs.locator("details"));
     // 자식 대화를 열면 부모 연결이 보인다
     await runs.getByRole("button", { name: "자식 대화" }).first().click();
     await expect(page.getByTestId("pane")).toHaveCount(2);

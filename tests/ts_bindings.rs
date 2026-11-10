@@ -27,6 +27,7 @@ fn generate() -> String {
         decl::<grove::models::ModelProfile>(),
         decl::<grove::runner::Turn>(),
         decl::<grove::approvals::ToolCallRow>(),
+        decl::<grove::changes::FileChange>(),
     ];
     for d in decls {
         out.push_str(&d);

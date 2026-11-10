@@ -541,6 +541,26 @@ pub const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE projects ADD COLUMN icon TEXT;
     "#,
+    // 28: 세션별 파일 변경 이력(GIT-011~014). 내용은 sha256 이름의 blob 파일, 행은 변경 한 건.
+    // before/after_sha가 NULL이면 그 시점에 파일이 없었다는 뜻이다. undone_at이 있으면 되돌린 상태다.
+    r#"
+    CREATE TABLE file_changes (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        turn_id TEXT,
+        call_id TEXT NOT NULL REFERENCES tool_calls(id),
+        tool TEXT NOT NULL,
+        path TEXT NOT NULL,
+        before_sha TEXT,
+        after_sha TEXT,
+        stored INTEGER NOT NULL DEFAULT 1,
+        undone_at TEXT,
+        created_at TEXT NOT NULL,
+        seq INTEGER NOT NULL
+    );
+    CREATE INDEX file_changes_session ON file_changes(session_id, seq);
+    CREATE INDEX file_changes_turn ON file_changes(turn_id);
+    "#,
 ];
 
 #[cfg(test)]

@@ -104,3 +104,13 @@ export type ToolCallRow = { id: string, session_id: string, project_id: string, 
  */
 approval_scope: string | null, };
 
+export type FileChange = { id: string, turn_id: string | null, call_id: string, tool: string, path: string, 
+/**
+ * created | modified | deleted
+ */
+op: string, before_sha: string | null, after_sha: string | null, 
+/**
+ * 내용을 보관해 diff·undo/redo가 가능한지
+ */
+stored: boolean, undone_at: string | null, created_at: string, seq: number, };
+
