@@ -5,6 +5,7 @@ import type { Project } from "../api/generated";
 import { applyPrefs, isNarrow, layoutKey, loadPrefs } from "../state/device";
 import * as L from "../state/layout";
 import { applyEvent, resyncAll, setLive, useLive, useQuery } from "../state/store";
+import { AddProjectDialog } from "./AddProject";
 import { BotsPanel } from "./BotsPanel";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { RecentPanel } from "./RecentPanel";
@@ -144,15 +145,11 @@ export function Workspace() {
         [update, narrow],
     );
 
-    const addProject = async () => {
-        const root = prompt("프로젝트 폴더의 서버 경로");
-        if (!root) return;
-        try {
-            const p = await api.post<Project>("/projects", { root_path: root });
-            open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name });
-        } catch (e) {
-            setNotice(e instanceof ApiError ? e.message : "프로젝트를 추가하지 못했습니다");
-        }
+    const [adding, setAdding] = useState(false);
+    const projectAdded = (p: Project) => {
+        setAdding(false);
+        projects.reload();
+        open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name });
     };
 
     return (
@@ -165,13 +162,14 @@ export function Workspace() {
                 <strong>Grove</strong>
                 <ConnStatus status={live.status} retryAt={live.retryAt} onRetry={() => stream.current?.retryNow()} />
                 <span className="spacer" />
-                <button className="ghost" onClick={addProject}>
+                <button className="ghost" onClick={() => setAdding(true)}>
                     + 프로젝트
                 </button>
                 <button className="ghost" onClick={() => open({ kind: "settings", title: "설정" })}>
                     설정
                 </button>
             </header>
+            {adding && <AddProjectDialog onDone={projectAdded} onClose={() => setAdding(false)} />}
             {notice && (
                 <div className="notice" role="status">
                     {notice} <button className="ghost" onClick={() => setNotice(null)}>닫기</button>

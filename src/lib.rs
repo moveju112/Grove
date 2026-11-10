@@ -132,6 +132,7 @@ pub fn router(app: App) -> Router {
         .route("/devices/{id}", delete(auth::revoke_device))
         .route("/events", get(events::stream))
         .route("/projects", get(projects::list).post(projects::create))
+        .route("/fs/dirs", get(projects::browse_dirs))
         .route("/projects/{id}", get(projects::show).patch(projects::update))
         .route("/projects/{id}/sessions", get(sessions::list).post(sessions::create))
         .route("/projects/{id}/terminals", get(terminals::list).post(terminals::create))

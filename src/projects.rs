@@ -66,6 +66,58 @@ pub fn active_root(conn: &Connection, id: &str) -> ApiResult<std::path::PathBuf>
 pub struct CreateProject {
     pub root_path: String,
     pub name: Option<String>,
+    /// 경로가 없으면 마지막 폴더 하나만 새로 만든다(상위 폴더는 이미 있어야 한다, PROJECT-001).
+    #[serde(default)]
+    pub create: bool,
+}
+
+#[derive(Deserialize)]
+pub struct DirsQuery {
+    pub path: Option<String>,
+    #[serde(default)]
+    pub hidden: bool,
+}
+
+const MAX_DIR_ENTRIES: usize = 500;
+
+/// 서버 PC 폴더 둘러보기(PROJECT-001). 프로젝트 등록과 같은 권한이며 하위 폴더 이름만 돌려준다(파일·내용 없음).
+/// 경로를 주지 않으면 서버 사용자의 홈 폴더에서 시작한다.
+pub async fn browse_dirs(_p: Principal, Query(q): Query<DirsQuery>) -> ApiResult<Json<serde_json::Value>> {
+    let start = match q.path.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(p) => std::path::PathBuf::from(p),
+        None => std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .map(std::path::PathBuf::from)
+            .ok_or_else(|| ApiError::invalid("홈 폴더를 알 수 없습니다. 경로를 입력하세요"))?,
+    };
+    if !start.is_absolute() {
+        return Err(ApiError::invalid("절대 경로를 입력하세요"));
+    }
+    tokio::task::spawn_blocking(move || {
+        let dir = crate::util::canonical(&start).map_err(|_| ApiError::not_found("존재하지 않는 경로입니다"))?;
+        if !dir.is_dir() {
+            return Err(ApiError::invalid("디렉터리가 아닙니다"));
+        }
+        let rd = std::fs::read_dir(&dir).map_err(|e| ApiError::new(StatusCode::FORBIDDEN, "permission_denied", format!("폴더를 읽을 수 없습니다: {e}")))?;
+        let mut entries: Vec<(String, String)> = rd
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
+            .filter_map(|e| {
+                let name = e.file_name().to_string_lossy().to_string();
+                (q.hidden || !name.starts_with('.')).then(|| (name, e.path().to_string_lossy().to_string()))
+            })
+            .collect();
+        entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+        let truncated = entries.len() > MAX_DIR_ENTRIES;
+        entries.truncate(MAX_DIR_ENTRIES);
+        Ok(Json(json!({
+            "path": dir.to_string_lossy(),
+            "parent": dir.parent().map(|p| p.to_string_lossy().to_string()),
+            "entries": entries.into_iter().map(|(name, path)| json!({ "name": name, "path": path })).collect::<Vec<_>>(),
+            "truncated": truncated,
+        })))
+    })
+    .await
+    .map_err(|e| ApiError::internal(e.to_string()))?
 }
 
 pub async fn create(
@@ -77,6 +129,23 @@ pub async fn create(
     let raw = body.root_path.trim();
     if raw.is_empty() {
         return Err(ApiError::invalid("root_path가 필요합니다"));
+    }
+    if body.create && !std::path::Path::new(raw).exists() {
+        let want = std::path::Path::new(raw);
+        if !want.is_absolute() {
+            return Err(ApiError::invalid("절대 경로를 입력하세요"));
+        }
+        let parent = want.parent().filter(|p| p.is_dir()).ok_or_else(|| ApiError::invalid("상위 폴더가 없습니다. 상위 폴더부터 만들어 주세요"))?;
+        let leaf = want.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
+        if leaf.is_empty() || leaf == "." || leaf == ".." {
+            return Err(ApiError::invalid("새 폴더 이름이 올바르지 않습니다"));
+        }
+        // 마지막 폴더 하나만 만든다. 같은 이름이 동시에 생기면 기존 폴더를 그대로 쓴다.
+        match std::fs::create_dir(parent.join(&leaf)) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(ApiError::new(StatusCode::FORBIDDEN, "permission_denied", format!("폴더를 만들 수 없습니다: {e}"))),
+        }
     }
     let canon = crate::util::canonical(raw).map_err(|_| ApiError::invalid("존재하지 않는 경로입니다"))?;
     if !canon.is_dir() {

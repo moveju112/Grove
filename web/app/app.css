@@ -100,6 +100,13 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .conn.reconnecting, .conn.connecting { background: var(--panel); color: var(--warn); border: 1px solid var(--warn); }
 .conn button { margin-left: 0.4em; }
 .notice { padding: 0.3em 0.7em; background: var(--accent-weak); font-size: 0.9em; }
+.dialog-backdrop { position: fixed; inset: 0; z-index: 30; background: #0005; display: flex; align-items: center; justify-content: center; padding: 1em; }
+.dialog { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 1em; width: min(36em, 100%); max-height: 90dvh; overflow: auto; display: grid; gap: 0.6em; }
+.dialog h2 { margin: 0; font-size: 1.1em; }
+.dialog label input:not([type="checkbox"]) { display: block; width: 100%; margin-top: 0.2em; }
+.dialog .row { display: flex; flex-wrap: wrap; gap: 0.5em; align-items: center; }
+.dir-list { list-style: none; margin: 0; padding: 0.3em; max-height: 16em; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
+.dir-list li { padding: 0.1em 0; }
 .update-banner { position: fixed; bottom: 0.7em; left: 50%; transform: translateX(-50%); z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 0.5em 0.8em; display: flex; gap: 0.5em; align-items: center; box-shadow: 0 4px 18px #0002; }
 .body { flex: 1; display: flex; min-height: 0; }
 .sidebar { width: 19em; flex-shrink: 0; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 0.6em; display: grid; gap: 1em; align-content: start; }

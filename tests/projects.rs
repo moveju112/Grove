@@ -5,6 +5,53 @@ use common::*;
 use reqwest::{Method, StatusCode};
 use serde_json::json;
 
+/// PROJECT-001: 서버 폴더 둘러보기(폴더 이름만)와 새 폴더로 프로젝트 만들기.
+#[tokio::test]
+async fn browse_dirs_and_create_project_in_new_folder() {
+    let s = TestServer::start().await;
+    let base = s.make_project_dir("browse");
+    std::fs::create_dir(base.join("alpha")).unwrap();
+    std::fs::create_dir(base.join(".hidden")).unwrap();
+    std::fs::write(base.join("file.txt"), "x").unwrap();
+    let q = |p: &std::path::Path, extra: &str| format!("/api/v1/fs/dirs?path={}{extra}", urlencode(&p.to_string_lossy()));
+    let (st, v) = s.get(&q(&base, "")).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let names: Vec<&str> = v["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
+    assert_eq!(names, vec!["alpha"], "폴더만, 숨김 제외");
+    assert_eq!(v["parent"].as_str().unwrap(), base.canonicalize().unwrap().parent().unwrap().to_str().unwrap());
+    let (_, v) = s.get(&q(&base, "&hidden=true")).await;
+    assert_eq!(v["entries"].as_array().unwrap().len(), 2);
+    let (st, _) = s.get(&q(&base.join("nope"), "")).await;
+    assert_eq!(st, StatusCode::NOT_FOUND);
+    let (st, _) = s.get("/api/v1/fs/dirs?path=relative/dir").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let r = s.raw(Method::GET, &q(&base, ""), None, None, Some("bad-token")).await;
+    assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "인증 필요");
+
+    // 없는 경로: create 없이는 거부, create면 마지막 폴더 하나만 만든다
+    let new = base.join("fresh");
+    let (st, _) = s.post("/api/v1/projects", json!({ "root_path": new })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    assert!(!new.exists());
+    let (st, v) = s.post("/api/v1/projects", json!({ "root_path": new, "create": true })).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert!(new.is_dir());
+    assert_eq!(v["name"], "fresh");
+    let deep = base.join("missing-parent").join("child");
+    let (st, v) = s.post("/api/v1/projects", json!({ "root_path": deep, "create": true })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
+    assert!(!base.join("missing-parent").exists(), "상위 폴더까지 만들지 않는다");
+    // 이미 있는 폴더에 create를 줘도 그대로 등록한다
+    let (st, _) = s.post("/api/v1/projects", json!({ "root_path": base.join("alpha"), "create": true })).await;
+    assert_eq!(st, StatusCode::CREATED);
+}
+
+fn urlencode(s: &str) -> String {
+    s.bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-_.~/".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
 #[tokio::test]
 async fn archive_removes_from_list_but_never_touches_directory() {
     let s = TestServer::start().await;

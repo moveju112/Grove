@@ -812,7 +812,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] SESSION-013 다른 세션에 메시지를 보낼 때 소유권·허용 정책을 검사한다. 검증: 모델이 다른 세션에 지시를 보내는 유일한 경로(agent send·status·wait·cancel)는 실행 전에 그 대화가 만든 자식 작업인지 검사하고, 아니면 `not_found`로 거부한다. 자식 대화에 턴이 생기지 않고 모델도 호출하지 않는다(`tests/agents.rs::runs_belong_to_their_parent_session`).
 - [ ] SESSION-014 관련 없는 세션 접근 허용 설정과 기본 차단을 유지한다.
 - [x] SESSION-015 원본 세션과 imported 세션의 ID 매핑·중복 가져오기 방지를 구현한다. 검증: `import_map(source, source_id) → session_id`를 대화 저장과 같은 transaction에 기록, 같은 원본 재실행은 `already_imported`, 원본이 바뀌면 덮어쓰지 않고 `changed_since_import`(`tests/import.rs`, 실데이터 945개 재실행 무중복).
-- [ ] PROJECT-001 프로젝트 폴더 선택·등록·생성·열기를 구현한다.
+- [x] PROJECT-001 프로젝트 폴더 선택·등록·생성·열기를 구현한다. 검증: 서버 PC 폴더 둘러보기 `GET /fs/dirs`(인증 필요, 하위 폴더 이름만, 숨김 선택, 500개 상한), 등록 시 `create: true`면 상위 폴더가 있을 때 마지막 폴더 하나만 생성(`tests/projects.rs::browse_dirs_and_create_project_in_new_folder`). 화면은 `prompt()` 대신 프로젝트 추가 대화상자(경로 입력·폴더 이동·상위 폴더·새로 만들기)로 등록 후 바로 열기(`web/e2e/project-add.spec.ts`). 처음 열 때 불러온 홈 목록이 입력 중인 경로 칸을 덮어써 경로가 이어 붙던 경합을 e2e로 발견해 수정(처음 목록은 "현재 위치"로만 표시). 회귀: Rust 234개·Vitest 28개·Playwright 66개(opt-in 7·2개 제외). 참고: 전체 실행 1회에서 `workspace.spec.ts`의 백그라운드 작업 시험이 "출력" 버튼 대기 시간 초과로 실패했으나 재실행에서 재현되지 않음(원인 미확정).
 - [ ] PROJECT-002 프로젝트 이름·아이콘·최근 항목·목록 정렬을 구현한다.
 - [x] PROJECT-003 프로젝트 제거와 실제 디렉터리 삭제를 분리한다. 검증: 프로젝트 보관은 목록에서만 제거하고 디렉터리·파일·대화를 건드리지 않으며 복원 가능, 외부에서 폴더를 지워도 서버는 삭제·재생성하지 않고 사용 불가로 표시(`tests/projects.rs::archive_removes_from_list_but_never_touches_directory`). 디렉터리 삭제 API는 없다.
 - [ ] PROJECT-004 프로젝트당 기본 작업공간 하나에 여러 세션을 연결한다. 화면 분할은 작업공간 생성과 분리하고 worktree는 명시적으로 선택한다.
