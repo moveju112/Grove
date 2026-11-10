@@ -94,20 +94,6 @@ async fn capture<R: AsyncRead + Unpin>(mut r: R) -> (Vec<u8>, usize) {
     (kept, total)
 }
 
-#[cfg(unix)]
-pub fn kill_group(pid: u32) {
-    // SAFETY: 이 프로세스가 생성한 process group에만 신호를 보낸다(pid == pgid).
-    unsafe {
-        libc::kill(-(pid as i32), libc::SIGKILL);
-    }
-}
-
-#[cfg(windows)]
-pub fn kill_group(pid: u32) {
-    let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()]).output();
-}
-
-/// OS 기본 셸 명령. 새 process group, stdin 없음, stdout/stderr pipe.
 /// 모델이 실행하는 명령에 넘기지 않을 환경변수인가(SEC-013).
 /// 자격증명처럼 보이는 이름과 서버 내부 설정(GROVE_*)을 뺀다. 사용자가 직접 여는 터미널에는 적용하지 않는다.
 pub fn is_sensitive_env(name: &str) -> bool {
@@ -120,7 +106,9 @@ pub fn is_sensitive_env(name: &str) -> bool {
     EXACT.contains(&n.as_str()) || PARTS.iter().any(|p| n.contains(p))
 }
 
-pub fn command(shell: &str, command: &str, cwd: &Path) -> tokio::process::Command {
+/// 셸 명령. stdin 없음, stdout/stderr pipe, 민감 환경변수 제거.
+/// 소유권 표식·process group·Job Object는 `procs::prepare`/`procs::adopt`가 맡는다(`tag`는 실행 표식).
+pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str) -> tokio::process::Command {
     let (program, args) = shell_argv(shell);
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).arg(command);
@@ -131,8 +119,7 @@ pub fn command(shell: &str, command: &str, cwd: &Path) -> tokio::process::Comman
         }
     }
     cmd.env("GROVE_SHELL", "1");
-    #[cfg(unix)]
-    cmd.process_group(0);
+    crate::procs::prepare(&mut cmd, tag);
     cmd
 }
 
@@ -140,10 +127,11 @@ pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver
     let cwd = resolve(root, planned.target["cwd"].as_str().unwrap_or("."))?;
     let command = planned.target["command"].as_str().unwrap_or("");
     let timeout = Duration::from_millis(planned.target["timeout_ms"].as_u64().unwrap_or(DEFAULT_TIMEOUT_MS));
-    let mut cmd = self::command(planned.target["shell"].as_str().unwrap_or("default"), command, &cwd);
+    let tag = crate::util::new_id();
+    let mut cmd = self::command(planned.target["shell"].as_str().unwrap_or("default"), command, &cwd, &tag);
     let started = std::time::Instant::now();
     let mut child = cmd.spawn().map_err(|e| ToolError::new("spawn_failed", format!("셸 실행 실패: {e}")))?;
-    let pid = child.id().unwrap_or(0);
+    let owned = crate::procs::adopt(&mut child, &tag).map_err(|e| ToolError::new("isolation_failed", e))?;
     let out_h = tokio::spawn(capture(child.stdout.take().expect("stdout")));
     let err_h = tokio::spawn(capture(child.stderr.take().expect("stderr")));
     enum End {
@@ -157,12 +145,12 @@ pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver
         _ = tokio::time::sleep(timeout) => End::Timeout,
         _ = cancel.wait_for(|c| *c) => End::Cancelled,
     };
-    if !matches!(end, End::Exit(_)) && pid != 0 {
-        kill_group(pid);
+    if !matches!(end, End::Exit(_)) {
+        owned.kill_tree(true);
         let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
-    } else if pid != 0 {
-        // 셸은 끝났지만 같은 그룹에 남은 background 자식도 정리한다(detach한 setsid 자식은 범위 밖).
-        kill_group(pid);
+    } else {
+        // 셸은 끝났지만 같은 트리에 남은 background 자식도 정리한다(Linux: setsid로 그룹을 떠난 자식은 범위 밖).
+        owned.kill_tree(false);
     }
     let (stdout, out_total) = tokio::time::timeout(Duration::from_secs(5), out_h).await.ok().and_then(Result::ok).unwrap_or_default();
     let (stderr, err_total) = tokio::time::timeout(Duration::from_secs(5), err_h).await.ok().and_then(Result::ok).unwrap_or_default();
@@ -236,7 +224,8 @@ mod tests {
         let out = v["stdout"].as_str().unwrap();
         let names: Vec<&str> = out.split('\u{1e}').filter_map(|l| l.split_once('=').map(|x| x.0)).collect();
         assert!(names.contains(&"PATH"), "일반 변수는 유지");
-        let leaked: Vec<_> = names.iter().filter(|n| **n != "GROVE_SHELL" && is_sensitive_env(n)).collect();
+        // GROVE_SHELL·실행 표식(GROVE_TASK_ID)은 서버가 의도적으로 넣는 비밀 아닌 값이다.
+        let leaked: Vec<_> = names.iter().filter(|n| **n != "GROVE_SHELL" && **n != crate::procs::OWNER_ENV && is_sensitive_env(n)).collect();
         assert!(leaked.is_empty(), "자식에 남은 민감 변수: {leaked:?}");
     }
 

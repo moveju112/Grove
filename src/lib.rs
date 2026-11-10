@@ -20,6 +20,7 @@ pub mod followups;
 pub mod goals;
 pub mod idem;
 pub mod models;
+pub mod procs;
 pub mod projects;
 pub mod provider;
 pub mod tools;

@@ -217,13 +217,12 @@ impl Drop for ScratchDir {
     }
 }
 
-/// 취소(future drop)·timeout 시 process group 전체를 종료한다.
-struct GroupGuard(Option<u32>);
+/// 끝나거나 취소(future drop)·timeout되면 소유 프로세스 트리 전체를 종료한다.
+/// leader 회수 여부를 모르므로 표식으로 소유를 확인하는 경로를 쓴다(SEC-016).
+struct GroupGuard(crate::procs::Owned);
 impl Drop for GroupGuard {
     fn drop(&mut self) {
-        if let Some(pid) = self.0 {
-            crate::tools::shell::kill_group(pid);
-        }
+        self.0.kill_tree(false);
     }
 }
 
@@ -254,13 +253,13 @@ pub async fn stream(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>
     {
         cmd.env("MAX_THINKING_TOKENS", super::effort_budget(e).to_string());
     }
-    #[cfg(unix)]
-    cmd.process_group(0);
+    let tag = crate::util::new_id();
+    crate::procs::prepare(&mut cmd, &tag);
     let mut child = cmd.spawn().map_err(|e| {
         let code = if e.kind() == std::io::ErrorKind::NotFound { "cli_not_found" } else { "cli_failed" };
         ProviderError::new(code, format!("{prog} 실행 실패: {e}"))
     })?;
-    let _guard = GroupGuard(child.id());
+    let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag).map_err(|e| ProviderError::new("cli_failed", e))?);
     let stdout = child.stdout.take().expect("stdout");
     let mut stderr = child.stderr.take().expect("stderr");
     let err_task = tokio::spawn(async move {

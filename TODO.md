@@ -702,10 +702,10 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] SEC-010 승인 만료·거부·중복 응답·연결 끊김·세션 종료를 안전하게 처리한다. 검증: `tests/turns.rs::approval_expires`, `denied_write_keeps_file_absent_and_model_sees_denial`, `cancelling_turn_cancels_pending_approvals`, `approval_survives_restart_and_resumes`.
 - [ ] SEC-011 파일 경로 traversal·symlink·UNC·대소문자 차이·TOCTOU를 검증한다.
 - [ ] SEC-012 사용자 파일 삭제·프로세스 종료·Git 파괴 작업의 대상을 확인하고 필요한 승인을 요구한다.
-- [x] SEC-013 셸/MCP 자식에 전달하는 환경변수·자격증명을 최소화한다. 검증: 모델 셸 도구 자식에서 자격증명형 이름·`GROVE_*`·`SSH_AUTH_SOCK` 제거(`tools::shell::tests::child_env_has_no_sensitive_vars`를 `GITHUB_TOKEN`·`OPENAI_API_KEY`·`GROVE_LISTEN` 설정 상태로 통과), Git은 프롬프트 차단, 사용자 터미널은 사용자 환경 유지(RULEBOOK §17). MCP 자식 프로세스는 아직 없음.
-- [ ] SEC-014 Linux process group/cgroup과 Windows Job Object로 소유한 프로세스 트리를 관리한다.
-- [ ] SEC-015 격리 실패 시 실행을 거부하고 실패를 무시하는 fallback을 두지 않는다.
-- [ ] SEC-016 PID 재사용과 다른 서비스 오인 종료를 방지한다.
+- [x] SEC-013 셸/MCP 자식에 전달하는 환경변수·자격증명을 최소화한다. 검증: 모델 셸 도구 자식에서 자격증명형 이름·`GROVE_*`·`SSH_AUTH_SOCK` 제거(`tools::shell::tests::child_env_has_no_sensitive_vars`를 `GITHUB_TOKEN`·`OPENAI_API_KEY`·`GROVE_LISTEN` 설정 상태로 통과, 비밀 아닌 실행 표식 `GROVE_SHELL`·`GROVE_TASK_ID`만 예외), Git은 프롬프트 차단, 사용자 터미널은 사용자 환경 유지(RULEBOOK §17). MCP 자식 프로세스는 아직 없음.
+- [x] SEC-014 Linux process group/cgroup과 Windows Job Object로 소유한 프로세스 트리를 관리한다. 검증: `src/procs.rs` 한 경로를 셸 도구·백그라운드 작업·CLI provider가 공유. Linux는 실행마다 새 process group + 실행 표식(`GROVE_TASK_ID`), cgroup은 쓰지 않음. Windows는 실행마다 Job Object(`KILL_ON_JOB_CLOSE`), 일시정지로 생성해 Job에 넣은 뒤 재개하므로 손자도 빠짐없이 포함. Windows 실행 파일을 wine에서 실행해 취소·서버 강제 종료 시 손자까지 종료됨을 확인(`procs::win_tests` 2개, wine 서버 시험 — 셸 `cmd`), Linux `procs::tests`.
+- [ ] SEC-015 격리 실패 시 실행을 거부하고 실패를 무시하는 fallback을 두지 않는다. 진행: Windows는 Job 할당·재개 실패 시 프로세스를 끝내고 `isolation_failed`로 거부(`procs::adopt`), Linux는 process group 생성 실패가 곧 spawn 실패. 남은 일: 격리 실패 주입 시험.
+- [x] SEC-016 PID 재사용과 다른 서비스 오인 종료를 방지한다. 검증: leader가 회수된 뒤에는 그룹 번호만 보고 신호를 보내지 않고, 같은 실행 표식의 구성원이 남아 있는 그룹만 종료(구성원이 있는 동안 그룹 번호는 재사용되지 않음). 재시작 정리도 PID가 아닌 표식 기준. `procs::tests::group_kill_requires_matching_tag`(표식 없는 그룹·다른 표식 그룹 유지, 우리 그룹은 표식 없는 `env -i` 자식까지 종료), `tests/tasks.rs::crash_leftover_processes_are_reaped_by_task_marker_only`. Windows는 Job handle 기준이라 PID를 쓰지 않음.
 - [ ] SEC-017 CPU·RAM·출력 크기·작업 수·timeout 한도를 적용한다.
 - [ ] SEC-018 비밀정보는 OS credential store를 우선 사용하고 headless 환경의 보호 대안을 정의한다.
 - [x] SEC-019 비밀번호 hash·토큰·OAuth refresh token은 평문 로그/응답/백업에 노출하지 않는다. 검증: 접근 토큰은 hash(`tokens.secret_hash`)만 저장, 한 번만 보이는 토큰 응답은 재전송 저장본에서 제거(`idem::run_redacted`), API 키는 `secret.key`로 암호화 저장(DB·snapshot에 평문 없음, `tests/secrets.rs`, `vault::tests`), 목록은 마스킹, 로그에 토큰·키 출력 없음.
@@ -895,7 +895,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] EXEC-007 hard timeout과 출력 대기 시간을 구분한다. 검증: `tests/tasks.rs::cancel_timeout_and_wait_timeout_are_distinct`(wait 시간 초과는 작업 유지, hard timeout은 종료).
 - [x] EXEC-008 종료 코드와 종료 신호·timeout·사용자 취소를 구분한다. 검증: `tools::shell::tests::runs_and_captures`, `timeout_kills_process_group`, `cancel_stops_command`.
 - [x] EXEC-009 task 소유 세션과 외부 프로세스 트리를 연결한다. 검증: `tasks` 행의 session_id·call_id·pid(process group), `tests/tasks.rs`(취소 시 그룹 전체 종료, call_id 연결).
-- [ ] EXEC-010 세션 종료·서버 종료·부모 사망 시 소유 프로세스 정리 정책을 적용한다. 진행: 세션 보관은 실행 중 작업이 있으면 거절(명시적 취소 필요), 서버 정상 종료는 작업 process group 취소(`tasks::stop_all`). Linux 비정상 종료: 작업 프로세스에 `GROVE_TASK_ID` 표식을 물려주고 재시작 때 표식이 일치하는 잔여 프로세스(setsid로 분리된 자손 포함)만 종료, 상태는 `unknown` 유지·종료 개수를 사유에 기록(`tests/tasks.rs::crash_leftover_processes_are_reaped_by_task_marker_only`). 남은 일: Windows 부모 사망 정리(Job Object), 표식을 지운 자손(`env -i`)은 찾지 못함.
+- [x] EXEC-010 세션 종료·서버 종료·부모 사망 시 소유 프로세스 정리 정책을 적용한다. 검증: 세션 보관은 실행 중 작업이 있으면 거절(명시적 취소 필요, `tests/tasks.rs::cancel_timeout_and_wait_timeout_are_distinct`), 서버 정상 종료는 작업 트리 취소(`tasks::stop_all`, `shutdown_cancels_and_crash_leftovers_become_unknown`). 부모 사망: Linux는 재시작 때 실행 표식이 일치하는 잔여 프로세스(setsid로 분리된 자손 포함)만 종료하고 상태는 `unknown` 유지·종료 개수를 사유에 기록(`crash_leftover_processes_are_reaped_by_task_marker_only`). Windows는 Job Object가 서버 사망과 함께 트리를 종료(wine에서 서버 SIGKILL 후 손자까지 종료·재시작 사유 "남은 프로세스는 없습니다" 확인). 한계: Linux에서 표식을 지운 자손(`env -i`)이 그룹까지 떠나면 재시작 정리 대상에서 빠짐.
 - [x] EXEC-011 백그라운드 완료 결과를 모델 호출 없이 원래 세션에 저장한다. 검증: `tests/tasks.rs`(note 1개, 다음 턴 모델 입력에 포함).
 - [x] EXEC-012 결과 기록의 중복 방지·클라이언트 재연결 전달을 구현한다. 검증: 상태 전이 guard로 note 1회(`tests/tasks.rs`), `message.created`·`task.changed` 이벤트 cursor 재전송.
 - [x] EXEC-013 재시작으로 결과를 확인할 수 없는 작업은 결과 불명으로 표시한다. 검증: `tests/tasks.rs::shutdown_cancels_and_crash_leftovers_become_unknown`.
