@@ -537,6 +537,10 @@ pub const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE turns ADD COLUMN progress_at TEXT;
     "#,
+    // 27: 프로젝트 아이콘(PROJECT-002). 이모지나 짧은 글자, 없으면 NULL.
+    r#"
+    ALTER TABLE projects ADD COLUMN icon TEXT;
+    "#,
 ];
 
 #[cfg(test)]

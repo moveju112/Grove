@@ -127,6 +127,8 @@ export function applyEvent(e: EventRecord) {
             if (sid) invalidate(`session:${sid}`);
             invalidate("recent");
             invalidate("search");
+            // 대화 활동이 바뀌면 최근 활동 순 프로젝트 목록 순서도 바뀐다(PROJECT-002).
+            invalidate("projects:recent");
             break;
         case "session.deleted": {
             const id = (e.payload as { id?: string })?.id;

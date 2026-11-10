@@ -16,6 +16,7 @@ export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
 
 const LOCAL_LAYOUT = "grove.layout.";
+const PROJECT_SORT = "grove.projectSort";
 
 function useNarrow(): boolean {
     const [n, setN] = useState(isNarrow());
@@ -37,7 +38,9 @@ export function Workspace() {
     const revision = useRef(0);
     const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
     const key = useMemo(() => layoutKey(), [narrow]); // eslint-disable-line react-hooks/exhaustive-deps
-    const projects = useQuery<Project[]>("projects", () => api.get("/projects"));
+    // 프로젝트 목록 정렬은 기기별 선택(PROJECT-002): 이름순 또는 최근 활동순.
+    const [projectSort, setProjectSort] = useState<"name" | "recent">(() => (localStorage.getItem(PROJECT_SORT) === "recent" ? "recent" : "name"));
+    const projects = useQuery<Project[]>(`projects:${projectSort}`, () => api.get(`/projects?sort=${projectSort}`));
 
     useEffect(() => applyPrefs(loadPrefs()), []);
 
@@ -183,11 +186,26 @@ export function Workspace() {
                         <SearchPanel open={open} />
                         <RecentPanel open={open} />
                         <section className="projects">
-                            <h2>프로젝트</h2>
+                            <h2>
+                                프로젝트{" "}
+                                <select
+                                    className="small"
+                                    aria-label="프로젝트 정렬"
+                                    value={projectSort}
+                                    onChange={(e) => {
+                                        const v = e.target.value === "recent" ? "recent" : "name";
+                                        localStorage.setItem(PROJECT_SORT, v);
+                                        setProjectSort(v);
+                                    }}
+                                >
+                                    <option value="name">이름순</option>
+                                    <option value="recent">최근 활동순</option>
+                                </select>
+                            </h2>
                             {(projects.data ?? []).map((p) => (
-                                <div key={p.id} className="row">
+                                <div key={p.id} className="row" data-testid="project-row">
                                     <button className="link" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name })} title={p.root_path}>
-                                        {p.name} {!p.available && <em className="warn">(경로 없음)</em>}
+                                        {p.icon && <span className="project-icon" aria-hidden>{p.icon}</span>} {p.name} {!p.available && <em className="warn">(경로 없음)</em>}
                                     </button>
                                     {!narrow && (
                                         <span className="row-actions">

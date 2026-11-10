@@ -7,6 +7,56 @@ import { GitPanel } from "./GitPanel";
 import { SchedulesPanel } from "./SchedulesPanel";
 import type { Opener } from "./Workspace";
 
+/// 프로젝트 이름·아이콘 변경(PROJECT-002). revision 충돌이면 최신 값을 다시 불러와 알린다.
+function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
+    const [edit, setEdit] = useState(false);
+    const [name, setName] = useState(p.name);
+    const [icon, setIcon] = useState(p.icon ?? "");
+    const [err, setErr] = useState<string | null>(null);
+    if (!edit) {
+        return (
+            <button
+                className="ghost small"
+                onClick={() => {
+                    setName(p.name);
+                    setIcon(p.icon ?? "");
+                    setErr(null);
+                    setEdit(true);
+                }}
+            >
+                이름·아이콘
+            </button>
+        );
+    }
+    const save = async () => {
+        setErr(null);
+        try {
+            await api.patch(`/projects/${p.id}`, { expected_revision: p.revision, name: name.trim(), icon: icon.trim() || null });
+            setEdit(false);
+            reload();
+        } catch (e) {
+            if (e instanceof ApiError && e.code === "revision_conflict") reload();
+            setErr(e instanceof ApiError ? e.message : "저장하지 못했습니다");
+        }
+    };
+    return (
+        <form
+            className="inline"
+            aria-label="프로젝트 이름·아이콘"
+            onSubmit={(e) => {
+                e.preventDefault();
+                void save();
+            }}
+        >
+            <input aria-label="아이콘" value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="예: 🌱" size={4} />
+            <input aria-label="프로젝트 이름" value={name} onChange={(e) => setName(e.target.value)} required />
+            <button className="small" type="submit">저장</button>
+            <button className="ghost small" type="button" onClick={() => setEdit(false)}>취소</button>
+            {err && <span className="err" role="alert">{err}</span>}
+        </form>
+    );
+}
+
 /// 프로젝트 = 단일 작업공간. 중간 생성 단계 없이 입력창에서 바로 새 대화를 시작한다.
 export function ProjectView({ projectId, open }: { projectId: string; open: Opener }) {
     const [q, setQ] = useState("");
@@ -26,7 +76,11 @@ export function ProjectView({ projectId, open }: { projectId: string; open: Open
     return (
         <div className="project-view">
             <header className="view-head">
-                <h1>{project.data?.name ?? "프로젝트"}</h1>
+                <h1>
+                    {project.data?.icon && <span className="project-icon" aria-hidden>{project.data.icon} </span>}
+                    {project.data?.name ?? "프로젝트"}
+                </h1>
+                {project.data && <ProjectIdentity p={project.data} reload={project.reload} />}
                 <code className="muted small">{project.data?.root_path}</code>
                 <button className="ghost small" onClick={() => open({ kind: "file", project_id: projectId, resource_id: "files", title: `파일 · ${project.data?.name ?? ""}` })}>
                     파일

@@ -8,7 +8,15 @@ export type Project = { id: string, name: string, root_path: string, created_at:
 /**
  * root 경로가 현재 접근 가능한 디렉터리인지
  */
-available: boolean, };
+available: boolean, 
+/**
+ * 표시 아이콘(이모지·짧은 글자, PROJECT-002). 없으면 null.
+ */
+icon: string | null, 
+/**
+ * 마지막 활동: 프로젝트 대화 중 가장 늦은 갱신 시각, 대화가 없으면 프로젝트 갱신 시각.
+ */
+last_activity_at: string, };
 
 export type Session = { id: string, project_id: string, title: string, created_at: string, updated_at: string, revision: number, archived_at: string | null, parent_session_id: string | null, fork_message_seq: number | null, fork_inherits_context: boolean, workflow_id: string | null, last_message_seq: number, 
 /**

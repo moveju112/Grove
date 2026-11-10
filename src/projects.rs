@@ -24,9 +24,18 @@ pub struct Project {
     pub archived_at: Option<String>,
     /// root 경로가 현재 접근 가능한 디렉터리인지
     pub available: bool,
+    /// 표시 아이콘(이모지·짧은 글자, PROJECT-002). 없으면 null.
+    pub icon: Option<String>,
+    /// 마지막 활동: 프로젝트 대화 중 가장 늦은 갱신 시각, 대화가 없으면 프로젝트 갱신 시각.
+    pub last_activity_at: String,
 }
 
-const COLS: &str = "id, name, root_path, created_at, updated_at, revision, archived_at";
+const COLS: &str = "id, name, root_path, created_at, updated_at, revision, archived_at, icon, \
+    COALESCE((SELECT s.updated_at FROM sessions s WHERE s.project_id = projects.id AND julianday(s.updated_at) > julianday(projects.updated_at) \
+              ORDER BY julianday(s.updated_at) DESC LIMIT 1), projects.updated_at) AS last_activity_at";
+
+/// 아이콘 최대 길이(문자). 이모지 조합(ZWJ·피부색)까지 담을 수 있게 넉넉히 둔다.
+const MAX_ICON_CHARS: usize = 8;
 
 fn from_row(r: &Row) -> rusqlite::Result<Project> {
     let root: String = r.get(2)?;
@@ -40,6 +49,8 @@ fn from_row(r: &Row) -> rusqlite::Result<Project> {
         revision: r.get(5)?,
         archived_at: r.get(6)?,
         available,
+        icon: r.get(7)?,
+        last_activity_at: r.get(8)?,
     })
 }
 
@@ -182,16 +193,21 @@ pub async fn create(
 #[derive(Deserialize)]
 pub struct ListQuery {
     pub archived: Option<bool>,
+    /// name(기본) | recent(마지막 활동 늦은 순)
+    pub sort: Option<String>,
 }
 
 pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<ListQuery>) -> ApiResult<Json<Vec<Project>>> {
     let archived = q.archived.unwrap_or(false);
+    let order = match q.sort.as_deref() {
+        None | Some("name") => "name COLLATE NOCASE, id",
+        Some("recent") => "julianday(last_activity_at) DESC, name COLLATE NOCASE, id",
+        Some(_) => return Err(ApiError::invalid("sort는 name 또는 recent입니다")),
+    };
     let v = app
         .db
         .call(move |c| {
-            let sql = format!(
-                "SELECT {COLS} FROM projects WHERE (archived_at IS NOT NULL) = ?1 ORDER BY name COLLATE NOCASE, id"
-            );
+            let sql = format!("SELECT {COLS} FROM projects WHERE (archived_at IS NOT NULL) = ?1 ORDER BY {order}");
             let mut s = c.prepare(&sql)?;
             let v = s.query_map(params![archived], from_row)?.collect::<Result<Vec<_>, _>>()?;
             Ok(v)
@@ -211,6 +227,9 @@ pub struct UpdateProject {
     pub archived: Option<bool>,
     /// 폴더를 옮겼을 때 새 경로로 다시 연결한다(PROJECT-007). 기존 폴더는 건드리지 않는다.
     pub root_path: Option<String>,
+    /// 아이콘 설정, null이면 해제(PROJECT-002).
+    #[serde(default, deserialize_with = "crate::util::double_option")]
+    pub icon: Option<Option<String>>,
 }
 
 /// 실행 중인 턴·백그라운드 작업·터미널 수(경로를 바꾸면 안 되는 상태).
@@ -237,6 +256,17 @@ pub async fn update(
             return Err(ApiError::invalid("이름은 1~120자여야 합니다"));
         }
     }
+    let icon = match &body.icon {
+        Some(Some(i)) => {
+            let i = i.trim().to_string();
+            if i.chars().count() > MAX_ICON_CHARS || i.chars().any(char::is_control) {
+                return Err(ApiError::invalid(format!("아이콘은 {MAX_ICON_CHARS}자 이하여야 합니다")));
+            }
+            Some(if i.is_empty() { None } else { Some(i) })
+        }
+        Some(None) => Some(None),
+        None => None,
+    };
     let new_root = match body.root_path.as_deref().map(str::trim) {
         None => None,
         Some(raw) => {
@@ -249,7 +279,7 @@ pub async fn update(
     };
     let h = idem::body_hash(
         "project.update",
-        &json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root }),
+        &json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon }),
     );
     let rev = body.expected_revision;
     let archived = body.archived;
@@ -275,9 +305,10 @@ pub async fn update(
             Some(false) => None,
             None => cur.archived_at.clone(),
         };
+        let new_icon = icon.clone().unwrap_or(cur.icon.clone());
         tx.execute(
-            "UPDATE projects SET name = ?2, archived_at = ?3, updated_at = ?4, revision = revision + 1 WHERE id = ?1",
-            params![id, new_name, archived_at, now],
+            "UPDATE projects SET name = ?2, archived_at = ?3, updated_at = ?4, icon = ?5, revision = revision + 1 WHERE id = ?1",
+            params![id, new_name, archived_at, now, new_icon],
         )?;
         let proj = get(tx, &id)?;
         events::append(tx, now, "project.updated", Some(&id), None, &serde_json::to_value(&proj)?)?;

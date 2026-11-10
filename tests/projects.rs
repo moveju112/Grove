@@ -46,6 +46,40 @@ async fn browse_dirs_and_create_project_in_new_folder() {
     assert_eq!(st, StatusCode::CREATED);
 }
 
+/// PROJECT-002: 아이콘 설정·해제와 이름순·최근 활동순 정렬.
+#[tokio::test]
+async fn project_icon_and_sort_by_recent_activity() {
+    let s = TestServer::start().await;
+    let a = s.create_project("aaa").await;
+    let b = s.create_project("bbb").await;
+    let (aid, bid) = (a["id"].as_str().unwrap().to_string(), b["id"].as_str().unwrap().to_string());
+    assert!(a["icon"].is_null());
+    let (st, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{aid}"), json!({ "expected_revision": a["revision"], "icon": "🌱" })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["icon"], "🌱");
+    assert_eq!(v["name"], "aaa", "이름은 그대로");
+    let (st, _) = s.send(Method::PATCH, &format!("/api/v1/projects/{aid}"), json!({ "expected_revision": v["revision"], "icon": "123456789" })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "너무 긴 아이콘 거부");
+    // icon 필드 없이 이름만 바꾸면 아이콘 유지, null이면 해제
+    let (_, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{aid}"), json!({ "expected_revision": v["revision"], "name": "aaa2" })).await;
+    assert_eq!(v["icon"], "🌱");
+    let (_, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{aid}"), json!({ "expected_revision": v["revision"], "icon": null })).await;
+    assert!(v["icon"].is_null(), "{v}");
+
+    let order = |v: &serde_json::Value| v.as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let (_, v) = s.get("/api/v1/projects?sort=name").await;
+    assert_eq!(order(&v), vec![aid.clone(), bid.clone()]);
+    // bbb에 대화 활동이 생기면 최근 활동순에서 앞
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    s.create_session(&bid).await;
+    let (_, v) = s.get("/api/v1/projects?sort=recent").await;
+    assert_eq!(order(&v), vec![bid.clone(), aid.clone()], "{v}");
+    let pb = v.as_array().unwrap().iter().find(|p| p["id"] == bid.as_str()).unwrap();
+    assert_ne!(pb["last_activity_at"], pb["updated_at"], "대화 활동 시각이 반영된다");
+    let (st, _) = s.get("/api/v1/projects?sort=size").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+}
+
 fn urlencode(s: &str) -> String {
     s.bytes()
         .map(|b| if b.is_ascii_alphanumeric() || b"-_.~/".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
