@@ -114,6 +114,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .pairings { display: grid; gap: 0.6em; }
 .pairing-qr { display: block; max-width: 100%; height: auto; }
 .pairings label input { display: block; width: 100%; }
+.notification-phase { display: block; }
 .dialog label input:not([type="checkbox"]) { display: block; width: 100%; margin-top: 0.2em; }
 .dialog .row { display: flex; flex-wrap: wrap; gap: 0.5em; align-items: center; }
 .dir-list { list-style: none; margin: 0; padding: 0.3em; max-height: 16em; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }

@@ -16,6 +16,7 @@ fn generate() -> String {
         decl::<grove::events::EventRecord>(),
         decl::<grove::auth::DeviceInfo>(),
         decl::<grove::pairing::PairingInfo>(),
+        decl::<grove::notifications::Notification>(),
         decl::<grove::projects::Project>(),
         decl::<grove::sessions::Session>(),
         decl::<grove::sessions::SessionPage>(),

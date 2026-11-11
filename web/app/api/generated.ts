@@ -6,6 +6,8 @@ export type DeviceInfo = { id: string, kind: string, name: string, created_at: s
 
 export type PairingInfo = { id: string, name: string, created_at: string, expires_at: string, revoked_at: string | null, consumed_at: string | null, device_id: string | null, };
 
+export type Notification = { id: string, kind: string, title: string, body: string, project_id: string | null, session_id: string | null, ref_id: string | null, created_at: string, delivered_at: string | null, read_at: string | null, };
+
 export type Project = { id: string, name: string, root_path: string, created_at: string, updated_at: string, revision: number, archived_at: string | null, 
 /**
  * root 경로가 현재 접근 가능한 디렉터리인지

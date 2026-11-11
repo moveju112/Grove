@@ -74,6 +74,7 @@ pub const CAPABILITIES: &[&str] = &[
     "worktrees_v1",
     "dependency_hints_v1",
     "pairing_v1",
+    "notification_delivery_v1",
 ];
 
 #[derive(Clone)]
@@ -181,6 +182,7 @@ pub fn router(app: App) -> Router {
         .route("/bots/{id}/status", post(bots::set_status))
         .route("/bots/{id}/seen", post(bots::seen))
         .route("/notifications", get(notifications::list))
+        .route("/notifications/delivered", post(notifications::delivered))
         .route("/notifications/read-all", post(notifications::read_all))
         .route("/notifications/{id}/read", post(notifications::read))
         .route("/schedules", get(schedules::list))

@@ -670,6 +670,12 @@ pub const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX pairings_issuer ON pairings(issuer_id,created_at);
     "#,
+    // 38: 알림 저장·앱 수신·명시적 열람을 분리한다. 기존 읽음은 앱 수신도 확인된 상태다.
+    r#"
+    ALTER TABLE notifications ADD COLUMN delivered_at TEXT;
+    UPDATE notifications SET delivered_at=read_at WHERE read_at IS NOT NULL;
+    CREATE INDEX notifications_ref_created ON notifications(ref_id,created_at,id);
+    "#,
 ];
 
 #[cfg(test)]

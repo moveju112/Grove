@@ -663,7 +663,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [ ] NET-021 기존 5회 실패 잠금 정책 유지 또는 변경을 결정하고 보안 회귀를 검증한다.
 - [ ] NET-022 릴레이의 암호화·신뢰 경계를 확인하고 중계자가 볼 수 있는 데이터를 명시한다.
 - [ ] NET-023 SSH 접속·터널 기능의 실제 노출을 조사하고 유지 시 host key 검증·인증·재연결을 구현한다.
-- [ ] NET-024 원격 명령 접수, 서버 저장, 앱 전달, 사용자 열람 상태를 구분한다.
+- [x] NET-024 원격 명령 접수, 서버 저장, 앱 전달, 사용자 열람 상태를 구분한다. 검증: 접수는 기존 commit 후 영속 receipt·`202` 계약을 유지하고 실행 완료로 취급하지 않는다. 결과 알림의 저장(`created_at`)·인증된 앱의 최초 확인(`delivered_at`)·명시적 읽음/모두 읽음(`read_at`)을 분리했다(`src/notifications.rs`, migration 38, `web/app/components/NotificationsPanel.tsx`). 목록 조회·SSE 전송은 전달로 간주하지 않으며 확인이 없으면 미확인, 기능 미지원이면 미지원으로 표시한다. 결과 참조 `ref_id`로 원래 run과 연결하고 알림이 없는 직접 응답의 앱 도착을 추정하지 않는다. 전달 batch는 100개 상한·ID 집합 정규화·기존 idempotency transaction을 사용하고 재전송 시 최초 상태·응답을 보존한다. 읽음 이벤트 저장 실패에도 읽음만 남던 결함을 먼저 재현하고 상태·이벤트를 같은 transaction으로 수정했다. 초기 E2E의 시험 예약 정리 API 오류를 수정한 뒤 명령 접수·저장·앱 전달·열람·네트워크 실패/재확인·모델 재실행 없음과 기존 예약 UI 흐름을 확인했다. 선택 Rust `notifications`·`schedules`·`api`·`storage`·`task_logs`·`cli`·`ts_bindings` 69개, 관련 Vitest 10개, 타입 검사, 새 전달 E2E 2개·기존 예약 E2E 1개 통과(변하지 않은 근거 재사용 포함). 전달·읽음은 기존 단일 사용자 서버의 공유 상태이며 모든 기기의 수신·주의 집중을 보장하지 않는다(`migration/RULEBOOK.md` §4). 기존 bundle·Router 경고는 유지한다.
 - [x] NET-025 호환되지 않는 버전은 명확히 거절하고 업데이트 안내를 제공한다. 검증: `X-Grove-Protocol` 불일치 변경 요청은 `409 protocol_mismatch`, 화면은 새로고침 배너(`tests/api.rs::protocol_mismatch_blocks_mutations_but_not_reads`, e2e protocol 배너), DB schema가 더 새로우면 시작 거부.
 
 ## 6. 저장·트랜잭션·복구

@@ -7,11 +7,13 @@ use crate::error::{ApiError, ApiResult};
 use crate::events;
 use axum::Json;
 use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::Response;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 pub struct Notification {
     pub id: String,
     pub kind: String,
@@ -21,6 +23,7 @@ pub struct Notification {
     pub session_id: Option<String>,
     pub ref_id: Option<String>,
     pub created_at: String,
+    pub delivered_at: Option<String>,
     pub read_at: Option<String>,
 }
 
@@ -42,6 +45,7 @@ pub fn push(c: &Connection, now: &str, kind: &str, title: &str, body: &str, proj
         session_id: session_id.map(String::from),
         ref_id: ref_id.map(String::from),
         created_at: now.into(),
+        delivered_at: None,
         read_at: None,
     };
     events::append(c, now, "notification.created", project_id, session_id, &serde_json::to_value(&n)?)?;
@@ -55,6 +59,8 @@ pub struct ListQuery {
     pub limit: Option<i64>,
     /// 이전 페이지의 next_cursor. 그보다 오래된 알림부터 돌려준다.
     pub before: Option<String>,
+    /// 명령 receipt의 run ID 등 결과 참조로 전달 상태를 확인한다.
+    pub ref_id: Option<String>,
 }
 
 /// cursor = "<created_at>|<id>" (새 알림이 생겨도 페이지가 밀리지 않는 keyset).
@@ -75,12 +81,13 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<ListQue
         .db
         .call(move |c| {
             let mut st = c.prepare(
-                "SELECT id, kind, title, body, project_id, session_id, ref_id, created_at, read_at FROM notifications \
+                "SELECT id, kind, title, body, project_id, session_id, ref_id, created_at, delivered_at, read_at FROM notifications \
                  WHERE (?1 = 0 OR read_at IS NULL) AND (?3 IS NULL OR created_at < ?3 OR (created_at = ?3 AND id < ?4)) \
+                 AND (?5 IS NULL OR ref_id = ?5) \
                  ORDER BY created_at DESC, id DESC LIMIT ?2",
             )?;
             let mut rows: Vec<Notification> = st
-                .query_map(params![q.unread as i64, limit + 1, bt, bid], |r| {
+                .query_map(params![q.unread as i64, limit + 1, bt, bid, q.ref_id], |r| {
                     Ok(Notification {
                         id: r.get(0)?,
                         kind: r.get(1)?,
@@ -90,7 +97,8 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<ListQue
                         session_id: r.get(5)?,
                         ref_id: r.get(6)?,
                         created_at: r.get(7)?,
-                        read_at: r.get(8)?,
+                        delivered_at: r.get(8)?,
+                        read_at: r.get(9)?,
                     })
                 })?
                 .collect::<Result<_, _>>()?;
@@ -113,10 +121,12 @@ pub async fn read(State(app): State<App>, _p: Principal, Path(id): Path<String>)
     let n = app
         .db
         .call(move |c| {
-            let n = c.execute("UPDATE notifications SET read_at = ?2 WHERE id = ?1 AND read_at IS NULL", params![id, now])?;
+            let tx = c.transaction()?;
+            let n = tx.execute("UPDATE notifications SET delivered_at = COALESCE(delivered_at, ?2), read_at = ?2 WHERE id = ?1 AND read_at IS NULL", params![id, now])?;
             if n > 0 {
-                events::append(c, &now, "notification.read", None, None, &json!({ "id": id }))?;
+                events::append(&tx, &now, "notification.read", None, None, &json!({ "id": id }))?;
             }
+            tx.commit()?;
             Ok(n)
         })
         .await?;
@@ -129,11 +139,40 @@ pub async fn read_all(State(app): State<App>, _p: Principal) -> ApiResult<Json<V
     let n = app
         .db
         .call(move |c| {
-            let n = c.execute("UPDATE notifications SET read_at = ?1 WHERE read_at IS NULL", params![now])?;
-            events::append(c, &now, "notification.read", None, None, &json!({ "all": true }))?;
+            let tx = c.transaction()?;
+            let n = tx.execute("UPDATE notifications SET delivered_at = COALESCE(delivered_at, ?1), read_at = ?1 WHERE read_at IS NULL", params![now])?;
+            if n > 0 { events::append(&tx, &now, "notification.read", None, None, &json!({ "all": true }))?; }
+            tx.commit()?;
             Ok(n)
         })
         .await?;
     app.notify_events().await;
     Ok(Json(json!({ "updated": n })))
+}
+
+#[derive(Deserialize)]
+pub struct Delivered {
+    pub ids: Vec<String>,
+}
+
+/// 목록 조회·SSE 전송만으로 전달을 추정하지 않는다. 수신한 앱의 명시적 확인만 기록한다.
+pub async fn delivered(State(app): State<App>, p: Principal, headers: HeaderMap, Json(mut body): Json<Delivered>) -> ApiResult<Response> {
+    if body.ids.is_empty() || body.ids.len() > 100 || body.ids.iter().any(|id| id.is_empty() || id.len() > 128) {
+        return Err(ApiError::invalid("확인할 알림 ID는 1~100개, 각 128바이트 이하로 지정하세요"));
+    }
+    body.ids.sort();
+    body.ids.dedup();
+    let hash = crate::idem::body_hash("notification.delivered", &json!({ "ids": body.ids }));
+    crate::idem::run(&app, &p, &headers, &hash, move |tx, now| {
+        let mut changed = Vec::new();
+        for id in body.ids {
+            let n = tx.execute("UPDATE notifications SET delivered_at=?2 WHERE id=?1 AND delivered_at IS NULL", params![id, now])?;
+            if n > 0 { changed.push(id); }
+        }
+        if !changed.is_empty() {
+            events::append(tx, now, "notification.delivered", None, None, &json!({ "ids": changed }))?;
+        }
+        let count = changed.len();
+        Ok((StatusCode::OK, json!({ "updated": count })))
+    }).await
 }

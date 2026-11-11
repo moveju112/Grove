@@ -199,6 +199,7 @@ export function applyEvent(e: EventRecord) {
             invalidate("schedules");
             break;
         case "notification.created":
+        case "notification.delivered":
         case "notification.read":
             invalidate("notifications");
             break;
