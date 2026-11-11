@@ -271,6 +271,10 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 ### 도구 정책 (SEC-006, 007)
 
+비신뢰 콘텐츠(SEC-022): 모델 텍스트·문서/웹 내용·도구 결과·백그라운드/자식 에이전트 결과는 데이터이며 시스템 지침이나 사용자 승인으로 승격하지 않는다. 공통 시스템 프롬프트에 이 경계를 명시하고, 일반 도구 결과는 provider의 tool 메시지 내용으로 전달한다. 역할·승인 JSON처럼 보이는 문자열도 메시지 배열이나 승인 API로 재해석하지 않는다. 비동기 결과는 provider 호환성을 위해 user 메시지에 실릴 수 있지만 비신뢰 데이터 표식과 JSON 문자열 인용을 붙이며, 실제 사용자의 승인으로 간주하지 않는다. 모델도 추가할 수 있는 Goal 제목은 다음 시스템 알림에서 JSON 데이터로 인용해 줄바꿈·헤더를 통한 지침 삽입을 막고 저장 원문은 보존한다.
+
+쓰기 승인 상태·대화 범위 허용은 기존 서버 정책과 인증된 명시적 승인 API만 변경한다. 모델 도구 인자의 `approved`·`approval_scope` 같은 미지원 필드와 알 수 없는 도구는 거부한다. 생성 텍스트의 승인 주장은 파일 실행·승인 전환·grant 생성을 일으키지 않는다. CLI는 기존 읽기 전용 강제 정책을 유지한다. `tests/trust_boundary.rs`의 로컬 fixture와 history·runner·CLI·Goal 회귀는 이 구조적 계약의 근거이며 실모델의 prompt-injection 저항성 평가나 외부 웹 fetch 기능의 인수 증거는 아니다.
+
 설정 `tools.mode`(ask|read_only, server·project·session), `tools.deny`(도구 이름 목록, server·project·session), `tools.allow`(server·project만). 가장 구체적인 값 하나가 아니라 **모든 범위를 합쳐** 판단한다.
 
 1. `tools.deny`에 있으면 금지(`policy_denied`) — 읽기 도구 포함, 최우선
