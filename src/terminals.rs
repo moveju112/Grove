@@ -214,7 +214,10 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
         cmd.cwd(&cwd2);
         cmd.env("TERM", "xterm-256color");
         cmd.env("GROVE_TERMINAL", "1");
-        let child = pair.slave.spawn_command(cmd).map_err(|e| format!("셸 실행 실패: {e}"))?;
+        // PTY 오류는 종류를 알 수 없으므로 실패했을 때만 PATH에서 찾아 설치 안내 여부를 정한다(ARCH-018).
+        let child = pair.slave.spawn_command(cmd).map_err(|e| {
+            if crate::deps::is_missing(&sh, None) { crate::deps::message(&sh) } else { format!("셸 실행 실패: {e}") }
+        })?;
         drop(pair.slave);
         let reader = pair.master.try_clone_reader().map_err(|e| e.to_string())?;
         let writer = pair.master.take_writer().map_err(|e| e.to_string())?;

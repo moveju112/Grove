@@ -210,7 +210,7 @@ async fn launch(app: &App, s: Spawn, id: String, root: PathBuf) -> ApiResult<Tas
         // 작업 ID가 실행 표식이다: 재시작 때 잔여 프로세스를 PID 재사용과 무관하게 찾는다(EXEC-010).
         Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.shell, &s.command, &cwd, &id, s.limits)
             .spawn()
-            .map_err(|e| format!("셸 실행 실패: {e}"))
+            .map_err(|e| crate::tools::shell::spawn_message(&s.shell, &e).1)
             .and_then(|mut c| crate::procs::adopt(&mut c, &id, s.limits).map(|o| (c, o))),
         Ok(_) => Err("cwd 디렉터리가 없습니다".into()),
         Err(e) => Err(e.message),

@@ -56,11 +56,17 @@ pub async fn git(root: &std::path::Path, args: &[&str], read_only: bool) -> ApiR
     let out = tokio::time::timeout(Duration::from_secs(60), cmd.output())
         .await
         .map_err(|_| ApiError::new(StatusCode::GATEWAY_TIMEOUT, "timeout", "git 명령이 60초 안에 끝나지 않았습니다"))?
-        .map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => ApiError::unsupported("git 실행 파일이 없습니다. 서버에 git을 설치하세요"),
-            _ => ApiError::internal(format!("git 실행 실패: {e}")),
-        })?;
+        .map_err(|e| spawn_err(&e, "git"))?;
     Ok(GitOut { code: out.status.code().unwrap_or(-1), stdout: out.stdout, stderr: String::from_utf8_lossy(&out.stderr).trim().to_string() })
+}
+
+/// git 실행 실패: 실행 파일이 없으면 설치 안내(ARCH-018), 그 밖은 내부 오류.
+fn spawn_err(e: &std::io::Error, what: &str) -> ApiError {
+    if crate::deps::is_missing("git", Some(e)) {
+        crate::deps::missing("git")
+    } else {
+        ApiError::internal(format!("{what} 실행 실패: {e}"))
+    }
 }
 
 pub(crate) fn fail(out: &GitOut, what: &str) -> ApiError {
@@ -355,7 +361,7 @@ pub async fn commit(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
                 .stdin(std::process::Stdio::piped())
                 .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::piped());
-            let mut child = cmd.spawn().map_err(|e| ApiError::internal(format!("git commit 실행 실패: {e}")))?;
+            let mut child = cmd.spawn().map_err(|e| spawn_err(&e, "git commit"))?;
             {
                 use tokio::io::AsyncWriteExt;
                 let mut stdin = child.stdin.take().expect("stdin");
@@ -463,7 +469,7 @@ async fn apply_cached(root: &std::path::Path, patch: &str, reverse: bool) -> Api
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped());
-    let mut child = cmd.spawn().map_err(|e| ApiError::internal(format!("git apply 실행 실패: {e}")))?;
+    let mut child = cmd.spawn().map_err(|e| spawn_err(&e, "git apply"))?;
     {
         use tokio::io::AsyncWriteExt;
         let mut stdin = child.stdin.take().expect("stdin");

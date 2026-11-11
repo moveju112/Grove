@@ -28,7 +28,14 @@ pub async fn check(profile: &Profile) -> Result<serde_json::Value, ProviderError
     let out = tokio::time::timeout(std::time::Duration::from_secs(15), tokio::process::Command::new(prog).arg("--version").stdin(Stdio::null()).kill_on_drop(true).output())
         .await
         .map_err(|_| ProviderError::new("cli_timeout", format!("{prog} --version이 15초 안에 끝나지 않았습니다")))?
-        .map_err(|e| ProviderError::new("cli_not_found", format!("{prog} 실행 파일을 찾을 수 없습니다: {e}")))?;
+        .map_err(|e| {
+            if crate::deps::is_missing(prog, Some(&e)) {
+                // 설치 안내만 하고 자동 설치하지 않는다(ARCH-018).
+                ProviderError::new("cli_not_found", crate::deps::message(prog))
+            } else {
+                ProviderError::new("cli_failed", format!("{prog} 실행 실패: {e}"))
+            }
+        })?;
     if !out.status.success() {
         return Err(ProviderError::new("cli_failed", format!("{prog} --version 실패(종료 코드 {:?})", out.status.code())));
     }
@@ -264,8 +271,11 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     let limits = crate::procs::Limits::default();
     crate::procs::prepare(&mut cmd, &tag, limits);
     let mut child = cmd.spawn().map_err(|e| {
-        let code = if e.kind() == std::io::ErrorKind::NotFound { "cli_not_found" } else { "cli_failed" };
-        ProviderError::new(code, format!("{prog} 실행 실패: {e}"))
+        if crate::deps::is_missing(&prog, Some(&e)) {
+            ProviderError::new("cli_not_found", crate::deps::message(&prog))
+        } else {
+            ProviderError::new("cli_failed", format!("{prog} 실행 실패: {e}"))
+        }
     })?;
     let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ProviderError::new("cli_failed", e))?);
     let stdout = child.stdout.take().expect("stdout");

@@ -12,6 +12,7 @@ mod logging;
 pub mod runner;
 pub mod server;
 pub mod config;
+pub mod deps;
 pub mod context;
 pub mod definitions;
 pub mod error;

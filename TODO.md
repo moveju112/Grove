@@ -633,7 +633,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] ARCH-015 모델 연결 풀·카탈로그·도구 인덱스를 서버 단위로 공유한다. 검증: provider HTTP client를 timeout 값별 전역 1개로 공유해 연결 풀 재사용(`provider::client_tests::clients_are_shared_per_timeout`), 도구 정의는 코드 고정 정적 목록(`tools::specs`), 모델 프로필·카탈로그는 서버 DB 단일 출처로 세션별 복제 없음.
 - [x] ARCH-016 세션별 상주 프로세스 없이 비활성 세션을 unload하고 필요 시 복원한다. 검증: 세션은 DB에만 있고 세션별 상주 프로세스·메모리 상태 없음(진행 중 partial만 메모리), 대화 50개 idle 16MB(RULEBOOK §15).
 - [x] ARCH-017 서버 headless 설치에 UI/WebView·Node·Python을 기본 필수로 넣지 않는다. 검증: 서버 패키지 = 실행 파일 + 정적 웹 + licenses(`build.py package`), UI/WebView·Node·Python 런타임 불필요.
-- [ ] ARCH-018 외부 도구가 필요할 때만 의존성을 진단하고 설치를 명시적으로 안내한다.
+- [x] ARCH-018 외부 도구가 필요할 때만 의존성을 진단하고 설치를 명시적으로 안내한다. 검증: 서버 시작·doctor에서는 미리 검사하지 않고, git·셸(bash/sh/zsh/pwsh/powershell/cmd)·CLI provider(claude/codex) 실행이 실패했을 때만 진단해 무엇에 필요한지와 OS별 설치·셸 변경 방법을 알린다(`dependency_missing`·424, details `program`·`purpose`·`install`·`auto_install: false`, `src/deps.rs`). 자동 설치 없음. 빈 PATH 서버로 Git 조회·백그라운드 작업·CLI 연결 확인 시험(`tests/deps.rs`), 권한 오류는 설치 안내 대상 아님(`deps::tests`). Rust 전체 318개 통과.
 
 ## 5. 공용 프로토콜·연결·호스트
 

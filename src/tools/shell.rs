@@ -69,6 +69,21 @@ fn shell_argv(shell: &str) -> (&'static str, &'static [&'static str]) {
     }
 }
 
+/// 셸 선택값의 실행 파일 이름(설치 안내용)
+pub fn program_of(shell: &str) -> &'static str {
+    shell_argv(shell).0
+}
+
+/// 셸 실행 실패 메시지: 실행 파일이 없으면 설치·셸 변경 안내(ARCH-018).
+pub fn spawn_message(shell: &str, e: &std::io::Error) -> (&'static str, String) {
+    let program = program_of(shell);
+    if crate::deps::is_missing(program, Some(e)) {
+        ("dependency_missing", crate::deps::message(program))
+    } else {
+        ("spawn_failed", format!("셸 실행 실패: {e}"))
+    }
+}
+
 /// 대화형 터미널용 셸 실행 파일. `default`면 None(터미널의 로그인 셸 규칙을 따른다).
 pub fn interactive_program(choice: &str) -> Option<&'static str> {
     (choice != "default" && SHELL_CHOICES.contains(&choice)).then(|| shell_argv(choice).0)
@@ -129,9 +144,13 @@ pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver
     let timeout = Duration::from_millis(planned.target["timeout_ms"].as_u64().unwrap_or(DEFAULT_TIMEOUT_MS));
     let tag = crate::util::new_id();
     let limits = crate::procs::Limits::from_json(&planned.target["limits"]);
-    let mut cmd = self::command(planned.target["shell"].as_str().unwrap_or("default"), command, &cwd, &tag, limits);
+    let shell = planned.target["shell"].as_str().unwrap_or("default");
+    let mut cmd = self::command(shell, command, &cwd, &tag, limits);
     let started = std::time::Instant::now();
-    let mut child = cmd.spawn().map_err(|e| ToolError::new("spawn_failed", format!("셸 실행 실패: {e}")))?;
+    let mut child = cmd.spawn().map_err(|e| {
+        let (code, msg) = spawn_message(shell, &e);
+        ToolError::new(code, msg)
+    })?;
     let owned = crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ToolError::new("isolation_failed", e))?;
     let out_h = tokio::spawn(capture(child.stdout.take().expect("stdout")));
     let err_h = tokio::spawn(capture(child.stderr.take().expect("stderr")));
