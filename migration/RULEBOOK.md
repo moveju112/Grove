@@ -275,6 +275,12 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 쓰기 승인 상태·대화 범위 허용은 기존 서버 정책과 인증된 명시적 승인 API만 변경한다. 모델 도구 인자의 `approved`·`approval_scope` 같은 미지원 필드와 알 수 없는 도구는 거부한다. 생성 텍스트의 승인 주장은 파일 실행·승인 전환·grant 생성을 일으키지 않는다. CLI는 기존 읽기 전용 강제 정책을 유지한다. `tests/trust_boundary.rs`의 로컬 fixture와 history·runner·CLI·Goal 회귀는 이 구조적 계약의 근거이며 실모델의 prompt-injection 저항성 평가나 외부 웹 fetch 기능의 인수 증거는 아니다.
 
+외부 주소·redirect 정책(SEC-021): 모델 요청·연결 확인은 소유자가 등록한 HTTP(S) 프로필의 endpoint만 사용한다. 로컬 모델·LAN/VPN 사용을 위해 loopback·private 주소를 일괄 차단하지 않으며, 이는 소유자가 서버의 네트워크 접근 대상을 명시하는 신뢰 경계다. 일반 요청은 프로필 ID를 선택할 뿐 임의 URL을 전달하는 프록시가 아니고 기기는 프로필 endpoint를 변경할 수 없다. 모델·문서·도구 결과의 URL을 서버가 자동 접속 대상으로 승격하지 않는다.
+
+모델 HTTP client는 기존처럼 redirect를 따르지 않고 `redirect_blocked`로 거부한다. `doctor`·CLI 기기 발급과 업데이트의 서버 상태/제어 HTTP도 redirect를 따르지 않는다. 같은 origin의 다른 API 경로로 옮기는 Location 역시 원래 요청한 작업의 승인이 아니므로 거부한다. 소유자 자격·provider API 키·추가 인증 헤더·본문을 새 대상으로 재전송하지 않으며, 이 계약은 외부 서비스나 운영 서비스를 건드리지 않는 실제 로컬 HTTP fixture로 확인한다(`tests/cli_redirects.rs`, `tests/provider_redirects.rs`, `update::tests::service_control_http_does_not_follow_redirects`).
+
+웹 fetch 도구와 Grove 자체 OAuth callback은 아직 구현하지 않았다. 이를 추가할 때는 비신뢰 URL을 위 소유자 프로필 권한과 혼동하지 않고 별도 허용 대상·DNS/redirect 후 주소 검증으로 loopback·private·link-local/metadata·비HTTP scheme 접근을 기본 거부해야 한다. OAuth callback은 등록한 redirect URI의 scheme·host·port·path, state·PKCE·고정 만료·취소를 확인하고 임의 return/next URL로 토큰을 보내지 않는다. 현재 문서의 정책 정의·기존 경로 회귀를 미구현 fetch/OAuth의 완료로 취급하지 않는다. 서명된 설치 산출물 다운로드의 별도 전송 경로를 이 인증/상태 제어 검사로 검증했다고 주장하지 않는다.
+
 설정 `tools.mode`(ask|read_only, server·project·session), `tools.deny`(도구 이름 목록, server·project·session), `tools.allow`(server·project만). 가장 구체적인 값 하나가 아니라 **모든 범위를 합쳐** 판단한다.
 
 1. `tools.deny`에 있으면 금지(`policy_denied`) — 읽기 도구 포함, 최우선

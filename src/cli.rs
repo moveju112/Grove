@@ -305,7 +305,8 @@ fn doctor(opts: Opts) -> Result<bool, String> {
     let process = server_process(&cfg);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
     let report = rt.block_on(async {
-        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().map_err(|e| e.to_string())?;
+        let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5))
+            .redirect(reqwest::redirect::Policy::none()).build().map_err(|e| e.to_string())?;
         let get = |path: &str, token: Option<&str>| {
             let mut rb = client.get(format!("{base}/api/v1{path}"));
             if let Some(t) = token {
@@ -374,7 +375,7 @@ fn pair(opts: Opts) -> Result<(), String> {
     let base = local_base(&cfg);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
     rt.block_on(async {
-        let r = reqwest::Client::new()
+        let r = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().map_err(|e| e.to_string())?
             .post(format!("{base}/api/v1/devices"))
             .bearer_auth(&token)
             .header("idempotency-key", crate::util::new_id())

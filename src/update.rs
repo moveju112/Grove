@@ -362,7 +362,8 @@ fn stage_release(inst: &Install, archive: &Path) -> Result<(String, Value), Stri
 fn http(method: &str, url: &str, token: Option<&str>) -> Result<(u16, Value), String> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
     rt.block_on(async {
-        let c = reqwest::Client::builder().timeout(Duration::from_secs(10)).build().map_err(|e| e.to_string())?;
+        let c = reqwest::Client::builder().timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none()).build().map_err(|e| e.to_string())?;
         let mut rb = c.request(method.parse().unwrap(), url);
         if let Some(t) = token {
             rb = rb.bearer_auth(t).header("Idempotency-Key", crate::util::new_id());
@@ -851,6 +852,27 @@ pub fn migrate_check(db: &Path) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn service_control_http_does_not_follow_redirects() {
+        use axum::{Json, Router, http::{StatusCode, header}, routing::any};
+        use std::sync::{Arc, atomic::{AtomicUsize, Ordering}};
+        let reached = Arc::new(AtomicUsize::new(0));
+        let count = reached.clone();
+        let app = Router::new()
+            .route("/other-operation", any(move || {
+                let count = count.clone();
+                async move { count.fetch_add(1, Ordering::SeqCst); Json(json!({ "accepted": true })) }
+            }))
+            .fallback(any(|| async { (StatusCode::TEMPORARY_REDIRECT, [(header::LOCATION, "/other-operation")]) }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/api/v1/admin/shutdown", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
+        let result = tokio::task::spawn_blocking(move || http("POST", &url, Some("not-a-real-token"))).await.unwrap().unwrap();
+        server.abort();
+        assert_eq!(result.0, 307);
+        assert_eq!(reached.load(Ordering::SeqCst), 0, "운영 중인 실제 서비스에는 접근하지 않는 격리 fixture다");
+    }
 
     fn key(seed: u8) -> SigningKey {
         SigningKey::from_bytes(&[seed; 32])
