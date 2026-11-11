@@ -1,0 +1,178 @@
+import { useRef, useState } from "react";
+import { ApiError, api, newKey } from "../api/client";
+import type { Worktree } from "../api/generated";
+import { useQuery } from "../state/store";
+
+type Row = Worktree & { exists: boolean; dirty_count: number | null; sessions: number };
+type List = { is_repo: boolean; worktrees: Row[]; unowned: { path: string; branch: string | null }[] };
+type Attempt = { label: string; key: string; run: (key: string) => Promise<unknown>; onConflict?: (e: ApiError) => boolean };
+
+/// Grove worktree(GIT-007~010). Grove가 만든 것만 merge·제거하고, 사용자가 만든 worktree는 표시만 한다.
+/// 응답을 받지 못한 요청은 같은 키로 결과를 다시 확인한다(새 요청으로 반복하지 않는다).
+export function WorktreesPanel({ projectId }: { projectId: string }) {
+    const q = useQuery<List>(`worktrees:${projectId}`, () => api.get(`/projects/${projectId}/worktrees`));
+    const [name, setName] = useState("");
+    const [err, setErr] = useState<string | null>(null);
+    const [choice, setChoice] = useState<{ kind: "dirty"; changed: number } | { kind: "large"; files: number } | null>(null);
+    const [attempt, setAttempt] = useState<Attempt | null>(null);
+    const [busy, setBusy] = useState(false);
+    const active = useRef(false);
+    const data = q.data;
+
+    const act = async (a: Attempt) => {
+        if (active.current) return;
+        active.current = true;
+        setBusy(true);
+        setErr(null);
+        setAttempt(a);
+        try {
+            await a.run(a.key);
+            setAttempt(null);
+            return true;
+        } catch (e) {
+            if (e instanceof ApiError && !e.retryable) setAttempt(null);
+            if (e instanceof ApiError && a.onConflict?.(e)) return false;
+            if (e instanceof ApiError && e.code === "worktree_dirty_choice") setChoice({ kind: "dirty", changed: (e.details as { changed: number }).changed });
+            else if (e instanceof ApiError && e.code === "worktree_large_repo") setChoice({ kind: "large", files: (e.details as { files: number }).files });
+            else setErr(e instanceof ApiError ? e.message : `${a.label}: 응답을 받지 못했습니다. 같은 요청의 결과를 다시 확인할 수 있습니다.`);
+            return false;
+        } finally {
+            active.current = false;
+            setBusy(false);
+            q.reload();
+        }
+    };
+
+    const create = (opts: { carry?: "leave" | "carry"; confirm_large?: boolean }) => {
+        const body = { name: name.trim(), ...opts };
+        void act({ label: "worktree 만들기", key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees`, body, { key }) }).then((ok) => {
+            if (ok) {
+                setName("");
+                setChoice(null);
+            }
+        });
+    };
+
+    if (data && !data.is_repo) return null;
+    const rows = data?.worktrees ?? [];
+    return (
+        <details className="worktrees" data-testid="worktrees-panel">
+            <summary>Worktree {rows.length > 0 ? `· ${rows.length}` : ""}</summary>
+            {err && <p className="err" role="alert">{err}</p>}
+            {Boolean(q.error) && <p className="err" role="alert">worktree 목록을 불러오지 못했습니다</p>}
+            {attempt && !busy && <button className="ghost small" onClick={() => void act(attempt)}>같은 요청 결과 확인</button>}
+            <form
+                className="inline"
+                onSubmit={(e) => {
+                    e.preventDefault();
+                    setChoice(null);
+                    create({});
+                }}
+            >
+                <input aria-label="worktree 이름" placeholder="이름(브랜치 grove/이름)" value={name} onChange={(e) => setName(e.target.value)} required pattern="[A-Za-z0-9._\-]{1,60}" />
+                <button className="small" type="submit" disabled={busy || attempt !== null || !name.trim()}>만들기</button>
+            </form>
+            {choice?.kind === "dirty" && (
+                <div className="notice" role="group" aria-label="커밋하지 않은 변경 처리">
+                    <p>프로젝트 폴더에 커밋하지 않은 변경 {choice.changed}개가 있습니다. 어느 쪽이든 프로젝트 폴더의 변경은 그대로 남습니다.</p>
+                    <button className="small" disabled={busy} onClick={() => create({ carry: "leave" })}>두고 가기(변경 없이 시작)</button>
+                    <button className="small" disabled={busy} onClick={() => create({ carry: "carry" })}>복사해 가기</button>
+                    <button className="ghost small" onClick={() => setChoice(null)}>취소</button>
+                </div>
+            )}
+            {choice?.kind === "large" && (
+                <div className="notice" role="group" aria-label="큰 저장소 확인">
+                    <p>추적 파일이 {choice.files.toLocaleString()}개인 큰 저장소입니다. 체크아웃에 시간과 디스크가 듭니다.</p>
+                    <button className="small" disabled={busy} onClick={() => create({ confirm_large: true })}>그래도 만들기</button>
+                    <button className="ghost small" onClick={() => setChoice(null)}>취소</button>
+                </div>
+            )}
+            <ul className="session-list">
+                {rows.map((w) => (
+                    <li key={w.id} data-testid="worktree-row" data-status={w.status}>
+                        <strong>{w.name}</strong> <code className="small">{w.branch}</code>{" "}
+                        {w.status === "missing" || !w.exists ? (
+                            <span className="err small">경로 없음</span>
+                        ) : (
+                            <span className="muted small">{w.dirty_count ? `변경 ${w.dirty_count}개` : "깨끗함"}{w.sessions > 0 ? ` · 대화 ${w.sessions}개` : ""}</span>
+                        )}
+                        <code className="muted small"> {w.path}</code>
+                        {w.status === "active" && w.exists && (
+                            <button
+                                className="ghost small"
+                                disabled={busy || attempt !== null}
+                                onClick={() => {
+                                    if (confirm(`${w.branch}를 프로젝트 폴더의 현재 브랜치에 merge할까요? 충돌하면 merge 전 상태로 되돌립니다.`))
+                                        void act({ label: "merge", key: newKey(), run: (key) => api.post(`/worktrees/${w.id}/merge`, {}, { key }) });
+                                }}
+                            >
+                                merge
+                            </button>
+                        )}
+                        <button
+                            className="ghost small"
+                            disabled={busy || attempt !== null || w.sessions > 0}
+                            title={w.sessions > 0 ? "대화를 프로젝트 폴더로 돌린 뒤 제거할 수 있습니다" : undefined}
+                            onClick={() => {
+                                if (!confirm(`worktree를 제거할까요? 브랜치 ${w.branch}는 남습니다.`)) return;
+                                // 변경 여부는 화면의 목록이 아니라 서버가 지금 확인한 결과로 판단한다.
+                                const force = () => void act({ label: "강제 제거", key: newKey(), run: (key) => api.del(`/worktrees/${w.id}?force=true`, { key }) });
+                                void act({
+                                    label: "제거",
+                                    key: newKey(),
+                                    run: (key) => api.del(`/worktrees/${w.id}`, { key }),
+                                    onConflict: (e) => {
+                                        if (e.code !== "worktree_dirty") return false;
+                                        const n = (e.details as { changed?: number } | undefined)?.changed ?? 0;
+                                        if (confirm(`커밋하지 않은 변경 ${n}개가 사라집니다. 그래도 제거할까요? 브랜치 ${w.branch}는 남습니다.`)) setTimeout(force, 0);
+                                        return true;
+                                    },
+                                });
+                            }}
+                        >
+                            제거
+                        </button>
+                    </li>
+                ))}
+            </ul>
+            {(data?.unowned.length ?? 0) > 0 && (
+                <>
+                    <p className="muted small">Grove가 만들지 않은 worktree(표시만 하고 변경하지 않음)</p>
+                    <ul className="session-list">
+                        {data!.unowned.map((u) => (
+                            <li key={u.path} data-testid="worktree-unowned"><code className="small">{u.path}</code> {u.branch && <code className="muted small">{u.branch}</code>}</li>
+                        ))}
+                    </ul>
+                </>
+            )}
+            {rows.some((w) => !w.exists) && (
+                <button className="ghost small" disabled={busy || attempt !== null} onClick={() => void act({ label: "정리", key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees/prune`, {}, { key }) })}>
+                    사라진 worktree 기록 정리
+                </button>
+            )}
+        </details>
+    );
+}
+
+/// 대화의 작업 위치 선택(GIT-008): 프로젝트 폴더 또는 이 프로젝트의 Grove worktree. 실행 중이면 서버가 거절한다.
+export function WorktreeSelect({ projectId, sessionId, current, disabled, onError }: { projectId: string; sessionId: string; current: string | null; disabled: boolean; onError: (m: string) => void }) {
+    const q = useQuery<List>(`worktrees:${projectId}`, () => api.get(`/projects/${projectId}/worktrees`));
+    const rows = (q.data?.worktrees ?? []).filter((w) => w.status === "active" || w.id === current);
+    if (!q.data?.is_repo || (rows.length === 0 && !current)) return null;
+    return (
+        <select
+            aria-label="작업 위치"
+            value={current ?? ""}
+            disabled={disabled}
+            onChange={(e) => {
+                const worktree_id = e.target.value || null;
+                api.post(`/sessions/${sessionId}/worktree`, { worktree_id }).catch((err: Error) => onError(`작업 위치를 바꾸지 못했습니다: ${err.message}`));
+            }}
+        >
+            <option value="">위치: 프로젝트 폴더</option>
+            {rows.map((w) => (
+                <option key={w.id} value={w.id}>위치: worktree {w.name}{w.status !== "active" ? " (경로 없음)" : ""}</option>
+            ))}
+        </select>
+    );
+}

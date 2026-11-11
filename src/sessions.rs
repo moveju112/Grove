@@ -38,6 +38,8 @@ pub struct Session {
     pub preview: Option<String>,
     /// 최근 항목에 기록된 읽은 위치보다 새 메시지가 있는지(열어 본 적 없으면 메시지가 있을 때 true)
     pub unread: bool,
+    /// 이 대화가 들어가 있는 Grove worktree(없으면 프로젝트 폴더에서 실행, GIT-008)
+    pub worktree_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
@@ -63,10 +65,11 @@ const COLS: &str = "s.id, s.project_id, s.title, s.created_at, s.updated_at, s.r
     (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id = s.id AND c.status = 'unknown' AND c.reviewed_at IS NULL), s.bot_id, \
     (SELECT substr(json_extract(m.content, '$.text'), 1, 120) FROM messages m WHERE m.session_id = s.id AND m.rewound_at IS NULL AND m.role IN ('user','assistant') \
        AND json_extract(m.content, '$.text') != '' ORDER BY m.seq DESC LIMIT 1), \
-    COALESCE((SELECT json_extract(r.view_state, '$.last_seen_seq') FROM recent_items r WHERE r.kind = 'session' AND r.resource_id = s.id), 0)";
+    COALESCE((SELECT json_extract(r.view_state, '$.last_seen_seq') FROM recent_items r WHERE r.kind = 'session' AND r.resource_id = s.id), 0), \
+    s.worktree_id";
 
 /// COLS 뒤에 붙이는 추가 열의 시작 번호.
-const NCOLS: usize = 18;
+const NCOLS: usize = 19;
 
 fn from_row(r: &Row) -> rusqlite::Result<Session> {
     Ok(Session {
@@ -88,6 +91,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Session> {
         bot_id: r.get(15)?,
         preview: r.get::<_, Option<String>>(16)?.map(|p| p.replace('\n', " ")),
         unread: r.get::<_, i64>(17)? < r.get::<_, i64>(11)?,
+        worktree_id: r.get(18)?,
     })
 }
 
@@ -131,6 +135,21 @@ pub fn get_active(conn: &Connection, id: &str) -> ApiResult<Session> {
         return Err(ApiError::conflict("archived", "보관된 세션입니다. 복원 후 사용하세요"));
     }
     Ok(s)
+}
+
+/// 대화의 실행 루트(GIT-008): 대화가 worktree에 들어가 있으면 그 경로, 아니면 프로젝트 폴더.
+/// 프로젝트가 보관·이동됐거나 worktree 경로가 없으면 실행을 거부한다(다른 폴더에서 실행하지 않는다).
+pub fn exec_root(conn: &Connection, session_id: &str) -> ApiResult<std::path::PathBuf> {
+    let (project_id, wt): (String, Option<String>) =
+        conn.query_row("SELECT project_id, worktree_id FROM sessions WHERE id = ?1", params![session_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let root = projects::active_root(conn, &project_id)?;
+    let Some(wt) = wt else { return Ok(root) };
+    let (path, status): (String, String) = conn.query_row("SELECT path, status FROM worktrees WHERE id = ?1", params![wt], |r| Ok((r.get(0)?, r.get(1)?)))?;
+    let p = std::path::PathBuf::from(path);
+    if status != "active" || !p.is_dir() {
+        return Err(ApiError::gone("이 대화의 worktree 경로에 접근할 수 없습니다. 프로젝트 폴더로 돌아가거나 worktree를 다시 만드세요"));
+    }
+    Ok(p)
 }
 
 fn msg_from_row(r: &Row) -> rusqlite::Result<Message> {
@@ -227,6 +246,10 @@ pub fn history_for_model_upto(conn: &Connection, session_id: &str, upto: Option<
 #[derive(Deserialize)]
 pub struct CreateSession {
     pub title: Option<String>,
+    /// 새 대화를 실행할 위치(GIT-008): 없으면 프로젝트 폴더, 있으면 이 프로젝트의 Grove worktree.
+    /// 자동 격리 기본값은 정하지 않았다(사용자 결정 대기). 지금은 명시해야만 worktree에서 실행한다.
+    #[serde(default)]
+    pub worktree_id: Option<String>,
 }
 
 fn clean_title(t: Option<String>) -> ApiResult<String> {
@@ -245,13 +268,17 @@ pub async fn create(
     Json(body): Json<CreateSession>,
 ) -> ApiResult<Response> {
     let title = clean_title(body.title)?;
-    let h = idem::body_hash("session.create", &json!({ "project": project_id, "title": title }));
+    let wt = body.worktree_id;
+    let h = idem::body_hash("session.create", &json!({ "project": project_id, "title": title, "worktree": wt }));
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         projects::active_root(tx, &project_id)?;
+        if let Some(w) = &wt {
+            crate::worktrees::ensure_usable(tx, &project_id, w)?;
+        }
         let id = crate::util::new_id();
         tx.execute(
-            "INSERT INTO sessions (id, project_id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![id, project_id, title, now],
+            "INSERT INTO sessions (id, project_id, title, created_at, updated_at, worktree_id) VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+            params![id, project_id, title, now, wt],
         )?;
         let s = get(tx, &id)?;
         events::append(tx, now, "session.created", Some(&project_id), Some(&id), &serde_json::to_value(&s)?)?;
@@ -804,9 +831,9 @@ pub async fn fork(
         let title = clean_title(Some(body.title.unwrap_or_else(|| format!("{} (분기)", parent.title))))?;
         let nid = crate::util::new_id();
         tx.execute(
-            "INSERT INTO sessions (id, project_id, title, created_at, updated_at, parent_session_id, fork_message_seq, fork_inherits_context, workflow_id) \
-             VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8)",
-            params![nid, parent.project_id, title, now, id, body.from_seq, body.inherit_context, parent.workflow_id],
+            "INSERT INTO sessions (id, project_id, title, created_at, updated_at, parent_session_id, fork_message_seq, fork_inherits_context, workflow_id, worktree_id) \
+             VALUES (?1, ?2, ?3, ?4, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![nid, parent.project_id, title, now, id, body.from_seq, body.inherit_context, parent.workflow_id, parent.worktree_id],
         )?;
         let s = get(tx, &nid)?;
         events::append(tx, now, "session.created", Some(&s.project_id), Some(&nid), &serde_json::to_value(&s)?)?;

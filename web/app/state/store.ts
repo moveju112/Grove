@@ -127,6 +127,7 @@ export function applyEvent(e: EventRecord) {
         case "session.created":
         case "session.updated":
             if (pid) invalidate(`sessions:${pid}`);
+            if (pid) invalidate(`worktrees:${pid}`);
             if (sid) invalidate(`session:${sid}`);
             invalidate("recent");
             invalidate("search");
@@ -167,6 +168,9 @@ export function applyEvent(e: EventRecord) {
             break;
         case "git.changed":
             if (pid) invalidate(`git:${pid}`);
+            break;
+        case "worktree.changed":
+            if (pid) invalidate(`worktrees:${pid}`);
             break;
         case "terminal.changed":
         case "terminal.removed":

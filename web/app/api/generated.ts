@@ -34,7 +34,11 @@ preview: string | null,
 /**
  * 최근 항목에 기록된 읽은 위치보다 새 메시지가 있는지(열어 본 적 없으면 메시지가 있을 때 true)
  */
-unread: boolean, };
+unread: boolean, 
+/**
+ * 이 대화가 들어가 있는 Grove worktree(없으면 프로젝트 폴더에서 실행, GIT-008)
+ */
+worktree_id: string | null, };
 
 export type SessionPage = { items: Array<Session>, next_cursor: string | null, };
 
@@ -113,4 +117,10 @@ op: string, before_sha: string | null, after_sha: string | null,
  * 내용을 보관해 diff·undo/redo가 가능한지
  */
 stored: boolean, undone_at: string | null, created_at: string, seq: number, };
+
+export type Worktree = { id: string, project_id: string, name: string, path: string, branch: string, base: string | null, 
+/**
+ * active | removed | missing(경로가 사라짐)
+ */
+status: string, created_at: string, removed_at: string | null, };
 

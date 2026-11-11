@@ -895,8 +895,11 @@ async fn migration_adds_purge_journal_and_resumes_legacy_purging_metadata() {
     .await;
     s.stop().await;
     let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
-    db.execute_batch("DROP TABLE trash_gc; PRAGMA user_version=34;")
-        .unwrap();
+    // 버전 34 상태를 흉내 낸다: 35(trash_gc)와 그 뒤 migration의 결과를 모두 되돌린다.
+    db.execute_batch(
+        "DROP TABLE trash_gc; DROP TABLE worktrees; ALTER TABLE sessions DROP COLUMN worktree_id; PRAGMA user_version=34;",
+    )
+    .unwrap();
     s.restart().await;
     assert_eq!(
         std::fs::read_to_string(dir.join("origin.json")).unwrap(),
@@ -905,7 +908,7 @@ async fn migration_adds_purge_journal_and_resumes_legacy_purging_metadata() {
     assert_eq!(
         db.query_row("PRAGMA user_version", [], |r| r.get::<_, i64>(0))
             .unwrap(),
-        35
+        grove::store::MIGRATIONS.len() as i64
     );
     assert_eq!(gc(&s).await["trash_removed"], 1);
     assert!(!dir.exists());

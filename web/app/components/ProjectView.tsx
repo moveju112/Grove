@@ -7,6 +7,7 @@ import { Composer, type SendOptions } from "./Composer";
 import { GitPanel } from "./GitPanel";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { TrashPanel } from "./TrashPanel";
+import { WorktreesPanel } from "./WorktreesPanel";
 import type { Opener } from "./Workspace";
 
 /// 프로젝트 이름·아이콘 변경(PROJECT-002). revision 충돌이면 최신 값을 다시 불러와 알린다.
@@ -115,7 +116,8 @@ export function ProjectView({ projectId, open }: { projectId: string; open: Open
             </details>
             <TerminalList projectId={projectId} open={open} />
             <SchedulesPanel projectId={projectId} open={open} />
-            <TrashPanel key={projectId} projectId={projectId} />
+            <WorktreesPanel key={`worktrees:${projectId}`} projectId={projectId} />
+            <TrashPanel key={`trash:${projectId}`} projectId={projectId} />
 
             <div className="list-tools">
                 <input type="search" placeholder="대화 검색" value={q} onChange={(e) => { setQ(e.target.value); setPages([""]); }} aria-label="대화 검색" />

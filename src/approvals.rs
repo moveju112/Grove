@@ -355,7 +355,8 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                     return Ok(None);
                 }
                 let call = get(&tx, &id)?;
-                let root = crate::projects::active_root(&tx, &call.project_id);
+                // 대화의 실행 루트(worktree에 들어가 있으면 그 경로, GIT-008).
+                let root = crate::sessions::exec_root(&tx, &call.session_id);
                 emit(&tx, &now, &call)?;
                 tx.commit()?;
                 Ok(Some((call, root)))
@@ -469,7 +470,7 @@ pub async fn create_request(
     let ttl = app.cfg.approval_ttl_secs;
     let resp = idem::run(&app, &p, &headers, &h, move |tx, now| {
         let s = crate::sessions::get_active(tx, &session_id)?;
-        let root = crate::projects::active_root(tx, &s.project_id)?;
+        let root = crate::sessions::exec_root(tx, &session_id)?;
         let ttl = approval_ttl(tx, ttl)?;
         let call = create_call(tx, now, ttl, &session_id, &s.project_id, &root, None, None, &b.name, &b.args)?;
         Ok((StatusCode::CREATED, serde_json::to_value(call)?))

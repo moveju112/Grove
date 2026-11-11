@@ -315,8 +315,8 @@ pub async fn review(State(app): State<App>, _p: Principal, Path(session_id): Pat
     let (changes, root) = app
         .db
         .call(move |c| {
-            let s = crate::sessions::get(c, &session_id)?;
-            Ok((session_changes(c, &session_id)?, crate::projects::active_root(c, &s.project_id)?))
+            crate::sessions::get(c, &session_id)?;
+            Ok((session_changes(c, &session_id)?, crate::sessions::exec_root(c, &session_id)?))
         })
         .await?;
     let dd = app.cfg.data_dir.clone();
@@ -378,7 +378,7 @@ fn prepare_apply(tx: &Connection, session_id: &str, ids: &[String], undo: bool) 
     if s.active_turn.is_some() {
         return Err(ApiError::busy("실행 중인 요청이 있어 파일 변경을 되돌릴 수 없습니다. 끝난 뒤 다시 시도하세요"));
     }
-    let root = crate::projects::active_root(tx, &s.project_id)?;
+    let root = crate::sessions::exec_root(tx, &session_id)?;
     let all = session_changes(tx, &session_id)?;
     let mut sel: Vec<&FileChange> = all.iter().filter(|c| ids.contains(&c.id)).collect();
     if sel.len() != ids.len() {

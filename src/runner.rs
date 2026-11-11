@@ -555,7 +555,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
         Ok(serde_json::from_str(&s).unwrap_or(json!({})))
     })?;
     let s = crate::sessions::get(c, &t.session_id)?;
-    let root = crate::projects::active_root(c, &s.project_id)?;
+    let root = crate::sessions::exec_root(c, &t.session_id)?;
     let profile_id = t.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?;
     let (mp, rp) = crate::models::runtime_profile(c, &profile_id)?;
     let cli_backend = crate::provider::cli::is_cli(&rp.protocol);
@@ -852,7 +852,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                     tx.commit()?;
                     return Ok(Some((false, vec![])));
                 }
-                let root = crate::projects::active_root(&tx, &s.project_id)?;
+                let root = crate::sessions::exec_root(&tx, &s.id)?;
                 let ttl = approvals::approval_ttl(&tx, ttl)?;
                 // 반복 감지(RUN-012)는 이번 호출을 만들기 전의 이력으로 판단한다.
                 let stuck = loop_guard(&tx, &tid, &out.tool_calls)?;
@@ -1102,7 +1102,7 @@ pub(crate) fn enqueue_with_attachments(
     source: Option<&Value>, attachments: Option<&crate::attachments::Prepared>,
 ) -> ApiResult<(Turn, crate::sessions::Message)> {
     let s = crate::sessions::get_active(tx, session_id)?;
-    crate::projects::active_root(tx, &s.project_id)?;
+    crate::sessions::exec_root(tx, session_id)?;
     if s.active_turn.is_some() {
         return Err(ApiError::busy("이 세션에서 이미 턴이 실행 중입니다"));
     }
@@ -1132,7 +1132,7 @@ pub(crate) fn enqueue_with_attachments(
     }
     // 지침 파일·응답 언어는 턴 시작 시점 값으로 고정한다(실행 중 변경은 다음 턴부터).
     let mode = crate::settings::effective(tx, "instructions.mode", Some(&s.project_id), Some(session_id))?;
-    let root = crate::projects::active_root(tx, &s.project_id)?;
+    let root = crate::sessions::exec_root(tx, session_id)?;
     def["instructions"] = crate::settings::load_instructions(&root, mode.as_str().unwrap_or("off"))
         .into_iter()
         .map(|(n, body)| json!({ "file": n, "sha256": crate::util::sha256_hex(body.as_bytes()), "body": body }))

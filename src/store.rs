@@ -638,6 +638,23 @@ pub const MIGRATIONS: &[&str] = &[
         origin_sha256 TEXT NOT NULL
     );
     "#,
+    // 36: Grove가 만든 worktree(GIT-007~010). 이 표에 있는 것만 Grove 소유이고 제거할 수 있다.
+    // 대화의 worktree_id가 있으면 그 대화의 도구·작업은 worktree 경로에서 실행한다(NULL이면 프로젝트 폴더).
+    r#"
+    CREATE TABLE worktrees (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        name TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE,
+        branch TEXT NOT NULL,
+        base TEXT,
+        status TEXT NOT NULL CHECK (status IN ('active','removed','missing')),
+        created_at TEXT NOT NULL,
+        removed_at TEXT
+    );
+    CREATE INDEX worktrees_project ON worktrees(project_id, status);
+    ALTER TABLE sessions ADD COLUMN worktree_id TEXT;
+    "#,
 ];
 
 #[cfg(test)]

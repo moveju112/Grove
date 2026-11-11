@@ -29,7 +29,7 @@ pub struct RepoLocks {
 }
 
 impl RepoLocks {
-    fn get(&self, project: &str) -> Arc<tokio::sync::Mutex<()>> {
+    pub(crate) fn get(&self, project: &str) -> Arc<tokio::sync::Mutex<()>> {
         self.map.lock().expect("repo locks").entry(project.to_string()).or_default().clone()
     }
 }
@@ -63,16 +63,16 @@ pub async fn git(root: &std::path::Path, args: &[&str], read_only: bool) -> ApiR
     Ok(GitOut { code: out.status.code().unwrap_or(-1), stdout: out.stdout, stderr: String::from_utf8_lossy(&out.stderr).trim().to_string() })
 }
 
-fn fail(out: &GitOut, what: &str) -> ApiError {
+pub(crate) fn fail(out: &GitOut, what: &str) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, "git_failed", format!("{what} 실패: {}", out.stderr.lines().take(5).collect::<Vec<_>>().join(" / ")))
 }
 
-async fn root_of(app: &App, project_id: &str) -> ApiResult<PathBuf> {
+pub(crate) async fn root_of(app: &App, project_id: &str) -> ApiResult<PathBuf> {
     let pid = project_id.to_string();
     app.db.call(move |c| crate::projects::active_root(c, &pid)).await
 }
 
-async fn is_repo(root: &std::path::Path) -> ApiResult<bool> {
+pub(crate) async fn is_repo(root: &std::path::Path) -> ApiResult<bool> {
     let o = git(root, &["rev-parse", "--is-inside-work-tree"], true).await?;
     Ok(o.code == 0 && String::from_utf8_lossy(&o.stdout).trim() == "true")
 }
@@ -651,29 +651,33 @@ pub async fn merge(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     }
     let (branch, no_ff) = (b.branch.clone(), b.no_ff);
     mutate(app, p, headers, id, "git.merge", json!({ "b": b.branch, "n": no_ff }), Some(b.expected_fingerprint), move |root| {
-        Box::pin(async move {
-            let dirty = git(root, &["status", "--porcelain", "--untracked-files=no"], true).await?;
-            if !dirty.stdout.is_empty() {
-                return Err(ApiError::conflict("dirty_tree", "커밋하지 않은 변경이 있어 merge하지 않습니다. 먼저 커밋하세요"));
-            }
-            let mut args = vec!["merge", "--no-edit"];
-            if no_ff {
-                args.push("--no-ff");
-            }
-            args.extend(["--", branch.as_str()]);
-            let o = git(root, &args, false).await?;
-            if o.code != 0 {
-                let conflicts = git(root, &["diff", "--name-only", "--diff-filter=U"], true).await?;
-                let files: Vec<String> = String::from_utf8_lossy(&conflicts.stdout).lines().map(str::to_string).collect();
-                let _ = git(root, &["merge", "--abort"], false).await;
-                return Err(ApiError::conflict("merge_conflict", "merge 충돌이 있어 되돌렸습니다. 저장소는 merge 전 상태입니다")
-                    .with_details(json!({ "conflicts": files, "stderr": o.stderr })));
-            }
-            let head = git(root, &["rev-parse", "HEAD"], true).await?;
-            Ok(json!({ "merged": branch, "head": String::from_utf8_lossy(&head.stdout).trim() }))
-        })
+        Box::pin(async move { merge_into(root, &branch, no_ff).await })
     })
     .await
+}
+
+/// 현재 브랜치에 `branch`를 merge한다. 호출자가 저장소 잠금을 잡고 있어야 한다.
+/// 커밋하지 않은 변경이 있으면 거부하고, 충돌이면 즉시 abort해 merge 전 상태로 돌려놓는다.
+pub(crate) async fn merge_into(root: &std::path::Path, branch: &str, no_ff: bool) -> ApiResult<Value> {
+    let dirty = git(root, &["status", "--porcelain", "--untracked-files=no"], true).await?;
+    if !dirty.stdout.is_empty() {
+        return Err(ApiError::conflict("dirty_tree", "커밋하지 않은 변경이 있어 merge하지 않습니다. 먼저 커밋하세요"));
+    }
+    let mut args = vec!["merge", "--no-edit"];
+    if no_ff {
+        args.push("--no-ff");
+    }
+    args.extend(["--", branch]);
+    let o = git(root, &args, false).await?;
+    if o.code != 0 {
+        let conflicts = git(root, &["diff", "--name-only", "--diff-filter=U"], true).await?;
+        let files: Vec<String> = String::from_utf8_lossy(&conflicts.stdout).lines().map(str::to_string).collect();
+        let _ = git(root, &["merge", "--abort"], false).await;
+        return Err(ApiError::conflict("merge_conflict", "merge 충돌이 있어 되돌렸습니다. 저장소는 merge 전 상태입니다")
+            .with_details(json!({ "conflicts": files, "stderr": o.stderr })));
+    }
+    let head = git(root, &["rev-parse", "HEAD"], true).await?;
+    Ok(json!({ "merged": branch, "head": String::from_utf8_lossy(&head.stdout).trim() }))
 }
 
 // ---------------- branch 이름 변경(GIT-004) ----------------

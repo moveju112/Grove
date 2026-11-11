@@ -48,6 +48,7 @@ pub mod usage;
 pub mod util;
 pub mod web;
 pub mod workspace;
+pub mod worktrees;
 
 use axum::Router;
 use axum::routing::{get, post};
@@ -219,6 +220,11 @@ pub fn router(app: App) -> Router {
         .route("/projects/{id}/git/pull", post(git::pull))
         .route("/projects/{id}/git/push", post(git::push))
         .route("/projects/{id}/git/merge", post(git::merge))
+        .route("/projects/{id}/worktrees", get(worktrees::list).post(worktrees::create))
+        .route("/projects/{id}/worktrees/prune", post(worktrees::prune))
+        .route("/worktrees/{id}", delete(worktrees::remove))
+        .route("/worktrees/{id}/merge", post(worktrees::merge))
+        .route("/sessions/{id}/worktree", post(worktrees::enter))
         .route("/projects/{id}/git/branches/rename", post(git::rename_branch))
         .route("/projects/{id}/git/commits/{rev}", get(git::show_commit))
         .route("/projects/{id}/git/compare", get(git::compare))

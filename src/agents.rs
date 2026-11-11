@@ -231,8 +231,9 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
     let first = brief.lines().next().unwrap_or("").chars().take(50).collect::<String>();
     let title = format!("{}: {}", def.def.name, first);
     tx.execute(
-        "INSERT INTO sessions (id, project_id, title, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-        params![child_id, parent.project_id, title, now],
+        // 자식 에이전트는 부모 대화와 같은 위치(프로젝트 폴더 또는 같은 worktree)에서 일한다.
+        "INSERT INTO sessions (id, project_id, title, created_at, updated_at, worktree_id) VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+        params![child_id, parent.project_id, title, now, parent.worktree_id],
     )?;
     let cs = crate::sessions::get(tx, &child_id)?;
     events::append(tx, now, "session.created", Some(&parent.project_id), Some(&child_id), &serde_json::to_value(&cs)?)?;

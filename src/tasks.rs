@@ -179,7 +179,7 @@ fn record_start(c: &Connection, id: &str, s: &Spawn, now: &str, expected_root: O
     if running_in_session(c,&s.session_id)? >= MAX_RUNNING_PER_SESSION {
         return Err(ApiError::busy(format!("세션당 백그라운드 작업은 {MAX_RUNNING_PER_SESSION}개까지 실행할 수 있습니다")));
     }
-    let root=crate::projects::active_root(c,&sess.project_id)?;
+    let root=crate::sessions::exec_root(c,&s.session_id)?;
     if expected_root.is_some_and(|expected| expected != root) {
         return Err(ApiError::conflict("project_changed", "프로젝트 경로가 바뀌었습니다. 다시 확인한 뒤 실행하세요"));
     }
@@ -490,7 +490,7 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
             let s = crate::sessions::get_active(c, &sid)?;
             let shell = crate::settings::effective(c, "exec.shell", Some(&s.project_id), Some(&sid))?;
             let limits = crate::procs::Limits::effective(c, Some(&s.project_id), Some(&sid))?;
-            Ok((crate::projects::active_root(c, &s.project_id)?, crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string(), limits))
+            Ok((crate::sessions::exec_root(c, &sid)?, crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string(), limits))
         })
         .await?;
     let cwd = resolve(&root, b.cwd.as_deref().unwrap_or(".")).map_err(|e| ApiError::invalid(e.message))?;

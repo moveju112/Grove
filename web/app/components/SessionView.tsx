@@ -13,6 +13,7 @@ import { ContextMeter } from "./ContextMeter";
 import { GoalsPanel } from "./GoalsPanel";
 import { TasksPanel } from "./TasksPanel";
 import type { Opener } from "./Workspace";
+import { WorktreeSelect } from "./WorktreesPanel";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
@@ -264,6 +265,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         <option key={w.id} value={w.id}>워크플로우: {w.name}</option>
                     ))}
                 </select>
+                <WorktreeSelect projectId={projectId} sessionId={sessionId} current={s.worktree_id} disabled={archived || !!s.active_turn} onError={setErr} />
                 {!archived && (
                     <button
                         className="ghost small"

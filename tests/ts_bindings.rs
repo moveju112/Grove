@@ -28,6 +28,7 @@ fn generate() -> String {
         decl::<grove::runner::Turn>(),
         decl::<grove::approvals::ToolCallRow>(),
         decl::<grove::changes::FileChange>(),
+        decl::<grove::worktrees::Worktree>(),
     ];
     for d in decls {
         out.push_str(&d);
