@@ -108,11 +108,16 @@ pub async fn start(cfg: Config, clock: SharedClock) -> Result<Server, String> {
 impl Server {
     /// 종료 순서: 신규 접수 중단 → 실행 정리 → 연결 종료 대기 → 기록 flush.
     pub async fn stop(self) {
+        self.stop_within(Shutdown::Interrupt.connection_wait()).await
+    }
+
+    /// 연결 종료 대기 시간만 다르고 순서는 같다(ARCH-013). OS가 곧 강제 종료하는 경우 짧게 기다려 flush까지 끝낸다.
+    pub async fn stop_within(self, connection_wait: Duration) {
         self.app.shutdown_tx.send_replace(true);
         crate::runner::cancel_all_for_shutdown(&self.app).await;
         crate::tasks::stop_all(&self.app).await;
         crate::terminals::stop_all(&self.app).await;
-        let _ = tokio::time::timeout(Duration::from_secs(10), self.handle).await;
+        let _ = tokio::time::timeout(connection_wait, self.handle).await;
         for b in self.background {
             b.abort();
         }
@@ -124,24 +129,99 @@ impl Server {
     }
 }
 
-pub async fn wait_for_signal() {
-    #[cfg(unix)]
-    {
-        use tokio::signal::unix::{SignalKind, signal};
-        let mut term = signal(SignalKind::terminate()).expect("SIGTERM handler");
-        tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = term.recv() => {}
+/// OS 종료 요청의 종류(ARCH-013). Linux 신호와 Windows 콘솔 이벤트를 같은 원인으로 묶어 같은 정책을 적용한다.
+/// - Interrupt: SIGINT / Ctrl-C·Ctrl-Break — 사용자가 직접 멈춤. 관리 API 종료도 같다.
+/// - Terminate: SIGTERM / 시스템 종료(CTRL_SHUTDOWN) — 서비스 관리자·OS가 멈춤.
+/// - ConsoleClosed: SIGHUP / 콘솔 창 닫기(CTRL_CLOSE) — 터미널이 사라짐. Windows는 몇 초 뒤 강제 종료한다.
+///
+/// Windows 로그오프(CTRL_LOGOFF)는 서비스로 실행 중일 때도 오므로 종료하지 않는다(Linux에 해당 신호 없음).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Shutdown {
+    Interrupt,
+    Terminate,
+    ConsoleClosed,
+}
+
+impl Shutdown {
+    /// 연결 종료 대기 한도. OS가 곧 강제 종료하는 원인은 짧게 잡아 DB flush까지 마친다(Windows는 약 5초 뒤 강제 종료).
+    pub fn connection_wait(self) -> Duration {
+        match self {
+            Shutdown::Interrupt => Duration::from_secs(10),
+            Shutdown::Terminate | Shutdown::ConsoleClosed => Duration::from_secs(3),
         }
     }
-    #[cfg(windows)]
-    {
-        let mut close = tokio::signal::windows::ctrl_close().expect("ctrl_close");
-        let mut shutdown = tokio::signal::windows::ctrl_shutdown().expect("ctrl_shutdown");
+}
+
+impl Default for Signals {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Signals {
+    /// 종료를 시작한 뒤에도 신호를 계속 받는다. 정리 중 요청이 한 번 더 오면 기다리지 않고 즉시 끝낸다
+    /// (DB는 WAL이라 비정상 종료에도 마지막 commit까지 보존된다).
+    pub fn exit_on_next(mut self) {
+        tokio::spawn(async move {
+            let again = self.next().await;
+            tracing::warn!(?again, "종료 중 종료 요청을 다시 받아 즉시 끝냅니다");
+            std::process::exit(130);
+        });
+    }
+}
+
+/// OS 종료 요청 수신기. 서버 준비 직후 만들어 종료가 끝날 때까지 유지한다.
+#[cfg(unix)]
+pub struct Signals {
+    int: tokio::signal::unix::Signal,
+    term: tokio::signal::unix::Signal,
+    hup: tokio::signal::unix::Signal,
+}
+
+#[cfg(unix)]
+impl Signals {
+    pub fn new() -> Self {
+        use tokio::signal::unix::{SignalKind, signal};
+        Self {
+            int: signal(SignalKind::interrupt()).expect("SIGINT handler"),
+            term: signal(SignalKind::terminate()).expect("SIGTERM handler"),
+            hup: signal(SignalKind::hangup()).expect("SIGHUP handler"),
+        }
+    }
+    pub async fn next(&mut self) -> Shutdown {
         tokio::select! {
-            _ = tokio::signal::ctrl_c() => {}
-            _ = close.recv() => {}
-            _ = shutdown.recv() => {}
+            _ = self.int.recv() => Shutdown::Interrupt,
+            _ = self.term.recv() => Shutdown::Terminate,
+            _ = self.hup.recv() => Shutdown::ConsoleClosed,
+        }
+    }
+}
+
+#[cfg(windows)]
+pub struct Signals {
+    c: tokio::signal::windows::CtrlC,
+    brk: tokio::signal::windows::CtrlBreak,
+    close: tokio::signal::windows::CtrlClose,
+    shutdown: tokio::signal::windows::CtrlShutdown,
+}
+
+#[cfg(windows)]
+impl Signals {
+    pub fn new() -> Self {
+        use tokio::signal::windows;
+        Self {
+            c: windows::ctrl_c().expect("ctrl_c"),
+            brk: windows::ctrl_break().expect("ctrl_break"),
+            close: windows::ctrl_close().expect("ctrl_close"),
+            shutdown: windows::ctrl_shutdown().expect("ctrl_shutdown"),
+        }
+    }
+    pub async fn next(&mut self) -> Shutdown {
+        tokio::select! {
+            _ = self.c.recv() => Shutdown::Interrupt,
+            _ = self.brk.recv() => Shutdown::Interrupt,
+            _ = self.close.recv() => Shutdown::ConsoleClosed,
+            _ = self.shutdown.recv() => Shutdown::Terminate,
         }
     }
 }

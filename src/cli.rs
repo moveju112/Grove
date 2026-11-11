@@ -394,12 +394,15 @@ fn serve(opts: Opts) -> Result<(), String> {
         tracing::info!(version = VERSION, address = %server.addr, "서버 준비 완료");
         // OS 신호 또는 관리 API 종료 요청(업데이트 도구)
         let mut exit_rx = server.app.exit_tx.subscribe();
-        tokio::select! {
-            _ = crate::server::wait_for_signal() => {}
-            _ = exit_rx.wait_for(|v| *v) => {}
-        }
-        tracing::info!("서버 종료 중");
-        server.stop().await;
+        let mut signals = crate::server::Signals::new();
+        let cause = tokio::select! {
+            c = signals.next() => c,
+            _ = exit_rx.wait_for(|v| *v) => crate::server::Shutdown::Interrupt,
+        };
+        signals.exit_on_next();
+        tracing::info!(?cause, "서버 종료 중");
+        server.stop_within(cause.connection_wait()).await;
+        tracing::info!("서버 종료 완료");
         Ok(())
     });
     if let Err(e) = &result { tracing::error!(error = %e, "서버 실행 실패"); }
