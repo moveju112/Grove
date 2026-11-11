@@ -82,6 +82,10 @@
 
 접속 경로(NET-005): 로컬·LAN·VPN·원격은 모두 같은 `/api/v1`과 같은 서버의 웹앱을 사용한다. 기본은 loopback이고 외부 접속은 `GROVE_LISTEN`/`--listen`으로 명시한다. 외부 공개 시 `GROVE_ALLOWED_HOSTS`에 실제 Host(포트 포함)를 제한하고 앞단 HTTPS에서 TLS를 종료한 뒤 `GROVE_TLS_TERMINATED=1`로 Secure refresh 쿠키를 사용한다. 이 설정은 TLS 자체를 제공하지 않는다. 장기 자격증명을 외부 평문 HTTP로 보내지 않는다. HTTP authority 계약 시험과 실제 네트워크·인증서·방화벽 검증은 구분한다.
 
+TLS·WebSocket Origin(SEC-003): 허용 Origin은 scheme·Host·port가 일치해야 한다. 기본 HTTP에서는 HTTP Origin, 명시적인 TLS 종료 설정에서는 HTTPS Origin만 같은 origin으로 인정하고 요청자가 보낸 `Forwarded`·`X-Forwarded-Proto`로 신뢰 상태를 바꾸지 않는다. 기존 개발용 `allowed_origins`는 명시적 예외이며 교차 사이트 fetch 차단은 유지한다. HTTPS 앞단을 쓰던 설치에서도 `GROVE_TLS_TERMINATED=1`이 빠지면 HTTPS Origin을 거절하므로 설정을 맞춘다. 앞단은 외부 Host와 port를 보존하고 SSE 스트리밍·WebSocket upgrade를 전달해야 하며, 평문 upstream은 신뢰하는 loopback·전용 네트워크에만 노출한다.
+
+터미널 WebSocket도 공용 Host/Origin middleware를 upgrade·티켓 소비 전에 적용한다. 잘못된 Origin은 티켓을 소모하지 않고 거절하며 정상 연결만 일회용 티켓을 소비한다. Origin이 없는 비브라우저 클라이언트는 기존 티켓 인증을 사용한다. `web/e2e/tls.spec.ts`는 OpenSSL로 임시 하루짜리 시험 인증서를 만들고 Node TLS 종료 fixture와 실제 Grove·Chrome으로 HTTPS 로그인·Secure/HttpOnly/Strict refresh·SSE·WSS PTY·재접속·종료 화면을 검증한다. CA 미신뢰와 hostname 불일치는 Node의 기본 인증서 검증에서 거절함을 별도로 확인한다. 브라우저의 self-signed 예외는 이 임시 시험 context에만 적용하며 제품·호스트 trust store를 변경하지 않는다. 실제 운영 인증서·공개 도메인·VPN·방화벽의 검증은 이 시험으로 대체하지 않는다.
+
 호스트 선택(NET-014·015): 로그인 전·후의 호스트 목록에 별명과 정규화한 HTTP(S) origin만 저장한다. 목록은 현재 origin의 브라우저 로컬 설정이고 서버 간 동기화하지 않는다. URL의 userinfo·경로·query·fragment는 거부하며 자격증명을 저장하지 않는다. 선택은 `noopener noreferrer` 새 탭에서 해당 서버의 웹앱을 여는 동작이다. 전역 API 주소·인증을 갈아 끼우거나 다른 origin을 proxy/iframe으로 중계하지 않으며 기존 교차 사이트 차단을 유지한다. 각 탭의 요청·이벤트·cursor·cache·승인·첨부·터미널은 자기 서버에 고정되고 초안·배치는 브라우저 origin으로 격리된다. 원격 실패 시 기존 탭과 초안을 유지하며 그 탭에서 재접속한다. 최근 기록은 명시적인 **열기 시각**이고 서버 연결·인증 성공을 뜻하지 않는다. 별명 수정은 기록을 보존하고 주소 변경은 초기화하며 목록 삭제는 서버·인증·실행·사용자 데이터를 삭제하지 않는다.
 
 브라우저 refresh 쿠키는 port를 구분하지 않으므로 이름에 요청 authority의 digest를 붙인다. 같은 hostname의 다른 포트에 로그인해도 갱신·로그아웃이 서로 덮어쓰지 않는다. 기존 `grove_refresh`는 새 이름의 쿠키가 없을 때만 읽고 성공한 refresh에서 회전·이전한다. 이는 쿠키의 전송 범위를 origin으로 바꾸지는 않는다. 같은 hostname의 모든 포트는 여전히 쿠키를 수신할 수 있으므로 서로 신뢰하지 않는 서버는 별도 hostname으로 운영한다.

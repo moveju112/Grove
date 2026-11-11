@@ -191,7 +191,9 @@ pub fn check_origin(app: &App, headers: &HeaderMap) -> ApiResult<()> {
         }
     }
     if let Some(origin) = headers.get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
-        let same = origin == format!("http://{host}") || origin == format!("https://{host}");
+        // TLS 종료는 운영자가 명시한다. 요청자가 보낸 forwarded 헤더로 신뢰 경계를 바꾸지 않는다.
+        let scheme = if app.cfg.tls_terminated { "https" } else { "http" };
+        let same = origin == format!("{scheme}://{host}");
         if !same && !app.cfg.allowed_origins.iter().any(|o| o == origin) {
             return Err(ApiError::forbidden(format!("허용되지 않은 origin입니다: {origin}")));
         }
