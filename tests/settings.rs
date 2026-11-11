@@ -113,3 +113,33 @@ async fn instructions_and_language_reach_model_and_are_fixed_per_turn() {
     let sys = f.requests()[1]["messages"][0]["content"].as_str().unwrap().to_string();
     assert!(!sys.contains("항상 테스트를 먼저 작성한다"));
 }
+
+#[tokio::test]
+async fn oversized_instruction_prefix_and_its_hash_reach_the_model_without_the_tail() {
+    use std::io::{Seek, SeekFrom, Write};
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let project = s.create_project("instruction-limit").await;
+    let pid = project["id"].as_str().unwrap();
+    let path = std::path::Path::new(project["root_path"].as_str().unwrap()).join("AGENTS.md");
+    let mut file = std::fs::File::create(path).unwrap();
+    file.write_all(&vec![b'x'; 64 * 1024]).unwrap();
+    file.set_len(4 * 1024 * 1024).unwrap();
+    file.seek(SeekFrom::End(-32)).unwrap();
+    file.write_all(b"UNSENT_INSTRUCTION_TAIL_FIXTURE").unwrap();
+    drop(file);
+    let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/instructions.mode"), json!({"expected_revision":0,"value":"agents_md"})).await;
+    assert_eq!(status, StatusCode::OK);
+    let session = s.create_session(pid).await;
+    f.push(fixture::text("ok"));
+    let (_, accepted) = s.post(&format!("/api/v1/sessions/{}/turns", session["id"].as_str().unwrap()), json!({"text":"hi","profile_id":profile})).await;
+    let turn = s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "completed").await;
+    let expected = format!("{}\n…(지침 파일이 65536바이트를 넘어 잘림)", "x".repeat(64 * 1024));
+    let request = &f.requests()[0];
+    let system = request["messages"][0]["content"].as_str().unwrap();
+    assert!(system.contains(&expected));
+    assert!(!system.contains("UNSENT_INSTRUCTION_TAIL_FIXTURE"));
+    assert_eq!(turn["definition"]["instructions"][0]["sha256"], grove::util::sha256_hex(expected.as_bytes()));
+    assert!(turn["definition"]["instructions"][0].get("body").is_none());
+}

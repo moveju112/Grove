@@ -843,7 +843,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [ ] CTX-013 tool schema deferred loading과 캐시 안정성을 구현한다.
 - [ ] CTX-014 프로젝트/상위/전역 지침 파일 로딩 우선순위를 정한다.
 - [x] CTX-015 `AGENTS.md`·`CLAUDE.md` 선택 모드와 끄기를 구현한다. 검증: `tests/settings.rs`(agents_md 모드·off 후 다음 턴 제외, 턴별 hash 고정).
-- [x] CTX-016 지침 파일 중복·symlink·크기 초과·읽기 실패를 처리한다. 검증: `src/settings.rs` 단위 시험(같은 파일 1회, 프로젝트 밖 symlink 무시, 64KiB 잘림, 읽기 불가 건너뜀).
+- [x] CTX-016 지침 파일 중복·symlink·크기 초과·읽기 실패를 처리한다. 검증: 표시만 64KiB로 자르면서 파일 전체를 읽던 결함과 사전 metadata 뒤 파일이 줄면 slice 범위 panic이 나는 결함을 실패 시험으로 재현·수정했다. 실제 스트림에서 최대 64KiB+길이 판정 1바이트만 읽고 열린 handle의 정규 파일 여부를 확인한다. Unix는 경로 확인 뒤 leaf symlink 교체를 거부하고 FIFO writer를 기다리지 않는다. 같은 파일 1회·밖 symlink 무시·읽기 실패 건너뜀을 유지하며, 단위 5개와 설정 통합 4개에서 큰 지침의 제한된 원문·잘림 표시·모델 전달·공개 hash·원문 비노출을 검증했다(`src/settings.rs`, `tests/settings.rs`). 부모 디렉터리 교체·Windows 파일 경계 전체는 SEC-011의 별도 미완료 범위다.
 - [ ] CTX-017 파일에 담긴 지침과 비신뢰 작업 데이터를 구분한다.
 - [ ] CTX-018 출력 스타일 선택·사용자 프로필·언어 설정을 모델 입력에 반영한다.
 - [ ] MEMORY-001 사용자 승인에 따른 장기 기억 추가·수정·삭제·목록을 구현한다.

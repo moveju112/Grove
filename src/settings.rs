@@ -16,6 +16,7 @@ use axum::response::Response;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+use std::io::Read;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingDef {
@@ -617,9 +618,34 @@ pub async fn put(
     .await
 }
 
+const INSTRUCTION_LIMIT: usize = 64 * 1024;
+
+fn instruction_text(reader: impl Read) -> std::io::Result<String> {
+    let mut bytes = Vec::with_capacity(INSTRUCTION_LIMIT + 1);
+    reader.take((INSTRUCTION_LIMIT + 1) as u64).read_to_end(&mut bytes)?;
+    Ok(if bytes.len() <= INSTRUCTION_LIMIT {
+        String::from_utf8_lossy(&bytes).to_string()
+    } else {
+        format!("{}\n…(지침 파일이 {}바이트를 넘어 잘림)", String::from_utf8_lossy(&bytes[..INSTRUCTION_LIMIT]), INSTRUCTION_LIMIT)
+    })
+}
+
+fn instruction_file(path: &std::path::Path) -> std::io::Result<Option<String>> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        // 경로 확인 뒤 바뀐 leaf symlink를 따라가거나 FIFO의 writer를 기다리지 않는다.
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() { return Ok(None); }
+    instruction_text(file).map(Some)
+}
+
 /// 지침 파일 읽기(CTX-014~017). 프로젝트 root의 파일만, 크기 제한, 같은 파일(symlink) 중복 제거.
 pub fn load_instructions(root: &std::path::Path, mode: &str) -> Vec<(String, String)> {
-    const MAX: u64 = 64 * 1024;
     let names: &[&str] = match mode {
         "agents_md" => &["AGENTS.md"],
         "claude_md" => &["CLAUDE.md"],
@@ -635,15 +661,7 @@ pub fn load_instructions(root: &std::path::Path, mode: &str) -> Vec<(String, Str
         if !canon.starts_with(crate::util::canonical(root).unwrap_or_else(|_| root.to_path_buf())) || !seen.insert(canon.clone()) {
             continue;
         }
-        let Ok(meta) = std::fs::metadata(&canon) else { continue };
-        if !meta.is_file() {
-            continue;
-        }
-        let text = match std::fs::read(&canon) {
-            Ok(b) if meta.len() <= MAX => String::from_utf8_lossy(&b).to_string(),
-            Ok(b) => format!("{}\n…(지침 파일이 {}바이트를 넘어 잘림)", String::from_utf8_lossy(&b[..MAX as usize]), MAX),
-            Err(_) => continue,
-        };
+        let Ok(Some(text)) = instruction_file(&canon) else { continue };
         out.push((n.to_string(), text));
     }
     out
@@ -652,6 +670,58 @@ pub fn load_instructions(root: &std::path::Path, mode: &str) -> Vec<(String, Str
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn instruction_reads_are_bounded_even_when_metadata_understates_the_content() {
+        struct Fixture { consumed: usize }
+        impl Read for Fixture {
+            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+                let remaining = INSTRUCTION_LIMIT + 1 - self.consumed;
+                if remaining == 0 { return Err(std::io::Error::other("fixture: read beyond the input budget")); }
+                let n = buf.len().min(remaining);
+                buf[..n].fill(b'x');
+                self.consumed += n;
+                Ok(n)
+            }
+        }
+        let mut reader = Fixture { consumed: 0 };
+        let text = instruction_text(&mut reader).expect("길이 판정용 한 바이트 뒤는 읽지 않는다");
+        assert_eq!(reader.consumed, INSTRUCTION_LIMIT + 1);
+        assert!(text.starts_with(&"x".repeat(INSTRUCTION_LIMIT)));
+        assert!(text.ends_with("바이트를 넘어 잘림)"));
+    }
+
+    #[test]
+    fn shrinking_instructions_do_not_panic_and_exact_limit_is_not_truncated() {
+        let text = instruction_text(std::io::Cursor::new(b"short")).unwrap();
+        assert_eq!(text, "short");
+        let text = instruction_text(std::io::Cursor::new(vec![b'x'; INSTRUCTION_LIMIT])).unwrap();
+        assert_eq!(text, "x".repeat(INSTRUCTION_LIMIT));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn instruction_leaf_replacement_and_fifo_do_not_read_or_block() {
+        use std::os::unix::ffi::OsStrExt;
+        let d = tempfile::tempdir().unwrap();
+        let root = d.path().join("project");
+        std::fs::create_dir(&root).unwrap();
+        let path = root.join("AGENTS.md");
+        std::fs::write(&path, "original").unwrap();
+        let prepared = std::fs::canonicalize(&path).unwrap();
+        let outside = d.path().join("outside");
+        std::fs::write(&outside, "outside secret fixture").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        std::os::unix::fs::symlink(&outside, &path).unwrap();
+        assert!(instruction_file(&prepared).is_err(), "경로 확인 뒤 교체된 symlink를 읽지 않는다");
+        std::fs::remove_file(&path).unwrap();
+        let cpath = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
+        let (tx, rx) = std::sync::mpsc::channel();
+        let reader = std::thread::spawn(move || { tx.send(instruction_file(&prepared)).unwrap(); });
+        assert!(rx.recv_timeout(std::time::Duration::from_secs(2)).expect("FIFO writer를 기다리지 않는다").unwrap().is_none());
+        reader.join().unwrap();
+    }
 
     #[test]
     fn validation() {
