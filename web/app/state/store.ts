@@ -159,6 +159,8 @@ export function applyEvent(e: EventRecord) {
             break;
         case "secret.changed":
             invalidate("secrets");
+            invalidate("profiles");
+            invalidate("bots");
             break;
         case "device.created":
         case "device.revoked":

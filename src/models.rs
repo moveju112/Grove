@@ -97,19 +97,21 @@ pub async fn replace_secret(
     let h = idem::body_hash("secret.replace", &json!({ "id": id, "l": b.label, "v": crate::util::sha256_hex(b.value.as_bytes()) }));
     let actor = p.clone();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
-        let active: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM turns t JOIN model_profiles p ON p.id=t.profile_id \
-             WHERE p.secret_id=?1 AND t.status IN ('queued','running','awaiting_approval'))",
-            [&id], |row| row.get(0),
-        )?;
-        if active {
-            let unchanged: bool = tx.query_row("SELECT grove_decrypt(value)=?2 FROM secrets WHERE id=?1",
-                params![id, b.value.trim()], |row| row.get(0))?;
-            if !unchanged { return Err(ApiError::busy("이 비밀을 사용하는 모델이 실행 중입니다. 먼저 실행을 끝내거나 취소하세요")); }
+        // 읽을 수 없는 옛 키도 명시적 재입력으로 복구한다. try_decrypt의 null은 동일성 미확인이다.
+        let unchanged: bool = tx.query_row("SELECT COALESCE(grove_try_decrypt(value)=?2,0) FROM secrets WHERE id=?1",
+            params![id, b.value.trim()], |row| row.get(0)).optional()?.ok_or_else(|| ApiError::not_found("비밀이 없습니다"))?;
+        if !unchanged {
+            let active: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM turns t JOIN model_profiles p ON p.id=t.profile_id \
+                 WHERE p.secret_id=?1 AND t.status IN ('queued','running','awaiting_approval'))",
+                [&id], |row| row.get(0),
+            )?;
+            if active { return Err(ApiError::busy("이 비밀을 사용하는 모델이 실행 중입니다. 먼저 실행을 끝내거나 취소하세요")); }
         }
-        let n = tx.execute("UPDATE secrets SET label = ?2, value = grove_encrypt(?3), updated_at = ?4 WHERE id = ?1", params![id, b.label.trim(), b.value.trim(), now])?;
-        if n == 0 {
-            return Err(ApiError::not_found("비밀이 없습니다"));
+        tx.execute("UPDATE secrets SET label = ?2, value = grove_encrypt(?3), updated_at = ?4 WHERE id = ?1", params![id, b.label.trim(), b.value.trim(), now])?;
+        if !unchanged {
+            tx.execute("DELETE FROM profile_checks WHERE profile_id IN (SELECT id FROM model_profiles WHERE secret_id=?1)", [&id])?;
+            tx.execute("UPDATE model_profiles SET revision=revision+1,updated_at=?2 WHERE secret_id=?1 AND deleted_at IS NULL", params![id, now])?;
         }
         events::append(tx, now, "secret.changed", None, None, &json!({ "id": id }))?;
         crate::audit::record(tx, now, &actor, "secret.replaced", &id, json!({ "label": b.label.trim() }))?;
@@ -198,7 +200,7 @@ fn profile_row(r: &Row) -> rusqlite::Result<ModelProfile> {
 /// 연결 확인(AUTH-001): 생성 요청 없이 provider에 한 번 닿아 보고 결과를 남긴다. 비밀 원문은 응답·기록에 넣지 않는다.
 pub async fn check_profile(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let pid = id.clone();
-    let (_, rp) = app.db.call(move |c| configured_profile(c, &pid)).await?;
+    let (checked, rp) = app.db.call(move |c| configured_profile(c, &pid)).await?;
     let started = std::time::Instant::now();
     let r = crate::provider::check(&rp).await;
     let ms = started.elapsed().as_millis() as i64;
@@ -212,6 +214,10 @@ pub async fn check_profile(State(app): State<App>, _p: Principal, Path(id): Path
         .db
         .call(move |c| {
             let tx = c.transaction()?;
+            let (current, current_runtime) = configured_profile(&tx, &id)?;
+            if !same_check_target(&checked, &rp, &current, &current_runtime) {
+                return Err(ApiError::conflict("profile_changed", "연결 확인 중 모델·endpoint·키·헤더가 바뀌었습니다. 현재 설정으로 다시 확인하세요"));
+            }
             tx.execute(
                 "INSERT INTO profile_checks (profile_id, ok, code, message, detail, latency_ms, checked_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
                  ON CONFLICT(profile_id) DO UPDATE SET ok = ?2, code = ?3, message = ?4, detail = ?5, latency_ms = ?6, checked_at = ?7",
@@ -286,6 +292,11 @@ fn header_identity(options: &Value) -> Vec<(String, String)> {
     // 이름은 대소문자를 구분하지 않지만, 중복 이름의 값 순서는 바꾸지 않는다.
     headers.sort_by(|a, b| a.0.cmp(&b.0));
     headers
+}
+
+fn same_check_target(a: &ModelProfile, ar: &Profile, b: &ModelProfile, br: &Profile) -> bool {
+    a.protocol == b.protocol && a.base_url == b.base_url && a.model == b.model
+        && ar.api_key == br.api_key && header_identity(&a.options) == header_identity(&b.options)
 }
 
 #[cfg(test)]
@@ -477,6 +488,7 @@ pub async fn update_profile(
         if base_url != cur.base_url || model != cur.model || secret != cur.secret_id
             || header_identity(&options) != header_identity(&cur.options) {
             ensure_profile_idle(tx, &id)?;
+            tx.execute("DELETE FROM profile_checks WHERE profile_id=?1", [&id])?;
         }
         tx.execute(
             "UPDATE model_profiles SET name = ?2, base_url = ?3, model = ?4, secret_id = ?5, options = ?6, revision = revision + 1, updated_at = ?7, enabled = ?8 WHERE id = ?1",
