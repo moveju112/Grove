@@ -98,8 +98,7 @@ pub fn usage(c: &Connection, session_id: &str, profile_id: Option<&str>) -> ApiR
     let s = crate::sessions::get(c, session_id)?;
     let input_reserve = crate::settings::effective(c, "context.input_reserve_tokens", Some(&s.project_id), Some(session_id))?.as_u64().unwrap_or(0);
     let reserve = opts["max_tokens"].as_u64().unwrap_or(DEFAULT_OUTPUT_RESERVE) + input_reserve;
-    let history = crate::sessions::history_for_model(c, session_id)?;
-    let estimated = estimate_tokens(&crate::runner::to_chat(&history), "");
+    let estimated = crate::history::estimated_tokens(c, session_id)?;
     let measured = measured_tokens(c, session_id)?;
     // 실측은 그 응답을 만든 요청의 입력이다. 그 응답 자체와 이후 메시지는 다음 요청에 더해지므로 추정으로 더한다
     // (content 전체 길이 기준이라 실제보다 약간 크게 잡힌다: 여유분을 과대평가하지 않는 쪽).
@@ -154,42 +153,16 @@ pub struct InputPage {
     pub limit: Option<usize>,
 }
 
-/// 모델이 다음 요청에서 실제로 보게 될 입력(SESSION-011). runner와 같은 함수(history_for_model → to_chat)로 계산해
+/// 모델이 다음 요청에서 실제로 보게 될 입력(SESSION-011). runner와 같은 순차 변환기로 계산해
 /// 압축 요약 치환·분기 상속·표시 전용 기록 제외가 화면과 일치한다. 큰 내용은 앞부분만 보여 준다.
 pub async fn get_model_input(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<InputPage>) -> ApiResult<Json<Value>> {
     let v = app
         .db
         .call(move |c| {
             crate::sessions::get(c, &id)?;
-            let chat = crate::runner::to_chat(&crate::sessions::history_for_model(c, &id)?);
-            let total = chat.len();
-            let offset = q.offset.unwrap_or(0).min(total);
+            let offset = q.offset.unwrap_or(0);
             let limit = q.limit.unwrap_or(50).clamp(1, 200);
-            let cut = |s: &str| -> Value {
-                let n = s.chars().count();
-                if n > 4000 { json!({ "text": s.chars().take(4000).collect::<String>(), "truncated_chars": n - 4000 }) } else { json!({ "text": s }) }
-            };
-            let items: Vec<Value> = chat[offset..(offset + limit).min(total)]
-                .iter()
-                .enumerate()
-                .map(|(i, m)| {
-                    let mut v = match m {
-                        ChatMsg::User { text, images } => json!({ "role": "user", "content": cut(text), "images":images }),
-                        ChatMsg::Assistant { text, tool_calls } => json!({
-                            "role": "assistant", "content": cut(text),
-                            "tool_calls": tool_calls.iter().map(|t| json!({ "id": t.id, "name": t.name })).collect::<Vec<_>>(),
-                        }),
-                        ChatMsg::Tool { call_id, name, content, is_error } => {
-                            json!({ "role": "tool", "call_id": call_id, "name": name, "is_error": is_error, "content": cut(content) })
-                        }
-                    };
-                    v["index"] = json!(offset + i);
-                    v
-                })
-                .collect();
-            let next = (offset + items.len() < total).then_some(offset + items.len());
-            Ok(json!({ "total": total, "offset": offset, "items": items, "next_offset": next,
-                       "note": "시스템 프롬프트와 도구 정의는 턴마다 정의 snapshot으로 따로 붙는다" }))
+            crate::history::preview(c, &id, offset, limit)
         })
         .await?;
     Ok(Json(v))
@@ -208,8 +181,7 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
             let chosen = crate::settings::effective(c, "context.summary_profile", Some(&s.project_id), Some(&sid))?;
             let use_profile = chosen.as_str().filter(|x| !x.is_empty()).map(str::to_string).unwrap_or(pid);
             let (_, rp) = crate::models::runtime_profile(c, &use_profile)?;
-            let history = crate::sessions::history_for_model_upto(c, &sid, Some(b))?;
-            let mut msgs = crate::runner::to_chat(&history);
+            let mut msgs = crate::history::model_chat(c, &sid, Some(b))?;
             let before = estimate_tokens(&msgs, "");
             crate::attachments::hydrate(c, &data, &s.project_id, &mut msgs)?;
             msgs.push(ChatMsg::User {

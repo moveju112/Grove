@@ -11,7 +11,7 @@ use crate::auth::Principal;
 use crate::error::{ApiError, ApiResult};
 use crate::events;
 use crate::idem;
-use crate::provider::{self, ChatMsg, ModelRequest, ToolCall, ToolDef};
+use crate::provider::{self, ChatMsg, ModelRequest, ToolDef};
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -342,125 +342,7 @@ pub async fn cancel_all_for_shutdown(app: &App) {
 
 /// 저장된 메시지를 provider 공통 메시지로 바꾼다. 결과가 없는 tool call에는 중단 결과를 합성해 짝을 맞춘다.
 pub fn to_chat(history: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg> {
-    let mut out = vec![];
-    let mut pending: Vec<(String, String)> = vec![];
-    // 비동기 결과 note(백그라운드 작업·자식 에이전트)는 도구 결과를 기다리는 중에도 기록될 수 있다.
-    // 그 사이에 끼워 넣으면 tool call/result 짝이 깨지므로 미결 도구 결과가 모두 나온 뒤에 넣는다.
-    let mut deferred: Vec<String> = vec![];
-    let flush = |out: &mut Vec<ChatMsg>, pending: &mut Vec<(String, String)>, deferred: &mut Vec<String>| {
-        for (id, name) in pending.drain(..) {
-            out.push(ChatMsg::Tool { call_id: id, name, content: "{\"error\":\"결과가 기록되지 않았습니다(중단됨)\"}".into(), is_error: true });
-        }
-        for d in deferred.drain(..) {
-            push_user(out, &d);
-        }
-    };
-    for (role, content, model_input) in history {
-        let c = model_input.as_ref().unwrap_or(content);
-        match role.as_str() {
-            "user" => {
-                flush(&mut out, &mut pending, &mut deferred);
-                push_user(&mut out, c["text"].as_str().unwrap_or(""));
-                if let Some(ChatMsg::User {images,..})=out.last_mut() {
-                    if let Some(items)=c["images"].as_array() {
-                        // 잘못된 영속 입력은 아래 hydration 단계에서 명시적으로 실패시킨다.
-                        for item in items {
-                            images.push(serde_json::from_value(item.clone()).unwrap_or(crate::provider::ImageInput{id:String::new(),sha256:String::new(),width:0,height:0,mime:String::new(),data:String::new()}));
-                        }
-                    }
-                }
-            }
-            // 백그라운드 작업·자식 에이전트 결과는 다음 요청에서 모델이 볼 수 있게 user 쪽 문맥으로 넣는다(EXEC-011, AGENT-011).
-            "note" if c["type"] == "task_result" || c["type"] == "agent_result" => {
-                let text = if c["type"] == "task_result" {
-                    format!("[background task result]\n{}", crate::tasks::note_text(c))
-                } else {
-                    format!("[child agent result]\n{}", crate::agents::note_text(c))
-                };
-                if pending.is_empty() {
-                    push_user(&mut out, &text);
-                } else {
-                    deferred.push(text);
-                }
-            }
-            // 이전 요청이 비정상 종료된 원인(RUN-023). 다음 요청의 모델이 '사용자가 멈춤'과 '예산 초과' 등을 구분해 알게 한다.
-            "note" if c["type"] == "turn_ended" => {
-                // 화면 표시용 미완료 범위(scope)는 모델 입력에 넣지 않는다(기존 입력 형식 유지).
-                let mut e = c["error"].clone();
-                if let Some(o) = e.as_object_mut() {
-                    o.remove("scope");
-                }
-                let text = format!(
-                    "[previous request ended: status={}]\n{}",
-                    c["status"].as_str().unwrap_or(""),
-                    e
-                );
-                if pending.is_empty() {
-                    push_user(&mut out, &text);
-                } else {
-                    deferred.push(text);
-                }
-            }
-            "assistant" => {
-                flush(&mut out, &mut pending, &mut deferred);
-                let calls: Vec<ToolCall> = c["tool_calls"]
-                    .as_array()
-                    .into_iter()
-                    .flatten()
-                    .map(|t| ToolCall {
-                        id: t["id"].as_str().unwrap_or("").to_string(),
-                        name: t["name"].as_str().unwrap_or("").to_string(),
-                        arguments: t["arguments"].clone(),
-                    })
-                    .collect();
-                pending = calls.iter().map(|c| (c.id.clone(), c.name.clone())).collect();
-                out.push(ChatMsg::Assistant { text: c["text"].as_str().unwrap_or("").to_string(), tool_calls: calls });
-            }
-            "tool" => {
-                let pid = c["provider_call_id"].as_str().unwrap_or("").to_string();
-                if let Some(pos) = pending.iter().position(|(id, _)| *id == pid) {
-                    pending.remove(pos);
-                    let output = &c["output"];
-                    out.push(ChatMsg::Tool {
-                        call_id: pid,
-                        name: c["name"].as_str().unwrap_or("").to_string(),
-                        content: truncate_tool_output(&provider::tool_content_string(output)),
-                        is_error: c["is_error"].as_bool().unwrap_or(false),
-                    });
-                    if pending.is_empty() {
-                        for d in deferred.drain(..) {
-                            push_user(&mut out, &d);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    flush(&mut out, &mut pending, &mut deferred);
-    out
-}
-
-/// 연속 user 메시지를 허용하지 않는 provider가 있어 바로 앞이 user면 합친다.
-fn push_user(out: &mut Vec<ChatMsg>, text: &str) {
-    if let Some(ChatMsg::User { text: prev, .. }) = out.last_mut() {
-        prev.push_str("\n\n");
-        prev.push_str(text);
-    } else {
-        out.push(ChatMsg::User { text: text.to_string(), images: vec![] });
-    }
-}
-
-fn truncate_tool_output(s: &str) -> String {
-    const MAX: usize = 100 * 1024;
-    if s.len() <= MAX {
-        return s.to_string();
-    }
-    let mut end = MAX;
-    while !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    format!("{}\n…(출력 {}바이트 중 {}바이트만 전달)", &s[..end], s.len(), end)
+    crate::history::from_rows(history)
 }
 
 pub fn system_prompt(def: &Value, project_root: &str, tools_enabled: bool) -> String {
@@ -559,8 +441,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let profile_id = t.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?;
     let (mp, rp) = crate::models::runtime_profile(c, &profile_id)?;
     let cli_backend = crate::provider::cli::is_cli(&rp.protocol);
-    let history = crate::sessions::history_for_model(c, &t.session_id)?;
-    let mut messages=to_chat(&history);
+    let mut messages=crate::history::model_chat(c, &t.session_id, None)?;
     crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
     let deadline = def["budget"]["max_minutes"]
         .as_i64()

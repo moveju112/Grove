@@ -14,6 +14,7 @@ pub mod server;
 pub mod config;
 pub mod deps;
 pub mod context;
+mod history;
 pub mod definitions;
 pub mod error;
 pub mod events;

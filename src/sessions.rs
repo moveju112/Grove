@@ -199,48 +199,45 @@ pub fn append_message(
     Ok(m)
 }
 
-/// 모델 입력용 대화 이력(분기 시 상속 포함). (role, content, model_input)
-/// 압축 기록이 있으면 경계 이전 메시지(상속분 포함)를 요약 블록 하나로 바꾼다(CTX-006/007).
-pub fn history_for_model(conn: &Connection, session_id: &str) -> ApiResult<Vec<(String, Value, Option<Value>)>> {
-    history_for_model_upto(conn, session_id, None)
-}
-
-/// `upto`가 있으면 그 seq 이하의 자기 메시지까지만(압축 입력 구성용).
-pub fn history_for_model_upto(conn: &Connection, session_id: &str, upto: Option<i64>) -> ApiResult<Vec<(String, Value, Option<Value>)>> {
-    let compaction = crate::context::latest_compaction(conn, session_id, upto)?;
-    if let Some(cp) = compaction {
-        let mut out = vec![("user".to_string(), json!({ "text": crate::context::summary_block(&cp.summary) }), None)];
-        let mut st = conn.prepare("SELECT role, content, model_input FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND seq > ?2 AND seq <= ?3 ORDER BY seq")?;
-        let rows = st.query_map(params![session_id, cp.upto_seq, upto.unwrap_or(i64::MAX)], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
+/// 필요한 모델 입력 구간만 한 행씩 읽는다. 표시용 content와 model_input을 중복해서 가져오지 않는다.
+/// 분기 원본도 fork 경계 이전의 압축·상위 분기를 사용해 원래 전체 이력을 재적재하지 않는다(DB-012).
+pub(crate) fn visit_model_history(
+    conn: &Connection, session_id: &str, upto: Option<i64>, visit: &mut dyn FnMut(&str, &Value),
+) -> ApiResult<()> {
+    let mut segments = Vec::new();
+    let (mut id, mut end) = (session_id.to_string(), upto);
+    loop {
+        let compaction = crate::context::latest_compaction(conn, &id, end)?;
+        let parent = if compaction.is_none() {
+            let session = get(conn, &id)?;
+            match (session.parent_session_id, session.fork_message_seq, session.fork_inherits_context) {
+                (Some(parent), Some(seq), true) => Some((parent, seq)),
+                _ => None,
+            }
+        } else { None };
+        segments.push((id, end, compaction));
+        let Some((parent, seq)) = parent else { break };
+        id = parent;
+        end = Some(seq);
+    }
+    for (id, end, compaction) in segments.into_iter().rev() {
+        let start = compaction.as_ref().map_or(0, |cp| cp.upto_seq);
+        if let Some(cp) = compaction {
+            visit("user", &json!({ "text": crate::context::summary_block(&cp.summary) }));
+        }
+        let mut statement = conn.prepare(
+            "SELECT role, CASE WHEN model_input IS NOT NULL AND json_valid(model_input) THEN model_input ELSE content END \
+             FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND seq > ?2 AND seq <= ?3 ORDER BY seq",
+        )?;
+        let rows = statement.query_map(params![id, start, end.unwrap_or(i64::MAX)], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
         })?;
         for row in rows {
-            let (role, c, mi) = row?;
-            out.push((role, serde_json::from_str(&c).unwrap_or(Value::Null), mi.and_then(|m| serde_json::from_str(&m).ok())));
-        }
-        return Ok(out);
-    }
-    let s = get(conn, session_id)?;
-    let mut out = Vec::new();
-    if let (Some(parent), Some(seq), true) = (&s.parent_session_id, s.fork_message_seq, s.fork_inherits_context) {
-        let mut st = conn.prepare("SELECT role, content, model_input FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND seq <= ?2 ORDER BY seq")?;
-        let rows = st.query_map(params![parent, seq], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
-        })?;
-        for row in rows {
-            let (role, c, mi) = row?;
-            out.push((role, serde_json::from_str(&c).unwrap_or(Value::Null), mi.and_then(|m| serde_json::from_str(&m).ok())));
+            let (role, input) = row?;
+            visit(&role, &serde_json::from_str(&input).unwrap_or(Value::Null));
         }
     }
-    let mut st = conn.prepare("SELECT role, content, model_input FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND seq <= ?2 ORDER BY seq")?;
-    let rows = st.query_map(params![session_id, upto.unwrap_or(i64::MAX)], |r| {
-        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
-    })?;
-    for row in rows {
-        let (role, c, mi) = row?;
-        out.push((role, serde_json::from_str(&c).unwrap_or(Value::Null), mi.and_then(|m| serde_json::from_str(&m).ok())));
-    }
-    Ok(out)
+    Ok(())
 }
 
 #[derive(Deserialize)]
