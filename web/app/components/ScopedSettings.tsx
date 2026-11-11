@@ -54,18 +54,24 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
     // 가장 좁은 범위를 기본으로 고른다(연 위치에 맞춤).
     const [scope, setScope] = useState(scopes.includes("session") ? "session" : scopes.includes("project") ? "project" : "server");
     const layer = it.layers[scope];
-    const [draft, setDraft] = useState<unknown>(undefined);
+    // SSE가 최신 값을 가져와도 편집 시작 시점의 revision은 바꾸지 않는다(NET-013).
+    const [draft, setDraft] = useState<{ value: unknown; revision: number } | undefined>(undefined);
     const [state, setState] = useState<{ kind: "idle" | "saving" | "saved" | "error" | "conflict"; msg?: string }>({ kind: "idle" });
-    const value = draft !== undefined ? draft : (layer?.value ?? it.effective);
-    const save = async (v: unknown) => {
+    const value = draft !== undefined ? draft.value : (layer?.value ?? it.effective);
+    const saving = state.kind === "saving";
+    const edit = (value: unknown) => {
+        setDraft((prev) => ({ value, revision: prev?.revision ?? layer?.revision ?? 0 }));
+        if (state.kind !== "conflict") setState({ kind: "idle" });
+    };
+    const save = async (v: unknown, revision: number) => {
         setState({ kind: "saving" });
         try {
             const [id] = scopeTarget(scope, t);
-            await api.put(`/settings/${scope}/${id}/${d.key}`, { expected_revision: layer?.revision ?? 0, value: v });
+            await api.put(`/settings/${scope}/${id}/${d.key}`, { expected_revision: revision, value: v });
             setDraft(undefined);
             setState({ kind: "saved", msg: APPLIES[d.applies] });
         } catch (e) {
-            if (e instanceof ApiError && e.code === "revision_conflict") setState({ kind: "conflict", msg: "다른 곳에서 먼저 바뀌었습니다. 최신 값을 불러왔습니다" });
+            if (e instanceof ApiError && e.code === "revision_conflict") setState({ kind: "conflict", msg: "다른 기기에서 먼저 바뀌었습니다. 내 수정은 보존했습니다" });
             else setState({ kind: "error", msg: e instanceof ApiError ? e.message : "저장 실패" });
         }
         reload();
@@ -80,35 +86,36 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
             <p className="muted small">{d.description}</p>
             <div className="inline wrap">
                 {scopes.length > 1 && (
-                    <select aria-label={`${d.label} 적용 범위`} value={scope} onChange={(e) => { setScope(e.target.value); setDraft(undefined); setState({ kind: "idle" }); }}>
+                    <select disabled={saving} aria-label={`${d.label} 적용 범위`} value={scope} onChange={(e) => { setScope(e.target.value); setDraft(undefined); setState({ kind: "idle" }); }}>
                         {scopes.map((s) => <option key={s} value={s}>{SCOPE_LABEL[s]}</option>)}
                     </select>
                 )}
                 <span className="scope">대상: {target}</span>
                 {d.kind === "bool" && (
                     <label className="check">
-                        <input type="checkbox" checked={Boolean(value)} onChange={(e) => setDraft(e.target.checked)} aria-label={d.label} /> 사용
+                        <input disabled={saving} type="checkbox" checked={Boolean(value)} onChange={(e) => edit(e.target.checked)} aria-label={d.label} /> 사용
                     </label>
                 )}
                 {d.kind === "enum" && (
-                    <select aria-label={d.label} value={String(value ?? "")} onChange={(e) => setDraft(e.target.value)}>
+                    <select disabled={saving} aria-label={d.label} value={String(value ?? "")} onChange={(e) => edit(e.target.value)}>
                         {d.options.map((o) => <option key={o} value={o}>{o}</option>)}
                     </select>
                 )}
                 {d.kind === "int" && (
-                    <input type="number" aria-label={d.label} min={d.min ?? undefined} max={d.max ?? undefined} value={Number(value ?? 0)} onChange={(e) => setDraft(Number(e.target.value))} />
+                    <input disabled={saving} type="number" aria-label={d.label} min={d.min ?? undefined} max={d.max ?? undefined} value={Number(value ?? 0)} onChange={(e) => edit(Number(e.target.value))} />
                 )}
                 {(d.kind === "string" || d.kind === "tool_list") && (
                     <input
+                        disabled={saving}
                         aria-label={d.label}
                         placeholder={d.kind === "tool_list" ? "예: shell, write_file" : undefined}
                         value={String(value ?? "")}
-                        onChange={(e) => setDraft(e.target.value)}
+                        onChange={(e) => edit(e.target.value)}
                     />
                 )}
-                <button disabled={draft === undefined || state.kind === "saving"} onClick={() => void save(draft)}>저장</button>
+                <button disabled={draft === undefined || saving || state.kind === "conflict"} onClick={() => draft && void save(draft.value, draft.revision)}>저장</button>
                 {layer && layer.value !== null && layer.value !== undefined && (
-                    <button className="ghost" onClick={() => void save(null)} title="이 범위의 값을 지우고 상위 범위 값을 쓴다">이 범위 값 지우기</button>
+                    <button disabled={saving} className="ghost" onClick={() => void save(null, layer.revision)} title="이 범위의 값을 지우고 상위 범위 값을 쓴다">이 범위 값 지우기</button>
                 )}
             </div>
             <p className="muted small">
@@ -119,6 +126,12 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                 <p className={`save-state ${state.kind === "error" || state.kind === "conflict" ? "error" : ""}`} role="status">
                     {state.kind === "saving" ? "저장 중…" : state.kind === "saved" ? `저장됨 · ${state.msg}` : state.kind === "conflict" ? state.msg : `저장 실패(기존 값 유지): ${state.msg}`}
                 </p>
+            )}
+            {state.kind === "conflict" && (
+                <div className="actions">
+                    <button className="ghost" onClick={() => { setDraft(undefined); setState({ kind: "idle" }); }}>최신 값 사용</button>
+                    {draft && <button onClick={() => void save(draft.value, layer?.revision ?? 0)}>내 수정으로 덮어쓰기</button>}
+                </div>
             )}
         </section>
     );

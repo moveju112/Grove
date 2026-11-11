@@ -72,6 +72,8 @@
 | timeout·연결 취소 | 공용 JSON·바이너리 클라이언트는 body 수신까지 기본 300,000ms(`timeoutMs`로 요청별 변경)를 제한한다. `ApiError`의 `status: 0`, `request_timeout`·`cancelled`·`network_error`와 request ID를 반환한다. 서버 실행을 취소하지 않는다. 변경 전송 후에는 `details.result_unknown: true`와 원래 idempotency key를 보존하고 자동 재실행하지 않는다 |
 | 실행 취소 | 턴 `POST /turns/{id}/cancel`의 `202 {cancel_requested:true, turn}`은 요청 접수이지 종료 보장이 아니다. 작업 `POST /tasks/{id}/cancel`의 `{cancelled, task}`에서 bool은 취소 신호 전달 여부다. 최종 자원 상태를 조회·이벤트로 확인한다. SSE·터미널 WebSocket은 일반 요청 timeout 대상이 아니다 |
 
+다중 기기(NET-013): 설정 편집 초안은 편집을 시작한 revision과 결합한다. SSE 재조회로 최신 값이 도착해도 초안의 revision을 바꾸지 않는다. 충돌하면 초안을 보존하고 최신 값 사용 또는 명시적 덮어쓰기를 선택한다. 승인 경합은 transaction에서 첫 결정만 확정하고 나머지 기기에는 `already_decided`와 현재 상태를 반환한다.
+
 ## 5. 경로·이름
 
 - Rust 모듈: `src/<영역>.rs` 또는 `src/<영역>/mod.rs`. 영역 이름은 소문자 단수(`store`, `auth`, `events`, `sessions`, `turns`, `tools`, `provider`, `agents`, `settings`, `layout`, `shell`, `git`...).

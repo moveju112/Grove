@@ -651,7 +651,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] NET-010 연결별 bounded queue와 느린 클라이언트의 backpressure·재동기화를 구현한다. 검증: SSE 연결별 bounded channel(64)·200개 배치 재생으로 느린 클라이언트 backpressure, 보존 범위 밖·미래 cursor는 `resync`(`tests/api.rs::sse_expired_cursor_requires_resync`).
 - [x] NET-011 heartbeat, 연결 끊김 감지, 지수 backoff, jitter를 구현한다. 검증: SSE heartbeat 15초(`KeepAlive`), 클라이언트 끊김 감지 후 지수 backoff + jitter·상한 30초 재접속(`web/app/state/events.test.ts`).
 - [x] NET-012 클라이언트 재접속이 실행 중인 모델·도구 호출을 재시작하지 않게 한다. 검증: 턴·도구 실행은 연결과 독립된 서버 task, 탭 닫기·재접속 후에도 계속 실행(e2e "봇 대화 탭을 닫아도 서버 실행은 계속되고…"), 재접속은 cursor 재생만.
-- [ ] NET-013 여러 기기의 동시 접속과 동일 승인·설정 충돌을 처리한다.
+- [x] NET-013 여러 기기의 동시 접속과 동일 승인·설정 충돌을 처리한다. 검증: `tests/multi_device.rs`가 서로 다른 기기 토큰의 동시 설정 저장·승인 경합·기기별 idempotency 범위와 부작용 1회 실행을 확인한다. `ScopedSettings`는 SSE로 최신 값이 도착해도 편집 시작 revision을 유지하고 충돌한 초안을 보존하며 최신 값 사용·명시적 덮어쓰기를 제공한다. 두 독립 브라우저 context에서 조용한 덮어쓰기(409 대신 200)를 먼저 재현한 뒤 수정했다(`web/e2e/multi-device.spec.ts`). 선택 Rust 5개, 타입 검사, 다중 기기·기존 범위 설정 E2E 4개 통과. 셸 부작용 경합 시험은 Unix 대상이다.
 - [ ] NET-014 호스트 추가·수정·삭제·별명·최근 연결을 구현한다.
 - [ ] NET-015 호스트 전환 시 이전 요청·구독 결과가 새 호스트 화면에 섞이지 않게 한다.
 - [ ] NET-016 QR와 페어링 링크 생성·스캔·만료·폐기·재발급을 구현한다.
