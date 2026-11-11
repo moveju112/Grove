@@ -97,6 +97,16 @@ pub async fn replace_secret(
     let h = idem::body_hash("secret.replace", &json!({ "id": id, "l": b.label, "v": crate::util::sha256_hex(b.value.as_bytes()) }));
     let actor = p.clone();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
+        let active: bool = tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM turns t JOIN model_profiles p ON p.id=t.profile_id \
+             WHERE p.secret_id=?1 AND t.status IN ('queued','running','awaiting_approval'))",
+            [&id], |row| row.get(0),
+        )?;
+        if active {
+            let unchanged: bool = tx.query_row("SELECT grove_decrypt(value)=?2 FROM secrets WHERE id=?1",
+                params![id, b.value.trim()], |row| row.get(0))?;
+            if !unchanged { return Err(ApiError::busy("이 비밀을 사용하는 모델이 실행 중입니다. 먼저 실행을 끝내거나 취소하세요")); }
+        }
         let n = tx.execute("UPDATE secrets SET label = ?2, value = grove_encrypt(?3), updated_at = ?4 WHERE id = ?1", params![id, b.label.trim(), b.value.trim(), now])?;
         if n == 0 {
             return Err(ApiError::not_found("비밀이 없습니다"));
@@ -268,6 +278,22 @@ pub fn runtime_profile(c: &Connection, id: &str) -> ApiResult<(ModelProfile, Pro
 
 fn configured_profile(c: &Connection, id: &str) -> ApiResult<(ModelProfile, Profile)> {
     provider_profile(c, get_profile(c, id)?)
+}
+
+fn header_identity(options: &Value) -> Vec<(String, String)> {
+    let mut headers: Vec<_> = options["headers"].as_object().into_iter().flat_map(|headers| headers.iter())
+        .filter_map(|(key, value)| value.as_str().map(|value| (key.to_ascii_lowercase(), value.to_string()))).collect();
+    // 이름은 대소문자를 구분하지 않지만, 중복 이름의 값 순서는 바꾸지 않는다.
+    headers.sort_by(|a, b| a.0.cmp(&b.0));
+    headers
+}
+
+#[cfg(test)]
+#[test]
+fn header_identity_normalizes_names_without_hiding_value_changes() {
+    assert_eq!(header_identity(&json!({})), header_identity(&json!({"headers":{}})));
+    assert_eq!(header_identity(&json!({"headers":{"X-Scope":"public"}})), header_identity(&json!({"headers":{"x-scope":"public"}})));
+    assert_ne!(header_identity(&json!({"headers":{"X-Scope":"public"}})), header_identity(&json!({"headers":{"x-scope":"private"}})));
 }
 
 fn provider_profile(c: &Connection, p: ModelProfile) -> ApiResult<(ModelProfile, Profile)> {
@@ -447,6 +473,10 @@ pub async fn update_profile(
         };
         if let Some(s) = &secret {
             secret_info(tx, s)?;
+        }
+        if base_url != cur.base_url || model != cur.model || secret != cur.secret_id
+            || header_identity(&options) != header_identity(&cur.options) {
+            ensure_profile_idle(tx, &id)?;
         }
         tx.execute(
             "UPDATE model_profiles SET name = ?2, base_url = ?3, model = ?4, secret_id = ?5, options = ?6, revision = revision + 1, updated_at = ?7, enabled = ?8 WHERE id = ?1",

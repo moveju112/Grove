@@ -740,7 +740,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] MODEL-018 공급자·계정별 동시 실행 한도와 대기열을 공유한다. `runs.provider_max_active`·`runs.account_max_active`(각 기본 4, 서버 범위 1~64)를 추가하고 대화·요약·제목 추론이 공통 한도를 사용한다(`src/model_limits.rs`). HTTP 공급자는 정규화된 origin, API 계정은 origin+실제 key hash로 묶어 같은 key의 별도 secret/프로필·추가 헤더 변경으로 한도가 갈라지지 않는다. 키 없는 익명/헤더 인증 endpoint는 origin 단위로 보수적으로 공유하고 CLI는 설치 로그인 종류별로 묶는다. 큐·화면에는 자격 증명·hash 대신 `account`/`provider` 대기 이유와 개수만 표시한다. 서로 다른 key가 같은 상위 공급자 계정인지 자동 추측하거나 실제 quota를 조회하지 않는다(AUTH-005~009의 별도 계정 연동 범위). 로컬 HTTP 포화·독립 계정/공급자 진행·대기 취소·제어 요청·보조 호출과 브라우저 회귀 통과. 제목 생성의 출력 상한도 선택한 모델 capability에 맞췄다. 실계정·유료 호출·Windows 실행은 미검증이다.
 - [ ] MODEL-019 fallback 모델 순서와 전환 조건을 설정하고 사용한 모델을 기록한다.
 - [ ] MODEL-020 fallback 때문에 권한·비용·데이터 전송 대상이 조용히 달라지지 않게 한다.
-- [ ] MODEL-021 모델 변경 시 기존 대화의 표현과 새 모델 입력 호환성을 검증한다.
+- [x] MODEL-021 모델 변경 시 기존 대화의 표현과 새 모델 입력 호환성을 검증한다. 로컬 HTTP fixture의 OpenAI/Anthropic/Gemini 3×3 전환에서 원래 메시지·도구 결과·표시 모델 기록을 고쳐 쓰지 않고 새 프로필 ID를 기록하며, 도구/결과 쌍을 대상 protocol로 변환하고 외부 endpoint·모델의 서명 원문은 보내지 않는 것을 확인했다(`tests/http_provider_roundtrip.rs`). 서명 검증용 가짜 값·validator 우회는 추가하지 않았다. 실행/대기/승인 중인 프로필의 모델·endpoint·비밀 참조·전송 헤더 변경과 공유 secret의 값 교체는 먼저 완료/취소하도록 차단한다. 표시 이름·trim 후 같은 secret 값·헤더 이름의 대소문자만 바뀌는 편집은 전송 대상 변경과 구분한다(`tests/model_switching.rs`, header_identity 단위). 단순 프로필 필드뿐 아니라 secret 본문·추가 헤더를 통한 변경도 실패 시험으로 확인한 뒤 고쳤다. 선택 서버·암호화·프로필/목록·브라우저 회귀 통과. 실계정의 공급자 수용성·유료 추론 품질·CLI 원격 세션/실행 검증은 별도로 남긴다.
 - [ ] MODEL-022 수동 effort·auto effort·fast/ultrafast capability와 실제 적용값을 표시한다.
 - [ ] MODEL-023 auto effort 판정기의 배포·자원·ARM64 지원을 검증하고 미지원 시 명시적 수동값을 사용한다.
 - [ ] MODEL-024 요약·제목·웹 검색용 모델 경로와 주 대화 모델 경로를 분리 설정한다.

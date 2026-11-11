@@ -112,16 +112,22 @@ fn steps(protocol: &str) -> Vec<Reply> {
     }
 }
 
-async fn configure(s: &TestServer, provider: &Provider, protocol: &str) -> (String, String) {
+async fn create_profile(s: &TestServer, provider: &Provider, protocol: &str) -> String {
     let (_, secret) = s.post("/api/v1/secrets", json!({ "label": "provider", "value": KEY })).await;
-    let (_, profile) = s.post("/api/v1/model-profiles", json!({
+    let (status, profile) = s.post("/api/v1/model-profiles", json!({
         "name": protocol, "protocol": protocol, "base_url": provider.base, "model": "fixture",
         "secret_id": secret["id"], "options": { "max_tokens": 32768, "context_window": 1000000 },
     })).await;
+    assert_eq!(status, StatusCode::CREATED);
+    profile["id"].as_str().unwrap().into()
+}
+
+async fn configure(s: &TestServer, provider: &Provider, protocol: &str) -> (String, String) {
+    let profile = create_profile(s, provider, protocol).await;
     let project = s.create_project("provider").await;
     std::fs::write(std::path::Path::new(project["root_path"].as_str().unwrap()).join("notes.txt"), "문서\n").unwrap();
     let session = s.create_session(project["id"].as_str().unwrap()).await;
-    (profile["id"].as_str().unwrap().into(), session["id"].as_str().unwrap().into())
+    (profile, session["id"].as_str().unwrap().into())
 }
 
 async fn roundtrip(protocol: &str) {
@@ -259,5 +265,53 @@ async fn signed_content_is_not_sent_to_a_different_endpoint_or_protocol() {
             assert!(!body.to_string().contains("must-not-leave"));
             assert!(body.to_string().contains("public history"));
         }
+    }
+}
+
+#[tokio::test]
+async fn switching_http_providers_keeps_display_history_and_translates_tool_pairs_without_foreign_signatures() {
+    for source_protocol in ["openai", "anthropic", "gemini"] {
+        let s = TestServer::start().await;
+        let source = Provider::start(source_protocol, steps(source_protocol)).await;
+        let (profile, session) = configure(&s, &source, source_protocol).await;
+        let (_, turn) = s.post(&format!("/api/v1/sessions/{session}/turns"),
+            json!({ "profile_id":profile, "text":"read notes", "tools":true, "effort":"high" })).await;
+        s.wait_status(turn["turn"]["id"].as_str().unwrap(), "completed").await;
+        let (_, original) = s.get(&format!("/api/v1/sessions/{session}/messages")).await;
+        for target_protocol in ["openai", "anthropic", "gemini"] {
+            let target = Provider::start(target_protocol, vec![steps(target_protocol).pop().unwrap()]).await;
+            let target_profile = create_profile(&s, &target, target_protocol).await;
+            let (_, turn) = s.post(&format!("/api/v1/sessions/{session}/turns"),
+                json!({ "profile_id":target_profile, "text":format!("new turn in {target_protocol}"), "tools":false })).await;
+            let done = s.wait_status(turn["turn"]["id"].as_str().unwrap(), "completed").await;
+            assert_eq!(done["profile_id"], target_profile);
+            let requests = &target.state.lock().unwrap().requests;
+            assert_eq!(requests.len(), 1);
+            assert!(requests[0].2);
+            let body = &requests[0].1;
+            let wire = body.to_string();
+            assert!(wire.contains("읽을게") && wire.contains("문서") && wire.contains("notes.txt"));
+            assert!(!wire.contains("fixture-signature") && !wire.contains("fixture-redacted") && !wire.contains("fixture-empty-signature"));
+            match target_protocol {
+                "openai" => {
+                    let messages = body["messages"].as_array().unwrap();
+                    assert!(messages.iter().any(|m| m["role"] == "tool" && m["tool_call_id"] == "native-read"));
+                    assert!(messages.iter().any(|m| m["tool_calls"][0]["id"] == "native-read"));
+                }
+                "anthropic" => {
+                    let blocks: Vec<_> = body["messages"].as_array().unwrap().iter().flat_map(|m| m["content"].as_array().unwrap()).collect();
+                    assert!(blocks.iter().any(|b| b["type"] == "tool_use" && b["id"] == "native-read"));
+                    assert!(blocks.iter().any(|b| b["type"] == "tool_result" && b["tool_use_id"] == "native-read"));
+                }
+                _ => {
+                    let parts: Vec<_> = body["contents"].as_array().unwrap().iter().flat_map(|m| m["parts"].as_array().unwrap()).collect();
+                    assert!(parts.iter().any(|p| p["functionCall"]["name"] == "read" && p["functionCall"]["args"]["path"] == "notes.txt"));
+                    assert!(parts.iter().any(|p| p["functionResponse"]["name"] == "read"));
+                }
+            }
+        }
+        let (_, after) = s.get(&format!("/api/v1/sessions/{session}/messages")).await;
+        let original = original["items"].as_array().unwrap();
+        assert_eq!(&after["items"].as_array().unwrap()[..original.len()], original.as_slice(), "표시용 원래 메시지를 고쳐 쓰지 않는다");
     }
 }
