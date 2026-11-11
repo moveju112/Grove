@@ -643,7 +643,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] NET-002 Rust 계약에서 TypeScript 타입과 런타임 검증 정보를 생성한다. 검증: `tests/ts_bindings.rs`가 ts-rs 선언과 `web/scripts/contract-metadata.mjs`의 런타임 metadata를 함께 생성·drift 검사한다. 미지원 구문은 생성 실패로 처리하고 nullable·optional·배열·참조·중첩 필드를 보존한다. `parseContract`는 SSE 이벤트 적용 전과 명시적인 HTTP 계약 요청에서 응답을 검사하며 추가 필드는 허용한다. 선택 검사: Rust `ts_bindings`·`api` 23개, Vitest 검증·capability·이벤트 10개, 타입 검사, worktree E2E 2개 통과.
 - [x] NET-003 request ID, timeout, 표준 오류 코드, 취소 응답을 정의한다. 검증: `web::request_context`가 UUID request ID·tracing span과 비정형 HTTP 오류의 표준 envelope를 제공한다. 공용 JSON·바이너리 요청은 body 수신까지 timeout·사용자 취소를 적용하고 전송된 변경의 결과 불명·같은 idempotency key를 보존한다. 응답 대기 취소와 실행 취소 접수·최종 상태를 `migration/RULEBOOK.md` §4에서 구분한다. 선택 검사: Rust `http_contract`·`api` 23개와 `tasks`·`turns` 41개, Vitest 클라이언트·검증 12개, 타입 검사, 작업 응답 유실·worktree E2E 5개 통과.
 - [x] NET-004 HTTP 요청·WebSocket 이벤트·파일 전송의 역할을 고정한다. 검증: 역할 결정 `migration/RULEBOOK.md` §2(HTTP 요청·SSE 이벤트·터미널 전용 WebSocket).
-- [ ] NET-005 로컬·LAN·VPN·원격에서 같은 API를 사용한다.
+- [x] NET-005 로컬·LAN·VPN·원격에서 같은 API를 사용한다. 검증: 하나의 `/api/v1` router와 동일 origin 웹앱을 사용하며 외부 listen·Host 허용 목록·앞단 TLS 종료는 설정으로 분리한다. `tests/network.rs`에서 실제 wildcard TCP 서버에 로컬·LAN·VPN·원격 authority의 Host/Origin을 보내 같은 인증·상태·idempotency 응답·SSE handshake와 Secure 쿠키를 확인하고 다른 Host/Origin을 거절했다(1개 통과). 실제 VPN 라우팅·방화벽·TLS 인증서 검증을 대신하지 않는다.
 - [x] NET-006 이벤트 순서 번호와 재접속 cursor를 구현한다. 검증: `src/events.rs`(seq·Last-Event-ID/cursor), `tests/api.rs::sse_cursor_replay_without_duplicates`.
 - [x] NET-007 이미 수신한 이벤트의 중복 적용을 방지한다. 검증: 서버 `seq > cursor` + 클라이언트 `Cursor.accept`, `web/app/state/events.test.ts`, mutation M8.
 - [x] NET-008 보존 기간 밖 cursor는 snapshot 재동기화로 처리한다. 검증: `tests/api.rs::sse_expired_cursor_requires_resync`, 클라이언트 `onResync` 전체 재조회.

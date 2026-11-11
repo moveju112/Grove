@@ -74,6 +74,8 @@
 
 다중 기기(NET-013): 설정 편집 초안은 편집을 시작한 revision과 결합한다. SSE 재조회로 최신 값이 도착해도 초안의 revision을 바꾸지 않는다. 충돌하면 초안을 보존하고 최신 값 사용 또는 명시적 덮어쓰기를 선택한다. 승인 경합은 transaction에서 첫 결정만 확정하고 나머지 기기에는 `already_decided`와 현재 상태를 반환한다.
 
+접속 경로(NET-005): 로컬·LAN·VPN·원격은 모두 같은 `/api/v1`과 같은 서버의 웹앱을 사용한다. 기본은 loopback이고 외부 접속은 `GROVE_LISTEN`/`--listen`으로 명시한다. 외부 공개 시 `GROVE_ALLOWED_HOSTS`에 실제 Host(포트 포함)를 제한하고 앞단 HTTPS에서 TLS를 종료한 뒤 `GROVE_TLS_TERMINATED=1`로 Secure refresh 쿠키를 사용한다. 이 설정은 TLS 자체를 제공하지 않는다. 장기 자격증명을 외부 평문 HTTP로 보내지 않는다. HTTP authority 계약 시험과 실제 네트워크·인증서·방화벽 검증은 구분한다.
+
 ## 5. 경로·이름
 
 - Rust 모듈: `src/<영역>.rs` 또는 `src/<영역>/mod.rs`. 영역 이름은 소문자 단수(`store`, `auth`, `events`, `sessions`, `turns`, `tools`, `provider`, `agents`, `settings`, `layout`, `shell`, `git`...).
