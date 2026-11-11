@@ -45,7 +45,7 @@ test("첨부 업로드와 전송 응답 유실 뒤 같은 요청으로 원문을
     await expect(project.getByLabel("메시지 입력")).toHaveValue(title);
     await expect(project.getByTestId("attachment-card")).toContainText(name);
     loseSend = false;
-    await project.getByRole("button", { name: "보내기", exact: true }).click();
+    await project.getByRole("button", { name: "같은 요청 확인", exact: true }).click();
     const sent = page.locator(".session-view").getByLabel("메시지 첨부파일");
     await expect(sent).toContainText(name);
     expect(sendKeys).toHaveLength(2);

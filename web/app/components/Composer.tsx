@@ -3,7 +3,7 @@ import { ApiError, api, newKey } from "../api/client";
 import type { Definition, ModelProfile } from "../api/generated";
 import { deviceName, loadPrefs } from "../state/device";
 import * as D from "../state/drafts";
-import { type SendOptions, capabilityProblem, resolveOptions } from "../state/sendOptions";
+import { type SendOptions, capabilityProblem, resolveOptions, sendOptionsSignature } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
 
@@ -42,6 +42,7 @@ type Props = {
 export type RunCommand = SlashCommand & { run: (arg: string, o: SendOptions) => Promise<string | void> | string | void };
 
 export type FollowKind = "queue" | "steer" | "interrupt";
+type PendingSend = { raw: string; sig: string; key: string; options: SendOptions; follow?: FollowKind };
 const FOLLOW_LABEL: Record<FollowKind, string> = { queue: "대기열에 추가", steer: "지금 반영", interrupt: "중단하고 보내기" };
 
 /// 입력창: 입력할 때마다 기기 내 사본을 저장하고, 서버 초안은 명시적으로 저장/불러온다.
@@ -107,8 +108,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     // 모바일(터치) 키보드에는 Shift가 불편하므로 Enter는 항상 줄바꿈이고, 보내기 버튼으로 보낸다.
     const enterSends = prefs.enterToSend && !(typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches);
     // 결과를 알 수 없는 전송(네트워크 끊김·서버 오류)의 key. 같은 내용·옵션으로 다시 보낼 때만 재사용한다(UI-028).
-    const unsure = useRef<{ sig: string; key: string } | null>(null);
-    const [unsureMsg, setUnsureMsg] = useState(false);
+    const [pending, setPending] = useState<PendingSend | null>(null);
+    const recovering = pending?.raw === text && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null;
     // slash command: 공통 명령 + 화면 명령. 등록된 이름만 명령이고 나머지 "/"는 보내지 않는다(//로 시작하면 글).
     const builtins: RunCommand[] = [
         {
@@ -191,24 +192,31 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
 
     /// body: 실제로 보낼 글("//" 이스케이프를 푼 값), raw: 입력창 원문(보낸 뒤 비울지 판단).
     const sendText = async (body: string, raw: string) => {
-        if (eff.mode === "model" && profileDisabled) {
+        const ids = attachments.ids;
+        const confirmation = pending?.raw === raw && pending.sig === sendOptionsSignature(opts, ids) ? pending : null;
+        if (!confirmation && eff.mode === "model" && profileDisabled) {
             setMsg("선택한 모델 프로필이 비활성화돼 있습니다. 다른 프로필을 명시적으로 선택하세요.");
             return;
         }
-        if (problem) { setMsg(problem); return; }
+        if (!confirmation && problem) { setMsg(problem); return; }
         const text = body;
         sending.current = true;
         setBusy(true);
         setMsg(null);
-        const kind = running ? follow : undefined;
-        const ids = attachments.ids;
-        const sig = JSON.stringify([text, eff, kind, ids]);
-        const key = unsure.current?.sig === sig ? unsure.current.key : newKey();
+        const options = confirmation?.options ?? eff;
+        const kind = confirmation ? confirmation.follow : running ? follow : undefined;
+        let intent = opts;
+        if (!confirmation && options.mode === "model" && boundProfileId === undefined) {
+            // 보내기를 누른 순간 보이는 기본 모델도 사용자가 선택한 대상이다.
+            intent = { ...opts, profileId: options.profileId };
+            update({ profileId: options.profileId });
+        }
+        const sig = confirmation?.sig ?? sendOptionsSignature(intent, ids);
+        const key = confirmation?.key ?? newKey();
         try {
-            await onSend(text, eff, key, kind, ids);
+            await onSend(text, options, key, kind, ids);
             attachments.clear();
-            unsure.current = null;
-            setUnsureMsg(false);
+            setPending(null);
             // 보내는 동안 새로 입력한 글은 지우지 않는다(보낸 글 그대로일 때만 비움).
             setText((cur) => (cur === raw ? "" : cur));
             // 보낸 뒤 서버 초안이 내 것이면 비운다(다른 기기 수정이 있으면 남김)
@@ -220,11 +228,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
             const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408
                 || (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true;
             if (unknown) {
-                unsure.current = { sig, key };
-                setUnsureMsg(true);
+                setPending({ raw, sig, key, options: { ...options }, follow: kind });
             } else {
-                unsure.current = null;
-                setUnsureMsg(false);
+                setPending(null);
                 setMsg(e.message);
             }
         } finally {
@@ -282,10 +288,10 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                     </button>
                 </div>
             )}
-            {unsureMsg && (
+            {pending && (
                 <div className="draft-note warn" role="alert" data-testid="send-unsure">
-                    보냈는지 확인할 수 없습니다(연결 문제). 입력은 그대로 보관했고 자동으로 다시 보내지 않습니다. 대화에 반영됐는지 확인한 뒤, 내용을 바꾸지 않고 다시 보내면 같은
-                    요청으로 처리되어 두 번 실행되지 않습니다.
+                    보냈는지 확인할 수 없습니다(연결 문제). 입력은 그대로 보관했고 자동으로 다시 보내지 않습니다.
+                    글·모델/도구 옵션·첨부를 바꾸지 않고 확인하면 원래 전송 위치·옵션·같은 요청 키를 사용합니다.
                 </div>
             )}
             {sugg.length > 0 && (
@@ -364,7 +370,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                     초안 서버 저장
                 </button>
                 {running && eff.mode === "model" && (
-                    <select aria-label="실행 중 보내기 방식" value={follow} onChange={(e) => setFollow(e.target.value as FollowKind)}>
+                    <select aria-label="실행 중 보내기 방식" value={follow} disabled={!!recovering} onChange={(e) => setFollow(e.target.value as FollowKind)}>
                         <option value="queue">대기열에 추가(끝난 뒤 새 요청)</option>
                         <option value="steer">지금 반영(다음 모델 호출에 추가)</option>
                         <option value="interrupt">중단하고 보내기</option>
@@ -372,10 +378,10 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 )}
                 <button
                     onClick={send}
-                    disabled={busy || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || !!problem || (eff.mode === "model" && (!eff.profileId || profileDisabled)) || (!!running && eff.mode === "save")}
+                    disabled={busy || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (!!problem || (eff.mode === "model" && (!eff.profileId || profileDisabled)) || (!!running && eff.mode === "save")))}
                     title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다(도구 호출과 결과 사이에 끼면 안 됨)" : undefined}
                 >
-                    {busy ? "보내는 중…" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
+                    {busy ? recovering ? "확인 중…" : "보내는 중…" : recovering ? "같은 요청 확인" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
                 </button>
             </div>
             {msg && <p className="muted small" role="status">{msg}</p>}

@@ -37,7 +37,7 @@ test("응답을 잃은 전송은 입력을 보관하고, 같은 내용 재전송
 
     // 내용을 바꾸지 않고 다시 보내면 같은 key → 서버가 이전 결과를 돌려주고 중복 저장하지 않는다
     lose = false;
-    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    await view.getByRole("button", { name: "같은 요청 확인", exact: true }).click();
     await expect(box).toHaveValue("");
     await expect(view.getByTestId("send-unsure")).toHaveCount(0);
     expect(keys).toHaveLength(2);

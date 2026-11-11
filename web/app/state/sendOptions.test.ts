@@ -1,8 +1,20 @@
 import { describe, expect, it } from "vitest";
-import { type SendOptions, capabilityProblem, resolveOptions } from "./sendOptions";
+import { type SendOptions, capabilityProblem, resolveOptions, sendOptionsSignature } from "./sendOptions";
 import type { ModelCapabilities } from "../api/generated";
 
 const base: SendOptions = { mode: "model", profileId: null, agentId: null, tools: false };
+
+describe("sendOptionsSignature", () => {
+    it("생략한 auto와 명시한 auto, 속성 순서는 요청의 정체성을 바꾸지 않는다", () => {
+        expect(sendOptionsSignature(base, ["a"])).toBe(sendOptionsSignature({ tools: false, agentId: null, profileId: null, mode: "model", effort: "auto" }, ["a"]));
+    });
+    it("대상·권한·첨부 순서 변경은 별도 요청이다", () => {
+        const original = sendOptionsSignature(base, ["a", "b"]);
+        expect(sendOptionsSignature({ ...base, profileId: "other" }, ["a", "b"])).not.toBe(original);
+        expect(sendOptionsSignature({ ...base, tools: true }, ["a", "b"])).not.toBe(original);
+        expect(sendOptionsSignature(base, ["b", "a"])).not.toBe(original);
+    });
+});
 
 describe("resolveOptions", () => {
     it("선택이 없으면 첫 프로필을 쓴다(다른 옵션 변경과 무관)", () => {
