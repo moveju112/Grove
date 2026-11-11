@@ -450,6 +450,8 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let (mp, rp) = crate::models::runtime_profile(c, &profile_id)?;
     let cli_backend = crate::provider::cli::is_cli(&rp.protocol);
     let mut messages=crate::history::model_chat(c, &t.session_id, None)?;
+    mp.check_capabilities(t.tools_enabled, def["effort"].as_str(), messages.iter().any(|m| matches!(m, ChatMsg::User { images, .. } if !images.is_empty())))?;
+    let (max_tokens, temperature) = mp.generation_options();
     crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
     let deadline = def["budget"]["max_minutes"]
         .as_i64()
@@ -465,8 +467,8 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             messages,
             // CLI 백엔드는 자기 도구를 쓰므로 Grove 도구 목록을 보내지 않는다.
             tools: if t.tools_enabled && !cli_backend { tool_defs() } else { vec![] },
-            max_tokens: mp.options["max_tokens"].as_u64().map(|v| v as u32),
-            temperature: mp.options["temperature"].as_f64(),
+            max_tokens,
+            temperature,
             // 접수 때 고정한 추론 강도(UI-020). 없으면 auto.
             effort: def["effort"].as_str().map(str::to_string),
             // CLI 백엔드: 프로젝트 root에서 실행하고, 이 대화×프로필의 CLI 세션이 있으면 이어 쓴다.
@@ -930,6 +932,9 @@ pub struct CreateTurn {
 /// 접수한 턴에 추론 강도를 고정한다(같은 transaction). 이후 단계·승인 뒤 재개에도 같은 값을 쓴다.
 pub fn set_turn_effort(tx: &Connection, turn_id: &str, effort: Option<&str>) -> ApiResult<()> {
     if let Some(e) = effort {
+        let turn = get_turn(tx, turn_id)?;
+        let profile = crate::models::get_enabled_profile(tx, turn.profile_id.as_deref().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?)?;
+        profile.check_capabilities(false, Some(e), false)?;
         tx.execute("UPDATE turns SET definition_snapshot = json_set(definition_snapshot, '$.effort', ?2) WHERE id = ?1", params![turn_id, e])?;
     }
     Ok(())
@@ -1009,9 +1014,7 @@ pub(crate) fn enqueue_with_attachments(
         None => (profile_id, agent_id),
     };
     let profile=crate::models::get_enabled_profile(tx, profile_id)?;
-    if attachments.is_some_and(|a|a.model_input["images"].as_array().is_some_and(|v|!v.is_empty())) && crate::provider::cli::is_cli(&profile.protocol) {
-        return Err(ApiError::unsupported("CLI 백엔드는 이미지 첨부를 지원하지 않습니다. HTTP 모델 프로필을 선택하세요"));
-    }
+    profile.check_capabilities(tools, None, attachments.is_some_and(|a| a.model_input["images"].as_array().is_some_and(|v| !v.is_empty())))?;
     let wf_id = s.workflow_id.clone().unwrap_or_else(|| "default".into());
     let wf = crate::definitions::resolve(tx, "workflow", &wf_id)?;
     let mut def = json!({ "workflow": { "id": wf_id, "revision": wf.def.revision, "body_sha256": wf.def.body_sha256, "body": wf.def.body } });

@@ -39,6 +39,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
 
     // 봇 대화도 보고 있는 동안 도착한 메시지는 읽은 것으로 기록한다(서버 위치는 뒤로 가지 않음).
     const botId = s?.bot_id ?? null;
+    const bots = useQuery<{ bots: { id: string; profile_id: string | null }[] }>(botId ? "bots" : null, () => api.get("/bots"));
     useEffect(() => {
         if (botId && lastSeq > 0) void api.post(`/bots/${botId}/seen`, { seq: lastSeq }).catch(() => undefined);
     }, [botId, lastSeq]);
@@ -408,7 +409,8 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             {!active && lastTurn && <TurnTiming sessionId={sessionId} turnId={lastTurn.id} />}
             <BudgetNote sessionId={sessionId} active={active} />
             <FollowupsPanel sessionId={sessionId} running={!!active} onError={setErr} />
-            <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands} />
+            <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands}
+                boundProfileId={s.bot_id ? bots.data?.bots.find((bot) => bot.id === s.bot_id)?.profile_id ?? null : undefined} />
         </div>
     );
 }

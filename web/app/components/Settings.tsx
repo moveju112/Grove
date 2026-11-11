@@ -7,6 +7,7 @@ import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSe
 import { UsagePanel } from "./UsagePanel";
 import { Pairings } from "./Pairing";
 import { ProfileCatalog } from "./ProfileCatalog";
+import { ProfileCapabilities } from "./ProfileCapabilities";
 import { useCapability } from "../state/capabilities";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
@@ -245,6 +246,7 @@ function Profiles() {
                         <button className="ghost small" onClick={() => void save.run(() => api.del(`/model-profiles/${p.id}`))}>삭제</button>
                         <button className="ghost small" onClick={() => void save.run(() => api.post(`/model-profiles/${p.id}/check`))}>연결 확인</button>
                         <CheckStatus c={p.last_check} />
+                        <ProfileCapabilities profile={p} />
                         {management !== false && <button className="ghost small" onClick={() => void save.run(() =>
                             api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, enabled: p.enabled === false }, { requires: ["model_management_v1"] })
                         )}>{p.enabled === false ? "활성화" : "비활성화"}</button>}

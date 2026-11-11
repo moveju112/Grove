@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { type SendOptions, resolveOptions } from "./sendOptions";
+import { type SendOptions, capabilityProblem, resolveOptions } from "./sendOptions";
+import type { ModelCapabilities } from "../api/generated";
 
 const base: SendOptions = { mode: "model", profileId: null, agentId: null, tools: false };
 
@@ -21,5 +22,21 @@ describe("resolveOptions", () => {
         expect(resolveOptions({ ...base, agentId: "old" }, ["p1"], ["worker"]).agentId).toBeNull();
         expect(resolveOptions({ ...base, agentId: "worker" }, ["p1"], ["worker"]).agentId).toBe("worker");
         expect(resolveOptions({ ...base, agentId: "worker" }, ["p1"], undefined).agentId).toBe("worker");
+    });
+});
+
+describe("capabilityProblem", () => {
+    const unknown: ModelCapabilities = { context_tokens: null, max_output_tokens: null, images: null, tools: null, effort: null, temperature: null, pdf: false, fast: false };
+    it("미확인 지원을 미지원으로 단정하지 않는다", () => {
+        expect(capabilityProblem(unknown, { ...base, tools: true, effort: "high" }, true)).toBeNull();
+        expect(capabilityProblem(undefined, base, false)).toBeNull();
+    });
+    it("미지원 요청은 명시적으로 되돌리게 하고 저장 모드는 막지 않는다", () => {
+        const no = { ...unknown, images: false, tools: false, effort: false };
+        expect(capabilityProblem(no, { ...base, tools: true }, false)).toContain("도구 루프 미지원");
+        expect(capabilityProblem(no, { ...base, effort: "high" }, false)).toContain("추론 강도 미지원");
+        expect(capabilityProblem(no, { ...base, effort: "auto" }, false)).toBeNull();
+        expect(capabilityProblem(no, base, true)).toContain("이미지 입력 미지원");
+        expect(capabilityProblem(no, { ...base, mode: "save", tools: true }, true)).toBeNull();
     });
 });

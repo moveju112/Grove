@@ -94,7 +94,9 @@ export type ModelProfile = { id: string, name: string, protocol: string, base_ur
 /**
  * 마지막 연결 확인 결과(AUTH-001). 확인한 적 없으면 null.
  */
-last_check: { ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null, enabled: boolean, };
+last_check: { ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null, enabled: boolean, capabilities: ModelCapabilities, };
+
+export type ModelCapabilities = { context_tokens: number | null, max_output_tokens: number | null, images: boolean | null, tools: boolean | null, effort: boolean | null, temperature: boolean | null, pdf: boolean, fast: boolean, };
 
 export type AvailableModel = { id: string, name: string, };
 

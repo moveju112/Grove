@@ -156,6 +156,7 @@ pub struct ModelProfile {
     #[ts(type = "{ ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null")]
     pub last_check: Option<Value>,
     pub enabled: bool,
+    pub capabilities: crate::model_capabilities::ModelCapabilities,
 }
 
 const PCOLS: &str = "id, name, protocol, base_url, model, secret_id, options, revision, created_at, updated_at, \
@@ -164,14 +165,18 @@ const PCOLS: &str = "id, name, protocol, base_url, model, secret_id, options, re
 
 fn profile_row(r: &Row) -> rusqlite::Result<ModelProfile> {
     let o: String = r.get(6)?;
+    let options = serde_json::from_str(&o).unwrap_or(json!({}));
+    let protocol: String = r.get(2)?;
+    let capabilities = crate::model_capabilities::resolve(&protocol, &options);
     Ok(ModelProfile {
         id: r.get(0)?,
         name: r.get(1)?,
-        protocol: r.get(2)?,
+        protocol,
         base_url: r.get(3)?,
         model: r.get(4)?,
         secret_id: r.get(5)?,
-        options: serde_json::from_str(&o).unwrap_or(json!({})),
+        options,
+        capabilities,
         revision: r.get(7)?,
         created_at: r.get(8)?,
         updated_at: r.get(9)?,
@@ -302,12 +307,12 @@ pub struct CreateProfile {
     pub enabled: Option<bool>,
 }
 
-fn validate_options(o: &Value) -> ApiResult<()> {
+fn validate_options(protocol: &str, o: &Value) -> ApiResult<()> {
     let obj = o.as_object().ok_or_else(|| ApiError::invalid("options는 객체여야 합니다"))?;
     for (k, v) in obj {
         match k.as_str() {
             "timeout_secs" | "max_tokens" => {
-                if v.as_u64().is_none() {
+                if !v.as_u64().is_some_and(|n| n > 0 && (k == "timeout_secs" || n <= u64::from(u32::MAX))) {
                     return Err(ApiError::invalid(format!("{k}는 양의 정수여야 합니다")));
                 }
             }
@@ -326,10 +331,11 @@ fn validate_options(o: &Value) -> ApiResult<()> {
                 }
             }
             "context_window" => {
-                if v.as_u64().is_none() {
+                if !v.as_u64().is_some_and(|n| n > 0) {
                     return Err(ApiError::invalid("context_window는 양의 정수여야 합니다"));
                 }
             }
+            "capabilities" => {}
             // 가격표(USAGE-003): 백만 token당 단가. 통화·버전을 함께 저장하고, 없으면 비용은 "알 수 없음"이다.
             "pricing" => {
                 let p = v.as_object().ok_or_else(|| ApiError::invalid("pricing은 객체여야 합니다"))?;
@@ -360,7 +366,7 @@ fn validate_options(o: &Value) -> ApiResult<()> {
             other => return Err(ApiError::invalid(format!("지원하지 않는 옵션: {other}"))),
         }
     }
-    Ok(())
+    crate::model_capabilities::validate_options(protocol, o)
 }
 
 pub async fn create_profile(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Json(b): Json<CreateProfile>) -> ApiResult<Response> {
@@ -370,7 +376,7 @@ pub async fn create_profile(State(app): State<App>, Owner(p): Owner, headers: He
     }
     let options = b.options.unwrap_or(json!({}));
     let enabled = b.enabled.unwrap_or(true);
-    validate_options(&options)?;
+    validate_options(&b.protocol, &options)?;
     let mut request = json!({ "n": b.name, "p": b.protocol, "u": b.base_url, "m": b.model, "s": b.secret_id, "o": options });
     if !enabled { request["enabled"] = json!(false); }
     let h = idem::body_hash("profile.create", &request);
@@ -410,15 +416,13 @@ pub async fn update_profile(
     Path(id): Path<String>,
     Json(b): Json<UpdateProfile>,
 ) -> ApiResult<Response> {
-    if let Some(o) = &b.options {
-        validate_options(o)?;
-    }
     let mut request = json!({ "id": id, "r": b.expected_revision, "n": b.name, "u": b.base_url, "m": b.model, "s": b.secret_id, "o": b.options });
     if b.secret_id.as_ref().is_some_and(Option::is_none) { request["secret_cleared"] = json!(true); }
     if let Some(enabled) = b.enabled { request["enabled"] = json!(enabled); }
     let h = idem::body_hash("profile.update", &request);
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let cur = get_profile(tx, &id)?;
+        if let Some(options) = &b.options { validate_options(&cur.protocol, options)?; }
         if cur.revision != b.expected_revision {
             return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));
         }
@@ -426,6 +430,17 @@ pub async fn update_profile(
         let base_url = b.base_url.map(|u| u.trim().trim_end_matches('/').to_string()).unwrap_or(cur.base_url.clone());
         let model = b.model.map(|m| m.trim().to_string()).unwrap_or(cur.model.clone());
         provider::validate_profile(&cur.protocol, &base_url, &model).map_err(ApiError::invalid)?;
+        let options = b.options.unwrap_or_else(|| {
+            let mut options = cur.options.clone();
+            if base_url != cur.base_url || model != cur.model {
+                // 다른 모델·endpoint의 확인값을 그대로 지원 보증으로 승격하지 않는다.
+                if let Some(object) = options.as_object_mut() {
+                    object.remove("capabilities");
+                    object.remove("context_window");
+                }
+            }
+            options
+        });
         let secret = match b.secret_id {
             Some(s) => s,
             None => cur.secret_id.clone(),
@@ -435,7 +450,7 @@ pub async fn update_profile(
         }
         tx.execute(
             "UPDATE model_profiles SET name = ?2, base_url = ?3, model = ?4, secret_id = ?5, options = ?6, revision = revision + 1, updated_at = ?7, enabled = ?8 WHERE id = ?1",
-            params![id, b.name.unwrap_or(cur.name.clone()), base_url, model, secret, b.options.unwrap_or(cur.options.clone()).to_string(), now, b.enabled.unwrap_or(cur.enabled)],
+            params![id, b.name.unwrap_or(cur.name.clone()), base_url, model, secret, options.to_string(), now, b.enabled.unwrap_or(cur.enabled)],
         )?;
         let prof = get_profile(tx, &id)?;
         events::append(tx, now, "profile.changed", None, None, &serde_json::to_value(&prof)?)?;

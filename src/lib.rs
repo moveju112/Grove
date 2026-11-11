@@ -23,6 +23,7 @@ pub mod git;
 pub mod followups;
 pub mod goals;
 pub mod idem;
+pub mod model_capabilities;
 pub mod models;
 pub mod changes;
 pub mod procs;
@@ -76,6 +77,7 @@ pub const CAPABILITIES: &[&str] = &[
     "pairing_v1",
     "notification_delivery_v1",
     "model_management_v1",
+    "model_capabilities_v1",
 ];
 
 #[derive(Clone)]

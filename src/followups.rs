@@ -98,6 +98,9 @@ pub fn apply_steers(tx: &Connection, now: &str, turn_id: &str, data: &std::path:
         let result = (|| -> ApiResult<()> {
             let owner = owner_of(tx, &f.id)?;
             let prepared = prepare_item(tx, data, f, &owner)?;
+            let turn = crate::runner::get_turn(tx, turn_id)?;
+            let profile = crate::models::get_enabled_profile(tx, turn.profile_id.as_deref().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?)?;
+            profile.check_capabilities(false, None, prepared.model_input["images"].as_array().is_some_and(|v| !v.is_empty()))?;
             let mut content = json!({"text":f.text,"source":{"kind":"steer","followup_id":f.id}});
             if !prepared.items.is_empty() {
                 content["attachments"] = json!(prepared.items);
@@ -285,8 +288,10 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
     let session_for_interrupt = session_id.clone();
     let resp = idem::run(&app, &p, &headers, &h, move |tx, now| {
         let s = crate::sessions::get_active(tx, &session_id)?;
-        crate::models::get_profile(tx, &b.profile_id)?;
+        let binding = crate::bots::turn_binding(tx, &session_id)?;
+        let profile = crate::models::get_enabled_profile(tx, binding.as_ref().map_or(b.profile_id.as_str(), |(profile, _)| profile.as_str()))?;
         let prepared=crate::attachments::prepare(tx,&data,&root_owner,&s.project_id,&b.text,&b.attachments)?;
+        profile.check_capabilities(tools, effort.as_deref(), prepared.model_input["images"].as_array().is_some_and(|v| !v.is_empty()))?;
         let Some(active) = active_turn_id(tx, &session_id)? else {
             // 그 사이 턴이 끝났다: 바로 시작한다.
             let (t, msg) = crate::runner::enqueue_with_attachments(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), tools, None, (!prepared.items.is_empty()).then_some(&prepared))?;

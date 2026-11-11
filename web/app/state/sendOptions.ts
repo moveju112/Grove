@@ -1,3 +1,5 @@
+import type { ModelCapabilities } from "../api/generated";
+
 /// effort(UI-020): auto면 provider 기본값(아무것도 보내지 않음).
 export type Effort = "auto" | "low" | "medium" | "high";
 export type SendOptions = { mode: "model" | "save"; profileId: string | null; agentId: string | null; tools: boolean; effort?: Effort };
@@ -10,4 +12,12 @@ export function resolveOptions(o: SendOptions, profileIds: string[] | undefined,
     const profileId = profileIds === undefined ? null : o.profileId && profileIds.includes(o.profileId) ? o.profileId : (profileIds[0] ?? null);
     const agentId = o.agentId && agentIds !== undefined && !agentIds.includes(o.agentId) ? null : o.agentId;
     return { ...o, profileId, agentId };
+}
+
+export function capabilityProblem(c: ModelCapabilities | undefined, options: SendOptions, images: boolean): string | null {
+    if (options.mode !== "model") return null;
+    if (options.tools && c?.tools === false) return "선택한 모델은 Grove 도구 루프 미지원입니다. 도구를 끄거나 다른 모델을 선택하세요.";
+    if (options.effort && options.effort !== "auto" && c?.effort === false) return "선택한 모델은 추론 강도 미지원입니다. auto 또는 다른 모델을 선택하세요.";
+    if (images && c?.images === false) return "선택한 모델은 이미지 입력 미지원입니다. 첨부를 제거하거나 다른 모델을 선택하세요.";
+    return null;
 }

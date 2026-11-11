@@ -91,15 +91,12 @@ fn measured_tokens(c: &Connection, session_id: &str) -> ApiResult<Option<(u64, i
 
 /// 사용량 계산(CTX-001/002). percent는 실측이 있으면 실측, 없으면 추정 기준이다.
 pub fn usage(c: &Connection, session_id: &str, profile_id: Option<&str>) -> ApiResult<Value> {
-    let opts = match profile_id {
-        Some(p) => crate::models::get_profile(c, p)?.options,
-        None => Value::Null,
-    };
-    let limit = opts["context_window"].as_u64();
+    let profile = profile_id.map(|id| crate::models::get_profile(c, id)).transpose()?;
+    let limit = profile.as_ref().and_then(|p| p.capabilities.context_tokens);
     // 여유분(CTX-003): 응답 최대 출력 + 도구 결과·다음 사용자 입력 예비분
     let s = crate::sessions::get(c, session_id)?;
     let input_reserve = crate::settings::effective(c, "context.input_reserve_tokens", Some(&s.project_id), Some(session_id))?.as_u64().unwrap_or(0);
-    let reserve = opts["max_tokens"].as_u64().unwrap_or(DEFAULT_OUTPUT_RESERVE) + input_reserve;
+    let reserve = profile.as_ref().and_then(|p| p.generation_options().0).map(u64::from).unwrap_or(DEFAULT_OUTPUT_RESERVE) + input_reserve;
     let estimated = crate::history::estimated_tokens(c, session_id)?;
     let measured = measured_tokens(c, session_id)?;
     // 실측은 그 응답을 만든 요청의 입력이다. 그 응답 자체와 이후 메시지는 다음 요청에 더해지므로 추정으로 더한다
@@ -182,8 +179,10 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
             // 요약 모델: 설정 > 요청 프로필
             let chosen = crate::settings::effective(c, "context.summary_profile", Some(&s.project_id), Some(&sid))?;
             let use_profile = chosen.as_str().filter(|x| !x.is_empty()).map(str::to_string).unwrap_or(pid);
-            let (_, rp) = crate::models::runtime_profile(c, &use_profile)?;
+            let (mp, rp) = crate::models::runtime_profile(c, &use_profile)?;
             let mut msgs = crate::history::model_chat(c, &sid, Some(b))?;
+            mp.check_capabilities(false, None, msgs.iter().any(|m| matches!(m, ChatMsg::User { images, .. } if !images.is_empty())))?;
+            let max_tokens = mp.capabilities.max_output_tokens.unwrap_or(4096).min(4096);
             let before = estimate_tokens(&msgs, "");
             crate::attachments::hydrate(c, &data, &s.project_id, &mut msgs)?;
             msgs.push(ChatMsg::User {
@@ -192,11 +191,11 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
             });
             // to_chat는 연속 user를 합치므로 마지막에 붙인 지시가 앞 user와 합쳐질 수 있다(의도대로 동작).
             let timeline: i64 = c.query_row("SELECT timeline_revision FROM sessions WHERE id = ?1", params![sid], |r| r.get(0))?;
-            Ok(Some((b, use_profile, rp, msgs, before, timeline)))
+            Ok(Some((b, use_profile, rp, msgs, before, timeline, max_tokens)))
         })
         .await?;
-    let Some((b, used_profile, rp, msgs, before, timeline)) = prepared else { return Ok(None) };
-    let req = ModelRequest { system: SUMMARY_SYSTEM.into(), messages: msgs, tools: vec![], max_tokens: Some(4096), temperature: None, effort: None, cli: None };
+    let Some((b, used_profile, rp, msgs, before, timeline, max_tokens)) = prepared else { return Ok(None) };
+    let req = ModelRequest { system: SUMMARY_SYSTEM.into(), messages: msgs, tools: vec![], max_tokens: Some(max_tokens), temperature: None, effort: None, cli: None };
     let out = provider::stream(&rp, &req, cancel, &mut |_| {}).await;
     let (sid, now) = (session_id.to_string(), app.now());
     let result = match out {

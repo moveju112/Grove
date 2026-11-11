@@ -3,11 +3,12 @@ import { ApiError, api, newKey } from "../api/client";
 import type { Definition, ModelProfile } from "../api/generated";
 import { deviceName, loadPrefs } from "../state/device";
 import * as D from "../state/drafts";
-import { type SendOptions, resolveOptions } from "../state/sendOptions";
+import { type SendOptions, capabilityProblem, resolveOptions } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
 
 import { AttachmentPicker, useAttachments } from "./Attachments";
+import { CapabilitySummary } from "./ProfileCapabilities";
 
 export type { SendOptions };
 
@@ -33,6 +34,8 @@ type Props = {
     onSend: (text: string, o: SendOptions, key: string, follow?: FollowKind, attachments?: string[]) => Promise<void>;
     /// 이 화면이 제공하는 slash command(UI-024). 입력창 공통 명령(/tools·/save·/model)은 Composer가 가진다.
     commands?: RunCommand[];
+    /// 봇 대화는 서버가 결합한 실제 프로필을 쓰며 로컬 선택을 변경하지 않는다.
+    boundProfileId?: string | null;
 };
 
 /// run의 반환 문자열은 상태 줄에 보인다. 실패는 throw.
@@ -42,7 +45,7 @@ export type FollowKind = "queue" | "steer" | "interrupt";
 const FOLLOW_LABEL: Record<FollowKind, string> = { queue: "대기열에 추가", steer: "지금 반영", interrupt: "중단하고 보내기" };
 
 /// 입력창: 입력할 때마다 기기 내 사본을 저장하고, 서버 초안은 명시적으로 저장/불러온다.
-export function Composer({ projectId, resourceKey, copyId, disabled, running, onSend, commands }: Props) {
+export function Composer({ projectId, resourceKey, copyId, disabled, running, onSend, commands, boundProfileId }: Props) {
     const [follow, setFollow] = useState<FollowKind>("queue");
     const store = typeof localStorage !== "undefined" ? localStorage : null;
     const localKey = D.key(resourceKey, copyId);
@@ -66,12 +69,16 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     useEffect(() => localStorage.setItem(OPT_KEY, JSON.stringify(opts)), [opts]);
 
     // 화면 선택과 보내는 값이 같도록 매 렌더 계산한다(기본 프로필을 상태로 복사하지 않음).
-    const eff = resolveOptions(
+    const resolved = resolveOptions(
         opts,
         profiles.data && [...profiles.data].sort((a, b) => Number(a.enabled === false) - Number(b.enabled === false)).map((p) => p.id),
         agents.data?.map((a) => a.id),
     );
-    const profileDisabled = profiles.data?.find((p) => p.id === eff.profileId)?.enabled === false;
+    const eff = boundProfileId === undefined ? resolved : { ...resolved, profileId: boundProfileId, agentId: null };
+    const selectedProfile = profiles.data?.find((p) => p.id === eff.profileId);
+    const profileDisabled = selectedProfile?.enabled === false;
+    const problem = capabilityProblem(selectedProfile?.capabilities, eff, attachments.items.some((item) =>
+        (item.attachment?.mime ?? item.file?.type)?.startsWith("image/")));
     const update = (patch: Partial<SendOptions>) => setOpts((o) => ({ ...o, ...patch }));
 
     const state = server.data ? D.compare(text ? { text, baseRevision: base.current, updatedAt: 0 } : null, server.data) : null;
@@ -188,6 +195,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
             setMsg("선택한 모델 프로필이 비활성화돼 있습니다. 다른 프로필을 명시적으로 선택하세요.");
             return;
         }
+        if (problem) { setMsg(problem); return; }
         const text = body;
         sending.current = true;
         setBusy(true);
@@ -209,7 +217,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
             }
         } catch (e) {
             // 응답을 못 받았거나 서버 오류면 실제로 처리됐는지 모른다: 입력을 남기고 자동 재전송하지 않는다.
-            const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408;
+            const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408
+                || (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true;
             if (unknown) {
                 unsure.current = { sig, key };
                 setUnsureMsg(true);
@@ -322,7 +331,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 </select>
                 {eff.mode === "model" && (
                     <>
-                        <select aria-label="모델 프로필" value={eff.profileId ?? ""} onChange={(e) => update({ profileId: e.target.value || null })}>
+                        <select aria-label="모델 프로필" value={eff.profileId ?? ""} disabled={boundProfileId !== undefined} onChange={(e) => update({ profileId: e.target.value || null })}>
+                            {boundProfileId === null && <option value="">봇 모델 로딩 중 또는 미설정</option>}
                             {(profiles.data ?? []).length === 0 && <option value="">모델 프로필 없음(설정에서 추가)</option>}
                             {(profiles.data ?? []).map((p) => (
                                 <option key={p.id} value={p.id} disabled={p.enabled === false}>
@@ -330,7 +340,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                                 </option>
                             ))}
                         </select>
-                        <select aria-label="에이전트" value={eff.agentId ?? ""} onChange={(e) => update({ agentId: e.target.value || null })}>
+                        <select aria-label="에이전트" value={eff.agentId ?? ""} disabled={boundProfileId !== undefined} onChange={(e) => update({ agentId: e.target.value || null })}>
                             <option value="">에이전트 없음</option>
                             {(agents.data ?? []).map((a) => (
                                 <option key={a.id} value={a.id}>
@@ -340,12 +350,12 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                         </select>
                         <select aria-label="추론 강도" value={eff.effort ?? "auto"} onChange={(e) => update({ effort: e.target.value as SendOptions["effort"] })} title="모델이 생각하는 정도. auto는 모델 기본값">
                             <option value="auto">강도 auto</option>
-                            <option value="low">강도 낮음</option>
-                            <option value="medium">강도 중간</option>
-                            <option value="high">강도 높음</option>
+                            <option value="low" disabled={selectedProfile?.capabilities?.effort === false}>강도 낮음</option>
+                            <option value="medium" disabled={selectedProfile?.capabilities?.effort === false}>강도 중간</option>
+                            <option value="high" disabled={selectedProfile?.capabilities?.effort === false}>강도 높음</option>
                         </select>
                         <label className="check">
-                            <input type="checkbox" checked={eff.tools} onChange={(e) => update({ tools: e.target.checked })} /> 도구
+                            <input type="checkbox" checked={eff.tools} disabled={!eff.tools && selectedProfile?.capabilities?.tools === false} onChange={(e) => update({ tools: e.target.checked })} /> 도구
                         </label>
                     </>
                 )}
@@ -362,13 +372,15 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 )}
                 <button
                     onClick={send}
-                    disabled={busy || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (eff.mode === "model" && (!eff.profileId || profileDisabled)) || (!!running && eff.mode === "save")}
+                    disabled={busy || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || !!problem || (eff.mode === "model" && (!eff.profileId || profileDisabled)) || (!!running && eff.mode === "save")}
                     title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다(도구 호출과 결과 사이에 끼면 안 됨)" : undefined}
                 >
                     {busy ? "보내는 중…" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
                 </button>
             </div>
             {msg && <p className="muted small" role="status">{msg}</p>}
+            {eff.mode === "model" && selectedProfile && <CapabilitySummary capabilities={selectedProfile.capabilities} />}
+            {problem && <p className="warn small" role="status">{problem}</p>}
             {eff.mode === "model" && profileDisabled && <p className="warn small" role="status" data-testid="profile-disabled">선택한 모델 프로필이 비활성화돼 있습니다. 다른 모델로 자동 전환하지 않습니다.</p>}
         </div>
     );
