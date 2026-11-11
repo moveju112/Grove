@@ -1,3 +1,4 @@
+import { AttachmentList, type Attachment } from "./Attachments";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileRefContext, Markdown } from "./Markdown";
 import { type Prefs, usePrefs } from "../state/device";
@@ -174,16 +175,16 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         }
     };
 
-    const send = async (text: string, o: SendOptions, key: string, follow?: FollowKind) => {
+    const send = async (text: string, o: SendOptions, key: string, follow?: FollowKind, attachments: string[] = []) => {
         // 내가 보낸 글과 그 답은 따라간다.
         toBottom();
         if (follow) {
             // 실행 중 추가 메시지(RUN-007): 서버가 실행 상태를 다시 확인하고, 그 사이 끝났으면 바로 새 요청으로 시작한다.
-            await api.post(`/sessions/${sessionId}/followups`, { kind: follow, text, profile_id: o.profileId, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto" }, { key });
+            await api.post(`/sessions/${sessionId}/followups`, { kind: follow, text, attachments, profile_id: o.profileId, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto" }, { key });
             return;
         }
-        if (o.mode === "save") await api.post(`/sessions/${sessionId}/messages`, { text }, { key });
-        else await api.post(`/sessions/${sessionId}/turns`, { text, profile_id: o.profileId, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto" }, { key });
+        if (o.mode === "save") await api.post(`/sessions/${sessionId}/messages`, { text, attachments }, { key });
+        else await api.post(`/sessions/${sessionId}/turns`, { text, attachments, profile_id: o.profileId, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto" }, { key });
     };
 
     const rewind = (m: Message) => {
@@ -357,8 +358,9 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             )}
             <GoalsPanel sessionId={sessionId} disabled={archived} />
             <AgentRunsPanel sessionId={sessionId} projectId={projectId} open={open} onError={setErr} />
-            <TasksPanel sessionId={sessionId} disabled={archived} />
-            <ChangesPanel sessionId={sessionId} disabled={archived} />
+            {/* 대화가 바뀌면 패널 상태를 새로 시작한다. 형제끼리 key가 겹치면 React가 패널을 잘못 맞춰 중복으로 그린다. */}
+            <TasksPanel key={`tasks:${sessionId}`} sessionId={sessionId} disabled={archived} />
+            <ChangesPanel key={`changes:${sessionId}`} sessionId={sessionId} disabled={archived} />
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
             {pending.map((c) => <ApprovalCard key={c.id} c={c} act={act} />)}
             {unknown.map((c) => <UnknownCard key={c.id} c={c} act={act} />)}
@@ -404,7 +406,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             {!active && lastTurn && <TurnTiming sessionId={sessionId} turnId={lastTurn.id} />}
             <BudgetNote sessionId={sessionId} active={active} />
             <FollowupsPanel sessionId={sessionId} running={!!active} onError={setErr} />
-            <Composer resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands} />
+            <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands} />
         </div>
     );
 }
@@ -414,7 +416,7 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
     // 답만 보기: 도구 결과·CLI 도구 활동·가져온 도구 기록과 글 없는 도구 호출 메시지를 숨긴다(승인 카드는 별도로 항상 표시).
     if (prefs.answerOnly && (m.role === "tool" || (m.role === "note" && (nt0 === "cli_activity" || nt0 === "imported_tool")))) return null;
     if (prefs.answerOnly && m.role === "assistant" && !(m.content as { text?: string }).text) return null;
-    const c = m.content as { reasoning?: string | null; reasoning_chars?: number; text?: string; tool_calls?: { id: string; name: string }[]; name?: string; status?: string; output?: unknown; model?: string; approval_scope?: string | null; args?: unknown; duration_ms?: number | null; truncated?: boolean };
+    const c = m.content as { attachments?: Attachment[]; reasoning?: string | null; reasoning_chars?: number; text?: string; tool_calls?: { id: string; name: string }[]; name?: string; status?: string; output?: unknown; model?: string; approval_scope?: string | null; args?: unknown; duration_ms?: number | null; truncated?: boolean };
     if (m.role === "note" && nt0 === "rewind") {
         const r = m.content as { text: string; removed_count: number };
         return <div className="msg note" data-testid="msg-rewind">{r.text} 활성 이력에서 {r.removed_count}개를 제외했습니다. 원문은 보관되며 자동 복원 UI는 없습니다.</div>;
@@ -479,7 +481,7 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
         );
     }
     if (m.role === "note" && (m.content as { type?: string }).type === "task_result") {
-        const r = m.content as { command: string; status: string; exit_code: number | null; reason: string | null; stdout_tail: string; stderr_tail: string; truncated: boolean };
+        const r = m.content as { command: string; status: string; exit_code: number | null; reason: string | null; stdout_tail: string; stderr_tail: string; truncated: boolean; log_errors?: unknown[] };
         return (
             <details className={`msg note task ${r.status}`} data-testid="msg-task-result">
                 <summary>
@@ -488,6 +490,7 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
                 </summary>
                 {r.stdout_tail && <pre className="diff">{r.stdout_tail}</pre>}
                 {r.stderr_tail && <pre className="diff err">{r.stderr_tail}</pre>}
+                {!!r.log_errors?.length && <p className="err" role="alert">로그 저장에 실패했습니다. 출력이 누락됐을 수 있습니다.</p>}
                 {r.truncated && <p className="muted small">끝부분만 표시합니다. 전체 출력은 백그라운드 작업 목록에서 보세요.</p>}
             </details>
         );
@@ -580,6 +583,7 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
             )}
             {c.text && (m.role === "assistant" ? <Markdown text={c.text} /> : <div className="text">{c.text}</div>)}
             {c.text && <CopyButton text={c.text} />}
+            {Array.isArray(c.attachments) && c.attachments.length > 0 && <AttachmentList attachments={c.attachments as Attachment[]} />}
             {c.tool_calls && c.tool_calls.length > 0 && <div className="muted small">도구 호출: {c.tool_calls.map((t) => t.name).join(", ")}</div>}
         </div>
     );
@@ -755,7 +759,7 @@ function fmtDuration(ms: number): string {
     return ms < 1000 ? `${ms}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}초` : `${Math.floor(ms / 60_000)}분 ${Math.round((ms % 60_000) / 1000)}초`;
 }
 
-type Followup = { id: string; kind: FollowKind; text: string; created_at: string; last_error?: { code: string; message: string } | null };
+type Followup = { attachments?: Attachment[]; id: string; kind: FollowKind; text: string; created_at: string; last_error?: { code: string; message: string } | null };
 const FOLLOW_KIND: Record<FollowKind, string> = { queue: "대기", steer: "반영 예정", interrupt: "끼어들기" };
 
 /// 실행 중 보낸 추가 메시지(UI-021). 실행 중이면 순서대로 기다리고, 실패·취소로 멈추면 직접 시작하거나 지운다.
@@ -781,6 +785,7 @@ function FollowupsPanel({ sessionId, running, onError }: { sessionId: string; ru
                     <li key={f.id} data-testid="followup">
                         <span className="badge">{FOLLOW_KIND[f.kind]}</span>
                         <span className="followup-text">{f.text.length > 120 ? `${f.text.slice(0, 120)}…` : f.text}</span>
+                        {!!f.attachments?.length && <AttachmentList attachments={f.attachments} />}
                         {f.last_error && <span className="err small"> · {f.last_error.message}</span>}
                         {!running && i === 0 && (
                             <button className="ghost small" onClick={() => void run(() => api.post(`/sessions/${sessionId}/followups/${f.id}/start`))}>

@@ -97,3 +97,22 @@ test("모바일 주요 화면의 조작 요소는 터치 영역이 충분하고 
     await check("대화");
     expect(problems, problems.join("\n")).toEqual([]);
 });
+
+test("모바일에서 첨부만 저장하고 원문을 미리본다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: "폰 첨부" });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    await login(page);
+    await page.getByRole("button", { name: "사이드바" }).click();
+    await page.locator(".recent").getByRole("button", { name: /폰 첨부/ }).first().click();
+    const view = page.getByTestId("session-view");
+    await view.getByLabel("보내기 방식", { exact: true }).selectOption("save");
+    await view.getByLabel("첨부파일 선택").setInputFiles({ name: "폰-원문.txt", mimeType: "text/plain", buffer: Buffer.from("모바일 첨부 원문") });
+    await expect(view.getByTestId("attachment-card")).toContainText("폰-원문.txt");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    const sent = view.getByLabel("메시지 첨부파일");
+    await expect(sent).toContainText("폰-원문.txt");
+    await sent.getByRole("button", { name: "미리보기", exact: true }).click();
+    await expect(sent.locator("pre")).toHaveText("모바일 첨부 원문");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+});

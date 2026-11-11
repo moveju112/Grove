@@ -11,6 +11,7 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
 
 사용법:
   grove [serve] [--listen 주소:포트] [--data-dir 경로]   foreground 서버 실행(기본)
+                [--log-file 경로]                      파일당 2MiB·보관본 3개, 이벤트당 16KiB 로그
   grove status [--listen 주소:포트]                      실행 중 서버 상태 확인(health)
   grove doctor [--listen 주소:포트] [--data-dir 경로]    프로세스·API 준비·인증·모델 설정을 각각 진단(문제 있으면 종료 코드 1)
   grove config [--listen 주소:포트] [--data-dir 경로]    실제 적용될 경로·주소·환경 설정 출력(비밀값 없음)
@@ -43,6 +44,7 @@ struct Opts {
     positional: Vec<String>,
     listen: Option<SocketAddr>,
     data_dir: Option<PathBuf>,
+    log_file: Option<PathBuf>,
     install: Option<PathBuf>,
     package: Option<PathBuf>,
     manifest: Option<String>,
@@ -63,6 +65,7 @@ fn parse(args: &[String]) -> Result<Opts, String> {
         match a.as_str() {
             "--listen" => o.listen = Some(val(&mut it, a)?.parse().map_err(|e| format!("--listen 형식 오류: {e}"))?),
             "--data-dir" => o.data_dir = Some(PathBuf::from(val(&mut it, a)?)),
+            "--log-file" => o.log_file = Some(PathBuf::from(val(&mut it, a)?)),
             "--install" => o.install = Some(PathBuf::from(val(&mut it, a)?)),
             "--package" => o.package = Some(PathBuf::from(val(&mut it, a)?)),
             "--manifest" => o.manifest = Some(val(&mut it, a)?),
@@ -140,7 +143,7 @@ pub fn run(args: Vec<String>) -> i32 {
             // 빌드·업데이트 도구가 읽는 형식(BUILD-031, UPDATE-005)
             println!(
                 "{}",
-                serde_json::json!({ "version": VERSION, "protocol": crate::PROTOCOL_VERSION, "schema": crate::store::MIGRATIONS.len(), "target": std::env::consts::ARCH.to_string() + "-" + std::env::consts::OS })
+                serde_json::json!({ "version": VERSION, "protocol": crate::PROTOCOL_VERSION, "schema": crate::store::MIGRATIONS.len(), "target": std::env::consts::ARCH.to_string() + "-" + std::env::consts::OS, "features": ["file_log_rotation_v1"] })
             );
         } else {
             println!("grove {VERSION} (protocol {}, schema {})", crate::PROTOCOL_VERSION, crate::store::MIGRATIONS.len());
@@ -373,27 +376,32 @@ fn pair(opts: Opts) -> Result<(), String> {
 
 fn serve(opts: Opts) -> Result<(), String> {
     let cfg = Config::from_env(opts.data_dir, opts.listen)?;
+    let file_log = opts.log_file.is_some();
+    let writer = crate::logging::writer(opts.log_file.as_deref()).map_err(|e| format!("로그 준비 실패: {e}"))?;
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("GROVE_LOG").unwrap_or_else(|_| "info".into()))
-        .with_writer(std::io::stderr)
+        .with_ansi(!file_log)
+        .event_format(crate::logging::EventFormat(file_log))
+        .with_writer(writer)
         .init();
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .max_blocking_threads(64)
         .build()
         .map_err(|e| e.to_string())?;
-    rt.block_on(async move {
+    let result = rt.block_on(async move {
         let server = crate::server::start(cfg, Arc::new(SystemClock)).await?;
-        eprintln!("grove {VERSION} listening on http://{}", server.addr);
-        eprintln!("owner token file: {}", server.app.cfg.data_dir.join("owner-token").display());
+        tracing::info!(version = VERSION, address = %server.addr, "서버 준비 완료");
         // OS 신호 또는 관리 API 종료 요청(업데이트 도구)
         let mut exit_rx = server.app.exit_tx.subscribe();
         tokio::select! {
             _ = crate::server::wait_for_signal() => {}
             _ = exit_rx.wait_for(|v| *v) => {}
         }
-        eprintln!("종료 중...");
+        tracing::info!("서버 종료 중");
         server.stop().await;
         Ok(())
-    })
+    });
+    if let Err(e) = &result { tracing::error!(error = %e, "서버 실행 실패"); }
+    result
 }

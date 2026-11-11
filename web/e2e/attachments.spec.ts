@@ -1,0 +1,136 @@
+import { expect, test } from "@playwright/test";
+import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { frames } from "./fixture";
+const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
+
+test("첨부 업로드와 전송 응답 유실 뒤 같은 요청으로 원문을 한 번 연결한다", async ({ page }) => {
+    const { b } = await ensureProjects();
+    await login(page);
+    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
+    const project = page.locator(".project-view");
+    const name = `attachment-${Date.now()}.html`;
+    const content = "<script>alert('fixture')</script> 원문";
+    const uploadKeys: string[] = [];
+    let loseUpload = true;
+    await page.route(`**/api/v1/projects/${b.id}/attachments`, async (route) => {
+        uploadKeys.push(route.request().headers()["idempotency-key"] ?? "");
+        if (loseUpload) { await route.fetch(); return route.abort("connectionreset"); }
+        return route.fallback();
+    });
+    await project.getByLabel("첨부파일 선택").setInputFiles({ name, mimeType: "text/html", buffer: Buffer.from(content) });
+    await expect(project.getByRole("button", { name: "업로드 다시 시도" })).toBeEnabled();
+    await expect(project.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
+    loseUpload = false;
+    await project.getByRole("button", { name: "업로드 다시 시도" }).click();
+    await expect(project.getByTestId("attachment-card")).toContainText(name);
+    expect(uploadKeys).toHaveLength(2);
+    expect(uploadKeys[1]).toBe(uploadKeys[0]);
+    expect(uploadKeys[0]).toBeTruthy();
+    await project.getByTestId("attachment-card").getByRole("button", { name: "미리보기", exact: true }).click();
+    await expect(project.locator(".attachment-text")).toHaveText(content);
+    await expect(project.locator(".attachment-text script")).toHaveCount(0);
+    await project.getByLabel("보내기 방식", { exact: true }).selectOption("save");
+    const title = `첨부 재확인 ${Date.now()}`;
+    await project.getByLabel("메시지 입력").fill(title);
+    const sendKeys: string[] = [];
+    let loseSend = true;
+    await page.route("**/api/v1/sessions/*/messages", async (route) => {
+        if (route.request().method() !== "POST") return route.fallback();
+        sendKeys.push(route.request().headers()["idempotency-key"] ?? "");
+        if (loseSend) { await route.fetch(); return route.abort("connectionreset"); }
+        return route.fallback();
+    });
+    await project.getByRole("button", { name: "보내기", exact: true }).click();
+    await expect(project).toContainText("같은 요청");
+    await expect(project.getByLabel("메시지 입력")).toHaveValue(title);
+    await expect(project.getByTestId("attachment-card")).toContainText(name);
+    loseSend = false;
+    await project.getByRole("button", { name: "보내기", exact: true }).click();
+    const sent = page.locator(".session-view").getByLabel("메시지 첨부파일");
+    await expect(sent).toContainText(name);
+    expect(sendKeys).toHaveLength(2);
+    expect(sendKeys[1]).toBe(sendKeys[0]);
+    const downloadEvent = page.waitForEvent("download");
+    await sent.getByRole("button", { name: "원문 다운로드" }).click();
+    const download = await downloadEvent;
+    expect(download.suggestedFilename()).toBe(name);
+    const chunks: Buffer[] = [];
+    for await (const chunk of (await download.createReadStream())!) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks).toString()).toBe(content);
+    const sid = await page.getByTestId("session-view").getAttribute("data-session");
+    const history = await apiCall<{ items: { role: string; content: { attachments?: unknown[] } }[] }>("GET", `/sessions/${sid}/messages`);
+    expect(history.items.filter((m) => m.role === "user")).toHaveLength(1);
+    expect(history.items[0]!.content.attachments).toHaveLength(1);
+    await page.reload();
+    await expect(page.locator(".session-view").getByLabel("메시지 첨부파일")).toContainText(name);
+});
+
+test("붙여넣기·드롭 첨부 초안을 복원하고 이미지를 모델로 보낸다", async ({ page }, testInfo) => {
+    const { b } = await ensureProjects();
+    const profile = await ensureProfile();
+    await login(page);
+    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
+    const project = page.locator(".project-view");
+    const input = project.getByLabel("메시지 입력");
+    await input.evaluate((el, data) => {
+        const dt = new DataTransfer();
+        dt.items.add(new File([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], "clipboard.png", { type: "image/png" }));
+        el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    }, png.toString("base64"));
+    await expect(project.getByTestId("attachment-card")).toContainText("모델 입력 1×1");
+    await page.reload();
+    await expect(project.getByTestId("attachment-card")).toContainText("clipboard.png");
+    await input.evaluate((el) => {
+        const dt = new DataTransfer(); dt.items.add(new File(["dropped text"], "drop.txt", { type: "text/plain" }));
+        el.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
+    });
+    await expect(project.getByTestId("attachment-card")).toHaveCount(2);
+    await project.getByRole("button", { name: "drop.txt 첨부 제거" }).click();
+    const card = project.getByTestId("attachment-card");
+    await expect(card).toHaveCount(1);
+    await project.getByLabel("첨부파일 선택").setInputFiles({ name: "too-large.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(4 * 1024 * 1024 + 1) });
+    await expect(project.getByRole("alert")).toContainText("파일당 4MiB");
+    await expect(card).toHaveCount(1);
+    await card.getByRole("button", { name: "미리보기", exact: true }).click();
+    await expect(card.getByRole("img", { name: "clipboard.png" })).toBeVisible();
+    await project.getByLabel("보내기 방식", { exact: true }).selectOption("model");
+    await project.getByLabel("모델 프로필", { exact: true }).selectOption(profile);
+    const marker = `image-ui-${Date.now()}`;
+    await input.fill(marker);
+    await script({ frames: frames.text(["이미지 fixture 완료"]), marker });
+    await project.getByRole("button", { name: "보내기", exact: true }).click();
+    await expect(page.locator(".session-view .msg.assistant").filter({ hasText: "이미지 fixture 완료" })).toBeVisible();
+    const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as unknown[];
+    const request = requests.find((r) => JSON.stringify(r).includes(marker));
+    expect(JSON.stringify(request)).toContain("data:image/jpeg;base64,");
+    expect(JSON.stringify(request)).not.toContain(png.toString("base64"));
+    await page.screenshot({ path: testInfo.outputPath("attachments.png"), fullPage: true });
+});
+
+test("실행 중 첨부를 대기열에 넣고 취소 뒤 직접 이어서 보낸다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    const profile = await ensureProfile();
+    const title = `첨부 대기열 ${Date.now()}`;
+    const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    await login(page);
+    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    const view = page.getByTestId("session-view");
+    await view.getByLabel("보내기 방식", { exact: true }).selectOption("model");
+    await view.getByLabel("모델 프로필", { exact: true }).selectOption(profile);
+    await script({ frames: [JSON.stringify({ choices: [{ delta: { content: "대기 중 fixture" } }] })], hang: true, marker: title });
+    await view.getByLabel("메시지 입력").fill(title);
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    await expect(view.getByTestId("partial")).toContainText("대기 중 fixture");
+    await view.getByLabel("첨부파일 선택").setInputFiles({ name: "queued.png", mimeType: "image/png", buffer: png });
+    await expect(view.locator(".attachment-picker").getByTestId("attachment-card")).toContainText("queued.png");
+    await view.getByRole("button", { name: "대기열에 추가", exact: true }).click();
+    await expect(view.getByTestId("followups")).toContainText("queued.png");
+    await view.getByTestId("turn-status").getByRole("button", { name: "취소", exact: true }).click();
+    await expect(view.getByTestId("followups").getByRole("button", { name: "지금 시작" })).toBeVisible();
+    await script({ frames: frames.text(["첨부 대기열 완료"]), marker: "queued.png" });
+    await view.getByTestId("followups").getByRole("button", { name: "지금 시작" }).click();
+    await expect(view.getByTestId("followups")).toHaveCount(0);
+    await expect(view.getByTestId("msg-assistant").filter({ hasText: "첨부 대기열 완료" })).toBeVisible();
+    await expect(view.getByLabel("메시지 첨부파일")).toContainText("queued.png");
+});

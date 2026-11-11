@@ -329,6 +329,7 @@ fn verify_package_dir(dir: &Path) -> Result<(PathBuf, Value), String> {
 
 fn probe_version(bin: &Path) -> Result<Value, String> {
     let o = std::process::Command::new(bin).args(["version", "--json"]).output().map_err(|e| format!("{}: 실행 실패 {e}", bin.display()))?;
+    if !o.status.success() { return Err("version --json 실행 실패".into()); }
     serde_json::from_slice(o.stdout.trim_ascii()).map_err(|e| format!("version --json 해석 실패: {e}"))
 }
 
@@ -384,16 +385,26 @@ pub fn start_service(inst: &Install) -> Result<(), String> {
         let st = std::process::Command::new("systemctl").args(["--user", "start", unit]).status().map_err(|e| e.to_string())?;
         return if st.success() { Ok(()) } else { Err(format!("systemctl start {unit} 실패")) };
     }
+    if health(inst).is_some() { return Err("서버 주소가 이미 응답합니다. 실행 중인 서버를 먼저 확인하세요".into()); }
     let dir = inst.release_dir(&id);
-    std::fs::create_dir_all(inst.root.join("logs")).map_err(|e| e.to_string())?;
-    let log = std::fs::OpenOptions::new().create(true).append(true).open(inst.root.join("logs").join("server.log")).map_err(|e| e.to_string())?;
-    let mut cmd = std::process::Command::new(dir.join(exe_name()));
+    let binary = dir.join(exe_name());
+    let v = probe_version(&binary)?;
+    let rotating = v["features"].as_array().is_some_and(|a| a.iter().any(|f| f == "file_log_rotation_v1"));
+    let log_path = inst.root.join("logs").join("server.log");
+    let log = crate::logging::prepare_file(&log_path).map_err(|e| format!("로그 준비 실패: {e}"))?;
+    let mut cmd = std::process::Command::new(binary);
     cmd.args(["serve", "--listen", &cfg.listen, "--data-dir"])
         .arg(&cfg.data_dir)
         .env("GROVE_WEB_DIR", dir.join("web"))
-        .stdin(std::process::Stdio::null())
-        .stdout(log.try_clone().map_err(|e| e.to_string())?)
-        .stderr(log);
+        .stdin(std::process::Stdio::null());
+    if rotating {
+        drop(log); // 서버가 독립적인 회전 잠금을 소유한다.
+        cmd.arg("--log-file").arg(log_path)
+            .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    } else {
+        // 기능 표식이 없는 이전 release로 되돌릴 때는 알 수 없는 인수를 보내지 않는다.
+        cmd.stdout(log.try_clone().map_err(|e| e.to_string())?).stderr(log);
+    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

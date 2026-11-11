@@ -15,6 +15,11 @@ pub fn sha256_hex(data: &[u8]) -> String {
     hex(&h.finalize())
 }
 
+/// 원문 저장 key는 소문자 SHA-256 hex만 허용한다.
+pub(crate) fn valid_sha256(sha: &str) -> bool {
+    sha.len() == 64 && sha.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
 pub fn hex(bytes: &[u8]) -> String {
     const T: &[u8; 16] = b"0123456789abcdef";
     let mut s = String::with_capacity(bytes.len() * 2);

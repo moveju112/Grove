@@ -73,6 +73,132 @@ async fn save_detects_external_change_and_converges_on_replay() {
 }
 
 #[tokio::test]
+async fn file_mutation_receipts_survive_database_failures_without_reexecution() {
+    for op in ["save", "mkdir", "rename", "duplicate"] {
+        for fault in ["accept", "accept_commit", "complete", "event", "commit"] {
+            let (mut s, pid, root) = setup().await;
+            std::fs::write(root.join("a.txt"), "before\n").unwrap();
+            let (method, route, body) = if op == "save" {
+                (Method::PUT, "content", json!({"path":"a.txt","expected_sha256":grove::util::sha256_hex(b"before\n"),"text":"after\n"}))
+            } else {
+                (Method::POST, "op", if op == "mkdir" { json!({"op":op,"path":"new"}) } else { json!({"op":op,"path":"a.txt","to":"new"}) })
+            };
+            let path = format!("/api/v1/projects/{pid}/files/{route}");
+            let key = s.key();
+            let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+            let sql = match fault {
+                "accept" => "CREATE TRIGGER fail_file BEFORE INSERT ON idempotency BEGIN SELECT RAISE(FAIL,'fixture file accept'); END;",
+                "accept_commit" => "CREATE TABLE fixture_failed_commit (project_id TEXT REFERENCES projects(id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_file AFTER INSERT ON idempotency BEGIN INSERT INTO fixture_failed_commit VALUES ('missing-fixture-project'); END;",
+                "complete" => "CREATE TRIGGER fail_file BEFORE UPDATE ON idempotency BEGIN SELECT RAISE(FAIL,'fixture file complete'); END;",
+                "event" => "CREATE TRIGGER fail_file BEFORE INSERT ON events WHEN NEW.kind='file.changed' BEGIN SELECT RAISE(FAIL,'fixture file event'); END;",
+                _ => "CREATE TABLE fixture_failed_commit (project_id TEXT REFERENCES projects(id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_file AFTER UPDATE ON idempotency BEGIN INSERT INTO fixture_failed_commit VALUES ('missing-fixture-project'); END;",
+            };
+            db.execute_batch(sql).unwrap();
+            let response = s.raw(method.clone(), &path, Some(body.clone()), Some(&key), None).await;
+            let accepted = fault != "accept" && fault != "accept_commit";
+            assert_eq!(response.status(), if accepted { StatusCode::CONFLICT } else { StatusCode::INTERNAL_SERVER_ERROR }, "{op}/{fault}");
+            let mut interrupted_stage = None;
+            if accepted {
+                let unknown = response.json::<serde_json::Value>().await.unwrap();
+                assert_eq!(unknown["error"]["code"], "result_unknown");
+                if op == "duplicate" {
+                    let name = unknown["error"]["details"]["staging"].as_str().unwrap();
+                    assert!(name.starts_with(".grove-copy-") && !name.contains(['/', '\\']));
+                    let stage = root.join(name);
+                    assert!(!stage.exists());
+                    // 접수 이후 복사 중 중단된 디스크 상태도 같은 receipt가 보존한다.
+                    std::fs::create_dir(&stage).unwrap();
+                    std::fs::write(stage.join("payload"), "partial copy").unwrap();
+                    interrupted_stage = Some(stage);
+                }
+                assert_eq!(db.query_row("SELECT status FROM idempotency WHERE key=?1", [&key], |r| r.get::<_,i64>(0)).unwrap(), 409);
+            } else {
+                assert_eq!(db.query_row("SELECT COUNT(*) FROM idempotency WHERE key=?1", [&key], |r| r.get::<_,i64>(0)).unwrap(), 0);
+            }
+            assert_eq!(db.query_row("SELECT COUNT(*) FROM events WHERE kind='file.changed'", [], |r| r.get::<_,i64>(0)).unwrap(), 0);
+            match op {
+                "save" => assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), if accepted { "after\n" } else { "before\n" }),
+                "mkdir" => assert_eq!(root.join("new").is_dir(), accepted),
+                "rename" => {
+                    assert_eq!(root.join("a.txt").exists(), !accepted);
+                    assert_eq!(root.join("new").exists(), accepted);
+                }
+                _ => {
+                    assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "before\n");
+                    assert_eq!(root.join("new").exists(), accepted);
+                }
+            }
+            db.execute_batch("DROP TRIGGER fail_file").unwrap();
+            if accepted {
+                s.restart().await;
+                // 이 시험이 만든 결과만 되돌려, 같은 키가 실행 가능한 상태여도 재실행하지 않는지 확인한다.
+                match op {
+                    "save" => std::fs::write(root.join("a.txt"), "before\n").unwrap(),
+                    "mkdir" => std::fs::remove_dir(root.join("new")).unwrap(),
+                    "rename" => std::fs::rename(root.join("new"), root.join("a.txt")).unwrap(),
+                    _ => std::fs::remove_file(root.join("new")).unwrap(),
+                }
+                let response = s.raw(method, &path, Some(body), Some(&key), None).await;
+                assert_eq!(response.status(), StatusCode::CONFLICT);
+                assert_eq!(response.headers()["idempotent-replayed"], "true");
+                assert_eq!(response.json::<serde_json::Value>().await.unwrap()["error"]["code"], "result_unknown");
+                assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "before\n");
+                assert!(!root.join("new").exists());
+                if let Some(stage) = interrupted_stage {
+                    let app = s.server.as_ref().unwrap().app.clone();
+                    tokio::task::spawn_blocking(move || grove::storage::gc(&app)).await.unwrap().unwrap();
+                    assert_eq!(std::fs::read(stage.join("payload")).unwrap(), b"partial copy", "미확정 복제 원문은 자동 정리하지 않는다");
+                }
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn file_mutations_require_keys_and_replay_before_revalidating_changed_paths() {
+    for op in ["save", "mkdir", "rename", "duplicate"] {
+        let (mut s, pid, root) = setup().await;
+        std::fs::write(root.join("a.txt"), "before\n").unwrap();
+        let (method, route, body, target) = if op == "save" {
+            (Method::PUT, "content", json!({"path":"a.txt","expected_sha256":grove::util::sha256_hex(b"before\n"),"text":"after\n"}), "a.txt")
+        } else {
+            (Method::POST, "op", if op == "mkdir" { json!({"op":op,"path":"new"}) } else { json!({"op":op,"path":"a.txt","to":"new"}) }, "new")
+        };
+        let path = format!("/api/v1/projects/{pid}/files/{route}");
+        let missing = s.raw(method.clone(), &path, Some(body.clone()), None, None).await;
+        assert_eq!(missing.status(), StatusCode::BAD_REQUEST);
+        assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), b"before\n");
+        assert!(!root.join("new").exists());
+        let key = s.key();
+        let (first, concurrent) = tokio::join!(
+            s.raw(method.clone(), &path, Some(body.clone()), Some(&key), None),
+            s.raw(method.clone(), &path, Some(body.clone()), Some(&key), None)
+        );
+        assert_eq!(first.status(), StatusCode::OK);
+        assert_eq!(concurrent.status(), StatusCode::OK);
+        assert_eq!(usize::from(first.headers().contains_key("idempotent-replayed")) + usize::from(concurrent.headers().contains_key("idempotent-replayed")), 1);
+        let first = first.json::<serde_json::Value>().await.unwrap();
+        assert_eq!(concurrent.json::<serde_json::Value>().await.unwrap(), first);
+        if op == "mkdir" { std::fs::remove_dir(root.join(target)).unwrap(); }
+        std::fs::write(root.join(target), "user edit\n").unwrap();
+        s.restart().await;
+        let replay = s.raw(method.clone(), &path, Some(body.clone()), Some(&key), None).await;
+        assert_eq!(replay.status(), StatusCode::OK);
+        assert_eq!(replay.headers()["idempotent-replayed"], "true");
+        assert_eq!(replay.json::<serde_json::Value>().await.unwrap(), first);
+        assert_eq!(std::fs::read(root.join(target)).unwrap(), b"user edit\n");
+        let mut different = body;
+        different["path"] = json!("other");
+        let response = s.raw(method, &path, Some(different), Some(&key), None).await;
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+        assert_eq!(response.json::<serde_json::Value>().await.unwrap()["error"]["code"], "idempotency_conflict");
+        let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+        assert_eq!(db.query_row("SELECT COUNT(*) FROM events WHERE kind='file.changed'", [], |r| r.get::<_,i64>(0)).unwrap(), 1);
+        assert!(!root.join("other").exists());
+    }
+}
+
+#[tokio::test]
 async fn ops_need_confirmation_never_overwrite_and_delete_goes_to_trash() {
     let (s, pid, root) = setup().await;
     let op = |b: serde_json::Value| (format!("/api/v1/projects/{pid}/files/op"), b);
@@ -104,7 +230,7 @@ async fn ops_need_confirmation_never_overwrite_and_delete_goes_to_trash() {
     assert_eq!(st, StatusCode::OK, "{v}");
     assert!(!root.join("d2").exists());
     let trash = s.data_dir().join("trash").join(v["trash"].as_str().unwrap());
-    assert_eq!(std::fs::read_to_string(trash.join("d2/x.txt")).unwrap(), "x", "휴지통에서 복구 가능");
+    assert_eq!(std::fs::read_to_string(trash.join("payload/x.txt")).unwrap(), "x", "휴지통에서 복구 가능");
     assert!(std::fs::read_to_string(trash.join("origin.json")).unwrap().contains("\"d2\""));
 }
 

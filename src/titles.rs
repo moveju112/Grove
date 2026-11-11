@@ -60,7 +60,7 @@ pub async fn generate(app: &App, session_id: &str, profile_id: Option<String>) -
     let (rev, rp, text) = prepared;
     let req = ModelRequest {
         system: SYSTEM.into(),
-        messages: vec![ChatMsg::User { text: format!("Conversation:\n{text}\nTitle:") }],
+        messages: vec![ChatMsg::User { text: format!("Conversation:\n{text}\nTitle:"), images: vec![] }],
         tools: vec![],
         max_tokens: Some(64),
         temperature: None,

@@ -3,10 +3,12 @@
 //! 모듈 경계(설계 문서 §6): 하위 모듈은 상위 모듈을 import하지 않는다.
 
 pub mod agents;
+pub mod attachments;
 pub mod approvals;
 pub mod auth;
 pub mod backup;
 pub mod cli;
+mod logging;
 pub mod runner;
 pub mod server;
 pub mod config;
@@ -22,6 +24,7 @@ pub mod idem;
 pub mod models;
 pub mod changes;
 pub mod procs;
+pub mod storage;
 pub mod projects;
 pub mod provider;
 pub mod tools;
@@ -29,6 +32,7 @@ pub mod sessions;
 pub mod settings;
 pub mod store;
 pub mod tasks;
+mod task_logs;
 pub mod admin;
 pub mod bots;
 pub mod notifications;
@@ -67,6 +71,7 @@ pub struct App {
     pub tickets: Arc<files::Tickets>,
     pub tasks: Arc<tasks::Tasks>,
     pub terminals: Arc<terminals::Terminals>,
+    pub storage: Arc<storage::Storage>,
     pub seq_tx: Arc<watch::Sender<i64>>,
     pub shutdown_tx: Arc<watch::Sender<bool>>,
     pub shutdown_rx: watch::Receiver<bool>,
@@ -97,6 +102,7 @@ impl App {
             tickets: Arc::new(files::Tickets::default()),
             tasks: Arc::new(tasks::Tasks::default()),
             terminals: Arc::new(terminals::Terminals::default()),
+            storage: Arc::new(storage::Storage::default()),
             seq_tx: Arc::new(seq_tx),
             shutdown_tx: Arc::new(shutdown_tx),
             shutdown_rx,
@@ -136,6 +142,9 @@ pub fn router(app: App) -> Router {
         .route("/fs/dirs", get(projects::browse_dirs))
         .route("/projects/{id}", get(projects::show).patch(projects::update))
         .route("/projects/{id}/sessions", get(sessions::list).post(sessions::create))
+        .route("/projects/{id}/attachments", post(attachments::upload).layer(axum::extract::DefaultBodyLimit::max(6 * 1024 * 1024)))
+        .route("/attachments/{id}", get(attachments::show).delete(attachments::remove))
+        .route("/attachments/{id}/content", get(attachments::content))
         .route("/projects/{id}/terminals", get(terminals::list).post(terminals::create))
         .route("/terminals/{id}", axum::routing::patch(terminals::rename).delete(terminals::remove))
         .route("/terminals/{id}/kill", post(terminals::kill))
@@ -183,6 +192,9 @@ pub fn router(app: App) -> Router {
         .route("/sessions/{id}/file-changes/redo", post(changes::redo))
         .route("/sessions/{id}/review", get(changes::review))
         .route("/file-changes/{id}/diff", get(changes::diff))
+        .route("/projects/{id}/trash", get(storage::list_trash))
+        .route("/trash/{id}/restore", post(storage::restore_trash))
+        .route("/trash/{id}/delete", post(storage::delete_trash))
         .route("/tasks/{id}", get(tasks::show))
         .route("/tasks/{id}/output", get(tasks::output))
         .route("/tasks/{id}/wait", get(tasks::wait))

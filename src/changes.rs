@@ -16,7 +16,7 @@ use crate::util::sha256_hex;
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -87,9 +87,14 @@ pub fn finalize(data_dir: &FsPath, b: Before) -> Vec<Rec> {
         if before.as_ref().map(|s| &s.sha) == after.as_ref().map(|s| &s.sha) {
             continue;
         }
-        for s in [&before, &after].into_iter().flatten() {
+        let mut before = before;
+        let mut after = after;
+        for s in [&mut before, &mut after].into_iter().flatten() {
             if let Some(bytes) = &s.bytes {
-                let _ = put_blob(data_dir, &s.sha, bytes);
+                if put_blob(data_dir, &s.sha, bytes).is_err() {
+                    // 파일 작업 성공과 되돌리기 원문 보관 성공은 구분한다.
+                    s.bytes = None;
+                }
             }
         }
         out.push(Rec { path: rel, before, after });
@@ -97,22 +102,72 @@ pub fn finalize(data_dir: &FsPath, b: Before) -> Vec<Rec> {
     out
 }
 
-fn blob_path(data_dir: &FsPath, sha: &str) -> PathBuf {
+pub(crate) fn blob_path(data_dir: &FsPath, sha: &str) -> PathBuf {
     data_dir.join("blobs").join(&sha[..2.min(sha.len())]).join(sha)
 }
 
 fn put_blob(data_dir: &FsPath, sha: &str, bytes: &[u8]) -> std::io::Result<()> {
-    let p = blob_path(data_dir, sha);
-    if p.exists() {
-        return Ok(());
+    if !crate::util::valid_sha256(sha) || bytes.len() as u64 > MAX_STORED {
+        return Err(std::io::Error::other("변경 원문 key 또는 크기가 잘못되었습니다"));
     }
-    std::fs::create_dir_all(p.parent().expect("blob dir"))?;
+    let p = blob_path(data_dir, sha);
+    for dir in [data_dir.join("blobs"), p.parent().expect("blob dir").to_path_buf()] {
+        match std::fs::create_dir(&dir) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(e),
+        }
+        if !dir.symlink_metadata()?.file_type().is_dir() {
+            return Err(std::io::Error::other("변경 원문 폴더가 잘못되었습니다"));
+        }
+    }
+    match p.symlink_metadata() {
+        Ok(m) => {
+            if !m.file_type().is_file() {
+                return Err(std::io::Error::other("변경 원문이 일반 파일이 아닙니다"));
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt;
+                if m.nlink() != 1 {
+                    return Err(std::io::Error::other("변경 원문이 외부 파일과 연결되었습니다"));
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(e),
+    }
+    // 현재 확보한 정상 원문으로 교체한다. 같은 hash의 손상 파일도 복구하고 GC 유예 시각을 갱신한다.
     atomic_write(&p, bytes).map_err(|e| std::io::Error::other(e.message))
 }
 
 fn get_blob(data_dir: &FsPath, sha: &str) -> Option<Vec<u8>> {
-    let b = std::fs::read(blob_path(data_dir, sha)).ok()?;
-    (sha256_hex(&b) == sha).then_some(b)
+    use std::io::Read;
+    if !crate::util::valid_sha256(sha) { return None; }
+    let p = blob_path(data_dir, sha);
+    for dir in [data_dir.join("blobs"), p.parent()?.to_path_buf()] {
+        if !dir.symlink_metadata().ok()?.file_type().is_dir() { return None; }
+    }
+    let m = p.symlink_metadata().ok()?;
+    if !m.file_type().is_file() || m.len() > MAX_STORED { return None; }
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(p).ok()?;
+    let m = file.metadata().ok()?;
+    if !m.file_type().is_file() || m.len() > MAX_STORED { return None; }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if m.nlink() != 1 { return None; }
+    }
+    let mut b = Vec::new();
+    file.take(MAX_STORED + 1).read_to_end(&mut b).ok()?;
+    (b.len() as u64 <= MAX_STORED && sha256_hex(&b) == sha).then_some(b)
 }
 
 /// 도구 결과 확정과 같은 transaction에서 기록한다.
@@ -124,6 +179,11 @@ pub fn insert(tx: &Connection, now: &str, session_id: &str, turn_id: Option<&str
     for r in recs {
         seq += 1;
         let stored = [&r.before, &r.after].into_iter().flatten().all(|s| s.bytes.is_some());
+        for s in [&r.before, &r.after].into_iter().flatten() {
+            if let Some(b) = &s.bytes {
+                tx.execute("INSERT INTO blobs (sha, size, created_at) VALUES (?1, ?2, ?3) ON CONFLICT(sha) DO NOTHING", params![s.sha, b.len() as i64, now])?;
+            }
+        }
         tx.execute(
             "INSERT INTO file_changes (id, session_id, turn_id, call_id, tool, path, before_sha, after_sha, stored, created_at, seq) \
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
@@ -305,53 +365,84 @@ pub async fn redo(State(app): State<App>, p: Principal, headers: HeaderMap, Path
     apply(app, p, headers, session_id, b.change_ids, false).await
 }
 
-/// undo(되돌리기)·redo(다시 적용). 대상의 현재 sha가 예상과 모두 맞을 때만 쓴다(GIT-012).
+struct ApplyPlan {
+    project_id: String,
+    root: PathBuf,
+    selected: Vec<FileChange>,
+    paths: HashMap<String, PathBuf>,
+}
+
+/// 정상적인 충돌·상태 오류는 receipt 접수 전에 거부하고, 실행 직전에도 같은 검증을 한다.
+fn prepare_apply(tx: &Connection, session_id: &str, ids: &[String], undo: bool) -> ApiResult<ApplyPlan> {
+    let s = crate::sessions::get_active(tx, &session_id)?;
+    if s.active_turn.is_some() {
+        return Err(ApiError::busy("실행 중인 요청이 있어 파일 변경을 되돌릴 수 없습니다. 끝난 뒤 다시 시도하세요"));
+    }
+    let root = crate::projects::active_root(tx, &s.project_id)?;
+    let all = session_changes(tx, &session_id)?;
+    let mut sel: Vec<&FileChange> = all.iter().filter(|c| ids.contains(&c.id)).collect();
+    if sel.len() != ids.len() {
+        return Err(ApiError::not_found("이 대화의 변경 기록이 아닌 항목이 있습니다"));
+    }
+    if let Some(c) = sel.iter().find(|c| c.undone_at.is_some() != !undo) {
+        return Err(ApiError::conflict(
+            "invalid_state",
+            format!("{}: 이미 {} 상태입니다", c.path, if undo { "되돌린" } else { "적용된" }),
+        ));
+    }
+    if let Some(c) = sel.iter().find(|c| !c.stored) {
+        return Err(ApiError::conflict("not_stored", format!("{}: 파일이 커서 내용을 보관하지 않아 되돌릴 수 없습니다", c.path)));
+    }
+    // undo는 최근 변경부터, redo는 오래된 변경부터.
+    sel.sort_by_key(|c| if undo { -c.seq } else { c.seq });
+    // 1) 확인: 파일별 예상 현재 상태를 순서대로 계산한다.
+    let mut expect: HashMap<String, Option<String>> = HashMap::new();
+    let mut abs: HashMap<String, PathBuf> = HashMap::new();
+    let mut conflicts = vec![];
+    for c in &sel {
+        let p = resolve(&root, &c.path).map_err(|e| ApiError::invalid(e.message))?;
+        let cur = expect.entry(c.path.clone()).or_insert_with(|| read_state(&p).map(|s| s.sha)).clone();
+        abs.insert(c.path.clone(), p);
+        let (from, to) = if undo { (&c.after_sha, &c.before_sha) } else { (&c.before_sha, &c.after_sha) };
+        if cur != *from {
+            conflicts.push(json!({ "path": c.path, "expected_sha": from, "current_sha": cur }));
+        }
+        expect.insert(c.path.clone(), to.clone());
+    }
+    if !conflicts.is_empty() {
+        return Err(ApiError::conflict("conflict", "파일이 기록 이후 바뀌어 적용하지 않았습니다. 아무 파일도 바꾸지 않았습니다")
+            .with_details(json!({ "files": conflicts })));
+    }
+    Ok(ApplyPlan { project_id: s.project_id, root, selected: sel.into_iter().cloned().collect(), paths: abs })
+}
+
+/// 파일 작업 전 receipt를 확정한다. 최종 DB 실패·중단은 같은 키로 재실행하지 않는다.
 async fn apply(app: App, p: Principal, headers: HeaderMap, session_id: String, ids: Vec<String>, undo: bool) -> ApiResult<Response> {
     if ids.is_empty() || ids.len() > 500 {
         return Err(ApiError::invalid("change_ids는 1~500개여야 합니다"));
     }
+    let _guard = app.storage.mutations.lock().await;
     let h = idem::body_hash(if undo { "changes.undo" } else { "changes.redo" }, &json!({ "s": session_id, "ids": ids }));
+    if let Some(response) = idem::replay(&app, &p, &headers, &h).await? { return Ok(response); }
+    let sid = session_id.clone();
+    let selected = ids.clone();
+    let expected_root = app.db.call(move |c| Ok(prepare_apply(c, &sid, &selected, undo)?.root)).await?;
+    let unknown = ApiError::conflict("result_unknown", "파일 변경 결과를 확정하지 못했습니다. 원문과 변경 이력을 확인하세요")
+        .with_details(json!({ "session_id": session_id, "change_ids": ids, "action": if undo {"undo"} else {"redo"} }));
+    let pending = unknown.body();
+    idem::run(&app, &p, &headers, &h, move |_, _| Ok((StatusCode::CONFLICT, pending))).await?;
+    let owner = p.root_id;
+    let key = idem::key_from(&headers)?;
     let dd = app.cfg.data_dir.clone();
-    idem::run(&app, &p, &headers, &h, move |tx, now| {
-        let s = crate::sessions::get_active(tx, &session_id)?;
-        if s.active_turn.is_some() {
-            return Err(ApiError::busy("실행 중인 요청이 있어 파일 변경을 되돌릴 수 없습니다. 끝난 뒤 다시 시도하세요"));
+    let now = app.now();
+    let response = app.db.call(move |c| {
+        let tx = c.transaction()?;
+        let plan = prepare_apply(&tx, &session_id, &ids, undo)?;
+        if plan.root != expected_root {
+            return Err(ApiError::conflict("project_changed", "프로젝트 경로가 변경되어 파일을 바꾸지 않았습니다"));
         }
-        let root = crate::projects::active_root(tx, &s.project_id)?;
-        let all = session_changes(tx, &session_id)?;
-        let mut sel: Vec<&FileChange> = all.iter().filter(|c| ids.contains(&c.id)).collect();
-        if sel.len() != ids.len() {
-            return Err(ApiError::not_found("이 대화의 변경 기록이 아닌 항목이 있습니다"));
-        }
-        if let Some(c) = sel.iter().find(|c| c.undone_at.is_some() != !undo) {
-            return Err(ApiError::conflict(
-                "invalid_state",
-                format!("{}: 이미 {} 상태입니다", c.path, if undo { "되돌린" } else { "적용된" }),
-            ));
-        }
-        if let Some(c) = sel.iter().find(|c| !c.stored) {
-            return Err(ApiError::conflict("not_stored", format!("{}: 파일이 커서 내용을 보관하지 않아 되돌릴 수 없습니다", c.path)));
-        }
-        // undo는 최근 변경부터, redo는 오래된 변경부터.
-        sel.sort_by_key(|c| if undo { -c.seq } else { c.seq });
-        // 1) 확인: 파일별 예상 현재 상태를 순서대로 계산한다.
-        let mut expect: HashMap<String, Option<String>> = HashMap::new();
-        let mut abs: HashMap<String, PathBuf> = HashMap::new();
-        let mut conflicts = vec![];
-        for c in &sel {
-            let p = resolve(&root, &c.path).map_err(|e| ApiError::invalid(e.message))?;
-            let cur = expect.entry(c.path.clone()).or_insert_with(|| read_state(&p).map(|s| s.sha)).clone();
-            abs.insert(c.path.clone(), p);
-            let (from, to) = if undo { (&c.after_sha, &c.before_sha) } else { (&c.before_sha, &c.after_sha) };
-            if cur != *from {
-                conflicts.push(json!({ "path": c.path, "expected_sha": from, "current_sha": cur }));
-            }
-            expect.insert(c.path.clone(), to.clone());
-        }
-        if !conflicts.is_empty() {
-            return Err(ApiError::conflict("conflict", "파일이 기록 이후 바뀌어 적용하지 않았습니다. 아무 파일도 바꾸지 않았습니다")
-                .with_details(json!({ "files": conflicts })));
-        }
+        let sel = plan.selected;
+        let abs = plan.paths;
         // 2) 쓰기: 실패하면 이미 쓴 파일을 원래대로 되돌린다.
         let mut done: Vec<(PathBuf, Option<Vec<u8>>)> = vec![];
         for c in &sel {
@@ -377,16 +468,90 @@ async fn apply(app: App, p: Principal, headers: HeaderMap, session_id: String, i
                         None => std::fs::remove_file(&q).map_err(|e| e.to_string()),
                     };
                 }
-                return Err(ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "write_failed", format!("{}: {e} (이미 쓴 파일은 되돌렸습니다)", c.path)));
+                return Err(ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "write_failed", format!("{}: {e} (원본과 변경 이력을 확인하세요)", c.path)));
             }
             done.push((p.clone(), prev));
         }
-        for c in &sel {
-            tx.execute("UPDATE file_changes SET undone_at = ?2 WHERE id = ?1", params![c.id, if undo { Some(now) } else { None }])?;
+
+        for change in &sel {
+            tx.execute("UPDATE file_changes SET undone_at = ?2 WHERE id = ?1", params![change.id, if undo { Some(&now) } else { None }])?;
         }
-        events::append(tx, now, "file_changes.updated", Some(&s.project_id), Some(&session_id), &json!({ "session_id": session_id }))?;
-        let changed = session_changes(tx, &session_id)?;
-        Ok((StatusCode::OK, json!({ "changes": changed })))
-    })
-    .await
+        events::append(&tx, &now, "file_changes.updated", Some(&plan.project_id), Some(&session_id), &json!({ "session_id": session_id }))?;
+        let response = json!({ "changes": session_changes(&tx, &session_id)? });
+        idem::complete(&tx, &owner, &key, &h, StatusCode::OK, &response)?;
+        tx.commit()?;
+        Ok(response)
+    }).await.map_err(|e| { tracing::warn!(code=e.code, "파일 변경 결과 불명"); unknown })?;
+    app.notify_events().await;
+    Ok(Json(response).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn blob_reads_and_writes_reject_oversize_and_invalid_keys() {
+        let data = tempfile::tempdir().unwrap();
+        let bytes = vec![b'x'; MAX_STORED as usize + 1];
+        let sha = sha256_hex(&bytes);
+        let path = blob_path(data.path(), &sha);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        assert!(get_blob(data.path(), &sha).is_none(), "hash가 맞아도 보관 상한을 넘으면 읽지 않는다");
+        assert!(put_blob(data.path(), &sha, &bytes).is_err());
+        assert_eq!(path.metadata().unwrap().len(), bytes.len() as u64);
+        assert!(get_blob(data.path(), "../../outside").is_none());
+        assert!(put_blob(data.path(), "../../outside", b"x").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn blob_links_and_special_files_never_expose_or_change_outside_data() {
+        use std::os::unix::fs::symlink;
+        let data = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let bytes = b"outside original";
+        let sha = sha256_hex(bytes);
+        let target = outside.path().join(&sha);
+        std::fs::write(&target, bytes).unwrap();
+        let path = blob_path(data.path(), &sha);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        symlink(&target, &path).unwrap();
+        assert!(get_blob(data.path(), &sha).is_none());
+        assert!(put_blob(data.path(), &sha, bytes).is_err());
+        assert!(path.symlink_metadata().unwrap().file_type().is_symlink());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::hard_link(&target, &path).unwrap();
+        assert!(get_blob(data.path(), &sha).is_none());
+        assert!(put_blob(data.path(), &sha, bytes).is_err());
+        std::fs::remove_file(&path).unwrap();
+        use std::os::unix::ffi::OsStrExt;
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0);
+        assert!(get_blob(data.path(), &sha).is_none());
+        assert!(put_blob(data.path(), &sha, bytes).is_err());
+        std::fs::remove_file(&path).unwrap();
+        std::fs::remove_dir(path.parent().unwrap()).unwrap();
+        symlink(outside.path(), path.parent().unwrap()).unwrap();
+        assert!(get_blob(data.path(), &sha).is_none());
+        assert!(put_blob(data.path(), &sha, bytes).is_err());
+        assert_eq!(std::fs::read(&target).unwrap(), bytes);
+    }
+
+    #[test]
+    fn storing_a_known_original_repairs_corrupt_blob_and_refreshes_its_grace() {
+        let data = tempfile::tempdir().unwrap();
+        let bytes = b"known original";
+        let sha = sha256_hex(bytes);
+        let path = blob_path(data.path(), &sha);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, b"wrong original").unwrap();
+        put_blob(data.path(), &sha, bytes).unwrap();
+        assert_eq!(get_blob(data.path(), &sha).as_deref(), Some(bytes.as_slice()));
+        let old = std::time::SystemTime::now() - std::time::Duration::from_secs(7200);
+        std::fs::OpenOptions::new().write(true).open(&path).unwrap().set_modified(old).unwrap();
+        put_blob(data.path(), &sha, bytes).unwrap();
+        assert!(path.metadata().unwrap().modified().unwrap() > old);
+    }
 }

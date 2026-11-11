@@ -7,6 +7,8 @@ import { type SendOptions, resolveOptions } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
 
+import { AttachmentPicker, useAttachments } from "./Attachments";
+
 export type { SendOptions };
 
 const OPT_KEY = "grove.composer.options";
@@ -20,6 +22,7 @@ function loadOpts(): SendOptions {
 }
 
 type Props = {
+    projectId: string;
     resourceKey: string; // session:<id> | project:<id>
     copyId: string; // 탭/분할 사본별 로컬 키
     disabled?: string | null;
@@ -27,7 +30,7 @@ type Props = {
     running?: boolean;
     /// key: 이 전송의 Idempotency-Key. 결과를 모르는 실패 뒤 같은 내용을 다시 보내면 같은 key를 넘겨 서버가 중복 실행하지 않는다.
     /// follow: 실행 중일 때 고른 방식(없으면 일반 전송).
-    onSend: (text: string, o: SendOptions, key: string, follow?: FollowKind) => Promise<void>;
+    onSend: (text: string, o: SendOptions, key: string, follow?: FollowKind, attachments?: string[]) => Promise<void>;
     /// 이 화면이 제공하는 slash command(UI-024). 입력창 공통 명령(/tools·/save·/model)은 Composer가 가진다.
     commands?: RunCommand[];
 };
@@ -39,11 +42,13 @@ export type FollowKind = "queue" | "steer" | "interrupt";
 const FOLLOW_LABEL: Record<FollowKind, string> = { queue: "대기열에 추가", steer: "지금 반영", interrupt: "중단하고 보내기" };
 
 /// 입력창: 입력할 때마다 기기 내 사본을 저장하고, 서버 초안은 명시적으로 저장/불러온다.
-export function Composer({ resourceKey, copyId, disabled, running, onSend, commands }: Props) {
+export function Composer({ projectId, resourceKey, copyId, disabled, running, onSend, commands }: Props) {
     const [follow, setFollow] = useState<FollowKind>("queue");
     const store = typeof localStorage !== "undefined" ? localStorage : null;
     const localKey = D.key(resourceKey, copyId);
     const [text, setText] = useState(() => (store ? D.load(store, localKey)?.text ?? "" : ""));
+    const attachments = useAttachments(localKey, projectId);
+    const sending = useRef(false);
     const base = useRef<number>(store ? D.load(store, localKey)?.baseRevision ?? 0 : 0);
     const [opts, setOpts] = useState<SendOptions>(loadOpts);
     const [busy, setBusy] = useState(false);
@@ -151,7 +156,7 @@ export function Composer({ resourceKey, copyId, disabled, running, onSend, comma
     };
 
     const send = async () => {
-        if (!text.trim() || busy) return;
+        if ((!text.trim() && attachments.items.length === 0) || busy || sending.current || attachments.busy || !attachments.ready || !!disabled) return;
         const parsed = parseSlash(text, allCmds.map((c) => c.name));
         if (parsed.kind === "unknown") {
             setMsg(`알 수 없는 명령 /${parsed.name}입니다. '/'를 입력하면 명령 목록이 보이고, '/'로 시작하는 글은 '//'로 시작해 보내세요.`);
@@ -179,13 +184,16 @@ export function Composer({ resourceKey, copyId, disabled, running, onSend, comma
     /// body: 실제로 보낼 글("//" 이스케이프를 푼 값), raw: 입력창 원문(보낸 뒤 비울지 판단).
     const sendText = async (body: string, raw: string) => {
         const text = body;
+        sending.current = true;
         setBusy(true);
         setMsg(null);
         const kind = running ? follow : undefined;
-        const sig = JSON.stringify([text, eff, kind]);
+        const ids = attachments.ids;
+        const sig = JSON.stringify([text, eff, kind, ids]);
         const key = unsure.current?.sig === sig ? unsure.current.key : newKey();
         try {
-            await onSend(text, eff, key, kind);
+            await onSend(text, eff, key, kind, ids);
+            attachments.clear();
             unsure.current = null;
             setUnsureMsg(false);
             // 보내는 동안 새로 입력한 글은 지우지 않는다(보낸 글 그대로일 때만 비움).
@@ -206,6 +214,7 @@ export function Composer({ resourceKey, copyId, disabled, running, onSend, comma
                 setMsg(e.message);
             }
         } finally {
+            sending.current = false;
             setBusy(false);
         }
     };
@@ -282,7 +291,11 @@ export function Composer({ resourceKey, copyId, disabled, running, onSend, comma
                     ))}
                 </ul>
             )}
+            <AttachmentPicker draft={attachments} disabled={busy || !!disabled} />
             <textarea
+                onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
+                onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); if (!busy && !disabled) void attachments.add(Array.from(e.dataTransfer.files)); } }}
+                onPaste={(e) => { if (e.clipboardData.files.length && !busy && !disabled) { e.preventDefault(); void attachments.add(Array.from(e.clipboardData.files)); } }}
                 value={text}
                 onChange={(e) => {
                     setText(e.target.value);
@@ -344,7 +357,7 @@ export function Composer({ resourceKey, copyId, disabled, running, onSend, comma
                 )}
                 <button
                     onClick={send}
-                    disabled={busy || !text.trim() || !!disabled || (eff.mode === "model" && !eff.profileId) || (!!running && eff.mode === "save")}
+                    disabled={busy || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (eff.mode === "model" && !eff.profileId) || (!!running && eff.mode === "save")}
                     title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다(도구 호출과 결과 사이에 끼면 안 됨)" : undefined}
                 >
                     {busy ? "보내는 중…" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}

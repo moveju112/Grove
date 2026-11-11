@@ -237,3 +237,43 @@ async fn missing_usage_is_not_reported_as_measured_zero() {
     assert!(u["measured_input_tokens"].is_null());
     assert!(u["estimated_tokens"].as_u64().unwrap() > 0);
 }
+
+// DB-004: 같은 영속 메시지 ID에 연결된 화면 기록과 모델 입력은 서로 다른 표현을 유지한다.
+#[tokio::test]
+async fn display_and_model_input_share_identity_but_keep_distinct_content_after_restart() {
+    let mut s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = profile_with_window(&s, &f.base, 100_000).await;
+    let p = s.create_project("input-representation").await;
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let app = s.server.as_ref().unwrap().app.clone();
+    let session = sid.clone();
+    let now = app.now();
+    let id = app.db.call(move |c| {
+        let tx = c.transaction()?;
+        let message = grove::sessions::append_message(&tx, &now, &session, "user", &json!({"text":"화면에 보존할 원본 기록"}), None, Some(&json!({"text":"모델에 전달할 입력 표현"})))?;
+        tx.commit()?;
+        Ok(message.id)
+    }).await.unwrap();
+    drop(app);
+    s.restart().await;
+    let (st, history) = s.get(&format!("/api/v1/sessions/{sid}/messages")).await;
+    assert_eq!(st, StatusCode::OK);
+    let shown = history["items"].as_array().unwrap().iter().find(|m| m["id"] == id).unwrap();
+    assert_eq!(shown["content"]["text"], "화면에 보존할 원본 기록");
+    assert!(shown.get("model_input").is_none());
+    let (st, preview) = s.get(&format!("/api/v1/sessions/{sid}/model-input")).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(preview.to_string().contains("모델에 전달할 입력 표현"));
+    assert!(!preview.to_string().contains("화면에 보존할 원본 기록"));
+    f.push(fixture::text("완료"));
+    turn(&s, &sid, &prof, "계속", false).await;
+    let requests = f.requests();
+    let actual = requests.last().unwrap()["messages"].to_string();
+    assert!(actual.contains("모델에 전달할 입력 표현"));
+    assert!(!actual.contains("화면에 보존할 원본 기록"));
+    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+    let (display, model): (String, String) = db.query_row("SELECT content, model_input FROM messages WHERE id = ?1", [id], |r| Ok((r.get(0)?,r.get(1)?))).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&display).unwrap()["text"], "화면에 보존할 원본 기록");
+    assert_eq!(serde_json::from_str::<Value>(&model).unwrap()["text"], "모델에 전달할 입력 표현");
+}

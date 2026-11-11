@@ -42,7 +42,7 @@ def ok(cond, what):
         FAILS.append(what)
 
 
-def variant(name, version, migrations):
+def variant(name, version, migrations, legacy_log=False):
     """소스 복사본을 버전·migration만 바꿔 debug 빌드한다(의존성은 공용 target에서 재사용)."""
     src = os.path.join(TMP, f"src-{name}")
     os.makedirs(src)
@@ -59,7 +59,16 @@ def variant(name, version, migrations):
     assert s.count(marker) == 1, "migration 끝 표식을 찾지 못했습니다"
     extra = "".join(f'    r#"CREATE TABLE {m} (x INTEGER);"#,\n' for m in migrations)
     open(st, "w").write(s.replace(marker, marker[:-3] + extra + "];"))
-    sh(["cargo", "build", "--bin", "grove"], cwd=src)
+    if legacy_log:
+        cli = os.path.join(src, "src", "cli.rs")
+        text = open(cli).read()
+        text = text.replace(', "features": ["file_log_rotation_v1"]', '')
+        text = text.replace('"--log-file" => o.log_file = Some(PathBuf::from(val(&mut it, a)?)),',
+                            '"--log-file" => return Err("legacy fixture: unsupported --log-file".into()),')
+        assert "legacy fixture" in text and '"features": ["file_log_rotation_v1"]' not in text
+        open(cli, "w").write(text)
+    # 고정한 공용 target의 기존 의존성 cache를 쓴다. 임시 소스 경로 hash마다 새로 컴파일하지 않는다.
+    sh(["cargo", "--config", f'build.build-dir="{TARGET}"', "build", "--offline", "--bin", "grove"], cwd=src)
     return os.path.join(TARGET, "debug", "grove")
 
 
@@ -129,7 +138,7 @@ def upd(*args):
 try:
     ENV["CARGO_TARGET_DIR"] = TARGET
     print("빌드: A·B·C(debug, 공용 target)", flush=True)
-    A_src = variant("a", "0.1.0", [])
+    A_src = variant("a", "0.1.0", [], legacy_log=True)
     A = os.path.join(TMP, "grove-a")
     shutil.copy2(A_src, A)
     B = variant("b", "0.1.1", ["update_probe_b"])
@@ -179,7 +188,12 @@ try:
             break
         time.sleep(0.1)
     ok((health() or {}).get("version") == "0.1.0", "A 실행")
+    log_path = os.path.join(INST, "logs", "server.log")
+    ok(os.path.isfile(log_path), "이전 release의 stderr 파일 로그 시작 호환")
     pid_a = open(os.path.join(INST, "server.pid")).read()
+    code, _, err = upd("start")
+    ok(code != 0 and "이미 응답" in err and open(os.path.join(INST, "server.pid")).read() == pid_a,
+       "중복 시작은 기존 process·PID·로그를 교체하지 않음")
 
     print("확인(무중단)", flush=True)
     code, c, _ = upd("update", "check", "--manifest", mb)
@@ -222,12 +236,17 @@ try:
         if api("GET", "/admin/update-readiness")["idle"]:
             break
         time.sleep(0.2)
+    # 이전 append 로그가 이미 꽉 찼어도 새 writer가 잘라 보관하고 시작한다.
+    with open(log_path, "ab") as f:
+        f.truncate(2 * 1024 * 1024)
     code, rc, err = upd("update", "apply", "--manifest", mb)
     ok(code == 0 and rc["status"] == "applied", f"B 적용: {rc and rc.get('status')} {err.strip()[:200]}")
     h = health() or {}
     ok(h.get("version") == "0.1.1" and h.get("schema") == vb["schema"], f"B 실행 {h}")
     ok(rc and rc.get("downtime_ms", 10**9) < 30000, f"중단 시간 {rc and rc.get('downtime_ms')}ms")
     ok(api("GET", f"/projects/{pid}")["id"] == pid, "기존 데이터 유지")
+    ok(os.path.getsize(log_path + ".1") == 2 * 1024 * 1024 and os.path.getsize(log_path) < 2 * 1024 * 1024,
+       "기존 append 로그에서 회전 로그로 전환")
     notes = api("GET", "/notifications")
     ok(any("업데이트 완료" in n["title"] for n in notes["items"]), "결과 알림(영속)")
     ups = api("GET", "/updates")
@@ -281,6 +300,10 @@ try:
 
     upd("stop")
     ok(health() is None, "정지")
+    logs = [log_path] + [log_path + f".{i}" for i in range(1, 4)]
+    ok(all(os.path.getsize(p) <= 2 * 1024 * 1024 for p in logs if os.path.isfile(p)), "업데이트·실패 복구·정지 뒤 파일별 로그 상한 유지")
+    text = open(log_path).read()
+    ok("서버 준비 완료" in text and "서버 종료 중" in text and "\x1b" not in text, "현재 서버 로그는 ANSI 없는 시작·종료 기록")
 except BaseException as e:  # 중단도 실패로 기록한다(성공으로 보고하지 않음)
     FAILS.append(f"예외로 중단: {e!r}")
     raise

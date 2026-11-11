@@ -561,6 +561,83 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX file_changes_session ON file_changes(session_id, seq);
     CREATE INDEX file_changes_turn ON file_changes(turn_id);
     "#,
+    // 29: 보관한 내용 blob의 크기·생성 시각(DB-013). 참조 수는 file_changes에서 계산하고, 참조가 없으면 정리한다.
+    r#"
+    CREATE TABLE blobs (
+        sha TEXT PRIMARY KEY,
+        size INTEGER NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX file_changes_before ON file_changes(before_sha);
+    CREATE INDEX file_changes_after ON file_changes(after_sha);
+    "#,
+    // 30: 제한된 저장 공간 검사와 미확정 휴지통 작업 보존(DB-014·019).
+    r#"
+    CREATE INDEX file_changes_stored ON file_changes(stored) WHERE stored = 1;
+    CREATE INDEX idempotency_created ON idempotency(created_at);
+    CREATE INDEX idempotency_unknown_trash ON idempotency(json_extract(response, '$.error.details.trash_id'))
+        WHERE status = 409 AND json_extract(response, '$.error.code') = 'result_unknown';
+    "#,
+    // 31: 첨부 원문과 메시지 소유 관계. 참조 수는 FK로 관리하는 참조 행에서 계산한다.
+    r#"
+    CREATE TABLE attachments (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        owner_id TEXT NOT NULL,
+        name TEXT NOT NULL,
+        mime TEXT NOT NULL,
+        size INTEGER NOT NULL,
+        sha256 TEXT NOT NULL,
+        storage_key TEXT NOT NULL,
+        stored INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX attachments_sha ON attachments(sha256);
+    CREATE TABLE attachment_refs (
+        attachment_id TEXT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+        message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,
+        PRIMARY KEY (attachment_id, message_id)
+    );
+    CREATE INDEX attachment_refs_message ON attachment_refs(message_id);
+    "#,
+    // 32: 이미지 원문 metadata. 모델용 축소본은 요청 시 제한된 메모리로 만든다.
+    r#"ALTER TABLE attachments ADD COLUMN image TEXT;"#,
+    // 33: 실행 대기 중인 첨부도 GC·명시적 삭제에서 보호한다.
+    r#"
+    ALTER TABLE followups ADD COLUMN attachments TEXT NOT NULL DEFAULT '[]';
+    CREATE TABLE followup_attachment_refs (
+        attachment_id TEXT NOT NULL REFERENCES attachments(id) ON DELETE CASCADE,
+        followup_id TEXT NOT NULL REFERENCES followups(id) ON DELETE CASCADE,
+        PRIMARY KEY (attachment_id, followup_id)
+    );
+    CREATE INDEX followup_attachment_refs_item ON followup_attachment_refs(followup_id);
+    "#,
+    // 34: 작업이 로그의 소유자·단일 참조다. 이전 로그는 제한된 검사에서 크기·hash를 채운다.
+    r#"
+    CREATE TABLE task_logs (
+        task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+        stream TEXT NOT NULL CHECK(stream IN ('out','err')),
+        storage_key TEXT NOT NULL UNIQUE,
+        size INTEGER NOT NULL DEFAULT 0 CHECK(size >= 0),
+        sha256 TEXT,
+        state TEXT NOT NULL CHECK(state IN ('writing','ready','error','missing','expired')),
+        error TEXT,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(task_id,stream)
+    );
+    INSERT INTO task_logs(task_id,stream,storage_key,state,updated_at)
+        SELECT t.id,s.stream,'tasks/'||t.id||'.'||s.stream,'writing',COALESCE(t.ended_at,t.started_at)
+        FROM tasks t CROSS JOIN (SELECT 'out' AS stream UNION ALL SELECT 'err') s;
+    "#,
+    // 35: 자동 영구 삭제의 마지막 파일 정리와 완료 이벤트 사이 복구 증거다.
+    r#"
+    CREATE TABLE trash_gc (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL,
+        path TEXT NOT NULL,
+        origin_sha256 TEXT NOT NULL
+    );
+    "#,
 ];
 
 #[cfg(test)]

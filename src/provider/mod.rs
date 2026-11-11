@@ -16,9 +16,23 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use tokio::sync::watch;
 
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImageInput {
+    pub id: String,
+    pub sha256: String,
+    pub width: u32,
+    pub height: u32,
+    pub mime: String,
+    #[serde(skip)]
+    pub data: String,
+}
+impl std::fmt::Debug for ImageInput {
+    fn fmt(&self,f:&mut std::fmt::Formatter<'_>)->std::fmt::Result { f.debug_struct("ImageInput").field("id",&self.id).field("width",&self.width).field("height",&self.height).finish_non_exhaustive() }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatMsg {
-    User { text: String },
+    User { text: String, images: Vec<ImageInput> },
     Assistant { text: String, tool_calls: Vec<ToolCall> },
     Tool { call_id: String, name: String, content: String, is_error: bool },
 }
@@ -283,6 +297,9 @@ pub async fn stream(
     if *cancel.borrow() {
         return Err(ProviderError::new("cancelled", "취소되었습니다"));
     }
+    if cli::is_cli(&profile.protocol) && req.messages.iter().any(|m|matches!(m,ChatMsg::User{images,..} if !images.is_empty())) {
+        return Err(ProviderError::new("unsupported_image", "CLI 백엔드는 이미지 첨부를 지원하지 않습니다. HTTP 모델 프로필을 선택하세요"));
+    }
     let client = http_client(profile.timeout);
     let mut attempt = 0u32;
     loop {
@@ -517,7 +534,7 @@ mod effort_tests {
     fn req(effort: Option<&str>) -> ModelRequest {
         ModelRequest {
             system: "s".into(),
-            messages: vec![ChatMsg::User { text: "q".into() }],
+            messages: vec![ChatMsg::User { text: "q".into(), images: vec![] }],
             tools: vec![],
             max_tokens: Some(1000),
             temperature: Some(0.2),

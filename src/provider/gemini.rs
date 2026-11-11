@@ -17,7 +17,10 @@ pub fn build_body(req: &ModelRequest) -> Value {
     };
     for m in &req.messages {
         match m {
-            ChatMsg::User { text } => push(&mut contents, "user", json!({ "text": text })),
+            ChatMsg::User { text, images } => {
+                push(&mut contents, "user", json!({ "text": text }));
+                for i in images {push(&mut contents,"user",json!({"inlineData":{"mimeType":i.mime,"data":i.data}}));}
+            },
             ChatMsg::Assistant { text, tool_calls } => {
                 if !text.is_empty() {
                     push(&mut contents, "model", json!({ "text": text }));
@@ -172,7 +175,7 @@ mod tests {
         let req = ModelRequest {
             system: "s".into(),
             messages: vec![
-                ChatMsg::User { text: "q".into() },
+                ChatMsg::User { text: "q".into(), images: vec![] },
                 ChatMsg::Assistant { text: "".into(), tool_calls: vec![ToolCall { id: "g".into(), name: "read".into(), arguments: json!({ "p": 1 }) }] },
                 ChatMsg::Tool { call_id: "g".into(), name: "read".into(), content: "r".into(), is_error: false },
             ],

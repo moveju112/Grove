@@ -48,7 +48,7 @@ fn program(protocol: &str) -> &'static str {
 fn prompt(req: &ModelRequest, resume: bool, with_system: bool) -> String {
     let last_user = req.messages.iter().rposition(|m| matches!(m, ChatMsg::User { .. }));
     let current = match last_user.map(|i| &req.messages[i]) {
-        Some(ChatMsg::User { text }) => text.clone(),
+        Some(ChatMsg::User { text, .. }) => text.clone(),
         _ => String::new(),
     };
     let mut out = String::new();
@@ -61,7 +61,7 @@ fn prompt(req: &ModelRequest, resume: bool, with_system: bool) -> String {
         let prev: Vec<String> = req.messages[..i]
             .iter()
             .filter_map(|m| match m {
-                ChatMsg::User { text } if !text.trim().is_empty() => Some(format!("[user]\n{text}")),
+                ChatMsg::User { text, .. } if !text.trim().is_empty() => Some(format!("[user]\n{text}")),
                 ChatMsg::Assistant { text, .. } if !text.trim().is_empty() => Some(format!("[assistant]\n{text}")),
                 _ => None,
             })
@@ -347,9 +347,9 @@ mod tests {
         ModelRequest {
             system: "sys".into(),
             messages: vec![
-                ChatMsg::User { text: "첫 질문".into() },
+                ChatMsg::User { text: "첫 질문".into(), images: vec![] },
                 ChatMsg::Assistant { text: "첫 답".into(), tool_calls: vec![] },
-                ChatMsg::User { text: "다음 질문".into() },
+                ChatMsg::User { text: "다음 질문".into(), images: vec![] },
             ],
             tools: vec![],
             max_tokens: None,

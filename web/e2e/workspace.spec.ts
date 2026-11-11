@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, openDetails, script, state } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openDetails, script, sessionView, state } from "./helpers";
 
 test("CSP·보안 헤더와 PWA manifest를 제공한다", async ({ request }) => {
     const r = await request.get("/");
@@ -361,13 +361,15 @@ test("백그라운드 작업을 시작·취소하고 결과가 대화에 한 번
     const sess = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title: "작업 대화" });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: sess.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: /작업 대화/ }).click();
-    const panel = page.getByTestId("tasks-panel");
-    await panel.locator("summary").click();
+    await page.locator(".recent").getByRole("button", { name: /작업 대화/ }).first().click();
+    // 앞선 시험이 분할 배치를 남겼을 수 있어 이 대화 화면 안에서만 찾는다.
+    const view = sessionView(page, sess.id);
+    const panel = view.getByTestId("tasks-panel");
+    await openDetails(panel);
     await panel.getByLabel("백그라운드 명령").fill("echo 백그라운드-완료");
     await panel.getByRole("button", { name: "실행", exact: true }).click();
-    await expect(page.getByTestId("msg-task-result")).toHaveCount(1);
-    await expect(page.getByTestId("msg-task-result")).toContainText("completed");
+    await expect(view.getByTestId("msg-task-result")).toHaveCount(1);
+    await expect(view.getByTestId("msg-task-result")).toContainText("completed");
     await expect(panel.getByTestId("task-row").first()).toHaveAttribute("data-status", "completed");
     await panel.getByTestId("task-row").first().getByRole("button", { name: "출력" }).click();
     await expect(panel.getByTestId("task-output")).toContainText("백그라운드-완료");
@@ -378,7 +380,7 @@ test("백그라운드 작업을 시작·취소하고 결과가 대화에 한 번
     await expect(runningRow).toHaveCount(1);
     await runningRow.getByRole("button", { name: "취소" }).click();
     await expect(panel.locator('[data-testid="task-row"][data-status="cancelled"]')).toHaveCount(1);
-    await expect(page.getByTestId("msg-task-result")).toHaveCount(2);
+    await expect(view.getByTestId("msg-task-result")).toHaveCount(2);
 });
 
 test("터미널을 열어 입력·출력하고, 새로고침하면 화면이 복원되며, 종료하면 읽기 전용이 된다", async ({ page }) => {

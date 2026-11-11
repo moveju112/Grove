@@ -397,6 +397,12 @@ pub fn edit(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
     Ok(json!({ "path": planned.target["path"], "replacements": planned.target["replacements"], "before_sha256": pre["sha256"], "sha256": sha256_hex(after.as_bytes()) }))
 }
 
+/// atomic_write의 UUID staging 이름에서 원래 파일명을 얻는다. 삭제 권한·경로는 호출자가 확인한다.
+pub(crate) fn atomic_staging_target(name: &str) -> Option<&str> {
+    let (target, id) = name.strip_prefix('.')?.strip_suffix(".tmp")?.rsplit_once(".grove-")?;
+    (!target.is_empty() && uuid::Uuid::parse_str(id).is_ok()).then_some(target)
+}
+
 /// 같은 디렉터리의 임시 파일에 쓰고 fsync 후 rename한다. 권한은 원본을 유지한다.
 pub fn atomic_write(p: &Path, data: &[u8]) -> ToolResult<()> {
     use std::io::Write;

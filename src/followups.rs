@@ -37,9 +37,10 @@ pub struct Followup {
     pub effort: Option<String>,
     /// 자동 시작이 막힌 이유(예: 결과 불명 작업 검토 필요). 사용자가 시작하거나 지울 때까지 남는다.
     pub last_error: Option<Value>,
+    pub attachments: Vec<Value>,
 }
 
-const COLS: &str = "id, session_id, kind, text, profile_id, agent_id, tools, created_at, last_error, effort";
+const COLS: &str = "id, session_id, kind, text, profile_id, agent_id, tools, created_at, last_error, effort, attachments";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Followup> {
     let err: Option<String> = r.get(8)?;
@@ -53,6 +54,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Followup> {
         tools: r.get(6)?,
         created_at: r.get(7)?,
         effort: r.get(9)?,
+        attachments: serde_json::from_str(&r.get::<_,String>(10)?).map_err(|e|rusqlite::Error::FromSqlConversionFailure(10,rusqlite::types::Type::Text,Box::new(e)))?,
         last_error: err.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
@@ -71,7 +73,7 @@ fn emit(c: &Connection, now: &str, session_id: &str) -> ApiResult<()> {
 
 /// 실행 중인 턴의 모델 호출 직전에 steer를 user 메시지로 넣는다. 도구 호출이 하나라도 끝나지 않았으면
 /// (도구 호출과 결과 사이에 끼우면 짝이 깨진다) 다음 경계로 미룬다. 넣은 개수를 돌려준다.
-pub fn apply_steers(tx: &Connection, now: &str, turn_id: &str) -> ApiResult<usize> {
+pub fn apply_steers(tx: &Connection, now: &str, turn_id: &str, data: &std::path::Path) -> ApiResult<usize> {
     let Some((session_id, status)) = tx
         .query_row("SELECT session_id, status FROM turns WHERE id = ?1", params![turn_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))
         .optional()?
@@ -89,32 +91,92 @@ pub fn apply_steers(tx: &Connection, now: &str, turn_id: &str) -> ApiResult<usiz
     if open > 0 {
         return Ok(0);
     }
-    let mut st = tx.prepare("SELECT id, text FROM followups WHERE session_id = ?1 AND kind = 'steer' ORDER BY rowid")?;
-    let items = st.query_map(params![session_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?;
-    drop(st);
-    for (id, text) in &items {
-        crate::sessions::append_message(tx, now, &session_id, "user", &json!({ "text": text, "source": { "kind": "steer", "followup_id": id } }), Some(turn_id), None)?;
-        tx.execute("DELETE FROM followups WHERE id = ?1", params![id])?;
+    let items: Vec<_> = list(tx, &session_id)?.into_iter().filter(|f| f.kind == "steer").collect();
+    let mut applied = 0;
+    for f in &items {
+        tx.execute_batch("SAVEPOINT steer_attachment")?;
+        let result = (|| -> ApiResult<()> {
+            let owner = owner_of(tx, &f.id)?;
+            let prepared = prepare_item(tx, data, f, &owner)?;
+            let mut content = json!({"text":f.text,"source":{"kind":"steer","followup_id":f.id}});
+            if !prepared.items.is_empty() {
+                content["attachments"] = json!(prepared.items);
+            }
+            let m = crate::sessions::append_message(
+                tx,
+                now,
+                &session_id,
+                "user",
+                &content,
+                Some(turn_id),
+                (!prepared.items.is_empty()).then_some(&prepared.model_input),
+            )?;
+            crate::attachments::bind(tx, now, &m.id, &prepared)?;
+            tx.execute("DELETE FROM followups WHERE id=?1", [&f.id])?;
+            Ok(())
+        })();
+        match result {
+            Ok(()) => {
+                tx.execute_batch("RELEASE steer_attachment")?;
+                applied += 1;
+            }
+            Err(e) => {
+                tx.execute_batch("ROLLBACK TO steer_attachment; RELEASE steer_attachment")?;
+                tx.execute(
+                    "UPDATE followups SET kind='queue',last_error=?2 WHERE id=?1",
+                    params![f.id, json!({"code":e.code,"message":e.message}).to_string()],
+                )?;
+            }
+        }
     }
     if !items.is_empty() {
         emit(tx, now, &session_id)?;
     }
-    Ok(items.len())
+    Ok(applied)
 }
 
-/// 항목 하나를 새 턴으로 시작한다. 실패하면 아무것도 쓰지 않고(savepoint) 이유를 항목에 남긴다.
-fn start_item(tx: &Connection, now: &str, epoch: &str, f: &Followup, owner: &str) -> ApiResult<Result<String, ApiError>> {
+// 큐 참조를 메시지 참조로 바꾸는 같은 transaction/savepoint 안에서만 호출한다.
+fn prepare_item(tx: &Connection, data: &std::path::Path, f: &Followup, owner: &str) -> ApiResult<crate::attachments::Prepared> {
+    let s = crate::sessions::get_active(tx, &f.session_id)?;
+    let ids: Vec<String> = f
+        .attachments
+        .iter()
+        .map(|a| a["id"].as_str().map(str::to_string).ok_or_else(|| ApiError::gone("대기 첨부 ID가 잘못되었습니다")))
+        .collect::<ApiResult<_>>()?;
+    tx.execute("DELETE FROM followup_attachment_refs WHERE followup_id=?1", [&f.id])?;
+    crate::attachments::prepare(tx, data, owner.strip_prefix("token:").unwrap_or(owner), &s.project_id, &f.text, &ids)
+}
+
+/// 항목 하나를 새 턴으로 시작한다. 실패하면 참조까지 되돌리고 이유를 항목에 남긴다.
+fn start_item(tx: &Connection, now: &str, epoch: &str, f: &Followup, owner: &str, data: &std::path::Path) -> ApiResult<Result<String, ApiError>> {
     tx.execute_batch("SAVEPOINT followup_start")?;
-    match crate::runner::enqueue_turn(tx, now, epoch, owner, &f.session_id, &f.text, &f.profile_id, f.agent_id.as_deref(), f.tools, None) {
-        Ok((t, _)) => {
-            crate::runner::set_turn_effort(tx, &t.id, f.effort.as_deref())?;
-            tx.execute("DELETE FROM followups WHERE id = ?1", params![f.id])?;
+    let result = (|| -> ApiResult<String> {
+        let prepared = prepare_item(tx, data, f, owner)?;
+        let (t, _) = crate::runner::enqueue_with_attachments(
+            tx,
+            now,
+            epoch,
+            owner,
+            &f.session_id,
+            &f.text,
+            &f.profile_id,
+            f.agent_id.as_deref(),
+            f.tools,
+            None,
+            (!prepared.items.is_empty()).then_some(&prepared),
+        )?;
+        crate::runner::set_turn_effort(tx, &t.id, f.effort.as_deref())?;
+        tx.execute("DELETE FROM followups WHERE id=?1", [&f.id])?;
+        Ok(t.id)
+    })();
+    match result {
+        Ok(tid) => {
             tx.execute_batch("RELEASE followup_start")?;
-            Ok(Ok(t.id))
+            Ok(Ok(tid))
         }
         Err(e) => {
             tx.execute_batch("ROLLBACK TO followup_start; RELEASE followup_start")?;
-            tx.execute("UPDATE followups SET last_error = ?2 WHERE id = ?1", params![f.id, json!({ "code": e.code, "message": e.message }).to_string()])?;
+            tx.execute("UPDATE followups SET last_error=?2 WHERE id=?1", params![f.id, json!({"code":e.code,"message":e.message}).to_string()])?;
             Ok(Err(e))
         }
     }
@@ -138,6 +200,7 @@ fn owner_of(tx: &Connection, id: &str) -> ApiResult<String> {
 /// 턴이 끝난 뒤 다음 항목을 정한다. 여러 경로에서 불려도 같은 결과가 되도록 현재 상태만 보고 결정한다.
 pub async fn after_turn(app: &App, turn_id: &str) {
     let (tid, epoch) = (turn_id.to_string(), app.epoch.clone());
+    let data=app.cfg.data_dir.clone();
     let started = app
         .db
         .call(move |c| {
@@ -166,7 +229,7 @@ pub async fn after_turn(app: &App, turn_id: &str) {
             let mut started = false;
             if let Some(f) = next {
                 let owner = owner_of(&tx, &f.id)?;
-                started = start_item(&tx, &now, &epoch, &f, &owner)?.is_ok();
+                started = start_item(&tx, &now, &epoch, &f, &owner, &data)?.is_ok();
                 emit(&tx, &now, &session_id)?;
             } else if converted > 0 {
                 emit(&tx, &now, &session_id)?;
@@ -192,6 +255,8 @@ pub struct AddBody {
     pub agent_id: Option<String>,
     pub tools: Option<bool>,
     pub effort: Option<String>,
+    #[serde(default)]
+    pub attachments: Vec<String>,
 }
 
 pub async fn get_list(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -200,7 +265,7 @@ pub async fn get_list(State(app): State<App>, _p: Principal, Path(id): Path<Stri
 
 /// 추가 메시지 접수. 실행 중인 턴이 없으면 바로 새 턴으로 시작한다(`started_turn`).
 pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, Path(session_id): Path<String>, Json(b): Json<AddBody>) -> ApiResult<Response> {
-    crate::sessions::validate_text(&b.text)?;
+    crate::sessions::validate_message(&b.text,&b.attachments)?;
     if !["queue", "steer", "interrupt"].contains(&b.kind.as_str()) {
         return Err(ApiError::invalid("kind는 queue·steer·interrupt 중 하나입니다"));
     }
@@ -209,7 +274,11 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
         return Err(ApiError::unsupported("이 서버에서는 모델 도구 실행이 꺼져 있습니다(GROVE_ENABLE_TOOL_LOOP=1)"));
     }
     let effort = crate::provider::parse_effort(b.effort.as_deref()).map_err(ApiError::invalid)?;
-    let h = idem::body_hash("followup.add", &json!({ "s": session_id, "k": b.kind, "t": b.text, "p": b.profile_id, "a": b.agent_id, "tools": tools, "e": effort }));
+    let mut hash_body=json!({ "s": session_id, "k": b.kind, "t": b.text, "p": b.profile_id, "a": b.agent_id, "tools": tools, "e": effort });
+    if !b.attachments.is_empty() {hash_body["attachments"]=json!(b.attachments);}
+    let h = idem::body_hash("followup.add", &hash_body);
+    let root_owner=p.root_id.clone();
+    let data=app.cfg.data_dir.clone();
     let owner = format!("token:{}", p.root_id);
     let epoch = app.epoch.clone();
     let kind = b.kind.clone();
@@ -217,10 +286,10 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
     let resp = idem::run(&app, &p, &headers, &h, move |tx, now| {
         let s = crate::sessions::get_active(tx, &session_id)?;
         crate::models::get_profile(tx, &b.profile_id)?;
-        let _ = s;
+        let prepared=crate::attachments::prepare(tx,&data,&root_owner,&s.project_id,&b.text,&b.attachments)?;
         let Some(active) = active_turn_id(tx, &session_id)? else {
             // 그 사이 턴이 끝났다: 바로 시작한다.
-            let (t, msg) = crate::runner::enqueue_turn(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), tools, None)?;
+            let (t, msg) = crate::runner::enqueue_with_attachments(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), tools, None, (!prepared.items.is_empty()).then_some(&prepared))?;
             crate::runner::set_turn_effort(tx, &t.id, effort.as_deref())?;
             let t = crate::runner::get_turn(tx, &t.id)?;
             return Ok((StatusCode::ACCEPTED, json!({ "started_turn": t, "message": msg })));
@@ -231,9 +300,10 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
         }
         let id = crate::util::new_id();
         tx.execute(
-            "INSERT INTO followups (id, session_id, kind, text, profile_id, agent_id, tools, owner_key, created_at, effort) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
-            params![id, session_id, b.kind, b.text, b.profile_id, b.agent_id, tools, owner, now, effort],
+            "INSERT INTO followups (id, session_id, kind, text, profile_id, agent_id, tools, owner_key, created_at, effort, attachments) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![id, session_id, b.kind, b.text, b.profile_id, b.agent_id, tools, owner, now, effort, json!(prepared.items).to_string()],
         )?;
+        for item in &prepared.items {tx.execute("INSERT INTO followup_attachment_refs(attachment_id,followup_id) VALUES (?1,?2)",params![item["id"].as_str().unwrap(),id])?;}
         emit(tx, now, &session_id)?;
         let item = tx.query_row(&format!("SELECT {COLS} FROM followups WHERE id = ?1"), params![id], row)?;
         Ok((StatusCode::CREATED, json!({ "followup": item, "active_turn": active })))
@@ -281,6 +351,7 @@ pub async fn delete(State(app): State<App>, _p: Principal, Path((session_id, fid
 /// 멈춘 항목을 지금 시작한다(실행 중인 턴이 없을 때만).
 pub async fn post_start(State(app): State<App>, _p: Principal, Path((session_id, fid)): Path<(String, String)>) -> ApiResult<(StatusCode, Json<Value>)> {
     let epoch = app.epoch.clone();
+    let data=app.cfg.data_dir.clone();
     let res = app
         .db
         .call(move |c| {
@@ -291,7 +362,7 @@ pub async fn post_start(State(app): State<App>, _p: Principal, Path((session_id,
                 .optional()?
                 .ok_or_else(|| ApiError::not_found("대기 메시지가 없습니다"))?;
             let owner = owner_of(&tx, &f.id)?;
-            let r = start_item(&tx, &now, &epoch, &f, &owner)?;
+            let r = start_item(&tx, &now, &epoch, &f, &owner, &data)?;
             emit(&tx, &now, &session_id)?;
             tx.commit()?;
             r

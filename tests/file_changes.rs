@@ -113,3 +113,67 @@ async fn file_changes_patch_review_undo_redo() {
     let (_, msgs) = s.get(&format!("/api/v1/sessions/{sid}/messages")).await;
     assert!(!msgs.to_string().contains("file_changes"));
 }
+
+#[tokio::test]
+async fn file_change_receipt_precedes_files_and_failed_completion_never_reexecutes() {
+    for action in ["undo", "redo"] {
+        for fault in ["accept", "accept_commit", "complete", "event", "commit"] {
+            let mut s = TestServer::start().await;
+            let fixture = Fixture::start().await;
+            let profile = s.fixture_profile(&fixture.base).await;
+            let project = s.create_project(&format!("{action}-{fault}")).await;
+            let file = std::path::Path::new(project["root_path"].as_str().unwrap()).join("a.txt");
+            std::fs::write(&file, "before\n").unwrap();
+            let sid = s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+            fixture.push(fixture::tool_calls(&[("edit", "edit", json!({"path":"a.txt","old_string":"before","new_string":"after"}))]));
+            fixture.push(fixture::text("완료"));
+            run_turn(&s, &sid, &profile, "수정").await;
+            let (_, changes) = s.get(&format!("/api/v1/sessions/{sid}/file-changes")).await;
+            let change = changes[0]["id"].as_str().unwrap().to_string();
+            if action == "redo" {
+                let (status, _) = s.post(&format!("/api/v1/sessions/{sid}/file-changes/undo"), json!({"change_ids":[change]})).await;
+                assert_eq!(status, StatusCode::OK);
+            }
+            let current = if action == "undo" { "after\n" } else { "before\n" };
+            let target = if action == "undo" { "before\n" } else { "after\n" };
+            let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+            let event_count = db.query_row("SELECT COUNT(*) FROM events WHERE kind='file_changes.updated' AND session_id=?1",[&sid],|r|r.get::<_,i64>(0)).unwrap();
+            let sql = match fault {
+                "accept" => "CREATE TRIGGER fail_undo BEFORE INSERT ON idempotency BEGIN SELECT RAISE(FAIL,'fixture undo accept'); END;",
+                "accept_commit" => "CREATE TABLE fixture_failed_commit (change_id TEXT REFERENCES file_changes(id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_undo AFTER INSERT ON idempotency BEGIN INSERT INTO fixture_failed_commit VALUES ('missing-fixture-change'); END;",
+                "complete" => "CREATE TRIGGER fail_undo BEFORE UPDATE ON idempotency BEGIN SELECT RAISE(FAIL,'fixture undo complete'); END;",
+                "commit" => "CREATE TABLE fixture_failed_commit (change_id TEXT REFERENCES file_changes(id) DEFERRABLE INITIALLY DEFERRED); CREATE TRIGGER fail_undo AFTER UPDATE ON idempotency BEGIN INSERT INTO fixture_failed_commit VALUES ('missing-fixture-change'); END;",
+                _ => "CREATE TRIGGER fail_undo BEFORE INSERT ON events WHEN NEW.kind='file_changes.updated' BEGIN SELECT RAISE(FAIL,'fixture undo event'); END;",
+            };
+            db.execute_batch(sql).unwrap();
+            let path = format!("/api/v1/sessions/{sid}/file-changes/{action}");
+            let key = s.key();
+            let body = json!({"change_ids":[change]});
+            let response = s.raw(reqwest::Method::POST,&path,Some(body.clone()),Some(&key),None).await;
+            let acceptance_failed = fault == "accept" || fault == "accept_commit";
+            if acceptance_failed {
+                assert_eq!(response.status(),StatusCode::INTERNAL_SERVER_ERROR);
+                assert_eq!(std::fs::read_to_string(&file).unwrap(),current,"접수 실패 전에 파일을 바꾸지 않는다");
+                assert_eq!(db.query_row("SELECT COUNT(*) FROM idempotency WHERE key=?1",[&key],|r|r.get::<_,i64>(0)).unwrap(),0);
+            } else {
+                assert_eq!(response.status(),StatusCode::CONFLICT,"{fault}: {}",response.text().await.unwrap());
+                assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"],"result_unknown");
+                assert_eq!(std::fs::read_to_string(&file).unwrap(),target);
+                assert_eq!(db.query_row("SELECT status FROM idempotency WHERE key=?1",[&key],|r|r.get::<_,i64>(0)).unwrap(),409);
+            }
+            assert_eq!(db.query_row("SELECT undone_at FROM file_changes WHERE id=?1",[&change],|r|r.get::<_,Option<String>>(0)).unwrap().is_some(),action=="redo");
+            assert_eq!(db.query_row("SELECT COUNT(*) FROM events WHERE kind='file_changes.updated' AND session_id=?1",[&sid],|r|r.get::<_,i64>(0)).unwrap(),event_count);
+            db.execute_batch("DROP TRIGGER fail_undo").unwrap();
+            if !acceptance_failed {
+                s.restart().await;
+                // 예상 현재 상태로 직접 돌려도 같은 키는 파일 작업을 다시 실행하지 않는다.
+                std::fs::write(&file,current).unwrap();
+                let response = s.raw(reqwest::Method::POST,&path,Some(body),Some(&key),None).await;
+                assert_eq!(response.status(),StatusCode::CONFLICT);
+                assert_eq!(response.headers()["idempotent-replayed"],"true");
+                assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"],"result_unknown");
+                assert_eq!(std::fs::read_to_string(&file).unwrap(),current);
+            }
+        }
+    }
+}

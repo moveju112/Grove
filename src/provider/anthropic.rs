@@ -10,7 +10,10 @@ pub fn build_body(profile: &Profile, req: &ModelRequest) -> Value {
     // 연속된 tool 결과는 user 메시지 하나의 tool_result 블록들로 묶는다.
     for m in &req.messages {
         match m {
-            ChatMsg::User { text } => push_block(&mut msgs, "user", json!({ "type": "text", "text": text })),
+            ChatMsg::User { text, images } => {
+                if !text.is_empty() {push_block(&mut msgs, "user", json!({ "type": "text", "text": text }));}
+                for i in images {push_block(&mut msgs,"user",json!({"type":"image","source":{"type":"base64","media_type":i.mime,"data":i.data}}));}
+            },
             ChatMsg::Assistant { text, tool_calls } => {
                 let mut blocks = vec![];
                 if !text.is_empty() {
@@ -244,7 +247,7 @@ mod tests {
         let req = ModelRequest {
             system: "s".into(),
             messages: vec![
-                ChatMsg::User { text: "q".into() },
+                ChatMsg::User { text: "q".into(), images: vec![] },
                 ChatMsg::Assistant { text: "".into(), tool_calls: vec![
                     ToolCall { id: "a".into(), name: "read".into(), arguments: json!({}) },
                     ToolCall { id: "b".into(), name: "read".into(), arguments: json!({ "__invalid_json": "{" }) },

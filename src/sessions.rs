@@ -639,12 +639,18 @@ pub async fn messages(
 #[derive(Deserialize)]
 pub struct PostMessage {
     pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<String>,
 }
 
 pub const MAX_MESSAGE_CHARS: usize = 200_000;
 
 pub fn validate_text(text: &str) -> ApiResult<()> {
-    if text.trim().is_empty() {
+    validate_message(text, &[])
+}
+
+pub fn validate_message(text: &str, attachments: &[String]) -> ApiResult<()> {
+    if text.trim().is_empty() && attachments.is_empty() {
         return Err(ApiError::invalid("메시지가 비어 있습니다"));
     }
     if text.chars().count() > MAX_MESSAGE_CHARS {
@@ -661,8 +667,12 @@ pub async fn post_message(
     Path(id): Path<String>,
     Json(body): Json<PostMessage>,
 ) -> ApiResult<Response> {
-    validate_text(&body.text)?;
-    let h = idem::body_hash("message.post", &json!({ "session": id, "text": body.text }));
+    validate_message(&body.text, &body.attachments)?;
+    let mut hash_body = json!({ "session": id, "text": body.text });
+    if !body.attachments.is_empty() { hash_body["attachments"] = json!(body.attachments); }
+    let h = idem::body_hash("message.post", &hash_body);
+    let data = app.cfg.data_dir.clone();
+    let owner = p.root_id.clone();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let s = get_active(tx, &id)?;
         projects::active_root(tx, &s.project_id)?;
@@ -670,7 +680,14 @@ pub async fn post_message(
         if s.active_turn.is_some() {
             return Err(ApiError::busy("턴이 실행 중입니다. 끝난 뒤 저장하세요"));
         }
-        let m = append_message(tx, now, &id, "user", &json!({ "text": body.text }), None, None)?;
+        let mut content = json!({ "text": body.text });
+        let prepared = crate::attachments::prepare(tx, &data, &owner, &s.project_id, &body.text, &body.attachments)?;
+        let model_input = if prepared.items.is_empty() { None } else {
+            content["attachments"] = json!(prepared.items);
+            Some(&prepared.model_input)
+        };
+        let m = append_message(tx, now, &id, "user", &content, None, model_input)?;
+        crate::attachments::bind(tx, now, &m.id, &prepared)?;
         Ok((StatusCode::CREATED, serde_json::to_value(m)?))
     })
     .await

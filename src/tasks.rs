@@ -16,7 +16,7 @@ use crate::tools::fs::{rel_display, resolve};
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -25,7 +25,6 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::Duration;
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt};
 use tokio::sync::watch;
 
 /// stream별 로그 파일 상한.
@@ -127,53 +126,23 @@ impl Tasks {
 }
 
 fn log_path(app: &App, id: &str, stream: &str) -> PathBuf {
-    app.cfg.data_dir.join("tasks").join(format!("{id}.{stream}"))
+    crate::task_logs::path(&app.cfg.data_dir, id, stream)
 }
 
 /// 파일 꼬리(lossy UTF-8).
 fn tail(path: &std::path::Path, n: u64) -> String {
-    let Ok(mut f) = std::fs::File::open(path) else { return String::new() };
+    let Ok(mut f) = crate::task_logs::open_read(path) else { return String::new() };
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     let start = len.saturating_sub(n);
     if f.seek(SeekFrom::Start(start)).is_err() {
         return String::new();
     }
     let mut buf = vec![];
-    let _ = f.read_to_end(&mut buf);
+    let _ = f.take(n).read_to_end(&mut buf);
     String::from_utf8_lossy(&buf).to_string()
 }
 
-async fn pump<R: AsyncRead + Unpin>(mut r: R, path: PathBuf) -> u64 {
-    let mut f = match tokio::fs::File::create(&path).await {
-        Ok(f) => Some(f),
-        Err(_) => None,
-    };
-    let mut written = 0u64;
-    let mut total = 0u64;
-    let mut buf = [0u8; 16 * 1024];
-    loop {
-        match r.read(&mut buf).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => {
-                total += n as u64;
-                // 상한을 넘어도 계속 읽어 pipe가 막혀 자식이 멈추지 않게 한다.
-                if let Some(f) = f.as_mut()
-                    && written < MAX_LOG
-                {
-                    let take = (n as u64).min(MAX_LOG - written) as usize;
-                    if f.write_all(&buf[..take]).await.is_ok() {
-                        written += take as u64;
-                    }
-                }
-            }
-        }
-    }
-    if let Some(mut f) = f {
-        let _ = f.flush().await;
-    }
-    total
-}
-
+#[derive(Clone)]
 pub struct Spawn {
     pub session_id: String,
     pub call_id: Option<String>,
@@ -191,29 +160,52 @@ pub struct Spawn {
 pub async fn spawn(app: &App, s: Spawn) -> ApiResult<Task> {
     let id = crate::util::new_id();
     let now = app.now();
-    let (sid, cid, cmd_s, cwd_s, timeout, detached, id2) =
-        (s.session_id.clone(), s.call_id.clone(), s.command.clone(), s.cwd_rel.clone(), s.timeout_ms as i64, s.detached, id.clone());
+    let (plan, id2) = (s.clone(), id.clone());
     let root = app
         .db
         .call(move |c| {
             let tx = c.transaction()?;
-            let sess = crate::sessions::get_active(&tx, &sid)?;
-            if running_in_session(&tx, &sid)? >= MAX_RUNNING_PER_SESSION {
-                return Err(ApiError::busy(format!("세션당 백그라운드 작업은 {MAX_RUNNING_PER_SESSION}개까지 실행할 수 있습니다")));
-            }
-            let root = crate::projects::active_root(&tx, &sess.project_id)?;
-            tx.execute(
-                "INSERT INTO tasks (id, session_id, project_id, call_id, command, cwd, timeout_ms, status, detached, started_at) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, 'running', ?8, ?9)",
-                params![id2, sid, sess.project_id, cid, cmd_s, cwd_s, timeout, detached as i64, now],
-            )?;
-            let t = get(&tx, &id2)?;
-            events::append(&tx, &now, "task.changed", Some(&t.project_id), Some(&t.session_id), &serde_json::to_value(&t)?)?;
+            let root = record_start(&tx, &id2, &plan, &now, None)?;
             tx.commit()?;
             Ok(root)
         })
         .await?;
-    std::fs::create_dir_all(app.cfg.data_dir.join("tasks")).map_err(|e| ApiError::internal(format!("작업 로그 폴더: {e}")))?;
+    launch(app,s,id,root).await
+}
+
+/// 도구 실행과 직접 사용자 요청이 같은 작업/로그/이벤트 접수 경계를 쓴다.
+fn record_start(c: &Connection, id: &str, s: &Spawn, now: &str, expected_root: Option<&std::path::Path>) -> ApiResult<PathBuf> {
+    let sess=crate::sessions::get_active(c,&s.session_id)?;
+    if running_in_session(c,&s.session_id)? >= MAX_RUNNING_PER_SESSION {
+        return Err(ApiError::busy(format!("세션당 백그라운드 작업은 {MAX_RUNNING_PER_SESSION}개까지 실행할 수 있습니다")));
+    }
+    let root=crate::projects::active_root(c,&sess.project_id)?;
+    if expected_root.is_some_and(|expected| expected != root) {
+        return Err(ApiError::conflict("project_changed", "프로젝트 경로가 바뀌었습니다. 다시 확인한 뒤 실행하세요"));
+    }
+    c.execute(
+        "INSERT INTO tasks (id,session_id,project_id,call_id,command,cwd,timeout_ms,status,detached,started_at) VALUES (?1,?2,?3,?4,?5,?6,?7,'running',?8,?9)",
+        params![id,s.session_id,sess.project_id,s.call_id,s.command,s.cwd_rel,s.timeout_ms as i64,s.detached as i64,now],
+    )?;
+    crate::task_logs::begin(c,id,now)?;
+    let t=get(c,id)?;
+    events::append(c,now,"task.changed",Some(&t.project_id),Some(&t.session_id),&serde_json::to_value(&t)?)?;
+    Ok(root)
+}
+
+async fn launch(app: &App, s: Spawn, id: String, root: PathBuf) -> ApiResult<Task> {
+    let (data, log_id) = (app.cfg.data_dir.clone(), id.clone());
+    let files = match tokio::task::spawn_blocking(move || crate::task_logs::create(&data, &log_id)).await {
+        Ok(Ok(f)) => f,
+        _ => {
+            finalize(
+                app, &id, End::SpawnFailed("작업 로그 파일을 만들 수 없어 실행하지 않았습니다".into()),
+                [crate::task_logs::Report::failed("log_create_failed"), crate::task_logs::Report::failed("log_create_failed")],
+            ).await?;
+            let i = id.clone();
+            return app.db.call(move |c| get(c, &i)).await;
+        }
+    };
     let started = match resolve(&root, &s.cwd_rel) {
         // 작업 ID가 실행 표식이다: 재시작 때 잔여 프로세스를 PID 재사용과 무관하게 찾는다(EXEC-010).
         Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.shell, &s.command, &cwd, &id, s.limits)
@@ -226,7 +218,8 @@ pub async fn spawn(app: &App, s: Spawn) -> ApiResult<Task> {
     let (mut child, owned) = match started {
         Ok(c) => c,
         Err(msg) => {
-            finalize(app, &id, End::SpawnFailed(msg), 0, 0).await;
+            drop(files);
+            finalize(app, &id, End::SpawnFailed(msg), [crate::task_logs::Report::empty(), crate::task_logs::Report::empty()]).await?;
             let i = id.clone();
             return app.db.call(move |c| get(c, &i)).await;
         }
@@ -236,8 +229,9 @@ pub async fn spawn(app: &App, s: Spawn) -> ApiResult<Task> {
         let _ = app.db.call(move |c| Ok(c.execute("UPDATE tasks SET pid = ?2 WHERE id = ?1", params![i, pid as i64])?)).await;
     }
     let (mut cancel_rx, done_tx) = app.tasks.insert(&id);
-    let out_h = tokio::spawn(pump(child.stdout.take().expect("stdout"), log_path(app, &id, "out")));
-    let err_h = tokio::spawn(pump(child.stderr.take().expect("stderr"), log_path(app, &id, "err")));
+    let [out, err] = files;
+    let out_h = tokio::spawn(crate::task_logs::pump(child.stdout.take().expect("stdout"), out));
+    let err_h = tokio::spawn(crate::task_logs::pump(child.stderr.take().expect("stderr"), err));
     let app2 = app.clone();
     let id2 = id.clone();
     let mut shutdown = app.shutdown_rx.clone();
@@ -255,9 +249,11 @@ pub async fn spawn(app: &App, s: Spawn) -> ApiResult<Task> {
             let _ = tokio::time::timeout(Duration::from_secs(5), child.wait()).await;
         }
         drop(owned);
-        let o = tokio::time::timeout(Duration::from_secs(5), out_h).await.ok().and_then(Result::ok).unwrap_or(0);
-        let e = tokio::time::timeout(Duration::from_secs(5), err_h).await.ok().and_then(Result::ok).unwrap_or(0);
-        finalize(&app2, &id2, end, o, e).await;
+        let o = crate::task_logs::join(out_h).await;
+        let e = crate::task_logs::join(err_h).await;
+        if let Err(e) = finalize(&app2, &id2, end, [o, e]).await {
+            tracing::error!(code = e.code, "작업 종료 기록 저장 실패");
+        }
         app2.tasks.remove(&id2);
         done_tx.send_replace(true);
     });
@@ -275,7 +271,7 @@ enum End {
 }
 
 /// 상태 전이 + (분리된 작업이면) 결과 note. running이 아니면 아무것도 하지 않아 중복 기록이 없다(EXEC-012).
-async fn finalize(app: &App, id: &str, end: End, out_bytes: u64, err_bytes: u64) {
+async fn finalize(app: &App, id: &str, end: End, logs: [crate::task_logs::Report; 2]) -> ApiResult<()> {
     let (status, code, sig, reason): (&str, Option<i64>, Option<i64>, Option<String>) = match &end {
         End::Exit(st) => {
             #[cfg(unix)]
@@ -293,22 +289,23 @@ async fn finalize(app: &App, id: &str, end: End, out_bytes: u64, err_bytes: u64)
         End::WaitErr(e) => ("failed", None, None, Some(e.clone())),
         End::SpawnFailed(e) => ("failed", None, None, Some(e.clone())),
     };
-    let tails = (tail(&log_path(app, id, "out"), TAIL), tail(&log_path(app, id, "err"), TAIL));
+    let paths = (log_path(app, id, "out"), log_path(app, id, "err"));
     let id = id.to_string();
     let now = app.now();
     let status = status.to_string();
-    let _ = app
-        .db
+    app.db
         .call(move |c| {
+            let tails = (tail(&paths.0, TAIL), tail(&paths.1, TAIL));
             let tx = c.transaction()?;
             let n = tx.execute(
                 "UPDATE tasks SET status = ?2, exit_code = ?3, signal = ?4, reason = ?5, stdout_bytes = ?6, stderr_bytes = ?7, ended_at = ?8 \
                  WHERE id = ?1 AND status = 'running'",
-                params![id, status, code, sig, reason, out_bytes as i64, err_bytes as i64, now],
+                params![id, status, code, sig, reason, logs[0].total.min(i64::MAX as u64) as i64, logs[1].total.min(i64::MAX as u64) as i64, now],
             )?;
             if n == 0 {
                 return Ok(());
             }
+            crate::task_logs::finish(&tx, &id, &logs, &now)?;
             let t = get(&tx, &id)?;
             record_note(&tx, &now, &t, &tails.0, &tails.1)?;
             let t = get(&tx, &id)?;
@@ -316,14 +313,17 @@ async fn finalize(app: &App, id: &str, end: End, out_bytes: u64, err_bytes: u64)
             tx.commit()?;
             Ok(())
         })
-        .await;
+        .await?;
     app.notify_events().await;
+    Ok(())
 }
 
 fn record_note(tx: &Connection, now: &str, t: &Task, out: &str, err: &str) -> ApiResult<()> {
     if !t.detached || t.result_message_id.is_some() {
         return Ok(());
     }
+    let log_errors: Vec<Value> = crate::task_logs::describe(tx, &t.id)?.into_iter()
+        .filter(|l| l["state"] == "error").map(|l| json!({"stream":l["stream"],"code":l["error"]})).collect();
     let content = json!({
         "type": "task_result",
         "task_id": t.id, "command": t.command, "cwd": t.cwd,
@@ -331,6 +331,7 @@ fn record_note(tx: &Connection, now: &str, t: &Task, out: &str, err: &str) -> Ap
         "stdout_tail": out, "stderr_tail": err,
         "stdout_bytes": t.stdout_bytes, "stderr_bytes": t.stderr_bytes,
         "truncated": t.stdout_bytes as u64 > TAIL || t.stderr_bytes as u64 > TAIL,
+        "log_errors":log_errors,
     });
     let m = crate::sessions::append_message(tx, now, &t.session_id, "note", &content, None, None)?;
     tx.execute("UPDATE tasks SET result_message_id = ?2 WHERE id = ?1", params![t.id, m.id])?;
@@ -361,15 +362,23 @@ pub fn note_text(c: &Value) -> String {
     if c["truncated"].as_bool() == Some(true) {
         s.push_str("\n(출력 일부만 표시. 전체는 작업 출력에서 확인)");
     }
+    if c["log_errors"].as_array().is_some_and(|v| !v.is_empty()) {
+        s.push_str("\n로그 저장에 실패했습니다. 출력이 누락됐을 수 있습니다.");
+    }
     s
 }
 
 /// 결과 요약(도구 결과·API 응답용).
-pub fn summary(app: &App, t: &Task) -> Value {
-    let mut v = serde_json::to_value(t).unwrap_or(Value::Null);
-    v["stdout_tail"] = json!(tail(&log_path(app, &t.id, "out"), TAIL));
-    v["stderr_tail"] = json!(tail(&log_path(app, &t.id, "err"), TAIL));
-    v
+pub async fn summary(app: &App, t: &Task) -> ApiResult<Value> {
+    let paths = (log_path(app, &t.id, "out"), log_path(app, &t.id, "err"));
+    let t = t.clone();
+    app.db.call(move |c| {
+        let mut v = serde_json::to_value(&t)?;
+        v["stdout_tail"] = json!(tail(&paths.0, TAIL));
+        v["stderr_tail"] = json!(tail(&paths.1, TAIL));
+        v["logs"] = json!(crate::task_logs::describe(c, &t.id)?);
+        Ok(v)
+    }).await
 }
 
 /// 도구 호출 경로: hold 동안 기다리고, 안 끝나면 분리(detach)한다. 분리와 완료는 DB에서 원자적으로 경합한다.
@@ -396,7 +405,7 @@ pub async fn run_with_hold(app: &App, s: Spawn, hold_ms: u64, mut cancel: watch:
         .map_err(|e| ToolError::new("internal", e.message))?;
     let id = t.id.clone();
     let t = app.db.call(move |c| get(c, &id)).await.map_err(|e| ToolError::new("internal", e.message))?;
-    let v = summary(app, &t);
+    let v = summary(app, &t).await.map_err(|e| ToolError::new(e.code, e.message))?;
     if detached {
         return Ok(json!({ "task_id": t.id, "status": "running", "background": true,
             "note": "hold 시간 안에 끝나지 않아 백그라운드로 전환했습니다. 끝나면 결과가 대화에 기록됩니다.",
@@ -488,13 +497,31 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     if !cwd.is_dir() {
         return Err(ApiError::invalid("cwd 디렉터리가 없습니다"));
     }
-    let t = spawn(
-        &app,
-        Spawn { session_id, call_id: None, shell, limits, command: b.command, cwd_rel: rel_display(&root, &cwd), timeout_ms: timeout, detached: true },
-    )
-    .await?;
+    let id=crate::util::new_id();
+    let unknown=ApiError::conflict("result_unknown","작업 접수 결과를 확정하지 못했습니다. 작업 목록에서 상태를 확인하세요")
+        .with_details(json!({"task_id":id,"session_id":session_id}));
+    let s=Spawn { session_id, call_id:None,shell,limits,command:b.command,cwd_rel:rel_display(&root,&cwd),timeout_ms:timeout,detached:true };
+    let (plan, record_id, pending)=(s.clone(),id.clone(),unknown.body());
+    let expected_root=root.clone();
+    // receipt·작업·로그·이벤트를 먼저 commit한다. 경합한 요청은 저장된 ID만 받고 실행하지 않는다.
+    let accepted=idem::run(&app,&p,&headers,&h,move |tx,now| {
+        record_start(tx,&record_id,&plan,now,Some(&expected_root))?;
+        Ok((StatusCode::CONFLICT,pending))
+    }).await?;
+    if accepted.headers().contains_key("idempotent-replayed") { return Ok(accepted); }
+    let t=launch(&app,s,id,root).await.map_err(|e| {
+        tracing::warn!(code=e.code,"접수한 작업의 시작 결과 불명");
+        unknown.clone()
+    })?;
     let v = serde_json::to_value(&t)?;
-    idem::run(&app, &p, &headers, &h, move |_, _| Ok((StatusCode::CREATED, v))).await
+    let (owner,key,response)=(p.root_id,idem::key_from(&headers)?,v.clone());
+    app.db.call(move |c| {
+        let tx=c.transaction()?;
+        idem::complete(&tx,&owner,&key,&h,StatusCode::CREATED,&response)?;
+        tx.commit()?;
+        Ok(())
+    }).await.map_err(|_|unknown)?;
+    Ok((StatusCode::CREATED,Json(v)).into_response())
 }
 
 pub async fn list(State(app): State<App>, _p: Principal, Path(session_id): Path<String>) -> ApiResult<Json<Value>> {
@@ -512,7 +539,7 @@ pub async fn list(State(app): State<App>, _p: Principal, Path(session_id): Path<
 
 pub async fn show(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let t = app.db.call(move |c| get(c, &id)).await?;
-    Ok(Json(summary(&app, &t)))
+    Ok(Json(summary(&app, &t).await?))
 }
 
 #[derive(Deserialize)]
@@ -531,29 +558,22 @@ pub async fn output(State(app): State<App>, _p: Principal, Path(id): Path<String
         "stderr" => "err",
         _ => return Err(ApiError::invalid("stream은 stdout 또는 stderr입니다")),
     };
-    let path = log_path(&app, &t.id, stream);
     let limit = q.limit.unwrap_or(64 * 1024).min(1024 * 1024);
     let offset = q.offset.unwrap_or(0);
-    let (data, size) = match std::fs::File::open(&path) {
-        Ok(mut f) => {
-            let size = f.metadata().map(|m| m.len()).unwrap_or(0);
-            let mut buf = vec![];
-            if offset < size {
-                f.seek(SeekFrom::Start(offset)).map_err(|e| ApiError::internal(e.to_string()))?;
-                f.take(limit).read_to_end(&mut buf).map_err(|e| ApiError::internal(e.to_string()))?;
-            }
-            (buf, size)
+    let data = app.cfg.data_dir.clone();
+    let now = app.now();
+    let v = app.db.call(move |c| {
+        let tx = c.transaction()?;
+        let t = get(&tx, &t.id)?;
+        let result = crate::task_logs::output(&tx, &data, &t, stream, offset, limit, &now);
+        if let Err(e) = &result {
+            if e.code != "task_log_unavailable" { return Err(e.clone()); }
         }
-        Err(_) => (vec![], 0),
-    };
-    let total = if stream == "out" { t.stdout_bytes } else { t.stderr_bytes } as u64;
-    Ok(Json(json!({
-        "task_id": t.id, "stream": q.stream.unwrap_or_else(|| "stdout".into()),
-        "offset": offset, "next_offset": offset + data.len() as u64,
-        "data": String::from_utf8_lossy(&data),
-        "stored_bytes": size, "eof": offset + data.len() as u64 >= size && t.status != "running",
-        "dropped_bytes": if t.status != "running" { total.saturating_sub(size) } else { 0 },
-    })))
+        tx.commit()?;
+        Ok(result)
+    }).await?;
+    app.notify_events().await;
+    Ok(Json(v?))
 }
 
 pub async fn cancel(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -651,11 +671,47 @@ pub async fn wait(State(app): State<App>, _p: Principal, Path(id): Path<String>,
         }
     };
     let t = app.db.call(move |c| get(c, &id)).await?;
-    let mut v = summary(&app, &t);
+    let mut v = summary(&app, &t).await?;
     let reason = if t.status == "running" { reason } else { "completed" };
     v["wait_timed_out"] = json!(reason == "timeout");
     v["wake_reason"] = json!(reason);
     v["event_cursor"] = json!(cursor);
     v["wake_event_seq"] = json!(event_seq);
     Ok(Json(v))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn acceptance_rejects_a_changed_project_root_without_records() {
+        let dir = tempfile::tempdir().unwrap();
+        let old = dir.path().join("old");
+        let new = dir.path().join("new");
+        std::fs::create_dir(&old).unwrap();
+        std::fs::create_dir(&new).unwrap();
+        let db = crate::store::Db::open(&dir.path().join("grove.db")).unwrap();
+        let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+        db.call_sync(|c| {
+            c.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','fixture',?1,?2,?2)", params![new.to_string_lossy(), now])?;
+            c.execute("INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES('s','p','fixture',?1,?1)", [&now])?;
+            let plan = Spawn {
+                session_id: "s".into(), call_id: None, shell: "default".into(),
+                limits: crate::procs::Limits::default(), command: "echo fixture".into(),
+                cwd_rel: ".".into(), timeout_ms: 1000, detached: true,
+            };
+            let tx = c.transaction()?;
+            let error = record_start(&tx, "stale", &plan, &now, Some(&old)).unwrap_err();
+            assert_eq!(error.code, "project_changed");
+            for table in ["tasks", "task_logs", "events"] {
+                let n: i64 = tx.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |r| r.get(0))?;
+                assert_eq!(n, 0, "경로가 바뀌면 접수 부작용을 남기지 않는다: {table}");
+            }
+            // 현재 경로가 일치하는 요청은 동일 접수 경계에서 정상 기록된다.
+            assert_eq!(record_start(&tx, "current", &plan, &now, Some(&new))?, new);
+            tx.commit()?;
+            Ok(())
+        }).unwrap();
+    }
 }

@@ -67,14 +67,22 @@ pub async fn start(cfg: Config, clock: SharedClock) -> Result<Server, String> {
 
     let mut background = vec![];
     {
-        // 이벤트 보존 한도 정리
+        // 이벤트 보존 한도 정리와 저장 공간 정리(DB-019: 한 번에 제한된 개수만)
         let app = app.clone();
         background.push(tokio::spawn(async move {
             let mut rx = app.shutdown_rx.clone();
             loop {
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(600)) => {
-                        let _ = app.db.call(|c| crate::events::prune(c)).await;
+                        if let Err(e) = app.db.call(|c| crate::events::prune(c)).await {
+                            tracing::warn!(code = e.code, "이벤트 보존 기간 정리 실패");
+                        }
+                        let a = app.clone();
+                        match tokio::task::spawn_blocking(move || crate::storage::gc(&a)).await {
+                            Ok(Ok(_)) => app.notify_events().await,
+                            Ok(Err(e)) => tracing::warn!(code = e.code, "저장 공간 정리 실패"),
+                            Err(_) => tracing::warn!("저장 공간 정리 작업 실패"),
+                        }
                     }
                     _ = rx.changed() => break,
                 }

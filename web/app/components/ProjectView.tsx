@@ -6,6 +6,7 @@ import { useQuery } from "../state/store";
 import { Composer, type SendOptions } from "./Composer";
 import { GitPanel } from "./GitPanel";
 import { SchedulesPanel } from "./SchedulesPanel";
+import { TrashPanel } from "./TrashPanel";
 import type { Opener } from "./Workspace";
 
 /// 프로젝트 이름·아이콘 변경(PROJECT-002). revision 충돌이면 최신 값을 다시 불러와 알린다.
@@ -66,11 +67,11 @@ export function ProjectView({ projectId, open }: { projectId: string; open: Open
     const project = useQuery<Project>(`project:${projectId}`, () => api.get(`/projects/${projectId}`));
 
     // 단계마다 key를 파생해, 결과를 모르는 실패 뒤 다시 보내도 대화가 두 개 생기거나 두 번 실행되지 않는다.
-    const start = async (text: string, o: SendOptions, key: string) => {
+    const start = async (text: string, o: SendOptions, key: string, _follow?: unknown, attachments: string[] = []) => {
         const title = text.trim().split("\n")[0]!.slice(0, 60);
         const s = await api.post<Session>(`/projects/${projectId}/sessions`, { title }, { key: `${key}:session` });
-        if (o.mode === "save") await api.post(`/sessions/${s.id}/messages`, { text }, { key: `${key}:send` });
-        else await api.post(`/sessions/${s.id}/turns`, { text, profile_id: o.profileId, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto" }, { key: `${key}:send` });
+        if (o.mode === "save") await api.post(`/sessions/${s.id}/messages`, { text, attachments }, { key: `${key}:send` });
+        else await api.post(`/sessions/${s.id}/turns`, { text, attachments, profile_id: o.profileId, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto" }, { key: `${key}:send` });
         open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
     };
 
@@ -107,13 +108,14 @@ export function ProjectView({ projectId, open }: { projectId: string; open: Open
                     </div>
                 )}
             </header>
-            <Composer resourceKey={`project:${projectId}`} copyId="new" onSend={start} disabled={project.data && !project.data.available ? "프로젝트 경로 없음" : null} />
+            <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId="new" onSend={start} disabled={project.data && !project.data.available ? "프로젝트 경로 없음" : null} />
             <details className="git-wrap">
                 <summary>변경 사항(Git)</summary>
                 <GitPanel projectId={projectId} />
             </details>
             <TerminalList projectId={projectId} open={open} />
             <SchedulesPanel projectId={projectId} open={open} />
+            <TrashPanel key={projectId} projectId={projectId} />
 
             <div className="list-tools">
                 <input type="search" placeholder="대화 검색" value={q} onChange={(e) => { setQ(e.target.value); setPages([""]); }} aria-label="대화 검색" />

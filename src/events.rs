@@ -75,9 +75,10 @@ pub fn read_after(conn: &Connection, after: i64, limit: i64) -> ApiResult<Vec<Ev
 /// 보존 한도를 넘는 오래된 이벤트와 idempotency 기록(7일 초과) 정리. 주기적으로 호출한다.
 pub fn prune(conn: &Connection) -> ApiResult<usize> {
     let max = latest_seq(conn)?;
-    let n = conn.execute("DELETE FROM events WHERE seq <= ?1", params![max - RETAIN_EVENTS])?;
+    let n = conn.execute("DELETE FROM events WHERE seq IN (SELECT seq FROM events WHERE seq <= ?1 ORDER BY seq LIMIT 2000)", params![max - RETAIN_EVENTS])?;
     let cutoff = crate::util::fmt_time(time::OffsetDateTime::now_utc() - time::Duration::days(7));
-    let m = conn.execute("DELETE FROM idempotency WHERE created_at < ?1", params![cutoff])?;
+    // 결과 불명인 외부 작업의 재실행 방지 증거는 자동으로 지우지 않는다.
+    let m = conn.execute("DELETE FROM idempotency WHERE rowid IN (SELECT rowid FROM idempotency WHERE created_at < ?1 AND COALESCE(json_extract(response, '$.error.code'), '') != 'result_unknown' ORDER BY created_at, rowid LIMIT 2000)", params![cutoff])?;
     Ok(n + m)
 }
 

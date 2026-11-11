@@ -56,7 +56,7 @@ fn estimate_tokens(msgs: &[ChatMsg], system: &str) -> u64 {
     let mut chars = system.chars().count();
     for m in msgs {
         chars += match m {
-            ChatMsg::User { text } => text.chars().count(),
+            ChatMsg::User { text, images } => text.chars().count() + images.len()*4096*4,
             ChatMsg::Assistant { text, tool_calls } => text.chars().count() + tool_calls.iter().map(|t| t.arguments.to_string().len() + t.name.len()).sum::<usize>(),
             ChatMsg::Tool { content, .. } => content.chars().count(),
         };
@@ -174,7 +174,7 @@ pub async fn get_model_input(State(app): State<App>, _p: Principal, Path(id): Pa
                 .enumerate()
                 .map(|(i, m)| {
                     let mut v = match m {
-                        ChatMsg::User { text } => json!({ "role": "user", "content": cut(text) }),
+                        ChatMsg::User { text, images } => json!({ "role": "user", "content": cut(text), "images":images }),
                         ChatMsg::Assistant { text, tool_calls } => json!({
                             "role": "assistant", "content": cut(text),
                             "tool_calls": tool_calls.iter().map(|t| json!({ "id": t.id, "name": t.name })).collect::<Vec<_>>(),
@@ -198,6 +198,7 @@ pub async fn get_model_input(State(app): State<App>, _p: Principal, Path(id): Pa
 /// 압축 실행. 성공하면 기록한 note를, 압축할 것이 없으면 None을 돌려준다.
 pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, cancel: &mut watch::Receiver<bool>) -> ApiResult<Option<Value>> {
     let (sid, pid) = (session_id.to_string(), profile_id.to_string());
+    let data = app.cfg.data_dir.clone();
     let prepared = app
         .db
         .call(move |c| {
@@ -210,8 +211,10 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
             let history = crate::sessions::history_for_model_upto(c, &sid, Some(b))?;
             let mut msgs = crate::runner::to_chat(&history);
             let before = estimate_tokens(&msgs, "");
+            crate::attachments::hydrate(c, &data, &s.project_id, &mut msgs)?;
             msgs.push(ChatMsg::User {
                 text: "Summarize the conversation above following the system instructions. Output only the summary.".into(),
+                images: vec![],
             });
             // to_chat는 연속 user를 합치므로 마지막에 붙인 지시가 앞 user와 합쳐질 수 있다(의도대로 동작).
             let timeline: i64 = c.query_row("SELECT timeline_revision FROM sessions WHERE id = ?1", params![sid], |r| r.get(0))?;

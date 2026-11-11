@@ -294,7 +294,8 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 | 읽기 전용 강제 | — | — | — | — | 통과 | 통과 |
 | 취소 | fixture | 미검증 | fixture | fixture | 통과 | 통과 |
 | 사용량 | fixture | 통과 | fixture | fixture | 통과 | 통과 |
-| 이미지·PDF | 미검증 | 미검증 | 미검증 | 미검증 | 미검증 | 미검증 |
+| 이미지 | fixture(실제 HTTP 요청) | 미검증 | fixture(요청 매핑) | fixture(요청 매핑) | 미지원(명시 오류) | 미지원(명시 오류) |
+| PDF 내용 | 미지원(파일 정보만) | 미지원(파일 정보만) | 미지원(파일 정보만) | 미지원(파일 정보만) | 미지원 | 미지원 |
 
 live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `web/e2e/real-model.spec.ts`·`cli-profile.spec.ts`. 모두 opt-in이고, 시험이 만든 프로필은 끝날 때 지운다. 남기면 공유 시험 서버의 기본 프로필(목록 첫 항목)이 바뀌어 다른 시험이 실제 모델을 부른다(2026-11-05 실제 발생, 수정).
 
@@ -322,6 +323,68 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 답변 `POST /tool-calls/{id}/answer`: 화면에 보인 revision만, 선택지 안의 label만(단일 선택은 1개), 직접 입력은 허용된 질문만(10000자), 빈 답 거절. 답하면 succeeded(질문·선택·입력), 닫으면 cancelled(모델은 사용자가 답하지 않았음을 안다). 같은 Idempotency-Key 재전송은 같은 결과이고 턴을 두 번 재개하지 않는다.
 - 질문에는 만료가 없다(사람이 답할 때까지 대기). 턴 취소·종료 시 함께 cancelled. 사람이 없는 예약 실행(`on_approval=fail`)은 질문이 나오면 `input_required`로 실패한다.
 - 답을 기다리는 동안 steer는 반영하지 않는다(도구 호출과 결과 사이에 user 메시지를 끼우지 않음, §21).
+
+## 23. 휴지통과 저장 공간 정리(DB-013·014·018·019)
+
+- 대화는 자동 삭제하지 않는다. 기존 archive와 제목 확인 후 영구 삭제 계약을 유지한다.
+- 파일 삭제는 `data_dir/trash/<id>/payload`로 이동하고 `origin.json`에 format=2, 프로젝트·원래 상대 경로·삭제 시각·상태를 기록한다. 원래 파일명이 origin.json/payload여도 충돌하지 않는다. 이전 원래 파일명 형식도 읽는다.
+- 삭제·복원·영구 삭제는 인증 주체 범위의 `Idempotency-Key`가 필수다. 부작용 전에 결과 불명 receipt를 commit하고, 완료 결과·file.changed 이벤트를 한 transaction에 기록한다. 같은 키는 저장된 결과를 반환한다. 중간 종료/최종 DB 기록 실패는 결과 불명으로 남기며 자동 재실행하지 않는다.
+- 복원은 같은 이름의 대상을 덮어쓰지 않는다. 다른 파일 시스템은 소유한 staging에 복사한 뒤 덮어쓰기 없는 rename으로 공개한다. Unix 폴더는 복사 중 0700으로 보호하고 완료 시 원래 권한을 적용한다. 복사·원본 제거 중 실패하면 원본과 휴지통 확인이 필요한 상태로 보존한다.
+- `storage.trash_retention_days`와 `storage.task_log_retention_days`는 서버 설정(0=무기한, 1~3650일)이다. 완료·실패·취소·timeout 작업 로그만 기간 정리하고 실행 중/unknown 로그는 보존한다. DB에 없는 작업의 로그는 orphan으로 정리한다.
+- GC는 10분 주기, 파일 변경과 직렬화하며 겹치면 다음 주기로 유예한다. 변경 blob은 정규 경로의 참조 없는 파일만 1시간 유예 후 삭제하며 파일 도구 실행 중에는 보존한다. 누락 blob은 변경의 stored를 해제하고 이벤트를 발행해 undo가 거부되게 한다.
+- 변경 blob 저장은 현재 확보한 정상 원문을 atomic_write로 교체해 같은 hash 경로의 손상도 복구하고 유예 시각을 갱신한다. 조회는 소문자 SHA-256 key·실제 폴더/일반 파일·최대 16MiB를 확인하고, 읽기를 16MiB+1에서 멈춘 뒤 hash를 대조한다. symlink와 Unix hardlink/FIFO는 보관 성공으로 처리하지 않는다. GC는 크기 초과 blob도 stored=false로 표시한다.
+- 변경 blob의 소유한 `.sha.grove-UUID.tmp` staging도 정상 prefix 폴더·정확한 이름·1시간 유예 후에만 정리한다. 첨부와 atomic_write staging 이름 판별 helper를 공유하며, 참조 blob·새 staging·잘못된 이름/경로·한글 파일명·symlink 대상은 보존한다. 저장 도구가 running인 동안은 기존 GC 유예를 유지한다.
+- 한 호출은 blob 500개, 변경 500행, 로그 파일 250개+metadata 250행, 휴지통 목록 검사+하위 항목 처리 500개, 첨부 파일 250개+metadata 250행(총 최대 2500개 검사) 이내다. 열린 iterator/행 cursor로 이어간다. 큰 휴지통은 purging 상태를 먼저 기록하고 하위 항목을 나눠 삭제한다. 재시작 후 purging 항목을 재개하며 symlink 대상은 따라가지 않는다. 결과 불명 receipt에 연결된 항목은 자동 정리하지 않는다.
+- 자동 영구 삭제는 payload 정리 후 `trash_gc`(migration 35)에 ID·프로젝트·상대 경로·origin hash를 먼저 commit한다. 이후 origin과 빈 항목 폴더만 제거하고 완료 이벤트와 journal 해제를 같은 transaction에서 확정한다. DB 실패·metadata 제거 직후 중단·폴더 제거 후 중단은 journal에서 재개하며 완료 이벤트는 한 번만 기록한다. 보존 기간을 0으로 바꿔도 원문 삭제가 끝난 journal은 마무리한다.
+- journal 복구는 한 호출에 최대 250행을 rowid cursor로 검사하고 그 수만큼 휴지통 하위 항목 처리 예산을 줄인다. 결과 불명 receipt·바뀐 origin·새 하위 파일·symlink는 journal과 내용을 보존하며 일반 purging scan에서도 재귀 삭제하지 않는다. 사용자가 경로를 확인한 명시적 영구 삭제는 완료 receipt·이벤트·journal 해제를 한 transaction에 기록한다.
+- 목록의 폴더·건너뛴 항목도 검사 예산에 포함한다. `origin.json`은 최대 256KiB만 읽고 GC 삭제 stack은 디렉터리 64단계까지만 연다. 깊이 초과 시 남은 원문과 metadata를 needs_review로 보존하고 다른 항목을 계속 처리한다. 상태 전환 뒤 이벤트 저장이 실패해도 빈 stack을 삭제 완료로 처리하지 않으며 재시작 후 자동 삭제를 재개하지 않는다. 사용자 원문은 보존 정책에 따라 유지하며, 위 한도는 자동 유지보수 한 호출의 작업량·버퍼·열린 iterator에 적용한다.
+- 이벤트·완료 receipt는 각각 최대 2000행씩 정리한다. 결과 불명 receipt는 시간만으로 삭제하지 않는다. 목록에는 중단된 항목을 needs_review, 자동 정리 중인 항목을 purging으로 표시하고 복원을 비활성화한다. 네트워크 응답을 잃은 화면은 사용자가 같은 키로 결과를 확인하게 한다.
+- 파일 탐색기의 저장·폴더 생성·이름 변경·복제도 인증 주체 범위의 Idempotency-Key와 부작용 전 결과 불명 접수를 사용한다. 접수 전 정상 충돌을 거부하고 실행 직전 원문·경로를 다시 확인한다. 완료 receipt와 file.changed를 한 transaction에서 확정하며, 중간 종료/최종 기록 실패는 원문·대상·결과 불명을 보존하고 같은 키로 재실행하지 않는다. 접수 전/실행 시 프로젝트 root를 대조하며 GC·휴지통·undo/redo와 같은 mutation 잠금을 쓴다.
+- 이름 변경은 기존 덮어쓰기 방지 rename을 재사용한다. 복제는 대상 부모의 전용 `.grove-copy-UUID` 폴더(Unix 0700) 안에서 마친 뒤 같은 rename으로 공개한다. 생성에 성공한 자기 staging만 정리하며, 중단 staging은 결과 불명 receipt의 상대 경로로 남기고 자동 삭제하지 않는다. 화면은 본문·키를 함께 유지해 같은 요청 결과 확인·명시적 닫기를 제공하고, 미확정 동안 새 파일 작업과 편집을 잠근다.
+- 파일 탐색기 복구 검증: 네 동작×5개 실패 지점(20개 경우: 접수 SQL/실제 COMMIT·완료 SQL/실제 COMMIT·이벤트), 동시 동일 키·다른 입력 충돌·키 누락·재시작·중단 복제 원문 보존을 확인했다. 접수 실패에도 파일을 쓰고 200을 반환하던 결함을 먼저 재현한 뒤 수정했다. 최신 관련 Rust 통합 48개(`api` 19·`file_changes` 2·`files` 6·`storage` 21), 복제 충돌/다른 staging 보존 단위 1개, 웹 타입/빌드, 실제 Chrome 13개(새 파일 복구 6·변경 이력/undo 4·휴지통 1·기존 파일/도구 흐름 2), Windows x64/Linux ARM64 교차 빌드와 격리 Wine의 파일 작업 4개가 통과했다. Chrome은 서버 도착 전/처리 후 실제 transport abort·최종 receipt 실패·동일 이벤트 루프 이중 저장을 확인했다. 실제 Windows/ARM64 기기 실행은 별도 미검증이다.
+- undo/redo는 일반 충돌을 먼저 거부한 뒤 결과 불명 receipt를 부작용 전에 commit한다. 완료 receipt·변경 상태·이벤트는 같은 transaction에서 확정한다. 접수 SQL/실제 COMMIT 실패는 파일을 바꾸지 않으며, 접수 후 기록 실패는 결과 불명으로 보존하고 같은 키로 재실행하지 않는다. 화면은 동기 실행 guard와 같은 키 결과 확인·명시적 닫기를 제공하고 미확정 동안 새 적용을 잠근다. `tests/file_changes.rs`의 두 동작×5개 실패 지점(10개 경우)·재시작과 실제 Chrome의 전송 전/처리 후 transport abort·완료 receipt 실패·이중 클릭을 확인했다. 관련 Rust 통합 41개와 최신 storage/file_changes 23개, 웹 타입/빌드·Chrome 6개, Windows x64/Linux ARM64 교차 빌드가 통과했다. 격리 Wine에서도 일반 undo/redo와 두 동작×5개 실패 지점(실제 COMMIT 포함), 파일 도구의 네 실패 지점이 통과했다. 실제 Windows/ARM64 기기 실행은 별도 미검증이다.
+- 파일 도구의 blob metadata·변경 이력·이벤트·실제 COMMIT 실패는 파일과 저장된 blob을 보존하고 도구 결과·변경 이력·blob metadata·이벤트를 함께 롤백한다. 재시작은 running을 unknown으로 바꾸고 접수 재전송/재승인으로 자동 재실행하지 않는다. 새 고아 blob은 1시간 유예하며 파일 도구 running 중에는 정리하지 않고, 이후 고아만 정리해 기존 참조 원문과 사용자 파일을 유지한다(`tests/storage.rs::failed_file_change_transaction_preserves_files_and_recovers_without_reexecution`, 네 실패 지점 통과).
+- blob 복구 검증: 변경 blob 단위 3개와 관련 Rust 통합 43개(`storage` 20·`attachments` 15·`file_changes` 1·`task_logs` 7) 통과. 손상 blob 재사용의 실패를 재현한 후 정상 원문 복구를 확인했고, 상한 초과 원문의 읽기/undo 거부·중단 staging 정리·원본/metadata 보존을 확인했다. 변경 검토/undo/redo와 휴지통 Chrome E2E 3개, Windows x64·Linux ARM64 교차 빌드, 격리 Wine의 blob 2개+완료 journal 5개 통합 시험도 통과했다. 실제 Windows/ARM64 기기 실행은 별도 미검증이다.
+- 완료 journal 검증: Rust 통합 72개(`api` 19·`attachments` 15·`files` 4·`projects` 5·`storage` 18·`task_logs` 7·`task_start` 4), store/storage 단위 7개, 실제 Chrome 휴지통 2개 통과. Windows x64·Linux ARM64 교차 빌드와 격리 Wine의 새 복구 시험 5개(intent/완료 DB 실패·중단 파일 상태·250행 cursor·34→35 이관)도 통과했다. symlink 보존은 Unix 시험에서 확인했고 실제 Windows/ARM64 기기는 별도 미검증이다.
+- 검증: `tests/storage.rs`, `tests/files.rs`, `tests/projects.rs`, `tests/api.rs`, `web/e2e/{trash,changes}.spec.ts`. Linux 교차 파일 시스템은 실제 `/dev/shm`과 일반 임시 디렉터리 사이에서 시험한다. Linux ARM64는 교차 빌드만 확인했다. Windows x64는 교차 빌드와 Wine에서 삭제·복원·영구 삭제·동일 키 재전송·충돌 거부를 확인했다. 실제 Windows OS 검증은 PC·QA 항목에서 별도다.
+
+## 24. 첨부 원문과 메시지 참조(DB-013·014·019)
+
+- `POST /projects/{id}/attachments`는 `{name,data_base64}`와 `Idempotency-Key`를 받는다. 파일당 4MiB, JSON 본문 6MiB(서버 전체 요청 상한 8MiB), 파일명은 경로·제어 문자 없이 255바이트 이하다. MIME은 확장자 대신 원문으로 분류하며 HTML/SVG는 text/plain으로 취급한다.
+- 원문은 `data_dir/attachments/blobs/<sha 앞 2자>/<sha>`에 atomic_write로 저장한다. DB에는 프로젝트·업로더(root 기기 ID)·이름·MIME·크기·SHA-256·저장 key·stored·시각을 둔다. 원문 중복은 같은 파일을 공유하고 업로드 항목의 ID는 별개다. migration 32는 이미지 metadata, 33은 대기열 첨부 metadata·FK 참조를 추가한다.
+- 미전송 첨부의 metadata·원문은 업로더만 조회·삭제할 수 있다. 업로드 파일명은 공용 SSE 이벤트에 노출하지 않는다. 메시지나 실행 대기열에 연결한 첨부는 같은 서버의 인증된 기기에 공유한다. 원문 응답은 attachment·sandbox CSP·nosniff·no-store를 적용하며 인증을 URL에 싣지 않는다.
+- 메시지 저장·턴 접수의 `attachments`는 같은 프로젝트의 ID 배열이다(최대 8개, 원문 합계 8MiB). 파일 존재·크기·SHA-256을 검증한 후 메시지·모델 입력·FK 참조·이벤트·receipt를 같은 transaction에서 기록한다. 실패하면 메시지 seq도 롤백한다. 참조가 있는 첨부 삭제는 409다. 메시지 영구 삭제는 FK 참조를 해제하며 분기 의존성은 기존 삭제 guard를 유지한다.
+- 화면 content는 입력한 글과 첨부 metadata를 보존한다. 모델 입력에는 파일명·ID·크기·hash와 텍스트 최대 8192자 발췌·생략 문자 수를 저장한다. 원문은 별도로 보존하며 턴 재시도도 첨부 ID를 유지한다. 일반 바이너리/PDF는 내용 미포함을 모델·UI에 명시한다.
+- PNG/JPEG/GIF/WebP는 업로드 시 실제 디코딩을 검증한다. 각 변 8192px·1600만 픽셀을 제한하고 decoder max_alloc=128MiB를 설정한다(codec의 보조 할당까지 포함한 프로세스 RSS 상한은 아니다). 모델용 이미지는 EXIF 방향 보정·최대 1024px(작으면 확대하지 않음)·흰 배경 알파 합성·첫 프레임·JPEG quality 80이다. 원문은 바꾸지 않는다. DB 모델 입력에는 ID·hash·전송 MIME·치수만 저장하고 실제 요청 직전에 원문 hash를 재검증해 메모리에서 만든다. 요청당 이미지 32개·인코딩 합계 8MiB 제한이며 누락·손상·상한 초과는 조용히 생략하지 않고 오류로 끝낸다. context 추정은 이미지당 4096 token의 보수적 추정값이며 실측과 구분한다.
+- OpenAI Chat의 image_url data URL, Anthropic의 base64 image source, Gemini의 inlineData로 보낸다. 공식 표현은 [OpenAI Chat](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create), [Anthropic Vision](https://platform.claude.com/docs/en/build-with-claude/vision), [Gemini image](https://ai.google.dev/gemini-api/docs/image-understanding)를 따른다. CLI 프로필은 이미지 지원 전까지 명시 오류로 거절하며, HTTP 어댑터도 실제 외부 모델의 시각 이해 품질을 검증한 것으로 취급하지 않는다.
+- followup은 queue/steer/interrupt 모두 첨부를 받는다. 대기열 FK 참조는 GC·명시 삭제에서 보존하고, 메시지 생성·참조 이전·대기열 삭제는 같은 transaction/savepoint다. 원문 누락·시작 실패는 큐와 참조를 유지하고 last_error로 알린다. 손상된 steer도 메시지 없이 오류가 있는 queue로 남겨 재업로드/수동 재개가 가능하다.
+- Composer는 파일 선택·드롭·붙여넣기, 파일별 업로드 중/실패/동일 키 재시도, 선택 제거, 원문 미리보기·다운로드를 제공한다. 업로드 미완료 시 전송을 막고 응답을 잃은 전송도 같은 내용·첨부·옵션이면 같은 키로 재확인한다. 완료한 첨부 ID·표시 metadata만 기기 내 초안에 보존하며 원문/인증은 localStorage에 넣지 않는다. 서버 초안은 글만 공유한다. 미리보기는 인증된 rawGet 후 허용된 이미지/텍스트만 표시하고 Blob URL은 닫기·교체·unmount에서 해제한다. 미참조 선택 제거는 서버 원문을 즉시 지우지 않고 기존 24시간 유예 정리를 따른다.
+- 고아 원문·정확한 `.sha.grove-UUID.tmp` staging만 1시간 후 정리하며 알 수 없는 이름·symlink 대상은 건드리지 않는다. 미참조 metadata는 24시간 후 만료하고 참조가 있으면 기간과 무관하게 보존한다. 파일 누락·크기 불일치는 stored=false와 이벤트로 알리고, 동일 hash 원문 재업로드는 기존 metadata의 stored도 복구한다. 원문 읽기는 크기 제한과 hash를 재검증한다.
+- GC는 업로드·휴지통 변경과 직렬화한다. 첨부 파일 250개와 metadata 250행만 검사해 다음 호출로 이어가며, 재시작 후 디스크·DB 상태에서 다시 시작한다. 원문 생성 후 DB 실패로 남은 파일과 메시지 참조 삽입 중 실패를 격리 테스트에서 주입한다(`tests/attachments.rs`).
+- 현재 CLI snapshot은 SQLite만 포함하며 첨부 원문을 복사하지 않는다. 첨부 bundle 백업·복원은 BOT-015-E/TRANSFER-003의 미완료 범위다.
+- 검증: 첨부 HTTP/복구 15개, 이미지 포함 압축 후 원문/참조 보존, JPEG 방향·GIF 첫 프레임·WebP 단위 2개, 관련 턴 33·컨텍스트 7·followup 5·제목 2와 기존 lib 86개, 웹 타입/빌드·Vitest 28개, 데스크톱 첨부 E2E 3개·모바일 첨부 E2E 1개 통과. 응답 유실은 실제 서버 처리 후 transport abort로 재현한다. Windows x64/ARM64 Linux 교차 빌드를 확인했다. 이전 Wine에서 4MiB·중복 원문·참조 보호를 검증했고 이미지 변경본도 격리 Wine에서 PNG 디코딩·작은 이미지 확대 방지·이미지 단독 메시지·모델 입력 ID/치수·원문 바이트 보존을 확인했다. 실제 Windows/Android 기기·ARM64 실행 및 외부 유료 모델 이미지 이해는 미검증이다.
+
+## 25. 작업 로그 metadata와 보관 실패(DB-013·014·019)
+
+- migration 34의 `task_logs(task_id, stream)`는 `tasks`를 FK로 참조한다. 프로젝트·세션 소유권은 작업 관계에서 얻고 stream별 참조 수는 1이다. 상대 `storage_key`·저장 크기·SHA-256·`writing/ready/error/missing/expired` 상태·오류 코드·검사 시각을 저장한다. 중복 상태 boolean은 두지 않는다.
+- 작업/로그 metadata를 먼저 commit하고 원문 파일 두 개를 확보한 뒤 프로세스를 시작한다. 생성 실패는 실행하지 않은 failed 작업과 보관 오류 note로 확정한다. Unix는 디렉터리 0700·파일 0600, `create_new`로 기존 파일을 덮어쓰지 않는다. 파일 준비·요약·조회는 blocking 실행 경로다.
+- 각 stream은 8MiB까지 저장하고 초과분도 pipe에서 계속 비워 전체 출력 바이트를 센다. 저장한 prefix의 hash만 기록한다. read/write/flush/sync 실패는 metadata와 결과 note에 따로 남기며 실행 exit code와 혼동하지 않는다. pump timeout은 handle을 취소하고 보관 실패로 남긴다.
+- 작업 종료 상태·로그 metadata·결과 note·이벤트를 같은 transaction에 기록한다. 최종 commit 실패 시 원문을 지우지 않으며 기존 running/writing 기록을 보존한다. 재시작은 작업을 unknown으로 바꾸고 자동 재실행하지 않는다. 이전 schema/중단 로그의 첫 검사에서는 현재 바이트의 크기·hash를 채우며 작업 unknown 상태는 유지한다.
+- `/tasks/{id}/output`은 완료 원문의 크기·hash를 확인하고 조각을 반환한다. 누락·손상·보관 실패·만료는 `410 task_log_unavailable`과 상태/원인을 반환한다. 손상 원문과 기존 fingerprint는 보존한다. 요약 tail은 최대 4KiB이며 symlink/비정규 파일을 읽지 않는다. 화면은 조회 오류를 빈 출력과 구분하고 스트림 변경 시 이전 응답이 새 선택을 덮어쓰지 않게 한다.
+- GC는 파일 250개와 metadata 250행 이내로 이어가며 이전/중단 원문 hash 계산은 호출당 최대 32MiB다. ready 로그의 주기 검사는 누락·종류·크기를 확인하고, 동일 크기 손상은 출력 조회의 hash 검증에서 확인한다. 실행 중/unknown 작업은 보존 기간 삭제 대상이 아니다. 만료해도 metadata·hash는 남긴다. 서버 파일 로그의 회전·상한은 §26을 따른다.
+- 검증: `tests/task_logs.rs` 7개(생성 실패·fingerprint/동일 크기 손상·누락/만료·최종 commit 실패/재시작·schema 33→34·hash 예산/cursor·symlink), pump 단위 2개(`/dev/full` 쓰기 실패 후 drain, 8MiB prefix hash), 관련 tasks 8·task_wait 3·storage 12·api 19·store 단위 3개 통과. 웹 타입/빌드와 새 로그 오류/기존 작업 시작·취소 Chrome E2E 2개 통과. Windows x64·Linux ARM64 교차 빌드, 격리 Wine에서 cmd 실행·SHA-256 metadata/출력 조회·손상 거부를 확인했다. 실제 Windows·ARM64 실행은 별도 미검증이다.
+- 직접 사용자 작업 시작은 결과 불명 receipt·작업 ID·로그 metadata·task.changed를 한 transaction에 먼저 commit한 뒤 프로세스를 시작한다. 동일 키 경합은 저장된 작업 ID만 돌려주고 실행하지 않는다. 완료 receipt 저장 실패는 작업 ID가 있는 `409 result_unknown`을 유지하며, 정리·재시작·재전송에서도 실행하지 않는다. 접수 commit 후 실행 전 중단은 재시작 시 unknown으로 복구한다. 접수 transaction에서 사전 검증한 프로젝트 root를 대조하며 바뀌었으면 `409 project_changed`로 작업·로그·이벤트 생성 전에 거부한다. 접수 후에는 기존 프로젝트 실행 guard가 root 변경을 막는다. 이 경계는 `tasks::tests::acceptance_rejects_a_changed_project_root_without_records`에서 거부/정상 기록을 확인했다.
+- TasksPanel은 접수 중 동기 guard로 이중 submit을 막고 명령 편집을 잠근다. 네트워크/서버 오류·result_unknown은 같은 명령/키를 유지해 사용자가 결과를 확인한다. 결과 불명을 닫고 다른 명령을 입력할 때는 입력을 비우며 기존 작업을 취소하지 않는다. 세션 전환은 패널 상태를 분리한다.
+- 접수 검증: `tests/task_start.rs` 4개와 관련 tasks·task_wait·task_logs·storage·api를 합친 Rust 통합 53개, 실제 Chrome에서 서버 도착 전/처리 후 응답 유실·동일 이벤트 루프 이중 submit·최종 receipt UPDATE 실패 3개와 기존 로그 조회/작업 시작·취소 2개, 웹 타입/빌드 통과. 기존 화면의 이중 submit 결함을 실패로 재현한 후 같은 시나리오의 통과를 확인했다(EXEC-005). Windows x64·Linux ARM64 교차 빌드와 격리 Wine의 cmd 작업·같은 ID 재전송·최종 receipt 실패/결과 불명·원문 파일 1회 쓰기도 확인했다. 실제 Windows OS 실행은 별도 미검증이다.
+
+## 26. 서버 파일 로그와 유지보수 자원(DB-019)
+
+- `grove serve --log-file <path>`는 현재 파일과 `.1`~`.3` 보관본을 각 2MiB 이내로 유지한다(합계 최대 8MiB). `tracing`의 기본 formatter를 사용하되 내부 문자열 버퍼에 적재하기 전에 이벤트를 16KiB 이내로 제한한다. 초과 표식을 남기고 UTF-8 경계를 보존한다. 파일에는 ANSI escape를 쓰지 않으며 시작·종료·시작 실패를 기록한다.
+- 일반 파일만 사용하고 Unix는 symlink·hardlink·특수 파일을 거부한다. 신규 로그 폴더는 0700, 생성·append 파일은 0600이다. `.lock` 파일의 OS 잠금을 서버 수명 동안 유지하며 이벤트 전체를 직렬화한다. 회전 전에 handle을 닫아 Windows에서도 같은 경로를 교체한다. 위험한 보관 경로는 파일 이동 전에 모두 검사한다.
+- 이전 대용량 로그는 각 파일의 끝부분만 최대 2MiB 복사한다. `.grove-tail.tmp` 고정 slot에 `[grove-log-tail:v1]` header와 tail을 쓰고 sync 후 교체한다. 생성부터 0600이며 각 staging도 최대 2MiB다. 중단 파일은 일반 파일·header·크기와 Unix 소유자/권한을 확인한 후에만 재사용한다. 대용량 정리 중 다른 내용·종류·권한의 staging을 발견하면 보존하고 시작을 거부한다. 각 로그 slot에 staging 하나만 두어 반복 중단 시 새 임시 파일이 계속 늘지 않게 한다. 복사·교체 실패 시 기존 로그 원문을 유지한다.
+- 새 관리 CLI의 `process` 시작은 기존 `version --json`의 `features: ["file_log_rotation_v1"]`를 확인해 `--log-file`을 전달한다. 시작 전에 파일 준비 오류를 보고하고, 이미 응답하는 서버가 있으면 PID·로그를 바꾸지 않는다. 기능 표식이 없는 이전 release는 기존 stdout/stderr append 방식으로 실행한다. 옵션 없는 foreground와 systemd는 stderr를 유지한다. 기존 CLI로 기동한 서버는 새 관리 CLI로 정상 재시작해야 파일 회전이 적용된다.
+- 자원 회귀: 파일 정리 관련 Rust 통합 72개(`api` 19·`attachments` 15·`cli` 6·`files` 4·`logging` 3·`projects` 5·`storage` 13·`task_logs` 7), logging 7·storage 4·update 4 단위 시험과 Chrome 휴지통 2개 통과. 큰 metadata와 깊은 stack은 실패를 재현한 뒤 수정했고, 빈 폴더를 포함한 scan 예산·cursor도 확인했다. Windows x64·Linux ARM64 교차 빌드, 격리 Wine의 1GiB tail 정규화·중단 staging·writer 잠금·5회 시작/종료·보관본 교체·8MiB 상한·다른 staging 보존을 확인했다. 실제 Windows/ARM64 실행과 프로세스 전체 RSS 상한은 이 검증의 범위 밖이다.
+- `scripts/test_update.py`는 격리한 실제 A/B/C/D 실행 파일로 새 설치·이전 append 로그에서 새 회전 로그로 전환·변경 없음·활성 작업 유예·고장 버전 snapshot 복구·중복 시작/PID 보존을 검증한다. 임시 소스 경로가 달라도 고정 target/build-dir의 의존성 cache를 사용하고 offline 빌드한다. 운영 서비스·데이터를 사용하지 않는다.
 
 ## 11. 결정 기록
 

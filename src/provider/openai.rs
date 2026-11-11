@@ -11,7 +11,14 @@ pub fn build_body(profile: &Profile, req: &ModelRequest) -> Value {
     }
     for m in &req.messages {
         match m {
-            ChatMsg::User { text } => msgs.push(json!({ "role": "user", "content": text })),
+            ChatMsg::User { text, images } => {
+                let content=if images.is_empty() {json!(text)} else {
+                    let mut parts=vec![json!({"type":"text","text":text})];
+                    parts.extend(images.iter().map(|i|json!({"type":"image_url","image_url":{"url":format!("data:{};base64,{}",i.mime,i.data)}})));
+                    json!(parts)
+                };
+                msgs.push(json!({"role":"user","content":content}));
+            },
             ChatMsg::Assistant { text, tool_calls } => {
                 let mut v = json!({ "role": "assistant", "content": if text.is_empty() && !tool_calls.is_empty() { Value::Null } else { json!(text) } });
                 if !tool_calls.is_empty() {
@@ -225,7 +232,7 @@ mod tests {
         let req = ModelRequest {
             system: "sys".into(),
             messages: vec![
-                ChatMsg::User { text: "hi".into() },
+                ChatMsg::User { text: "hi".into(), images: vec![] },
                 ChatMsg::Assistant { text: String::new(), tool_calls: vec![ToolCall { id: "c1".into(), name: "read".into(), arguments: json!({ "path": "a" }) }] },
                 ChatMsg::Tool { call_id: "c1".into(), name: "read".into(), content: "data".into(), is_error: false },
             ],

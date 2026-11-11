@@ -1,5 +1,10 @@
 import { type Locator, type Page, expect } from "@playwright/test";
 
+/// 특정 대화 화면. 앞선 시험이 분할 배치를 남겨 대화 화면이 여러 개일 수 있어 항상 대화 ID로 고른다.
+export function sessionView(page: Page, sessionId: string): Locator {
+    return page.locator(`[data-testid="session-view"][data-session="${sessionId}"]`);
+}
+
 /// `<details>`가 닫혀 있을 때만 연다(이미 열려 있으면 그대로). summary를 무조건 누르면 열린 패널이 닫힌다.
 export async function openDetails(details: Locator) {
     if (!(await details.evaluate((d) => (d as HTMLDetailsElement).open))) await details.locator("summary").first().click();

@@ -9,14 +9,15 @@ use crate::App;
 use crate::auth::Principal;
 use crate::error::{ApiError, ApiResult};
 use crate::events;
+use crate::idem;
 use crate::tools::ToolError;
 use crate::tools::fs::{atomic_write, file_sha, rel_display, resolve};
 use axum::Json;
 use axum::body::Body;
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path as FsPath, PathBuf};
 
@@ -42,14 +43,14 @@ async fn root_of(app: &App, project_id: &str) -> ApiResult<PathBuf> {
     crate::util::canonical(&root).map_err(|_| ApiError::conflict("project_unavailable", "프로젝트 폴더에 접근할 수 없습니다"))
 }
 
-fn resolve_api(root: &FsPath, rel: &str) -> ApiResult<PathBuf> {
+pub(crate) fn resolve_api(root: &FsPath, rel: &str) -> ApiResult<PathBuf> {
     if rel.trim().is_empty() {
         return Err(ApiError::invalid("경로가 비어 있습니다"));
     }
     resolve(root, rel).map_err(tool_err)
 }
 
-fn io_err(e: std::io::Error, what: &str) -> ApiError {
+pub(crate) fn io_err(e: std::io::Error, what: &str) -> ApiError {
     match e.kind() {
         std::io::ErrorKind::NotFound => ApiError::not_found(format!("{what}: 없음")),
         std::io::ErrorKind::PermissionDenied => ApiError::new(StatusCode::FORBIDDEN, "permission_denied", format!("{what}: 권한 없음")),
@@ -255,7 +256,7 @@ pub struct RawQuery {
     pub download: bool,
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 pub struct SaveBody {
     pub path: String,
     /// 새 파일이면 null. 기존 파일이면 사용자가 열었을 때의 sha256.
@@ -263,35 +264,11 @@ pub struct SaveBody {
     pub text: String,
 }
 
-pub async fn save(State(app): State<App>, _p: Principal, Path(id): Path<String>, Json(b): Json<SaveBody>) -> ApiResult<Json<Value>> {
-    let root = root_of(&app, &id).await?;
-    let p = resolve_api(&root, &b.path)?;
-    if b.text.len() as u64 > MAX_TEXT {
-        return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "편집기로 저장할 수 있는 크기를 넘었습니다"));
-    }
-    let new_sha = crate::util::sha256_hex(b.text.as_bytes());
-    let cur = if p.exists() { Some(file_sha(&p).map_err(|e| io_err(e, "파일 읽기"))?) } else { None };
-    // 이미 같은 내용이면(재전송 등) 쓰지 않고 성공으로 수렴한다.
-    if cur.as_deref() == Some(new_sha.as_str()) {
-        return Ok(Json(json!({ "path": rel_display(&root, &p), "sha256": new_sha, "changed": false })));
-    }
-    if cur != b.expected_sha256 {
-        return Err(ApiError::conflict(
-            if cur.is_none() { "file_missing" } else if b.expected_sha256.is_none() { "already_exists" } else { "file_changed" },
-            "편집을 시작한 뒤 파일이 바뀌었습니다. 현재 내용을 확인하세요",
-        )
-        .with_details(json!({ "current_sha256": cur })));
-    }
-    if p.parent().is_none_or(|d| !d.is_dir()) {
-        return Err(ApiError::invalid("상위 폴더가 없습니다"));
-    }
-    atomic_write(&p, b.text.as_bytes()).map_err(tool_err)?;
-    let rel = rel_display(&root, &p);
-    notify(&app, &id, json!({ "op": "save", "path": rel })).await?;
-    Ok(Json(json!({ "path": rel, "sha256": new_sha, "changed": true })))
+pub async fn save(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<SaveBody>) -> ApiResult<Response> {
+    mutate(app, p, headers, id, FileMutation::Save(b)).await
 }
 
-#[derive(Deserialize)]
+#[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum FileOp {
     Mkdir { path: String },
@@ -301,7 +278,7 @@ pub enum FileOp {
     Delete { path: String, confirm: String },
 }
 
-fn copy_recursive(from: &FsPath, to: &FsPath) -> std::io::Result<()> {
+pub(crate) fn copy_recursive(from: &FsPath, to: &FsPath) -> std::io::Result<()> {
     let m = from.symlink_metadata()?;
     if m.file_type().is_symlink() {
         #[cfg(unix)]
@@ -310,88 +287,200 @@ fn copy_recursive(from: &FsPath, to: &FsPath) -> std::io::Result<()> {
         return std::fs::copy(from, to).map(|_| ());
     }
     if m.is_dir() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            // 복사 도중에도 비공개 폴더의 내용이 다른 사용자에게 노출되지 않게 한다.
+            std::fs::DirBuilder::new().mode(0o700).create(to)?;
+        }
+        #[cfg(not(unix))]
         std::fs::create_dir(to)?;
         for e in std::fs::read_dir(from)? {
             let e = e?;
             copy_recursive(&e.path(), &to.join(e.file_name()))?;
         }
+        #[cfg(unix)]
+        std::fs::set_permissions(to, m.permissions())?;
         Ok(())
     } else {
         std::fs::copy(from, to).map(|_| ())
     }
 }
 
-pub async fn op(State(app): State<App>, _p: Principal, Path(id): Path<String>, Json(b): Json<FileOp>) -> ApiResult<Json<Value>> {
-    let root = root_of(&app, &id).await?;
-    let result = match b {
-        FileOp::Mkdir { path } => {
-            let p = resolve_api(&root, &path)?;
-            std::fs::create_dir(&p).map_err(|e| io_err(e, "폴더 만들기"))?;
-            json!({ "op": "mkdir", "path": rel_display(&root, &p) })
-        }
-        FileOp::Rename { path, to } => {
-            let (a, z) = (resolve_api(&root, &path)?, resolve_api(&root, &to)?);
-            if a == root {
-                return Err(ApiError::invalid("프로젝트 root는 옮길 수 없습니다"));
-            }
-            a.symlink_metadata().map_err(|e| io_err(e, "원본"))?;
-            if z.symlink_metadata().is_ok() {
-                return Err(ApiError::conflict("already_exists", "대상 이름이 이미 있습니다. 덮어쓰지 않습니다"));
-            }
-            std::fs::rename(&a, &z).map_err(|e| io_err(e, "이름 바꾸기"))?;
-            json!({ "op": "rename", "path": rel_display(&root, &a), "to": rel_display(&root, &z) })
-        }
-        FileOp::Duplicate { path, to } => {
-            let (a, z) = (resolve_api(&root, &path)?, resolve_api(&root, &to)?);
-            if z.symlink_metadata().is_ok() {
-                return Err(ApiError::conflict("already_exists", "대상 이름이 이미 있습니다. 덮어쓰지 않습니다"));
-            }
-            if z.starts_with(&a) {
-                return Err(ApiError::invalid("폴더를 자기 안으로 복제할 수 없습니다"));
-            }
-            if let Err(e) = copy_recursive(&a, &z) {
-                // 부분 복제본은 우리가 만든 것이므로 정리한다.
-                let _ = if z.is_dir() { std::fs::remove_dir_all(&z) } else { std::fs::remove_file(&z) };
-                return Err(io_err(e, "복제"));
-            }
-            json!({ "op": "duplicate", "path": rel_display(&root, &a), "to": rel_display(&root, &z) })
-        }
-        FileOp::Delete { path, confirm } => {
-            let a = resolve_api(&root, &path)?;
-            let rel = rel_display(&root, &a);
-            if a == root {
-                return Err(ApiError::invalid("프로젝트 root는 지울 수 없습니다"));
-            }
-            if confirm != rel {
-                return Err(ApiError::new(StatusCode::BAD_REQUEST, "confirmation_required", format!("삭제하려면 확인란에 `{rel}`을 그대로 적으세요")));
-            }
-            a.symlink_metadata().map_err(|e| io_err(e, "삭제 대상"))?;
-            let trash = app.cfg.data_dir.join("trash").join(crate::util::new_id());
-            std::fs::create_dir_all(&trash).map_err(|e| io_err(e, "휴지통"))?;
-            let dest = trash.join(a.file_name().unwrap_or_default());
-            std::fs::write(trash.join("origin.json"), json!({ "project_id": id, "path": rel }).to_string()).map_err(|e| io_err(e, "휴지통"))?;
-            if std::fs::rename(&a, &dest).is_err() {
-                // 다른 파일 시스템이면 복사가 끝난 뒤에만 원본을 지운다.
-                copy_recursive(&a, &dest).map_err(|e| io_err(e, "휴지통으로 복사"))?;
-                let m = a.symlink_metadata().map_err(|e| io_err(e, "삭제 대상"))?;
-                if m.is_dir() { std::fs::remove_dir_all(&a) } else { std::fs::remove_file(&a) }.map_err(|e| io_err(e, "삭제"))?;
-            }
-            json!({ "op": "delete", "path": rel, "trash": trash.file_name().map(|n| n.to_string_lossy().to_string()) })
-        }
-    };
-    notify(&app, &id, result.clone()).await?;
-    Ok(Json(result))
+pub async fn op(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<FileOp>) -> ApiResult<Response> {
+    if let FileOp::Delete { path, confirm } = b {
+        return crate::storage::move_to_trash(app, p, headers, id, path, confirm).await;
+    }
+    mutate(app, p, headers, id, FileMutation::Op(b)).await
 }
 
-async fn notify(app: &App, project_id: &str, data: Value) -> ApiResult<()> {
-    let pid = project_id.to_string();
-    let now = app.now();
-    app.db
-        .call(move |c| {
-            events::append(c, &now, "file.changed", Some(&pid), None, &data)?;
-            Ok(())
-        })
-        .await?;
+#[derive(Clone, Serialize)]
+enum FileMutation {
+    Save(SaveBody),
+    Op(FileOp),
+}
+
+enum FileWork {
+    Save(PathBuf, Vec<u8>),
+    Mkdir(PathBuf),
+    Rename(PathBuf, PathBuf),
+    Duplicate { from: PathBuf, to: PathBuf, stage: PathBuf },
+}
+
+struct FilePlan {
+    work: Option<FileWork>,
+    response: Value,
+    event: Option<Value>,
+}
+
+fn require_absent(path: &FsPath) -> ApiResult<()> {
+    match path.symlink_metadata() {
+        Ok(_) => Err(ApiError::conflict("already_exists", "대상 이름이 이미 있습니다. 덮어쓰지 않습니다")),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(io_err(e, "대상 확인")),
+    }
+}
+
+fn prepare_mutation(root: &FsPath, mutation: &FileMutation, copy_id: &str) -> ApiResult<FilePlan> {
+    let (work, response, event) = match mutation {
+        FileMutation::Save(b) => {
+            let p = resolve_api(root, &b.path)?;
+            if b.text.len() as u64 > MAX_TEXT {
+                return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "편집기로 저장할 수 있는 크기를 넘었습니다"));
+            }
+            let new_sha = crate::util::sha256_hex(b.text.as_bytes());
+            let cur = if p.exists() { Some(file_sha(&p).map_err(|e| io_err(e, "파일 읽기"))?) } else { None };
+            let rel = rel_display(root, &p);
+            if cur.as_deref() == Some(new_sha.as_str()) {
+                return Ok(FilePlan { work: None, response: json!({"path":rel,"sha256":new_sha,"changed":false}), event: None });
+            }
+            if cur != b.expected_sha256 {
+                return Err(ApiError::conflict(
+                    if cur.is_none() { "file_missing" } else if b.expected_sha256.is_none() { "already_exists" } else { "file_changed" },
+                    "편집을 시작한 뒤 파일이 바뀌었습니다. 현재 내용을 확인하세요",
+                ).with_details(json!({"current_sha256":cur})));
+            }
+            if p.parent().is_none_or(|d| !d.is_dir()) {
+                return Err(ApiError::invalid("상위 폴더가 없습니다"));
+            }
+            (FileWork::Save(p, b.text.as_bytes().to_vec()), json!({"path":rel,"sha256":new_sha,"changed":true}), json!({"op":"save","path":rel}))
+        }
+        FileMutation::Op(FileOp::Mkdir { path }) => {
+            let p = resolve_api(root, path)?;
+            require_absent(&p)?;
+            let result = json!({"op":"mkdir","path":rel_display(root, &p)});
+            (FileWork::Mkdir(p), result.clone(), result)
+        }
+        FileMutation::Op(FileOp::Rename { path, to } | FileOp::Duplicate { path, to }) => {
+            let (a, z) = (resolve_api(root, path)?, resolve_api(root, to)?);
+            a.symlink_metadata().map_err(|e| io_err(e, "원본"))?;
+            require_absent(&z)?;
+            if matches!(mutation, FileMutation::Op(FileOp::Rename { .. })) {
+                if a == root { return Err(ApiError::invalid("프로젝트 root는 옮길 수 없습니다")); }
+                let result = json!({"op":"rename","path":rel_display(root,&a),"to":rel_display(root,&z)});
+                (FileWork::Rename(a, z), result.clone(), result)
+            } else {
+                if z.starts_with(&a) { return Err(ApiError::invalid("폴더를 자기 안으로 복제할 수 없습니다")); }
+                let parent = z.parent().filter(|p| p.is_dir()).ok_or_else(|| ApiError::invalid("상위 폴더가 없습니다"))?;
+                let stage = parent.join(format!(".grove-copy-{copy_id}"));
+                require_absent(&stage)?;
+                let result = json!({"op":"duplicate","path":rel_display(root,&a),"to":rel_display(root,&z)});
+                (FileWork::Duplicate { from: a, to: z, stage }, result.clone(), result)
+            }
+        }
+        FileMutation::Op(FileOp::Delete { .. }) => unreachable!("삭제는 휴지통 경로에서 처리"),
+    };
+    Ok(FilePlan { work: Some(work), response, event: Some(event) })
+}
+
+fn execute_mutation(work: FileWork) -> ApiResult<()> {
+    match work {
+        FileWork::Save(p, bytes) => atomic_write(&p, &bytes).map_err(tool_err),
+        FileWork::Mkdir(p) => std::fs::create_dir(p).map_err(|e| io_err(e, "폴더 만들기")),
+        FileWork::Rename(a, z) => crate::storage::rename_noreplace(&a, &z).map_err(|e| io_err(e, "이름 바꾸기")),
+        FileWork::Duplicate { from, to, stage } => {
+            #[cfg(unix)]
+            let created = {
+                use std::os::unix::fs::DirBuilderExt;
+                std::fs::DirBuilder::new().mode(0o700).create(&stage)
+            };
+            #[cfg(not(unix))]
+            let created = std::fs::create_dir(&stage);
+            created.map_err(|e| io_err(e, "복제 임시 폴더"))?;
+            // 소유한 staging 안에서만 복사한다. 외부에서 만든 대상은 rename 시에도 덮어쓰지 않는다.
+            let result = copy_recursive(&from, &stage.join("payload"))
+                .and_then(|_| crate::storage::rename_noreplace(&stage.join("payload"), &to));
+            let cleanup = std::fs::remove_dir_all(&stage);
+            result.map_err(|e| io_err(e, "복제"))?;
+            cleanup.map_err(|e| io_err(e, "복제 임시 폴더 정리"))
+        }
+    }
+}
+
+async fn mutate(app: App, p: Principal, headers: HeaderMap, id: String, mutation: FileMutation) -> ApiResult<Response> {
+    let _guard = app.storage.mutations.lock().await;
+    let h = idem::body_hash("files.mutate", &json!({"project_id":id,"request":mutation}));
+    if let Some(response) = idem::replay(&app, &p, &headers, &h).await? { return Ok(response); }
+    let (pid, input, copy_id) = (id.clone(), mutation.clone(), crate::util::new_id());
+    let staging_id = copy_id.clone();
+    let (root, mut details) = app.db.call(move |c| {
+        let root = crate::projects::active_root(c, &pid)?;
+        let root = crate::util::canonical(&root).map_err(|_| ApiError::conflict("project_unavailable", "프로젝트 폴더에 접근할 수 없습니다"))?;
+        let plan = prepare_mutation(&root, &input, &copy_id)?;
+        let mut details = plan.event.unwrap_or_else(|| json!({"op":"save","path":plan.response["path"]}));
+        if let Some(FileWork::Duplicate { stage, .. }) = plan.work { details["staging"] = json!(rel_display(&root, &stage)); }
+        Ok((root, details))
+    }).await?;
+    details["project_id"] = json!(id);
+    let unknown = ApiError::conflict("result_unknown", "파일 작업 결과를 확정하지 못했습니다. 원문과 대상 경로를 확인하세요").with_details(details);
+    let pending = unknown.body();
+    let (pid, expected_root) = (id.clone(), root.clone());
+    idem::run(&app, &p, &headers, &h, move |tx, _| {
+        if crate::projects::active_root(tx, &pid)? != expected_root {
+            return Err(ApiError::conflict("project_changed", "프로젝트 경로가 변경되어 파일을 바꾸지 않았습니다"));
+        }
+        Ok((StatusCode::CONFLICT, pending))
+    }).await?;
+    let (owner, key, now) = (p.root_id, idem::key_from(&headers)?, app.now());
+    let response = app.db.call(move |c| {
+        let tx = c.transaction()?;
+        if crate::projects::active_root(&tx, &id)? != root {
+            return Err(ApiError::conflict("project_changed", "프로젝트 경로가 변경되어 파일을 바꾸지 않았습니다"));
+        }
+        // 접수 이후 원문·대상 경로를 다시 확인한다. DB 잠금 안에서 경로 변경과 완료 기록을 직렬화한다.
+        let plan = prepare_mutation(&root, &mutation, &staging_id)?;
+        if let Some(work) = plan.work { execute_mutation(work)?; }
+        if let Some(event) = plan.event { events::append(&tx, &now, "file.changed", Some(&id), None, &event)?; }
+        idem::complete(&tx, &owner, &key, &h, StatusCode::OK, &plan.response)?;
+        tx.commit()?;
+        Ok(plan.response)
+    }).await.map_err(|e| { tracing::warn!(code=e.code, "파일 작업 결과 불명"); unknown })?;
     app.notify_events().await;
-    Ok(())
+    Ok(Json(response).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn duplicate_preserves_a_target_created_after_preparation_and_cleans_only_its_stage() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source");
+        let target = root.path().join("copy");
+        let stage = root.path().join(".grove-copy-fixture");
+        std::fs::write(&source, "original").unwrap();
+        let mutation = FileMutation::Op(FileOp::Duplicate { path: "source".into(), to: "copy".into() });
+        let plan = prepare_mutation(root.path(), &mutation, "fixture").unwrap();
+        std::fs::write(&target, "external edit").unwrap();
+        assert!(execute_mutation(plan.work.unwrap()).is_err());
+        assert_eq!(std::fs::read(&source).unwrap(), b"original");
+        assert_eq!(std::fs::read(&target).unwrap(), b"external edit");
+        assert!(!stage.exists());
+        // 존재하는 외부 staging은 소유하지 않으므로 생성 실패 뒤 정리하지 않는다.
+        std::fs::create_dir(&stage).unwrap();
+        std::fs::write(stage.join("foreign"), "keep").unwrap();
+        assert!(execute_mutation(FileWork::Duplicate { from: source, to: target, stage: stage.clone() }).is_err());
+        assert_eq!(std::fs::read(stage.join("foreign")).unwrap(), b"keep");
+    }
 }

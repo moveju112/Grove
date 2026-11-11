@@ -8,7 +8,7 @@ use crate::util::fmt_time;
 use axum::Json;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use rusqlite::{OptionalExtension, Transaction, params};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::Value;
 
 pub const HEADER: &str = "idempotency-key";
@@ -96,7 +96,7 @@ where
 }
 
 /// 외부 부작용(프로세스·Git)을 transaction 밖에서 일으키는 요청용: 같은 키의 기록이 있으면 실행 없이 저장된 응답을 돌려준다.
-/// 다른 요청에 쓰인 키면 충돌. 기록이 없으면 None(호출자가 실행 후 `run`으로 기록한다).
+/// 다른 요청에 쓰인 키면 충돌. 기록이 없으면 None이며, 부작용 전 접수·직렬화는 호출자가 보장해야 한다.
 pub async fn replay(app: &App, p: &Principal, headers: &HeaderMap, request_hash: &str) -> ApiResult<Option<Response>> {
     let key = key_from(headers)?;
     let owner = p.root_id.clone();
@@ -119,6 +119,16 @@ pub async fn replay(app: &App, p: &Principal, headers: &HeaderMap, request_hash:
     let mut resp = (StatusCode::from_u16(status as u16).unwrap_or(StatusCode::OK), Json(body)).into_response();
     resp.headers_mut().insert("idempotent-replayed", HeaderValue::from_static("true"));
     Ok(Some(resp))
+}
+
+/// 외부 부작용 전에 저장한 결과 불명 receipt만 확정한다. 호출자의 transaction에 이벤트도 함께 넣는다.
+pub(crate) fn complete(c: &Connection, owner: &str, key: &str, hash: &str, status: StatusCode, body: &Value) -> ApiResult<()> {
+    let n=c.execute(
+        "UPDATE idempotency SET status=?4,response=?5 WHERE owner_id=?1 AND key=?2 AND request_hash=?3 AND status=409 AND json_extract(response,'$.error.code')='result_unknown'",
+        params![owner,key,hash,status.as_u16() as i64,body.to_string()],
+    )?;
+    if n != 1 { return Err(ApiError::conflict("result_unknown","작업 접수 기록을 확정하지 못했습니다")); }
+    Ok(())
 }
 
 /// 요청 본문의 정규화 hash. serde_json은 객체 키 순서를 보존하므로 정렬해서 hash한다.

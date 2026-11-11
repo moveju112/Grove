@@ -202,6 +202,7 @@ export function applyEvent(e: EventRecord) {
             if (pid) {
                 invalidate(`files:${pid}`);
                 invalidate(`git:${pid}`);
+                invalidate(`trash:${pid}`);
             }
             break;
         case "draft.updated":

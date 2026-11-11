@@ -361,6 +361,14 @@ pub fn to_chat(history: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg> {
             "user" => {
                 flush(&mut out, &mut pending, &mut deferred);
                 push_user(&mut out, c["text"].as_str().unwrap_or(""));
+                if let Some(ChatMsg::User {images,..})=out.last_mut() {
+                    if let Some(items)=c["images"].as_array() {
+                        // 잘못된 영속 입력은 아래 hydration 단계에서 명시적으로 실패시킨다.
+                        for item in items {
+                            images.push(serde_json::from_value(item.clone()).unwrap_or(crate::provider::ImageInput{id:String::new(),sha256:String::new(),width:0,height:0,mime:String::new(),data:String::new()}));
+                        }
+                    }
+                }
             }
             // 백그라운드 작업·자식 에이전트 결과는 다음 요청에서 모델이 볼 수 있게 user 쪽 문맥으로 넣는다(EXEC-011, AGENT-011).
             "note" if c["type"] == "task_result" || c["type"] == "agent_result" => {
@@ -435,11 +443,11 @@ pub fn to_chat(history: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg> {
 
 /// 연속 user 메시지를 허용하지 않는 provider가 있어 바로 앞이 user면 합친다.
 fn push_user(out: &mut Vec<ChatMsg>, text: &str) {
-    if let Some(ChatMsg::User { text: prev }) = out.last_mut() {
+    if let Some(ChatMsg::User { text: prev, .. }) = out.last_mut() {
         prev.push_str("\n\n");
         prev.push_str(text);
     } else {
-        out.push(ChatMsg::User { text: text.to_string() });
+        out.push(ChatMsg::User { text: text.to_string(), images: vec![] });
     }
 }
 
@@ -537,7 +545,7 @@ struct StepInput {
     deadline: Option<time::OffsetDateTime>,
 }
 
-fn load_step(c: &Connection, turn_id: &str, epoch: &str) -> ApiResult<Option<StepInput>> {
+fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path) -> ApiResult<Option<StepInput>> {
     let (t, owner) = get_turn_epoch(c, turn_id)?;
     if t.status != "running" || owner != epoch {
         return Ok(None);
@@ -552,6 +560,8 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str) -> ApiResult<Option<Ste
     let (mp, rp) = crate::models::runtime_profile(c, &profile_id)?;
     let cli_backend = crate::provider::cli::is_cli(&rp.protocol);
     let history = crate::sessions::history_for_model(c, &t.session_id)?;
+    let mut messages=to_chat(&history);
+    crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
     let deadline = def["budget"]["max_minutes"]
         .as_i64()
         .and_then(|m| Some(crate::util::parse_time(&t.created_at)? + time::Duration::minutes(m)));
@@ -563,7 +573,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str) -> ApiResult<Option<Ste
         profile: rp,
         request: ModelRequest {
             system: system_prompt(&def, &root.to_string_lossy(), t.tools_enabled),
-            messages: to_chat(&history),
+            messages,
             // CLI 백엔드는 자기 도구를 쓰므로 Grove 도구 목록을 보내지 않는다.
             tools: if t.tools_enabled && !cli_backend { tool_defs() } else { vec![] },
             max_tokens: mp.options["max_tokens"].as_u64().map(|v| v as u32),
@@ -617,6 +627,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             .call({
                 let tid = tid.clone();
                 let epoch = epoch.clone();
+                let data = app.cfg.data_dir.clone();
                 move |c| {
                     let tx = c.transaction()?;
                     let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
@@ -624,7 +635,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                         emit_turn(&tx, &now, &tid)?;
                     }
                     // 모델 호출 경계: 실행 중 보낸 steer를 이번 요청에 넣는다(RUN-008, 반영과 삭제가 같은 transaction).
-                    crate::followups::apply_steers(&tx, &now, &tid)?;
+                    crate::followups::apply_steers(&tx, &now, &tid, &data)?;
                     tx.commit()?;
                     Ok(())
                 }
@@ -633,7 +644,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         app.notify_events().await;
         let step = app.db.call({
             let tid = tid.clone();
-            move |c| load_step(c, &tid, &epoch)
+            { let data=app.cfg.data_dir.clone(); move |c| load_step(c, &tid, &epoch, &data) }
         });
         let input = match step.await {
             Ok(Some(i)) => i,
@@ -1015,6 +1026,8 @@ pub async fn maybe_resume(app: &App, turn_id: &str) {
 #[derive(Deserialize)]
 pub struct CreateTurn {
     pub text: String,
+    #[serde(default)]
+    pub attachments: Vec<String>,
     pub profile_id: String,
     pub agent_id: Option<String>,
     pub tools: Option<bool>,
@@ -1037,18 +1050,24 @@ pub async fn create(
     Path(session_id): Path<String>,
     Json(b): Json<CreateTurn>,
 ) -> ApiResult<Response> {
-    crate::sessions::validate_text(&b.text)?;
+    crate::sessions::validate_message(&b.text, &b.attachments)?;
     let tools = b.tools.unwrap_or(false);
     if tools && !app.cfg.enable_tool_loop {
         return Err(ApiError::unsupported("이 서버에서는 모델 도구 실행이 꺼져 있습니다(GROVE_ENABLE_TOOL_LOOP=1)"));
     }
     let effort = provider::parse_effort(b.effort.as_deref()).map_err(ApiError::invalid)?;
-    let h = idem::body_hash("turn.create", &json!({ "s": session_id, "t": b.text, "p": b.profile_id, "a": b.agent_id, "tools": tools, "e": effort }));
+    let mut body = json!({ "s": session_id, "t": b.text, "p": b.profile_id, "a": b.agent_id, "tools": tools, "e": effort });
+    if !b.attachments.is_empty() { body["attachments"] = json!(b.attachments); }
+    let h = idem::body_hash("turn.create", &body);
+    let data = app.cfg.data_dir.clone();
+    let uploader = p.root_id.clone();
     let epoch = app.epoch.clone();
     // 소유자 key는 서버가 인증 주체에서 정한다(FAIR-002). 브라우저 세션은 부모 기기 토큰으로 묶여 연결을 새로 만들어도 같다.
     let owner = format!("token:{}", p.root_id);
     let resp = idem::run(&app, &p, &headers, &h, move |tx, now| {
-        let (t, msg) = enqueue_turn(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), tools, None)?;
+        let session = crate::sessions::get_active(tx, &session_id)?;
+        let prepared = crate::attachments::prepare(tx, &data, &uploader, &session.project_id, &b.text, &b.attachments)?;
+        let (t, msg) = enqueue_with_attachments(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), tools, None, Some(&prepared))?;
         set_turn_effort(tx, &t.id, effort.as_deref())?;
         let t = get_turn(tx, &t.id)?;
         Ok((StatusCode::ACCEPTED, json!({ "turn": t, "message": msg })))
@@ -1073,6 +1092,15 @@ pub fn enqueue_turn(
     tools: bool,
     source: Option<&Value>,
 ) -> ApiResult<(Turn, crate::sessions::Message)> {
+    enqueue_with_attachments(tx, now, epoch, owner, session_id, text, profile_id, agent_id, tools, source, None)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn enqueue_with_attachments(
+    tx: &Connection, now: &str, epoch: &str, owner: &str, session_id: &str,
+    text: &str, profile_id: &str, agent_id: Option<&str>, tools: bool,
+    source: Option<&Value>, attachments: Option<&crate::attachments::Prepared>,
+) -> ApiResult<(Turn, crate::sessions::Message)> {
     let s = crate::sessions::get_active(tx, session_id)?;
     crate::projects::active_root(tx, &s.project_id)?;
     if s.active_turn.is_some() {
@@ -1088,7 +1116,10 @@ pub fn enqueue_turn(
         Some((p, _)) => (p.as_str(), None),
         None => (profile_id, agent_id),
     };
-    crate::models::get_profile(tx, profile_id)?;
+    let profile=crate::models::get_profile(tx, profile_id)?;
+    if attachments.is_some_and(|a|a.model_input["images"].as_array().is_some_and(|v|!v.is_empty())) && crate::provider::cli::is_cli(&profile.protocol) {
+        return Err(ApiError::unsupported("CLI 백엔드는 이미지 첨부를 지원하지 않습니다. HTTP 모델 프로필을 선택하세요"));
+    }
     let wf_id = s.workflow_id.clone().unwrap_or_else(|| "default".into());
     let wf = crate::definitions::resolve(tx, "workflow", &wf_id)?;
     let mut def = json!({ "workflow": { "id": wf_id, "revision": wf.def.revision, "body_sha256": wf.def.body_sha256, "body": wf.def.body } });
@@ -1153,7 +1184,10 @@ pub fn enqueue_turn(
         }
         content["source"] = src;
     }
-    let msg = crate::sessions::append_message(tx, now, session_id, "user", &content, Some(&tid), None)?;
+    let attachments = attachments.filter(|a| !a.items.is_empty());
+    if let Some(a) = attachments { content["attachments"] = json!(a.items); }
+    let msg = crate::sessions::append_message(tx, now, session_id, "user", &content, Some(&tid), attachments.map(|a| &a.model_input))?;
+    if let Some(a) = attachments { crate::attachments::bind(tx, now, &msg.id, a)?; }
     let ins = tx.execute(
         "INSERT INTO turns (id, session_id, status, request_message_id, profile_id, agent_id, workflow_id, definition_snapshot, tools_enabled, owner_epoch, usage, created_at, updated_at, owner_key) \
          VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6, ?7, ?8, ?9, '{}', ?10, ?10, ?11)",
@@ -1234,6 +1268,8 @@ const RETRYABLE_END: &[&str] = &["failed", "interrupted", "cancelled"];
 /// 끝난 요청 다시 실행(RUN-019). 그 대화의 가장 최근 요청이 실패·중단·취소로 끝났을 때만, 같은 글·프로필·에이전트·도구·강도로
 /// 새 요청을 만든다(출처 retry). 원래 요청은 확인한 것으로 표시한다. 같은 Idempotency-Key 재전송은 한 번만 만든다.
 pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
+    let data = app.cfg.data_dir.clone();
+    let uploader = p.root_id.clone();
     let h = idem::body_hash("turn.retry", &json!({ "id": id }));
     let epoch = app.epoch.clone();
     let owner = format!("token:{}", p.root_id);
@@ -1250,12 +1286,15 @@ pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         if newer > 0 {
             return Err(ApiError::conflict("not_latest", "이후에 다른 요청이 있어 다시 실행할 수 없습니다. 새 요청으로 보내세요"));
         }
-        let text: String = tx.query_row("SELECT content FROM messages WHERE id = ?1", params![old.request_message_id], |r| r.get::<_, String>(0)).map(|c| {
-            serde_json::from_str::<Value>(&c).ok().and_then(|v| v["text"].as_str().map(str::to_string)).unwrap_or_default()
-        })?;
+        let content: String = tx.query_row("SELECT content FROM messages WHERE id = ?1", params![old.request_message_id], |r| r.get(0))?;
+        let content: Value = serde_json::from_str(&content).map_err(|_| ApiError::internal("message content"))?;
+        let text = content["text"].as_str().unwrap_or("").to_string();
+        let ids: Vec<String> = content["attachments"].as_array().into_iter().flatten().filter_map(|a| a["id"].as_str().map(str::to_owned)).collect();
+        let session = crate::sessions::get_active(tx, &old.session_id)?;
+        let prepared = crate::attachments::prepare(tx, &data, &uploader, &session.project_id, &text, &ids)?;
         let profile = old.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없는 요청입니다"))?;
         let src = json!({ "kind": "retry", "turn_id": old.id });
-        let (t, msg) = enqueue_turn(tx, now, &epoch, &owner, &old.session_id, &text, &profile, old.agent_id.as_deref(), old.tools_enabled, Some(&src))?;
+        let (t, msg) = enqueue_with_attachments(tx, now, &epoch, &owner, &old.session_id, &text, &profile, old.agent_id.as_deref(), old.tools_enabled, Some(&src), Some(&prepared))?;
         set_turn_effort(tx, &t.id, old.definition["effort"].as_str())?;
         tx.execute("UPDATE turns SET acknowledged_at = COALESCE(acknowledged_at, ?2) WHERE id = ?1", params![old.id, now])?;
         emit_turn(tx, now, &old.id)?;
@@ -1423,7 +1462,7 @@ mod tests {
         }
         // 미뤄진 agent note + task note + 다음 user가 하나의 user 메시지로 합쳐진다
         match &out[3] {
-            ChatMsg::User { text } => {
+            ChatMsg::User { text, .. } => {
                 assert!(text.contains("[child agent result]") && text.contains("[background task result]") && text.ends_with("다음"), "{text}");
             }
             o => panic!("{o:?}"),
@@ -1446,7 +1485,7 @@ mod tests {
         ];
         let out = to_chat(&h);
         assert!(matches!(&out[1], ChatMsg::Tool { call_id, is_error: false, .. } if call_id == "w1"));
-        let ChatMsg::User { text } = &out[2] else { panic!("{out:?}") };
+        let ChatMsg::User { text, .. } = &out[2] else { panic!("{out:?}") };
         let detail = text.lines().nth(1).unwrap();
         assert_eq!(serde_json::from_str::<Value>(detail).unwrap(), error);
         assert!(text.ends_with("다음"));
