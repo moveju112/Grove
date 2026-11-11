@@ -312,6 +312,9 @@ pub async fn diff(State(app): State<App>, _p: Principal, Path(id): Path<String>)
 /// 세션 전체 검토(GIT-014): 파일마다 이 세션의 첫 변경 전 상태(기준 snapshot)와 지금 디스크 내용을 비교한다.
 /// 되돌린 변경은 빼고, 세션 밖에서 바뀐 내용도 현재 상태에 그대로 드러난다.
 pub async fn review(State(app): State<App>, _p: Principal, Path(session_id): Path<String>) -> ApiResult<Json<Value>> {
+    let sid = session_id.clone();
+    let project = app.db.call(move |c| Ok(crate::sessions::get(c,&sid)?.project_id)).await?;
+    let _resource = app.project_resources.ui_read(&app,&project,&_p).await?;
     let (changes, root) = app
         .db
         .call(move |c| {
@@ -421,9 +424,13 @@ async fn apply(app: App, p: Principal, headers: HeaderMap, session_id: String, i
     if ids.is_empty() || ids.len() > 500 {
         return Err(ApiError::invalid("change_ids는 1~500개여야 합니다"));
     }
-    let _guard = app.storage.mutations.lock().await;
     let h = idem::body_hash(if undo { "changes.undo" } else { "changes.redo" }, &json!({ "s": session_id, "ids": ids }));
     if let Some(response) = idem::replay(&app, &p, &headers, &h).await? { return Ok(response); }
+    let sid = session_id.clone();
+    let project = app.db.call(move |c| Ok(crate::sessions::get_active(c,&sid)?.project_id)).await?;
+    let _resource = app.project_resources.ui_write(&app,&project,&p).await?;
+    let _guard = app.storage.mutations.lock().await;
+    if let Some(response) = idem::replay(&app,&p,&headers,&h).await? { return Ok(response); }
     let sid = session_id.clone();
     let selected = ids.clone();
     let expected_root = app.db.call(move |c| Ok(prepare_apply(c, &sid, &selected, undo)?.root)).await?;

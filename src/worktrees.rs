@@ -100,6 +100,7 @@ fn canon(p: &FsPath) -> PathBuf {
 
 pub async fn list(State(app): State<App>, _p: Principal, Path(project_id): Path<String>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &project_id).await?;
+    let _resource = app.project_resources.ui_read(&app,&project_id,&_p).await?;
     if !is_repo(&root).await? {
         return Ok(Json(json!({ "is_repo": false, "worktrees": [], "unowned": [] })));
     }
@@ -185,10 +186,12 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
     }
     let lock = app.repo_locks.get(&project_id);
     let _g = lock.lock().await;
+    crate::auth::revalidate(&app,&p).await?;
     let h = idem::body_hash("worktree.create", &json!({ "p": project_id, "n": b.name, "b": b.base, "c": b.carry, "l": b.confirm_large }));
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
+    let _resource = app.project_resources.ui_write(&app,&project_id,&p).await?;
     let dirty = dirty_paths(&root).await?;
     if !dirty.is_empty() && carry.is_none() {
         return Err(ApiError::conflict("worktree_dirty_choice", "원래 폴더에 커밋하지 않은 변경이 있습니다. 두고 갈지(leave) 복사해 갈지(carry) 선택하세요")
@@ -291,6 +294,10 @@ pub struct EnterBody {
 
 pub async fn enter(State(app): State<App>, p: Principal, headers: HeaderMap, Path(session_id): Path<String>, Json(b): Json<EnterBody>) -> ApiResult<Response> {
     let h = idem::body_hash("session.worktree", &json!({ "s": session_id, "w": b.worktree_id }));
+    if let Some(response) = idem::replay(&app,&p,&headers,&h).await? { return Ok(response); }
+    let sid = session_id.clone();
+    let project = app.db.call(move |c| Ok(crate::sessions::get_active(c,&sid)?.project_id)).await?;
+    let _resource = app.project_resources.ui_read(&app,&project,&p).await?;
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let s = crate::sessions::get_active(tx, &session_id)?;
         if s.worktree_id == b.worktree_id {
@@ -337,10 +344,12 @@ pub async fn merge(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     }
     let lock = app.repo_locks.get(&w.project_id);
     let _g = lock.lock().await;
+    crate::auth::revalidate(&app,&p).await?;
     let h = idem::body_hash("worktree.merge", &json!({ "w": id, "n": b.no_ff }));
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
+    let _resource = app.project_resources.ui_write(&app,&w.project_id,&p).await?;
     if FsPath::new(&w.path).is_dir() {
         let d = dirty_paths(FsPath::new(&w.path)).await?;
         if !d.is_empty() {
@@ -371,10 +380,12 @@ pub async fn remove(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
     let (w, root) = owned(&app, &id).await?;
     let lock = app.repo_locks.get(&w.project_id);
     let _g = lock.lock().await;
+    crate::auth::revalidate(&app,&p).await?;
     let h = idem::body_hash("worktree.remove", &json!({ "w": id, "f": force }));
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
+    let _resource = app.project_resources.ui_write(&app,&w.project_id,&p).await?;
     if w.status == "removed" {
         return Ok(axum::response::IntoResponse::into_response((StatusCode::OK, Json(serde_json::to_value(&w)?))));
     }
@@ -428,10 +439,12 @@ pub async fn prune(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     }
     let lock = app.repo_locks.get(&project_id);
     let _g = lock.lock().await;
+    crate::auth::revalidate(&app,&p).await?;
     let h = idem::body_hash("worktree.prune", &json!({ "p": project_id }));
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
+    let _resource = app.project_resources.ui_write(&app,&project_id,&p).await?;
     let o = git(&root, &["worktree", "prune", "--verbose"], false).await?;
     if o.code != 0 {
         return Err(fail(&o, "worktree prune"));

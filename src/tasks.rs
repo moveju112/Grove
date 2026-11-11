@@ -95,6 +95,7 @@ pub fn running_in_session(c: &Connection, session_id: &str) -> ApiResult<i64> {
 /// 실행 중 작업의 메모리 핸들. 취소 신호와 완료 알림.
 #[derive(Default)]
 pub struct Tasks {
+    pub(crate) admission: crate::project_resources::ProjectQueues,
     running: Mutex<HashMap<String, (watch::Sender<bool>, watch::Receiver<bool>)>>,
 }
 
@@ -158,6 +159,16 @@ pub struct Spawn {
 
 /// 작업을 기록하고 프로세스를 시작한다. 반환 시점에 row는 commit되어 있다.
 pub async fn spawn(app: &App, s: Spawn) -> ApiResult<Task> {
+    let (_sender, mut cancel) = watch::channel(false);
+    spawn_with_cancel(app,s,&mut cancel).await
+}
+
+async fn spawn_with_cancel(app: &App, s: Spawn, cancel: &mut watch::Receiver<bool>) -> ApiResult<Task> {
+    let sid = s.session_id.clone();
+    let project = app.db.call(move |c| Ok(crate::sessions::get_active(c,&sid)?.project_id)).await?;
+    let resource = app.project_resources.tool(app,&project,crate::tools::Effect::Execute,cancel).await
+        .map_err(|e|ApiError::conflict(e.code,e.message))?;
+    if let Some(call)=s.call_id.clone() { app.db.call(move |c|crate::approvals::check_running_execution(c,&call)).await?; }
     let id = crate::util::new_id();
     let now = app.now();
     let (plan, id2) = (s.clone(), id.clone());
@@ -170,7 +181,7 @@ pub async fn spawn(app: &App, s: Spawn) -> ApiResult<Task> {
             Ok(root)
         })
         .await?;
-    launch(app,s,id,root).await
+    launch(app,s,id,root,resource,Some(cancel.clone())).await
 }
 
 /// 도구 실행과 직접 사용자 요청이 같은 작업/로그/이벤트 접수 경계를 쓴다.
@@ -193,7 +204,7 @@ fn record_start(c: &Connection, id: &str, s: &Spawn, now: &str, expected_root: O
     Ok(root)
 }
 
-async fn launch(app: &App, s: Spawn, id: String, root: PathBuf) -> ApiResult<Task> {
+async fn launch(app: &App, s: Spawn, id: String, root: PathBuf, _resource: Option<crate::project_resources::Lease>, initial_cancel: Option<watch::Receiver<bool>>) -> ApiResult<Task> {
     let (data, log_id) = (app.cfg.data_dir.clone(), id.clone());
     let files = match tokio::task::spawn_blocking(move || crate::task_logs::create(&data, &log_id)).await {
         Ok(Ok(f)) => f,
@@ -206,6 +217,11 @@ async fn launch(app: &App, s: Spawn, id: String, root: PathBuf) -> ApiResult<Tas
             return app.db.call(move |c| get(c, &i)).await;
         }
     };
+    if app.is_shutting_down() || initial_cancel.as_ref().is_some_and(|cancel| *cancel.borrow()) {
+        drop(files);
+        finalize(app,&id,End::Cancelled(if app.is_shutting_down() {"server_shutdown before spawn"} else {"turn cancelled before spawn"}),[crate::task_logs::Report::empty(),crate::task_logs::Report::empty()]).await?;
+        return app.db.call(move |c| get(c,&id)).await;
+    }
     let started = match resolve(&root, &s.cwd_rel) {
         // 작업 ID가 실행 표식이다: 재시작 때 잔여 프로세스를 PID 재사용과 무관하게 찾는다(EXEC-010).
         Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.shell, &s.command, &cwd, &id, s.limits)
@@ -384,7 +400,7 @@ pub async fn summary(app: &App, t: &Task) -> ApiResult<Value> {
 /// 도구 호출 경로: hold 동안 기다리고, 안 끝나면 분리(detach)한다. 분리와 완료는 DB에서 원자적으로 경합한다.
 pub async fn run_with_hold(app: &App, s: Spawn, hold_ms: u64, mut cancel: watch::Receiver<bool>) -> Result<Value, crate::tools::ToolError> {
     use crate::tools::ToolError;
-    let t = spawn(app, s).await.map_err(|e| ToolError::new("spawn_failed", e.message))?;
+    let t = spawn_with_cancel(app, s, &mut cancel).await.map_err(|e| ToolError::new(e.code, e.message))?;
     if let Some(mut done) = app.tasks.done_rx(&t.id) {
         let cancelled = tokio::select! {
             _ = async { let _ = done.wait_for(|d| *d).await; } => false,
@@ -484,15 +500,20 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         return Ok(r);
     }
     let sid = session_id.clone();
-    let (root, shell, limits) = app
+    let (root, shell, limits, project) = app
         .db
         .call(move |c| {
             let s = crate::sessions::get_active(c, &sid)?;
             let shell = crate::settings::effective(c, "exec.shell", Some(&s.project_id), Some(&sid))?;
             let limits = crate::procs::Limits::effective(c, Some(&s.project_id), Some(&sid))?;
-            Ok((crate::sessions::exec_root(c, &sid)?, crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string(), limits))
+            Ok((crate::sessions::exec_root(c, &sid)?, crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string(), limits, s.project_id))
         })
         .await?;
+    let queue=app.tasks.admission.get(&project);
+    let admission=queue.lock().await;
+    crate::auth::revalidate(&app,&p).await?;
+    if let Some(response)=idem::replay(&app,&p,&headers,&h).await? { return Ok(response); }
+    let resource = Some(crate::project_resources::Lease::Write { _guard:app.project_resources.process_start(&app,&project,&p).await? });
     let cwd = resolve(&root, b.cwd.as_deref().unwrap_or(".")).map_err(|e| ApiError::invalid(e.message))?;
     if !cwd.is_dir() {
         return Err(ApiError::invalid("cwd 디렉터리가 없습니다"));
@@ -509,7 +530,8 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         Ok((StatusCode::CONFLICT,pending))
     }).await?;
     if accepted.headers().contains_key("idempotent-replayed") { return Ok(accepted); }
-    let t=launch(&app,s,id,root).await.map_err(|e| {
+    drop(admission);
+    let t=launch(&app,s,id,root,resource,None).await.map_err(|e| {
         tracing::warn!(code=e.code,"접수한 작업의 시작 결과 불명");
         unknown.clone()
     })?;

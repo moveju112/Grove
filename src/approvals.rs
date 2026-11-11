@@ -349,6 +349,40 @@ enum ExecutionClaim {
     Run(ToolCallRow, ApiResult<std::path::PathBuf>),
 }
 
+fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiResult<Option<tools::ToolError>> {
+    let Some(spec) = tools::spec(&call.name) else { return Ok(None); };
+    let policy = tool_policy(c,&call.project_id,&call.session_id,&spec)?;
+    let needs = if call.name=="agent" { crate::agents::approval_policy(c,&call.project_id,&call.session_id,&call.target)? }
+        else { Some(tools::needs_approval(spec.effect)) };
+    let granted = call.name!="agent" && c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM session_tool_grants WHERE session_id=?1 AND tool=?2)",
+        params![call.session_id,call.name],|r|r.get::<_,bool>(0),
+    )?;
+    let blocked = match policy {
+        PolicyDecision::Deny(code,message) => Some((code,message)),
+        _ if needs.is_none() => Some(("delegation_disabled","위임 정책이 변경돼 실행하지 않았습니다".into())),
+        PolicyDecision::Allow => None,
+        _ if needs==Some(true) && call.approval_scope.as_deref()!=Some("once") && !granted =>
+            Some(("approval_revoked","대기 중 자동 허용 또는 대화 범위 승인이 해제돼 실행하지 않았습니다. 새 승인이 필요합니다".into())),
+        _ => None,
+    };
+    Ok(blocked.map(|(code,message)|tools::ToolError::new(code,message)))
+}
+
+/// 프로젝트 guard 대기가 끝난 뒤에도 현재 권한과 중지 접수 상태를 다시 확인한다.
+pub(crate) fn check_running_execution(c: &Connection, id: &str) -> ApiResult<()> {
+    let call=get(c,id)?;
+    if call.status!="running" { return Err(ApiError::conflict("cancelled","이미 끝난 도구를 실행하지 않았습니다")); }
+    if let Some(turn)=&call.turn_id {
+        let parent=crate::runner::get_turn(c,turn)?;
+        if !matches!(parent.status.as_str(),"running"|"awaiting_approval") || !parent.error.is_null() {
+            return Err(ApiError::conflict("cancelled","턴 중지 요청으로 실행하지 않았습니다"));
+        }
+    }
+    if let Some(error)=execution_permission(c,&call)? { return Err(ApiError::conflict(error.code,error.message)); }
+    Ok(())
+}
+
 fn claim_execution(c: &mut Connection, id: &str) -> ApiResult<ExecutionClaim> {
     let tx = c.transaction()?;
     let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
@@ -371,28 +405,10 @@ fn claim_execution(c: &mut Connection, id: &str) -> ApiResult<ExecutionClaim> {
         }
     }
     // 대기 중 금지·읽기 전용으로 바뀌면 옛 자동 허용/승인을 사용해 새 부작용을 시작하지 않는다.
-    if let Some(spec) = tools::spec(&call.name) {
-        let policy = tool_policy(&tx, &call.project_id, &call.session_id, &spec)?;
-        let needs = if call.name == "agent" {
-            crate::agents::approval_policy(&tx, &call.project_id, &call.session_id, &call.target)?
-        } else { Some(tools::needs_approval(spec.effect)) };
-        let granted = call.name != "agent" && tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM session_tool_grants WHERE session_id=?1 AND tool=?2)",
-            params![call.session_id,call.name], |r| r.get::<_, bool>(0),
-        )?;
-        let blocked = match policy {
-            PolicyDecision::Deny(code, message) => Some((code,message)),
-            _ if needs.is_none() => Some(("delegation_disabled","위임 정책이 변경돼 실행하지 않았습니다".into())),
-            PolicyDecision::Allow => None,
-            _ if needs == Some(true) && call.approval_scope.as_deref() != Some("once") && !granted =>
-                Some(("approval_revoked","대기 중 자동 허용 또는 대화 범위 승인이 해제돼 실행하지 않았습니다. 새 승인이 필요합니다".into())),
-            _ => None,
-        };
-        if let Some((code,message)) = blocked {
-            finish(&tx, &now, id, &["approved"], "failed", Some(tools::ToolError::new(code,message).to_json()))?;
-            tx.commit()?;
-            return Ok(ExecutionClaim::Finished(call.turn_id));
-        }
+    if let Some(error)=execution_permission(&tx,&call)? {
+        finish(&tx,&now,id,&["approved"],"failed",Some(error.to_json()))?;
+        tx.commit()?;
+        return Ok(ExecutionClaim::Finished(call.turn_id));
     }
     let n = tx.execute(
         "UPDATE tool_calls SET status = 'running', started_at = ?2, updated_at = ?2, revision = revision + 1 WHERE id = ?1 AND status = 'approved'",
@@ -433,7 +449,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 }
             }
         };
-        let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
+        let (cancel_tx, mut cancel_rx) = tokio::sync::watch::channel(false);
         app.cancels.register(&call.id, cancel_tx);
         if let Some(t) = &call.turn_id {
             // 턴이 이미 취소 요청되었으면 도구도 즉시 취소 신호를 받는다.
@@ -441,8 +457,18 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 app.cancels.cancel(&call.id);
             }
         }
+        // hold/background 셸은 task 접수 경계에서 guard를 얻는다. 이중 획득으로 교착시키지 않는다.
+        let resource = if call.name == "shell" && call.target.get("hold_ms").is_some() { Ok(None) }
+            else if let Some(spec) = tools::spec(&call.name) { app.project_resources.tool(&app,&call.project_id,spec.effect,&mut cancel_rx).await }
+            else { Ok(None) };
+        let (_resource, mut blocked) = match resource { Ok(lease)=>(lease,None),Err(error)=>(None,Some(error)) };
+        if blocked.is_none() {
+            let id=call.id.clone();
+            blocked=app.db.call(move |c|check_running_execution(c,&id)).await.err().map(|e|tools::ToolError::new(e.code,e.message));
+        }
         let mut file_recs: Vec<crate::changes::Rec> = vec![];
         let outcome = match root {
+            _ if blocked.is_some() => Err(blocked.expect("resource error")),
             _ if *cancel_rx.borrow() => Err(tools::ToolError::new("cancelled","실행 전에 취소돼 시작하지 않았습니다")),
             Err(e) => Err(tools::ToolError::new("project_unavailable", e.message)),
             Ok(_) if call.name == "agent" => crate::agents::execute_tool(&app, &call, cancel_rx).await,

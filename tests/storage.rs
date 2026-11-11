@@ -1276,7 +1276,7 @@ async fn failed_file_change_transaction_preserves_files_and_recovers_without_ree
         };
         db.execute_batch(sql).unwrap();
         // 승인 완료 직후의 상태에서 같은 실제 실행 경로를 호출하고 JoinHandle로 완료를 기다린다.
-        db.execute("UPDATE tool_calls SET status='approved' WHERE id=?1", [&id])
+        db.execute("UPDATE tool_calls SET status='approved',approval_scope='once' WHERE id=?1", [&id])
             .unwrap();
         let app = s.server.as_ref().unwrap().app.clone();
         grove::approvals::spawn_execute(&app, id.clone())

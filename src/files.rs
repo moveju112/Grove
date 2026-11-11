@@ -74,6 +74,7 @@ pub struct ListQuery {
 
 pub async fn list(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<ListQuery>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
     let dir = resolve_api(&root, q.path.as_deref().unwrap_or("."))?;
     let rd = std::fs::read_dir(&dir).map_err(|e| io_err(e, "폴더 열기"))?;
     let mut entries = vec![];
@@ -131,6 +132,7 @@ fn preview_kind(p: &FsPath) -> &'static str {
 
 pub async fn content(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<PathQuery>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
     let p = resolve_api(&root, &q.path)?;
     let m = std::fs::metadata(&p).map_err(|e| io_err(e, "파일"))?;
     if !m.is_file() {
@@ -181,6 +183,7 @@ impl Tickets {
 
 pub async fn ticket(State(app): State<App>, principal: Principal, Path(id): Path<String>, Json(q): Json<PathQuery>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app,&id,&principal).await?;
     let p = resolve_api(&root, &q.path)?;
     if !p.is_file() {
         return Err(ApiError::invalid("파일이 아닙니다"));
@@ -199,17 +202,18 @@ pub struct TicketQuery {
 pub async fn by_ticket(State(app): State<App>, Path(t): Path<String>, Query(q): Query<TicketQuery>) -> ApiResult<Response> {
     let (pid, path, principal) = app.tickets.check(&t).ok_or_else(|| ApiError::unauthorized("만료되었거나 잘못된 파일 링크입니다"))?;
     crate::auth::revalidate(&app, &principal).await?;
-    serve(&app, &pid, &path, q.download).await
+    serve(&app, &pid, &path, q.download,&principal).await
 }
 
 /// preview·다운로드. 스크립트가 실행되지 않도록 sandbox CSP와 nosniff를 붙이고, HTML은 원문 텍스트로만 보낸다.
 pub async fn raw(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<RawQuery>) -> ApiResult<Response> {
-    serve(&app, &id, &q.path, q.download).await
+    serve(&app, &id, &q.path, q.download,&_p).await
 }
 
-async fn serve(app: &App, id: &str, path: &str, download: bool) -> ApiResult<Response> {
+async fn serve(app: &App, id: &str, path: &str, download: bool, principal: &Principal) -> ApiResult<Response> {
     let q = RawQuery { path: path.to_string(), download };
     let root = root_of(app, id).await?;
+    let _resource = app.project_resources.ui_read(app,id,principal).await?;
     let p = resolve_api(&root, &q.path)?;
     let m = std::fs::metadata(&p).map_err(|e| io_err(e, "파일"))?;
     if !m.is_file() {
@@ -419,9 +423,11 @@ fn execute_mutation(work: FileWork) -> ApiResult<()> {
 }
 
 async fn mutate(app: App, p: Principal, headers: HeaderMap, id: String, mutation: FileMutation) -> ApiResult<Response> {
-    let _guard = app.storage.mutations.lock().await;
     let h = idem::body_hash("files.mutate", &json!({"project_id":id,"request":mutation}));
     if let Some(response) = idem::replay(&app, &p, &headers, &h).await? { return Ok(response); }
+    let _resource = app.project_resources.ui_write(&app,&id,&p).await?;
+    let _guard = app.storage.mutations.lock().await;
+    if let Some(response) = idem::replay(&app,&p,&headers,&h).await? { return Ok(response); }
     let (pid, input, copy_id) = (id.clone(), mutation.clone(), crate::util::new_id());
     let staging_id = copy_id.clone();
     let (root, mut details) = app.db.call(move |c| {

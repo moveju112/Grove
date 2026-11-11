@@ -16,23 +16,12 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const MAX_DIFF: usize = 512 * 1024;
 
-#[derive(Default)]
-pub struct RepoLocks {
-    map: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
-}
-
-impl RepoLocks {
-    pub(crate) fn get(&self, project: &str) -> Arc<tokio::sync::Mutex<()>> {
-        self.map.lock().expect("repo locks").entry(project.to_string()).or_default().clone()
-    }
-}
+pub type RepoLocks = crate::project_resources::ProjectQueues;
 
 pub struct GitOut {
     pub code: i32,
@@ -182,6 +171,7 @@ async fn fingerprint(root: &std::path::Path) -> ApiResult<String> {
 
 pub async fn status(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
     if !is_repo(&root).await? {
         return Ok(Json(json!({ "is_repo": false })));
     }
@@ -197,6 +187,7 @@ pub async fn status(State(app): State<App>, _p: Principal, Path(id): Path<String
 
 pub async fn diff(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<DiffQuery>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
     if let Some(p) = &q.path {
         check_path(p)?;
     }
@@ -211,6 +202,7 @@ pub struct LogQuery {
 
 pub async fn log(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<LogQuery>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
     let n = q.limit.unwrap_or(50).clamp(1, 500).to_string();
     let o = git(&root, &["log", "-n", &n, "--format=%H%x1f%an%x1f%aI%x1f%s%x1e"], true).await?;
     if o.code != 0 {
@@ -229,6 +221,7 @@ pub async fn log(State(app): State<App>, _p: Principal, Path(id): Path<String>, 
 
 pub async fn branches(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
     let o = git(&root, &["branch", "--format=%(refname:short)%1f%(HEAD)%1f%(objectname:short)"], true).await?;
     if o.code != 0 {
         return Err(fail(&o, "branch 목록"));
@@ -260,11 +253,13 @@ async fn mutate(
     }
     let lock = app.repo_locks.get(&project_id);
     let _g = lock.lock().await;
+    crate::auth::revalidate(&app,&p).await?;
     let h = idem::body_hash(route, &json!({ "p": project_id, "b": body, "e": expected }));
     // 같은 키 재전송이면 실행 없이 저장된 결과를 돌려준다.
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
+    let _resource = app.project_resources.ui_write(&app,&project_id,&p).await?;
     if let Some(exp) = &expected {
         let cur = fingerprint(&root).await?;
         if &cur != exp {
@@ -493,6 +488,7 @@ pub struct HunksQuery {
 pub async fn hunks(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<HunksQuery>) -> ApiResult<Json<Value>> {
     check_path(&q.path)?;
     let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
     let (text, truncated) = diff_text(&root, q.staged.unwrap_or(false), Some(&q.path)).await?;
     let (_, hs) = split_hunks(&text);
     Ok(Json(json!({ "path": q.path, "hunks": hs, "truncated": truncated, "fingerprint": fingerprint(&root).await? })))
@@ -723,6 +719,7 @@ pub async fn show_commit(State(app): State<App>, _p: Principal, Path((id, rev)):
         return Err(ApiError::invalid("commit hash가 올바르지 않습니다"));
     }
     let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
     let meta = git(&root, &["show", "-s", "--format=%H%x1f%an%x1f%aI%x1f%B", &rev, "--"], true).await?;
     if meta.code != 0 {
         return Err(ApiError::not_found("commit이 없습니다"));
@@ -763,6 +760,7 @@ pub async fn compare(State(app): State<App>, _p: Principal, Path(id): Path<Strin
     }
     let root = root_of(&app, &id).await?;
     let range = format!("{}...HEAD", q.base);
+    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
     let o = git(&root, &["diff", "--no-ext-diff", "--find-renames", &range, "--"], true).await?;
     if o.code != 0 {
         return Err(fail(&o, "비교"));

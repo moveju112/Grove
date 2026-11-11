@@ -935,11 +935,17 @@ async fn mutate(
     op: Op,
     body: Value,
 ) -> ApiResult<Response> {
-    let _guard = app.storage.mutations.lock().await;
     let h = idem::body_hash("trash", &body);
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
+    let project = match &op {
+        Op::Delete { project_id,.. } => project_id.clone(),
+        Op::Restore { id } | Op::Purge { id,.. } => entry(&app,id)?.1.project_id,
+    };
+    let _resource = app.project_resources.ui_write(&app,&project,&p).await?;
+    let _guard = app.storage.mutations.lock().await;
+    if let Some(response) = idem::replay(&app,&p,&headers,&h).await? { return Ok(response); }
     let a = app.clone();
     let plan = tokio::task::spawn_blocking(move || prepare(&a, op))
         .await

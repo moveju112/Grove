@@ -29,6 +29,7 @@ pub mod model_headers;
 pub mod models;
 pub mod changes;
 pub mod procs;
+pub mod project_resources;
 pub mod storage;
 pub mod projects;
 pub mod provider;
@@ -94,6 +95,7 @@ pub struct App {
     pub cancels: Arc<runner::Cancels>,
     pub fair: fair::Fair,
     pub repo_locks: Arc<git::RepoLocks>,
+    pub project_resources: Arc<project_resources::ProjectResources>,
     pub tickets: Arc<files::Tickets>,
     pub tasks: Arc<tasks::Tasks>,
     pub terminals: Arc<terminals::Terminals>,
@@ -127,6 +129,7 @@ impl App {
             cancels: Arc::new(runner::Cancels::default()),
             fair: fair::Fair::default(),
             repo_locks: Arc::new(git::RepoLocks::default()),
+            project_resources: Arc::new(project_resources::ProjectResources::default()),
             tickets: Arc::new(files::Tickets::default()),
             tasks: Arc::new(tasks::Tasks::default()),
             terminals: Arc::new(terminals::Terminals::default()),
