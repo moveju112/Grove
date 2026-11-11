@@ -160,32 +160,32 @@ pub async fn content(State(app): State<App>, _p: Principal, Path(id): Path<Strin
 /// `<img>`·새 탭처럼 Authorization 헤더를 보낼 수 없는 요청용 단기 티켓(FILEUI-005).
 /// 프로젝트·경로 하나에만 유효하고 5분 뒤 만료된다. 프로세스 메모리에만 있어 재시작하면 사라진다.
 #[derive(Default)]
-pub struct Tickets(std::sync::Mutex<std::collections::HashMap<String, (String, String, std::time::Instant)>>);
+pub struct Tickets(std::sync::Mutex<std::collections::HashMap<String, (String, String, std::time::Instant, Principal)>>);
 
 const TICKET_TTL: std::time::Duration = std::time::Duration::from_secs(300);
 
 impl Tickets {
-    fn issue(&self, project_id: &str, path: &str) -> String {
+    fn issue(&self, project_id: &str, path: &str, principal: Principal) -> String {
         let t = crate::util::random_secret(24);
         let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let now = std::time::Instant::now();
         m.retain(|_, v| v.2 > now);
-        m.insert(t.clone(), (project_id.to_string(), path.to_string(), now + TICKET_TTL));
+        m.insert(t.clone(), (project_id.to_string(), path.to_string(), now + TICKET_TTL, principal));
         t
     }
-    fn check(&self, ticket: &str) -> Option<(String, String)> {
+    fn check(&self, ticket: &str) -> Option<(String, String, Principal)> {
         let m = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        m.get(ticket).filter(|v| v.2 > std::time::Instant::now()).map(|v| (v.0.clone(), v.1.clone()))
+        m.get(ticket).filter(|v| v.2 > std::time::Instant::now()).map(|v| (v.0.clone(), v.1.clone(), v.3.clone()))
     }
 }
 
-pub async fn ticket(State(app): State<App>, _p: Principal, Path(id): Path<String>, Json(q): Json<PathQuery>) -> ApiResult<Json<Value>> {
+pub async fn ticket(State(app): State<App>, principal: Principal, Path(id): Path<String>, Json(q): Json<PathQuery>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
     let p = resolve_api(&root, &q.path)?;
     if !p.is_file() {
         return Err(ApiError::invalid("파일이 아닙니다"));
     }
-    let t = app.tickets.issue(&id, &rel_display(&root, &p));
+    let t = app.tickets.issue(&id, &rel_display(&root, &p), principal);
     Ok(Json(json!({ "url": format!("/api/v1/file-tickets/{t}"), "expires_in": TICKET_TTL.as_secs() })))
 }
 
@@ -197,7 +197,8 @@ pub struct TicketQuery {
 
 /// 티켓으로 여는 preview·다운로드. 인증 대신 티켓이 프로젝트·경로를 고정한다.
 pub async fn by_ticket(State(app): State<App>, Path(t): Path<String>, Query(q): Query<TicketQuery>) -> ApiResult<Response> {
-    let (pid, path) = app.tickets.check(&t).ok_or_else(|| ApiError::unauthorized("만료되었거나 잘못된 파일 링크입니다"))?;
+    let (pid, path, principal) = app.tickets.check(&t).ok_or_else(|| ApiError::unauthorized("만료되었거나 잘못된 파일 링크입니다"))?;
+    crate::auth::revalidate(&app, &principal).await?;
     serve(&app, &pid, &path, q.download).await
 }
 

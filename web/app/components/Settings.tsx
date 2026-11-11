@@ -390,13 +390,14 @@ function Devices() {
     if (list.error instanceof ApiError && list.error.code === "forbidden") return <p className="muted">기기 관리는 소유자만 할 수 있습니다.</p>;
     return (
         <>
+            <p className="muted small">등록 기기는 모든 프로젝트·대화·파일을 공유하고 명령·터미널을 실행할 수 있습니다. 기기·비밀·모델 프로필 관리는 소유자만 할 수 있습니다.</p>
             <ul>
                 {(list.data ?? []).filter((d) => d.kind !== "browser" || !d.revoked_at).map((d) => (
                     <li key={d.id}>
                         {d.name} <span className="muted small">{d.kind === "owner" ? "소유자" : d.kind === "device" ? "기기" : "브라우저 로그인"}</span>
                         {d.current && <span className="muted small"> (현재)</span>}
                         {d.revoked_at ? <span className="muted small"> · 폐기됨</span> : d.kind !== "owner" && (
-                            <button className="ghost small" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요?`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</button>
+                            <button className="ghost small" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</button>
                         )}
                         {d.last_used_at && <span className="muted small"> · 최근 {new Date(d.last_used_at).toLocaleString()}</span>}
                     </li>

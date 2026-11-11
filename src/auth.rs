@@ -33,6 +33,9 @@ pub struct Principal {
     pub root_id: String,
     pub kind: String,
     pub is_owner: bool,
+    /// 티켓·장기 연결도 발급 당시 access 자격의 수명 이상으로 권한을 연장하지 않는다.
+    #[serde(skip)]
+    valid_until: Option<time::OffsetDateTime>,
 }
 
 pub fn format_token(id: &str, secret: &str) -> String {
@@ -58,11 +61,11 @@ impl AccessTokens {
         m.insert(sha256_hex(secret.as_bytes()), (browser_id.to_string(), exp));
         (format!("gva_{secret}"), exp)
     }
-    fn lookup(&self, raw: &str, now: time::OffsetDateTime) -> Option<String> {
+    fn lookup(&self, raw: &str, now: time::OffsetDateTime) -> Option<(String, time::OffsetDateTime)> {
         let secret = raw.strip_prefix("gva_")?;
         let m = self.map.lock().expect("access tokens");
         let (bid, exp) = m.get(&sha256_hex(secret.as_bytes()))?;
-        (*exp > now).then(|| bid.clone())
+        (*exp > now).then(|| (bid.clone(), *exp))
     }
     pub fn revoke_browser(&self, browser_id: &str) {
         self.map.lock().expect("access tokens").retain(|_, (b, _)| b != browser_id);
@@ -89,24 +92,30 @@ pub(crate) fn verify_row(conn: &Connection, id: &str, secret: Option<&str>, now:
     if revoked.is_some() {
         return Err(ApiError::unauthorized("폐기된 토큰입니다"));
     }
-    if let Some(exp) = expires {
+    if let Some(exp) = &expires {
         if exp.as_str() <= now {
             return Err(ApiError::unauthorized("만료된 토큰입니다"));
         }
     }
+    let mut valid_until = expires.as_deref().and_then(parse_time);
     let root_id = match (&kind[..], parent) {
         ("browser", Some(p)) => {
-            let parent_ok: Option<(String, Option<String>)> = conn
-                .query_row("SELECT kind, revoked_at FROM tokens WHERE id = ?1", params![p], |r| {
-                    Ok((r.get(0)?, r.get(1)?))
+            let parent_ok: Option<(String, Option<String>, Option<String>)> = conn
+                .query_row("SELECT kind, revoked_at, expires_at FROM tokens WHERE id = ?1", params![p], |r| {
+                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
                 })
                 .optional()?;
             match parent_ok {
-                Some((_, None)) => p,
-                _ => return Err(ApiError::unauthorized("상위 기기 토큰이 폐기되었습니다")),
+                Some((kind, None, exp)) if matches!(kind.as_str(), "owner" | "device")
+                    && exp.as_deref().is_none_or(|e| e > now) => {
+                    valid_until = valid_until.into_iter().chain(exp.as_deref().and_then(parse_time)).min();
+                    p
+                }
+                _ => return Err(ApiError::unauthorized("상위 기기 토큰이 만료되었거나 폐기되었습니다")),
             }
         }
-        _ => id.to_string(),
+        ("owner" | "device", None) => id.to_string(),
+        _ => return Err(ApiError::unauthorized("토큰의 권한 계층이 올바르지 않습니다")),
     };
     let is_owner = if kind == "owner" {
         true
@@ -115,7 +124,46 @@ pub(crate) fn verify_row(conn: &Connection, id: &str, secret: Option<&str>, now:
     } else {
         false
     };
-    Ok(Principal { token_id: id.to_string(), root_id, kind, is_owner })
+    Ok(Principal { token_id: id.to_string(), root_id, kind, is_owner, valid_until })
+}
+
+/// 이미 인증한 주체를 현재 DB 상태와 다시 대조한다. 원문 토큰을 티켓에 보관하지 않는다.
+pub(crate) fn check_principal(conn: &Connection, p: &Principal, now: &str) -> ApiResult<Option<time::OffsetDateTime>> {
+    let current = verify_row(conn, &p.token_id, None, now)?;
+    if current.root_id != p.root_id || current.kind != p.kind || current.is_owner != p.is_owner {
+        return Err(ApiError::unauthorized("인증 주체의 권한이 변경되었습니다"));
+    }
+    let until = p.valid_until.into_iter().chain(current.valid_until).min();
+    if until.is_some_and(|exp| fmt_time(exp).as_str() <= now) {
+        return Err(ApiError::unauthorized("연결 자격이 만료되었습니다"));
+    }
+    Ok(until)
+}
+
+pub(crate) async fn revalidate(app: &App, p: &Principal) -> ApiResult<Option<time::OffsetDateTime>> {
+    let (p, now) = (p.clone(), app.now());
+    app.db.call(move |c| check_principal(c, &p, &now)).await
+}
+
+/// 폐기·로그아웃 알림과 자격의 고정 만료 시각을 기다린다. idle 연결에도 적용한다.
+pub(crate) async fn wait_until_invalid(app: App, p: Principal) -> ApiError {
+    let mut changed = app.auth_tx.subscribe();
+    loop {
+        let until = match revalidate(&app, &p).await {
+            Ok(until) => until,
+            Err(error) => return error,
+        };
+        let expiry = async {
+            match until {
+                Some(exp) => tokio::time::sleep((exp - app.clock.now()).try_into().unwrap_or_default()).await,
+                None => std::future::pending::<()>().await,
+            }
+        };
+        tokio::select! {
+            _ = changed.changed() => {}
+            _ = expiry => {}
+        }
+    }
 }
 
 pub async fn authenticate(app: &App, headers: &HeaderMap) -> ApiResult<Principal> {
@@ -129,8 +177,12 @@ pub async fn authenticate(app: &App, headers: &HeaderMap) -> ApiResult<Principal
     let now = app.clock.now();
     let now_s = fmt_time(now);
     if raw.starts_with("gva_") {
-        let bid = app.access.lookup(&raw, now).ok_or_else(|| ApiError::unauthorized("access token이 만료되었거나 무효입니다"))?;
-        return app.db.call(move |c| verify_row(c, &bid, None, &now_s)).await;
+        let (bid, exp) = app.access.lookup(&raw, now).ok_or_else(|| ApiError::unauthorized("access token이 만료되었거나 무효입니다"))?;
+        return app.db.call(move |c| {
+            let mut p = verify_row(c, &bid, None, &now_s)?;
+            p.valid_until = p.valid_until.into_iter().chain(Some(exp)).min();
+            Ok(p)
+        }).await;
     }
     let (id, secret) = parse_token(&raw).ok_or_else(|| ApiError::unauthorized("토큰 형식이 올바르지 않습니다"))?;
     let (id, secret) = (id.to_string(), secret.to_string());
@@ -353,6 +405,7 @@ pub async fn revoke_device(
         Ok((StatusCode::OK, json!({ "id": id, "revoked": true })))
     })
     .await?;
+    app.auth_tx.send_replace(());
     // 폐기된 브라우저 세션의 메모리 access token도 무효화
     let children: Vec<String> = app
         .db
@@ -538,12 +591,16 @@ pub async fn browser_refresh(State(app): State<App>, headers: HeaderMap) -> ApiR
 pub async fn browser_logout(State(app): State<App>, headers: HeaderMap) -> ApiResult<Response> {
     check_origin(&app, &headers)?;
     if let Some(raw) = cookie_value(&headers, &refresh_cookie_name(&headers)).or_else(|| cookie_value(&headers, REFRESH_COOKIE)) {
-        if let Some((id, _)) = parse_token(&raw) {
-            let id = id.to_string();
+        if let Some((id, secret)) = parse_token(&raw) {
+            let (id, secret) = (id.to_string(), secret.to_string());
             let now = fmt_time(app.clock.now());
             let id2 = id.clone();
             app.db
                 .call(move |c| {
+                    let p = verify_row(c, &id2, Some(&secret), &now)?;
+                    if p.kind != "browser" {
+                        return Err(ApiError::unauthorized("브라우저 세션이 아닙니다"));
+                    }
                     c.execute(
                         "UPDATE tokens SET revoked_at = COALESCE(revoked_at, ?2) WHERE id = ?1 AND kind = 'browser'",
                         params![id2, now],
@@ -551,6 +608,7 @@ pub async fn browser_logout(State(app): State<App>, headers: HeaderMap) -> ApiRe
                     Ok(())
                 })
                 .await?;
+            app.auth_tx.send_replace(());
             app.access.revoke_browser(&id);
         }
     }
@@ -561,4 +619,51 @@ pub async fn browser_logout(State(app): State<App>, headers: HeaderMap) -> ApiRe
 
 pub async fn whoami(p: Principal) -> Json<Principal> {
     Json(p)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::util::Clock;
+    use std::sync::Arc;
+    use time::OffsetDateTime;
+
+    struct ManualClock(Mutex<OffsetDateTime>);
+    impl Clock for ManualClock {
+        fn now(&self) -> OffsetDateTime { *self.0.lock().unwrap() }
+    }
+
+    #[tokio::test]
+    async fn access_expiry_is_not_extended_by_refresh_for_existing_tickets_or_connections() {
+        let dir = tempfile::tempdir().unwrap();
+        let clock = Arc::new(ManualClock(Mutex::new(OffsetDateTime::now_utc())));
+        let cfg = crate::config::Config {
+            data_dir: dir.path().to_path_buf(), listen: "127.0.0.1:0".parse().unwrap(),
+            allowed_origins: vec![], allowed_hosts: vec![], tls_terminated: false, web_dir: None,
+            enable_tool_loop: true, approval_ttl_secs: 1800, scheduler_tick_ms: 100,
+        };
+        let app = App::new(cfg, clock.clone()).unwrap();
+        let owner = ensure_owner_token(&app).unwrap();
+        let parent = parse_token(&owner).unwrap().0.to_string();
+        let browser_id = new_id();
+        let (bid, now) = (browser_id.clone(), app.now());
+        app.db.call(move |c| {
+            c.execute("INSERT INTO tokens (id,kind,name,secret_hash,parent_id,created_at) VALUES (?1,'browser','expiry',?2,?3,?4)",
+                params![bid, sha256_hex(b"test-refresh-secret"), parent, now])?;
+            Ok(())
+        }).await.unwrap();
+        let (access, _) = app.access.issue(&browser_id, clock.now());
+        let mut headers = HeaderMap::new();
+        headers.insert(header::AUTHORIZATION, format!("Bearer {access}").parse().unwrap());
+        let old = authenticate(&app, &headers).await.unwrap();
+        assert!(revalidate(&app, &old).await.is_ok());
+        *clock.0.lock().unwrap() += ACCESS_TTL + Duration::seconds(1);
+        let (fresh, _) = app.access.issue(&browser_id, clock.now());
+        headers.insert(header::AUTHORIZATION, format!("Bearer {fresh}").parse().unwrap());
+        let new = authenticate(&app, &headers).await.unwrap();
+        assert!(revalidate(&app, &new).await.is_ok());
+        assert_eq!(revalidate(&app, &old).await.unwrap_err().status, StatusCode::UNAUTHORIZED);
+        tokio::time::timeout(std::time::Duration::from_secs(1), wait_until_invalid(app, old))
+            .await.expect("이전 access로 열린 연결은 갱신된 access의 수명을 빌릴 수 없다");
+    }
 }

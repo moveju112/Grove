@@ -599,7 +599,7 @@ pub struct WaitQuery {
 
 /// 완료·같은 세션의 새 입력·관련 알림을 기다린다(EXEC-006). watch 알림 때만 DB를 읽고 주기적으로 조회하지 않는다.
 /// 기다림이 끝나도 실행 중인 프로세스는 그대로 유지한다.
-pub async fn wait(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<WaitQuery>) -> ApiResult<Json<Value>> {
+pub async fn wait(State(app): State<App>, p: Principal, Path(id): Path<String>, Query(q): Query<WaitQuery>) -> ApiResult<Json<Value>> {
     // snapshot보다 먼저 구독한다. snapshot 조회와 select 사이의 commit도 changed()가 감지한다.
     let mut events = app.seq_tx.subscribe();
     let mut shutdown = app.shutdown_rx.clone();
@@ -612,8 +612,11 @@ pub async fn wait(State(app): State<App>, _p: Principal, Path(id): Path<String>,
     let mut done = app.tasks.done_rx(&id);
     let deadline = tokio::time::sleep(Duration::from_millis(q.timeout_ms.unwrap_or(30_000).min(300_000)));
     tokio::pin!(deadline);
+    let invalid = crate::auth::wait_until_invalid(app.clone(), p.clone());
+    tokio::pin!(invalid);
     let mut event_seq = None;
     let reason = loop {
+        crate::auth::revalidate(&app, &p).await?;
         let i = id.clone();
         if app.db.call(move |c| get(c, &i)).await?.status != "running" {
             break "completed";
@@ -659,6 +662,7 @@ pub async fn wait(State(app): State<App>, _p: Principal, Path(id): Path<String>,
             continue;
         }
         tokio::select! {
+            error = &mut invalid => return Err(error),
             _ = async {
                 match done.as_mut() {
                     Some(d) => { let _ = d.wait_for(|v| *v).await; }
@@ -670,6 +674,7 @@ pub async fn wait(State(app): State<App>, _p: Principal, Path(id): Path<String>,
             _ = shutdown.wait_for(|v| *v) => break "server_shutdown",
         }
     };
+    crate::auth::revalidate(&app, &p).await?;
     let t = app.db.call(move |c| get(c, &id)).await?;
     let mut v = summary(&app, &t).await?;
     let reason = if t.status == "running" { reason } else { "completed" };

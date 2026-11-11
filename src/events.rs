@@ -134,7 +134,7 @@ enum Out {
 
 pub async fn stream(
     State(app): State<App>,
-    _p: Principal,
+    p: Principal,
     headers: HeaderMap,
     Query(q): Query<StreamQuery>,
 ) -> ApiResult<Sse<impl Stream<Item = Result<Event, Infallible>>>> {
@@ -155,7 +155,8 @@ pub async fn stream(
     let partials_now: Vec<(String, Value)> =
         sessions.iter().filter_map(|s| app.partials.get(s).map(|v| (s.clone(), v))).collect();
 
-    tokio::spawn(async move {
+    let invalid = crate::auth::wait_until_invalid(app.clone(), p.clone());
+    let producer = async move {
         // 시작 cursor 결정과 보존 범위 검사
         let mut cursor = match start {
             Some(c) => c,
@@ -210,6 +211,7 @@ pub async fn stream(
                 }
             }
             tokio::select! {
+                _ = tx.closed() => return,
                 changed = seq_rx.changed() => { if changed.is_err() { return; } }
                 msg = partial_rx.recv() => {
                     match msg {
@@ -237,12 +239,16 @@ pub async fn stream(
                 }
             }
         }
+    };
+    tokio::spawn(async move {
+        // 큐 backpressure 중이어도 폐기·만료를 받으면 생산자를 취소하고 연결을 끝낸다.
+        tokio::select! { biased; _ = invalid => {}, _ = producer => {} }
     });
 
-    let stream = futures_util::stream::unfold(rx, |mut rx| async move {
+    let stream = futures_util::stream::unfold((rx, app, p), |(mut rx, app, p)| async move {
         match rx.recv().await {
-            Some(Out::Event(e)) => Some((Ok(e), rx)),
-            Some(Out::End) | None => None,
+            Some(Out::Event(e)) if crate::auth::revalidate(&app, &p).await.is_ok() => Some((Ok(e), (rx, app, p))),
+            _ => None,
         }
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("hb")))

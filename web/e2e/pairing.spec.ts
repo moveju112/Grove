@@ -35,6 +35,7 @@ test("QR 이미지를 기기에서 스캔해 한 번 등록하고 장기 자격�
         await form.getByLabel("페어링 QR 사진").setInputFiles({ name: "qr.png", mimeType: "image/png", buffer: image });
         await expect(form.getByLabel("페어링 링크", { exact: true })).toHaveValue(link);
         await expect(form.getByText("등록 대상:")).toContainText(new URL(link).origin);
+        await expect(form.getByText("등록 기기는 모든 프로젝트", { exact: false })).toBeVisible();
         await form.getByRole("button", { name: "이 기기 등록", exact: true }).click();
         await expect(other.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         await expect(panel.getByTestId("pairing-row").filter({ hasText: name })).toContainText("사용됨");

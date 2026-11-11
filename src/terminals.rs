@@ -110,7 +110,7 @@ pub struct Live {
 #[derive(Default)]
 pub struct Terminals {
     live: Mutex<HashMap<String, Arc<Live>>>,
-    tickets: Mutex<HashMap<String, (String, Instant)>>,
+    tickets: Mutex<HashMap<String, (String, Instant, Principal)>>,
 }
 
 impl Terminals {
@@ -120,18 +120,18 @@ impl Terminals {
     fn all(&self) -> Vec<(String, Arc<Live>)> {
         self.live.lock().unwrap_or_else(|e| e.into_inner()).iter().map(|(k, v)| (k.clone(), v.clone())).collect()
     }
-    fn issue_ticket(&self, id: &str) -> String {
+    fn issue_ticket(&self, id: &str, principal: Principal) -> String {
         let t = crate::util::random_secret(24);
         let mut m = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
         let now = Instant::now();
         m.retain(|_, v| v.1 > now);
-        m.insert(t.clone(), (id.to_string(), now + TICKET_TTL));
+        m.insert(t.clone(), (id.to_string(), now + TICKET_TTL, principal));
         t
     }
     /// 일회용: 쓰면 바로 지운다.
-    fn take_ticket(&self, t: &str) -> Option<String> {
+    fn take_ticket(&self, t: &str) -> Option<(String, Principal)> {
         let mut m = self.tickets.lock().unwrap_or_else(|e| e.into_inner());
-        m.remove(t).filter(|v| v.1 > Instant::now()).map(|v| v.0)
+        m.remove(t).filter(|v| v.1 > Instant::now()).map(|v| (v.0, v.2))
     }
 }
 
@@ -408,20 +408,21 @@ pub async fn screen(State(app): State<App>, _p: Principal, Path(id): Path<String
     Ok(([(axum::http::header::CONTENT_TYPE, "application/octet-stream")], data).into_response())
 }
 
-pub async fn ticket(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+pub async fn ticket(State(app): State<App>, principal: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let i = id.clone();
     let t = app.db.call(move |c| get(c, &i)).await?;
     if t.status != "running" || app.terminals.get(&id).is_none() {
         return Err(ApiError::conflict("not_running", "실행 중인 터미널이 아닙니다"));
     }
-    let tk = app.terminals.issue_ticket(&id);
+    let tk = app.terminals.issue_ticket(&id, principal);
     Ok(Json(json!({ "url": format!("/api/v1/terminal-ws/{tk}"), "expires_in": TICKET_TTL.as_secs() })))
 }
 
 pub async fn ws(State(app): State<App>, Path(ticket): Path<String>, up: WebSocketUpgrade) -> ApiResult<Response> {
-    let id = app.terminals.take_ticket(&ticket).ok_or_else(|| ApiError::unauthorized("만료되었거나 이미 쓴 터미널 연결 티켓입니다"))?;
+    let (id, principal) = app.terminals.take_ticket(&ticket).ok_or_else(|| ApiError::unauthorized("만료되었거나 이미 쓴 터미널 연결 티켓입니다"))?;
+    crate::auth::revalidate(&app, &principal).await?;
     let live = app.terminals.get(&id).ok_or_else(|| ApiError::conflict("not_running", "터미널이 이미 끝났습니다"))?;
-    Ok(up.max_message_size(1024 * 1024).on_upgrade(move |sock| session(app, id, live, sock)))
+    Ok(up.max_message_size(1024 * 1024).on_upgrade(move |sock| session(app, id, live, principal, sock)))
 }
 
 #[derive(Deserialize)]
@@ -437,10 +438,16 @@ fn subscribe(live: &Live) -> (broadcast::Receiver<Bytes>, Vec<u8>) {
     (live.tx.subscribe(), r.snapshot())
 }
 
-async fn session(app: App, id: String, live: Arc<Live>, mut sock: WebSocket) {
+async fn session(app: App, id: String, live: Arc<Live>, principal: Principal, mut sock: WebSocket) {
     let (mut rx, snap) = subscribe(&live);
     let mut exited = live.exited.subscribe();
     let mut shutdown = app.shutdown_rx.clone();
+    let invalid = crate::auth::wait_until_invalid(app.clone(), principal.clone());
+    tokio::pin!(invalid);
+    if crate::auth::revalidate(&app, &principal).await.is_err() {
+        let _ = sock.send(Message::Close(None)).await;
+        return;
+    }
     if sock.send(Message::Text(json!({ "type": "hello", "id": id }).to_string().into())).await.is_err()
         || sock.send(Message::Binary(snap.into())).await.is_err()
     {
@@ -448,7 +455,11 @@ async fn session(app: App, id: String, live: Arc<Live>, mut sock: WebSocket) {
     }
     loop {
         tokio::select! {
-            out = rx.recv() => match out {
+            biased;
+            _ = &mut invalid => break,
+            out = rx.recv() => {
+                if crate::auth::revalidate(&app, &principal).await.is_err() { break; }
+                match out {
                 Ok(b) => if sock.send(Message::Binary(b)).await.is_err() { break },
                 // 느린 클라이언트: 놓친 조각 대신 현재 화면 전체를 다시 보낸다.
                 Err(broadcast::error::RecvError::Lagged(_)) => {
@@ -458,8 +469,11 @@ async fn session(app: App, id: String, live: Arc<Live>, mut sock: WebSocket) {
                         || sock.send(Message::Binary(snap.into())).await.is_err() { break }
                 }
                 Err(broadcast::error::RecvError::Closed) => break,
+                }
             },
-            inc = sock.recv() => match inc {
+            inc = sock.recv() => {
+                if crate::auth::revalidate(&app, &principal).await.is_err() { break; }
+                match inc {
                 Some(Ok(Message::Text(t))) => match serde_json::from_str::<ClientMsg>(&t) {
                     Ok(ClientMsg::Input { data }) => {
                         let mut w = live.writer.lock().unwrap_or_else(|e| e.into_inner());
@@ -475,8 +489,10 @@ async fn session(app: App, id: String, live: Arc<Live>, mut sock: WebSocket) {
                 },
                 Some(Ok(Message::Close(_))) | None | Some(Err(_)) => break,
                 _ => {}
+                }
             },
             code = async { exited.wait_for(|v| v.is_some()).await.ok().and_then(|v| *v) } => {
+                if crate::auth::revalidate(&app, &principal).await.is_err() { break; }
                 // 남은 출력을 흘려보낸 뒤 종료를 알린다.
                 while let Ok(b) = rx.try_recv() {
                     let _ = sock.send(Message::Binary(b)).await;

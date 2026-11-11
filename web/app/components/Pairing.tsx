@@ -152,6 +152,7 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                     ? <a href={pairingLink(target.origin, target.code)} target="_blank" rel="noopener noreferrer">대상 서버에서 등록 확인</a>
                     : <button type="submit" disabled={busy || checking || loggedIn || !link.trim()}>{busy ? "등록 중…" : "이 기기 등록"}</button>}
                 <p className="muted small">등록하면 이 브라우저가 대상 서버에 접근할 수 있습니다. 링크는 5분 뒤 만료되며 한 번만 사용할 수 있습니다.</p>
+                <p className="muted small">등록 기기는 모든 프로젝트·대화·파일을 공유하고 명령·터미널을 실행할 수 있습니다. 소유자 관리 권한은 부여하지 않습니다.</p>
                 {error && <p className="err" role="alert">{error}</p>}
                 <button type="button" className="ghost" disabled={busy} onClick={onCancel}>토큰 로그인으로 돌아가기</button>
             </form>
