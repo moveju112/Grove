@@ -501,6 +501,13 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 자원 회귀: 파일 정리 관련 Rust 통합 72개(`api` 19·`attachments` 15·`cli` 6·`files` 4·`logging` 3·`projects` 5·`storage` 13·`task_logs` 7), logging 7·storage 4·update 4 단위 시험과 Chrome 휴지통 2개 통과. 큰 metadata와 깊은 stack은 실패를 재현한 뒤 수정했고, 빈 폴더를 포함한 scan 예산·cursor도 확인했다. Windows x64·Linux ARM64 교차 빌드, 격리 Wine의 1GiB tail 정규화·중단 staging·writer 잠금·5회 시작/종료·보관본 교체·8MiB 상한·다른 staging 보존을 확인했다. 실제 Windows/ARM64 실행과 프로세스 전체 RSS 상한은 이 검증의 범위 밖이다.
 - `scripts/test_update.py`는 격리한 실제 A/B/C/D 실행 파일로 새 설치·이전 append 로그에서 새 회전 로그로 전환·변경 없음·활성 작업 유예·고장 버전 snapshot 복구·중복 시작/PID 보존을 검증한다. 임시 소스 경로가 달라도 고정 target/build-dir의 의존성 cache를 사용하고 offline 빌드한다. 운영 서비스·데이터를 사용하지 않는다.
 
+## 27. 응답 선호와 사용자 배경(CTX-018)
+
+- `output.style`은 `default`·`concise`·`detailed`이며 서버→프로젝트→대화 순서로 덮어쓴다. `null` 저장은 해당 범위 override를 지우고 상위 값을 적용한다. 기본값은 추가 스타일 지침을 넣지 않는다. 간결 모드도 중요한 실패·위험·필요한 행동을 생략하라는 뜻이 아니다.
+- `user.profile`은 서버 전체에 직접 입력하는 선택 배경 정보다. 최대 4000 Unicode 문자이며 빈 값은 전달하지 않는다. 모든 프로젝트의 다음 대화 턴에서 선택 모델에 JSON 문자열 데이터로 전달하고, 권한·승인·시스템 역할을 부여하지 않는다. 비밀번호·API 키 저장소가 아니다.
+- 스타일·언어·프로필은 턴 접수 시 snapshot에 고정한다. 실행/승인 대기 중 바꾼 값은 다음 턴부터 적용한다. 설정 조회는 편집할 원문을 반환하지만 턴 definition·SSE의 정의 metadata에는 프로필 원문 대신 hash만 보내고 감사 기록은 값의 존재 여부·revision만 남긴다. 프로필 설정과 내부 턴 snapshot은 서버 DB·백업에 남으며, 현재 프로필을 지워도 과거 요청 기록을 지우지 않는다. 모델이 생성하는 답변의 개인정보 억제를 보장하는 기능은 아니다.
+- 화면은 기존 범위별 설정·revision 충돌 처리와 같은 경로를 쓴다. 실모델의 문체 준수나 품질 개선은 로컬 provider fixture의 입력 전달 검증과 별개다.
+
 ## 11. 결정 기록
 
 | ID | 결정 | 근거 |

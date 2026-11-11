@@ -8,7 +8,7 @@ export type SettingDef = {
     label: string;
     description: string;
     keywords: string;
-    kind: "bool" | "int" | "string" | "enum" | "tool_list";
+    kind: "bool" | "int" | "string" | "text" | "enum" | "tool_list";
     options: string[];
     min: number | null;
     max: number | null;
@@ -22,6 +22,7 @@ type Item = { key: string; default: unknown; layers: Record<string, Layer>; effe
 
 const SCOPE_LABEL: Record<string, string> = { server: "서버 전체", project: "이 프로젝트", session: "이 대화", default: "기본값" };
 const APPLIES: Record<string, string> = { immediate: "즉시 적용", next_turn: "다음 요청부터 적용", restart: "재시작 후 적용" };
+const ENUM_LABEL: Record<string, Record<string, string>> = { "output.style": { default: "모델 기본", concise: "간결하게", detailed: "자세하게" } };
 
 /// 연 위치(프로젝트·대화)를 정확히 가리키는 대상 정보. 탭을 열 때 고정되어 pane 전환으로 바뀌지 않는다(CONFIG-005, SETTINGS-024).
 export type SettingsTarget = { projectId?: string; projectName?: string; sessionId?: string; sessionTitle?: string };
@@ -98,7 +99,7 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                 )}
                 {d.kind === "enum" && (
                     <select disabled={saving} aria-label={d.label} value={String(value ?? "")} onChange={(e) => edit(e.target.value)}>
-                        {d.options.map((o) => <option key={o} value={o}>{o}</option>)}
+                        {d.options.map((o) => <option key={o} value={o}>{ENUM_LABEL[d.key]?.[o] ?? o}</option>)}
                     </select>
                 )}
                 {d.kind === "int" && (
@@ -113,6 +114,7 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                         onChange={(e) => edit(e.target.value)}
                     />
                 )}
+                {d.kind === "text" && <textarea disabled={saving} aria-label={d.label} rows={4} value={String(value ?? "")} onChange={(e) => edit(e.target.value)} />}
                 <button disabled={draft === undefined || saving || state.kind === "conflict"} onClick={() => draft && void save(draft.value, draft.revision)}>저장</button>
                 {layer && layer.value !== null && layer.value !== undefined && (
                     <button disabled={saving} className="ghost" onClick={() => void save(null, layer.revision)} title="이 범위의 값을 지우고 상위 범위 값을 쓴다">이 범위 값 지우기</button>

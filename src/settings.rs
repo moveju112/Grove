@@ -25,7 +25,7 @@ pub struct SettingDef {
     pub label: &'static str,
     pub description: &'static str,
     pub keywords: &'static str,
-    /// bool | int | string | enum
+    /// bool | int | string | text | enum
     pub kind: &'static str,
     pub options: &'static [&'static str],
     pub min: Option<i64>,
@@ -81,6 +81,36 @@ pub fn registry() -> Vec<SettingDef> {
             max: None,
             default: json!(""),
             scopes: &["server", "project", "session"],
+            applies: "next_turn",
+            advanced: false,
+        },
+        SettingDef {
+            key: "output.style",
+            menu: "agents",
+            label: "출력 스타일",
+            description: "모델 기본·간결하게·자세하게 중 선택합니다. 간결한 답변도 중요한 실패·위험·필요한 행동은 생략하지 않습니다.",
+            keywords: "output style concise detailed 출력 스타일 간결 자세히",
+            kind: "enum",
+            options: &["default", "concise", "detailed"],
+            min: None,
+            max: None,
+            default: json!("default"),
+            scopes: &["server", "project", "session"],
+            applies: "next_turn",
+            advanced: false,
+        },
+        SettingDef {
+            key: "user.profile",
+            menu: "agents",
+            label: "사용자 프로필",
+            description: "모든 프로젝트의 다음 모델 요청에 전달할 배경 정보입니다(최대 4000자). 비밀정보는 넣지 마세요. 지워도 이전 요청 기록은 지우지 않습니다.",
+            keywords: "user profile background experience 사용자 프로필 배경 경험",
+            kind: "text",
+            options: &[],
+            min: None,
+            max: Some(4000),
+            default: json!(""),
+            scopes: &["server"],
             applies: "next_turn",
             advanced: false,
         },
@@ -455,7 +485,7 @@ pub fn validate(d: &SettingDef, v: &Value) -> ApiResult<()> {
     let ok = match d.kind {
         "bool" => v.is_boolean(),
         "int" => v.as_i64().is_some_and(|n| d.min.is_none_or(|m| n >= m) && d.max.is_none_or(|m| n <= m)),
-        "string" => v.is_null() || v.as_str().is_some_and(|s| s.chars().count() <= 200),
+        "string" | "text" => v.is_null() || v.as_str().is_some_and(|s| s.chars().count() <= d.max.unwrap_or(200) as usize),
         "enum" => v.as_str().is_some_and(|s| d.options.contains(&s)),
         // 알려진 도구 이름만(오타로 정책이 조용히 무시되지 않게)
         "tool_list" => v.is_null() || v.as_str().is_some_and(|s| s.len() <= 500 && tool_names(s).all(|n| crate::tools::spec(n).is_some())),
@@ -604,14 +634,20 @@ pub async fn put(
         )?;
         let v = resolve_key(tx, &d, project.as_deref(), session.as_deref())?;
         events::append(tx, now, "setting.changed", project.as_deref(), session.as_deref(), &json!({ "scope": scope, "scope_id": scope_id, "key": key }))?;
-        // 설정 값은 비밀이 아니다(비밀은 secrets 표). 이전 값과 새 값을 남긴다.
+        // 프로필 원문은 감사 로그에 중복 저장하지 않는다.
+        let audit = if key == "user.profile" {
+            json!({"old_present":old_value.as_str().is_some_and(|s| !s.trim().is_empty()),
+                "new_present":b.value.as_str().is_some_and(|s| !s.trim().is_empty()),"revision":cur + 1})
+        } else {
+            json!({"old":old_value,"new":b.value,"revision":cur + 1})
+        };
         crate::audit::record(
             tx,
             now,
             &actor,
             "setting.changed",
             &format!("{scope}:{scope_id}:{key}"),
-            json!({ "old": old_value, "new": b.value, "revision": cur + 1 }),
+            audit,
         )?;
         Ok((StatusCode::OK, json!({ "item": v, "applies": d.applies })))
     })
