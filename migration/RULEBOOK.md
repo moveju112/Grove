@@ -78,6 +78,8 @@
 | timeout·연결 취소 | 공용 JSON·바이너리 클라이언트는 body 수신까지 기본 300,000ms(`timeoutMs`로 요청별 변경)를 제한한다. `ApiError`의 `status: 0`, `request_timeout`·`cancelled`·`network_error`와 request ID를 반환한다. 서버 실행을 취소하지 않는다. 변경 전송 후에는 `details.result_unknown: true`와 원래 idempotency key를 보존하고 자동 재실행하지 않는다 |
 | 실행 취소 | 턴 `POST /turns/{id}/cancel`의 `202 {cancel_requested:true, turn}`은 요청 접수이지 종료 보장이 아니다. 작업 `POST /tasks/{id}/cancel`의 `{cancelled, task}`에서 bool은 취소 신호 전달 여부다. 최종 자원 상태를 조회·이벤트로 확인한다. SSE·터미널 WebSocket은 일반 요청 timeout 대상이 아니다 |
 
+Git 변경(GIT-003): 저장소 자원 guard와 fingerprint 검증 뒤, 부작용 전에 `409 result_unknown` receipt를 commit한다. 완료 결과·`git.changed` 이벤트·receipt 갱신은 같은 transaction으로 확정한다. 접수 저장 실패는 Git을 실행하지 않으며, 실행 뒤 저장·HEAD/fingerprint 확인 실패는 결과 불명으로 남겨 재실행하지 않는다. 같은 키·본문의 확인은 현재 저장소 조회보다 먼저 저장 결과를 재생하므로 저장소가 사라져도 재확인할 수 있다. 명령 자체의 알려진 실패도 재생한다. 화면은 원래 프로젝트·대상·fingerprint·키를 보존하고 미확정 동안 새 변경을 잠근다. 사용자가 실제 상태를 검토한 뒤에만 새 요청을 허용할 수 있으며, 이는 이전 요청의 성공·실패 확정이나 되돌림이 아니다. 새 커밋 초안은 이전 요청 확인이 지우지 않는다.
+
 다중 기기(NET-013): 설정 편집 초안은 편집을 시작한 revision과 결합한다. SSE 재조회로 최신 값이 도착해도 초안의 revision을 바꾸지 않는다. 충돌하면 초안을 보존하고 최신 값 사용 또는 명시적 덮어쓰기를 선택한다. 승인 경합은 transaction에서 첫 결정만 확정하고 나머지 기기에는 `already_decided`와 현재 상태를 반환한다.
 
 접속 경로(NET-005): 로컬·LAN·VPN·원격은 모두 같은 `/api/v1`과 같은 서버의 웹앱을 사용한다. 기본은 loopback이고 외부 접속은 `GROVE_LISTEN`/`--listen`으로 명시한다. 외부 공개 시 `GROVE_ALLOWED_HOSTS`에 실제 Host(포트 포함)를 제한하고 앞단 HTTPS에서 TLS를 종료한 뒤 `GROVE_TLS_TERMINATED=1`로 Secure refresh 쿠키를 사용한다. 이 설정은 TLS 자체를 제공하지 않는다. 장기 자격증명을 외부 평문 HTTP로 보내지 않는다. HTTP authority 계약 시험과 실제 네트워크·인증서·방화벽 검증은 구분한다.

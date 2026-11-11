@@ -917,7 +917,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 
 - [x] GIT-001 상태·diff·untracked·staged diff를 정확히 조회한다. 검증: `tests/git.rs`(Unicode 경로·untracked·staged diff).
 - [x] GIT-002 파일/hunk 선택 stage와 stale diff 거부를 구현한다. 검증: `tests/git.rs::hunk_level_stage_and_unstage`(hunk 선택 stage·unstage, 범위 밖·오래된 fingerprint 거부), 파일 단위 stale 거부.
-- [x] GIT-003 commit·push·pull·fetch·merge의 권한과 결과를 처리한다. 검증: `tests/git.rs::rename_remote_ops_merge_and_history`(fetch 작업 트리 불변, pull ff-only·갈라짐 거절, force 없는 push 거절, merge 충돌 시 abort로 원상태).
+- [x] GIT-003 commit·push·pull·fetch·merge의 권한과 결과를 처리한다. 검증: `tests/git.rs::rename_remote_ops_merge_and_history`(fetch 작업 트리 불변, pull ff-only·갈라짐 거절, force 없는 push 거절, merge 충돌 시 abort로 원상태). Git 부작용 전에 결과 불명 receipt를 commit하고 최종 응답·이벤트를 함께 확정한다. 접수 SQL/COMMIT 실패는 실행하지 않으며, 실행 뒤 이벤트·receipt·COMMIT·HEAD/fingerprint 확인 실패는 같은 키와 재시작 후에도 재실행하지 않는다. 알려진 명령 오류도 저장해 재생한다. 화면은 원래 대상·fingerprint·키를 보존해 재확인하고 미확정 동안 새 변경을 막으며 새 커밋 초안을 지우지 않는다. 저장소를 조회할 수 없어도 재확인은 남는다. Git·receipt·공유 자원 통합 11개, Git 단위 4개, 타입/서버/웹 빌드와 실제 응답 유실·이중 submit·조회 복구·hunk·worktree E2E 6개 통과. 조회 복구 E2E의 첫 실행은 자동 재조회로 사라진 이전 버튼을 기다려 timeout이 났고, 현재 화면 상태의 조회 버튼을 선택하도록 fixture를 수정해 통과했다(`tests/git_receipts.rs`, `web/e2e/git-recovery.spec.ts`).
 - [x] GIT-004 branch 목록·생성·이름 변경·전환·이름 검증을 구현한다. 검증: 목록·생성·전환(`tests/git.rs`), 이름 변경(덮어쓰기 거부), 이름 검증 단위 시험.
 - [ ] GIT-005 stash save/list/pop과 discard는 실제 노출 여부를 확인하고 명시적 승인 하에만 제공한다.
 - [x] GIT-006 작업 중인 사용자 변경을 자동 stash/reset/clean하지 않는다. 검증: `tests/git.rs`(충돌 전환 거부 후 변경 보존, unstage 시 작업 트리 불변).

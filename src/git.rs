@@ -13,7 +13,7 @@ use crate::util::sha256_hex;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
+use axum::response::{IntoResponse,Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::path::PathBuf;
@@ -161,6 +161,9 @@ async fn fingerprint(root: &std::path::Path) -> ApiResult<String> {
     let st = git(root, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], true).await?;
     let wt = git(root, &["diff", "--no-ext-diff", "--binary"], true).await?;
     let ix = git(root, &["diff", "--no-ext-diff", "--binary", "--cached"], true).await?;
+    for (out,what) in [(&st,"status 확인"),(&wt,"작업 트리 확인"),(&ix,"index 확인")] {
+        if out.code!=0 { return Err(fail(out,what)); }
+    }
     let mut buf = st.stdout;
     buf.extend_from_slice(b"\n--wt--\n");
     buf.extend_from_slice(&wt.stdout);
@@ -247,6 +250,8 @@ async fn mutate(
     expected: Option<String>,
     run: impl for<'a> FnOnce(&'a std::path::Path) -> std::pin::Pin<Box<dyn std::future::Future<Output = ApiResult<Value>> + Send + 'a>> + Send,
 ) -> ApiResult<Response> {
+    let h = idem::body_hash(route, &json!({ "p": project_id, "b": body, "e": expected }));
+    if let Some(response)=idem::replay(&app,&p,&headers,&h).await? { return Ok(response); }
     let root = root_of(&app, &project_id).await?;
     if !is_repo(&root).await? {
         return Err(ApiError::invalid("Git 저장소가 아닙니다"));
@@ -254,12 +259,14 @@ async fn mutate(
     let lock = app.repo_locks.get(&project_id);
     let _g = lock.lock().await;
     crate::auth::revalidate(&app,&p).await?;
-    let h = idem::body_hash(route, &json!({ "p": project_id, "b": body, "e": expected }));
     // 같은 키 재전송이면 실행 없이 저장된 결과를 돌려준다.
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
     let _resource = app.project_resources.ui_write(&app,&project_id,&p).await?;
+    if root_of(&app,&project_id).await? != root {
+        return Err(ApiError::conflict("project_changed","프로젝트 경로가 바뀌어 Git 작업을 시작하지 않았습니다"));
+    }
     if let Some(exp) = &expected {
         let cur = fingerprint(&root).await?;
         if &cur != exp {
@@ -267,16 +274,33 @@ async fn mutate(
                 .with_details(json!({ "fingerprint": cur })));
         }
     }
-    let result = run(&root).await?;
-    let fp = fingerprint(&root).await?;
+    let unknown=ApiError::conflict("result_unknown","Git 작업 결과를 확정하지 못했습니다. Git 상태·index·이력·원격 상태를 확인하세요. 같은 요청을 재실행하지 않습니다")
+        .with_details(json!({"project_id":project_id,"operation":route}));
+    let pending=unknown.body();
+    let accepted=idem::run(&app,&p,&headers,&h,move |_,_|Ok((StatusCode::CONFLICT,pending))).await?;
+    if accepted.headers().contains_key("idempotent-replayed") { return Ok(accepted); }
+    let outcome=run(&root).await;
+    let fp=fingerprint(&root).await.map_err(|_|unknown.clone())?;
+    let (status,response)=match outcome {
+        Ok(mut value)=> { value["fingerprint"]=json!(fp); (StatusCode::OK,value) }
+        Err(error) if error.status.is_server_error() || error.status==StatusCode::REQUEST_TIMEOUT || error.code=="result_unknown"
+            || error.details.as_ref().is_some_and(|details|details["result_unknown"]==true) => {
+                tracing::warn!(code=error.code,operation=route,"Git 실행 결과 확인 실패");
+                return Err(unknown);
+            }
+        Err(error)=>(error.status,error.body()),
+    };
     let pid = project_id.clone();
-    idem::run(&app, &p, &headers, &h, move |tx, now| {
-        let mut r = result;
-        r["fingerprint"] = json!(fp);
-        events::append(tx, now, "git.changed", Some(&pid), None, &json!({ "op": route }))?;
-        Ok((StatusCode::OK, r))
-    })
-    .await
+    let (owner,key,stored,hash,now)=(p.root_id,idem::key_from(&headers)?,response.clone(),h.clone(),app.now());
+    app.db.call(move |c| {
+        let tx=c.transaction()?;
+        events::append(&tx,&now,"git.changed",Some(&pid),None,&json!({"op":route,"ok":status.is_success()}))?;
+        idem::complete(&tx,&owner,&key,&hash,status,&stored)?;
+        tx.commit()?;
+        Ok(())
+    }).await.map_err(|error| { tracing::warn!(code=error.code,operation=route,"Git 결과 저장 실패"); unknown })?;
+    app.notify_events().await;
+    Ok((status,Json(response)).into_response())
 }
 
 #[derive(Deserialize)]
@@ -368,6 +392,7 @@ pub async fn commit(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
                 return Err(fail(&o, "commit"));
             }
             let head = git(root, &["rev-parse", "HEAD"], true).await?;
+            if head.code!=0 { return Err(ApiError::conflict("result_unknown","커밋은 실행됐지만 새 HEAD를 확인하지 못했습니다")); }
             Ok(json!({ "commit": String::from_utf8_lossy(&head.stdout).trim() }))
         })
     })
@@ -776,6 +801,15 @@ pub async fn compare(State(app): State<App>, _p: Principal, Path(id): Path<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn fingerprint_rejects_failed_git_metadata_reads_instead_of_hashing_empty_output() {
+        let root=tempfile::tempdir().unwrap();
+        let initialized=git(root.path(),&["init","-q"],false).await.unwrap();
+        assert_eq!(initialized.code,0);
+        std::fs::write(root.path().join(".git/index"),b"fixture corrupt index").unwrap();
+        assert!(fingerprint(root.path()).await.is_err());
+    }
 
     #[test]
     fn hunk_split_keeps_header_and_bodies() {
