@@ -138,7 +138,7 @@ async fn oversized_instruction_prefix_and_its_hash_reach_the_model_without_the_t
     let expected = format!("{}\n…(지침 파일이 65536바이트를 넘어 잘림)", "x".repeat(64 * 1024));
     let request = &f.requests()[0];
     let system = request["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains(&expected));
+    assert!(system.contains(&serde_json::to_string(&expected).unwrap()));
     assert!(!system.contains("UNSENT_INSTRUCTION_TAIL_FIXTURE"));
     assert_eq!(turn["definition"]["instructions"][0]["sha256"], grove::util::sha256_hex(expected.as_bytes()));
     assert!(turn["definition"]["instructions"][0].get("body").is_none());
