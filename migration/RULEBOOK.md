@@ -292,6 +292,19 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 실시험(2026-11-05): `claude_code:haiku`, `codex_cli:gpt-6-luna` 각각 서버 2개(읽기·쓰기 거부·resume, 취소)와 브라우저 1개 통과.
 
+### 공식 인증 지원 범위와 경로 결정 (DEC-010·011)
+
+공식 문서 확인 기준: 2026-11-11. 아래는 제품 통합 경로의 기술 결정이며 약관 동의를 대신하지 않는다.
+
+| 경로 | 공식 범위·제한 | Grove 결정 |
+|---|---|---|
+| Claude 구독 OAuth 직접 사용 | [Legal and compliance](https://code.claude.com/docs/en/legal-and-compliance)는 제3자 앱의 Claude.ai 로그인 제공·구독 자격증명 중계·수집·저장을 허용하지 않는다. SDK 사용 제품도 API 키 또는 지원 cloud provider 경로를 사용한다 | Grove 자체 Claude 구독 OAuth client나 CLI credential 파일 복사·추출을 구현하지 않는다 |
+| 미수정 Claude Code | 같은 문서의 “Can customers offer Claude Code in their products?”는 미수정 배포 binary·사용자 자신의 인증과 직접 과금·해당 Commercial Terms 준수 조건을 명시한다. [공식 non-interactive CLI](https://code.claude.com/docs/en/headless)는 `claude -p`를 제공한다. `--bare`는 구독 OAuth를 읽지 않으므로 구독 경로에 임의로 추가하지 않는다 | 기존 `claude_code` 외부 프로세스 어댑터를 유지한다. 사용자가 공식 CLI에서 직접 로그인하고 CLI가 갱신·저장을 담당한다. 공개·다중 사용자 호스팅의 약관 적용 여부를 개인 self-hosted 사용과 동일하다고 간주하지 않는다 |
+| Codex CLI | [Authentication](https://developers.openai.com/codex/auth)은 ChatGPT 구독·API 키 로그인을 제공한다. [Non-interactive mode](https://developers.openai.com/codex/noninteractive)는 `codex exec`의 기존 CLI 인증 재사용과 자동화의 API 키 기본 사용을 설명한다. 공개·비신뢰 실행 환경에 계정 credential을 노출하지 않는다 | 기존 `codex_cli` 외부 프로세스 어댑터를 유지하고 인증 파일을 가져오지 않는다. API 키 경로는 별도 사용량 과금이다 |
+| OpenAI 직접 Sign in with ChatGPT | [Overview](https://developers.openai.com/siwc/token-sharing-open-source)는 open-source·locally hosted 앱을 다루며 유료·원격 호스팅 앱은 별도 문의 경로를 제시한다. [Registration and sign-in](https://developers.openai.com/siwc/token-sharing-open-source/sign-in)은 `dynamic_agent_client` 초기 등록, host별 영속 ID, 발급 client ID, PKCE·state·nonce와 서명 검증된 ID token, 별도 plan-use scope를 요구한다 | 직접 연동이 무조건 금지라고 판단하지 않는다. 다만 기존 CLI 로그인 성공을 이 별도 흐름의 구현·지원 검증으로 세지 않는다. 직접 계정 관리는 AUTH-002~009에서 해당 계약으로 구현·검증할 별도 범위다 |
+
+비용·의존성: 현재 CLI 어댑터는 선택한 공식 CLI 프로세스만 필요하고 새 Node/Python SDK 런타임을 Grove에 추가하지 않는다. CLI 사용량은 사용자의 해당 계정·플랜 한도 및 추가 사용 정책을 따른다. HTTP API 키는 구독과 별도인 provider의 사용량 과금 경로다. 구독 사용이 무제한·무과금이라고 약속하지 않는다. 직접 OAuth·SDK 도입 전 별도 보안·지원 검증이 필요하며, 이 결정으로 실제 로그인·유료 추론 시험을 수행한 것은 아니다.
+
 ### 오류 정규화와 재시도 (MODEL-015·016)
 
 - 분류(`provider::classify`): `auth_failed`(401·403), `rate_limited`(429), `timeout`(408·504), `provider_unavailable`(5xx), `context_too_long`(400·413·422 중 context 초과로 보이는 오류 code·본문), `model_not_found`(404, 또는 400·422 중 모델 미지원), `bad_request`, `redirect_blocked`.

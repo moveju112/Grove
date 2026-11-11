@@ -604,8 +604,8 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [ ] DEC-007 필수 기능의 PWA 한계를 재현하면 웹 대안을 먼저 비교하고, 해결되지 않는 플랫폼만 최소 네이티브 셸 도입 여부를 결정한다.
 - [x] DEC-008 React + React Router Framework SPA + Vite를 우선 검증하고 공용 UI·pane 상태·PWA 경계를 확정한다. 검증: `migration/RULEBOOK.md` §11, 정적 SPA·CSP·SW·분할 pane e2e.
 - [x] DEC-009 Axum + Tokio + 필요한 Tower 계층을 우선 검증하고 SQLite 접근·타입 생성 도구는 지원 환경·동시성·빌드 비용으로 선정한다. 검증: `migration/RULEBOOK.md` §1·§11(Axum/Tokio/tower-http, rusqlite bundled, ts-rs), Rust 통합 시험 전체.
-- [ ] DEC-010 OAuth 구독 계정의 공식 지원 경로·이용 조건·허용 클라이언트 제한을 확인한다.
-- [ ] DEC-011 OAuth가 새 런타임에서 허용되지 않는 경우 공식 SDK/CLI 어댑터 또는 API 키 경로의 비용·의존성을 결정한다.
+- [x] DEC-010 OAuth 구독 계정의 공식 지원 경로·이용 조건·허용 클라이언트 제한을 확인한다. 검증: 2026-11-11 공식 Anthropic legal/compliance·authentication·headless, OpenAI Codex authentication/non-interactive·Sign in with ChatGPT overview/sign-in 문서를 확인했다. Claude 자체 구독 OAuth 중계 금지와 미수정 CLI 호스팅 조건, OpenAI의 로컬/self-hosted 직접 동적 등록과 별도 호스팅 범위·scope 검증을 구분했다(`migration/RULEBOOK.md` §20의 공식 출처 링크). 문서 확인은 실제 계정·클라이언트 등록 성공 검증이 아니다.
+- [x] DEC-011 OAuth가 새 런타임에서 허용되지 않는 경우 공식 SDK/CLI 어댑터 또는 API 키 경로의 비용·의존성을 결정한다. 검증: 기존 미수정 외부 CLI 어댑터·CLI 자체 인증과 별도 과금 HTTP API 키 경로를 유지하고 Node/Python SDK를 새 필수 런타임으로 추가하지 않는다. CLI 계정 파일을 추출·복사하지 않으며 플랜 한도·추가 사용 정책을 그대로 따른다. OpenAI 직접 OAuth를 일괄 금지하지 않고 AUTH-002~009의 별도 지원·보안 검증 범위로 남겼다(`migration/RULEBOOK.md` §20). 의존성 변경·실제 로그인·유료 추론 없음.
 - [ ] DEC-012 기존 릴레이와의 호환 유지 또는 교체를 결정하고 외부 서비스 운영 부담을 명시한다.
 - [ ] DEC-013 Android 푸시 전달에 필요한 외부 서비스와 서버 측 자격증명 관리 방식을 정한다.
 - [x] DEC-014 구제품 wire protocol/플러그인 ABI 호환 계층은 만들지 않고 새 클라이언트로 일괄 전환한다. 새 제품 자체 버전 간 호환 범위를 정의한다. 검증: `migration/RULEBOOK.md` §10(API v1 추가만, protocol 불일치 변경 거부, schema 전진 전용·새 schema 거부), `tests/api.rs::protocol_mismatch_blocks_mutations_but_not_reads`, e2e protocol 배너.
