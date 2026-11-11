@@ -287,9 +287,11 @@ pub fn router(app: App) -> Router {
         .route("/auth/browser-login", post(auth::browser_login))
         .route("/auth/refresh", post(auth::browser_refresh))
         .route("/auth/logout", post(auth::browser_logout))
+        .fallback(|| async { error::ApiError::not_found("요청한 API가 없습니다") })
         .layer(axum::middleware::from_fn_with_state(app.clone(), auth::origin_guard))
         .layer(axum::middleware::from_fn_with_state(app.clone(), web::reject_when_shutting_down))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(8 * 1024 * 1024))
-        .layer(axum::middleware::from_fn(web::protocol_guard));
+        .layer(axum::middleware::from_fn(web::protocol_guard))
+        .layer(axum::middleware::from_fn(web::request_context));
     Router::new().nest("/api/v1", api).merge(web::static_routes(&app)).with_state(app)
 }

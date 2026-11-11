@@ -2,7 +2,7 @@
 // 인증: 브라우저 로그인 → access token(메모리 전용) + HttpOnly refresh 쿠키.
 
 import type { ContractTypes } from "./generated.metadata";
-import { parseContract } from "./validation";
+import { ContractError, parseContract } from "./validation";
 
 export class ApiError extends Error {
     constructor(
@@ -11,6 +11,7 @@ export class ApiError extends Error {
         message: string,
         public retryable = false,
         public details?: unknown,
+        public requestId?: string,
     ) {
         super(message);
     }
@@ -101,9 +102,9 @@ async function parse(resp: Response): Promise<unknown> {
     }
 }
 
-function toError(status: number, body: unknown): ApiError {
+function toError(status: number, body: unknown, requestId?: string): ApiError {
     const e = (body as { error?: { code?: string; message?: string; retryable?: boolean; details?: unknown } })?.error;
-    return new ApiError(status, e?.code ?? "http_" + status, e?.message ?? `HTTP ${status}`, e?.retryable ?? false, e?.details);
+    return new ApiError(status, e?.code ?? "http_" + status, e?.message ?? `HTTP ${status}`, e?.retryable ?? false, e?.details, requestId);
 }
 
 export async function login(token: string, name: string): Promise<void> {
@@ -156,44 +157,97 @@ export function accessToken(): string | null {
 }
 
 /// requires: 이 요청에 필요한 서버 기능. 서버에 없으면 실행하지 않고 `capability_missing`으로 거절된다.
-type Opts = { key?: string; signal?: AbortSignal; requires?: string[]; contract?: keyof ContractTypes };
+type Opts = { key?: string; signal?: AbortSignal; requires?: string[]; contract?: keyof ContractTypes; timeoutMs?: number };
+
+export const REQUEST_TIMEOUT_MS = 300_000;
+
+/// timeout·화면 취소는 응답 대기만 끝낸다. 변경 결과가 불명확하면 같은 idempotency key로만 확인한다.
+async function boundedRequest<T>(opts: Opts, mutation: boolean, operation: (send: (url: string, init?: RequestInit) => Promise<Response>) => Promise<T>): Promise<T> {
+    const timeout = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
+    if (!Number.isFinite(timeout) || timeout <= 0) throw new ApiError(400, "invalid_request", "timeoutMs는 양수여야 합니다");
+    const controller = new AbortController();
+    let cause: "cancelled" | "request_timeout" = "cancelled";
+    let requestId: string | undefined;
+    const abort = () => controller.abort();
+    const interrupted = new Promise<never>((_, reject) => {
+        controller.signal.addEventListener("abort", () => {
+            const unknown = mutation && requestId !== undefined;
+            const message = cause === "request_timeout" ? "응답 대기 시간이 초과됐습니다" : "요청 대기를 취소했습니다";
+            reject(new ApiError(0, cause, message + (unknown ? ". 서버 작업은 계속 실행될 수 있으니 같은 요청의 결과를 확인하세요" : ""),
+                cause === "request_timeout" || unknown, { result_unknown: unknown, idempotency_key: opts.key }, requestId));
+        }, { once: true });
+    });
+    const timer = setTimeout(() => {
+        cause = "request_timeout";
+        controller.abort();
+    }, timeout);
+    opts.signal?.addEventListener("abort", abort, { once: true });
+    if (opts.signal?.aborted) abort();
+    const send = (url: string, init: RequestInit = {}) => {
+        controller.signal.throwIfAborted();
+        requestId = newKey();
+        const headers = new Headers(init.headers);
+        headers.set("x-request-id", requestId);
+        headers.set("x-grove-protocol", String(PROTOCOL));
+        return fetch(url, { ...init, headers, signal: controller.signal });
+    };
+    try {
+        if (controller.signal.aborted) return await interrupted;
+        return await Promise.race([operation(send), interrupted]);
+    } catch (error) {
+        if (controller.signal.aborted) return await interrupted;
+        if (error instanceof ApiError || error instanceof ContractError) throw error;
+        if (error instanceof TypeError) {
+            throw new ApiError(0, "network_error", "서버 응답을 받지 못했습니다. 변경 요청은 같은 키로 결과를 확인하세요", true,
+                { result_unknown: mutation && requestId !== undefined, idempotency_key: opts.key }, requestId);
+        }
+        throw error;
+    } finally {
+        clearTimeout(timer);
+        opts.signal?.removeEventListener("abort", abort);
+    }
+}
 
 export async function request<T>(method: string, path: string, body?: unknown, opts: Opts = {}): Promise<T> {
     if (method !== "GET" && protocolMismatch !== null) {
         throw new ApiError(409, "protocol_mismatch", "화면 버전이 서버와 맞지 않습니다. 새로고침한 뒤 다시 시도하세요");
     }
-    const send = async () => {
-        const headers: Record<string, string> = { "x-grove-protocol": String(PROTOCOL) };
-        if (current) headers.authorization = `Bearer ${current.accessToken}`;
-        if (body !== undefined) headers["content-type"] = "application/json";
-        if (opts.requires?.length) headers["x-grove-require"] = opts.requires.join(",");
-        if (method !== "GET") headers["idempotency-key"] = opts.key ?? newKey();
-        return fetch("/api/v1" + path, {
-            method,
-            headers,
-            body: body === undefined ? undefined : JSON.stringify(body),
-            signal: opts.signal,
-            credentials: "same-origin",
-        });
-    };
     // 같은 key로 재전송하므로 access token 만료 후 재시도해도 중복 실행되지 않는다.
     if (method !== "GET" && !opts.key) opts = { ...opts, key: newKey() };
-    let resp = await send();
-    if (resp.status === 401 && (await refresh())) resp = await send();
-    checkProtocol(resp);
-    const parsed = await parse(resp);
-    if (!resp.ok) throw toError(resp.status, parsed);
-    return (opts.contract ? parseContract(opts.contract, parsed) : parsed) as T;
+    return boundedRequest(opts, method !== "GET", async (fetchRequest) => {
+        const send = async () => {
+            const headers: Record<string, string> = {};
+            if (current) headers.authorization = `Bearer ${current.accessToken}`;
+            if (body !== undefined) headers["content-type"] = "application/json";
+            if (opts.requires?.length) headers["x-grove-require"] = opts.requires.join(",");
+            if (method !== "GET") headers["idempotency-key"] = opts.key!;
+            return fetchRequest("/api/v1" + path, {
+                method,
+                headers,
+                body: body === undefined ? undefined : JSON.stringify(body),
+                credentials: "same-origin",
+            });
+        };
+        let resp = await send();
+        if (resp.status === 401 && (await refresh())) resp = await send();
+        checkProtocol(resp);
+        const parsed = await parse(resp);
+        if (!resp.ok) throw toError(resp.status, parsed, resp.headers.get("x-request-id") ?? undefined);
+        return (opts.contract ? parseContract(opts.contract, parsed) : parsed) as T;
+    });
 }
 
 /// 바이너리 응답 GET(터미널 화면 등). 인증 만료 시 한 번 갱신 후 재시도한다.
-export async function rawGet(path: string): Promise<ArrayBuffer> {
-    const send = () =>
-        fetch("/api/v1" + path, { headers: current ? { authorization: `Bearer ${current.accessToken}` } : {}, credentials: "same-origin" });
-    let resp = await send();
-    if (resp.status === 401 && (await refresh())) resp = await send();
-    if (!resp.ok) throw toError(resp.status, await parse(resp));
-    return resp.arrayBuffer();
+export async function rawGet(path: string, opts: Opts = {}): Promise<ArrayBuffer> {
+    return boundedRequest(opts, false, async (fetchRequest) => {
+        const send = () =>
+            fetchRequest("/api/v1" + path, { headers: current ? { authorization: `Bearer ${current.accessToken}` } : {}, credentials: "same-origin" });
+        let resp = await send();
+        if (resp.status === 401 && (await refresh())) resp = await send();
+        checkProtocol(resp);
+        if (!resp.ok) throw toError(resp.status, await parse(resp), resp.headers.get("x-request-id") ?? undefined);
+        return resp.arrayBuffer();
+    });
 }
 
 export const api = {

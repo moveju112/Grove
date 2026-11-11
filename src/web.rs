@@ -5,7 +5,7 @@ use crate::error::ApiError;
 use axum::Json;
 use axum::Router;
 use axum::extract::{Request, State};
-use axum::http::{HeaderValue, Method, header};
+use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
@@ -39,6 +39,46 @@ pub async fn reject_when_shutting_down(State(app): State<App>, req: Request, nex
 pub const PROTOCOL_HEADER: &str = "x-grove-protocol";
 /// 요청에 필요한 기능 목록(쉼표 구분). 없으면 기능 검사를 하지 않는다(CLI·도구 호환).
 pub const REQUIRE_HEADER: &str = "x-grove-require";
+pub const REQUEST_ID_HEADER: &str = "x-request-id";
+
+/// 요청 ID는 실행 중복 방지 키가 아니다(NET-003). UUID만 받아 로그 주입·임의 데이터 반사를 막는다.
+/// 응답 대기 timeout으로 서버의 변경 처리를 중단하지 않는다. 취소는 자원별 cancel API가 담당한다.
+pub async fn request_context(mut req: Request, next: Next) -> Response {
+    use tracing::Instrument;
+    let id = req.headers().get(REQUEST_ID_HEADER)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|s| uuid::Uuid::parse_str(s).ok())
+        .unwrap_or_else(uuid::Uuid::new_v4)
+        .to_string();
+    let header_id = HeaderValue::from_str(&id).expect("UUID header");
+    req.headers_mut().insert(REQUEST_ID_HEADER, header_id.clone());
+    let span = tracing::info_span!("http_request", request_id = %id, method = %req.method());
+    let mut response = next.run(req).instrument(span).await;
+    // Axum extractor·라우터·body limit의 비정형 오류도 공통 형태로 만든다. 원문은 노출하지 않는다.
+    let status = response.status();
+    let is_json = response.headers().get(header::CONTENT_TYPE)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|h| h.split(';').next() == Some("application/json"));
+    if !is_json && (status.is_client_error() || status.is_server_error()) {
+        let (code, message) = match status {
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY => ("invalid_request", "요청 형식이 올바르지 않습니다"),
+            StatusCode::NOT_FOUND => ("not_found", "요청한 API가 없습니다"),
+            StatusCode::METHOD_NOT_ALLOWED => ("method_not_allowed", "허용되지 않는 요청 방식입니다"),
+            StatusCode::PAYLOAD_TOO_LARGE => ("payload_too_large", "요청 본문이 너무 큽니다"),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE => ("unsupported_media_type", "지원하지 않는 요청 형식입니다"),
+            _ => ("http_error", "HTTP 요청을 처리하지 못했습니다"),
+        };
+        let headers = response.headers().clone();
+        response = ApiError::new(status, code, message).into_response();
+        for (name, value) in &headers {
+            if name != header::CONTENT_TYPE && name != header::CONTENT_LENGTH {
+                response.headers_mut().insert(name.clone(), value.clone());
+            }
+        }
+    }
+    response.headers_mut().insert(REQUEST_ID_HEADER, header_id);
+    response
+}
 
 /// 클라이언트·서버 protocol 호환(DEC-014, WEB-022).
 /// - 모든 API 응답에 서버 protocol을 붙여 오래 열린 탭이 불일치를 알게 한다.

@@ -59,10 +59,18 @@
 ## 4. 오류 모델
 
 - Rust: `ApiError { status, code: &'static str, message: String, details: Option<Value> }` 하나로 HTTP 응답 변환.
-- 표준 code: `unauthorized`, `forbidden`, `not_found`, `invalid_request`, `revision_conflict`, `idempotency_conflict`, `busy`, `queue_full`, `unsupported`, `internal`, `cancelled`, `gone`.
+- 표준 code: `unauthorized`, `forbidden`, `not_found`, `invalid_request`, `revision_conflict`, `idempotency_conflict`, `busy`, `queue_full`, `unsupported`, `internal`, `cancelled`, `gone`, `method_not_allowed`, `payload_too_large`, `unsupported_media_type`. Axum의 JSON·라우팅·body limit 오류도 같은 envelope로 변환한다.
 - 응답 본문: `{"error":{"code","message","retryable":bool,"details"?}}`.
 - 내부 오류는 `internal` + 상관 ID만 노출, 상세는 로그.
 - 도메인 함수는 `anyhow` 대신 모듈별 `thiserror` 열거형을 쓰고 경계에서 `ApiError`로 변환.
+
+### HTTP 요청 수명 (NET-003)
+
+| 경계 | 계약 |
+|---|---|
+| request ID | `X-Request-Id`의 UUID를 정규화해 모든 API 응답과 요청 tracing span에 붙인다. 없거나 잘못됐으면 서버가 발급한다. 인증 재시도마다 새 ID를 쓰되 `Idempotency-Key`는 유지한다. request ID는 실행 중복 방지 키가 아니다 |
+| timeout·연결 취소 | 공용 JSON·바이너리 클라이언트는 body 수신까지 기본 300,000ms(`timeoutMs`로 요청별 변경)를 제한한다. `ApiError`의 `status: 0`, `request_timeout`·`cancelled`·`network_error`와 request ID를 반환한다. 서버 실행을 취소하지 않는다. 변경 전송 후에는 `details.result_unknown: true`와 원래 idempotency key를 보존하고 자동 재실행하지 않는다 |
+| 실행 취소 | 턴 `POST /turns/{id}/cancel`의 `202 {cancel_requested:true, turn}`은 요청 접수이지 종료 보장이 아니다. 작업 `POST /tasks/{id}/cancel`의 `{cancelled, task}`에서 bool은 취소 신호 전달 여부다. 최종 자원 상태를 조회·이벤트로 확인한다. SSE·터미널 WebSocket은 일반 요청 timeout 대상이 아니다 |
 
 ## 5. 경로·이름
 
