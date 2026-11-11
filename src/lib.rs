@@ -60,6 +60,19 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// 클라이언트·서버 공용 프로토콜 버전. 호환되지 않는 변경 시 올린다(NET-001, NET-025).
 pub const PROTOCOL_VERSION: u32 = 1;
 
+/// 같은 protocol 안에서 추가된 기능 목록(NET-001). health·이벤트 `hello`·`grove version --json`이 같은 목록을 알린다.
+/// 클라이언트는 쓰기 전에 목록을 확인하고, 변경 요청에는 필요한 기능을 `x-grove-require`로 밝힌다.
+/// 기능을 빼거나 의미를 바꾸면 이름의 버전(`_v2`)을 올린다.
+pub const CAPABILITIES: &[&str] = &[
+    "file_log_rotation_v1",
+    "file_changes_v1",
+    "trash_v1",
+    "attachments_v1",
+    "task_logs_v1",
+    "worktrees_v1",
+    "dependency_hints_v1",
+];
+
 #[derive(Clone)]
 pub struct App {
     pub cfg: Arc<config::Config>,

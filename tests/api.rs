@@ -501,3 +501,48 @@ async fn protocol_mismatch_blocks_mutations_but_not_reads() {
         .unwrap();
     assert_eq!(r.status(), StatusCode::CREATED);
 }
+
+/// 기능 협상(NET-001): 서버는 health·이벤트 hello에 같은 기능 목록을 알리고,
+/// 클라이언트가 요구한 기능이 없으면 조회·변경 모두 실행하지 않는다. 헤더가 없으면 검사하지 않는다.
+#[tokio::test]
+async fn capability_negotiation_advertises_and_enforces_required_features() {
+    let s = TestServer::start().await;
+    let (_, h) = s.get("/api/v1/health").await;
+    let caps: Vec<String> = serde_json::from_value(h["capabilities"].clone()).unwrap();
+    assert_eq!(caps, grove::CAPABILITIES.iter().map(|c| c.to_string()).collect::<Vec<_>>());
+    assert!(caps.contains(&"worktrees_v1".to_string()));
+    // 이벤트 hello도 같은 목록
+    let mut r = s.client.get(format!("{}/api/v1/events", s.base)).bearer_auth(&s.token).send().await.unwrap();
+    let mut buf = String::new();
+    while !buf.contains("\n\n") {
+        buf.push_str(&String::from_utf8_lossy(&r.chunk().await.unwrap().unwrap()));
+    }
+    let data = buf.lines().find_map(|l| l.strip_prefix("data:")).unwrap().trim();
+    let hello: serde_json::Value = serde_json::from_str(data).unwrap();
+    assert_eq!(hello["capabilities"], h["capabilities"]);
+    drop(r);
+
+    let dir = s.make_project_dir("cap");
+    let post = |key: &'static str, require: &'static str| {
+        s.client
+            .post(format!("{}/api/v1/projects", s.base))
+            .bearer_auth(&s.token)
+            .header("idempotency-key", key)
+            .header("x-grove-require", require)
+            .json(&serde_json::json!({ "root_path": dir }))
+            .send()
+    };
+    let r = post("cap-1", "worktrees_v1, teleport_v9").await.unwrap();
+    assert_eq!(r.status(), StatusCode::CONFLICT);
+    let v: serde_json::Value = r.json().await.unwrap();
+    assert_eq!(v["error"]["code"], "capability_missing");
+    assert_eq!(v["error"]["details"]["missing"], serde_json::json!(["teleport_v9"]));
+    let (_, list) = s.get("/api/v1/projects").await;
+    assert!(list.as_array().unwrap().is_empty(), "실행되지 않음");
+    // 조회도 같은 규칙
+    let r = s.client.get(format!("{}/api/v1/projects", s.base)).bearer_auth(&s.token).header("x-grove-require", "teleport_v9").send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::CONFLICT);
+    // 있는 기능만 요구하면 정상
+    let r = post("cap-2", "worktrees_v1").await.unwrap();
+    assert_eq!(r.status(), StatusCode::CREATED);
+}

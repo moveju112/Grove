@@ -19,6 +19,26 @@ async function freshRepo(tag: string) {
     return { root, run, p };
 }
 
+test("서버가 worktree 기능을 알리지 않으면 화면에서 숨긴다(기능 협상)", async ({ page }) => {
+    const { p } = await freshRepo("cap");
+    // 오래된 서버를 흉내 낸다: 이벤트 hello의 기능 목록에서 worktrees_v1을 뺀다.
+    await page.route("**/api/v1/events**", (route) =>
+        route.fulfill({
+            status: 200,
+            headers: { "content-type": "text/event-stream", "x-grove-protocol": "1" },
+            body: `event: hello\ndata: ${JSON.stringify({ cursor: 0, protocol: 1, capabilities: ["trash_v1"] })}\n\n`,
+        }),
+    );
+    // 가짜 stream은 hello 뒤 바로 끝나므로 연결 상태 대신 화면이 열리는지로 로그인 완료를 본다.
+    await page.goto("/");
+    await page.locator("html[data-hydrated=true]").waitFor({ state: "attached" });
+    await page.getByLabel("토큰").fill(state().token);
+    await page.getByRole("button", { name: "로그인" }).click();
+    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
+    await expect(page.getByTestId("trash-panel")).toBeVisible();
+    await expect(page.getByTestId("worktrees-panel")).toHaveCount(0);
+});
+
 test("worktree를 변경 처리 선택 후 만들고, 대화를 그 위치에서 실행·복귀하고, 제거한다", async ({ page }) => {
     const { root, run, p } = await freshRepo("ui");
     writeFileSync(join(root, "a.txt"), "one\nwip\n");

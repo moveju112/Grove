@@ -18,6 +18,7 @@ pub async fn health(State(app): State<App>) -> Json<serde_json::Value> {
         "status": if app.is_shutting_down() { "stopping" } else if db_ok { "ready" } else { "degraded" },
         "version": crate::VERSION,
         "protocol": crate::PROTOCOL_VERSION,
+        "capabilities": crate::CAPABILITIES,
         "db": db_ok,
         "schema": app.db.schema_version(),
         // 진단용(UI-031): 실행 중인 빌드 대상
@@ -36,6 +37,8 @@ pub async fn reject_when_shutting_down(State(app): State<App>, req: Request, nex
 }
 
 pub const PROTOCOL_HEADER: &str = "x-grove-protocol";
+/// 요청에 필요한 기능 목록(쉼표 구분). 없으면 기능 검사를 하지 않는다(CLI·도구 호환).
+pub const REQUIRE_HEADER: &str = "x-grove-require";
 
 /// 클라이언트·서버 protocol 호환(DEC-014, WEB-022).
 /// - 모든 API 응답에 서버 protocol을 붙여 오래 열린 탭이 불일치를 알게 한다.
@@ -48,6 +51,20 @@ pub async fn protocol_guard(req: Request, next: Next) -> Response {
     {
         let mut r = ApiError::conflict("protocol_mismatch", "화면 버전이 서버와 맞지 않아 요청을 실행하지 않았습니다. 새로고침하세요")
             .with_details(json!({ "client_protocol": p, "server_protocol": crate::PROTOCOL_VERSION }))
+            .into_response();
+        r.headers_mut().insert(PROTOCOL_HEADER, HeaderValue::from(crate::PROTOCOL_VERSION));
+        return r;
+    }
+    // 기능 협상(NET-001): 클라이언트가 밝힌 기능 중 이 서버에 없는 것이 있으면 실행하지 않는다.
+    let missing: Vec<String> = req
+        .headers()
+        .get(REQUIRE_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .map(|v| v.split(',').map(str::trim).filter(|c| !c.is_empty() && !crate::CAPABILITIES.contains(c)).map(String::from).collect())
+        .unwrap_or_default();
+    if !missing.is_empty() {
+        let mut r = ApiError::conflict("capability_missing", "이 서버는 요청한 기능을 지원하지 않습니다. 서버를 업데이트하세요")
+            .with_details(json!({ "missing": missing, "server_capabilities": crate::CAPABILITIES }))
             .into_response();
         r.headers_mut().insert(PROTOCOL_HEADER, HeaderValue::from(crate::PROTOCOL_VERSION));
         return r;

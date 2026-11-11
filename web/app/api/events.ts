@@ -2,7 +2,7 @@
 // 끊기면 backoff 후 마지막 cursor부터 이어받는다. resync를 받으면 상위가 snapshot을 다시 읽는다.
 
 import type { EventRecord } from "./generated";
-import { accessToken, checkProtocol, refresh } from "./client";
+import { accessToken, checkProtocol, refresh, setCapabilities } from "./client";
 import { Cursor, FrameParser, backoff } from "../state/events";
 
 export type StreamHandlers = {
@@ -95,7 +95,8 @@ export class EventStream {
                             this.attempt = 0;
                             this.everLive = true;
                             this.h.onStatus("live");
-                            const c = JSON.parse(f.data) as { cursor: number };
+                            const c = JSON.parse(f.data) as { cursor: number; capabilities?: unknown };
+                            setCapabilities(c.capabilities);
                             if (this.cursor.seq === null) {
                                 // cursor 없이 처음 붙으면 조회와 연결 사이에 생긴 변경을 놓칠 수 있으므로 snapshot을 다시 읽는다.
                                 this.cursor.seq = c.cursor;

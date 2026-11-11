@@ -164,7 +164,7 @@ pub async fn stream(
                 Err(_) => return,
             },
         };
-        let hello = json!({ "cursor": cursor, "protocol": crate::PROTOCOL_VERSION });
+        let hello = json!({ "cursor": cursor, "protocol": crate::PROTOCOL_VERSION, "capabilities": crate::CAPABILITIES });
         if tx.send(Out::Event(Event::default().event("hello").data(hello.to_string()))).await.is_err() {
             return;
         }

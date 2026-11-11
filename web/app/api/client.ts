@@ -37,6 +37,28 @@ export function checkProtocol(resp: Response) {
     }
 }
 
+/// 서버가 알린 기능 목록(NET-001). 이벤트 `hello`에서 갱신한다. 아직 모르면 null.
+let capabilities: ReadonlySet<string> | null = null;
+const capabilityListeners = new Set<() => void>();
+
+export function setCapabilities(list: unknown) {
+    if (!Array.isArray(list)) return;
+    const next = new Set(list.filter((x): x is string => typeof x === "string"));
+    if (capabilities && capabilities.size === next.size && [...next].every((c) => capabilities!.has(c))) return;
+    capabilities = next;
+    for (const l of capabilityListeners) l();
+}
+
+export function onCapabilities(fn: () => void): () => void {
+    capabilityListeners.add(fn);
+    return () => capabilityListeners.delete(fn);
+}
+
+/// 기능 지원 여부. 아직 목록을 받지 못했으면 null(서버가 `x-grove-require`로 다시 확인한다).
+export function hasCapability(name: string): boolean | null {
+    return capabilities === null ? null : capabilities.has(name);
+}
+
 let current: Session | null = null;
 let refreshing: Promise<Session | null> | null = null;
 const listeners = new Set<(s: Session | null) => void>();
@@ -130,7 +152,8 @@ export function accessToken(): string | null {
     return current?.accessToken ?? null;
 }
 
-type Opts = { key?: string; signal?: AbortSignal };
+/// requires: 이 요청에 필요한 서버 기능. 서버에 없으면 실행하지 않고 `capability_missing`으로 거절된다.
+type Opts = { key?: string; signal?: AbortSignal; requires?: string[] };
 
 export async function request<T>(method: string, path: string, body?: unknown, opts: Opts = {}): Promise<T> {
     if (method !== "GET" && protocolMismatch !== null) {
@@ -140,6 +163,7 @@ export async function request<T>(method: string, path: string, body?: unknown, o
         const headers: Record<string, string> = { "x-grove-protocol": String(PROTOCOL) };
         if (current) headers.authorization = `Bearer ${current.accessToken}`;
         if (body !== undefined) headers["content-type"] = "application/json";
+        if (opts.requires?.length) headers["x-grove-require"] = opts.requires.join(",");
         if (method !== "GET") headers["idempotency-key"] = opts.key ?? newKey();
         return fetch("/api/v1" + path, {
             method,

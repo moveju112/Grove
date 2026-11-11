@@ -143,7 +143,7 @@ pub fn run(args: Vec<String>) -> i32 {
             // 빌드·업데이트 도구가 읽는 형식(BUILD-031, UPDATE-005)
             println!(
                 "{}",
-                serde_json::json!({ "version": VERSION, "protocol": crate::PROTOCOL_VERSION, "schema": crate::store::MIGRATIONS.len(), "target": std::env::consts::ARCH.to_string() + "-" + std::env::consts::OS, "features": ["file_log_rotation_v1"] })
+                serde_json::json!({ "version": VERSION, "protocol": crate::PROTOCOL_VERSION, "schema": crate::store::MIGRATIONS.len(), "target": std::env::consts::ARCH.to_string() + "-" + std::env::consts::OS, "features": crate::CAPABILITIES })
             );
         } else {
             println!("grove {VERSION} (protocol {}, schema {})", crate::PROTOCOL_VERSION, crate::store::MIGRATIONS.len());

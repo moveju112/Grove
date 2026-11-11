@@ -1,7 +1,11 @@
 import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import type { Worktree } from "../api/generated";
+import { useCapability } from "../state/capabilities";
 import { useQuery } from "../state/store";
+
+/// 이 화면이 쓰는 서버 기능(NET-001). 서버에 없으면 화면을 숨기고 요청은 서버가 거절한다.
+const WT = ["worktrees_v1"];
 
 type Row = Worktree & { exists: boolean; dirty_count: number | null; sessions: number };
 type List = { is_repo: boolean; worktrees: Row[]; unowned: { path: string; branch: string | null }[] };
@@ -10,7 +14,12 @@ type Attempt = { label: string; key: string; run: (key: string) => Promise<unkno
 /// Grove worktree(GIT-007~010). Grove가 만든 것만 merge·제거하고, 사용자가 만든 worktree는 표시만 한다.
 /// 응답을 받지 못한 요청은 같은 키로 결과를 다시 확인한다(새 요청으로 반복하지 않는다).
 export function WorktreesPanel({ projectId }: { projectId: string }) {
-    const q = useQuery<List>(`worktrees:${projectId}`, () => api.get(`/projects/${projectId}/worktrees`));
+    if (useCapability("worktrees_v1") === false) return null;
+    return <WorktreesPanelBody projectId={projectId} />;
+}
+
+function WorktreesPanelBody({ projectId }: { projectId: string }) {
+    const q = useQuery<List>(`worktrees:${projectId}`, () => api.get(`/projects/${projectId}/worktrees`, { requires: WT }));
     const [name, setName] = useState("");
     const [err, setErr] = useState<string | null>(null);
     const [choice, setChoice] = useState<{ kind: "dirty"; changed: number } | { kind: "large"; files: number } | null>(null);
@@ -45,7 +54,7 @@ export function WorktreesPanel({ projectId }: { projectId: string }) {
 
     const create = (opts: { carry?: "leave" | "carry"; confirm_large?: boolean }) => {
         const body = { name: name.trim(), ...opts };
-        void act({ label: "worktree 만들기", key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees`, body, { key }) }).then((ok) => {
+        void act({ label: "worktree 만들기", key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees`, body, { key, requires: WT }) }).then((ok) => {
             if (ok) {
                 setName("");
                 setChoice(null);
@@ -103,7 +112,7 @@ export function WorktreesPanel({ projectId }: { projectId: string }) {
                                 disabled={busy || attempt !== null}
                                 onClick={() => {
                                     if (confirm(`${w.branch}를 프로젝트 폴더의 현재 브랜치에 merge할까요? 충돌하면 merge 전 상태로 되돌립니다.`))
-                                        void act({ label: "merge", key: newKey(), run: (key) => api.post(`/worktrees/${w.id}/merge`, {}, { key }) });
+                                        void act({ label: "merge", key: newKey(), run: (key) => api.post(`/worktrees/${w.id}/merge`, {}, { key, requires: WT }) });
                                 }}
                             >
                                 merge
@@ -116,11 +125,11 @@ export function WorktreesPanel({ projectId }: { projectId: string }) {
                             onClick={() => {
                                 if (!confirm(`worktree를 제거할까요? 브랜치 ${w.branch}는 남습니다.`)) return;
                                 // 변경 여부는 화면의 목록이 아니라 서버가 지금 확인한 결과로 판단한다.
-                                const force = () => void act({ label: "강제 제거", key: newKey(), run: (key) => api.del(`/worktrees/${w.id}?force=true`, { key }) });
+                                const force = () => void act({ label: "강제 제거", key: newKey(), run: (key) => api.del(`/worktrees/${w.id}?force=true`, { key, requires: WT }) });
                                 void act({
                                     label: "제거",
                                     key: newKey(),
-                                    run: (key) => api.del(`/worktrees/${w.id}`, { key }),
+                                    run: (key) => api.del(`/worktrees/${w.id}`, { key, requires: WT }),
                                     onConflict: (e) => {
                                         if (e.code !== "worktree_dirty") return false;
                                         const n = (e.details as { changed?: number } | undefined)?.changed ?? 0;
@@ -146,7 +155,7 @@ export function WorktreesPanel({ projectId }: { projectId: string }) {
                 </>
             )}
             {rows.some((w) => !w.exists) && (
-                <button className="ghost small" disabled={busy || attempt !== null} onClick={() => void act({ label: "정리", key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees/prune`, {}, { key }) })}>
+                <button className="ghost small" disabled={busy || attempt !== null} onClick={() => void act({ label: "정리", key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees/prune`, {}, { key, requires: WT }) })}>
                     사라진 worktree 기록 정리
                 </button>
             )}
@@ -155,8 +164,13 @@ export function WorktreesPanel({ projectId }: { projectId: string }) {
 }
 
 /// 대화의 작업 위치 선택(GIT-008): 프로젝트 폴더 또는 이 프로젝트의 Grove worktree. 실행 중이면 서버가 거절한다.
-export function WorktreeSelect({ projectId, sessionId, current, disabled, onError }: { projectId: string; sessionId: string; current: string | null; disabled: boolean; onError: (m: string) => void }) {
-    const q = useQuery<List>(`worktrees:${projectId}`, () => api.get(`/projects/${projectId}/worktrees`));
+export function WorktreeSelect(props: { projectId: string; sessionId: string; current: string | null; disabled: boolean; onError: (m: string) => void }) {
+    if (useCapability("worktrees_v1") === false) return null;
+    return <WorktreeSelectBody {...props} />;
+}
+
+function WorktreeSelectBody({ projectId, sessionId, current, disabled, onError }: { projectId: string; sessionId: string; current: string | null; disabled: boolean; onError: (m: string) => void }) {
+    const q = useQuery<List>(`worktrees:${projectId}`, () => api.get(`/projects/${projectId}/worktrees`, { requires: WT }));
     const rows = (q.data?.worktrees ?? []).filter((w) => w.status === "active" || w.id === current);
     if (!q.data?.is_repo || (rows.length === 0 && !current)) return null;
     return (
@@ -166,7 +180,7 @@ export function WorktreeSelect({ projectId, sessionId, current, disabled, onErro
             disabled={disabled}
             onChange={(e) => {
                 const worktree_id = e.target.value || null;
-                api.post(`/sessions/${sessionId}/worktree`, { worktree_id }).catch((err: Error) => onError(`작업 위치를 바꾸지 못했습니다: ${err.message}`));
+                api.post(`/sessions/${sessionId}/worktree`, { worktree_id }, { requires: WT }).catch((err: Error) => onError(`작업 위치를 바꾸지 못했습니다: ${err.message}`));
             }}
         >
             <option value="">위치: 프로젝트 폴더</option>

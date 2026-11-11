@@ -639,7 +639,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 
 근거: S01, S07, S11.
 
-- [ ] NET-001 버전 handshake와 기능 capability 협상을 정의한다.
+- [x] NET-001 버전 handshake와 기능 capability 협상을 정의한다. 검증: protocol 버전은 모든 요청·응답 헤더·health·이벤트 `hello`로 주고받고 다르면 변경 요청을 막는다(기존). 기능 목록은 `grove::CAPABILITIES` 한 곳에서 정의해 health·`hello`·`grove version --json`이 같은 값을 알리고, 클라이언트가 `x-grove-require`로 밝힌 기능이 없으면 조회·변경을 실행하지 않는다(`capability_missing`, `tests/api.rs::capability_negotiation_advertises_and_enforces_required_features`). 화면은 `hello`의 목록으로 기능을 숨기고 요청에 필요한 기능을 붙인다(`useCapability`, `web/app/state/capabilities.test.ts`, `web/e2e/worktrees.spec.ts` 기능 미지원 서버 흉내). 회귀: Rust 319개·Vitest 30개·Playwright 89개(opt-in 7·2개 제외).
 - [ ] NET-002 Rust 계약에서 TypeScript 타입과 런타임 검증 정보를 생성한다.
 - [ ] NET-003 request ID, timeout, 표준 오류 코드, 취소 응답을 정의한다.
 - [x] NET-004 HTTP 요청·WebSocket 이벤트·파일 전송의 역할을 고정한다. 검증: 역할 결정 `migration/RULEBOOK.md` §2(HTTP 요청·SSE 이벤트·터미널 전용 WebSocket).
