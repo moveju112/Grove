@@ -687,6 +687,24 @@ pub const MIGRATIONS: &[&str] = &[
         completed_at TEXT NOT NULL
     );
     "#,
+    // 41: 생성 접수의 소유권을 Git 실행 전에 보존하고 결과 미확정을 active와 구분한다.
+    r#"
+    CREATE TABLE worktrees_next (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        name TEXT NOT NULL,
+        path TEXT NOT NULL UNIQUE,
+        branch TEXT NOT NULL,
+        base TEXT,
+        status TEXT NOT NULL CHECK (status IN ('active','removed','missing','unknown')),
+        created_at TEXT NOT NULL,
+        removed_at TEXT
+    );
+    INSERT INTO worktrees_next SELECT * FROM worktrees;
+    DROP TABLE worktrees;
+    ALTER TABLE worktrees_next RENAME TO worktrees;
+    CREATE INDEX worktrees_project ON worktrees(project_id, status);
+    "#,
 ];
 
 #[cfg(test)]
@@ -700,6 +718,26 @@ mod tests {
         connection.execute("INSERT INTO model_profiles(id,name,protocol,base_url,model,created_at,updated_at) VALUES ('legacy','legacy','openai','http://localhost/v1','manual','t','t')", []).unwrap();
         connection.execute_batch(super::MIGRATIONS[38]).unwrap();
         assert!(connection.query_row("SELECT enabled FROM model_profiles WHERE id='legacy'", [], |row| row.get::<_, bool>(0)).unwrap());
+    }
+
+    #[test]
+    fn worktree_rebuild_preserves_ownership_locations_and_statuses() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        for migration in &super::MIGRATIONS[..40] { c.execute_batch(migration).unwrap(); }
+        c.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES ('project','project','/fixture/project','t','t')", []).unwrap();
+        for status in ["active", "missing", "removed"] {
+            c.execute("INSERT INTO worktrees(id,project_id,name,path,branch,base,status,created_at,removed_at) VALUES (?1,'project',?1,?2,?3,'base',?1,'created','removed')",
+                rusqlite::params![status, format!("/fixture/{status}"), format!("grove/{status}")]).unwrap();
+        }
+        c.execute_batch(super::MIGRATIONS[40]).unwrap();
+        for status in ["active", "missing", "removed"] {
+            let row: (String, String, String, String, String) = c.query_row("SELECT project_id,path,branch,base,status FROM worktrees WHERE id=?1", [status],
+                |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?,r.get(4)?))).unwrap();
+            assert_eq!(row, ("project".into(),format!("/fixture/{status}"),format!("grove/{status}"),"base".into(),status.into()));
+        }
+        c.execute("UPDATE worktrees SET status='unknown' WHERE id='missing'", []).unwrap();
+        let violations: i64 = c.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0)).unwrap();
+        assert_eq!(violations, 0);
     }
 
     /// 목록·검색·사용량의 주요 조회가 전체 표 scan 없이 인덱스를 쓴다(DB-011).

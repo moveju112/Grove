@@ -255,6 +255,7 @@ pub fn router(app: App) -> Router {
         .route("/projects/{id}/worktrees/prune", post(worktrees::prune))
         .route("/worktrees/{id}", delete(worktrees::remove))
         .route("/worktrees/{id}/merge", post(worktrees::merge))
+        .route("/worktrees/{id}/review", post(worktrees::review))
         .route("/sessions/{id}/worktree", post(worktrees::enter))
         .route("/projects/{id}/git/branches/rename", post(git::rename_branch))
         .route("/projects/{id}/git/commits/{rev}", get(git::show_commit))

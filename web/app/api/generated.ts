@@ -130,7 +130,7 @@ stored: boolean, undone_at: string | null, created_at: string, seq: number, };
 
 export type Worktree = { id: string, project_id: string, name: string, path: string, branch: string, base: string | null, 
 /**
- * active | removed | missing(경로가 사라짐)
+ * active | removed | missing(경로가 사라짐) | unknown(생성 결과 미확정)
  */
 status: string, created_at: string, removed_at: string | null, };
 

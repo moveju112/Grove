@@ -17,8 +17,8 @@ use crate::idem;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::Response;
-use rusqlite::{Connection, OptionalExtension, params};
+use axum::response::{IntoResponse, Response};
+use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path as FsPath, PathBuf};
@@ -34,7 +34,7 @@ pub struct Worktree {
     pub path: String,
     pub branch: String,
     pub base: Option<String>,
-    /// active | removed | missing(경로가 사라짐)
+    /// active | removed | missing(경로가 사라짐) | unknown(생성 결과 미확정)
     pub status: String,
     pub created_at: String,
     pub removed_at: Option<String>,
@@ -94,6 +94,52 @@ async fn dirty_paths(root: &FsPath) -> ApiResult<Vec<String>> {
 /// 경로 비교용 정규화(심볼릭 링크·`..` 제거, 없으면 그대로)
 fn canon(p: &FsPath) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+fn unknown(project_id: &str, operation: &str, worktree_id: Option<&str>) -> ApiError {
+    ApiError::conflict("result_unknown", "worktree 작업 결과를 확정하지 못했습니다. 폴더·브랜치·이력을 확인하세요. 같은 요청을 재실행하지 않습니다")
+        .with_details(json!({"project_id":project_id,"operation":operation,"worktree_id":worktree_id}))
+}
+
+async fn accept(
+    app: &App, p: &Principal, headers: &HeaderMap, hash: &str, unknown: &ApiError,
+    prepare: impl FnOnce(&Transaction, &str) -> ApiResult<()> + Send + 'static,
+) -> ApiResult<Option<Response>> {
+    let pending = unknown.body();
+    let response = idem::run(app, p, headers, hash, move |tx, now| {
+        prepare(tx, now)?;
+        Ok((StatusCode::CONFLICT, pending))
+    }).await?;
+    Ok(response.headers().contains_key("idempotent-replayed").then_some(response))
+}
+
+async fn finish(
+    app: &App, p: &Principal, headers: &HeaderMap, hash: &str, unknown: ApiError,
+    result: ApiResult<(StatusCode, Value)>,
+    update: impl FnOnce(&Transaction, &str, Value) -> ApiResult<Value> + Send + 'static,
+) -> ApiResult<Response> {
+    let (status, body) = match result {
+        Ok(result) => result,
+        Err(error) if error.status.is_server_error() || error.status == StatusCode::REQUEST_TIMEOUT
+            || error.code == "result_unknown" || error.details.as_ref().is_some_and(|d| d["result_unknown"] == true) => {
+            tracing::warn!(code=error.code, "worktree 실행 결과 확인 실패");
+            return Err(unknown);
+        }
+        Err(error) => (error.status, error.body()),
+    };
+    let (owner, key, hash, now) = (p.root_id.clone(), idem::key_from(headers)?, hash.to_string(), app.now());
+    let body = app.db.call(move |c| {
+        let tx = c.transaction()?;
+        let body = if status.is_success() { update(&tx, &now, body)? } else { body };
+        idem::complete(&tx, &owner, &key, &hash, status, &body)?;
+        tx.commit()?;
+        Ok(body)
+    }).await.map_err(|error| {
+        tracing::warn!(code=error.code, "worktree 결과 저장 실패");
+        unknown
+    })?;
+    app.notify_events().await;
+    Ok((status, Json(body)).into_response())
 }
 
 // ---------------- 목록 ----------------
@@ -180,6 +226,8 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
     if carry == Some(true) && b.base.is_some() {
         return Err(ApiError::invalid("변경을 옮겨 가려면 현재 HEAD에서 시작해야 합니다(base 없이 요청하세요)"));
     }
+    let h = idem::body_hash("worktree.create", &json!({ "p": project_id, "n": b.name, "b": b.base, "c": b.carry, "l": b.confirm_large }));
+    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? { return Ok(r); }
     let root = root_of(&app, &project_id).await?;
     if !is_repo(&root).await? {
         return Err(ApiError::invalid("Git 저장소가 아닙니다"));
@@ -187,17 +235,20 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
     let lock = app.repo_locks.get(&project_id);
     let _g = lock.lock().await;
     crate::auth::revalidate(&app,&p).await?;
-    let h = idem::body_hash("worktree.create", &json!({ "p": project_id, "n": b.name, "b": b.base, "c": b.carry, "l": b.confirm_large }));
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
     let _resource = app.project_resources.ui_write(&app,&project_id,&p).await?;
+    if root_of(&app, &project_id).await? != root {
+        return Err(ApiError::conflict("project_changed", "프로젝트 경로가 바뀌어 worktree를 만들지 않았습니다"));
+    }
     let dirty = dirty_paths(&root).await?;
     if !dirty.is_empty() && carry.is_none() {
         return Err(ApiError::conflict("worktree_dirty_choice", "원래 폴더에 커밋하지 않은 변경이 있습니다. 두고 갈지(leave) 복사해 갈지(carry) 선택하세요")
             .with_details(json!({ "changed": dirty.len(), "sample": dirty.iter().take(20).collect::<Vec<_>>() })));
     }
     let files = git(&root, &["ls-files", "-z"], true).await?;
+    if files.code != 0 { return Err(fail(&files, "추적 파일 확인")); }
     let count = files.stdout.split(|b| *b == 0).filter(|s| !s.is_empty()).count();
     if count > LARGE_REPO_FILES && !b.confirm_large {
         return Err(ApiError::conflict("worktree_large_repo", format!("추적 파일이 {count}개인 큰 저장소입니다. 체크아웃에 시간과 디스크가 듭니다. 확인 후 다시 요청하세요"))
@@ -221,33 +272,35 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
     std::fs::create_dir_all(&dir).map_err(|e| ApiError::internal(format!("worktree 폴더 생성 실패: {e}")))?;
     let path = dir.join(&id);
     let path_s = path.to_string_lossy().to_string();
-    // 브랜치가 이미 있으면 git이 거절한다(기존 브랜치를 덮어쓰지 않는다).
-    let o = git(&root, &["worktree", "add", "-b", &branch, "--", &path_s, &sha], false).await?;
-    if o.code != 0 {
-        return Err(fail(&o, "worktree 생성"));
-    }
-    if carry == Some(true)
-        && let Err(e) = carry_changes(&root, &path, &dir.join(format!("{id}.patch"))).await
-    {
-        // 방금 만든 것만 되돌린다: 새 worktree와 새 브랜치. 원래 폴더는 건드리지 않았다.
-        let _ = git(&root, &["worktree", "remove", "--force", "--", &path_s], false).await;
-        let _ = git(&root, &["branch", "-D", "--", &branch], false).await;
-        return Err(e);
-    }
-    let carried = carry == Some(true) && !dirty.is_empty();
-    let pid = project_id.clone();
-    idem::run(&app, &p, &headers, &h, move |tx, now| {
+    let pending = unknown(&project_id, "worktree.create", Some(&id));
+    let (pid, wid, name, target, new_branch, base) = (project_id.clone(), id.clone(), b.name.clone(), path_s.clone(), branch.clone(), sha.clone());
+    if let Some(r) = accept(&app, &p, &headers, &h, &pending, move |tx, now| {
         crate::projects::active_root(tx, &pid)?;
         tx.execute(
-            "INSERT INTO worktrees (id, project_id, name, path, branch, base, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'active', ?7)",
-            params![id, pid, b.name, path_s, branch, sha, now],
+            "INSERT INTO worktrees (id,project_id,name,path,branch,base,status,created_at) VALUES (?1,?2,?3,?4,?5,?6,'unknown',?7)",
+            params![wid,pid,name,target,new_branch,base,now],
         )?;
+        events::append(tx, now, "worktree.changed", Some(&pid), None, &json!({"op":"create.accepted","id":wid}))?;
+        Ok(())
+    }).await? { return Ok(r); }
+    // 브랜치가 이미 있으면 git이 거절한다(기존 브랜치를 덮어쓰지 않는다).
+    let result = async {
+        let o = git(&root, &["worktree", "add", "-b", &branch, "--", &path_s, &sha], false).await?;
+        if o.code != 0 { return Err(fail(&o, "worktree 생성")); }
+        // 복사 실패도 소유 기록과 원본을 보존한다. 부분 생성물을 자동 삭제하지 않는다.
+        if carry == Some(true) { carry_changes(&root, &path, &dir.join(format!("{id}.patch"))).await?; }
+        Ok((StatusCode::CREATED, json!({})))
+    }.await;
+    let carried = carry == Some(true) && !dirty.is_empty();
+    let pid = project_id.clone();
+    finish(&app, &p, &headers, &h, pending, result, move |tx, now, _| {
+        tx.execute("UPDATE worktrees SET status='active' WHERE id=?1", params![id])?;
         let w = get(tx, &id)?;
         events::append(tx, now, "worktree.changed", Some(&pid), None, &json!({ "op": "create", "id": id }))?;
         let mut v = serde_json::to_value(&w)?;
         v["carried"] = json!(carried);
         v["files"] = json!(count);
-        Ok((StatusCode::CREATED, v))
+        Ok(v)
     })
     .await
 }
@@ -269,6 +322,7 @@ async fn carry_changes(root: &FsPath, target: &FsPath, patch_file: &FsPath) -> A
         }
     }
     let untracked = git(root, &["ls-files", "--others", "--exclude-standard", "-z"], true).await?;
+    if untracked.code != 0 { return Err(fail(&untracked, "미추적 파일 확인")); }
     for rel in untracked.stdout.split(|b| *b == 0).filter(|s| !s.is_empty()) {
         let rel = String::from_utf8_lossy(rel).to_string();
         let from = root.join(&rel);
@@ -336,20 +390,73 @@ pub struct MergeBody {
     pub no_ff: bool,
 }
 
+#[derive(Deserialize)]
+pub struct ReviewBody {
+    pub reviewed: bool,
+}
+
+/// 이전 생성 요청의 완료 여부와 별개로, 사용자가 검토한 현재 worktree를 사용한다.
+pub async fn review(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<ReviewBody>) -> ApiResult<Response> {
+    if !b.reviewed { return Err(ApiError::invalid("폴더·브랜치·복사된 파일을 먼저 확인하세요")); }
+    let h = idem::body_hash("worktree.review", &json!({"w":id,"reviewed":b.reviewed}));
+    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? { return Ok(r); }
+    let (w, root) = owned(&app, &id).await?;
+    let lock = app.repo_locks.get(&w.project_id);
+    let _g = lock.lock().await;
+    let _resource = app.project_resources.ui_write(&app, &w.project_id, &p).await?;
+    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? { return Ok(r); }
+    let (w, current_root) = owned(&app, &id).await?;
+    if current_root != root { return Err(ApiError::conflict("project_changed", "프로젝트 경로가 바뀌었습니다")); }
+    if w.status != "unknown" { return Err(ApiError::conflict("worktree_state", "생성 결과 미확정 worktree만 검토할 수 있습니다")); }
+    let target = FsPath::new(&w.path);
+    let list = git(&root, &["worktree", "list", "--porcelain", "-z"], true).await?;
+    if list.code != 0 { return Err(fail(&list, "worktree 등록 확인")); }
+    let fields: Vec<_> = list.stdout.split(|b| *b == 0).collect();
+    let wanted_path = format!("worktree {}", w.path);
+    let wanted_branch = format!("branch refs/heads/{}", w.branch);
+    let registered = fields.split(|field| field.is_empty()).any(|record|
+        record.contains(&wanted_path.as_bytes()) && record.contains(&wanted_branch.as_bytes()));
+    if !registered || !target.is_dir() { return Err(ApiError::conflict("worktree_mismatch", "소유 기록과 실제 Git worktree가 다릅니다. 파일을 보존하고 직접 확인하세요")); }
+    for (at, args, expected) in [
+        (target, vec!["rev-parse","--show-toplevel"], canon(target)),
+        (target, vec!["rev-parse","--git-common-dir"], {
+            let common = git(&root, &["rev-parse","--git-common-dir"], true).await?;
+            if common.code != 0 { return Err(fail(&common, "공유 Git metadata 확인")); }
+            canon(&root.join(String::from_utf8_lossy(&common.stdout).trim_end_matches('\n')))
+        }),
+    ] {
+        let actual = git(at, &args, true).await?;
+        if actual.code != 0 || canon(&at.join(String::from_utf8_lossy(&actual.stdout).trim_end_matches('\n'))) != expected {
+            return Err(ApiError::conflict("worktree_mismatch", "실제 폴더의 Git metadata가 소유 기록과 다릅니다"));
+        }
+    }
+    let branch = git(target, &["symbolic-ref","--quiet","HEAD"], true).await?;
+    if branch.code != 0 || String::from_utf8_lossy(&branch.stdout).trim_end_matches('\n') != format!("refs/heads/{}", w.branch) {
+        return Err(ApiError::conflict("worktree_mismatch", "실제 worktree 브랜치가 소유 기록과 다릅니다"));
+    }
+    idem::run(&app, &p, &headers, &h, move |tx, now| {
+        tx.execute("UPDATE worktrees SET status='active' WHERE id=?1 AND status='unknown'", params![id])?;
+        let w = get(tx, &id)?;
+        events::append(tx, now, "worktree.changed", Some(&w.project_id), None, &json!({"op":"review","id":id}))?;
+        Ok((StatusCode::OK, serde_json::to_value(w)?))
+    }).await
+}
+
 /// worktree 브랜치를 프로젝트 폴더의 현재 브랜치에 merge한다. worktree에 커밋하지 않은 변경이 있으면 거부한다.
 pub async fn merge(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<MergeBody>) -> ApiResult<Response> {
+    let h = idem::body_hash("worktree.merge", &json!({ "w": id, "n": b.no_ff }));
+    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? { return Ok(r); }
     let (w, root) = owned(&app, &id).await?;
-    if w.status != "active" {
-        return Err(ApiError::gone("제거된 worktree입니다"));
-    }
     let lock = app.repo_locks.get(&w.project_id);
     let _g = lock.lock().await;
     crate::auth::revalidate(&app,&p).await?;
-    let h = idem::body_hash("worktree.merge", &json!({ "w": id, "n": b.no_ff }));
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
     let _resource = app.project_resources.ui_write(&app,&w.project_id,&p).await?;
+    let (w, current_root) = owned(&app, &id).await?;
+    if current_root != root { return Err(ApiError::conflict("project_changed", "프로젝트 경로가 바뀌어 merge하지 않았습니다")); }
+    if w.status != "active" { return Err(ApiError::gone("활성 worktree가 아닙니다")); }
     if FsPath::new(&w.path).is_dir() {
         let d = dirty_paths(FsPath::new(&w.path)).await?;
         if !d.is_empty() {
@@ -357,12 +464,14 @@ pub async fn merge(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
                 .with_details(json!({ "changed": d.len() })));
         }
     }
-    let result = crate::git::merge_into(&root, &w.branch, b.no_ff).await?;
+    let pending = unknown(&w.project_id, "worktree.merge", Some(&id));
+    if let Some(r) = accept(&app, &p, &headers, &h, &pending, |_, _| Ok(())).await? { return Ok(r); }
+    let result = crate::git::merge_into(&root, &w.branch, b.no_ff).await.map(|v| (StatusCode::OK, v));
     let pid = w.project_id.clone();
-    idem::run(&app, &p, &headers, &h, move |tx, now| {
+    finish(&app, &p, &headers, &h, pending, result, move |tx, now, result| {
         events::append(tx, now, "git.changed", Some(&pid), None, &json!({ "op": "worktree.merge" }))?;
         events::append(tx, now, "worktree.changed", Some(&pid), None, &json!({ "op": "merge", "id": id }))?;
-        Ok((StatusCode::OK, result))
+        Ok(result)
     })
     .await
 }
@@ -377,15 +486,18 @@ pub struct RemoveQuery {
 /// Grove가 만든 worktree만 제거한다. 브랜치는 남긴다. 대화가 아직 들어가 있으면 거부한다.
 pub async fn remove(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Query(q): Query<RemoveQuery>) -> ApiResult<Response> {
     let force = q.force;
+    let h = idem::body_hash("worktree.remove", &json!({ "w": id, "f": force }));
+    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? { return Ok(r); }
     let (w, root) = owned(&app, &id).await?;
     let lock = app.repo_locks.get(&w.project_id);
     let _g = lock.lock().await;
     crate::auth::revalidate(&app,&p).await?;
-    let h = idem::body_hash("worktree.remove", &json!({ "w": id, "f": force }));
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
     let _resource = app.project_resources.ui_write(&app,&w.project_id,&p).await?;
+    let (w, current_root) = owned(&app, &id).await?;
+    if current_root != root { return Err(ApiError::conflict("project_changed", "프로젝트 경로가 바뀌어 worktree를 제거하지 않았습니다")); }
     if w.status == "removed" {
         return Ok(axum::response::IntoResponse::into_response((StatusCode::OK, Json(serde_json::to_value(&w)?))));
     }
@@ -405,27 +517,30 @@ pub async fn remove(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
             return Err(ApiError::conflict("worktree_dirty", "worktree에 커밋하지 않은 변경이 있어 제거하지 않습니다. 버려도 되면 강제 제거를 선택하세요")
                 .with_details(json!({ "changed": d.len(), "sample": d.iter().take(20).collect::<Vec<_>>() })));
         }
-        let mut args = vec!["worktree", "remove"];
-        if force {
-            args.push("--force");
-        }
-        args.extend(["--", w.path.as_str()]);
-        let o = git(&root, &args, false).await?;
-        if o.code != 0 {
-            return Err(fail(&o, "worktree 제거"));
-        }
-    } else {
-        // 경로가 이미 없으면 git의 관리 기록만 정리한다.
-        let _ = git(&root, &["worktree", "prune"], false).await?;
     }
+    let pending = unknown(&w.project_id, "worktree.remove", Some(&id));
+    if let Some(r) = accept(&app, &p, &headers, &h, &pending, |_, _| Ok(())).await? { return Ok(r); }
+    let result = async {
+        let o = if path.is_dir() {
+            let mut args = vec!["worktree", "remove"];
+            if force { args.push("--force"); }
+            args.extend(["--", w.path.as_str()]);
+            git(&root, &args, false).await?
+        } else {
+            // 경로가 이미 없으면 git의 관리 기록만 정리한다.
+            git(&root, &["worktree", "prune"], false).await?
+        };
+        if o.code != 0 { return Err(fail(&o, "worktree 제거")); }
+        Ok((StatusCode::OK, json!({})))
+    }.await;
     let pid = w.project_id.clone();
-    idem::run(&app, &p, &headers, &h, move |tx, now| {
+    finish(&app, &p, &headers, &h, pending, result, move |tx, now, _| {
         tx.execute("UPDATE worktrees SET status = 'removed', removed_at = ?2 WHERE id = ?1", params![id, now])?;
         let w = get(tx, &id)?;
         events::append(tx, now, "worktree.changed", Some(&pid), None, &json!({ "op": "remove", "id": id }))?;
         let mut v = serde_json::to_value(&w)?;
         v["branch_kept"] = json!(true);
-        Ok((StatusCode::OK, v))
+        Ok(v)
     })
     .await
 }
@@ -433,6 +548,8 @@ pub async fn remove(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
 /// 경로가 사라진 worktree의 git 관리 기록을 정리하고 Grove 기록을 missing으로 표시한다.
 /// 어떤 폴더도 지우지 않는다(소유 아닌 worktree·남아 있는 폴더는 그대로).
 pub async fn prune(State(app): State<App>, p: Principal, headers: HeaderMap, Path(project_id): Path<String>) -> ApiResult<Response> {
+    let h = idem::body_hash("worktree.prune", &json!({ "p": project_id }));
+    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? { return Ok(r); }
     let root = root_of(&app, &project_id).await?;
     if !is_repo(&root).await? {
         return Err(ApiError::invalid("Git 저장소가 아닙니다"));
@@ -440,17 +557,19 @@ pub async fn prune(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     let lock = app.repo_locks.get(&project_id);
     let _g = lock.lock().await;
     crate::auth::revalidate(&app,&p).await?;
-    let h = idem::body_hash("worktree.prune", &json!({ "p": project_id }));
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
     let _resource = app.project_resources.ui_write(&app,&project_id,&p).await?;
-    let o = git(&root, &["worktree", "prune", "--verbose"], false).await?;
-    if o.code != 0 {
-        return Err(fail(&o, "worktree prune"));
-    }
-    let pruned = lines(o.stderr.as_bytes()).len() + lines(&o.stdout).len();
-    idem::run(&app, &p, &headers, &h, move |tx, now| {
+    if root_of(&app, &project_id).await? != root { return Err(ApiError::conflict("project_changed", "프로젝트 경로가 바뀌어 prune하지 않았습니다")); }
+    let pending = unknown(&project_id, "worktree.prune", None);
+    if let Some(r) = accept(&app, &p, &headers, &h, &pending, |_, _| Ok(())).await? { return Ok(r); }
+    let result = async {
+        let o = git(&root, &["worktree", "prune", "--verbose"], false).await?;
+        if o.code != 0 { return Err(fail(&o, "worktree prune")); }
+        Ok((StatusCode::OK, json!({"git_pruned":lines(o.stderr.as_bytes()).len() + lines(&o.stdout).len()})))
+    }.await;
+    finish(&app, &p, &headers, &h, pending, result, move |tx, now, mut result| {
         let mut st = tx.prepare("SELECT id, path FROM worktrees WHERE project_id = ?1 AND status = 'active'")?;
         let rows = st.query_map(params![project_id], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
         drop(st);
@@ -462,7 +581,8 @@ pub async fn prune(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
             }
         }
         events::append(tx, now, "worktree.changed", Some(&project_id), None, &json!({ "op": "prune" }))?;
-        Ok((StatusCode::OK, json!({ "git_pruned": pruned, "missing": missing })))
+        result["missing"] = json!(missing);
+        Ok(result)
     })
     .await
 }

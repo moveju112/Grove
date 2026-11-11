@@ -687,6 +687,7 @@ pub async fn merge(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
 /// 커밋하지 않은 변경이 있으면 거부하고, 충돌이면 즉시 abort해 merge 전 상태로 돌려놓는다.
 pub(crate) async fn merge_into(root: &std::path::Path, branch: &str, no_ff: bool) -> ApiResult<Value> {
     let dirty = git(root, &["status", "--porcelain", "--untracked-files=no"], true).await?;
+    if dirty.code != 0 { return Err(fail(&dirty, "merge 전 상태 확인")); }
     if !dirty.stdout.is_empty() {
         return Err(ApiError::conflict("dirty_tree", "커밋하지 않은 변경이 있어 merge하지 않습니다. 먼저 커밋하세요"));
     }
@@ -699,11 +700,16 @@ pub(crate) async fn merge_into(root: &std::path::Path, branch: &str, no_ff: bool
     if o.code != 0 {
         let conflicts = git(root, &["diff", "--name-only", "--diff-filter=U"], true).await?;
         let files: Vec<String> = String::from_utf8_lossy(&conflicts.stdout).lines().map(str::to_string).collect();
-        let _ = git(root, &["merge", "--abort"], false).await;
+        let aborted = git(root, &["merge", "--abort"], false).await?;
+        if aborted.code != 0 {
+            return Err(ApiError::conflict("result_unknown", "merge 실패 뒤 원래 상태로 복구하지 못했습니다. 폴더·index·이력을 직접 확인하세요")
+                .with_details(json!({"result_unknown":true,"conflicts":files})));
+        }
         return Err(ApiError::conflict("merge_conflict", "merge 충돌이 있어 되돌렸습니다. 저장소는 merge 전 상태입니다")
             .with_details(json!({ "conflicts": files, "stderr": o.stderr })));
     }
     let head = git(root, &["rev-parse", "HEAD"], true).await?;
+    if head.code != 0 { return Err(ApiError::conflict("result_unknown", "merge 뒤 HEAD를 확인하지 못했습니다")); }
     Ok(json!({ "merged": branch, "head": String::from_utf8_lossy(&head.stdout).trim() }))
 }
 
