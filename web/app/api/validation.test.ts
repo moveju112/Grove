@@ -36,6 +36,8 @@ describe("Rust 계약에서 생성한 런타임 검증", () => {
         };
         expect(parseContract("Turn", turn)).toBe(turn);
         expect(parseContract("Turn", { ...turn, queue: { ahead: 1, active: 2, limit: 3 } }).queue?.ahead).toBe(1);
+        expect(parseContract("Turn", { ...turn, queue: { ahead: 0, active: 1, limit: 1, reason: "account" } }).queue?.reason).toBe("account");
+        expect(() => parseContract("Turn", { ...turn, queue: { ahead: 0, active: 1, limit: 1, reason: "credential-secret" } })).toThrow("$.queue.reason");
         expect(() => parseContract("Turn", { ...turn, queue: { ahead: "bad", active: 2, limit: 3 } })).toThrow("$.queue.ahead");
     });
 

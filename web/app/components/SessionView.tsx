@@ -376,7 +376,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                               ? "답변을 기다리는 중"
                               : "승인을 기다리는 중"
                         : active.queue
-                          ? `실행 차례를 기다리는 중 · 동시 실행 ${active.queue.active}/${active.queue.limit}${active.queue.ahead > 0 ? ` · 앞에 ${active.queue.ahead}개` : ""}`
+                          ? `실행 차례를 기다리는 중 · ${active.queue.reason === "account" ? "계정 한도" : active.queue.reason === "provider" ? "공급자 한도" : "동시 실행"} ${active.queue.active}/${active.queue.limit}${active.queue.ahead > 0 ? ` · 앞에 ${active.queue.ahead}개` : ""}`
                           : active.status === "queued"
                             ? "대기 중"
                             : "실행 중"}

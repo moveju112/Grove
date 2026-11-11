@@ -24,6 +24,7 @@ pub mod followups;
 pub mod goals;
 pub mod idem;
 pub mod model_capabilities;
+pub mod model_limits;
 pub mod models;
 pub mod changes;
 pub mod procs;

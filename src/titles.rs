@@ -41,7 +41,8 @@ pub async fn generate(app: &App, session_id: &str, profile_id: Option<String>) -
                 .or_else(|| chosen.as_str().filter(|x| !x.is_empty()).map(String::from))
                 .or(last)
                 .ok_or_else(|| ApiError::invalid("제목을 만들 모델 프로필이 없습니다"))?;
-            let (_, rp) = crate::models::runtime_profile(c, &profile)?;
+            let (mp, rp) = crate::models::runtime_profile(c, &profile)?;
+            let max_tokens = mp.capabilities.max_output_tokens.unwrap_or(64).min(64);
             let mut st = c.prepare(
                 "SELECT role, json_extract(content, '$.text') FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND role IN ('user','assistant') \
                  AND json_extract(content, '$.text') IS NOT NULL ORDER BY seq LIMIT 4",
@@ -54,21 +55,23 @@ pub async fn generate(app: &App, session_id: &str, profile_id: Option<String>) -
             if text.trim().is_empty() {
                 return Err(ApiError::conflict("empty", "제목을 만들 메시지가 없습니다"));
             }
-            Ok((s.revision, rp, text))
+            Ok((s.revision, rp, text, max_tokens))
         })
         .await?;
-    let (rev, rp, text) = prepared;
+    let (rev, rp, text, max_tokens) = prepared;
     let req = ModelRequest {
         system: SYSTEM.into(),
         messages: vec![ChatMsg::User { text: format!("Conversation:\n{text}\nTitle:"), images: vec![] }],
         tools: vec![],
-        max_tokens: Some(64),
+        max_tokens: Some(max_tokens),
         temperature: None,
         effort: None,
         cli: None,
     };
     let (_tx, mut cancel) = tokio::sync::watch::channel(false);
+    let permit = crate::model_limits::auxiliary(app, session_id, &rp, &mut cancel).await?;
     let out = provider::stream(&rp, &req, &mut cancel, &mut |_| {}).await;
+    drop(permit);
     let title = match out {
         Ok(o) => clean(&o.text),
         Err(e) => return Ok(json!({ "applied": false, "reason": "model_error", "message": e.message })),

@@ -300,10 +300,12 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 | 소유자 key | 서버가 정함: API=`token:<인증 소유 주체>`(브라우저 세션은 부모 기기로 묶임), 예약=`schedule:<id>`, 자식 에이전트=부모 턴의 소유자. 클라이언트 입력 없음 | `turns.owner_key`(migration 17) |
 | 접수 한도 | 설정 `runs.max_queued_per_owner`(16)·`runs.max_queued_total`(64)을 queued/running 기준으로 접수 transaction에서 검사, 넘치면 기록 없이 `429 queue_full`(retryable) | `tests/fair.rs` |
 | 분배 | `runs.max_active`(4). 빈 슬롯은 실행 중 호출이 가장 적은 소유자 → 가장 오래전에 받은 소유자 → 도착 순. 혼자면 전부 사용, 선점 없음 | `fair::tests::newcomer_gets_next_slot_while_one_owner_floods`, FIFO 결함 주입 시 `tests/fair.rs` 실패 |
-| 반환·취소 | Permit Drop으로 모든 경로에서 반환, 대기 중 취소는 큐에서 빠지고 모델을 부르지 않음, 배정과 취소가 겹치면 즉시 반환 | `fair::tests::cancel_storm_does_not_leak_slots` |
+| 공급자·계정 | `runs.provider_max_active`·`runs.account_max_active`(각 기본 4, 1~64). 대화·요약·제목이 전역/공급자/계정 자원을 한 번에 얻는다. 포화된 대상은 다른 슬롯을 잡지 않으며 다른 대상의 배정을 막지 않는다. HTTP origin+API key hash로 계정을 공유하고 임의의 추가 헤더·secret 행 ID는 분리 근거가 아니다. key 없는 endpoint는 origin, CLI는 설치 로그인 종류로 보수적으로 묶는다. 여러 key가 같은 외부 계정인지 추측하지 않으며 OAuth 계정/실제 quota 연동은 별도다 | `tests/model_limits.rs`, `fair::tests` |
+| 보조 호출 | 요약·제목도 동일 큐를 사용하고 마지막 대화 턴의 서버 owner를 이어받는다(턴 없는 대화는 공통 system 보조 owner). 목록/연결 확인 같은 메타데이터·제어 요청은 추론 큐 밖이다 | `tests/model_limits.rs::summary_and_title_share_inference_limits_and_release_them_before_committing` |
+| 반환·취소 | Permit Drop으로 모든 경로에서 반환, 대기 중 취소는 큐에서 빠지고 모델을 부르지 않음, 배정과 취소가 겹치면 즉시 반환. 대기 future 자체의 drop/abort도 예약과 이미 배정된 모든 자원을 정리한다 | `fair::tests::cancel_storm_does_not_leak_slots`, `dropping_a_wait_future_before_or_after_assignment_returns_every_resource` |
 | 재시작 | 큐는 메모리에만. 재시작 시 queued/running 턴은 interrupted, 자동 재접수 없음 | `running_turn_interrupted_by_restart_is_not_rerun` |
-| 표시 | 대기 중인 턴은 `queue{ahead, active, limit}`(다른 소유자 상세 없음), 대기 시작·끝에 `turn.updated` | `tests/fair.rs` |
-| 미구현 | provider 계정별 한도(FAIR-006), 사용량 화면의 대기 표시, ARM64 실측 | — |
+| 표시 | 대기 중인 턴은 `queue{ahead, active, limit, reason?}`. reason은 `account`/`provider` 또는 생략(전역)이며 다른 소유자·자격 증명·계정 hash는 보내지 않는다. 대기 시작·끝에 `turn.updated` | `tests/fair.rs`, `web/e2e/model-limits.spec.ts` |
+| 미구현 | 사용량 화면의 대기 표시, ARM64 실측 | — |
 
 ## 19. 실모델 시험 (opt-in, 경량 모델)
 

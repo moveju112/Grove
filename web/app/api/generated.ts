@@ -110,7 +110,7 @@ acknowledged_at: string | null,
 /**
  * 실행 슬롯 대기 중이면 대기 정보(FAIR-011). 다른 소유자의 상세는 개수로만.
  */
-queue?: { ahead: number; active: number; limit: number }, };
+queue?: { ahead: number; active: number; limit: number; reason?: "provider" | "account" }, };
 
 export type ToolCallRow = { id: string, session_id: string, project_id: string, turn_id: string | null, provider_call_id: string | null, name: string, args: unknown, target: unknown, status: string, needs_approval: boolean, revision: number, result: unknown, expires_at: string | null, created_at: string, updated_at: string, decided_at: string | null, started_at: string | null, finished_at: string | null, reviewed_at: string | null, review: unknown, 
 /**

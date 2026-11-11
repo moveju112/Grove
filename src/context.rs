@@ -196,7 +196,9 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
         .await?;
     let Some((b, used_profile, rp, msgs, before, timeline, max_tokens)) = prepared else { return Ok(None) };
     let req = ModelRequest { system: SUMMARY_SYSTEM.into(), messages: msgs, tools: vec![], max_tokens: Some(max_tokens), temperature: None, effort: None, cli: None };
+    let permit = crate::model_limits::auxiliary(app, session_id, &rp, cancel).await?;
     let out = provider::stream(&rp, &req, cancel, &mut |_| {}).await;
+    drop(permit);
     let (sid, now) = (session_id.to_string(), app.now());
     let result = match out {
         Ok(o) if !o.text.trim().is_empty() => {

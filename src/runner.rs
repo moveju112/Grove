@@ -94,7 +94,7 @@ pub struct Turn {
     pub acknowledged_at: Option<String>,
     /// 실행 슬롯 대기 중이면 대기 정보(FAIR-011). 다른 소유자의 상세는 개수로만.
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[ts(optional, type = "{ ahead: number; active: number; limit: number }")]
+    #[ts(optional, type = "{ ahead: number; active: number; limit: number; reason?: \"provider\" | \"account\" }")]
     pub queue: Option<crate::fair::WaitInfo>,
 }
 
@@ -558,12 +558,13 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         }
         // 공정 실행 슬롯(FAIR-005~008): 모델 호출 한 번만 차지한다. 승인 대기·도구 실행 중에는 반환된 상태다.
         let tid_q = turn_id.to_string();
-        let (owner, max_active) = match app
+        let profile_for_limits = input.profile.clone();
+        let (owner, max_active, resources) = match app
             .db
             .call(move |c| {
                 let o: String = c.query_row("SELECT owner_key FROM turns WHERE id = ?1", params![tid_q], |r| r.get(0))?;
-                let m = crate::settings::effective(c, "runs.max_active", None, None)?.as_i64().unwrap_or(4);
-                Ok((o, m.max(1) as usize))
+                let (max, resources) = crate::model_limits::limits(c, &profile_for_limits)?;
+                Ok((o, max, resources))
             })
             .await
         {
@@ -573,15 +574,14 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 return session_for_partial;
             }
         };
-        let waited = app.fair.counts().0 >= max_active;
         // acquire future는 이 block 안에서 끝나야 cancel_rx 빌림이 풀린다(뒤의 provider 호출이 다시 쓴다).
         let res = {
-            let acquiring = app.fair.acquire(&owner, turn_id, max_active, &mut cancel_rx);
+            let acquiring = app.fair.acquire_scoped(&owner, turn_id, max_active, Some(resources), &mut cancel_rx);
             tokio::pin!(acquiring);
             // 곧바로 받지 못하면 대기 시작을 알린다(화면에 대기 이유 표시).
             let got = tokio::select! {
                 r = &mut acquiring => Some(r),
-                _ = tokio::time::sleep(Duration::from_millis(20)), if waited => None,
+                _ = tokio::time::sleep(Duration::from_millis(20)) => None,
             };
             match got {
                 Some(r) => r,

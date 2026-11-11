@@ -13,12 +13,17 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use crate::model_limits::Resources;
 use tokio::sync::{oneshot, watch};
 
 struct Waiter {
+    id: u64,
     turn_id: String,
     owner: String,
     tx: oneshot::Sender<()>,
+    resources: Option<Resources>,
+    granted: Arc<AtomicBool>,
 }
 
 #[derive(Default)]
@@ -30,35 +35,61 @@ struct Inner {
     last_served: HashMap<String, u64>,
     tick: u64,
     waiters: VecDeque<Waiter>,
+    next_id: u64,
+    provider_limit: usize,
+    account_limit: usize,
+    providers: HashMap<String, usize>,
+    accounts: HashMap<String, usize>,
 }
 
 impl Inner {
-    fn grant(&mut self, owner: &str) {
+    fn grant(&mut self, owner: &str, resources: Option<&Resources>) {
         self.active += 1;
         *self.active_by_owner.entry(owner.to_string()).or_default() += 1;
         self.tick += 1;
         self.last_served.insert(owner.to_string(), self.tick);
+        if let Some(r) = resources {
+            *self.providers.entry(r.provider.clone()).or_default() += 1;
+            *self.accounts.entry(r.account.clone()).or_default() += 1;
+        }
+    }
+
+    fn resource_wait(&self, resources: Option<&Resources>) -> Option<(&'static str, usize, usize)> {
+        let r = resources?;
+        let account = self.accounts.get(&r.account).copied().unwrap_or(0);
+        if account >= self.account_limit { return Some(("account", account, self.account_limit)); }
+        let provider = self.providers.get(&r.provider).copied().unwrap_or(0);
+        if provider >= self.provider_limit { return Some(("provider", provider, self.provider_limit)); }
+        None
     }
 
     /// 빈 슬롯마다 다음 대기자를 고른다.
     fn dispatch(&mut self) {
         while self.active < self.max_active && !self.waiters.is_empty() {
-            let pick = (0..self.waiters.len())
+            let pick = (0..self.waiters.len()).filter(|&i| self.resource_wait(self.waiters[i].resources.as_ref()).is_none())
                 .min_by_key(|&i| {
                     let o = &self.waiters[i].owner;
                     (self.active_by_owner.get(o).copied().unwrap_or(0), self.last_served.get(o).copied().unwrap_or(0), i)
-                })
-                .expect("non-empty");
+                });
+            let Some(pick) = pick else { break };
             let w = self.waiters.remove(pick).expect("index");
             let owner = w.owner.clone();
-            // 받는 쪽이 이미 사라졌으면(취소) 다음 대기자로.
-            if w.tx.send(()).is_ok() {
-                self.grant(&owner);
+            // 수신 task가 즉시 permit을 버려도 반환할 수 있도록 깨우기 전에 배정한다.
+            self.grant(&owner, w.resources.as_ref());
+            w.granted.store(true, Ordering::SeqCst);
+            if w.tx.send(()).is_err() {
+                w.granted.store(false, Ordering::SeqCst);
+                self.ungrant(&owner, w.resources.as_ref());
             }
         }
     }
 
-    fn release(&mut self, owner: &str) {
+    fn release(&mut self, owner: &str, resources: Option<&Resources>) {
+        self.ungrant(owner, resources);
+        self.dispatch();
+    }
+
+    fn ungrant(&mut self, owner: &str, resources: Option<&Resources>) {
         self.active = self.active.saturating_sub(1);
         if let Some(n) = self.active_by_owner.get_mut(owner) {
             *n = n.saturating_sub(1);
@@ -66,7 +97,14 @@ impl Inner {
                 self.active_by_owner.remove(owner);
             }
         }
-        self.dispatch();
+        if let Some(r) = resources {
+            for (map, key) in [(&mut self.providers, &r.provider), (&mut self.accounts, &r.account)] {
+                if let Some(n) = map.get_mut(key) {
+                    *n = n.saturating_sub(1);
+                    if *n == 0 { map.remove(key); }
+                }
+            }
+        }
     }
 }
 
@@ -78,11 +116,15 @@ pub struct Fair {
 pub struct Permit {
     fair: Fair,
     owner: String,
+    resources: Option<Resources>,
+    granted: Arc<AtomicBool>,
 }
 
 impl Drop for Permit {
     fn drop(&mut self) {
-        self.fair.inner.lock().expect("fair").release(&self.owner);
+        if self.granted.swap(false, Ordering::SeqCst) {
+            self.fair.inner.lock().expect("fair").release(&self.owner, self.resources.as_ref());
+        }
     }
 }
 
@@ -97,22 +139,51 @@ pub struct WaitInfo {
     pub ahead: usize,
     pub active: usize,
     pub limit: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<&'static str>,
+}
+
+/// future가 watch 취소 외의 timeout·task abort로 drop돼도 대기/배정 자원을 함께 돌려준다.
+struct Reservation {
+    id: u64,
+    permit: Option<Permit>,
+}
+impl Drop for Reservation {
+    fn drop(&mut self) {
+        if let Some(permit) = self.permit.take() {
+            let mut inner = permit.fair.inner.lock().expect("fair");
+            inner.waiters.retain(|w| w.id != self.id);
+            if permit.granted.swap(false, Ordering::SeqCst) {
+                inner.release(&permit.owner, permit.resources.as_ref());
+            } else { inner.dispatch(); }
+        }
+    }
 }
 
 impl Fair {
     pub async fn acquire(&self, owner: &str, turn_id: &str, max_active: usize, cancel: &mut watch::Receiver<bool>) -> Result<Permit, AcquireError> {
-        let rx = {
+        self.acquire_scoped(owner, turn_id, max_active, None, cancel).await
+    }
+
+    pub async fn acquire_scoped(&self, owner: &str, turn_id: &str, max_active: usize, resources: Option<Resources>, cancel: &mut watch::Receiver<bool>) -> Result<Permit, AcquireError> {
+        if *cancel.borrow() { return Err(AcquireError::Cancelled); }
+        let granted = Arc::new(AtomicBool::new(false));
+        let (id, rx) = {
             let mut g = self.inner.lock().expect("fair");
             g.max_active = max_active.max(1);
-            // 한도가 늘었으면 기존 대기자부터 채운다.
-            g.dispatch();
-            if g.active < g.max_active && g.waiters.is_empty() {
-                g.grant(owner);
-                return Ok(Permit { fair: self.clone(), owner: owner.to_string() });
+            if let Some(r) = &resources {
+                g.provider_limit = r.provider_limit.max(1);
+                g.account_limit = r.account_limit.max(1);
             }
+            g.next_id += 1;
+            let id = g.next_id;
             let (tx, rx) = oneshot::channel();
-            g.waiters.push_back(Waiter { turn_id: turn_id.to_string(), owner: owner.to_string(), tx });
-            rx
+            g.waiters.push_back(Waiter { id, turn_id: turn_id.to_string(), owner: owner.to_string(), tx, resources: resources.clone(), granted: granted.clone() });
+            g.dispatch();
+            (id, rx)
+        };
+        let mut reservation = Reservation {
+            id, permit: Some(Permit { fair: self.clone(), owner: owner.to_string(), resources, granted }),
         };
         let mut rx = rx;
         loop {
@@ -122,7 +193,8 @@ impl Fair {
             tokio::select! {
                 r = &mut rx => {
                     return match r {
-                        Ok(()) => Ok(Permit { fair: self.clone(), owner: owner.to_string() }),
+                        Ok(()) if !*cancel.borrow() => Ok(reservation.permit.take().expect("reservation")),
+                        Ok(()) => Err(AcquireError::Cancelled),
                         Err(_) => Err(AcquireError::Cancelled),
                     };
                 }
@@ -133,23 +205,17 @@ impl Fair {
                 }
             }
         }
-        // 취소: 큐에서 빼고, 그 사이 배정됐으면 바로 반환한다.
-        let granted = {
-            let mut g = self.inner.lock().expect("fair");
-            let before = g.waiters.len();
-            g.waiters.retain(|w| w.turn_id != turn_id);
-            before == g.waiters.len()
-        };
-        if granted && rx.try_recv().is_ok() {
-            drop(Permit { fair: self.clone(), owner: owner.to_string() });
-        }
         Err(AcquireError::Cancelled)
     }
 
     pub fn waiting(&self, turn_id: &str) -> Option<WaitInfo> {
         let g = self.inner.lock().expect("fair");
         let pos = g.waiters.iter().position(|w| w.turn_id == turn_id)?;
-        Some(WaitInfo { ahead: pos, active: g.active, limit: g.max_active })
+        let (reason, active, limit) = match g.resource_wait(g.waiters[pos].resources.as_ref()) {
+            Some((reason, active, limit)) => (Some(reason), active, limit),
+            None => (None, g.active, g.max_active),
+        };
+        Some(WaitInfo { ahead: pos, active, limit, reason })
     }
 
     /// 관찰용(시험·상태 화면): (실행 중, 대기 중)
@@ -214,7 +280,7 @@ mod tests {
         });
         tokio::time::sleep(Duration::from_millis(5)).await;
         assert_eq!(f.counts(), (1, 4));
-        assert_eq!(f.waiting("b1"), Some(WaitInfo { ahead: 3, active: 1, limit: 1 }), "B는 줄 끝에 있지만");
+        assert_eq!(f.waiting("b1"), Some(WaitInfo { ahead: 3, active: 1, limit: 1, reason: None }), "B는 줄 끝에 있지만");
         drop(a1);
         let (who, p) = hb.await.unwrap();
         assert_eq!(who, "b1", "A가 방금 썼으므로 다음 기회는 B");
@@ -293,5 +359,64 @@ mod tests {
         // 다른 호출이 더 큰 한도로 들어오면 기존 대기자부터 채운다
         let _p3 = f.acquire("C", "3", 3, &mut c).await.unwrap();
         assert!(h.await.unwrap().is_ok());
+    }
+
+    fn resource(provider: &str, account: &str, provider_limit: usize, account_limit: usize) -> Resources {
+        Resources { provider: provider.into(), account: account.into(), provider_limit, account_limit }
+    }
+
+    #[tokio::test]
+    async fn blocked_accounts_do_not_hold_global_or_other_account_slots() {
+        let f = Fair::default();
+        let (_a, mut ca) = never();
+        let (_b, mut cb) = never();
+        let (_c, mut cc) = never();
+        let p = f.acquire_scoped("A", "1", 2, Some(resource("provider", "account1", 2, 1)), &mut ca).await.unwrap();
+        let mut blocked = Box::pin(f.acquire_scoped("A", "2", 2, Some(resource("provider", "account1", 2, 1)), &mut cb));
+        assert!(futures_util::poll!(blocked.as_mut()).is_pending());
+        assert_eq!(f.waiting("2").unwrap().reason, Some("account"));
+        let other = f.acquire_scoped("B", "3", 2, Some(resource("provider", "account2", 2, 1)), &mut cc).await.unwrap();
+        assert_eq!(f.counts(), (2, 1));
+        drop(p);
+        let resumed = blocked.await.unwrap();
+        drop(resumed);
+        drop(other);
+        assert_eq!(f.counts(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn saturated_provider_does_not_block_another_provider() {
+        let f = Fair::default();
+        let (_a, mut ca) = never();
+        let (_b, mut cb) = never();
+        let (_c, mut cc) = never();
+        let p = f.acquire_scoped("A", "1", 2, Some(resource("p1", "a1", 1, 2)), &mut ca).await.unwrap();
+        let mut blocked = Box::pin(f.acquire_scoped("A", "2", 2, Some(resource("p1", "a2", 1, 2)), &mut cb));
+        assert!(futures_util::poll!(blocked.as_mut()).is_pending());
+        assert_eq!(f.waiting("2").unwrap().reason, Some("provider"));
+        let other = f.acquire_scoped("B", "3", 2, Some(resource("p2", "a3", 1, 2)), &mut cc).await.unwrap();
+        drop(blocked);
+        drop(p);
+        drop(other);
+        assert_eq!(f.counts(), (0, 0));
+    }
+
+    #[tokio::test]
+    async fn dropping_a_wait_future_before_or_after_assignment_returns_every_resource() {
+        let f = Fair::default();
+        let (_a, mut ca) = never();
+        let (_b, mut cb) = never();
+        let p = f.acquire_scoped("A", "1", 1, Some(resource("p", "a", 1, 1)), &mut ca).await.unwrap();
+        let mut waiting = Box::pin(f.acquire_scoped("A", "2", 1, Some(resource("p", "a", 1, 1)), &mut cb));
+        assert!(futures_util::poll!(waiting.as_mut()).is_pending());
+        drop(waiting);
+        assert_eq!(f.counts(), (1, 0));
+        let mut assigned = Box::pin(f.acquire_scoped("A", "3", 1, Some(resource("p", "a", 1, 1)), &mut cb));
+        assert!(futures_util::poll!(assigned.as_mut()).is_pending());
+        drop(p);
+        assert_eq!(f.counts(), (1, 0));
+        drop(assigned);
+        assert_eq!(f.counts(), (0, 0));
+        let _next = f.acquire_scoped("B", "4", 1, Some(resource("p", "a", 1, 1)), &mut cb).await.unwrap();
     }
 }
