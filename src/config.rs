@@ -79,18 +79,23 @@ fn host_name(host: &str) -> &str {
     host.rsplit_once(':').map(|(h, _)| h).unwrap_or(host)
 }
 
+/// 사용자별 데이터 경로(ARCH-009). 설정은 DB 안에 두므로 별도 설정 파일 경로가 없고,
+/// 다시 만들 수 있는 캐시를 두지 않으므로 캐시 경로도 쓰지 않는다(모든 파일이 사용자 데이터라 백업 대상).
 pub fn default_data_dir() -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        std::env::var_os("LOCALAPPDATA").map(|p| PathBuf::from(p).join("Grove"))
+    data_dir_for(cfg!(windows), |k| std::env::var_os(k))
+}
+
+/// OS 규칙: Windows `%LOCALAPPDATA%\Grove`, 그 밖은 `$XDG_DATA_HOME/grove`(비었거나 상대 경로면 무시) 또는 `~/.local/share/grove`.
+fn data_dir_for(windows: bool, env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<PathBuf> {
+    let abs = |k: &str| env(k).map(PathBuf::from).filter(|p| p.is_absolute());
+    if windows {
+        return abs("LOCALAPPDATA").map(|p| p.join("Grove"));
     }
-    #[cfg(not(windows))]
-    {
-        if let Some(x) = std::env::var_os("XDG_DATA_HOME").filter(|v| !v.is_empty()) {
-            return Some(PathBuf::from(x).join("grove"));
-        }
-        std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share/grove"))
+    // XDG Base Directory 명세: 상대 경로 값은 무효로 보고 무시한다.
+    if let Some(x) = abs("XDG_DATA_HOME") {
+        return Some(x.join("grove"));
     }
+    abs("HOME").map(|h| h.join(".local/share/grove"))
 }
 
 /// 실행 파일 옆 `web/` 또는 `../share/grove/web`.
@@ -116,6 +121,21 @@ mod tests {
             scheduler_tick_ms: 15_000,
         }
     }
+    /// OS별 데이터 경로 규칙(ARCH-009). 절대 경로 판정은 실행 OS 기준이라 Unix 형식 값으로 확인한다.
+    #[test]
+    fn data_dir_follows_os_rules() {
+        let env = |pairs: &'static [(&'static str, &'static str)]| move |k: &str| pairs.iter().find(|(n, _)| *n == k).map(|(_, v)| std::ffi::OsString::from(v));
+        let all: &[(&str, &str)] = &[("XDG_DATA_HOME", "/xdg"), ("HOME", "/home/u"), ("LOCALAPPDATA", "/local")];
+        assert_eq!(data_dir_for(false, env(all)), Some(PathBuf::from("/xdg/grove")));
+        assert_eq!(data_dir_for(true, env(all)), Some(PathBuf::from("/local/Grove")), "Windows는 XDG를 보지 않는다");
+        // 비었거나 상대 경로인 XDG 값은 무시하고 HOME 기본값을 쓴다.
+        assert_eq!(data_dir_for(false, env(&[("XDG_DATA_HOME", ""), ("HOME", "/home/u")])), Some(PathBuf::from("/home/u/.local/share/grove")));
+        assert_eq!(data_dir_for(false, env(&[("XDG_DATA_HOME", "rel"), ("HOME", "/home/u")])), Some(PathBuf::from("/home/u/.local/share/grove")));
+        // 정할 수 없으면 추측하지 않는다(현재 폴더 등에 만들지 않음).
+        assert_eq!(data_dir_for(false, env(&[("HOME", "")])), None);
+        assert_eq!(data_dir_for(true, env(&[("HOME", "/home/u")])), None);
+    }
+
     #[test]
     fn loopback_hosts_only() {
         let c = cfg("127.0.0.1:7740", &[]);

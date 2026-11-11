@@ -70,7 +70,8 @@
 - Rust 통합 시험: `tests/<영역>.rs`, 공용 harness `tests/common/mod.rs`(임시 디렉터리 + 실제 서버 기동).
 - FLOW 판정 시험: `tests/flow_<nn>.rs`(서버 API 수준) 및 `web/e2e/flow-<nn>.spec.ts`(브라우저 수준).
 - 웹: `web/app/routes/*`, 상태 로직 `web/app/state/*`(순수 함수 + Vitest), API 클라이언트 `web/app/api/*`.
-- 데이터 경로: Linux `$XDG_DATA_HOME/grove`(기본 `~/.local/share/grove`), Windows `%LOCALAPPDATA%\Grove`. `GROVE_DATA_DIR`로 재정의(시험은 항상 임시 디렉터리).
+- 데이터 경로: Linux `$XDG_DATA_HOME/grove`(기본 `~/.local/share/grove`), Windows `%LOCALAPPDATA%\Grove`. `GROVE_DATA_DIR`로 재정의(시험은 항상 임시 디렉터리). 비었거나 상대 경로인 환경값은 무시하고, 정할 수 없으면 추측하지 않고 시작을 거부한다(`config::data_dir_for`).
+- 설정·캐시 경로: 설정은 DB(`settings`)에 두므로 별도 설정 파일·`$XDG_CONFIG_HOME` 경로가 없다. 다시 만들 수 있는 캐시를 두지 않으므로 `$XDG_CACHE_HOME`도 쓰지 않는다. 데이터 디렉터리의 파일(DB·blobs·작업 로그·휴지통·worktrees·키)은 모두 사용자 데이터다. 실행 로그는 설치 위치 `logs/`(서비스 설치 시).
 - 환경변수 prefix `GROVE_`.
 - 표식: `TODO(port):`, `PERF(port):`, `BUG(port):`, `SAFETY:` — 형식 고정.
 
