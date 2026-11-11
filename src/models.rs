@@ -6,7 +6,7 @@ use crate::auth::{Owner, Principal};
 use crate::error::{ApiError, ApiResult};
 use crate::events;
 use crate::idem;
-use crate::provider::{self, Profile};
+use crate::provider::{self, Profile, scrub_provider_text};
 use axum::Json;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -224,15 +224,6 @@ pub fn get_enabled_profile(c: &Connection, id: &str) -> ApiResult<ModelProfile> 
         return Err(ApiError::conflict("profile_disabled", "이 모델 프로필은 비활성화돼 있습니다. 다른 프로필을 명시적으로 선택하거나 설정에서 활성화하세요"));
     }
     Ok(profile)
-}
-
-fn scrub_provider_text(profile: &Profile, text: &str) -> String {
-    let headers = profile.extra_headers.iter().filter(|(name, _)| {
-        let name = name.to_ascii_lowercase();
-        name.ends_with("key") || ["authorization", "cookie", "token", "secret", "password", "credential"].iter().any(|part| name.contains(part))
-    });
-    profile.api_key.iter().chain(headers.map(|(_, value)| value))
-        .filter(|value| !value.is_empty()).fold(text.to_string(), |text, secret| text.replace(secret.as_str(), "[redacted]"))
 }
 
 #[derive(Serialize, ts_rs::TS)]

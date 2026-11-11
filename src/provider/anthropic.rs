@@ -14,7 +14,11 @@ pub fn build_body(profile: &Profile, req: &ModelRequest) -> Value {
                 if !text.is_empty() {push_block(&mut msgs, "user", json!({ "type": "text", "text": text }));}
                 for i in images {push_block(&mut msgs,"user",json!({"type":"image","source":{"type":"base64","media_type":i.mime,"data":i.data}}));}
             },
-            ChatMsg::Assistant { text, tool_calls } => {
+            ChatMsg::Assistant { text, tool_calls, native } => {
+                if let Some(native) = native.as_ref().filter(|n| n.protocol == "anthropic") {
+                    msgs.push(json!({ "role": "assistant", "content": native.blocks }));
+                    continue;
+                }
                 let mut blocks = vec![];
                 if !text.is_empty() {
                     blocks.push(json!({ "type": "text", "text": text }));
@@ -77,6 +81,7 @@ pub struct Accumulator {
     out: ModelOutput,
     /// index → (id, name, partial json)
     blocks: Vec<(u64, String, String, String)>,
+    content: std::collections::BTreeMap<u64, Value>,
     stopped: bool,
 }
 
@@ -96,6 +101,7 @@ impl Accumulator {
             }
             "content_block_start" => {
                 let b = &data["content_block"];
+                self.content.insert(data["index"].as_u64().unwrap_or(0), b.clone());
                 if b["type"] == "tool_use" {
                     let idx = data["index"].as_u64().unwrap_or(0);
                     self.blocks.push((idx, b["id"].as_str().unwrap_or("").into(), b["name"].as_str().unwrap_or("").into(), String::new()));
@@ -103,10 +109,25 @@ impl Accumulator {
                     if let Some(t) = b["text"].as_str() {
                         self.out.text.push_str(t);
                     }
+                } else if b["type"] == "thinking" {
+                    self.out.reasoning.push_str(b["thinking"].as_str().unwrap_or(""));
                 }
             }
             "content_block_delta" => {
                 let d = &data["delta"];
+                if let Some(block) = self.content.get_mut(&data["index"].as_u64().unwrap_or(0)) {
+                    let pair = match d["type"].as_str() {
+                        Some("text_delta") => Some(("text", "text")),
+                        Some("thinking_delta") => Some(("thinking", "thinking")),
+                        Some("signature_delta") => Some(("signature", "signature")),
+                        _ => None,
+                    };
+                    if let Some((key, delta)) = pair {
+                        let mut value = block[key].as_str().unwrap_or("").to_string();
+                        value.push_str(d[delta].as_str().unwrap_or(""));
+                        block[key] = json!(value);
+                    }
+                }
                 match d["type"].as_str() {
                     Some("text_delta") => self.out.text.push_str(d["text"].as_str().unwrap_or("")),
                     Some("thinking_delta") => self.out.reasoning.push_str(d["thinking"].as_str().unwrap_or("")),
@@ -154,7 +175,12 @@ impl Accumulator {
     fn calls(&self) -> Vec<ToolCall> {
         let mut b = self.blocks.clone();
         b.sort_by_key(|x| x.0);
-        b.into_iter().map(|(_, id, name, args)| ToolCall { id, name, arguments: parse_arguments(&args) }).collect()
+        b.into_iter().map(|(index, id, name, args)| {
+            let arguments = if args.is_empty() {
+                self.content.get(&index).and_then(|b| b.get("input")).cloned().unwrap_or_else(|| json!({}))
+            } else { parse_arguments(&args) };
+            ToolCall { id, name, arguments }
+        }).collect()
     }
 
     pub fn snapshot(&self) -> ModelOutput {
@@ -169,6 +195,16 @@ impl Accumulator {
         }
         let mut o = self.out.clone();
         o.tool_calls = self.calls();
+        let mut content = self.content;
+        for (index, _, _, args) in self.blocks {
+            if let Some(block) = content.get_mut(&index) {
+                if !args.is_empty() { block["input"] = parse_arguments(&args); }
+            }
+        }
+        o.native = Some(NativeContent {
+            protocol: "anthropic".into(), base_url: String::new(), model: String::new(),
+            blocks: content.into_values().collect(),
+        });
         Ok(o)
     }
 }
@@ -248,7 +284,7 @@ mod tests {
             system: "s".into(),
             messages: vec![
                 ChatMsg::User { text: "q".into(), images: vec![] },
-                ChatMsg::Assistant { text: "".into(), tool_calls: vec![
+                ChatMsg::Assistant { text: "".into(), native: None, tool_calls: vec![
                     ToolCall { id: "a".into(), name: "read".into(), arguments: json!({}) },
                     ToolCall { id: "b".into(), name: "read".into(), arguments: json!({ "__invalid_json": "{" }) },
                 ] },

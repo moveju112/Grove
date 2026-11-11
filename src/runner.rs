@@ -694,14 +694,17 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                     "finish_reason": out.finish_reason,
                     "usage": out.usage,
                     "reasoning_chars": out.reasoning.chars().count(),
-                    // 표시 전용(UI-012). 모델 입력 재구성은 text·tool_calls만 쓰므로 다음 요청에 섞이지 않는다.
+                    // 표시 전용(UI-012). 서명된 공급자 입력은 별도 model_input에 보존한다.
                     "reasoning": reasoning_stored(&out.reasoning),
                 });
                 // CLI 백엔드가 자기 안에서 한 도구 활동은 표시 전용 note로 먼저 남긴다(Grove가 다시 실행하지 않음).
                 if !out.activity.is_empty() {
                     crate::sessions::append_message(&tx, &now, &t.session_id, "note", &json!({ "type": "cli_activity", "items": out.activity }), Some(&tid), None)?;
                 }
-                crate::sessions::append_message(&tx, &now, &t.session_id, "assistant", &content, Some(&tid), None)?;
+                let model_input = out.native.map(|native| json!({
+                    "text": content["text"], "tool_calls": content["tool_calls"], "native": native,
+                }));
+                crate::sessions::append_message(&tx, &now, &t.session_id, "assistant", &content, Some(&tid), model_input.as_ref())?;
                 if let (Some(native), Some(pid)) = (&out.native_session, &t.profile_id) {
                     tx.execute(
                         "INSERT INTO cli_sessions (session_id, profile_id, native_id, updated_at) VALUES (?1, ?2, ?3, ?4) \

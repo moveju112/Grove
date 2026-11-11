@@ -358,7 +358,7 @@ mod tests {
             system: "sys".into(),
             messages: vec![
                 ChatMsg::User { text: "첫 질문".into(), images: vec![] },
-                ChatMsg::Assistant { text: "첫 답".into(), tool_calls: vec![] },
+                ChatMsg::Assistant { text: "첫 답".into(), tool_calls: vec![], native: None },
                 ChatMsg::User { text: "다음 질문".into(), images: vec![] },
             ],
             tools: vec![],

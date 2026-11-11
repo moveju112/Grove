@@ -21,7 +21,11 @@ pub fn build_body(req: &ModelRequest) -> Value {
                 push(&mut contents, "user", json!({ "text": text }));
                 for i in images {push(&mut contents,"user",json!({"inlineData":{"mimeType":i.mime,"data":i.data}}));}
             },
-            ChatMsg::Assistant { text, tool_calls } => {
+            ChatMsg::Assistant { text, tool_calls, native } => {
+                if let Some(native) = native.as_ref().filter(|n| n.protocol == "gemini") {
+                    for part in &native.blocks { push(&mut contents, "model", part.clone()); }
+                    continue;
+                }
                 if !text.is_empty() {
                     push(&mut contents, "model", json!({ "text": text }));
                 }
@@ -30,9 +34,15 @@ pub fn build_body(req: &ModelRequest) -> Value {
                     push(&mut contents, "model", json!({ "functionCall": { "name": c.name, "args": args } }));
                 }
             }
-            ChatMsg::Tool { name, content, is_error, .. } => {
+            ChatMsg::Tool { call_id, name, content, is_error } => {
                 let key = if *is_error { "error" } else { "output" };
-                push(&mut contents, "user", json!({ "functionResponse": { "name": name, "response": { key: content } } }));
+                // 서명 원문에 실제 공급자 ID가 있는 호출만 같은 ID로 응답한다.
+                let has_id = req.messages.iter().any(|m| matches!(m,
+                    ChatMsg::Assistant { native: Some(n), .. } if n.protocol == "gemini"
+                        && n.blocks.iter().any(|p| p["functionCall"]["id"].as_str() == Some(call_id.as_str()))));
+                let mut response = json!({ "name": name, "response": { key: content } });
+                if has_id { response["id"] = json!(call_id); }
+                push(&mut contents, "user", json!({ "functionResponse": response }));
             }
         }
     }
@@ -62,6 +72,7 @@ pub fn build_body(req: &ModelRequest) -> Value {
 #[derive(Default)]
 pub struct Accumulator {
     out: ModelOutput,
+    parts: Vec<Value>,
     finished: bool,
 }
 
@@ -86,6 +97,7 @@ impl Accumulator {
         let Some(c) = v["candidates"].get(0) else { return Ok(()) };
         if let Some(parts) = c["content"]["parts"].as_array() {
             for p in parts {
+                self.parts.push(p.clone());
                 if p["thought"].as_bool() == Some(true) {
                     self.out.reasoning.push_str(p["text"].as_str().unwrap_or(""));
                 } else if let Some(t) = p["text"].as_str() {
@@ -117,7 +129,11 @@ impl Accumulator {
         if !self.finished {
             return Err(ProviderError { code: "stream_incomplete", message: "응답 stream이 완료 전에 끊겼습니다".into(), status: None, retryable: true, retry_after_secs: None });
         }
-        Ok(self.out)
+        let mut out = self.out;
+        out.native = Some(NativeContent {
+            protocol: "gemini".into(), base_url: String::new(), model: String::new(), blocks: self.parts,
+        });
+        Ok(out)
     }
 }
 
@@ -201,7 +217,7 @@ mod tests {
             system: "s".into(),
             messages: vec![
                 ChatMsg::User { text: "q".into(), images: vec![] },
-                ChatMsg::Assistant { text: "".into(), tool_calls: vec![ToolCall { id: "g".into(), name: "read".into(), arguments: json!({ "p": 1 }) }] },
+                ChatMsg::Assistant { text: "".into(), native: None, tool_calls: vec![ToolCall { id: "g".into(), name: "read".into(), arguments: json!({ "p": 1 }) }] },
                 ChatMsg::Tool { call_id: "g".into(), name: "read".into(), content: "r".into(), is_error: false },
             ],
             tools: vec![ToolDef { name: "read".into(), description: "d".into(), schema: json!({ "type": "object" }) }],

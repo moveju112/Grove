@@ -19,7 +19,7 @@ pub fn build_body(profile: &Profile, req: &ModelRequest) -> Value {
                 };
                 msgs.push(json!({"role":"user","content":content}));
             },
-            ChatMsg::Assistant { text, tool_calls } => {
+            ChatMsg::Assistant { text, tool_calls, .. } => {
                 let mut v = json!({ "role": "assistant", "content": if text.is_empty() && !tool_calls.is_empty() { Value::Null } else { json!(text) } });
                 if !tool_calls.is_empty() {
                     v["tool_calls"] = tool_calls
@@ -233,7 +233,7 @@ mod tests {
             system: "sys".into(),
             messages: vec![
                 ChatMsg::User { text: "hi".into(), images: vec![] },
-                ChatMsg::Assistant { text: String::new(), tool_calls: vec![ToolCall { id: "c1".into(), name: "read".into(), arguments: json!({ "path": "a" }) }] },
+                ChatMsg::Assistant { text: String::new(), native: None, tool_calls: vec![ToolCall { id: "c1".into(), name: "read".into(), arguments: json!({ "path": "a" }) }] },
                 ChatMsg::Tool { call_id: "c1".into(), name: "read".into(), content: "data".into(), is_error: false },
             ],
             tools: vec![],

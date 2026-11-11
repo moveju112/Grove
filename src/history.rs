@@ -67,10 +67,12 @@ impl Output {
         self.finish_current();
         let (text, extra_chars) = match &mut message {
             ChatMsg::User { text, images } => (text, images.len() * 4096 * 4),
-            ChatMsg::Assistant { text, tool_calls } => {
-                let extra = tool_calls.iter().map(|call| call.arguments.to_string().len() + call.name.len()).sum();
+            ChatMsg::Assistant { text, tool_calls, native } => {
+                let extra = native.as_ref().map_or(0, |n| n.blocks.iter().map(|b| b.to_string().chars().count()).sum::<usize>())
+                    + tool_calls.iter().map(|call| call.arguments.to_string().len() + call.name.len()).sum::<usize>();
                 if self.preview {
                     for call in tool_calls { call.arguments = Value::Null; }
+                    *native = None;
                 }
                 (text, extra)
             }
@@ -178,7 +180,10 @@ impl Builder {
                     arguments: call["arguments"].clone(),
                 }).collect();
                 self.pending = calls.iter().map(|call| (call.id.clone(), call.name.clone())).collect();
-                self.output.push(ChatMsg::Assistant { text: c["text"].as_str().unwrap_or("").into(), tool_calls: calls });
+                self.output.push(ChatMsg::Assistant {
+                    text: c["text"].as_str().unwrap_or("").into(), tool_calls: calls,
+                    native: c.get("native").and_then(|n| serde_json::from_value(n.clone()).ok()),
+                });
             }
             "tool" => {
                 let id = c["provider_call_id"].as_str().unwrap_or("");
@@ -242,7 +247,7 @@ pub(crate) fn preview(conn: &Connection, session: &str, offset: usize, limit: us
         };
         let mut value = match entry.message {
             ChatMsg::User { text, images } => json!({ "role": "user", "content": cut(text), "images": images }),
-            ChatMsg::Assistant { text, tool_calls } => json!({ "role": "assistant", "content": cut(text), "tool_calls": tool_calls.iter().map(|c| json!({ "id": c.id, "name": c.name })).collect::<Vec<_>>() }),
+            ChatMsg::Assistant { text, tool_calls, .. } => json!({ "role": "assistant", "content": cut(text), "tool_calls": tool_calls.iter().map(|c| json!({ "id": c.id, "name": c.name })).collect::<Vec<_>>() }),
             ChatMsg::Tool { call_id, name, content, is_error } => json!({ "role": "tool", "call_id": call_id, "name": name, "is_error": is_error, "content": cut(content) }),
         };
         value["index"] = json!(offset + index);

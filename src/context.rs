@@ -57,7 +57,9 @@ fn estimate_tokens(msgs: &[ChatMsg], system: &str) -> u64 {
     for m in msgs {
         chars += match m {
             ChatMsg::User { text, images } => text.chars().count() + images.len()*4096*4,
-            ChatMsg::Assistant { text, tool_calls } => text.chars().count() + tool_calls.iter().map(|t| t.arguments.to_string().len() + t.name.len()).sum::<usize>(),
+            ChatMsg::Assistant { text, tool_calls, native } => text.chars().count()
+                + native.as_ref().map_or(0, |n| n.blocks.iter().map(|b| b.to_string().chars().count()).sum::<usize>())
+                + tool_calls.iter().map(|t| t.arguments.to_string().len() + t.name.len()).sum::<usize>(),
             ChatMsg::Tool { content, .. } => content.chars().count(),
         };
     }

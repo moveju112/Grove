@@ -35,8 +35,29 @@ impl std::fmt::Debug for ImageInput {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ChatMsg {
     User { text: String, images: Vec<ImageInput> },
-    Assistant { text: String, tool_calls: Vec<ToolCall> },
+    Assistant { text: String, tool_calls: Vec<ToolCall>, native: Option<NativeContent> },
     Tool { call_id: String, name: String, content: String, is_error: bool },
+}
+
+/// 공급자의 서명된 원문. 표시용 reasoning과 분리하고 생성한 endpoint·모델에만 돌려준다.
+#[derive(Clone, PartialEq, Serialize, Deserialize)]
+pub struct NativeContent {
+    pub protocol: String,
+    pub base_url: String,
+    pub model: String,
+    pub blocks: Vec<Value>,
+}
+
+impl std::fmt::Debug for NativeContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("NativeContent").field("protocol", &self.protocol).field("blocks", &self.blocks.len()).finish_non_exhaustive()
+    }
+}
+
+impl NativeContent {
+    fn matches(&self, profile: &Profile) -> bool {
+        self.protocol == profile.protocol && self.base_url == profile.base_url && self.model == profile.model
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -105,6 +126,7 @@ pub struct ModelOutput {
     pub native_session: Option<String>,
     /// CLI 백엔드가 자기 안에서 실행한 도구 활동(표시 전용, Grove가 다시 실행하지 않음)
     pub activity: Vec<Value>,
+    pub native: Option<NativeContent>,
 }
 
 /// 진행 중 delta를 UI snapshot으로 보내기 위한 콜백.
@@ -137,6 +159,15 @@ pub struct Profile {
     pub api_key: Option<String>,
     pub timeout: Duration,
     pub extra_headers: Vec<(String, String)>,
+}
+
+pub(crate) fn scrub_provider_text(profile: &Profile, text: &str) -> String {
+    let headers = profile.extra_headers.iter().filter(|(name, _)| {
+        let name = name.to_ascii_lowercase();
+        name.ends_with("key") || ["authorization", "cookie", "token", "secret", "password", "credential"].iter().any(|part| name.contains(part))
+    });
+    profile.api_key.iter().chain(headers.map(|(_, value)| value))
+        .filter(|value| !value.is_empty()).fold(text.to_string(), |text, secret| text.replace(secret.as_str(), "[redacted]"))
 }
 
 /// endpoint·모델·timeout 정규화와 요청 전 검증(ADAPTER-001).
@@ -302,6 +333,18 @@ pub async fn stream(
     if cli::is_cli(&profile.protocol) && req.messages.iter().any(|m|matches!(m,ChatMsg::User{images,..} if !images.is_empty())) {
         return Err(ProviderError::new("unsupported_image", "CLI 백엔드는 이미지 첨부를 지원하지 않습니다. HTTP 모델 프로필을 선택하세요"));
     }
+    // 다른 공급자·endpoint·모델로 전환해도 서명된 원문을 유출하지 않는다.
+    let filtered;
+    let req = if req.messages.iter().any(|m| matches!(m, ChatMsg::Assistant { native: Some(native), .. } if !native.matches(profile))) {
+        let mut request = req.clone();
+        for message in &mut request.messages {
+            if let ChatMsg::Assistant { native, .. } = message {
+                if native.as_ref().is_some_and(|n| !n.matches(profile)) { *native = None; }
+            }
+        }
+        filtered = request;
+        &filtered
+    } else { req };
     let client = http_client(profile.timeout);
     let mut attempt = 0u32;
     loop {
@@ -327,8 +370,18 @@ pub async fn stream(
             _ = cancel.wait_for(|c| *c) => return Err(ProviderError::new("cancelled", "취소되었습니다")),
         };
         let e = match r {
-            Ok(o) => return Ok(o),
-            Err(e) => e,
+            Ok(mut o) => {
+                if let Some(native) = &mut o.native {
+                    native.protocol = profile.protocol.clone();
+                    native.base_url = profile.base_url.clone();
+                    native.model = profile.model.clone();
+                }
+                return Ok(o);
+            }
+            Err(mut e) => {
+                e.message = scrub_provider_text(profile, &e.message);
+                e
+            }
         };
         // CLI 백엔드는 자기 도구를 이미 실행했을 수 있어 재시도하지 않는다.
         let delay = (e.retryable && !emitted && attempt < MAX_RETRIES && !cli::is_cli(&profile.protocol))
