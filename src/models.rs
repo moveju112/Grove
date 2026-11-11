@@ -370,6 +370,11 @@ fn validate_options(protocol: &str, o: &Value) -> ApiResult<()> {
                     return Err(ApiError::invalid("context_window는 양의 정수여야 합니다"));
                 }
             }
+            "auto_clear_minutes" => {
+                if !v.as_u64().is_some_and(|n| n <= 525_600) {
+                    return Err(ApiError::invalid("auto_clear_minutes는 0~525600 정수여야 합니다(0=자동 초기화 없음)"));
+                }
+            }
             "capabilities" => {}
             // 가격표(USAGE-003): 백만 token당 단가. 통화·버전을 함께 저장하고, 없으면 비용은 "알 수 없음"이다.
             "pricing" => {

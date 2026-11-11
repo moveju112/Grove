@@ -56,9 +56,14 @@ async fn manual_compaction_replaces_old_history_and_keeps_tool_pairs() {
     assert_eq!(st, StatusCode::BAD_GATEWAY, "{v}");
     assert!(notes_of(&s, &sid, "compaction").await.is_empty());
     // 성공
+    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+    db.execute("INSERT INTO cli_sessions(session_id,profile_id,native_id,updated_at) VALUES (?1,?2,'old-native-fixture','2020-01-01T00:00:00Z')",
+        rusqlite::params![sid,prof]).unwrap();
     f.push_for(SUMMARY, fixture::text("요약: 사용자가 n.txt를 읽게 했고 첫 질문에 답함"));
     let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/compact"), json!({ "profile_id": prof })).await;
     assert_eq!(st, StatusCode::CREATED, "{v}");
+    assert_eq!(db.query_row("SELECT COUNT(*) FROM cli_sessions WHERE session_id=?1",[&sid],|r|r.get::<_,i64>(0)).unwrap(), 0,
+        "요약된 원문을 가진 native CLI context를 재사용하지 않는다");
     let cp = &notes_of(&s, &sid, "compaction").await[0]["content"];
     assert_eq!(cp["auto"], false);
     // 요약 요청에는 압축 대상(1턴·도구 결과)만, 최근 user 메시지는 들어가지 않는다

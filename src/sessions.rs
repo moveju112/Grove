@@ -207,7 +207,7 @@ pub(crate) fn visit_model_history(
     let mut segments = Vec::new();
     let (mut id, mut end) = (session_id.to_string(), upto);
     loop {
-        let compaction = crate::context::latest_compaction(conn, &id, end)?;
+        let compaction = crate::context::latest_boundary(conn, &id, end)?;
         let parent = if compaction.is_none() {
             let session = get(conn, &id)?;
             match (session.parent_session_id, session.fork_message_seq, session.fork_inherits_context) {
@@ -222,8 +222,8 @@ pub(crate) fn visit_model_history(
     }
     for (id, end, compaction) in segments.into_iter().rev() {
         let start = compaction.as_ref().map_or(0, |cp| cp.upto_seq);
-        if let Some(cp) = compaction {
-            visit("user", &json!({ "text": crate::context::summary_block(&cp.summary) }));
+        if let Some(summary) = compaction.and_then(|cp| cp.summary) {
+            visit("user", &json!({ "text": crate::context::summary_block(&summary) }));
         }
         let mut statement = conn.prepare(
             "SELECT role, CASE WHEN model_input IS NOT NULL AND json_valid(model_input) THEN model_input ELSE content END \

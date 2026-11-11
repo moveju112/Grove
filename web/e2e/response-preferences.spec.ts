@@ -53,7 +53,7 @@ test("출력 스타일과 사용자 프로필을 저장해 다음 요청에 반�
     expect(turn.definition.user_profile.sha256).toBe(createHash("sha256").update(background).digest("hex"));
     expect(turn.definition.user_profile.body).toBeUndefined();
     await page.reload();
-    await page.getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("사용자 프로필");
     await expect(page.getByTestId("setting-user.profile").getByLabel("사용자 프로필", { exact: true })).toHaveValue(background);
 });

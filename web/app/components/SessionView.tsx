@@ -462,6 +462,12 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
             </details>
         );
     }
+    if (m.role === "note" && (m.content as { type?: string }).type === "context_clear") {
+        const r = m.content as { idle_minutes: number };
+        return <div className="msg note" role="status" data-testid="msg-context-clear">
+            idle {r.idle_minutes}분 이상 뒤 모델 context를 초기화했어요. 이전 대화는 요약 없이 모델 입력에서 제외했으며 화면 이력·파일은 남아 있어요.
+        </div>;
+    }
     if (m.role === "note" && (m.content as { type?: string }).type === "compaction") {
         const r = m.content as { summary: string; auto: boolean; estimated_before?: number; estimated_after?: number };
         return (

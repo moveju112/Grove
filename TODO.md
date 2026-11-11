@@ -836,8 +836,8 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] CTX-006 요약 생성과 새 context 적용을 원자적으로 수행한다. 검증: 요약 성공 시에만 경계 seq와 요약을 한 transaction으로 기록, 같은 범위 중복 압축 방지(`tests/context.rs`).
 - [x] CTX-007 compact 전후 tool call/result 짝과 시스템 지침을 보존한다. 검증: 경계를 마지막 사용자 메시지 직전으로 잡아 tool call/result 짝을 함께 요약, 다음 입력에 고아 tool 메시지 없음·시스템 지침 매 턴 재구성(`tests/context.rs::manual_compaction_replaces_old_history_and_keeps_tool_pairs`).
 - [x] CTX-008 모델 변경 시 필요에 따른 압축과 사용자 설정을 반영한다. 검증: 자동 압축 판단은 새 턴의 모델 기준(작은 context 모델로 바꾸면 첫 호출 전 압축, 요청에는 요약만), 기준·여유분은 사용자 설정 반영(`tests/context.rs::switching_to_smaller_model_compacts_for_that_model`).
-- [ ] CTX-009 auto-clear의 활성화·idle 시간·provider별 override·무제한을 구현한다.
-- [ ] CTX-010 auto-clear가 화면 히스토리를 지우는 것과 모델 context를 정리하는 것을 구분한다.
+- [x] CTX-009 auto-clear의 활성화·idle 시간·provider별 override·무제한을 구현한다. `context.auto_clear_minutes`는 서버→프로젝트→대화 상속(기본 0=시간 제한 없이 유지), 공급자 프로필 `options.auto_clear_minutes`는 범위별 값보다 우선하며 빈 편집값은 상속·0은 명시적 끔이다. 새 사용자 턴 접수 transaction에서 마지막 메시지/요청 종료의 실제 시각을 기준으로 판단하고 실행·승인·백그라운드·자식·추가 입력 대기 중에는 적용하지 않는다. 접수 실패 rollback·동일 키 재생·재시작·정확한 idle 경계·UTC offset·분기/요약 연결을 검증했다. 관련 통합 57개·타입/서버/웹 빌드·선택 E2E 7개 통과(`tests/context_clear.rs`, RULEBOOK §28). 초기 공간 부족으로 링크가 실패해 이 세션이 만든 시험 실행 파일만 정리했으며 공통 cache 경로·의존성은 유지했다. 새 시험의 변수 shadowing·TS `findLast` 호환성과 기존 설정 E2E의 중복 locator도 수정 후 해당 실패 범위를 재검증했다.
+- [x] CTX-010 auto-clear가 화면 히스토리를 지우는 것과 모델 context를 정리하는 것을 구분한다. `context_clear` note로 이전 입력을 요약 없이 제외한 경계를 영속화하며 화면에 이유·이력/파일 보존을 표시한다. 모델 입력 보기·사용량·분기 상속도 같은 경계를 쓰고 이전 실측 token은 초기화한다. 압축/초기화 뒤에는 제외한 원문이 남은 CLI native resume를 폐기한다. 수동 요약 도중 새 턴이 시작되면 요약을 적용하지 않아 실행 중 native context를 바꾸지 않는다. 원본 화면 이력·파일·원본 분기의 context를 보존하고 새로고침·재시작 뒤에도 경계를 유지함을 서버·브라우저에서 검증했다.
 - [x] CTX-011 recap·최근 요약·압축 이벤트를 UI에 표시한다. 검증: 대화에 압축 요약 note(자동/수동·압축 전후 추정 token)와 자동 압축 실패 note 표시(`SessionView` `MessageView`), e2e "context 사용량을 추정/실측으로 표시하고 수동 압축 결과를 이전 대화 요약으로 보여 준다". 별도 recap 기능은 없음.
 - [ ] CTX-012 큰 도구 출력을 파일로 offload하고 모델에 제한된 발췌와 조회 참조를 제공한다.
 - [ ] CTX-013 tool schema deferred loading과 캐시 안정성을 구현한다.

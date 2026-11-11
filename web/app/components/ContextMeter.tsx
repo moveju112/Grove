@@ -11,6 +11,8 @@ type Usage = {
     tokens: number;
     reserve_tokens: number;
     available_tokens: number | null;
+    auto_clear_minutes?: number;
+    cleared?: { upto_seq: number } | null;
 };
 
 /// 대화 context 사용량(실측/추정 구분)과 수동 압축.
@@ -50,6 +52,8 @@ export function ContextMeter({ sessionId, profileId, busy, onError }: { sessionI
                 context {label} {u.basis === "estimated" ? "(추정)" : "(실측 기반)"}
             </span>
             {short && <span className="warn" data-testid="context-short"> · 여유 부족(압축 권장)</span>}
+            {u.cleared && <span className="muted" data-testid="context-cleared"> · 이전 context 제외됨(화면 이력 유지)</span>}
+            {!!u.auto_clear_minutes && <span className="muted small"> · idle {u.auto_clear_minutes}분 뒤 다음 요청에서 초기화</span>}
             <button className="ghost small" disabled={!profileId || busy || working} onClick={() => void compact()}>
                 {working ? "압축 중…" : "압축"}
             </button>

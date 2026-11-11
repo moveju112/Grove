@@ -81,6 +81,7 @@ pub const CAPABILITIES: &[&str] = &[
     "notification_delivery_v1",
     "model_management_v1",
     "model_capabilities_v1",
+    "context_auto_clear_v1",
     "private_model_headers_v1",
 ];
 

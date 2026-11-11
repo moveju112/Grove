@@ -1164,8 +1164,8 @@ pub(crate) fn enqueue_with_attachments(
         .collect();
     def["language"] = crate::settings::effective(tx, "output.language", Some(&s.project_id), Some(session_id))?;
     def["output_style"] = crate::settings::effective(tx, "output.style", Some(&s.project_id), Some(session_id))?;
-    let profile = crate::settings::effective(tx, "user.profile", Some(&s.project_id), Some(session_id))?;
-    def["user_profile"] = match profile.as_str().filter(|s| !s.trim().is_empty()) {
+    let background = crate::settings::effective(tx, "user.profile", Some(&s.project_id), Some(session_id))?;
+    def["user_profile"] = match background.as_str().filter(|s| !s.trim().is_empty()) {
         Some(body) => json!({"sha256":crate::util::sha256_hex(body.as_bytes()),"body":body}),
         None => Value::Null,
     };
@@ -1204,6 +1204,11 @@ pub(crate) fn enqueue_with_attachments(
     }
     // 접수 한도(FAIR-003): 넘치면 아무것도 기록하지 않고 거부한다(재시도 가능).
     crate::fair::admit(tx, owner)?;
+    if source.is_none()
+        && let Some(cleared) = crate::context::maybe_auto_clear(tx, now, session_id, &profile)?
+    {
+        def["context_clear"] = cleared;
+    }
     let tid = crate::util::new_id();
     // 출처 보존(AGENT-010): 사람이 아니라 부모 에이전트·예약이 보낸 지시면 source를 남긴다.
     let mut content = json!({ "text": text });
@@ -1225,7 +1230,7 @@ pub(crate) fn enqueue_with_attachments(
         params![tid, session_id, msg.id, profile_id, agent_id, wf_id, def.to_string(), tools, epoch, now, owner],
     );
     if let Err(rusqlite::Error::SqliteFailure(f, _)) = &ins
-        && f.code == rusqlite::ErrorCode::ConstraintViolation
+        && f.extended_code == rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE
     {
         return Err(ApiError::busy("이 세션에서 이미 턴이 실행 중입니다"));
     }
