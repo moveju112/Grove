@@ -24,7 +24,7 @@
 | ID | UUID v7 문자열(시간 정렬) | ARCH-005: 서버만 생성 |
 | 해시 | sha2 (SHA-256 hex) | 파일 revision·원문 baseline |
 | HTTP client | reqwest(rustls, stream) | provider 어댑터 |
-| 타입 생성 | `ts-rs`로 Rust 계약 → `web/app/api/generated/*.ts` | NET-002 |
+| 타입·검증 정보 생성 | `ts-rs`로 Rust 계약 → `web/app/api/generated.ts`, TypeScript compiler API로 `generated.metadata.ts` 생성 | NET-002. `tests/ts_bindings.rs`가 두 산출물의 drift를 검사한다. 갱신은 `GROVE_UPDATE_BINDINGS=1 python3 scripts/build.py test --rust ts_bindings`(Node·웹 개발 의존성 필요). `parseContract`는 추가 필드를 허용하되 필수·중첩 타입을 검사하고 미지원 선언은 생성 실패로 처리한다 |
 | 시간 | `time` crate(UTC, RFC3339) | chrono 대신 경량 |
 | CLI | 직접 파싱(인자 수 적음) | 의존성 예산 |
 | 웹 | React 19 + React Router 7 framework 모드 `ssr:false` + Vite, TypeScript strict | FRAME-007, DEC-008 |

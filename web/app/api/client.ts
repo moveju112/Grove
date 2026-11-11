@@ -1,6 +1,9 @@
 // 공용 API 클라이언트. 모든 상태 변경 요청에 Idempotency-Key를 붙이고 표준 오류를 ApiError로 바꾼다.
 // 인증: 브라우저 로그인 → access token(메모리 전용) + HttpOnly refresh 쿠키.
 
+import type { ContractTypes } from "./generated.metadata";
+import { parseContract } from "./validation";
+
 export class ApiError extends Error {
     constructor(
         public status: number,
@@ -153,7 +156,7 @@ export function accessToken(): string | null {
 }
 
 /// requires: 이 요청에 필요한 서버 기능. 서버에 없으면 실행하지 않고 `capability_missing`으로 거절된다.
-type Opts = { key?: string; signal?: AbortSignal; requires?: string[] };
+type Opts = { key?: string; signal?: AbortSignal; requires?: string[]; contract?: keyof ContractTypes };
 
 export async function request<T>(method: string, path: string, body?: unknown, opts: Opts = {}): Promise<T> {
     if (method !== "GET" && protocolMismatch !== null) {
@@ -180,7 +183,7 @@ export async function request<T>(method: string, path: string, body?: unknown, o
     checkProtocol(resp);
     const parsed = await parse(resp);
     if (!resp.ok) throw toError(resp.status, parsed);
-    return parsed as T;
+    return (opts.contract ? parseContract(opts.contract, parsed) : parsed) as T;
 }
 
 /// 바이너리 응답 GET(터미널 화면 등). 인증 만료 시 한 번 갱신 후 재시도한다.
@@ -194,6 +197,8 @@ export async function rawGet(path: string): Promise<ArrayBuffer> {
 }
 
 export const api = {
+    getContract: <K extends keyof ContractTypes>(contract: K, p: string, o?: Opts) =>
+        request<ContractTypes[K]>("GET", p, undefined, { ...o, contract }),
     get: <T>(p: string, o?: Opts) => request<T>("GET", p, undefined, o),
     post: <T>(p: string, b: unknown = {}, o?: Opts) => request<T>("POST", p, b, o),
     put: <T>(p: string, b: unknown, o?: Opts) => request<T>("PUT", p, b, o),

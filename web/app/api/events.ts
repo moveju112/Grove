@@ -2,6 +2,7 @@
 // 끊기면 backoff 후 마지막 cursor부터 이어받는다. resync를 받으면 상위가 snapshot을 다시 읽는다.
 
 import type { EventRecord } from "./generated";
+import { parseContract } from "./validation";
 import { accessToken, checkProtocol, refresh, setCapabilities } from "./client";
 import { Cursor, FrameParser, backoff } from "../state/events";
 
@@ -103,7 +104,7 @@ export class EventStream {
                                 this.h.onResync();
                             }
                         } else if (f.event === "event") {
-                            const e = JSON.parse(f.data) as EventRecord;
+                            const e = parseContract("EventRecord", JSON.parse(f.data));
                             if (this.cursor.accept(e.seq)) this.h.onEvent(e);
                         } else if (f.event === "partial") {
                             const p = JSON.parse(f.data) as { session_id: string; snapshot: unknown };
