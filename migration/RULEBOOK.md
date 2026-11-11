@@ -402,6 +402,13 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - interrupt 재전송(같은 Idempotency-Key)은 아직 시작되지 않은 interrupt 항목이 있을 때만 취소하므로, 이미 새로 시작한 턴을 다시 취소하지 않는다.
 - 다음 항목 결정(`after_turn`)은 턴 실행 루프 종료·대기/승인 대기 취소 경로에서 부르며, 현재 DB 상태만 보고 결정하므로 여러 번 불려도 결과가 같다.
 
+### 도구 batch admission (RUN-005)
+
+- 같은 턴에서 앞 호출이 승인/답변 대기·approved·running·unknown이면, 현재 호출과 앞 미결 호출 모두 알려진 `Read` 도구일 때만 함께 시작한다. 그 밖의 직접 호출은 순서대로 시작한다. 시작 가능 판정과 `approved → running` 전이는 같은 DB transaction이다.
+- 대기 전에 이벤트를 구독하며 승인 거절·취소·완료로 경계가 풀리면 현재 상태를 다시 읽는다. 시작 직전 금지/읽기 전용과 자동 허용·대화 범위 승인 철회를 검사한다. 철회된 호출은 `approval_revoked`로 실패하며 새 승인이 필요하다. 명시적인 일회 승인은 금지 정책에 막히지 않는 한 그 호출에 유효하다.
+- 턴의 중지 접수 원인이 저장되었거나 종료 상태이면 뒤 호출을 시작하지 않는다. 실행 직전 이미 받은 취소 신호도 실제 도구를 호출하기 전에 처리한다.
+- 이 규칙은 직접 호출의 시작/종료 경계다. `background` 전환 뒤 프로세스 수명과 자식/여러 세션·UI 파일 작업·Git 사이 공유 자원 제어는 RUN-006의 별도 경계다.
+
 ### 소유 작업과 final 확정 (RUN-020)
 
 - 모델 턴에서 시작한 셸 백그라운드 작업(`tasks.call_id`)과 자식 실행(`agent_runs.parent_turn_id`)이 남으면 도구 호출 없는 응답도 중간 응답이다. `pending_work`를 응답 원문에 붙이고 `completion_deferred` note를 저장하며 `running`·`finished_at=null`을 유지한다. UI가 직접 시작한 독립 작업은 포함하지 않는다.

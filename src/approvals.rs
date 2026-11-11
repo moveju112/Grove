@@ -338,32 +338,101 @@ pub fn finish(c: &Connection, now: &str, id: &str, from: &[&str], to: &str, resu
 }
 
 /// 승인된 호출을 실행한다. running receipt를 먼저 commit하고 결과를 기록한다.
+/// 모델이 독립성을 증명하지 않은 부작용 호출은 직렬화한다. 공유 읽기만 병렬로 허용한다.
+fn parallel_safe(name: &str) -> bool {
+    tools::spec(name).is_some_and(|spec| spec.effect == tools::Effect::Read)
+}
+
+enum ExecutionClaim {
+    Wait,
+    Finished(Option<String>),
+    Run(ToolCallRow, ApiResult<std::path::PathBuf>),
+}
+
+fn claim_execution(c: &mut Connection, id: &str) -> ApiResult<ExecutionClaim> {
+    let tx = c.transaction()?;
+    let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+    let call = get(&tx, id)?;
+    if call.status != "approved" { return Ok(ExecutionClaim::Finished(None)); }
+    if let Some(turn) = &call.turn_id {
+        let parent = crate::runner::get_turn(&tx, turn)?;
+        // 취소 접수는 종료 전 원인을 먼저 저장한다. 앞 도구의 취소 완료와 턴 종료 사이에도 새 호출을 시작하지 않는다.
+        if !matches!(parent.status.as_str(),"running"|"awaiting_approval") || !parent.error.is_null() {
+            finish(&tx,&now,id,&["approved"],"cancelled",Some(tools::ToolError::new("turn_ended","턴이 종료됐거나 중지 요청돼 실행하지 않았습니다").to_json()))?;
+            tx.commit()?;
+            return Ok(ExecutionClaim::Finished(call.turn_id));
+        }
+        let mut st = tx.prepare(
+            "SELECT name FROM tool_calls WHERE turn_id=?1 AND rowid<(SELECT rowid FROM tool_calls WHERE id=?2) \
+             AND status IN ('pending_approval','awaiting_input','approved','running','unknown') ORDER BY rowid",
+        )?;
+        for name in st.query_map(params![turn,id], |r| r.get::<_, String>(0))? {
+            if !parallel_safe(&call.name) || !parallel_safe(&name?) { return Ok(ExecutionClaim::Wait); }
+        }
+    }
+    // 대기 중 금지·읽기 전용으로 바뀌면 옛 자동 허용/승인을 사용해 새 부작용을 시작하지 않는다.
+    if let Some(spec) = tools::spec(&call.name) {
+        let policy = tool_policy(&tx, &call.project_id, &call.session_id, &spec)?;
+        let needs = if call.name == "agent" {
+            crate::agents::approval_policy(&tx, &call.project_id, &call.session_id, &call.target)?
+        } else { Some(tools::needs_approval(spec.effect)) };
+        let granted = call.name != "agent" && tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM session_tool_grants WHERE session_id=?1 AND tool=?2)",
+            params![call.session_id,call.name], |r| r.get::<_, bool>(0),
+        )?;
+        let blocked = match policy {
+            PolicyDecision::Deny(code, message) => Some((code,message)),
+            _ if needs.is_none() => Some(("delegation_disabled","위임 정책이 변경돼 실행하지 않았습니다".into())),
+            PolicyDecision::Allow => None,
+            _ if needs == Some(true) && call.approval_scope.as_deref() != Some("once") && !granted =>
+                Some(("approval_revoked","대기 중 자동 허용 또는 대화 범위 승인이 해제돼 실행하지 않았습니다. 새 승인이 필요합니다".into())),
+            _ => None,
+        };
+        if let Some((code,message)) = blocked {
+            finish(&tx, &now, id, &["approved"], "failed", Some(tools::ToolError::new(code,message).to_json()))?;
+            tx.commit()?;
+            return Ok(ExecutionClaim::Finished(call.turn_id));
+        }
+    }
+    let n = tx.execute(
+        "UPDATE tool_calls SET status = 'running', started_at = ?2, updated_at = ?2, revision = revision + 1 WHERE id = ?1 AND status = 'approved'",
+        params![id, now],
+    )?;
+    if n == 0 { return Ok(ExecutionClaim::Finished(None)); }
+    let call = get(&tx, id)?;
+    let root = crate::sessions::exec_root(&tx, &call.session_id);
+    emit(&tx, &now, &call)?;
+    tx.commit()?;
+    Ok(ExecutionClaim::Run(call, root))
+}
+
 pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
     let app = app.clone();
     tokio::spawn(async move {
-        let id = call_id.clone();
-        let started = app
-            .db
-            .call(move |c| {
-                let tx = c.transaction()?;
-                let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
-                let n = tx.execute(
-                    "UPDATE tool_calls SET status = 'running', started_at = ?2, updated_at = ?2, revision = revision + 1 WHERE id = ?1 AND status = 'approved'",
-                    params![id, now],
-                )?;
-                if n == 0 {
-                    return Ok(None);
+        // 조회 전에 구독해 앞 호출의 종료·승인/거절 이벤트를 놓치지 않는다.
+        let mut events = app.seq_tx.subscribe();
+        let mut shutdown = app.shutdown_rx.clone();
+        let (call, root) = loop {
+            if *shutdown.borrow() { return; }
+            let id = call_id.clone();
+            let claim = app.db.call(move |c| claim_execution(c, &id)).await;
+            app.notify_events().await;
+            match claim {
+                Ok(ExecutionClaim::Run(call, root)) => break (call, root),
+                Ok(ExecutionClaim::Finished(turn)) => {
+                    if let Some(turn) = turn { crate::runner::maybe_resume(&app, &turn).await; }
+                    return;
                 }
-                let call = get(&tx, &id)?;
-                // 대화의 실행 루트(worktree에 들어가 있으면 그 경로, GIT-008).
-                let root = crate::sessions::exec_root(&tx, &call.session_id);
-                emit(&tx, &now, &call)?;
-                tx.commit()?;
-                Ok(Some((call, root)))
-            })
-            .await;
-        app.notify_events().await;
-        let Ok(Some((call, root))) = started else { return };
+                Ok(ExecutionClaim::Wait) => tokio::select! {
+                    changed = events.changed() => { if changed.is_err() { return; } }
+                    _ = shutdown.wait_for(|v| *v) => return,
+                },
+                Err(error) => {
+                    tracing::error!(tool_call_id=%call_id, code=%error.code, "tool execution claim failed");
+                    return;
+                }
+            }
+        };
         let (cancel_tx, cancel_rx) = tokio::sync::watch::channel(false);
         app.cancels.register(&call.id, cancel_tx);
         if let Some(t) = &call.turn_id {
@@ -374,6 +443,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
         }
         let mut file_recs: Vec<crate::changes::Rec> = vec![];
         let outcome = match root {
+            _ if *cancel_rx.borrow() => Err(tools::ToolError::new("cancelled","실행 전에 취소돼 시작하지 않았습니다")),
             Err(e) => Err(tools::ToolError::new("project_unavailable", e.message)),
             Ok(_) if call.name == "agent" => crate::agents::execute_tool(&app, &call, cancel_rx).await,
             Ok(_) if call.name == "goal" => {
@@ -836,6 +906,14 @@ pub async fn expire_due(app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parallel_execution_requires_known_read_only_effects() {
+        for name in ["read","list","find","grep"] { assert!(parallel_safe(name),"{name}"); }
+        for name in ["write","edit","apply_patch","shell","agent","goal","ask_user","unknown"] {
+            assert!(!parallel_safe(name),"{name}");
+        }
+    }
 
     #[test]
     fn display_helpers_summarize_args_duration_and_truncation() {

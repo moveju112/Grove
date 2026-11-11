@@ -302,18 +302,20 @@ async fn wait_for_owned_work(app: &App, turn_id: &str, input_seq: i64, cancel: &
         }
         let tid = turn_id.to_string();
         let session = sid.clone();
-        let (new_input, work) = app.db.call(move |c| {
+        let (new_input, work, latest_seq) = app.db.call(move |c| {
             let user_seq: i64 = c.query_row(
                 "SELECT COALESCE(MAX(seq),0) FROM messages WHERE session_id=?1 AND role='user'", [&session], |r| r.get(0),
             )?;
             let steer: bool = c.query_row(
                 "SELECT EXISTS(SELECT 1 FROM followups WHERE session_id=?1 AND kind='steer')", [&session], |r| r.get(0),
             )?;
-            Ok(((user_seq > candidate_seq || steer).then_some(user_seq > input_seq || steer), owned_work(c, &tid)?))
+            let latest_seq: i64 = c.query_row("SELECT last_message_seq FROM sessions WHERE id=?1",[&session],|r|r.get(0))?;
+            Ok(((user_seq > candidate_seq || steer).then_some(user_seq > input_seq || steer), owned_work(c, &tid)?, latest_seq))
         }).await?;
         // 대기 중 새 지시는 즉시 모델 경계로 돌린다. 이미 입력에 실린 지시라면 바로 모델을 호출한다.
-        if let Some(reload) = new_input { return Ok(reload); }
-        if !work_pending(&work) { return Ok(waited); }
+        if let Some(reload) = new_input { return Ok(reload || latest_seq > input_seq); }
+        // load_step과 이 조회 사이에 이미 완료됐어도 새 결과 note를 반영하도록 다시 읽는다.
+        if !work_pending(&work) { return Ok(waited || latest_seq > input_seq); }
         waited = true;
         tokio::select! {
             _ = cancel.wait_for(|v| *v) => return Err(ApiError::conflict("cancelled", "사용자가 중지했습니다")),
