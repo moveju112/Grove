@@ -6,12 +6,15 @@
 ## 실행
 
 ```bash
-source .envrc.dev
-cargo test                                   # 서버 API·판정 시나리오
-(cd web && npm test && npm run build)        # 상태 로직 + 정적 빌드
-(cd web && TMPDIR=/tmp npx playwright test)  # 실제 서버 + Chrome
+python3 scripts/build.py test --rust api turns   # 변경에 해당하는 서버 target만 선택
+python3 scripts/build.py test --vitest app/state/events.test.ts --typecheck
+python3 scripts/build.py test --e2e e2e/workspace.spec.ts  # debug 서버 + 웹 + 선택 Chrome 흐름
+python3 scripts/build.py test --full            # 전체 인수가 명시적으로 필요한 경우만
 python3 migration/judge/mutate.py            # 판정기 자체 검증(결함 주입)
 ```
+
+선택 검사의 성공은 전체 판정 시나리오의 통과를 뜻하지 않는다. 관련 입력이 그대로인 통과 결과는 재사용하고,
+실패한 단계 뒤에 실행되지 않은 검사는 통과로 세지 않는다. 개발용 E2E를 위해 release 빌드를 만들지 않는다.
 
 ## 판정기 검증(2026-11-05)
 

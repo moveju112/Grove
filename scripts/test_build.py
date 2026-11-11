@@ -2,6 +2,9 @@
 import os
 import sys
 import unittest
+from contextlib import redirect_stdout
+from io import StringIO
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build  # noqa: E402
@@ -63,6 +66,106 @@ class Scan(unittest.TestCase):
         self.assertIn("key.txt: 비밀정보", bad)
         self.assertIn("app.js.map: 개발 파일", bad)
         self.assertFalse(any(line.startswith("ok.txt") for line in bad.splitlines()), bad)
+
+
+class Verification(unittest.TestCase):
+    def execute(self, *args, fail=None):
+        calls = []
+
+        def run(step, cmd, **kwargs):
+            calls.append((step, cmd, kwargs))
+            if step == fail:
+                raise SystemExit(23)
+            return 0
+
+        metadata = '{"target_directory": "/tmp/grove-custom-target"}'
+        with patch.dict(os.environ), patch.object(build, "run", side_effect=run), patch.object(build, "out", return_value=metadata) as out, redirect_stdout(StringIO()) as output:
+            try:
+                build.main(["test", *args])
+            except SystemExit as e:
+                return calls, e.code, output.getvalue()
+            if "--dry-run" in args:
+                out.assert_not_called()
+        return calls, 0, output.getvalue()
+
+    def test_scope_is_required_before_running_anything(self):
+        calls, code, _ = self.execute()
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
+
+    def test_rust_selection_does_not_run_unrelated_checks(self):
+        calls, code, _ = self.execute("--rust", "storage", "worktrees")
+        self.assertEqual(code, 0)
+        self.assertEqual([cmd for _, cmd, _ in calls], [
+            ["cargo", "test", "--test", "storage", "--test", "worktrees"],
+        ])
+
+    def test_library_filter_is_passed_to_cargo(self):
+        calls, code, _ = self.execute("--lib", "--filter", "config::tests")
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0][1], ["cargo", "test", "--lib", "config::tests"])
+
+    def test_filter_without_rust_scope_is_rejected(self):
+        calls, code, _ = self.execute("--filter", "config")
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
+
+    def test_web_selection_does_not_compile_rust(self):
+        calls, code, _ = self.execute("--vitest", "app/state/capabilities.test.ts", "--typecheck")
+        self.assertEqual(code, 0)
+        self.assertEqual([cmd for _, cmd, _ in calls], [
+            ["npm", "run", "typecheck"],
+            ["npx", "vitest", "run", "app/state/capabilities.test.ts"],
+        ])
+
+    def test_e2e_builds_debug_and_uses_that_exact_binary(self):
+        calls, code, _ = self.execute("--e2e", "e2e/worktrees.spec.ts")
+        self.assertEqual(code, 0)
+        self.assertEqual([cmd for _, cmd, _ in calls], [
+            ["cargo", "build", "--bin", "grove"],
+            ["npm", "run", "build"],
+            ["npx", "playwright", "test", "e2e/worktrees.spec.ts"],
+        ])
+        expected = os.path.join("/tmp/grove-custom-target", "debug", "grove.exe" if os.name == "nt" else "grove")
+        self.assertEqual(calls[-1][2]["extra_env"]["GROVE_BIN"], expected)
+        self.assertNotIn("--release", [arg for _, cmd, _ in calls for arg in cmd])
+
+    def test_full_is_explicit_and_covers_all_suites(self):
+        calls, code, _ = self.execute("--full")
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0][1], ["cargo", "test", "--no-fail-fast"])
+        self.assertIn(["npx", "vitest", "run"], [cmd for _, cmd, _ in calls])
+        self.assertEqual(calls[-1][1], ["npx", "playwright", "test"])
+
+    def test_full_cannot_be_misreported_with_a_filter(self):
+        calls, code, _ = self.execute("--full", "--lib", "--filter", "config")
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
+
+    def test_failure_preserves_exit_code_and_reports_unrun_checks(self):
+        calls, code, output = self.execute("--full", fail="rust tests")
+        self.assertEqual(code, 23)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("미실행", output)
+        self.assertIn("e2e", output)
+
+    def test_failed_debug_build_never_launches_e2e(self):
+        calls, code, output = self.execute("--e2e", "e2e/worktrees.spec.ts", fail="server debug build")
+        self.assertEqual(code, 23)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("미실행", output)
+
+    def test_dry_run_has_no_build_or_test_side_effects(self):
+        calls, code, output = self.execute("--rust", "api", "--dry-run")
+        self.assertEqual(code, 0)
+        self.assertEqual(calls, [])
+        self.assertIn("cargo test --test api", output)
+
+    def test_real_child_failure_keeps_its_exit_status(self):
+        with redirect_stdout(StringIO()), self.assertRaises(SystemExit) as raised:
+            build.run("intentional failure", [sys.executable, "-c", "raise SystemExit(23)"])
+        self.assertEqual(raised.exception.code, 23)
+        self.assertEqual(build.LOG[-1]["exit"], 23)
 
 
 if __name__ == "__main__":

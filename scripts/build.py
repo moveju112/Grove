@@ -2,7 +2,11 @@
 """Grove 빌드 진입점(BUILD-002). 표준 라이브러리만 쓴다.
 
     scripts/build.py dev                 # debug 서버 + 웹(개발용, release 최적화 없음)
-    scripts/build.py test [--e2e]        # Rust·Vitest(·Playwright) 시험
+    scripts/build.py test --rust api     # 선택한 Rust integration target만
+    scripts/build.py test --lib --filter config
+    scripts/build.py test --vitest app/state/events.test.ts
+    scripts/build.py test --e2e e2e/workspace.spec.ts  # debug 서버 + 웹 빌드 후 선택 E2E
+    scripts/build.py test --full         # 명시적으로 전체 인수 검사
     scripts/build.py plan --changed F..  # 변경 파일 → 영향 범위(서버/웹/protocol/전체/없음)
     scripts/build.py package [--targets linux-x64,linux-arm64,windows-x64] [--dry-run] [--jobs N]
 
@@ -19,6 +23,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -97,7 +102,8 @@ def run(step, cmd, cwd=ROOT, extra_env=None, check=True):
     LOG.append(rec)
     print(f"  · {step}: {rec['wall_s']}s wall, {rec['cpu_s']}s cpu, {rec['peak_rss_mb']}MB peak, exit {p.returncode}", flush=True)
     if check and p.returncode != 0:
-        raise SystemExit(f"단계 실패: {step} (exit {p.returncode})")
+        print(f"단계 실패: {step} (exit {p.returncode})", file=sys.stderr, flush=True)
+        raise SystemExit(p.returncode if p.returncode > 0 else 128 - p.returncode)
     return p.returncode
 
 
@@ -151,16 +157,66 @@ def cmd_dev(_a):
     run("web build", ["npm", "run", "build"], cwd=os.path.join(ROOT, "web"))
 
 
+def test_steps(a):
+    """범위를 추측해 전체로 넓히지 않고, 요청한 검사만 실행한다."""
+    if a.full and (a.rust or a.lib or a.filter or a.vitest or a.e2e or a.typecheck):
+        raise ValueError("--full과 선택 검사 옵션은 함께 사용할 수 없습니다")
+    if a.filter and not (a.rust or a.lib):
+        raise ValueError("--filter에는 --rust 또는 --lib가 필요합니다")
+    if not (a.full or a.rust or a.lib or a.vitest or a.e2e or a.typecheck):
+        raise ValueError("검사 범위를 지정하세요: --rust TARGET, --lib, --vitest FILE, --e2e FILE, --typecheck 또는 --full")
+    steps = []
+    web = os.path.join(ROOT, "web")
+    if a.full or a.rust or a.lib:
+        cmd = ["cargo", "test"]
+        if a.full:
+            cmd += ["--no-fail-fast"]
+        else:
+            if a.lib:
+                cmd += ["--lib"]
+            for target in a.rust or []:
+                cmd += ["--test", target]
+            if a.filter:
+                cmd += [a.filter]
+        steps.append(("rust tests", cmd, ROOT))
+    if a.full or a.typecheck:
+        steps.append(("typecheck", ["npm", "run", "typecheck"], web))
+    if a.full or a.vitest:
+        steps.append(("vitest", ["npx", "vitest", "run", *(a.vitest or [])], web))
+    if a.full or a.e2e:
+        steps += [
+            ("server debug build", ["cargo", "build", "--bin", "grove"], ROOT),
+            ("web build", ["npm", "run", "build"], web),
+            ("e2e", ["npx", "playwright", "test", *(a.e2e or [])], web),
+        ]
+    return steps
+
+
 def cmd_test(a):
-    run("rust tests", ["cargo", "test", "--no-fail-fast"])
-    run("vitest", ["npx", "vitest", "run"], cwd=os.path.join(ROOT, "web"))
-    if a.e2e:
-        tmp = tempfile.mkdtemp(prefix="gpw-", dir="/tmp")  # Chrome 소켓 경로 한도 때문에 짧은 경로
+    try:
+        steps = test_steps(a)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        raise SystemExit(2) from e
+    if a.dry_run:
+        for name, cmd, _ in steps:
+            print(f"{name}: {shlex.join(cmd)}")
+        return
+    for index, (name, cmd, cwd) in enumerate(steps):
         try:
-            run("web build", ["npm", "run", "build"], cwd=os.path.join(ROOT, "web"))
-            run("e2e", ["npx", "playwright", "test"], cwd=os.path.join(ROOT, "web"), extra_env={"TMPDIR": tmp})
-        finally:
-            shutil.rmtree(tmp, ignore_errors=True)
+            if name == "e2e":
+                metadata = json.loads(out(["cargo", "metadata", "--no-deps", "--format-version", "1"]))
+                binary = os.path.join(metadata["target_directory"], "debug", "grove.exe" if os.name == "nt" else "grove")
+                # Chrome 소켓 경로 한도를 지키고, 부모의 오래된 GROVE_BIN은 사용하지 않는다.
+                with tempfile.TemporaryDirectory(prefix="gpw-", dir="/tmp") as tmp:
+                    run(name, cmd, cwd=cwd, extra_env={"TMPDIR": tmp, "GROVE_BIN": binary})
+            else:
+                run(name, cmd, cwd=cwd)
+        except (SystemExit, subprocess.CalledProcessError, OSError):
+            remaining = ", ".join(step[0] for step in steps[index + 1:]) or "없음"
+            print(f"검증 중단: {name}. 미실행: {remaining}", flush=True)
+            raise
+    print("지정한 검사 단계가 모두 통과했습니다. 미선택 검사는 실행하지 않았습니다.", flush=True)
 
 
 def cmd_bench(a):
@@ -448,12 +504,19 @@ def cmd_package(a):
     print(json.dumps([{k: r[k] for k in ("target", "archive", "size", "archive_sha256")} | {"executed": r["verify"]["executed"]} for r in results], ensure_ascii=False, indent=2))
 
 
-def main():
+def main(argv=None):
     ap = argparse.ArgumentParser(description="Grove 빌드")
     sp = ap.add_subparsers(dest="cmd", required=True)
     sp.add_parser("dev")
     t = sp.add_parser("test")
-    t.add_argument("--e2e", action="store_true")
+    t.add_argument("--rust", nargs="+", metavar="TARGET", help="Rust integration test target 이름")
+    t.add_argument("--lib", action="store_true", help="Rust library 시험")
+    t.add_argument("--filter", help="선택한 Rust 시험의 이름 필터")
+    t.add_argument("--vitest", nargs="+", metavar="FILE", help="Vitest 파일")
+    t.add_argument("--e2e", nargs="+", metavar="FILE", help="Playwright spec (debug 서버 사용)")
+    t.add_argument("--typecheck", action="store_true")
+    t.add_argument("--full", action="store_true", help="전체 Rust·타입·Vitest·Playwright 인수 검사")
+    t.add_argument("--dry-run", action="store_true", help="실행 없이 선택한 명령 표시")
     pl = sp.add_parser("plan")
     pl.add_argument("--changed", nargs="*", default=[])
     pk = sp.add_parser("package")
@@ -461,7 +524,7 @@ def main():
     pk.add_argument("--dry-run", action="store_true")
     pk.add_argument("--jobs", type=int)
     sp.add_parser("bench")
-    a = ap.parse_args()
+    a = ap.parse_args(argv)
     # 하위 도구(라이선스·SBOM 포함)가 모두 저장소 전용 툴체인을 쓰게 한다.
     os.environ.update(env())
     {"dev": cmd_dev, "test": cmd_test, "plan": cmd_plan, "package": cmd_package, "bench": cmd_bench}[a.cmd](a)

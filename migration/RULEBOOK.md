@@ -135,7 +135,9 @@ config/paths → store(migration) → auth → events → projects → sessions/
 | 명령 | 용도 |
 |---|---|
 | `build.py dev` | debug 서버 + 웹. release 최적화를 하지 않는다 |
-| `build.py test [--e2e]` | Rust·Vitest(·Playwright) |
+| `build.py test --rust TARGET / --lib [--filter NAME] / --vitest FILE / --e2e FILE / --typecheck` | 선택 검사. E2E는 debug 서버·웹 빌드 후 해당 실행 파일로 수행 |
+| `build.py test --full` | 명시적 전체 Rust·타입·Vitest·Playwright 인수. 개별 기능마다 실행하지 않음 |
+| `build.py test … --dry-run` | 실행 없이 검사 범위 확인. 실패 코드는 보존하고 뒤 단계는 미실행으로 보고 |
 | `build.py plan --changed <파일…>` | 변경 영향: 문서만→없음, UI만→웹, 서버만→서버, `generated.ts`/`lib.rs`→protocol(둘 다), lockfile·toolchain·빌드 스크립트·모르는 파일→전체 |
 | `build.py package [--targets …] [--dry-run] [--jobs N]` | release artifact |
 
