@@ -78,9 +78,10 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
         }
         q.reload();
     };
-    const profileId = form.profile_id || profiles.data?.[0]?.id || "";
+    const profileId = form.profile_id || profiles.data?.find((profile) => profile.enabled !== false)?.id || "";
     const submit = () =>
         act(async () => {
+            if (profiles.data?.find((profile) => profile.id === profileId)?.enabled === false) throw new Error("비활성 모델 프로필은 선택할 수 없습니다");
             const body: Record<string, unknown> = {
                 name: form.name,
                 prompt: form.prompt,
@@ -150,7 +151,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                     )}
                     {form.kind === "once" && <input aria-label="실행 일시" type="datetime-local" value={form.at} onChange={(e) => setForm({ ...form, at: e.target.value })} />}
                     <select aria-label="예약 모델" value={profileId} onChange={(e) => setForm({ ...form, profile_id: e.target.value })}>
-                        {(profiles.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        {(profiles.data ?? []).map((p) => <option key={p.id} value={p.id} disabled={p.enabled === false}>{p.name}{p.enabled === false ? " · 비활성" : ""}</option>)}
                     </select>
                     <label className="check">
                         <input type="checkbox" checked={form.tools} onChange={(e) => setForm({ ...form, tools: e.target.checked })} /> 도구 사용

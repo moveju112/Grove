@@ -676,11 +676,24 @@ pub const MIGRATIONS: &[&str] = &[
     UPDATE notifications SET delivered_at=read_at WHERE read_at IS NOT NULL;
     CREATE INDEX notifications_ref_created ON notifications(ref_id,created_at,id);
     "#,
+    // 39: 프로필 비활성화는 설정을 지우지 않고 새 실행을 차단한다.
+    r#"
+    ALTER TABLE model_profiles ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1));
+    "#,
 ];
 
 #[cfg(test)]
 mod tests {
     const MIGRATIONS_1_5_SHA16: &str = "40371687b4936aac";
+
+    #[test]
+    fn profile_activation_migration_preserves_existing_profiles_as_enabled() {
+        let connection = rusqlite::Connection::open_in_memory().unwrap();
+        for migration in &super::MIGRATIONS[..38] { connection.execute_batch(migration).unwrap(); }
+        connection.execute("INSERT INTO model_profiles(id,name,protocol,base_url,model,created_at,updated_at) VALUES ('legacy','legacy','openai','http://localhost/v1','manual','t','t')", []).unwrap();
+        connection.execute_batch(super::MIGRATIONS[38]).unwrap();
+        assert!(connection.query_row("SELECT enabled FROM model_profiles WHERE id='legacy'", [], |row| row.get::<_, bool>(0)).unwrap());
+    }
 
     /// 목록·검색·사용량의 주요 조회가 전체 표 scan 없이 인덱스를 쓴다(DB-011).
     #[test]

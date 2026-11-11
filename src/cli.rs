@@ -337,19 +337,22 @@ fn doctor(opts: Opts) -> Result<bool, String> {
             (Some(t), Some("ok")) => match get("/model-profiles", Some(t)).await {
                 Ok((st, v)) if st.is_success() => {
                     let list = v.as_array().cloned().unwrap_or_default();
-                    let ok = list.iter().filter(|p| p["last_check"]["ok"] == true).count();
-                    let failing = list.iter().filter(|p| p["last_check"]["ok"] == false).count();
+                    let enabled: Vec<_> = list.iter().filter(|p| p["enabled"] != false).collect();
+                    let ok = enabled.iter().filter(|p| p["last_check"]["ok"] == true).count();
+                    let failing = enabled.iter().filter(|p| p["last_check"]["ok"] == false).count();
                     let status = if list.is_empty() {
                         "none"
+                    } else if enabled.is_empty() {
+                        "disabled"
                     } else if ok > 0 {
                         "ok"
-                    } else if failing == list.len() {
+                    } else if failing == enabled.len() {
                         "failing"
                     } else {
                         "unverified"
                     };
-                    serde_json::json!({ "status": status, "profiles": list.len(), "verified": ok, "failing": failing,
-                        "detail": "마지막 연결 확인 결과 기준(진단 중 모델을 호출하지 않음)" })
+                    serde_json::json!({ "status": status, "profiles": list.len(), "enabled": enabled.len(), "disabled": list.len() - enabled.len(), "verified": ok, "failing": failing,
+                        "detail": "활성 프로필의 마지막 연결 확인 결과 기준(진단 중 모델을 호출하지 않음)" })
                 }
                 Ok((st, _)) => serde_json::json!({ "status": "error", "http": st.as_u16() }),
                 Err(e) => serde_json::json!({ "status": "error", "detail": e }),

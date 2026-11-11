@@ -320,6 +320,16 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 ## 20. 서버 설치 CLI 백엔드 (claude_code·codex_cli)
 
+`doctor`의 모델 진단은 활성 프로필만 마지막 연결 확인의 성공/실패에 집계한다. 모두 비활성이면 `models.status=disabled`, `healthy=false`로 보고하고 전체·활성·비활성 수를 구분한다. 진단 때문에 추론을 호출하지 않는다.
+
+프로필 수정 receipt는 비밀 참조의 생략(유지)과 명시적 null(해제)을 구분한다. 과거 두 의도를 구분하지 못한 키로 해제를 재전송하면 충돌할 수 있으므로 현재 참조를 확인하고 새 키로 명시적으로 요청한다. 기본 활성 상태·비밀 유지 요청의 기존 hash 의미는 유지한다.
+
+모델 관리(MODEL-007, `model_management_v1`): 소유자는 등록한 HTTP 프로필의 `GET /model-profiles/{id}/models`로 목록을 수동 새로고침하고 revision을 결합해 모델을 선택한다. endpoint·키·수동 모델 입력은 기존 설정을 유지한다. OpenAI는 `data[].id`, [Anthropic](https://platform.claude.com/docs/en/api/models/list)은 `data[].id/display_name`과 `has_more/last_id → after_id`, [Gemini](https://aistudio.google.com/api-reference/models/list-models)는 `models[].name/displayName`과 `nextPageToken → pageToken`을 사용한다. Gemini resource의 `models/` 접두사를 모델 인자로 정규화하고 명시적으로 `generateContent`를 지원하지 않는 항목은 제외한다. 그 밖의 모델 이름으로 capability를 추측하지 않는다. CLI 목록 자동 조회는 미지원이며 수동 이름과 기존 CLI 인증을 사용한다.
+
+목록은 중복 ID를 정규화하고 마지막 페이지까지 조회하되 2,000개·20페이지·누적 8MiB·총 30초를 넘기면 실패한다. 비정형 성공 응답·반복 cursor·과다 응답을 빈 목록이나 완전한 부분 목록으로 바꾸지 않는다. cursor는 같은 endpoint의 query 값일 뿐 새 URL이 아니며 redirect는 기존처럼 차단한다. 알려진 자격이 모델 ID에 포함되면 결과를 거부하고 표시명·오류에서도 자격을 가린다. 조회 중 프로필 revision이 바뀌면 결과를 거부하고 UI는 마지막 조회 목록과 실패·오래된 상태를 구분한다. 생성 요청은 하지 않는다. Gemini의 선택된 모델 ID는 생성 URL의 한 segment로 인코딩해 경로·query·fragment를 바꾸지 못하게 한다.
+
+프로필 `enabled`(migration 39)의 기본값은 true다. 기존 프로필과 기본 활성 상태 요청의 구버전 receipt 의미를 보존한다. 비활성 프로필은 설정·봇·예약의 참조를 지우지 않지만 새 턴 접수와 모델 실행에서 서버가 `profile_disabled`로 차단하며 다른 모델로 자동 대체하지 않는다. 실행 중인 프로필의 비활성화는 거부하므로 먼저 실행을 마치거나 명시적으로 취소한다. 비활성 상태의 연결 확인·목록 조회는 허용한다. Composer는 명시적으로 선택했던 비활성 프로필과 초안을 보존하고 보내기를 막는다. 봇 준비 상태도 활성 여부를 반영하며 profile 변경 이벤트가 profiles·bots cache를 함께 무효화한다. `tests/model_catalog.rs`, store·Gemini 단위, 선택 턴/봇/예약/후속/컨텍스트 및 `web/e2e/model-catalog.spec.ts`가 로컬 fixture 근거이며 실제 공급자 계정·유료 추론 인수는 별도다.
+
 사용자 지시: 기존 paseodog처럼 서버에 설치된 Codex·Claude Code를 쓰고, 시험은 저가형 모델(`gpt-6-luna`, `haiku`)로 한다.
 
 | 규칙 | 내용 | 시험 |

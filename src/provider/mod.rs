@@ -6,6 +6,8 @@
 //! 실행된 도구가 다시 돌지 않는다. 조각을 보낸 뒤의 오류·취소·CLI 백엔드는 재시도하지 않는다. 그 밖의 재시도는 사용자가 새 턴으로 한다.
 
 pub mod anthropic;
+mod catalog;
+pub use catalog::{AvailableModel, list_models};
 pub mod cli;
 pub mod gemini;
 pub mod openai;
@@ -366,49 +368,9 @@ pub async fn check(profile: &Profile) -> Result<Value, ProviderError> {
     if cli::is_cli(&profile.protocol) {
         return cli::check(profile).await;
     }
-    let client = http_client(Duration::from_secs(15));
-    let base = profile.base_url.trim_end_matches('/');
-    let mut rb = match profile.protocol.as_str() {
-        "openai" => {
-            let r = client.get(format!("{base}/models"));
-            match &profile.api_key {
-                Some(k) => r.bearer_auth(k),
-                None => r,
-            }
-        }
-        "anthropic" => {
-            let r = client.get(format!("{base}/v1/models")).header("anthropic-version", anthropic::API_VERSION);
-            match &profile.api_key {
-                Some(k) => r.header("x-api-key", k),
-                None => r,
-            }
-        }
-        "gemini" => {
-            let r = client.get(format!("{base}/v1beta/models"));
-            match &profile.api_key {
-                Some(k) => r.header("x-goog-api-key", k),
-                None => r,
-            }
-        }
-        other => return Err(ProviderError::new("unsupported", format!("지원하지 않는 protocol: {other}"))),
-    };
-    for (k, v) in &profile.extra_headers {
-        rb = rb.header(k, v);
-    }
-    let resp = send(rb).await?;
-    if !resp.status().is_success() {
-        return Err(http_error(resp).await);
-    }
-    let v: Value = resp.json().await.unwrap_or(Value::Null);
-    let ids: Vec<String> = v["data"]
-        .as_array()
-        .or(v["models"].as_array())
-        .into_iter()
-        .flatten()
-        .filter_map(|m| m["id"].as_str().or(m["name"].as_str()).map(str::to_string))
-        .collect();
-    let listed = ids.iter().any(|m| *m == profile.model || m.ends_with(&format!("/{}", profile.model)));
-    Ok(json!({ "models": ids.len(), "model_listed": listed }))
+    let models = list_models(profile).await?;
+    let listed = models.iter().any(|m| m.id == profile.model);
+    Ok(json!({ "models": models.len(), "model_listed": listed }))
 }
 
 /// HTTP 오류 응답을 표준 오류로 변환한다. 본문은 제한된 크기만 읽고 비밀정보를 포함하지 않게 한다.

@@ -84,7 +84,7 @@ function Editor({ bot, onDone }: { bot: Bot | null; onDone: () => void }) {
             <textarea aria-label="작업 지침" placeholder="작업 지침" rows={2} value={f.instructions} onChange={(e) => setF({ ...f, instructions: e.target.value })} />
             <select aria-label="봇 모델" value={f.profile_id} onChange={(e) => setF({ ...f, profile_id: e.target.value })}>
                 <option value="">모델 미설정(실행 불가)</option>
-                {(profiles.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name} · {p.model}</option>)}
+                {(profiles.data ?? []).map((p) => <option key={p.id} value={p.id} disabled={p.enabled === false}>{p.name} · {p.model}{p.enabled === false ? " · 비활성" : ""}</option>)}
             </select>
             <select aria-label="봇 프로젝트" value={projectId} disabled={!!bot?.home_session_id} onChange={(e) => setF({ ...f, project_id: e.target.value })}>
                 {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
@@ -104,6 +104,7 @@ function Editor({ bot, onDone }: { bot: Bot | null; onDone: () => void }) {
 /// 봇 목록: 위임 역할과 별개로, 사용자가 직접 대화하는 상대.
 export function BotsPanel({ open }: { open: Opener }) {
     const q = useQuery<{ bots: Bot[]; order_revision: number }>("bots", () => api.get("/bots"));
+    const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const [hidden, setHidden] = useState<string[]>(loadHidden);
     const [showHidden, setShowHidden] = useState(false);
     const [showDeleted, setShowDeleted] = useState(false);
@@ -159,7 +160,8 @@ export function BotsPanel({ open }: { open: Opener }) {
                             {b.home_status === "awaiting_approval" && <span className="status awaiting_approval">승인 대기</span>}
                             {b.home_status === "awaiting_input" && <span className="status awaiting_input">답변 대기</span>}
                             {b.status === "disabled" && <span className="status">비활성</span>}
-                            {!b.runnable && b.status !== "deleted" && <span className="muted small">모델 없음</span>}
+                            {(!b.runnable || profiles.data?.some((profile) => profile.id === b.profile_id && profile.enabled === false)) && b.status !== "deleted" &&
+                                <span className="muted small">{profiles.data?.some((profile) => profile.id === b.profile_id && profile.enabled === false) ? "모델 비활성" : "모델 없음"}</span>}
                         </button>
                         <details className="bot-actions">
                             <summary aria-label={`${b.name} 관리`}>⋯</summary>

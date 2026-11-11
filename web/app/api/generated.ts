@@ -94,7 +94,11 @@ export type ModelProfile = { id: string, name: string, protocol: string, base_ur
 /**
  * 마지막 연결 확인 결과(AUTH-001). 확인한 적 없으면 null.
  */
-last_check: { ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null, };
+last_check: { ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null, enabled: boolean, };
+
+export type AvailableModel = { id: string, name: string, };
+
+export type ModelCatalog = { profile_id: string, profile_revision: number, models: Array<AvailableModel>, fetched_at: string, };
 
 export type Turn = { id: string, session_id: string, status: string, request_message_id: string, profile_id: string | null, agent_id: string | null, workflow_id: string | null, tools_enabled: boolean, error: unknown, usage: unknown, step: number, created_at: string, updated_at: string, finished_at: string | null, definition: unknown, 
 /**

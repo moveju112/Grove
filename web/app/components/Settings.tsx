@@ -6,6 +6,7 @@ import { useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
 import { UsagePanel } from "./UsagePanel";
 import { Pairings } from "./Pairing";
+import { ProfileCatalog } from "./ProfileCatalog";
 import { useCapability } from "../state/capabilities";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
@@ -225,6 +226,7 @@ function Profiles() {
     const secrets = useQuery<SecretInfo[]>("secrets", () => api.get("/secrets"));
     const [f, setF] = useState({ name: "", protocol: "openai", base_url: "https://api.openai.com/v1", model: "", secret_id: "" });
     const save = useSave();
+    const management = useCapability("model_management_v1");
     const presets: Record<string, string> = { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com", claude_code: "", codex_cli: "" };
     // 서버에 설치된 CLI 백엔드는 endpoint·키가 없다(CLI가 자기 로그인을 쓴다). 저가형 기본 모델을 제안한다.
     const cliModels: Record<string, string> = { claude_code: "haiku", codex_cli: "gpt-6-luna" };
@@ -233,8 +235,9 @@ function Profiles() {
         <>
             <ul>
                 {(list.data ?? []).map((p) => (
-                    <li key={p.id}>
+                    <li key={p.id} data-testid="model-profile">
                         <strong>{p.name}</strong> · {p.protocol} · <code>{p.model}</code> <span className="muted small">{p.base_url}</span>
+                        {p.enabled === false && <span className="warn small"> · 비활성</span>}
                         <button className="ghost small" onClick={() => {
                             const m = prompt("모델 이름", p.model);
                             if (m && m !== p.model) void save.run(() => api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, model: m }));
@@ -242,6 +245,12 @@ function Profiles() {
                         <button className="ghost small" onClick={() => void save.run(() => api.del(`/model-profiles/${p.id}`))}>삭제</button>
                         <button className="ghost small" onClick={() => void save.run(() => api.post(`/model-profiles/${p.id}/check`))}>연결 확인</button>
                         <CheckStatus c={p.last_check} />
+                        {management !== false && <button className="ghost small" onClick={() => void save.run(() =>
+                            api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, enabled: p.enabled === false }, { requires: ["model_management_v1"] })
+                        )}>{p.enabled === false ? "활성화" : "비활성화"}</button>}
+                        <ProfileCatalog profile={p} onChoose={(model, revision) => void save.run(() =>
+                            api.put(`/model-profiles/${p.id}`, { expected_revision: revision, model }, { requires: ["model_management_v1"] })
+                        )} />
                     </li>
                 ))}
             </ul>

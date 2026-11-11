@@ -121,8 +121,17 @@ impl Accumulator {
     }
 }
 
+fn endpoint(profile: &Profile) -> Result<reqwest::Url, ProviderError> {
+    let mut url = reqwest::Url::parse(&format!("{}/v1beta/models/", profile.base_url.trim_end_matches('/')))
+        .map_err(|_| ProviderError::new("invalid_request", "Gemini endpoint URL이 올바르지 않습니다"))?;
+    url.path_segments_mut().map_err(|_| ProviderError::new("invalid_request", "Gemini endpoint에 경로를 지정할 수 없습니다"))?
+        .pop_if_empty().push(&format!("{}:streamGenerateContent", profile.model));
+    url.query_pairs_mut().append_pair("alt", "sse");
+    Ok(url)
+}
+
 pub async fn stream(client: &reqwest::Client, profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
-    let url = format!("{}/v1beta/models/{}:streamGenerateContent?alt=sse", profile.base_url.trim_end_matches('/'), profile.model);
+    let url = endpoint(profile)?;
     let mut rb = client.post(url).json(&build_body(req));
     if let Some(k) = &profile.api_key {
         // 키를 URL query에 넣지 않는다(로그·오류 노출 방지).
@@ -149,6 +158,22 @@ pub async fn stream(client: &reqwest::Client, profile: &Profile, req: &ModelRequ
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn model_identifier_cannot_change_the_endpoint_path_query_or_fragment() {
+        let profile = Profile {
+            protocol: "gemini".into(), base_url: "http://127.0.0.1:7/prefix".into(),
+            model: "../../other?x=y#fragment".into(), api_key: None,
+            timeout: std::time::Duration::from_secs(5), extra_headers: vec![],
+        };
+        let url = endpoint(&profile).unwrap();
+        assert_eq!(url.host_str(), Some("127.0.0.1"));
+        assert_eq!(url.port(), Some(7));
+        assert!(url.path().starts_with("/prefix/v1beta/models/"));
+        assert_eq!(url.path_segments().unwrap().count(), 4);
+        assert_eq!(url.query_pairs().collect::<Vec<_>>(), vec![("alt".into(), "sse".into())]);
+        assert!(url.fragment().is_none());
+    }
 
     #[test]
     fn function_calls_and_usage() {

@@ -155,6 +155,7 @@ export function applyEvent(e: EventRecord) {
             break;
         case "profile.changed":
             invalidate("profiles");
+            invalidate("bots");
             break;
         case "secret.changed":
             invalidate("secrets");

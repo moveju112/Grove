@@ -29,6 +29,8 @@ fn generate() -> String {
         decl::<grove::definitions::DefinitionDetail>(),
         decl::<grove::models::SecretInfo>(),
         decl::<grove::models::ModelProfile>(),
+        decl::<grove::provider::AvailableModel>(),
+        decl::<grove::models::ModelCatalog>(),
         decl::<grove::runner::Turn>(),
         decl::<grove::approvals::ToolCallRow>(),
         decl::<grove::changes::FileChange>(),

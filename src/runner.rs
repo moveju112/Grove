@@ -1005,7 +1005,7 @@ pub(crate) fn enqueue_with_attachments(
         Some((p, _)) => (p.as_str(), None),
         None => (profile_id, agent_id),
     };
-    let profile=crate::models::get_profile(tx, profile_id)?;
+    let profile=crate::models::get_enabled_profile(tx, profile_id)?;
     if attachments.is_some_and(|a|a.model_input["images"].as_array().is_some_and(|v|!v.is_empty())) && crate::provider::cli::is_cli(&profile.protocol) {
         return Err(ApiError::unsupported("CLI 백엔드는 이미지 첨부를 지원하지 않습니다. HTTP 모델 프로필을 선택하세요"));
     }

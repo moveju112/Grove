@@ -75,6 +75,7 @@ pub const CAPABILITIES: &[&str] = &[
     "dependency_hints_v1",
     "pairing_v1",
     "notification_delivery_v1",
+    "model_management_v1",
 ];
 
 #[derive(Clone)]
@@ -277,6 +278,7 @@ pub fn router(app: App) -> Router {
         .route("/model-profiles", get(models::list_profiles).post(models::create_profile))
         .route("/model-profiles/{id}", axum::routing::put(models::update_profile).delete(models::delete_profile))
         .route("/model-profiles/{id}/check", post(models::check_profile))
+        .route("/model-profiles/{id}/models", get(models::catalog))
         .route("/settings/registry", get(settings::get_registry))
         .route("/settings/effective", get(settings::get_effective))
         .route("/settings/{scope}/{scope_id}/{key}", axum::routing::put(settings::put))

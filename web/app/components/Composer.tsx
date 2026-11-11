@@ -68,9 +68,10 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     // 화면 선택과 보내는 값이 같도록 매 렌더 계산한다(기본 프로필을 상태로 복사하지 않음).
     const eff = resolveOptions(
         opts,
-        profiles.data?.map((p) => p.id),
+        profiles.data && [...profiles.data].sort((a, b) => Number(a.enabled === false) - Number(b.enabled === false)).map((p) => p.id),
         agents.data?.map((a) => a.id),
     );
+    const profileDisabled = profiles.data?.find((p) => p.id === eff.profileId)?.enabled === false;
     const update = (patch: Partial<SendOptions>) => setOpts((o) => ({ ...o, ...patch }));
 
     const state = server.data ? D.compare(text ? { text, baseRevision: base.current, updatedAt: 0 } : null, server.data) : null;
@@ -139,7 +140,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
             description: "모델 프로필 바꾸기(이름·모델 일부)",
             run: (a) => {
                 const q = a.toLowerCase();
-                const p = (profiles.data ?? []).find((x) => q && (x.name.toLowerCase().includes(q) || x.model.toLowerCase().includes(q)));
+                const p = (profiles.data ?? []).find((x) => x.enabled !== false && q && (x.name.toLowerCase().includes(q) || x.model.toLowerCase().includes(q)));
                 if (!p) throw new Error(a ? `'${a}'에 맞는 모델 프로필이 없습니다` : "프로필 이름을 함께 쓰세요(/model 이름)");
                 update({ profileId: p.id, mode: "model" });
                 return `모델 프로필을 ${p.name} · ${p.model}로 바꿨습니다`;
@@ -183,6 +184,10 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
 
     /// body: 실제로 보낼 글("//" 이스케이프를 푼 값), raw: 입력창 원문(보낸 뒤 비울지 판단).
     const sendText = async (body: string, raw: string) => {
+        if (eff.mode === "model" && profileDisabled) {
+            setMsg("선택한 모델 프로필이 비활성화돼 있습니다. 다른 프로필을 명시적으로 선택하세요.");
+            return;
+        }
         const text = body;
         sending.current = true;
         setBusy(true);
@@ -320,8 +325,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                         <select aria-label="모델 프로필" value={eff.profileId ?? ""} onChange={(e) => update({ profileId: e.target.value || null })}>
                             {(profiles.data ?? []).length === 0 && <option value="">모델 프로필 없음(설정에서 추가)</option>}
                             {(profiles.data ?? []).map((p) => (
-                                <option key={p.id} value={p.id}>
-                                    {p.name} · {p.model}
+                                <option key={p.id} value={p.id} disabled={p.enabled === false}>
+                                    {p.name} · {p.model}{p.enabled === false ? " · 비활성" : ""}
                                 </option>
                             ))}
                         </select>
@@ -357,13 +362,14 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 )}
                 <button
                     onClick={send}
-                    disabled={busy || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (eff.mode === "model" && !eff.profileId) || (!!running && eff.mode === "save")}
+                    disabled={busy || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (eff.mode === "model" && (!eff.profileId || profileDisabled)) || (!!running && eff.mode === "save")}
                     title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다(도구 호출과 결과 사이에 끼면 안 됨)" : undefined}
                 >
                     {busy ? "보내는 중…" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
                 </button>
             </div>
             {msg && <p className="muted small" role="status">{msg}</p>}
+            {eff.mode === "model" && profileDisabled && <p className="warn small" role="status" data-testid="profile-disabled">선택한 모델 프로필이 비활성화돼 있습니다. 다른 모델로 자동 전환하지 않습니다.</p>}
         </div>
     );
 }

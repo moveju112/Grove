@@ -155,11 +155,12 @@ pub struct ModelProfile {
     /// 마지막 연결 확인 결과(AUTH-001). 확인한 적 없으면 null.
     #[ts(type = "{ ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null")]
     pub last_check: Option<Value>,
+    pub enabled: bool,
 }
 
 const PCOLS: &str = "id, name, protocol, base_url, model, secret_id, options, revision, created_at, updated_at, \
     (SELECT json_object('ok', json(CASE WHEN k.ok THEN 'true' ELSE 'false' END), 'code', k.code, 'message', k.message, 'latency_ms', k.latency_ms, \
-     'checked_at', k.checked_at, 'detail', json(k.detail)) FROM profile_checks k WHERE k.profile_id = model_profiles.id)";
+     'checked_at', k.checked_at, 'detail', json(k.detail)) FROM profile_checks k WHERE k.profile_id = model_profiles.id), enabled";
 
 fn profile_row(r: &Row) -> rusqlite::Result<ModelProfile> {
     let o: String = r.get(6)?;
@@ -175,25 +176,21 @@ fn profile_row(r: &Row) -> rusqlite::Result<ModelProfile> {
         created_at: r.get(8)?,
         updated_at: r.get(9)?,
         last_check: r.get::<_, Option<String>>(10)?.and_then(|s| serde_json::from_str(&s).ok()),
+        enabled: r.get(11)?,
     })
 }
 
 /// 연결 확인(AUTH-001): 생성 요청 없이 provider에 한 번 닿아 보고 결과를 남긴다. 비밀 원문은 응답·기록에 넣지 않는다.
 pub async fn check_profile(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
     let pid = id.clone();
-    let (_, rp) = app.db.call(move |c| runtime_profile(c, &pid)).await?;
+    let (_, rp) = app.db.call(move |c| configured_profile(c, &pid)).await?;
     let started = std::time::Instant::now();
     let r = crate::provider::check(&rp).await;
     let ms = started.elapsed().as_millis() as i64;
-    let secret = rp.api_key.clone();
     // 오류 본문에 키가 되돌아오는 서버가 있어도 기록·응답에는 남기지 않는다.
-    let scrub = |m: &str| match &secret {
-        Some(k) if k.len() >= 8 => m.replace(k.as_str(), "[redacted]"),
-        _ => m.to_string(),
-    };
     let (ok, code, message, detail) = match &r {
         Ok(d) => (true, None, None, d.clone()),
-        Err(e) => (false, Some(e.code.to_string()), Some(scrub(&e.message)), json!({ "status": e.status, "retryable": e.retryable })),
+        Err(e) => (false, Some(e.code.to_string()), Some(scrub_provider_text(&rp, &e.message)), json!({ "status": e.status, "retryable": e.retryable })),
     };
     let now = crate::util::fmt_time(app.clock.now());
     let prof = app
@@ -221,9 +218,63 @@ pub fn get_profile(c: &Connection, id: &str) -> ApiResult<ModelProfile> {
         .ok_or_else(|| ApiError::not_found("모델 프로필이 없습니다"))
 }
 
+pub fn get_enabled_profile(c: &Connection, id: &str) -> ApiResult<ModelProfile> {
+    let profile = get_profile(c, id)?;
+    if !profile.enabled {
+        return Err(ApiError::conflict("profile_disabled", "이 모델 프로필은 비활성화돼 있습니다. 다른 프로필을 명시적으로 선택하거나 설정에서 활성화하세요"));
+    }
+    Ok(profile)
+}
+
+fn scrub_provider_text(profile: &Profile, text: &str) -> String {
+    let headers = profile.extra_headers.iter().filter(|(name, _)| {
+        let name = name.to_ascii_lowercase();
+        name.ends_with("key") || ["authorization", "cookie", "token", "secret", "password", "credential"].iter().any(|part| name.contains(part))
+    });
+    profile.api_key.iter().chain(headers.map(|(_, value)| value))
+        .filter(|value| !value.is_empty()).fold(text.to_string(), |text, secret| text.replace(secret.as_str(), "[redacted]"))
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub struct ModelCatalog {
+    pub profile_id: String,
+    pub profile_revision: i64,
+    pub models: Vec<provider::AvailableModel>,
+    pub fetched_at: String,
+}
+
+pub async fn catalog(State(app): State<App>, Owner(_p): Owner, Path(id): Path<String>) -> ApiResult<Json<ModelCatalog>> {
+    let pid = id.clone();
+    let (profile, runtime) = app.db.call(move |c| configured_profile(c, &pid)).await?;
+    let mut models = provider::list_models(&runtime).await.map_err(|error| {
+        ApiError::new(StatusCode::BAD_GATEWAY, error.code, scrub_provider_text(&runtime, &error.message))
+            .with_details(json!({ "provider_status": error.status, "retryable": error.retryable }))
+    })?;
+    for model in &mut models {
+        if scrub_provider_text(&runtime, &model.id) != model.id {
+            return Err(ApiError::new(StatusCode::BAD_GATEWAY, "catalog_invalid", "공급자가 비밀정보를 포함한 모델 식별자를 반환해 목록을 표시하지 않았습니다"));
+        }
+        model.name = scrub_provider_text(&runtime, &model.name);
+    }
+    let revision = profile.revision;
+    app.db.call(move |c| {
+        let current = get_profile(c, &id)?;
+        if current.revision != revision { return Err(ApiError::revision_conflict(serde_json::to_value(current)?)); }
+        Ok(())
+    }).await?;
+    Ok(Json(ModelCatalog { profile_id: profile.id, profile_revision: revision, models, fetched_at: app.now() }))
+}
+
 /// 실행용 provider 설정(비밀 원문 포함). 서버 내부에서만 사용한다.
 pub fn runtime_profile(c: &Connection, id: &str) -> ApiResult<(ModelProfile, Profile)> {
-    let p = get_profile(c, id)?;
+    provider_profile(c, get_enabled_profile(c, id)?)
+}
+
+fn configured_profile(c: &Connection, id: &str) -> ApiResult<(ModelProfile, Profile)> {
+    provider_profile(c, get_profile(c, id)?)
+}
+
+fn provider_profile(c: &Connection, p: ModelProfile) -> ApiResult<(ModelProfile, Profile)> {
     let key: Option<String> = match &p.secret_id {
         // 복호화 함수의 실패는 SQLite를 거쳐 SQLITE_ERROR + 메시지로 돌아온다(이 조회에서 그 실패를 낼 곳은 복호화뿐).
         Some(s) => c.query_row("SELECT grove_decrypt(value) FROM secrets WHERE id = ?1", params![s], |r| r.get(0)).optional().map_err(|e| match e {
@@ -257,6 +308,7 @@ pub struct CreateProfile {
     pub model: String,
     pub secret_id: Option<String>,
     pub options: Option<Value>,
+    pub enabled: Option<bool>,
 }
 
 fn validate_options(o: &Value) -> ApiResult<()> {
@@ -326,16 +378,19 @@ pub async fn create_profile(State(app): State<App>, Owner(p): Owner, headers: He
         return Err(ApiError::invalid("이름은 1~80자여야 합니다"));
     }
     let options = b.options.unwrap_or(json!({}));
+    let enabled = b.enabled.unwrap_or(true);
     validate_options(&options)?;
-    let h = idem::body_hash("profile.create", &json!({ "n": b.name, "p": b.protocol, "u": b.base_url, "m": b.model, "s": b.secret_id, "o": options }));
+    let mut request = json!({ "n": b.name, "p": b.protocol, "u": b.base_url, "m": b.model, "s": b.secret_id, "o": options });
+    if !enabled { request["enabled"] = json!(false); }
+    let h = idem::body_hash("profile.create", &request);
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         if let Some(s) = &b.secret_id {
             secret_info(tx, s)?;
         }
         let id = crate::util::new_id();
         tx.execute(
-            "INSERT INTO model_profiles (id, name, protocol, base_url, model, secret_id, options, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)",
-            params![id, b.name.trim(), b.protocol, b.base_url.trim().trim_end_matches('/'), b.model.trim(), b.secret_id, options.to_string(), now],
+            "INSERT INTO model_profiles (id, name, protocol, base_url, model, secret_id, options, created_at, updated_at, enabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
+            params![id, b.name.trim(), b.protocol, b.base_url.trim().trim_end_matches('/'), b.model.trim(), b.secret_id, options.to_string(), now, enabled],
         )?;
         let prof = get_profile(tx, &id)?;
         events::append(tx, now, "profile.changed", None, None, &serde_json::to_value(&prof)?)?;
@@ -354,6 +409,7 @@ pub struct UpdateProfile {
     #[serde(default, deserialize_with = "crate::util::double_option")]
     pub secret_id: Option<Option<String>>,
     pub options: Option<Value>,
+    pub enabled: Option<bool>,
 }
 
 pub async fn update_profile(
@@ -366,12 +422,16 @@ pub async fn update_profile(
     if let Some(o) = &b.options {
         validate_options(o)?;
     }
-    let h = idem::body_hash("profile.update", &json!({ "id": id, "r": b.expected_revision, "n": b.name, "u": b.base_url, "m": b.model, "s": b.secret_id, "o": b.options }));
+    let mut request = json!({ "id": id, "r": b.expected_revision, "n": b.name, "u": b.base_url, "m": b.model, "s": b.secret_id, "o": b.options });
+    if b.secret_id.as_ref().is_some_and(Option::is_none) { request["secret_cleared"] = json!(true); }
+    if let Some(enabled) = b.enabled { request["enabled"] = json!(enabled); }
+    let h = idem::body_hash("profile.update", &request);
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let cur = get_profile(tx, &id)?;
         if cur.revision != b.expected_revision {
             return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));
         }
+        if b.enabled == Some(false) && cur.enabled { ensure_profile_idle(tx, &id)?; }
         let base_url = b.base_url.map(|u| u.trim().trim_end_matches('/').to_string()).unwrap_or(cur.base_url.clone());
         let model = b.model.map(|m| m.trim().to_string()).unwrap_or(cur.model.clone());
         provider::validate_profile(&cur.protocol, &base_url, &model).map_err(ApiError::invalid)?;
@@ -383,8 +443,8 @@ pub async fn update_profile(
             secret_info(tx, s)?;
         }
         tx.execute(
-            "UPDATE model_profiles SET name = ?2, base_url = ?3, model = ?4, secret_id = ?5, options = ?6, revision = revision + 1, updated_at = ?7 WHERE id = ?1",
-            params![id, b.name.unwrap_or(cur.name.clone()), base_url, model, secret, b.options.unwrap_or(cur.options.clone()).to_string(), now],
+            "UPDATE model_profiles SET name = ?2, base_url = ?3, model = ?4, secret_id = ?5, options = ?6, revision = revision + 1, updated_at = ?7, enabled = ?8 WHERE id = ?1",
+            params![id, b.name.unwrap_or(cur.name.clone()), base_url, model, secret, b.options.unwrap_or(cur.options.clone()).to_string(), now, b.enabled.unwrap_or(cur.enabled)],
         )?;
         let prof = get_profile(tx, &id)?;
         events::append(tx, now, "profile.changed", None, None, &serde_json::to_value(&prof)?)?;
@@ -397,19 +457,20 @@ pub async fn delete_profile(State(app): State<App>, Owner(p): Owner, headers: He
     let h = idem::body_hash("profile.delete", &json!({ "id": id }));
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         get_profile(tx, &id)?;
-        let active: i64 = tx.query_row(
-            "SELECT COUNT(*) FROM turns WHERE profile_id = ?1 AND status IN ('queued','running','awaiting_approval')",
-            params![id],
-            |r| r.get(0),
-        )?;
-        if active > 0 {
-            return Err(ApiError::busy("이 프로필로 실행 중인 턴이 있습니다"));
-        }
+        ensure_profile_idle(tx, &id)?;
         tx.execute("UPDATE model_profiles SET deleted_at = ?2 WHERE id = ?1", params![id, now])?;
         events::append(tx, now, "profile.changed", None, None, &json!({ "id": id, "deleted": true }))?;
         Ok((StatusCode::OK, json!({ "deleted": true })))
     })
     .await
+}
+
+fn ensure_profile_idle(c: &Connection, id: &str) -> ApiResult<()> {
+    let active: i64 = c.query_row(
+        "SELECT COUNT(*) FROM turns WHERE profile_id = ?1 AND status IN ('queued','running','awaiting_approval')", [id], |row| row.get(0),
+    )?;
+    if active > 0 { return Err(ApiError::busy("이 프로필로 실행 중인 턴이 있습니다. 먼저 실행을 끝내거나 취소하세요")); }
+    Ok(())
 }
 
 pub async fn list_profiles(State(app): State<App>, _p: Principal) -> ApiResult<Json<Vec<ModelProfile>>> {

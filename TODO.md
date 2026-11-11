@@ -726,7 +726,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [ ] MODEL-004 Gemini API 어댑터를 구현한다.
 - [x] MODEL-005 OpenAI-compatible endpoint 어댑터를 구현한다. 검증: 실제 로컬 OpenAI 호환 서버(Ollama v0.40.14, qwen2.5:1.5b·3b)로 대화·이력 전달·도구 루프(read)·쓰기 승인 대기를 확인(`tests/real_model.rs`: 대화·이력·쓰기 승인 대기는 안정적, `read` 도구 시험은 12회 중 6회가 모델 품질로 실패(잘못된 인자·경로, 재시도 안 함 — Grove는 정확한 오류 반환), `web/e2e/real-model.spec.ts` 3회 통과). 실모델이 보낸 offset 0·큰 limit·선택 인자 null 처리 결함을 고침(RULEBOOK §19).
 - [ ] MODEL-006 OpenRouter·DeepSeek·xAI·Groq·Mistral의 기존 노출 설정과 호환 차이를 검증한다.
-- [ ] MODEL-007 공급자별 모델 목록·새로고침·수동 endpoint·활성화/비활성화를 구현한다.
+- [x] MODEL-007 공급자별 모델 목록·새로고침·수동 endpoint·활성화/비활성화를 구현한다. 소유자가 등록한 OpenAI 호환·Anthropic·Gemini endpoint의 목록을 새로고침해 revision과 결합해 선택하고 수동 endpoint/모델 입력을 유지한다(`src/provider/catalog.rs`, `web/app/components/ProfileCatalog.tsx`, `model_management_v1`). 공급자별 페이지·ID를 정규화하고 반복 cursor·비정형 성공 응답·과다/부분 응답·비밀 echo·조회 중 프로필 변경을 오류로 구분한다. Gemini 모델 ID는 URL의 한 segment로 인코딩한다. CLI 자동 목록은 미지원으로 표시하고 수동 입력을 유지한다. migration 39의 `enabled`는 기존 프로필을 활성으로 보존하며 비활성 프로필은 접수·실행에서 거부하고 다른 모델로 전환하지 않는다. 사용 중 비활성화는 거부하며 기존 선택·초안·봇/예약 참조는 보존한다. 봇 준비 상태와 cache, doctor의 활성 프로필 집계도 반영했다. 비밀 참조 유지/명시적 해제의 receipt 충돌도 재현·수정했다. 계약 생성·타입·선택 단위/통합·목록→선택→비활성→재활성→실행 및 기존 봇/예약/Composer 브라우저 회귀 통과. E2E 정리 요청의 잘못된 필드를 수정한 뒤 실패 범위만 재실행해 통과했다. 실제 공급자 계정·유료 추론·Windows 실행은 별도이며 파일 안전 후보의 라이선스 보류와 구분한다(RULEBOOK §20).
 - [ ] MODEL-008 모델 capability에 context 크기·출력 한도·이미지/PDF·도구·effort·fast 지원을 포함한다.
 - [ ] MODEL-009 지원하지 않는 옵션을 보내지 않고 UI에서도 명시한다.
 - [x] MODEL-010 SSE/기타 stream의 부분 frame·UTF-8 분할·중복·조기 종료를 처리한다. 검증: `src/provider/sse.rs` 단위 시험(1바이트 분할·UTF-8·CRLF·미종료 tail), `openai::tests::truncated_stream_is_error`.

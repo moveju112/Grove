@@ -67,7 +67,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Bot> {
 pub struct BotView {
     #[serde(flatten)]
     pub bot: Bot,
-    /// 모델이 설정되어 있고 존재하는지
+    /// 모델 프로필이 설정되어 있고 존재하며 활성인지
     pub runnable: bool,
     /// idle | running | awaiting_approval
     pub home_status: String,
@@ -92,7 +92,7 @@ fn prefixed() -> String {
 
 fn view(c: &Connection, b: Bot) -> ApiResult<BotView> {
     let runnable = match &b.profile_id {
-        Some(p) => crate::models::get_profile(c, p).is_ok(),
+        Some(p) => crate::models::get_profile(c, p).is_ok_and(|profile| profile.enabled),
         None => false,
     };
     let (home_status, unread) = match &b.home_session_id {
