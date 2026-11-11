@@ -25,6 +25,7 @@ pub mod goals;
 pub mod idem;
 pub mod model_capabilities;
 pub mod model_limits;
+pub mod model_headers;
 pub mod models;
 pub mod changes;
 pub mod procs;
@@ -79,6 +80,7 @@ pub const CAPABILITIES: &[&str] = &[
     "notification_delivery_v1",
     "model_management_v1",
     "model_capabilities_v1",
+    "private_model_headers_v1",
 ];
 
 #[derive(Clone)]
@@ -111,6 +113,7 @@ impl App {
         let db = store::Db::open(&cfg.db_path())?;
         // 이전 버전의 평문 비밀정보를 암호화한다(SEC-019).
         db.call_sync(|c| Ok(vault::migrate_plaintext(c)?))?;
+        db.call_sync(model_headers::migrate)?;
         let latest = db.call_sync(|c| events::latest_seq(c))?;
         let (seq_tx, _) = watch::channel(latest);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);

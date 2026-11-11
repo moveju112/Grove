@@ -241,7 +241,7 @@ async fn signed_content_is_not_sent_to_a_different_endpoint_or_protocol() {
         let provider = Provider::start(protocol, vec![steps(protocol).pop().unwrap(), steps(protocol).pop().unwrap()]).await;
         let profile = Profile {
             protocol: protocol.into(), base_url: provider.base.clone(), model: "fixture".into(),
-            api_key: Some(KEY.into()), timeout: std::time::Duration::from_secs(2), extra_headers: vec![],
+            api_key: Some(KEY.into()), timeout: std::time::Duration::from_secs(2), extra_headers: vec![], sensitive_headers: vec![],
         };
         for other_protocol in [false, true] {
             let native = NativeContent {

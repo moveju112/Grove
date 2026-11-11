@@ -680,6 +680,13 @@ pub const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE model_profiles ADD COLUMN enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1));
     "#,
+    // 40: 암호화 함수 등록 후 실행하는 자격 데이터 backfill의 완료를 원자적으로 기록한다.
+    r#"
+    CREATE TABLE credential_backfills (
+        name TEXT PRIMARY KEY,
+        completed_at TEXT NOT NULL
+    );
+    "#,
 ];
 
 #[cfg(test)]

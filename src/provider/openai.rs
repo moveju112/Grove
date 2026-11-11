@@ -228,7 +228,7 @@ mod tests {
 
     #[test]
     fn body_maps_history() {
-        let p = Profile { protocol: "openai".into(), base_url: "http://x".into(), model: "m".into(), api_key: None, timeout: Duration::from_secs(1), extra_headers: vec![] };
+        let p = Profile { protocol: "openai".into(), base_url: "http://x".into(), model: "m".into(), api_key: None, timeout: Duration::from_secs(1), extra_headers: vec![], sensitive_headers: vec![] };
         let req = ModelRequest {
             system: "sys".into(),
             messages: vec![

@@ -280,8 +280,10 @@ async fn public_header_values_matching_model_ids_are_not_treated_as_credentials(
     let (status, catalog) = s.get(&format!("/api/v1/model-profiles/{id}/models")).await;
     assert_eq!(status, StatusCode::OK);
     assert!(catalog["models"].as_array().unwrap().iter().any(|model| model["id"] == "a"));
+    let (status, credential) = s.post("/api/v1/secrets", json!({"label":"catalog fixture credential","value":"a"})).await;
+    assert_eq!(status, StatusCode::CREATED);
     assert_eq!(s.send(Method::PUT, &format!("/api/v1/model-profiles/{id}"),
-        json!({ "expected_revision": updated["revision"], "options": { "headers": { "x-custom-credential": "a" } } })).await.0, StatusCode::OK);
+        json!({ "expected_revision": updated["revision"], "options": { "headers": { "x-custom-credential": {"secret_id":credential["id"]} } } })).await.0, StatusCode::OK);
     let (status, error) = s.get(&format!("/api/v1/model-profiles/{id}/models")).await;
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert_eq!(error["error"]["code"], "catalog_invalid");

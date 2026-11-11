@@ -159,13 +159,18 @@ pub struct Profile {
     pub api_key: Option<String>,
     pub timeout: Duration,
     pub extra_headers: Vec<(String, String)>,
+    /// 공개 이름의 헤더라도 vault 참조로 지정했으면 오류 본문에서 비밀로 취급한다.
+    pub sensitive_headers: Vec<String>,
+}
+
+pub(crate) fn is_credential_header(name: &str) -> bool {
+    let name = name.to_ascii_lowercase();
+    name.ends_with("key") || ["authorization", "cookie", "token", "secret", "password", "credential"].iter().any(|part| name.contains(part))
 }
 
 pub(crate) fn scrub_provider_text(profile: &Profile, text: &str) -> String {
-    let headers = profile.extra_headers.iter().filter(|(name, _)| {
-        let name = name.to_ascii_lowercase();
-        name.ends_with("key") || ["authorization", "cookie", "token", "secret", "password", "credential"].iter().any(|part| name.contains(part))
-    });
+    let headers = profile.extra_headers.iter().filter(|(name, _)| is_credential_header(name)
+        || profile.sensitive_headers.iter().any(|private| private.eq_ignore_ascii_case(name)));
     profile.api_key.iter().chain(headers.map(|(_, value)| value))
         .filter(|value| !value.is_empty()).fold(text.to_string(), |text, secret| text.replace(secret.as_str(), "[redacted]"))
 }
@@ -559,7 +564,7 @@ mod effort_tests {
     }
 
     fn prof(protocol: &str) -> Profile {
-        Profile { protocol: protocol.into(), base_url: "http://x".into(), model: "m".into(), api_key: None, timeout: Duration::from_secs(5), extra_headers: vec![] }
+        Profile { protocol: protocol.into(), base_url: "http://x".into(), model: "m".into(), api_key: None, timeout: Duration::from_secs(5), extra_headers: vec![], sensitive_headers: vec![] }
     }
 
     #[test]

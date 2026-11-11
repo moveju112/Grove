@@ -44,7 +44,7 @@ fn secret_info(c: &Connection, id: &str) -> ApiResult<SecretInfo> {
         )
         .optional()?
         .ok_or_else(|| ApiError::not_found("비밀이 없습니다"))?;
-    let mut st = c.prepare("SELECT name FROM model_profiles WHERE secret_id = ?1 AND deleted_at IS NULL ORDER BY name")?;
+    let mut st = c.prepare(&format!("SELECT p.name FROM model_profiles p WHERE p.deleted_at IS NULL AND {} ORDER BY p.name", crate::model_headers::SECRET_USAGE))?;
     let used_by = st.query_map(params![id], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
     // 해독할 수 없으면(키 파일 없음·손상) 마스킹하지 않은 안내 문구로 알린다.
     let masked = value.as_deref().map(mask).unwrap_or_else(|| "(해독 불가: secret.key 없음·손상 — 키를 다시 입력하세요)".into());
@@ -102,16 +102,16 @@ pub async fn replace_secret(
             params![id, b.value.trim()], |row| row.get(0)).optional()?.ok_or_else(|| ApiError::not_found("비밀이 없습니다"))?;
         if !unchanged {
             let active: bool = tx.query_row(
-                "SELECT EXISTS(SELECT 1 FROM turns t JOIN model_profiles p ON p.id=t.profile_id \
-                 WHERE p.secret_id=?1 AND t.status IN ('queued','running','awaiting_approval'))",
+                &format!("SELECT EXISTS(SELECT 1 FROM turns t JOIN model_profiles p ON p.id=t.profile_id \
+                 WHERE {} AND t.status IN ('queued','running','awaiting_approval'))", crate::model_headers::SECRET_USAGE),
                 [&id], |row| row.get(0),
             )?;
             if active { return Err(ApiError::busy("이 비밀을 사용하는 모델이 실행 중입니다. 먼저 실행을 끝내거나 취소하세요")); }
         }
         tx.execute("UPDATE secrets SET label = ?2, value = grove_encrypt(?3), updated_at = ?4 WHERE id = ?1", params![id, b.label.trim(), b.value.trim(), now])?;
         if !unchanged {
-            tx.execute("DELETE FROM profile_checks WHERE profile_id IN (SELECT id FROM model_profiles WHERE secret_id=?1)", [&id])?;
-            tx.execute("UPDATE model_profiles SET revision=revision+1,updated_at=?2 WHERE secret_id=?1 AND deleted_at IS NULL", params![id, now])?;
+            tx.execute(&format!("DELETE FROM profile_checks WHERE profile_id IN (SELECT p.id FROM model_profiles p WHERE {})", crate::model_headers::SECRET_USAGE), [&id])?;
+            tx.execute(&format!("UPDATE model_profiles AS p SET revision=revision+1,updated_at=?2 WHERE p.deleted_at IS NULL AND {}", crate::model_headers::SECRET_USAGE), params![id, now])?;
         }
         events::append(tx, now, "secret.changed", None, None, &json!({ "id": id }))?;
         crate::audit::record(tx, now, &actor, "secret.replaced", &id, json!({ "label": b.label.trim() }))?;
@@ -286,17 +286,22 @@ fn configured_profile(c: &Connection, id: &str) -> ApiResult<(ModelProfile, Prof
     provider_profile(c, get_profile(c, id)?)
 }
 
-fn header_identity(options: &Value) -> Vec<(String, String)> {
+fn header_identity(options: &Value) -> Vec<(String, Value)> {
     let mut headers: Vec<_> = options["headers"].as_object().into_iter().flat_map(|headers| headers.iter())
-        .filter_map(|(key, value)| value.as_str().map(|value| (key.to_ascii_lowercase(), value.to_string()))).collect();
+        .map(|(key, value)| (key.to_ascii_lowercase(), value.clone())).collect();
     // 이름은 대소문자를 구분하지 않지만, 중복 이름의 값 순서는 바꾸지 않는다.
     headers.sort_by(|a, b| a.0.cmp(&b.0));
     headers
 }
 
 fn same_check_target(a: &ModelProfile, ar: &Profile, b: &ModelProfile, br: &Profile) -> bool {
+    let headers = |headers: &[(String, String)]| {
+        let mut values: Vec<_> = headers.iter().map(|(name, value)| (name.to_ascii_lowercase(), value.clone())).collect();
+        values.sort_by(|a, b| a.0.cmp(&b.0));
+        values
+    };
     a.protocol == b.protocol && a.base_url == b.base_url && a.model == b.model
-        && ar.api_key == br.api_key && header_identity(&a.options) == header_identity(&b.options)
+        && ar.api_key == br.api_key && headers(&ar.extra_headers) == headers(&br.extra_headers)
 }
 
 #[cfg(test)]
@@ -307,21 +312,19 @@ fn header_identity_normalizes_names_without_hiding_value_changes() {
     assert_ne!(header_identity(&json!({"headers":{"X-Scope":"public"}})), header_identity(&json!({"headers":{"x-scope":"private"}})));
 }
 
-fn provider_profile(c: &Connection, p: ModelProfile) -> ApiResult<(ModelProfile, Profile)> {
-    let key: Option<String> = match &p.secret_id {
-        // 복호화 함수의 실패는 SQLite를 거쳐 SQLITE_ERROR + 메시지로 돌아온다(이 조회에서 그 실패를 낼 곳은 복호화뿐).
-        Some(s) => c.query_row("SELECT grove_decrypt(value) FROM secrets WHERE id = ?1", params![s], |r| r.get(0)).optional().map_err(|e| match e {
+pub(crate) fn decrypt_secret(c: &Connection, id: &str) -> ApiResult<String> {
+    c.query_row("SELECT grove_decrypt(value) FROM secrets WHERE id = ?1", [id], |r| r.get(0)).optional().map_err(|e| match e {
             rusqlite::Error::UserFunctionError(m) => ApiError::conflict("secret_unreadable", m.to_string()),
             rusqlite::Error::SqliteFailure(f, Some(m)) if f.code == rusqlite::ErrorCode::Unknown => ApiError::conflict("secret_unreadable", m),
             other => other.into(),
-        })?,
-        None => None,
-    };
+    })?.ok_or_else(|| ApiError::conflict("secret_unreadable", "참조한 비밀이 없습니다"))
+}
+
+fn provider_profile(c: &Connection, p: ModelProfile) -> ApiResult<(ModelProfile, Profile)> {
+    let key = p.secret_id.as_deref().map(|id| decrypt_secret(c, id)).transpose()?;
     let timeout = p.options["timeout_secs"].as_u64().unwrap_or(300).clamp(5, 3600);
-    let headers = p.options["headers"]
-        .as_object()
-        .map(|m| m.iter().filter_map(|(k, v)| v.as_str().map(|v| (k.clone(), v.to_string()))).collect())
-        .unwrap_or_default();
+    let (headers, sensitive_headers) = if provider::cli::is_cli(&p.protocol) { (vec![], vec![]) }
+        else { crate::model_headers::load(c, &p.options)? };
     let rp = Profile {
         protocol: p.protocol.clone(),
         base_url: p.base_url.clone(),
@@ -329,6 +332,7 @@ fn provider_profile(c: &Connection, p: ModelProfile) -> ApiResult<(ModelProfile,
         api_key: key,
         timeout: Duration::from_secs(timeout),
         extra_headers: headers,
+        sensitive_headers,
     };
     Ok((p, rp))
 }
@@ -359,13 +363,7 @@ fn validate_options(protocol: &str, o: &Value) -> ApiResult<()> {
                 }
             }
             "headers" => {
-                let h = v.as_object().ok_or_else(|| ApiError::invalid("headers는 객체여야 합니다"))?;
-                for (hk, hv) in h {
-                    let lk = hk.to_ascii_lowercase();
-                    if matches!(lk.as_str(), "authorization" | "x-api-key" | "x-goog-api-key" | "host") || !hv.is_string() {
-                        return Err(ApiError::invalid(format!("허용되지 않은 header: {hk}")));
-                    }
-                }
+                crate::model_headers::validate(v)?;
             }
             "context_window" => {
                 if !v.as_u64().is_some_and(|n| n > 0) {
@@ -413,11 +411,14 @@ pub async fn create_profile(State(app): State<App>, Owner(p): Owner, headers: He
     }
     let options = b.options.unwrap_or(json!({}));
     let enabled = b.enabled.unwrap_or(true);
-    validate_options(&b.protocol, &options)?;
     let mut request = json!({ "n": b.name, "p": b.protocol, "u": b.base_url, "m": b.model, "s": b.secret_id, "o": options });
     if !enabled { request["enabled"] = json!(false); }
     let h = idem::body_hash("profile.create", &request);
+    // 옛 receipt는 비밀을 참조로 옮긴 응답으로 재생한다. 새 평문 자격 헤더는 받지 않는다.
+    if let Some(response) = idem::replay(&app, &p, &headers, &h).await? { return Ok(response); }
+    validate_options(&b.protocol, &options)?;
     idem::run(&app, &p, &headers, &h, move |tx, now| {
+        crate::model_headers::validate_references(tx, &options)?;
         if let Some(s) = &b.secret_id {
             secret_info(tx, s)?;
         }
@@ -478,6 +479,7 @@ pub async fn update_profile(
             }
             options
         });
+        crate::model_headers::validate_references(tx, &options)?;
         let secret = match b.secret_id {
             Some(s) => s,
             None => cur.secret_id.clone(),

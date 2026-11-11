@@ -118,12 +118,17 @@ impl Drop for SlowModels { fn drop(&mut self) { self.task.abort(); } }
 
 #[tokio::test]
 async fn delayed_checks_cannot_publish_results_for_a_different_current_target() {
-    for kind in ["model", "endpoint", "key", "headers", "name", "catalog_key"] {
+    for kind in ["model", "endpoint", "key", "headers", "name", "catalog_key", "header_key"] {
         let s = TestServer::start().await;
         let f = SlowModels::start().await;
         let (_, secret) = s.post("/api/v1/secrets", json!({"label":"initial", "value":"synthetic-original-key"})).await;
+        let header_secret = if kind == "header_key" {
+            Some(s.post("/api/v1/secrets", json!({"label":"header initial","value":"synthetic-original-header"})).await.1)
+        } else { None };
+        let options = header_secret.as_ref().map_or(json!({}), |secret| json!({"headers":{"X-Client-Name":{"secret_id":secret["id"]}}}));
         let (status, p) = s.post("/api/v1/model-profiles", json!({
             "name":"original", "protocol":"openai", "base_url":f.base, "model":"original", "secret_id":secret["id"],
+            "options":options,
         })).await;
         assert_eq!(status, StatusCode::CREATED);
         let id = p["id"].as_str().unwrap();
@@ -141,6 +146,11 @@ async fn delayed_checks_cannot_publish_results_for_a_different_current_target() 
             "key" | "catalog_key" => {
                 let (status, _) = s.send(Method::PUT, &format!("/api/v1/secrets/{}", secret["id"].as_str().unwrap()),
                     json!({"label":"updated", "value":"synthetic-new-key"})).await;
+                assert_eq!(status, StatusCode::OK);
+            }
+            "header_key" => {
+                let (status, _) = s.send(Method::PUT, &format!("/api/v1/secrets/{}", header_secret.as_ref().unwrap()["id"].as_str().unwrap()),
+                    json!({"label":"header updated", "value":"synthetic-new-header"})).await;
                 assert_eq!(status, StatusCode::OK);
             }
             _ => {

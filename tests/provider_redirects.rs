@@ -27,7 +27,7 @@ async fn provider_credentials_and_custom_headers_are_not_forwarded_to_redirect_t
             let profile = Profile {
                 protocol: protocol.into(), base_url: base.clone(), model: "fixture".into(),
                 api_key: Some("not-a-real-provider-key".into()), timeout: Duration::from_secs(5),
-                extra_headers: vec![("x-custom-credential".into(), "not-a-real-credential".into())],
+                extra_headers: vec![("x-custom-credential".into(), "not-a-real-credential".into())], sensitive_headers: vec![],
             };
             let error = provider::check(&profile).await.unwrap_err();
             assert_eq!(error.code, "redirect_blocked");

@@ -180,7 +180,7 @@ mod tests {
         let profile = Profile {
             protocol: "gemini".into(), base_url: "http://127.0.0.1:7/prefix".into(),
             model: "../../other?x=y#fragment".into(), api_key: None,
-            timeout: std::time::Duration::from_secs(5), extra_headers: vec![],
+            timeout: std::time::Duration::from_secs(5), extra_headers: vec![], sensitive_headers: vec![],
         };
         let url = endpoint(&profile).unwrap();
         assert_eq!(url.host_str(), Some("127.0.0.1"));

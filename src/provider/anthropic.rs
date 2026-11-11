@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn tool_results_grouped_into_one_user_message() {
-        let p = Profile { protocol: "anthropic".into(), base_url: "http://x".into(), model: "m".into(), api_key: None, timeout: Duration::from_secs(1), extra_headers: vec![] };
+        let p = Profile { protocol: "anthropic".into(), base_url: "http://x".into(), model: "m".into(), api_key: None, timeout: Duration::from_secs(1), extra_headers: vec![], sensitive_headers: vec![] };
         let req = ModelRequest {
             system: "s".into(),
             messages: vec![

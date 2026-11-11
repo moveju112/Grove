@@ -260,6 +260,8 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 |---|---|---|
 | 접근 토큰 | DB에는 hash만. 한 번만 보이는 토큰 응답은 재전송 저장본에 남기지 않음 | `tests/api.rs` |
 | API 키 | 데이터 디렉터리 `secret.key`(32B, 0600)로 ChaCha20-Poly1305 암호화(`v1:` 접두어). 이전 평문은 시작 시 암호화. snapshot에는 암호문만 있으므로 복원본에서 쓰려면 키 파일을 따로 옮긴다. 키가 없거나 손상되면 목록에 "해독 불가", 실행은 `secret_unreadable` | `tests/secrets.rs`, `vault::tests` |
+| 추가 인증 헤더 | `options.headers`의 공개 값은 문자열, 비밀 값은 `/secrets`의 `{"secret_id":"..."}` 참조다(`private_model_headers_v1`). token/key/cookie 등 자격 이름의 새 평문 값은 거부한다. 공개 이름이라도 vault 참조는 비밀로 취급하며 서버에서 복호화해 전송하고 프로필·이벤트에는 원문을 넣지 않는다. 참조도 비밀 사용처·실행 중 교체 금지·상태 무효화에 포함한다 | `tests/header_credentials.rs`, `tests/profile_check_state.rs`, `web/e2e/header-credentials.spec.ts` |
+| 이전 헤더 이전 | schema 40 적용 후 API를 열기 전에 프로필·`profile.changed` 이력·profile receipt의 자격 문자열을 암호화 vault 참조로 바꾼다. 현재/과거 값은 암호화로 보존하고 원래 idempotency hash와 replay를 유지한다. 한 transaction·완료 표식·행 단위 처리·최대 256개 hash cache를 사용하며 실패하면 모두 rollback하고 다음 시작에서 재시도한다. 과거 백업은 수정하지 않는다. 이미 평문 값이 노출됐을 가능성이 있는 실키는 외부 서비스에서도 교체해야 한다 | `tests/header_legacy.rs` |
 | OS credential store | headless 서버가 기본 대상이라 OS keyring 대신 파일 키 + 권한 제한을 쓴다(데스크톱 keyring 연동은 범위 밖, DEC 기록) | — |
 | 모델 셸 도구 환경 | 자격증명처럼 보이는 이름(`TOKEN`·`SECRET`·`PASSWORD`·`API_KEY`·`AUTH`·`CREDENTIAL` 등 포함, `SSH_AUTH_SOCK`·askpass)과 `GROVE_*`를 제거하고 `GROVE_SHELL=1`만 추가 | `tools::shell::tests::child_env_has_no_sensitive_vars` |
 | 사용자 터미널 | 사용자가 직접 여는 터미널은 사용자 환경 그대로(`TERM`, `GROVE_TERMINAL=1`만 추가). 모델이 입력할 수 없다 | `tests/terminals.rs` |

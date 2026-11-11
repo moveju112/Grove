@@ -351,7 +351,7 @@ mod tests {
     use std::time::Duration;
 
     fn prof(p: &str) -> Profile {
-        Profile { protocol: p.into(), base_url: String::new(), model: "m".into(), api_key: None, timeout: Duration::from_secs(5), extra_headers: vec![] }
+        Profile { protocol: p.into(), base_url: String::new(), model: "m".into(), api_key: None, timeout: Duration::from_secs(5), extra_headers: vec![], sensitive_headers: vec![] }
     }
     fn req(resume: Option<&str>) -> ModelRequest {
         ModelRequest {

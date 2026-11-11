@@ -793,7 +793,7 @@ async fn image_parts_map_to_three_http_protocols_and_cli_is_explicitly_rejected(
         model: "fixture".into(),
         api_key: None,
         timeout: Duration::from_secs(1),
-        extra_headers: vec![],
+        extra_headers: vec![], sensitive_headers: vec![],
     };
     let openai = provider::openai::build_body(&profile, &req);
     assert_eq!(
