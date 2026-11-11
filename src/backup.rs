@@ -6,14 +6,40 @@ use crate::config::Config;
 use rusqlite::{Connection, OpenFlags};
 use std::path::{Path, PathBuf};
 
+/// 생성에 성공한 고유 staging만 정리한다. 예전 고정 `*.partial`은 소유권을 알 수 없어 건드리지 않는다.
+struct SnapshotStage(PathBuf);
+
+impl SnapshotStage {
+    fn create(parent: &Path) -> Result<Self, String> {
+        let dir = parent.join(format!(".grove-snapshot-{}", uuid::Uuid::new_v4()));
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        builder.create(&dir).map_err(|e| format!("백업 staging 생성 실패: {e}"))?;
+        Ok(Self(dir))
+    }
+}
+
+impl Drop for SnapshotStage {
+    fn drop(&mut self) {
+        if let Err(error) = std::fs::remove_dir_all(&self.0) {
+            tracing::warn!(%error, "백업 staging 정리 실패");
+        }
+    }
+}
+
 pub fn snapshot_to(db_path: &Path, dest: &Path) -> Result<(), String> {
     if dest.exists() {
         return Err(format!("{}: 이미 존재합니다. 덮어쓰지 않습니다", dest.display()));
     }
     let src = Connection::open_with_flags(db_path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
         .map_err(|e| format!("원본 열기 실패: {e}"))?;
-    let tmp = dest.with_extension("partial");
-    let _ = std::fs::remove_file(&tmp);
+    let parent = dest.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+    let stage = SnapshotStage::create(parent)?;
+    let tmp = stage.0.join("snapshot.db");
     {
         let mut dst = Connection::open(&tmp).map_err(|e| format!("대상 생성 실패: {e}"))?;
         let backup = rusqlite::backup::Backup::new(&src, &mut dst).map_err(|e| e.to_string())?;
@@ -22,8 +48,12 @@ pub fn snapshot_to(db_path: &Path, dest: &Path) -> Result<(), String> {
             .map_err(|e| format!("backup 실패: {e}"))?;
     }
     verify(&tmp)?;
-    crate::store::restrict_permissions(&tmp);
-    std::fs::rename(&tmp, dest).map_err(|e| format!("rename 실패: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600)).map_err(|e| format!("백업 권한 설정 실패: {e}"))?;
+    }
+    crate::storage::rename_noreplace(&tmp, dest).map_err(|e| format!("백업 게시 실패(기존 대상은 보존): {e}"))?;
     Ok(())
 }
 
