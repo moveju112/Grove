@@ -254,7 +254,7 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
 }
 
 /// send: 끝난 run에 후속 지시. 실행 중이면 거부(이중 실행 금지).
-fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str) -> ApiResult<AgentRun> {
+fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str, parent_turn_id: Option<&str>, parent_call_id: &str) -> ApiResult<AgentRun> {
     let run = get(tx, run_id)?;
     if run.status == "running" {
         return Err(ApiError::busy("자식 작업이 아직 실행 중입니다. wait로 기다리거나 cancel 후 다시 지시하세요"));
@@ -262,12 +262,13 @@ fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str
     if running_for_parent(tx, &run.parent_session_id)? >= MAX_PER_PARENT {
         return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "limit", format!("한 대화에서 자식 에이전트는 동시에 {MAX_PER_PARENT}개까지 실행할 수 있습니다")));
     }
-    let src = json!({ "kind": "agent_run", "run_id": run.id, "parent_session_id": run.parent_session_id });
+    let src = json!({ "kind": "agent_run", "run_id": run.id, "parent_session_id": run.parent_session_id, "parent_turn_id": parent_turn_id });
     let owner = parent_owner(tx, &run.parent_session_id)?;
     let (t, _) = crate::runner::enqueue_turn(tx, now, epoch, &owner, &run.child_session_id, brief, &run.profile_id, Some(&run.agent_id), run.tools_enabled, Some(&src))?;
     tx.execute(
-        "UPDATE agent_runs SET status = 'running', last_turn_id = ?2, result = NULL, error = NULL, ended_at = NULL, updated_at = ?3 WHERE id = ?1",
-        params![run_id, t.id, now],
+        "UPDATE agent_runs SET status = 'running', last_turn_id = ?2, result = NULL, error = NULL, ended_at = NULL, updated_at = ?3, \
+         parent_turn_id=?4, parent_call_id=?5 WHERE id = ?1",
+        params![run_id, t.id, now, parent_turn_id, parent_call_id],
     )?;
     let run = get(tx, run_id)?;
     emit(tx, now, &run)?;
@@ -381,11 +382,12 @@ pub async fn execute_tool(app: &App, call: &crate::approvals::ToolCallRow, mut c
             let run = get_run(t["run_id"].as_str().unwrap_or("").to_string()).await?;
             owned(&run)?;
             let (rid, brief, epoch, now) = (run.id.clone(), t["brief"].as_str().unwrap_or("").to_string(), app.epoch.clone(), app.now());
+            let (parent_turn, parent_call) = (call.turn_id.clone(), call.id.clone());
             let run = app
                 .db
                 .call(move |c| {
                     let tx = c.transaction()?;
-                    let r = send_in_tx(&tx, &now, &epoch, &rid, &brief)?;
+                    let r = send_in_tx(&tx, &now, &epoch, &rid, &brief, parent_turn.as_deref(), &parent_call)?;
                     tx.commit()?;
                     Ok(r)
                 })

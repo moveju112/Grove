@@ -60,7 +60,9 @@ async fn spawn_requires_approval_by_default_and_result_reaches_parent_once() {
     let (s, f, prof, _pid, sid) = setup().await;
     f.push(fixture::tool_calls(&[("a1", "agent", json!({ "action": "spawn", "agent_id": "reviewer", "brief": "README를 검토해" }))]));
     f.push(fixture::text("자식에게 맡겼어"));
-    f.push_for(CHILD, fixture::text("검토 결과: 문제 없음 XYZ"));
+    f.push(fixture::text("검토 결과를 확인했어"));
+    let (child_result, release) = fixture::gated_text("검토 결과: 문제 없음 XYZ");
+    f.push_for(CHILD, child_result);
     let tid = turn(&s, &sid, &prof, "검토 맡겨").await;
     // 기본 정책 ask: 승인 대기
     let t = s.wait_status(&tid, "awaiting_approval").await;
@@ -68,6 +70,8 @@ async fn spawn_requires_approval_by_default_and_result_reaches_parent_once() {
     assert_eq!(c["name"], "agent");
     assert_eq!(c["target"]["agent_id"], "reviewer");
     s.post(&format!("/api/v1/tool-calls/{}/decision", c["id"].as_str().unwrap()), json!({ "decision": "approve", "expected_revision": c["revision"] })).await;
+    s.wait_turn(&tid, |t| t["status"] == "running" && t["step"] == 2).await;
+    release.send_replace(true);
     let t = s.wait_status(&tid, "completed").await;
     // 도구 결과는 즉시 running(완료로 보고하지 않음)
     assert_eq!(t["tool_calls"][0]["result"]["status"], "running", "{t}");
@@ -118,15 +122,26 @@ async fn wait_in_same_turn_keeps_tool_pairs_and_send_follows_up() {
     set_policy(&s, "auto").await;
     f.push(fixture::tool_calls(&[("a1", "agent", json!({ "action": "spawn", "agent_id": "reviewer", "brief": "천천히 해" }))]));
     f.push(fixture::text("시작함"));
-    f.push_for(CHILD, fixture::slow_text(&["느린 ", "결과"], 700));
+    f.push(fixture::text("첫 결과 확인"));
+    let (first, release) = fixture::gated_text("첫 결과");
+    f.push_for(CHILD, first);
     let t1 = turn(&s, &sid, &prof, "시작").await;
+    s.wait_turn(&t1, |t| t["status"] == "running" && t["step"] == 2).await;
+    release.send_replace(true);
     s.wait_status(&t1, "completed").await;
-    let run = wait_run(&s, &sid, |r| r["status"] == "running").await;
+    let run = wait_run(&s, &sid, |r| r["status"] == "completed").await;
     let run_id = run["id"].as_str().unwrap().to_string();
-    // 같은 턴에서 wait: 자식이 끝날 때까지 도구가 기다린다
+    // 사용자 직접 send로 실행 중인 자식을 만든 뒤 모델의 wait가 실제로 기다리게 한다.
+    let (next, release) = fixture::gated_text("느린 결과");
+    f.push_for(CHILD, next);
+    s.post(&format!("/api/v1/sessions/{sid}/tool-requests"), json!({"name":"agent","args":{"action":"send","run_id":run_id,"brief":"두 번째 작업"}})).await;
+    wait_run(&s, &sid, |r| r["status"] == "running").await;
+    // 같은 턴에서 wait: 자식이 끝날 때까지 도구가 기다린다.
     f.push(fixture::tool_calls(&[("w1", "agent", json!({ "action": "wait", "run_id": run_id, "timeout_ms": 20000 }))]));
     f.push(fixture::text("다 기다림"));
     let t2 = turn(&s, &sid, &prof, "기다려").await;
+    s.wait_turn(&t2, |t| t["tool_calls"].as_array().is_some_and(|calls| calls.iter().any(|c| c["status"]=="running"))).await;
+    release.send_replace(true);
     let t = s.wait_status(&t2, "completed").await;
     let r = &t["tool_calls"][0]["result"];
     assert_eq!(r["status"], "completed", "{t}");
@@ -137,18 +152,24 @@ async fn wait_in_same_turn_keeps_tool_pairs_and_send_follows_up() {
     let arr = msgs.as_array().unwrap();
     let tool_idx = arr.iter().position(|m| m["role"] == "tool" && m["tool_call_id"] == "w1").expect("w1 결과");
     assert!(!msgs.to_string().contains("중단됨"), "{msgs}");
-    if let Some(note_idx) = arr.iter().position(|m| m.to_string().contains("[child agent result]")) {
-        assert!(note_idx > tool_idx, "note는 tool 결과 뒤: {msgs}");
-    }
+    let note_idx = arr.iter().position(|m| {
+        let text = m.to_string();
+        text.contains("[child agent result]") && text.contains("느린 결과")
+    }).expect("이번 wait의 자식 결과");
+    assert!(note_idx > tool_idx, "이번 결과 note는 tool 결과 뒤: {msgs}");
     // send: 끝난 run에 후속 지시 → 다시 running → 결과 note 두 번째
     f.push(fixture::tool_calls(&[("s1", "agent", json!({ "action": "send", "run_id": run_id, "brief": "한 번 더" }))]));
     f.push(fixture::text("다시 맡김"));
-    f.push_for(CHILD, fixture::text("두 번째 결과"));
+    f.push(fixture::text("후속 결과 확인"));
+    let (next, release) = fixture::gated_text("두 번째 결과");
+    f.push_for(CHILD, next);
     let t3 = turn(&s, &sid, &prof, "한 번 더").await;
+    s.wait_turn(&t3, |t| t["status"] == "running" && t["step"] == 2).await;
+    release.send_replace(true);
     s.wait_status(&t3, "completed").await;
     wait_run(&s, &sid, |r| r["status"] == "completed" && r["result"] == "두 번째 결과").await;
     let n = notes(&s, &sid).await;
-    assert_eq!(n.len(), 2, "턴마다 한 번: {n:?}");
+    assert_eq!(n.len(), 3, "사용자 직접 send와 각 모델 위임 턴마다 한 번: {n:?}");
     // 실행 중 send는 거부(이중 실행 금지)는 상태 계약으로 확인: list는 하나
     let r = runs(&s, &sid).await;
     assert_eq!(r["runs"].as_array().unwrap().len(), 1);
@@ -169,9 +190,11 @@ async fn policy_off_and_depth_limit() {
     set_policy(&s, "auto").await;
     f.push(fixture::tool_calls(&[("a2", "agent", json!({ "action": "spawn", "agent_id": "reviewer", "brief": "A 작업" }))]));
     f.push(fixture::text("부모 끝"));
+    f.push(fixture::text("부모 결과 반영"));
     f.push_for(CHILD, fixture::tool_calls(&[("b1", "agent", json!({ "action": "spawn", "agent_id": "reviewer", "brief": "B 작업" }))]));
     f.push_for(CHILD, fixture::text("끝 1"));
     f.push_for(CHILD, fixture::text("끝 2"));
+    f.push_for(CHILD, fixture::text("자식 결과 반영"));
     let t = turn(&s, &sid, &prof, "깊게").await;
     s.wait_status(&t, "completed").await;
     let a = wait_run(&s, &sid, |r| r["status"] == "completed").await;
@@ -214,7 +237,7 @@ async fn parent_cancel_cascades_and_restart_interrupts_children() {
     f.push(fixture::text("맡김"));
     f.push_for(CHILD, fixture::hang_after("멈춤"));
     let t2 = turn(&s, &sid, &prof, "다시").await;
-    s.wait_status(&t2, "completed").await;
+    s.wait_turn(&t2, |t| t["status"] == "running" && t["step"] == 2).await;
     let r2 = wait_run(&s, &sid, |r| r["status"] == "running").await;
     tokio::time::sleep(Duration::from_millis(300)).await;
     s.restart().await;
@@ -229,6 +252,7 @@ async fn runs_belong_to_their_parent_session() {
     set_policy(&s, "auto").await;
     f.push(fixture::tool_calls(&[("a1", "agent", json!({ "action": "spawn", "agent_id": "reviewer", "brief": "x" }))]));
     f.push(fixture::text("ok"));
+    f.push(fixture::text("result received"));
     f.push_for(CHILD, fixture::text("done"));
     let t = turn(&s, &sid, &prof, "go").await;
     s.wait_status(&t, "completed").await;

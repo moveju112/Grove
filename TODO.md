@@ -780,7 +780,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] RUN-017 서버 재시작 후 안전한 읽기 작업과 불확실한 변경 작업을 구분한다. 검증: `tests/turns.rs::restart_distinguishes_read_only_from_mutating_calls`.
 - [x] RUN-018 결과 불명의 shell/API 변경을 자동 재실행하지 않는다. 검증: `tests/turns.rs::crash_during_tool_marks_unknown_and_requires_review`.
 - [x] RUN-019 중단된 턴의 재개·새 요청·포기를 사용자가 선택할 수 있게 한다. 검증: 실패·중단된 마지막 요청 배너에 '다시 실행'(같은 글·프로필·에이전트·도구·강도로 새 요청, 출처 `source.kind=retry`, 원래 요청 확인 처리, 같은 key 재전송 1회, 이후 요청이 있거나 정상 완료면 거절)·'새 요청 쓰기'(입력창 이동)·'닫기(포기)'(`acknowledged_at` 기록, migration 24, 결과는 그대로·새로고침과 다른 기기에서도 닫힘)를 둔다(`tests/turns.rs::ended_turn_can_be_retried_once_or_acknowledged`, `web/e2e/turn-error.spec.ts`). 자동 재실행은 하지 않는다.
-- [ ] RUN-020 final answer 확정 전에 필요한 소유 작업의 완료 여부를 반영한다.
+- [x] RUN-020 final answer 확정 전에 필요한 소유 작업의 완료 여부를 반영한다. 검증: 소유 백그라운드 작업 실행 중 모델 final만으로 completed가 되는 결함을 실패 시험으로 재현했다. 소유 작업이 남거나 모델 호출 중 도착한 결과가 입력에 없으면 응답에 `pending_work`·`completion_deferred`를 보존하고 running을 유지한다. 슬롯을 놓고 이벤트로 기다린 뒤 실패·취소·불명 결과도 다음 입력에 전달한다. 대기 중 steer·취소·시간 예산·재시작 중단을 유지하고 UI 직접 작업은 제외한다. 자식 send의 소유권·취소도 현재 부모 턴으로 이전한다. `tests/turn_completion.rs` 6개와 agents·followups·model_limits·schedules·tasks·trust_boundary·turns를 합친 통합 66개, runner/history 단위 6개, 타입·웹/서버 빌드, 중간 응답/새로고침·기존 자식 위임 E2E 2개 통과. 옛 완료/결과 순서 가정·평문 인증 헤더 fixture·새 E2E의 nullable 배열 접근을 수정했다. 링크 Bus error는 공통 디스크 여유 부족 상태에서 발생했으며 이번 세션이 만든 이전 시험 실행 파일만 정리한 뒤 검증이 통과했다. 자연어 요청 전체의 완료·품질 판정이나 유료 실모델 비교를 대신하지 않는다(RULEBOOK §21).
 
 ### 장시간 작업의 실행 연속성과 중단 원인
 

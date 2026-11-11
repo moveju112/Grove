@@ -45,8 +45,10 @@ async fn profiles_with_identical_credentials_share_accounts_without_blocking_oth
     let other = profile(&s, &f, "synthetic-account-two").await;
     let (_, profiles) = s.get("/api/v1/model-profiles").await;
     let current = profiles.as_array().unwrap().iter().find(|p| p["id"] == same).unwrap();
+    let (status, header) = s.post("/api/v1/secrets", json!({"label":"unrelated header","value":"synthetic-unrelated"})).await;
+    assert_eq!(status, StatusCode::CREATED, "{header}");
     let (status, _) = s.send(Method::PUT, &format!("/api/v1/model-profiles/{same}"),
-        json!({ "expected_revision":current["revision"], "options":{"headers":{"x-unused-token":"synthetic-unrelated"}} })).await;
+        json!({ "expected_revision":current["revision"], "options":{"headers":{"x-unused-token":{"secret_id":header["id"]}}} })).await;
     assert_eq!(status, StatusCode::OK);
     let project = s.create_project("accounts").await["id"].as_str().unwrap().to_string();
     f.push_for("MARK_FIRST", fixture::Step::Hang(vec![]));

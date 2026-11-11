@@ -421,6 +421,13 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
     if (prefs.answerOnly && (m.role === "tool" || (m.role === "note" && (nt0 === "cli_activity" || nt0 === "imported_tool")))) return null;
     if (prefs.answerOnly && m.role === "assistant" && !(m.content as { text?: string }).text) return null;
     const c = m.content as { attachments?: Attachment[]; reasoning?: string | null; reasoning_chars?: number; text?: string; tool_calls?: { id: string; name: string }[]; name?: string; status?: string; output?: unknown; model?: string; approval_scope?: string | null; args?: unknown; duration_ms?: number | null; truncated?: boolean };
+    if (m.role === "note" && nt0 === "completion_deferred") {
+        const work = (m.content as { pending_work: { tasks: { id: string }[]; agents: { id: string }[] } }).pending_work;
+        return <div className="msg note warn" role="status" data-testid="msg-completion-deferred">
+            이 응답 시점에는 소유 작업 결과 반영 전이라 완료를 보류했습니다(진행 중: 백그라운드 {work.tasks.length}개 · 자식 {work.agents.length}개).
+            결과를 받은 뒤 모델이 이어서 답합니다. 실행 상태와 결과는 작업·자식 목록에서 확인할 수 있습니다.
+        </div>;
+    }
     if (m.role === "note" && nt0 === "rewind") {
         const r = m.content as { text: string; removed_count: number };
         return <div className="msg note" data-testid="msg-rewind">{r.text} 활성 이력에서 {r.removed_count}개를 제외했습니다. 원문은 보관되며 자동 복원 UI는 없습니다.</div>;
@@ -574,7 +581,7 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
                         ? "부모 에이전트의 지시"
                         : "나"
                     : m.role === "assistant"
-                      ? `모델${c.model ? " · " + c.model : ""}`
+                      ? `모델${c.model ? " · " + c.model : ""}${(m.content as { pending_work?: unknown }).pending_work ? " · 중간 응답(소유 작업 결과 반영 전)" : ""}`
                       : m.role}
             </div>
             {m.role === "assistant" && c.reasoning && prefs.reasoning !== "hidden" && (
@@ -666,7 +673,7 @@ function ApprovalCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unkno
     );
 }
 
-type EndScopeData = { steps: number; tool_calls: Record<string, number>; running_tasks: { id: string; command: string }[] };
+type EndScopeData = { steps: number; tool_calls: Record<string, number>; running_tasks: { id: string; command: string }[]; running_agents?: { id: string; agent_id: string; child_session_id: string }[] };
 
 // tool_calls.status 값(store.rs CHECK 제약)과 같은 이름.
 const CALL_STATUS: Record<string, string> = {
@@ -698,6 +705,7 @@ function EndScope({ s }: { s: EndScopeData }) {
                     계속 실행 중인 백그라운드 작업 {tasks.length}개: {tasks.map((t) => <code key={t.id}>{t.command}</code>)} — 작업 목록에서 확인·취소할 수 있습니다
                 </p>
             )}
+            {!!s.running_agents?.length && <p>미완료 자식 작업 {s.running_agents.length}개: {s.running_agents.map((a) => <code key={a.id}>{a.agent_id} </code>)} — 자식 목록에서 확인할 수 있습니다</p>}
             <p>
                 다음 조치: {unknown > 0 ? "결과가 확정되지 않은 작업을 먼저 확인하세요. " : ""}같은 요청 다시 실행 · 새 요청 쓰기 · 닫기(포기)
             </p>

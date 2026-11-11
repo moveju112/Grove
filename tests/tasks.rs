@@ -292,13 +292,16 @@ async fn model_shell_with_hold_detaches_and_result_reaches_next_turn() {
     assert!(notes(&s, &sid).await.is_empty(), "hold 안에 끝나면 note를 남기지 않는다");
 
     // 오래 걸리는 명령: hold가 지나면 task_id를 돌려주고 턴은 계속, 끝나면 note
-    f.push(fixture::tool_calls(&[("q2", "shell", json!({ "command": "sleep 0.8; echo late", "hold_ms": 100 }))]));
+    f.push(fixture::tool_calls(&[("q2", "shell", json!({ "command": "while [ ! -f release ]; do sleep 0.02; done; echo late", "hold_ms": 100, "timeout_ms":10000 }))]));
     f.push(fixture::text("백그라운드로 보냄"));
+    f.push(fixture::text("백그라운드 결과 확인"));
     let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "go2", "profile_id": prof, "tools": true })).await;
     let tid = v["turn"]["id"].as_str().unwrap().to_string();
     let t = s.wait_status(&tid, "awaiting_approval").await;
     let c = &t["tool_calls"][0];
     s.post(&format!("/api/v1/tool-calls/{}/decision", c["id"].as_str().unwrap()), json!({ "decision": "approve", "expected_revision": c["revision"] })).await;
+    s.wait_turn(&tid, |t| t["status"] == "running" && t["step"] == 2).await;
+    std::fs::write(std::path::Path::new(p["root_path"].as_str().unwrap()).join("release"), b"go").unwrap();
     let t = s.wait_status(&tid, "completed").await;
     let r = &t["tool_calls"][0]["result"];
     assert_eq!(r["background"], true, "{r}");
@@ -306,7 +309,9 @@ async fn model_shell_with_hold_detaches_and_result_reaches_next_turn() {
     let (_, w) = s.get(&format!("/api/v1/tasks/{task_id}/wait?timeout_ms=10000")).await;
     assert_eq!(w["status"], "completed");
     assert_eq!(w["call_id"], c["id"]);
-    let n = notes(&s, &sid).await;
+    let all = notes(&s, &sid).await;
+    assert!(all.iter().any(|m| m["content"]["type"] == "completion_deferred"));
+    let n: Vec<_> = all.iter().filter(|m| m["content"]["type"] == "task_result").collect();
     assert_eq!(n.len(), 1);
     assert!(n[0]["content"]["stdout_tail"].as_str().unwrap().contains("late"));
     // 다음 턴의 모델 입력에 결과가 들어간다

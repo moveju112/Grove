@@ -167,6 +167,9 @@ impl Builder {
                 };
                 self.note(text);
             }
+            "note" if c["type"] == "completion_deferred" => {
+                self.note("[completion deferred]\nThe preceding assistant response was provisional, not a completed result. Incorporate the following owned-work results, including any failure or unknown outcome, before concluding.".into());
+            }
             "note" if c["type"] == "turn_ended" => {
                 let mut error = c["error"].clone();
                 if let Some(object) = error.as_object_mut() { object.remove("scope"); }

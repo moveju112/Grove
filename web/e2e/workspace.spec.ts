@@ -149,12 +149,14 @@ test("자식 에이전트 위임을 승인하면 자식 대화가 생기고 결�
     // 뒤에서 자식 대화가 두 번째 pane에 열리므로 부모 화면을 첫 pane으로 고정한다.
     const view = page.getByTestId("session-view").first();
     await expect(view).toHaveAttribute("data-session", s.id);
-    await script({ frames: frames.tool("a1", "agent", { action: "spawn", agent_id: "reviewer", brief: "변경을 검토해" }) });
-    await script({ frames: frames.text(["검토를 맡겼어"]) });
+    const prompt = `검토 맡겨 ${s.id}`;
+    await script({ frames: frames.tool("a1", "agent", { action: "spawn", agent_id: "reviewer", brief: "변경을 검토해" }), marker: prompt });
+    await script({ frames: frames.text(["검토를 맡겼어"]), marker: prompt });
+    await script({ frames: frames.text(["자식 검토 결과를 확인했어"]), marker: prompt });
     await script({ frames: frames.text(["자식 검토 결과: 이상 없음"]), delayMs: 200, marker: "Delegated task" });
     await view.getByLabel("보내기 방식").selectOption("model");
     await view.getByLabel("도구").check();
-    await view.getByLabel("메시지 입력").fill("검토 맡겨");
+    await view.getByLabel("메시지 입력").fill(prompt);
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const card = view.getByTestId("approval");
     await expect(card).toContainText("reviewer", { timeout: 15_000 });
@@ -163,6 +165,11 @@ test("자식 에이전트 위임을 승인하면 자식 대화가 생기고 결�
     await card.getByRole("button", { name: "이번만 승인" }).click();
     await expect(view.getByTestId("msg-agent-result")).toHaveCount(1, { timeout: 15_000 });
     await expect(view.getByTestId("msg-agent-result")).toContainText("자식 검토 결과: 이상 없음");
+    await expect(view.getByTestId("turn-status")).toHaveCount(0);
+    const turns = await apiCall<{ status: string; error: unknown }[]>("GET", `/sessions/${s.id}/turns`);
+    expect(turns).toHaveLength(1);
+    expect(turns[0]!.status).toBe("completed");
+    expect(turns[0]!.error).toBeNull();
     const runs = view.getByTestId("agent-runs");
     // 진행 중에 자동으로 열린 목록은 끝나도 열린 채 남는다. 상태가 확정된 뒤 닫혀 있을 때만 연다.
     await expect(runs.getByTestId("agent-run").first()).toHaveAttribute("data-status", "completed");

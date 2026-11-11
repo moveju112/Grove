@@ -20,6 +20,8 @@ pub enum Step {
     Frames(Vec<String>, u64),
     /// 일부 프레임 후 연결을 끊지 않고 멈춘다(취소 시험용)
     Hang(Vec<String>),
+    /// 요청 접수 후 시험이 관찰한 상태를 근거로 해제할 때까지 응답을 보류한다.
+    Gated(Vec<String>, tokio::sync::watch::Receiver<bool>),
     /// HTTP 오류 응답
     Error(u16, String),
 }
@@ -101,6 +103,10 @@ async fn openai(State(f): State<Fixture>, headers: HeaderMap, body: String) -> R
             let stream = async_stream(frames, 0, true);
             Response::builder().header("content-type", "text/event-stream").body(Body::from_stream(stream)).unwrap()
         }
+        Some(Step::Gated(frames, mut gate)) => {
+            gate.wait_for(|ready| *ready).await.expect("fixture gate sender");
+            Response::builder().header("content-type", "text/event-stream").body(Body::from_stream(async_stream(frames, 0, false))).unwrap()
+        }
     }
 }
 
@@ -123,15 +129,21 @@ fn async_stream(frames: Vec<String>, delay: u64, hang: bool) -> impl futures_uti
 // ---- OpenAI 형식 대본 도우미 ----
 
 pub fn text(t: &str) -> Step {
-    Step::Frames(
-        vec![
-            json!({ "choices": [{ "delta": { "content": t } }] }).to_string(),
-            json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] }).to_string(),
-            json!({ "choices": [], "usage": { "prompt_tokens": 11, "completion_tokens": 3 } }).to_string(),
-            "[DONE]".into(),
-        ],
-        0,
-    )
+    Step::Frames(text_frames(t), 0)
+}
+
+pub fn gated_text(t: &str) -> (Step, tokio::sync::watch::Sender<bool>) {
+    let (release, gate) = tokio::sync::watch::channel(false);
+    (Step::Gated(text_frames(t), gate), release)
+}
+
+fn text_frames(t: &str) -> Vec<String> {
+    vec![
+        json!({ "choices": [{ "delta": { "content": t } }] }).to_string(),
+        json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] }).to_string(),
+        json!({ "choices": [], "usage": { "prompt_tokens": 11, "completion_tokens": 3 } }).to_string(),
+        "[DONE]".into(),
+    ]
 }
 
 /// reasoning(생각) 조각 뒤에 답을 보낸다(OpenAI 호환 `reasoning_content`).

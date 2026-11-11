@@ -255,13 +255,77 @@ fn end_scope(c: &Connection, turn_id: &str) -> ApiResult<Value> {
         let (s, n) = row?;
         calls.insert(s, json!(n));
     }
+    let work = owned_work(c, turn_id)?;
+    Ok(json!({ "steps": steps, "tool_calls": calls, "running_tasks": work["tasks"], "running_agents": work["agents"] }))
+}
+
+/// UI가 직접 시작한 작업과 다른 턴의 작업은 포함하지 않는다. send로 재사용한 자식도 이번 호출의 소유 작업이다.
+fn owned_work(c: &Connection, turn_id: &str) -> ApiResult<Value> {
     let mut st = c.prepare(
         "SELECT t.id, t.command FROM tasks t JOIN tool_calls k ON k.id = t.call_id WHERE k.turn_id = ?1 AND t.status = 'running' ORDER BY t.started_at",
     )?;
     let tasks = st
         .query_map(params![turn_id], |r| Ok(json!({ "id": r.get::<_, String>(0)?, "command": r.get::<_, String>(1)? })))?
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(json!({ "steps": steps, "tool_calls": calls, "running_tasks": tasks }))
+    let mut st = c.prepare(
+        "SELECT id, agent_id, child_session_id FROM agent_runs WHERE status='running' AND parent_turn_id=?1 ORDER BY created_at,id",
+    )?;
+    let agents = st.query_map([turn_id], |r| Ok(json!({
+        "id":r.get::<_, String>(0)?, "agent_id":r.get::<_, String>(1)?, "child_session_id":r.get::<_, String>(2)?
+    })))?.collect::<Result<Vec<_>, _>>()?;
+    Ok(json!({ "tasks": tasks, "agents": agents }))
+}
+
+fn work_pending(work: &Value) -> bool {
+    ["tasks", "agents"].iter().any(|key| work[*key].as_array().is_some_and(|items| !items.is_empty()))
+}
+
+/// 이른 final 뒤에만 기다린다. 먼저 구독한 뒤 DB snapshot을 읽어 완료 이벤트 유실을 막고,
+/// 슬롯·DB transaction을 잡지 않는다. 결과를 받으면 입력을 다시 읽어 모델에 전달한다.
+async fn wait_for_owned_work(app: &App, turn_id: &str, input_seq: i64, cancel: &mut watch::Receiver<bool>, deadline: Option<time::OffsetDateTime>) -> ApiResult<bool> {
+    let mut events = app.seq_tx.subscribe();
+    let tid = turn_id.to_string();
+    let deferred = app.db.call(move |c| {
+        let message: Option<(String, String, i64)> = c.query_row(
+            "SELECT content,session_id,seq FROM messages WHERE turn_id=?1 AND role='assistant' ORDER BY seq DESC LIMIT 1",
+            [tid], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+        ).optional()?;
+        Ok(message.and_then(|(body,sid,seq)| serde_json::from_str::<Value>(&body).ok()
+            .filter(|c| c.get("pending_work").is_some()).map(|_| (sid,seq))))
+    }).await?;
+    let Some((sid,candidate_seq)) = deferred else { return Ok(false); };
+    let mut waited = false;
+    loop {
+        if *cancel.borrow() { return Err(ApiError::conflict("cancelled", "사용자가 중지했습니다")); }
+        if deadline.is_some_and(|d| d <= time::OffsetDateTime::now_utc()) {
+            return Err(ApiError::conflict("time_budget_exceeded", "소유 작업을 기다리다 요청 시간 예산을 넘었습니다"));
+        }
+        let tid = turn_id.to_string();
+        let session = sid.clone();
+        let (new_input, work) = app.db.call(move |c| {
+            let user_seq: i64 = c.query_row(
+                "SELECT COALESCE(MAX(seq),0) FROM messages WHERE session_id=?1 AND role='user'", [&session], |r| r.get(0),
+            )?;
+            let steer: bool = c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM followups WHERE session_id=?1 AND kind='steer')", [&session], |r| r.get(0),
+            )?;
+            Ok(((user_seq > candidate_seq || steer).then_some(user_seq > input_seq || steer), owned_work(c, &tid)?))
+        }).await?;
+        // 대기 중 새 지시는 즉시 모델 경계로 돌린다. 이미 입력에 실린 지시라면 바로 모델을 호출한다.
+        if let Some(reload) = new_input { return Ok(reload); }
+        if !work_pending(&work) { return Ok(waited); }
+        waited = true;
+        tokio::select! {
+            _ = cancel.wait_for(|v| *v) => return Err(ApiError::conflict("cancelled", "사용자가 중지했습니다")),
+            changed = events.changed() => { changed.map_err(|_| ApiError::internal("작업 완료 이벤트 채널이 닫혔습니다"))?; }
+            _ = async {
+                match deadline {
+                    Some(d) => tokio::time::sleep(Duration::from_millis((d-time::OffsetDateTime::now_utc()).whole_milliseconds().max(0) as u64)).await,
+                    None => std::future::pending::<()>().await,
+                }
+            } => return Err(ApiError::conflict("time_budget_exceeded", "소유 작업을 기다리다 요청 시간 예산을 넘었습니다")),
+        }
+    }
 }
 
 /// 서버 시작 시 이전 프로세스의 실행 기록을 정리한다.
@@ -394,6 +458,7 @@ pub fn system_prompt(def: &Value, project_root: &str, tools_enabled: bool) -> St
     let mut env = format!("# Environment\nProject root: {project_root}\n");
     if tools_enabled {
         env.push_str("Paths in tool arguments are relative to the project root. Mutating tools (write, edit, shell) wait for the user's approval.\n");
+        env.push_str("A final response is provisional while background tasks or child runs owned by this turn remain active. The server waits without holding a model slot, then supplies their results for you to incorporate. Report failures and unknown outcomes honestly; never equate task acceptance with completion.\n");
         match def["agents_available"].as_array() {
             Some(a) if !a.is_empty() => {
                 env.push_str("Child agents available to the `agent` tool (agent_id — name: description):\n");
@@ -426,6 +491,8 @@ pub fn tool_defs() -> Vec<ToolDef> {
 
 struct StepInput {
     session_id: String,
+    /// 이 모델 입력에 포함한 마지막 메시지. stream 중 도착한 소유 작업 결과도 빠뜨리지 않는다.
+    input_seq: i64,
     profile_id: String,
     /// 이 턴의 첫 모델 호출인지(자동 압축 판단용)
     first_step: bool,
@@ -459,6 +526,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     Ok(Some(StepInput {
         deadline,
         session_id: t.session_id.clone(),
+        input_seq: s.last_message_seq,
         profile_id: profile_id.clone(),
         first_step: t.step == 0,
         profile: rp,
@@ -555,6 +623,18 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             auto_compact_checked = true;
             crate::context::maybe_auto_compact(app, &input.session_id, &input.profile_id, &mut cancel_rx).await;
             continue;
+        }
+        match wait_for_owned_work(app, turn_id, input.input_seq, &mut cancel_rx, input.deadline).await {
+            Ok(true) => continue, // 완료 note를 포함하도록 이력을 다시 읽는다.
+            Ok(false) => {}
+            Err(e) if e.code == "cancelled" => {
+                end_cancelled(app, turn_id, None).await;
+                return session_for_partial;
+            }
+            Err(e) => {
+                fail(app, turn_id, json!({ "code":e.code, "message":e.message })).await;
+                return session_for_partial;
+            }
         }
         // 공정 실행 슬롯(FAIR-005~008): 모델 호출 한 번만 차지한다. 승인 대기·도구 실행 중에는 반환된 상태다.
         let tid_q = turn_id.to_string();
@@ -689,7 +769,18 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                     return Ok(None);
                 }
                 let s = crate::sessions::get(&tx, &t.session_id)?;
-                let content = json!({
+                let mut pending_work = if out.tool_calls.is_empty() { owned_work(&tx, &tid)? } else { Value::Null };
+                let unseen_results = out.tool_calls.is_empty() && tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM messages m WHERE m.session_id=?1 AND m.seq>?2 AND m.role='note' AND ( \
+                     (json_extract(m.content,'$.type')='task_result' AND EXISTS(SELECT 1 FROM tasks t JOIN tool_calls k ON k.id=t.call_id \
+                      WHERE k.turn_id=?3 AND t.id=json_extract(m.content,'$.task_id'))) OR \
+                     (json_extract(m.content,'$.type')='agent_result' AND EXISTS(SELECT 1 FROM agent_runs a \
+                      WHERE a.parent_turn_id=?3 AND a.id=json_extract(m.content,'$.run_id')))))",
+                    params![t.session_id, input.input_seq, tid], |r| r.get::<_, bool>(0),
+                )?;
+                let completion_pending = work_pending(&pending_work) || unseen_results;
+                if completion_pending { pending_work["unseen_results"] = json!(unseen_results); }
+                let mut content = json!({
                     "text": out.text,
                     "tool_calls": out.tool_calls.iter().map(|c| json!({ "id": c.id, "name": c.name, "arguments": c.arguments })).collect::<Vec<_>>(),
                     "model": model,
@@ -699,6 +790,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                     // 표시 전용(UI-012). 서명된 공급자 입력은 별도 model_input에 보존한다.
                     "reasoning": reasoning_stored(&out.reasoning),
                 });
+                if completion_pending { content["pending_work"] = pending_work.clone(); }
                 // CLI 백엔드가 자기 안에서 한 도구 활동은 표시 전용 note로 먼저 남긴다(Grove가 다시 실행하지 않음).
                 if !out.activity.is_empty() {
                     crate::sessions::append_message(&tx, &now, &t.session_id, "note", &json!({ "type": "cli_activity", "items": out.activity }), Some(&tid), None)?;
@@ -742,7 +834,20 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                     }
                 }
                 if out.tool_calls.is_empty() {
-                    finish_turn(&tx, &now, &tid, &["running"], "completed", None)?;
+                    if completion_pending {
+                        crate::sessions::append_message(&tx, &now, &t.session_id, "note", &json!({
+                            "type":"completion_deferred", "pending_work":pending_work,
+                        }), Some(&tid), None)?;
+                        if step >= MAX_STEPS {
+                            finish_turn(&tx, &now, &tid, &["running"], "failed", Some(json!({
+                                "code":"step_limit", "message":format!("소유 작업 결과 반영 전에 모델 단계가 {MAX_STEPS}회에 도달했습니다")
+                            })))?;
+                        } else {
+                            emit_turn(&tx, &now, &tid)?;
+                        }
+                    } else {
+                        finish_turn(&tx, &now, &tid, &["running"], "completed", None)?;
+                    }
                     tx.commit()?;
                     return Ok(Some((false, vec![])));
                 }
