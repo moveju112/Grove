@@ -221,7 +221,7 @@ async fn migration_adopts_legacy_logs_without_rewriting_original_bytes() {
     let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
     // 버전 33 상태를 흉내 낸다: 34(task_logs) 이후 migration의 결과를 모두 되돌린다.
     db.execute_batch(
-        "DROP TABLE trash_gc; DROP TABLE task_logs; DROP TABLE worktrees; ALTER TABLE sessions DROP COLUMN worktree_id; PRAGMA user_version=33;",
+        "DROP TABLE pairings; DROP TABLE trash_gc; DROP TABLE task_logs; DROP TABLE worktrees; ALTER TABLE sessions DROP COLUMN worktree_id; PRAGMA user_version=33;",
     )
     .unwrap();
     drop(db);

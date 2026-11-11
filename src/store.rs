@@ -655,6 +655,21 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX worktrees_project ON worktrees(project_id, status);
     ALTER TABLE sessions ADD COLUMN worktree_id TEXT;
     "#,
+    // 37: 만료·일회성 소비·폐기를 같은 transaction으로 판정하는 페어링. 원문 비밀은 저장하지 않는다.
+    r#"
+    CREATE TABLE pairings (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        secret_hash TEXT NOT NULL,
+        issuer_id TEXT NOT NULL REFERENCES tokens(id),
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        revoked_at TEXT,
+        consumed_at TEXT,
+        device_id TEXT REFERENCES tokens(id)
+    );
+    CREATE INDEX pairings_issuer ON pairings(issuer_id,created_at);
+    "#,
 ];
 
 #[cfg(test)]

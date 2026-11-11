@@ -90,4 +90,31 @@ describe("HTTP 요청 식별·timeout·취소 계약", () => {
         expect(new Uint8Array(await client.rawGet("/terminals/t/screen"))).toEqual(new Uint8Array([1, 2]));
         expect(vi.getTimerCount()).toBe(0);
     });
+
+    it.each([401, 410])("일회용 페어링은 HTTP %s나 응답 유실 때 자동 refresh·재등록하지 않는다", async (status) => {
+        const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+            error: { code: "pairing_unavailable", message: "사용됨" },
+        }), { status }));
+        vi.stubGlobal("fetch", fetch);
+        await expect(client.redeemPairing("one-time-code")).rejects.toMatchObject({ code: "pairing_unavailable" });
+        expect(fetch).toHaveBeenCalledTimes(1);
+        expect(fetch.mock.calls[0]![0]).toBe("/api/v1/auth/pairing");
+        fetch.mockRejectedValueOnce(new TypeError("connection lost"));
+        await expect(client.redeemPairing("one-time-code")).rejects.toMatchObject({
+            code: "network_error", details: { result_unknown: true },
+        });
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("페어링 결과의 access 자격은 메모리 세션에만 반영한다", async () => {
+        const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({ access_token: "temporary-access", expires_at: "2026-01-01T00:00:00Z" })));
+        vi.stubGlobal("fetch", fetch);
+        await client.redeemPairing("one-time-code");
+        expect(client.accessToken()).toBe("temporary-access");
+        const init = fetch.mock.calls[0]![1] as RequestInit;
+        expect(init.credentials).toBe("same-origin");
+        expect(JSON.parse(init.body as string)).toEqual({ code: "one-time-code" });
+        await expect(client.redeemPairing("another-code")).rejects.toMatchObject({ code: "already_authenticated" });
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
 });

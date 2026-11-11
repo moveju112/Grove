@@ -15,6 +15,7 @@ fn generate() -> String {
     let decls = [
         decl::<grove::events::EventRecord>(),
         decl::<grove::auth::DeviceInfo>(),
+        decl::<grove::pairing::PairingInfo>(),
         decl::<grove::projects::Project>(),
         decl::<grove::sessions::Session>(),
         decl::<grove::sessions::SessionPage>(),

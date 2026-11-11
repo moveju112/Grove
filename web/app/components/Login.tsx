@@ -2,11 +2,13 @@ import { useState } from "react";
 import { ApiError, lastAuthEnd, login } from "../api/client";
 import { deviceName } from "../state/device";
 import { Hosts } from "./Hosts";
+import { PairingLogin } from "./Pairing";
 
 export function Login() {
     const [token, setToken] = useState("");
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    const [pairing, setPairing] = useState(false);
     const submit = async (e: React.FormEvent) => {
         e.preventDefault();
         setBusy(true);
@@ -20,6 +22,7 @@ export function Login() {
             setBusy(false);
         }
     };
+    if (pairing) return <PairingLogin onDone={() => setPairing(false)} onCancel={() => setPairing(false)} />;
     return (
         <main className="login">
             <form onSubmit={submit} aria-label="로그인">
@@ -40,6 +43,7 @@ export function Login() {
                 <button type="submit" disabled={busy || !token.trim()}>
                     {busy ? "확인 중…" : "로그인"}
                 </button>
+                <button type="button" className="ghost" disabled={busy} onClick={() => setPairing(true)}>페어링 링크·QR로 등록</button>
             </form>
         </main>
     );

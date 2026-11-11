@@ -4,6 +4,8 @@ export type EventRecord = { seq: number, created_at: string, kind: string, proje
 
 export type DeviceInfo = { id: string, kind: string, name: string, created_at: string, last_used_at: string | null, revoked_at: string | null, parent_id: string | null, expires_at: string | null, current: boolean, };
 
+export type PairingInfo = { id: string, name: string, created_at: string, expires_at: string, revoked_at: string | null, consumed_at: string | null, device_id: string | null, };
+
 export type Project = { id: string, name: string, root_path: string, created_at: string, updated_at: string, revision: number, archived_at: string | null, 
 /**
  * root 경로가 현재 접근 가능한 디렉터리인지

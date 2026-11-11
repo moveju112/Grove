@@ -5,6 +5,8 @@ import { type Prefs, loadPrefs, savePrefs } from "../state/device";
 import { useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
 import { UsagePanel } from "./UsagePanel";
+import { Pairings } from "./Pairing";
+import { useCapability } from "../state/capabilities";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" };
@@ -384,6 +386,7 @@ function Devices() {
     const list = useQuery<DeviceInfo[]>("devices", () => api.get("/devices"));
     const [issued, setIssued] = useState<string | null>(null);
     const save = useSave();
+    const pairing = useCapability("pairing_v1");
     if (list.error instanceof ApiError && list.error.code === "forbidden") return <p className="muted">기기 관리는 소유자만 할 수 있습니다.</p>;
     return (
         <>
@@ -410,6 +413,7 @@ function Devices() {
                 </div>
             )}
             {save.view}
+            {pairing !== false && <Pairings />}
         </>
     );
 }

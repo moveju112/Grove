@@ -163,6 +163,9 @@ export function applyEvent(e: EventRecord) {
         case "device.revoked":
             invalidate("devices");
             break;
+        case "pairing.changed":
+            invalidate("pairings");
+            break;
         case "setting.changed":
             invalidate("settings");
             break;

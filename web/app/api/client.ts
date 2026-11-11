@@ -120,6 +120,21 @@ export async function login(token: string, name: string): Promise<void> {
     setSession({ accessToken: b.access_token, expiresAt: b.expires_at });
 }
 
+/// 일회용 등록은 자동 refresh·재시도하지 않는다. 결과 유실 시 소유자가 기기 목록에서 확인한다.
+export async function redeemPairing(code: string): Promise<void> {
+    if (current) throw new ApiError(409, "already_authenticated", "이미 로그인되어 있습니다. 기존 로그인을 덮어쓰지 않고 별도 브라우저에서 등록하세요.");
+    await boundedRequest({}, true, async (send) => {
+        const resp = await send("/api/v1/auth/pairing", {
+            method: "POST", credentials: "same-origin",
+            headers: { "content-type": "application/json" }, body: JSON.stringify({ code }),
+        });
+        const body = await parse(resp);
+        if (!resp.ok) throw toError(resp.status, body, resp.headers.get("x-request-id") ?? undefined);
+        const b = body as { access_token: string; expires_at: string };
+        setSession({ accessToken: b.access_token, expiresAt: b.expires_at });
+    });
+}
+
 /// refresh 쿠키로 access token을 다시 받는다. 동시 호출은 하나로 합친다(singleflight).
 export function refresh(): Promise<Session | null> {
     if (!refreshing) {

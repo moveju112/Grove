@@ -70,7 +70,7 @@ impl AccessTokens {
 }
 
 /// 토큰 행을 검증하고 상위 토큰이 살아 있는지 확인한다.
-fn verify_row(conn: &Connection, id: &str, secret: Option<&str>, now: &str) -> ApiResult<Principal> {
+pub(crate) fn verify_row(conn: &Connection, id: &str, secret: Option<&str>, now: &str) -> ApiResult<Principal> {
     let row: Option<(String, String, Option<String>, Option<String>, Option<String>)> = conn
         .query_row(
             "SELECT kind, secret_hash, parent_id, expires_at, revoked_at FROM tokens WHERE id = ?1",
@@ -389,6 +389,14 @@ fn refresh_cookie(app: &App, headers: &HeaderMap, value: &str, max_age: i64) -> 
     .expect("cookie header")
 }
 
+pub(crate) fn browser_session_response(app: &App, headers: &HeaderMap, bid: &str, refresh: &str, max_age: i64) -> Response {
+    let (access, exp) = app.access.issue(bid, app.clock.now());
+    let mut resp = Json(json!({ "access_token": access, "expires_at": fmt_time(exp), "browser_session_id": bid })).into_response();
+    resp.headers_mut().insert(header::SET_COOKIE, refresh_cookie(app, headers, &format_token(bid, refresh), max_age));
+    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    resp
+}
+
 fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     headers.get_all(header::COOKIE).iter().filter_map(|v| v.to_str().ok()).flat_map(|v| v.split(';')).find_map(|kv| {
         let (k, v) = kv.trim().split_once('=')?;
@@ -488,11 +496,7 @@ pub async fn browser_login(State(app): State<App>, req: Request) -> ApiResult<Re
         })
         .await;
     let (bid, refresh) = result?;
-    let (access, exp) = app.access.issue(&bid, now);
-    let mut resp = Json(json!({ "access_token": access, "expires_at": fmt_time(exp), "browser_session_id": bid })).into_response();
-    resp.headers_mut().insert(header::SET_COOKIE, refresh_cookie(&app, &headers, &format_token(&bid, &refresh), REFRESH_TTL.whole_seconds()));
-    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    Ok(resp)
+    Ok(browser_session_response(&app, &headers, &bid, &refresh, REFRESH_TTL.whole_seconds()))
 }
 
 /// refresh 쿠키로 새 access token을 받는다. refresh 비밀은 매번 교체한다.
@@ -526,11 +530,7 @@ pub async fn browser_refresh(State(app): State<App>, headers: HeaderMap) -> ApiR
         .await?;
     // refresh 만료 시각은 고정(최초 로그인 기준). 남은 시간만큼 쿠키 유지.
     let remaining = expires_at.as_deref().and_then(parse_time).map(|e| (e - now).whole_seconds()).unwrap_or(0).max(0);
-    let (access, exp) = app.access.issue(&bid, now);
-    let mut resp = Json(json!({ "access_token": access, "expires_at": fmt_time(exp), "browser_session_id": bid })).into_response();
-    resp.headers_mut().insert(header::SET_COOKIE, refresh_cookie(&app, &headers, &format_token(&bid, &refresh), remaining));
-    resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
-    Ok(resp)
+    Ok(browser_session_response(&app, &headers, &bid, &refresh, remaining))
 }
 
 pub async fn browser_logout(State(app): State<App>, headers: HeaderMap) -> ApiResult<Response> {

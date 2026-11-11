@@ -111,6 +111,9 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .host-address { overflow-wrap: anywhere; }
 .host-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.6em; }
 .host-list li { border: 1px solid var(--line); border-radius: 6px; padding: 0.6em; display: grid; gap: 0.3em; }
+.pairings { display: grid; gap: 0.6em; }
+.pairing-qr { display: block; max-width: 100%; height: auto; }
+.pairings label input { display: block; width: 100%; }
 .dialog label input:not([type="checkbox"]) { display: block; width: 100%; margin-top: 0.2em; }
 .dialog .row { display: flex; flex-wrap: wrap; gap: 0.5em; align-items: center; }
 .dir-list { list-style: none; margin: 0; padding: 0.3em; max-height: 16em; overflow: auto; border: 1px solid var(--line); border-radius: 6px; }
