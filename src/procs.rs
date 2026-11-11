@@ -225,6 +225,29 @@ mod tests {
     use super::*;
     use std::time::Duration;
 
+    #[tokio::test]
+    async fn isolation_setup_failures_never_execute_the_payload() {
+        for fail_group in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let marker = dir.path().join("payload-ran");
+            let mut command = tokio::process::Command::new("bash");
+            command.args(["-c", "printf ran > \"$1\"", "isolation-fixture"]).arg(&marker).kill_on_drop(true);
+            prepare(&mut command, &crate::util::new_id(), Limits::default());
+            if fail_group {
+                // setpgid가 거부할 음수 PGID를 만들어 실제 process-group 생성 실패를 유도한다.
+                command.process_group(-1);
+            } else {
+                // 자원/격리 설정이 exec 전에 실패하는 경계다. 사용자 payload는 시작하면 안 된다.
+                unsafe {
+                    command.pre_exec(|| Err(std::io::Error::from_raw_os_error(libc::EPERM)));
+                }
+            }
+            let error = command.spawn().expect_err("격리 실패를 무시하고 실행하면 안 된다");
+            assert!(error.raw_os_error().is_some(), "실제 spawn 오류여야 한다: {error}");
+            assert!(!marker.exists(), "실패 뒤 사용자 명령을 실행하거나 재시도하지 않는다");
+        }
+    }
+
     fn spawn(tag: Option<&str>, script: &str) -> tokio::process::Child {
         let mut c = tokio::process::Command::new("bash");
         c.args(["-c", script]).env_remove(OWNER_ENV).kill_on_drop(true);
