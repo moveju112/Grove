@@ -82,6 +82,10 @@
 
 접속 경로(NET-005): 로컬·LAN·VPN·원격은 모두 같은 `/api/v1`과 같은 서버의 웹앱을 사용한다. 기본은 loopback이고 외부 접속은 `GROVE_LISTEN`/`--listen`으로 명시한다. 외부 공개 시 `GROVE_ALLOWED_HOSTS`에 실제 Host(포트 포함)를 제한하고 앞단 HTTPS에서 TLS를 종료한 뒤 `GROVE_TLS_TERMINATED=1`로 Secure refresh 쿠키를 사용한다. 이 설정은 TLS 자체를 제공하지 않는다. 장기 자격증명을 외부 평문 HTTP로 보내지 않는다. HTTP authority 계약 시험과 실제 네트워크·인증서·방화벽 검증은 구분한다.
 
+호스트 선택(NET-014·015): 로그인 전·후의 호스트 목록에 별명과 정규화한 HTTP(S) origin만 저장한다. 목록은 현재 origin의 브라우저 로컬 설정이고 서버 간 동기화하지 않는다. URL의 userinfo·경로·query·fragment는 거부하며 자격증명을 저장하지 않는다. 선택은 `noopener noreferrer` 새 탭에서 해당 서버의 웹앱을 여는 동작이다. 전역 API 주소·인증을 갈아 끼우거나 다른 origin을 proxy/iframe으로 중계하지 않으며 기존 교차 사이트 차단을 유지한다. 각 탭의 요청·이벤트·cursor·cache·승인·첨부·터미널은 자기 서버에 고정되고 초안·배치는 브라우저 origin으로 격리된다. 원격 실패 시 기존 탭과 초안을 유지하며 그 탭에서 재접속한다. 최근 기록은 명시적인 **열기 시각**이고 서버 연결·인증 성공을 뜻하지 않는다. 별명 수정은 기록을 보존하고 주소 변경은 초기화하며 목록 삭제는 서버·인증·실행·사용자 데이터를 삭제하지 않는다.
+
+브라우저 refresh 쿠키는 port를 구분하지 않으므로 이름에 요청 authority의 digest를 붙인다. 같은 hostname의 다른 포트에 로그인해도 갱신·로그아웃이 서로 덮어쓰지 않는다. 기존 `grove_refresh`는 새 이름의 쿠키가 없을 때만 읽고 성공한 refresh에서 회전·이전한다. 이는 쿠키의 전송 범위를 origin으로 바꾸지는 않는다. 같은 hostname의 모든 포트는 여전히 쿠키를 수신할 수 있으므로 서로 신뢰하지 않는 서버는 별도 hostname으로 운영한다.
+
 ## 5. 경로·이름
 
 - Rust 모듈: `src/<영역>.rs` 또는 `src/<영역>/mod.rs`. 영역 이름은 소문자 단수(`store`, `auth`, `events`, `sessions`, `turns`, `tools`, `provider`, `agents`, `settings`, `layout`, `shell`, `git`...).

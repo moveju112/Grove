@@ -11,6 +11,7 @@ import { NotificationsPanel } from "./NotificationsPanel";
 import { RecentPanel } from "./RecentPanel";
 import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
+import { Hosts } from "./Hosts";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -163,6 +164,7 @@ export function Workspace() {
                 </button>
                 <img src="/icon.svg" alt="" width={22} height={22} />
                 <strong>Grove</strong>
+                <Hosts />
                 <ConnStatus status={live.status} retryAt={live.retryAt} onRetry={() => stream.current?.retryNow()} />
                 <span className="spacer" />
                 <button className="ghost" onClick={() => setAdding(true)}>

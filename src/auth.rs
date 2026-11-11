@@ -374,10 +374,17 @@ pub struct BrowserLogin {
     pub name: Option<String>,
 }
 
-fn refresh_cookie(app: &App, value: &str, max_age: i64) -> HeaderValue {
+fn refresh_cookie_name(headers: &HeaderMap) -> String {
+    // 쿠키는 port를 구분하지 않는다. 같은 hostname의 서로 다른 Grove 서버가 덮어쓰지 않게 한다.
+    let authority = headers.get(header::HOST).and_then(|h| h.to_str().ok()).unwrap_or("").to_ascii_lowercase();
+    format!("{REFRESH_COOKIE}_{}", &sha256_hex(authority.as_bytes())[..16])
+}
+
+fn refresh_cookie(app: &App, headers: &HeaderMap, value: &str, max_age: i64) -> HeaderValue {
     let secure = if app.cfg.tls_terminated { "; Secure" } else { "" };
+    let name = refresh_cookie_name(headers);
     HeaderValue::from_str(&format!(
-        "{REFRESH_COOKIE}={value}; HttpOnly; SameSite=Strict; Path=/api/v1/auth; Max-Age={max_age}{secure}"
+        "{name}={value}; HttpOnly; SameSite=Strict; Path=/api/v1/auth; Max-Age={max_age}{secure}"
     ))
     .expect("cookie header")
 }
@@ -483,7 +490,7 @@ pub async fn browser_login(State(app): State<App>, req: Request) -> ApiResult<Re
     let (bid, refresh) = result?;
     let (access, exp) = app.access.issue(&bid, now);
     let mut resp = Json(json!({ "access_token": access, "expires_at": fmt_time(exp), "browser_session_id": bid })).into_response();
-    resp.headers_mut().insert(header::SET_COOKIE, refresh_cookie(&app, &format_token(&bid, &refresh), REFRESH_TTL.whole_seconds()));
+    resp.headers_mut().insert(header::SET_COOKIE, refresh_cookie(&app, &headers, &format_token(&bid, &refresh), REFRESH_TTL.whole_seconds()));
     resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(resp)
 }
@@ -491,7 +498,9 @@ pub async fn browser_login(State(app): State<App>, req: Request) -> ApiResult<Re
 /// refresh 쿠키로 새 access token을 받는다. refresh 비밀은 매번 교체한다.
 pub async fn browser_refresh(State(app): State<App>, headers: HeaderMap) -> ApiResult<Response> {
     check_origin(&app, &headers)?;
-    let raw = cookie_value(&headers, REFRESH_COOKIE).ok_or_else(|| ApiError::unauthorized("로그인이 필요합니다"))?;
+    let raw = cookie_value(&headers, &refresh_cookie_name(&headers))
+        .or_else(|| cookie_value(&headers, REFRESH_COOKIE))
+        .ok_or_else(|| ApiError::unauthorized("로그인이 필요합니다"))?;
     let (id, secret) = parse_token(&raw).ok_or_else(|| ApiError::unauthorized("로그인이 필요합니다"))?;
     let (id, secret) = (id.to_string(), secret.to_string());
     let now = app.clock.now();
@@ -519,14 +528,14 @@ pub async fn browser_refresh(State(app): State<App>, headers: HeaderMap) -> ApiR
     let remaining = expires_at.as_deref().and_then(parse_time).map(|e| (e - now).whole_seconds()).unwrap_or(0).max(0);
     let (access, exp) = app.access.issue(&bid, now);
     let mut resp = Json(json!({ "access_token": access, "expires_at": fmt_time(exp), "browser_session_id": bid })).into_response();
-    resp.headers_mut().insert(header::SET_COOKIE, refresh_cookie(&app, &format_token(&bid, &refresh), remaining));
+    resp.headers_mut().insert(header::SET_COOKIE, refresh_cookie(&app, &headers, &format_token(&bid, &refresh), remaining));
     resp.headers_mut().insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
     Ok(resp)
 }
 
 pub async fn browser_logout(State(app): State<App>, headers: HeaderMap) -> ApiResult<Response> {
     check_origin(&app, &headers)?;
-    if let Some(raw) = cookie_value(&headers, REFRESH_COOKIE) {
+    if let Some(raw) = cookie_value(&headers, &refresh_cookie_name(&headers)).or_else(|| cookie_value(&headers, REFRESH_COOKIE)) {
         if let Some((id, _)) = parse_token(&raw) {
             let id = id.to_string();
             let now = fmt_time(app.clock.now());
@@ -544,7 +553,7 @@ pub async fn browser_logout(State(app): State<App>, headers: HeaderMap) -> ApiRe
         }
     }
     let mut resp = Json(json!({ "logged_out": true })).into_response();
-    resp.headers_mut().insert(header::SET_COOKIE, refresh_cookie(&app, "", 0));
+    resp.headers_mut().insert(header::SET_COOKIE, refresh_cookie(&app, &headers, "", 0));
     Ok(resp)
 }
 

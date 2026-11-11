@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ApiError, lastAuthEnd, login } from "../api/client";
 import { deviceName } from "../state/device";
+import { Hosts } from "./Hosts";
 
 export function Login() {
     const [token, setToken] = useState("");
@@ -24,6 +25,7 @@ export function Login() {
             <form onSubmit={submit} aria-label="로그인">
                 <img src="/icon.svg" alt="" width={56} height={56} />
                 <h1>Grove</h1>
+                <Hosts />
                 {lastAuthEnd() === "expired" && (
                     <p className="warn" role="status" data-testid="auth-expired">
                         로그인이 만료되었거나 이 기기 토큰이 폐기되었습니다. 다시 로그인하세요.
