@@ -733,6 +733,7 @@ mod tests {
 pub struct Db {
     conn: Arc<Mutex<Connection>>,
     pub path: PathBuf,
+    recovery: tokio::sync::watch::Sender<Option<&'static str>>,
 }
 
 impl Db {
@@ -746,7 +747,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         crate::vault::register(&conn, path.parent().unwrap_or(Path::new(".")))?;
-        let mut db = Self { conn: Arc::new(Mutex::new(conn)), path: path.to_path_buf() };
+        let mut db = Self { conn: Arc::new(Mutex::new(conn)), path: path.to_path_buf(), recovery: tokio::sync::watch::channel(None).0 };
         db.migrate()?;
         restrict_permissions(path);
         Ok(db)
@@ -788,7 +789,23 @@ impl Db {
     }
 
     pub fn schema_version(&self) -> i64 {
-        self.conn.lock().expect("db mutex").query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0)
+        self.call_sync(|c| Ok(c.query_row("PRAGMA user_version", [], |r| r.get(0))?)).unwrap_or(0)
+    }
+
+    pub fn recovery_reason(&self) -> Option<&'static str> {
+        *self.recovery.borrow()
+    }
+
+    pub(crate) fn recovery_receiver(&self) -> tokio::sync::watch::Receiver<Option<&'static str>> {
+        self.recovery.subscribe()
+    }
+
+    pub fn recovery_error(&self) -> Option<ApiError> {
+        self.recovery_reason().map(|reason| {
+            ApiError::new(axum::http::StatusCode::SERVICE_UNAVAILABLE, "storage_recovery_required",
+                "저장소 오류로 실행을 중단했습니다. 원본을 보존하고 grove doctor --offline으로 확인하세요")
+                .with_details(serde_json::json!({ "reason": reason, "restart_required": true }))
+        })
     }
 
     /// blocking 스레드에서 연결을 사용한다.
@@ -797,11 +814,8 @@ impl Db {
         T: Send + 'static,
         F: FnOnce(&mut Connection) -> ApiResult<T> + Send + 'static,
     {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut guard = conn.lock().map_err(|_| ApiError::internal("db mutex poisoned"))?;
-            f(&mut guard)
-        })
+        let db = self.clone();
+        tokio::task::spawn_blocking(move || db.call_sync(f))
         .await
         .map_err(|e| ApiError::internal(format!("db task: {e}")))?
     }
@@ -809,7 +823,16 @@ impl Db {
     /// 동기 문맥(시작·종료·CLI)용.
     pub fn call_sync<T>(&self, f: impl FnOnce(&mut Connection) -> ApiResult<T>) -> ApiResult<T> {
         let mut guard = self.conn.lock().map_err(|_| ApiError::internal("db mutex poisoned"))?;
-        f(&mut guard)
+        if let Some(error) = self.recovery_error() { return Err(error); }
+        let result = f(&mut guard);
+        if let Err(error) = &result
+            && matches!(error.code, "storage_full" | "storage_permission" | "storage_corrupt" | "storage_io")
+        {
+            // 같은 연결의 다음 작업이 시작되기 전에 고정한다. 자동 재시도·자동 해제는 하지 않는다(DB-015).
+            self.recovery.send_replace(Some(error.code));
+            tracing::error!(code = error.code, "저장소 복구 필요: 새 DB 작업을 차단하고 서버 실행을 종료합니다");
+        }
+        result
     }
 }
 

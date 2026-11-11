@@ -68,6 +68,8 @@
 
 백업 staging(DB-016·017): 목적지와 같은 디렉터리에 고유 private staging(Unix 0700)을 만들고 검증·파일 권한(Unix 0600) 설정 후 `rename_noreplace`로 게시한다. 사전 존재 검사 뒤에 대상이 생겨도 덮어쓰지 않으며 dangling symlink도 보존한다. 생성한 staging만 정리하고 기존 고정 `*.partial`은 소유권을 추정해 지우지 않는다.
 
+저장소 장애(DB-015): SQLite FULL은 `507 storage_full`, READONLY/PERM은 `503 storage_permission`, CORRUPT/NOTADB는 `503 storage_corrupt`, IOERR/CANTOPEN은 `503 storage_io`로 구분한다. 첫 치명 오류를 연결의 직렬화 lock 안에서 고정하고 이후 DB 작업을 `503 storage_recovery_required`로 차단한다. 일반 busy·revision 충돌은 이 상태로 전환하지 않는다. 서버는 신규 접수를 막고 모델·작업·PTY를 중지한 뒤 종료하며, 기록하지 못한 실행 결과를 성공·취소로 단정하지 않는다. 복구 중 남아 있는 health 응답은 `recovery_required`와 `storage_error`를 표시한다. 원본을 자동 수리·삭제·덮어쓰지 않고 자동 재시도나 자동 정상 복귀도 하지 않는다. `grove doctor --offline --data-dir <경로>`는 서버·migration·키 발급 없이 읽기 전용 integrity/foreign-key 검사를 수행한다. 운영자는 원본 DB·WAL·첨부·키를 보존하고 공간·권한 문제를 해결한 뒤 재시작하거나, snapshot을 새 디렉터리에 복원·검증한다. 실제 장치 장애·OS별 파일 시스템 복구 검증은 별도다.
+
 ### HTTP 요청 수명 (NET-003)
 
 | 경계 | 계약 |

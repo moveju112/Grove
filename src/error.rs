@@ -84,6 +84,18 @@ impl From<rusqlite::Error> for ApiError {
             if f.code == rusqlite::ErrorCode::DiskFull {
                 return ApiError::new(StatusCode::INSUFFICIENT_STORAGE, "storage_full", "저장 공간이 부족합니다");
             }
+            match f.code {
+                rusqlite::ErrorCode::ReadOnly | rusqlite::ErrorCode::PermissionDenied => {
+                    return ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "storage_permission", "데이터베이스 쓰기 권한이 없습니다");
+                }
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase => {
+                    return ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "storage_corrupt", "데이터베이스가 손상되어 복구가 필요합니다");
+                }
+                rusqlite::ErrorCode::SystemIoFailure | rusqlite::ErrorCode::CannotOpen => {
+                    return ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "storage_io", "데이터베이스 파일을 읽거나 쓸 수 없습니다");
+                }
+                _ => {}
+            }
         }
         ApiError::internal(format!("sqlite: {e}"))
     }

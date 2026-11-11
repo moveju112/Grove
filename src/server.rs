@@ -53,7 +53,9 @@ pub async fn start(cfg: Config, clock: SharedClock) -> Result<Server, String> {
     let addr = listener.local_addr().map_err(|e| e.to_string())?;
     let mut cfg = cfg;
     cfg.listen = addr;
-    let app = App::new(cfg, clock).map_err(|e| e.to_string())?;
+    let app = App::new(cfg, clock).map_err(|e| format!(
+        "{e}\n시작을 중단했습니다. 원본 데이터를 삭제하거나 덮어쓰지 마세요. grove doctor --offline --data-dir <경로>로 읽기 전용 검사를 수행하세요"
+    ))?;
     let owner_token = crate::auth::ensure_owner_token(&app).map_err(|e| e.message)?;
     crate::runner::recover_on_start(&app).await.map_err(|e| e.message)?;
     let now = app.now();
@@ -66,6 +68,21 @@ pub async fn start(cfg: Config, clock: SharedClock) -> Result<Server, String> {
         .map_err(|e| e.message)?;
 
     let mut background = vec![];
+    {
+        let app = app.clone();
+        let mut recovery = app.db.recovery_receiver();
+        background.push(tokio::spawn(async move {
+            if recovery.wait_for(|reason| reason.is_some()).await.is_err() { return; }
+            // 새 접수를 막은 뒤 실행 중인 외부 작업을 중지한다. 저장 실패한 종료 결과는 재시작 복구가 unknown으로 보존한다.
+            app.shutdown_tx.send_replace(true);
+            tokio::join!(
+                crate::runner::cancel_all_for_shutdown(&app),
+                crate::tasks::stop_all(&app),
+                crate::terminals::stop_all(&app),
+            );
+            app.exit_tx.send_replace(true);
+        }));
+    }
     {
         // 이벤트 보존 한도 정리와 저장 공간 정리(DB-019: 한 번에 제한된 개수만)
         let app = app.clone();

@@ -14,6 +14,7 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
                 [--log-file 경로]                      파일당 2MiB·보관본 3개, 이벤트당 16KiB 로그
   grove status [--listen 주소:포트]                      실행 중 서버 상태 확인(health)
   grove doctor [--listen 주소:포트] [--data-dir 경로]    프로세스·API 준비·인증·모델 설정을 각각 진단(문제 있으면 종료 코드 1)
+  grove doctor --offline [--data-dir 경로]               DB 읽기 전용 무결성 검사·복구 안내(서버·migration·모델 호출 없음)
   grove config [--listen 주소:포트] [--data-dir 경로]    실제 적용될 경로·주소·환경 설정 출력(비밀값 없음)
   grove auth token [--data-dir 경로]                     소유자 토큰 출력(= grove token)
   grove auth unlock [--data-dir 경로]                    브라우저 로그인 실패 잠금 해제(= grove unlock)
@@ -53,6 +54,7 @@ struct Opts {
     keys: Vec<PathBuf>,
     force: bool,
     dry_run: bool,
+    offline: bool,
     allow_downgrade: bool,
     ready_timeout: Option<u64>,
 }
@@ -75,6 +77,7 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             "--ready-timeout" => o.ready_timeout = Some(val(&mut it, a)?.parse().map_err(|_| "--ready-timeout은 초 단위 정수")?),
             "--force" => o.force = true,
             "--dry-run" => o.dry_run = true,
+            "--offline" => o.offline = true,
             "--allow-downgrade" => o.allow_downgrade = true,
             "--json" => {}
             s if s.starts_with("--") => return Err(format!("알 수 없는 옵션: {s}")),
@@ -158,6 +161,10 @@ pub fn run(args: Vec<String>) -> i32 {
         }
     };
     let cmd = opts.positional.first().map(String::as_str).unwrap_or("serve");
+    if opts.offline && cmd != "doctor" {
+        eprintln!("--offline은 doctor에서만 사용할 수 있습니다");
+        return 2;
+    }
     let result = match cmd {
         "serve" if opts.positional.len() == 1 || opts.positional.is_empty() => serve(opts),
         "token" => token(opts),
@@ -282,6 +289,18 @@ fn server_process(cfg: &Config) -> serde_json::Value {
 /// 모델은 유료 호출 없이 저장된 마지막 연결 확인 결과만 보고한다. 문제가 없으면 true.
 fn doctor(opts: Opts) -> Result<bool, String> {
     let cfg = Config::from_env(opts.data_dir, opts.listen)?;
+    if opts.offline {
+        let result = crate::backup::inspect(&cfg.db_path());
+        let database = match &result {
+            Ok(schema) => serde_json::json!({ "status": "integrity_ok", "schema": schema }),
+            Err(error) => serde_json::json!({ "status": "recovery_required", "code": error.code, "message": error.message }),
+        };
+        println!("{}", serde_json::to_string_pretty(&serde_json::json!({
+            "mode": "offline_read_only", "database": database,
+            "recovery": "원본 DB·WAL·첨부·키 파일을 보존하세요. 공간·권한 문제를 해결하고, snapshot은 grove restore <snapshot> <새 디렉터리>로 별도 검증하세요. 손상 원본을 자동 수리하거나 덮어쓰지 않습니다",
+        })).map_err(|e| e.to_string())?);
+        return Ok(result.is_ok());
+    }
     let base = local_base(&cfg);
     let process = server_process(&cfg);
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;

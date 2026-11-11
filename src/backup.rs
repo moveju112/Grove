@@ -59,17 +59,25 @@ pub fn snapshot_to(db_path: &Path, dest: &Path) -> Result<(), String> {
 
 /// 무결성·외래키 검사. 문제가 있으면 오류 목록을 반환한다.
 pub fn verify(path: &Path) -> Result<(), String> {
-    let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY).map_err(|e| e.to_string())?;
-    let ic: String = c.query_row("PRAGMA integrity_check", [], |r| r.get(0)).map_err(|e| e.to_string())?;
+    inspect(path).map(|_| ()).map_err(|error| error.message)
+}
+
+/// 서버를 시작하거나 migration·복구 쓰기를 하지 않고 확인한다(DB-015).
+pub fn inspect(path: &Path) -> crate::error::ApiResult<i64> {
+    use crate::error::ApiError;
+    use axum::http::StatusCode;
+    let c = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY)?;
+    let ic: String = c.query_row("PRAGMA integrity_check", [], |r| r.get(0))?;
     if ic != "ok" {
-        return Err(format!("integrity_check: {ic}"));
+        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "storage_corrupt", "integrity_check 실패: 원본을 보존하고 별도 복원본을 검증하세요"));
     }
-    let mut st = c.prepare("PRAGMA foreign_key_check").map_err(|e| e.to_string())?;
-    let n = st.query_map([], |_| Ok(())).map_err(|e| e.to_string())?.count();
+    let mut st = c.prepare("PRAGMA foreign_key_check")?;
+    let mut n = 0;
+    for row in st.query_map([], |_| Ok(()))? { row?; n += 1; }
     if n > 0 {
-        return Err(format!("foreign_key_check: 위반 {n}건"));
+        return Err(ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "storage_corrupt", format!("foreign_key_check: 위반 {n}건")));
     }
-    Ok(())
+    Ok(c.query_row("PRAGMA user_version", [], |r| r.get(0))?)
 }
 
 pub fn restore_into(snapshot: &Path, new_dir: &Path) -> Result<PathBuf, String> {

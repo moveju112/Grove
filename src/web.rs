@@ -15,7 +15,8 @@ use tower_http::set_header::SetResponseHeaderLayer;
 pub async fn health(State(app): State<App>) -> Json<serde_json::Value> {
     let db_ok = app.db.call(|c| Ok(c.query_row("SELECT 1", [], |r| r.get::<_, i64>(0))?)).await.is_ok();
     Json(json!({
-        "status": if app.is_shutting_down() { "stopping" } else if db_ok { "ready" } else { "degraded" },
+        "status": if app.db.recovery_reason().is_some() { "recovery_required" } else if app.is_shutting_down() { "stopping" } else if db_ok { "ready" } else { "degraded" },
+        "storage_error": app.db.recovery_reason(),
         "version": crate::VERSION,
         "protocol": crate::PROTOCOL_VERSION,
         "capabilities": crate::CAPABILITIES,
@@ -28,6 +29,11 @@ pub async fn health(State(app): State<App>) -> Json<serde_json::Value> {
 
 /// 종료가 시작되면 새 상태 변경 요청을 받지 않는다(ARCH-012). 조회는 허용한다.
 pub async fn reject_when_shutting_down(State(app): State<App>, req: Request, next: Next) -> Response {
+    if req.uri().path() != "/health"
+        && let Some(error) = app.db.recovery_error()
+    {
+        return error.into_response();
+    }
     if app.is_shutting_down() && req.method() != Method::GET {
         return ApiError::new(axum::http::StatusCode::SERVICE_UNAVAILABLE, "shutting_down", "서버가 종료 중입니다")
             .retryable()

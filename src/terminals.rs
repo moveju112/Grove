@@ -238,7 +238,25 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
         exited: exit_tx,
         closing: AtomicBool::new(false),
     });
-    app.terminals.live.lock().unwrap_or_else(|e| e.into_inner()).insert(id.clone(), live.clone());
+    let admitted = {
+        let mut registry = app.terminals.live.lock().unwrap_or_else(|e| e.into_inner());
+        // blocking PTY 생성 중 복구 종료가 시작됐어도 늦게 돌아온 셸을 남기지 않는다.
+        // shutdown flag 확인과 등록을 stop_all의 snapshot과 같은 lock으로 묶는다.
+        if app.is_shutting_down() || app.db.recovery_reason().is_some() {
+            false
+        } else {
+            registry.insert(id.clone(), live.clone());
+            true
+        }
+    };
+    if !admitted {
+        let killed = live.killer.lock().unwrap_or_else(|e| e.into_inner()).kill();
+        killed.map_err(|e| ApiError::internal(format!("미등록 PTY 종료 실패: {e}")))?;
+        tokio::task::spawn_blocking(move || child.wait()).await
+            .map_err(|e| ApiError::internal(format!("미등록 PTY 회수 작업 실패: {e}")))?
+            .map_err(|e| ApiError::internal(format!("미등록 PTY 회수 실패: {e}")))?;
+        return Err(app.db.recovery_error().unwrap_or_else(|| ApiError::new(StatusCode::SERVICE_UNAVAILABLE, "shutting_down", "서버가 종료 중입니다")));
+    }
 
     // 출력 reader: blocking read → ring + broadcast(같은 lock 안에서)
     {
