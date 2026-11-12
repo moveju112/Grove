@@ -1763,8 +1763,8 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 - [x] STORE-003 상태 전이와 outbox 기록을 한 transaction으로 수행하고 commit 전 성공 응답을 막는다. 검증: `src/idem.rs::run`(상태·응답·이벤트 한 transaction).
 - [x] STORE-004 outbox 읽기·전달·ack·재전달과 client cursor deduplication을 연결한다. 검증: cursor 재생·중복 제거, `tests/api.rs::sse_cursor_replay_without_duplicates`, `web/app/state/events.test.ts`.
 - [x] STORE-005 외부 작업 시작/종료 receipt와 DB commit 사이 crash를 주입하고 불확실 작업을 격리한다. 검증: `tests/turns.rs::crash_during_tool_marks_unknown_and_requires_review`, `restart_distinguishes_read_only_from_mutating_calls`.
-- [ ] STORE-006 blob 임시 기록·최종 rename·DB 참조·실패 정리 순서를 구현한다.
-- [ ] STORE-007 read/write 경쟁·DB 잠금·disk full·permission 오류를 오류별로 처리한다.
+- [x] STORE-006 blob 임시 기록·최종 rename·DB 참조·실패 정리 순서를 구현한다. 검증: 변경 원문(`src/changes.rs::put_blob`)과 첨부(`src/attachments.rs::upload`)는 내용 hash 경로에 임시 파일→fsync→rename으로 쓴 뒤 DB 참조를 commit한다. DB 실패로 남은 고아·staging 파일은 유예 뒤 같은 DB 잠금 안에서 참조 없음을 다시 확인하고 지우며, 원문이 사라진 참조는 `stored=false`로 표시한다(`src/storage.rs::gc`, `attachments::gc`). Rust `tests/attachments.rs::failed_commit_leaves_only_graced_orphan_and_staging_cleanup_is_owned`, `tests/storage.rs::gc_removes_only_owned_old_blob_staging_and_keeps_referenced_original` 등 storage 15·attachments 6 통과. RULEBOOK "파일 저장 오류"에 순서를 기록했다.
+- [x] STORE-007 read/write 경쟁·DB 잠금·disk full·permission 오류를 오류별로 처리한다. 검증: 파일 IO 오류가 공간 부족·읽기 전용·사용 중을 모두 `409 io_failed`/`write_failed`로 뭉개던 것을 `507 storage_full`·`403 read_only_filesystem`·`403 permission_denied`·재시도 가능한 `409 file_busy`로 나누고 모델 도구 쓰기(write·edit·apply_patch)도 같은 코드로 돌려준다(`src/files.rs::io_err`, `src/tools/fs.rs::write_error`). 실패한 원자 쓰기는 원본을 유지하고 임시 파일을 남기지 않는다(권한 없는 폴더로 실제 실패를 유도한 단위 시험). 쓰기 경쟁은 승인 당시 hash 재확인(`conflict`), DB 잠금·busy와 DB disk full·권한은 DB-015·`tests/db_lock.rs`·`tests/recovery.rs`로 처리한다. 단위 3개(Linux ENOSPC·EDQUOT·EROFS·EBUSY OS 번호 포함)·Rust storage/attachments/files/turns 75개 통과. 실제 가득 찬 디스크·Windows 공유 위반은 OS 오류 번호 분류로만 확인했다.
 - [x] STORE-008 일관된 snapshot 생성·복원·참조 무결성 검사를 disposable DB에서 검증한다. 검증: `tests/cli.rs::snapshot_and_restore_into_new_directory`.
 
 ### 35.4 기본 에이전트와 워크플로우 편집

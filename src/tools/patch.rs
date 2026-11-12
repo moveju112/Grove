@@ -316,14 +316,14 @@ pub fn execute(planned: &Planned, root: &Path) -> ToolResult<Value> {
             match w["op"].as_str() {
                 Some("add") => {
                     if let Some(parent) = p.parent() {
-                        scope.create_dir_all(parent).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                        scope.create_dir_all(parent).map_err(super::fs::write_error)?;
                     }
-                    scope.write_new(&p, w["after"].as_str().unwrap_or("").as_bytes()).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                    scope.write_new(&p, w["after"].as_str().unwrap_or("").as_bytes()).map_err(super::fs::write_error)?;
                     undo.push(Undo::Remove(p));
                 }
                 Some("delete") => {
                     let orig = scope.read(&p, MAX_EDIT_BYTES).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
-                    scope.remove_file(&p).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                    scope.remove_file(&p).map_err(super::fs::write_error)?;
                     undo.push(Undo::Restore(p, orig));
                 }
                 _ => {
@@ -333,15 +333,15 @@ pub fn execute(planned: &Planned, root: &Path) -> ToolResult<Value> {
                         Some(m) => {
                             let d = resolve(root, m)?;
                             if let Some(parent) = d.parent() {
-                                scope.create_dir_all(parent).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                                scope.create_dir_all(parent).map_err(super::fs::write_error)?;
                             }
-                            scope.write_new(&d, after.as_bytes()).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                            scope.write_new(&d, after.as_bytes()).map_err(super::fs::write_error)?;
                             undo.push(Undo::Remove(d));
-                            scope.remove_file(&p).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                            scope.remove_file(&p).map_err(super::fs::write_error)?;
                             undo.push(Undo::Restore(p, orig));
                         }
                         None => {
-                            scope.atomic_write(&p, after.as_bytes()).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                            scope.atomic_write(&p, after.as_bytes()).map_err(super::fs::write_error)?;
                             undo.push(Undo::Restore(p, orig));
                         }
                     }

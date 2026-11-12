@@ -52,14 +52,26 @@ pub(crate) fn resolve_api(root: &FsPath, rel: &str) -> ApiResult<PathBuf> {
     resolve(root, rel).map_err(tool_err)
 }
 
+/// 파일 IO 오류를 원인별 응답으로 구분한다(STORE-007). 공간 부족·읽기 전용·사용 중은 사용자가 할 조치가 달라 일반 실패와 섞지 않는다.
 pub(crate) fn io_err(e: std::io::Error, what: &str) -> ApiError {
+    if is_busy(&e) {
+        return ApiError::new(StatusCode::CONFLICT, "file_busy", format!("{what}: 다른 프로그램이 사용 중입니다")).retryable();
+    }
     match e.kind() {
         std::io::ErrorKind::NotFound => ApiError::not_found(format!("{what}: 없음")),
         std::io::ErrorKind::PermissionDenied => ApiError::new(StatusCode::FORBIDDEN, "permission_denied", format!("{what}: 권한 없음")),
+        std::io::ErrorKind::ReadOnlyFilesystem => ApiError::new(StatusCode::FORBIDDEN, "read_only_filesystem", format!("{what}: 읽기 전용 파일시스템입니다")),
+        std::io::ErrorKind::StorageFull | std::io::ErrorKind::QuotaExceeded => ApiError::new(StatusCode::INSUFFICIENT_STORAGE, "storage_full", format!("{what}: 저장 공간이 부족합니다")),
         std::io::ErrorKind::AlreadyExists => ApiError::conflict("already_exists", format!("{what}: 이미 있습니다")),
         std::io::ErrorKind::InvalidInput | std::io::ErrorKind::IsADirectory | std::io::ErrorKind::NotADirectory => ApiError::invalid(format!("{what}: {e}")),
         _ => ApiError::conflict("io_failed", format!("{what}: {e}")),
     }
+}
+
+/// 다른 프로세스가 잡고 있어 지금은 쓸 수 없는 상태. Windows 공유·잠금 위반은 별도 kind가 없어 OS 코드로 확인한다.
+pub(crate) fn is_busy(e: &std::io::Error) -> bool {
+    matches!(e.kind(), std::io::ErrorKind::ResourceBusy | std::io::ErrorKind::ExecutableFileBusy)
+        || (cfg!(windows) && matches!(e.raw_os_error(), Some(32 | 33)))
 }
 
 fn mtime(m: &std::fs::Metadata) -> Option<String> {
@@ -460,6 +472,27 @@ async fn mutate(app: App, p: Principal, headers: HeaderMap, id: String, mutation
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn io_errors_are_classified_by_cause() {
+        use std::io::{Error, ErrorKind};
+        let code = |e: Error| { let a = io_err(e, "x"); (a.status, a.code) };
+        assert_eq!(code(Error::from(ErrorKind::StorageFull)), (StatusCode::INSUFFICIENT_STORAGE, "storage_full"));
+        assert_eq!(code(Error::from(ErrorKind::QuotaExceeded)), (StatusCode::INSUFFICIENT_STORAGE, "storage_full"));
+        assert_eq!(code(Error::from(ErrorKind::ReadOnlyFilesystem)), (StatusCode::FORBIDDEN, "read_only_filesystem"));
+        assert_eq!(code(Error::from(ErrorKind::PermissionDenied)), (StatusCode::FORBIDDEN, "permission_denied"));
+        assert_eq!(code(Error::from(ErrorKind::ResourceBusy)), (StatusCode::CONFLICT, "file_busy"));
+        assert!(io_err(Error::from(ErrorKind::ResourceBusy), "x").retryable);
+        assert_eq!(code(Error::other("x")), (StatusCode::CONFLICT, "io_failed"));
+        // 실제 OS 오류 번호(Linux ENOSPC·EDQUOT·EROFS·EBUSY)도 같은 분류가 된다.
+        #[cfg(target_os = "linux")]
+        {
+            assert_eq!(code(Error::from_raw_os_error(28)).1, "storage_full");
+            assert_eq!(code(Error::from_raw_os_error(122)).1, "storage_full");
+            assert_eq!(code(Error::from_raw_os_error(30)).1, "read_only_filesystem");
+            assert_eq!(code(Error::from_raw_os_error(16)).1, "file_busy");
+        }
+    }
 
     #[cfg(unix)]
     #[test]

@@ -341,12 +341,11 @@ pub fn write_new(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Val
         return Err(ToolError::new("target_mismatch", "승인된 내용과 실행 내용이 다릅니다"));
     }
     if let Some(parent) = p.parent() {
-        scope.create_dir_all(parent).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+        scope.create_dir_all(parent).map_err(write_error)?;
     }
     scope.write_new(&p, content.as_bytes()).map_err(|e| match e.kind() {
         std::io::ErrorKind::AlreadyExists => ToolError::new("already_exists", "실행 시점에 파일이 이미 있어 덮어쓰지 않았습니다"),
-        std::io::ErrorKind::PermissionDenied => ToolError::new("permission_denied", "쓰기 권한이 없습니다"),
-        _ => ToolError::new("write_failed", e.to_string()),
+        _ => write_error(e),
     })?;
     Ok(json!({ "path": planned.target["path"], "created": true, "bytes": content.len(), "sha256": sha256_hex(content.as_bytes()) }))
 }
@@ -399,7 +398,7 @@ pub fn edit(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
     if sha256_hex(after.as_bytes()) != pre["after_sha256"].as_str().unwrap_or("") {
         return Err(ToolError::new("target_mismatch", "승인된 변경과 실행 결과가 다릅니다"));
     }
-    scope.atomic_write(&p, after.as_bytes()).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+    scope.atomic_write(&p, after.as_bytes()).map_err(write_error)?;
     Ok(json!({ "path": planned.target["path"], "replacements": planned.target["replacements"], "before_sha256": pre["sha256"], "sha256": sha256_hex(after.as_bytes()) }))
 }
 
@@ -426,12 +425,23 @@ pub fn atomic_write(p: &Path, data: &[u8]) -> ToolResult<()> {
     })();
     if let Err(e) = res {
         let _ = std::fs::remove_file(&tmp);
-        return Err(match e.kind() {
-            std::io::ErrorKind::PermissionDenied => ToolError::new("permission_denied", "쓰기 권한이 없습니다"),
-            _ => ToolError::new("write_failed", e.to_string()),
-        });
+        return Err(write_error(e));
     }
     Ok(())
+}
+
+/// 쓰기 실패를 원인별 코드로 구분한다(STORE-007). 모델과 화면이 공간 부족·읽기 전용·사용 중을 일반 실패와 다르게 다룬다.
+pub(crate) fn write_error(e: std::io::Error) -> ToolError {
+    use std::io::ErrorKind as K;
+    if crate::files::is_busy(&e) {
+        return ToolError::new("file_busy", "다른 프로그램이 파일을 사용 중이라 쓰지 못했습니다. 닫은 뒤 다시 시도하세요");
+    }
+    match e.kind() {
+        K::PermissionDenied => ToolError::new("permission_denied", "쓰기 권한이 없습니다"),
+        K::ReadOnlyFilesystem => ToolError::new("read_only_filesystem", "읽기 전용 파일시스템이라 쓸 수 없습니다"),
+        K::StorageFull | K::QuotaExceeded => ToolError::new("storage_full", "저장 공간이 부족해 쓰지 못했습니다"),
+        _ => ToolError::new("write_failed", e.to_string()),
+    }
 }
 
 /// 결과 불명 검토용: 현재 파일 상태를 승인 당시 기대값과 비교한다.
@@ -517,6 +527,34 @@ pub fn unified_diff(a: &str, b: &str, ctx: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_errors_keep_their_cause() {
+        use std::io::{Error, ErrorKind};
+        assert_eq!(write_error(Error::from(ErrorKind::StorageFull)).code, "storage_full");
+        assert_eq!(write_error(Error::from(ErrorKind::ReadOnlyFilesystem)).code, "read_only_filesystem");
+        assert_eq!(write_error(Error::from(ErrorKind::PermissionDenied)).code, "permission_denied");
+        assert_eq!(write_error(Error::from(ErrorKind::ResourceBusy)).code, "file_busy");
+        assert_eq!(write_error(Error::other("x")).code, "write_failed");
+    }
+
+    /// 쓰기 실패 시 임시 파일을 남기지 않고 원본을 그대로 둔다(권한 없는 폴더로 실제 실패를 만든다).
+    #[cfg(unix)]
+    #[test]
+    fn failed_atomic_write_keeps_original_and_leaves_no_staging() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("a.txt");
+        std::fs::write(&p, "before").unwrap();
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).unwrap();
+        let denied = std::fs::OpenOptions::new().write(true).create_new(true).open(dir.path().join("probe")).is_err();
+        let r = atomic_write(&p, b"after");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+        if !denied { return; } // root는 권한 검사를 우회하므로 이 환경에선 확인할 수 없다.
+        assert_eq!(r.unwrap_err().code, "permission_denied");
+        assert_eq!(std::fs::read_to_string(&p).unwrap(), "before");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn resolve_blocks_escape() {
