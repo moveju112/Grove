@@ -139,6 +139,7 @@ test("기기 기본값 복원은 선택 필드의 동시 변경을 확인하고 
     await dialog(page).getByRole("button", { name: "복원 창 닫기", exact: true }).click();
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem("grove.device.prefs")!))).toEqual({
         theme: "system", fontSize: 15, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
+        notifyDone: false, notifyApproval: false, notifyServer: false, notifySound: false,
     });
     expect(await page.evaluate(() => ({
         device: localStorage.getItem("grove.device.id"), draft: localStorage.getItem("grove.draft.reset-test"), layout: localStorage.getItem("grove.layout.reset-test"),

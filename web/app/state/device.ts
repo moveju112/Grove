@@ -39,9 +39,14 @@ export type Prefs = {
     expandTools: boolean;
     clock: "system" | "24h" | "12h";
     timeStyle: "absolute" | "relative";
+    notifyDone: boolean;
+    notifyApproval: boolean;
+    notifyServer: boolean;
+    notifySound: boolean;
 };
 export const defaultPrefs: Prefs = {
     theme: "system", fontSize: 15, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
+    notifyDone: false, notifyApproval: false, notifyServer: false, notifySound: false,
 };
 const CLOCKS: readonly Prefs["clock"][] = ["system", "24h", "12h"];
 const TIME_STYLES: readonly Prefs["timeStyle"][] = ["absolute", "relative"];

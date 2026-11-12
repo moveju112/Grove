@@ -2,6 +2,7 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, authGeneration, isLoggedIn, newKey } from "../api/client";
 import { EventStream } from "../api/events";
 import type { Project } from "../api/generated";
+import { notifyAttention, onOpenSession } from "../state/attention";
 import { applyPrefs, isNarrow, layoutKey, loadPrefs } from "../state/device";
 import * as L from "../state/layout";
 import { LayoutPersistence } from "../state/layoutPersistence";
@@ -63,7 +64,10 @@ export function Workspace() {
     const stream = useRef<EventStream | null>(null);
     useEffect(() => {
         const s = new EventStream({
-            onEvent: applyEvent,
+            onEvent: (e) => {
+                applyEvent(e);
+                notifyAttention(e);
+            },
             onPartial: (sid, snap) => setLive((l) => ({ ...l, partials: { ...l.partials, [sid]: snap } })),
             onResync: () => resyncAll(),
             onStatus: (status, retryAt) => setLive((l) => ({ ...l, status, retryAt })),
@@ -127,6 +131,8 @@ export function Workspace() {
         [updateAt],
     );
     const open: Opener = useCallback((t, how) => openAt(key, t, how), [key, openAt]);
+    // OS 알림을 누르면 해당 대화를 현재 배치에 연다(SETTINGS-014).
+    useEffect(() => onOpenSession((projectId, sessionId) => open({ kind: "session", project_id: projectId, resource_id: sessionId, title: "대화" })), [open]);
 
     const [adding, setAdding] = useState(false);
     const projectAdded = (p: Project) => {

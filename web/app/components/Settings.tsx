@@ -3,6 +3,7 @@ import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
 import { type Prefs, defaultPrefs, savePrefs, usePrefs } from "../state/device";
 import { When } from "./When";
+import { notificationPermission, showAttention } from "../state/attention";
 import { useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
 import { UsagePanel } from "./UsagePanel";
@@ -32,6 +33,7 @@ export const ITEMS: Item[] = [
     { id: "theme", menu: "display", label: "테마", keywords: "dark light 다크 라이트 색", scope: "이 기기" },
     { id: "font", menu: "display", label: "글자 크기", keywords: "font size 글꼴", scope: "이 기기" },
     { id: "enter", menu: "display", label: "Enter로 보내기", keywords: "enter send 입력 단축키", scope: "이 기기" },
+    { id: "notify", menu: "display", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
     { id: "devices", menu: "devices", label: "기기 토큰", keywords: "device token pair 페어링 폐기 분실", scope: "서버 전체" },
@@ -103,7 +105,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
                 {visible("definitions") && <Section item="definitions"><Definitions /></Section>}
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
-                {(["theme", "font", "enter", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
+                {(["theme", "font", "enter", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
                 {visible("devices") && <Section item="devices"><Devices /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
                 {visible("logout") && <Section item="logout"><button onClick={() => void logout()}>이 브라우저에서 로그아웃</button></Section>}
@@ -184,6 +186,11 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <DeviceSettingsReset fields={["enterToSend"]} label="입력 기본값 복원" />
                 </Section>
             )}
+            {show("notify") && (
+                <Section item="notify">
+                    <NotifyPrefs prefs={p} set={set} />
+                </Section>
+            )}
             {show("time") && (
                 <Section item="time">
                     <label>
@@ -224,6 +231,57 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <DeviceSettingsReset fields={["reasoning", "answerOnly", "expandTools"]} label="대화 표시 기본값 복원" />
                 </Section>
             )}
+        </>
+    );
+}
+
+const PERMISSION_LABEL: Record<NotificationPermission | "unsupported", string> = {
+    granted: "허용됨",
+    default: "아직 묻지 않음",
+    denied: "브라우저에서 차단됨(브라우저 사이트 설정에서 바꿀 수 있습니다)",
+    unsupported: "이 브라우저는 알림을 지원하지 않습니다",
+};
+
+function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void }) {
+    const [permission, setPermission] = useState(notificationPermission);
+    const [testSent, setTestSent] = useState(false);
+    // 알림 종류를 켜면 그때 브라우저 권한을 묻는다. 거부돼도 소리 설정은 따로 쓸 수 있다.
+    const toggle = async (key: "notifyDone" | "notifyApproval" | "notifyServer", on: boolean) => {
+        set({ ...p, [key]: on });
+        if (on && permission === "default") setPermission(await Notification.requestPermission());
+    };
+    const kinds = [
+        ["notifyDone", "작업 완료·실패"],
+        ["notifyApproval", "승인 요청"],
+        ["notifyServer", "예약·업데이트 알림"],
+    ] as const;
+    return (
+        <>
+            <p className="muted small">앱이 열려 있지만 이 화면을 보고 있지 않을 때 이 기기에서 알립니다. 대화 내용은 알림에 넣지 않으며, 같은 브라우저의 여러 탭은 한 번만 알립니다. 앱을 닫은 동안의 사건은 알림 목록에서 확인하세요.</p>
+            {kinds.map(([key, label]) => (
+                <label className="check" key={key}>
+                    <input type="checkbox" checked={p[key]} onChange={(e) => void toggle(key, e.target.checked)} /> {label}
+                </label>
+            ))}
+            <label className="check">
+                <input type="checkbox" checked={p.notifySound} onChange={(e) => set({ ...p, notifySound: e.target.checked })} /> 알림 소리
+            </label>
+            <p className="small" data-testid="notify-permission">브라우저 알림 권한: {PERMISSION_LABEL[permission]}</p>
+            {(p.notifyDone || p.notifyApproval || p.notifyServer) && permission !== "granted" && (
+                <p className="warn small" role="status">브라우저 권한이 없어 화면 알림은 표시되지 않습니다{p.notifySound ? ". 소리만 재생합니다." : "."}</p>
+            )}
+            {permission === "default" && <button className="ghost small" onClick={() => void Notification.requestPermission().then(setPermission)}>브라우저 알림 허용</button>}
+            <button
+                className="ghost small"
+                onClick={() => {
+                    showAttention({ kind: "server", tag: `test:${Date.now()}`, title: "Grove 알림 시험", body: "이 기기의 알림이 동작합니다.", projectId: null, sessionId: null }, p.notifySound);
+                    setTestSent(true);
+                }}
+            >
+                시험 알림 보내기
+            </button>
+            {testSent && <span className="muted small" role="status"> 보냈습니다{permission === "granted" ? "" : "(권한이 없어 화면 알림은 생략)"}.</span>}
+            <DeviceSettingsReset fields={["notifyDone", "notifyApproval", "notifyServer", "notifySound"]} label="알림 기본값 복원" />
         </>
     );
 }
