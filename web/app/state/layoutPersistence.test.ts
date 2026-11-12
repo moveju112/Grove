@@ -1,0 +1,215 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { ApiError } from "../api/client";
+import { emptyLayout, openTab, setDirection, setRatio, splitLeaf, type Layout } from "./layout";
+import { LayoutPersistence } from "./layoutPersistence";
+
+function layout(): Layout {
+    const base = emptyLayout();
+    const first = openTab(base, base.focused_leaf, { kind: "settings", title: "설정" });
+    return splitLeaf(first, first.focused_leaf, "row", { kind: "project", project_id: "A", title: "A" });
+}
+function deferred<T>() {
+    let resolve!: (v: T) => void;
+    let reject!: (e: unknown) => void;
+    const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+    return { promise, resolve, reject };
+}
+function fixture(initial: Layout = layout()) {
+    const values = new Map<string, string>();
+    const store = {
+        getItem: vi.fn((key: string) => values.get(key) ?? null),
+        setItem: vi.fn((key: string, value: string) => { values.set(key, value); }),
+    };
+    let n = 0;
+    const get = vi.fn(async () => ({ layout: initial as unknown, revision: 3 }));
+    const put = vi.fn(async (_attempt: unknown, _signal: AbortSignal) => ({ revision: ++n + 3 }));
+    const notice = vi.fn();
+    const active = vi.fn(() => true);
+    const options = { store, get, put, notice, active, newKey: () => `key-${++n}` };
+    const current = new LayoutPersistence("pc", options);
+    return { current, values, options, initial, get, put, store, notice, active,
+        copy: () => JSON.parse(values.get("grove.layout.pc")!) };
+}
+
+describe("기기별 배치 저장", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("서버에 미반영된 로컬 탭·분할·비율·활성 pane을 먼저 복원한다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        const edited = setRatio(setDirection(f.initial, [], "column"), [], 0.35);
+        f.current.change(edited);
+        f.current.dispose();
+        const next = new LayoutPersistence("pc", f.options);
+        expect(await next.restore()).toEqual(edited);
+        expect(f.copy().dirty).toBe(true);
+        next.dispose();
+    });
+
+    it("동기화된 사본보다 서버를 우선하고 기존 plain JSON은 오프라인에서도 읽는다", async () => {
+        const f = fixture();
+        const newer = setRatio(f.initial, [], 0.7);
+        f.values.set("grove.layout.pc", JSON.stringify(newer));
+        expect(await f.current.restore()).toEqual(f.initial);
+        f.current.dispose();
+        f.values.set("grove.layout.pc", JSON.stringify(newer));
+        f.get.mockRejectedValue(new Error("offline"));
+        const offline = new LayoutPersistence("pc", f.options);
+        expect(await offline.restore()).toEqual(newer);
+        offline.dispose();
+    });
+
+    it("손상된 JSON·잘못된 트리·미지원 format을 복원하지 않는다", async () => {
+        for (const raw of ["{", '{"schema":1,"root":{"type":"split","children":[null,null]}}', '{"format":99}']) {
+            const f = fixture();
+            f.values.set("grove.layout.pc", raw);
+            expect(await f.current.restore()).toEqual(f.initial);
+            f.current.dispose();
+        }
+    });
+
+    it("손상된 보류 요청은 새 키로 재구성해 자동 전송하지 않는다", async () => {
+        for (const attempt of [null, false, 0, {}, { key: "", expected_revision: 0, layout: layout() }]) {
+            const f = fixture();
+            f.values.set("grove.layout.pc", JSON.stringify({
+                format: 1, layout: setRatio(f.initial, [], 0.8), revision: 1, dirty: true, edit: "corrupt", attempt,
+            }));
+            expect(await f.current.restore()).toEqual(f.initial);
+            await vi.advanceTimersByTimeAsync(600);
+            expect(f.put).not.toHaveBeenCalled();
+            f.current.dispose();
+        }
+    });
+
+    it("화면을 떠난 뒤 늦게 끝난 복원 GET은 배치나 사본을 갱신하지 않는다", async () => {
+        const f = fixture();
+        const pending = deferred<{ layout: unknown; revision: number }>();
+        f.get.mockImplementationOnce(() => pending.promise);
+        const restoring = f.current.restore();
+        f.current.dispose();
+        pending.resolve({ layout: f.initial, revision: 99 });
+        expect(await restoring).toBeNull();
+        expect(f.values.size).toBe(0);
+    });
+
+    it("저장 응답을 기다리는 중의 새 편집을 이전 응답으로 지우지 않고 순서대로 저장한다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        const pending = deferred<{ revision: number }>();
+        f.put.mockImplementationOnce(() => pending.promise);
+        const first = setRatio(f.initial, [], 0.3);
+        const latest = setRatio(f.initial, [], 0.6);
+        f.current.change(first);
+        const running = f.current.flush();
+        f.current.change(latest);
+        await f.current.flush();
+        expect(f.put).toHaveBeenCalledTimes(1);
+        pending.resolve({ revision: 4 });
+        await running;
+        expect(f.put).toHaveBeenCalledTimes(2);
+        expect(f.put.mock.calls[1]![0]).toMatchObject({ layout: latest, expected_revision: 4 });
+        expect(f.copy()).toMatchObject({ layout: latest, dirty: false });
+        f.current.dispose();
+    });
+
+    it("응답 유실 후 재실행해도 원래 본문·revision·요청 키부터 확인한다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        f.current.change(setRatio(f.initial, [], 0.3));
+        f.put.mockRejectedValueOnce(new Error("response lost"));
+        await f.current.flush();
+        const attempt = f.put.mock.calls[0]![0];
+        const latest = setRatio(f.initial, [], 0.8);
+        f.current.change(latest);
+        f.current.dispose();
+        const restored = new LayoutPersistence("pc", f.options);
+        expect(await restored.restore()).toEqual(latest);
+        await restored.flush();
+        expect(f.put.mock.calls[1]![0]).toEqual(attempt);
+        expect(f.put.mock.calls[2]![0]).toMatchObject({ layout: latest });
+        expect(f.copy()).toMatchObject({ layout: latest, dirty: false });
+        restored.dispose();
+    });
+
+    it("CAS 충돌은 최신 revision 위에서 한 번만 새 요청으로 저장한다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        const conflict = new ApiError(409, "revision_conflict", "conflict", false, { current: { revision: 9 } });
+        f.put.mockRejectedValueOnce(conflict).mockRejectedValueOnce(conflict);
+        f.current.change(setRatio(f.initial, [], 0.3));
+        await f.current.flush();
+        expect(f.put).toHaveBeenCalledTimes(2);
+        const first = f.put.mock.calls[0]![0] as { key: string };
+        const second = f.put.mock.calls[1]![0] as { key: string };
+        expect(second).toMatchObject({ expected_revision: 9 });
+        expect(second.key).not.toBe(first.key);
+        expect(f.copy().dirty).toBe(true);
+        expect(f.notice).toHaveBeenLastCalledWith(expect.stringContaining("서버에 저장하지 못했습니다"));
+        f.current.dispose();
+    });
+
+    it("로그아웃 뒤 늦은 저장 완료는 삭제한 사본이나 안내를 다시 만들지 않는다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        const pending = deferred<{ revision: number }>();
+        f.put.mockImplementationOnce(() => pending.promise);
+        f.current.change(setRatio(f.initial, [], 0.3));
+        const running = f.current.flush();
+        f.active.mockReturnValue(false);
+        f.values.clear();
+        pending.resolve({ revision: 4 });
+        await running;
+        expect(f.values.size).toBe(0);
+        expect(f.notice).not.toHaveBeenCalled();
+        f.current.dispose();
+    });
+
+    it("폭 전환·unmount는 타이머와 요청을 폐기하고 다른 배치 revision에 간섭하지 않는다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        const pending = deferred<{ revision: number }>();
+        f.put.mockImplementationOnce(() => pending.promise);
+        f.current.change(setRatio(f.initial, [], 0.3));
+        const running = f.current.flush();
+        const signal = f.put.mock.calls[0]![1];
+        f.current.dispose();
+        const saved = f.values.get("grove.layout.pc");
+        pending.resolve({ revision: 99 });
+        await running;
+        await vi.advanceTimersByTimeAsync(600);
+        expect(signal.aborted).toBe(true);
+        expect(f.values.get("grove.layout.pc")).toBe(saved);
+        expect(f.put).toHaveBeenCalledTimes(1);
+    });
+
+    it("다른 창의 새 로컬 사본을 늦은 저장 응답으로 덮어쓰지 않는다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        const pending = deferred<{ revision: number }>();
+        f.put.mockImplementationOnce(() => pending.promise);
+        f.current.change(setRatio(f.initial, [], 0.3));
+        const running = f.current.flush();
+        const other = { ...f.copy(), edit: "other-window", layout: setRatio(f.initial, [], 0.8) };
+        f.values.set("grove.layout.pc", JSON.stringify(other));
+        pending.resolve({ revision: 4 });
+        await running;
+        expect(f.copy()).toEqual(other);
+        f.current.dispose();
+    });
+
+    it("기기 저장 공간 부족은 알리고 복구 키를 보존하지 못한 변경은 전송하지 않는다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        f.store.setItem.mockImplementation(() => { throw new Error("quota"); });
+        f.current.change(setRatio(f.initial, [], 0.3));
+        await f.current.flush();
+        expect(f.put).not.toHaveBeenCalled();
+        expect(f.notice).toHaveBeenCalledWith(expect.stringContaining("이 기기에 배치를 보존하지 못했습니다"));
+        f.store.setItem.mockImplementation((key, value) => { f.values.set(key, value); });
+        await f.current.flush();
+        expect(f.put).toHaveBeenCalledTimes(1);
+        expect(f.copy().dirty).toBe(false);
+        f.current.dispose();
+    });
+});

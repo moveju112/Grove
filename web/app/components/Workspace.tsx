@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ApiError, api } from "../api/client";
+import { api, authGeneration, isLoggedIn, newKey } from "../api/client";
 import { EventStream } from "../api/events";
 import type { Project } from "../api/generated";
 import { applyPrefs, isNarrow, layoutKey, loadPrefs } from "../state/device";
 import * as L from "../state/layout";
+import { LayoutPersistence } from "../state/layoutPersistence";
 import { applyEvent, resyncAll, setLive, useLive, useQuery } from "../state/store";
 import { AddProjectDialog } from "./AddProject";
 import { BotsPanel } from "./BotsPanel";
@@ -16,7 +17,6 @@ import { Hosts } from "./Hosts";
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
 
-const LOCAL_LAYOUT = "grove.layout.";
 const PROJECT_SORT = "grove.projectSort";
 
 function useNarrow(): boolean {
@@ -36,8 +36,7 @@ export function Workspace() {
     const [layout, setLayout] = useState<L.Layout | null>(null);
     const [sidebar, setSidebar] = useState(!isNarrow());
     const [notice, setNotice] = useState<string | null>(null);
-    const revision = useRef(0);
-    const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+    const persistence = useRef<LayoutPersistence | null>(null);
     const key = useMemo(() => layoutKey(), [narrow]); // eslint-disable-line react-hooks/exhaustive-deps
     // 프로젝트 목록 정렬은 기기별 선택(PROJECT-002): 이름순 또는 최근 활동순.
     const [projectSort, setProjectSort] = useState<"name" | "recent">(() => (localStorage.getItem(PROJECT_SORT) === "recent" ? "recent" : "name"));
@@ -69,72 +68,34 @@ export function Workspace() {
         stream.current?.setSessions(visible);
     }, [layout]);
 
-    // 기기별 배치 복원: 서버 → 로컬 사본 → 빈 배치
+    // 미반영 로컬 배치 → 서버 → 로컬 fallback. 기기/화면 폭이 바뀌면 이전 저장 수명을 끝낸다.
     useEffect(() => {
-        let alive = true;
         setLayout(null);
-        void (async () => {
-            let restored: L.Layout | null = null;
-            try {
-                const r = await api.get<{ layout: unknown; revision: number }>(`/layouts/${key}`);
-                revision.current = r.revision;
-                if (L.isValid(r.layout)) restored = r.layout;
-            } catch {
-                /* 오프라인이면 로컬 사본 */
-            }
-            if (!restored) {
-                try {
-                    const local = JSON.parse(localStorage.getItem(LOCAL_LAYOUT + key) ?? "null");
-                    if (L.isValid(local)) restored = local;
-                } catch {
-                    /* 손상된 사본 무시 */
-                }
-            }
-            if (alive) setLayout(restored ?? L.emptyLayout());
-        })();
+        const owner = authGeneration();
+        const store = new LayoutPersistence(key, {
+            store: localStorage, newKey, notice: setNotice,
+            active: () => owner === authGeneration() && isLoggedIn(),
+            get: (signal) => api.get(`/layouts/${key}`, { signal, timeoutMs: 10_000 }),
+            put: ({ key: requestKey, ...body }, signal) => api.put(`/layouts/${key}`, body, { key: requestKey, signal, timeoutMs: 10_000 }),
+        });
+        persistence.current = store;
+        void store.restore().then((restored) => { if (restored) setLayout(restored); });
         return () => {
-            alive = false;
+            store.dispose();
+            if (persistence.current === store) persistence.current = null;
         };
     }, [key]);
-
-    const persist = useCallback(
-        (next: L.Layout) => {
-            localStorage.setItem(LOCAL_LAYOUT + key, JSON.stringify(next));
-            if (saveTimer.current) clearTimeout(saveTimer.current);
-            saveTimer.current = setTimeout(async () => {
-                const put = () => api.put<{ revision: number }>(`/layouts/${key}`, { expected_revision: revision.current, layout: next });
-                try {
-                    revision.current = (await put()).revision;
-                } catch (e) {
-                    if (e instanceof ApiError && e.code === "revision_conflict") {
-                        // 같은 기기의 다른 창이 바꿨다: 이 창의 배치를 최신 revision 위에 저장한다(기기 UI 상태, 마지막 저장 우선).
-                        const cur = (e.details as { current?: { revision?: number } })?.current;
-                        revision.current = cur?.revision ?? revision.current;
-                        try {
-                            revision.current = (await put()).revision;
-                            setNotice("다른 창에서 바뀐 배치를 이 창의 배치로 덮어썼습니다");
-                        } catch {
-                            setNotice("배치를 서버에 저장하지 못했습니다(이 기기에는 보존)");
-                        }
-                    } else {
-                        setNotice("배치를 서버에 저장하지 못했습니다(이 기기에는 보존)");
-                    }
-                }
-            }, 500);
-        },
-        [key],
-    );
 
     const update = useCallback(
         (f: (l: L.Layout) => L.Layout) => {
             setLayout((cur) => {
                 if (!cur) return cur;
                 const next = f(cur);
-                if (next !== cur) persist(next);
+                if (next !== cur && persistence.current?.key === key) persistence.current.change(next);
                 return next;
             });
         },
-        [persist],
+        [key],
     );
 
     const open: Opener = useCallback(
@@ -177,7 +138,8 @@ export function Workspace() {
             {adding && <AddProjectDialog onDone={projectAdded} onClose={() => setAdding(false)} />}
             {notice && (
                 <div className="notice" role="status">
-                    {notice} <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
+                    {notice} <button className="ghost" onClick={() => { setNotice(null); void persistence.current?.flush(); }}>배치 다시 저장</button>
+                    <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
                 </div>
             )}
             <div className="body">
