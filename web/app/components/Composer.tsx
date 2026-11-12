@@ -354,13 +354,13 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
             </div>}
             {state?.kind === "server_newer" && (
                 <div className="draft-note">
-                    다른 기기({state.server.device_name})의 서버 초안이 있습니다.
+                    다른 기기({state.server.device_name}) 또는 입력 사본에서 저장한 서버 초안이 있습니다.
                     <button className="ghost small" onClick={() => loadServer(state.server, "replace")}>불러오기</button>
                 </div>
             )}
             {conflict && (
                 <div className="draft-note warn" role="alert">
-                    서버 초안이 다른 기기({conflict.device_name})에서 바뀌었습니다. 내 초안은 이 기기에 보존되어 있습니다.
+                    서버 초안이 다른 기기({conflict.device_name}) 또는 입력 사본에서 바뀌었습니다. 내 초안은 이 탭에 보존되어 있습니다.
                     <details>
                         <summary>서버 초안 보기</summary>
                         <pre>{conflict.text}</pre>

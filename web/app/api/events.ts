@@ -69,16 +69,24 @@ export class EventStream {
         while (!this.stopped) {
             this.h.onStatus(this.everLive ? "reconnecting" : "connecting");
             this.abort = new AbortController();
+            const signal = this.abort.signal;
+            const requireActive = () => {
+                if (this.stopped || signal.aborted) throw new DOMException("stream retired", "AbortError");
+            };
             let resync = false;
+            let reader: ReadableStreamDefaultReader<string> | null = null;
             try {
                 const q = new URLSearchParams({ sessions: this.sessions.join(",") });
                 if (this.cursor.seq !== null) q.set("cursor", String(this.cursor.seq));
                 let token = accessToken();
-                let resp = await fetch(`/api/v1/events?${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal: this.abort.signal });
+                let resp = await fetch(`/api/v1/events?${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal });
+                requireActive();
                 if (resp.status === 401 && (await refresh())) {
+                    requireActive();
                     token = accessToken();
-                    resp = await fetch(`/api/v1/events?${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal: this.abort.signal });
+                    resp = await fetch(`/api/v1/events?${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal });
                 }
+                requireActive();
                 checkProtocol(resp);
                 if (resp.status === 401) {
                     // refresh도 거부됨: 만료. 재시도해도 소용없으므로 멈춘다(로그인 화면이 이유를 안내한다).
@@ -86,12 +94,14 @@ export class EventStream {
                     break;
                 }
                 if (!resp.ok || !resp.body) throw new Error(`events HTTP ${resp.status}`);
-                const reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
+                reader = resp.body.pipeThrough(new TextDecoderStream()).getReader();
                 const parser = new FrameParser();
                 for (;;) {
                     const { value, done } = await reader.read();
+                    if (this.stopped || signal.aborted) break;
                     if (done) break;
                     for (const f of parser.push(value)) {
+                        if (resync || this.stopped || signal.aborted) break;
                         if (f.event === "hello") {
                             this.attempt = 0;
                             this.everLive = true;
@@ -113,10 +123,16 @@ export class EventStream {
                             resync = true;
                         }
                     }
-                    if (resync) break;
+                    if (resync || this.stopped || signal.aborted) break;
                 }
             } catch {
                 // 아래에서 재접속
+            } finally {
+                if (reader) {
+                    try { await reader.cancel(); }
+                    catch { /* 이미 오류·abort로 닫힌 reader의 cancel은 다시 거절될 수 있다. */ }
+                    reader.releaseLock();
+                }
             }
             if (this.stopped) break;
             if (resync) {
