@@ -39,6 +39,10 @@ export type Prefs = {
     expandTools: boolean;
 };
 export const defaultPrefs: Prefs = { theme: "system", fontSize: 15, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false };
+export function restoredPrefs(current: Prefs, expected: Prefs, fields: (keyof Prefs)[]): Prefs {
+    if (fields.some((key) => current[key] !== expected[key])) throw new Error("확인 후 기기 설정이 바뀌었습니다. 다시 비교하세요.");
+    return { ...current, ...Object.fromEntries(fields.map((key) => [key, defaultPrefs[key]])) };
+}
 const PREFS_EVENT = "grove-prefs";
 
 export function loadPrefs(): Prefs {

@@ -3,14 +3,23 @@
 use super::{MAX_OUTPUT, Planned, ToolError, ToolResult};
 use crate::util::sha256_hex;
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
+use crate::project_fs::ProjectFs;
 
 /// 대형 파일 편집 상한.
 pub const MAX_EDIT_BYTES: u64 = 8 * 1024 * 1024;
 const MAX_LINE_CHARS: usize = 2000;
 /// read 한 번에 돌려주는 최대 줄 수. 더 큰 limit은 거부하지 않고 이 값으로 줄인다.
 const MAX_READ_LINES: u64 = 5000;
+
+pub(crate) fn project_scope(root: &Path) -> ToolResult<ProjectFs> {
+    ProjectFs::open(root).map_err(|e| ToolError::new("project_unavailable", e.to_string()))
+}
+
+pub(crate) fn read_project(root: &Path, path: &Path, max: u64) -> ToolResult<Vec<u8>> {
+    project_scope(root)?.read(path, max).map_err(|e| ToolError::new("read_failed", e.to_string()))
+}
 
 /// 프로젝트 root 안의 경로로 해석한다. 존재하는 경로는 canonicalize로 symlink 탈출까지 막는다.
 /// 존재하지 않는 경로(새 파일)는 가장 가까운 존재하는 조상을 canonicalize해 검사한다.
@@ -151,18 +160,20 @@ pub fn read(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
         return read_batch(files, root);
     }
     let p = target_path(planned, root)?;
-    let meta = std::fs::metadata(&p).map_err(|e| match e.kind() {
+    let f = project_scope(root)?.open_file(&p).map_err(|e| match e.kind() {
         std::io::ErrorKind::NotFound => ToolError::new("not_found", "파일이 없습니다"),
+        std::io::ErrorKind::IsADirectory => ToolError::new("is_directory", "디렉터리입니다. list를 사용하세요"),
+        std::io::ErrorKind::InvalidInput => ToolError::new("special_file", "일반 파일이 아닙니다"),
         std::io::ErrorKind::PermissionDenied => ToolError::new("permission_denied", "읽기 권한이 없습니다"),
         _ => ToolError::new("read_failed", e.to_string()),
     })?;
+    let meta = f.metadata().map_err(|e| ToolError::new("read_failed", e.to_string()))?;
     if meta.is_dir() {
         return Err(ToolError::new("is_directory", "디렉터리입니다. list를 사용하세요"));
     }
     if !meta.is_file() {
         return Err(ToolError::new("special_file", "일반 파일이 아닙니다"));
     }
-    let f = std::fs::File::open(&p).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
     let mut head = vec![0u8; 8192.min(meta.len() as usize)];
     let mut fr = BufReader::new(f);
     fr.read_exact(&mut head).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
@@ -174,7 +185,7 @@ pub fn read(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
         }));
     }
     // 전체 적재 없이 줄 단위로 읽는다(TOOL-011).
-    let f = std::fs::File::open(&p).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
+    fr.seek(SeekFrom::Start(0)).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
     let offset = args["offset"].as_u64().unwrap_or(1).max(1) as usize;
     let asked = args["limit"].as_u64().unwrap_or(2000);
     let limit = asked.min(MAX_READ_LINES) as usize;
@@ -184,7 +195,7 @@ pub fn read(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
     let mut truncated = false;
     let mut invalid_utf8 = false;
     let mut total_lines = None;
-    let mut reader = BufReader::new(f);
+    let mut reader = fr;
     let mut buf = Vec::new();
     loop {
         buf.clear();
@@ -233,8 +244,11 @@ pub fn read(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
 }
 
 pub fn file_sha(p: &Path) -> std::io::Result<String> {
+    reader_sha(std::fs::File::open(p)?)
+}
+
+pub(crate) fn reader_sha(mut f: impl Read) -> std::io::Result<String> {
     use sha2::{Digest, Sha256};
-    let mut f = std::fs::File::open(p)?;
     let mut h = Sha256::new();
     let mut buf = [0u8; 64 * 1024];
     loop {
@@ -249,14 +263,16 @@ pub fn file_sha(p: &Path) -> std::io::Result<String> {
 
 pub fn list(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
     let p = target_path(planned, root)?;
-    if !p.is_dir() {
-        return Err(ToolError::new(if p.exists() { "not_directory" } else { "not_found" }, "디렉터리가 아닙니다"));
+    let scope = project_scope(root)?;
+    let meta = scope.metadata(&p).map_err(|e| ToolError::new("not_found", e.to_string()))?;
+    if !meta.is_dir() {
+        return Err(ToolError::new("not_directory", "디렉터리가 아닙니다"));
     }
     let hidden = args["hidden"].as_bool().unwrap_or(false);
     let meta = args["meta"].as_bool().unwrap_or(false);
     let offset = args["offset"].as_u64().unwrap_or(0) as usize;
     let limit = args["limit"].as_u64().unwrap_or(200) as usize;
-    let mut entries: Vec<_> = std::fs::read_dir(&p)
+    let mut entries: Vec<_> = scope.dir.read_dir(scope.relative(&p).map_err(|e| ToolError::new("invalid_path", e.to_string()))?)
         .map_err(|e| ToolError::new("read_failed", e.to_string()))?
         .filter_map(Result::ok)
         .filter(|e| hidden || !e.file_name().to_string_lossy().starts_with('.'))
@@ -279,10 +295,10 @@ pub fn list(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
             if meta {
                 if let Ok(m) = e.metadata() {
                     v["size"] = json!(m.len());
-                    v["mtime"] = json!(m.modified().ok().map(|t| crate::util::fmt_time(t.into())));
+                    v["mtime"] = json!(m.modified().ok().map(|t| crate::util::fmt_time(t.into_std().into())));
                     #[cfg(unix)]
                     {
-                        use std::os::unix::fs::PermissionsExt;
+                        use cap_std::fs::PermissionsExt;
                         v["mode"] = json!(format!("{:o}", m.permissions().mode() & 0o7777));
                     }
                 }
@@ -319,41 +335,33 @@ fn preview(s: &str) -> String {
 /// 새 파일만 만든다(create_new). 승인 이후 누군가 파일을 만들었으면 덮어쓰지 않고 실패한다.
 pub fn write_new(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
     let p = target_path(planned, root)?;
+    let scope = project_scope(root)?;
     let content = args["content"].as_str().unwrap_or("");
     if sha256_hex(content.as_bytes()) != planned.target["content_sha256"].as_str().unwrap_or("") {
         return Err(ToolError::new("target_mismatch", "승인된 내용과 실행 내용이 다릅니다"));
     }
     if let Some(parent) = p.parent() {
-        std::fs::create_dir_all(parent).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
-        // 디렉터리 생성 중 symlink로 경계를 벗어나지 않았는지 재검사
-        resolve(root, planned.target["path"].as_str().unwrap_or(""))?;
+        scope.create_dir_all(parent).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
     }
-    use std::io::Write;
-    let mut f = std::fs::OpenOptions::new().write(true).create_new(true).open(&p).map_err(|e| match e.kind() {
+    scope.write_new(&p, content.as_bytes()).map_err(|e| match e.kind() {
         std::io::ErrorKind::AlreadyExists => ToolError::new("already_exists", "실행 시점에 파일이 이미 있어 덮어쓰지 않았습니다"),
         std::io::ErrorKind::PermissionDenied => ToolError::new("permission_denied", "쓰기 권한이 없습니다"),
         _ => ToolError::new("write_failed", e.to_string()),
     })?;
-    let res = f.write_all(content.as_bytes()).and_then(|_| f.sync_all());
-    if let Err(e) = res {
-        // 부분 파일을 남기지 않는다.
-        let _ = std::fs::remove_file(&p);
-        return Err(ToolError::new("write_failed", e.to_string()));
-    }
     Ok(json!({ "path": planned.target["path"], "created": true, "bytes": content.len(), "sha256": sha256_hex(content.as_bytes()) }))
 }
 
 pub fn plan_edit(args: &Value, root: &Path) -> ToolResult<Planned> {
     let rel = args["path"].as_str().unwrap_or("");
     let p = resolve(root, rel)?;
-    let meta = std::fs::metadata(&p).map_err(|_| ToolError::new("not_found", "파일이 없습니다"))?;
+    let meta = project_scope(root)?.metadata(&p).map_err(|_| ToolError::new("not_found", "파일이 없습니다"))?;
     if !meta.is_file() {
         return Err(ToolError::new("special_file", "일반 파일이 아닙니다"));
     }
     if meta.len() > MAX_EDIT_BYTES {
         return Err(ToolError::new("too_large", "편집하기에 너무 큰 파일입니다"));
     }
-    let bytes = std::fs::read(&p).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
+    let bytes = read_project(root, &p, MAX_EDIT_BYTES)?;
     let text = String::from_utf8(bytes.clone()).map_err(|_| ToolError::new("binary_file", "UTF-8 텍스트 파일만 편집할 수 있습니다"))?;
     let old = args["old_string"].as_str().unwrap_or("");
     let new = args["new_string"].as_str().unwrap_or("");
@@ -379,10 +387,8 @@ pub fn plan_edit(args: &Value, root: &Path) -> ToolResult<Planned> {
 pub fn edit(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
     let p = target_path(planned, root)?;
     let pre = planned.precondition.as_ref().ok_or_else(|| ToolError::new("internal", "precondition 없음"))?;
-    let bytes = std::fs::read(&p).map_err(|e| match e.kind() {
-        std::io::ErrorKind::NotFound => ToolError::new("not_found", "파일이 사라졌습니다"),
-        _ => ToolError::new("read_failed", e.to_string()),
-    })?;
+    let scope = project_scope(root)?;
+    let bytes = scope.read(&p, MAX_EDIT_BYTES).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
     if sha256_hex(&bytes) != pre["sha256"].as_str().unwrap_or("") {
         return Err(ToolError::new("conflict", "승인 이후 파일이 변경되어 편집하지 않았습니다"));
     }
@@ -393,7 +399,7 @@ pub fn edit(args: &Value, planned: &Planned, root: &Path) -> ToolResult<Value> {
     if sha256_hex(after.as_bytes()) != pre["after_sha256"].as_str().unwrap_or("") {
         return Err(ToolError::new("target_mismatch", "승인된 변경과 실행 결과가 다릅니다"));
     }
-    atomic_write(&p, after.as_bytes())?;
+    scope.atomic_write(&p, after.as_bytes()).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
     Ok(json!({ "path": planned.target["path"], "replacements": planned.target["replacements"], "before_sha256": pre["sha256"], "sha256": sha256_hex(after.as_bytes()) }))
 }
 
@@ -434,7 +440,7 @@ pub fn observe(planned: &Planned, root: &Path) -> Value {
         Ok(p) => p,
         Err(e) => return json!({ "error": e.message }),
     };
-    let current = file_sha(&p).ok();
+    let current = project_scope(root).ok().and_then(|s| s.open_file(&p).ok()).and_then(|f| reader_sha(f).ok());
     let pre = planned.precondition.clone().unwrap_or(Value::Null);
     let expected_after = pre["after_sha256"].as_str().map(String::from).or_else(|| planned.target["content_sha256"].as_str().map(String::from));
     let state = match (&current, &expected_after) {

@@ -119,6 +119,8 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
         expect(requests.filter((request) => JSON.stringify(request.messages).includes(f.prefix)).map((request) => request.model)).toEqual(["fixture-default-a"]);
         await search.fill("압축 요약 모델");
         await summary.getByRole("button", { name: "이 범위 값 지우기", exact: true }).click();
+        await page.getByRole("dialog", { name: "기본값 복원 확인", exact: true }).getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
+        await page.getByRole("dialog", { name: "기본값 복원 확인", exact: true }).getByRole("button", { name: "복원 창 닫기", exact: true }).click();
         await expect(summary.getByLabel("압축 요약 모델", { exact: true })).toHaveValue("");
     } finally { await f.cleanup(); }
 });

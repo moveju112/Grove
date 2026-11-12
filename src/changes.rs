@@ -52,12 +52,21 @@ pub struct FileState {
     pub bytes: Option<Vec<u8>>,
 }
 
-fn read_state(p: &FsPath) -> Option<FileState> {
-    let m = std::fs::metadata(p).ok().filter(|m| m.is_file())?;
+fn read_state(root: &FsPath, p: &FsPath) -> Option<FileState> {
+    use std::io::Read;
+    let scope = crate::project_fs::ProjectFs::open(root).ok()?;
+    let mut file = scope.open_file(p).ok()?;
+    let m = file.metadata().ok()?;
     if m.len() > MAX_STORED {
-        return crate::tools::fs::file_sha(p).ok().map(|sha| FileState { sha, bytes: None });
+        return crate::tools::fs::reader_sha(file).ok().map(|sha| FileState { sha, bytes: None });
     }
-    let bytes = std::fs::read(p).ok()?;
+    let mut bytes = Vec::new();
+    (&mut file).take(MAX_STORED + 1).read_to_end(&mut bytes).ok()?;
+    if bytes.len() as u64 > MAX_STORED {
+        use std::io::{Seek, SeekFrom};
+        file.seek(SeekFrom::Start(0)).ok()?;
+        return crate::tools::fs::reader_sha(file).ok().map(|sha| FileState { sha, bytes: None });
+    }
     Some(FileState { sha: sha256_hex(&bytes), bytes: Some(bytes) })
 }
 
@@ -68,7 +77,7 @@ pub struct Before {
 }
 
 pub fn capture(root: &FsPath, paths: &[String]) -> Before {
-    let files = paths.iter().map(|rel| (rel.clone(), resolve(root, rel).ok().and_then(|p| read_state(&p)))).collect();
+    let files = paths.iter().map(|rel| (rel.clone(), resolve(root, rel).ok().and_then(|p| read_state(root, &p)))).collect();
     Before { root: root.to_path_buf(), files }
 }
 
@@ -83,7 +92,7 @@ pub struct Rec {
 pub fn finalize(data_dir: &FsPath, b: Before) -> Vec<Rec> {
     let mut out = vec![];
     for (rel, before) in b.files {
-        let after = resolve(&b.root, &rel).ok().and_then(|p| read_state(&p));
+        let after = resolve(&b.root, &rel).ok().and_then(|p| read_state(&b.root, &p));
         if before.as_ref().map(|s| &s.sha) == after.as_ref().map(|s| &s.sha) {
             continue;
         }
@@ -332,7 +341,7 @@ pub async fn review(State(app): State<App>, _p: Principal, Path(session_id): Pat
         }
         base.into_iter()
             .map(|(path, baseline, stored)| {
-                let cur = resolve(&root, &path).ok().and_then(|p| read_state(&p));
+                let cur = resolve(&root, &path).ok().and_then(|p| read_state(&root, &p));
                 let cur_sha = cur.as_ref().map(|s| s.sha.clone());
                 let mut v = json!({ "path": path, "baseline_sha": baseline, "current_sha": cur_sha, "unchanged": baseline == cur_sha });
                 if !stored || cur.as_ref().is_some_and(|s| s.bytes.is_none()) {
@@ -404,7 +413,7 @@ fn prepare_apply(tx: &Connection, session_id: &str, ids: &[String], undo: bool) 
     let mut conflicts = vec![];
     for c in &sel {
         let p = resolve(&root, &c.path).map_err(|e| ApiError::invalid(e.message))?;
-        let cur = expect.entry(c.path.clone()).or_insert_with(|| read_state(&p).map(|s| s.sha)).clone();
+        let cur = expect.entry(c.path.clone()).or_insert_with(|| read_state(&root, &p).map(|s| s.sha)).clone();
         abs.insert(c.path.clone(), p);
         let (from, to) = if undo { (&c.after_sha, &c.before_sha) } else { (&c.before_sha, &c.after_sha) };
         if cur != *from {
@@ -448,6 +457,7 @@ async fn apply(app: App, p: Principal, headers: HeaderMap, session_id: String, i
         if plan.root != expected_root {
             return Err(ApiError::conflict("project_changed", "프로젝트 경로가 변경되어 파일을 바꾸지 않았습니다"));
         }
+        let scope = crate::project_fs::ProjectFs::open(&plan.root).map_err(|e| ApiError::invalid(e.to_string()))?;
         let sel = plan.selected;
         let abs = plan.paths;
         // 2) 쓰기: 실패하면 이미 쓴 파일을 원래대로 되돌린다.
@@ -455,24 +465,24 @@ async fn apply(app: App, p: Principal, headers: HeaderMap, session_id: String, i
         for c in &sel {
             let p = &abs[&c.path];
             let to = if undo { &c.before_sha } else { &c.after_sha };
-            let prev = std::fs::read(p).ok();
+            let prev = scope.read(p, MAX_STORED).ok();
             let res = match to {
-                None => std::fs::remove_file(p).map_err(|e| e.to_string()),
+                None => scope.remove_file(p).map_err(|e| e.to_string()),
                 Some(sha) => match get_blob(&dd, sha) {
                     None => Err("보관한 내용을 찾을 수 없습니다".to_string()),
-                    Some(bytes) => {
+                    Some(bytes) => (|| -> std::io::Result<()> {
                         if let Some(parent) = p.parent() {
-                            let _ = std::fs::create_dir_all(parent);
+                            scope.create_dir_all(parent)?;
                         }
-                        atomic_write(p, &bytes).map_err(|e| e.message)
-                    }
+                        scope.atomic_write(p, &bytes)
+                    })().map_err(|e| e.to_string()),
                 },
             };
             if let Err(e) = res {
                 for (q, old) in done.into_iter().rev() {
                     let _ = match old {
-                        Some(b) => atomic_write(&q, &b).map_err(|e| e.message),
-                        None => std::fs::remove_file(&q).map_err(|e| e.to_string()),
+                        Some(b) => scope.atomic_write(&q, &b).map_err(|e| e.to_string()),
+                        None => scope.remove_file(&q).map_err(|e| e.to_string()),
                     };
                 }
                 return Err(ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "write_failed", format!("{}: {e} (원본과 변경 이력을 확인하세요)", c.path)));

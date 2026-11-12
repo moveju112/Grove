@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
-import { type Prefs, loadPrefs, savePrefs } from "../state/device";
+import { type Prefs, defaultPrefs, savePrefs, usePrefs } from "../state/device";
 import { useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
 import { UsagePanel } from "./UsagePanel";
@@ -11,6 +11,7 @@ import { ProfileCapabilities } from "./ProfileCapabilities";
 import { ProfileContextPolicy } from "./ProfileContextPolicy";
 import { Memories } from "./Memories";
 import { useCapability } from "../state/capabilities";
+import { DeviceSettingsReset } from "./SettingsReset";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -91,7 +92,8 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
             </nav>
             <div className="settings-body">
                 {needle && <p className="muted">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</p>}
-                {serverDefs.length > 0 && <ScopedSettings defs={serverDefs} target={target} />}
+                {serverDefs.length > 0 && <ScopedSettings defs={serverDefs} target={target}
+                    resetDefs={!needle ? (registry.data ?? []).filter((d) => d.menu === menu) : undefined} area={MENUS.find(([id]) => id === menu)?.[1]} />}
                 {hiddenAdvanced > 0 && !showAdvanced && (
                     <button className="ghost" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</button>
                 )}
@@ -148,13 +150,13 @@ function useSave() {
 }
 
 function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
-    const [p, setP] = useState<Prefs>(loadPrefs);
+    const p = usePrefs();
     const set = (n: Prefs) => {
-        setP(n);
         savePrefs(n);
     };
     return (
         <>
+            <DeviceSettingsReset fields={Object.keys(defaultPrefs) as (keyof Prefs)[]} label="이 기기 화면·입력 전체 복원" />
             {show("theme") && (
                 <Section item="theme">
                     <select value={p.theme} onChange={(e) => set({ ...p, theme: e.target.value as Prefs["theme"] })} aria-label="테마">
@@ -163,11 +165,13 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                         <option value="dark">어둡게</option>
                         <option value="soft">부드럽게(soft)</option>
                     </select>
+                    <DeviceSettingsReset fields={["theme"]} label="테마 기본값 복원" />
                 </Section>
             )}
             {show("font") && (
                 <Section item="font">
                     <input type="range" min={12} max={20} value={p.fontSize} onChange={(e) => set({ ...p, fontSize: Number(e.target.value) })} aria-label="글자 크기" /> {p.fontSize}px
+                    <DeviceSettingsReset fields={["fontSize"]} label="글자 크기 기본값 복원" />
                 </Section>
             )}
             {show("enter") && (
@@ -175,6 +179,7 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <label className="check">
                         <input type="checkbox" checked={p.enterToSend} onChange={(e) => set({ ...p, enterToSend: e.target.checked })} /> Enter로 보내기(Shift+Enter 줄바꿈)
                     </label>
+                    <DeviceSettingsReset fields={["enterToSend"]} label="입력 기본값 복원" />
                 </Section>
             )}
             {show("transcript") && (
@@ -193,6 +198,7 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <label className="check">
                         <input type="checkbox" checked={p.expandTools} onChange={(e) => set({ ...p, expandTools: e.target.checked })} /> 도구 실행 세부를 펼쳐서 표시
                     </label>
+                    <DeviceSettingsReset fields={["reasoning", "answerOnly", "expandTools"]} label="대화 표시 기본값 복원" />
                 </Section>
             )}
         </>

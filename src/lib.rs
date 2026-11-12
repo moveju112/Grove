@@ -5,6 +5,7 @@
 pub mod agents;
 pub mod attachments;
 pub mod approvals;
+mod project_fs;
 pub mod auth;
 pub mod backup;
 pub mod cli;
@@ -92,6 +93,7 @@ pub const CAPABILITIES: &[&str] = &[
     "private_model_headers_v1",
     "project_scripts_v1",
     "terminal_capture_v1",
+    "settings_reset_v1",
 ];
 
 #[derive(Clone)]
@@ -309,6 +311,8 @@ pub fn router(app: App) -> Router {
         .route("/model-profiles/{id}/models", get(models::catalog))
         .route("/settings/registry", get(settings::get_registry))
         .route("/settings/effective", get(settings::get_effective))
+        .route("/settings/reset-preview", get(settings::reset_preview))
+        .route("/settings/reset", post(settings::reset_apply))
         .route("/settings/{scope}/{scope_id}/{key}", axum::routing::put(settings::put))
         .route("/recent", get(workspace::list))
         .route("/recent/touch", post(workspace::touch))

@@ -108,6 +108,12 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .host-dialog:not([open]) { display: none; }
 .script-dialog:not([open]) { display: none; }
 .script-dialog::backdrop { background: #0005; }
+.settings-reset-dialog { color: var(--text); width: min(64em, 96vw); }
+.settings-reset-dialog:not([open]) { display: none; }
+.settings-reset-dialog::backdrop { background: #0005; }
+.settings-reset-table { overflow: auto; }
+.settings-reset-table table { width: 100%; border-collapse: collapse; }
+.settings-reset-table th, .settings-reset-table td { border: 1px solid var(--line); padding: .4em; vertical-align: top; }
 .project-scripts .stack { display: grid; gap: .5em; }
 .project-scripts .stack label { display: grid; gap: .2em; }
 .host-dialog::backdrop { background: #0005; }

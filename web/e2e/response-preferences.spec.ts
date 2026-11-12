@@ -72,6 +72,10 @@ test("다른 기기의 프로필 변경과 충돌하면 내 초안을 보존하�
     await user.getByRole("button", { name: "최신 값 사용", exact: true }).click();
     await expect(user.getByLabel("사용자 프로필", { exact: true })).toHaveValue("Fixture remote background");
     await user.getByRole("button", { name: "이 범위 값 지우기", exact: true }).click();
+    const reset = page.getByRole("dialog", { name: "기본값 복원 확인", exact: true });
+    await reset.getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
+    await expect(reset.getByRole("status")).toContainText("복원 저장됨");
+    await reset.getByRole("button", { name: "복원 창 닫기", exact: true }).click();
     await expect(user.getByLabel("사용자 프로필", { exact: true })).toHaveValue("");
     expect((await settings()).find((item) => item.key === "user.profile")!.effective).toBe("");
 });

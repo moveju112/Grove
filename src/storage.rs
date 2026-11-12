@@ -729,11 +729,12 @@ struct Plan {
     path: String,
     origin: Value,
     work: Work,
+    storage: crate::project_fs::ProjectFs,
 }
 
 enum Work {
-    Delete(PathBuf),
-    Restore { item: PathBuf, target: PathBuf },
+    Delete { source: PathBuf, scope: crate::project_fs::ProjectFs },
+    Restore { item: PathBuf, target: PathBuf, scope: crate::project_fs::ProjectFs },
     Purge,
 }
 
@@ -749,6 +750,7 @@ fn confirm_path(confirm: &str, path: &str) -> ApiResult<()> {
 }
 
 fn prepare(app: &App, op: Op) -> ApiResult<Plan> {
+    let storage = crate::project_fs::ProjectFs::open(&app.cfg.data_dir).map_err(|e| files::io_err(e, "저장 공간 열기"))?;
     match op {
         Op::Delete {
             project_id,
@@ -760,13 +762,14 @@ fn prepare(app: &App, op: Op) -> ApiResult<Plan> {
                 .call_sync(|c| crate::projects::active_root(c, &project_id))?;
             let root = crate::util::canonical(&root).map_err(|e| files::io_err(e, "프로젝트"))?;
             let source = files::resolve_api(&root, &path)?;
+            let scope = crate::project_fs::ProjectFs::open(&root).map_err(|e| files::io_err(e, "프로젝트 열기"))?;
             if source == root {
                 return Err(ApiError::invalid("프로젝트 root는 지울 수 없습니다"));
             }
             let path = crate::tools::fs::rel_display(&root, &source);
             confirm_path(&confirm, &path)?;
-            source
-                .symlink_metadata()
+            scope
+                .symlink_metadata(&source)
                 .map_err(|e| files::io_err(e, "삭제 대상"))?;
             let dir = app.cfg.data_dir.join("trash").join(crate::util::new_id());
             let origin = json!({ "format": 2, "state": "pending", "project_id": project_id, "path": path, "deleted_at": app.now() });
@@ -775,7 +778,8 @@ fn prepare(app: &App, op: Op) -> ApiResult<Plan> {
                 project_id,
                 path,
                 origin,
-                work: Work::Delete(source),
+                work: Work::Delete { source, scope },
+                storage,
             })
         }
         Op::Restore { ref id } | Op::Purge { ref id, .. } => {
@@ -797,13 +801,14 @@ fn prepare(app: &App, op: Op) -> ApiResult<Plan> {
                     .item
                     .ok_or_else(|| ApiError::conflict("broken", "휴지통 내용이 없습니다"))?;
                 let target = files::resolve_api(&root, &e.path)?;
-                if target.symlink_metadata().is_ok() {
+                let scope = crate::project_fs::ProjectFs::open(&root).map_err(|e| files::io_err(e, "프로젝트 열기"))?;
+                if scope.symlink_metadata(&target).is_ok() {
                     return Err(ApiError::conflict(
                         "already_exists",
                         "같은 경로에 이미 파일이 있습니다",
                     ));
                 }
-                Work::Restore { item, target }
+                Work::Restore { item, target, scope }
             };
             Ok(Plan {
                 dir,
@@ -811,6 +816,7 @@ fn prepare(app: &App, op: Op) -> ApiResult<Plan> {
                 path: e.path,
                 origin: e.origin,
                 work,
+                storage,
             })
         }
     }
@@ -819,14 +825,6 @@ fn prepare(app: &App, op: Op) -> ApiResult<Plan> {
 fn write_origin(dir: &FsPath, origin: &Value) -> ApiResult<()> {
     crate::tools::fs::atomic_write(&dir.join("origin.json"), origin.to_string().as_bytes())
         .map_err(|e| ApiError::conflict(e.code, e.message))
-}
-
-fn remove_item(path: &FsPath) -> std::io::Result<()> {
-    if path.symlink_metadata()?.file_type().is_dir() {
-        std::fs::remove_dir_all(path)
-    } else {
-        std::fs::remove_file(path)
-    }
 }
 
 /// 확인 뒤 새로 만들어진 같은 이름의 파일도 덮어쓰지 않는다.
@@ -877,52 +875,57 @@ pub(crate) fn rename_noreplace(from: &FsPath, to: &FsPath) -> std::io::Result<()
 }
 
 fn execute(mut plan: Plan) -> ApiResult<Value> {
+    let storage = plan.storage;
+    let write_origin = |origin: &Value| storage.atomic_write(&plan.dir.join("origin.json"), origin.to_string().as_bytes())
+        .map_err(|e| files::io_err(e, "휴지통 기록"));
     match plan.work {
-        Work::Delete(source) => {
-            std::fs::create_dir_all(plan.dir.parent().unwrap())
+        Work::Delete { source, scope } => {
+            storage.create_dir_all(plan.dir.parent().unwrap())
                 .map_err(|e| files::io_err(e, "휴지통"))?;
-            std::fs::create_dir(&plan.dir).map_err(|e| files::io_err(e, "휴지통 항목"))?;
-            write_origin(&plan.dir, &plan.origin)?;
+            storage.create_dir(&plan.dir, true).map_err(|e| files::io_err(e, "휴지통 항목"))?;
+            write_origin(&plan.origin)?;
             let payload = plan.dir.join("payload");
-            if let Err(e) = rename_noreplace(&source, &payload) {
+            if let Err(e) = scope.rename_noreplace(&source, &storage, &payload) {
                 if e.kind() != std::io::ErrorKind::CrossesDevices {
                     return Err(files::io_err(e, "휴지통 이동"));
                 }
-                files::copy_recursive(&source, &payload)
+                scope.copy_to(&source, &storage, &payload)
                     .map_err(|e| files::io_err(e, "휴지통 복사"))?;
-                remove_item(&source).map_err(|e| files::io_err(e, "원본 정리"))?;
+                if scope.symlink_metadata(&source).map_err(|e| files::io_err(e, "원본 확인"))?.is_dir() {
+                    scope.remove_dir_all(&source)
+                } else { scope.remove_file(&source) }.map_err(|e| files::io_err(e, "원본 정리"))?;
             }
             plan.origin["state"] = json!("trashed");
-            write_origin(&plan.dir, &plan.origin)?;
+            write_origin(&plan.origin)?;
             Ok(
                 json!({ "op": "delete", "path": plan.path, "trash": plan.dir.file_name().unwrap().to_string_lossy() }),
             )
         }
-        Work::Restore { item, target } => {
+        Work::Restore { item, target, scope } => {
             plan.origin["state"] = json!("restoring");
-            write_origin(&plan.dir, &plan.origin)?;
+            write_origin(&plan.origin)?;
             let parent = target
                 .parent()
                 .ok_or_else(|| ApiError::invalid("복원 경로가 잘못되었습니다"))?;
-            std::fs::create_dir_all(parent).map_err(|e| files::io_err(e, "복원 폴더"))?;
-            if let Err(e) = rename_noreplace(&item, &target) {
+            scope.create_dir_all(parent).map_err(|e| files::io_err(e, "복원 폴더"))?;
+            if let Err(e) = storage.rename_noreplace(&item, &scope, &target) {
                 if e.kind() != std::io::ErrorKind::CrossesDevices {
                     return Err(files::io_err(e, "복원"));
                 }
                 // 복사는 우리가 만든 staging 안에서 끝낸 뒤 덮어쓰기 없는 rename으로 공개한다.
                 let stage = parent.join(format!(".grove-restore-{}", crate::util::new_id()));
-                std::fs::create_dir(&stage).map_err(|e| files::io_err(e, "복원 임시 폴더"))?;
-                let result = files::copy_recursive(&item, &stage.join("payload"))
-                    .and_then(|_| rename_noreplace(&stage.join("payload"), &target));
-                let _ = std::fs::remove_dir_all(&stage);
+                scope.create_dir(&stage, true).map_err(|e| files::io_err(e, "복원 임시 폴더"))?;
+                let result = storage.copy_to(&item, &scope, &stage.join("payload"))
+                    .and_then(|_| scope.rename_noreplace(&stage.join("payload"), &scope, &target));
+                let _ = scope.remove_dir_all(&stage);
                 result.map_err(|e| files::io_err(e, "복원"))?;
             }
-            std::fs::remove_dir_all(&plan.dir)
+            storage.remove_dir_all(&plan.dir)
                 .map_err(|e| files::io_err(e, "복원 후 휴지통 정리"))?;
             Ok(json!({ "op": "restore", "path": plan.path }))
         }
         Work::Purge => {
-            std::fs::remove_dir_all(&plan.dir).map_err(|e| files::io_err(e, "영구 삭제"))?;
+            storage.remove_dir_all(&plan.dir).map_err(|e| files::io_err(e, "영구 삭제"))?;
             Ok(json!({ "op": "purge", "deleted": true, "path": plan.path }))
         }
     }
@@ -1055,6 +1058,43 @@ pub async fn delete_trash(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn trash_delete_and_restore_do_not_follow_replaced_project_parents() {
+        use crate::project_fs::ProjectFs;
+        use std::os::unix::fs::symlink;
+        for restore in [false, true] {
+            let fixture = tempfile::tempdir().unwrap();
+            let root = fixture.path().join("project");
+            let data = fixture.path().join("data");
+            let outside = fixture.path().join("outside");
+            std::fs::create_dir_all(root.join("folder")).unwrap();
+            std::fs::create_dir(&data).unwrap();
+            std::fs::create_dir(&outside).unwrap();
+            std::fs::write(outside.join("file"), "outside").unwrap();
+            std::fs::write(root.join("folder/file"), "project").unwrap();
+            let dir = data.join("trash/entry");
+            let scope = ProjectFs::open(&root).unwrap();
+            let storage = ProjectFs::open(&data).unwrap();
+            let work = if restore {
+                std::fs::create_dir_all(&dir).unwrap();
+                std::fs::write(dir.join("payload"), "restore").unwrap();
+                Work::Restore { item: dir.join("payload"), target: root.join("folder/new"), scope }
+            } else {
+                Work::Delete { source: root.join("folder/file"), scope }
+            };
+            let plan = Plan { dir: dir.clone(), project_id: "project".into(), path: "folder/file".into(),
+                origin: json!({ "format": 2, "state": "pending", "project_id": "project", "path": "folder/file" }),
+                work, storage };
+            std::fs::rename(root.join("folder"), root.join("old-folder")).unwrap();
+            symlink(&outside, root.join("folder")).unwrap();
+            assert!(execute(plan).is_err());
+            assert_eq!(std::fs::read(outside.join("file")).unwrap(), b"outside");
+            assert!(!outside.join("new").exists());
+            if restore { assert_eq!(std::fs::read(dir.join("payload")).unwrap(), b"restore"); }
+        }
+    }
 
     fn trash_fixture(root: &FsPath) -> PathBuf {
         let dir = root.join("entry");

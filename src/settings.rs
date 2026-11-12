@@ -16,6 +16,8 @@ use axum::response::Response;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
+mod reset;
+pub use reset::{apply as reset_apply, preview as reset_preview};
 use std::io::Read;
 
 #[derive(Debug, Clone, Serialize)]
@@ -540,8 +542,6 @@ fn row(c: &Connection, scope: &str, id: &str, key: &str) -> ApiResult<Option<(Va
 /// 한 key의 범위별 값과 실제 적용값. 값이 null인 행은 "override 없음(revision만 유지)"이다.
 pub fn resolve_key(c: &Connection, d: &SettingDef, project: Option<&str>, session: Option<&str>) -> ApiResult<Value> {
     let mut layers = serde_json::Map::new();
-    let mut effective = d.default.clone();
-    let mut source = "default";
     for (scope, id) in [("server", Some("-")), ("project", project), ("session", session)] {
         if !d.scopes.contains(&scope) {
             continue;
@@ -549,13 +549,21 @@ pub fn resolve_key(c: &Connection, d: &SettingDef, project: Option<&str>, sessio
         let Some(id) = id else { continue };
         let r = row(c, scope, id, d.key)?;
         let (v, rev) = r.unwrap_or((Value::Null, 0));
-        if !v.is_null() {
-            effective = v.clone();
-            source = scope;
-        }
         layers.insert(scope.to_string(), json!({ "scope_id": id, "value": v, "revision": rev }));
     }
-    Ok(json!({ "key": d.key, "default": d.default, "layers": layers, "effective": effective, "source": source }))
+    Ok(resolve_layers(d,layers))
+}
+
+fn resolve_layers(d: &SettingDef, layers: serde_json::Map<String,Value>) -> Value {
+    let mut effective = d.default.clone();
+    let mut source = "default";
+    for scope in ["server","project","session"] {
+        if let Some(layer) = layers.get(scope) && !layer["value"].is_null() {
+            effective = layer["value"].clone();
+            source = scope;
+        }
+    }
+    json!({ "key": d.key, "default": d.default, "layers": layers, "effective": effective, "source": source })
 }
 
 pub fn tool_names(s: &str) -> impl Iterator<Item = &str> {

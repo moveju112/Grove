@@ -1,6 +1,6 @@
 //! 검색 도구 find/glob/grep(TOOL-004~009). ignore 규칙(.gitignore 등)을 모든 도구에 같은 방식으로 적용한다.
 
-use super::fs::{rel_display, resolve};
+use super::fs::{project_scope, rel_display, resolve};
 use super::{MAX_OUTPUT, Planned, ToolError, ToolResult};
 use serde_json::{Value, json};
 use std::path::{Path, PathBuf};
@@ -69,6 +69,7 @@ fn cancelled(c: &watch::Receiver<bool>) -> ToolResult<()> {
 }
 
 pub fn glob(args: &Value, planned: &Planned, root: &Path, cancel: &watch::Receiver<bool>) -> ToolResult<Value> {
+    let scope = project_scope(root)?;
     let mut gb = globset::GlobSetBuilder::new();
     for p in str_or_list(&args["pattern"]) {
         gb.add(globset::GlobBuilder::new(&p).literal_separator(false).build().map_err(|e| ToolError::new("invalid_pattern", e.to_string()))?);
@@ -89,7 +90,8 @@ pub fn glob(args: &Value, planned: &Planned, root: &Path, cancel: &watch::Receiv
             let rel_base = e.path().strip_prefix(&base).unwrap_or(e.path());
             let rel_root = e.path().strip_prefix(&canon_root).unwrap_or(e.path());
             if set.is_match(rel_base) || set.is_match(rel_root) {
-                let m = e.metadata().ok().and_then(|m| m.modified().ok()).unwrap_or(std::time::UNIX_EPOCH);
+                let Ok(meta) = scope.metadata(e.path()) else { continue };
+                let m = meta.modified().ok().map(|t| t.into_std()).unwrap_or(std::time::UNIX_EPOCH);
                 found.push((rel_display(root, e.path()), m));
             }
         }
@@ -126,6 +128,7 @@ fn page(items: Vec<String>, args: &Value, key: &str) -> ToolResult<Value> {
 }
 
 pub fn find(args: &Value, planned: &Planned, root: &Path, cancel: &watch::Receiver<bool>) -> ToolResult<Value> {
+    let scope = project_scope(root)?;
     let frags: Vec<String> = args["query"].as_str().unwrap_or("").split_whitespace().map(|s| s.to_lowercase()).collect();
     if frags.is_empty() {
         return Err(ToolError::new("invalid_arguments", "query가 비어 있습니다"));
@@ -142,6 +145,7 @@ pub fn find(args: &Value, planned: &Planned, root: &Path, cancel: &watch::Receiv
             if e.depth() == 0 {
                 continue;
             }
+            if scope.symlink_metadata(e.path()).is_err() { continue; }
             let rel = rel_display(root, e.path());
             let low = rel.to_lowercase();
             if frags.iter().all(|f| low.contains(f.as_str())) {
@@ -161,6 +165,7 @@ pub fn find(args: &Value, planned: &Planned, root: &Path, cancel: &watch::Receiv
 }
 
 pub fn grep(args: &Value, planned: &Planned, root: &Path, cancel: &watch::Receiver<bool>) -> ToolResult<Value> {
+    let scope = project_scope(root)?;
     let ci = args["ignore_case"].as_bool().unwrap_or(false);
     let pats: Vec<regex::Regex> = str_or_list(&args["pattern"])
         .iter()
@@ -199,7 +204,7 @@ pub fn grep(args: &Value, planned: &Planned, root: &Path, cancel: &watch::Receiv
                 skipped_large += 1;
                 continue;
             }
-            let Ok(bytes) = std::fs::read(e.path()) else { continue };
+            let Ok(bytes) = scope.read(e.path(), MAX_FILE_FOR_GREP) else { continue };
             if bytes.iter().take(8192).any(|b| *b == 0) {
                 continue;
             }

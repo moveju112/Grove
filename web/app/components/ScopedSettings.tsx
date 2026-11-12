@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ApiError, api } from "../api/client";
 import { useQuery } from "../state/store";
 import type { ModelProfile } from "../api/generated";
+import { APPLIES, SCOPE_LABEL, SettingsResetButton } from "./SettingsReset";
 
 export type SettingDef = {
     key: string;
@@ -21,8 +22,6 @@ export type SettingDef = {
 type Layer = { scope_id: string; value: unknown; revision: number };
 type Item = { key: string; default: unknown; layers: Record<string, Layer>; effective: unknown; source: string };
 
-const SCOPE_LABEL: Record<string, string> = { server: "서버 전체", project: "이 프로젝트", session: "이 대화", default: "기본값" };
-const APPLIES: Record<string, string> = { immediate: "즉시 적용", next_turn: "다음 요청부터 적용", restart: "재시작 후 적용" };
 const ENUM_LABEL: Record<string, Record<string, string>> = {
     "output.style": { default: "모델 기본", concise: "간결하게", detailed: "자세하게" },
     "instructions.mode": { agents_md: "AGENTS.md만 전달", claude_md: "CLAUDE.md만 전달", both: "두 지침 파일 전달", off: "지침 파일 전달 안 함" },
@@ -51,13 +50,27 @@ function ProfileChoice({ d, value, disabled, edit }: { d: SettingDef; value: unk
 export type SettingsTarget = { projectId?: string; projectName?: string; sessionId?: string; sessionTitle?: string };
 
 /// 범위별 설정 편집기.
-export function ScopedSettings({ defs, target }: { defs: SettingDef[]; target: SettingsTarget }) {
+export function ScopedSettings({ defs, target, resetDefs, area }: { defs: SettingDef[]; target: SettingsTarget; resetDefs?: SettingDef[]; area?: string }) {
     const p = new URLSearchParams();
     if (target.sessionId) p.set("session_id", target.sessionId);
     else if (target.projectId) p.set("project_id", target.projectId);
     const eff = useQuery<{ items: Item[] }>(`settings:${target.sessionId ?? target.projectId ?? "-"}`, () => api.get(`/settings/effective?${p}`));
+    const scopes = ["server", ...(target.projectId ? ["project"] : []), ...(target.sessionId ? ["session"] : [])];
+    const [resetScope, setResetScope] = useState(scopes.at(-1)!);
+    const [resetId, resetLabel] = scopeTarget(resetScope, target);
     return (
         <div className="scoped">
+            {resetDefs && <div className="setting" data-testid="settings-area-reset">
+                <p>{area}의 범위별 설정 복원 · 접힌 고급 항목도 포함합니다. 모델 프로필·키·정의 파일은 지우지 않습니다.</p>
+                <div className="inline wrap">
+                    <select aria-label="영역 복원 범위" value={resetScope} onChange={(event) => setResetScope(event.target.value)}>
+                        {scopes.map((scope) => <option key={scope} value={scope}>{SCOPE_LABEL[scope]}</option>)}
+                    </select>
+                    <SettingsResetButton key={resetScope} defs={resetDefs.filter((d) => d.scopes.includes(resetScope))}
+                        target={target} scope={resetScope} scopeId={resetId} targetLabel={resetLabel} label="이 영역의 범위별 설정 복원" saved={eff.reload} />
+                </div>
+                <p className="muted small">편집 중인 미저장 입력은 적용하거나 버리지 않습니다. 복원 뒤 다시 저장하면 revision 충돌을 확인해야 할 수 있습니다.</p>
+            </div>}
             {defs.map((d) => {
                 const it = eff.data?.items.find((i) => i.key === d.key);
                 return it ? <Row key={d.key} d={d} it={it} t={target} reload={eff.reload} /> : null;
@@ -140,9 +153,9 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                 )}
                 {d.kind === "text" && <textarea disabled={saving} aria-label={d.label} rows={4} value={String(value ?? "")} onChange={(e) => edit(e.target.value)} />}
                 <button disabled={draft === undefined || saving || state.kind === "conflict"} onClick={() => draft && void save(draft.value, draft.revision)}>저장</button>
-                {layer && layer.value !== null && layer.value !== undefined && (
-                    <button disabled={saving} className="ghost" onClick={() => void save(null, layer.revision)} title="이 범위의 값을 지우고 상위 범위 값을 쓴다">이 범위 값 지우기</button>
-                )}
+                <SettingsResetButton key={scope} defs={[d]} target={t} scope={scope} scopeId={scopeTarget(scope,t)[0]} targetLabel={target}
+                    label="이 범위 값 지우기" disabled={saving || layer?.value === null || layer?.value === undefined} draft={draft?.value}
+                    saved={() => { setDraft(undefined); setState({ kind: "saved", msg: APPLIES[d.applies] }); reload(); }} />
             </div>
             <p className="muted small">
                 실제 적용값: <code>{JSON.stringify(it.effective)}</code> ({SCOPE_LABEL[it.source]}) · 기본값 <code>{JSON.stringify(it.default)}</code>

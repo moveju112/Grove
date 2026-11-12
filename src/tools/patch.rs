@@ -19,7 +19,7 @@
 //!   실제 반영·되돌림 결과를 정확히 반환한다(TOOL-022).
 //! - 원본의 CRLF와 끝 개행 유무를 보존한다. 경로는 프로젝트 경계 안에서만 해석한다(symlink는 대상 파일을 고친다).
 
-use super::fs::{MAX_EDIT_BYTES, atomic_write, rel_display, resolve, unified_diff};
+use super::fs::{MAX_EDIT_BYTES, project_scope, read_project, rel_display, resolve, unified_diff};
 use super::{Planned, ToolError, ToolResult};
 use crate::util::sha256_hex;
 use serde_json::{Value, json};
@@ -192,21 +192,22 @@ pub fn apply_chunks(path: &str, original: &str, chunks: &[Chunk]) -> ToolResult<
     Ok(join(&t))
 }
 
-fn read_text(p: &Path, rel: &str) -> ToolResult<(Vec<u8>, String)> {
-    let meta = std::fs::metadata(p).map_err(|_| ToolError::new("not_found", format!("{rel}: 파일이 없습니다")))?;
+fn read_text(root: &Path, p: &Path, rel: &str) -> ToolResult<(Vec<u8>, String)> {
+    let meta = project_scope(root)?.metadata(p).map_err(|_| ToolError::new("not_found", format!("{rel}: 파일이 없습니다")))?;
     if !meta.is_file() {
         return Err(ToolError::new("special_file", format!("{rel}: 일반 파일이 아닙니다")));
     }
     if meta.len() > MAX_EDIT_BYTES {
         return Err(ToolError::new("too_large", format!("{rel}: 편집하기에 너무 큰 파일입니다")));
     }
-    let b = std::fs::read(p).map_err(|e| ToolError::new("read_failed", format!("{rel}: {e}")))?;
+    let b = read_project(root, p, MAX_EDIT_BYTES)?;
     let s = String::from_utf8(b.clone()).map_err(|_| ToolError::new("binary_file", format!("{rel}: UTF-8 텍스트만 편집할 수 있습니다")))?;
     Ok((b, s))
 }
 
 /// 계획: 모든 결과를 계산해 target(파일별 diff)과 precondition(파일별 sha)을 고정한다.
 pub fn plan(args: &Value, root: &Path) -> ToolResult<Planned> {
+    let scope = project_scope(root)?;
     let text = args["patch"].as_str().unwrap_or("");
     if text.len() > MAX_PATCH_BYTES {
         return Err(ToolError::new("too_large", "패치가 너무 큽니다"));
@@ -220,7 +221,7 @@ pub fn plan(args: &Value, root: &Path) -> ToolResult<Planned> {
             Op::Add { path, lines } => {
                 let p = resolve(root, path)?;
                 let rel = rel_display(root, &p);
-                if p.symlink_metadata().is_ok() {
+                if scope.symlink_metadata(&p).is_ok() {
                     return Err(ToolError::new("already_exists", format!("{rel}: 이미 있는 파일입니다. Update File을 쓰세요")));
                 }
                 let mut content = lines.join("\n");
@@ -236,7 +237,7 @@ pub fn plan(args: &Value, root: &Path) -> ToolResult<Planned> {
             Op::Delete { path } => {
                 let p = resolve(root, path)?;
                 let rel = rel_display(root, &p);
-                let (b, s) = read_text(&p, &rel)?;
+                let (b, s) = read_text(root, &p, &rel)?;
                 files.push(json!({ "op": "delete", "path": rel, "diff": unified_diff(&s, "", 3) }));
                 writes.push(json!({ "op": "delete", "path": rel, "before_sha256": sha256_hex(&b) }));
                 if !seen.insert(rel.clone()) {
@@ -246,13 +247,13 @@ pub fn plan(args: &Value, root: &Path) -> ToolResult<Planned> {
             Op::Update { path, move_to, chunks } => {
                 let p = resolve(root, path)?;
                 let rel = rel_display(root, &p);
-                let (b, s) = read_text(&p, &rel)?;
+                let (b, s) = read_text(root, &p, &rel)?;
                 let after = apply_chunks(&rel, &s, chunks)?;
                 let dest = match move_to {
                     Some(m) => {
                         let d = resolve(root, m)?;
                         let drel = rel_display(root, &d);
-                        if d.symlink_metadata().is_ok() {
+                        if scope.symlink_metadata(&d).is_ok() {
                             return Err(ToolError::new("already_exists", format!("{drel}: 이동할 대상이 이미 있습니다")));
                         }
                         if !seen.insert(drel.clone()) {
@@ -275,6 +276,7 @@ pub fn plan(args: &Value, root: &Path) -> ToolResult<Planned> {
 
 /// 실행: 모든 조건 확인 → 순서대로 쓰기 → 실패 시 되돌림.
 pub fn execute(planned: &Planned, root: &Path) -> ToolResult<Value> {
+    let scope = project_scope(root)?;
     let writes = planned.precondition.as_ref().and_then(|p| p["writes"].as_array()).ok_or_else(|| ToolError::new("internal", "precondition 없음"))?.clone();
     // 1) 사전 확인(아무것도 쓰기 전)
     for w in &writes {
@@ -282,19 +284,19 @@ pub fn execute(planned: &Planned, root: &Path) -> ToolResult<Value> {
         let p = resolve(root, rel)?;
         match w["op"].as_str() {
             Some("add") => {
-                if p.symlink_metadata().is_ok() {
+                if scope.symlink_metadata(&p).is_ok() {
                     return Err(ToolError::new("conflict", format!("{rel}: 승인 이후 파일이 생겨 패치를 적용하지 않았습니다")));
                 }
             }
             _ => {
-                let b = std::fs::read(&p).map_err(|_| ToolError::new("conflict", format!("{rel}: 승인 이후 파일이 사라져 패치를 적용하지 않았습니다")))?;
+                let b = scope.read(&p, MAX_EDIT_BYTES).map_err(|_| ToolError::new("conflict", format!("{rel}: 승인 이후 파일이 사라지거나 경계가 바뀌어 패치를 적용하지 않았습니다")))?;
                 if sha256_hex(&b) != w["before_sha256"].as_str().unwrap_or("") {
                     return Err(ToolError::new("conflict", format!("{rel}: 승인 이후 파일이 바뀌어 패치를 적용하지 않았습니다")));
                 }
             }
         }
         if let Some(m) = w["move_to"].as_str()
-            && resolve(root, m)?.symlink_metadata().is_ok()
+            && scope.symlink_metadata(&resolve(root, m)?).is_ok()
         {
             return Err(ToolError::new("conflict", format!("{m}: 승인 이후 이동 대상이 생겨 패치를 적용하지 않았습니다")));
         }
@@ -314,33 +316,32 @@ pub fn execute(planned: &Planned, root: &Path) -> ToolResult<Value> {
             match w["op"].as_str() {
                 Some("add") => {
                     if let Some(parent) = p.parent() {
-                        std::fs::create_dir_all(parent).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
-                        resolve(root, &rel)?;
+                        scope.create_dir_all(parent).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
                     }
-                    atomic_write(&p, w["after"].as_str().unwrap_or("").as_bytes())?;
+                    scope.write_new(&p, w["after"].as_str().unwrap_or("").as_bytes()).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
                     undo.push(Undo::Remove(p));
                 }
                 Some("delete") => {
-                    let orig = std::fs::read(&p).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
-                    std::fs::remove_file(&p).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                    let orig = scope.read(&p, MAX_EDIT_BYTES).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
+                    scope.remove_file(&p).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
                     undo.push(Undo::Restore(p, orig));
                 }
                 _ => {
-                    let orig = std::fs::read(&p).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
+                    let orig = scope.read(&p, MAX_EDIT_BYTES).map_err(|e| ToolError::new("read_failed", e.to_string()))?;
                     let after = w["after"].as_str().unwrap_or("");
                     match w["move_to"].as_str() {
                         Some(m) => {
                             let d = resolve(root, m)?;
                             if let Some(parent) = d.parent() {
-                                std::fs::create_dir_all(parent).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                                scope.create_dir_all(parent).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
                             }
-                            atomic_write(&d, after.as_bytes())?;
+                            scope.write_new(&d, after.as_bytes()).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
                             undo.push(Undo::Remove(d));
-                            std::fs::remove_file(&p).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
+                            scope.remove_file(&p).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
                             undo.push(Undo::Restore(p, orig));
                         }
                         None => {
-                            atomic_write(&p, after.as_bytes())?;
+                            scope.atomic_write(&p, after.as_bytes()).map_err(|e| ToolError::new("write_failed", e.to_string()))?;
                             undo.push(Undo::Restore(p, orig));
                         }
                     }
@@ -364,11 +365,11 @@ pub fn execute(planned: &Planned, root: &Path) -> ToolResult<Value> {
     for u in undo.into_iter().rev() {
         let (p, r) = match u {
             Undo::Remove(p) => {
-                let r = std::fs::remove_file(&p);
+                let r = scope.remove_file(&p);
                 (p, r.map_err(|e| e.to_string()))
             }
             Undo::Restore(p, b) => {
-                let r = atomic_write(&p, &b).map_err(|e| e.message);
+                let r = scope.atomic_write(&p, &b).map_err(|e| e.to_string());
                 (p, r)
             }
         };
@@ -392,7 +393,7 @@ pub fn observe(planned: &Planned, root: &Path) -> Value {
         .map(|w| {
             let rel = w["path"].as_str().unwrap_or("");
             let dest = w["move_to"].as_str().unwrap_or(rel);
-            let sha = |r: &str| resolve(root, r).ok().and_then(|p| std::fs::read(p).ok()).map(|b| sha256_hex(&b));
+            let sha = |r: &str| resolve(root, r).ok().and_then(|p| read_project(root, &p, MAX_EDIT_BYTES).ok()).map(|b| sha256_hex(&b));
             let (cur_src, cur_dest) = (sha(rel), sha(dest));
             let state = match w["op"].as_str() {
                 Some("add") => match cur_src.as_deref() {
