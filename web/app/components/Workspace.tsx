@@ -11,6 +11,7 @@ import { AddProjectDialog } from "./AddProject";
 import { BotsPanel } from "./BotsPanel";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { RecentPanel } from "./RecentPanel";
+import { RecoveryPanel } from "./RecoveryPanel";
 import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Hosts } from "./Hosts";
@@ -176,6 +177,7 @@ export function Workspace() {
                 {sidebar && (
                     <aside className="sidebar">
                         <NotificationsPanel open={open} />
+                        <RecoveryPanel open={open} />
                         <BotsPanel open={open} />
                         <SearchPanel open={open} />
                         <RecentPanel open={open} linked={splitSessions} />

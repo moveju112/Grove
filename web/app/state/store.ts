@@ -148,6 +148,7 @@ export function applyEvent(e: EventRecord) {
             invalidate("usage-capacity");
             invalidate("recent");
             invalidate("bots");
+            invalidate("recovery");
             break;
         case "tool_call.updated":
             if (sid) {
@@ -155,6 +156,7 @@ export function applyEvent(e: EventRecord) {
                 invalidate(`session:${sid}`);
             }
             invalidate("recent");
+            invalidate("recovery");
             break;
         case "file_changes.updated":
             if (sid) invalidate(`changes:${sid}`);

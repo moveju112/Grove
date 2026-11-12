@@ -68,3 +68,44 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await expect(page.getByTestId("session-view").getByTestId("msg-turn-ended")).toHaveCount(2);
     await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_tokens`, { expected_revision: 3, value: null });
 });
+
+// REC-009·010: 응답 도중 끊긴 요청은 확정 답변과 분리된 중단 증거로 보여 주고, 사이드바 '확인 필요'에서 해당 대화로 이동한다.
+test("끊긴 응답은 중단 증거로 표시되고 확인 전까지 확인 필요 목록에 남는다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    await ensureProfile();
+    const title = `중단 증거 ${Date.now()}`;
+    const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    await login(page);
+    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    const view = page.getByTestId("session-view");
+    // 완료 신호 없이 연결이 끝나는 응답
+    await script({ frames: [JSON.stringify({ choices: [{ delta: { content: "끊기기 전 문장" } }] })] });
+    await view.getByLabel("보내기 방식").selectOption("model");
+    await view.getByLabel("메시지 입력").fill("길게 써 줘");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    const err = view.getByTestId("turn-ended");
+    await expect(err).toBeVisible({ timeout: 15_000 });
+    const evidence = err.getByTestId("turn-evidence");
+    await expect(evidence).toContainText("중단 전까지 받은 응답(확정되지 않음 · 8자");
+    await evidence.locator("summary").click();
+    await expect(evidence.locator(".evidence-text")).toHaveText("끊기기 전 문장");
+    await expect(view.getByTestId("msg-assistant")).toHaveCount(0);
+
+    const panel = page.getByTestId("recovery");
+    await panel.locator("summary").click();
+    const item = panel.getByTestId("recovery-item").filter({ hasText: title });
+    await expect(item).toContainText("요청 실패 · 확정 전 응답 8자 보존");
+    // 다른 대화를 연 뒤 목록에서 이 대화로 돌아온다
+    const other = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `${title} 다른` });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: other.id });
+    await page.locator(".recent").getByRole("button", { name: new RegExp(`${title} 다른`) }).first().click();
+    await item.getByRole("button").click();
+    await expect(page.getByTestId("session-view").getByTestId("turn-evidence")).toBeVisible();
+    await page.reload();
+    await page.getByTestId("recovery").locator("summary").click();
+    await expect(page.getByTestId("recovery-item").filter({ hasText: title })).toHaveCount(1);
+    await page.getByTestId("recovery-item").filter({ hasText: title }).getByRole("button").click();
+    await page.getByTestId("session-view").getByTestId("turn-ended").getByRole("button", { name: "닫기(포기)" }).click();
+    await expect(page.getByTestId("recovery-item").filter({ hasText: title })).toHaveCount(0);
+});

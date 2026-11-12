@@ -563,6 +563,16 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 결과의 `scope=current_and_inherited_history`는 제한된 이력 조회이지 모든 대화에 대한 부재 증거가 아니다. 인증된 사용자가 화면에서 직접 하는 검색과 모델 도구의 자동 조회를 구분한다. 기존 agent 상태/결과 조회의 부모 소유권 제한도 유지한다.
 - 이는 Grove 모델 조회 정책이며 승인된 임의 셸·외부 CLI의 파일시스템 접근을 격리하는 OS sandbox가 아니다. 설정 철회는 이후 조회에 적용하고 이미 전달한 결과·대화 사본을 소급 회수하지 않는다.
 
+## 32. 중단 턴과 미복구 기록(REC)
+
+- 별도 checkpoint 원장을 만들지 않는다. 실행 식별·접수·종료는 기존 `idempotency`(요청 receipt→턴 ID), `turns`(상태·`owner_epoch`·`step`·`definition_snapshot`·`error`·`progress_at`·`acknowledged_at`), `tool_calls`(승인·`revision`·`started_at`·`unknown`·`reviewed_at`), `messages`(확정 답변·종료 note)가 맡는다. 새로 더한 것은 확정 전 응답의 `turns.evidence`(migration 46) 하나다. 이전 턴은 NULL(기록 이전)이며 기존 interrupted/unknown을 성공으로 바꾸지 않는다.
+- 기록 경계: 입력 접수(receipt·턴·사용자 메시지 한 transaction) → 모델 step(stream 중 5초 간격으로 진행 시각과 증거, 실패·취소·종료 시 마지막 증거를 종료 기록 전에) → 답변 확정(assistant 메시지·usage·`step+1`·증거 삭제가 한 transaction) → 도구 승인(호출 행 생성·결정은 revision 비교) → 외부 실행 접수(`running`+`started_at` 기록 뒤 실행) → 결과 확정(결과·상태 한 transaction) → 최종 종료(`finish_turn`과 종료 note). 외부 동작과 DB 사이 간격은 `running` 도구가 결과 불명(`unknown`)이 되는 지점이며 자동 재실행하지 않는다. 확정 전 강제 종료는 마지막 5초 이내 진행분이 증거에서 빠질 수 있다.
+- 증거 내용: 단계 번호, 응답 앞 32,000자(넘으면 `truncated`), 전체 글자 수, 계획 중이던 도구 이름, 추론 글자 수, 기록 시각. 숨은 추론 원문·도구 인자·token·환경변수는 넣지 않는다. 본문 문자열과 sha256을 함께 저장한다.
+- 쓰기는 `status='running' AND owner_epoch=현재 AND step=이 단계`일 때만 한다. 재시작으로 interrupted가 된 턴, 이미 확정된 단계, 다른 실행 소유자의 늦은 쓰기는 증거를 덮어쓰지 못한다. 살아 있는 소유자는 epoch로만 판단하고 PID·heartbeat 지연으로 복구·재시작하지 않는다.
+- 읽기는 검증만 한다. 파싱 실패·지원하지 않는 버전·본문 누락·hash 불일치는 `{corrupt, kind, raw_sha256, raw_bytes}`로 알리고 원본 bytes를 그대로 둔다. 같은 세션의 새 턴은 기존 규칙대로 허용하며(미검토 unknown 차단 유지) 증거 격리나 확인이 부작용 재실행을 허용하지 않는다.
+- `GET /recovery`: 확인하지 않은 interrupted 턴, 증거가 남은 failed 턴, 검토하지 않은 unknown 도구를 최신순 `(시각, ID)` keyset cursor(최대 100)로 보낸다. 원문·인자 없이 위치·상태·오류 분류·증거 요약만 담는다. 확인(`/turns/{id}/acknowledge`)·검토(기존 tool review revision)는 멱등이며 과거 실행의 성공 판정이 아니다. 사용자 취소 턴의 증거는 남기되 목록에 올리지 않는다.
+- 보존: 증거는 답변 확정 commit에서만 지운다. 확인·검토 뒤에도 자동 정리하지 않으며 턴 행과 함께 backup/restore에 포함된다. 복원 뒤에도 모델·도구를 다시 실행하지 않는다.
+
 ## 11. 결정 기록
 
 | ID | 결정 | 근거 |

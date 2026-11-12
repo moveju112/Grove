@@ -116,6 +116,11 @@ export type Turn = { id: string, session_id: string, status: string, request_mes
  */
 acknowledged_at: string | null, 
 /**
+ * 확정되지 않은 응답의 중단 증거(REC). 없으면 null, 손상되면 `{ corrupt: true, kind, raw_sha256, raw_bytes }`.
+ * 확정 답변과 별개이며 모델 입력에 넣지 않는다.
+ */
+evidence: { step: number; text: string; text_chars: number; truncated: boolean; tool_calls: string[]; reasoning_chars: number; captured_at: string; sha256: string } | { corrupt: true; kind: string; raw_sha256: string; raw_bytes: number } | null, 
+/**
  * 실행 슬롯 대기 중이면 대기 정보(FAIR-011). 다른 소유자의 상세는 개수로만.
  */
 queue?: { ahead: number; active: number; limit: number; reason?: "provider" | "account" }, };

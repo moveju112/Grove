@@ -367,19 +367,19 @@ PaseoDog 설치 엔진의 선언 버전 `1.4.1`과 최신 소스의 기능 존�
 | 재시작 | 살아 있는 실행 소유자의 기록은 복구하지 않음. 중단된 실행은 interrupted, 부작용 결과 불명은 unknown 유지 |
 | 사용자 조치 | 원본 조회·관련 출력 확인·검토 완료·새 요청 시작을 구분. 검토가 과거 실행의 성공 판정을 의미하지 않음 |
 
-- [ ] REC-001 현재 turn/approval/recovery 저장 구조와 checkpoint 후보 필드를 대조한다. 기존 테이블에 넣을 정보와 별도 불변 증거를 구분해 이중 상태 원장을 만들지 않는다.
-- [ ] REC-002 순방향 migration과 참조 제약을 정의한다. 기존 interrupted/unknown 데이터는 성공으로 변환하지 않고 새 필드 부재를 명시적으로 처리한다.
-- [ ] REC-003 기록 경계를 입력 접수·모델 step·도구 승인·외부 실행 접수·결과 확정·최종 종료로 나눈다. 각 경계의 원자적 DB 변경과 외부 동작 사이 간격을 문서화한다.
-- [ ] REC-004 요청 receipt와 checkpoint를 공통 ID로 연결한다. 같은 키 재접수는 원래 결과/현재 상태를 반환하고 같은 키의 다른 입력은 거부한다.
-- [ ] REC-005 실행 소유권 epoch와 종료 확인을 사용해 살아 있는 턴을 보호한다. PID만 같거나 heartbeat가 늦다는 이유로 실행을 복구·재시작하지 않는다.
-- [ ] REC-006 정상 종료 commit으로 포괄된 증거와 미포괄 증거를 구분한다. 최종 저장 실패 시 완료 이벤트만 먼저 전달하지 않는다.
-- [ ] REC-007 충돌·손상·참조 누락 checkpoint를 격리하고 원본 bytes/hash와 오류 분류를 보존한다. 격리 저장 실패 시 새 작업이 원본을 덮어쓰지 못하게 한다.
-- [ ] REC-008 동일 세션 새 턴을 허용할 조건을 정의한다. 기존 미검토 unknown 차단은 유지하고 독립적인 증거 격리가 완료됐다는 이유만으로 부작용 재실행을 허용하지 않는다.
-- [ ] REC-009 미복구 목록/상세/검토 API에 소유권·pagination·revision·멱등 처리를 적용한다. 진단 내용에 token·환경변수 전체·다른 프로젝트 내용을 노출하지 않는다.
-- [ ] REC-010 공용 UI에 확정 답변·중단 증거·불명 작업을 구분해 표시한다. 재실행 버튼과 검토 완료 버튼을 혼동시키지 않고 해당 턴/도구 출력으로 이동 가능하게 한다.
-- [ ] REC-011 기록 용량·보존·정리 정책을 정한다. 미검토 unknown과 미복구 원본은 자동 정리 대상에서 제외하고 blob 정리는 참조 무결성과 함께 처리한다.
-- [ ] REC-012 각 기록 경계에 crash/디스크 부족/쓰기 권한 오류를 주입한다. 원본 보존·중복 결과 방지·실행 소유자 보호·재시작 반복 수렴을 검증한다.
-- [ ] REC-013 backup/restore에 복구 증거와 검토 receipt를 포함한다. 새 대상 복원 후에도 모델/도구를 자동 재실행하지 않음을 확인한다.
+- [x] REC-001 현재 turn/approval/recovery 저장 구조와 checkpoint 후보 필드를 대조한다. 기존 테이블에 넣을 정보와 별도 불변 증거를 구분해 이중 상태 원장을 만들지 않는다. 검증: 별도 원장 없이 기존 `idempotency`·`turns`·`tool_calls`·`messages`를 쓰고 확정 전 응답 증거 `turns.evidence` 하나만 더했다(RULEBOOK §32).
+- [x] REC-002 순방향 migration과 참조 제약을 정의한다. 기존 interrupted/unknown 데이터는 성공으로 변환하지 않고 새 필드 부재를 명시적으로 처리한다. 검증: migration 46은 열 추가만 하며 이전 턴은 NULL(기록 이전), 기존 interrupted/unknown은 그대로다. 하위 버전 흉내 시험 4개에 열 삭제를 반영해 재적용을 확인했다.
+- [x] REC-003 기록 경계를 입력 접수·모델 step·도구 승인·외부 실행 접수·결과 확정·최종 종료로 나눈다. 각 경계의 원자적 DB 변경과 외부 동작 사이 간격을 문서화한다. 검증: 접수·모델 step·답변 확정·승인·외부 실행 접수·결과 확정·최종 종료 경계와 각 transaction, 외부 동작 사이 간격(running→unknown, 강제 종료 시 최대 5초 증거 누락)을 RULEBOOK §32에 기록했다.
+- [x] REC-004 요청 receipt와 checkpoint를 공통 ID로 연결한다. 같은 키 재접수는 원래 결과/현재 상태를 반환하고 같은 키의 다른 입력은 거부한다. 검증: 요청 receipt는 턴 ID를 돌려주고 증거는 그 턴 행에 있다. 같은 키 재접수·다른 입력 거부는 `tests/turns.rs::one_active_turn_per_session_and_idempotent_create`.
+- [x] REC-005 실행 소유권 epoch와 종료 확인을 사용해 살아 있는 턴을 보호한다. PID만 같거나 heartbeat가 늦다는 이유로 실행을 복구·재시작하지 않는다. 검증: 증거 쓰기는 `running`·현재 `owner_epoch`·같은 `step`일 때만 한다. 재시작 복구는 다른 epoch의 실행만 interrupted로 바꾸고 PID·heartbeat로 판단하지 않는다(`interrupted_stream_evidence_survives_forced_stop_and_is_listed`). 살아 있는 이전 소유자의 늦은 쓰기를 직접 주입한 시험은 없다.
+- [x] REC-006 정상 종료 commit으로 포괄된 증거와 미포괄 증거를 구분한다. 최종 저장 실패 시 완료 이벤트만 먼저 전달하지 않는다. 검증: assistant 메시지·usage·step 확정과 같은 transaction에서만 증거를 지우고, 실패·취소·종료는 종료 기록 전에 마지막 증거를 남긴다(`evidence_cleared_on_commit_and_kept_on_cancel`).
+- [x] REC-007 충돌·손상·참조 누락 checkpoint를 격리하고 원본 bytes/hash와 오류 분류를 보존한다. 격리 저장 실패 시 새 작업이 원본을 덮어쓰지 못하게 한다. 검증: 파싱 실패·버전·본문 누락·hash 불일치를 분류하고 원본 bytes·sha256·크기를 보존하며, 같은 세션의 새 턴이 원본을 덮어쓰지 않는다(`corrupt_evidence_is_reported_and_preserved`).
+- [x] REC-008 동일 세션 새 턴을 허용할 조건을 정의한다. 기존 미검토 unknown 차단은 유지하고 독립적인 증거 격리가 완료됐다는 이유만으로 부작용 재실행을 허용하지 않는다. 검증: 증거 유무와 무관하게 같은 세션 새 턴은 허용하고 미검토 unknown 차단(`unknown_pending_review`)은 유지한다. 확인·증거 격리는 재실행을 허용하지 않는다.
+- [x] REC-009 미복구 목록/상세/검토 API에 소유권·pagination·revision·멱등 처리를 적용한다. 진단 내용에 token·환경변수 전체·다른 프로젝트 내용을 노출하지 않는다. 검증: `GET /recovery` 최신순 keyset cursor(최대 100)·잘못된 cursor 400·원문 없는 요약, 확인·검토는 기존 멱등·revision 경로(`corrupt_evidence_is_reported_and_preserved`, 강제 종료 시험).
+- [x] REC-010 공용 UI에 확정 답변·중단 증거·불명 작업을 구분해 표시한다. 재실행 버튼과 검토 완료 버튼을 혼동시키지 않고 해당 턴/도구 출력으로 이동 가능하게 한다. 검증: 실패·중단 배너에 확정되지 않은 응답을 답변과 분리해 표시하고, 사이드바 `확인 필요`에서 해당 대화로 이동하며 닫기 뒤 목록에서 빠진다(`web/e2e/turn-error.spec.ts`, `RecoveryPanel.test.ts`).
+- [x] REC-011 기록 용량·보존·정리 정책을 정한다. 미검토 unknown과 미복구 원본은 자동 정리 대상에서 제외하고 blob 정리는 참조 무결성과 함께 처리한다. 검증: 응답 앞 32,000자 상한·`truncated`, 답변 확정에서만 삭제, 확인·검토 뒤에도 자동 정리 없음(RULEBOOK §32). 증거는 blob을 쓰지 않는다.
+- [ ] REC-012 각 기록 경계에 crash/디스크 부족/쓰기 권한 오류를 주입한다. 원본 보존·중복 결과 방지·실행 소유자 보호·재시작 반복 수렴을 검증한다. 진행: 강제 종료(죽은 epoch)·반복 재시작 수렴·원본 보존·모델 재호출 없음은 검증했다. 각 경계의 디스크 부족·쓰기 권한 오류 주입은 미실행이다.
+- [x] REC-013 backup/restore에 복구 증거와 검토 receipt를 포함한다. 새 대상 복원 후에도 모델/도구를 자동 재실행하지 않음을 확인한다. 검증: snapshot을 새 디렉터리에 복원해도 중단 증거·확인 시각이 남고 모델을 다시 부르지 않는다(`interrupted_stream_evidence_survives_forced_stop_and_is_listed`).
 
 완료 조건: 실행 중 서버를 종료해도 확정 이력은 유지되고, 미확정 결과는 숨겨지거나 성공으로 바뀌지 않으며, 다음 요청이 미복구 증거를 덮어쓰지 않는다.
 

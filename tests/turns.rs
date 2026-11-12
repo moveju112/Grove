@@ -553,6 +553,167 @@ async fn stream_progress_time_survives_forced_stop() {
     assert_eq!(t["error"]["last_progress_at"], progress, "단계 갱신 시각이 아니라 stream 진행 시각: {t}");
 }
 
+// REC-003·005·006·012: 확정 전 응답은 실행 중에 중단 증거로 남고, 강제 종료 뒤 복구·반복 재시작에서도 원본 그대로 보존된다.
+// 확정 답변으로 바꾸거나 모델을 다시 부르지 않으며, 확인(포기)은 목록에서만 내리고 증거는 지우지 않는다.
+#[tokio::test]
+async fn interrupted_stream_evidence_survives_forced_stop_and_is_listed() {
+    let (mut s, f, prof, sid, _) = setup().await;
+    f.push(fixture::hang_after("부분 응답"));
+    let v = start_turn(&s, &sid, &prof, "x", false).await;
+    let tid = v["turn"]["id"].as_str().unwrap().to_string();
+    s.wait_status(&tid, "running").await;
+    let db_path = s.data_dir().join("grove.db");
+    let raw = |p: &std::path::Path, tid: &str| -> Option<String> {
+        let db = rusqlite::Connection::open(p).unwrap();
+        db.query_row("SELECT evidence FROM turns WHERE id = ?1", [tid], |r| r.get(0)).unwrap()
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(15);
+    let written = loop {
+        if let Some(e) = raw(&db_path, &tid) {
+            break e;
+        }
+        assert!(std::time::Instant::now() < deadline, "stream 중 중단 증거가 기록되지 않음");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    };
+    s.stop().await;
+    // 강제 종료 흉내: 종료 정리 전 상태(실행 중, 죽은 epoch)와 실행 중에 기록된 증거만 남긴다.
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    db.execute(
+        "UPDATE turns SET status = 'running', error = NULL, finished_at = NULL, owner_epoch = 'dead-epoch', evidence = ?2 WHERE id = ?1",
+        rusqlite::params![tid, written],
+    )
+    .unwrap();
+    db.execute("DELETE FROM messages WHERE turn_id = ?1 AND role = 'note'", [&tid]).unwrap();
+    drop(db);
+    s.restart().await;
+    let (_, t) = s.get(&format!("/api/v1/turns/{tid}")).await;
+    assert_eq!(t["status"], "interrupted", "{t}");
+    assert_eq!(t["evidence"]["text"], "부분 응답", "{t}");
+    assert_eq!(t["evidence"]["step"], 0);
+    assert_eq!(t["evidence"]["truncated"], false);
+    assert!(t["evidence"]["sha256"].is_string() && t["evidence"].get("reasoning").is_none(), "{t}");
+    let (_, msgs) = s.get(&format!("/api/v1/sessions/{sid}/messages")).await;
+    assert!(!msgs["items"].as_array().unwrap().iter().any(|m| m["role"] == "assistant"), "중단 증거를 확정 답변으로 바꾸지 않는다");
+    let (st, page) = s.get("/api/v1/recovery").await;
+    assert_eq!(st, StatusCode::OK, "{page}");
+    let item = page["items"].as_array().unwrap().iter().find(|i| i["id"] == tid.as_str()).cloned().expect("미복구 목록에 중단 턴");
+    assert_eq!(item["kind"], "turn");
+    assert_eq!(item["session_id"], sid.as_str());
+    assert_eq!(item["evidence"]["text_chars"], 5);
+    assert!(item["evidence"].get("text").is_none(), "목록에는 원문을 싣지 않는다: {item}");
+    // 반복 재시작에도 원본 bytes가 그대로이고 모델을 다시 부르지 않는다.
+    s.restart().await;
+    assert_eq!(raw(&db_path, &tid).as_deref(), Some(written.as_str()));
+    assert_eq!(f.requests().len(), 1, "재시작 후 모델을 다시 부르지 않는다");
+    let (st, _) = s.post(&format!("/api/v1/turns/{tid}/acknowledge"), json!({})).await;
+    assert_eq!(st, StatusCode::OK);
+    let (_, page) = s.get("/api/v1/recovery").await;
+    assert!(!page["items"].as_array().unwrap().iter().any(|i| i["id"] == tid.as_str()), "확인한 턴은 목록에서 내린다");
+    assert_eq!(raw(&db_path, &tid).as_deref(), Some(written.as_str()), "확인은 증거를 지우지 않는다");
+    // REC-013: snapshot을 새 디렉터리에 복원해도 증거·확인 기록이 남고 모델을 다시 부르지 않는다.
+    let backup = tempfile::tempdir().unwrap();
+    let snap = backup.path().join("snap.db");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_grove")).arg("snapshot").arg(&snap).arg("--data-dir").arg(s.data_dir()).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    s.stop().await;
+    let target = tempfile::tempdir().unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_grove")).arg("restore").arg(&snap).arg(target.path().join("data")).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let cfg = config(&target.path().join("data"));
+    let r = TestServer::start_with(target, cfg).await;
+    let (_, t) = r.get(&format!("/api/v1/turns/{tid}")).await;
+    assert_eq!(t["status"], "interrupted");
+    assert_eq!(t["evidence"]["text"], "부분 응답");
+    assert!(t["acknowledged_at"].is_string());
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert_eq!(f.requests().len(), 1, "복원 뒤에도 모델을 다시 부르지 않는다");
+}
+
+// REC-006: 답변이 확정되면 같은 commit에서 중단 증거를 지운다. 사용자 취소는 증거를 남기되 목록에는 올리지 않는다.
+#[tokio::test]
+async fn evidence_cleared_on_commit_and_kept_on_cancel() {
+    let (s, f, prof, sid, _) = setup().await;
+    f.push(fixture::slow_text(&["안녕", "하세요"], 100));
+    let v = start_turn(&s, &sid, &prof, "a", false).await;
+    let t = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert!(t["evidence"].is_null(), "{t}");
+    f.push(fixture::hang_after("멈춘 응답"));
+    let v = start_turn(&s, &sid, &prof, "b", false).await;
+    let tid = v["turn"]["id"].as_str().unwrap().to_string();
+    s.wait_status(&tid, "running").await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while f.requests().len() < 2 {
+        assert!(std::time::Instant::now() < deadline, "모델 요청이 도착하지 않음");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    s.post(&format!("/api/v1/turns/{tid}/cancel"), json!({})).await;
+    let t = s.wait_status(&tid, "cancelled").await;
+    assert_eq!(t["evidence"]["text"], "멈춘 응답", "{t}");
+    let (_, page) = s.get("/api/v1/recovery").await;
+    assert!(page["items"].as_array().unwrap().is_empty(), "사용자 취소는 미복구 목록에 올리지 않는다: {page}");
+}
+
+// REC-007·009: 손상된 증거는 원본 bytes를 바꾸지 않고 분류·hash만 알리며, 새 턴이 덮어쓰지 않는다. 목록은 keyset cursor로 나눈다.
+#[tokio::test]
+async fn corrupt_evidence_is_reported_and_preserved() {
+    let (mut s, f, prof, sid, _) = setup().await;
+    let mut ids = vec![];
+    for i in 0..3 {
+        f.push(fixture::text("ok"));
+        let v = start_turn(&s, &sid, &prof, &format!("q{i}"), false).await;
+        let tid = v["turn"]["id"].as_str().unwrap().to_string();
+        s.wait_status(&tid, "completed").await;
+        ids.push(tid);
+    }
+    s.stop().await;
+    let db_path = s.data_dir().join("grove.db");
+    let good = r#"{"v":1,"sha256":"00","body":"{\"text\":\"변조\"}"}"#;
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    for (i, (tid, ev)) in ids.iter().zip(["not json", good, r#"{"v":2}"#]).enumerate() {
+        db.execute(
+            "UPDATE turns SET status = 'interrupted', evidence = ?2, finished_at = ?3, acknowledged_at = NULL WHERE id = ?1",
+            rusqlite::params![tid, ev, format!("2030-01-01T00:00:0{i}Z")],
+        )
+        .unwrap();
+    }
+    drop(db);
+    s.restart().await;
+    let (_, t) = s.get(&format!("/api/v1/turns/{}", ids[0])).await;
+    assert_eq!(t["evidence"]["corrupt"], true);
+    assert_eq!(t["evidence"]["kind"], "parse");
+    assert_eq!(t["evidence"]["raw_bytes"], 8);
+    assert_eq!(t["evidence"]["raw_sha256"], grove::util::sha256_hex(b"not json"));
+    let (_, t) = s.get(&format!("/api/v1/turns/{}", ids[1])).await;
+    assert_eq!(t["evidence"]["kind"], "hash_mismatch", "{t}");
+    assert!(t["evidence"].get("text").is_none());
+    let (_, t) = s.get(&format!("/api/v1/turns/{}", ids[2])).await;
+    assert_eq!(t["evidence"]["kind"], "unsupported_version");
+    // 최신순 2개씩: 다음 cursor로 나머지 1개
+    let (_, p1) = s.get("/api/v1/recovery?limit=2").await;
+    let got: Vec<_> = p1["items"].as_array().unwrap().iter().map(|i| i["id"].as_str().unwrap().to_string()).collect();
+    assert_eq!(got, vec![ids[2].clone(), ids[1].clone()]);
+    assert_eq!(p1["items"][1]["evidence"], json!({ "corrupt": true, "kind": "hash_mismatch" }));
+    let cursor = p1["next_cursor"].as_str().unwrap().to_string();
+    let (_, p2) = s.get(&format!("/api/v1/recovery?limit=2&cursor={}", urlencoding(&cursor))).await;
+    assert_eq!(p2["items"].as_array().unwrap().len(), 1);
+    assert_eq!(p2["items"][0]["id"], ids[0].as_str());
+    assert!(p2["next_cursor"].is_null());
+    let (st, _) = s.get("/api/v1/recovery?cursor=bad").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    // 같은 세션의 새 턴은 진행되지만 이전 턴의 손상 원본은 그대로다.
+    f.push(fixture::text("새 답"));
+    let v = start_turn(&s, &sid, &prof, "새 요청", false).await;
+    s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    let db = rusqlite::Connection::open(&db_path).unwrap();
+    let kept: String = db.query_row("SELECT evidence FROM turns WHERE id = ?1", [&ids[0]], |r| r.get(0)).unwrap();
+    assert_eq!(kept, "not json");
+}
+
+fn urlencoding(s: &str) -> String {
+    s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
+}
+
 // RUN-023: provider timeout은 사용자 중지와 구별되고, 원인·시간·설정이 다음 모델 요청까지 유지된다.
 #[tokio::test]
 async fn provider_timeout_cause_survives_into_next_request() {

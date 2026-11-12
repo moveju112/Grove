@@ -444,6 +444,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     마지막 요청이 {lastTurn.status === "failed" ? "실패" : "중단"}했습니다: {(lastTurn.error as { message?: string })?.message ?? ""}
                     <span className="muted small"> (자동으로 다시 실행하지 않습니다)</span>
                     {(lastTurn.error as { scope?: EndScopeData })?.scope && <EndScope s={(lastTurn.error as { scope: EndScopeData }).scope} />}
+                    {lastTurn.evidence && <TurnEvidence e={lastTurn.evidence} />}
                     {/* RUN-019: 다시 실행(같은 글·설정)·새 요청 쓰기·포기(배너 닫기, 모든 기기) */}
                     <span className="inline">
                         <button className="ghost small" disabled={archived} onClick={() => void act(() => api.post(`/turns/${lastTurn.id}/retry`))}>
@@ -467,6 +468,26 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands}
                 boundProfileId={s.bot_id ? bots.data?.bots.find((bot) => bot.id === s.bot_id)?.profile_id ?? null : undefined} />
         </div>
+    );
+}
+
+/// 확정되지 않은 응답의 중단 증거(REC-010). 답변 목록과 분리해 표시하고 모델 입력에는 쓰지 않는다.
+function TurnEvidence({ e }: { e: NonNullable<Turn["evidence"]> }) {
+    if ("corrupt" in e) {
+        return (
+            <p className="small" data-testid="turn-evidence">
+                중단 시점 기록이 손상되어 표시할 수 없습니다({e.kind}). 원본은 지우지 않고 보존합니다.
+            </p>
+        );
+    }
+    return (
+        <details className="small" data-testid="turn-evidence">
+            <summary>
+                중단 전까지 받은 응답(확정되지 않음 · {e.text_chars}자{e.truncated ? ", 앞부분만 보존" : ""}
+                {e.tool_calls.length > 0 ? ` · 계획 중이던 도구 ${e.tool_calls.join(", ")}(실행 안 함)` : ""})
+            </summary>
+            <pre className="evidence-text">{e.text}</pre>
+        </details>
     );
 }
 

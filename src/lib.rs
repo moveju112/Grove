@@ -294,6 +294,7 @@ pub fn router(app: App) -> Router {
         .route("/turns/{id}/cancel", post(runner::cancel))
         .route("/turns/{id}/retry", post(runner::retry))
         .route("/turns/{id}/acknowledge", post(runner::acknowledge))
+        .route("/recovery", get(runner::recovery))
         .route("/tool-calls", get(approvals::list))
         .route("/tool-calls/{id}", get(approvals::show))
         .route("/tool-calls/{id}/decision", post(approvals::decide))

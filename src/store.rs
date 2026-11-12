@@ -749,6 +749,10 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE schedules ADD COLUMN last_failed_at TEXT;
     ALTER TABLE schedules ADD COLUMN paused_reason TEXT CHECK (paused_reason IS NULL OR paused_reason IN ('user','failures'));
     "#,
+    // 46: 확정되지 않은 모델 응답의 중단 증거(REC). 답변 확정 commit에서만 지운다. 이전 턴은 NULL(증거 기록 이전)로 둔다.
+    r#"
+    ALTER TABLE turns ADD COLUMN evidence TEXT;
+    "#,
 ];
 
 #[cfg(test)]

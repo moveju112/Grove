@@ -92,13 +92,17 @@ pub struct Turn {
     pub definition: Value,
     /// 실패·중단된 요청을 사용자가 확인(포기·다시 실행)한 시각(RUN-019). null이면 아직 확인 전.
     pub acknowledged_at: Option<String>,
+    /// 확정되지 않은 응답의 중단 증거(REC). 없으면 null, 손상되면 `{ corrupt: true, kind, raw_sha256, raw_bytes }`.
+    /// 확정 답변과 별개이며 모델 입력에 넣지 않는다.
+    #[ts(type = "{ step: number; text: string; text_chars: number; truncated: boolean; tool_calls: string[]; reasoning_chars: number; captured_at: string; sha256: string } | { corrupt: true; kind: string; raw_sha256: string; raw_bytes: number } | null")]
+    pub evidence: Value,
     /// 실행 슬롯 대기 중이면 대기 정보(FAIR-011). 다른 소유자의 상세는 개수로만.
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional, type = "{ ahead: number; active: number; limit: number; reason?: \"provider\" | \"account\" }")]
     pub queue: Option<crate::fair::WaitInfo>,
 }
 
-const TCOLS: &str = "id, session_id, status, request_message_id, profile_id, agent_id, workflow_id, tools_enabled, error, usage, step, created_at, updated_at, finished_at, definition_snapshot, owner_epoch, acknowledged_at";
+const TCOLS: &str = "id, session_id, status, request_message_id, profile_id, agent_id, workflow_id, tools_enabled, error, usage, step, created_at, updated_at, finished_at, definition_snapshot, owner_epoch, acknowledged_at, evidence";
 
 fn turn_row(r: &Row) -> rusqlite::Result<(Turn, String)> {
     let j = |i: usize| -> rusqlite::Result<Value> {
@@ -139,6 +143,7 @@ fn turn_row(r: &Row) -> rusqlite::Result<(Turn, String)> {
             finished_at: r.get(13)?,
             definition: def,
             acknowledged_at: r.get(16)?,
+            evidence: read_evidence(r.get(17)?),
             queue: None,
         },
         r.get(15)?,
@@ -536,6 +541,8 @@ struct StepInput {
     profile_id: String,
     /// 이 턴의 첫 모델 호출인지(자동 압축 판단용)
     first_step: bool,
+    /// 이 호출 전에 확정된 모델 단계 수. 중단 증거는 이 단계에서만 쓴다(REC-005).
+    step: i64,
     profile: crate::provider::Profile,
     request: ModelRequest,
     /// 사용자가 정한 시간 예산의 끝(없으면 제한 없음)
@@ -574,6 +581,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
         input_seq: s.last_message_seq,
         profile_id: profile_id.clone(),
         first_step: t.step == 0,
+        step: t.step,
         profile: rp,
         request: ModelRequest {
             system,
@@ -727,12 +735,16 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         let tid2 = turn_id.to_string();
         let mut last = Instant::now() - Duration::from_secs(1);
         let mut last_progress_at = None;
+        let step_now = input.step;
         // 실제 진행 시각을 5초 간격으로 DB에 남긴다. 서버가 강제 종료돼도 중단 원인에 마지막 진행 시각이 남는다(RUN-023).
         let progress = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        // 확정 전 응답의 중단 증거(REC). 같은 간격으로 이 단계·이 실행 소유자일 때만 쓴다.
+        let evidence = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
         let progress_writer = {
-            let (app, tid, progress) = (app.clone(), turn_id.to_string(), progress.clone());
+            let (app, tid, progress, evidence, step) = (app.clone(), turn_id.to_string(), progress.clone(), evidence.clone(), input.step);
             tokio::spawn(async move {
                 let mut written: Option<String> = None;
+                let mut written_evidence: Option<String> = None;
                 loop {
                     tokio::time::sleep(Duration::from_secs(5)).await;
                     let cur = progress.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -740,6 +752,11 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                         let (tid, at) = (tid.clone(), cur.clone());
                         let _ = app.db.call(move |c| Ok(c.execute("UPDATE turns SET progress_at = ?2 WHERE id = ?1", params![tid, at])?)).await;
                         written = cur;
+                    }
+                    let ev = evidence.lock().unwrap_or_else(|e| e.into_inner()).clone();
+                    if ev.is_some() && ev != written_evidence {
+                        write_evidence(&app, &tid, step, ev.clone()).await;
+                        written_evidence = ev;
                     }
                 }
             })
@@ -752,6 +769,9 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             }
             if last.elapsed() >= Duration::from_millis(50) {
                 last = Instant::now();
+                if !o.text.is_empty() || !o.tool_calls.is_empty() {
+                    *evidence.lock().unwrap_or_else(|e| e.into_inner()) = Some(encode_evidence(o, step_now));
+                }
                 partials.set(
                     &sid,
                     json!({ "turn_id": tid2, "text": o.text, "reasoning_chars": o.reasoning.chars().count(), "reasoning": reasoning_tail(&o.reasoning),
@@ -769,6 +789,13 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             None => provider::stream(&input.profile, &input.request, &mut cancel_rx, &mut on_delta).await,
         };
         progress_writer.abort();
+        // 응답 없이 끝나면(취소·종료·오류) 마지막 중단 증거를 종료 기록보다 먼저 남긴다. 성공은 확정 commit이 증거를 지운다.
+        if result.is_err() {
+            let ev = evidence.lock().unwrap_or_else(|e| e.into_inner()).clone();
+            if ev.is_some() {
+                write_evidence(app, turn_id, input.step, ev).await;
+            }
+        }
         // 응답을 받으면 바로 반환한다(이후 도구 실행·승인 대기는 슬롯 없이). 오류·취소 경로도 여기서 반환된다.
         drop(permit);
         app.partials.clear(&input.session_id);
@@ -847,7 +874,8 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 let mut usage: provider::Usage = serde_json::from_value(t.usage.clone()).unwrap_or_default();
                 usage.add(&out.usage);
                 let step = t.step + 1;
-                tx.execute("UPDATE turns SET usage = ?2, step = ?3, updated_at = ?4 WHERE id = ?1", params![tid, serde_json::to_string(&usage)?, step, now])?;
+                // 답변 확정과 같은 transaction에서만 이 단계의 중단 증거를 지운다(REC-006).
+                tx.execute("UPDATE turns SET usage = ?2, step = ?3, updated_at = ?4, evidence = NULL WHERE id = ?1", params![tid, serde_json::to_string(&usage)?, step, now])?;
                 let limits = &t.definition["limits"];
                 // 예약 한도와 사용자 예산 중 작은 쪽. 어느 쪽인지 원인에 남긴다(RUN-023).
                 let caps = [("schedule", limits["max_total_tokens"].as_i64()), ("user", t.definition["budget"]["max_tokens"].as_i64())];
@@ -990,6 +1018,57 @@ async fn fail(app: &App, turn_id: &str, error: Value) {
         })
         .await;
     app.notify_events().await;
+}
+
+/// 중단 증거에 남기는 응답 글자 상한. 넘으면 앞부분만 남기고 truncated로 표시한다(REC-011).
+const EVIDENCE_MAX_CHARS: usize = 32_000;
+
+/// 확정 전 응답의 중단 증거(REC). 숨은 추론 원문은 넣지 않고 글자 수만 남긴다.
+/// 본문 문자열의 sha256을 함께 저장해 손상을 읽을 때 판정한다.
+fn encode_evidence(o: &provider::ModelOutput, step: i64) -> String {
+    let chars = o.text.chars().count();
+    let body = json!({
+        "step": step,
+        "text": o.text.chars().take(EVIDENCE_MAX_CHARS).collect::<String>(),
+        "text_chars": chars,
+        "truncated": chars > EVIDENCE_MAX_CHARS,
+        "tool_calls": o.tool_calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
+        "reasoning_chars": o.reasoning.chars().count(),
+        "captured_at": crate::util::fmt_time(time::OffsetDateTime::now_utc()),
+    })
+    .to_string();
+    json!({ "v": 1, "sha256": crate::util::sha256_hex(body.as_bytes()), "body": body }).to_string()
+}
+
+/// 살아 있는 이 실행 소유자의 같은 단계에서만 증거를 쓴다. 종료·재시작된 턴과 이미 확정된 단계는 덮어쓰지 않는다(REC-005·007).
+async fn write_evidence(app: &App, turn_id: &str, step: i64, evidence: Option<String>) {
+    let (tid, epoch) = (turn_id.to_string(), app.epoch.clone());
+    let _ = app
+        .db
+        .call(move |c| {
+            Ok(c.execute(
+                "UPDATE turns SET evidence = ?2 WHERE id = ?1 AND status = 'running' AND owner_epoch = ?3 AND step = ?4",
+                params![tid, evidence, epoch, step],
+            )?)
+        })
+        .await;
+}
+
+/// 저장된 중단 증거를 검증해 보여 준다. 손상되면 원문을 바꾸지 않고 분류·hash·크기만 알린다(REC-007).
+pub fn read_evidence(raw: Option<String>) -> Value {
+    let Some(raw) = raw else { return Value::Null };
+    let corrupt = |kind: &str| json!({ "corrupt": true, "kind": kind, "raw_sha256": crate::util::sha256_hex(raw.as_bytes()), "raw_bytes": raw.len() });
+    let Ok(wrapper) = serde_json::from_str::<Value>(&raw) else { return corrupt("parse") };
+    if wrapper["v"] != 1 {
+        return corrupt("unsupported_version");
+    }
+    let Some(body) = wrapper["body"].as_str() else { return corrupt("missing_body") };
+    if wrapper["sha256"].as_str() != Some(crate::util::sha256_hex(body.as_bytes()).as_str()) {
+        return corrupt("hash_mismatch");
+    }
+    let Ok(mut out) = serde_json::from_str::<Value>(body) else { return corrupt("parse") };
+    out["sha256"] = wrapper["sha256"].clone();
+    out
 }
 
 async fn end_cancelled(app: &App, turn_id: &str, last_progress_at: Option<String>) {
@@ -1364,6 +1443,61 @@ pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     .await?;
     kick_queued(&app).await;
     Ok(resp)
+}
+
+#[derive(Deserialize)]
+pub struct RecoveryQuery {
+    pub cursor: Option<String>,
+    pub limit: Option<i64>,
+}
+
+/// 미복구 기록 목록(REC-009). 확인하지 않은 중단 턴(실패는 중단 증거가 남은 것만)과 검토하지 않은 결과 불명 도구.
+/// 원문·인자는 보내지 않고 위치·상태·오류 분류만 보낸다. 최신순 (시각, ID) keyset cursor.
+pub async fn recovery(State(app): State<App>, _p: Principal, Query(q): Query<RecoveryQuery>) -> ApiResult<Json<Value>> {
+    let limit = q.limit.unwrap_or(50).clamp(1, 100);
+    let cursor = match q.cursor.as_deref() {
+        None => None,
+        Some(c) => Some(c.rsplit_once('|').map(|(a, b)| (a.to_string(), b.to_string())).ok_or_else(|| ApiError::invalid("cursor 형식이 잘못되었습니다"))?),
+    };
+    let page = app
+        .db
+        .call(move |c| {
+            let (ca, ci) = cursor.unzip();
+            let mut st = c.prepare(
+                "SELECT kind, id, session_id, project_id, title, archived_at, status, at, code, message, evidence, name, turn_id FROM ( \
+                 SELECT 'turn' kind, t.id, t.session_id, s.project_id, s.title, s.archived_at, t.status, COALESCE(t.finished_at, t.updated_at) at, \
+                   json_extract(t.error, '$.code') code, json_extract(t.error, '$.message') message, t.evidence, NULL name, t.id turn_id \
+                 FROM turns t JOIN sessions s ON s.id = t.session_id \
+                 WHERE t.acknowledged_at IS NULL AND (t.status = 'interrupted' OR (t.status = 'failed' AND t.evidence IS NOT NULL)) \
+                 UNION ALL \
+                 SELECT 'tool_call', k.id, k.session_id, k.project_id, s.title, s.archived_at, k.status, COALESCE(k.finished_at, k.updated_at), \
+                   json_extract(k.result, '$.error.code'), json_extract(k.result, '$.error.message'), NULL, k.name, k.turn_id \
+                 FROM tool_calls k JOIN sessions s ON s.id = k.session_id \
+                 WHERE k.status = 'unknown' AND k.reviewed_at IS NULL) \
+                 WHERE ?1 IS NULL OR at < ?1 OR (at = ?1 AND id < ?2) ORDER BY at DESC, id DESC LIMIT ?3",
+            )?;
+            let mut items = st
+                .query_map(params![ca, ci, limit + 1], |r| {
+                    let ev = read_evidence(r.get(10)?);
+                    Ok(json!({
+                        "kind": r.get::<_, String>(0)?, "id": r.get::<_, String>(1)?, "session_id": r.get::<_, String>(2)?,
+                        "project_id": r.get::<_, String>(3)?, "session_title": r.get::<_, String>(4)?, "archived": r.get::<_, Option<String>>(5)?.is_some(),
+                        "status": r.get::<_, String>(6)?, "at": r.get::<_, String>(7)?, "code": r.get::<_, Option<String>>(8)?,
+                        "message": r.get::<_, Option<String>>(9)?, "tool_name": r.get::<_, Option<String>>(11)?, "turn_id": r.get::<_, Option<String>>(12)?,
+                        "evidence": if ev.is_null() { Value::Null } else if ev["corrupt"] == true { json!({ "corrupt": true, "kind": ev["kind"] }) }
+                            else { json!({ "text_chars": ev["text_chars"], "tool_calls": ev["tool_calls"].as_array().map_or(0, Vec::len) }) },
+                    }))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            let next = (items.len() as i64 > limit).then(|| {
+                items.truncate(limit as usize);
+                let l = items.last().unwrap();
+                format!("{}|{}", l["at"].as_str().unwrap_or(""), l["id"].as_str().unwrap_or(""))
+            });
+            Ok(json!({ "items": items, "next_cursor": next }))
+        })
+        .await?;
+    Ok(Json(page))
 }
 
 /// 실패·중단된 요청 확인(포기, RUN-019). 결과는 그대로 두고 배너만 닫는다.

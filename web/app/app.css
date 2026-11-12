@@ -219,6 +219,8 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .approval .actions, .def-editor .actions { display: flex; gap: 0.4em; flex-wrap: wrap; }
 .diff { max-height: 16em; }
 .turn-status { display: flex; gap: 0.6em; align-items: center; font-size: 0.9em; }
+.turn-status.err { flex-wrap: wrap; }
+.evidence-text { max-height: 12em; overflow: auto; white-space: pre-wrap; margin: 0.3em 0 0; }
 .composer { border-top: 1px solid var(--line); padding-top: 0.5em; display: grid; gap: 0.35em; position: sticky; bottom: 0; background: var(--panel); }
 .composer-bar { display: flex; gap: 0.35em; align-items: center; flex-wrap: wrap; }
 .check { display: inline-flex; gap: 0.3em; align-items: center; }
