@@ -320,3 +320,69 @@ async fn restart_interrupts_running_without_replay_and_records_missed() {
     assert!(titles.iter().any(|t| t.contains("놓쳤습니다")), "{titles:?}");
     assert!(titles.iter().any(|t| t.contains("중단")), "{titles:?}");
 }
+
+/// RTE-001·002·006·009·010: 담당 봇 예약은 확인 전 일시 정지로 저장(모델 호출 0)하고, 실행 시점의 봇 home에서 봇 설정으로 실행한다.
+/// 봇 초기화 뒤에는 새 home으로 전달하고, 봇이 비활성이면 다른 대화로 돌리지 않고 시작 실패로 남긴다.
+#[tokio::test]
+async fn bot_owned_schedule_runs_in_current_home_and_stops_when_bot_inactive() {
+    let c = ctx().await;
+    let (st, b) = c.s.post("/api/v1/bots", json!({ "name": "점검봇", "project_id": c.pid, "profile_id": c.prof })).await;
+    assert_eq!(st, StatusCode::CREATED, "{b}");
+    let bid = b["id"].as_str().unwrap().to_string();
+    // 잘못된 조합은 저장 전에 거부한다
+    let other = c.s.create_project("sch-other").await;
+    let (st, ob) = c.s.post("/api/v1/bots", json!({ "name": "다른봇", "project_id": other["id"], "profile_id": c.prof })).await;
+    assert_eq!(st, StatusCode::CREATED);
+    for (extra, why) in [
+        (json!({ "bot_id": ob["id"], "session_mode": "same" }), "다른 프로젝트 봇"),
+        (json!({ "bot_id": bid, "session_mode": "new" }), "봇 home 대신 새 대화"),
+        (json!({ "bot_id": bid, "session_mode": "same", "agent_id": "default" }), "다른 에이전트"),
+        (json!({ "bot_id": bid, "session_mode": "same", "profile_id": "other-profile" }), "봇과 다른 모델"),
+    ] {
+        let (st, e) = c.create(extra).await;
+        assert!(st.is_client_error(), "{why}: {e}");
+    }
+    let (st, sch) = c.create(json!({ "bot_id": bid, "session_mode": "same", "start_paused": true, "interval_minutes": 1, "at": fmt(time::OffsetDateTime::now_utc() + time::Duration::seconds(2)) })).await;
+    assert_eq!(st, StatusCode::CREATED, "{sch}");
+    assert_eq!((sch["status"].as_str(), sch["paused_reason"].as_str(), sch["bot_id"].as_str()), (Some("paused"), Some("user"), Some(bid.as_str())));
+    let id = sch["id"].as_str().unwrap().to_string();
+    tokio::time::sleep(Duration::from_millis(3000)).await;
+    assert!(c.runs(&id).await.is_empty() && c.f.requests().is_empty(), "일시 정지로 저장한 예약은 실행·모델 호출을 하지 않는다");
+    // 수동 실행: 봇 home에 예약 출처로 전달
+    c.f.push(fixture::text("점검 완료"));
+    let (st, r) = c.s.post(&format!("/api/v1/schedules/{id}/run"), json!({})).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{r}");
+    let runs = c.wait_run(&id, |r| r.first().is_some_and(|x| x["status"] == "completed")).await;
+    let (_, bv) = c.s.get(&format!("/api/v1/bots/{bid}")).await;
+    let home = bv["home_session_id"].as_str().unwrap().to_string();
+    assert_eq!(runs[0]["session_id"].as_str(), Some(home.as_str()), "결과는 봇 home");
+    let (_, msgs) = c.s.get(&format!("/api/v1/sessions/{home}/messages")).await;
+    let all = msgs.to_string();
+    assert!(all.contains("\"kind\":\"schedule\"") && all.contains(&bid) && all.contains("점검 완료"), "예약 출처·봇·결과: {all}");
+    assert_eq!(c.f.requests().len(), 1);
+    // 봇 대화 초기화 뒤에는 새 home으로 전달한다
+    let (_, cur) = c.s.get(&format!("/api/v1/bots/{bid}")).await;
+    let (st, _) = c.s.post(&format!("/api/v1/bots/{bid}/status"), json!({ "expected_revision": cur["revision"], "action": "reset" })).await;
+    assert!(st.is_success());
+    c.f.push(fixture::text("두 번째"));
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let (st, r) = c.s.post(&format!("/api/v1/schedules/{id}/run"), json!({})).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{r}");
+    let runs = c.wait_run(&id, |r| r.len() == 2 && r.iter().all(|x| x["status"] == "completed")).await;
+    let (_, bv) = c.s.get(&format!("/api/v1/bots/{bid}")).await;
+    let home2 = bv["home_session_id"].as_str().unwrap().to_string();
+    assert_ne!(home2, home);
+    assert!(runs.iter().any(|x| x["session_id"].as_str() == Some(home2.as_str())));
+    // 비활성 봇: 실행 직전 확인으로 시작 실패, 모델 호출 없음, 다른 대화를 만들지 않음
+    let (_, cur) = c.s.get(&format!("/api/v1/bots/{bid}")).await;
+    let (st, _) = c.s.post(&format!("/api/v1/bots/{bid}/status"), json!({ "expected_revision": cur["revision"], "action": "disable" })).await;
+    assert!(st.is_success());
+    tokio::time::sleep(Duration::from_millis(1100)).await;
+    let (_, r) = c.s.post(&format!("/api/v1/schedules/{id}/run"), json!({})).await;
+    assert_eq!(r["status"], "start_failed", "{r}");
+    assert!(r["detail"].as_str().unwrap().contains("비활성"), "{r}");
+    assert!(r["session_id"].is_null());
+    assert_eq!(c.f.requests().len(), 2, "비활성 봇은 모델을 부르지 않는다");
+    let (_, bv) = c.s.get(&format!("/api/v1/bots/{bid}")).await;
+    assert_eq!(bv["home_session_id"].as_str(), Some(home2.as_str()), "이전 결과·home 보존");
+}

@@ -681,7 +681,9 @@ const MessageView = memo(function MessageView({ m, prefs }: { m: Message; prefs:
                 {m.role === "user"
                     ? (c as { source?: { kind?: string } }).source?.kind === "agent_run"
                         ? "부모 에이전트의 지시"
-                        : "나"
+                        : (c as { source?: { kind?: string } }).source?.kind === "schedule"
+                          ? `예약 '${(c as { source: { name?: string } }).source.name ?? ""}' 실행`
+                          : "나"
                     : m.role === "assistant"
                       ? `모델${c.model ? " · " + c.model : ""}${(m.content as { pending_work?: unknown }).pending_work ? " · 중간 응답(소유 작업 결과 반영 전)" : ""}`
                       : m.role}

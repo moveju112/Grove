@@ -174,6 +174,7 @@ config/paths → store(migration) → auth → events → projects → sessions/
 | 알림 | 실행 종료·놓침·시작 실패는 서버 DB의 영속 알림으로 남긴다. 알림은 모델을 다시 부르지 않는다 | `notifications::push` |
 | 반복 한도(AUTO-009) | 반복 예약에만 `max_runs`(1~100000, 시작한 자동 실행 수, 수동·놓침·건너뜀 제외)와 `end_at`(이 시각 뒤 자동 실행 없음)을 정할 수 있다. 다 쓰거나 다음 시각이 종료 뒤면 `done`. 수정으로 한도를 늘리면 다시 활성화한다 | `schedules::reschedule` |
 | 연속 실패(AUTO-009) | `failed`·`start_failed`만 세고 사용자 취소·재시작 중단은 세지 않으며, 완료하면 0으로 돌린다. n회 연속 실패 뒤 자동 실행은 마지막 실패에서 `60초×2^(n-1)`(최대 24시간) 동안 `missed`(이유 기록, 알림 없음)로 건너뛰고 수동 실행은 막지 않는다. `pause_after_failures`(새 예약 기본 5, null=끔, migration 전 예약은 끔)에 이르면 `paused`·`paused_reason=failures`로 멈추고 알린다. 재개하면 연속 실패를 지우며, 사용자가 멈추면 `paused_reason=user`다. 실행 중 삭제한 예약의 결과는 상태를 바꾸지 않는다 | `schedules::record_outcome`, `process_due` |
+| 담당 봇(RTE-001·002·006·009·010) | `bot_id`가 있으면 같은 예약 엔진·실행 receipt를 쓰고 `session_mode=same`·`session_id`/`agent_id` 없이, 프로젝트가 같고 profile이 봇 모델과 같은 활성 봇만 지정한다(migration 51). 실행 직전에 봇 상태를 다시 확인해 그 시점의 봇 home(초기화 뒤면 새 home)에서 봇 설정으로 실행하고, 비활성·삭제면 다른 대화·봇으로 돌리지 않고 `start_failed`(모델 호출 없음, 이전 결과 보존)로 남긴다. 사용자 메시지 출처에 예약 이름·run·예정 시각·예약 revision을 남겨 화면에 "예약 '이름' 실행"으로 표시한다. `start_paused`로 만들면 `paused`/`user`로 저장해 확인 전 실행·모델 호출이 없다. 화면은 봇 예약의 대상·주기·모델·도구·승인 정책·횟수를 보여 주고 확인해야 저장한다 | `schedules::validate`, `fire`, `SchedulesPanel` |
 
 ## 13. SQLite 운영 정책 (DB-010)
 

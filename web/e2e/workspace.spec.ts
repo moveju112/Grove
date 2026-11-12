@@ -547,6 +547,44 @@ test("예약을 만들고 지금 실행하면 실행 기록과 영속 알림이 
     await expect(page.getByTestId("session-view").last()).toContainText("예약 결과 보고");
 });
 
+// RTE-002·009: 담당 봇 예약은 범위를 확인해야 저장되고, 일시 정지로 저장하면 실행하지 않으며 결과는 봇 대화에 예약 출처로 남는다.
+test("담당 봇 예약은 범위 확인 뒤 저장하고 결과를 봇 대화에 예약 출처로 남긴다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    const profile = await ensureProfile();
+    const stamp = Date.now().toString(36);
+    const bot = await apiCall<{ id: string; name: string }>("POST", "/bots", { name: `예약봇 ${stamp}`, project_id: a.id, profile_id: profile });
+    await login(page);
+    await page.getByRole("button", { name: a.name, exact: true }).first().click();
+    const panel = page.getByTestId("schedules-panel");
+    await panel.locator("summary").first().click();
+    await panel.getByLabel("예약 이름").fill(`봇 점검 ${stamp}`);
+    await panel.getByLabel("예약 지시").fill("상태 알려줘");
+    await panel.getByLabel("예약 방식").selectOption("interval");
+    await panel.getByLabel("간격(분)").fill("600");
+    await panel.getByLabel("담당 봇").selectOption(bot.id);
+    await expect(panel.getByLabel("예약 모델")).toBeDisabled();
+    const confirmBox = panel.getByTestId("schedule-confirm");
+    await expect(confirmBox).toContainText(bot.name);
+    await expect(confirmBox).toContainText("600분마다");
+    const add = panel.getByRole("button", { name: "예약 추가" });
+    await expect(add).toBeDisabled();
+    await confirmBox.getByLabel("위 범위를 확인했습니다").check();
+    await confirmBox.getByLabel("저장만 하고 일시 정지 상태로 둠").check();
+    await add.click();
+    const item = panel.getByTestId("schedule").filter({ hasText: `봇 점검 ${stamp}` });
+    await expect(item.locator("summary").first()).toContainText("일시 정지");
+    await item.locator("summary").first().click();
+    await expect(item.getByTestId("schedule-bot")).toContainText(bot.name);
+    await expect(item).toContainText("아직 실행 기록이 없습니다");
+    await script({ frames: frames.text(["봇 예약 결과"]) });
+    await item.getByRole("button", { name: "지금 실행" }).click();
+    await expect(item.getByTestId("schedule-runs")).toContainText("완료", { timeout: 15_000 });
+    await item.getByRole("button", { name: "대화 열기" }).click();
+    const view = page.getByTestId("session-view").last();
+    await expect(view).toContainText(`예약 '봇 점검 ${stamp}' 실행`);
+    await expect(view).toContainText("봇 예약 결과");
+});
+
 // AUTO-009: 반복 한도를 화면에서 정하고, 연속 실패로 자동 정지된 예약은 이유와 실패 수를 보여 주며 재개할 수 있다.
 test("예약에 최대 횟수·연속 실패 정지를 정하고, 실패로 자동 정지되면 이유를 보여 주고 재개한다", async ({ page }) => {
     const { a } = await ensureProjects();

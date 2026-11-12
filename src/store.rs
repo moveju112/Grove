@@ -826,6 +826,11 @@ pub const MIGRATIONS: &[&str] = &[
         updated_at TEXT NOT NULL
     );
     "#,
+    // 51: 예약의 담당 봇(RTE-001). 같은 예약 엔진·receipt를 쓰고, 결과는 실행 시점의 봇 home에 전달한다.
+    r#"
+    ALTER TABLE schedules ADD COLUMN bot_id TEXT REFERENCES bots(id);
+    CREATE INDEX schedules_bot ON schedules(bot_id) WHERE bot_id IS NOT NULL;
+    "#,
 ];
 
 #[cfg(test)]

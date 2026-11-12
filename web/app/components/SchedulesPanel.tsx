@@ -28,7 +28,9 @@ type Schedule = {
     paused_reason: "user" | "failures" | null;
     runs_used: number;
     backoff_until: string | null;
+    bot_id: string | null;
 };
+type BotRef = { id: string; name: string; project_id: string; profile_id: string | null; status: string; runnable: boolean };
 
 /// 반복 한도·연속 실패 상태(AUTO-009). 자동 실행만 세고 수동 실행은 횟수에 넣지 않는다.
 function limits(s: Schedule) {
@@ -88,8 +90,13 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
     const q = useQuery<Schedule[]>(`schedules:${projectId}`, () => api.get(`/schedules?project_id=${projectId}`));
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const [err, setErr] = useState<string | null>(null);
-    const [form, setForm] = useState({ name: "", prompt: "", kind: "daily", daily_time: "09:00", interval_minutes: 60, at: "", profile_id: "", on_approval: "wait", tools: false, max_runs: "", end_at: "", pause_after_failures: "5" });
+    const bots = useQuery<{ bots: BotRef[] }>("bots", () => api.get("/bots"));
+    const [form, setForm] = useState({ name: "", prompt: "", kind: "daily", daily_time: "09:00", interval_minutes: 60, at: "", profile_id: "", on_approval: "wait", tools: false, max_runs: "", end_at: "", pause_after_failures: "5", bot_id: "", confirmed: false, start_paused: false });
     const list = q.data ?? [];
+    // 담당 봇 후보: 이 프로젝트의 실행 가능한 활성 봇(RTE-001)
+    const projectBots = (bots.data?.bots ?? []).filter((b) => b.project_id === projectId && b.status === "active" && b.runnable);
+    const bot = projectBots.find((b) => b.id === form.bot_id);
+    const botName = (id: string | null) => (bots.data?.bots ?? []).find((b) => b.id === id)?.name ?? "삭제된 봇";
     const act = async (f: () => Promise<unknown>) => {
         setErr(null);
         try {
@@ -99,7 +106,8 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
         }
         q.reload();
     };
-    const profileId = form.profile_id || profiles.data?.find((profile) => profile.enabled !== false)?.id || "";
+    const profileId = bot ? bot.profile_id ?? "" : form.profile_id || profiles.data?.find((profile) => profile.enabled !== false)?.id || "";
+    const profileName = profiles.data?.find((p) => p.id === profileId)?.name ?? profileId;
     const submit = () =>
         act(async () => {
             if (profiles.data?.find((profile) => profile.id === profileId)?.enabled === false) throw new Error("비활성 모델 프로필은 선택할 수 없습니다");
@@ -118,8 +126,13 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
             if (form.kind !== "once" && form.max_runs) body.max_runs = Number(form.max_runs);
             if (form.kind !== "once" && form.end_at) body.end_at = new Date(form.end_at).toISOString();
             body.pause_after_failures = form.pause_after_failures ? Number(form.pause_after_failures) : null;
+            if (bot) {
+                body.bot_id = bot.id;
+                body.session_mode = "same";
+            }
+            if (form.start_paused) body.start_paused = true;
             await api.post(`/projects/${projectId}/schedules`, body);
-            setForm((f) => ({ ...f, name: "", prompt: "" }));
+            setForm((f) => ({ ...f, name: "", prompt: "", confirmed: false }));
         });
     return (
         <details className="schedules" data-testid="schedules-panel">
@@ -137,6 +150,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                                 {s.next_run_at && s.status === "active" && <span className="muted small"> · 다음 <When at={s.next_run_at} absolute /></span>}
                             </summary>
                             <p className="small">{s.prompt}</p>
+                            {s.bot_id && <p className="small" data-testid="schedule-bot">담당 봇: {botName(s.bot_id)} · 결과는 봇 대화에 전달</p>}
                             <p className="muted small">승인 필요 시: {s.on_approval === "wait" ? "승인을 기다림" : "실패로 끝냄"} · 도구 {s.tools_enabled ? "사용" : "끔"}</p>
                             <p className="muted small" data-testid="schedule-limits">{limits(s)}</p>
                             <div className="inline wrap">
@@ -177,7 +191,11 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                         <input aria-label="간격(분)" type="number" min={1} value={form.interval_minutes} onChange={(e) => setForm({ ...form, interval_minutes: Number(e.target.value) })} />
                     )}
                     {form.kind === "once" && <input aria-label="실행 일시" type="datetime-local" value={form.at} onChange={(e) => setForm({ ...form, at: e.target.value })} />}
-                    <select aria-label="예약 모델" value={profileId} onChange={(e) => setForm({ ...form, profile_id: e.target.value })}>
+                    <select aria-label="담당 봇" value={form.bot_id} onChange={(e) => setForm({ ...form, bot_id: e.target.value, confirmed: false })}>
+                        <option value="">담당 봇 없음(새 대화)</option>
+                        {projectBots.map((b) => <option key={b.id} value={b.id}>{b.name}</option>)}
+                    </select>
+                    <select aria-label="예약 모델" value={profileId} disabled={!!bot} onChange={(e) => setForm({ ...form, profile_id: e.target.value })}>
                         {(profiles.data ?? []).map((p) => <option key={p.id} value={p.id} disabled={p.enabled === false}>{p.name}{p.enabled === false ? " · 비활성" : ""}</option>)}
                     </select>
                     <label className="check">
@@ -203,7 +221,21 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                     </label>
                 </div>
                 <p className="muted small">매일 실행은 이 기기의 현재 UTC offset으로 저장됩니다. 서머타임이 바뀌면 다시 저장하세요. 서버가 꺼져 있어 놓친 실행은 나중에 몰아서 실행하지 않습니다. 실패가 이어지면 자동 실행 간격을 1분부터 두 배씩(최대 하루) 늘리고, 정한 횟수에 이르면 멈춥니다. 사용자 취소·서버 재시작 중단은 실패로 세지 않습니다.</p>
-                <button type="submit" disabled={!form.name.trim() || !form.prompt.trim() || !profileId}>예약 추가</button>
+                {bot && (
+                    <div className="stack small" data-testid="schedule-confirm">
+                        <p>
+                            활성화 전 확인: <strong>{bot.name}</strong>이(가) {form.kind === "daily" ? `매일 ${form.daily_time}` : form.kind === "interval" ? `${form.interval_minutes}분마다` : "한 번"} 이 프로젝트에서 모델 {profileName}로 실행합니다. 도구 {form.tools ? "사용" : "끔"}, 승인 필요 시 {form.on_approval === "wait" ? "대기" : "실패"}
+                            {form.max_runs ? `, 최대 ${form.max_runs}회` : ""}. 실행마다 모델 비용이 발생하고 결과는 봇 대화에 남습니다.
+                        </p>
+                        <label className="check">
+                            <input type="checkbox" checked={form.confirmed} onChange={(e) => setForm({ ...form, confirmed: e.target.checked })} /> 위 범위를 확인했습니다
+                        </label>
+                        <label className="check">
+                            <input type="checkbox" checked={form.start_paused} onChange={(e) => setForm({ ...form, start_paused: e.target.checked })} /> 저장만 하고 일시 정지 상태로 둠
+                        </label>
+                    </div>
+                )}
+                <button type="submit" disabled={!form.name.trim() || !form.prompt.trim() || !profileId || (!!bot && !form.confirmed)}>예약 추가</button>
             </form>
         </details>
     );

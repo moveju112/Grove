@@ -66,12 +66,14 @@ pub struct Schedule {
     pub runs_used: i64,
     /// 연속 실패 뒤 자동 실행을 미루는 시각(지났으면 의미 없음).
     pub backoff_until: Option<String>,
+    /// 담당 봇(RTE-001). 있으면 실행 시점의 봇 home에서 봇의 모델·persona로 실행한다.
+    pub bot_id: Option<String>,
 }
 
 const COLS: &str = "id, project_id, owner_id, name, prompt, profile_id, agent_id, tools_enabled, allowed_tools, max_total_tokens, kind, at, interval_minutes, \
                     daily_time, tz_offset_minutes, session_mode, session_id, on_approval, missed_grace_minutes, status, next_run_at, revision, created_at, updated_at, \
                     max_runs, end_at, pause_after_failures, consecutive_failures, last_failed_at, paused_reason, \
-                    (SELECT COUNT(*) FROM schedule_runs r WHERE r.schedule_id = schedules.id AND r.manual = 0 AND r.status NOT IN ('missed','skipped_overlap'))";
+                    (SELECT COUNT(*) FROM schedule_runs r WHERE r.schedule_id = schedules.id AND r.manual = 0 AND r.status NOT IN ('missed','skipped_overlap')), bot_id";
 
 /// 연속 실패 n회 뒤 자동 실행을 미루는 시간: 60초×2^(n-1), 최대 24시간(upstream routine 안전장치와 같은 형태).
 pub fn backoff(failures: i64) -> Option<Duration> {
@@ -113,6 +115,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Schedule> {
         paused_reason: r.get(29)?,
         runs_used: r.get(30)?,
         backoff_until: None,
+        bot_id: r.get(31)?,
     })
     .map(|mut s| {
         s.backoff_until = s.last_failed_at.as_deref().and_then(crate::util::parse_time).zip(backoff(s.consecutive_failures)).map(|(t, d)| crate::util::fmt_time(t + d));
@@ -289,6 +292,12 @@ pub struct SpecBody {
     /// 생략하면 5회. null이면 연속 실패로 멈추지 않는다.
     #[serde(default = "default_pause_after_failures")]
     pub pause_after_failures: Option<i64>,
+    /// 담당 봇. 있으면 session_mode는 same이고 session_id 없이 실행 때마다 봇 home을 찾는다.
+    #[serde(default)]
+    pub bot_id: Option<String>,
+    /// 만들 때 일시 정지 상태로 저장한다(RTE-002: 확인 전 저장은 실행·모델 호출을 하지 않는다).
+    #[serde(default)]
+    pub start_paused: bool,
 }
 
 fn default_pause_after_failures() -> Option<i64> {
@@ -355,6 +364,23 @@ fn validate(c: &Connection, project_id: &str, b: &SpecBody, now: OffsetDateTime)
     if !(-14 * 60..=14 * 60).contains(&b.tz_offset_minutes) {
         return Err(ApiError::invalid("시간대 offset은 ±14시간 이내여야 합니다"));
     }
+    if let Some(bid) = &b.bot_id {
+        // 봇 예약은 봇의 프로젝트에서 봇 설정으로만 실행한다. 다른 에이전트·대화로 돌리지 않는다.
+        let bot = crate::bots::get(c, bid)?;
+        if bot.status != "active" {
+            return Err(ApiError::conflict("bot_inactive", "활성 상태인 봇만 예약의 담당으로 정할 수 있습니다"));
+        }
+        if bot.project_id != project_id {
+            return Err(ApiError::invalid("담당 봇의 프로젝트와 예약 프로젝트가 다릅니다"));
+        }
+        if b.agent_id.is_some() || b.session_mode != "same" || b.session_id.is_some() {
+            return Err(ApiError::invalid("봇 예약은 session_mode=same, session_id·agent_id 없이 지정합니다(결과는 봇 home에 전달)"));
+        }
+        if bot.profile_id.as_deref() != Some(b.profile_id.as_str()) {
+            return Err(ApiError::invalid("봇 예약의 profile_id는 봇에 설정된 모델과 같아야 합니다"));
+        }
+        return validate_tail(b, now);
+    }
     match b.session_mode.as_str() {
         "new" => {}
         "same" => {
@@ -366,6 +392,10 @@ fn validate(c: &Connection, project_id: &str, b: &SpecBody, now: OffsetDateTime)
         }
         _ => return Err(ApiError::invalid("session_mode는 new·same 중 하나여야 합니다")),
     }
+    validate_tail(b, now)
+}
+
+fn validate_tail(b: &SpecBody, now: OffsetDateTime) -> ApiResult<()> {
     if !matches!(b.on_approval.as_str(), "wait" | "fail") {
         return Err(ApiError::invalid("on_approval은 wait·fail 중 하나여야 합니다"));
     }
@@ -453,7 +483,7 @@ fn write_spec(c: &Connection, now: &str, id: &str, b: &SpecBody) -> ApiResult<()
     c.execute(
         "UPDATE schedules SET name = ?2, prompt = ?3, profile_id = ?4, agent_id = ?5, tools_enabled = ?6, allowed_tools = ?7, max_total_tokens = ?8, \
          kind = ?9, at = ?10, interval_minutes = ?11, daily_time = ?12, tz_offset_minutes = ?13, session_mode = ?14, session_id = ?15, \
-         on_approval = ?16, missed_grace_minutes = ?17, updated_at = ?18, max_runs = ?19, end_at = ?20, pause_after_failures = ?21 WHERE id = ?1",
+         on_approval = ?16, missed_grace_minutes = ?17, updated_at = ?18, max_runs = ?19, end_at = ?20, pause_after_failures = ?21, bot_id = ?22 WHERE id = ?1",
         params![
             id,
             b.name.trim(),
@@ -475,7 +505,8 @@ fn write_spec(c: &Connection, now: &str, id: &str, b: &SpecBody) -> ApiResult<()
             now,
             b.max_runs,
             b.end_at.as_deref().and_then(crate::util::parse_time).map(|t| crate::util::fmt_time(secs(t))),
-            b.pause_after_failures
+            b.pause_after_failures,
+            b.bot_id
         ],
     )?;
     Ok(())
@@ -505,8 +536,16 @@ fn fire(c: &Connection, now: &str, epoch: &str, s: &Schedule, planned: &str, man
     };
     c.execute_batch("SAVEPOINT schedule_fire")?;
     let started = (|| -> ApiResult<(String, String)> {
-        let sid = match s.session_mode.as_str() {
-            "same" => s.session_id.clone().ok_or_else(|| ApiError::invalid("대화가 지정되지 않았습니다"))?,
+        let sid = match (s.bot_id.as_deref(), s.session_mode.as_str()) {
+            // 실행 직전에 봇 상태를 다시 확인한다(RTE-006·010). 비활성·삭제면 다른 봇이나 새 대화로 돌리지 않고 시작 실패로 남긴다.
+            (Some(bid), _) => {
+                let bot = crate::bots::ensure_home(c, now, bid)?;
+                if bot.status != "active" {
+                    return Err(ApiError::conflict("bot_inactive", "담당 봇이 비활성화돼 실행하지 않았습니다"));
+                }
+                bot.home_session_id.ok_or_else(|| ApiError::internal("봇 home을 만들지 못했습니다"))?
+            }
+            (None, "same") => s.session_id.clone().ok_or_else(|| ApiError::invalid("대화가 지정되지 않았습니다"))?,
             _ => {
                 let sid = crate::util::new_id();
                 let title: String = format!("{} · {}", s.name, &planned[..planned.len().min(16)]).chars().take(120).collect();
@@ -517,7 +556,7 @@ fn fire(c: &Connection, now: &str, epoch: &str, s: &Schedule, planned: &str, man
             }
         };
         let src = json!({
-            "kind": "schedule", "schedule_id": s.id, "run_id": run_id, "name": s.name,
+            "kind": "schedule", "schedule_id": s.id, "run_id": run_id, "name": s.name, "bot_id": s.bot_id, "planned_at": planned, "schedule_revision": s.revision,
             "limits": { "allowed_tools": s.allowed_tools, "max_total_tokens": s.max_total_tokens, "on_approval": s.on_approval },
         });
         let (t, _) = crate::runner::enqueue_turn(c, now, epoch, &format!("schedule:{}", s.id), &sid, &s.prompt, &s.profile_id, s.agent_id.as_deref(), s.tools_enabled, Some(&src))?;
@@ -688,9 +727,12 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
         let id = crate::util::new_id();
         tx.execute(
             "INSERT INTO schedules (id, project_id, owner_id, name, prompt, profile_id, tools_enabled, kind, session_mode, on_approval, missed_grace_minutes, status, created_at, updated_at) \
-             VALUES (?1, ?2, ?3, '', '', ?4, 0, ?5, ?6, ?7, ?8, 'active', ?9, ?9)",
-            params![id, project_id, owner, b.profile_id, b.kind, b.session_mode, b.on_approval, b.missed_grace_minutes, crate::util::fmt_time(secs(now_t))],
+             VALUES (?1, ?2, ?3, '', '', ?4, 0, ?5, ?6, ?7, ?8, ?10, ?9, ?9)",
+            params![id, project_id, owner, b.profile_id, b.kind, b.session_mode, b.on_approval, b.missed_grace_minutes, crate::util::fmt_time(secs(now_t)), if b.start_paused { "paused" } else { "active" }],
         )?;
+        if b.start_paused {
+            tx.execute("UPDATE schedules SET paused_reason = 'user' WHERE id = ?1", params![id])?;
+        }
         write_spec(tx, now, &id, &b)?;
         let s = reschedule(tx, now, &id, now_t)?;
         Ok((StatusCode::CREATED, serde_json::to_value(s)?))
