@@ -1,5 +1,5 @@
 import { AttachmentList, type Attachment } from "./Attachments";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileRefContext, Markdown } from "./Markdown";
 import { type Prefs, usePrefs } from "../state/device";
 import { useFocusRequest } from "../state/focus";
@@ -14,6 +14,8 @@ import { GoalsPanel } from "./GoalsPanel";
 import { TasksPanel } from "./TasksPanel";
 import type { Opener } from "./Workspace";
 import { WorktreeSelect } from "./WorktreesPanel";
+import { loadScrollPosition, saveScrollPosition } from "../state/scrollPosition";
+import { VirtualMessages } from "./VirtualMessages";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
@@ -55,9 +57,28 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
 
     // 자동 스크롤(UI-009): 맨 아래 근처를 보고 있을 때만 새 내용을 따라 내려간다. 위를 읽는 중이면 위치를 그대로 두고 알림만 띄운다.
     const msgsRef = useRef<HTMLDivElement>(null);
-    const stick = useRef(true);
+    const [savedPosition] = useState(() => loadScrollPosition(tabId, sessionId));
+    const pendingPosition = useRef(savedPosition?.atBottom ? null : savedPosition);
+    const stick = useRef(savedPosition?.atBottom ?? true);
     const [unseen, setUnseen] = useState(false);
     const scroller = () => msgsRef.current?.closest(".pane-body") as HTMLElement | null;
+    const capturePosition = () => {
+        const el = scroller();
+        const data = latestRef.current;
+        if (!el || !data || pendingPosition.current) return;
+        const viewport = el.getBoundingClientRect();
+        const row = [...(msgsRef.current?.querySelectorAll<HTMLElement>(".msg-row") ?? [])].find((node) => {
+            const rect = node.getBoundingClientRect();
+            return rect.bottom > viewport.top && rect.top < viewport.bottom;
+        });
+        if (!stick.current && !row) return;
+        saveScrollPosition(tabId, {
+            sessionId, timelineRevision: data.timeline_revision, lastSeq: data.items.at(-1)?.seq ?? 0,
+            atBottom: stick.current, anchorSeq: stick.current ? null : Number(row!.dataset.seq),
+            offset: stick.current ? 0 : row!.getBoundingClientRect().top - viewport.top,
+        });
+    };
+    useLayoutEffect(() => () => capturePosition(), [tabId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         const el = scroller();
         if (!el) return;
@@ -66,6 +87,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             const b = bottom.current?.getBoundingClientRect();
             stick.current = !!b && b.top <= el.getBoundingClientRect().bottom + 80;
             if (stick.current) setUnseen(false);
+            capturePosition();
         };
         // 브라우저 scroll anchoring이 아래에 내용이 늘 때 위치를 고치며 scroll 이벤트를 내면 '맨 아래 보는 중'이 꺼진다.
         // 위쪽에 붙이는 이전 페이지는 직접 보정하므로 이 영역에서는 끈다.
@@ -78,13 +100,15 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         };
     }, [!!latest.data]); // eslint-disable-line react-hooks/exhaustive-deps
     const toBottom = () => {
+        pendingPosition.current = null;
         stick.current = true;
         setUnseen(false);
         bottom.current?.scrollIntoView({ block: "end" });
     };
     useEffect(() => {
+        if (pendingPosition.current) return;
         if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
-        else setUnseen(true);
+        else if (!savedPosition || (latest.data?.items.at(-1)?.seq ?? 0) > savedPosition.lastSeq || partial?.text) setUnseen(true);
         // 최신 페이지는 항상 최근 N개라 개수가 아니라 마지막 메시지로 새 글을 판단한다.
     }, [latest.data?.items.at(-1)?.seq, partial?.text]);
 
@@ -107,23 +131,15 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     }
     const latestFirst = latest.data?.items[0]?.seq ?? Number.MAX_SAFE_INTEGER;
     const messages = [...older.filter((m) => m.seq < latestFirst), ...(latest.data?.items ?? [])];
-    // 이전 페이지를 앞에 붙여도 읽던 메시지가 화면에서 밀리지 않게 높이 차이만큼 스크롤을 보정한다(UI-008).
-    const restore = useRef<{ height: number; top: number } | null>(null);
+    // 앞에 붙인 페이지와 측정 높이의 위치 보정은 VirtualMessages가 같은 읽기 anchor로 처리한다.
     const loadOlder = async () => {
         const first = messages[0]?.seq;
         if (!first) return;
         const page = await api.get<MessagePage>(`/sessions/${sessionId}/messages?limit=100&before_seq=${first}`);
         if (page.timeline_revision !== latestRef.current?.timeline_revision) return;
-        const el = scroller();
-        if (el) restore.current = { height: el.scrollHeight, top: el.scrollTop };
         setOlder((o) => [...page.items, ...o]);
         setOlderMore(page.has_more_before);
     };
-    useLayoutEffect(() => {
-        const el = scroller();
-        if (el && restore.current) el.scrollTop = restore.current.top + (el.scrollHeight - restore.current.height);
-        restore.current = null;
-    }, [older.length]); // eslint-disable-line react-hooks/exhaustive-deps
     const hasOlder = olderMore ?? latest.data?.has_more_before;
 
     // 검색 결과에서 연 메시지로 이동(UI-026): 그 메시지가 나올 때까지 이전 페이지를 읽고, 가운데로 옮겨 잠시 강조한다.
@@ -131,6 +147,34 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const [highlight, setHighlight] = useState<number | null>(null);
     const [focusMiss, setFocusMiss] = useState(false);
     const loadingOlder = useRef(false);
+    useLayoutEffect(() => {
+        const position = pendingPosition.current;
+        if (!position || !latest.data) return;
+        if (focusSeq != null || position.timelineRevision !== latest.data.timeline_revision) {
+            pendingPosition.current = null;
+            stick.current = focusSeq == null;
+            if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
+            return;
+        }
+        const el = scroller();
+        const row = msgsRef.current?.querySelector<HTMLElement>(`[data-seq="${position.anchorSeq}"]`);
+        if (el && row) {
+            stick.current = false;
+            el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - position.offset;
+            pendingPosition.current = null;
+            setUnseen((latest.data.items.at(-1)?.seq ?? 0) > position.lastSeq || !!partial?.text);
+            capturePosition();
+        } else if (hasOlder && (messages[0]?.seq ?? 0) > (position.anchorSeq ?? 0)) {
+            if (!loadingOlder.current) {
+                loadingOlder.current = true;
+                void loadOlder().finally(() => (loadingOlder.current = false));
+            }
+        } else {
+            pendingPosition.current = null;
+            stick.current = true;
+            bottom.current?.scrollIntoView({ block: "end" });
+        }
+    }, [focusSeq, latest.data, messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (highlight == null) return;
         const t = setTimeout(() => setHighlight(null), 4000);
@@ -138,8 +182,9 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     }, [highlight]);
     useEffect(() => {
         if (focusSeq == null || !latest.data) return;
-        const el = document.querySelector(`[data-session-msgs="${sessionId}"] [data-seq="${focusSeq}"]`);
+        const el = msgsRef.current?.querySelector<HTMLElement>(`[data-seq="${focusSeq}"]`);
         if (el) {
+            stick.current = false;
             el.scrollIntoView({ block: "center" });
             setHighlight(focusSeq);
             setFocusMiss(false);
@@ -328,7 +373,10 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                 <FileRefContext.Provider
                     value={(path, line) => open({ kind: "file", project_id: projectId, resource_id: line ? `${path}:${line}` : path, title: line ? `${path}:${line}` : path }, "right")}
                 >
-                    {messages.map((m) => (
+                    <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={messages}
+                        targetSeq={focusSeq ?? pendingPosition.current?.anchorSeq ?? null} presentationKey={JSON.stringify(prefs)}
+                        stick={stick} bottom={bottom} onNavigate={() => { pendingPosition.current = null; stick.current = false; }}
+                        render={(m) => (
                         <div key={m.id} className={`msg-row${highlight === m.seq ? " focus-hit" : ""}`} data-seq={m.seq}>
                             <MessageView m={m} prefs={prefs} />
                             {m.role === "user" && (
@@ -340,7 +388,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                                 >이전으로 되감기</button>
                             )}
                         </div>
-                    ))}
+                    )} />
                 </FileRefContext.Provider>
                 {partial && partial.text !== undefined && (
                     <div className="msg assistant partial" data-testid="partial">
@@ -415,7 +463,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     );
 }
 
-function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
+const MessageView = memo(function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
     const nt0 = (m.content as { type?: string }).type;
     // 답만 보기: 도구 결과·CLI 도구 활동·가져온 도구 기록과 글 없는 도구 호출 메시지를 숨긴다(승인 카드는 별도로 항상 표시).
     if (prefs.answerOnly && (m.role === "tool" || (m.role === "note" && (nt0 === "cli_activity" || nt0 === "imported_tool")))) return null;
@@ -604,7 +652,7 @@ function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
             {c.tool_calls && c.tool_calls.length > 0 && <div className="muted small">도구 호출: {c.tool_calls.map((t) => t.name).join(", ")}</div>}
         </div>
     );
-}
+});
 
 type Timing = { total_ms: number; approval_wait_ms: number; tool_ms: number; model_and_other_ms: number; running: boolean };
 

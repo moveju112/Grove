@@ -34,7 +34,7 @@ test("과거 메시지를 읽는 동안 자동 스크롤하지 않고, 이전 �
     await first.scrollIntoViewIfNeeded();
     const y0 = (await first.boundingBox())!.y;
     await view.getByRole("button", { name: "이전 메시지" }).click();
-    await expect(view.getByText("줄 0", { exact: true })).toHaveCount(1);
+    await expect(view.getByRole("button", { name: "이전 메시지", exact: true })).toHaveCount(0);
     await expect.poll(async () => Math.abs((await first.boundingBox())!.y - y0)).toBeLessThan(60);
     expect(before).not.toBeNull();
 
@@ -46,4 +46,32 @@ test("과거 메시지를 읽는 동안 자동 스크롤하지 않고, 이전 �
     await apiCall("POST", `/sessions/${s.id}/messages`, { text: "따라갈 글" });
     await expect(view.getByText("따라갈 글", { exact: true })).toBeInViewport();
     await expect(view.getByTestId("new-below")).toHaveCount(0);
+});
+
+test("다른 탭을 다녀와도 이전 페이지의 읽던 메시지와 화면 내 위치를 복원한다", async ({ page }) => {
+    test.setTimeout(60_000);
+    const { a } = await ensureProjects();
+    const prefix = `position-${Date.now()}`;
+    const reading = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `${prefix} reading` });
+    const other = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `${prefix} other` });
+    for (let i = 0; i < 180; i++) await apiCall("POST", `/sessions/${reading.id}/messages`, { text: `${prefix} line ${i}` });
+    await apiCall("POST", `/sessions/${other.id}/messages`, { text: "other tab fixture" });
+    for (const session of [other, reading]) await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
+    await login(page);
+    await page.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
+    const view = page.locator(`[data-testid=session-view][data-session="${reading.id}"]`);
+    await view.getByRole("button", { name: "이전 메시지", exact: true }).click();
+    await expect(view.getByRole("button", { name: "이전 메시지", exact: true })).toHaveCount(0);
+    await view.getByRole("feed", { name: "불러온 대화 메시지" }).focus();
+    await page.keyboard.press("Home");
+    for (let i = 0; i < 20; i++) await page.keyboard.press("ArrowDown");
+    const target = view.getByText(`${prefix} line 20`, { exact: true });
+    await target.scrollIntoViewIfNeeded();
+    await expect(target).toBeInViewport();
+    const y = (await target.boundingBox())!.y;
+    await page.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} other`) }).click();
+    await expect(page.getByText("other tab fixture", { exact: true })).toBeVisible();
+    await page.locator(".tabbar .tab-title").filter({ hasText: `${prefix} reading` }).click();
+    await expect(target).toBeInViewport();
+    await expect.poll(async () => Math.abs((await target.boundingBox())!.y - y)).toBeLessThan(8);
 });
