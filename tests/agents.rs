@@ -116,6 +116,45 @@ async fn spawn_requires_approval_by_default_and_result_reaches_parent_once() {
     assert!(last.contains("[child agent result]") && last.contains("XYZ"), "{last}");
 }
 
+/// AGENT-007: 부모 대화당 동시 자식 수 한도를 넘는 위임은 실행하지 않고 limit으로 실패하며, 자식 턴도 프로젝트 예산을 그대로 받는다.
+#[tokio::test]
+async fn per_parent_limit_refuses_extra_children_and_children_inherit_budget() {
+    let (s, f, prof, pid, sid) = setup().await;
+    set_policy(&s, "auto").await;
+    let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/runs.budget.max_tokens"), json!({ "expected_revision": 0, "value": 99_999 })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let n = grove::agents::MAX_PER_PARENT as usize + 1;
+    let calls: Vec<(String, Value)> = (0..n).map(|i| (format!("a{i}"), json!({ "action": "spawn", "agent_id": "reviewer", "brief": format!("일 {i}") }))).collect();
+    let refs: Vec<(&str, &str, Value)> = calls.iter().map(|(id, a)| (id.as_str(), "agent", a.clone())).collect();
+    f.push(fixture::tool_calls(&refs));
+    for _ in 0..4 {
+        f.push(fixture::text("부모 진행"));
+    }
+    let mut gates = vec![];
+    for i in 0..n - 1 {
+        let (step, release) = fixture::gated_text(&format!("자식 {i} 끝"));
+        f.push_for(CHILD, step);
+        gates.push(release);
+    }
+    let tid = turn(&s, &sid, &prof, "여러 개 맡겨").await;
+    let t = s.wait_turn(&tid, |t| t["tool_calls"].as_array().is_some_and(|a| a.len() == n && a.iter().all(|c| c["status"] != "pending_approval" && c["status"] != "approved" && c["status"] != "running"))).await;
+    let calls = t["tool_calls"].as_array().unwrap();
+    let refused: Vec<_> = calls.iter().filter(|c| c["status"] == "failed").collect();
+    assert_eq!(refused.len(), 1, "{t}");
+    assert_eq!(refused[0]["result"]["error"]["code"], "limit", "{t}");
+    let r = runs(&s, &sid).await;
+    let list = r["runs"].as_array().unwrap();
+    assert_eq!(list.len(), n - 1, "한도 밖 자식은 만들지 않는다");
+    // 자식 턴의 예산 snapshot은 프로젝트 설정을 따른다
+    let child_turn = list[0]["last_turn_id"].as_str().unwrap();
+    let (_, ct) = s.get(&format!("/api/v1/turns/{child_turn}")).await;
+    assert_eq!(ct["definition"]["budget"]["max_tokens"], 99_999, "{ct}");
+    for g in gates {
+        g.send_replace(true);
+    }
+    s.wait_status(&tid, "completed").await;
+}
+
 /// WORKFLOW-007: 자식의 진행·질문·완료 상태가 역할·부모 ID와 함께 부모 대화의 이벤트로 전달된다.
 #[tokio::test]
 async fn child_question_and_completion_reach_parent_with_role_and_parent_ids() {

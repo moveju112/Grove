@@ -944,7 +944,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] AGENT-004 역할 편집에 revision 검사와 잘못된 ID·빈 본문 검증을 적용한다. 검증: `tests/definitions.rs::edit_compare_restore_and_conflict`, `custom_definitions_lifecycle`.
 - [ ] AGENT-005 역할별 provider/model/effort/fast/context/fallback/disabled 설정을 구현한다.
 - [x] AGENT-006 spawn/send/status/list/wait/cancel과 결과 전달을 구현한다. 검증: `agent` 도구 spawn/send/status/list/wait/cancel, `tests/agents.rs`(결과 전달·같은 턴 wait·send 후속 지시).
-- [ ] AGENT-007 동시 실행·깊이·비용·자원 한도를 적용한다.
+- [ ] AGENT-007 동시 실행·깊이·비용·자원 한도를 적용한다. 진행: 깊이 2·부모 대화당 동시 4·서버 전체 16 한도와 자식 턴의 프로젝트/서버 token·시간·비용 예산 snapshot을 적용한다. 부모당 한도 초과 위임이 실행 없이 `limit`으로 실패하고 자식 턴이 프로젝트 예산을 받는 것을 시험했다(`tests/agents.rs::per_parent_limit_refuses_extra_children_and_children_inherit_budget`). 깊이·서버 전체 한도의 통합 시험과 자식 전체 합산 비용 한도는 남았다.
 - [x] AGENT-008 부모 취소·종료·재시작 시 자식 작업의 처리 정책을 구현한다. 검증: `tests/agents.rs::parent_cancel_cascades_and_restart_interrupts_children`(부모 턴 취소→자식 취소, 재시작→interrupted 보고·자동 재실행 없음, 실행 중 보관 거부).
 - [x] AGENT-009 agent 작업 진행·도구·최종 결과를 타임라인에 구분 표시한다. 검증: 부모 대화의 맡긴 작업 패널(진행 상태)·`agent_result` 결과 카드, 자식 대화에 도구·응답 타임라인, e2e 자식 에이전트 위임.
 - [x] AGENT-010 다른 세션 메시지와 사용자 메시지의 출처를 보존한다. 검증: 자식 지시 메시지 `content.source`(agent_run·부모 세션) 기록과 "부모 에이전트의 지시" 표시(`tests/agents.rs`, e2e).
@@ -953,7 +953,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [ ] AGENT-013 solo/위임 등 orchestration 모드와 역할 허용 정책을 구현한다.
 - [x] AGENT-014 자동 위임 여부는 사용자 정책으로 제어하고 기본값을 확정한다. 검증: 설정 `agents.delegation`(off/ask/auto, 기본 ask), `tests/agents.rs`(기본 승인 대기·off 시 delegation_disabled·auto).
 - [x] AGENT-015 workflow 목록·생성·본문 조회·편집·삭제·활성화/비활성화를 구현한다. 검증: `tests/definitions.rs::custom_definitions_lifecycle`.
-- [ ] AGENT-016 workflow 변경의 새 턴 적용 시점과 세션 표시를 일치시킨다.
+- [x] AGENT-016 workflow 변경의 새 턴 적용 시점과 세션 표시를 일치시킨다. 검증: WORKFLOW-006과 같은 구현. 요청 접수 때 워크플로 snapshot을 고정하고, 실행 중 표시는 이번 요청의 워크플로와 "바꾸면 다음 요청부터 적용"을 함께 보여 준다(`tests/turns.rs::disabled_or_deleted_workflow_never_changes_active_turn_and_next_turn_uses_default`, `web/e2e/effort.spec.ts`).
 - [x] AGENT-017 Goal/task 목록·추가·변경·완료·취소·순서를 영속 저장한다. 검증: `goals` 테이블·API·`goal` 도구, `tests/goals.rs`(추가·상태·순서·revision 충돌·재시작 후 유지), e2e Goal.
 - [x] AGENT-018 미완료 Goal 알림과 idle reminder가 무한 자동 턴을 만들지 않게 한다. 검증: 미완료 Goal은 다음 요청 지침에만 포함, 자동 턴 없음(`tests/goals.rs::model_manages_goals_reminder_reaches_next_turn_and_no_auto_turns`).
 - [x] AGENT-019 세션 간 작업 생성·결과 보고의 reportsBack 가능 여부를 명시한다. 검증: 에이전트가 지시한 턴만 부모에 보고, 사용자가 자식 대화에 직접 보낸 턴은 보고하지 않음(`tests/agents.rs`).
