@@ -311,7 +311,10 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     onChange={(e) => void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, workflow_id: e.target.value === "default" ? null : e.target.value }))}
                 >
                     {(workflows.data ?? []).filter((w) => w.enabled || w.id === s.workflow_id).map((w) => (
-                        <option key={w.id} value={w.id}>워크플로우: {w.name}</option>
+                        <option key={w.id} value={w.id}>
+                            워크플로우: {w.name}
+                            {!w.enabled && " (꺼짐 · 다음 요청은 기본 워크플로우)"}
+                        </option>
                     ))}
                 </select>
                 <WorktreeSelect projectId={projectId} sessionId={sessionId} current={s.worktree_id} disabled={archived || !!s.active_turn} onError={setErr} />
@@ -979,12 +982,15 @@ function BudgetNote({ sessionId, active }: { sessionId: string; active?: Turn })
 /// 실행 중 요청에 고정된 설정(RUN-009). 접수 때 정해져 실행 중 바꿔도 이 요청에는 적용되지 않는다.
 function ActiveSettings({ turn, workflows }: { turn: Turn; workflows: Definition[] }) {
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
-    const def = (turn.definition ?? {}) as { effort?: string; workflow?: { id?: string }; agent?: { id?: string } };
+    const def = (turn.definition ?? {}) as { effort?: string; workflow?: { id?: string; disabled_selection?: string }; agent?: { id?: string } };
     const p = profiles.data?.find((x) => x.id === turn.profile_id);
     const wf = workflows.find((w) => w.id === (def.workflow?.id ?? turn.workflow_id));
+    const skipped = def.workflow?.disabled_selection;
+    const skippedName = skipped && (workflows.find((w) => w.id === skipped)?.name ?? skipped);
     return (
         <p className="muted small" data-testid="active-settings">
             이번 요청: {p ? `${p.name} · ${p.model}` : "모델 프로필"} · 강도 {def.effort ?? "auto"} · 워크플로 {wf?.name ?? def.workflow?.id ?? "기본"}
+            {skippedName && `(꺼진 ${skippedName} 대신)`}
             {def.agent?.id && ` · 에이전트 ${def.agent.id}`} — 실행 중에 모델·강도·워크플로를 바꾸면 다음 요청부터 적용됩니다.
         </p>
     );

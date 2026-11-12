@@ -1028,6 +1028,74 @@ async fn workflow_change_during_turn_applies_from_next_turn() {
     assert!(!last.contains("WORKFLOW-A"), "다음 요청은 바뀐 설정");
 }
 
+// WORKFLOW-006: 진행 중 요청은 접수 때 워크플로를 유지하고, 비활성화한 워크플로는 다음 요청부터 기본으로 대신하되
+// 대화의 선택은 남아 다시 켜면 복원된다. 삭제하면 진행 중 요청은 그대로 끝나고 다음 요청은 기본 워크플로다.
+#[tokio::test]
+async fn disabled_or_deleted_workflow_never_changes_active_turn_and_next_turn_uses_default() {
+    let (s, f, prof, sid, _) = setup().await;
+    let (st, _) = s.post("/api/v1/definitions/workflow", json!({ "id": "wf-b", "name": "B", "body": "WORKFLOW-B-BODY" })).await;
+    assert_eq!(st, StatusCode::CREATED);
+    let (_, sess) = s.get(&format!("/api/v1/sessions/{sid}")).await;
+    let (st, _) = s.send(Method::PATCH, &format!("/api/v1/sessions/{sid}"), json!({ "expected_revision": sess["revision"], "workflow_id": "wf-b" })).await;
+    assert_eq!(st, StatusCode::OK);
+    let sys = |r: &Value| r["messages"][0]["content"].as_str().unwrap_or("").to_string();
+    let approve_and_finish = |t: Value| {
+        let s = &s;
+        async move {
+            let c = &t["tool_calls"][0];
+            s.post(&format!("/api/v1/tool-calls/{}/decision", c["id"].as_str().unwrap()), json!({ "decision": "approve", "expected_revision": c["revision"] })).await;
+            s.wait_status(t["id"].as_str().unwrap(), "completed").await
+        }
+    };
+
+    // 1) 승인 대기 중 비활성화 → 진행 중 요청은 B로 끝난다.
+    f.push(fixture::tool_calls(&[("w1", "write", json!({ "path": "b1.txt", "content": "1" }))]));
+    f.push(fixture::text("끝1"));
+    let tid = start_turn(&s, &sid, &prof, "하나", true).await["turn"]["id"].as_str().unwrap().to_string();
+    let t = s.wait_status(&tid, "awaiting_approval").await;
+    let (_, d) = s.get("/api/v1/definitions/workflow/wf-b").await;
+    let (st, _) = s.send(Method::PUT, "/api/v1/definitions/workflow/wf-b", json!({ "expected_revision": d["revision"], "enabled": false })).await;
+    assert_eq!(st, StatusCode::OK);
+    approve_and_finish(t).await;
+    assert!(sys(&f.requests()[1]).contains("WORKFLOW-B-BODY"), "진행 중 요청은 접수 때 워크플로");
+
+    // 2) 다음 요청: 기본 워크플로로 대신하고 snapshot에 원래 선택을 남긴다. 대화 선택은 유지.
+    f.push(fixture::text("둘"));
+    let v = start_turn(&s, &sid, &prof, "둘", false).await;
+    let done = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert!(!sys(f.requests().last().unwrap()).contains("WORKFLOW-B"), "비활성 워크플로는 새 요청에 적용하지 않는다");
+    assert_eq!(done["definition"]["workflow"]["id"], "default");
+    assert_eq!(done["definition"]["workflow"]["disabled_selection"], "wf-b");
+    assert_eq!(s.get(&format!("/api/v1/sessions/{sid}")).await.1["workflow_id"], "wf-b");
+
+    // 3) 다시 켜면 다음 요청부터 B로 돌아온다.
+    let (_, d) = s.get("/api/v1/definitions/workflow/wf-b").await;
+    s.send(Method::PUT, "/api/v1/definitions/workflow/wf-b", json!({ "expected_revision": d["revision"], "enabled": true })).await;
+    f.push(fixture::text("셋"));
+    let v = start_turn(&s, &sid, &prof, "셋", false).await;
+    let done = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert!(sys(f.requests().last().unwrap()).contains("WORKFLOW-B-BODY"));
+    assert!(done["definition"]["workflow"].get("disabled_selection").is_none());
+
+    // 4) 승인 대기 중 삭제 → 진행 중 요청은 B로 끝나고, 다음 요청은 기본이며 대화 선택은 비워진다.
+    f.push(fixture::tool_calls(&[("w2", "write", json!({ "path": "b2.txt", "content": "2" }))]));
+    f.push(fixture::text("끝4"));
+    let n = f.requests().len();
+    let tid = start_turn(&s, &sid, &prof, "넷", true).await["turn"]["id"].as_str().unwrap().to_string();
+    let t = s.wait_status(&tid, "awaiting_approval").await;
+    let (_, d) = s.get("/api/v1/definitions/workflow/wf-b").await;
+    let (st, _) = s.send(Method::DELETE, &format!("/api/v1/definitions/workflow/wf-b?expected_revision={}", d["revision"]), json!({})).await;
+    assert_eq!(st, StatusCode::OK);
+    approve_and_finish(t).await;
+    assert!(sys(&f.requests()[n + 1]).contains("WORKFLOW-B-BODY"), "삭제 뒤에도 진행 중 요청은 고정한 본문");
+    assert!(s.get(&format!("/api/v1/sessions/{sid}")).await.1["workflow_id"].is_null());
+    f.push(fixture::text("다섯"));
+    let v = start_turn(&s, &sid, &prof, "다섯", false).await;
+    let done = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert!(!sys(f.requests().last().unwrap()).contains("WORKFLOW-B"));
+    assert_eq!(done["definition"]["workflow"]["id"], "default");
+}
+
 // RUN-019: 끝난(실패·중단·취소) 요청은 다시 실행하거나 포기(확인)할 수 있다.
 #[tokio::test]
 async fn ended_turn_can_be_retried_once_or_acknowledged() {

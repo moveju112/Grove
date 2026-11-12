@@ -1157,9 +1157,19 @@ pub(crate) fn enqueue_with_attachments(
     };
     let profile=crate::models::get_enabled_profile(tx, profile_id)?;
     profile.check_capabilities(tools, None, attachments.is_some_and(|a| a.model_input["images"].as_array().is_some_and(|v| !v.is_empty())))?;
-    let wf_id = s.workflow_id.clone().unwrap_or_else(|| "default".into());
-    let wf = crate::definitions::resolve(tx, "workflow", &wf_id)?;
+    // 비활성화한 워크플로는 새 요청에 적용하지 않는다(WORKFLOW-006). 대화의 선택은 남겨 다시 켜면 복원하고,
+    // 이번 요청은 기본 워크플로로 고정하며 대신 쓴 사실을 snapshot에 남긴다.
+    let selected = s.workflow_id.clone().unwrap_or_else(|| "default".into());
+    let mut wf_id = selected.clone();
+    let mut wf = crate::definitions::resolve(tx, "workflow", &wf_id)?;
+    if !wf.def.enabled {
+        wf_id = "default".into();
+        wf = crate::definitions::resolve(tx, "workflow", &wf_id)?;
+    }
     let mut def = json!({ "workflow": { "id": wf_id, "revision": wf.def.revision, "body_sha256": wf.def.body_sha256, "body": wf.def.body } });
+    if wf_id != selected {
+        def["workflow"]["disabled_selection"] = json!(selected);
+    }
     if let Some(a) = agent_id {
         let ad = crate::definitions::resolve(tx, "agent", a)?;
         def["agent"] = json!({ "id": a, "revision": ad.def.revision, "body_sha256": ad.def.body_sha256, "body": ad.def.body });

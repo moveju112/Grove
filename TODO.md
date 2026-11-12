@@ -1776,7 +1776,7 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 - [x] WORKFLOW-003 목록·선택·본문 조회와 새 역할 생성의 유효성 검사를 구현한다. 검증: `tests/definitions.rs::custom_definitions_lifecycle`.
 - [x] WORKFLOW-004 편집 초안·저장·취소·외부 수정 충돌을 구현하고 저장 전 원본을 덮어쓰지 않는다. 검증: `tests/definitions.rs::edit_compare_restore_and_conflict`, 설정 화면 편집 취소.
 - [x] WORKFLOW-005 기본값 비교·항목별 복원·전체 복원의 영향 범위 확인을 구현한다. 검증: `tests/definitions.rs::edit_compare_restore_and_conflict`, `web/e2e/workspace.spec.ts` 복원.
-- [ ] WORKFLOW-006 workflow 활성화·전환·삭제 시 활성 턴과 다음 턴에 적용되는 정의를 고정한다.
+- [x] WORKFLOW-006 workflow 활성화·전환·삭제 시 활성 턴과 다음 턴에 적용되는 정의를 고정한다. 검증: RULEBOOK "워크플로 적용 시점"에 계약을 정했다. 요청은 접수 때 워크플로 snapshot을 고정해 실행 중 수정·전환·비활성화·삭제가 적용되지 않는다. 이미 그 워크플로를 고른 대화는 비활성화 뒤에도 다음 요청에 꺼진 워크플로를 계속 적용하던 결함을 고쳐, 선택은 유지(다시 켜면 복원)하되 요청은 기본 워크플로로 고정하고 `disabled_selection`을 남긴다. 화면은 선택 목록에 "꺼짐 · 다음 요청은 기본 워크플로우", 실행 중 표시에 "(꺼진 … 대신)"을 보여 준다. 삭제하면 선택을 비워 다음 요청부터 기본이다. Rust turns 34(`disabled_or_deleted_workflow_never_changes_active_turn_and_next_turn_uses_default`)·definitions 3·타입/빌드·선택 E2E 27개(`web/e2e/effort.spec.ts`, `workspace.spec.ts`) 통과.
 - [ ] WORKFLOW-007 spawn·진행·질문·완료·실패·취소 이벤트를 역할/부모 ID에 연결해 표시한다.
 - [ ] WORKFLOW-008 동등 이식의 회귀 시험과 프롬프트 개선의 실제 비교 시험을 분리하고 사용자 override 보존까지 검증한다.
 

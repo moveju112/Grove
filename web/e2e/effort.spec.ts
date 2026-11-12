@@ -40,6 +40,36 @@ test("추론 강도를 고르면 모델 요청에 들어가고 auto는 보내지
     await expect(sel).toHaveValue("high");
 });
 
+// WORKFLOW-006: 꺼진 워크플로를 고른 대화는 선택을 유지한 채 기본 워크플로로 요청하고 그 사실을 보여 준다.
+test("꺼진 워크플로를 고른 대화는 선택이 남고, 이번 요청은 기본 워크플로로 대신했다고 보여 준다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    await ensureProfile();
+    const id = `wf-off-${Date.now()}`;
+    await apiCall("POST", "/definitions/workflow", { id, name: "꺼둘 흐름", body: "WF-OFF-BODY" });
+    const title = `꺼진 워크플로 대화 ${Date.now()}`;
+    const s = await apiCall<{ id: string; revision: number }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("PATCH", `/sessions/${s.id}`, { expected_revision: s.revision, workflow_id: id });
+    const d = await apiCall<{ revision: number }>("GET", `/definitions/workflow/${id}`);
+    await apiCall("PUT", `/definitions/workflow/${id}`, { expected_revision: d.revision, enabled: false });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    await login(page);
+    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    const view = page.getByTestId("session-view");
+    const wf = view.getByLabel("워크플로우");
+    await expect(wf).toHaveValue(id);
+    await expect(wf.locator("option:checked")).toContainText("꺼짐 · 다음 요청은 기본 워크플로우");
+    await view.getByLabel("보내기 방식").selectOption("model");
+    const before = (await requests()).length;
+    await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
+    await view.getByLabel("메시지 입력").fill("꺼진 흐름으로");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    await expect(view.getByTestId("active-settings")).toContainText("(꺼진 꺼둘 흐름 대신)");
+    await expect.poll(async () => (await requests()).length).toBe(before + 1);
+    expect(JSON.stringify((await requests())[before])).not.toContain("WF-OFF-BODY");
+    await view.getByTestId("turn-status").getByRole("button", { name: "취소" }).click();
+    await expect(view.getByTestId("active-settings")).toHaveCount(0);
+});
+
 // RUN-009: 실행 중 바꾼 모델·강도는 이번 요청에 적용되지 않고, 적용 시점을 보여 준다.
 test("실행 중 강도를 바꾸면 이번 요청은 그대로이고 다음 요청부터 적용된다", async ({ page }) => {
     const { a } = await ensureProjects();
