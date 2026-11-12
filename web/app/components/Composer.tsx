@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, api, newKey } from "../api/client";
+import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../api/client";
 import type { Definition, ModelProfile } from "../api/generated";
 import { deviceName, loadPrefs } from "../state/device";
 import * as D from "../state/drafts";
-import { type SendOptions, capabilityProblem, resolveOptions, sendOptionsSignature } from "../state/sendOptions";
+import { type FollowKind, type SendOptions, capabilityProblem, resolveOptions, sendOptionsSignature } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
 
@@ -41,8 +41,7 @@ type Props = {
 /// run의 반환 문자열은 상태 줄에 보인다. 실패는 throw.
 export type RunCommand = SlashCommand & { run: (arg: string, o: SendOptions) => Promise<string | void> | string | void };
 
-export type FollowKind = "queue" | "steer" | "interrupt";
-type PendingSend = { raw: string; sig: string; key: string; options: SendOptions; follow?: FollowKind };
+export type { FollowKind } from "../state/sendOptions";
 const FOLLOW_LABEL: Record<FollowKind, string> = { queue: "대기열에 추가", steer: "지금 반영", interrupt: "중단하고 보내기" };
 
 /// 입력창: 입력할 때마다 기기 내 사본을 저장하고, 서버 초안은 명시적으로 저장/불러온다.
@@ -50,11 +49,21 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     const [follow, setFollow] = useState<FollowKind>("queue");
     const store = typeof localStorage !== "undefined" ? localStorage : null;
     const localKey = D.key(resourceKey, copyId);
-    const [text, setText] = useState(() => (store ? D.load(store, localKey)?.text ?? "" : ""));
-    const attachments = useAttachments(localKey, projectId);
+    const [initialDraft] = useState(() => store ? D.load(store, localKey) : null);
+    const [text, setText] = useState(initialDraft?.text ?? "");
+    const [pending, setPending] = useState<D.PendingSend | null>(initialDraft?.pending ?? null);
+    const [pendingInvalid, setPendingInvalid] = useState(initialDraft?.pendingInvalid ?? false);
+    const attachments = useAttachments(localKey, projectId, initialDraft?.attachments);
     const sending = useRef(false);
-    const base = useRef<number>(store ? D.load(store, localKey)?.baseRevision ?? 0 : 0);
-    const [opts, setOpts] = useState<SendOptions>(loadOpts);
+    const checking = useRef(false);
+    const base = useRef<number>(initialDraft?.baseRevision ?? 0);
+    const [opts, setOpts] = useState<SendOptions>(() => initialDraft?.pending?.intent ?? loadOpts());
+    const [owner] = useState(authGeneration);
+    const alive = useRef(true);
+    useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+    const otherCopies = () => store ? D.siblingCopies(store, resourceKey).filter((c) => c.key !== localKey) : [];
+    const [copies, setCopies] = useState(otherCopies);
+    const [copyError, setCopyError] = useState(false);
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
     const [conflict, setConflict] = useState<D.ServerDraft | null>(null);
@@ -64,8 +73,15 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     const prefs = loadPrefs();
 
     useEffect(() => {
-        if (store) D.save(store, localKey, { text, baseRevision: base.current, updatedAt: Date.now() });
-    }, [text, localKey, store]);
+        if (!store || !isLoggedIn() || authGeneration() !== owner) return;
+        try {
+            D.save(store, localKey, {
+                text, baseRevision: base.current, updatedAt: Date.now(), pending: pending ?? undefined, pendingInvalid,
+                attachments: attachments.items.flatMap((i) => i.attachment ? [i.attachment] : []),
+            });
+            setCopyError(false);
+        } catch { setCopyError(true); }
+    }, [text, localKey, store, pending, pendingInvalid, attachments.items, base.current]); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => localStorage.setItem(OPT_KEY, JSON.stringify(opts)), [opts]);
 
@@ -81,6 +97,25 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     const problem = capabilityProblem(selectedProfile?.capabilities, eff, attachments.items.some((item) =>
         (item.attachment?.mime ?? item.file?.type)?.startsWith("image/")));
     const update = (patch: Partial<SendOptions>) => setOpts((o) => ({ ...o, ...patch }));
+    const restoreCopy = (draft: D.LocalDraft) => {
+        if (!store || busy || attachments.busy) return;
+        try {
+            // 현재 입력도 별도 사본으로 남기고 선택한 snapshot만 이 탭에 복제한다.
+            if (text || attachments.items.length || pending || pendingInvalid) D.save(store, D.key(resourceKey, `${copyId}-${newKey()}`), {
+                text, baseRevision: base.current, updatedAt: Date.now(), pending: pending ?? undefined, pendingInvalid,
+                attachments: attachments.items.flatMap((i) => i.attachment ? [i.attachment] : []),
+            });
+            D.save(store, localKey, draft);
+            base.current = draft.baseRevision;
+            setText(draft.text);
+            setPending(draft.pending ?? null);
+            setPendingInvalid(draft.pendingInvalid ?? false);
+            if (draft.pending) setOpts(draft.pending.intent);
+            attachments.restore(draft.attachments ?? []);
+            setCopies(otherCopies());
+            setCopyError(false);
+        } catch { setCopyError(true); }
+    };
 
     const state = server.data ? D.compare(text ? { text, baseRevision: base.current, updatedAt: 0 } : null, server.data) : null;
 
@@ -108,7 +143,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     // 모바일(터치) 키보드에는 Shift가 불편하므로 Enter는 항상 줄바꿈이고, 보내기 버튼으로 보낸다.
     const enterSends = prefs.enterToSend && !(typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches);
     // 결과를 알 수 없는 전송(네트워크 끊김·서버 오류)의 key. 같은 내용·옵션으로 다시 보낼 때만 재사용한다(UI-028).
-    const [pending, setPending] = useState<PendingSend | null>(null);
     const recovering = pending?.raw === text && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null;
     // slash command: 공통 명령 + 화면 명령. 등록된 이름만 명령이고 나머지 "/"는 보내지 않는다(//로 시작하면 글).
     const builtins: RunCommand[] = [
@@ -165,7 +199,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     };
 
     const send = async () => {
-        if ((!text.trim() && attachments.items.length === 0) || busy || sending.current || attachments.busy || !attachments.ready || !!disabled) return;
+        if ((!text.trim() && attachments.items.length === 0) || busy || sending.current || attachments.busy || !attachments.ready || !!disabled || pendingInvalid) return;
+        if (recovering) { await sendText(recovering.body, text); return; }
         const parsed = parseSlash(text, allCmds.map((c) => c.name));
         if (parsed.kind === "unknown") {
             setMsg(`알 수 없는 명령 /${parsed.name}입니다. '/'를 입력하면 명령 목록이 보이고, '/'로 시작하는 글은 '//'로 시작해 보내세요.`);
@@ -191,15 +226,17 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     };
 
     /// body: 실제로 보낼 글("//" 이스케이프를 푼 값), raw: 입력창 원문(보낸 뒤 비울지 판단).
-    const sendText = async (body: string, raw: string) => {
-        const ids = attachments.ids;
-        const confirmation = pending?.raw === raw && pending.sig === sendOptionsSignature(opts, ids) ? pending : null;
+    const sendText = async (body: string, raw: string, original?: D.PendingSend) => {
+        if (busy || sending.current || attachments.busy || !!disabled || pendingInvalid) return;
+        const confirmation = original ?? (pending?.raw === raw && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null);
+        const ids = confirmation?.attachmentIds ?? attachments.ids;
         if (!confirmation && eff.mode === "model" && profileDisabled) {
             setMsg("선택한 모델 프로필이 비활성화돼 있습니다. 다른 프로필을 명시적으로 선택하세요.");
             return;
         }
         if (!confirmation && problem) { setMsg(problem); return; }
-        const text = body;
+        const requestBody = confirmation?.body ?? body;
+        checking.current = !!confirmation;
         sending.current = true;
         setBusy(true);
         setMsg(null);
@@ -213,10 +250,28 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
         }
         const sig = confirmation?.sig ?? sendOptionsSignature(intent, ids);
         const key = confirmation?.key ?? newKey();
+        const snapshot: D.PendingSend = { body: requestBody, raw, sig, key, intent: confirmation?.intent ?? intent,
+            options: { ...options }, follow: kind, attachmentIds: [...ids] };
         try {
-            await onSend(text, options, key, kind, ids);
-            attachments.clear();
+            if (!store) throw new Error("draft storage unavailable");
+            D.save(store, localKey, { text, baseRevision: base.current, updatedAt: Date.now(),
+                attachments: attachments.items.flatMap((i) => i.attachment ? [i.attachment] : []), pending: snapshot });
+        } catch {
+            sending.current = false;
+            setBusy(false);
+            setCopyError(true);
+            setMsg("전송 사본을 보관하지 못해 보내지 않았습니다. 기기 저장 공간을 확인하세요.");
+            return;
+        }
+        setPending(snapshot);
+        try {
+            await onSend(requestBody, options, key, kind, ids);
+            if (authGeneration() !== owner) return;
+            D.settleSend(store, resourceKey, key, true);
+            if (!alive.current) return;
+            attachments.clearSent(ids);
             setPending(null);
+            setCopies(otherCopies());
             // 보내는 동안 새로 입력한 글은 지우지 않는다(보낸 글 그대로일 때만 비움).
             setText((cur) => (cur === raw ? "" : cur));
             // 보낸 뒤 서버 초안이 내 것이면 비운다(다른 기기 수정이 있으면 남김)
@@ -224,12 +279,15 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 await api.put(`/drafts/${resourceKey}`, { expected_revision: base.current, text: "", device_name: deviceName() }).catch(() => undefined);
             }
         } catch (e) {
+            if (authGeneration() !== owner) return;
             // 응답을 못 받았거나 서버 오류면 실제로 처리됐는지 모른다: 입력을 남기고 자동 재전송하지 않는다.
             const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408
                 || (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true;
             if (unknown) {
-                setPending({ raw, sig, key, options: { ...options }, follow: kind });
+                if (alive.current) setPending(snapshot);
             } else {
+                D.settleSend(store, resourceKey, key, false);
+                if (!alive.current) return;
                 setPending(null);
                 setMsg(e.message);
             }
@@ -268,6 +326,21 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
 
     return (
         <div className="composer">
+            {copyError && <p className="err" role="alert">기기에 입력 사본을 보관하지 못했습니다. 화면을 떠나기 전에 내용을 복사하세요.</p>}
+            {copies.length > 0 && <details className="draft-note" data-testid="draft-copies">
+                <summary>다른 입력 사본 {copies.length}개</summary>
+                <p className="muted small">선택한 사본을 이 탭에 복제합니다. 현재 입력은 별도 사본으로 남기며 자동 전송하지 않습니다.</p>
+                {copies.map((copy) => <div key={copy.key} data-testid="draft-copy">
+                    <pre>{copy.draft.text}</pre>
+                    {!!copy.draft.attachments?.length && <p className="small">첨부: {copy.draft.attachments.map((a) => a.name).join(", ")}</p>}
+                    {copy.draft.pending && <p className="warn small">전송 결과 확인 필요 · 원래 요청 키 유지</p>}
+                    <button className="ghost small" disabled={busy || attachments.busy} onClick={() => restoreCopy(copy.draft)}>이 사본 이어받기</button>
+                </div>)}
+            </details>}
+            {pendingInvalid && <div className="draft-note warn" role="alert">
+                전송 사본이 손상되어 원래 요청을 확인할 수 없습니다. 서버 대화·실행 기록을 먼저 확인하세요.
+                <button className="ghost small" onClick={() => setPendingInvalid(false)}>기록 확인 후 새 전송 허용</button>
+            </div>}
             {state?.kind === "server_newer" && (
                 <div className="draft-note">
                     다른 기기({state.server.device_name})의 서버 초안이 있습니다.
@@ -288,10 +361,18 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                     </button>
                 </div>
             )}
-            {pending && (
+            {pending && !busy && (
                 <div className="draft-note warn" role="alert" data-testid="send-unsure">
                     보냈는지 확인할 수 없습니다(연결 문제). 입력은 그대로 보관했고 자동으로 다시 보내지 않습니다.
                     글·모델/도구 옵션·첨부를 바꾸지 않고 확인하면 원래 전송 위치·옵션·같은 요청 키를 사용합니다.
+                    {!recovering && <>
+                        <details><summary>원래 요청 보기</summary><pre>{pending.raw}</pre>
+                            <p className="small">모델: {pending.options.profileId ?? "없음"} · 첨부 {pending.attachmentIds.length}개 · {pending.follow ? FOLLOW_LABEL[pending.follow] : pending.options.mode === "save" ? "메시지만 저장" : "모델로 보내기"}</p>
+                        </details>
+                        <button className="ghost small" disabled={busy || attachments.busy || !!disabled}
+                            onClick={() => void sendText(pending.body, pending.raw, pending)}>원래 요청 결과 확인</button>
+                        <span className="small">현재 입력과 새 첨부는 보존합니다. 현재 내용을 보내면 별도의 새 요청입니다.</span>
+                    </>}
                 </div>
             )}
             {sugg.length > 0 && (
@@ -378,10 +459,10 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 )}
                 <button
                     onClick={send}
-                    disabled={busy || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (!!problem || (eff.mode === "model" && (!eff.profileId || profileDisabled)) || (!!running && eff.mode === "save")))}
+                    disabled={busy || pendingInvalid || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (!!problem || (eff.mode === "model" && (!eff.profileId || profileDisabled)) || (!!running && eff.mode === "save")))}
                     title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다(도구 호출과 결과 사이에 끼면 안 됨)" : undefined}
                 >
-                    {busy ? recovering ? "확인 중…" : "보내는 중…" : recovering ? "같은 요청 확인" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
+                    {busy ? checking.current ? "확인 중…" : "보내는 중…" : recovering ? "같은 요청 확인" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
                 </button>
             </div>
             {msg && <p className="muted small" role="status">{msg}</p>}

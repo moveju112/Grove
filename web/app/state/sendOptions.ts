@@ -3,6 +3,7 @@ import type { ModelCapabilities } from "../api/generated";
 /// effort(UI-020): auto면 provider 기본값(아무것도 보내지 않음).
 export type Effort = "auto" | "low" | "medium" | "high";
 export type SendOptions = { mode: "model" | "save"; profileId: string | null; agentId: string | null; tools: boolean; effort?: Effort };
+export type FollowKind = "queue" | "steer" | "interrupt";
 
 /// 저장된 선택값을 현재 목록에 맞춰 실제로 쓸 값으로 바꾼다.
 /// 선택값을 effect로 상태에 복사하지 않고 렌더마다 계산해, 화면에 보이는 선택과 보내는 값이 항상 같게 한다.

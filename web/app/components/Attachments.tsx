@@ -1,18 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, api, newKey, rawGet } from "../api/client";
+import { ApiError, api, authGeneration, newKey, rawGet } from "../api/client";
+import { parseDraftAttachments, type DraftAttachment as Attachment } from "../state/drafts";
 
-export type Attachment = { id: string; project_id: string; name: string; mime: string; size: number; stored: boolean; image?: { width: number; height: number; model_width: number; model_height: number } | null };
+export type { DraftAttachment as Attachment } from "../state/drafts";
 type Pending = { key: string; file?: File; attachment?: Attachment; error?: string };
 const MAX_FILE = 4 * 1024 * 1024;
 const MAX_TOTAL = 8 * 1024 * 1024;
 
 // 원문·토큰은 localStorage에 넣지 않고, 업로드 완료한 ID와 표시 metadata만 초안 사본별로 보존한다.
-export function useAttachments(draftKey: string, projectId: string) {
+export function useAttachments(draftKey: string, projectId: string, initial?: Attachment[]) {
     const key = `${draftKey}:attachments`;
+    const [owner] = useState(authGeneration);
+    const entries = (saved: unknown): Pending[] => parseDraftAttachments(saved).filter((a) => a.project_id === projectId).map((a) => ({ key: newKey(), attachment: a }));
     const [items, setItems] = useState<Pending[]>(() => {
         try {
-            const saved: Attachment[] = JSON.parse(localStorage.getItem(key) ?? "[]");
-            return saved.filter((a) => a.project_id === projectId && typeof a.id === "string" && typeof a.name === "string" && Number.isFinite(a.size)).slice(0, 8).map((a) => ({ key: newKey(), attachment: a }));
+            return entries(initial ?? JSON.parse(localStorage.getItem(key) ?? "[]"));
         } catch { return []; }
     });
     const [busy, setBusy] = useState(false);
@@ -22,6 +24,7 @@ export function useAttachments(draftKey: string, projectId: string) {
     const alive = useRef(true);
     useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
     const replace = (next: Pending[]) => {
+        if (authGeneration() !== owner) return;
         current.current = next;
         if (alive.current) setItems(next);
         // 완료 응답이 화면 이동 뒤 도착해도 같은 초안에서 원문을 다시 찾는다.
@@ -65,7 +68,10 @@ export function useAttachments(draftKey: string, projectId: string) {
         // 서버의 미참조 원문은 유예 후 GC가 정리한다. 불명 전송 직후 이미 연결된 원문도 안전하다.
         replace(current.current.filter((i) => i.key !== key));
     };
-    return { items, busy, error, add, remove, retry: (i: Pending) => process([i]), clear: () => replace([]), ids: items.flatMap((i) => i.attachment ? [i.attachment.id] : []), ready: items.every((i) => !!i.attachment) };
+    return { items, busy, error, add, remove, retry: (i: Pending) => process([i]),
+        restore: (saved: Attachment[]) => replace(entries(saved)),
+        clearSent: (ids: string[]) => replace(current.current.filter((i) => !i.attachment || !ids.includes(i.attachment.id))),
+        ids: items.flatMap((i) => i.attachment ? [i.attachment.id] : []), ready: items.every((i) => !!i.attachment) };
 }
 
 export function AttachmentPicker({ draft, disabled }: { draft: ReturnType<typeof useAttachments>; disabled: boolean }) {
