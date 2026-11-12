@@ -39,6 +39,11 @@ test("단일 선택 질문: 답변 대기로 표시되고, 고른 답으로 이�
     await expect(view.getByTestId("turn-status")).toContainText("답변을 기다리는 중");
     await expect(view.getByTestId("approval")).toHaveCount(0);
     await expect(page.locator(".recent").getByText("답변 대기").first()).toBeVisible();
+    const recent = page.locator(".recent");
+    const title = (await view.locator("h1").innerText()).trim();
+    await recent.getByRole("button", { name: "답변 대기", exact: true }).click();
+    const waiting = recent.getByTestId("recent-item").filter({ hasText: title });
+    await expect(waiting).toHaveCount(1);
     await expect(card.getByLabel("직접 입력")).toHaveCount(0);
     await expect(card.getByRole("button", { name: "답하기" })).toBeDisabled();
     await card.getByRole("radio", { name: /SQLite/ }).check();
@@ -48,6 +53,8 @@ test("단일 선택 질문: 답변 대기로 표시되고, 고른 답으로 이�
     await card.getByRole("button", { name: "답하기" }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "Postgres로 진행" })).toHaveCount(1, { timeout: 15_000 });
     await expect(view.getByTestId("question")).toHaveCount(0);
+    await expect(waiting).toHaveCount(0);
+    await recent.getByRole("button", { name: "전체", exact: true }).click();
     const r = (await requests()).slice(before);
     expect(r).toHaveLength(1);
     expect(toolText(r[0]!)).toContain("Postgres");

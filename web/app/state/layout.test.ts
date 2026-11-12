@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-    allTabs, closeLeaf, closeTab, emptyLayout, fileTarget, focusedLeaf, isValid, leaves, markMissing, mobileView, moveTab, openTab, setDirection, setRatio, splitLeaf,
+    allTabs, closeLeaf, closeTab, emptyLayout, fileTarget, focusedLeaf, isValid, leaves, markMissing, mobileView, moveTab, openResource, openTab, setDirection, setRatio, splitLeaf,
     type Layout,
 } from "./layout";
 
@@ -15,6 +15,42 @@ function twoPanes(dir: "row" | "column" = "row"): Layout {
 }
 
 describe("layout", () => {
+    it("다른 pane의 열린 자원으로 이동하고 모바일에서도 그 탭을 표시한다", () => {
+        const l = twoPanes();
+        const original = leaves(l.root)[0]!.tabs[0]!;
+        const next = openResource(l, sA);
+        expect(allTabs(next)).toHaveLength(2);
+        expect(focusedLeaf(next).active_tab).toBe(original.id);
+        expect(mobileView(next).tab?.id).toBe(original.id);
+        const opened = openResource(next, { ...sA, resource_id: "new" });
+        expect(allTabs(opened)).toHaveLength(3);
+        expect(focusedLeaf(opened).id).toBe(focusedLeaf(next).id);
+    });
+    it("이미 여러 사본이 있으면 현재 pane의 사본을 유지하며 명시적인 분할은 새 사본을 만든다", () => {
+        let l = emptyLayout();
+        l = openTab(l, l.focused_leaf, sA);
+        l = splitLeaf(l, l.focused_leaf, "row", sA);
+        const copy = focusedLeaf(l);
+        const next = openResource(l, sA);
+        expect(focusedLeaf(next).id).toBe(copy.id);
+        expect(focusedLeaf(next).active_tab).toBe(copy.active_tab);
+        expect(allTabs(next)).toHaveLength(2);
+        expect(allTabs(splitLeaf(next, copy.id, "column", sA))).toHaveLength(3);
+    });
+    it("프로젝트와 파일/줄 정규화에 맞는 대상만 재사용한다", () => {
+        let l = emptyLayout();
+        const file = { kind: "file" as const, project_id: "A", resource_id: "src/a:42", title: "src/a:42" };
+        l = openTab(l, l.focused_leaf, file);
+        const original = focusedLeaf(l).tabs[0]!.id;
+        l = splitLeaf(l, l.focused_leaf, "row", sB);
+        l = openResource(l, { ...file, resource_id: "src/a", filePath: "src/a", fileLine: 42 });
+        expect(allTabs(l)).toHaveLength(2);
+        expect(focusedLeaf(l).active_tab).toBe(original);
+        l = openResource(l, { ...file, filePath: "src/a:42" });
+        expect(allTabs(l)).toHaveLength(3);
+        l = openResource(l, { ...sB, project_id: "A" });
+        expect(allTabs(l)).toHaveLength(4);
+    });
     it("파일 경로와 줄 번호를 구분하고 이전 배치와 같은 대상은 중복 생성하지 않는다", () => {
         let l = emptyLayout();
         const old = { kind: "file" as const, project_id: "A", resource_id: "src/a.txt:42", title: "src/a.txt:42" };

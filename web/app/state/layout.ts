@@ -75,6 +75,17 @@ export function openTab(l: Layout, leafId: string, tab: Omit<Tab, "id"> & { id?:
     return { ...l, root: mapLeaf(l.root, leafId, (x) => ({ ...(x as Leaf), tabs: [...(x as Leaf).tabs, t], active_tab: t.id })), focused_leaf: leafId };
 }
 
+/// 기본 열기는 현재 pane의 사본을 우선하고 다른 pane에 있으면 그 탭으로 이동한다.
+/// 명시적인 분할은 splitLeaf를 사용하므로 같은 자원의 독립 사본을 만들 수 있다.
+export function openResource(l: Layout, tab: Omit<Tab, "id">): Layout {
+    const here = focusedLeaf(l);
+    for (const leaf of [here, ...leaves(l.root).filter((x) => x.id !== here.id)]) {
+        const existing = leaf.tabs.find((t) => sameResource(t, tab as Tab));
+        if (existing) return activate(l, existing.id);
+    }
+    return openTab(l, here.id, tab);
+}
+
 function depthOf(n: Node, id: string, d = 0): number {
     if (n.type === "leaf") return n.id === id ? d : -1;
     return Math.max(depthOf(n.children[0], id, d + 1), depthOf(n.children[1], id, d + 1));

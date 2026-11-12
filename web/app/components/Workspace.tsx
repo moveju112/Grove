@@ -141,7 +141,7 @@ export function Workspace() {
         (t, how = "here") => {
             update((l) => {
                 const leaf = L.focusedLeaf(l);
-                if (how === "here" || narrow) return L.openTab(l, leaf.id, t);
+                if (how === "here" || narrow) return L.openResource(l, t);
                 return L.splitLeaf(l, leaf.id, how === "right" ? "row" : "column", t);
             });
             if (narrow) setSidebar(false);

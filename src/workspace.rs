@@ -163,7 +163,7 @@ pub async fn touch(State(app): State<App>, p: Principal, headers: HeaderMap, Jso
 
 #[derive(Deserialize)]
 pub struct RecentQuery {
-    /// all | pinned | running | awaiting_approval | unread | hidden
+    /// all | pinned | running | awaiting_approval | awaiting_input | unread | hidden
     pub filter: Option<String>,
     pub q: Option<String>,
     pub project_id: Option<String>,
@@ -182,7 +182,7 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let offset = q.offset.unwrap_or(0).max(0);
     let filter = q.filter.unwrap_or_else(|| "all".into());
-    if !matches!(filter.as_str(), "all" | "pinned" | "running" | "awaiting_approval" | "unread" | "hidden") {
+    if !matches!(filter.as_str(), "all" | "pinned" | "running" | "awaiting_approval" | "awaiting_input" | "unread" | "hidden") {
         return Err(ApiError::invalid("알 수 없는 필터입니다"));
     }
     let needle = q.q.unwrap_or_default().to_lowercase();

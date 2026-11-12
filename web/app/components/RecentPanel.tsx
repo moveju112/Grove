@@ -46,11 +46,17 @@ export function RecentPanel({ open }: { open: Opener }) {
         else if (it.kind === "project") open({ kind: "project", project_id: it.project_id, resource_id: it.resource_id, title: it.title }, how);
         else if (it.kind === "terminal") open({ kind: "terminal", project_id: it.project_id, resource_id: it.resource_id, title: it.title }, how);
         else if (it.kind === "file") open({ kind: "file", project_id: it.project_id, resource_id: it.resource_id, filePath: it.resource_id, title: it.title }, how);
+        else return;
+        // 이미 보이는 탭으로 이동해 컴포넌트가 다시 mount되지 않아도 접근 시각은 갱신한다.
+        // view_state를 보내지 않아 읽던 위치·읽음 정보는 그대로 둔다.
+        void api.post("/recent/touch", { kind: it.kind, project_id: it.project_id, resource_id: it.resource_id, title: it.title })
+            .catch((e) => setErr(e instanceof ApiError ? e.message : "최근 접근 기록을 갱신하지 못했습니다."));
     };
 
     return (
         <section className="recent" aria-label="최근">
             <h2>최근</h2>
+            <p className="muted small">고정 항목 먼저 · 최근 접근순</p>
             <input type="search" placeholder="최근 항목 검색" value={q} onChange={(e) => setQ(e.target.value)} aria-label="최근 항목 검색" />
             <div className="chips" role="group" aria-label="필터">
                 {FILTERS.map(([k, label]) => (
@@ -60,6 +66,9 @@ export function RecentPanel({ open }: { open: Opener }) {
                 ))}
             </div>
             {err && <p className="err" role="alert">{err}</p>}
+            {Boolean(recent.error) && <p className="err" role="alert">
+                {recent.error instanceof ApiError ? recent.error.message : "최근 목록을 불러오지 못했습니다."}
+            </p>}
             <ul className="recent-list">
                 {(recent.data?.items ?? []).map((it) => (
                     <li key={it.id} className={it.unread ? "unread" : ""} data-testid="recent-item">

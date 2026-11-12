@@ -126,6 +126,11 @@ async fn recent_status_reflects_archived_and_hidden() {
     let (_, item) = s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": sid })).await;
     assert_eq!(item["status"], "active");
     assert_eq!(item["unread"], false);
+    for filter in ["all", "pinned", "running", "awaiting_approval", "awaiting_input", "unread", "hidden"] {
+        let (st, page) = s.get(&format!("/api/v1/recent?filter={filter}")).await;
+        assert_eq!(st, StatusCode::OK, "{filter}: {page}");
+        assert!(page["items"].is_array(), "{filter}: {page}");
+    }
     s.post(&format!("/api/v1/sessions/{sid}/messages"), json!({ "text": "new" })).await;
     let (_, unread) = s.get("/api/v1/recent?filter=unread").await;
     assert_eq!(unread["items"].as_array().unwrap().len(), 1);
