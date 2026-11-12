@@ -818,7 +818,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] PROJECT-003 프로젝트 제거와 실제 디렉터리 삭제를 분리한다. 검증: 프로젝트 보관은 목록에서만 제거하고 디렉터리·파일·대화를 건드리지 않으며 복원 가능, 외부에서 폴더를 지워도 서버는 삭제·재생성하지 않고 사용 불가로 표시(`tests/projects.rs::archive_removes_from_list_but_never_touches_directory`). 디렉터리 삭제 API는 없다.
 - [x] PROJECT-004 프로젝트당 기본 작업공간 하나에 여러 세션을 연결한다. 화면 분할은 작업공간 생성과 분리하고 worktree는 명시적으로 선택한다. 검증: 프로젝트 = root 하나의 단일 작업공간에 세션 여러 개, 분할은 화면 배치만 바꾸고 탭 닫기는 세션을 건드리지 않음(`tests/workspace.rs::two_projects_recent_and_split_survive_restart`, `web/e2e/workspace.spec.ts` 분할 시험). worktree는 대화마다 명시적으로 선택한다(GIT-007·008).
 - [x] PROJECT-005 프로젝트 열기 뒤 별도 workspace 생성 단계를 없애고 단일 워크스페이스의 기존 사용자 흐름을 보존한다. 검증: workspace 생성 API·화면이 없고, 새 프로젝트를 만든 직후 프로젝트 화면 입력창에서 보내면 바로 그 프로젝트의 대화가 하나 생기고 열림(`web/e2e/project-add.spec.ts`).
-- [ ] PROJECT-006 세션의 cwd 변경과 셸의 일시적인 cwd를 구분한다.
+- [x] PROJECT-006 세션의 cwd 변경과 셸의 일시적인 cwd를 구분한다. 검증: 대화의 실행 위치는 프로젝트 root 또는 연결된 worktree로만 바뀌고(worktree 연결), 셸의 `cwd` 인자와 명령 안의 `cd`는 그 호출에만 적용된다. 다음 호출은 다시 root에서 시작하고 대화 실행 위치는 그대로다(`tests/turns.rs::shell_cwd_is_per_call_and_does_not_move_session_root`).
 - [x] PROJECT-007 폴더 이동·누락·권한 변경·네트워크 경로 오류를 복구 UI로 안내한다. 검증: 폴더 이동·누락 시 `available=false`·실행 410, 프로젝트 화면 안내와 "새 경로로 다시 연결"(`root_path` 변경: 정규화·중복·실행 중 거부), `tests/projects.rs::relink_moved_folder_keeps_history_and_rejects_conflicts`.
 - [ ] PROJECT-008 작업공간 제목·고정·라벨 생성/수정/할당/삭제의 실제 사용 범위를 유지한다.
 - [ ] PROJECT-009 archive와 복구 검사·복구 실행을 구현한다.

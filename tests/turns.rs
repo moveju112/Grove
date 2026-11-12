@@ -714,6 +714,29 @@ fn urlencoding(s: &str) -> String {
     s.bytes().map(|b| if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") }).collect()
 }
 
+// PROJECT-006: 셸 호출의 `cwd` 인자와 명령 안의 `cd`는 그 호출에만 적용되고, 대화의 실행 위치(프로젝트 root)는 바뀌지 않는다.
+#[tokio::test]
+async fn shell_cwd_is_per_call_and_does_not_move_session_root() {
+    let (s, f, prof, sid, root) = setup().await;
+    std::fs::create_dir_all(format!("{root}/sub")).unwrap();
+    let (st, v) = s.send(Method::PUT, "/api/v1/settings/server/-/tools.allow", json!({ "expected_revision": 0, "value": "shell" })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    f.push(fixture::tool_calls(&[("s1", "shell", json!({ "command": "pwd; cd /; pwd", "cwd": "sub" }))]));
+    f.push(fixture::tool_calls(&[("s2", "shell", json!({ "command": "pwd" }))]));
+    f.push(fixture::text("확인"));
+    let v = start_turn(&s, &sid, &prof, "위치 확인", true).await;
+    let t = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    let canon = std::fs::canonicalize(&root).unwrap();
+    let first = t["tool_calls"][0]["result"]["stdout"].as_str().unwrap().to_string();
+    let lines: Vec<&str> = first.lines().collect();
+    assert_eq!(lines, vec![canon.join("sub").to_str().unwrap(), "/"], "{t}");
+    assert_eq!(t["tool_calls"][0]["result"]["cwd"], "sub");
+    let second = t["tool_calls"][1]["result"]["stdout"].as_str().unwrap().trim().to_string();
+    assert_eq!(second, canon.to_str().unwrap(), "다음 호출은 다시 프로젝트 root에서 시작");
+    let (_, sess) = s.get(&format!("/api/v1/sessions/{sid}")).await;
+    assert!(sess["worktree_id"].is_null(), "대화 실행 위치는 그대로");
+}
+
 // RUN-023: provider timeout은 사용자 중지와 구별되고, 원인·시간·설정이 다음 모델 요청까지 유지된다.
 #[tokio::test]
 async fn provider_timeout_cause_survives_into_next_request() {
