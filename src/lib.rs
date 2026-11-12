@@ -102,6 +102,7 @@ pub const CAPABILITIES: &[&str] = &[
     "settings_reset_v1",
     "mcp_settings_v1",
     "mcp_check_v1",
+    "mcp_tools_v1",
 ];
 
 #[derive(Clone)]

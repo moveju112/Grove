@@ -207,7 +207,12 @@ pub fn create_call(
 ) -> ApiResult<ToolCallRow> {
     let id = crate::util::new_id();
     let mut scope: Option<&str> = None;
-    let (status, needs, target, pre, result) = match tools::plan(name, args, root) {
+    let plan=tools::plan(name,args,root).and_then(|(spec,planned)| {
+        if spec.name=="mcp_call" {
+            crate::mcp::plan_call(c,args,project_id,session_id).map(|p|(spec,p)).map_err(|e|tools::ToolError::new(e.code,e.message))
+        } else { Ok((spec,planned)) }
+    });
+    let (status, needs, target, pre, result) = match plan {
         Ok((spec, mut planned)) => {
             // 셸은 범위별 설정으로 정해 승인 대상에 고정한다. 승인 후 설정이 바뀌어도 승인한 셸로 실행한다(EXEC-001).
             if spec.name == "shell" {
@@ -224,7 +229,7 @@ pub fn create_call(
             };
             let policy = tool_policy(c, project_id, session_id, &spec)?;
             // 이 대화에서 계속 허용한 도구(SEC-009). 금지·읽기 전용이 먼저이고, 위임(agent)에는 쓰지 않는다.
-            let granted = spec.name != "agent"
+            let granted = !matches!(spec.name,"agent"|"mcp_call")
                 && c.query_row("SELECT 1 FROM session_tool_grants WHERE session_id = ?1 AND tool = ?2", params![session_id, spec.name], |_| Ok(()))
                     .optional()?
                     .is_some();
@@ -361,7 +366,7 @@ fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiResult<Option<
     let policy = tool_policy(c,&call.project_id,&call.session_id,&spec)?;
     let needs = if call.name=="agent" { crate::agents::approval_policy(c,&call.project_id,&call.session_id,&call.target)? }
         else { Some(tools::needs_approval(spec.effect)) };
-    let granted = call.name!="agent" && c.query_row(
+    let granted = !matches!(call.name.as_str(),"agent"|"mcp_call") && c.query_row(
         "SELECT EXISTS(SELECT 1 FROM session_tool_grants WHERE session_id=?1 AND tool=?2)",
         params![call.session_id,call.name],|r|r.get::<_,bool>(0),
     )?;
@@ -373,7 +378,11 @@ fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiResult<Option<
             Some(("approval_revoked","대기 중 자동 허용 또는 대화 범위 승인이 해제돼 실행하지 않았습니다. 새 승인이 필요합니다".into())),
         _ => None,
     };
-    Ok(blocked.map(|(code,message)|tools::ToolError::new(code,message)))
+    if let Some((code,message))=blocked { return Ok(Some(tools::ToolError::new(code,message))); }
+    if call.name=="mcp_call" && let Err(e)=crate::mcp::validate_call(c,call) {
+        return Ok(Some(tools::ToolError::new(e.code,e.message)));
+    }
+    Ok(None)
 }
 
 /// 프로젝트 guard 대기가 끝난 뒤에도 현재 권한과 중지 접수 상태를 다시 확인한다.
@@ -477,6 +486,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
             blocked=app.db.call(move |c|check_running_execution(c,&id)).await.err().map(|e|tools::ToolError::new(e.code,e.message));
         }
         let mut file_recs: Vec<crate::changes::Rec> = vec![];
+        let mut mcp_stale=false;
         let outcome = match root {
             _ if blocked.is_some() => Err(blocked.expect("resource error")),
             _ if *cancel_rx.borrow() => Err(tools::ToolError::new("cancelled","실행 전에 취소돼 시작하지 않았습니다")),
@@ -498,6 +508,15 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 let (sid,args) = (call.session_id.clone(),call.target.clone());
                 app.db.call(move |c| crate::recall::execute_tool(c,&sid,&args)).await
                     .map_err(|e| tools::ToolError::new(e.code,e.message))
+            }
+            Ok(_) if call.name=="mcp_tools" => {
+                let args=call.target.clone();
+                app.db.call(move |c|crate::mcp::catalog(c,&args)).await.map_err(|e|tools::ToolError::new(e.code,e.message))
+            }
+            Ok(_) if call.name=="mcp_call" => {
+                let (outcome,stale)=crate::mcp::execute_call(&app,&call,cancel_rx).await;
+                mcp_stale=stale;
+                outcome
             }
             // hold_ms가 있는 셸은 백그라운드 작업으로 실행한다(EXEC-004).
             Ok(_) if call.name == "shell" && call.target.get("hold_ms").is_some() => {
@@ -544,6 +563,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
         let id = call.id.clone();
         let turn = call.turn_id.clone();
         let (sid, tool, turn_for_rec) = (call.session_id.clone(), call.name.clone(), call.turn_id.clone());
+        let mcp_server=call.target["server_id"].as_str().map(str::to_string);
         let _ = app
             .db
             .call(move |c| {
@@ -552,8 +572,12 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 let (to, result) = match outcome {
                     Ok(v) => ("succeeded", v),
                     Err(e) if e.code == "cancelled" => ("cancelled", e.to_json()),
+                    Err(e) if e.code == "result_unknown" => ("unknown", e.to_json()),
                     Err(e) => ("failed", e.to_json()),
                 };
+                if mcp_stale && let Some(server)=&mcp_server {
+                    crate::mcp::invalidate_catalog(&tx,&now,server)?;
+                }
                 if finish(&tx, &now, &id, &["running"], to, Some(result))?.is_some() {
                     crate::changes::insert(&tx, &now, &sid, turn_for_rec.as_deref(), &id, &tool, &file_recs)?;
                 }
@@ -678,6 +702,9 @@ pub async fn decide(
         // 승인 대기 중에 정책이 바뀌었으면(금지·읽기 전용) 승인해도 실행하지 않는다(SEC-007).
         if b.decision == "approve_session" && cur.name == "agent" {
             return Err(ApiError::invalid("자식 에이전트 위임은 대화 범위로 허용할 수 없습니다(위임 정책 agents.delegation을 쓰세요)"));
+        }
+        if b.decision=="approve_session" && cur.name=="mcp_call" {
+            return Err(ApiError::invalid("MCP 외부 호출은 서로 다른 서버·도구를 묶어 대화 범위로 허용할 수 없습니다. 이번만 승인하거나 명시적 도구 정책을 사용하세요"));
         }
         if approving
             && let Some(spec) = tools::spec(&cur.name)

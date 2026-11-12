@@ -32,6 +32,7 @@ pub fn busy(c: &Connection, now: &str) -> ApiResult<Value> {
         "schedules_within_10m": schedules_soon,
         "running_schedule_runs": n("SELECT COUNT(*) FROM schedule_runs WHERE status = 'running'")?,
         "running_mcp_checks": n("SELECT COUNT(*) FROM mcp_checks WHERE status = 'checking'")?,
+        "running_mcp_calls": n("SELECT COUNT(*) FROM tool_calls WHERE name='mcp_call' AND status='running'")?,
     });
     Ok(v)
 }

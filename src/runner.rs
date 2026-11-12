@@ -592,6 +592,13 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let cli = if cli_backend { Some(crate::provider::cli::CliContext {
         cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system)?
     }) } else { None };
+    let tools=if t.tools_enabled && !cli_backend {
+        let mcp_ready:bool=c.query_row(
+            "SELECT EXISTS(SELECT 1 FROM mcp_servers m JOIN mcp_checks k ON k.server_id=m.id WHERE m.enabled=1 AND k.status='ready')",
+            [],|r|r.get(0),
+        )?;
+        tool_defs().into_iter().filter(|d|mcp_ready || !matches!(d.name.as_str(),"mcp_tools"|"mcp_call")).collect()
+    } else { vec![] };
     Ok(Some(StepInput {
         deadline,
         session_id: t.session_id.clone(),
@@ -604,7 +611,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             system,
             messages,
             // CLI 백엔드는 자기 도구를 쓰므로 Grove 도구 목록을 보내지 않는다.
-            tools: if t.tools_enabled && !cli_backend { tool_defs() } else { vec![] },
+            tools,
             max_tokens,
             temperature,
             // 접수 때 고정한 추론 강도(UI-020). 없으면 auto.

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, login } from "./helpers";
+import { apiCall, ensureProjects, login, sessionView } from "./helpers";
 import { createServer } from "node:http";
 
 type Server = { id: string; name: string; config: unknown; enabled: boolean; revision: number; timeout_secs: number };
@@ -163,5 +163,60 @@ test("MCP 연결 검사는 실행 확인·handshake·도구 목록·연결 정�
         const list = await apiCall<Server[]>("GET", "/mcp/servers");
         for (const s of list.filter((s) => s.id === server.id)) await apiCall("DELETE", `/mcp/servers/${s.id}?expected_revision=${s.revision}`);
         await apiCall("DELETE", `/secrets/${secret.id}`);
+    }
+});
+
+test("MCP 외부 호출은 namespace·대상·인자를 확인한 이번만 승인 뒤에만 실행하고 거부는 전달하지 않는다", async ({ page }) => {
+    let invocations = 0;
+    const remote = createServer(async (request, response) => {
+        if (request.method === "DELETE") { response.end(); return; }
+        let text = "";
+        for await (const chunk of request) text += chunk.toString();
+        const message = JSON.parse(text) as { id?: number; method: string };
+        if (message.method === "notifications/initialized") { response.writeHead(202); response.end(); return; }
+        response.setHeader("content-type", "application/json");
+        let result: unknown;
+        if (message.method === "initialize") result = { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fixture", version: "1" } };
+        else if (message.method === "tools/list") result = { tools: [{ name: "echo", inputSchema: { type: "object" }, annotations: { readOnlyHint: true } }] };
+        else { invocations++; result = { content: [{ type: "text", text: "mcp-ui-result" }] }; }
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result }));
+    });
+    await new Promise<void>((resolve) => remote.listen(0, "127.0.0.1", resolve));
+    const address = remote.address();
+    if (!address || typeof address === "string") throw new Error("fixture address missing");
+    const name = `mcp-exec-${Date.now()}`;
+    const server = await apiCall<Server>("POST", "/mcp/servers", {
+        name, enabled: true, config: { transport: "http", endpoint: `http://127.0.0.1:${address.port}/mcp` },
+    });
+    try {
+        await apiCall("POST", `/mcp/servers/${server.id}/check`, { expected_revision: 1, confirmed: true });
+        const { a } = await ensureProjects();
+        const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: name });
+        await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
+        await login(page);
+        await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+        const view = sessionView(page, session.id);
+        const body = { name: "mcp_call", args: { server_id: server.id, tool: `${name}/echo`, arguments: { message: "approved-argument" } } };
+        await apiCall("POST", `/sessions/${session.id}/tool-requests`, body);
+        const approval = view.getByTestId("approval");
+        await expect(approval.getByTestId("approval-mcp")).toContainText(`${name}/echo`);
+        await expect(approval.getByTestId("approval-mcp")).toContainText("approved-argument");
+        await expect(approval.getByTestId("approval-mcp")).toContainText(`http://127.0.0.1:${address.port}/mcp`);
+        await expect(approval.getByRole("button", { name: "이 대화에서 계속 허용", exact: true })).toHaveCount(0);
+        expect(invocations).toBe(0);
+        await approval.getByRole("button", { name: "거부", exact: true }).click();
+        await expect(approval).toHaveCount(0);
+        expect(invocations).toBe(0);
+        const call = await apiCall<{ id: string }>("POST", `/sessions/${session.id}/tool-requests`, body);
+        await expect(approval).toContainText(`${name}/echo`);
+        await approval.getByRole("button", { name: "이번만 승인", exact: true }).click();
+        await expect.poll(() => invocations).toBe(1);
+        await expect.poll(async () => (await apiCall<{ status: string }>("GET", `/tool-calls/${call.id}`)).status).toBe("succeeded");
+        expect(invocations).toBe(1);
+    } finally {
+        remote.closeAllConnections();
+        await new Promise<void>((resolve, reject) => remote.close((error) => error ? reject(error) : resolve()));
+        const list = await apiCall<Server[]>("GET", "/mcp/servers");
+        for (const s of list.filter((s) => s.id === server.id)) await apiCall("DELETE", `/mcp/servers/${s.id}?expected_revision=${s.revision}`);
     }
 });

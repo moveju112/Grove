@@ -57,8 +57,8 @@ pub async fn start(cfg: Config, clock: SharedClock) -> Result<Server, String> {
         "{e}\n시작을 중단했습니다. 원본 데이터를 삭제하거나 덮어쓰지 마세요. grove doctor --offline --data-dir <경로>로 읽기 전용 검사를 수행하세요"
     ))?;
     let owner_token = crate::auth::ensure_owner_token(&app).map_err(|e| e.message)?;
-    crate::runner::recover_on_start(&app).await.map_err(|e| e.message)?;
     crate::mcp::recover_on_start(&app).await.map_err(|e| e.message)?;
+    crate::runner::recover_on_start(&app).await.map_err(|e| e.message)?;
     let now = app.now();
     app.db
         .call(move |c| {

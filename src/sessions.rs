@@ -106,10 +106,14 @@ pub fn get(conn: &Connection, id: &str) -> ApiResult<Session> {
 pub fn ensure_archivable(c: &Connection, cur: &Session) -> ApiResult<()> {
     let running_tasks = crate::tasks::running_in_session(c, &cur.id)?;
     let running_agents = crate::agents::running_for_parent(c, &cur.id)?;
-    if cur.active_turn.is_some() || cur.pending_approvals > 0 || cur.unreviewed_unknown > 0 || running_tasks > 0 || running_agents > 0 {
+    let active_tool_calls:i64=c.query_row(
+        "SELECT COUNT(*) FROM tool_calls WHERE session_id=?1 AND status IN ('approved','running','awaiting_input')",
+        [&cur.id],|r|r.get(0),
+    )?;
+    if cur.active_turn.is_some() || cur.pending_approvals > 0 || cur.unreviewed_unknown > 0 || running_tasks > 0 || running_agents > 0 || active_tool_calls>0 {
         return Err(ApiError::busy("실행 중이거나 승인 대기·미검토 작업이 있는 세션은 보관할 수 없습니다").with_details(json!({
             "active_turn": cur.active_turn, "pending_approvals": cur.pending_approvals, "unreviewed_unknown": cur.unreviewed_unknown,
-            "running_tasks": running_tasks, "running_agents": running_agents
+            "running_tasks": running_tasks, "running_agents": running_agents,"active_tool_calls":active_tool_calls
         })));
     }
     Ok(())

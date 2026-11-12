@@ -758,11 +758,16 @@ function ApprovalCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unkno
                     <span className="muted small">자식이 쓰는 파일 변경·명령은 따로 승인을 받습니다. 모델 사용 비용이 듭니다.</span>
                 </div>
             )}
+            {c.name==="mcp_call" && <div data-testid="approval-mcp">
+                <p>MCP 외부 호출: <code>{(c.target as {namespace:string}).namespace}</code> · 서버 revision {(c.target as {server_revision:number}).server_revision}</p>
+                <pre className="preview">{JSON.stringify(c.target,null,2)}</pre>
+                <p className="muted small">원격 read-only 표시는 권한 근거가 아닙니다. 외부 부작용이 발생할 수 있으며 응답 유실은 결과 불명으로 남깁니다.</p>
+            </div>}
             {t.diff && <pre className="diff">{t.diff}</pre>}
             {t.preview && <pre className="preview">{t.preview}</pre>}
             <div className="actions">
                 <button onClick={() => void act(() => api.post(`/tool-calls/${c.id}/decision`, { decision: "approve", expected_revision: c.revision }))}>이번만 승인</button>
-                {c.name !== "agent" && (
+                {c.name !== "agent" && c.name !== "mcp_call" && (
                     <button
                         className="ghost"
                         title={`이 대화에서 ${c.name} 도구는 다시 묻지 않습니다(금지·읽기 전용 정책이 우선, 대화 설정에서 해제)`}

@@ -15,6 +15,10 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 mod client;
+mod execute;
+#[cfg(test)]
+mod redaction_tests;
+pub use execute::{catalog, plan_call, validate_call, execute_call, invalidate_catalog};
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "transport", rename_all = "snake_case", deny_unknown_fields)]
@@ -271,8 +275,10 @@ fn check_summary(c: &Connection, id: &str) -> ApiResult<Option<Value>> {
 }
 
 fn ensure_not_checking(c: &Connection, id: &str) -> ApiResult<()> {
-    let busy: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM mcp_checks WHERE server_id=?1 AND status='checking')", [id], |r| r.get(0))?;
-    if busy { Err(ApiError::busy("MCP 연결 확인 중입니다. 확인이 끝난 뒤 설정을 바꾸세요")) } else { Ok(()) }
+    let busy: bool = c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM mcp_checks WHERE server_id=?1 AND status='checking') OR
+         EXISTS(SELECT 1 FROM tool_calls WHERE name='mcp_call' AND status='running' AND json_extract(target,'$.server_id')=?1)", [id], |r| r.get(0))?;
+    if busy { Err(ApiError::busy("MCP 연결 확인 또는 도구 실행 중입니다. 끝난 뒤 설정을 바꾸세요")) } else { Ok(()) }
 }
 
 pub async fn check_result(State(app): State<App>, Owner(_p): Owner, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -324,11 +330,7 @@ pub async fn check(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, 
     let sid = id.clone();
     let loaded = app.db.call(move |c| {
         let server = get(c, &sid)?;
-        let refs = match &server.config {
-            ServerConfig::Stdio { env_secrets, .. } => env_secrets,
-            ServerConfig::Http { header_secrets, .. } | ServerConfig::Sse { header_secrets, .. } => header_secrets,
-        };
-        let secrets = refs.values().map(|id| Ok((id.clone(), crate::models::decrypt_secret(c, id)?))).collect::<ApiResult<BTreeMap<_,_>>>()?;
+        let secrets = load_secrets(c,&server)?;
         Ok((server,secrets,crate::procs::Limits::effective(c, None, None)?))
     }).await;
     let result = match loaded {
@@ -337,7 +339,7 @@ pub async fn check(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, 
             let mut shutdown = app.shutdown_rx.clone();
             let mut client = None;
             let probe = async {
-                client = Some(client::Client::open(&server.config, &secrets, &check_id, limits).await?);
+                client = Some(client::Client::open(&server.config, &secrets, &check_id, limits,None).await?);
                 client.as_mut().expect("opened client").inspect(&server.name).await
             };
             // open 단계와 handshake·모든 페이지 조회가 같은 hard timeout을 공유한다.
@@ -348,7 +350,7 @@ pub async fn check(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, 
                     result.unwrap_or_else(|_| Err(ApiError::new(StatusCode::GATEWAY_TIMEOUT, "mcp_timeout", "MCP 연결 확인 시간이 초과됐습니다"))),
             };
             if let Some(client) = &mut client { client.close().await; }
-            result.map(|mut value| { scrub(&mut value, &secrets); value })
+            result.and_then(|mut value| { scrub(&mut value, &secrets)?; Ok(value) })
         }
     };
     let (status,detail) = match result {
@@ -367,27 +369,43 @@ pub async fn check(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, 
     Ok(Json(value).into_response())
 }
 
-fn scrub(value: &mut Value, secrets: &BTreeMap<String,String>) {
-    let clean = |text: &str| {
-        let mut text = text.to_string();
-        for secret in secrets.values().filter(|s| !s.is_empty()) {
-            text = text.replace(secret, "[redacted]");
-            if let Some((scheme,token)) = secret.split_once(' ').filter(|(s,t)| (s.eq_ignore_ascii_case("bearer") || s.eq_ignore_ascii_case("basic")) && !t.is_empty()) {
-                let _ = scheme;
-                text = text.replace(token,"[redacted]");
-            }
+fn scrub(value: &mut Value, secrets: &BTreeMap<String,String>) -> ApiResult<()> {
+    let mut patterns=Vec::new();
+    for secret in secrets.values().filter(|s|!s.is_empty()) {
+        patterns.push(secret.as_str());
+        if let Some((_,token))=secret.split_once(' ').filter(|(s,t)|(s.eq_ignore_ascii_case("bearer") || s.eq_ignore_ascii_case("basic")) && !t.is_empty()) {
+            patterns.push(token);
         }
-        text
-    };
-    match value {
-        Value::String(s) => *s = clean(s),
-        Value::Array(a) => for v in a { scrub(v, secrets); },
-        Value::Object(o) => {
-            let old = std::mem::take(o);
-            for (key,mut v) in old { scrub(&mut v,secrets); o.insert(clean(&key),v); }
-        }
-        _ => {}
     }
+    if patterns.is_empty() { return Ok(()); }
+    patterns.sort_by(|a,b|b.len().cmp(&a.len()).then_with(||a.cmp(b)));
+    patterns.dedup();
+    let pattern=patterns.into_iter().map(regex::escape).collect::<Vec<_>>().join("|");
+    let re=regex::Regex::new(&pattern).map_err(|_|ApiError::internal("MCP 비밀 가림 패턴을 준비하지 못했습니다"))?;
+    fn walk(value: &mut Value, re: &regex::Regex) {
+        match value {
+            Value::String(s)=>*s=re.replace_all(s,"[redacted]").into_owned(),
+            Value::Array(a)=>for v in a { walk(v,re); },
+            Value::Object(o)=>{
+                let old=std::mem::take(o);
+                for (key,mut v) in old { walk(&mut v,re); o.insert(re.replace_all(&key,"[redacted]").into_owned(),v); }
+            }
+            _=>{}
+        }
+    }
+    walk(value,&re);
+    if serde_json::to_vec(value)?.len()>4*1024*1024 {
+        return Err(ApiError::conflict("mcp_limit","비밀을 가린 MCP 응답이 허용 한도를 넘었습니다"));
+    }
+    Ok(())
+}
+
+fn load_secrets(c: &Connection, server: &McpServer) -> ApiResult<BTreeMap<String,String>> {
+    let refs=match &server.config {
+        ServerConfig::Stdio { env_secrets,.. }=>env_secrets,
+        ServerConfig::Http { header_secrets,.. } | ServerConfig::Sse { header_secrets,.. }=>header_secrets,
+    };
+    refs.values().map(|id|Ok((id.clone(),crate::models::decrypt_secret(c,id)?))).collect()
 }
 
 fn finish_check(c: &Connection, now: &str, id: &str, check_id: &str, status: &str, detail: &Value) -> ApiResult<Value> {
@@ -409,8 +427,12 @@ pub async fn recover_on_start(app: &App) -> ApiResult<()> {
         let mut s = c.prepare("SELECT server_id,id FROM mcp_checks WHERE status='checking'")?;
         Ok(s.query_map([],|r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?)
     }).await?;
-    if running.is_empty() { return Ok(()); }
-    let tags = running.iter().map(|(_,id)| id.clone()).collect::<Vec<_>>();
+    let mut tags:Vec<String>=app.db.call(|c| {
+        let mut s=c.prepare("SELECT id FROM tool_calls WHERE name='mcp_call' AND status='running'")?;
+        Ok(s.query_map([],|r|r.get(0))?.collect::<Result<Vec<_>,_>>()?)
+    }).await?;
+    tags.extend(running.iter().map(|(_,id)|id.clone()));
+    if tags.is_empty() { return Ok(()); }
     tokio::task::spawn_blocking(move || crate::procs::reap_leftovers(&tags)).await.map_err(|_| ApiError::internal("MCP 중단 프로세스 정리에 실패했습니다"))?;
     let now = app.now();
     app.db.call(move |c| {

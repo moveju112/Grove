@@ -1179,9 +1179,9 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [ ] RESOURCE-004 MCP 연결 상태·도구 목록·재연결·timeout·crash를 처리한다.
 - [ ] RESOURCE-005 MCP OAuth 시작·상태·취소·완료·자격증명 갱신을 구현한다.
 - [x] RESOURCE-006 MCP secret은 목록·오류·UI projection에 노출하지 않는다. 검증: 설정·이벤트·감사·receipt에는 vault 참조만 저장하고, 연결 때만 참조값을 복호화한다. HTTP 자격 헤더는 sensitive로 표시하고 redirect·환경 proxy·다른 origin의 구 SSE endpoint 전달을 막는다. 원격 오류 본문·stdio stderr를 기록하지 않으며 도구 목록·서버 정보에 반사된 secret과 Bearer/Basic token을 저장·응답 전에 가린다. secret 교체는 확인 중 거절하고 완료된 검사·설정 revision을 무효화한다(`tests/mcp.rs`, `tests/mcp_connect.rs`, `web/e2e/mcp-settings.spec.ts`). 향후 OAuth·모델 호출에도 이 경계를 유지해야 한다.
-- [ ] RESOURCE-007 서버별 도구 namespace·이름 충돌·schema 갱신을 처리한다.
-- [ ] RESOURCE-008 MCP 도구에도 같은 승인·deny·read-only·소유권 규칙을 적용한다.
-- [ ] RESOURCE-009 세션 종료 후 불필요한 MCP 프로세스·연결을 정리한다.
+- [x] RESOURCE-007 서버별 도구 namespace·이름 충돌·schema 갱신을 처리한다. 검증: 저장 registry는 `<서버 이름>/<원격 이름>`으로 구분하고 모델에는 고정 gateway `mcp_tools`·`mcp_call`만 제공한다. 다른 서버의 동명 read/write·내장 read와 충돌하지 않고 server_id와 namespace를 바꿔치기할 수 없다. 승인한 도구 metadata hash와 설정 revision을 고정하며 실행 직전 새 목록과 대조한다. `notifications/tools/list_changed`를 받으면 호출 전 중단하거나 확정 결과와 같은 transaction에서 registry를 무효화한다(`tests/mcp_connect.rs`).
+- [x] RESOURCE-008 MCP 도구에도 같은 승인·deny·read-only·소유권 규칙을 적용한다. 검증: `mcp_call`은 원격 annotation과 무관하게 Execute로 취급하고 기존 `tool_calls` 접수·승인·실행 직전 재검사·프로젝트 guard·취소·복구 경로를 쓴다. 대상 서버·namespace·인자·설정 revision·cwd·한도를 고정한다. 일반 대화와 봇·예약의 기존 정책이 그대로 적용되며 MCP 전체를 묶는 대화 범위 승인은 거절한다. 실제 전송 후 응답 유실·취소는 `unknown`으로 남기고 검토 전 새 MCP 호출을 막는다. 모델 fixture의 목록 조회→승인→도구 결과 전달·기존 권한/도구 회귀와 화면 거부/이번만 승인을 검증했다(`tests/mcp_connect.rs`, `web/e2e/mcp-settings.spec.ts`).
+- [x] RESOURCE-009 세션 종료 후 불필요한 MCP 프로세스·연결을 정리한다. 검증: MCP 검사·호출마다 연결을 열고 완료·실패·timeout·취소·서버 종료 시 닫으며 idle 연결·자식 프로세스를 유지하지 않는다. stdio는 소유 process group/Job, HTTP는 session DELETE·stream 해제로 정리한다. 재시작은 실행 중 MCP tag를 먼저 회수한 뒤 기존 도구 `unknown` 복구를 따르고 자동 재실행하지 않는다. 턴 없는 직접 도구도 approved/running/awaiting_input이면 세션 보관·삭제·rewind를 막아 실행 기록을 보존한다. Linux에서 검사·실제 호출의 부모/자식 종료와 승인 cwd 실행을 확인했다(`tests/mcp_connect.rs`); Windows·macOS 실측은 남는다.
 - [ ] RESOURCE-010 스킬 발견·목록·본문 조회·선택·적용을 구현한다.
 - [ ] RESOURCE-011 스킬 추가·저장·reload·활성화/비활성화를 구현한다.
 - [ ] RESOURCE-012 전역/프로젝트 스킬 우선순위·alias·중복·symlink를 처리한다.
@@ -1862,11 +1862,11 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 
 - [x] MCP-001 서버 설정의 transport·실행 인자·endpoint·secret 참조를 검증하고 연결 전에 저장 상태를 구분한다. 검증: `stdio`·`http`·`sse` tagged 설정의 실행 파일/인자·URL·timeout·환경변수/헤더 secret 참조를 검사하고, 미지원 transport·원문 env/headers·내장 URL 자격증명/query/fragment·예약/중복 헤더·없는 secret을 거절한다. 정규화 후 idempotency hash를 계산하고 저장 설정·사용 여부와 `disabled`/`disconnected` 상태를 분리한다(`tests/mcp.rs`, RULEBOOK §39).
 - [x] MCP-002 stdio spawn 또는 HTTP 연결·초기화·capability handshake를 구현한다. 검증: `POST /mcp/servers/{id}/check {expected_revision,confirmed}`가 부작용 전 receipt를 저장하고 일회성 연결에서 version 협상(2025-06-18·2025-03-26·2024-11-05)·initialize/initialized·tools capability와 목록을 확인한다. `ping`만 답하고 선언하지 않은 client 기능은 거절한다. 같은 키 재접수·종료·timeout·crash·크기 제한·최종 저장 실패/재시작의 중단 확정을 검증했다(`tests/mcp_connect.rs`, 화면 확인·실제 응답 유실·열린 상세 갱신은 `web/e2e/mcp-settings.spec.ts`). 도구는 표시용 namespace이며 `callable:false`; 모델 실행 통합은 MCP-003·004·007에 남는다.
-- [ ] MCP-003 도구 목록·namespace·schema version·변경 알림을 registry에 반영한다.
+- [x] MCP-003 도구 목록·namespace·schema version·변경 알림을 registry에 반영한다. 검증: RESOURCE-007과 같은 구현. 확인된 목록을 영속 registry로 사용하고 설정 revision·정규화 metadata hash를 승인 precondition으로 결합한다. per-call handshake·새 목록 대조·변경 알림으로 stale 목록을 무효화하며, schema는 깊이/노드 예산 안에서 형태를 검사하고 `$ref`를 가져오지 않는다. 잘못된 required/properties 등의 형태·깊이 과다·중복 도구·순환 cursor를 거절한다. 사용 가능한 registry가 없으면 모델 요청에 MCP 도구 정의를 추가하지 않는다(`src/mcp/client.rs`, `src/mcp/execute.rs`, `src/runner.rs`, `tests/mcp_connect.rs`).
 - [ ] MCP-004 도구 요청·진행·결과·오류·취소·timeout을 공통 실행 루프에 연결한다.
 - [ ] MCP-005 인증 필요 상태·OAuth·refresh·취소·로그아웃을 LOGIN 계약과 연결한다.
-- [ ] MCP-006 연결 실패·프로세스 crash·재연결·disable·세션 종료 시 pending 요청과 자원을 정리한다.
-- [ ] MCP-007 악성/잘못된 schema·동명 도구·거부된 호출·늦은 응답을 시험하고 정책 우회가 없는지 확인한다.
+- [x] MCP-006 연결 실패·프로세스 crash·재연결·disable·세션 종료 시 pending 요청과 자원을 정리한다. 검증: 장기 연결 대신 검사·호출마다 새 연결을 열고 항상 닫는 수명으로 구현했다. pending 요청에는 cancellation을 시도하고 프로세스·HTTP 세션을 정리한다. 실행 중 설정/secret 교체·삭제는 거절하고, 승인 대기 중 disable·설정/실행 위치/metadata 변경은 실행 전에 다시 거절한다. 재시작·실제 응답 유실 뒤 같은 receipt를 재실행하지 않으며 결과 불명은 검토 전 차단한다(`tests/mcp_connect.rs`).
+- [x] MCP-007 악성/잘못된 schema·동명 도구·거부된 호출·늦은 응답을 시험하고 정책 우회가 없는지 확인한다. 검증: malformed/과도하게 깊은 schema·중복 이름·서버별 동명 도구·틀린 응답 ID·서버 오류·cross-origin endpoint·redirect·readOnlyHint를 이용한 read-only/deny 우회·대기 중 disable/schema 변경·목록 변경 알림을 시험했다. 실제 부작용 뒤 응답 stream을 끊는 시나리오는 `unknown`·재실행 금지로 검증하고, 취소 뒤 확정되지 않은 응답을 성공으로 처리하지 않는다. 공통 승인/정책 회귀와 실제 화면의 대상/인자·거부/이번만 승인을 함께 확인했다(`tests/mcp_connect.rs`, `web/e2e/mcp-settings.spec.ts`). schema 입력값의 최종 검증은 MCP 서버 책임이며 Grove는 외부 schema를 실행하거나 권한 근거로 쓰지 않는다.
 
 ### 35.12 예약·원격 완료 감시
 

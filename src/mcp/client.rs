@@ -123,11 +123,12 @@ pub struct Client {
     bytes: usize,
     messages: usize,
     pending: Option<u64>,
+    pub(super) catalog_changed: bool,
 }
 
 impl Client {
     /// 참조한 secret만 받고 부모 프로세스의 자격증명 환경을 상속하지 않는다.
-    pub async fn open(config: &ServerConfig, secrets: &BTreeMap<String, String>, tag: &str, limits: Limits) -> ApiResult<Self> {
+    pub async fn open(config: &ServerConfig, secrets: &BTreeMap<String, String>, tag: &str, limits: Limits, cwd: Option<&std::path::Path>) -> ApiResult<Self> {
         let transport = match config {
             ServerConfig::Stdio { command, args, env_secrets } => {
                 let path = std::env::temp_dir().join(format!("grove-mcp-{}", crate::util::new_id()));
@@ -143,7 +144,7 @@ impl Client {
                 }).await.map_err(|_| ApiError::internal("MCP 임시 디렉터리 준비가 중단됐습니다"))?
                     .map_err(|_| ApiError::internal("MCP 임시 디렉터리를 만들 수 없습니다"))?;
                 let mut cmd = Command::new(command);
-                cmd.args(args).current_dir(scratch.0.as_ref().expect("allocated scratch")).env_clear().stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
+                cmd.args(args).current_dir(cwd.unwrap_or_else(||scratch.0.as_ref().expect("allocated scratch").as_path())).env_clear().stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
                 for name in ["PATH", "HOME", "USERPROFILE", "SystemRoot", "COMSPEC", "TEMP", "TMP", "TMPDIR"] {
                     if let Some(v) = std::env::var_os(name) { cmd.env(name, v); }
                 }
@@ -217,7 +218,7 @@ impl Client {
                 Transport::Http(http)
             }
         };
-        Ok(Self { transport, next_id: 1, bytes: 0, messages: 0, pending: None })
+        Ok(Self { transport, next_id: 1, bytes: 0, messages: 0, pending: None, catalog_changed:false })
     }
 
     fn count(&mut self, n: usize) -> ApiResult<()> {
@@ -320,6 +321,7 @@ impl Client {
             let message = self.receive(&mut response, &mut parser, json, &mut buffer).await?;
             if message["jsonrpc"] != "2.0" || !message.is_object() { return Err(protocol()); }
             if let Some(method) = message.get("method").and_then(Value::as_str) {
+                if method=="notifications/tools/list_changed" { self.catalog_changed=true; }
                 if let Some(request_id) = message.get("id") {
                     let answer = if method == "ping" {
                         json!({ "jsonrpc": "2.0", "id": request_id, "result": {} })
@@ -350,6 +352,7 @@ impl Client {
         if !init["capabilities"].is_object() || !init["serverInfo"]["name"].is_string() || !init["serverInfo"]["version"].is_string() { return Err(protocol()); }
         if let Transport::Http(h) = &mut self.transport { h.version = Some(version.to_string()); }
         self.send(&json!({ "jsonrpc": "2.0", "method": "notifications/initialized" })).await?;
+        self.catalog_changed=false;
         let mut tools = vec![];
         let mut names = BTreeSet::new();
         let mut cursors = BTreeSet::new();
@@ -363,6 +366,7 @@ impl Client {
                     if name.is_empty() || name.len() > 128 || !name.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
                         || !names.insert(name.to_string()) || tools.len() == 256 || tool["inputSchema"]["type"] != "object"
                     { return Err(protocol()); }
+                    if !valid_schema(&tool["inputSchema"],0,&mut 4096) { return Err(protocol()); }
                     tools.push(json!({
                         "name": name, "namespace": format!("{namespace}/{name}"),
                         "description": tool.get("description").and_then(Value::as_str).unwrap_or(""),
@@ -380,10 +384,23 @@ impl Client {
             }
         }
         let info = &init["serverInfo"];
+        if self.catalog_changed {
+            return Err(ApiError::conflict("mcp_schema_changed","조회 중 MCP 도구 목록이 바뀌었습니다. 연결을 다시 확인하세요"));
+        }
         Ok(json!({
             "protocol_version": version, "server_info": { "name": info["name"], "version": info["version"] },
             "tools": tools, "tool_count": tools.len(), "connection_closed_after_check": true,
         }))
+    }
+
+    pub async fn call_tool(&mut self, name: &str, arguments: &Value) -> ApiResult<Value> {
+        let result=self.request("tools/call",json!({"name":name,"arguments":arguments})).await?;
+        if !result.is_object() || (result.get("content").is_some_and(|v|!v.is_array()))
+            || (result.get("isError").is_some_and(|v|!v.is_boolean()))
+            || (result.get("content").is_none() && !result.get("structuredContent").is_some_and(Value::is_object))
+        { return Err(protocol()); }
+        if serde_json::to_vec(&result)?.len()>crate::tools::MAX_OUTPUT-512 { return Err(too_large()); }
+        Ok(result)
     }
 
     pub async fn close(&mut self) {
@@ -408,4 +425,39 @@ fn content_type(response: &reqwest::Response) -> Option<&str> {
 }
 fn check_content_type(response: &reqwest::Response, expected: &str) -> ApiResult<()> {
     if content_type(response) == Some(expected) { Ok(()) } else { Err(protocol()) }
+}
+
+/// 일반 JSON Schema의 형태·복잡도만 검사한다. $ref를 가져오거나 원격 schema를 코드로 실행하지 않는다.
+/// 입력값의 최종 schema 검증은 MCP 서버가 수행하며 권한은 schema와 별개로 Grove가 강제한다.
+fn valid_schema(value: &Value, depth: usize, budget: &mut usize) -> bool {
+    if depth>32 || *budget==0 { return false; }
+    *budget-=1;
+    if value.is_boolean() { return true; }
+    let Some(object)=value.as_object() else { return false; };
+    if let Some(kind)=object.get("type") {
+        let valid=|v:&Value|v.as_str().is_some_and(|s|matches!(s,"null"|"boolean"|"object"|"array"|"number"|"integer"|"string"));
+        if !valid(kind) && !kind.as_array().is_some_and(|a|!a.is_empty() && a.iter().all(valid)) { return false; }
+    }
+    for (key,value) in object {
+        let ok=match key.as_str() {
+            "properties"|"patternProperties"|"$defs"|"definitions"|"dependentSchemas" =>
+                value.as_object().is_some_and(|m|m.values().all(|v|valid_schema(v,depth+1,budget))),
+            "allOf"|"anyOf"|"oneOf"|"prefixItems" =>
+                value.as_array().is_some_and(|a|!a.is_empty() && a.iter().all(|v|valid_schema(v,depth+1,budget))),
+            "items" => if let Some(a)=value.as_array() { a.iter().all(|v|valid_schema(v,depth+1,budget)) } else { valid_schema(value,depth+1,budget) },
+            "additionalProperties"|"additionalItems"|"unevaluatedProperties"|"unevaluatedItems"|"contains"|"propertyNames"|"not"|"if"|"then"|"else" =>
+                valid_schema(value,depth+1,budget),
+            "required" => value.as_array().is_some_and(|a|a.iter().all(Value::is_string) && a.iter().filter_map(Value::as_str).collect::<BTreeSet<_>>().len()==a.len()),
+            "dependentRequired" => value.as_object().is_some_and(|m|m.values().all(|v|v.as_array().is_some_and(|a|a.iter().all(Value::is_string)))),
+            "enum" => value.as_array().is_some_and(|a|!a.is_empty()),
+            "$ref"|"$id"|"$schema"|"$anchor"|"title"|"description"|"format"|"pattern" => value.is_string(),
+            "minLength"|"maxLength"|"minItems"|"maxItems"|"minProperties"|"maxProperties"|"minContains"|"maxContains" => value.as_u64().is_some(),
+            "minimum"|"maximum"|"exclusiveMinimum"|"exclusiveMaximum" => value.is_number(),
+            "multipleOf" => value.as_f64().is_some_and(|n|n>0.0),
+            "uniqueItems"|"readOnly"|"writeOnly"|"deprecated" => value.is_boolean(),
+            _ => true,
+        };
+        if !ok { return false; }
+    }
+    true
 }
