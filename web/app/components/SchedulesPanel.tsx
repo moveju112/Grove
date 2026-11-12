@@ -29,6 +29,7 @@ type Schedule = {
     runs_used: number;
     backoff_until: string | null;
     bot_id: string | null;
+    webhook_enabled: boolean;
 };
 type BotRef = { id: string; name: string; project_id: string; profile_id: string | null; status: string; runnable: boolean };
 
@@ -82,6 +83,36 @@ function Runs({ id, projectId, open }: { id: string; projectId: string; open: Op
                 </li>
             ))}
         </ul>
+    );
+}
+
+/// webhook(RTE-004): 켜면 새 비밀을 한 번만 보여 준다. 다시 만들면 이전 비밀은 무효.
+function Webhook({ s, act }: { s: Schedule; act: (f: () => Promise<unknown>) => Promise<void> }) {
+    const [shown, setShown] = useState<{ secret: string; path: string } | null>(null);
+    const enable = () =>
+        act(async () => {
+            if (s.webhook_enabled && !confirm("비밀을 다시 만들면 이전 비밀로 보낸 요청은 거부됩니다. 계속할까요?")) return;
+            setShown(await api.post<{ secret: string; path: string }>(`/schedules/${s.id}/webhook`, { enable: true }));
+        });
+    return (
+        <div className="stack small" data-testid="schedule-webhook">
+            <div className="inline wrap">
+                <span>webhook {s.webhook_enabled ? "켜짐" : "꺼짐"}</span>
+                <button className="ghost small" onClick={() => void enable()}>{s.webhook_enabled ? "비밀 다시 만들기" : "webhook 켜기"}</button>
+                {s.webhook_enabled && (
+                    <button className="ghost small" onClick={() => void act(async () => { await api.post(`/schedules/${s.id}/webhook`, { enable: false }); setShown(null); })}>
+                        webhook 끄기
+                    </button>
+                )}
+            </div>
+            {shown && (
+                <div className="notice" role="status">
+                    <p>이 비밀은 지금만 보입니다. 발신 측에 저장하세요.</p>
+                    <code data-testid="webhook-secret">{shown.secret}</code>
+                    <p className="muted">POST {location.origin}{shown.path} · 헤더 X-Grove-Timestamp(unix 초), X-Grove-Event-Id, X-Grove-Signature: sha256=HMAC-SHA256(비밀, "timestamp.event_id.본문")의 hex. 본문 64KiB 이하, 같은 event ID는 한 번만 실행하고 payload의 지시는 따르지 않습니다.</p>
+                </div>
+            )}
+        </div>
     );
 }
 
@@ -166,6 +197,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                                     삭제
                                 </button>
                             </div>
+                            <Webhook s={s} act={act} />
                             <Runs id={s.id} projectId={projectId} open={open} />
                         </details>
                     </li>

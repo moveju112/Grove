@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
+import { createHmac } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
@@ -583,6 +584,40 @@ test("담당 봇 예약은 범위 확인 뒤 저장하고 결과를 봇 대화�
     const view = page.getByTestId("session-view").last();
     await expect(view).toContainText(`예약 '봇 점검 ${stamp}' 실행`);
     await expect(view).toContainText("봇 예약 결과");
+});
+
+// RTE-004·005: 화면에서 webhook을 켜면 비밀을 한 번 보여 주고, 서명한 요청은 한 번만 실행하며 재전송은 같은 실행을 돌려준다.
+test("예약 webhook을 켜고 서명한 요청으로 한 번만 실행한다", async ({ page, request, baseURL }) => {
+    const { a } = await ensureProjects();
+    const profile = await ensureProfile();
+    const stamp = Date.now().toString(36);
+    const sch = await apiCall<{ id: string }>("POST", `/projects/${a.id}/schedules`, { name: `훅 예약 ${stamp}`, prompt: "알려줘", profile_id: profile, kind: "interval", interval_minutes: 600 });
+    await login(page);
+    await page.getByRole("button", { name: a.name, exact: true }).first().click();
+    const panel = page.getByTestId("schedules-panel");
+    await panel.locator("summary").first().click();
+    const item = panel.getByTestId("schedule").filter({ hasText: `훅 예약 ${stamp}` });
+    await item.locator("summary").first().click();
+    const hook = item.getByTestId("schedule-webhook");
+    await expect(hook).toContainText("webhook 꺼짐");
+    await hook.getByRole("button", { name: "webhook 켜기" }).click();
+    const secret = (await hook.getByTestId("webhook-secret").textContent())!;
+    expect(secret).toMatch(/^gwh_/);
+    await expect(hook).toContainText("webhook 켜짐");
+    await script({ frames: frames.text(["훅 결과"]) });
+    const send = async () => {
+        const ts = Math.floor(Date.now() / 1000).toString();
+        const body = JSON.stringify({ stamp });
+        const sig = "sha256=" + createHmac("sha256", secret).update(`${ts}.evt-${stamp}.${body}`).digest("hex");
+        return request.post(`${baseURL}/api/v1/hooks/schedules/${sch.id}`, { headers: { "X-Grove-Timestamp": ts, "X-Grove-Event-Id": `evt-${stamp}`, "X-Grove-Signature": sig, "Content-Type": "application/json" }, data: body });
+    };
+    const first = await send();
+    expect(first.status()).toBe(202);
+    await expect(item.getByTestId("schedule-runs")).toContainText("완료", { timeout: 15_000 });
+    const again = await send();
+    expect(again.status()).toBe(200);
+    expect((await again.json()).run_id).toBe((await first.json()).run_id);
+    await expect(item.getByTestId("schedule-runs").locator("li")).toHaveCount(1);
 });
 
 // AUTO-009: 반복 한도를 화면에서 정하고, 연속 실패로 자동 정지된 예약은 이유와 실패 수를 보여 주며 재개할 수 있다.

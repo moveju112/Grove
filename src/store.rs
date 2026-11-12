@@ -831,6 +831,28 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE schedules ADD COLUMN bot_id TEXT REFERENCES bots(id);
     CREATE INDEX schedules_bot ON schedules(bot_id) WHERE bot_id IS NOT NULL;
     "#,
+    // 52: 예약 webhook(RTE-004·005, AUTO-010). 비밀은 vault로 암호화해 저장하고, 수신 receipt는 (예약, event ID)로 한 번만 접수한다.
+    r#"
+    CREATE TABLE schedule_webhooks (
+        schedule_id TEXT PRIMARY KEY REFERENCES schedules(id),
+        secret TEXT NOT NULL,
+        enabled INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE TABLE webhook_receipts (
+        id TEXT PRIMARY KEY,
+        schedule_id TEXT NOT NULL REFERENCES schedules(id),
+        event_id TEXT NOT NULL,
+        received_at TEXT NOT NULL,
+        body_sha256 TEXT NOT NULL,
+        body_bytes INTEGER NOT NULL,
+        outcome TEXT NOT NULL,
+        run_id TEXT REFERENCES schedule_runs(id),
+        UNIQUE (schedule_id, event_id)
+    );
+    CREATE INDEX webhook_receipts_recent ON webhook_receipts(schedule_id, received_at);
+    "#,
 ];
 
 #[cfg(test)]

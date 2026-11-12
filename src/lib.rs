@@ -237,6 +237,8 @@ pub fn router(app: App) -> Router {
         .route("/schedules/{id}/delete", post(schedules::delete))
         .route("/schedules/{id}/run", post(schedules::run_now))
         .route("/schedules/{id}/runs", get(schedules::runs))
+        .route("/schedules/{id}/webhook", post(schedules::set_webhook))
+        .route("/hooks/schedules/{id}", post(schedules::receive_hook))
         .route("/sessions/{id}/context", get(context::get_usage))
         .route("/sessions/{id}/model-input", get(context::get_model_input))
         .route("/sessions/{id}/compact", post(context::post_compact))
