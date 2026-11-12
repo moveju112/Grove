@@ -1,0 +1,20 @@
+import { useMemo, useState } from "react";
+import { artifactDocument } from "../state/artifactPreview";
+import { Markdown } from "./Markdown";
+
+export function ArtifactPreview({ path, text, dirty }: { path: string; text: string; dirty: boolean }) {
+    const html = /\.(html?|svg)$/i.test(path);
+    const [expanded, setExpanded] = useState(false);
+    return <details className="artifact-preview" data-testid="artifact-preview" onToggle={(event) => setExpanded(event.currentTarget.open)}>
+        <summary>산출물 미리보기{dirty ? " · 저장 전 편집 사본" : ""}</summary>
+        <p className="muted small">현재 파일 기준입니다. 스크립트·폼·외부 자원·로컬 파일 접근은 실행하지 않습니다.</p>
+        {expanded && <PreviewBody path={path} text={text} html={html} />}
+    </details>;
+}
+
+function PreviewBody({ path, text, html }: { path: string; text: string; html: boolean }) {
+    const document = useMemo(() => html ? artifactDocument(text) : "", [html, text]);
+    return html ? <iframe title={`${path} 산출물 미리보기`} className="artifact-frame" sandbox=""
+        referrerPolicy="no-referrer" allow="camera 'none'; microphone 'none'; geolocation 'none'" srcDoc={document} />
+        : /\.md$|\.markdown$/i.test(path) ? <Markdown text={text} /> : <pre>{text}</pre>;
+}

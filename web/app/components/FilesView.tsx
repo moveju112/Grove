@@ -4,6 +4,8 @@ import { useQuery } from "../state/store";
 import { fileAttemptKey, loadFileAttempt, loadFileBuffer, loadFileView, saveFileBuffer, saveFileView, type FileAttempt } from "../state/fileState";
 import { watchFile, type FileContent as Content } from "../state/fileWatch";
 import { usePaneVisible } from "../state/paneVisibility";
+import { ArtifactPreview } from "./ArtifactPreview";
+import { isArtifact } from "../state/artifactPreview";
 
 type Entry = { name: string; path: string; kind: "dir" | "file" | "link_outside" | "other"; size: number | null; mtime: string | null };
 type Listing = { path: string; entries: Entry[]; truncated: boolean };
@@ -327,7 +329,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
                 </span>}
                 {raw && <a className="small" href={`${raw}?download=true`} download>내려받기</a>}
             </h2>
-            {c.preview === "image" || c.preview === "svg" ? (
+            {c.preview === "image" || (c.preview === "svg" && c.text === null) ? (
                 raw ? <img className="preview" src={raw} alt={real} /> : <p className="muted">불러오는 중…</p>
             ) : c.preview === "pdf" ? (
                 raw && <a href={raw} target="_blank" rel="noopener noreferrer">PDF를 새 탭에서 열기</a>
@@ -342,6 +344,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
                         <button disabled={disabled || mutation.locked || (!dirty && !isNew)} onClick={() => void save()}>저장</button>
                         {conflict && <button className="ghost" onClick={() => { if (confirm("내 편집을 버리고 최신 내용을 불러올까요?")) void load(); }}>최신 내용 불러오기</button>}
                     </div>
+                    {isArtifact(real) && <ArtifactPreview path={real} text={text} dirty={dirty} />}
                 </>
             )}
             {copyError && <p className="err" role="alert">{COPY_ERROR}</p>}

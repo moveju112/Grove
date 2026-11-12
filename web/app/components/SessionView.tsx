@@ -413,7 +413,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             <AgentRunsPanel sessionId={sessionId} projectId={projectId} open={open} onError={setErr} />
             {/* 대화가 바뀌면 패널 상태를 새로 시작한다. 형제끼리 key가 겹치면 React가 패널을 잘못 맞춰 중복으로 그린다. */}
             <TasksPanel key={`tasks:${sessionId}`} sessionId={sessionId} disabled={archived} />
-            <ChangesPanel key={`changes:${sessionId}`} sessionId={sessionId} disabled={archived} />
+            <ChangesPanel key={`changes:${sessionId}`} sessionId={sessionId} projectId={projectId} open={open} disabled={archived} />
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
             {pending.map((c) => <ApprovalCard key={c.id} c={c} act={act} />)}
             {unknown.map((c) => <UnknownCard key={c.id} c={c} act={act} />)}

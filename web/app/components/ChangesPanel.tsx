@@ -2,6 +2,8 @@ import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import type { FileChange } from "../api/generated";
 import { useQuery } from "../state/store";
+import type { Opener } from "./Workspace";
+import { isArtifact } from "../state/artifactPreview";
 
 const OP: Record<string, string> = { created: "새 파일", modified: "수정", deleted: "삭제" };
 
@@ -11,7 +13,7 @@ type Review = { files: { path: string; diff?: string; unavailable?: string; unch
 
 /// 이 대화의 도구가 바꾼 파일(GIT-011~014). 대화 되감기(rewind)와는 별개로, 파일만 되돌리거나 다시 적용한다.
 /// 되돌리기는 파일이 기록 뒤 바뀌지 않았을 때만 하고, 충돌이면 아무 파일도 바꾸지 않는다.
-export function ChangesPanel({ sessionId, disabled }: { sessionId: string; disabled: boolean }) {
+export function ChangesPanel({ sessionId, projectId, open, disabled }: { sessionId: string; projectId: string; open: Opener; disabled: boolean }) {
     const q = useQuery<FileChange[]>(`changes:${sessionId}`, () => api.get(`/sessions/${sessionId}/file-changes`));
     const [err, setErr] = useState<string | null>(null);
     const [diff, setDiff] = useState<{ id: string; text: string } | null>(null);
@@ -91,6 +93,11 @@ export function ChangesPanel({ sessionId, disabled }: { sessionId: string; disab
                                     {c.undone_at && <em className="small"> 되돌림</em>}
                                     {!c.stored && <em className="small"> (파일이 커서 되돌릴 수 없음)</em>}
                                     <button className="ghost small" onClick={() => void showDiff(c.id)}>patch</button>
+                                    {c.op !== "deleted" && !c.undone_at && isArtifact(c.path) && <button className="ghost small"
+                                        title="변경 시점의 snapshot이 아니라 현재 파일을 엽니다"
+                                        onClick={() => open({ kind: "file", project_id: projectId, resource_id: c.path, filePath: c.path, title: c.path }, "right")}>
+                                        산출물 열기
+                                    </button>}
                                     {c.stored && (
                                         <button className="ghost small" disabled={locked} onClick={() => void act({ op: c.undone_at ? "redo" : "undo", ids: [c.id], key: newKey() })}>
                                             {c.undone_at ? "다시 적용" : "되돌리기"}

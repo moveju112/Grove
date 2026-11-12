@@ -1308,8 +1308,8 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] FILEUI-008 Git 변경 목록·파일 diff·hunk stage·commit UI를 구현한다. 검증: Git 패널 변경 목록·파일 diff·hunk별 올리기/내리기·커밋, e2e Git hunk 커밋.
 - [ ] FILEUI-009 branch·worktree·PR·CI 상태와 실행 권한을 표시한다.
 - [ ] FILEUI-010 터미널 탭·프로젝트 script·실행 로그를 공용 화면에 연결한다.
-- [ ] FILEUI-011 모델이 만든 HTML/SVG/문서 결과의 artifact preview와 다운로드를 제공한다.
-- [ ] FILEUI-012 artifact의 임의 스크립트 실행과 로컬 파일 접근을 차단한다.
+- [x] FILEUI-011 모델이 만든 HTML/SVG/문서 결과의 artifact preview와 다운로드를 제공한다. 검증: 대화의 적용 중인 HTML/SVG/Markdown/텍스트/PDF 변경에서 원래 프로젝트에 고정된 파일 탭을 열고 현재 파일을 확인한다(변경 시점 snapshot과 구분). HTML/SVG는 정적 sandbox preview, Markdown/텍스트는 기존 안전 렌더러, PDF는 기존 sandbox 티켓의 새 탭 열기를 사용한다. dirty 입력은 저장 전 사본이라고 표시하며 미리보기가 원문을 바꾸지 않는다. 다운로드는 원문/파일 이름을 그대로 보존한다. 편집 한도를 넘는 SVG는 기존 image preview를 유지한다. 단위 1개·선택 E2E 17개·타입/빌드 통과(`web/e2e/artifact-preview.spec.ts` 4개, 모델 fixture write 승인→산출물 열기→프로젝트 격리→원문 다운로드, 변경 이력·파일 구독·Markdown·pane 회귀). 정적 지원 형식의 미리보기이며 임의 웹앱 실행이나 Office 변환기를 추가한 것은 아니다.
+- [x] FILEUI-012 artifact의 임의 스크립트 실행과 로컬 파일 접근을 차단한다. 검증: inert template 안에서 정적 HTML/SVG 태그·속성만 남기고 script/이벤트/폼/iframe/object/foreignObject/활성 SVG/meta redirect/base/URL 링크를 제거한다. 빈 sandbox·referrer 없음·CSP(default-src/connect-src/frame-src/object-src none)를 겹쳐 적용하고 data 이미지/폰트·inline style만 허용한다. 실제 Chrome에서 부모 DOM 접근 SecurityError, 스크립트·dialog 미실행, CSS import/외부 이미지/iframe/링크/file:// 경로의 요청 없음과 2MiB 초과 SVG image preview의 외부 자원·스크립트 미실행을 확인했다(`web/e2e/artifact-preview.spec.ts`). 다운로드 원문은 별도로 명시적으로 받으며 브라우저 밖에서 여는 파일의 동작까지 보장하지 않는다.
 
 ## 21. 설정 화면과 설정 소유권
 
