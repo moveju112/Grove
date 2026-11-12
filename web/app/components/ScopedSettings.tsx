@@ -23,7 +23,10 @@ type Item = { key: string; default: unknown; layers: Record<string, Layer>; effe
 
 const SCOPE_LABEL: Record<string, string> = { server: "서버 전체", project: "이 프로젝트", session: "이 대화", default: "기본값" };
 const APPLIES: Record<string, string> = { immediate: "즉시 적용", next_turn: "다음 요청부터 적용", restart: "재시작 후 적용" };
-const ENUM_LABEL: Record<string, Record<string, string>> = { "output.style": { default: "모델 기본", concise: "간결하게", detailed: "자세하게" } };
+const ENUM_LABEL: Record<string, Record<string, string>> = {
+    "output.style": { default: "모델 기본", concise: "간결하게", detailed: "자세하게" },
+    "instructions.mode": { agents_md: "AGENTS.md만 전달", claude_md: "CLAUDE.md만 전달", both: "두 지침 파일 전달", off: "지침 파일 전달 안 함" },
+};
 const PROFILE_KEYS = new Set(["model.default_profile", "context.summary_profile"]);
 
 function ProfileChoice({ d, value, disabled, edit }: { d: SettingDef; value: unknown; disabled: boolean; edit: (value: string) => void }) {

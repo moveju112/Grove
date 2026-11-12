@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { apiCall, ensureProfile, login, script, state } from "./helpers";
 import { frames } from "./fixture";
@@ -88,4 +88,42 @@ test("너무 긴 프로필은 저장하지 않고 수정할 초안과 기존 적
     await expect(user).toContainText("저장 실패(기존 값 유지)");
     await expect(user.getByLabel("사용자 프로필", { exact: true })).toHaveValue(draft);
     expect((await settings()).find((item) => item.key === "user.profile")!.effective).toBe(before);
+});
+
+test("지침 파일 모드는 파일을 수정하지 않고 다음 요청에 선택한 파일만 전달한다", async ({ page }) => {
+    const profile = await ensureProfile();
+    const root = mkdtempSync(join(dirname(state().projA), "instruction-preferences-"));
+    const agentText = `AGENT_INSTRUCTION_FIXTURE_${Date.now()}`;
+    const claudeText = `CLAUDE_INSTRUCTION_FIXTURE_${Date.now()}`;
+    writeFileSync(join(root, "AGENTS.md"), agentText);
+    writeFileSync(join(root, "CLAUDE.md"), claudeText);
+    const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+    const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: "instruction preferences fixture" });
+    await login(page);
+    await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    await page.getByLabel("설정 검색").fill("프로젝트 지침 파일");
+    const row = page.getByTestId("setting-instructions.mode");
+    await expect(row.getByRole("option", { name: "AGENTS.md만 전달", exact: true })).toHaveAttribute("value", "agents_md");
+    for (const mode of ["agents_md", "claude_md", "both", "off"]) {
+        await row.getByLabel("프로젝트 지침 파일", { exact: true }).selectOption(mode);
+        await row.getByRole("button", { name: "저장", exact: true }).click();
+        await expect(row.getByRole("status")).toContainText("저장됨 · 다음 요청부터 적용");
+        const prompt = `${project.id} instruction mode ${mode}`;
+        await script({ marker: prompt, frames: frames.text(["instruction fixture complete"]) });
+        const accepted = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`, { text: prompt, profile_id: profile });
+        type Turn = { status: string; definition: { instructions: { file: string; sha256: string; body?: string }[] } };
+        await expect.poll(async () => (await apiCall<Turn>("GET", `/turns/${accepted.turn.id}`)).status).toBe("completed");
+        const turn = await apiCall<Turn>("GET", `/turns/${accepted.turn.id}`);
+        const expected = mode === "both" ? ["AGENTS.md", "CLAUDE.md"] : mode === "agents_md" ? ["AGENTS.md"] : mode === "claude_md" ? ["CLAUDE.md"] : [];
+        expect(turn.definition.instructions.map((instruction) => instruction.file)).toEqual(expected);
+        expect(turn.definition.instructions.every((instruction) => instruction.body === undefined)).toBe(true);
+        const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as { messages: { role: string; content: string }[] }[];
+        const request = requests.filter((request) => JSON.stringify(request.messages).includes(prompt)).at(-1)!;
+        const system = request.messages.find((message) => message.role === "system")!.content;
+        expect(system.includes(agentText)).toBe(mode === "agents_md" || mode === "both");
+        expect(system.includes(claudeText)).toBe(mode === "claude_md" || mode === "both");
+    }
+    expect(readFileSync(join(root, "AGENTS.md"), "utf8")).toBe(agentText);
+    expect(readFileSync(join(root, "CLAUDE.md"), "utf8")).toBe(claudeText);
 });

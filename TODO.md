@@ -1329,7 +1329,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [ ] SETTINGS-004 역할별 모델·fallback·context·disabled 설정을 구현한다.
 - [x] SETTINGS-005 workflow·에이전트 정의 편집과 충돌 보호를 구현한다. 검증: `tests/definitions.rs`(revision 충돌), e2e 설정 수정·복원.
 - [x] SETTINGS-006 압축·buffer·요약 모델·auto-clear 설정을 구현한다. 검증: 기존 범위별 자동 압축 기준·입력 여유 token·idle 초기화 및 프로필 override 설정에 이름/전송 대상이 보이는 요약 모델 선택을 연결했다. 충돌 시 선택을 보존하고 명시적으로 덮어쓰거나 범위 값을 지워 상속한다. 실제 로컬 요약 요청이 요청 모델 대신 지정한 요약 프로필로 전송되고 기록에 사용 profile_id를 남김, buffer 변경분이 reserve_tokens에 반영됨, idle 설정이 context 사용량 API에 반영됨을 확인했다(`web/e2e/model-defaults.spec.ts`). Rust context 7개·settings 5개·단위 20개·선택 E2E 23개·타입/빌드 통과. 기본 idle 초기화는 계속 0(끔)이고 이력·파일을 삭제하지 않는다.
-- [ ] SETTINGS-007 instruction 파일 모드·출력 스타일·프로필·언어 설정을 구현한다.
+- [x] SETTINGS-007 instruction 파일 모드·출력 스타일·프로필·언어 설정을 구현한다. 검증: 기존 범위별 설정에 지침 모드의 읽기 쉬운 이름(AGENTS.md만/CLAUDE.md만/둘 다/전달 안 함)을 보강했다. 격리된 임시 프로젝트의 네 모드를 화면에서 저장하고 실제 fixture 요청에 선택한 지침만 전달됨·turn 응답에는 원문 대신 파일/hash만 남음·지침 파일 자체는 변경되지 않음을 확인했다. 출력 스타일/언어/사용자 프로필은 요청 시작 시 고정되고 승인 대기 중 변경은 다음 요청에 적용되며, 프로필 원문이 도구 쓰기를 승인할 수 없음을 기존 서버 회귀로 재검증했다. 프로필 길이/범위 오류·동시 편집 충돌·상속 복원·새로고침도 보존한다. Rust settings 5개·response_preferences 3개·선택 E2E 6개·타입/빌드 통과(`tests/settings.rs`, `tests/response_preferences.rs`, `web/e2e/response-preferences.spec.ts`, 설정 검색/범위 회귀). 저장소의 사용자 작성 AGENTS.md를 다시 쓴 것은 아니다.
 - [ ] SETTINGS-008 메모리·검색·내장 도구·선택 기능의 활성화 설정을 구현한다.
 - [ ] SETTINGS-009 MCP·스킬·훅 관리 화면을 구현한다.
 - [ ] SETTINGS-010 read-only 원본 Claude/Codex 설정 화면을 구현한다.
