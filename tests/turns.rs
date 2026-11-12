@@ -1285,6 +1285,8 @@ async fn ended_turn_can_be_retried_once_or_acknowledged() {
     assert_eq!(v1["turn"]["id"], v2["turn"]["id"], "같은 key 재전송은 같은 요청");
     let nt = v1["turn"]["id"].as_str().unwrap();
     assert_eq!(v1["turn"]["definition"]["effort"], "medium", "원래 강도 유지");
+    // EFF-002: 요청값과 provider에 보내는 적용값을 함께 고정한다
+    assert_eq!(v1["turn"]["definition"]["effort_applied"], json!({ "requested": "medium", "field": "reasoning_effort", "value": "medium" }));
     assert_eq!(v1["message"]["content"]["text"], "다시 해 볼 요청");
     assert_eq!(v1["message"]["content"]["source"]["kind"], "retry");
     s.wait_status(nt, "completed").await;

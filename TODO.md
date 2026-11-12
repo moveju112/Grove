@@ -450,15 +450,15 @@ PaseoDog 설치 엔진의 선언 버전 `1.4.1`과 최신 소스의 기능 존�
 기존 수동 effort를 기준 동작으로 유지하고, 자동 판정은 명시적으로 켠 경우만 사용한다.
 upstream의 특정 판정기와 수백 ms 대기값을 그대로 채택하지 않는다. Linux ARM64·Windows 지원과 설치/메모리 비용을 확인한 후 선택한다.
 
-- [ ] EFF-001 provider/model별 지원 effort 단계와 중간 변경 가능 여부를 capability로 정의한다. 문자열만 비슷한 비지원 값을 전송하지 않는다.
-- [ ] EFF-002 요청 단위 수동/자동 설정과 provider별 실제 적용값을 분리한다. 수동 설정을 자동 판정이 덮어쓰지 못하게 한다.
+- [ ] EFF-001 provider/model별 지원 effort 단계와 중간 변경 가능 여부를 capability로 정의한다. 문자열만 비슷한 비지원 값을 전송하지 않는다. 진행: 프로필 capability `effort`(지원/미지원/미확인)와 공통 단계 low·medium·high, 접수 때 고정해 턴 도중 바꾸지 않는 규칙이 있다. 모델별 세부 단계(minimal 등)는 아직 없다.
+- [x] EFF-002 요청 단위 수동/자동 설정과 provider별 실제 적용값을 분리한다. 수동 설정을 자동 판정이 덮어쓰지 못하게 한다. 검증: 턴 접수 때 요청값(`definition.effort`, auto는 없음)과 provider별 실제 전송값(`definition.effort_applied`: reasoning_effort·thinking budget·thinkingBudget·model_reasoning_effort·MAX_THINKING_TOKENS)을 함께 고정하고 이후 단계·재시도에 같은 값을 쓴다. 자동 판정은 아직 없어 덮어쓸 경로가 없다(`provider::effort_tests::effort_application_matches_what_each_adapter_sends`, `tests/turns.rs` 재시도 시험, `web/e2e/effort.spec.ts`).
 - [ ] EFF-003 판정 입력을 사용자 요청·현재 step·제한된 도구 결과로 구성한다. secret·타 프로젝트 데이터·대용량 원시 출력은 제외한다.
 - [ ] EFF-004 판정기 후보의 실행 방식·고정 버전·라이선스·OS/CPU 지원·메모리/다운로드 예산을 결정한다. 미지원 기기에서는 수동값으로 동작하고 자동 지원으로 표시하지 않는다.
 - [ ] EFF-005 판정 호출을 FAIR 한도와 취소 체계에 연결하고 timeout/비용 상한을 설정한다. 느린 판정이 매 step의 무한 대기나 별도 무제한 queue를 만들지 않게 한다.
 - [ ] EFF-006 결과는 해당 turn/step/설정 revision이 유효할 때만 다음 요청 경계에서 적용한다. 늦은 결과가 이미 보낸 요청·종료 턴·다른 세션을 변경하지 못하게 한다.
 - [ ] EFF-007 판정 실패·미지원 값·빈 결과에서는 기존 유효 effort를 유지한다. 실패를 숨기지 않되 매 step 동일 경고를 과도하게 쌓지 않는다.
 - [ ] EFF-008 적용 결정을 불변 이력에 기록하고 요청 재구성 시 같은 prefix를 만든다. cache 유지를 위해 실패/취소된 결정을 과거 transcript에 소급 삽입하지 않는다.
-- [ ] EFF-009 UI/사용량에 요청값·판정값·실제 적용값·판정 비용/지연을 분리한다. 모델이 지원하지 않아 적용되지 않은 값은 적용된 것처럼 표시하지 않는다.
+- [ ] EFF-009 UI/사용량에 요청값·판정값·실제 적용값·판정 비용/지연을 분리한다. 모델이 지원하지 않아 적용되지 않은 값은 적용된 것처럼 표시하지 않는다. 진행: 대화의 실행 중 설정에 요청값과 실제 전송값(보내지 않으면 "모델 기본값")을 나눠 표시한다. 판정값·판정 비용/지연은 자동 판정(EFF-004 결정) 뒤의 범위다.
 - [ ] EFF-010 fixture로 capability·timeout·취소·지연 응답·provider 전환을 검증하고 EVAL에서 품질·전체 비용·전체 지연을 수동 baseline과 비교한다. 실제 이득 확인 전 기본 활성화하지 않는다.
 
 완료 조건: 자동 판정 실패가 기존 수동 동작을 망가뜨리지 않고, 품질을 유지하면서 얻은 이득을 판정기 비용까지 포함해 측정할 수 있다.

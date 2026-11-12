@@ -1021,17 +1021,28 @@ function BudgetNote({ sessionId, active }: { sessionId: string; active?: Turn })
     );
 }
 
+/// 요청한 강도와 provider에 실제로 보낸 값을 구분한다(EFF-009). 보내지 않은 값은 적용된 것처럼 쓰지 않는다.
+export function effortApplied(a: { field: string | null; value: string | number | null } | undefined): string {
+    if (!a) return "";
+    if (!a.field) return "(보내지 않음: 모델 기본값)";
+    return `(실제 전송 ${a.field}=${a.value})`;
+}
+
 /// 실행 중 요청에 고정된 설정(RUN-009). 접수 때 정해져 실행 중 바꿔도 이 요청에는 적용되지 않는다.
 function ActiveSettings({ turn, workflows }: { turn: Turn; workflows: Definition[] }) {
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
-    const def = (turn.definition ?? {}) as { effort?: string; workflow?: { id?: string; disabled_selection?: string }; agent?: { id?: string } };
+    const def = (turn.definition ?? {}) as {
+        effort?: string; effort_applied?: { field: string | null; value: string | number | null };
+        workflow?: { id?: string; disabled_selection?: string }; agent?: { id?: string };
+    };
     const p = profiles.data?.find((x) => x.id === turn.profile_id);
     const wf = workflows.find((w) => w.id === (def.workflow?.id ?? turn.workflow_id));
     const skipped = def.workflow?.disabled_selection;
     const skippedName = skipped && (workflows.find((w) => w.id === skipped)?.name ?? skipped);
     return (
         <p className="muted small" data-testid="active-settings">
-            이번 요청: {p ? `${p.name} · ${p.model}` : "모델 프로필"} · 강도 {def.effort ?? "auto"} · 워크플로 {wf?.name ?? def.workflow?.id ?? "기본"}
+            이번 요청: {p ? `${p.name} · ${p.model}` : "모델 프로필"} · 강도 {def.effort ?? "auto"}
+            <span data-testid="effort-applied">{effortApplied(def.effort_applied)}</span> · 워크플로 {wf?.name ?? def.workflow?.id ?? "기본"}
             {skippedName && `(꺼진 ${skippedName} 대신)`}
             {def.agent?.id && ` · 에이전트 ${def.agent.id}`} — 실행 중에 모델·강도·워크플로를 바꾸면 다음 요청부터 적용됩니다.
         </p>

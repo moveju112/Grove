@@ -116,6 +116,8 @@ test("실행 중 강도를 바꾸면 이번 요청은 그대로이고 다음 요
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const info = view.getByTestId("active-settings");
     await expect(info).toContainText("강도 low");
+    // EFF-009: 요청값과 실제 전송값을 구분해 보여 준다
+    await expect(info.getByTestId("effort-applied")).toHaveText("(실제 전송 reasoning_effort=low)");
     await expect(info).toContainText("fixture-model");
     await expect(info).toContainText("다음 요청부터 적용");
     await sel.selectOption("high");

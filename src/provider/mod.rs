@@ -411,6 +411,23 @@ pub fn parse_effort(v: Option<&str>) -> Result<Option<String>, String> {
     }
 }
 
+/// 요청한 effort가 이 protocol에서 실제로 어떤 값으로 보내지는지(EFF-002·009). auto는 아무것도 보내지 않는다.
+/// 요청값·적용값을 화면·사용량에서 구분하는 데 쓴다. 턴 접수 때 고정하며 턴 도중 바꾸지 않는다.
+pub fn effort_application(protocol: &str, effort: Option<&str>) -> serde_json::Value {
+    let Some(e) = effort else {
+        return serde_json::json!({ "requested": "auto", "field": null, "value": null });
+    };
+    let (field, value) = match protocol {
+        "openai" => ("reasoning_effort", serde_json::json!(e)),
+        "anthropic" => ("thinking.budget_tokens", serde_json::json!(effort_budget(e))),
+        "gemini" => ("thinkingConfig.thinkingBudget", serde_json::json!(effort_budget(e))),
+        "codex_cli" => ("model_reasoning_effort", serde_json::json!(e)),
+        "claude_code" => ("MAX_THINKING_TOKENS", serde_json::json!(effort_budget(e))),
+        _ => return serde_json::json!({ "requested": e, "field": null, "value": null }),
+    };
+    serde_json::json!({ "requested": e, "field": field, "value": value })
+}
+
 /// 생각 token 예산으로 표현하는 provider(Anthropic thinking·Gemini thinkingBudget·Claude Code)의 effort 환산.
 pub fn effort_budget(effort: &str) -> u32 {
     match effort {
@@ -593,5 +610,19 @@ mod effort_tests {
         assert!(args.windows(2).any(|w| w[0] == "-c" && w[1] == "model_reasoning_effort=\"low\""), "{args:?}");
         let (args, _) = cli::args(&prof("codex_cli"), &req(None), "s");
         assert!(!args.iter().any(|a| a.contains("model_reasoning_effort")));
+    }
+
+    /// EFF-002: 기록하는 적용값은 실제 요청 본문에 넣는 값과 같다.
+    #[test]
+    fn effort_application_matches_what_each_adapter_sends() {
+        for e in ["low", "medium", "high"] {
+            let a = effort_application("openai", Some(e));
+            assert_eq!(openai::build_body(&prof("openai"), &req(Some(e)))["reasoning_effort"], a["value"]);
+            let a = effort_application("anthropic", Some(e));
+            assert_eq!(anthropic::build_body(&prof("anthropic"), &req(Some(e)))["thinking"]["budget_tokens"], a["value"]);
+            assert_eq!(gemini::build_body(&req(Some(e)))["generationConfig"]["thinkingConfig"]["thinkingBudget"], effort_application("gemini", Some(e))["value"]);
+        }
+        let auto = effort_application("openai", None);
+        assert!(auto["field"].is_null() && auto["value"].is_null() && auto["requested"] == "auto");
     }
 }

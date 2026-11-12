@@ -1153,12 +1153,16 @@ pub struct CreateTurn {
 
 /// 접수한 턴에 추론 강도를 고정한다(같은 transaction). 이후 단계·승인 뒤 재개에도 같은 값을 쓴다.
 pub fn set_turn_effort(tx: &Connection, turn_id: &str, effort: Option<&str>) -> ApiResult<()> {
+    let turn = get_turn(tx, turn_id)?;
+    let Some(profile_id) = turn.profile_id.as_deref() else { return Ok(()) };
+    let profile = crate::models::get_enabled_profile(tx, profile_id)?;
     if let Some(e) = effort {
-        let turn = get_turn(tx, turn_id)?;
-        let profile = crate::models::get_enabled_profile(tx, turn.profile_id.as_deref().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?)?;
         profile.check_capabilities(false, Some(e), false)?;
         tx.execute("UPDATE turns SET definition_snapshot = json_set(definition_snapshot, '$.effort', ?2) WHERE id = ?1", params![turn_id, e])?;
     }
+    // 요청값과 provider에 실제로 보내는 값을 함께 고정한다(EFF-002·009).
+    let applied = provider::effort_application(&profile.protocol, effort);
+    tx.execute("UPDATE turns SET definition_snapshot = json_set(definition_snapshot, '$.effort_applied', json(?2)) WHERE id = ?1", params![turn_id, applied.to_string()])?;
     Ok(())
 }
 
