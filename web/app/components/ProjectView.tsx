@@ -76,6 +76,16 @@ export function ProjectView({ projectId, open }: { projectId: string; open: Open
         open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
     };
 
+    const composer = <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId="new" onSend={start}
+        disabled={project.error ? "프로젝트를 확인할 수 없습니다" : !project.data ? "프로젝트 확인 중…" : !project.data.available ? "프로젝트 경로 없음" : null} />;
+    if (project.error) return <div className="project-view">
+        <h1>프로젝트를 열 수 없습니다</h1>
+        <p className="err" role="alert">{project.error instanceof ApiError ? project.error.message : "프로젝트 정보를 불러오지 못했습니다."}</p>
+        <p className="muted small">저장된 프로젝트 ID를 유지합니다. 다른 프로젝트로 바꾸거나 작업을 자동으로 시작하지 않습니다.</p>
+        <button className="ghost small" onClick={project.reload}>프로젝트 다시 확인</button>
+        {composer}
+    </div>;
+
     return (
         <div className="project-view">
             <header className="view-head">
@@ -109,7 +119,7 @@ export function ProjectView({ projectId, open }: { projectId: string; open: Open
                     </div>
                 )}
             </header>
-            <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId="new" onSend={start} disabled={project.data && !project.data.available ? "프로젝트 경로 없음" : null} />
+            {composer}
             <details className="git-wrap">
                 <summary>변경 사항(Git)</summary>
                 <GitPanel projectId={projectId} />

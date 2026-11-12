@@ -395,7 +395,7 @@ test("터미널을 열어 입력·출력하고, 새로고침하면 화면이 복
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const list = page.getByTestId("terminal-list");
-    await list.locator("summary").click();
+    await openDetails(list);
     await list.getByRole("button", { name: "새 터미널" }).click();
     const view = page.getByTestId("terminal-view");
     await expect(view).toHaveAttribute("data-conn", "open");

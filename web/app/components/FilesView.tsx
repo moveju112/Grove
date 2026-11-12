@@ -97,6 +97,10 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                     <code className="small">{dir}</code>
                     {parent !== null && <button className="ghost small" disabled={locked} onClick={() => setDir(parent)}>상위 폴더</button>}
                 </div>
+                {Boolean(listing.error) && <div className="err" role="alert">
+                    {listing.error instanceof ApiError ? listing.error.message : "폴더 목록을 불러오지 못했습니다."}
+                    <button className="ghost small" onClick={listing.reload}>폴더 다시 확인</button>
+                </div>}
                 <div className="inline wrap">
                     <input type="search" aria-label="파일 이름 거르기" placeholder="이름 거르기" value={filter} onChange={(e) => setFilter(e.target.value)} />
                     <select aria-label="정렬" value={sort} onChange={(e) => setSort(e.target.value)}>
@@ -222,8 +226,9 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
         if (!restore) mutation.clear();
         void api.post("/recent/touch", { kind: "file", project_id: projectId, resource_id: real, title: real }).catch(() => undefined);
     };
+    const loadFailed = (e: unknown) => setMsg({ kind: "err", text: e instanceof ApiError ? e.message : "열기 실패" });
     useEffect(() => {
-        load(true).catch((e) => setMsg({ kind: "err", text: e instanceof ApiError ? e.message : "열기 실패" }));
+        load(true).catch(loadFailed);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [path]);
     // <img>·새 탭은 인증 헤더를 못 보내므로 5분짜리 파일 티켓을 받아 쓴다.
@@ -253,7 +258,16 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
         window.addEventListener("beforeunload", h);
         return () => window.removeEventListener("beforeunload", h);
     }, [dirty]);
-    if (!c) return msg ? <p className="err">{msg.text}</p> : <p className="muted">여는 중…</p>;
+    if (!c) return msg ? <div className="editor" data-testid="file-editor">
+        <h2><code>{real}</code></h2>
+        <p className="err" role="alert">파일을 열 수 없습니다: {msg.text}</p>
+        <p className="muted small">다른 경로를 추측하거나 파일을 자동으로 다시 만들지 않습니다.</p>
+        {saved?.buffer.text != null && <>
+            <p className="warn small">이 기기의 저장 전 편집 사본입니다. 원문이 아니며 복사해서 보관할 수 있습니다.</p>
+            <textarea className="code" aria-label="복구용 편집 사본" value={saved.buffer.text} readOnly spellCheck={false} />
+        </>}
+        <button className="ghost small" onClick={() => void load(true).catch(loadFailed)}>파일 다시 확인</button>
+    </div> : <p className="muted">여는 중…</p>;
     const raw = ticket;
     const save = () => {
         if (disabled || mutation.locked) return;

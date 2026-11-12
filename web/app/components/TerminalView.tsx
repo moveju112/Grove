@@ -20,7 +20,8 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
     const host = useRef<HTMLDivElement>(null);
     const sock = useRef<WebSocket | null>(null);
     const [row, setRow] = useState<TerminalRow | null>(null);
-    const [conn, setConn] = useState<"connecting" | "open" | "closed" | "readonly">("connecting");
+    const [conn, setConn] = useState<"connecting" | "open" | "closed" | "readonly" | "missing" | "error">("connecting");
+    const [retry, setRetry] = useState(0);
     const [err, setErr] = useState<string | null>(null);
     const [ctrl, setCtrl] = useState(false);
     const [alt, setAlt] = useState(false);
@@ -33,13 +34,21 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
     };
 
     useEffect(() => {
-        const term = new XTerm({ convertEol: false, cursorBlink: true, fontSize: 13, scrollback: 5000 });
+        const term = new XTerm({ convertEol: false, cursorBlink: true, fontSize: 13, scrollback: 5000, disableStdin: true });
         const fit = new FitAddon();
         term.loadAddon(fit);
         term.open(host.current!);
         fit.fit();
         let closed = false;
+        const controller = new AbortController();
         let attempt = 0;
+        let reconnect: ReturnType<typeof setTimeout> | null = null;
+        const failed = (e: unknown) => {
+            if (closed) return;
+            term.options.disableStdin = true;
+            setErr(e instanceof ApiError ? e.message : "연결 실패");
+            setConn("error");
+        };
 
         // 모바일 보조키(Ctrl/Alt)를 다음 입력 한 글자에 적용한다.
         term.onData((d) => {
@@ -65,7 +74,9 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
         ro.observe(host.current!);
 
         const showSaved = async () => {
-            const buf = await rawGet(`/terminals/${terminalId}/screen`);
+            const buf = await rawGet(`/terminals/${terminalId}/screen`, { signal: controller.signal });
+            if (closed) return;
+            term.options.disableStdin = true;
             term.reset();
             term.write(new Uint8Array(buf));
             setConn("readonly");
@@ -74,11 +85,14 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
         const connect = async () => {
             if (closed) return;
             setConn("connecting");
-            const list = await api.get<{ terminals: TerminalRow[] }>(`/projects/${projectId}/terminals`);
+            setErr(null);
+            const list = await api.get<{ terminals: TerminalRow[] }>(`/projects/${projectId}/terminals`, { signal: controller.signal });
+            if (closed) return;
             const r = list.terminals.find((t) => t.id === terminalId) ?? null;
             setRow(r);
             if (!r) {
                 setErr("터미널이 없습니다(삭제됨)");
+                setConn("missing");
                 return;
             }
             if (r.status !== "running") {
@@ -87,26 +101,35 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             }
             let url: string;
             try {
-                url = (await api.post<{ url: string }>(`/terminals/${terminalId}/ticket`)).url;
+                url = (await api.post<{ url: string }>(`/terminals/${terminalId}/ticket`, {}, { signal: controller.signal })).url;
             } catch (e) {
+                if (closed) return;
                 if (e instanceof ApiError && e.code === "not_running") return void connect();
                 throw e;
             }
+            if (closed) return;
             const proto = location.protocol === "https:" ? "wss:" : "ws:";
             const ws = new WebSocket(`${proto}//${location.host}${url}`);
             ws.binaryType = "arraybuffer";
             sock.current = ws;
             let first = true;
             ws.onopen = () => {
+                if (closed || sock.current !== ws) { ws.close(); return; }
                 attempt = 0;
+                term.options.disableStdin = false;
                 setConn("open");
                 ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
             };
             ws.onmessage = (ev) => {
+                if (closed || sock.current !== ws) return;
                 if (typeof ev.data === "string") {
                     const m = JSON.parse(ev.data) as { type: string; code?: number };
                     if (m.type === "reset") first = true;
-                    if (m.type === "exit") void connect();
+                    if (m.type === "exit") {
+                        sock.current = null;
+                        ws.close();
+                        void connect().catch(failed);
+                    }
                     return;
                 }
                 // 첫 binary(또는 reset 뒤)는 전체 snapshot이다: 화면을 비우고 다시 그린다.
@@ -119,28 +142,33 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             ws.onclose = () => {
                 if (sock.current !== ws || closed) return;
                 sock.current = null;
+                term.options.disableStdin = true;
                 setConn("closed");
                 // 끊기면 잠시 뒤 다시 붙는다(서버가 끝났으면 저장 화면으로 바뀐다).
                 attempt += 1;
-                setTimeout(() => void connect().catch(() => undefined), Math.min(8000, 500 * 2 ** attempt));
+                reconnect = setTimeout(() => void connect().catch(failed), Math.min(8000, 500 * 2 ** attempt));
             };
         };
-        connect().catch((e) => setErr(e instanceof ApiError ? e.message : "연결 실패"));
+        connect().catch(failed);
         return () => {
             closed = true;
+            controller.abort();
+            if (reconnect !== null) clearTimeout(reconnect);
             ro.disconnect();
             sock.current?.close();
             sock.current = null;
             term.dispose();
         };
-    }, [projectId, terminalId]);
+    }, [projectId, terminalId, retry]);
 
     const kill = async () => {
         if (!confirm("터미널 프로세스를 종료할까요?")) return;
         await api.post(`/terminals/${terminalId}/kill`);
     };
     const statusText =
-        conn === "open" ? "연결됨" : conn === "connecting" ? "연결 중…" : conn === "closed" ? "끊김 · 다시 연결 중" : row?.status === "lost" ? "서버 재시작으로 종료됨 · 화면만 복원" : `종료됨${row?.exit_code != null ? ` (코드 ${row.exit_code})` : ""}`;
+        conn === "missing" ? "터미널 없음 · 자동 재생성 안 함" : conn === "error" ? "연결 실패 · 자동 실행 안 함"
+            : conn === "open" ? "연결됨" : conn === "connecting" ? "연결 중…" : conn === "closed" ? "끊김 · 다시 연결 중"
+                : row?.status === "lost" ? "서버 재시작으로 종료됨 · 화면만 복원" : `종료됨${row?.exit_code != null ? ` (코드 ${row.exit_code})` : ""}`;
     return (
         <div className="terminal-view" data-testid="terminal-view" data-conn={conn}>
             <div className="inline small">
@@ -149,6 +177,7 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
                 {row?.status === "running" && <button className="ghost small" onClick={() => void kill()}>종료</button>}
             </div>
             {err && <p className="err" role="alert">{err}</p>}
+            {(conn === "missing" || conn === "error") && <button className="ghost small" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</button>}
             <div className="term-host" ref={host} />
             {conn === "open" && (
                 <div className="term-keys" aria-label="보조 키">

@@ -1274,7 +1274,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [ ] RECENT-006 PC·Android·Web에서 같은 서버 세션을 이어 열고 최근 접근 정보의 충돌·오프라인 처리를 정의한다.
 - [x] RECENT-007 초안은 기기별 revision을 보존하고 동시 편집 시 비교·선택/복사로 복구하며 무음 덮어쓰기를 금지한다. 검증: `tests/workspace.rs::drafts_conflict_instead_of_silent_overwrite`, `web/app/state/drafts.test.ts`, e2e 초안 시험.
 - [x] RECENT-008 최근 탭 제거·화면 닫기·세션 archive·작업 취소를 구분한다. 검증: 숨김≠삭제(`tests/workspace.rs::recent_status_reflects_archived_and_hidden`), 탭 닫기≠보관(e2e).
-- [ ] RECENT-009 이동·삭제·접근 불가 프로젝트나 종료된 터미널을 복원할 때 대상을 추측하거나 자동 재실행하지 않는다.
+- [x] RECENT-009 이동·삭제·접근 불가 프로젝트나 종료된 터미널을 복원할 때 대상을 추측하거나 자동 재실행하지 않는다. 검증: 이동/삭제된 파일은 원래 경로와 오류를 표시하고 저장 전 사본만 읽기 전용으로 복구한다. 원래 경로를 사용자가 복구한 뒤 재확인·저장해야 원문이 바뀌며 다른 경로 검색·재생성은 하지 않는다. 접근 불가/없는 프로젝트는 ID와 입력 사본을 유지하고 실행 입력을 막으며 수동 재확인만 제공한다. 종료/lost 터미널은 저장 화면만 표시하고 삭제된 터미널은 '터미널 없음'으로 멈춘다. 새 프로세스·접속 티켓을 자동 생성하지 않으며 탭을 닫으면 진행 중인 조회/접속 준비와 재연결 타이머를 취소해 늦은 응답으로 WebSocket을 만들지 않는다. 타입·빌드·선택 E2E 17개 통과(`web/e2e/resource-restore.spec.ts` 7개, `web/e2e/file-resume.spec.ts` 7개, `web/e2e/workspace.spec.ts` 파일/터미널 2개, `web/e2e/attachments.spec.ts` 프로젝트 전송 1개). 실제 PTY 동작은 Linux 시험 환경 기준이다.
 
 ### 프로젝트 경계 없는 분할 화면
 
