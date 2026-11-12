@@ -485,7 +485,7 @@ routine 등록은 미래 실행의 구체적 범위·프로젝트·도구·예�
 - [ ] RTE-008 봇 직접 실행과 선택적 executor 실행을 구분한다. 자식 실행·보고는 AGENT/BOT-011의 원인 ID·hop·예산을 유지하고 결과 전달을 새 trigger로 해석하지 않는다.
 - [x] RTE-009 결과를 담당 home에 영속 전달하고 routine 출처·실행 시각·결과 상태를 표시한다. 기본은 저장된 결과 전달이며 자연어 재작성 때문에 별도 모델을 자동 호출하지 않는다. 검증: 결과는 실행 시점 봇 home에 영속 저장되고 메시지 출처(예약 이름·run·예정 시각·revision)를 "예약 '이름' 실행"으로 표시, 실행 기록에 상태와 대화 열기. 저장된 결과를 그대로 전달하며 별도 모델 호출 없음(모델 요청 수 확인).
 - [x] RTE-010 봇 삭제/비활성·home 보관·권한 철회 때의 결과 전달 정책을 정한다. 결과를 보존하고 전달 보류 이유를 표시하며 임의 다른 봇에게 돌리지 않는다. 검증: 봇 비활성·삭제 시 다른 대화·봇으로 돌리지 않고 `start_failed`(이유 표시·알림)로 남기며 이전 결과·home은 보존, 초기화(home 보관) 뒤에는 새 home으로 전달(같은 Rust 시험).
-- [ ] RTE-011 실행·결과 저장·outbox 전달 사이 crash를 주입한다. 결과 재전달은 멱등 처리하고 외부 mutation 결과 불명은 unknown으로 남긴다.
+- [x] RTE-011 실행·결과 저장·outbox 전달 사이 crash를 주입한다. 결과 재전달은 멱등 처리하고 외부 mutation 결과 불명은 unknown으로 남긴다. 검증: 봇 예약을 webhook으로 실행하던 중 서버를 멈추면 run·턴은 `interrupted`로 남고 자동 재실행하지 않으며, 재시작 뒤 같은 event 재전송은 새 실행 없이 기존 run과 현재 상태(`interrupted`)를 돌려준다(`tests/schedules.rs::webhook_run_interrupted_by_restart_is_not_replayed_on_resend`). 결과 전달은 턴 종료와 같은 transaction(봇 home 저장)이라 별도 outbox 단계가 없고, 실행 중이던 외부 부작용 도구는 공통 복구 규칙으로 `unknown`(REC·`tests/recovery.rs`).
 - [ ] RTE-012 pause/resume/run-once·취소·budget 초과·webhook 중복·담당 봇 변경을 공용 UI와 실제 서버에서 검증한다. routine 실행을 멈추는 것과 이미 실행된 부작용을 취소하는 것을 구분한다.
 
 완료 조건: 명시적으로 활성화한 routine만 제한된 권한으로 실행되고, 결과는 올바른 봇에 중복 없이 표시되며, 승인 필요·실패·불명 상태를 정상 완료로 숨기지 않는다.

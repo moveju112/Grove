@@ -484,3 +484,56 @@ async fn webhook_requires_signature_and_runs_each_event_once() {
     let (st, _) = hook(secret2, "after-off", "{}", 0).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
 }
+
+/// RTE-011: 봇 예약을 webhook으로 받아 실행하던 중 서버가 멈추면 실행은 interrupted로 남고 자동 재실행하지 않는다.
+/// 재시작 뒤 같은 event를 다시 받아도 기존 run을 돌려줄 뿐 새로 실행하지 않는다(결과 전달은 턴 종료와 같은 transaction이라 별도 outbox가 없다).
+#[tokio::test]
+async fn webhook_run_interrupted_by_restart_is_not_replayed_on_resend() {
+    let mut c = ctx().await;
+    let (_, b) = c.s.post("/api/v1/bots", json!({ "name": "훅봇", "project_id": c.pid, "profile_id": c.prof })).await;
+    let bid = b["id"].as_str().unwrap().to_string();
+    let (st, sch) = c.create(json!({ "bot_id": bid, "session_mode": "same" })).await;
+    assert_eq!(st, StatusCode::CREATED, "{sch}");
+    let id = sch["id"].as_str().unwrap().to_string();
+    let (_, on) = c.s.post(&format!("/api/v1/schedules/{id}/webhook"), json!({ "enable": true })).await;
+    let secret = on["secret"].as_str().unwrap().to_string();
+    let send = |base: String, client: reqwest::Client| {
+        let (secret, id) = (secret.clone(), id.clone());
+        async move {
+            let ts = time::OffsetDateTime::now_utc().unix_timestamp().to_string();
+            let body = br#"{"n":1}"#;
+            let r = client
+                .post(format!("{base}/api/v1/hooks/schedules/{id}"))
+                .header("X-Grove-Timestamp", &ts)
+                .header("X-Grove-Event-Id", "crash-1")
+                .header("X-Grove-Signature", grove::schedules::hook_signature(&secret, &ts, "crash-1", body))
+                .body(body.to_vec())
+                .send()
+                .await
+                .unwrap();
+            let st = r.status();
+            (st, r.json::<Value>().await.unwrap_or_default())
+        }
+    };
+    c.f.push(fixture::slow_text(&["a", "b", "c", "d"], 2000));
+    let (st, v) = send(c.s.base.clone(), c.s.client.clone()).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let run_id = v["run_id"].as_str().unwrap().to_string();
+    let runs = c.wait_run(&id, |r| r.first().is_some_and(|x| x["turn_id"].is_string())).await;
+    let tid = runs[0]["turn_id"].as_str().unwrap().to_string();
+    c.s.wait_status(&tid, "running").await;
+    c.s.stop().await;
+    c.s.restart().await;
+    let runs = c.wait_run(&id, |r| r.first().is_some_and(|x| x["status"] == "interrupted")).await;
+    assert_eq!(runs.len(), 1);
+    let (st, again) = send(c.s.base.clone(), c.s.client.clone()).await;
+    assert_eq!((st, again["duplicate"].as_bool(), again["run_id"].as_str(), again["outcome"].as_str()), (StatusCode::OK, Some(true), Some(run_id.as_str()), Some("interrupted")), "{again}");
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(c.runs(&id).await.len(), 1, "재전송은 새로 실행하지 않는다");
+    // fixture는 끊긴 stream 요청을 기록하지 않을 수 있다. 재실행이 있었다면 완료된 요청이 추가로 기록된다.
+    assert!(c.f.requests().len() <= 1, "중단된 실행을 자동으로 다시 부르지 않는다");
+    let (_, t) = c.s.get(&format!("/api/v1/turns/{tid}")).await;
+    assert_eq!(t["status"], "interrupted");
+    let (_, bv) = c.s.get(&format!("/api/v1/bots/{bid}")).await;
+    assert_eq!(t["session_id"], bv["home_session_id"], "중단 기록은 담당 봇 대화에 남는다");
+}

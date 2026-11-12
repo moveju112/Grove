@@ -994,7 +994,12 @@ pub async fn receive_hook(State(app): State<App>, headers: HeaderMap, Path(id): 
                 if sha != body_sha {
                     return Err(ApiError::conflict("event_conflict", "같은 event ID로 다른 본문을 받았습니다"));
                 }
-                return Ok((StatusCode::OK, json!({ "duplicate": true, "outcome": outcome, "run_id": run_id })));
+                // 재전송에는 receipt 당시 값이 아니라 그 실행의 현재 상태를 돌려준다(중단·완료 반영).
+                let current: Option<String> = match &run_id {
+                    Some(r) => tx.query_row("SELECT status FROM schedule_runs WHERE id = ?1", params![r], |row| row.get(0)).optional()?,
+                    None => None,
+                };
+                return Ok((StatusCode::OK, json!({ "duplicate": true, "outcome": current.unwrap_or(outcome), "run_id": run_id })));
             }
             let since = crate::util::fmt_time(now_t - Duration::minutes(1));
             let recent: i64 = tx.query_row("SELECT COUNT(*) FROM webhook_receipts WHERE schedule_id = ?1 AND received_at > ?2", params![id, since], |r| r.get(0))?;
