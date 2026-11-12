@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { DEFAULT_RECENT_WINDOW, DEFAULT_RECENT_WINDOWS, isRecentWindow, normalizeRecentWindows, type RecentWindow } from "./recentWindow";
 // 기기 식별(레이아웃·초안 사본용)과 기기 로컬 설정. 서버 비밀은 저장하지 않는다.
 
 const ID_KEY = "grove.device.id";
@@ -43,15 +44,19 @@ export type Prefs = {
     notifyApproval: boolean;
     notifyServer: boolean;
     notifySound: boolean;
+    recentWindows: RecentWindow[];
+    recentWindow: RecentWindow | "all";
 };
 export const defaultPrefs: Prefs = {
     theme: "system", fontSize: 15, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
     notifyDone: false, notifyApproval: false, notifyServer: false, notifySound: false,
+    recentWindows: [...DEFAULT_RECENT_WINDOWS], recentWindow: DEFAULT_RECENT_WINDOW,
 };
 const CLOCKS: readonly Prefs["clock"][] = ["system", "24h", "12h"];
 const TIME_STYLES: readonly Prefs["timeStyle"][] = ["absolute", "relative"];
 export function restoredPrefs(current: Prefs, expected: Prefs, fields: (keyof Prefs)[]): Prefs {
-    if (fields.some((key) => current[key] !== expected[key])) throw new Error("확인 후 기기 설정이 바뀌었습니다. 다시 비교하세요.");
+    // 배열 값도 있으므로 값으로 비교한다.
+    if (fields.some((key) => JSON.stringify(current[key]) !== JSON.stringify(expected[key]))) throw new Error("확인 후 기기 설정이 바뀌었습니다. 다시 비교하세요.");
     return { ...current, ...Object.fromEntries(fields.map((key) => [key, defaultPrefs[key]])) };
 }
 const PREFS_EVENT = "grove-prefs";
@@ -62,6 +67,8 @@ export function loadPrefs(): Prefs {
         // 다른 버전이 남긴 알 수 없는 시간 형식은 기본값으로 읽는다(저장값은 사용자가 바꿀 때까지 그대로 둔다).
         if (!CLOCKS.includes(prefs.clock)) prefs.clock = defaultPrefs.clock;
         if (!TIME_STYLES.includes(prefs.timeStyle)) prefs.timeStyle = defaultPrefs.timeStyle;
+        prefs.recentWindows = normalizeRecentWindows(Array.isArray(prefs.recentWindows) ? prefs.recentWindows : []);
+        if (prefs.recentWindow !== "all" && !isRecentWindow(prefs.recentWindow)) prefs.recentWindow = defaultPrefs.recentWindow;
         return prefs;
     } catch {
         return defaultPrefs;

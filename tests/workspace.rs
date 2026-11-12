@@ -116,6 +116,63 @@ async fn drafts_conflict_instead_of_silent_overwrite() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
+/// RECENT-001: 원본 최근 탭처럼 마지막 사용자 메시지로 정렬하고, 숨긴 뒤 새 메시지가 오면 다시 보이며,
+/// 시간 범위 밖이어도 고정·진행 중 항목은 남는다.
+#[tokio::test]
+async fn recent_follows_last_user_message_window_and_revives_hidden() {
+    let s = TestServer::start().await;
+    let pid = s.create_project("p").await["id"].as_str().unwrap().to_string();
+    let a = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    let b = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    let (_, ia) = s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": a })).await;
+    s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": b })).await;
+    assert_eq!(ia["last_user_message_at"], Value::Null);
+    let order = |list: &Value| list["items"].as_array().unwrap().iter().map(|i| i["resource_id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(order(&list), [b.clone(), a.clone()]);
+    // A에 새 메시지 → 마지막 활동이 늦어져 먼저 보인다(접근 시각은 그대로).
+    s.post(&format!("/api/v1/sessions/{a}/messages"), json!({ "text": "a" })).await;
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(order(&list), [a.clone(), b.clone()]);
+    assert_eq!(list["items"][0]["last_activity_at"], list["items"][0]["last_user_message_at"]);
+    assert_eq!(list["items"][0]["last_access_at"], ia["last_access_at"]);
+
+    // 숨김 → 새 사용자 메시지가 오면 다시 보인다.
+    let ia = &list["items"][0];
+    let (st, hidden) = s.send(Method::PATCH, &format!("/api/v1/recent/{}", ia["id"].as_str().unwrap()), json!({ "expected_revision": ia["revision"], "hidden": true })).await;
+    assert_eq!(st, StatusCode::OK, "{hidden}");
+    assert_eq!(hidden["hidden"], true);
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(order(&list), [b.clone()]);
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    s.post(&format!("/api/v1/sessions/{a}/messages"), json!({ "text": "again" })).await;
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(order(&list), [a.clone(), b.clone()]);
+    assert_eq!(list["items"][0]["hidden"], false);
+
+    // 시간 범위: 미래 시각 이후 활동은 없으므로 고정 항목만 남는다. 잘못된 시각은 거절한다.
+    let ib = list["items"].as_array().unwrap().iter().find(|i| i["resource_id"] == b.as_str()).unwrap().clone();
+    s.send(Method::PATCH, &format!("/api/v1/recent/{}", ib["id"].as_str().unwrap()), json!({ "expected_revision": ib["revision"], "pinned": true })).await;
+    let (_, list) = s.get("/api/v1/recent?since=2999-01-01T00:00:00Z").await;
+    assert_eq!(order(&list), [b.clone()]);
+    let (_, list) = s.get("/api/v1/recent?since=2000-01-01T00:00:00Z").await;
+    assert_eq!(order(&list), [b.clone(), a.clone()], "고정 먼저");
+    let (st, _) = s.get("/api/v1/recent?since=yesterday").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    // 숨긴 시각이 없는 이전 숨김은 새 메시지가 와도 다시 열 때까지 유지한다.
+    let aid = a.clone();
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        c.execute("UPDATE recent_items SET hidden = 1, hidden_at = NULL WHERE resource_id = ?1", [&aid])?;
+        Ok(())
+    }).await.unwrap();
+    s.post(&format!("/api/v1/sessions/{a}/messages"), json!({ "text": "legacy" })).await;
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(order(&list), [b.clone()]);
+    let (_, reopened) = s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": a })).await;
+    assert_eq!(reopened["hidden"], false);
+}
+
 #[tokio::test]
 async fn recent_status_reflects_archived_and_hidden() {
     let s = TestServer::start().await;

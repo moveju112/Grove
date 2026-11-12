@@ -5,6 +5,7 @@ use crate::auth::Principal;
 use crate::error::{ApiError, ApiResult};
 use crate::events;
 use crate::idem;
+use crate::util::parse_time;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -32,6 +33,10 @@ pub struct RecentItem {
     /// 서버 상태로 계산한 값: active | running | awaiting_approval | awaiting_input | unknown_result | archived | missing | project_unavailable
     pub status: String,
     pub unread: bool,
+    /// 대화의 마지막 사용자 메시지 시각(되돌린 메시지 제외). 다른 종류는 없음.
+    pub last_user_message_at: Option<String>,
+    /// 정렬·시간 범위 기준: 마지막 접근과 마지막 사용자 메시지 중 늦은 시각.
+    pub last_activity_at: String,
 }
 
 const RCOLS: &str = "r.id, r.kind, r.project_id, p.name, r.resource_id, r.title, r.last_access_at, r.pinned, r.hidden, r.view_state, r.revision, \
@@ -43,7 +48,16 @@ const RCOLS: &str = "r.id, r.kind, r.project_id, p.name, r.resource_id, r.title,
         FROM turns t WHERE t.session_id = s.id AND t.status IN ('queued','running','awaiting_approval')), \
     (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id = s.id AND c.status = 'pending_approval'), \
     (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id = s.id AND c.status = 'unknown' AND c.reviewed_at IS NULL), \
-    COALESCE(s.title, r.title)";
+    COALESCE(s.title, r.title), r.hidden_at, \
+    (SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'user' AND m.rewound_at IS NULL ORDER BY m.seq DESC LIMIT 1)";
+
+/// 늦은 시각. 형식이 다른 RFC3339 문자열도 실제 시각으로 비교한다.
+fn later(a: &str, b: Option<&str>) -> String {
+    match b {
+        Some(b) if parse_time(b).zip(parse_time(a)).is_some_and(|(b, a)| b > a) => b.to_string(),
+        _ => a.to_string(),
+    }
+}
 
 const RFROM: &str = "FROM recent_items r JOIN projects p ON p.id = r.project_id \
     LEFT JOIN sessions s ON r.kind = 'session' AND s.id = r.resource_id";
@@ -78,6 +92,12 @@ fn recent_from_row(r: &Row) -> rusqlite::Result<RecentItem> {
         "active"
     };
     let seen = view_state.get("last_seen_seq").and_then(Value::as_i64).unwrap_or(0);
+    let last_access: String = r.get(6)?;
+    let hidden_at: Option<String> = r.get(20)?;
+    let last_user: Option<String> = r.get(21)?;
+    // 원본 최근 탭처럼 숨긴 뒤 새 사용자 메시지가 오면 다시 보인다. 숨긴 시각이 없는 이전 숨김은 유지한다.
+    let revived = hidden_at.as_deref().and_then(parse_time).zip(last_user.as_deref().and_then(parse_time)).is_some_and(|(h, m)| m > h);
+    let hidden: bool = r.get::<_, bool>(8)? && !revived;
     Ok(RecentItem {
         id: r.get(0)?,
         kind,
@@ -85,13 +105,15 @@ fn recent_from_row(r: &Row) -> rusqlite::Result<RecentItem> {
         project_name: r.get(3)?,
         resource_id: r.get(4)?,
         title: r.get(19)?,
-        last_access_at: r.get(6)?,
+        last_activity_at: later(&last_access, last_user.as_deref()),
+        last_access_at: last_access,
         pinned: r.get(7)?,
-        hidden: r.get(8)?,
+        hidden,
         view_state,
         revision: r.get(10)?,
         status: status.into(),
         unread: last_seq.is_some_and(|s| s > seen),
+        last_user_message_at: last_user,
     })
 }
 
@@ -145,7 +167,7 @@ pub async fn touch(State(app): State<App>, p: Principal, headers: HeaderMap, Jso
         let id = crate::util::new_id();
         tx.execute(
             "INSERT INTO recent_items (id, kind, project_id, resource_id, title, last_access_at, view_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-             ON CONFLICT(kind, project_id, resource_id) DO UPDATE SET last_access_at = ?6, hidden = 0, title = ?5, \
+             ON CONFLICT(kind, project_id, resource_id) DO UPDATE SET last_access_at = ?6, hidden = 0, hidden_at = NULL, title = ?5, \
              view_state = CASE WHEN ?8 THEN ?7 ELSE view_state END, revision = revision + 1",
             params![id, b.kind, b.project_id, b.resource_id, title, now, b.view_state.clone().unwrap_or(json!({})).to_string(), b.view_state.is_some()],
         )?;
@@ -167,6 +189,8 @@ pub struct RecentQuery {
     pub filter: Option<String>,
     pub q: Option<String>,
     pub project_id: Option<String>,
+    /// 시간 범위(RFC3339). 이 시각 이후 활동한 항목과, 범위와 무관하게 고정·실행 중·승인/답변 대기 항목을 보여 준다.
+    pub since: Option<String>,
     pub offset: Option<i64>,
     pub limit: Option<i64>,
 }
@@ -187,6 +211,10 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
     }
     let needle = q.q.unwrap_or_default().to_lowercase();
     let project = q.project_id;
+    let since = match q.since.as_deref() {
+        None | Some("") => None,
+        Some(s) => Some(parse_time(s).ok_or_else(|| ApiError::invalid("since는 RFC3339 시각이어야 합니다"))?),
+    };
     let page = app
         .db
         .call(move |c| {
@@ -196,7 +224,10 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
                  ORDER BY r.pinned DESC, r.last_access_at DESC, r.id DESC"
             );
             let mut st = c.prepare(&sql)?;
-            let all = st.query_map(params![project], recent_from_row)?.collect::<Result<Vec<_>, _>>()?;
+            let mut all = st.query_map(params![project], recent_from_row)?.collect::<Result<Vec<_>, _>>()?;
+            // 고정 먼저, 그다음 마지막 활동(접근·사용자 메시지) 최신순. 같은 시각은 SQL 순서를 유지한다.
+            let activity = |i: &RecentItem| parse_time(&i.last_activity_at);
+            all.sort_by(|a, b| b.pinned.cmp(&a.pinned).then_with(|| activity(b).cmp(&activity(a))));
             let filtered: Vec<RecentItem> = all
                 .into_iter()
                 .filter(|i| match filter.as_str() {
@@ -208,6 +239,12 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
                     "awaiting_input" => i.status == "awaiting_input",
                     "unread" => i.unread,
                     _ => true,
+                })
+                .filter(|i| {
+                    let Some(since) = since else { return true };
+                    i.pinned
+                        || matches!(i.status.as_str(), "running" | "awaiting_approval" | "awaiting_input")
+                        || parse_time(&i.last_activity_at).is_some_and(|t| t >= since)
                 })
                 .filter(|i| {
                     needle.is_empty()
@@ -250,13 +287,18 @@ pub async fn update(
         if cur.revision != b.expected_revision {
             return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));
         }
+        // 숨김을 바꿀 때만 숨긴 시각을 새로 기록한다. 다른 수정은 기존 숨김 기준을 유지한다.
+        let hidden = b.hidden.unwrap_or(cur.hidden);
         tx.execute(
-            "UPDATE recent_items SET pinned = ?2, hidden = ?3, view_state = ?4, revision = revision + 1 WHERE id = ?1",
+            "UPDATE recent_items SET pinned = ?2, hidden = ?3, view_state = ?4, revision = revision + 1, \
+             hidden_at = CASE WHEN ?5 THEN (CASE WHEN ?3 THEN ?6 ELSE NULL END) ELSE hidden_at END WHERE id = ?1",
             params![
                 id,
                 b.pinned.unwrap_or(cur.pinned),
-                b.hidden.unwrap_or(cur.hidden),
-                b.view_state.unwrap_or(cur.view_state).to_string()
+                hidden,
+                b.view_state.unwrap_or(cur.view_state).to_string(),
+                b.hidden.is_some(),
+                now
             ],
         )?;
         let item = get_recent(tx, &id)?;

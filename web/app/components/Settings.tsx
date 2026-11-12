@@ -4,6 +4,7 @@ import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo
 import { type Prefs, defaultPrefs, savePrefs, usePrefs } from "../state/device";
 import { When } from "./When";
 import { notificationPermission, showAttention } from "../state/attention";
+import { MAX_RECENT_WINDOWS, normalizeRecentWindows, RECENT_WINDOW_OPTIONS, recentWindowLabel } from "../state/recentWindow";
 import { useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
 import { UsagePanel } from "./UsagePanel";
@@ -33,6 +34,7 @@ export const ITEMS: Item[] = [
     { id: "theme", menu: "display", label: "테마", keywords: "dark light 다크 라이트 색", scope: "이 기기" },
     { id: "font", menu: "display", label: "글자 크기", keywords: "font size 글꼴", scope: "이 기기" },
     { id: "enter", menu: "display", label: "Enter로 보내기", keywords: "enter send 입력 단축키", scope: "이 기기" },
+    { id: "recent", menu: "display", label: "최근 항목 시간 범위", keywords: "recent window 최근 범위 분 시간 오늘", scope: "이 기기" },
     { id: "notify", menu: "display", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
@@ -105,7 +107,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
                 {visible("definitions") && <Section item="definitions"><Definitions /></Section>}
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
-                {(["theme", "font", "enter", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
+                {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
                 {visible("devices") && <Section item="devices"><Devices /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
                 {visible("logout") && <Section item="logout"><button onClick={() => void logout()}>이 브라우저에서 로그아웃</button></Section>}
@@ -184,6 +186,25 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                         <input type="checkbox" checked={p.enterToSend} onChange={(e) => set({ ...p, enterToSend: e.target.checked })} /> Enter로 보내기(Shift+Enter 줄바꿈)
                     </label>
                     <DeviceSettingsReset fields={["enterToSend"]} label="입력 기본값 복원" />
+                </Section>
+            )}
+            {show("recent") && (
+                <Section item="recent">
+                    <fieldset>
+                        <legend className="small">최근 목록 위에 보일 범위(최대 {MAX_RECENT_WINDOWS}개)</legend>
+                        {RECENT_WINDOW_OPTIONS.map((option) => {
+                            const on = p.recentWindows.includes(option);
+                            return (
+                                <label className="check" key={option}>
+                                    <input type="checkbox" checked={on} disabled={!on && p.recentWindows.length >= MAX_RECENT_WINDOWS}
+                                        onChange={(e) => set({ ...p, recentWindows: normalizeRecentWindows(e.target.checked ? [...p.recentWindows, option] : p.recentWindows.filter((x) => x !== option)) })} />{" "}
+                                    {recentWindowLabel(option)}
+                                </label>
+                            );
+                        })}
+                    </fieldset>
+                    <p className="muted small">마지막 접근·내 메시지 기준입니다. 고정·실행 중·승인/답변 대기 항목은 범위와 관계없이 보입니다. 모두 끄면 기본값(30분·4시간·12시간)을 씁니다.</p>
+                    <DeviceSettingsReset fields={["recentWindows", "recentWindow"]} label="최근 범위 기본값 복원" />
                 </Section>
             )}
             {show("notify") && (

@@ -132,7 +132,8 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .change-group { margin: 0.3em 0; }
 .update-banner { position: fixed; bottom: 0.7em; left: 50%; transform: translateX(-50%); z-index: 20; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 0.5em 0.8em; display: flex; gap: 0.5em; align-items: center; box-shadow: 0 4px 18px #0002; }
 .body { position: relative; flex: 1; display: flex; min-height: 0; }
-.sidebar { width: 19em; flex-shrink: 0; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 0.6em; display: grid; gap: 1em; align-content: start; }
+/* 열을 minmax(0, 1fr)로 고정해 긴 제목(줄바꿈 없음)이 사이드바를 넓혀 가로 스크롤을 만들지 않게 한다. */
+.sidebar { width: 19em; flex-shrink: 0; border-right: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 0.6em; display: grid; grid-template-columns: minmax(0, 1fr); gap: 1em; align-content: start; }
 .ws.narrow .sidebar { position: absolute; z-index: 10; top: 0; bottom: 0; left: 0; width: 88vw; box-shadow: 4px 0 20px #0003; }
 .sidebar h2 { font-size: 0.8em; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); margin: 0 0 0.3em; }
 .sidebar input[type="search"] { width: 100%; }
@@ -143,6 +144,10 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .recent-list li, .projects .row, .session-list li { display: flex; align-items: center; gap: 0.3em; border-bottom: 1px solid var(--line); padding: 0.15em 0; }
 .recent-list li > .link, .projects .row > .link { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .recent-list li.unread > .link { font-weight: 600; }
+/* 분할로 함께 연 대화 묶음: 옅은 강조 박스와 왼쪽 강조선 */
+.recent-list li.recent-split { display: block; padding: 0; margin: 0.15em 0; border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: 6px; background: var(--accent-weak); }
+.recent-list li.recent-split > ul { list-style: none; margin: 0; padding: 0 0 0 0.2em; }
+.recent-list li.recent-split li + li { border-top: 1px dashed var(--line); }
 .row-actions { display: flex; gap: 0.15em; }
 .badge { display: inline-block; font-size: 0.72em; padding: 0 0.45em; border-radius: 4px; background: var(--accent-weak); color: var(--accent); margin-right: 0.25em; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .status { font-size: 0.72em; margin-left: 0.35em; padding: 0 0.4em; border-radius: 4px; background: var(--accent-weak); }

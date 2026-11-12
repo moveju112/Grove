@@ -736,6 +736,10 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE UNIQUE INDEX project_scripts_name ON project_scripts(project_id,name) WHERE deleted_at IS NULL;
     ALTER TABLE tasks ADD COLUMN script_snapshot TEXT CHECK(script_snapshot IS NULL OR json_valid(script_snapshot));
     "#,
+    // 44: 최근 항목 숨김 시각(RECENT-001). 그 뒤 새 사용자 메시지가 오면 다시 보인다. 이전 숨김(NULL)은 다시 열 때까지 유지한다.
+    r#"
+    ALTER TABLE recent_items ADD COLUMN hidden_at TEXT;
+    "#,
 ];
 
 #[cfg(test)]

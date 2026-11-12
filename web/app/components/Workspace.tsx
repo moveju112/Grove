@@ -54,6 +54,12 @@ export function Workspace() {
     const persistence = useRef(new Map<string, LayoutPersistence>());
     const key = useMemo(() => layoutKey(), [narrow]); // eslint-disable-line react-hooks/exhaustive-deps
     const layout = layouts[key];
+    // 현재 배치의 각 영역에 보이는 대화가 둘 이상이면 최근 목록에서 한 묶음으로 보여 준다(원본 최근 탭).
+    const splitSessions = useMemo(() => {
+        const ids = new Set(layout ? L.leaves(layout.root).map((leaf) => leaf.tabs.find((t) => t.id === leaf.active_tab))
+            .filter((t): t is L.Tab => t?.kind === "session" && !!t.resource_id).map((t) => t.resource_id!) : []);
+        return ids.size > 1 ? ids : new Set<string>();
+    }, [layout]);
     // 프로젝트 목록 정렬은 기기별 선택(PROJECT-002): 이름순 또는 최근 활동순.
     const [projectSort, setProjectSort] = useState<"name" | "recent">(() => (localStorage.getItem(PROJECT_SORT) === "recent" ? "recent" : "name"));
     const projects = useQuery<Project[]>(`projects:${projectSort}`, () => api.get(`/projects?sort=${projectSort}`));
@@ -172,7 +178,7 @@ export function Workspace() {
                         <NotificationsPanel open={open} />
                         <BotsPanel open={open} />
                         <SearchPanel open={open} />
-                        <RecentPanel open={open} />
+                        <RecentPanel open={open} linked={splitSessions} />
                         <section className="projects">
                             <h2>
                                 프로젝트{" "}

@@ -124,6 +124,7 @@ export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel,
 const PREF_LABEL: Record<keyof Prefs, string> = {
     theme: "테마", fontSize: "글자 크기", enterToSend: "Enter로 보내기", reasoning: "생각 과정 표시", answerOnly: "답만 보기", expandTools: "도구 세부 펼침", clock: "시계 형식", timeStyle: "지난 시각 표시",
     notifyDone: "작업 완료·실패 알림", notifyApproval: "승인 요청 알림", notifyServer: "예약·업데이트 알림", notifySound: "알림 소리",
+    recentWindows: "최근 항목 시간 범위 선택지", recentWindow: "최근 항목 선택 범위",
 };
 type DeviceReview = { kind: "review" | "error"; before: Prefs; message?: string } | { kind: "saved" };
 export function DeviceSettingsReset({ fields, label }: { fields: (keyof Prefs)[]; label: string }) {

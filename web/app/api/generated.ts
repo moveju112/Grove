@@ -62,7 +62,15 @@ export type RecentItem = { id: string, kind: string, project_id: string, project
 /**
  * 서버 상태로 계산한 값: active | running | awaiting_approval | awaiting_input | unknown_result | archived | missing | project_unavailable
  */
-status: string, unread: boolean, };
+status: string, unread: boolean, 
+/**
+ * 대화의 마지막 사용자 메시지 시각(되돌린 메시지 제외). 다른 종류는 없음.
+ */
+last_user_message_at: string | null, 
+/**
+ * 정렬·시간 범위 기준: 마지막 접근과 마지막 사용자 메시지 중 늦은 시각.
+ */
+last_activity_at: string, };
 
 export type RecentPage = { items: Array<RecentItem>, next_offset: number | null, total: number, };
 
