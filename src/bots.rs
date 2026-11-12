@@ -72,6 +72,8 @@ pub struct BotView {
     pub bot: Bot,
     /// 모델 프로필이 설정되어 있고 존재하며 활성인지
     pub runnable: bool,
+    /// ok | not_configured | deleted | disabled — 실행할 수 없는 이유를 구분한다(BOT-002-B). 다른 모델로 대체하지 않는다.
+    pub model_state: &'static str,
     /// idle | running | awaiting_approval
     pub home_status: String,
     pub unread: bool,
@@ -101,10 +103,8 @@ fn prefixed() -> String {
 }
 
 fn view(c: &Connection, b: Bot) -> ApiResult<BotView> {
-    let runnable = match &b.profile_id {
-        Some(p) => crate::models::get_profile(c, p).is_ok_and(|profile| profile.enabled),
-        None => false,
-    };
+    let model_state = model_state(c, b.profile_id.as_deref())?;
+    let runnable = model_state == "ok";
     let (home_status, unread) = match &b.home_session_id {
         Some(sid) => {
             let s = crate::sessions::get(c, sid)?;
@@ -121,7 +121,19 @@ fn view(c: &Connection, b: Bot) -> ApiResult<BotView> {
         }
         None => ("idle".into(), false),
     };
-    Ok(BotView { bot: b, runnable, home_status, unread })
+    Ok(BotView { bot: b, runnable, model_state, home_status, unread })
+}
+
+fn model_state(c: &Connection, profile_id: Option<&str>) -> ApiResult<&'static str> {
+    let Some(p) = profile_id else { return Ok("not_configured") };
+    let row: Option<(bool, bool)> = c
+        .query_row("SELECT enabled, deleted_at IS NOT NULL FROM model_profiles WHERE id = ?1", params![p], |r| Ok((r.get(0)?, r.get(1)?)))
+        .optional()?;
+    Ok(match row {
+        None | Some((_, true)) => "deleted",
+        Some((false, false)) => "disabled",
+        Some((true, false)) => "ok",
+    })
 }
 
 fn emit(c: &Connection, now: &str, b: &Bot) -> ApiResult<()> {
@@ -446,7 +458,9 @@ pub fn turn_binding(c: &Connection, session_id: &str) -> ApiResult<Option<(Strin
         _ => return Err(ApiError::conflict("deleted", "삭제된 봇입니다")),
     }
     let profile = b.profile_id.clone().ok_or_else(|| ApiError::conflict("model_not_configured", "이 봇에 모델이 설정되지 않아 실행할 수 없습니다"))?;
-    crate::models::get_profile(c, &profile).map_err(|_| ApiError::conflict("model_not_configured", "이 봇의 모델 프로필이 없습니다"))?;
+    if model_state(c, Some(&profile))? == "deleted" {
+        return Err(ApiError::conflict("model_deleted", "이 봇의 모델 프로필이 삭제됐습니다. 봇 편집에서 다른 모델을 고르세요"));
+    }
     Ok(Some((
         profile,
         json!({ "id": b.id, "name": b.name, "revision": b.revision, "persona": b.persona, "instructions": b.instructions }),

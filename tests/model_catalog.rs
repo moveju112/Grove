@@ -241,10 +241,21 @@ async fn bot_readiness_tracks_profile_activation_without_losing_its_configuratio
     let (_, list) = s.get("/api/v1/bots").await;
     let current = list["bots"].as_array().unwrap().iter().find(|entry| entry["id"] == bot["id"]).unwrap();
     assert_eq!(current["runnable"], false);
+    assert_eq!(current["model_state"], "disabled");
     assert_eq!(current["profile_id"], pid);
     s.send(Method::PUT, &format!("/api/v1/model-profiles/{pid}"), json!({ "expected_revision": disabled["revision"], "enabled": true })).await;
     let (_, list) = s.get("/api/v1/bots").await;
-    assert_eq!(list["bots"].as_array().unwrap().iter().find(|entry| entry["id"] == bot["id"]).unwrap()["runnable"], true);
+    let current = list["bots"].as_array().unwrap().iter().find(|entry| entry["id"] == bot["id"]).unwrap().clone();
+    assert_eq!((&current["runnable"], &current["model_state"]), (&json!(true), &json!("ok")));
+    // BOT-002-B: 삭제된 프로필은 미설정과 구분하고 다른 모델로 대체하지 않는다.
+    let (st, _) = s.send(Method::DELETE, &format!("/api/v1/model-profiles/{pid}"), json!({})).await;
+    assert!(st.is_success());
+    let (_, current) = s.get(&format!("/api/v1/bots/{}", bot["id"].as_str().unwrap())).await;
+    assert_eq!((&current["runnable"], &current["model_state"], &current["profile_id"]), (&json!(false), &json!("deleted"), &json!(pid)));
+    let (_, home) = s.post(&format!("/api/v1/bots/{}/home", bot["id"].as_str().unwrap()), json!({})).await;
+    let (st, e) = s.post(&format!("/api/v1/sessions/{}/turns", home["home_session_id"].as_str().unwrap()), json!({ "text": "x", "profile_id": "ignored" })).await;
+    assert_eq!((st, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("model_deleted")));
+    assert!(fixture.requests().is_empty());
 }
 
 #[tokio::test]

@@ -168,6 +168,13 @@ pub enum PolicyDecision {
 pub fn tool_policy(c: &Connection, project_id: &str, session_id: &str, spec: &tools::ToolSpec) -> ApiResult<PolicyDecision> {
     use crate::settings::{all_layers, tool_names};
     let (p, s) = (Some(project_id), Some(session_id));
+    // 봇 대화의 도구는 실행 직전까지 봇이 활성인지 다시 확인한다(BOT-005-D·006-B). 턴 snapshot은 비활성화·삭제를 무효화하지 못한다.
+    let bot_status: Option<String> = c
+        .query_row("SELECT b.status FROM sessions s JOIN bots b ON b.id = s.bot_id WHERE s.id = ?1", params![session_id], |r| r.get(0))
+        .optional()?;
+    if bot_status.is_some_and(|st| st != "active") {
+        return Ok(PolicyDecision::Deny("bot_inactive", format!("봇이 비활성화되거나 삭제돼 {}을(를) 실행하지 않았습니다", spec.name)));
+    }
     let listed = |key: &str| -> ApiResult<bool> {
         Ok(all_layers(c, key, p, s)?.iter().any(|v| v.as_str().is_some_and(|x| tool_names(x).any(|n| n == spec.name))))
     };

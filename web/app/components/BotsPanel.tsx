@@ -19,10 +19,12 @@ type Bot = {
     home_session_id: string | null;
     revision: number;
     runnable: boolean;
+    model_state: "ok" | "not_configured" | "deleted" | "disabled";
     home_status: "idle" | "running" | "awaiting_approval" | "awaiting_input";
     unread: boolean;
 };
 type Project = { id: string; name: string };
+const MODEL_STATE = { not_configured: "모델 없음", deleted: "모델 삭제됨", disabled: "모델 비활성" } as const;
 
 // 숨김은 이 기기 화면 상태일 뿐이다(서버 실행·다른 기기에 영향 없음).
 const HIDE_KEY = "grove.bots.hidden";
@@ -159,7 +161,6 @@ function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDo
 /// 봇 목록: 위임 역할과 별개로, 사용자가 직접 대화하는 상대.
 export function BotsPanel({ open }: { open: Opener }) {
     const q = useQuery<{ bots: Bot[]; order_revision: number }>("bots", () => api.get("/bots"));
-    const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const [hidden, setHidden] = useState<string[]>(loadHidden);
     const [showHidden, setShowHidden] = useState(false);
     const [showDeleted, setShowDeleted] = useState(false);
@@ -216,8 +217,8 @@ export function BotsPanel({ open }: { open: Opener }) {
                             {b.home_status === "awaiting_approval" && <span className="status awaiting_approval">승인 대기</span>}
                             {b.home_status === "awaiting_input" && <span className="status awaiting_input">답변 대기</span>}
                             {b.status === "disabled" && <span className="status">비활성</span>}
-                            {(!b.runnable || profiles.data?.some((profile) => profile.id === b.profile_id && profile.enabled === false)) && b.status !== "deleted" &&
-                                <span className="muted small">{profiles.data?.some((profile) => profile.id === b.profile_id && profile.enabled === false) ? "모델 비활성" : "모델 없음"}</span>}
+                            {b.model_state !== "ok" && b.status !== "deleted" &&
+                                <span className="muted small">{MODEL_STATE[b.model_state]}</span>}
                         </button>
                         <details className="bot-actions">
                             <summary aria-label={`${b.name} 관리`}>⋯</summary>
