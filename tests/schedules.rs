@@ -142,6 +142,23 @@ async fn once_fires_exactly_once_and_leaves_persistent_notification() {
     assert_eq!(n["unread"], 0);
 }
 
+/// SCHEDULE-007: 같은 데이터 디렉터리로 서버를 하나 더 띄우면 거부되고, 실제 짧은 주기 예약은 한 번만 실행된다.
+#[tokio::test]
+async fn duplicate_server_start_is_refused_and_schedule_fires_once() {
+    let c = ctx().await;
+    c.f.push(fixture::text("한 번만"));
+    let at = fmt(time::OffsetDateTime::now_utc() + time::Duration::seconds(1));
+    let (_, v) = c.create(json!({ "kind": "once", "at": at })).await;
+    let id = v["id"].as_str().unwrap().to_string();
+    let second = grove::server::start(config(&c.s.data_dir()), std::sync::Arc::new(grove::util::SystemClock)).await;
+    let Err(e) = second else { panic!("두 번째 서버가 같은 데이터로 시작됨") };
+    assert!(e.to_string().contains("이미 서버가 실행 중"), "{e}");
+    c.wait_run(&id, |r| r.first().is_some_and(|x| x["status"] == "completed")).await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(c.runs(&id).await.len(), 1);
+    assert_eq!(c.f.requests().len(), 1);
+}
+
 /// AUTO-009: 반복 예약의 최대 횟수·종료 시각, 연속 실패 backoff와 자동 정지, 재개 시 초기화.
 #[tokio::test]
 async fn repeat_limits_backoff_and_auto_pause_after_failures() {

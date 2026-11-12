@@ -1872,13 +1872,13 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 
 상위: AUTO-001~007, EXEC-014~017.
 
-- [ ] SCHEDULE-001 예약 규칙·시간대·owner·프로젝트·모델·실행 한도를 입력 계약으로 정의한다.
-- [ ] SCHEDULE-002 다음 실행 시각·DST·놓친 실행 정책과 중복 접수 방지를 구현한다.
-- [ ] SCHEDULE-003 pause/resume/run-once/update/delete의 활성 실행 영향과 revision 충돌을 처리한다.
-- [ ] SCHEDULE-004 승인 대기·overlap·retry·서버 재시작의 상태 전이를 구현한다.
+- [x] SCHEDULE-001 예약 규칙·시간대·owner·프로젝트·모델·실행 한도를 입력 계약으로 정의한다. 검증: AUTO-001·005와 같은 구현. 규칙(once·interval·daily)·고정 offset 시간대·owner·프로젝트·모델·허용 도구·token 한도·반복 한도를 입력 계약으로 검증한다(`tests/schedules.rs::crud_validation_pause_resume_delete`, RULEBOOK §12).
+- [x] SCHEDULE-002 다음 실행 시각·DST·놓친 실행 정책과 중복 접수 방지를 구현한다. 검증: AUTO-003·004와 같은 구현. 다음 실행 시각·DST 재저장·놓친 실행 missed·`UNIQUE(schedule_id, planned_at)` 중복 접수 방지(`schedules::tests::decide_covers_missed_overlap_and_clock_jumps`).
+- [x] SCHEDULE-003 pause/resume/run-once/update/delete의 활성 실행 영향과 revision 충돌을 처리한다. 검증: AUTO-001·002·009와 같은 구현. pause/resume/run-once/update/delete의 revision 충돌과 진행 중 실행 overlap 409, 연속 실패 정지 재개 초기화(`tests/schedules.rs`).
+- [x] SCHEDULE-004 승인 대기·overlap·retry·서버 재시작의 상태 전이를 구현한다. 검증: AUTO-004·006·007과 같은 구현. 승인 대기 wait/fail, overlap skipped, 실패 backoff, 재시작 시 실행 중 턴 interrupted·자동 재실행 없음(`approval_policy_overlap_allowed_tools_and_budget`, `restart_interrupts_running_without_replay_and_records_missed`).
 - [x] SCHEDULE-005 원격 job의 정확한 URL·job ID·허용 상태·timeout·감시 취소를 구현한다. 검증: 정확한 URL·상태 위치(job 상태)·성공/실패 허용 값·확인 간격·감시 시간·감시 취소를 EXEC-014~017과 같은 구현으로 제공한다(RULEBOOK §33).
-- [ ] SCHEDULE-006 완료/실패/결과 불명 receipt와 알림 저장을 연결하고 모델 후속 호출을 별도 정책으로 둔다.
-- [ ] SCHEDULE-007 고정 시계 시험과 실제 짧은 주기 실행을 병행해 시계 변경·중복 기동·복구·감시 취소를 검증한다.
+- [x] SCHEDULE-006 완료/실패/결과 불명 receipt와 알림 저장을 연결하고 모델 후속 호출을 별도 정책으로 둔다. 검증: AUTO-011·012와 원격 감시(§33). 예약 실행 종료와 원격 감시 종료는 알림·note로 저장하고 모델을 다시 부르지 않으며, 결과 불명은 interrupted·timed_out으로 남긴다(`once_fires_exactly_once_and_leaves_persistent_notification`, `tests/remote_watches.rs`).
+- [x] SCHEDULE-007 고정 시계 시험과 실제 짧은 주기 실행을 병행해 시계 변경·중복 기동·복구·감시 취소를 검증한다. 검증: 고정 시계 단위 시험(시계 역행·도약·놓친 실행)과 100ms 실제 주기 통합 시험을 함께 쓴다. 같은 데이터 디렉터리의 두 번째 서버 시작은 잠금으로 거부되고 예약은 한 번만 실행된다(`duplicate_server_start_is_refused_and_schedule_fires_once`). 재시작 복구·원격 감시 취소는 `restart_interrupts_running_without_replay_and_records_missed`·`cancel_stops_only_watching_and_failure_value_fails`.
 
 ### 35.13 음성 입력·재생
 
