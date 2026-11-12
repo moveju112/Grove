@@ -102,6 +102,7 @@ pub async fn replace_secret(
         let unchanged: bool = tx.query_row("SELECT COALESCE(grove_try_decrypt(value)=?2,0) FROM secrets WHERE id=?1",
             params![id, b.value.trim()], |row| row.get(0)).optional()?.ok_or_else(|| ApiError::not_found("비밀이 없습니다"))?;
         if !unchanged {
+            crate::mcp::secret_changed(tx, now, &id)?;
             let active: bool = tx.query_row(
                 &format!("SELECT EXISTS(SELECT 1 FROM turns t JOIN model_profiles p ON p.id=t.profile_id \
                  WHERE {} AND t.status IN ('queued','running','awaiting_approval'))", crate::model_headers::SECRET_USAGE),

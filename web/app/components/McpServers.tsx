@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import { useQuery } from "../state/store";
+import { useCapability } from "../state/capabilities";
 
 type Config =
     | { transport: "stdio"; command: string; args: string[]; env_secrets: Record<string, string> }
@@ -8,6 +9,7 @@ type Config =
 type Server = {
     id: string; name: string; config: Config; enabled: boolean; timeout_secs: number; revision: number;
     connection_state: "disabled" | "disconnected";
+    last_check: null | { status: "checking" | "ready" | "failed" | "interrupted"; tool_count: number | null; error: { message: string } | null };
 };
 type Attempt = { method: "post" | "put" | "del"; path: string; body?: unknown; key: string };
 type Mutation = { phase: "idle" } | { phase: "sending" | "unknown"; attempt: Attempt };
@@ -18,6 +20,10 @@ export function McpServers() {
     const secrets = useQuery<{ id: string; label: string }[]>("secrets", () => api.get("/secrets"));
     const [editing, setEditing] = useState<Server | null>(null);
     const [deleting, setDeleting] = useState<Server | null>(null);
+    const [testing, setTesting] = useState<Server | null>(null);
+    const [selected, setSelected] = useState<string | null>(null);
+    const checkSupported = useCapability("mcp_check_v1");
+    const check = useQuery<{ status: string; detail?: unknown } | null>(`mcp-check:${selected ?? "-"}`, () => selected ? api.get(`/mcp/servers/${selected}/check`) : Promise.resolve(null));
     const [name, setName] = useState("");
     const [config, setConfig] = useState(example);
     const [timeout, setTimeout] = useState(60);
@@ -27,7 +33,7 @@ export function McpServers() {
     const sending = useRef(false);
     const blocked = mutation.phase !== "idle";
     const reset = () => {
-        setEditing(null); setDeleting(null); setName(""); setConfig(example); setTimeout(60); setEnabled(false);
+        setEditing(null); setDeleting(null); setTesting(null); setName(""); setConfig(example); setTimeout(60); setEnabled(false);
     };
     const mutate = async (attempt: Attempt) => {
         if (sending.current) return;
@@ -35,13 +41,14 @@ export function McpServers() {
         setMutation({ phase: "sending", attempt });
         setError(null);
         try {
-            const options = { key: attempt.key, requires: ["mcp_settings_v1"] };
+            const options = { key: attempt.key, requires: attempt.path.endsWith("/check") ? ["mcp_settings_v1", "mcp_check_v1"] : ["mcp_settings_v1"] };
             if (attempt.method === "del") await api.del(attempt.path, options);
             else await api[attempt.method](attempt.path, attempt.body, options);
             setMutation({ phase: "idle" });
             reset();
         } catch (e) {
             const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408
+                || e.code === "result_unknown"
                 || (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true;
             setMutation(unknown ? { phase: "unknown", attempt } : { phase: "idle" });
             setError(e instanceof Error ? e.message : "MCP 설정 요청 실패");
@@ -67,21 +74,36 @@ export function McpServers() {
     };
     const current = query.data?.find((s) => s.id === editing?.id);
     return <div className="stack" data-testid="mcp-panel">
-        <p className="muted small">서버 전체 설정이며 소유자만 관리할 수 있습니다. 저장·사용 설정은 연결 완료가 아닙니다. 현재 이 화면은 연결하거나 프로세스를 실행하지 않습니다.</p>
+        <p className="muted small">서버 전체 설정이며 소유자만 관리할 수 있습니다. 저장·사용 설정은 연결 완료가 아닙니다. 연결 확인을 명시적으로 실행할 때만 handshake·도구 목록을 조회하고 연결과 프로세스를 닫습니다. 모델은 아직 이 도구를 호출하지 않습니다.</p>
         <p className="muted small">비밀 원문을 실행 인자·URL·JSON에 넣지 마세요. 환경변수는 env_secrets, 헤더는 header_secrets에 API 키의 ID를 참조하세요. 헤더 secret에는 필요한 접두사(예: Bearer)까지 저장하세요.</p>
         {!!query.error && <p role="alert" className="err">{query.error instanceof Error ? query.error.message : "MCP 조회 실패"}</p>}
         <ul>{(query.data ?? []).map((server) => <li key={server.id} data-testid="mcp-row">
             <strong>{server.name}</strong> · {server.config.transport} · {server.enabled ? "사용 설정 · 미연결" : "사용 안 함"} · revision {server.revision}
             <div className="inline">
-                <button type="button" disabled={blocked || !!editing || !!deleting || !!name} onClick={() => edit(server)}>MCP 편집</button>
-                <button type="button" disabled={blocked || !!editing || !!deleting || !!name} onClick={() => void mutate({
+                <button type="button" disabled={blocked || !!editing || !!deleting || !!testing || !!name || server.last_check?.status === "checking"} onClick={() => edit(server)}>MCP 편집</button>
+                <button type="button" disabled={blocked || !!editing || !!deleting || !!testing || !!name || server.last_check?.status === "checking"} onClick={() => void mutate({
                     method: "put", path: `/mcp/servers/${server.id}`, key: newKey(),
                     body: { expected_revision: server.revision, server: { name: server.name, config: server.config, timeout_secs: server.timeout_secs, enabled: !server.enabled } },
                 })}>{server.enabled ? "MCP 사용 끄기" : "MCP 사용 켜기"}</button>
-                <button type="button" disabled={blocked || !!editing || !!deleting || !!name} onClick={() => { setDeleting(server); setError(null); }}>MCP 삭제 확인</button>
+                <button type="button" disabled={blocked || !!editing || !!deleting || !!testing || !!name || server.last_check?.status === "checking"} onClick={() => { setDeleting(server); setError(null); }}>MCP 삭제 확인</button>
+                {checkSupported !== false && <button type="button" disabled={blocked || !!editing || !!deleting || !!testing || !!name || server.last_check?.status === "checking"} onClick={() => { setTesting(server); setError(null); }}>MCP 연결 확인 준비</button>}
+                {server.last_check && <button type="button" onClick={() => setSelected(server.id)}>MCP 확인 상세</button>}
             </div>
+            {server.last_check && <p role="status">마지막 확인: {({ checking: "확인 중", ready: "성공 · 확인 후 연결 닫힘", failed: "실패", interrupted: "중단" })[server.last_check.status]}
+                {server.last_check.tool_count !== null && ` · 도구 ${server.last_check.tool_count}개`}
+                {server.last_check.error && ` · ${server.last_check.error.message}`}</p>}
         </li>)}</ul>
-        {deleting ? <div role="group" aria-label="MCP 삭제 확인">
+        {selected && <div role="group" aria-label="MCP 확인 상세">
+            {check.error ? <p className="err">연결 확인 결과 조회 실패</p> : <pre>{JSON.stringify(check.data, null, 2)}</pre>}
+            <button type="button" onClick={() => setSelected(null)}>MCP 확인 상세 닫기</button>
+        </div>}
+        {testing ? <div role="group" aria-label="MCP 실행·외부 연결 확인">
+            <p>“{testing.name}”(revision {testing.revision})의 {testing.config.transport === "stdio" ? "프로세스를 실행합니다" : "외부 서버에 연결합니다"}. 저장한 secret 참조를 전달하고 handshake·도구 목록을 조회한 뒤 닫습니다. 임의 MCP 프로세스는 OS 파일시스템 sandbox로 격리되지 않습니다.</p>
+            <button type="button" disabled={blocked} onClick={() => void mutate({
+                method: "post", path: `/mcp/servers/${testing.id}/check`, key: newKey(), body: { expected_revision: testing.revision, confirmed: true },
+            })}>확인하고 MCP 연결 검사</button>
+            <button type="button" disabled={blocked} onClick={() => setTesting(null)}>MCP 검사 취소</button>
+        </div> : deleting ? <div role="group" aria-label="MCP 삭제 확인">
             <p>“{deleting.name}” 설정(revision {deleting.revision})을 삭제합니다. 참조한 API 키는 삭제하지 않습니다.</p>
             <button type="button" disabled={blocked} onClick={() => void mutate({
                 method: "del", path: `/mcp/servers/${deleting.id}?expected_revision=${deleting.revision}`, key: newKey(),

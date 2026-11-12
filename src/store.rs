@@ -874,6 +874,20 @@ pub const MIGRATIONS: &[&str] = &[
         updated_at TEXT NOT NULL
     );
     "#,
+    // 55: MCP 연결 확인 receipt. 확인마다 한 번만 시작하고 재시작은 중단으로 확정한다.
+    r#"
+    CREATE TABLE mcp_checks (
+        server_id TEXT PRIMARY KEY REFERENCES mcp_servers(id) ON DELETE CASCADE,
+        id TEXT NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK(status IN ('checking','ready','failed','interrupted')),
+        started_at TEXT NOT NULL,
+        finished_at TEXT,
+        detail TEXT NOT NULL DEFAULT '{}',
+        owner_id TEXT NOT NULL,
+        idem_key TEXT NOT NULL,
+        request_hash TEXT NOT NULL
+    );
+    "#,
 ];
 
 #[cfg(test)]

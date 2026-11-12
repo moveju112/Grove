@@ -14,6 +14,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
+mod client;
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "transport", rename_all = "snake_case", deny_unknown_fields)]
 pub enum ServerConfig {
@@ -106,6 +108,7 @@ pub struct McpServer {
     pub created_at: String,
     pub updated_at: String,
     pub connection_state: &'static str,
+    pub last_check: Option<Value>,
 }
 
 pub fn get(c: &Connection, id: &str) -> ApiResult<McpServer> {
@@ -118,6 +121,7 @@ pub fn get(c: &Connection, id: &str) -> ApiResult<McpServer> {
         id: row.0, name: row.1, config: serde_json::from_str(&row.2)?, enabled: row.3, timeout_secs: row.4,
         revision: row.5, created_at: row.6, updated_at: row.7,
         connection_state: if row.3 { "disconnected" } else { "disabled" },
+        last_check: check_summary(c, id)?,
     })
 }
 
@@ -216,7 +220,9 @@ pub async fn update(State(app): State<App>, Owner(p): Owner, headers: HeaderMap,
         if current.revision != b.expected_revision {
             return Err(ApiError::revision_conflict(serde_json::to_value(current)?));
         }
+        ensure_not_checking(tx, &id)?;
         b.server.validate(tx, Some(&id))?;
+        tx.execute("DELETE FROM mcp_checks WHERE server_id=?1", [&id])?;
         tx.execute(
             "UPDATE mcp_servers SET name=?2,config=?3,enabled=?4,timeout_secs=?5,revision=revision+1,updated_at=?6 WHERE id=?1",
             params![id,b.server.name,serde_json::to_string(&b.server.config)?,b.server.enabled,b.server.timeout_secs,now],
@@ -235,6 +241,7 @@ pub async fn remove(State(app): State<App>, Owner(p): Owner, headers: HeaderMap,
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let current = get(tx, &id)?;
         if current.revision != q.expected_revision { return Err(ApiError::revision_conflict(serde_json::to_value(current)?)); }
+        ensure_not_checking(tx, &id)?;
         tx.execute("DELETE FROM mcp_servers WHERE id=?1", [&id])?;
         events::append(tx, now, "mcp.changed", None, None, &json!({ "id": id, "deleted": true }))?;
         crate::audit::record(tx, now, &actor, "mcp.deleted", &id, json!({}))?;
@@ -249,4 +256,187 @@ pub fn secret_users(c: &Connection, secret_id: &str) -> ApiResult<Vec<String>> {
          UNION SELECT DISTINCT 'MCP: '||m.name FROM mcp_servers m, json_each(m.config, '$.header_secrets') h WHERE h.value=?1 ORDER BY 1",
     )?;
     Ok(st.query_map([secret_id], |r| r.get(0))?.collect::<Result<Vec<_>, _>>()?)
+}
+
+fn check_summary(c: &Connection, id: &str) -> ApiResult<Option<Value>> {
+    let row: Option<(String, String, String, Option<String>, String)> = c.query_row(
+        "SELECT id,status,started_at,finished_at,detail FROM mcp_checks WHERE server_id=?1", [id],
+        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+    ).optional()?;
+    row.map(|(id,status,started,finished,detail)| {
+        let detail: Value = serde_json::from_str(&detail)?;
+        Ok(json!({ "id": id, "status": status, "started_at": started, "finished_at": finished,
+            "protocol_version": detail.get("protocol_version"), "tool_count": detail.get("tool_count"), "error": detail.get("error") }))
+    }).transpose()
+}
+
+fn ensure_not_checking(c: &Connection, id: &str) -> ApiResult<()> {
+    let busy: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM mcp_checks WHERE server_id=?1 AND status='checking')", [id], |r| r.get(0))?;
+    if busy { Err(ApiError::busy("MCP 연결 확인 중입니다. 확인이 끝난 뒤 설정을 바꾸세요")) } else { Ok(()) }
+}
+
+pub async fn check_result(State(app): State<App>, Owner(_p): Owner, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    Ok(Json(app.db.call(move |c| {
+        get(c, &id)?;
+        let row: Option<(String, String)> = c.query_row("SELECT status,detail FROM mcp_checks WHERE server_id=?1", [&id], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
+        let Some((status,detail)) = row else { return Ok(json!({ "status": "not_checked" })); };
+        Ok(json!({ "status": status, "detail": serde_json::from_str::<Value>(&detail)? }))
+    }).await?))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckRequest {
+    pub expected_revision: i64,
+    pub confirmed: bool,
+}
+
+/// 프로세스·네트워크 부작용 전에 결과 불명 receipt를 접수한다. 같은 키는 절대 다시 연결하지 않는다.
+pub async fn check(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<CheckRequest>) -> ApiResult<Response> {
+    if !b.confirmed { return Err(ApiError::invalid("MCP 프로세스 실행 또는 외부 연결을 명시적으로 확인하세요")); }
+    let h = idem::body_hash("mcp.check", &json!({ "id": id, "revision": b.expected_revision }));
+    let hash = h.clone();
+    let key = idem::key_from(&headers)?;
+    let owner = p.root_id.clone();
+    let check_id = crate::util::new_id();
+    let (sid,cid) = (id.clone(),check_id.clone());
+    let actor = p.clone();
+    let receipt = idem::run(&app, &p, &headers, &h, move |tx, now| {
+        let server = get(tx, &sid)?;
+        if server.revision != b.expected_revision { return Err(ApiError::revision_conflict(serde_json::to_value(server)?)); }
+        ensure_not_checking(tx, &sid)?;
+        let count: i64 = tx.query_row("SELECT COUNT(*) FROM mcp_checks WHERE status='checking'", [], |r| r.get(0))?;
+        if count >= 4 { return Err(ApiError::busy("MCP 연결 확인은 동시에 4개까지 실행할 수 있습니다")); }
+        tx.execute(
+            "INSERT INTO mcp_checks(server_id,id,status,started_at,owner_id,idem_key,request_hash) VALUES(?1,?2,'checking',?3,?4,?5,?6)
+             ON CONFLICT(server_id) DO UPDATE SET id=excluded.id,status='checking',started_at=excluded.started_at,finished_at=NULL,detail='{}',
+             owner_id=excluded.owner_id,idem_key=excluded.idem_key,request_hash=excluded.request_hash",
+            params![sid,cid,now,owner,key,hash],
+        )?;
+        events::append(tx, now, "mcp.changed", None, None, &json!({ "id": sid }))?;
+        crate::audit::record(tx, now, &actor, "mcp.check_started", &sid, json!({ "check_id": cid }))?;
+        Ok((StatusCode::CONFLICT, json!({
+            "error": { "code": "result_unknown", "message": "MCP 연결 확인 결과가 아직 확정되지 않았습니다", "retryable": true },
+            "check_id": cid,
+        })))
+    }).await?;
+    if receipt.headers().contains_key("idempotent-replayed") { return Ok(receipt); }
+    let sid = id.clone();
+    let loaded = app.db.call(move |c| {
+        let server = get(c, &sid)?;
+        let refs = match &server.config {
+            ServerConfig::Stdio { env_secrets, .. } => env_secrets,
+            ServerConfig::Http { header_secrets, .. } | ServerConfig::Sse { header_secrets, .. } => header_secrets,
+        };
+        let secrets = refs.values().map(|id| Ok((id.clone(), crate::models::decrypt_secret(c, id)?))).collect::<ApiResult<BTreeMap<_,_>>>()?;
+        Ok((server,secrets,crate::procs::Limits::effective(c, None, None)?))
+    }).await;
+    let result = match loaded {
+        Err(e) => Err(e),
+        Ok((server,secrets,limits)) => {
+            let mut shutdown = app.shutdown_rx.clone();
+            let mut client = None;
+            let probe = async {
+                client = Some(client::Client::open(&server.config, &secrets, &check_id, limits).await?);
+                client.as_mut().expect("opened client").inspect(&server.name).await
+            };
+            // open 단계와 handshake·모든 페이지 조회가 같은 hard timeout을 공유한다.
+            let result = tokio::select! {
+                biased;
+                _ = shutdown.wait_for(|v| *v) => Err(ApiError::conflict("mcp_interrupted", "서버 종료로 MCP 연결 확인을 중단했습니다")),
+                result = tokio::time::timeout(std::time::Duration::from_secs(server.timeout_secs as u64), probe) =>
+                    result.unwrap_or_else(|_| Err(ApiError::new(StatusCode::GATEWAY_TIMEOUT, "mcp_timeout", "MCP 연결 확인 시간이 초과됐습니다"))),
+            };
+            if let Some(client) = &mut client { client.close().await; }
+            result.map(|mut value| { scrub(&mut value, &secrets); value })
+        }
+    };
+    let (status,detail) = match result {
+        Ok(detail) => ("ready", detail),
+        Err(e) => (if e.code == "mcp_interrupted" { "interrupted" } else { "failed" }, json!({ "error": e.body()["error"] })),
+    };
+    let now = app.now();
+    let value = app.db.call(move |c| {
+        let tx = c.transaction()?;
+        let result = finish_check(&tx, &now, &id, &check_id, status, &detail)?;
+        tx.commit()?;
+        Ok(result)
+    }).await?;
+    app.notify_events().await;
+    use axum::response::IntoResponse;
+    Ok(Json(value).into_response())
+}
+
+fn scrub(value: &mut Value, secrets: &BTreeMap<String,String>) {
+    let clean = |text: &str| {
+        let mut text = text.to_string();
+        for secret in secrets.values().filter(|s| !s.is_empty()) {
+            text = text.replace(secret, "[redacted]");
+            if let Some((scheme,token)) = secret.split_once(' ').filter(|(s,t)| (s.eq_ignore_ascii_case("bearer") || s.eq_ignore_ascii_case("basic")) && !t.is_empty()) {
+                let _ = scheme;
+                text = text.replace(token,"[redacted]");
+            }
+        }
+        text
+    };
+    match value {
+        Value::String(s) => *s = clean(s),
+        Value::Array(a) => for v in a { scrub(v, secrets); },
+        Value::Object(o) => {
+            let old = std::mem::take(o);
+            for (key,mut v) in old { scrub(&mut v,secrets); o.insert(clean(&key),v); }
+        }
+        _ => {}
+    }
+}
+
+fn finish_check(c: &Connection, now: &str, id: &str, check_id: &str, status: &str, detail: &Value) -> ApiResult<Value> {
+    let (owner,key,hash): (String,String,String) = c.query_row(
+        "SELECT owner_id,idem_key,request_hash FROM mcp_checks WHERE server_id=?1 AND id=?2 AND status='checking'",
+        params![id,check_id], |r| Ok((r.get(0)?,r.get(1)?,r.get(2)?)),
+    )?;
+    c.execute("UPDATE mcp_checks SET status=?3,detail=?4,finished_at=?5 WHERE server_id=?1 AND id=?2",
+        params![id,check_id,status,detail.to_string(),now])?;
+    let value = json!({ "check_id": check_id, "status": status, "detail": detail });
+    idem::complete(c,&owner,&key,&hash,StatusCode::OK,&value)?;
+    events::append(c,now,"mcp.changed",None,None,&json!({ "id": id }))?;
+    Ok(value)
+}
+
+/// 재시작은 확인을 다시 실행하지 않는다. 남은 소유 프로세스를 정리하고 receipt를 중단으로 확정한다.
+pub async fn recover_on_start(app: &App) -> ApiResult<()> {
+    let running: Vec<(String,String)> = app.db.call(|c| {
+        let mut s = c.prepare("SELECT server_id,id FROM mcp_checks WHERE status='checking'")?;
+        Ok(s.query_map([],|r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?)
+    }).await?;
+    if running.is_empty() { return Ok(()); }
+    let tags = running.iter().map(|(_,id)| id.clone()).collect::<Vec<_>>();
+    tokio::task::spawn_blocking(move || crate::procs::reap_leftovers(&tags)).await.map_err(|_| ApiError::internal("MCP 중단 프로세스 정리에 실패했습니다"))?;
+    let now = app.now();
+    app.db.call(move |c| {
+        let tx = c.transaction()?;
+        for (server,id) in running {
+            finish_check(&tx,&now,&server,&id,"interrupted",&json!({ "error": {
+                "code": "mcp_interrupted", "message": "서버 재시작으로 연결 확인이 중단됐습니다. 자동 재실행하지 않습니다", "retryable": false,
+            }}))?;
+        }
+        tx.commit()?;
+        Ok(())
+    }).await
+}
+
+/// secret 교체는 확인 중 금지하고, 완료된 확인 결과와 설정 revision을 무효화한다.
+pub fn secret_changed(c: &Connection, now: &str, secret_id: &str) -> ApiResult<()> {
+    let mut st = c.prepare(
+        "SELECT DISTINCT m.id FROM mcp_servers m, json_each(m.config, '$.env_secrets') e WHERE e.value=?1
+         UNION SELECT DISTINCT m.id FROM mcp_servers m, json_each(m.config, '$.header_secrets') h WHERE h.value=?1",
+    )?;
+    let ids = st.query_map([secret_id],|r| r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
+    for id in ids {
+        ensure_not_checking(c,&id)?;
+        c.execute("DELETE FROM mcp_checks WHERE server_id=?1",[&id])?;
+        c.execute("UPDATE mcp_servers SET revision=revision+1,updated_at=?2 WHERE id=?1",params![id,now])?;
+        events::append(c,now,"mcp.changed",None,None,&json!({ "id": id }))?;
+    }
+    Ok(())
 }

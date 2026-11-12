@@ -210,6 +210,7 @@ export function applyEvent(e: EventRecord) {
             break;
         case "mcp.changed":
             invalidate("mcp");
+            invalidate("mcp-check");
             invalidate("secrets");
             break;
         case "device.created":

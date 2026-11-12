@@ -58,6 +58,7 @@ pub async fn start(cfg: Config, clock: SharedClock) -> Result<Server, String> {
     ))?;
     let owner_token = crate::auth::ensure_owner_token(&app).map_err(|e| e.message)?;
     crate::runner::recover_on_start(&app).await.map_err(|e| e.message)?;
+    crate::mcp::recover_on_start(&app).await.map_err(|e| e.message)?;
     let now = app.now();
     app.db
         .call(move |c| {

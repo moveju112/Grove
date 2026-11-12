@@ -639,12 +639,16 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 
 ## 39. MCP 등록 설정(RESOURCE-003, MCP-001)
 
-- 원본 고정 SHA의 `engine/src/policy.mjs::mapMcpServers`는 stdio·http·sse를 허용한다. 등록 설정은 세 transport를 보존한다. 실제 transport·handshake·도구 실행은 이 등록 흐름과 별도로 구현하며, 저장하거나 사용 설정을 켜도 연결 완료로 표시하지 않는다.
+- 원본 고정 SHA의 `engine/src/policy.mjs::mapMcpServers`는 stdio·http·sse를 허용한다. 세 transport를 보존하며, 저장하거나 사용 설정을 켜도 연결 완료로 표시하지 않는다. 구 SSE는 저장된 설정의 전환·동등 동작 확인과 사용자의 제거 결정 전까지 유지하고 자동 종료 날짜를 두지 않는다.
 - 소유자 전용 `GET/POST /mcp/servers`, `PUT /mcp/servers/{id}` `{expected_revision, server}`, `DELETE /mcp/servers/{id}?expected_revision=`. 변경은 기존 idempotency·transaction·outbox 계약을 따른다. 이름·URL·헤더 이름을 정규화한 뒤 hash를 계산한다. 이벤트·감사에는 설정 원문이 아닌 ID만 남긴다.
 - `server`: 이름(소문자 ASCII 영숫자·._-, 1~64자, 예약 이름 제외), `enabled`(기본 false), `timeout_secs`(기본 60, 1~300), tagged `config`. 서버 100개·설정 64KiB 상한. `stdio`는 실행 파일·인자(128개, 각각 8192바이트)와 `env_secrets`, `http`/`sse`는 HTTP(S) endpoint와 `header_secrets`를 받는다. URL 내장 자격증명·query·fragment와 프로토콜 예약 헤더를 거절한다.
 - 비밀은 기존 vault의 secret ID만 참조한다. 원문 `env`·`headers` 필드는 받지 않고 JSON에 알 수 없는 필드도 거절한다. 헤더 secret은 필요한 접두사(예: `Bearer `)까지 포함한 완전한 헤더 값이다. 비활성 설정도 secret 삭제를 막고 vault 목록의 `used_by`에 `MCP: <name>`으로 표시한다. MCP 설정 삭제는 secret을 삭제하지 않는다.
-- 응답의 `connection_state`는 현재 `disabled` 또는 `disconnected`다. 서버 재시작은 설정만 보존하며 자식 프로세스·외부 연결을 자동 생성하지 않는다. 관리 화면도 이 차이를 명시하고, revision 충돌은 내 입력을 보존하며 응답 유실은 원래 내용·revision·같은 키로만 확인한다.
-- 검증: `tests/mcp.rs`, `web/e2e/mcp-settings.spec.ts`; vault·권한·하위 버전 migration 회귀는 `tests/secrets.rs`, `tests/access.rs`, `tests/header_legacy.rs`, `tests/notifications.rs`, `tests/storage.rs`, `tests/task_logs.rs`.
+- 응답의 `connection_state`는 현재 `disabled` 또는 `disconnected`다. `last_check`는 마지막 연결 검사 요약이지 현재 연결 상태가 아니다. 서버 재시작은 설정만 보존하며 자식 프로세스·외부 연결을 자동 생성하지 않는다. 관리 화면도 이 차이를 명시하고, revision 충돌은 내 입력을 보존하며 응답 유실은 원래 내용·revision·같은 키로만 확인한다.
+- 연결 검사(migration 55): 소유자 전용 `POST /mcp/servers/{id}/check {expected_revision,confirmed:true}`는 프로세스 실행/외부 연결 확인을 요구한다. 부작용 전 `mcp_checks`와 `result_unknown` receipt를 같은 transaction에 접수하고, 완료 뒤 결과·receipt·outbox를 함께 확정한다. 같은 키는 검사 도중에도 다시 실행하지 않는다. `GET`은 상태·도구 목록 상세 조회다. 최종 저장 실패는 원래 접수를 보존하고, 재시작은 남은 소유 프로세스를 정리한 뒤 `interrupted`로 확정한다. 동시 검사는 전체 4개·서버당 1개이며 확인 중 설정 변경·삭제·참조 secret 교체는 거절한다.
+- 프로토콜: [2025-06-18 transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)·[lifecycle](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle)·[구 SSE](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports)를 기준으로 한다. 지원 version은 2025-06-18·2025-03-26·2024-11-05. initialize 때 client capability는 빈 객체이며 sampling·roots·elicitation을 제공하지 않는다. 서버 `ping`은 답하고 미지원 요청은 -32601로 거절한다. tools capability가 있으면 모든 페이지를 조회하되 중복 이름·순환 cursor·object가 아닌 inputSchema를 거절한다. 도구 namespace는 `<서버 이름>/<원격 이름>`이고 표시용 `callable:false`이며 실행 registry로 사용하지 않는다. 지속 목록 변경 구독·도구 실행은 후속 범위다.
+- 한도·정리: 설정 timeout(기본 60초)이 연결·handshake·전체 페이지 조회의 공통 hard timeout이다. 응답 전체 4MiB·단일 응답 1MiB·메시지 512개·도구 256개 상한을 둔다. timeout·서버 종료에는 pending 요청 cancellation을 시도하고 stdio 입력 종료 뒤 소유 process group/Job을 정리하며, Streamable HTTP는 받은 session ID로 DELETE(정리 대기 1초 상한)한다. 검사 종료 뒤 연결을 유지하지 않는다. stdio는 별도 고유 임시 디렉터리에서 최소 환경과 명시한 secret만 받아 실행하지만 OS 파일시스템 sandbox는 아니며 확인 화면에도 이를 밝힌다. Linux process tree·정상 종료·crash·timeout·과대 출력은 검증했고 실제 Windows·macOS는 미검증이다.
+- 비밀 경계: HTTP redirect와 환경 proxy를 사용하지 않고 구 SSE의 POST endpoint는 같은 origin이어야 한다. 원격 오류 본문·stdio stderr는 저장/로그에 내보내지 않는다. 도구/서버 정보 문자열·키에 반사된 secret은 저장/응답 전에 가린다. secret 값 교체는 참조 MCP revision을 올리고 과거 검사 결과를 무효화한다.
+- 검증: `tests/mcp.rs`, `tests/mcp_connect.rs`, `web/e2e/mcp-settings.spec.ts`; vault·권한·하위 버전 migration 회귀는 `tests/secrets.rs`, `tests/access.rs`, `tests/header_legacy.rs`, `tests/notifications.rs`, `tests/storage.rs`, `tests/task_logs.rs`다. 상세 패널은 `mcp-check` cache prefix로 갱신해 재검사 실패 때 과거 성공 목록을 유지하지 않는다.
 
 ## 11. 결정 기록
 

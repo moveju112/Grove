@@ -101,6 +101,7 @@ pub const CAPABILITIES: &[&str] = &[
     "terminal_capture_v1",
     "settings_reset_v1",
     "mcp_settings_v1",
+    "mcp_check_v1",
 ];
 
 #[derive(Clone)]
@@ -215,6 +216,7 @@ pub fn router(app: App) -> Router {
         .route("/admin/metrics", get(admin::metrics))
         .route("/mcp/servers", get(mcp::list).post(mcp::create))
         .route("/mcp/servers/{id}", axum::routing::put(mcp::update).delete(mcp::remove))
+        .route("/mcp/servers/{id}/check", get(mcp::check_result).post(mcp::check))
         .route("/admin/update-receipts/import", post(admin::import_receipts))
         .route("/updates", get(admin::list_updates))
         .route("/bots", get(bots::list).post(bots::create))

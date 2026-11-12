@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { apiCall, login } from "./helpers";
+import { createServer } from "node:http";
 
 type Server = { id: string; name: string; config: unknown; enabled: boolean; revision: number; timeout_secs: number };
 
@@ -86,5 +87,81 @@ test("MCP 오래된 revision·잘못된 설정은 덮어쓰지 않고 응답 유
     } finally {
         const list = await apiCall<Server[]>("GET", "/mcp/servers");
         for (const s of list.filter((s) => s.id === created.id)) await apiCall("DELETE", `/mcp/servers/${s.id}?expected_revision=${s.revision}`);
+    }
+});
+
+test("MCP 연결 검사는 실행 확인·handshake·도구 목록·연결 정리를 표시하고 응답 유실을 재실행하지 않는다", async ({ page }) => {
+    const calls: string[] = [];
+    let reject = false;
+    const remote = createServer(async (request, response) => {
+        if (request.method === "DELETE") {
+            calls.push("DELETE");
+            response.end();
+            return;
+        }
+        let text = "";
+        for await (const chunk of request) text += chunk.toString();
+        const message = JSON.parse(text) as { id?: number; method: string };
+        calls.push(message.method);
+        if (reject) { response.writeHead(401); response.end("fixture-private-mcp-check"); return; }
+        if (message.method === "notifications/initialized") { response.writeHead(202); response.end(); return; }
+        response.setHeader("content-type", "application/json");
+        response.setHeader("mcp-session-id", "fixture-ui-session");
+        response.end(JSON.stringify({ jsonrpc: "2.0", id: message.id, result: message.method === "initialize"
+            ? { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "fixture", version: "1" } }
+            : { tools: [{ name: "read", description: "fixture-private-mcp-check", inputSchema: { type: "object" } }] } }));
+    });
+    await new Promise<void>((resolve) => remote.listen(0, "127.0.0.1", resolve));
+    const address = remote.address();
+    if (!address || typeof address === "string") throw new Error("fixture address missing");
+    const name = `mcp-check-${Date.now()}`;
+    const secret = await apiCall<{ id: string }>("POST", "/secrets", { label: name, value: "fixture-private-mcp-check" });
+    const server = await apiCall<Server>("POST", "/mcp/servers", {
+        name, config: { transport: "http", endpoint: `http://127.0.0.1:${address.port}/mcp`, header_secrets: { Authorization: secret.id } },
+    });
+    try {
+        await login(page);
+        await page.getByRole("button", { name: "설정", exact: true }).click();
+        await page.getByLabel("설정 검색", { exact: true }).fill("MCP");
+        const panel = page.getByTestId("mcp-panel");
+        const row = panel.getByTestId("mcp-row").filter({ hasText: name });
+        await row.getByRole("button", { name: "MCP 연결 확인 준비", exact: true }).click();
+        await expect(panel.getByRole("group", { name: "MCP 실행·외부 연결 확인", exact: true })).toContainText("외부 서버");
+        await panel.getByRole("button", { name: "MCP 검사 취소", exact: true }).click();
+        expect(calls).toEqual([]);
+        const keys: string[] = [];
+        await page.route(`**/api/v1/mcp/servers/${server.id}/check`, async (route) => {
+            if (route.request().method() !== "POST") return route.continue();
+            keys.push(route.request().headers()["idempotency-key"]!);
+            const response = await route.fetch();
+            if (keys.length === 1) await route.abort("connectionfailed");
+            else await route.fulfill({ response });
+        });
+        await row.getByRole("button", { name: "MCP 연결 확인 준비", exact: true }).click();
+        await panel.getByRole("button", { name: "확인하고 MCP 연결 검사", exact: true }).click();
+        await expect(panel.getByRole("group", { name: "MCP 결과 재확인", exact: true })).toBeVisible();
+        await panel.getByRole("button", { name: "같은 MCP 요청 확인", exact: true }).click();
+        await expect(row).toContainText("성공 · 확인 후 연결 닫힘");
+        await expect(row).toContainText("도구 1개");
+        expect(keys).toHaveLength(2);
+        expect(keys[0]).toBe(keys[1]);
+        expect(calls).toEqual(["initialize", "notifications/initialized", "tools/list", "DELETE"]);
+        await row.getByRole("button", { name: "MCP 확인 상세", exact: true }).click();
+        await expect(panel.getByRole("group", { name: "MCP 확인 상세", exact: true })).toContainText(`${name}/read`);
+        await expect(panel).not.toContainText("fixture-private-mcp-check");
+        reject = true;
+        await row.getByRole("button", { name: "MCP 연결 확인 준비", exact: true }).click();
+        await panel.getByRole("button", { name: "확인하고 MCP 연결 검사", exact: true }).click();
+        await expect(row).toContainText("실패");
+        await expect(row).toContainText("인증이 필요");
+        await expect(panel.getByRole("group", { name: "MCP 확인 상세", exact: true })).toContainText('"status": "failed"');
+        await expect(panel.getByRole("group", { name: "MCP 확인 상세", exact: true })).not.toContainText(`${name}/read`);
+        await expect(panel).not.toContainText("fixture-private-mcp-check");
+    } finally {
+        remote.closeAllConnections();
+        await new Promise<void>((resolve, reject) => remote.close((error) => error ? reject(error) : resolve()));
+        const list = await apiCall<Server[]>("GET", "/mcp/servers");
+        for (const s of list.filter((s) => s.id === server.id)) await apiCall("DELETE", `/mcp/servers/${s.id}?expected_revision=${s.revision}`);
+        await apiCall("DELETE", `/secrets/${secret.id}`);
     }
 });
