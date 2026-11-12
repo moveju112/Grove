@@ -145,6 +145,7 @@ export function applyEvent(e: EventRecord) {
                 invalidate(`turns:${sid}`);
                 invalidate(`session:${sid}`);
             }
+            invalidate("usage-capacity");
             invalidate("recent");
             invalidate("bots");
             break;

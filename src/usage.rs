@@ -238,6 +238,51 @@ pub async fn get_usage(State(app): State<App>, _p: Principal, Query(q): Query<Us
     Ok(Json(app.db.call(move |c| aggregate(c, &q)).await?))
 }
 
+/// 실행 용량(FAIR-011). 서버 전체는 실행·대기 합계와 한도만, 요청별 상세(대화·대기 이유·순서)는
+/// 요청한 기기 소유자의 것만 보여 준다. 다른 소유자의 대화·프로젝트·계정 정보는 내보내지 않는다.
+pub async fn capacity(State(app): State<App>, p: Principal) -> ApiResult<Json<Value>> {
+    let owner = format!("token:{}", p.root_id);
+    let (limits, mine) = app
+        .db
+        .call(move |c| {
+            let lim = |k: &str| -> ApiResult<Value> { crate::settings::effective(c, k, None, None) };
+            let limits = json!({
+                "max_active": lim("runs.max_active")?,
+                "max_queued_per_owner": lim("runs.max_queued_per_owner")?,
+                "max_queued_total": lim("runs.max_queued_total")?,
+            });
+            let mut st = c.prepare(
+                "SELECT t.id, t.status, t.session_id, s.title, s.project_id, t.created_at FROM turns t JOIN sessions s ON s.id = t.session_id \
+                 WHERE t.owner_key = ?1 AND t.status IN ('queued','running','awaiting_approval') ORDER BY t.created_at, t.id",
+            )?;
+            let rows = st
+                .query_map(params![owner], |r| {
+                    Ok(json!({ "turn_id": r.get::<_, String>(0)?, "status": r.get::<_, String>(1)?, "session_id": r.get::<_, String>(2)?,
+                               "session_title": r.get::<_, String>(3)?, "project_id": r.get::<_, String>(4)?, "created_at": r.get::<_, String>(5)? }))
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok((limits, rows))
+        })
+        .await?;
+    let (running, waiting) = app.fair.counts();
+    let requests: Vec<Value> = mine
+        .into_iter()
+        .map(|mut r| {
+            if let Some(q) = r["turn_id"].as_str().and_then(|id| app.fair.waiting(id)) {
+                r["queue"] = json!(q);
+            }
+            r
+        })
+        .collect();
+    let count = |f: &dyn Fn(&Value) -> bool| requests.iter().filter(|r| f(r)).count();
+    let mine = json!({
+        "waiting": count(&|r| r.get("queue").is_some()),
+        "running": count(&|r| r["status"] == "running" && r.get("queue").is_none()),
+        "awaiting_user": count(&|r| r["status"] == "awaiting_approval"),
+    });
+    Ok(Json(json!({ "limits": limits, "server": { "running": running, "waiting": waiting }, "mine": mine, "requests": requests })))
+}
+
 // ---------------- 턴 시간 분해(USAGE-008/009) ----------------
 
 fn merge_len(mut iv: Vec<(OffsetDateTime, OffsetDateTime)>) -> Duration {

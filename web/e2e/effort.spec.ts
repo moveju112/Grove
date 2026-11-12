@@ -70,6 +70,33 @@ test("꺼진 워크플로를 고른 대화는 선택이 남고, 이번 요청은
     await expect(view.getByTestId("active-settings")).toHaveCount(0);
 });
 
+// FAIR-011: 사용량 화면은 서버 합계와 이 기기 요청의 상태를 보여 주고 거기서 취소할 수 있다.
+test("사용량 화면의 실행 용량에서 이 기기의 실행 중 요청을 보고 취소한다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    await ensureProfile();
+    const title = `용량 대화 ${Date.now()}`;
+    const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    await login(page);
+    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    const view = page.getByTestId("session-view");
+    await view.getByLabel("보내기 방식").selectOption("model");
+    await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
+    await view.getByLabel("메시지 입력").fill("오래 걸리는 일");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    await expect(view.getByTestId("active-settings")).toBeVisible();
+    await page.getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByLabel("설정 검색").fill("사용량");
+    const cap = page.getByTestId("usage-capacity");
+    await expect(cap).toContainText(/서버 전체: 실행 \d+\/\d+/);
+    const row = cap.getByTestId("capacity-request").filter({ hasText: title });
+    await expect(row).toContainText("실행 중");
+    await row.getByRole("button", { name: "취소" }).click();
+    await expect(row).toHaveCount(0);
+    const turns = await apiCall<{ status: string }[]>("GET", `/sessions/${s.id}/turns`);
+    expect(turns[0]!.status).toBe("cancelled");
+});
+
 // RUN-009: 실행 중 바꾼 모델·강도는 이번 요청에 적용되지 않고, 적용 시점을 보여 준다.
 test("실행 중 강도를 바꾸면 이번 요청은 그대로이고 다음 요청부터 적용된다", async ({ page }) => {
     const { a } = await ensureProjects();

@@ -96,6 +96,22 @@ async fn newcomer_runs_next_queue_limits_and_control_stays_responsive() {
     assert_eq!(t3["queue"]["active"], 1);
     let (_, t1) = s.get(&format!("/api/v1/turns/{a1}")).await;
     assert!(t1.get("queue").is_none(), "{t1}");
+    // 사용량 화면의 실행 용량: 서버 전체는 합계만, 상세는 자기 요청만(다른 소유자의 대화·순서는 보이지 않는다)
+    let (st, cap) = s.get("/api/v1/usage/capacity").await;
+    assert_eq!(st, StatusCode::OK, "{cap}");
+    assert_eq!(cap["limits"]["max_active"], 1);
+    assert_eq!(cap["server"], json!({ "running": 1, "waiting": 3 }));
+    assert_eq!(cap["mine"], json!({ "waiting": 2, "running": 1, "awaiting_user": 0 }));
+    let ids: Vec<&str> = cap["requests"].as_array().unwrap().iter().map(|r| r["turn_id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [a1.as_str(), a2.as_str(), a3.as_str()]);
+    assert_eq!(cap["requests"][2]["queue"]["limit"], 1);
+    assert!(!cap.to_string().contains(&b1) && !cap.to_string().contains(&sids[4]), "다른 소유자 상세 비노출: {cap}");
+    let (st, cap_b) = as_device(&s, &dev_token, Method::GET, "/api/v1/usage/capacity", None, "cap-b").await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(cap_b["server"], cap["server"]);
+    let ids: Vec<&str> = cap_b["requests"].as_array().unwrap().iter().map(|r| r["turn_id"].as_str().unwrap()).collect();
+    assert_eq!(ids, [b1.as_str()]);
+    assert!(!cap_b.to_string().contains(&a2) && !cap_b.to_string().contains(&sids[0]));
 
     // 제어 요청은 포화 중에도 바로 응답(FAIR-009): 상태 조회·대기 중 턴 취소
     let t0 = Instant::now();

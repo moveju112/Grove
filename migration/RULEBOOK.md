@@ -315,7 +315,8 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 | 반환·취소 | Permit Drop으로 모든 경로에서 반환, 대기 중 취소는 큐에서 빠지고 모델을 부르지 않음, 배정과 취소가 겹치면 즉시 반환. 대기 future 자체의 drop/abort도 예약과 이미 배정된 모든 자원을 정리한다 | `fair::tests::cancel_storm_does_not_leak_slots`, `dropping_a_wait_future_before_or_after_assignment_returns_every_resource` |
 | 재시작 | 큐는 메모리에만. 재시작 시 queued/running 턴은 interrupted, 자동 재접수 없음 | `running_turn_interrupted_by_restart_is_not_rerun` |
 | 표시 | 대기 중인 턴은 `queue{ahead, active, limit, reason?}`. reason은 `account`/`provider` 또는 생략(전역)이며 다른 소유자·자격 증명·계정 hash는 보내지 않는다. 대기 시작·끝에 `turn.updated` | `tests/fair.rs`, `web/e2e/model-limits.spec.ts` |
-| 미구현 | 사용량 화면의 대기 표시, ARM64 실측 | — |
+| 사용량 화면 | `GET /usage/capacity`: 서버 전체는 실행·대기 합계와 한도(`runs.max_active`·`max_queued_per_owner`·`max_queued_total`)만, 요청별 상세(대화 제목·상태·`queue`)는 요청한 기기 소유자(`token:<root>`)의 queued/running/승인 대기 턴만 보여 주고 거기서 취소한다. 다른 소유자의 대화·프로젝트·순서·계정은 보내지 않는다. 대화 화면과 같은 대기 이유 문구를 쓴다 | `tests/fair.rs::newcomer_runs_next_queue_limits_and_control_stays_responsive`, `web/e2e/effort.spec.ts` |
+| 미구현 | ARM64 실측 | — |
 
 ## 19. 실모델 시험 (opt-in, 경량 모델)
 

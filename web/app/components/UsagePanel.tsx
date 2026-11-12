@@ -1,6 +1,59 @@
 import { useState } from "react";
-import { api } from "../api/client";
+import { ApiError, api } from "../api/client";
+import { type QueueInfo, queueText } from "../state/queue";
 import { useQuery } from "../state/store";
+
+type CapacityRequest = { turn_id: string; status: string; session_id: string; session_title: string; project_id: string; queue?: QueueInfo };
+type Capacity = {
+    limits: { max_active: number | null; max_queued_per_owner: number | null; max_queued_total: number | null };
+    server: { running: number; waiting: number };
+    mine: { running: number; waiting: number; awaiting_user: number };
+    requests: CapacityRequest[];
+};
+
+/// 실행 용량(FAIR-011): 서버 전체는 합계·한도만, 대기 이유와 취소는 이 기기의 요청에만 보여 준다.
+function CapacitySection() {
+    const q = useQuery<Capacity>("usage-capacity", () => api.get("/usage/capacity"));
+    const [err, setErr] = useState<string | null>(null);
+    const c = q.data;
+    if (!c) return null;
+    const cancel = async (id: string) => {
+        setErr(null);
+        try {
+            await api.post(`/turns/${id}/cancel`);
+        } catch (e) {
+            setErr(e instanceof ApiError ? e.message : "취소 실패");
+        }
+        q.reload();
+    };
+    const limit = (n: number | null) => (n == null ? "제한 없음" : String(n));
+    return (
+        <div data-testid="usage-capacity">
+            <h3>실행 용량</h3>
+            <p>
+                서버 전체: 실행 {c.server.running}/{limit(c.limits.max_active)} · 대기 {c.server.waiting}
+                <span className="muted small"> · 기기별 대기 한도 {limit(c.limits.max_queued_per_owner)} · 서버 대기 한도 {limit(c.limits.max_queued_total)}</span>
+            </p>
+            <p className="muted small">다른 기기의 대화·대기 순서는 보이지 않습니다. 대기 중인 요청은 모델을 부르기 전에 취소할 수 있습니다.</p>
+            {c.requests.length === 0 ? (
+                <p className="muted">이 기기에서 실행·대기 중인 요청이 없습니다.</p>
+            ) : (
+                <ul className="session-list">
+                    {c.requests.map((r) => (
+                        <li key={r.turn_id} data-testid="capacity-request">
+                            <span>{r.session_title || "제목 없는 대화"}</span>{" "}
+                            <span className="muted small">
+                                {r.queue ? queueText(r.queue) : r.status === "awaiting_approval" ? "승인·답변 대기(실행 슬롯 사용 안 함)" : r.status === "queued" ? "대기 중" : "실행 중"}
+                            </span>{" "}
+                            <button className="ghost small" onClick={() => void cancel(r.turn_id)}>취소</button>
+                        </li>
+                    ))}
+                </ul>
+            )}
+            {err && <p className="error" role="alert">{err}</p>}
+        </div>
+    );
+}
 
 type Row = {
     key: string;
@@ -62,6 +115,7 @@ export function UsagePanel() {
     return (
         <section className="setting" data-testid="usage-panel">
             <h2>사용량</h2>
+            <CapacitySection />
             <div className="inline wrap">
                 <select aria-label="기간" value={days} onChange={(e) => setDays(Number(e.target.value))}>
                     {PERIODS.map(([d, l]) => <option key={d} value={d}>{l}</option>)}

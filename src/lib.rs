@@ -196,6 +196,7 @@ pub fn router(app: App) -> Router {
         .route("/terminals/{id}/ticket", post(terminals::ticket))
         .route("/terminal-ws/{ticket}", get(terminals::ws))
         .route("/usage", get(usage::get_usage))
+        .route("/usage/capacity", get(usage::capacity))
         .route("/admin/update-readiness", get(admin::readiness))
         .route("/admin/shutdown", post(admin::shutdown))
         .route("/admin/update-receipts/import", post(admin::import_receipts))
