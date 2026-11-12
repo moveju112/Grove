@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, authGeneration, isLoggedIn, newKey } from "../api/client";
 import { EventStream } from "../api/events";
 import type { Project } from "../api/generated";
@@ -18,6 +18,19 @@ export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
 
 const PROJECT_SORT = "grove.projectSort";
+const NO_PROJECTS: Project[] = [];
+
+type LayoutActions = {
+    onUpdate: (id: string, f: (layout: L.Layout) => L.Layout) => void;
+    onOpen: (id: string, target: OpenTarget, how?: "here" | "right" | "down") => void;
+};
+const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, onUpdate, onOpen }: LayoutActions & {
+    id: string; layout: L.Layout; visible: boolean; projects: Project[];
+}) {
+    const update = useCallback((f: (layout: L.Layout) => L.Layout) => onUpdate(id, f), [id, onUpdate]);
+    const open: Opener = useCallback((target, how) => onOpen(id, target, how), [id, onOpen]);
+    return <SplitView layout={layout} update={update} open={open} narrow={id.endsWith("-narrow")} visible={visible} projects={projects} />;
+});
 
 function useNarrow(): boolean {
     const [n, setN] = useState(isNarrow());
@@ -32,7 +45,8 @@ function useNarrow(): boolean {
 
 export function Workspace() {
     const narrow = useNarrow();
-    const live = useLive();
+    const status = useLive((live) => live.status);
+    const retryAt = useLive((live) => live.retryAt);
     const [layouts, setLayouts] = useState<Record<string, L.Layout>>({});
     const [sidebar, setSidebar] = useState(!isNarrow());
     const [notice, setNotice] = useState<string | null>(null);
@@ -130,7 +144,7 @@ export function Workspace() {
                 <img src="/icon.svg" alt="" width={22} height={22} />
                 <strong>Grove</strong>
                 <Hosts />
-                <ConnStatus status={live.status} retryAt={live.retryAt} onRetry={() => stream.current?.retryNow()} />
+                <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
                 <span className="spacer" />
                 <button className="ghost" onClick={() => setAdding(true)}>
                     + 프로젝트
@@ -193,8 +207,8 @@ export function Workspace() {
                 )}
                 <main className="main">
                     {Object.entries(layouts).map(([id, saved]) => (
-                        <SplitView key={id} layout={saved} update={(f) => updateAt(id, f)} open={(t, how) => openAt(id, t, how)} narrow={id.endsWith("-narrow")}
-                            visible={id === key} projects={projects.data ?? []} />
+                        <SavedLayout key={id} id={id} layout={saved} onUpdate={updateAt} onOpen={openAt}
+                            visible={id === key} projects={projects.data ?? NO_PROJECTS} />
                     ))}
                     {!layout && <div className="boot">배치 불러오는 중…</div>}
                 </main>

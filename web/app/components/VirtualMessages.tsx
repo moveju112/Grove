@@ -55,7 +55,8 @@ export function VirtualMessages({ messages, targetSeq, presentationKey, stick, b
     const observer = useRef<ResizeObserver | null>(null);
     const anchor = useRef<Anchor | null>(null);
     const geometry = useRef<Geometry | null>(null);
-    const adjustment = useRef<Anchor | null>(null);
+    // anchor가 아직 없을 때도 측정/resize에 따른 맨 아래 보정은 대기 중일 수 있다.
+    const adjustment = useRef<{ point: Anchor | null } | null>(null);
     const pendingFocus = useRef<string | null>(null);
     const previousFirst = useRef(messages[0]?.id);
     const previousTarget = useRef(targetSeq);
@@ -107,7 +108,7 @@ export function VirtualMessages({ messages, targetSeq, presentationKey, stick, b
             }
             // 메시지 높이가 같아도 헤더 줄바꿈·키보드로 feed 시작점/viewport가 움직인다.
             if (changed || entries.some((entry) => entry.target === el || entry.target === view)) {
-                adjustment.current = anchor.current;
+                adjustment.current = { point: anchor.current };
                 measured((v) => v + 1);
             } else updateViewport();
         });
@@ -138,7 +139,7 @@ export function VirtualMessages({ messages, targetSeq, presentationKey, stick, b
         if (!el || !root.current) return;
         if (!visible) { wasVisible.current = false; return; }
         if (!wasVisible.current || !sameGeometry(geometry.current, geometryOf(el, root.current))) {
-            adjustment.current = anchor.current;
+            adjustment.current = { point: anchor.current };
             wasVisible.current = true;
         }
         const targetChanged = previousTarget.current !== targetSeq;
@@ -154,7 +155,7 @@ export function VirtualMessages({ messages, targetSeq, presentationKey, stick, b
                 pendingFocus.current = null;
             }
         } else if (!targetChanged && (adjustment.current || previousFirst.current !== messages[0]?.id)) {
-            const point = adjustment.current ?? anchor.current;
+            const point = adjustment.current?.point ?? anchor.current;
             if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
             else if (point) {
                 const node = nodes.current.get(point.id);

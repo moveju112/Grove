@@ -247,14 +247,17 @@ export function setLive(f: (l: Live) => Live) {
     for (const s of liveSubs) s();
 }
 
-export function useLive(): Live {
+const subscribeLive = (cb: () => void) => {
+    liveSubs.add(cb);
+    return () => { liveSubs.delete(cb); };
+};
+
+// selector는 기존 snapshot의 필드/객체를 반환한다. 무관한 대화의 frame은 렌더링을 유발하지 않는다.
+export function useLive<T>(select: (value: Live) => T): T {
     return useSyncExternalStore(
-        (cb) => {
-            liveSubs.add(cb);
-            return () => liveSubs.delete(cb);
-        },
-        () => live,
-        () => live,
+        subscribeLive,
+        () => select(live),
+        () => select(live),
     );
 }
 

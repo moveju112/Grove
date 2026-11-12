@@ -450,14 +450,14 @@ async function webBuild(): Promise<string> {
 function Health() {
     const h = useQuery<Record<string, unknown>>("health", () => api.get("/health"));
     const build = useQuery<string>("web-build", webBuild);
-    const live = useLive();
+    const status = useLive((live) => live.status);
     const [copied, setCopied] = useState<string | null>(null);
     // 진단 정보(UI-031): 버전·연결·브라우저만. 토큰·쿠키·대화 내용·경로 같은 민감 정보는 넣지 않는다.
     const diag = () => ({
         collected_at: new Date().toISOString(),
         server: { status: h.data?.status, version: h.data?.version, protocol: h.data?.protocol, schema: h.data?.schema, target: h.data?.target, db: h.data?.db },
         web: { build: build.data, protocol: PROTOCOL, protocol_matches: h.data?.protocol === PROTOCOL },
-        connection: live.status,
+        connection: status,
         browser: navigator.userAgent,
         online: navigator.onLine,
         theme: document.documentElement.dataset.theme ?? "system",
@@ -472,7 +472,7 @@ function Health() {
                 <dt>프로토콜</dt><dd>서버 {String(h.data?.protocol ?? "")} · 화면 {PROTOCOL}{h.data && h.data.protocol !== PROTOCOL ? " (다름: 새로고침 필요)" : ""}</dd>
                 <dt>DB schema</dt><dd>{String(h.data?.schema ?? "")}</dd>
                 <dt>화면 빌드</dt><dd><code>{build.data ?? "…"}</code></dd>
-                <dt>이벤트 연결</dt><dd>{live.status}</dd>
+                <dt>이벤트 연결</dt><dd>{status}</dd>
             </dl>
             <button
                 className="ghost small"

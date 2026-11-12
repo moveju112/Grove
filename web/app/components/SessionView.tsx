@@ -28,8 +28,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const turns = useQuery<Turn[]>(`turns:${sessionId}`, () => api.get(`/sessions/${sessionId}/turns?limit=5`));
     const calls = useQuery<ToolCallRow[]>(`calls:${sessionId}`, () => api.get(`/tool-calls?session_id=${sessionId}&limit=200`));
     const workflows = useQuery<Definition[]>("definitions:workflow", () => api.get("/definitions?kind=workflow"));
-    const live = useLive();
-    const partial = live.partials[sessionId] as { turn_id: string; text: string; reasoning?: string; tool_calls: string[] } | null | undefined;
+    const partial = useLive((live) => visible ? live.partials[sessionId] : undefined) as { turn_id: string; text: string; reasoning?: string; tool_calls: string[] } | null | undefined;
     const [older, setOlder] = useState<Message[]>([]);
     const [olderMore, setOlderMore] = useState<boolean | null>(null);
     const latestRef = useRef(latest.data);
@@ -101,7 +100,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             el.removeEventListener("scroll", on);
             el.style.overflowAnchor = prevAnchor;
         };
-    }, [!!latest.data]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [!!s, !!latest.data]); // eslint-disable-line react-hooks/exhaustive-deps
     const toBottom = () => {
         pendingPosition.current = null;
         stick.current = true;
@@ -113,7 +112,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
         else if (!savedPosition || (latest.data?.items.at(-1)?.seq ?? 0) > savedPosition.lastSeq || partial?.text) setUnseen(true);
         // 최신 페이지는 항상 최근 N개라 개수가 아니라 마지막 메시지로 새 글을 판단한다.
-    }, [visible, latest.data?.items.at(-1)?.seq, partial?.text]);
+    }, [visible, !!s, latest.data?.items.at(-1)?.seq, partial?.text]);
 
     // 최신 화면은 '최근 N개' 창이다. 새 메시지로 창이 밀리면 빠져나간 메시지를 이전 목록으로 옮겨, 읽던 메시지가 사라지지 않게 한다(UI-008).
     // 같은 렌더 안에서 옮겨야 한다: effect로 옮기면 한 번은 위쪽 메시지가 빠졌다 다시 붙어 내용이 밀리고 스크롤이 어긋난다.
@@ -177,7 +176,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             stick.current = true;
             bottom.current?.scrollIntoView({ block: "end" });
         }
-    }, [visible, focusSeq, latest.data, messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [visible, !!s, focusSeq, latest.data, messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (highlight == null) return;
         const t = setTimeout(() => setHighlight(null), 4000);
