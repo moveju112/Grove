@@ -65,6 +65,9 @@ export function hasCapability(name: string): boolean | null {
 
 let current: Session | null = null;
 let refreshing: Promise<Session | null> | null = null;
+let loggingOut: Promise<void> | null = null;
+let authEpoch = 0;
+export function authGeneration(): number { return authEpoch; }
 const listeners = new Set<(s: Session | null) => void>();
 
 export function onAuthChange(fn: (s: Session | null) => void): () => void {
@@ -79,6 +82,7 @@ export function lastAuthEnd(): "expired" | "logout" | null {
 }
 
 function setSession(s: Session | null) {
+    if (!s && current) authEpoch++;
     if (s) authEnd = null;
     current = s;
     for (const l of listeners) l(s);
@@ -108,6 +112,7 @@ function toError(status: number, body: unknown, requestId?: string): ApiError {
 }
 
 export async function login(token: string, name: string): Promise<void> {
+    if (loggingOut) await loggingOut;
     const resp = await fetch("/api/v1/auth/browser-login", {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -122,6 +127,7 @@ export async function login(token: string, name: string): Promise<void> {
 
 /// 일회용 등록은 자동 refresh·재시도하지 않는다. 결과 유실 시 소유자가 기기 목록에서 확인한다.
 export async function redeemPairing(code: string): Promise<void> {
+    if (loggingOut) await loggingOut;
     if (current) throw new ApiError(409, "already_authenticated", "이미 로그인되어 있습니다. 기존 로그인을 덮어쓰지 않고 별도 브라우저에서 등록하세요.");
     await boundedRequest({}, true, async (send) => {
         const resp = await send("/api/v1/auth/pairing", {
@@ -137,10 +143,13 @@ export async function redeemPairing(code: string): Promise<void> {
 
 /// refresh 쿠키로 access token을 다시 받는다. 동시 호출은 하나로 합친다(singleflight).
 export function refresh(): Promise<Session | null> {
+    if (lastAuthEnd() === "logout") return Promise.resolve(null);
     if (!refreshing) {
+        const owner = authEpoch;
         refreshing = (async () => {
             try {
                 const resp = await fetch("/api/v1/auth/refresh", { method: "POST", credentials: "same-origin" });
+                if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
                 if (!resp.ok) {
                     // 로그인된 상태에서 refresh가 거부되면 만료다(처음 열 때 쿠키 없음은 만료 안내 대상 아님).
                     if (current) authEnd = "expired";
@@ -148,6 +157,7 @@ export function refresh(): Promise<Session | null> {
                     return null;
                 }
                 const b = (await resp.json()) as { access_token: string; expires_at: string };
+                if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
                 const s = { accessToken: b.access_token, expiresAt: b.expires_at };
                 setSession(s);
                 return s;
@@ -161,10 +171,21 @@ export function refresh(): Promise<Session | null> {
     return refreshing;
 }
 
-export async function logout(): Promise<void> {
-    await fetch("/api/v1/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+export function logout(): Promise<void> {
+    if (loggingOut) return loggingOut;
+    const renewal = refreshing;
     authEnd = "logout";
     setSession(null);
+    // 진행 중 refresh의 cookie rotation 뒤에 폐기하고 다음 로그인과 겹치지 않게 한다.
+    loggingOut = (async () => {
+        await renewal;
+        await fetch("/api/v1/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+    })().finally(() => { loggingOut = null; });
+    return loggingOut;
+}
+
+function requireAuthGeneration(owner: number, mutation: boolean) {
+    if (owner !== authEpoch) throw new ApiError(401, "auth_session_changed", "인증 상태가 바뀌어 이전 요청의 결과를 사용하지 않습니다.", false, { result_unknown: mutation });
 }
 
 export function accessToken(): string | null {
@@ -224,6 +245,7 @@ async function boundedRequest<T>(opts: Opts, mutation: boolean, operation: (send
 }
 
 export async function request<T>(method: string, path: string, body?: unknown, opts: Opts = {}): Promise<T> {
+    const owner = authEpoch;
     if (method !== "GET" && protocolMismatch !== null) {
         throw new ApiError(409, "protocol_mismatch", "화면 버전이 서버와 맞지 않습니다. 새로고침한 뒤 다시 시도하세요");
     }
@@ -244,9 +266,16 @@ export async function request<T>(method: string, path: string, body?: unknown, o
             });
         };
         let resp = await send();
-        if (resp.status === 401 && (await refresh())) resp = await send();
+        requireAuthGeneration(owner, method !== "GET" && resp.status !== 401);
+        if (resp.status === 401) {
+            const renewed = await refresh();
+            requireAuthGeneration(owner, false);
+            if (renewed) resp = await send();
+        }
+        requireAuthGeneration(owner, method !== "GET" && resp.status !== 401);
         checkProtocol(resp);
         const parsed = await parse(resp);
+        requireAuthGeneration(owner, method !== "GET" && resp.status !== 401);
         if (!resp.ok) throw toError(resp.status, parsed, resp.headers.get("x-request-id") ?? undefined);
         return (opts.contract ? parseContract(opts.contract, parsed) : parsed) as T;
     });
@@ -254,14 +283,27 @@ export async function request<T>(method: string, path: string, body?: unknown, o
 
 /// 바이너리 응답 GET(터미널 화면 등). 인증 만료 시 한 번 갱신 후 재시도한다.
 export async function rawGet(path: string, opts: Opts = {}): Promise<ArrayBuffer> {
+    const owner = authEpoch;
     return boundedRequest(opts, false, async (fetchRequest) => {
         const send = () =>
             fetchRequest("/api/v1" + path, { headers: current ? { authorization: `Bearer ${current.accessToken}` } : {}, credentials: "same-origin" });
         let resp = await send();
-        if (resp.status === 401 && (await refresh())) resp = await send();
+        requireAuthGeneration(owner, false);
+        if (resp.status === 401) {
+            const renewed = await refresh();
+            requireAuthGeneration(owner, false);
+            if (renewed) resp = await send();
+        }
+        requireAuthGeneration(owner, false);
         checkProtocol(resp);
-        if (!resp.ok) throw toError(resp.status, await parse(resp), resp.headers.get("x-request-id") ?? undefined);
-        return resp.arrayBuffer();
+        if (!resp.ok) {
+            const error = await parse(resp);
+            requireAuthGeneration(owner, false);
+            throw toError(resp.status, error, resp.headers.get("x-request-id") ?? undefined);
+        }
+        const result = await resp.arrayBuffer();
+        requireAuthGeneration(owner, false);
+        return result;
     });
 }
 

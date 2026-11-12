@@ -11,6 +11,121 @@ afterEach(() => {
 });
 
 describe("HTTP 요청 식별·timeout·취소 계약", () => {
+    it.each(["json", "binary"] as const)("headers 뒤에 인증이 바뀌어도 늦은 %s 오류 본문을 전달하지 않는다", async (kind) => {
+        let body!: ReadableStreamDefaultController<Uint8Array>;
+        const response = new Response(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } }), { status: 403 });
+        const session = () => new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" }));
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(session()).mockResolvedValueOnce(response)
+            .mockResolvedValueOnce(new Response("{}")).mockResolvedValueOnce(session()));
+        await client.redeemPairing("fixture-one");
+        const result = expect(kind === "json" ? client.api.get("/projects") : client.rawGet("/files"))
+            .rejects.toMatchObject({ code: "auth_session_changed" });
+        await vi.waitFor(() => expect(response.bodyUsed).toBe(true));
+        await client.logout();
+        await client.redeemPairing("fixture-two");
+        body.enqueue(new TextEncoder().encode('{"error":{"code":"private_fixture","message":"old session fixture"}}'));
+        body.close();
+        await result;
+    });
+    it("서버 로그아웃을 마치기 전에 다음 등록 요청을 보내 새 쿠키를 폐기하지 않는다", async () => {
+        let release!: (r: Response) => void;
+        let started!: () => void;
+        const pending = new Promise<Response>((resolve) => { release = resolve; });
+        const observed = new Promise<void>((resolve) => { started = resolve; });
+        const session = () => new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" }));
+        const fetch = vi.fn().mockResolvedValueOnce(session())
+            .mockImplementationOnce(() => { started(); return pending; }).mockResolvedValueOnce(session());
+        vi.stubGlobal("fetch", fetch);
+        await client.redeemPairing("fixture-one");
+        const leaving = client.logout();
+        await observed;
+        const entering = client.redeemPairing("fixture-two");
+        try {
+            expect(client.isLoggedIn()).toBe(false);
+            expect(fetch).toHaveBeenCalledTimes(2);
+            release(new Response("{}"));
+            await Promise.all([leaving, entering]);
+            expect(fetch).toHaveBeenCalledTimes(3);
+            expect(client.isLoggedIn()).toBe(true);
+        } finally { release(new Response("{}")); }
+    });
+    it("이전 인증의 401 변경 요청을 다음 로그인 자격으로 재전송하지 않는다", async () => {
+        let release!: (r: Response) => void;
+        const response = new Promise<Response>((resolve) => { release = resolve; });
+        const session = () => new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" }));
+        const fetch = vi.fn().mockResolvedValueOnce(session()).mockReturnValueOnce(response)
+            .mockResolvedValueOnce(new Response("{}")).mockResolvedValueOnce(session());
+        vi.stubGlobal("fetch", fetch);
+        await client.redeemPairing("fixture-one");
+        const result = expect(client.api.post("/projects", {}, { key: "old-operation" })).rejects.toMatchObject({
+            code: "auth_session_changed", retryable: false, details: { result_unknown: false },
+        });
+        await client.logout();
+        await client.redeemPairing("fixture-two");
+        release(new Response("{}", { status: 401 }));
+        await result;
+        expect(fetch).toHaveBeenCalledTimes(4);
+    });
+    it.each(["json", "binary"] as const)("이전 인증의 늦은 %s 조회 결과를 새 로그인에 전달하지 않는다", async (kind) => {
+        let release!: (r: Response) => void;
+        const response = new Promise<Response>((resolve) => { release = resolve; });
+        const session = () => new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" }));
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValueOnce(session()).mockReturnValueOnce(response)
+            .mockResolvedValueOnce(new Response("{}")).mockResolvedValueOnce(session()));
+        await client.redeemPairing("fixture-one");
+        const result = expect(kind === "json" ? client.api.get("/projects") : client.rawGet("/files"))
+            .rejects.toMatchObject({ code: "auth_session_changed", details: { result_unknown: false } });
+        await client.logout();
+        await client.redeemPairing("fixture-two");
+        release(new Response("{}"));
+        await result;
+    });
+    it("로그아웃보다 늦게 끝난 refresh가 이전 로그인을 되살리지 않는다", async () => {
+        let releaseRefresh!: (r: Response) => void;
+        let releaseLogout!: (r: Response) => void;
+        const refreshResponse = new Promise<Response>((resolve) => { releaseRefresh = resolve; });
+        const logoutResponse = new Promise<Response>((resolve) => { releaseLogout = resolve; });
+        vi.stubGlobal("fetch", vi.fn()
+            .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "fixture-initial", expires_at: "" })))
+            .mockReturnValueOnce(refreshResponse)
+            .mockReturnValueOnce(logoutResponse));
+        await client.redeemPairing("fixture-pairing");
+        let ended!: () => void;
+        const out = new Promise<void>((resolve) => { ended = resolve; });
+        const off = client.onAuthChange((s) => { if (!s) ended(); });
+        const renewing = client.refresh();
+        const leaving = client.logout();
+        try {
+            releaseLogout(new Response("{}"));
+            await out;
+            releaseRefresh(new Response(JSON.stringify({ access_token: "fixture-stale", expires_at: "" })));
+            await Promise.all([renewing, leaving]);
+            expect(client.isLoggedIn()).toBe(false);
+            expect(await client.refresh()).toBeNull();
+        } finally {
+            off();
+        }
+    });
+    it("access refresh는 소유 세대를 유지하고 로그아웃 뒤 재로그인해도 이전 비동기 작업의 세대는 되살리지 않는다", async () => {
+        const session = () => new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" }));
+        const fetch = vi.fn()
+            .mockResolvedValueOnce(session())
+            .mockResolvedValueOnce(session())
+            .mockResolvedValueOnce(new Response("{}"))
+            .mockResolvedValueOnce(session());
+        vi.stubGlobal("fetch", fetch);
+        await client.redeemPairing("fixture-pairing");
+        const owner = client.authGeneration();
+        await client.refresh();
+        expect(client.authGeneration()).toBe(owner);
+        await client.logout();
+        const ended = client.authGeneration();
+        expect(ended).not.toBe(owner);
+        await client.redeemPairing("fixture-next-pairing");
+        expect(client.isLoggedIn()).toBe(true);
+        expect(client.authGeneration()).toBe(ended);
+        expect(client.authGeneration()).not.toBe(owner);
+    });
     it("timeout은 서버 취소로 취급하지 않고 같은 변경 키를 보존한다", async () => {
         vi.useFakeTimers();
         const fetch = vi.fn().mockImplementation(() => new Promise(() => {}));
