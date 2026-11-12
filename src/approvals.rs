@@ -484,6 +484,11 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                     .await
                     .map_err(|e| tools::ToolError::new(if e.code == "not_found" { "not_found" } else { "invalid_arguments" }, e.message))
             }
+            Ok(_) if call.name == "recall" => {
+                let (sid,args) = (call.session_id.clone(),call.target.clone());
+                app.db.call(move |c| crate::recall::execute_tool(c,&sid,&args)).await
+                    .map_err(|e| tools::ToolError::new(e.code,e.message))
+            }
             // hold_ms가 있는 셸은 백그라운드 작업으로 실행한다(EXEC-004).
             Ok(_) if call.name == "shell" && call.target.get("hold_ms").is_some() => {
                 let s = crate::tasks::Spawn {

@@ -139,12 +139,14 @@ export function applyEvent(e: EventRecord) {
             if (pid) invalidate(`sessions:${pid}`);
             if (id) invalidate(`session:${id}`);
             invalidate("recent");
+            invalidate("search");
             break;
         }
         case "project.created":
         case "project.updated":
             invalidate("projects");
             invalidate("recent");
+            invalidate("search");
             break;
         case "recent.updated":
             invalidate("recent");

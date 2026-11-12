@@ -14,6 +14,7 @@ pub mod server;
 pub mod config;
 pub mod deps;
 pub mod context;
+pub mod recall;
 mod history;
 pub mod definitions;
 pub mod error;
@@ -82,6 +83,7 @@ pub const CAPABILITIES: &[&str] = &[
     "model_management_v1",
     "model_capabilities_v1",
     "context_auto_clear_v1",
+    "recall_keyword_v1",
     "private_model_headers_v1",
 ];
 
@@ -262,6 +264,7 @@ pub fn router(app: App) -> Router {
         .route("/projects/{id}/git/commits/{rev}", get(git::show_commit))
         .route("/projects/{id}/git/compare", get(git::compare))
         .route("/sessions/search", get(sessions::search))
+        .route("/recall", get(recall::get))
         .route("/sessions/{id}/delete", post(sessions::delete_permanently))
         .route("/sessions/{id}/title", post(titles::post_generate))
         .route("/sessions/{id}", get(sessions::show).patch(sessions::update))
