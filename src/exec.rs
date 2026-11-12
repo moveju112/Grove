@@ -296,7 +296,7 @@ async fn execute(o: &Opts, prompt: &str, project: &Path, run_dir: &Path, api_key
         enable_tool_loop: o.tools,
         approval_ttl_secs: 30 * 60,
         scheduler_tick_ms: 600_000,
-        remote_watch_insecure_loopback: false,
+        remote_watch_insecure_loopback: false, gh_command: "gh".into(),
     };
     let server = match crate::server::start(cfg, Arc::new(SystemClock)).await {
         Ok(s) => s,

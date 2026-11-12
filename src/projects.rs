@@ -182,22 +182,20 @@ pub async fn create(
         return Err(ApiError::invalid("이름은 120자 이하여야 합니다"));
     }
     let h = idem::body_hash("project.create", &json!({ "root": root, "name": name }));
-    idem::run(&app, &p, &headers, &h, move |tx, now| {
-        let existing: Option<String> =
-            tx.query_row("SELECT id FROM projects WHERE root_path = ?1", params![root], |r| r.get(0)).optional()?;
-        if let Some(id) = existing {
-            return Err(ApiError::conflict("already_exists", "이미 등록된 경로입니다").with_details(json!({ "id": id })));
-        }
-        let id = crate::util::new_id();
-        tx.execute(
-            "INSERT INTO projects (id, name, root_path, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)",
-            params![id, name, root, now],
-        )?;
-        let proj = get(tx, &id)?;
-        events::append(tx, now, "project.created", Some(&id), None, &serde_json::to_value(&proj)?)?;
-        Ok((StatusCode::CREATED, serde_json::to_value(proj)?))
-    })
-    .await
+    idem::run(&app, &p, &headers, &h, move |tx, now| Ok((StatusCode::CREATED, serde_json::to_value(insert(tx, now, &root, &name)?)?))).await
+}
+
+/// 정규화한 root로 프로젝트를 등록한다(같은 경로는 `already_exists`). 등록·clone이 같은 규칙을 쓴다.
+pub(crate) fn insert(tx: &Connection, now: &str, root: &str, name: &str) -> ApiResult<Project> {
+    let existing: Option<String> = tx.query_row("SELECT id FROM projects WHERE root_path = ?1", params![root], |r| r.get(0)).optional()?;
+    if let Some(id) = existing {
+        return Err(ApiError::conflict("already_exists", "이미 등록된 경로입니다").with_details(json!({ "id": id })));
+    }
+    let id = crate::util::new_id();
+    tx.execute("INSERT INTO projects (id, name, root_path, created_at, updated_at) VALUES (?1, ?2, ?3, ?4, ?4)", params![id, name, root, now])?;
+    let proj = get(tx, &id)?;
+    events::append(tx, now, "project.created", Some(&id), None, &serde_json::to_value(&proj)?)?;
+    Ok(proj)
 }
 
 #[derive(Deserialize)]

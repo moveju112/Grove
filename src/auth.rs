@@ -640,7 +640,7 @@ mod tests {
         let cfg = crate::config::Config {
             data_dir: dir.path().to_path_buf(), listen: "127.0.0.1:0".parse().unwrap(),
             allowed_origins: vec![], allowed_hosts: vec![], tls_terminated: false, web_dir: None,
-            enable_tool_loop: true, approval_ttl_secs: 1800, scheduler_tick_ms: 100, remote_watch_insecure_loopback: false,
+            enable_tool_loop: true, approval_ttl_secs: 1800, scheduler_tick_ms: 100, remote_watch_insecure_loopback: false, gh_command: "gh".into(),
         };
         let app = App::new(cfg, clock.clone()).unwrap();
         let owner = ensure_owner_token(&app).unwrap();

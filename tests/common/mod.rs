@@ -32,7 +32,7 @@ pub fn config(data_dir: &Path) -> Config {
         enable_tool_loop: true,
         approval_ttl_secs: 1800,
         scheduler_tick_ms: 100,
-        remote_watch_insecure_loopback: true,
+        remote_watch_insecure_loopback: true, gh_command: "gh".into(),
     }
 }
 

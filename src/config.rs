@@ -25,6 +25,8 @@ pub struct Config {
     pub scheduler_tick_ms: u64,
     /// 원격 감시에서 loopback IP의 평문 HTTP를 허용한다(시험 전용, 기본 false). 그 밖의 대상은 항상 HTTPS만 쓴다.
     pub remote_watch_insecure_loopback: bool,
+    /// GitHub CLI 실행 파일(PROJECT-012 저장소 검색). 기본 `gh`(PATH), `GROVE_GH`로 바꾼다.
+    pub gh_command: String,
 }
 
 impl Config {
@@ -55,6 +57,7 @@ impl Config {
             approval_ttl_secs: std::env::var("GROVE_APPROVAL_TTL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(30 * 60),
             scheduler_tick_ms: std::env::var("GROVE_SCHEDULER_TICK_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(15_000).clamp(100, 600_000),
             remote_watch_insecure_loopback: std::env::var("GROVE_REMOTE_WATCH_INSECURE_LOOPBACK").is_ok_and(|v| v == "1"),
+            gh_command: std::env::var("GROVE_GH").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "gh".into()),
         })
     }
 
@@ -122,7 +125,7 @@ mod tests {
             enable_tool_loop: false,
             approval_ttl_secs: 60,
             scheduler_tick_ms: 15_000,
-            remote_watch_insecure_loopback: false,
+            remote_watch_insecure_loopback: false, gh_command: "gh".into(),
         }
     }
     /// OS별 데이터 경로 규칙(ARCH-009). 절대 경로 판정은 실행 OS 기준이라 Unix 형식 값으로 확인한다.

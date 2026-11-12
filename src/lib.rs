@@ -37,6 +37,7 @@ pub mod project_resources;
 pub mod storage;
 pub mod labels;
 pub mod projects;
+pub mod repos;
 pub mod provider;
 pub mod tools;
 pub mod sessions;
@@ -186,6 +187,9 @@ pub fn router(app: App) -> Router {
         .route("/events", get(events::stream))
         .route("/projects", get(projects::list).post(projects::create))
         .route("/fs/dirs", get(projects::browse_dirs))
+        .route("/fs/suggest", get(repos::suggest))
+        .route("/github/repos", get(repos::search))
+        .route("/projects/clone", post(repos::clone))
         .route("/projects/{id}", get(projects::show).patch(projects::update))
         .route("/labels", get(labels::list).post(labels::create))
         .route("/labels/{id}", axum::routing::patch(labels::update).delete(labels::remove))

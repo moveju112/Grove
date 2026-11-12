@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, api } from "../api/client";
+import { ApiError, api, newKey } from "../api/client";
 import type { Project } from "../api/generated";
 
 type Dirs = { path: string; parent: string | null; entries: { name: string; path: string }[]; truncated: boolean };
@@ -33,6 +33,20 @@ export function AddProjectDialog({ onDone, onClose }: { onDone: (p: Project) => 
             setErr(e instanceof ApiError ? e.message : "폴더를 읽지 못했습니다");
         }
     };
+    // 경로 입력 제안(PROJECT-012): 입력이 멈추면 서버 PC의 맞는 폴더를 보인다. 늦은 응답은 버린다.
+    const [suggestions, setSuggestions] = useState<string[]>([]);
+    const suggestSeq = useRef(0);
+    useEffect(() => {
+        const q = path.trim();
+        const my = ++suggestSeq.current;
+        if (!q || q === dirs?.path) { setSuggestions([]); return; }
+        const t = setTimeout(() => {
+            api.get<{ directories: string[] }>(`/fs/suggest?${new URLSearchParams({ q, limit: "8" })}`)
+                .then((r) => { if (my === suggestSeq.current) setSuggestions(r.directories); })
+                .catch(() => { if (my === suggestSeq.current) setSuggestions([]); });
+        }, 250);
+        return () => clearTimeout(t);
+    }, [path, dirs?.path]);
     // 처음 열면 서버 사용자의 홈 폴더를 보여 준다. 숨김 표시를 바꾸면 같은 폴더를 다시 읽는다.
     useEffect(() => {
         void browse(dirs?.path, false);
@@ -71,6 +85,13 @@ export function AddProjectDialog({ onDone, onClose }: { onDone: (p: Project) => 
                         autoFocus
                     />
                 </label>
+                {suggestions.length > 0 && (
+                    <ul className="dir-list" aria-label="경로 제안">
+                        {suggestions.map((s) => (
+                            <li key={s}><button className="link small" onClick={() => { setSuggestions([]); void browse(s); }}>{s}</button></li>
+                        ))}
+                    </ul>
+                )}
                 <div className="row">
                     <button className="ghost small" onClick={() => void browse(path)}>이 경로 열기</button>
                     <button className="ghost small" disabled={!dirs?.parent} onClick={() => dirs?.parent && void browse(dirs.parent)}>
@@ -114,7 +135,89 @@ export function AddProjectDialog({ onDone, onClose }: { onDone: (p: Project) => 
                         취소
                     </button>
                 </div>
+                <details className="clone-repo">
+                    <summary>저장소에서 clone</summary>
+                    <CloneRepo target={dirs?.path ?? ""} onDone={onDone} />
+                </details>
             </div>
         </div>
     );
+}
+
+type Repo = { full_name: string; name: string; description: string | null; private: boolean; url: string };
+type Search = { status: "success" | "unavailable" | "unauthenticated" | "error"; repositories: Repo[]; error: string | null };
+
+/// 저장소 clone(PROJECT-012): GitHub 저장소를 서버 PC의 gh로 찾거나 owner/name·원격 주소를 직접 입력해
+/// 대상 폴더 아래 `<저장소 이름>`으로 받고 프로젝트로 등록한다. 응답을 받지 못하면 같은 키로만 다시 확인한다.
+function CloneRepo({ target: initialTarget, onDone }: { target: string; onDone: (p: Project) => void }) {
+    const [repo, setRepo] = useState("");
+    const [protocol, setProtocol] = useState<"https" | "ssh">("https");
+    const [target, setTarget] = useState(initialTarget);
+    const [query, setQuery] = useState("");
+    const [search, setSearch] = useState<Search | null>(null);
+    const [err, setErr] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    // 결과를 확정하지 못한 요청은 같은 키로 다시 보내 clone을 두 번 하지 않는다.
+    const pending = useRef<{ key: string; body: string } | null>(null);
+    useEffect(() => { if (!target && initialTarget) setTarget(initialTarget); }, [initialTarget]); // eslint-disable-line react-hooks/exhaustive-deps
+    const slug = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo.trim());
+
+    const find = async () => {
+        setErr(null);
+        try {
+            setSearch(await api.get<Search>(`/github/repos?${new URLSearchParams({ q: query.trim(), limit: "20" })}`));
+        } catch (e) {
+            setErr(e instanceof ApiError ? e.message : "저장소를 검색하지 못했습니다");
+        }
+    };
+    const clone = async () => {
+        const body = { repo: repo.trim(), target_directory: target.trim(), ...(slug ? { protocol } : {}) };
+        const text = JSON.stringify(body);
+        if (pending.current?.body !== text) pending.current = { key: newKey(), body: text };
+        setBusy(true);
+        setErr(null);
+        try {
+            const r = await api.post<{ project: Project }>("/projects/clone", body, { key: pending.current.key });
+            pending.current = null;
+            onDone(r.project);
+        } catch (e) {
+            const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408;
+            if (!unknown) pending.current = null;
+            setErr(e instanceof ApiError ? e.message : "응답을 받지 못했습니다. 같은 요청으로 다시 확인하세요(clone을 반복하지 않습니다)");
+        } finally {
+            setBusy(false);
+        }
+    };
+    return <div className="stack" role="group" aria-label="저장소 clone">
+        <div className="row">
+            <input aria-label="GitHub 저장소 검색" placeholder="검색어(비우면 내 저장소)" value={query} onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && void find()} />
+            <button className="ghost small" onClick={() => void find()}>검색</button>
+        </div>
+        {search && search.status !== "success" && <p className="warn small" role="status">{search.error}</p>}
+        {search?.status === "success" && (
+            <ul className="dir-list" aria-label="저장소 검색 결과">
+                {search.repositories.length === 0 && <li className="muted small">결과 없음</li>}
+                {search.repositories.map((r) => (
+                    <li key={r.full_name}>
+                        <button className="link" onClick={() => setRepo(r.full_name)}>{r.full_name}{r.private ? " 🔒" : ""}</button>
+                        {r.description && <span className="muted small"> {r.description}</span>}
+                    </li>
+                ))}
+            </ul>
+        )}
+        <label>저장소(owner/name 또는 원격 주소)
+            <input aria-label="clone할 저장소" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/name" />
+        </label>
+        {slug && <label className="small">clone 방식
+            <select aria-label="clone 방식" value={protocol} onChange={(e) => setProtocol(e.target.value === "ssh" ? "ssh" : "https")}>
+                <option value="https">https</option><option value="ssh">ssh</option>
+            </select>
+        </label>}
+        <label>받을 상위 폴더
+            <input aria-label="clone 대상 폴더" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="/절대/경로 또는 ~/code" />
+        </label>
+        {err && <p className="err" role="alert">{err}</p>}
+        <button disabled={busy || !repo.trim() || !target.trim()} onClick={() => void clone()}>{busy ? "clone 중…" : pending.current ? "같은 clone 요청 결과 확인" : "clone 후 프로젝트로 추가"}</button>
+    </div>;
 }
