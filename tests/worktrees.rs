@@ -133,6 +133,92 @@ async fn create_with_dirty_choice_enter_run_merge_and_remove() {
     assert_eq!(st, StatusCode::GONE);
 }
 
+/// PROJECT-009: 제거·유실된 worktree는 검사 뒤 남은 브랜치로 같은 경로에 다시 만들고, 불가 사유를 구분한다.
+#[tokio::test]
+async fn removed_and_missing_worktrees_are_inspected_then_restored_from_kept_branch() {
+    let (s, pid, root) = repo().await;
+    let (_, w) = s.post(&format!("/api/v1/projects/{pid}/worktrees"), json!({ "name": "back" })).await;
+    let id = w["id"].as_str().unwrap().to_string();
+    let path = wt_path(&w);
+    std::fs::write(path.join("b.txt"), "kept\n").unwrap();
+    sh(&path, &["add", "b.txt"]);
+    sh(&path, &["-c", "user.email=t@example.invalid", "-c", "user.name=Tester", "commit", "-q", "-m", "wt"]);
+    // 아직 활성: 복원 대상 아님
+    let (_, r) = s.get(&format!("/api/v1/worktrees/{id}/recovery")).await;
+    assert_eq!((r["kind"].as_str(), r["reason"].as_str()), (Some("unavailable"), Some("worktree_not_removed")), "{r}");
+    let (st, _) = s.send(Method::DELETE, &format!("/api/v1/worktrees/{id}"), json!({})).await;
+    assert_eq!(st, StatusCode::OK);
+    let (_, list) = s.get(&format!("/api/v1/projects/{pid}/worktrees")).await;
+    assert_eq!(list["removed"][0]["id"], id.as_str(), "{list}");
+    // 같은 브랜치를 다른 폴더가 쓰면 복원하지 않는다
+    let other = root.parent().unwrap().join(format!("hold-{pid}"));
+    sh(&root, &["worktree", "add", "-q", other.to_str().unwrap(), "grove/back"]);
+    let (_, r) = s.get(&format!("/api/v1/worktrees/{id}/recovery")).await;
+    assert_eq!(r["reason"], "worktree_branch_in_use", "{r}");
+    let (st, e) = s.post(&format!("/api/v1/worktrees/{id}/restore"), json!({})).await;
+    assert_eq!((st, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("worktree_branch_in_use")));
+    sh(&root, &["worktree", "remove", other.to_str().unwrap()]);
+    // 원래 경로에 폴더가 생기면 덮어쓰지 않는다
+    std::fs::create_dir_all(&path).unwrap();
+    std::fs::write(path.join("user.txt"), "x").unwrap();
+    let (_, r) = s.get(&format!("/api/v1/worktrees/{id}/recovery")).await;
+    assert_eq!(r["reason"], "worktree_path_occupied", "{r}");
+    std::fs::remove_dir_all(&path).unwrap();
+    // 복원 가능 → 실행: 브랜치의 커밋 내용으로 같은 경로에 생긴다
+    let (_, r) = s.get(&format!("/api/v1/worktrees/{id}/recovery")).await;
+    assert_eq!((r["kind"].as_str(), r["action"].as_str(), r["branch"].as_str()), (Some("recoverable"), Some("restore"), Some("grove/back")), "{r}");
+    let (st, v) = s.post(&format!("/api/v1/worktrees/{id}/restore"), json!({})).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["status"], "active");
+    assert!(v["removed_at"].is_null());
+    assert_eq!(std::fs::read_to_string(path.join("b.txt")).unwrap(), "kept\n");
+    let (_, list) = s.get(&format!("/api/v1/projects/{pid}/worktrees")).await;
+    assert_eq!(list["removed"], json!([]));
+    assert_eq!(list["worktrees"][0]["status"], "active");
+    // 유실(missing)도 같은 방법으로 복원하고, 브랜치를 지우면 복원 불가
+    std::fs::remove_dir_all(&path).unwrap();
+    s.post(&format!("/api/v1/projects/{pid}/worktrees/prune"), json!({})).await;
+    let (_, r) = s.get(&format!("/api/v1/worktrees/{id}/recovery")).await;
+    assert_eq!(r["kind"], "recoverable", "{r}");
+    sh(&root, &["branch", "-D", "grove/back"]);
+    let (_, r) = s.get(&format!("/api/v1/worktrees/{id}/recovery")).await;
+    assert_eq!(r["reason"], "worktree_branch_missing", "{r}");
+    let (st, e) = s.post(&format!("/api/v1/worktrees/{id}/restore"), json!({})).await;
+    assert_eq!((st, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("worktree_branch_missing")));
+    assert!(!path.exists());
+}
+
+/// PROJECT-009: 보관된 프로젝트는 검사 뒤 복원하고, 폴더가 사라졌으면 다시 연결이 필요하다고 알린다.
+#[tokio::test]
+async fn archived_project_recovery_inspects_folder_and_restores() {
+    let s = TestServer::start().await;
+    let p = s.create_project("arch").await;
+    let pid = p["id"].as_str().unwrap().to_string();
+    let (_, r) = s.get(&format!("/api/v1/projects/{pid}/recovery")).await;
+    assert_eq!(r["reason"], "project_not_archived", "{r}");
+    let (_, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{pid}"), json!({ "expected_revision": p["revision"], "archived": true })).await;
+    let (_, r) = s.get(&format!("/api/v1/projects/{pid}/recovery")).await;
+    assert_eq!((r["kind"].as_str(), r["action"].as_str()), (Some("recoverable"), Some("unarchive")), "{r}");
+    let (st, e) = s.post(&format!("/api/v1/projects/{pid}/restore"), json!({ "expected_revision": p["revision"] })).await;
+    assert_eq!(st, StatusCode::CONFLICT, "오래된 revision: {e}");
+    // 폴더가 사라진 경우: 복원은 되지만 다시 연결이 필요하다고 알린다
+    let root = PathBuf::from(p["root_path"].as_str().unwrap());
+    let moved = root.with_file_name(format!("{}-moved", root.file_name().unwrap().to_string_lossy()));
+    std::fs::rename(&root, &moved).unwrap();
+    let (_, r) = s.get(&format!("/api/v1/projects/{pid}/recovery")).await;
+    assert_eq!(r["action"], "unarchive_relink", "{r}");
+    let (st, v) = s.post(&format!("/api/v1/projects/{pid}/restore"), json!({ "expected_revision": v["revision"] })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v["action"], "unarchive_relink");
+    assert!(v["project"]["archived_at"].is_null());
+    assert_eq!(v["project"]["available"], false);
+    let (_, list) = s.get("/api/v1/projects").await;
+    assert!(list.as_array().unwrap().iter().any(|x| x["id"] == pid.as_str()));
+    let (st, e) = s.post(&format!("/api/v1/projects/{pid}/restore"), json!({ "expected_revision": v["project"]["revision"] })).await;
+    assert_eq!((st, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("project_not_archived")));
+    std::fs::rename(&moved, &root).unwrap();
+}
+
 #[tokio::test]
 async fn unowned_worktrees_are_listed_but_never_touched_and_prune_marks_missing() {
     let (s, pid, root) = repo().await;

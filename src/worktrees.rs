@@ -148,19 +148,22 @@ pub async fn list(State(app): State<App>, _p: Principal, Path(project_id): Path<
     let root = root_of(&app, &project_id).await?;
     let _resource = app.project_resources.ui_read(&app,&project_id,&_p).await?;
     if !is_repo(&root).await? {
-        return Ok(Json(json!({ "is_repo": false, "worktrees": [], "unowned": [] })));
+        return Ok(Json(json!({ "is_repo": false, "worktrees": [], "unowned": [], "removed": [] })));
     }
     let pid = project_id.clone();
-    let (rows, users): (Vec<Worktree>, Vec<(String, i64)>) = app
+    let (rows, users, removed): (Vec<Worktree>, Vec<(String, i64)>, Vec<Worktree>) = app
         .db
         .call(move |c| {
             let mut st = c.prepare(&format!("SELECT {COLS} FROM worktrees WHERE project_id = ?1 AND status != 'removed' ORDER BY created_at"))?;
             let rows = st.query_map(params![pid], from_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
+            // 복원 후보(PROJECT-009): 최근 제거한 것부터.
+            let mut st = c.prepare(&format!("SELECT {COLS} FROM worktrees WHERE project_id = ?1 AND status = 'removed' ORDER BY removed_at DESC LIMIT 50"))?;
+            let removed = st.query_map(params![pid], from_row)?.collect::<rusqlite::Result<Vec<_>>>()?;
             let mut st = c.prepare(
                 "SELECT worktree_id, COUNT(*) FROM sessions WHERE project_id = ?1 AND worktree_id IS NOT NULL AND archived_at IS NULL GROUP BY worktree_id",
             )?;
             let users = st.query_map(params![pid], |r| Ok((r.get(0)?, r.get(1)?)))?.collect::<rusqlite::Result<Vec<_>>>()?;
-            Ok((rows, users))
+            Ok((rows, users, removed))
         })
         .await?;
     // git이 아는 worktree 중 Grove 기록에 없는 것(주 작업 폴더 제외)은 소유 아님으로 보여 준다.
@@ -196,7 +199,7 @@ pub async fn list(State(app): State<App>, _p: Principal, Path(project_id): Path<
         v["sessions"] = json!(sessions);
         out.push(v);
     }
-    Ok(Json(json!({ "is_repo": true, "worktrees": out, "unowned": unowned })))
+    Ok(Json(json!({ "is_repo": true, "worktrees": out, "unowned": unowned, "removed": removed })))
 }
 
 // ---------------- 생성(GIT-007·009) ----------------
@@ -541,6 +544,94 @@ pub async fn remove(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
         let mut v = serde_json::to_value(&w)?;
         v["branch_kept"] = json!(true);
         Ok(v)
+    })
+    .await
+}
+
+// ---------------- 복원 검사·실행(PROJECT-009) ----------------
+
+/// 제거(removed)·유실(missing)된 Grove worktree를 남겨 둔 브랜치로 같은 경로에 다시 만들 수 있는지.
+/// 기존 폴더·다른 worktree가 쓰는 브랜치는 덮어쓰지 않는다.
+async fn inspect_worktree(w: &Worktree, root: &FsPath) -> ApiResult<Value> {
+    let unavailable = |reason: &str, message: &str| json!({ "kind": "unavailable", "worktree_id": w.id, "reason": reason, "message": message });
+    if w.status != "removed" && w.status != "missing" {
+        return Ok(unavailable("worktree_not_removed", "제거되거나 사라진 worktree가 아닙니다"));
+    }
+    if !is_repo(root).await? {
+        return Ok(unavailable("project_not_repo", "프로젝트 폴더가 Git 저장소가 아니어서 다시 만들 수 없습니다"));
+    }
+    if FsPath::new(&w.path).exists() {
+        return Ok(unavailable("worktree_path_occupied", "원래 worktree 경로에 이미 폴더가 있어 덮어쓰지 않습니다. 폴더를 확인하세요"));
+    }
+    let r = git(root, &["rev-parse", "--verify", "--quiet", "--end-of-options", &format!("refs/heads/{}", w.branch)], true).await?;
+    if r.code != 0 {
+        return Ok(unavailable("worktree_branch_missing", "남겨 둔 브랜치가 지워져 복원할 수 없습니다"));
+    }
+    let list = git(root, &["worktree", "list", "--porcelain"], true).await?;
+    let mut holder: Option<String> = None;
+    for block in String::from_utf8_lossy(&list.stdout).split("\n\n") {
+        let path = block.lines().find_map(|l| l.strip_prefix("worktree ")).map(str::to_string);
+        let branch = block.lines().find_map(|l| l.strip_prefix("branch ")).map(|b| b.trim_start_matches("refs/heads/").to_string());
+        let gone = block.lines().any(|l| l.starts_with("prunable"));
+        if branch.as_deref() == Some(w.branch.as_str()) && !gone {
+            holder = path;
+        }
+    }
+    if let Some(p) = holder {
+        return Ok(json!({ "kind": "unavailable", "worktree_id": w.id, "reason": "worktree_branch_in_use",
+            "message": format!("브랜치 {}를 다른 작업 폴더가 쓰고 있습니다: {p}", w.branch) }));
+    }
+    Ok(json!({ "kind": "recoverable", "worktree_id": w.id, "action": "restore", "branch": w.branch, "path": w.path, "name": w.name }))
+}
+
+pub async fn recovery(State(app): State<App>, p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let (w, root) = owned(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app, &w.project_id, &p).await?;
+    Ok(Json(inspect_worktree(&w, &root).await?))
+}
+
+pub async fn restore(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
+    let h = idem::body_hash("worktree.restore", &json!({ "w": id }));
+    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? { return Ok(r); }
+    let (w, root) = owned(&app, &id).await?;
+    let lock = app.repo_locks.get(&w.project_id);
+    let _g = lock.lock().await;
+    crate::auth::revalidate(&app, &p).await?;
+    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
+        return Ok(r);
+    }
+    let _resource = app.project_resources.ui_write(&app, &w.project_id, &p).await?;
+    let (w, current_root) = owned(&app, &id).await?;
+    if current_root != root { return Err(ApiError::conflict("project_changed", "프로젝트 경로가 바뀌어 worktree를 복원하지 않았습니다")); }
+    // 검사는 잠금 안에서 다시 한다(화면이 본 결과를 믿지 않는다).
+    let state = inspect_worktree(&w, &root).await?;
+    if state["kind"] != "recoverable" {
+        let reason = state["reason"].as_str().unwrap_or("unavailable").to_string();
+        let code: &'static str = match reason.as_str() {
+            "worktree_not_removed" => "worktree_not_removed",
+            "project_not_repo" => "project_not_repo",
+            "worktree_path_occupied" => "worktree_path_occupied",
+            "worktree_branch_missing" => "worktree_branch_missing",
+            _ => "worktree_branch_in_use",
+        };
+        return Err(ApiError::conflict(code, state["message"].as_str().unwrap_or("복원할 수 없습니다").to_string()).with_details(state));
+    }
+    let pending = unknown(&w.project_id, "worktree.restore", Some(&id));
+    if let Some(r) = accept(&app, &p, &headers, &h, &pending, |_, _| Ok(())).await? { return Ok(r); }
+    let result = async {
+        // 사라진 경로의 관리 기록이 남아 있으면 add가 거절하므로 먼저 정리한다(폴더는 지우지 않는다).
+        let o = git(&root, &["worktree", "prune"], false).await?;
+        if o.code != 0 { return Err(fail(&o, "worktree prune")); }
+        let o = git(&root, &["worktree", "add", "--", &w.path, &w.branch], false).await?;
+        if o.code != 0 { return Err(fail(&o, "worktree 복원")); }
+        Ok((StatusCode::OK, json!({})))
+    }.await;
+    let pid = w.project_id.clone();
+    finish(&app, &p, &headers, &h, pending, result, move |tx, now, _| {
+        tx.execute("UPDATE worktrees SET status = 'active', removed_at = NULL WHERE id = ?1", params![id])?;
+        let w = get(tx, &id)?;
+        events::append(tx, now, "worktree.changed", Some(&pid), None, &json!({ "op": "restore", "id": id }))?;
+        Ok(serde_json::to_value(&w)?)
     })
     .await
 }

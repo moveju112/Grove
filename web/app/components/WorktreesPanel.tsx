@@ -8,7 +8,8 @@ import { useQuery } from "../state/store";
 const WT = ["worktrees_v1"];
 
 type Row = Worktree & { exists: boolean; dirty_count: number | null; sessions: number };
-type List = { is_repo: boolean; worktrees: Row[]; unowned: { path: string; branch: string | null }[] };
+type List = { is_repo: boolean; worktrees: Row[]; unowned: { path: string; branch: string | null }[]; removed?: Worktree[] };
+type Recovery = { kind: "recoverable"; branch: string; path: string } | { kind: "unavailable"; reason: string; message: string };
 type Attempt = { label: string; target: string; key: string; run: (key: string) => Promise<unknown>; onSuccess?: () => void; onConflict?: (e: ApiError) => boolean };
 type CreateOptions = { carry?: "leave" | "carry"; confirm_large?: boolean };
 type Choice = ({ kind: "dirty"; changed: number } | { kind: "large"; files: number }) & { options: CreateOptions; name: string };
@@ -188,6 +189,15 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
                     </ul>
                 </>
             )}
+            {(data?.removed?.length ?? 0) > 0 && (
+                <>
+                    <p className="muted small">제거한 worktree(브랜치가 남아 있으면 같은 경로에 다시 만들 수 있음)</p>
+                    <ul className="session-list">
+                        {data!.removed!.map((w) => <RemovedRow key={w.id} w={w} disabled={busy || attempt !== null}
+                            restore={() => void act({ label: "복원", target: w.path, key: newKey(), run: (key) => api.post(`/worktrees/${w.id}/restore`, {}, { key, requires: WT }) })} />)}
+                    </ul>
+                </>
+            )}
             {rows.some((w) => !w.exists) && (
                 <button className="ghost small" disabled={busy || attempt !== null} onClick={() => void act({ label: "정리", target: projectId, key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees/prune`, {}, { key, requires: WT }) })}>
                     사라진 worktree 기록 정리
@@ -195,6 +205,26 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
             )}
         </details>
     );
+}
+
+/// 제거한 worktree 한 줄(PROJECT-009). 복원은 서버 검사 결과를 먼저 보이고, 실행 때 서버가 다시 검사한다.
+function RemovedRow({ w, disabled, restore }: { w: Worktree; disabled: boolean; restore: () => void }) {
+    const [state, setState] = useState<Recovery | null>(null);
+    const [err, setErr] = useState<string | null>(null);
+    const check = async () => {
+        setErr(null);
+        try { setState(await api.get<Recovery>(`/worktrees/${w.id}/recovery`, { requires: WT })); } catch (e) { setErr(e instanceof Error ? e.message : "복원 검사 실패"); }
+    };
+    return <li data-testid="worktree-removed">
+        <strong>{w.name}</strong> <code className="small">{w.branch}</code>
+        {!state && <button className="ghost small" disabled={disabled} onClick={() => void check()}>복원 검사</button>}
+        {state?.kind === "recoverable" && <>
+            <span className="muted small"> 브랜치로 <code>{state.path}</code>에 다시 만듭니다.</span>
+            <button className="small" disabled={disabled} onClick={restore}>복원</button>
+        </>}
+        {state?.kind === "unavailable" && <span className="warn small" role="status"> 복원 불가: {state.message}</span>}
+        {err && <span className="err small" role="alert"> {err}</span>}
+    </li>;
 }
 
 /// 대화의 작업 위치 선택(GIT-008): 프로젝트 폴더 또는 이 프로젝트의 Grove worktree. 실행 중이면 서버가 거절한다.

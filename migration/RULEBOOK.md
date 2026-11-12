@@ -622,7 +622,8 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 라벨: `GET/POST /labels`, `PATCH/DELETE /labels/{id}`(revision 확인), 할당 `PUT /projects/{id}/labels/{label_id}` `{assigned}`(집합 연산이라 재전송해도 같은 결과, 프로젝트 revision은 올리지 않음). 생성 시 `project_id`를 주면 같은 transaction에서 붙인다.
 - 이름은 공백을 하나로 정리하고 대소문자를 무시해 고유하다(40자). 빈 이름 `label_name_empty`, 겹치면 `label_name_taken`. 이름 바꾸기 충돌은 병합하지 않고 이름·색 모두 적용하지 않는다. 색은 10색 팔레트(`labels::COLORS`) 안에서만, 라벨 200개 상한.
 - 할당은 라벨 id로 연결해 이름·색을 바꿔도 유지한다. 삭제는 같은 transaction에서 할당을 지우고 `affected_project_count`를 돌려준다. 목록의 `project_count`로 삭제 전 영향을 보인다. 보관된 프로젝트에는 새로 붙일 수 없다(`archived`).
-- 화면: 사이드바 프로젝트 행 메뉴(고정, 라벨 체크, 새 라벨 만들고 붙이기), 라벨 필터(라벨 여러 개 OR + 라벨 없음, 기기별 저장, 삭제된 라벨 id는 무시)와 라벨 관리(이름·색 수정, 영향 수 확인 뒤 삭제). 실패하면 입력·선택을 보존하고 오류를 보인다. 시험: `tests/projects.rs::pin_and_labels_create_assign_edit_and_delete`, `labels::tests`, `web/app/state/projectLabels.test.ts`, `web/e2e/project-labels.spec.ts`.
+- 복원(PROJECT-009): 원본 작업공간 복구처럼 검사와 실행을 나눈다. `GET /projects/{id}/recovery`는 보관 아님(`project_not_archived`)·`unarchive`·`unarchive_relink`(폴더 없음: 복원 뒤 새 경로로 다시 연결)를, `POST /projects/{id}/restore {expected_revision}`은 보관 표시만 되돌린다. 제거·유실된 Grove worktree는 `GET /worktrees/{id}/recovery`·`POST /worktrees/{id}/restore`로 남겨 둔 브랜치를 같은 경로에 다시 체크아웃한다. 불가 사유: `worktree_not_removed`, `project_not_repo`, `worktree_path_occupied`(기존 폴더 덮어쓰지 않음), `worktree_branch_missing`, `worktree_branch_in_use`. 실행은 저장소 잠금 안에서 다시 검사하고 결과 불명 처리는 다른 worktree 작업과 같다. 목록 응답의 `removed`가 복원 후보(최근 50개)다.
+- 화면: 사이드바 프로젝트 행 메뉴(고정, 라벨 체크, 새 라벨 만들고 붙이기, 보관), "보관됨" 목록의 복원 검사·복원, worktree 패널의 제거한 worktree 복원 검사·복원, 라벨 필터(라벨 여러 개 OR + 라벨 없음, 기기별 저장, 삭제된 라벨 id는 무시)와 라벨 관리(이름·색 수정, 영향 수 확인 뒤 삭제). 실패하면 입력·선택을 보존하고 오류를 보인다. 시험: `tests/projects.rs::pin_and_labels_create_assign_edit_and_delete`, `labels::tests`, `web/app/state/projectLabels.test.ts`, `web/e2e/project-labels.spec.ts`.
 
 ## 11. 결정 기록
 

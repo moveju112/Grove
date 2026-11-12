@@ -90,6 +90,10 @@ export function ProjectMenu({ project, labels, onClose }: { project: Project; la
             </span>
         </form>}
         {error && <p className="err" role="alert">{error}</p>}
+        <button type="button" className="ghost small" disabled={busy} onClick={() => {
+            if (!confirm(`${project.name}을(를) 보관할까요? 목록에서만 빠지고 폴더·대화는 그대로이며 "보관됨"에서 복원할 수 있습니다.`)) return;
+            void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, archived: true }), "보관 실패").then((ok) => { if (ok) onClose(); });
+        }}>보관</button>
         <button type="button" className="ghost small" onClick={onClose}>닫기</button>
     </div>;
 }

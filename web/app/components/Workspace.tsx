@@ -8,6 +8,7 @@ import * as L from "../state/layout";
 import { LayoutPersistence } from "../state/layoutPersistence";
 import { applyEvent, resyncAll, setLive, useLive, useQuery } from "../state/store";
 import { AddProjectDialog } from "./AddProject";
+import { ArchivedProjects } from "./ArchivedProjects";
 import { BotsPanel } from "./BotsPanel";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { LabelChips, LabelFilter, ProjectMenu, useLabels } from "./ProjectLabels";
@@ -75,6 +76,7 @@ export function Workspace() {
     const setLabelFilter = (next: string[]) => { localStorage.setItem(LABEL_FILTER, JSON.stringify(next)); setLabelFilterState(next); };
     const [filtering, setFiltering] = useState(labelFilter.length > 0);
     const [menuFor, setMenuFor] = useState<string | null>(null);
+    const [showArchived, setShowArchived] = useState(false);
     const shown = filterProjects(projects.data ?? NO_PROJECTS, labelFilter, labels);
 
     useEffect(() => applyPrefs(loadPrefs()), []);
@@ -215,6 +217,8 @@ export function Workspace() {
                                 </button>
                             </h2>
                             {filtering && <LabelFilter labels={labels} selected={labelFilter} onChange={setLabelFilter} />}
+                            <button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</button>
+                            {showArchived && <ArchivedProjects />}
                             {shown.map((p) => (
                                 <div key={p.id} className="row" data-testid="project-row" data-project={p.name}>
                                     <button className="link" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name })} title={p.root_path}>

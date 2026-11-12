@@ -241,6 +241,48 @@ pub struct UpdateProject {
     pub pinned: Option<bool>,
 }
 
+/// 보관된 프로젝트 복원 검사(PROJECT-009). 폴더가 있으면 그대로 보관 해제, 없으면 해제 뒤 새 경로로 다시 연결해야 한다.
+/// 보관해도 폴더·대화를 건드리지 않으므로 복원은 보관 표시만 되돌린다.
+fn inspect(p: &Project) -> serde_json::Value {
+    if p.archived_at.is_none() {
+        return json!({ "kind": "unavailable", "project_id": p.id, "reason": "project_not_archived", "message": "보관된 프로젝트가 아닙니다" });
+    }
+    if p.available {
+        json!({ "kind": "recoverable", "project_id": p.id, "action": "unarchive", "name": p.name, "root_path": p.root_path })
+    } else {
+        json!({ "kind": "recoverable", "project_id": p.id, "action": "unarchive_relink", "name": p.name, "root_path": p.root_path,
+                "message": "원래 폴더가 없습니다. 복원하면 대화 기록은 그대로 보이고, 실행하려면 새 경로로 다시 연결해야 합니다" })
+    }
+}
+
+pub async fn recovery(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<serde_json::Value>> {
+    Ok(Json(app.db.call(move |c| Ok(inspect(&get(c, &id)?))).await?))
+}
+
+#[derive(Deserialize)]
+pub struct RestoreBody {
+    pub expected_revision: i64,
+}
+
+pub async fn restore(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<RestoreBody>) -> ApiResult<Response> {
+    let h = idem::body_hash("project.restore", &json!({ "id": id, "rev": b.expected_revision }));
+    idem::run(&app, &p, &headers, &h, move |tx, now| {
+        let cur = get(tx, &id)?;
+        if cur.revision != b.expected_revision {
+            return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));
+        }
+        let state = inspect(&cur);
+        if state["kind"] != "recoverable" {
+            return Err(ApiError::conflict("project_not_archived", "보관된 프로젝트가 아닙니다").with_details(state));
+        }
+        tx.execute("UPDATE projects SET archived_at = NULL, updated_at = ?2, revision = revision + 1 WHERE id = ?1", params![id, now])?;
+        let proj = get(tx, &id)?;
+        events::append(tx, now, "project.updated", Some(&id), None, &serde_json::to_value(&proj)?)?;
+        Ok((StatusCode::OK, json!({ "project": proj, "action": state["action"] })))
+    })
+    .await
+}
+
 /// 실행 중인 턴·백그라운드 작업·터미널 수(경로를 바꾸면 안 되는 상태).
 fn running_in_project(c: &Connection, id: &str) -> ApiResult<i64> {
     Ok(c.query_row(
