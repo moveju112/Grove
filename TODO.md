@@ -1777,7 +1777,7 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 - [x] WORKFLOW-004 편집 초안·저장·취소·외부 수정 충돌을 구현하고 저장 전 원본을 덮어쓰지 않는다. 검증: `tests/definitions.rs::edit_compare_restore_and_conflict`, 설정 화면 편집 취소.
 - [x] WORKFLOW-005 기본값 비교·항목별 복원·전체 복원의 영향 범위 확인을 구현한다. 검증: `tests/definitions.rs::edit_compare_restore_and_conflict`, `web/e2e/workspace.spec.ts` 복원.
 - [x] WORKFLOW-006 workflow 활성화·전환·삭제 시 활성 턴과 다음 턴에 적용되는 정의를 고정한다. 검증: RULEBOOK "워크플로 적용 시점"에 계약을 정했다. 요청은 접수 때 워크플로 snapshot을 고정해 실행 중 수정·전환·비활성화·삭제가 적용되지 않는다. 이미 그 워크플로를 고른 대화는 비활성화 뒤에도 다음 요청에 꺼진 워크플로를 계속 적용하던 결함을 고쳐, 선택은 유지(다시 켜면 복원)하되 요청은 기본 워크플로로 고정하고 `disabled_selection`을 남긴다. 화면은 선택 목록에 "꺼짐 · 다음 요청은 기본 워크플로우", 실행 중 표시에 "(꺼진 … 대신)"을 보여 준다. 삭제하면 선택을 비워 다음 요청부터 기본이다. Rust turns 34(`disabled_or_deleted_workflow_never_changes_active_turn_and_next_turn_uses_default`)·definitions 3·타입/빌드·선택 E2E 27개(`web/e2e/effort.spec.ts`, `workspace.spec.ts`) 통과.
-- [ ] WORKFLOW-007 spawn·진행·질문·완료·실패·취소 이벤트를 역할/부모 ID에 연결해 표시한다.
+- [x] WORKFLOW-007 spawn·진행·질문·완료·실패·취소 이벤트를 역할/부모 ID에 연결해 표시한다. 검증: 자식 작업 이벤트(`agent_run.changed`)는 역할(`agent_id`)·부모 대화·부모 턴·자식 대화 ID를 싣고 부모 대화로 발행된다. 이전에는 생성·종료 때만 발행해 자식이 승인·질문을 기다려도 부모 목록이 "진행 중"으로만 보였다. 자식 턴의 상태 전이마다 부모에도 알리고 `turn_status`가 질문만 기다리면 `awaiting_input`으로 계산되게 했다(`src/agents.rs::on_turn_changed`). 부모 패널은 시작 대기·승인 대기·답변 대기를 표시하고 사용자 확인이 필요한 수를 요약한다. 종료는 완료·실패·취소·중단으로 표시한다. Rust agents 6(`child_question_and_completion_reach_parent_with_role_and_parent_ids`)·questions 4·단위 2(`web/app/components/AgentRunsPanel.test.ts`)·타입/빌드·선택 E2E 26개 통과. 자식 질문 대기의 브라우저 표시는 단위 시험으로만 확인했다.
 - [ ] WORKFLOW-008 동등 이식의 회귀 시험과 프롬프트 개선의 실제 비교 시험을 분리하고 사용자 override 보존까지 검증한다.
 
 ### 35.5 최근 탭

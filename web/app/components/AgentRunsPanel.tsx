@@ -12,6 +12,8 @@ export type AgentRun = {
     status: "running" | "completed" | "failed" | "cancelled" | "interrupted";
     result: string | null;
     created_at: string;
+    /// 마지막 자식 턴 상태. 질문만 기다리면 awaiting_input.
+    turn_status?: string | null;
 };
 
 const LABEL: Record<AgentRun["status"], string> = {
@@ -21,6 +23,20 @@ const LABEL: Record<AgentRun["status"], string> = {
     cancelled: "취소됨",
     interrupted: "중단됨",
 };
+
+/// 진행 중인 자식 작업이 지금 무엇을 하는지(WORKFLOW-007). 승인·답변 대기는 사용자가 자식 대화에서 처리해야 한다.
+const WAITING: Record<string, string> = {
+    queued: "시작 대기",
+    awaiting_approval: "승인 대기",
+    awaiting_input: "답변 대기",
+};
+
+export function runLabel(r: Pick<AgentRun, "status" | "turn_status">): { text: string; needsUser: boolean } {
+    const waiting = r.status === "running" && r.turn_status ? WAITING[r.turn_status] : undefined;
+    return waiting
+        ? { text: waiting, needsUser: r.turn_status === "awaiting_approval" || r.turn_status === "awaiting_input" }
+        : { text: LABEL[r.status], needsUser: false };
+}
 
 export function useAgentRuns(sessionId: string) {
     return useQuery<{ runs: AgentRun[]; parent: AgentRun | null }>(`agent-runs:${sessionId}`, () => api.get(`/sessions/${sessionId}/agent-runs`));
@@ -47,7 +63,7 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
         <div className="agent-runs" data-testid="agent-runs">
             {parent && (
                 <p className="small">
-                    자식 작업({parent.agent_id}, {LABEL[parent.status]}) · 결과는 부모 대화에 보고됩니다{" "}
+                    자식 작업({parent.agent_id}, {runLabel(parent).text}) · 결과는 부모 대화에 보고됩니다{" "}
                     <button className="link" onClick={() => openSession(parent.parent_session_id, "부모 대화")}>부모 대화 열기</button>
                 </p>
             )}
@@ -56,12 +72,13 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
                     <summary>
                         맡긴 작업 {runs.length}
                         {runs.some((r) => r.status === "running") && <strong> · 진행 중 {runs.filter((r) => r.status === "running").length}</strong>}
+                        {runs.some((r) => runLabel(r).needsUser) && <strong> · 확인 필요 {runs.filter((r) => runLabel(r).needsUser).length}</strong>}
                     </summary>
                     <ul className="session-list">
                         {runs.map((r) => (
-                            <li key={r.id} data-testid="agent-run" data-status={r.status}>
+                            <li key={r.id} data-testid="agent-run" data-status={r.status} data-turn-status={r.turn_status ?? ""}>
                                 <span className="chip">{r.agent_id}</span>
-                                <span className={`status ${r.status}`}>{LABEL[r.status]}</span>
+                                <span className={`status ${runLabel(r).needsUser ? "awaiting_approval" : r.status}`}>{runLabel(r).text}</span>
                                 <button className="link" onClick={() => openSession(r.child_session_id, r.agent_id)}>자식 대화</button>
                                 {r.status === "running" && <button className="ghost small" onClick={() => void cancel(r.id)}>취소</button>}
                             </li>

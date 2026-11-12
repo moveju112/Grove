@@ -51,7 +51,20 @@ pub struct AgentRun {
 
 const COLS: &str = "id, parent_session_id, parent_turn_id, parent_call_id, child_session_id, agent_id, profile_id, tools_enabled, depth, status, \
                     last_turn_id, delivered_turn_id, result, error, created_at, updated_at, ended_at, \
-                    (SELECT t.status FROM turns t WHERE t.id = agent_runs.last_turn_id)";
+                    (SELECT CASE WHEN t.status = 'awaiting_approval' \
+                        AND EXISTS (SELECT 1 FROM tool_calls q WHERE q.turn_id = t.id AND q.status = 'awaiting_input') \
+                        AND NOT EXISTS (SELECT 1 FROM tool_calls a WHERE a.turn_id = t.id AND a.status = 'pending_approval') \
+                        THEN 'awaiting_input' ELSE t.status END FROM turns t WHERE t.id = agent_runs.last_turn_id)";
+
+/// 자식 턴의 상태가 바뀌면(접수·실행·승인/질문 대기) 부모 대화의 작업 목록도 갱신한다(WORKFLOW-007).
+/// 종료는 `on_turn_finished`가 결과 전달과 함께 알린다.
+pub fn on_turn_changed(c: &Connection, now: &str, turn_id: &str) -> ApiResult<()> {
+    let run = c.query_row(&format!("SELECT {COLS} FROM agent_runs WHERE last_turn_id = ?1 AND status = 'running'"), params![turn_id], from_row).optional()?;
+    if let Some(run) = run {
+        emit(c, now, &run)?;
+    }
+    Ok(())
+}
 
 fn from_row(r: &rusqlite::Row) -> rusqlite::Result<AgentRun> {
     let err: Option<String> = r.get(13)?;

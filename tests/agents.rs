@@ -116,6 +116,47 @@ async fn spawn_requires_approval_by_default_and_result_reaches_parent_once() {
     assert!(last.contains("[child agent result]") && last.contains("XYZ"), "{last}");
 }
 
+/// WORKFLOW-007: 자식의 진행·질문·완료 상태가 역할·부모 ID와 함께 부모 대화의 이벤트로 전달된다.
+#[tokio::test]
+async fn child_question_and_completion_reach_parent_with_role_and_parent_ids() {
+    let (s, f, prof, _pid, sid) = setup().await;
+    set_policy(&s, "auto").await;
+    f.push(fixture::tool_calls(&[("a1", "agent", json!({ "action": "spawn", "agent_id": "reviewer", "brief": "질문하고 끝내" }))]));
+    f.push(fixture::text("맡겼어"));
+    f.push(fixture::text("자식 결과 확인"));
+    f.push_for(CHILD, fixture::tool_calls(&[("q1", "ask_user", json!({ "question": "어느 쪽?", "options": [{ "label": "A" }, { "label": "B" }] }))]));
+    f.push_for(CHILD, fixture::text("A로 끝냄"));
+    let cursor = 0;
+    let tid = turn(&s, &sid, &prof, "자식에게 맡겨").await;
+    // 자식이 질문하면 부모 목록에서 '답변 대기'로 보인다.
+    let run = wait_run(&s, &sid, |r| r["turn_status"] == "awaiting_input").await;
+    assert_eq!(run["status"], "running");
+    let child = run["child_session_id"].as_str().unwrap().to_string();
+    let changed = |evs: &[(String, Value)], status: &str| {
+        events_of(evs, "agent_run.changed").into_iter().any(|e| {
+            e["session_id"] == sid.as_str()
+                && e["payload"]["agent_id"] == "reviewer"
+                && e["payload"]["parent_session_id"] == sid.as_str()
+                && e["payload"]["parent_turn_id"] == tid.as_str()
+                && e["payload"]["child_session_id"] == child.as_str()
+                && (e["payload"]["turn_status"] == status || e["payload"]["status"] == status)
+        })
+    };
+    let evs = s.read_events(Some(cursor), "", 200, 1500).await;
+    assert!(changed(&evs, "awaiting_input"), "질문 대기가 부모 대화 이벤트로 전달: {evs:?}");
+    // 자식 대화에서 답하면 이어서 완료되고 부모에 결과가 한 번 보고된다.
+    let ct = s.wait_status(run["last_turn_id"].as_str().unwrap(), "awaiting_approval").await;
+    let call = ct["tool_calls"].as_array().unwrap().iter().find(|c| c["status"] == "awaiting_input").expect("자식 질문").clone();
+    let (st, v) = s.post(&format!("/api/v1/tool-calls/{}/answer", call["id"].as_str().unwrap()), json!({ "choices": ["A"], "expected_revision": call["revision"] })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let run = wait_run(&s, &sid, |r| r["status"] == "completed").await;
+    assert_eq!(run["result"], "A로 끝냄");
+    s.wait_status(&tid, "completed").await;
+    let evs = s.read_events(Some(cursor), "", 400, 1500).await;
+    assert!(changed(&evs, "completed"));
+    assert_eq!(notes(&s, &sid).await.len(), 1);
+}
+
 #[tokio::test]
 async fn wait_in_same_turn_keeps_tool_pairs_and_send_follows_up() {
     let (s, f, prof, _pid, sid) = setup().await;

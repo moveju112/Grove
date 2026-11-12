@@ -172,6 +172,7 @@ fn emit_turn(c: &Connection, now: &str, turn_id: &str) -> ApiResult<Turn> {
     let t = get_turn(c, turn_id)?;
     let pid = project_of(c, &t.session_id)?;
     events::append(c, now, "turn.updated", Some(&pid), Some(&t.session_id), &serde_json::to_value(&t)?)?;
+    crate::agents::on_turn_changed(c, now, turn_id)?;
     Ok(t)
 }
 
