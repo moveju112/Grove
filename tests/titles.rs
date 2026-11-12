@@ -11,6 +11,39 @@ async fn title_of(s: &TestServer, sid: &str) -> String {
     s.get(&format!("/api/v1/sessions/{sid}")).await.1["title"].as_str().unwrap().to_string()
 }
 
+/// MODEL-024: 제목·요약 모델 경로는 주 대화 모델과 따로 설정되며 설정한 endpoint로만 간다.
+#[tokio::test]
+async fn title_and_summary_models_are_configured_separately_from_main_model() {
+    let s = TestServer::start().await;
+    let main = Fixture::start().await;
+    let aux = Fixture::start().await;
+    let prof = s.fixture_profile(&main.base).await;
+    let aux_prof = s.fixture_profile(&aux.base).await;
+    let p = s.create_project("aux").await;
+    let pid = p["id"].as_str().unwrap();
+    let (_, sv) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({ "title": "원래" })).await;
+    let sid = sv["id"].as_str().unwrap().to_string();
+    for key in ["session.title_profile", "context.summary_profile"] {
+        let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/{key}"), json!({ "expected_revision": 0, "value": aux_prof })).await;
+        assert!(st.is_success(), "{key}: {v}");
+    }
+    main.push(fixture::text(&format!("첫 답 {}", "길게 ".repeat(40))));
+    let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "첫 질문", "profile_id": prof })).await;
+    s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
+    main.push(fixture::text("둘째 답"));
+    let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "둘째 질문", "profile_id": prof })).await;
+    s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
+    aux.push(fixture::text("\"보조 제목\""));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/title"), json!({})).await;
+    assert!(st.is_success(), "{v}");
+    assert_eq!(title_of(&s, &sid).await, "보조 제목");
+    aux.push(fixture::text("짧은 요약"));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/compact"), json!({ "profile_id": prof })).await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{v}");
+    assert_eq!(aux.requests().len(), 2, "제목·요약은 보조 모델로");
+    assert_eq!(main.requests().len(), 2, "주 대화 모델은 대화 요청만");
+}
+
 #[tokio::test]
 async fn auto_title_is_off_by_default_and_generates_once_when_enabled() {
     let s = TestServer::start().await;
