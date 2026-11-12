@@ -208,6 +208,10 @@ export function applyEvent(e: EventRecord) {
             invalidate("profiles");
             invalidate("bots");
             break;
+        case "mcp.changed":
+            invalidate("mcp");
+            invalidate("secrets");
+            break;
         case "device.created":
         case "device.revoked":
             invalidate("devices");

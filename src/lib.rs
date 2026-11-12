@@ -36,6 +36,7 @@ pub mod procs;
 pub mod project_resources;
 pub mod storage;
 pub mod labels;
+pub mod mcp;
 pub mod projects;
 pub mod repos;
 pub mod provider;
@@ -99,6 +100,7 @@ pub const CAPABILITIES: &[&str] = &[
     "project_scripts_v1",
     "terminal_capture_v1",
     "settings_reset_v1",
+    "mcp_settings_v1",
 ];
 
 #[derive(Clone)]
@@ -211,6 +213,8 @@ pub fn router(app: App) -> Router {
         .route("/admin/update-readiness", get(admin::readiness))
         .route("/admin/shutdown", post(admin::shutdown))
         .route("/admin/metrics", get(admin::metrics))
+        .route("/mcp/servers", get(mcp::list).post(mcp::create))
+        .route("/mcp/servers/{id}", axum::routing::put(mcp::update).delete(mcp::remove))
         .route("/admin/update-receipts/import", post(admin::import_receipts))
         .route("/updates", get(admin::list_updates))
         .route("/bots", get(bots::list).post(bots::create))

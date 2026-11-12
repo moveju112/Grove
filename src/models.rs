@@ -45,7 +45,8 @@ fn secret_info(c: &Connection, id: &str) -> ApiResult<SecretInfo> {
         .optional()?
         .ok_or_else(|| ApiError::not_found("비밀이 없습니다"))?;
     let mut st = c.prepare(&format!("SELECT p.name FROM model_profiles p WHERE p.deleted_at IS NULL AND {} ORDER BY p.name", crate::model_headers::SECRET_USAGE))?;
-    let used_by = st.query_map(params![id], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
+    let mut used_by = st.query_map(params![id], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
+    used_by.extend(crate::mcp::secret_users(c, id)?);
     // 해독할 수 없으면(키 파일 없음·손상) 마스킹하지 않은 안내 문구로 알린다.
     let masked = value.as_deref().map(mask).unwrap_or_else(|| "(해독 불가: secret.key 없음·손상 — 키를 다시 입력하세요)".into());
     Ok(SecretInfo { id: id.into(), label, masked, created_at, updated_at, used_by })
@@ -126,7 +127,7 @@ pub async fn delete_secret(State(app): State<App>, Owner(p): Owner, headers: Hea
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let info = secret_info(tx, &id)?;
         if !info.used_by.is_empty() {
-            return Err(ApiError::conflict("in_use", "모델 프로필이 사용 중인 키입니다").with_details(json!({ "used_by": info.used_by })));
+            return Err(ApiError::conflict("in_use", "모델 프로필 또는 MCP 서버가 사용 중인 키입니다").with_details(json!({ "used_by": info.used_by })));
         }
         tx.execute("UPDATE model_profiles SET secret_id = NULL WHERE secret_id = ?1", params![id])?;
         tx.execute("DELETE FROM secrets WHERE id = ?1", params![id])?;

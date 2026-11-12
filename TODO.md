@@ -1175,7 +1175,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 
 - [ ] RESOURCE-001 MCP stdio·HTTP transport의 기존 지원 범위를 확인하고 구현한다.
 - [ ] RESOURCE-002 기존 SSE MCP 호환 필요성과 종료 계획을 결정한다.
-- [ ] RESOURCE-003 MCP 서버 추가·편집·삭제·활성화·비활성화를 구현한다.
+- [x] RESOURCE-003 MCP 서버 추가·편집·삭제·활성화·비활성화를 구현한다. 검증: 소유자 전용 `/mcp/servers` 등록·revision 편집/삭제·사용 설정·vault 참조 보호와 설정 검색 화면을 구현했다(migration 54, `src/mcp.rs`, `web/app/components/McpServers.tsx`). 저장·사용 설정은 연결과 구분하며 현재 연결/실행은 하지 않는다. 재시작·같은 키 재접수·오래된 revision·잘못된 설정 원자 거절·기기/미인증 접근 거부·secret 원문 미복제는 `tests/mcp.rs`, 화면 CRUD·충돌 입력 보존·실제 응답 유실의 같은 키 확인은 `web/e2e/mcp-settings.spec.ts`로 확인했다. transport·handshake·호출 수명은 RESOURCE-001·004·008·009에 남는다.
 - [ ] RESOURCE-004 MCP 연결 상태·도구 목록·재연결·timeout·crash를 처리한다.
 - [ ] RESOURCE-005 MCP OAuth 시작·상태·취소·완료·자격증명 갱신을 구현한다.
 - [ ] RESOURCE-006 MCP secret은 목록·오류·UI projection에 노출하지 않는다.
@@ -1860,7 +1860,7 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 
 상위: RESOURCE-001~009.
 
-- [ ] MCP-001 서버 설정의 transport·실행 인자·endpoint·secret 참조를 검증하고 연결 전에 저장 상태를 구분한다.
+- [x] MCP-001 서버 설정의 transport·실행 인자·endpoint·secret 참조를 검증하고 연결 전에 저장 상태를 구분한다. 검증: `stdio`·`http`·`sse` tagged 설정의 실행 파일/인자·URL·timeout·환경변수/헤더 secret 참조를 검사하고, 미지원 transport·원문 env/headers·내장 URL 자격증명/query/fragment·예약/중복 헤더·없는 secret을 거절한다. 정규화 후 idempotency hash를 계산하고 저장 설정·사용 여부와 `disabled`/`disconnected` 상태를 분리한다(`tests/mcp.rs`, RULEBOOK §39).
 - [ ] MCP-002 stdio spawn 또는 HTTP 연결·초기화·capability handshake를 구현한다.
 - [ ] MCP-003 도구 목록·namespace·schema version·변경 알림을 registry에 반영한다.
 - [ ] MCP-004 도구 요청·진행·결과·오류·취소·timeout을 공통 실행 루프에 연결한다.

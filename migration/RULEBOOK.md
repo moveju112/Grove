@@ -637,6 +637,15 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - clone·저장소 검색·경로 제안(PROJECT-012, `src/repos.rs`): 검색 `GET /github/repos?q=&limit=`은 서버 PC의 `gh`(`GROVE_GH`, 기본 PATH의 gh)로만 하고 `status`를 success·unavailable(`reason: gh_missing`)·unauthenticated·error로 나눈다. 빈 검색어는 내 저장소 목록, 검색어는 `--` 뒤에 넘겨 옵션으로 해석되지 않는다. clone `POST /projects/clone {repo, protocol?, target_directory}`은 owner/name(+https|ssh 필수) 또는 https·ssh·`git@host:`·file 원격만 받고(평문 http·ext 등 거절), 대상 폴더(없으면 생성) 아래 `<저장소 이름>`이 이미 있으면 `already_exists`로 거절한다. 임시 폴더 `.grove-clone-<id>`에 받은 뒤 이름을 바꾸고 실패하면 그 임시 폴더만 지운다(`clone_failed`, 오류의 URL 자격 증명은 가림). 5분 제한, 프롬프트 없음(ssh BatchMode), 서버 전체에서 한 번에 하나. 같은 Idempotency-Key는 clone을 다시 하지 않고 등록 결과를 돌려준다. 경로 제안 `GET /fs/suggest?q=`는 폴더 경로만 돌려준다: 절대 경로·`~`면 그 폴더의 하위 폴더 접두어(점으로 시작할 때만 숨김), 이름이면 홈 아래 깊이 4·5,000개 상한(숨김·빌드 산출물 제외).
 - 화면: 사이드바 프로젝트 행 메뉴(고정, 라벨 체크, 새 라벨 만들고 붙이기, 보관), "보관됨" 목록의 복원 검사·복원, worktree 패널의 제거한 worktree 복원 검사·복원, 라벨 필터(라벨 여러 개 OR + 라벨 없음, 기기별 저장, 삭제된 라벨 id는 무시)와 라벨 관리(이름·색 수정, 영향 수 확인 뒤 삭제). 실패하면 입력·선택을 보존하고 오류를 보인다. 시험: `tests/projects.rs::pin_and_labels_create_assign_edit_and_delete`, `labels::tests`, `web/app/state/projectLabels.test.ts`, `web/e2e/project-labels.spec.ts`.
 
+## 39. MCP 등록 설정(RESOURCE-003, MCP-001)
+
+- 원본 고정 SHA의 `engine/src/policy.mjs::mapMcpServers`는 stdio·http·sse를 허용한다. 등록 설정은 세 transport를 보존한다. 실제 transport·handshake·도구 실행은 이 등록 흐름과 별도로 구현하며, 저장하거나 사용 설정을 켜도 연결 완료로 표시하지 않는다.
+- 소유자 전용 `GET/POST /mcp/servers`, `PUT /mcp/servers/{id}` `{expected_revision, server}`, `DELETE /mcp/servers/{id}?expected_revision=`. 변경은 기존 idempotency·transaction·outbox 계약을 따른다. 이름·URL·헤더 이름을 정규화한 뒤 hash를 계산한다. 이벤트·감사에는 설정 원문이 아닌 ID만 남긴다.
+- `server`: 이름(소문자 ASCII 영숫자·._-, 1~64자, 예약 이름 제외), `enabled`(기본 false), `timeout_secs`(기본 60, 1~300), tagged `config`. 서버 100개·설정 64KiB 상한. `stdio`는 실행 파일·인자(128개, 각각 8192바이트)와 `env_secrets`, `http`/`sse`는 HTTP(S) endpoint와 `header_secrets`를 받는다. URL 내장 자격증명·query·fragment와 프로토콜 예약 헤더를 거절한다.
+- 비밀은 기존 vault의 secret ID만 참조한다. 원문 `env`·`headers` 필드는 받지 않고 JSON에 알 수 없는 필드도 거절한다. 헤더 secret은 필요한 접두사(예: `Bearer `)까지 포함한 완전한 헤더 값이다. 비활성 설정도 secret 삭제를 막고 vault 목록의 `used_by`에 `MCP: <name>`으로 표시한다. MCP 설정 삭제는 secret을 삭제하지 않는다.
+- 응답의 `connection_state`는 현재 `disabled` 또는 `disconnected`다. 서버 재시작은 설정만 보존하며 자식 프로세스·외부 연결을 자동 생성하지 않는다. 관리 화면도 이 차이를 명시하고, revision 충돌은 내 입력을 보존하며 응답 유실은 원래 내용·revision·같은 키로만 확인한다.
+- 검증: `tests/mcp.rs`, `web/e2e/mcp-settings.spec.ts`; vault·권한·하위 버전 migration 회귀는 `tests/secrets.rs`, `tests/access.rs`, `tests/header_legacy.rs`, `tests/notifications.rs`, `tests/storage.rs`, `tests/task_logs.rs`.
+
 ## 11. 결정 기록
 
 | ID | 결정 | 근거 |

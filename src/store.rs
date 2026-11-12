@@ -861,6 +861,19 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE schedule_runs ADD COLUMN result_evidence TEXT;
     ALTER TABLE schedule_runs ADD COLUMN notified INTEGER;
     "#,
+    // 54: MCP 서버 등록. 연결·도구 실행 상태는 저장 설정과 구분한다.
+    r#"
+    CREATE TABLE mcp_servers (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL UNIQUE,
+        config TEXT NOT NULL CHECK(json_valid(config)),
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+        timeout_secs INTEGER NOT NULL CHECK(timeout_secs BETWEEN 1 AND 300),
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    "#,
 ];
 
 #[cfg(test)]
