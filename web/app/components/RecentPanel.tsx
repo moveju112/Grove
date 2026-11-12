@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { RecentItem, RecentPage } from "../api/generated";
 import { useQuery } from "../state/store";
+import { DRAG_OPEN } from "../state/layout";
 import type { Opener } from "./Workspace";
 
 const FILTERS: [string, string][] = [
@@ -72,7 +73,14 @@ export function RecentPanel({ open }: { open: Opener }) {
             <ul className="recent-list">
                 {(recent.data?.items ?? []).map((it) => (
                     <li key={it.id} className={it.unread ? "unread" : ""} data-testid="recent-item">
-                        <button className="link" onClick={() => openItem(it)} title={`${it.project_name} · ${it.title}`}>
+                        <button className="link" onClick={() => openItem(it)} title={`${it.project_name} · ${it.title} · 영역이나 가장자리로 끌어서 열 수 있습니다`}
+                            draggable={["session", "project", "terminal", "file"].includes(it.kind)}
+                            onDragStart={(e) => {
+                                const target = { kind: it.kind, project_id: it.project_id, resource_id: it.resource_id, title: it.title, ...(it.kind === "file" ? { filePath: it.resource_id } : {}) };
+                                e.dataTransfer.setData(DRAG_OPEN, JSON.stringify(target));
+                                e.dataTransfer.effectAllowed = "copy";
+                            }}
+                        >
                             <span className="badge">{it.project_name}</span> {it.title}
                             {STATUS[it.status] && <span className={`status ${it.status}`}>{STATUS[it.status]}</span>}
                             {it.unread && <span className="dot" aria-label="읽지 않음" />}

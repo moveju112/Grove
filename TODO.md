@@ -1284,7 +1284,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] LAYOUT-001 첫 UI 구조부터 split tree·pane·tab을 정의하고 전역 단일 currentProject에 실행 대상을 의존하지 않는다. 검증: `web/app/state/layout.ts`(tab마다 project_id 고정), `layout.test.ts`.
 - [x] LAYOUT-002 서로 다른 프로젝트의 대화·파일·터미널을 같은 창에서 좌우 분할로 연다. 검증: `web/e2e/workspace.spec.ts` 좌우 분할 시험.
 - [x] LAYOUT-003 서로 다른 프로젝트를 위아래 분할로 열고 분할 방향 변경·비율 조정을 지원한다. 검증: `web/e2e/workspace.spec.ts`(위아래 전환), `layout.test.ts`(비율 clamp).
-- [ ] LAYOUT-004 최근 탭과 열린 탭을 drag/drop으로 분할·이동하고 메뉴·키보드·터치 대안을 제공한다.
+- [x] LAYOUT-004 최근 탭과 열린 탭을 drag/drop으로 분할·이동하고 메뉴·키보드·터치 대안을 제공한다. 검증: 열린 탭은 다른 탭 위(그 위치)·pane 가운데(그 pane)·가장자리 25%(왼/오/위/아래 새 분할)로 끌어 옮기며 놓을 위치를 미리 표시한다. 탭 ID를 유지해 초안·서버 작업이 이어지고 빈 pane은 정리한다. 최근 항목은 가운데에 놓으면 그 pane의 같은 자원을 재사용하고 가장자리에 놓으면 새 분할에 연다(기존 "오른쪽/아래에 열기" 버튼이 메뉴 대안). 탭의 "탭 이동" 메뉴는 앞/뒤 순서·다른 영역·네 방향 새 영역을, Alt+Shift+←/→는 순서 변경을 제공하고, 메뉴는 터치 기기에서도 쓸 수 있다. 영역 수·깊이 한도와 자기 영역의 유일한 탭 분할은 배치를 바꾸지 않는다. 외부 페이지가 흉내낸 drag 데이터는 종류·ID·길이를 검증해 무시한다. 좁은 화면은 한 pane만 보이므로 분할 대신 가운데 drop만 받는다. 단위 21개(`web/app/state/layout.test.ts`)·타입/빌드·선택 E2E 15개(`web/e2e/pane-dnd.spec.ts`, pane 조작·배치 복원·반응형·모바일 회귀) 통과. 실기기 터치 drag는 미검증이다.
 - [x] LAYOUT-005 pane마다 host/project/workspace/session 또는 resource ID를 보존하고 제목·경로·활성 표시로 대상을 구분한다. 검증: 탭 배지·제목, `web/e2e/workspace.spec.ts`.
 - [x] LAYOUT-006 포커스 변경이 다른 pane의 cwd·모델 설정·stream·승인 대상에 영향을 주지 않게 한다. 검증: 기기 기본 선택은 새 탭의 초기값으로 유지하고, 기존 탭은 빈 입력이어도 모델·effort·도구·에이전트·전송 방식 선택을 자기 사본에서 복원한다. 프로젝트 입력도 공유 `new` 키 대신 탭 ID로 분리하며 이전 공유 초안은 지우거나 자동 배정하지 않고 사본 선택으로 복구한다. 모델만 바꾼 같은 글을 원래 요청 확인 뒤 지우던 결함도 수정했다. 서로 다른 프로젝트의 같은 상대 경로에 shell 쓰기 승인을 대기시키고, 승인 HTTP 전달 전에 다른 pane으로 초점을 옮겨도 cwd·파일 변경·응답 stream·실제 모델이 원래 대화에 귀속됨을 확인했다(실모델 호출 없이 Linux fixture). 단위 9개·타입/빌드·선택 E2E 23개 통과(`web/app/state/drafts.test.ts`, `web/e2e/pane-isolation.spec.ts` 5개, 입력/첨부/전송 복구·로그아웃·누락 프로젝트·서버 초안 충돌 회귀).
 - [x] LAYOUT-007 요청 생성 시 대상을 고정하고 서버에서 소유권을 검사한다. 응답 도착 시 전역 포커스를 참조하지 않는다. 검증: 요청 경로에 session_id 고정, 서버가 세션의 프로젝트로 실행, e2e pane별 메시지 귀속.
@@ -1799,7 +1799,7 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 - [x] PANE-001 split tree node의 방향·비율·child와 leaf pane의 tab 목록·활성 tab을 정의한다. 검증: `web/app/state/layout.ts`, `layout.test.ts`, 서버 검증 `src/workspace.rs::validate_layout`.
 - [x] PANE-002 각 tab의 host/project/workspace/resource 바인딩을 불변 실행 대상으로 정의한다. 검증: `layout.test.ts`, `tests/workspace.rs::layout_validation_and_conflict`.
 - [x] PANE-003 좌우/위아래 생성·방향 변경·비율 변경·최소 크기 제한을 구현한다. 검증: `layout.test.ts`(분할·방향·비율·최대 pane).
-- [ ] PANE-004 다른 프로젝트 탭의 이동·drag/drop·새 분할과 키보드/메뉴 대안을 구현한다.
+- [x] PANE-004 다른 프로젝트 탭의 이동·drag/drop·새 분할과 키보드/메뉴 대안을 구현한다. 검증: LAYOUT-004와 같은 `placeTab`/`openAtEdge`를 사용한다. 탭은 자기 `project_id`/`resource_id`를 그대로 가지고 이동하므로 다른 프로젝트 pane으로 옮겨도 요청 대상 프로젝트가 바뀌지 않는다(`layout.test.ts` 프로젝트 A/B 이동, `web/e2e/pane-dnd.spec.ts`).
 - [x] PANE-005 닫기·합치기·전체 보기·복원 시 tab 유실을 막고 서버 작업은 유지한다. 검증: `layout.test.ts`(pane 닫기 시 tab 합침), e2e 탭 닫기 후 세션 유지.
 - [ ] PANE-006 포커스·입력·shortcut·clipboard·승인 버튼의 대상을 pane에 결합한다.
 - [ ] PANE-007 같은 세션을 중복 표시할 때 구독을 공유하고 각 viewer 해제의 참조 수를 관리한다.

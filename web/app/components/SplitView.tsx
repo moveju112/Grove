@@ -100,20 +100,89 @@ function NodeView(p: ViewProps & { node: L.Node; path: number[] }) {
     );
 }
 
+const { DRAG_TAB, DRAG_OPEN } = L;
+const EDGE_LABEL: Record<(typeof L.SPLIT_EDGES)[number], string> = { left: "왼쪽", right: "오른쪽", top: "위", bottom: "아래" };
+
+// pane 가장자리 25% 안이면 그 방향 분할, 아니면 그 pane에 넣는다. 좁은 화면은 분할하지 않는다.
+function dropZone(e: React.DragEvent<HTMLElement>, narrow: boolean): L.DropEdge {
+    if (narrow) return "center";
+    const r = e.currentTarget.getBoundingClientRect();
+    const x = (e.clientX - r.left) / r.width;
+    const y = (e.clientY - r.top) / r.height;
+    const near = [["left", x], ["right", 1 - x], ["top", y], ["bottom", 1 - y]] as const;
+    const [edge, dist] = near.reduce((a, b) => (b[1] < a[1] ? b : a));
+    return dist < 0.25 ? edge : "center";
+}
+
+const draggable = (e: React.DragEvent) => e.dataTransfer.types.includes(DRAG_TAB) || e.dataTransfer.types.includes(DRAG_OPEN);
+
 function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     const { leaf } = p;
     const focused = p.layout.focused_leaf === leaf.id;
     const active = leaf.tabs.find((t) => t.id === leaf.active_tab);
+    const activeIndex = leaf.tabs.findIndex((t) => t.id === leaf.active_tab);
     const others = L.leaves(p.layout.root).filter((x) => x.id !== leaf.id);
     const projectName = (id?: string) => p.projects.find((x) => x.id === id)?.name;
     const visible = p.visible && (!p.narrow || focused) && (!p.maximized || p.maximized === leaf.id);
+    const [zone, setZone] = useState<L.DropEdge | null>(null);
+    const splittable = L.canSplit(p.layout, leaf.id);
+    const drop = (e: React.DragEvent, edge: L.DropEdge, index?: number) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setZone(null);
+        const tabId = e.dataTransfer.getData(DRAG_TAB);
+        if (tabId) {
+            p.update((l) => L.placeTab(l, tabId, leaf.id, edge, index));
+            return;
+        }
+        const target = L.parseOpenTarget(e.dataTransfer.getData(DRAG_OPEN));
+        if (target) p.update((l) => L.openAtEdge(l, leaf.id, edge, target));
+    };
+    const menu = (value: string) => {
+        if (!active || !value) return;
+        const [kind, arg] = value.split(":") as [string, string];
+        if (kind === "leaf") p.update((l) => L.moveTab(l, active.id, arg));
+        else if (kind === "order") p.update((l) => L.placeTab(l, active.id, leaf.id, "center", activeIndex + Number(arg)));
+        else if (kind === "edge") p.update((l) => L.placeTab(l, active.id, leaf.id, arg as L.DropEdge));
+    };
     return (
         <PaneVisibility.Provider value={visible}>
-        <section className={`pane ${focused ? "focused" : ""}`} onPointerDownCapture={() => !focused && p.update((l) => L.focus(l, leaf.id))} data-testid="pane" data-leaf={leaf.id}>
+        <section className={`pane ${focused ? "focused" : ""}`} onPointerDownCapture={() => !focused && p.update((l) => L.focus(l, leaf.id))} data-testid="pane" data-leaf={leaf.id}
+            onDragOver={(e) => {
+                if (!draggable(e)) return;
+                e.preventDefault();
+                e.dataTransfer.dropEffect = e.dataTransfer.types.includes(DRAG_TAB) ? "move" : "copy";
+                const next = dropZone(e, p.narrow);
+                setZone(next !== "center" && !splittable ? "center" : next);
+            }}
+            onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setZone(null)}
+            onDrop={(e) => draggable(e) && drop(e, zone ?? "center")}
+        >
+            {zone && <div className={`drop-zone ${zone}`} data-testid="drop-zone" data-zone={zone} aria-hidden="true" />}
             <div className="tabbar" role="tablist">
-                {leaf.tabs.map((t) => (
-                    <div key={t.id} className={`tab ${t.id === leaf.active_tab ? "on" : ""}`} role="tab" aria-selected={t.id === leaf.active_tab}>
-                        <button className="tab-title" onClick={() => p.update((l) => L.activate(l, t.id))} title={t.title}>
+                {leaf.tabs.map((t, i) => (
+                    <div key={t.id} className={`tab ${t.id === leaf.active_tab ? "on" : ""}`} role="tab" aria-selected={t.id === leaf.active_tab}
+                        onDragOver={(e) => {
+                            if (!draggable(e)) return;
+                            e.preventDefault();
+                            e.stopPropagation();
+                            setZone(null);
+                        }}
+                        onDrop={(e) => draggable(e) && drop(e, "center", i)}
+                    >
+                        <button className="tab-title" onClick={() => p.update((l) => L.activate(l, t.id))} title={`${t.title} · 끌어서 다른 영역이나 가장자리로 이동(Alt+Shift+←/→ 순서 변경)`}
+                            draggable
+                            onDragStart={(e) => {
+                                e.dataTransfer.setData(DRAG_TAB, t.id);
+                                e.dataTransfer.effectAllowed = "move";
+                            }}
+                            onKeyDown={(e) => {
+                                if (!e.altKey || !e.shiftKey || (e.key !== "ArrowLeft" && e.key !== "ArrowRight")) return;
+                                e.preventDefault();
+                                const index = i + (e.key === "ArrowLeft" ? -1 : 1);
+                                if (index >= 0 && index < leaf.tabs.length) p.update((l) => L.placeTab(l, t.id, leaf.id, "center", index));
+                            }}
+                        >
                             {t.kind !== "settings" && <span className="badge">{projectName(t.project_id) ?? "?"}</span>}
                             {t.kind === "project" ? "대화 목록" : t.title}
                         </button>
@@ -131,20 +200,21 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                         <button className="ghost small" title="아래로 분할" aria-label="아래로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "column", copyOf(active)))}>
                             ⊟
                         </button>
-                        {others.length > 0 && (
-                            <select
-                                aria-label="다른 영역으로 이동"
-                                value=""
-                                onChange={(e) => e.target.value && p.update((l) => L.moveTab(l, active.id, e.target.value))}
-                            >
-                                <option value="">이동…</option>
-                                {others.map((o, i) => (
-                                    <option key={o.id} value={o.id}>
-                                        영역 {i + 1}
-                                    </option>
-                                ))}
-                            </select>
-                        )}
+                        <select aria-label="탭 이동" value="" onChange={(e) => menu(e.target.value)}>
+                            <option value="">이동…</option>
+                            {leaf.tabs.length > 1 && <>
+                                <option value="order:-1" disabled={activeIndex <= 0}>탭을 앞으로</option>
+                                <option value="order:1" disabled={activeIndex >= leaf.tabs.length - 1}>탭을 뒤로</option>
+                            </>}
+                            {others.map((o, i) => (
+                                <option key={o.id} value={`leaf:${o.id}`}>
+                                    영역 {i + 1}
+                                </option>
+                            ))}
+                            {leaf.tabs.length > 1 && splittable && L.SPLIT_EDGES.map((edge) => (
+                                <option key={edge} value={`edge:${edge}`}>{EDGE_LABEL[edge]} 새 영역으로</option>
+                            ))}
+                        </select>
                     </>
                 )}
                 {others.length > 0 && (

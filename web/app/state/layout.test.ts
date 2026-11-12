@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-    allTabs, closeLeaf, closeTab, emptyLayout, fileTarget, focusedLeaf, isValid, leaves, markMissing, mobileView, moveTab, openResource, openTab, setDirection, setRatio, splitLeaf,
+    allTabs, closeLeaf, closeTab, emptyLayout, fileTarget, focusedLeaf, isValid, leaves, markMissing, MAX_LEAVES, mobileView, moveTab, openAtEdge, openResource, openTab,
+    parseOpenTarget, placeTab, setDirection, setRatio, splitLeaf,
     type Layout,
 } from "./layout";
 
@@ -12,6 +13,74 @@ function twoPanes(dir: "row" | "column" = "row"): Layout {
     l = openTab(l, l.focused_leaf, sA);
     l = splitLeaf(l, l.focused_leaf, dir, sB);
     return l;
+}
+
+describe("탭 drag/drop·메뉴 이동", () => {
+    const sC = { kind: "session" as const, project_id: "A", resource_id: "sc", title: "C 대화" };
+    it("같은 pane 안에서 순서를 바꾸고 tab ID를 유지한다", () => {
+        let l = emptyLayout();
+        for (const t of [sA, sB, sC]) l = openTab(l, l.focused_leaf, t);
+        const [a, b, c] = leaves(l.root)[0]!.tabs;
+        const next = placeTab(l, a!.id, l.focused_leaf, "center", 1);
+        expect(leaves(next.root)[0]!.tabs.map((t) => t.id)).toEqual([b!.id, a!.id, c!.id]);
+        expect(placeTab(next, c!.id, l.focused_leaf, "center", 0).root).toMatchObject({ tabs: [c, b, a].map((t) => ({ id: t!.id })) });
+        expect(validAfter(placeTab(l, a!.id, l.focused_leaf, "center", 99))).toBe(true);
+    });
+    it("다른 pane의 지정 위치로 옮기고 빈 pane은 정리한다", () => {
+        const l = twoPanes();
+        const [left, right] = leaves(l.root);
+        const moved = placeTab(l, left!.tabs[0]!.id, right!.id, "center", 0);
+        expect(leaves(moved.root)).toHaveLength(1);
+        expect(leaves(moved.root)[0]!.tabs.map((t) => t.resource_id)).toEqual(["sa", "sb"]);
+        expect(leaves(moved.root)[0]!.active_tab).toBe(left!.tabs[0]!.id);
+    });
+    it("가장자리 drop은 그 방향에 새 pane을 만들고 원래 pane이 비면 닫는다", () => {
+        const l = twoPanes();
+        const [left, right] = leaves(l.root);
+        const top = placeTab(l, right!.tabs[0]!.id, left!.id, "top");
+        expect(leaves(top.root).map((x) => x.tabs.map((t) => t.resource_id))).toEqual([["sb"], ["sa"]]);
+        expect(top.root).toMatchObject({ type: "split", direction: "column" });
+        expect(focusedLeaf(top).tabs[0]!.id).toBe(right!.tabs[0]!.id);
+        let one = emptyLayout();
+        one = openTab(openTab(one, one.focused_leaf, sA), one.focused_leaf, sB);
+        const split = placeTab(one, leaves(one.root)[0]!.tabs[0]!.id, one.focused_leaf, "right");
+        expect(leaves(split.root).map((x) => x.tabs.map((t) => t.resource_id))).toEqual([["sb"], ["sa"]]);
+    });
+    it("자기 pane의 유일한 탭 분할·한도 초과는 배치를 바꾸지 않는다", () => {
+        let l = emptyLayout();
+        l = openTab(l, l.focused_leaf, sA);
+        const only = leaves(l.root)[0]!.tabs[0]!.id;
+        expect(placeTab(l, only, l.focused_leaf, "left")).toBe(l);
+        let n = 0;
+        while (leaves(l.root).length < MAX_LEAVES) {
+            for (const leaf of leaves(l.root)) l = splitLeaf(l, leaf.id, "row", { ...sB, resource_id: `s${n++}` });
+        }
+        expect(leaves(l.root)).toHaveLength(MAX_LEAVES);
+        expect(openAtEdge(l, l.focused_leaf, "right", sC)).toBe(l);
+        const extra = leaves(l.root)[0]!;
+        const full = openTab(l, extra.id, sC);
+        expect(placeTab(full, focusedLeaf(full).tabs.at(-1)!.id, extra.id, "bottom")).toBe(full);
+    });
+    it("최근 항목 drop은 가운데면 같은 자원을 재사용하고 가장자리면 새 pane에 연다", () => {
+        const l = twoPanes();
+        const [left] = leaves(l.root);
+        expect(allTabs(openAtEdge(l, left!.id, "center", sA))).toHaveLength(2);
+        const below = openAtEdge(l, left!.id, "bottom", sC);
+        expect(leaves(below.root).map((x) => x.tabs.map((t) => t.resource_id))).toEqual([["sa"], ["sc"], ["sb"]]);
+        expect(focusedLeaf(below).tabs[0]!.resource_id).toBe("sc");
+    });
+    it("drag 데이터는 형식·ID·길이를 검증한다", () => {
+        expect(parseOpenTarget(JSON.stringify(sA))).toEqual(sA);
+        expect(parseOpenTarget(JSON.stringify({ kind: "file", project_id: "A", resource_id: "src/a b.ts", filePath: "src/a b.ts", title: "a" }))).toMatchObject({ filePath: "src/a b.ts" });
+        for (const bad of [
+            "{broken", "null", JSON.stringify({ ...sA, kind: "settings" }), JSON.stringify({ ...sA, project_id: "../x" }),
+            JSON.stringify({ ...sA, resource_id: "a/b" }), JSON.stringify({ ...sA, title: "x".repeat(501) }), JSON.stringify({ ...sA, filePath: "x" }),
+        ]) expect(parseOpenTarget(bad)).toBeNull();
+    });
+});
+
+function validAfter(l: Layout) {
+    return isValid(l);
 }
 
 describe("layout", () => {

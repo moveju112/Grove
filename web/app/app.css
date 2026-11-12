@@ -161,7 +161,15 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .divider { flex: 0 0 6px; background: var(--line); cursor: col-resize; touch-action: none; }
 .split.column > .divider { cursor: row-resize; }
 .divider:hover, .divider:focus { background: var(--accent); }
-.pane { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); border: 2px solid transparent; }
+.pane { position: relative; flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--panel); border: 2px solid transparent; }
+/* drag 중 놓을 위치 미리보기. 입력을 가로채지 않는다. */
+.drop-zone { position: absolute; z-index: 5; pointer-events: none; background: var(--accent-weak); border: 2px dashed var(--accent); opacity: 0.7; }
+.drop-zone.center { inset: 0; }
+.drop-zone.left { inset: 0 50% 0 0; }
+.drop-zone.right { inset: 0 0 0 50%; }
+.drop-zone.top { inset: 0 0 50% 0; }
+.drop-zone.bottom { inset: 50% 0 0 0; }
+.tab-title[draggable="true"] { cursor: grab; }
 .pane.focused { border-color: var(--accent-weak); }
 .tabbar { display: flex; align-items: center; gap: 0.2em; border-bottom: 1px solid var(--line); padding: 0.15em 0.3em; overflow-x: auto; }
 .tab { display: flex; align-items: center; border-radius: 6px 6px 0 0; padding: 0 0.2em; }

@@ -113,6 +113,81 @@ export function moveTab(l: Layout, tabId: string, toLeafId: string): Layout {
     return collapseEmpty({ ...l, root, focused_leaf: toLeafId });
 }
 
+/// drop 위치(LAYOUT-004·PANE-004). center는 그 pane에 넣고, 가장자리는 대상 pane을 그 방향으로 나눈다.
+export type DropEdge = "center" | "left" | "right" | "top" | "bottom";
+export const SPLIT_EDGES = ["left", "right", "top", "bottom"] as const;
+const EDGE: Record<(typeof SPLIT_EDGES)[number], { direction: "row" | "column"; before: boolean }> = {
+    left: { direction: "row", before: true },
+    right: { direction: "row", before: false },
+    top: { direction: "column", before: true },
+    bottom: { direction: "column", before: false },
+};
+
+export function canSplit(l: Layout, leafId: string): boolean {
+    return leaves(l.root).length < MAX_LEAVES && depthOf(l.root, leafId) >= 0 && depthOf(l.root, leafId) < MAX_DEPTH;
+}
+
+function splitWith(root: Node, leafId: string, edge: (typeof SPLIT_EDGES)[number], added: Leaf): Node {
+    const { direction, before } = EDGE[edge];
+    return mapLeaf(root, leafId, (x) => ({ type: "split", direction, ratio: 0.5, children: before ? [added, x] : [x, added] }));
+}
+
+const clampIndex = (i: number | undefined, length: number) => Math.min(length, Math.max(0, i ?? length));
+
+/// 기존 tab을 drop 위치로 옮긴다. tab ID를 유지하므로 초안·스크롤·서버 작업은 그대로다.
+/// index는 옮길 tab을 뺀 나머지 목록에서의 위치다. 바꿀 수 없으면(한도·자기 자신 분할) 그대로 둔다.
+export function placeTab(l: Layout, tabId: string, toLeafId: string, edge: DropEdge, index?: number): Layout {
+    const from = leaves(l.root).find((x) => x.tabs.some((t) => t.id === tabId));
+    const to = findLeaf(l, toLeafId);
+    if (!from || !to) return l;
+    const tab = from.tabs.find((t) => t.id === tabId)!;
+    if (edge === "center") {
+        const root = mapLeaf(l.root, from.id, (x) => removeFromLeaf(x as Leaf, tabId));
+        const placed = mapLeaf(root, to.id, (x) => {
+            const tabs = (x as Leaf).tabs;
+            const at = clampIndex(index, tabs.length);
+            return { ...(x as Leaf), tabs: [...tabs.slice(0, at), tab, ...tabs.slice(at)], active_tab: tab.id };
+        });
+        return collapseEmpty({ ...l, root: placed, focused_leaf: to.id });
+    }
+    if ((from.id === to.id && from.tabs.length === 1) || !canSplit(l, to.id)) return l;
+    const id = uid("L");
+    const root = mapLeaf(l.root, from.id, (x) => removeFromLeaf(x as Leaf, tabId));
+    return collapseEmpty({ ...l, root: splitWith(root, to.id, edge, { type: "leaf", id, tabs: [tab], active_tab: tab.id }), focused_leaf: id });
+}
+
+/// 최근 항목 등 새 자원을 drop 위치에 연다. center는 그 pane의 같은 자원을 재사용한다.
+export function openAtEdge(l: Layout, toLeafId: string, edge: DropEdge, tab: Omit<Tab, "id">): Layout {
+    if (!findLeaf(l, toLeafId)) return l;
+    if (edge === "center") return openTab(l, toLeafId, tab);
+    if (!canSplit(l, toLeafId) || allTabs(l).length >= MAX_TABS) return l;
+    const id = uid("L");
+    const next = { ...l, root: splitWith(l.root, toLeafId, edge, { type: "leaf", id, tabs: [], active_tab: null }), focused_leaf: id };
+    return openTab(next, id, tab);
+}
+
+export const DRAG_TAB = "application/x-grove-tab";
+export const DRAG_OPEN = "application/x-grove-open";
+const DROP_KINDS: readonly TabKind[] = ["session", "project", "file", "terminal"];
+const ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+/// drag로 받은 열기 대상. 다른 페이지도 같은 형식을 흉내낼 수 있으므로 형식·길이를 검증하고 조회 탭만 만든다.
+export function parseOpenTarget(raw: string): Omit<Tab, "id"> | null {
+    let v: Record<string, unknown>;
+    try {
+        v = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+        return null;
+    }
+    if (!v || typeof v !== "object") return null;
+    const { kind, project_id, resource_id, title, filePath } = v;
+    if (!DROP_KINDS.includes(kind as TabKind) || typeof project_id !== "string" || !ID.test(project_id)) return null;
+    if (typeof resource_id !== "string" || !resource_id || resource_id.length > 4096 || typeof title !== "string" || title.length > 500) return null;
+    if (kind !== "file" && !ID.test(resource_id)) return null;
+    if (filePath !== undefined && (kind !== "file" || typeof filePath !== "string" || filePath.length > 4096)) return null;
+    return { kind: kind as TabKind, project_id, resource_id, title, ...(typeof filePath === "string" ? { filePath } : {}) };
+}
+
 function removeFromLeaf(leaf: Leaf, tabId: string): Leaf {
     const idx = leaf.tabs.findIndex((t) => t.id === tabId);
     const tabs = leaf.tabs.filter((t) => t.id !== tabId);
