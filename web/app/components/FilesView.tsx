@@ -4,6 +4,7 @@ import { useQuery } from "../state/store";
 import { fileAttemptKey, loadFileAttempt, loadFileBuffer, loadFileView, saveFileBuffer, saveFileView, type FileAttempt } from "../state/fileState";
 import { watchFile, type FileContent as Content } from "../state/fileWatch";
 import { usePaneVisible } from "../state/paneVisibility";
+import { sha256Hex } from "../state/sha256";
 import { ArtifactPreview } from "./ArtifactPreview";
 import { isArtifact } from "../state/artifactPreview";
 
@@ -12,7 +13,10 @@ type Listing = { path: string; entries: Entry[]; truncated: boolean };
 
 const enc = encodeURIComponent;
 
-const COPY_ERROR = "이 기기에 편집 사본을 보관하지 못했습니다. 화면을 떠나기 전에 저장하거나 내용을 복사하세요.";
+/// 서버 `files::MAX_UPLOAD`와 같은 값.
+const MAX_UPLOAD = 5 * 1024 * 1024;
+
+const COPY_ERROR ="이 기기에 편집 사본을 보관하지 못했습니다. 화면을 떠나기 전에 저장하거나 내용을 복사하세요.";
 type AttemptCache = { key: string; restoreKey?: string; endpoint: string; method: FileAttempt["method"]; path?: string };
 
 // 탐색기 작업과 편집기 저장은 응답 유실 뒤에도 요청 본문과 키를 함께 유지한다.
@@ -23,6 +27,8 @@ function useFileMutation<T>(onSuccess: (result: T, attempt: FileAttempt) => void
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<unknown>(null);
     const active = useRef(false);
+    // 기기 사본에 넣지 않는 큰 본문(업로드 원문). 같은 키로 다시 확인할 때만 메모리에서 함께 보낸다.
+    const transient = useRef<{ key: string; body: Record<string, string> } | null>(null);
     useEffect(() => {
         if (!attempt || !isLoggedIn()) return;
         try { localStorage.setItem(cache.key, JSON.stringify(attempt)); }
@@ -30,25 +36,29 @@ function useFileMutation<T>(onSuccess: (result: T, attempt: FileAttempt) => void
     }, [cache.key]); // eslint-disable-line react-hooks/exhaustive-deps
     const clear = () => {
         localStorage.removeItem(cache.key);
+        transient.current = null;
         setAttempt(null);
         setError(null);
     };
-    const act = async (a: FileAttempt) => {
+    const act = async (a: FileAttempt, extra?: Record<string, string>) => {
         if (active.current) return;
         active.current = true;
+        if (extra) transient.current = { key: a.key, body: extra };
+        const more = transient.current?.key === a.key ? transient.current.body : {};
         setAttempt(a);
         setBusy(true);
         setError(null);
         try {
             try { localStorage.setItem(cache.key, JSON.stringify(a)); }
             catch { throw new ApiError(0, "local_copy_unavailable", "요청 사본을 보관하지 못해 실행하지 않았습니다. 기기 저장 공간을 확인하세요.", true); }
-            const result = await api[a.method]<T>(a.path, a.body, { key: a.key });
+            const result = await api[a.method]<T>(a.path, { ...a.body, ...more }, { key: a.key });
             clear();
             onSuccess(result, a);
         } catch (e) {
             setError(e);
             if (e instanceof ApiError && e.status < 500 && e.code !== "result_unknown" && !e.retryable) {
                 localStorage.removeItem(cache.key);
+                transient.current = null;
                 setAttempt(null);
             }
         } finally {
@@ -85,10 +95,29 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
     const mutation = useFileMutation<unknown>(() => listing.reload(), {
         key: fileAttemptKey(projectId, "", tabId, "op"), endpoint: `/projects/${projectId}/files/op`, method: "post",
     });
-    const locked = mutation.locked || editorLocked;
+    const uploads = useFileMutation<unknown>(() => listing.reload(), {
+        key: fileAttemptKey(projectId, "", tabId, "upload"), endpoint: `/projects/${projectId}/files/upload`, method: "post",
+    });
+    const locked = mutation.locked || uploads.locked || editorLocked;
     const op = (body: Record<string, string>) => {
         if (locked) return;
         void mutation.act({ method: "post", path: `/projects/${projectId}/files/op`, body, key: newKey() });
+    };
+    const uploadInput = useRef<HTMLInputElement>(null);
+    const [uploadError, setUploadError] = useState<string | null>(null);
+    // 업로드(FILEUI-005): 기기 사본에는 경로·내용 hash만 남기고 원문은 메모리에만 둔다. 덮어쓰지 않는다.
+    const upload = async (file: File) => {
+        setUploadError(null);
+        if (locked) return;
+        if (file.size > MAX_UPLOAD) {
+            setUploadError(`한 번에 올릴 수 있는 파일은 ${MAX_UPLOAD / 1024 / 1024}MiB까지입니다(${(file.size / 1024 / 1024).toFixed(1)}MiB).`);
+            return;
+        }
+        const bytes = new Uint8Array(await file.arrayBuffer());
+        const sha256 = await sha256Hex(bytes);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+        void uploads.act({ method: "post", path: `/projects/${projectId}/files/upload`, body: { path: join(file.name), sha256 }, key: newKey() }, { data_base64: btoa(binary) });
     };
     const join = (name: string) => (dir === "." ? name : `${dir}/${name}`);
     const parent = dir === "." ? null : dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : ".";
@@ -116,7 +145,15 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                 <div className="inline wrap">
                     <button className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 파일 이름"); if (n) selectPath(`new:${join(n)}`); }}>새 파일</button>
                     <button className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 폴더 이름"); if (n) void op({ op: "mkdir", path: join(n) }); }}>새 폴더</button>
+                    <button className="ghost small" disabled={locked} onClick={() => uploadInput.current?.click()}>{uploads.busy ? "올리는 중…" : "파일 올리기"}</button>
+                    <input ref={uploadInput} type="file" hidden aria-label="올릴 파일 선택" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void upload(f); }} />
                 </div>
+                {uploadError && <p className="err" role="alert">{uploadError}</p>}
+                {Boolean(uploads.error) && <p className="err" role="alert">{fileError(uploads.error)}</p>}
+                {uploads.attempt && !uploads.busy && <div className="inline wrap">
+                    <button className="ghost small" onClick={() => void uploads.act(uploads.attempt!)}>같은 업로드 결과 확인</button>
+                    <button className="ghost small" onClick={() => { uploads.clear(); listing.reload(); }}>목록 확인 후 닫기</button>
+                </div>}
                 {Boolean(mutation.error) && <p className="err" role="alert">{fileError(mutation.error)}</p>}
                 {mutation.attempt && !mutation.busy && <div className="inline wrap">
                     <button className="ghost small" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</button>

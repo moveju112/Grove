@@ -188,6 +188,7 @@ pub async fn content(State(app): State<App>, _p: Principal, Path(id): Path<Strin
 pub struct Tickets(std::sync::Mutex<std::collections::HashMap<String, (String, String, std::time::Instant, Principal)>>);
 
 const TICKET_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+const MAX_TICKETS: usize = 4096;
 
 impl Tickets {
     fn issue(&self, project_id: &str, path: &str, principal: Principal) -> String {
@@ -195,6 +196,11 @@ impl Tickets {
         let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
         let now = std::time::Instant::now();
         m.retain(|_, v| v.2 > now);
+        // 만료 전 티켓이 상한을 넘으면 가장 먼저 만료될 것부터 버린다(메모리 상한).
+        while m.len() >= MAX_TICKETS {
+            let Some(oldest) = m.iter().min_by_key(|(_, v)| v.2).map(|(k, _)| k.clone()) else { break };
+            m.remove(&oldest);
+        }
         m.insert(t.clone(), (project_id.to_string(), path.to_string(), now + TICKET_TTL, principal));
         t
     }
@@ -244,12 +250,14 @@ async fn serve(app: &App, id: &str, path: &str, download: bool, principal: &Prin
     if !m.is_file() {
         return Err(ApiError::invalid("파일이 아닙니다"));
     }
-    if m.len() > MAX_RAW {
-        return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", format!("{}바이트를 넘는 파일은 보낼 수 없습니다", MAX_RAW)));
+    // 미리보기는 브라우저가 한 번에 그리는 크기까지만, 내려받기는 더 큰 파일도 흘려보낸다.
+    let limit = if download { MAX_DOWNLOAD } else { MAX_RAW };
+    if m.len() > limit {
+        return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", format!("{}MiB를 넘는 파일은 {}할 수 없습니다", limit / 1024 / 1024, if download { "내려받기" } else { "미리보기" }))
+            .with_details(json!({ "limit": limit, "size": m.len() })));
     }
-    let mut bytes = Vec::new();
-    file.take(MAX_RAW + 1).read_to_end(&mut bytes).map_err(|e| io_err(e, "파일 읽기"))?;
-    if bytes.len() as u64 > MAX_RAW { return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "파일 크기 제한을 넘었습니다")); }
+    let len = m.len();
+    let body = stream_file(file, len);
     let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let ctype = match ext.as_str() {
         "png" => "image/png",
@@ -264,9 +272,10 @@ async fn serve(app: &App, id: &str, path: &str, download: bool, principal: &Prin
         _ => "text/plain; charset=utf-8",
     };
     let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-    let mut r = Response::new(Body::from(bytes));
+    let mut r = Response::new(body);
     let h = r.headers_mut();
     h.insert(header::CONTENT_TYPE, HeaderValue::from_static(ctype));
+    h.insert(header::CONTENT_LENGTH, HeaderValue::from(len));
     h.insert(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff"));
     h.insert(
         header::CONTENT_SECURITY_POLICY,
@@ -279,6 +288,26 @@ async fn serve(app: &App, id: &str, path: &str, download: bool, principal: &Prin
         h.insert(header::CONTENT_DISPOSITION, v);
     }
     Ok(r.into_response())
+}
+
+/// 검사한 handle에서 처음 확인한 길이만큼만 64KiB씩 보낸다. 도중에 파일이 줄면 본문이 Content-Length보다
+/// 짧게 끝나 받는 쪽이 불완전한 전송으로 알 수 있고, 늘어난 부분은 보내지 않는다.
+fn stream_file(file: std::fs::File, len: u64) -> Body {
+    use tokio::io::AsyncReadExt;
+    let reader = tokio::fs::File::from_std(file).take(len);
+    let stream = futures_util::stream::unfold(Some(reader), |state| async move {
+        let mut reader = state?;
+        let mut buf = vec![0u8; 64 * 1024];
+        match reader.read(&mut buf).await {
+            Ok(0) => None,
+            Ok(n) => {
+                buf.truncate(n);
+                Some((Ok::<_, std::io::Error>(bytes::Bytes::from(buf)), Some(reader)))
+            }
+            Err(e) => Some((Err(e), None)),
+        }
+    });
+    Body::from_stream(stream)
 }
 
 #[derive(Deserialize)]
@@ -317,14 +346,56 @@ pub async fn op(State(app): State<App>, p: Principal, headers: HeaderMap, Path(i
     mutate(app, p, headers, id, FileMutation::Op(b)).await
 }
 
+/// 프로젝트 파일 업로드(FILEUI-005). 원문은 기기에 보관하지 않으므로 멱등 hash는 경로·내용 hash로 정하고,
+/// 응답을 잃은 뒤 원문 없이 같은 키로 다시 물으면 저장된 결과만 돌려준다.
+#[derive(Clone, Deserialize, Serialize)]
+pub struct UploadBody {
+    pub path: String,
+    pub sha256: String,
+    #[serde(default, skip_serializing)]
+    pub data_base64: Option<String>,
+}
+
+/// 업로드 원문 상한. 전역 요청 본문 한도(8MiB) 안에서 base64 확장(4/3)과 JSON을 담는다.
+pub const MAX_UPLOAD: u64 = 5 * 1024 * 1024;
+/// 내려받기 상한. 파일을 메모리에 모으지 않고 열린 handle에서 흘려보낸다.
+pub const MAX_DOWNLOAD: u64 = 1024 * 1024 * 1024;
+
+pub async fn upload(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<UploadBody>) -> ApiResult<Response> {
+    if !crate::util::valid_sha256(&b.sha256) {
+        return Err(ApiError::invalid("sha256이 올바르지 않습니다"));
+    }
+    if b.data_base64.as_ref().is_some_and(|d| d.len() as u64 > MAX_UPLOAD.div_ceil(3) * 4) {
+        return Err(too_large_upload());
+    }
+    mutate(app, p, headers, id, FileMutation::Upload(b)).await
+}
+
+fn too_large_upload() -> ApiError {
+    ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", format!("한 번에 올릴 수 있는 파일은 {}MiB까지입니다", MAX_UPLOAD / 1024 / 1024))
+        .with_details(json!({ "limit": MAX_UPLOAD }))
+}
+
 #[derive(Clone, Serialize)]
 enum FileMutation {
     Save(SaveBody),
     Op(FileOp),
+    Upload(UploadBody),
+}
+
+impl FileMutation {
+    /// 멱등 hash 입력. 업로드 원문은 빼고 경로·내용 hash로 같은 요청을 식별한다.
+    fn hash_input(&self) -> Value {
+        match self {
+            FileMutation::Upload(b) => json!({ "upload": { "path": b.path, "sha256": b.sha256 } }),
+            other => json!(other),
+        }
+    }
 }
 
 enum FileAction {
     Save(PathBuf, Vec<u8>),
+    Create(PathBuf, Vec<u8>),
     Mkdir(PathBuf),
     Rename(PathBuf, PathBuf),
     Duplicate { from: PathBuf, to: PathBuf, stage: PathBuf },
@@ -402,6 +473,27 @@ fn prepare_mutation(root: &FsPath, mutation: &FileMutation, copy_id: &str) -> Ap
             }
         }
         FileMutation::Op(FileOp::Delete { .. }) => unreachable!("삭제는 휴지통 경로에서 처리"),
+        FileMutation::Upload(b) => {
+            let data = b.data_base64.as_deref().ok_or_else(|| {
+                ApiError::conflict("upload_data_required", "이 업로드의 결과 기록이 없습니다. 원본 파일을 다시 선택해 올리세요")
+            })?;
+            let bytes = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data)
+                .map_err(|_| ApiError::invalid("base64 파일 내용이 올바르지 않습니다"))?;
+            if bytes.len() as u64 > MAX_UPLOAD {
+                return Err(too_large_upload());
+            }
+            if crate::util::sha256_hex(&bytes) != b.sha256 {
+                return Err(ApiError::invalid("파일 내용이 sha256과 다릅니다. 전송 중 손상되었을 수 있습니다"));
+            }
+            let p = resolve_api(root, &b.path)?;
+            require_absent(&scope, &p)?;
+            if p.parent().is_none_or(|d| scope.metadata(d).map_or(true, |m| !m.is_dir())) {
+                return Err(ApiError::invalid("상위 폴더가 없습니다"));
+            }
+            let rel = rel_display(root, &p);
+            let size = bytes.len();
+            (FileAction::Create(p, bytes), json!({"op":"upload","path":rel,"sha256":b.sha256,"bytes":size}), json!({"op":"upload","path":rel}))
+        }
     };
     Ok(FilePlan { work: Some(FileWork { scope, action: work }), response, event: Some(event) })
 }
@@ -410,6 +502,8 @@ fn execute_mutation(work: FileWork) -> ApiResult<()> {
     let scope = work.scope;
     match work.action {
         FileAction::Save(p, bytes) => scope.atomic_write(&p, &bytes).map_err(|e| io_err(e, "파일 저장")),
+        // 같은 폴더 임시 파일에 fsync까지 마친 뒤 덮어쓰지 않는 rename으로 공개한다. 실패하면 임시 파일을 지운다.
+        FileAction::Create(p, bytes) => scope.write_new(&p, &bytes).map_err(|e| io_err(e, "파일 올리기")),
         FileAction::Mkdir(p) => scope.create_dir(&p, false).map_err(|e| io_err(e, "폴더 만들기")),
         FileAction::Rename(a, z) => scope.rename_noreplace(&a, &scope, &z).map_err(|e| io_err(e, "이름 바꾸기")),
         FileAction::Duplicate { from, to, stage } => {
@@ -426,7 +520,7 @@ fn execute_mutation(work: FileWork) -> ApiResult<()> {
 }
 
 async fn mutate(app: App, p: Principal, headers: HeaderMap, id: String, mutation: FileMutation) -> ApiResult<Response> {
-    let h = idem::body_hash("files.mutate", &json!({"project_id":id,"request":mutation}));
+    let h = idem::body_hash("files.mutate", &json!({"project_id":id,"request":mutation.hash_input()}));
     if let Some(response) = idem::replay(&app, &p, &headers, &h).await? { return Ok(response); }
     let _resource = app.project_resources.ui_write(&app,&id,&p).await?;
     let _guard = app.storage.mutations.lock().await;

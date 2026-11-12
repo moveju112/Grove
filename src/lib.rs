@@ -252,6 +252,7 @@ pub fn router(app: App) -> Router {
         .route("/projects/{id}/files/content", get(files::content).put(files::save))
         .route("/projects/{id}/files/raw", get(files::raw))
         .route("/projects/{id}/files/op", post(files::op))
+        .route("/projects/{id}/files/upload", post(files::upload).layer(axum::extract::DefaultBodyLimit::max(7 * 1024 * 1024 + 512 * 1024)))
         .route("/projects/{id}/files/ticket", post(files::ticket))
         .route("/file-tickets/{ticket}", get(files::by_ticket))
         .route("/projects/{id}/git/status", get(git::status))

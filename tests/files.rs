@@ -234,6 +234,78 @@ async fn ops_need_confirmation_never_overwrite_and_delete_goes_to_trash() {
     assert!(std::fs::read_to_string(trash.join("origin.json")).unwrap().contains("\"d2\""));
 }
 
+/// FILEUI-005: 업로드는 덮어쓰지 않고 내용 hash를 확인하며, 응답을 잃은 뒤 원문 없이 같은 키로 결과를 확인한다.
+#[tokio::test]
+async fn upload_never_overwrites_checks_hash_and_replays_without_the_original() {
+    use base64::Engine;
+    let (s, pid, root) = setup().await;
+    let url = format!("/api/v1/projects/{pid}/files/upload");
+    let post = |body: serde_json::Value, key: &'static str| {
+        let (s, url) = (&s, url.clone());
+        async move {
+            let r = s.raw(Method::POST, &url, Some(body), Some(key), None).await;
+            let st = r.status();
+            (st, r.json::<serde_json::Value>().await.unwrap_or_default())
+        }
+    };
+    let bytes: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+    let sha = grove::util::sha256_hex(&bytes);
+    let data = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    std::fs::create_dir(root.join("in")).unwrap();
+    let (st, v) = post(json!({ "path": "in/a.bin", "sha256": sha, "data_base64": data }), "up-1").await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!(v, json!({ "op": "upload", "path": "in/a.bin", "sha256": sha, "bytes": 200_000 }));
+    assert_eq!(std::fs::read(root.join("in/a.bin")).unwrap(), bytes);
+    // 응답 유실 뒤 새로고침: 원문 없이 같은 키로 물으면 저장된 결과
+    let (st, again) = post(json!({ "path": "in/a.bin", "sha256": sha }), "up-1").await;
+    assert_eq!((st, &again), (StatusCode::OK, &v));
+    // 다른 키로 같은 경로 → 덮어쓰지 않는다
+    let other = base64::engine::general_purpose::STANDARD.encode(b"other");
+    let (st, e) = post(json!({ "path": "in/a.bin", "sha256": grove::util::sha256_hex(b"other"), "data_base64": other }), "up-2").await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    assert_eq!(e["error"]["code"], "already_exists");
+    assert_eq!(std::fs::read(root.join("in/a.bin")).unwrap(), bytes);
+    // 결과 기록이 없는 키를 원문 없이 물으면 실행하지 않고 다시 고르게 한다
+    let (st, e) = post(json!({ "path": "in/b.bin", "sha256": sha }), "up-3").await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    assert_eq!(e["error"]["code"], "upload_data_required");
+    assert!(!root.join("in/b.bin").exists());
+    // 내용이 hash와 다르면 거부, 상위 폴더 없음·프로젝트 밖 경로 거부
+    let (st, _) = post(json!({ "path": "in/c.bin", "sha256": sha, "data_base64": other }), "up-4").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = post(json!({ "path": "none/c.bin", "sha256": sha, "data_base64": data }), "up-5").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = post(json!({ "path": "../c.bin", "sha256": sha, "data_base64": data }), "up-6").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    // 상한(5MiB)을 넘으면 413과 한도
+    let big = vec![7u8; 5 * 1024 * 1024 + 1];
+    let (st, e) = post(json!({ "path": "in/big.bin", "sha256": grove::util::sha256_hex(&big), "data_base64": base64::engine::general_purpose::STANDARD.encode(&big) }), "up-7").await;
+    assert_eq!(st, StatusCode::PAYLOAD_TOO_LARGE, "{e}");
+    assert_eq!(e["error"]["details"]["limit"], 5 * 1024 * 1024);
+    assert!(!root.join("in/big.bin").exists());
+    // 임시 파일이 남지 않는다
+    let names: Vec<String> = std::fs::read_dir(root.join("in")).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().to_string()).collect();
+    assert_eq!(names, ["a.bin"]);
+}
+
+/// FILEUI-005: 내려받기는 미리보기 상한(32MiB)보다 큰 파일도 길이를 밝혀 흘려보낸다.
+#[tokio::test]
+async fn download_streams_files_larger_than_the_preview_limit() {
+    let (s, pid, root) = setup().await;
+    let size = 33 * 1024 * 1024 + 123;
+    let f = std::fs::File::create(root.join("big.bin")).unwrap();
+    f.set_len(size).unwrap();
+    drop(f);
+    let r = s.raw(Method::GET, &format!("/api/v1/projects/{pid}/files/raw?path=big.bin"), None, None, None).await;
+    assert_eq!(r.status(), StatusCode::PAYLOAD_TOO_LARGE, "미리보기는 상한 유지");
+    let r = s.raw(Method::GET, &format!("/api/v1/projects/{pid}/files/raw?path=big.bin&download=true"), None, None, None).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(r.headers().get("content-length").unwrap(), &size.to_string());
+    let body = r.bytes().await.unwrap();
+    assert_eq!(body.len() as u64, size);
+    assert!(body.iter().all(|b| *b == 0));
+}
+
 #[tokio::test]
 async fn raw_preview_is_sandboxed_and_html_is_not_rendered() {
     let (s, pid, root) = setup().await;
