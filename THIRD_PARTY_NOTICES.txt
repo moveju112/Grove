@@ -4,6 +4,7 @@ cargo	adler2	2.0.1	0BSD OR MIT OR Apache-2.0
 cargo	aead	0.5.2	MIT OR Apache-2.0
 cargo	aho-corasick	1.1.5	Unlicense OR MIT
 cargo	anyhow	1.0.104	MIT OR Apache-2.0
+cargo	arrayvec	0.7.8	MIT OR Apache-2.0
 cargo	atomic-waker	1.1.2	Apache-2.0 OR MIT
 cargo	autocfg	1.5.1	Apache-2.0 OR MIT
 cargo	axum	0.8.9	MIT
@@ -221,6 +222,7 @@ cargo	typed-path	0.13.0	MIT OR Apache-2.0
 cargo	typenum	1.20.1	MIT OR Apache-2.0
 cargo	unicase	2.10.0	MIT OR Apache-2.0
 cargo	unicode-ident	1.0.27	(MIT OR Apache-2.0) AND Unicode-3.0
+cargo	unicode-width	0.2.3	MIT OR Apache-2.0
 cargo	universal-hash	0.5.1	MIT OR Apache-2.0
 cargo	untrusted	0.9.0	ISC
 cargo	url	2.5.8	MIT OR Apache-2.0
@@ -229,6 +231,8 @@ cargo	utf_types	1.0.0	Apache-2.0 OR MIT
 cargo	uuid	1.29.0	Apache-2.0 OR MIT
 cargo	vcpkg	0.2.15	MIT/Apache-2.0
 cargo	version_check	0.9.5	MIT/Apache-2.0
+cargo	vt100	0.16.2	MIT
+cargo	vte	0.15.0	Apache-2.0 OR MIT
 cargo	walkdir	2.5.0	Unlicense/MIT
 cargo	want	0.3.2	MIT
 cargo	webpki-roots	1.0.11	CDLA-Permissive-2.0

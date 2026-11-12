@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, rawGet } from "../api/client";
+import { TerminalCapture } from "./TerminalCapture";
 
 type TerminalRow = { id: string; name: string; status: "running" | "exited" | "lost"; exit_code: number | null; reason: string | null; revision: number };
 
@@ -179,6 +180,7 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             {err && <p className="err" role="alert">{err}</p>}
             {(conn === "missing" || conn === "error") && <button className="ghost small" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</button>}
             <div className="term-host" ref={host} />
+            <TerminalCapture key={terminalId} terminalId={terminalId} enabled={conn === "open" || conn === "readonly"} />
             {conn === "open" && (
                 <div className="term-keys" aria-label="보조 키">
                     {KEYS.map(([label, seq]) => (

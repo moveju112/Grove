@@ -45,6 +45,67 @@ async fn create(s: &TestServer, pid: &str) -> Value {
 }
 
 #[tokio::test]
+async fn capture_reads_screen_ranges_and_restores_without_writing_to_the_shell() {
+    let mut s = TestServer::start().await;
+    let project = s.create_project("capture").await;
+    let terminal = create(&s,project["id"].as_str().unwrap()).await;
+    let tid = terminal["id"].as_str().unwrap();
+    let path = format!("/api/v1/terminals/{tid}/capture");
+    assert_eq!(s.raw(Method::GET,&path,None,None,Some("")).await.status(),StatusCode::UNAUTHORIZED);
+    assert_eq!(s.get("/api/v1/terminals/missing/capture").await.0,StatusCode::NOT_FOUND);
+    for query in ["start=no","end=1.5","start=9223372036854775808","unknown=1"] {
+        let (status,error) = s.get(&format!("{path}?{query}")).await;
+        assert_eq!(status,StatusCode::BAD_REQUEST,"{error}");
+        assert!(error["error"]["code"].is_string());
+    }
+    let mut ws = open(&s,tid).await;
+    input(&mut ws,"stty -echo; printf x >> capture-counter; printf '\\033[2J\\033[Hold\\r\\033[2K\\033[31m한글\\033[0m\\r\\nrow-%s\\r\\n' \"$((40+2))\"\n").await;
+    read_until(&mut ws,"row-42",5000).await;
+    let (status,snapshot) = s.get(&format!("{path}?start=0&end=1")).await;
+    assert_eq!(status,StatusCode::OK,"{snapshot}");
+    assert_eq!(snapshot["lines"],json!(["한글","row-42"]));
+    assert_eq!(snapshot["source"],"live");
+    assert_eq!(snapshot["total_lines"],24);
+    let (_,last) = s.get(&format!("{path}?start=-1&end=-1")).await;
+    assert_eq!(last["lines"],json!([""]));
+    let (_,reversed) = s.get(&format!("{path}?start=3&end=1")).await;
+    assert_eq!(reversed["lines"],json!([]));
+    let counter = std::path::Path::new(project["root_path"].as_str().unwrap()).join("capture-counter");
+    assert_eq!(std::fs::read(&counter).unwrap(),b"x");
+    drop(ws);
+    s.restart().await;
+    let (status,saved) = s.get(&format!("{path}?start=0&end=1")).await;
+    assert_eq!(status,StatusCode::OK,"{saved}");
+    assert_eq!(saved["lines"],snapshot["lines"]);
+    assert_eq!(saved["source"],"saved");
+    assert_ne!(saved["status"],"running");
+    let capture_path = s.data_dir().join("terminals").join(format!("{tid}.capture.json"));
+    let original = std::fs::read(&capture_path).unwrap();
+    std::fs::write(&capture_path,b"corrupt").unwrap();
+    let (status,error) = s.get(&path).await;
+    assert_eq!(status,StatusCode::CONFLICT);
+    assert_eq!(error["error"]["code"],"terminal_capture_unavailable");
+    // 새 형식 이전의 raw 출력만 남은 경우는 정확한 화면 snapshot과 명시적으로 구분한다.
+    std::fs::remove_file(&capture_path).unwrap();
+    let (status,legacy) = s.get(&format!("{path}?start=0&end=1")).await;
+    assert_eq!(status,StatusCode::OK,"{legacy}");
+    assert_eq!(legacy["source"],"legacy_output");
+    assert_eq!(legacy["lines"],snapshot["lines"]);
+    std::fs::remove_file(s.data_dir().join("terminals").join(format!("{tid}.screen"))).unwrap();
+    assert_eq!(s.get(&path).await.0,StatusCode::CONFLICT);
+    assert_eq!(std::fs::read(&counter).unwrap(),b"x","캡처·복원은 셸 명령을 다시 실행하지 않는다");
+    std::fs::write(&capture_path,original).unwrap();
+    let raw_path = s.data_dir().join("terminals").join(format!("{tid}.screen"));
+    std::fs::create_dir(&raw_path).unwrap();
+    assert_eq!(s.send(Method::DELETE,&format!("/api/v1/terminals/{tid}"),json!({})).await.0,StatusCode::INTERNAL_SERVER_ERROR);
+    assert!(capture_path.exists(),"파일 삭제 실패를 성공으로 숨기거나 보존된 사본을 잃지 않는다");
+    assert_eq!(s.get(&path).await.0,StatusCode::OK,"파일 정리 실패는 DB 기록을 먼저 지우지 않는다");
+    std::fs::remove_dir(&raw_path).unwrap();
+    assert_eq!(s.send(Method::DELETE,&format!("/api/v1/terminals/{tid}"),json!({})).await.0,StatusCode::NO_CONTENT);
+    assert!(!capture_path.exists());
+}
+
+#[tokio::test]
 async fn io_resize_single_use_ticket_and_exit() {
     let s = TestServer::start().await;
     let p = s.create_project("term").await;
@@ -73,6 +134,9 @@ async fn io_resize_single_use_ticket_and_exit() {
     tokio::time::sleep(Duration::from_millis(100)).await;
     input(&mut ws, "stty size\n").await;
     read_until(&mut ws, "30 100", 5000).await;
+    let (status, capture) = s.get(&format!("/api/v1/terminals/{tid}/capture")).await;
+    assert_eq!(status,StatusCode::OK,"{capture}");
+    assert_eq!((capture["rows"].as_u64(),capture["cols"].as_u64()),(Some(30),Some(100)));
     // 재연결: 새 티켓으로 snapshot에 이전 출력이 있다
     let mut ws2 = open(&s, tid).await;
     let _hello = ws2.next().await;

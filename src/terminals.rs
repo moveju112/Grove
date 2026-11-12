@@ -14,7 +14,7 @@ use crate::idem;
 use crate::tools::fs::{rel_display, resolve};
 use axum::Json;
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use bytes::Bytes;
@@ -80,10 +80,12 @@ pub fn get(c: &Connection, id: &str) -> ApiResult<Terminal> {
 struct Ring {
     buf: VecDeque<u8>,
     dirty: bool,
+    screen: vt100::Parser,
 }
 
 impl Ring {
     fn push(&mut self, b: &[u8]) {
+        self.screen.process(b);
         self.buf.extend(b);
         let over = self.buf.len().saturating_sub(SCROLLBACK);
         if over > 0 {
@@ -105,6 +107,7 @@ pub struct Live {
     tx: broadcast::Sender<Bytes>,
     exited: watch::Sender<Option<i64>>,
     closing: AtomicBool,
+    save: Mutex<()>,
 }
 
 #[derive(Default)]
@@ -139,18 +142,31 @@ fn screen_path(app: &App, id: &str) -> std::path::PathBuf {
     app.cfg.data_dir.join("terminals").join(format!("{id}.screen"))
 }
 
+fn capture_path(app: &App, id: &str) -> std::path::PathBuf {
+    app.cfg.data_dir.join("terminals").join(format!("{id}.capture.json"))
+}
+
 fn save_screen(app: &App, id: &str, live: &Live) {
-    let snap = {
+    let _saving = live.save.lock().unwrap_or_else(|e|e.into_inner());
+    let (snap, capture) = {
         let mut r = live.ring.lock().unwrap_or_else(|e| e.into_inner());
         if !r.dirty {
             return;
         }
         r.dirty = false;
-        r.snapshot()
+        (r.snapshot(), r.screen.screen().clone())
     };
     let p = screen_path(app, id);
-    let _ = std::fs::create_dir_all(p.parent().unwrap_or(&p));
-    let _ = crate::tools::fs::atomic_write(&p, &snap);
+    let result = (|| -> Result<(),()> {
+        std::fs::create_dir_all(p.parent().unwrap_or(&p)).map_err(|_|())?;
+        crate::tools::fs::atomic_write(&p, &snap).map_err(|_|())?;
+        let capture = serde_json::to_vec(&crate::terminal_capture::Snapshot::from_screen(capture)).map_err(|_|())?;
+        crate::tools::fs::atomic_write(&capture_path(app,id), &capture).map_err(|_|())
+    })();
+    if result.is_err() {
+        live.ring.lock().unwrap_or_else(|e|e.into_inner()).dirty = true;
+        tracing::warn!("터미널 화면 저장 실패: 다음 저장에서 다시 확인합니다");
+    }
 }
 
 fn default_shell() -> String {
@@ -233,10 +249,11 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
         writer: Mutex::new(writer),
         master: Mutex::new(master),
         killer: Mutex::new(child.clone_killer()),
-        ring: Mutex::new(Ring { buf: VecDeque::new(), dirty: false }),
+        ring: Mutex::new(Ring { buf: VecDeque::new(), dirty: true, screen: vt100::Parser::new(rows,cols,crate::terminal_capture::HISTORY) }),
         tx,
         exited: exit_tx,
         closing: AtomicBool::new(false),
+        save: Mutex::new(()),
     });
     let admitted = {
         let mut registry = app.terminals.live.lock().unwrap_or_else(|e| e.into_inner());
@@ -379,6 +396,25 @@ pub async fn kill(State(app): State<App>, _p: Principal, Path(id): Path<String>)
 /// 끝난 터미널 기록과 화면 파일을 지운다. 실행 중이면 거부한다.
 pub async fn remove(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<StatusCode> {
     let i = id.clone();
+    app.db.call(move |c| {
+        let terminal = get(c,&i)?;
+        if terminal.status == "running" {
+            return Err(ApiError::conflict("running", "실행 중인 터미널은 먼저 종료하세요"));
+        }
+        Ok(())
+    }).await?;
+    let paths = [screen_path(&app,&id),capture_path(&app,&id)];
+    tokio::task::spawn_blocking(move || -> ApiResult<()> {
+        for path in paths {
+            match std::fs::remove_file(path) {
+                Ok(()) => {},
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Err(_) => return Err(ApiError::internal("터미널 화면 파일을 지우지 못해 기록을 보존했습니다. 삭제 요청을 다시 확인하세요")),
+            }
+        }
+        Ok(())
+    }).await.map_err(|_|ApiError::internal("터미널 화면 정리 작업을 마치지 못해 기록을 보존했습니다"))??;
+    let i = id.clone();
     app.db
         .call(move |c| {
             let tx = c.transaction()?;
@@ -392,7 +428,6 @@ pub async fn remove(State(app): State<App>, _p: Principal, Path(id): Path<String
             Ok(())
         })
         .await?;
-    let _ = std::fs::remove_file(screen_path(&app, &id));
     app.notify_events().await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -406,6 +441,62 @@ pub async fn screen(State(app): State<App>, _p: Principal, Path(id): Path<String
         None => std::fs::read(screen_path(&app, &id)).unwrap_or_default(),
     };
     Ok(([(axum::http::header::CONTENT_TYPE, "application/octet-stream")], data).into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CaptureQuery {
+    pub start: Option<i64>,
+    pub end: Option<i64>,
+}
+
+/// 현재 화면/scrollback의 물리적 줄. 0부터 시작하며 끝은 포함하고 음수는 뒤에서 센다.
+pub async fn capture(State(app): State<App>, p: Principal, Path(id): Path<String>, Query(query): Query<CaptureQuery>) -> ApiResult<Json<Value>> {
+    let i = id.clone();
+    let terminal = app.db.call(move |c|get(c,&i)).await?;
+    let live = app.terminals.get(&id);
+    let path = capture_path(&app,&id);
+    let legacy = screen_path(&app,&id);
+    let status = terminal.status.clone();
+    let mut response = tokio::task::spawn_blocking(move || -> ApiResult<Value> {
+        let (snapshot,source) = if let Some(live) = live {
+            let screen = live.ring.lock().unwrap_or_else(|e|e.into_inner()).screen.screen().clone();
+            (crate::terminal_capture::Snapshot::from_screen(screen),"live")
+        } else {
+            let snapshot = match std::fs::File::open(path) {
+                Ok(file) => {
+                    let mut raw = Vec::new();
+                    file.take(crate::terminal_capture::MAX_SAVED_BYTES+1).read_to_end(&mut raw).map_err(|_|crate::terminal_capture::unavailable())?;
+                    if raw.len() as u64 > crate::terminal_capture::MAX_SAVED_BYTES { return Err(crate::terminal_capture::unavailable()); }
+                    let snapshot: crate::terminal_capture::Snapshot = serde_json::from_slice(&raw).map_err(|_|crate::terminal_capture::unavailable())?;
+                    snapshot.validate()?;
+                    Some(snapshot)
+                },
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(_) => return Err(crate::terminal_capture::unavailable()),
+            };
+            match snapshot {
+                Some(snapshot) => (snapshot,"saved"),
+                None => {
+                    // 새 형식 도입 전 터미널은 보존된 제한 출력으로 복원하며 정확한 화면 snapshot과 구분한다.
+                    let file = std::fs::File::open(legacy).map_err(|_|crate::terminal_capture::unavailable())?;
+                    let mut raw = Vec::new();
+                    file.take(SCROLLBACK as u64+1).read_to_end(&mut raw).map_err(|_|crate::terminal_capture::unavailable())?;
+                    if raw.len() > SCROLLBACK { return Err(crate::terminal_capture::unavailable()); }
+                    let mut parser = vt100::Parser::new(terminal.rows as u16,terminal.cols as u16,crate::terminal_capture::HISTORY);
+                    parser.process(&raw);
+                    (crate::terminal_capture::Snapshot::from_screen(parser.screen().clone()),"legacy_output")
+                }
+            }
+        };
+        let mut result = snapshot.select(query.start,query.end);
+        result["source"] = json!(source);
+        result["status"] = json!(status);
+        Ok(result)
+    }).await.map_err(|_|crate::terminal_capture::unavailable())??;
+    crate::auth::revalidate(&app,&p).await?;
+    response["terminal_id"] = json!(id);
+    Ok(Json(response))
 }
 
 pub async fn ticket(State(app): State<App>, principal: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
@@ -481,7 +572,12 @@ async fn session(app: App, id: String, live: Arc<Live>, principal: Principal, mu
                     }
                     Ok(ClientMsg::Resize { cols, rows }) => {
                         let (c, r) = clamp_size(Some(cols), Some(rows));
-                        let _ = live.master.lock().unwrap_or_else(|e| e.into_inner()).resize(PtySize { rows: r, cols: c, pixel_width: 0, pixel_height: 0 });
+                        if live.master.lock().unwrap_or_else(|e| e.into_inner()).resize(PtySize { rows: r, cols: c, pixel_width: 0, pixel_height: 0 }).is_err() { continue; }
+                        {
+                            let mut ring = live.ring.lock().unwrap_or_else(|e|e.into_inner());
+                            ring.screen.screen_mut().set_size(r,c);
+                            ring.dirty = true;
+                        }
                         let i = id.clone();
                         let _ = app.db.call(move |db| Ok(db.execute("UPDATE terminals SET cols = ?2, rows = ?3 WHERE id = ?1", params![i, c as i64, r as i64])?)).await;
                     }
@@ -513,9 +609,10 @@ pub fn spawn_saver(app: App) -> tokio::task::JoinHandle<()> {
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(Duration::from_secs(2)) => {
-                    for (id, live) in app.terminals.all() {
-                        save_screen(&app, &id, &live);
-                    }
+                    let saving = app.clone();
+                    if tokio::task::spawn_blocking(move || {
+                        for (id,live) in saving.terminals.all() { save_screen(&saving,&id,&live); }
+                    }).await.is_err() { tracing::warn!("터미널 화면 저장 작업 실패"); }
                 }
                 _ = rx.changed() => break,
             }

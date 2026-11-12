@@ -248,6 +248,9 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .terminal-view { display: flex; flex-direction: column; gap: 0.35rem; height: 100%; min-height: 0; }
 .term-host { flex: 1; min-height: 12rem; background: #111; padding: 0.25rem; border-radius: 4px; overflow: hidden; }
 .term-keys { display: flex; gap: 0.25rem; flex-wrap: wrap; }
+.terminal-capture { flex-shrink: 0; }
+.terminal-capture input { width: 7em; }
+.terminal-capture pre { max-height: 16em; }
 @media (pointer: fine) { .term-keys { display: none; } }
 .strike { text-decoration: line-through; }
 

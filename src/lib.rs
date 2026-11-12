@@ -46,6 +46,7 @@ pub mod bots;
 pub mod notifications;
 pub mod schedules;
 pub mod terminals;
+mod terminal_capture;
 pub mod titles;
 pub mod audit;
 pub mod fair;
@@ -90,6 +91,7 @@ pub const CAPABILITIES: &[&str] = &[
     "model_session_access_v1",
     "private_model_headers_v1",
     "project_scripts_v1",
+    "terminal_capture_v1",
 ];
 
 #[derive(Clone)]
@@ -188,6 +190,7 @@ pub fn router(app: App) -> Router {
         .route("/terminals/{id}", axum::routing::patch(terminals::rename).delete(terminals::remove))
         .route("/terminals/{id}/kill", post(terminals::kill))
         .route("/terminals/{id}/screen", get(terminals::screen))
+        .route("/terminals/{id}/capture", get(terminals::capture))
         .route("/terminals/{id}/ticket", post(terminals::ticket))
         .route("/terminal-ws/{ticket}", get(terminals::ws))
         .route("/usage", get(usage::get_usage))
