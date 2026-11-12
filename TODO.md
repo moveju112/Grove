@@ -428,18 +428,18 @@ PaseoDog 설치 엔진의 선언 버전 `1.4.1`과 최신 소스의 기능 존�
 | 적용 | 입력 revision 일치와 취소 여부 확인 후 원자적 교체; 경합 시 오래된 후보를 적용하지 않음 |
 | 실패 | 원문 유지. context 한도를 초과하면 명시적 실패/사용자 선택으로 처리하고 무한 재요약하지 않음 |
 
-- [ ] CMP-001 기존 context 생성과 memory 검색의 책임을 분리한다. 공용 원문 참조를 사용하되 압축 요약을 자동으로 사용자 성향 memory에 저장하지 않는다.
-- [ ] CMP-002 모델별 context/출력/buffer 예산과 token 추정/실측을 정리한다. 요약 자체 및 다음 도구 결과가 들어갈 공간을 별도로 확보한다.
-- [ ] CMP-003 짧은 입력·예상 절감 미달 시 압축 생략 기준을 정한다. 경계값 fixture로 호출 수 0과 원문 유지가 일치함을 확인한다.
-- [ ] CMP-004 최근 원문 보존 정책을 사용자 턴 및 연관 tool call/result 묶음 단위로 구현한다. 단순 행 수 절단으로 짝을 끊거나 승인 요청을 제거하지 않는다.
-- [ ] CMP-005 요약 후보에 원문 구간 ID/hash·context revision·모델·사용량·생성 상태를 연결한다. 다른 세션 원문이나 새로 도착한 요구사항을 혼합하지 않는다.
-- [ ] CMP-006 빈 요약·더 긴 요약·잘못된 참조·형식 위반을 거부한다. 짧지만 잘못된 내용은 이 검사만으로 검출됐다고 주장하지 않는다.
-- [ ] CMP-007 명시적 횟수/시간/비용 상한 안에서만 재생성을 허용한다. 상한 뒤 원문 유지와 실패 사유를 기록하고 같은 입력을 매번 자동 재시도하지 않는다.
-- [ ] CMP-008 candidate 검증과 context 적용을 분리하고 revision compare-and-swap으로 교체한다. 생성 중 새 메시지·모델 변경·취소가 발생하면 안전하게 폐기/재판정한다.
-- [ ] CMP-009 압축 적용 후에도 확정 대화·첨부·승인/unknown 상태·검색 원문 근거를 보존한다. rewind 가능 범위와 압축 projection 복원 범위를 UI에서 구분한다.
+- [x] CMP-001 기존 context 생성과 memory 검색의 책임을 분리한다. 공용 원문 참조를 사용하되 압축 요약을 자동으로 사용자 성향 memory에 저장하지 않는다. 검증: 압축 요약은 대화 note로만 저장하고 장기 기억은 사용자 확인 경로만 쓴다(MEMORY-001~003, RULEBOOK §34). 요약을 기억으로 옮기는 코드 경로가 없다.
+- [x] CMP-002 모델별 context/출력/buffer 예산과 token 추정/실측을 정리한다. 요약 자체 및 다음 도구 결과가 들어갈 공간을 별도로 확보한다. 검증: 모델 context 한도·응답 최대 출력·입력 여유분(`context.input_reserve_tokens`, 도구 결과·다음 입력)·실측/추정 구분은 CTX-001~003, 요약 호출 출력은 4,096 token 상한으로 따로 둔다(`tests/context.rs::reserve_for_output_and_next_input_triggers_compaction_below_percent`).
+- [x] CMP-003 짧은 입력·예상 절감 미달 시 압축 생략 기준을 정한다. 경계값 fixture로 호출 수 0과 원문 유지가 일치함을 확인한다. 검증: `context.compact_min_tokens`(기본 500) 미만이면 자동 압축 요약 호출 0·원문 유지, 기준을 낮추면 같은 대화에서 압축(`auto_compaction_skips_ranges_below_minimum`).
+- [x] CMP-004 최근 원문 보존 정책을 사용자 턴 및 연관 tool call/result 묶음 단위로 구현한다. 단순 행 수 절단으로 짝을 끊거나 승인 요청을 제거하지 않는다. 검증: 경계를 마지막 사용자 메시지 직전으로 두어 tool call/result 짝과 진행 중 턴·승인 대기를 자르지 않는다(`manual_compaction_replaces_old_history_and_keeps_tool_pairs`).
+- [x] CMP-005 요약 후보에 원문 구간 ID/hash·context revision·모델·사용량·생성 상태를 연결한다. 다른 세션 원문이나 새로 도착한 요구사항을 혼합하지 않는다. 검증: 압축 note에 원문 구간(from/upto)·메시지 수·구간 sha256·timeline revision·요약 프로필·사용량을 기록한다(`auto_compaction_skips_ranges_below_minimum`). 구간 밖 새 메시지는 요약 입력에 넣지 않는다.
+- [x] CMP-006 빈 요약·더 긴 요약·잘못된 참조·형식 위반을 거부한다. 짧지만 잘못된 내용은 이 검사만으로 검출됐다고 주장하지 않는다. 검증: 빈 요약(`empty_summary`)과 원문보다 짧지 않은 요약(`summary_not_shorter`)은 적용하지 않는다(`longer_summary_is_rejected_and_repeated_auto_failures_pause`). 짧지만 틀린 요약은 이 검사로 검출하지 못한다고 RULEBOOK §34에 적었다.
+- [x] CMP-007 명시적 횟수/시간/비용 상한 안에서만 재생성을 허용한다. 상한 뒤 원문 유지와 실패 사유를 기록하고 같은 입력을 매번 자동 재시도하지 않는다. 검증: 마지막 압축 이후 자동 실패가 `context.auto_compact_max_failures`(기본 2)에 닿으면 정지 note 한 번 뒤 요약 호출 없음, 압축 성공 시 재개(`longer_summary_is_rejected_and_repeated_auto_failures_pause`).
+- [x] CMP-008 candidate 검증과 context 적용을 분리하고 revision compare-and-swap으로 교체한다. 생성 중 새 메시지·모델 변경·취소가 발생하면 안전하게 폐기/재판정한다. 검증: 적용 transaction에서 timeline revision·구간 hash·활성 턴·더 새 경계를 다시 확인한다. 생성 중 원문 변경은 `source_changed`, 되감기는 `timeline_changed`로 폐기(`summary_is_discarded_when_source_changes_during_generation`, `tests/rewind.rs::compaction_started_before_rewind_cannot_restore_hidden_context`).
+- [x] CMP-009 압축 적용 후에도 확정 대화·첨부·승인/unknown 상태·검색 원문 근거를 보존한다. rewind 가능 범위와 압축 projection 복원 범위를 UI에서 구분한다. 검증: 압축은 note만 더하고 원문·첨부·승인/unknown 기록을 지우지 않는다. 되감기는 압축된 구간을 막고 복구 가능 범위를 화면에 구분한다(`web/e2e/rewind.spec.ts` 압축 구간 시험, `manual_compaction_replaces_old_history_and_keeps_tool_pairs`).
 - [ ] CMP-010 이미 보낸 provider 요청의 prefix를 뒤늦게 다시 쓰지 않는다. 변경 없는 지침/도구 schema/과거 effort 기록의 직렬화를 안정화하고 cache hit은 관찰된 값으로만 표시한다.
-- [ ] CMP-011 UI에 적용 구간·원문 열기·적용 전후 추정 token·요약 모델/비용·실패 이유를 표시한다. 실패한 후보를 정상 압축 이벤트로 보여주지 않는다.
-- [ ] CMP-012 기계 회귀로 경합·취소·과대 요약·누락 참조·디스크 실패·재시작을 검증한다. 실패 시 원문과 기존 projection이 유지됨을 확인한다.
+- [ ] CMP-011 UI에 적용 구간·원문 열기·적용 전후 추정 token·요약 모델/비용·실패 이유를 표시한다. 실패한 후보를 정상 압축 이벤트로 보여주지 않는다. 진행: 압축 note에 대상 구간·원문 보존·추정 전후·요약 사용량, 실패·자동 정지 note를 정상 압축과 구분해 표시한다(`web/e2e/workspace.spec.ts`). 요약 모델 이름·비용 표시는 남았다.
+- [ ] CMP-012 기계 회귀로 경합·취소·과대 요약·누락 참조·디스크 실패·재시작을 검증한다. 실패 시 원문과 기존 projection이 유지됨을 확인한다. 진행: 되감기 경합·원문 변경·과대 요약·연속 실패를 기계 회귀로 확인했다. 디스크 실패·재시작 주입은 남았다.
 - [ ] CMP-013 EVAL에 긴 코딩 작업·상충 요구·보류 결정·미완료 자식 작업·승인 대기·보안 지침 사례를 추가한다. 동일 모델/입력으로 요구 보존·정답·비용·지연을 baseline과 비교한다.
 - [ ] CMP-014 품질 퇴행 시 새 압축 정책만 끌 수 있게 한다. 원문과 이전 유효 projection을 보존하며 이미 실행된 도구 부작용을 압축 rollback으로 되돌렸다고 표시하지 않는다.
 

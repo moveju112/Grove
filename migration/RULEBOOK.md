@@ -582,6 +582,15 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 종료하면 같은 transaction에서 알림(`kind=remote_watch`, `ref_id`=감시 ID)과 대화 note(`remote_watch_result`)를 남긴다. 감시 결과(원격 성공/실패)·연결된 로컬 명령 결과·알림 저장·앱 전달·열람은 각각 다른 필드다. 모델은 다시 부르지 않고, 다음 요청에서 note를 신뢰하지 않는 외부 입력으로만 전달한다.
 - 재시작 뒤에도 GET 감시는 이어서 하며 기한은 서버 점검(1초)에서 판정한다.
 
+## 34. 압축 후보 검증(CMP)
+
+- 압축 요약은 대화 note로만 저장하고 장기 기억으로 옮기지 않는다(기억은 사용자 확인 경로만). 원문 메시지·첨부·승인/unknown 상태는 지우지 않으며 모델 입력 projection만 바뀐다.
+- 경계는 마지막 사용자 메시지 직전이라 tool call/result 짝과 진행 중 턴을 자르지 않는다. 자동 압축은 턴의 첫 모델 호출 전에만 하므로 이미 보낸 요청 prefix를 바꾸지 않는다.
+- 자동 압축 생략: 요약 대상 추정이 `context.compact_min_tokens`(기본 500) 미만이면 모델을 부르지 않는다. 수동 압축에는 적용하지 않는다.
+- 후보 기록: `source{from_seq, upto_seq, messages, sha256, timeline_revision}`·요약 프로필·사용량·추정 전후. sha256은 이전 요약 note와 구간 메시지의 ID·seq·내용 hash를 순서대로 묶는다.
+- 적용 조건(한 transaction): timeline revision 동일 → 구간 hash 동일 → 수동이면 활성 턴 없음 → 같은 범위의 더 새 경계 없음 → 요약 추정이 원문보다 작음. 하나라도 어긋나면 적용하지 않는다(`timeline_changed`·`source_changed`·`summary_not_shorter`). 짧지만 틀린 요약은 이 검사로 찾지 못한다.
+- 재시도 상한: 마지막 압축 경계 이후 자동 실패가 `context.auto_compact_max_failures`(기본 2)에 닿으면 `compaction_paused` note를 한 번 남기고 자동 압축을 멈춘다. 압축이 성공하면 다시 센다. 요약 호출은 출력 4,096 token·provider timeout·보조 호출 한도 안에서만 한다.
+
 ## 11. 결정 기록
 
 | ID | 결정 | 근거 |

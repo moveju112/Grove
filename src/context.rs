@@ -194,6 +194,23 @@ fn boundary(c: &Connection, session_id: &str) -> ApiResult<Option<i64>> {
     Ok((n >= 2).then_some(b))
 }
 
+/// 요약 대상 원문 구간의 식별 hash(CMP-005). 이전 요약 note와 (from, upto] 구간 메시지의 ID·seq·내용 hash를 순서대로 묶는다.
+fn source_hash(c: &Connection, session_id: &str, prev_record: Option<i64>, from: i64, upto: i64) -> ApiResult<(String, i64)> {
+    use sha2::{Digest, Sha256};
+    let mut st = c.prepare(
+        "SELECT id, seq, content FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND ((seq > ?2 AND seq <= ?3) OR seq = ?4) ORDER BY seq",
+    )?;
+    let mut rows = st.query(params![session_id, from, upto, prev_record.unwrap_or(-1)])?;
+    let mut h = Sha256::new();
+    let mut n = 0;
+    while let Some(r) = rows.next()? {
+        let (id, seq, content): (String, i64, String) = (r.get(0)?, r.get(1)?, r.get(2)?);
+        h.update(format!("{id}\0{seq}\0{}\n", crate::util::sha256_hex(content.as_bytes())));
+        n += 1;
+    }
+    Ok((format!("{:x}", h.finalize()), n))
+}
+
 #[derive(Deserialize)]
 pub struct InputPage {
     pub offset: Option<usize>,
@@ -224,6 +241,10 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
         .call(move |c| {
             let s = crate::sessions::get_active(c, &sid)?;
             let Some(b) = boundary(c, &sid)? else { return Ok(None) };
+            let prev = latest_boundary(c, &sid, None)?;
+            let from = prev.as_ref().map(|p| p.upto_seq).unwrap_or(0);
+            let prev_record = prev.as_ref().map(|p| p.record_seq);
+            let (source, count) = source_hash(c, &sid, prev_record, from, b)?;
             // 요약 모델: 설정 > 요청 프로필
             let chosen = crate::settings::effective(c, "context.summary_profile", Some(&s.project_id), Some(&sid))?;
             let use_profile = chosen.as_str().filter(|x| !x.is_empty()).map(str::to_string).unwrap_or(pid);
@@ -232,6 +253,11 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
             mp.check_capabilities(false, None, msgs.iter().any(|m| matches!(m, ChatMsg::User { images, .. } if !images.is_empty())))?;
             let max_tokens = mp.capabilities.max_output_tokens.unwrap_or(4096).min(4096);
             let before = estimate_tokens(&msgs, "");
+            // 예상 절감이 작으면 자동 압축은 모델을 부르지 않고 원문을 그대로 둔다(CMP-003).
+            let min = crate::settings::effective(c, "context.compact_min_tokens", Some(&s.project_id), Some(&sid))?.as_u64().unwrap_or(500);
+            if auto && before < min {
+                return Ok(None);
+            }
             crate::attachments::hydrate(c, &data, &s.project_id, &mut msgs)?;
             msgs.push(ChatMsg::User {
                 text: "Summarize the conversation above following the system instructions. Output only the summary.".into(),
@@ -239,10 +265,10 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
             });
             // to_chat는 연속 user를 합치므로 마지막에 붙인 지시가 앞 user와 합쳐질 수 있다(의도대로 동작).
             let timeline: i64 = c.query_row("SELECT timeline_revision FROM sessions WHERE id = ?1", params![sid], |r| r.get(0))?;
-            Ok(Some((b, use_profile, rp, msgs, before, timeline, max_tokens)))
+            Ok(Some((b, use_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count))))
         })
         .await?;
-    let Some((b, used_profile, rp, msgs, before, timeline, max_tokens)) = prepared else { return Ok(None) };
+    let Some((b, used_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count))) = prepared else { return Ok(None) };
     let req = ModelRequest { system: SUMMARY_SYSTEM.into(), messages: msgs, tools: vec![], max_tokens: Some(max_tokens), temperature: None, effort: None, cli: None };
     let permit = crate::model_limits::auxiliary(app, session_id, &rp, cancel).await?;
     let out = provider::stream(&rp, &req, cancel, &mut |_| {}).await;
@@ -259,6 +285,14 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
                     if current != timeline {
                         return Err(ApiError::conflict("timeline_changed", "요약 중 대화가 되감겨 이전 요약을 적용하지 않았습니다"));
                     }
+                    // 요약한 원문 구간이 그대로인지 hash로 다시 확인한다(CMP-005·008).
+                    if source_hash(&tx, &sid, prev_record, from, b)?.0 != source {
+                        return Err(ApiError::conflict("source_changed", "요약 중 대상 원문이 바뀌어 적용하지 않았습니다"));
+                    }
+                    // 원문보다 짧지 않은 요약은 절감이 없으므로 적용하지 않는다(CMP-006). 짧지만 틀린 요약은 이 검사로 걸러지지 않는다.
+                    if after >= before {
+                        return Err(ApiError::new(StatusCode::BAD_GATEWAY, "summary_not_shorter", format!("요약(약 {after} tokens)이 원문(약 {before} tokens)보다 짧지 않아 적용하지 않았습니다")));
+                    }
                     if !auto && crate::sessions::get_active(&tx, &sid)?.active_turn.is_some() {
                         return Err(ApiError::busy("요약 중 새 요청이 시작되어 압축을 적용하지 않았습니다"));
                     }
@@ -269,6 +303,7 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
                     let content = json!({
                         "type": "compaction", "upto_seq": b, "summary": summary, "auto": auto, "profile_id": used_profile,
                         "usage": o.usage, "estimated_before": before, "estimated_after": after,
+                        "source": { "from_seq": from, "upto_seq": b, "messages": count, "sha256": source, "timeline_revision": timeline },
                     });
                     let m = crate::sessions::append_message(&tx, &now, &sid, "note", &content, None, None)?;
                     tx.execute("DELETE FROM cli_sessions WHERE session_id = ?1", params![sid])?;
@@ -288,21 +323,46 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
 /// 턴 시작 시 자동 압축. 실패는 턴을 막지 않고 note로 남긴다.
 pub async fn maybe_auto_compact(app: &App, session_id: &str, profile_id: &str, cancel: &mut watch::Receiver<bool>) {
     let (sid, pid) = (session_id.to_string(), profile_id.to_string());
+    let now = app.now();
     let need = app
         .db
         .call(move |c| {
             let s = crate::sessions::get(c, &sid)?;
             let th = crate::settings::effective(c, "context.auto_compact_percent", Some(&s.project_id), Some(&sid))?.as_f64().unwrap_or(0.0);
             if th <= 0.0 {
-                return Ok(false);
+                return Ok((false, false));
             }
             let u = usage(c, &sid, Some(&pid))?;
             // 비율 기준을 넘었거나, 비율은 낮아도 출력·다음 입력 여유가 모자라면 압축한다.
-            Ok(u["percent"].as_f64().is_some_and(|p| p >= th) || u["available_tokens"].as_i64().is_some_and(|a| a < 0))
+            if !(u["percent"].as_f64().is_some_and(|p| p >= th) || u["available_tokens"].as_i64().is_some_and(|a| a < 0)) {
+                return Ok((false, false));
+            }
+            // 마지막 압축 이후 연속 실패가 한도에 닿으면 매 턴 같은 실패를 되풀이하지 않는다(CMP-007).
+            let since = latest_boundary(c, &sid, None)?.map(|b| b.record_seq).unwrap_or(0);
+            let count = |kind: &str| -> rusqlite::Result<i64> {
+                c.query_row(
+                    "SELECT COUNT(*) FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND role = 'note' AND json_extract(content, '$.type') = ?2 AND seq > ?3",
+                    params![sid, kind, since],
+                    |r| r.get(0),
+                )
+            };
+            let max = crate::settings::effective(c, "context.auto_compact_max_failures", Some(&s.project_id), Some(&sid))?.as_i64().unwrap_or(2);
+            let failures = count("compaction_failed")?;
+            if failures >= max {
+                if count("compaction_paused")? == 0 {
+                    crate::sessions::append_message(c, &now, &sid, "note", &json!({ "type": "compaction_paused", "failures": failures, "limit": max }), None, None)?;
+                    return Ok((false, true));
+                }
+                return Ok((false, false));
+            }
+            Ok((true, false))
         })
         .await
-        .unwrap_or(false);
-    if !need {
+        .unwrap_or((false, false));
+    if need.1 {
+        app.notify_events().await;
+    }
+    if !need.0 {
         return;
     }
     if let Err(e) = compact(app, session_id, profile_id, true, cancel).await {

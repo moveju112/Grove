@@ -143,6 +143,8 @@ async fn auto_compaction_runs_before_first_model_call_over_threshold() {
     assert!(notes_of(&s, &sid, "compaction").await.is_empty());
     let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/context.auto_compact_percent"), json!({ "expected_revision": 0, "value": 50 })).await;
     assert_eq!(st, StatusCode::OK, "{v}");
+    // 이 시험의 대화는 아주 짧으므로 최소 대상 기준(CMP-003)을 끈다
+    s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/context.compact_min_tokens"), json!({ "expected_revision": 0, "value": 0 })).await;
     f.push_for(SUMMARY, fixture::text("자동 요약"));
     f.push(fixture::text("셋째 답"));
     turn(&s, &sid, &prof, "셋째", false).await;
@@ -241,6 +243,119 @@ async fn missing_usage_is_not_reported_as_measured_zero() {
     assert_eq!(u["basis"], "estimated", "{u}");
     assert!(u["measured_input_tokens"].is_null());
     assert!(u["estimated_tokens"].as_u64().unwrap() > 0);
+}
+
+async fn auto_session(s: &TestServer, base: &str, window: u64) -> (String, String, String) {
+    let prof = profile_with_window(s, base, window).await;
+    let p = s.create_project("cmp").await;
+    let pid = p["id"].as_str().unwrap().to_string();
+    let sid = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/context.auto_compact_percent"), json!({ "expected_revision": 0, "value": 50 })).await;
+    (prof, pid, sid)
+}
+
+fn summary_requests(f: &Fixture) -> usize {
+    f.requests().iter().filter(|r| r.to_string().contains(SUMMARY)).count()
+}
+
+// CMP-003: 요약할 이전 대화가 최소 기준보다 작으면 자동 압축은 모델을 부르지 않고 원문을 그대로 보낸다.
+#[tokio::test]
+async fn auto_compaction_skips_ranges_below_minimum() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let (prof, pid, sid) = auto_session(&s, &f.base, 20).await;
+    f.push(fixture::text("짧은 답"));
+    turn(&s, &sid, &prof, "짧은 질문", false).await;
+    f.push(fixture::text("둘째 답"));
+    turn(&s, &sid, &prof, "둘째", false).await;
+    assert_eq!(summary_requests(&f), 0, "기본 최소 기준(500 token) 미만이면 요약 호출 0");
+    assert!(notes_of(&s, &sid, "compaction").await.is_empty());
+    assert!(f.requests().last().unwrap()["messages"].to_string().contains("짧은 질문"), "원문 유지");
+    // 경계값: 기준을 대상 크기 이하로 낮추면 같은 대화에서 압축한다
+    s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/context.compact_min_tokens"), json!({ "expected_revision": 0, "value": 1 })).await;
+    f.push_for(SUMMARY, fixture::text("요"));
+    f.push(fixture::text("셋째 답"));
+    turn(&s, &sid, &prof, "셋째", false).await;
+    assert_eq!(summary_requests(&f), 1);
+    let cp = &notes_of(&s, &sid, "compaction").await[0]["content"];
+    // CMP-005: 요약 후보에 원문 구간·hash·timeline revision·모델·사용량을 남긴다
+    assert_eq!(cp["source"]["from_seq"], 0);
+    assert_eq!(cp["source"]["upto_seq"], cp["upto_seq"]);
+    assert_eq!(cp["source"]["messages"], 4, "{cp}");
+    assert_eq!(cp["source"]["sha256"].as_str().unwrap().len(), 64);
+    assert!(cp["source"]["timeline_revision"].is_i64() && cp["profile_id"] == prof.as_str() && cp["usage"].is_object(), "{cp}");
+}
+
+// CMP-006·007: 원문보다 짧지 않은 요약은 거부하고, 마지막 압축 이후 연속 실패가 한도에 닿으면 자동 압축을 멈춘다.
+#[tokio::test]
+async fn longer_summary_is_rejected_and_repeated_auto_failures_pause() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let (prof, pid, sid) = auto_session(&s, &f.base, 20).await;
+    s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/context.compact_min_tokens"), json!({ "expected_revision": 0, "value": 0 })).await;
+    f.push(fixture::text("답"));
+    turn(&s, &sid, &prof, "질문", false).await;
+    let long = "긴 요약 ".repeat(50);
+    for i in 0..2 {
+        f.push_for(SUMMARY, fixture::text(&long));
+        f.push(fixture::text(&format!("답{i}")));
+        turn(&s, &sid, &prof, &format!("다음{i}"), false).await;
+    }
+    let failed = notes_of(&s, &sid, "compaction_failed").await;
+    assert_eq!(failed.len(), 2);
+    assert_eq!(failed[0]["content"]["error"]["code"], "summary_not_shorter", "{failed:?}");
+    assert!(notes_of(&s, &sid, "compaction").await.is_empty(), "거부한 후보는 적용하지 않는다");
+    let calls = summary_requests(&f);
+    for i in 2..4 {
+        f.push(fixture::text(&format!("답{i}")));
+        turn(&s, &sid, &prof, &format!("다음{i}"), false).await;
+    }
+    assert_eq!(summary_requests(&f), calls, "한도 뒤에는 같은 대화의 자동 요약을 다시 부르지 않는다");
+    let paused = notes_of(&s, &sid, "compaction_paused").await;
+    assert_eq!(paused.len(), 1, "정지 안내는 한 번만");
+    assert_eq!(paused[0]["content"]["limit"], 2);
+    // 수동 압축이 성공하면 다시 센다
+    f.push_for(SUMMARY, fixture::text("짧은 요약"));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/compact"), json!({ "profile_id": prof })).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    f.push(fixture::text("하나 더 답"));
+    f.push(fixture::text("하나 더 답 2"));
+    turn(&s, &sid, &prof, "하나 더", false).await;
+    turn(&s, &sid, &prof, "하나 더 2", false).await;
+    assert!(summary_requests(&f) > calls + 1, "성공한 압축 뒤에는 자동 압축을 다시 시도한다");
+}
+
+// CMP-008: 요약 생성 중 대상 원문이 바뀌면 후보를 적용하지 않는다(원문 구간 hash 비교).
+#[tokio::test]
+async fn summary_is_discarded_when_source_changes_during_generation() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = profile_with_window(&s, &f.base, 100_000).await;
+    let p = s.create_project("cas").await;
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    f.push(fixture::text("첫 답"));
+    turn(&s, &sid, &prof, "첫 질문", false).await;
+    f.push(fixture::text("둘째 답"));
+    turn(&s, &sid, &prof, "둘째 질문", false).await;
+    f.push_for(SUMMARY, fixture::slow_text(&["요", "약"], 400));
+    let compact = {
+        let (c, b, t, sid, prof) = (s.client.clone(), s.base.clone(), s.token.clone(), sid.clone(), prof.clone());
+        tokio::spawn(async move {
+            let r = c.post(format!("{b}/api/v1/sessions/{sid}/compact")).bearer_auth(t).header("Idempotency-Key", "cas-1").json(&json!({ "profile_id": prof })).send().await.unwrap();
+            (r.status(), r.json::<Value>().await.unwrap())
+        })
+    };
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while summary_requests(&f) == 0 {
+        assert!(std::time::Instant::now() < deadline);
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+    db.execute("UPDATE messages SET content = json_set(content, '$.text', '바뀐 답') WHERE session_id = ?1 AND role = 'assistant' AND seq = (SELECT MIN(seq) FROM messages WHERE session_id = ?1 AND role = 'assistant')", [&sid]).unwrap();
+    let (st, v) = compact.await.unwrap();
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"]["code"], "source_changed");
+    assert!(notes_of(&s, &sid, "compaction").await.is_empty());
 }
 
 // DB-004: 같은 영속 메시지 ID에 연결된 화면 기록과 모델 입력은 서로 다른 표현을 유지한다.

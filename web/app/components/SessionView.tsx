@@ -552,20 +552,33 @@ const MessageView = memo(function MessageView({ m, prefs }: { m: Message; prefs:
         </div>;
     }
     if (m.role === "note" && (m.content as { type?: string }).type === "compaction") {
-        const r = m.content as { summary: string; auto: boolean; estimated_before?: number; estimated_after?: number };
+        const r = m.content as {
+            summary: string; auto: boolean; estimated_before?: number; estimated_after?: number; profile_id?: string;
+            usage?: { input_tokens?: number; output_tokens?: number }; source?: { from_seq: number; upto_seq: number; messages: number };
+        };
         return (
             <details className="msg note compaction" data-testid="msg-compaction">
                 <summary>
                     이전 대화 요약({r.auto ? "자동" : "수동"} 압축) · 모델에는 이 요약과 이후 대화만 보냅니다
                     {r.estimated_before ? ` · 약 ${r.estimated_before}→${r.estimated_after} tokens` : ""}
                 </summary>
+                {r.source && (
+                    <p className="muted small" data-testid="compaction-source">
+                        대상 원문 메시지 {r.source.messages}개(#{r.source.from_seq + 1}~#{r.source.upto_seq}) · 원문은 화면 이력에 그대로 남습니다
+                        {r.usage?.input_tokens ? ` · 요약 사용량 입력 ${r.usage.input_tokens}·출력 ${r.usage.output_tokens ?? 0} tokens` : ""}
+                    </p>
+                )}
                 <div className="text">{r.summary}</div>
             </details>
         );
     }
     if (m.role === "note" && (m.content as { type?: string }).type === "compaction_failed") {
         const r = m.content as { error?: { message?: string } };
-        return <div className="msg note warn" role="status">자동 압축 실패(대화는 그대로 진행): {r.error?.message}</div>;
+        return <div className="msg note warn" role="status">자동 압축 실패(적용하지 않음, 대화는 원문 그대로 진행): {r.error?.message}</div>;
+    }
+    if (m.role === "note" && (m.content as { type?: string }).type === "compaction_paused") {
+        const r = m.content as { failures: number; limit: number };
+        return <div className="msg note warn" role="status" data-testid="msg-compaction-paused">자동 압축이 연속 {r.failures}번 실패해 이 대화의 자동 압축을 멈췄습니다(한도 {r.limit}). 수동 압축이 성공하면 다시 시도합니다.</div>;
     }
     if (m.role === "note" && (m.content as { type?: string }).type === "agent_result") {
         const r = m.content as { agent_id: string; status: string; text: string; truncated: boolean; error?: { message?: string } | null };

@@ -249,7 +249,8 @@ test("context 사용량을 추정/실측으로 표시하고 수동 압축 결과
     await page.locator(".recent").getByRole("button", { name: /압축 대화/ }).first().click();
     const view = page.getByTestId("session-view").first();
     await view.getByLabel("보내기 방식").selectOption("model");
-    for (const [q, ans] of [["첫 질문", "첫 답"], ["둘째 질문", "둘째 답"]]) {
+    // 요약이 원문보다 짧아야 적용되므로(CMP-006) 첫 답은 요약보다 길게 둔다
+    for (const [q, ans] of [["첫 질문", `첫 답 ${"자세한 설명 ".repeat(20)}`], ["둘째 질문", "둘째 답"]]) {
         await script({ frames: frames.text([ans!]) });
         await view.getByLabel("메시지 입력").fill(q!);
         await view.getByRole("button", { name: "보내기", exact: true }).click();
@@ -262,6 +263,9 @@ test("context 사용량을 추정/실측으로 표시하고 수동 압축 결과
     await meter.getByRole("button", { name: "압축" }).click();
     await expect(view.getByTestId("msg-compaction")).toHaveCount(1, { timeout: 15_000 });
     await expect(view.getByTestId("msg-compaction")).toContainText("수동 압축");
+    // CMP-011: 적용 구간과 원문 보존을 함께 보여 준다
+    await view.getByTestId("msg-compaction").locator("summary").click();
+    await expect(view.getByTestId("compaction-source")).toContainText("원문은 화면 이력에 그대로 남습니다");
     // 화면 이력은 그대로 남는다
     await expect(view.getByTestId("msg-assistant").first()).toContainText("첫 답");
 });
