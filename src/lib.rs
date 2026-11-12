@@ -86,6 +86,7 @@ pub const CAPABILITIES: &[&str] = &[
     "context_auto_clear_v1",
     "recall_keyword_v1",
     "user_memories_v1",
+    "model_session_access_v1",
     "private_model_headers_v1",
 ];
 
