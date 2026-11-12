@@ -1801,9 +1801,9 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 - [x] PANE-003 좌우/위아래 생성·방향 변경·비율 변경·최소 크기 제한을 구현한다. 검증: `layout.test.ts`(분할·방향·비율·최대 pane).
 - [x] PANE-004 다른 프로젝트 탭의 이동·drag/drop·새 분할과 키보드/메뉴 대안을 구현한다. 검증: LAYOUT-004와 같은 `placeTab`/`openAtEdge`를 사용한다. 탭은 자기 `project_id`/`resource_id`를 그대로 가지고 이동하므로 다른 프로젝트 pane으로 옮겨도 요청 대상 프로젝트가 바뀌지 않는다(`layout.test.ts` 프로젝트 A/B 이동, `web/e2e/pane-dnd.spec.ts`).
 - [x] PANE-005 닫기·합치기·전체 보기·복원 시 tab 유실을 막고 서버 작업은 유지한다. 검증: `layout.test.ts`(pane 닫기 시 tab 합침), e2e 탭 닫기 후 세션 유지.
-- [ ] PANE-006 포커스·입력·shortcut·clipboard·승인 버튼의 대상을 pane에 결합한다.
-- [ ] PANE-007 같은 세션을 중복 표시할 때 구독을 공유하고 각 viewer 해제의 참조 수를 관리한다.
-- [ ] PANE-008 배치 직렬화·schema version·복원·누락 자원 fallback을 구현한다.
+- [x] PANE-006 포커스·입력·shortcut·clipboard·승인 버튼의 대상을 pane에 결합한다. 검증: 단축키(Escape 전체 보기 해제, Alt+Shift+←/→ 탭 순서)·붙여넣기 첨부·복사·승인 버튼은 모두 pane 안 요소에 결합돼 있고 전역 keydown/paste 처리기는 없다. pointer뿐 아니라 키보드 포커스 진입도 현재 pane으로 반영해, Tab으로 다른 pane 입력창에 들어간 뒤 사이드바에서 연 항목이 그 pane에 열리도록 고쳤다(숨긴 pane은 포커스를 가져가지 않음). 승인 버튼은 그 탭의 고정 세션만 대상으로 한다(기존 공유 대화 회귀). 선택 E2E `web/e2e/pane-focus.spec.ts`(키보드 포커스·입력·붙여넣기 첨부·열기 대상이 다른 프로젝트 pane과 섞이지 않음)와 pane·공유 대화·작업 공간 회귀 47개 통과.
+- [x] PANE-007 같은 세션을 중복 표시할 때 구독을 공유하고 각 viewer 해제의 참조 수를 관리한다. 검증: 이벤트 연결은 표시 중인 세션 집합으로 하나만 쓰고(LAYOUT-013), 조회 cache는 key별 viewer 집합으로 한 요청을 공유한다. 마지막 viewer가 닫힌 key는 이후 이벤트·재동기화에서 다시 읽지 않고 stale로 표시했다가 다시 열 때 한 번만 읽는다(이전에는 닫힌 대화도 이벤트마다 계속 재조회). 구독자 없는 항목은 200개까지만 보관하고, 버린 항목을 늦게 끝난 조회가 되살리던 결함을 고쳤다. 단위 3개(`web/app/state/store.test.ts`)·작업 공간/pane E2E 47개 통과.
+- [x] PANE-008 배치 직렬화·schema version·복원·누락 자원 fallback을 구현한다. 검증: `schema: 1` 배치를 클라이언트 `isValid`와 서버 `validate_layout`이 같은 규칙으로 검증하고, 기기 사본은 `format: 1`·revision·보류 요청을 검증해 손상·미지원 사본은 복원하지 않는다(`layoutPersistence.test.ts` 12개, `tests/workspace.rs` 5개). 없는 프로젝트·자원 탭은 지우지 않고 오류로 표시하며 다른 대상으로 보내지 않는다(`markMissing`, `web/e2e/resource-restore.spec.ts`, `layout-resume.spec.ts`).
 - [x] PANE-009 모바일 단일 pane 표시와 넓은 화면 분할을 전환하며 가려진 pane 상태를 보존한다. 검증: `layout.test.ts::mobileView`, `web/e2e/mobile.spec.ts`.
 - [ ] PANE-010 A/B 프로젝트·다른 호스트·같은 세션 조합에서 포커스 이동 중 늦은 응답·승인·파일 변경이 원래 대상에만 반영되는지 검증한다.
 

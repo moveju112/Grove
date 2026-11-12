@@ -147,7 +147,10 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     };
     return (
         <PaneVisibility.Provider value={visible}>
-        <section className={`pane ${focused ? "focused" : ""}`} onPointerDownCapture={() => !focused && p.update((l) => L.focus(l, leaf.id))} data-testid="pane" data-leaf={leaf.id}
+        <section className={`pane ${focused ? "focused" : ""}`} data-testid="pane" data-leaf={leaf.id}
+            // pointer뿐 아니라 키보드(Tab) 포커스 진입도 현재 pane으로 삼아, 사이드바에서 여는 항목이 입력 중인 pane에 열리게 한다(PANE-006).
+            onPointerDownCapture={() => !focused && p.update((l) => L.focus(l, leaf.id))}
+            onFocusCapture={() => !focused && visible && p.update((l) => L.focus(l, leaf.id))}
             onDragOver={(e) => {
                 if (!draggable(e)) return;
                 e.preventDefault();

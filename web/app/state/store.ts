@@ -5,7 +5,10 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { EventRecord } from "../api/generated";
 import { refreshFiles } from "./fileWatch";
 
-type Entry = { data: unknown; error: unknown; loading: boolean; version: number; fetcher: () => Promise<unknown> };
+// stale: 보는 화면이 없어 무효화를 미뤄 둔 항목. 다시 구독하면 그때 한 번 읽는다(PANE-007).
+type Entry = { data: unknown; error: unknown; loading: boolean; version: number; stale: boolean; fetcher: () => Promise<unknown> };
+/// 구독자가 없는 cache 항목의 최대 보관 수. 넘으면 오래된 것부터 버린다.
+export const IDLE_ENTRY_LIMIT = 200;
 
 const entries = new Map<string, Entry>();
 const subs = new Map<string, Set<() => void>>();
@@ -32,7 +35,8 @@ async function load(key: string) {
     } catch (err) {
         if (e.version === v) e.error = err;
     } finally {
-        if (g !== generation) return;
+        // 로그아웃 정리나 보관 상한으로 버린 항목은 늦게 끝난 조회가 되살리지 않는다.
+        if (g !== generation || entries.get(key) !== e) return;
         if (e.version === v) {
             e.loading = false;
             // 객체 identity를 바꿔 구독자가 다시 그리게 한다.
@@ -42,8 +46,51 @@ async function load(key: string) {
     }
 }
 
+/// 보고 있는 key만 다시 읽고, 닫힌 화면의 key는 stale로 표시해 불필요한 요청을 보내지 않는다.
+function refresh(k: string) {
+    if (subs.get(k)?.size) void load(k);
+    else {
+        const e = entries.get(k);
+        if (e) e.stale = true;
+    }
+}
+
 export function invalidate(prefix: string) {
-    for (const k of entries.keys()) if (k === prefix || k.startsWith(prefix + ":")) void load(k);
+    for (const k of entries.keys()) if (k === prefix || k.startsWith(prefix + ":")) refresh(k);
+}
+
+/// 같은 key의 여러 viewer는 한 항목·한 요청을 공유한다. 반환한 함수로 각 viewer를 해제한다.
+export function subscribeQuery(key: string, fetcher: () => Promise<unknown>, listener: () => void): () => void {
+    let e = entries.get(key);
+    if (!e) {
+        e = { data: undefined, error: null, loading: false, version: 0, stale: false, fetcher };
+        entries.set(key, e);
+        void load(key);
+    } else {
+        e.fetcher = fetcher;
+        if (e.stale) {
+            e.stale = false;
+            void load(key);
+        }
+    }
+    const set = subs.get(key) ?? new Set();
+    set.add(listener);
+    subs.set(key, set);
+    return () => {
+        set.delete(listener);
+        if (set.size > 0 || subs.get(key) !== set) return;
+        subs.delete(key);
+        pruneIdle();
+    };
+}
+
+function pruneIdle() {
+    const idle = [...entries.keys()].filter((k) => !subs.get(k)?.size);
+    for (const k of idle.slice(0, Math.max(0, idle.length - IDLE_ENTRY_LIMIT))) entries.delete(k);
+}
+
+export function cacheStats(): { entries: number; subscribed: number } {
+    return { entries: entries.size, subscribed: [...subs.values()].filter((s) => s.size > 0).length };
 }
 
 export function setData(key: string, data: unknown) {
@@ -58,21 +105,7 @@ export function useQuery<T>(key: string | null, fetcher: () => Promise<T>): { da
     const [, force] = useState(0);
     useEffect(() => {
         if (!key) return;
-        let e = entries.get(key);
-        if (!e) {
-            e = { data: undefined, error: null, loading: false, version: 0, fetcher };
-            entries.set(key, e);
-            void load(key);
-        } else {
-            e.fetcher = fetcher;
-        }
-        const set = subs.get(key) ?? new Set();
-        const f = () => force((x) => x + 1);
-        set.add(f);
-        subs.set(key, set);
-        return () => {
-            set.delete(f);
-        };
+        return subscribeQuery(key, fetcher, () => force((x) => x + 1));
         // fetcher는 key가 같으면 같은 대상을 읽는다고 가정한다.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key]);
@@ -239,7 +272,7 @@ export function applyEvent(e: EventRecord) {
 
 /// 재동기화: 모든 조회를 다시 읽는다(NET-008).
 export function resyncAll() {
-    for (const k of entries.keys()) void load(k);
+    for (const k of entries.keys()) refresh(k);
     refreshFiles();
 }
 
