@@ -84,6 +84,8 @@ Worktree 복구(GIT-007·009): 생성 전에 `unknown` 소유 기록과 결과 �
 
 다중 기기(NET-013): 설정 편집 초안은 편집을 시작한 revision과 결합한다. SSE 재조회로 최신 값이 도착해도 초안의 revision을 바꾸지 않는다. 충돌하면 초안을 보존하고 최신 값 사용 또는 명시적 덮어쓰기를 선택한다. 승인 경합은 transaction에서 첫 결정만 확정하고 나머지 기기에는 `already_decided`와 현재 상태를 반환한다.
 
+최근 항목의 기기 간 이어보기(RECENT-006): PC·Android·Web은 같은 서버의 최근 항목·대화를 공유하고, 화면 배치·탭별 위치·시간 범위 선택은 기기별이다. 접근 시각은 서버 시각으로 마지막 접근이 남는다. 대화를 보며 보내는 `last_seen_seq`는 큰 값을 유지해 늦게 갱신된 기기가 다른 기기의 읽음을 되돌리지 않으며, 위치 없이 여는 접근은 읽음 정보를 바꾸지 않는다. 고정·숨김은 `expected_revision`으로 보호하고 바꾸려는 필드만 보낸다. 충돌하면 화면은 최신 항목에서 이미 원하는 값이면 그대로 두고, 아니면 최신 revision으로 그 필드만 한 번 다시 적용해 다른 기기가 바꾼 다른 필드를 덮어쓰지 않는다. 오프라인이면 마지막으로 받은 목록과 기존 탭은 그대로 쓰되 접근 기록은 대기열에 쌓지 않는다. 실패를 표시하고, 다시 연결된 뒤 그 화면을 다시 볼 때 새로 기록한다.
+
 접속 경로(NET-005): 로컬·LAN·VPN·원격은 모두 같은 `/api/v1`과 같은 서버의 웹앱을 사용한다. 기본은 loopback이고 외부 접속은 `GROVE_LISTEN`/`--listen`으로 명시한다. 외부 공개 시 `GROVE_ALLOWED_HOSTS`에 실제 Host(포트 포함)를 제한하고 앞단 HTTPS에서 TLS를 종료한 뒤 `GROVE_TLS_TERMINATED=1`로 Secure refresh 쿠키를 사용한다. 이 설정은 TLS 자체를 제공하지 않는다. 장기 자격증명을 외부 평문 HTTP로 보내지 않는다. HTTP authority 계약 시험과 실제 네트워크·인증서·방화벽 검증은 구분한다.
 
 TLS·WebSocket Origin(SEC-003): 허용 Origin은 scheme·Host·port가 일치해야 한다. 기본 HTTP에서는 HTTP Origin, 명시적인 TLS 종료 설정에서는 HTTPS Origin만 같은 origin으로 인정하고 요청자가 보낸 `Forwarded`·`X-Forwarded-Proto`로 신뢰 상태를 바꾸지 않는다. 기존 개발용 `allowed_origins`는 명시적 예외이며 교차 사이트 fetch 차단은 유지한다. HTTPS 앞단을 쓰던 설치에서도 `GROVE_TLS_TERMINATED=1`이 빠지면 HTTPS Origin을 거절하므로 설정을 맞춘다. 앞단은 외부 Host와 port를 보존하고 SSE 스트리밍·WebSocket upgrade를 전달해야 하며, 평문 upstream은 신뢰하는 loopback·전용 네트워크에만 노출한다.

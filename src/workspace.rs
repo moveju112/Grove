@@ -140,6 +140,7 @@ fn validate_view_state(v: &Value) -> ApiResult<()> {
 }
 
 /// 자원을 열 때 호출한다. 같은 자원은 항목 하나만 유지하고 접근 시각만 갱신한다(RECENCY-002).
+/// 여러 기기가 같은 대화를 보면 늦게 갱신된 기기의 낮은 `last_seen_seq`가 읽음을 되돌리지 않도록 큰 값을 유지한다(RECENT-006).
 pub async fn touch(State(app): State<App>, p: Principal, headers: HeaderMap, Json(b): Json<Touch>) -> ApiResult<Response> {
     if !matches!(b.kind.as_str(), "session" | "file" | "terminal" | "project") {
         return Err(ApiError::invalid("알 수 없는 항목 종류입니다"));
@@ -168,7 +169,9 @@ pub async fn touch(State(app): State<App>, p: Principal, headers: HeaderMap, Jso
         tx.execute(
             "INSERT INTO recent_items (id, kind, project_id, resource_id, title, last_access_at, view_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
              ON CONFLICT(kind, project_id, resource_id) DO UPDATE SET last_access_at = ?6, hidden = 0, hidden_at = NULL, title = ?5, \
-             view_state = CASE WHEN ?8 THEN ?7 ELSE view_state END, revision = revision + 1",
+             view_state = CASE WHEN ?8 THEN json_set(?7, '$.last_seen_seq', \
+                 MAX(COALESCE(json_extract(view_state, '$.last_seen_seq'), 0), COALESCE(json_extract(?7, '$.last_seen_seq'), 0))) \
+                 ELSE view_state END, revision = revision + 1",
             params![id, b.kind, b.project_id, b.resource_id, title, now, b.view_state.clone().unwrap_or(json!({})).to_string(), b.view_state.is_some()],
         )?;
         let rid: String = tx.query_row(

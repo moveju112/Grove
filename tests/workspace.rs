@@ -215,6 +215,51 @@ async fn recent_status_reflects_archived_and_hidden() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
+/// RECENT-006: 같은 대화를 여러 기기에서 볼 때 늦은 기기의 낮은 읽음 위치가 읽음을 되돌리지 않고,
+/// 고정·숨김 동시 변경은 revision 충돌로 알리며 다른 필드를 덮어쓰지 않는다.
+#[tokio::test]
+async fn recent_access_from_several_devices_never_regresses_read_state() {
+    let s = TestServer::start().await;
+    let pid = s.create_project("p").await["id"].as_str().unwrap().to_string();
+    let sid = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    for t in ["a", "b", "c"] {
+        s.post(&format!("/api/v1/sessions/{sid}/messages"), json!({ "text": t })).await;
+    }
+    let touch = |seq: Option<i64>| {
+        let mut body = json!({ "kind": "session", "project_id": pid, "resource_id": sid });
+        if let Some(seq) = seq { body["view_state"] = json!({ "last_seen_seq": seq }); }
+        body
+    };
+    // PC가 끝까지 읽음 → 늦게 갱신된 폰이 이전 위치(1)로 접근해도 읽음 유지.
+    let (_, pc) = s.post("/api/v1/recent/touch", touch(Some(3))).await;
+    assert_eq!(pc["unread"], false);
+    let (_, phone) = s.post("/api/v1/recent/touch", touch(Some(1))).await;
+    assert_eq!(phone["view_state"]["last_seen_seq"], 3);
+    assert_eq!(phone["unread"], false);
+    // 위치 없이 여는 접근(최근 목록 클릭)은 읽음 정보를 그대로 둔다.
+    let (_, opened) = s.post("/api/v1/recent/touch", touch(None)).await;
+    assert_eq!(opened["view_state"]["last_seen_seq"], 3);
+    // 새 메시지는 다시 읽지 않음.
+    s.post(&format!("/api/v1/sessions/{sid}/messages"), json!({ "text": "d" })).await;
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(list["items"][0]["unread"], true);
+
+    // 고정(PC)과 숨김(폰, 오래된 revision)이 동시에 오면 폰은 충돌을 받고 현재 값을 확인한다.
+    let item = list["items"][0].clone();
+    let id = item["id"].as_str().unwrap();
+    let (st, _) = s.send(Method::PATCH, &format!("/api/v1/recent/{id}"), json!({ "expected_revision": item["revision"], "pinned": true })).await;
+    assert_eq!(st, StatusCode::OK);
+    let (st, conflict) = s.send(Method::PATCH, &format!("/api/v1/recent/{id}"), json!({ "expected_revision": item["revision"], "hidden": true })).await;
+    assert_eq!(st, StatusCode::CONFLICT);
+    let current = &conflict["error"]["details"]["current"];
+    assert_eq!(current["pinned"], true);
+    // 최신 revision으로 숨김만 다시 적용해도 다른 기기의 고정은 유지된다.
+    let (st, after) = s.send(Method::PATCH, &format!("/api/v1/recent/{id}"), json!({ "expected_revision": current["revision"], "hidden": true })).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(after["pinned"], true);
+    assert_eq!(after["hidden"], true);
+}
+
 /// RECENCY-007: 대량 최근 목록(파일 4,000 + 대화 1,000)의 정렬·검색·시간 범위·상태 필터 결과와 응답 시간.
 /// 시간 상한은 debug 빌드·부하 차이를 감안한 병적 회귀 감시용이고, 측정값은 출력해 기록한다.
 #[tokio::test]

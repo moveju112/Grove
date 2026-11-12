@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { RecentItem, RecentPage } from "../api/generated";
 import { loadPrefs, savePrefs, usePrefs } from "../state/device";
+import { type RecentIntent, retryIntent } from "../state/recentPatch";
 import { effectiveRecentWindow, groupBySplit, recentSince, recentWindowLabel } from "../state/recentWindow";
 import { When } from "./When";
 import { useQuery } from "../state/store";
@@ -54,11 +55,21 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
     const query = new URLSearchParams({ filter, q, limit: String(limit), ...(since ? { since } : {}) }).toString();
     const recent = useQuery<RecentPage>(`recent:${query}`, () => api.get(`/recent?${query}`));
 
-    const patch = async (it: RecentItem, body: object) => {
+    const patch = async (it: RecentItem, intent: RecentIntent) => {
+        setErr(null);
         try {
-            await api.patch(`/recent/${it.id}`, { expected_revision: it.revision, ...body });
+            await api.patch(`/recent/${it.id}`, { expected_revision: it.revision, ...intent });
         } catch (e) {
-            setErr(e instanceof ApiError ? e.message : "변경 실패");
+            // 다른 기기가 먼저 바꿨다: 이미 원하는 값이면 그대로 두고, 아니면 최신 값 위에 내 필드만 한 번 다시 적용한다.
+            const current = e instanceof ApiError && e.code === "revision_conflict" ? (e.details as { current?: RecentItem } | undefined)?.current : undefined;
+            const again = current ? retryIntent(current, intent) : null;
+            try {
+                if (again) await api.patch(`/recent/${it.id}`, again);
+                else if (!current) throw e;
+            } catch (retry) {
+                setErr(retry instanceof ApiError ? retry.message : "변경 실패");
+            }
+        } finally {
             recent.reload();
         }
     };

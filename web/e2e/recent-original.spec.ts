@@ -33,6 +33,35 @@ test("시간 범위 밖 항목은 기본 4시간에서 빠지고 넓은 범위·
     await expect(row).toHaveCount(1);
 });
 
+test("다른 기기가 먼저 고정해도 이 기기의 숨김은 오류 없이 그 필드만 다시 적용하고 고정을 유지한다(RECENT-006)", async ({ page }) => {
+    const { a } = await ensureProjects();
+    await ensureProfile();
+    const s = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title: `devices-${randomUUID()}` });
+    const touched = await apiCall<{ id: string; revision: number }>("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    await login(page);
+    const recent = page.locator(".recent");
+    const row = recent.getByTestId("recent-item").filter({ hasText: s.title });
+    await expect(row).toHaveCount(1);
+    const sent: unknown[] = [];
+    await page.route(`**/api/v1/recent/${touched.id}`, async (route) => {
+        sent.push(route.request().postDataJSON());
+        // 이 기기의 첫 요청이 서버에 닿기 직전에 다른 기기가 고정한다.
+        if (sent.length === 1) {
+            const current = (await apiCall<{ items: { id: string; revision: number }[] }>("GET", "/recent?limit=200&filter=all")).items.find((i) => i.id === touched.id)!;
+            await apiCall("PATCH", `/recent/${touched.id}`, { expected_revision: current.revision, pinned: true });
+        }
+        await route.continue();
+    });
+    await row.getByRole("button", { name: "최근에서 숨기기" }).click();
+    await expect(row).toHaveCount(0);
+    expect(sent).toHaveLength(2);
+    expect(sent[1]).toMatchObject({ hidden: true });
+    expect(sent[1]).not.toHaveProperty("pinned");
+    await expect(recent.getByRole("alert")).toHaveCount(0);
+    const hidden = (await apiCall<{ items: { id: string; pinned: boolean; hidden: boolean }[] }>("GET", "/recent?limit=200&filter=hidden")).items.find((i) => i.id === touched.id)!;
+    expect(hidden).toMatchObject({ pinned: true, hidden: true });
+});
+
 test("숨긴 대화는 새 메시지가 오면 다시 보이고, 분할로 함께 연 대화는 한 묶음으로 보인다", async ({ page }) => {
     const { a } = await ensureProjects();
     await ensureProfile();
