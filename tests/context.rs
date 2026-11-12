@@ -325,6 +325,25 @@ async fn longer_summary_is_rejected_and_repeated_auto_failures_pause() {
     assert!(summary_requests(&f) > calls + 1, "성공한 압축 뒤에는 자동 압축을 다시 시도한다");
 }
 
+// CMP-014: 추가 검사만 끄면 이전 방식(최소 대상·길이 검사 없음)으로 돌아가고, 원문 hash 확인은 그대로 남는다.
+#[tokio::test]
+async fn compaction_checks_can_be_disabled_without_dropping_source_checks() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let (prof, pid, sid) = auto_session(&s, &f.base, 20).await;
+    let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/context.compaction_checks"), json!({ "expected_revision": 0, "value": false })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    f.push(fixture::text("답"));
+    turn(&s, &sid, &prof, "질문", false).await;
+    f.push_for(SUMMARY, fixture::text(&"긴 요약 ".repeat(50)));
+    f.push(fixture::text("다음 답"));
+    turn(&s, &sid, &prof, "다음", false).await;
+    let cps = notes_of(&s, &sid, "compaction").await;
+    assert_eq!(cps.len(), 1, "작은 대상·긴 요약도 이전 방식대로 적용");
+    assert_eq!(cps[0]["content"]["source"]["messages"], 2, "원문 구간 기록은 유지");
+    assert!(notes_of(&s, &sid, "compaction_failed").await.is_empty());
+}
+
 // CMP-008: 요약 생성 중 대상 원문이 바뀌면 후보를 적용하지 않는다(원문 구간 hash 비교).
 #[tokio::test]
 async fn summary_is_discarded_when_source_changes_during_generation() {
@@ -356,6 +375,31 @@ async fn summary_is_discarded_when_source_changes_during_generation() {
     assert_eq!(st, StatusCode::CONFLICT, "{v}");
     assert_eq!(v["error"]["code"], "source_changed");
     assert!(notes_of(&s, &sid, "compaction").await.is_empty());
+}
+
+// CMP-010: 압축이 없으면 다음 요청은 이전 요청의 지침·도구 schema·메시지를 같은 직렬화로 그대로 앞에 둔다(provider cache prefix 유지).
+#[tokio::test]
+async fn consecutive_requests_keep_an_identical_serialized_prefix() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = profile_with_window(&s, &f.base, 100_000).await;
+    let p = s.create_project("prefix").await;
+    let root = p["root_path"].as_str().unwrap();
+    std::fs::write(format!("{root}/AGENTS.md"), "지침: 짧게 답한다").unwrap();
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    f.push(fixture::tool_calls(&[("r1", "read", json!({ "path": "AGENTS.md" }))]));
+    f.push(fixture::text("첫 답"));
+    turn(&s, &sid, &prof, "첫 질문", true).await;
+    f.push(fixture::text("둘째 답"));
+    turn(&s, &sid, &prof, "둘째 질문", true).await;
+    let reqs = f.requests();
+    let (a, b) = (&reqs[1], &reqs[2]);
+    assert_eq!(a["tools"].to_string(), b["tools"].to_string(), "도구 schema 직렬화가 같다");
+    let (am, bm) = (a["messages"].as_array().unwrap(), b["messages"].as_array().unwrap());
+    assert!(bm.len() > am.len());
+    for (i, m) in am.iter().enumerate() {
+        assert_eq!(m.to_string(), bm[i].to_string(), "{i}번째 메시지가 다시 쓰였다");
+    }
 }
 
 // DB-004: 같은 영속 메시지 ID에 연결된 화면 기록과 모델 입력은 서로 다른 표현을 유지한다.

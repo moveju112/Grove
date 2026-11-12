@@ -254,8 +254,9 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
             let max_tokens = mp.capabilities.max_output_tokens.unwrap_or(4096).min(4096);
             let before = estimate_tokens(&msgs, "");
             // 예상 절감이 작으면 자동 압축은 모델을 부르지 않고 원문을 그대로 둔다(CMP-003).
+            let checks = crate::settings::effective(c, "context.compaction_checks", Some(&s.project_id), Some(&sid))?.as_bool().unwrap_or(true);
             let min = crate::settings::effective(c, "context.compact_min_tokens", Some(&s.project_id), Some(&sid))?.as_u64().unwrap_or(500);
-            if auto && before < min {
+            if checks && auto && before < min {
                 return Ok(None);
             }
             crate::attachments::hydrate(c, &data, &s.project_id, &mut msgs)?;
@@ -265,10 +266,10 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
             });
             // to_chat는 연속 user를 합치므로 마지막에 붙인 지시가 앞 user와 합쳐질 수 있다(의도대로 동작).
             let timeline: i64 = c.query_row("SELECT timeline_revision FROM sessions WHERE id = ?1", params![sid], |r| r.get(0))?;
-            Ok(Some((b, use_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count))))
+            Ok(Some((b, use_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks))))
         })
         .await?;
-    let Some((b, used_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count))) = prepared else { return Ok(None) };
+    let Some((b, used_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks))) = prepared else { return Ok(None) };
     let req = ModelRequest { system: SUMMARY_SYSTEM.into(), messages: msgs, tools: vec![], max_tokens: Some(max_tokens), temperature: None, effort: None, cli: None };
     let permit = crate::model_limits::auxiliary(app, session_id, &rp, cancel).await?;
     let out = provider::stream(&rp, &req, cancel, &mut |_| {}).await;
@@ -290,7 +291,7 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
                         return Err(ApiError::conflict("source_changed", "요약 중 대상 원문이 바뀌어 적용하지 않았습니다"));
                     }
                     // 원문보다 짧지 않은 요약은 절감이 없으므로 적용하지 않는다(CMP-006). 짧지만 틀린 요약은 이 검사로 걸러지지 않는다.
-                    if after >= before {
+                    if checks && after >= before {
                         return Err(ApiError::new(StatusCode::BAD_GATEWAY, "summary_not_shorter", format!("요약(약 {after} tokens)이 원문(약 {before} tokens)보다 짧지 않아 적용하지 않았습니다")));
                     }
                     if !auto && crate::sessions::get_active(&tx, &sid)?.active_turn.is_some() {
@@ -347,8 +348,9 @@ pub async fn maybe_auto_compact(app: &App, session_id: &str, profile_id: &str, c
                 )
             };
             let max = crate::settings::effective(c, "context.auto_compact_max_failures", Some(&s.project_id), Some(&sid))?.as_i64().unwrap_or(2);
+            let checks = crate::settings::effective(c, "context.compaction_checks", Some(&s.project_id), Some(&sid))?.as_bool().unwrap_or(true);
             let failures = count("compaction_failed")?;
-            if failures >= max {
+            if checks && failures >= max {
                 if count("compaction_paused")? == 0 {
                     crate::sessions::append_message(c, &now, &sid, "note", &json!({ "type": "compaction_paused", "failures": failures, "limit": max }), None, None)?;
                     return Ok((false, true));

@@ -590,6 +590,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 후보 기록: `source{from_seq, upto_seq, messages, sha256, timeline_revision}`·요약 프로필·사용량·추정 전후. sha256은 이전 요약 note와 구간 메시지의 ID·seq·내용 hash를 순서대로 묶는다.
 - 적용 조건(한 transaction): timeline revision 동일 → 구간 hash 동일 → 수동이면 활성 턴 없음 → 같은 범위의 더 새 경계 없음 → 요약 추정이 원문보다 작음. 하나라도 어긋나면 적용하지 않는다(`timeline_changed`·`source_changed`·`summary_not_shorter`). 짧지만 틀린 요약은 이 검사로 찾지 못한다.
 - 재시도 상한: 마지막 압축 경계 이후 자동 실패가 `context.auto_compact_max_failures`(기본 2)에 닿으면 `compaction_paused` note를 한 번 남기고 자동 압축을 멈춘다. 압축이 성공하면 다시 센다. 요약 호출은 출력 4,096 token·provider timeout·보조 호출 한도 안에서만 한다.
+- 되돌림 스위치: `context.compaction_checks=false`는 최소 대상·길이 검사·연속 실패 정지만 끈다. timeline·구간 hash 확인과 원문·기존 요약은 유지한다.
 
 ## 11. 결정 기록
 

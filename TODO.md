@@ -437,11 +437,11 @@ PaseoDog 설치 엔진의 선언 버전 `1.4.1`과 최신 소스의 기능 존�
 - [x] CMP-007 명시적 횟수/시간/비용 상한 안에서만 재생성을 허용한다. 상한 뒤 원문 유지와 실패 사유를 기록하고 같은 입력을 매번 자동 재시도하지 않는다. 검증: 마지막 압축 이후 자동 실패가 `context.auto_compact_max_failures`(기본 2)에 닿으면 정지 note 한 번 뒤 요약 호출 없음, 압축 성공 시 재개(`longer_summary_is_rejected_and_repeated_auto_failures_pause`).
 - [x] CMP-008 candidate 검증과 context 적용을 분리하고 revision compare-and-swap으로 교체한다. 생성 중 새 메시지·모델 변경·취소가 발생하면 안전하게 폐기/재판정한다. 검증: 적용 transaction에서 timeline revision·구간 hash·활성 턴·더 새 경계를 다시 확인한다. 생성 중 원문 변경은 `source_changed`, 되감기는 `timeline_changed`로 폐기(`summary_is_discarded_when_source_changes_during_generation`, `tests/rewind.rs::compaction_started_before_rewind_cannot_restore_hidden_context`).
 - [x] CMP-009 압축 적용 후에도 확정 대화·첨부·승인/unknown 상태·검색 원문 근거를 보존한다. rewind 가능 범위와 압축 projection 복원 범위를 UI에서 구분한다. 검증: 압축은 note만 더하고 원문·첨부·승인/unknown 기록을 지우지 않는다. 되감기는 압축된 구간을 막고 복구 가능 범위를 화면에 구분한다(`web/e2e/rewind.spec.ts` 압축 구간 시험, `manual_compaction_replaces_old_history_and_keeps_tool_pairs`).
-- [ ] CMP-010 이미 보낸 provider 요청의 prefix를 뒤늦게 다시 쓰지 않는다. 변경 없는 지침/도구 schema/과거 effort 기록의 직렬화를 안정화하고 cache hit은 관찰된 값으로만 표시한다.
+- [x] CMP-010 이미 보낸 provider 요청의 prefix를 뒤늦게 다시 쓰지 않는다. 변경 없는 지침/도구 schema/과거 effort 기록의 직렬화를 안정화하고 cache hit은 관찰된 값으로만 표시한다. 검증: 압축은 턴의 첫 모델 호출 전에만 하고, 압축이 없으면 다음 요청이 이전 요청의 지침·도구 schema·메시지를 같은 직렬화로 앞에 둔다(`tests/context.rs::consecutive_requests_keep_an_identical_serialized_prefix`). cache hit은 provider usage의 `cache_read_tokens` 관찰값만 표시한다.
 - [ ] CMP-011 UI에 적용 구간·원문 열기·적용 전후 추정 token·요약 모델/비용·실패 이유를 표시한다. 실패한 후보를 정상 압축 이벤트로 보여주지 않는다. 진행: 압축 note에 대상 구간·원문 보존·추정 전후·요약 사용량, 실패·자동 정지 note를 정상 압축과 구분해 표시한다(`web/e2e/workspace.spec.ts`). 요약 모델 이름·비용 표시는 남았다.
 - [ ] CMP-012 기계 회귀로 경합·취소·과대 요약·누락 참조·디스크 실패·재시작을 검증한다. 실패 시 원문과 기존 projection이 유지됨을 확인한다. 진행: 되감기 경합·원문 변경·과대 요약·연속 실패를 기계 회귀로 확인했다. 디스크 실패·재시작 주입은 남았다.
 - [ ] CMP-013 EVAL에 긴 코딩 작업·상충 요구·보류 결정·미완료 자식 작업·승인 대기·보안 지침 사례를 추가한다. 동일 모델/입력으로 요구 보존·정답·비용·지연을 baseline과 비교한다.
-- [ ] CMP-014 품질 퇴행 시 새 압축 정책만 끌 수 있게 한다. 원문과 이전 유효 projection을 보존하며 이미 실행된 도구 부작용을 압축 rollback으로 되돌렸다고 표시하지 않는다.
+- [x] CMP-014 품질 퇴행 시 새 압축 정책만 끌 수 있게 한다. 원문과 이전 유효 projection을 보존하며 이미 실행된 도구 부작용을 압축 rollback으로 되돌렸다고 표시하지 않는다. 검증: `context.compaction_checks`를 끄면 최소 대상·길이 검사·연속 실패 정지만 이전 방식으로 돌아가고 원문 구간 hash·timeline 확인과 기존 요약·원문은 그대로다(`compaction_checks_can_be_disabled_without_dropping_source_checks`). 압축은 도구 부작용을 되돌리지 않으며 그렇게 표시하지 않는다.
 
 완료 조건: 실패·경합에서도 원문이 손실되지 않고, 기계적 무결성과 실제 모델의 작업 품질을 각각 검증한 정책만 기본값으로 적용한다.
 
