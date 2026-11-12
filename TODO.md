@@ -900,10 +900,10 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] EXEC-011 백그라운드 완료 결과를 모델 호출 없이 원래 세션에 저장한다. 검증: `tests/tasks.rs`(note 1개, 다음 턴 모델 입력에 포함).
 - [x] EXEC-012 결과 기록의 중복 방지·클라이언트 재연결 전달을 구현한다. 검증: 상태 전이 guard로 note 1회(`tests/tasks.rs`), `message.created`·`task.changed` 이벤트 cursor 재전송.
 - [x] EXEC-013 재시작으로 결과를 확인할 수 없는 작업은 결과 불명으로 표시한다. 검증: `tests/tasks.rs::shutdown_cancels_and_crash_leftovers_become_unknown`.
-- [ ] EXEC-014 원격 job 상태 API 등록·조회·감시 취소를 구현한다.
-- [ ] EXEC-015 승인된 정확한 HTTPS URL만 조회하고 redirect·원격 mutation을 실행하지 않는다.
-- [ ] EXEC-016 원격 감시 취소와 원격 작업 자체 취소를 분리한다.
-- [ ] EXEC-017 로컬 명령 성공·원격 job 성공·알림 저장·앱 열람을 구분한다.
+- [x] EXEC-014 원격 job 상태 API 등록·조회·감시 취소를 구현한다. 검증: 대화별 등록(멱등)·목록·조회·지금 확인·감시 취소와 재시작 뒤 이어 감시, 기한 경과 `timed_out`(`tests/remote_watches.rs` 6개, `remote_watches::tests`, `web/e2e/remote-watch.spec.ts`). 실제 외부 HTTPS 서비스는 loopback fixture와 별개로 미검증.
+- [x] EXEC-015 승인된 정확한 HTTPS URL만 조회하고 redirect·원격 mutation을 실행하지 않는다. 검증: HTTPS·사용자 정보/fragment 없는 URL만 등록, GET만·인증/쿠키 없음, 3xx는 따라가지 않고 `redirect_refused`로 중단, 5xx·비 JSON은 기록 후 계속(`redirect_stops_watch_and_transient_errors_keep_watching`). 시험 전용 loopback 평문 예외는 설정으로만 켠다(RULEBOOK §33).
+- [x] EXEC-016 원격 감시 취소와 원격 작업 자체 취소를 분리한다. 검증: 감시 취소는 revision 비교 후 조회만 멈추고 `remote_job_cancelled: false`를 돌려주며 원격에 추가 요청이 없다(`cancel_stops_only_watching_and_failure_value_fails`, E2E).
+- [x] EXEC-017 로컬 명령 성공·원격 job 성공·알림 저장·앱 열람을 구분한다. 검증: 원격 상태·감시 결과·연결된 로컬 작업·알림 저장/앱 전달/열람을 다른 필드로 두고 화면에 나눠 표시한다. 결과만으로 모델을 부르지 않고 다음 요청에 신뢰하지 않는 note로 전달한다(`watch_reports_remote_success_separately_from_local_task_and_notification`, `result_reaches_next_model_request_as_untrusted_note`, E2E).
 - [ ] TERM-001 Linux PTY와 Windows ConPTY 기반 터미널을 구현한다.
 - [x] TERM-002 터미널 생성·목록·이름 변경·종료를 구현한다. 검증: `tests/terminals.rs`(생성·revision 이름 변경·kill·exit 코드·삭제), e2e 터미널.
 - [x] TERM-003 입력·resize·출력 stream·구독/해제를 구현한다. 검증: `tests/terminals.rs::io_resize_single_use_ticket_and_exit`(입력·`stty size` 30 100·일회용 티켓), e2e 터미널.
@@ -1876,7 +1876,7 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 - [ ] SCHEDULE-002 다음 실행 시각·DST·놓친 실행 정책과 중복 접수 방지를 구현한다.
 - [ ] SCHEDULE-003 pause/resume/run-once/update/delete의 활성 실행 영향과 revision 충돌을 처리한다.
 - [ ] SCHEDULE-004 승인 대기·overlap·retry·서버 재시작의 상태 전이를 구현한다.
-- [ ] SCHEDULE-005 원격 job의 정확한 URL·job ID·허용 상태·timeout·감시 취소를 구현한다.
+- [x] SCHEDULE-005 원격 job의 정확한 URL·job ID·허용 상태·timeout·감시 취소를 구현한다. 검증: 정확한 URL·상태 위치(job 상태)·성공/실패 허용 값·확인 간격·감시 시간·감시 취소를 EXEC-014~017과 같은 구현으로 제공한다(RULEBOOK §33).
 - [ ] SCHEDULE-006 완료/실패/결과 불명 receipt와 알림 저장을 연결하고 모델 후속 호출을 별도 정책으로 둔다.
 - [ ] SCHEDULE-007 고정 시계 시험과 실제 짧은 주기 실행을 병행해 시계 변경·중복 기동·복구·감시 취소를 검증한다.
 

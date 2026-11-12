@@ -753,6 +753,35 @@ pub const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE turns ADD COLUMN evidence TEXT;
     "#,
+    // 47: 원격 job 완료 감시(EXEC-014~017). 정확한 URL의 GET 조회 상태와 종료 알림을 연결한다.
+    r#"
+    CREATE TABLE remote_watches (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        task_id TEXT REFERENCES tasks(id),
+        title TEXT NOT NULL,
+        url TEXT NOT NULL,
+        status_pointer TEXT NOT NULL,
+        success_values TEXT NOT NULL,
+        failure_values TEXT NOT NULL,
+        interval_secs INTEGER NOT NULL CHECK (interval_secs BETWEEN 10 AND 3600),
+        deadline_at TEXT NOT NULL,
+        status TEXT NOT NULL CHECK (status IN ('watching','succeeded','failed','timed_out','cancelled','stopped')),
+        remote_value TEXT,
+        checks INTEGER NOT NULL DEFAULT 0,
+        last_checked_at TEXT,
+        next_check_at TEXT,
+        last_error TEXT,
+        notification_id TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        finished_at TEXT,
+        revision INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE INDEX remote_watches_session ON remote_watches(session_id, created_at);
+    CREATE INDEX remote_watches_due ON remote_watches(status, next_check_at);
+    "#,
 ];
 
 #[cfg(test)]

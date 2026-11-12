@@ -573,6 +573,15 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - `GET /recovery`: 확인하지 않은 interrupted 턴, 증거가 남은 failed 턴, 검토하지 않은 unknown 도구를 최신순 `(시각, ID)` keyset cursor(최대 100)로 보낸다. 원문·인자 없이 위치·상태·오류 분류·증거 요약만 담는다. 확인(`/turns/{id}/acknowledge`)·검토(기존 tool review revision)는 멱등이며 과거 실행의 성공 판정이 아니다. 사용자 취소 턴의 증거는 남기되 목록에 올리지 않는다.
 - 보존: 증거는 답변 확정 commit에서만 지운다. 확인·검토 뒤에도 자동 정리하지 않으며 턴 행과 함께 backup/restore에 포함된다. 복원 뒤에도 모델·도구를 다시 실행하지 않는다.
 
+## 33. 원격 job 완료 감시(EXEC-014~017, SCHEDULE-005)
+
+- 등록(`POST /sessions/{id}/remote-watches`, Idempotency-Key): 이름, 정확한 URL, 상태 위치(JSON pointer, 빈 값은 본문 전체), 성공 값·실패 값(각 1~20개, 겹침 금지), 확인 간격 10~3600초(기본 60), 감시 시간 1분~7일(기본 60분), 선택적 같은 대화의 로컬 작업 ID. 등록 즉시 한 번 확인한다.
+- 조회 범위: HTTPS만, 사용자 정보·fragment 없는 URL 그대로 GET 한 번. redirect를 따르지 않으며(3xx는 `stopped`/`redirect_refused`), 인증·쿠키를 보내지 않고, 응답은 1MiB·15초 상한이다. 원격 mutation·원격 작업 취소 요청은 하지 않는다. 사용자가 등록한 대상은 사설 주소도 허용한다(소유자 결정). `GROVE_REMOTE_WATCH_INSECURE_LOOPBACK=1`은 시험 전용으로 loopback IP의 평문 HTTP만 더 허용한다.
+- 상태: `watching` → 성공 값 `succeeded`·실패 값 `failed`·기한 경과 `timed_out`(결과 불명, 마지막 원격 값 보존)·사용자 `cancelled`·설정 오류 `stopped`. 그 밖의 값·5xx·네트워크·JSON 아님·위치 없음은 `last_error`만 남기고 다음 간격에 다시 본다. 갱신은 `status='watching'` 조건이라 조회 중 취소가 이긴다. 같은 감시는 겹쳐 조회하지 않는다.
+- 취소(`/cancel`)와 지금 확인(`/check`)은 `expected_revision`을 비교한다. 취소 응답의 `remote_job_cancelled: false`와 화면 문구로 원격 작업이 계속될 수 있음을 알린다.
+- 종료하면 같은 transaction에서 알림(`kind=remote_watch`, `ref_id`=감시 ID)과 대화 note(`remote_watch_result`)를 남긴다. 감시 결과(원격 성공/실패)·연결된 로컬 명령 결과·알림 저장·앱 전달·열람은 각각 다른 필드다. 모델은 다시 부르지 않고, 다음 요청에서 note를 신뢰하지 않는 외부 입력으로만 전달한다.
+- 재시작 뒤에도 GET 감시는 이어서 하며 기한은 서버 점검(1초)에서 판정한다.
+
 ## 11. 결정 기록
 
 | ID | 결정 | 근거 |

@@ -108,6 +108,7 @@ pub async fn start(cfg: Config, clock: SharedClock) -> Result<Server, String> {
     }
     background.push(crate::approvals::spawn_expiry(app.clone()));
     background.push(crate::schedules::spawn(app.clone()));
+    background.push(crate::remote_watches::spawn(app.clone()));
     background.push(crate::terminals::spawn_saver(app.clone()));
 
     let router = crate::router(app.clone());

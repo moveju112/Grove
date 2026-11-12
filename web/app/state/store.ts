@@ -254,6 +254,9 @@ export function applyEvent(e: EventRecord) {
         case "task.changed":
             if (sid) invalidate(`tasks:${sid}`);
             break;
+        case "remote_watch.changed":
+            if (sid) invalidate(`remote-watches:${sid}`);
+            break;
         case "project_script.changed":
             if (pid) invalidate(`scripts:${pid}`);
             break;

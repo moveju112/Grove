@@ -167,6 +167,17 @@ impl Builder {
                 };
                 self.note(text);
             }
+            "note" if c["type"] == "remote_watch_result" => {
+                // 원격 상태 값은 외부 서버가 준 문자열이므로 신뢰하지 않는 입력으로 감싼다(EXEC-017).
+                let text = format!(
+                    "title: {}\nwatch status: {}\nremote state: {}\nurl: {}",
+                    c["title"].as_str().unwrap_or(""),
+                    c["status"].as_str().unwrap_or(""),
+                    c["remote_value"].as_str().unwrap_or("(none)"),
+                    c["url"].as_str().unwrap_or(""),
+                );
+                self.note(untrusted_note("[remote job watch result]", text));
+            }
             "note" if c["type"] == "completion_deferred" => {
                 self.note("[completion deferred]\nThe preceding assistant response was provisional, not a completed result. Incorporate the following owned-work results, including any failure or unknown outcome, before concluding.".into());
             }

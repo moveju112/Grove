@@ -46,6 +46,7 @@ pub mod admin;
 pub mod bots;
 pub mod notifications;
 pub mod schedules;
+pub mod remote_watches;
 pub mod terminals;
 mod terminal_capture;
 pub mod titles;
@@ -295,6 +296,10 @@ pub fn router(app: App) -> Router {
         .route("/turns/{id}/retry", post(runner::retry))
         .route("/turns/{id}/acknowledge", post(runner::acknowledge))
         .route("/recovery", get(runner::recovery))
+        .route("/sessions/{id}/remote-watches", get(remote_watches::list).post(remote_watches::create))
+        .route("/remote-watches/{id}", get(remote_watches::show))
+        .route("/remote-watches/{id}/cancel", post(remote_watches::cancel))
+        .route("/remote-watches/{id}/check", post(remote_watches::check_now))
         .route("/tool-calls", get(approvals::list))
         .route("/tool-calls/{id}", get(approvals::show))
         .route("/tool-calls/{id}/decision", post(approvals::decide))

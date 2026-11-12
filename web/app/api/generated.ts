@@ -147,3 +147,21 @@ export type Worktree = { id: string, project_id: string, name: string, path: str
  */
 status: string, created_at: string, removed_at: string | null, };
 
+export type RemoteWatch = { id: string, project_id: string, session_id: string, 
+/**
+ * 원격 job을 시작한 로컬 명령(선택). 그 명령의 성공은 원격 job 성공과 별개다.
+ */
+task_id: string | null, title: string, url: string, status_pointer: string, success_values: Array<string>, failure_values: Array<string>, interval_secs: number, deadline_at: string, 
+/**
+ * watching·succeeded(원격 성공 값)·failed(원격 실패 값)·timed_out(감시 시간 초과)·cancelled(감시만 중단)·stopped(redirect 등 설정 오류로 중단)
+ */
+status: string, 
+/**
+ * 마지막으로 읽은 원격 상태 값(원문 문자열).
+ */
+remote_value: string | null, checks: number, last_checked_at: string | null, next_check_at: string | null, last_error: { code: string; message: string } | null, 
+/**
+ * 종료 알림 ID. 알림의 앱 전달·열람 상태는 알림 쪽에 따로 있다.
+ */
+notification_id: string | null, created_at: string, updated_at: string, finished_at: string | null, revision: number, };
+

@@ -36,6 +36,7 @@ fn generate() -> String {
         decl::<grove::approvals::ToolCallRow>(),
         decl::<grove::changes::FileChange>(),
         decl::<grove::worktrees::Worktree>(),
+        decl::<grove::remote_watches::RemoteWatch>(),
     ];
     for d in decls {
         out.push_str(&d);

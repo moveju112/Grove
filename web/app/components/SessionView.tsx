@@ -14,6 +14,7 @@ import { ChangesPanel } from "./ChangesPanel";
 import { ContextMeter } from "./ContextMeter";
 import { GoalsPanel } from "./GoalsPanel";
 import { TasksPanel } from "./TasksPanel";
+import { RemoteWatchesPanel } from "./RemoteWatchesPanel";
 import type { Opener } from "./Workspace";
 import { WorktreeSelect } from "./WorktreesPanel";
 import { loadScrollPosition, saveScrollPosition } from "../state/scrollPosition";
@@ -418,6 +419,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             <AgentRunsPanel sessionId={sessionId} projectId={projectId} open={open} onError={setErr} />
             {/* 대화가 바뀌면 패널 상태를 새로 시작한다. 형제끼리 key가 겹치면 React가 패널을 잘못 맞춰 중복으로 그린다. */}
             <TasksPanel key={`tasks:${sessionId}`} sessionId={sessionId} disabled={archived} />
+            <RemoteWatchesPanel key={`remote-watches:${sessionId}`} sessionId={sessionId} disabled={archived} />
             <ChangesPanel key={`changes:${sessionId}`} sessionId={sessionId} projectId={projectId} open={open} disabled={archived} />
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
             {pending.map((c) => <ApprovalCard key={c.id} c={c} act={act} />)}
@@ -503,6 +505,11 @@ const MessageView = memo(function MessageView({ m, prefs }: { m: Message; prefs:
             이 응답 시점에는 소유 작업 결과 반영 전이라 완료를 보류했습니다(진행 중: 백그라운드 {work.tasks.length}개 · 자식 {work.agents.length}개).
             결과를 받은 뒤 모델이 이어서 답합니다. 실행 상태와 결과는 작업·자식 목록에서 확인할 수 있습니다.
         </div>;
+    }
+    if (m.role === "note" && nt0 === "remote_watch_result") {
+        const r = m.content as { title: string; status: string; remote_value: string | null };
+        const word: Record<string, string> = { succeeded: "원격 성공", failed: "원격 실패", timed_out: "감시 시간 초과(결과 불명)", stopped: "감시 중단" };
+        return <div className="msg note" data-testid="msg-remote-watch">원격 작업 {r.title}: {word[r.status] ?? r.status}{r.remote_value ? ` · 원격 상태 ${r.remote_value}` : ""}</div>;
     }
     if (m.role === "note" && nt0 === "rewind") {
         const r = m.content as { text: string; removed_count: number };
