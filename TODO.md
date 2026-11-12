@@ -1643,7 +1643,7 @@ Rust가 전체 빌드나 모델 응답 시간을 자동으로 줄인다고 가�
 - [x] OBS-001 구조화 로그에 request/session/turn/tool ID를 연결한다. 검증: HTTP 요청 span `request_id`(기존), 턴 실행 span `turn_id`·`session_id`(`runner::spawn_drive`), 도구 실행 span `tool_call_id`(시작한 턴·요청 span을 부모로 연결, `approvals::spawn_execute`)를 추가했다. 재시도 로그에 turn·session ID, 도구 종료 로그에 tool call·turn ID가 붙는 것을 확인(`tests/obs_logs.rs`).
 - [x] OBS-002 기본 로그에 prompt·대화 본문·API 키·토큰·개인 경로를 불필요하게 남기지 않는다. 검증: 로그에는 코드·도구 이름·ID만 남기고 prompt·파일 본문·인증 토큰이 기록되지 않음을 같은 시험에서 확인. 내부 오류는 correlation ID만 남기고(`error.rs`), 파일 로그는 이벤트당 16KiB로 제한(`logging.rs`).
 - [ ] OBS-003 개발용 상세 로그는 명시적으로 활성화하고 보관 기간을 제한한다.
-- [ ] OBS-004 CPU·메모리·활성 세션·작업·queue·DB 크기·연결 수를 조회한다.
+- [x] OBS-004 CPU·메모리·활성 세션·작업·queue·DB 크기·연결 수를 조회한다. 검증: 소유자 전용 `GET /api/v1/admin/metrics`가 프로세스 RSS·스레드·CPU 시간(Linux `/proc/self`, 다른 OS는 측정 불가 `null`)·활성 세션·실행 중 턴/작업/터미널/예약·모델 호출 대기열(실행·대기)·DB 본파일/WAL 크기·이벤트 구독 수(SSE 연결과 내부 대기 포함)를 상태 변경 없이 보고한다. 유휴·실행 중 수치와 기기 토큰 접근 거부를 확인(`tests/obs_logs.rs::metrics_report_process_work_queue_and_db`, `tests/access.rs`). Windows·macOS 프로세스 수치는 미구현.
 - [ ] OBS-005 provider 지연·도구 지연·승인 대기·UI 전달 지연을 구분한다.
 - [x] OBS-006 `doctor`는 모델 호출·설치·서비스 변경 없이 상태를 점검한다. 검증: `grove doctor`는 process·API·인증·모델(마지막 연결 확인 결과, 모델 호출 없음)을 단계별로 보고하고 데이터 디렉터리를 만들지 않으며, `--offline`은 서버·migration·키 발급 없이 읽기 전용 검사(ARCH-007·011, DB-015, `tests/cli.rs`·`tests/recovery.rs`·`tests/model_catalog.rs`).
 - [x] OBS-007 의존성 없음·미인증·권한 없음·서버 오류·클라이언트 오류를 구분한다. 검증: 공통 오류 형식으로 의존성 없음(`dependency_missing` 424, ARCH-018 `tests/deps.rs`)·미인증 401·권한 없음 403·클라이언트 오류 4xx(`invalid_request` 등)·서버 오류 5xx(correlation ID)를 구분(`tests/http_contract.rs`).

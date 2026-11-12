@@ -210,6 +210,7 @@ pub fn router(app: App) -> Router {
         .route("/usage/capacity", get(usage::capacity))
         .route("/admin/update-readiness", get(admin::readiness))
         .route("/admin/shutdown", post(admin::shutdown))
+        .route("/admin/metrics", get(admin::metrics))
         .route("/admin/update-receipts/import", post(admin::import_receipts))
         .route("/updates", get(admin::list_updates))
         .route("/bots", get(bots::list).post(bots::create))

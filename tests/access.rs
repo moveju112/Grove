@@ -29,7 +29,7 @@ async fn devices_share_user_sessions_but_cannot_escalate_to_owner_or_replay_anot
     let second = device(&s, "second").await;
     let (access, _) = browser(&s, first["token"].as_str().unwrap()).await;
     for token in [first["token"].as_str().unwrap(), &access] {
-        for path in ["/devices", "/secrets", "/audit", "/pairings", "/admin/update-readiness"] {
+        for path in ["/devices", "/secrets", "/audit", "/pairings", "/admin/update-readiness", "/admin/metrics"] {
             assert_eq!(s.raw(Method::GET, &format!("/api/v1{path}"), None, None, Some(token)).await.status(), StatusCode::FORBIDDEN);
         }
         for path in ["/devices", "/secrets", "/model-profiles", "/pairings", "/admin/shutdown"] {

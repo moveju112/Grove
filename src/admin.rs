@@ -45,6 +45,51 @@ pub async fn readiness(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Js
     })))
 }
 
+/// 서버 자원 상태(OBS-004). 소유자 전용 조회이며 상태를 바꾸지 않는다.
+/// CPU·메모리는 Linux `/proc/self`에서 읽고, 다른 OS는 `null`(측정 불가)로 둔다.
+pub async fn metrics(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Json<Value>> {
+    let now = app.now();
+    let busy = app.db.call(move |c| busy(c, &now)).await?;
+    let sessions: i64 = app
+        .db
+        .call(|c| Ok(c.query_row("SELECT COUNT(DISTINCT session_id) FROM turns WHERE status IN ('queued','running','awaiting_approval')", [], |r| r.get(0))?))
+        .await?;
+    let (fair_active, fair_waiting) = app.fair.counts();
+    let db = app.cfg.data_dir.join("grove.db");
+    let size = |suffix: &str| std::fs::metadata(format!("{}{suffix}", db.display())).map(|m| m.len()).unwrap_or(0);
+    Ok(Json(json!({
+        "process": process_stats(),
+        "active_sessions": sessions,
+        "work": busy,
+        "queue": { "running": fair_active, "waiting": fair_waiting },
+        "db_bytes": { "main": size(""), "wal": size("-wal") },
+        // 이벤트 변경 구독 수. 열린 SSE 연결과 서버 내부 대기(도구 실행 순서 대기 등)를 함께 센다.
+        "event_subscribers": app.seq_tx.receiver_count(),
+    })))
+}
+
+#[cfg(target_os = "linux")]
+fn process_stats() -> Value {
+    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+    let field = |k: &str| status.lines().find_map(|l| l.strip_prefix(k)).and_then(|v| v.split_whitespace().next()).and_then(|v| v.parse::<u64>().ok());
+    // /proc/self/stat의 14·15번째(utime·stime)는 USER_HZ(Linux ABI 100) 단위다. comm에 공백이 있을 수 있어 ')' 뒤에서 센다.
+    let stat = std::fs::read_to_string("/proc/self/stat").unwrap_or_default();
+    let cpu = stat.rsplit_once(')').map(|(_, rest)| rest.split_whitespace().collect::<Vec<_>>()).and_then(|f| {
+        let t = |i: usize| f.get(i).and_then(|v| v.parse::<u64>().ok());
+        Some(t(11)? + t(12)?)
+    });
+    json!({
+        "rss_bytes": field("VmRSS:").map(|kb| kb * 1024),
+        "threads": field("Threads:"),
+        "cpu_seconds": cpu.map(|ticks| ticks as f64 / 100.0),
+    })
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_stats() -> Value {
+    json!({ "rss_bytes": null, "threads": null, "cpu_seconds": null })
+}
+
 pub async fn shutdown(State(app): State<App>, Owner(_p): Owner) -> (StatusCode, Json<Value>) {
     app.exit_tx.send_replace(true);
     (StatusCode::ACCEPTED, Json(json!({ "shutting_down": true })))

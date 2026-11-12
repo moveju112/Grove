@@ -49,3 +49,29 @@ async fn turn_and_tool_logs_carry_ids_without_content() {
         assert!(!log.contains(secret), "로그에 본문·토큰이 없다: {secret}");
     }
 }
+
+/// OBS-004: 소유자는 프로세스 메모리·CPU 시간·활성 세션·실행 작업·대기열·DB 크기·이벤트 구독 수를 조회한다.
+#[tokio::test]
+async fn metrics_report_process_work_queue_and_db() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = s.fixture_profile(&f.base).await;
+    let p = s.create_project("metrics").await;
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let (_, idle) = s.get("/api/v1/admin/metrics").await;
+    assert_eq!(idle["active_sessions"], 0, "{idle}");
+    assert!(idle["db_bytes"]["main"].as_u64().unwrap() > 0);
+    if cfg!(target_os = "linux") {
+        assert!(idle["process"]["rss_bytes"].as_u64().unwrap() > 1024 * 1024, "{idle}");
+        assert!(idle["process"]["threads"].as_u64().unwrap() >= 1 && idle["process"]["cpu_seconds"].as_f64().is_some());
+    }
+    f.push(fixture::slow_text(&["a", "b", "c"], 500));
+    let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "x", "profile_id": prof })).await;
+    let tid = v["turn"]["id"].as_str().unwrap().to_string();
+    s.wait_status(&tid, "running").await;
+    let (_, busy) = s.get("/api/v1/admin/metrics").await;
+    assert_eq!((busy["active_sessions"].as_i64(), busy["work"]["active_turns"].as_i64()), (Some(1), Some(1)), "{busy}");
+    // 모델 호출 permit은 호출 단계마다 잡으므로 순간값만 확인한다.
+    assert!(busy["queue"]["running"].as_u64().is_some_and(|n| n <= 1) && busy["queue"]["waiting"].as_u64() == Some(0), "{busy}");
+    s.wait_status(&tid, "completed").await;
+}
