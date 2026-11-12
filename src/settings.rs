@@ -843,4 +843,20 @@ mod tests {
             assert!(v.is_empty(), "프로젝트 밖 symlink는 읽지 않는다");
         }
     }
+
+    /// CTX-014: 실행 위치 루트의 파일만 AGENTS.md → CLAUDE.md 순서로 읽고, 상위 폴더·하위 폴더 지침은 자동으로 읽지 않는다.
+    #[test]
+    fn instruction_files_load_from_exec_root_only_in_fixed_order() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join("AGENTS.md"), "상위 폴더 지침").unwrap();
+        let root = d.path().join("p");
+        std::fs::create_dir_all(root.join("sub")).unwrap();
+        std::fs::write(root.join("CLAUDE.md"), "클로드").unwrap();
+        std::fs::write(root.join("AGENTS.md"), "에이전트").unwrap();
+        std::fs::write(root.join("sub/AGENTS.md"), "하위 지침").unwrap();
+        let v = load_instructions(&root, "both");
+        assert_eq!(v, vec![("AGENTS.md".to_string(), "에이전트".to_string()), ("CLAUDE.md".to_string(), "클로드".to_string())]);
+        std::fs::remove_file(root.join("AGENTS.md")).unwrap();
+        assert!(load_instructions(&root, "agents_md").is_empty(), "프로젝트에 없으면 상위 폴더 파일로 대신하지 않는다");
+    }
 }
