@@ -140,7 +140,9 @@ pub fn usage(c: &Connection, session_id: &str, profile_id: Option<&str>) -> ApiR
     let s = crate::sessions::get(c, session_id)?;
     let input_reserve = crate::settings::effective(c, "context.input_reserve_tokens", Some(&s.project_id), Some(session_id))?.as_u64().unwrap_or(0);
     let reserve = profile.as_ref().and_then(|p| p.generation_options().0).map(u64::from).unwrap_or(DEFAULT_OUTPUT_RESERVE) + input_reserve;
-    let estimated = crate::history::estimated_tokens(c, session_id)?;
+    let memory_input_tokens = crate::memories::model_prompt(&crate::memories::snapshot(c,&s.project_id)?)
+        .map_or(0,|prompt|estimate_tokens(&[],&prompt));
+    let estimated = crate::history::estimated_tokens(c, session_id)? + memory_input_tokens;
     let measured = measured_tokens(c, session_id)?;
     // 실측은 그 응답을 만든 요청의 입력이다. 그 응답 자체와 이후 메시지는 다음 요청에 더해지므로 추정으로 더한다
     // (content 전체 길이 기준이라 실제보다 약간 크게 잡힌다: 여유분을 과대평가하지 않는 쪽).
@@ -162,7 +164,7 @@ pub fn usage(c: &Connection, session_id: &str, profile_id: Option<&str>) -> ApiR
     let cleared = boundary.as_ref().filter(|b| b.summary.is_none()).map(|cp| json!({ "upto_seq": cp.upto_seq }));
     let idle_minutes = auto_clear_minutes(c, session_id, profile.as_ref())?;
     Ok(json!({
-        "context_window": limit, "estimated_tokens": estimated,
+        "context_window": limit, "estimated_tokens": estimated, "memory_input_tokens":memory_input_tokens,
         "measured_input_tokens": measured.map(|m| m.0), "measured_at_seq": measured.map(|m| m.1),
         "basis": if measured.is_some() { "measured" } else { "estimated" },
         "percent": percent, "compaction": compaction, "cleared": cleared, "auto_clear_minutes": idle_minutes,

@@ -140,6 +140,7 @@ export function applyEvent(e: EventRecord) {
             if (id) invalidate(`session:${id}`);
             invalidate("recent");
             invalidate("search");
+            invalidate("memories");
             break;
         }
         case "project.created":
@@ -173,6 +174,10 @@ export function applyEvent(e: EventRecord) {
             break;
         case "setting.changed":
             invalidate("settings");
+            break;
+        case "memories.changed":
+            invalidate("memories");
+            invalidate("context");
             break;
         case "git.changed":
             if (pid) invalidate(`git:${pid}`);

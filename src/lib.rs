@@ -15,6 +15,7 @@ pub mod config;
 pub mod deps;
 pub mod context;
 pub mod recall;
+pub mod memories;
 mod history;
 pub mod definitions;
 pub mod error;
@@ -59,7 +60,7 @@ pub mod worktrees;
 pub mod pairing;
 
 use axum::Router;
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use std::sync::Arc;
 use tokio::sync::watch;
 
@@ -84,6 +85,7 @@ pub const CAPABILITIES: &[&str] = &[
     "model_capabilities_v1",
     "context_auto_clear_v1",
     "recall_keyword_v1",
+    "user_memories_v1",
     "private_model_headers_v1",
 ];
 
@@ -265,6 +267,9 @@ pub fn router(app: App) -> Router {
         .route("/projects/{id}/git/compare", get(git::compare))
         .route("/sessions/search", get(sessions::search))
         .route("/recall", get(recall::get))
+        .route("/memories", get(memories::get_list).post(memories::create))
+        .route("/memories/{id}", put(memories::update))
+        .route("/memories/{id}/delete", post(memories::delete))
         .route("/sessions/{id}/delete", post(sessions::delete_permanently))
         .route("/sessions/{id}/title", post(titles::post_generate))
         .route("/sessions/{id}", get(sessions::show).patch(sessions::update))

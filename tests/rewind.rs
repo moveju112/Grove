@@ -45,7 +45,7 @@ async fn rewind_is_idempotent_preserves_files_audit_and_ids_and_resets_cli_conte
     let (_, before) = s.get(&format!("/api/v1/sessions/{sid}")).await;
     {
         let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
-        db.execute("INSERT INTO cli_sessions VALUES (?1, ?2, 'old-native-context', 't')", rusqlite::params![sid, prof]).unwrap();
+        db.execute("INSERT INTO cli_sessions(session_id,profile_id,native_id,updated_at) VALUES (?1, ?2, 'old-native-context', 't')", rusqlite::params![sid, prof]).unwrap();
     }
     let path = format!("/api/v1/sessions/{sid}/rewind");
     let b = body(&s, &sid, remove["message"]["id"].as_str().unwrap()).await;

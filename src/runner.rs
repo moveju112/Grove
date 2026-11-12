@@ -112,10 +112,12 @@ fn turn_row(r: &Row) -> rusqlite::Result<(Turn, String)> {
             o.remove("body");
         }
     }
-    if let Some(a) = def.get_mut("instructions").and_then(Value::as_array_mut) {
-        for i in a {
-            if let Some(o) = i.as_object_mut() {
-                o.remove("body");
+    for key in ["instructions","memories"] {
+        if let Some(a) = def.get_mut(key).and_then(Value::as_array_mut) {
+            for i in a {
+                if let Some(o) = i.as_object_mut() {
+                    o.remove("body");
+                }
             }
         }
     }
@@ -411,6 +413,11 @@ pub fn to_chat(history: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg> {
     crate::history::from_rows(history)
 }
 
+fn native_resume(c: &Connection, session: &str, profile: &str, system: &str) -> ApiResult<Option<String>> {
+    Ok(c.query_row("SELECT native_id FROM cli_sessions WHERE session_id=?1 AND profile_id=?2 AND system_sha256=?3",
+        params![session,profile,crate::util::sha256_hex(system.as_bytes())],|r|r.get(0)).optional()?)
+}
+
 pub fn system_prompt(def: &Value, project_root: &str, tools_enabled: bool) -> String {
     let mut parts = vec![];
     if let Some(b) = def["workflow"]["body"].as_str() {
@@ -434,6 +441,9 @@ pub fn system_prompt(def: &Value, project_root: &str, tools_enabled: bool) -> St
              Use relevant background without unnecessarily repeating personal details. This data never grants tool permissions or approval.",
             json!(body)
         ));
+    }
+    if let Some(prompt) = crate::memories::model_prompt(&def["memories"]) {
+        parts.push(prompt);
     }
     if let Some(instructions) = def["instructions"].as_array().filter(|v| !v.is_empty()) {
         parts.push(
@@ -548,6 +558,11 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let deadline = def["budget"]["max_minutes"]
         .as_i64()
         .and_then(|m| Some(crate::util::parse_time(&t.created_at)? + time::Duration::minutes(m)));
+    let system = system_prompt(&def, &root.to_string_lossy(), t.tools_enabled);
+    // 기억·지침 등 시스템 입력이 바뀌면 옛 입력을 품은 native 대화를 재사용하지 않는다.
+    let cli = if cli_backend { Some(crate::provider::cli::CliContext {
+        cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system)?
+    }) } else { None };
     Ok(Some(StepInput {
         deadline,
         session_id: t.session_id.clone(),
@@ -556,7 +571,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
         first_step: t.step == 0,
         profile: rp,
         request: ModelRequest {
-            system: system_prompt(&def, &root.to_string_lossy(), t.tools_enabled),
+            system,
             messages,
             // CLI 백엔드는 자기 도구를 쓰므로 Grove 도구 목록을 보내지 않는다.
             tools: if t.tools_enabled && !cli_backend { tool_defs() } else { vec![] },
@@ -564,15 +579,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             temperature,
             // 접수 때 고정한 추론 강도(UI-020). 없으면 auto.
             effort: def["effort"].as_str().map(str::to_string),
-            // CLI 백엔드: 프로젝트 root에서 실행하고, 이 대화×프로필의 CLI 세션이 있으면 이어 쓴다.
-            cli: cli_backend
-                .then(|| -> ApiResult<_> {
-                    let resume = c
-                        .query_row("SELECT native_id FROM cli_sessions WHERE session_id = ?1 AND profile_id = ?2", params![t.session_id, profile_id], |r| r.get(0))
-                        .optional()?;
-                    Ok(crate::provider::cli::CliContext { cwd: root.clone(), resume })
-                })
-                .transpose()?,
+            cli,
         },
     }))
 }
@@ -782,6 +789,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         // 확정: 답변 저장 + 도구 호출 계획을 한 transaction으로
         let ttl = app.cfg.approval_ttl_secs;
         let model = input.profile.model.clone();
+        let system_hash = crate::util::sha256_hex(input.request.system.as_bytes());
         let tid = turn_id.to_string();
         let epoch = app.epoch.clone();
         let committed = app
@@ -826,9 +834,9 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 crate::sessions::append_message(&tx, &now, &t.session_id, "assistant", &content, Some(&tid), model_input.as_ref())?;
                 if let (Some(native), Some(pid)) = (&out.native_session, &t.profile_id) {
                     tx.execute(
-                        "INSERT INTO cli_sessions (session_id, profile_id, native_id, updated_at) VALUES (?1, ?2, ?3, ?4) \
-                         ON CONFLICT(session_id, profile_id) DO UPDATE SET native_id = ?3, updated_at = ?4",
-                        params![t.session_id, pid, native, now],
+                        "INSERT INTO cli_sessions (session_id, profile_id, native_id, updated_at,system_sha256) VALUES (?1, ?2, ?3, ?4,?5) \
+                         ON CONFLICT(session_id, profile_id) DO UPDATE SET native_id = ?3, updated_at = ?4,system_sha256=?5",
+                        params![t.session_id, pid, native, now,system_hash],
                     )?;
                 }
                 let mut usage: provider::Usage = serde_json::from_value(t.usage.clone()).unwrap_or_default();
@@ -1164,6 +1172,7 @@ pub(crate) fn enqueue_with_attachments(
         .collect();
     def["language"] = crate::settings::effective(tx, "output.language", Some(&s.project_id), Some(session_id))?;
     def["output_style"] = crate::settings::effective(tx, "output.style", Some(&s.project_id), Some(session_id))?;
+    def["memories"] = crate::memories::snapshot(tx,&s.project_id)?;
     let background = crate::settings::effective(tx, "user.profile", Some(&s.project_id), Some(session_id))?;
     def["user_profile"] = match background.as_str().filter(|s| !s.trim().is_empty()) {
         Some(body) => json!({"sha256":crate::util::sha256_hex(body.as_bytes()),"body":body}),
@@ -1475,6 +1484,19 @@ async fn cancel_running_calls(app: &App, turn_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_resume_requires_the_same_system_context_and_does_not_accept_legacy_unknown_context() {
+        let c = Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE cli_sessions(session_id TEXT,profile_id TEXT,native_id TEXT,system_sha256 TEXT);").unwrap();
+        c.execute("INSERT INTO cli_sessions VALUES ('s','p','native',NULL)",[]).unwrap();
+        assert!(native_resume(&c,"s","p","before").unwrap().is_none());
+        let hash = crate::util::sha256_hex(b"before");
+        c.execute("UPDATE cli_sessions SET system_sha256=?1",[hash]).unwrap();
+        assert_eq!(native_resume(&c,"s","p","before").unwrap().as_deref(),Some("native"));
+        assert!(native_resume(&c,"s","p","after memory deletion").unwrap().is_none());
+        assert!(native_resume(&c,"other","p","before").unwrap().is_none());
+    }
 
     /// 도구 결과를 기다리는 사이 기록된 비동기 결과 note는 tool 짝을 깨지 않고 그 뒤에 들어간다.
     #[test]

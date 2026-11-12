@@ -705,11 +705,40 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE worktrees_next RENAME TO worktrees;
     CREATE INDEX worktrees_project ON worktrees(project_id, status);
     "#,
+    // 42: 직접 확인한 장기 기억. 모델이 자동으로 추가·수정하는 경로는 제공하지 않는다.
+    r#"
+    CREATE TABLE memories (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id),
+        body TEXT NOT NULL,
+        source_session_id TEXT REFERENCES sessions(id) ON DELETE SET NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX memories_scope ON memories(project_id,created_at,id);
+    CREATE UNIQUE INDEX memories_global_body ON memories(body) WHERE project_id IS NULL;
+    CREATE UNIQUE INDEX memories_project_body ON memories(project_id,body) WHERE project_id IS NOT NULL;
+    ALTER TABLE cli_sessions ADD COLUMN system_sha256 TEXT;
+    "#,
 ];
 
 #[cfg(test)]
 mod tests {
     const MIGRATIONS_1_5_SHA16: &str = "40371687b4936aac";
+
+    #[test]
+    fn memories_migration_preserves_existing_native_sessions_as_unknown_system_context() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        for migration in &super::MIGRATIONS[..41] { c.execute_batch(migration).unwrap(); }
+        c.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES ('project','fixture','/fixture','2020-01-01','2020-01-01')",[]).unwrap();
+        c.execute("INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES ('s','project','fixture','2020-01-01','2020-01-01')",[]).unwrap();
+        c.execute("INSERT INTO cli_sessions(session_id,profile_id,native_id,updated_at) VALUES ('s','p','native','2020-01-01T00:00:00Z')",[]).unwrap();
+        for migration in &super::MIGRATIONS[41..] { c.execute_batch(migration).unwrap(); }
+        let binding: (String,Option<String>) = c.query_row("SELECT native_id,system_sha256 FROM cli_sessions",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(binding,("native".into(),None));
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM memories",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
 
     #[test]
     fn profile_activation_migration_preserves_existing_profiles_as_enabled() {

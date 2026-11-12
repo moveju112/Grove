@@ -9,10 +9,11 @@ import { Pairings } from "./Pairing";
 import { ProfileCatalog } from "./ProfileCatalog";
 import { ProfileCapabilities } from "./ProfileCapabilities";
 import { ProfileContextPolicy } from "./ProfileContextPolicy";
+import { Memories } from "./Memories";
 import { useCapability } from "../state/capabilities";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
-type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" };
+type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
 type Menu = "model" | "agents" | "display" | "devices" | "server";
 const MENUS: [Menu, string][] = [
     ["model", "모델·키"],
@@ -25,6 +26,7 @@ export const ITEMS: Item[] = [
     { id: "secrets", menu: "model", label: "API 키", keywords: "key secret 비밀 openai anthropic gemini", scope: "서버 전체" },
     { id: "profiles", menu: "model", label: "모델 프로필", keywords: "model provider endpoint url 모델 timeout temperature max_tokens", scope: "서버 전체" },
     { id: "definitions", menu: "agents", label: "에이전트·워크플로우 편집", keywords: "agent workflow prompt 지침 기본값 복원 비교", scope: "서버 전체" },
+    { id: "memories", menu: "agents", label: "확인한 장기 기억", keywords: "memory preference 기억 선호 제약 전역 프로젝트", scope: "전역·프로젝트" },
     { id: "theme", menu: "display", label: "테마", keywords: "dark light 다크 라이트 색", scope: "이 기기" },
     { id: "font", menu: "display", label: "글자 크기", keywords: "font size 글꼴", scope: "이 기기" },
     { id: "enter", menu: "display", label: "Enter로 보내기", keywords: "enter send 입력 단축키", scope: "이 기기" },
@@ -44,6 +46,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
     const registry = useQuery<SettingDef[]>("settings-registry", () => api.get("/settings/registry"));
     const session = useQuery<{ title: string } | null>(`session:${sessionId ?? "-"}`, () => (sessionId ? api.get(`/sessions/${sessionId}`) : Promise.resolve(null)));
     const target: SettingsTarget = { projectId, projectName, sessionId, sessionTitle: session.data?.title };
+    const memoriesSupported = useCapability("user_memories_v1");
 
     // 직접 링크(#setting-<key>): 해당 메뉴를 열고 고급 항목이면 펼친 뒤 그 항목으로 이동한다(SETTINGS-021).
     const [linked, setLinked] = useState<string | null>(() => (typeof location !== "undefined" && location.hash.startsWith("#setting-") ? decodeURIComponent(location.hash.slice(9)) : null));
@@ -61,7 +64,8 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
         return () => clearTimeout(t);
     }, [linked, registry.data]);
     const needle = q.trim().toLowerCase();
-    const results = useMemo(() => (needle ? ITEMS.filter((i) => (i.label + " " + i.keywords).toLowerCase().includes(needle)) : null), [needle]);
+    const results = useMemo(() => (needle ? ITEMS.filter((i) => (i.id !== "memories" || memoriesSupported !== false)
+        && (i.label + " " + i.keywords).toLowerCase().includes(needle)) : null), [needle, memoriesSupported]);
     const serverDefs = (registry.data ?? []).filter((d) =>
         needle ? (d.label + " " + d.keywords + " " + d.description).toLowerCase().includes(needle) : d.menu === menu && (showAdvanced || !d.advanced),
     );
@@ -94,6 +98,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {visible("secrets") && <Section item="secrets"><Secrets /></Section>}
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
                 {visible("definitions") && <Section item="definitions"><Definitions /></Section>}
+                {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
                 {(visible("theme") || visible("font") || visible("enter") || visible("transcript")) && <DisplayPrefs show={visible} />}
                 {visible("devices") && <Section item="devices"><Devices /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
