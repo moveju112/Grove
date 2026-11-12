@@ -143,7 +143,7 @@ function PaneView(p: Props & { leaf: L.Leaf }) {
                 {active?.kind === "session" && active.resource_id && active.project_id && (
                     <SessionView key={active.id} tabId={active.id} sessionId={active.resource_id} projectId={active.project_id} open={p.open} />
                 )}
-                {active?.kind === "project" && active.project_id && <ProjectView key={active.id} projectId={active.project_id} open={p.open} />}
+                {active?.kind === "project" && active.project_id && <ProjectView key={active.id} tabId={active.id} projectId={active.project_id} open={p.open} />}
                 {active?.kind === "file" && active.project_id && <FilesView key={active.id} tabId={active.id} projectId={active.project_id}
                     initial={L.fileTarget(active)} />}
                 {active?.kind === "terminal" && active.project_id && active.resource_id && (

@@ -61,7 +61,7 @@ function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
 }
 
 /// 프로젝트 = 단일 작업공간. 중간 생성 단계 없이 입력창에서 바로 새 대화를 시작한다.
-export function ProjectView({ projectId, open }: { projectId: string; open: Opener }) {
+export function ProjectView({ tabId, projectId, open }: { tabId: string; projectId: string; open: Opener }) {
     const [q, setQ] = useState("");
     const [archived, setArchived] = useState(false);
     const [pages, setPages] = useState<string[]>([""]);
@@ -76,7 +76,7 @@ export function ProjectView({ projectId, open }: { projectId: string; open: Open
         open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
     };
 
-    const composer = <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId="new" onSend={start}
+    const composer = <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId={tabId} onSend={start}
         disabled={project.error ? "프로젝트를 확인할 수 없습니다" : !project.data ? "프로젝트 확인 중…" : !project.data.available ? "프로젝트 경로 없음" : null} />;
     if (project.error) return <div className="project-view">
         <h1>프로젝트를 열 수 없습니다</h1>

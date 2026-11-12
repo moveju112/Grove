@@ -57,7 +57,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     const sending = useRef(false);
     const checking = useRef(false);
     const base = useRef<number>(initialDraft?.baseRevision ?? 0);
-    const [opts, setOpts] = useState<SendOptions>(() => initialDraft?.pending?.intent ?? loadOpts());
+    const [opts, setOpts] = useState<SendOptions>(() => initialDraft?.options ?? initialDraft?.pending?.intent ?? loadOpts());
+    const selection = useRef({ options: opts, ids: attachments.ids });
+    selection.current = { options: opts, ids: attachments.ids };
     const [owner] = useState(authGeneration);
     const alive = useRef(true);
     useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -76,14 +78,18 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
         if (!store || !isLoggedIn() || authGeneration() !== owner) return;
         try {
             D.save(store, localKey, {
-                text, baseRevision: base.current, updatedAt: Date.now(), pending: pending ?? undefined, pendingInvalid,
+                text, baseRevision: base.current, updatedAt: Date.now(), pending: pending ?? undefined, pendingInvalid, options: opts,
                 attachments: attachments.items.flatMap((i) => i.attachment ? [i.attachment] : []),
             });
             setCopyError(false);
         } catch { setCopyError(true); }
-    }, [text, localKey, store, pending, pendingInvalid, attachments.items, base.current]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [text, localKey, store, pending, pendingInvalid, attachments.items, base.current, opts]); // eslint-disable-line react-hooks/exhaustive-deps
 
-    useEffect(() => localStorage.setItem(OPT_KEY, JSON.stringify(opts)), [opts]);
+    useEffect(() => {
+        if (!isLoggedIn() || authGeneration() !== owner) return;
+        try { localStorage.setItem(OPT_KEY, JSON.stringify(opts)); }
+        catch { setCopyError(true); }
+    }, [opts, owner]);
 
     // 화면 선택과 보내는 값이 같도록 매 렌더 계산한다(기본 프로필을 상태로 복사하지 않음).
     const resolved = resolveOptions(
@@ -102,7 +108,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
         try {
             // 현재 입력도 별도 사본으로 남기고 선택한 snapshot만 이 탭에 복제한다.
             if (text || attachments.items.length || pending || pendingInvalid) D.save(store, D.key(resourceKey, `${copyId}-${newKey()}`), {
-                text, baseRevision: base.current, updatedAt: Date.now(), pending: pending ?? undefined, pendingInvalid,
+                text, baseRevision: base.current, updatedAt: Date.now(), pending: pending ?? undefined, pendingInvalid, options: opts,
                 attachments: attachments.items.flatMap((i) => i.attachment ? [i.attachment] : []),
             });
             D.save(store, localKey, draft);
@@ -110,7 +116,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
             setText(draft.text);
             setPending(draft.pending ?? null);
             setPendingInvalid(draft.pendingInvalid ?? false);
-            if (draft.pending) setOpts(draft.pending.intent);
+            if (draft.options || draft.pending) setOpts(draft.options ?? draft.pending!.intent);
             attachments.restore(draft.attachments ?? []);
             setCopies(otherCopies());
             setCopyError(false);
@@ -250,11 +256,12 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
         }
         const sig = confirmation?.sig ?? sendOptionsSignature(intent, ids);
         const key = confirmation?.key ?? newKey();
+        selection.current = { options: intent, ids: attachments.ids };
         const snapshot: D.PendingSend = { body: requestBody, raw, sig, key, intent: confirmation?.intent ?? intent,
             options: { ...options }, follow: kind, attachmentIds: [...ids] };
         try {
             if (!store) throw new Error("draft storage unavailable");
-            D.save(store, localKey, { text, baseRevision: base.current, updatedAt: Date.now(),
+            D.save(store, localKey, { text, baseRevision: base.current, updatedAt: Date.now(), options: intent,
                 attachments: attachments.items.flatMap((i) => i.attachment ? [i.attachment] : []), pending: snapshot });
         } catch {
             sending.current = false;
@@ -267,13 +274,14 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
         try {
             await onSend(requestBody, options, key, kind, ids);
             if (authGeneration() !== owner) return;
+            const sameSelection = sendOptionsSignature(selection.current.options, selection.current.ids) === sig;
             D.settleSend(store, resourceKey, key, true);
             if (!alive.current) return;
             attachments.clearSent(ids);
             setPending(null);
             setCopies(otherCopies());
             // 보내는 동안 새로 입력한 글은 지우지 않는다(보낸 글 그대로일 때만 비움).
-            setText((cur) => (cur === raw ? "" : cur));
+            setText((cur) => (sameSelection && cur === raw ? "" : cur));
             // 보낸 뒤 서버 초안이 내 것이면 비운다(다른 기기 수정이 있으면 남김)
             if (server.data && server.data.revision === base.current && server.data.text) {
                 await api.put(`/drafts/${resourceKey}`, { expected_revision: base.current, text: "", device_name: deviceName() }).catch(() => undefined);
@@ -332,6 +340,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 <p className="muted small">선택한 사본을 이 탭에 복제합니다. 현재 입력은 별도 사본으로 남기며 자동 전송하지 않습니다.</p>
                 {copies.map((copy) => <div key={copy.key} data-testid="draft-copy">
                     <pre>{copy.draft.text}</pre>
+                    {copy.draft.options && <p className="muted small">
+                        {copy.draft.options.mode === "save" ? "메시지만 저장" : `모델: ${profiles.data?.find((p) => p.id === copy.draft.options!.profileId)?.name ?? copy.draft.options.profileId ?? "기본"} · 강도: ${copy.draft.options.effort ?? "auto"} · 도구 ${copy.draft.options.tools ? "사용" : "끔"}`}
+                    </p>}
                     {!!copy.draft.attachments?.length && <p className="small">첨부: {copy.draft.attachments.map((a) => a.name).join(", ")}</p>}
                     {copy.draft.pending && <p className="warn small">전송 결과 확인 필요 · 원래 요청 키 유지</p>}
                     <button className="ghost small" disabled={busy || attachments.busy} onClick={() => restoreCopy(copy.draft)}>이 사본 이어받기</button>

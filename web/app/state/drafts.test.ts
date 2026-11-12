@@ -29,6 +29,33 @@ const pending: PendingSend = {
 };
 
 describe("drafts", () => {
+    it("같은 글이라도 모델 선택이 바뀐 새 입력은 원래 요청 확정으로 지우지 않는다", () => {
+        const s = new Mem();
+        const next = { ...options, mode: "model" as const, profileId: "next-model" };
+        const k = key("session:x", "one");
+        save(s, k, { text: pending.raw, baseRevision: 0, updatedAt: 1, options: next, pending, attachments: [attachment] });
+        settleSend(s, "session:x", pending.key, true);
+        expect(load(s, k)).toMatchObject({ text: pending.raw, pending: undefined, options: next, attachments: [] });
+    });
+    it("빈 입력도 탭별 선택은 보존하지만 설정만 있는 사본은 초안 선택 목록에 나타내지 않는다", () => {
+        const s = new Mem();
+        save(s, key("session:x", "one"), { text: "", baseRevision: 0, updatedAt: 1, options });
+        const other = { ...options, mode: "model" as const, profileId: "another-profile", agentId: "another-agent", effort: "high" as const, tools: true };
+        save(s, key("session:x", "two"), { text: "", baseRevision: 0, updatedAt: 2, options: other });
+        expect(load(s, key("session:x", "one"))?.options).toEqual(options);
+        expect(load(s, key("session:x", "two"))?.options).toEqual(other);
+        expect(siblingCopies(s, "session:x")).toEqual([]);
+    });
+    it("전송 확정 뒤에도 해당 탭의 선택은 남기고 손상된 선택은 사용하지 않는다", () => {
+        const s = new Mem();
+        const k = key("session:x", "one");
+        save(s, k, { text: pending.raw, baseRevision: 0, updatedAt: 1, options, pending, attachments: [attachment] });
+        settleSend(s, "session:x", pending.key, true);
+        expect(load(s, k)).toMatchObject({ text: "", pending: undefined, options });
+        expect(siblingCopies(s, "session:x")).toEqual([]);
+        s.setItem(k, JSON.stringify({ text: "keep text", baseRevision: 0, updatedAt: 1, options: { ...options, mode: "invalid" } }));
+        expect(load(s, k)).toMatchObject({ text: "keep text", options: undefined });
+    });
     it("첨부만 있는 이전 형식도 사본 하나로 정규화하고 전송 본문·키를 보존한다", () => {
         const s = new Mem();
         s.setItem(`${key("session:x", "old")}:attachments`, JSON.stringify([attachment]));

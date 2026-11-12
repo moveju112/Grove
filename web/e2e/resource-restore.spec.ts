@@ -67,7 +67,7 @@ test("접근 불가 프로젝트를 최근 항목에서 열어도 새 위치를 
 
 test("배치에 남은 없는 프로젝트 ID는 오류로 표시하고 다른 프로젝트에 입력을 보내지 않는다", async ({ page }) => {
     const missing = randomUUID();
-    await page.addInitScript((id) => localStorage.setItem(`grove.draft.project:${id}#new`, JSON.stringify({
+    await page.addInitScript((id) => localStorage.setItem(`grove.draft.project:${id}#missing-tab`, JSON.stringify({
         text: "missing project draft fixture", baseRevision: 0, updatedAt: 1,
     })), missing);
     await page.route("**/api/v1/layouts/*", (route) => route.request().method() === "GET" ? route.fulfill({

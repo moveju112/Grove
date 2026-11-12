@@ -5,7 +5,7 @@ import { sendOptionsSignature, type FollowKind, type SendOptions } from "./sendO
 
 export type DraftAttachment = { id: string; project_id: string; name: string; mime: string; size: number; stored: boolean; image?: { width: number; height: number; model_width: number; model_height: number } | null };
 export type PendingSend = { body: string; raw: string; sig: string; key: string; intent: SendOptions; options: SendOptions; attachmentIds: string[]; follow?: FollowKind };
-export type LocalDraft = { text: string; baseRevision: number; updatedAt: number; attachments?: DraftAttachment[]; pending?: PendingSend; pendingInvalid?: boolean };
+export type LocalDraft = { text: string; baseRevision: number; updatedAt: number; attachments?: DraftAttachment[]; pending?: PendingSend; pendingInvalid?: boolean; options?: SendOptions };
 export type ServerDraft = { text: string; revision: number; device_name: string; updated_at: string | null };
 
 export type DraftState =
@@ -72,7 +72,8 @@ export function load(store: Store, k: string): LocalDraft | null {
         if (!v || typeof v.text !== "string" || !Number.isSafeInteger(v.baseRevision) || v.baseRevision < 0) return null;
         const pending = v.pending && validPending(v.pending) ? v.pending : undefined;
         return { ...v, attachments: store.getItem(`${k}:attachments`) !== null ? legacy() : parseDraftAttachments(v.attachments),
-            pending, pendingInvalid: v.pendingInvalid === true || (!!v.pending && !pending) };
+            pending, pendingInvalid: v.pendingInvalid === true || (!!v.pending && !pending),
+            options: validOptions(v.options) ? v.options : undefined };
     } catch {
         return null;
     }
@@ -80,7 +81,7 @@ export function load(store: Store, k: string): LocalDraft | null {
 
 export function save(store: Store, k: string, d: LocalDraft): void {
     if (d.attachments !== undefined) store.setItem(`${k}:attachments`, JSON.stringify(d.attachments));
-    if (d.text === "" && !d.attachments?.length && !d.pending && !d.pendingInvalid) store.removeItem(k);
+    if (d.text === "" && !d.attachments?.length && !d.pending && !d.pendingInvalid && !d.options) store.removeItem(k);
     else store.setItem(k, JSON.stringify(d));
 }
 
@@ -105,9 +106,10 @@ export function settleSend(store: Store & { length: number; key(i: number): stri
     for (const copy of siblingCopies(store, resourceKey)) {
         const p = copy.draft.pending;
         if (p?.key !== requestKey) continue;
+        const sameSelection = sendOptionsSignature(copy.draft.options ?? p.intent, (copy.draft.attachments ?? []).map((a) => a.id)) === p.sig;
         save(store, copy.key, {
             ...copy.draft, pending: undefined,
-            text: accepted && copy.draft.text === p.raw ? "" : copy.draft.text,
+            text: accepted && sameSelection && copy.draft.text === p.raw ? "" : copy.draft.text,
             attachments: accepted ? copy.draft.attachments?.filter((a) => !p.attachmentIds.includes(a.id)) : copy.draft.attachments,
         });
     }
