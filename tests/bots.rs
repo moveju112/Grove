@@ -106,6 +106,49 @@ async fn persona_and_model_changes_apply_from_next_turn() {
     assert_eq!(bv["unread"], false);
 }
 
+/// BOT-008: 봇 home도 일반 대화와 같은 승인·취소·초안 경로를 쓴다.
+#[tokio::test]
+async fn bot_home_supports_approval_cancel_and_drafts_like_sessions() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = s.fixture_profile(&f.base).await;
+    let p = s.create_project("bot-ops").await;
+    let b = bot(&s, p["id"].as_str().unwrap(), "작업", Some(&prof), "").await;
+    let id = b["id"].as_str().unwrap().to_string();
+    let sid = home(&s, &id).await;
+    // 승인: 셸 도구는 사용자 결정 전 실행하지 않는다
+    f.push(fixture::tool_calls(&[("c1", "shell", json!({ "command": "touch approved-by-user" }))]));
+    f.push(fixture::text("완료"));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "만들어", "profile_id": "ignored", "tools": true })).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let tid = v["turn"]["id"].as_str().unwrap().to_string();
+    let t = s.wait_status(&tid, "awaiting_approval").await;
+    let root = std::path::PathBuf::from(p["root_path"].as_str().unwrap());
+    assert!(!root.join("approved-by-user").exists());
+    let (_, bv) = s.get(&format!("/api/v1/bots/{id}")).await;
+    assert_eq!(bv["home_status"], "awaiting_approval");
+    let c = &t["tool_calls"][0];
+    let (st, d) = s.post(&format!("/api/v1/tool-calls/{}/decision", c["id"].as_str().unwrap()), json!({ "decision": "approve", "expected_revision": c["revision"] })).await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    s.wait_status(&tid, "completed").await;
+    assert!(root.join("approved-by-user").exists(), "봇 프로젝트 폴더에서 실행");
+    // 취소: 진행 중 턴을 멈추고 봇은 다시 idle
+    f.push(fixture::slow_text(&["느", "린", "답"], 400));
+    let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "길게", "profile_id": "ignored" })).await;
+    let tid = v["turn"]["id"].as_str().unwrap().to_string();
+    s.wait_status(&tid, "running").await;
+    let (st, _) = s.post(&format!("/api/v1/turns/{tid}/cancel"), json!({})).await;
+    assert!(st.is_success());
+    s.wait_status(&tid, "cancelled").await;
+    let (_, bv) = s.get(&format!("/api/v1/bots/{id}")).await;
+    assert_eq!(bv["home_status"], "idle");
+    // 초안은 봇 대화 단위로 보존
+    let (st, d) = s.send(reqwest::Method::PUT, &format!("/api/v1/drafts/session:{sid}"), json!({ "expected_revision": 0, "text": "봇 초안", "device_name": "t" })).await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    let (_, d) = s.get(&format!("/api/v1/drafts/session:{sid}")).await;
+    assert_eq!(d["text"], "봇 초안");
+}
+
 /// BOT-005: 봇 대화는 봇의 프로젝트 첨부만 쓰고, 대화가 생긴 뒤에는 프로젝트를 바꿀 수 없다.
 #[tokio::test]
 async fn bot_home_uses_only_its_project_attachments_and_project_is_locked() {

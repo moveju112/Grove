@@ -182,12 +182,12 @@ export function BotsPanel({ open }: { open: Opener }) {
     };
     const visible = all.filter((b) => (showDeleted ? b.status === "deleted" : b.status !== "deleted") && (showHidden || !hidden.includes(b.id)));
     const status = (b: Bot, action: string) => act(() => api.post(`/bots/${b.id}/status`, { expected_revision: b.revision, action }));
-    const enter = (b: Bot) =>
+    const enter = (b: Bot, how?: "right" | "down") =>
         act(async () => {
             const v = await api.post<Bot>(`/bots/${b.id}/home`);
             const s = await api.get<{ last_message_seq: number }>(`/sessions/${v.home_session_id}`);
             await api.post(`/bots/${b.id}/seen`, { seq: s.last_message_seq });
-            open({ kind: "session", project_id: v.project_id, resource_id: v.home_session_id!, title: v.name });
+            open({ kind: "session", project_id: v.project_id, resource_id: v.home_session_id!, title: v.name }, how);
         });
     const moveUp = (i: number) => {
         const ids = visible.map((b) => b.id);
@@ -222,6 +222,8 @@ export function BotsPanel({ open }: { open: Opener }) {
                         <details className="bot-actions">
                             <summary aria-label={`${b.name} 관리`}>⋯</summary>
                             {b.status !== "deleted" && <button className="ghost small" onClick={() => setEditing(b)}>편집</button>}
+                            {b.status !== "deleted" && <button className="ghost small" onClick={() => void enter(b, "right")}>오른쪽에 열기</button>}
+                            {b.status !== "deleted" && <button className="ghost small" onClick={() => void enter(b, "down")}>아래에 열기</button>}
                             {i > 0 && !showDeleted && <button className="ghost small" onClick={() => moveUp(i)}>위로</button>}
                             <button className="ghost small" onClick={() => toggleHide(b.id)}>{hidden.includes(b.id) ? "이 기기에서 보이기" : "이 기기에서 숨기기"}</button>
                             {b.status === "active" && <button className="ghost small" onClick={() => void status(b, "disable")}>비활성화</button>}
