@@ -26,7 +26,8 @@ export function parseScrollPosition(raw: string | null, sessionId: string): Scro
 
 export function loadScrollPosition(tabId: string, sessionId: string): ScrollPosition | null {
     try {
-        return parseScrollPosition(sessionStorage.getItem(`grove.scroll.${tabId}`), sessionId);
+        return parseScrollPosition(sessionStorage.getItem(`grove.scroll.${tabId}`), sessionId)
+            ?? parseScrollPosition(sessionStorage.getItem(`grove.scroll.session.${sessionId}`), sessionId);
     } catch {
         return null;
     }
@@ -34,4 +35,5 @@ export function loadScrollPosition(tabId: string, sessionId: string): ScrollPosi
 
 export function saveScrollPosition(tabId: string, position: ScrollPosition) {
     sessionStorage.setItem(`grove.scroll.${tabId}`, JSON.stringify(position));
+    sessionStorage.setItem(`grove.scroll.session.${position.sessionId}`, JSON.stringify(position));
 }

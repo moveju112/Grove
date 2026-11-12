@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-    allTabs, closeLeaf, closeTab, emptyLayout, focusedLeaf, isValid, leaves, markMissing, mobileView, moveTab, openTab, setDirection, setRatio, splitLeaf,
+    allTabs, closeLeaf, closeTab, emptyLayout, fileTarget, focusedLeaf, isValid, leaves, markMissing, mobileView, moveTab, openTab, setDirection, setRatio, splitLeaf,
     type Layout,
 } from "./layout";
 
@@ -15,6 +15,19 @@ function twoPanes(dir: "row" | "column" = "row"): Layout {
 }
 
 describe("layout", () => {
+    it("파일 경로와 줄 번호를 구분하고 이전 배치와 같은 대상은 중복 생성하지 않는다", () => {
+        let l = emptyLayout();
+        const old = { kind: "file" as const, project_id: "A", resource_id: "src/a.txt:42", title: "src/a.txt:42" };
+        l = openTab(l, l.focused_leaf, old);
+        l = openTab(l, l.focused_leaf, { ...old, resource_id: "src/a.txt", filePath: "src/a.txt", fileLine: 42 });
+        expect(allTabs(l)).toHaveLength(1);
+        const literal = { ...old, filePath: "src/a.txt:42" };
+        l = openTab(l, l.focused_leaf, literal);
+        expect(allTabs(l)).toHaveLength(2);
+        expect(fileTarget(literal)).toEqual({ path: "src/a.txt:42", line: undefined });
+        expect(fileTarget({ resource_id: "files", title: "파일 · A" })).toBeNull();
+        expect(fileTarget({ resource_id: "files", filePath: "files", title: "files" })?.path).toBe("files");
+    });
     it("opens a resource once per pane", () => {
         let l = emptyLayout();
         l = openTab(l, l.focused_leaf, sA);

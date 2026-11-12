@@ -3,7 +3,7 @@ import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileRefContext, Markdown } from "./Markdown";
 import { type Prefs, usePrefs } from "../state/device";
 import { useFocusRequest } from "../state/focus";
-import { ApiError, api } from "../api/client";
+import { ApiError, api, isLoggedIn } from "../api/client";
 import type { Definition, Message, MessagePage, ModelProfile, RecentItem, Session, ToolCallRow, Turn } from "../api/generated";
 import { useLive, useQuery } from "../state/store";
 import { Composer, type FollowKind, type RunCommand, type SendOptions } from "./Composer";
@@ -65,7 +65,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const capturePosition = () => {
         const el = scroller();
         const data = latestRef.current;
-        if (!el || !data || pendingPosition.current) return;
+        if (!el || !data || pendingPosition.current || !isLoggedIn()) return;
         const viewport = el.getBoundingClientRect();
         const row = [...(msgsRef.current?.querySelectorAll<HTMLElement>(".msg-row") ?? [])].find((node) => {
             const rect = node.getBoundingClientRect();
@@ -371,7 +371,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             <div className="messages" aria-live="polite" data-session-msgs={sessionId} ref={msgsRef}>
                 {hasOlder && <button className="ghost" onClick={loadOlder}>이전 메시지</button>}
                 <FileRefContext.Provider
-                    value={(path, line) => open({ kind: "file", project_id: projectId, resource_id: line ? `${path}:${line}` : path, title: line ? `${path}:${line}` : path }, "right")}
+                    value={(path, line) => open({ kind: "file", project_id: projectId, resource_id: path, filePath: path, fileLine: line, title: line ? `${path}:${line}` : path }, "right")}
                 >
                     <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={messages}
                         targetSeq={focusSeq ?? pendingPosition.current?.anchorSeq ?? null} presentationKey={JSON.stringify(prefs)}

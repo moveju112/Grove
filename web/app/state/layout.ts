@@ -2,7 +2,7 @@
 // 각 tab은 project_id/resource_id에 고정되며(PANE-002), 전역 "현재 프로젝트"는 없다.
 
 export type TabKind = "session" | "project" | "settings" | "file" | "terminal";
-export type Tab = { id: string; kind: TabKind; project_id?: string; resource_id?: string; title: string };
+export type Tab = { id: string; kind: TabKind; project_id?: string; resource_id?: string; title: string; filePath?: string; fileLine?: number };
 export type Leaf = { type: "leaf"; id: string; tabs: Tab[]; active_tab: string | null };
 export type Split = { type: "split"; direction: "row" | "column"; ratio: number; children: [Node, Node] };
 export type Node = Leaf | Split;
@@ -45,8 +45,21 @@ function mapLeaf(n: Node, id: string, f: (leaf: Leaf) => Node): Node {
     return { ...n, children: [mapLeaf(n.children[0], id, f), mapLeaf(n.children[1], id, f)] };
 }
 
+// 새 파일 탭은 경로와 줄을 분리한다. 예전 배치의 "경로:줄"과 탐색기 ID만 호환한다.
+export function fileTarget(tab: Pick<Tab, "resource_id" | "title" | "filePath" | "fileLine">): { path: string; line?: number } | null {
+    if (typeof tab.filePath === "string" && tab.filePath) return {
+        path: tab.filePath, line: Number.isSafeInteger(tab.fileLine) && tab.fileLine! > 0 ? tab.fileLine : undefined,
+    };
+    if (!tab.resource_id || (tab.resource_id === "files" && tab.title.startsWith("파일 · "))) return null;
+    const match = tab.resource_id.match(/^(.*?)(?::(\d+))?$/);
+    return match?.[1] ? { path: match[1], line: match[2] ? Number(match[2]) : undefined } : null;
+}
+
 function sameResource(a: Tab, b: Tab): boolean {
-    return a.kind === b.kind && a.project_id === b.project_id && a.resource_id === b.resource_id;
+    if (a.kind !== b.kind || a.project_id !== b.project_id) return false;
+    if (a.kind !== "file") return a.resource_id === b.resource_id;
+    const x = fileTarget(a), y = fileTarget(b);
+    return x?.path === y?.path && x?.line === y?.line;
 }
 
 /// 탭 열기. 같은 pane에 같은 자원이 있으면 새로 만들지 않고 활성화한다.

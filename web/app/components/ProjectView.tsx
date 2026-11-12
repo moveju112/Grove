@@ -85,7 +85,7 @@ export function ProjectView({ projectId, open }: { projectId: string; open: Open
                 </h1>
                 {project.data && <ProjectIdentity p={project.data} reload={project.reload} />}
                 <code className="muted small">{project.data?.root_path}</code>
-                <button className="ghost small" onClick={() => open({ kind: "file", project_id: projectId, resource_id: "files", title: `파일 · ${project.data?.name ?? ""}` })}>
+                <button className="ghost small" onClick={() => open({ kind: "file", project_id: projectId, title: `파일 · ${project.data?.name ?? ""}` })}>
                     파일
                 </button>
                 <button className="ghost small" onClick={() => open({ kind: "settings", project_id: projectId, resource_id: "settings", title: `설정 · ${project.data?.name ?? ""}` })}>

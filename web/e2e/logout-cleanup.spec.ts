@@ -39,6 +39,7 @@ test("인증 만료로 로그인 화면이 되면 초안 사본은 남아 다시
     await page.route("**/api/v1/**", (r) => (r.request().url().includes("/auth/") ? r.fallback() : r.fulfill({ status: 401, body: "" })));
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await expect(page.getByTestId("auth-expired")).toBeVisible({ timeout: 10_000 });
+    expect(await page.evaluate(() => Object.keys(sessionStorage).filter((k) => k.startsWith("grove.scroll.")))).toEqual([]);
     expect((await keys(page)).some((k) => k.startsWith("grove.draft."))).toBe(true);
     await page.unrouteAll();
     // 가짜 만료를 걷어 내면 refresh 쿠키로 다시 로그인된다

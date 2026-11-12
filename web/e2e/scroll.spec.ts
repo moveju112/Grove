@@ -74,4 +74,8 @@ test("다른 탭을 다녀와도 이전 페이지의 읽던 메시지와 화면 
     await page.locator(".tabbar .tab-title").filter({ hasText: `${prefix} reading` }).click();
     await expect(target).toBeInViewport();
     await expect.poll(async () => Math.abs((await target.boundingBox())!.y - y)).toBeLessThan(8);
+    await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
+    await page.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
+    await expect(target).toBeInViewport();
+    await expect.poll(async () => Math.abs((await target.boundingBox())!.y - y)).toBeLessThan(8);
 });

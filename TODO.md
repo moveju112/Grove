@@ -1270,7 +1270,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] RECENT-002 프로젝트별 화면에 갇히지 않고 최근 대화·파일·터미널을 식별 가능한 프로젝트명과 함께 제공한다. 검증: `tests/workspace.rs::two_projects_recent_and_split_survive_restart`, `web/e2e/workspace.spec.ts`.
 - [ ] RECENT-003 최근 항목 고정·해제·정렬과 현재 열린 탭으로 이동을 구현한다.
 - [x] RECENT-004 실행 중·승인 대기·읽지 않은 결과 필터를 최근 탭에 통합하고 별도 관리 시스템을 만들지 않는다. 검증: `tests/workspace.rs::recent_status_reflects_archived_and_hidden`, 최근 패널 필터.
-- [ ] RECENT-005 항목별 마지막 대화 위치·파일 위치·입력 초안을 복원한다.
+- [ ] RECENT-005 항목별 마지막 대화 위치·파일 위치·입력 초안을 복원한다. 진행: 기존 탭은 자기 대화 위치를 유지하고 닫은 탭을 최근 항목에서 다시 열 때는 해당 대화의 마지막 위치를 복원한다. 파일은 최근 항목에서 열 수 있고, 탭별 마지막 파일·선택·가로/세로 스크롤·저장 전 편집을 기기 내 사본으로 보존한다. 새 탭은 마지막 파일 사본을 복제하되 기존 사본은 덮어쓰지 않는다. 외부 변경은 복원한 편집의 원래 sha로 검사하고, 응답 유실 요청의 본문·키·잠금을 복원해 자동 재전송하지 않는다. 새 파일의 첫 저장·저장 공간 부족·로그아웃 정리·콜론/숫자 파일명과 파일/줄 참조 구분을 확인했다. 단위 19개·선택 E2E 21개·타입/빌드 통과(`web/app/state/fileState.test.ts`, `web/app/state/layout.test.ts`, `web/app/state/scrollPosition.test.ts`, `web/app/state/cleanup.test.ts`, `web/e2e/file-resume.spec.ts`, `web/e2e/file-recovery.spec.ts`, `web/e2e/scroll.spec.ts`, `web/e2e/logout-cleanup.spec.ts`, `web/e2e/markdown.spec.ts`, `web/e2e/workspace.spec.ts`의 파일/초안 2개). 남은 것: 닫은 대화의 새 탭에서 입력·첨부 사본 선택과 불명 전송의 원래 키 복원.
 - [ ] RECENT-006 PC·Android·Web에서 같은 서버 세션을 이어 열고 최근 접근 정보의 충돌·오프라인 처리를 정의한다.
 - [x] RECENT-007 초안은 기기별 revision을 보존하고 동시 편집 시 비교·선택/복사로 복구하며 무음 덮어쓰기를 금지한다. 검증: `tests/workspace.rs::drafts_conflict_instead_of_silent_overwrite`, `web/app/state/drafts.test.ts`, e2e 초안 시험.
 - [x] RECENT-008 최근 탭 제거·화면 닫기·세션 archive·작업 취소를 구분한다. 검증: 숨김≠삭제(`tests/workspace.rs::recent_status_reflects_archived_and_hidden`), 탭 닫기≠보관(e2e).

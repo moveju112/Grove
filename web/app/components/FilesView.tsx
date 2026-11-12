@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from "react";
-import { ApiError, api, newKey } from "../api/client";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ApiError, api, isLoggedIn, newKey } from "../api/client";
 import { useQuery } from "../state/store";
+import { fileAttemptKey, loadFileAttempt, loadFileBuffer, loadFileView, saveFileBuffer, saveFileView, type FileAttempt } from "../state/fileState";
 
 type Entry = { name: string; path: string; kind: "dir" | "file" | "link_outside" | "other"; size: number | null; mtime: string | null };
 type Listing = { path: string; entries: Entry[]; truncated: boolean };
@@ -8,14 +9,27 @@ type Content = { path: string; size: number; sha256: string; preview: "text" | "
 
 const enc = encodeURIComponent;
 
-type FileAttempt = { method: "post" | "put"; path: string; body: Record<string, string | null>; key: string };
+const COPY_ERROR = "이 기기에 편집 사본을 보관하지 못했습니다. 화면을 떠나기 전에 저장하거나 내용을 복사하세요.";
+type AttemptCache = { key: string; restoreKey?: string; endpoint: string; method: FileAttempt["method"]; path?: string };
 
 // 탐색기 작업과 편집기 저장은 응답 유실 뒤에도 요청 본문과 키를 함께 유지한다.
-function useFileMutation<T>(onSuccess: (result: T, attempt: FileAttempt) => void) {
-    const [attempt, setAttempt] = useState<FileAttempt | null>(null);
+function useFileMutation<T>(onSuccess: (result: T, attempt: FileAttempt) => void, cache: AttemptCache) {
+    const [attempt, setAttempt] = useState<FileAttempt | null>(() =>
+        loadFileAttempt(localStorage, cache.key, cache.endpoint, cache.method, cache.path)
+        ?? (cache.restoreKey ? loadFileAttempt(localStorage, cache.restoreKey, cache.endpoint, cache.method, cache.path) : null));
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<unknown>(null);
     const active = useRef(false);
+    useEffect(() => {
+        if (!attempt || !isLoggedIn()) return;
+        try { localStorage.setItem(cache.key, JSON.stringify(attempt)); }
+        catch { setError(new ApiError(0, "local_copy_unavailable", "요청 사본을 보관하지 못했습니다. 기기 저장 공간을 확인하세요.", true)); }
+    }, [cache.key]); // eslint-disable-line react-hooks/exhaustive-deps
+    const clear = () => {
+        localStorage.removeItem(cache.key);
+        setAttempt(null);
+        setError(null);
+    };
     const act = async (a: FileAttempt) => {
         if (active.current) return;
         active.current = true;
@@ -23,18 +37,23 @@ function useFileMutation<T>(onSuccess: (result: T, attempt: FileAttempt) => void
         setBusy(true);
         setError(null);
         try {
+            try { localStorage.setItem(cache.key, JSON.stringify(a)); }
+            catch { throw new ApiError(0, "local_copy_unavailable", "요청 사본을 보관하지 못해 실행하지 않았습니다. 기기 저장 공간을 확인하세요.", true); }
             const result = await api[a.method]<T>(a.path, a.body, { key: a.key });
-            setAttempt(null);
+            clear();
             onSuccess(result, a);
         } catch (e) {
             setError(e);
-            if (e instanceof ApiError && e.status < 500 && e.code !== "result_unknown" && !e.retryable) setAttempt(null);
+            if (e instanceof ApiError && e.status < 500 && e.code !== "result_unknown" && !e.retryable) {
+                localStorage.removeItem(cache.key);
+                setAttempt(null);
+            }
         } finally {
             active.current = false;
             setBusy(false);
         }
     };
-    return { attempt, busy, error, act, locked: busy || attempt !== null, clear: () => { setAttempt(null); setError(null); } };
+    return { attempt, busy, error, act, locked: busy || attempt !== null, clear };
 }
 
 function fileError(error: unknown): string {
@@ -44,19 +63,25 @@ function fileError(error: unknown): string {
 }
 
 /// 프로젝트 파일 탐색·편집. 저장은 연 시점의 sha256으로 외부 변경을 검사한다.
-export function FilesView({ projectId, initial }: { projectId: string; initial?: string | null }) {
-    // 처음 열 파일(탭의 resource_id = "경로" 또는 "경로:줄")
-    const start = parseInitial(initial);
-    const [dir, setDir] = useState(start ? (start.path.includes("/") ? start.path.slice(0, start.path.lastIndexOf("/")) : ".") : ".");
+export function FilesView({ tabId, projectId, initial: start }: { tabId: string; projectId: string; initial?: { path: string; line?: number } | null }) {
+    const [openPath, setOpenPath] = useState<string | null>(() => start?.path ?? loadFileView(localStorage, projectId, tabId));
+    const [dir, setDir] = useState(openPath?.includes("/") ? openPath.slice(0, openPath.lastIndexOf("/")).replace(/^new:/, "") : ".");
+    const [copyError, setCopyError] = useState(false);
+    const selectPath = (path: string) => {
+        try { saveFileView(localStorage, projectId, tabId, path); setCopyError(false); }
+        catch { setCopyError(true); }
+        setOpenPath(path);
+    };
     const [hidden, setHidden] = useState(false);
     const [sort, setSort] = useState("name");
     const [filter, setFilter] = useState("");
-    const [openPath, setOpenPath] = useState<string | null>(start?.path ?? null);
     const [editorLocked, setEditorLocked] = useState(false);
     const listing = useQuery<Listing>(`files:${projectId}:${dir}:${hidden}:${sort}`, () =>
         api.get(`/projects/${projectId}/files?path=${enc(dir)}&hidden=${hidden}&sort=${sort}`),
     );
-    const mutation = useFileMutation<unknown>(() => listing.reload());
+    const mutation = useFileMutation<unknown>(() => listing.reload(), {
+        key: fileAttemptKey(projectId, "", tabId, "op"), endpoint: `/projects/${projectId}/files/op`, method: "post",
+    });
     const locked = mutation.locked || editorLocked;
     const op = (body: Record<string, string>) => {
         if (locked) return;
@@ -82,7 +107,7 @@ export function FilesView({ projectId, initial }: { projectId: string; initial?:
                     <label className="check small"><input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} /> 숨김 파일</label>
                 </div>
                 <div className="inline wrap">
-                    <button className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 파일 이름"); if (n) setOpenPath(`new:${join(n)}`); }}>새 파일</button>
+                    <button className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 파일 이름"); if (n) selectPath(`new:${join(n)}`); }}>새 파일</button>
                     <button className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 폴더 이름"); if (n) void op({ op: "mkdir", path: join(n) }); }}>새 폴더</button>
                 </div>
                 {Boolean(mutation.error) && <p className="err" role="alert">{fileError(mutation.error)}</p>}
@@ -98,7 +123,7 @@ export function FilesView({ projectId, initial }: { projectId: string; initial?:
                                 className="link"
                                 disabled={locked || e.kind === "link_outside" || e.kind === "other"}
                                 title={e.kind === "link_outside" ? "프로젝트 밖을 가리키는 링크" : undefined}
-                                onClick={() => (e.kind === "dir" ? setDir(e.path) : setOpenPath(e.path))}
+                                onClick={() => (e.kind === "dir" ? setDir(e.path) : selectPath(e.path))}
                             >
                                 {e.kind === "dir" ? "📁 " : ""}{e.name}
                             </button>
@@ -124,36 +149,42 @@ export function FilesView({ projectId, initial }: { projectId: string; initial?:
                 {listing.data?.truncated && <p className="muted small">항목이 많아 일부만 표시합니다. 이름 거르기를 쓰세요.</p>}
             </aside>
             <section className="file-pane">
-                {openPath ? <FileEditor key={openPath} projectId={projectId} path={openPath} onSaved={listing.reload} disabled={mutation.locked} onLock={setEditorLocked} line={openPath === start?.path ? start?.line : undefined} /> : <p className="muted">파일을 고르세요.</p>}
+                {copyError && <p className="err" role="alert">{COPY_ERROR}</p>}
+                {openPath ? <FileEditor key={openPath} copyId={tabId} projectId={projectId} path={openPath}
+                    onSaved={() => { listing.reload(); if (openPath.startsWith("new:")) selectPath(openPath.slice(4)); }}
+                    disabled={mutation.locked} onLock={setEditorLocked} line={openPath === start?.path ? start?.line : undefined} /> : <p className="muted">파일을 고르세요.</p>}
             </section>
         </div>
     );
 }
 
-function parseInitial(s?: string | null): { path: string; line?: number } | null {
-    if (!s) return null;
-    const m = s.match(/^(.*?)(?::(\d+))?$/);
-    return m && m[1] ? { path: m[1], line: m[2] ? Number(m[2]) : undefined } : null;
-}
-
-function FileEditor({ projectId, path, onSaved, line, disabled, onLock }: { projectId: string; path: string; onSaved: () => void; line?: number; disabled: boolean; onLock: (locked: boolean) => void }) {
+function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }: { copyId: string; projectId: string; path: string; onSaved: () => void; line?: number; disabled: boolean; onLock: (locked: boolean) => void }) {
     const isNew = path.startsWith("new:");
     const real = isNew ? path.slice(4) : path;
     const [c, setC] = useState<Content | null>(null);
+    const [saved] = useState(() => loadFileBuffer(localStorage, projectId, path, copyId));
+    const [copyError, setCopyError] = useState(false);
     const area = useRef<HTMLTextAreaElement | null>(null);
     const jumped = useRef(false);
-    useEffect(() => {
-        // 지정한 줄을 선택하고 그 위치로 스크롤한다(한 번만).
+    useLayoutEffect(() => {
+        // 명시적인 줄 이동이 저장 위치보다 우선한다. 편집 사본을 반영한 뒤 한 번만 복원한다.
         const el = area.current;
-        if (!line || !c || jumped.current || !el) return;
+        if (!c || jumped.current || !el) return;
         jumped.current = true;
-        const lines = (c.text ?? "").split("\n");
-        const at = lines.slice(0, Math.max(0, line - 1)).reduce((n, l) => n + l.length + 1, 0);
-        const end = at + (lines[line - 1]?.length ?? 0);
-        el.focus();
-        el.setSelectionRange(at, end);
-        const lh = parseFloat(getComputedStyle(el).lineHeight) || 18;
-        el.scrollTop = Math.max(0, (line - 3) * lh);
+        if (line) {
+            const lines = el.value.split("\n");
+            const at = lines.slice(0, Math.max(0, line - 1)).reduce((n, l) => n + l.length + 1, 0);
+            const end = at + (lines[line - 1]?.length ?? 0);
+            el.focus();
+            el.setSelectionRange(at, end);
+            const lh = parseFloat(getComputedStyle(el).lineHeight) || 18;
+            el.scrollTop = Math.max(0, (line - 3) * lh);
+        } else if (saved) {
+            const b = saved.buffer;
+            el.setSelectionRange(b.start, b.end, b.direction);
+            el.scrollTop = b.top;
+            el.scrollLeft = b.left;
+        }
     }, [c, line]);
     const [text, setText] = useState("");
     const [base, setBase] = useState<string | null>(null);
@@ -164,23 +195,35 @@ function FileEditor({ projectId, path, onSaved, line, disabled, onLock }: { proj
         setC((current) => current ? { ...current, text: saved, sha256: result.sha256 } : current);
         setMsg({ kind: "ok", text: "저장됨" });
         onSaved();
+    }, {
+        key: fileAttemptKey(projectId, path, copyId),
+        restoreKey: saved && saved.copy !== copyId ? fileAttemptKey(projectId, path, saved.copy) : undefined,
+        endpoint: `/projects/${projectId}/files/content`, method: "put", path: real,
     });
     useEffect(() => { onLock(mutation.locked); }, [mutation.locked, onLock]);
 
-    const load = async () => {
+    const load = async (restore = false) => {
+        const draft = restore ? saved?.buffer : null;
         if (isNew) {
             setC({ path: real, size: 0, sha256: "", preview: "text", text: "" });
+            setText(draft?.text ?? "");
             return;
         }
         const v = await api.get<Content>(`/projects/${projectId}/files/content?path=${enc(real)}`);
         setC(v);
-        setText(v.text ?? "");
-        setBase(v.sha256);
-        setMsg(null);
-        mutation.clear();
+        const hasDraft = draft?.text != null && draft.text !== v.text;
+        setText(hasDraft ? draft.text! : v.text ?? "");
+        setBase(hasDraft ? draft.base : v.sha256);
+        setMsg(hasDraft ? {
+            kind: draft.base === v.sha256 ? "ok" : "err",
+            text: draft.base === v.sha256 ? "이 기기의 편집 사본을 복원했습니다. 파일은 아직 저장하지 않았습니다."
+                : "파일이 바뀌었습니다. 복원한 편집은 보존했으며 이전 원문 기준으로 저장하므로 덮어쓰지 않습니다.",
+        } : null);
+        if (!restore) mutation.clear();
+        void api.post("/recent/touch", { kind: "file", project_id: projectId, resource_id: real, title: real }).catch(() => undefined);
     };
     useEffect(() => {
-        load().catch((e) => setMsg({ kind: "err", text: e instanceof ApiError ? e.message : "열기 실패" }));
+        load(true).catch((e) => setMsg({ kind: "err", text: e instanceof ApiError ? e.message : "열기 실패" }));
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [path]);
     // <img>·새 탭은 인증 헤더를 못 보내므로 5분짜리 파일 티켓을 받아 쓴다.
@@ -191,6 +234,19 @@ function FileEditor({ projectId, path, onSaved, line, disabled, onLock }: { proj
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [c?.sha256]);
     const dirty = c?.text !== null && c !== null && text !== (c.text ?? "");
+    const capture = (value = text) => {
+        const el = area.current;
+        if (!c || c.text === null || !el || !isLoggedIn()) return;
+        try {
+            saveFileBuffer(localStorage, projectId, path, copyId, {
+                text: value === c.text ? null : value, base,
+                start: el.selectionStart, end: el.selectionEnd, direction: el.selectionDirection,
+                top: el.scrollTop, left: el.scrollLeft,
+            });
+            setCopyError(false);
+        } catch { setCopyError(true); }
+    };
+    useEffect(() => { capture(); }, [text, base, c]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (!dirty) return;
         const h = (e: BeforeUnloadEvent) => e.preventDefault();
@@ -204,7 +260,8 @@ function FileEditor({ projectId, path, onSaved, line, disabled, onLock }: { proj
         setMsg(null);
         void mutation.act({ method: "put", path: `/projects/${projectId}/files/content`, body: { path: real, expected_sha256: base, text }, key: newKey() });
     };
-    const conflict = mutation.error instanceof ApiError && ["file_changed", "file_missing", "already_exists"].includes(mutation.error.code);
+    const conflict = (dirty && !isNew && base !== c.sha256)
+        || (mutation.error instanceof ApiError && ["file_changed", "file_missing", "already_exists"].includes(mutation.error.code));
     return (
         <div className="editor" data-testid="file-editor">
             <h2 className="inline">
@@ -219,13 +276,16 @@ function FileEditor({ projectId, path, onSaved, line, disabled, onLock }: { proj
                 <p className="muted">{c.reason === "too_large" ? "파일이 커서 편집기로 열 수 없습니다. 내려받아 확인하세요." : "텍스트가 아닌 파일입니다."}</p>
             ) : (
                 <>
-                    <textarea ref={area} className="code" aria-label="파일 내용" spellCheck={false} readOnly={mutation.locked || disabled} value={text} onChange={(e) => setText(e.target.value)} />
+                    <textarea ref={area} className="code" aria-label="파일 내용" spellCheck={false} readOnly={mutation.locked || disabled} value={text}
+                        onChange={(e) => { setText(e.target.value); capture(e.target.value); }}
+                        onSelect={() => capture()} onScroll={() => capture()} onBlur={() => capture()} />
                     <div className="inline">
                         <button disabled={disabled || mutation.locked || (!dirty && !isNew)} onClick={() => void save()}>저장</button>
                         {conflict && <button className="ghost" onClick={() => { if (confirm("내 편집을 버리고 최신 내용을 불러올까요?")) void load(); }}>최신 내용 불러오기</button>}
                     </div>
                 </>
             )}
+            {copyError && <p className="err" role="alert">{COPY_ERROR}</p>}
             {mutation.attempt && !mutation.busy && <div className="inline wrap">
                 <button className="ghost small" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</button>
                 <button className="ghost small" onClick={() => mutation.clear()}>원문 확인 후 닫기</button>
