@@ -142,6 +142,88 @@ async fn once_fires_exactly_once_and_leaves_persistent_notification() {
     assert_eq!(n["unread"], 0);
 }
 
+/// AUTO-009: 반복 예약의 최대 횟수·종료 시각, 연속 실패 backoff와 자동 정지, 재개 시 초기화.
+#[tokio::test]
+async fn repeat_limits_backoff_and_auto_pause_after_failures() {
+    let c = ctx().await;
+    let soon = |s: i64| fmt(time::OffsetDateTime::now_utc() + time::Duration::seconds(s));
+    // 검증: 한 번 실행에는 횟수·종료 불가, 범위 밖·과거 종료 거부
+    for (extra, why) in [
+        (json!({ "kind": "once", "at": soon(60), "max_runs": 2 }), "한 번 실행 횟수"),
+        (json!({ "max_runs": 0 }), "횟수 0"),
+        (json!({ "end_at": "2001-01-01T00:00:00Z" }), "과거 종료"),
+        (json!({ "pause_after_failures": 0 }), "정지 0"),
+    ] {
+        let (st, e) = c.create(extra).await;
+        assert_eq!(st, StatusCode::BAD_REQUEST, "{why}: {e}");
+    }
+    let (_, d) = c.create(json!({ "name": "기본" })).await;
+    assert_eq!(d["pause_after_failures"], 5, "생략하면 5회 연속 실패에 멈춘다");
+    assert_eq!(d["runs_used"], 0);
+
+    // 최대 1회: 첫 자동 실행 뒤 끝난다(다음 시각 없음)
+    c.f.push(fixture::text("한 번만"));
+    let (st, v) = c.create(json!({ "name": "한 번만", "interval_minutes": 1, "at": soon(1), "max_runs": 1 })).await;
+    assert_eq!(st, StatusCode::CREATED, "{v}");
+    let once = v["id"].as_str().unwrap().to_string();
+    c.wait_run(&once, |r| r.first().is_some_and(|x| x["status"] == "completed")).await;
+    let (_, s) = c.s.get(&format!("/api/v1/schedules/{once}")).await;
+    assert_eq!((s["status"].as_str(), s["runs_used"].as_i64(), s["next_run_at"].is_null()), (Some("done"), Some(1), true), "{s}");
+
+    // 종료 시각: 다음 시각(1분 뒤)이 종료 시각보다 뒤라 첫 실행 뒤 끝난다
+    c.f.push(fixture::text("종료 전"));
+    let (_, v) = c.create(json!({ "name": "종료", "interval_minutes": 1, "at": soon(1), "end_at": soon(30) })).await;
+    let ended = v["id"].as_str().unwrap().to_string();
+    c.wait_run(&ended, |r| r.first().is_some_and(|x| x["status"] == "completed")).await;
+    let (_, s) = c.s.get(&format!("/api/v1/schedules/{ended}")).await;
+    assert_eq!(s["status"], "done", "{s}");
+
+    // 연속 실패: 한 번 실패하면 자동 실행은 backoff 동안 건너뛰고(수동 실행은 가능), 두 번째 실패에 자동 정지
+    let (_, v) = c.create(json!({ "name": "실패", "interval_minutes": 1, "at": soon(4), "max_total_tokens": 5, "pause_after_failures": 2 })).await;
+    let bad = v["id"].as_str().unwrap().to_string();
+    c.f.push(fixture::text("너무 길다"));
+    let (_, r) = c.s.post(&format!("/api/v1/schedules/{bad}/run"), json!({})).await;
+    c.s.wait_status(r["turn_id"].as_str().unwrap(), "failed").await;
+    c.wait_run(&bad, |r| r.iter().any(|x| x["status"] == "failed")).await;
+    let (_, s) = c.s.get(&format!("/api/v1/schedules/{bad}")).await;
+    assert_eq!(s["consecutive_failures"], 1, "{s}");
+    assert!(s["backoff_until"].is_string());
+    let runs = c.wait_run(&bad, |r| r.iter().any(|x| x["status"] == "missed")).await;
+    let skipped = runs.iter().find(|x| x["status"] == "missed").unwrap();
+    assert!(skipped["detail"].as_str().unwrap().contains("연속 1회 실패"), "{skipped}");
+    assert_eq!(skipped["manual"], false);
+    let (_, s) = c.s.get(&format!("/api/v1/schedules/{bad}")).await;
+    assert_eq!((s["status"].as_str(), s["runs_used"].as_i64()), (Some("active"), Some(0)), "건너뛴 자동 실행은 횟수에 들지 않는다: {s}");
+    c.f.push(fixture::text("또 길다"));
+    let (_, r) = c.s.post(&format!("/api/v1/schedules/{bad}/run"), json!({})).await;
+    c.s.wait_status(r["turn_id"].as_str().unwrap(), "failed").await;
+    let mut paused = Value::Null;
+    for _ in 0..50 {
+        paused = c.s.get(&format!("/api/v1/schedules/{bad}")).await.1;
+        if paused["status"] == "paused" { break; }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert_eq!((paused["status"].as_str(), paused["paused_reason"].as_str(), paused["consecutive_failures"].as_i64()), (Some("paused"), Some("failures"), Some(2)), "{paused}");
+    let (_, n) = c.s.get("/api/v1/notifications?unread=true").await;
+    assert!(n["items"].as_array().unwrap().iter().any(|i| i["title"].as_str().unwrap().contains("자동 일시 정지")), "{n}");
+    // 재개하면 연속 실패를 지우고 사용자 정지와 구분한다
+    let (st, rs) = c.s.post(&format!("/api/v1/schedules/{bad}/resume"), json!({ "expected_revision": paused["revision"] })).await;
+    assert_eq!(st, StatusCode::OK, "{rs}");
+    assert_eq!((rs["consecutive_failures"].as_i64(), rs["paused_reason"].is_null(), rs["backoff_until"].is_null()), (Some(0), true, true), "{rs}");
+    let (_, pz) = c.s.post(&format!("/api/v1/schedules/{bad}/pause"), json!({ "expected_revision": rs["revision"] })).await;
+    assert_eq!(pz["paused_reason"], "user");
+
+    // 사용자 취소는 실패로 세지 않는다
+    let (_, v) = c.create(json!({ "name": "취소", "tools": true })).await;
+    let cancel = v["id"].as_str().unwrap().to_string();
+    c.f.push(fixture::tool_calls(&[("w9", "write", json!({ "path": "c.txt", "content": "c" }))]));
+    let (_, r) = c.s.post(&format!("/api/v1/schedules/{cancel}/run"), json!({})).await;
+    c.s.wait_status(r["turn_id"].as_str().unwrap(), "awaiting_approval").await;
+    c.s.post(&format!("/api/v1/turns/{}/cancel", r["turn_id"].as_str().unwrap()), json!({})).await;
+    c.wait_run(&cancel, |r| r[0]["status"] == "cancelled").await;
+    assert_eq!(c.s.get(&format!("/api/v1/schedules/{cancel}")).await.1["consecutive_failures"], 0);
+}
+
 #[tokio::test]
 async fn approval_policy_overlap_allowed_tools_and_budget() {
     let c = ctx().await;

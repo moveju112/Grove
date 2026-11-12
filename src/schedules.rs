@@ -52,10 +52,31 @@ pub struct Schedule {
     pub revision: i64,
     pub created_at: String,
     pub updated_at: String,
+    /// 반복 예약의 자동 실행 최대 횟수(AUTO-009). 수동 실행·놓침·건너뜀은 세지 않는다.
+    pub max_runs: Option<i64>,
+    /// 이 시각 이후로는 자동 실행하지 않는다.
+    pub end_at: Option<String>,
+    /// 연속 실패가 이 횟수에 이르면 자동으로 일시 정지한다(없으면 끔).
+    pub pause_after_failures: Option<i64>,
+    pub consecutive_failures: i64,
+    pub last_failed_at: Option<String>,
+    /// 일시 정지 이유: 사용자(`user`) 또는 연속 실패(`failures`).
+    pub paused_reason: Option<String>,
+    /// 지금까지 시작한 자동 실행 수.
+    pub runs_used: i64,
+    /// 연속 실패 뒤 자동 실행을 미루는 시각(지났으면 의미 없음).
+    pub backoff_until: Option<String>,
 }
 
 const COLS: &str = "id, project_id, owner_id, name, prompt, profile_id, agent_id, tools_enabled, allowed_tools, max_total_tokens, kind, at, interval_minutes, \
-                    daily_time, tz_offset_minutes, session_mode, session_id, on_approval, missed_grace_minutes, status, next_run_at, revision, created_at, updated_at";
+                    daily_time, tz_offset_minutes, session_mode, session_id, on_approval, missed_grace_minutes, status, next_run_at, revision, created_at, updated_at, \
+                    max_runs, end_at, pause_after_failures, consecutive_failures, last_failed_at, paused_reason, \
+                    (SELECT COUNT(*) FROM schedule_runs r WHERE r.schedule_id = schedules.id AND r.manual = 0 AND r.status NOT IN ('missed','skipped_overlap'))";
+
+/// 연속 실패 n회 뒤 자동 실행을 미루는 시간: 60초×2^(n-1), 최대 24시간(upstream routine 안전장치와 같은 형태).
+pub fn backoff(failures: i64) -> Option<Duration> {
+    (failures >= 1).then(|| Duration::seconds(60 * 2i64.pow((failures - 1).min(20) as u32)).min(Duration::hours(24)))
+}
 
 fn from_row(r: &Row) -> rusqlite::Result<Schedule> {
     let tools: Option<String> = r.get(8)?;
@@ -84,6 +105,18 @@ fn from_row(r: &Row) -> rusqlite::Result<Schedule> {
         revision: r.get(21)?,
         created_at: r.get(22)?,
         updated_at: r.get(23)?,
+        max_runs: r.get(24)?,
+        end_at: r.get(25)?,
+        pause_after_failures: r.get(26)?,
+        consecutive_failures: r.get(27)?,
+        last_failed_at: r.get::<_, Option<String>>(28)?,
+        paused_reason: r.get(29)?,
+        runs_used: r.get(30)?,
+        backoff_until: None,
+    })
+    .map(|mut s| {
+        s.backoff_until = s.last_failed_at.as_deref().and_then(crate::util::parse_time).zip(backoff(s.consecutive_failures)).map(|(t, d)| crate::util::fmt_time(t + d));
+        s
     })
 }
 
@@ -249,6 +282,17 @@ pub struct SpecBody {
     pub on_approval: String,
     #[serde(default = "default_grace")]
     pub missed_grace_minutes: i64,
+    #[serde(default)]
+    pub max_runs: Option<i64>,
+    #[serde(default)]
+    pub end_at: Option<String>,
+    /// 생략하면 5회. null이면 연속 실패로 멈추지 않는다.
+    #[serde(default = "default_pause_after_failures")]
+    pub pause_after_failures: Option<i64>,
+}
+
+fn default_pause_after_failures() -> Option<i64> {
+    Some(5)
 }
 
 fn default_mode() -> String {
@@ -328,13 +372,70 @@ fn validate(c: &Connection, project_id: &str, b: &SpecBody, now: OffsetDateTime)
     if !(0..=1440).contains(&b.missed_grace_minutes) {
         return Err(ApiError::invalid("놓친 실행 허용 시간은 0~1440분이어야 합니다"));
     }
+    if b.kind == "once" && (b.max_runs.is_some() || b.end_at.is_some()) {
+        return Err(ApiError::invalid("최대 횟수·종료 시각은 반복 예약에만 정할 수 있습니다"));
+    }
+    if b.max_runs.is_some_and(|m| !(1..=100_000).contains(&m)) {
+        return Err(ApiError::invalid("최대 실행 횟수는 1~100000이어야 합니다"));
+    }
+    if let Some(end) = &b.end_at {
+        let end = crate::util::parse_time(end).ok_or_else(|| ApiError::invalid("종료 시각 형식이 잘못되었습니다"))?;
+        if end <= now {
+            return Err(ApiError::invalid("종료 시각은 미래여야 합니다"));
+        }
+    }
+    if b.pause_after_failures.is_some_and(|k| !(1..=100).contains(&k)) {
+        return Err(ApiError::invalid("연속 실패 정지 횟수는 1~100이어야 합니다"));
+    }
     Ok(())
+}
+
+/// 실행 결과를 연속 실패 수에 반영한다(AUTO-009). 실패·시작 실패만 세고, 서버 재시작 중단과 사용자 취소는 세지 않는다.
+/// 한도에 이르면 활성 예약을 `failures` 이유로 일시 정지하고 알린다.
+fn record_outcome(c: &Connection, now: &str, id: &str, status: &str) -> ApiResult<()> {
+    // 실행 중에 삭제한 예약은 기록만 남기고 상태를 바꾸지 않는다(턴 종료 transaction을 실패시키지 않는다).
+    let current: Option<String> = c.query_row("SELECT status FROM schedules WHERE id = ?1", params![id], |r| r.get(0)).optional()?;
+    if current.is_none_or(|s| s == "deleted") {
+        return Ok(());
+    }
+    match status {
+        "completed" => {
+            c.execute("UPDATE schedules SET consecutive_failures = 0, last_failed_at = NULL WHERE id = ?1", params![id])?;
+        }
+        "failed" | "start_failed" => {
+            c.execute("UPDATE schedules SET consecutive_failures = consecutive_failures + 1, last_failed_at = ?2 WHERE id = ?1", params![id, now])?;
+            let s = get(c, id)?;
+            if s.status == "active" && s.pause_after_failures.is_some_and(|k| s.consecutive_failures >= k) {
+                c.execute(
+                    "UPDATE schedules SET status = 'paused', paused_reason = 'failures', revision = revision + 1, updated_at = ?2 WHERE id = ?1",
+                    params![id, now],
+                )?;
+                notifications::push(
+                    c,
+                    now,
+                    "schedule.paused",
+                    &format!("예약 '{}' 자동 일시 정지", s.name),
+                    &format!("연속 {}회 실패해 멈췄습니다. 실행 기록에서 원인을 확인한 뒤 재개하세요", s.consecutive_failures),
+                    Some(&s.project_id),
+                    None,
+                    Some(&s.id),
+                )?;
+            }
+        }
+        _ => return Ok(()),
+    }
+    emit(c, now, &get(c, id)?)
 }
 
 /// 저장된 필드로 다음 예정 시각을 다시 계산해 기록한다.
 fn reschedule(c: &Connection, now: &str, id: &str, from: OffsetDateTime) -> ApiResult<Schedule> {
     let s = get(c, id)?;
-    let next = next_after(&timing_of(&s)?, from).map(crate::util::fmt_time);
+    // 최대 횟수를 다 썼거나 다음 시각이 종료 시각 뒤면 더 실행하지 않는다.
+    let end = s.end_at.as_deref().and_then(crate::util::parse_time);
+    let next = next_after(&timing_of(&s)?, from)
+        .filter(|n| end.is_none_or(|e| *n <= e))
+        .filter(|_| s.max_runs.is_none_or(|m| s.runs_used < m))
+        .map(crate::util::fmt_time);
     let status = if next.is_none() && s.status == "active" { "done" } else { s.status.as_str() };
     c.execute(
         "UPDATE schedules SET next_run_at = ?2, status = ?3, revision = revision + 1, updated_at = ?4 WHERE id = ?1",
@@ -352,7 +453,7 @@ fn write_spec(c: &Connection, now: &str, id: &str, b: &SpecBody) -> ApiResult<()
     c.execute(
         "UPDATE schedules SET name = ?2, prompt = ?3, profile_id = ?4, agent_id = ?5, tools_enabled = ?6, allowed_tools = ?7, max_total_tokens = ?8, \
          kind = ?9, at = ?10, interval_minutes = ?11, daily_time = ?12, tz_offset_minutes = ?13, session_mode = ?14, session_id = ?15, \
-         on_approval = ?16, missed_grace_minutes = ?17, updated_at = ?18 WHERE id = ?1",
+         on_approval = ?16, missed_grace_minutes = ?17, updated_at = ?18, max_runs = ?19, end_at = ?20, pause_after_failures = ?21 WHERE id = ?1",
         params![
             id,
             b.name.trim(),
@@ -371,7 +472,10 @@ fn write_spec(c: &Connection, now: &str, id: &str, b: &SpecBody) -> ApiResult<()
             session_id,
             b.on_approval,
             b.missed_grace_minutes,
-            now
+            now,
+            b.max_runs,
+            b.end_at.as_deref().and_then(crate::util::parse_time).map(|t| crate::util::fmt_time(secs(t))),
+            b.pause_after_failures
         ],
     )?;
     Ok(())
@@ -428,6 +532,7 @@ fn fire(c: &Connection, now: &str, epoch: &str, s: &Schedule, planned: &str, man
             c.execute_batch("ROLLBACK TO schedule_fire; RELEASE schedule_fire")?;
             c.execute("UPDATE schedule_runs SET status = 'start_failed', detail = ?2, ended_at = ?3 WHERE id = ?1", params![run_id, e.message, now])?;
             notifications::push(c, now, "schedule.run", &format!("예약 '{}' 시작 실패", s.name), &e.message, Some(&s.project_id), s.session_id.as_deref(), Some(&run_id))?;
+            record_outcome(c, now, &s.id, "start_failed")?;
         }
     }
     Ok(Some(c.query_row(&format!("SELECT {RCOLS} FROM schedule_runs WHERE id = ?1"), params![run_id], run_row)?))
@@ -462,7 +567,12 @@ pub fn process_due(c: &Connection, now_t: OffsetDateTime, epoch: &str) -> ApiRes
                 insert_run(c, &now, &s, &planned, false, "skipped_overlap", Some("이전 실행이 아직 끝나지 않아 건너뛰었습니다"))?;
             }
             Decision::Fire => {
-                if let Some(r) = fire(c, &now, epoch, &s, &planned, false)? {
+                // 연속 실패 뒤 대기 시간 안이면 자동 실행을 건너뛰고 이유를 남긴다(수동 실행은 막지 않는다).
+                if let Some(until) = s.backoff_until.as_deref().and_then(crate::util::parse_time).filter(|u| *u > now_t) {
+                    insert_run(c, &now, &s, &planned, false, "missed", Some(&format!(
+                        "연속 {}회 실패 뒤 대기 중이라 건너뛰었습니다(자동 실행 재개 {})", s.consecutive_failures, crate::util::fmt_time(until)
+                    )))?;
+                } else if let Some(r) = fire(c, &now, epoch, &s, &planned, false)? {
                     fired |= r.status == "running";
                 }
             }
@@ -543,7 +653,7 @@ pub fn on_turn_finished(c: &Connection, now: &str, turn_id: &str, to: &str) -> A
     };
     notifications::push(c, now, "schedule.run", &format!("예약 '{name}' {label}"), &body, Some(&project_id), session_id.as_deref(), Some(&run_id))?;
     events::append(c, now, "schedule.run", Some(&project_id), session_id.as_deref(), &json!({ "schedule_id": sched_id, "run_id": run_id, "status": status }))?;
-    Ok(())
+    record_outcome(c, now, &sched_id, status)
 }
 
 // ---- API ----
@@ -634,7 +744,14 @@ async fn set_status(app: App, p: Principal, headers: HeaderMap, id: String, rev:
             ("delete", _) => "deleted",
             _ => return Err(ApiError::conflict("invalid_state", format!("{} 상태에서는 할 수 없습니다", cur.status))),
         };
-        tx.execute("UPDATE schedules SET status = ?2, revision = revision + 1, updated_at = ?3 WHERE id = ?1", params![id, to, now])?;
+        // 사용자가 멈추면 이유를 남기고, 재개하면 연속 실패를 초기화해 바로 자동 실행할 수 있게 한다.
+        tx.execute(
+            "UPDATE schedules SET status = ?2, revision = revision + 1, updated_at = ?3, \
+             paused_reason = CASE ?2 WHEN 'paused' THEN 'user' ELSE NULL END, \
+             consecutive_failures = CASE ?2 WHEN 'active' THEN 0 ELSE consecutive_failures END, \
+             last_failed_at = CASE ?2 WHEN 'active' THEN NULL ELSE last_failed_at END WHERE id = ?1",
+            params![id, to, now],
+        )?;
         let v = if to == "active" {
             // 재개: 정지 중 지난 시각은 실행하지 않고 지금 기준으로 다음 시각을 정한다.
             serde_json::to_value(reschedule(tx, now, &id, now_t)?)?

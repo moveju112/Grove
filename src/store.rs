@@ -740,6 +740,15 @@ pub const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE recent_items ADD COLUMN hidden_at TEXT;
     "#,
+    // 45: 반복 예약의 자동 실행 횟수·종료 시각과 연속 실패 안전장치(AUTO-009). 기존 예약은 자동 정지를 켜지 않는다.
+    r#"
+    ALTER TABLE schedules ADD COLUMN max_runs INTEGER CHECK (max_runs IS NULL OR max_runs > 0);
+    ALTER TABLE schedules ADD COLUMN end_at TEXT;
+    ALTER TABLE schedules ADD COLUMN pause_after_failures INTEGER CHECK (pause_after_failures IS NULL OR pause_after_failures > 0);
+    ALTER TABLE schedules ADD COLUMN consecutive_failures INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE schedules ADD COLUMN last_failed_at TEXT;
+    ALTER TABLE schedules ADD COLUMN paused_reason TEXT CHECK (paused_reason IS NULL OR paused_reason IN ('user','failures'));
+    "#,
 ];
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { When } from "./When";
 import { ApiError, api } from "../api/client";
 import type { ModelProfile } from "../api/generated";
@@ -21,7 +21,27 @@ type Schedule = {
     status: "active" | "paused" | "done";
     next_run_at: string | null;
     revision: number;
+    max_runs: number | null;
+    end_at: string | null;
+    pause_after_failures: number | null;
+    consecutive_failures: number;
+    paused_reason: "user" | "failures" | null;
+    runs_used: number;
+    backoff_until: string | null;
 };
+
+/// 반복 한도·연속 실패 상태(AUTO-009). 자동 실행만 세고 수동 실행은 횟수에 넣지 않는다.
+function limits(s: Schedule) {
+    const parts: ReactNode[] = [];
+    if (s.kind !== "once") parts.push(`자동 실행 ${s.runs_used}${s.max_runs ? `/${s.max_runs}` : ""}회`);
+    if (s.end_at) parts.push(<>종료 <When at={s.end_at} absolute /></>);
+    parts.push(s.pause_after_failures ? `연속 ${s.pause_after_failures}회 실패 시 자동 정지` : "실패해도 자동 정지 안 함");
+    if (s.consecutive_failures > 0) {
+        const waiting = s.backoff_until && new Date(s.backoff_until).getTime() > Date.now();
+        parts.push(<span className="warn">연속 실패 {s.consecutive_failures}회{waiting && <> · 자동 실행 재개 <When at={s.backoff_until!} absolute /></>}</span>);
+    }
+    return parts.map((p, i) => <span key={i}>{i > 0 && " · "}{p}</span>);
+}
 type Run = { id: string; planned_at: string; manual: boolean; status: string; session_id: string | null; detail: string | null };
 
 const RUN_LABEL: Record<string, string> = {
@@ -68,7 +88,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
     const q = useQuery<Schedule[]>(`schedules:${projectId}`, () => api.get(`/schedules?project_id=${projectId}`));
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const [err, setErr] = useState<string | null>(null);
-    const [form, setForm] = useState({ name: "", prompt: "", kind: "daily", daily_time: "09:00", interval_minutes: 60, at: "", profile_id: "", on_approval: "wait", tools: false });
+    const [form, setForm] = useState({ name: "", prompt: "", kind: "daily", daily_time: "09:00", interval_minutes: 60, at: "", profile_id: "", on_approval: "wait", tools: false, max_runs: "", end_at: "", pause_after_failures: "5" });
     const list = q.data ?? [];
     const act = async (f: () => Promise<unknown>) => {
         setErr(null);
@@ -95,6 +115,9 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
             if (form.kind === "daily") body.daily_time = form.daily_time;
             if (form.kind === "interval") body.interval_minutes = Number(form.interval_minutes);
             if (form.kind === "once") body.at = form.at ? new Date(form.at).toISOString() : "";
+            if (form.kind !== "once" && form.max_runs) body.max_runs = Number(form.max_runs);
+            if (form.kind !== "once" && form.end_at) body.end_at = new Date(form.end_at).toISOString();
+            body.pause_after_failures = form.pause_after_failures ? Number(form.pause_after_failures) : null;
             await api.post(`/projects/${projectId}/schedules`, body);
             setForm((f) => ({ ...f, name: "", prompt: "" }));
         });
@@ -108,11 +131,14 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                         <details>
                             <summary>
                                 <strong>{s.name}</strong> <span className="muted small">{when(s)}</span>{" "}
-                                <span className={`status ${s.status}`}>{s.status === "active" ? "활성" : s.status === "paused" ? "일시 정지" : "끝남"}</span>
+                                <span className={`status ${s.status}`}>
+                                    {s.status === "active" ? "활성" : s.status === "paused" ? (s.paused_reason === "failures" ? "일시 정지(연속 실패)" : "일시 정지") : "끝남"}
+                                </span>
                                 {s.next_run_at && s.status === "active" && <span className="muted small"> · 다음 <When at={s.next_run_at} absolute /></span>}
                             </summary>
                             <p className="small">{s.prompt}</p>
                             <p className="muted small">승인 필요 시: {s.on_approval === "wait" ? "승인을 기다림" : "실패로 끝냄"} · 도구 {s.tools_enabled ? "사용" : "끔"}</p>
+                            <p className="muted small" data-testid="schedule-limits">{limits(s)}</p>
                             <div className="inline wrap">
                                 <button className="small" onClick={() => void act(() => api.post(`/schedules/${s.id}/run`))}>지금 실행</button>
                                 {s.status === "active" && <button className="ghost small" onClick={() => void act(() => api.post(`/schedules/${s.id}/pause`, { expected_revision: s.revision }))}>일시 정지</button>}
@@ -162,7 +188,21 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                         <option value="fail">승인 필요 시 실패</option>
                     </select>
                 </div>
-                <p className="muted small">매일 실행은 이 기기의 현재 UTC offset으로 저장됩니다. 서머타임이 바뀌면 다시 저장하세요. 서버가 꺼져 있어 놓친 실행은 나중에 몰아서 실행하지 않습니다.</p>
+                <div className="inline wrap">
+                    {form.kind !== "once" && (
+                        <>
+                            <input aria-label="최대 실행 횟수" type="number" min={1} placeholder="최대 횟수(없음)" value={form.max_runs} onChange={(e) => setForm({ ...form, max_runs: e.target.value })} />
+                            <label className="small">
+                                종료 일시 <input aria-label="종료 일시" type="datetime-local" value={form.end_at} onChange={(e) => setForm({ ...form, end_at: e.target.value })} />
+                            </label>
+                        </>
+                    )}
+                    <label className="small">
+                        연속 실패 시 정지(회){" "}
+                        <input aria-label="연속 실패 시 정지" type="number" min={1} max={100} placeholder="정지 안 함" value={form.pause_after_failures} onChange={(e) => setForm({ ...form, pause_after_failures: e.target.value })} />
+                    </label>
+                </div>
+                <p className="muted small">매일 실행은 이 기기의 현재 UTC offset으로 저장됩니다. 서머타임이 바뀌면 다시 저장하세요. 서버가 꺼져 있어 놓친 실행은 나중에 몰아서 실행하지 않습니다. 실패가 이어지면 자동 실행 간격을 1분부터 두 배씩(최대 하루) 늘리고, 정한 횟수에 이르면 멈춥니다. 사용자 취소·서버 재시작 중단은 실패로 세지 않습니다.</p>
                 <button type="submit" disabled={!form.name.trim() || !form.prompt.trim() || !profileId}>예약 추가</button>
             </form>
         </details>

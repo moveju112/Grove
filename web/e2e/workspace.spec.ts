@@ -543,6 +543,41 @@ test("예약을 만들고 지금 실행하면 실행 기록과 영속 알림이 
     await expect(page.getByTestId("session-view").last()).toContainText("예약 결과 보고");
 });
 
+// AUTO-009: 반복 한도를 화면에서 정하고, 연속 실패로 자동 정지된 예약은 이유와 실패 수를 보여 주며 재개할 수 있다.
+test("예약에 최대 횟수·연속 실패 정지를 정하고, 실패로 자동 정지되면 이유를 보여 주고 재개한다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    const profile = await ensureProfile();
+    const stamp = Date.now();
+    await apiCall("POST", `/projects/${a.id}/schedules`, {
+        name: `실패 예약 ${stamp}`, prompt: "길게 말해", profile_id: profile, kind: "interval", interval_minutes: 600, max_total_tokens: 5, pause_after_failures: 1,
+    });
+    await login(page);
+    await page.getByRole("button", { name: a.name, exact: true }).first().click();
+    const panel = page.getByTestId("schedules-panel");
+    await panel.locator("summary").first().click();
+    await panel.getByLabel("예약 이름").fill(`한도 예약 ${stamp}`);
+    await panel.getByLabel("예약 지시").fill("상태 알려줘");
+    await panel.getByLabel("예약 방식").selectOption("interval");
+    await panel.getByLabel("간격(분)").fill("600");
+    await panel.getByLabel("최대 실행 횟수").fill("3");
+    await panel.getByLabel("연속 실패 시 정지").fill("2");
+    await panel.getByRole("button", { name: "예약 추가" }).click();
+    const limited = panel.getByTestId("schedule").filter({ hasText: `한도 예약 ${stamp}` });
+    await limited.locator("summary").click();
+    await expect(limited.getByTestId("schedule-limits")).toHaveText("자동 실행 0/3회 · 연속 2회 실패 시 자동 정지");
+    const failing = panel.getByTestId("schedule").filter({ hasText: `실패 예약 ${stamp}` });
+    await failing.locator("summary").click();
+    // 사용량을 보고해야 token 한도(5)를 넘은 실패가 된다.
+    await script({ frames: [...frames.text(["예산을 넘는 긴 답"]).slice(0, 2), JSON.stringify({ choices: [], usage: { prompt_tokens: 120, completion_tokens: 30 } }), "[DONE]"] });
+    await failing.getByRole("button", { name: "지금 실행" }).click();
+    await expect(failing.getByTestId("schedule-runs")).toContainText("실패", { timeout: 15_000 });
+    await expect(failing.locator("summary").first()).toContainText("일시 정지(연속 실패)");
+    await expect(failing.getByTestId("schedule-limits")).toContainText("연속 실패 1회");
+    await failing.getByRole("button", { name: "재개" }).click();
+    await expect(failing.locator("summary").first()).toContainText("활성");
+    await expect(failing.getByTestId("schedule-limits")).not.toContainText("연속 실패 1회");
+});
+
 test("사용량 패널은 기간·묶음별 token과 가격 미설정 상태를 보여 주고 대화에는 마지막 요청 시간이 보인다", async ({ page }) => {
     const { a } = await ensureProjects();
     await ensureProfile();

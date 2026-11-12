@@ -172,6 +172,8 @@ config/paths → store(migration) → auth → events → projects → sessions/
 | 승인 | 자동 승인하지 않는다. `on_approval=wait`이면 사람이 승인할 때까지 대기하고, `fail`이면 턴을 `approval_required`로 실패시킨다 | `runner` 확정 단계 |
 | 허용 도구·token 한도 | 예약에 저장하고 턴의 정의 snapshot에 고정한다. 허용 목록 밖 호출은 실행 없이 failed, 누적 token이 한도를 넘으면 남은 도구 호출을 계획하지 않고 `budget_exceeded`로 끝낸다 | `runner` 확정 단계 |
 | 알림 | 실행 종료·놓침·시작 실패는 서버 DB의 영속 알림으로 남긴다. 알림은 모델을 다시 부르지 않는다 | `notifications::push` |
+| 반복 한도(AUTO-009) | 반복 예약에만 `max_runs`(1~100000, 시작한 자동 실행 수, 수동·놓침·건너뜀 제외)와 `end_at`(이 시각 뒤 자동 실행 없음)을 정할 수 있다. 다 쓰거나 다음 시각이 종료 뒤면 `done`. 수정으로 한도를 늘리면 다시 활성화한다 | `schedules::reschedule` |
+| 연속 실패(AUTO-009) | `failed`·`start_failed`만 세고 사용자 취소·재시작 중단은 세지 않으며, 완료하면 0으로 돌린다. n회 연속 실패 뒤 자동 실행은 마지막 실패에서 `60초×2^(n-1)`(최대 24시간) 동안 `missed`(이유 기록, 알림 없음)로 건너뛰고 수동 실행은 막지 않는다. `pause_after_failures`(새 예약 기본 5, null=끔, migration 전 예약은 끔)에 이르면 `paused`·`paused_reason=failures`로 멈추고 알린다. 재개하면 연속 실패를 지우며, 사용자가 멈추면 `paused_reason=user`다. 실행 중 삭제한 예약의 결과는 상태를 바꾸지 않는다 | `schedules::record_outcome`, `process_due` |
 
 ## 13. SQLite 운영 정책 (DB-010)
 
