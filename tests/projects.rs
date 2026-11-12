@@ -80,6 +80,78 @@ async fn project_icon_and_sort_by_recent_activity() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
+/// PROJECT-008: 작업공간 고정과 색상 라벨의 생성·다중 할당·이름/색 수정·충돌 거절·삭제 영향.
+#[tokio::test]
+async fn pin_and_labels_create_assign_edit_and_delete() {
+    let s = TestServer::start().await;
+    let a = s.create_project("aaa").await;
+    let b = s.create_project("bbb").await;
+    let (aid, bid) = (a["id"].as_str().unwrap().to_string(), b["id"].as_str().unwrap().to_string());
+    let order = |v: &serde_json::Value| v.as_array().unwrap().iter().map(|p| p["id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
+    // 고정한 프로젝트가 맨 위, 고정만 바꾸면 활동 시각은 그대로
+    let (st, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{bid}"), json!({ "expected_revision": b["revision"], "pinned": true })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert!(v["pinned_at"].is_string());
+    assert_eq!(v["updated_at"], b["updated_at"]);
+    let (_, list) = s.get("/api/v1/projects?sort=name").await;
+    assert_eq!(order(&list), vec![bid.clone(), aid.clone()]);
+    let pinned_at = v["pinned_at"].clone();
+    let (_, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{bid}"), json!({ "expected_revision": v["revision"], "pinned": true })).await;
+    assert_eq!(v["pinned_at"], pinned_at, "다시 고정해도 순서 유지");
+
+    // 만들고 바로 할당
+    let (st, urgent) = s.post("/api/v1/labels", json!({ "name": "  Urgent  ", "color": "red", "project_id": aid })).await;
+    assert_eq!(st, StatusCode::CREATED, "{urgent}");
+    assert_eq!(urgent["name"], "Urgent");
+    assert_eq!(urgent["project_count"], 1);
+    let uid = urgent["id"].as_str().unwrap().to_string();
+    let (st, e) = s.post("/api/v1/labels", json!({ "name": "urgent", "color": "sky" })).await;
+    assert_eq!((st, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("label_name_taken")));
+    let (st, e) = s.post("/api/v1/labels", json!({ "name": "x", "color": "#fff" })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{e}");
+    let (st, e) = s.post("/api/v1/labels", json!({ "name": "   ", "color": "red" })).await;
+    assert_eq!(e["error"]["code"], "label_name_empty", "{st}");
+    let (_, front) = s.post("/api/v1/labels", json!({ "name": "Frontend", "color": "sky" })).await;
+    let fid = front["id"].as_str().unwrap().to_string();
+    // 다중 할당·재전송은 같은 결과
+    for _ in 0..2 {
+        let (st, p) = s.send(Method::PUT, &format!("/api/v1/projects/{aid}/labels/{fid}"), json!({ "assigned": true })).await;
+        assert_eq!(st, StatusCode::OK, "{p}");
+        let mut got: Vec<_> = p["labels"].as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect();
+        got.sort();
+        let mut want = vec![uid.clone(), fid.clone()];
+        want.sort();
+        assert_eq!(got, want);
+    }
+    s.send(Method::PUT, &format!("/api/v1/projects/{bid}/labels/{uid}"), json!({ "assigned": true })).await;
+    // 이름 바꾸기 충돌은 병합하지 않고 거절, 색도 함께 적용되지 않는다
+    let (st, e) = s.send(Method::PATCH, &format!("/api/v1/labels/{fid}"), json!({ "expected_revision": front["revision"], "name": "URGENT", "color": "amber" })).await;
+    assert_eq!((st, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("label_name_taken")));
+    let (_, labels) = s.get("/api/v1/labels").await;
+    let f = labels.as_array().unwrap().iter().find(|l| l["id"] == fid.as_str()).unwrap();
+    assert_eq!((f["name"].as_str(), f["color"].as_str()), (Some("Frontend"), Some("sky")));
+    // 대소문자만 바꾸는 이름 변경과 색 변경은 할당을 유지한다
+    let (st, v) = s.send(Method::PATCH, &format!("/api/v1/labels/{uid}"), json!({ "expected_revision": urgent["revision"], "name": "Priority", "color": "amber" })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    assert_eq!((v["name"].as_str(), v["color"].as_str(), v["project_count"].as_i64()), (Some("Priority"), Some("amber"), Some(2)));
+    let (st, _) = s.send(Method::PATCH, &format!("/api/v1/labels/{uid}"), json!({ "expected_revision": urgent["revision"], "color": "red" })).await;
+    assert_eq!(st, StatusCode::CONFLICT, "오래된 revision");
+    // 할당 해제
+    let (_, p) = s.send(Method::PUT, &format!("/api/v1/projects/{aid}/labels/{fid}"), json!({ "assigned": false })).await;
+    assert_eq!(p["labels"], json!([uid]));
+    // 삭제: 할당이 모두 사라지고 영향 수를 돌려준다
+    let (st, d) = s.send(Method::DELETE, &format!("/api/v1/labels/{uid}?expected_revision={}", v["revision"]), json!({})).await;
+    assert_eq!(st, StatusCode::OK, "{d}");
+    assert_eq!(d["affected_project_count"], 2);
+    let (_, list) = s.get("/api/v1/projects").await;
+    assert!(list.as_array().unwrap().iter().all(|p| p["labels"] == json!([])), "{list}");
+    // 보관된 프로젝트에는 붙일 수 없다
+    let (_, cur) = s.get(&format!("/api/v1/projects/{aid}")).await;
+    s.send(Method::PATCH, &format!("/api/v1/projects/{aid}"), json!({ "expected_revision": cur["revision"], "archived": true })).await;
+    let (st, e) = s.send(Method::PUT, &format!("/api/v1/projects/{aid}/labels/{fid}"), json!({ "assigned": true })).await;
+    assert_eq!((st, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("archived")));
+}
+
 fn urlencode(s: &str) -> String {
     s.bytes()
         .map(|b| if b.is_ascii_alphanumeric() || b"-_.~/".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })

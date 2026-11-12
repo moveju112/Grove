@@ -614,6 +614,16 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - awaiting_input은 awaiting_approval 턴 안의 질문 도구 호출 상태이고, canceling은 취소 신호를 받은 running(저장 상태 아님)이다. 승인 대기는 서버 재시작에도 유지한다.
 - `runner::TURN_TRANSITIONS`가 이 표이며 모든 종료 전이(`finish_turn`)는 개발·시험 빌드에서 표 밖 전이를 assert로 막는다.
 
+## 37. 작업공간 고정·라벨(PROJECT-008)
+
+원본 작업공간 라벨·고정 범위를 프로젝트(= 단일 작업공간)에 그대로 둔다. migration 48.
+
+- 고정: `PATCH /projects/{id}` `pinned`. 고정한 시각 `pinned_at`을 남기고 다시 고정해도 바꾸지 않는다. 목록은 정렬 방식과 무관하게 고정한 프로젝트를 고정한 순서로 맨 위에 둔다. 고정만 바꾸면 `updated_at`(최근 활동순 기준)을 건드리지 않는다.
+- 라벨: `GET/POST /labels`, `PATCH/DELETE /labels/{id}`(revision 확인), 할당 `PUT /projects/{id}/labels/{label_id}` `{assigned}`(집합 연산이라 재전송해도 같은 결과, 프로젝트 revision은 올리지 않음). 생성 시 `project_id`를 주면 같은 transaction에서 붙인다.
+- 이름은 공백을 하나로 정리하고 대소문자를 무시해 고유하다(40자). 빈 이름 `label_name_empty`, 겹치면 `label_name_taken`. 이름 바꾸기 충돌은 병합하지 않고 이름·색 모두 적용하지 않는다. 색은 10색 팔레트(`labels::COLORS`) 안에서만, 라벨 200개 상한.
+- 할당은 라벨 id로 연결해 이름·색을 바꿔도 유지한다. 삭제는 같은 transaction에서 할당을 지우고 `affected_project_count`를 돌려준다. 목록의 `project_count`로 삭제 전 영향을 보인다. 보관된 프로젝트에는 새로 붙일 수 없다(`archived`).
+- 화면: 사이드바 프로젝트 행 메뉴(고정, 라벨 체크, 새 라벨 만들고 붙이기), 라벨 필터(라벨 여러 개 OR + 라벨 없음, 기기별 저장, 삭제된 라벨 id는 무시)와 라벨 관리(이름·색 수정, 영향 수 확인 뒤 삭제). 실패하면 입력·선택을 보존하고 오류를 보인다. 시험: `tests/projects.rs::pin_and_labels_create_assign_edit_and_delete`, `labels::tests`, `web/app/state/projectLabels.test.ts`, `web/e2e/project-labels.spec.ts`.
+
 ## 11. 결정 기록
 
 | ID | 결정 | 근거 |

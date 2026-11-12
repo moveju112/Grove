@@ -190,6 +190,10 @@ export function applyEvent(e: EventRecord) {
         case "recent.updated":
             invalidate("recent");
             break;
+        case "label.changed":
+        case "label.deleted":
+            invalidate("labels");
+            break;
         case "definition.changed":
         case "definition.deleted":
             invalidate("definitions");

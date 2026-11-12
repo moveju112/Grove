@@ -10,6 +10,8 @@ import { applyEvent, resyncAll, setLive, useLive, useQuery } from "../state/stor
 import { AddProjectDialog } from "./AddProject";
 import { BotsPanel } from "./BotsPanel";
 import { NotificationsPanel } from "./NotificationsPanel";
+import { LabelChips, LabelFilter, ProjectMenu, useLabels } from "./ProjectLabels";
+import { filterProjects } from "../state/projectLabels";
 import { RecentPanel } from "./RecentPanel";
 import { RecoveryPanel } from "./RecoveryPanel";
 import { SearchPanel } from "./SearchPanel";
@@ -20,6 +22,7 @@ export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
 
 const PROJECT_SORT = "grove.projectSort";
+const LABEL_FILTER = "grove.labelFilter";
 const NO_PROJECTS: Project[] = [];
 
 type LayoutActions = {
@@ -64,6 +67,15 @@ export function Workspace() {
     // 프로젝트 목록 정렬은 기기별 선택(PROJECT-002): 이름순 또는 최근 활동순.
     const [projectSort, setProjectSort] = useState<"name" | "recent">(() => (localStorage.getItem(PROJECT_SORT) === "recent" ? "recent" : "name"));
     const projects = useQuery<Project[]>(`projects:${projectSort}`, () => api.get(`/projects?sort=${projectSort}`));
+    // 라벨 필터는 기기별 선택(PROJECT-008). 삭제된 라벨 id는 필터에서 무시한다.
+    const labels = useLabels();
+    const [labelFilter, setLabelFilterState] = useState<string[]>(() => {
+        try { const v = JSON.parse(localStorage.getItem(LABEL_FILTER) ?? "[]"); return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []; } catch { return []; }
+    });
+    const setLabelFilter = (next: string[]) => { localStorage.setItem(LABEL_FILTER, JSON.stringify(next)); setLabelFilterState(next); };
+    const [filtering, setFiltering] = useState(labelFilter.length > 0);
+    const [menuFor, setMenuFor] = useState<string | null>(null);
+    const shown = filterProjects(projects.data ?? NO_PROJECTS, labelFilter, labels);
 
     useEffect(() => applyPrefs(loadPrefs()), []);
 
@@ -197,12 +209,22 @@ export function Workspace() {
                                     <option value="name">이름순</option>
                                     <option value="recent">최근 활동순</option>
                                 </select>
+                                <button type="button" className="ghost small" aria-expanded={filtering} aria-label="라벨 필터"
+                                    onClick={() => setFiltering((f) => !f)}>
+                                    라벨{labelFilter.length > 0 ? ` (${labelFilter.length})` : ""}
+                                </button>
                             </h2>
-                            {(projects.data ?? []).map((p) => (
-                                <div key={p.id} className="row" data-testid="project-row">
+                            {filtering && <LabelFilter labels={labels} selected={labelFilter} onChange={setLabelFilter} />}
+                            {shown.map((p) => (
+                                <div key={p.id} className="row" data-testid="project-row" data-project={p.name}>
                                     <button className="link" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name })} title={p.root_path}>
+                                        {p.pinned_at && <span aria-label="고정됨" title="고정됨">📌</span>}
                                         {p.icon && <span className="project-icon" aria-hidden>{p.icon}</span>} {p.name} {!p.available && <em className="warn">(경로 없음)</em>}
+                                        <LabelChips project={p} labels={labels} />
                                     </button>
+                                    <button type="button" className="ghost small" aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} aria-expanded={menuFor === p.id}
+                                        onClick={() => setMenuFor((m) => (m === p.id ? null : p.id))}>⋯</button>
+                                    {menuFor === p.id && <ProjectMenu project={p} labels={labels} onClose={() => setMenuFor(null)} />}
                                     {!narrow && (
                                         <span className="row-actions">
                                             <button className="ghost small" title="오른쪽에 열기" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name }, "right")}>
@@ -216,6 +238,11 @@ export function Workspace() {
                                 </div>
                             ))}
                             {projects.data?.length === 0 && <p className="muted">프로젝트를 추가하세요.</p>}
+                            {!!projects.data?.length && shown.length === 0 && (
+                                <p className="muted" role="status">
+                                    라벨 조건에 맞는 프로젝트가 없습니다. <button type="button" className="ghost small" onClick={() => setLabelFilter([])}>필터 해제</button>
+                                </p>
+                            )}
                         </section>
                     </aside>
                 )}

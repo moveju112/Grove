@@ -28,11 +28,16 @@ pub struct Project {
     pub icon: Option<String>,
     /// 마지막 활동: 프로젝트 대화 중 가장 늦은 갱신 시각, 대화가 없으면 프로젝트 갱신 시각.
     pub last_activity_at: String,
+    /// 고정한 시각(PROJECT-008). 고정한 프로젝트는 목록 맨 위에 고정한 순서로 보인다.
+    pub pinned_at: Option<String>,
+    /// 붙은 라벨 id(PROJECT-008, `/labels`).
+    pub labels: Vec<String>,
 }
 
 const COLS: &str = "id, name, root_path, created_at, updated_at, revision, archived_at, icon, \
     COALESCE((SELECT s.updated_at FROM sessions s WHERE s.project_id = projects.id AND julianday(s.updated_at) > julianday(projects.updated_at) \
-              ORDER BY julianday(s.updated_at) DESC LIMIT 1), projects.updated_at) AS last_activity_at";
+              ORDER BY julianday(s.updated_at) DESC LIMIT 1), projects.updated_at) AS last_activity_at, pinned_at, \
+    (SELECT group_concat(label_id, ',') FROM (SELECT label_id FROM project_labels WHERE project_id = projects.id ORDER BY label_id))";
 
 /// 아이콘 최대 길이(문자). 이모지 조합(ZWJ·피부색)까지 담을 수 있게 넉넉히 둔다.
 const MAX_ICON_CHARS: usize = 8;
@@ -51,6 +56,8 @@ fn from_row(r: &Row) -> rusqlite::Result<Project> {
         available,
         icon: r.get(7)?,
         last_activity_at: r.get(8)?,
+        pinned_at: r.get(9)?,
+        labels: r.get::<_, Option<String>>(10)?.map(|s| s.split(',').map(String::from).collect()).unwrap_or_default(),
     })
 }
 
@@ -200,8 +207,8 @@ pub struct ListQuery {
 pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<ListQuery>) -> ApiResult<Json<Vec<Project>>> {
     let archived = q.archived.unwrap_or(false);
     let order = match q.sort.as_deref() {
-        None | Some("name") => "name COLLATE NOCASE, id",
-        Some("recent") => "julianday(last_activity_at) DESC, name COLLATE NOCASE, id",
+        None | Some("name") => "pinned_at IS NULL, julianday(pinned_at), name COLLATE NOCASE, id",
+        Some("recent") => "pinned_at IS NULL, julianday(pinned_at), julianday(last_activity_at) DESC, name COLLATE NOCASE, id",
         Some(_) => return Err(ApiError::invalid("sort는 name 또는 recent입니다")),
     };
     let v = app
@@ -230,6 +237,8 @@ pub struct UpdateProject {
     /// 아이콘 설정, null이면 해제(PROJECT-002).
     #[serde(default, deserialize_with = "crate::util::double_option")]
     pub icon: Option<Option<String>>,
+    /// 고정·해제(PROJECT-008). 이미 같은 상태면 고정 시각을 바꾸지 않는다.
+    pub pinned: Option<bool>,
 }
 
 /// 실행 중인 턴·백그라운드 작업·터미널 수(경로를 바꾸면 안 되는 상태).
@@ -279,10 +288,12 @@ pub async fn update(
     };
     let h = idem::body_hash(
         "project.update",
-        &json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon }),
+        &json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon, "pinned": body.pinned }),
     );
     let rev = body.expected_revision;
     let archived = body.archived;
+    let pinned = body.pinned;
+    let pin_only = body.name.is_none() && body.archived.is_none() && body.root_path.is_none() && body.icon.is_none();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let cur = get(tx, &id)?;
         if cur.revision != rev {
@@ -306,9 +317,15 @@ pub async fn update(
             None => cur.archived_at.clone(),
         };
         let new_icon = icon.clone().unwrap_or(cur.icon.clone());
+        let pinned_at = match pinned {
+            Some(true) => cur.pinned_at.clone().or(Some(now.to_string())),
+            Some(false) => None,
+            None => cur.pinned_at.clone(),
+        };
         tx.execute(
-            "UPDATE projects SET name = ?2, archived_at = ?3, updated_at = ?4, icon = ?5, revision = revision + 1 WHERE id = ?1",
-            params![id, new_name, archived_at, now, new_icon],
+            "UPDATE projects SET name = ?2, archived_at = ?3, updated_at = ?4, icon = ?5, pinned_at = ?6, revision = revision + 1 WHERE id = ?1",
+            // 고정만 바꾸면 활동 시각(최근 활동순 정렬)을 건드리지 않는다.
+            params![id, new_name, archived_at, if pin_only { cur.updated_at.as_str() } else { now }, new_icon, pinned_at],
         )?;
         let proj = get(tx, &id)?;
         events::append(tx, now, "project.updated", Some(&id), None, &serde_json::to_value(&proj)?)?;

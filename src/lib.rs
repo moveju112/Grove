@@ -35,6 +35,7 @@ pub mod changes;
 pub mod procs;
 pub mod project_resources;
 pub mod storage;
+pub mod labels;
 pub mod projects;
 pub mod provider;
 pub mod tools;
@@ -186,6 +187,9 @@ pub fn router(app: App) -> Router {
         .route("/projects", get(projects::list).post(projects::create))
         .route("/fs/dirs", get(projects::browse_dirs))
         .route("/projects/{id}", get(projects::show).patch(projects::update))
+        .route("/labels", get(labels::list).post(labels::create))
+        .route("/labels/{id}", axum::routing::patch(labels::update).delete(labels::remove))
+        .route("/projects/{id}/labels/{label_id}", axum::routing::put(labels::assign))
         .route("/projects/{id}/sessions", get(sessions::list).post(sessions::create))
         .route("/projects/{id}/attachments", post(attachments::upload).layer(axum::extract::DefaultBodyLimit::max(6 * 1024 * 1024)))
         .route("/attachments/{id}", get(attachments::show).delete(attachments::remove))

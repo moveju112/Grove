@@ -782,6 +782,26 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX remote_watches_session ON remote_watches(session_id, created_at);
     CREATE INDEX remote_watches_due ON remote_watches(status, next_check_at);
     "#,
+    // 48: 작업공간(프로젝트) 고정과 색상 라벨(PROJECT-008). 라벨 이름은 공백 정리 뒤 대소문자 무시 고유, 할당은 프로젝트별 여러 개.
+    r#"
+    ALTER TABLE projects ADD COLUMN pinned_at TEXT;
+    CREATE TABLE labels (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL UNIQUE,
+        color TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1
+    );
+    CREATE TABLE project_labels (
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        label_id TEXT NOT NULL REFERENCES labels(id),
+        created_at TEXT NOT NULL,
+        PRIMARY KEY (project_id, label_id)
+    );
+    CREATE INDEX project_labels_label ON project_labels(label_id);
+    "#,
 ];
 
 #[cfg(test)]

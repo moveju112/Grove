@@ -149,6 +149,15 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .recent-list li.recent-split > ul { list-style: none; margin: 0; padding: 0 0 0 0.2em; }
 .recent-list li.recent-split li + li { border-top: 1px dashed var(--line); }
 .row-actions { display: flex; gap: 0.15em; }
+.label-chips { display: inline-flex; gap: 0.2em; margin-left: 0.3em; flex-wrap: wrap; vertical-align: middle; }
+.label-chip { display: inline-block; font-size: 0.72em; padding: 0 0.4em; border: 1px solid; border-radius: 999px; max-width: 8em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.label-filter, .project-menu { display: flex; flex-wrap: wrap; gap: 0.25em; align-items: center; padding: 0.3em; border: 1px solid var(--line); border-radius: 6px; margin: 0.2em 0; }
+.projects .row { flex-wrap: wrap; }
+.project-menu { flex-direction: column; align-items: stretch; flex-basis: 100%; }
+.label-swatches { display: inline-flex; gap: 0.2em; flex-wrap: wrap; }
+.label-swatch { width: 1.3em; height: 1.3em; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
+.label-swatch input { margin: 0; width: 0.8em; height: 0.8em; accent-color: #fff; }
+.label-editor { display: flex; flex-wrap: wrap; gap: 0.25em; align-items: center; }
 .badge { display: inline-block; font-size: 0.72em; padding: 0 0.45em; border-radius: 4px; background: var(--accent-weak); color: var(--accent); margin-right: 0.25em; max-width: 9em; overflow: hidden; text-overflow: ellipsis; vertical-align: middle; }
 .status { font-size: 0.72em; margin-left: 0.35em; padding: 0 0.4em; border-radius: 4px; background: var(--accent-weak); }
 .status.awaiting_approval, .status.awaiting_input, .status.unknown_result, .status.unknown { background: var(--warn-weak); color: var(--warn); }

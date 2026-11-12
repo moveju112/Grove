@@ -20,7 +20,21 @@ icon: string | null,
 /**
  * 마지막 활동: 프로젝트 대화 중 가장 늦은 갱신 시각, 대화가 없으면 프로젝트 갱신 시각.
  */
-last_activity_at: string, };
+last_activity_at: string, 
+/**
+ * 고정한 시각(PROJECT-008). 고정한 프로젝트는 목록 맨 위에 고정한 순서로 보인다.
+ */
+pinned_at: string | null, 
+/**
+ * 붙은 라벨 id(PROJECT-008, `/labels`).
+ */
+labels: Array<string>, };
+
+export type Label = { id: string, name: string, color: string, revision: number, created_at: string, updated_at: string, 
+/**
+ * 이 라벨이 붙은(보관 포함) 프로젝트 수. 삭제 전 영향 확인에 쓴다.
+ */
+project_count: number, };
 
 export type Session = { id: string, project_id: string, title: string, created_at: string, updated_at: string, revision: number, archived_at: string | null, parent_session_id: string | null, fork_message_seq: number | null, fork_inherits_context: boolean, workflow_id: string | null, last_message_seq: number, 
 /**
