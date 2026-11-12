@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { When } from "./When";
 import { ApiError, api } from "../api/client";
 import type { ModelProfile } from "../api/generated";
 import { useQuery } from "../state/store";
@@ -35,7 +36,7 @@ const RUN_LABEL: Record<string, string> = {
 };
 
 function when(s: Schedule) {
-    if (s.kind === "once") return `한 번 · ${new Date(s.at ?? "").toLocaleString()}`;
+    if (s.kind === "once") return <>한 번 · <When at={s.at ?? ""} absolute /></>;
     if (s.kind === "interval") return `${s.interval_minutes}분마다`;
     const h = s.tz_offset_minutes / 60;
     return `매일 ${s.daily_time} (UTC${h >= 0 ? "+" : ""}${h})`;
@@ -49,7 +50,7 @@ function Runs({ id, projectId, open }: { id: string; projectId: string; open: Op
         <ul className="session-list" data-testid="schedule-runs">
             {runs.slice(0, 10).map((r) => (
                 <li key={r.id} data-status={r.status}>
-                    <span className="muted small">{new Date(r.planned_at).toLocaleString()}{r.manual ? " · 수동" : ""}</span> <span className={`status ${r.status}`}>{RUN_LABEL[r.status] ?? r.status}</span>
+                    <span className="muted small"><When at={r.planned_at} />{r.manual ? " · 수동" : ""}</span> <span className={`status ${r.status}`}>{RUN_LABEL[r.status] ?? r.status}</span>
                     {r.detail && <span className="muted small"> {r.detail}</span>}
                     {r.session_id && (
                         <button className="ghost small" onClick={() => open({ kind: "session", project_id: projectId, resource_id: r.session_id!, title: "예약 실행" })}>
@@ -108,7 +109,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                             <summary>
                                 <strong>{s.name}</strong> <span className="muted small">{when(s)}</span>{" "}
                                 <span className={`status ${s.status}`}>{s.status === "active" ? "활성" : s.status === "paused" ? "일시 정지" : "끝남"}</span>
-                                {s.next_run_at && s.status === "active" && <span className="muted small"> · 다음 {new Date(s.next_run_at).toLocaleString()}</span>}
+                                {s.next_run_at && s.status === "active" && <span className="muted small"> · 다음 <When at={s.next_run_at} absolute /></span>}
                             </summary>
                             <p className="small">{s.prompt}</p>
                             <p className="muted small">승인 필요 시: {s.on_approval === "wait" ? "승인을 기다림" : "실패로 끝냄"} · 도구 {s.tools_enabled ? "사용" : "끔"}</p>

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { When } from "./When";
 import { ApiError, api, isLoggedIn, redeemPairing } from "../api/client";
 import type { PairingInfo } from "../api/generated";
 import { insecureRemote } from "../state/hosts";
@@ -79,7 +80,7 @@ export function Pairings() {
             {link && issued && <div className="draft-note">
                 <PairingQr link={link} />
                 <label>일회용 페어링 링크<input readOnly value={link} className="selectable" /></label>
-                <p className="small">만료: {new Date(issued.expires_at).toLocaleString()}. 원문은 이 화면에서만 표시됩니다.</p>
+                <p className="small">만료: <When at={issued.expires_at} absolute />. 원문은 이 화면에서만 표시됩니다.</p>
                 <button type="button" className="ghost small" onClick={() => setIssued(null)}>링크 숨기기</button>
             </div>}
             {error && <p className="err" role="alert">{error}</p>}
@@ -87,7 +88,7 @@ export function Pairings() {
             <ul className="host-list">
                 {(list.data ?? []).map((info) => <li key={info.id} data-testid="pairing-row">
                     <strong>{info.name}</strong>
-                    <span>{pairingStatus(info, now)} · 만료 {new Date(info.expires_at).toLocaleString()}</span>
+                    <span>{pairingStatus(info, now)} · 만료 <When at={info.expires_at} absolute /></span>
                     <div className="row">
                         {!info.consumed_at && !info.revoked_at && <button type="button" className="ghost small" disabled={busy} onClick={() => void run(async () => {
                             await api.del(`/pairings/${info.id}`, { requires: ["pairing_v1"] });

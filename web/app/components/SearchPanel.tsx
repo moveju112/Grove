@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { When } from "./When";
 import { api } from "../api/client";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
@@ -100,7 +101,7 @@ export function SearchPanel({ open }: { open: Opener }) {
                                         open({ kind: "session", project_id: h.project_id, resource_id: h.id, title: h.title });
                                     }}
                                 >
-                                    <strong>{h.title}</strong> <span className="muted small">{h.project_name} · {new Date(h.updated_at).toLocaleString()}{h.archived_at ? " · 보관" : ""}</span>
+                                    <strong>{h.title}</strong> <span className="muted small">{h.project_name} · <When at={h.updated_at} />{h.archived_at ? " · 보관" : ""}</span>
                                     {h.source && <span className="muted small"> · {h.source.role} · 원문 #{h.source.seq}</span>}
                                     {h.snippet && <span className="small snippet"> {h.snippet}</span>}
                                 </button>

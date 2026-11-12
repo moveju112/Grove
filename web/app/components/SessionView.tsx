@@ -2,6 +2,7 @@ import { AttachmentList, type Attachment } from "./Attachments";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileRefContext, Markdown } from "./Markdown";
 import { type Prefs, usePrefs } from "../state/device";
+import { When } from "./When";
 import { useFocusRequest } from "../state/focus";
 import { ApiError, api, isLoggedIn } from "../api/client";
 import type { Definition, Message, MessagePage, ModelProfile, RecentItem, Session, ToolCallRow, Turn } from "../api/generated";
@@ -681,7 +682,7 @@ function ApprovalCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unkno
     return (
         <div className="approval" role="group" aria-label="승인 요청" data-testid="approval">
             <div>
-                <strong>{c.name}</strong> 승인 요청 {c.expires_at && <span className="muted small">· {new Date(c.expires_at).toLocaleTimeString()}까지</span>}
+                <strong>{c.name}</strong> 승인 요청 {c.expires_at && <span className="muted small">· <When at={c.expires_at} absolute part="time" />까지</span>}
             </div>
             {t.path && <div>대상: <code>{t.path}</code>{t.bytes !== undefined && ` (${t.bytes}바이트)`}</div>}
             {t.command && (
@@ -949,7 +950,7 @@ function BudgetNote({ sessionId, active }: { sessionId: string; active?: Turn })
                 예산(접수 시 고정):
                 {fixed.max_minutes && (
                     <>
-                        {" "}시간 {fixed.max_minutes}분 · {new Date(base).toLocaleTimeString()} 시작 기준 · 남은 {Math.floor(left! / 60)}분 {left! % 60}초
+                        {" "}시간 {fixed.max_minutes}분 · <When at={active.created_at} absolute part="time" /> 시작 기준 · 남은 {Math.floor(left! / 60)}분 {left! % 60}초
                     </>
                 )}
                 {fixed.max_tokens && <> · token {fixed.max_tokens} 중 {used} 사용</>}

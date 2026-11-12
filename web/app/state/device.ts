@@ -37,8 +37,14 @@ export type Prefs = {
     reasoning: "collapsed" | "hidden" | "expanded";
     answerOnly: boolean;
     expandTools: boolean;
+    clock: "system" | "24h" | "12h";
+    timeStyle: "absolute" | "relative";
 };
-export const defaultPrefs: Prefs = { theme: "system", fontSize: 15, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false };
+export const defaultPrefs: Prefs = {
+    theme: "system", fontSize: 15, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
+};
+const CLOCKS: readonly Prefs["clock"][] = ["system", "24h", "12h"];
+const TIME_STYLES: readonly Prefs["timeStyle"][] = ["absolute", "relative"];
 export function restoredPrefs(current: Prefs, expected: Prefs, fields: (keyof Prefs)[]): Prefs {
     if (fields.some((key) => current[key] !== expected[key])) throw new Error("확인 후 기기 설정이 바뀌었습니다. 다시 비교하세요.");
     return { ...current, ...Object.fromEntries(fields.map((key) => [key, defaultPrefs[key]])) };
@@ -47,7 +53,11 @@ const PREFS_EVENT = "grove-prefs";
 
 export function loadPrefs(): Prefs {
     try {
-        return { ...defaultPrefs, ...(JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as Partial<Prefs>) };
+        const prefs = { ...defaultPrefs, ...(JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as Partial<Prefs>) };
+        // 다른 버전이 남긴 알 수 없는 시간 형식은 기본값으로 읽는다(저장값은 사용자가 바꿀 때까지 그대로 둔다).
+        if (!CLOCKS.includes(prefs.clock)) prefs.clock = defaultPrefs.clock;
+        if (!TIME_STYLES.includes(prefs.timeStyle)) prefs.timeStyle = defaultPrefs.timeStyle;
+        return prefs;
     } catch {
         return defaultPrefs;
     }

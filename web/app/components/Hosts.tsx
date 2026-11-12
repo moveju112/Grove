@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { When } from "./When";
 import { createPortal } from "react-dom";
 import { HOSTS_KEY, insecureRemote, loadHosts, markHostOpened, recentHosts, removeHost, saveHost, type Host } from "../state/hosts";
 
@@ -70,7 +71,7 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
                         <code className="host-address">{host.origin}</code>
                         {host.origin === location.origin && <span className="small">현재 호스트</span>}
                         <span className="muted small">
-                            {host.lastOpenedAt === null ? "아직 열지 않음" : `최근 열기: ${new Date(host.lastOpenedAt).toLocaleString()}`}
+                            {host.lastOpenedAt === null ? "아직 열지 않음" : <>최근 열기: <When at={new Date(host.lastOpenedAt).toISOString()} /></>}
                             {" · 연결 성공 여부가 아닌 열기 기록"}
                         </span>
                         {insecureRemote(host.origin) && <p className="warn small">암호화되지 않은 HTTP입니다. 토큰과 대화가 노출될 수 있으니 HTTPS 또는 신뢰하는 VPN을 사용하세요.</p>}

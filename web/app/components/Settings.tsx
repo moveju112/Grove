@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
 import { type Prefs, defaultPrefs, savePrefs, usePrefs } from "../state/device";
+import { When } from "./When";
 import { useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
 import { UsagePanel } from "./UsagePanel";
@@ -31,6 +32,7 @@ export const ITEMS: Item[] = [
     { id: "theme", menu: "display", label: "테마", keywords: "dark light 다크 라이트 색", scope: "이 기기" },
     { id: "font", menu: "display", label: "글자 크기", keywords: "font size 글꼴", scope: "이 기기" },
     { id: "enter", menu: "display", label: "Enter로 보내기", keywords: "enter send 입력 단축키", scope: "이 기기" },
+    { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
     { id: "devices", menu: "devices", label: "기기 토큰", keywords: "device token pair 페어링 폐기 분실", scope: "서버 전체" },
     { id: "logout", menu: "devices", label: "로그아웃", keywords: "logout sign out", scope: "이 기기" },
@@ -101,7 +103,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
                 {visible("definitions") && <Section item="definitions"><Definitions /></Section>}
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
-                {(visible("theme") || visible("font") || visible("enter") || visible("transcript")) && <DisplayPrefs show={visible} />}
+                {(["theme", "font", "enter", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
                 {visible("devices") && <Section item="devices"><Devices /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
                 {visible("logout") && <Section item="logout"><button onClick={() => void logout()}>이 브라우저에서 로그아웃</button></Section>}
@@ -180,6 +182,27 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                         <input type="checkbox" checked={p.enterToSend} onChange={(e) => set({ ...p, enterToSend: e.target.checked })} /> Enter로 보내기(Shift+Enter 줄바꿈)
                     </label>
                     <DeviceSettingsReset fields={["enterToSend"]} label="입력 기본값 복원" />
+                </Section>
+            )}
+            {show("time") && (
+                <Section item="time">
+                    <label>
+                        시계 형식{" "}
+                        <select aria-label="시계 형식" value={p.clock} onChange={(e) => set({ ...p, clock: e.target.value as Prefs["clock"] })}>
+                            <option value="system">시스템</option>
+                            <option value="24h">24시간</option>
+                            <option value="12h">12시간(오전/오후)</option>
+                        </select>
+                    </label>
+                    <label>
+                        지난 시각{" "}
+                        <select aria-label="지난 시각 표시" value={p.timeStyle} onChange={(e) => set({ ...p, timeStyle: e.target.value as Prefs["timeStyle"] })}>
+                            <option value="absolute">날짜·시각</option>
+                            <option value="relative">상대 시간(7일 이내)</option>
+                        </select>
+                    </label>
+                    <p className="muted small">만료·예정·시작 기준 시각은 항상 날짜·시각으로 표시합니다. 정확한 시각은 표시 위에 포인터를 올리면 볼 수 있습니다.</p>
+                    <DeviceSettingsReset fields={["clock", "timeStyle"]} label="시간 표시 기본값 복원" />
                 </Section>
             )}
             {show("transcript") && (
@@ -423,7 +446,7 @@ function Devices() {
                         {d.revoked_at ? <span className="muted small"> · 폐기됨</span> : d.kind !== "owner" && (
                             <button className="ghost small" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</button>
                         )}
-                        {d.last_used_at && <span className="muted small"> · 최근 {new Date(d.last_used_at).toLocaleString()}</span>}
+                        {d.last_used_at && <span className="muted small"> · 최근 <When at={d.last_used_at} /></span>}
                     </li>
                 ))}
             </ul>
@@ -521,7 +544,7 @@ function Help() {
 function CheckStatus({ c }: { c: ModelProfile["last_check"] }) {
     if (!c) return <span className="muted small" data-testid="profile-check"> · 연결 확인 안 함</span>;
     const d = (c.detail ?? {}) as { models?: number; model_listed?: boolean; cli_version?: string };
-    const when = new Date(c.checked_at).toLocaleString();
+    const when = <When at={c.checked_at} />;
     return c.ok ? (
         <span className="small" data-testid="profile-check">
             {" "}· <span className="status succeeded">연결됨</span> {c.latency_ms}ms · {when}

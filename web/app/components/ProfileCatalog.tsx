@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { When } from "./When";
 import { api } from "../api/client";
 import type { ModelCatalog, ModelProfile } from "../api/generated";
 import { useCapability } from "../state/capabilities";
@@ -44,7 +45,7 @@ export function ProfileCatalog({ profile, onChoose }: { profile: ModelProfile; o
                         {catalog.models.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.id}</option>)}
                     </select>
                 </label>
-                <span className="muted"> {catalog.models.length}개 · {new Date(catalog.fetched_at).toLocaleString()} 조회</span>
+                <span className="muted"> {catalog.models.length}개 · <When at={catalog.fetched_at} /> 조회</span>
                 {catalog.models.length === 0 && <span className="muted"> 조회된 모델이 없습니다. 수동 모델 입력은 유지됩니다.</span>}
                 {stale && <p className="warn" role="status">프로필이 바뀌었습니다. 목록을 다시 조회한 뒤 선택하세요.</p>}
             </>}

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { When } from "./When";
 import { ApiError, api } from "../api/client";
 import type { Notification } from "../api/generated";
 import { useCapability } from "../state/capabilities";
@@ -68,7 +69,7 @@ export function NotificationsPanel({ open }: { open: Opener }) {
                                 >
                                     <strong>{n.title}</strong>
                                     {n.body && <span className="small"> {n.body.slice(0, 120)}</span>}
-                                    <span className="muted small"> · {new Date(n.created_at).toLocaleString()}</span>
+                                    <span className="muted small"> · <When at={n.created_at} /></span>
                                     <span className="muted small notification-phase" data-testid="notification-delivery">
                                         서버 저장됨 · {delivery === false ? "전달 확인 미지원" : n.delivered_at ? "앱 전달 확인" : "앱 전달 미확인"} · {n.read_at ? "읽음" : "미열람"}
                                     </span>

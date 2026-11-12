@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { When } from "./When";
 import { ApiError, api } from "../api/client";
 import type { Project, Session, SessionPage } from "../api/generated";
 import { useAutoOpen } from "../state/autoOpen";
@@ -209,7 +210,7 @@ function SessionPageList(p: { projectId: string; cursor: string; q: string; arch
                     )}
                     {s.pending_approvals > 0 && <span className="status awaiting_approval">승인 {s.pending_approvals}</span>}
                     {s.unreviewed_unknown > 0 && <span className="status unknown_result">결과 확인 필요</span>}
-                    <span className="muted small">{new Date(s.updated_at).toLocaleString()}</span>
+                    <span className="muted small" data-testid="session-updated"><When at={s.updated_at} /></span>
                 </li>
             ))}
             {p.last && page.data?.next_cursor && (
