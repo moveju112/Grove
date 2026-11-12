@@ -106,6 +106,41 @@ async fn persona_and_model_changes_apply_from_next_turn() {
     assert_eq!(bv["unread"], false);
 }
 
+/// BOT-005: 봇 대화는 봇의 프로젝트 첨부만 쓰고, 대화가 생긴 뒤에는 프로젝트를 바꿀 수 없다.
+#[tokio::test]
+async fn bot_home_uses_only_its_project_attachments_and_project_is_locked() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = s.fixture_profile(&f.base).await;
+    let a = s.create_project("bot-a").await;
+    let other = s.create_project("bot-b").await;
+    let (pa, pb) = (a["id"].as_str().unwrap(), other["id"].as_str().unwrap());
+    let b = bot(&s, pa, "범위", Some(&prof), "").await;
+    let id = b["id"].as_str().unwrap().to_string();
+    let sid = home(&s, &id).await;
+    use base64::Engine;
+    let sr = &s;
+    let upload = |pid: &str, name: &str| {
+        let body = json!({ "name": name, "data_base64": base64::engine::general_purpose::STANDARD.encode(format!("{name} 내용")) });
+        let path = format!("/api/v1/projects/{pid}/attachments");
+        async move { sr.post(&path, body).await }
+    };
+    let (st, foreign) = upload(pb, "b.txt").await;
+    assert_eq!(st, StatusCode::CREATED, "{foreign}");
+    let (st, e) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "읽어", "profile_id": "ignored", "attachments": [foreign["id"]] })).await;
+    assert_eq!(st, StatusCode::FORBIDDEN, "다른 프로젝트 첨부는 거절: {e}");
+    assert!(f.requests().is_empty(), "거절한 요청은 모델을 부르지 않는다");
+    let (_, own) = upload(pa, "a.txt").await;
+    f.push(fixture::text("읽었어"));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "읽어", "profile_id": "ignored", "attachments": [own["id"]] })).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert!(f.requests()[0].to_string().contains("a.txt 내용"));
+    let (_, cur) = s.get(&format!("/api/v1/bots/{id}")).await;
+    let (st, e) = s.send(reqwest::Method::PATCH, &format!("/api/v1/bots/{id}"), json!({ "expected_revision": cur["revision"], "name": "범위", "project_id": pb, "profile_id": prof })).await;
+    assert_eq!((st, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("project_locked")));
+}
+
 #[tokio::test]
 async fn lifecycle_disable_reset_delete_restore_and_name_reuse() {
     let s = TestServer::start().await;
