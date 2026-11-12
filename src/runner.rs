@@ -616,8 +616,11 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
 
 /// 턴을 진행한다. 같은 턴의 중복 실행은 cancel registry로 막는다.
 pub fn spawn_drive(app: &App, turn_id: String) {
+    use tracing::Instrument;
     let app = app.clone();
-    tokio::spawn(async move { drive(app, turn_id).await });
+    // 턴 실행 중 로그에 turn·session ID를 붙인다(OBS-001). 본문·prompt는 span에 넣지 않는다.
+    let span = tracing::info_span!(parent: None, "turn", turn_id = %turn_id, session_id = tracing::field::Empty);
+    tokio::spawn(async move { drive(app, turn_id).await }.instrument(span));
 }
 
 async fn drive(app: App, turn_id: String) {
@@ -676,6 +679,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             }
         };
         session_for_partial = Some(input.session_id.clone());
+        tracing::Span::current().record("session_id", tracing::field::display(&input.session_id));
         if *cancel_rx.borrow() {
             end_cancelled(app, turn_id, None).await;
             return session_for_partial;

@@ -430,7 +430,10 @@ fn claim_execution(c: &mut Connection, id: &str) -> ApiResult<ExecutionClaim> {
 }
 
 pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
+    use tracing::Instrument;
     let app = app.clone();
+    // 도구 실행 로그에 tool call ID를 붙이고, 시작한 턴·요청의 span을 부모로 이어 turn/request ID를 함께 남긴다(OBS-001).
+    let span = tracing::info_span!("tool_call", tool_call_id = %call_id);
     tokio::spawn(async move {
         // 조회 전에 구독해 앞 호출의 종료·승인/거절 이벤트를 놓치지 않는다.
         let mut events = app.seq_tx.subscribe();
@@ -532,6 +535,11 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 r
             }
         };
+        // 도구 이름·결과 코드만 남긴다. 인자·출력 본문은 로그에 넣지 않는다(OBS-002).
+        match &outcome {
+            Ok(_) => tracing::info!(tool = %call.name, "도구 실행 종료"),
+            Err(e) => tracing::info!(tool = %call.name, code = %e.code, "도구 실행 실패"),
+        }
         app.cancels.remove(&call.id);
         let id = call.id.clone();
         let turn = call.turn_id.clone();
@@ -557,7 +565,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
         if let Some(t) = turn {
             crate::runner::maybe_resume(&app, &t).await;
         }
-    })
+    }.instrument(span))
 }
 
 // ---------------- API ----------------
