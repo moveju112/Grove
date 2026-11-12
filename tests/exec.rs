@@ -142,6 +142,30 @@ async fn sigterm_cancels_and_closed_stdout_keeps_receipt() {
     assert_eq!(saved["text"], "닫힌 출력");
 }
 
+// ONCE-007·008: 실행 프로세스가 강제 종료되면 receipt가 없으므로 show는 다시 실행하지 않고 결과 불명(7)을 알리며 작업 데이터는 남는다.
+#[cfg(unix)]
+#[tokio::test]
+async fn killed_run_is_reported_unknown_without_rerun() {
+    let (d, p) = setup();
+    let f = Fixture::start().await;
+    f.push(fixture::hang_after("..."));
+    let rd = d.path().join("kill");
+    let child = cmd(&p, &rd, &f, &["--prompt", "오래"]).spawn().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while f.requests().is_empty() {
+        assert!(std::time::Instant::now() < deadline, "모델 요청 없음");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    unsafe { libc_kill(child.id().unwrap() as i32, 9) };
+    let _ = child.wait_with_output().await.unwrap();
+    assert!(!rd.join("result.json").exists());
+    assert!(rd.join("data/grove.db").exists(), "중단 증거(작업 DB)를 지우지 않는다");
+    let o = tokio::process::Command::new(env!("CARGO_BIN_EXE_grove")).args(["exec", "show"]).arg(&rd).output().await.unwrap();
+    assert_eq!(o.status.code(), Some(7));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("결과는 불명"));
+    assert_eq!(f.requests().len(), 1, "다시 실행하지 않는다");
+}
+
 // ONCE-008: 시간 예산을 넘으면 timeout(5). 최소 예산이 1분이라 느린 시험으로 따로 실행한다(`--ignored`).
 #[tokio::test]
 #[ignore = "1분 시간 예산을 실제로 기다림"]

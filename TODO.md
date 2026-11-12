@@ -528,11 +528,11 @@ routine 등록은 미래 실행의 구체적 범위·프로젝트·도구·예�
 - [ ] ONCE-005 프로젝트 capability·허용 도구·시간/토큰/비용 상한을 적용한다. web search 비활성화가 shell networking 차단을 의미하지 않음을 도움말에 명시한다. 진행: 허용 도구·읽기 전용·token/시간 예산을 적용하고 도움말에 셸 네트워크가 막히지 않는다고 밝혔다. 비용 상한(가격표)은 아직 없다.
 - [x] ONCE-006 사전 허용 범위를 벗어난 도구·사람 인증 필요 상황은 needs_approval/needs_input 등의 확정된 비성공 결과로 종료한다. 자동 허용이나 무한 대기는 하지 않는다. 검증: 허용 밖 변경 도구는 턴을 취소하고 `needs_approval`(4)로 끝나며 파일을 쓰지 않는다. 질문 도구는 `needs_input`(4). 무한 대기·자동 허용 없음(`unapproved_tool_needs_approval_and_allowed_tool_runs`).
 - [x] ONCE-007 고유 작업 디렉터리·데이터 보존·명시적 run ID의 재조회 계약을 정한다. interrupted/unknown 증거는 기본 임시파일 청소로 지우지 않는다. 검증: 비어 있지 않은 run 디렉터리 재사용 거부, run 데이터·receipt를 지우지 않고 보존, `grove exec show`로 재조회(`success_excludes_project_instructions_and_show_does_not_rerun`).
-- [ ] ONCE-008 출력 schema와 exit code를 성공·입력 오류·인증/설정 오류·승인/입력 필요·timeout·취소·실행 실패·결과 불명으로 구분한다. 숫자 매핑은 호환 계약으로 고정한다. 진행: `grove.exec.v1`과 종료 코드 0~7을 고정하고 성공·입력·설정·승인 필요·시간 초과(느린 시험)·취소·실패를 시험했다. 결과 불명(7)은 시험하지 않았다.
+- [ ] ONCE-008 출력 schema와 exit code를 성공·입력 오류·인증/설정 오류·승인/입력 필요·timeout·취소·실행 실패·결과 불명으로 구분한다. 숫자 매핑은 호환 계약으로 고정한다. 진행: `grove.exec.v1`과 종료 코드 0~7을 고정하고 성공·입력·설정·승인 필요·시간 초과(느린 시험)·취소·실패를 시험했다. 강제 종료된 실행의 `exec show`가 다시 실행하지 않고 결과 불명(7)을 알리는 것도 시험했다(`killed_run_is_reported_unknown_without_rerun`). 실행 중 unknown 도구 상태로 끝나는 경로는 시험하지 않았다.
 - [x] ONCE-009 stdout JSON에 progress 로그가 섞이지 않게 하고 stderr/파일에도 secret을 제거한다. 출력 pipe 종료 시 실행 취소와 receipt 저장 정책을 정의한다. 검증: stdout에는 JSON 하나만, 키 원문은 출력·진단에 없음, receipt를 출력 전에 저장해 stdout pipe가 닫혀도 결과·종료 코드 유지(`sigterm_cancels_and_closed_stdout_keeps_receipt`).
 - [ ] ONCE-010 SIGINT/TERM 및 Windows 종료를 공용 취소 경로에 연결한다. 자식 프로세스 정리와 외부 부작용 결과 불명을 구분한다. 진행: Unix SIGTERM·Ctrl+C를 턴 취소로 연결하고 SIGTERM을 시험했다. Windows 종료는 미검증이다.
 - [x] ONCE-011 동일 run 재조회는 실행을 반복하지 않게 한다. 새 CLI 호출은 새 요청임을 명시하고 실패한 CI job의 자동 재시도가 mutation을 중복 실행할 위험을 안내한다. 검증: `exec show`는 receipt만 출력하고 모델을 다시 부르지 않는다. 도움말에 새 호출은 새 요청이며 CI 재시도가 변경 도구를 중복 실행할 수 있다고 적었다.
-- [ ] ONCE-012 격리 HTTP fixture와 임시 프로젝트로 정상/실패/승인 필요/취소/timeout/unknown/출력 pipe 종료를 시험한다. Linux x86_64·ARM64·Windows 결과를 각각 기록하고 cross build만으로 실행 검증을 대체하지 않는다. 진행: Linux x86_64에서 격리 fixture로 정상·실패·승인 필요·취소·시간 초과·출력 pipe 종료를 확인했다. unknown과 ARM64·Windows 실행은 남았다.
+- [ ] ONCE-012 격리 HTTP fixture와 임시 프로젝트로 정상/실패/승인 필요/취소/timeout/unknown/출력 pipe 종료를 시험한다. Linux x86_64·ARM64·Windows 결과를 각각 기록하고 cross build만으로 실행 검증을 대체하지 않는다. 진행: Linux x86_64에서 격리 fixture로 정상·실패·승인 필요·취소·시간 초과·출력 pipe 종료·강제 종료 뒤 결과 불명 조회를 확인했다. ARM64·Windows 실행은 남았다.
 
 완료 조건: 개인 대화/설정을 섞지 않고 명시적 한 작업을 수행하며, 비대화 환경에서도 권한·취소·불명 결과·기계 판독 출력의 계약을 지킨다.
 
