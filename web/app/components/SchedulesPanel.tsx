@@ -30,6 +30,7 @@ type Schedule = {
     backoff_until: string | null;
     bot_id: string | null;
     webhook_enabled: boolean;
+    quiet_policy: "off" | "unchanged_result";
 };
 type BotRef = { id: string; name: string; project_id: string; profile_id: string | null; status: string; runnable: boolean };
 
@@ -45,7 +46,25 @@ function limits(s: Schedule) {
     }
     return parts.map((p, i) => <span key={i}>{i > 0 && " · "}{p}</span>);
 }
-type Run = { id: string; planned_at: string; manual: boolean; status: string; session_id: string | null; detail: string | null };
+type Run = {
+    id: string;
+    planned_at: string;
+    manual: boolean;
+    status: string;
+    session_id: string | null;
+    detail: string | null;
+    result_class: string | null;
+    notified: boolean | null;
+    usage: { input_tokens?: number; output_tokens?: number } | null;
+};
+
+// 결과 분류(QUIET-001): 실행 상태와 별개다.
+const CLASS_LABEL: Record<string, string> = {
+    changed: "변화 있음",
+    no_change: "변화 없음",
+    needs_approval: "승인 필요",
+    unknown: "결과 불명 작업",
+};
 
 const RUN_LABEL: Record<string, string> = {
     running: "실행 중",
@@ -74,6 +93,9 @@ function Runs({ id, projectId, open }: { id: string; projectId: string; open: Op
             {runs.slice(0, 10).map((r) => (
                 <li key={r.id} data-status={r.status}>
                     <span className="muted small"><When at={r.planned_at} />{r.manual ? " · 수동" : ""}</span> <span className={`status ${r.status}`}>{RUN_LABEL[r.status] ?? r.status}</span>
+                    {r.result_class && CLASS_LABEL[r.result_class] && <span className="badge small" data-testid="run-class"> {CLASS_LABEL[r.result_class]}</span>}
+                    {r.notified === false && <span className="muted small"> · 알림 생략(실행·비용은 발생)</span>}
+                    {r.usage && (r.usage.input_tokens || r.usage.output_tokens) ? <span className="muted small"> · {(r.usage.input_tokens ?? 0) + (r.usage.output_tokens ?? 0)} token</span> : null}
                     {r.detail && <span className="muted small"> {r.detail}</span>}
                     {r.session_id && (
                         <button className="ghost small" onClick={() => open({ kind: "session", project_id: projectId, resource_id: r.session_id!, title: "예약 실행" })}>
@@ -122,7 +144,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const [err, setErr] = useState<string | null>(null);
     const bots = useQuery<{ bots: BotRef[] }>("bots", () => api.get("/bots"));
-    const [form, setForm] = useState({ name: "", prompt: "", kind: "daily", daily_time: "09:00", interval_minutes: 60, at: "", profile_id: "", on_approval: "wait", tools: false, max_runs: "", end_at: "", pause_after_failures: "5", bot_id: "", confirmed: false, start_paused: false });
+    const [form, setForm] = useState({ name: "", prompt: "", kind: "daily", daily_time: "09:00", interval_minutes: 60, at: "", profile_id: "", on_approval: "wait", tools: false, max_runs: "", end_at: "", pause_after_failures: "5", bot_id: "", confirmed: false, start_paused: false, quiet: false });
     const list = q.data ?? [];
     // 담당 봇 후보: 이 프로젝트의 실행 가능한 활성 봇(RTE-001)
     const projectBots = (bots.data?.bots ?? []).filter((b) => b.project_id === projectId && b.status === "active" && b.runnable);
@@ -162,6 +184,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                 body.session_mode = "same";
             }
             if (form.start_paused) body.start_paused = true;
+            if (form.quiet) body.quiet_policy = "unchanged_result";
             await api.post(`/projects/${projectId}/schedules`, body);
             setForm((f) => ({ ...f, name: "", prompt: "", confirmed: false }));
         });
@@ -184,6 +207,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                             {s.bot_id && <p className="small" data-testid="schedule-bot">담당 봇: {botName(s.bot_id)} · 결과는 봇 대화에 전달</p>}
                             <p className="muted small">승인 필요 시: {s.on_approval === "wait" ? "승인을 기다림" : "실패로 끝냄"} · 도구 {s.tools_enabled ? "사용" : "끔"}</p>
                             <p className="muted small" data-testid="schedule-limits">{limits(s)}</p>
+                            {s.quiet_policy === "unchanged_result" && <p className="muted small">직전 완료 결과와 같으면 자동 실행 알림을 생략합니다(실행 기록·비용은 남고, 실패·승인 필요·직접 실행은 항상 알림).</p>}
                             <div className="inline wrap">
                                 <button className="small" onClick={() => void act(() => api.post(`/schedules/${s.id}/run`))}>지금 실행</button>
                                 {s.status === "active" && <button className="ghost small" onClick={() => void act(() => api.post(`/schedules/${s.id}/pause`, { expected_revision: s.revision }))}>일시 정지</button>}
@@ -247,6 +271,9 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                             </label>
                         </>
                     )}
+                    <label className="check small">
+                        <input type="checkbox" checked={form.quiet} onChange={(e) => setForm({ ...form, quiet: e.target.checked })} /> 결과가 직전과 같으면 알림 생략
+                    </label>
                     <label className="small">
                         연속 실패 시 정지(회){" "}
                         <input aria-label="연속 실패 시 정지" type="number" min={1} max={100} placeholder="정지 안 함" value={form.pause_after_failures} onChange={(e) => setForm({ ...form, pause_after_failures: e.target.value })} />

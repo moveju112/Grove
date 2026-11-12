@@ -495,14 +495,14 @@ routine 등록은 미래 실행의 구체적 범위·프로젝트·도구·예�
 조용한 종료는 저장 생략이 아니라 알림 정책이다. 실패 은폐나 근거 없는 “변경 없음” 판단으로 사용하지 않는다.
 제안 결과 상태는 `changed/no_change/failed/needs_approval/interrupted/unknown`이며 실제 schema는 공통 실행 상태와 중복되지 않도록 결과 분류로 연결한다.
 
-- [ ] QUIET-001 routine 결과의 실행 상태와 알림 판단을 별도 필드로 정의한다. 모델이 임의 문자열을 출력했다는 이유만으로 성공/no_change를 확정하지 않는다.
-- [ ] QUIET-002 no_change를 판단할 근거를 routine별로 정한다. 조회 범위·기준 cursor/hash·이전 성공 결과가 없거나 조회 일부가 실패하면 무변경으로 간주하지 않는다.
+- [x] QUIET-001 routine 결과의 실행 상태와 알림 판단을 별도 필드로 정의한다. 모델이 임의 문자열을 출력했다는 이유만으로 성공/no_change를 확정하지 않는다. 검증: `result_class`·`result_evidence`·`notified`를 실행 상태와 별도 필드로 저장(migration 53). 모델이 "변화 없음"이라고 써도 결과가 다르면 changed(`tests/schedules.rs::quiet_policy_skips_notification_only_for_evidenced_unchanged_results`).
+- [x] QUIET-002 no_change를 판단할 근거를 routine별로 정한다. 조회 범위·기준 cursor/hash·이전 성공 결과가 없거나 조회 일부가 실패하면 무변경으로 간주하지 않는다. 검증: 근거는 예약별 `quiet_policy=unchanged_result`에서 직전 완료 실행의 최종 답 해시 비교뿐이다. 이전 결과가 없으면 `no_previous_result`, 도구 일부 실패면 `partial_failure`로 변화 있음(`tests/schedules.rs::quiet_policy_skips_notification_only_for_evidenced_unchanged_results`).
 - [ ] QUIET-003 모델을 쓰는 변화 분류는 근거 참조를 포함해 schema 검증하고 불확실하면 알림 가능한 결과로 처리한다. 모델 분류만으로 도구 실패 상태를 변경하지 않는다.
-- [ ] QUIET-004 no_change 결과도 run 이력·비용·완료 시각·근거를 저장한다. 대화/알림에서 축약해도 실행 상세에서는 조회할 수 있게 한다.
-- [ ] QUIET-005 정책에 따라 no_change의 push·미읽음 증가·대화 미리보기 갱신을 생략한다. 명시적인 사용자 run-once에는 최소 완료 상태를 보여준다.
-- [ ] QUIET-006 failed/needs_approval/interrupted/unknown은 quiet 정책에서 제외한다. 오류 폭주 제한을 적용해도 현재 blocker와 누적 실패를 조회 가능하게 한다.
-- [ ] QUIET-007 알림 판단과 outbox receipt를 원자적으로 기록한다. 기기 재접속·재시도·정책 변경이 이미 처리한 결과의 알림을 반복하지 않게 한다.
-- [ ] QUIET-008 옵션 변경·변화 있음·변화 없음·부분 실패·승인 필요·중복 전달을 fixture와 Chromium으로 검증한다. quiet로 줄어드는 것은 알림이며 이미 지출한 모델 비용이 아님을 표시한다.
+- [x] QUIET-004 no_change 결과도 run 이력·비용·완료 시각·근거를 저장한다. 대화/알림에서 축약해도 실행 상세에서는 조회할 수 있게 한다. 검증: no_change도 실행 기록·근거(이전 run ID·해시)·완료 시각·token 사용량을 저장하고 실행 기록 화면에 표시(`tests/schedules.rs::quiet_policy_skips_notification_only_for_evidenced_unchanged_results`, e2e).
+- [x] QUIET-005 정책에 따라 no_change의 push·미읽음 증가·대화 미리보기 갱신을 생략한다. 명시적인 사용자 run-once에는 최소 완료 상태를 보여준다. 검증: 자동 실행의 no_change만 알림을 생략하고 담당 봇 미읽음을 늘리지 않으며, 사용자가 직접 실행하면 "완료(변화 없음)" 알림을 남긴다(`tests/schedules.rs::quiet_policy_skips_notification_only_for_evidenced_unchanged_results`). 봇이 아닌 새 대화 예약은 새 대화 자체가 기록이라 목록 표시는 유지한다.
+- [x] QUIET-006 failed/needs_approval/interrupted/unknown은 quiet 정책에서 제외한다. 오류 폭주 제한을 적용해도 현재 blocker와 누적 실패를 조회 가능하게 한다. 검증: 실패·승인 필요·중단·결과 불명은 조용한 종료에서 제외하고 항상 알린다(`tests/schedules.rs::quiet_policy_skips_notification_only_for_evidenced_unchanged_results`). 오류 폭주는 기존 연속 실패 backoff·자동 정지로 제한하며 실행 기록과 연속 실패 수를 조회할 수 있다(AUTO-009).
+- [x] QUIET-007 알림 판단과 outbox receipt를 원자적으로 기록한다. 기기 재접속·재시도·정책 변경이 이미 처리한 결과의 알림을 반복하지 않게 한다. 검증: 알림 판단(`notified`)과 결과 분류를 실행 종료 처리와 같은 transaction에 기록한다. 실행은 `status=running`일 때 한 번만 종료되므로 재접속·재시도·정책 변경이 이미 처리한 결과의 알림을 반복하지 않는다.
+- [x] QUIET-008 옵션 변경·변화 있음·변화 없음·부분 실패·승인 필요·중복 전달을 fixture와 Chromium으로 검증한다. quiet로 줄어드는 것은 알림이며 이미 지출한 모델 비용이 아님을 표시한다. 검증: 옵션 검증·변화 있음/없음·부분 실패·승인 필요·직접 실행을 fixture로 확인(`tests/schedules.rs::quiet_policy_skips_notification_only_for_evidenced_unchanged_results`). webhook 중복 전달은 `webhook_requires_signature_and_runs_each_event_once`. Chromium에서 화면 옵션→같은 결과 두 번→"변화 없음 · 알림 생략(실행·비용은 발생)" 표시와 알림 1건 확인(`web/e2e/workspace.spec.ts`).
 
 완료 조건: 정상 무변경 실행은 사용자를 방해하지 않으면서 이력을 남기고, 확인이 필요한 결과는 quiet 설정으로 사라지지 않는다.
 

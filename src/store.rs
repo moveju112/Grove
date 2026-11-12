@@ -853,6 +853,14 @@ pub const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX webhook_receipts_recent ON webhook_receipts(schedule_id, received_at);
     "#,
+    // 53: 자동 실행 결과 분류와 조용한 종료(QUIET-001~007). 실행 상태와 별도로 결과 분류·근거·알림 여부를 남긴다.
+    r#"
+    ALTER TABLE schedules ADD COLUMN quiet_policy TEXT NOT NULL DEFAULT 'off' CHECK (quiet_policy IN ('off','unchanged_result'));
+    ALTER TABLE schedule_runs ADD COLUMN result_class TEXT;
+    ALTER TABLE schedule_runs ADD COLUMN result_sha256 TEXT;
+    ALTER TABLE schedule_runs ADD COLUMN result_evidence TEXT;
+    ALTER TABLE schedule_runs ADD COLUMN notified INTEGER;
+    "#,
 ];
 
 #[cfg(test)]

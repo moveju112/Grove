@@ -620,6 +620,46 @@ test("예약 webhook을 켜고 서명한 요청으로 한 번만 실행한다", 
     await expect(item.getByTestId("schedule-runs").locator("li")).toHaveCount(1);
 });
 
+// QUIET-005·008: 화면에서 조용한 종료를 켜면 같은 결과의 자동 실행은 알림 없이 기록되고, 생략된 것은 알림뿐임을 보여 준다.
+test("결과가 같으면 알림을 생략하고 실행 기록에 변화 없음·알림 생략을 표시한다", async ({ page, request, baseURL }) => {
+    const { a } = await ensureProjects();
+    await ensureProfile();
+    const stamp = Date.now().toString(36);
+    await login(page);
+    await page.getByRole("button", { name: a.name, exact: true }).first().click();
+    const panel = page.getByTestId("schedules-panel");
+    await panel.locator("summary").first().click();
+    await panel.getByLabel("예약 이름").fill(`조용 ${stamp}`);
+    await panel.getByLabel("예약 지시").fill("상태 알려줘");
+    await panel.getByLabel("예약 방식").selectOption("interval");
+    await panel.getByLabel("간격(분)").fill("600");
+    await panel.getByLabel("결과가 직전과 같으면 알림 생략").check();
+    await panel.getByRole("button", { name: "예약 추가" }).click();
+    const item = panel.getByTestId("schedule").filter({ hasText: `조용 ${stamp}` });
+    await item.locator("summary").first().click();
+    await expect(item).toContainText("직전 완료 결과와 같으면 자동 실행 알림을 생략");
+    await item.getByTestId("schedule-webhook").getByRole("button", { name: "webhook 켜기" }).click();
+    const secret = (await item.getByTestId("webhook-secret").textContent())!;
+    const id = (await apiCall<{ id: string; name: string }[]>("GET", `/schedules?project_id=${a.id}`)).find((s) => s.name === `조용 ${stamp}`)!.id;
+    const send = async (event: string) => {
+        const ts = Math.floor(Date.now() / 1000).toString();
+        const sig = "sha256=" + createHmac("sha256", secret).update(`${ts}.${event}.{}`).digest("hex");
+        const r = await request.post(`${baseURL}/api/v1/hooks/schedules/${id}`, { headers: { "X-Grove-Timestamp": ts, "X-Grove-Event-Id": event, "X-Grove-Signature": sig }, data: "{}" });
+        expect(r.status()).toBe(202);
+    };
+    const runs = item.getByTestId("schedule-runs").locator("li");
+    await script({ frames: frames.text(["이상 없음"]) });
+    await send(`a-${stamp}`);
+    await expect(runs.first()).toContainText("변화 있음", { timeout: 15_000 });
+    await script({ frames: frames.text(["이상 없음"]) });
+    await send(`b-${stamp}`);
+    await expect(runs).toHaveCount(2, { timeout: 15_000 });
+    await expect(item.getByTestId("schedule-runs")).toContainText("변화 없음", { timeout: 15_000 });
+    await expect(item.getByTestId("schedule-runs")).toContainText("알림 생략(실행·비용은 발생)");
+    const notes = await apiCall<{ items: { title: string }[] }>("GET", "/notifications");
+    expect(notes.items.filter((n) => n.title.includes(`조용 ${stamp}`))).toHaveLength(1);
+});
+
 // AUTO-009: 반복 한도를 화면에서 정하고, 연속 실패로 자동 정지된 예약은 이유와 실패 수를 보여 주며 재개할 수 있다.
 test("예약에 최대 횟수·연속 실패 정지를 정하고, 실패로 자동 정지되면 이유를 보여 주고 재개한다", async ({ page }) => {
     const { a } = await ensureProjects();

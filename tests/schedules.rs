@@ -537,3 +537,76 @@ async fn webhook_run_interrupted_by_restart_is_not_replayed_on_resend() {
     let (_, bv) = c.s.get(&format!("/api/v1/bots/{bid}")).await;
     assert_eq!(t["session_id"], bv["home_session_id"], "중단 기록은 담당 봇 대화에 남는다");
 }
+
+/// QUIET-001~007: 직전 완료 결과와 같을 때만 no_change로 조용히 끝내고(알림·봇 미읽음 없음, 기록·비용은 남김),
+/// 첫 결과·다른 결과·도구 일부 실패·승인 필요·사용자 직접 실행은 알린다.
+#[tokio::test]
+async fn quiet_policy_skips_notification_only_for_evidenced_unchanged_results() {
+    let c = ctx().await;
+    let (_, b) = c.s.post("/api/v1/bots", json!({ "name": "조용봇", "project_id": c.pid, "profile_id": c.prof })).await;
+    let bid = b["id"].as_str().unwrap().to_string();
+    let (st, e) = c.create(json!({ "quiet_policy": "sometimes" })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{e}");
+    let (st, sch) = c.create(json!({ "bot_id": bid, "session_mode": "same", "quiet_policy": "unchanged_result", "tools": true, "on_approval": "fail" })).await;
+    assert_eq!(st, StatusCode::CREATED, "{sch}");
+    let id = sch["id"].as_str().unwrap().to_string();
+    let (_, on) = c.s.post(&format!("/api/v1/schedules/{id}/webhook"), json!({ "enable": true })).await;
+    let secret = on["secret"].as_str().unwrap().to_string();
+    let fire = |event: &'static str| {
+        let (sr, secret, id) = (&c.s, secret.clone(), id.clone());
+        async move {
+            let ts = time::OffsetDateTime::now_utc().unix_timestamp().to_string();
+            let r = sr.client.post(format!("{}/api/v1/hooks/schedules/{id}", sr.base)).header("X-Grove-Timestamp", &ts).header("X-Grove-Event-Id", event)
+                .header("X-Grove-Signature", grove::schedules::hook_signature(&secret, &ts, event, b"{}")).body("{}").send().await.unwrap();
+            assert_eq!(r.status(), StatusCode::ACCEPTED);
+        }
+    };
+    let notes = || async { c.s.get("/api/v1/notifications").await.1["items"].as_array().unwrap().iter().filter(|n| n["title"].as_str().unwrap().contains("예약")).count() };
+    let done = |n: usize| move |r: &[Value]| r.len() == n && r.iter().all(|x| x["status"] != "running");
+    // 1) 첫 결과: 비교 대상이 없으므로 변화 있음
+    c.f.push(fixture::text("상태 정상"));
+    fire("q1").await;
+    let r = c.wait_run(&id, done(1)).await;
+    assert_eq!((r[0]["result_class"].as_str(), r[0]["notified"].as_bool()), (Some("changed"), Some(true)));
+    assert_eq!(r[0]["result_evidence"]["reason"], "no_previous_result");
+    assert_eq!(notes().await, 1);
+    // 2) 같은 결과: 조용히 끝남(알림·미읽음 없음), 기록·근거·비용은 남김
+    c.f.push(fixture::text("상태 정상"));
+    fire("q2").await;
+    let r = c.wait_run(&id, done(2)).await;
+    let quiet = r.iter().find(|x| x["result_class"] == "no_change").expect("no_change");
+    assert_eq!(quiet["notified"], false);
+    assert!(quiet["result_evidence"]["previous_run_id"].is_string() && quiet["ended_at"].is_string() && quiet["usage"].is_object(), "{quiet}");
+    assert_eq!(notes().await, 1, "변화 없음은 알리지 않는다");
+    let (_, bv) = c.s.get(&format!("/api/v1/bots/{bid}")).await;
+    assert_eq!(bv["unread"], false, "조용한 종료는 봇 미읽음을 늘리지 않는다");
+    // 3) 모델이 '변화 없음'이라고 써도 결과가 다르면 변화 있음
+    c.f.push(fixture::text("변화 없음"));
+    fire("q3").await;
+    let r = c.wait_run(&id, done(3)).await;
+    assert_eq!(r.iter().filter(|x| x["result_class"] == "changed").count(), 2);
+    assert_eq!(notes().await, 2);
+    // 4) 도구 일부 실패면 같은 답이어도 무변경으로 보지 않는다
+    c.f.push(fixture::tool_calls(&[("r1", "read", json!({ "path": "missing.txt" }))]));
+    c.f.push(fixture::text("변화 없음"));
+    fire("q4").await;
+    let r = c.wait_run(&id, done(4)).await;
+    assert!(r.iter().any(|x| x["result_evidence"]["reason"] == "partial_failure"), "{r:?}");
+    assert_eq!(notes().await, 3);
+    // 5) 승인이 필요해 중단되면 needs_approval로 알린다
+    c.f.push(fixture::tool_calls(&[("s1", "shell", json!({ "command": "true" }))]));
+    fire("q5").await;
+    let r = c.wait_run(&id, done(5)).await;
+    assert!(r.iter().any(|x| x["result_class"] == "needs_approval" && x["notified"] == true), "{r:?}");
+    assert_eq!(notes().await, 4);
+    // 6) 사용자가 직접 실행하면 같은 결과여도 최소 완료 알림을 남긴다
+    c.f.push(fixture::text("변화 없음"));
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    let (st, _) = c.s.post(&format!("/api/v1/schedules/{id}/run"), json!({})).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    let r = c.wait_run(&id, done(6)).await;
+    let manual = r.iter().find(|x| x["manual"] == true).unwrap();
+    assert_eq!((manual["result_class"].as_str(), manual["notified"].as_bool()), (Some("no_change"), Some(true)));
+    let (_, n) = c.s.get("/api/v1/notifications").await;
+    assert!(n.to_string().contains("완료(변화 없음)"));
+}

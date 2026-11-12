@@ -70,13 +70,15 @@ pub struct Schedule {
     pub bot_id: Option<String>,
     /// 서명한 webhook으로 실행을 받는지(RTE-004·AUTO-010). 비밀은 응답하지 않는다.
     pub webhook_enabled: bool,
+    /// 조용한 종료 정책(QUIET): off | unchanged_result(직전 완료 결과와 같으면 알림 생략).
+    pub quiet_policy: String,
 }
 
 const COLS: &str = "id, project_id, owner_id, name, prompt, profile_id, agent_id, tools_enabled, allowed_tools, max_total_tokens, kind, at, interval_minutes, \
                     daily_time, tz_offset_minutes, session_mode, session_id, on_approval, missed_grace_minutes, status, next_run_at, revision, created_at, updated_at, \
                     max_runs, end_at, pause_after_failures, consecutive_failures, last_failed_at, paused_reason, \
                     (SELECT COUNT(*) FROM schedule_runs r WHERE r.schedule_id = schedules.id AND r.manual = 0 AND r.status NOT IN ('missed','skipped_overlap')), bot_id, \
-                    EXISTS(SELECT 1 FROM schedule_webhooks w WHERE w.schedule_id = schedules.id AND w.enabled = 1)";
+                    EXISTS(SELECT 1 FROM schedule_webhooks w WHERE w.schedule_id = schedules.id AND w.enabled = 1), quiet_policy";
 
 /// 연속 실패 n회 뒤 자동 실행을 미루는 시간: 60초×2^(n-1), 최대 24시간(upstream routine 안전장치와 같은 형태).
 pub fn backoff(failures: i64) -> Option<Duration> {
@@ -120,6 +122,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Schedule> {
         backoff_until: None,
         bot_id: r.get(31)?,
         webhook_enabled: r.get(32)?,
+        quiet_policy: r.get(33)?,
     })
     .map(|mut s| {
         s.backoff_until = s.last_failed_at.as_deref().and_then(crate::util::parse_time).zip(backoff(s.consecutive_failures)).map(|(t, d)| crate::util::fmt_time(t + d));
@@ -139,9 +142,18 @@ pub struct Run {
     pub detail: Option<String>,
     pub created_at: String,
     pub ended_at: Option<String>,
+    /// 결과 분류(QUIET-001): changed | no_change | failed | needs_approval | interrupted | unknown | cancelled. 실행 상태와 별개다.
+    pub result_class: Option<String>,
+    /// 분류 근거(비교한 이전 실행·해시 등).
+    pub result_evidence: Option<Value>,
+    /// 종료 알림을 보냈는지. no_change는 조용히 끝날 수 있다(실행 기록과 비용은 그대로 남는다).
+    pub notified: Option<bool>,
+    /// 이 실행이 쓴 token(조용히 끝나도 비용은 이미 발생했다).
+    pub usage: Option<Value>,
 }
 
-const RCOLS: &str = "id, schedule_id, planned_at, manual, status, session_id, turn_id, detail, created_at, ended_at";
+const RCOLS: &str = "id, schedule_id, planned_at, manual, status, session_id, turn_id, detail, created_at, ended_at, result_class, result_evidence, notified, \
+                     (SELECT t.usage FROM turns t WHERE t.id = schedule_runs.turn_id)";
 
 fn run_row(r: &Row) -> rusqlite::Result<Run> {
     Ok(Run {
@@ -155,6 +167,10 @@ fn run_row(r: &Row) -> rusqlite::Result<Run> {
         detail: r.get(7)?,
         created_at: r.get(8)?,
         ended_at: r.get(9)?,
+        result_class: r.get(10)?,
+        result_evidence: r.get::<_, Option<String>>(11)?.and_then(|s| serde_json::from_str(&s).ok()),
+        notified: r.get(12)?,
+        usage: r.get::<_, Option<String>>(13)?.and_then(|s| serde_json::from_str(&s).ok()),
     })
 }
 
@@ -302,6 +318,12 @@ pub struct SpecBody {
     /// 만들 때 일시 정지 상태로 저장한다(RTE-002: 확인 전 저장은 실행·모델 호출을 하지 않는다).
     #[serde(default)]
     pub start_paused: bool,
+    #[serde(default = "default_quiet")]
+    pub quiet_policy: String,
+}
+
+fn default_quiet() -> String {
+    "off".into()
 }
 
 fn default_pause_after_failures() -> Option<i64> {
@@ -400,6 +422,9 @@ fn validate(c: &Connection, project_id: &str, b: &SpecBody, now: OffsetDateTime)
 }
 
 fn validate_tail(b: &SpecBody, now: OffsetDateTime) -> ApiResult<()> {
+    if !matches!(b.quiet_policy.as_str(), "off" | "unchanged_result") {
+        return Err(ApiError::invalid("quiet_policy는 off·unchanged_result 중 하나여야 합니다"));
+    }
     if !matches!(b.on_approval.as_str(), "wait" | "fail") {
         return Err(ApiError::invalid("on_approval은 wait·fail 중 하나여야 합니다"));
     }
@@ -487,7 +512,7 @@ fn write_spec(c: &Connection, now: &str, id: &str, b: &SpecBody) -> ApiResult<()
     c.execute(
         "UPDATE schedules SET name = ?2, prompt = ?3, profile_id = ?4, agent_id = ?5, tools_enabled = ?6, allowed_tools = ?7, max_total_tokens = ?8, \
          kind = ?9, at = ?10, interval_minutes = ?11, daily_time = ?12, tz_offset_minutes = ?13, session_mode = ?14, session_id = ?15, \
-         on_approval = ?16, missed_grace_minutes = ?17, updated_at = ?18, max_runs = ?19, end_at = ?20, pause_after_failures = ?21, bot_id = ?22 WHERE id = ?1",
+         on_approval = ?16, missed_grace_minutes = ?17, updated_at = ?18, max_runs = ?19, end_at = ?20, pause_after_failures = ?21, bot_id = ?22, quiet_policy = ?23 WHERE id = ?1",
         params![
             id,
             b.name.trim(),
@@ -510,7 +535,8 @@ fn write_spec(c: &Connection, now: &str, id: &str, b: &SpecBody) -> ApiResult<()
             b.max_runs,
             b.end_at.as_deref().and_then(crate::util::parse_time).map(|t| crate::util::fmt_time(secs(t))),
             b.pause_after_failures,
-            b.bot_id
+            b.bot_id,
+            b.quiet_policy
         ],
     )?;
     Ok(())
@@ -670,9 +696,9 @@ pub fn spawn(app: App) -> JoinHandle<()> {
 
 /// 예약 실행 턴 종료 hook(`runner::finish_turn`에서 같은 transaction으로 호출).
 pub fn on_turn_finished(c: &Connection, now: &str, turn_id: &str, to: &str) -> ApiResult<()> {
-    let Some((run_id, sched_id, session_id)) = c
-        .query_row("SELECT id, schedule_id, session_id FROM schedule_runs WHERE turn_id = ?1 AND status = 'running'", params![turn_id], |r| {
-            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?))
+    let Some((run_id, sched_id, session_id, manual)) = c
+        .query_row("SELECT id, schedule_id, session_id, manual FROM schedule_runs WHERE turn_id = ?1 AND status = 'running'", params![turn_id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, bool>(3)?))
         })
         .optional()?
     else {
@@ -683,26 +709,103 @@ pub fn on_turn_finished(c: &Connection, now: &str, turn_id: &str, to: &str) -> A
         _ => "failed",
     };
     let err: Option<String> = c.query_row("SELECT error FROM turns WHERE id = ?1", params![turn_id], |r| r.get(0))?;
-    let err_msg = err.and_then(|e| serde_json::from_str::<Value>(&e).ok()).and_then(|e| e["message"].as_str().map(String::from));
-    c.execute("UPDATE schedule_runs SET status = ?2, detail = ?3, ended_at = ?4 WHERE id = ?1", params![run_id, status, err_msg, now])?;
-    let (name, project_id): (String, String) = c.query_row("SELECT name, project_id FROM schedules WHERE id = ?1", params![sched_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
-    let body = if status == "completed" {
-        let text: Option<String> = c
-            .query_row("SELECT content FROM messages WHERE turn_id = ?1 AND role = 'assistant' ORDER BY seq DESC LIMIT 1", params![turn_id], |r| r.get(0))
-            .optional()?;
-        text.and_then(|t| serde_json::from_str::<Value>(&t).ok()).and_then(|v| v["text"].as_str().map(|s| s.chars().take(300).collect())).unwrap_or_default()
+    let err = err.and_then(|e| serde_json::from_str::<Value>(&e).ok());
+    let err_msg = err.as_ref().and_then(|e| e["message"].as_str().map(String::from));
+    let (name, project_id, quiet): (String, String, String) =
+        c.query_row("SELECT name, project_id, quiet_policy FROM schedules WHERE id = ?1", params![sched_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    let text: Option<String> = if status == "completed" {
+        c.query_row("SELECT content FROM messages WHERE turn_id = ?1 AND role = 'assistant' ORDER BY seq DESC LIMIT 1", params![turn_id], |r| r.get::<_, String>(0))
+            .optional()?
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .and_then(|v| v["text"].as_str().map(String::from))
     } else {
-        err_msg.unwrap_or_default()
+        None
     };
-    let label = match status {
-        "completed" => "완료",
-        "failed" => "실패",
-        "cancelled" => "취소",
-        _ => "중단",
-    };
-    notifications::push(c, now, "schedule.run", &format!("예약 '{name}' {label}"), &body, Some(&project_id), session_id.as_deref(), Some(&run_id))?;
-    events::append(c, now, "schedule.run", Some(&project_id), session_id.as_deref(), &json!({ "schedule_id": sched_id, "run_id": run_id, "status": status }))?;
+    let (class, sha, evidence) = classify(c, &sched_id, &run_id, turn_id, status, err.as_ref(), text.as_deref(), &quiet)?;
+    // 알림 판단과 실행 기록을 같은 transaction에 남긴다(QUIET-007). 사용자가 직접 실행한 경우는 조용히 끝내지 않는다.
+    let notify = !(class == "no_change" && !manual);
+    c.execute(
+        "UPDATE schedule_runs SET status = ?2, detail = ?3, ended_at = ?4, result_class = ?5, result_sha256 = ?6, result_evidence = ?7, notified = ?8 WHERE id = ?1",
+        params![run_id, status, err_msg, now, class, sha, evidence.to_string(), notify],
+    )?;
+    if notify {
+        let body = match &text {
+            Some(t) => t.chars().take(300).collect(),
+            None => err_msg.clone().unwrap_or_default(),
+        };
+        let label = match class {
+            "no_change" => "완료(변화 없음)",
+            "changed" => "완료",
+            "unknown" => "완료(결과 불명 작업 있음)",
+            "needs_approval" => "승인 필요로 중단",
+            "failed" => "실패",
+            "cancelled" => "취소",
+            _ => "중단",
+        };
+        notifications::push(c, now, "schedule.run", &format!("예약 '{name}' {label}"), &body, Some(&project_id), session_id.as_deref(), Some(&run_id))?;
+    } else if let Some(sid) = &session_id {
+        // 조용한 종료: 담당 봇 대화의 미읽음을 늘리지 않는다(QUIET-005). 메시지·실행 기록은 그대로 남긴다.
+        c.execute(
+            "UPDATE bots SET home_seen_seq = MAX(home_seen_seq, (SELECT COALESCE(MAX(seq), 0) FROM messages WHERE session_id = ?1)) WHERE home_session_id = ?1",
+            params![sid],
+        )?;
+    }
+    events::append(c, now, "schedule.run", Some(&project_id), session_id.as_deref(), &json!({ "schedule_id": sched_id, "run_id": run_id, "status": status, "result_class": class }))?;
     record_outcome(c, now, &sched_id, status)
+}
+
+/// 결과 분류(QUIET-001~003). 실행 상태는 그대로 두고, 변화 없음은 결정적 근거가 있을 때만 정한다:
+/// 정책이 `unchanged_result`이고, 이번 턴에 실패·결과 불명 도구가 없으며, 직전 완료 실행의 결과 해시와 최종 답이 같을 때.
+/// 모델이 "변화 없음"이라고 쓴 문구만으로는 정하지 않는다. 이전 결과가 없으면 변화 있음이다.
+#[allow(clippy::too_many_arguments)]
+fn classify(
+    c: &Connection,
+    sched_id: &str,
+    run_id: &str,
+    turn_id: &str,
+    status: &str,
+    err: Option<&Value>,
+    text: Option<&str>,
+    quiet: &str,
+) -> ApiResult<(&'static str, Option<String>, Value)> {
+    match status {
+        "failed" => {
+            let code = err.and_then(|e| e["code"].as_str()).unwrap_or("");
+            let class = if matches!(code, "approval_required" | "input_required") { "needs_approval" } else { "failed" };
+            return Ok((class, None, json!({ "error_code": code })));
+        }
+        "cancelled" => return Ok(("cancelled", None, json!({}))),
+        "interrupted" => return Ok(("interrupted", None, json!({}))),
+        _ => {}
+    }
+    let count = |st: &str| -> ApiResult<i64> {
+        Ok(c.query_row("SELECT COUNT(*) FROM tool_calls WHERE turn_id = ?1 AND status = ?2", params![turn_id, st], |r| r.get(0))?)
+    };
+    if count("unknown")? > 0 {
+        return Ok(("unknown", None, json!({ "reason": "unknown_tool_result" })));
+    }
+    let sha = crate::util::sha256_hex(text.unwrap_or("").trim().as_bytes());
+    let failed_tools = count("failed")?;
+    if quiet != "unchanged_result" {
+        return Ok(("changed", Some(sha), json!({ "policy": quiet })));
+    }
+    if failed_tools > 0 {
+        // 조회 일부가 실패했으면 무변경으로 보지 않는다(QUIET-002).
+        return Ok(("changed", Some(sha), json!({ "reason": "partial_failure", "failed_tools": failed_tools })));
+    }
+    let prev: Option<(String, String)> = c
+        .query_row(
+            "SELECT id, result_sha256 FROM schedule_runs WHERE schedule_id = ?1 AND id != ?2 AND result_class IN ('changed','no_change') AND result_sha256 IS NOT NULL \
+             ORDER BY ended_at DESC LIMIT 1",
+            params![sched_id, run_id],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )
+        .optional()?;
+    Ok(match prev {
+        Some((pid, psha)) if psha == sha => ("no_change", Some(sha.clone()), json!({ "previous_run_id": pid, "sha256": sha })),
+        Some((pid, _)) => ("changed", Some(sha.clone()), json!({ "previous_run_id": pid, "sha256": sha })),
+        None => ("changed", Some(sha.clone()), json!({ "reason": "no_previous_result", "sha256": sha })),
+    })
 }
 
 // ---- API ----
