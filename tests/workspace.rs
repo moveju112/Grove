@@ -215,6 +215,66 @@ async fn recent_status_reflects_archived_and_hidden() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
+/// RECENCY-007: 대량 최근 목록(파일 4,000 + 대화 1,000)의 정렬·검색·시간 범위·상태 필터 결과와 응답 시간.
+/// 시간 상한은 debug 빌드·부하 차이를 감안한 병적 회귀 감시용이고, 측정값은 출력해 기록한다.
+#[tokio::test]
+async fn large_recent_list_search_sort_and_window_stay_correct_and_bounded() {
+    let s = TestServer::start().await;
+    let pid = s.create_project("big").await["id"].as_str().unwrap().to_string();
+    let mut sessions = Vec::new();
+    for _ in 0..1000 {
+        sessions.push(s.create_session(&pid).await["id"].as_str().unwrap().to_string());
+    }
+    let (p2, sids) = (pid.clone(), sessions.clone());
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        let tx = c.transaction()?;
+        for i in 0..4000 {
+            // 오래된 접근 시각(2020년)의 파일 항목. 이름에 번호를 넣어 검색 대상을 만든다.
+            tx.execute(
+                "INSERT INTO recent_items (id, kind, project_id, resource_id, title, last_access_at, view_state) VALUES (?1, 'file', ?2, ?3, ?3, ?4, '{}')",
+                rusqlite::params![format!("rf{i:05}"), p2, format!("src/file-{i:05}.rs"), format!("2020-01-01T00:{:02}:{:02}Z", (i / 60) % 60, i % 60)],
+            )?;
+        }
+        for (i, sid) in sids.iter().enumerate() {
+            tx.execute(
+                "INSERT INTO recent_items (id, kind, project_id, resource_id, title, last_access_at, view_state) VALUES (?1, 'session', ?2, ?3, 't', ?4, '{}')",
+                rusqlite::params![format!("rs{i:05}"), p2, sid, format!("2021-01-01T00:{:02}:{:02}Z", (i / 60) % 60, i % 60)],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }).await.unwrap();
+    // 마지막 대화 하나에 새 메시지 → 맨 앞으로 오고 시간 범위 안에 든다.
+    let newest = sessions.last().unwrap().clone();
+    s.post(&format!("/api/v1/sessions/{newest}/messages"), json!({ "text": "now" })).await;
+    let timed = |path: String| {
+        let s = &s;
+        async move {
+            let t = std::time::Instant::now();
+            let (st, v) = s.get(&path).await;
+            assert_eq!(st, StatusCode::OK, "{path}: {v}");
+            (v, t.elapsed())
+        }
+    };
+    let (all, t_all) = timed("/api/v1/recent?limit=50".into()).await;
+    assert_eq!(all["total"], 5000);
+    assert_eq!(all["items"][0]["resource_id"], newest.as_str(), "마지막 사용자 메시지가 가장 최근 활동");
+    assert_eq!(all["items"][1]["kind"], "session", "2021년 대화가 2020년 파일보다 앞");
+    let (found, t_q) = timed("/api/v1/recent?limit=50&q=file-03999".into()).await;
+    assert_eq!(found["total"], 1);
+    let (window, t_since) = timed("/api/v1/recent?limit=50&since=2025-01-01T00:00:00Z".into()).await;
+    assert_eq!(window["total"], 1);
+    let (unread, t_unread) = timed("/api/v1/recent?limit=50&filter=unread".into()).await;
+    assert_eq!(unread["total"], 1);
+    let (last, t_last) = timed("/api/v1/recent?limit=50&offset=4990".into()).await;
+    assert_eq!(last["items"].as_array().unwrap().len(), 10);
+    assert!(last["next_offset"].is_null());
+    println!("recent 5000: all={t_all:?} q={t_q:?} since={t_since:?} unread={t_unread:?} last_page={t_last:?}");
+    for t in [t_all, t_q, t_since, t_unread, t_last] {
+        assert!(t < std::time::Duration::from_secs(5), "최근 목록 조회가 너무 느립니다: {t:?}");
+    }
+}
+
 #[tokio::test]
 async fn recent_pagination_offsets() {
     let s = TestServer::start().await;

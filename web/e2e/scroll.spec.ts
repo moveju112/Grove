@@ -77,3 +77,42 @@ test("다른 탭을 다녀와도 이전 페이지의 읽던 메시지와 화면 
     await expect(target).toBeInViewport();
     await expect.poll(async () => Math.abs((await target.boundingBox())!.y - y)).toBeLessThan(8);
 });
+
+test("앱을 닫았다 다시 열어도(탭 저장소 없음) 대화의 마지막 읽던 위치를 복원한다", async ({ page, browser }) => {
+    const { a } = await ensureProjects();
+    const prefix = `restart-${Date.now()}`;
+    const reading = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `${prefix} reading` });
+    for (let i = 0; i < 120; i++) await apiCall("POST", `/sessions/${reading.id}/messages`, { text: `${prefix} line ${i}` });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: reading.id });
+    await login(page);
+    await page.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
+    const view = page.locator(`[data-testid=session-view][data-session="${reading.id}"]`);
+    // 첫 페이지는 최근 100개(line 20~119)다. 가상 스크롤이라 화면 밖 메시지는 DOM에 없으므로
+    // 키보드로 불러온 첫 메시지(line 20)에서 다섯 칸 내려가 읽던 위치를 만든다.
+    const target = view.getByText(`${prefix} line 25`, { exact: true });
+    await view.getByRole("feed", { name: "불러온 대화 메시지" }).focus();
+    await page.keyboard.press("Home");
+    for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowDown");
+    await target.scrollIntoViewIfNeeded();
+    await expect(target).toBeInViewport();
+    await expect.poll(() => page.evaluate((id) => localStorage.getItem(`grove.scroll.session.${id}`), reading.id)).toContain("\"atBottom\":false");
+    // 기기 저장소(localStorage·cookie)만 남기고 탭 저장소(sessionStorage)는 버린 새 창 = 앱 종료·process death 뒤 재시작.
+    const restarted = await browser.newContext({ storageState: await page.context().storageState() });
+    try {
+        const again = await restarted.newPage();
+        await again.goto("/");
+        const token = again.getByLabel("토큰");
+        await expect(again.getByTestId("conn").or(token)).toBeVisible();
+        if (await token.isVisible()) await login(again);
+        await expect(again.getByTestId("conn")).toHaveText("연결됨");
+        await again.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
+        await expect(again.locator(`[data-testid=session-view][data-session="${reading.id}"]`).getByText(`${prefix} line 25`, { exact: true })).toBeInViewport();
+        // 직접 로그아웃하면 읽던 위치 사본도 지운다.
+        await again.getByRole("button", { name: "설정", exact: true }).first().click();
+        await again.getByLabel("설정 검색", { exact: true }).fill("로그아웃");
+        await again.getByRole("button", { name: "이 브라우저에서 로그아웃" }).click();
+        await expect.poll(() => again.evaluate(() => Object.keys(localStorage).filter((k) => k.startsWith("grove.scroll.")))).toEqual([]);
+    } finally {
+        await restarted.close();
+    }
+});

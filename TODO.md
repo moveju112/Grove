@@ -1787,10 +1787,10 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 - [x] RECENCY-001 최근 항목의 host/project/resource 종류·ID와 접근 시각을 정의한다. 검증: `src/workspace.rs::RecentItem`(kind·project·resource·접근 시각).
 - [x] RECENCY-002 동일 항목 재열기·핀·핀 해제·정렬·페이지 경계를 구현하고 중복 항목을 만들지 않는다. 검증: `tests/workspace.rs::two_projects_recent_and_split_survive_restart`, `recent_pagination_offsets`.
 - [x] RECENCY-003 실행/승인 대기/읽지 않음 필터를 서버 상태와 연결하고 재접속 후 재계산한다. 검증: `tests/workspace.rs::recent_status_reflects_archived_and_hidden`(서버 상태 계산).
-- [ ] RECENCY-004 대화 anchor·파일 cursor·스크롤·초안 복원 상태를 자원 ID별로 저장한다.
+- [x] RECENCY-004 대화 anchor·파일 cursor·스크롤·초안 복원 상태를 자원 ID별로 저장한다. 검증: 대화 읽기 위치(anchor seq·offset·timeline revision)는 탭별(`sessionStorage`)과 대화 ID별(`localStorage`, 최근 200개, 이전 탭 저장소 값도 읽음)로, 파일 선택·스크롤·편집 사본은 프로젝트·경로·사본별(`grove.file.*`), 초안은 서버 resource key와 기기 사본으로 저장한다. 이전에는 대화별 위치가 `sessionStorage`에만 있어 앱 종료 뒤 사라졌다. 메시지 본문은 저장하지 않으며 직접 로그아웃하면 `grove.scroll.*`도 다른 기기 사본과 함께 지운다. 단위 7개(`web/app/state/scrollPosition.test.ts`, `cleanup.test.ts`).
 - [x] RECENCY-005 기기별 draft revision·충돌 표시·사본 보존·사용자 선택을 구현한다. 검증: `tests/workspace.rs::drafts_conflict_instead_of_silent_overwrite`, e2e 초안 충돌.
 - [x] RECENCY-006 최근 항목 제거와 실제 자원 삭제를 분리하고 삭제·권한 상실·오프라인 자원을 표시한다. 검증: 상태 계산 archived·missing·project_unavailable, `tests/workspace.rs::recent_status_reflects_archived_and_hidden`.
-- [ ] RECENCY-007 앱 종료·서버 재시작·폰 process death 후 복원과 대량 목록 검색/정렬 지연을 검증한다.
+- [x] RECENCY-007 앱 종료·서버 재시작·폰 process death 후 복원과 대량 목록 검색/정렬 지연을 검증한다. 검증: 탭 저장소 없이 기기 저장소만 남긴 새 브라우저 창(앱 종료·process death 모사)에서 배치·대화의 마지막 읽던 위치를 복원하고, 로그아웃하면 위치 사본을 지운다(`web/e2e/scroll.spec.ts`). 서버 재시작 뒤 최근 항목·분할 배치 유지는 `tests/workspace.rs::two_projects_recent_and_split_survive_restart`, 미반영 배치·초안 복원은 `layout-resume`·`draft-resume` E2E. 최근 항목 5,000개(파일 4,000·대화 1,000)의 활동순 정렬·검색·시간 범위·읽지 않음 필터·마지막 페이지가 정확하며 Linux debug 빌드 응답이 52~60ms였다(`large_recent_list_search_sort_and_window_stay_correct_and_bounded`, 5초 회귀 상한). Rust workspace 7개·선택 E2E 15개 통과. 실제 Android/iOS 기기의 process death는 미검증이다.
 
 ### 35.6 프로젝트 간 분할 화면
 
