@@ -16,10 +16,12 @@ import type { Opener } from "./Workspace";
 import { WorktreeSelect } from "./WorktreesPanel";
 import { loadScrollPosition, saveScrollPosition } from "../state/scrollPosition";
 import { VirtualMessages } from "./VirtualMessages";
+import { usePaneVisible } from "../state/paneVisibility";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
 export function SessionView({ tabId, sessionId, projectId, open }: Props) {
+    const visible = usePaneVisible();
     const prefs = usePrefs();
     const session = useQuery<Session>(`session:${sessionId}`, () => api.get(`/sessions/${sessionId}`));
     const latest = useQuery<MessagePage>(`messages:${sessionId}`, () => api.get(`/sessions/${sessionId}/messages?limit=100`));
@@ -43,17 +45,17 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const botId = s?.bot_id ?? null;
     const bots = useQuery<{ bots: { id: string; profile_id: string | null }[] }>(botId ? "bots" : null, () => api.get("/bots"));
     useEffect(() => {
-        if (botId && lastSeq > 0) void api.post(`/bots/${botId}/seen`, { seq: lastSeq }).catch(() => undefined);
-    }, [botId, lastSeq]);
+        if (visible && botId && lastSeq > 0) void api.post(`/bots/${botId}/seen`, { seq: lastSeq }).catch(() => undefined);
+    }, [visible, botId, lastSeq]);
     useEffect(() => {
-        if (!s) return;
+        if (!s || !visible) return;
         const t = setTimeout(() => {
             void api
                 .post<RecentItem>("/recent/touch", { kind: "session", project_id: projectId, resource_id: sessionId, view_state: { last_seen_seq: lastSeq } })
                 .catch(() => undefined);
         }, 300);
         return () => clearTimeout(t);
-    }, [sessionId, projectId, lastSeq, !!s]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [visible, sessionId, projectId, lastSeq, !!s]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // 자동 스크롤(UI-009): 맨 아래 근처를 보고 있을 때만 새 내용을 따라 내려간다. 위를 읽는 중이면 위치를 그대로 두고 알림만 띄운다.
     const msgsRef = useRef<HTMLDivElement>(null);
@@ -65,7 +67,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const capturePosition = () => {
         const el = scroller();
         const data = latestRef.current;
-        if (!el || !data || pendingPosition.current || !isLoggedIn()) return;
+        if (!el || !el.clientHeight || !el.clientWidth || !data || pendingPosition.current || !isLoggedIn()) return;
         const viewport = el.getBoundingClientRect();
         const row = [...(msgsRef.current?.querySelectorAll<HTMLElement>(".msg-row") ?? [])].find((node) => {
             const rect = node.getBoundingClientRect();
@@ -83,6 +85,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         const el = scroller();
         if (!el) return;
         const on = () => {
+            if (!el.clientHeight || !el.clientWidth) return;
             // 메시지 끝 표시가 스크롤 영역 아래쪽 80px 안에 보이면 '맨 아래를 보는 중'이다(아래 패널·입력창 높이와 무관).
             const b = bottom.current?.getBoundingClientRect();
             stick.current = !!b && b.top <= el.getBoundingClientRect().bottom + 80;
@@ -106,11 +109,11 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         bottom.current?.scrollIntoView({ block: "end" });
     };
     useEffect(() => {
-        if (pendingPosition.current) return;
+        if (!visible || pendingPosition.current) return;
         if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
         else if (!savedPosition || (latest.data?.items.at(-1)?.seq ?? 0) > savedPosition.lastSeq || partial?.text) setUnseen(true);
         // 최신 페이지는 항상 최근 N개라 개수가 아니라 마지막 메시지로 새 글을 판단한다.
-    }, [latest.data?.items.at(-1)?.seq, partial?.text]);
+    }, [visible, latest.data?.items.at(-1)?.seq, partial?.text]);
 
     // 최신 화면은 '최근 N개' 창이다. 새 메시지로 창이 밀리면 빠져나간 메시지를 이전 목록으로 옮겨, 읽던 메시지가 사라지지 않게 한다(UI-008).
     // 같은 렌더 안에서 옮겨야 한다: effect로 옮기면 한 번은 위쪽 메시지가 빠졌다 다시 붙어 내용이 밀리고 스크롤이 어긋난다.
@@ -149,7 +152,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const loadingOlder = useRef(false);
     useLayoutEffect(() => {
         const position = pendingPosition.current;
-        if (!position || !latest.data) return;
+        if (!visible || !position || !latest.data) return;
         if (focusSeq != null || position.timelineRevision !== latest.data.timeline_revision) {
             pendingPosition.current = null;
             stick.current = focusSeq == null;
@@ -174,7 +177,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             stick.current = true;
             bottom.current?.scrollIntoView({ block: "end" });
         }
-    }, [focusSeq, latest.data, messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [visible, focusSeq, latest.data, messages.length]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         if (highlight == null) return;
         const t = setTimeout(() => setHighlight(null), 4000);

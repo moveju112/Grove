@@ -33,11 +33,12 @@ function useNarrow(): boolean {
 export function Workspace() {
     const narrow = useNarrow();
     const live = useLive();
-    const [layout, setLayout] = useState<L.Layout | null>(null);
+    const [layouts, setLayouts] = useState<Record<string, L.Layout>>({});
     const [sidebar, setSidebar] = useState(!isNarrow());
     const [notice, setNotice] = useState<string | null>(null);
-    const persistence = useRef<LayoutPersistence | null>(null);
+    const persistence = useRef(new Map<string, LayoutPersistence>());
     const key = useMemo(() => layoutKey(), [narrow]); // eslint-disable-line react-hooks/exhaustive-deps
+    const layout = layouts[key];
     // 프로젝트 목록 정렬은 기기별 선택(PROJECT-002): 이름순 또는 최근 활동순.
     const [projectSort, setProjectSort] = useState<"name" | "recent">(() => (localStorage.getItem(PROJECT_SORT) === "recent" ? "recent" : "name"));
     const projects = useQuery<Project[]>(`projects:${projectSort}`, () => api.get(`/projects?sort=${projectSort}`));
@@ -58,19 +59,18 @@ export function Workspace() {
         return () => s.stop();
     }, []);
 
-    // 화면에 보이는 세션만 상세 stream 구독
+    // 숨긴 배치도 확정 상태를 계속 받는다. 서버 작업의 수명은 화면 크기와 무관하다.
     useEffect(() => {
-        if (!layout) return;
-        const visible = L.leaves(layout.root)
+        const visible = Object.values(layouts).flatMap((l) => L.leaves(l.root))
             .map((leaf) => leaf.tabs.find((t) => t.id === leaf.active_tab))
             .filter((t): t is L.Tab => !!t && t.kind === "session" && !!t.resource_id)
             .map((t) => t.resource_id!);
         stream.current?.setSessions(visible);
-    }, [layout]);
+    }, [layouts]);
 
-    // 미반영 로컬 배치 → 서버 → 로컬 fallback. 기기/화면 폭이 바뀌면 이전 저장 수명을 끝낸다.
+    // 폭별 배치는 따로 복원하되 방문한 배치의 DOM·저장 수명은 로그아웃/unmount까지 보존한다.
     useEffect(() => {
-        setLayout(null);
+        if (persistence.current.has(key)) return;
         const owner = authGeneration();
         const store = new LayoutPersistence(key, {
             store: localStorage, newKey, notice: setNotice,
@@ -78,37 +78,41 @@ export function Workspace() {
             get: (signal) => api.get(`/layouts/${key}`, { signal, timeoutMs: 10_000 }),
             put: ({ key: requestKey, ...body }, signal) => api.put(`/layouts/${key}`, body, { key: requestKey, signal, timeoutMs: 10_000 }),
         });
-        persistence.current = store;
-        void store.restore().then((restored) => { if (restored) setLayout(restored); });
-        return () => {
-            store.dispose();
-            if (persistence.current === store) persistence.current = null;
-        };
+        persistence.current.set(key, store);
+        void store.restore().then((restored) => { if (restored) setLayouts((cur) => ({ ...cur, [key]: restored })); });
     }, [key]);
+    useEffect(() => {
+        const stores = persistence.current;
+        return () => { for (const store of stores.values()) store.dispose(); stores.clear(); };
+    }, []);
 
-    const update = useCallback(
-        (f: (l: L.Layout) => L.Layout) => {
-            setLayout((cur) => {
-                if (!cur) return cur;
-                const next = f(cur);
-                if (next !== cur && persistence.current?.key === key) persistence.current.change(next);
-                return next;
+    const updateAt = useCallback(
+        (id: string, f: (l: L.Layout) => L.Layout) => {
+            setLayouts((cur) => {
+                const current = cur[id];
+                if (!current) return cur;
+                const next = f(current);
+                if (next === current) return cur;
+                persistence.current.get(id)?.change(next);
+                return { ...cur, [id]: next };
             });
         },
-        [key],
+        [],
     );
 
-    const open: Opener = useCallback(
-        (t, how = "here") => {
-            update((l) => {
+    const openAt = useCallback(
+        (id: string, t: OpenTarget, how: "here" | "right" | "down" = "here") => {
+            const small = id.endsWith("-narrow");
+            updateAt(id, (l) => {
                 const leaf = L.focusedLeaf(l);
-                if (how === "here" || narrow) return L.openResource(l, t);
+                if (how === "here" || small) return L.openResource(l, t);
                 return L.splitLeaf(l, leaf.id, how === "right" ? "row" : "column", t);
             });
-            if (narrow) setSidebar(false);
+            if (small) setSidebar(false);
         },
-        [update, narrow],
+        [updateAt],
     );
+    const open: Opener = useCallback((t, how) => openAt(key, t, how), [key, openAt]);
 
     const [adding, setAdding] = useState(false);
     const projectAdded = (p: Project) => {
@@ -138,7 +142,7 @@ export function Workspace() {
             {adding && <AddProjectDialog onDone={projectAdded} onClose={() => setAdding(false)} />}
             {notice && (
                 <div className="notice" role="status">
-                    {notice} <button className="ghost" onClick={() => { setNotice(null); void persistence.current?.flush(); }}>배치 다시 저장</button>
+                    {notice} <button className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</button>
                     <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
                 </div>
             )}
@@ -188,7 +192,11 @@ export function Workspace() {
                     </aside>
                 )}
                 <main className="main">
-                    {layout ? <SplitView layout={layout} update={update} open={open} narrow={narrow} projects={projects.data ?? []} /> : <div className="boot">배치 불러오는 중…</div>}
+                    {Object.entries(layouts).map(([id, saved]) => (
+                        <SplitView key={id} layout={saved} update={(f) => updateAt(id, f)} open={(t, how) => openAt(id, t, how)} narrow={id.endsWith("-narrow")}
+                            visible={id === key} projects={projects.data ?? []} />
+                    ))}
+                    {!layout && <div className="boot">배치 불러오는 중…</div>}
                 </main>
             </div>
         </div>

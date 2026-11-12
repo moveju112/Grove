@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Project } from "../api/generated";
 import * as L from "../state/layout";
+import { PaneVisibility } from "../state/paneVisibility";
 import { FilesView } from "./FilesView";
 import { ProjectView } from "./ProjectView";
 import { SessionView } from "./SessionView";
@@ -8,7 +9,7 @@ import { Settings } from "./Settings";
 import { TerminalView } from "./TerminalView";
 import type { Opener } from "./Workspace";
 
-type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; projects: Project[] };
+type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; visible: boolean; projects: Project[] };
 type ViewProps = Props & { maximized: string | null; toggleMaximize: (leafId: string) => void };
 
 export function SplitView(p: Props) {
@@ -22,32 +23,24 @@ export function SplitView(p: Props) {
         p.update((l) => L.focus(l, id));
         setMaximized(zoom === id ? null : id);
     } };
-    if (p.narrow) {
-        // 좁은 화면: 포커스된 pane 하나만 보여 주고, 다른 pane은 전환 메뉴로 접근한다(상태는 보존).
-        const all = L.leaves(p.layout.root);
-        return (
-            <div className="split-root">
-                {all.length > 1 && (
-                    <nav className="pane-switch" aria-label="pane 전환">
-                        {all.map((leaf, i) => (
-                            <button key={leaf.id} className={leaf.id === p.layout.focused_leaf ? "on" : ""} onClick={() => p.update((l) => L.focus(l, leaf.id))}>
-                                영역 {i + 1}
-                            </button>
-                        ))}
-                    </nav>
-                )}
-                <PaneView {...view} leaf={L.focusedLeaf(p.layout)} />
-            </div>
-        );
-    }
+    const all = L.leaves(p.layout.root);
     return (
-        <div className="split-root" onKeyDownCapture={(e) => {
+        <div className="split-root" data-layout-mode={p.narrow ? "narrow" : "wide"} hidden={!p.visible} inert={!p.visible} onKeyDownCapture={(e) => {
             if (zoom && e.key === "Escape") {
                 e.preventDefault();
                 e.stopPropagation();
                 setMaximized(null);
             }
         }}>
+            {p.narrow && all.length > 1 && (
+                <nav className="pane-switch" aria-label="pane 전환">
+                    {all.map((leaf, i) => (
+                        <button key={leaf.id} className={leaf.id === p.layout.focused_leaf ? "on" : ""} onClick={() => p.update((l) => L.focus(l, leaf.id))}>
+                            영역 {i + 1}
+                        </button>
+                    ))}
+                </nav>
+            )}
             <NodeView {...view} node={p.layout.root} path={[]} />
         </div>
     );
@@ -57,7 +50,8 @@ function NodeView(p: ViewProps & { node: L.Node; path: number[] }) {
     const ref = useRef<HTMLDivElement>(null);
     if (p.node.type === "leaf") return <PaneView {...p} leaf={p.node} />;
     const n = p.node;
-    const shown = (node: L.Node) => !p.maximized || L.leaves(node).some((leaf) => leaf.id === p.maximized);
+    const single = p.narrow ? p.layout.focused_leaf : p.maximized;
+    const shown = (node: L.Node) => !single || L.leaves(node).some((leaf) => leaf.id === single);
     const onDrag = (e: React.PointerEvent) => {
         const el = ref.current;
         if (!el) return;
@@ -83,12 +77,12 @@ function NodeView(p: ViewProps & { node: L.Node; path: number[] }) {
     };
     return (
         <div ref={ref} className={`split ${n.direction}`} data-testid={`split-${n.direction}`}>
-            <div className="split-child" hidden={!shown(n.children[0])} style={{ flexBasis: p.maximized ? "100%" : `${n.ratio * 100}%` }}>
+            <div className="split-child" hidden={!shown(n.children[0])} style={{ flexBasis: single ? "100%" : `${n.ratio * 100}%` }}>
                 <NodeView {...p} node={n.children[0]} path={[...p.path, 0]} />
             </div>
             <div
                 className="divider"
-                hidden={!!p.maximized}
+                hidden={!!single}
                 role="separator"
                 aria-orientation={n.direction === "row" ? "vertical" : "horizontal"}
                 aria-valuenow={Math.round(n.ratio * 100)}
@@ -99,7 +93,7 @@ function NodeView(p: ViewProps & { node: L.Node; path: number[] }) {
                 onDoubleClick={() => p.update((l) => L.setDirection(l, p.path, n.direction === "row" ? "column" : "row"))}
                 title="끌어서 크기 조절 · 더블클릭으로 방향 전환"
             />
-            <div className="split-child" hidden={!shown(n.children[1])} style={{ flexBasis: p.maximized ? "100%" : `${(1 - n.ratio) * 100}%` }}>
+            <div className="split-child" hidden={!shown(n.children[1])} style={{ flexBasis: single ? "100%" : `${(1 - n.ratio) * 100}%` }}>
                 <NodeView {...p} node={n.children[1]} path={[...p.path, 1]} />
             </div>
         </div>
@@ -112,7 +106,9 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     const active = leaf.tabs.find((t) => t.id === leaf.active_tab);
     const others = L.leaves(p.layout.root).filter((x) => x.id !== leaf.id);
     const projectName = (id?: string) => p.projects.find((x) => x.id === id)?.name;
+    const visible = p.visible && (!p.narrow || focused) && (!p.maximized || p.maximized === leaf.id);
     return (
+        <PaneVisibility.Provider value={visible}>
         <section className={`pane ${focused ? "focused" : ""}`} onPointerDownCapture={() => !focused && p.update((l) => L.focus(l, leaf.id))} data-testid="pane" data-leaf={leaf.id}>
             <div className="tabbar" role="tablist">
                 {leaf.tabs.map((t) => (
@@ -184,6 +180,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 )}
             </div>
         </section>
+        </PaneVisibility.Provider>
     );
 }
 

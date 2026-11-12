@@ -82,11 +82,11 @@ test("좁은 화면을 다녀와도 미반영 넓은 화면 배치와 각 기기
     await login(page);
     await page.getByRole("separator").press("ArrowLeft");
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(page.getByTestId("pane")).toHaveCount(1);
+    await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(1);
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await expect(page.getByRole("tab", { selected: true })).toContainText("설정");
     await page.setViewportSize({ width: 1400, height: 900 });
-    await expect(page.getByTestId("pane")).toHaveCount(2);
+    await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(2);
     await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "35");
     const narrow = await page.evaluate((key) => JSON.parse(localStorage.getItem(`grove.layout.${key}-narrow`)!), device);
     expect(narrow.layout.root.tabs[0].kind).toBe("settings");
