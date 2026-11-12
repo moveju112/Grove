@@ -6,6 +6,8 @@ export type ScriptListing = { scripts: ProjectScript[]; execution: Execution | n
 export type RunAttempt = {
     format: 1; projectId: string; projectName: string; actorId: string; script: ProjectScript; execution: Execution;
     sessionKey: string; taskKey: string; sessionId?: string;
+    /// 초기 설정 실행(PROJECT-010): 실행 위치(null=프로젝트 폴더). 그 위치의 새 대화에서 실행한다.
+    setup?: { worktreeId: string | null };
 };
 type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 const prefix = (project: string) => `grove.script.run.${project}.`;
@@ -25,7 +27,8 @@ export function parseRun(raw: string | null, project: string): RunAttempt | null
         const value = JSON.parse(raw ?? "null") as RunAttempt | null;
         if (!value || value.format !== 1 || value.projectId !== project || !id(project) || !id(value.actorId)
             || !text(value.projectName, 200) || !key(value.sessionKey) || !key(value.taskKey)
-            || value.sessionId !== undefined && !id(value.sessionId)) return null;
+            || value.sessionId !== undefined && !id(value.sessionId)
+            || value.setup !== undefined && (typeof value.setup !== "object" || value.setup === null || (value.setup.worktreeId !== null && !id(value.setup.worktreeId)))) return null;
         const script = value.script, execution = value.execution;
         if (!script || !id(script.id) || script.project_id !== project || !text(script.name, 160)
             || !text(script.command, 65536) || new TextEncoder().encode(script.command).length > 65536 || script.command.includes("\0")
@@ -47,10 +50,10 @@ export function pendingRuns(store: Store & Pick<Storage, "length" | "key">, proj
     return rows;
 }
 
-export function newRun(projectName: string, actorId: string, script: ProjectScript, execution: Execution): RunAttempt {
+export function newRun(projectName: string, actorId: string, script: ProjectScript, execution: Execution, setup?: { worktreeId: string | null }): RunAttempt {
     const base = newKey();
     return { format: 1, projectId: script.project_id, projectName, actorId, script: { ...script }, execution: { ...execution },
-        sessionKey: `${base}:session`, taskKey: `${base}:task` };
+        sessionKey: `${base}:session`, taskKey: `${base}:task`, ...(setup ? { setup: { ...setup } } : {}) };
 }
 export function forgetRun(store: Store, name: string) {
     store.removeItem(name);
@@ -63,10 +66,13 @@ export type RunTransport = {
 };
 const transport: RunTransport = {
     owner: async () => (await api.get<{ root_id: string }>("/auth/whoami")).root_id,
-    session: (attempt) => api.post(`/projects/${attempt.projectId}/sessions`, { title: `Script · ${attempt.script.name}` },
+    session: (attempt) => api.post(`/projects/${attempt.projectId}/sessions`, attempt.setup
+        ? { title: `초기 설정 · ${attempt.script.name}`, ...(attempt.setup.worktreeId ? { worktree_id: attempt.setup.worktreeId } : {}) }
+        : { title: `Script · ${attempt.script.name}` },
         { key: attempt.sessionKey, requires: ["project_scripts_v1"] }),
     task: (attempt) => api.post(`/sessions/${attempt.sessionId}/scripts/${attempt.script.id}/run`, {
         command: attempt.script.command, expected_revision: attempt.script.revision, expected_execution: attempt.execution.fingerprint, expected_owner: attempt.actorId,
+        ...(attempt.setup ? { setup: true } : {}),
     }, { key: attempt.taskKey, requires: ["project_scripts_v1"] }),
 };
 
@@ -89,7 +95,8 @@ export async function confirmRun(store: Store, original: RunAttempt, active: () 
         const observed = parseRun(raw, attempt.projectId);
         const identity = (value: RunAttempt) => JSON.stringify([
             value.projectId, value.actorId, value.script.id, value.script.project_id, value.script.name, value.script.command, value.script.revision,
-            value.execution.root, value.execution.shell, value.execution.fingerprint, value.sessionKey, value.taskKey,
+            value.execution.root, value.execution.shell, value.execution.fingerprint, value.sessionKey, value.taskKey, value.setup?.worktreeId,
+            value.setup !== undefined,
         ]);
         if (!observed || identity(observed) !== identity(attempt)) throw new Error("실행 요청 사본이 바뀌었습니다. 원래 작업을 확인하세요.");
         attempt = observed;

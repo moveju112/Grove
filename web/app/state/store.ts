@@ -184,6 +184,7 @@ export function applyEvent(e: EventRecord) {
         case "project.created":
         case "project.updated":
             invalidate("projects");
+            if (pid) invalidate(`setup:${pid}`);
             invalidate("recent");
             invalidate("search");
             break;
@@ -226,6 +227,7 @@ export function applyEvent(e: EventRecord) {
             break;
         case "worktree.changed":
             if (pid) invalidate(`worktrees:${pid}`);
+            if (pid) invalidate(`setup:${pid}`);
             break;
         case "terminal.changed":
         case "terminal.removed":
@@ -257,12 +259,15 @@ export function applyEvent(e: EventRecord) {
             break;
         case "task.changed":
             if (sid) invalidate(`tasks:${sid}`);
+            // 초기 설정 상태는 작업 상태에서 읽는다(PROJECT-010).
+            if (pid) invalidate(`setup:${pid}`);
             break;
         case "remote_watch.changed":
             if (sid) invalidate(`remote-watches:${sid}`);
             break;
         case "project_script.changed":
             if (pid) invalidate(`scripts:${pid}`);
+            if (pid) invalidate(`setup:${pid}`);
             break;
         case "file.changed":
             refreshFiles(pid ?? undefined);

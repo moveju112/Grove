@@ -151,6 +151,9 @@ pub struct Run {
     pub expected_revision: i64,
     pub expected_execution: String,
     pub expected_owner: String,
+    /// 초기 설정 실행(PROJECT-010). 이 script가 프로젝트의 초기 설정 script여야 한다.
+    #[serde(default)]
+    pub setup: bool,
 }
 pub async fn run(State(app): State<App>, p: Principal, headers: HeaderMap, Path((session,id)): Path<(String,String)>, Json(body): Json<Run>) -> ApiResult<Response> {
     if p.root_id != body.expected_owner {
@@ -160,5 +163,50 @@ pub async fn run(State(app): State<App>, p: Principal, headers: HeaderMap, Path(
     crate::tasks::start(State(app),p,headers,Path(session),Json(crate::tasks::StartBody {
         command:body.command,cwd:None,timeout_ms:None,
         script:Some(Intent {id,expected_revision:body.expected_revision,expected_execution:body.expected_execution}),
+        setup:body.setup,
     })).await
+}
+
+/// 초기 설정 상태(PROJECT-010): 지정한 script와 실행 위치(프로젝트 폴더·활성 worktree)별 마지막 설정 실행.
+/// 상태는 작업 상태 그대로(running·completed·failed·timeout·cancelled·unknown), 실행한 적 없으면 not_run.
+/// 각 위치의 실행 확인값(fingerprint)을 함께 돌려 화면이 그 위치의 대화에서 확인된 실행을 요청하게 한다.
+pub async fn setup_status(State(app): State<App>, _p: Principal, Path(project): Path<String>) -> ApiResult<Json<Value>> {
+    Ok(Json(app.db.call(move |c| {
+        let p = crate::projects::get(c, &project)?;
+        let script = match &p.setup_script_id {
+            Some(id) => c.query_row(&format!("SELECT {COLS} FROM project_scripts WHERE id=?1 AND deleted_at IS NULL"), [id], row).optional()?,
+            None => None,
+        };
+        let usable = p.available && p.archived_at.is_none();
+        let shell = {
+            let setting = crate::settings::effective(c, "exec.shell", Some(&project), None)?;
+            crate::tools::shell::resolve_shell(setting.as_str().unwrap_or("default")).to_string()
+        };
+        let mut targets: Vec<(Option<String>, String, String)> = vec![(None, "프로젝트 폴더".into(), p.root_path.clone())];
+        let mut st = c.prepare("SELECT id, name, path FROM worktrees WHERE project_id = ?1 AND status = 'active' ORDER BY created_at")?;
+        for r in st.query_map([&project], |r| Ok((Some(r.get::<_, String>(0)?), r.get::<_, String>(1)?, r.get::<_, String>(2)?)))? {
+            targets.push(r?);
+        }
+        let mut out = vec![];
+        for (wid, name, path) in targets {
+            let last: Option<(String, String, String, Option<i64>, String, Option<String>)> = c.query_row(
+                "SELECT t.id, t.session_id, t.status, t.exit_code, t.started_at, t.ended_at FROM setup_runs r JOIN tasks t ON t.id = r.task_id \
+                 WHERE r.project_id = ?1 AND r.worktree_id IS ?2 AND r.script_id = ?3 ORDER BY r.created_at DESC, r.task_id DESC LIMIT 1",
+                params![project, wid, p.setup_script_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?)),
+            ).optional()?;
+            let attempts: i64 = c.query_row(
+                "SELECT COUNT(*) FROM setup_runs WHERE project_id = ?1 AND worktree_id IS ?2 AND script_id = ?3",
+                params![project, wid, p.setup_script_id], |r| r.get(0))?;
+            let exists = FsPath::new(&path).is_dir();
+            let fingerprint = (usable && exists).then(|| fingerprint(&p, FsPath::new(&path), &shell));
+            out.push(json!({
+                "worktree_id": wid, "name": name, "path": path, "fingerprint": fingerprint, "attempts": attempts,
+                "status": last.as_ref().map(|l| l.2.clone()).unwrap_or_else(|| "not_run".into()),
+                "task_id": last.as_ref().map(|l| l.0.clone()), "session_id": last.as_ref().map(|l| l.1.clone()),
+                "exit_code": last.as_ref().and_then(|l| l.3), "started_at": last.as_ref().map(|l| l.4.clone()),
+                "ended_at": last.as_ref().and_then(|l| l.5.clone()),
+            }));
+        }
+        Ok(json!({ "script": script, "targets": out }))
+    }).await?))
 }

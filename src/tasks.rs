@@ -159,6 +159,8 @@ pub struct Spawn {
     pub timeout_ms: u64,
     pub detached: bool,
     pub script: Option<crate::project_scripts::Snapshot>,
+    /// 프로젝트의 초기 설정 script 실행(PROJECT-010). 작업 접수와 같은 transaction에서 실행 위치별 기록을 남긴다.
+    pub setup: bool,
 }
 
 /// 작업을 기록하고 프로세스를 시작한다. 반환 시점에 row는 commit되어 있다.
@@ -212,6 +214,17 @@ fn record_start(c: &Connection, id: &str, s: &Spawn, now: &str, expected_root: O
         "INSERT INTO tasks (id,session_id,project_id,call_id,command,cwd,timeout_ms,status,detached,started_at,script_snapshot) VALUES (?1,?2,?3,?4,?5,?6,?7,'running',?8,?9,?10)",
         params![id,s.session_id,sess.project_id,s.call_id,s.command,s.cwd_rel,s.timeout_ms as i64,s.detached as i64,now,s.script.as_ref().map(serde_json::to_string).transpose()?],
     )?;
+    if s.setup {
+        let script = s.script.as_ref().ok_or_else(|| ApiError::invalid("초기 설정 실행은 프로젝트 script로만 할 수 있습니다"))?;
+        let chosen: Option<String> = c.query_row("SELECT setup_script_id FROM projects WHERE id = ?1", [&sess.project_id], |r| r.get(0))?;
+        if chosen.as_deref() != Some(script.id.as_str()) {
+            return Err(ApiError::conflict("setup_script_changed", "초기 설정 script 지정이 바뀌었습니다. 다시 확인하세요"));
+        }
+        c.execute(
+            "INSERT INTO setup_runs (task_id, project_id, worktree_id, script_id, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![id, sess.project_id, sess.worktree_id, script.id, now],
+        )?;
+    }
     crate::task_logs::begin(c,id,now)?;
     let t=get(c,id)?;
     events::append(c,now,"task.changed",Some(&t.project_id),Some(&t.session_id),&serde_json::to_value(&t)?)?;
@@ -505,6 +518,8 @@ pub struct StartBody {
     pub cwd: Option<String>,
     pub timeout_ms: Option<u64>,
     pub script: Option<crate::project_scripts::Intent>,
+    #[serde(default)]
+    pub setup: bool,
 }
 
 /// 사용자가 직접 시작하는 백그라운드 작업. 소유자가 명시적으로 실행하므로 승인 단계가 없다.
@@ -516,6 +531,7 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     // 같은 Idempotency-Key 재전송이 프로세스를 두 번 띄우지 않게, 기록된 응답이 있으면 그대로 돌려준다.
     let mut hash_body = json!({ "s": session_id, "c": b.command, "w": b.cwd, "t": timeout });
     if let Some(script) = &b.script { hash_body["script"] = json!(script); }
+    if b.setup { hash_body["setup"] = json!(true); }
     let h = idem::body_hash("task.start", &hash_body);
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
@@ -546,7 +562,7 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     let id=crate::util::new_id();
     let unknown=ApiError::conflict("result_unknown","작업 접수 결과를 확정하지 못했습니다. 작업 목록에서 상태를 확인하세요")
         .with_details(json!({"task_id":id,"session_id":session_id}));
-    let s=Spawn { session_id, call_id:None,shell,limits,command:b.command,cwd_rel:rel_display(&root,&cwd),timeout_ms:timeout,detached:true,script };
+    let s=Spawn { session_id, call_id:None,shell,limits,command:b.command,cwd_rel:rel_display(&root,&cwd),timeout_ms:timeout,detached:true,script,setup:b.setup };
     let (plan, record_id, pending)=(s.clone(),id.clone(),unknown.body());
     let expected_root=root.clone();
     // receipt·작업·로그·이벤트를 먼저 commit한다. 경합한 요청은 저장된 ID만 받고 실행하지 않는다.
@@ -755,7 +771,7 @@ mod tests {
             let snapshot = crate::project_scripts::prepare(c,"p",&intent,"echo fixture",&root,shell)?;
             let plan = Spawn {
                 session_id:"s".into(),call_id:None,shell:shell.into(),limits:crate::procs::Limits::default(),
-                command:"echo fixture".into(),cwd_rel:".".into(),timeout_ms:1000,detached:true,script:Some(snapshot),
+                command:"echo fixture".into(),cwd_rel:".".into(),timeout_ms:1000,detached:true,script:Some(snapshot),setup:false,
             };
             let changed = if shell == "sh" { "bash" } else { "sh" };
             c.execute("INSERT INTO settings(scope,scope_id,key,value,revision,updated_at) VALUES('project','p','exec.shell',?1,1,?2)",
@@ -785,7 +801,7 @@ mod tests {
                 session_id: "s".into(), call_id: None, shell: "default".into(),
                 limits: crate::procs::Limits::default(), command: "echo fixture".into(),
                 cwd_rel: ".".into(), timeout_ms: 1000, detached: true,
-                script: None,
+                script: None, setup: false,
             };
             let tx = c.transaction()?;
             let error = record_start(&tx, "stale", &plan, &now, Some(&old)).unwrap_err();

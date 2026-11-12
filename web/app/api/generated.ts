@@ -28,7 +28,11 @@ pinned_at: string | null,
 /**
  * 붙은 라벨 id(PROJECT-008, `/labels`).
  */
-labels: Array<string>, };
+labels: Array<string>, 
+/**
+ * 초기 설정 script(PROJECT-010). 지정만으로는 실행하지 않는다.
+ */
+setup_script_id: string | null, };
 
 export type Label = { id: string, name: string, color: string, revision: number, created_at: string, updated_at: string, 
 /**

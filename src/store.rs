@@ -802,6 +802,18 @@ pub const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX project_labels_label ON project_labels(label_id);
     "#,
+    // 49: 초기 설정 script 지정과 실행 위치(프로젝트 폴더·worktree)별 설정 실행 기록(PROJECT-010). 상태는 작업 상태에서 읽는다.
+    r#"
+    ALTER TABLE projects ADD COLUMN setup_script_id TEXT;
+    CREATE TABLE setup_runs (
+        task_id TEXT PRIMARY KEY REFERENCES tasks(id),
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        worktree_id TEXT,
+        script_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+    );
+    CREATE INDEX setup_runs_target ON setup_runs(project_id, worktree_id, created_at);
+    "#,
 ];
 
 #[cfg(test)]

@@ -59,6 +59,46 @@ test("script 저장·확인 취소는 실행하지 않고 확인 후 원래 프�
     await expect(tasks.getByTestId("task-row")).toContainText(`script · ${f.name} · r1`);
 });
 
+// PROJECT-010: 초기 설정 script 지정은 실행하지 않고, 확인 뒤 실행·실패·재시도를 위치별 상태로 보인다.
+test("초기 설정 script를 지정하고 실패한 설정을 다시 실행해 성공 상태와 시도 횟수를 본다", async ({ page }) => {
+    const f = await setup(page);
+    const marker = `${f.name}.ok`;
+    const row = await add(page, f.panel, f.name, `test -f '${marker}' || { touch '${marker}'; exit 3; }`);
+    try {
+        await row.getByRole("button", { name: "초기 설정으로 지정", exact: true }).click();
+        const group = f.panel.getByTestId("project-setup");
+        await expect(group).toContainText(f.name);
+        const target = group.getByTestId("setup-target").first();
+        await expect(target).toHaveAttribute("data-status", "not_run");
+        expect(existsSync(join(f.root, marker))).toBe(false);
+        await target.getByRole("button", { name: "실행 확인", exact: true }).click();
+        const review = page.getByRole("dialog", { name: "script 실행 확인", exact: true });
+        await expect(review).toContainText("초기 설정 실행 확인");
+        await expect(review).toContainText("프로젝트 폴더");
+        // 실행하면 그 위치의 작업 대화가 열린다. 프로젝트로 돌아와 상태를 본다.
+        const back = async () => {
+            await expect(page.getByTestId("session-view")).toBeVisible();
+            await page.getByTestId("project-row").getByRole("button", { name: f.a.name, exact: true }).click();
+            await openDetails(f.panel);
+        };
+        await review.getByRole("button", { name: "이 명령 실행", exact: true }).click();
+        await back();
+        await expect(target).toHaveAttribute("data-status", "failed");
+        await expect(target).toContainText("종료 코드 3");
+        await expect(target).toContainText("시도 1회");
+        await target.getByRole("button", { name: "다시 실행 확인", exact: true }).click();
+        await review.getByRole("button", { name: "이 명령 실행", exact: true }).click();
+        await back();
+        await expect(target).toHaveAttribute("data-status", "completed");
+        await expect(target).toContainText("시도 2회");
+        await row.getByRole("button", { name: "초기 설정 지정 해제", exact: true }).click();
+        await expect(group).toContainText("지정 안 함");
+    } finally {
+        const p = await apiCall<{ revision: number; setup_script_id: string | null }>("GET", `/projects/${f.a.id}`);
+        if (p.setup_script_id) await apiCall("PATCH", `/projects/${f.a.id}`, { expected_revision: p.revision, setup_script_id: null });
+    }
+});
+
 for (const phase of ["session", "task"] as const) test(`${phase} 응답 유실 뒤 새로고침해도 원래 키를 확인해 script를 한 번만 실행한다`, async ({ page }) => {
     const f = await setup(page);
     const row = await add(page, f.panel, f.name, f.command);

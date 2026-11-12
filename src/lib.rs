@@ -242,6 +242,7 @@ pub fn router(app: App) -> Router {
         .route("/projects/{id}/scripts", get(project_scripts::list).post(project_scripts::create))
         .route("/projects/{id}/scripts/{script}", put(project_scripts::update).delete(project_scripts::remove))
         .route("/sessions/{id}/scripts/{script}/run", post(project_scripts::run))
+        .route("/projects/{id}/setup", get(project_scripts::setup_status))
         .route("/sessions/{id}/file-changes", get(changes::list))
         .route("/sessions/{id}/file-changes/undo", post(changes::undo))
         .route("/sessions/{id}/file-changes/redo", post(changes::redo))

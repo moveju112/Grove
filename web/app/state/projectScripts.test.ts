@@ -16,6 +16,23 @@ function store() {
 function transport(): RunTransport {
     return { owner: vi.fn(async () => "actor-a"), session: vi.fn(async () => ({ id: "session-a" })), task: vi.fn(async () => ({ id: "task-a" })) };
 }
+describe("초기 설정 실행 사본(PROJECT-010)", () => {
+    it("실행 위치를 보존하고 손상된 위치 값은 실행 가능한 사본으로 보지 않는다", () => {
+        const setup = { ...original, setup: { worktreeId: "wt-1" } };
+        expect(parseRun(JSON.stringify(setup), "project-a")?.setup).toEqual({ worktreeId: "wt-1" });
+        expect(parseRun(JSON.stringify({ ...original, setup: { worktreeId: null } }), "project-a")?.setup).toEqual({ worktreeId: null });
+        expect(parseRun(JSON.stringify({ ...original, setup: { worktreeId: "../x" } }), "project-a")).toBeNull();
+        expect(parseRun(JSON.stringify({ ...original, setup: null }), "project-a")).toBeNull();
+    });
+    it("같은 키의 사본이라도 실행 위치가 다르면 덮어쓰지 않는다", async () => {
+        const storage = store(), remote = transport();
+        const setup: RunAttempt = { ...original, setup: { worktreeId: "wt-1" } };
+        storage.setItem(runKey(setup), JSON.stringify({ ...setup, setup: { worktreeId: "wt-2" } }));
+        await expect(confirmRun(storage, setup, () => true, remote)).rejects.toThrow("사본이 바뀌었습니다");
+        expect(remote.session).not.toHaveBeenCalled();
+    });
+});
+
 describe("프로젝트 script 실행 요청 복구", () => {
     it("실행 전 사본을 쓰고 세션 ID도 보존한 뒤 task를 접수한다", async () => {
         const storage = store(), remote = transport();

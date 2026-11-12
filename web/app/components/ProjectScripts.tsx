@@ -7,11 +7,20 @@ import type { Opener } from "./Workspace";
 
 type Editor = { id?: string; revision?: number; name: string; command: string };
 type EditAttempt = { method: "post" | "put" | "del"; path: string; body?: object; key: string };
-type Review = { script: ProjectScript; execution: Execution; projectName: string; actorId: string };
+type Review = { script: ProjectScript; execution: Execution; projectName: string; actorId: string; setup?: { worktreeId: string | null; target: string } };
+type SetupTarget = {
+    worktree_id: string | null; name: string; path: string; fingerprint: string | null; attempts: number;
+    status: string; task_id: string | null; session_id: string | null; exit_code: number | null; ended_at: string | null;
+};
+type SetupStatus = { script: ProjectScript | null; targets: SetupTarget[] };
+const SETUP_LABEL: Record<string, string> = {
+    not_run: "미실행", running: "실행 중", completed: "성공", failed: "실패", timeout: "시간 초과", cancelled: "취소됨", unknown: "결과 불명",
+};
 
 export function ProjectScripts({ projectId, projectName, open }: { projectId: string; projectName: string; open: Opener }) {
     const supported = useCapability("project_scripts_v1");
     const list = useQuery<ScriptListing>(supported === false ? null : `scripts:${projectId}`, () => api.get(`/projects/${projectId}/scripts`));
+    const setup = useQuery<SetupStatus>(supported === false ? null : `setup:${projectId}`, () => api.get(`/projects/${projectId}/setup`));
     const [editor, setEditor] = useState<Editor | null>(null);
     const [editAttempt, setEditAttempt] = useState<EditAttempt | null>(null);
     const [review, setReview] = useState<Review | null>(null);
@@ -69,7 +78,7 @@ export function ProjectScripts({ projectId, projectName, open }: { projectId: st
             }
         } finally {
             working.current = false;
-            if (alive.current && active()) { setBusy(false); refresh(); list.reload(); }
+            if (alive.current && active()) { setBusy(false); refresh(); list.reload(); setup.reload(); }
         }
     };
     const latest = async () => {
@@ -81,8 +90,24 @@ export function ProjectScripts({ projectId, projectName, open }: { projectId: st
             setEditor({ ...script }); setError(null); list.reload();
         } catch (error) { if (alive.current && active()) setError(error instanceof Error ? error.message : "다시 읽기 실패"); }
     };
+    // 초기 설정 script 지정·해제(PROJECT-010). 지정만으로는 실행하지 않는다.
+    const designate = async (scriptId: string | null) => {
+        if (working.current) return;
+        working.current = true;
+        setBusy(true); setError(null);
+        try {
+            const project = await api.get<{ revision: number }>(`/projects/${projectId}`);
+            await api.patch(`/projects/${projectId}`, { expected_revision: project.revision, setup_script_id: scriptId });
+        } catch (error) {
+            if (alive.current && active()) setError(error instanceof Error ? error.message : "초기 설정 지정 실패");
+        } finally {
+            working.current = false;
+            if (alive.current && active()) { setBusy(false); setup.reload(); }
+        }
+    };
     if (supported === false) return null;
     const locked = busy || editAttempt !== null;
+    const setupId = setup.data?.script?.id ?? null;
     return <details className="project-scripts" data-testid="project-scripts">
         <summary>프로젝트 script · {list.data?.scripts.length ?? 0}</summary>
         <p className="muted small">등록만으로 실행하지 않습니다. 실행 전 프로젝트·작업 경로·셸·명령을 확인하세요. 비밀정보는 명령에 넣지 마세요.</p>
@@ -93,6 +118,10 @@ export function ProjectScripts({ projectId, projectName, open }: { projectId: st
                 <strong>{script.name}</strong><span className="muted small">revision {script.revision}</span><code>{script.command}</code>
                 <button className="ghost small" disabled={locked || editor !== null || !list.data?.execution} onClick={() =>
                     setReview({ script: { ...script }, execution: { ...list.data!.execution! }, projectName, actorId: list.data!.owner })}>실행 확인</button>
+                <button className="ghost small" disabled={locked} aria-pressed={setupId === script.id}
+                    onClick={() => void designate(setupId === script.id ? null : script.id)}>
+                    {setupId === script.id ? "초기 설정 지정 해제" : "초기 설정으로 지정"}
+                </button>
                 <button className="ghost small" disabled={locked} onClick={() => { setEditor({ ...script }); setError(null); }}>편집</button>
                 <button className="ghost small" disabled={locked} onClick={() => {
                     if (confirm(`script “${script.name}” 정의만 삭제할까요? 이미 실행한 작업은 취소하지 않습니다.`))
@@ -101,6 +130,23 @@ export function ProjectScripts({ projectId, projectName, open }: { projectId: st
             </li>)}
         </ul>
         {!list.data?.execution && list.data && <p className="warn small">프로젝트를 사용할 수 없어 실행할 수 없습니다. 정의는 편집할 수 있습니다.</p>}
+        <div role="group" aria-label="초기 설정" data-testid="project-setup">
+            <h3 className="small">초기 설정 {setup.data?.script ? <>· <strong>{setup.data.script.name}</strong></> : <span className="muted">· 지정 안 함</span>}</h3>
+            {setup.data?.script && <ul className="session-list">
+                {setup.data.targets.map((t) => <li key={t.worktree_id ?? "root"} data-testid="setup-target" data-status={t.status}>
+                    <span>{t.name}</span>
+                    <span className={t.status === "completed" ? "muted small" : t.status === "not_run" || t.status === "running" ? "small" : "warn small"}>
+                        {SETUP_LABEL[t.status] ?? t.status}{t.exit_code != null && t.status !== "completed" ? ` (종료 코드 ${t.exit_code})` : ""}{t.attempts > 0 ? ` · 시도 ${t.attempts}회` : ""}
+                    </span>
+                    {t.session_id && <button className="ghost small" onClick={() => open({ kind: "session", project_id: projectId, resource_id: t.session_id!, title: `초기 설정 · ${t.name}` })}>로그</button>}
+                    <button className="ghost small" disabled={locked || editor !== null || !t.fingerprint || !list.data?.execution || t.status === "running"}
+                        onClick={() => setReview({
+                            script: { ...setup.data!.script! }, execution: { root: t.path, shell: list.data!.execution!.shell, fingerprint: t.fingerprint! },
+                            projectName, actorId: list.data!.owner, setup: { worktreeId: t.worktree_id, target: t.name },
+                        })}>{t.status === "not_run" ? "실행 확인" : "다시 실행 확인"}</button>
+                </li>)}
+            </ul>}
+        </div>
         <button className="ghost small" disabled={locked || editor !== null} onClick={() => setEditor({ name: "", command: "" })}>script 추가</button>
         {editor && <form className="stack" onSubmit={(event) => {
             event.preventDefault();
@@ -131,7 +177,8 @@ export function ProjectScripts({ projectId, projectName, open }: { projectId: st
                 if (confirm("기기의 요청 사본만 지웁니다. 서버 작업을 취소하거나 기록을 지우지 않습니다. 계속할까요?")) forgetRun(localStorage, row.key);
             }}>요청 사본만 지우기</button>
         </div>)}
-        {review && <RunReview review={review} onClose={() => setReview(null)} onConfirm={() => void run(newRun(review.projectName, review.actorId, review.script, review.execution))} />}
+        {review && <RunReview review={review} onClose={() => setReview(null)} onConfirm={() => void run(newRun(review.projectName, review.actorId, review.script, review.execution,
+            review.setup ? { worktreeId: review.setup.worktreeId } : undefined))} />}
     </details>;
 }
 
@@ -139,8 +186,8 @@ function RunReview({ review, onClose, onConfirm }: { review: Review; onClose: ()
     const dialog = useRef<HTMLDialogElement>(null);
     useEffect(() => { dialog.current!.showModal(); }, []);
     return <dialog ref={dialog} className="dialog script-dialog" aria-label="script 실행 확인" onCancel={(event) => { event.preventDefault(); onClose(); }}>
-        <h2>{review.script.name} 실행 확인</h2>
-        <p>프로젝트: <strong>{review.projectName}</strong></p>
+        <h2>{review.script.name} {review.setup ? "초기 설정 " : ""}실행 확인</h2>
+        <p>프로젝트: <strong>{review.projectName}</strong>{review.setup && <> · 위치: <strong>{review.setup.target}</strong></>}</p>
         <code>작업 경로: {review.execution.root}</code><code>셸: {review.execution.shell}</code>
         <pre>{review.script.command}</pre>
         <p className="muted small">revision {review.script.revision}의 명령을 새 작업 대화에서 한 번 접수합니다. 셸 명령은 프로젝트 밖의 파일에도 영향을 줄 수 있습니다.</p>

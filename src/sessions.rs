@@ -383,6 +383,8 @@ pub async fn delete_permanently(State(app): State<App>, p: Principal, headers: H
         }
         for sql in [
             "DELETE FROM goals WHERE session_id = ?1",
+            // 초기 설정 실행 기록은 작업과 함께 사라진다(PROJECT-010).
+            "DELETE FROM setup_runs WHERE task_id IN (SELECT id FROM tasks WHERE session_id = ?1)",
             "DELETE FROM tasks WHERE session_id = ?1",
             "DELETE FROM session_tool_grants WHERE session_id = ?1",
             "DELETE FROM cli_sessions WHERE session_id = ?1",

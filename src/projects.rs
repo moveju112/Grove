@@ -32,12 +32,14 @@ pub struct Project {
     pub pinned_at: Option<String>,
     /// 붙은 라벨 id(PROJECT-008, `/labels`).
     pub labels: Vec<String>,
+    /// 초기 설정 script(PROJECT-010). 지정만으로는 실행하지 않는다.
+    pub setup_script_id: Option<String>,
 }
 
 const COLS: &str = "id, name, root_path, created_at, updated_at, revision, archived_at, icon, \
     COALESCE((SELECT s.updated_at FROM sessions s WHERE s.project_id = projects.id AND julianday(s.updated_at) > julianday(projects.updated_at) \
               ORDER BY julianday(s.updated_at) DESC LIMIT 1), projects.updated_at) AS last_activity_at, pinned_at, \
-    (SELECT group_concat(label_id, ',') FROM (SELECT label_id FROM project_labels WHERE project_id = projects.id ORDER BY label_id))";
+    (SELECT group_concat(label_id, ',') FROM (SELECT label_id FROM project_labels WHERE project_id = projects.id ORDER BY label_id)), setup_script_id";
 
 /// 아이콘 최대 길이(문자). 이모지 조합(ZWJ·피부색)까지 담을 수 있게 넉넉히 둔다.
 const MAX_ICON_CHARS: usize = 8;
@@ -58,6 +60,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Project> {
         last_activity_at: r.get(8)?,
         pinned_at: r.get(9)?,
         labels: r.get::<_, Option<String>>(10)?.map(|s| s.split(',').map(String::from).collect()).unwrap_or_default(),
+        setup_script_id: r.get(11)?,
     })
 }
 
@@ -239,6 +242,9 @@ pub struct UpdateProject {
     pub icon: Option<Option<String>>,
     /// 고정·해제(PROJECT-008). 이미 같은 상태면 고정 시각을 바꾸지 않는다.
     pub pinned: Option<bool>,
+    /// 초기 설정 script 지정, null이면 해제(PROJECT-010). 이 프로젝트의 삭제되지 않은 script만.
+    #[serde(default, deserialize_with = "crate::util::double_option")]
+    pub setup_script_id: Option<Option<String>>,
 }
 
 /// 보관된 프로젝트 복원 검사(PROJECT-009). 폴더가 있으면 그대로 보관 해제, 없으면 해제 뒤 새 경로로 다시 연결해야 한다.
@@ -330,12 +336,13 @@ pub async fn update(
     };
     let h = idem::body_hash(
         "project.update",
-        &json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon, "pinned": body.pinned }),
+        &json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon, "pinned": body.pinned, "setup": body.setup_script_id }),
     );
+    let setup = body.setup_script_id.clone();
     let rev = body.expected_revision;
     let archived = body.archived;
     let pinned = body.pinned;
-    let pin_only = body.name.is_none() && body.archived.is_none() && body.root_path.is_none() && body.icon.is_none();
+    let pin_only = body.name.is_none() && body.archived.is_none() && body.root_path.is_none() && body.icon.is_none() && body.setup_script_id.is_none();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let cur = get(tx, &id)?;
         if cur.revision != rev {
@@ -369,6 +376,19 @@ pub async fn update(
             // 고정만 바꾸면 활동 시각(최근 활동순 정렬)을 건드리지 않는다.
             params![id, new_name, archived_at, if pin_only { cur.updated_at.as_str() } else { now }, new_icon, pinned_at],
         )?;
+        if let Some(script) = &setup {
+            if let Some(sid) = script {
+                let ok: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM project_scripts WHERE id = ?1 AND project_id = ?2 AND deleted_at IS NULL)",
+                    params![sid, id],
+                    |r| r.get(0),
+                )?;
+                if !ok {
+                    return Err(ApiError::not_found("이 프로젝트의 script가 아닙니다"));
+                }
+            }
+            tx.execute("UPDATE projects SET setup_script_id = ?2 WHERE id = ?1", params![id, script])?;
+        }
         let proj = get(tx, &id)?;
         events::append(tx, now, "project.updated", Some(&id), None, &serde_json::to_value(&proj)?)?;
         Ok((StatusCode::OK, serde_json::to_value(proj)?))

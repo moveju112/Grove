@@ -95,6 +95,98 @@ async fn stale_command_target_and_cross_project_requests_never_start_a_task() {
     assert!(!std::path::Path::new(p["root_path"].as_str().unwrap()).join("counter").exists());
 }
 
+/// PROJECT-010: 초기 설정 script 지정은 실행하지 않고, 실행 위치별 상태·실패·재시도를 작업 상태로 기록한다.
+#[tokio::test]
+async fn setup_script_status_failure_and_retry_are_tracked_per_location() {
+    let s = TestServer::start().await;
+    let p = s.create_project("setup").await;
+    let pid = p["id"].as_str().unwrap().to_string();
+    let root = std::path::PathBuf::from(p["root_path"].as_str().unwrap());
+    let git = |dir: &std::path::Path, args: &[&str]| assert!(std::process::Command::new("git").args(args).current_dir(dir).status().unwrap().success());
+    git(&root, &["init", "-q", "-b", "main"]);
+    std::fs::write(root.join(".gitignore"), "ok\n").unwrap();
+    git(&root, &["add", ".gitignore"]);
+    git(&root, &["-c", "user.email=t@example.invalid", "-c", "user.name=T", "commit", "-q", "-m", "init"]);
+    // 처음에는 표식 파일을 만들고 실패, 두 번째에 성공한다.
+    let (_, script) = s.post(&format!("/api/v1/projects/{pid}/scripts"), json!({"name":"setup","command":"test -f ok || { touch ok; exit 3; }"})).await;
+    let sid_script = script["id"].as_str().unwrap().to_string();
+    let (_, st0) = s.get(&format!("/api/v1/projects/{pid}/setup")).await;
+    assert!(st0["script"].is_null());
+    assert_eq!(st0["targets"][0]["status"], "not_run");
+    let session = s.create_session(&pid).await;
+    let sess = session["id"].as_str().unwrap().to_string();
+    let run = |sess: String, fp: Value, setup: bool| {
+        let body = json!({"command":script["command"],"expected_revision":script["revision"],"expected_execution":fp,"expected_owner":"owner","setup":setup});
+        (format!("/api/v1/sessions/{sess}/scripts/{sid_script}/run"), body)
+    };
+    let (_, list) = s.get(&format!("/api/v1/projects/{pid}/scripts")).await;
+    let owner = list["owner"].clone();
+    let with_owner = |(path, mut body): (String, Value)| { body["expected_owner"] = owner.clone(); (path, body) };
+    // 지정하지 않은 script로 설정 실행은 거절하고 작업을 만들지 않는다
+    let (path, body) = with_owner(run(sess.clone(), st0["targets"][0]["fingerprint"].clone(), true));
+    let (code, e) = s.post(&path, body).await;
+    assert_eq!((code, e["error"]["code"].as_str()), (StatusCode::CONFLICT, Some("setup_script_changed")), "{e}");
+    assert!(!root.join("ok").exists());
+    // 지정: 실행하지 않는다
+    let (code, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{pid}"), json!({"expected_revision":p["revision"],"setup_script_id":sid_script})).await;
+    assert_eq!(code, StatusCode::OK, "{v}");
+    assert_eq!(v["setup_script_id"], sid_script.as_str());
+    assert!(!root.join("ok").exists());
+    let (_, st1) = s.get(&format!("/api/v1/projects/{pid}/setup")).await;
+    assert_eq!(st1["script"]["name"], "setup");
+    // 일반 script 실행은 설정 시도로 세지 않는다
+    let (path, body) = with_owner(run(sess.clone(), st1["targets"][0]["fingerprint"].clone(), false));
+    let (_, t) = s.post(&path, body).await;
+    s.get(&format!("/api/v1/tasks/{}/wait?timeout_ms=10000", t["id"].as_str().unwrap())).await;
+    std::fs::remove_file(root.join("ok")).unwrap();
+    let (_, st) = s.get(&format!("/api/v1/projects/{pid}/setup")).await;
+    assert_eq!((st["targets"][0]["status"].as_str(), st["targets"][0]["attempts"].as_i64()), (Some("not_run"), Some(0)));
+    // 실패 → 재시도 성공
+    for (want, n) in [("failed", 1), ("completed", 2)] {
+        let (path, body) = with_owner(run(sess.clone(), st1["targets"][0]["fingerprint"].clone(), true));
+        let (code, t) = s.post(&path, body).await;
+        assert_eq!(code, StatusCode::CREATED, "{t}");
+        s.get(&format!("/api/v1/tasks/{}/wait?timeout_ms=10000", t["id"].as_str().unwrap())).await;
+        let (_, st) = s.get(&format!("/api/v1/projects/{pid}/setup")).await;
+        let target = &st["targets"][0];
+        assert_eq!((target["status"].as_str(), target["attempts"].as_i64()), (Some(want), Some(n)), "{st}");
+        assert_eq!(target["task_id"], t["id"]);
+        if want == "failed" { assert_eq!(target["exit_code"], 3); }
+    }
+    // worktree는 따로 센다: 그 worktree의 대화에서 그 위치의 확인값으로 실행한다
+    let (_, w) = s.post(&format!("/api/v1/projects/{pid}/worktrees"), json!({"name":"wt"})).await;
+    let (_, st) = s.get(&format!("/api/v1/projects/{pid}/setup")).await;
+    let wt = st["targets"].as_array().unwrap().iter().find(|t| t["worktree_id"] == w["id"]).unwrap().clone();
+    assert_eq!(wt["status"], "not_run");
+    assert_ne!(wt["fingerprint"], st["targets"][0]["fingerprint"]);
+    let (_, ws) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({"worktree_id": w["id"]})).await;
+    let (path, body) = with_owner(run(sess.clone(), wt["fingerprint"].clone(), true));
+    assert_eq!(s.post(&path, body).await.0, StatusCode::CONFLICT, "프로젝트 폴더 대화에서 worktree 확인값으로는 실행하지 않는다");
+    let (path, body) = with_owner(run(ws["id"].as_str().unwrap().to_string(), wt["fingerprint"].clone(), true));
+    let (_, t) = s.post(&path, body).await;
+    s.get(&format!("/api/v1/tasks/{}/wait?timeout_ms=10000", t["id"].as_str().unwrap())).await;
+    let (_, st) = s.get(&format!("/api/v1/projects/{pid}/setup")).await;
+    let wt = st["targets"].as_array().unwrap().iter().find(|t| t["worktree_id"] == w["id"]).unwrap();
+    assert_eq!((wt["status"].as_str(), wt["attempts"].as_i64()), (Some("failed"), Some(1)));
+    assert_eq!(st["targets"][0]["attempts"], 2, "프로젝트 폴더 기록은 그대로");
+    // 설정을 실행한 대화를 영구 삭제하면 그 위치의 설정 기록도 함께 지워진다
+    let wsid = ws["id"].as_str().unwrap();
+    let (_, cur) = s.get(&format!("/api/v1/sessions/{wsid}")).await;
+    let (code, v) = s.send(Method::PATCH, &format!("/api/v1/sessions/{wsid}"), json!({"expected_revision":cur["revision"],"archived":true})).await;
+    assert_eq!(code, StatusCode::OK, "{v}");
+    let (code, v) = s.post(&format!("/api/v1/sessions/{wsid}/delete"), json!({"expected_revision":v["revision"],"confirm_title":v["title"]})).await;
+    assert!(code.is_success(), "{v}");
+    let (_, st) = s.get(&format!("/api/v1/projects/{pid}/setup")).await;
+    let wt = st["targets"].as_array().unwrap().iter().find(|t| t["worktree_id"] == w["id"]).unwrap();
+    assert_eq!((wt["status"].as_str(), wt["attempts"].as_i64()), (Some("not_run"), Some(0)));
+    // 지정 해제는 기록을 지우지 않고 상태 표시만 비운다
+    let (_, cur) = s.get(&format!("/api/v1/projects/{pid}")).await;
+    let (_, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{pid}"), json!({"expected_revision":cur["revision"],"setup_script_id":null})).await;
+    assert!(v["setup_script_id"].is_null(), "{v}");
+    let (code, _) = s.send(Method::PATCH, &format!("/api/v1/projects/{pid}"), json!({"expected_revision":v["revision"],"setup_script_id":"nope"})).await;
+    assert_eq!(code, StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn definitions_reject_duplicate_invalid_and_oversized_values_without_mutation() {
     let (s,p,_,_) = setup().await;
