@@ -592,6 +592,15 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 재시도 상한: 마지막 압축 경계 이후 자동 실패가 `context.auto_compact_max_failures`(기본 2)에 닿으면 `compaction_paused` note를 한 번 남기고 자동 압축을 멈춘다. 압축이 성공하면 다시 센다. 요약 호출은 출력 4,096 token·provider timeout·보조 호출 한도 안에서만 한다.
 - 되돌림 스위치: `context.compaction_checks=false`는 최소 대상·길이 검사·연속 실패 정지만 끈다. timeline·구간 hash 확인과 원문·기존 요약은 유지한다.
 
+## 35. 단발 실행 `grove exec`(ONCE)
+
+- 진입점은 같은 실행 파일의 `exec` 하위 명령이며 서버 옵션 parser를 거치지 않는다. 필수: `--base-url`·`--model`·(`--prompt` 또는 `--stdin`). 상대 경로는 현재 폴더 기준, 키는 `--api-key-env` 환경변수 이름으로만 받고 `--api-key` 인자는 거부한다. 다른 모델·계정을 자동 선택하지 않는다.
+- 실행: 고유 run 디렉터리(`--run-dir`, 기본 `<데이터 경로>/exec-runs/<run ID>`, 비어 있지 않으면 거부)의 새 DB로 같은 서버 코어를 loopback에 띄우고 공용 HTTP API(설정·프로필·프로젝트·대화·턴)를 쓴다. 두 번째 agent loop는 없다. 개인 DB·대화·기억·사용자 배경·봇·예약을 열지 않으며 프로젝트 지침 파일은 `instructions.mode=off`로 기본 제외(`--with-project-instructions`로 넣고 `included_context`에 표시).
+- 권한: `--tools` 없으면 도구 없음, `--read-only`는 `tools.mode=read_only`, `--allow-tool`은 서버 `tools.allow`. 그 밖의 변경 도구·질문은 턴을 취소하고 `needs_approval`/`needs_input`으로 끝낸다. 예산은 대화 범위 `runs.budget.max_tokens`·`max_minutes`. 파일·네트워크 sandbox가 아니며 도움말과 출력 `isolation: "none"`에 밝힌다.
+- 출력: stdout에는 `schema: "grove.exec.v1"` JSON 하나(상태·종료 코드·최종 답·사용량·도구 상태·오류·제외/포함 문맥), 진단은 stderr. receipt `result.json`을 출력보다 먼저 저장하고 stdout pipe가 닫혀도 실행 결과·종료 코드를 바꾸지 않는다.
+- 종료 코드(호환 계약): 0 성공, 1 실행 실패, 2 입력 오류, 3 인증·설정 오류(접수 전 진단 포함), 4 승인·입력 필요, 5 시간 예산 초과, 6 취소, 7 결과 불명(unknown 도구·취소 아닌 interrupted).
+- 취소: Ctrl+C(모든 OS)·SIGTERM(Unix)을 턴 취소 API로 보낸다. `grove exec show <run 디렉터리>`는 receipt만 다시 출력하고 실행하지 않으며 receipt가 없으면 7로 결과 불명을 알린다. 새 호출은 언제나 새 요청이다.
+
 ## 11. 결정 기록
 
 | ID | 결정 | 근거 |

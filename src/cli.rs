@@ -34,6 +34,7 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
   grove release keygen <개인키 파일>                                  서명 키 생성(.pub 함께)
   grove release sign --key 개인키 [--key 개인키]… <release.json> <출력>
   grove migrate-check <DB 복사본>                                      이 버전의 migration 사전 시험
+  grove exec --base-url URL --model 이름 --prompt 텍스트 [...]          개인 문맥 없는 단발 실행(grove exec --help)
   grove --version | -V [--json]                          버전
   grove --help | -h                                      이 도움말
 
@@ -137,6 +138,10 @@ fn update_cmds(o: &Opts) -> Result<i32, String> {
 }
 
 pub fn run(args: Vec<String>) -> i32 {
+    // 단발 실행은 고유 옵션과 종료 코드 계약이 있으므로 서버 옵션 parser를 거치지 않는다(ONCE-001).
+    if args.first().is_some_and(|a| a == "exec") {
+        return crate::exec::run(&args[1..]);
+    }
     if args.iter().any(|a| a == "--help" || a == "-h") || args.first().is_some_and(|a| a == "help") {
         println!("{HELP}");
         return 0;

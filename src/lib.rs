@@ -9,6 +9,7 @@ mod project_fs;
 pub mod auth;
 pub mod backup;
 pub mod cli;
+pub mod exec;
 mod logging;
 pub mod runner;
 pub mod server;
