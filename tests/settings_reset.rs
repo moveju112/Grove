@@ -56,6 +56,12 @@ async fn preview_is_read_only_reset_inherits_and_replays_without_clearing_newer_
     assert_eq!(replay.json::<Value>().await.unwrap(),accepted);
     let current=preview(&s,"project",pid,pid,"output.language").await;
     assert_eq!(item(&current,"output.language")["before"]["effective"],"new-value");
+    let session_plan=preview(&s,"session",sid,pid,"output.language").await;
+    assert_eq!(item(&session_plan,"output.language")["after"]["effective"],"new-value");
+    assert_eq!(s.post("/api/v1/settings/reset",body(&session_plan)).await.0,StatusCode::OK);
+    let (_,effective)=s.get(&format!("/api/v1/settings/effective?session_id={sid}")).await;
+    assert_eq!(item(&effective,"output.language")["effective"],"new-value");
+    assert_eq!(item(&effective,"output.language")["source"],"project");
 }
 
 #[tokio::test]
