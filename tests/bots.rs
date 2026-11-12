@@ -167,6 +167,57 @@ async fn lifecycle_disable_reset_delete_restore_and_name_reuse() {
     assert!(h2["archived_at"].is_null());
 }
 
+/// BOT-003: 사용자 아바타는 래스터 이미지를 디코딩해 PNG로 다시 저장하고, 능동 콘텐츠·깨진 이미지는 거절한다.
+#[tokio::test]
+async fn avatar_upload_is_validated_reencoded_served_safely_and_removable() {
+    let s = TestServer::start().await;
+    let p = s.create_project("av").await;
+    let b = bot(&s, p["id"].as_str().unwrap(), "아바타", None, "").await;
+    let id = b["id"].as_str().unwrap();
+    assert!(b["avatar_sha256"].is_null(), "기본형");
+    let url = format!("{}/api/v1/bots/{id}/avatar", s.base);
+    use base64::Engine;
+    let put = |bytes: Vec<u8>, _claimed: &'static str, key: String| {
+        let body = json!({ "data_base64": base64::engine::general_purpose::STANDARD.encode(bytes) });
+        s.client.put(&url).bearer_auth(&s.token).header("idempotency-key", key).json(&body).send()
+    };
+    let mut jpeg = std::io::Cursor::new(vec![]);
+    image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(600, 300, image::Rgb([200, 10, 10]))).write_to(&mut jpeg, image::ImageFormat::Jpeg).unwrap();
+    // SVG는 PNG라고 주장해도 내용으로 판별해 거절
+    let r = put(br#"<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>"#.to_vec(), "image/png", "av-svg".into()).await.unwrap();
+    assert_eq!(r.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let r = put(b"\x89PNG\r\n\x1a\nbroken".to_vec(), "image/png", "av-broken".into()).await.unwrap();
+    assert_eq!(r.status(), StatusCode::BAD_REQUEST);
+    let r = put(vec![0xff; 2 * 1024 * 1024 + 10], "image/jpeg", "av-big".into()).await.unwrap();
+    assert_eq!(r.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let (_, cur) = s.get(&format!("/api/v1/bots/{id}")).await;
+    assert!(cur["avatar_sha256"].is_null(), "거절한 요청은 바꾸지 않는다");
+    let r = put(jpeg.into_inner(), "application/octet-stream", "av-ok".into()).await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    let v: Value = r.json().await.unwrap();
+    assert_eq!((v["width"].as_i64(), v["height"].as_i64(), v["source_mime"].as_str()), (Some(256), Some(128), Some("image/jpeg")));
+    let (_, cur) = s.get(&format!("/api/v1/bots/{id}")).await;
+    assert_eq!(cur["avatar_sha256"], v["avatar_sha256"]);
+    // 내려받기: PNG·nosniff·sandbox CSP·ETag
+    let r = s.client.get(&url).bearer_auth(&s.token).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::OK);
+    assert_eq!(r.headers()["content-type"], "image/png");
+    assert_eq!(r.headers()["x-content-type-options"], "nosniff");
+    assert!(r.headers()["content-security-policy"].to_str().unwrap().contains("sandbox"));
+    let etag = r.headers()["etag"].to_str().unwrap().to_string();
+    let bytes = r.bytes().await.unwrap();
+    assert!(bytes.starts_with(b"\x89PNG"));
+    let r = s.client.get(&url).bearer_auth(&s.token).header("if-none-match", &etag).send().await.unwrap();
+    assert_eq!(r.status(), StatusCode::NOT_MODIFIED);
+    assert_eq!(s.client.get(&url).send().await.unwrap().status(), StatusCode::UNAUTHORIZED, "인증 필요");
+    // 지우면 기본형
+    let r = s.raw(reqwest::Method::DELETE, &format!("/api/v1/bots/{id}/avatar"), None, Some("av-del"), None).await;
+    assert_eq!(r.status(), StatusCode::OK);
+    let (_, cur) = s.get(&format!("/api/v1/bots/{id}")).await;
+    assert!(cur["avatar_sha256"].is_null());
+    assert_eq!(s.client.get(&url).bearer_auth(&s.token).send().await.unwrap().status(), StatusCode::NOT_FOUND);
+}
+
 #[tokio::test]
 async fn featured_is_single_and_order_uses_revision() {
     let s = TestServer::start().await;

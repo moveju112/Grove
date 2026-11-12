@@ -614,6 +614,13 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - awaiting_input은 awaiting_approval 턴 안의 질문 도구 호출 상태이고, canceling은 취소 신호를 받은 running(저장 상태 아님)이다. 승인 대기는 서버 재시작에도 유지한다.
 - `runner::TURN_TRANSITIONS`가 이 표이며 모든 종료 전이(`finish_turn`)는 개발·시험 빌드에서 표 밖 전이를 assert로 막는다.
 
+## 38. 봇 아바타(BOT-003)
+
+- 기본형은 색+이니셜(`bots.avatar_color`). 사용자 이미지는 `PUT /bots/{id}/avatar {data_base64}`(2MiB), `DELETE`로 기본형 복귀, `GET`으로 받는다(인증 필요). 봇 응답의 `avatar_sha256`이 현재 이미지다.
+- 형식은 내용으로만 판별한 PNG·JPEG·GIF·WebP(`unsupported`: SVG·HTML 등 능동 콘텐츠). 4096×4096·할당 64MiB 안에서 실제 디코딩하고(실패 `invalid_request`), 첫 프레임을 256px 안 PNG로 다시 인코딩해 `bot_avatars`(migration 50)에 저장한다. 원본 바이트·메타데이터는 남기지 않는다.
+- 응답은 `image/png`·`nosniff`·`default-src 'none'; sandbox`·ETag. 파일 경로 참조는 받지 않는다(서버 파일 접근 경로를 만들지 않음). 아바타 변경은 봇 revision을 올리지 않아 편집과 충돌하지 않는다.
+- 화면: 봇 편집기의 이미지 선택·기본형으로, 목록·편집기의 아바타는 인증 요청으로 받은 object URL(같은 sha는 한 번만 받음). 시험: `tests/bots.rs::avatar_upload_is_validated_reencoded_served_safely_and_removable`, `bot_avatars::tests`, `web/e2e/bot-avatar.spec.ts`.
+
 ## 37. 작업공간 고정·라벨(PROJECT-008)
 
 원본 작업공간 라벨·고정 범위를 프로젝트(= 단일 작업공간)에 그대로 둔다. migration 48.

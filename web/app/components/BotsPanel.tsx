@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { ApiError, api } from "../api/client";
+import { useEffect, useState } from "react";
+import { ApiError, api, rawGet } from "../api/client";
 import type { ModelProfile } from "../api/generated";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
@@ -14,6 +14,7 @@ type Bot = {
     project_id: string;
     featured: boolean;
     avatar_color: string;
+    avatar_sha256: string | null;
     status: "active" | "disabled" | "deleted";
     home_session_id: string | null;
     revision: number;
@@ -33,7 +34,29 @@ const loadHidden = (): string[] => {
     }
 };
 
+// 사용자 아바타(BOT-003)는 인증 헤더로 받아 object URL로 보인다. 같은 이미지(sha256)는 한 번만 받는다.
+const avatarUrls = new Map<string, Promise<string>>();
+function avatarUrl(b: Bot): Promise<string> {
+    const key = `${b.id}:${b.avatar_sha256}`;
+    let url = avatarUrls.get(key);
+    if (!url) {
+        url = rawGet(`/bots/${b.id}/avatar`).then((buf) => URL.createObjectURL(new Blob([buf], { type: "image/png" })));
+        url.catch(() => avatarUrls.delete(key));
+        avatarUrls.set(key, url);
+    }
+    return url;
+}
+
 function Avatar({ b }: { b: Bot }) {
+    const [src, setSrc] = useState<string | null>(null);
+    useEffect(() => {
+        let alive = true;
+        setSrc(null);
+        if (b.avatar_sha256) avatarUrl(b).then((u) => { if (alive) setSrc(u); }).catch(() => undefined);
+        return () => { alive = false; };
+    }, [b.id, b.avatar_sha256]); // eslint-disable-line react-hooks/exhaustive-deps
+    // 이미지를 못 받으면(삭제·네트워크) 기본형으로 보인다.
+    if (src) return <img className="avatar" src={src} alt="" aria-hidden data-testid="bot-avatar-image" />;
     return (
         <span className="avatar" style={{ background: b.avatar_color }} aria-hidden>
             {[...b.name][0] ?? "?"}
@@ -41,9 +64,40 @@ function Avatar({ b }: { b: Bot }) {
     );
 }
 
+/// 아바타 이미지 선택·기본형 복귀. 서버가 형식·크기·디코딩을 검사하고 PNG로 다시 저장한다.
+function AvatarControl({ bot }: { bot: Bot }) {
+    const [err, setErr] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    const run = async (fn: () => Promise<unknown>) => {
+        setBusy(true);
+        setErr(null);
+        try { await fn(); } catch (e) { setErr(e instanceof ApiError ? e.message : "아바타 변경 실패"); } finally { setBusy(false); }
+    };
+    return <div className="inline" role="group" aria-label="봇 아바타">
+        <Avatar b={bot} />
+        <label className="small">아바타 이미지
+            <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy} aria-label="아바타 이미지 선택"
+                onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    e.target.value = "";
+                    if (!file) return;
+                    void run(async () => {
+                        if (file.size > 2 * 1024 * 1024) throw new ApiError(413, "too_large", "아바타 이미지는 2MiB 이하여야 합니다", false);
+                        const data = new Uint8Array(await file.arrayBuffer());
+                        let binary = "";
+                        for (let i = 0; i < data.length; i += 8192) binary += String.fromCharCode(...data.subarray(i, i + 8192));
+                        await api.put(`/bots/${bot.id}/avatar`, { data_base64: btoa(binary) });
+                    });
+                }} />
+        </label>
+        {bot.avatar_sha256 && <button type="button" className="ghost small" disabled={busy} onClick={() => void run(() => api.del(`/bots/${bot.id}/avatar`))}>기본형으로</button>}
+        {err && <span className="err small" role="alert">{err}</span>}
+    </div>;
+}
+
 type Form = { name: string; description: string; persona: string; instructions: string; profile_id: string; project_id: string; featured: boolean };
 
-function Editor({ bot, onDone }: { bot: Bot | null; onDone: () => void }) {
+function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDone: () => void }) {
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const projects = useQuery<Project[]>("projects", () => api.get("/projects"));
     const [f, setF] = useState<Form>({
@@ -78,6 +132,7 @@ function Editor({ bot, onDone }: { bot: Bot | null; onDone: () => void }) {
             }}
         >
             {err && <p className="err" role="alert">{err}</p>}
+            {bot && <AvatarControl bot={live ?? bot} />}
             <input aria-label="봇 이름" placeholder="이름" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
             <input aria-label="봇 설명" placeholder="설명" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
             <textarea aria-label="persona" placeholder="persona(말투·성격)" rows={2} value={f.persona} onChange={(e) => setF({ ...f, persona: e.target.value })} />
@@ -145,7 +200,8 @@ export function BotsPanel({ open }: { open: Opener }) {
                 봇 <button className="ghost small" onClick={() => setEditing("new")}>+ 봇</button>
             </h2>
             {err && <p className="err" role="alert">{err}</p>}
-            {editing && <Editor bot={editing === "new" ? null : editing} onDone={() => { setEditing(null); q.reload(); }} />}
+            {editing && <Editor bot={editing === "new" ? null : editing}
+                live={editing === "new" ? null : (q.data?.bots.find((x) => x.id === editing.id) ?? null)} onDone={() => { setEditing(null); q.reload(); }} />}
             <ul className="session-list">
                 {visible.map((b, i) => (
                     <li key={b.id} data-testid="bot" data-status={b.status}>

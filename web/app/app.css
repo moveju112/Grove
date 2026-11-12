@@ -299,6 +299,7 @@ table.usage .bar { display: inline-block; height: 0.6rem; background: var(--acce
 .bots h2 { display: flex; align-items: center; gap: 0.4rem; }
 .bots li { display: flex; align-items: center; gap: 0.2rem; }
 .bot-open { display: flex; align-items: center; gap: 0.4rem; flex: 1; text-align: left; }
+img.avatar { object-fit: cover; background: var(--line); }
 .avatar { display: inline-flex; align-items: center; justify-content: center; width: 1.6rem; height: 1.6rem; border-radius: 50%; color: #fff; font-weight: 600; font-size: 0.8rem; flex: none; }
 .bots .dot { display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: var(--accent, #3b82f6); margin-left: 0.3rem; }
 .bot-actions > summary { list-style: none; cursor: pointer; padding: 0 0.3rem; }

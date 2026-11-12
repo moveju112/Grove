@@ -814,6 +814,18 @@ pub const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX setup_runs_target ON setup_runs(project_id, worktree_id, created_at);
     "#,
+    // 50: 봇 사용자 아바타(BOT-003). 검사·디코딩 뒤 다시 인코딩한 정사각 PNG만 저장한다. 없으면 기본형(색+이니셜).
+    r#"
+    CREATE TABLE bot_avatars (
+        bot_id TEXT PRIMARY KEY REFERENCES bots(id),
+        png BLOB NOT NULL,
+        sha256 TEXT NOT NULL,
+        source_mime TEXT NOT NULL,
+        width INTEGER NOT NULL,
+        height INTEGER NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    "#,
 ];
 
 #[cfg(test)]

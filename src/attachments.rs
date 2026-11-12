@@ -76,7 +76,7 @@ fn name_valid(name: &str) -> bool {
             .any(|c| c.is_control() || c == '/' || c == '\\')
         && !matches!(name, "." | "..")
 }
-fn sniff(bytes: &[u8]) -> &'static str {
+pub(crate) fn sniff(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         "image/png"
     } else if bytes.starts_with(b"\xff\xd8\xff") {

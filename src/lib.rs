@@ -46,6 +46,7 @@ pub mod store;
 pub mod tasks;
 mod task_logs;
 pub mod admin;
+pub mod bot_avatars;
 pub mod bots;
 pub mod notifications;
 pub mod schedules;
@@ -214,6 +215,13 @@ pub fn router(app: App) -> Router {
         .route("/bots", get(bots::list).post(bots::create))
         .route("/bots/order", post(bots::reorder))
         .route("/bots/{id}", get(bots::show).patch(bots::update))
+        .route(
+            "/bots/{id}/avatar",
+            get(bot_avatars::get)
+                .put(bot_avatars::put)
+                .delete(bot_avatars::remove)
+                .layer(axum::extract::DefaultBodyLimit::max(bot_avatars::MAX_BYTES.div_ceil(3) * 4 + 4096)),
+        )
         .route("/bots/{id}/home", post(bots::open_home))
         .route("/bots/{id}/status", post(bots::set_status))
         .route("/bots/{id}/seen", post(bots::seen))

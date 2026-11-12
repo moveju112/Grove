@@ -36,10 +36,12 @@ pub struct Bot {
     pub created_at: String,
     pub updated_at: String,
     pub deleted_at: Option<String>,
+    /// 사용자 아바타 PNG의 sha256(BOT-003). 없으면 기본형(색+이니셜).
+    pub avatar_sha256: Option<String>,
 }
 
 const COLS: &str = "id, name, description, persona, instructions, profile_id, project_id, featured, avatar_color, status, home_session_id, home_seen_seq, \
-                    revision, created_at, updated_at, deleted_at";
+                    revision, created_at, updated_at, deleted_at, (SELECT a.sha256 FROM bot_avatars a WHERE a.bot_id = bots.id)";
 
 fn from_row(r: &Row) -> rusqlite::Result<Bot> {
     Ok(Bot {
@@ -59,6 +61,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Bot> {
         created_at: r.get(13)?,
         updated_at: r.get(14)?,
         deleted_at: r.get(15)?,
+        avatar_sha256: r.get(16)?,
     })
 }
 
@@ -87,7 +90,14 @@ pub fn by_session(c: &Connection, session_id: &str) -> ApiResult<Option<Bot>> {
 }
 
 fn prefixed() -> String {
-    COLS.split(", ").map(|c| format!("b.{}", c.trim())).collect::<Vec<_>>().join(", ")
+    COLS.split(", ")
+        .map(|c| {
+            let c = c.trim();
+            // 하위 질의(아바타)는 접두어를 붙이지 않고 별칭 b의 id를 참조한다.
+            if c.starts_with('(') { c.replace("bots.id", "b.id") } else { format!("b.{c}") }
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn view(c: &Connection, b: Bot) -> ApiResult<BotView> {
