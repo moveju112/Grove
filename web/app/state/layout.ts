@@ -148,15 +148,22 @@ export function collapseEmpty(l: Layout): Layout {
 
 /// pane 닫기: 그 안의 tab을 인접 pane으로 합친다(tab 유실 방지, PANE-005).
 export function closeLeaf(l: Layout, leafId: string): Layout {
-    const all = leaves(l.root);
-    if (all.length <= 1) return l;
     const leaf = findLeaf(l, leafId);
     if (!leaf) return l;
-    const target = all.find((x) => x.id !== leafId)!;
-    let next = l;
-    for (const t of leaf.tabs) next = moveTab(next, t.id, target.id);
-    next = { ...next, root: mapLeaf(next.root, leafId, (x) => ({ ...(x as Leaf), tabs: [] })) };
-    return collapseEmpty({ ...next, focused_leaf: target.id });
+    // 가장 가까운 형제 subtree로 합친다. 자원이 같아도 tab ID와 독립 초안은 유지한다.
+    const adjacent = (n: Node): Leaf | undefined => {
+        if (n.type === "leaf") return undefined;
+        if (n.children[0].type === "leaf" && n.children[0].id === leafId) return leaves(n.children[1])[0];
+        if (n.children[1].type === "leaf" && n.children[1].id === leafId) return leaves(n.children[0])[0];
+        return adjacent(n.children[0]) ?? adjacent(n.children[1]);
+    };
+    const target = adjacent(l.root);
+    if (!target) return l;
+    let root = mapLeaf(l.root, leafId, (x) => ({ ...x as Leaf, tabs: [], active_tab: null }));
+    root = mapLeaf(root, target.id, (x) => ({
+        ...x as Leaf, tabs: [...(x as Leaf).tabs, ...leaf.tabs], active_tab: leaf.active_tab ?? (x as Leaf).active_tab,
+    }));
+    return collapseEmpty({ ...l, root, focused_leaf: target.id });
 }
 
 /// path: 루트에서 split까지 children 인덱스 배열.

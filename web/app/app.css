@@ -146,6 +146,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .split.row { flex-direction: row; }
 .split.column { flex-direction: column; }
 .split-child { display: flex; min-width: 8em; min-height: 6em; flex-grow: 0; flex-shrink: 1; }
+.split-child[hidden], .divider[hidden] { display: none; }
 .divider { flex: 0 0 6px; background: var(--line); cursor: col-resize; touch-action: none; }
 .split.column > .divider { cursor: row-resize; }
 .divider:hover, .divider:focus { background: var(--accent); }

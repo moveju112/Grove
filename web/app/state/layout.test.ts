@@ -105,6 +105,37 @@ describe("layout", () => {
         expect(allTabs(c)).toHaveLength(2);
     });
 
+    it("중첩 pane은 인접 영역에 합치고 활성 탭·독립 사본 ID·다른 분할 비율을 보존한다", () => {
+        let l = twoPanes();
+        const right = focusedLeaf(l).id;
+        l = splitLeaf(l, right, "column", sB);
+        const closing = focusedLeaf(l).id;
+        l = openTab(l, closing, { ...sA, resource_id: "other" });
+        const selected = focusedLeaf(l).active_tab;
+        const ids = allTabs(l).map((t) => t.id).sort();
+        l = setRatio(l, [], 0.35);
+        const next = closeLeaf(l, closing);
+        expect(next.focused_leaf).toBe(right);
+        expect(focusedLeaf(next).active_tab).toBe(selected);
+        expect(focusedLeaf(next).tabs).toHaveLength(3);
+        expect(allTabs(next).map((t) => t.id).sort()).toEqual(ids);
+        expect(leaves(next.root)[0]).toEqual(leaves(l.root)[0]);
+        expect(next.root.type === "split" && next.root.ratio).toBe(0.35);
+        expect(isValid(next)).toBe(true);
+    });
+
+    it("빈 pane도 안전하게 합치고 마지막 pane 또는 없는 대상은 그대로 둔다", () => {
+        const base = openTab(emptyLayout(), "missing", sA);
+        expect(closeLeaf(base, base.focused_leaf)).toBe(base);
+        expect(closeLeaf(base, "missing")).toBe(base);
+        const pair = twoPanes();
+        const l = splitLeaf(pair, focusedLeaf(pair).id, "row");
+        const next = closeLeaf(l, focusedLeaf(l).id);
+        expect(leaves(next.root)).toHaveLength(2);
+        expect(allTabs(next)).toEqual(allTabs(pair));
+        expect(isValid(next)).toBe(true);
+    });
+
     it("closing last tab keeps one empty pane", () => {
         let l = emptyLayout();
         l = openTab(l, l.focused_leaf, sA);

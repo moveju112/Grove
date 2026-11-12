@@ -1,4 +1,4 @@
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Project } from "../api/generated";
 import * as L from "../state/layout";
 import { FilesView } from "./FilesView";
@@ -9,8 +9,19 @@ import { TerminalView } from "./TerminalView";
 import type { Opener } from "./Workspace";
 
 type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; projects: Project[] };
+type ViewProps = Props & { maximized: string | null; toggleMaximize: (leafId: string) => void };
 
 export function SplitView(p: Props) {
+    const [maximized, setMaximized] = useState<string | null>(null);
+    useEffect(() => {
+        setMaximized((id) => p.narrow || id !== p.layout.focused_leaf ? null : id);
+    }, [p.narrow, p.layout.focused_leaf]);
+    // 전체 보기는 배치를 바꾸지 않는다. 다른 자원으로 이동하면 숨겨진 pane에 갇히지 않도록 해제한다.
+    const zoom = !p.narrow && maximized === p.layout.focused_leaf && L.leaves(p.layout.root).length > 1 ? maximized : null;
+    const view: ViewProps = { ...p, maximized: zoom, toggleMaximize: (id) => {
+        p.update((l) => L.focus(l, id));
+        setMaximized(zoom === id ? null : id);
+    } };
     if (p.narrow) {
         // 좁은 화면: 포커스된 pane 하나만 보여 주고, 다른 pane은 전환 메뉴로 접근한다(상태는 보존).
         const all = L.leaves(p.layout.root);
@@ -25,21 +36,28 @@ export function SplitView(p: Props) {
                         ))}
                     </nav>
                 )}
-                <PaneView {...p} leaf={L.focusedLeaf(p.layout)} />
+                <PaneView {...view} leaf={L.focusedLeaf(p.layout)} />
             </div>
         );
     }
     return (
-        <div className="split-root">
-            <NodeView {...p} node={p.layout.root} path={[]} />
+        <div className="split-root" onKeyDownCapture={(e) => {
+            if (zoom && e.key === "Escape") {
+                e.preventDefault();
+                e.stopPropagation();
+                setMaximized(null);
+            }
+        }}>
+            <NodeView {...view} node={p.layout.root} path={[]} />
         </div>
     );
 }
 
-function NodeView(p: Props & { node: L.Node; path: number[] }) {
+function NodeView(p: ViewProps & { node: L.Node; path: number[] }) {
     const ref = useRef<HTMLDivElement>(null);
     if (p.node.type === "leaf") return <PaneView {...p} leaf={p.node} />;
     const n = p.node;
+    const shown = (node: L.Node) => !p.maximized || L.leaves(node).some((leaf) => leaf.id === p.maximized);
     const onDrag = (e: React.PointerEvent) => {
         const el = ref.current;
         if (!el) return;
@@ -65,11 +83,12 @@ function NodeView(p: Props & { node: L.Node; path: number[] }) {
     };
     return (
         <div ref={ref} className={`split ${n.direction}`} data-testid={`split-${n.direction}`}>
-            <div className="split-child" style={{ flexBasis: `${n.ratio * 100}%` }}>
+            <div className="split-child" hidden={!shown(n.children[0])} style={{ flexBasis: p.maximized ? "100%" : `${n.ratio * 100}%` }}>
                 <NodeView {...p} node={n.children[0]} path={[...p.path, 0]} />
             </div>
             <div
                 className="divider"
+                hidden={!!p.maximized}
                 role="separator"
                 aria-orientation={n.direction === "row" ? "vertical" : "horizontal"}
                 aria-valuenow={Math.round(n.ratio * 100)}
@@ -80,14 +99,14 @@ function NodeView(p: Props & { node: L.Node; path: number[] }) {
                 onDoubleClick={() => p.update((l) => L.setDirection(l, p.path, n.direction === "row" ? "column" : "row"))}
                 title="끌어서 크기 조절 · 더블클릭으로 방향 전환"
             />
-            <div className="split-child" style={{ flexBasis: `${(1 - n.ratio) * 100}%` }}>
+            <div className="split-child" hidden={!shown(n.children[1])} style={{ flexBasis: p.maximized ? "100%" : `${(1 - n.ratio) * 100}%` }}>
                 <NodeView {...p} node={n.children[1]} path={[...p.path, 1]} />
             </div>
         </div>
     );
 }
 
-function PaneView(p: Props & { leaf: L.Leaf }) {
+function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     const { leaf } = p;
     const focused = p.layout.focused_leaf === leaf.id;
     const active = leaf.tabs.find((t) => t.id === leaf.active_tab);
@@ -130,11 +149,17 @@ function PaneView(p: Props & { leaf: L.Leaf }) {
                                 ))}
                             </select>
                         )}
-                        {others.length > 0 && (
-                            <button className="ghost small" title="영역 닫기(탭은 다른 영역으로 합침)" aria-label="영역 닫기" onClick={() => p.update((l) => L.closeLeaf(l, leaf.id))}>
-                                ⊠
-                            </button>
-                        )}
+                    </>
+                )}
+                {others.length > 0 && (
+                    <>
+                        {!p.narrow && <button className="ghost small" aria-label={p.maximized === leaf.id ? "분할 복원" : "영역 전체 보기"}
+                            aria-pressed={p.maximized === leaf.id} title="화면 배치만 변경합니다(작업은 계속)"
+                            onClick={() => p.toggleMaximize(leaf.id)}>
+                            {p.maximized === leaf.id ? "분할 복원" : "전체 보기"}
+                        </button>}
+                        <button className="ghost small" title="영역 닫기(탭은 인접 영역으로 합침, 작업은 계속)" aria-label="영역 닫기"
+                            onClick={() => p.update((l) => L.closeLeaf(l, leaf.id))}>⊠</button>
                     </>
                 )}
             </div>
