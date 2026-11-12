@@ -218,6 +218,9 @@ export function applyEvent(e: EventRecord) {
         case "task.changed":
             if (sid) invalidate(`tasks:${sid}`);
             break;
+        case "project_script.changed":
+            if (pid) invalidate(`scripts:${pid}`);
+            break;
         case "file.changed":
             refreshFiles(pid ?? undefined);
             if (pid) {

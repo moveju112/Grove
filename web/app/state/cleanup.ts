@@ -8,7 +8,7 @@ import { lastAuthEnd, onAuthChange } from "../api/client";
 import { clearServerCache } from "./store";
 
 /// 로그아웃 때 지우는 localStorage key 접두사.
-export const SENSITIVE_PREFIXES = ["grove.draft.", "grove.file.", "grove.layout.", "grove.composer.options", "grove.bots.hidden"];
+export const SENSITIVE_PREFIXES = ["grove.draft.", "grove.file.", "grove.layout.", "grove.script.", "grove.composer.options", "grove.bots.hidden"];
 
 export function clearDeviceCopies(storage: Storage) {
     const keys: string[] = [];

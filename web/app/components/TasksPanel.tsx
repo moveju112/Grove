@@ -14,6 +14,7 @@ export type TaskRow = {
     stderr_bytes: number;
     started_at: string;
     ended_at: string | null;
+    script?: { id: string; name: string; revision: number } | null;
 };
 
 const LABEL: Record<TaskRow["status"], string> = {
@@ -92,6 +93,7 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
             <ul className="session-list">
                 {list.slice(0, 20).map((t) => (
                     <li key={t.id} data-testid="task-row" data-status={t.status}>
+                        {t.script && <span className="badge">script · {t.script.name} · r{t.script.revision}</span>}
                         <code className="small">{t.command}</code>
                         <span className={`status ${t.status}`}>
                             {LABEL[t.status]}

@@ -27,8 +27,8 @@ async fn legacy_headers_are_encrypted_before_serving_and_receipts_replay_without
     s.stop().await;
     {
         let conn = rusqlite::Connection::open(&db).unwrap();
-        // v40의 유일한 새 표를 제거해 실제 v39 schema와 backfill 전 데이터를 구성한다.
-        conn.execute_batch("DROP TABLE credential_backfills; PRAGMA user_version=39;").unwrap();
+        // 후속 migration의 새 표·열을 제거해 v39의 backfill 전 데이터를 구성한다.
+        conn.execute_batch("ALTER TABLE tasks DROP COLUMN script_snapshot; DROP TABLE project_scripts; DROP TABLE memories; ALTER TABLE cli_sessions DROP COLUMN system_sha256; DROP TABLE credential_backfills; PRAGMA user_version=39;").unwrap();
         conn.execute("UPDATE model_profiles SET options=?1 WHERE id=?2", rusqlite::params![body["options"].to_string(), id]).unwrap();
         conn.execute("INSERT INTO events(created_at,kind,payload) VALUES(?1,'profile.changed',?2)",
             rusqlite::params![legacy["updated_at"].as_str().unwrap(), legacy.to_string()]).unwrap();

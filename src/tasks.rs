@@ -54,10 +54,11 @@ pub struct Task {
     pub result_message_id: Option<String>,
     pub started_at: String,
     pub ended_at: Option<String>,
+    pub script: Option<crate::project_scripts::Snapshot>,
 }
 
 const COLS: &str = "id, session_id, project_id, call_id, command, cwd, timeout_ms, status, detached, pid, exit_code, signal, \
-                    stdout_bytes, stderr_bytes, reason, result_message_id, started_at, ended_at";
+                    stdout_bytes, stderr_bytes, reason, result_message_id, started_at, ended_at, script_snapshot";
 
 fn from_row(r: &rusqlite::Row) -> rusqlite::Result<Task> {
     Ok(Task {
@@ -79,6 +80,8 @@ fn from_row(r: &rusqlite::Row) -> rusqlite::Result<Task> {
         result_message_id: r.get(15)?,
         started_at: r.get(16)?,
         ended_at: r.get(17)?,
+        script: r.get::<_, Option<String>>(18)?.map(|raw| serde_json::from_str(&raw)
+            .map_err(|error| rusqlite::Error::FromSqlConversionFailure(18,rusqlite::types::Type::Text,Box::new(error)))).transpose()?,
     })
 }
 
@@ -155,6 +158,7 @@ pub struct Spawn {
     pub cwd_rel: String,
     pub timeout_ms: u64,
     pub detached: bool,
+    pub script: Option<crate::project_scripts::Snapshot>,
 }
 
 /// 작업을 기록하고 프로세스를 시작한다. 반환 시점에 row는 commit되어 있다.
@@ -194,9 +198,19 @@ fn record_start(c: &Connection, id: &str, s: &Spawn, now: &str, expected_root: O
     if expected_root.is_some_and(|expected| expected != root) {
         return Err(ApiError::conflict("project_changed", "프로젝트 경로가 바뀌었습니다. 다시 확인한 뒤 실행하세요"));
     }
+    if let Some(script) = &s.script {
+        let setting = crate::settings::effective(c, "exec.shell", Some(&sess.project_id), Some(&s.session_id))?;
+        let shell = crate::tools::shell::resolve_shell(setting.as_str().unwrap_or("default"));
+        if shell != s.shell {
+            return Err(ApiError::conflict("script_changed", "실행 셸이 바뀌었습니다. 프로젝트·셸·명령을 다시 확인하세요"));
+        }
+        crate::project_scripts::prepare(c,&sess.project_id,&crate::project_scripts::Intent {
+            id:script.id.clone(),expected_revision:script.revision,expected_execution:script.execution.clone(),
+        },&s.command,&root,&s.shell)?;
+    }
     c.execute(
-        "INSERT INTO tasks (id,session_id,project_id,call_id,command,cwd,timeout_ms,status,detached,started_at) VALUES (?1,?2,?3,?4,?5,?6,?7,'running',?8,?9)",
-        params![id,s.session_id,sess.project_id,s.call_id,s.command,s.cwd_rel,s.timeout_ms as i64,s.detached as i64,now],
+        "INSERT INTO tasks (id,session_id,project_id,call_id,command,cwd,timeout_ms,status,detached,started_at,script_snapshot) VALUES (?1,?2,?3,?4,?5,?6,?7,'running',?8,?9,?10)",
+        params![id,s.session_id,sess.project_id,s.call_id,s.command,s.cwd_rel,s.timeout_ms as i64,s.detached as i64,now,s.script.as_ref().map(serde_json::to_string).transpose()?],
     )?;
     crate::task_logs::begin(c,id,now)?;
     let t=get(c,id)?;
@@ -348,6 +362,7 @@ fn record_note(tx: &Connection, now: &str, t: &Task, out: &str, err: &str) -> Ap
         "stdout_bytes": t.stdout_bytes, "stderr_bytes": t.stderr_bytes,
         "truncated": t.stdout_bytes as u64 > TAIL || t.stderr_bytes as u64 > TAIL,
         "log_errors":log_errors,
+        "script":t.script,
     });
     let m = crate::sessions::append_message(tx, now, &t.session_id, "note", &content, None, None)?;
     tx.execute("UPDATE tasks SET result_message_id = ?2 WHERE id = ?1", params![t.id, m.id])?;
@@ -365,6 +380,9 @@ pub fn note_text(c: &Value) -> String {
     );
     if let Some(code) = c["exit_code"].as_i64() {
         s.push_str(&format!(", exit code {code}"));
+    }
+    if let Some(name) = c["script"]["name"].as_str() {
+        s.push_str(&format!("\nproject script: {name} (revision {})", c["script"]["revision"]));
     }
     if let Some(r) = c["reason"].as_str() {
         s.push_str(&format!(" ({r})"));
@@ -486,6 +504,7 @@ pub struct StartBody {
     pub command: String,
     pub cwd: Option<String>,
     pub timeout_ms: Option<u64>,
+    pub script: Option<crate::project_scripts::Intent>,
 }
 
 /// 사용자가 직접 시작하는 백그라운드 작업. 소유자가 명시적으로 실행하므로 승인 단계가 없다.
@@ -495,18 +514,24 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     }
     let timeout = b.timeout_ms.unwrap_or(crate::tools::shell::MAX_BACKGROUND_TIMEOUT_MS).clamp(100, crate::tools::shell::MAX_BACKGROUND_TIMEOUT_MS);
     // 같은 Idempotency-Key 재전송이 프로세스를 두 번 띄우지 않게, 기록된 응답이 있으면 그대로 돌려준다.
-    let h = idem::body_hash("task.start", &json!({ "s": session_id, "c": b.command, "w": b.cwd, "t": timeout }));
+    let mut hash_body = json!({ "s": session_id, "c": b.command, "w": b.cwd, "t": timeout });
+    if let Some(script) = &b.script { hash_body["script"] = json!(script); }
+    let h = idem::body_hash("task.start", &hash_body);
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
     let sid = session_id.clone();
-    let (root, shell, limits, project) = app
+    let (intent,command)=(b.script.clone(),b.command.clone());
+    let (root, shell, limits, project, script) = app
         .db
         .call(move |c| {
             let s = crate::sessions::get_active(c, &sid)?;
             let shell = crate::settings::effective(c, "exec.shell", Some(&s.project_id), Some(&sid))?;
             let limits = crate::procs::Limits::effective(c, Some(&s.project_id), Some(&sid))?;
-            Ok((crate::sessions::exec_root(c, &sid)?, crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string(), limits, s.project_id))
+            let shell = crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string();
+            let root = crate::sessions::exec_root(c, &sid)?;
+            let script = intent.as_ref().map(|intent| crate::project_scripts::prepare(c,&s.project_id,intent,&command,&root,&shell)).transpose()?;
+            Ok((root,shell,limits,s.project_id,script))
         })
         .await?;
     let queue=app.tasks.admission.get(&project);
@@ -521,7 +546,7 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     let id=crate::util::new_id();
     let unknown=ApiError::conflict("result_unknown","작업 접수 결과를 확정하지 못했습니다. 작업 목록에서 상태를 확인하세요")
         .with_details(json!({"task_id":id,"session_id":session_id}));
-    let s=Spawn { session_id, call_id:None,shell,limits,command:b.command,cwd_rel:rel_display(&root,&cwd),timeout_ms:timeout,detached:true };
+    let s=Spawn { session_id, call_id:None,shell,limits,command:b.command,cwd_rel:rel_display(&root,&cwd),timeout_ms:timeout,detached:true,script };
     let (plan, record_id, pending)=(s.clone(),id.clone(),unknown.body());
     let expected_root=root.clone();
     // receipt·작업·로그·이벤트를 먼저 commit한다. 경합한 요청은 저장된 ID만 받고 실행하지 않는다.
@@ -712,6 +737,39 @@ mod tests {
     use super::*;
 
     #[test]
+    fn script_acceptance_rechecks_shell_after_waiting_for_admission() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::store::Db::open(&dir.path().join("grove.db")).unwrap();
+        let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+        db.call_sync(|c| {
+            c.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','fixture',?1,?2,?2)", params![dir.path().to_string_lossy(),now])?;
+            c.execute("INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES('s','p','fixture',?1,?1)", [&now])?;
+            c.execute("INSERT INTO project_scripts(id,project_id,name,command,created_at,updated_at) VALUES('script','p','check','echo fixture',?1,?1)", [&now])?;
+            let shell = crate::tools::shell::resolve_shell("default");
+            let project = crate::projects::get(c, "p")?;
+            let root = crate::sessions::exec_root(c, "s")?;
+            let execution = crate::util::sha256_hex(json!({
+                "project":project.id,"revision":project.revision,"root":root.to_string_lossy(),"shell":shell
+            }).to_string().as_bytes());
+            let intent = crate::project_scripts::Intent { id:"script".into(),expected_revision:1,expected_execution:execution };
+            let snapshot = crate::project_scripts::prepare(c,"p",&intent,"echo fixture",&root,shell)?;
+            let plan = Spawn {
+                session_id:"s".into(),call_id:None,shell:shell.into(),limits:crate::procs::Limits::default(),
+                command:"echo fixture".into(),cwd_rel:".".into(),timeout_ms:1000,detached:true,script:Some(snapshot),
+            };
+            let changed = if shell == "sh" { "bash" } else { "sh" };
+            c.execute("INSERT INTO settings(scope,scope_id,key,value,revision,updated_at) VALUES('project','p','exec.shell',?1,1,?2)",
+                params![json!(changed).to_string(),now])?;
+            let tx = c.transaction()?;
+            let error = record_start(&tx,"stale",&plan,&now,Some(&root)).unwrap_err();
+            assert_eq!(error.code,"script_changed");
+            let count: i64 = tx.query_row("SELECT COUNT(*) FROM tasks",[],|r|r.get(0))?;
+            assert_eq!(count,0);
+            Ok(())
+        }).unwrap();
+    }
+
+    #[test]
     fn acceptance_rejects_a_changed_project_root_without_records() {
         let dir = tempfile::tempdir().unwrap();
         let old = dir.path().join("old");
@@ -727,6 +785,7 @@ mod tests {
                 session_id: "s".into(), call_id: None, shell: "default".into(),
                 limits: crate::procs::Limits::default(), command: "echo fixture".into(),
                 cwd_rel: ".".into(), timeout_ms: 1000, detached: true,
+                script: None,
             };
             let tx = c.transaction()?;
             let error = record_start(&tx, "stale", &plan, &now, Some(&old)).unwrap_err();

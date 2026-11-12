@@ -721,6 +721,21 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE UNIQUE INDEX memories_project_body ON memories(project_id,body) WHERE project_id IS NOT NULL;
     ALTER TABLE cli_sessions ADD COLUMN system_sha256 TEXT;
     "#,
+    // 43: 프로젝트 script 정의와 실제 접수한 실행 snapshot. 삭제해도 과거 작업의 출처는 유지한다.
+    r#"
+    CREATE TABLE project_scripts (
+        id TEXT PRIMARY KEY,
+        project_id TEXT NOT NULL REFERENCES projects(id),
+        name TEXT NOT NULL,
+        command TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        deleted_at TEXT
+    );
+    CREATE UNIQUE INDEX project_scripts_name ON project_scripts(project_id,name) WHERE deleted_at IS NULL;
+    ALTER TABLE tasks ADD COLUMN script_snapshot TEXT CHECK(script_snapshot IS NULL OR json_valid(script_snapshot));
+    "#,
 ];
 
 #[cfg(test)]

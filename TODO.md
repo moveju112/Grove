@@ -910,7 +910,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] TERM-004 snapshot·scrollback·wrap 정보·재연결 화면 복원을 구현한다. 검증: 재연결 snapshot(`tests/terminals.rs`), cols/rows 저장, e2e 새로고침 후 화면 복원.
 - [ ] TERM-005 모바일 키보드·Ctrl/Alt/Esc·한글 IME·붙여넣기를 지원한다.
 - [x] TERM-006 출력 폭주 시 UI와 서버가 멈추지 않도록 backpressure를 구현한다. 검증: `tests/terminals.rs::output_flood_does_not_block_server_and_slow_client_gets_reset`(30MB 출력 중 API 1초 내 응답, 느린 클라이언트 reset, scrollback 상한).
-- [ ] TERM-007 터미널 capture·프로젝트 script와의 연결을 구현한다.
+- [ ] TERM-007 터미널 capture·프로젝트 script와의 연결을 구현한다. 진행: 프로젝트 script 정의·명시적 실행 확인·새 작업 대화·출력 로그·결과 출처를 공용 화면에 연결했다(`FILEUI-010`). 터미널 화면의 capture 계약·공용 화면 연결은 남아 있어 완료로 표시하지 않는다.
 - [x] TERM-008 서버 재시작 뒤 복원 가능한 화면과 실제 생존 프로세스를 구분한다. 검증: `tests/terminals.rs`(재시작 후 running 아님·화면 복원·티켓 거부, 비정상 종료 잔여 행은 lost).
 
 ## 14. Git·워크트리·변경 이력
@@ -1307,7 +1307,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [ ] FILEUI-007 외부 editor 목록·열기는 PC capability로 분리한다.
 - [x] FILEUI-008 Git 변경 목록·파일 diff·hunk stage·commit UI를 구현한다. 검증: Git 패널 변경 목록·파일 diff·hunk별 올리기/내리기·커밋, e2e Git hunk 커밋.
 - [ ] FILEUI-009 branch·worktree·PR·CI 상태와 실행 권한을 표시한다.
-- [ ] FILEUI-010 터미널 탭·프로젝트 script·실행 로그를 공용 화면에 연결한다.
+- [x] FILEUI-010 터미널 탭·프로젝트 script·실행 로그를 공용 화면에 연결한다. 검증: 프로젝트별 이름·명령·revision CRUD와 충돌 시 입력 보존, 등록·확인 취소 시 미실행, 프로젝트·작업 경로·셸·명령 확인 후 기존 백그라운드 작업/로그/결과 대화에 연결. 실행 당시 출처는 정의 변경·삭제와 분리해 보존한다. 접수 직전 정의·실행 대상·현재 셸을 재검사하고 다른 프로젝트/인증의 실행은 거부한다. 세션/작업 응답 유실 후 새로고침해도 기기 사본의 원래 키로 결과를 확인해 프로세스·결과를 한 번만 남긴다. 인증 종료 후 늦은 응답은 새 작업/사본을 만들지 않으며 로그아웃은 사본을 정리한다. Rust 접수 단위 2개·선택 통합 29개, DB 단위 6개·저장 통합 21개, 웹 단위 8개·선택 E2E 13개·타입/빌드 통과(`tests/project_scripts.rs`, `web/e2e/project-scripts.spec.ts`, 기존 작업/로그/터미널·인증 정리 회귀). 구버전 migration fixture의 새 표/열 제거도 갱신했다. 실제 Windows script 실행·PTY는 별도 미검증이며 셸의 프로젝트 밖 접근 권한은 축소하지 않았다.
 - [x] FILEUI-011 모델이 만든 HTML/SVG/문서 결과의 artifact preview와 다운로드를 제공한다. 검증: 대화의 적용 중인 HTML/SVG/Markdown/텍스트/PDF 변경에서 원래 프로젝트에 고정된 파일 탭을 열고 현재 파일을 확인한다(변경 시점 snapshot과 구분). HTML/SVG는 정적 sandbox preview, Markdown/텍스트는 기존 안전 렌더러, PDF는 기존 sandbox 티켓의 새 탭 열기를 사용한다. dirty 입력은 저장 전 사본이라고 표시하며 미리보기가 원문을 바꾸지 않는다. 다운로드는 원문/파일 이름을 그대로 보존한다. 편집 한도를 넘는 SVG는 기존 image preview를 유지한다. 단위 1개·선택 E2E 17개·타입/빌드 통과(`web/e2e/artifact-preview.spec.ts` 4개, 모델 fixture write 승인→산출물 열기→프로젝트 격리→원문 다운로드, 변경 이력·파일 구독·Markdown·pane 회귀). 정적 지원 형식의 미리보기이며 임의 웹앱 실행이나 Office 변환기를 추가한 것은 아니다.
 - [x] FILEUI-012 artifact의 임의 스크립트 실행과 로컬 파일 접근을 차단한다. 검증: inert template 안에서 정적 HTML/SVG 태그·속성만 남기고 script/이벤트/폼/iframe/object/foreignObject/활성 SVG/meta redirect/base/URL 링크를 제거한다. 빈 sandbox·referrer 없음·CSP(default-src/connect-src/frame-src/object-src none)를 겹쳐 적용하고 data 이미지/폰트·inline style만 허용한다. 실제 Chrome에서 부모 DOM 접근 SecurityError, 스크립트·dialog 미실행, CSS import/외부 이미지/iframe/링크/file:// 경로의 요청 없음과 2MiB 초과 SVG image preview의 외부 자원·스크립트 미실행을 확인했다(`web/e2e/artifact-preview.spec.ts`). 다운로드 원문은 별도로 명시적으로 받으며 브라우저 밖에서 여는 파일의 동작까지 보장하지 않는다.
 

@@ -145,7 +145,7 @@ async fn ref_filter_and_legacy_read_migration_preserve_the_delivery_boundary() {
     assert_eq!(filtered["items"][0]["title"], "legacy read");
     server.stop().await;
     let db = rusqlite::Connection::open(server.data_dir().join("grove.db")).unwrap();
-    db.execute_batch("DROP INDEX notifications_ref_created; ALTER TABLE notifications DROP COLUMN delivered_at; PRAGMA user_version=37;").unwrap();
+    db.execute_batch("ALTER TABLE tasks DROP COLUMN script_snapshot; DROP TABLE project_scripts; DROP TABLE memories; ALTER TABLE cli_sessions DROP COLUMN system_sha256; DROP TABLE credential_backfills; ALTER TABLE model_profiles DROP COLUMN enabled; DROP INDEX notifications_ref_created; ALTER TABLE notifications DROP COLUMN delivered_at; PRAGMA user_version=37;").unwrap();
     drop(db);
     server.restart().await;
     let (_, page) = server.get("/api/v1/notifications?ref_id=command-1").await;

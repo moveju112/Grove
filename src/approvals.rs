@@ -500,6 +500,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                     cwd_rel: call.target["cwd"].as_str().unwrap_or(".").to_string(),
                     timeout_ms: call.target["timeout_ms"].as_u64().unwrap_or(tools::shell::MAX_BACKGROUND_TIMEOUT_MS),
                     detached: false,
+                    script: None,
                 };
                 crate::tasks::run_with_hold(&app, s, call.target["hold_ms"].as_u64().unwrap_or(0), cancel_rx).await
             }

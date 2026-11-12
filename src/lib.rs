@@ -58,6 +58,7 @@ pub mod web;
 pub mod workspace;
 pub mod worktrees;
 pub mod pairing;
+pub mod project_scripts;
 
 use axum::Router;
 use axum::routing::{get, post, put};
@@ -88,6 +89,7 @@ pub const CAPABILITIES: &[&str] = &[
     "user_memories_v1",
     "model_session_access_v1",
     "private_model_headers_v1",
+    "project_scripts_v1",
 ];
 
 #[derive(Clone)]
@@ -225,6 +227,9 @@ pub fn router(app: App) -> Router {
         .route("/agent-runs/{id}", get(agents::show))
         .route("/agent-runs/{id}/cancel", post(agents::cancel))
         .route("/sessions/{id}/tasks", get(tasks::list).post(tasks::start))
+        .route("/projects/{id}/scripts", get(project_scripts::list).post(project_scripts::create))
+        .route("/projects/{id}/scripts/{script}", put(project_scripts::update).delete(project_scripts::remove))
+        .route("/sessions/{id}/scripts/{script}/run", post(project_scripts::run))
         .route("/sessions/{id}/file-changes", get(changes::list))
         .route("/sessions/{id}/file-changes/undo", post(changes::undo))
         .route("/sessions/{id}/file-changes/redo", post(changes::redo))

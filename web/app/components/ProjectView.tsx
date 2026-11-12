@@ -8,6 +8,7 @@ import { GitPanel } from "./GitPanel";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { TrashPanel } from "./TrashPanel";
 import { WorktreesPanel } from "./WorktreesPanel";
+import { ProjectScripts } from "./ProjectScripts";
 import type { Opener } from "./Workspace";
 
 /// 프로젝트 이름·아이콘 변경(PROJECT-002). revision 충돌이면 최신 값을 다시 불러와 알린다.
@@ -125,6 +126,7 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
                 <GitPanel projectId={projectId} />
             </details>
             <TerminalList projectId={projectId} open={open} />
+            <ProjectScripts projectId={projectId} projectName={project.data?.name ?? projectId} open={open} />
             <SchedulesPanel projectId={projectId} open={open} />
             <WorktreesPanel key={`worktrees:${projectId}`} projectId={projectId} />
             <TrashPanel key={`trash:${projectId}`} projectId={projectId} />
