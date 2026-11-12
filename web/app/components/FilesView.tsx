@@ -2,10 +2,11 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ApiError, api, isLoggedIn, newKey } from "../api/client";
 import { useQuery } from "../state/store";
 import { fileAttemptKey, loadFileAttempt, loadFileBuffer, loadFileView, saveFileBuffer, saveFileView, type FileAttempt } from "../state/fileState";
+import { watchFile, type FileContent as Content } from "../state/fileWatch";
+import { usePaneVisible } from "../state/paneVisibility";
 
 type Entry = { name: string; path: string; kind: "dir" | "file" | "link_outside" | "other"; size: number | null; mtime: string | null };
 type Listing = { path: string; entries: Entry[]; truncated: boolean };
-type Content = { path: string; size: number; sha256: string; preview: "text" | "image" | "svg" | "pdf" | "html"; text: string | null; reason?: string };
 
 const enc = encodeURIComponent;
 
@@ -163,17 +164,28 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
 }
 
 function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }: { copyId: string; projectId: string; path: string; onSaved: () => void; line?: number; disabled: boolean; onLock: (locked: boolean) => void }) {
+    const visible = usePaneVisible();
     const isNew = path.startsWith("new:");
     const real = isNew ? path.slice(4) : path;
     const [c, setC] = useState<Content | null>(null);
     const [saved] = useState(() => loadFileBuffer(localStorage, projectId, path, copyId));
     const [copyError, setCopyError] = useState(false);
     const area = useRef<HTMLTextAreaElement | null>(null);
+    const refreshingPosition = useRef<{ start: number; end: number; direction: "forward" | "backward" | "none"; top: number; left: number } | null>(null);
     const jumped = useRef(false);
     useLayoutEffect(() => {
         // 명시적인 줄 이동이 저장 위치보다 우선한다. 편집 사본을 반영한 뒤 한 번만 복원한다.
         const el = area.current;
-        if (!c || jumped.current || !el) return;
+        if (!c || !el) return;
+        const position = refreshingPosition.current;
+        if (position) {
+            el.setSelectionRange(position.start, position.end, position.direction);
+            el.scrollTop = position.top;
+            el.scrollLeft = position.left;
+            refreshingPosition.current = null;
+            return;
+        }
+        if (jumped.current) return;
         jumped.current = true;
         if (line) {
             const lines = el.value.split("\n");
@@ -193,6 +205,8 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
     const [text, setText] = useState("");
     const [base, setBase] = useState<string | null>(null);
     const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+    const [watchError, setWatchError] = useState<string | null>(null);
+    const [watchReady, setWatchReady] = useState(false);
     const mutation = useFileMutation<{ sha256: string }>((result, attempt) => {
         const saved = attempt.body.text ?? "";
         setBase(result.sha256);
@@ -231,6 +245,34 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
         load(true).catch(loadFailed);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [path]);
+    const receive = useRef<(content: Content) => void>(() => {});
+    receive.current = (content) => {
+        if (!c || c.sha256 === content.sha256) return;
+        const keep = text !== (c.text ?? "") || mutation.locked;
+        setC(content);
+        if (keep) {
+            setMsg({ kind: "err", text: "파일이 바뀌었습니다. 내 편집과 원래 저장 기준을 유지합니다. 최신 내용과 비교한 뒤 저장하세요." });
+        } else {
+            const el = area.current;
+            if (el) refreshingPosition.current = {
+                start: el.selectionStart, end: el.selectionEnd, direction: el.selectionDirection, top: el.scrollTop, left: el.scrollLeft,
+            };
+            setText(content.text ?? "");
+            setBase(content.sha256);
+            setMsg({ kind: "ok", text: "외부 변경을 반영했습니다." });
+        }
+    };
+    useEffect(() => {
+        setWatchReady(false);
+        if (isNew || !c || !visible) return;
+        return watchFile(projectId, c.path, {
+            value: (content) => { setWatchReady(true); setWatchError(null); receive.current(content); },
+            error: (error) => {
+                setWatchReady(false);
+                setWatchError(`파일 변경을 확인하지 못했습니다. 편집은 유지합니다. ${error instanceof ApiError ? error.message : "서버 연결을 확인하세요."}`);
+            },
+        });
+    }, [projectId, c?.path, isNew, visible]); // eslint-disable-line react-hooks/exhaustive-deps
     // <img>·새 탭은 인증 헤더를 못 보내므로 5분짜리 파일 티켓을 받아 쓴다.
     const [ticket, setTicket] = useState<string | null>(null);
     useEffect(() => {
@@ -280,6 +322,9 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
         <div className="editor" data-testid="file-editor">
             <h2 className="inline">
                 <code>{real}</code> {dirty && <strong className="dirty" title="저장 안 됨">● 저장 안 됨</strong>}
+                {!isNew && <span className="muted small" data-testid="file-watch-status">
+                    {!visible ? "변경 확인 일시정지" : watchError ? "변경 확인 대기" : watchReady ? "자동 확인 · 5초" : "변경 확인 중"}
+                </span>}
                 {raw && <a className="small" href={`${raw}?download=true`} download>내려받기</a>}
             </h2>
             {c.preview === "image" || c.preview === "svg" ? (
@@ -306,7 +351,8 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
                 <span className="muted small">입력은 유지합니다. 원문을 확인한 뒤 다음 저장을 시작하세요.</span>
             </div>}
             {Boolean(mutation.error) && <p className="save-state error" role="status">{fileError(mutation.error)}</p>}
-            {!mutation.error && msg && <p className={msg.kind === "ok" ? "save-state" : "save-state error"} role="status">{msg.text}</p>}
+            {!mutation.error && watchError && <p className="save-state error" role="status">{watchError}</p>}
+            {!mutation.error && !watchError && msg && <p className={msg.kind === "ok" ? "save-state" : "save-state error"} role="status">{msg.text}</p>}
         </div>
     );
 }

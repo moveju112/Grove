@@ -1299,7 +1299,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 ## 20. 파일 탐색·편집·작업 화면
 
 - [x] FILEUI-001 프로젝트 파일 트리·숨김 파일·정렬·검색을 구현한다. 검증: `tests/files.rs`(폴더 우선 정렬·숨김·프로젝트 밖 링크 표시), `FilesView` 이름 거르기.
-- [ ] FILEUI-002 파일 열기·preview·변경 구독·구독 해제를 구현한다.
+- [x] FILEUI-002 파일 열기·preview·변경 구독·구독 해제를 구현한다. 검증: 기존 인증 content API를 canonical 프로젝트/경로별로 공유 구독하며 서버 file.changed·file_changes.updated·재동기화·창 복귀 때 즉시, 외부 OS 편집은 5초 주기로 확인한다(새 native watcher/서버 API 추가 아님). 중복 구독은 한 조회를 공유하고 실행 중 이벤트는 한 번으로 합친다. 마지막 해제·숨긴 pane·로그아웃은 요청/타이머를 폐기하며 늦은 응답·다른 인증 세대로 전달하지 않는다. 깨끗한 파일은 선택/스크롤을 유지해 갱신하고 dirty/결과 확인 중인 파일은 입력·이전 SHA·원래 요청 키를 보존해 충돌을 표시한다. 삭제/조회 실패는 입력을 지우거나 파일을 재생성하지 않는다. 단위 28개·선택 E2E 27개·타입/빌드 통과(`web/app/state/fileWatch.test.ts` 6개, fileState/client 회귀, `web/e2e/file-watch.spec.ts` 4개·파일 응답 유실/재실행/선택 복원/이미지 preview/누락 자원/로그아웃 회귀).
 - [x] FILEUI-003 편집·저장·외부 변경 충돌·dirty 표시를 구현한다. 검증: `tests/files.rs`(sha 충돌·재전송 수렴), e2e 파일 화면(저장 안 됨 표시·충돌 시 편집과 파일 보존).
 - [x] FILEUI-004 파일/폴더 생성·rename·duplicate·delete를 확인 절차와 함께 구현한다. 검증: 기존 덮어쓰기 거부·경로 확인 문구·휴지통 복구를 유지하고, 저장/생성/rename/duplicate의 부작용 전 접수·완료 receipt·DB 실패/재시작·같은 키 재전송을 확인했다(`tests/files.rs` 6개, 단위 복제 충돌/다른 staging 보존 1개). 복제는 전용 staging 후 덮어쓰기 없는 rename으로 공개한다. 화면은 응답 유실/결과 불명 때 같은 본문·키를 유지하고 새 작업을 잠근다(`web/e2e/file-recovery.spec.ts` 6개, 기존 파일 화면 회귀 통과, RULEBOOK §23).
 - [ ] FILEUI-005 다운로드 토큰·만료·업로드·대용량 전송 한도를 구현한다.

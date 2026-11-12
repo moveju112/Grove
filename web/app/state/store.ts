@@ -3,6 +3,7 @@
 
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { EventRecord } from "../api/generated";
+import { refreshFiles } from "./fileWatch";
 
 type Entry = { data: unknown; error: unknown; loading: boolean; version: number; fetcher: () => Promise<unknown> };
 
@@ -123,6 +124,7 @@ export function applyEvent(e: EventRecord) {
             break;
         case "file_changes.updated":
             if (sid) invalidate(`changes:${sid}`);
+            refreshFiles(pid ?? undefined);
             break;
         case "session.created":
         case "session.updated":
@@ -217,6 +219,7 @@ export function applyEvent(e: EventRecord) {
             if (sid) invalidate(`tasks:${sid}`);
             break;
         case "file.changed":
+            refreshFiles(pid ?? undefined);
             if (pid) {
                 invalidate(`files:${pid}`);
                 invalidate(`git:${pid}`);
@@ -234,6 +237,7 @@ export function applyEvent(e: EventRecord) {
 /// 재동기화: 모든 조회를 다시 읽는다(NET-008).
 export function resyncAll() {
     for (const k of entries.keys()) void load(k);
+    refreshFiles();
 }
 
 // ---- 연결 상태·중간 응답(메모리) ----
