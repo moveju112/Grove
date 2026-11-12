@@ -84,6 +84,35 @@ async fn invalid_values_scope_and_conflicts_keep_previous() {
 }
 
 #[tokio::test]
+async fn profile_settings_require_an_existing_enabled_target_and_allow_inheritance() {
+    let s = TestServer::start().await;
+    let profile = s.fixture_profile("http://127.0.0.1:9/v1").await;
+    for key in ["model.default_profile", "context.summary_profile"] {
+        let (status, value) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
+            json!({ "expected_revision": 0, "value": profile })).await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+    }
+    assert_eq!(s.send(Method::PUT, &format!("/api/v1/model-profiles/{profile}"),
+        json!({ "expected_revision": 1, "enabled": false })).await.0, StatusCode::OK);
+    for key in ["model.default_profile", "context.summary_profile"] {
+        for (target, expected) in [("missing-profile", StatusCode::NOT_FOUND), (profile.as_str(), StatusCode::CONFLICT)] {
+            let (status, value) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
+                json!({ "expected_revision": 1, "value": target })).await;
+            assert_eq!(status, expected, "{value}");
+            let (_, effective) = s.get("/api/v1/settings/effective").await;
+            assert_eq!(item(&effective, key)["effective"], profile);
+            assert_eq!(item(&effective, key)["layers"]["server"]["revision"], 1);
+        }
+        assert_eq!(s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
+            json!({ "expected_revision": 1, "value": "" })).await.0, StatusCode::OK);
+        let (status, value) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
+            json!({ "expected_revision": 2, "value": null })).await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        assert_eq!(value["item"]["source"], "default");
+    }
+}
+
+#[tokio::test]
 async fn instructions_and_language_reach_model_and_are_fixed_per_turn() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;

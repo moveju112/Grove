@@ -3,7 +3,7 @@ import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../api/client
 import type { Definition, ModelProfile } from "../api/generated";
 import { deviceName, loadPrefs } from "../state/device";
 import * as D from "../state/drafts";
-import { type FollowKind, type SendOptions, capabilityProblem, resolveOptions, sendOptionsSignature } from "../state/sendOptions";
+import { type FollowKind, type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
 
@@ -57,7 +57,17 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     const sending = useRef(false);
     const checking = useRef(false);
     const base = useRef<number>(initialDraft?.baseRevision ?? 0);
-    const [opts, setOpts] = useState<SendOptions>(() => initialDraft?.options ?? initialDraft?.pending?.intent ?? loadOpts());
+    const [deviceOptions, setDeviceOptions] = useState(loadOpts);
+    const [selectionState, setSelectionState] = useState<{ phase: "loading" | "ready"; options: SendOptions }>(() => {
+        const restored = initialDraft?.options ?? initialDraft?.pending?.intent;
+        return { phase: boundProfileId !== undefined || restored?.profileId ? "ready" : "loading",
+            options: restored ?? { ...deviceOptions, profileId: null } };
+    });
+    const opts = selectionState.options;
+    const setOpts = (value: SendOptions | ((options: SendOptions) => SendOptions)) => setSelectionState((current) => {
+        const options = typeof value === "function" ? value(current.options) : value;
+        return { phase: options.profileId ? "ready" : current.phase, options };
+    });
     const selection = useRef({ options: opts, ids: attachments.ids });
     selection.current = { options: opts, ids: attachments.ids };
     const [owner] = useState(authGeneration);
@@ -70,9 +80,20 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     const [msg, setMsg] = useState<string | null>(null);
     const [conflict, setConflict] = useState<D.ServerDraft | null>(null);
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
+    const defaults = useQuery<{ items: { key: string; effective: unknown }[] }>(boundProfileId === undefined ? `settings:${projectId}` : null,
+        () => api.get(`/settings/effective?project_id=${encodeURIComponent(projectId)}`));
     const agents = useQuery<Definition[]>("definitions:agent", () => api.get("/definitions?kind=agent"));
     const server = useQuery<D.ServerDraft>(`draft:${resourceKey}`, () => api.get(`/drafts/${resourceKey}`));
     const prefs = loadPrefs();
+    const ready = boundProfileId !== undefined || selectionState.phase === "ready";
+    useEffect(() => {
+        if (ready || !profiles.data || !defaults.data) return;
+        const configured = defaults.data.items.find((item) => item.key === "model.default_profile")?.effective;
+        const ids = [...profiles.data].sort((a, b) => Number(a.enabled === false) - Number(b.enabled === false)).map((profile) => profile.id);
+        setSelectionState((current) => current.phase === "ready" ? current : {
+            phase: "ready", options: { ...current.options, profileId: initialProfile(configured, deviceOptions.profileId, ids) },
+        });
+    }, [ready, profiles.data, defaults.data, deviceOptions.profileId]);
 
     useEffect(() => {
         if (!store || !isLoggedIn() || authGeneration() !== owner) return;
@@ -87,9 +108,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
 
     useEffect(() => {
         if (!isLoggedIn() || authGeneration() !== owner) return;
-        try { localStorage.setItem(OPT_KEY, JSON.stringify(opts)); }
+        try { localStorage.setItem(OPT_KEY, JSON.stringify(deviceOptions)); }
         catch { setCopyError(true); }
-    }, [opts, owner]);
+    }, [deviceOptions, owner]);
 
     // 화면 선택과 보내는 값이 같도록 매 렌더 계산한다(기본 프로필을 상태로 복사하지 않음).
     const resolved = resolveOptions(
@@ -100,9 +121,14 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     const eff = boundProfileId === undefined ? resolved : { ...resolved, profileId: boundProfileId, agentId: null };
     const selectedProfile = profiles.data?.find((p) => p.id === eff.profileId);
     const profileDisabled = selectedProfile?.enabled === false;
+    const profileMissing = !!eff.profileId && profiles.data !== undefined && !selectedProfile;
     const problem = capabilityProblem(selectedProfile?.capabilities, eff, attachments.items.some((item) =>
         (item.attachment?.mime ?? item.file?.type)?.startsWith("image/")));
-    const update = (patch: Partial<SendOptions>) => setOpts((o) => ({ ...o, ...patch }));
+    const update = (patch: Partial<SendOptions>) => {
+        setOpts((o) => ({ ...o, ...patch }));
+        // 범위별 자동 기본값·사본 복원은 기기 기본값으로 승격하지 않는다. 직접 바꾼 필드만 공유한다.
+        setDeviceOptions((o) => ({ ...o, ...patch }));
+    };
     const restoreCopy = (draft: D.LocalDraft) => {
         if (!store || busy || attachments.busy) return;
         try {
@@ -236,8 +262,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
         if (busy || sending.current || attachments.busy || !!disabled || pendingInvalid) return;
         const confirmation = original ?? (pending?.raw === raw && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null);
         const ids = confirmation?.attachmentIds ?? attachments.ids;
-        if (!confirmation && eff.mode === "model" && profileDisabled) {
-            setMsg("선택한 모델 프로필이 비활성화돼 있습니다. 다른 프로필을 명시적으로 선택하세요.");
+        if (!confirmation && eff.mode === "model" && (!ready || profileDisabled || profileMissing)) {
+            setMsg(!ready ? "기본 모델 설정을 확인한 뒤 보내세요." : "선택한 모델 프로필을 사용할 수 없습니다. 다른 프로필을 명시적으로 선택하세요.");
             return;
         }
         if (!confirmation && problem) { setMsg(problem); return; }
@@ -252,7 +278,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
         if (!confirmation && options.mode === "model" && boundProfileId === undefined) {
             // 보내기를 누른 순간 보이는 기본 모델도 사용자가 선택한 대상이다.
             intent = { ...opts, profileId: options.profileId };
-            update({ profileId: options.profileId });
+            setOpts(intent);
         }
         const sig = confirmation?.sig ?? sendOptionsSignature(intent, ids);
         const key = confirmation?.key ?? newKey();
@@ -429,7 +455,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 </select>
                 {eff.mode === "model" && (
                     <>
-                        <select aria-label="모델 프로필" value={eff.profileId ?? ""} disabled={boundProfileId !== undefined} onChange={(e) => update({ profileId: e.target.value || null })}>
+                        <select aria-label="모델 프로필" value={eff.profileId ?? ""} disabled={!ready || boundProfileId !== undefined} onChange={(e) => update({ profileId: e.target.value || null })}>
+                            {profileMissing && <option value={eff.profileId!} disabled>선택한 프로필 없음(직접 다른 모델을 선택하세요)</option>}
                             {boundProfileId === null && <option value="">봇 모델 로딩 중 또는 미설정</option>}
                             {(profiles.data ?? []).length === 0 && <option value="">모델 프로필 없음(설정에서 추가)</option>}
                             {(profiles.data ?? []).map((p) => (
@@ -470,7 +497,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 )}
                 <button
                     onClick={send}
-                    disabled={busy || pendingInvalid || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (!!problem || (eff.mode === "model" && (!eff.profileId || profileDisabled)) || (!!running && eff.mode === "save")))}
+                    disabled={busy || pendingInvalid || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (!!problem || (eff.mode === "model" && (!ready || !eff.profileId || profileDisabled || profileMissing)) || (!!running && eff.mode === "save")))}
                     title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다(도구 호출과 결과 사이에 끼면 안 됨)" : undefined}
                 >
                     {busy ? checking.current ? "확인 중…" : "보내는 중…" : recovering ? "같은 요청 확인" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
@@ -480,6 +507,11 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
             {eff.mode === "model" && selectedProfile && <CapabilitySummary capabilities={selectedProfile.capabilities} />}
             {problem && <p className="warn small" role="status">{problem}</p>}
             {eff.mode === "model" && profileDisabled && <p className="warn small" role="status" data-testid="profile-disabled">선택한 모델 프로필이 비활성화돼 있습니다. 다른 모델로 자동 전환하지 않습니다.</p>}
+            {eff.mode === "model" && profileMissing && <p className="warn small" role="status" data-testid="profile-missing">선택한 모델 프로필이 없습니다. 다른 공급자로 자동 전환하지 않습니다. 모델을 직접 선택하세요.</p>}
+            {!ready && eff.mode === "model" && <p className="muted small" role="status">
+                {defaults.error || profiles.error ? "모델 선택 정보를 불러오지 못했습니다." : "기본 모델 설정 확인 중…"}
+                {Boolean(defaults.error || profiles.error) && <button className="ghost small" onClick={() => { defaults.reload(); profiles.reload(); }}>모델 설정 다시 확인</button>}
+            </p>}
         </div>
     );
 }

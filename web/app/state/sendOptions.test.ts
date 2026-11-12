@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type SendOptions, capabilityProblem, resolveOptions, sendOptionsSignature } from "./sendOptions";
+import { type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature } from "./sendOptions";
 import type { ModelCapabilities } from "../api/generated";
 
 const base: SendOptions = { mode: "model", profileId: null, agentId: null, tools: false };
@@ -20,8 +20,8 @@ describe("resolveOptions", () => {
     it("선택이 없으면 첫 프로필을 쓴다(다른 옵션 변경과 무관)", () => {
         expect(resolveOptions({ ...base, mode: "model" }, ["p1", "p2"], []).profileId).toBe("p1");
     });
-    it("목록에 없는 저장 프로필은 첫 프로필로 바꾼다", () => {
-        expect(resolveOptions({ ...base, profileId: "gone" }, ["p1"], []).profileId).toBe("p1");
+    it("목록에서 사라진 명시적 선택을 다른 공급자로 조용히 바꾸지 않는다", () => {
+        expect(resolveOptions({ ...base, profileId: "gone" }, ["p1"], []).profileId).toBe("gone");
     });
     it("목록에 있는 선택은 유지한다", () => {
         expect(resolveOptions({ ...base, profileId: "p2" }, ["p1", "p2"], []).profileId).toBe("p2");
@@ -50,5 +50,18 @@ describe("capabilityProblem", () => {
         expect(capabilityProblem(no, { ...base, effort: "auto" }, false)).toBeNull();
         expect(capabilityProblem(no, base, true)).toContain("이미지 입력 미지원");
         expect(capabilityProblem(no, { ...base, mode: "save", tools: true }, true)).toBeNull();
+    });
+});
+
+describe("새 입력창의 기본 모델", () => {
+    it("범위별 기본값이 기기 선택보다 우선하고 미설정일 때만 기기/첫 모델을 쓴다", () => {
+        expect(initialProfile("project", "device", ["first"])).toBe("project");
+        expect(initialProfile("", "device", ["first"])).toBe("device");
+        expect(initialProfile(null, null, ["first"])).toBe("first");
+        expect(initialProfile(null, null, [])).toBeNull();
+    });
+    it("사라진 기본값이나 기기 선택도 다른 공급자로 자동 교체하지 않는다", () => {
+        expect(initialProfile("gone", "device", ["first"])).toBe("gone");
+        expect(initialProfile(null, "gone", ["first"])).toBe("gone");
     });
 });

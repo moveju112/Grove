@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ApiError, api } from "../api/client";
 import { useQuery } from "../state/store";
+import type { ModelProfile } from "../api/generated";
 
 export type SettingDef = {
     key: string;
@@ -23,6 +24,25 @@ type Item = { key: string; default: unknown; layers: Record<string, Layer>; effe
 const SCOPE_LABEL: Record<string, string> = { server: "서버 전체", project: "이 프로젝트", session: "이 대화", default: "기본값" };
 const APPLIES: Record<string, string> = { immediate: "즉시 적용", next_turn: "다음 요청부터 적용", restart: "재시작 후 적용" };
 const ENUM_LABEL: Record<string, Record<string, string>> = { "output.style": { default: "모델 기본", concise: "간결하게", detailed: "자세하게" } };
+const PROFILE_KEYS = new Set(["model.default_profile", "context.summary_profile"]);
+
+function ProfileChoice({ d, value, disabled, edit }: { d: SettingDef; value: unknown; disabled: boolean; edit: (value: string) => void }) {
+    const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
+    const id = String(value ?? "");
+    const selected = profiles.data?.find((profile) => profile.id === id);
+    return <div>
+        <select aria-label={d.label} value={id} disabled={disabled || !profiles.data} onChange={(event) => edit(event.target.value)}>
+            <option value="">{d.key === "context.summary_profile" ? "요청에 쓰는 모델 사용" : "기기 선택 또는 첫 활성 모델"}</option>
+            {id && profiles.data && !selected && <option value={id} disabled>사용 불가 모델(삭제됐거나 접근 불가)</option>}
+            {(profiles.data ?? []).map((profile) => <option key={profile.id} value={profile.id} disabled={profile.enabled === false}>
+                {profile.name} · {profile.protocol} · {profile.model}{profile.enabled === false ? " · 비활성" : ""}
+            </option>)}
+        </select>
+        {selected && <span className="muted small"> 전송 대상: {selected.base_url || "서버 설치 CLI"} · {selected.model}</span>}
+        {id && profiles.data && (!selected || selected.enabled === false) && <p className="warn small" role="status">현재 모델을 사용할 수 없습니다. 다른 모델로 자동 전환하지 않습니다.</p>}
+        {Boolean(profiles.error) && <p className="err" role="alert">모델 목록을 읽지 못했습니다. <button className="ghost small" onClick={profiles.reload}>다시 읽기</button></p>}
+    </div>;
+}
 
 /// 연 위치(프로젝트·대화)를 정확히 가리키는 대상 정보. 탭을 열 때 고정되어 pane 전환으로 바뀌지 않는다(CONFIG-005, SETTINGS-024).
 export type SettingsTarget = { projectId?: string; projectName?: string; sessionId?: string; sessionTitle?: string };
@@ -105,7 +125,8 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                 {d.kind === "int" && (
                     <input disabled={saving} type="number" aria-label={d.label} min={d.min ?? undefined} max={d.max ?? undefined} value={Number(value ?? 0)} onChange={(e) => edit(Number(e.target.value))} />
                 )}
-                {(d.kind === "string" || d.kind === "tool_list") && (
+                {PROFILE_KEYS.has(d.key) && <ProfileChoice d={d} value={value} disabled={saving} edit={edit} />}
+                {((d.kind === "string" && !PROFILE_KEYS.has(d.key)) || d.kind === "tool_list") && (
                     <input
                         disabled={saving}
                         aria-label={d.label}

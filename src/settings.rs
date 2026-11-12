@@ -43,7 +43,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: "model.default_profile",
             menu: "model",
             label: "기본 모델 프로필",
-            description: "새 대화에서 처음 선택될 모델 프로필 ID",
+            description: "새 입력창의 초기 모델입니다. 프로젝트 설정이 서버 설정보다 우선하며 기존 탭의 명시적 선택·보류 요청은 바꾸지 않습니다. 비우면 기기 선택 또는 첫 활성 모델을 씁니다",
             keywords: "model default provider 기본 모델",
             kind: "string",
             options: &[],
@@ -656,6 +656,11 @@ pub async fn put(
         let old_value = prev.map(|r| r.0).unwrap_or(Value::Null);
         if cur != b.expected_revision {
             return Err(ApiError::revision_conflict(resolve_key(tx, &d, project.as_deref(), session.as_deref())?));
+        }
+        if matches!(key.as_str(), "model.default_profile" | "context.summary_profile")
+            && let Some(profile) = b.value.as_str().filter(|value| !value.is_empty())
+        {
+            crate::models::get_enabled_profile(tx, profile)?;
         }
         tx.execute(
             "INSERT INTO settings (scope, scope_id, key, value, revision, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
