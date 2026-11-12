@@ -181,8 +181,25 @@ fn emit_turn(c: &Connection, now: &str, turn_id: &str) -> ApiResult<Turn> {
     Ok(t)
 }
 
+/// 턴 상태 전이표(RUN-001). 저장 상태만 적는다.
+/// - idle: 활성 턴(queued·running·awaiting_approval)이 없는 대화. 별도 행이 없다.
+/// - awaiting_input: awaiting_approval 턴 안의 질문 도구 호출 상태(`tool_calls.status`).
+/// - canceling: 취소 신호를 받은 running 턴. 실행 경로가 정리하며 cancelled·interrupted로 끝난다(저장 상태 아님).
+/// - completed·failed·cancelled·interrupted는 종료 상태라 나가는 전이가 없다. 재시도는 새 턴이다.
+pub const TURN_TRANSITIONS: &[(&str, &[&str])] = &[
+    ("queued", &["running", "failed", "cancelled", "interrupted"]),
+    ("running", &["awaiting_approval", "completed", "failed", "cancelled", "interrupted"]),
+    ("awaiting_approval", &["running", "failed", "cancelled"]),
+];
+
+pub fn turn_transition_allowed(from: &str, to: &str) -> bool {
+    TURN_TRANSITIONS.iter().any(|(f, tos)| *f == from && tos.contains(&to))
+}
+
 /// 조건부 종료 전이. 이미 다른 상태면 아무것도 하지 않는다.
 fn finish_turn(c: &Connection, now: &str, id: &str, from: &[&str], to: &str, error: Option<Value>) -> ApiResult<bool> {
+    // 모든 호출 경로가 전이표 안의 전이만 쓰는지 개발·시험 빌드에서 강제한다.
+    debug_assert!(from.iter().all(|f| turn_transition_allowed(f, to)), "허용되지 않은 턴 전이: {from:?} -> {to}");
     let ph = from.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(",");
     // 마지막 진행 시각(RUN-023): 종료 전 마지막 갱신 시각.
     // stream 중 기록한 진행 시각과 마지막 단계 갱신 시각 중 늦은 쪽.
@@ -1637,6 +1654,22 @@ async fn cancel_running_calls(app: &App, turn_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// RUN-001: 종료 상태에서는 나가지 않고, 전이표의 상태는 DB CHECK의 상태와 같다.
+    #[test]
+    fn turn_transition_table_is_closed_and_terminal_states_are_final() {
+        let stored = ["queued", "running", "awaiting_approval", "completed", "failed", "cancelled", "interrupted"];
+        for (from, tos) in TURN_TRANSITIONS {
+            assert!(stored.contains(from), "{from}");
+            assert!(tos.iter().all(|t| stored.contains(t)), "{tos:?}");
+        }
+        for terminal in ["completed", "failed", "cancelled", "interrupted"] {
+            assert!(stored.iter().all(|to| !turn_transition_allowed(terminal, to)), "{terminal}");
+        }
+        assert!(turn_transition_allowed("awaiting_approval", "running"), "승인 뒤 재개");
+        assert!(!turn_transition_allowed("queued", "completed"), "모델 호출 없이 완료하지 않는다");
+        assert!(!turn_transition_allowed("awaiting_approval", "interrupted"), "승인 대기는 재시작에도 유지");
+    }
 
     #[test]
     fn native_resume_requires_the_same_system_context_and_does_not_accept_legacy_unknown_context() {

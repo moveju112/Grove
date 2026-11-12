@@ -599,7 +599,20 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 권한: `--tools` 없으면 도구 없음, `--read-only`는 `tools.mode=read_only`, `--allow-tool`은 서버 `tools.allow`. 그 밖의 변경 도구·질문은 턴을 취소하고 `needs_approval`/`needs_input`으로 끝낸다. 예산은 대화 범위 `runs.budget.max_tokens`·`max_minutes`. 파일·네트워크 sandbox가 아니며 도움말과 출력 `isolation: "none"`에 밝힌다.
 - 출력: stdout에는 `schema: "grove.exec.v1"` JSON 하나(상태·종료 코드·최종 답·사용량·도구 상태·오류·제외/포함 문맥), 진단은 stderr. receipt `result.json`을 출력보다 먼저 저장하고 stdout pipe가 닫혀도 실행 결과·종료 코드를 바꾸지 않는다.
 - 종료 코드(호환 계약): 0 성공, 1 실행 실패, 2 입력 오류, 3 인증·설정 오류(접수 전 진단 포함), 4 승인·입력 필요, 5 시간 예산 초과, 6 취소, 7 결과 불명(unknown 도구·취소 아닌 interrupted).
-- 취소: Ctrl+C(모든 OS)·SIGTERM(Unix)을 턴 취소 API로 보낸다. `grove exec show <run 디렉터리>`는 receipt만 다시 출력하고 실행하지 않으며 receipt가 없으면 7로 결과 불명을 알린다. 새 호출은 언제나 새 요청이다.
+- 취소: Ctrl+C(모든 OS)·SIGTERM(Unix)을 턴 취소 API로 보낸다. (턴 상태 전이표는 §36) `grove exec show <run 디렉터리>`는 receipt만 다시 출력하고 실행하지 않으며 receipt가 없으면 7로 결과 불명을 알린다. 새 호출은 언제나 새 요청이다.
+
+## 36. 턴 상태 전이(RUN-001)
+
+| 현재 | 다음 |
+|---|---|
+| (idle: 활성 턴 없음) | queued(접수) |
+| queued | running, failed, cancelled, interrupted(서버 종료·재시작) |
+| running | awaiting_approval, completed, failed, cancelled, interrupted |
+| awaiting_approval | running(모든 결정·답변 뒤 재개), failed, cancelled |
+| completed·failed·cancelled·interrupted | 없음(재시도는 새 턴) |
+
+- awaiting_input은 awaiting_approval 턴 안의 질문 도구 호출 상태이고, canceling은 취소 신호를 받은 running(저장 상태 아님)이다. 승인 대기는 서버 재시작에도 유지한다.
+- `runner::TURN_TRANSITIONS`가 이 표이며 모든 종료 전이(`finish_turn`)는 개발·시험 빌드에서 표 밖 전이를 assert로 막는다.
 
 ## 11. 결정 기록
 

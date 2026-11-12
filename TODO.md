@@ -761,7 +761,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 
 ## 9. 에이전트 실행 루프·취소·질문
 
-- [ ] RUN-001 `idle/queued/running/awaiting_approval/awaiting_input/canceling/completed/failed/interrupted` 전이를 정의한다.
+- [x] RUN-001 `idle/queued/running/awaiting_approval/awaiting_input/canceling/completed/failed/interrupted` 전이를 정의한다. 검증: 저장 상태 전이표 `runner::TURN_TRANSITIONS`와 idle·awaiting_input·canceling의 의미를 RULEBOOK §36에 정의했다. 모든 종료 전이는 시험 빌드에서 표 밖 전이를 assert로 막고, 턴을 만드는 통합 시험 18개 target이 assert 없이 통과했다(`runner::tests::turn_transition_table_is_closed_and_terminal_states_are_final`).
 - [x] RUN-002 세션마다 하나의 실행 소유자를 두고 중복 턴 실행을 방지한다. 검증: DB unique index `turns_one_active` + `Cancels::register_unique`, `tests/turns.rs::one_active_turn_per_session_and_idempotent_create`.
 - [x] RUN-003 사용자 요청 저장, 모델 호출, 도구 실행, 결과 반영, 최종 답변 저장을 일관되게 연결한다. 검증: `tests/turns.rs::read_tool_runs_automatically_and_result_reaches_model`.
 - [x] RUN-004 한 턴의 여러 모델 step과 tool batch를 추적한다. 검증: `turns.step`·턴별 `tool_calls`, `tests/turns.rs`.
@@ -823,7 +823,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [ ] PROJECT-008 작업공간 제목·고정·라벨 생성/수정/할당/삭제의 실제 사용 범위를 유지한다.
 - [ ] PROJECT-009 archive와 복구 검사·복구 실행을 구현한다.
 - [ ] PROJECT-010 초기 setup script의 상태·실행·실패·재시도를 명시적으로 관리한다.
-- [ ] PROJECT-011 프로젝트 스크립트 목록·시작·중지·로그를 제공한다.
+- [x] PROJECT-011 프로젝트 스크립트 목록·시작·중지·로그를 제공한다. 검증: FILEUI-010의 프로젝트 script 목록·시작·실행 로그와 기존 작업 중지(`/tasks/{id}/cancel`)를 같은 작업/로그 경로로 제공한다(`tests/project_scripts.rs`, `web/e2e/project-scripts.spec.ts`, `tests/tasks.rs`).
 - [ ] PROJECT-012 프로젝트 clone·저장소 검색·경로 제안을 유지 대상으로 검증한다.
 
 ## 11. 컨텍스트·압축·지침·메모리
