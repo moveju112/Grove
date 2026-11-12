@@ -10,7 +10,7 @@ const MODEL = process.env.GROVE_REAL_MODEL;
 test.skip(!BASE || !MODEL, "실모델 opt-in 시험: GROVE_REAL_BASE·GROVE_REAL_MODEL이 없어 건너뜀");
 
 test("실제 경량 모델로 첫 대화를 하고 새로고침해도 대화와 답이 남는다", async ({ page }) => {
-    test.setTimeout(300_000);
+    if (process.env.GROVE_E2E_FAST !== "1") test.setTimeout(300_000);
     const { a } = await ensureProjects();
     const name = `real-${Date.now()}`;
     const prof = await apiCall<{ id: string }>("POST", "/model-profiles", {

@@ -3,7 +3,6 @@ import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers
 import { frames } from "./fixture";
 
 test("긴 대화의 이전 페이지를 계속 불러와도 렌더링한 메시지 수는 viewport 크기에 머문다", async ({ page }) => {
-    test.setTimeout(60_000);
     const { a } = await ensureProjects();
     const title = `virtual-${Date.now()}`;
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
@@ -36,7 +35,6 @@ test("긴 대화의 이전 페이지를 계속 불러와도 렌더링한 메시�
 });
 
 test("가변 높이 행을 펼친 상태는 화면 밖으로 나가도 유지되고 폭이 바뀌어도 읽던 위치를 지킨다", async ({ page }) => {
-    test.setTimeout(60_000);
     const { a } = await ensureProjects();
     const profile = await ensureProfile();
     const title = `virtual-details-${Date.now()}`;

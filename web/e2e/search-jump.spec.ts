@@ -3,7 +3,6 @@ import { apiCall, ensureProjects, login } from "./helpers";
 
 // UI-026: 검색 결과를 누르면 그 대화의 정확한 메시지로 이동한다(첫 페이지 밖이면 이전 페이지를 읽어서).
 test("검색 결과를 누르면 오래된 메시지까지 이전 페이지를 읽어 그 메시지로 이동하고 강조한다", async ({ page }) => {
-    test.setTimeout(60_000);
     const { a } = await ensureProjects();
     const word = `needle${Date.now()}`;
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `긴 대화 ${word.slice(-5)}` });

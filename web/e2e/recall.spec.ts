@@ -5,7 +5,6 @@ import { dirname, join } from "node:path";
 import { apiCall, ensureProjects, login, sessionView, state } from "./helpers";
 
 test("메시지 작성 시각으로 회상하고 페이지 밖의 원문 메시지로 이동한다", async ({ page }) => {
-    test.setTimeout(60_000);
     const { a } = await ensureProjects();
     const word = `recall-source-${Date.now()}`;
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `회상 원문 ${word}` });

@@ -1,6 +1,9 @@
 """변경 영향 규칙 시험(BUILD-042). 실행: python3 -m unittest scripts/test_build.py"""
 import os
+import json
+import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from io import StringIO
@@ -128,7 +131,22 @@ class Verification(unittest.TestCase):
         ])
         expected = os.path.join("/tmp/grove-custom-target", "debug", "grove.exe" if os.name == "nt" else "grove")
         self.assertEqual(calls[-1][2]["extra_env"]["GROVE_BIN"], expected)
+        self.assertEqual(calls[-1][2]["extra_env"]["GROVE_E2E_FAST"], "1")
         self.assertNotIn("--release", [arg for _, cmd, _ in calls for arg in cmd])
+
+    def test_selected_regression_keeps_original_policy(self):
+        with patch.dict(os.environ, {"GROVE_E2E_FAST": "1"}):
+            calls, code, _ = self.execute("--e2e", "e2e/scroll.spec.ts", "--e2e-regression")
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[-1][1], ["npx", "playwright", "test", "e2e/scroll.spec.ts"])
+        self.assertEqual(calls[-1][2]["extra_env"]["GROVE_E2E_FAST"], "0")
+
+    def test_regression_mode_requires_selected_e2e(self):
+        for args in [[], ["--typecheck"], ["--full"]]:
+            with self.subTest(args=args):
+                calls, code, _ = self.execute(*args, "--e2e-regression")
+                self.assertEqual(code, 2)
+                self.assertEqual(calls, [])
 
     def test_full_is_explicit_and_covers_all_suites(self):
         calls, code, _ = self.execute("--full")
@@ -136,6 +154,7 @@ class Verification(unittest.TestCase):
         self.assertEqual(calls[0][1], ["cargo", "test", "--no-fail-fast"])
         self.assertIn(["npx", "vitest", "run"], [cmd for _, cmd, _ in calls])
         self.assertEqual(calls[-1][1], ["npx", "playwright", "test"])
+        self.assertEqual(calls[-1][2]["extra_env"]["GROVE_E2E_FAST"], "0")
 
     def test_full_cannot_be_misreported_with_a_filter(self):
         calls, code, _ = self.execute("--full", "--lib", "--filter", "config")
@@ -161,11 +180,59 @@ class Verification(unittest.TestCase):
         self.assertEqual(calls, [])
         self.assertIn("cargo test --test api", output)
 
+    def test_e2e_dry_run_displays_policy_without_running(self):
+        for args, mode in [
+            (["--e2e", "e2e/scroll.spec.ts"], "1"),
+            (["--e2e", "e2e/scroll.spec.ts", "--e2e-regression"], "0"),
+            (["--full"], "0"),
+        ]:
+            with self.subTest(args=args):
+                calls, code, output = self.execute(*args, "--dry-run")
+                self.assertEqual(code, 0)
+                self.assertEqual(calls, [])
+                self.assertIn(f"e2e: GROVE_E2E_FAST={mode} npx playwright test", output)
+
     def test_real_child_failure_keeps_its_exit_status(self):
         with redirect_stdout(StringIO()), self.assertRaises(SystemExit) as raised:
             build.run("intentional failure", [sys.executable, "-c", "raise SystemExit(23)"])
         self.assertEqual(raised.exception.code, 23)
         self.assertEqual(build.LOG[-1]["exit"], 23)
+
+
+class PlaywrightPolicy(unittest.TestCase):
+    def test_loaded_config_applies_fast_mode_only_when_explicit(self):
+        # --list로 실제 설정을 읽되 서버·브라우저·실모델은 실행하지 않는다.
+        web = os.path.join(build.ROOT, "web")
+        with tempfile.TemporaryDirectory(prefix="grove-policy-") as tmp:
+            config = os.path.join(tmp, "playwright.config.ts")
+            with open(config, "w") as f:
+                f.write(
+                    f"import original from {json.dumps(os.path.join(web, 'playwright.config.ts'))};\n"
+                    "console.log('GROVE_POLICY=' + JSON.stringify({"
+                    "timeout: original.timeout, expect: original.expect?.timeout,"
+                    "maxFailures: original.maxFailures, retries: original.retries}));\n"
+                    f"export default {{ ...original, testDir: {json.dumps(os.path.join(web, 'e2e'))},"
+                    "globalSetup: undefined, globalTeardown: undefined };\n"
+                )
+            for mode, expected in [
+                ("1", {"timeout": 20_000, "expect": 3_000, "maxFailures": 1, "retries": 0}),
+                ("0", {"timeout": 60_000}),
+                (None, {"timeout": 60_000}),
+            ]:
+                with self.subTest(mode=mode):
+                    e = dict(os.environ)
+                    e.pop("GROVE_E2E_FAST", None)
+                    if mode is not None:
+                        e["GROVE_E2E_FAST"] = mode
+                    result = subprocess.run(
+                        ["node", os.path.join(web, "node_modules", "@playwright", "test", "cli.js"),
+                         "test", "--config", config, "--list", "scroll.spec.ts"],
+                        cwd=web, env=e, capture_output=True, text=True, timeout=20,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    policy = next(line.removeprefix("GROVE_POLICY=") for line in result.stdout.splitlines()
+                                  if line.startswith("GROVE_POLICY="))
+                    self.assertEqual(json.loads(policy), expected)
 
 
 if __name__ == "__main__":

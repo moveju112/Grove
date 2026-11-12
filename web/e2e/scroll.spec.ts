@@ -3,7 +3,6 @@ import { apiCall, ensureProjects, login } from "./helpers";
 
 // UI-008·009: 위를 읽는 중에는 새 메시지가 와도 위치를 지키고 알림만 띄우며, 이전 페이지를 붙여도 읽던 위치를 유지한다.
 test("과거 메시지를 읽는 동안 자동 스크롤하지 않고, 이전 페이지를 불러와도 읽던 메시지가 그 자리에 남는다", async ({ page }) => {
-    test.setTimeout(60_000);
     const { a } = await ensureProjects();
     const title = `스크롤 대화 ${Date.now()}`;
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
@@ -49,7 +48,6 @@ test("과거 메시지를 읽는 동안 자동 스크롤하지 않고, 이전 �
 });
 
 test("다른 탭을 다녀와도 이전 페이지의 읽던 메시지와 화면 내 위치를 복원한다", async ({ page }) => {
-    test.setTimeout(60_000);
     const { a } = await ensureProjects();
     const prefix = `position-${Date.now()}`;
     const reading = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `${prefix} reading` });

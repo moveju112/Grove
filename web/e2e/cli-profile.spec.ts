@@ -32,7 +32,7 @@ const REAL = process.env.GROVE_REAL_CLI;
 
 test("서버에 설치된 CLI로 프로젝트 파일을 읽어 답하고 도구 활동이 표시된다(실제 CLI, opt-in)", async ({ page }) => {
     test.skip(!REAL, "실제 CLI opt-in 시험: GROVE_REAL_CLI가 없어 건너뜀");
-    test.setTimeout(300_000);
+    if (process.env.GROVE_E2E_FAST !== "1") test.setTimeout(300_000);
     const [protocol, model] = REAL!.split(":");
     const { a } = await ensureProjects();
     const { writeFileSync } = await import("node:fs");

@@ -6,6 +6,7 @@
     scripts/build.py test --lib --filter config
     scripts/build.py test --vitest app/state/events.test.ts
     scripts/build.py test --e2e e2e/workspace.spec.ts  # debug 서버 + 웹 빌드 후 선택 E2E
+    scripts/build.py test --e2e e2e/workspace.spec.ts --e2e-regression  # 기존 timeout·재시도 정책
     scripts/build.py test --full         # 명시적으로 전체 인수 검사
     scripts/build.py plan --changed F..  # 변경 파일 → 영향 범위(서버/웹/protocol/전체/없음)
     scripts/build.py package [--targets linux-x64,linux-arm64,windows-x64] [--dry-run] [--jobs N]
@@ -159,6 +160,8 @@ def cmd_dev(_a):
 
 def test_steps(a):
     """범위를 추측해 전체로 넓히지 않고, 요청한 검사만 실행한다."""
+    if a.e2e_regression and not a.e2e:
+        raise ValueError("--e2e-regression에는 --e2e FILE이 필요합니다 (--full은 기존 정책 사용)")
     if a.full and (a.rust or a.lib or a.filter or a.vitest or a.e2e or a.typecheck):
         raise ValueError("--full과 선택 검사 옵션은 함께 사용할 수 없습니다")
     if a.filter and not (a.rust or a.lib):
@@ -200,7 +203,8 @@ def cmd_test(a):
         raise SystemExit(2) from e
     if a.dry_run:
         for name, cmd, _ in steps:
-            print(f"{name}: {shlex.join(cmd)}")
+            mode = f"GROVE_E2E_FAST={int(not a.full and not a.e2e_regression)} " if name == "e2e" else ""
+            print(f"{name}: {mode}{shlex.join(cmd)}")
         return
     for index, (name, cmd, cwd) in enumerate(steps):
         try:
@@ -209,7 +213,10 @@ def cmd_test(a):
                 binary = os.path.join(metadata["target_directory"], "debug", "grove.exe" if os.name == "nt" else "grove")
                 # Chrome 소켓 경로 한도를 지키고, 부모의 오래된 GROVE_BIN은 사용하지 않는다.
                 with tempfile.TemporaryDirectory(prefix="gpw-", dir="/tmp") as tmp:
-                    run(name, cmd, cwd=cwd, extra_env={"TMPDIR": tmp, "GROVE_BIN": binary})
+                    run(name, cmd, cwd=cwd, extra_env={
+                        "TMPDIR": tmp, "GROVE_BIN": binary,
+                        "GROVE_E2E_FAST": str(int(not a.full and not a.e2e_regression)),
+                    })
             else:
                 run(name, cmd, cwd=cwd)
         except (SystemExit, subprocess.CalledProcessError, OSError):
@@ -514,6 +521,7 @@ def main(argv=None):
     t.add_argument("--filter", help="선택한 Rust 시험의 이름 필터")
     t.add_argument("--vitest", nargs="+", metavar="FILE", help="Vitest 파일")
     t.add_argument("--e2e", nargs="+", metavar="FILE", help="Playwright spec (debug 서버 사용)")
+    t.add_argument("--e2e-regression", action="store_true", help="선택 E2E에 기존 timeout·재시도 정책 사용 (기본: 빠른 실패)")
     t.add_argument("--typecheck", action="store_true")
     t.add_argument("--full", action="store_true", help="전체 Rust·타입·Vitest·Playwright 인수 검사")
     t.add_argument("--dry-run", action="store_true", help="실행 없이 선택한 명령 표시")

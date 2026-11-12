@@ -1,9 +1,12 @@
 import { defineConfig } from "@playwright/test";
 
+const fast = process.env.GROVE_E2E_FAST === "1";
+
 // 실제 grove 실행 파일 + 빌드된 정적 웹앱 + 설치된 Google Chrome으로 시험한다.
 export default defineConfig({
     testDir: "e2e",
-    timeout: 60_000,
+    timeout: fast ? 20_000 : 60_000,
+    ...(fast ? { expect: { timeout: 3_000 }, maxFailures: 1, retries: 0 } : {}),
     fullyParallel: false,
     workers: 1,
     reporter: [["list"]],
