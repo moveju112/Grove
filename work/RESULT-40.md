@@ -5,10 +5,10 @@
 # 40 — CTX-013 완료 인계
 
 - 상태: 소유 구현·실제 연결·선택 검사·배정된 실제 브라우저 인수 완료. 실행 가능한 잔여 및 blocker 없음.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-40-deferred-tools`
+- Worktree: `<세션 worktree 루트>/b02-40-deferred-tools`
 - Branch: `parallel/b02-deferred-tools`
 - 고정 기준: `f4a4a702bcd342e159efe8801d429ad181391651`. 시작 HEAD가 정확히 일치했고 `43a51d0055a41fe889692fdb04a5e5b204eebf89` 포함을 확인했다.
-- 정본: `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/40.md`.
+- 정본: `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/40.md`.
 - TODO 체크, 다른 checkout 수정, 위임, merge/rebase, push/배포, 실행 설정·workspace 조작은 하지 않았다.
 
 ## 제공 동작과 계약
@@ -47,12 +47,12 @@
 
 ## 실제 검증과 근거
 
-모든 실행은 이 worktree에서 원본 `/data/project/paseodog_opus/.envrc.dev`를 source했다. 옛 실행기는 파일을 수정하지 않고 Python 프로세스 안에서만 다음과 같이 사용했다.
+모든 실행은 이 worktree에서 원본 `<원본 저장소>/.envrc.dev`를 source했다. 옛 실행기는 파일을 수정하지 않고 Python 프로세스 안에서만 다음과 같이 사용했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c \
-  'import sys; sys.path.insert(0,"scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test","--rust","deferred_tools"])'
+  'import sys; sys.path.insert(0,"scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test","--rust","deferred_tools"])'
 ```
 
 Rust/E2E는 각 전체 명령이 같은 잠금을 유지했다. 여러 Rust target은 하나의 `--rust` 뒤에 함께 지정했다. 기존 실행을 취소하거나 환경을 바꾸지 않았다. `web/node_modules`만 COMMON의 승인된 기존 공유 경로로 symlink했으며 toolchain 설치·복사·build 파일 수정은 없다. 실행기 기본 jobs=2와 cache 설정을 유지했다.
@@ -69,12 +69,12 @@ Rust/E2E는 각 전체 명령이 같은 잠금을 유지했다. 여러 Rust targ
 두 시험만 다음 명령으로 재실행해 각각 1개 통과했다. 최초 통과한 나머지 12개의 실행 동작·제품 입력은 바뀌지 않았다. Unix shell 응답 유실 시험의 `cfg(unix)` 표시만 보완했고 이 Linux 실행에는 영향이 없다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 flock /home/ubuntu/.cache/grove-rust-check.lock python3 - <<'PY'
 import sys
 sys.path.insert(0, "scripts")
 import build
-build.DEV = "/data/project/paseodog_opus/.dev"
+build.DEV = "<원본 저장소>/.dev"
 for name in (
     "cli_capability_and_tools_off_block_loading_while_legacy_turns_keep_their_list",
     "signed_native_loading_uses_the_next_request_and_does_not_leak_signatures_to_another_model",
@@ -103,8 +103,8 @@ PY
 ### 웹 타입·단위
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-python3 -c 'import sys; sys.path.insert(0,"scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test","--vitest","app/components/approvals/decision.test.ts","app/components/approvals/projection.test.ts","app/state/capabilities.test.ts","--typecheck"])'
+source <원본 저장소>/.envrc.dev
+python3 -c 'import sys; sys.path.insert(0,"scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test","--vitest","app/components/approvals/decision.test.ts","app/components/approvals/projection.test.ts","app/state/capabilities.test.ts","--typecheck"])'
 ```
 
 최초 실행은 새 E2E의 배열 index nullable 타입 오류로 typecheck 실패(exit 2), Vitest 미실행이었다. 관측한 index에 non-null 표시를 적용한 뒤 같은 명령으로 typecheck와 Vitest 3파일·18개가 모두 통과했다. 그 후 웹 소스·spec은 변경하지 않았다.
@@ -112,9 +112,9 @@ python3 -c 'import sys; sys.path.insert(0,"scripts"); import build; build.DEV="/
 ### 배정된 실제 브라우저 인수
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c \
-  'import sys; sys.path.insert(0,"scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test","--e2e","e2e/deferred-tools.spec.ts"])'
+  'import sys; sys.path.insert(0,"scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test","--e2e","e2e/deferred-tools.spec.ts"])'
 ```
 
 debug 서버 빌드, 웹 빌드, Chrome desktop 3개 모두 통과(exit 0).
@@ -144,11 +144,11 @@ debug 서버 빌드, 웹 빌드, Chrome desktop 3개 모두 통과(exit 0).
 
 실행 로그(이 checkout 외부):
 
-- 최초 Rust: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_f39ef213.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_f39ef213.stderr`
-- 수정 선택 및 기존 Rust 회귀: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_bf5c134f.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_bf5c134f.stderr`
-- 최초 타입 실패: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_2eb99c17.stdout`
-- 수정 타입·Vitest: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_345e5ffe.stdout`
-- 실제 E2E: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_c5e1114e.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_c5e1114e.stderr`
+- 최초 Rust: `<실행 로그>/shell_f39ef213.stdout`, `<실행 로그>/shell_f39ef213.stderr`
+- 수정 선택 및 기존 Rust 회귀: `<실행 로그>/shell_bf5c134f.stdout`, `<실행 로그>/shell_bf5c134f.stderr`
+- 최초 타입 실패: `<실행 로그>/shell_2eb99c17.stdout`
+- 수정 타입·Vitest: `<실행 로그>/shell_345e5ffe.stdout`
+- 실제 E2E: `<실행 로그>/shell_c5e1114e.stdout`, `<실행 로그>/shell_c5e1114e.stderr`
 
 웹 빌드는 기존 큰 bundle 경고와 React Router v8 future flag 경고를 출력했다. 관련 기능 실패는 아니며 공유 UI/build 설정은 변경하지 않았다. 전체 suite, release/패키징, 실기기 mobile, 실제 유료 provider/cache 성능은 미선택·미검증이다.
 

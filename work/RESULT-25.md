@@ -6,7 +6,7 @@
 
 ## 식별·상태
 
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings`
+- Worktree: `<세션 worktree 루트>/b02-25-update-settings`
 - Branch: `parallel/b02-update-settings`
 - 공통 기준: `7b3949d24e420d09e6e4cde29405414b2d99253a`
 - 재개 기준: 기능 커밋 `fbbd6aa2545b2399483416cab5aecbfb901a5802`, 원본 배정 갱신 `4439295801693d17c7d150fb126eb364fbd7593c`의 25번 문서와 live COMMON.
@@ -70,9 +70,9 @@
 
 | 명령 | 입력·결과 |
 | --- | --- |
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust update_settings access` | update_settings 5개·access 9개 통과, exit 0 |
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --lib --filter update::tests` | 서명·키 회전/폐기·버전 비교·복구·서비스 HTTP redirect 금지 5개 통과, exit 0 |
-| `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/update/UpdateSettings.test.ts --typecheck` | 최종 코드 기준 7개 통과, typecheck 통과. E2E 소스도 타입 검사 범위에 포함, exit 0 |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust update_settings access` | update_settings 5개·access 9개 통과, exit 0 |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --lib --filter update::tests` | 서명·키 회전/폐기·버전 비교·복구·서비스 HTTP redirect 금지 5개 통과, exit 0 |
+| `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/update/UpdateSettings.test.ts --typecheck` | 최종 코드 기준 7개 통과, typecheck 통과. E2E 소스도 타입 검사 범위에 포함, exit 0 |
 | `git diff --check` | 통과 |
 
 - 초기 도구 반환은 `Cancelled`였지만 실제 실행은 계속되었으며, 해당 두 명령의 런타임 완료 알림과 exit 0을 확인했다. 초기 웹 단위 시험 5개 이후 응답 유실 분류를 보완해 최종 7개와 typecheck를 재검증했다.
@@ -87,7 +87,7 @@
 실제 실행 명령:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && CARGO_TARGET_DIR=/data/project/paseodog_opus/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV = "/data/project/paseodog_opus/.dev"; build.main(["test", "--e2e", "e2e/update-settings.spec.ts"])'
+source <원본 저장소>/.envrc.dev && CARGO_TARGET_DIR=<원본 저장소>/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV = "<원본 저장소>/.dev"; build.main(["test", "--e2e", "e2e/update-settings.spec.ts"])'
 ```
 
 - 현 worktree의 기존 `scripts/build.py` 진입점을 그대로 실행하되, 실행 시 `DEV`만 공용 툴체인 경로로 지정했다. source만 하면 실행기가 다시 로컬 `.dev`를 지정하는 기존 문제를 회피한 것이며 runner 소스·분기·검사·포트는 바꾸지 않았다.
@@ -108,7 +108,7 @@ source /data/project/paseodog_opus/.envrc.dev && CARGO_TARGET_DIR=/data/project/
 | 작업 보류 fixture | 로컬 readiness 응답 fixture의 실행 턴·작업·승인 대기 표시. 실제 작업 중단·설치를 하지 않음 |
 | 저장 응답 유실·충돌 | 서버에서 PUT을 완료한 뒤 전송을 abort하여 응답 유실 재현, 같은 요청 재확인 후 revision 1회 증가, 다른 요청의 revision 충돌에서 초안 보존 |
 
-첫 실행에서 4개 모두 통과했고 자기 결함 수정이나 재실행은 필요하지 않았다. 빌드에는 기존 chunk 500kB 초과 경고가 있었지만 모든 단계 exit 0이며 이번 소유 범위의 실패는 아니다. 세션 로그는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_da25ba81.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_da25ba81.stderr`다.
+첫 실행에서 4개 모두 통과했고 자기 결함 수정이나 재실행은 필요하지 않았다. 빌드에는 기존 chunk 500kB 초과 경고가 있었지만 모든 단계 exit 0이며 이번 소유 범위의 실패는 아니다. 세션 로그는 `<실행 로그>/shell_da25ba81.stdout`, `<실행 로그>/shell_da25ba81.stderr`다.
 
 ## SETTINGS-016 충족 근거·남은 요구
 

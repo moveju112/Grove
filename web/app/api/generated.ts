@@ -32,7 +32,11 @@ labels: Array<string>,
 /**
  * 초기 설정 script(PROJECT-010). 지정만으로는 실행하지 않는다.
  */
-setup_script_id: string | null, };
+setup_script_id: string | null, 
+/**
+ * 워크스페이스 모드: "single" | "project"
+ */
+workspace_mode: string, };
 
 export type Label = { id: string, name: string, color: string, revision: number, created_at: string, updated_at: string, 
 /**

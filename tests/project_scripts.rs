@@ -154,6 +154,7 @@ async fn setup_script_status_failure_and_retry_are_tracked_per_location() {
         if want == "failed" { assert_eq!(target["exit_code"], 3); }
     }
     // worktree는 따로 센다: 그 worktree의 대화에서 그 위치의 확인값으로 실행한다
+    s.use_workspaces(&pid).await;
     let (_, w) = s.post(&format!("/api/v1/projects/{pid}/worktrees"), json!({"name":"wt"})).await;
     let (_, st) = s.get(&format!("/api/v1/projects/{pid}/setup")).await;
     let wt = st["targets"].as_array().unwrap().iter().find(|t| t["worktree_id"] == w["id"]).unwrap().clone();

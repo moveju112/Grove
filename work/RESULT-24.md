@@ -5,7 +5,7 @@
 **부분 구현 종료 / 기본 cwd 실행 연결 blocker / 통합 인수 대기.**
 SETTINGS-011 전체 완료가 아니다. 기본 cwd는 저장·상속·검증·resolver까지만 제공하며 실제 셸 계획·사용자 작업에는 아직 적용되지 않는다. 화면과 설정 설명에도 이 제한을 명시했다.
 
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings`
+- Worktree: `<세션 worktree 루트>/b02-24-exec-settings`
 - Branch: `parallel/b02-exec-settings`
 - 공통 기준 SHA: `7b3949d24e420d09e6e4cde29405414b2d99253a`
 - ENTRY의 README 24 행, 실제 top-level·branch·HEAD·merge-base가 일치했고 시작 상태는 clean이었다.
@@ -46,8 +46,8 @@ SETTINGS-011 전체 완료가 아니다. 기본 cwd는 저장·상속·검증·r
 
 | 실제 명령 | 결과·입력 |
 |---|---|
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_settings settings tasks` | 성공. 새 통합 시험 4개, 기존 settings 5개, 기존 tasks 8개, 총 17개 통과. 컴파일 포함. |
-| `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/exec-settings/ExecSettings.test.ts --typecheck` | 최종 입력으로 성공. Vitest 3개 및 typecheck 통과. 작성한 E2E도 타입 검사에 포함. |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_settings settings tasks` | 성공. 새 통합 시험 4개, 기존 settings 5개, 기존 tasks 8개, 총 17개 통과. 컴파일 포함. |
+| `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/exec-settings/ExecSettings.test.ts --typecheck` | 최종 입력으로 성공. Vitest 3개 및 typecheck 통과. 작성한 E2E도 타입 검사에 포함. |
 | `git diff --check` | 코드·시험 변경에 대해 성공. |
 
 - Rust 실행 검사는 Linux의 실제 셸에서 `$0`, `ulimit -v`, `ulimit -t` 결과를 확인했다. 승인 대기 중 session 설정을 바꿔도 foreground·background 모두 기존 shell·limits·target을 유지하며 다음 계획만 새 값을 사용했다. 사용자 작업의 session 값도 확인했다.

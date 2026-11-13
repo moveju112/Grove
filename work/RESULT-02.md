@@ -2,7 +2,7 @@
 
 ## 위치·상태
 
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-02-web-base`
+- Worktree: `<세션 worktree 루트>/b01-02-web-base`
 - Branch: `parallel/b01-web-base`
 - 공통 기준: `c186b31ab62734c9f91803cf7848b639ad9871fb`
 - `ENTRY.md`와 `README.md`의 경로·브랜치 행으로 02를 선택했다. 시작 시 Git은 clean이었고 `git merge-base HEAD c186b31ab62734c9f91803cf7848b639ad9871fb`도 기준 SHA와 같았다.

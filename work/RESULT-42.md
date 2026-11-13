@@ -5,11 +5,11 @@
 # 42 — FILEUI-009 Git 위치·exact-HEAD PR/CI·실제 실행 권한
 
 - 배치: b02 / 42. 상태: 소유 구현·실제 연결·선택 검증 완료, 통합 대기. blocker 없음.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-42-git-context`
+- Worktree: `<세션 worktree 루트>/b02-42-git-context`
 - Branch: `parallel/b02-git-context`
 - 고정 기준: `6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c`
 - 포함된 승인 제품 입력: `f53aa85061cc35198461bb54e1d133218dbb7cad` (`merge-base --is-ancestor` 성공).
-- 정본: `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/42.md`. README의 경로·branch 일치, 시작 시 HEAD·clean 확인.
+- 정본: `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/42.md`. README의 경로·branch 일치, 시작 시 HEAD·clean 확인.
 
 ## 제공 동작과 연결
 
@@ -55,8 +55,8 @@
 
 ## 검증 근거
 
-모든 명령은 먼저 `source /data/project/paseodog_opus/.envrc.dev`를 적용했다.
-준비된 `.dev -> /data/project/paseodog_opus/.dev`는 보존했고, 승인된 경로대로 없던 `web/node_modules`만 메인 공유 경로의 symlink로 연결했다. 설치·의존성 변경은 없다.
+모든 명령은 먼저 `source <원본 저장소>/.envrc.dev`를 적용했다.
+준비된 `.dev -> <원본 저장소>/.dev`는 보존했고, 승인된 경로대로 없던 `web/node_modules`만 메인 공유 경로의 symlink로 연결했다. 설치·의존성 변경은 없다.
 Rust/E2E는 아래 **전체 명령**에 같은 `grove-rust-check.lock`을 적용했다. 기존 검사·환경·포트는 취소하거나 바꾸지 않았다.
 
 ### 최초 선택 Rust 및 기존 Git 회귀

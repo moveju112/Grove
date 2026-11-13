@@ -3,7 +3,7 @@
 ## 식별·상태
 
 - 작업: `TOOL-012`, 04 이월의 실제 `read` → runner → provider 연결.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-12-image-read-wire`.
+- Worktree: `<세션 worktree 루트>/b02-12-image-read-wire`.
 - Branch: `parallel/b02-image-read-wire`.
 - 공통 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. `git merge-base HEAD <기준 SHA>` 일치, 진입 시 clean.
 - 상태: 소유 구현 종료, Rust 컴파일·관련 integration 검증 통과. 통합 담당의 웹 환경 검증·TODO 판정 대기.
@@ -45,23 +45,23 @@
 
 ## 실행 검증
 
-호스트 공용 `.dev`를 복사하지 않고 `ln -s /data/project/paseodog_opus/.dev .dev`로 만든 task-owned symlink를 재사용했다. 빌드 호출마다 `source /data/project/paseodog_opus/.envrc.dev`를 적용했다. 검증 후 정확한 symlink 대상과 소유권을 확인해 이 링크만 제거했다. toolchain·node_modules 설치나 복사는 하지 않았다.
+호스트 공용 `.dev`를 복사하지 않고 `ln -s <원본 저장소>/.dev .dev`로 만든 task-owned symlink를 재사용했다. 빌드 호출마다 `source <원본 저장소>/.envrc.dev`를 적용했다. 검증 후 정확한 symlink 대상과 소유권을 확인해 이 링크만 제거했다. toolchain·node_modules 설치나 복사는 하지 않았다.
 
 | 명령·입력 | 실제 결과 |
 | --- | --- |
 | 공용 Rust 1.93.0의 `rustfmt --edition 2024 src/tools/image_read.rs tests/image_read.rs` | 실행 완료. 자동으로 따라간 common harness의 포맷 변경은 diff 근거로 제거해 원본과 일치시켰다. 동작 변경 없음 |
-| `CARGO_TARGET_DIR=/data/project/paseodog_opus/target python3 scripts/build.py test --rust image_read attachments http_provider_roundtrip tool_batches --lib --filter image --vitest app/state/capabilities.test.ts --typecheck` | 첫 실행 exit 101. 컴파일 완료, image 필터 library 3개·attachments 4개 통과. 새 provider fixture의 HTTP 400 기대 code가 `invalid_request`여서 실패; 실제 기존 계약 `bad_request`로 기대값만 수정. HTTP target은 필터로 0개, tool_batches·웹 검사는 앞 실패로 미실행 |
-| `CARGO_TARGET_DIR=/data/project/paseodog_opus/target npm_config_offline=true python3 scripts/build.py test --rust image_read tool_batches http_provider_roundtrip attachments --typecheck --vitest app/state/capabilities.test.ts` | Rust 컴파일 및 integration 40개 통과: image_read 16, attachments 15, http_provider_roundtrip 6, tool_batches 3. 이어 typecheck exit 127: `sh: 1: react-router: not found`. Vitest는 실행기가 중단해 미실행 |
-| `CARGO_TARGET_DIR=/data/project/paseodog_opus/target python3 scripts/build.py test --lib --filter tools::image_read::tests` | 최종 파일 교체 보완 후 컴파일·단위 1개 통과. 이미지 표본을 읽은 뒤 원문을 텍스트로 바꾸면 hex 성공이 아닌 `unsupported_image`를 반환 |
-| `CARGO_TARGET_DIR=/data/project/paseodog_opus/target python3 scripts/build.py test --rust image_read tool_batches http_provider_roundtrip attachments` | 위 최종 소스와 원본 common harness로 컴파일·integration 40개 전부 재통과. 웹 의존성 실패는 재실행하지 않았고 여전히 미해결 |
+| `CARGO_TARGET_DIR=<원본 저장소>/target python3 scripts/build.py test --rust image_read attachments http_provider_roundtrip tool_batches --lib --filter image --vitest app/state/capabilities.test.ts --typecheck` | 첫 실행 exit 101. 컴파일 완료, image 필터 library 3개·attachments 4개 통과. 새 provider fixture의 HTTP 400 기대 code가 `invalid_request`여서 실패; 실제 기존 계약 `bad_request`로 기대값만 수정. HTTP target은 필터로 0개, tool_batches·웹 검사는 앞 실패로 미실행 |
+| `CARGO_TARGET_DIR=<원본 저장소>/target npm_config_offline=true python3 scripts/build.py test --rust image_read tool_batches http_provider_roundtrip attachments --typecheck --vitest app/state/capabilities.test.ts` | Rust 컴파일 및 integration 40개 통과: image_read 16, attachments 15, http_provider_roundtrip 6, tool_batches 3. 이어 typecheck exit 127: `sh: 1: react-router: not found`. Vitest는 실행기가 중단해 미실행 |
+| `CARGO_TARGET_DIR=<원본 저장소>/target python3 scripts/build.py test --lib --filter tools::image_read::tests` | 최종 파일 교체 보완 후 컴파일·단위 1개 통과. 이미지 표본을 읽은 뒤 원문을 텍스트로 바꾸면 hex 성공이 아닌 `unsupported_image`를 반환 |
+| `CARGO_TARGET_DIR=<원본 저장소>/target python3 scripts/build.py test --rust image_read tool_batches http_provider_roundtrip attachments` | 위 최종 소스와 원본 common harness로 컴파일·integration 40개 전부 재통과. 웹 의존성 실패는 재실행하지 않았고 여전히 미해결 |
 | 공용 Rust 1.93.0의 `rustfmt --edition 2024 --config skip_children=true --check src/tools/image_read.rs tests/image_read.rs` | 최종 소유 Rust 파일만 검사, exit 0 |
 | `git diff --check` | 통과 |
 
 40개 통과에는 세 HTTP provider의 실제 `read` tool call → runner → JPEG image part 요청, 고의 HTTP 실패 뒤 서버 재시작·turn retry의 동일 이미지, 원문 변경 시 외부 호출 없는 `image_changed`, 미지원 모델의 이미지 전송 거부가 포함된다. 배치 순서·오류 격리·잘린 JSON·metadata 불일치·업로드와 합산한 문맥 한도·경계 재검사도 검증했다. 기존 첨부/승인·취소/서명된 provider 내용의 회귀도 통과했다.
 
-첫 실행 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_0d8aace6.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_0d8aace6.stderr`.
-웹 blocker 실행 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3d3b6976.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3d3b6976.stderr`.
-최종 Rust 실행 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_0611a6b9.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_0611a6b9.stderr`.
+첫 실행 로그: `<실행 로그>/shell_0d8aace6.stdout`, `<실행 로그>/shell_0d8aace6.stderr`.
+웹 blocker 실행 로그: `<실행 로그>/shell_3d3b6976.stdout`, `<실행 로그>/shell_3d3b6976.stderr`.
+최종 Rust 실행 로그: `<실행 로그>/shell_0611a6b9.stdout`, `<실행 로그>/shell_0611a6b9.stderr`.
 Cargo 로그의 실제 산출물은 호스트 cache `/home/ubuntu/.cache/cargo-build/ae/5e402e02bdf0be/debug/deps/`였다.
 
 ## 남은 조건·통합

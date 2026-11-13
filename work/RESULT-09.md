@@ -1,7 +1,7 @@
 # b01 / 09 — 승인 카드 명확화 인계
 
 - 상태: 독립 구현 종료, 공통 화면 연결·실행 검증 대기. 제품 기능 전체 완료 아님.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-09-approval-ui`
+- worktree: `<세션 worktree 루트>/b01-09-approval-ui`
 - branch: `parallel/b01-approval-ui`
 - 공통 기준: `c186b31ab62734c9f91803cf7848b639ad9871fb`
 - 시작 상태: clean. 실제 top-level·브랜치가 README의 09 행과 일치하고 merge-base가 공통 기준과 일치했다.

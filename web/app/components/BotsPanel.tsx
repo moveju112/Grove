@@ -44,10 +44,20 @@ function Avatar({ b }: { b: Bot }) {
     // 이미지를 못 받으면(삭제·네트워크) 기본형으로 보인다.
     if (src) return <img className="avatar" src={src} alt="" aria-hidden data-testid="bot-avatar-image" />;
     return (
-        <span className="avatar" style={{ background: b.avatar_color }} aria-hidden>
+        <span className="avatar" style={{ background: b.avatar_color, color: avatarInk(b.avatar_color) }} aria-hidden>
             {[...b.name][0] ?? "?"}
         </span>
     );
+}
+
+/// 기본형 아바타 글자색: 흰색과 거의 검은색 중 바탕과 대비가 큰 쪽(초록·주황 바탕의 흰 글자는 AA 미달).
+export function avatarInk(hex: string): string {
+    const m = /^#([0-9a-f]{6})$/i.exec(hex);
+    if (!m) return "#ffffff";
+    const ch = [0, 2, 4].map((i) => parseInt(m[1]!.slice(i, i + 2), 16) / 255).map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4));
+    const lum = 0.2126 * ch[0]! + 0.7152 * ch[1]! + 0.0722 * ch[2]!;
+    const dark = 0.0064; // #111318의 상대 휘도
+    return 1.05 / (lum + 0.05) >= (lum + 0.05) / (dark + 0.05) ? "#ffffff" : "#111318";
 }
 
 /// 아바타 이미지 선택·기본형 복귀. 서버가 형식·크기·디코딩을 검사하고 PNG로 다시 저장한다.

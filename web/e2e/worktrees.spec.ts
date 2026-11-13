@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, openDetails, sessionView, state } from "./helpers";
+import { apiCall, login, openDetails, sessionView, state, useWorkspaces } from "./helpers";
 
 /// 다른 시험과 저장소를 공유하지 않도록 새 프로젝트 폴더에 저장소를 만든다.
 async function freshRepo(tag: string) {
@@ -16,6 +16,7 @@ async function freshRepo(tag: string) {
     run("add", "a.txt");
     run("commit", "-q", "-m", "init");
     const p = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+    await useWorkspaces(p.id);
     return { root, run, p };
 }
 
@@ -66,7 +67,7 @@ test("worktree를 변경 처리 선택 후 만들고, 대화를 그 위치에서
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: p.id, resource_id: sess.id });
     await page.locator(".recent").getByRole("button", { name: /wt 대화/ }).first().click();
     const view = sessionView(page, sess.id);
-    const where = view.getByLabel("작업 위치");
+    const where = view.getByLabel("워크스페이스");
     await expect(where).toHaveValue("");
     await where.selectOption(wt.id);
     await expect(where).toHaveValue(wt.id);

@@ -11,12 +11,10 @@ async fn builtin_agents_and_workflows_preserved_byte_for_byte() {
     assert_eq!(agents.as_array().unwrap().len(), 13);
     let (_, wfs) = s.get("/api/v1/definitions?kind=workflow").await;
     assert_eq!(wfs.as_array().unwrap().len(), 2);
-    // 원본 파일과 바이트 대조(원본 경로가 있을 때)
-    let src = std::path::Path::new("/home/ubuntu/project/paseodog/engine/node_modules/mixdog/src/agents/worker/AGENT.md");
+    // 고정한 원문 hash(assets/baseline-manifest.json)와 API 본문을 바이트 단위로 대조한다.
+    let manifest: serde_json::Value = serde_json::from_str(grove::definitions::BASELINE_MANIFEST).unwrap();
     let (_, w) = s.get("/api/v1/definitions/agent/worker").await;
-    if src.exists() {
-        assert_eq!(w["body"].as_str().unwrap().as_bytes(), std::fs::read(src).unwrap().as_slice());
-    }
+    assert_eq!(w["body_sha256"], manifest["files"]["agents/worker/AGENT.md"]);
     assert_eq!(w["name"], "Worker");
     assert_eq!(w["builtin"], true);
     assert_eq!(w["revision"], 0);

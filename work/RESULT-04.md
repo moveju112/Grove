@@ -3,7 +3,7 @@
 ## 식별·상태
 
 - 작업: `TOOL-012`.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-04-image-read`.
+- Worktree: `<세션 worktree 루트>/b01-04-image-read`.
 - Branch: `parallel/b01-image-read`.
 - 공통 기준 SHA: `c186b31ab62734c9f91803cf7848b639ad9871fb`.
 - 진입 시 Git 상태는 clean이며 `git merge-base HEAD <기준 SHA>`가 기준 SHA와 일치했다.

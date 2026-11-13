@@ -26,8 +26,6 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
                                                         실행 중 서버에서 새 기기 토큰 발급(원문은 이때 한 번만 출력)
   grove snapshot <대상 파일> [--data-dir 경로]           일관된 DB snapshot 생성
   grove restore <snapshot 파일> <새 데이터 디렉터리>     snapshot을 새 디렉터리로 복원·검증
-  grove import paseo <원본 sessions 디렉터리> [--dry-run] [--data-dir 경로]
-                                                        기존 Paseo 대화 가져오기(원본은 읽기만, 서버 정지 상태에서)
   grove install --install 설치경로 --package 압축본 --data-dir 경로 --listen 주소:포트
                 [--trust-key 공개키파일]… [--service process|systemd-user:<unit>]   새 설치
   grove update check  --install 설치경로 --manifest URL|파일          업데이트 확인(서비스 중단 없음)
@@ -58,7 +56,6 @@ struct Opts {
     trust_keys: Vec<PathBuf>,
     keys: Vec<PathBuf>,
     force: bool,
-    dry_run: bool,
     offline: bool,
     allow_downgrade: bool,
     ready_timeout: Option<u64>,
@@ -82,7 +79,6 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             "--key" => o.keys.push(PathBuf::from(val(&mut it, a)?)),
             "--ready-timeout" => o.ready_timeout = Some(val(&mut it, a)?.parse().map_err(|_| "--ready-timeout은 초 단위 정수")?),
             "--force" => o.force = true,
-            "--dry-run" => o.dry_run = true,
             "--offline" => o.offline = true,
             "--allow-downgrade" => o.allow_downgrade = true,
             "--json" => o.json = true,
@@ -205,9 +201,6 @@ pub fn run(args: Vec<String>) -> i32 {
             };
         }
         "snapshot" => crate::backup::cli_snapshot(opts.positional.get(1).map(PathBuf::from), opts.data_dir),
-        "import" if opts.positional.get(1).map(String::as_str) == Some("paseo") => {
-            crate::import::cli(opts.positional.get(2).map(PathBuf::from), opts.data_dir, opts.dry_run)
-        }
         "restore" => crate::backup::cli_restore(opts.positional.get(1).map(PathBuf::from), opts.positional.get(2).map(PathBuf::from)),
         "install" | "update" | "release" | "migrate-check" | "start" | "stop" => {
             return match update_cmds(&opts) {

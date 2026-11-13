@@ -220,7 +220,7 @@ class Commands(unittest.TestCase):
         self.assertEqual(collect.call_args.args[2], 6)
 
     def test_service_failure_returns_nonzero_without_success_json(self):
-        failure = subprocess.CalledProcessError(7, ["paseo"], stderr="private service response")
+        failure = subprocess.CalledProcessError(7, ["agent-cli"], stderr="private service response")
         with patch.object(queue, "load_agents", side_effect=failure), \
                 redirect_stdout(StringIO()) as out, redirect_stderr(StringIO()) as err:
             self.assertEqual(queue.main([]), 1)
@@ -230,8 +230,17 @@ class Commands(unittest.TestCase):
 
     def test_invalid_service_shape_is_rejected(self):
         for payload in ({}, [{"id": "x", "cwd": "/a"}]):
-            with patch.object(queue, "command", return_value=json.dumps(payload)), self.assertRaises(ValueError):
+            with patch.dict(os.environ, {"GROVE_AGENT_CLI": "agent-cli"}), \
+                    patch.object(queue, "command", return_value=json.dumps(payload)) as command, self.assertRaises(ValueError):
                 queue.load_agents(Path.cwd())
+            self.assertEqual(command.call_args.args[0][0], "agent-cli")
+
+    def test_missing_cli_name_fails_without_running_anything(self):
+        env = {k: v for k, v in os.environ.items() if k != "GROVE_AGENT_CLI"}
+        with patch.dict(os.environ, env, clear=True), patch.object(queue, "command") as command, \
+                self.assertRaisesRegex(ValueError, "GROVE_AGENT_CLI"):
+            queue.load_agents(Path.cwd())
+        command.assert_not_called()
 
     def test_ancestor_failure_is_not_treated_as_not_merged(self):
         result = subprocess.CompletedProcess([], 128, stderr="invalid object")
@@ -269,7 +278,7 @@ class Repository(unittest.TestCase):
                              GIT_COMMITTER_EMAIL="queue@example.invalid"),
                 ).stdout
 
-            git(root, "init", "-b", "master")
+            git(root, "init", "-b", "main")
             (root / "work").mkdir()
             (root / "work/README.md").write_text(readme([(21, worktree)]))
             git(root, "add", "work/README.md")

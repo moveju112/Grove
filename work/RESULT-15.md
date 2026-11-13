@@ -2,7 +2,7 @@
 
 ## 식별·상태
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-15-turn-timing`
+- worktree: `<세션 worktree 루트>/b02-15-turn-timing`
 - branch: `parallel/b02-turn-timing`
 - 공통 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`
 - `git merge-base HEAD <기준 SHA>`가 기준 SHA와 일치했고 시작 시 Git 변경은 없었다.

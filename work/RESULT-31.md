@@ -10,11 +10,11 @@
 Rust 42개·Vitest 3개의 기존 근거를 보존했고, 후속 배정된 정확한 E2E 4개 spec의 14개 시험과 변경 후 typecheck도 통과했다.
 SETTINGS-011 전체 플랫폼 완료나 Windows/macOS 실측을 주장하지 않는다.
 
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-31-exec-cwd`
+- Worktree: `<세션 worktree 루트>/b02-31-exec-cwd`
 - Branch: `parallel/b02-exec-cwd`
 - 공통 기준 SHA: `9942629c17891c5cad8cc5a7a62fee99e0379650`
-- 초기 구현 commit `642d5bb15530fbab79ef80f40b43542a22cd5c71`에서 후속 작업을 시작했다. `/data/project/paseodog_opus/work/31.md`의 `442e020` 후속 배정과 live 원본 COMMON을 실제 읽었다. 브랜치 동기화·기준 변경 없이 진행했다.
-- `/data/project/paseodog_opus/work/ENTRY.md`, `COMMON.md`, `31.md`, README 배정 행과 실제 top-level·branch·시작 HEAD가 일치했다. 시작 상태는 clean이었다.
+- 초기 구현 commit `642d5bb15530fbab79ef80f40b43542a22cd5c71`에서 후속 작업을 시작했다. `<원본 저장소>/work/31.md`의 `442e020` 후속 배정과 live 원본 COMMON을 실제 읽었다. 브랜치 동기화·기준 변경 없이 진행했다.
+- `<원본 저장소>/work/ENTRY.md`, `COMMON.md`, `31.md`, README 배정 행과 실제 top-level·branch·시작 HEAD가 일치했다. 시작 상태는 clean이었다.
 - main·TODO·의존성·terminal·hook·외부 CLI 정책·승인 상태 전이를 수정하지 않았다. 29 소유 hook 분기는 변경하지 않았다.
 - 다른 세션 접촉·위임·merge·push·배포·workspace 정리는 하지 않았다. TTS/playback·microphone 차단 및 STT 관련 코드는 변경하지 않았다.
 
@@ -59,13 +59,13 @@ SETTINGS-011 전체 플랫폼 완료나 Windows/macOS 실측을 주장하지 않
 
 | 실제 명령 | 결과 |
 |---|---|
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_cwd --filter inherited_and_explicit_cwd_reaches_shell_and_direct_tasks` | 구현 전 red 확인. 1개 실패: 실제 cwd `.`와 기대한 session 기본값 불일치. 컴파일 성공. |
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_cwd exec_settings tasks project_scripts worktrees settings` | 구현 후 새 시험 6개 통과, 2개 실패. 새 시험이 오류를 `result.code`로 읽은 잘못된 기대값 때문이었다. 기존 계약은 `result.error.code`다. 뒤 integration target들은 실행되지 않았다. |
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_cwd --filter invalid_defaults_and_post_plan_symlink_escape_never_execute_outside_root` | 기대값 수정 뒤 1개 통과. |
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_cwd --filter cwd_defaults_do_not_bypass_deny_or_read_only_rechecks` | 기대값 수정 뒤 1개 통과. 위 두 명령은 같은 shell의 순차 실행이었다. |
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_settings tasks project_scripts worktrees settings shared_resources` | 위 두 focused 검사 뒤 순차 시도했으나 공용 Rust 잠금 대기에서 shell 전체의 600초 제한으로 timeout(exit 124). 이 묶음은 그 시도에서 미실행이었다. 앞 두 focused 통과는 유지했다. |
-| `source /data/project/paseodog_opus/.envrc.dev && flock -w 120 /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_settings tasks project_scripts worktrees settings shared_resources` | 잠금 보유를 확인한 뒤 대기 한도를 둔 단 한 번의 재시도. 컴파일 및 34개 통과: exec_settings 4, tasks 8, project_scripts 6, worktrees 5, settings 5, shared_resources 6. |
-| `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/exec-settings/ExecSettings.test.ts --typecheck` | Vitest 3개와 typecheck 통과. 새 E2E 파일도 타입 검사 입력에 포함됐다. |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_cwd --filter inherited_and_explicit_cwd_reaches_shell_and_direct_tasks` | 구현 전 red 확인. 1개 실패: 실제 cwd `.`와 기대한 session 기본값 불일치. 컴파일 성공. |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_cwd exec_settings tasks project_scripts worktrees settings` | 구현 후 새 시험 6개 통과, 2개 실패. 새 시험이 오류를 `result.code`로 읽은 잘못된 기대값 때문이었다. 기존 계약은 `result.error.code`다. 뒤 integration target들은 실행되지 않았다. |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_cwd --filter invalid_defaults_and_post_plan_symlink_escape_never_execute_outside_root` | 기대값 수정 뒤 1개 통과. |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_cwd --filter cwd_defaults_do_not_bypass_deny_or_read_only_rechecks` | 기대값 수정 뒤 1개 통과. 위 두 명령은 같은 shell의 순차 실행이었다. |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_settings tasks project_scripts worktrees settings shared_resources` | 위 두 focused 검사 뒤 순차 시도했으나 공용 Rust 잠금 대기에서 shell 전체의 600초 제한으로 timeout(exit 124). 이 묶음은 그 시도에서 미실행이었다. 앞 두 focused 통과는 유지했다. |
+| `source <원본 저장소>/.envrc.dev && flock -w 120 /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_settings tasks project_scripts worktrees settings shared_resources` | 잠금 보유를 확인한 뒤 대기 한도를 둔 단 한 번의 재시도. 컴파일 및 34개 통과: exec_settings 4, tasks 8, project_scripts 6, worktrees 5, settings 5, shared_resources 6. |
+| `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/exec-settings/ExecSettings.test.ts --typecheck` | Vitest 3개와 typecheck 통과. 새 E2E 파일도 타입 검사 입력에 포함됐다. |
 | `git diff --check` | 통과. |
 
 최종 유효 근거는 서로 다른 Rust 시험 42개(새 시험 6개 최초 통과 + 수정한 2개 focused 통과 + 기존 34개), Vitest 3개 및 typecheck다.
@@ -94,7 +94,7 @@ production Rust·웹 컴포넌트·Rust 시험·Vitest 입력은 초기 commit �
 정확한 E2E 명령은 두 시도 모두 다음과 같다. 공용 잠금이 서버·웹 빌드부터 브라우저 종료까지 전체 명령을 감쌌다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/exec-cwd.spec.ts e2e/exec-settings.spec.ts e2e/task-start.spec.ts e2e/project-scripts.spec.ts
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/exec-cwd.spec.ts e2e/exec-settings.spec.ts e2e/task-start.spec.ts e2e/project-scripts.spec.ts
 ```
 
 | 시도·단계 | 결과 | wall / CPU (초) |
@@ -105,7 +105,7 @@ source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove
 | fixture 수정 후 server debug build | 통과 | 3.73 / 0.32 |
 | fixture 수정 후 web build | 통과 | 3.27 / 4.87 |
 | fixture 수정 후 E2E | 14개 전부 통과, exit 0 | 17.08 / 17.06 |
-| `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --typecheck` | 수정한 E2E 포함 통과, exit 0 | 8.77 / 11.28 |
+| `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --typecheck` | 수정한 E2E 포함 통과, exit 0 | 8.77 / 11.28 |
 
 첫 fixture는 background 작업 결과 반영에 따른 final 보류·추가 모델 응답 경계를 다루지 않고 완료 status만 기다렸다.
 수정 후에는 fixture 작업을 해제 표식으로 유지하고 API에서 첫 final이 보류된 상태를 확인한 뒤 완료 응답과 표식을 공급한다.

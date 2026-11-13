@@ -60,13 +60,17 @@ def variant(name, version, migrations, legacy_log=False):
     extra = "".join(f'    r#"CREATE TABLE {m} (x INTEGER);"#,\n' for m in migrations)
     open(st, "w").write(s.replace(marker, marker[:-3] + extra + "];"))
     if legacy_log:
+        # 이전 release 흉내: 기능 목록(CAPABILITIES)에서 로그 회전 표식을 빼고 --log-file을 거부한다.
+        # 두 치환 중 하나라도 맞지 않으면 픽스처가 깨진 것이므로 바로 멈춘다.
+        lib = os.path.join(src, "src", "lib.rs")
+        caps = open(lib).read()
+        assert caps.count('    "file_log_rotation_v1",\n') == 1, "CAPABILITIES의 file_log_rotation_v1 줄을 찾지 못했습니다"
+        open(lib, "w").write(caps.replace('    "file_log_rotation_v1",\n', ''))
         cli = os.path.join(src, "src", "cli.rs")
         text = open(cli).read()
-        text = text.replace(', "features": ["file_log_rotation_v1"]', '')
-        text = text.replace('"--log-file" => o.log_file = Some(PathBuf::from(val(&mut it, a)?)),',
-                            '"--log-file" => return Err("legacy fixture: unsupported --log-file".into()),')
-        assert "legacy fixture" in text and '"features": ["file_log_rotation_v1"]' not in text
-        open(cli, "w").write(text)
+        arg = '"--log-file" => o.log_file = Some(PathBuf::from(val(&mut it, a)?)),'
+        assert text.count(arg) == 1, "--log-file 인수 처리를 찾지 못했습니다"
+        open(cli, "w").write(text.replace(arg, '"--log-file" => return Err("legacy fixture: unsupported --log-file".into()),'))
     # 고정한 공용 target의 기존 의존성 cache를 쓴다. 임시 소스 경로 hash마다 새로 컴파일하지 않는다.
     sh(["cargo", "--config", f'build.build-dir="{TARGET}"', "build", "--offline", "--bin", "grove"], cwd=src)
     return os.path.join(TARGET, "debug", "grove")

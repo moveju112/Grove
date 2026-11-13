@@ -105,7 +105,8 @@ export function effectiveTheme(t: Prefs["theme"]): "light" | "dark" | "soft" {
     return typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-const THEME_COLOR = { light: "#2f6b3f", dark: "#121513", soft: "#4d6b50" } as const;
+// 주소창·PWA 상단 색은 각 테마의 바탕(--bg)과 같게 둔다.
+const THEME_COLOR = { light: "#f7f7f8", dark: "#14161b", soft: "#e9ebee" } as const;
 let osWatch: MediaQueryList | null = null;
 
 export function applyPrefs(p: Prefs) {

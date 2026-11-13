@@ -3,7 +3,7 @@
 ## 상태·기준
 
 - 상태: 독립 구현 종료, 공통 연결·실행 검증 대기. 제품 기능 전체 완료가 아니다.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-01-skills`
+- Worktree: `<세션 worktree 루트>/b01-01-skills`
 - Branch: `parallel/b01-skills`
 - 공통 기준 SHA: `c186b31ab62734c9f91803cf7848b639ad9871fb`
 - 시작 시 HEAD가 공통 기준과 같고 Git 상태가 clean이었다. `ENTRY.md`와 `README.md`의 경로·브랜치 양쪽 일치로 01을 선택했다. 앞선 00 지정으로는 편집하지 않았다.

@@ -5,7 +5,7 @@ import type { Session } from "../../api/generated";
 import { ApiError, api } from "../../api/client";
 import { invalidate } from "../../state/store";
 import { SessionRow, StatusIcon, toolbarKeys } from "./index";
-import { markSessionRead, pinSession, projectStatus, STATUS, type SidebarSession } from "./state";
+import { groupByWorkspace, markSessionRead, pinSession, projectStatus, STATUS, type SidebarSession } from "./state";
 
 vi.mock("../../api/client", () => ({
     ApiError: class extends Error {
@@ -24,6 +24,23 @@ const session: Session = {
 const item: SidebarSession = { session, status: "completed", pinned: false, recent_id: "r", recent_revision: 4 };
 
 beforeEach(() => vi.resetAllMocks());
+
+describe("프로젝트 모드 워크스페이스 묶음", () => {
+    const at = (id: string, worktree_id: string | null): SidebarSession => ({ ...item, session: { ...session, id, worktree_id } });
+    it("프로젝트 폴더 → 워크스페이스 순서로 묶고 빈 워크스페이스도 보인다", () => {
+        const groups = groupByWorkspace([at("a", "w2"), at("b", null), at("c", "w2")], [{ id: "w1", name: "feat" }, { id: "w2", name: "fix" }]);
+        expect(groups.map((g) => [g.id, g.name, g.items.map((i) => i.session.id)])).toEqual([
+            [null, "프로젝트 폴더", ["b"]],
+            ["w1", "feat", []],
+            ["w2", "fix", ["a", "c"]],
+        ]);
+    });
+    it("쓸 수 없는 워크스페이스의 대화는 숨기지 않고 따로 묶는다", () => {
+        const groups = groupByWorkspace([at("a", "gone")], []);
+        expect(groups.at(-1)).toMatchObject({ id: "gone", name: "경로 없는 워크스페이스" });
+        expect(groups.at(-1)!.items.map((i) => i.session.id)).toEqual(["a"]);
+    });
+});
 
 describe("실제 서버 상태 표시", () => {
     it.each(Object.entries(STATUS))("%s는 색 이외의 아이콘·텍스트로 구분한다", (status, value) => {

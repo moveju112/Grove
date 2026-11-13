@@ -3,7 +3,7 @@
 ## 상태·기준
 
 - 구현 종료, **웹 검증 blocker·통합 인수 대기**. 전체 기능 검증 완료가 아니다.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-10-source-settings-wire`
+- worktree: `<세션 worktree 루트>/b02-10-source-settings-wire`
 - branch: `parallel/b02-source-settings-wire`
 - 공통 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`
 - `work/ENTRY.md` 절차로 실제 top-level·branch를 원본 프로젝트의 준비 표와 대조해 10 한 행에 매칭했다. 기준 SHA가 HEAD의 조상임을 확인했고 시작 상태는 clean이었다.
@@ -68,7 +68,7 @@ exit 1, `FileNotFoundError: [Errno 2] No such file or directory: 'cargo'`. 이 �
 원본 프로젝트의 기존 `.dev`를 이 작업의 `.dev` 심볼릭 링크로 일시 연결해 복사·설치 없이 툴체인과 cache를 재사용했다. 이후 실행:
 
 ```sh
-source /data/project/paseodog_opus/.envrc.dev && CARGO_TARGET_DIR=/data/project/paseodog_opus/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 python3 scripts/build.py test --rust source_settings --vitest app/components/source-settings/SourceSettingsPanel.test.ts app/components/source-settings/SourceSettings.test.ts --typecheck
+source <원본 저장소>/.envrc.dev && CARGO_TARGET_DIR=<원본 저장소>/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 python3 scripts/build.py test --rust source_settings --vitest app/components/source-settings/SourceSettingsPanel.test.ts app/components/source-settings/SourceSettings.test.ts --typecheck
 ```
 
 | 단계 | 결과 |
@@ -84,7 +84,7 @@ source /data/project/paseodog_opus/.envrc.dev && CARGO_TARGET_DIR=/data/project/
 서버 root 결정 단위 시험도 별도로 실행했다:
 
 ```sh
-source /data/project/paseodog_opus/.envrc.dev && python3 -c 'import os; print("검증 UID:", os.geteuid())' && CARGO_TARGET_DIR=/data/project/paseodog_opus/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 python3 scripts/build.py test --lib --filter source_settings::routes
+source <원본 저장소>/.envrc.dev && python3 -c 'import os; print("검증 UID:", os.geteuid())' && CARGO_TARGET_DIR=<원본 저장소>/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 python3 scripts/build.py test --lib --filter source_settings::routes
 ```
 
 exit 0. `roots_use_server_environment_without_guessing_relative_or_missing_paths` 1개 통과, 나머지 180개는 미선택이다. 서버 환경 override·기본 위치·상대/빈/부재 값 거부를 합성 경로로 검증했다.

@@ -2,7 +2,7 @@
 
 ## 상태와 기준
 - 상태: 구현·시험 작성 종료, **검증 환경 blocker로 컴파일·동작 확인 및 통합 대기**. 완료 후보로 판정하지 않는다.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-13-sidebar-status`
+- worktree: `<세션 worktree 루트>/b02-13-sidebar-status`
 - branch: `parallel/b02-sidebar-status`
 - 공통 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`
 - `ENTRY.md`와 원본 `work/README.md`에서 경로·브랜치가 모두 일치하는 13번을 선택했다. 시작 Git 상태는 clean이고 `git merge-base HEAD <기준 SHA>`가 기준과 일치했다.

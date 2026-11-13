@@ -5,7 +5,7 @@
 # 36 — HTTP MCP OAuth 연결·명시적 갱신
 
 - 배치/번호: b02 / 36, `RESOURCE-005`.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-36-mcp-oauth`.
+- worktree: `<세션 worktree 루트>/b02-36-mcp-oauth`.
 - branch: `parallel/b02-mcp-oauth`.
 - 고정 기준: `11e51d6efaf0b10a6f0c2c682da7bb1db5738955`. 시작 HEAD 일치·clean과 `a453f18` ancestor를 확인했다.
 - 상태: 소유 구현·실제 API/UI 연결·로컬 브라우저 인수 완료. 실행 가능한 소유 잔여와 blocker 없음.
@@ -108,12 +108,12 @@ TTS·재생·마이크 차단·STT 범위도 건드리지 않았다.
 공용 환경 복구 후 사용한 진입점은 아래와 같다. `b.DEV` 보정은 기준 버전 `scripts/build.py`가 환경의 CARGO_HOME/RUSTUP_HOME을 worktree `.dev`로 덮어쓰는 문제를 피하기 위한 실행 시 보정이다. 스크립트 파일은 수정하지 않았다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 \
-CARGO_TARGET_DIR=/data/project/paseodog_opus/target \
+CARGO_TARGET_DIR=<원본 저장소>/target \
 flock /home/ubuntu/.cache/grove-rust-check.lock python3 - <<'PY'
 import scripts.build as b
-b.DEV = "/data/project/paseodog_opus/.dev"
+b.DEV = "<원본 저장소>/.dev"
 b.main(["test", "--rust", "mcp_oauth"])
 b.main(["test", "--lib", "--filter", "mcp"])
 b.main(["test", "--e2e", "e2e/mcp-oauth.spec.ts",
@@ -139,12 +139,12 @@ PY
 
 검증 로그(이 세션의 보존된 실제 출력):
 
-- OAuth 8개 및 수정 전 browser 실패: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_e6207e54.{stdout,stderr}`.
-- Rust 단위 5개: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_f88939ea.{stdout,stderr}`.
-- 최종 browser 5개·stdio 단독 통과: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_0d21f5ee.{stdout,stderr}`.
-- 최종 관련 transport 묶음의 1초 실패: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5326d0ed.{stdout,stderr}`.
-- Vitest·최초 typecheck: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_e302325a.{stdout,stderr}`.
-- 후속 typecheck 및 당시 MCP 27개 전체 통과: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_929a86d0.{stdout,stderr}`.
+- OAuth 8개 및 수정 전 browser 실패: `<실행 로그>/shell_e6207e54.{stdout,stderr}`.
+- Rust 단위 5개: `<실행 로그>/shell_f88939ea.{stdout,stderr}`.
+- 최종 browser 5개·stdio 단독 통과: `<실행 로그>/shell_0d21f5ee.{stdout,stderr}`.
+- 최종 관련 transport 묶음의 1초 실패: `<실행 로그>/shell_5326d0ed.{stdout,stderr}`.
+- Vitest·최초 typecheck: `<실행 로그>/shell_e302325a.{stdout,stderr}`.
+- 후속 typecheck 및 당시 MCP 27개 전체 통과: `<실행 로그>/shell_929a86d0.{stdout,stderr}`.
 
 마지막 Rust 제품 변경은 기한 비교 보정이다. OAuth 8개·단위 5개·마지막 E2E는 그 코드를 사용했다.
 이후 코드 변경은 전용 E2E의 폐기된 locator를 현재 의미 기반 승인 region으로 바꾼 것뿐이며 마지막 E2E가 이를 포함한다.
@@ -162,7 +162,7 @@ PY
 - 기존 stdio 시험의 동시 target 실행 중 1초 timeout 실패는 원인 확정/수정하지 않았다. 이전 묶음과 최종 단독 선택에서 통과했지만 간헐 timing 위험으로 인계한다. 시험 상한·transport 코드를 바꾸지 않았다.
 - callback route 변경 전 잠금 대기 중이던 검사는 입력 무효화 때문에 취소했다(exit 137, 실행 출력 없음). 통과로 집계하지 않았다.
 - 초기 문서상의 표준 Rust 명령은 기준 build.py의 DEV 덮어쓰기 때문에 worktree에 툴체인·crate를 자동 다운로드했다. 의도하지 않은 환경 부작용이다. 이 호출이 만든 정확한 worktree `.dev`와 `target`을 확인 후 제거했다. 이후에는 기존 메인 DEV를 실행 시 지정하고 offline/auto-install 금지로 검증했다. dependency/lockfile 변경은 없다.
-- 웹은 COMMON이 허용한 `/data/project/paseodog_opus/web/node_modules` symlink를 썼다. npm install/ci는 하지 않았다.
+- 웹은 COMMON이 허용한 `<원본 저장소>/web/node_modules` symlink를 썼다. npm install/ci는 하지 않았다.
 - 공용 Rust/E2E 잠금을 매번 지켰다. 대기 시간이 길었지만 다른 검사·서버를 종료하거나 실행 설정을 바꾸지 않았다. 표의 시간은 runner 단계 값이며 잠금 대기나 절감량을 추정해 넣지 않았다.
 - 빌드의 500kB 초과 chunk·React Router v8 future flag 경고는 남았다. 이 범위 밖 최적화는 하지 않았다.
 - 전체 회귀/release/패키징, 실제 외부 issuer·계정·실토큰·모바일 실기기 호환성은 미선택/미검증이다.

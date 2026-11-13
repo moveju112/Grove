@@ -2,7 +2,7 @@
 
 ## 상태·기준
 - 상태: 구현 종료, 통합 검증 대기. 코드·단위 시험·typecheck blocker는 없다. 실제 PTY E2E와 모바일 실기기 검증은 남아 있다.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-18-terminal-input`
+- worktree: `<세션 worktree 루트>/b02-18-terminal-input`
 - branch: `parallel/b02-terminal-input`
 - 공통 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1` (시작 HEAD·merge-base 모두 일치).
 - 원본 프로젝트·서버·공통 CSS·dependency/lockfile·TODO는 변경하지 않았다. push·merge·배포·서비스 조작은 하지 않았다.
@@ -30,7 +30,7 @@
 - 서버 계약은 기존 `{ type: "input", data: string }` 그대로다. 기존 인증·일회용 ticket·서버 권한 검사를 재사용한다. 닫힌 소켓에는 전송하지 않으며 읽기 전용/연결 중 paste도 전달하지 않는다.
 
 ## 검증 근거
-기존 `/data/project/paseodog_opus/web/node_modules`를 task-owned 임시 symlink로 참조했다. 설치·복사는 하지 않았고 검증 후 해당 symlink를 제거했다. 각 검사 전에 `source .envrc.dev`를 적용했다.
+기존 `<원본 저장소>/web/node_modules`를 task-owned 임시 symlink로 참조했다. 설치·복사는 하지 않았고 검증 후 해당 symlink를 제거했다. 각 검사 전에 `source .envrc.dev`를 적용했다.
 
 | 실제 명령·입력 | 결과 |
 |---|---|

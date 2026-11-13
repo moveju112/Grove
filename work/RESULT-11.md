@@ -3,7 +3,7 @@
 ## 상태와 기준
 
 - 상태: 배정 범위 구현 종료, 통합 및 웹 실행 검증 대기. 웹 검증 blocker가 있으므로 전체 완료로 처리하면 안 된다.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-11-skills-wire`
+- Worktree: `<세션 worktree 루트>/b02-11-skills-wire`
 - Branch: `parallel/b02-skills-wire`
 - 공통 기준 SHA 및 시작 HEAD: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`
 - `ENTRY.md` 절차에 따라 원본 준비 표의 경로·브랜치가 모두 일치하는 11번을 선택했다. 기준 SHA와 merge-base가 같고 시작 상태는 clean이었다.
@@ -60,12 +60,12 @@
 
 ## 실제 검증
 
-검사 전에 기존 `/data/project/paseodog_opus/.dev`를 가리키는 로컬 `.dev` symlink를 사용하고 `source .envrc.dev`를 적용했다. 의존성 설치·다운로드·통째 복사는 하지 않았다. 이 symlink는 검증 후 제거했다. 실행 파일은 호스트 공용 cargo cache에 생성됐으며 실제 로그의 경로는 `/home/ubuntu/.cache/cargo-build/0c/a57d71094bfb80/debug/deps/`다.
+검사 전에 기존 `<원본 저장소>/.dev`를 가리키는 로컬 `.dev` symlink를 사용하고 `source .envrc.dev`를 적용했다. 의존성 설치·다운로드·통째 복사는 하지 않았다. 이 symlink는 검증 후 제거했다. 실행 파일은 호스트 공용 cargo cache에 생성됐으며 실제 로그의 경로는 `/home/ubuntu/.cache/cargo-build/0c/a57d71094bfb80/debug/deps/`다.
 
 | 명령 | 결과 |
 |---|---|
-| `source .envrc.dev && CARGO_TARGET_DIR=/data/project/paseodog_opus/target CARGO_BUILD_JOBS=2 npm_config_offline=true npm_config_yes=false python3 scripts/build.py test --rust skills --vitest app/components/skills/SkillsPanel.test.ts --typecheck` | Rust 컴파일 및 `tests/skills.rs` **17개 통과**. 이후 typecheck가 exit 127, `sh: 1: react-router: not found`로 실패. 전체 명령 exit 127, Vitest는 실행기에서 미실행으로 표시 |
-| `source .envrc.dev && CARGO_TARGET_DIR=/data/project/paseodog_opus/target CARGO_BUILD_JOBS=2 npm_config_offline=true npm_config_yes=false python3 scripts/build.py test --lib --filter store::tests` | migration·기존 데이터 보존 관련 library 시험 **7개 통과**, 173개 미선택, exit 0 |
+| `source .envrc.dev && CARGO_TARGET_DIR=<원본 저장소>/target CARGO_BUILD_JOBS=2 npm_config_offline=true npm_config_yes=false python3 scripts/build.py test --rust skills --vitest app/components/skills/SkillsPanel.test.ts --typecheck` | Rust 컴파일 및 `tests/skills.rs` **17개 통과**. 이후 typecheck가 exit 127, `sh: 1: react-router: not found`로 실패. 전체 명령 exit 127, Vitest는 실행기에서 미실행으로 표시 |
+| `source .envrc.dev && CARGO_TARGET_DIR=<원본 저장소>/target CARGO_BUILD_JOBS=2 npm_config_offline=true npm_config_yes=false python3 scripts/build.py test --lib --filter store::tests` | migration·기존 데이터 보존 관련 library 시험 **7개 통과**, 173개 미선택, exit 0 |
 | `git diff --check` | whitespace 검사 통과 |
 
 - Rust API 회귀는 승인된 전역/프로젝트 root, 익명·위조 요청, 본문 조회, 선택 충돌, 세션 격리, 재시작 보존, 같은 요청 replay, missing key, 상태변경 이벤트 1회, 프로젝트 보관 후 replay 거부를 확인했다.

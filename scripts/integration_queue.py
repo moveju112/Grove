@@ -69,13 +69,17 @@ def git(root, *args):
 
 
 def load_agents(root):
-    data = json.loads(command(["paseo", "agent", "ls", "--global", "--all", "--json"], root))
+    # 세션 관리 CLI 이름은 저장소에 두지 않고 실행 환경에서 받는다.
+    cli = os.environ.get("GROVE_AGENT_CLI", "").strip()
+    if not cli:
+        raise ValueError("GROVE_AGENT_CLI에 세션 관리 CLI 이름을 지정하세요")
+    data = json.loads(command([cli, "agent", "ls", "--global", "--all", "--json"], root))
     if not isinstance(data, list):
-        raise ValueError("Paseo 세션 목록이 배열이 아님")
+        raise ValueError("세션 목록이 배열이 아님")
     for agent in data:
         if not isinstance(agent, dict) or not all(isinstance(agent.get(k), str) and agent[k]
                                                  for k in ("id", "cwd", "status")):
-            raise ValueError("Paseo 세션 목록의 id·cwd·status 형식 오류")
+            raise ValueError("세션 목록의 id·cwd·status 형식 오류")
     return data
 
 

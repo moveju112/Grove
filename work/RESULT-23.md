@@ -2,7 +2,7 @@
 
 ## 식별·판정
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-23-tab-close`
+- worktree: `<세션 worktree 루트>/b02-23-tab-close`
 - branch: `parallel/b02-tab-close`
 - 기준 SHA: `7b3949d24e420d09e6e4cde29405414b2d99253a`
 - 시작 HEAD가 기준 SHA와 같았고 Git 상태가 깨끗했다. 원본 `work/ENTRY.md`, `work/README.md`의 23번 경로·브랜치 행, `work/COMMON.md`, `work/23.md`와 대조했다.
@@ -63,9 +63,9 @@ context/browser 재생성 시 실제 기기 저장소 역할의 `storageState`�
 
 ## 실행 검증
 
-검사 전에 매번 `set -a; source /home/ubuntu/.config/environment.d/60-build-storage.conf; set +a`와 `source /data/project/paseodog_opus/.envrc.dev`를 적용했다.
+검사 전에 매번 `set -a; source /home/ubuntu/.config/environment.d/60-build-storage.conf; set +a`와 `source <원본 저장소>/.envrc.dev`를 적용했다.
 기존 cache·병렬도는 유지했다.
-worktree에 도구 설치·복사를 하지 않고 ignored `.dev`를 `/data/project/paseodog_opus/.dev`에, `web/node_modules`를 `/data/project/paseodog_opus/web/node_modules`에 symlink했다.
+worktree에 도구 설치·복사를 하지 않고 ignored `.dev`를 `<원본 저장소>/.dev`에, `web/node_modules`를 `<원본 저장소>/web/node_modules`에 symlink했다.
 전자는 `scripts/build.py`가 설정하는 worktree 기준 CARGO_HOME/RUSTUP_HOME도 같은 메인 툴체인을 가리키게 한다. 공유 서비스나 메인 tracked 파일 변경이 아니다.
 
 | 실제 명령 | 결과·입력 범위 |

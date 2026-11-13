@@ -7,7 +7,7 @@
 ## 범위와 상태
 
 - 배치/번호: b02 / 46, ONCE-008의 남은 실제 단발 CLI unknown 도구 결과 경로.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-46-exec-unknown`
+- worktree: `<세션 worktree 루트>/b02-46-exec-unknown`
 - branch: `parallel/b02-exec-unknown`
 - 고정 기준 및 시작 HEAD: `7d5a6e57776f5770162b577dc4e372a2d67ae3e3`
 - ENTRY/COMMON/46 정본과 README의 경로·branch 일치, 시작 시 clean 확인.
@@ -38,7 +38,7 @@ ONCE-008의 미검증 실제 in-flight unknown 경로를 충족한다. ONCE-007/
 검사 명령:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && export CARGO_TARGET_DIR=/data/project/paseodog_opus/target CARGO_BUILD_JOBS=2 && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_unknown exec
+source <원본 저장소>/.envrc.dev && export CARGO_TARGET_DIR=<원본 저장소>/target CARGO_BUILD_JOBS=2 && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust exec_unknown exec
 ```
 
 전체 명령은 COMMON의 공용 Rust 잠금 안에서 실행했다. 대기 중 잠금은 다른 실행이 보유하고 있음을 읽기 전용으로 확인했으며 우회·공유 프로세스 중단은 하지 않았다.
@@ -63,8 +63,8 @@ source /data/project/paseodog_opus/.envrc.dev && export CARGO_TARGET_DIR=/data/p
 
 원본 검사 로그:
 
-- `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_e8eb03a7.stdout`
-- `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_e8eb03a7.stderr`
+- `<실행 로그>/shell_e8eb03a7.stdout`
+- `<실행 로그>/shell_e8eb03a7.stderr`
 
 검사 입력 SHA-256:
 

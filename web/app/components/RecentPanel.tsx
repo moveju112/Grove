@@ -152,7 +152,7 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                         <span className="row-actions">
                             <button className="ghost small" title="오른쪽에 열기" aria-label="오른쪽에 열기" onClick={() => openItem(it, "right")}>⇥</button>
                             <button className="ghost small" title="아래에 열기" aria-label="아래에 열기" onClick={() => openItem(it, "down")}>⤓</button>
-                            <ServerActionButton className="ghost small" aria-label={it.pinned ? "고정 해제" : "고정"} title={it.pinned ? "고정 해제" : "고정"} onClick={() => patch(it, { pinned: !it.pinned })}>
+                            <ServerActionButton className="ghost small pin-toggle" aria-pressed={it.pinned} aria-label={it.pinned ? "고정 해제" : "고정"} title={it.pinned ? "고정 해제" : "고정"} onClick={() => patch(it, { pinned: !it.pinned })}>
                                 {it.pinned ? "★" : "☆"}
                             </ServerActionButton>
                             <ServerActionButton className="ghost small" aria-label={it.hidden ? "다시 표시" : "최근에서 숨기기"}

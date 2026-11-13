@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, openDetails, state } from "./helpers";
+import { apiCall, login, openDetails, state, useWorkspaces } from "./helpers";
 
 async function openWorktrees(page: Page) {
     const root = mkdtempSync(join(dirname(state().projA), "worktree-recovery-"));
@@ -14,6 +14,7 @@ async function openWorktrees(page: Page) {
     run("add", "a.txt");
     run("commit", "-qm", "base");
     const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+    await useWorkspaces(project.id);
     await login(page);
     await page.locator(".sidebar .projects").getByRole("button", { name: project.name, exact: true }).click();
     const panel = page.getByTestId("worktrees-panel");

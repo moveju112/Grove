@@ -6,11 +6,11 @@
 
 | 위치 | 내용 | 이전 대상 |
 |---|---|---|
-| `~/.local/share/paseodog/sessions/*.json` | 대화 기록(형식 version 2), 945개·항목 69,999개. `*.lock` 38개, `delivery-reports` | **가져옴**(`grove import paseo`) |
-| `~/.local/share/paseodog/paseo/config.json`(+backup) | Paseo 설정 | 가져오지 않음(설정 체계가 다름, 사용자가 Grove 설정에서 다시 지정) |
-| `~/.local/share/paseodog/mixdog/data/provider-accounts*.json`, `*-oauth-*` | 계정·OAuth | **가져오지 않음**(MIG-009/010, 재로그인 필요) |
-| `mixdog/data/pgdata`, `history/*.jsonl`, `gateway-*` | 런타임 DB·추적·사용량 로그 | 가져오지 않음(런타임 내부, 대화 표시 기록은 sessions에 있음) |
-| `mixdog/data/agents`, `bots`, `goals`, 메모리 | 에이전트·봇·Goal·메모리 | 이번 범위 밖(MIG-003, 형식 조사 필요) |
+| `<기존 제품 데이터>/sessions/*.json` | 대화 기록(형식 version 2), 945개·항목 69,999개. `*.lock` 38개, `delivery-reports` | **가져옴**(`grove import(삭제됨)`) |
+| `<기존 제품 데이터>/<이전 서버>/config.json`(+backup) | 이전 서버 설정 | 가져오지 않음(설정 체계가 다름, 사용자가 Grove 설정에서 다시 지정) |
+| `<기존 제품 데이터>/기존 엔진/data/provider-accounts*.json`, `*-oauth-*` | 계정·OAuth | **가져오지 않음**(MIG-009/010, 재로그인 필요) |
+| `기존 엔진/data/pgdata`, `history/*.jsonl`, `gateway-*` | 런타임 DB·추적·사용량 로그 | 가져오지 않음(런타임 내부, 대화 표시 기록은 sessions에 있음) |
+| `기존 엔진/data/agents`, `bots`, `goals`, 메모리 | 에이전트·봇·Goal·메모리 | 이번 범위 밖(MIG-003, 형식 조사 필요) |
 
 ## 대화 파일 형식(version 2)
 

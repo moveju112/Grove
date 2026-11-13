@@ -2,7 +2,7 @@
 
 ## 위치와 상태
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-08-web-fetch`
+- worktree: `<세션 worktree 루트>/b01-08-web-fetch`
 - branch: `parallel/b01-web-fetch`
 - 공통 기준: `c186b31ab62734c9f91803cf7848b639ad9871fb`
 - 실제 Git top-level·branch가 README의 08 행과 일치했고, 시작 시 clean 및 merge-base 일치를 확인했다.

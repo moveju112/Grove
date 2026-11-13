@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, state } from "./helpers";
+import { apiCall, login, state, useWorkspaces } from "./helpers";
 
 type P = { id: string; name: string; root_path: string; revision: number; archived_at: string | null };
 
@@ -15,6 +15,7 @@ test("프로젝트를 보관했다가 복원하고, 제거한 worktree를 브랜
     writeFileSync(join(p.root_path, "a.txt"), "one\n");
     git("add", "a.txt");
     git("-c", "user.email=t@example.invalid", "-c", "user.name=T", "commit", "-q", "-m", "init");
+    await useWorkspaces(p.id);
     const wt = await apiCall<{ id: string }>("POST", `/projects/${p.id}/worktrees`, { name: "again" });
     await apiCall("DELETE", `/worktrees/${wt.id}`);
     try {

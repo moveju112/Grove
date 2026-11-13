@@ -2,7 +2,7 @@
 
 ## 상태·기준
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-17-hooks-config`
+- worktree: `<세션 worktree 루트>/b02-17-hooks-config`
 - branch: `parallel/b02-hooks-config`
 - 공통 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`
 - 실제 top-level·branch가 원본 `work/README.md`의 17번 행과 일치하고 merge-base·시작 HEAD도 위 SHA였다. 시작 상태는 깨끗했고 기존 `work/RESULT-17.md`는 없었다.

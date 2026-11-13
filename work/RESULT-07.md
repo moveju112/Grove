@@ -2,7 +2,7 @@
 
 ## 식별·상태
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-07-linux-service`
+- worktree: `<세션 worktree 루트>/b01-07-linux-service`
 - branch: `parallel/b01-linux-service`
 - 공통 기준 SHA: `c186b31ab62734c9f91803cf7848b639ad9871fb`
 - 실제 Git top-level·branch가 ENTRY 표의 07과 일치했고 시작 시 clean이었다.

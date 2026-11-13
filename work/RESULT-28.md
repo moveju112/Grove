@@ -3,7 +3,7 @@
 ## 상태와 기준
 
 - 상태: 배정된 구현·연결과 선택 로컬 검증 종료. 브라우저 E2E 인수는 COMMON 계약에 따라 통합 단계 대기다. 전체 브라우저 사용자 흐름을 검증 완료했다고 주장하지 않는다.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-28-skill-management`
+- Worktree: `<세션 worktree 루트>/b02-28-skill-management`
 - Branch: `parallel/b02-skill-management`
 - 공통 기준 및 시작 HEAD: `551f551d48d1f47cd3ad67015f1737c62d576228`
 - ENTRY의 원본 README 표에서 실제 top-level·branch가 일치하는 28번을 확인했고 시작 상태는 clean이었다.
@@ -63,13 +63,13 @@
 
 ## 실제 검증
 
-의존성 설치·복사 없이 `/data/project/paseodog_opus/.dev`와 `/data/project/paseodog_opus/web/node_modules`를 가리키는 작업 소유 symlink로 공용 환경을 사용했다. Rust는 지정 flock과 공용 cargo build cache를 사용했다. 이 symlink 두 개는 검증 후 제거했다.
+의존성 설치·복사 없이 `<원본 저장소>/.dev`와 `<원본 저장소>/web/node_modules`를 가리키는 작업 소유 symlink로 공용 환경을 사용했다. Rust는 지정 flock과 공용 cargo build cache를 사용했다. 이 symlink 두 개는 검증 후 제거했다.
 
 | 실제 명령 | 결과 |
 |---|---|
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust skill_management skills` | 최종 Rust 컴파일, 관리 11개 및 기존 catalog/선택/모델 17개 통과, exit 0 |
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --lib --filter store::tests` | migration/기존 데이터 보존 7개 통과, 179개 미선택, exit 0. 이후 migration/store 입력은 바뀌지 않아 재사용 |
-| `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/skills/SkillsPanel.test.ts app/components/skills/SkillEditor.test.ts --typecheck` | typecheck 및 Vitest 12개 통과, exit 0. 이후 웹 입력은 바뀌지 않아 재사용 |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust skill_management skills` | 최종 Rust 컴파일, 관리 11개 및 기존 catalog/선택/모델 17개 통과, exit 0 |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --lib --filter store::tests` | migration/기존 데이터 보존 7개 통과, 179개 미선택, exit 0. 이후 migration/store 입력은 바뀌지 않아 재사용 |
+| `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/skills/SkillsPanel.test.ts app/components/skills/SkillEditor.test.ts --typecheck` | typecheck 및 Vitest 12개 통과, exit 0. 이후 웹 입력은 바뀌지 않아 재사용 |
 | `git diff --check` | 공백 검사 통과 |
 
 - 승인 root의 첫 생성·전역/프로젝트 저장·동시 저장의 단일 승자·같은 bytes의 stale 저장 거절·외부 변경 reload·재시작 후 원래 선택 보존을 확인했다.

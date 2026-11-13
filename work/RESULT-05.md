@@ -1,7 +1,7 @@
 # b01 / 05 — USAGE-007 인계
 
 ## 식별·상태
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-05-usage-ui`
+- Worktree: `<세션 worktree 루트>/b01-05-usage-ui`
 - Branch: `parallel/b01-usage-ui`
 - 공통 기준 SHA: `c186b31ab62734c9f91803cf7848b639ad9871fb`
 - 실제 Git top-level·branch가 ENTRY/README/05와 정확히 일치하며 `git merge-base HEAD <기준 SHA>`도 기준 SHA였다. 시작 시 working tree는 clean이었다.

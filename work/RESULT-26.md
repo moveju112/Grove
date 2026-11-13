@@ -3,7 +3,7 @@
 ## 작업 식별·상태
 
 - 배치/번호: b02 / 26.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps`.
+- Worktree: `<세션 worktree 루트>/b02-26-browser-caps`.
 - Branch: `parallel/b02-browser-caps`.
 - 공통 기준: `7b3949d24e420d09e6e4cde29405414b2d99253a`. 시작 시 실제 경로·브랜치·clean 상태와 기준 ancestry를 확인했다.
 - 상태: 구현 종료, 선택 Rust·Vitest·typecheck 통과. 실제 브라우저 E2E는 COMMON 계약에 따라 통합 단계 실행 대기이며 검증 완료로 간주하지 않는다.
@@ -59,15 +59,15 @@ WEB-010 전체 구현은 연결됐지만 E2E·실기기 확인은 남았다. 이
 
 ## 실제 실행 검증
 
-환경은 메인의 기존 의존성을 재사용했다. `web/node_modules`는 `/data/project/paseodog_opus/web/node_modules`, `.dev`는 `/data/project/paseodog_opus/.dev`로 향하는 Git ignore symlink다.
+환경은 메인의 기존 의존성을 재사용했다. `web/node_modules`는 `<원본 저장소>/web/node_modules`, `.dev`는 `<원본 저장소>/.dev`로 향하는 Git ignore symlink다.
 `.dev` 연결은 빌드 실행기가 worktree의 `.dev` 경로를 사용하는 계약 때문에 필요했다. 설치·복사·dependency 갱신은 하지 않았다.
 
-1. `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/capabilities/browser.test.ts app/state/attention.test.ts --typecheck`
+1. `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/capabilities/browser.test.ts app/state/attention.test.ts --typecheck`
    - 최초 실패: typecheck에서 배열 접근 결과의 undefined 가능성 TS2345 2건. 이때 Vitest는 실행기에서 중단되어 미실행이었다.
    - 수정 후 동일 명령 성공: typecheck 통과, 신규 11개 + 기존 알림 3개 = Vitest 14개 통과.
-2. `source /data/project/paseodog_opus/.envrc.dev && CARGO_TARGET_DIR=/data/project/paseodog_opus/target flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust web_base`
+2. `source <원본 저장소>/.envrc.dev && CARGO_TARGET_DIR=<원본 저장소>/target flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust web_base`
    - 컴파일 포함 성공. `deployment_base_is_a_safe_path`, `static_mount_preserves_api_and_asset_boundaries` 2개 통과. 이후 Rust 관련 입력은 변경하지 않아 결과 재사용.
-3. 최종 웹 변경 후 `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/capabilities/browser.test.ts --typecheck`
+3. 최종 웹 변경 후 `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/capabilities/browser.test.ts --typecheck`
    - 성공. typecheck 및 신규 11개 통과. E2E 파일도 tsconfig 범위에 포함되어 타입 검사됨.
    - 기존 알림 3개의 코드·시험 입력은 그대로여서 앞선 통과 결과 재사용.
 4. `git diff --check`: 통과.
@@ -79,7 +79,7 @@ E2E·전체 회귀·release·패키징은 COMMON에 따라 실행하지 않았�
 ## 통합 단계
 
 - 기존 Settings 등록/mount 및 세 진입점 변경을 보존해 병합한다.
-- 공통 고정 포트 소유가 확보된 통합 단계에서 `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --e2e e2e/browser-capabilities.spec.ts e2e/attention.spec.ts e2e/markdown.spec.ts e2e/attachments.spec.ts`로 신규 상태·기존 알림/복사/첨부 흐름을 확인한다.
+- 공통 고정 포트 소유가 확보된 통합 단계에서 `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --e2e e2e/browser-capabilities.spec.ts e2e/attention.spec.ts e2e/markdown.spec.ts e2e/attachments.spec.ts`로 신규 상태·기존 알림/복사/첨부 흐름을 확인한다.
 - 신규 E2E의 비보안 시나리오는 localhost에서 isSecureContext 신호를 제어하는 시험이지 실제 원격 HTTP 보안 정책 시험은 아니다.
 - 파일 시스템 권한은 선택한 handle별이므로 탐지로 사전 허용을 확정하지 않는다. Clipboard 권한 descriptor 미지원 브라우저는 계속 미확인으로 표시하는 것이 의도된 계약이다.
 - 통합 담당이 실제 브라우저 검증 결과와 남은 플랫폼 범위를 판단한 뒤 TODO를 반영한다.

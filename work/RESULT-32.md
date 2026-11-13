@@ -1,10 +1,10 @@
 # b02 / 32 — CMP-011 압축 기록 상세
 
 - 상태: 구현·선택 검증 완료. 공통 연결 대기와 blocker 없음. 메인 통합·TODO 반영은 통합 담당 범위.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-32-compaction-details`
+- Worktree: `<세션 worktree 루트>/b02-32-compaction-details`
 - Branch: `parallel/b02-compaction-details`
 - 기준 SHA: `9942629c17891c5cad8cc5a7a62fee99e0379650`
-- 정본: `/data/project/paseodog_opus/work/ENTRY.md`, `COMMON.md`, `32.md`. README의 경로·브랜치 일치와 기준 ancestry, 시작 시 clean 상태를 확인했다.
+- 정본: `<원본 저장소>/work/ENTRY.md`, `COMMON.md`, `32.md`. README의 경로·브랜치 일치와 기준 ancestry, 시작 시 clean 상태를 확인했다.
 
 ## 제공 동작·소유 변경
 
@@ -39,7 +39,7 @@
 
 ## 실제 검증
 
-공통 환경을 매번 `source /data/project/paseodog_opus/.envrc.dev`로 적용했다. Rust/E2E는 `CARGO_TARGET_DIR=/data/project/paseodog_opus/target`와 `flock /home/ubuntu/.cache/grove-rust-check.lock`을 사용했다. 빌드 실행기가 사용하는 `.dev`와 `web/node_modules`는 메인 경로의 ignored symlink이며 설치·복사하지 않았다. E2E는 요청된 완료 흐름 확인을 위해 고정 포트에서 직렬 실행했다.
+공통 환경을 매번 `source <원본 저장소>/.envrc.dev`로 적용했다. Rust/E2E는 `CARGO_TARGET_DIR=<원본 저장소>/target`와 `flock /home/ubuntu/.cache/grove-rust-check.lock`을 사용했다. 빌드 실행기가 사용하는 `.dev`와 `web/node_modules`는 메인 경로의 ignored symlink이며 설치·복사하지 않았다. E2E는 요청된 완료 흐름 확인을 위해 고정 포트에서 직렬 실행했다.
 
 | 실행 명령 (`python3 scripts/build.py test`의 인수) | 결과 |
 |---|---|

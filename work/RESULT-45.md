@@ -1,14 +1,14 @@
 <!-- grove-handoff:v1
-{"state":"ready","remaining":[],"blockers":[],"integration_checks":["source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/rewind.spec.ts"]}
+{"state":"ready","remaining":[],"blockers":[],"integration_checks":["source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/rewind.spec.ts"]}
 -->
 
 # 45 — CMP-012 압축 저장 실패·중단·재시작 보존
 
 - 상태: 소유 범위 구현·실제 API 연결·선택 검증 완료, blocker 없음. 기존 브라우저 회귀는 중앙 통합 인수로 남긴다.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-45-compaction-faults`
+- Worktree: `<세션 worktree 루트>/b02-45-compaction-faults`
 - Branch: `parallel/b02-compaction-faults`
 - 고정 기준 및 시작 HEAD: `7d5a6e57776f5770162b577dc4e372a2d67ae3e3`
-- 정본: `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/45.md`
+- 정본: `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/45.md`
 - 변경: `tests/compaction_faults.rs`, `work/RESULT-45.md`만 작성했다. 저장 결함이 재현되지 않아 `src/context.rs::compact`와 기존 회귀는 변경하지 않았다.
 - 최종 시험 소스 Git blob: `d88cdd65e4cb51d89654398fee680a8935855b45`. 최종 선택 시험 이후에는 이 인계 파일만 작성했다.
 
@@ -46,35 +46,35 @@
 모든 Rust 명령은 공통 환경을 source하고 **명령 전체**를 공용 Rust/E2E lock 안에서 실행했다. 여러 target은 하나의 `--rust` 옵션 뒤에 지정했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && rustfmt --edition 2024 --config skip_children=true tests/compaction_faults.rs && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust compaction_faults context model_input_pages rewind compaction_details
+source <원본 저장소>/.envrc.dev && rustfmt --edition 2024 --config skip_children=true tests/compaction_faults.rs && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust compaction_faults context model_input_pages rewind compaction_details
 ```
 
 - exit 0. `compaction_faults` 6, `context` 12, `model_input_pages` 3, `rewind` 5, `compaction_details` 4: 총 30개 통과, 실패·무시·필터 제외 0.
 - 실행기 측정: 173.86s wall, 247.69s CPU, 2179.3MB peak. 이 값은 실행기 내부 검사 단계의 값이며 바깥 `flock` 대기 시간을 포함한다고 주장하지 않는다.
-- stdout: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_b48a893e.stdout`
-- stderr: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_b48a893e.stderr`
+- stdout: `<실행 로그>/shell_b48a893e.stdout`
+- stderr: `<실행 로그>/shell_b48a893e.stderr`
 - 처음 컴파일에서 신규 시험의 미사용 `Method` import 경고가 있었다. import만 제거했고 제품·공용 fixture·기존 target 입력은 그대로여서 기존 네 target의 24개 통과 근거는 재사용한다.
 
 최종 신규 target은 import 제거 뒤 다시 실행했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust compaction_faults
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust compaction_faults
 ```
 
 - exit 0. 최종 blob 기준 6개 통과, 실패·무시·필터 제외 0, 컴파일 경고 없음.
 - 실행기 측정: 30.9s wall, 13.35s CPU, 1497.9MB peak.
-- stdout: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_0e2b7bf2.stdout`
-- stderr: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_0e2b7bf2.stderr`
+- stdout: `<실행 로그>/shell_0e2b7bf2.stdout`
+- stderr: `<실행 로그>/shell_0e2b7bf2.stderr`
 
 웹 compatibility 확인은 기존 공유 `node_modules`를 ignore 대상 symlink로 연결한 뒤 실행했다. 설치·복사는 하지 않았다.
 
 ```bash
-ln -s /data/project/paseodog_opus/web/node_modules web/node_modules
-source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --typecheck
+ln -s <원본 저장소>/web/node_modules web/node_modules
+source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --typecheck
 ```
 
 - exit 0. 실행기 측정: 28.17s wall, 13.01s CPU, 667.9MB peak.
-- stdout: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5bab1ecf.stdout`
+- stdout: `<실행 로그>/shell_5bab1ecf.stdout`
 - 웹 제품 입력은 기준 SHA에서 변경하지 않아 이후 Rust 시험 import 정리에 영향받지 않는다.
 - Vitest는 변경된 웹 동작이 없어 미선택했다. E2E·전체 회귀·release·실모델 호출은 실행하지 않았다. 실패·취소·timeout으로 끝난 검증 명령은 없다. 시험에서 예상한 storage/cancellation 오류와 검증 명령 실패를 구분한다.
 

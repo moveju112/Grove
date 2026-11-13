@@ -44,7 +44,7 @@ TARGETS = {
 }
 SERVER_INPUTS = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src", "assets"]
 WEB_INPUTS = ["web/package.json", "web/package-lock.json", "web/app", "web/public", "web/scripts", "web/vite.config.ts", "web/react-router.config.ts", "web/tsconfig.json"]
-NOTICE_FILES = ["assets/MIXDOG-LICENSE", "assets/MIXDOG-NOTICE.md"]
+NOTICE_FILES = ["assets/licenses/agent-baseline-LICENSE", "assets/licenses/agent-baseline-NOTICE.md"]
 
 
 # ---------- 공통 ----------
@@ -314,7 +314,8 @@ SECRET_PATTERNS = [
     rb"-----BEGIN (?:RSA |EC |OPENSSH |)PRIVATE KEY-----",
     rb"sk-ant-[A-Za-z0-9_-]{20,}",
     rb"sk-(?:proj-)?[A-Za-z0-9]{32,}",
-    rb"ghp_[A-Za-z0-9]{30,}",
+    # GitHub classic PAT는 접두어 뒤 정확히 36자다. 인접 문자열이 병합된 rodata 오탐을 막는다.
+    rb"ghp_[A-Za-z0-9]{36}(?![A-Za-z0-9])",
     rb"AKIA[0-9A-Z]{16}",
     rb"grv_[0-9a-f-]{8,}\.[A-Za-z0-9_-]{20,}",
 ]

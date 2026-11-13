@@ -22,6 +22,7 @@ async fn repo() -> (TestServer, String, PathBuf) {
     std::fs::write(root.join("a.txt"), "base\n").unwrap();
     git(&root, &["add", "a.txt"]);
     git(&root, &["commit", "-qm", "base"]);
+    s.use_workspaces(p["id"].as_str().unwrap()).await;
     (s, p["id"].as_str().unwrap().to_string(), root)
 }
 
