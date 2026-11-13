@@ -203,9 +203,11 @@ impl Builder {
                 let id = c["provider_call_id"].as_str().unwrap_or("");
                 if let Some(index) = self.pending.iter().position(|(pending, _)| pending == id) {
                     self.pending.remove(index);
+                    let bounded = crate::tool_outputs::model_input(c);
+                    let input = bounded.as_ref().unwrap_or(c);
                     self.output.push(ChatMsg::Tool {
                         call_id: id.into(), name: c["name"].as_str().unwrap_or("").into(),
-                        content: truncate_tool_output(&provider::tool_content_string(&c["output"])),
+                        content: truncate_tool_output(&provider::tool_content_string(&input["output"])),
                         is_error: c["is_error"].as_bool().unwrap_or(false),
                     });
                     if self.pending.is_empty() { self.flush_notes(); }

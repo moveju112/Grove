@@ -46,6 +46,7 @@ pub mod projects;
 pub mod repos;
 pub mod provider;
 pub mod tools;
+pub mod tool_outputs;
 pub mod sessions;
 pub mod settings;
 pub mod store;

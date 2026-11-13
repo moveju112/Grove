@@ -210,6 +210,8 @@ pub fn create_call(
     let plan=tools::plan(name,args,root).and_then(|(spec,planned)| {
         if spec.name=="mcp_call" {
             crate::mcp::plan_call(c,args,project_id,session_id).map(|p|(spec,p)).map_err(|e|tools::ToolError::new(e.code,e.message))
+        } else if spec.name==crate::tool_outputs::NAME {
+            crate::tool_outputs::plan(c,session_id,args).map(|p|(spec,p))
         } else { Ok((spec,planned)) }
     });
     let (status, needs, target, pre, result) = match plan {
@@ -306,7 +308,8 @@ fn append_tool_message(c: &Connection, now: &str, call: &ToolCallRow) -> ApiResu
         "duration_ms": duration_ms(call.started_at.as_deref(), call.finished_at.as_deref()),
         "truncated": output_truncated(&output),
     });
-    crate::sessions::append_message(c, now, &call.session_id, "tool", &content, call.turn_id.as_deref(), None)?;
+    let model_input = crate::tool_outputs::model_input(&content);
+    crate::sessions::append_message(c, now, &call.session_id, "tool", &content, call.turn_id.as_deref(), model_input.as_ref())?;
     Ok(())
 }
 
@@ -509,6 +512,11 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 app.db.call(move |c| crate::recall::execute_tool(c,&sid,&args)).await
                     .map_err(|e| tools::ToolError::new(e.code,e.message))
             }
+            Ok(_) if call.name == crate::tool_outputs::NAME => {
+                let (sid,args,data) = (call.session_id.clone(),call.target.clone(),app.cfg.data_dir.clone());
+                app.db.call(move |c| crate::tool_outputs::execute(c,&data,&sid,&args)).await
+                    .map_err(|e| tools::ToolError::new(e.code,e.message))
+            }
             Ok(_) if call.name=="mcp_tools" => {
                 let args=call.target.clone();
                 app.db.call(move |c|crate::mcp::catalog(c,&args)).await.map_err(|e|tools::ToolError::new(e.code,e.message))
@@ -564,6 +572,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
         let turn = call.turn_id.clone();
         let (sid, tool, turn_for_rec) = (call.session_id.clone(), call.name.clone(), call.turn_id.clone());
         let mcp_server=call.target["server_id"].as_str().map(str::to_string);
+        let output_data = app.cfg.data_dir.clone();
         let _ = app
             .db
             .call(move |c| {
@@ -578,10 +587,12 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 if mcp_stale && let Some(server)=&mcp_server {
                     crate::mcp::invalidate_catalog(&tx,&now,server)?;
                 }
-                if finish(&tx, &now, &id, &["running"], to, Some(result))?.is_some() {
+                let finished = finish(&tx, &now, &id, &["running"], to, Some(result))?;
+                if finished.is_some() {
                     crate::changes::insert(&tx, &now, &sid, turn_for_rec.as_deref(), &id, &tool, &file_recs)?;
                 }
                 tx.commit()?;
+                if let Some(call) = finished { crate::tool_outputs::store_copy(&output_data, &call); }
                 Ok(())
             })
             .await;
