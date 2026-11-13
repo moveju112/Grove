@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { ApiError, api } from "../api/client";
 import { useQuery } from "../state/store";
 import type { ModelProfile } from "../api/generated";
 import { APPLIES, SCOPE_LABEL, SettingsResetButton } from "./SettingsReset";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import type { SettingLinkReady } from "./settings-links/reveal";
 
 export type SettingDef = {
     key: string;
@@ -51,16 +52,29 @@ function ProfileChoice({ d, value, disabled, edit }: { d: SettingDef; value: unk
 export type SettingsTarget = { projectId?: string; projectName?: string; sessionId?: string; sessionTitle?: string };
 
 /// 범위별 설정 편집기.
-export function ScopedSettings({ defs, target, resetDefs, area }: { defs: SettingDef[]; target: SettingsTarget; resetDefs?: SettingDef[]; area?: string }) {
+export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLinkReady }: {
+    defs: SettingDef[]; target: SettingsTarget; resetDefs?: SettingDef[]; area?: string;
+    linkedKey?: string; onLinkReady?: SettingLinkReady;
+}) {
     const p = new URLSearchParams();
     if (target.sessionId) p.set("session_id", target.sessionId);
     else if (target.projectId) p.set("project_id", target.projectId);
     const eff = useQuery<{ items: Item[] }>(`settings:${target.sessionId ?? target.projectId ?? "-"}`, () => api.get(`/settings/effective?${p}`));
+    const root = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+        if (!linkedKey || !onLinkReady || !defs.some((definition) => definition.key === linkedKey)) return;
+        if (eff.error) return onLinkReady(linkedKey, null);
+        if (!eff.data || eff.loading) return;
+        // 이 편집기에 속한 실제 행만 조회한다. 키는 CSS selector에 삽입하지 않는다.
+        const row = Array.from(root.current?.querySelectorAll<HTMLElement>("[data-setting-key]") ?? [])
+            .find((element) => element.dataset.settingKey === linkedKey) ?? null;
+        onLinkReady(linkedKey, row);
+    }, [linkedKey, onLinkReady, defs, eff.data, eff.error, eff.loading]);
     const scopes = ["server", ...(target.projectId ? ["project"] : []), ...(target.sessionId ? ["session"] : [])];
     const [resetScope, setResetScope] = useState(scopes.at(-1)!);
     const [resetId, resetLabel] = scopeTarget(resetScope, target);
     return (
-        <div className="scoped">
+        <div className="scoped" ref={root}>
             {resetDefs && <div className="setting" data-testid="settings-area-reset">
                 <p>{area}의 범위별 설정 복원 · 접힌 고급 항목도 포함합니다. 모델 프로필·키·정의 파일은 지우지 않습니다.</p>
                 <div className="inline wrap">
@@ -116,7 +130,7 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
     };
     const [, target] = scopeTarget(scope, t);
     return (
-        <section className="setting" data-testid={`setting-${d.key}`}>
+        <section className="setting" data-testid={`setting-${d.key}`} data-setting-key={d.key}>
             <h2>
                 {d.label} {d.advanced && <span className="muted small">고급</span>}{" "}
                 <a className="muted small" href={`#setting-${encodeURIComponent(d.key)}`} title="이 항목으로 바로 가는 링크" aria-label={`${d.label} 링크`}>#</a>
