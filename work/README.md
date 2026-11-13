@@ -32,12 +32,12 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 12 | parallel/b02-image-read-wire | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-12-image-read-wire | `wks_13f52f7f5562939c` | 이미지 읽기 모델 전달 (04 이월) |
 | 14 | parallel/b02-pwa-lifecycle | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-14-pwa-lifecycle | `wks_043964eeb7dd683e` | PWA 버전 갱신·오프라인·저장소 한계 |
 | 20 | parallel/b02-external-editor | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-20-external-editor | `wks_7abac678efb30e9a` | 외부 편집기 목록·열기 (`c2eebe6` 기준) |
-| 21 | parallel/b02-source-skills-hooks | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-21-source-skills-hooks | 생성 후 기록 | 원본 스킬·hook 읽기 전용 보기 (10 이월) |
-| 22 | parallel/b02-create-entry | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-22-create-entry | 생성 후 기록 | 세션·프로젝트 생성 진입점 단순화 |
-| 23 | parallel/b02-tab-close | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-23-tab-close | 생성 후 기록 | 탭·창 닫기 시 서버 작업 유지 |
-| 24 | parallel/b02-exec-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings | 생성 후 기록 | 셸·작업 한도·격리·기본 위치 설정 |
-| 25 | parallel/b02-update-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings | 생성 후 기록 | 서버 업데이트 채널·버전 표시 |
-| 26 | parallel/b02-browser-caps | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps | 생성 후 기록 | 브라우저 알림·clipboard·파일 API 차이 표시 |
+| 21 | parallel/b02-source-skills-hooks | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-21-source-skills-hooks | `wks_ee49ecc425d4a36e` | 원본 스킬·hook 읽기 전용 보기 (10 이월, `7b3949d` 기준) |
+| 22 | parallel/b02-create-entry | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-22-create-entry | `wks_e30bd8e9163a7bb1` | 세션·프로젝트 생성 진입점 단순화 (`7b3949d` 기준) |
+| 23 | parallel/b02-tab-close | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-23-tab-close | `wks_2953ff0df5ee7bb2` | 탭·창 닫기 시 서버 작업 유지 (`7b3949d` 기준) |
+| 24 | parallel/b02-exec-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings | `wks_4a12061aaef2c918` | 셸·작업 한도·격리·기본 위치 설정 (`7b3949d` 기준) |
+| 25 | parallel/b02-update-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings | `wks_9ec8fd34396cf19a` | 서버 업데이트 채널·버전 표시 (`7b3949d` 기준) |
+| 26 | parallel/b02-browser-caps | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps | `wks_9d9878d624297a99` | 브라우저 알림·clipboard·파일 API 차이 표시 (`7b3949d` 기준) |
 
 공통 파일 연결 지점이 겹치는 곳: `src/lib.rs::router`(11·20·25), `src/store.rs` MIGRATIONS 끝(11), `Settings.tsx` mount(11·24·25·26), `Composer.tsx`(11·14). 모두 서로 다른 줄의 추가이며 통합 때 순서만 맞춘다. `src/runner.rs`는 11이 지침 조립, 12가 도구 결과→provider 경로만 수정한다. `src/source_settings/`는 21, `src/skills/`는 11 소유다.
 
