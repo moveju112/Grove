@@ -4,14 +4,14 @@
 사용자는 메인 세션에 “남은 거 10개 뽑아줘”라고 요청한다.
 통합 담당은 이 대화에 고정되지 않는다. 원본 프로젝트에서 다른 세션을 열고 `work/INTEGRATE.md`로 같은 역할을 수행할 수 있다.
 통합 담당이 현재 변경·TODO·의존성을 확인하고 기준 커밋, 겹치지 않는 기능, worktree, 작업 문서와 시작 프롬프트를 준비한다.
-수동 운영에서는 사용자가 각 워크스페이스에서 `work/START.md`의 공통 프롬프트를 보낸다. 현재는 사용자가 자동 순환을 승인했으므로 통합 담당이 준비된 workspace의 기능 세션도 시작한다.
+수동 운영에서는 사용자가 각 워크스페이스에서 공통 프롬프트로 직접 시작한다. 현재 자동 순환은 중단 상태이며, 최신 요청은 남은 종료 작업의 일회성 통합·검증·정리다.
 `work/ENTRY.md`가 실제 Git top-level 경로와 브랜치를 대조해 번호 문서를 자동 선택한다. 사용자가 번호를 바꿔 붙여넣을 필요가 없다.
 각 담당은 구현을 끝내면 자기 worktree의 `work/RESULT-NN.md`에 인계 내용을 남기고 종료한다.
 일부 또는 전체 작업이 종료되면 사용자는 메인 세션에 `work/START.md`의 통합 프롬프트를 보낸다. 완료된 작업만 통합하고 나머지는 계속 진행한다.
 통합 담당이 직접 인계 파일과 Git 상태를 읽으므로 사용자에게 결과 복사·실시간 중계를 요구하지 않는다.
 관리·검증 전용 에이전트를 추가로 띄울 필요는 없다. 원본 프로젝트의 메인 세션 하나가 통합을 맡는다. 사용자가 부르는 “00 메인 세션”도 가능하며, 기존 00 원본 설정 기능 worktree와는 구분한다.
-초기 배치는 06을 제외한 00~09, 총 9개 기능 담당이었다. 현재 운영 목표는 활성 15개·동시 실행/초기화 최대 10개이며, 정리 직후 같은 흐름에서 목표 수까지 다음 번호로 보충한다. 다음 최초 번호는 10이며 기존 번호는 재사용하지 않는다.
-통합·검증·TODO 반영 후 종료된 작업의 worktree와 Paseo 워크스페이스를 정리하고 다음 작업을 자동 준비한다. 세부 절차는 `work/INTEGRATE.md`가 정본이다.
+초기 배치는 06을 제외한 00~09, 총 9개 기능 담당이었다. 중단 전 운영 목표 15/10과 번호 이력은 보존하지만 이번 통합에서 빈 자리를 보충하지 않는다. 기존 번호는 재사용하지 않는다.
+통합·검증·TODO 반영 후 종료된 작업의 worktree와 Paseo 워크스페이스만 정리한다. 신규 준비·시작·자동 순환은 별도 재개 요청이 필요하다. 세부 절차는 `work/INTEGRATE.md`가 정본이다.
 
 ## b01 고정 기준
 - 기준 SHA: `c186b31ab62734c9f91803cf7848b639ad9871fb`.
@@ -51,7 +51,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
-사용자의 최신 “이번꺼까지하고 중단” 요청에 따라 40 공통 인수·관련 완료 정리 뒤 자동 순환을 중단한다. 기존 heartbeat `5848102f` 삭제 성공을 확인했다. 새 명시적 재개 전 신규 시작·자동 재개·보충·예약 재생성을 하지 않으며 이미 실행 중인 기능/검사는 취소하지 않는다. 이전 운영 목표 15/10·31~50의 이력·21/25의 기존 retry 접수는 보존하지만 현재 자동 실행 권한으로 쓰지 않는다.
+자동 순환 중단과 heartbeat `5848102f` 삭제는 유지한다. 이후 “일단 다 통합” 요청으로 종료 작업 36·37·38·39·41·43·44·45만 일회성 인수한다. 신규 시작·자동 재개·보충·예약 재생성은 하지 않고 준비 47~50은 보존한다. 이전 15/10 운영·21/25 retry 이력은 현재 실행 권한이 아니다.
 
 ## 명시적 후속 요청 우선순위
 신규 기능보다 verified idle continuation을 우선하며, 최신 기능 running/initializing 합계 상한 10개와 backlog 3개 backpressure를 따른다. 이 요청은 provider 시스템 오류 retry가 아니므로 retry count를 초기화하지 않는다.
@@ -67,6 +67,12 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 25 | ready · `f9df069` 통합·인수 완료 | 기능 update-settings E2E 4개 및 통합 검사 통과. SETTINGS-016 완료; 정책 저장과 실제 자동 설치를 구분. 기존 오류 retry count=1은 재사용하지 않음 |
 
 ## 현재 통합 인수
+- 일회성 인수는 원본 master의 다른 세션 편집을 피하려고 `paseodog/remaining-integration`에서 진행했다. 36 `d11d6ba`→`404bcac`, 37 `e983913`→`b56dc09`, 41 `b67262a`→`c6a0ae4`, 43 `2952da7`→`e9d56f0`, 44 `eb79a24`→`985cb53` 순차 merge로 ancestry를 보존했다. OAuth migration은 기존 hook migration 뒤에 추가하고 PWA 차단·정의 비교·직접 링크 연결을 모두 보존했다. 38·39·45는 이미 통합돼 재병합하지 않았다.
+- 38/39의 `validation-kslynbo0`는 Rust 7개·E2E 18개, 45의 `validation-3k5fkh0x`는 Rust 6개·rewind E2E 3개가 exit 0이다. 이후 Profiles/로컬 연결과 기존 PWA 보호 입력은 불변이어서 근거를 재사용했다. 새 Settings/runner 공통 입력의 영향은 아래 추가 인수에서 분리해 확인했다.
+- `validation-fy9owsh7`(candidate `985cb53`)은 Rust 110개·웹 단위 17개·타입·E2E 8개가 exit 0이다. 요구사항/스킬 저장·명시적 선택·복구/실행 owner·압축 projection·deferred schema의 공통 경계를 포함한다. 이후 해당 제품·시험 입력은 바뀌지 않아 이 근거는 유효하다.
+- `validation-zf577bvh`는 역할 개요가 실제 역할 ID 없이 승인 판정을 호출해 blocked를 표시하는 결함으로 Rust exit 101, 후속 검사는 미실행이었다. 실제 허용 역할을 사용하고 solo/역할 교집합을 표시하도록 수정했으며, 상위 off를 하위 auto가 푼다는 폐기된 기대도 고쳤다. `validation-89yf4hxs`는 새 개요 응답을 독립 보류해 설정 링크가 먼저 소비되는 추가 결함을 exit 1로 재현했다. 실제 개요의 commit/오류 종료 준비를 부모 Settings에 연결해 해결했다.
+- 수정 candidate `441259d`의 `validation-dnjdciwr`에서 Rust 46개·웹 단위 19개·타입·E2E 25개는 통과했다. job 전체는 폐기된 전체 복원 버튼을 찾던 workspace 회귀 1개 실패·2개 미실행으로 exit 1이다. 제품은 바꾸지 않고 시험을 현재 비교·본문 선택 적용으로 갱신한 `d21adcb`의 `validation-iuz12stz`에서 실패/미실행 3개·타입이 exit 0으로 통과했다. `924c84e`의 `validation-bzh20knp`는 기존 MCP 승인 locator/인자 원문 노출 기대를 현재 projection 계약에 맞춘 E2E 1개·타입이 exit 0이다. 입력 불변의 통과 검사를 반복하지 않았으며 새 선택 인수의 고유 통과 범위는 Rust 156개·웹 단위 36개·E2E 37개다. 전체 회귀·release·외부 계정·타 OS 실측은 미선택/미검증이며 기존 chunk/Router 경고는 유지한다. 위 job에 telemetry_error는 없고 외부 flock 미계측 대기는 unknown이다.
+- TODO의 RESOURCE-005/013, SETTINGS-021, MODEL-025, AGENT-022/024, REC-012, CMP-012 전체 조건을 완료 반영했다. 49/LAYOUT-004의 분할 생성 초안 수명, 47/48/50 미시작 범위와 기존 승인/실기기 blocker는 완료로 바꾸지 않았다. 원본의 UI 담당은 편집·검사가 없는 안전한 경계와 master 갱신 전까지 편집 보류를 명시적으로 인계했다. 다른 세션 미커밋 19개 파일과 통합 경로가 겹치지 않음을 확인했으며 해당 변경은 stage/commit/검증 성공 범위에 포함하지 않는다.
 - 중단 전 마지막 정리로 34(`wks_145becb7b1464f70`)·40(`wks_bd0e6e72588493d4`)·46(`wks_82d694c284330b14`)을 순차 archive했다. 각각 종료 세션 1개 보관·디렉터리 제거 응답 뒤 cleanup-finished를 기록했다. 브랜치 `parallel/b02-agent-policy`·`parallel/b02-deferred-tools`·`parallel/b02-exec-unknown`와 RESULT·검사 job은 복구 근거로 보존한다. 사용자의 중단 요청에 따라 빈 세 자리를 보충하지 않으며 준비 47~50도 시작하지 않는다. 38/39·45 인수 및 36/37/41/43/44 기존 실행은 취소하지 않고 그대로 둔다. 이후 완료 알림만으로 자동 병합·새 후속을 시작하지 않는다.
 - 40 공통 `validation-mohesp79`는 candidate `7ec5119`에서 Rust 106개·typecheck·E2E 6개가 exit 0으로 통과했다. preparing 83.21초·waiting-lock 872.35초·running 295.14초, telemetry_error 없음이다. 현재 HEAD 차이로 reusable=false이나 이후 diff에서 runner/approval/도구 registry/출력/정책/exec 및 선택 시험 입력 불변을 확인했다. definitions 변경은 미전송 override 보존·선택 복원이며 역할 ID/허용 판정 계약을 바꾸지 않는다. 34·40·46의 필수 인수 완료와 AGENT-013/CTX-013/ONCE-008을 반영하고 정확한 종료 세션·workspace·clean·ancestry·RESULT 보존을 확인했다. 37 설정 링크 실패와 나머지 미인수 묶음은 이 성공으로 완료 처리하지 않는다.
 - 45의 `38817444ad229db7686b10767954783272d64b08`·idle/권한 대기 없음/clean·ready와 소유 disposable 실패 주입을 확인했다. 제품 수정 없이 SQLite FULL·실제 journal 권한 거부·보류 응답 재시작·source/timeline 경합·후보 경쟁의 기존 보존 동작을 시험했다. 기능 Rust 30개와 최종 신규 target 6개 재확인 근거를 보존하며 `c3d33d624b9628037c7ffff7fbb6f40288286acd`에 통합했다. 이후 35/40의 history/모델 입력 공통 변경을 고려해 고정 `/home/ubuntu/.cache/grove-validation/validation-3k5fkh0x`(shell `job_1794550044002_1c77ba`)에서 `--rust compaction_faults --e2e e2e/rewind.spec.ts`를 공유 잠금·계측·`--work 45`로 인수한다. CMP-012는 결과 전 완료/정리하지 않는다. 50은 실제 반환 cwd/branch/HEAD/clean을 확인해 prepared를 기록했으며 시작하지 않았다.
