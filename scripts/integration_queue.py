@@ -6,6 +6,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from integration_events import observe
 
 
 RUNNING = {"running", "initializing"}
@@ -213,9 +214,12 @@ def main(argv=None):
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument("--max-running", type=int, choices=range(1, 11), default=MAX_RUNNING,
                         help="승인된 운영 상한. 기본 4, 변경해도 기존 실행은 중단하지 않음")
+    parser.add_argument("--events", type=Path, help="명시한 경우에만 비식별 관측 이벤트 기록")
     args = parser.parse_args(argv)
     try:
         snapshot = collect(args.root, load_agents(args.root), args.max_running)
+        if args.events:
+            observe(args.events, snapshot)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         # 원시 서비스 응답에는 인증 정보가 섞일 수 있으므로 그대로 출력하지 않는다.
         detail = f"exit {error.returncode}" if isinstance(error, subprocess.CalledProcessError) else str(error)

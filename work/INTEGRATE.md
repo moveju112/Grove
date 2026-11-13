@@ -58,6 +58,16 @@ Rust·웹 빌드·E2E는 기본 순차 실행한다. 메인을 포함한 모든 
 - job checkout·로그는 검증 근거와 복구를 위해 보존한다. 자동 삭제나 worktree 목표 10개에 포함하지 않는다. 자동 병합과 검사 슬롯 증설은 별도 후속 범위다.
 
 ## 3. TODO와 인계 보존
+### 사이클 계측
+- 이벤트 저장소는 `/home/ubuntu/.cache/grove-events/events.jsonl`이다. 원문 대화·토큰·환경변수·명령 인자·개인 경로를 넣지 않는다. 모듈은 허용된 작업 번호·commit·검사 job ID·상태·이유 코드만 받아 0600 JSONL에 잠금 append한다. 기존 기록은 자동 삭제하지 않는다.
+- 큐 호출에는 `--events /home/ubuntu/.cache/grove-events/events.jsonl`을 추가한다. `queue-observed`와 `workspace-observed`는 그 시각의 관측이며 실제 시작·완료 시각이 아니다. 첫 관측 이전의 시간을 역산하거나 과거 이벤트를 합성하지 않는다. 옵션이 없으면 기존 읽기 전용 동작을 유지한다.
+- 고정 검증 `run`에도 같은 `--events`를 `--` 앞에 추가한다. 단일 기능이면 `--work NN`, 묶음이면 같은 job ID와 commit으로 각 작업의 인수 이벤트를 연결한다. 준비·공유 잠금 대기·실행·최종 상태 전이와 이전 단계의 monotonic duration을 자동 기록한다. `state.json`에도 `phase_seconds`가 남는다. telemetry_error가 있으면 시험 결과와 별도로 계측 누락을 보고한다.
+- 실제 운영 경계에서 `python3 scripts/integration_events.py --events /home/ubuntu/.cache/grove-events/events.jsonl --event EVENT --work NN --commit FULL_SHA`를 호출한다. `assigned`, `prepared`, `start-requested`, `started`, `completion-observed`, `intake-started`, `merge-started`, `merge-finished`, `fix-requested`, `cleanup-finished`, `deferred`를 사용한다. merge 전후에는 `--before-commit FULL_SHA`, 검사 연결에는 `--job validation-ID`를 덧붙인다.
+- 시작 요청 접수는 start-requested일 뿐 started가 아니다. started는 실제 running 확인, completion-observed는 종료 인계 확인, merge-finished는 실제 Git 결과, cleanup-finished는 정확한 정리 결과를 확인한 뒤 기록한다. deferred/fix-requested의 이유는 `capacity/backlog/shared-lock/dependency/approval/conflict/test-failure/environment/unknown` 중 하나만 쓰며 상세 원문은 넣지 않는다.
+- 외부에서 수행한 배정·병합·정리의 기록 호출은 메인이 맡는다. 로그 파일 자체가 자동화 권한·성공 판정을 부여하지 않는다. 순환 누락을 찾는 완료 알림·heartbeat에서 누락 상태를 확인하되 중복 실행하지 않는다.
+- 이미 실행 중인 검사는 변경·재시작하지 않는다. 개발 workspace의 외부 flock 대기처럼 계측기를 거치지 않은 구간은 정확한 시간을 알 수 없다고 표시한다. 단계 duration과 관측 간격을 섞지 않는다.
+- 강제 종료·기록 실패로 마지막 종료 이벤트가 없으면 성공이나 정확한 종료 시각을 추정하지 않는다.
+
 TODO 항목별 전체 요구·필수 검증을 확인해 충족한 항목은 반드시 `[x]`와 근거를 반영한다.
 부분 구현·필수 실기기/플랫폼 미검증은 `[ ]`로 남기고 실제 진척·남은 조건을 기록한다.
 기능 세션이 종료됐다면 남은 연결·검증 때문에 worktree를 남기지 않는다. 통합 담당이 이번 흐름에서 끝낼 수 있는 연결은 끝낸다. 남은 연결·외부 검증은 `TODO.md`의 `[ ]`와 README의 “이월 작업” 표에 TODO ID·RESULT 경로·남은 조건으로 기록한 뒤 정리한다.

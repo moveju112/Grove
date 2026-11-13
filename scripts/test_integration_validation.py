@@ -47,7 +47,8 @@ class Validation(unittest.TestCase):
     def run_job(self, timeout=10):
         before = self.git("status", "--porcelain")
         head = self.git("rev-parse", "HEAD")
-        code = validation.run(self.root, head, self.store, ["--typecheck"], timeout)
+        code = validation.run(self.root, head, self.store, ["--typecheck"], timeout,
+                              events=self.base / "events.jsonl", work=38)
         self.assertEqual(self.git("rev-parse", "HEAD"), head)
         self.assertEqual(self.git("status", "--porcelain"), before)
         job = sorted(self.store.iterdir(), key=lambda path: path.stat().st_mtime_ns)[-1]
@@ -57,6 +58,12 @@ class Validation(unittest.TestCase):
         code, job, state = self.run_job()
         self.assertEqual(code, 0)
         self.assertEqual(state["status"], "passed")
+        events = [json.loads(line) for line in (self.base / "events.jsonl").read_text().splitlines()]
+        self.assertEqual([event["status"] for event in events],
+                         ["preparing", "waiting-lock", "running", "passed"])
+        self.assertTrue(all(event["work"] == 38 for event in events))
+        self.assertEqual(set(state["phase_seconds"]), {"preparing", "waiting-lock", "running"})
+        self.assertNotIn(str(self.base), (self.base / "events.jsonl").read_text())
         self.assertTrue(validation.inspect(job, self.root)["reusable"])
         (self.root / "new").write_text("change")
         self.assertFalse(validation.inspect(job, self.root)["reusable"])
@@ -81,6 +88,8 @@ class Validation(unittest.TestCase):
         code, job, state = self.run_job(timeout=0.5)
         self.assertEqual(code, 1)
         self.assertEqual(state["status"], "timed-out")
+        self.assertEqual(json.loads((self.base / "events.jsonl").read_text().splitlines()[-1])["status"],
+                         "timed-out")
         self.assertFalse(validation.inspect(job, self.root)["reusable"])
 
     def test_changed_checkout_is_not_evidence(self):

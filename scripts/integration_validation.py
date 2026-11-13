@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from integration_events import emit
 
 
 LOCK = Path("/home/ubuntu/.cache/grove-rust-check.lock")
@@ -66,7 +67,7 @@ def inspect(job, root):
     return state
 
 
-def run(root, candidate, store, args, timeout):
+def run(root, candidate, store, args, timeout, events=None, work=None):
     root = Path(root).resolve()
     if Path(git(root, "rev-parse", "--show-toplevel")) != root:
         raise ValueError("--root는 Git top-level이어야 함")
@@ -81,7 +82,30 @@ def run(root, candidate, store, args, timeout):
     job = Path(tempfile.mkdtemp(prefix="validation-", dir=store))
     state = dict(root=str(root), candidate=sha, selection=args, status="preparing",
                  started_at=time.time(), pid=os.getpid(), checkout=str(job / "checkout"))
-    save(job, state)
+    previous_phase = None
+    phase_started = time.monotonic()
+
+    def checkpoint():
+        nonlocal previous_phase, phase_started
+        now = time.monotonic()
+        fields = dict(job=job.name, commit=sha, status=state["status"])
+        if work is not None:
+            fields["work"] = work
+        if previous_phase is not None:
+            fields.update(previous_status=previous_phase, duration_seconds=now - phase_started)
+            state.setdefault("phase_seconds", {})[previous_phase] = now - phase_started
+        if "returncode" in state:
+            fields["returncode"] = state["returncode"]
+        if events:
+            try:
+                emit(events, "validation-phase", **fields)
+            except (OSError, ValueError):
+                state["telemetry_error"] = True
+                print("이벤트 기록 실패: 검사 결과와 별도로 로그 누락 확인 필요", file=sys.stderr)
+        previous_phase, phase_started = state["status"], now
+        save(job, state)
+
+    checkpoint()
     print(json.dumps({"job": str(job), "candidate": sha}), flush=True)
     process = None
     deadline = time.monotonic() + timeout
@@ -130,7 +154,7 @@ def run(root, candidate, store, args, timeout):
                     raise ValueError(f"공유 검사 환경 없음: {source}")
                 target.symlink_to(source.resolve(), target_is_directory=True)
             state["status"] = "waiting-lock"
-            save(job, state)
+            checkpoint()
             # 단일 공유 잠금은 유지한다. 프로세스 내부 대기만 하며 메인은 자유롭다.
             with LOCK.open("a") as lock:
                 try:
@@ -149,7 +173,7 @@ def run(root, candidate, store, args, timeout):
                         signal.signal(signal.SIGALRM, old_alarm)
                     state["status"] = "running"
                     state["test_started_at"] = time.time()
-                    save(job, state)
+                    checkpoint()
                     environment = dict(os.environ)
                     # 공유 target 설정은 그대로 유지하며 모든 실행을 같은 잠금으로 감싼다.
                     code = execute([sys.executable, "scripts/build.py", "test", *args],
@@ -171,7 +195,7 @@ def run(root, candidate, store, args, timeout):
     finally:
         stop()
         state["finished_at"] = time.time()
-        save(job, state)
+        checkpoint()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
     return 0 if state["status"] == "passed" else 1
@@ -185,6 +209,8 @@ def main():
     start.add_argument("--candidate", required=True)
     start.add_argument("--store", required=True)
     start.add_argument("--timeout", type=float, default=3600)
+    start.add_argument("--events", help="공유 구조화 이벤트 JSONL")
+    start.add_argument("--work", type=int, help="단일 기능 검사인 경우 작업 번호")
     start.add_argument("selection", nargs=argparse.REMAINDER)
     status = sub.add_parser("inspect")
     status.add_argument("--root", required=True)
@@ -197,7 +223,8 @@ def main():
         args = options.selection
         if args[:1] == ["--"]:
             args = args[1:]
-        return run(options.root, options.candidate, options.store, args, options.timeout)
+        return run(options.root, options.candidate, options.store, args, options.timeout,
+                   options.events, options.work)
     except (ValueError, OSError, subprocess.SubprocessError) as error:
         print(str(error), file=sys.stderr)
         return 1
