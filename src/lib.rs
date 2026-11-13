@@ -265,6 +265,7 @@ pub fn router(app: App) -> Router {
         .route("/sessions/{id}/skills", get(skills::api::list))
         .route("/sessions/{id}/skills/body", post(skills::api::inspect))
         .route("/sessions/{id}/skills/selection", put(skills::api::select))
+        .route("/sessions/{id}/skills/management", put(skills::management::mutate))
         .route("/sessions/{id}/compact", post(context::post_compact))
         .route("/sessions/{id}/rewind", post(sessions::rewind))
         .route("/sessions/{id}/followups", get(followups::get_list).post(followups::post_add))

@@ -13,6 +13,8 @@ export type SkillsPanelProps = {
     onInspect: (selection: SkillSelection) => void;
     onSelect: (selection: SkillSelection) => void;
     onDeselect: (selection: SkillSelection) => void;
+    onEdit?: (body: SkillBody) => void;
+    onSetEnabled?: (selection: SkillSelection, enabled: boolean) => void;
 };
 
 const priorityLabel = {
@@ -25,7 +27,7 @@ const priorityLabel = {
 // 본문은 실행 가능한 HTML/Markdown이나 파일 링크로 만들지 않고 텍스트로 표시한다.
 // loading/error 동안 이전 props의 본문·선택 버튼을 재사용하지 않는다.
 export function SkillsPanel({
-    listing, selected, preview, loading, busy = false, error = null, onInspect, onSelect, onDeselect,
+    listing, selected, preview, loading, busy = false, error = null, onInspect, onSelect, onDeselect, onEdit, onSetEnabled,
 }: SkillsPanelProps) {
     const blocked = loading || busy || Boolean(error);
     const entries = listing?.entries ?? [];
@@ -55,6 +57,7 @@ export function SkillsPanel({
                 const prior = selected.find((selection) => selection.id === entry.id && sameSource(selection.source, entry.source));
                 return <li key={entry.id} className="stack">
                     <strong>{entry.name}</strong>
+                    <span>{entry.enabled === false ? "비활성 · 모델 적용 불가" : "활성"}</span>
                     <span className="muted small">{sourceLabel(entry.source)}</span>
                     <span className="small">{priorityLabel[entry.priority]}</span>
                     {entry.conflicts.length > 0 && <span className="small">동명 후보 {entry.conflicts.length}개 · 아래 목록의 출처로 구분하세요.</span>}
@@ -70,6 +73,9 @@ export function SkillsPanel({
                             aria-label={`${entry.name} · ${sourceLabel(entry.source)} 본문 보기`}>본문 보기</button>
                         {prior && <button type="button" className="ghost small" disabled={busy}
                             onClick={() => onDeselect({ ...prior, source: { ...prior.source } })}>선택 해제</button>}
+                        {onSetEnabled && <button type="button" className="ghost small" disabled={blocked}
+                            aria-label={`${entry.name} · ${sourceLabel(entry.source)} ${entry.enabled ? "비활성화" : "활성화"}`}
+                            onClick={() => onSetEnabled(bindingOf(entry), !entry.enabled)}>{entry.enabled ? "비활성화" : "활성화"}</button>}
                     </div>
                 </li>;
             })}
@@ -96,7 +102,10 @@ export function SkillsPanel({
             <p className="muted small">{sourceLabel(previewEntry.source)} · revision <code>{preview.selection.revision}</code></p>
             <p className="warn small">본문 보기만으로 적용하지 않습니다. 선택하면 다음 모델 호출 직전 출처·revision을 검증해 지침에 넣습니다. 명령은 실행하지 않습니다.</p>
             <pre className="text" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "24rem", overflow: "auto" }}>{preview.text}</pre>
-            <button type="button" disabled={blocked || selectionStatus(previewEntry, selected) !== "none"
+            {onEdit && <button type="button" disabled={blocked || previewEntry.symlink}
+                onClick={() => onEdit(preview)}>본문 편집</button>}
+            {onEdit && previewEntry.symlink && <p className="muted small">symlink는 조회만 가능하며 원본을 이 편집기로 저장하지 않습니다.</p>}
+            <button type="button" disabled={blocked || previewEntry.enabled === false || selectionStatus(previewEntry, selected) !== "none"
                 || selected.some((selection) => !entries.some((entry) => sameSelection(entry, selection)))
                 || selected.some((selection) => {
                     const other = entries.find((entry) => sameSelection(entry, selection));

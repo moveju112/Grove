@@ -5,6 +5,7 @@ export type SkillSource =
     | { kind: "project"; root_id: string; project_id: string };
 export type SkillSelection = { id: string; source: SkillSource; revision: string };
 export type SkillEntry = SkillSelection & {
+    enabled: boolean;
     name: string;
     symlink: boolean;
     alias_of: string | null;
@@ -22,6 +23,11 @@ export type SessionSkills = {
     selected: SkillSelection[];
     validation_error: { code: string; message: string } | null;
 };
+export type SkillMutation =
+    | { op: "add"; scope: "global" | "project"; name: string; text: string }
+    | { op: "save"; selection: SkillSelection; text: string }
+    | { op: "set_enabled"; selection: SkillSelection; enabled: boolean };
+export type SkillChange = { id: string; revision: string; enabled: boolean };
 
 const path = (session: string) => `/sessions/${encodeURIComponent(session)}/skills`;
 export const skillsApi = {
@@ -30,4 +36,6 @@ export const skillsApi = {
         api.post<SkillBody>(`${path(session)}/body`, { selection }, { signal }),
     select: (session: string, selection: SkillSelection, selected: boolean, key: string, signal?: AbortSignal) =>
         api.put<{ selected: SkillSelection[] }>(`${path(session)}/selection`, { selection, selected }, { key, signal }),
+    manage: (session: string, body: SkillMutation, key: string, signal?: AbortSignal) =>
+        api.put<SkillChange>(`${path(session)}/management`, body, { key, signal }),
 };

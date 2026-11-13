@@ -1,0 +1,71 @@
+import { expect, test } from "@playwright/test";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { apiCall, login, openDetails, sessionView, state } from "./helpers";
+import type { SessionSkills } from "../app/api/skills";
+
+test("스킬 추가·저장 응답 유실·reload 충돌·비활성화를 기존 세션 선택에 연결한다", async ({ page }) => {
+    const root = mkdtempSync(join(dirname(state().projA), "skill-management-"));
+    const title = `managed-skills-${Date.now()}`;
+    const project = await apiCall<{ id: string }>("POST", "/projects", { root_path: root });
+    const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title });
+    const snapshot = () => apiCall<SessionSkills>("GET", `/sessions/${session.id}/skills`);
+    try {
+        await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
+        await login(page);
+        await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+        await openDetails(sessionView(page, session.id).getByTestId("skills-disclosure"));
+        const panel = sessionView(page, session.id).getByTestId("session-skills");
+        await panel.getByRole("button", { name: "Grove 스킬 추가", exact: true }).click();
+        const editor = panel.getByRole("form", { name: "Grove 스킬 편집" });
+        await editor.getByLabel("저장 범위").selectOption("project");
+        await editor.getByLabel("스킬 이름").fill("managed-review");
+        await editor.getByLabel("스킬 본문").fill("FIRST_MANAGED_BODY");
+        await editor.getByRole("button", { name: "스킬 저장" }).click();
+        const inspect = panel.getByRole("button", { name: /managed-review .*본문 보기/ });
+        await inspect.click();
+        await panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
+        await expect(panel).toContainText("선택됨 · 다음 모델 호출 직전 재검증");
+        const original = (await snapshot()).selected[0];
+        await inspect.click();
+        await panel.getByRole("button", { name: "본문 편집", exact: true }).click();
+        await editor.getByLabel("스킬 본문").fill("SAVED_AFTER_LOST_RESPONSE");
+        const keys: string[] = [];
+        await page.route(`**/sessions/${session.id}/skills/management`, async (route) => {
+            keys.push(route.request().headers()["idempotency-key"]!);
+            if (keys.length === 1) { await route.fetch(); await route.abort(); }
+            else await route.continue();
+        });
+        await editor.getByRole("button", { name: "스킬 저장" }).click();
+        await panel.getByRole("button", { name: "같은 요청 결과 확인" }).click();
+        await expect(panel).toContainText("선택한 스킬을 적용할 수 없습니다");
+        expect(keys).toHaveLength(2);
+        expect(keys[0]).toBe(keys[1]);
+        expect((await snapshot()).selected).toEqual([original]);
+        expect(readFileSync(join(root, ".agents/skills/managed-review/SKILL.md"), "utf8")).toBe("SAVED_AFTER_LOST_RESPONSE");
+        await page.unroute(`**/sessions/${session.id}/skills/management`);
+        await inspect.click();
+        await panel.getByRole("button", { name: "본문 편집", exact: true }).click();
+        await editor.getByLabel("스킬 본문").fill("LOCAL_DRAFT_NOT_OVERWRITE");
+        writeFileSync(join(root, ".agents/skills/managed-review/SKILL.md"), "EXTERNAL_CURRENT_BODY");
+        await editor.getByRole("button", { name: "스킬 저장" }).click();
+        await expect(panel.getByRole("alert").filter({ hasText: "출처 또는 본문이 변경" })).toBeVisible();
+        await panel.getByRole("button", { name: "스킬 새로고침" }).click();
+        await expect(editor.getByLabel("스킬 본문")).toHaveValue("LOCAL_DRAFT_NOT_OVERWRITE");
+        expect((await snapshot()).selected).toEqual([original]);
+        expect(readFileSync(join(root, ".agents/skills/managed-review/SKILL.md"), "utf8")).toBe("EXTERNAL_CURRENT_BODY");
+        await editor.getByRole("button", { name: "초안 닫기" }).click();
+        await panel.getByRole("button", { name: /managed-review .*비활성화/ }).click();
+        await expect(panel).toContainText("skill_disabled");
+        await panel.getByRole("button", { name: /managed-review .*활성화/ }).click();
+        await expect(panel).toContainText("skill_changed");
+        expect((await snapshot()).selected).toEqual([original]);
+        await panel.getByRole("button", { name: "선택 해제", exact: true }).click();
+        await inspect.click();
+        await panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
+        await expect(panel).toContainText("선택됨 · 다음 모델 호출 직전 재검증");
+        expect((await snapshot()).selected[0]).not.toEqual(original);
+    } finally {
+        rmSync(root, { recursive: true });
+    }
+});

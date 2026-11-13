@@ -35,22 +35,23 @@ pub struct Select {
     pub selected: bool,
 }
 
-fn api_error(err: ToolError) -> ApiError {
+pub(super) fn api_error(err: ToolError) -> ApiError {
     let status = match err.code {
         "skill_not_found" => StatusCode::NOT_FOUND,
         "skill_forbidden" => StatusCode::FORBIDDEN,
-        "skill_changed" | "selection_conflict" => StatusCode::CONFLICT,
+        "skill_changed" | "selection_conflict" | "skill_disabled" | "already_exists" => StatusCode::CONFLICT,
+        "skill_read_only" | "read_only_filesystem" => StatusCode::FORBIDDEN,
         _ => StatusCode::UNPROCESSABLE_ENTITY,
     };
     ApiError::new(status, err.code, err.message)
 }
 
-fn scope(c: &Connection, session: &str) -> ApiResult<(String, std::path::PathBuf)> {
+pub(super) fn scope(c: &Connection, session: &str) -> ApiResult<(String, std::path::PathBuf)> {
     let s = crate::sessions::get_active(c, session)?;
     Ok((s.project_id, crate::sessions::exec_root(c, session)?))
 }
 
-fn catalog(c: &Connection, data: &FsPath, session: &str) -> ApiResult<SkillCatalog> {
+pub(super) fn catalog(c: &Connection, data: &FsPath, session: &str) -> ApiResult<SkillCatalog> {
     let (project, root) = scope(c, session)?;
     let mut roots = Vec::new();
     for allowed in [
@@ -59,7 +60,9 @@ fn catalog(c: &Connection, data: &FsPath, session: &str) -> ApiResult<SkillCatal
     ] {
         if let Some(root) = allowed.map_err(api_error)? { roots.push(root); }
     }
-    SkillCatalog::discover(roots).map_err(api_error)
+    let mut catalog = SkillCatalog::discover(roots).map_err(api_error)?;
+    super::management::apply_states(c, &mut catalog)?;
+    Ok(catalog)
 }
 
 fn selections(c: &Connection, session: &str) -> ApiResult<SkillSelections> {

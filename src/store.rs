@@ -916,6 +916,14 @@ pub const MIGRATIONS: &[&str] = &[
         bindings TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(bindings))
     );
     "#,
+    // Grove 스킬 활성 상태. 세대가 바뀌면 과거 세션 binding을 다시 살리지 않는다.
+    r#"
+    CREATE TABLE skill_states (
+        skill_id TEXT PRIMARY KEY,
+        enabled INTEGER NOT NULL CHECK(enabled IN (0,1)),
+        generation INTEGER NOT NULL CHECK(generation > 0)
+    );
+    "#,
 ];
 
 #[cfg(test)]

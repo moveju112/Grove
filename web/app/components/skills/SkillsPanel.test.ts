@@ -8,6 +8,7 @@ const entry: SkillEntry = {
     id: "skill_safe", name: "review", source: { kind: "global", root_id: "global" },
     revision: "a".repeat(64), symlink: false, alias_of: null, priority: "preferred",
     conflicts: [], metadata: "none",
+    enabled: true,
 };
 const selection = bindingOf(entry);
 const props: SkillsPanelProps = {
@@ -46,6 +47,22 @@ describe("스킬 조회·명시적 선택", () => {
         expect(html).toContain("선택됨 · 다음 모델 호출 직전 재검증");
         expect(html).toContain("자동 매칭 없음");
         expect(html).toContain("선택 해제");
+    });
+    it("비활성 본문은 관측·편집할 수 있지만 모델 선택은 막는다", () => {
+        const disabled = { ...entry, enabled: false };
+        const toggled: unknown[] = [];
+        const edited: unknown[] = [];
+        const controls = buttons(SkillsPanel({
+            ...props, listing: { entries: [disabled], issues: [] },
+            onSetEnabled: (binding, enabled) => toggled.push({ binding, enabled }),
+            onEdit: (body) => edited.push(body),
+        }));
+        expect(controls.find((button) => button.children === "이 revision 선택 · 다음 모델 호출에 적용")!.disabled).toBe(true);
+        controls.find((button) => button.children === "활성화")!.onClick!();
+        controls.find((button) => button.children === "본문 편집")!.onClick!();
+        expect(toggled).toEqual([{ binding: selection, enabled: true }]);
+        expect(edited).toEqual([props.preview]);
+        expect(render({ listing: { entries: [disabled], issues: [] } })).toContain("비활성 · 모델 적용 불가");
     });
     it("로딩·오류·stale 본문은 표시하거나 선택에 재사용하지 않는다", () => {
         expect(render({ loading: true })).not.toContain("unsafe()");
