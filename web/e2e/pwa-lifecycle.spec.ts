@@ -155,6 +155,44 @@ test("실제 초안 저장 경로의 quota 오류를 알리고 입력을 지우�
     await expect(view.getByLabel("메시지 입력")).toHaveValue("저장되지 않은 중요한 입력");
 });
 
+test("격리된 Chrome origin의 실제 저장 한도와 저장 정책을 확인하고 초안·서버 미전송을 보존한다", async ({ page }) => {
+    const { session, view } = await openDraft(page, "real-quota");
+    const policy = await page.evaluate(() => navigator.storage.persisted());
+    const limits = page.getByTestId("storage-limits");
+    await limits.locator("summary").click();
+    await expect(limits).toContainText(policy ? "영구 보관 상태지만" : "영구 보관 승인을 받지 않았습니다");
+    const drafts = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage)
+        .filter((key) => key.startsWith("grove.draft.")).map((key) => [key, localStorage.getItem(key)])));
+    const before = await drafts();
+    // 이 시험의 disposable browser context에만 채운다. 실제 DOMException을 발생시키며 Storage를 mock하지 않는다.
+    await page.evaluate(() => {
+        for (const size of [65_536, 1024, 32]) {
+            let exhausted = false;
+            for (let i = 0; i < 256; i++) {
+                try { localStorage.setItem(`grove.test.quota.${size}.${i}`, "x".repeat(size)); }
+                catch (error) {
+                    if (!(error instanceof DOMException) || error.name !== "QuotaExceededError") throw error;
+                    exhausted = true;
+                    break;
+                }
+            }
+            if (!exhausted) throw new Error("격리한 quota 시험의 저장 상한 안에서 한도에 도달하지 못했습니다");
+        }
+    });
+    const mutations: string[] = [];
+    page.on("request", (request) => {
+        if (request.url().includes(`/sessions/${session.id}/`) && request.method() !== "GET") mutations.push(request.url());
+    });
+    const text = "실제 quota에서 보존할 미저장 입력 ".repeat(100);
+    await view.getByLabel("메시지 입력").fill(text);
+    await expect(page.getByTestId("storage-warning")).toContainText("quota");
+    await expect(view.getByLabel("메시지 입력")).toHaveValue(text);
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    await expect(view).toContainText("전송 사본을 보관하지 못해 보내지 않았습니다");
+    expect(await drafts()).toEqual(before);
+    expect(mutations).toEqual([]);
+});
+
 test("저장 데이터 유실과 앱 cache 삭제를 별도로 알리고 남아 있는 메모리 초안을 보존한다", async ({ page }) => {
     const { view } = await openDraft(page, "loss");
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);

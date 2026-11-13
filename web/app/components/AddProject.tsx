@@ -7,7 +7,9 @@ import { ProjectCreation } from "./create/creation";
 type Dirs = { path: string; parent: string | null; entries: { name: string; path: string }[]; truncated: boolean };
 
 /// 프로젝트 추가(PROJECT-001): 서버 PC의 폴더를 둘러보거나 경로를 입력해 등록하고, 없으면 새 폴더로 만든다.
-export function AddProjectDialog({ onDone, onClose }: { onDone: (p: Project) => void; onClose: () => void }) {
+export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutation }: {
+    onDone: (p: Project) => void; onClose: () => void; blockedReason?: string | null; beforeMutation?: () => void;
+}) {
     const [path, setPath] = useState("");
     const [dirs, setDirs] = useState<Dirs | null>(null);
     const [hidden, setHidden] = useState(false);
@@ -65,6 +67,7 @@ export function AddProjectDialog({ onDone, onClose }: { onDone: (p: Project) => 
         setBusy(true);
         setErr(null);
         try {
+            beforeMutation?.();
             const project = await creation.run(endpoint, body);
             if (project) done.current(project);
         } catch (e) {
@@ -77,11 +80,12 @@ export function AddProjectDialog({ onDone, onClose }: { onDone: (p: Project) => 
     return (
         <CreationDialog label="프로젝트 추가" onClose={close} busy={busy}>
                 <h2>프로젝트 추가</h2>
+                {blockedReason && <p className="warn" role="status" data-testid="project-add-blocked">{blockedReason} 경로 입력·복사·취소는 계속 사용할 수 있습니다.</p>}
                 {err && <p className="err" role="alert">{err}</p>}
                 {busy && <p role="status">프로젝트 추가 중…</p>}
                 {unresolved && !busy && <div className="warn" role="status">
                     생성 결과를 확인하지 못했습니다. 결과 확인 전에는 다른 생성 요청이나 닫기를 사용할 수 없습니다.
-                    <button onClick={() => { const request = creation.pending!; void submit(request.path, request.body); }}>같은 생성 요청 결과 확인</button>
+                    <button disabled={!!blockedReason} title={blockedReason ?? undefined} onClick={() => { const request = creation.pending!; void submit(request.path, request.body); }}>같은 생성 요청 결과 확인</button>
                 </div>}
                 <fieldset disabled={busy || unresolved} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
                 <label>
@@ -137,7 +141,7 @@ export function AddProjectDialog({ onDone, onClose }: { onDone: (p: Project) => 
                     <input type="checkbox" checked={create} onChange={(e) => setCreate(e.target.checked)} /> 폴더가 없으면 마지막 폴더를 새로 만들기
                 </label>
                 <div className="row">
-                    <button disabled={!path.trim()} onClick={() => void submit("/projects", { root_path: path.trim(), create })}>
+                    <button disabled={!path.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void submit("/projects", { root_path: path.trim(), create })}>
                         이 폴더를 프로젝트로 추가
                     </button>
                     <button className="ghost" onClick={close}>
@@ -146,7 +150,7 @@ export function AddProjectDialog({ onDone, onClose }: { onDone: (p: Project) => 
                 </div>
                 <details className="clone-repo">
                     <summary>저장소에서 clone</summary>
-                    <CloneRepo target={dirs?.path ?? ""} onCreate={(body) => submit("/projects/clone", body)} />
+                    <CloneRepo target={dirs?.path ?? ""} blockedReason={blockedReason} onCreate={(body) => submit("/projects/clone", body)} />
                 </details>
                 </fieldset>
         </CreationDialog>
@@ -158,7 +162,9 @@ type Search = { status: "success" | "unavailable" | "unauthenticated" | "error";
 
 /// 저장소 clone(PROJECT-012): GitHub 저장소를 서버 PC의 gh로 찾거나 owner/name·원격 주소를 직접 입력해
 /// 대상 폴더 아래 `<저장소 이름>`으로 받고 프로젝트로 등록한다. 응답을 받지 못하면 같은 키로만 다시 확인한다.
-function CloneRepo({ target: initialTarget, onCreate }: { target: string; onCreate: (body: Record<string, unknown>) => Promise<void> }) {
+function CloneRepo({ target: initialTarget, blockedReason, onCreate }: {
+    target: string; blockedReason?: string | null; onCreate: (body: Record<string, unknown>) => Promise<void>;
+}) {
     const [repo, setRepo] = useState("");
     const [protocol, setProtocol] = useState<"https" | "ssh">("https");
     const [target, setTarget] = useState(initialTarget);
@@ -210,6 +216,6 @@ function CloneRepo({ target: initialTarget, onCreate }: { target: string; onCrea
             <input aria-label="clone 대상 폴더" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="/절대/경로 또는 ~/code" />
         </label>
         {err && <p className="err" role="alert">{err}</p>}
-        <button disabled={!repo.trim() || !target.trim()} onClick={() => void clone()}>clone 후 프로젝트로 추가</button>
+        <button disabled={!repo.trim() || !target.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void clone()}>clone 후 프로젝트로 추가</button>
     </div>;
 }

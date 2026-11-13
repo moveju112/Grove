@@ -4,14 +4,16 @@ import { CreationDialog } from "./CreationDialog";
 
 export const CreationFocus = createContext<{ tabId: string; narrow: boolean; version: number } | null>(null);
 
-export function CreationEntry({ projects, currentId, loading, error, onReload, onSelect, onAddProject, onClose }: {
+export function CreationEntry({ projects, currentId, loading, error, blockedReason, onReload, onSelect, onAddProject, onClose }: {
     projects: Project[]; currentId?: string; loading: boolean; error: boolean;
+    blockedReason?: string | null;
     onReload: () => void; onSelect: (project: Project) => void; onAddProject: () => void; onClose: () => void;
 }) {
     const current = projects.find((project) => project.id === currentId);
     return <CreationDialog label="만들기" onClose={onClose}>
         <h2>새 대화</h2>
         <p className="muted small">프로젝트 입력창에서 메시지를 보내면 대화가 만들어집니다. 기존 입력은 유지합니다.</p>
+        {blockedReason && <p className="warn" role="status" data-testid="creation-blocked">{blockedReason} 프로젝트 선택·초안 편집·취소는 계속 사용할 수 있습니다.</p>}
         {loading && <p role="status">프로젝트 확인 중…</p>}
         {error && <p className="err" role="alert">프로젝트를 불러오지 못했습니다. <button onClick={onReload}>다시 확인</button></p>}
         {currentId ? <>

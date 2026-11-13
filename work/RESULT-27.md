@@ -1,5 +1,119 @@
 # b02 / 27 — PWA 호환·오프라인·다중 탭 복구
 
+<!-- grove-handoff:v1
+{"state":"ready","remaining":[],"blockers":[],"integration_checks":["22 담당: web/e2e/create-entry.spec.ts의 알려진 focus trap 실패 수정 후 생성 전체 인수","실기기 Safari/iOS/Android 확보 후 실제 eviction·장기 저장 정책·백그라운드 탭 수명 인수"]}
+-->
+
+## 현재 인계 — 승인된 후속 완료
+
+- 위치·브랜치: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery`, `parallel/b02-pwa-recovery`.
+- 원래 기준은 `551f551d48d1f47cd3ad67015f1737c62d576228`로 유지한다. `8c09b9d`의 구현·검증을 보존했고, 통합 담당이 22의 `e28dbdf`를 동기화한 `8da340d`의 clean checkout에서 재개했다. 자체 merge는 하지 않았다.
+- 현재 정본 `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/27.md`를 재확인했다. 런타임 설정은 변경하지 않았다.
+- **소유 구현·연결·선택 단위·최종 typecheck·배정된 브라우저 흐름 완료. 실행 가능한 소유 잔여·blocker 없음.** TODO 완료 표시는 하지 않았다.
+- 아래 접힌 최초 인계의 “생성·WebSocket 미연결”, “브라우저 미실행”은 과거 상태다. 이번 후속에서 해소했으며 현재 계약은 이 절을 따른다.
+
+### 완성된 연결·권한 계약
+
+- `TerminalView`의 키보드 `onData/send`, paste, 보조키, ResizeObserver resize, onopen 초기 resize와 입력 활성화가 모두 기존 `requireServerAction()`을 통과한다. 이벤트나 React 갱신보다 먼저 `navigator.onLine`이 바뀌어도 전송하지 않는다. 별도의 호환 정책·입력 큐는 만들지 않았다.
+- PWA 차단은 이유를 표시하고 xterm stdin·서버 입력 보조키만 잠근다. Ctrl/Alt 상태를 비우며 로컬 보조키 해제·출력 표시·선택/복사를 서버 작업으로 바꾸지 않는다. PTY 종료·socket 종료·실행 실패·턴 취소로 취급하지 않는다. 복구 시 입력/resize를 재전송하는 effect가 없다.
+- ticket 발급·WS 연결/재연결·snapshot·저장 화면·명시적 종료는 기존 경로를 유지한다. 실제 PTY가 계속 running인 상태에서 차단·복구를 확인했다. 기존 모바일 보조키·한글 조합·bracketed paste·reload 재연결 시험도 통과했다.
+- Workspace가 `CreationEntry`와 `AddProjectDialog`에 이유/guard를 주입한다. “만들기”, 프로젝트 선택·입력창 열기는 로컬 탐색으로 유지한다. AddProject는 등록/clone/원래 요청 확인 버튼만 차단하고 경로 입력·복사·정상 취소는 유지한다. 미확정 생성의 기존 닫기 잠금은 풀지 않는다.
+- ProjectView가 `ProjectComposer`에 이유/guard를 주입한다. PWA 이유를 textarea의 parent disabled로 전달하지 않는다. 대화 생성과 후속 메시지/턴 전송 직전에 검사한다. 생성 응답을 받은 뒤 두 번째 단계가 차단되면 전체 의도의 원래 `${key}:session`, `${key}:send`를 보존하도록 결과 확인 상태를 유지한다. 복구 후 자동 전송하지 않고 사용자가 같은 요청을 확인한다. 브라우저에서 대화 1개·메시지 1개와 키 재사용을 확인했다.
+- 새 터미널·worktree 생성 및 worktree 변경 처리 선택 버튼에도 기존 `ServerActionButton`을 연결했다. 실제 worktree 화면에서 offline/protocol 이유, 로컬 이름 편집, 복구 후 무자동생성을 확인했다.
+- 자원 생성 알고리즘·모달·focus trap·전송 사본 구현 자체는 재설계하지 않았다. 인증 세대·idempotency·알 수 없는 결과 계약과 기존 공통 HTTP guard는 유지했다. auth/API·초안 저장소·worker 구현에는 후속 변경이 없다.
+- 새 영구 자격 저장, 인증 우회, microphone 녹음/음성 입력/STT, TTS 변경, 의존성/lockfile 변경, TODO 변경, main 편집, 위임/세션 연락, push/배포/정리는 하지 않았다.
+
+### 추가 public props / export
+
+| 지점 | 계약 |
+|---|---|
+| `web/app/components/pwa/terminalAction.ts::terminalAction(action, blocked)` | 동기 작업 직전에 기존 lifecycle guard 확인. 거부 시 이유 callback과 `false`, 허용 시 작업 실행과 `true`. 실제 socket 오류는 삼키지 않음. 저장·재시도·PTY 제어 없음 |
+| `CreationEntry.blockedReason` | 선택적 `string \| null`, 안내만 표시. 로컬 선택은 유지 |
+| `AddProjectDialog.blockedReason / beforeMutation` | 이유와 선택적 `() => void` guard. 생성 요청 사본을 할당하기 전에 검사 |
+| `ProjectComposer.blockedReason / beforeMutation` | 안내와 선택적 `() => void` guard. 생성 전 차단은 미전송, 이미 생성된 후의 단계 차단은 원래 의도 확인 상태 유지 |
+| `TerminalKeys.blockedReason` | 서버 입력 버튼만 disabled/title 연결. 로컬 보조키 해제는 유지 |
+
+root mount·서버 API 등록·추가 공통 연결은 필요 없다.
+
+### 이번 후속 소유 변경
+
+- `web/app/components/TerminalView.tsx`, `web/app/components/terminal/TerminalKeys.tsx`
+- `web/app/components/Workspace.tsx`, `web/app/components/ProjectView.tsx`, `web/app/components/WorktreesPanel.tsx`
+- `web/app/components/AddProject.tsx`, `web/app/components/create/CreationEntry.tsx`, `web/app/components/create/ProjectComposer.tsx`
+- `web/app/components/pwa/terminalAction.ts`, `web/app/components/pwa/terminalAction.test.ts`, `web/app/components/pwa/creationConnections.test.ts`
+- `web/e2e/pwa-transport.spec.ts`, `web/e2e/pwa-recovery.spec.ts`, `web/e2e/pwa-lifecycle.spec.ts`
+- `work/RESULT-27.md`
+
+### 유효한 검증과 재사용
+
+`8c09b9d`의 기존 197개 근거는 아래 최초 인계와 해당 commit에 보존했다. `8c09b9d..8da340d`의 변경 경로를 확인했으며 해당 18개 단위 시험의 구현·fixture 입력은 변경되지 않아 재실행하지 않았다. 후속에서 변경한 생성 컴포넌트와 terminal 연결은 별도 선택 검사로 검증했다.
+
+모든 명령은 먼저 `source /data/project/paseodog_opus/.envrc.dev`를 적용했다. 최종 production 코드는 첫 선택 단위 검사 이후 동일하며, 이후 수정은 E2E locator·플랫폼/배치 동기화·추가 수명/저장소 시험이다. 마지막 typecheck에는 이 시험 소스도 포함됐다.
+
+단위 명령:
+`python3 scripts/build.py test --vitest app/components/pwa/terminalAction.test.ts app/components/pwa/creationConnections.test.ts app/components/create/creation.test.ts app/components/create/projectComposer.test.ts app/components/terminal/input.test.ts --typecheck`
+
+- 5개 파일 55개 통과: terminalAction 4, 생성 연결 5, 기존 생성 16, ProjectComposer 3, 기존 terminal input 27.
+- typecheck: wall 8.14s / CPU 11.31s, exit 0. Vitest: wall 1.44s / CPU 3.29s, exit 0.
+- 이전 197개와 별도의 55개다. 전체 suite를 다시 실행하거나 이 합계를 전체 제품 완료율로 사용하지 않았다.
+
+아래 E1은 `flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test ...`, E2 이후는 같은 명령 앞에 `RUSTUP_AUTO_INSTALL=0 CARGO_NET_OFFLINE=true`를 적용했다. 서버 빌드부터 브라우저 종료까지 전체 명령을 같은 잠금으로 직렬화했다. 포트·공통 E2E 설정·다른 실행은 건드리지 않았다.
+
+| 실행 | `test` 이후 정확한 입력 | 결과 / E2E wall·CPU |
+|---|---|---|
+| E1 | `--typecheck --e2e e2e/pwa-recovery.spec.ts e2e/pwa-lifecycle.spec.ts e2e/pwa-transport.spec.ts e2e/pwa-update.spec.ts e2e/terminal-input.spec.ts` | 8 통과, 1 locator 실패, 6 미실행. 17.61s / 9.89s, exit 1 |
+| E2 | `--e2e e2e/pwa-recovery.spec.ts:63 e2e/pwa-recovery.spec.ts:102 e2e/pwa-recovery.spec.ts:150 e2e/pwa-transport.spec.ts e2e/pwa-update.spec.ts e2e/terminal-input.spec.ts` | 수정한 단계 사이 복구·cold start·protocol 3 통과, terminal timeout 1, 3 미실행. 24.26s / 5.47s, exit 1 |
+| E3 | `--e2e e2e/pwa-transport.spec.ts e2e/pwa-update.spec.ts e2e/terminal-input.spec.ts` | terminal timeout 1, 3 미실행. 22.13s / 3.5s, exit 1 |
+| E4 | `--e2e e2e/pwa-transport.spec.ts e2e/pwa-update.spec.ts e2e/terminal-input.spec.ts e2e/pwa-recovery.spec.ts:169` | 실제 worktree 차단 1 통과, terminal timeout 1, 3 미실행. 23.11s / 4.08s, exit 1 |
+| E5 | `--e2e e2e/pwa-transport.spec.ts e2e/pwa-update.spec.ts e2e/terminal-input.spec.ts e2e/deployment-base.spec.ts` | 6 통과. 18.29s / 7.48s, exit 0 |
+| E6 | `--typecheck --e2e e2e/deployment-base.spec.ts` (`GROVE_WEB_BASE=/grove/`) | 하위 경로 2 통과. 6.03s / 3.31s, exit 0 |
+| E7 | `--typecheck --e2e e2e/pwa-lifecycle.spec.ts:158` | 실제 Chrome quota/저장 정책 1 통과. 2.79s / 2.9s, exit 0 |
+
+line selector는 그 실행 시점 소스 기준이다. 뒤의 import·신규 시험 추가로 현재 line이 달라진 경우 이름으로 대응한다. 통과한 입력은 재사용하고 실패·미실행·추가 시험만 실행했다. 현재 서로 다른 인수 시나리오는 **21개 통과**이며 단일 전체 E2E 실행 결과는 아니다:
+
+- `web/e2e/pwa-lifecycle.spec.ts`: 7개. 열린 탭 offline, multi-tab exact lazy asset/단일 구 탭/회수, protocol, mock quota, 실제 quota/정책, 저장/cache 삭제, 사용자 동의 갱신.
+- `web/e2e/pwa-recovery.spec.ts`: 6개. 1400/390px 생성 진입, 단계 사이 차단과 원래 키, 인증 없는 offline cold start/초안 보존, protocol 인증 차단, 실제 worktree 생성 차단.
+- `web/e2e/pwa-transport.spec.ts`: 2개. 실제 열린 PTY의 입력/paste/보조키/observer resize 차단과 무재전송, ticket 후 protocol 전환의 초기 resize/입력 차단.
+- `web/e2e/pwa-update.spec.ts`, `web/e2e/terminal-input.spec.ts`: 각각 1개 기존 흐름 통과.
+- `web/e2e/deployment-base.spec.ts`: `/` 2개와 `/grove/` 2개 통과.
+
+마지막 E7 typecheck wall 7.11s / CPU 11.31s, exit 0. 최종 root build의 worker version은 `d351f72336fe8db9`이며 E1~E5와 같은 production 입력이다. `/grove/` 빌드는 `03ce1e70e528684f`로 별도 생성·실행했다. Rust 소스 수정은 없어 Rust 단위/통합 시험은 추가 선택하지 않았지만 E2E의 debug 서버 빌드는 통과했다. release·전체 회귀는 실행하지 않았다.
+
+실행 원문(stdout/stderr 쌍):
+
+- E1: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_9d099c1a.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_9d099c1a.stderr`
+- E2: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3e29d2ab.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3e29d2ab.stderr`
+- E3: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5ec5c631.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5ec5c631.stderr`
+- E4: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6f081ef0.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6f081ef0.stderr`
+- E5: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6845d318.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6845d318.stderr`
+- E6: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6112c750.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6112c750.stderr`
+- E7: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_b6724a04.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_b6724a04.stderr`
+
+### 실패 원인·환경 사고와 복구
+
+- E1 실패는 시험 locator가 실제 “같은 요청 확인”을 옛 이름 “원래 요청 결과 확인”으로 찾은 것이다. 실제 미전송·pending 보존 요구는 낮추지 않고 locator만 수정했다.
+- terminal timeout들은 새 harness가 데스크톱에서 숨겨지는 보조키를 찾고, 좁은 화면 초기 배치 준비를 기다리지 않으며, observer 자극 중 760px 경계를 넘어 다른 저장 배치로 이동한 데서 발생했다. snapshot·실제 `Workspace` 배치 코드와 `.term-keys` pointer 조건을 확인하고, 터치 조건·배치 준비 관측·같은 배치 안 resize로 수정했다. timeout을 늘리거나 입력/resize 시나리오를 삭제하지 않았다. finally의 닫힌 page 접근도 제거해 원래 실패를 가리지 않도록 했다.
+- E1에서는 공통 env를 source했어도 `scripts/build.py::env()`가 worktree `.dev`를 지정하여 rustup이 **1.93.0을 자동 설치하고 Cargo cache를 다운로드했다**. 설치 금지 계약에 어긋난 이 실행 사실을 남긴다. 시작 전 없던 이번 실행 소유 `.dev`, `target`임을 확인하고 제거한 뒤 `.dev`를 `/data/project/paseodog_opus/.dev`로 symlink 복구했다. main 툴체인·사용자 파일은 삭제/복사하지 않았다. 이후 auto-install을 막고 offline Cargo로 공유 환경만 사용했으며 추가 설치·다운로드나 manifest/lockfile 변경은 없다.
+- 빌드의 기존 chunk-size 경고·React Router future 경고는 passing 코드를 바꿀 사유로 삼지 않았다. 실행기 원문에 남겼다.
+- E1의 typecheck wall/CPU 7.04s/11.26s, debug build 141.8s/211.43s, web build 5.49s/4.94s. 복구 뒤 E2 debug/web 1.02s/0.27s·3.18s/4.87s, E3 1.0s/0.26s·3.22s/4.77s, E4 0.26s/0.26s·3.63s/4.68s, E5 0.87s/0.25s·3.25s/4.89s, E6 7.23s/0.33s·3.36s/4.97s, E7 2.34s/0.26s·3.27s/4.83s. E6 typecheck 8.63s/11.21s. 이는 개별 단계 값이며 잠금 대기나 작업 시간 절감량을 추정한 값이 아니다.
+
+### TODO별 현재 판정·외부 인수
+
+| ID | 소유 범위 완료 근거 | 남는 한계 / 해제 조건 |
+|---|---|---|
+| WEB-007 | 인증·HTTP·WS 호환 경계, 실제 multi-tab document/asset/cache 전환, `/`·`/grove/`의 동의 후 갱신 통과 | 실제 다른 엔진·장기 중지된 설치형 탭은 해당 실기기를 확보해 수동 인수 |
+| WEB-009 | offline 버튼/단축키/WS 차단, 인증 없는 cold start 비노출·사본 보존·온라인 복구, 생성의 로컬 탐색/편집/취소, 단계별 원래 키와 무자동재전송 브라우저 통과 | 오프라인 인증 우회나 다른 계정 초안 목록 열기는 의도적으로 제공하지 않음 |
+| WEB-016 | Chrome의 실제 origin quota 예외·실제 persisted 정책 안내·기존 사본/메모리 입력 보존·미전송, 관측한 storage/cache 삭제, 다중 탭 안전 회수 통과 | OS/브라우저의 실제 자동 eviction은 결정적으로 유발할 승인된 실기기 환경이 없음. 실기기 저장 압박·장기 백그라운드 수동 인수 필요. 삭제 데이터 복구·첫 방문과 전체 삭제의 구분·영구 보존은 보장 불가 |
+
+22의 알려진 focus trap 실패는 이 작업의 blocker나 통과로 바꾸지 않았다. 22 담당이 수정한 뒤 `web/e2e/create-entry.spec.ts`의 전체 생성 접근성 흐름을 인수해야 한다. 기존 근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_56f2bbd0.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_56f2bbd0.stderr` (46개 중 첫 focus 실패, 나머지 45개 미실행). PWA 시험은 이 실패 기대를 제거하거나 해당 파일을 수정하지 않았다.
+
+구 UI·버전 불명 탭이 남으면 cache 회수를 보류하므로 고정 cache 상한은 보장하지 않는다. 원격 logout이 전송되지 못한 경우 서버 쿠키 폐기 성공도 보장하지 않는다. 기존 안내·명시적 복구 계약을 유지하며 새 자격 저장/자동 폐기 큐는 없다.
+
+<details>
+<summary>8c09b9d 최초 인계와 197개 검증 근거 — 과거 상태 보존</summary>
+
+아래 “미완료·미실행·다음 통합 단계”는 최초 commit 시점의 기록이다. 현재 상태와 해소 범위는 위 후속 인계를 따른다.
+
 ## 기준과 상태
 
 - worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery`
@@ -147,3 +261,5 @@ Rust 변경은 없어 선택 Rust 시험은 해당 없음이다. COMMON의 독�
 - microphone 녹음·음성 입력·STT는 추가하지 않았다. 기존 TTS와 microphone 차단 코드는 변경하지 않았다. 해당 실기기 동작을 새로 검증했다고 주장하지 않는다.
 
 이 인계와 관련 변경만 한국어 로컬 커밋으로 남기고 편집을 종료한다. 이 문서에 자기 커밋 SHA를 넣기 위한 순환 수정은 하지 않는다.
+
+</details>

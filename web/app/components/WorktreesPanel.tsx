@@ -111,20 +111,20 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
                 }}
             >
                 <input aria-label="worktree 이름" placeholder="이름(브랜치 grove/이름)" value={name} onChange={(e) => setName(e.target.value)} required pattern="[A-Za-z0-9._\-]{1,60}" />
-                <button className="small" type="submit" disabled={busy || attempt !== null || !name.trim()}>만들기</button>
+                <ServerActionButton className="small" type="submit" disabled={busy || attempt !== null || !name.trim()}>만들기</ServerActionButton>
             </form>
             {choice?.kind === "dirty" && (
                 <div className="notice" role="group" aria-label="커밋하지 않은 변경 처리">
                     <p><code>grove/{choice.name}</code> · 프로젝트 폴더에 커밋하지 않은 변경 {choice.changed}개가 있습니다. 어느 쪽이든 프로젝트 폴더의 변경은 그대로 남습니다.</p>
-                    <button className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "leave" }, choice.name)}>두고 가기(변경 없이 시작)</button>
-                    <button className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "carry" }, choice.name)}>복사해 가기</button>
+                    <ServerActionButton className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "leave" }, choice.name)}>두고 가기(변경 없이 시작)</ServerActionButton>
+                    <ServerActionButton className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "carry" }, choice.name)}>복사해 가기</ServerActionButton>
                     <button className="ghost small" onClick={() => setChoice(null)}>취소</button>
                 </div>
             )}
             {choice?.kind === "large" && (
                 <div className="notice" role="group" aria-label="큰 저장소 확인">
                     <p><code>grove/{choice.name}</code> · 추적 파일이 {choice.files.toLocaleString()}개인 큰 저장소입니다. 체크아웃에 시간과 디스크가 듭니다.</p>
-                    <button className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, confirm_large: true }, choice.name)}>그래도 만들기</button>
+                    <ServerActionButton className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, confirm_large: true }, choice.name)}>그래도 만들기</ServerActionButton>
                     <button className="ghost small" onClick={() => setChoice(null)}>취소</button>
                 </div>
             )}

@@ -12,6 +12,7 @@ import { WorktreesPanel } from "./WorktreesPanel";
 import { ProjectScripts } from "./ProjectScripts";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 
 /// 프로젝트 이름·아이콘 변경(PROJECT-002). revision 충돌이면 최신 값을 다시 불러와 알린다.
 function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
@@ -65,12 +66,14 @@ function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
 
 /// 프로젝트 = 단일 작업공간. 중간 생성 단계 없이 입력창에서 바로 새 대화를 시작한다.
 export function ProjectView({ tabId, projectId, open }: { tabId: string; projectId: string; open: Opener }) {
+    const serverBlocked = useServerBlockReason();
     const [q, setQ] = useState("");
     const [archived, setArchived] = useState(false);
     const [pages, setPages] = useState<string[]>([""]);
     const project = useQuery<Project>(`project:${projectId}`, () => api.get(`/projects/${projectId}`));
 
     const composer = <ProjectComposer projectId={projectId} tabId={tabId} open={open}
+        blockedReason={serverBlocked} beforeMutation={requireServerAction}
         disabled={project.error ? "프로젝트를 확인할 수 없습니다" : !project.data ? "프로젝트 확인 중…" : !project.data.available ? "프로젝트 경로 없음" : null} />;
     if (project.error) return <div className="project-view">
         <h1>프로젝트를 열 수 없습니다</h1>
@@ -165,7 +168,7 @@ function TerminalList({ projectId, open }: { projectId: string; open: Opener }) 
     return (
         <details className="terminals" data-testid="terminal-list" {...details}>
             <summary>터미널 {terms.length > 0 ? `· ${terms.length}` : ""}</summary>
-            <button className="ghost small" onClick={() => void create()}>새 터미널</button>
+            <ServerActionButton className="ghost small" onClick={() => void create()}>새 터미널</ServerActionButton>
             {err && <p className="err" role="alert">{err}</p>}
             <ul className="session-list">
                 {terms.map((t) => (
