@@ -7,7 +7,7 @@ import { markSessionRead, pinSession, projectStatus, STATUS, type SidebarPage, t
 import "./sidebar.css";
 
 export function StatusIcon({ status }: { status: string }) {
-    const value = STATUS[status] ?? STATUS.unknown;
+    const value = STATUS[status] ?? STATUS.unknown!;
     return <span className={`sidebar-status sidebar-status-${status}`} data-testid="sidebar-status">
         <span aria-hidden="true">{value.icon}</span> <span>{value.label}</span>
     </span>;
@@ -22,7 +22,7 @@ export function toolbarKeys(event: KeyboardEvent<HTMLElement>) {
     event.preventDefault();
     const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1
         : (index + (event.key === "ArrowRight" ? 1 : -1) + buttons.length) % buttons.length;
-    buttons[next].focus();
+    buttons[next]!.focus();
 }
 
 export function SessionRow({ item, open, narrow }: { item: SidebarSession; open: Opener; narrow: boolean }) {

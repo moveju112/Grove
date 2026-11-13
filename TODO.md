@@ -919,7 +919,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] GIT-002 파일/hunk 선택 stage와 stale diff 거부를 구현한다. 검증: `tests/git.rs::hunk_level_stage_and_unstage`(hunk 선택 stage·unstage, 범위 밖·오래된 fingerprint 거부), 파일 단위 stale 거부.
 - [x] GIT-003 commit·push·pull·fetch·merge의 권한과 결과를 처리한다. 검증: `tests/git.rs::rename_remote_ops_merge_and_history`(fetch 작업 트리 불변, pull ff-only·갈라짐 거절, force 없는 push 거절, merge 충돌 시 abort로 원상태). Git 부작용 전에 결과 불명 receipt를 commit하고 최종 응답·이벤트를 함께 확정한다. 접수 SQL/COMMIT 실패는 실행하지 않으며, 실행 뒤 이벤트·receipt·COMMIT·HEAD/fingerprint 확인 실패는 같은 키와 재시작 후에도 재실행하지 않는다. 알려진 명령 오류도 저장해 재생한다. 화면은 원래 대상·fingerprint·키를 보존해 재확인하고 미확정 동안 새 변경을 막으며 새 커밋 초안을 지우지 않는다. 저장소를 조회할 수 없어도 재확인은 남는다. Git·receipt·공유 자원 통합 11개, Git 단위 4개, 타입/서버/웹 빌드와 실제 응답 유실·이중 submit·조회 복구·hunk·worktree E2E 6개 통과. 조회 복구 E2E의 첫 실행은 자동 재조회로 사라진 이전 버튼을 기다려 timeout이 났고, 현재 화면 상태의 조회 버튼을 선택하도록 fixture를 수정해 통과했다(`tests/git_receipts.rs`, `web/e2e/git-recovery.spec.ts`).
 - [x] GIT-004 branch 목록·생성·이름 변경·전환·이름 검증을 구현한다. 검증: 목록·생성·전환(`tests/git.rs`), 이름 변경(덮어쓰기 거부), 이름 검증 단위 시험.
-- [ ] GIT-005 stash save/list/pop과 discard는 실제 노출 여부를 확인하고 명시적 승인 하에만 제공한다.
+- [x] GIT-005 stash save/list/pop과 discard는 실제 노출 여부를 확인하고 명시적 승인 하에만 제공한다. 검증: Git 화면·route에 stash 저장·목록·pop과 파일 discard를 연결하고 대상·변경 요약 확인 뒤 fingerprint가 같을 때만 실행, untracked 보존·pop 충돌 시 stash 보존(`src/git.rs`, `web/app/components/git/`). `tests/git_stash.rs` 9개·기존 `git`·`git_receipts`, 확인 화면 단위 4개, `e2e/git-stash.spec.ts`·`git-recovery.spec.ts` 통과(`work/RESULT-19.md`).
 - [x] GIT-006 작업 중인 사용자 변경을 자동 stash/reset/clean하지 않는다. 검증: `tests/git.rs`(충돌 전환 거부 후 변경 보존, unstage 시 작업 트리 불변).
 - [x] GIT-007 worktree 생성·진입·복귀·목록·merge·제거·prune을 구현한다. 검증: Grove가 만든 worktree는 `data/worktrees/<id>`·브랜치 `grove/<이름>`으로 만들고 `worktrees`에 기록한다. 생성 전 소유권과 결과 불명 receipt를 같은 transaction에 저장하며 migration 41은 기존 기록을 보존하고 `unknown`을 추가한다. 생성·merge·제거·prune의 최종 DB 저장 실패와 재시작·같은 키 확인은 새 파일·commit을 건드리지 않는다. 미확정 생성은 실행 위치로 선택할 수 없으며, 사용자가 검토한 현재 폴더·등록 경로·브랜치·공유 Git metadata가 일치할 때만 별도 확인으로 사용한다. 이 확인은 옛 생성 receipt를 성공으로 바꾸지 않는다. merge abort가 실제로 실패하면 원상 복구를 주장하지 않고 결과 불명으로 보존한다. 화면은 원래 대상·키·새 이름 초안을 보존하고 미확정 중 새 변경을 막는다. Git·worktree·공유 자원 통합 24개, TS 계약 3개, 저장소 migration 단위 5개, 타입/서버/웹 빌드와 관련 E2E 12개 통과(`tests/worktree_receipts.rs`, `tests/worktrees.rs`, `web/e2e/worktree-recovery.spec.ts`). 서버 빌드의 최초 실행은 공통 cache 공간 부족으로 실패했으며, 이 작업이 새로 만든 종료된 시험 실행 파일 4개만 정리하고 같은 경로·설정으로 재개해 통과했다. 실제 Windows 실행은 미검증이다.
 - [x] GIT-008 새 작업의 현재 폴더/격리 worktree 선택을 명시하고 자동 격리 기본값은 별도 결정한다. 검증: 새 대화 생성 시 `worktree_id`를 명시하거나 대화 화면의 "작업 위치"에서 고른다. 들어가 있으면 도구·백그라운드 작업·승인 계획·지침 파일·파일 변경 되돌리기가 worktree 경로를 쓰고(`sessions::exec_root`), 분기·자식 에이전트는 부모 위치를 물려받는다. 경로가 사라지면 다른 폴더에서 실행하지 않고 거부한다. 기본값은 프로젝트 폴더(자동 격리 없음)로 두었고, 자동 격리를 기본으로 할지는 사용자 결정으로 남긴다.
@@ -1187,11 +1187,11 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [ ] RESOURCE-012 전역/프로젝트 스킬 우선순위·alias·중복·symlink를 처리한다. 진행: catalog의 우선순위·동명 충돌·내부 alias·외부 symlink 거부 회귀 통과. 남음: 실제 허용 root·인증·화면 연결 검증(`tests/skills.rs`).
 - [ ] RESOURCE-013 스킬 실행 의존성·필요 도구·platform capability를 검증한다.
 - [ ] RESOURCE-014 사용자 선택과 자동 매칭의 적용 규칙을 명시한다.
-- [ ] RESOURCE-015 hook 목록·이벤트·matcher·활성화·설정 저장을 구현한다.
+- [x] RESOURCE-015 hook 목록·이벤트·matcher·활성화·설정 저장을 구현한다. 검증: 전역·프로젝트 hook 정의 CRUD·고정 이벤트·matcher 검증·revision 충돌·명령 비밀값 가림과 “아직 실행되지 않음” 표시(`src/hooks/`, `web/app/components/hooks/`). `tests/hooks.rs` 5개·단위 5개·`e2e/hooks.spec.ts` 4개 통과(`work/RESULT-17.md`). 실행은 `RESOURCE-016` 범위.
 - [ ] RESOURCE-016 hook 실행은 승인·timeout·취소·환경 격리 정책을 적용한다.
 - [ ] RESOURCE-017 Windows 전용 command와 POSIX command 차이를 처리한다.
-- [ ] RESOURCE-018 Claude/Codex 원본 스킬·훅 설정의 읽기 전용 보기와 출처 표시를 유지한다.
-- [ ] RESOURCE-019 원본 Claude/Codex 설정 조회를 새 제품 적용 상태로 오해하지 않게 표시한다.
+- [ ] RESOURCE-018 Claude/Codex 원본 스킬·훅 설정의 읽기 전용 보기와 출처 표시를 유지한다. 진행: 원본 settings의 안전 필드 읽기 전용 조회 API·설정 화면을 출처별로 연결했다(`work/RESULT-10.md`). 남음: 원본 스킬·hook 정의 자체의 읽기 전용 보기(hook 본문은 현재 의도적으로 비노출).
+- [x] RESOURCE-019 원본 Claude/Codex 설정 조회를 새 제품 적용 상태로 오해하지 않게 표시한다. 검증: 소유자 전용 `GET /api/v1/source-settings`(고정 source·서버 측 root·원문 비노출)와 설정 화면의 “원본 조회 ≠ Grove 적용 설정” 구분 표시. `tests/source_settings.rs`·단위·`e2e/source-settings.spec.ts` 통과(`work/RESULT-10.md`).
 - [ ] RESOURCE-020 기존 plugin add/update/remove/enable/reload 사용 사례를 전수 조사한다.
 - [ ] RESOURCE-021 제품 provider plugin은 Rust 내부 모듈로 대체하고 등록 계층을 제거한다.
 - [ ] RESOURCE-022 사용자 플러그인은 MCP/스킬/내장 기능으로 대체 가능한지 개별 매핑한다.
@@ -1224,7 +1224,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [ ] USAGE-006 실시간 quota 새로고침의 TTL·동시 요청 합치기·실패 상태를 구현한다.
 - [x] USAGE-007 사용량 카드·도넛·정렬·색상·텍스트 대체 표시를 구현한다. 검증: 통화별 비용·미보고·0 분모·정렬 단위 7개와 실제 화면의 기간/묶음·키보드·로딩/실패/빈 결과·stale/재시도·실행 용량 E2E 3개 통과(`web/app/components/usage/`, `web/e2e/usage-presentation.spec.ts`).
 - [x] USAGE-008 턴 경과 시간·모델 대기·도구 실행·사용자 대기를 구분한다. 검증: 턴 상세 `timing`(승인 대기·도구 실행 합집합·모델과 처리, 합계 일치), `tests/usage.rs::turn_timing_separates_approval_wait_from_tool_and_model`, 대화 화면 마지막 요청 시간.
-- [ ] USAGE-009 턴 시간 표시 설정·서버 재시작 복구·기기 시계 차이를 처리한다.
+- [x] USAGE-009 턴 시간 표시 설정·서버 재시작 복구·기기 시계 차이를 처리한다. 검증: 서버 `timing.total_ms` 표본+단조 시계 보간, 기기별 켜기/끄기(끄면 timer 해제), 재시작 복구의 종료 시각 고정(`web/app/components/turn-timing/`). 단위 시험과 기기 시계 ±5분·설정 유지·격리 서버 실제 재시작 `e2e/turn-timing.spec.ts` 통과(`work/RESULT-15.md`).
 - [ ] USAGE-010 auto effort 실제 적용값과 선택값을 별도로 표시한다.
 - [x] USAGE-011 진행률이 없는 작업을 허위 백분율로 표현하지 않는다. 검증: 진행률을 알 수 없는 턴·백그라운드 작업·자식 에이전트·압축은 상태 문구만 표시하고, 백분율은 실제 계산되는 context 사용률에만 사용(웹 컴포넌트 `TasksPanel`·`AgentRunsPanel`·`ContextMeter`).
 - [ ] USAGE-012 선택적인 예산 경고·한도를 모델/예약/서브에이전트에 일관되게 적용한다.
@@ -1234,7 +1234,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [ ] UI-001 반응형 공용 레이아웃과 플랫폼 capability adapter를 구성한다.
 - [ ] UI-002 welcome·온보딩·서버 연결·계정 설정·첫 프로젝트 흐름을 구현한다.
 - [ ] UI-003 호스트·프로젝트·세션 탐색과 현재 위치를 일관되게 표시한다.
-- [ ] UI-004 sidebar의 상태 아이콘·읽지 않음·핀·toolbar를 구현한다.
+- [x] UI-004 sidebar의 상태 아이콘·읽지 않음·핀·toolbar를 구현한다. 검증: `GET /projects/{id}/sidebar`의 실제 상태 분류·전체 집계, 텍스트 레이블 상태 아이콘, 서버 저장 읽음(`recent_items.view_state`)·세션 핀, 방향키 toolbar(`web/app/components/sidebar/`). `sessions` lib 4개·단위·`e2e/sidebar-status.spec.ts`와 기존 workspace·최근 탐색 E2E 통과(`work/RESULT-13.md`).
 - [ ] UI-005 세션/프로젝트 생성 진입점을 단순화하고 중복 생성 UI를 없앤다.
 - [x] UI-006 사용자·assistant·reasoning·도구·오류·알림·압축 항목을 렌더링한다. 검증: 사용자 글(평문)·assistant(Markdown, `markdown.spec.ts`)·reasoning(접기·펼치기·숨김, `transcript-prefs.spec.ts`)·도구(상태·인자·결과·소요 시간, `workspace.spec.ts`)·오류(실패 원인과 자동 재실행 없음 안내, role=alert, `turn-error.spec.ts`)·알림성 기록(자식 에이전트 결과·백그라운드 작업 결과 `workspace.spec.ts`, 가져온 기록 알림 `import.spec.ts`, CLI 도구 활동 `cli-profile.spec.ts`)·압축(`workspace.spec.ts`)·질문(`question.spec.ts`) 항목을 각각 구분해 렌더링한다.
 - [x] UI-007 stream 중 부분 메시지 병합과 확정 이벤트를 구분한다. 검증: `tests/turns.rs::text_turn_streams_partial_then_persists_answer`, e2e partial 표시 후 확정.
@@ -1356,7 +1356,7 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 
 - [ ] PC-001 공용 웹앱의 일반 브라우저 실행·PWA 설치·독립 창 실행 경로를 정의한다.
 - [ ] PC-002 브라우저/PWA와 서버의 별도 수명·소유권을 명시한다.
-- [ ] PC-003 로컬 Rust 서버 설치 후 첫 시작·준비 확인·오류·재시작 안내를 구현한다.
+- [x] PC-003 로컬 Rust 서버 설치 후 첫 시작·준비 확인·오류·재시작 안내를 구현한다. 검증: 첫 시작·재시작 안내(데이터·접속 주소·토큰 파일 위치, 토큰 값 비노출), 포트 충돌·중복 서버·schema 불일치·SQLite 잠금·권한 오류별 원인·조치와 종료 코드, `--json`(`src/startup.rs`). `tests/first_start.rs` 9개·기존 `cli`·`api` 27개 통과(`work/RESULT-16.md`). Windows 자동 시작은 `PC-014`.
 - [ ] PC-004 사용자가 관리하는 로컬 서버·설치기가 등록한 서버·원격 서버의 연결과 실행 책임을 구분한다.
 - [ ] PC-005 탭/PWA 창 닫기·브라우저 종료가 서버 작업을 중단하지 않게 한다.
 - [ ] PC-006 백그라운드 서버 유지·명시적 중지 경로를 제공한다. 트레이가 필수라면 PWA 대안과 셸 필요성을 검증한다.

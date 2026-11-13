@@ -61,13 +61,13 @@ describe("실제 서버 상태 표시", () => {
         const preventDefault = vi.fn();
         const event = { currentTarget: { querySelectorAll: () => buttons }, target: buttons[0], preventDefault, key: "ArrowLeft" };
         toolbarKeys(event as unknown as Parameters<typeof toolbarKeys>[0]);
-        expect(buttons[2].focus).toHaveBeenCalledTimes(1);
+        expect(buttons[2]!.focus).toHaveBeenCalledTimes(1);
         toolbarKeys({ ...event, key: "ArrowRight" } as unknown as Parameters<typeof toolbarKeys>[0]);
-        expect(buttons[1].focus).toHaveBeenCalledTimes(1);
+        expect(buttons[1]!.focus).toHaveBeenCalledTimes(1);
         toolbarKeys({ ...event, target: buttons[1], key: "Home" } as unknown as Parameters<typeof toolbarKeys>[0]);
-        expect(buttons[0].focus).toHaveBeenCalledTimes(1);
+        expect(buttons[0]!.focus).toHaveBeenCalledTimes(1);
         toolbarKeys({ ...event, key: "End" } as unknown as Parameters<typeof toolbarKeys>[0]);
-        expect(buttons[2].focus).toHaveBeenCalledTimes(2);
+        expect(buttons[2]!.focus).toHaveBeenCalledTimes(2);
     });
 });
 

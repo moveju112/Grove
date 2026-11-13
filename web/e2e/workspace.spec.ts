@@ -323,7 +323,8 @@ test("설정 검색은 항목과 적용 범위를 보여 주고 기본 에이전
     await expect(page.getByTestId("setting-secrets")).toHaveCount(0);
     await page.getByLabel("설정 검색").fill("");
     await page.getByRole("button", { name: "에이전트·워크플로우" }).click();
-    await page.getByRole("button", { name: /^Reviewer/ }).click();
+    // 사이드바 세션 목록에도 "Reviewer: …" 대화가 보일 수 있어 설정 정의 영역으로 범위를 좁힌다.
+    await page.getByTestId("setting-definitions").getByRole("button", { name: /^Reviewer/ }).click();
     const editor = page.getByLabel("정의 본문");
     const original = await editor.inputValue();
     await editor.fill(original + "\n추가 지침");

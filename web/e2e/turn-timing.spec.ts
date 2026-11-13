@@ -14,7 +14,8 @@ async function timingSetting(page: Page, title: string, enabled: boolean) {
     await page.getByRole("button", { name: "설정", exact: true }).first().click();
     await page.getByLabel("설정 검색", { exact: true }).fill("턴 경과");
     await page.getByLabel("턴 시간 표시", { exact: true }).setChecked(enabled);
-    await page.getByRole("tab").getByRole("button", { name: title, exact: true }).click();
+    // 탭 버튼 이름은 "프로젝트 이름 + 대화 제목"이다.
+    await page.getByRole("tab").getByRole("button", { name: title }).click();
 }
 
 test("진행·완료 시간은 기기 시계 ±5분에도 서버와 같고 끄기는 새로고침 뒤에도 유지된다", async ({ page }) => {
