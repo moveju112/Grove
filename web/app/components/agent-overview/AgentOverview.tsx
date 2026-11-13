@@ -1,4 +1,4 @@
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
 import { getAgentOverview, type AgentOverviewData, type OverviewProfile, type OverviewRole, type OverviewTarget } from "../../api/agentOverview";
 import { subscribeQuery, useLive } from "../../state/store";
 
@@ -70,12 +70,19 @@ function Profile({ value }: { value: OverviewProfile }) {
     }
 }
 
-export function AgentOverview({ target, onEdit }: { target: OverviewTarget; onEdit: (id: string) => void }) {
+export function AgentOverview({ target, onEdit, onLayoutChange }: {
+    target: OverviewTarget; onEdit: (id: string) => void; onLayoutChange?: (ready: boolean) => void;
+}) {
     const connection = useLive((live) => live.status);
     const online = useSyncExternalStore(subscribeNetwork, () => navigator.onLine, () => true);
     const connected = connection === "live" && online;
     const { view, reload } = useOverview(target, connected);
     const ready = connected && view.status === "ready" ? view.data : null;
+    // 실제 개요가 commit된 시점만 알린다. 오류 화면도 높이가 확정된 종료 상태다.
+    useLayoutEffect(() => {
+        onLayoutChange?.(connected && view.status !== "loading");
+        return () => onLayoutChange?.(false);
+    }, [onLayoutChange, connected, view.key, view.status]);
     return <section data-testid="agent-overview" aria-label="역할·모델·실행 규칙 개요">
         <h3>역할·모델·실행 규칙 개요</h3>
         <p className="muted small">조회 전용 · 별도 템플릿 설치 없음. 열기·지침 확인은 저장·위임·모델 실행을 하지 않습니다.</p>

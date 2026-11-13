@@ -92,10 +92,15 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
     const link = useSettingsLink(registry, JSON.stringify([projectId, sessionId]), prepareLink);
     const execLink = Boolean(link.key && (registry.data ?? []).some((definition) => definition.key === link.key && isExecSetting(definition)));
     const execLayoutReady = useExecLinkLayout(execLink, projectId, mcpSupported);
+    const overviewTargetKey = JSON.stringify([projectId ?? null, sessionId ?? null]);
+    const [readyOverviewTarget, setReadyOverviewTarget] = useState<string | null>(null);
+    const onOverviewLayoutChange = useCallback((ready: boolean) => {
+        setReadyOverviewTarget(ready ? overviewTargetKey : null);
+    }, [overviewTargetKey]);
     const onLinkReady = useCallback((key: string, element: HTMLElement | null) => {
-        if (element && execLink && !execLayoutReady) return;
+        if (element && execLink && (!execLayoutReady || (menu === "agents" && readyOverviewTarget !== overviewTargetKey))) return;
         link.ready(key, element);
-    }, [execLink, execLayoutReady, link.ready]);
+    }, [execLink, execLayoutReady, menu, readyOverviewTarget, overviewTargetKey, link.ready]);
     const needle = q.trim().toLowerCase();
     const results = useMemo(() => (needle ? ITEMS.filter((i) => (i.id !== "memories" || memoriesSupported !== false)
         && (i.id !== "mcp" || mcpSupported !== false)
@@ -147,7 +152,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 )}
                 {visible("secrets") && <Section item="secrets"><Secrets /></Section>}
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
-                {visible("definitions") && <Section item="definitions"><Definitions target={target} /></Section>}
+                {visible("definitions") && <Section item="definitions"><Definitions target={target} onOverviewLayoutChange={onOverviewLayoutChange} /></Section>}
                 {visible("source-settings") && <Section item="source-settings"><SourceSettings projectId={projectId} /></Section>}
                 {visible("mcp") && mcpSupported !== false && <Section item="mcp"><McpServers /></Section>}
                 {visible("hooks") && <Section item="hooks"><HooksSettings projectId={projectId} projectName={projectName} /></Section>}
@@ -480,13 +485,15 @@ function Profiles() {
     );
 }
 
-function Definitions({ target }: { target: SettingsTarget }) {
+function Definitions({ target, onOverviewLayoutChange }: {
+    target: SettingsTarget; onOverviewLayoutChange: (ready: boolean) => void;
+}) {
     const [kind, setKind] = useState<"agent" | "workflow">("agent");
     const [sel, setSel] = useState<string | null>(null);
     const list = useQuery<Definition[]>(`definitions:${kind}`, () => api.get(`/definitions?kind=${kind}`));
     return (
         <div className="defs">
-            <AgentOverview target={target} onEdit={(id) => { setKind("agent"); setSel(id); }} />
+            <AgentOverview target={target} onEdit={(id) => { setKind("agent"); setSel(id); }} onLayoutChange={onOverviewLayoutChange} />
             <div className="chips">
                 <button className={kind === "agent" ? "chip on" : "chip"} onClick={() => { setKind("agent"); setSel(null); }}>에이전트</button>
                 <button className={kind === "workflow" ? "chip on" : "chip"} onClick={() => { setKind("workflow"); setSel(null); }}>워크플로우</button>
