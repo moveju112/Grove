@@ -9,7 +9,7 @@
 각 담당은 구현을 끝내면 자기 worktree의 `work/RESULT-NN.md`에 인계 내용을 남기고 종료한다.
 일부 또는 전체 작업이 종료되면 사용자는 메인 세션에 `work/START.md`의 통합 프롬프트를 보낸다. 완료된 작업만 통합하고 나머지는 계속 진행한다.
 통합 담당이 직접 인계 파일과 Git 상태를 읽으므로 사용자에게 결과 복사·실시간 중계를 요구하지 않는다.
-관리·검증 전용 에이전트를 추가로 띄울 필요는 없다. 메인 세션 하나가 통합을 맡고, 00은 기능 담당이다.
+관리·검증 전용 에이전트를 추가로 띄울 필요는 없다. 원본 프로젝트의 메인 세션 하나가 통합을 맡는다. 사용자가 부르는 “00 메인 세션”도 가능하며, 기존 00 원본 설정 기능 worktree와는 구분한다.
 초기 배치는 06을 제외한 00~09, 총 9개 기능 담당이다. 완료 정리 후 빈 자리만 다음 번호로 보충한다. 다음 최초 번호는 10이며 기존 번호는 재사용하지 않는다.
 통합·검증·TODO 반영 후 안전 조건을 만족한 worktree와 Paseo 워크스페이스를 정리하고 다음 작업을 자동 준비한다. 세부 절차는 `work/INTEGRATE.md`가 정본이다.
 
@@ -39,10 +39,14 @@
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
 새 작업을 준비하면 보충 번호를 기록한다. 재실행 시 이미 보충한 자리를 중복 생성하지 않는다.
-현재 완료 정리된 기능 작업은 없다. 06의 사용자 취소는 보충 대상 완료로 세지 않는다.
+06의 사용자 취소는 보충 대상 완료로 세지 않는다. 아래 정리 대상은 `53f634b`에 코드·인계·TODO와 통합 연결이 보존돼 있다. 02의 실제 원격 호스팅·TLS 검증은 미실행이며 `WEB-003`은 미완료로 유지한다.
 
 | 번호 | 작업 브랜치·tip | 통합 SHA | RESULT 경로·검증 근거 | workspace ID·절대 경로 | 정리 상태 | 보충 번호 |
 |---|---|---|---|---|---|---|
+| 02 | `parallel/b01-web-base` · `7de966564c3d426f2a90e6157c5874157318b137` | `53f634b` | `work/RESULT-02.md`; 서버 2개, base/worker/Pages 단위 52개, 루트·하위 경로 E2E 4개 및 기존 PWA 회귀 통과 | `wks_e675c092ea9c3feb` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-02-web-base` | 보존·clean·편집 종료 확인, 정리 대기 | 미배정 |
+| 03 | `parallel/b01-assistant-identity` · `df94a3056ab58759c488aaecc198f4b7a79f0c14` | `53f634b` | `work/RESULT-03.md`; 단위 50개, identity E2E 3개 및 기존 봇 회귀 통과 | `wks_df7a705fd9c77bdb` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-03-assistant-identity` | 보존·clean·편집 종료 확인, 정리 대기 | 미배정 |
+| 05 | `parallel/b01-usage-ui` · `fd1e3bf4fbd754b2fe6bd963f049042cf9d9e17f` | `53f634b` | `work/RESULT-05.md`; 단위 7개, 사용량 E2E 3개 통과 | `wks_4eb1e336ad21d6c9` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-05-usage-ui` | 보존·clean·편집 종료 확인, 정리 대기 | 미배정 |
+| 09 | `parallel/b01-approval-ui` · `ab5413d2ed6fcd1e543d992bbc7872818d5d9546` | `53f634b` | `work/RESULT-09.md`; 단위 27개, 승인 E2E 4개 및 workspace 회귀 통과 | `wks_424ce685e3fd8e91` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-09-approval-ui` | 보존·clean·편집 종료 확인, 정리 대기 | 미배정 |
 
 ## 통합 담당의 완료 절차
 1. 사용자 통합 요청 뒤 각 worktree의 RESULT와 실제 branch·SHA·diff를 확인한다. 인계 파일만 보고 성공으로 단정하지 않는다.
