@@ -19,6 +19,7 @@ export type ApprovalCardProps = {
     onDecision: (request: ApprovalRequest) => Promise<ToolCallRow>;
     feedback?: ApprovalFeedback;
     onRefresh?: (identity: ApprovalIdentity) => Promise<void>;
+    blockedReason?: string | null;
     /** 새 요청에서 명시적으로 초점을 이동할 때만 지정한다. */
     focusOnMount?: boolean;
 };
@@ -28,7 +29,7 @@ export function ApprovalCard(props: ApprovalCardProps) {
     return <ApprovalCardInstance key={approvalKey(props.call)} {...props} />;
 }
 
-function ApprovalCardInstance({ call, effect, choices, onDecision, feedback, onRefresh, focusOnMount }: ApprovalCardProps) {
+function ApprovalCardInstance({ call, effect, choices, onDecision, feedback, onRefresh, focusOnMount, blockedReason }: ApprovalCardProps) {
     const title = useId();
     const statusId = useId();
     const heading = useRef<HTMLHeadingElement>(null);
@@ -72,7 +73,7 @@ function ApprovalCardInstance({ call, effect, choices, onDecision, feedback, onR
     const failure = external?.phase === "failed" ? external.failure : state.phase === "failed" ? state.failure : null;
     const effective = state.phase === "settled" && call.status === "pending_approval" ? state.call : call;
     const closed = effective.status !== "pending_approval";
-    const disabled = pending || !!failure || expired || closed || !call.needs_approval;
+    const disabled = pending || !!failure || expired || closed || !call.needs_approval || !!blockedReason;
     const projection = projectApproval(call);
     const effectInfo = effect ? effectLabels[effect] : null;
     const status = pending ? "승인 선택 처리 중 · 실행 결과 미확정"
@@ -80,7 +81,7 @@ function ApprovalCardInstance({ call, effect, choices, onDecision, feedback, onR
         : closed ? statusLabels[effective.status] ?? "알 수 없는 상태 · 최신 상태를 확인하세요"
         : expired ? "승인 만료 · 최신 상태를 확인하세요"
         : !call.needs_approval ? "사용자 승인 대상이 아닙니다"
-        : "승인 대기 · 아직 실행하지 않았습니다";
+        : blockedReason ?? "승인 대기 · 아직 실행하지 않았습니다";
     const resultError = record(record(effective.result).error);
     const policyBlocked = effective.status === "failed"
         && ["policy_denied", "read_only", "forbidden"].includes(String(resultError.code));

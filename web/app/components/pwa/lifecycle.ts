@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { ApiError, PROTOCOL, checkProtocol, onProtocolMismatch } from "../../api/client";
+import { ApiError, PROTOCOL, checkProtocol, onProtocolMismatch, setServerActionGuard } from "../../api/client";
 
 export type StorageIssue = "quota" | "unavailable" | "missing" | null;
 export type LifecycleState = {
@@ -55,6 +55,8 @@ export function requireServerAction() {
         !navigator.onLine ? "offline" : state.protocol !== null ? "protocol_mismatch" : "server_unavailable",
         reason, false, { result_unknown: false });
 }
+
+setServerActionGuard(requireServerAction);
 
 export function storageFailure(error: unknown): Exclude<StorageIssue, null | "missing"> {
     const name = (error as { name?: unknown } | null)?.name;

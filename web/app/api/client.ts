@@ -30,6 +30,11 @@ export function onProtocolMismatch(fn: (server: number | null) => void): () => v
     return () => protocolListeners.delete(fn);
 }
 
+let serverActionGuard: (() => void) | null = null;
+export function setServerActionGuard(guard: () => void) {
+    serverActionGuard = guard;
+}
+
 /// 응답의 서버 protocol을 확인한다. 다르면 이후 변경 요청을 막고 새로고침을 안내한다.
 export function checkProtocol(resp: Response) {
     const v = resp.headers.get("x-grove-protocol");
@@ -253,6 +258,7 @@ export async function request<T>(method: string, path: string, body?: unknown, o
     if (method !== "GET" && !opts.key) opts = { ...opts, key: newKey() };
     return boundedRequest(opts, method !== "GET", async (fetchRequest) => {
         const send = async () => {
+            if (method !== "GET") serverActionGuard?.();
             const headers: Record<string, string> = {};
             if (current) headers.authorization = `Bearer ${current.accessToken}`;
             if (body !== undefined) headers["content-type"] = "application/json";

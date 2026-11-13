@@ -65,6 +65,25 @@ describe("서버 작업 경계", () => {
         expect(fetch).toHaveBeenCalledTimes(1);
     });
 
+    it("다른 화면의 변경 요청도 오프라인에서 fetch 전에 거부하며 결과 불명으로 표시하지 않는다", async () => {
+        const fetch = vi.fn(async () => health(1));
+        vi.stubGlobal("fetch", fetch);
+        await lifecycle.checkCompatibility();
+        browser.onLine = false;
+        const { api } = await import("../../api/client");
+        for (const operation of [
+            () => api.post("/tool-calls/fixture/decision", { decision: "approve" }),
+            () => api.put("/settings", {}),
+            () => api.patch("/sessions/fixture", {}),
+            () => api.del("/projects/fixture"),
+        ]) {
+            await expect(operation()).rejects.toMatchObject({
+                code: "offline", retryable: false, details: { result_unknown: false },
+            });
+        }
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
     it.each([
         () => Promise.reject(new TypeError("network lost")),
         async () => new Response("{}"),

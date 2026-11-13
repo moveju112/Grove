@@ -25,11 +25,13 @@ import { useBotAvatar } from "../state/botAvatar";
 import { AssistantIdentity } from "./assistant-identity";
 import { ApprovalCard, currentApprovalContract } from "./approvals";
 import { TurnTiming } from "./turn-timing/TurnTiming";
+import { useServerBlockReason } from "./pwa/lifecycle";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
 export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const visible = usePaneVisible();
+    const serverBlocked = useServerBlockReason();
     useEffect(() => visible ? deliveryTiming.watch(sessionId) : undefined, [visible, sessionId]);
     const prefs = usePrefs();
     const session = useQuery<Session>(`session:${sessionId}`, () => api.get(`/sessions/${sessionId}`));
@@ -435,6 +437,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             <ChangesPanel key={`changes:${sessionId}`} sessionId={sessionId} projectId={projectId} open={open} disabled={archived} />
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
             {pending.map((c) => <ApprovalCard key={c.id} call={c} {...currentApprovalContract(c.name)}
+                blockedReason={serverBlocked}
                 onDecision={async (r) => {
                     const result = await api.post<ToolCallRow>(`/tool-calls/${r.id}/decision`, { decision: r.decision, expected_revision: r.revision });
                     calls.reload();

@@ -34,6 +34,30 @@ test("대상·부작용·넓은 허용 범위를 읽고 키보드로 거부하�
     expect(existsSync(join(state().projA, path))).toBe(false);
 });
 
+test("오프라인에서는 승인·거부를 잠그고 복구 후에도 자동으로 실행하지 않는다", async ({ page }) => {
+    const { card, call, path } = await openApproval(page);
+    await expect(card.getByRole("button", { name: "이번만 승인", exact: true })).toBeEnabled();
+    let decisions = 0;
+    page.on("request", (request) => {
+        if (request.url().endsWith(`/tool-calls/${call.id}/decision`)) decisions++;
+    });
+    try {
+        await page.context().setOffline(true);
+        for (const name of ["이번만 승인", "이 대화에서 계속 허용", "거부"]) {
+            await expect(card.getByRole("button", { name, exact: true })).toBeDisabled();
+        }
+        await expect(card.getByTestId("approval-status")).toContainText("오프라인");
+    } finally {
+        await page.context().setOffline(false);
+    }
+    await expect(card.getByRole("button", { name: "이번만 승인", exact: true })).toBeEnabled();
+    expect(decisions).toBe(0);
+    expect((await apiCall<ToolCallRow>("GET", `/tool-calls/${call.id}`)).status).toBe("pending_approval");
+    expect(existsSync(join(state().projA, path))).toBe(false);
+    await card.getByRole("button", { name: "거부", exact: true }).click();
+    await expect.poll(async () => (await apiCall<ToolCallRow>("GET", `/tool-calls/${call.id}`)).status).toBe("denied");
+});
+
 test("응답 대기 중 승인·거부를 잠가 요청을 중복 전송하지 않는다", async ({ page }) => {
     const { card, call } = await openApproval(page);
     let release!: () => void;

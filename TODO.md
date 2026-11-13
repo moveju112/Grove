@@ -870,7 +870,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] TOOL-009 ignore와 gitignored 포함 옵션을 모든 검색 도구에서 일관되게 적용한다. 검증: find·glob·grep 공통 walker(`include_noise`), `tools::search::tests::glob_respects_ignore_and_noise`.
 - [x] TOOL-010 `read`의 단일/배치·라인 범위·겹침 병합·인코딩 처리를 구현한다. 검증: 단일 `path` 또는 배치 `files[{path,offset,limit}]`(최대 10, 동시 사용 거부), 같은 파일의 겹치거나 맞닿은 범위 병합, 파일별 오류 격리, 배치 출력 한도, 항목별 경계 재검사, 줄 범위·큰 limit 축소·offset 0·UTF-8 이외 표시(`tools::fs::tests::batch_read_merges_overlaps_and_isolates_errors`, `read_ranges_binary_and_errors`).
 - [x] TOOL-011 대형 파일을 전체 적재하지 않고 bounded range로 읽는다. 검증: 줄 단위 bounded 읽기, `tools::fs::tests::read_ranges_binary_and_errors`.
-- [ ] TOOL-012 이미지 metadata·resize·모델 첨부 표현을 구현한다. 진행: 업로드한 PNG/JPEG/GIF/WebP의 실제 디코딩·해상도/픽셀/할당 제한, 방향 보정·최대 1024px(확대 없음)·투명 배경 합성·첫 프레임 JPEG 입력, OpenAI/Anthropic/Gemini 표현을 검증했다(`src/attachments.rs`, `tests/attachments.rs`, RULEBOOK §24). 프로젝트 이미지 capability 읽기·변환 모듈도 통합하고 이미지 11개·첨부 15개 시험을 통과했다(`tests/image_read.rs`). 남음: 실제 `read` → runner → provider의 typed 이미지 전달·영속화·재시도 연결(`work/RESULT-04.md`).
+- [x] TOOL-012 이미지 metadata·resize·모델 첨부 표현을 구현한다. 검증: 기존 업로드 변환과 프로젝트 capability 읽기를 실제 `read`→runner→OpenAI/Anthropic/Gemini typed 이미지 입력에 연결했다. 원문 4MiB·해상도/픽셀/할당 제한, 방향 보정·최대 1024px·투명 배경 합성·첫 프레임 JPEG를 재사용하고 bytes/base64는 로그·이벤트·tool JSON에 저장하지 않는다. metadata에서 재시작·retry 입력을 복원하며 원문 변경·권한 철회·미지원 모델을 명시적으로 거절한다. 이미지 16개·첨부 15개·HTTP provider 6개·도구 배치 3개 및 웹 capability 검사 통과(`work/RESULT-12.md`, `tests/image_read.rs`).
 - [ ] TOOL-013 PDF 페이지 범위·텍스트 추출·이미지 페이지·OCR 지원을 선택 의존성으로 구현한다.
 - [x] TOOL-014 binary의 제한된 hex와 잘못된 인코딩을 처리한다. 검증: `tools::fs::tests::read_ranges_binary_and_errors`(hex·invalid_utf8).
 - [x] TOOL-015 없는 파일·디렉터리·special file·읽기 실패를 구분한다. 검증: `tools::fs::tests::read_ranges_binary_and_errors`(not_found·is_directory), special_file 분기.
@@ -1182,11 +1182,11 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] RESOURCE-007 서버별 도구 namespace·이름 충돌·schema 갱신을 처리한다. 검증: 저장 registry는 `<서버 이름>/<원격 이름>`으로 구분하고 모델에는 고정 gateway `mcp_tools`·`mcp_call`만 제공한다. 다른 서버의 동명 read/write·내장 read와 충돌하지 않고 server_id와 namespace를 바꿔치기할 수 없다. 승인한 도구 metadata hash와 설정 revision을 고정하며 실행 직전 새 목록과 대조한다. `notifications/tools/list_changed`를 받으면 호출 전 중단하거나 확정 결과와 같은 transaction에서 registry를 무효화한다(`tests/mcp_connect.rs`).
 - [x] RESOURCE-008 MCP 도구에도 같은 승인·deny·read-only·소유권 규칙을 적용한다. 검증: `mcp_call`은 원격 annotation과 무관하게 Execute로 취급하고 기존 `tool_calls` 접수·승인·실행 직전 재검사·프로젝트 guard·취소·복구 경로를 쓴다. 대상 서버·namespace·인자·설정 revision·cwd·한도를 고정한다. 일반 대화와 봇·예약의 기존 정책이 그대로 적용되며 MCP 전체를 묶는 대화 범위 승인은 거절한다. 실제 전송 후 응답 유실·취소는 `unknown`으로 남기고 검토 전 새 MCP 호출을 막는다. 모델 fixture의 목록 조회→승인→도구 결과 전달·기존 권한/도구 회귀와 화면 거부/이번만 승인을 검증했다(`tests/mcp_connect.rs`, `web/e2e/mcp-settings.spec.ts`).
 - [x] RESOURCE-009 세션 종료 후 불필요한 MCP 프로세스·연결을 정리한다. 검증: MCP 검사·호출마다 연결을 열고 완료·실패·timeout·취소·서버 종료 시 닫으며 idle 연결·자식 프로세스를 유지하지 않는다. stdio는 소유 process group/Job, HTTP는 session DELETE·stream 해제로 정리한다. 재시작은 실행 중 MCP tag를 먼저 회수한 뒤 기존 도구 `unknown` 복구를 따르고 자동 재실행하지 않는다. 턴 없는 직접 도구도 approved/running/awaiting_input이면 세션 보관·삭제·rewind를 막아 실행 기록을 보존한다. Linux에서 검사·실제 호출의 부모/자식 종료와 승인 cwd 실행을 확인했다(`tests/mcp_connect.rs`); Windows·macOS 실측은 남는다.
-- [ ] RESOURCE-010 스킬 발견·목록·본문 조회·선택·적용을 구현한다. 진행: 독립 catalog·본문·revision 결합 선택과 UI 컴포넌트를 통합하고 Rust 12개·웹 7개 시험을 통과했다. 남음: 인증된 API·화면·선택 상태 및 모델 적용 연결(`work/RESULT-01.md`).
+- [x] RESOURCE-010 스킬 발견·목록·본문 조회·선택·적용을 구현한다. 검증: 서버 승인 root의 인증 API·세션별 멱등 선택 저장·Composer 조회/해제·runner 지침을 연결하고 적용 직전 source/revision을 재검증한다. 스킬 17개·저장 migration 7개·화면 단위 7개·타입·선택 응답 유실/재시작/변경·삭제 차단 E2E 2개 통과(`work/RESULT-11.md`).
 - [ ] RESOURCE-011 스킬 추가·저장·reload·활성화/비활성화를 구현한다.
-- [ ] RESOURCE-012 전역/프로젝트 스킬 우선순위·alias·중복·symlink를 처리한다. 진행: catalog의 우선순위·동명 충돌·내부 alias·외부 symlink 거부 회귀 통과. 남음: 실제 허용 root·인증·화면 연결 검증(`tests/skills.rs`).
+- [ ] RESOURCE-012 전역/프로젝트 스킬 우선순위·alias·중복·symlink를 처리한다. 진행: 실제 승인 root·인증·화면·모델 연결, 우선순위·동급 충돌·내부 상대 symlink alias·외부 탈출·root 변경·프로젝트 이동 회귀와 스킬 E2E 통과(`work/RESULT-11.md`). 남음: metadata alias·다른 root 간 alias·hardlink 지원 계약 및 Windows 경로/junction 검증. 기존 선택의 source/revision은 자동 교체하지 않는다.
 - [ ] RESOURCE-013 스킬 실행 의존성·필요 도구·platform capability를 검증한다.
-- [ ] RESOURCE-014 사용자 선택과 자동 매칭의 적용 규칙을 명시한다.
+- [x] RESOURCE-014 사용자 선택과 자동 매칭의 적용 규칙을 명시한다. 검증: 화면·모델 지침에 자동 매칭 없음과 사용자 선택만 적용됨을 표시한다. stale/삭제/alias 충돌은 전체 적용을 거절하며 최신 revision으로 몰래 바꾸지 않는다. Rust 모델 fixture·화면 단위·스킬 E2E 통과(`work/RESULT-11.md`).
 - [x] RESOURCE-015 hook 목록·이벤트·matcher·활성화·설정 저장을 구현한다. 검증: 전역·프로젝트 hook 정의 CRUD·고정 이벤트·matcher 검증·revision 충돌·명령 비밀값 가림과 “아직 실행되지 않음” 표시(`src/hooks/`, `web/app/components/hooks/`). `tests/hooks.rs` 5개·단위 5개·`e2e/hooks.spec.ts` 4개 통과(`work/RESULT-17.md`). 실행은 `RESOURCE-016` 범위.
 - [ ] RESOURCE-016 hook 실행은 승인·timeout·취소·환경 격리 정책을 적용한다.
 - [ ] RESOURCE-017 Windows 전용 command와 POSIX command 차이를 처리한다.
@@ -1304,7 +1304,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] FILEUI-004 파일/폴더 생성·rename·duplicate·delete를 확인 절차와 함께 구현한다. 검증: 기존 덮어쓰기 거부·경로 확인 문구·휴지통 복구를 유지하고, 저장/생성/rename/duplicate의 부작용 전 접수·완료 receipt·DB 실패/재시작·같은 키 재전송을 확인했다(`tests/files.rs` 6개, 단위 복제 충돌/다른 staging 보존 1개). 복제는 전용 staging 후 덮어쓰기 없는 rename으로 공개한다. 화면은 응답 유실/결과 불명 때 같은 본문·키를 유지하고 새 작업을 잠근다(`web/e2e/file-recovery.spec.ts` 6개, 기존 파일 화면 회귀 통과, RULEBOOK §23).
 - [x] FILEUI-005 다운로드 토큰·만료·업로드·대용량 전송 한도를 구현한다. 검증: RULEBOOK "파일 전송"에 계약을 정했다. 기존 5분 경로·주체 결합 티켓에 메모리 상한(4096)을 더했다. 미리보기 32MiB를 통째로 메모리에 읽던 전송을 열린 handle 스트리밍으로 바꾸고 내려받기를 1GiB까지 `Content-Length`와 함께 보낸다. 파일 화면에 업로드를 추가했다(5MiB, 덮어쓰기 거부, sha256 확인, 임시 파일→fsync→덮어쓰지 않는 rename). 멱등 hash를 경로·sha256으로 정해 원문은 기기에 남기지 않고 응답 유실·새로고침 뒤에도 같은 키로 결과를 확인하며, 기록이 없으면 `upload_data_required`로 실행하지 않는다. 비보안 HTTP용 SHA-256 대체 구현은 Node crypto와 블록 경계 값으로 대조했다. Rust files 8(`upload_never_overwrites_checks_hash_and_replays_without_the_original`, `download_streams_files_larger_than_the_preview_limit`)·attachments 15·단위 1·타입/빌드·선택 E2E 31개(`web/e2e/file-recovery.spec.ts` 업로드 응답 유실·새로고침·덮어쓰기 거부·상한) 통과. 실제 모바일 브라우저의 대용량 내려받기는 미검증이다.
 - [x] FILEUI-006 이미지/PDF/텍스트 preview를 안전한 렌더러로 제공한다. 검증: `tests/files.rs`(sandbox CSP·nosniff·HTML 비렌더), e2e 이미지 티켓 preview.
-- [ ] FILEUI-007 외부 editor 목록·열기는 PC capability로 분리한다.
+- [ ] FILEUI-007 외부 editor 목록·열기는 PC capability로 분리한다. 진행: PC/GUI 조건·고정 후보 탐지·경로/읽기 전용/인증 검증·shell 없는 분리 실행·멱등 receipt·파일 화면을 연결했다. 격리 Linux fixture 7환경을 실행하는 Rust driver·계약 검사, 웹 단위 4개·타입·E2E 4개 통과(`work/RESULT-20.md`). 남음: 실제 GUI 편집기와 Windows/macOS·서비스 세션의 탐지/실행 검증. 실제 편집기는 이번 검사에서 띄우지 않았다.
 - [x] FILEUI-008 Git 변경 목록·파일 diff·hunk stage·commit UI를 구현한다. 검증: Git 패널 변경 목록·파일 diff·hunk별 올리기/내리기·커밋, e2e Git hunk 커밋.
 - [ ] FILEUI-009 branch·worktree·PR·CI 상태와 실행 권한을 표시한다.
 - [x] FILEUI-010 터미널 탭·프로젝트 script·실행 로그를 공용 화면에 연결한다. 검증: 프로젝트별 이름·명령·revision CRUD와 충돌 시 입력 보존, 등록·확인 취소 시 미실행, 프로젝트·작업 경로·셸·명령 확인 후 기존 백그라운드 작업/로그/결과 대화에 연결. 실행 당시 출처는 정의 변경·삭제와 분리해 보존한다. 접수 직전 정의·실행 대상·현재 셸을 재검사하고 다른 프로젝트/인증의 실행은 거부한다. 세션/작업 응답 유실 후 새로고침해도 기기 사본의 원래 키로 결과를 확인해 프로세스·결과를 한 번만 남긴다. 인증 종료 후 늦은 응답은 새 작업/사본을 만들지 않으며 로그아웃은 사본을 정리한다. Rust 접수 단위 2개·선택 통합 29개, DB 단위 6개·저장 통합 21개, 웹 단위 8개·선택 E2E 13개·타입/빌드 통과(`tests/project_scripts.rs`, `web/e2e/project-scripts.spec.ts`, 기존 작업/로그/터미널·인증 정리 회귀). 구버전 migration fixture의 새 표/열 제거도 갱신했다. 실제 Windows script 실행·PTY는 별도 미검증이며 셸의 프로젝트 밖 접근 권한은 축소하지 않았다.
@@ -1403,16 +1403,16 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 - [ ] WEB-004 서버 주소 입력·pairing link·호스트 목록·로그아웃을 구현한다.
 - [ ] WEB-005 HTTPS 페이지에서 로컬/원격 서버 연결 시 mixed content·브라우저 제약을 처리한다.
 - [ ] WEB-006 브라우저 credential 보관과 XSS 위험을 검토한다.
-- [ ] WEB-007 새 UI 버전과 오래 열린 탭의 API 호환·갱신 안내를 구현한다.
+- [ ] WEB-007 새 UI 버전과 오래 열린 탭의 API 호환·갱신 안내를 구현한다. 진행: health 사전 호환 확인·protocol 불일치 차단·사용자 동의 후 worker 전환·버전별 shell 고정, 루트와 `/grove/` 배포 E2E 통과(`work/RESULT-14.md`). 남음: 인증 등 별도 전송 진입점의 공통 호환 경계와 다중 탭 실제 전환 인수.
 - [x] WEB-008 자산 cache와 사용자 대화 cache의 범위를 분리한다. 검증: service worker cache는 앱 자산(`grove-shell-<version>`)만, `/api/` 응답은 cache하지 않음(활성화 후 cache 항목 검사), 대화·초안은 서버 API와 초안 저장소로 분리(`web/e2e/pwa-update.spec.ts`).
-- [ ] WEB-009 오프라인 화면·draft는 지원하되 서버 작업 실행 가능으로 오인시키지 않는다.
+- [ ] WEB-009 오프라인 화면·draft는 지원하되 서버 작업 실행 가능으로 오인시키지 않는다. 진행: 열린 탭의 초안 편집·로컬 저장, Composer·승인 버튼 비활성, 공통 API 변경 요청의 fetch 전 차단과 결과 미전송 표시, 복구 후 자동 재전송 없음. 실제 공통 경계 누락을 실패 시험으로 확인해 수정했고 lifecycle 12개·API 18개·오프라인 승인 및 PWA E2E 통과(`work/RESULT-14.md`). 남음: 나머지 서버 작업 버튼의 비활성 이유 연결, 인증을 우회하지 않는 오프라인 cold-start 초안 복구 계약.
 - [ ] WEB-010 지원 브라우저의 알림·clipboard·파일 API 차이를 표시한다.
 - [ ] WEB-011 기본 제품으로 PWA manifest·설치 안내·service worker·Web Push를 구현하고 지원 브라우저별 한계를 표시한다.
 - [ ] WEB-012 서버 정적 UI 제공을 지원한다면 headless 최소 빌드와 UI 포함 배포를 분리한다.
 - [ ] WEB-013 앱 ID·이름·아이콘·start URL·scope를 정의하고 browser/PWA 링크에서 같은 세션을 복원한다.
 - [ ] WEB-014 service worker 설치·대기·활성화와 버전별 자산 cache를 구현하고 HTML/JS 혼합 버전을 방지한다.
 - [x] WEB-015 UI 갱신을 알리되 실행·입력 중 강제 reload하지 않는다. 초안 저장·재접속 cursor 확보 후 안전하게 전환한다. 검증: 새 service worker는 대기하고 배너만 표시, 응답 stream 진행·입력 중 강제 reload 없음, 사용자가 고를 때 1회 전환 후 초안·대화·SSE 연결 복원, 턴 재실행 없음(`web/e2e/pwa-update.spec.ts`, 즉시 활성화 결함 주입 사본은 실패).
-- [ ] WEB-016 cache 삭제·storage quota 초과·브라우저 데이터 eviction을 처리하고 로컬 초안의 보존 한계를 명시한다.
+- [ ] WEB-016 cache 삭제·storage quota 초과·브라우저 데이터 eviction을 처리하고 로컬 초안의 보존 한계를 명시한다. 진행: quota·저장소 접근 거부·정책 미지원·관측한 데이터 유실·shell cache 유실을 구분하고 영구 보존을 보장하지 않는다고 안내한다. 단위·quota 쓰기 실패/삭제/worker 전환 E2E 통과(`work/RESULT-14.md`). 남음: 다중 탭 cache 정리·실제 브라우저 quota/eviction·저장 정책 인수. 모든 데이터 삭제와 첫 방문은 구분하지 못한다.
 - [ ] WEB-017 PWA 제거와 서버/계정 삭제를 분리하고 로그아웃 시 cache·push subscription·기기 토큰을 정리한다.
 - [ ] WEB-018 push의 지연·미지원·권한 거부·중복·알림 클릭을 시험하고 수신 성공을 보장한다고 과장하지 않는다.
 - [ ] WEB-019 HTTPS 웹→loopback/LAN/원격 서버 연결을 실제 브라우저에서 검증한다. 보안 설정 해제나 무인증 bridge를 해결책으로 쓰지 않는다.
