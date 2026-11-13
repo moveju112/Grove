@@ -3,6 +3,7 @@
 //! 모듈 경계(설계 문서 §6): 하위 모듈은 상위 모듈을 import하지 않는다.
 
 pub mod agents;
+pub mod agent_overview;
 pub mod attachments;
 pub mod source_settings;
 pub mod skills;
@@ -195,6 +196,7 @@ pub fn router(app: App) -> Router {
     use axum::routing::delete;
     let api = Router::new()
         .route("/auth/whoami", get(auth::whoami))
+        .route("/agent-overview", get(agent_overview::show))
         .route("/devices", get(auth::list_devices).post(auth::create_device))
         .route("/devices/{id}", delete(auth::revoke_device))
         .route("/events", get(events::stream))

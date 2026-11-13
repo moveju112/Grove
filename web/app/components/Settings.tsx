@@ -26,6 +26,7 @@ import { isExecSetting } from "../api/execSettings";
 import { BrowserCapabilitiesSettings, currentNotificationIssue, useBrowserCapabilities } from "./capabilities/BrowserCapabilities";
 import { requestNotificationAccess } from "./capabilities/browser";
 import { UpdateSettings } from "./update/UpdateSettings";
+import { AgentOverview } from "./agent-overview/AgentOverview";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -124,7 +125,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 )}
                 {visible("secrets") && <Section item="secrets"><Secrets /></Section>}
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
-                {visible("definitions") && <Section item="definitions"><Definitions /></Section>}
+                {visible("definitions") && <Section item="definitions"><Definitions target={target} /></Section>}
                 {visible("source-settings") && <Section item="source-settings"><SourceSettings projectId={projectId} /></Section>}
                 {visible("mcp") && mcpSupported !== false && <Section item="mcp"><McpServers /></Section>}
                 {visible("hooks") && <Section item="hooks"><HooksSettings projectId={projectId} projectName={projectName} /></Section>}
@@ -453,12 +454,13 @@ function Profiles() {
     );
 }
 
-function Definitions() {
+function Definitions({ target }: { target: SettingsTarget }) {
     const [kind, setKind] = useState<"agent" | "workflow">("agent");
     const [sel, setSel] = useState<string | null>(null);
     const list = useQuery<Definition[]>(`definitions:${kind}`, () => api.get(`/definitions?kind=${kind}`));
     return (
         <div className="defs">
+            <AgentOverview target={target} onEdit={(id) => { setKind("agent"); setSel(id); }} />
             <div className="chips">
                 <button className={kind === "agent" ? "chip on" : "chip"} onClick={() => { setKind("agent"); setSel(null); }}>에이전트</button>
                 <button className={kind === "workflow" ? "chip on" : "chip"} onClick={() => { setKind("workflow"); setSel(null); }}>워크플로우</button>
