@@ -2,6 +2,7 @@
 //! foreground 실행과 시험 harness가 같은 시작·종료 경로를 쓴다.
 
 use crate::config::Config;
+use crate::startup::{FailureKind, StartupError};
 use crate::util::SharedClock;
 use crate::App;
 use std::fs::File;
@@ -20,7 +21,11 @@ pub struct Server {
 
 /// 데이터 디렉터리 단위 단일 실행 잠금. 프로세스가 죽으면 OS가 잠금을 해제하므로 stale lock이 남지 않는다.
 pub(crate) fn acquire_lock(cfg: &Config) -> Result<File, String> {
-    std::fs::create_dir_all(&cfg.data_dir).map_err(|e| format!("데이터 디렉터리 생성 실패: {e}"))?;
+    acquire_startup_lock(cfg).map_err(|e| e.to_string())
+}
+
+fn acquire_startup_lock(cfg: &Config) -> Result<File, StartupError> {
+    std::fs::create_dir_all(&cfg.data_dir).map_err(|e| StartupError::io(&e, &cfg.data_dir))?;
     let path = cfg.data_dir.join("grove.lock");
     let f = std::fs::OpenOptions::new()
         .create(true)
@@ -28,7 +33,7 @@ pub(crate) fn acquire_lock(cfg: &Config) -> Result<File, String> {
         .read(true)
         .write(true)
         .open(&path)
-        .map_err(|e| format!("{}: {e}", path.display()))?;
+        .map_err(|e| StartupError::io(&e, &path))?;
     match f.try_lock() {
         Ok(()) => {
             let _ = f.set_len(0);
@@ -37,28 +42,29 @@ pub(crate) fn acquire_lock(cfg: &Config) -> Result<File, String> {
             Ok(f)
         }
         Err(std::fs::TryLockError::WouldBlock) => {
-            let pid = std::fs::read_to_string(&path).unwrap_or_default();
-            Err(format!("같은 데이터 디렉터리로 이미 서버가 실행 중입니다(pid {})", pid.trim()))
+            Err(StartupError::new(FailureKind::AlreadyRunning, Some(&path)))
         }
-        Err(std::fs::TryLockError::Error(e)) => Err(format!("잠금 실패: {e}")),
+        Err(std::fs::TryLockError::Error(e)) => Err(StartupError::io(&e, &path)),
     }
 }
 
 pub async fn start(cfg: Config, clock: SharedClock) -> Result<Server, String> {
-    let lock = acquire_lock(&cfg)?;
+    start_with_diagnostics(cfg, clock).await.map_err(|e| e.to_string())
+}
+
+pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> Result<Server, StartupError> {
+    let lock = acquire_startup_lock(&cfg)?;
     let listener = tokio::net::TcpListener::bind(cfg.listen).await.map_err(|e| match e.kind() {
-        std::io::ErrorKind::AddrInUse => format!("{} 포트가 이미 사용 중입니다", cfg.listen),
-        _ => format!("{} 바인딩 실패: {e}", cfg.listen),
+        std::io::ErrorKind::AddrInUse => StartupError::new(FailureKind::PortInUse, None),
+        _ => StartupError::new(FailureKind::Listen, None),
     })?;
-    let addr = listener.local_addr().map_err(|e| e.to_string())?;
+    let addr = listener.local_addr().map_err(|_| StartupError::new(FailureKind::Listen, None))?;
     let mut cfg = cfg;
     cfg.listen = addr;
-    let app = App::new(cfg, clock).map_err(|e| format!(
-        "{e}\n시작을 중단했습니다. 원본 데이터를 삭제하거나 덮어쓰지 마세요. grove doctor --offline --data-dir <경로>로 읽기 전용 검사를 수행하세요"
-    ))?;
-    let owner_token = crate::auth::ensure_owner_token(&app).map_err(|e| e.message)?;
-    crate::mcp::recover_on_start(&app).await.map_err(|e| e.message)?;
-    crate::runner::recover_on_start(&app).await.map_err(|e| e.message)?;
+    let app = App::new(cfg.clone(), clock).map_err(|e| StartupError::database(&cfg, &e.to_string()))?;
+    let owner_token = crate::auth::ensure_owner_token(&app).map_err(|e| StartupError::api(&cfg, e))?;
+    crate::mcp::recover_on_start(&app).await.map_err(|e| StartupError::api(&cfg, e))?;
+    crate::runner::recover_on_start(&app).await.map_err(|e| StartupError::api(&cfg, e))?;
     let now = app.now();
     app.db
         .call(move |c| {
@@ -66,7 +72,7 @@ pub async fn start(cfg: Config, clock: SharedClock) -> Result<Server, String> {
             crate::terminals::recover_on_start(c, &now)
         })
         .await
-        .map_err(|e| e.message)?;
+        .map_err(|e| StartupError::api(&cfg, e))?;
 
     let mut background = vec![];
     {

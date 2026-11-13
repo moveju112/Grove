@@ -15,6 +15,7 @@ pub mod exec;
 mod logging;
 pub mod runner;
 pub mod server;
+mod startup;
 pub mod config;
 pub mod deps;
 pub mod context;
