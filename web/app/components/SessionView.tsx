@@ -25,6 +25,7 @@ import { useBotAvatar } from "../state/botAvatar";
 import { AssistantIdentity } from "./assistant-identity";
 import { ApprovalCard, currentApprovalContract } from "./approvals";
 import { TurnTiming } from "./turn-timing/TurnTiming";
+import { MessageCopyButton as CopyButton } from "./capabilities/MessageCopyButton";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
@@ -806,28 +807,6 @@ function UnknownCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unknow
                 </>
             )}
         </div>
-    );
-}
-
-/// 메시지 원문 복사(UI-011). 표시용 Markdown이 아니라 저장된 원문을 복사한다.
-function CopyButton({ text }: { text: string }) {
-    const [done, setDone] = useState(false);
-    return (
-        <button
-            className="ghost small msg-copy"
-            data-testid="msg-copy"
-            onClick={() =>
-                void navigator.clipboard?.writeText(text).then(
-                    () => {
-                        setDone(true);
-                        setTimeout(() => setDone(false), 1500);
-                    },
-                    () => setDone(false),
-                )
-            }
-        >
-            {done ? "복사됨" : "메시지 복사"}
-        </button>
     );
 }
 

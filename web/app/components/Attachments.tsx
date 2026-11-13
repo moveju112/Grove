@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, authGeneration, newKey, rawGet } from "../api/client";
 import { parseDraftAttachments, type DraftAttachment as Attachment } from "../state/drafts";
+import { attachmentIssue } from "./capabilities/browser";
 
 export type { DraftAttachment as Attachment } from "../state/drafts";
 type Pending = { key: string; file?: File; attachment?: Attachment; error?: string };
@@ -76,10 +77,20 @@ export function useAttachments(draftKey: string, projectId: string, initial?: At
 
 export function AttachmentPicker({ draft, disabled }: { draft: ReturnType<typeof useAttachments>; disabled: boolean }) {
     const input = useRef<HTMLInputElement>(null);
+    const [supportError, setSupportError] = useState<string | null>(null);
     return <div className="attachment-picker">
         <input ref={input} type="file" multiple aria-label="첨부파일 선택" hidden disabled={disabled || draft.busy} onChange={(e) => { void draft.add(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-        <button className="ghost small" disabled={disabled || draft.busy} onClick={() => input.current?.click()}>파일 첨부</button>
+        <button className="ghost small" disabled={disabled || draft.busy} onClick={() => {
+            const issue = attachmentIssue();
+            setSupportError(issue);
+            if (!issue) {
+                try { input.current?.click(); }
+                catch { setSupportError("파일 선택 창을 열지 못했습니다. 브라우저 설정을 확인하거나 파일 내용을 메시지에 붙여 넣으세요."); }
+            }
+        }}>파일 첨부</button>
+        {supportError && <div className="warn small" role="status">{supportError}</div>}
         <span className="muted small">파일당 4MiB · 전체 8MiB · 최대 8개</span>
+        <div className="muted small">드래그가 안 되면 파일 첨부 버튼을 사용하세요. 일반 첨부에는 파일 시스템 접근 API가 필요하지 않습니다.</div>
         <div className="muted small">첨부 선택 목록은 이 기기에 저장됩니다. 미전송 파일은 24시간 뒤 만료됩니다.</div>
         {draft.error && <div role="alert">{draft.error}</div>}
         <ul className="attachment-list" aria-label="선택한 첨부파일">

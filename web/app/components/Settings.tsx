@@ -20,6 +20,8 @@ import { DiagnosticsBundle } from "./DiagnosticsBundle";
 import { SourceSettings } from "./source-settings/SourceSettings";
 import { TurnTimingSetting } from "./turn-timing/TurnTimingSetting";
 import { HooksSettings } from "./hooks/HooksSettings";
+import { BrowserCapabilitiesSettings, currentNotificationIssue, useBrowserCapabilities } from "./capabilities/BrowserCapabilities";
+import { requestNotificationAccess } from "./capabilities/browser";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -47,6 +49,7 @@ export const ITEMS: Item[] = [
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜 턴 경과 소요 대기", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
     { id: "devices", menu: "devices", label: "기기 토큰", keywords: "device token pair 페어링 폐기 분실", scope: "서버 전체" },
+    { id: "browser-capabilities", menu: "devices", label: "브라우저 기능·권한", keywords: "이 기기 browser notification clipboard 알림 복사 붙여넣기 파일 첨부 드래그 HTTPS 보안 권한", scope: "이 기기" },
     { id: "logout", menu: "devices", label: "로그아웃", keywords: "logout sign out", scope: "이 기기" },
     { id: "usage", menu: "model", label: "사용량·비용", keywords: "usage cost token price 사용량 비용 토큰 가격", scope: "서버 전체" },
     { id: "health", menu: "server", label: "서버 상태·버전·진단", keywords: "version health schema diagnostics 버전 상태 진단 정보 복사", scope: "서버 전체" },
@@ -122,6 +125,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
                 {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
                 {visible("devices") && <Section item="devices"><Devices /></Section>}
+                {visible("browser-capabilities") && <Section item="browser-capabilities"><BrowserCapabilitiesSettings /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
                 {visible("logout") && <Section item="logout"><button onClick={() => void logout()}>이 브라우저에서 로그아웃</button></Section>}
                 {visible("usage") && <UsagePanel />}
@@ -279,11 +283,22 @@ const PERMISSION_LABEL: Record<NotificationPermission | "unsupported", string> =
 
 function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void }) {
     const [permission, setPermission] = useState(notificationPermission);
+    const [capabilities, refresh] = useBrowserCapabilities();
+    const [requestError, setRequestError] = useState<string | null>(null);
+    const notificationIssue = currentNotificationIssue(capabilities);
+    useEffect(() => { setPermission(notificationPermission()); }, [capabilities]);
+    useEffect(() => { setRequestError(null); }, [permission]);
+    const request = async () => {
+        const result = await requestNotificationAccess();
+        if (result.permission) setPermission(result.permission);
+        setRequestError(result.message ?? null);
+        refresh();
+    };
     const [testSent, setTestSent] = useState(false);
     // 알림 종류를 켜면 그때 브라우저 권한을 묻는다. 거부돼도 소리 설정은 따로 쓸 수 있다.
     const toggle = async (key: "notifyDone" | "notifyApproval" | "notifyServer", on: boolean) => {
         set({ ...p, [key]: on });
-        if (on && permission === "default") setPermission(await Notification.requestPermission());
+        if (on) await request();
     };
     const kinds = [
         ["notifyDone", "작업 완료·실패"],
@@ -301,11 +316,12 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
             <label className="check">
                 <input type="checkbox" checked={p.notifySound} onChange={(e) => set({ ...p, notifySound: e.target.checked })} /> 알림 소리
             </label>
-            <p className="small" data-testid="notify-permission">브라우저 알림 권한: {PERMISSION_LABEL[permission]}</p>
+            <p className="small" data-testid="notify-permission">브라우저 알림 권한: {capabilities && !capabilities.secureContext ? "보안 컨텍스트 필요(HTTPS·localhost)" : PERMISSION_LABEL[permission]}</p>
             {(p.notifyDone || p.notifyApproval || p.notifyServer) && permission !== "granted" && (
                 <p className="warn small" role="status">브라우저 권한이 없어 화면 알림은 표시되지 않습니다{p.notifySound ? ". 소리만 재생합니다." : "."}</p>
             )}
-            {permission === "default" && <button className="ghost small" onClick={() => void Notification.requestPermission().then(setPermission)}>브라우저 알림 허용</button>}
+            {(requestError || notificationIssue) && <p className="warn small" role="status">{requestError || notificationIssue}</p>}
+            {permission === "default" && <button className="ghost small" onClick={() => void request()}>브라우저 알림 허용</button>}
             <button
                 className="ghost small"
                 onClick={() => {
