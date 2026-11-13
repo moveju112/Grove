@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
 import { type Prefs, defaultPrefs, savePrefs, usePrefs } from "../state/device";
@@ -24,6 +24,8 @@ import { ExecSettings } from "./exec-settings/ExecSettings";
 import { isExecSetting } from "../api/execSettings";
 import { BrowserCapabilitiesSettings, currentNotificationIssue, useBrowserCapabilities } from "./capabilities/BrowserCapabilities";
 import { requestNotificationAccess } from "./capabilities/browser";
+import { settingLinkKey } from "./settings-links/reveal";
+import { useSettingsLink } from "./settings-links/useSettingsLink";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -71,20 +73,14 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
     const mcpSupported = useCapability("mcp_settings_v1");
 
     // 직접 링크(#setting-<key>): 해당 메뉴를 열고 고급 항목이면 펼친 뒤 그 항목으로 이동한다(SETTINGS-021).
-    const [linked, setLinked] = useState<string | null>(() => (typeof location !== "undefined" && location.hash.startsWith("#setting-") ? decodeURIComponent(location.hash.slice(9)) : null));
-    useEffect(() => {
-        if (!linked || !registry.data) return;
-        const d = registry.data.find((x) => x.key === linked);
-        if (!d) return setLinked(null);
+    const prepareLink = useCallback((d: SettingDef) => {
+        if (!MENUS.some(([id]) => id === d.menu)) return false;
         setQ("");
         setMenu(d.menu as Menu);
         if (d.advanced) setShowAdvanced(true);
-        const t = setTimeout(() => {
-            document.querySelector(`[data-testid="setting-${CSS.escape(linked)}"]`)?.scrollIntoView({ block: "center" });
-            setLinked(null);
-        }, 50);
-        return () => clearTimeout(t);
-    }, [linked, registry.data]);
+        return true;
+    }, []);
+    const link = useSettingsLink(registry, JSON.stringify([projectId, sessionId]), prepareLink);
     const needle = q.trim().toLowerCase();
     const results = useMemo(() => (needle ? ITEMS.filter((i) => (i.id !== "memories" || memoriesSupported !== false)
         && (i.id !== "mcp" || mcpSupported !== false)
@@ -96,11 +92,23 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
     const visible = (id: string) => (results ? results.some((r) => r.id === id) : ITEMS.find((i) => i.id === id)?.menu === menu);
     const total = (results?.length ?? 0) + (needle ? serverDefs.length : 0);
     return (
-        <div className="settings">
+        <div className="settings" ref={link.root}
+            onWheelCapture={link.cancel} onTouchMoveCapture={link.cancel}
+            onKeyDownCapture={link.cancel} onPointerDownCapture={link.cancel}
+            onClick={(event) => {
+                if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                const anchor = (event.target as Element).closest<HTMLAnchorElement>("a");
+                if (!anchor || !event.currentTarget.contains(anchor)) return;
+                const key = settingLinkKey(anchor.getAttribute("href") ?? "");
+                if (!key) return;
+                event.preventDefault();
+                history.replaceState(history.state, "", anchor.getAttribute("href")!);
+                link.open(key);
+            }}>
             <nav className="settings-nav" aria-label="설정 메뉴">
-                <input type="search" placeholder="설정 검색" value={q} onChange={(e) => setQ(e.target.value)} aria-label="설정 검색" />
+                <input type="search" placeholder="설정 검색" value={q} onChange={(e) => { link.cancel(); setQ(e.target.value); }} aria-label="설정 검색" />
                 {MENUS.map(([m, label]) => (
-                    <button key={m} className={!results && menu === m ? "on" : ""} onClick={() => { setQ(""); setMenu(m); }}>
+                    <button key={m} className={!results && menu === m ? "on" : ""} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
                         {label}
                     </button>
                 ))}
@@ -113,8 +121,11 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 )}
             </nav>
             <div className="settings-body">
+                {link.pending && <p className="muted" role="status">링크한 설정을 불러오는 중…</p>}
+                {link.error && <p className="err" role="alert">{link.error}</p>}
                 {needle && <p className="muted">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</p>}
                 {serverDefs.filter((d) => !isExecSetting(d)).length > 0 && <ScopedSettings defs={serverDefs.filter((d) => !isExecSetting(d))} target={target}
+                    linkedKey={link.key} onLinkReady={link.ready}
                     resetDefs={!needle ? (registry.data ?? []).filter((d) => d.menu === menu) : undefined} area={MENUS.find(([id]) => id === menu)?.[1]} />}
                 {hiddenAdvanced > 0 && !showAdvanced && (
                     <button className="ghost" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</button>
@@ -126,6 +137,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {visible("mcp") && mcpSupported !== false && <Section item="mcp"><McpServers /></Section>}
                 {visible("hooks") && <Section item="hooks"><HooksSettings projectId={projectId} projectName={projectName} /></Section>}
                 {(visible("exec-settings") || serverDefs.some(isExecSetting)) && <ExecSettings
+                    linkedKey={link.key} onLinkReady={link.ready}
                     defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} />}
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
                 {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}

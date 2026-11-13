@@ -1,13 +1,16 @@
 import type { ExecSettingDef } from "../../api/execSettings";
 import { ScopedSettings, type SettingsTarget } from "../ScopedSettings";
+import type { SettingLinkReady } from "../settings-links/reveal";
 
-export function ExecSettings({ defs, target }: { defs: ExecSettingDef[]; target: SettingsTarget }) {
+export function ExecSettings({ defs, target, linkedKey, onLinkReady }: {
+    defs: ExecSettingDef[]; target: SettingsTarget; linkedKey?: string; onLinkReady?: SettingLinkReady;
+}) {
     return <div data-testid="exec-settings">
         <p>전역(서버 전체)보다 프로젝트, 프로젝트보다 대화 설정이 우선합니다. 이 범위 값을 지우면 상위 값을 상속합니다.</p>
         <p className="warn">변경은 다음에 계획하는 실행부터 적용됩니다. 이미 계획·승인된 호출의 shell·limits·cwd는 바꾸지 않습니다.</p>
         {defs.map((def) => <div key={def.key}>
             <fieldset disabled={Boolean(def.disabled_reason)} style={{ border: 0, padding: 0, margin: 0 }}>
-                <ScopedSettings defs={[def]} target={target} />
+                <ScopedSettings defs={[def]} target={target} linkedKey={linkedKey} onLinkReady={onLinkReady} />
             </fieldset>
             {def.disabled_reason && <p className="warn" role="status">{def.disabled_reason}</p>}
             {def.unavailable_options && def.unavailable_options.length > 0 && <fieldset disabled className="setting">
