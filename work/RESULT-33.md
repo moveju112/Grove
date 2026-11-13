@@ -1,12 +1,17 @@
 # 33 — 명시적 첫 응답 전 HTTP fallback
 
+<!-- grove-handoff:v1
+{"state":"ready","remaining":[],"blockers":[],"integration_checks":["메인 통합 후 runner의 29 hook/승인/tool 경계와 SessionView의 32 compaction 공존 인수"]}
+-->
+
 ## 식별·상태
 
 - 배치/번호: b02 / 33.
 - Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-33-model-fallback`.
 - Branch: `parallel/b02-model-fallback`.
 - 기준: `9942629c17891c5cad8cc5a7a62fee99e0379650` (현재 HEAD의 merge-base 확인).
-- 상태: 구현 종료, 선택 서버·웹 단위 검증 통과. 브라우저 E2E는 작성·타입 검사만 했으며 COMMON에 따라 통합 단계 실행 대기다. 브라우저 사용자 흐름의 완료를 확정하지 않는다.
+- 상태: 구현·연결·선택 서버/웹 검사와 배정된 브라우저 인수 완료. 실행 가능한 소유 잔여와 실제 blocker는 없다. 메인의 타 기능 통합 공통 경계 인수만 별도다.
+- 후속은 `ae49eec791ad18ea7139ff86344dd64da0be4138`의 깨끗한 worktree에서 시작했다. 원본 `work/33.md`의 `442e020` 후속 배정 내용과 live `work/COMMON.md`를 실제 읽었다. branch 동기화나 기준 변경은 하지 않았다.
 - ENTRY/README의 실제 worktree·branch 배정과 33번 문서가 일치했고 시작 Git 상태는 깨끗했다.
 
 ## 제공 동작·설정 계약
@@ -53,7 +58,7 @@
 | `web/app/components/ProfileFallback.test.ts` | 설정 payload·검증·기본 꺼짐·CLI 표시 단위 시험 3개 |
 | `web/app/components/Settings.tsx` | Profiles의 import/프로필별 mount만 |
 | `web/app/components/SessionView.tsx` | 별도 `model_fallback` note 표시 분기만 |
-| `web/e2e/model-fallback.spec.ts` | 자체 loopback HTTP fixture 기반 설정 저장→전환→표시→reload 비재호출 시험 |
+| `web/e2e/model-fallback.spec.ts` | 자체 loopback HTTP fixture 기반 설정 저장→전환→실제 모델/이유 코드·endpoint/원래 선택 표시→reload 비재호출 시험 |
 | `work/RESULT-33.md` | 이 인계 |
 
 Public Rust 연결은 `validate`, `validate_references`, `snapshot`, `runtime`, `permitted`, `after_error`이며 모든 DB 변경은 기존 접수/전환 transaction 경계에 있다. `MAX_CANDIDATES`는 4다. 오류는 기존 ApiError 형식이며 stale 후보는 `fallback_changed`, 유효하지 않은 설정/통화는 invalid, CLI는 unsupported다.
@@ -91,7 +96,9 @@ source /data/project/paseodog_opus/.envrc.dev
 python3 -c 'import runpy,sys; sys.argv=["scripts/build.py","test","--vitest","app/components/ProfileFallback.test.ts","--typecheck"]; m=runpy.run_path("scripts/build.py"); m["env"].__globals__["DEV"]="/data/project/paseodog_opus/.dev"; m["main"]()'
 ```
 
-Typecheck(새 E2E 포함)와 Vitest 3개 모두 통과했다.
+위 최초 구현 시점의 Typecheck(E2E 포함)와 Vitest 3개 모두 통과했다. 후속에서 제품 Rust/웹 코드와 이 단위 시험들의 입력은 바꾸지 않았으므로 Rust·Vitest 근거는 재사용했고 다시 실행하지 않았다. 후속 변경은 E2E assertion 보강과 RESULT뿐이다. 변경된 E2E를 포함하는 typecheck는 후속 실행에서 갱신했다.
+
+최초 구현의 실행기가 제공한 시간도 보존한다(초, wall/CPU): Rust 선택 6 targets `96.84/103.42`, fallback library `54.03/67.61`, 웹 typecheck `7.75/12.16`, Vitest `1.54/2.26`. 잠금 대기나 생산성 절감량으로 해석하지 않는다.
 
 초기 실패도 보존한다:
 
@@ -100,20 +107,46 @@ Typecheck(새 E2E 포함)와 Vitest 3개 모두 통과했다.
 
 실행 로그는 세션 shell 로그에 있고 별도 기록 파일을 저장소에 추가하지 않았다. 최종 통과 Rust 입력에는 위 컴파일 수정과 모든 13개 fallback 통합 시험이 포함됐다.
 
+## 후속 브라우저 인수
+
+갱신된 33번 계약에 따라 정확히 `e2e/model-fallback.spec.ts`를 배정받아 실행했다. 공유 도구·공유 target을 사용하고 전체 명령에 같은 flock을 적용했다. 고정 E2E 포트·검사 설정·모델/모드 설정은 변경하지 않았고 설치·다른 검사 중단·타 세션 변경도 없었다.
+
+최종 실행 명령:
+
+```bash
+source /data/project/paseodog_opus/.envrc.dev
+export CARGO_TARGET_DIR=/data/project/paseodog_opus/target
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import runpy,sys; sys.argv=["scripts/build.py","test","--typecheck","--e2e","e2e/model-fallback.spec.ts"]; m=runpy.run_path("scripts/build.py"); m["env"].__globals__["DEV"]="/data/project/paseodog_opus/.dev"; m["main"]()'
+```
+
+| 최종 단계 | 결과 | wall(초) | CPU(초) |
+|---|---|---:|---:|
+| typecheck | 통과, 보강한 E2E 포함 | 7.18 | 11.29 |
+| server debug build | 통과, 현재 worktree 소스·공유 target | 0.91 | 0.18 |
+| web build | 통과, 현재 worktree 웹 | 3.48 | 4.8 |
+| E2E desktop | 1 passed, retries 0 | 6.44 | 4.21 |
+
+최종 브라우저 시험은 로컬 fixture만 사용해 다음을 확인했다:
+
+- 기본 꺼짐에서 명시 후보를 선택하고 endpoint/model을 표시한다. 전송 확인 전 저장 버튼은 비활성이며, 확인 후 저장한 후보가 서버 옵션에 남는다.
+- source의 HTTP 503 호출 3회(기존 bounded retry 포함) 뒤 저장한 실제 후보를 정확히 1회 호출하고 답변을 표시한다.
+- 별도 fallback 기록에 실제 model과 HTTP 503이 표시된다. 기록을 펼쳐 `provider_unavailable` 이유 코드, 실제 endpoint, 원래 profile ID가 화면에 드러나는 것도 확인했다.
+- reload 뒤 fallback 기록이 복원되며 fixture 호출 수는 4회 그대로다.
+
+최초 배정 실행은 원래 `ae49eec` spec 그대로 `--e2e e2e/model-fallback.spec.ts`로 통과했다. 실행기가 제공한 wall/CPU는 server build `78.1/80.26`, web build `3.31/4.89`, E2E `5.73/4.22`초다. 이후 이유 코드·endpoint·원래 선택을 실제 펼쳐 확인하는 assertion만 보강했기 때문에 그 변경에 영향받는 typecheck와 정확한 E2E를 위 최종 명령으로 실행했다. 후속 실패나 자체 제품 결함은 발견되지 않았고 기존 Rust/단위 검사를 반복하지 않았다.
+
+빌드에는 기존 React Router future flag 및 500 kB 초과 chunk 경고가 있었지만 단계 실패는 없었다. passing 코드나 공통 빌드 설정을 수정하지 않았다. 소유 범위 안의 브라우저 인수를 메인에 다시 미루지 않는다.
+
 ## TODO 요구별 인계·미검증
 
 | ID | 구현 근거·남은 사항 |
 |---|---|
-| MODEL-019 | 명시 순서 저장→bounded retry 뒤 허용 오류 전환→실제 모델/이유 note→원래/실제 선택·시도 기록까지 서버와 UI를 연결했다. 서버 동작·usage 귀속·reload 없는 startup 복구는 로컬 통합 시험으로 검증했다. 브라우저 설정부터 표시/reload까지의 실행은 미검증이다. |
+| MODEL-019 | 명시 순서 저장→bounded retry 뒤 허용 오류 전환→실제 모델/이유 note→원래/실제 선택·시도 기록까지 서버와 UI를 연결했다. 서버 동작·usage 귀속·startup 복구는 로컬 통합 시험으로 검증했다. 후속 브라우저에서 설정 저장부터 실제 모델·이유 표시와 reload 비재호출까지 통과했다. |
 | MODEL-020 | 기본 off, 전송 대상·가격 확인, revision 고정/재검증, credential 보호, capability/input/예산/FAIR/취소 보존, 금지 오류 비전환을 구현했다. 기존 signature·active-use·usage 회귀도 통과했다. 실공급자 수용성/요금/실기기는 검증하지 않았다. |
 | SETTINGS-004 fallback 부분 | Profiles에 fallback UI를 mount하고 기존 Owner/revision/idempotency API와 연결했다. 역할별 모델/context/disabled 등 SETTINGS-004 전체 완료를 주장하지 않는다. |
 
-통합 단계에서 고정 포트 E2E를 직렬로 실행해야 한다:
+최초 인계에서는 당시 COMMON에 따라 E2E를 실행하지 않았지만, 이번 정확한 후속 배정으로 해당 미완료를 해소했다. 현재 `remaining`과 `blockers`는 비어 있다. 타 기능을 합친 후 runner/SessionView 공통 경계 인수는 메인 통합 책임이며 소유 구현/시험 잔여와 구분한다.
 
-```bash
-python3 scripts/build.py test --e2e e2e/model-fallback.spec.ts
-```
-
-메인의 승인된 공유 빌드 환경을 적용해야 한다. COMMON의 독립 작업 E2E 금지에 따라 여기서는 실행하지 않았다. 전체 회귀·release·패키징·Windows·실계정·실모델·외부 서비스는 실행하지 않았다. 새로운 dependency나 서비스 조작 없이 검증 가능한 범위를 마쳤고, 미해결 제품 컴파일/선택 시험 실패는 없다. 브라우저 E2E 통합 검증이 남은 blocker다.
+전체 회귀·release·패키징·Windows·실계정·실모델·외부 서비스는 실행하지 않았다. 실공급자 수용성·요금·실기기 결과를 주장하지 않으며 로컬 fixture로 한정된 이번 완료 조건의 blocker로 취급하지 않는다. 새로운 dependency나 서비스 조작 없이 소유 검증을 마쳤고 미해결 제품 컴파일/선택 시험 실패는 없다.
 
 TODO 갱신·merge·push·deploy·다른 세션 접촉·위임·workspace 정리는 하지 않았다.

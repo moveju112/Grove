@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { frames } from "./fixture";
-import { apiCall, ensureProjects, login, sessionView } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, sessionView } from "./helpers";
 
 test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과 이유를 표시한다", async ({ page, browser }) => {
     const prefix = `fallback-${randomUUID()}`;
@@ -66,8 +66,13 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await view.getByLabel("메시지 입력").fill("local explicit fallback request");
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("msg-assistant").last()).toContainText("fallback browser fixture complete");
-        await expect(view.getByTestId("msg-model-fallback")).toContainText(`${prefix}-actual`);
-        await expect(view.getByTestId("msg-model-fallback")).toContainText("HTTP 503");
+        const record = view.getByTestId("msg-model-fallback");
+        await expect(record).toContainText(`${prefix}-actual`);
+        await expect(record).toContainText("HTTP 503");
+        await openDetails(record);
+        await expect(record.getByText(/전환 이유: provider_unavailable/)).toBeVisible();
+        await expect(record.getByText("이후 호출 대상:", { exact: false })).toContainText(base_url);
+        await expect(record.getByText("원래 선택:", { exact: false })).toContainText(primary.id);
         expect(requests.map((r) => r.model)).toEqual([
             `${prefix}-primary`, `${prefix}-primary`, `${prefix}-primary`, `${prefix}-actual`,
         ]);
