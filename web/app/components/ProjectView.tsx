@@ -1,10 +1,10 @@
 import { useState } from "react";
 import { When } from "./When";
 import { ApiError, api } from "../api/client";
-import type { Project, Session, SessionPage } from "../api/generated";
+import type { Project, SessionPage } from "../api/generated";
 import { useAutoOpen } from "../state/autoOpen";
 import { useQuery } from "../state/store";
-import { Composer, type SendOptions } from "./Composer";
+import { ProjectComposer } from "./create/ProjectComposer";
 import { GitPanel } from "./GitPanel";
 import { SchedulesPanel } from "./SchedulesPanel";
 import { TrashPanel } from "./TrashPanel";
@@ -70,16 +70,7 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
     const [pages, setPages] = useState<string[]>([""]);
     const project = useQuery<Project>(`project:${projectId}`, () => api.get(`/projects/${projectId}`));
 
-    // 단계마다 key를 파생해, 결과를 모르는 실패 뒤 다시 보내도 대화가 두 개 생기거나 두 번 실행되지 않는다.
-    const start = async (text: string, o: SendOptions, key: string, _follow?: unknown, attachments: string[] = []) => {
-        const title = text.trim().split("\n")[0]!.slice(0, 60);
-        const s = await api.post<Session>(`/projects/${projectId}/sessions`, { title }, { key: `${key}:session` });
-        if (o.mode === "save") await api.post(`/sessions/${s.id}/messages`, { text, attachments }, { key: `${key}:send` });
-        else await api.post(`/sessions/${s.id}/turns`, { text, attachments, profile_id: o.profileId, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto" }, { key: `${key}:send` });
-        open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
-    };
-
-    const composer = <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId={tabId} onSend={start}
+    const composer = <ProjectComposer projectId={projectId} tabId={tabId} open={open}
         disabled={project.error ? "프로젝트를 확인할 수 없습니다" : !project.data ? "프로젝트 확인 중…" : !project.data.available ? "프로젝트 경로 없음" : null} />;
     if (project.error) return <div className="project-view">
         <h1>프로젝트를 열 수 없습니다</h1>

@@ -60,8 +60,8 @@ export function SessionRow({ item, open, narrow }: { item: SidebarSession; open:
 }
 
 /// children은 Workspace의 기존 프로젝트 메뉴·라벨·분할 열기다. 최근 탭의 렌더링은 바꾸지 않는다.
-export function SidebarProject({ project, children, open, narrow }: {
-    project: Project; children: ReactNode; open: Opener; narrow: boolean;
+export function SidebarProject({ project, children, open, narrow, onCreate }: {
+    project: Project; children: ReactNode; open: Opener; narrow: boolean; onCreate: () => void;
 }) {
     const [expanded, setExpanded] = useState(true);
     const [unreadOnly, setUnreadOnly] = useState(false);
@@ -81,6 +81,7 @@ export function SidebarProject({ project, children, open, narrow }: {
             {!project.available && <span className="warn">프로젝트 경로 없음</span>}
         </div>
         <div className="sidebar-toolbar" role="toolbar" aria-label={`${project.name} 도구`} onKeyDown={toolbarKeys}>
+            <button type="button" className="ghost small" disabled={!project.available} onClick={onCreate}>새 대화</button>
             <button type="button" className="ghost small" aria-expanded={expanded} aria-controls={listId}
                 onClick={() => setExpanded((v) => !v)}>대화 {expanded ? "접기" : "펼치기"}{data ? ` (${data.total})` : ""}</button>
             <button type="button" className="ghost small" aria-pressed={unreadOnly}

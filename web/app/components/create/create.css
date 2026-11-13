@@ -1,0 +1,10 @@
+.creation-dialog {
+    color: var(--text);
+    margin: auto;
+    max-width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    overflow-wrap: anywhere;
+}
+.creation-dialog:not([open]) { display: none; }
+.creation-dialog::backdrop { background: #0005; }
+.creation-dialog > fieldset { display: grid; gap: 0.6em; }
