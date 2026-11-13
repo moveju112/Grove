@@ -1,5 +1,7 @@
-//! src/lib.rs의 pub mod source_settings 등록 후 기존 통합 target으로 실행한다.
+//! 원본 설정 projection과 인증된 조회 API.
 //! 개인 설정·외부 서비스 없이 소유한 임시 디렉터리만 사용한다.
+
+mod common;
 
 use grove::source_settings::{
     MAX_SOURCE_BYTES, ReadErrorCode, SourceFormat, SourceId, SourceSettings, SourceState, read_source,
@@ -191,4 +193,118 @@ fn unreadable_file_is_not_reported_as_missing() {
     let result = read_source(root.path(), SourceId::ClaudeUser);
     std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
     assert_error(result, ReadErrorCode::PermissionDenied);
+}
+
+#[tokio::test]
+async fn http_project_projection_is_scoped_safe_read_only_and_available_to_owner_browser() {
+    use common::TestServer;
+    use reqwest::{Method, StatusCode};
+    let server = TestServer::start().await;
+    let project = server.create_project("source-projection").await;
+    let other = server.create_project("source-other").await;
+    let root = Path::new(project["root_path"].as_str().unwrap());
+    let bytes = br#"{"autoMemoryEnabled":true,"env":{"FIXTURE":"source-private-marker"},"hooks":{"Stop":"source-private-marker"}}"#;
+    write(root, SourceId::ClaudeProject, bytes);
+    write(root, SourceId::CodexProject, b"source-private-marker");
+    write(Path::new(other["root_path"].as_str().unwrap()), SourceId::ClaudeProject, br#"{"cleanupPeriodDays":999}"#);
+    let path = format!("/api/v1/source-settings?project_id={}", project["id"].as_str().unwrap());
+    let expected = json!({"items": [
+        {"source":"claude_project","status":"present","projection":{"autoMemoryEnabled":true},"ignored_invalid_fields":false},
+        {"source":"claude_project_local","status":"missing"},
+        {"source":"codex_project","status":"unsupported_format","format":"toml"}
+    ]});
+    for _ in 0..2 {
+        let (status, value) = server.get(&path).await;
+        assert_eq!(status, StatusCode::OK, "{value}");
+        assert_eq!(value, expected);
+        assert!(!value.to_string().contains(root.to_str().unwrap()));
+        assert!(!value.to_string().contains("source-private-marker"));
+    }
+    let (status, browser) = server.post("/api/v1/auth/browser-login", json!({"token": server.token})).await;
+    assert_eq!(status, StatusCode::OK);
+    let response = server.raw(Method::GET, &path, None, None, Some(browser["access_token"].as_str().unwrap())).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.json::<Value>().await.unwrap(), expected);
+    assert_eq!(std::fs::read(root.join(SourceId::ClaudeProject.relative_path())).unwrap(), bytes);
+    let (status, value) = server.get("/api/v1/source-settings?project_id=unregistered").await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "{value}");
+    assert_eq!(value["error"]["code"], "not_found");
+    let id = project["id"].as_str().unwrap().to_string();
+    server.server.as_ref().unwrap().app.db.call(move |c| {
+        c.execute("UPDATE projects SET archived_at = '2026-01-01T00:00:00Z' WHERE id = ?1", [id])?;
+        Ok(())
+    }).await.unwrap();
+    assert_eq!(server.get(&path).await.0, StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn http_denies_anonymous_devices_and_device_browsers_for_every_project_and_user_sources() {
+    use common::TestServer;
+    use reqwest::{Method, StatusCode};
+    let server = TestServer::start().await;
+    let a = server.create_project("sources-a").await;
+    let b = server.create_project("sources-b").await;
+    let (status, device) = server.post("/api/v1/devices", json!({"name":"source-reader"})).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (status, browser) = server.post("/api/v1/auth/browser-login", json!({"token":device["token"]})).await;
+    assert_eq!(status, StatusCode::OK);
+    for path in [
+        "/api/v1/source-settings".to_string(),
+        format!("/api/v1/source-settings?project_id={}", a["id"].as_str().unwrap()),
+        format!("/api/v1/source-settings?project_id={}", b["id"].as_str().unwrap()),
+        "/api/v1/source-settings?project_id=unknown".to_string(),
+    ] {
+        let response = server.raw(Method::GET, &path, None, None, Some("")).await;
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        for token in [device["token"].as_str().unwrap(), browser["access_token"].as_str().unwrap()] {
+            let response = server.raw(Method::GET, &path, None, None, Some(token)).await;
+            assert_eq!(response.status(), StatusCode::FORBIDDEN);
+            assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"], "forbidden");
+        }
+    }
+}
+
+#[tokio::test]
+async fn http_rejects_root_paths_filenames_and_unknown_query_fields_without_echoing_them() {
+    use common::TestServer;
+    use reqwest::{Method, StatusCode};
+    let server = TestServer::start().await;
+    for query in [
+        "root=%2Fsource-private-marker",
+        "path=source-private-marker",
+        "filename=source-private-marker",
+        "source=source-private-marker",
+        "project_id=&root=source-private-marker",
+        "project_id=",
+        "project_id=one&project_id=source-private-marker",
+    ] {
+        let (status, value) = server.get(&format!("/api/v1/source-settings?{query}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{query}: {value}");
+        assert_eq!(value["error"]["code"], "invalid_request");
+        assert!(!value.to_string().contains("source-private-marker"));
+        assert!(value.get("items").is_none());
+    }
+    for method in [Method::POST, Method::PUT, Method::PATCH, Method::DELETE] {
+        let response = server.raw(method, "/api/v1/source-settings", Some(json!({})), Some("no-source-write"), None).await;
+        assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
+    }
+}
+
+#[tokio::test]
+async fn http_file_errors_are_sanitized_and_recover_on_the_next_read() {
+    use common::TestServer;
+    use reqwest::StatusCode;
+    let server = TestServer::start().await;
+    let project = server.create_project("sources-errors").await;
+    let root = Path::new(project["root_path"].as_str().unwrap());
+    let path = format!("/api/v1/source-settings?project_id={}", project["id"].as_str().unwrap());
+    write(root, SourceId::ClaudeProject, b"source-private-marker not json");
+    let (status, value) = server.get(&path).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["items"][0], json!({"source":"claude_project","status":"read_error","code":"invalid_json"}));
+    assert!(!value.to_string().contains("source-private-marker"));
+    write(root, SourceId::ClaudeProject, br#"{"cleanupPeriodDays":7}"#);
+    let (status, value) = server.get(&path).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value["items"][0]["projection"], json!({"cleanupPeriodDays":7}));
 }
