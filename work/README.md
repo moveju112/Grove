@@ -36,9 +36,9 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 | 번호 | 브랜치 | worktree 절대 경로 | workspace ID | 기능 |
 |---|---|---|---|---|
-| 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | `wks_145becb7b1464f70` | 역할별 위임 허용 정책 (`873c441` 종료·clean, `262798c` 병합, `validation-52_pbv0g` 인수 중) |
+| 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | `wks_145becb7b1464f70` | 역할별 위임 허용 정책 (`873c441` 종료·clean, `262798c` 병합, 개별 인수 통과·37과 묶은 공통 설정 회귀 미실행 보존) |
 | 36 | parallel/b02-mcp-oauth | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-36-mcp-oauth | `wks_912a0803920b11fa` | HTTP MCP OAuth 연결·명시적 갱신 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준, 세션 `4741efe5-e045-4afd-b63c-b94d901a65e4` 실행 확인) |
-| 37 | parallel/b02-settings-links | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links | `wks_c1844db43036c46f` | 비동기 설정 직접 링크·pane 경계 (`43cf9ad` 종료·clean, `ee8173c` 병합, `validation-52_pbv0g` 인수 중) |
+| 37 | parallel/b02-settings-links | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links | `wks_c1844db43036c46f` | 비동기 설정 직접 링크·pane 경계 (`43cf9ad` 종료·clean, `ee8173c` 병합, 실행 설정 링크 E2E 실패·실행10개로 원래 담당 재개 미접수) |
 | 38 | parallel/b02-local-models | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-38-local-models | `wks_97add2973aa8639a` | 선택적 로컬 HTTP 모델 연결·상태·목록 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, 세션 `e60b7aa1-33c3-40c7-b35e-89476f3e0ec2` running 확인) |
 | 39 | parallel/b02-definition-updates | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-39-definition-updates | `wks_10afe7eb9a765704` | 기본 정의 수정본 보존·비교·선택 적용 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, 세션 `2c941d84-82d8-407c-a7f6-57e7573111fc` running·fast=false 확인) |
 | 40 | parallel/b02-deferred-tools | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-40-deferred-tools | `wks_bd0e6e72588493d4` | 도구 schema 지연 로딩·모델 입력 안정성 (`f4a4a702bcd342e159efe8801d429ad181391651` 기준, 세션 `c0904779-2933-434a-8e33-249f8ea1f159` running·fast=false 확인) |
@@ -70,6 +70,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 25 | ready · `f9df069` 통합·인수 완료 | 기능 update-settings E2E 4개 및 통합 검사 통과. SETTINGS-016 완료; 정책 저장과 실제 자동 설치를 구분. 기존 오류 retry count=1은 재사용하지 않음 |
 
 ## 현재 통합 인수
+- `validation-52_pbv0g`은 exit 1로 종료했다. 실제 candidate `ee8173c`에서 Rust 10개·단위 7개·타입·E2E 4개 통과, 실행 설정 링크 `settings-links.spec.ts:144`의 viewport ratio 0 실패 1개·나머지 E2E 10개 미실행이다. 뒤의 문서 변경만 확인했고 다른 성공으로 이 실패를 지우지 않았다. preparing 38.00초·waiting-lock 657.79초·running 233.88초이며 telemetry_error는 없다. 공통 회귀 미실행을 보존해 34/37은 아직 정리하지 않는다. 37의 기존 범위에 정확한 로그/재현·부분 통과 근거를 추가했고 실행 10개이므로 수정 요청 전송·재개는 하지 않았다. 슬롯이 생기면 신규 기능보다 이 후속을 우선한다.
 - 35는 `validation-16syoppr`의 필수 인수·CTX-012·인계/commit 보존 확인 후 `wks_242996cfa36e0a48`을 archive했다. 종료 세션 1개 보관·디렉터리 제거 응답을 확인했고 브랜치는 유지했다. cleanup-finished 기록 후 큐는 backlog 2개·실행 7개·새 시작 슬롯 3개다. 빈자리는 이월된 분할 초안 유실을 49로 배정한다.
 - 49의 실제 cwd/branch/HEAD/clean과 prepared 기록을 확인해 활성 15개로 보충했다. 44~46은 archived 포함 세션 이력 없음·clean·고정 기준·독립 소유권·현재 공통 입력 불변·권한 대기 없음을 확인한 뒤 하나씩 시작했다. 첫 44 생성은 provider 인자 검증에서 거절돼 생성되지 않았고 provider/model 형식으로 수정한 한 번의 실제 생성만 접수했다. 각 시작 접수/실제 running 이벤트와 반환 설정을 확인했다. 34/37의 기존 검사는 그대로 유지하며 47~49는 실행 상한에 따라 준비 상태로 둔다.
 - 43은 manifest-aware catalog revision과 `management.rs` 저장 응답의 본문-only revision 불일치를 보고하며 배정 밖 한 줄 변경을 질문했다. 진행 중 소유권 변경 금지에 따라 기존 소유권 유지로 응답했고 독립 구현·현재 턴은 건드리지 않았다. 종료 인계의 실제 잔여를 확인한 안전한 경계에서 필요한 연결 소유권을 판단한다. RESOURCE-013 완료로 간주하지 않는다.
