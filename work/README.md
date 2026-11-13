@@ -28,18 +28,18 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 | 번호 | 브랜치 | worktree 절대 경로 | workspace ID | 기능 |
 |---|---|---|---|---|
-| 10 | parallel/b02-source-settings-wire | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-10-source-settings-wire | `wks_b997271e9d51ba39` | 원본 설정 조회 연결 (00 이월) |
 | 11 | parallel/b02-skills-wire | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-11-skills-wire | `wks_98d3177f6bbf5a31` | 스킬 선택·적용 연결 (01 이월) |
 | 12 | parallel/b02-image-read-wire | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-12-image-read-wire | `wks_13f52f7f5562939c` | 이미지 읽기 모델 전달 (04 이월) |
-| 13 | parallel/b02-sidebar-status | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-13-sidebar-status | `wks_b6450d7ae495aae8` | 사이드바 상태·읽지 않음·핀 |
 | 14 | parallel/b02-pwa-lifecycle | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-14-pwa-lifecycle | `wks_043964eeb7dd683e` | PWA 버전 갱신·오프라인·저장소 한계 |
-| 15 | parallel/b02-turn-timing | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-15-turn-timing | `wks_16baa50b76c83e71` | 턴 시간 표시 |
-| 16 | parallel/b02-first-start | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-16-first-start | `wks_3e03fb86d3452409` | 서버 첫 시작·오류 안내 |
-| 17 | parallel/b02-hooks-config | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-17-hooks-config | `wks_d3b07706e87b88fc` | hook 목록·설정 |
-| 19 | parallel/b02-git-stash | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-19-git-stash | `wks_69960bfc3714a13f` | Git stash·discard |
 | 20 | parallel/b02-external-editor | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-20-external-editor | `wks_7abac678efb30e9a` | 외부 편집기 목록·열기 (`c2eebe6` 기준) |
+| 21 | parallel/b02-source-skills-hooks | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-21-source-skills-hooks | 생성 후 기록 | 원본 스킬·hook 읽기 전용 보기 (10 이월) |
+| 22 | parallel/b02-create-entry | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-22-create-entry | 생성 후 기록 | 세션·프로젝트 생성 진입점 단순화 |
+| 23 | parallel/b02-tab-close | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-23-tab-close | 생성 후 기록 | 탭·창 닫기 시 서버 작업 유지 |
+| 24 | parallel/b02-exec-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings | 생성 후 기록 | 셸·작업 한도·격리·기본 위치 설정 |
+| 25 | parallel/b02-update-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings | 생성 후 기록 | 서버 업데이트 채널·버전 표시 |
+| 26 | parallel/b02-browser-caps | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps | 생성 후 기록 | 브라우저 알림·clipboard·파일 API 차이 표시 |
 
-공통 파일 연결 지점이 겹치는 곳: `src/lib.rs::router`(10·11·13·17·19·20), `src/store.rs` MIGRATIONS 끝(11·13·17), `Settings.tsx` mount(10·11·15·17), `Composer.tsx`(11·14). 모두 서로 다른 줄의 추가이며 통합 때 순서만 맞춘다. `src/runner.rs`는 11이 지침 조립, 12가 도구 결과→provider 경로만 수정한다.
+공통 파일 연결 지점이 겹치는 곳: `src/lib.rs::router`(11·20·25), `src/store.rs` MIGRATIONS 끝(11), `Settings.tsx` mount(11·24·25·26), `Composer.tsx`(11·14). 모두 서로 다른 줄의 추가이며 통합 때 순서만 맞춘다. `src/runner.rs`는 11이 지침 조립, 12가 도구 결과→provider 경로만 수정한다. `src/source_settings/`는 21, `src/skills/`는 11 소유다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
@@ -59,6 +59,12 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 07 | `parallel/b01-linux-service` · `37b55bfbe34121592feecf62d015680d29fa09eb` | `53f634b` | `work/RESULT-07.md`; `scripts/test_user_service.py` 통과, 실제 서비스 검증은 남음 | `wks_9b5efc61967806b7` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-07-linux-service` | 남은 작업 `master` 이관 후 archive; 브랜치 유지 | 미배정 |
 | 08 | `parallel/b01-web-fetch` · `840c51ac51c140a64c6994fd10a7e612193302cf` | `31585a2` | `work/RESULT-08.md`; web_fetch 28개·승인 화면 20개 통과, HTML 본문 추출·실제 네트워크 검증은 남음 | `wks_b3a27f07ded8d599` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-08-web-fetch` | 남은 작업 `master` 이관 후 archive; 브랜치 유지 | 미배정 |
 | 18 | `parallel/b02-terminal-input` · `e341ad1d348c9142a1a1ff14cc3713255cc65e53` | `fc0de9b` | `work/RESULT-18.md`; 단위 27개·typecheck, 터미널 입력·캡처·기존 모바일 E2E 7개 통과(모바일 사이드바 열기·보조키 접근성 이름 기대값 통합 수정) | `wks_d50b41aa00282a33` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-18-terminal-input` | workspace·종료 세션 archive, 디렉터리 제거 확인; 브랜치 유지 | 20 |
+| 10 | `parallel/b02-source-settings-wire` · `3c5b307` | `4cb228c` | `work/RESULT-10.md`; `source_settings` Rust·단위·`source-settings` E2E 통과 | `wks_b997271e9d51ba39` | archive·디렉터리 제거 확인; 브랜치 유지 | 21 |
+| 13 | `parallel/b02-sidebar-status` · `0c07593` | `4cb228c` | `work/RESULT-13.md`; lib 4개·단위·`sidebar-status`·workspace·최근 탐색 E2E 통과(strict 타입 오류 통합 수정, workspace E2E locator 범위 축소) | `wks_b6450d7ae495aae8` | archive·디렉터리 제거 확인; 브랜치 유지 | 22 |
+| 15 | `parallel/b02-turn-timing` · `3b6be6f` | `4cb228c` | `work/RESULT-15.md`; 단위·`turn-timing` E2E(시계 ±5분·재시작) 통과(탭 버튼 이름 locator 통합 수정) | `wks_16baa50b76c83e71` | archive·디렉터리 제거 확인; 브랜치 유지 | 23 |
+| 16 | `parallel/b02-first-start` · `90aa51f` | `4cb228c` | `work/RESULT-16.md`; `first_start` 9개·기존 `cli`·`api` 27개 통과 | `wks_3e03fb86d3452409` | archive·디렉터리 제거 확인; 브랜치 유지 | 24 |
+| 17 | `parallel/b02-hooks-config` · `3188cf5` | `4cb228c` | `work/RESULT-17.md`; `hooks` 5개·단위 5개·`hooks` E2E 4개 통과 | `wks_d3b07706e87b88fc` | archive·디렉터리 제거 확인; 브랜치 유지 | 25 |
+| 19 | `parallel/b02-git-stash` · `b40e805` | `4cb228c` | `work/RESULT-19.md`; `git_stash` 9개·`git`·`git_receipts`·단위 4개·`git-stash`·`git-recovery` E2E 통과 | `wks_69960bfc3714a13f` | archive·디렉터리 제거 확인; 브랜치 유지 | 26 |
 
 b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01·04 이월은 10·11·12로 배정했다.
 
@@ -73,6 +79,7 @@ b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01
 | 07 | Linux 사용자 서비스의 실제 설치·재시작 검증 (외부 환경 필요) | `work/RESULT-07.md` | 보류: 실제 systemd 사용자 서비스 환경에서 검증 필요 |
 | 08 | HTML 본문 추출 방식 결정·실제 네트워크 검증 (`INTEGRATION-002`) | `work/RESULT-08.md` | 보류: 추출 의존성 추가 승인 필요 |
 | 18 | `TERM-005` Android/iOS 실기기 한글 키보드·클립보드 확인 | `work/RESULT-18.md` | 보류: 실기기 필요 |
+| 10 | `RESOURCE-018` 원본 스킬·hook 정의 읽기 전용 보기 | `work/RESULT-10.md` | 21 |
 
 ## 통합 담당의 완료 절차
 1. 사용자 통합 요청 뒤 각 worktree의 RESULT와 실제 branch·SHA·diff를 확인한다. 인계 파일만 보고 성공으로 단정하지 않는다.
