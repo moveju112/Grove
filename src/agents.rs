@@ -119,10 +119,11 @@ pub fn available_for(c: &Connection, session_id: &str) -> ApiResult<Value> {
     if session_depth(c, session_id)? >= MAX_DEPTH {
         return Ok(json!([]));
     }
+    let policy = crate::agent_policy::Policy::for_session(c, session_id)?;
     let defs = crate::definitions::list_all(c, "agent")?;
     Ok(defs
         .into_iter()
-        .filter(|d| d.enabled)
+        .filter(|d| d.enabled && policy.allows(&d.id))
         .map(|d| json!({ "id": d.id, "name": d.name, "description": d.description.chars().take(200).collect::<String>() }))
         .collect())
 }
@@ -134,12 +135,30 @@ pub fn approval_policy(c: &Connection, project_id: &str, session_id: &str, targe
         // 조회·대기·취소는 부작용을 늘리지 않으므로 바로 실행한다.
         _ => return Ok(Some(false)),
     }
-    let mode = crate::settings::effective(c, "agents.delegation", Some(project_id), Some(session_id))?;
-    Ok(match mode.as_str() {
-        Some("off") => None,
-        Some("auto") => Some(false),
-        _ => Some(true),
-    })
+    let session = crate::sessions::get(c, session_id)?;
+    if session.project_id != project_id {
+        return Err(ApiError::not_found("이 프로젝트의 대화가 아닙니다"));
+    }
+    let policy = crate::agent_policy::Policy::for_session(c, session_id)?;
+    let id = if target["action"] == "send" {
+        let run = match get(c, target["run_id"].as_str().unwrap_or("")) {
+            Ok(run) if run.parent_session_id == session_id => run,
+            // 소유권 오류는 기존 실행 경로가 not_found 도구 결과로 돌려준다.
+            Ok(_) => return Ok(Some(false)),
+            Err(error) if error.code == "not_found" => return Ok(Some(false)),
+            Err(error) => return Err(error),
+        };
+        if run.depth > MAX_DEPTH {
+            return Ok(None);
+        }
+        run.agent_id
+    } else {
+        if session_depth(c, session_id)? >= MAX_DEPTH {
+            return Ok(None);
+        }
+        target["agent_id"].as_str().unwrap_or("").to_string()
+    };
+    Ok(policy.allows_defined(c, &id)?.then_some(policy.needs_approval))
 }
 
 fn last_assistant_text(c: &Connection, turn_id: &str) -> ApiResult<Option<String>> {
@@ -214,6 +233,10 @@ fn tool_err(e: ApiError) -> ToolError {
         "not_found" => "not_found",
         "busy" => "busy",
         "limit" => "limit",
+        "delegation_disabled" => "delegation_disabled",
+        "approval_revoked" => "approval_revoked",
+        "cancelled" => "cancelled",
+        "disabled" => "disabled",
         _ => "agent_failed",
     };
     ToolError::new(code, e.message)
@@ -223,6 +246,8 @@ fn tool_err(e: ApiError) -> ToolError {
 #[allow(clippy::too_many_arguments)]
 fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str, parent_turn_id: &str, parent_call_id: &str, agent_id: &str, brief: &str) -> ApiResult<AgentRun> {
     let parent = crate::sessions::get_active(tx, parent_session_id)?;
+    // 승인 후 실행 claim과 이 transaction 사이의 철회도 새 자식 생성 전에 재검사한다.
+    crate::approvals::check_running_execution(tx, parent_call_id)?;
     let depth = session_depth(tx, parent_session_id)? + 1;
     if depth > MAX_DEPTH {
         return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "limit", format!("자식 에이전트는 {MAX_DEPTH}단계까지만 만들 수 있습니다")));
@@ -269,6 +294,7 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
 /// send: 끝난 run에 후속 지시. 실행 중이면 거부(이중 실행 금지).
 fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str, parent_turn_id: Option<&str>, parent_call_id: &str) -> ApiResult<AgentRun> {
     let run = get(tx, run_id)?;
+    crate::approvals::check_running_execution(tx, parent_call_id)?;
     if run.status == "running" {
         return Err(ApiError::busy("자식 작업이 아직 실행 중입니다. wait로 기다리거나 cancel 후 다시 지시하세요"));
     }
