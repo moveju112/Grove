@@ -29,9 +29,29 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             await expect(dialog.getByRole("list", { name: "대화 프로젝트 선택" })).toBeVisible();
             await dialog.getByRole("button", { name: "취소", exact: true }).focus();
             await page.keyboard.press("Tab");
+            const focusState = await dialog.evaluate((node) => ({
+                open: (node as HTMLDialogElement).open, modal: node.matches(":modal"),
+                activeTag: document.activeElement?.tagName, activeLabel: document.activeElement?.getAttribute("aria-label"),
+            }));
+            expect(await dialog.evaluate((node) => node.contains(document.activeElement)), JSON.stringify(focusState)).toBe(true);
+            const firstProject = dialog.getByRole("button", { name: a.name, exact: true });
+            await expect(firstProject).toBeFocused();
+            await page.keyboard.press("Shift+Tab");
+            await expect(dialog.getByRole("button", { name: "취소", exact: true })).toBeFocused();
             expect(await dialog.evaluate((node) => node.contains(document.activeElement))).toBe(true);
             await page.keyboard.press("Escape");
             await expect(dialog).toHaveCount(0);
+            await expect(entry).toBeFocused();
+            await entry.click();
+            await dialog.getByRole("button", { name: "취소", exact: true }).click();
+            await expect(dialog).toHaveCount(0);
+            await expect(entry).toBeFocused();
+            await entry.click();
+            await dialog.getByRole("button", { name: "프로젝트 추가", exact: true }).click();
+            const addDialog = page.getByRole("dialog", { name: "프로젝트 추가", exact: true });
+            await expect(addDialog.getByLabel("폴더 경로")).toBeFocused();
+            await addDialog.getByRole("button", { name: "취소", exact: true }).click();
+            await expect(addDialog).toHaveCount(0);
             await expect(entry).toBeFocused();
 
             const created: string[] = [];
@@ -101,7 +121,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             await expect(project.getByTestId("send-unsure")).toBeVisible();
             const before = await apiCall<SessionPage>("GET", `/projects/${a.id}/sessions?q=${encodeURIComponent(text)}`);
             expect(before.items.filter((session) => session.title === text)).toHaveLength(1);
-            await twice(project.getByRole("button", { name: "원래 요청 결과 확인", exact: true }));
+            await twice(project.getByRole("button", { name: "같은 요청 확인", exact: true }));
             await expect(page.getByTestId("session-view").filter({ hasText: text }).getByTestId("msg-user").filter({ hasText: text })).toHaveCount(1);
             expect(keys).toHaveLength(2);
             expect(keys[0]).toBeTruthy();
