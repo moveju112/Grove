@@ -51,9 +51,9 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 21 | blocked · 후속 종료、tip `d369ef8` | 공유 환경 복구 후 typecheck·Vitest 12개·E2E 4개 통과、기존 Rust 23개 근거 재사용。inline TOML parser 승인/재사용 parser 제공이 해제 조건이며 RESOURCE-018 전체 완료는 아님。기존 error retry count=1 유지 |
 | 22 | ready · `30a5f785` 후속 통합·인수 완료 | 원래 담당이 native modal Tab 이탈을 재현·수정, 기능 E2E 8개 통과. 통합 공통 경계 포함 E2E 16개·Rust 4개·타입 통과. 27의 향후 PWA 결합은 27 담당의 남은 인수로 보존 |
 | 27 | needs-continuation · 기존 세션 후속 접수、실행 중 | 22 `e28dbdf`를 27 branch의 `8da340d`에 동기화한 뒤 기존 세션 `dd2a07fa-fd60-4bfe-ab70-0d3ded54d983`에 한 번 접수。개발 fast=false 명시·재조회 확인。최신 원본 COMMON·27 소유 범위·유효 근거 보존과 structured handoff를 전달했으며 실제 구현·검증 완료는 미확인 |
-| 31 | 기존 세션 브라우저 인수 후속 한 번 접수 | `442e020`의 `work/31.md`에 4개 정확한 spec·자기 결함 수정 배정. 기존 Rust 42개·웹 근거 보존, fast=false 명시·재조회. `status=sent`이며 완료 확인은 아님 |
+| 31 | ready · `997c061` 후속 통합·Linux 인수 완료 | 기존 Rust 42개·웹 근거 보존, 기능 E2E 14개 통과. 통합 Rust 8개·타입·E2E 5개 통과. Windows/macOS 실측·향후 hook 결합은 SETTINGS-011과 이월에 보존 |
 | 33 | 기존 세션 브라우저 인수 후속 한 번 접수 | `442e020`의 `work/33.md`에 model-fallback spec·자기 결함 수정 배정. 기존 Rust·웹 근거 보존, fast=false 명시·재조회. `status=sent`이며 완료 확인은 아님 |
-| 29 | 기존 세션 후속 배정 · 접수 전 상태 재확인 | `work/29.md`에 hook-execution/hooks E2E·자기 결함 수정 배정. 기존 근거·미지원 이벤트/플랫폼 유지. 슬롯·idle·clean·fast=false 확인 후 한 번 접수 |
+| 29 | 기존 세션 브라우저 인수 후속 한 번 접수 | `35f0baf`의 `work/29.md`에 hook-execution/hooks E2E·자기 결함 수정 배정. 슬롯·idle·clean·fast=false 명시/재조회 뒤 기존 세션에 `status=sent`. 실제 완료 확인은 아님 |
 | 25 | 검증 후속 슬롯 대기 | 구현·선택 Rust/웹 검사는 끝났고 update-settings E2E 4개는 미실행. 기존 오류 retry는 반복하지 않으며 다음 idle 후속은 정확한 spec 소유 배정·슬롯 확인 뒤 진행 |
 
 ## 현재 통합 인수
@@ -62,6 +62,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 - 근거는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_2d71780d.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_1ec03650.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3cdb03b6.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3bf22535.stdout`와 같은 절대 경로의 stderr 로그다. 총 38개 선택 E2E 중 서로 다른 37개 통과·1개 실패이며, 마지막 미실행 1개는 별도 실행해 통과했다. 전체 선택 명령의 성공으로 바꾸지 않는다.
 - 미해결 설정 직접 링크는 `SETTINGS-021`을 다시 열었다. Settings/ScopedSettings는 이번 22·28·30 통합 diff에서 바뀌지 않았지만 원인·통합 인과는 미확정이다. 관련 없는 스킬 인수·정리는 진행하고, 30의 전체 UI 통합 완료 판단은 이 공통 경계 조사와 함께 보존한다. 22의 focus 실패는 아래 후속 인수에서 해소됐다.
 - 후속 묶음 22·32는 `442e020` 입력에서 Rust compaction_details 4개·typecheck·E2E 16개가 통과했다. 생성 dialog 넓은/좁은 화면·응답 유실, 압축 상세·원문 이동, sidebar·프로젝트 복구·responsive 공통 경계를 인수했다. 코드 변경 없는 기존 기능 검사 근거는 재사용했다. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_70163db4.stdout`와 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_70163db4.stderr`. 이전 focus 실패는 해소됐고 설정 직접 링크 실패는 별개로 유지한다. 22·32의 코드·RESULT·TODO는 원본에 보존했으며 정리 전 정확한 workspace·종료·clean·ancestry를 대조했다.
+- 이어 완료된 31은 `291ec83` 통합 입력에서 exec_cwd Rust 8개·typecheck·exec-cwd/exec-settings E2E 5개가 통과했다. 기능 workspace의 유효 Rust 42개·Vitest 3개·브라우저 14개 근거를 재사용했다. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_8c76a313.stdout`와 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_8c76a313.stderr`. Windows/macOS 미검증으로 SETTINGS-011은 체크하지 않고, 29 통합 시 일반 cwd와 hook 계획 분리 인수도 보존한다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
@@ -116,7 +117,7 @@ b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01
 | 14 | `WEB-007`·`WEB-009`·`WEB-016` 인증/나머지 작업 경계·offline cold start·다중 탭·저장소 인수 | `work/RESULT-14.md`, `af0ad28` | 27 |
 | 20 | `FILEUI-007` 실제 GUI 편집기·Windows/macOS·서비스 세션 검증 | `work/RESULT-20.md` | 보류: 해당 플랫폼·GUI 환경 필요 |
 | 23 | `PC-005` 설치형 standalone PWA native 창 수명 확인 | `work/RESULT-23.md` | 보류: 설치형 PWA 환경 필요 |
-| 24 | `SETTINGS-011` 기본 cwd의 실제 shell/task 계획 연결·승인 target 고정 | `work/RESULT-24.md` | 31; Windows/macOS 실측은 별도 미검증 유지 |
+| 24·31 | `SETTINGS-011` Windows/macOS 실행·경계·복구 실측, 29 hook 결합 인수 | `work/RESULT-24.md`, `work/RESULT-31.md` | Linux 연결·브라우저 인수 완료. 플랫폼 실측은 해당 OS 환경 필요; hook 분리는 29 통합에서 인수 |
 | 26 | `WEB-010` Safari/Firefox·iOS/Android·실제 비보안 origin 권한 동작 | `work/RESULT-26.md` | 보류: 해당 브라우저·실기기 환경 필요 |
 
 ## 통합 담당의 완료 절차
