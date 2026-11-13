@@ -26,7 +26,7 @@ test("hook 추가·수정·비활성화·삭제는 미실행이며 명령의 비
         await panel.getByLabel("hook 이벤트", { exact: true }).selectOption("PreToolUse");
         await panel.getByLabel("hook matcher", { exact: true }).fill("shell*");
         await panel.getByLabel("hook 명령", { exact: true }).fill("TOKEN=hooks-ui-fixture-private printf not-run");
-        await panel.getByLabel("hook 활성 설정 (실행 안 됨)", { exact: true }).check();
+        await panel.getByLabel("hook 활성 설정 (별도 승인 필요)", { exact: true }).check();
         await panel.getByRole("button", { name: "hook 설정 저장", exact: true }).click();
         const row = panel.getByTestId("hook-row").filter({ hasText: prefix });
         await expect(row).toContainText("revision 1");
@@ -43,7 +43,7 @@ test("hook 추가·수정·비활성화·삭제는 미실행이며 명령의 비
         await expect(row).toContainText("revision 3");
         await page.reload();
         await page.getByLabel("설정 검색").last().fill("hook");
-        await expect(row).toContainText("아직 실행되지 않음");
+        await expect(row).toContainText("이벤트 발생 후 개별 승인 필요");
         await row.getByRole("button", { name: "hook 삭제 확인", exact: true }).click();
         await panel.getByRole("button", { name: "이 hook 삭제", exact: true }).click();
         await expect(row).toHaveCount(0);
