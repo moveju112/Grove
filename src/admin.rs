@@ -48,6 +48,55 @@ pub async fn readiness(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Js
     })))
 }
 
+/// 일반 기기는 조회만 가능하다. updater의 소유자 전용 readiness 경계는 유지한다.
+pub async fn update_settings(State(app): State<App>, p: Principal) -> ApiResult<Json<Value>> {
+    let now = app.now();
+    let value = app.db.call(move |c| {
+        let b = busy(c, &now)?;
+        let idle = b.as_object().is_some_and(|o| o.values().all(|v| v.as_i64() == Some(0)));
+        Ok(json!({
+            "server": { "version": crate::VERSION, "protocol": crate::PROTOCOL_VERSION, "schema": crate::store::MIGRATIONS.len() },
+            "settings": crate::update::settings(c)?,
+            "last_check": crate::update::last_check(c)?,
+            "can_manage": p.is_owner,
+            "readiness": { "idle": idle, "busy": b },
+            "automatic_application": "not_enabled",
+        }))
+    }).await?;
+    Ok(Json(value))
+}
+
+pub async fn save_update_settings(
+    State(app): State<App>, Owner(p): Owner, headers: axum::http::HeaderMap,
+    Json(request): Json<crate::update::SaveUpdateSettings>,
+) -> ApiResult<Response> {
+    let hash = crate::idem::body_hash("server_update.settings", &serde_json::to_value(&request)?);
+    let actor = p.clone();
+    crate::idem::run(&app, &p, &headers, &hash, move |tx, now| {
+        let settings = crate::update::save_settings(tx, request, now)?;
+        crate::audit::record(tx, now, &actor, "server_update.settings", "server", serde_json::to_value(&settings)?)?;
+        Ok((StatusCode::OK, json!({ "settings": settings })))
+    }).await
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpdateCheckRequest {
+    pub expected_revision: i64,
+}
+
+pub async fn check_update(
+    State(app): State<App>, Owner(p): Owner, headers: axum::http::HeaderMap,
+    Json(request): Json<UpdateCheckRequest>,
+) -> ApiResult<Response> {
+    let hash = crate::idem::body_hash("server_update.check", &serde_json::to_value(&request)?);
+    let data_dir = app.cfg.data_dir.clone();
+    crate::idem::run(&app, &p, &headers, &hash, move |tx, now| {
+        let result = crate::update::check_settings(tx, &data_dir, request.expected_revision, now)?;
+        Ok((StatusCode::OK, json!({ "last_check": result })))
+    }).await
+}
+
 /// 서버 자원 상태(OBS-004). 소유자 전용 조회이며 상태를 바꾸지 않는다.
 /// CPU·메모리는 Linux `/proc/self`에서 읽고, 다른 OS는 `null`(측정 불가)로 둔다.
 pub async fn metrics(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Json<Value>> {

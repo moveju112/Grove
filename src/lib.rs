@@ -219,6 +219,8 @@ pub fn router(app: App) -> Router {
         .route("/usage", get(usage::get_usage))
         .route("/usage/capacity", get(usage::capacity))
         .route("/admin/update-readiness", get(admin::readiness))
+        .route("/updates/settings", get(admin::update_settings).put(admin::save_update_settings))
+        .route("/updates/check", post(admin::check_update))
         .route("/admin/shutdown", post(admin::shutdown))
         .route("/admin/metrics", get(admin::metrics))
         .route("/admin/diagnostics", post(admin::diagnostics))
