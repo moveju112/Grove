@@ -28,13 +28,9 @@
 |---|---|---|
 | 00 | parallel/b01-source-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-00-source-settings |
 | 01 | parallel/b01-skills | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-01-skills |
-| 02 | parallel/b01-web-base | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-02-web-base |
-| 03 | parallel/b01-assistant-identity | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-03-assistant-identity |
 | 04 | parallel/b01-image-read | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-04-image-read |
-| 05 | parallel/b01-usage-ui | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-05-usage-ui |
 | 07 | parallel/b01-linux-service | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-07-linux-service |
 | 08 | parallel/b01-web-fetch | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-08-web-fetch |
-| 09 | parallel/b01-approval-ui | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-09-approval-ui |
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
@@ -43,10 +39,10 @@
 
 | 번호 | 작업 브랜치·tip | 통합 SHA | RESULT 경로·검증 근거 | workspace ID·절대 경로 | 정리 상태 | 보충 번호 |
 |---|---|---|---|---|---|---|
-| 02 | `parallel/b01-web-base` · `7de966564c3d426f2a90e6157c5874157318b137` | `53f634b` | `work/RESULT-02.md`; 서버 2개, base/worker/Pages 단위 52개, 루트·하위 경로 E2E 4개 및 기존 PWA 회귀 통과 | `wks_e675c092ea9c3feb` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-02-web-base` | 보존·clean·편집 종료 확인, 정리 대기 | 미배정 |
-| 03 | `parallel/b01-assistant-identity` · `df94a3056ab58759c488aaecc198f4b7a79f0c14` | `53f634b` | `work/RESULT-03.md`; 단위 50개, identity E2E 3개 및 기존 봇 회귀 통과 | `wks_df7a705fd9c77bdb` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-03-assistant-identity` | 보존·clean·편집 종료 확인, 정리 대기 | 미배정 |
-| 05 | `parallel/b01-usage-ui` · `fd1e3bf4fbd754b2fe6bd963f049042cf9d9e17f` | `53f634b` | `work/RESULT-05.md`; 단위 7개, 사용량 E2E 3개 통과 | `wks_4eb1e336ad21d6c9` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-05-usage-ui` | 보존·clean·편집 종료 확인, 정리 대기 | 미배정 |
-| 09 | `parallel/b01-approval-ui` · `ab5413d2ed6fcd1e543d992bbc7872818d5d9546` | `53f634b` | `work/RESULT-09.md`; 단위 27개, 승인 E2E 4개 및 workspace 회귀 통과 | `wks_424ce685e3fd8e91` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-09-approval-ui` | 보존·clean·편집 종료 확인, 정리 대기 | 미배정 |
+| 02 | `parallel/b01-web-base` · `7de966564c3d426f2a90e6157c5874157318b137` | `53f634b` | `work/RESULT-02.md`; 서버 2개, base/worker/Pages 단위 52개, 루트·하위 경로 E2E 4개 및 기존 PWA 회귀 통과 | `wks_e675c092ea9c3feb` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-02-web-base` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
+| 03 | `parallel/b01-assistant-identity` · `df94a3056ab58759c488aaecc198f4b7a79f0c14` | `53f634b` | `work/RESULT-03.md`; 단위 50개, identity E2E 3개 및 기존 봇 회귀 통과 | `wks_df7a705fd9c77bdb` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-03-assistant-identity` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
+| 05 | `parallel/b01-usage-ui` · `fd1e3bf4fbd754b2fe6bd963f049042cf9d9e17f` | `53f634b` | `work/RESULT-05.md`; 단위 7개, 사용량 E2E 3개 통과 | `wks_4eb1e336ad21d6c9` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-05-usage-ui` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
+| 09 | `parallel/b01-approval-ui` · `ab5413d2ed6fcd1e543d992bbc7872818d5d9546` | `53f634b` | `work/RESULT-09.md`; 단위 27개, 승인 E2E 4개 및 workspace 회귀 통과 | `wks_424ce685e3fd8e91` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-09-approval-ui` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
 
 ## 통합 담당의 완료 절차
 1. 사용자 통합 요청 뒤 각 worktree의 RESULT와 실제 branch·SHA·diff를 확인한다. 인계 파일만 보고 성공으로 단정하지 않는다.
