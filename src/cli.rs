@@ -1,6 +1,7 @@
 //! 명령행(ARCH-007). foreground 서버와 관리 명령.
 
 use crate::config::Config;
+use crate::startup::{FailureKind, StartupError};
 use crate::util::SystemClock;
 use crate::VERSION;
 use std::net::SocketAddr;
@@ -12,6 +13,7 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
 사용법:
   grove [serve] [--listen 주소:포트] [--data-dir 경로]   foreground 서버 실행(기본)
                 [--log-file 경로]                      파일당 2MiB·보관본 3개, 이벤트당 16KiB 로그
+                [--json]                               준비·실패 안내(JSON); 시작 오류 종료 코드 10~17
   grove status [--listen 주소:포트]                      실행 중 서버 상태 확인(health)
   grove doctor [--listen 주소:포트] [--data-dir 경로]    프로세스·API 준비·인증·모델 설정을 각각 진단(문제 있으면 종료 코드 1)
   grove doctor --offline [--data-dir 경로]               DB 읽기 전용 무결성 검사·복구 안내(서버·migration·모델 호출 없음)
@@ -58,6 +60,7 @@ struct Opts {
     offline: bool,
     allow_downgrade: bool,
     ready_timeout: Option<u64>,
+    json: bool,
 }
 
 fn parse(args: &[String]) -> Result<Opts, String> {
@@ -80,7 +83,7 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             "--dry-run" => o.dry_run = true,
             "--offline" => o.offline = true,
             "--allow-downgrade" => o.allow_downgrade = true,
-            "--json" => {}
+            "--json" => o.json = true,
             s if s.starts_with("--") => return Err(format!("알 수 없는 옵션: {s}")),
             _ => o.positional.push(a.clone()),
         }
@@ -161,17 +164,23 @@ pub fn run(args: Vec<String>) -> i32 {
     let opts = match parse(&args) {
         Ok(o) => o,
         Err(e) => {
+            if args.iter().any(|a| a == "--json") && args.first().is_none_or(|a| a == "serve" || a.starts_with('-')) {
+                return print_startup_error(StartupError::new(FailureKind::Configuration, None), None, true);
+            }
             eprintln!("오류: {e}\n\n{HELP}");
             return 2;
         }
     };
     let cmd = opts.positional.first().map(String::as_str).unwrap_or("serve");
     if opts.offline && cmd != "doctor" {
+        if cmd == "serve" && opts.json {
+            return print_startup_error(StartupError::new(FailureKind::Configuration, None), None, true);
+        }
         eprintln!("--offline은 doctor에서만 사용할 수 있습니다");
         return 2;
     }
     let result = match cmd {
-        "serve" if opts.positional.len() == 1 || opts.positional.is_empty() => serve(opts),
+        "serve" if opts.positional.len() == 1 || opts.positional.is_empty() => return serve(opts),
         "token" => token(opts),
         "unlock" => unlock(opts),
         "auth" => match opts.positional.get(1).map(String::as_str) {
@@ -402,10 +411,37 @@ fn pair(opts: Opts) -> Result<(), String> {
     })
 }
 
-fn serve(opts: Opts) -> Result<(), String> {
-    let cfg = Config::from_env(opts.data_dir, opts.listen)?;
-    let file_log = opts.log_file.is_some();
-    let (writer, maintenance) = crate::logging::writer(opts.log_file.as_deref()).map_err(|e| format!("로그 준비 실패: {e}"))?;
+fn serve(opts: Opts) -> i32 {
+    let json_output = opts.json;
+    let cfg = match Config::from_env(opts.data_dir, opts.listen) {
+        Ok(cfg) => cfg,
+        Err(_) => return print_startup_error(StartupError::new(FailureKind::Configuration, None), None, json_output),
+    };
+    match serve_config(&opts.log_file, cfg.clone(), json_output) {
+        Ok(()) => 0,
+        Err(error) => print_startup_error(error, Some(&cfg), json_output),
+    }
+}
+
+fn print_startup_error(error: StartupError, cfg: Option<&Config>, json_output: bool) -> i32 {
+    if json_output {
+        println!("{}", error.report(cfg));
+    } else {
+        eprintln!("시작 실패: {error}");
+        if let Some(cfg) = cfg {
+            eprintln!("데이터 위치: {}\n접속 주소: {}", cfg.data_dir.display(), cfg.listen);
+            eprintln!("owner token 파일: {}", cfg.data_dir.join("owner-token").display());
+        }
+    }
+    error.exit_code()
+}
+
+fn serve_config(log_file: &Option<PathBuf>, cfg: Config, json_output: bool) -> Result<(), StartupError> {
+    let first_start = !cfg.db_path().exists();
+    let file_log = log_file.is_some();
+    let (writer, maintenance) = crate::logging::writer(log_file.as_deref()).map_err(|e| {
+        log_file.as_deref().map(|path| StartupError::io(&e, path)).unwrap_or_else(|| StartupError::new(FailureKind::Runtime, None))
+    })?;
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("GROVE_LOG").unwrap_or_else(|_| "info".into()))
         .with_ansi(!file_log)
@@ -417,7 +453,7 @@ fn serve(opts: Opts) -> Result<(), String> {
         .enable_all()
         .max_blocking_threads(64)
         .build()
-        .map_err(|e| e.to_string())?;
+        .map_err(|_| StartupError::new(FailureKind::Runtime, None))?;
     let result = rt.block_on(async move {
         // 로그가 전혀 없는 유휴 서버에서도 보관 기간을 적용한다.
         let _maintenance = maintenance.map(|maintenance| tokio::spawn(async move {
@@ -429,11 +465,12 @@ fn serve(opts: Opts) -> Result<(), String> {
                 }
             }
         }));
-        let server = crate::server::start(cfg, Arc::new(SystemClock)).await?;
-        tracing::info!(version = VERSION, address = %server.addr, "서버 준비 완료");
+        let server = crate::server::start_with_diagnostics(cfg, Arc::new(SystemClock)).await?;
         // OS 신호 또는 관리 API 종료 요청(업데이트 도구)
         let mut exit_rx = server.app.exit_tx.subscribe();
         let mut signals = crate::server::Signals::new();
+        crate::startup::print_ready(&server.app.cfg, first_start, json_output);
+        tracing::info!(version = VERSION, address = %server.addr, "서버 준비 완료");
         let cause = tokio::select! {
             c = signals.next() => c,
             _ = exit_rx.wait_for(|v| *v) => crate::server::Shutdown::Interrupt,
@@ -442,7 +479,7 @@ fn serve(opts: Opts) -> Result<(), String> {
         tracing::info!(?cause, "서버 종료 중");
         server.stop_within(cause.connection_wait()).await;
         tracing::info!("서버 종료 완료");
-        Ok(())
+        Ok::<_, StartupError>(())
     });
     if let Err(e) = &result { tracing::error!(error = %e, "서버 실행 실패"); }
     result
