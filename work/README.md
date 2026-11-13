@@ -50,7 +50,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 46 | parallel/b02-exec-unknown | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-46-exec-unknown | `wks_82d694c284330b14` | 단발 CLI 실행 중 unknown·재조회 (`7d5a6e5` 기준, branch/HEAD/clean 확인, 미시작) |
 | 47 | parallel/b02-routine-lifecycle | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-47-routine-lifecycle | `wks_80cdf0940f759e7c` | Routine 실제 제어 수명주기 (`7d5a6e5` 기준, branch/HEAD/clean 확인, 미시작) |
 | 48 | parallel/b02-websocket-boundaries | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-48-websocket-boundaries | `wks_12fc63102b765987` | WebSocket 인증·한도·재접속 (`7d5a6e5` 기준, branch/HEAD/clean 확인, 미시작) |
-| 49 | parallel/b02-pane-draft-lifetime | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-49-pane-draft-lifetime | 생성 예정 | 분할 생성·이동 중 설정 초안 수명 (`151cbe5ad83129dac9457e628714da069d6e59f4` 검증 기준) |
+| 49 | parallel/b02-pane-draft-lifetime | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-49-pane-draft-lifetime | `wks_04a2d0337ad1e737` | 분할 생성·이동 중 설정 초안 수명 (`151cbe5ad83129dac9457e628714da069d6e59f4` 검증 기준、실제 cwd/branch/HEAD/clean 확인·미시작) |
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
