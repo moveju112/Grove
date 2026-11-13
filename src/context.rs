@@ -266,10 +266,21 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
             });
             // to_chat는 연속 user를 합치므로 마지막에 붙인 지시가 앞 user와 합쳐질 수 있다(의도대로 동작).
             let timeline: i64 = c.query_row("SELECT timeline_revision FROM sessions WHERE id = ?1", params![sid], |r| r.get(0))?;
-            Ok(Some((b, use_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks))))
+            // 실행 직전 공개 정보만 고정한다. options·endpoint·자격 정보는 기록하지 않는다.
+            let generation = json!({ "profile_name": mp.name, "protocol": rp.protocol, "model": rp.model });
+            let pricing = mp.options.get("pricing").filter(|p| p.is_object()).map(|p| {
+                let mut public = serde_json::Map::new();
+                for key in ["currency", "version", "input_per_mtok", "output_per_mtok", "cache_read_per_mtok", "cache_write_per_mtok"] {
+                    if let Some(value) = p.get(key) {
+                        public.insert(key.into(), value.clone());
+                    }
+                }
+                Value::Object(public)
+            });
+            Ok(Some((b, use_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks), generation, pricing)))
         })
         .await?;
-    let Some((b, used_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks))) = prepared else { return Ok(None) };
+    let Some((b, used_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks), generation, pricing)) = prepared else { return Ok(None) };
     let req = ModelRequest { system: SUMMARY_SYSTEM.into(), messages: msgs, tools: vec![], max_tokens: Some(max_tokens), temperature: None, effort: None, cli: None };
     let permit = crate::model_limits::auxiliary(app, session_id, &rp, cancel).await?;
     let out = provider::stream(&rp, &req, cancel, &mut |_| {}).await;
@@ -279,6 +290,12 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
         Ok(o) if !o.text.trim().is_empty() => {
             let summary = o.text.trim().to_string();
             let after = (summary.chars().count() as u64).div_ceil(4);
+            // 현재 provider 계약은 미보고 input/output을 0으로 정규화한다.
+            // 어느 쪽이든 0이면 부분 미보고와 구분할 수 없어 무료 실행으로 단정하지 않는다.
+            let usage_known = o.usage.input_tokens > 0 && o.usage.output_tokens > 0;
+            let estimated_cost = pricing.as_ref().filter(|_| usage_known)
+                .map(|p| crate::usage::estimate_cost(&json!(o.usage), p));
+            let cost_status = if !usage_known { "usage_unreported_or_zero" } else if pricing.is_none() { "missing_pricing" } else { "estimated" };
             app.db
                 .call(move |c| {
                     let tx = c.transaction()?;
@@ -304,6 +321,7 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
                     let content = json!({
                         "type": "compaction", "upto_seq": b, "summary": summary, "auto": auto, "profile_id": used_profile,
                         "usage": o.usage, "estimated_before": before, "estimated_after": after,
+                        "generation": generation, "pricing": pricing, "estimated_cost": estimated_cost, "cost_status": cost_status,
                         "source": { "from_seq": from, "upto_seq": b, "messages": count, "sha256": source, "timeline_revision": timeline },
                     });
                     let m = crate::sessions::append_message(&tx, &now, &sid, "note", &content, None, None)?;
