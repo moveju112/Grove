@@ -4,17 +4,10 @@ import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, rawGet } from "../api/client";
 import { TerminalCapture } from "./TerminalCapture";
+import { guardComposition, NO_MODIFIERS, TerminalInput, type Modifiers } from "./terminal/input";
+import { TerminalKeys } from "./terminal/TerminalKeys";
 
 type TerminalRow = { id: string; name: string; status: "running" | "exited" | "lost"; exit_code: number | null; reason: string | null; revision: number };
-
-const KEYS: [string, string][] = [
-    ["Esc", "\x1b"],
-    ["Tab", "\t"],
-    ["↑", "\x1b[A"],
-    ["↓", "\x1b[B"],
-    ["←", "\x1b[D"],
-    ["→", "\x1b[C"],
-];
 
 /// 터미널 탭. 실행 중이면 일회용 티켓으로 WebSocket에 붙고, 끝났으면 저장된 화면을 읽기 전용으로 보여 준다.
 export function TerminalView({ projectId, terminalId }: { projectId: string; terminalId: string }) {
@@ -24,10 +17,9 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
     const [conn, setConn] = useState<"connecting" | "open" | "closed" | "readonly" | "missing" | "error">("connecting");
     const [retry, setRetry] = useState(0);
     const [err, setErr] = useState<string | null>(null);
-    const [ctrl, setCtrl] = useState(false);
-    const [alt, setAlt] = useState(false);
-    const mods = useRef({ ctrl: false, alt: false });
-    mods.current = { ctrl, alt };
+    const [modifiers, setModifiers] = useState<Modifiers>(NO_MODIFIERS);
+    const input = useRef<TerminalInput | null>(null);
+    const terminal = useRef<XTerm | null>(null);
 
     const send = (data: string) => {
         const s = sock.current;
@@ -40,6 +32,22 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
         term.loadAddon(fit);
         term.open(host.current!);
         fit.fit();
+        terminal.current = term;
+        const keyboard = new TerminalInput(send, setModifiers);
+        input.current = keyboard;
+        keyboard.reset();
+        const removeCompositionGuard = guardComposition(host.current!);
+        const paste = (event: ClipboardEvent) => {
+            if (!event.clipboardData) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+            if (term.options.disableStdin) return;
+            keyboard.paste(event.clipboardData.getData("text/plain"),
+                () => confirm("여러 줄을 붙여넣으면 명령이 실행될 수 있어요. 붙여넣을까요?"),
+                (text) => term.paste(text));
+        };
+        const element = host.current!;
+        element.addEventListener("paste", paste, true);
         let closed = false;
         const controller = new AbortController();
         let attempt = 0;
@@ -47,25 +55,12 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
         const failed = (e: unknown) => {
             if (closed) return;
             term.options.disableStdin = true;
+            keyboard.reset();
             setErr(e instanceof ApiError ? e.message : "연결 실패");
             setConn("error");
         };
 
-        // 모바일 보조키(Ctrl/Alt)를 다음 입력 한 글자에 적용한다.
-        term.onData((d) => {
-            let out = d;
-            const m = mods.current;
-            if (m.ctrl && d.length === 1) {
-                const c = d.toUpperCase().charCodeAt(0);
-                if (c >= 64 && c <= 95) out = String.fromCharCode(c - 64);
-                setCtrl(false);
-            }
-            if (m.alt) {
-                out = "\x1b" + out;
-                setAlt(false);
-            }
-            send(out);
-        });
+        term.onData((data) => keyboard.data(data));
         const resize = () => {
             fit.fit();
             const s = sock.current;
@@ -144,6 +139,7 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
                 if (sock.current !== ws || closed) return;
                 sock.current = null;
                 term.options.disableStdin = true;
+                keyboard.reset();
                 setConn("closed");
                 // 끊기면 잠시 뒤 다시 붙는다(서버가 끝났으면 저장 화면으로 바뀐다).
                 attempt += 1;
@@ -156,6 +152,10 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             controller.abort();
             if (reconnect !== null) clearTimeout(reconnect);
             ro.disconnect();
+            element.removeEventListener("paste", paste, true);
+            removeCompositionGuard();
+            input.current = null;
+            terminal.current = null;
             sock.current?.close();
             sock.current = null;
             term.dispose();
@@ -182,13 +182,10 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             <div className="term-host" ref={host} />
             <TerminalCapture key={terminalId} terminalId={terminalId} enabled={conn === "open" || conn === "readonly"} />
             {conn === "open" && (
-                <div className="term-keys" aria-label="보조 키">
-                    {KEYS.map(([label, seq]) => (
-                        <button key={label} className="chip" onClick={() => send(seq)}>{label}</button>
-                    ))}
-                    <button className={ctrl ? "chip on" : "chip"} aria-pressed={ctrl} onClick={() => setCtrl(!ctrl)}>Ctrl</button>
-                    <button className={alt ? "chip on" : "chip"} aria-pressed={alt} onClick={() => setAlt(!alt)}>Alt</button>
-                </div>
+                <TerminalKeys modifiers={modifiers}
+                    onToggle={(key) => { input.current?.toggle(key); terminal.current?.focus(); }}
+                    onReset={() => { input.current?.reset(); terminal.current?.focus(); }}
+                    onKey={(data) => { input.current?.data(data); terminal.current?.focus(); }} />
             )}
         </div>
     );
