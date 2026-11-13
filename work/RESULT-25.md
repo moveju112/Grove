@@ -1,11 +1,16 @@
 # b02 / 25 — SETTINGS-016 서버 업데이트 설정
 
+<!-- grove-handoff:v1
+{"state":"ready","remaining":[],"blockers":[],"integration_checks":[]}
+-->
+
 ## 식별·상태
 
 - Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings`
 - Branch: `parallel/b02-update-settings`
 - 공통 기준: `7b3949d24e420d09e6e4cde29405414b2d99253a`
-- 상태: 구현 종료, 통합 E2E 검증 대기. 런타임 E2E가 미실행이므로 SETTINGS-016 전체 완료 판정은 보류한다.
+- 재개 기준: 기능 커밋 `fbbd6aa2545b2399483416cab5aecbfb901a5802`, 원본 배정 갱신 `4439295801693d17c7d150fb126eb364fbd7593c`의 25번 문서와 live COMMON.
+- 상태: 소유 범위 구현·연결·선택 브라우저 인수 완료(`ready`). 실행 가능한 잔여·blocker는 없다. 설정 저장·표시와 로컬 확인의 완료이며 실제 자동 설치 완료를 뜻하지 않는다.
 - 설치·실서비스 재시작·배포·원격 릴리스 조회·의존성 변경·TODO 수정은 구현에 포함하지 않았다. TTS·마이크 차단·STT 관련 코드는 변경하지 않았다.
 
 ## 제공 동작·소유 변경
@@ -20,7 +25,7 @@
 | `web/app/components/update/UpdateSettings.tsx` | 설정·버전·결과·보류·권한 화면과 동일 키 재확인 |
 | `web/app/components/update/UpdateSettings.test.ts` | 표시·권한·응답 유실 분류 단위 시험 7개 |
 | `web/app/components/Settings.tsx` | 서버 메뉴·검색 registry 항목과 화면 mount |
-| `web/e2e/update-settings.spec.ts` | 로컬 서명 fixture·읽기 전용·보류 fixture·응답 유실/충돌 시나리오 4개. 작성 및 typecheck만 완료 |
+| `web/e2e/update-settings.spec.ts` | 로컬 서명 fixture·읽기 전용·보류 fixture·응답 유실/충돌 시나리오 4개. 지정된 브라우저 인수 실행으로 모두 통과 |
 | `work/RESULT-25.md` | 이 인계 |
 
 ## 공개 계약·연결
@@ -34,7 +39,7 @@
 - 확인 실패 코드는 `local_source_unavailable`, `channel_source_unavailable`, `local_source_required`, `manifest_check_failed`다. 파일 경로·manifest 원문·키·내부 오류는 응답에 노출하지 않는다.
 - `UpdateSettings()`는 실제 API를 연결한다. `UpdateSettingsPanel({data, blocked, onSave, onCheck})`는 typed props/callback으로 동작한다. `CheckResult({check})`, `updateResultUnknown(error)`도 export한다. 관련 타입은 `web/app/api/updateSettings.ts`에 있다.
 - 저장 응답 이후 GET까지 완료해야 저장 확인을 표시한다. 응답 유실·timeout·서버 오류·확인 GET 실패는 원래 키와 본문을 보존하여 같은 요청으로 복구한다. revision 거부는 초안을 유지한다.
-- 지정된 route·Settings mount 연결은 완료했다. 추가 공통 연결은 필요하지 않다. 공통 생성 타입 registry가 필요하다면 통합 담당이 기존 생성기 소유 범위에서 연결할 수 있으며, 현재 전용 타입은 typecheck에 포함된다.
+- 지정된 route·Settings mount 연결은 완료했다. 추가 공통 연결은 필요하지 않다. 전용 API 타입은 실제 컴포넌트에서 import하며 typecheck에 포함된다.
 
 ## 로컬 확인 소스·실행 경계
 
@@ -59,6 +64,10 @@
 
 ## 실제 검증
 
+### 기존 유효 근거 보존
+
+아래 Rust·웹 근거는 `fbbd6aa`의 코드·시험 입력 기준이다. 이번 브라우저 후속에서는 제품 코드·시험·환경 설정 파일을 수정하지 않았고 인계 문서만 갱신하므로 통과 근거를 재사용했으며 반복 실행하지 않았다.
+
 | 명령 | 입력·결과 |
 | --- | --- |
 | `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust update_settings access` | update_settings 5개·access 9개 통과, exit 0 |
@@ -70,7 +79,36 @@
 - 최종 웹 검사 호출 한 번은 실행 시작 전 `atomic lock timeout after 2000ms`로 실패했다. 다른 작업 완료 후 한 번 재시도한 최종 명령이 통과했다. 이를 시험 실패로 숨기거나 통과 수에 더하지 않았다.
 - 공통 문서의 경로를 source했지만 `scripts/build.py::env()`가 worktree의 `.dev` 경로를 다시 지정했다. 첫 Rust 검사에서 Rust 1.93.0 도구 5개와 Cargo 의존성 다운로드가 자동 발생했다. 설치·복사를 의도적으로 실행하지 않았고 dependency/lockfile은 변경하지 않았다. 이 환경 동작은 소유 범위 밖이므로 스크립트를 수정하지 않았다.
 - 웹은 공통 문서에 따라 메인 node_modules를 symlink해 사용했으며 npm 설치는 하지 않았다.
-- E2E·전체 회귀·release·패키징은 COMMON의 독립 구현 규칙에 따라 실행하지 않았다. E2E 시나리오의 런타임 성공은 주장하지 않는다. Windows·ARM64 실기기 검증도 미실행이다.
+- 위 취소 반환·lock timeout·자동 다운로드는 최초 구현 당시 이력이다. 이후 브라우저 후속의 새로운 실패·설치가 아니며 기존 시스템 오류 retry count=1을 초기화하거나 재사용하지 않았다.
+- 최초 구현에서는 당시 COMMON에 따라 E2E를 실행하지 않았다. 이번 후속 배정으로 정확한 spec의 실행 권한을 받아 아래 검증을 완료했다. 전체 회귀·release·패키징·Windows/ARM64 실기기 검증은 여전히 미실행이며 이번 인수 범위에 포함되지 않는다.
+
+### 후속 브라우저 인수
+
+실제 실행 명령:
+
+```bash
+source /data/project/paseodog_opus/.envrc.dev && CARGO_TARGET_DIR=/data/project/paseodog_opus/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV = "/data/project/paseodog_opus/.dev"; build.main(["test", "--e2e", "e2e/update-settings.spec.ts"])'
+```
+
+- 현 worktree의 기존 `scripts/build.py` 진입점을 그대로 실행하되, 실행 시 `DEV`만 공용 툴체인 경로로 지정했다. source만 하면 실행기가 다시 로컬 `.dev`를 지정하는 기존 문제를 회피한 것이며 runner 소스·분기·검사·포트는 바꾸지 않았다.
+- 공유 target·jobs=2를 사용했고 새 설치·다운로드를 막기 위해 Cargo offline·rustup 자동 설치 금지를 지정했다. 서버 빌드부터 웹 빌드·브라우저 종료까지 전체 명령에 같은 `grove-rust-check.lock`을 적용했다.
+- `scripts/build.py`가 이번 코드로 만든 공유 target의 debug 실행 파일을 E2E에 명시적으로 전달했다. 별도 브랜치 동기화·다른 검사 중단·포트 변경·실서비스 재시작·원격 릴리스 조회는 없었다.
+- 개발 런타임 fast=false와 다른 모델·런타임 설정은 변경하지 않았다. 실행기의 선택 E2E fast 정책은 기존 기본값 그대로이며 시스템 오류 retry count와 별개다.
+
+| 단계 | wall / CPU / peak RSS | 결과 |
+| --- | --- | --- |
+| server debug build | 124.07s / 194.23s / 2096.3MB | exit 0 |
+| web build | 3.5s / 4.92s / 525.6MB | exit 0 |
+| E2E | 5.23s / 4.67s / 264.6MB | desktop 4개 모두 통과, exit 0 |
+
+| 브라우저 시나리오 | 검증한 동작 |
+| --- | --- |
+| 버전·채널·결과·PWA 구분 | 실제 서버 버전·schema 표시, 알림만 기본값, 로컬 서명 manifest의 새 버전·최신·실패, beta/patch 저장·재조회·새로고침 보존 |
+| 일반 기기 읽기 전용 | 실제 기기 인증 GET 200, 설정 PUT/확인 POST 403, 브라우저 필드·확인 버튼 disabled |
+| 작업 보류 fixture | 로컬 readiness 응답 fixture의 실행 턴·작업·승인 대기 표시. 실제 작업 중단·설치를 하지 않음 |
+| 저장 응답 유실·충돌 | 서버에서 PUT을 완료한 뒤 전송을 abort하여 응답 유실 재현, 같은 요청 재확인 후 revision 1회 증가, 다른 요청의 revision 충돌에서 초안 보존 |
+
+첫 실행에서 4개 모두 통과했고 자기 결함 수정이나 재실행은 필요하지 않았다. 빌드에는 기존 chunk 500kB 초과 경고가 있었지만 모든 단계 exit 0이며 이번 소유 범위의 실패는 아니다. 세션 로그는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_da25ba81.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_da25ba81.stderr`다.
 
 ## SETTINGS-016 충족 근거·남은 요구
 
@@ -81,8 +119,10 @@
 | 마지막 확인 새 버전·최신·실패 | 로컬 서명 fixture 통합 시험·화면 단위 시험 통과. 채널 불일치·소스 누락·네트워크 URL 거부·결과 영속화도 확인 |
 | 소유자 변경·다른 기기 읽기 전용 | GET 허용, PUT/POST 403, 비인증 401 통합 시험·화면 disabled 표시 시험 통과 |
 | 활성 작업 유예·PWA 분리 | 기존 readiness 수 일치·확인 후 작업 유지 통합 시험, 화면 보류·PWA 분리 단위 시험 통과 |
-| E2E 완료 조건 | 4개 시나리오 작성·typecheck 완료, 런타임 미실행. 이 요구는 아직 충족 판정하지 않음 |
+| E2E 완료 조건 | 정확한 지정 spec의 desktop 4개 통과. 버전·채널·결과·권한·응답 유실 복구를 실제 브라우저에서 확인 |
 
 ## 다음 통합 단계·blocker
 
-구현 blocker는 없다. 통합 담당이 공통 E2E 자원을 확보해 `python3 scripts/build.py test --e2e e2e/update-settings.spec.ts`를 실행해야 한다. 그 전까지 SETTINGS-016 전체 완료·TODO 체크는 보류한다. 로컬 확인 소스는 운영자가 준비해야 하며, 없을 때의 실패 표시는 의도한 동작이다. 빌드 실행기의 worktree `.dev` 재지정·자동 다운로드도 통합 환경에서 확인할 사항이다.
+blocker·실행 가능한 소유 잔여·필수 연결 누락은 없다. 브라우저 후속에서는 제품 코드·E2E·Settings 상위 로직을 수정하지 않았으므로 33 Profiles·37 직접 링크·36 MCP 소유권을 건드리지 않았다. 인계 문서 갱신만 관련 로컬 커밋으로 남긴다.
+
+로컬 확인 소스는 운영자가 준비해야 하며, 없을 때의 실패 표시는 의도한 동작이다. 자동 적용 범위는 알림만 기본값의 정책 저장이며 실제 알림 발송·자동 설치·서비스 재시작은 이 작업의 비목표다. 이후 통합·TODO 판정은 메인 소유이며 여기서는 TODO 체크·merge·workspace 정리를 하지 않는다.
