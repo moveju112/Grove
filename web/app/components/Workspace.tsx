@@ -17,7 +17,6 @@ import { RecentPanel } from "./RecentPanel";
 import { RecoveryPanel } from "./RecoveryPanel";
 import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
-import { Hosts } from "./Hosts";
 import { Icon } from "./icons";
 import { SidebarProject } from "./sidebar";
 import { SidebarUsage } from "./sidebar/SidebarUsage";
@@ -285,7 +284,6 @@ export function Workspace() {
                 {!createInSidebar && brand}
                 {!createInSidebar && create(false)}
                 <span className="spacer" />
-                <Hosts />
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
                 <button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
                     <Icon name="settings" /><span className="sr-only">설정</span>
@@ -353,7 +351,7 @@ function ConnStatus({ status, retryAt, onRetry }: { status: string; retryAt?: nu
     return (
         <span className={`conn ${status}`} title={`서버 연결 상태: ${label}`} data-testid="conn" role="status">
             <span className="conn-dot" aria-hidden="true" />
-            <span className="conn-label">{label}</span>
+            <span className="sr-only">{label}</span>
             {status === "offline" && (
                 <button className="ghost small" onClick={onRetry}>
                     지금 재연결

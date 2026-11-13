@@ -10,6 +10,7 @@ import { useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
 import { UsagePanel } from "./UsagePanel";
 import { Pairings } from "./Pairing";
+import { Hosts } from "./Hosts";
 import { ProfileCatalog } from "./ProfileCatalog";
 import { LocalModelConnection } from "./local-models/LocalModelConnection";
 import { ProfileCapabilities } from "./ProfileCapabilities";
@@ -161,7 +162,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                     defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} />}
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
                 {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
-                {visible("devices") && <Section item="devices"><Devices /></Section>}
+                {visible("devices") && <Section item="devices"><Hosts /><Devices /></Section>}
                 {visible("browser-capabilities") && <Section item="browser-capabilities"><BrowserCapabilitiesSettings /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
                 {visible("logout") && <Section item="logout"><ServerActionButton onClick={() => void logout()}>이 브라우저에서 로그아웃</ServerActionButton></Section>}
