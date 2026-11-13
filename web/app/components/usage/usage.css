@@ -1,0 +1,24 @@
+.usage-presentation { display: grid; gap: .8em; margin-top: .8em; }
+.usage-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(10em, 100%), 1fr)); gap: .6em; }
+.usage-card { display: grid; align-content: start; gap: .3em; padding: .8em; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); overflow-wrap: anywhere; }
+.usage-card > strong { font-size: 1.4em; font-variant-numeric: tabular-nums; }
+.usage-cost-card { grid-column: 1 / -1; }
+.usage-donut { display: flex; align-items: center; flex-wrap: wrap; gap: 1em; margin: 0; }
+.usage-donut svg { width: 9em; height: 9em; flex: 0 0 auto; }
+.usage-donut figcaption { flex: 1; min-width: min(16em, 100%); }
+.usage-donut p { margin: .2em 0; }
+.usage-donut circle { fill: none; stroke-width: 16; }
+.usage-ring-base { stroke: var(--line); }
+.usage-ring-input { stroke: var(--accent); }
+.usage-ring-output { stroke: var(--focus); }
+.usage-swatch { display: inline-block; width: .8em; height: .8em; margin-right: .4em; }
+.usage-input { background: var(--accent); }
+.usage-output { background: var(--focus); }
+.usage-table-scroll { max-width: 100%; overflow-x: auto; }
+.usage-table-scroll table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.usage-table-scroll caption { text-align: left; color: var(--muted); padding-bottom: .4em; }
+.usage-table-scroll th, .usage-table-scroll td { text-align: left; padding: .5em; vertical-align: top; border-bottom: 1px solid var(--line); }
+.usage-table-scroll th[scope="row"] { overflow-wrap: anywhere; min-width: 8em; }
+.usage-table-scroll td { min-width: 5em; }
+.usage-share-track { display: block; min-width: 7em; height: .4em; background: var(--line); margin-top: .3em; }
+.usage-share-track > span { display: block; height: 100%; background: var(--accent); }
