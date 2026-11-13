@@ -24,6 +24,7 @@ pub mod recall;
 pub mod memories;
 mod history;
 pub mod definitions;
+pub mod deferred_tools;
 pub mod error;
 pub mod events;
 pub mod files;

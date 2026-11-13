@@ -507,6 +507,11 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
             Err(e) => Err(tools::ToolError::new("project_unavailable", e.message)),
             Ok(_) if call.name == "agent" => crate::agents::execute_tool(&app, &call, cancel_rx).await,
             Ok(_) if call.name == "hook" => crate::hooks::execute_call(&app, &call, cancel_rx).await,
+            Ok(_) if call.name == crate::deferred_tools::NAME => {
+                let call = call.clone();
+                app.db.call(move |c| crate::deferred_tools::execute_tool(c, &call)).await
+                    .map_err(|e| tools::ToolError::new(e.code, e.message))
+            }
             Ok(_) if call.name == "goal" => {
                 let (sid, args, now) = (call.session_id.clone(), call.target.clone(), app.now());
                 app.db
