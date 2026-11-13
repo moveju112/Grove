@@ -5,15 +5,15 @@
 목표는 **하나의 Rust 서버·에이전트 런타임 + PC·Android·웹에서 사용하는 하나의 공용 웹앱/PWA**다.
 네이티브 PC·Android 셸은 기본 출시 구성에서 제외하고, 실제 요구 기능이 웹 플랫폼으로 충족되지 않을 때만 비교 검증 후 추가한다.
 서버와 데몬은 같은 실행 파일의 실행 방식이며, PC는 로컬/원격 서버 모두 지원하고 Android/Web은 서버에 접속한다.
-Paseo 데몬과 Mixdog 엔진의 제품·소유권·설정·수명 경계를 제거하고 하나의 독립 제품으로 재설계한다.
+이전 서버와 기존 엔진의 제품·소유권·설정·수명 경계를 제거하고 하나의 독립 제품으로 재설계한다.
 세션·모델·도구·저장 등 책임별 내부 모듈 경계는 유지하지만 기존 제품별 디렉터리/어댑터 경계를 재현하지 않는다.
 별도 마이크로서비스, 메시지 브로커, 엔진용 내부 RPC는 만들지 않는다.
-앞으로 Mixdog·Paseo의 업데이트를 받거나 추적·병합하지 않는다. 고정한 원본은 기능 조사와 일회성 데이터 이관의 참고 자료로만 사용한다.
+앞으로 기존 엔진·이전 서버의 업데이트를 받거나 추적·병합하지 않는다. 고정한 원본은 기능 조사와 일회성 데이터 이관의 참고 자료로만 사용한다.
 사용자 요청에 따른 최신 엔진 기능의 일회성 추가 조사는 §1.1과 §15.1의 별도 고정 SHA를 기준으로 한다. 기존 조사 기준·기본 에이전트 원문을 교체하거나 upstream 추적을 재개하는 것은 아니다.
-제품명은 **Grove(그로브)**로 확정했다. 요청한 작업 디렉터리 `/home/ubuntu/project/paseodog_opus`는 유지한다.
+제품명은 **Grove(그로브)**로 확정했다. 요청한 작업 디렉터리 `<원본 저장소>`는 유지한다.
 
 개발 진행 중이다. 체크박스는 해당 항목의 전체 완료 조건을 충족했을 때만 표시하며, 초기 기반 구현을 기능 전체 완료로 간주하지 않는다.
-기존 PaseoDog 소스·서비스·데이터는 변경하지 않으며, 운영 배포와 유료 모델 호출은 별도 승인 없이 하지 않는다.
+기존 제품 소스·서비스·데이터는 변경하지 않으며, 운영 배포와 유료 모델 호출은 별도 승인 없이 하지 않는다.
 
 ### 사용자 흐름별 개발·검증 주기
 
@@ -52,11 +52,11 @@ Paseo 데몬과 Mixdog 엔진의 제품·소유권·설정·수명 경계를 제
 
 | 항목 | 방향 |
 |---|---|
-| 새 작업 경로 | `/home/ubuntu/project/paseodog_opus` |
-| 새 제품명 | Grove(그로브); PaseoDog·Paseo·Mixdog와 별도 브랜드·버전 체계 |
-| 원본 참조 경로 | `/home/ubuntu/project/paseodog` |
+| 새 작업 경로 | `<원본 저장소>` |
+| 새 제품명 | Grove(그로브); 기존 제품·이전 서버·기존 엔진과 별도 브랜드·버전 체계 |
+| 원본 참조 경로 | `<기존 제품 원본>` |
 | 조사 기준 원본 HEAD | `73416e27c452a9285611bf7fc33290e6d3b7cbec` |
-| 원본 선언 버전 | PaseoDog `1.0.0-rc.7`, Paseo `0.11.4`, Mixdog `1.4.1` |
+| 원본 선언 버전 | 기존 제품 `1.0.0-rc.7`, 이전 서버 `0.11.4`, 기존 엔진 `1.4.1` |
 | 서버 | Rust 단일 실행 파일, Linux x86_64/ARM64와 Windows x64 |
 | UI | 공용 TypeScript 웹 UI, 현재 UX를 참고하되 React Native/Expo 구조를 그대로 이식하지 않음 |
 | PC 앱 | Windows/Linux의 지원 브라우저 또는 설치형 PWA; 로컬 실행이 필요할 때 Rust 서버만 별도 설치 |
@@ -64,11 +64,11 @@ Paseo 데몬과 Mixdog 엔진의 제품·소유권·설정·수명 경계를 제
 | 웹 | TypeScript + React + React Router Framework SPA 모드 + Vite를 우선 검증해 정적 배포; 별도 Node 운영 서버 없음 |
 | 저장 | SQLite 중심, 첨부파일·대용량 로그는 파일, 비밀정보는 별도 보호 |
 | 통신 | 로컬/원격 공통 버전 프로토콜, 요청과 스트리밍 이벤트 |
-| 모델 실행 | Rust 내부 provider 어댑터; Node Mixdog를 호출하는 래퍼를 최종 구조로 삼지 않음 |
+| 모델 실행 | Rust 내부 provider 어댑터; Node 기존 엔진을 호출하는 래퍼를 최종 구조로 삼지 않음 |
 | 외부 프로세스 | 셸, Git, MCP, 브라우저, 선택적 미디어/추론 도구는 허용하되 소유권·종료 관리 |
 | 전환 | 독립 개발·검증 후 한 번의 최종 전환, 기존 구현과 데이터는 복구용으로 보존 |
 | 기본 기능 정책 | 현재 사용자 기능 유지. 삭제·보류는 명시적인 결정 없이는 하지 않음 |
-| upstream 정책 | Mixdog·Paseo 업데이트·자동 동기화·패치 추적·런타임 의존성 없음 |
+| upstream 정책 | 기존 엔진·이전 서버 업데이트·자동 동기화·패치 추적·런타임 의존성 없음 |
 | 구제품 호환 | 일회성 데이터 import만 제공; 구클라이언트/프로토콜/플러그인 ABI의 지속 호환은 비목표 |
 | 유지보수 소유권 | 모델 API 변화·보안 수정·OS 대응·회귀 해결은 새 제품이 직접 책임짐 |
 | 기본 빌드·배포 | Windows/Linux 서버 target + 공용 웹/PWA 산출물; UI 변경만으로 PC 셸·APK를 빌드하지 않음 |
@@ -181,7 +181,7 @@ HTTP middleware만으로 WebSocket 메시지별 권한·출력 backpressure가 �
 ### 범위 고정과 의존성 예산
 
 - 포팅 중 새 제품 기능은 기본 범위에 추가하지 않는다. 필요한 기능은 근거·비용·기존 작업 대체 여부를 확인한 뒤 결정한다.
-- 원본 기준은 고정한다. Mixdog·Paseo의 후속 버전이나 변경을 추적·병합하지 않으며 새로 발견한 보안·회귀 문제는 새 제품에서 독립적으로 해결한다.
+- 원본 기준은 고정한다. 기존 엔진·이전 서버의 후속 버전이나 변경을 추적·병합하지 않으며 새로 발견한 보안·회귀 문제는 새 제품에서 독립적으로 해결한다.
 - 초기 인프라는 기존 artifact 호스팅·정적 웹 호스팅·릴레이·푸시 서비스를 우선 활용한다. 서비스 의존성은 남지만 자체 운영 시스템은 늘리지 않는다.
 - 서버 core의 필수 상주 런타임은 Rust 실행 파일 하나다. 셸·MCP 등 실제 사용자 작업 자식 프로세스는 별도로 계측한다.
 - 브라우저·로컬 LLM·Office 변환기는 필요 시 설치·실행하고, 미사용 상태의 기본 메모리 예산에 포함시키지 않는다.
@@ -210,7 +210,7 @@ HTTP middleware만으로 WebSocket 메시지별 권한·출력 backpressure가 �
 | 보안·데이터 손실 수정 | 안전 불변식과 재현 시험 우선; 품질 저하가 있으면 원인 해결 또는 결정 요청 | 위험한 기존 동작으로 자동 복귀하지 않고 해당 기능 적용을 막음 |
 
 여기서 “기존 방식 유지”는 **Grove의 독립 Rust 구현에서 검증된 기존 동작·프롬프트를 보존**한다는 뜻이다.
-Paseo/Mixdog 런타임에 다시 의존하거나 upstream 업데이트를 받는다는 뜻이 아니다.
+이전 서버/기존 엔진 런타임에 다시 의존하거나 upstream 업데이트를 받는다는 뜻이 아니다.
 제품명·문서 경로 등의 필수 치환은 원문과 대응시켜 기록하고, 그 과정에서 프롬프트 의미를 함께 고치지 않는다.
 관찰된 개선이 없거나 시험이 불가능하면 후보를 기본값으로 적용하지 않는다.
 
@@ -243,9 +243,9 @@ upstream 업데이트 중단은 Rust crate·OS 라이브러리 등 일반 의존
 - [ ] BRAND-005 앱 제목·아이콘·온보딩·도움말·오류·알림에서 기존 두 제품의 구분과 브랜드를 제거한다.
 - [ ] BRAND-006 PWA manifest ID·scope·HTTPS 링크와 서버 서비스 식별자를 결정한다. native application ID·URL scheme·파일 연결은 셸을 채택할 때만 확정한다.
 - [ ] BRAND-007 식별자 변경에 따른 새 설치·페어링 재등록·푸시 재등록·계정 재로그인 필요성을 검증한다.
-- [ ] BRAND-008 제품 자체 버전·release manifest·업데이트 채널을 정의하고 Paseo/Mixdog 버전 pin과 업데이트 검사를 제거한다.
-- [x] BRAND-009 구제품의 bundled runtime·SDK·provider plugin·번들 패치·전용 내부 IPC가 최종 dependency graph에 남지 않게 한다. 검증: 최종 의존성 그래프(4개 플랫폼)에 Paseo/Mixdog runtime·SDK·provider plugin·IPC 없음, 기본 에이전트 원문만 `assets/`에 포함.
-- [x] BRAND-010 재사용한 코드·자산의 저작권·라이선스·NOTICE를 유지하고 제품 브랜딩과 구분한다. 검증: Mixdog 원문 라이선스·NOTICE를 `assets/`에 유지하고 패키지 `licenses/`에 포함, 제3자 목록 자동 생성. Grove 자체 라이선스 파일은 사용자 결정 필요(Cargo.toml은 Apache-2.0 표기).
+- [ ] BRAND-008 제품 자체 버전·release manifest·업데이트 채널을 정의하고 이전 서버/기존 엔진 버전 pin과 업데이트 검사를 제거한다.
+- [x] BRAND-009 구제품의 bundled runtime·SDK·provider plugin·번들 패치·전용 내부 IPC가 최종 dependency graph에 남지 않게 한다. 검증: 최종 의존성 그래프(4개 플랫폼)에 이전 서버/기존 엔진 runtime·SDK·provider plugin·IPC 없음, 기본 에이전트 원문만 `assets/`에 포함.
+- [x] BRAND-010 재사용한 코드·자산의 저작권·라이선스·NOTICE를 유지하고 제품 브랜딩과 구분한다. 검증: 기존 엔진 원문 라이선스·NOTICE를 `assets/`에 유지하고 패키지 `licenses/`에 포함, 제3자 목록 자동 생성. Grove 자체 라이선스 파일은 사용자 결정 필요(Cargo.toml은 Apache-2.0 표기).
 - [ ] BRAND-011 독립적인 보안 의존성 갱신·provider API 호환·OS 회귀 대응 절차를 구성한다.
 - [ ] BRAND-012 기존 upstream 운영 릴레이·인증/업데이트 endpoint의 숨은 의존성을 조사하고 독립적으로 사용 가능한 서비스 또는 관리형 대안으로 전환한다.
 - [ ] BRAND-013 선택한 Grove 싹/줄기 모티프를 정식 SVG·앱 아이콘·favicon·단색 자산으로 다듬고 소형 크기 식별성을 검증한다.
@@ -271,38 +271,38 @@ upstream 업데이트 중단은 Rust crate·OS 라이브러리 등 일반 의존
 ## 1. 원본 근거와 기능 추적
 
 새 프로젝트에서 원본 파일을 참조할 때 아래 절대 경로를 사용한다.
-설치된 Mixdog 소스는 조사 근거일 뿐 수정하거나 새 제품의 런타임 의존성으로 복사하지 않는다.
+설치된 기존 엔진 소스는 조사 근거일 뿐 수정하거나 새 제품의 런타임 의존성으로 복사하지 않는다.
 
 | 근거 | 경로 | 주요 범위 |
 |---|---|---|
-| S01 | `/home/ubuntu/project/paseodog/README.md` | 설치, 페어링, 릴레이, 백그라운드 결과, 배포 |
-| S02 | `/home/ubuntu/project/paseodog/docs/ai-rules/ARCHITECTURE.md` | 기존 소유권·데이터 흐름 |
-| S03 | `/home/ubuntu/project/paseodog/engine/src/controls.mjs` | 모델, 에이전트, 워크플로, 압축, 설정 |
-| S04 | `/home/ubuntu/project/paseodog/engine/src/auth-session.mjs` | OAuth, API 키, 계정 풀 |
-| S05 | `/home/ubuntu/project/paseodog/engine/src/session-actions.mjs` | fork, context, rewind, 변경 이력, undo/redo |
-| S06 | `/home/ubuntu/project/paseodog/engine/src/resource-controls.mjs` | MCP, 스킬, 기존 플러그인 관리 |
-| S07 | `/home/ubuntu/project/paseodog/plugin/server` | 세션 연결, 저널, 승인, 질문, 복구, 알림, 업데이트 |
-| S08 | `/home/ubuntu/project/paseodog/plugin/client` | 사용량, 실시간 상태, 세션 도구, 원본 설정 조회 |
-| S09 | `/home/ubuntu/project/paseodog/tests` | 제품 회귀 계약·보안·빌드·플랫폼 동작 |
-| S10 | `/home/ubuntu/project/paseodog/patches` | upstream에 적용한 제품 동작 변경 |
-| S11 | `/home/ubuntu/project/paseodog/android/packages/protocol/src` | 요청·이벤트, 터미널, Git, 파일, 예약, 채팅 |
-| S12 | `/home/ubuntu/project/paseodog/android/packages/app/src` | 화면, 탐색, 입력, 설정, 모바일 동작 |
-| S13 | `/home/ubuntu/project/paseodog/android/packages/server/src` | 기존 서버·provider·도구 구현 |
-| S14 | `/home/ubuntu/project/paseodog/android/packages/desktop` | PC 실행 수명, 설치·업데이트 |
-| S15 | `/home/ubuntu/project/paseodog/scripts/build-release.mjs` | APK·웹·PC 빌드 그래프 |
-| S16 | `/home/ubuntu/project/paseodog/scripts/release-pipeline.mjs` | 릴리스·검증·적용 흐름 |
-| S17 | `/home/ubuntu/project/paseodog/engine/node_modules/mixdog/src/session-runtime` | Mixdog 공개 facade와 기능별 API |
-| S18 | `/home/ubuntu/project/paseodog/engine/node_modules/mixdog/src/runtime` | 모델, 도구, 메모리, 검색, 연동 |
+| S01 | `<기존 제품 원본>/README.md` | 설치, 페어링, 릴레이, 백그라운드 결과, 배포 |
+| S02 | `<기존 제품 원본>/docs/ai-rules/ARCHITECTURE.md` | 기존 소유권·데이터 흐름 |
+| S03 | `<기존 제품 원본>/engine/src/controls.mjs` | 모델, 에이전트, 워크플로, 압축, 설정 |
+| S04 | `<기존 제품 원본>/engine/src/auth-session.mjs` | OAuth, API 키, 계정 풀 |
+| S05 | `<기존 제품 원본>/engine/src/session-actions.mjs` | fork, context, rewind, 변경 이력, undo/redo |
+| S06 | `<기존 제품 원본>/engine/src/resource-controls.mjs` | MCP, 스킬, 기존 플러그인 관리 |
+| S07 | `<기존 제품 원본>/plugin/server` | 세션 연결, 저널, 승인, 질문, 복구, 알림, 업데이트 |
+| S08 | `<기존 제품 원본>/plugin/client` | 사용량, 실시간 상태, 세션 도구, 원본 설정 조회 |
+| S09 | `<기존 제품 원본>/tests` | 제품 회귀 계약·보안·빌드·플랫폼 동작 |
+| S10 | `<기존 제품 원본>/patches` | upstream에 적용한 제품 동작 변경 |
+| S11 | `<기존 제품 원본>/android/packages/protocol/src` | 요청·이벤트, 터미널, Git, 파일, 예약, 채팅 |
+| S12 | `<기존 제품 원본>/android/packages/app/src` | 화면, 탐색, 입력, 설정, 모바일 동작 |
+| S13 | `<기존 제품 원본>/android/packages/server/src` | 기존 서버·provider·도구 구현 |
+| S14 | `<기존 제품 원본>/android/packages/desktop` | PC 실행 수명, 설치·업데이트 |
+| S15 | `<기존 제품 원본>/scripts/build-release.mjs` | APK·웹·PC 빌드 그래프 |
+| S16 | `<기존 제품 원본>/scripts/release-pipeline.mjs` | 릴리스·검증·적용 흐름 |
+| S17 | `<기존 제품 원본>/engine/node_modules/<기존 엔진>/src/session-runtime` | 기존 엔진 공개 facade와 기능별 API |
+| S18 | `<기존 제품 원본>/engine/node_modules/<기존 엔진>/src/runtime` | 모델, 도구, 메모리, 검색, 연동 |
 
 - [ ] INV-001 원본 소스·패치·lockfile·설치된 upstream의 버전/해시를 확정하고 조사 기준과 불일치를 표시한다.
 - [ ] INV-002 전체 UI 경로와 설정 항목을 추출해 이 문서의 UI/설정 항목에 대응시킨다.
 - [ ] INV-003 전체 프로토콜의 요청·응답·이벤트·binary frame을 추출해 신규 계약에 대응시킨다.
 - [ ] INV-004 `messages.ts`에서 확인한 125개 명명된 Request/ClientMessage schema 외에 비정형 선언·import된 schema까지 대조한다.
-- [ ] INV-005 Mixdog의 공개 API·도구 registry·deferred tool·내장 기능 목록을 전수 대조한다.
+- [ ] INV-005 기존 엔진의 공개 API·도구 registry·deferred tool·내장 기능 목록을 전수 대조한다.
 - [ ] INV-006 root·앱·서버·프로토콜 테스트를 기능별로 묶고 새 테스트 또는 승인된 제외 항목에 연결한다.
 - [ ] INV-007 모든 제품 패치를 사용자 동작·버그 회귀·구현 우회로 분류한다.
 - [ ] INV-008 패치의 문자열 변환은 옮기지 않고 사용자에게 필요한 동작과 회귀 조건만 옮긴다.
-- [ ] INV-009 upstream에 있으나 PaseoDog에 노출되지 않는 기능을 별도로 표시한다.
+- [ ] INV-009 upstream에 있으나 기존 제품에 노출되지 않는 기능을 별도로 표시한다.
 - [ ] INV-010 현재 실패·미지원 기능을 정상 동작 요구와 구분하고 재설계 여부를 결정한다.
 - [ ] INV-011 현재 기능을 유지/통합/재설계/제외로 분류하고 제외는 사용자 결정으로 확정한다.
 - [ ] INV-012 고정된 원본 코드와 별개로 최종 이관할 사용자 데이터의 snapshot 시점을 정하고, 코드 업데이트 수용과 데이터 이관을 혼동하지 않는다.
@@ -310,7 +310,7 @@ upstream 업데이트 중단은 Rust crate·OS 라이브러리 등 일반 의존
 - [ ] INV-014 모든 기능에 구현 영역, 플랫폼, 회귀 시나리오, 마이그레이션 필요 여부를 연결한다.
 - [ ] INV-015 최종 전환 전에 전체 표면을 다시 대조해 미분류 기능이 없는지 확인한다.
 
-### 1.1 최신 Mixdog 엔진의 유익한 기능: 상세 보강 계획
+### 1.1 최신 기존 엔진의 유익한 기능: 상세 보강 계획
 
 사용자가 추천 방향의 계획 반영을 요청한 범위다. 봇 기능은 §15.1에서 관리하고, 여기서는 기반 안정성·컨텍스트 품질·실행 효율·자동화·단발 CLI를 다룬다.
 **현재 상태는 설계 및 구현 TODO다. 코드 구현·실제 모델 시험·배포·자동 실행 활성화는 완료하지 않았다.**
@@ -320,10 +320,10 @@ upstream 업데이트 중단은 Rust crate·OS 라이브러리 등 일반 의존
 
 #### 조사 근거와 채택 범위
 
-Mixdog 공식 저장소의 고정 SHA `b776a16055cd52fc42e4e06a355de5e18a4d6f69`를 정적으로 조사했다.
-기준 링크: https://github.com/tribgames/mixdog/tree/b776a16055cd52fc42e4e06a355de5e18a4d6f69
+기존 엔진 공식 저장소의 고정 SHA `b776a16055cd52fc42e4e06a355de5e18a4d6f69`를 정적으로 조사했다.
+기준 링크: <기존 엔진 저장소>/tree/b776a16055cd52fc42e4e06a355de5e18a4d6f69
 아래 경로는 해당 upstream 저장소 기준이다. 실제 실행/성능 검증이나 각 기능이 처음 추가된 버전의 확인을 의미하지 않는다.
-PaseoDog 설치 엔진의 선언 버전 `1.4.1`과 최신 소스의 기능 존재를 구분하며, 기존 제품 UI에 모두 노출되어 있다고 가정하지 않는다.
+기존 제품 설치 엔진의 선언 버전 `1.4.1`과 최신 소스의 기능 존재를 구분하며, 기존 제품 UI에 모두 노출되어 있다고 가정하지 않는다.
 
 | 기능 | 확인한 근거 | Grove 채택 방향 |
 |---|---|---|
@@ -333,7 +333,7 @@ PaseoDog 설치 엔진의 선언 버전 `1.4.1`과 최신 소스의 기능 존�
 | step별 자동 effort | `src/runtime/agent/orchestrator/session/loop/step-auto-effort.mjs` | 요청 경계의 적용·실패 시 유지·기록과 cache 안정성 채택; 특정 판정 모델·런타임 의존성은 미확정 |
 | routine 결과의 봇 연결 | `src/runtime/shared/routine-trigger.mjs` | 실행/결과 출처를 유지한 home 연결; upstream의 unattended 안내문만으로 권한을 보장하지 않음 |
 | 변화 없는 routine의 조용한 종료 | 위 `routine-trigger.mjs`의 `ROUTINE_QUIET` 처리 | 실행 이력은 보존하고 알림만 생략; 문자열 sentinel 대신 검증된 구조화 결과를 우선 |
-| 개인 문맥을 제외한 단발 실행 | `README.md`의 `mixdog exec` 계약 | 같은 Rust 코어로 비대화 실행 제공; 개인 설정 제외와 OS/network sandbox를 명확히 구분 |
+| 개인 문맥을 제외한 단발 실행 | `README.md`의 `기존 엔진 exec` 계약 | 같은 Rust 코어로 비대화 실행 제공; 개인 설정 제외와 OS/network sandbox를 명확히 구분 |
 
 #### 우선순위·의존성·완료 판정
 
@@ -784,7 +784,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 
 ### 장시간 작업의 실행 연속성과 중단 원인
 
-기존 PaseoDog에서는 정상 작업 중에도 턴 시작 후 고정 시간(기본 120분, 관찰된 설정 240분)이 지나면 강제 취소되고, 원인이 일반 `[Request interrupted]`로 축약되어 설명 없이 멈추는 문제가 있었다. Grove에서는 연결 수명·작업 수명·사용자 취소를 분리하며, RUN-012의 시간 초과 감지는 아래의 명시적 예산과 단계별 timeout에 한정한다.
+기존 제품에서는 정상 작업 중에도 턴 시작 후 고정 시간(기본 120분, 관찰된 설정 240분)이 지나면 강제 취소되고, 원인이 일반 `[Request interrupted]`로 축약되어 설명 없이 멈추는 문제가 있었다. Grove에서는 연결 수명·작업 수명·사용자 취소를 분리하며, RUN-012의 시간 초과 감지는 아래의 명시적 예산과 단계별 timeout에 한정한다.
 
 - [x] RUN-021 정상 진행 중인 턴을 기본 총 경과시간 제한으로 강제 종료하지 않는다. 총 실행시간 예산은 사용자가 명시적으로 설정한 경우에만 적용하고, 적용 범위·기준 시각·남은 시간·초과 정책을 실행 전과 실행 중에 표시한다. 검증: 시간·token 예산 설정(`runs.budget.max_minutes`·`max_tokens`, 서버·프로젝트·대화 범위)은 기본 0=제한 없음이고, 정한 경우에만 접수 시점 값을 턴 정의에 고정해 적용한다(시간: 시작부터·승인/답변 대기 포함, 모델 호출 중에도 남은 시간 안에 끝나지 않으면 `time_budget_exceeded`; token: 예약 한도와 작은 쪽, 원인에 source). 대화 화면은 실행 전 '다음 요청 예산'(값·출처·초과 정책), 실행 중 고정값·시작 기준 시각·남은 시간·사용 token을 표시하고 예산이 없으면 표시하지 않는다(`tests/turns.rs::explicit_token_and_time_budgets_stop_turn_with_distinct_causes`, `web/e2e/budget.spec.ts`).
 - [x] RUN-022 provider 응답 대기·무진행 감시·도구별 timeout·사용자 명시 예산을 분리한다. 모델/도구/서브에이전트의 실제 진행과 소유 작업 heartbeat를 추적하며, 승인·질문 대기와 장시간 셸 실행을 정체로 오판하지 않는다. 진행 snapshot 누락·조회 실패를 곧바로 무진행으로 간주하지 않고, 실제 정체 감시와 자원 한도는 유지한다. 검증: provider 대기는 연결(15초)·첫 응답·무응답 timeout으로 단계별 구분(`provider::timeout_tests`). CLI provider도 전체 실행 시간 제한을 없애고 출력 사이 무응답만 감시(`provider::cli::tests::idle_watch_and_process_exit_are_distinct`: 0.8초 timeout에서 2.4초 동안 출력이 이어지면 끝까지 받음, 출력이 멈추면 `idle_timeout`). 도구는 도구별 hard timeout·자원 한도만 적용하고 무진행으로 끊지 않음(EXEC-004·007, SEC-017). 승인·질문 대기는 승인 만료(TTL) 외 시간 제한 없음. 사용자 예산은 명시한 경우만 별도 원인으로 적용(RUN-021). 정체 판정은 진행 snapshot 조회가 아니라 실제 응답 바이트·출력 줄 도착 기준.
@@ -825,6 +825,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] PROJECT-010 초기 setup script의 상태·실행·실패·재시도를 명시적으로 관리한다. 검증: 원본 worktree setup(명령별 상태·종료 코드·재실행)을 명시적 실행 원칙에 맞춰 구현했다(RULEBOOK §37, migration 49). 프로젝트 script 하나를 초기 설정으로 지정하고(지정만으로 실행 안 함) 프로젝트 폴더·활성 worktree별 마지막 설정 상태(미실행·실행 중·성공·실패·시간 초과·취소·결과 불명)·종료 코드·시도 횟수를 보이며, 실행·재시도는 그 위치의 새 대화에서 기존 확인 실행 경로로 접수한다. 지정 외 script·다른 위치 확인값은 작업을 만들지 않는다. Rust project_scripts 6(`setup_script_status_failure_and_retry_are_tracked_per_location`)·projects 6·tasks 8·worktrees 5·storage 21·legacy migration 3종·Vitest 9·타입·선택 E2E(`web/e2e/project-scripts.spec.ts` 6) 통과. 원본의 forge change-request `blocked` 상태는 Grove에 해당 기능이 없어 제외.
 - [x] PROJECT-011 프로젝트 스크립트 목록·시작·중지·로그를 제공한다. 검증: FILEUI-010의 프로젝트 script 목록·시작·실행 로그와 기존 작업 중지(`/tasks/{id}/cancel`)를 같은 작업/로그 경로로 제공한다(`tests/project_scripts.rs`, `web/e2e/project-scripts.spec.ts`, `tests/tasks.rs`).
 - [x] PROJECT-012 프로젝트 clone·저장소 검색·경로 제안을 유지 대상으로 검증한다. 검증: 원본 고정 커밋의 GitHub 저장소 검색(gh, 상태 4종)·clone(owner/name+https|ssh 또는 원격 URL, 기존 경로 거절, 임시 폴더 후 이름 변경, 실패 시 임시 폴더만 정리)·경로 제안을 구현했다(RULEBOOK §37, `src/repos.rs`). 화면은 프로젝트 추가 대화상자의 경로 제안과 "저장소에서 clone"(검색·직접 입력·방식·대상 폴더, 결과 불명 시 같은 키 확인). Rust repos 3(로컬 file 원격 clone·재전송·실패 정리, 가짜 gh로 성공/미설치/미인증/오류·`--` 인자, 경로 제안)·`repos::tests`·projects 6·타입·선택 E2E 2(`web/e2e/project-clone.spec.ts`, `project-add.spec.ts`) 통과. 실제 GitHub 네트워크·인증된 gh 검색과 ssh clone은 이 환경에서 미검증.
+- [ ] PROJECT-013 프로젝트별 워크스페이스 모드(단일·프로젝트)를 제공한다. 결정(2026-11-13, 사용자): 단일 모드가 기본이며 프로젝트 → 대화로 쓰고 워크스페이스(Git worktree)를 만들거나 연결하지 않는다. 프로젝트 모드는 프로젝트 → 워크스페이스(프로젝트 폴더 + worktree) → 대화다. 워크스페이스나 워크스페이스에 연결된 대화가 남아 있으면 단일 모드로 바꿀 수 없다. 구현: `projects.workspace_mode`(migration, 기존 worktree 사용 프로젝트는 project로 이전), 단일 모드의 worktree 생성·복원·대화 연결은 서버가 같은 transaction에서 409 `single_workspace_mode`로 거부, 전환 거부는 409 `workspaces_in_use`(남은 수 포함). 화면은 워크스페이스 패널의 모드 전환, 단일 모드의 생성 UI·대화 워크스페이스 선택 숨김, 프로젝트 모드의 사이드바 워크스페이스별 묶음과 새 대화 워크스페이스 선택. 검증: Rust worktrees 6(`single_mode_blocks_workspaces_and_switch_back_requires_cleanup`)·worktree_receipts 5·exec_cwd 8·project_scripts 6·projects 6·`store::tests::workspace_mode_migration_keeps_projects_that_use_worktrees_in_project_mode`·ts_bindings, Vitest sidebar 25·타입, 선택 E2E 16(`web/e2e/workspace-mode.spec.ts` 포함) 통과. 남은 일: 새 사이드바 디자인(1안 본문 + 4안 사이드바)에 같은 묶음을 옮긴다.
 
 ## 11. 컨텍스트·압축·지침·메모리
 
@@ -965,7 +966,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] AGENT-025 대화에 현재 workflow·활성 에이전트·진행/완료/대기 상태를 간결하게 표시한다. 검증: 대화 머리말의 워크플로우 선택·처리 에이전트 표시, 맡긴 작업 진행/완료 표시(e2e 자식 에이전트 위임).
 - [ ] AGENT-026 기본 에이전트 지침·자동 위임·실행 순서 변경은 EVAL의 실제 작업 비교를 통과한 경우에만 적용한다.
 
-### 15.1 최신 Mixdog 봇 분석과 Grove 추가안
+### 15.1 최신 기존 엔진 봇 분석과 Grove 추가안
 
 **상태: 사용자 요청으로 계획에 추가한 설계안이며, 구현 완료나 자동 실행 승인으로 간주하지 않는다.**
 기본 봇·전용 대화를 1차 추가 대상으로 제안하고, 그룹 방·봇 간 자동 전달은 별도 단계로 둔다.
@@ -973,10 +974,10 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 
 #### 조사 기준과 확인된 동작
 
-공식 저장소 `https://github.com/tribgames/mixdog`의 조회 당시 `main` HEAD
+공식 저장소 `<기존 엔진 저장소>`의 조회 당시 `main` HEAD
 `b776a16055cd52fc42e4e06a355de5e18a4d6f69`(커밋 시각 `2026-11-04T05:18:09Z`)를 고정해 소스를 읽었다.
 아래 경로는 이 SHA의 upstream 저장소 기준이며, 링크의 기준점은
-https://github.com/tribgames/mixdog/tree/b776a16055cd52fc42e4e06a355de5e18a4d6f69 이다.
+<기존 엔진 저장소>/tree/b776a16055cd52fc42e4e06a355de5e18a4d6f69 이다.
 이는 정적 소스·시험 코드 분석이다. upstream 앱 실행, 테스트 통과, 실제 모델 품질을 검증한 결과는 아니다.
 
 | 확인된 기능 | 고정 소스 근거 | Grove에 주는 의미 |
@@ -1207,7 +1208,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] AUTO-005 예약 소유자·프로젝트·모델·허용 도구·비용 한도를 저장한다. 검증: owner_id·project_id·profile_id·agent_id·allowed_tools·max_total_tokens 저장, 허용 도구 밖 호출 실행 없음·token 한도 초과 `budget_exceeded`(`tests/schedules.rs`).
 - [x] AUTO-006 서버 재시작 뒤 예약은 복원하되 불확실한 이전 mutation을 replay하지 않는다. 검증: `tests/schedules.rs::restart_interrupts_running_without_replay_and_records_missed`(실행 중 턴 interrupted·자동 재실행 없음·놓친 예정 시각 missed 기록).
 - [x] AUTO-007 승인 필요한 예약은 자동 우회하지 않고 대기/실패 정책을 적용한다. 검증: `on_approval` wait/fail, fail이면 `approval_required`로 실패하고 도구 호출은 cancelled·파일 미생성(`tests/schedules.rs`).
-- [x] AUTO-008 idle heartbeat·routine·loop 기능의 실제 노출을 조사한다. 검증: Mixdog upstream 고정 SHA `b776a16055cd52fc42e4e06a355de5e18a4d6f69`를 정적으로 조사했다(실행 검증 아님). (1) idle heartbeat: 대표 봇(Mixy) 전용으로 setup 동작 `set_heartbeat_enabled`·`set_heartbeat_interval`에만 노출되며 기본 꺼짐, 간격 30/60(기본)/120/240분이다. 사용자가 30분 동안 조작하지 않을 때만 돌고, 모델 없이 모은 요약이 직전과 같거나 비면 끝낸다. 별도 Maintainer 모델 판정(기본 없음, 연속 실패 시 차단)을 거쳐 숨긴 무인 routine 턴 하나를 깨우며 `HEARTBEAT_QUIET`면 아무것도 보이지 않는다. 제안은 최대 5개·72시간이다(`src/session-runtime/mixy-heartbeat.mjs`, `src/defaults/skills/setup/references/actions.md`). (2) routine: 봇이 소유한 예약·webhook(`save_automation`·`set_automation_enabled`·`run_automation`·`set_webhook_config`)이며 실행 대리 하위 에이전트와 `ROUTINE_QUIET`가 있다. 안전장치는 연속 실패 시 `60초×2^(n-1)` backoff, 5회 연속 실패 시 자동 정지, 홈 대화 대기 200개이고 실행 동시성·시간 상한은 없다(`src/runtime/shared/routine-limits.mjs`). (3) 조건부 반복 loop: help·setup 동작·기본 스킬·규칙·내부 도구 어디에도 사용자에게 노출된 명령·도구·설정이 없고 `loop` 이름은 내부 턴 실행 모듈뿐이다. 결론: Grove 예약에는 실패 backoff·자동 정지가 빠져 있어 AUTO-009에서 다루고, heartbeat는 봇·알림 선별(RTE/QUIET) 이후 명시적 설정으로만 검토하며, 일반 loop는 upstream 노출이 없어 새 기능으로 추가하지 않는다.
+- [x] AUTO-008 idle heartbeat·routine·loop 기능의 실제 노출을 조사한다. 검증: 기존 엔진 upstream 고정 SHA `b776a16055cd52fc42e4e06a355de5e18a4d6f69`를 정적으로 조사했다(실행 검증 아님). (1) idle heartbeat: 대표 봇(Mixy) 전용으로 setup 동작 `set_heartbeat_enabled`·`set_heartbeat_interval`에만 노출되며 기본 꺼짐, 간격 30/60(기본)/120/240분이다. 사용자가 30분 동안 조작하지 않을 때만 돌고, 모델 없이 모은 요약이 직전과 같거나 비면 끝낸다. 별도 Maintainer 모델 판정(기본 없음, 연속 실패 시 차단)을 거쳐 숨긴 무인 routine 턴 하나를 깨우며 `HEARTBEAT_QUIET`면 아무것도 보이지 않는다. 제안은 최대 5개·72시간이다(`src/session-runtime/mixy-heartbeat.mjs`, `src/defaults/skills/setup/references/actions.md`). (2) routine: 봇이 소유한 예약·webhook(`save_automation`·`set_automation_enabled`·`run_automation`·`set_webhook_config`)이며 실행 대리 하위 에이전트와 `ROUTINE_QUIET`가 있다. 안전장치는 연속 실패 시 `60초×2^(n-1)` backoff, 5회 연속 실패 시 자동 정지, 홈 대화 대기 200개이고 실행 동시성·시간 상한은 없다(`src/runtime/shared/routine-limits.mjs`). (3) 조건부 반복 loop: help·setup 동작·기본 스킬·규칙·내부 도구 어디에도 사용자에게 노출된 명령·도구·설정이 없고 `loop` 이름은 내부 턴 실행 모듈뿐이다. 결론: Grove 예약에는 실패 backoff·자동 정지가 빠져 있어 AUTO-009에서 다루고, heartbeat는 봇·알림 선별(RTE/QUIET) 이후 명시적 설정으로만 검토하며, 일반 loop는 upstream 노출이 없어 새 기능으로 추가하지 않는다.
 - [x] AUTO-009 조건부 loop/routine의 횟수·종료 조건·취소·예산을 구현한다. 검증: AUTO-008 조사에 따라 일반 loop는 추가하지 않고 반복 예약(routine)에 적용했다. 최대 자동 실행 횟수·종료 시각, upstream과 같은 형태의 연속 실패 backoff(`60초×2^(n-1)`, 최대 24시간)와 N회 연속 실패 자동 정지(새 예약 기본 5, 기존 예약은 꺼짐), 재개 시 초기화, 정지 이유(사용자/연속 실패)를 구현했다(migration 45, RULEBOOK §12). 취소는 기존 턴 취소·일시 정지를 쓰며 실패로 세지 않고, 예산은 기존 실행별 token 한도를 쓴다. 화면에 자동 실행 수/최대·종료·연속 실패·자동 실행 재개 시각과 입력을 추가했다. Rust schedules(`repeat_limits_backoff_and_auto_pause_after_failures`)·하위 schema 승격 시험(header_legacy·notifications·storage·task_logs)·lib 예약/migration 10개·타입/빌드·선택 E2E 25개 통과.
 - [x] AUTO-010 webhook 실행 기능을 유지하면 서명·replay 방지·payload 한도·권한을 적용한다. 검증: webhook 기능을 유지하고 RTE-004·005와 같은 구현으로 서명·replay 방지·payload 한도·권한(일반 예약과 같은 승인·허용 도구 정책)을 적용했다.
 - [x] AUTO-011 자동화 완료 알림과 자동 모델 후속 호출 여부를 분리한다. 검증: 실행 종료 알림은 `notifications`에만 기록하고 모델을 다시 부르지 않음(fixture 요청 수 1, `tests/schedules.rs::once_fires_exactly_once_and_leaves_persistent_notification`).
@@ -1435,7 +1436,7 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 
 ## 26. 외부 연동·선택 도구의 누락 방지
 
-S17/S18에 존재하는 기능군이다. 실제 PaseoDog 노출 여부와 계정/플랫폼 제한을 먼저 확인한다.
+S17/S18에 존재하는 기능군이다. 실제 기존 제품 노출 여부와 계정/플랫폼 제한을 먼저 확인한다.
 전체 기능 유지 요구를 이유로 upstream의 모든 실험 기능을 무조건 새 제품에 추가하지 않는다.
 
 - [ ] INTEGRATION-001 `web_search`의 provider/model 설정·검색·출처·오류·사용량을 구현한다.
@@ -1527,7 +1528,7 @@ S17/S18에 존재하는 기능군이다. 실제 PaseoDog 노출 여부와 계정
 - [x] BUILD-029 기본 빌드에 사용하지 않는 provider SDK·선택 기능 바이너리를 묶지 않는다. 검증: 런타임 의존성에 provider SDK 없음(HTTP는 reqwest 직접), 선택 기능 바이너리 미포함(패키지 파일 18개 manifest).
 - [x] BUILD-030 upstream bundle 문자열 패치·중복 Node dependency tree·Electron 패키징 경로를 새 제품에서 제거한다. 검증: upstream bundle 문자열 패치·Node 런타임 트리·Electron 패키징 경로 없음(패키지 = 서버 바이너리 + 정적 웹 + licenses).
 - [x] BUILD-031 artifact manifest에 버전·commit·target·protocol·schema·hash를 포함한다. 검증: `manifest.json`에 version·protocol·schema·target·source/입력 hash·toolchain·파일별 sha256. git 저장소가 아니어서 `commit: null`, `source_hash`로 식별.
-- [x] BUILD-032 산출물 SBOM·라이선스·NOTICE·무결성 checksum을 생성한다. 검증: `sbom.cdx.json`(CycloneDX 1.5, 라이선스 포함·허용 목록 검사), `licenses/`(Mixdog 라이선스·NOTICE, THIRD_PARTY_NOTICES), `SHA256SUMS`.
+- [x] BUILD-032 산출물 SBOM·라이선스·NOTICE·무결성 checksum을 생성한다. 검증: `sbom.cdx.json`(CycloneDX 1.5, 라이선스 포함·허용 목록 검사), `licenses/`(기존 엔진 라이선스·NOTICE, THIRD_PARTY_NOTICES), `SHA256SUMS`.
 - [x] BUILD-033 비밀정보·개인 경로·캐시·개발 로그가 패키지에 포함되지 않게 검사한다. 검증: `--remap-path-prefix`로 개인 경로 제거(release 바이너리 `strings`에서 0건), 패키지 검사기가 개인 경로·실제 비밀값 형식·개발 파일 발견 시 실패(`scripts/test_build.py::Scan`). 오탐(접두어 상수)을 형식 정규식으로 고침.
 - [x] BUILD-034 실패한 단계 이후 재개 시 입력과 산출물 hash를 검증하고 성공 단계를 불필요하게 반복하지 않는다. 검증: receipt의 입력 hash + artifact sha256 재계산이 맞는 target만 재사용, 사라진/손상된 target만 다시 빌드(windows 압축본 제거·arm64 손상 주입으로 확인).
 - [ ] BUILD-035 고정 source commit·입력 hash·toolchain·target으로 candidate를 한 번 생성하고 검증된 동일 bytes를 발행한다.
@@ -1579,12 +1580,14 @@ S17/S18에 존재하는 기능군이다. 실제 PaseoDog 노출 여부와 계정
 
 ## 29. 기존 데이터 마이그레이션
 
-- [x] MIG-001 기존 Paseo·Mixdog·adapter journal의 데이터 위치와 schema를 read-only로 조사한다. 검증: 읽기 전용 조사(자격증명·pgdata 미열람, 내용 미출력), 대화 파일 version 2 형식·항목 종류·개수 전수 집계(`migration/import-survey.md`).
+결정(2026-11-13, 사용자): 이전 제품 대화 가져오기 기능(`grove import`)을 제거했다. 아래 MIG 항목의 가져오기 구현·시험은 더 이상 제품에 없으며, 이미 가져온 대화가 있다면 일반 대화로 남는다(`import_map` 표는 배포된 migration이라 유지). 저장소의 문서·코드·주석에서 이전 제품·엔진 이름을 쓰지 않는다(AGENTS.md 표기 규칙, 법적 고지 `assets/licenses/`만 예외).
+
+- [x] MIG-001 기존 이전 서버·기존 엔진·adapter journal의 데이터 위치와 schema를 read-only로 조사한다. 검증: 읽기 전용 조사(자격증명·pgdata 미열람, 내용 미출력), 대화 파일 version 2 형식·항목 종류·개수 전수 집계(`migration/import-survey.md`).
 - [ ] MIG-002 대화·모델 context·프로젝트·worktree·첨부파일·설정·사용량·계정 참조를 분류한다.
 - [ ] MIG-003 스킬·에이전트·workflow·hook·MCP·예약·메모리의 이전 대상을 확정한다.
-- [x] MIG-004 dry-run으로 이전 가능·충돌·미지원 항목을 표시한다. 검증: `grove import paseo --dry-run`이 가져올 수 있음·실패·결과 불명·잘린 기록·새 프로젝트·없는 경로·옮기지 않는 항목을 DB 변경 없이 보고(`tests/import.rs`, 실데이터 945개 dry-run).
+- [x] MIG-004 dry-run으로 이전 가능·충돌·미지원 항목을 표시한다. 검증: `grove import(삭제됨) --dry-run`이 가져올 수 있음·실패·결과 불명·잘린 기록·새 프로젝트·없는 경로·옮기지 않는 항목을 DB 변경 없이 보고(`tests/import.rs`, 실데이터 945개 dry-run).
 - [x] MIG-005 기존 세션 ID와 새 ID를 영속 매핑한다. 검증: `import_map(source, source_id) → session_id` 영속 매핑을 대화 저장과 같은 transaction에 기록(`tests/import.rs`).
-- [ ] MIG-006 중복된 Paseo 표시 기록과 Mixdog 원본 기록을 출처·ID·시간 기준으로 정규화한다.
+- [ ] MIG-006 중복된 이전 서버 표시 기록과 기존 엔진 원본 기록을 출처·ID·시간 기준으로 정규화한다.
 - [ ] MIG-007 표현만 다른 동일 데이터는 충돌로 취급하지 않는다.
 - [x] MIG-008 복구 불가능한 tool/result 짝·압축 구간·누락 첨부를 명확히 표시한다. 검증: 도구 호출(표시 텍스트뿐)·압축(요약문 없음)·잘린 기록·결과 불명을 대화 맨 앞 안내와 항목별 표시로 명시, 모델 입력에서 제외(`tests/import.rs`, `web/e2e/import.spec.ts`).
 - [x] MIG-009 비밀정보는 승인된 안전 경로로 이전하거나 재로그인을 요구한다. 검증: 계정·API 키·OAuth는 옮기지 않고 보고서에 재로그인 필요로 표시(`tests/import.rs` dry-run 보고서).
@@ -1676,7 +1679,7 @@ Rust가 전체 빌드나 모델 응답 시간을 자동으로 줄인다고 가�
 
 - [ ] CUT-001 유지 대상으로 확정한 모든 기능 ID가 구현·테스트·migration 결과와 연결되어 있는지 확인한다.
 - [ ] CUT-002 제외/보류 항목은 사용자 결정과 대안을 명시하고 미해결 기능을 숨기지 않는다.
-- [ ] CUT-003 새 제품의 모든 유지 흐름이 Mixdog/Paseo 런타임·SDK·내부 API·업데이트 없이 동작하고 책임별 모듈만 남았는지 확인한다.
+- [ ] CUT-003 새 제품의 모든 유지 흐름이 기존 엔진/이전 서버 런타임·SDK·내부 API·업데이트 없이 동작하고 책임별 모듈만 남았는지 확인한다.
 - [ ] CUT-004 PC·Android·Web이 공용 UI와 공용 프로토콜을 사용함을 확인한다.
 - [ ] CUT-005 모든 기본 실행 상태·기록의 최종 소유자가 Rust 서버 하나인지 확인한다.
 - [ ] CUT-006 성능과 빌드 목표 달성 여부를 같은 조건의 기준선과 비교한다.

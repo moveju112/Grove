@@ -5,10 +5,10 @@
 # 39 — AGENT-024 기본 정의 비교·선택 적용
 
 - 상태: 고정 baseline에서 소유 구현·실제 mount·선택 인수 완료. blocker 없음. root 통합은 수행하지 않음.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-39-definition-updates`
+- Worktree: `<세션 worktree 루트>/b02-39-definition-updates`
 - Branch: `parallel/b02-definition-updates`
 - 고정 기준: `eb841bb51dfde92a714f48189d02b0f568ad23c0`. `339f5167b1883d4db17134bd4277ffeee983f47b` 포함을 `git merge-base --is-ancestor`로 확인.
-- 정본: `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/39.md` 및 README의 정확한 경로·브랜치 매칭.
+- 정본: `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/39.md` 및 README의 정확한 경로·브랜치 매칭.
 - 초기 Git clean 확인. 개발 세션 조회는 런타임의 `session: cross-session control is unavailable in this runtime`으로 불가. 사용자 지시에 따라 런타임 설정·workspace 관리·위임은 하지 않음.
 
 ## 제공 동작·소유 변경
@@ -51,7 +51,7 @@
 최초 선택 검사:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test", "--rust", "definitions", "definition_updates", "--vitest", "app/components/definition-updates/model.test.ts", "--typecheck"])'
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test", "--rust", "definitions", "definition_updates", "--vitest", "app/components/definition-updates/model.test.ts", "--typecheck"])'
 ```
 
 - Rust `definitions` 3개와 `definition_updates` 3개 통과. Rust 156.45s wall / 213.06s CPU.
@@ -59,13 +59,13 @@ source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove
 - 알려진 요청 길이를 먼저 검증하는 시험의 배열 접근에 non-null assertion을 추가. 이후 다음 명령으로 typecheck(7.69s wall / 12.13s CPU), Vitest 3개(1.5s wall / 2.28s CPU) 통과:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test", "--vitest", "app/components/definition-updates/model.test.ts", "--typecheck"])'
+source <원본 저장소>/.envrc.dev && python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test", "--vitest", "app/components/definition-updates/model.test.ts", "--typecheck"])'
 ```
 
 최초 브라우저 인수:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test", "--e2e", "e2e/definition-updates.spec.ts"])'
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test", "--e2e", "e2e/definition-updates.spec.ts"])'
 ```
 
 - 3개 통과. debug 서버 빌드 80.32s wall / 83.0s CPU, 웹 빌드 4.84s wall / 5.13s CPU, E2E 6.85s wall / 5.02s CPU.
@@ -74,7 +74,7 @@ source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove
 안정된 최종 입력의 영향 검사:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test", "--rust", "definition_updates", "--vitest", "app/components/definition-updates/model.test.ts", "--typecheck", "--e2e", "e2e/definition-updates.spec.ts"])'
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test", "--rust", "definition_updates", "--vitest", "app/components/definition-updates/model.test.ts", "--typecheck", "--e2e", "e2e/definition-updates.spec.ts"])'
 ```
 
 | 단계 | 결과 | wall | CPU |
@@ -88,8 +88,8 @@ source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove
 
 기존 `definitions` 3개 통과는 이후 실행 코드 변경 없이 재사용. 마지막 검사 뒤 제품/시험 입력 변경은 없고 이 RESULT만 작성함.
 실행기 시간은 단계 측정치이며 공용 잠금 대기 시간이나 생산성/절감량으로 해석하지 않음.
-최종 원본 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5e9ebbe4.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5e9ebbe4.stderr`.
-최초 실패 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_d3d4a4c5.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_d3d4a4c5.stderr`.
+최종 원본 로그: `<실행 로그>/shell_5e9ebbe4.stdout`, `<실행 로그>/shell_5e9ebbe4.stderr`.
+최초 실패 로그: `<실행 로그>/shell_d3d4a4c5.stdout`, `<실행 로그>/shell_d3d4a4c5.stderr`.
 `git diff --check` 통과. 빌드의 React Router future flags 및 500 kB chunk 경고는 남아 있고 관련 없는 설정/코드를 고치지 않음.
 전체 suite·release·모바일·외부 모델·실제 다른 번들 binary의 교체는 미선택. 이전 번들 상황은 기존 DB fixture와 이전 metadata의 브라우저 응답으로 검증했으며 실제 번들을 바꾸지 않았음.
 

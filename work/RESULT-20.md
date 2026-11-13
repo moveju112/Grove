@@ -1,7 +1,7 @@
 # b02 / 20 — 외부 편집기 목록·열기
 
 ## 위치·상태
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-20-external-editor`
+- Worktree: `<세션 worktree 루트>/b02-20-external-editor`
 - Branch: `parallel/b02-external-editor`
 - 분기 기준: `c2eebe6a08c4375d604a76e807066e76f9e4fbcd` (README 20 행의 별도 기준). 작업 시작 HEAD와 일치하고 ancestry 확인 완료.
 - 상태: 구현 종료, 통합 및 E2E·실환경 검증 대기. 구현 blocker 없음.
@@ -38,8 +38,8 @@
 
 | 실제 명령 | 최종 결과·입력 |
 |---|---|
-| `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust external_editor` | 성공. 상위 test 2개 통과, fixture 1개는 기본 실행에서 의도적으로 ignored. driver가 desktop·Wayland·headless·missing·SSH·public listen·TLS proxy 7개 환경에서 fixture를 각각 명시 실행하여 모두 성공했다. |
-| `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/files/ExternalEditor.test.ts --typecheck` | 최종 성공. typecheck 및 Vitest 4개 통과. |
+| `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust external_editor` | 성공. 상위 test 2개 통과, fixture 1개는 기본 실행에서 의도적으로 ignored. driver가 desktop·Wayland·headless·missing·SSH·public listen·TLS proxy 7개 환경에서 fixture를 각각 명시 실행하여 모두 성공했다. |
+| `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/files/ExternalEditor.test.ts --typecheck` | 최종 성공. typecheck 및 Vitest 4개 통과. |
 | `git diff --check` | 성공. |
 
 - Rust는 설치 후보/실행 권한 없는 후보/미탐지, 실제 응답의 경로 비노출, GUI 없음, 모바일·프록시 거부, 인증 거부, 서버·프로젝트 읽기 전용, 경로 탈출·외부 symlink, 임의 executable/args 거부, 특수문자·공백·한글 파일명의 정확한 단일 인자와 cwd, 멱등 재전송/키 충돌, 접수 DB 실패·완료 DB 실패, spawn 실패 및 원문 보존을 확인했다.

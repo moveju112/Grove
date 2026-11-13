@@ -23,7 +23,80 @@ async fn repo() -> (TestServer, String, PathBuf) {
     std::fs::write(root.join("a.txt"), "one\n").unwrap();
     sh(&root, &["add", "a.txt"]);
     sh(&root, &["commit", "-q", "-m", "init"]);
+    s.use_workspaces(p["id"].as_str().unwrap()).await;
     (s, p["id"].as_str().unwrap().to_string(), root)
+}
+
+/// 단일 모드(기본)는 워크스페이스를 만들거나 연결할 수 없고, 워크스페이스가 남아 있으면 단일 모드로 돌아갈 수 없다.
+#[tokio::test]
+async fn single_mode_blocks_workspaces_and_switch_back_requires_cleanup() {
+    let s = TestServer::start().await;
+    let p = s.create_project("single").await;
+    let pid = p["id"].as_str().unwrap().to_string();
+    assert_eq!(p["workspace_mode"], "single", "새 프로젝트는 단일 모드");
+    let root = PathBuf::from(p["root_path"].as_str().unwrap());
+    sh(&root, &["init", "-q", "-b", "main"]);
+    sh(&root, &["config", "user.email", "t@example.invalid"]);
+    sh(&root, &["config", "user.name", "Tester"]);
+    std::fs::write(root.join("a.txt"), "one\n").unwrap();
+    sh(&root, &["add", "a.txt"]);
+    sh(&root, &["commit", "-q", "-m", "init"]);
+
+    // 단일 모드: 생성 거부, git에도 Grove 기록에도 아무것도 남지 않는다.
+    let (st, v) = s.post(&format!("/api/v1/projects/{pid}/worktrees"), json!({ "name": "feat" })).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"]["code"], "single_workspace_mode");
+    assert_eq!(sh(&root, &["worktree", "list"]).lines().count(), 1);
+    assert!(sh(&root, &["branch", "--list", "grove/*"]).trim().is_empty(), "브랜치도 만들지 않는다");
+    let (_, list) = s.get(&format!("/api/v1/projects/{pid}/worktrees")).await;
+    assert_eq!(list["worktrees"], json!([]), "{list}");
+    assert_eq!(list["removed"], json!([]), "{list}");
+    let (_, sess) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({ "title": "a" })).await;
+    let sid = sess["id"].as_str().unwrap().to_string();
+    assert_eq!(sess["worktree_id"], Value::Null);
+    // 프로젝트 폴더로 돌아오는 요청은 단일 모드에서도 허용(바뀌는 것 없음).
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/worktree"), json!({ "worktree_id": null })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+
+    // 프로젝트 모드에서 워크스페이스를 만들고 대화를 넣는다.
+    let p = s.use_workspaces(&pid).await;
+    assert_eq!(p["workspace_mode"], "project");
+    let (st, w) = s.post(&format!("/api/v1/projects/{pid}/worktrees"), json!({ "name": "feat" })).await;
+    assert_eq!(st, StatusCode::CREATED, "{w}");
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/worktree"), json!({ "worktree_id": w["id"] })).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+
+    // 워크스페이스가 남아 있으면 단일 모드로 못 돌아가고, 아무것도 바뀌지 않는다.
+    let switch = |rev: Value| json!({ "expected_revision": rev, "workspace_mode": "single" });
+    let (st, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{pid}"), switch(p["revision"].clone())).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"]["code"], "workspaces_in_use");
+    assert_eq!(v["error"]["details"], json!({ "worktrees": 1, "sessions": 1 }));
+    let (_, cur) = s.get(&format!("/api/v1/projects/{pid}")).await;
+    assert_eq!(cur["workspace_mode"], "project");
+    assert_eq!(cur["revision"], p["revision"]);
+
+    // 대화를 프로젝트 폴더로 돌려도 worktree가 남아 있으면 거부.
+    s.post(&format!("/api/v1/sessions/{sid}/worktree"), json!({ "worktree_id": null })).await;
+    let (st, v) = s.send(Method::PATCH, &format!("/api/v1/projects/{pid}"), switch(cur["revision"].clone())).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"]["details"], json!({ "worktrees": 1, "sessions": 0 }));
+
+    // worktree를 제거하면 단일 모드로 돌아가고, 제거한 worktree 복원은 거부된다.
+    let wid = w["id"].as_str().unwrap();
+    let (st, v) = s.send(Method::DELETE, &format!("/api/v1/worktrees/{wid}"), json!({})).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let (st, single) = s.send(Method::PATCH, &format!("/api/v1/projects/{pid}"), switch(cur["revision"].clone())).await;
+    assert_eq!(st, StatusCode::OK, "{single}");
+    assert_eq!(single["workspace_mode"], "single");
+    let (st, v) = s.post(&format!("/api/v1/worktrees/{wid}/restore"), json!({})).await;
+    assert_eq!(st, StatusCode::CONFLICT, "{v}");
+    assert_eq!(v["error"]["code"], "single_workspace_mode");
+    assert_eq!(sh(&root, &["worktree", "list"]).lines().count(), 1, "복원 거부 시 worktree를 다시 만들지 않는다");
+
+    // 잘못된 모드 값
+    let (st, _) = s.send(Method::PATCH, &format!("/api/v1/projects/{pid}"), json!({ "expected_revision": single["revision"], "workspace_mode": "multi" })).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
 /// 대화에서 백그라운드 작업으로 파일을 만들고 끝날 때까지 기다린다(실행 위치 확인용).

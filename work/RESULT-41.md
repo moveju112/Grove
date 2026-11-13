@@ -6,10 +6,10 @@
 
 ## 기준·상태
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-41-agent-overview`
+- worktree: `<세션 worktree 루트>/b02-41-agent-overview`
 - branch: `parallel/b02-agent-overview`
 - 고정 기준: `f4a4a702bcd342e159efe8801d429ad181391651`. 시작 HEAD와 일치하고 `43a51d0055a41fe889692fdb04a5e5b204eebf89` 포함을 확인했다.
-- 정본: `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/41.md`. 원본 README의 경로·브랜치 행도 일치했다.
+- 정본: `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/41.md`. 원본 README의 경로·브랜치 행도 일치했다.
 - 소유 구현·실제 Settings 연결·선택 검사·배정 브라우저 인수를 완료했다. 실행 가능한 잔여·blocker 없음. 통합·TODO 반영은 메인 소유이며 여기서는 하지 않았다.
 
 ## 제공 동작·연결
@@ -54,11 +54,11 @@
 모든 실행은 이 worktree에서 했다. 기존 환경·검사·빌드 스크립트·툴체인은 변경하지 않았다. 원본 `.envrc.dev`를 source하고 구형 builder의 `DEV`만 프로세스에서 지정했다. 없는 `web/node_modules`는 COMMON의 원본 공유 경로로 symlink했다. `.dev` 설치·복사·덮어쓰기는 하지 않았다. 기존 cargo config의 jobs=2/build-dir 설정을 그대로 사용했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test", "--rust", "agent_overview", "definitions", "settings", "agents"])'
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test", "--rust", "agent_overview", "definitions", "settings", "agents"])'
 
-source /data/project/paseodog_opus/.envrc.dev && python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test", "--vitest", "app/components/agent-overview/AgentOverview.test.ts", "--typecheck"])'
+source <원본 저장소>/.envrc.dev && python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test", "--vitest", "app/components/agent-overview/AgentOverview.test.ts", "--typecheck"])'
 
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test", "--e2e", "e2e/agent-overview.spec.ts"])'
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; sys.path.insert(0, "scripts"); import build; build.DEV="<원본 저장소>/.dev"; build.main(["test", "--e2e", "e2e/agent-overview.spec.ts"])'
 ```
 
 | 최종 검사 | 결과 | 실행기 wall / CPU |
@@ -72,18 +72,18 @@ source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove
 
 유효 로그:
 
-- Rust: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3aa5f60f.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3aa5f60f.stderr`
-- 타입·Vitest: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_24f15905.stdout`
-- 빌드·최종 브라우저: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_f279ecba.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_f279ecba.stderr`
+- Rust: `<실행 로그>/shell_3aa5f60f.stdout`, `<실행 로그>/shell_3aa5f60f.stderr`
+- 타입·Vitest: `<실행 로그>/shell_24f15905.stdout`
+- 빌드·최종 브라우저: `<실행 로그>/shell_f279ecba.stdout`, `<실행 로그>/shell_f279ecba.stderr`
 
 최종 범위 확인에서 rustfmt의 하위 모듈 처리로 공통 fixture 두 파일에도 포맷 변경이 생긴 것을 발견했다. 그 변경만 원문으로 되돌렸고 `tests/common/mod.rs`, `tests/common/fixture.rs`의 Git diff가 없는 상태에서 위 Rust 20개를 다시 통과했다. 최종 웹/브라우저 검사 입력은 이 복구와 무관하며 그대로다. 최종 Rust 검사 이후에는 이 인계 문서만 갱신했다. 로컬 fixture만 사용했으며 실제 모델 품질·외부 서비스 성공을 주장하지 않는다. 전체 회귀·release·mobile·다른 OS는 미선택/미검증이다.
 
 ### 실패·수정 이력
 
-- 첫 Rust 실행은 새 시험 4/5 통과 후, `total_changes`에 기존 Bearer 인증의 `tokens.last_used_at` 1건을 포함해 실패했다. 인증 구현을 확인해 그 1건만 기대값에 반영했고 제품 코드는 바꾸지 않았다. 같은 명령 재실행에서 20개가 모두 통과했다(68.55s wall / 36.32s CPU, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_60c64899.stdout`). 공통 fixture 원문 복구 후 최종 20개 통과 근거는 위 표다. 최초 실행은 exit 101, rust tests 135.79s wall / 221.65s CPU였고 뒤 integration targets는 당시 미실행이었다. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_fa77b645.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_fa77b645.stderr`.
+- 첫 Rust 실행은 새 시험 4/5 통과 후, `total_changes`에 기존 Bearer 인증의 `tokens.last_used_at` 1건을 포함해 실패했다. 인증 구현을 확인해 그 1건만 기대값에 반영했고 제품 코드는 바꾸지 않았다. 같은 명령 재실행에서 20개가 모두 통과했다(68.55s wall / 36.32s CPU, `<실행 로그>/shell_60c64899.stdout`). 공통 fixture 원문 복구 후 최종 20개 통과 근거는 위 표다. 최초 실행은 exit 101, rust tests 135.79s wall / 221.65s CPU였고 뒤 integration targets는 당시 미실행이었다. 로그: `<실행 로그>/shell_fa77b645.stdout`, `<실행 로그>/shell_fa77b645.stderr`.
 - 최초 E2E는 세션 목록을 배열로 가정한 새 시험의 오류로 1 실패·3 미실행이었다. 실제 `SessionPage.items` 계약으로 고쳤다. 두 번째 실행은 편집/reload 1 통과 후 프로젝트 선택이 같은 pane의 활성 탭을 바꾼다는 점을 놓쳐 대상 보존 시험이 timeout, 나머지 2개는 미실행이었다. 실제 화면 snapshot을 확인하고 다른 대화를 오른쪽 pane에서 선택하는 원래 요구 시나리오로 고쳤다.
 - 다음에는 `e2e/agent-overview.spec.ts:69`, `:103`, `:149`를 한 `--e2e` 입력으로 선택했다. 대상 보존은 통과했지만 실제 `context.setOffline(true)`에서 SSE의 기존 live 상태가 남아 개요가 이전값을 노출해 1 실패·1 미실행이었다. 개요 소유 범위에서 navigator online/offline도 구독하고 연결 변화마다 새 조회·세대 해제를 하도록 수정했다. HTTP 오류로 offline 시나리오를 바꾸거나 timeout을 늘리지 않았다. 최종 5개 전체 인수와 영향받은 타입·Vitest를 다시 통과했다.
-- 실패 브라우저 로그는 각각 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_8359e009.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_41264e89.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_4b008996.stdout`와 같은 basename의 `.stderr`다. 각 실행은 exit 1이다. E2E 단계 wall/CPU는 순서대로 4.54s/3.42s, 25.65s/4.58s, 7.36s/4.21s였다.
+- 실패 브라우저 로그는 각각 `<실행 로그>/shell_8359e009.stdout`, `<실행 로그>/shell_41264e89.stdout`, `<실행 로그>/shell_4b008996.stdout`와 같은 basename의 `.stderr`다. 각 실행은 exit 1이다. E2E 단계 wall/CPU는 순서대로 4.54s/3.42s, 25.65s/4.58s, 7.36s/4.21s였다.
 - 기존 React Router future flag·500kB 초과 chunk 경고는 남아 있으며 범위 밖 공통 설정을 수정하지 않았다.
 - 읽기 전용 세션 목록 도구는 이 runtime에서 cross-session 기능을 제공하지 않았다. 원본의 broad inventory 조회도 timeout되어 알려진 cargo config 파일을 직접 읽어 환경을 확인했다. 이를 검사 성공이나 세션 관리 수행으로 간주하지 않았다.
 

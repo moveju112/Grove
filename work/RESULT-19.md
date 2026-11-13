@@ -2,7 +2,7 @@
 
 ## 식별·상태
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-19-git-stash`
+- worktree: `<세션 worktree 루트>/b02-19-git-stash`
 - branch: `parallel/b02-git-stash`
 - 공통 기준: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`
 - 원본 `work/ENTRY.md`·README의 절대 경로와 브랜치가 정확히 일치하는 19번을 선택했고, `git merge-base HEAD <기준>`도 위 SHA였다.

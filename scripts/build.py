@@ -44,7 +44,7 @@ TARGETS = {
 }
 SERVER_INPUTS = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml", "src", "assets"]
 WEB_INPUTS = ["web/package.json", "web/package-lock.json", "web/app", "web/public", "web/scripts", "web/vite.config.ts", "web/react-router.config.ts", "web/tsconfig.json"]
-NOTICE_FILES = ["assets/MIXDOG-LICENSE", "assets/MIXDOG-NOTICE.md"]
+NOTICE_FILES = ["assets/licenses/agent-baseline-LICENSE", "assets/licenses/agent-baseline-NOTICE.md"]
 
 
 # ---------- 공통 ----------

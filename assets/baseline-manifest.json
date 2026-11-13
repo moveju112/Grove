@@ -1,5 +1,5 @@
 {
-  "source": "mixdog 1.4.1 (/home/ubuntu/project/paseodog/engine/node_modules/mixdog/src), paseodog base SHA 73416e27c452a9285611bf7fc33290e6d3b7cbec",
+  "source": "upstream agent baseline 1.4.1, base SHA 73416e27c452a9285611bf7fc33290e6d3b7cbec; agents/maintainer/agent.json product name replaced with Grove",
   "files": {
     "agents/advisor/AGENT.md": "b61354e7606f0d5a112ba8945e7cd99658f654d1b87baf6638b69f2918ce2ec9",
     "agents/advisor/agent.json": "799c509d3fda9dcf242b712aa206f4a8b5eeb0697a0ab7b3b9551f5e06d8ad94",
@@ -16,7 +16,7 @@
     "agents/heavy-worker/AGENT.md": "eec5d59fd9d0fc398c521ed7424c02b88c126597baf23c394d3225e6fc78aad8",
     "agents/heavy-worker/agent.json": "7c77bc99ad467835fd441dd56e73e052c831b56d12f756ebfcfe86d1e8fe29da",
     "agents/maintainer/AGENT.md": "a4535580b6a9391d357290d55a3525b7fa0727806ae12925e2356425065fbe08",
-    "agents/maintainer/agent.json": "9b3df2bcb4063691fe9cdf0d1c21eac347f31f3f090e47f7004c76d63f8f5afe",
+    "agents/maintainer/agent.json": "6ec3d42122cfe19592ee185a4e92eef3400eb01fb7d2752819f59e233af2b60f",
     "agents/reviewer/AGENT.md": "66304eae3cd4212b58be4440aeb4274c63f7ce32ed8e406e47bd1fa437f3b4ae",
     "agents/reviewer/agent.json": "256ef4da2929ac75542efe126e379756a65e1b382351e78409fc5a63976b993b",
     "agents/security/AGENT.md": "ac379721eda2df3d91429e996e19bf0a5c0a13993cb205c2e04134bc1edee07e",

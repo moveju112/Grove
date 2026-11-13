@@ -4,24 +4,24 @@
 이 문서는 원본 프로젝트의 메인 세션에서 실행하는 통합 절차다. 사용자가 “00 메인 세션”이라고 부르는 세션이나 다른 메인 세션에서도 사용할 수 있다.
 메인 역할은 실제 Git top-level·브랜치와 사용자 요청으로 판별한다. 기존 00 기능 worktree(`parallel/b01-source-settings`)는 원본 설정 담당이며, 이름이 00이라는 이유로 통합 역할을 맡거나 작업 위치를 자동 전환하지 않는다.
 사용자가 통합·합치기·정리·다음 작업 준비 중 하나라도 요청하면 이 절차 전체를 실행한다. “정리해줘”, “합쳐줘”, “10개 뽑아줘”만 보내도 1~5단계를 모두 수행한다. 사용자가 명시적으로 뺀 단계만 생략한다. 문서 조회·작성 요청만으로는 실제 통합이나 삭제를 시작하지 않는다.
-통합 대상 프로젝트는 `/data/project/paseodog_opus`, 대상 브랜치는 `master`다.
+통합 대상 프로젝트는 `<원본 저장소>`, 대상 브랜치는 `master`다.
 현재 작업 위치와 Git root·브랜치를 확인한다. 기능 worktree에서 이 절차를 실행하지 않는다.
 적용되는 공통·프로젝트 룰, `work/README.md`, `work/COMMON.md`, 해당 번호 문서를 읽는다.
 같은 통합 checkout의 편집 담당은 한 세션이어야 한다. 다른 통합 세션이 작업 중이면 함께 편집하지 않는다.
 현재 미커밋 변경은 소유권과 인계 범위를 확인한다. 남의 변경을 포함하거나 stash/reset/restore/clean하지 않는다.
-상태는 파일과 Git·Paseo 실제 상태로 복구한다. 이전 대화를 반드시 읽거나 사용자에게 작업 결과를 복사해 오도록 요구하지 않는다.
+상태는 파일과 Git·이전 서버 실제 상태로 복구한다. 이전 대화를 반드시 읽거나 사용자에게 작업 결과를 복사해 오도록 요구하지 않는다.
 
 ## 권한 범위
 위 실행 요청은 START의 통합 프롬프트와 같은 범위를 승인한 것으로 처리한다. 사용자에게 긴 프롬프트를 다시 보내게 하지 않는다:
 - 완료한 배치 작업의 로컬 merge, 필요한 연결·결함 수정, 검사와 관련 로컬 커밋.
-- 검증·TODO 반영·보존 조건을 모두 충족한 정확한 작업 worktree와 Paseo 워크스페이스의 정리.
-- 최신 통합 커밋에서 다음 독립 기능의 문서·브랜치·worktree·Paseo 워크스페이스 준비.
+- 검증·TODO 반영·보존 조건을 모두 충족한 정확한 작업 worktree와 이전 서버 워크스페이스의 정리.
+- 최신 통합 커밋에서 다음 독립 기능의 문서·브랜치·worktree·이전 서버 워크스페이스 준비.
 push·배포·의존성 추가/업그레이드·운영 서비스 중단·강제 삭제·이력 재작성·작업 브랜치 삭제는 포함하지 않는다.
 기본은 사용자가 각 워크스페이스에서 공통 프롬프트로 직접 시작한다. 사용자가 생성·프롬프트 전송·완료 감지·병합·정리·TODO 반영의 자동 반복을 명시적으로 승인한 경우에만 아래 자동 순환 계약을 적용한다.
 
 ## 1. 완료 작업만 수집
 README의 활성 목록에서 실제 경로·브랜치·workspace ID를 확인한다. 세션 목록은 프로젝트 한 곳으로 제한되지 않도록 서비스의 전체 목록 또는 정확한 workspace 조회를 사용한다.
-첫 수집은 `python3 scripts/integration_queue.py --root /data/project/paseodog_opus --max-running 10 --events /home/ubuntu/.cache/grove-events/events.jsonl`로 수행한다. 사용자 최신 명시 설정의 운영 상한을 명시하며 점검기 기본값 4는 바꾸지 않는다. 옵션은 1..10만 허용하고 기존 초과 실행을 중단하지 않는다. 한 번의 전체 세션 조회와 Git worktree 목록으로 `prepared`, `running`, 완료 후보·계속할 작업·blocker·과거 인계 검토를 구분한다. 점검기는 이벤트 append 외에는 읽기 전용이며 종료 세션의 committed RESULT 앞 8 KiB 완료 계약만 읽는다. 실행 중인 worktree의 RESULT·diff·검사 로그는 읽거나 세션을 시작하지 않는다.
+첫 수집은 `GROVE_AGENT_CLI=<세션 관리 CLI 이름> python3 scripts/integration_queue.py --root <원본 저장소> --max-running 10 --events /home/ubuntu/.cache/grove-events/events.jsonl`로 수행한다. CLI 이름은 저장소에 적지 않고 실행 환경에서만 지정한다. 지정하지 않으면 점검기는 아무것도 실행하지 않고 실패한다. 사용자 최신 명시 설정의 운영 상한을 명시하며 점검기 기본값 4는 바꾸지 않는다. 옵션은 1..10만 허용하고 기존 초과 실행을 중단하지 않는다. 한 번의 전체 세션 조회와 Git worktree 목록으로 `prepared`, `running`, 완료 후보·계속할 작업·blocker·과거 인계 검토를 구분한다. 점검기는 이벤트 append 외에는 읽기 전용이며 종료 세션의 committed RESULT 앞 8 KiB 완료 계약만 읽는다. 실행 중인 worktree의 RESULT·diff·검사 로그는 읽거나 세션을 시작하지 않는다.
 `candidate`는 clean·종료 상태·committed RESULT가 있는 통합 후보일 뿐 완료 승인이 아니다. `integrated-candidate`도 ancestry만 확인했으므로 검증·TODO·정리는 별도다. `prepared`도 기준 SHA·정확한 workspace·승인 조건을 확인하기 전에는 시작하지 않는다. 조회 실패는 빈 큐로 간주하지 않는다.
 `needs-continuation`은 맡은 범위의 실행 가능한 잔여가 남은 종료 세션이다. `blocked`는 해제 조건이 명시된 실제 외부 blocker이고 무한 재개하지 않는다. `legacy-review`는 과거 인계를 한 번 읽고 실제 잔여·승인·검사 대기를 분류할 대상으로서, 완료나 자동 재개로 추정하지 않는다. 잘못된 완료 계약은 `invalid-handoff`로 보존한다.
 기능 세션의 소유 범위에서 해결 가능한 잔여를 메인이 재구현하거나 다음 번호로 계속 떠넘기지 않는다. 단일 소유권·현재 상태·실행 슬롯을 확인한 뒤 원래 종료 세션에서 이어가도록 하고, 정확한 종료 조건과 필요한 연결 소유권을 전달한다. 기존 진행 세션·기준 SHA·유효 검사는 보존한다. 실제 외부 blocker는 이유·해제 조건을 TODO와 이월에 남기고 독립 작업을 계속한다.
@@ -49,9 +49,9 @@ Rust·웹 빌드·E2E는 기본 순차 실행한다. 메인을 포함한 모든 
 
 ### 고정 candidate 비동기 검증과 실패 격리
 - 첫 단계에서는 메인이 유일한 병합 작성자다. 실행기는 merge·커밋·TODO 완료·정리·세션 재개를 하지 않는다.
-- 관련 묶음의 입력을 커밋으로 확정한 뒤 `python3 scripts/integration_validation.py run --root /data/project/paseodog_opus --candidate <정확한-SHA> --store /home/ubuntu/.cache/grove-validation --timeout 3600 -- --e2e <선택-spec>`를 background task로 실행한다. 승인된 공통 빌드 환경을 먼저 적용하고 선택 옵션은 기존 build.py 계약을 따른다. 원본 미커밋 변경은 candidate에 포함되지 않는다.
+- 관련 묶음의 입력을 커밋으로 확정한 뒤 `python3 scripts/integration_validation.py run --root <원본 저장소> --candidate <정확한-SHA> --store /home/ubuntu/.cache/grove-validation --timeout 3600 -- --e2e <선택-spec>`를 background task로 실행한다. 승인된 공통 빌드 환경을 먼저 적용하고 선택 옵션은 기존 build.py 계약을 따른다. 원본 미커밋 변경은 candidate에 포함되지 않는다.
 - 실행기는 고유 job 아래 독립 Git clone을 만들고 candidate를 detached checkout한다. 원본 index·HEAD·worktree 등록을 변경하지 않는다. `.dev`와 `web/node_modules`는 원본 공유 환경을 연결하고 설치하지 않는다. 공유 dependency·툴체인·cache 설정은 검사 중 변경하지 않는다. Rust·E2E 공유 잠금은 그대로 유지하므로 병렬 E2E를 허용하는 변경이 아니다.
-- 시작 출력의 job 경로를 보존하고 완료 알림을 이용한다. `inspect --root /data/project/paseodog_opus <job>`로 최종 상태·선택 범위·SHA·원래 종료 코드를 읽는다. `output.log`에 전체 출력을 남긴다. 실패·timeout·중단 job은 덮어쓰거나 성공으로 바꾸지 않는다. 반복 polling·동일 입력 재실행은 하지 않는다. 프로세스 강제 종료로 마지막 상태가 running인 경우 완료로 추정하지 않는다.
+- 시작 출력의 job 경로를 보존하고 완료 알림을 이용한다. `inspect --root <원본 저장소> <job>`로 최종 상태·선택 범위·SHA·원래 종료 코드를 읽는다. `output.log`에 전체 출력을 남긴다. 실패·timeout·중단 job은 덮어쓰거나 성공으로 바꾸지 않는다. 반복 polling·동일 입력 재실행은 하지 않는다. 프로세스 강제 종료로 마지막 상태가 running인 경우 완료로 추정하지 않는다.
 - 고정 checkout 검증 중 메인은 다른 후보 조사·소유권 보완·승인된 기존 세션 이어하기·독립 통합을 진행할 수 있다. 검사 checkout과 공유 환경은 수정하지 않는다. 기존 원본 검사와 달리 원본 HEAD 변경은 고정 검사 입력을 바꾸지 않는다.
 - `reusable=true`는 현재 원본이 clean이고 정확히 검증 SHA일 때만 반환한다. 이는 해당 선택 검사 근거일 뿐 전체 인수 승인이 아니다. HEAD나 미커밋 입력이 달라지면 자동 재사용하지 않고 메인이 관련 입력 차이를 판단해 영향 검사만 수행한다.
 - 실패는 job·기능·공통 경계별로 분류하고 원래 담당에게 좁은 결함 수정을 맡긴다. 의존성 없는 다른 후보는 계속 처리한다. 공통 인증·저장·복구·빌드 결함이면 영향받는 묶음을 보류한다. 실패한 후보가 포함된 HEAD에서 다른 검사가 통과해도 실패 항목을 완료 처리하지 않는다.
@@ -87,17 +87,17 @@ RESULT의 완료 SHA는 실제 작업 브랜치와 대조한다. 작업 결과 �
 7. 해당 작업과 통합 영향 검사가 통과했다. 미해결 결함 때문에 작업을 재개해야 하는 상태가 아니다.
 
 조건 하나라도 불충족이면 그 대상은 보존하고 이유를 보고한다. 강제 삭제하거나 실행 중 에이전트를 중단하지 않는다.
-Paseo의 workspace archive 기능으로 정확한 ID만 정리한다. 이 작업은 종료된 소속 세션도 보관 처리하므로 그 영향을 함께 확인한다.
+이전 서버의 workspace archive 기능으로 정확한 ID만 정리한다. 이 작업은 종료된 소속 세션도 보관 처리하므로 그 영향을 함께 확인한다.
 서비스가 worktree 디렉터리까지 제거했다고 응답하면 중복 삭제하지 않는다.
 서비스가 디렉터리를 남겼다면 실제 Git worktree 등록과 상태를 다시 확인한 뒤 지원되는 관리 경로로 정확한 worktree만 제거한다.
 일반 `rm -rf`, 광범위 glob, 강제 제거는 사용하지 않는다.
-Git worktree 목록과 Paseo 활성 목록에서 제거됐는지 확인한다.
-Paseo가 soft archive만 제공한다면 hard delete했다고 말하지 않는다. 사용자 화면의 활성 워크스페이스 제거와 디렉터리 제거를 구분해 보고한다.
+Git worktree 목록과 이전 서버 활성 목록에서 제거됐는지 확인한다.
+이전 서버가 soft archive만 제공한다면 hard delete했다고 말하지 않는다. 사용자 화면의 활성 워크스페이스 제거와 디렉터리 제거를 구분해 보고한다.
 작업 브랜치와 통합된 커밋은 복구 근거로 유지한다.
 
 ## 5. 빈 자리 자동 보충
 정리 직후 같은 흐름에서 반드시 수행한다. 정리만 하고 끝내지 않는다. 건너뛰면 최종 보고에 이유를 쓴다.
-준비 순서를 지킨다: ① 번호 문서와 README 활성 표 행(예정 경로 `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/<slug>`·브랜치)을 먼저 작성·커밋한다 → ② Paseo workspace를 만든다 → ③ 반환된 cwd·브랜치가 표와 같은지 확인하고, 다르면 표를 고쳐 커밋한다 → ④ 그 뒤에 사용자에게 알린다. workspace가 보이는데 표가 없으면 사용자가 먼저 시작한 세션이 매칭 실패로 멈춘다.
+준비 순서를 지킨다: ① 번호 문서와 README 활성 표 행(예정 경로 `<세션 worktree 루트>/<slug>`·브랜치)을 먼저 작성·커밋한다 → ② 이전 서버 workspace를 만든다 → ③ 반환된 cwd·브랜치가 표와 같은지 확인하고, 다르면 표를 고쳐 커밋한다 → ④ 그 뒤에 사용자에게 알린다. workspace가 보이는데 표가 없으면 사용자가 먼저 시작한 세션이 매칭 실패로 멈춘다.
 운영 목표는 활성 기능 worktree 15개다. 사용자가 개수를 바꾸면 그 값을 따른다.
 이 수는 진행·준비 workspace 총수이며 동시 구현 수가 아니다. 새 시작·재개는 아래 실행 한도를 따른다. 슬롯이 없어도 준비 workspace를 지우거나 번호를 재사용하지 않는다.
 새 배정 수는 목표 수에서 현재 남은 진행·준비 worktree 수를 뺀 값이다. 정리가 실패해 남은 worktree도 활성 수에 포함한다.
@@ -111,7 +111,7 @@ TODO의 제외 결정과 사용자 제외 범위를 배정 전에 확인한다.
 배정 전에 실제 호출 경로에서 서버 라우트·도구 등록·runner·store/migration·화면 mount 중 필요한 지점을 확인한다. 구현·연결·선택 검사·자기 결함 수정·E2E 작성까지 담당 workspace에 묶는다. 공통 파일이라도 분리 가능한 연결 지점은 번호 문서에 지정한다. 같은 함수·migration 순서·상태 계약이 겹치면 함께 배정하거나 선행 작업 통합 뒤 배정한다. 소유권 때문에 핵심 연결을 메인에 넘기는 분할은 하지 않는다.
 자기 변경에 국한된 결함은 인계된 재현·실패 로그·허용 경로를 원래 종료 세션에 전달해 수정하게 할 수 있다. 정확한 상태와 시작·재개 한도를 확인하고 소유권을 다시 지정한 경우에만 요청한다. 메인은 같은 범위를 동시에 고치지 않고 독립 작업을 진행한다. 실행 중·오류·취소·권한 대기 세션을 이 조항으로 재개하지 않으며, 공통 의미 충돌·통합 HEAD에서만 재현되는 결함은 통합 담당이 맡는다.
 새 작업에 사전 승인이 필요한 의존성·외부 환경이 있으면 가능한 다른 작업을 우선한다. 독립 작업이 부족하면 적게 준비하고 이유를 보고한다.
-새 브랜치·관리형 worktree·Paseo 워크스페이스를 만들고 실제 반환된 경로·ID를 README에 기록한다.
+새 브랜치·관리형 worktree·이전 서버 워크스페이스를 만들고 실제 반환된 경로·ID를 README에 기록한다.
 ENTRY/COMMON/START는 모든 번호가 같은 방식으로 시작하도록 유지한다. 파일 존재·경로·브랜치·소유권 겹침을 확인한다.
 완료 작업의 문서와 RESULT는 보존하고 README의 활성 표에서만 완료 이력으로 옮긴다.
 수동 운영에서는 기능 에이전트를 시작하지 않고 새 워크스페이스 이름·번호를 알려준다. 자동 순환 운영에서는 문서 커밋과 workspace 경로 검증을 마친 뒤 준비된 workspace의 세션을 시작한다.
@@ -148,11 +148,11 @@ Rust 검사는 기능 세션과 같은 잠금(`flock /home/ubuntu/.cache/grove-r
 ## 자동 순환(사용자 명시 승인 시)
 - 자동 순환은 사용자의 “이번꺼까지하고 중단” 요청으로 중단했고 heartbeat `5848102f` 삭제 성공을 확인했다. 이후 “일단 다 통합” 요청은 남은 종료 작업 36·37·38·39·41·43·44·45의 일회성 통합·검증·TODO 반영·정리만 재개한다. 원본 checkout의 다른 편집 소유권은 보존한다.
 - 새 명시적 자동 순환 재개 전에는 예약 재생성·신규 기능 시작·종료 세션 자동 재개·빈 자리 보충을 하지 않는다. 준비된 47~50도 시작하지 않는다. 기존 15/10 값과 아래 설정은 재개 시 참고 계약이지 현재 자동 실행 권한이 아니다.
-- 새 개발 세션 설정은 Paseo provider `paseodog`, model `openai-oauth/gpt-6.1-sol`, `thinkingOptionId: high`, `modeId: bypass`, `settings.features.fast: false`다. 실제 provider 모델 목록과 반환된 세션 설정으로 확인한다. 승인 경계는 이 문서와 COMMON 그대로이며 도구 실행 모드가 추가 권한을 부여하지 않는다.
+- 새 개발 세션 설정은 이전 서버 provider `기존 제품`, model `openai-oauth/gpt-6.1-sol`, `thinkingOptionId: high`, `modeId: bypass`, `settings.features.fast: false`다. 실제 provider 모델 목록과 반환된 세션 설정으로 확인한다. 승인 경계는 이 문서와 COMMON 그대로이며 도구 실행 모드가 추가 권한을 부여하지 않는다.
 - 사용자 최신 명시 설정은 통합 메인만 `settings.features.fast=true`, 개발 세션은 `settings.features.fast=false`다. 개발 세션 준비·보충·생성과 기존 세션의 승인된 재개에서도 `false`를 명시하고 반환 설정을 확인한다. 이는 최적화만으로 실행 설정을 바꾸지 않는 제한의 명시 예외이며 모델·thinking·mode는 변경하지 않는다. 설정은 다음 턴부터 적용되므로 현재 턴·진행 중 검사를 중단하거나 재시작하지 않는다.
 - 세션 상태는 각 README 행의 정확한 cwd로 조회한다. 무필터 `list_agents`가 호출자 workspace만 반환할 수 있으므로 그 결과를 전체 목록으로 취급하지 않는다. archived 세션도 포함해 미시작과 종료를 구분한다.
 - 미시작 판정은 workspace 경로·브랜치·기준 SHA 일치, 세션 이력 없음, 정확한 `RESULT-NN.md` 없음, tracked/untracked clean을 모두 만족해야 한다. `create_agent`는 정확한 workspace ID와 완료 알림을 지정해 한 번만 호출한다. 생성 응답이 유실되면 먼저 그 cwd의 세션 이력을 다시 확인하고 중복 생성하지 않는다.
-- 같은 저장소의 workspace 생성·agent 시작·재개·archive와 label 변경은 Git 공통 admission 메타데이터를 공유하므로 병렬 호출하지 않고 하나씩 끝낸다. 기능 구현은 별도 worktree에서 병렬로 유지한다. 실제 `mixdog-workspace-admission.json.lock` 2초 대기 오류가 관측됐으며, 이는 코드 merge 충돌과 다르다.
+- 같은 저장소의 workspace 생성·agent 시작·재개·archive와 label 변경은 Git 공통 admission 메타데이터를 공유하므로 병렬 호출하지 않고 하나씩 끝낸다. 기능 구현은 별도 worktree에서 병렬로 유지한다. 실제 `기존 엔진-workspace-admission.json.lock` 2초 대기 오류가 관측됐으며, 이는 코드 merge 충돌과 다르다.
 - admission lock timeout 때 lock 파일 삭제·보유 프로세스 kill·설치 엔진 직접 수정으로 우회하지 않는다. 접수 여부를 상태·세션 이력으로 먼저 확인하고 원래 실행을 중복 시작하지 않는다. 순차 관리 호출은 경합 완화일 뿐, 엔진의 고정 timeout과 모든 세션 간 경합을 해결했다고 주장하지 않는다.
 - 첫 메시지는 ENTRY·COMMON·번호 문서를 정본으로 지정하고, 번호 문서의 사용자 흐름·소유 경로·완료 조건과 로컬 커밋 권한을 전달한다. 다른 기능·checkout은 수정하지 않고 RESULT와 관련 커밋을 남겨 종료한다. 기능 세션은 재위임·merge·TODO 체크·workspace 정리를 하지 않는다.
 - 작업 완료 알림은 빠른 깨우기 수단이고 heartbeat가 누락을 복구한다. 알림만으로 성공·완료를 판정하지 않고 상태·인계·commit·clean을 다시 확인한다. running/initializing·승인 대기·취소 상태는 자동 재실행·중단·메시지 전송하지 않는다. 미커밋 변경도 임의 인수하지 않는다. 사용자 승인한 제공자 시스템 오류의 기존 세션 재개만 아래 예외를 따른다.
@@ -164,8 +164,8 @@ Rust 검사는 기능 세션과 같은 잠금(`flock /home/ubuntu/.cache/grove-r
 ## 제공자 시스템 오류의 자동 재시도
 사용자는 `An error occurred while processing your request. You can retry your request` 형태의 제공자 오류에서 기존 기능 세션의 자동 재개를 승인했다. 기능 세션당 한 번만 자동 재시도하며 재실패는 보존·보고한다. 취소·권한 거부/대기·검사 실패·quota/인증 오류·메인 통합 실패를 이 예외로 우회하지 않는다.
 1. 정확한 agent ID의 상태가 error이고 activeTurn·pendingPermissions가 없으며 lastError가 해당 시스템 오류인지 확인한다. workspace/cwd/branch와 변경 소유권은 원래 배정과 일치해야 한다.
-2. 에이전트 label `grove.autoloop.system-retry.count`가 없거나 0일 때만 예약한다. `update_agent`로 count=`1`, request-id와 state=`reserved`를 먼저 patch한다. 기존 `paseo.*` label은 보내지 않는다(서버가 관리하며 사용자 label patch는 병합된다).
-3. 오류 직후 연속 재호출하지 않고 다음 3분 점검에서 기존 세션에 `paseo agent send --no-wait --json <exact-agent-id> <resume-prompt>`를 보낸다. 최초 프롬프트·현재 worktree·유효한 검사에서 이어 가고 기존 변경/commit을 보존하라고 지시한다. 새 세션을 만들지 않는다.
+2. 에이전트 label `grove.autoloop.system-retry.count`가 없거나 0일 때만 예약한다. `update_agent`로 count=`1`, request-id와 state=`reserved`를 먼저 patch한다. 세션 관리 서버가 예약한 label(CLI 이름 접두어)은 보내지 않는다(서버가 관리하며 사용자 label patch는 병합된다).
+3. 오류 직후 연속 재호출하지 않고 다음 3분 점검에서 기존 세션에 `$GROVE_AGENT_CLI agent send --no-wait --json <exact-agent-id> <resume-prompt>`를 보낸다. 최초 프롬프트·현재 worktree·유효한 검사에서 이어 가고 기존 변경/commit을 보존하라고 지시한다. 새 세션을 만들지 않는다.
 4. `status: sent`는 접수이지 완료가 아니다. 접수 후 retry state를 `sent`로 기록한다. 전송 응답 유실·reserved 상태에서는 새로 보내지 말고 해당 세션의 최신 사용자 메시지/실행 상태로 접수를 판별한다. 성공·error 알림과 heartbeat로 후속 상태를 확인한다.
 5. 재개 후 다시 error면 같은 count를 유지하고 자동 재시도를 멈춘다. stage/commit/TODO 완료·workspace 정리 조건은 정상 작업과 같으며 오류를 통과로 숨기지 않는다.
 

@@ -2,7 +2,7 @@
 
 ## 배정·현재 상태
 
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-03-assistant-identity`
+- Worktree: `<세션 worktree 루트>/b01-03-assistant-identity`
 - Branch: `parallel/b01-assistant-identity`
 - 공통 기준: `c186b31ab62734c9f91803cf7848b639ad9871fb`
 - `ENTRY.md`와 `README.md`의 절대 경로·브랜치가 일치하는 유일한 행으로 03을 선택했다. `git rev-parse --show-toplevel`, `git status --short --branch`, `git merge-base HEAD c186b31ab62734c9f91803cf7848b639ad9871fb`로 확인했다. 시작 시 작업 트리는 깨끗했다.

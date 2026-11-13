@@ -21,6 +21,12 @@
     margin: 0;
     padding: 0 0 0 .65rem;
 }
+.sidebar-workspace-name {
+    margin: .5rem 0 .15rem .65rem;
+    font-size: .8rem;
+    font-weight: 500;
+    color: var(--muted);
+}
 .sidebar-session {
     padding-block: .25rem;
     border-inline-start: 2px solid var(--line);

@@ -3,7 +3,8 @@ import { ApiError, api } from "../../api/client";
 import type { Project } from "../../api/generated";
 import { useQuery } from "../../state/store";
 import type { Opener } from "../Workspace";
-import { markSessionRead, pinSession, projectStatus, STATUS, type SidebarPage, type SidebarSession } from "./state";
+import { useWorkspaces } from "../../state/workspaces";
+import { groupByWorkspace, markSessionRead, pinSession, projectStatus, STATUS, type SidebarPage, type SidebarSession } from "./state";
 import "./sidebar.css";
 
 export function StatusIcon({ status }: { status: string }) {
@@ -73,6 +74,9 @@ export function SidebarProject({ project, children, open, narrow, onCreate }: {
     const data = page.data;
     const unread = data?.unread ?? 0;
     const status = data ? projectStatus(data.statuses) : null;
+    const projectMode = project.workspace_mode === "project";
+    const spaces = useWorkspaces(project.id, projectMode);
+    const groups = projectMode ? groupByWorkspace(data?.items ?? [], spaces) : [];
     return <section className="sidebar-project" aria-label={`${project.name} 탐색`} data-testid="sidebar-project" data-project-id={project.id}>
         {children}
         <div className="sidebar-project-summary">
@@ -91,9 +95,22 @@ export function SidebarProject({ project, children, open, narrow, onCreate }: {
         {Boolean(page.error) && <p className="err small" role="alert">대화 목록을 불러오지 못했습니다. 목록 새로고침으로 다시 시도하세요.</p>}
         {!data && page.loading && <p className="muted small" role="status">대화 불러오는 중…</p>}
         <div id={listId} hidden={!expanded}>
-            <ul className="sidebar-sessions">
-                {data?.items.map((item) => <SessionRow key={item.session.id} item={item} open={open} narrow={narrow} />)}
-            </ul>
+            {projectMode ? (
+                // 프로젝트 모드: 프로젝트 → 워크스페이스 → 대화. 프로젝트 폴더가 기본 워크스페이스다.
+                groups.map((g) => (
+                    <section key={g.id ?? "root"} className="sidebar-workspace" aria-label={`워크스페이스 ${g.name}`} data-testid="sidebar-workspace" data-worktree={g.id ?? ""}>
+                        <h3 className="sidebar-workspace-name">{g.name}</h3>
+                        <ul className="sidebar-sessions">
+                            {g.items.map((item) => <SessionRow key={item.session.id} item={item} open={open} narrow={narrow} />)}
+                        </ul>
+                    </section>
+                ))
+            ) : (
+                // 단일 모드: 프로젝트 → 대화
+                <ul className="sidebar-sessions">
+                    {data?.items.map((item) => <SessionRow key={item.session.id} item={item} open={open} narrow={narrow} />)}
+                </ul>
+            )}
             {data?.items.length === 0 && <p className="muted small">{unreadOnly ? "읽지 않은 대화가 없습니다." : "이 페이지에 대화가 없습니다."}</p>}
             <div className="sidebar-toolbar" role="group" aria-label="대화 페이지">
                 {offset > 0 && <button type="button" className="ghost small" onClick={() => setOffset(Math.max(0, offset - 30))}>이전 대화</button>}

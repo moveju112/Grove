@@ -3,12 +3,12 @@
 ## 현재 상태
 
 - 독립 구현 종료, **통합·실행 검증 대기**. 제품 기능 전체 완료는 아니다.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-00-source-settings`
+- worktree: `<세션 worktree 루트>/b01-00-source-settings`
 - branch: `parallel/b01-source-settings`
 - 공통 기준 SHA: `c186b31ab62734c9f91803cf7848b639ad9871fb`
 - 시작 시 HEAD와 merge-base 모두 위 기준과 일치했고 Git 상태는 깨끗했다.
-- 사용자 후속 요청의 `/data/project/paseodog_opus/work/ENTRY.md`에 따라 실제 Git top-level과 branch를 README 표에 다시 대조했다. 정확히 00 한 행과 일치했고, 당시 변경은 이 세션이 작성한 아래 소유 파일뿐이었다.
-- 확인 가능한 Paseo 세션 조회에서 같은 cwd에는 이 작업 세션 하나만 있었다.
+- 사용자 후속 요청의 `<원본 저장소>/work/ENTRY.md`에 따라 실제 Git top-level과 branch를 README 표에 다시 대조했다. 정확히 00 한 행과 일치했고, 당시 변경은 이 세션이 작성한 아래 소유 파일뿐이었다.
+- 확인 가능한 이전 서버 세션 조회에서 같은 cwd에는 이 작업 세션 하나만 있었다.
 - 독립 구현을 막는 blocker는 없다. 모듈 등록·권한·API·화면 연결과 실행 검증은 남아 있다.
 - 로컬 커밋만 수행한다. push·merge·배포·서비스 중단은 하지 않는다.
 

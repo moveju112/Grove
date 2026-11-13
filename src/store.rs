@@ -969,6 +969,13 @@ pub const MIGRATIONS: &[&str] = &[
     );
     CREATE UNIQUE INDEX mcp_oauth_active ON mcp_oauth_attempts(server_id) WHERE status IN ('pending','exchanging');
     "#,
+    // 프로젝트별 워크스페이스 모드(기본 single). 이미 worktree를 쓰는 프로젝트는 project로 두어 기존 작업을 숨기지 않는다.
+    r#"
+    ALTER TABLE projects ADD COLUMN workspace_mode TEXT NOT NULL DEFAULT 'single' CHECK (workspace_mode IN ('single','project'));
+    UPDATE projects SET workspace_mode = 'project'
+     WHERE EXISTS (SELECT 1 FROM worktrees w WHERE w.project_id = projects.id AND w.status != 'removed')
+        OR EXISTS (SELECT 1 FROM sessions s WHERE s.project_id = projects.id AND s.worktree_id IS NOT NULL);
+    "#,
 ];
 
 #[cfg(test)]
@@ -990,6 +997,30 @@ mod tests {
         assert_eq!(timing["total_ms"], 1000);
         assert_eq!(timing["model_and_other_ms"], 1000);
         assert!(timing["provider_ms"].is_null() && timing["other_ms"].is_null());
+    }
+
+    #[test]
+    fn workspace_mode_migration_keeps_projects_that_use_worktrees_in_project_mode() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        let last = super::MIGRATIONS.len() - 1;
+        for migration in &super::MIGRATIONS[..last] { c.execute_batch(migration).unwrap(); }
+        let t = "2026-01-01T00:00:00Z";
+        for (id, root) in [("plain", "/a"), ("active", "/b"), ("removed", "/c"), ("linked", "/d")] {
+            c.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES (?1,?1,?2,?3,?3)", rusqlite::params![id, root, t]).unwrap();
+        }
+        c.execute_batch(&format!(
+            "INSERT INTO worktrees(id,project_id,name,path,branch,status,created_at) VALUES ('w1','active','x','/w1','grove/x','active','{t}');
+             INSERT INTO worktrees(id,project_id,name,path,branch,status,created_at,removed_at) VALUES ('w2','removed','y','/w2','grove/y','removed','{t}','{t}');
+             INSERT INTO worktrees(id,project_id,name,path,branch,status,created_at,removed_at) VALUES ('w3','linked','z','/w3','grove/z','removed','{t}','{t}');
+             INSERT INTO sessions(id,project_id,title,created_at,updated_at,archived_at,worktree_id) VALUES ('s','linked','fixture','{t}','{t}','{t}','w3');"
+        )).unwrap();
+        c.execute_batch(super::MIGRATIONS[last]).unwrap();
+        let mode = |id: &str| c.query_row("SELECT workspace_mode FROM projects WHERE id = ?1", [id], |r| r.get::<_, String>(0)).unwrap();
+        assert_eq!(mode("plain"), "single");
+        assert_eq!(mode("active"), "project", "제거되지 않은 worktree가 있으면 project");
+        assert_eq!(mode("removed"), "single", "제거된 worktree만 있으면 single");
+        assert_eq!(mode("linked"), "project", "worktree에 연결된 대화(보관 포함)가 있으면 project");
+        assert!(c.execute("UPDATE projects SET workspace_mode = 'multi' WHERE id = 'plain'", []).is_err(), "허용되지 않은 값은 거부");
     }
 
     #[test]

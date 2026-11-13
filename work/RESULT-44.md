@@ -5,10 +5,10 @@
 # 44 — REC-012 기록 경계 저장 실패·재시작 수렴
 
 - 상태: 소유 범위 구현·기존 API 연결·선택 검증 완료. blocker 없음.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-44-recovery-faults`
+- worktree: `<세션 worktree 루트>/b02-44-recovery-faults`
 - branch: `parallel/b02-recovery-faults`
 - 고정 기준: `7d5a6e57776f5770162b577dc4e372a2d67ae3e3`에서 시작했고 최초 HEAD·merge-base가 모두 일치했으며 clean이었다.
-- 정본: `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/44.md`. README의 경로·브랜치 행과도 일치한다.
+- 정본: `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/44.md`. README의 경로·브랜치 행과도 일치한다.
 
 ## 변경·연결 계약
 
@@ -63,8 +63,8 @@ live owner 회귀는 `queued`·`running`·`awaiting_approval` 각각에서 같�
 Rust 실행마다 아래 공유 환경을 먼저 적용했고, 컴파일부터 시험 종료까지 동일한 전체 명령 잠금을 사용했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-export CARGO_TARGET_DIR=/data/project/paseodog_opus/target
+source <원본 저장소>/.envrc.dev
+export CARGO_TARGET_DIR=<원본 저장소>/target
 flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust recovery_faults recovery turns
 ```
 
@@ -87,11 +87,11 @@ flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --
 
 로그:
 
-- 최초 잠금 timeout: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_06fd1ac8.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_06fd1ac8.stderr`
-- 재현 실패: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_e055be15.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_e055be15.stderr`
-- 제품 수정 뒤 세 target 통과: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_9567b278.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_9567b278.stderr`
-- 최종 전용 target 통과: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3d670b3f.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3d670b3f.stderr`
-- 웹 통과: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_bbc260a5.stdout`
+- 최초 잠금 timeout: `<실행 로그>/shell_06fd1ac8.stdout`, `<실행 로그>/shell_06fd1ac8.stderr`
+- 재현 실패: `<실행 로그>/shell_e055be15.stdout`, `<실행 로그>/shell_e055be15.stderr`
+- 제품 수정 뒤 세 target 통과: `<실행 로그>/shell_9567b278.stdout`, `<실행 로그>/shell_9567b278.stderr`
+- 최종 전용 target 통과: `<실행 로그>/shell_3d670b3f.stdout`, `<실행 로그>/shell_3d670b3f.stderr`
+- 웹 통과: `<실행 로그>/shell_bbc260a5.stdout`
 
 ## 범위·남은 조건
 

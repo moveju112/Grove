@@ -1,6 +1,6 @@
-# 00 — 타당성 보고서: PaseoDog(TS/Node + Mixdog) → Grove(Rust 서버 + 공용 웹앱)
+# 00 — 타당성 보고서: 기존 제품(TS/Node + 기존 엔진) → Grove(Rust 서버 + 공용 웹앱)
 
-작성일: 2026-11-05. 조사 대상: `/home/ubuntu/project/paseodog` (읽기 전용).
+작성일: 2026-11-05. 조사 대상: `<기존 제품 원본>` (읽기 전용).
 
 ## 키트 6단계 색인
 
@@ -13,14 +13,14 @@
 
 ## 떠나야 하는 이유 (이 저장소의 근거)
 
-- 런타임 3중 계층: Paseo 데몬(`android/packages/server/src`, TS 1,068파일·442,636줄), Mixdog 엔진(`engine/node_modules/mixdog/src`, mjs 2,568파일·545,190줄), 그 둘을 잇는 플러그인(`plugin`, 36파일·5,520줄)과 엔진 브리지(`engine/src`, 16파일·2,052줄)가 별도 프로세스·JSON Lines로 연결됨 (TODO ARCH-004가 제거 대상으로 명시).
+- 런타임 3중 계층: 이전 서버(`android/packages/server/src`, TS 1,068파일·442,636줄), 기존 엔진(`engine/node_modules/<기존 엔진>/src`, mjs 2,568파일·545,190줄), 그 둘을 잇는 플러그인(`plugin`, 36파일·5,520줄)과 엔진 브리지(`engine/src`, 16파일·2,052줄)가 별도 프로세스·JSON Lines로 연결됨 (TODO ARCH-004가 제거 대상으로 명시).
 - upstream 패치 부담: `patches/` 53파일·3,748줄이 두 upstream에 덧대는 수정이며, 기준 SHA `73416e27`에서 원본 HEAD가 이미 25커밋 이동(`bd84a7e`).
 - 빌드 그래프: APK·데스크톱·웹·데몬이 한 릴리스 스크립트(`scripts/build-release.mjs`)에 묶여 UI 변경만으로도 여러 산출물 재빌드(TODO FLOW-10).
 
 ## 세 가지 판단
 
 1. **구조 보존 vs 재설계 → 재설계.** 목표 구조가 단일 Rust 실행 파일 + 정적 웹/PWA이며, 기존 데몬/엔진/플러그인 경계와 React Native/Expo 구조(`android/packages/app/src`, 2,188파일)를 재현하지 않는다는 결정이 TODO §0에 있음. 구제품 wire protocol 호환도 비목표(DEC-014).
-   결정 근거 파일: `android/packages/server/src`, `engine/node_modules/mixdog/src/runtime`, `plugin/server`, `android/packages/app/src`.
+   결정 근거 파일: `android/packages/server/src`, `engine/node_modules/<기존 엔진>/src/runtime`, `plugin/server`, `android/packages/app/src`.
 2. **검증 비용.** 기준선: `npm --prefix plugin run typecheck` 2.67초·RSS 534MB(실측). 전체 Android/데스크톱 빌드는 시간 측정하지 않음(가정: 수 분~수십 분). 대상 Rust는 `cargo check`가 증분 수 초~수십 초 예상(가정: 단일 crate, 의존성 컴파일 1회 후 증분) → 컴파일러를 각 서브시스템 루프 안에 둔다.
    결정 근거 파일: `plugin/tsconfig.json`, `scripts/build-release.mjs`.
 3. **테스트 생존 → 거의 생존하지 않음.** 저장소 루트 `tests/*.test.mjs` 128개 중 프로세스/HTTP/WebSocket을 쓰는 것 25개, 나머지 103개는 내부 모듈 import. `android/packages`의 `*.test.ts(x)` 1,239개(server 559·app 680) 대부분이 TS 내부 import이고, 실제 외부 e2e는 server `*.e2e.test.ts` 136개(대부분 실 provider 필요). 프로토콜이 바뀌므로 외부 표면 테스트도 신규 제품에 그대로 실행할 수 없다.
@@ -62,4 +62,4 @@
 
 ## 읽은 것과 실행한 것
 
-읽음: `package.json`, TODO.md 전체 구조, `tests/` 목록, `android/packages` 구성, Mixdog `src/runtime` 목록. 실행: 파일/줄 수 집계, `git rev-parse`, 기준 SHA 존재 확인, `npm --prefix plugin run typecheck` 1회.
+읽음: `package.json`, TODO.md 전체 구조, `tests/` 목록, `android/packages` 구성, 기존 엔진 `src/runtime` 목록. 실행: 파일/줄 수 집계, `git rev-parse`, 기준 SHA 존재 확인, `npm --prefix plugin run typecheck` 1회.

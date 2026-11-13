@@ -106,6 +106,16 @@ impl TestServer {
         v
     }
 
+    /// 프로젝트를 워크스페이스(worktree)를 쓰는 프로젝트 모드로 바꾼다. 새 프로젝트는 단일 모드다.
+    pub async fn use_workspaces(&self, project_id: &str) -> Value {
+        let (_, p) = self.get(&format!("/api/v1/projects/{project_id}")).await;
+        let (s, v) = self
+            .send(Method::PATCH, &format!("/api/v1/projects/{project_id}"), json!({ "expected_revision": p["revision"], "workspace_mode": "project" }))
+            .await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        v
+    }
+
     pub async fn create_session(&self, project_id: &str) -> Value {
         let (s, v) = self.post(&format!("/api/v1/projects/{project_id}/sessions"), json!({})).await;
         assert_eq!(s, StatusCode::CREATED, "{v}");

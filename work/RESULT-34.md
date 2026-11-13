@@ -5,10 +5,10 @@
 # 34 — 역할별 위임 허용 정책
 
 - 배치/요구: b02 / 34 / `AGENT-013`. 소유 구현·연결·선택 검사 완료, blocker 없음.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy`
+- Worktree: `<세션 worktree 루트>/b02-34-agent-policy`
 - Branch: `parallel/b02-agent-policy`
 - 고정 기준: `a340d2bccd7860d8452a5513b59c7f8ac215178c`. 시작 시 HEAD 일치·clean 및 제품 입력 `07bbd7b26763bf96735e013962f4d8f0d33c01ba` 포함을 확인했다. 기준 변경·merge·rebase는 하지 않았다.
-- 권위 문서: `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/34.md`.
+- 권위 문서: `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/34.md`.
 
 ## 제공 동작·입출력 계약
 
@@ -47,7 +47,7 @@
 최종 제품 코드와 Rust 시험이 안정된 뒤 아래 통합 선택 명령을 실행했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust agent_policy agents settings settings_reset --e2e e2e/agent-policy.spec.ts
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust agent_policy agents settings settings_reset --e2e e2e/agent-policy.spec.ts
 ```
 
 | 단계 | 결과 | 실행기 wall / CPU |
@@ -57,17 +57,17 @@ source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove
 | 웹 빌드 | 통과 | 9.63s / 4.99s |
 | 실제 Chrome E2E `e2e/agent-policy.spec.ts` | 2개 통과, 재시도 없음 | 9.66s / 9.06s |
 
-최종 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_41a12b7f.stdout` 및 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_41a12b7f.stderr`.
+최종 로그: `<실행 로그>/shell_41a12b7f.stdout` 및 `<실행 로그>/shell_41a12b7f.stderr`.
 
 아래 통과 근거도 재사용한다. 이후 변경은 Rust의 정책/설정 상속 및 해당 Rust 시험뿐이며, 관련 웹/타입/Vitest 입력은 변하지 않았다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/AgentRunsPanel.test.ts app/components/approvals/decision.test.ts app/components/approvals/projection.test.ts app/components/approvals/ApprovalCard.test.ts
-source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --typecheck
+source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/AgentRunsPanel.test.ts app/components/approvals/decision.test.ts app/components/approvals/projection.test.ts app/components/approvals/ApprovalCard.test.ts
+source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --typecheck
 ```
 
-- Vitest: 4개 파일·30개 시험 통과, 2.57s wall / 2.95s CPU. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_90cd1370.stdout`.
-- Typecheck: E2E TypeScript 포함 통과, 10.64s wall / 12.18s CPU. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_9d7b1631.stdout`.
+- Vitest: 4개 파일·30개 시험 통과, 2.57s wall / 2.95s CPU. 로그: `<실행 로그>/shell_90cd1370.stdout`.
+- Typecheck: E2E TypeScript 포함 통과, 10.64s wall / 12.18s CPU. 로그: `<실행 로그>/shell_9d7b1631.stdout`.
 - 코드 검토와 `git diff --check` 통과. 검사 이후 제품/시험 변경은 없고 이 인계 문서만 추가했다.
 
 ### 실패 이력·환경·미선택
@@ -76,7 +76,7 @@ source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test -
 - 첫 새 Rust 회귀 실행은 시험의 잘못된 정의 API method(PATCH 대신 PUT)와 존재하지 않는 summary `turn_id` 가정으로 2개 실패했다. 실제 API/summary 계약에 맞게 시험을 고친 뒤 통과했다.
 - 최초 E2E는 recent 버튼의 accessible name을 title과 정확히 같다고 가정해 timeout됐다. 실제 프로젝트명·시간 포함 이름에 맞는 locator로 수정했다.
 - 다음 E2E는 hang fixture에 `[DONE]`을 포함해 자식이 먼저 완료되어 취소 시나리오가 실패했다. 기존 fixture 방식대로 종료 프레임 없이 연결을 유지하도록 수정했다. 임의 지연·성공할 때까지 재시도·제품 변경으로 우회하지 않았다. 이후 보완된 상속 코드에서도 두 흐름 모두 다시 통과했다.
-- 공통 환경을 source했지만 `scripts/build.py::env()`가 worktree `.dev` 경로로 덮어써 첫 실행에서 고정 Rust 1.93.0 툴체인과 Cargo cache를 로컬에 자동 생성했다. 경고를 숨기지 않았으며, 검증 완료 뒤 이번 실행이 생성한 worktree `.dev`만 확인 후 정리했다. dependency/lockfile 변경은 없다. `web/node_modules`는 계약대로 `/data/project/paseodog_opus/web/node_modules` symlink를 사용했다.
+- 공통 환경을 source했지만 `scripts/build.py::env()`가 worktree `.dev` 경로로 덮어써 첫 실행에서 고정 Rust 1.93.0 툴체인과 Cargo cache를 로컬에 자동 생성했다. 경고를 숨기지 않았으며, 검증 완료 뒤 이번 실행이 생성한 worktree `.dev`만 확인 후 정리했다. dependency/lockfile 변경은 없다. `web/node_modules`는 계약대로 `<원본 저장소>/web/node_modules` symlink를 사용했다.
 - 개발 세션 조회는 이 런타임에서 `session: cross-session control is unavailable in this runtime`으로 불가능했다. 다른 세션을 생성·재개하거나 runtime 설정을 변경하지 않았다.
 - 웹 빌드의 기존 큰 chunk/React Router future 경고는 남아 있다. 검사 실패로 처리하거나 무관한 설정 변경으로 감추지 않았다.
 - 전체 suite·release·실계정·유료 모델·Windows/macOS는 실행하지 않았다. 검사 서버/DB와 모델은 격리된 로컬 fixture다.

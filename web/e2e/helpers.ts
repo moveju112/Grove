@@ -34,6 +34,12 @@ export async function apiCall<T>(method: string, path: string, body?: unknown): 
     return (t ? JSON.parse(t) : null) as T;
 }
 
+/// 프로젝트를 워크스페이스(worktree)를 쓰는 프로젝트 모드로 바꾼다. 새 프로젝트는 단일 모드다.
+export async function useWorkspaces(projectId: string): Promise<void> {
+    const p = await apiCall<{ revision: number }>("GET", `/projects/${projectId}`);
+    await apiCall("PATCH", `/projects/${projectId}`, { expected_revision: p.revision, workspace_mode: "project" });
+}
+
 /// 바이너리/텍스트 원문 GET(검증용).
 export async function apiText(path: string): Promise<string> {
     const r = await fetch(BASE + "/api/v1" + path, { headers: { authorization: `Bearer ${state().token}` } });

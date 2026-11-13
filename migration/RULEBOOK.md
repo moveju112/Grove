@@ -5,7 +5,7 @@
 
 ## 0. 범위와 자세
 
-- **재설계 이전.** 원본(`/home/ubuntu/project/paseodog`, 기준 SHA `73416e27c452a9285611bf7fc33290e6d3b7cbec`)의 사용자 동작을 보존하되 구조는 새로 만든다. 원본 읽기는 `git show 73416e27:<path>`로 고정 SHA 기준으로 한다(작업 트리 HEAD는 25커밋 앞서 있음).
+- **재설계 이전.** 원본(`<기존 제품 원본>`, 기준 SHA `73416e27c452a9285611bf7fc33290e6d3b7cbec`)의 사용자 동작을 보존하되 구조는 새로 만든다. 원본 읽기는 `git show 73416e27:<path>`로 고정 SHA 기준으로 한다(작업 트리 HEAD는 25커밋 앞서 있음).
 - 작업 단위는 파일이 아니라 **서브시스템**(TODO 영역 접두어)이다.
 - 컴파일러는 저렴하므로 각 단위 루프 안에서 `cargo check`/`cargo test`, `tsc`를 실행한다(키트 README Step 4 흡수 규칙).
 - 1차 목표는 동작 정확성. 느리지만 맞는 구현은 `PERF(port):` 표시 후 진행.
@@ -29,19 +29,19 @@
 | CLI | 직접 파싱(인자 수 적음) | 의존성 예산 |
 | 웹 | React 19 + React Router 7 framework 모드 `ssr:false` + Vite, TypeScript strict | FRAME-007, DEC-008 |
 | 웹 시험 | Vitest(상태 로직) + Playwright(실제 서버·Chrome) | 기존 설치된 Google Chrome 사용 |
-| 금지 | Node 런타임 서버, Mixdog/Paseo 패키지, 내부 RPC, 동적 플러그인 프레임워크, DI container | TODO §0 |
+| 금지 | Node 런타임 서버, 기존 엔진/이전 서버 패키지, 내부 RPC, 동적 플러그인 프레임워크, DI container | TODO §0 |
 
 ## 2. 원본 구성 → Grove 구성 대응 (재설계 매핑)
 
 | 원본 | Grove | 비고 |
 |---|---|---|
-| Paseo 데몬 + Mixdog 엔진 + 플러그인 3프로세스 | `grove serve` 단일 프로세스 | JSON Lines 브리지 제거 |
-| Paseo WebSocket 메시지(`messages.ts`) | HTTP JSON 요청(`/api/v1/...`) + SSE 이벤트 stream(`/api/v1/events`) + 터미널 전용 WebSocket | NET-004 결정. 구 wire 비호환(DEC-014) |
+| 이전 서버 + 기존 엔진 + 플러그인 3프로세스 | `grove serve` 단일 프로세스 | JSON Lines 브리지 제거 |
+| 이전 서버 WebSocket 메시지(`messages.ts`) | HTTP JSON 요청(`/api/v1/...`) + SSE 이벤트 stream(`/api/v1/events`) + 터미널 전용 WebSocket | NET-004 결정. 구 wire 비호환(DEC-014) |
 | 데몬 저널 파일 | SQLite `events` 테이블(outbox, 단조 증가 `seq`) | NET-006, STORE-003 |
 | 세션/에이전트 상태 객체 중복 | DB 행이 실행 상태의 단일 원천, UI는 투영 | ARCH-006 |
 | Expo/React Native 앱 | 공용 웹앱/PWA (`web/`) | |
-| Mixdog 내장 도구(read/grep/glob/find/list/edit/shell...) | `src/tools/*` 동일 계약의 Rust 구현 | 승인 정책은 서버 강제 |
-| Mixdog 기본 에이전트/워크플로우 원문 | `assets/agents/*.md`, `assets/workflows/*.md` 바이트 그대로 + `manifest.json`(sha256) | EVAL-001, WORKFLOW-001 |
+| 기존 엔진 내장 도구(read/grep/glob/find/list/edit/shell...) | `src/tools/*` 동일 계약의 Rust 구현 | 승인 정책은 서버 강제 |
+| 기존 엔진 기본 에이전트/워크플로우 원문 | `assets/agents/*.md`, `assets/workflows/*.md` 바이트 그대로 + `manifest.json`(sha256) | EVAL-001, WORKFLOW-001 |
 
 ## 3. 핵심 불변식 (모든 구현자가 따를 것)
 
@@ -150,7 +150,7 @@ config/paths → store(migration) → auth → events → projects → sessions/
 
 ## 10. 버전 호환 범위 (DEC-014)
 
-구제품(Paseo·Mixdog)의 wire protocol·플러그인 ABI 호환 계층은 만들지 않는다. 새 제품 안에서의 호환 규칙은 아래와 같다.
+구제품(이전 서버·기존 엔진)의 wire protocol·플러그인 ABI 호환 계층은 만들지 않는다. 새 제품 안에서의 호환 규칙은 아래와 같다.
 
 | 경계 | 규칙 | 강제 위치 |
 |---|---|---|
@@ -211,7 +211,7 @@ config/paths → store(migration) → auth → events → projects → sessions/
 | 변경 없음 | 모든 target 재사용이면 아무것도 빌드·패키징하지 않고 끝난다 |
 | 병렬도 | `min(CPU, 메모리GB/2)` |
 | 개인 경로 | `--remap-path-prefix`로 저장소·cargo·rustup·홈 경로를 지운다. 패키지는 개인 경로·실제 비밀값 형식·개발 파일(.map/.log/.db/.env)을 검사해 있으면 실패 |
-| 산출물 | `dist/release/grove-<ver>-<target>/`: 압축본(tar.gz/zip), `manifest.json`(version·protocol·schema·target·source/입력 hash·toolchain·파일별 sha256), `sbom.cdx.json`(CycloneDX 1.5), `SHA256SUMS`, `receipt.json`. 압축본 안에 `licenses/`(Mixdog 원문 라이선스·NOTICE, `THIRD_PARTY_NOTICES.txt`) |
+| 산출물 | `dist/release/grove-<ver>-<target>/`: 압축본(tar.gz/zip), `manifest.json`(version·protocol·schema·target·source/입력 hash·toolchain·파일별 sha256), `sbom.cdx.json`(CycloneDX 1.5), `SHA256SUMS`, `receipt.json`. 압축본 안에 `licenses/`(기존 엔진 원문 라이선스·NOTICE, `THIRD_PARTY_NOTICES.txt`) |
 | 라이선스 | `scripts/check_licenses.py`: 4개 플랫폼 cargo 그래프 + 웹 번들 npm 의존성. 허용 목록 밖이면 실패 |
 | 실행 검증 | 압축본을 임시 폴더에 풀어 `version --json`이 manifest와 같은지, `serve` 후 health `ready`·웹 200인지 확인. linux-x64는 직접, windows-x64는 wine(실제 Windows 검증은 별도), linux-arm64는 ARM64 장치에서만 |
 | 측정 | 단계별 wall·CPU·peak RSS를 `dist/build-log.json`에 기록(`wait4`) |
@@ -249,7 +249,7 @@ config/paths → store(migration) → auth → events → projects → sessions/
 
 LTO(BUILD-028): thin·cgu4(현재) 106s·16.2MB, off·cgu16 89s·16.9MB, fat·cgu1 197s·14.4MB. 실행 성능 차이는 측정 오차 안이라 현재 설정 유지.
 
-기존 제품 비교(같은 머신, 읽기 전용 측정, 대화 여러 개 실행 중이라 idle 아님): Paseo 서버 트리 32개 프로세스 PSS 3,190MB·CPU 2.7%, Electron 앱 8개 프로세스 PSS 671MB. Grove는 서버 1개 프로세스이고 UI는 기존 브라우저 탭이다(브라우저 메모리는 별도 측정 대상).
+기존 제품 비교(같은 머신, 읽기 전용 측정, 대화 여러 개 실행 중이라 idle 아님): 이전 서버 트리 32개 프로세스 PSS 3,190MB·CPU 2.7%, Electron 앱 8개 프로세스 PSS 671MB. Grove는 서버 1개 프로세스이고 UI는 기존 브라우저 탭이다(브라우저 메모리는 별도 측정 대상).
 
 ## 16. 설치·업데이트 (UPDATE)
 
@@ -348,7 +348,7 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 프로필 `enabled`(migration 39)의 기본값은 true다. 기존 프로필과 기본 활성 상태 요청의 구버전 receipt 의미를 보존한다. 비활성 프로필은 설정·봇·예약의 참조를 지우지 않지만 새 턴 접수와 모델 실행에서 서버가 `profile_disabled`로 차단하며 다른 모델로 자동 대체하지 않는다. 실행 중인 프로필의 비활성화는 거부하므로 먼저 실행을 마치거나 명시적으로 취소한다. 비활성 상태의 연결 확인·목록 조회는 허용한다. Composer는 명시적으로 선택했던 비활성 프로필과 초안을 보존하고 보내기를 막는다. 봇 준비 상태도 활성 여부를 반영하며 profile 변경 이벤트가 profiles·bots cache를 함께 무효화한다. `tests/model_catalog.rs`, store·Gemini 단위, 선택 턴/봇/예약/후속/컨텍스트 및 `web/e2e/model-catalog.spec.ts`가 로컬 fixture 근거이며 실제 공급자 계정·유료 추론 인수는 별도다.
 
-사용자 지시: 기존 paseodog처럼 서버에 설치된 Codex·Claude Code를 쓰고, 시험은 저가형 모델(`gpt-6-luna`, `haiku`)로 한다.
+사용자 지시: 기존 제품처럼 서버에 설치된 Codex·Claude Code를 쓰고, 시험은 저가형 모델(`gpt-6-luna`, `haiku`)로 한다.
 
 | 규칙 | 내용 | 시험 |
 |---|---|---|

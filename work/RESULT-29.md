@@ -6,10 +6,10 @@
 
 ## 상태·기준
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-29-hook-execution`
+- worktree: `<세션 worktree 루트>/b02-29-hook-execution`
 - branch: `parallel/b02-hook-execution`
 - 공통 기준: `551f551d48d1f47cd3ad67015f1737c62d576228`
-- 재개 HEAD: `3cb8d0ec34e9bf35b8b09bbb2dc44391f9b8cb81`. 최초 소유권 누락을 기록한 이 커밋은 보존했다. 갱신된 `/data/project/paseodog_opus/work/29.md`와 사용자의 replacement assignment가 `src/approvals.rs`의 좁은 hook 연결 소유권을 명시해 blocker가 해소됐다. 권한 거절을 뒤집은 작업이 아니다.
+- 재개 HEAD: `3cb8d0ec34e9bf35b8b09bbb2dc44391f9b8cb81`. 최초 소유권 누락을 기록한 이 커밋은 보존했다. 갱신된 `<원본 저장소>/work/29.md`와 사용자의 replacement assignment가 `src/approvals.rs`의 좁은 hook 연결 소유권을 명시해 blocker가 해소됐다. 권한 거절을 뒤집은 작업이 아니다.
 - 브라우저 인수 후속의 재개 HEAD는 `538fc9955de2ba2b9d38e4f145ea02b1c61a3123`이다. 원본 `35f0baf:work/29.md`와 live COMMON의 후속 소유권을 확인했다. 기존 커밋·기준·지원 범위는 보존했다.
 - ENTRY·COMMON·갱신된 29를 읽고 실제 top-level·branch·깨끗한 재개 상태를 확인했다. README의 배정 경로·branch는 이전 확인과 일치한다.
 - 상태: **지원 범위 구현·선택 검증·배정된 브라우저 인수 완료**. 실행 가능한 소유 잔여와 외부 blocker는 없다. 아래 미지원 이벤트·발생 경로·플랫폼 구분은 그대로이며 `RESOURCE-016` 전체 이벤트 완료를 주장하지 않는다.
@@ -76,7 +76,7 @@ hook은 **원래 작업을 차단하지 않는 독립 알림형 실행**이며 `
 
 아래 첫 표는 `538fc995`까지의 유효한 기존 근거다. 이번 브라우저 후속에서는 제품 Rust·웹 코드, 해당 Rust·Vitest 시험, dependency·lockfile을 변경하지 않아 이를 재사용했다. 변경 입력은 정확히 두 E2E spec과 이 RESULT뿐이다. 동일 입력의 기존 Rust·Vitest 검사는 재실행하지 않았다.
 
-모든 검사는 `source /data/project/paseodog_opus/.envrc.dev` 후 실행했다. Rust 명령은 `flock /home/ubuntu/.cache/grove-rust-check.lock`으로 감쌌다. worktree의 build.py가 `.dev`를 기준으로 환경을 설정하므로 `.dev`를 `/data/project/paseodog_opus/.dev`에 symlink했고, `web/node_modules`도 COMMON대로 메인 것을 symlink했다. 이번 후속에서도 이 공용 환경을 그대로 사용했다. 설치·복사·dependency 변경은 없으며 두 링크는 ignore 대상이다.
+모든 검사는 `source <원본 저장소>/.envrc.dev` 후 실행했다. Rust 명령은 `flock /home/ubuntu/.cache/grove-rust-check.lock`으로 감쌌다. worktree의 build.py가 `.dev`를 기준으로 환경을 설정하므로 `.dev`를 `<원본 저장소>/.dev`에 symlink했고, `web/node_modules`도 COMMON대로 메인 것을 symlink했다. 이번 후속에서도 이 공용 환경을 그대로 사용했다. 설치·복사·dependency 변경은 없으며 두 링크는 ignore 대상이다.
 
 | 실제 명령 | 결과·유효 범위 |
 |---|---|
@@ -98,8 +98,8 @@ hook은 **원래 작업을 차단하지 않는 독립 알림형 실행**이며 `
 실행 명령:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-CARGO_TARGET_DIR=/data/project/paseodog_opus/target flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/hooks.spec.ts e2e/hook-execution.spec.ts
+source <원본 저장소>/.envrc.dev
+CARGO_TARGET_DIR=<원본 저장소>/target flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/hooks.spec.ts e2e/hook-execution.spec.ts
 python3 scripts/build.py test --typecheck
 ```
 

@@ -1,4 +1,8 @@
-//! 프로젝트 = 단일 작업공간(PROJECT). 프로젝트마다 root 경로 하나, 중간 생성 단계 없음.
+//! 프로젝트(PROJECT). 프로젝트마다 root 경로 하나, 중간 생성 단계 없음.
+//! 워크스페이스 모드는 프로젝트별이다.
+//! - single(기본): 프로젝트 폴더 하나에 대화가 바로 붙는다. worktree를 만들거나 대화를 worktree에 넣을 수 없다.
+//! - project: 프로젝트 폴더가 기본 워크스페이스이고, Grove worktree 하나가 추가 워크스페이스 하나다.
+//! single로 바꾸려면 제거되지 않은 worktree와 worktree에 연결된 대화가 없어야 한다(같은 transaction에서 검사).
 
 use crate::App;
 use crate::auth::Principal;
@@ -34,12 +38,39 @@ pub struct Project {
     pub labels: Vec<String>,
     /// 초기 설정 script(PROJECT-010). 지정만으로는 실행하지 않는다.
     pub setup_script_id: Option<String>,
+    /// 워크스페이스 모드: "single" | "project"
+    pub workspace_mode: String,
+}
+
+pub const SINGLE: &str = "single";
+pub const PROJECT_MODE: &str = "project";
+
+/// 단일 모드 프로젝트에는 워크스페이스(worktree)를 만들거나 연결하지 않는다. 호출자의 transaction 안에서 쓴다.
+pub fn ensure_workspaces(conn: &Connection, id: &str) -> ApiResult<()> {
+    let mode: String = conn.query_row("SELECT workspace_mode FROM projects WHERE id = ?1", params![id], |r| r.get(0))
+        .optional()?
+        .ok_or_else(|| ApiError::not_found("프로젝트가 없습니다"))?;
+    if mode == SINGLE {
+        return Err(ApiError::conflict("single_workspace_mode", "단일 워크스페이스 프로젝트에는 워크스페이스를 만들거나 연결할 수 없습니다. 프로젝트 모드로 바꾼 뒤 다시 시도하세요")
+            .with_details(json!({ "project_id": id })));
+    }
+    Ok(())
+}
+
+/// 단일 모드로 바꿀 수 없게 하는 워크스페이스 사용량: 제거되지 않은 worktree 수, worktree에 연결된 대화 수(보관 포함).
+fn workspaces_in_use(conn: &Connection, id: &str) -> ApiResult<(i64, i64)> {
+    Ok(conn.query_row(
+        "SELECT (SELECT COUNT(*) FROM worktrees WHERE project_id = ?1 AND status != 'removed'), \
+                (SELECT COUNT(*) FROM sessions WHERE project_id = ?1 AND worktree_id IS NOT NULL)",
+        params![id],
+        |r| Ok((r.get(0)?, r.get(1)?)),
+    )?)
 }
 
 const COLS: &str = "id, name, root_path, created_at, updated_at, revision, archived_at, icon, \
     COALESCE((SELECT s.updated_at FROM sessions s WHERE s.project_id = projects.id AND julianday(s.updated_at) > julianday(projects.updated_at) \
               ORDER BY julianday(s.updated_at) DESC LIMIT 1), projects.updated_at) AS last_activity_at, pinned_at, \
-    (SELECT group_concat(label_id, ',') FROM (SELECT label_id FROM project_labels WHERE project_id = projects.id ORDER BY label_id)), setup_script_id";
+    (SELECT group_concat(label_id, ',') FROM (SELECT label_id FROM project_labels WHERE project_id = projects.id ORDER BY label_id)), setup_script_id, workspace_mode";
 
 /// 아이콘 최대 길이(문자). 이모지 조합(ZWJ·피부색)까지 담을 수 있게 넉넉히 둔다.
 const MAX_ICON_CHARS: usize = 8;
@@ -61,6 +92,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Project> {
         pinned_at: r.get(9)?,
         labels: r.get::<_, Option<String>>(10)?.map(|s| s.split(',').map(String::from).collect()).unwrap_or_default(),
         setup_script_id: r.get(11)?,
+        workspace_mode: r.get(12)?,
     })
 }
 
@@ -243,6 +275,8 @@ pub struct UpdateProject {
     /// 초기 설정 script 지정, null이면 해제(PROJECT-010). 이 프로젝트의 삭제되지 않은 script만.
     #[serde(default, deserialize_with = "crate::util::double_option")]
     pub setup_script_id: Option<Option<String>>,
+    /// 워크스페이스 모드 변경: "single" | "project"
+    pub workspace_mode: Option<String>,
 }
 
 /// 보관된 프로젝트 복원 검사(PROJECT-009). 폴더가 있으면 그대로 보관 해제, 없으면 해제 뒤 새 경로로 다시 연결해야 한다.
@@ -332,15 +366,19 @@ pub async fn update(
             Some(canon.to_string_lossy().to_string())
         }
     };
+    let mode = body.workspace_mode.clone();
+    if mode.as_deref().is_some_and(|m| m != SINGLE && m != PROJECT_MODE) {
+        return Err(ApiError::invalid("workspace_mode는 single 또는 project입니다"));
+    }
     let h = idem::body_hash(
         "project.update",
-        &json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon, "pinned": body.pinned, "setup": body.setup_script_id }),
+        &json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon, "pinned": body.pinned, "setup": body.setup_script_id, "mode": mode }),
     );
     let setup = body.setup_script_id.clone();
     let rev = body.expected_revision;
     let archived = body.archived;
     let pinned = body.pinned;
-    let pin_only = body.name.is_none() && body.archived.is_none() && body.root_path.is_none() && body.icon.is_none() && body.setup_script_id.is_none();
+    let pin_only = body.name.is_none() && body.archived.is_none() && body.root_path.is_none() && body.icon.is_none() && body.setup_script_id.is_none() && body.workspace_mode.is_none();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let cur = get(tx, &id)?;
         if cur.revision != rev {
@@ -386,6 +424,19 @@ pub async fn update(
                 }
             }
             tx.execute("UPDATE projects SET setup_script_id = ?2 WHERE id = ?1", params![id, script])?;
+        }
+        if let Some(m) = mode.as_deref().filter(|m| *m != cur.workspace_mode) {
+            if m == SINGLE {
+                let (worktrees, sessions) = workspaces_in_use(tx, &id)?;
+                if worktrees > 0 || sessions > 0 {
+                    return Err(ApiError::conflict(
+                        "workspaces_in_use",
+                        "워크스페이스가 남아 있어 단일 모드로 바꿀 수 없습니다. 대화를 프로젝트 폴더로 옮기고 worktree를 제거한 뒤 다시 시도하세요",
+                    )
+                    .with_details(json!({ "worktrees": worktrees, "sessions": sessions })));
+                }
+            }
+            tx.execute("UPDATE projects SET workspace_mode = ?2 WHERE id = ?1", params![id, m])?;
         }
         let proj = get(tx, &id)?;
         events::append(tx, now, "project.updated", Some(&id), None, &serde_json::to_value(&proj)?)?;

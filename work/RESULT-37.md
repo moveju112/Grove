@@ -7,7 +7,7 @@
 ## 통합 실패 후속 — 현재 인계
 
 - 재개 기준은 `43cf9add981931f74c5665ed0a402e57f31b4a0a`다. 같은 worktree·branch에서 clean 시작했고 기준 변경·merge·rebase·다른 checkout 편집은 없다.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links`, branch: `parallel/b02-settings-links`.
+- worktree: `<세션 worktree 루트>/b02-37-settings-links`, branch: `parallel/b02-settings-links`.
 - 상태: 기존 브랜치에서 자기 결함을 재현·수정하고 소유 선택 인수를 완료했다. blocker는 없다. 고정 candidate 자체는 수정하거나 재검증한 것으로 주장하지 않으며, 수정 통합 후 인수는 위 `integration_checks`에 남겼다.
 - 별도 분할 생성 시 초안 수명 문제는 **work 49 소유**다. 이번 변경·잔여·blocker에 포함하지 않는다.
 
@@ -17,13 +17,13 @@
 원래 결과는 Rust 10개·Vitest 7개·typecheck·E2E 첫 4개 통과, exec viewport 실패 1개, 후속 E2E 10개 미실행, job exit 1이다. 이 실패를 이후 통과로 덮어쓰지 않는다.
 
 수정 전 브랜치에서 `python3 scripts/build.py test --e2e settings-links.spec.ts:144` 단독 실행은 통과했다.
-근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_848a56b0.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_848a56b0.stderr`.
+근거: `<실행 로그>/shell_848a56b0.stdout`, `<실행 로그>/shell_848a56b0.stderr`.
 branch와 candidate의 reveal/useSettingsLink/ExecSettings/공통 app.css/전용 E2E는 bytes가 같았다. Settings의 차이는 PWA 버튼·업데이트·fallback 공존이며 ScopedSettings는 저장 버튼의 ServerActionButton 래퍼 차이였다. 그 차이만으로 원인을 단정하지 않았다.
 
 같은 브랜치에서 실제 Definitions 응답도 별도로 보류하는 결정적 fixture로 바꾸고, 제품 수정 전 같은 명령을 실행하자 실패했다.
 effective 응답을 해제하면 exec 행에 scrollIntoView가 한 번 실행되고 viewport 안에 있었지만, 그 앞쪽 Definitions 응답을 나중에 해제·렌더하자 동일한 `viewport ratio 0`이 발생했다.
 진단 기록은 행 top `5721.78125`에서 scroll 직후 `440.78125`, 다음 frame `373.28125`, pane scrollTop `5281`, pane clientHeight `744`였고, 이후 Definitions 렌더 뒤 최종 viewport 검사가 실패했다.
-근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_4806ee8f.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_4806ee8f.stderr` (exit 1).
+근거: `<실행 로그>/shell_4806ee8f.stdout`, `<실행 로그>/shell_4806ee8f.stderr` (exit 1).
 즉 기존 행 준비 신호는 **앞쪽 비동기 내용의 높이 준비**를 보장하지 않았다. 통합에서만 발생하는 경계가 아니라 브랜치에서도 재현한 결함이다. candidate 내부의 정확한 응답 순서까지 관측했다고 주장하지 않는다.
 
 ### 수정과 계약
@@ -47,7 +47,7 @@ Profiles·Definitions·업데이트/MCP mount·공통 CSS·서버·API client·T
 
 ### 검증 명령·유효 입력
 
-아래는 모두 같은 worktree에서 `source /data/project/paseodog_opus/.envrc.dev` 후 실행했다. 모든 E2E 전체 명령은 `flock /home/ubuntu/.cache/grove-rust-check.lock`으로 직렬화했고 실행기가 현재 debug 서버와 웹을 빌드했다. 실제 사용자 설정 대신 disposable E2E 서버/DB만 사용했다.
+아래는 모두 같은 worktree에서 `source <원본 저장소>/.envrc.dev` 후 실행했다. 모든 E2E 전체 명령은 `flock /home/ubuntu/.cache/grove-rust-check.lock`으로 직렬화했고 실행기가 현재 debug 서버와 웹을 빌드했다. 실제 사용자 설정 대신 disposable E2E 서버/DB만 사용했다.
 
 ```bash
 python3 scripts/build.py test --typecheck --vitest app/components/settings-links/useExecLinkLayout.test.ts
@@ -58,10 +58,10 @@ python3 scripts/build.py test --typecheck
 
 | 실행 근거 | 실제 결과·실행기 wall / CPU |
 | --- | --- |
-| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_48f8ebe0.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_48f8ebe0.stderr` | 신규 Vitest 5개 통과, 2.18s / 2.43s. 당시 typecheck 통과, 14.03s / 14.84s |
-| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3c5577f4.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3c5577f4.stderr` | 소유 E2E 13개 통과, 10.24s / 9.72s. 서버 빌드 2.45s / 0.36s, 웹 빌드 3.48s / 4.97s |
-| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_4ae99ff8.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_4ae99ff8.stderr` | 다중 pane 시나리오를 context/exec로 확장한 뒤 해당 2개 통과, 4.29s / 4.17s. 서버 빌드 2.95s / 0.3s, 웹 빌드 3.44s / 5.04s |
-| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5d7cb3c9.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5d7cb3c9.stderr` | 마지막 시험 변경 이후 최종 typecheck 통과, 8.41s / 12.24s |
+| `<실행 로그>/shell_48f8ebe0.stdout`, `<실행 로그>/shell_48f8ebe0.stderr` | 신규 Vitest 5개 통과, 2.18s / 2.43s. 당시 typecheck 통과, 14.03s / 14.84s |
+| `<실행 로그>/shell_3c5577f4.stdout`, `<실행 로그>/shell_3c5577f4.stderr` | 소유 E2E 13개 통과, 10.24s / 9.72s. 서버 빌드 2.45s / 0.36s, 웹 빌드 3.48s / 4.97s |
+| `<실행 로그>/shell_4ae99ff8.stdout`, `<실행 로그>/shell_4ae99ff8.stderr` | 다중 pane 시나리오를 context/exec로 확장한 뒤 해당 2개 통과, 4.29s / 4.17s. 서버 빌드 2.95s / 0.3s, 웹 빌드 3.44s / 5.04s |
+| `<실행 로그>/shell_5d7cb3c9.stdout`, `<실행 로그>/shell_5d7cb3c9.stderr` | 마지막 시험 변경 이후 최종 typecheck 통과, 8.41s / 12.24s |
 
 두 브라우저 통과 실행 사이 제품 변경은 없고, 산출물은 모두 `app-DVSWb5ck.js`, SW `4c39891ff61424c5`였다.
 13개 통과 실행 이후에는 다중 pane 시험만 context/exec 두 경우로 확장했다. 그 시험을 제외한 나머지 12개의 제품·helper·시험 본문은 그대로여서 재사용했고, 변경/추가한 다중 pane 2개만 다시 실행했다. 따라서 현재 고유 소유 시나리오는 **14개 통과**이며, 한 번에 14개를 실행했다고 표현하지 않는다.
@@ -77,10 +77,10 @@ SETTINGS-021의 실행 가능한 소유 잔여는 없다. 수정 통합 candidat
 ## 이하 `43cf9ad` 시점 최초 인계 — 기존 근거 보존
 
 - 상태: 소유 구현·연결·선택 브라우저 인수 완료. SETTINGS-021 통합 완료 후보이며 TODO는 수정하지 않았다.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links`
+- worktree: `<세션 worktree 루트>/b02-37-settings-links`
 - branch: `parallel/b02-settings-links`
 - 고정 기준: `292cf1aff5305b4c039613dfd4266f416cef5f03`. 시작 HEAD 일치·clean 확인. 기준 변경·merge·rebase 없음.
-- 정본: `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/37.md`.
+- 정본: `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/37.md`.
 
 ## 제공 동작과 소유 경계
 
@@ -123,7 +123,7 @@ TTS·재생·마이크·STT 경로를 사용하거나 변경하지 않았다.
 
 ## 실제 검증
 
-모든 명령은 이 worktree에서 `source /data/project/paseodog_opus/.envrc.dev` 후 실행했다.
+모든 명령은 이 worktree에서 `source <원본 저장소>/.envrc.dev` 후 실행했다.
 E2E 명령 전체는 `flock /home/ubuntu/.cache/grove-rust-check.lock`으로 직렬화했다.
 프로젝트 실행기가 빌드한 debug 서버·현재 웹 산출물, Chrome desktop, `GROVE_E2E_FAST=1`을 사용했다.
 설정 저장은 매 실행이 생성한 disposable E2E 서버/DB에서만 수행했다.
@@ -131,40 +131,40 @@ E2E 명령 전체는 `flock /home/ubuntu/.cache/grove-rust-check.lock`으로 직
 ### 원인 재현
 
 1. `python3 scripts/build.py test --e2e workspace.spec.ts:799`: 변경 전 원래 시험 1개 통과. 이전 실패가 무조건 재현된다고 주장하지 않는다.
-   근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_ecbcd92c.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_ecbcd92c.stderr`.
+   근거: `<실행 로그>/shell_ecbcd92c.stdout`, `<실행 로그>/shell_ecbcd92c.stderr`.
 2. 제품 코드 변경 전 `python3 scripts/build.py test --e2e settings-links.spec.ts:50`: 실제 upstream effective 응답을 보류하고, 가상 시계로 1초 진행 후 응답을 해제했다. 행은 생겼지만 `toBeInViewport`가 `viewport ratio 0`으로 실패했다.
-   근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_49cff7cf.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_49cff7cf.stderr`.
+   근거: `<실행 로그>/shell_49cff7cf.stdout`, `<실행 로그>/shell_49cff7cf.stderr`.
    이것으로 실제 행이 없을 때 50ms 처리와 링크 상태 폐기가 먼저 끝나는 경계를 확정했다. 실시간 sleep·반복 retry·시험의 scrollIntoView 우회는 사용하지 않았다.
 
 ### 유효한 통과 근거
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 python3 scripts/build.py test --vitest app/components/settings-links/reveal.test.ts app/components/exec-settings/ExecSettings.test.ts app/state/store.test.ts --typecheck
 ```
 
 3파일 12개 Vitest 통과. typecheck 통과.
-근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_138ca80c.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_138ca80c.stderr`.
+근거: `<실행 로그>/shell_138ca80c.stdout`, `<실행 로그>/shell_138ca80c.stderr`.
 실행기 기록: typecheck wall 13.24s / CPU 12.15s, Vitest wall 1.46s / CPU 2.87s.
 이후 제품·단위 시험·store·ExecSettings 입력은 변경하지 않았다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e settings-links.spec.ts workspace.spec.ts:319 workspace.spec.ts:799 workspace.spec.ts:807
 ```
 
 첫 번째 전용 시나리오(지연 렌더 후 viewport 진입·저장 이벤트에 따른 재조회 후 사용자 scrollTop 유지)는 통과했다.
 이 실행 전체는 아래 fixture 오류로 실패했으므로 전체 통과 근거로 사용하지 않는다.
-근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5840f612.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5840f612.stderr`.
+근거: `<실행 로그>/shell_5840f612.stdout`, `<실행 로그>/shell_5840f612.stderr`.
 해당 첫 시나리오 본문·공유 helper·제품 입력은 이후 그대로다. 변경은 다른 시나리오와 미사용 import 제거뿐이다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --typecheck --e2e settings-links.spec.ts:86 settings-links.spec.ts:144 settings-links.spec.ts:158 settings-links.spec.ts:175 settings-links.spec.ts:197 settings-links.spec.ts:217 workspace.spec.ts:319 workspace.spec.ts:799 workspace.spec.ts:807
 ```
 
 나머지 12개 브라우저 시나리오, typecheck, debug 서버·웹 빌드 모두 통과했다.
-근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6182ac2d.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6182ac2d.stderr`.
+근거: `<실행 로그>/shell_6182ac2d.stdout`, `<실행 로그>/shell_6182ac2d.stderr`.
 실행기 기록: typecheck wall 20.63s / CPU 11.7s, 서버 빌드 wall 6.66s / CPU 0.33s, 웹 빌드 wall 3.53s / CPU 5.06s, E2E wall 10.22s / CPU 9.42s.
 두 브라우저 통과 근거의 제품 bundle은 동일한 `app-D-wv8Rxa.js`, SW version은 `ff12594f34001fff`였다.
 이후 변경은 이 인계 파일뿐이다.
@@ -179,11 +179,11 @@ Rust 코드는 변경하지 않았고 E2E 진입점에서 실제 Rust 서버를 
 
 | 기록 | 실제 결과와 처리 |
 | --- | --- |
-| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_df5d228f.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_df5d228f.stderr` | 최초 원래 시험 실행은 build.py의 worktree `.dev` 강제로 로컬 툴체인/크레이트 다운로드가 시작되어 중단했다(exit 137). 이 실행이 만든 `.dev`를 제거하고 main `.dev` symlink로 복구했다. lockfile 변경이나 dependency 추가/업그레이드는 없다. |
-| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_ae0d2628.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_ae0d2628.stderr` | `--e2e settings-links.spec.ts:48`은 선택 위치 오류로 `No tests found.` 실패. 실제 test 위치 `:50`으로 수정해 원인 재현을 수행했다. |
-| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5840f612.stdout` | 다중 pane fixture의 `getByRole("status")`가 다른 기존 status까지 잡아 strict locator 실패. 정확한 링크 대기 문구로 한정했다. 이때 첫 지연/재조회 시나리오는 통과했다. |
-| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_b46dd8b2.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_b46dd8b2.stderr` | 분할 전에 만든 초안이 분할 생성 뒤 `2007`에서 `2000`으로 사라지는 실패를 관측했다. 수정하지 않은 `web/app/components/SplitView.tsx::NodeView`는 leaf에서 split으로 바뀔 때 Settings 하위 트리를 remount한다. 최종 링크 fixture는 먼저 두 pane을 만든 후 초안을 작성해 링크 처리의 보존을 검증한다. |
-| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_37d5a5ea.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_37d5a5ea.stderr` | 고급 context 행이 session 범위를 지원한다는 잘못된 시험 기대가 실패했다. `src/settings.rs::registry`의 실제 `server/project` 계약에 맞춰 프로젝트 대상/범위를 검증하고, 별도로 `output.language`의 고정 대화 대상도 검증했다. 제품의 유효한 범위 로직은 바꾸지 않았다. |
+| `<실행 로그>/shell_df5d228f.stdout`, `<실행 로그>/shell_df5d228f.stderr` | 최초 원래 시험 실행은 build.py의 worktree `.dev` 강제로 로컬 툴체인/크레이트 다운로드가 시작되어 중단했다(exit 137). 이 실행이 만든 `.dev`를 제거하고 main `.dev` symlink로 복구했다. lockfile 변경이나 dependency 추가/업그레이드는 없다. |
+| `<실행 로그>/shell_ae0d2628.stdout`, `<실행 로그>/shell_ae0d2628.stderr` | `--e2e settings-links.spec.ts:48`은 선택 위치 오류로 `No tests found.` 실패. 실제 test 위치 `:50`으로 수정해 원인 재현을 수행했다. |
+| `<실행 로그>/shell_5840f612.stdout` | 다중 pane fixture의 `getByRole("status")`가 다른 기존 status까지 잡아 strict locator 실패. 정확한 링크 대기 문구로 한정했다. 이때 첫 지연/재조회 시나리오는 통과했다. |
+| `<실행 로그>/shell_b46dd8b2.stdout`, `<실행 로그>/shell_b46dd8b2.stderr` | 분할 전에 만든 초안이 분할 생성 뒤 `2007`에서 `2000`으로 사라지는 실패를 관측했다. 수정하지 않은 `web/app/components/SplitView.tsx::NodeView`는 leaf에서 split으로 바뀔 때 Settings 하위 트리를 remount한다. 최종 링크 fixture는 먼저 두 pane을 만든 후 초안을 작성해 링크 처리의 보존을 검증한다. |
+| `<실행 로그>/shell_37d5a5ea.stdout`, `<실행 로그>/shell_37d5a5ea.stderr` | 고급 context 행이 session 범위를 지원한다는 잘못된 시험 기대가 실패했다. `src/settings.rs::registry`의 실제 `server/project` 계약에 맞춰 프로젝트 대상/범위를 검증하고, 별도로 `output.language`의 고정 대화 대상도 검증했다. 제품의 유효한 범위 로직은 바꾸지 않았다. |
 
 분할 생성 자체의 remount를 넘어서는 초안 보존은 이번 링크 소유 범위의 완료 주장에 포함하지 않는다. 해당 상위 탐색 구조를 수정하려면 별도 소유권/작업이 필요하다.
 안정된 두 pane에서 늦게 연 링크, 같은 pane의 링크 재활성화 동안 양쪽 초안·프로젝트/대화 대상은 보존됨을 실제 브라우저로 확인했다.

@@ -157,6 +157,7 @@ async fn worktree_defaults_use_actual_execution_root_and_never_fall_back() {
         let out = std::process::Command::new("git").args(args).current_dir(&root).output().unwrap();
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     }
+    s.use_workspaces(&pid).await;
     let (status, wt) = s.post(&format!("/api/v1/projects/{pid}/worktrees"), json!({"name": "cwd"})).await;
     assert_eq!(status, StatusCode::CREATED, "{wt}");
     let wt_root = PathBuf::from(wt["path"].as_str().unwrap());

@@ -534,8 +534,8 @@ function TurnEvidence({ e }: { e: NonNullable<Turn["evidence"]> }) {
 
 const MessageView = memo(function MessageView({ m, prefs, assistantName, assistantImage }: { m: Message; prefs: Prefs; assistantName: string; assistantImage: string | null }) {
     const nt0 = (m.content as { type?: string }).type;
-    // 답만 보기: 도구 결과·CLI 도구 활동·가져온 도구 기록과 글 없는 도구 호출 메시지를 숨긴다(승인 카드는 별도로 항상 표시).
-    if (prefs.answerOnly && (m.role === "tool" || (m.role === "note" && (nt0 === "cli_activity" || nt0 === "imported_tool")))) return null;
+    // 답만 보기: 도구 결과·CLI 도구 활동과 글 없는 도구 호출 메시지를 숨긴다(승인 카드는 별도로 항상 표시).
+    if (prefs.answerOnly && (m.role === "tool" || (m.role === "note" && nt0 === "cli_activity"))) return null;
     if (prefs.answerOnly && m.role === "assistant" && !(m.content as { text?: string }).text) return null;
     const c = m.content as { attachments?: Attachment[]; reasoning?: string | null; reasoning_chars?: number; text?: string; tool_calls?: { id: string; name: string }[]; name?: string; status?: string; output?: unknown; model?: string; approval_scope?: string | null; args?: unknown; duration_ms?: number | null; truncated?: boolean };
     if (m.role === "note" && nt0 === "model_fallback") {
@@ -640,30 +640,7 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
             </details>
         );
     }
-    // 가져온 기록(MIG-008, 014): 표시 전용이며 모델 입력에는 user/assistant 텍스트만 들어간다.
     const nt = (m.content as { type?: string }).type;
-    if (m.role === "note" && nt === "import_notice") {
-        const r = m.content as { source: string; truncated: boolean; interrupted: number; unsupported: string[] };
-        return (
-            <div className="msg note import" role="note" data-testid="msg-import-notice">
-                기존 {r.source === "paseo" ? "Paseo" : r.source} 대화에서 가져왔습니다. 이어서 요청하면 모델에는 주고받은 글만 보내고,
-                도구 결과·압축 요약은 보내지 않습니다.
-                {r.truncated && " 원본 기록이 잘려 있어 앞부분이 없습니다."}
-                {r.interrupted > 0 && ` 실행 중이던 작업 ${r.interrupted}건은 결과를 알 수 없으며 다시 실행하지 않았습니다.`}
-            </div>
-        );
-    }
-    if (m.role === "note" && nt === "imported_tool") {
-        const r = m.content as { name: string; status: string; text: string };
-        return (
-            <details className={`msg tool imported ${r.status}`} data-testid="msg-imported-tool" open={prefs.expandTools || undefined}>
-                <summary>
-                    도구 {r.name} · <span className={`status ${r.status}`}>{r.status === "interrupted" ? "결과 불명(중단)" : r.status}</span> · 가져온 기록
-                </summary>
-                <pre>{r.text.slice(0, 20000)}</pre>
-            </details>
-        );
-    }
     if (m.role === "note" && nt === "cli_activity") {
         const r = m.content as { items: { kind: string; name: string; input?: unknown; status?: string }[] };
         return (
@@ -673,14 +650,6 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
                 </summary>
                 <pre>{JSON.stringify(r.items, null, 2).slice(0, 20000)}</pre>
             </details>
-        );
-    }
-    if (m.role === "note" && (nt === "imported_notice" || nt === "imported_compaction")) {
-        const r = m.content as { level?: string; text?: string; pre_tokens?: number };
-        return (
-            <div className={`msg note ${r.level === "error" || r.level === "warning" ? "warn" : ""}`} data-testid="msg-imported-note">
-                {nt === "imported_compaction" ? `원래 대화에서 자동 압축된 지점${r.pre_tokens ? `(약 ${r.pre_tokens} tokens)` : ""} · 요약문은 원본에 없습니다` : r.text}
-            </div>
         );
     }
     if (m.role === "tool") {

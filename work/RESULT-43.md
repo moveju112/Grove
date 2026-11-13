@@ -12,13 +12,13 @@
 | 항목 | 값 |
 |---|---|
 | 배치/번호 | b02 / 43 |
-| worktree | `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-43-skill-requirements` |
+| worktree | `<세션 worktree 루트>/b02-43-skill-requirements` |
 | branch | `parallel/b02-skill-requirements` |
 | 고정 기준 | `6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c` |
 | 검증 제품 입력 | `f53aa85061cc35198461bb54e1d133218dbb7cad`가 기준의 ancestor임을 확인 |
 | 상태 | 소유 구현·브라우저 인수 완료, 관리 revision 연결의 승인 경계로 blocked |
 
-`/data/project/paseodog_opus/work/ENTRY.md`, `COMMON.md`, `43.md`와 README의 정확한 경로/branch 행을 확인했다.
+`<원본 저장소>/work/ENTRY.md`, `COMMON.md`, `43.md`와 README의 정확한 경로/branch 행을 확인했다.
 시작 HEAD는 고정 기준과 같고 clean이었다. 현재 세션의 `fast=false`를 조회로 확인했으며 runtime 설정은 변경하지 않았다.
 
 ## 제공 동작과 소유 변경
@@ -61,23 +61,23 @@ API 조회/선택은 서버의 tool-loop disabled도 반영한다.
 
 ## 실행 검사와 근거
 
-모든 실행에서 먼저 `source /data/project/paseodog_opus/.envrc.dev`를 적용했다.
-옛 실행기의 `DEV`만 프로세스 안에서 `/data/project/paseodog_opus/.dev`로 지정했다.
+모든 실행에서 먼저 `source <원본 저장소>/.envrc.dev`를 적용했다.
+옛 실행기의 `DEV`만 프로세스 안에서 `<원본 저장소>/.dev`로 지정했다.
 공유 `web/node_modules`로 Git-ignored symlink를 연결했으며 설치/빌드 파일/검사 설정/cache 설정은 변경하지 않았다.
 Rust/E2E는 아래와 같이 전체 명령을 같은 잠금으로 직렬화했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; from scripts import build; build.DEV="/data/project/paseodog_opus/.dev"; sys.argv=["scripts/build.py","test","--rust","skill_requirements","skills","skill_management"]; build.main()'
+source <원본 저장소>/.envrc.dev
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import sys; from scripts import build; build.DEV="<원본 저장소>/.dev"; sys.argv=["scripts/build.py","test","--rust","skill_requirements","skills","skill_management"]; build.main()'
 
-source /data/project/paseodog_opus/.envrc.dev
-python3 -c 'import sys; from scripts import build; build.DEV="/data/project/paseodog_opus/.dev"; sys.argv=["scripts/build.py","test","--vitest","app/components/skills/SkillsPanel.test.ts","app/components/skills/SkillEditor.test.ts","app/components/skills/requirements/Requirements.test.tsx","--typecheck"]; build.main()'
+source <원본 저장소>/.envrc.dev
+python3 -c 'import sys; from scripts import build; build.DEV="<원본 저장소>/.dev"; sys.argv=["scripts/build.py","test","--vitest","app/components/skills/SkillsPanel.test.ts","app/components/skills/SkillEditor.test.ts","app/components/skills/requirements/Requirements.test.tsx","--typecheck"]; build.main()'
 
-source /data/project/paseodog_opus/.envrc.dev
-python3 -c 'from scripts import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test","--vitest","app/components/skills/requirements/Requirements.test.ts","--typecheck"])'
+source <원본 저장소>/.envrc.dev
+python3 -c 'from scripts import build; build.DEV="<원본 저장소>/.dev"; build.main(["test","--vitest","app/components/skills/requirements/Requirements.test.ts","--typecheck"])'
 
-source /data/project/paseodog_opus/.envrc.dev
-flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test","--e2e","e2e/skill-requirements.spec.ts","e2e/skills.spec.ts"])'
+source <원본 저장소>/.envrc.dev
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV="<원본 저장소>/.dev"; build.main(["test","--e2e","e2e/skill-requirements.spec.ts","e2e/skills.spec.ts"])'
 ```
 
 | 검사 | 결과 | 실행기가 출력한 wall / CPU |
@@ -123,7 +123,7 @@ manifest 스킬의 catalog revision은 본문+manifest+target이므로 이 응�
 
 ## 완료 경계 후속 — Save revision 연결과 blocker 해소
 
-사용자의 새 후속 요청과 갱신된 `/data/project/paseodog_opus/work/43.md`, `COMMON.md`를 확인했다.
+사용자의 새 후속 요청과 갱신된 `<원본 저장소>/work/43.md`, `COMMON.md`를 확인했다.
 재개 HEAD는 `f9098ee1410e6bcbb1e2722c40d10a04fc61412a`, branch는 `parallel/b02-skill-requirements`, checkout은 clean이었다.
 고정 기준 `6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c`와 이전 작업을 보존했다.
 이전 진행 중 소유권 유지 판단을 확대 해석하지 않았고, 종료 후 새로 배정된 한 연결에만 후속 권한을 적용했다.
@@ -152,20 +152,20 @@ manifest가 없는 경우 기존 loader가 본문 SHA-256을 반환하므로 이
 두 회귀 모두 예상한 revision 동등성 검사에서 실패했다. 기존 정적 불일치를 실행으로 확인한 것이며, 이 실패를 삭제하거나 통과로 바꾸지 않는다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test","--rust","skill_requirements","--filter","manifest_save_"])'
+source <원본 저장소>/.envrc.dev
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV="<원본 저장소>/.dev"; build.main(["test","--rust","skill_requirements","--filter","manifest_save_"])'
 ```
 
 실패 메시지는 각각 `실제 저장 응답과 catalog revision이 일치해야 한다`, `같은 본문 저장은 같은 revision이어야 한다`였다.
 0개 통과·2개 실패·8개 filter 제외, exit 101이다.
 실행기 시간은 37.84s wall / 10.76s CPU였다.
-전체 로그는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_28049fac.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_28049fac.stderr`다.
+전체 로그는 `<실행 로그>/shell_28049fac.stdout`, `<실행 로그>/shell_28049fac.stderr`다.
 
 그 뒤 승인된 한 줄을 수정하고, 실패/영향 범위와 필수 저장·선택 경계를 한 잠금 안에서 실행했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test","--rust","skill_requirements","skill_management","--e2e","e2e/skill-management.spec.ts"])'
+source <원본 저장소>/.envrc.dev
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV="<원본 저장소>/.dev"; build.main(["test","--rust","skill_requirements","skill_management","--e2e","e2e/skill-management.spec.ts"])'
 ```
 
 | 검사 | 결과 | 실행기가 출력한 wall / CPU |
@@ -177,7 +177,7 @@ flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import 
 | `e2e/skill-management.spec.ts` 저장 응답 유실·reload 충돌·비활성화·명시적 재선택 | desktop 1개 통과 | 3.95s / 3.44s |
 
 전체 명령 exit 0이다.
-전체 로그는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_02053afd.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_02053afd.stderr`다.
+전체 로그는 `<실행 로그>/shell_02053afd.stdout`, `<실행 로그>/shell_02053afd.stderr`다.
 웹 빌드의 기존 React Router future flag/chunk 크기 경고는 그대로이며 설정을 바꾸지 않았다.
 공유 잠금 대기 시간은 위 실행기 시간과 구분하며 절감량을 추정하지 않는다.
 

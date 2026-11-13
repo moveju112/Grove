@@ -3,7 +3,7 @@
 ## 상태와 기준
 
 - **지원 형식의 구현·역할 내 검증 완료 · Codex inline TOML parser 승인 blocker**. RESOURCE-018 전체 완료가 아니다.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-21-source-skills-hooks`
+- worktree: `<세션 worktree 루트>/b02-21-source-skills-hooks`
 - branch: `parallel/b02-source-skills-hooks`
 - 공통 기준 SHA: `7b3949d24e420d09e6e4cde29405414b2d99253a`
 - 원본 `work/ENTRY.md`, `work/COMMON.md`, `work/21.md`를 읽고 README의 21 행과 실제 top-level·branch를 대조했다. 시작 HEAD가 기준 SHA와 같았고 worktree는 clean이었다.
@@ -87,7 +87,7 @@ HookMetadata = { event, matcher: string | null, has_command: boolean }
 Rust 선택 검사:
 
 ```sh
-ln -s /data/project/paseodog_opus/.dev .dev && source /data/project/paseodog_opus/.envrc.dev && CARGO_TARGET_DIR=/data/project/paseodog_opus/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust source_settings
+ln -s <원본 저장소>/.dev .dev && source <원본 저장소>/.envrc.dev && CARGO_TARGET_DIR=<원본 저장소>/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust source_settings
 ```
 
 - exit 0. 라이브러리·integration target 컴파일 포함, `tests/source_settings.rs` **23개 통과**, 실패·ignored·filtered 0.
@@ -100,7 +100,7 @@ ln -s /data/project/paseodog_opus/.dev .dev && source /data/project/paseodog_opu
 최초 웹 선택 검사와 당시 실패:
 
 ```sh
-source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/source-settings/SourceSettingsPanel.test.ts app/components/source-settings/SourceSettings.test.ts --typecheck
+source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/source-settings/SourceSettingsPanel.test.ts app/components/source-settings/SourceSettings.test.ts --typecheck
 ```
 
 - 당시 전체 exit 127. 첫 typecheck에서 `sh: 1: react-router: not found`, Vitest는 선행 실패로 미실행이었다. 당시 E2E도 독립 단계 제한과 dependency 부재로 실행하지 않았다. 이 실패·미실행 이력은 이후 통과와 구분해 보존한다.
@@ -109,7 +109,7 @@ source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test -
 후속 공유 환경 복구 및 웹 선택 검사:
 
 ```sh
-ln -s /data/project/paseodog_opus/web/node_modules web/node_modules && ln -s /data/project/paseodog_opus/.dev .dev && source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --vitest app/components/source-settings/SourceSettingsPanel.test.ts app/components/source-settings/SourceSettings.test.ts --typecheck
+ln -s <원본 저장소>/web/node_modules web/node_modules && ln -s <원본 저장소>/.dev .dev && source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --vitest app/components/source-settings/SourceSettingsPanel.test.ts app/components/source-settings/SourceSettings.test.ts --typecheck
 ```
 
 - exit 0. typecheck 통과, `SourceSettingsPanel.test.ts` 7개와 `SourceSettings.test.ts` 5개, 합계 **12개 통과**.
@@ -118,7 +118,7 @@ ln -s /data/project/paseodog_opus/web/node_modules web/node_modules && ln -s /da
 사용자 명시 예외로 직접 실행한 선택 E2E:
 
 ```sh
-source /data/project/paseodog_opus/.envrc.dev && CARGO_TARGET_DIR=/data/project/paseodog_opus/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/source-settings.spec.ts
+source <원본 저장소>/.envrc.dev && CARGO_TARGET_DIR=<원본 저장소>/target CARGO_BUILD_JOBS=2 CARGO_NET_OFFLINE=true RUSTUP_AUTO_INSTALL=0 flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/source-settings.spec.ts
 ```
 
 - **전체 명령을 공용 flock 안에서 실행**했다. 잠금 대기를 거쳐 exit 0. 메인 검사를 취소·수정·재실행하지 않았고 포트·timeout·재시도 정책을 변경하지 않았다.

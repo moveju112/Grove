@@ -1,5 +1,5 @@
 <!-- grove-handoff:v1
-{"state":"ready","remaining":[],"blockers":[],"integration_checks":["메인 통합 후 source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts e2e/cli-profile.spec.ts:5 — Settings/Profiles의 ServerActionButton 및 ProfileCatalog의 useServerBlockReason 결합을 보존한 통합 트리에서 재확인"]}
+{"state":"ready","remaining":[],"blockers":[],"integration_checks":["메인 통합 후 source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts e2e/cli-profile.spec.ts:5 — Settings/Profiles의 ServerActionButton 및 ProfileCatalog의 useServerBlockReason 결합을 보존한 통합 트리에서 재확인"]}
 -->
 
 # 38 — MODEL-025 로컬 HTTP 모델 연결
@@ -7,7 +7,7 @@
 구현·소유 브라우저 인수 완료, blocker 없음. TODO는 수정하지 않았다.
 
 - 배치: b02 / 38.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-38-local-models`.
+- Worktree: `<세션 worktree 루트>/b02-38-local-models`.
 - Branch: `parallel/b02-local-models`.
 - 고정 기준: `eb841bb51dfde92a714f48189d02b0f568ad23c0`.
 - 포함된 제품 입력: `339f5167b1883d4db17134bd4277ffeee983f47b`. 두 SHA 모두 시작 시 merge-base로 포함을 확인했다.
@@ -54,18 +54,18 @@ ProfileCatalog는 진행 중 프로필 ID/revision이 바뀌면 이전 응답을
 최종 Rust 입력의 유효 근거:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust local_models model_catalog profile_check profile_check_state --vitest app/components/local-models/connection.test.ts --typecheck --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust local_models model_catalog profile_check profile_check_state --vitest app/components/local-models/connection.test.ts --typecheck --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts
 ```
 
-이 호출 전체는 최초 브라우저 기대 오류로 exit 1이었다. 선행 Rust는 **18/18 통과**: local_models 4, model_catalog 10, profile_check 1, profile_check_state 3. 이후 Rust 소스·시험은 변경하지 않았다. 근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_d22e049e.stdout`, 같은 stem의 `.stderr`.
+이 호출 전체는 최초 브라우저 기대 오류로 exit 1이었다. 선행 Rust는 **18/18 통과**: local_models 4, model_catalog 10, profile_check 1, profile_check_state 3. 이후 Rust 소스·시험은 변경하지 않았다. 근거: `<실행 로그>/shell_d22e049e.stdout`, 같은 stem의 `.stderr`.
 
 최종 웹·브라우저 전체 성공 명령:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --vitest app/components/local-models/connection.test.ts --typecheck --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts e2e/cli-profile.spec.ts:5
+source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --vitest app/components/local-models/connection.test.ts --typecheck --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts e2e/cli-profile.spec.ts:5
 ```
 
-exit 0. Vitest **5/5**, desktop E2E **6/6**, typecheck·debug 서버 빌드·웹 빌드 통과. CLI는 설정 UI 시험만 선택했고 실제 CLI/계정 시험은 선택하지 않았다. 근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_b87efee6.stdout`, 같은 stem의 `.stderr`.
+exit 0. Vitest **5/5**, desktop E2E **6/6**, typecheck·debug 서버 빌드·웹 빌드 통과. CLI는 설정 UI 시험만 선택했고 실제 CLI/계정 시험은 선택하지 않았다. 근거: `<실행 로그>/shell_b87efee6.stdout`, 같은 stem의 `.stderr`.
 
 | 유효 단계 | wall seconds | CPU seconds |
 | --- | ---: | ---: |
@@ -80,11 +80,11 @@ exit 0. Vitest **5/5**, desktop E2E **6/6**, typecheck·debug 서버 빌드·웹
 
 ### 중간 실패·복구 이력
 
-- `python3 scripts/build.py test --vitest app/components/local-models/connection.test.ts --typecheck`를 루트 환경 source 후 실행했다. 초기 5개/타입 통과 뒤 E2E 추가로 `string | undefined` 타입 오류가 발생했다. 소유 시험의 배열/헤더 타입을 바로잡고 같은 명령이 통과했다. 실패 호출에서는 Vitest 미실행. 로그 stem: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_e605a148`, 수정 후 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_7fcf28cb`.
-- 최초 선택 Rust 전용 명령 `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust local_models model_catalog profile_check profile_check_state`도 18개 통과했다. 이후 endpoint 검증 순서·capability 회귀를 보완했으므로 위 최종 Rust 근거를 사용한다. 로그 stem: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_05d9ffbd`.
+- `python3 scripts/build.py test --vitest app/components/local-models/connection.test.ts --typecheck`를 루트 환경 source 후 실행했다. 초기 5개/타입 통과 뒤 E2E 추가로 `string | undefined` 타입 오류가 발생했다. 소유 시험의 배열/헤더 타입을 바로잡고 같은 명령이 통과했다. 실패 호출에서는 Vitest 미실행. 로그 stem: `<실행 로그>/shell_e605a148`, 수정 후 `<실행 로그>/shell_7fcf28cb`.
+- 최초 선택 Rust 전용 명령 `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust local_models model_catalog profile_check profile_check_state`도 18개 통과했다. 이후 endpoint 검증 순서·capability 회귀를 보완했으므로 위 최종 Rust 근거를 사용한다. 로그 stem: `<실행 로그>/shell_05d9ffbd`.
 - 최종 Rust 근거 호출의 E2E는 `conn`이 오프라인 즉시 바뀐다는 잘못된 기대 때문에 1개 실패·4개 미실행이었다. 실제 기존 EventStream은 열린 SSE가 끊겨야 상태가 바뀐다. 실제 offline 배너·전송 차단과 reload 후 새 연결/초안 복원을 검증하도록 고쳤다. 제품의 SSE 동작은 바꾸지 않았다.
-- 다음 명령 `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --typecheck --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts`는 1개 통과·1개 실패·3개 미실행이었다. 실패는 모델과 `auth_failed`가 모두 code 요소인 소유 시험 locator의 모호함이었다. 직접 모델 표시로 범위를 좁혔다. 로그 stem: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_8b3b7030`.
-- 다음 명령 `source /data/project/paseodog_opus/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --vitest app/components/local-models/connection.test.ts --typecheck --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts`는 소유 E2E 2개 통과 후 기존 model-catalog의 이름 locator 충돌로 1개 실패·2개 미실행이었다. 새 폼을 `로컬 연결 이름`·`로컬 인증 비밀`로 구분했다. 기존 시험은 수정하지 않았으며 CLI UI도 선택 회귀에 포함해 최종 6개 통과했다. 로그 stem: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_c389f908`.
+- 다음 명령 `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --typecheck --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts`는 1개 통과·1개 실패·3개 미실행이었다. 실패는 모델과 `auth_failed`가 모두 code 요소인 소유 시험 locator의 모호함이었다. 직접 모델 표시로 범위를 좁혔다. 로그 stem: `<실행 로그>/shell_8b3b7030`.
+- 다음 명령 `source <원본 저장소>/.envrc.dev && flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --vitest app/components/local-models/connection.test.ts --typecheck --e2e e2e/local-models.spec.ts e2e/model-catalog.spec.ts e2e/profile-check.spec.ts`는 소유 E2E 2개 통과 후 기존 model-catalog의 이름 locator 충돌로 1개 실패·2개 미실행이었다. 새 폼을 `로컬 연결 이름`·`로컬 인증 비밀`로 구분했다. 기존 시험은 수정하지 않았으며 CLI UI도 선택 회귀에 포함해 최종 6개 통과했다. 로그 stem: `<실행 로그>/shell_c389f908`.
 - Vite 500 kB chunk 경고와 React Router v8 future flag 경고는 남는다. 이를 이유로 passing code·빌드 설정을 바꾸지 않았다. 관련 없는 전체 회귀·release·모바일/실기기·실모델 품질은 미선택이며 통과로 주장하지 않는다.
 
 ## MODEL-025 인수 대응·남은 조건

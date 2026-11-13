@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProjects, login, openDetails, sessionView, state } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, sessionView, state, useWorkspaces } from "./helpers";
 
 for (const width of [1400, 390]) {
     test.describe(`PWA 생성 진입 ${width}px`, () => {
@@ -170,6 +170,7 @@ test("실제 프로젝트의 worktree 생성은 offline·protocol 불일치에�
     const root = mkdtempSync(join(dirname(state().projA), "pwa-worktree-"));
     execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root });
     const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+    await useWorkspaces(project.id);
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
     const panel = page.getByTestId("worktrees-panel");

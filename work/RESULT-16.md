@@ -2,7 +2,7 @@
 
 ## 위치·상태
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-16-first-start`
+- worktree: `<세션 worktree 루트>/b02-16-first-start`
 - branch: `parallel/b02-first-start`
 - 공통 기준: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1` (시작 HEAD 및 merge-base 일치)
 - 상태: 배정 범위 구현·시험 작성 종료, **컴파일·동작 검증 blocker로 통합 대기**. 검증 완료나 `PC-003` 완료 후보로 간주하지 않는다.

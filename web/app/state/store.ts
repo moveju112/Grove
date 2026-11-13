@@ -209,6 +209,8 @@ export function applyEvent(e: EventRecord) {
         case "project.created":
         case "project.updated":
             invalidate("projects");
+            // 워크스페이스 모드 등 프로젝트 화면·입력창이 쓰는 단건 조회도 갱신한다(다른 기기의 변경 포함).
+            if (pid) invalidate(`project:${pid}`);
             if (pid) invalidate(`setup:${pid}`);
             invalidate("recent");
             invalidate("search");

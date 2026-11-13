@@ -68,7 +68,6 @@ mod terminal_capture;
 pub mod titles;
 pub mod audit;
 pub mod fair;
-pub mod import;
 pub mod update;
 pub mod vault;
 pub mod usage;

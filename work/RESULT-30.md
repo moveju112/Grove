@@ -3,7 +3,7 @@
 ## 배정·상태
 
 - 배치/번호: b02 / 30, TODO ID: `UI-003`.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context`.
+- Worktree: `<세션 worktree 루트>/b02-30-navigation-context`.
 - Branch: `parallel/b02-navigation-context`.
 - 공통 기준 SHA: `551f551d48d1f47cd3ad67015f1737c62d576228`.
 - 상태: 구현 종료, 선택 단위·타입·Rust 검증 통과, 브라우저 인수는 통합 대기. E2E 미실행 상태를 전체 요구의 검증 완료로 간주하지 않는다.
@@ -44,25 +44,25 @@
 
 ## 실행한 검사·결과
 
-명령은 위 worktree에서 실행했다. 웹 의존성은 `web/node_modules` symlink로 `/data/project/paseodog_opus/web/node_modules`를 재사용했다.
+명령은 위 worktree에서 실행했다. 웹 의존성은 `web/node_modules` symlink로 `<원본 저장소>/web/node_modules`를 재사용했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 python3 scripts/build.py test --vitest app/components/navigation/context.test.ts app/components/navigation/NavigationContext.test.ts app/state/layout.test.ts app/state/layoutPersistence.test.ts app/state/drafts.test.ts --typecheck
 ```
 
 - 최종 결과: 타입 검사 통과, Vitest 5파일 60개 통과. 신규 기능 18개와 기존 layout 21개·layoutPersistence 12개·drafts 9개를 포함한다.
 - 최초 실행은 `context.ts`에서 `TS18048: 'session' is possibly 'undefined'.`로 실패했고 Vitest는 미실행이었다. 세션 존재 조건을 명시해 수정한 뒤 위 명령 전체가 통과했다.
-- E2E의 긴 제목을 서버 `clean_title()` 계약(200자 이하·trim)에 맞춘 뒤 `source /data/project/paseodog_opus/.envrc.dev && python3 scripts/build.py test --typecheck`를 다시 실행해 통과했다.
+- E2E의 긴 제목을 서버 `clean_title()` 계약(200자 이하·trim)에 맞춘 뒤 `source <원본 저장소>/.envrc.dev && python3 scripts/build.py test --typecheck`를 다시 실행해 통과했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-CARGO_TARGET_DIR=/data/project/paseodog_opus/target flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust workspace --filter two_projects_recent_and_split_survive_restart
+source <원본 저장소>/.envrc.dev
+CARGO_TARGET_DIR=<원본 저장소>/target flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust workspace --filter two_projects_recent_and_split_survive_restart
 ```
 
 - 결과: Rust 컴파일 및 `two_projects_recent_and_split_survive_restart` 1개 통과, 같은 target의 나머지 7개는 미선택.
 - 최초 Rust 시도는 target override 없이 같은 선택 명령을 실행했다. 실행기의 `env()`가 공유 환경을 worktree `.dev`로 덮어써 rustup 다운로드를 시작했으므로 직접 중단했다(exit 137). 시험은 실행되지 않았고 이 시도는 성공이 아니다.
-- 해당 시도가 새로 만든 `.dev/rustup`을 제거하고 `.dev`를 `/data/project/paseodog_opus/.dev`에 symlink한 후 위 명령으로 공유 툴체인·target cache를 재사용했다. dependency/툴체인 설치나 복사로 복구하지 않았다. `.dev`와 `web/node_modules` symlink는 Git ignore 대상이다.
+- 해당 시도가 새로 만든 `.dev/rustup`을 제거하고 `.dev`를 `<원본 저장소>/.dev`에 symlink한 후 위 명령으로 공유 툴체인·target cache를 재사용했다. dependency/툴체인 설치나 복사로 복구하지 않았다. `.dev`와 `web/node_modules` symlink는 Git ignore 대상이다.
 
 ```bash
 # 위 worktree의 web 디렉터리에서 실행
@@ -85,7 +85,7 @@ npx playwright test e2e/navigation-context.spec.ts --list
 통합 단계에서 공유 E2E 실행 자원을 확보한 뒤 아래 선택 흐름을 확인하면 된다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 python3 scripts/build.py test --e2e e2e/navigation-context.spec.ts e2e/pane-focus.spec.ts e2e/responsive-panes.spec.ts
 ```
 

@@ -12,7 +12,7 @@
 
 ### 원인과 실제 산출물 재현
 
-통합 실패 근거는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_56f2bbd0.stdout`·`.stderr`다. 첫 desktop 시험 실패, 45개 미실행이었다.
+통합 실패 근거는 `<실행 로그>/shell_56f2bbd0.stdout`·`.stderr`다. 첫 desktop 시험 실패, 45개 미실행이었다.
 자기 worktree에서 기존 구현을 새 debug 서버·새 정적 웹으로 빌드해 같은 취소 버튼 → Tab 시나리오를 실행했다.
 `open=true`, `:modal=true`인데 `activeTag=BODY`로 빠지는 동일 결함을 재현했다. 통합의 Workspace 연결 때문이라고 판단하지 않았다.
 네이티브 modal의 배경 inert 처리만으로 마지막 Tab이 문서 내부에서 순환한다고 가정했던 것이 원인이다.
@@ -25,7 +25,7 @@
 
 ### 후속 검사 명령·실패·최종 결과
 
-모든 명령은 이 worktree에서 실행했고 먼저 `source /data/project/paseodog_opus/.envrc.dev`를 적용했다.
+모든 명령은 이 worktree에서 실행했고 먼저 `source <원본 저장소>/.envrc.dev`를 적용했다.
 기존 ignored `.dev`·`web/node_modules` 공유 symlink를 재사용했다. 설치·설정·포트 변경이나 다른 검사 중단은 없었다.
 아래 전체 호출은 서버·웹 빌드부터 브라우저 종료까지 동일 `flock` 안에서 실행했다.
 
@@ -48,12 +48,12 @@ transport abort·동일 요청 키·세션/메시지/프로젝트 개수와 원�
 
 정확한 로그:
 
-- 재현: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5e58d178.stdout`·`.stderr`
-- 제품 수정 후 단위/타입 통과 및 locator timeout: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_01af2d63.stdout`·`.stderr`
-- 최종 8개 통과: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_42671354.stdout`·`.stderr`
+- 재현: `<실행 로그>/shell_5e58d178.stdout`·`.stderr`
+- 제품 수정 후 단위/타입 통과 및 locator timeout: `<실행 로그>/shell_01af2d63.stdout`·`.stderr`
+- 최종 8개 통과: `<실행 로그>/shell_42671354.stdout`·`.stderr`
 
 최종 E2E locator 변경 후 `python3 scripts/build.py test --typecheck`도 다시 통과했다(wall 10.18초 / CPU 12.29초).
-이 단계의 로그는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_f2c44d73.stdout`·`.stderr`다.
+이 단계의 로그는 `<실행 로그>/shell_f2c44d73.stdout`·`.stderr`다.
 같은 shell의 후속 인계 확인 스크립트는 처음에 UTF-8을 임의의 8192바이트에서 잘라 decode해 실패했다. RESULT 손상이 아니라 검사 스크립트의 경계 처리 문제였다.
 typecheck는 재실행하지 않고 JSON 완료 계약의 바이트 구간을 먼저 추출하도록 검사만 고쳤으며, `ready`·빈 remaining/blockers·integration_checks와 계약 끝 위치 373바이트를 확인했다.
 
@@ -71,11 +71,11 @@ typecheck는 재실행하지 않고 JSON 완료 계약의 바이트 구간을 �
 
 ## 작업 식별·상태
 
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-22-create-entry`
+- Worktree: `<세션 worktree 루트>/b02-22-create-entry`
 - Branch: `parallel/b02-create-entry`
 - 공통 기준 SHA: `7b3949d24e420d09e6e4cde29405414b2d99253a`
 - 상태: 초기 구현·승인된 focus 결함 후속 종료. 배정된 세 spec의 실제 브라우저 8개 통과. 다른 기능 결합·공통 경계의 통합 인수는 위 완료 계약에 남김.
-- `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/22.md` 기준으로 작업했다.
+- `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/22.md` 기준으로 작업했다.
 - 서버·API·store·의존성/lockfile·TODO·메인 checkout 소스는 수정하지 않았다. merge/push/배포·세션 연락·위임·workspace 제거도 하지 않았다.
 
 ## 진입점 조사와 최종 경로
@@ -138,8 +138,8 @@ typecheck는 재실행하지 않고 JSON 완료 계약의 바이트 구간을 �
 
 ## 초기 e28dbdf 단계 검증 이력
 
-모든 명령은 이 worktree에서 실행했다. 공통 환경은 `source /data/project/paseodog_opus/.envrc.dev`를 적용했다.
-`web/node_modules`는 승인된 `/data/project/paseodog_opus/web/node_modules`의 ignored symlink로 연결했다.
+모든 명령은 이 worktree에서 실행했다. 공통 환경은 `source <원본 저장소>/.envrc.dev`를 적용했다.
+`web/node_modules`는 승인된 `<원본 저장소>/web/node_modules`의 ignored symlink로 연결했다.
 
 | 명령·입력 | 실제 결과 |
 |---|---|
@@ -152,7 +152,7 @@ typecheck는 재실행하지 않고 JSON 완료 계약의 바이트 구간을 �
 | 초기 E2E·웹 production build·전체 회귀·release·실기기 | 초기 단계에서는 미실행. 승인된 후속에서 실제 debug·web build 및 배정 E2E 8개를 실행·통과했다. 전체 회귀·release·실기기는 여전히 미실행 |
 
 Rust 환경 복구에서 처음 자동 생성된 이 작업 소유의 로컬 `.dev`·`target`만 제거했다.
-이후 ignored `.dev` symlink를 `/data/project/paseodog_opus/.dev`로 연결해 기존 툴체인·cache를 재사용했다.
+이후 ignored `.dev` symlink를 `<원본 저장소>/.dev`로 연결해 기존 툴체인·cache를 재사용했다.
 성공한 재시도는 네트워크와 툴체인 자동 설치를 금지한 환경으로 실행했다. 의존성 버전·lockfile·빌드 실행기 소스는 바꾸지 않았다.
 Rust 시험 서버는 `tests/common/mod.rs`의 `tempfile::TempDir`, loopback 임의 포트·해당 임시 data/project 경로를 사용한다.
 
@@ -178,7 +178,7 @@ Rust 시험 서버는 `tests/common/mod.rs`의 `tempfile::TempDir`, loopback 임
 통합 checkout에서는 위 완료 계약의 공통 경계와 27 결합 후 생성 진입을 직렬 인수해야 한다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
+source <원본 저장소>/.envrc.dev
 flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e e2e/create-entry.spec.ts e2e/sidebar-status.spec.ts e2e/project-recovery.spec.ts e2e/responsive-panes.spec.ts
 ```
 

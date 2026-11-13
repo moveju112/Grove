@@ -3,27 +3,63 @@ import { ApiError, api, newKey } from "../api/client";
 import type { Worktree } from "../api/generated";
 import { useCapability } from "../state/capabilities";
 import { useQuery } from "../state/store";
+import { WT, useProject, useWorkspaceMode, type WorkspaceList as List } from "../state/workspaces";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
-
-/// 이 화면이 쓰는 서버 기능(NET-001). 서버에 없으면 화면을 숨기고 요청은 서버가 거절한다.
-const WT = ["worktrees_v1"];
-
-type Row = Worktree & { exists: boolean; dirty_count: number | null; sessions: number };
-type List = { is_repo: boolean; worktrees: Row[]; unowned: { path: string; branch: string | null }[]; removed?: Worktree[] };
 type Recovery = { kind: "recoverable"; branch: string; path: string } | { kind: "unavailable"; reason: string; message: string };
 type Attempt = { label: string; target: string; key: string; run: (key: string) => Promise<unknown>; onSuccess?: () => void; onConflict?: (e: ApiError) => boolean };
 type CreateOptions = { carry?: "leave" | "carry"; confirm_large?: boolean };
 type Choice = ({ kind: "dirty"; changed: number } | { kind: "large"; files: number }) & { options: CreateOptions; name: string };
 
-/// Grove worktree(GIT-007~010). Grove가 만든 것만 merge·제거하고, 사용자가 만든 worktree는 표시만 한다.
-/// 응답을 받지 못한 요청은 같은 키로 결과를 다시 확인한다(새 요청으로 반복하지 않는다).
-export function WorktreesPanel({ projectId }: { projectId: string }) {
-    if (useCapability("worktrees_v1") === false) return null;
-    return <WorktreesPanelBody projectId={projectId} />;
+/// 워크스페이스 모드 전환. 단일 모드로 돌아갈 때 남은 워크스페이스는 서버가 확인해 거부한다.
+function WorkspaceModeSwitch({ projectId }: { projectId: string }) {
+    const project = useProject(projectId);
+    const [err, setErr] = useState<string | null>(null);
+    const [busy, setBusy] = useState(false);
+    const p = project.data;
+    if (!p) return null;
+    const single = p.workspace_mode === "single";
+    const change = async () => {
+        setErr(null);
+        setBusy(true);
+        try {
+            await api.patch(`/projects/${projectId}`, { expected_revision: p.revision, workspace_mode: single ? "project" : "single" });
+        } catch (e) {
+            if (e instanceof ApiError && e.code === "workspaces_in_use") {
+                const d = e.details as { worktrees: number; sessions: number };
+                setErr(`워크스페이스 ${d.worktrees}개와 워크스페이스에서 일하는 대화 ${d.sessions}개가 남아 있어 단일 모드로 바꿀 수 없습니다. 대화를 프로젝트 폴더로 옮기고 워크스페이스를 제거한 뒤 다시 시도하세요.`);
+            } else {
+                setErr(e instanceof ApiError ? e.message : "모드를 바꾸지 못했습니다");
+            }
+        } finally {
+            setBusy(false);
+            project.reload();
+        }
+    };
+    return (
+        <div className="workspace-mode" data-testid="workspace-mode" data-mode={p.workspace_mode}>
+            <p className="muted small">
+                {single ? "단일 모드: 프로젝트 폴더 하나에서 바로 대화합니다. 워크스페이스는 만들지 않습니다."
+                    : "프로젝트 모드: 프로젝트 폴더와 워크스페이스(Git worktree)마다 대화를 나눕니다."}
+            </p>
+            <ServerActionButton className="ghost small" disabled={busy} onClick={() => void change()}>
+                {single ? "프로젝트 모드로 전환" : "단일 모드로 전환"}
+            </ServerActionButton>
+            {err && <p className="err small" role="alert">{err}</p>}
+        </div>
+    );
 }
 
-function WorktreesPanelBody({ projectId }: { projectId: string }) {
+/// 워크스페이스(Grove worktree, GIT-007~010). Grove가 만든 것만 merge·제거하고, 사용자가 만든 worktree는 표시만 한다.
+/// 응답을 받지 못한 요청은 같은 키로 결과를 다시 확인한다(새 요청으로 반복하지 않는다).
+/// 단일 모드에서는 모드 전환만 보이고 워크스페이스를 만들 수 없다.
+export function WorktreesPanel({ projectId }: { projectId: string }) {
+    const mode = useWorkspaceMode(projectId);
+    if (useCapability("worktrees_v1") === false || !mode) return null;
+    return <WorktreesPanelBody projectId={projectId} mode={mode} />;
+}
+
+function WorktreesPanelBody({ projectId, mode }: { projectId: string; mode: "single" | "project" }) {
     const q = useQuery<List>(`worktrees:${projectId}`, () => api.get(`/projects/${projectId}/worktrees`, { requires: WT }));
     const [name, setName] = useState("");
     const [err, setErr] = useState<string | null>(null);
@@ -86,9 +122,18 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
 
     if (data && !data.is_repo && !attempt) return null;
     const rows = data?.worktrees ?? [];
+    if (mode === "single") {
+        return (
+            <details className="worktrees" data-testid="worktrees-panel">
+                <summary>워크스페이스 · 단일 모드</summary>
+                <WorkspaceModeSwitch projectId={projectId} />
+            </details>
+        );
+    }
     return (
         <details className="worktrees" data-testid="worktrees-panel">
-            <summary>Worktree {rows.length > 0 ? `· ${rows.length}` : ""}</summary>
+            <summary>워크스페이스 {rows.length > 0 ? `· ${rows.length}` : ""}</summary>
+            <WorkspaceModeSwitch projectId={projectId} />
             {err && <p className="err" role="alert">{err}</p>}
             {Boolean(q.error) && <p className="err" role="alert">worktree 목록을 불러오지 못했습니다</p>}
             {busy && <p className="muted small" role="status">worktree 요청 처리·결과 확인 중…</p>}
@@ -229,9 +274,11 @@ function RemovedRow({ w, disabled, restore }: { w: Worktree; disabled: boolean; 
     </li>;
 }
 
-/// 대화의 작업 위치 선택(GIT-008): 프로젝트 폴더 또는 이 프로젝트의 Grove worktree. 실행 중이면 서버가 거절한다.
+/// 대화의 워크스페이스 선택(GIT-008): 프로젝트 폴더 또는 이 프로젝트의 Grove worktree. 실행 중이면 서버가 거절한다.
+/// 단일 모드에서는 보이지 않는다(서버도 연결을 거부한다).
 export function WorktreeSelect(props: { projectId: string; sessionId: string; current: string | null; disabled: boolean; onError: (m: string) => void }) {
-    if (useCapability("worktrees_v1") === false) return null;
+    const mode = useWorkspaceMode(props.projectId);
+    if (useCapability("worktrees_v1") === false || mode !== "project") return null;
     return <WorktreeSelectBody {...props} />;
 }
 
@@ -242,7 +289,7 @@ function WorktreeSelectBody({ projectId, sessionId, current, disabled, onError }
     if (!q.data?.is_repo || (rows.length === 0 && !current)) return null;
     return (
         <select
-            aria-label="작업 위치"
+            aria-label="워크스페이스"
             value={current ?? ""}
             disabled={disabled || !!serverBlocked}
             title={serverBlocked ?? undefined}
@@ -251,9 +298,9 @@ function WorktreeSelectBody({ projectId, sessionId, current, disabled, onError }
                 api.post(`/sessions/${sessionId}/worktree`, { worktree_id }, { requires: WT }).catch((err: Error) => onError(`작업 위치를 바꾸지 못했습니다: ${err.message}`));
             }}
         >
-            <option value="">위치: 프로젝트 폴더</option>
+            <option value="">워크스페이스: 프로젝트 폴더</option>
             {rows.map((w) => (
-                <option key={w.id} value={w.id}>위치: worktree {w.name}{w.status !== "active" ? " (경로 없음)" : ""}</option>
+                <option key={w.id} value={w.id}>워크스페이스: {w.name}{w.status !== "active" ? " (경로 없음)" : ""}</option>
             ))}
         </select>
     );

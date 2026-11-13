@@ -34,6 +34,24 @@ export const STATUS: Record<string, { label: string; icon: string }> = {
     idle: { label: "대기", icon: "○" },
 };
 
+export type WorkspaceGroup = { id: string | null; name: string; items: SidebarSession[] };
+
+/// 프로젝트 모드의 사이드바 묶음: 프로젝트 폴더(기본 워크스페이스) → 워크스페이스 순서. 대화가 없는 워크스페이스도 보인다.
+/// 쓸 수 없는 워크스페이스(경로 없음·제거)에 남은 대화는 숨기지 않고 따로 묶는다.
+export function groupByWorkspace(items: SidebarSession[], spaces: { id: string; name: string }[]): WorkspaceGroup[] {
+    const groups: WorkspaceGroup[] = [{ id: null, name: "프로젝트 폴더", items: [] }, ...spaces.map((w) => ({ id: w.id, name: w.name, items: [] }))];
+    for (const item of items) {
+        const id = item.session.worktree_id;
+        let group = groups.find((g) => g.id === id);
+        if (!group) {
+            group = { id, name: "경로 없는 워크스페이스", items: [] };
+            groups.push(group);
+        }
+        group.items.push(item);
+    }
+    return groups;
+}
+
 export function projectStatus(statuses: Record<string, number>): string {
     return Object.keys(STATUS).find((status) => (statuses[status] ?? 0) > 0)
         ?? (Object.values(statuses).some((count) => count > 0) ? "unknown" : "idle");

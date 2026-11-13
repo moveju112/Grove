@@ -7,7 +7,7 @@
 ## 식별·상태
 
 - 배치/번호: b02 / 33.
-- Worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-33-model-fallback`.
+- Worktree: `<세션 worktree 루트>/b02-33-model-fallback`.
 - Branch: `parallel/b02-model-fallback`.
 - 기준: `9942629c17891c5cad8cc5a7a62fee99e0379650` (현재 HEAD의 merge-base 확인).
 - 상태: 구현·연결·선택 서버/웹 검사와 배정된 브라우저 인수 완료. 실행 가능한 소유 잔여와 실제 blocker는 없다. 메인의 타 기능 통합 공통 경계 인수만 별도다.
@@ -69,13 +69,13 @@ Public Rust 연결은 `validate`, `validate_references`, `snapshot`, `runtime`, 
 
 ## 실행 검증
 
-공유 도구는 `/data/project/paseodog_opus/.envrc.dev`를 source했고, `web/node_modules`만 메인 경로로 symlink했다. 설치·복사·dependency 갱신은 하지 않았다.
+공유 도구는 `<원본 저장소>/.envrc.dev`를 source했고, `web/node_modules`만 메인 경로로 symlink했다. 설치·복사·dependency 갱신은 하지 않았다.
 
 이 기준의 `scripts/build.py::env`는 source한 환경을 worktree의 없는 `.dev`로 덮어쓰므로, 파일 변경 없이 같은 실행기의 DEV만 메인 도구 경로로 지정했다. 실제 Rust 실행은 아래와 같으며 공유 flock을 유지했다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import runpy,sys; m=runpy.run_path("scripts/build.py"); m["env"].__globals__["DEV"]="/data/project/paseodog_opus/.dev"; sys.argv=["scripts/build.py","test","--rust","model_fallback","model_switching","http_provider_roundtrip","model_limits","model_capabilities","usage"]; m["main"](); sys.argv=["scripts/build.py","test","--lib","--filter","model_fallback"]; m["main"]()'
+source <원본 저장소>/.envrc.dev
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import runpy,sys; m=runpy.run_path("scripts/build.py"); m["env"].__globals__["DEV"]="<원본 저장소>/.dev"; sys.argv=["scripts/build.py","test","--rust","model_fallback","model_switching","http_provider_roundtrip","model_limits","model_capabilities","usage"]; m["main"](); sys.argv=["scripts/build.py","test","--lib","--filter","model_fallback"]; m["main"]()'
 ```
 
 | 검사 | 입력·결과 |
@@ -92,8 +92,8 @@ flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import runpy,sys; m=
 웹 실제 실행:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-python3 -c 'import runpy,sys; sys.argv=["scripts/build.py","test","--vitest","app/components/ProfileFallback.test.ts","--typecheck"]; m=runpy.run_path("scripts/build.py"); m["env"].__globals__["DEV"]="/data/project/paseodog_opus/.dev"; m["main"]()'
+source <원본 저장소>/.envrc.dev
+python3 -c 'import runpy,sys; sys.argv=["scripts/build.py","test","--vitest","app/components/ProfileFallback.test.ts","--typecheck"]; m=runpy.run_path("scripts/build.py"); m["env"].__globals__["DEV"]="<원본 저장소>/.dev"; m["main"]()'
 ```
 
 위 최초 구현 시점의 Typecheck(E2E 포함)와 Vitest 3개 모두 통과했다. 후속에서 제품 Rust/웹 코드와 이 단위 시험들의 입력은 바꾸지 않았으므로 Rust·Vitest 근거는 재사용했고 다시 실행하지 않았다. 후속 변경은 E2E assertion 보강과 RESULT뿐이다. 변경된 E2E를 포함하는 typecheck는 후속 실행에서 갱신했다.
@@ -114,9 +114,9 @@ python3 -c 'import runpy,sys; sys.argv=["scripts/build.py","test","--vitest","ap
 최종 실행 명령:
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-export CARGO_TARGET_DIR=/data/project/paseodog_opus/target
-flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import runpy,sys; sys.argv=["scripts/build.py","test","--typecheck","--e2e","e2e/model-fallback.spec.ts"]; m=runpy.run_path("scripts/build.py"); m["env"].__globals__["DEV"]="/data/project/paseodog_opus/.dev"; m["main"]()'
+source <원본 저장소>/.envrc.dev
+export CARGO_TARGET_DIR=<원본 저장소>/target
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'import runpy,sys; sys.argv=["scripts/build.py","test","--typecheck","--e2e","e2e/model-fallback.spec.ts"]; m=runpy.run_path("scripts/build.py"); m["env"].__globals__["DEV"]="<원본 저장소>/.dev"; m["main"]()'
 ```
 
 | 최종 단계 | 결과 | wall(초) | CPU(초) |

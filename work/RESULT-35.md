@@ -5,10 +5,10 @@
 # 35 — 큰 도구 결과 보관·범위 재조회
 
 - 상태: 소유 구현·연결·선택 Rust/Vitest/typecheck·전용 브라우저 흐름 완료. blocker 없음.
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-35-tool-outputs`
+- worktree: `<세션 worktree 루트>/b02-35-tool-outputs`
 - branch: `parallel/b02-tool-outputs`
 - 고정 기준: `11e51d6efaf0b10a6f0c2c682da7bb1db5738955`. 시작 시 HEAD·branch·clean 확인, `a453f18` 포함 확인. merge/rebase 없음.
-- 정본: `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/35.md`.
+- 정본: `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/35.md`.
 
 ## 제공 동작·계약
 
@@ -51,16 +51,16 @@ public export는 `tool_outputs::{NAME, INLINE_BYTES, EXCERPT_BYTES, MAX_READ_BYT
 
 ## 실행한 검사
 
-공용 환경은 `source /data/project/paseodog_opus/.envrc.dev`를 먼저 적용했다. Rust·E2E는 전체 명령을 `flock /home/ubuntu/.cache/grove-rust-check.lock`으로 직렬화했다.
+공용 환경은 `source <원본 저장소>/.envrc.dev`를 먼저 적용했다. Rust·E2E는 전체 명령을 `flock /home/ubuntu/.cache/grove-rust-check.lock`으로 직렬화했다.
 
 이 기준의 `scripts/build.py`는 `env()`에서 DEV를 worktree의 `.dev`로 덮어쓴다. 첫 실행에서 rustup이 로컬 툴체인을 자동 설치한 사실이 로그에 있다. task가 만든 worktree `.dev`만 제거했고, 이후에는 파일 수정·추가 설치 없이 실행기의 DEV만 프로세스 안에서 공용 경로로 지정했다. 사용한 실행기 호출은 다음과 같다.
 
 ```bash
-source /data/project/paseodog_opus/.envrc.dev
-flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV = "/data/project/paseodog_opus/.dev"; build.main()' test --rust tool_outputs
-flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV = "/data/project/paseodog_opus/.dev"; build.main()' test --lib --filter tool_outputs
-python3 -c 'from scripts import build; build.DEV = "/data/project/paseodog_opus/.dev"; build.main()' test --vitest app/components/approvals/projection.test.ts app/state/events.test.ts --typecheck
-flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV = "/data/project/paseodog_opus/.dev"; build.main()' test --e2e e2e/tool-outputs.spec.ts
+source <원본 저장소>/.envrc.dev
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV = "<원본 저장소>/.dev"; build.main()' test --rust tool_outputs
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV = "<원본 저장소>/.dev"; build.main()' test --lib --filter tool_outputs
+python3 -c 'from scripts import build; build.DEV = "<원본 저장소>/.dev"; build.main()' test --vitest app/components/approvals/projection.test.ts app/state/events.test.ts --typecheck
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV = "<원본 저장소>/.dev"; build.main()' test --e2e e2e/tool-outputs.spec.ts
 ```
 
 | 실제 입력·결과 | 실행기 wall / CPU |
@@ -81,11 +81,11 @@ flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import 
 
 검사 로그(각 경로의 stdout/stderr):
 
-- `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_cb46c00a.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_cb46c00a.stderr`: 최초 실제 tool_batches와 자동 설치.
-- `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5df30490.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5df30490.stderr`: model_input_pages 통과와 수정 전 fixture 실패.
-- `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_beb21c16.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_beb21c16.stderr`: 최종 전용 통합 9개·단위 2개.
-- `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_a648105b.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_a648105b.stderr`: typecheck·Vitest.
-- `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_7c2df63e.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_7c2df63e.stderr`: debug/web 빌드·실제 브라우저.
+- `<실행 로그>/shell_cb46c00a.stdout`, `<실행 로그>/shell_cb46c00a.stderr`: 최초 실제 tool_batches와 자동 설치.
+- `<실행 로그>/shell_5df30490.stdout`, `<실행 로그>/shell_5df30490.stderr`: model_input_pages 통과와 수정 전 fixture 실패.
+- `<실행 로그>/shell_beb21c16.stdout`, `<실행 로그>/shell_beb21c16.stderr`: 최종 전용 통합 9개·단위 2개.
+- `<실행 로그>/shell_a648105b.stdout`, `<실행 로그>/shell_a648105b.stderr`: typecheck·Vitest.
+- `<실행 로그>/shell_7c2df63e.stdout`, `<실행 로그>/shell_7c2df63e.stderr`: debug/web 빌드·실제 브라우저.
 
 최종 제품 모듈과 전용 시험은 최종 Rust·브라우저 검사 후 바꾸지 않았다. typecheck/Vitest의 웹 입력도 그대로다. 이전 통과한 model_input_pages/tool_batches 이후 Rust 추가 변경은 큰 결과의 표시 이름 상한과 전용 모듈 단위 시험이며, 이 회귀들의 작은 tool 결과·페이지 처리·실행 순서 입력은 바뀌지 않아 통과 근거를 재사용했다. 그 뒤 추가한 파일은 이 RESULT뿐이다.
 

@@ -1,7 +1,7 @@
 # b02 / 14 — PWA 수명주기 인계
 
 ## 기준·상태
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-14-pwa-lifecycle`
+- worktree: `<세션 worktree 루트>/b02-14-pwa-lifecycle`
 - branch: `parallel/b02-pwa-lifecycle`
 - 공통 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1` (작업 시작 HEAD와 merge-base 모두 일치)
 - 원본 `work/README.md`의 경로·브랜치가 함께 일치하는 14번을 선택했다. 시작 시 변경 없음, 같은 checkout의 다른 개발 세션 없음.

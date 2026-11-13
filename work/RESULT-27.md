@@ -6,9 +6,9 @@
 
 ## 현재 인계 — 승인된 후속 완료
 
-- 위치·브랜치: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery`, `parallel/b02-pwa-recovery`.
+- 위치·브랜치: `<세션 worktree 루트>/b02-27-pwa-recovery`, `parallel/b02-pwa-recovery`.
 - 원래 기준은 `551f551d48d1f47cd3ad67015f1737c62d576228`로 유지한다. `8c09b9d`의 구현·검증을 보존했고, 통합 담당이 22의 `e28dbdf`를 동기화한 `8da340d`의 clean checkout에서 재개했다. 자체 merge는 하지 않았다.
-- 현재 정본 `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/27.md`를 재확인했다. 런타임 설정은 변경하지 않았다.
+- 현재 정본 `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/27.md`를 재확인했다. 런타임 설정은 변경하지 않았다.
 - **소유 구현·연결·선택 단위·최종 typecheck·배정된 브라우저 흐름 완료. 실행 가능한 소유 잔여·blocker 없음.** TODO 완료 표시는 하지 않았다.
 - 아래 접힌 최초 인계의 “생성·WebSocket 미연결”, “브라우저 미실행”은 과거 상태다. 이번 후속에서 해소했으며 현재 계약은 이 절을 따른다.
 
@@ -48,7 +48,7 @@ root mount·서버 API 등록·추가 공통 연결은 필요 없다.
 
 `8c09b9d`의 기존 197개 근거는 아래 최초 인계와 해당 commit에 보존했다. `8c09b9d..8da340d`의 변경 경로를 확인했으며 해당 18개 단위 시험의 구현·fixture 입력은 변경되지 않아 재실행하지 않았다. 후속에서 변경한 생성 컴포넌트와 terminal 연결은 별도 선택 검사로 검증했다.
 
-모든 명령은 먼저 `source /data/project/paseodog_opus/.envrc.dev`를 적용했다. 최종 production 코드는 첫 선택 단위 검사 이후 동일하며, 이후 수정은 E2E locator·플랫폼/배치 동기화·추가 수명/저장소 시험이다. 마지막 typecheck에는 이 시험 소스도 포함됐다.
+모든 명령은 먼저 `source <원본 저장소>/.envrc.dev`를 적용했다. 최종 production 코드는 첫 선택 단위 검사 이후 동일하며, 이후 수정은 E2E locator·플랫폼/배치 동기화·추가 수명/저장소 시험이다. 마지막 typecheck에는 이 시험 소스도 포함됐다.
 
 단위 명령:
 `python3 scripts/build.py test --vitest app/components/pwa/terminalAction.test.ts app/components/pwa/creationConnections.test.ts app/components/create/creation.test.ts app/components/create/projectComposer.test.ts app/components/terminal/input.test.ts --typecheck`
@@ -81,19 +81,19 @@ line selector는 그 실행 시점 소스 기준이다. 뒤의 import·신규 �
 
 실행 원문(stdout/stderr 쌍):
 
-- E1: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_9d099c1a.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_9d099c1a.stderr`
-- E2: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3e29d2ab.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3e29d2ab.stderr`
-- E3: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5ec5c631.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5ec5c631.stderr`
-- E4: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6f081ef0.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6f081ef0.stderr`
-- E5: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6845d318.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6845d318.stderr`
-- E6: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6112c750.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_6112c750.stderr`
-- E7: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_b6724a04.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_b6724a04.stderr`
+- E1: `<실행 로그>/shell_9d099c1a.stdout`, `<실행 로그>/shell_9d099c1a.stderr`
+- E2: `<실행 로그>/shell_3e29d2ab.stdout`, `<실행 로그>/shell_3e29d2ab.stderr`
+- E3: `<실행 로그>/shell_5ec5c631.stdout`, `<실행 로그>/shell_5ec5c631.stderr`
+- E4: `<실행 로그>/shell_6f081ef0.stdout`, `<실행 로그>/shell_6f081ef0.stderr`
+- E5: `<실행 로그>/shell_6845d318.stdout`, `<실행 로그>/shell_6845d318.stderr`
+- E6: `<실행 로그>/shell_6112c750.stdout`, `<실행 로그>/shell_6112c750.stderr`
+- E7: `<실행 로그>/shell_b6724a04.stdout`, `<실행 로그>/shell_b6724a04.stderr`
 
 ### 실패 원인·환경 사고와 복구
 
 - E1 실패는 시험 locator가 실제 “같은 요청 확인”을 옛 이름 “원래 요청 결과 확인”으로 찾은 것이다. 실제 미전송·pending 보존 요구는 낮추지 않고 locator만 수정했다.
 - terminal timeout들은 새 harness가 데스크톱에서 숨겨지는 보조키를 찾고, 좁은 화면 초기 배치 준비를 기다리지 않으며, observer 자극 중 760px 경계를 넘어 다른 저장 배치로 이동한 데서 발생했다. snapshot·실제 `Workspace` 배치 코드와 `.term-keys` pointer 조건을 확인하고, 터치 조건·배치 준비 관측·같은 배치 안 resize로 수정했다. timeout을 늘리거나 입력/resize 시나리오를 삭제하지 않았다. finally의 닫힌 page 접근도 제거해 원래 실패를 가리지 않도록 했다.
-- E1에서는 공통 env를 source했어도 `scripts/build.py::env()`가 worktree `.dev`를 지정하여 rustup이 **1.93.0을 자동 설치하고 Cargo cache를 다운로드했다**. 설치 금지 계약에 어긋난 이 실행 사실을 남긴다. 시작 전 없던 이번 실행 소유 `.dev`, `target`임을 확인하고 제거한 뒤 `.dev`를 `/data/project/paseodog_opus/.dev`로 symlink 복구했다. main 툴체인·사용자 파일은 삭제/복사하지 않았다. 이후 auto-install을 막고 offline Cargo로 공유 환경만 사용했으며 추가 설치·다운로드나 manifest/lockfile 변경은 없다.
+- E1에서는 공통 env를 source했어도 `scripts/build.py::env()`가 worktree `.dev`를 지정하여 rustup이 **1.93.0을 자동 설치하고 Cargo cache를 다운로드했다**. 설치 금지 계약에 어긋난 이 실행 사실을 남긴다. 시작 전 없던 이번 실행 소유 `.dev`, `target`임을 확인하고 제거한 뒤 `.dev`를 `<원본 저장소>/.dev`로 symlink 복구했다. main 툴체인·사용자 파일은 삭제/복사하지 않았다. 이후 auto-install을 막고 offline Cargo로 공유 환경만 사용했으며 추가 설치·다운로드나 manifest/lockfile 변경은 없다.
 - 빌드의 기존 chunk-size 경고·React Router future 경고는 passing 코드를 바꿀 사유로 삼지 않았다. 실행기 원문에 남겼다.
 - E1의 typecheck wall/CPU 7.04s/11.26s, debug build 141.8s/211.43s, web build 5.49s/4.94s. 복구 뒤 E2 debug/web 1.02s/0.27s·3.18s/4.87s, E3 1.0s/0.26s·3.22s/4.77s, E4 0.26s/0.26s·3.63s/4.68s, E5 0.87s/0.25s·3.25s/4.89s, E6 7.23s/0.33s·3.36s/4.97s, E7 2.34s/0.26s·3.27s/4.83s. E6 typecheck 8.63s/11.21s. 이는 개별 단계 값이며 잠금 대기나 작업 시간 절감량을 추정한 값이 아니다.
 
@@ -105,7 +105,7 @@ line selector는 그 실행 시점 소스 기준이다. 뒤의 import·신규 �
 | WEB-009 | offline 버튼/단축키/WS 차단, 인증 없는 cold start 비노출·사본 보존·온라인 복구, 생성의 로컬 탐색/편집/취소, 단계별 원래 키와 무자동재전송 브라우저 통과 | 오프라인 인증 우회나 다른 계정 초안 목록 열기는 의도적으로 제공하지 않음 |
 | WEB-016 | Chrome의 실제 origin quota 예외·실제 persisted 정책 안내·기존 사본/메모리 입력 보존·미전송, 관측한 storage/cache 삭제, 다중 탭 안전 회수 통과 | OS/브라우저의 실제 자동 eviction은 결정적으로 유발할 승인된 실기기 환경이 없음. 실기기 저장 압박·장기 백그라운드 수동 인수 필요. 삭제 데이터 복구·첫 방문과 전체 삭제의 구분·영구 보존은 보장 불가 |
 
-22의 알려진 focus trap 실패는 이 작업의 blocker나 통과로 바꾸지 않았다. 22 담당이 수정한 뒤 `web/e2e/create-entry.spec.ts`의 전체 생성 접근성 흐름을 인수해야 한다. 기존 근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_56f2bbd0.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_56f2bbd0.stderr` (46개 중 첫 focus 실패, 나머지 45개 미실행). PWA 시험은 이 실패 기대를 제거하거나 해당 파일을 수정하지 않았다.
+22의 알려진 focus trap 실패는 이 작업의 blocker나 통과로 바꾸지 않았다. 22 담당이 수정한 뒤 `web/e2e/create-entry.spec.ts`의 전체 생성 접근성 흐름을 인수해야 한다. 기존 근거: `<실행 로그>/shell_56f2bbd0.stdout`, `<실행 로그>/shell_56f2bbd0.stderr` (46개 중 첫 focus 실패, 나머지 45개 미실행). PWA 시험은 이 실패 기대를 제거하거나 해당 파일을 수정하지 않았다.
 
 구 UI·버전 불명 탭이 남으면 cache 회수를 보류하므로 고정 cache 상한은 보장하지 않는다. 원격 logout이 전송되지 못한 경우 서버 쿠키 폐기 성공도 보장하지 않는다. 기존 안내·명시적 복구 계약을 유지하며 새 자격 저장/자동 폐기 큐는 없다.
 
@@ -116,10 +116,10 @@ line selector는 그 실행 시점 소스 기준이다. 뒤의 import·신규 �
 
 ## 기준과 상태
 
-- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery`
+- worktree: `<세션 worktree 루트>/b02-27-pwa-recovery`
 - branch: `parallel/b02-pwa-recovery`
 - 공통 기준: `551f551d48d1f47cd3ad67015f1737c62d576228`. 시작 HEAD와 일치했고 작업 트리는 깨끗했다.
-- 원본 `/data/project/paseodog_opus/work/ENTRY.md`, `/data/project/paseodog_opus/work/COMMON.md`, `/data/project/paseodog_opus/work/27.md`와 README의 실제 경로·브랜치 배정을 확인했다. `af0ad28`이 현재 기준의 조상임도 확인했다.
+- 원본 `<원본 저장소>/work/ENTRY.md`, `<원본 저장소>/work/COMMON.md`, `<원본 저장소>/work/27.md`와 README의 실제 경로·브랜치 배정을 확인했다. `af0ad28`이 현재 기준의 조상임도 확인했다.
 - 상태: **소유 HTTP 복구 흐름 구현·타입 검사·선택 단위 시험 완료 / 브라우저 통합 인수 대기 / 남은 경계 있음**. 세 TODO 전체 완료로 판정하지 않는다.
 - main·TODO·의존성·lockfile·서버·공통 검사 설정을 수정하지 않았다. 위임·세션 조회/연락·merge·push·배포·workspace 삭제는 하지 않았다.
 
@@ -214,7 +214,7 @@ line selector는 그 실행 시점 소스 기준이다. 뒤의 import·신규 �
 
 ## 실제 검증
 
-검사마다 `source /data/project/paseodog_opus/.envrc.dev`를 적용했다. COMMON의 경로로 `web/node_modules` symlink만 만들었고 설치·복사는 하지 않았다.
+검사마다 `source <원본 저장소>/.envrc.dev`를 적용했다. COMMON의 경로로 `web/node_modules` symlink만 만들었고 설치·복사는 하지 않았다.
 
 1. 결함 재현:
    `python3 scripts/build.py test --vitest app/components/pwa/auth.test.ts`

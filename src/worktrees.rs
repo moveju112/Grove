@@ -62,12 +62,13 @@ pub fn get(c: &Connection, id: &str) -> ApiResult<Worktree> {
         .ok_or_else(|| ApiError::not_found("worktree가 없습니다"))
 }
 
-/// 대화가 들어갈 수 있는 worktree인지: 같은 프로젝트·active·경로 존재.
+/// 대화가 들어갈 수 있는 worktree인지: 같은 프로젝트·프로젝트 모드·active·경로 존재.
 pub fn ensure_usable(c: &Connection, project_id: &str, id: &str) -> ApiResult<Worktree> {
     let w = get(c, id)?;
     if w.project_id != project_id {
         return Err(ApiError::invalid("다른 프로젝트의 worktree입니다"));
     }
+    crate::projects::ensure_workspaces(c, project_id)?;
     if w.status != "active" || !FsPath::new(&w.path).is_dir() {
         return Err(ApiError::gone("worktree 경로에 접근할 수 없습니다"));
     }
@@ -279,6 +280,8 @@ pub async fn create(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
     let (pid, wid, name, target, new_branch, base) = (project_id.clone(), id.clone(), b.name.clone(), path_s.clone(), branch.clone(), sha.clone());
     if let Some(r) = accept(&app, &p, &headers, &h, &pending, move |tx, now| {
         crate::projects::active_root(tx, &pid)?;
+        // 모드 변경과 같은 transaction 순서로 판정해 단일 모드에 worktree가 생기지 않게 한다.
+        crate::projects::ensure_workspaces(tx, &pid)?;
         tx.execute(
             "INSERT INTO worktrees (id,project_id,name,path,branch,base,status,created_at) VALUES (?1,?2,?3,?4,?5,?6,'unknown',?7)",
             params![wid,pid,name,target,new_branch,base,now],
@@ -617,7 +620,8 @@ pub async fn restore(State(app): State<App>, p: Principal, headers: HeaderMap, P
         return Err(ApiError::conflict(code, state["message"].as_str().unwrap_or("복원할 수 없습니다").to_string()).with_details(state));
     }
     let pending = unknown(&w.project_id, "worktree.restore", Some(&id));
-    if let Some(r) = accept(&app, &p, &headers, &h, &pending, |_, _| Ok(())).await? { return Ok(r); }
+    let pid = w.project_id.clone();
+    if let Some(r) = accept(&app, &p, &headers, &h, &pending, move |tx, _| crate::projects::ensure_workspaces(tx, &pid)).await? { return Ok(r); }
     let result = async {
         // 사라진 경로의 관리 기록이 남아 있으면 add가 거절하므로 먼저 정리한다(폴더는 지우지 않는다).
         let o = git(&root, &["worktree", "prune"], false).await?;
