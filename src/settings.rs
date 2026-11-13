@@ -397,7 +397,7 @@ pub fn registry() -> Vec<SettingDef> {
             min: None,
             max: None,
             default: json!("default"),
-            scopes: &["server", "project"],
+            scopes: &["server", "project", "session"],
             applies: "next_turn",
             advanced: false,
         },
@@ -412,7 +412,7 @@ pub fn registry() -> Vec<SettingDef> {
             min: Some(0),
             max: Some(1_048_576),
             default: json!(0),
-            scopes: &["server", "project"],
+            scopes: &["server", "project", "session"],
             applies: "next_turn",
             advanced: true,
         },
@@ -427,9 +427,39 @@ pub fn registry() -> Vec<SettingDef> {
             min: Some(0),
             max: Some(86_400),
             default: json!(0),
-            scopes: &["server", "project"],
+            scopes: &["server", "project", "session"],
             applies: "next_turn",
             advanced: true,
+        },
+        SettingDef {
+            key: "exec.isolation",
+            menu: "agents",
+            label: "프로세스 격리 수준",
+            description: "항상 소유 프로세스 트리를 격리·정리합니다. Unix는 process group, Windows는 Job Object를 사용합니다. 파일·네트워크 접근을 막는 보안 sandbox는 아닙니다",
+            keywords: "exec isolation process group job sandbox 프로세스 격리",
+            kind: "enum",
+            options: &["process_tree"],
+            min: None,
+            max: None,
+            default: json!("process_tree"),
+            scopes: &["server", "project", "session"],
+            applies: "next_turn",
+            advanced: false,
+        },
+        SettingDef {
+            key: "exec.default_cwd",
+            menu: "agents",
+            label: "기본 작업 위치",
+            description: "cwd를 생략한 새 명령의 프로젝트 안 상대 디렉터리입니다. '/'로 구분하고 '..'·절대 경로는 사용할 수 없습니다. 기본값 '.'은 실행 root입니다. 현재 실행 경로 연결은 통합 대기 중이며 저장만으로 적용되지 않습니다",
+            keywords: "exec cwd directory working default 기본 작업 위치 디렉터리",
+            kind: "string",
+            options: &[],
+            min: None,
+            max: Some(4096),
+            default: json!("."),
+            scopes: &["server", "project", "session"],
+            applies: "next_turn",
+            advanced: false,
         },
         SettingDef {
             key: "storage.trash_retention_days",
@@ -571,7 +601,90 @@ pub fn validate(d: &SettingDef, v: &Value) -> ApiResult<()> {
     if !ok {
         return Err(ApiError::invalid(format!("{}에 허용되지 않는 값입니다", d.label)));
     }
+    if let Some(choice) = v.as_str()
+        && let Some(reason) = exec_option_reason(d.key, choice)
+    {
+        return Err(ApiError::invalid(reason));
+    }
+    if d.key == "exec.default_cwd" && !v.is_null() {
+        validate_default_cwd(v.as_str().unwrap())?;
+    }
+    if matches!(d.key, "exec.max_memory_mb" | "exec.max_cpu_seconds")
+        && v.as_u64().is_some_and(|n| n > 0)
+        && !cfg!(any(target_os = "linux", windows))
+    {
+        return Err(ApiError::invalid("이 서버 OS에서는 메모리·CPU 자원 한도를 지원하지 않습니다"));
+    }
     Ok(())
+}
+
+fn exec_option_reason(key: &str, value: &str) -> Option<String> {
+    match key {
+        "exec.shell" => {
+            if !cfg!(windows) && matches!(value, "powershell" | "cmd") {
+                return Some("이 셸은 Windows에서만 지원합니다".into());
+            }
+            let program = crate::tools::shell::program_of(value);
+            let path = crate::deps::find_in_path(program);
+            let executable = path.is_some_and(|path| {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    path.metadata().is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = path;
+                    true
+                }
+            });
+            (!executable).then(|| format!("{program} 실행 파일이 서버 PATH에 없거나 실행할 수 없습니다"))
+        }
+        "exec.isolation" => match value {
+            "none" => Some("프로세스 소유권·트리 정리는 해제할 수 없습니다".into()),
+            "sandbox" => Some("파일·네트워크 sandbox는 아직 구현되지 않았습니다".into()),
+            "process_tree" if !cfg!(any(unix, windows)) => Some("이 서버 OS에서는 프로세스 트리 격리를 지원하지 않습니다".into()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn validate_default_cwd(value: &str) -> ApiResult<()> {
+    use std::path::{Component, Path};
+    if value.is_empty()
+        || value.contains(['\0', '\\', ':'])
+        || Path::new(value).components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
+    {
+        return Err(ApiError::invalid("기본 작업 위치는 프로젝트 안 상대 경로여야 합니다('/' 구분, '..'·절대 경로 금지)"));
+    }
+    Ok(())
+}
+
+fn checked_cwd(root: &std::path::Path, value: &str) -> ApiResult<std::path::PathBuf> {
+    let path = crate::tools::fs::resolve(root, value).map_err(|e| ApiError::invalid(e.message))?;
+    if !path.is_dir() {
+        return Err(ApiError::invalid("cwd 디렉터리가 없습니다"));
+    }
+    Ok(path)
+}
+
+/// 새 실행을 계획할 때만 호출한다. 명시적 cwd가 우선하며 승인된 target에는 다시 적용하지 않는다.
+/// 실행 root(worktree 포함)를 호출자가 넘기고 기존 프로젝트 경계 검사를 재사용한다.
+pub fn execution_cwd(
+    c: &Connection,
+    root: &std::path::Path,
+    project: Option<&str>,
+    session: Option<&str>,
+    explicit: Option<&str>,
+) -> ApiResult<std::path::PathBuf> {
+    if let Some(value) = explicit {
+        return checked_cwd(root, value);
+    }
+    let value = effective(c, "exec.default_cwd", project, session)?;
+    let value = value.as_str().ok_or_else(|| ApiError::invalid("기본 작업 위치가 문자열이 아닙니다"))?;
+    validate_default_cwd(value)?;
+    checked_cwd(root, value)
 }
 
 fn row(c: &Connection, scope: &str, id: &str, key: &str) -> ApiResult<Option<(Value, i64)>> {
@@ -636,8 +749,30 @@ pub fn effective(c: &Connection, key: &str, project: Option<&str>, session: Opti
     Ok(resolve_key(c, &d, project, session)?["effective"].clone())
 }
 
-pub async fn get_registry(_p: Principal) -> Json<Vec<SettingDef>> {
-    Json(registry())
+pub async fn get_registry(_p: Principal) -> Json<Vec<Value>> {
+    Json(registry().iter().map(|d| {
+        let mut value = json!(d);
+        if matches!(d.key, "exec.shell" | "exec.isolation") {
+            let choices = if d.key == "exec.isolation" { &["process_tree", "none", "sandbox"][..] } else { d.options };
+            let mut available = vec![];
+            let mut unavailable = vec![];
+            for &choice in choices {
+                if let Some(reason) = exec_option_reason(d.key, choice) {
+                    unavailable.push(json!({ "value": choice, "reason": reason }));
+                } else {
+                    available.push(choice);
+                }
+            }
+            value["options"] = json!(available);
+            value["unavailable_options"] = json!(unavailable);
+        }
+        if matches!(d.key, "exec.max_memory_mb" | "exec.max_cpu_seconds")
+            && !cfg!(any(target_os = "linux", windows))
+        {
+            value["disabled_reason"] = json!("이 서버 OS에서는 메모리·CPU 자원 한도를 지원하지 않습니다");
+        }
+        value
+    }).collect())
 }
 
 #[derive(Deserialize)]
@@ -714,6 +849,17 @@ pub async fn put(
             && let Some(profile) = b.value.as_str().filter(|value| !value.is_empty())
         {
             crate::models::get_enabled_profile(tx, profile)?;
+        }
+        if key == "exec.default_cwd" && let Some(value) = b.value.as_str() {
+            let root = if let Some(session) = &session {
+                Some(crate::sessions::exec_root(tx, session)?)
+            } else if let Some(project) = &project {
+                Some(std::path::PathBuf::from(crate::projects::get(tx, project)?.root_path))
+            } else {
+                // 전역 상대 경로는 프로젝트마다 다르므로 새 실행 계획 시 실제 root에서 다시 검사한다.
+                None
+            };
+            if let Some(root) = root { checked_cwd(&root, value)?; }
         }
         tx.execute(
             "INSERT INTO settings (scope, scope_id, key, value, revision, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \

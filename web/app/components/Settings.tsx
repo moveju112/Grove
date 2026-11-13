@@ -20,6 +20,8 @@ import { DiagnosticsBundle } from "./DiagnosticsBundle";
 import { SourceSettings } from "./source-settings/SourceSettings";
 import { TurnTimingSetting } from "./turn-timing/TurnTimingSetting";
 import { HooksSettings } from "./hooks/HooksSettings";
+import { ExecSettings } from "./exec-settings/ExecSettings";
+import { isExecSetting } from "../api/execSettings";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -39,6 +41,7 @@ export const ITEMS: Item[] = [
     { id: "memories", menu: "agents", label: "확인한 장기 기억", keywords: "memory preference 기억 선호 제약 전역 프로젝트", scope: "전역·프로젝트" },
     { id: "mcp", menu: "agents", label: "MCP 서버", keywords: "mcp transport stdio http sse 도구 연결 secret", scope: "서버 전체" },
     { id: "hooks", menu: "agents", label: "hook 설정", keywords: "hook 훅 이벤트 matcher 명령 활성화", scope: "전역·프로젝트" },
+    { id: "exec-settings", menu: "agents", label: "셸·자원 한도·격리·작업 위치", keywords: "exec shell limits isolation cwd bash sh cpu memory 셸 자원 한도 격리 기본 작업 위치 대화", scope: "전역·프로젝트" },
     { id: "theme", menu: "display", label: "테마", keywords: "dark light 다크 라이트 색", scope: "이 기기" },
     { id: "font", menu: "display", label: "글자 크기", keywords: "font size 글꼴", scope: "이 기기" },
     { id: "enter", menu: "display", label: "Enter로 보내기", keywords: "enter send 입력 단축키", scope: "이 기기" },
@@ -108,7 +111,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
             </nav>
             <div className="settings-body">
                 {needle && <p className="muted">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</p>}
-                {serverDefs.length > 0 && <ScopedSettings defs={serverDefs} target={target}
+                {serverDefs.filter((d) => !isExecSetting(d)).length > 0 && <ScopedSettings defs={serverDefs.filter((d) => !isExecSetting(d))} target={target}
                     resetDefs={!needle ? (registry.data ?? []).filter((d) => d.menu === menu) : undefined} area={MENUS.find(([id]) => id === menu)?.[1]} />}
                 {hiddenAdvanced > 0 && !showAdvanced && (
                     <button className="ghost" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</button>
@@ -119,6 +122,8 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {visible("source-settings") && <Section item="source-settings"><SourceSettings projectId={projectId} /></Section>}
                 {visible("mcp") && mcpSupported !== false && <Section item="mcp"><McpServers /></Section>}
                 {visible("hooks") && <Section item="hooks"><HooksSettings projectId={projectId} projectName={projectName} /></Section>}
+                {(visible("exec-settings") || serverDefs.some(isExecSetting)) && <ExecSettings
+                    defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} />}
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
                 {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
                 {visible("devices") && <Section item="devices"><Devices /></Section>}
