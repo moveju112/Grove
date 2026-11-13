@@ -51,9 +51,10 @@ NOTICE_FILES = ["assets/MIXDOG-LICENSE", "assets/MIXDOG-NOTICE.md"]
 
 def env():
     e = dict(os.environ)
-    e["CARGO_HOME"] = os.path.join(DEV, "cargo")
-    e["RUSTUP_HOME"] = os.path.join(DEV, "rustup")
-    e["PATH"] = os.pathsep.join([os.path.join(DEV, "cargo", "bin"), os.path.join(DEV, "bin"), os.path.join(DEV, "venv", "bin"), e.get("PATH", "")])
+    # 공통 환경을 source한 worktree에서는 공유 툴체인을 덮어쓰지 않는다.
+    e.setdefault("CARGO_HOME", os.path.join(DEV, "cargo"))
+    e.setdefault("RUSTUP_HOME", os.path.join(DEV, "rustup"))
+    e["PATH"] = os.pathsep.join([os.path.join(e["CARGO_HOME"], "bin"), os.path.join(DEV, "bin"), os.path.join(DEV, "venv", "bin"), e.get("PATH", "")])
     return e
 
 

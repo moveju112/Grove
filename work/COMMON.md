@@ -47,6 +47,7 @@ Rust 전용 모듈은 기존 `ToolResult`·`ToolError`·`Planned`와 권한 경�
 완료 직전 자기 기능의 선택 Rust 시험(컴파일 포함)과 Vitest·typecheck를 프로젝트 선택 검사 진입점으로 한 번 실행한다. 컴파일되지 않는 코드를 인계하지 않는다. 실패는 고친 뒤 실패한 검사만 다시 실행한다.
 worktree에는 Rust 툴체인(`.dev`)과 `web/node_modules`가 없다. 설치·복사하지 말고 메인 것을 쓴다:
 - Rust: `source /data/project/paseodog_opus/.envrc.dev`. 자기 worktree의 `.envrc.dev`가 `$PWD/.dev`를 가리키는 옛 버전이어도 이 절대 경로를 source한다.
+- 공유 환경 보존 수정 전의 `build.py`를 쓰는 미시작 workspace는 `.dev`가 없는 것을 확인한 뒤 `ln -s /data/project/paseodog_opus/.dev .dev`로 기존 공유 툴체인을 연결할 수 있다. 이미 존재하는 `.dev`나 실행 중인 검사·설치 환경은 바꾸지 않는다. 수정된 실행기는 명시적 `CARGO_HOME`·`RUSTUP_HOME`·`CARGO_TARGET_DIR`를 보존하며 다음 검사부터 사용한다.
 - 웹: `web/node_modules`가 없으면 `ln -s /data/project/paseodog_opus/web/node_modules web/node_modules`. Git ignore 대상이라 worktree는 clean으로 남는다. `npm install`·`npm ci`는 하지 않는다.
 - Rust 검사는 여러 세션이 동시에 빌드하지 않도록 `flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust ...`로 실행한다. Vitest·typecheck는 잠금 없이 실행한다.
 - 여러 Rust target은 `--rust target1 target2`처럼 한 옵션 뒤에 함께 쓴다. `--rust target1 --rust target2`는 마지막 옵션만 적용되므로 사용하지 않는다. 신규 배정과 종료 후 승인된 재개부터 이 계약을 읽고, 이미 실행 중인 검사는 취소하거나 같은 입력으로 반복하지 않는다.
