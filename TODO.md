@@ -1333,7 +1333,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [ ] SETTINGS-008 메모리·검색·내장 도구·선택 기능의 활성화 설정을 구현한다.
 - [ ] SETTINGS-009 MCP·스킬·훅 관리 화면을 구현한다.
 - [ ] SETTINGS-010 read-only 원본 Claude/Codex 설정 화면을 구현한다. 진행: 안전 필드 projection과 출처별 읽기 전용 컴포넌트 통합, Rust 10개·웹 5개 시험 통과. 남음: 인증·서버 root 결정·API·설정 화면 연결. Codex TOML은 미지원으로 표시하며 적용 여부를 추측하지 않는다(`work/RESULT-00.md`).
-- [ ] SETTINGS-011 셸·작업 한도·프로세스 격리·기본 작업 위치 설정을 구현한다.
+- [ ] SETTINGS-011 셸·작업 한도·프로세스 격리·기본 작업 위치 설정을 구현한다. 진행: 기존 범위별 설정에 session 셸/한도와 격리 capability·기본 cwd 저장/상속/경계 검증 resolver·전용 화면을 연결했다. 실행 설정 4개·기존 settings/tasks 회귀, 웹 단위 3개·타입·E2E 3개 통과. 승인한 shell/limits 고정과 다음 계획 적용을 확인했다(`work/RESULT-24.md`). 남음: `src/approvals.rs::create_call`의 shell 계획과 `src/tasks.rs::start`에 기본 cwd resolver 연결 및 승인 target cwd 고정 인수, Windows/macOS 실행 확인. 현재 기본 cwd가 실제 실행에 적용된다고 표시하지 않는다.
 - [ ] SETTINGS-012 TTS provider·언어·모델·출력 장치·GPU 설정을 구현한다.
 - [ ] SETTINGS-013 호스트·페어링·릴레이·접속 기기·접속 암호 설정을 구현한다.
 - [x] SETTINGS-014 알림·작업 완료·승인 요청·소리 설정을 구현한다. 검증: 이 기기 설정으로 작업 완료·실패(`completed`/`failed`/`interrupted`, 사용자 취소 제외), 승인 요청(`awaiting_approval`), 예약·업데이트 서버 알림(`notification.created`)과 소리를 각각 켠다(기본 모두 끔). 종류를 켤 때 브라우저 권한을 묻고 허용/미요청/차단/미지원을 표시하며, 권한이 없으면 화면 알림을 생략하고 소리만 재생한다. 앱이 열린 뒤 받은 이벤트만 다루고 화면을 보고 있으면 알리지 않는다. 같은 브라우저의 여러 탭은 사건 tag를 10분간 공유해 한 번만 알린다. 알림 본문에 대화·오류 내용을 넣지 않고, 누르면 해당 대화를 현재 배치에 연다. 시험 알림·항목/전체 기기 복원 제공. 앱을 닫은 동안의 OS Push는 PWA Push 범위로 별도(서버 영속 알림 목록은 기존대로). 단위 9개(`web/app/state/attention.test.ts`, 시간/기기 복원)·타입/빌드·선택 E2E 8개(`web/e2e/attention.spec.ts`, 알림 목록·설정 복원·시간 표시 회귀) 통과. 실제 OS 알림 센터·소리 출력은 브라우저 대체 객체로만 확인했다.
@@ -1358,7 +1358,7 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 - [ ] PC-002 브라우저/PWA와 서버의 별도 수명·소유권을 명시한다.
 - [x] PC-003 로컬 Rust 서버 설치 후 첫 시작·준비 확인·오류·재시작 안내를 구현한다. 검증: 첫 시작·재시작 안내(데이터·접속 주소·토큰 파일 위치, 토큰 값 비노출), 포트 충돌·중복 서버·schema 불일치·SQLite 잠금·권한 오류별 원인·조치와 종료 코드, `--json`(`src/startup.rs`). `tests/first_start.rs` 9개·기존 `cli`·`api` 27개 통과(`work/RESULT-16.md`). Windows 자동 시작은 `PC-014`.
 - [ ] PC-004 사용자가 관리하는 로컬 서버·설치기가 등록한 서버·원격 서버의 연결과 실행 책임을 구분한다.
-- [ ] PC-005 탭/PWA 창 닫기·브라우저 종료가 서버 작업을 중단하지 않게 한다.
+- [ ] PC-005 탭/PWA 창 닫기·브라우저 종료가 서버 작업을 중단하지 않게 한다. 진행: 연결 종료가 취소로 이어지지 않는 기존 서버 수명을 확인하고 SSE/WS 실제 폐기·무관찰 턴/foreground/background/PTY 완료·재연결·명시적 취소 회귀를 추가했다. Rust 신규 7개와 기존 관련 회귀, 실제 탭·context·시험 소유 Chrome 종료 E2E 9개 통과(`work/RESULT-23.md`). 남음: 설치형 standalone PWA의 native 창 수명 검증. 서버 자체 종료 뒤 작업 지속을 보장하는 기능은 아니다.
 - [ ] PC-006 백그라운드 서버 유지·명시적 중지 경로를 제공한다. 트레이가 필수라면 PWA 대안과 셸 필요성을 검증한다.
 - [ ] PC-007 복수 창/탭·재실행·deep link에서 인증/세션을 복원하고 요청 중복을 방지한다.
 - [ ] PC-008 창 크기·다중 모니터·최소화/복귀 시 반응형 배치를 검증한다. OS 창 위치 제어는 브라우저가 제공하는 범위를 명시한다.
@@ -1406,7 +1406,7 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 - [ ] WEB-007 새 UI 버전과 오래 열린 탭의 API 호환·갱신 안내를 구현한다. 진행: health 사전 호환 확인·protocol 불일치 차단·사용자 동의 후 worker 전환·버전별 shell 고정, 루트와 `/grove/` 배포 E2E 통과(`work/RESULT-14.md`). 남음: 인증 등 별도 전송 진입점의 공통 호환 경계와 다중 탭 실제 전환 인수.
 - [x] WEB-008 자산 cache와 사용자 대화 cache의 범위를 분리한다. 검증: service worker cache는 앱 자산(`grove-shell-<version>`)만, `/api/` 응답은 cache하지 않음(활성화 후 cache 항목 검사), 대화·초안은 서버 API와 초안 저장소로 분리(`web/e2e/pwa-update.spec.ts`).
 - [ ] WEB-009 오프라인 화면·draft는 지원하되 서버 작업 실행 가능으로 오인시키지 않는다. 진행: 열린 탭의 초안 편집·로컬 저장, Composer·승인 버튼 비활성, 공통 API 변경 요청의 fetch 전 차단과 결과 미전송 표시, 복구 후 자동 재전송 없음. 실제 공통 경계 누락을 실패 시험으로 확인해 수정했고 lifecycle 12개·API 18개·오프라인 승인 및 PWA E2E 통과(`work/RESULT-14.md`). 남음: 나머지 서버 작업 버튼의 비활성 이유 연결, 인증을 우회하지 않는 오프라인 cold-start 초안 복구 계약.
-- [ ] WEB-010 지원 브라우저의 알림·clipboard·파일 API 차이를 표시한다.
+- [ ] WEB-010 지원 브라우저의 알림·clipboard·파일 API 차이를 표시한다. 진행: 이 기기 기능표, 권한 허용/거부/미확인·보안 컨텍스트 구분, 무부작용 탐지·사용자 클릭 전용 권한 요청, 원문 수동 복사·첨부 대안을 실제 설정/메시지/첨부 진입점에 연결했다. 신규 단위 11개·기존 알림 회귀·타입·빌드 및 Chromium E2E 4개 통과(`work/RESULT-26.md`). 남음: Safari/Firefox·iOS/Android 실기기와 실제 비보안 origin의 지원/권한 동작 확인. 신호 mock을 실제 플랫폼 검증으로 간주하지 않는다.
 - [ ] WEB-011 기본 제품으로 PWA manifest·설치 안내·service worker·Web Push를 구현하고 지원 브라우저별 한계를 표시한다.
 - [ ] WEB-012 서버 정적 UI 제공을 지원한다면 headless 최소 빌드와 UI 포함 배포를 분리한다.
 - [ ] WEB-013 앱 ID·이름·아이콘·start URL·scope를 정의하고 browser/PWA 링크에서 같은 세션을 복원한다.

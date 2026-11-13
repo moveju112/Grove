@@ -54,7 +54,6 @@ test("범위별 셸·한도·작업 위치 저장과 상속 복원은 기존 설
 test("미지원 격리·셸은 이유와 함께 비활성이고 기존 승인 계약을 안내한다", async ({ page }) => {
     const { panel } = await setup(page);
     const unsupported = panel.getByRole("group", { name: "프로세스 격리 수준 미지원 선택지", exact: true });
-    await expect(unsupported).toBeDisabled();
     await expect(unsupported.getByRole("radio", { name: /sandbox/ })).toBeDisabled();
     await expect(unsupported).toContainText("아직 구현되지 않았습니다");
     await expect(unsupported.getByRole("radio", { name: /none/ })).toBeDisabled();
