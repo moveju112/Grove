@@ -128,7 +128,7 @@ fn read_verified(data: &FsPath, v: &Value) -> ApiResult<Vec<u8>> {
 }
 
 /// 원문은 보존하고, 메모리·해상도를 제한한 첫 프레임만 모델에 보낸다.
-fn model_image(bytes: &[u8]) -> ApiResult<(Value, Vec<u8>)> {
+pub(crate) fn model_image(bytes: &[u8]) -> ApiResult<(Value, Vec<u8>)> {
     use image::ImageDecoder;
     let invalid = || ApiError::invalid("이미지를 읽을 수 없습니다(최대 8192×8192, 1600만 픽셀)");
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
