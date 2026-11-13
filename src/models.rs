@@ -350,6 +350,20 @@ pub struct CreateProfile {
     pub enabled: Option<bool>,
 }
 
+// OpenAI-compatible endpoint는 그대로 /models·/chat/completions 경로를 붙여 쓴다.
+// URL 자격 증명이 프로필·이벤트에 평문으로 저장되지 않게 secret 참조로 분리한다.
+fn validate_http_endpoint(protocol: &str, base_url: &str) -> ApiResult<()> {
+    if protocol != "openai" { return Ok(()); }
+    let url = reqwest::Url::parse(base_url.trim()).map_err(|_| ApiError::invalid("endpoint는 올바른 HTTP(S) URL이어야 합니다"))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(ApiError::invalid("endpoint는 올바른 HTTP(S) URL이어야 합니다"));
+    }
+    if !url.username().is_empty() || url.password().is_some() || url.query().is_some() || url.fragment().is_some() {
+        return Err(ApiError::invalid("endpoint에 계정·키·query·fragment를 넣을 수 없습니다. 필요한 키는 secret_id로 연결하세요"));
+    }
+    Ok(())
+}
+
 fn validate_options(protocol: &str, o: &Value) -> ApiResult<()> {
     let obj = o.as_object().ok_or_else(|| ApiError::invalid("options는 객체여야 합니다"))?;
     for (k, v) in obj {
@@ -424,6 +438,7 @@ pub async fn create_profile(State(app): State<App>, Owner(p): Owner, headers: He
     let h = idem::body_hash("profile.create", &request);
     // 옛 receipt는 비밀을 참조로 옮긴 응답으로 재생한다. 새 평문 자격 헤더는 받지 않는다.
     if let Some(response) = idem::replay(&app, &p, &headers, &h).await? { return Ok(response); }
+    validate_http_endpoint(&b.protocol, &b.base_url)?;
     validate_options(&b.protocol, &options)?;
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         crate::model_headers::validate_references(tx, &options)?;
@@ -479,6 +494,7 @@ pub async fn update_profile(
         let base_url = b.base_url.map(|u| u.trim().trim_end_matches('/').to_string()).unwrap_or(cur.base_url.clone());
         let model = b.model.map(|m| m.trim().to_string()).unwrap_or(cur.model.clone());
         provider::validate_profile(&cur.protocol, &base_url, &model).map_err(ApiError::invalid)?;
+        validate_http_endpoint(&cur.protocol, &base_url)?;
         let options = b.options.unwrap_or_else(|| {
             let mut options = cur.options.clone();
             if base_url != cur.base_url || model != cur.model {

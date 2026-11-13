@@ -11,6 +11,7 @@ import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSe
 import { UsagePanel } from "./UsagePanel";
 import { Pairings } from "./Pairing";
 import { ProfileCatalog } from "./ProfileCatalog";
+import { LocalModelConnection } from "./local-models/LocalModelConnection";
 import { ProfileCapabilities } from "./ProfileCapabilities";
 import { ProfileContextPolicy } from "./ProfileContextPolicy";
 import { ProfileFallback } from "./ProfileFallback";
@@ -402,6 +403,9 @@ function Profiles() {
     const isCli = f.protocol === "claude_code" || f.protocol === "codex_cli";
     return (
         <>
+            {management !== false && <LocalModelConnection secrets={secrets.data ?? []} onCreate={(body, key) =>
+                api.post("/model-profiles", body, { key, requires: ["model_management_v1"] })
+            } />}
             <ul>
                 {(list.data ?? []).map((p) => (
                     <li key={p.id} data-testid="model-profile">
