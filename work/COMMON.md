@@ -10,8 +10,8 @@
 핵심 범위 전체가 막히면 blocker를 기록하고 종료한다. 임의로 다른 기능을 맡지 않는다.
 
 ## 편집 소유권
-번호 문서의 경로와 자기 `work/RESULT-NN.md`만 수정한다. 다른 경로는 읽기만 가능하다.
-다음 공통 파일은 `work/INTEGRATE.md`를 따르는 메인 세션이 나중에 연결한다:
+번호 문서의 경로·공통 파일 연결 지점과 자기 `work/RESULT-NN.md`만 수정한다. 다른 경로는 읽기만 가능하다.
+번호 문서가 연결 지점을 지정했다면 그 범위의 등록·라우트·화면 mount를 직접 연결해 기능이 실제 경로에서 동작하게 끝낸다. 지정되지 않은 다음 공통 파일은 메인 세션이 연결한다:
 `TODO.md`, `AGENTS.md`, `src/lib.rs`, `src/store.rs`, `src/runner.rs`, `src/tools/mod.rs`,
 `web/app/components/SessionView.tsx`, `web/app/components/Composer.tsx`, `web/app/components/Settings.tsx`,
 `web/app/state/store.ts`, `web/app/api/`, `web/app/app.css`,
@@ -33,8 +33,8 @@ Rust 전용 모듈은 기존 `ToolResult`·`ToolError`·`Planned`와 권한 경�
 
 ## 검증·자원
 독립 조사·관련 편집은 묶고 유효한 근거는 재사용한다. 보안·오류·복구 분기를 생략하지 않는다.
-실시간 자원 조율은 하지 않는다. Rust 컴파일·통합 시험, 웹 build/typecheck, E2E, release·패키징은 통합 단계에서 실행한다.
-기존 의존성이 준비돼 있고 별도 빌드·브라우저·서버를 띄우지 않는 작은 단위 검사만 로컬에서 수행한다.
+실시간 자원 조율은 하지 않는다. E2E·전체 회귀·release·패키징은 통합 단계에서 실행한다.
+완료 직전 자기 기능의 선택 Rust 시험(컴파일 포함)과 Vitest·typecheck를 프로젝트 선택 검사 진입점으로 한 번 실행한다. 컴파일되지 않는 코드를 인계하지 않는다. 실패는 고친 뒤 실패한 검사만 다시 실행한다.
 프로젝트의 해당 선택 검사 진입점을 사용한다. 환경이 없으면 설치나 우회 대신 미실행으로 기록한다.
 시험은 작성하되 미실행을 통과로 보고하지 않는다. 연결 없는 모듈이 기존 검사에서 제외된 사실을 숨기지 않는다.
 각 worktree에 target·node_modules·툴체인을 통째로 복사하거나 설치하지 않는다.
