@@ -405,19 +405,30 @@ fn pair(opts: Opts) -> Result<(), String> {
 fn serve(opts: Opts) -> Result<(), String> {
     let cfg = Config::from_env(opts.data_dir, opts.listen)?;
     let file_log = opts.log_file.is_some();
-    let writer = crate::logging::writer(opts.log_file.as_deref()).map_err(|e| format!("로그 준비 실패: {e}"))?;
+    let (writer, maintenance) = crate::logging::writer(opts.log_file.as_deref()).map_err(|e| format!("로그 준비 실패: {e}"))?;
     tracing_subscriber::fmt()
         .with_env_filter(tracing_subscriber::EnvFilter::try_from_env("GROVE_LOG").unwrap_or_else(|_| "info".into()))
         .with_ansi(!file_log)
         .event_format(crate::logging::EventFormat(file_log))
         .with_writer(writer)
         .init();
+    tracing::debug!("개발용 상세 로그 활성화");
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .max_blocking_threads(64)
         .build()
         .map_err(|e| e.to_string())?;
     let result = rt.block_on(async move {
+        // 로그가 전혀 없는 유휴 서버에서도 보관 기간을 적용한다.
+        let _maintenance = maintenance.map(|maintenance| tokio::spawn(async move {
+            let mut interval = tokio::time::interval(crate::logging::MAINTENANCE_INTERVAL);
+            loop {
+                interval.tick().await;
+                if let Err(e) = maintenance.run() {
+                    eprintln!("로그 보관 정리 실패: {e}");
+                }
+            }
+        }));
         let server = crate::server::start(cfg, Arc::new(SystemClock)).await?;
         tracing::info!(version = VERSION, address = %server.addr, "서버 준비 완료");
         // OS 신호 또는 관리 API 종료 요청(업데이트 도구)

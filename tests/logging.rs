@@ -127,6 +127,35 @@ fn startup_failure_is_recorded_in_the_selected_output() {
 }
 
 #[test]
+fn detailed_logging_is_opt_in_and_expired_slots_are_removed_before_startup() {
+    let d = tempfile::tempdir().unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let listen = listener.local_addr().unwrap().to_string();
+    for (i, level) in [None, Some("info"), Some("debug"), Some("trace"), Some("[invalid")].into_iter().enumerate() {
+        let path = d.path().join(format!("server-{i}.log"));
+        let archive = path.with_extension("log.1");
+        let expired = std::fs::File::create(&archive).unwrap();
+        use std::io::Write;
+        (&expired).write_all(b"expired debug detail\n").unwrap();
+        expired.set_modified(std::time::SystemTime::now() - Duration::from_secs(8 * 24 * 60 * 60)).unwrap();
+        drop(expired);
+        let mut cmd = grove();
+        cmd.env_remove("GROVE_LOG");
+        if let Some(level) = level {
+            cmd.env("GROVE_LOG", level);
+        }
+        let out = cmd.args(["serve", "--listen", &listen, "--data-dir"])
+            .arg(d.path().join(format!("data-{i}")))
+            .arg("--log-file").arg(&path).output().unwrap();
+        assert!(!out.status.success());
+        let text = std::fs::read_to_string(path).unwrap();
+        assert!(text.contains("서버 실행 실패"), "{text}");
+        assert_eq!(text.contains("개발용 상세 로그 활성화"), matches!(level, Some("debug" | "trace")), "{text}");
+        assert!(!archive.exists());
+    }
+}
+
+#[test]
 fn invalid_log_target_fails_before_server_data_is_created() {
     let d = tempfile::tempdir().unwrap();
     let data = d.path().join("data");

@@ -3,6 +3,7 @@ use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
@@ -11,6 +12,9 @@ pub(crate) const ARCHIVES: usize = 3;
 const EVENT_BYTES: usize = 16 * 1024;
 const TRUNCATED: &[u8] = b" [grove: log event truncated]\n";
 const TRIM_HEADER: &[u8] = b"[grove-log-tail:v1]\n";
+const DAY_SECONDS: u64 = 24 * 60 * 60;
+const RETENTION: Duration = Duration::from_secs(7 * DAY_SECONDS);
+pub(crate) const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 /// fmt layer의 thread-local String에 적재하기 전에 제한한다. writer에서만 자르면
 /// 디스크는 제한해도 큰 field를 포맷한 버퍼는 스레드마다 계속 남는다.
@@ -68,10 +72,21 @@ impl std::fmt::Write for LimitedText<'_> {
     }
 }
 
-pub(crate) fn writer(path: Option<&Path>) -> io::Result<BoxMakeWriter> {
+pub(crate) fn writer(path: Option<&Path>) -> io::Result<(BoxMakeWriter, Option<Maintenance>)> {
     match path {
-        Some(path) => Ok(BoxMakeWriter::new(FileLog::open(path)?)),
-        None => Ok(BoxMakeWriter::new(std::io::stderr)),
+        Some(path) => {
+            let log = FileLog::open(path)?;
+            Ok((BoxMakeWriter::new(log.clone()), Some(Maintenance(log))))
+        }
+        None => Ok((BoxMakeWriter::new(std::io::stderr), None)),
+    }
+}
+
+pub(crate) struct Maintenance(FileLog);
+
+impl Maintenance {
+    pub(crate) fn run(&self) -> io::Result<()> {
+        self.0.0.lock().expect("log mutex").maintain(SystemTime::now())
     }
 }
 
@@ -89,6 +104,7 @@ struct Rolling {
     path: PathBuf,
     file: Option<File>,
     size: u64,
+    day: u64,
     // 파일 교체와 무관한 별도 잠금을 서버 수명 동안 소유한다.
     _lock: File,
 }
@@ -97,6 +113,10 @@ fn sibling(path: &Path, suffix: &str) -> PathBuf {
     let mut name = path.as_os_str().to_os_string();
     name.push(suffix);
     PathBuf::from(name)
+}
+
+fn day(time: SystemTime) -> u64 {
+    time.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() / DAY_SECONDS
 }
 
 fn regular(path: &Path) -> io::Result<Option<std::fs::Metadata>> {
@@ -204,6 +224,7 @@ fn trim(path: &Path) -> io::Result<()> {
         if copied != tail_bytes {
             return Err(io::Error::other("로그 끝부분 복사 중 원본이 바뀌었습니다"));
         }
+        target.set_modified(meta.modified()?)?;
         target.sync_all()?;
         drop(target);
         std::fs::rename(&temporary, path)
@@ -250,44 +271,93 @@ impl FileLog {
         for i in 1..=ARCHIVES {
             trim(&sibling(path, &format!(".{i}")))?;
         }
+        let now = SystemTime::now();
         let file = open(path, false)?;
         let size = file.metadata()?.len();
-        Ok(Self(Arc::new(Mutex::new(Rolling {
+        let day = day(file.metadata()?.modified()?);
+        let mut rolling = Rolling {
             path: path.into(),
             file: Some(file),
             size,
+            day,
             _lock: lock,
-        }))))
+        };
+        rolling.maintain(now)?;
+        Ok(Self(Arc::new(Mutex::new(rolling))))
     }
 }
 
 impl Rolling {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
+    fn maintain(&mut self, now: SystemTime) -> io::Result<()> {
+        // 일부 파일을 지운 후 위험한 slot을 발견하지 않도록 먼저 모두 검증한다.
+        let slots = (0..=ARCHIVES)
+            .map(|i| {
+                let path = if i == 0 { self.path.clone() } else { sibling(&self.path, &format!(".{i}")) };
+                let expired = regular(&path)?
+                    .map(|meta| meta.modified().map(|modified| {
+                        now.duration_since(modified).is_ok_and(|age| age >= RETENTION)
+                    }))
+                    .transpose()?
+                    .unwrap_or(false);
+                Ok((path, expired))
+            })
+            .collect::<io::Result<Vec<_>>>()?;
+        for (i, (path, expired)) in slots.into_iter().enumerate() {
+            if expired {
+                if i == 0 {
+                    self.file.take();
+                }
+                std::fs::remove_file(path)?;
+            }
+        }
         if self.file.is_none() {
             let file = open(&self.path, false)?;
             self.size = file.metadata()?.len();
             self.file = Some(file);
+            self.day = day(now);
         }
-        if self.size + bytes.len() as u64 > FILE_BYTES {
-            regular(&self.path)?;
-            for i in 1..=ARCHIVES {
-                regular(&sibling(&self.path, &format!(".{i}")))?;
+        if self.size > 0 && day(now) > self.day {
+            self.rotate(now)?;
+        }
+        Ok(())
+    }
+
+    fn rotate(&mut self, now: SystemTime) -> io::Result<()> {
+        regular(&self.path)?;
+        for i in 1..=ARCHIVES {
+            regular(&sibling(&self.path, &format!(".{i}")))?;
+        }
+        self.file.take(); // Windows에서도 handle을 닫고 이름을 바꾼다.
+        let last = sibling(&self.path, &format!(".{ARCHIVES}"));
+        if regular(&last)?.is_some() {
+            std::fs::remove_file(last)?;
+        }
+        for i in (1..ARCHIVES).rev() {
+            let from = sibling(&self.path, &format!(".{i}"));
+            if regular(&from)?.is_some() {
+                std::fs::rename(from, sibling(&self.path, &format!(".{}", i + 1)))?;
             }
-            self.file.take(); // Windows에서도 handle을 닫고 이름을 바꾼다.
-            let last = sibling(&self.path, &format!(".{ARCHIVES}"));
-            if regular(&last)?.is_some() {
-                std::fs::remove_file(last)?;
-            }
-            for i in (1..ARCHIVES).rev() {
-                let from = sibling(&self.path, &format!(".{i}"));
-                if regular(&from)?.is_some() {
-                    std::fs::rename(from, sibling(&self.path, &format!(".{}", i + 1)))?;
-                }
-            }
-            std::fs::rename(&self.path, sibling(&self.path, ".1"))?;
-            let file = open(&self.path, true)?;
+        }
+        std::fs::rename(&self.path, sibling(&self.path, ".1"))?;
+        self.file = Some(open(&self.path, true)?);
+        self.size = 0;
+        self.day = day(now);
+        Ok(())
+    }
+
+    fn write(&mut self, bytes: &[u8]) -> io::Result<()> {
+        let now = SystemTime::now();
+        if self.file.is_none() {
+            let file = open(&self.path, false)?;
+            self.size = file.metadata()?.len();
+            self.day = day(file.metadata()?.modified()?);
             self.file = Some(file);
-            self.size = 0;
+        }
+        if self.size + bytes.len() as u64 > FILE_BYTES || (self.size > 0 && day(now) > self.day) {
+            self.maintain(now)?;
+            if self.size + bytes.len() as u64 > FILE_BYTES {
+                self.rotate(now)?;
+            }
         }
         let file = self.file.as_mut().expect("opened log");
         // 부분 쓰기 오류가 나도 다음 기록이 용량을 초과하지 않게 실제 크기를 다시 얻는다.
@@ -303,6 +373,80 @@ mod tests {
 
     fn record(log: &FileLog, bytes: &[u8]) {
         log.make_writer().write_all(bytes).unwrap();
+    }
+
+    #[test]
+    fn retention_expires_only_old_slots_on_startup_and_while_idle() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("server.log");
+        let old = SystemTime::now() - RETENTION - Duration::from_secs(60);
+        for suffix in ["", ".1"] {
+            let file = open(&sibling(&path, suffix), true).unwrap();
+            (&file).write_all(b"expired detail\n").unwrap();
+            if suffix == ".1" {
+                // 이전 대용량 로그의 tail 정리가 보관 시각을 새로 만들면 안 된다.
+                file.set_len(FILE_BYTES + 1).unwrap();
+            }
+            file.set_modified(old).unwrap();
+        }
+        let recent = sibling(&path, ".2");
+        std::fs::write(&recent, b"recent detail\n").unwrap();
+        let unrelated = d.path().join("unrelated.log");
+        std::fs::write(&unrelated, b"keep").unwrap();
+        let log = FileLog::open(&path).unwrap();
+        assert!(std::fs::read(&path).unwrap().is_empty());
+        assert!(!sibling(&path, ".1").exists());
+        assert_eq!(std::fs::read(&recent).unwrap(), b"recent detail\n");
+        record(&log, b"new detail\n");
+        let future = SystemTime::now() + RETENTION + Duration::from_secs(60);
+        log.0.lock().unwrap().maintain(future).unwrap();
+        assert!(std::fs::read(&path).unwrap().is_empty());
+        assert!(!recent.exists());
+        assert_eq!(std::fs::read(unrelated).unwrap(), b"keep");
+        record(&log, b"after idle cleanup\n");
+        assert_eq!(std::fs::read(&path).unwrap(), b"after idle cleanup\n");
+    }
+
+    #[test]
+    fn daily_rotation_does_not_refresh_an_archives_age() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("server.log");
+        let file = open(&path, true).unwrap();
+        (&file).write_all(b"yesterday\n").unwrap();
+        let yesterday = SystemTime::now() - Duration::from_secs(DAY_SECONDS);
+        file.set_modified(yesterday).unwrap();
+        drop(file);
+        let log = FileLog::open(&path).unwrap();
+        assert!(std::fs::read(&path).unwrap().is_empty());
+        let archived = sibling(&path, ".1");
+        assert_eq!(std::fs::read(&archived).unwrap(), b"yesterday\n");
+        assert_eq!(std::fs::metadata(&archived).unwrap().modified().unwrap(), yesterday);
+        record(&log, b"today\n");
+        let mut guard = log.0.lock().unwrap();
+        let tomorrow = SystemTime::now() + Duration::from_secs(DAY_SECONDS);
+        guard.maintain(tomorrow).unwrap();
+        assert_eq!(std::fs::read(sibling(&path, ".1")).unwrap(), b"today\n");
+        assert_eq!(std::fs::read(sibling(&path, ".2")).unwrap(), b"yesterday\n");
+        // 시계가 뒤로 이동해도 미래로 보이는 파일을 지우지 않는다.
+        guard.maintain(SystemTime::now() - RETENTION).unwrap();
+        assert_eq!(std::fs::read(sibling(&path, ".2")).unwrap(), b"yesterday\n");
+    }
+
+    #[test]
+    fn retention_checks_every_slot_before_removing_expired_files() {
+        let d = tempfile::tempdir().unwrap();
+        let path = d.path().join("server.log");
+        let log = FileLog::open(&path).unwrap();
+        record(&log, b"keep on unsafe slot\n");
+        let old = SystemTime::now() - RETENTION - Duration::from_secs(60);
+        log.0.lock().unwrap().file.as_ref().unwrap().set_modified(old).unwrap();
+        let bad = sibling(&path, ".3");
+        std::fs::create_dir(&bad).unwrap();
+        assert!(log.0.lock().unwrap().maintain(SystemTime::now()).is_err());
+        assert_eq!(std::fs::read(&path).unwrap(), b"keep on unsafe slot\n");
+        std::fs::remove_dir(bad).unwrap();
+        log.0.lock().unwrap().maintain(SystemTime::now()).unwrap();
+        assert!(std::fs::read(&path).unwrap().is_empty());
     }
 
     #[test]

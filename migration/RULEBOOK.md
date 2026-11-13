@@ -512,6 +512,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 ## 26. 서버 파일 로그와 유지보수 자원(DB-019)
 
 - `grove serve --log-file <path>`는 현재 파일과 `.1`~`.3` 보관본을 각 2MiB 이내로 유지한다(합계 최대 8MiB). `tracing`의 기본 formatter를 사용하되 내부 문자열 버퍼에 적재하기 전에 이벤트를 16KiB 이내로 제한한다. 초과 표식을 남기고 UTF-8 경계를 보존한다. 파일에는 ANSI escape를 쓰지 않으며 시작·종료·시작 실패를 기록한다.
+- 상세 로그는 기본 끔(info)이며 `GROVE_LOG=debug` 또는 `trace`로 명시한다. 파일 로그는 UTC 날짜 변경에도 회전해 오래된 내용이 계속 append되어 남지 않게 한다. 마지막 수정 시각으로 7일 지난 현재/보관 slot을 시작 시·회전 시·실행 중 매시간 정리하며 기록이 없는 유휴 시간에도 적용한다. 정리 시각 전까지 최대 한 검사 주기의 지연이 있고, 중지된 프로세스의 파일은 다음 시작 때 정리한다. 미래 시각 파일은 시계 역행으로 삭제하지 않는다. tail 정규화와 회전은 원래 mtime을 보존한다. stderr/systemd 보관은 해당 로그 관리자의 정책이다.
 - 일반 파일만 사용하고 Unix는 symlink·hardlink·특수 파일을 거부한다. 신규 로그 폴더는 0700, 생성·append 파일은 0600이다. `.lock` 파일의 OS 잠금을 서버 수명 동안 유지하며 이벤트 전체를 직렬화한다. 회전 전에 handle을 닫아 Windows에서도 같은 경로를 교체한다. 위험한 보관 경로는 파일 이동 전에 모두 검사한다.
 - 이전 대용량 로그는 각 파일의 끝부분만 최대 2MiB 복사한다. `.grove-tail.tmp` 고정 slot에 `[grove-log-tail:v1]` header와 tail을 쓰고 sync 후 교체한다. 생성부터 0600이며 각 staging도 최대 2MiB다. 중단 파일은 일반 파일·header·크기와 Unix 소유자/권한을 확인한 후에만 재사용한다. 대용량 정리 중 다른 내용·종류·권한의 staging을 발견하면 보존하고 시작을 거부한다. 각 로그 slot에 staging 하나만 두어 반복 중단 시 새 임시 파일이 계속 늘지 않게 한다. 복사·교체 실패 시 기존 로그 원문을 유지한다.
 - 새 관리 CLI의 `process` 시작은 기존 `version --json`의 `features: ["file_log_rotation_v1"]`를 확인해 `--log-file`을 전달한다. 시작 전에 파일 준비 오류를 보고하고, 이미 응답하는 서버가 있으면 PID·로그를 바꾸지 않는다. 기능 표식이 없는 이전 release는 기존 stdout/stderr append 방식으로 실행한다. 옵션 없는 foreground와 systemd는 stderr를 유지한다. 기존 CLI로 기동한 서버는 새 관리 CLI로 정상 재시작해야 파일 회전이 적용된다.
