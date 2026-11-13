@@ -43,6 +43,14 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 20개 증설은 취소됐고 목표는 활성 기능 workspace 10개다. 현재 31~33은 23·24·26 정리의 세 자리 보충이며 증설이 아니다. 21·25의 제공자 오류는 기존 세션에 1회 재개 요청을 접수했으며 재실패를 자동 반복하지 않는다. 관리 메타데이터 쓰기는 직렬화하고 진행 중 세션은 건드리지 않는다.
 
+## 명시적 후속 요청 우선순위
+신규 기능보다 verified idle continuation을 우선하며, 기존 기능 running/initializing 총 4개를 넘겨 시작하지 않는다. 이 요청은 provider 시스템 오류 retry가 아니므로 retry count를 초기화하지 않는다.
+
+| 번호 | 분류·접수 | 남은 일·다음 조건 |
+|---|---|---|
+| 21 | needs-continuation · 기존 세션 `684c9ba6-fe86-479f-bd81-ade1a401079e`에 후속 요청 접수 | 공유 node_modules의 세 패키지는 메인에서 정상 resolve, 해당 worktree만 react-router MODULE_NOT_FOUND. 본인 shared symlink 복구·타입/단위/E2E·자기 결함 수정. inline TOML parser 승인 blocker는 별도 보존하며 기존 error retry count=1 유지 |
+| 27 | needs-continuation · 소유권 보완 완료, 실행 슬롯 대기 | `work/27.md`에 TerminalView WS 입력/resize·22 생성 진입의 PWA 안내/guard·본인 E2E 소유를 명시. 실제 재개 전 clean/idle/slot 재확인, 22 `e28dbdf`를 메인이 27 branch에 동기화한 뒤 기존 세션 재개. 소유권 확인 상태는 `8b0ffcd`이며 아직 코드 적용·재개 완료가 아님 |
+
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
 새 작업을 준비하면 보충 번호를 기록한다. 재실행 시 이미 보충한 자리를 중복 생성하지 않는다.
