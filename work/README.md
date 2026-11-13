@@ -37,7 +37,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 16 | parallel/b02-first-start | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-16-first-start | `wks_3e03fb86d3452409` | 서버 첫 시작·오류 안내 |
 | 17 | parallel/b02-hooks-config | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-17-hooks-config | `wks_d3b07706e87b88fc` | hook 목록·설정 |
 | 19 | parallel/b02-git-stash | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-19-git-stash | `wks_69960bfc3714a13f` | Git stash·discard |
-| 20 | parallel/b02-external-editor | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-20-external-editor | 생성 후 기록 | 외부 편집기 목록·열기 (`fc0de9b` 기준) |
+| 20 | parallel/b02-external-editor | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-20-external-editor | `wks_7abac678efb30e9a` | 외부 편집기 목록·열기 (`c2eebe6` 기준) |
 
 공통 파일 연결 지점이 겹치는 곳: `src/lib.rs::router`(10·11·13·17·19·20), `src/store.rs` MIGRATIONS 끝(11·13·17), `Settings.tsx` mount(10·11·15·17), `Composer.tsx`(11·14). 모두 서로 다른 줄의 추가이며 통합 때 순서만 맞춘다. `src/runner.rs`는 11이 지침 조립, 12가 도구 결과→provider 경로만 수정한다.
 
