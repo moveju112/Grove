@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ContextType } from "react";
 import { api, authGeneration, isLoggedIn, newKey } from "../api/client";
 import { EventStream } from "../api/events";
 import type { Project } from "../api/generated";
@@ -19,6 +19,8 @@ import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Hosts } from "./Hosts";
 import { SidebarProject } from "./sidebar";
+import { CreationEntry, CreationFocus } from "./create/CreationEntry";
+import { currentProjectId, projectTarget } from "./create/creation";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -156,14 +158,31 @@ export function Workspace() {
     // OS 알림을 누르면 해당 대화를 현재 배치에 연다(SETTINGS-014).
     useEffect(() => onOpenSession((projectId, sessionId) => open({ kind: "session", project_id: projectId, resource_id: sessionId, title: "대화" })), [open]);
 
-    const [adding, setAdding] = useState(false);
+    const [adding, setAdding] = useState<{ step: "choose"; projectId?: string } | { step: "project" } | null>(null);
+    const [creationFocus, setCreationFocus] = useState<ContextType<typeof CreationFocus>>(null);
+    const startProject = (p: Project) => {
+        if (!layout || !p.available) return;
+        const target = projectTarget(p);
+        const next = L.openResource(layout, target);
+        const leaf = L.focusedLeaf(next);
+        const tab = leaf.tabs.find((item) => item.id === leaf.active_tab);
+        if (tab?.kind !== "project" || tab.project_id !== p.id) {
+            setNotice("프로젝트 입력창을 열 수 없습니다. 사용하지 않는 탭을 닫고 다시 시도하세요.");
+            return;
+        }
+        setAdding(null);
+        updateAt(key, () => next);
+        if (narrow) setSidebar(false);
+        setCreationFocus((previous) => ({ tabId: tab.id, narrow, version: (previous?.version ?? 0) + 1 }));
+    };
     const projectAdded = (p: Project) => {
-        setAdding(false);
+        setAdding(null);
         projects.reload();
-        open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name });
+        startProject(p);
     };
 
     return (
+        <CreationFocus.Provider value={creationFocus}>
         <div className={`ws ${narrow ? "narrow" : ""}`}>
             <header className="topbar">
                 <button className="ghost icon" aria-label="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
@@ -174,14 +193,18 @@ export function Workspace() {
                 <Hosts />
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
                 <span className="spacer" />
-                <button className="ghost" onClick={() => setAdding(true)}>
-                    + 프로젝트
+                <button className="ghost" aria-haspopup="dialog" disabled={!layout}
+                    onClick={() => setAdding({ step: "choose", projectId: currentProjectId(layout) })}>
+                    만들기
                 </button>
                 <button className="ghost" onClick={() => open({ kind: "settings", title: "설정" })}>
                     설정
                 </button>
             </header>
-            {adding && <AddProjectDialog onDone={projectAdded} onClose={() => setAdding(false)} />}
+            {adding?.step === "choose" && <CreationEntry projects={projects.data ?? NO_PROJECTS} currentId={adding.projectId}
+                loading={projects.loading} error={Boolean(projects.error)} onReload={projects.reload}
+                onSelect={startProject} onAddProject={() => setAdding({ step: "project" })} onClose={() => setAdding(null)} />}
+            {adding?.step === "project" && <AddProjectDialog onDone={projectAdded} onClose={() => setAdding(null)} />}
             {notice && (
                 <div className="notice" role="status">
                     {notice} <button className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</button>
@@ -221,7 +244,7 @@ export function Workspace() {
                             <button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</button>
                             {showArchived && <ArchivedProjects />}
                             {shown.map((p) => (
-                                <SidebarProject key={p.id} project={p} open={open} narrow={narrow}>
+                                <SidebarProject key={p.id} project={p} open={open} narrow={narrow} onCreate={() => startProject(p)}>
                                 <div className="row" data-testid="project-row" data-project={p.name}>
                                     <button className="link" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name })} title={p.root_path}>
                                         {p.pinned_at && <span aria-label="고정됨" title="고정됨">📌</span>}
@@ -262,6 +285,7 @@ export function Workspace() {
                 </main>
             </div>
         </div>
+        </CreationFocus.Provider>
     );
 }
 
