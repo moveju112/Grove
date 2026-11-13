@@ -376,7 +376,14 @@ async fn execution_listing_is_owner_scoped_and_unsupported_or_disabled_events_ar
     let (_, device) = s.post("/api/v1/devices", json!({"name":"fixture"})).await;
     assert_eq!(s.raw(Method::GET, &path, None, None, Some(device["token"].as_str().unwrap())).await.status(), StatusCode::FORBIDDEN);
     assert_eq!(s.raw(Method::GET, &path, None, None, Some("")).await.status(), StatusCode::UNAUTHORIZED);
-    setting(&s, pid, "exec.shell", json!("zsh")).await;
+    // 일반 설정 API는 없는 셸을 거절한다. 다른 환경에서 저장된 셸이 남은 복구 상황을 준비한다.
+    {
+        let c = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+        c.execute(
+            "INSERT INTO settings (scope,scope_id,key,value,revision,updated_at) VALUES ('project',?1,'exec.shell',?2,1,?3)",
+            rusqlite::params![pid, json!("zsh").to_string(), "2026-01-01T00:00:00Z"],
+        ).unwrap();
+    }
     s.post(&format!("/api/v1/sessions/{sid}/messages"), json!({"text":"unsupported shell fixture"})).await;
     assert!(calls(&s, &sid).await.iter().any(|c| c["result"]["error"]["code"]=="hook_shell_unsupported"));
     assert!(!Path::new(p["root_path"].as_str().unwrap()).join("forbidden").exists());
