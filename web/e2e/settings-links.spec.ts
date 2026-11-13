@@ -83,75 +83,107 @@ test("effective 응답을 보류해도 실제 고급 행이 렌더된 뒤 이동
     }
 });
 
-test("같은 항목이 있는 두 pane 중 늦게 연 대화 설정만 이동하고 양쪽 대상과 미저장 초안을 보존한다", async ({ page }) => {
-    const { a, b } = await ensureProjects();
-    const leftTitle = `링크 왼쪽 ${Date.now()}`;
-    const rightTitle = `링크 오른쪽 ${Date.now()}`;
-    const leftSession = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: leftTitle });
-    const rightSession = await apiCall<{ id: string }>("POST", `/projects/${b.id}/sessions`, { title: rightTitle });
-    for (const [project, session] of [[a, leftSession], [b, rightSession]] as const) {
-        await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
-    }
-    await login(page);
-    await setLink(page, advancedKey);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(leftTitle) }).first().click();
-    // 분할 생성의 상위 트리 remount와 링크 이동을 분리한다. 초안은 안정된 두 pane에서 만든다.
-    await page.locator(".recent").getByTestId("recent-item").filter({ hasText: rightTitle })
-        .getByRole("button", { name: "오른쪽에 열기" }).click();
-    const left = page.getByTestId("pane").nth(0);
-    const right = page.getByTestId("pane").nth(1);
-    await left.getByRole("button", { name: "대화 설정" }).click();
-    const leftRow = left.getByTestId(`setting-${advancedKey}`);
-    await expect(leftRow).toBeInViewport();
-    const draft = String(Number(await leftRow.locator("input[type=number]").inputValue()) + 7);
-    await leftRow.locator("input[type=number]").fill(draft);
-    await expect(leftRow).toContainText("저장 안 됨");
-    const gate = await holdEffective(page, rightSession.id);
-    try {
-        await right.getByRole("button", { name: "대화 설정" }).click();
-        await gate.seen;
-        await expect(right.getByText("링크한 설정을 불러오는 중…", { exact: true })).toBeVisible();
-        await scrollTop(left);
-        await gate.deliver();
-        const rightRow = right.getByTestId(`setting-${advancedKey}`);
-        await expect(rightRow).toBeInViewport();
-        await expect(leftRow.locator("input[type=number]")).toHaveValue(draft);
+for (const key of [advancedKey, "exec.max_memory_mb"]) {
+    test(`같은 항목 ${key}이 있는 두 pane 중 늦게 연 대화 설정만 이동하고 양쪽 대상과 미저장 초안을 보존한다`, async ({ page }) => {
+        const { a, b } = await ensureProjects();
+        const leftTitle = `링크 왼쪽 ${Date.now()}`;
+        const rightTitle = `링크 오른쪽 ${Date.now()}`;
+        const leftSession = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: leftTitle });
+        const rightSession = await apiCall<{ id: string }>("POST", `/projects/${b.id}/sessions`, { title: rightTitle });
+        for (const [project, session] of [[a, leftSession], [b, rightSession]] as const) {
+            await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
+        }
+        await login(page);
+        await setLink(page, key);
+        await page.locator(".recent").getByRole("button", { name: new RegExp(leftTitle) }).first().click();
+        // 분할 생성의 상위 트리 remount와 링크 이동을 분리한다. 초안은 안정된 두 pane에서 만든다.
+        await page.locator(".recent").getByTestId("recent-item").filter({ hasText: rightTitle })
+            .getByRole("button", { name: "오른쪽에 열기" }).click();
+        const left = page.getByTestId("pane").nth(0);
+        const right = page.getByTestId("pane").nth(1);
+        await left.getByRole("button", { name: "대화 설정" }).click();
+        const leftRow = left.getByTestId(`setting-${key}`);
+        await expect(leftRow).toBeInViewport();
+        const draft = String(Number(await leftRow.locator("input[type=number]").inputValue()) + 7);
+        await leftRow.locator("input[type=number]").fill(draft);
         await expect(leftRow).toContainText("저장 안 됨");
-        // registry상 이 고급 항목은 서버·프로젝트 범위만 지원한다.
-        await expect(leftRow).toContainText(`대상: 프로젝트 “${a.name}”`);
-        await expect(rightRow).toContainText(`대상: 프로젝트 “${b.name}”`);
-        await expect(leftRow.getByLabel("입력 여유분(token) 적용 범위")).toHaveValue("project");
-        await expect(left.getByTestId("settings-origin")).toContainText(leftTitle);
-        await expect(right.getByTestId("settings-origin")).toContainText(rightTitle);
-        await expect(left.getByTestId("setting-output.language")).toContainText(`대상: 대화 “${leftTitle}”`);
-        await expect(right.getByTestId("setting-output.language")).toContainText(`대상: 대화 “${rightTitle}”`);
-        await expect.poll(() => left.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
-        // 링크 클릭은 이 Settings 인스턴스에서만 처리한다. 키보드 활성화도 같은 경로다.
-        const rightDraft = String(Number(await rightRow.locator("input[type=number]").inputValue()) + 9);
-        await rightRow.locator("input[type=number]").fill(rightDraft);
-        await rightRow.locator("a").focus();
-        await page.keyboard.press("Enter");
-        await expect(rightRow).toBeInViewport();
-        await expect(rightRow.locator("input[type=number]")).toHaveValue(rightDraft);
-        await expect(rightRow).toContainText("저장 안 됨");
-        await expect(leftRow.locator("input[type=number]")).toHaveValue(draft);
-        await expect.poll(() => left.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
-    } finally {
-        gate.release();
-    }
-});
+        const gate = await holdEffective(page, rightSession.id);
+        try {
+            await right.getByRole("button", { name: "대화 설정" }).click();
+            await gate.seen;
+            await expect(right.getByText("링크한 설정을 불러오는 중…", { exact: true })).toBeVisible();
+            await scrollTop(left);
+            await gate.deliver();
+            const rightRow = right.getByTestId(`setting-${key}`);
+            await expect(rightRow).toBeInViewport();
+            await expect(leftRow.locator("input[type=number]")).toHaveValue(draft);
+            await expect(leftRow).toContainText("저장 안 됨");
+            // context 여유분은 프로젝트까지, exec 한도는 대화 범위까지 지원한다.
+            const sessionScope = key === "exec.max_memory_mb";
+            await expect(leftRow).toContainText(sessionScope ? `대상: 대화 “${leftTitle}”` : `대상: 프로젝트 “${a.name}”`);
+            await expect(rightRow).toContainText(sessionScope ? `대상: 대화 “${rightTitle}”` : `대상: 프로젝트 “${b.name}”`);
+            await expect(leftRow.getByRole("combobox")).toHaveValue(sessionScope ? "session" : "project");
+            await expect(left.getByTestId("settings-origin")).toContainText(leftTitle);
+            await expect(right.getByTestId("settings-origin")).toContainText(rightTitle);
+            await expect(left.getByTestId("setting-output.language")).toContainText(`대상: 대화 “${leftTitle}”`);
+            await expect(right.getByTestId("setting-output.language")).toContainText(`대상: 대화 “${rightTitle}”`);
+            await expect.poll(() => left.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
+            // 링크 클릭은 이 Settings 인스턴스에서만 처리한다. 키보드 활성화도 같은 경로다.
+            const rightDraft = String(Number(await rightRow.locator("input[type=number]").inputValue()) + 9);
+            await rightRow.locator("input[type=number]").fill(rightDraft);
+            await rightRow.locator("a").focus();
+            await page.keyboard.press("Enter");
+            await expect(rightRow).toBeInViewport();
+            await expect(rightRow.locator("input[type=number]")).toHaveValue(rightDraft);
+            await expect(rightRow).toContainText("저장 안 됨");
+            await expect(leftRow.locator("input[type=number]")).toHaveValue(draft);
+            await expect.poll(() => left.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
+        } finally {
+            gate.release();
+        }
+    });
+}
 
 test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로 드러난다", async ({ page }) => {
     const gate = await holdEffective(page);
+    let releaseDefinitions!: () => void;
+    let definitionsRequested!: () => void;
+    const definitionsHeld = new Promise<void>((resolve) => { releaseDefinitions = resolve; });
+    const definitionsSeen = new Promise<void>((resolve) => { definitionsRequested = resolve; });
+    await page.route((url) => url.pathname === "/api/v1/definitions" && url.searchParams.get("kind") === "agent", async (route) => {
+        const response = await route.fetch();
+        definitionsRequested();
+        await definitionsHeld;
+        await route.fulfill({ response });
+    });
     try {
         const settings = await openSettings(page, "exec.max_memory_mb");
         await gate.seen;
+        await definitionsSeen;
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toBeVisible();
         await gate.deliver();
-        await expect(settings.getByTestId("exec-settings").getByTestId("setting-exec.max_memory_mb")).toBeInViewport();
+        const row = settings.getByTestId("exec-settings").getByTestId("setting-exec.max_memory_mb");
+        await expect(row).toBeVisible();
+        // 행만 준비됐어도 앞쪽 내용이 미완성이면 최초 이동을 아직 소비하지 않는다.
+        await expect(settings.getByText("링크한 설정을 불러오는 중…")).toBeVisible();
+        const definitionsReceived = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/definitions");
+        releaseDefinitions();
+        await definitionsReceived;
+        await expect(settings.getByTestId("setting-definitions").getByRole("button", { name: /^Reviewer/ })).toBeAttached();
+        await expect(row).toBeInViewport();
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
+        const current = await apiCall<{ items: { key: string; layers: Record<string, { revision: number }> }[] }>("GET", "/settings/effective");
+        const item = current.items.find((entry) => entry.key === "exec.max_memory_mb")!;
+        await scrollTop(page.getByTestId("pane"));
+        const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === effectivePath);
+        // 0(제한 없음)을 그대로 저장해 격리 서버의 한도는 바꾸지 않고 재조회만 유도한다.
+        await apiCall("PUT", "/settings/server/-/exec.max_memory_mb", { expected_revision: item.layers.server!.revision, value: 0 });
+        await refreshed;
+        await expect(row).toContainText("(서버 전체)");
+        await expect.poll(() => page.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
     } finally {
         gate.release();
+        releaseDefinitions();
     }
 });
 
