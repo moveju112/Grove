@@ -10,6 +10,7 @@ import { useQuery } from "../state/store";
 import { AttachmentPicker, useAttachments } from "./Attachments";
 import { CapabilitySummary } from "./ProfileCapabilities";
 import { SessionSkills } from "./skills/SessionSkills";
+import { localDraftStorage, requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 
 export type { SendOptions };
 
@@ -46,9 +47,11 @@ export type { FollowKind } from "../state/sendOptions";
 const FOLLOW_LABEL: Record<FollowKind, string> = { queue: "대기열에 추가", steer: "지금 반영", interrupt: "중단하고 보내기" };
 
 /// 입력창: 입력할 때마다 기기 내 사본을 저장하고, 서버 초안은 명시적으로 저장/불러온다.
-export function Composer({ projectId, resourceKey, copyId, disabled, running, onSend, commands, boundProfileId }: Props) {
+export function Composer({ projectId, resourceKey, copyId, disabled: parentDisabled, running, onSend, commands, boundProfileId }: Props) {
+    const serverBlocked = useServerBlockReason();
+    const disabled = parentDisabled ?? serverBlocked;
     const [follow, setFollow] = useState<FollowKind>("queue");
-    const store = typeof localStorage !== "undefined" ? localStorage : null;
+    const store = localDraftStorage();
     const localKey = D.key(resourceKey, copyId);
     const [initialDraft] = useState(() => store ? D.load(store, localKey) : null);
     const [text, setText] = useState(initialDraft?.text ?? "");
@@ -155,6 +158,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     const saveServer = async () => {
         setMsg(null);
         try {
+            requireServerAction();
             const r = await api.put<D.ServerDraft>(`/drafts/${resourceKey}`, { expected_revision: base.current, text, device_name: deviceName() });
             base.current = r.revision;
             setConflict(null);
@@ -233,6 +237,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
 
     const send = async () => {
         if ((!text.trim() && attachments.items.length === 0) || busy || sending.current || attachments.busy || !attachments.ready || !!disabled || pendingInvalid) return;
+        try { requireServerAction(); } catch (e) { setMsg((e as Error).message); return; }
         if (recovering) { await sendText(recovering.body, text); return; }
         const parsed = parseSlash(text, allCmds.map((c) => c.name));
         if (parsed.kind === "unknown") {
@@ -261,6 +266,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     /// body: 실제로 보낼 글("//" 이스케이프를 푼 값), raw: 입력창 원문(보낸 뒤 비울지 판단).
     const sendText = async (body: string, raw: string, original?: D.PendingSend) => {
         if (busy || sending.current || attachments.busy || !!disabled || pendingInvalid) return;
+        try { requireServerAction(); } catch (e) { setMsg((e as Error).message); return; }
         const confirmation = original ?? (pending?.raw === raw && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null);
         const ids = confirmation?.attachmentIds ?? attachments.ids;
         if (!confirmation && eff.mode === "model" && (!ready || profileDisabled || profileMissing)) {
@@ -362,6 +368,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
     return (
         <div className="composer">
             {resourceKey.startsWith("session:") && <SessionSkills key={`${projectId}:${resourceKey}`} sessionId={resourceKey.slice("session:".length)} />}
+            {serverBlocked && <p className="draft-note" role="status" data-testid="composer-blocked">{serverBlocked}</p>}
             {copyError && <p className="err" role="alert">기기에 입력 사본을 보관하지 못했습니다. 화면을 떠나기 전에 내용을 복사하세요.</p>}
             {copies.length > 0 && <details className="draft-note" data-testid="draft-copies">
                 <summary>다른 입력 사본 {copies.length}개</summary>
@@ -395,7 +402,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                     </details>
                     <button className="ghost small" onClick={() => loadServer(conflict, "replace")}>서버 것으로 바꾸기</button>
                     <button className="ghost small" onClick={() => loadServer(conflict, "append")}>합치기</button>
-                    <button className="ghost small" onClick={() => { base.current = conflict.revision; setConflict(null); void saveServer(); }}>
+                    <button className="ghost small" disabled={!!disabled} onClick={() => { base.current = conflict.revision; setConflict(null); void saveServer(); }}>
                         내 것으로 덮어쓰기
                     </button>
                 </div>
@@ -448,7 +455,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                 placeholder={disabled ?? (enterSends ? "메시지 (Enter 보내기 · Shift+Enter 줄바꿈)" : "메시지 (Ctrl+Enter 보내기)")}
                 aria-label="메시지 입력"
                 rows={3}
-                disabled={!!disabled}
+                disabled={!!parentDisabled}
             />
             <div className="composer-bar">
                 <select aria-label="보내기 방식" value={eff.mode} onChange={(e) => update({ mode: e.target.value as SendOptions["mode"] })}>
@@ -487,7 +494,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
                     </>
                 )}
                 <span className="spacer" />
-                <button className="ghost small" onClick={saveServer} disabled={!text} title="다른 기기에서 이어서 쓰도록 서버에 저장">
+                <button className="ghost small" onClick={saveServer} disabled={!text || !!disabled} title={disabled ?? "다른 기기에서 이어서 쓰도록 서버에 저장"}>
                     초안 서버 저장
                 </button>
                 {running && eff.mode === "model" && (

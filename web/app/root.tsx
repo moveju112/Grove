@@ -4,6 +4,7 @@ import "./app.css";
 import { applyPrefs, loadPrefs } from "./state/device";
 import { installAuthCleanup } from "./state/cleanup";
 import { deployment } from "./deployment";
+import { LifecycleBanner } from "./components/pwa/LifecycleBanner";
 
 // 로그인 화면을 포함해 첫 화면부터 이 기기 테마를 적용한다(빌드 시 prerender에서는 document가 없다).
 if (typeof document !== "undefined") {
@@ -39,7 +40,7 @@ export default function Root() {
     useEffect(() => {
         document.documentElement.dataset.hydrated = "true";
     }, []);
-    return <Outlet />;
+    return <div className="pwa-shell"><LifecycleBanner /><Outlet /></div>;
 }
 
 // 빌드 시 루트 렌더링 동안 보이는 화면(브라우저 API는 여기서 쓰지 않는다).

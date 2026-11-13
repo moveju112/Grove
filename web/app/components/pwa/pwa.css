@@ -1,0 +1,50 @@
+.pwa-shell {
+    height: 100dvh;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.pwa-shell > .ws {
+    height: auto;
+    flex: 1;
+    min-height: 0;
+}
+
+.pwa-shell > .login {
+    min-height: 0;
+    flex: 1;
+}
+
+.pwa-lifecycle {
+    flex-shrink: 0;
+    max-height: min(35dvh, 20rem);
+    overflow: auto;
+    padding: .25rem .7rem;
+}
+
+.pwa-lifecycle .update-banner {
+    position: static;
+    transform: none;
+    display: block;
+    margin: .25rem 0;
+    box-shadow: none;
+}
+
+.pwa-lifecycle details p {
+    margin: .5rem 0;
+}
+
+.pwa-update-notices,
+.update-banner[data-testid="protocol-banner"] {
+    display: block;
+    width: max-content;
+    max-width: calc(100vw - 1.4rem);
+    max-height: 35dvh;
+    overflow: auto;
+}
+
+.update-banner[data-testid="protocol-banner"] {
+    bottom: auto;
+    top: .7em;
+}
