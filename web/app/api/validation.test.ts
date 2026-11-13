@@ -32,7 +32,7 @@ describe("Rust 계약에서 생성한 런타임 검증", () => {
     it("선택 필드는 생략할 수 있지만 있으면 중첩 타입을 검사한다", () => {
         const turn = {
             id: "t", session_id: "s", status: "running", request_message_id: "m", profile_id: null, agent_id: null, workflow_id: null,
-            tools_enabled: true, error: null, usage: {}, step: 1, created_at: "", updated_at: "", finished_at: null, definition: {}, acknowledged_at: null,
+            tools_enabled: true, error: null, usage: {}, step: 1, created_at: "", updated_at: "", finished_at: null, definition: {}, acknowledged_at: null, evidence: null,
         };
         expect(parseContract("Turn", turn)).toBe(turn);
         expect(parseContract("Turn", { ...turn, queue: { ahead: 1, active: 2, limit: 3 } }).queue?.ahead).toBe(1);

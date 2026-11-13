@@ -278,7 +278,7 @@ class Repository(unittest.TestCase):
                              GIT_COMMITTER_EMAIL="queue@example.invalid"),
                 ).stdout
 
-            git(root, "init", "-b", "master")
+            git(root, "init", "-b", "main")
             (root / "work").mkdir()
             (root / "work/README.md").write_text(readme([(21, worktree)]))
             git(root, "add", "work/README.md")
