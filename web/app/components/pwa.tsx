@@ -25,8 +25,12 @@ function checkWaiting(worker: ServiceWorker | null) {
 export function registerServiceWorker() {
     if (started || !("serviceWorker" in navigator) || import.meta.env.DEV) return;
     started = true;
+    let controller = navigator.serviceWorker.controller;
     // 첫 claim이나 다른 탭의 동의로 입력 중인 탭을 reload하지 않는다.
     navigator.serviceWorker.addEventListener("controllerchange", () => {
+        const previous = controller;
+        controller = navigator.serviceWorker.controller;
+        if (!updateRequested && previous && controller && previous !== controller) checkWaiting(controller);
         if (!updateRequested || reloaded) return;
         reloaded = true;
         location.reload();

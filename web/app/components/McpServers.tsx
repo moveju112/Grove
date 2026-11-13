@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import { useQuery } from "../state/store";
 import { useCapability } from "../state/capabilities";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Config =
     | { transport: "stdio"; command: string; args: string[]; env_secrets: Record<string, string> }
@@ -86,10 +87,10 @@ export function McpServers() {
             {" · "}revision {server.revision}
             <div className="inline">
                 <button type="button" disabled={rowBlocked(server)} onClick={() => edit(server)}>MCP 편집</button>
-                <button type="button" disabled={rowBlocked(server)} onClick={() => void mutate({
+                <ServerActionButton type="button" disabled={rowBlocked(server)} onClick={() => void mutate({
                     method: "put", path: `/mcp/servers/${server.id}`, key: newKey(),
                     body: { expected_revision: server.revision, server: { name: server.name, config: server.config, timeout_secs: server.timeout_secs, enabled: !server.enabled } },
-                })}>{server.enabled ? "MCP 사용 끄기" : "MCP 사용 켜기"}</button>
+                })}>{server.enabled ? "MCP 사용 끄기" : "MCP 사용 켜기"}</ServerActionButton>
                 <button type="button" disabled={rowBlocked(server)} onClick={() => { setDeleting(server); setError(null); }}>MCP 삭제 확인</button>
                 {checkSupported !== false && <button type="button" disabled={rowBlocked(server)} onClick={() => { setTesting(server); setError(null); }}>MCP 연결 확인 준비</button>}
                 {server.last_check && <button type="button" onClick={() => setSelected(server.id)}>MCP 확인 상세</button>}
@@ -104,15 +105,15 @@ export function McpServers() {
         </div>}
         {testing ? <div role="group" aria-label="MCP 실행·외부 연결 확인">
             <p>“{testing.name}”(revision {testing.revision})의 {testing.config.transport === "stdio" ? "프로세스를 실행합니다" : "외부 서버에 연결합니다"}. 저장한 secret 참조를 전달하고 handshake·도구 목록을 조회한 뒤 닫습니다. 임의 MCP 프로세스는 OS 파일시스템 sandbox로 격리되지 않습니다.</p>
-            <button type="button" disabled={blocked} onClick={() => void mutate({
+            <ServerActionButton type="button" disabled={blocked} onClick={() => void mutate({
                 method: "post", path: `/mcp/servers/${testing.id}/check`, key: newKey(), body: { expected_revision: testing.revision, confirmed: true },
-            })}>확인하고 MCP 연결 검사</button>
+            })}>확인하고 MCP 연결 검사</ServerActionButton>
             <button type="button" disabled={blocked} onClick={() => setTesting(null)}>MCP 검사 취소</button>
         </div> : deleting ? <div role="group" aria-label="MCP 삭제 확인">
             <p>“{deleting.name}” 설정(revision {deleting.revision})을 삭제합니다. 참조한 API 키는 삭제하지 않습니다.</p>
-            <button type="button" disabled={blocked} onClick={() => void mutate({
+            <ServerActionButton type="button" disabled={blocked} onClick={() => void mutate({
                 method: "del", path: `/mcp/servers/${deleting.id}?expected_revision=${deleting.revision}`, key: newKey(),
-            })}>이 MCP 설정 삭제</button>
+            })}>이 MCP 설정 삭제</ServerActionButton>
             <button type="button" disabled={blocked} onClick={() => setDeleting(null)}>삭제 취소</button>
         </div> : <form className="stack" onSubmit={(e) => { e.preventDefault(); submit(); }}>
             <fieldset disabled={blocked || !!query.error}>
@@ -125,7 +126,7 @@ export function McpServers() {
                 </details>
                 <label>MCP timeout(초)<input aria-label="MCP timeout(초)" type="number" min={1} max={300} value={timeout} onChange={(e) => setTimeout(Number(e.target.value))} /></label>
                 <label className="check"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />MCP 사용 설정(연결 아님)</label>
-                <button type="submit" disabled={!name.trim()}>MCP 설정 저장</button>
+                <ServerActionButton type="submit" disabled={!name.trim()}>MCP 설정 저장</ServerActionButton>
                 {editing && <button type="button" onClick={reset}>MCP 편집 취소</button>}
                 {editing && current && current.revision !== editing.revision && <button type="button" onClick={() => edit(current)}>최신 MCP 설정 사용</button>}
             </fieldset>
@@ -134,7 +135,7 @@ export function McpServers() {
         {mutation.phase === "sending" && <p role="status">MCP 설정 결과 확인 중…</p>}
         {mutation.phase === "unknown" && <div role="group" aria-label="MCP 결과 재확인">
             <p className="warn">결과 불명입니다. 새 요청을 만들지 않고 원래 내용·revision·같은 키로 확인합니다.</p>
-            <button type="button" onClick={() => void mutate(mutation.attempt)}>같은 MCP 요청 확인</button>
+            <ServerActionButton type="button" onClick={() => void mutate(mutation.attempt)}>같은 MCP 요청 확인</ServerActionButton>
         </div>}
         {error && <p role="alert" className="err">{error}</p>}
     </div>;

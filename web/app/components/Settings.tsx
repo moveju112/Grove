@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
 import { type Prefs, defaultPrefs, savePrefs, usePrefs } from "../state/device";
 import { When } from "./When";
@@ -123,7 +124,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
                 {visible("devices") && <Section item="devices"><Devices /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
-                {visible("logout") && <Section item="logout"><button onClick={() => void logout()}>이 브라우저에서 로그아웃</button></Section>}
+                {visible("logout") && <Section item="logout"><ServerActionButton onClick={() => void logout()}>이 브라우저에서 로그아웃</ServerActionButton></Section>}
                 {visible("usage") && <UsagePanel />}
                 {visible("health") && <Section item="health"><Health /></Section>}
                 {visible("backup") && (
@@ -332,18 +333,18 @@ function Secrets() {
                 {(list.data ?? []).map((s) => (
                     <li key={s.id}>
                         {s.label} <code>{s.masked}</code> {s.used_by.length > 0 && <span className="muted small">사용: {s.used_by.join(", ")}</span>}
-                        <button className="ghost small" onClick={() => {
+                        <ServerActionButton className="ghost small" onClick={() => {
                             const v = prompt(`${s.label}의 새 키(이전 키는 저장 성공 후에만 교체)`);
                             if (v) void save.run(() => api.put(`/secrets/${s.id}`, { label: s.label, value: v }));
-                        }}>교체</button>
-                        <button className="ghost small" onClick={() => void save.run(() => api.del(`/secrets/${s.id}`))}>삭제</button>
+                        }}>교체</ServerActionButton>
+                        <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.del(`/secrets/${s.id}`))}>삭제</ServerActionButton>
                     </li>
                 ))}
             </ul>
             <form className="inline" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post("/secrets", { label, value }); setLabel(""); setValue(""); }); }}>
                 <input placeholder="이름" value={label} onChange={(e) => setLabel(e.target.value)} aria-label="키 이름" required />
                 <input placeholder="키 값" type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} aria-label="키 값" required />
-                <button type="submit">추가</button>
+                <ServerActionButton type="submit">추가</ServerActionButton>
             </form>
             {save.view}
         </>
@@ -367,18 +368,18 @@ function Profiles() {
                     <li key={p.id} data-testid="model-profile">
                         <strong>{p.name}</strong> · {p.protocol} · <code>{p.model}</code> <span className="muted small">{p.base_url}</span>
                         {p.enabled === false && <span className="warn small"> · 비활성</span>}
-                        <button className="ghost small" onClick={() => {
+                        <ServerActionButton className="ghost small" onClick={() => {
                             const m = prompt("모델 이름", p.model);
                             if (m && m !== p.model) void save.run(() => api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, model: m }));
-                        }}>모델 변경</button>
-                        <button className="ghost small" onClick={() => void save.run(() => api.del(`/model-profiles/${p.id}`))}>삭제</button>
-                        <button className="ghost small" onClick={() => void save.run(() => api.post(`/model-profiles/${p.id}/check`))}>연결 확인</button>
+                        }}>모델 변경</ServerActionButton>
+                        <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.del(`/model-profiles/${p.id}`))}>삭제</ServerActionButton>
+                        <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.post(`/model-profiles/${p.id}/check`))}>연결 확인</ServerActionButton>
                         <CheckStatus c={p.last_check} />
                         <ProfileCapabilities profile={p} />
                         <ProfileContextPolicy profile={p} />
-                        {management !== false && <button className="ghost small" onClick={() => void save.run(() =>
+                        {management !== false && <ServerActionButton className="ghost small" onClick={() => void save.run(() =>
                             api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, enabled: p.enabled === false }, { requires: ["model_management_v1"] })
-                        )}>{p.enabled === false ? "활성화" : "비활성화"}</button>}
+                        )}>{p.enabled === false ? "활성화" : "비활성화"}</ServerActionButton>}
                         <ProfileCatalog profile={p} onChoose={(model, revision) => void save.run(() =>
                             api.put(`/model-profiles/${p.id}`, { expected_revision: revision, model }, { requires: ["model_management_v1"] })
                         )} />
@@ -420,7 +421,7 @@ function Profiles() {
                         서버에 설치된 CLI의 로그인을 씁니다. 읽기 도구(파일 읽기·검색)만 허용하며, 파일 변경·명령 실행은 막습니다.
                     </span>
                 )}
-                <button type="submit">추가</button>
+                <ServerActionButton type="submit">추가</ServerActionButton>
             </form>
             {save.view}
         </>
@@ -468,27 +469,27 @@ function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
             <p className="muted small">{cur.description}</p>
             <textarea value={draft} onChange={(e) => setBody(e.target.value)} rows={14} aria-label="정의 본문" />
             <div className="actions">
-                <button disabled={!changed} onClick={() => void save.run(async () => {
+                <ServerActionButton disabled={!changed} onClick={() => void save.run(async () => {
                     await api.put(`/definitions/${kind}/${id}`, { expected_revision: cur.revision, body: draft });
                     setBody(null);
                     d.reload();
-                })}>저장</button>
+                })}>저장</ServerActionButton>
                 <button className="ghost" disabled={!changed} onClick={() => setBody(null)}>편집 취소</button>
                 {cur.builtin && cur.modified_fields.length > 0 && (
-                    <button className="ghost" onClick={() => {
+                    <ServerActionButton className="ghost" onClick={() => {
                         if (confirm(`기본값으로 복원합니다: ${cur.modified_fields.join(", ")}\n사용자 수정본은 사라집니다.`))
                             void save.run(async () => { await api.post(`/definitions/${kind}/${id}/restore`, { expected_revision: cur.revision }); setBody(null); d.reload(); });
-                    }}>기본값 복원</button>
+                    }}>기본값 복원</ServerActionButton>
                 )}
                 {!cur.builtin && (
-                    <button className="ghost" onClick={() => {
+                    <ServerActionButton className="ghost" onClick={() => {
                         if (confirm("이 정의를 삭제할까요?")) void save.run(() => api.del(`/definitions/${kind}/${id}?expected_revision=${cur.revision}`));
-                    }}>삭제</button>
+                    }}>삭제</ServerActionButton>
                 )}
                 {kind === "workflow" && id !== "default" && (
-                    <button className="ghost" onClick={() => void save.run(async () => { await api.put(`/definitions/${kind}/${id}`, { expected_revision: cur.revision, enabled: !cur.enabled }); d.reload(); })}>
+                    <ServerActionButton className="ghost" onClick={() => void save.run(async () => { await api.put(`/definitions/${kind}/${id}`, { expected_revision: cur.revision, enabled: !cur.enabled }); d.reload(); })}>
                         {cur.enabled ? "선택 불가로" : "선택 가능으로"}
-                    </button>
+                    </ServerActionButton>
                 )}
             </div>
             {save.view}
@@ -515,7 +516,7 @@ function NewDefinition({ kind }: { kind: string }) {
                 <input placeholder="ID (소문자-하이픈)" value={f.id} onChange={(e) => setF({ ...f, id: e.target.value })} aria-label="ID" required />
                 <input placeholder="이름" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} aria-label="이름" required />
                 <textarea placeholder="본문" value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} aria-label="본문" required />
-                <button type="submit">만들기</button>
+                <ServerActionButton type="submit">만들기</ServerActionButton>
             </form>
             {save.view}
         </details>
@@ -537,16 +538,16 @@ function Devices() {
                         {d.name} <span className="muted small">{d.kind === "owner" ? "소유자" : d.kind === "device" ? "기기" : "브라우저 로그인"}</span>
                         {d.current && <span className="muted small"> (현재)</span>}
                         {d.revoked_at ? <span className="muted small"> · 폐기됨</span> : d.kind !== "owner" && (
-                            <button className="ghost small" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</button>
+                            <ServerActionButton className="ghost small" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</ServerActionButton>
                         )}
                         {d.last_used_at && <span className="muted small"> · 최근 <When at={d.last_used_at} /></span>}
                     </li>
                 ))}
             </ul>
-            <button onClick={() => {
+            <ServerActionButton onClick={() => {
                 const name = prompt("새 기기 이름");
                 if (name) void save.run(async () => setIssued((await api.post<{ token: string }>("/devices", { name })).token));
-            }}>기기 토큰 발급</button>
+            }}>기기 토큰 발급</ServerActionButton>
             {issued && (
                 <div className="draft-note" role="alert">
                     이 토큰은 지금 한 번만 표시됩니다: <code className="selectable">{issued}</code>

@@ -19,6 +19,7 @@ import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Hosts } from "./Hosts";
 import { SidebarProject } from "./sidebar";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -184,7 +185,7 @@ export function Workspace() {
             {adding && <AddProjectDialog onDone={projectAdded} onClose={() => setAdding(false)} />}
             {notice && (
                 <div className="notice" role="status">
-                    {notice} <button className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</button>
+                    {notice} <ServerActionButton className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</ServerActionButton>
                     <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
                 </div>
             )}

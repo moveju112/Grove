@@ -3,6 +3,7 @@ import { ApiError, api } from "../api/client";
 import { useQuery } from "../state/store";
 import type { ModelProfile } from "../api/generated";
 import { APPLIES, SCOPE_LABEL, SettingsResetButton } from "./SettingsReset";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 export type SettingDef = {
     key: string;
@@ -152,7 +153,7 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                     />
                 )}
                 {d.kind === "text" && <textarea disabled={saving} aria-label={d.label} rows={4} value={String(value ?? "")} onChange={(e) => edit(e.target.value)} />}
-                <button disabled={draft === undefined || saving || state.kind === "conflict"} onClick={() => draft && void save(draft.value, draft.revision)}>저장</button>
+                <ServerActionButton disabled={draft === undefined || saving || state.kind === "conflict"} onClick={() => draft && void save(draft.value, draft.revision)}>저장</ServerActionButton>
                 <SettingsResetButton key={scope} defs={[d]} target={t} scope={scope} scopeId={scopeTarget(scope,t)[0]} targetLabel={target}
                     label="이 범위 값 지우기" disabled={saving || layer?.value === null || layer?.value === undefined} draft={draft?.value}
                     saved={() => { setDraft(undefined); setState({ kind: "saved", msg: APPLIES[d.applies] }); reload(); }} />
@@ -169,7 +170,7 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
             {state.kind === "conflict" && (
                 <div className="actions">
                     <button className="ghost" onClick={() => { setDraft(undefined); setState({ kind: "idle" }); }}>최신 값 사용</button>
-                    {draft && <button onClick={() => void save(draft.value, layer?.revision ?? 0)}>내 수정으로 덮어쓰기</button>}
+                    {draft && <ServerActionButton onClick={() => void save(draft.value, layer?.revision ?? 0)}>내 수정으로 덮어쓰기</ServerActionButton>}
                 </div>
             )}
         </section>

@@ -151,10 +151,12 @@ export function checkCompatibility(): Promise<void> {
 /** root의 안내 mount가 소유한다. 네트워크 복구는 조회만 하며 작업을 재전송하지 않는다. */
 export function startLifecycle(): () => void {
     let stopped = false;
+    // controllerchange는 document 갱신이 아니다. 시작할 때의 shell 버전을 계속 보고한다.
+    const version = document.querySelector<HTMLMetaElement>('meta[name="grove-shell-version"]')?.content ?? null;
     const inspect = () => {
         inspectLocalDrafts();
         void inspectStoragePolicy();
-        if ("serviceWorker" in navigator) navigator.serviceWorker.controller?.postMessage({ type: "shell-status" });
+        if ("serviceWorker" in navigator) navigator.serviceWorker.controller?.postMessage({ type: "shell-status", version });
         else update({ shell: "unsupported" });
     };
     const refresh = () => { if (!stopped) { inspect(); void checkCompatibility(); } };

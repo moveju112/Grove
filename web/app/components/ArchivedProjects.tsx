@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { Project } from "../api/generated";
 import { invalidate, useQuery } from "../state/store";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Recovery = { kind: "recoverable"; action: "unarchive" | "unarchive_relink"; message?: string } | { kind: "unavailable"; message: string };
 
@@ -31,11 +32,11 @@ function ArchivedRow({ project }: { project: Project }) {
             onClick={() => void run(async () => setState(await api.get<Recovery>(`/projects/${project.id}/recovery`)), "복원 검사 실패")}>복원 검사</button>}
         {state?.kind === "recoverable" && <>
             {state.action === "unarchive_relink" && <span className="warn small" role="status">{state.message}</span>}
-            <button type="button" className="small" disabled={busy}
+            <ServerActionButton type="button" className="small" disabled={busy}
                 onClick={() => void run(async () => {
                     await api.post(`/projects/${project.id}/restore`, { expected_revision: project.revision });
                     invalidate("projects");
-                }, "복원 실패")}>복원</button>
+                }, "복원 실패")}>복원</ServerActionButton>
         </>}
         {state?.kind === "unavailable" && <span className="warn small" role="status">{state.message}</span>}
         {error && <span className="err small" role="alert">{error}</span>}

@@ -4,6 +4,7 @@ import { useCapability } from "../state/capabilities";
 import { useQuery } from "../state/store";
 import { confirmRun, forgetRun, newRun, pendingRuns, subscribeScriptRuns, type Execution, type ProjectScript, type RunAttempt, type ScriptListing } from "../state/projectScripts";
 import type { Opener } from "./Workspace";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Editor = { id?: string; revision?: number; name: string; command: string };
 type EditAttempt = { method: "post" | "put" | "del"; path: string; body?: object; key: string };
@@ -118,15 +119,15 @@ export function ProjectScripts({ projectId, projectName, open }: { projectId: st
                 <strong>{script.name}</strong><span className="muted small">revision {script.revision}</span><code>{script.command}</code>
                 <button className="ghost small" disabled={locked || editor !== null || !list.data?.execution} onClick={() =>
                     setReview({ script: { ...script }, execution: { ...list.data!.execution! }, projectName, actorId: list.data!.owner })}>실행 확인</button>
-                <button className="ghost small" disabled={locked} aria-pressed={setupId === script.id}
+                <ServerActionButton className="ghost small" disabled={locked} aria-pressed={setupId === script.id}
                     onClick={() => void designate(setupId === script.id ? null : script.id)}>
                     {setupId === script.id ? "초기 설정 지정 해제" : "초기 설정으로 지정"}
-                </button>
+                </ServerActionButton>
                 <button className="ghost small" disabled={locked} onClick={() => { setEditor({ ...script }); setError(null); }}>편집</button>
-                <button className="ghost small" disabled={locked} onClick={() => {
+                <ServerActionButton className="ghost small" disabled={locked} onClick={() => {
                     if (confirm(`script “${script.name}” 정의만 삭제할까요? 이미 실행한 작업은 취소하지 않습니다.`))
                         void edit({ method: "del", path: `/projects/${projectId}/scripts/${script.id}?expected_revision=${script.revision}`, key: newKey() });
-                }}>삭제</button>
+                }}>삭제</ServerActionButton>
             </li>)}
         </ul>
         {!list.data?.execution && list.data && <p className="warn small">프로젝트를 사용할 수 없어 실행할 수 없습니다. 정의는 편집할 수 있습니다.</p>}
@@ -156,20 +157,20 @@ export function ProjectScripts({ projectId, projectName, open }: { projectId: st
             <label>script 이름<input aria-label="script 이름" required disabled={locked} value={editor.name} onChange={(event) => setEditor({ ...editor, name: event.target.value })} /></label>
             <label>script 명령<textarea aria-label="script 명령" required rows={3} disabled={locked} value={editor.command} onChange={(event) => setEditor({ ...editor, command: event.target.value })} /></label>
             <div className="inline">
-                <button type="submit" disabled={locked}>script 저장</button>
+                <ServerActionButton type="submit" disabled={locked}>script 저장</ServerActionButton>
                 <button type="button" className="ghost" disabled={locked} onClick={() => setEditor(null)}>편집 취소</button>
                 {editor.id && <button type="button" className="ghost" disabled={locked} onClick={() => void latest()}>최신 값으로 편집</button>}
             </div>
         </form>}
         {editAttempt && !busy && <div className="inline">
-            <button onClick={() => void edit(editAttempt)}>같은 저장 요청 결과 확인</button>
+            <ServerActionButton onClick={() => void edit(editAttempt)}>같은 저장 요청 결과 확인</ServerActionButton>
             <button className="ghost" onClick={() => { setEditAttempt(null); list.reload(); }}>서버 값 확인 후 닫기</button>
         </div>}
         {pending.map((row) => <div key={row.key} data-testid="script-run-pending">
             {row.attempt ? <>
                 <p>미확인 실행: {row.attempt.script.name} · revision {row.attempt.script.revision}</p>
                 <pre>{row.attempt.script.command}</pre>
-                <button disabled={locked || editor !== null || !list.data || row.attempt.actorId !== list.data.owner} onClick={() => void run(row.attempt!)}>원래 실행 요청 결과 확인</button>
+                <ServerActionButton disabled={locked || editor !== null || !list.data || row.attempt.actorId !== list.data.owner} onClick={() => void run(row.attempt!)}>원래 실행 요청 결과 확인</ServerActionButton>
                 {list.data && row.attempt.actorId !== list.data.owner && <p className="warn small">다른 인증의 실행 사본입니다. 원래 인증으로 결과를 확인하세요.</p>}
                 {row.attempt.sessionId && <button className="ghost" onClick={() => open({ kind: "session", project_id: projectId, resource_id: row.attempt!.sessionId!, title: `Script · ${row.attempt!.script.name}` })}>작업 대화 열기</button>}
             </> : <p className="warn">실행 사본 형식이 손상됐습니다. 자동 실행하지 않습니다. 프로젝트의 작업 대화를 확인하세요.</p>}
@@ -191,6 +192,6 @@ function RunReview({ review, onClose, onConfirm }: { review: Review; onClose: ()
         <code>작업 경로: {review.execution.root}</code><code>셸: {review.execution.shell}</code>
         <pre>{review.script.command}</pre>
         <p className="muted small">revision {review.script.revision}의 명령을 새 작업 대화에서 한 번 접수합니다. 셸 명령은 프로젝트 밖의 파일에도 영향을 줄 수 있습니다.</p>
-        <div className="inline"><button onClick={onConfirm}>이 명령 실행</button><button className="ghost" autoFocus onClick={onClose}>취소</button></div>
+        <div className="inline"><ServerActionButton onClick={onConfirm}>이 명령 실행</ServerActionButton><button className="ghost" autoFocus onClick={onClose}>취소</button></div>
     </dialog>;
 }

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
 import type { GitReview } from "./types";
+import { ServerActionButton } from "../pwa/ServerActionButton";
 
 export function GitConfirmation({ projectId, review, onConfirm, onCancel }: {
     projectId: string;
@@ -24,7 +25,7 @@ export function GitConfirmation({ projectId, review, onConfirm, onCancel }: {
             <p className="muted small">확인 후 상태가 바뀌면 실행하지 않습니다.</p>
             <div className="inline">
                 <button autoFocus onClick={onCancel}>취소</button>
-                <button onClick={onConfirm}>{discard ? "확인하고 변경 버리기" : "확인하고 stash pop"}</button>
+                <ServerActionButton onClick={onConfirm}>{discard ? "확인하고 변경 버리기" : "확인하고 stash pop"}</ServerActionButton>
             </div>
         </dialog>
     );

@@ -16,6 +16,16 @@
     flex: 1;
 }
 
+.login[data-testid="auth-recovery"] {
+    overflow: auto;
+}
+
+.login[data-testid="auth-recovery"] > section {
+    width: min(38em, 100%);
+    padding: 1em;
+    overflow-wrap: anywhere;
+}
+
 .pwa-lifecycle {
     flex-shrink: 0;
     max-height: min(35dvh, 20rem);

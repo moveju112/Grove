@@ -32,6 +32,28 @@ afterEach(() => { vi.unstubAllGlobals(); });
 const health = (protocol: number, version = "any-server-build") => new Response(JSON.stringify({ protocol, version }));
 
 describe("서버 작업 경계", () => {
+    it.each([null, "original-shell"])("controller가 바뀌어도 현재 document의 shell 버전 %s를 유지한다", (version) => {
+        vi.useFakeTimers();
+        const postMessage = vi.fn();
+        const service = Object.assign(new EventTarget(), { controller: { postMessage } });
+        const meta = version === null ? null : { content: version };
+        const document = Object.assign(new EventTarget(), { visibilityState: "visible", querySelector: vi.fn(() => meta) });
+        vi.stubGlobal("document", document);
+        vi.stubGlobal("window", Object.assign(new EventTarget(), { localStorage: local }));
+        vi.stubGlobal("navigator", { ...browser, serviceWorker: service });
+        vi.stubGlobal("fetch", vi.fn(async () => health(1)));
+        const stop = lifecycle.startLifecycle();
+        try {
+            expect(postMessage).toHaveBeenLastCalledWith({ type: "shell-status", version });
+            if (meta) meta.content = "next-controller";
+            service.dispatchEvent(new Event("controllerchange"));
+            expect(postMessage).toHaveBeenLastCalledWith({ type: "shell-status", version });
+        } finally {
+            stop();
+            vi.useRealTimers();
+        }
+    });
+
     it("protocol이 같은 서로 다른 빌드는 허용하고, 호환 확인 전에는 전송하지 않는다", async () => {
         expect(() => lifecycle.requireServerAction()).toThrow("호환성을 확인");
         vi.stubGlobal("fetch", vi.fn(async () => health(1, "different-build")));

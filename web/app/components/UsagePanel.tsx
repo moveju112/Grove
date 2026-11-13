@@ -4,6 +4,7 @@ import { type QueueInfo, queueText } from "../state/queue";
 import { useQuery } from "../state/store";
 import { UsagePresentation } from "./usage/UsagePresentation";
 import type { UsageReport } from "./usage/model";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type CapacityRequest = { turn_id: string; status: string; session_id: string; session_title: string; project_id: string; queue?: QueueInfo };
 type Capacity = {
@@ -47,7 +48,7 @@ function CapacitySection() {
                             <span className="muted small">
                                 {r.queue ? queueText(r.queue) : r.status === "awaiting_approval" ? "승인·답변 대기(실행 슬롯 사용 안 함)" : r.status === "queued" ? "대기 중" : "실행 중"}
                             </span>{" "}
-                            <button className="ghost small" onClick={() => void cancel(r.turn_id)}>취소</button>
+                            <ServerActionButton className="ghost small" onClick={() => void cancel(r.turn_id)}>취소</ServerActionButton>
                         </li>
                     ))}
                 </ul>

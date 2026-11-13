@@ -5,6 +5,7 @@ import type { PairingInfo } from "../api/generated";
 import { insecureRemote } from "../state/hosts";
 import { pairingLink, pairingStatus, parsePairingLink, scanPairingImage } from "../state/pairing";
 import { useQuery } from "../state/store";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Issued = { id: string; code?: string; expires_at: string };
 
@@ -75,7 +76,7 @@ export function Pairings() {
             {["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) && <p className="warn small">현재 주소는 loopback입니다. 다른 기기에 전달하려면 그 기기에서 접속 가능한 HTTPS·VPN 주소로 이 화면을 열어 발급하세요.</p>}
             <form className="row" aria-label="페어링 링크 발급" onSubmit={(e) => { e.preventDefault(); void run(() => issue(name.trim())); }}>
                 <label>등록할 기기 이름<input value={name} maxLength={80} required onChange={(e) => setName(e.target.value)} /></label>
-                <button type="submit" disabled={busy || !name.trim()}>페어링 링크 발급</button>
+                <ServerActionButton type="submit" disabled={busy || !name.trim()}>페어링 링크 발급</ServerActionButton>
             </form>
             {link && issued && <div className="draft-note">
                 <PairingQr link={link} />
@@ -90,11 +91,11 @@ export function Pairings() {
                     <strong>{info.name}</strong>
                     <span>{pairingStatus(info, now)} · 만료 <When at={info.expires_at} absolute /></span>
                     <div className="row">
-                        {!info.consumed_at && !info.revoked_at && <button type="button" className="ghost small" disabled={busy} onClick={() => void run(async () => {
+                        {!info.consumed_at && !info.revoked_at && <ServerActionButton type="button" className="ghost small" disabled={busy} onClick={() => void run(async () => {
                             await api.del(`/pairings/${info.id}`, { requires: ["pairing_v1"] });
                             if (issued?.id === info.id) setIssued(null);
-                        })}>링크 폐기</button>}
-                        <button type="button" className="ghost small" disabled={busy} onClick={() => void run(() => issue(info.name, info.id))}>링크 재발급</button>
+                        })}>링크 폐기</ServerActionButton>}
+                        <ServerActionButton type="button" className="ghost small" disabled={busy} onClick={() => void run(() => issue(info.name, info.id))}>링크 재발급</ServerActionButton>
                     </div>
                 </li>)}
             </ul>
@@ -133,7 +134,7 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                 setBusy(true);
                 setError(null);
                 void redeemPairing(parsed.code).then(onDone).catch((e) => {
-                    const unknown = e instanceof ApiError && e.status === 0;
+                    const unknown = e instanceof ApiError && (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true;
                     setError(unknown ? "등록 결과를 확인하지 못했습니다. 새로고침해 로그인을 확인하고, 실패하면 소유자가 기기 목록을 확인한 뒤 폐기·재발급하세요. 자동 재등록하지 않습니다." : e instanceof ApiError ? e.message : "등록하지 못했습니다.");
                 }).finally(() => setBusy(false));
             }}>
@@ -151,7 +152,7 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                 {target && insecureRemote(target.origin) && <p className="warn">암호화되지 않은 HTTP입니다. HTTPS 또는 신뢰하는 VPN에서 등록하세요.</p>}
                 {target && target.origin !== location.origin
                     ? <a href={pairingLink(target.origin, target.code)} target="_blank" rel="noopener noreferrer">대상 서버에서 등록 확인</a>
-                    : <button type="submit" disabled={busy || checking || loggedIn || !link.trim()}>{busy ? "등록 중…" : "이 기기 등록"}</button>}
+                    : <ServerActionButton type="submit" disabled={busy || checking || loggedIn || !link.trim()}>{busy ? "등록 중…" : "이 기기 등록"}</ServerActionButton>}
                 <p className="muted small">등록하면 이 브라우저가 대상 서버에 접근할 수 있습니다. 링크는 5분 뒤 만료되며 한 번만 사용할 수 있습니다.</p>
                 <p className="muted small">등록 기기는 모든 프로젝트·대화·파일을 공유하고 명령·터미널을 실행할 수 있습니다. 소유자 관리 권한은 부여하지 않습니다.</p>
                 {error && <p className="err" role="alert">{error}</p>}

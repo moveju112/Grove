@@ -2,6 +2,7 @@ import { ApiError, api } from "../api/client";
 import { useAutoOpen } from "../state/autoOpen";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 export type AgentRun = {
     id: string;
@@ -80,7 +81,7 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
                                 <span className="chip">{r.agent_id}</span>
                                 <span className={`status ${runLabel(r).needsUser ? "awaiting_approval" : r.status}`}>{runLabel(r).text}</span>
                                 <button className="link" onClick={() => openSession(r.child_session_id, r.agent_id)}>자식 대화</button>
-                                {r.status === "running" && <button className="ghost small" onClick={() => void cancel(r.id)}>취소</button>}
+                                {r.status === "running" && <ServerActionButton className="ghost small" onClick={() => void cancel(r.id)}>취소</ServerActionButton>}
                             </li>
                         ))}
                     </ul>

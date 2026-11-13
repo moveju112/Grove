@@ -6,6 +6,7 @@ import { ApiError, api, rawGet } from "../api/client";
 import { TerminalCapture } from "./TerminalCapture";
 import { guardComposition, NO_MODIFIERS, TerminalInput, type Modifiers } from "./terminal/input";
 import { TerminalKeys } from "./terminal/TerminalKeys";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type TerminalRow = { id: string; name: string; status: "running" | "exited" | "lost"; exit_code: number | null; reason: string | null; revision: number };
 
@@ -175,10 +176,10 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             <div className="inline small">
                 <strong>{row?.name ?? "터미널"}</strong>
                 <span className="muted" data-testid="terminal-status">{statusText}</span>
-                {row?.status === "running" && <button className="ghost small" onClick={() => void kill()}>종료</button>}
+                {row?.status === "running" && <ServerActionButton className="ghost small" onClick={() => void kill()}>종료</ServerActionButton>}
             </div>
             {err && <p className="err" role="alert">{err}</p>}
-            {(conn === "missing" || conn === "error") && <button className="ghost small" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</button>}
+            {(conn === "missing" || conn === "error") && <ServerActionButton className="ghost small" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</ServerActionButton>}
             <div className="term-host" ref={host} />
             <TerminalCapture key={terminalId} terminalId={terminalId} enabled={conn === "open" || conn === "readonly"} />
             {conn === "open" && (

@@ -3,8 +3,10 @@ import { When } from "./When";
 import { api } from "../api/client";
 import type { ModelCatalog, ModelProfile } from "../api/generated";
 import { useCapability } from "../state/capabilities";
+import { useServerBlockReason } from "./pwa/lifecycle";
 
 export function ProfileCatalog({ profile, onChoose }: { profile: ModelProfile; onChoose: (model: string, revision: number) => void }) {
+    const serverBlocked = useServerBlockReason();
     const supported = useCapability("model_management_v1");
     const [catalog, setCatalog] = useState<ModelCatalog | null>(null);
     const [busy, setBusy] = useState(false);
@@ -40,7 +42,8 @@ export function ProfileCatalog({ profile, onChoose }: { profile: ModelProfile; o
                 <label>
                     공급자 모델
                     <select aria-label={`${profile.name} 공급자 모델`} value={catalog.models.some((model) => model.id === profile.model) ? profile.model : ""}
-                        disabled={busy || stale} onChange={(event) => { if (event.target.value) onChoose(event.target.value, catalog.profile_revision); }}>
+                        disabled={busy || stale || !!serverBlocked} title={serverBlocked ?? undefined}
+                        onChange={(event) => { if (event.target.value) onChoose(event.target.value, catalog.profile_revision); }}>
                         <option value="">모델을 선택하세요(수동 입력도 가능)</option>
                         {catalog.models.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.id}</option>)}
                     </select>

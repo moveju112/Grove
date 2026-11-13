@@ -10,7 +10,7 @@ function worker(base: string, assets?: string[]) {
     type WorkerEvent = {
         request?: { url: string; method: string; mode: string };
         data?: unknown;
-        source?: { postMessage: (message: unknown) => void };
+        source?: { id: string; url: string; postMessage: (message: unknown) => void };
         waitUntil: (promise: Promise<unknown>) => void;
         respondWith: (promise: Promise<Response>) => void;
     };
@@ -33,20 +33,20 @@ function worker(base: string, assets?: string[]) {
         }),
     };
     const self = {
-        registration: { scope: origin + base },
+        registration: { scope: origin + base, waiting: null as unknown, installing: null as unknown },
         __GROVE_ASSETS__: assets,
-        clients: { claim: vi.fn(async () => undefined), matchAll: vi.fn(async () => [{ url: origin + base }]) },
+        clients: { claim: vi.fn(async () => undefined), matchAll: vi.fn(async () => [{ id: "one", url: origin + base }]) },
         skipWaiting: vi.fn(),
         addEventListener: (type: string, handler: (event: WorkerEvent) => void) => { handlers.set(type, handler); },
     };
     const fetch = vi.fn(async (_request: unknown) => new Response("network", { headers: { "content-type": "text/javascript" } }));
     const postMessage = vi.fn();
-    runInNewContext(source, { self, caches, fetch, URL, Response });
-    async function dispatch(type: string, request?: WorkerEvent["request"], data?: unknown) {
+    runInNewContext(source, { self, caches, fetch, URL, Response, Headers });
+    async function dispatch(type: string, request?: WorkerEvent["request"], data?: unknown, clientId = "one") {
         const pending: Promise<unknown>[] = [];
         let response: Promise<Response> | undefined;
         handlers.get(type)!({
-            request, data, source: { postMessage },
+            request, data, source: { id: clientId, url: origin + base, postMessage },
             waitUntil: (promise) => { pending.push(promise); },
             respondWith: (promise) => { response = promise; },
         });
@@ -148,7 +148,9 @@ describe.each(["/", "/grove/", "/grove/child/"])("worker at %s", (base) => {
             `${prefix}__GROVE_BUILD__`,
             "unrelated-app-cache",
         ];
-        for (const key of [...keep, `${prefix}old`]) w.entries.set(key, new Map());
+        for (const key of [`${prefix}old`, ...keep]) w.entries.set(key, new Map());
+        await w.dispatch("install");
+        w.self.clients.matchAll.mockResolvedValue([]);
         await w.dispatch("activate");
         expect([...w.entries.keys()]).toEqual(keep);
         expect(w.self.clients.claim).toHaveBeenCalledOnce();
@@ -168,7 +170,7 @@ describe.each(["/", "/grove/", "/grove/child/"])("worker at %s", (base) => {
             [origin + base + "assets/old-hash.js", new Response("old lazy asset")],
         ]);
         w.entries.set(`${prefix}old`, old);
-        w.self.clients.matchAll.mockResolvedValue([{ url: origin + base }, { url: origin + base + "other" }]);
+        w.self.clients.matchAll.mockResolvedValue([{ id: "one", url: origin + base }, { id: "two", url: origin + base + "other" }]);
         await w.dispatch("activate");
         expect(w.entries.has(`${prefix}old`)).toBe(true);
         const asset = await w.dispatch("fetch", w.request(`${base}assets/old-hash.js`));
@@ -176,6 +178,73 @@ describe.each(["/", "/grove/", "/grove/child/"])("worker at %s", (base) => {
         w.fetch.mockRejectedValue(new TypeError("offline"));
         const shell = await w.dispatch("fetch", w.request(`${base}deep/link`, "GET", "navigate"));
         expect(await shell!.text()).toBe(`shell:${base}`);
+    });
+
+    it.each([null, "old"])("does not delete a lone document's lazy assets on activation (version %s)", async (version) => {
+        const w = worker(base);
+        const old = `grove-shell-${encodeURIComponent(origin + base)}-old`;
+        w.entries.set(old, new Map([[origin + base + "assets/old.js", new Response("old lazy")]]));
+        await w.dispatch("activate");
+        await w.dispatch("message", undefined, { type: "shell-status", version });
+        expect(w.entries.has(old)).toBe(true);
+        expect(await (await w.dispatch("fetch", w.request(base + "assets/old.js")))!.text()).toBe("old lazy");
+    });
+
+    it("reclaims old caches only after every live document reports the current shell, including after another tab closes", async () => {
+        const w = worker(base);
+        const old = `grove-shell-${encodeURIComponent(origin + base)}-old`;
+        w.entries.set(old, new Map());
+        await w.dispatch("install");
+        w.self.clients.matchAll.mockResolvedValue([{ id: "one", url: origin + base }, { id: "two", url: origin + base }]);
+        await w.dispatch("message", undefined, { type: "shell-status", version: "__GROVE_BUILD__" });
+        expect(w.entries.has(old)).toBe(true);
+        await w.dispatch("message", undefined, { type: "shell-status", version: "old" }, "two");
+        expect(w.entries.has(old)).toBe(true);
+        w.self.clients.matchAll.mockResolvedValue([{ id: "one", url: origin + base }]);
+        await w.dispatch("message", undefined, { type: "shell-status", version: "__GROVE_BUILD__" });
+        expect(w.entries.has(old)).toBe(false);
+    });
+
+    it("keeps waiting and newer caches, and does not collect from a recreated empty current cache", async () => {
+        const w = worker(base);
+        const prefix = `grove-shell-${encodeURIComponent(origin + base)}-`;
+        w.entries.set(prefix + "old", new Map());
+        await w.dispatch("install");
+        w.entries.set(prefix + "next", new Map());
+        w.self.registration.waiting = {};
+        await w.dispatch("message", undefined, { type: "shell-status", version: "__GROVE_BUILD__" });
+        expect(w.entries.has(prefix + "old")).toBe(true);
+        w.self.registration.waiting = null;
+        await w.dispatch("message", undefined, { type: "shell-status", version: "__GROVE_BUILD__" });
+        expect(w.entries.has(prefix + "old")).toBe(false);
+        expect(w.entries.has(prefix + "next")).toBe(true);
+        w.entries.delete(prefix + "__GROVE_BUILD__");
+        await w.dispatch("message", undefined, { type: "shell-status", version: "__GROVE_BUILD__" });
+        expect(w.entries.has(prefix + "next")).toBe(true);
+    });
+
+    it("reclaims only after both open tabs report the current document version", async () => {
+        const w = worker(base);
+        const old = `grove-shell-${encodeURIComponent(origin + base)}-old`;
+        w.entries.set(old, new Map());
+        await w.dispatch("install");
+        w.self.clients.matchAll.mockResolvedValue([{ id: "one", url: origin + base }, { id: "two", url: origin + base }]);
+        await w.dispatch("message", undefined, { type: "shell-status", version: "__GROVE_BUILD__" });
+        expect(w.entries.has(old)).toBe(true);
+        await w.dispatch("message", undefined, { type: "shell-status", version: "__GROVE_BUILD__" }, "two");
+        expect(w.entries.has(old)).toBe(false);
+    });
+
+    it("stamps only its cached HTML with a document version, never a network fallback", async () => {
+        const w = worker(base);
+        await w.dispatch("install");
+        const cache = [...w.entries.values()][0]!;
+        cache.set(origin + base, new Response("<html><head></head><body>cached</body></html>", { headers: { "content-type": "text/html" } }));
+        const response = await w.dispatch("fetch", w.request(base, "GET", "navigate"));
+        expect(await response!.text()).toContain('<meta name="grove-shell-version" content="__GROVE_BUILD__">');
+        cache.delete(origin + base);
+        w.fetch.mockResolvedValue(new Response("<head></head>network", { headers: { "content-type": "text/html" } }));
+        expect(await (await w.dispatch("fetch", w.request(base, "GET", "navigate")))!.text()).toBe("<head></head>network");
     });
 
     it("reports shell cache loss without deleting or inventing local drafts", async () => {

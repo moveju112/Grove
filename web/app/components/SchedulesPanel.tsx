@@ -4,6 +4,7 @@ import { ApiError, api } from "../api/client";
 import type { ModelProfile } from "../api/generated";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Schedule = {
     id: string;
@@ -120,11 +121,11 @@ function Webhook({ s, act }: { s: Schedule; act: (f: () => Promise<unknown>) => 
         <div className="stack small" data-testid="schedule-webhook">
             <div className="inline wrap">
                 <span>webhook {s.webhook_enabled ? "켜짐" : "꺼짐"}</span>
-                <button className="ghost small" onClick={() => void enable()}>{s.webhook_enabled ? "비밀 다시 만들기" : "webhook 켜기"}</button>
+                <ServerActionButton className="ghost small" onClick={() => void enable()}>{s.webhook_enabled ? "비밀 다시 만들기" : "webhook 켜기"}</ServerActionButton>
                 {s.webhook_enabled && (
-                    <button className="ghost small" onClick={() => void act(async () => { await api.post(`/schedules/${s.id}/webhook`, { enable: false }); setShown(null); })}>
+                    <ServerActionButton className="ghost small" onClick={() => void act(async () => { await api.post(`/schedules/${s.id}/webhook`, { enable: false }); setShown(null); })}>
                         webhook 끄기
-                    </button>
+                    </ServerActionButton>
                 )}
             </div>
             {shown && (
@@ -209,17 +210,17 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                             <p className="muted small" data-testid="schedule-limits">{limits(s)}</p>
                             {s.quiet_policy === "unchanged_result" && <p className="muted small">직전 완료 결과와 같으면 자동 실행 알림을 생략합니다(실행 기록·비용은 남고, 실패·승인 필요·직접 실행은 항상 알림).</p>}
                             <div className="inline wrap">
-                                <button className="small" onClick={() => void act(() => api.post(`/schedules/${s.id}/run`))}>지금 실행</button>
-                                {s.status === "active" && <button className="ghost small" onClick={() => void act(() => api.post(`/schedules/${s.id}/pause`, { expected_revision: s.revision }))}>일시 정지</button>}
-                                {s.status === "paused" && <button className="ghost small" onClick={() => void act(() => api.post(`/schedules/${s.id}/resume`, { expected_revision: s.revision }))}>재개</button>}
-                                <button
+                                <ServerActionButton className="small" onClick={() => void act(() => api.post(`/schedules/${s.id}/run`))}>지금 실행</ServerActionButton>
+                                {s.status === "active" && <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/schedules/${s.id}/pause`, { expected_revision: s.revision }))}>일시 정지</ServerActionButton>}
+                                {s.status === "paused" && <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/schedules/${s.id}/resume`, { expected_revision: s.revision }))}>재개</ServerActionButton>}
+                                <ServerActionButton
                                     className="ghost small danger"
                                     onClick={() => {
                                         if (confirm(`예약 '${s.name}'을 삭제할까요? 실행 기록과 대화는 남습니다.`)) void act(() => api.post(`/schedules/${s.id}/delete`, { expected_revision: s.revision }));
                                     }}
                                 >
                                     삭제
-                                </button>
+                                </ServerActionButton>
                             </div>
                             <Webhook s={s} act={act} />
                             <Runs id={s.id} projectId={projectId} open={open} />
@@ -294,7 +295,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                         </label>
                     </div>
                 )}
-                <button type="submit" disabled={!form.name.trim() || !form.prompt.trim() || !profileId || (!!bot && !form.confirmed)}>예약 추가</button>
+                <ServerActionButton type="submit" disabled={!form.name.trim() || !form.prompt.trim() || !profileId || (!!bot && !form.confirmed)}>예약 추가</ServerActionButton>
             </form>
         </details>
     );

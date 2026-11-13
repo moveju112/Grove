@@ -3,6 +3,7 @@ import { ApiError, api } from "../api/client";
 import type { Notification, RemoteWatch } from "../api/generated";
 import { useQuery } from "../state/store";
 import { When } from "./When";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 const STATUS: Record<string, string> = {
     watching: "감시 중",
@@ -55,16 +56,16 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
                             <div className="muted small">{w.url}</div>
                             {w.status === "watching" && !disabled && (
                                 <span className="inline">
-                                    <button className="ghost small" onClick={() => void act(() => api.post(`/remote-watches/${w.id}/check`, { expected_revision: w.revision }))}>
+                                    <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/remote-watches/${w.id}/check`, { expected_revision: w.revision }))}>
                                         지금 확인
-                                    </button>
-                                    <button
+                                    </ServerActionButton>
+                                    <ServerActionButton
                                         className="ghost small"
                                         title="이 서버의 조회만 멈춥니다. 원격 작업은 취소하지 않습니다"
                                         onClick={() => void act(() => api.post(`/remote-watches/${w.id}/cancel`, { expected_revision: w.revision }))}
                                     >
                                         감시 취소(원격 작업은 계속)
-                                    </button>
+                                    </ServerActionButton>
                                 </span>
                             )}
                         </li>
@@ -98,7 +99,7 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
                     <input aria-label="실패 값(쉼표 구분)" value={form.failure} onChange={(e) => setForm({ ...form, failure: e.target.value })} />
                     <input aria-label="확인 간격(초)" type="number" min={10} max={3600} value={form.interval} onChange={(e) => setForm({ ...form, interval: e.target.value })} />
                     <input aria-label="감시 시간(분)" type="number" min={1} value={form.timeout} onChange={(e) => setForm({ ...form, timeout: e.target.value })} />
-                    <button type="submit" disabled={!form.title.trim() || !form.url.trim()}>감시 시작</button>
+                    <ServerActionButton type="submit" disabled={!form.title.trim() || !form.url.trim()}>감시 시작</ServerActionButton>
                 </form>
             )}
         </details>
