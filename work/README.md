@@ -37,7 +37,6 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 번호 | 브랜치 | worktree 절대 경로 | workspace ID | 기능 |
 |---|---|---|---|---|
 | 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | `wks_145becb7b1464f70` | 역할별 위임 허용 정책 (`873c441` 종료·clean, `262798c` 병합, `validation-52_pbv0g` 인수 중) |
-| 35 | parallel/b02-tool-outputs | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-35-tool-outputs | `wks_242996cfa36e0a48` | 큰 도구 결과 파일 보관·범위 조회 (`80b69f5` 종료·clean 확인, `151cbe5` 병합, 고정 job `validation-16syoppr` 인수 중) |
 | 36 | parallel/b02-mcp-oauth | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-36-mcp-oauth | `wks_912a0803920b11fa` | HTTP MCP OAuth 연결·명시적 갱신 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준, 세션 `4741efe5-e045-4afd-b63c-b94d901a65e4` 실행 확인) |
 | 37 | parallel/b02-settings-links | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links | `wks_c1844db43036c46f` | 비동기 설정 직접 링크·pane 경계 (`43cf9ad` 종료·clean, `ee8173c` 병합, `validation-52_pbv0g` 인수 중) |
 | 38 | parallel/b02-local-models | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-38-local-models | `wks_97add2973aa8639a` | 선택적 로컬 HTTP 모델 연결·상태·목록 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, 세션 `e60b7aa1-33c3-40c7-b35e-89476f3e0ec2` running 확인) |
@@ -51,6 +50,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 46 | parallel/b02-exec-unknown | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-46-exec-unknown | `wks_82d694c284330b14` | 단발 CLI 실행 중 unknown·재조회 (`7d5a6e5` 기준, branch/HEAD/clean 확인, 미시작) |
 | 47 | parallel/b02-routine-lifecycle | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-47-routine-lifecycle | `wks_80cdf0940f759e7c` | Routine 실제 제어 수명주기 (`7d5a6e5` 기준, branch/HEAD/clean 확인, 미시작) |
 | 48 | parallel/b02-websocket-boundaries | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-48-websocket-boundaries | `wks_12fc63102b765987` | WebSocket 인증·한도·재접속 (`7d5a6e5` 기준, branch/HEAD/clean 확인, 미시작) |
+| 49 | parallel/b02-pane-draft-lifetime | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-49-pane-draft-lifetime | 생성 예정 | 분할 생성·이동 중 설정 초안 수명 (`151cbe5ad83129dac9457e628714da069d6e59f4` 검증 기준) |
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
@@ -70,6 +70,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 25 | ready · `f9df069` 통합·인수 완료 | 기능 update-settings E2E 4개 및 통합 검사 통과. SETTINGS-016 완료; 정책 저장과 실제 자동 설치를 구분. 기존 오류 retry count=1은 재사용하지 않음 |
 
 ## 현재 통합 인수
+- 35는 `validation-16syoppr`의 필수 인수·CTX-012·인계/commit 보존 확인 후 `wks_242996cfa36e0a48`을 archive했다. 종료 세션 1개 보관·디렉터리 제거 응답을 확인했고 브랜치는 유지했다. cleanup-finished 기록 후 큐는 backlog 2개·실행 7개·새 시작 슬롯 3개다. 빈자리는 이월된 분할 초안 유실을 49로 배정한다.
 - 22·28·30의 기존 유효 Rust 35개·웹 단위 114개 근거는 재사용했다. 28의 스킬 관리/선택 E2E 3개와 30의 위치/부모 탐색·pane focus·반응형 회귀 7개가 실제 통합 서버에서 통과했다.
 - 공통 workspace E2E는 서로 다른 27개 통과, 설정 직접 링크 1개 실패다. protocol 차단 시험은 이미 비활성화된 버튼 클릭을 기다리는 낡은 기대를 비활성 상태·키보드 전송 차단·초안 보존으로 수정해 통과했다. 수정 중 `frames`를 함수로 잘못 호출한 TypeError도 있었으며 그 호출을 제거하고 typecheck·영향 시험을 통과했다. 성공한 기존 시험은 반복하지 않았다.
 - 근거는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_2d71780d.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_1ec03650.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3cdb03b6.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3bf22535.stdout`와 같은 절대 경로의 stderr 로그다. 총 38개 선택 E2E 중 서로 다른 37개 통과·1개 실패이며, 마지막 미실행 1개는 별도 실행해 통과했다. 전체 선택 명령의 성공으로 바꾸지 않는다.
@@ -136,7 +137,7 @@ b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01
 
 | 출처 | 남은 작업 | 근거 | 배정 |
 |---|---|---|---|
-| 37 | `LAYOUT-004` 분할 생성 자체의 설정 초안 remount 유실 | `work/RESULT-37.md`; `shell_b46dd8b2`의 분할 전 2007→분할 후 2000 관측 | 미배정. 안정된 두 pane의 직접 링크 보존은 37에서 검증했으나 leaf→split 초안 수명은 별도 소유/회귀가 필요하다. 다음 보충 우선 |
+| 37 | `LAYOUT-004` 분할 생성 자체의 설정 초안 remount 유실 | `work/RESULT-37.md`; `shell_b46dd8b2`의 분할 전 2007→분할 후 2000 관측 | 49 배정. 안정된 두 pane의 직접 링크 보존과 분할 생성 수명을 구분해 인수한다 |
 | 00 | 원본 설정 조회의 서버 라우트·설정 화면 연결 | `work/RESULT-00.md` | 10 |
 | 01 | 스킬 선택·적용의 모델 경로 연결 | `work/RESULT-01.md`, `work/RESULT-11.md` | 11에서 통합·검증 완료 |
 | 04 | 이미지 읽기 도구의 모델 입력 경로 연결 | `work/RESULT-04.md`, `work/RESULT-12.md` | 12에서 통합·검증 완료 |
