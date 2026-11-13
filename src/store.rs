@@ -893,6 +893,22 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE turns ADD COLUMN provider_ms INTEGER CHECK (provider_ms IS NULL OR provider_ms >= 0);
     ALTER TABLE turns ADD COLUMN provider_started_at TEXT;
     "#,
+    // Hook 설정 저장 전용. 다른 병렬 작업의 migration에 의존하지 않는다.
+    r#"
+    CREATE TABLE hook_definitions (
+        id TEXT PRIMARY KEY,
+        project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
+        name TEXT NOT NULL,
+        event TEXT NOT NULL CHECK(event IN ('SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SessionEnd')),
+        matcher TEXT NOT NULL,
+        command TEXT NOT NULL,
+        enabled INTEGER NOT NULL DEFAULT 0 CHECK(enabled IN (0,1)),
+        revision INTEGER NOT NULL DEFAULT 1 CHECK(revision > 0),
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    CREATE INDEX hook_definitions_scope ON hook_definitions(project_id,name,id);
+    "#,
 ];
 
 #[cfg(test)]
