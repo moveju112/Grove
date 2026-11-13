@@ -7,14 +7,12 @@ export type LifecycleState = {
     connection: "checking" | "ready" | "unreachable";
     protocol: number | null;
     storageIssue: StorageIssue;
-    storageApi: "unknown" | "supported" | "unsupported" | "unavailable";
-    persistence: "unknown" | "persistent" | "best-effort";
     shell: "unknown" | "ready" | "missing" | "unsupported";
 };
 
 const initial: LifecycleState = {
     online: true, connection: "checking", protocol: null, storageIssue: null,
-    storageApi: "unknown", persistence: "unknown", shell: "unknown",
+    shell: "unknown",
 };
 let state = initial;
 const subscribers = new Set<() => void>();
@@ -113,19 +111,6 @@ export function inspectLocalDrafts() {
     catch (error) { update({ storageIssue: storageFailure(error) }); }
 }
 
-export async function inspectStoragePolicy() {
-    if (!navigator.storage) {
-        update({ storageApi: "unsupported", persistence: "unknown" });
-        return;
-    }
-    try {
-        const persistent = navigator.storage.persisted ? await navigator.storage.persisted() : null;
-        update({ storageApi: "supported", persistence: persistent === null ? "unknown" : persistent ? "persistent" : "best-effort" });
-    } catch {
-        update({ storageApi: "unavailable", persistence: "unknown" });
-    }
-}
-
 let checking: Promise<void> | null = null;
 export function checkCompatibility(): Promise<void> {
     const reconnected = navigator.onLine && !state.online;
@@ -155,7 +140,6 @@ export function startLifecycle(): () => void {
     const version = document.querySelector<HTMLMetaElement>('meta[name="grove-shell-version"]')?.content ?? null;
     const inspect = () => {
         inspectLocalDrafts();
-        void inspectStoragePolicy();
         if ("serviceWorker" in navigator) navigator.serviceWorker.controller?.postMessage({ type: "shell-status", version });
         else update({ shell: "unsupported" });
     };

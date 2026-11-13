@@ -155,12 +155,8 @@ test("실제 초안 저장 경로의 quota 오류를 알리고 입력을 지우�
     await expect(view.getByLabel("메시지 입력")).toHaveValue("저장되지 않은 중요한 입력");
 });
 
-test("격리된 Chrome origin의 실제 저장 한도와 저장 정책을 확인하고 초안·서버 미전송을 보존한다", async ({ page }) => {
+test("격리된 Chrome origin의 실제 저장 한도에서 초안·서버 미전송을 보존한다", async ({ page }) => {
     const { session, view } = await openDraft(page, "real-quota");
-    const policy = await page.evaluate(() => navigator.storage.persisted());
-    const limits = page.getByTestId("storage-limits");
-    await limits.locator("summary").click();
-    await expect(limits).toContainText(policy ? "영구 보관 상태지만" : "영구 보관 승인을 받지 않았습니다");
     const drafts = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage)
         .filter((key) => key.startsWith("grove.draft.")).map((key) => [key, localStorage.getItem(key)])));
     const before = await drafts();

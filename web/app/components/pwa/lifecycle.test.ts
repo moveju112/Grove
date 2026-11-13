@@ -17,11 +17,11 @@ class MemoryStorage implements Storage {
 
 let lifecycle: typeof import("./lifecycle");
 let local: MemoryStorage;
-let browser: { onLine: boolean; storage?: { persisted: () => Promise<boolean> } };
+let browser: { onLine: boolean };
 beforeEach(async () => {
     vi.resetModules();
     local = new MemoryStorage();
-    browser = { onLine: true, storage: { persisted: async () => false } };
+    browser = { onLine: true };
     vi.stubGlobal("navigator", browser);
     vi.stubGlobal("window", { localStorage: local });
     vi.stubGlobal("sessionStorage", new MemoryStorage());
@@ -148,26 +148,5 @@ describe("초안 저장소", () => {
         lifecycle.inspectLocalDrafts();
         expect(lifecycle.lifecycleSnapshot().storageIssue).toBe("missing");
         expect(local.getItem("grove.draft.fixture")).toBeNull();
-    });
-
-    it("navigator.storage 미지원이어도 localStorage 초안을 막지 않는다", async () => {
-        delete browser.storage;
-        await lifecycle.inspectStoragePolicy();
-        expect(lifecycle.lifecycleSnapshot().storageApi).toBe("unsupported");
-        lifecycle.localDraftStorage()!.setItem("grove.draft.fixture", "offline draft");
-        expect(local.getItem("grove.draft.fixture")).toBe("offline draft");
-        expect(lifecycle.lifecycleSnapshot().storageIssue).toBeNull();
-    });
-
-    it("정책 조회 거부·best-effort·영구 보관을 구분한다", async () => {
-        await lifecycle.inspectStoragePolicy();
-        expect(lifecycle.lifecycleSnapshot().persistence).toBe("best-effort");
-        browser.storage = { persisted: async () => true };
-        await lifecycle.inspectStoragePolicy();
-        expect(lifecycle.lifecycleSnapshot().persistence).toBe("persistent");
-        browser.storage = { persisted: async () => { throw new DOMException("", "SecurityError"); } };
-        await lifecycle.inspectStoragePolicy();
-        expect(lifecycle.lifecycleSnapshot().storageApi).toBe("unavailable");
-        expect(lifecycle.lifecycleSnapshot().persistence).toBe("unknown");
     });
 });
