@@ -1,0 +1,20 @@
+# Managed by scripts/user_service.py; do not edit.
+[Unit]
+Description=Grove user server
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+ExecStart=@EXEC_START@
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=70
+KillMode=control-group
+UMask=0077
+NoNewPrivileges=true
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
