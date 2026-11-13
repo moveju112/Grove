@@ -288,8 +288,9 @@ test("서버 protocol이 바뀌면 새로고침을 안내하고 변경 요청을
     const view = page.locator(".project-view").first();
     await view.getByLabel("보내기 방식").selectOption("save");
     await view.getByLabel("메시지 입력").fill("보내지면 안 됨");
-    await view.getByRole("button", { name: "보내기", exact: true }).click();
-    await page.waitForTimeout(500);
+    await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
+    await view.getByLabel("메시지 입력").press("Control+Enter");
+    await expect(view.getByLabel("메시지 입력")).toHaveValue("보내지면 안 됨");
     expect(mutations).toBe(0);
     await page.unroute("**/api/v1/**");
 });

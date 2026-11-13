@@ -49,8 +49,14 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 번호 | 분류·접수 | 남은 일·다음 조건 |
 |---|---|---|
 | 21 | blocked · 후속 종료、tip `d369ef8` | 공유 환경 복구 후 typecheck·Vitest 12개·E2E 4개 통과、기존 Rust 23개 근거 재사용。inline TOML parser 승인/재사용 parser 제공이 해제 조건이며 RESOURCE-018 전체 완료는 아님。기존 error retry count=1 유지 |
-| 22 | needs-continuation · 원래 담당의 focus 결함 수정 준비 | 생성 dialog의 취소→Tab containment E2E 1개 실패、나머지 45개 미실행。`work/22.md`에 CreationDialog 한정 소유와 선택 E2E를 배정。27의 PWA 연결 소유와 분리하며 수정·인수 전 정리하지 않음 |
+| 22 | needs-continuation · 원래 세션에 후속 한 번 접수 | 생성 dialog의 취소→Tab containment E2E 1개 실패, 나머지 45개 미실행. `26acaaf`의 `work/22.md`에 CreationDialog 한정 소유·선택 E2E 배정 후 `status=sent` 접수. 개발 fast=false 재조회 확인. 27의 PWA 소유와 분리하며 실제 수정·인수 완료는 미확인 |
 | 27 | needs-continuation · 기존 세션 후속 접수、실행 중 | 22 `e28dbdf`를 27 branch의 `8da340d`에 동기화한 뒤 기존 세션 `dd2a07fa-fd60-4bfe-ab70-0d3ded54d983`에 한 번 접수。개발 fast=false 명시·재조회 확인。최신 원본 COMMON·27 소유 범위·유효 근거 보존과 structured handoff를 전달했으며 실제 구현·검증 완료는 미확인 |
+
+## 현재 통합 인수
+- 22·28·30의 기존 유효 Rust 35개·웹 단위 114개 근거는 재사용했다. 28의 스킬 관리/선택 E2E 3개와 30의 위치/부모 탐색·pane focus·반응형 회귀 7개가 실제 통합 서버에서 통과했다.
+- 공통 workspace E2E는 서로 다른 27개 통과, 설정 직접 링크 1개 실패다. protocol 차단 시험은 이미 비활성화된 버튼 클릭을 기다리는 낡은 기대를 비활성 상태·키보드 전송 차단·초안 보존으로 수정해 통과했다. 수정 중 `frames`를 함수로 잘못 호출한 TypeError도 있었으며 그 호출을 제거하고 typecheck·영향 시험을 통과했다. 성공한 기존 시험은 반복하지 않았다.
+- 근거는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_2d71780d.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_1ec03650.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3cdb03b6.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3bf22535.stdout`와 같은 절대 경로의 stderr 로그다. 총 38개 선택 E2E 중 서로 다른 37개 통과·1개 실패이며, 마지막 미실행 1개는 별도 실행해 통과했다. 전체 선택 명령의 성공으로 바꾸지 않는다.
+- 미해결 설정 직접 링크는 `SETTINGS-021`을 다시 열었다. Settings/ScopedSettings는 이번 22·28·30 통합 diff에서 바뀌지 않았지만 원인·통합 인과는 미확정이다. 관련 없는 스킬 인수·정리는 진행하고, 30의 전체 UI 통합 완료 판단은 이 공통 경계 조사와 함께 보존한다. 22는 원래 담당의 focus 수정·인수 전까지 보존한다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
