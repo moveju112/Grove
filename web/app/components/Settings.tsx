@@ -29,6 +29,8 @@ import { requestNotificationAccess } from "./capabilities/browser";
 import { UpdateSettings } from "./update/UpdateSettings";
 import { settingLinkKey } from "./settings-links/reveal";
 import { useSettingsLink } from "./settings-links/useSettingsLink";
+import { DefinitionUpdates } from "./definition-updates/DefinitionUpdates";
+import { useDefinitionDraft } from "./definition-updates/useDefinitionDraft";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -495,51 +497,50 @@ function Definitions() {
 
 function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
     const d = useQuery<DefinitionDetail>(`definitions:${kind}:${id}`, () => api.get(`/definitions/${kind}/${id}`));
-    const [body, setBody] = useState<string | null>(null);
+    const local = useDefinitionDraft(kind, id);
+    const [restoring, setRestoring] = useState(false);
+    const [saving, setSaving] = useState(false);
     const save = useSave();
     if (!d.data) return null;
     const cur = d.data;
-    const draft = body ?? cur.body;
+    const draft = local.draft?.text ?? cur.body;
     const changed = draft !== cur.body;
+    const busy = restoring || saving;
     return (
         <div className="def-editor">
             <h3>{cur.name} <span className="muted small">revision {cur.revision}</span></h3>
             <p className="muted small">{cur.description}</p>
-            <textarea value={draft} onChange={(e) => setBody(e.target.value)} rows={14} aria-label="정의 본문" />
+            <textarea value={draft} disabled={saving} onChange={(e) => local.write({
+                text: e.target.value, baseRevision: local.draft?.baseRevision ?? cur.revision, updatedAt: Date.now(),
+            })} rows={14} aria-label="정의 본문" />
+            {local.error && <p role="alert">{local.error}</p>}
+            {local.draft && local.draft.baseRevision !== cur.revision && <p role="alert">초안 작성 뒤 서버 revision이 바뀌었어. 저장은 이전 revision으로 검사하므로 새 값을 조용히 덮어쓰지 않아. 아래 비교에서 현재 적용값을 확인해.</p>}
             <div className="actions">
-                <ServerActionButton disabled={!changed} onClick={() => void save.run(async () => {
-                    await api.put(`/definitions/${kind}/${id}`, { expected_revision: cur.revision, body: draft });
-                    setBody(null);
-                    d.reload();
+                <ServerActionButton disabled={!changed || busy} onClick={() => void save.run(async () => {
+                    setSaving(true);
+                    try {
+                        await api.put(`/definitions/${kind}/${id}`, { expected_revision: local.draft?.baseRevision ?? cur.revision, body: draft });
+                        local.write(null);
+                        d.reload();
+                    } finally { setSaving(false); }
                 })}>저장</ServerActionButton>
-                <button className="ghost" disabled={!changed} onClick={() => setBody(null)}>편집 취소</button>
-                {cur.builtin && cur.modified_fields.length > 0 && (
-                    <ServerActionButton className="ghost" onClick={() => {
-                        if (confirm(`기본값으로 복원합니다: ${cur.modified_fields.join(", ")}\n사용자 수정본은 사라집니다.`))
-                            void save.run(async () => { await api.post(`/definitions/${kind}/${id}/restore`, { expected_revision: cur.revision }); setBody(null); d.reload(); });
-                    }}>기본값 복원</ServerActionButton>
-                )}
+                <button className="ghost" disabled={!local.draft || busy} onClick={() => local.write(null)}>편집 취소</button>
                 {!cur.builtin && (
-                    <ServerActionButton className="ghost" onClick={() => {
+                    <ServerActionButton className="ghost" disabled={busy} onClick={() => {
                         if (confirm("이 정의를 삭제할까요?")) void save.run(() => api.del(`/definitions/${kind}/${id}?expected_revision=${cur.revision}`));
                     }}>삭제</ServerActionButton>
                 )}
                 {kind === "workflow" && id !== "default" && (
-                    <ServerActionButton className="ghost" onClick={() => void save.run(async () => { await api.put(`/definitions/${kind}/${id}`, { expected_revision: cur.revision, enabled: !cur.enabled }); d.reload(); })}>
+                    <ServerActionButton className="ghost" disabled={busy} onClick={() => void save.run(async () => { await api.put(`/definitions/${kind}/${id}`, { expected_revision: cur.revision, enabled: !cur.enabled }); d.reload(); })}>
                         {cur.enabled ? "선택 불가로" : "선택 가능으로"}
                     </ServerActionButton>
                 )}
             </div>
             {save.view}
-            {cur.builtin && cur.modified_fields.includes("body") && (
-                <details>
-                    <summary>기본 원문과 비교</summary>
-                    <div className="compare">
-                        <pre aria-label="기본 원문">{cur.baseline_body}</pre>
-                        <pre aria-label="현재 적용값">{cur.body}</pre>
-                    </div>
-                </details>
-            )}
+            {cur.builtin && <DefinitionUpdates definition={cur} draft={local.draft?.text} disabled={saving} onLocked={setRestoring} onApplied={d.reload}
+                onDraftReviewed={(reviewed) => {
+                    if (local.draft) local.write({ ...local.draft, baseRevision: reviewed.revision, updatedAt: Date.now() });
+                }} />}
         </div>
     );
 }

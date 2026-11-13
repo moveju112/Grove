@@ -356,14 +356,17 @@ pub async fn update(
             return Err(ApiError::invalid("기본 워크플로우는 비활성화할 수 없습니다"));
         }
         let builtin = cur.def.builtin;
+        let row = load_row(tx, &kind, &id)?;
         // builtin 수정본은 원문과 같은 값이면 NULL(원문 사용)로 저장해 이후 원문 비교가 정확하도록 한다.
-        let pick = |new: Option<String>, curv: &str, base: &Option<String>| -> Option<String> {
-            let v = new.unwrap_or_else(|| curv.to_string());
+        // 보내지 않은 필드는 기존 NULL/override 구분까지 보존한다.
+        let pick = |new: Option<String>, stored: Option<String>, base: &Option<String>| -> Option<String> {
+            let Some(v) = new else { return stored };
             if builtin && base.as_deref() == Some(v.as_str()) { None } else { Some(v) }
         };
-        let name = pick(b.name.map(|n| n.trim().to_string()), &cur.def.name, &cur.baseline_name);
-        let desc = pick(b.description, &cur.def.description, &cur.baseline_description);
-        let body = pick(b.body, &cur.def.body, &cur.baseline_body);
+        let (n, d, body) = row.map(|(_, n, d, body, _, _, _)| (n, d, body)).unwrap_or_default();
+        let name = pick(b.name.map(|n| n.trim().to_string()), n, &cur.baseline_name);
+        let desc = pick(b.description, d, &cur.baseline_description);
+        let body = pick(b.body, body, &cur.baseline_body);
         let enabled = b.enabled.unwrap_or(cur.def.enabled);
         tx.execute(
             "INSERT INTO definitions (kind, id, builtin, name, description, body, enabled, revision, created_at, updated_at) \
@@ -381,8 +384,30 @@ pub async fn update(
 #[derive(Deserialize)]
 pub struct RestoreDef {
     pub expected_revision: i64,
-    /// 복원할 필드. 비우면 전체(name, description, body).
+    /// 복원할 필드. 생략하면 전체(name, description, body), 빈 배열은 거절.
     pub fields: Option<Vec<String>>,
+    /// 비교한 번들 identity. 생략한 기존 클라이언트의 복원 계약은 유지한다.
+    pub expected_baseline: Option<RestoreBaseline>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct RestoreBaseline {
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    pub sha256: String,
+}
+
+fn check_restore_baseline(cur: &DefinitionDetail, expected: &RestoreBaseline) -> ApiResult<()> {
+    if cur.baseline_name.as_deref() != Some(expected.name.as_str())
+        || cur.baseline_description.as_deref() != Some(expected.description.as_str())
+        || cur.baseline_body.as_deref() != Some(expected.body.as_str())
+        || cur.def.baseline_sha256.as_deref() != Some(expected.sha256.as_str())
+    {
+        return Err(ApiError::conflict("baseline_conflict", "번들 기본값이 변경되었습니다. 다시 비교하세요")
+            .with_details(json!({ "current": cur })));
+    }
+    Ok(())
 }
 
 pub async fn restore(
@@ -394,10 +419,14 @@ pub async fn restore(
 ) -> ApiResult<Response> {
     check_kind(&kind)?;
     let fields = b.fields.unwrap_or_else(|| vec!["name".into(), "description".into(), "body".into()]);
-    if fields.iter().any(|f| !matches!(f.as_str(), "name" | "description" | "body")) {
+    if fields.is_empty() || fields.iter().any(|f| !matches!(f.as_str(), "name" | "description" | "body")) {
         return Err(ApiError::invalid("복원 가능한 필드는 name, description, body입니다"));
     }
-    let h = idem::body_hash("def.restore", &json!({ "kind": kind, "id": id, "rev": b.expected_revision, "f": fields }));
+    let mut identity = json!({ "kind": kind, "id": id, "rev": b.expected_revision, "f": fields });
+    if let Some(expected) = &b.expected_baseline {
+        identity["baseline"] = serde_json::to_value(expected)?;
+    }
+    let h = idem::body_hash("def.restore", &identity);
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let cur = resolve(tx, &kind, &id)?;
         if !cur.def.builtin {
@@ -405,6 +434,9 @@ pub async fn restore(
         }
         if cur.def.revision != b.expected_revision {
             return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));
+        }
+        if let Some(expected) = &b.expected_baseline {
+            check_restore_baseline(&cur, expected)?;
         }
         let row = load_row(tx, &kind, &id)?;
         let (mut n, mut d, mut body, en) = match row {

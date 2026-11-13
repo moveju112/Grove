@@ -1,0 +1,24 @@
+.definition-updates-table {
+    overflow-x: auto;
+}
+.definition-updates-table table {
+    width: 100%;
+    table-layout: fixed;
+}
+.definition-updates-table th:first-child {
+    width: 3rem;
+}
+.definition-updates-table th:nth-child(2) {
+    width: 4rem;
+}
+.definition-updates-table td,
+.definition-updates-table th {
+    vertical-align: top;
+    text-align: left;
+}
+.definition-updates-table pre {
+    max-height: 18rem;
+    overflow: auto;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
