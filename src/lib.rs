@@ -25,6 +25,7 @@ pub mod definitions;
 pub mod error;
 pub mod events;
 pub mod files;
+pub mod external_editor;
 pub mod git;
 pub mod followups;
 pub mod goals;
@@ -86,6 +87,7 @@ pub const CAPABILITIES: &[&str] = &[
     "file_log_rotation_v1",
     "diagnostics_bundle_v1",
     "file_changes_v1",
+    "external_editor_v1",
     "trash_v1",
     "attachments_v1",
     "task_logs_v1",
@@ -195,6 +197,8 @@ pub fn router(app: App) -> Router {
         .route("/events", get(events::stream))
         .route("/projects", get(projects::list).post(projects::create))
         .route("/fs/dirs", get(projects::browse_dirs))
+        .route("/external-editors", get(external_editor::list))
+        .route("/projects/{id}/external-editor", post(external_editor::open))
         .route("/fs/suggest", get(repos::suggest))
         .route("/github/repos", get(repos::search))
         .route("/projects/clone", post(repos::clone))
