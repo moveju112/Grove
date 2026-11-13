@@ -3,7 +3,9 @@
 //! 서버가 인증·프로젝트 권한 확인 후 `AllowedRoot`를 구성한다. client 경로를
 //! 받지 않으며, ID는 경로로 역변환하지 않는다. I/O는 기존 ProjectFs capability만 쓴다.
 //! 지원 형식은 root 바로 아래 `<name>/SKILL.md` UTF-8 파일이다. 이름은 디렉터리명,
-//! metadata는 해석하지 않는다. 본문은 지시가 아닌 데이터이며 실행·모델 적용은 하지 않는다.
+//! metadata는 해석하지 않는다. 사용자 선택만 모델 지침에 적용하며 자동 매칭은 없다.
+
+pub mod api;
 
 use crate::project_fs::ProjectFs;
 use crate::tools::{ToolError, ToolResult};
@@ -58,6 +60,33 @@ impl AllowedRoot {
         let path = crate::util::canonical(path).map_err(io_error)?;
         let fs = ProjectFs::open(&path).map_err(io_error)?;
         Ok(Self { source, path, fs })
+    }
+
+    /// 서버가 정한 부모에서 capability로 하위 root를 연다. client 경로는 받지 않는다.
+    fn within(parent: &Path, relative: &Path, project_id: Option<&str>) -> ToolResult<Option<Self>> {
+        let path = crate::util::canonical(parent).map_err(io_error)?;
+        let mut fs = ProjectFs::open(&path).map_err(io_error)?;
+        let target = match fs.dir.canonicalize(relative) {
+            Ok(target) => target,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+            Err(err) => return Err(io_error(err)),
+        };
+        // ProjectFs의 절대 경로→상대 경로 변환 기준은 그대로 두고 I/O 권한만 좁힌다.
+        // path.join(name)은 실제 ambient I/O에 쓰이지 않고 열린 하위 Dir에 대한 name이 된다.
+        let narrowed = fs.dir.open_dir(relative).map_err(io_error)?;
+        if fs.dir.canonicalize(relative).map_err(io_error)? != target {
+            return Err(error("skill_changed", "조회 중 스킬 출처가 변경됐습니다"));
+        }
+        fs.dir = narrowed;
+        let root_id = format!("skillroot_{}", sha256_hex(
+            &serde_json::to_vec(&(path.as_os_str().as_encoded_bytes(), target.as_os_str().as_encoded_bytes()))
+                .map_err(|_| error("invalid_source", "스킬 출처를 확인할 수 없습니다"))?,
+        ));
+        let source = match project_id {
+            Some(id) => SkillSource::Project { root_id, project_id: id.to_owned() },
+            None => SkillSource::Global { root_id },
+        };
+        Ok(Some(Self { source, path, fs }))
     }
 }
 

@@ -1,22 +1,5 @@
-// Rust skills 모듈의 wire projection. 라우트·generated binding 연결은 통합 단계 소유다.
-export type SkillSource =
-    | { kind: "global"; root_id: string }
-    | { kind: "project"; root_id: string; project_id: string };
-
-export type SkillSelection = { id: string; source: SkillSource; revision: string };
-export type SkillEntry = SkillSelection & {
-    name: string;
-    symlink: boolean;
-    alias_of: string | null;
-    priority: "preferred" | "shadowed" | "conflict" | "incomplete";
-    conflicts: string[];
-    metadata: "none" | "opaque_front_matter";
-};
-export type SkillBody = { selection: SkillSelection; text: string };
-export type SkillListing = {
-    entries: SkillEntry[];
-    issues: { source: SkillSource; name: string | null; code: string }[];
-};
+import type { SkillEntry, SkillSelection, SkillSource } from "../../api/skills";
+export type { SkillBody, SkillEntry, SkillListing, SkillSelection, SkillSource } from "../../api/skills";
 
 export function sameSource(a: SkillSource, b: SkillSource): boolean {
     return a.kind === b.kind && a.root_id === b.root_id

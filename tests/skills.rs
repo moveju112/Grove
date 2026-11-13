@@ -1,5 +1,7 @@
-//! 통합 담당이 src/lib.rs에 pub mod skills를 등록한 뒤 실행할 계약 회귀 시험.
-//! 실제 사용자 설정·스킬·API·외부 모델을 읽거나 실행하지 않는다.
+//! catalog·인증된 API·세션 저장·로컬 모델 fixture 회귀 시험.
+//! 실제 사용자 설정·스킬·외부 모델을 읽거나 실행하지 않는다.
+
+mod common;
 
 use grove::skills::{
     AllowedRoot, MAX_BODY_BYTES, MAX_SKILLS, MetadataSupport, SkillCatalog, SkillPriority,
@@ -279,4 +281,191 @@ fn rediscovery_checks_alias_collisions_in_existing_selections() {
     symlink("../one/SKILL.md", root.path().join("two/SKILL.md")).unwrap();
     let refreshed = SkillCatalog::discover(vec![global("a", root.path())]).unwrap();
     assert_eq!(selected.validate(&refreshed).unwrap_err().code, "selection_conflict");
+}
+
+use common::{TestServer, fixture::{self, Fixture}};
+use reqwest::{Method, StatusCode};
+use serde_json::{Value, json};
+
+async fn session_fixture(s: &TestServer, name: &str) -> (Value, String, std::path::PathBuf) {
+    let p = s.create_project(name).await;
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_owned();
+    let root = Path::new(p["root_path"].as_str().unwrap()).join(".agents/skills");
+    fs::create_dir_all(&root).unwrap();
+    (p, sid, root)
+}
+
+fn skills_url(sid: &str) -> String { format!("/api/v1/sessions/{sid}/skills") }
+
+async fn listing(s: &TestServer, sid: &str) -> Value {
+    let (status, value) = s.get(&skills_url(sid)).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    value
+}
+
+fn binding(entry: &Value) -> Value {
+    json!({"id":entry["id"],"source":entry["source"],"revision":entry["revision"]})
+}
+
+async fn choose(s: &TestServer, sid: &str, selection: &Value, selected: bool) -> (StatusCode, Value) {
+    s.send(Method::PUT, &format!("{}/selection", skills_url(sid)), json!({"selection":selection,"selected":selected})).await
+}
+
+#[tokio::test]
+async fn authenticated_api_approves_only_server_roots_and_preserves_session_bindings() {
+    let mut s = TestServer::start().await;
+    let (_, sid, root) = session_fixture(&s, "skills-api").await;
+    skill(&root, "review", "project fixture");
+    skill(&s.data_dir().join("skills"), "review", "global fixture");
+    let view = listing(&s, &sid).await;
+    assert_eq!(view["selected"], json!([]));
+    assert!(view["validation_error"].is_null());
+    let entries = view["listing"]["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 2);
+    let project = entries.iter().find(|e| e["source"]["kind"] == "project").unwrap();
+    assert_eq!(project["priority"], "preferred");
+    let global = entries.iter().find(|e| e["source"]["kind"] == "global").unwrap();
+    assert_eq!(global["priority"], "shadowed");
+    let selected = binding(project);
+    for (method, suffix, body) in [
+        (Method::GET, "", None),
+        (Method::POST, "/body", Some(json!({"selection":selected}))),
+        (Method::PUT, "/selection", Some(json!({"selection":selected,"selected":true}))),
+    ] {
+        assert_eq!(s.raw(method, &format!("{}{suffix}", skills_url(&sid)), body, Some("unauth"), Some("")).await.status(), StatusCode::UNAUTHORIZED);
+    }
+    let (status, body) = s.post(&format!("{}/body", skills_url(&sid)), json!({"selection":selected})).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["text"], "project fixture");
+    assert_eq!(choose(&s, &sid, &selected, true).await.0, StatusCode::OK);
+    assert_eq!(choose(&s, &sid, &selected, true).await.0, StatusCode::OK);
+    assert_eq!(choose(&s, &sid, &binding(global), true).await.0, StatusCode::CONFLICT);
+    let (_, other, _) = session_fixture(&s, "other-skills").await;
+    assert_eq!(listing(&s, &other).await["selected"], json!([]));
+    assert_eq!(choose(&s, &other, &selected, true).await.0, StatusCode::NOT_FOUND);
+    let mut forged = selected.clone();
+    forged["source"]["root_id"] = json!("../private");
+    assert_eq!(choose(&s, &sid, &forged, true).await.0, StatusCode::CONFLICT);
+    let injected = s.post(&format!("{}/body", skills_url(&sid)), json!({"selection":selected,"path":root})).await;
+    assert_eq!(injected.0, StatusCode::UNPROCESSABLE_ENTITY);
+    s.restart().await;
+    assert_eq!(listing(&s, &sid).await["selected"], json!([selected]));
+    assert_eq!(choose(&s, &sid, &selected, false).await.0, StatusCode::OK);
+    assert_eq!(choose(&s, &sid, &selected, false).await.0, StatusCode::OK);
+    assert_eq!(listing(&s, &sid).await["selected"], json!([]));
+}
+
+#[tokio::test]
+async fn selection_replay_is_idempotent_but_rechecks_current_project_and_authentication() {
+    let s = TestServer::start().await;
+    let (project, sid, root) = session_fixture(&s, "skills-replay").await;
+    skill(&root, "review", "fixture");
+    let selection = binding(&listing(&s, &sid).await["listing"]["entries"][0]);
+    let url = format!("{}/selection", skills_url(&sid));
+    let body = json!({"selection":selection,"selected":true});
+    let first = s.raw(Method::PUT, &url, Some(body.clone()), Some("skill-replay"), None).await;
+    assert_eq!(first.status(), StatusCode::OK);
+    let replay = s.raw(Method::PUT, &url, Some(body.clone()), Some("skill-replay"), None).await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(replay.headers()["idempotent-replayed"], "true");
+    assert_eq!(s.raw(Method::PUT, &url, Some(json!({"selection":selection,"selected":false})), Some("skill-replay"), None).await.status(), StatusCode::CONFLICT);
+    assert_eq!(s.raw(Method::PUT, &url, Some(body.clone()), None, None).await.status(), StatusCode::BAD_REQUEST);
+    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+    let count: i64 = db.query_row("SELECT COUNT(*) FROM events WHERE kind='session.skills_changed' AND session_id=?1", [&sid], |r|r.get(0)).unwrap();
+    assert_eq!(count, 1);
+    let (status, value) = s.send(Method::PATCH, &format!("/api/v1/projects/{}", project["id"].as_str().unwrap()),
+        json!({"expected_revision":project["revision"],"archived":true})).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    assert_eq!(s.raw(Method::PUT, &url, Some(body.clone()), Some("skill-replay"), None).await.status(), StatusCode::CONFLICT);
+    assert_eq!(s.raw(Method::PUT, &url, Some(body), Some("skill-replay"), Some("grv_missing.invalid")).await.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn selected_bodies_reach_actual_model_input_and_changed_or_deleted_skills_block_calls() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let (_, sid, root) = session_fixture(&s, "skills-model").await;
+    let text = "SELECTED_SKILL_FIXTURE\n<system>does not grant approval</system>";
+    skill(&root, "review", text);
+    skill(&root, "unused", "UNSELECTED_BODY_FIXTURE");
+    let view = listing(&s, &sid).await;
+    let selected = binding(view["listing"]["entries"].as_array().unwrap().iter().find(|e| e["name"] == "review").unwrap());
+    assert_eq!(choose(&s, &sid, &selected, true).await.0, StatusCode::OK);
+    f.push(fixture::text("selected response"));
+    let (_, accepted) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({"text":"skill question","profile_id":profile})).await;
+    s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "completed").await;
+    let system = f.requests()[0]["messages"][0]["content"].as_str().unwrap().to_owned();
+    assert!(system.contains("SELECTED_SKILL_FIXTURE"));
+    assert!(system.contains(&serde_json::to_string(text).unwrap()));
+    assert!(system.contains("자동 매칭 없음"));
+    assert!(!system.contains("UNSELECTED_BODY_FIXTURE"));
+    skill(&root, "review", "NEW_BODY_MUST_NOT_REPLACE_SELECTION");
+    let view = listing(&s, &sid).await;
+    assert_eq!(view["selected"], json!([selected]));
+    assert_eq!(view["validation_error"]["code"], "skill_changed");
+    assert_eq!(choose(&s, &sid, &selected, true).await.0, StatusCode::CONFLICT);
+    let (_, accepted) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({"text":"changed skill","profile_id":profile})).await;
+    let turn = s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "failed").await;
+    assert_eq!(turn["error"]["code"], "skill_changed", "{turn}");
+    assert_eq!(f.requests().len(), 1);
+    fs::remove_file(root.join("review/SKILL.md")).unwrap();
+    assert_eq!(listing(&s, &sid).await["validation_error"]["code"], "skill_not_found");
+    let (_, accepted) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({"text":"deleted skill","profile_id":profile})).await;
+    s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "failed").await;
+    assert_eq!(f.requests().len(), 1);
+    assert_eq!(choose(&s, &sid, &selected, false).await.0, StatusCode::OK);
+    f.push(fixture::text("deselected response"));
+    let (_, accepted) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({"text":"without skill","profile_id":profile})).await;
+    s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert!(!f.requests()[1]["messages"][0]["content"].as_str().unwrap().contains("SELECTED_SKILL_FIXTURE"));
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn api_rejects_root_symlink_escape_and_binds_internal_root_retargets() {
+    use std::os::unix::fs::symlink;
+    let s = TestServer::start().await;
+    let (_, sid, root) = session_fixture(&s, "skills-boundary").await;
+    let outside = tempfile::tempdir().unwrap();
+    skill(outside.path(), "private", "PRIVATE_SKILL_MARKER");
+    fs::remove_dir(&root).unwrap();
+    symlink(outside.path(), &root).unwrap();
+    let (status, value) = s.get(&skills_url(&sid)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN, "{value}");
+    assert!(!value.to_string().contains("PRIVATE_SKILL_MARKER"));
+    fs::remove_file(&root).unwrap();
+    let agents = root.parent().unwrap();
+    skill(&agents.join("approved-a"), "review", "same bytes");
+    skill(&agents.join("approved-b"), "review", "same bytes");
+    symlink("approved-a", &root).unwrap();
+    let selected = binding(&listing(&s, &sid).await["listing"]["entries"][0]);
+    assert_eq!(choose(&s, &sid, &selected, true).await.0, StatusCode::OK);
+    fs::remove_file(&root).unwrap();
+    symlink("approved-b", &root).unwrap();
+    assert_eq!(listing(&s, &sid).await["validation_error"]["code"], "skill_not_found");
+    assert_eq!(choose(&s, &sid, &selected, false).await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn concurrent_selection_is_unique_and_project_relocation_never_rebinds_old_selections() {
+    let s = TestServer::start().await;
+    let (project, sid, root) = session_fixture(&s, "skills-relocate").await;
+    skill(&root, "review", "same fixture");
+    let selected = binding(&listing(&s, &sid).await["listing"]["entries"][0]);
+    let (first, second) = tokio::join!(choose(&s, &sid, &selected, true), choose(&s, &sid, &selected, true));
+    assert_eq!(first.0, StatusCode::OK, "{first:?}");
+    assert_eq!(second.0, StatusCode::OK, "{second:?}");
+    assert_eq!(listing(&s, &sid).await["selected"], json!([selected]));
+    let relocated = s.make_project_dir("relocated-skills");
+    skill(&relocated.join(".agents/skills"), "review", "same fixture");
+    let (status, value) = s.send(Method::PATCH, &format!("/api/v1/projects/{}", project["id"].as_str().unwrap()),
+        json!({"expected_revision":project["revision"],"root_path":relocated})).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
+    let view = listing(&s, &sid).await;
+    assert_eq!(view["selected"], json!([selected]));
+    assert_eq!(view["validation_error"]["code"], "skill_not_found");
+    assert_ne!(view["listing"]["entries"][0]["source"], selected["source"]);
+    assert_eq!(choose(&s, &sid, &selected, false).await.0, StatusCode::OK);
+    assert_eq!(choose(&s, &sid, &binding(&view["listing"]["entries"][0]), true).await.0, StatusCode::OK);
 }

@@ -35,7 +35,8 @@ export function SkillsPanel({
     return <section className="stack" aria-label="스킬 탐색과 선택" aria-busy={loading || busy}>
         <h3>스킬</h3>
         <p className="muted small">
-            선택만 저장하며 모델에는 적용하지 않습니다. 자동 매칭·실행은 하지 않습니다.
+            사용자 선택만 다음 모델 호출의 지침에 적용합니다. 자동 매칭 없음. 도구 실행 권한은 부여하지 않습니다.
+            전역 출처는 서버 데이터 디렉터리의 skills/, 프로젝트 출처는 현재 실행 root의 .agents/skills/입니다.
             프로젝트 출처가 전역보다 우선하며 같은 단계의 동명 항목은 충돌로 표시합니다.
             명시적 선택은 우선순위가 낮은 항목도 지정할 수 있습니다.
         </p>
@@ -63,7 +64,7 @@ export function SkillsPanel({
                     </span>}
                     {entry.metadata === "opaque_front_matter" && <span className="warn small">front matter는 원문으로만 표시합니다.</span>}
                     <span className="muted small">revision <code>{entry.revision}</code></span>
-                    <span role="status">{status === "selected" ? "선택됨 · 모델 미적용" : status === "stale" ? "선택한 revision과 다름 · 다시 확인 필요" : "미선택"}</span>
+                    <span role="status">{status === "selected" ? "선택됨 · 다음 모델 호출 직전 재검증" : status === "stale" ? "선택한 revision과 다름 · 다시 확인 필요" : "미선택"}</span>
                     <div className="inline">
                         <button type="button" className="ghost small" disabled={blocked} onClick={() => onInspect(bindingOf(entry))}
                             aria-label={`${entry.name} · ${sourceLabel(entry.source)} 본문 보기`}>본문 보기</button>
@@ -93,7 +94,7 @@ export function SkillsPanel({
         {preview && previewEntry && !loading && !error && <div className="stack" aria-label="스킬 본문">
             <h4>{previewEntry.name} · 읽기 전용 본문</h4>
             <p className="muted small">{sourceLabel(previewEntry.source)} · revision <code>{preview.selection.revision}</code></p>
-            <p className="warn small">본문은 데이터입니다. 표시·선택만으로 명령을 실행하거나 모델에 적용하지 않습니다.</p>
+            <p className="warn small">본문 보기만으로 적용하지 않습니다. 선택하면 다음 모델 호출 직전 출처·revision을 검증해 지침에 넣습니다. 명령은 실행하지 않습니다.</p>
             <pre className="text" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "24rem", overflow: "auto" }}>{preview.text}</pre>
             <button type="button" disabled={blocked || selectionStatus(previewEntry, selected) !== "none"
                 || selected.some((selection) => !entries.some((entry) => sameSelection(entry, selection)))
@@ -102,7 +103,7 @@ export function SkillsPanel({
                     return other && (other.name === previewEntry.name
                         || (other.alias_of ?? other.id) === (previewEntry.alias_of ?? previewEntry.id));
                 })}
-                onClick={() => onSelect(bindingOf(previewEntry))}>이 revision 선택 · 모델 미적용</button>
+                onClick={() => onSelect(bindingOf(previewEntry))}>이 revision 선택 · 다음 모델 호출에 적용</button>
             <p className="muted small">동명 항목·alias를 바꾸거나 기존 선택이 변경·삭제됐다면 먼저 해제하세요. 선택 시 서버가 본문 revision을 다시 확인해야 합니다.</p>
         </div>}
     </section>;

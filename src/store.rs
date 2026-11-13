@@ -893,6 +893,13 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE turns ADD COLUMN provider_ms INTEGER CHECK (provider_ms IS NULL OR provider_ms >= 0);
     ALTER TABLE turns ADD COLUMN provider_started_at TEXT;
     "#,
+    // 세션별 스킬 선택. source·revision은 원래 binding 그대로 보존한다.
+    r#"
+    CREATE TABLE session_skills (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        bindings TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(bindings))
+    );
+    "#,
 ];
 
 #[cfg(test)]
