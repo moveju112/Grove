@@ -11,7 +11,7 @@ export type ApprovalFailure = { kind: "expired" | "processed" | "permission" | "
 const effects: Readonly<Record<string, ApprovalEffect>> = {
     read: "read", list: "read", glob: "read", find: "read", grep: "read",
     write: "write", edit: "write", apply_patch: "write",
-    shell: "execute", mcp_call: "execute", agent: "delegate",
+    shell: "execute", mcp_call: "execute", web_fetch: "execute", agent: "delegate",
     goal: "conversation", recall: "conversation", mcp_tools: "conversation", ask_user: "conversation",
 };
 
@@ -96,6 +96,11 @@ export function projectApproval(call: Pick<ToolCallRow, "name" | "target">): App
         if (typeof destination.endpoint === "string") fields.push({ label: "외부 목적지", value: displayText(destination.endpoint) });
         if (typeof destination.command === "string") fields.push({ label: "서버 실행 명령", value: displayText(destination.command) });
         notices.push("원격 read-only 표시는 권한 근거가 아닙니다. 외부 부작용이 발생할 수 있습니다.");
+    }
+    if (call.name === "web_fetch") {
+        text("url", "요청 URL", 1000);
+        number("max_bytes", "본문 상한", "바이트");
+        notices.push("공개 인터넷 주소로 익명 GET 요청을 보냅니다. 받은 본문은 신뢰할 수 없는 데이터로 다룹니다.");
     }
     if (!fields.length) notices.push("서버가 표시 가능한 대상 정보를 제공하지 않았습니다.");
     notices.push("비밀값 보호를 위해 파일 내용·diff·위임 지시·외부 도구 인자는 표시하지 않습니다. 긴 대상은 일부만 표시하며, 승인은 생략된 부분을 포함한 서버 계획 전체에 적용됩니다.");

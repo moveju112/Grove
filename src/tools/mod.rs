@@ -7,6 +7,7 @@ pub mod image_read;
 pub mod patch;
 pub mod search;
 pub mod shell;
+pub mod web_fetch;
 
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -264,6 +265,7 @@ pub fn specs() -> Vec<ToolSpec> {
                 "allow_free_text": { "type": "boolean" }
             }, "required": ["question"], "additionalProperties": false }),
         },
+        web_fetch::spec(),
     ]
 }
 
@@ -394,6 +396,7 @@ pub fn plan(name: &str, args: &Value, root: &Path) -> ToolResult<(ToolSpec, Plan
         "agent" => plan_agent(args)?,
         "goal" | "recall" | "mcp_tools" | "mcp_call" => Planned { target: args.clone(), precondition: None },
         "ask_user" => plan_ask(args)?,
+        "web_fetch" => web_fetch::plan(args)?,
         _ => unreachable!(),
     };
     Ok((spec, planned))
@@ -404,6 +407,7 @@ pub async fn execute(name: &str, args: &Value, planned: &Planned, root: &Path, c
     let (name, args, planned, root) = (name.to_string(), args.clone(), planned.clone(), root.to_path_buf());
     match name.as_str() {
         "shell" => shell::execute(&planned, &root, cancel).await,
+        "web_fetch" => web_fetch::execute(&args, &planned, cancel).await,
         _ => tokio::task::spawn_blocking(move || match name.as_str() {
             "read" => fs::read(&args, &planned, &root),
             "list" => fs::list(&args, &planned, &root),
@@ -428,6 +432,7 @@ pub fn observe(name: &str, planned: &Planned, root: &Path) -> Value {
         "shell" => json!({ "note": "셸 명령의 결과는 자동으로 관찰할 수 없습니다. 관련 출력·파일을 직접 확인하세요", "target": planned.target }),
         "agent" => json!({ "note": "자식 에이전트 작업 목록에서 실제 시작 여부를 확인하세요", "target": planned.target }),
         "mcp_call" => json!({ "note":"외부 MCP 부작용은 자동으로 관찰하거나 재실행하지 않습니다. 원격 서비스에서 실제 결과를 확인하고 검토를 기록하세요","target":planned.target }),
+        "web_fetch" => json!({ "note": "외부 웹 요청은 자동으로 다시 보내지 않습니다. 필요하면 새 요청으로 승인받으세요", "target": planned.target }),
         _ => json!({ "note": "읽기 전용 도구는 부작용이 없습니다" }),
     }
 }

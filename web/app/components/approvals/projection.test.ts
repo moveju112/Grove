@@ -37,6 +37,20 @@ describe("승인 projection과 현재 서버 계약", () => {
         expect(p.notices.join(" ")).toContain("read-only 표시는 권한 근거가 아닙니다");
     });
 
+    it("웹 조회는 실행 승인으로 URL의 query를 숨기고 본문 상한을 보여준다", () => {
+        expect(currentApprovalContract("web_fetch")).toEqual({ effect: "execute", choices: ["approve", "approve_session", "deny"] });
+        const p = projectApproval(approvalFixture({
+            name: "web_fetch",
+            target: { tool: "web_fetch", url: "https://example.com/page?token=query-sentinel", max_bytes: 2048 },
+        }));
+        expect(p.fields).toEqual([
+            { label: "요청 URL", value: "https://example.com/page?[쿼리 숨김]" },
+            { label: "본문 상한", value: "2048바이트" },
+        ]);
+        expect(JSON.stringify(p)).not.toContain("sentinel");
+        expect(p.notices.join(" ")).toContain("익명 GET");
+    });
+
     it("알려진 credential을 자르기 전에 가리고 제어문자와 긴 인자를 제한한다", () => {
         const value = displayText('TOKEN="example-value" --password value-two Authorization: Bearer value-three https://user:pass@host/path?token=value-four sk-examplevalue123 \u202e');
         for (const secret of ["example-value", "value-two", "value-three", "user:pass", "value-four", "sk-examplevalue123", "\u202e"]) {
