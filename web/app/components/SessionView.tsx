@@ -24,6 +24,7 @@ import { deliveryTiming } from "../state/deliveryTiming";
 import { useBotAvatar } from "../state/botAvatar";
 import { AssistantIdentity } from "./assistant-identity";
 import { ApprovalCard, currentApprovalContract } from "./approvals";
+import { TurnTiming } from "./turn-timing/TurnTiming";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
@@ -220,6 +221,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
 
     const active = turns.data?.find((t) => ["queued", "running", "awaiting_approval"].includes(t.status));
     const lastTurn = turns.data?.[0];
+    const timedTurn = active ?? lastTurn;
     const pending = (calls.data ?? []).filter((c) => c.status === "pending_approval");
     // 질문 대기(RUN-014): 승인 대기와 다른 호출 상태로 구분해 따로 보여 준다.
     const questions = (calls.data ?? []).filter((c) => (c.status as string) === "awaiting_input");
@@ -493,8 +495,8 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     </span>
                 </div>
             )}
-            {!active && lastTurn && <TurnTiming sessionId={sessionId} turnId={lastTurn.id}
-                messagesReady={latest.data?.items.some((m) => m.turn_id === lastTurn.id && m.created_at === lastTurn.finished_at) ?? false} />}
+            {timedTurn && <TurnTiming sessionId={sessionId} turn={timedTurn}
+                messagesReady={latest.data?.items.some((m) => m.turn_id === timedTurn.id && m.created_at === timedTurn.finished_at) ?? false} />}
             <BudgetNote sessionId={sessionId} active={active} />
             <FollowupsPanel sessionId={sessionId} running={!!active} onError={setErr} />
             <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands}
@@ -733,30 +735,6 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
         </div>
     );
 });
-
-type Timing = { total_ms: number; approval_wait_ms: number; tool_ms: number; model_and_other_ms: number; provider_ms?: number | null; other_ms?: number | null; running: boolean };
-
-/// 마지막 요청의 경과 시간 분해(서버 시각 기준이라 기기 시계와 무관).
-function TurnTiming({ sessionId, turnId, messagesReady }: { sessionId: string; turnId: string; messagesReady: boolean }) {
-    const q = useQuery<{ timing: Timing }>(`turns:${sessionId}:timing:${turnId}`, () => api.get(`/turns/${turnId}`));
-    const t = q.data?.timing;
-    const visible = usePaneVisible();
-    const [deliveryMs, setDeliveryMs] = useState<number | null>(null);
-    useLayoutEffect(() => {
-        if (visible && messagesReady && t && !t.running) setDeliveryMs(deliveryTiming.applied(turnId));
-    }, [visible, messagesReady, t, turnId]);
-    if (!t || t.running) return null;
-    const s = (ms: number) => `${(ms / 1000).toFixed(1)}초`;
-    return (
-        <p className="muted small" data-testid="turn-timing">
-            마지막 요청 {s(t.total_ms)}
-            {t.provider_ms != null ? ` · 공급자 ${s(t.provider_ms)} · 기타 ${s(t.other_ms ?? 0)}` : ` · 모델·처리 ${s(t.model_and_other_ms)}(공급자 미측정)`}
-            {t.tool_ms > 0 && ` · 도구 ${s(t.tool_ms)}`}
-            {t.approval_wait_ms > 0 && ` · 승인 대기 ${s(t.approval_wait_ms)}`}
-            {deliveryMs != null && <span data-testid="ui-delivery" title="SSE 수신 이후 조회·화면 반영 시간. 네트워크 편도 지연·이전 연결 끊김 시간은 포함하지 않습니다."> · 화면 반영(수신 후) {Math.round(deliveryMs)}ms</span>}
-        </p>
-    );
-}
 
 type EndScopeData = { steps: number; tool_calls: Record<string, number>; running_tasks: { id: string; command: string }[]; running_agents?: { id: string; agent_id: string; child_session_id: string }[] };
 

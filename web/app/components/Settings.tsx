@@ -18,6 +18,7 @@ import { DeviceSettingsReset } from "./SettingsReset";
 import { McpServers } from "./McpServers";
 import { DiagnosticsBundle } from "./DiagnosticsBundle";
 import { SourceSettings } from "./source-settings/SourceSettings";
+import { TurnTimingSetting } from "./turn-timing/TurnTimingSetting";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -41,7 +42,7 @@ export const ITEMS: Item[] = [
     { id: "enter", menu: "display", label: "Enter로 보내기", keywords: "enter send 입력 단축키", scope: "이 기기" },
     { id: "recent", menu: "display", label: "최근 항목 시간 범위", keywords: "recent window 최근 범위 분 시간 오늘", scope: "이 기기" },
     { id: "notify", menu: "display", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
-    { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜", scope: "이 기기" },
+    { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜 턴 경과 소요 대기", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
     { id: "devices", menu: "devices", label: "기기 토큰", keywords: "device token pair 페어링 폐기 분실", scope: "서버 전체" },
     { id: "logout", menu: "devices", label: "로그아웃", keywords: "logout sign out", scope: "이 기기" },
@@ -240,6 +241,7 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     </label>
                     <p className="muted small">만료·예정·시작 기준 시각은 항상 날짜·시각으로 표시합니다. 정확한 시각은 표시 위에 포인터를 올리면 볼 수 있습니다.</p>
                     <DeviceSettingsReset fields={["clock", "timeStyle"]} label="시간 표시 기본값 복원" />
+                    <TurnTimingSetting />
                 </Section>
             )}
             {show("transcript") && (
