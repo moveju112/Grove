@@ -11,7 +11,8 @@ test("프로젝트 추가 대화상자에서 폴더를 둘러보고 새 폴더�
     const base = dirname(root);
     const existing = basename(root);
     await login(page);
-    await page.getByRole("button", { name: "+ 프로젝트" }).click();
+    await page.getByRole("button", { name: "만들기", exact: true }).click();
+    await page.getByRole("dialog", { name: "만들기", exact: true }).getByRole("button", { name: "프로젝트 추가", exact: true }).click();
     const dlg = page.getByRole("dialog", { name: "프로젝트 추가" });
     await expect(dlg).toBeVisible();
     // 홈 폴더에서 시작한 뒤 입력한 경로로 이동
