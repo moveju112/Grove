@@ -48,11 +48,11 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 | 번호 | 분류·접수 | 남은 일·다음 조건 |
 |---|---|---|
-| 21 | blocked · 후속 종료、tip `d369ef8` | 공유 환경 복구 후 typecheck·Vitest 12개·E2E 4개 통과、기존 Rust 23개 근거 재사용。inline TOML parser 승인/재사용 parser 제공이 해제 조건이며 RESOURCE-018 전체 완료는 아님。기존 error retry count=1 유지 |
+| 21 | blocked · `d369ef8` 부분 통합·지원 형식 인수 완료 | 공유 환경 복구 후 typecheck·Vitest 12개·E2E 4개 및 통합 인수 통과, Rust 23개 근거 재사용. inline TOML parser 승인/재사용 parser 제공이 해제 조건이며 RESOURCE-018은 미완료. 같은 blocker로 재개하지 않음 |
 | 22 | ready · `30a5f785` 후속 통합·인수 완료 | 원래 담당이 native modal Tab 이탈을 재현·수정, 기능 E2E 8개 통과. 통합 공통 경계 포함 E2E 16개·Rust 4개·타입 통과. 27의 향후 PWA 결합은 27 담당의 남은 인수로 보존 |
 | 27 | needs-continuation · 기존 세션 후속 접수、실행 중 | 22 `e28dbdf`를 27 branch의 `8da340d`에 동기화한 뒤 기존 세션 `dd2a07fa-fd60-4bfe-ab70-0d3ded54d983`에 한 번 접수。개발 fast=false 명시·재조회 확인。최신 원본 COMMON·27 소유 범위·유효 근거 보존과 structured handoff를 전달했으며 실제 구현·검증 완료는 미확인 |
 | 31 | ready · `997c061` 후속 통합·Linux 인수 완료 | 기존 Rust 42개·웹 근거 보존, 기능 E2E 14개 통과. 통합 Rust 8개·타입·E2E 5개 통과. Windows/macOS 실측·향후 hook 결합은 SETTINGS-011과 이월에 보존 |
-| 33 | 기존 세션 브라우저 인수 후속 한 번 접수 | `442e020`의 `work/33.md`에 model-fallback spec·자기 결함 수정 배정. 기존 Rust·웹 근거 보존, fast=false 명시·재조회. `status=sent`이며 완료 확인은 아님 |
+| 33 | ready · `2127559` 통합·현재 공통 경계 인수 완료 | 기능 Rust 33·웹 단위 3·브라우저 1개 근거 보존. 통합 Rust 13·타입·관련 E2E 8개 통과. MODEL-019/020 완료, SETTINGS-004 역할별 나머지는 유지. 29 hook 통합 시 runner 결합 인수는 별도 |
 | 29 | 기존 세션 브라우저 인수 후속 한 번 접수 | `35f0baf`의 `work/29.md`에 hook-execution/hooks E2E·자기 결함 수정 배정. 슬롯·idle·clean·fast=false 명시/재조회 뒤 기존 세션에 `status=sent`. 실제 완료 확인은 아님 |
 | 25 | 기존 세션 브라우저 인수 후속 한 번 접수 | `4439295`의 `work/25.md`에 update-settings E2E·자기 결함 수정 배정. idle·clean·슬롯·fast=false 명시/재조회 뒤 `status=sent`. 기존 오류 retry count=1 유지하며 별도 정상 후속이다. 실제 완료 확인은 아님 |
 
@@ -64,6 +64,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 - 후속 묶음 22·32는 `442e020` 입력에서 Rust compaction_details 4개·typecheck·E2E 16개가 통과했다. 생성 dialog 넓은/좁은 화면·응답 유실, 압축 상세·원문 이동, sidebar·프로젝트 복구·responsive 공통 경계를 인수했다. 코드 변경 없는 기존 기능 검사 근거는 재사용했다. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_70163db4.stdout`와 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_70163db4.stderr`. 이전 focus 실패는 해소됐고 설정 직접 링크 실패는 별개로 유지한다. 22·32의 코드·RESULT·TODO는 원본에 보존했으며 정리 전 정확한 workspace·종료·clean·ancestry를 대조했다.
 - 이어 완료된 31은 `291ec83` 통합 입력에서 exec_cwd Rust 8개·typecheck·exec-cwd/exec-settings E2E 5개가 통과했다. 기능 workspace의 유효 Rust 42개·Vitest 3개·브라우저 14개 근거를 재사용했다. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_8c76a313.stdout`와 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_8c76a313.stderr`. Windows/macOS 미검증으로 SETTINGS-011은 체크하지 않고, 29 통합 시 일반 cwd와 hook 계획 분리 인수도 보존한다.
 - 22·32·31 정리의 빈자리는 35·36·37로 보충해 기능 workspace 총 10개를 유지했다. 34~37은 준비 상태이며 신규 시작 없이 기존 후속·인수를 우선한다. 설정 직접 링크 실패의 수정 소유는 `work/37.md`에 배정했고 실제 수정 전까지 SETTINGS-021은 미완료다. 25·29·33 후속과 진행 중 27의 최종 통합 인수는 남아 있다.
+- 21·33의 `bf635ad4` 통합 입력에서 fallback Rust 13개·typecheck·model-fallback/compaction-details/source-settings E2E 8개가 통과했다. source 조회의 기존 Rust 23개·단위 12개와 fallback 기능 Rust 33개·단위 3개 근거는 재사용했다. 현재 runner 도구/예산 경계와 32 compaction 표시 공존을 인수했으며 29 hook은 아직 실행 중이라 향후 결합 검사를 남긴다. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_e44c8e15.stdout` 및 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_e44c8e15.stderr`. 21은 승인 blocker를 TODO·이월에 보존하고 반복 재개하지 않는다. 별도 throughput 담당이 새 검증 실행기·AGENTS/INTEGRATE/COMMON 계약을 소유하므로 인계 전 해당 경계는 편집하지 않는다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
@@ -114,7 +115,8 @@ b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01
 | 07 | Linux 사용자 서비스의 실제 설치·재시작 검증 (외부 환경 필요) | `work/RESULT-07.md` | 보류: 실제 systemd 사용자 서비스 환경에서 검증 필요 |
 | 08 | HTML 본문 추출 방식 결정·실제 네트워크 검증 (`INTEGRATION-002`) | `work/RESULT-08.md` | 보류: 추출 의존성 추가 승인 필요 |
 | 18 | `TERM-005` Android/iOS 실기기 한글 키보드·클립보드 확인 | `work/RESULT-18.md` | 보류: 실기기 필요 |
-| 10 | `RESOURCE-018` 원본 스킬·hook 정의 읽기 전용 보기 | `work/RESULT-10.md` | 21 |
+| 10·21 | `RESOURCE-018` Codex inline TOML hook 조회 | `work/RESULT-10.md`, `work/RESULT-21.md` | 안전 필드·스킬 metadata·JSON hook 연결과 Linux 인수 완료. TOML parser dependency 버전/범위 승인 또는 승인된 재사용 parser 제공 뒤 후속 배정 |
+| 33 | SETTINGS-004 역할별 모델/context/disabled 및 29 hook과 fallback 공통 인수 | `work/RESULT-33.md` | HTTP fallback과 현재 통합 인수 완료. 역할별 설정은 별도 미배정; 29 hook 결합은 해당 통합 시 수행 |
 | 11 | `RESOURCE-012` metadata/root 간 alias·hardlink 계약, Windows 경로/junction 검증 | `work/RESULT-11.md` | 보류: 지원 계약·Windows 환경 확인 필요 |
 | 14 | `WEB-007`·`WEB-009`·`WEB-016` 인증/나머지 작업 경계·offline cold start·다중 탭·저장소 인수 | `work/RESULT-14.md`, `af0ad28` | 27 |
 | 20 | `FILEUI-007` 실제 GUI 편집기·Windows/macOS·서비스 세션 검증 | `work/RESULT-20.md` | 보류: 해당 플랫폼·GUI 환경 필요 |
