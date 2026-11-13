@@ -283,6 +283,7 @@ pub async fn create(
         )?;
         let s = get(tx, &id)?;
         events::append(tx, now, "session.created", Some(&project_id), Some(&id), &serde_json::to_value(&s)?)?;
+        crate::hooks::capture(tx, now, &id, "SessionStart", &id, &id)?;
         Ok((StatusCode::CREATED, serde_json::to_value(s)?))
     })
     .await
@@ -829,6 +830,7 @@ pub async fn post_message(
         };
         let m = append_message(tx, now, &id, "user", &content, None, model_input)?;
         crate::attachments::bind(tx, now, &m.id, &prepared)?;
+        crate::hooks::capture(tx, now, &id, "UserPromptSubmit", &m.id, &id)?;
         Ok((StatusCode::CREATED, serde_json::to_value(m)?))
     })
     .await

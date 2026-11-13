@@ -238,6 +238,8 @@ fn finish_turn(c: &Connection, now: &str, id: &str, from: &[&str], to: &str, err
         crate::agents::on_turn_finished(c, now, id, to)?;
         // 예약 실행 턴이면 실행 로그를 닫고 알림을 남긴다(같은 transaction).
         crate::schedules::on_turn_finished(c, now, id, to)?;
+        let turn = get_turn(c, id)?;
+        crate::hooks::capture(c, now, &turn.session_id, "Stop", id, &turn.session_id)?;
     }
     Ok(n > 0)
 }
@@ -366,6 +368,7 @@ pub async fn recover_on_start(app: &App) -> ApiResult<()> {
         .call(move |c| {
             let tx = c.transaction()?;
             let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+            crate::hooks::recover(&tx)?;
             let mut st = tx.prepare("SELECT id, name FROM tool_calls WHERE status IN ('running','approved')")?;
             let calls = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?;
             drop(st);
@@ -1428,6 +1431,9 @@ pub(crate) fn enqueue_with_attachments(
         return Err(ApiError::busy("이 세션에서 이미 턴이 실행 중입니다"));
     }
     ins?;
+    if source.is_none() {
+        crate::hooks::capture(tx, now, session_id, "UserPromptSubmit", &msg.id, session_id)?;
+    }
     let t = emit_turn(tx, now, &tid)?;
     Ok((t, msg))
 }

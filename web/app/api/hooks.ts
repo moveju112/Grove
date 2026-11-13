@@ -4,10 +4,11 @@ export type HookDefinition = {
 };
 export type Hook = HookDefinition & {
     id: string; project_id: string | null; revision: number;
-    command_redacted: boolean; execution_state: "not_implemented";
+    command_redacted: boolean; execution_state: "not_implemented" | "approval_required";
 };
 export type HookListing = {
-    hooks: Hook[]; events: string[]; matcher_syntax: "glob"; execution_state: "not_implemented";
+    hooks: Hook[]; events: string[]; matcher_syntax: "glob"; execution_state: "not_implemented" | "partial";
+    supported_events?: string[]; execution_note?: string;
 };
 export type HookUpdate = Omit<HookDefinition, "command"> & { expected_revision: number; command?: string };
 

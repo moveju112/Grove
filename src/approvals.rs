@@ -217,6 +217,8 @@ pub fn create_call(
         }
         if spec.name=="mcp_call" {
             crate::mcp::plan_call(c,args,project_id,session_id).map(|p|(spec,p)).map_err(|e|tools::ToolError::new(e.code,e.message))
+        } else if spec.name == "hook" {
+            crate::hooks::plan_call(c,args,project_id,session_id,&id).map(|p|(spec,p)).map_err(|e|tools::ToolError::new(e.code,e.message))
         } else { Ok((spec,planned)) }
     });
     let (status, needs, target, pre, result) = match plan {
@@ -242,6 +244,8 @@ pub fn create_call(
                     .is_some();
             let decision = match (&policy, base) {
                 (PolicyDecision::Deny(..), _) => None,
+                // lifecycle 발생·저장·enabled·과거 grant는 이번 명령 계획의 승인이 아니다.
+                (_, Some(true)) if spec.name == "hook" => Some(true),
                 (PolicyDecision::Allow, Some(true)) => {
                     scope = Some("policy");
                     Some(false)
@@ -389,6 +393,9 @@ fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiResult<Option<
     if call.name=="mcp_call" && let Err(e)=crate::mcp::validate_call(c,call) {
         return Ok(Some(tools::ToolError::new(e.code,e.message)));
     }
+    if call.name=="hook" && let Err(e)=crate::hooks::validate_call(c,call) {
+        return Ok(Some(tools::ToolError::new(e.code,e.message)));
+    }
     Ok(None)
 }
 
@@ -499,6 +506,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
             _ if *cancel_rx.borrow() => Err(tools::ToolError::new("cancelled","실행 전에 취소돼 시작하지 않았습니다")),
             Err(e) => Err(tools::ToolError::new("project_unavailable", e.message)),
             Ok(_) if call.name == "agent" => crate::agents::execute_tool(&app, &call, cancel_rx).await,
+            Ok(_) if call.name == "hook" => crate::hooks::execute_call(&app, &call, cancel_rx).await,
             Ok(_) if call.name == "goal" => {
                 let (sid, args, now) = (call.session_id.clone(), call.target.clone(), app.now());
                 app.db
@@ -587,6 +595,10 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 }
                 if finish(&tx, &now, &id, &["running"], to, Some(result))?.is_some() {
                     crate::changes::insert(&tx, &now, &sid, turn_for_rec.as_deref(), &id, &tool, &file_recs)?;
+                    // hook은 자기 실행으로 다시 hook 이벤트를 만들지 않는다.
+                    if tool != "hook" {
+                        crate::hooks::capture(&tx, &now, &sid, "PostToolUse", &id, &tool)?;
+                    }
                 }
                 tx.commit()?;
                 Ok(())

@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../../api/client";
 import { hookPath, hookUpdate, type Hook, type HookDefinition, type HookListing } from "../../api/hooks";
 import { useQuery } from "../../state/store";
+import { HookExecutions } from "./HookExecutions";
 
 type Attempt = { method: "post" | "put" | "del"; path: string; body?: unknown; key: string };
 type Mutation = { phase: "idle" } | { phase: "sending" | "unknown"; attempt: Attempt };
@@ -63,8 +64,14 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
     const current = query.data?.hooks.find((h) => h.id === editing?.id);
     const event = draft.event || query.data?.events[0] || "";
     return <div className="stack" data-testid="hooks-panel">
-        <p className="muted">아직 실행되지 않음 · 활성화는 설정만 저장합니다. hook 실행 기능은 제공하지 않습니다.</p>
+        <p className="muted">저장·활성화는 실행 승인이 아닙니다. 지원 이벤트가 발생하면 아래 hook 실행 요청에서 고정 계획을 확인하고 승인하세요.</p>
+        <p className="muted small">{query.data?.execution_note ?? "이 서버의 이벤트 실행 지원 상태를 확인하세요."}</p>
+        <p className="muted small">실행 지원: {query.data?.supported_events?.join(", ") || "없음"}. 미지원 이벤트는 아직 실행되지 않음.</p>
+        <p className="muted small">hook은 원래 작업을 차단하지 않는 독립 실행입니다. 아래 실행 요청에서 취소·결과를, 해당 대화에서 결과 불명 검토를 확인하세요. 연결 종료는 취소가 아닙니다.</p>
         <p className="muted small">matcher는 glob 문법입니다. *는 모든 대상, ?는 한 글자입니다. 정규식·셸 명령이 아닙니다.</p>
+        <p className="muted small">PostToolUse는 도구 이름, 다른 지원 이벤트는 대화 ID에 matcher를 적용합니다.
+            SessionStart는 직접 대화 생성, UserPromptSubmit은 직접 턴·메시지 접수, Stop은 Grove 턴 종료에 연결됩니다.
+            분기·자식/봇 세션 생성, followup/steer 접수와 모델 내부 도구 이벤트는 미연결입니다.</p>
         {query.loading && <p role="status">hook 목록 불러오는 중</p>}
         {!!query.error && <p role="alert">{query.error instanceof Error ? query.error.message : "hook 조회 실패"}</p>}
         {error && <p role="alert">{error}</p>}
@@ -75,7 +82,7 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
         {query.data?.hooks.map((hook) => <article className="setting" key={hook.id} data-testid="hook-row">
             <strong>{hook.name}</strong>
             <p>{hook.event} · matcher <code>{hook.matcher}</code> · {hook.enabled ? "활성 설정" : "비활성 설정"} · revision {hook.revision}</p>
-            <p>아직 실행되지 않음</p>
+            <p>{hook.execution_state === "approval_required" ? "이벤트 발생 후 개별 승인 필요" : "아직 실행되지 않음 · 미지원 이벤트 또는 플랫폼"}</p>
             <pre>{hook.command}</pre>
             {hook.command_redacted && <p className="muted">비밀값 징후가 있어 명령 전체를 가렸습니다.</p>}
             <button disabled={blocked || !!deleting} onClick={() => edit(hook)}>hook 편집</button>
@@ -111,9 +118,9 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
                 {editing && <label><input type="checkbox" checked={replaceCommand} onChange={(e) => setReplaceCommand(e.target.checked)} />명령 교체</label>}
                 <label>hook 명령<textarea aria-label="hook 명령" autoComplete="off" spellCheck={false}
                     disabled={!!editing && !replaceCommand} required={!editing || replaceCommand} value={draft.command}
-                    placeholder={editing ? "비워 두면 저장된 원문 유지" : "저장만 하며 실행하지 않습니다"}
+                    placeholder={editing ? "비워 두면 저장된 원문 유지" : "이벤트 발생 후 승인한 계획만 실행합니다"}
                     onChange={(e) => setDraft({ ...draft, command: e.target.value })} /></label>
-                <label><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />hook 활성 설정 (실행 안 됨)</label>
+                <label><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />hook 활성 설정 (별도 승인 필요)</label>
                 {editing && <p>revision {editing.revision} 기준으로 수정합니다.</p>}
                 {editing && current?.revision !== editing.revision && <p role="status">
                     다른 요청으로 바뀌었습니다. 입력을 보존했으니 최신 설정을 확인하세요.
@@ -123,5 +130,6 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
                 {editing && <button type="button" onClick={reset}>hook 편집 취소</button>}
             </fieldset>
         </form>
+        <HookExecutions projectId={projectId} />
     </div>;
 }

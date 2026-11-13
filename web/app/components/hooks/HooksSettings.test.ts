@@ -5,7 +5,9 @@ import { hookPath, hookUpdate, type Hook, type HookListing } from "../../api/hoo
 import { HooksSettings } from "./HooksSettings";
 
 const query = vi.hoisted(() => ({ data: undefined as unknown, error: null as unknown, loading: false }));
-vi.mock("../../state/store", () => ({ useQuery: () => ({ ...query, reload: () => {} }) }));
+vi.mock("../../state/store", () => ({ useQuery: (key: string) => ({
+    ...query, data: key.startsWith("recovery:hook-executions:") ? [] : query.data, reload: () => {},
+}) }));
 const hook: Hook = {
     id: "h1", project_id: null, name: "<script>hook</script>", event: "PreToolUse", matcher: "shell*",
     command: "[redacted]", command_redacted: true, enabled: true, revision: 3, execution_state: "not_implemented",
@@ -14,7 +16,18 @@ const listing: HookListing = { hooks: [hook], events: ["PreToolUse", "Stop"], ma
 const render = (projectId?: string) => renderToStaticMarkup(createElement(HooksSettings, { projectId, projectName: "project" }));
 
 beforeEach(() => { query.data = listing; query.error = null; query.loading = false; });
-describe("hook 저장 전용 화면·계약", () => {
+describe("hook 설정·실행 지원 계약", () => {
+    it("지원 이벤트만 승인형 실행으로 표시하고 독립 실행·취소·복구 경계를 설명한다", () => {
+        query.data = { ...listing, supported_events: ["SessionStart", "Stop"],
+            hooks: [{ ...hook, event: "Stop", execution_state: "approval_required" }] };
+        const html = render();
+        expect(html).toContain("이벤트 발생 후 개별 승인 필요");
+        expect(html).toContain("SessionStart, Stop");
+        expect(html).toContain("저장·활성화는 실행 승인이 아닙니다");
+        expect(html).toContain("원래 작업을 차단하지 않는 독립 실행");
+        expect(html).toContain("연결 종료는 취소가 아닙니다");
+        expect(html).toContain("결과 불명 검토");
+    });
     it("서버의 이벤트·활성 설정과 미실행 상태를 표시하고 HTML을 escape한다", () => {
         const html = render();
         expect(html).toContain("아직 실행되지 않음");

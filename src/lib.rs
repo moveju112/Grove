@@ -262,6 +262,7 @@ pub fn router(app: App) -> Router {
         .route("/schedules/{id}/webhook", post(schedules::set_webhook))
         .route("/hooks/schedules/{id}", post(schedules::receive_hook))
         .route("/hooks", get(hooks::list).post(hooks::create))
+        .route("/hooks/executions", get(hooks::executions))
         .route("/hooks/{id}", put(hooks::update).delete(hooks::remove))
         .route("/sessions/{id}/context", get(context::get_usage))
         .route("/sessions/{id}/model-input", get(context::get_model_input))
