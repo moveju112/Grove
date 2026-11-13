@@ -7,6 +7,7 @@
 
 pub mod api;
 pub mod management;
+pub mod requirements;
 
 use crate::project_fs::ProjectFs;
 use crate::tools::{ToolError, ToolResult};
@@ -115,8 +116,8 @@ pub struct SkillEntry {
     pub id: String,
     pub name: String,
     pub source: SkillSource,
-    /// 원문 전체 bytes의 SHA-256. 활성 상태 변경 이력이 있으면 관리 세대도 포함한다.
-    /// metadata 또는 활성 세대가 바뀌면 기존 선택은 무효다.
+    /// 선언이 없으면 본문 전체 bytes의 SHA-256, 있으면 본문·선언·대상을 결합한다.
+    /// 본문/선언 또는 관리 활성 세대가 바뀌면 기존 선택은 무효다.
     pub revision: String,
     pub symlink: bool,
     /// 같은 root에서 같은 canonical 상대 경로로 향하는 다른 항목.
@@ -126,6 +127,9 @@ pub struct SkillEntry {
     pub conflicts: Vec<String>,
     pub metadata: MetadataSupport,
     pub enabled: bool,
+    /// 서버 관측 전용. client가 충족 상태를 제출해 검증을 우회할 수 없다.
+    #[serde(skip_deserializing)]
+    pub requirements: requirements::Report,
 }
 
 impl SkillEntry {
@@ -150,6 +154,8 @@ pub struct SkillBody {
     pub selection: SkillSelection,
     /// 원문을 그대로 표시한다. front matter도 추측해서 제거·변환하지 않는다.
     pub text: String,
+    #[serde(skip_deserializing)]
+    pub requirements: requirements::Report,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +184,7 @@ struct Loaded {
     revision: String,
     symlink: bool,
     metadata: MetadataSupport,
+    requirements: requirements::Report,
 }
 
 pub struct SkillCatalog {
@@ -261,6 +268,7 @@ impl SkillCatalog {
                     conflicts: vec![],
                     metadata: loaded.metadata,
                     enabled: true,
+                    requirements: loaded.requirements,
                 };
                 pairs.push((item, Record { root: index, name: name.to_owned(), target: loaded.target, generation: 0 }));
             }
@@ -331,7 +339,7 @@ impl SkillCatalog {
         if loaded.target != record.target || management::revision(&loaded.revision, record.generation) != selection.revision {
             return Err(error("skill_changed", "출처 또는 본문이 변경됐습니다. 다시 조회하고 선택하세요"));
         }
-        Ok(SkillBody { selection: selection.clone(), text: loaded.text })
+        Ok(SkillBody { selection: selection.clone(), text: loaded.text, requirements: loaded.requirements })
     }
 }
 
@@ -411,7 +419,10 @@ fn load(root: &AllowedRoot, name: &str) -> ToolResult<Loaded> {
     if target != after {
         return Err(error("skill_changed", "조회 중 스킬의 대상이 변경됐습니다"));
     }
-    let revision = sha256_hex(&bytes);
+    let (revision, requirements) = requirements::load(root, name, &bytes)?;
+    if root.fs.dir.canonicalize(&rel).map_err(io_error)? != target {
+        return Err(error("skill_changed", "조회 중 스킬의 대상이 변경됐습니다"));
+    }
     let text = String::from_utf8(bytes).map_err(|_| error("unsupported_format", "UTF-8 스킬 본문만 지원합니다"))?;
     if text.contains('\0') {
         return Err(error("unsupported_format", "바이너리 스킬 본문은 지원하지 않습니다"));
@@ -421,7 +432,7 @@ fn load(root: &AllowedRoot, name: &str) -> ToolResult<Loaded> {
     Ok(Loaded {
         target, text, revision,
         symlink: directory.file_type().is_symlink() || leaf.file_type().is_symlink(),
-        metadata,
+        metadata, requirements,
     })
 }
 

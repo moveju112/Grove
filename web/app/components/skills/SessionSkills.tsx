@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ApiError, authGeneration, isLoggedIn, newKey, onAuthChange } from "../../api/client";
-import { skillsApi, type SessionSkills as Snapshot, type SkillBody, type SkillMutation, type SkillSelection } from "../../api/skills";
+import { api, ApiError, authGeneration, isLoggedIn, newKey, onAuthChange } from "../../api/client";
+import { skillsApi, type SessionSkills as Snapshot, type SkillBody, type SkillMutation, type SkillSelection, type SkillCapabilityContext } from "../../api/skills";
 import { SkillsPanel } from "./SkillsPanel";
 import { SkillEditor, type SkillDraft } from "./SkillEditor";
+import { RequirementContext } from "./requirements/Requirements";
 
-type Intent = { kind: "select"; selection: SkillSelection; selected: boolean; key: string }
+type Intent = { kind: "select"; selection: SkillSelection; selected: boolean; key: string; context: SkillCapabilityContext }
     | { kind: "manage"; body: SkillMutation; key: string };
 type State = {
     owner: number;
@@ -25,6 +26,9 @@ export function uncertainSkillResult(e: unknown): boolean {
 // session/project가 바뀌면 Composer의 key로 재생성한다. 응답 순서와 인증 epoch도 별도로 확인한다.
 function ConnectedSkills({ sessionId }: { sessionId: string }) {
     const [state, setState] = useState(initial);
+    const [context, setContext] = useState<SkillCapabilityContext>({});
+    const [profiles, setProfiles] = useState<{ id: string; name: string; enabled: boolean }[]>([]);
+    const [profileError, setProfileError] = useState<string | null>(null);
     const sequence = useRef(0);
     const controller = useRef<AbortController | null>(null);
     const mutation = useRef(false);
@@ -42,7 +46,7 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
         // 초안·pending·저장된 선택은 그대로 두고 현재 파일/상태만 관측한다.
         setState((s) => ({ ...s, loading: true, preview: null, error: null }));
         try {
-            const snapshot = await skillsApi.list(sessionId, request.signal);
+            const snapshot = await skillsApi.list(sessionId, request.signal, context);
             if (request.current()) setState((s) => ({ ...s, owner: authGeneration(), snapshot, loading: false }));
         } catch (e) {
             if (request.current()) setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : "스킬 조회 실패" }));
@@ -50,6 +54,16 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
     };
     useEffect(() => {
         const owner = authGeneration();
+        const profileRequest = new AbortController();
+        setProfileError(null);
+        void api.get<{ id: string; name: string; enabled: boolean }[]>("/model-profiles", { signal: profileRequest.signal })
+            .then((items) => { if (owner === authGeneration() && isLoggedIn()) setProfiles(items); })
+            .catch((e: unknown) => {
+                if (!profileRequest.signal.aborted && owner === authGeneration() && isLoggedIn()) {
+                    setProfiles([]);
+                    setProfileError(e instanceof Error ? e.message : "검증용 모델 목록 조회 실패");
+                }
+            });
         void reload();
         const unsubscribe = onAuthChange(() => {
             if (owner === authGeneration() && isLoggedIn()) return;
@@ -57,15 +71,15 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
             controller.current?.abort();
             setState(initial());
         });
-        return () => { unsubscribe(); ++sequence.current; controller.current?.abort(); };
-    }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+        return () => { unsubscribe(); profileRequest.abort(); ++sequence.current; controller.current?.abort(); };
+    }, [sessionId, context]); // eslint-disable-line react-hooks/exhaustive-deps
 
     const inspect = async (selection: SkillSelection) => {
         if (mutation.current) return;
         const request = begin();
         setState((s) => ({ ...s, loading: true, preview: null, error: null }));
         try {
-            const preview = await skillsApi.inspect(sessionId, selection, request.signal);
+            const preview = await skillsApi.inspect(sessionId, selection, request.signal, context);
             if (request.current()) setState((s) => ({ ...s, preview, loading: false }));
         } catch (e) {
             if (request.current()) setState((s) => ({ ...s, loading: false, error: e instanceof Error ? e.message : "스킬 본문 조회 실패" }));
@@ -78,14 +92,14 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
         setState((s) => ({ ...s, pending: intent, loading: true, preview: null, error: null }));
         try {
             if (intent.kind === "select") {
-                await skillsApi.select(sessionId, intent.selection, intent.selected, intent.key, request.signal);
+                await skillsApi.select(sessionId, intent.selection, intent.selected, intent.key, request.signal, intent.context);
             } else {
                 await skillsApi.manage(sessionId, intent.body, intent.key, request.signal);
             }
             if (!request.current()) return;
             // replay는 과거 응답일 수 있다. 성공 뒤 현재 catalog를 별도로 읽는다.
             setState((s) => ({ ...s, pending: null, draft: intent.kind === "manage" && intent.body.op !== "set_enabled" ? null : s.draft }));
-            const snapshot = await skillsApi.list(sessionId, request.signal);
+            const snapshot = await skillsApi.list(sessionId, request.signal, context);
             if (request.current()) setState((s) => ({ ...s, snapshot, loading: false }));
         } catch (e) {
             if (request.current()) setState((s) => ({ ...s, loading: false, pending: uncertainSkillResult(e) ? intent : null,
@@ -100,6 +114,8 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
             <button type="button" className="ghost small" disabled={busy || Boolean(state.draft)}
                 onClick={() => setState((s) => ({ ...s, draft: { kind: "add", scope: "project", name: "", text: "" } }))}>Grove 스킬 추가</button>
         </div>
+        {active && profileError && <p className="warn" role="status">{profileError} · 모델 지원을 추정하지 않습니다.</p>}
+        <RequirementContext value={context} profiles={active ? profiles : []} disabled={busy} onChange={setContext} />
         {active && state.pending && !state.loading && <div role="alert">
             변경 결과를 확인하지 못했습니다. 자동으로 다시 변경하지 않습니다.
             <button type="button" onClick={() => void change(state.pending!)}>같은 요청 결과 확인</button>
@@ -110,7 +126,8 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
         </div>}
         {snapshot?.validation_error && <p className="warn" role="alert">
             선택한 스킬을 적용할 수 없습니다: {snapshot.validation_error.message} ({snapshot.validation_error.code}).
-            다음 모델 호출은 차단됩니다. 원래 선택을 해제하고 다시 확인하세요.
+            현재 관측 조건에서 적용할 수 없습니다. 실제 호출은 접수된 조건으로 다시 검증합니다.
+            기존 선택을 해제하거나 문제를 해결한 뒤 다시 확인하세요.
         </p>}
         {active && state.draft && <SkillEditor draft={state.draft} busy={busy || !snapshot}
             onChange={(draft) => setState((s) => ({ ...s, draft }))}
@@ -119,8 +136,8 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
         <SkillsPanel listing={snapshot?.listing ?? null} selected={snapshot?.selected ?? []}
             preview={active ? state.preview : null} loading={!active || state.loading} busy={!active || Boolean(state.pending)}
             error={active ? state.error : null} onInspect={(selection) => void inspect(selection)}
-            onSelect={(selection) => void change({ kind: "select", selection, selected: true, key: newKey() })}
-            onDeselect={(selection) => void change({ kind: "select", selection, selected: false, key: newKey() })}
+            onSelect={(selection) => void change({ kind: "select", selection, selected: true, key: newKey(), context: { ...context } })}
+            onDeselect={(selection) => void change({ kind: "select", selection, selected: false, key: newKey(), context: { ...context } })}
             onEdit={(body) => setState((s) => s.draft ? s : ({ ...s, draft: { kind: "save", selection: body.selection, text: body.text } }))}
             onSetEnabled={(selection, enabled) => void change({ kind: "manage", body: { op: "set_enabled", selection, enabled }, key: newKey() })} />
     </div>;
