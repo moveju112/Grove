@@ -72,6 +72,10 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 14 | `parallel/b02-pwa-lifecycle` · `4577b43` | `af0ad28` | `work/RESULT-14.md`; lifecycle 12개·API 18개·PWA/연결/응답 유실/승인 포함 E2E 22개 및 루트·`/grove/` 배포 E2E 4개 통과. 공통 변경 요청 경계 누락을 실패 시험으로 재현 후 수정 | `wks_043964eeb7dd683e` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-14-pwa-lifecycle` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 29 |
 | 20 | `parallel/b02-external-editor` · `1b1e438` | `af0ad28` | `work/RESULT-20.md`; 격리 7환경을 실행하는 Rust driver·타입 계약 2개, 웹 단위 4개·타입·외부 편집기 E2E 4개 통과. 실제 GUI·Windows/macOS 미검증 | `wks_7abac678efb30e9a` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-20-external-editor` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 30 |
 
+| 23 | `parallel/b02-tab-close` · `a8cfe5c` | `b59d9f7` | `work/RESULT-23.md`; 신규 Rust 7개·기존 회귀, 실제 tab/context/browser 종료 E2E 9개 통과 | `wks_2953ff0df5ee7bb2` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-23-tab-close` | 정리 조건 확인 완료·archive 대기; 브랜치 유지 | 31 |
+| 24 | `parallel/b02-exec-settings` · `93a61c0` | `b59d9f7` | `work/RESULT-24.md`; exec_settings 4개·settings/tasks 회귀·웹 단위 3개·타입·E2E 3개 통과. 미지원 fieldset 자체의 잘못된 Playwright 기대만 제거하고 각 radio 비활성 검사 유지 | `wks_4a12061aaef2c918` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings` | 정리 조건 확인 완료·archive 대기; 브랜치 유지 | 32 |
+| 26 | `parallel/b02-browser-caps` · `7fb45ba` | `b59d9f7` | `work/RESULT-26.md`; 신규 단위 11개·기존 알림 회귀·타입·빌드·Chromium E2E 4개 통과 | `wks_9d9878d624297a99` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps` | 정리 조건 확인 완료·archive 대기; 브랜치 유지 | 33 |
+
 b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01·04 이월은 10·11·12로 배정했다.
 
 ## 이월 작업
@@ -89,6 +93,9 @@ b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01
 | 11 | `RESOURCE-012` metadata/root 간 alias·hardlink 계약, Windows 경로/junction 검증 | `work/RESULT-11.md` | 보류: 지원 계약·Windows 환경 확인 필요 |
 | 14 | `WEB-007`·`WEB-009`·`WEB-016` 인증/나머지 작업 경계·offline cold start·다중 탭·저장소 인수 | `work/RESULT-14.md`, `af0ad28` | 27 |
 | 20 | `FILEUI-007` 실제 GUI 편집기·Windows/macOS·서비스 세션 검증 | `work/RESULT-20.md` | 보류: 해당 플랫폼·GUI 환경 필요 |
+| 23 | `PC-005` 설치형 standalone PWA native 창 수명 확인 | `work/RESULT-23.md` | 보류: 설치형 PWA 환경 필요 |
+| 24 | `SETTINGS-011` 기본 cwd의 실제 shell/task 계획 연결·승인 target 고정 | `work/RESULT-24.md` | 31; Windows/macOS 실측은 별도 미검증 유지 |
+| 26 | `WEB-010` Safari/Firefox·iOS/Android·실제 비보안 origin 권한 동작 | `work/RESULT-26.md` | 보류: 해당 브라우저·실기기 환경 필요 |
 
 ## 통합 담당의 완료 절차
 1. 사용자 통합 요청 뒤 각 worktree의 RESULT와 실제 branch·SHA·diff를 확인한다. 인계 파일만 보고 성공으로 단정하지 않는다.
