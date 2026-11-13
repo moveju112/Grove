@@ -32,16 +32,16 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 22 | parallel/b02-create-entry | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-22-create-entry | `wks_e30bd8e9163a7bb1` | 세션·프로젝트 생성 진입점 단순화 (`7b3949d` 기준) |
 | 25 | parallel/b02-update-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings | `wks_9ec8fd34396cf19a` | 서버 업데이트 채널·버전 표시 (`7b3949d` 기준) |
 | 27 | parallel/b02-pwa-recovery | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery | `wks_9a7c204337ac8249` | PWA 호환·오프라인·다중 탭 복구 (14 이월, `551f551` 기준) |
-| 28 | parallel/b02-skill-management | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-28-skill-management | `wks_e343b3a56e3a22d6` | Grove 스킬 추가·저장·reload·활성화 (`551f551` 기준) |
 | 29 | parallel/b02-hook-execution | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-29-hook-execution | `wks_31bb4a6cdc6ff8bc` | 승인·한도·취소 경계를 따르는 hook 실행 (`551f551` 기준) |
 | 30 | parallel/b02-navigation-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context | `wks_73d51bb0a7f9b465` | 호스트·프로젝트·세션 현재 위치와 탐색 (`551f551` 기준) |
 | 31 | parallel/b02-exec-cwd | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-31-exec-cwd | `wks_fe83bf0ff80fb523` | 기본 cwd 실제 실행 연결 (24 이월, `9942629` 기준) |
 | 32 | parallel/b02-compaction-details | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-32-compaction-details | `wks_101ba29980186bf0` | 압축 기록 모델·비용·원문 이동 (`9942629` 기준) |
 | 33 | parallel/b02-model-fallback | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-33-model-fallback | `wks_e0883b94183c3f2a` | 명시적 첫 응답 전 HTTP 모델 fallback (`9942629` 기준) |
+| 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | 준비 중 | 역할별 위임 허용 정책 (`work/34.md` 사전 배정 커밋 기준, 미시작) |
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
-자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 20개 증설은 취소됐고 목표는 활성 기능 workspace 10개다. 현재 31~33은 23·24·26 정리의 세 자리 보충이며 증설이 아니다. 21·25의 제공자 오류는 기존 세션에 1회 재개 요청을 접수했으며 재실패를 자동 반복하지 않는다. 관리 메타데이터 쓰기는 직렬화하고 진행 중 세션은 건드리지 않는다.
+자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 20개 증설은 취소됐고 목표는 활성 기능 workspace 10개다. 31~33은 23·24·26 정리의 세 자리, 34는 28 정리의 한 자리 보충이며 증설이 아니다. 21·25의 제공자 오류는 기존 세션에 1회 재개 요청을 접수했으며 재실패를 자동 반복하지 않는다. 관리 메타데이터 쓰기는 직렬화하고 진행 중 세션은 건드리지 않는다. 34는 backlog 3개 이상인 동안 신규 시작하지 않으며, 생성 시 개발 fast=false 명시·반환 확인이 필요하다.
 
 ## 명시적 후속 요청 우선순위
 신규 기능보다 verified idle continuation을 우선하며, 기존 기능 running/initializing 총 4개를 넘겨 시작하지 않는다. 이 요청은 provider 시스템 오류 retry가 아니므로 retry count를 초기화하지 않는다.
@@ -66,6 +66,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 | 번호 | 작업 브랜치·tip | 통합 SHA | RESULT 경로·검증 근거 | workspace ID·절대 경로 | 정리 상태 | 보충 번호 |
 |---|---|---|---|---|---|---|
+| 28 | `parallel/b02-skill-management` · `9383ff0fd7d405606d2fe72fd4e6412bdc779eb2` | `07bbd7b` | `work/RESULT-28.md`; Rust 관리 11·skills 17·store 7·웹 단위/타입 및 스킬 관리/선택 E2E 3개 통과. 별도 설정 직접 링크 실패는 SETTINGS-021로 보존 | `wks_e343b3a56e3a22d6` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-28-skill-management` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 34 |
 | 02 | `parallel/b01-web-base` · `7de966564c3d426f2a90e6157c5874157318b137` | `53f634b` | `work/RESULT-02.md`; 서버 2개, base/worker/Pages 단위 52개, 루트·하위 경로 E2E 4개 및 기존 PWA 회귀 통과 | `wks_e675c092ea9c3feb` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-02-web-base` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
 | 03 | `parallel/b01-assistant-identity` · `df94a3056ab58759c488aaecc198f4b7a79f0c14` | `53f634b` | `work/RESULT-03.md`; 단위 50개, identity E2E 3개 및 기존 봇 회귀 통과 | `wks_df7a705fd9c77bdb` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-03-assistant-identity` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
 | 05 | `parallel/b01-usage-ui` · `fd1e3bf4fbd754b2fe6bd963f049042cf9d9e17f` | `53f634b` | `work/RESULT-05.md`; 단위 7개, 사용량 E2E 3개 통과 | `wks_4eb1e336ad21d6c9` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-05-usage-ui` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
