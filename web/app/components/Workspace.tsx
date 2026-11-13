@@ -19,6 +19,7 @@ import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Hosts } from "./Hosts";
 import { SidebarProject } from "./sidebar";
+import { NavigationContext } from "./navigation/NavigationContext";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -188,6 +189,8 @@ export function Workspace() {
                     <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
                 </div>
             )}
+            <NavigationContext layout={layout} projects={projects.data ?? NO_PROJECTS} host={window.location.origin}
+                open={open} onBrowseProjects={() => setSidebar(true)} sidebarOpen={sidebar} />
             <div className="body">
                 {sidebar && (
                     <aside className="sidebar">
