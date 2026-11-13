@@ -578,7 +578,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let s = crate::sessions::get(c, &t.session_id)?;
     let root = crate::sessions::exec_root(c, &t.session_id)?;
     let profile_id = t.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?;
-    let (mp, rp) = crate::models::runtime_profile(c, &profile_id)?;
+    let (mp, rp) = crate::model_fallback::runtime(c, &def, &profile_id)?;
     let cli_backend = crate::provider::cli::is_cli(&rp.protocol);
     let mut messages=crate::history::model_chat(c, &t.session_id, None)?;
     crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
@@ -595,13 +595,21 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let cli = if cli_backend { Some(crate::provider::cli::CliContext {
         cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system)?
     }) } else { None };
-    let tools=if t.tools_enabled && !cli_backend {
+    let tools: Vec<ToolDef> = if t.tools_enabled && !cli_backend {
         let mcp_ready:bool=c.query_row(
             "SELECT EXISTS(SELECT 1 FROM mcp_servers m JOIN mcp_checks k ON k.server_id=m.id WHERE m.enabled=1 AND k.status='ready')",
             [],|r|r.get(0),
         )?;
         tool_defs().into_iter().filter(|d|mcp_ready || !matches!(d.name.as_str(),"mcp_tools"|"mcp_call")).collect()
     } else { vec![] };
+    if def.get("fallback").is_some() {
+        let usage = crate::context::usage(c, &t.session_id, Some(&profile_id))?;
+        let tool_chars: usize = tools.iter().map(|t| t.name.chars().count() + t.description.chars().count() + t.schema.to_string().chars().count() + 64).sum();
+        let extra = (system.chars().count() + tool_chars).div_ceil(4) as i64;
+        if usage["available_tokens"].as_i64().is_some_and(|left| left < extra) {
+            return Err(ApiError::invalid("fallback 모델의 입력 용량과 출력 여유를 초과합니다"));
+        }
+    }
     Ok(Some(StepInput {
         deadline,
         session_id: t.session_id.clone(),
@@ -808,8 +816,10 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 }
             })
         };
+        let mut fallback_emitted = false;
         let mut on_delta = |o: &provider::ModelOutput| {
             if !o.text.is_empty() || !o.reasoning.is_empty() || !o.tool_calls.is_empty() || !o.activity.is_empty() {
+                fallback_emitted = true;
                 let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
                 *progress.lock().unwrap_or_else(|e| e.into_inner()) = Some(now.clone());
                 last_progress_at = Some(now);
@@ -865,6 +875,20 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 return session_for_partial;
             }
             Err(e) => {
+                if *cancel_rx.borrow() {
+                    end_cancelled(app, turn_id, last_progress_at).await;
+                    return session_for_partial;
+                }
+                let may_switch = crate::model_fallback::permitted(&e, input.step, fallback_emitted, false);
+                let (tid, epoch, error) = (turn_id.to_string(), app.epoch.clone(), e.clone());
+                match app.db.call(move |c| crate::model_fallback::after_error(c, &tid, &epoch, &error, may_switch)).await {
+                    Ok(true) => { app.notify_events().await; continue; }
+                    Ok(false) => {}
+                    Err(error) => {
+                        fail(app, turn_id, json!({"code":error.code,"message":error.message})).await;
+                        return session_for_partial;
+                    }
+                }
                 let mut error = e.to_json();
                 error["last_progress_at"] = json!(last_progress_at);
                 error["settings"] = json!({ "provider_timeout_secs": input.profile.timeout.as_secs() });
@@ -1354,6 +1378,9 @@ pub(crate) fn enqueue_with_attachments(
     }
     if budget.as_object().is_some_and(|o| !o.is_empty()) {
         def["budget"] = budget;
+    }
+    if let Some(fallback) = crate::model_fallback::snapshot(tx, &profile, &def["budget"])? {
+        def["fallback"] = fallback;
     }
     // 부모 에이전트가 보낸 지시 턴에만 위임 규칙을 넣는다. 사용자가 자식 대화에 직접 보낸 턴은 부모에 보고되지 않으므로 넣지 않는다.
     if source.is_some_and(|s| s["kind"] == "agent_run")

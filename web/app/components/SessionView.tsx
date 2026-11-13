@@ -535,6 +535,17 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
     if (prefs.answerOnly && (m.role === "tool" || (m.role === "note" && (nt0 === "cli_activity" || nt0 === "imported_tool")))) return null;
     if (prefs.answerOnly && m.role === "assistant" && !(m.content as { text?: string }).text) return null;
     const c = m.content as { attachments?: Attachment[]; reasoning?: string | null; reasoning_chars?: number; text?: string; tool_calls?: { id: string; name: string }[]; name?: string; status?: string; output?: unknown; model?: string; approval_scope?: string | null; args?: unknown; duration_ms?: number | null; truncated?: boolean };
+    if (m.role === "note" && nt0 === "model_fallback") {
+        const r = m.content as {
+            original_profile_id: string; reason: string; status: number;
+            from: { name: string; model: string }; to: { name: string; model: string; base_url: string };
+        };
+        return <details className="msg note warn" data-testid="msg-model-fallback">
+            <summary>모델 fallback · {r.from.name} ({r.from.model}) → {r.to.name} ({r.to.model}) · HTTP {r.status}</summary>
+            <p>이후 호출 대상: {r.to.base_url} · {r.to.model}</p>
+            <p>원래 선택: {r.original_profile_id} · 전환 이유: {r.reason} · 동일 모델 재시도 뒤 첫 응답 전에 확인한 순서로 전환했습니다.</p>
+        </details>;
+    }
     if (m.role === "note" && nt0 === "completion_deferred") {
         const work = (m.content as { pending_work: { tasks: { id: string }[]; agents: { id: string }[] } }).pending_work;
         return <div className="msg note warn" role="status" data-testid="msg-completion-deferred">
