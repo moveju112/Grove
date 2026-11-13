@@ -104,6 +104,8 @@ Rust 검사는 기능 세션과 같은 잠금(`flock /home/ubuntu/.cache/grove-r
 - 새 세션 설정은 Paseo provider `paseodog`, model `openai-oauth/gpt-6.1-sol`, `thinkingOptionId: high`, `modeId: bypass`다. 실제 provider 모델 목록과 반환된 세션 설정으로 확인한다. 승인 경계는 이 문서와 COMMON 그대로이며 도구 실행 모드가 추가 권한을 부여하지 않는다.
 - 세션 상태는 각 README 행의 정확한 cwd로 조회한다. 무필터 `list_agents`가 호출자 workspace만 반환할 수 있으므로 그 결과를 전체 목록으로 취급하지 않는다. archived 세션도 포함해 미시작과 종료를 구분한다.
 - 미시작 판정은 workspace 경로·브랜치·기준 SHA 일치, 세션 이력 없음, 정확한 `RESULT-NN.md` 없음, tracked/untracked clean을 모두 만족해야 한다. `create_agent`는 정확한 workspace ID와 완료 알림을 지정해 한 번만 호출한다. 생성 응답이 유실되면 먼저 그 cwd의 세션 이력을 다시 확인하고 중복 생성하지 않는다.
+- 같은 저장소의 workspace 생성·agent 시작·재개·archive와 label 변경은 Git 공통 admission 메타데이터를 공유하므로 병렬 호출하지 않고 하나씩 끝낸다. 기능 구현은 별도 worktree에서 병렬로 유지한다. 실제 `mixdog-workspace-admission.json.lock` 2초 대기 오류가 관측됐으며, 이는 코드 merge 충돌과 다르다.
+- admission lock timeout 때 lock 파일 삭제·보유 프로세스 kill·설치 엔진 직접 수정으로 우회하지 않는다. 접수 여부를 상태·세션 이력으로 먼저 확인하고 원래 실행을 중복 시작하지 않는다. 순차 관리 호출은 경합 완화일 뿐, 엔진의 고정 timeout과 모든 세션 간 경합을 해결했다고 주장하지 않는다.
 - 첫 메시지는 ENTRY·COMMON·번호 문서를 정본으로 지정하고, 번호 문서의 사용자 흐름·소유 경로·완료 조건과 로컬 커밋 권한을 전달한다. 다른 기능·checkout은 수정하지 않고 RESULT와 관련 커밋을 남겨 종료한다. 기능 세션은 재위임·merge·TODO 체크·workspace 정리를 하지 않는다.
 - 작업 완료 알림은 빠른 깨우기 수단이고 heartbeat가 누락을 복구한다. 알림만으로 성공·완료를 판정하지 않고 상태·인계·commit·clean을 다시 확인한다. running/initializing·승인 대기·취소 상태는 자동 재실행·중단·메시지 전송하지 않는다. 미커밋 변경도 임의 인수하지 않는다. 사용자 승인한 제공자 시스템 오류의 기존 세션 재개만 아래 예외를 따른다.
 - 메인에는 하나의 heartbeat만 유지한다. 같은 이름·대상으로 `create_heartbeat`하면 기존 예약을 갱신하므로 만료·횟수 인자를 생략해 무기한으로 만든다. 예약기는 메인 실행 중 새 실행을 거절하므로 중복 통합을 시작하지 않는다. 메인 세션을 archive하면 감시도 끝나므로 자동 운영 중 archive하지 않는다.
