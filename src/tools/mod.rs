@@ -409,7 +409,7 @@ pub async fn execute(name: &str, args: &Value, planned: &Planned, root: &Path, c
         "shell" => shell::execute(&planned, &root, cancel).await,
         "web_fetch" => web_fetch::execute(&args, &planned, cancel).await,
         _ => tokio::task::spawn_blocking(move || match name.as_str() {
-            "read" => fs::read(&args, &planned, &root),
+            "read" => image_read::read(&args, &planned, &root),
             "list" => fs::list(&args, &planned, &root),
             "glob" => search::glob(&args, &planned, &root, &cancel),
             "find" => search::find(&args, &planned, &root, &cancel),

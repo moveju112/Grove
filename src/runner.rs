@@ -581,9 +581,11 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let (mp, rp) = crate::models::runtime_profile(c, &profile_id)?;
     let cli_backend = crate::provider::cli::is_cli(&rp.protocol);
     let mut messages=crate::history::model_chat(c, &t.session_id, None)?;
+    crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
+    crate::tools::image_read::hydrate(&mut messages, &root)
+        .map_err(|e| ApiError::new(axum::http::StatusCode::BAD_REQUEST, e.code, e.message))?;
     mp.check_capabilities(t.tools_enabled, def["effort"].as_str(), messages.iter().any(|m| matches!(m, ChatMsg::User { images, .. } if !images.is_empty())))?;
     let (max_tokens, temperature) = mp.generation_options();
-    crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
     let deadline = def["budget"]["max_minutes"]
         .as_i64()
         .and_then(|m| Some(crate::util::parse_time(&t.created_at)? + time::Duration::minutes(m)));
