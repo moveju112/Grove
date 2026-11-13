@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, state, useWorkspaces } from "./helpers";
+import { apiCall, login, openDetails, state, useWorkspaces } from "./helpers";
 
 type P = { id: string; name: string; root_path: string; revision: number; archived_at: string | null };
 
@@ -27,7 +27,7 @@ test("프로젝트를 보관했다가 복원하고, 제거한 worktree를 브랜
         // 제거한 worktree: 검사 결과를 본 뒤 복원
         await row.getByRole("button", { name: new RegExp(p.name) }).first().click();
         const panel = page.locator(".project-view").filter({ has: page.locator(".view-head", { hasText: p.name }) }).getByTestId("worktrees-panel");
-        await panel.locator("summary").click();
+        await openDetails(panel);
         const removed = panel.getByTestId("worktree-removed").filter({ hasText: "again" });
         await removed.getByRole("button", { name: "복원 검사" }).click();
         await expect(removed).toContainText("브랜치로");
@@ -39,7 +39,7 @@ test("프로젝트를 보관했다가 복원하고, 제거한 worktree를 브랜
         await row.getByRole("button", { name: "프로젝트 메뉴" }).click();
         await page.getByRole("dialog", { name: `${p.name} 메뉴` }).getByRole("button", { name: "보관" }).click();
         await expect(row).toHaveCount(0);
-        await side.getByLabel("프로젝트 목록 옵션", { exact: true }).click();
+        await side.getByRole("button", { name: "프로젝트 목록 옵션", exact: true }).click();
         await side.getByRole("button", { name: "보관됨" }).click();
         const archived = side.getByTestId("archived-project").filter({ hasText: p.name });
         await archived.getByRole("button", { name: "복원 검사" }).click();

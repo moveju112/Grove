@@ -94,7 +94,7 @@ test("SessionStart는 승인 후 한 번 실행하고 기록을 복원하며 거
         await showHooks(page);
         const view = card(page, f.call.id);
         await expect(view).toContainText("승인 대기");
-        await view.locator("summary").click();
+        await view.getByRole("button", { name: "승인 계획", exact: true }).click();
         await expect(view).toContainText('"hook_revision": 1');
         await expect(view).toContainText('"environment"');
         await expect(view).toContainText('"limits"');

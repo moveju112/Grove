@@ -6,6 +6,9 @@ import { requestFocus } from "../../state/focus";
 import { CompactionDetails, focusCompactionSource, type CompactionRecord } from "./CompactionDetails";
 
 vi.mock("../../state/focus", () => ({ requestFocus: vi.fn() }));
+vi.mock("../ui/Controls", () => ({
+    DetailDialog: ({ title, children }: { title: import("react").ReactNode; children: import("react").ReactNode }) => createElement("section", null, title, children),
+}));
 afterEach(() => vi.restoreAllMocks());
 
 const record: CompactionRecord = {

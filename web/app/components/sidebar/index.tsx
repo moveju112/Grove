@@ -1,4 +1,5 @@
 import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
+import { ActionMenu } from "../ui/Controls";
 import { ApiError, api } from "../../api/client";
 import type { Project } from "../../api/generated";
 import { useQuery } from "../../state/store";
@@ -44,8 +45,7 @@ export function SessionRow({ item, open, narrow }: { item: SidebarSession; open:
             <StatusIcon status={item.status} />
             {s.unread && <span className="sidebar-unread">● 읽지 않음</span>}
         </button>
-        <details className="sidebar-session-actions">
-            <summary aria-label={`${s.title} 도구`}>⋯</summary>
+        <ActionMenu className="sidebar-session-actions" label={`${s.title} 도구`}>
             <div role="toolbar" aria-label={`${s.title} 도구`} className="sidebar-toolbar" onKeyDown={toolbarKeys}>
             <button type="button" className="ghost small pin-toggle" disabled={busy} aria-pressed={item.pinned}
                 aria-label={item.pinned ? "세션 고정 해제" : "세션 고정"} title={item.pinned ? "고정 해제" : "고정"}
@@ -59,7 +59,7 @@ export function SessionRow({ item, open, narrow }: { item: SidebarSession; open:
                 <button type="button" className="ghost small" aria-label="세션 아래에 열기" onClick={() => open(target, "down")}>⤓</button>
             </>}
             </div>
-        </details>
+        </ActionMenu>
         {error && <p className="err small" role="alert">{error}</p>}
     </li>;
 }
@@ -89,18 +89,11 @@ export function SidebarProject({ project, children, open, narrow, onCreate }: {
             {!project.available && <span className="warn">프로젝트 경로 없음</span>}
         </div>
         {/* 프로젝트 행 오른쪽의 작은 도구. 이름은 접근성 이름으로 두고 화면에는 기호만 보인다. */}
-        <details className="sidebar-project-tools">
-            <summary aria-label={`${project.name} 대화 도구`} title="대화 도구">
+        <ActionMenu className="sidebar-project-tools" label={`${project.name} 대화 도구`} trigger={<>
                 {unreadOnly && <span className="dot" aria-label="읽지 않음 필터 적용 중" />}
                 {data && <span className="sidebar-count num">{data.total}</span>}<span aria-hidden="true">⌄</span>
-            </summary>
-        <div className="sidebar-toolbar" role="toolbar" aria-label={`${project.name} 도구`} onKeyDown={toolbarKeys}
-            onClick={(event) => {
-                if (!(event.target as HTMLElement).closest("button")) return;
-                const details = event.currentTarget.closest("details")!;
-                details.open = false;
-                details.querySelector("summary")?.focus();
-            }}>
+            </>}>
+        <div className="sidebar-toolbar" role="toolbar" aria-label={`${project.name} 도구`} onKeyDown={toolbarKeys}>
             <button type="button" className="ghost small" disabled={!project.available} onClick={onCreate} aria-label="새 대화" title="새 대화">+</button>
             <button type="button" className="ghost small sidebar-expand" aria-expanded={expanded} aria-controls={listId}
                 aria-label={`대화 ${expanded ? "접기" : "펼치기"}${data ? ` (${data.total})` : ""}`} title={expanded ? "대화 접기" : "대화 펼치기"}
@@ -111,7 +104,7 @@ export function SidebarProject({ project, children, open, narrow, onCreate }: {
                 onClick={() => { setUnreadOnly((v) => !v); setOffset(0); }}>●</button>
             <button type="button" className="ghost small" onClick={page.reload} aria-label="목록 새로고침" title="목록 새로고침">↻</button>
         </div>
-        </details>
+        </ActionMenu>
         {Boolean(page.error) && <p className="err small" role="alert">대화 목록을 불러오지 못했습니다. 목록 새로고침으로 다시 시도하세요.</p>}
         {!data && page.loading && <p className="muted small" role="status">대화 불러오는 중…</p>}
         <div id={listId} hidden={!expanded}>

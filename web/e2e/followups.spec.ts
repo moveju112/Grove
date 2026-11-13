@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
 
 // UI-021, RUN-007·008: 실행 중에는 보내기 대신 대기열·지금 반영(steer)·중단하고 보내기를 고르고, 중지할 수 있다.
 async function requests(): Promise<{ messages: { role: string; content: unknown }[] }[]> {
@@ -17,7 +17,7 @@ async function openSession(page: Page, title: string) {
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     return view;
 }
 
@@ -51,7 +51,7 @@ test("지금 반영(steer)은 도구 결과 뒤 다음 모델 호출에 한 번�
     const before = (await requests()).length;
     await script({ frames: frames.tool("s1", "list", {}), delayMs: 1500 });
     await script({ frames: frames.text(["반영한 답"]) });
-    await view.getByLabel("도구").check();
+    await composerOption(view, "도구", true);
     await box.fill("목록 보고 정리해");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("turn-status")).toBeVisible();
@@ -59,7 +59,7 @@ test("지금 반영(steer)은 도구 결과 뒤 다음 모델 호출에 한 번�
     await box.fill("한국어 표로 정리해");
     await view.getByRole("button", { name: "지금 반영" }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "반영한 답" })).toHaveCount(1, { timeout: 15_000 });
-    await view.getByLabel("도구").uncheck();
+    await composerOption(view, "도구", false);
     const reqs = (await requests()).slice(before);
     expect(reqs).toHaveLength(2);
     expect(has(reqs[0]!, "한국어 표로")).toBe(false);

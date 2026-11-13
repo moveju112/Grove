@@ -12,6 +12,7 @@ test("다른 기기의 설정 변경이 도착해도 편집 시작 revision을 �
         const open = async (p: Page) => {
             await login(p);
             await p.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+            await sessionView(p, session.id).getByRole("button", { name: "대화 작업", exact: true }).click();
             await sessionView(p, session.id).getByRole("button", { name: "대화 설정" }).click();
             await p.getByLabel("설정 검색").last().fill("응답 언어");
             return p.getByTestId("setting-output.language").last();

@@ -30,14 +30,14 @@ test("서버에 아직 저장하지 못한 탭·분할 방향·비율·활성 pa
     const divider = page.getByRole("separator");
     await divider.press("ArrowRight");
     await divider.dblclick();
-    await page.getByTestId("pane").first().getByRole("tab").click();
+    await page.getByTestId("pane").first().locator(".tabbar").getByRole("tab").click();
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-    await expect(page.getByTestId("pane").first().getByRole("tab", { selected: true })).toContainText("설정");
+    await expect(page.getByTestId("pane").first().locator(".tabbar").getByRole("tab", { selected: true })).toContainText("설정");
     await page.reload();
     await expect(page.getByTestId("split-column")).toBeVisible();
     await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "45");
     await expect(page.getByTestId("pane").first()).toHaveClass(/focused/);
-    await expect(page.getByTestId("pane").first().getByRole("tab", { selected: true })).toContainText("설정");
+    await expect(page.getByTestId("pane").first().locator(".tabbar").getByRole("tab", { selected: true })).toContainText("설정");
     await page.getByTestId("pane").first().locator(".tab-title").filter({ hasText: "대화 목록" }).click();
     await expect(page.getByTestId("pane").first().getByLabel("메시지 입력")).toBeEnabled();
     const server = await apiCall<{ revision: number; layout: Layout }>("GET", `/layouts/${device}`);
@@ -84,7 +84,7 @@ test("좁은 화면을 다녀와도 미반영 넓은 화면 배치와 각 기기
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(1);
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-    await expect(page.getByRole("tab", { selected: true })).toContainText("설정");
+    await expect(page.locator(".tabbar").getByRole("tab", { selected: true })).toContainText("설정");
     await page.setViewportSize({ width: 1400, height: 900 });
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(2);
     await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "35");

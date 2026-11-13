@@ -75,7 +75,6 @@ export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
     const [scope, setScope] = useState<AutoApplyScope>(data.settings.auto_apply);
     const dirty = channel !== data.settings.channel || scope !== data.settings.auto_apply;
     return <>
-        <p>서버 실행 파일의 업데이트 설정입니다. PWA 화면(UI) 갱신·새로고침과는 별개입니다.</p>
         <dl className="kv" data-testid="server-update-version">
             <dt>현재 서버 버전</dt><dd>{data.server.version}</dd>
             <dt>서버 protocol</dt><dd>{data.server.protocol}</dd>
@@ -104,7 +103,6 @@ export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
         {!data.readiness.idle && <dl className="kv" aria-label="업데이트 보류 대상">
             {Object.entries(data.readiness.busy).filter(([, count]) => count > 0).map(([kind, count]) => <div key={kind}><dt>{busyLabels[kind] ?? kind}</dt><dd>{count}</dd></div>)}
         </dl>}
-        <p className="muted small">확인은 로컬에 준비된 서명 manifest만 읽습니다. 외부 릴리스 서버 접속과 패키지 다운로드는 하지 않습니다.</p>
         {data.last_check && data.last_check.settings_revision !== data.settings.revision
             && <p>이전 설정에서 확인한 결과입니다. 현재 저장된 채널로 다시 확인하세요.</p>}
         <CheckResult check={data.last_check} />

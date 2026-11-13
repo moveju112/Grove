@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, openBots, script, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openBots, script, sessionView } from "./helpers";
 
 // UI-013 통합 인수 시험. SessionView의 실제 assistant 항목 연결 전에는 통과하지 않는다.
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -25,7 +25,7 @@ async function openBot(page: Page, bot: { name: string; sessionId: string }) {
 
 async function answer(view: Locator, marker: string) {
     await script({ frames: frames.text([marker]), marker });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill(marker);
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const message = view.getByTestId("msg-assistant").filter({ hasText: marker });

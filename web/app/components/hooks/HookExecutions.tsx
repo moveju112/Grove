@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DetailDialog } from "../ui/Controls";
 import { api } from "../../api/client";
 import type { ToolCallRow } from "../../api/generated";
 import { useQuery } from "../../state/store";
@@ -33,7 +34,7 @@ export function HookExecutions({ projectId }: { projectId?: string }) {
         {query.data?.length === 0 && <p>접수된 hook 실행 요청이 없습니다.</p>}
         {query.data?.map((call) => <article key={call.id} data-testid="hook-execution" data-call-id={call.id}>
             <p>대화 <code>{call.session_id}</code> · {statusLabels[call.status] ?? call.status}</p>
-            <details><summary>승인 계획 · 이벤트·revision·명령·위치·환경·한도</summary><pre>{JSON.stringify(call.target, null, 2)}</pre></details>
+            <DetailDialog label="승인 계획" title="승인 계획"><pre>{JSON.stringify(call.target, null, 2)}</pre></DetailDialog>
             {call.status === "pending_approval" && <ApprovalCard call={call} effect="execute" choices={["approve", "deny"]}
                 onDecision={async (request) => {
                     try {

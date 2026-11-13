@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, login, openDetails, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Call = { id: string; name: string; status: string; result: unknown };
@@ -20,9 +20,9 @@ test("큰 결과는 화면 원문과 모델 참조를 구분하고 실제 범위
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("모델 프로필").selectOption(profile);
-    await view.getByLabel("도구", { exact: true }).check();
+    await composerOption(view, "도구", true);
     await script({ marker: title, frames: frames.tool("large-original", "shell", { command: "printf run >> executions; cat output.txt" }) });
     await script({ marker: title, frames: frames.text(["큰 결과를 참조로 보관했어"]) });
     await view.getByLabel("메시지 입력").fill(title);

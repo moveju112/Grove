@@ -6,6 +6,7 @@ import { useQuery } from "../state/store";
 import { WT, useProject, useWorkspaceMode, type WorkspaceList as List } from "../state/workspaces";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
+import { Panel } from "./ui/Controls";
 type Recovery = { kind: "recoverable"; branch: string; path: string } | { kind: "unavailable"; reason: string; message: string };
 type Attempt = { label: string; target: string; key: string; run: (key: string) => Promise<unknown>; onSuccess?: () => void; onConflict?: (e: ApiError) => boolean };
 type CreateOptions = { carry?: "leave" | "carry"; confirm_large?: boolean };
@@ -38,10 +39,6 @@ function WorkspaceModeSwitch({ projectId }: { projectId: string }) {
     };
     return (
         <div className="workspace-mode" data-testid="workspace-mode" data-mode={p.workspace_mode}>
-            <p className="muted small">
-                {single ? "단일 모드: 프로젝트 폴더 하나에서 바로 대화합니다. 워크스페이스는 만들지 않습니다."
-                    : "프로젝트 모드: 프로젝트 폴더와 워크스페이스(Git worktree)마다 대화를 나눕니다."}
-            </p>
             <ServerActionButton className="ghost small" disabled={busy} onClick={() => void change()}>
                 {single ? "프로젝트 모드로 전환" : "단일 모드로 전환"}
             </ServerActionButton>
@@ -120,19 +117,19 @@ function WorktreesPanelBody({ projectId, mode }: { projectId: string; mode: "sin
         });
     };
 
-    if (data && !data.is_repo && !attempt) return null;
+    if (data && !data.is_repo && !attempt) return <Panel className="worktrees" data-testid="worktrees-panel" title="워크스페이스">
+        <p className="muted small">Git 저장소에서 사용할 수 있습니다.</p>
+    </Panel>;
     const rows = data?.worktrees ?? [];
     if (mode === "single") {
         return (
-            <details className="worktrees" data-testid="worktrees-panel">
-                <summary>워크스페이스 · 단일 모드</summary>
+            <Panel className="worktrees" data-testid="worktrees-panel" title="워크스페이스 · 단일 모드">
                 <WorkspaceModeSwitch projectId={projectId} />
-            </details>
+            </Panel>
         );
     }
     return (
-        <details className="worktrees" data-testid="worktrees-panel">
-            <summary>워크스페이스 {rows.length > 0 ? `· ${rows.length}` : ""}</summary>
+        <Panel className="worktrees" data-testid="worktrees-panel" title={`워크스페이스${rows.length > 0 ? ` · ${rows.length}` : ""}`}>
             <WorkspaceModeSwitch projectId={projectId} />
             {err && <p className="err" role="alert">{err}</p>}
             {Boolean(q.error) && <p className="err" role="alert">worktree 목록을 불러오지 못했습니다</p>}
@@ -250,7 +247,7 @@ function WorktreesPanelBody({ projectId, mode }: { projectId: string; mode: "sin
                     사라진 worktree 기록 정리
                 </ServerActionButton>
             )}
-        </details>
+        </Panel>
     );
 }
 

@@ -34,15 +34,18 @@ test("제어문자를 해석한 화면을 읽기 전용으로 캡처하고 동�
     const file = await download;
     expect(file.suggestedFilename()).toBe(`terminal-${terminal.id}.txt`);
     expect(readFileSync((await file.path())!, "utf8")).toBe(frozen);
+    await page.keyboard.press("Escape");
     await view.locator(".xterm").click();
     await page.keyboard.type("printf 'later-%s\\n' \"$((42+1))\"");
     await page.keyboard.press("Enter");
     await expect(view.locator(".xterm-rows")).toContainText("later-43");
+    await openDetails(panel);
     await expect(text).toHaveText(frozen!);
     await panel.getByLabel("캡처 시작 줄", { exact: true }).fill("0");
     await panel.getByLabel("캡처 끝 줄", { exact: true }).fill("0");
     await panel.getByRole("button", { name: "지금 캡처", exact: true }).click();
     await expect(text).toHaveText("한글 캡처");
+    await page.keyboard.press("Escape");
     page.once("dialog", (dialog) => dialog.accept());
     await view.getByRole("button", { name: "종료", exact: true }).click();
     await expect(view).toHaveAttribute("data-conn", "readonly");

@@ -1,5 +1,5 @@
 import { ApiError, api } from "../api/client";
-import { useAutoOpen } from "../state/autoOpen";
+import { Panel } from "./ui/Controls";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -57,9 +57,11 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
         }
         q.reload();
     };
-    // 진행 중인 작업이 생기면 열고, 끝나도 사용자가 연 목록을 닫지 않는다(hook은 조기 반환 전에 호출).
-    const details = useAutoOpen(runs.some((r) => r.status === "running"));
-    if (!parent && runs.length === 0) return null;
+    if (!parent && runs.length === 0) return <Panel className="agent-runs" data-testid="agent-runs" title="맡긴 작업">
+        <p className={q.error ? "err small" : "muted small"} role={q.error ? "alert" : "status"}>
+            {q.loading ? "불러오는 중…" : q.error ? "맡긴 작업을 읽지 못했습니다." : "맡긴 작업 없음"}
+        </p>
+    </Panel>;
     return (
         <div className="agent-runs" data-testid="agent-runs">
             {parent && (
@@ -69,12 +71,11 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
                 </p>
             )}
             {runs.length > 0 && (
-                <details {...details}>
-                    <summary>
+                <Panel title={<>
                         맡긴 작업 {runs.length}
                         {runs.some((r) => r.status === "running") && <strong> · 진행 중 {runs.filter((r) => r.status === "running").length}</strong>}
                         {runs.some((r) => runLabel(r).needsUser) && <strong> · 확인 필요 {runs.filter((r) => runLabel(r).needsUser).length}</strong>}
-                    </summary>
+                    </>}>
                     <ul className="session-list">
                         {runs.map((r) => (
                             <li key={r.id} data-testid="agent-run" data-status={r.status} data-turn-status={r.turn_status ?? ""}>
@@ -85,7 +86,7 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
                             </li>
                         ))}
                     </ul>
-                </details>
+                </Panel>
             )}
         </div>
     );

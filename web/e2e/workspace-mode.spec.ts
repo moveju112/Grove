@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, openDetails, state } from "./helpers";
+import { apiCall, composerOption, login, openDetails, state } from "./helpers";
 
 /// 다른 시험과 저장소를 공유하지 않도록 새 프로젝트 폴더에 저장소를 만든다(모드는 기본값 그대로).
 async function freshRepo(tag: string) {
@@ -51,7 +51,7 @@ test("단일 모드는 워크스페이스를 만들지 않고, 프로젝트 모�
     // 새 대화를 워크스페이스에서 시작하면 그 워크스페이스에 연결된다(보내면 대화 화면으로 바뀐다).
     await view.getByLabel("새 대화 워크스페이스").selectOption(wt.id);
     await view.getByLabel("메시지 입력").fill("워크스페이스 대화");
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     await view.getByLabel("메시지 입력").press("Control+Enter");
     await expect.poll(async () => (await apiCall<{ items: { title: string; worktree_id: string | null }[] }>("GET", `/projects/${p.id}/sessions?limit=30`))
         .items.find((s) => s.title === "워크스페이스 대화")?.worktree_id).toBe(wt.id);

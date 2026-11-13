@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, script, sessionView, state } from "./helpers";
 
 type Setting = { key: string; layers: { server?: { value: unknown; revision: number } } };
 const keys = ["runs.max_active", "runs.provider_max_active", "runs.account_max_active"];
@@ -32,7 +32,7 @@ test("같은 계정의 모델 요청은 한도를 표시하며 기다리고 취�
         await login(page);
         await page.locator(".recent").getByRole("button", { name: new RegExp(marker) }).first().click();
         const view = sessionView(page, second.id);
-        await view.getByLabel("보내기 방식").selectOption("model");
+        await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("모델 프로필").selectOption(profile.id);
         await view.getByLabel("메시지 입력").fill(`${marker}-queued`);
         await view.getByRole("button", { name: "보내기", exact: true }).click();

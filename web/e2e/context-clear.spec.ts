@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, login, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 async function profile(name: string) {
@@ -36,7 +36,7 @@ c.close()
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
     const view = sessionView(page, session.id);
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("모델 프로필").selectOption(model.id);
     await view.getByLabel("메시지 입력").fill("NEW_CONTEXT_QUESTION_FIXTURE");
     await script({ frames: frames.text(["NEW_CONTEXT_ANSWER_FIXTURE"]), marker: "NEW_CONTEXT_QUESTION_FIXTURE" });

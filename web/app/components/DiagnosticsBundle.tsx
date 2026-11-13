@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DetailDialog } from "./ui/Controls";
 import { ApiError, api, PROTOCOL } from "../api/client";
 import { useCapability } from "../state/capabilities";
 import { useLive } from "../state/store";
@@ -43,7 +44,6 @@ export function DiagnosticsBundle() {
 
     if (supported === false) return null;
     return <div data-testid="diagnostics-bundle">
-        <p className="muted small">소유자 전용 · 직접 요청한 때만 생성합니다. 서버에 파일을 저장하거나 외부로 자동 전송하지 않습니다.</p>
         {!preparing && <button type="button" className="ghost small" onClick={() => { setPreparing(true); setError(null); }}>진단 묶음 준비</button>}
         {preparing && <div role="group" aria-label="진단 정보 범위 확인">
             <p className="small">포함: 버전·OS·프로토콜·DB 크기·메모리·실행/대기 수·상태별 개수·이벤트 연결 상태.</p>
@@ -54,7 +54,7 @@ export function DiagnosticsBundle() {
         </div>}
         {error && <p className="err" role="alert">{error}</p>}
         {bundle && <div>
-            <details><summary>공유 전 진단 묶음 미리 보기</summary><pre data-testid="diagnostics-preview">{bundle}</pre></details>
+            <DetailDialog label="진단 묶음 미리 보기" title="공유 전 진단 묶음 미리 보기"><pre data-testid="diagnostics-preview">{bundle}</pre></DetailDialog>
             {url && <a href={url} download="grove-diagnostics.json">진단 묶음 다운로드</a>}
             <button type="button" className="ghost small" onClick={() => setBundle(null)}>진단 묶음 지우기</button>
         </div>}

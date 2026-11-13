@@ -75,8 +75,7 @@ describe("원본 설정의 읽기 전용 출처", () => {
         }]);
         expect(html).toContain("Claude · 프로젝트 원본");
         expect(html).toContain(".claude/settings.json");
-        expect(html).toContain("원본을 조회했다고 Grove에 적용된 것은 아닙니다");
-        expect(html).toContain("Grove의 범위별 설정 화면");
+        expect(html).toContain("원본 조회 전용 · Grove 실제 적용 상태와 별개");
         expect(html).toContain("켜짐");
         expect(html).toContain("꺼짐");
         expect(html).toContain("0일");

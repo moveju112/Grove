@@ -7,6 +7,7 @@ import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { Icon } from "./icons";
+import { DetailDialog } from "./ui/Controls";
 
 /// 서버에 영속 보관된 알림. 기기가 꺼져 있던 동안의 알림도 접속하면 보인다.
 export function NotificationsPanel({ open }: { open: Opener }) {
@@ -43,8 +44,7 @@ export function NotificationsPanel({ open }: { open: Opener }) {
         finally { q.reload(); }
     };
     return (
-        <details className="notifications" data-testid="notifications">
-            <summary>
+        <DetailDialog className="notifications" data-testid="notifications" label="알림" title={<>
                 <Icon name="bell" size={16} />
                 알림{" "}
                 {unread > 0 && (
@@ -52,7 +52,7 @@ export function NotificationsPanel({ open }: { open: Opener }) {
                         {unread}
                     </span>
                 )}
-            </summary>
+            </>}>
             {deliveryError && <p className="err" role="alert">앱 전달 미확인: {deliveryError} <ServerActionButton className="ghost small" onClick={() => void confirmDelivery()}>전달 다시 확인</ServerActionButton></p>}
             {readError && <p className="err" role="alert">{readError}</p>}
             {items.length === 0 ? (
@@ -65,6 +65,7 @@ export function NotificationsPanel({ open }: { open: Opener }) {
                             <li key={n.id} data-testid="notification" className={n.read_at ? "muted" : ""}>
                                 <button
                                     className="ghost"
+                                    data-dialog-close
                                     onClick={() => {
                                         if (!n.read_at) void read(`/notifications/${n.id}/read`);
                                         if (n.session_id && n.project_id) open({ kind: "session", project_id: n.project_id, resource_id: n.session_id, title: n.title });
@@ -82,6 +83,6 @@ export function NotificationsPanel({ open }: { open: Opener }) {
                     </ul>
                 </>
             )}
-        </details>
+        </DetailDialog>
     );
 }

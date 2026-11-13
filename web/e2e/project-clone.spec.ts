@@ -33,7 +33,7 @@ test("경로 제안으로 폴더를 고르고, 원격 저장소를 clone해 프�
         await expect(dialog.getByTestId("dir-current")).toContainText(join(base, "zeta-suggest"));
 
         // clone: 대상 폴더 아래 저장소 이름으로 받고 프로젝트로 등록한다
-        await dialog.locator("summary", { hasText: "저장소에서 clone" }).click();
+        await dialog.getByRole("button", { name: "저장소에서 clone", exact: true }).click();
         const box = dialog.getByRole("group", { name: "저장소 clone" });
         await box.getByLabel("clone할 저장소").fill(`file://${join(base, `${repoName}.git`)}`);
         await expect(box.getByLabel("clone 방식")).toHaveCount(0);
@@ -46,7 +46,7 @@ test("경로 제안으로 폴더를 고르고, 원격 저장소를 clone해 프�
         // 같은 대상에 다시 받으면 기존 폴더를 지키고 이유를 보인다
         await page.getByRole("button", { name: "만들기", exact: true }).click();
         await page.getByRole("dialog", { name: "만들기", exact: true }).getByRole("button", { name: "프로젝트 추가", exact: true }).click();
-        await dialog.locator("summary", { hasText: "저장소에서 clone" }).click();
+        await dialog.getByRole("button", { name: "저장소에서 clone", exact: true }).click();
         await box.getByLabel("clone할 저장소").fill(`file://${join(base, `${repoName}.git`)}`);
         await box.getByLabel("clone 대상 폴더").fill(target);
         await box.getByRole("button", { name: "clone 후 프로젝트로 추가" }).click();

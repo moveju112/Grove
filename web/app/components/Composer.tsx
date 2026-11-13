@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { ActionMenu, DetailDialog } from "./ui/Controls";
+import { Icon } from "./icons";
 import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../api/client";
 import type { Definition, ModelProfile } from "../api/generated";
 import { deviceName, loadPrefs } from "../state/device";
@@ -367,11 +369,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
 
     return (
         <div className="composer">
-            {resourceKey.startsWith("session:") && <SessionSkills key={`${projectId}:${resourceKey}`} sessionId={resourceKey.slice("session:".length)} />}
             {serverBlocked && <p className="draft-note" role="status" data-testid="composer-blocked">{serverBlocked}</p>}
             {copyError && <p className="err" role="alert">기기에 입력 사본을 보관하지 못했습니다. 화면을 떠나기 전에 내용을 복사하세요.</p>}
-            {copies.length > 0 && <details className="draft-note" data-testid="draft-copies">
-                <summary>다른 입력 사본 {copies.length}개</summary>
+            {copies.length > 0 && <DetailDialog className="draft-note" data-testid="draft-copies" label="다른 입력 사본" title={`다른 입력 사본 ${copies.length}개`}>
                 <p className="muted small">선택한 사본을 이 탭에 복제합니다. 현재 입력은 별도 사본으로 남기며 자동 전송하지 않습니다.</p>
                 {copies.map((copy) => <div key={copy.key} data-testid="draft-copy">
                     <pre>{copy.draft.text}</pre>
@@ -380,9 +380,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     </p>}
                     {!!copy.draft.attachments?.length && <p className="small">첨부: {copy.draft.attachments.map((a) => a.name).join(", ")}</p>}
                     {copy.draft.pending && <p className="warn small">전송 결과 확인 필요 · 원래 요청 키 유지</p>}
-                    <button className="ghost small" disabled={busy || attachments.busy} onClick={() => restoreCopy(copy.draft)}>이 사본 이어받기</button>
+                    <button className="ghost small" data-dialog-close disabled={busy || attachments.busy} onClick={() => restoreCopy(copy.draft)}>이 사본 이어받기</button>
                 </div>)}
-            </details>}
+            </DetailDialog>}
             {pendingInvalid && <div className="draft-note warn" role="alert">
                 전송 사본이 손상되어 원래 요청을 확인할 수 없습니다. 서버 대화·실행 기록을 먼저 확인하세요.
                 <button className="ghost small" onClick={() => setPendingInvalid(false)}>기록 확인 후 새 전송 허용</button>
@@ -396,10 +396,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
             {conflict && (
                 <div className="draft-note warn" role="alert">
                     서버 초안이 다른 기기({conflict.device_name}) 또는 입력 사본에서 바뀌었습니다. 내 초안은 이 탭에 보존되어 있습니다.
-                    <details>
-                        <summary>서버 초안 보기</summary>
+                    <DetailDialog label="서버 초안" title="서버 초안 보기">
                         <pre>{conflict.text}</pre>
-                    </details>
+                    </DetailDialog>
                     <button className="ghost small" onClick={() => loadServer(conflict, "replace")}>서버 것으로 바꾸기</button>
                     <button className="ghost small" onClick={() => loadServer(conflict, "append")}>합치기</button>
                     <button className="ghost small" disabled={!!disabled} onClick={() => { base.current = conflict.revision; setConflict(null); void saveServer(); }}>
@@ -412,9 +411,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     보냈는지 확인할 수 없습니다(연결 문제). 입력은 그대로 보관했고 자동으로 다시 보내지 않습니다.
                     글·모델/도구 옵션·첨부를 바꾸지 않고 확인하면 원래 전송 위치·옵션·같은 요청 키를 사용합니다.
                     {!recovering && <>
-                        <details><summary>원래 요청 보기</summary><pre>{pending.raw}</pre>
+                        <DetailDialog label="원래 전송 요청" title="원래 요청 보기"><pre>{pending.raw}</pre>
                             <p className="small">모델: {pending.options.profileId ?? "없음"} · 첨부 {pending.attachmentIds.length}개 · {pending.follow ? FOLLOW_LABEL[pending.follow] : pending.options.mode === "save" ? "메시지만 저장" : "모델로 보내기"}</p>
-                        </details>
+                        </DetailDialog>
                         <button className="ghost small" disabled={busy || attachments.busy || !!disabled}
                             onClick={() => void sendText(pending.body, pending.raw, pending)}>원래 요청 결과 확인</button>
                         <span className="small">현재 입력과 새 첨부는 보존합니다. 현재 내용을 보내면 별도의 새 요청입니다.</span>
@@ -444,7 +443,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     update({ profileId: profile.id, mode: "model", tools: false });
                 }} />
             )}
-            <AttachmentPicker draft={attachments} disabled={busy || !!disabled} />
             <textarea
                 onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
                 onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); if (!busy && !disabled) void attachments.add(Array.from(e.dataTransfer.files)); } }}
@@ -458,16 +456,30 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 onCompositionStart={() => (composing.current = true)}
                 onCompositionEnd={() => (composing.current = false)}
                 enterKeyHint={enterSends ? "send" : "enter"}
-                placeholder={disabled ?? (enterSends ? "메시지 (Enter 보내기 · Shift+Enter 줄바꿈)" : "메시지 (Ctrl+Enter 보내기)")}
+                placeholder={disabled ?? "메시지를 입력하세요"}
                 aria-label="메시지 입력"
                 rows={3}
                 disabled={!!parentDisabled}
             />
             <div className="composer-bar">
+                <AttachmentPicker draft={attachments} disabled={busy || !!disabled} />
+                <ActionMenu label="입력 옵션" trigger={<Icon name="settings" />}>
                 <select aria-label="보내기 방식" value={eff.mode} onChange={(e) => update({ mode: e.target.value as SendOptions["mode"] })}>
                     <option value="model">모델로 보내기</option>
                     <option value="save">메시지만 저장</option>
                 </select>
+                {resourceKey.startsWith("session:") && <SessionSkills key={`${projectId}:${resourceKey}`} sessionId={resourceKey.slice("session:".length)} />}
+                {eff.mode === "model" && <select aria-label="에이전트" value={eff.agentId ?? ""} disabled={boundProfileId !== undefined} onChange={(e) => update({ agentId: e.target.value || null })}>
+                    <option value="">기본 역할</option>
+                    {(agents.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
+                </select>}
+                {eff.mode === "model" && <label className="check">
+                    <input type="checkbox" checked={eff.tools} disabled={!eff.tools && selectedProfile?.capabilities?.tools === false} onChange={(e) => update({ tools: e.target.checked })} /> 도구
+                </label>}
+                <button className="ghost small" onClick={saveServer} disabled={!text || !!disabled} title={disabled ?? "다른 기기에서 이어서 쓰도록 서버에 저장"}>
+                    초안 서버 저장
+                </button>
+                </ActionMenu>
                 {eff.mode === "model" && (profiles.data?.length ?? 0) > 0 && (
                     <>
                         <select aria-label="모델 프로필" value={eff.profileId ?? ""} disabled={!ready || boundProfileId !== undefined} onChange={(e) => update({ profileId: e.target.value || null })}>
@@ -480,29 +492,14 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                                 </option>
                             ))}
                         </select>
-                        <select aria-label="에이전트" value={eff.agentId ?? ""} disabled={boundProfileId !== undefined} onChange={(e) => update({ agentId: e.target.value || null })}>
-                            <option value="">기본 역할</option>
-                            {(agents.data ?? []).map((a) => (
-                                <option key={a.id} value={a.id}>
-                                    {a.name}
-                                </option>
-                            ))}
-                        </select>
                         <select aria-label="추론 강도" value={eff.effort ?? "auto"} onChange={(e) => update({ effort: e.target.value as SendOptions["effort"] })} title="모델이 생각하는 정도. auto는 모델 기본값">
                             <option value="auto">강도 auto</option>
                             <option value="low" disabled={selectedProfile?.capabilities?.effort === false}>강도 낮음</option>
                             <option value="medium" disabled={selectedProfile?.capabilities?.effort === false}>강도 중간</option>
                             <option value="high" disabled={selectedProfile?.capabilities?.effort === false}>강도 높음</option>
                         </select>
-                        <label className="check">
-                            <input type="checkbox" checked={eff.tools} disabled={!eff.tools && selectedProfile?.capabilities?.tools === false} onChange={(e) => update({ tools: e.target.checked })} /> 도구
-                        </label>
                     </>
                 )}
-                <span className="spacer" />
-                <button className="ghost small" onClick={saveServer} disabled={!text || !!disabled} title={disabled ?? "다른 기기에서 이어서 쓰도록 서버에 저장"}>
-                    초안 서버 저장
-                </button>
                 {running && eff.mode === "model" && (
                     <select aria-label="실행 중 보내기 방식" value={follow} disabled={!!recovering} onChange={(e) => setFollow(e.target.value as FollowKind)}>
                         <option value="queue">대기열에 추가(끝난 뒤 새 요청)</option>
@@ -511,11 +508,13 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     </select>
                 )}
                 <button
+                    className="send-button"
+                    aria-label={busy ? checking.current ? "확인 중…" : "보내는 중…" : recovering ? "같은 요청 확인" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
                     onClick={send}
                     disabled={busy || pendingInvalid || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (!!problem || (eff.mode === "model" && (!ready || !eff.profileId || profileDisabled || profileMissing)) || (!!running && eff.mode === "save")))}
-                    title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다(도구 호출과 결과 사이에 끼면 안 됨)" : undefined}
+                    title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다" : enterSends ? "보내기 · Enter" : "보내기 · Ctrl+Enter"}
                 >
-                    {busy ? checking.current ? "확인 중…" : "보내는 중…" : recovering ? "같은 요청 확인" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
+                    <Icon name="send" />
                 </button>
             </div>
             {msg && <p className="muted small" role="status">{msg}</p>}

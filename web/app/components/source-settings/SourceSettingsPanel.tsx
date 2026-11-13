@@ -81,7 +81,6 @@ function SourceCard({ item, resources }: { item: SourceSettings; resources: read
         <p className="muted small">출처: {source.location}</p>
         <p className="scope">원본 조회 전용 · Grove 실제 적용 상태와 별개</p>
         {item.status === "present" && <>
-            <p>존재함 · 허용된 필드만 표시</p>
             <Projection value={item.projection} />
             {item.ignored_invalid_fields && <p className="warn small">지원 필드 중 타입이나 범위가 맞지 않는 값은 생략했습니다. 원본 값은 표시하지 않습니다.</p>}
         </>}
@@ -96,9 +95,6 @@ function SourceCard({ item, resources }: { item: SourceSettings; resources: read
 export function SourceSettingsPanel({ view }: SourceSettingsPanelProps) {
     return <section aria-label="원본 Claude/Codex 설정">
         <h2>원본 Claude/Codex 설정 · 읽기 전용</h2>
-        <p>이 화면은 서버에 있는 원본 파일의 일부만 보여 줍니다. 원본을 조회했다고 Grove에 적용된 것은 아닙니다.</p>
-        <p className="muted small">Grove 실제 적용 설정은 Grove의 범위별 설정 화면에서 확인하세요. 원본 간 우선순위나 Claude/Codex의 최종 유효값도 계산하지 않습니다.</p>
-        <p className="muted small">원문·환경 변수·토큰·자격증명·명령·스킬 본문은 표시하지 않습니다. 지원하지 않는 필드도 생략하며 수정·적용·가져오기·훅 실행은 제공하지 않습니다.</p>
         {view.status === "loading" && <p role="status">원본 출처를 확인하는 중입니다.</p>}
         {view.status === "error" && <p className="err" role="alert">원본 출처 목록을 가져오지 못했습니다. Grove 설정의 적용 여부와는 관계없습니다.</p>}
         {view.status === "ready" && (view.items.length === 0

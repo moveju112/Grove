@@ -6,6 +6,9 @@ import { HookExecutions } from "./HookExecutions";
 
 const query = vi.hoisted(() => ({ data: undefined as unknown, error: null as unknown, loading: false }));
 vi.mock("../../state/store", () => ({ useQuery: () => ({ ...query, reload: () => {} }) }));
+vi.mock("../ui/Controls", () => ({
+    DetailDialog: ({ title, children }: { title: import("react").ReactNode; children: import("react").ReactNode }) => createElement("section", null, title, children),
+}));
 const call = {
     id: "hook-request", session_id: "session-fixture", name: "hook", status: "pending_approval", revision: 1,
     needs_approval: true, expires_at: null, target: {

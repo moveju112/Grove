@@ -14,9 +14,8 @@ test("소유자가 모바일에서 공식 인증을 시작하고 재접속·취�
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
         await page.getByRole("searchbox", { name: "설정 검색", exact: true }).fill("모델 프로필");
         const profiles = page.locator('[data-testid="setting-profiles"]:visible');
-        const cli = profiles.locator("details").filter({ has: page.getByText("CLI 에이전트 연결", { exact: true }) });
-        if (!await cli.evaluate((el) => (el as HTMLDetailsElement).open)) await profiles.getByText("CLI 에이전트 연결", { exact: true }).click();
-        await profiles.getByText("계정 로그인", { exact: true }).click();
+        await profiles.getByRole("button", { name: "CLI 에이전트 연결", exact: true }).click();
+        await profiles.getByRole("button", { name: "계정 로그인", exact: true }).click();
     };
     await open();
     const codex = page.getByRole("region", { name: "Codex 계정", exact: true });

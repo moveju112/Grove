@@ -88,6 +88,7 @@ test("프로젝트 범위는 전역·다른 프로젝트와 분리하고 기기 
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
         await login(page);
         await page.locator(".recent").getByRole("button", { name: new RegExp(prefix) }).click();
+        await sessionView(page, session.id).getByRole("button", { name: "대화 작업", exact: true }).click();
         await sessionView(page, session.id).getByRole("button", { name: "대화 설정" }).click();
         await page.getByLabel("설정 검색").last().fill("hook");
         await page.getByLabel("hook 범위", { exact: true }).selectOption("project");

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ActionMenu } from "./ui/Controls";
 import { ApiError, api, isLoggedIn, newKey } from "../api/client";
 import { useQuery } from "../state/store";
 import { fileAttemptKey, loadFileAttempt, loadFileBuffer, loadFileView, saveFileBuffer, saveFileView, type FileAttempt } from "../state/fileState";
@@ -177,8 +178,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                                 {e.kind === "dir" ? "📁 " : ""}{e.name}
                             </button>
                             <span className="muted small">{e.size !== null ? `${e.size}B` : ""}</span>
-                            <details className="row-menu">
-                                <summary aria-label={`${e.name} 작업`}>⋯</summary>
+                            <ActionMenu className="row-menu" label={`${e.name} 작업`}>
                                 <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const to = prompt("새 이름(경로)", e.path); if (to && to !== e.path) void op({ op: "rename", path: e.path, to }); }}>이름 바꾸기</ServerActionButton>
                                 <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const to = prompt("복제본 경로", `${e.path}.copy`); if (to) void op({ op: "duplicate", path: e.path, to }); }}>복제</ServerActionButton>
                                 <ServerActionButton
@@ -191,7 +191,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                                 >
                                     삭제
                                 </ServerActionButton>
-                            </details>
+                            </ActionMenu>
                         </li>
                     ))}
                 </ul>

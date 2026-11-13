@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login, removeProfiles } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, removeProfiles } from "./helpers";
 
 // FLOW-02(실모델, opt-in): 로그인 → 첫 대화 → 새로고침 후 같은 대화·답이 보인다.
 // 실제 외부 계정 대신 로컬 OpenAI 호환 경량 모델(예: Ollama qwen2.5:3b)로 실행한다.
@@ -23,7 +23,7 @@ test("실제 경량 모델로 첫 대화를 하고 새로고침해도 대화와 
     await page.locator(".recent").getByRole("button", { name: /실모델 첫 대화/ }).first().click();
     const view = page.getByTestId("session-view");
     await expect(view).toHaveAttribute("data-session", s.id);
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("모델 프로필").selectOption(prof.id);
     await view.getByLabel("메시지 입력").fill("Say hello in one short sentence.");
     await view.getByRole("button", { name: "보내기", exact: true }).click();

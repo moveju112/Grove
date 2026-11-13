@@ -1,4 +1,5 @@
 import { AttachmentList, type Attachment } from "./Attachments";
+import { ActionMenu, DetailDialog, Workbench } from "./ui/Controls";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileRefContext, Markdown } from "./Markdown";
 import { type Prefs, usePrefs } from "../state/device";
@@ -9,8 +10,9 @@ import { ApiError, api, isLoggedIn } from "../api/client";
 import type { Definition, Message, MessagePage, ModelProfile, RecentItem, Session, ToolCallRow, Turn } from "../api/generated";
 import { useLive, useQuery } from "../state/store";
 import { Composer, type FollowKind, type RunCommand, type SendOptions } from "./Composer";
-import { AgentRunsPanel } from "./AgentRunsPanel";
+import { AgentRunsPanel, useAgentRuns } from "./AgentRunsPanel";
 import { ChangesPanel } from "./ChangesPanel";
+import { FilesView } from "./FilesView";
 import { ContextMeter } from "./ContextMeter";
 import { GoalsPanel } from "./GoalsPanel";
 import { TasksPanel } from "./TasksPanel";
@@ -50,6 +52,8 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const [err, setErr] = useState<string | null>(null);
     const bottom = useRef<HTMLDivElement>(null);
     const s = session.data;
+    const background = useQuery<{ tasks: { status: string }[] }>(`tasks:${sessionId}`, () => api.get(`/sessions/${sessionId}/tasks`));
+    const delegated = useAgentRuns(sessionId);
 
     // 최근 항목 갱신 + 읽음 표시(보고 있는 동안 마지막 메시지까지 읽음)
     const lastSeq = s?.last_message_seq ?? 0;
@@ -233,15 +237,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     }, [highlight]);
     useEffect(() => {
         if (focusSeq == null || !latest.data) return;
-        const el = msgsRef.current?.querySelector<HTMLElement>(`[data-seq="${focusSeq}"]`);
-        if (el) {
-            stick.current = false;
-            el.scrollIntoView({ block: "center" });
-            setHighlight(focusSeq);
-            setFocusMiss(false);
-            focusDone();
-            return;
-        }
+        if (messages.some((message) => message.seq === focusSeq)) return;
         const first = messages[0]?.seq;
         if (first != null && first > focusSeq && hasOlder) {
             if (!loadingOlder.current) {
@@ -346,6 +342,14 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
 
     return (
         <div className="session-view" data-testid="session-view" data-session={sessionId}>
+            <Workbench label="대화 도구" tools={[
+                { id: "changes", label: "변경", icon: "changes", content: <ChangesPanel key={`changes:${sessionId}`} sessionId={sessionId} projectId={projectId} open={open} disabled={archived} /> },
+                { id: "files", label: "파일", icon: "file", lazy: true, content: <FilesView tabId={`${tabId}:files`} projectId={projectId} /> },
+                { id: "tasks", label: "작업", icon: "terminal", activity: background.data?.tasks.filter((t) => t.status === "running").length, content: <TasksPanel key={`tasks:${sessionId}`} sessionId={sessionId} disabled={archived} /> },
+                { id: "goals", label: "Goal", content: <GoalsPanel sessionId={sessionId} disabled={archived} /> },
+                { id: "agents", label: "에이전트", activity: delegated.data?.runs.filter((r) => r.status === "running").length, content: <AgentRunsPanel sessionId={sessionId} projectId={projectId} open={open} onError={setErr} /> },
+                { id: "watches", label: "원격 감시", content: <RemoteWatchesPanel key={`remote-watches:${sessionId}`} sessionId={sessionId} disabled={archived} /> },
+            ]}>
             <header className="view-head">
                 <h1>
                     <ServerActionButton className="link" title="이름 바꾸기" onClick={() => {
@@ -355,6 +359,9 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         {s.title}
                     </ServerActionButton>
                 </h1>
+                {s.bot_id && <span className="chip" data-testid="bot-chip" title="모델·persona는 봇 설정을 따릅니다(입력창의 모델·에이전트 선택은 쓰지 않음)">봇 대화</span>}
+                {lastTurn?.agent_id && <span className="chip" title="마지막 요청을 처리한 에이전트">에이전트: {lastTurn.agent_id}</span>}
+                <ActionMenu label="대화 작업">
                 <select
                     aria-label="워크플로우"
                     value={s.workflow_id ?? "default"}
@@ -384,8 +391,6 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         제목 생성
                     </ServerActionButton>
                 )}
-                {s.bot_id && <span className="chip" data-testid="bot-chip" title="모델·persona는 봇 설정을 따릅니다(입력창의 모델·에이전트 선택은 쓰지 않음)">봇 대화</span>}
-                {lastTurn?.agent_id && <span className="chip" title="마지막 요청을 처리한 에이전트">에이전트: {lastTurn.agent_id}</span>}
                 <ContextMeter sessionId={sessionId} profileId={lastTurn?.profile_id ?? null} busy={!!active || archived || !!serverBlocked} onError={setErr} />
                 <ServerActionButton className="ghost small" disabled={archived} onClick={() => {
                     const inherit = confirm("모델 컨텍스트도 이어받을까요?\n확인: 대화와 컨텍스트 계승 / 취소: 대화 기록만 표시하고 새 컨텍스트");
@@ -412,6 +417,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         영구 삭제
                     </ServerActionButton>
                 )}
+                </ActionMenu>
             </header>
             {s.parent_session_id && (
                 <p className="muted small">
@@ -433,6 +439,12 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                 >
                     <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={messages}
                         targetSeq={focusSeq ?? pendingPosition.current?.anchorSeq ?? null} presentationKey={JSON.stringify(prefs)}
+                        onTargetReached={(seq) => {
+                            if (focusSeq == null) return;
+                            setHighlight(seq);
+                            setFocusMiss(false);
+                            focusDone();
+                        }}
                         restorePosition={focusSeq == null && pendingPosition.current?.timelineRevision === latest.data?.timeline_revision ? pendingPosition.current : null}
                         onRestored={() => {
                             const position = pendingPosition.current;
@@ -445,12 +457,14 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         <div key={m.id} className={`msg-row${highlight === m.seq ? " focus-hit" : ""}`} data-seq={m.seq}>
                             <MessageView m={m} prefs={prefs} assistantName={assistantName} assistantImage={assistantImage} />
                             {m.role === "user" && (
+                                <ActionMenu className="message-actions" label="메시지 작업">
                                 <ServerActionButton
                                     className="ghost small"
                                     aria-label="이 메시지 이전으로 되감기"
                                     disabled={archived || !!active || m.seq <= (latest.data?.rewind_boundary_seq ?? 0)}
                                     onClick={() => rewind(m)}
                                 >이전으로 되감기</ServerActionButton>
+                                </ActionMenu>
                             )}
                         </div>
                     )} />
@@ -472,12 +486,6 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     새 메시지 ↓
                 </button>
             )}
-            <GoalsPanel sessionId={sessionId} disabled={archived} />
-            <AgentRunsPanel sessionId={sessionId} projectId={projectId} open={open} onError={setErr} />
-            {/* 대화가 바뀌면 패널 상태를 새로 시작한다. 형제끼리 key가 겹치면 React가 패널을 잘못 맞춰 중복으로 그린다. */}
-            <TasksPanel key={`tasks:${sessionId}`} sessionId={sessionId} disabled={archived} />
-            <RemoteWatchesPanel key={`remote-watches:${sessionId}`} sessionId={sessionId} disabled={archived} />
-            <ChangesPanel key={`changes:${sessionId}`} sessionId={sessionId} projectId={projectId} open={open} disabled={archived} />
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
             {pending.map((c) => <ApprovalCard key={c.id} call={c} {...currentApprovalContract(c.name)}
                 blockedReason={serverBlocked}
@@ -547,6 +555,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             <FollowupsPanel sessionId={sessionId} running={!!active} onError={setErr} />
             <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands}
                 boundProfileId={s.bot_id ? bots.data?.bots.find((bot) => bot.id === s.bot_id)?.profile_id ?? null : undefined} />
+            </Workbench>
         </div>
     );
 }
@@ -561,13 +570,12 @@ function TurnEvidence({ e }: { e: NonNullable<Turn["evidence"]> }) {
         );
     }
     return (
-        <details className="small" data-testid="turn-evidence">
-            <summary>
+        <DetailDialog className="small" data-testid="turn-evidence" label="중단 전 응답" title={<>
                 중단 전까지 받은 응답(확정되지 않음 · {e.text_chars}자{e.truncated ? ", 앞부분만 보존" : ""}
                 {e.tool_calls.length > 0 ? ` · 계획 중이던 도구 ${e.tool_calls.join(", ")}(실행 안 함)` : ""})
-            </summary>
+            </>}>
             <pre className="evidence-text">{e.text}</pre>
-        </details>
+        </DetailDialog>
     );
 }
 
@@ -582,11 +590,11 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
             original_profile_id: string; reason: string; status: number;
             from: { name: string; model: string }; to: { name: string; model: string; base_url: string };
         };
-        return <details className="msg note warn" data-testid="msg-model-fallback">
-            <summary>모델 fallback · {r.from.name} ({r.from.model}) → {r.to.name} ({r.to.model}) · HTTP {r.status}</summary>
+        return <DetailDialog className="msg note warn" data-testid="msg-model-fallback" label="모델 전환 기록"
+            title={<>모델 fallback · {r.from.name} ({r.from.model}) → {r.to.name} ({r.to.model}) · HTTP {r.status}</>}>
             <p>이후 호출 대상: {r.to.base_url} · {r.to.model}</p>
             <p>원래 선택: {r.original_profile_id} · 전환 이유: {r.reason} · 동일 모델 재시도 뒤 첫 응답 전에 확인한 순서로 전환했습니다.</p>
-        </details>;
+        </DetailDialog>;
     }
     if (m.role === "note" && nt0 === "completion_deferred") {
         const work = (m.content as { pending_work: { tasks: { id: string }[]; agents: { id: string }[] } }).pending_work;
@@ -616,8 +624,8 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
         };
         const e = r.error;
         return (
-            <details className="msg note warn" data-testid="msg-turn-ended">
-                <summary>요청 종료 · {e.message} (<code>{e.code}</code>)</summary>
+            <DetailDialog className="msg note warn" data-testid="msg-turn-ended" label="요청 종료 기록"
+                title={<>요청 종료 · {e.message} (<code>{e.code}</code>)</>}>
                 <p>상태: {r.status}</p>
                 {e.at && <p>발생 시각: <time dateTime={e.at}>{e.at}</time></p>}
                 {e.last_progress_at && <p>마지막 진행: <time dateTime={e.last_progress_at}>{e.last_progress_at}</time></p>}
@@ -631,7 +639,7 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
                 )}
                 {e.settings?.provider_timeout_secs != null && <p>provider timeout: {e.settings.provider_timeout_secs}초</p>}
                 {e.scope && <EndScope s={e.scope} />}
-            </details>
+            </DetailDialog>
         );
     }
     if (m.role === "note" && (m.content as { type?: string }).type === "context_clear") {
@@ -654,47 +662,43 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
     if (m.role === "note" && (m.content as { type?: string }).type === "agent_result") {
         const r = m.content as { agent_id: string; status: string; text: string; truncated: boolean; error?: { message?: string } | null };
         return (
-            <details className={`msg note agent ${r.status}`} data-testid="msg-agent-result" open>
-                <summary>
+            <DetailDialog className={`msg note agent ${r.status}`} data-testid="msg-agent-result" label="자식 에이전트 결과" inline title={<>
                     자식 에이전트 <code>{r.agent_id}</code> · {r.status}
                     {r.error?.message ? ` · ${r.error.message}` : ""}
-                </summary>
+                </>}>
                 {r.text && <div className="text">{r.text}</div>}
                 {r.truncated && <p className="muted small">일부만 표시합니다. 전체는 자식 대화에서 보세요.</p>}
-            </details>
+            </DetailDialog>
         );
     }
     if (m.role === "note" && (m.content as { type?: string }).type === "task_result") {
         const r = m.content as { command: string; status: string; exit_code: number | null; reason: string | null; stdout_tail: string; stderr_tail: string; truncated: boolean; log_errors?: unknown[] };
         return (
-            <details className={`msg note task ${r.status}`} data-testid="msg-task-result">
-                <summary>
+            <DetailDialog className={`msg note task ${r.status}`} data-testid="msg-task-result" label="백그라운드 작업 결과" title={<>
                     백그라운드 작업 <code>{r.command}</code> · {r.status}
                     {r.exit_code !== null ? ` (코드 ${r.exit_code})` : ""} {r.reason ? `· ${r.reason}` : ""}
-                </summary>
+                </>}>
                 {r.stdout_tail && <pre className="diff">{r.stdout_tail}</pre>}
                 {r.stderr_tail && <pre className="diff err">{r.stderr_tail}</pre>}
                 {!!r.log_errors?.length && <p className="err" role="alert">로그 저장에 실패했습니다. 출력이 누락됐을 수 있습니다.</p>}
                 {r.truncated && <p className="muted small">끝부분만 표시합니다. 전체 출력은 백그라운드 작업 목록에서 보세요.</p>}
-            </details>
+            </DetailDialog>
         );
     }
     const nt = (m.content as { type?: string }).type;
     if (m.role === "note" && nt === "cli_activity") {
         const r = m.content as { items: { kind: string; name: string; input?: unknown; status?: string }[] };
         return (
-            <details className="msg tool cli" data-testid="msg-cli-activity" open={prefs.expandTools || undefined}>
-                <summary>
+            <DetailDialog className="msg tool cli" data-testid="msg-cli-activity" label="CLI 도구 활동" inline={prefs.expandTools} title={<>
                     CLI가 사용한 도구 {r.items.length}개 · {r.items.map((i) => (i.kind === "denied" ? `${i.name}(거부됨)` : i.name)).join(", ")}
-                </summary>
+                </>}>
                 <pre>{JSON.stringify(r.items, null, 2).slice(0, 20000)}</pre>
-            </details>
+            </DetailDialog>
         );
     }
     if (m.role === "tool") {
         return (
-            <details className={`msg tool ${c.status}`} data-testid="msg-tool" open={prefs.expandTools || undefined}>
-                <summary>
+            <DetailDialog className={`msg tool ${c.status}`} data-testid="msg-tool" label="도구 실행 세부" inline={prefs.expandTools} title={<>
                     도구 {c.name} · <span className={`status ${c.status}`}>{c.status}</span>
                     {c.approval_scope && (
                         <span className="muted small" data-testid="approval-scope">
@@ -703,7 +707,7 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
                     )}
                     {typeof c.duration_ms === "number" && <span className="muted small" data-testid="tool-duration"> · {fmtDuration(c.duration_ms)}</span>}
                     {c.truncated && <span className="muted small" data-testid="tool-truncated"> · 결과 일부만(잘림)</span>}
-                </summary>
+                </>}>
                 {c.args !== undefined && (
                     <>
                         <div className="muted small">인자</div>
@@ -712,7 +716,7 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
                 )}
                 <div className="muted small">{c.status === "succeeded" ? "결과" : "결과·오류"}</div>
                 <pre data-testid="tool-output">{JSON.stringify(c.output, null, 2)?.slice(0, 20000)}</pre>
-            </details>
+            </DetailDialog>
         );
     }
     return (
@@ -729,12 +733,11 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
                       : m.role}
             </div>
             {m.role === "assistant" && c.reasoning && prefs.reasoning !== "hidden" && (
-                <details className="reasoning" data-testid="msg-reasoning" open={prefs.reasoning === "expanded" || undefined}>
-                    <summary className="muted small">
+                <DetailDialog className="reasoning" data-testid="msg-reasoning" label="생각 과정" inline={prefs.reasoning === "expanded"} title={<>
                         생각 과정 · {c.reasoning_chars ?? c.reasoning.length}자{(c.reasoning_chars ?? 0) > [...c.reasoning].length ? " (앞부분만 보관)" : ""}
-                    </summary>
+                    </>}>
                     <div className="text muted">{c.reasoning}</div>
-                </details>
+                </DetailDialog>
             )}
             {c.text && (m.role === "assistant" ? <Markdown text={c.text} /> : <div className="text">{c.text}</div>)}
             {c.text && <CopyButton text={c.text} />}

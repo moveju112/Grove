@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script } from "./helpers";
 
 // FLOW-16: 새 PWA 버전이 발행돼도 진행 중인 stream과 입력을 끊지 않고, 사용자가 고를 때만 전환한다.
 // 서버는 web/build/client를 매번 디스크에서 읽으므로(sw.js는 no-cache) 파일을 바꾸면 새 버전 발행과 같다.
@@ -24,7 +24,7 @@ test("새 버전 발행 중에도 stream과 초안이 유지되고, 사용자가
 
         // 1) 느린 응답 stream 시작, 그 사이에 다음 입력을 쓴다
         await script({ frames: frames.text(["업데이트 ", "중에도 ", "끊기지 ", "않는 ", "답변"]), delayMs: 500 });
-        await view.getByLabel("보내기 방식").selectOption("model");
+        await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("메시지 입력").fill("첫 질문");
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("partial")).toBeVisible();

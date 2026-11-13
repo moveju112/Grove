@@ -1,7 +1,7 @@
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails } from "./helpers";
 
 // EXEC-014~017: 대화에서 원격 job 감시를 등록하고, 원격 성공·알림 저장/전달/열람과 감시 취소(원격 작업은 계속)를 구분해 보여 준다.
 test("원격 작업 감시는 원격 성공과 알림 단계를 따로 보여 주고 취소는 조회만 멈춘다", async ({ page }) => {
@@ -22,7 +22,7 @@ test("원격 작업 감시는 원격 성공과 알림 단계를 따로 보여 �
         await login(page);
         await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
         const panel = page.getByTestId("session-view").getByTestId("remote-watches");
-        await panel.locator("summary").click();
+        await openDetails(panel);
         const add = async (name: string, path: string) => {
             await panel.getByLabel("감시 이름").fill(name);
             await panel.getByLabel("상태 URL").fill(`http://127.0.0.1:${port}${path}`);
@@ -41,7 +41,7 @@ test("원격 작업 감시는 원격 성공과 알림 단계를 따로 보여 �
         await expect(page.getByTestId("session-view").getByTestId("msg-remote-watch")).toContainText("원격 작업 배포: 원격 성공 · 원격 상태 success");
         // 이 화면이 목록을 받아 앱 전달은 확인되지만 열람 전이다
         await expect(deploy.getByTestId("remote-watch-notice")).toContainText("알림 저장됨 · 앱 전달 확인 · 미열람", { timeout: 10_000 });
-        await page.getByTestId("notifications").locator("summary").click();
+        await openDetails(page.getByTestId("notifications"));
         await page.getByTestId("notification").filter({ hasText: "원격 작업 배포: 성공" }).first().getByRole("button").click();
         await expect(deploy.getByTestId("remote-watch-notice")).toContainText("앱 전달 확인 · 읽음");
 

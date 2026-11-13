@@ -34,7 +34,7 @@ test("긴 대화의 이전 페이지를 계속 불러와도 렌더링한 메시�
     await expect(view.locator('[data-virtual-seq="449"]')).toBeFocused();
 });
 
-test("가변 높이 행을 펼친 상태는 화면 밖으로 나가도 유지되고 폭이 바뀌어도 읽던 위치를 지킨다", async ({ page }) => {
+test("생각 과정을 본문에 표시한 상태는 화면 밖으로 나가도 유지되고 폭이 바뀌어도 읽던 위치를 지킨다", async ({ page }) => {
     const { a } = await ensureProjects();
     const profile = await ensureProfile();
     const title = `virtual-details-${Date.now()}`;
@@ -45,6 +45,9 @@ test("가변 높이 행을 펼친 상태는 화면 밖으로 나가도 유지되
     for (let i = 0; i < 160; i++) await apiCall("POST", `/sessions/${session.id}/messages`, { text: `details filler ${i}` });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
+    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByLabel("설정 검색").fill("대화 표시");
+    await page.getByLabel("생각 과정 표시").selectOption("expanded");
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
     const view = page.getByTestId("session-view");
     const feed = view.getByRole("feed", { name: "불러온 대화 메시지" });
@@ -53,14 +56,13 @@ test("가변 높이 행을 펼친 상태는 화면 밖으로 나가도 유지되
     await feed.focus();
     await page.keyboard.press("Home");
     const reasoning = view.getByTestId("msg-reasoning");
-    await reasoning.locator("summary").click();
-    await expect(reasoning).toHaveAttribute("open", "");
+    await expect(reasoning.getByText("가변 높이의 긴 생각 과정과 줄바꿈을 확인한다.", { exact: false })).toBeVisible();
     await feed.focus();
     await page.keyboard.press("End");
     await expect(view.getByText("details filler 159", { exact: true })).toBeInViewport();
     await expect(reasoning).toHaveCount(0);
     await page.keyboard.press("Home");
-    await expect(reasoning).toHaveAttribute("open", "");
+    await expect(reasoning.getByText("가변 높이의 긴 생각 과정과 줄바꿈을 확인한다.", { exact: false })).toBeVisible();
     const body = page.locator(".pane-body").filter({ has: view });
     const article = reasoning.locator("xpath=ancestor::*[@data-virtual-id]");
     await body.evaluate((el) => { el.scrollTop += 250; });

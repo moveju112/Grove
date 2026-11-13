@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails } from "./helpers";
 
 // UI-026: 검색 결과를 누르면 그 대화의 정확한 메시지로 이동한다(첫 페이지 밖이면 이전 페이지를 읽어서).
 test("검색 결과를 누르면 오래된 메시지까지 이전 페이지를 읽어 그 메시지로 이동하고 강조한다", async ({ page }) => {
@@ -12,7 +12,7 @@ test("검색 결과를 누르면 오래된 메시지까지 이전 페이지를 �
     }
     await login(page);
     const panel = page.getByTestId("search-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     await panel.getByLabel("대화 검색어").fill(word);
     const hit = panel.getByTestId("search-hit");
     await expect(hit).toHaveCount(1);

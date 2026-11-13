@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openDetails, script } from "./helpers";
 
 type Session = { id: string; revision: number; last_message_seq: number };
 type Message = { id: string; seq: number };
@@ -18,21 +18,25 @@ test("메시지 ID로 되감으면 화면·검색이 갱신되고 새로고침 �
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     const search = page.getByTestId("search-panel");
-    await search.locator("summary").click();
+    await openDetails(search);
     await search.getByLabel("대화 검색어").fill(needle);
     await expect(search.getByTestId("search-hit")).toHaveCount(1);
+    await page.getByRole("dialog", { name: "대화 검색", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
     const row = view.locator(".msg-row").filter({ has: page.getByTestId("msg-user").filter({ hasText: needle }) });
     page.once("dialog", (d) => d.dismiss());
+    await row.getByRole("button", { name: "메시지 작업", exact: true }).click();
     await row.getByRole("button", { name: "이 메시지 이전으로 되감기" }).click();
     await expect(view.getByText("뒤의 메시지", { exact: true })).toBeVisible();
     page.once("dialog", async (d) => {
         expect(d.message()).toContain("파일·Git 변경과 실행 기록은 되돌리지 않습니다");
         await d.accept();
     });
+    await row.getByRole("button", { name: "메시지 작업", exact: true }).click();
     await row.getByRole("button", { name: "이 메시지 이전으로 되감기" }).click();
     await expect(view.getByTestId("msg-rewind")).toContainText("2개를 제외");
     await expect(view.getByTestId("msg-user")).toHaveCount(1);
     await expect(view.getByText("남길 메시지", { exact: true })).toBeVisible();
+    await openDetails(search);
     await expect(search.getByTestId("search-total")).toHaveText("0개");
     await page.reload();
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
@@ -97,11 +101,17 @@ test("압축된 구간은 되감기를 막고 복구 가능한 범위와 파일 
     await expect(view.getByTestId("rewind-limit")).toContainText("seq 2까지");
     await expect(view.getByTestId("rewind-limit")).toContainText("파일·Git 변경은 별도");
     const rows = view.locator(".msg-row").filter({ has: page.getByTestId("msg-user") });
+    await rows.nth(0).getByRole("button", { name: "메시지 작업", exact: true }).click();
     await expect(rows.nth(0).getByRole("button", { name: "이 메시지 이전으로 되감기" })).toBeDisabled();
+    await page.keyboard.press("Escape");
+    await rows.nth(1).getByRole("button", { name: "메시지 작업", exact: true }).click();
     await expect(rows.nth(1).getByRole("button", { name: "이 메시지 이전으로 되감기" })).toBeEnabled();
     page.once("dialog", (d) => d.accept());
     await rows.nth(1).getByRole("button", { name: "이 메시지 이전으로 되감기" }).click();
     await expect(view.getByTestId("msg-rewind")).toBeVisible();
+    await expect(view.getByTestId("msg-compaction").getByRole("button")).toBeVisible();
+    await openDetails(view.getByTestId("msg-compaction"));
     await expect(view.getByTestId("msg-compaction")).toContainText("앞선 질문의 요약");
+    await page.keyboard.press("Escape");
     await expect(view.getByTestId("rewind-limit")).toBeVisible();
 });

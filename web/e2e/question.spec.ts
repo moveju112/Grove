@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
 
 // UI-016, RUN-013·014: 모델 질문 카드(단일·복수 선택·직접 입력·닫기), 승인 대기와 구분된 상태 표시.
 async function requests(): Promise<{ messages: { role: string; content: unknown }[] }[]> {
@@ -18,8 +18,8 @@ async function askInNewSession(page: Page, args: Record<string, unknown>) {
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await script({ frames: frames.tool("ask1", "ask_user", args) });
-    await view.getByLabel("도구").check();
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "도구", true);
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("필요하면 물어보고 진행해");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("question")).toBeVisible({ timeout: 15_000 });
@@ -58,7 +58,7 @@ test("단일 선택 질문: 답변 대기로 표시되고, 고른 답으로 이�
     const r = (await requests()).slice(before);
     expect(r).toHaveLength(1);
     expect(toolText(r[0]!)).toContain("Postgres");
-    await view.getByLabel("도구").uncheck();
+    await composerOption(view, "도구", false);
 });
 
 test("복수 선택과 직접 입력을 함께 보내고, 닫기는 답하지 않았음을 모델에 알린다", async ({ page }) => {
@@ -85,5 +85,5 @@ test("복수 선택과 직접 입력을 함께 보내고, 닫기는 답하지 �
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "배포하지 않을게" })).toHaveCount(1, { timeout: 15_000 });
     const r2 = (await requests()).slice(before);
     expect(toolText(r2[0]!)).toContain("답하지 않고");
-    await view.getByLabel("도구").uncheck();
+    await composerOption(view, "도구", false);
 });

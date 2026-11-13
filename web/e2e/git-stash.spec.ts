@@ -18,7 +18,7 @@ async function openGit(page: Page) {
     const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
     await login(page);
     await page.locator(".sidebar .projects").getByRole("button", { name: project.name, exact: true }).click();
-    await page.locator(".git-wrap").locator("summary").first().click();
+    await page.getByRole("tab", { name: "변경", exact: true }).click();
     const panel = page.getByTestId("git-panel");
     await expect(panel).toContainText("작업 트리 변경 (2)");
     return { root, run, project, panel };

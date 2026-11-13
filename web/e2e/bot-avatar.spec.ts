@@ -14,7 +14,7 @@ test("봇 아바타 이미지를 올리고 SVG는 거절하며 기본형으로 �
     const panel = page.getByTestId("bots-panel");
     const item = panel.getByTestId("bot").filter({ hasText: name });
     await expect(item.getByTestId("bot-avatar-image")).toHaveCount(0);
-    await item.getByLabel(`${name} 관리`).click();
+    await item.getByRole("button", { name: `${name} 관리`, exact: true }).click();
     await item.getByRole("button", { name: "편집" }).click();
     const avatar = panel.getByTestId("bot-editor").getByRole("group", { name: "봇 아바타" });
     await avatar.getByLabel("아바타 이미지 선택").setInputFiles({ name: "a.png", mimeType: "image/png", buffer: PNG });

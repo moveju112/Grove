@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { audit } from "./a11y-audit";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script } from "./helpers";
 
 // UI-029: 주요 화면의 이름 없는 조작 요소·글자 대비를 테마별로 점검하고, 키보드로 주요 흐름을 조작할 수 있는지 본다.
 async function screens(page: Page, title: string) {
@@ -29,8 +29,8 @@ for (const theme of ["light", "dark", "soft"] as const) {
         await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
         const view = page.getByTestId("session-view");
         await script({ frames: frames.tool("w1", "write", { path: `a11y-${theme}.txt`, content: "x" }) });
-        await view.getByLabel("도구").check();
-        await view.getByLabel("보내기 방식").selectOption("model");
+        await composerOption(view, "도구", true);
+        await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("메시지 입력").fill("파일 만들어");
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("approval")).toBeVisible({ timeout: 15_000 });
@@ -43,7 +43,7 @@ for (const theme of ["light", "dark", "soft"] as const) {
         await view.getByTestId("question").getByRole("radio", { name: /A/ }).check();
         await view.getByTestId("question").getByRole("button", { name: "답하기" }).click();
         await expect(view.getByTestId("msg-assistant").last()).toContainText("끝", { timeout: 15_000 });
-        await view.getByLabel("도구").uncheck();
+        await composerOption(view, "도구", false);
         await check("완료된 대화");
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
         await check("설정");
@@ -69,7 +69,7 @@ test("키보드만으로 대화를 열고 보내며, 초점이 보인다", async
     await expect(view).toBeVisible();
     const box = view.getByLabel("메시지 입력");
     await box.focus();
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     await box.focus();
     await page.keyboard.type("키보드로 쓴 글");
     await page.keyboard.press("Control+Enter");

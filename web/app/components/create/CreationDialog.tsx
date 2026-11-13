@@ -1,4 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
+import { usePaneVisible } from "../../state/paneVisibility";
 import "./create.css";
 
 // native modal도 마지막 Tab에서 브라우저 UI로 초점을 넘길 수 있어 양 끝을 명시적으로 순환한다.
@@ -25,9 +26,14 @@ export function CreationDialog({ label, onClose, children, busy = false }: {
     label: string; onClose: () => void; children: ReactNode; busy?: boolean;
 }) {
     const ref = useRef<HTMLDialogElement>(null);
+    const visible = usePaneVisible();
     const close = useRef(onClose);
     close.current = onClose;
     useEffect(() => {
+        if (!visible) {
+            close.current();
+            return;
+        }
         const previous = document.activeElement as HTMLElement | null;
         const dialog = ref.current!;
         dialog.showModal();
@@ -42,9 +48,9 @@ export function CreationDialog({ label, onClose, children, busy = false }: {
         return () => {
             document.removeEventListener("keydown", contain);
             dialog.close();
-            if (previous?.isConnected) previous.focus();
+            if (previous?.isConnected) previous.focus({ preventScroll: true });
         };
-    }, []);
+    }, [visible]);
     return <dialog ref={ref} tabIndex={-1} className="dialog creation-dialog" aria-label={label} aria-modal="true" aria-busy={busy}
         onCancel={(e) => { e.preventDefault(); close.current(); }}
         onClick={(e) => {

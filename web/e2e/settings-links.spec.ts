@@ -97,7 +97,7 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
         await setLink(page, key);
         await page.locator(".recent").getByRole("button", { name: new RegExp(leftTitle) }).first().click();
         // 분할 생성의 상위 트리 remount와 링크 이동을 분리한다. 초안은 안정된 두 pane에서 만든다.
-        await page.locator(".recent").getByTestId("recent-item").filter({ hasText: rightTitle }).getByLabel("최근 항목 관리").click();
+        await page.locator(".recent").getByTestId("recent-item").filter({ hasText: rightTitle }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
         await page.locator(".recent").getByTestId("recent-item").filter({ hasText: rightTitle })
             .getByRole("button", { name: "오른쪽에 열기" }).click();
         const left = page.getByTestId("pane").nth(0);

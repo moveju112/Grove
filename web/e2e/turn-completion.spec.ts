@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 test("소유 작업이 남은 final은 중간 응답으로 표시하고 작업 결과 뒤에 완료한다", async ({ page }) => {
@@ -11,9 +11,9 @@ test("소유 작업이 남은 final은 중간 응답으로 표시하고 작업 �
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("모델 프로필").selectOption(profile);
-    await view.getByLabel("도구", { exact: true }).check();
+    await composerOption(view, "도구", true);
     await script({ frames: frames.tool("bg", "shell", { command: "sleep 10", background: true, timeout_ms: 10000 }), marker: title });
     await script({ frames: frames.text(["아직 결과를 모르는 응답"]), marker: title });
     await script({ frames: frames.text(["작업은 취소됐고 성공으로 처리하지 않았어"]), marker: title });

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script } from "./helpers";
 
 const notes = (page: Page) => page.evaluate(() => (window as unknown as { __notes: { title: string; opts: { tag: string; body: string } }[] }).__notes.map((n) => ({ title: n.title, tag: n.opts.tag, body: n.opts.body })));
 const setHidden = (page: Page, hidden: boolean) => page.evaluate((h) => { (window as unknown as { __hidden: boolean }).__hidden = h; }, hidden);
@@ -40,7 +40,7 @@ test("화면을 보지 않을 때 켠 종류만 내용 없이 한 번 알리고,
     const view = page.locator(`[data-testid=session-view][data-session="${s.id}"]`);
     await script({ frames: frames.tool("n1", "write", { path: "attention.txt", content: "x" }) });
     await script({ frames: frames.text(["거부 확인"]) });
-    await view.getByLabel("도구").check();
+    await composerOption(view, "도구", true);
     await view.getByLabel("메시지 입력").fill("비밀 내용으로 파일 만들어");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await setHidden(page, true);
@@ -61,7 +61,7 @@ test("화면을 보지 않을 때 켠 종류만 내용 없이 한 번 알리고,
     // 화면을 보고 있으면 알리지 않는다.
     await setHidden(page, false);
     await script({ frames: frames.text(["보는 중"]) });
-    await view.getByLabel("도구").uncheck();
+    await composerOption(view, "도구", false);
     await view.getByLabel("메시지 입력").fill("다시");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").last()).toContainText("보는 중", { timeout: 15_000 });

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DetailDialog, Panel } from "./ui/Controls";
 import { ApiError, api, newKey } from "../api/client";
 import { useQuery } from "../state/store";
 import { GitConfirmation } from "./git/GitConfirmation";
@@ -97,14 +98,13 @@ export function GitPanel({ projectId }: { projectId: string }) {
     const recovery = mutation.phase === "unknown" && (
         <div key="git-recovery" className="draft-note warn" role="group" aria-label="Git 결과 재확인" data-testid="git-unsure">
             <p>{LABEL[mutation.attempt.op]} 결과를 확정하지 못했습니다. 자동으로 다시 실행하지 않습니다. 재확인은 현재 입력이 아니라 원래 대상·fingerprint·같은 요청 키를 사용합니다.</p>
-            <details>
-                <summary>원래 요청 대상</summary>
+            <DetailDialog label="원래 Git 요청 대상" title="원래 요청 대상">
                 <code>프로젝트 {mutation.attempt.projectId}</code>
                 {mutation.attempt.op === "commit" && <pre>{mutation.attempt.body.message}</pre>}
                 {(mutation.attempt.op === "stage" || mutation.attempt.op === "unstage") && <pre>{mutation.attempt.body.paths.join("\n")}</pre>}
                 {mutation.attempt.op === "stage-hunks" && <p>{mutation.attempt.body.path} · 부분 {mutation.attempt.body.hunks.map((i) => i + 1).join(", ")}</p>}
                 {(mutation.attempt.op === "confirm" || mutation.attempt.op === "stash-save") && <pre>{JSON.stringify(mutation.attempt.body, null, 2)}</pre>}
-            </details>
+            </DetailDialog>
             <div className="inline">
                 <ServerActionButton onClick={() => void mutate(mutation.attempt)}>같은 Git 요청 확인</ServerActionButton>
                 <button className="ghost small" onClick={() => {
@@ -129,7 +129,6 @@ export function GitPanel({ projectId }: { projectId: string }) {
         <GitContextOverview projectId={projectId} refreshSignal={s} />
         {progress}
         {recovery}
-        <p className="muted">Git 저장소가 아닙니다.</p>
         <button onClick={() => status.reload()}>상태 다시 확인</button>
     </section>;
     const entries = s.entries ?? [];
@@ -192,8 +191,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
             <h3 className="small">작업 트리 변경 ({unstaged.length})</h3>
             <ul className="session-list">{unstaged.map((e) => row(e, false))}</ul>
             {diff && (
-                <details open>
-                    <summary>{diff.path} {diff.staged ? "(stage됨)" : ""}</summary>
+                <Panel title={<>{diff.path} {diff.staged ? "(stage됨)" : ""}</>}>
                     {diff.hunks ? (
                         diff.hunks.map((h, i) => (
                             <div key={i} className="hunk" data-testid="hunk">
@@ -204,7 +202,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
                     ) : (
                         <pre className="diff">{diff.text}</pre>
                     )}
-                </details>
+                </Panel>
             )}
             <form
                 className="inline wrap"

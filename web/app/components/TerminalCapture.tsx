@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DetailDialog } from "./ui/Controls";
 import { ApiError, api } from "../api/client";
 import { useCapability } from "../state/capabilities";
 
@@ -44,9 +45,8 @@ export function TerminalCapture({ terminalId, enabled }: { terminalId: string; e
         }
     };
     if (supported === false) return null;
-    return <details className="terminal-capture" data-testid="terminal-capture">
-        <summary>화면 텍스트 캡처</summary>
-        <p className="muted small">현재 화면과 최근 최대 1024줄의 사본입니다. 전체 실행 로그가 아니며 명령을 보내지 않습니다. 비밀정보가 포함될 수 있으니 내려받기 전에 확인하세요.</p>
+    return <DetailDialog className="terminal-capture" data-testid="terminal-capture" label="화면 텍스트 캡처" title="화면 텍스트 캡처">
+        <p className="warn small">최근 최대 1024줄입니다. 비밀정보가 포함될 수 있으니 다운로드 전에 확인하세요.</p>
         <form className="inline wrap small" onSubmit={(event) => { event.preventDefault(); void read(); }}>
             <label>시작 줄<input aria-label="캡처 시작 줄" type="number" step="1" placeholder="처음" value={range.start} onChange={(event) => setRange({ ...range, start: event.target.value })} /></label>
             <label>끝 줄<input aria-label="캡처 끝 줄" type="number" step="1" placeholder="마지막" value={range.end} onChange={(event) => setRange({ ...range, end: event.target.value })} /></label>
@@ -62,5 +62,5 @@ export function TerminalCapture({ terminalId, enabled }: { terminalId: string; e
                 <button className="ghost" onClick={() => setCapture(null)}>캡처 닫기</button>
             </div>
         </div>}
-    </details>;
+    </DetailDialog>;
 }

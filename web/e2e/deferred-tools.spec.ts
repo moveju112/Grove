@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProjects, login, openDetails, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, sessionView } from "./helpers";
 
 type Request = {
     tools?: { function: { name: string; parameters: unknown; description: string } }[];
@@ -46,7 +46,7 @@ async function setup(page: Page) {
     await login(page);
     await page.locator(".recent").getByRole("button", { name: title }).click();
     const view = sessionView(page, session.id);
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("모델 프로필", { exact: true }).selectOption(profile.id);
     await view.getByLabel("추론 강도", { exact: true }).selectOption("auto");
     await view.getByRole("checkbox", { name: "도구", exact: true }).check();

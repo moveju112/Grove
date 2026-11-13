@@ -40,7 +40,8 @@ for (const width of [320, 390, 1280]) {
                 }
                 await settings.getByRole("button", { name: "모델·키", exact: true }).click();
                 await expect(settings.getByTestId("setting-model.default_profile")).toBeVisible();
-                await expect(settings.getByTestId("settings-area-reset").getByRole("button")).toBeHidden();
+                await expect(settings.getByTestId("settings-area-reset").getByRole("button", { name: /기본값 복원/ })).toBeVisible();
+                await expect(settings.getByTestId("settings-area-reset").getByRole("combobox")).toHaveCount(0);
                 if (width < 760) {
                     const menuBox = await settings.locator(".settings-menu").boundingBox();
                     const bodyBox = await settings.locator(".settings-body").boundingBox();

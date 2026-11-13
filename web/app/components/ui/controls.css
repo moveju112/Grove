@@ -1,0 +1,83 @@
+.panel-title { font-size: 14px; font-weight: 600; margin: 0 0 16px; }
+.detail-trigger { display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 32px; text-align: left; font-size: 12px; }
+.detail-trigger > .icon { flex: none; color: var(--muted); margin-left: auto; }
+.detail-heading { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.dialog-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 20px; }
+.dialog-heading h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.detail-content { min-width: 0; overflow-wrap: anywhere; }
+.detail-content pre { max-height: 60dvh; overflow: auto; white-space: pre-wrap; }
+.creation-dialog:has(> .detail-content) { width: min(760px, calc(100vw - 24px)); }
+.action-menu { display: inline-flex; flex: none; }
+button.menu-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-height: 32px; min-width: 32px; border: 0; padding: 0 8px; color: var(--muted); }
+.action-popover { position: fixed; inset: auto; left: var(--menu-left); top: var(--menu-top); margin: 0; width: 240px; max-width: calc(100vw - 16px); max-height: min(480px, calc(100dvh - 16px)); overflow: auto; padding: 8px; border: 1px solid var(--line-strong); border-radius: 12px; background: var(--raised); color: var(--text); box-shadow: var(--shadow-float); }
+.action-popover:popover-open, .action-popover .row-actions, .action-popover .sidebar-toolbar { display: flex; flex-direction: column; align-items: stretch; gap: 4px; }
+.action-popover button { min-height: 32px; text-align: left; border: 0; padding: 6px 10px; }
+.action-popover label { display: grid; gap: 6px; padding: 6px; }
+.workbench { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100%; align-content: start; }
+.workbench-main { display: flex; flex-direction: column; min-width: 0; gap: 12px; grid-column: 1; grid-row: 2; }
+.tool-dock { grid-column: 1; grid-row: 1; min-width: 0; margin-bottom: 20px; }
+.dock-bar { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.dock-tabs { display: flex; align-items: center; gap: 4px; overflow: auto; padding: 4px; background: var(--raised); border-radius: 12px; }
+.dock-tabs > button { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px; background: transparent; color: var(--muted); white-space: nowrap; font-size: 13px; }
+.dock-tabs > button:hover { background: var(--hover); color: var(--text); }
+.dock-tabs > button[aria-selected="true"] { background: var(--sel); color: var(--text); }
+.dock-activity { font-size: 11px; color: var(--ok); font-variant-numeric: tabular-nums; }
+.dock-content:not([hidden]) { padding: 20px 4px; }
+.dock-content .panel-title { margin-top: 0; }
+.dock-content .stack, .dock-content .inline { max-width: 100%; }
+.dock-content :is(input:not([type=checkbox]):not([type=radio]), select, textarea) { max-width: 100%; min-width: 0; }
+.dock-content .session-list > li { flex-wrap: wrap; }
+.dock-content .inline > button { flex-shrink: 0; white-space: nowrap; }
+.dock-content .inline > input:not([type=checkbox]):not([type=radio]) { flex: 1; min-width: 0; }
+.project-view { min-height: 100%; container-type: inline-size; }
+.project-view > .view-head { margin-bottom: 20px; }
+.project-conversations { flex: 1; width: 100%; max-width: 720px; margin-inline: auto; }
+.project-conversations .list-tools { margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
+.project-conversations .list-tools > input { flex: 1 1 160px; width: 0; min-width: 0; }
+.project-conversations .list-tools .check { white-space: nowrap; flex: none; }
+.project-view .composer { margin-top: auto; }
+.composer > textarea { width: 100%; min-height: 88px; }
+.composer-bar { flex-wrap: nowrap; gap: 8px; }
+.composer-bar > select { border-color: transparent; background-color: transparent; max-width: 42%; text-overflow: ellipsis; }
+.composer-bar > select[aria-label="모델 프로필"] { flex: 1; min-width: 0; width: 0; max-width: none; }
+.composer-bar > select[aria-label="추론 강도"] { flex: none; width: 88px; padding-inline: 4px; }
+.composer-bar > .action-menu { margin-right: auto; }
+.composer-bar .attachment-list:empty { display: none; }
+.composer-bar > .attachment-picker:has(.attachment-list > li) { flex-basis: 100%; }
+.composer-bar:has(.attachment-list > li) { flex-wrap: wrap; }
+.attachment-picker > .attachment-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
+.attachment-picker > .attachment-list > li { display: flex; align-items: center; gap: 4px; max-width: 100%; padding: 4px 8px; border: 1px solid var(--line); border-radius: 10px; }
+.attachment-card.compact { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; border: 0; padding: 0; }
+.attachment-card.compact > span { overflow-wrap: anywhere; }
+.send-button { display: grid; place-items: center; width: 36px; height: 36px; flex: none; padding: 0; border-radius: 50%; background: var(--text); color: var(--panel); }
+.side-nav .detail-trigger { width: 100%; border: 0; background: transparent; min-height: 36px; padding: 0 8px; font-size: 13px; }
+.side-nav .detail-trigger > .icon:last-child { display: none; }
+.side-nav .detail-trigger > .icon:first-child { display: block; width: 16px; color: var(--muted); margin: 0; }
+.project-view .workbench { min-height: calc(100dvh - 240px); }
+.session-view .view-head > h1 { flex: 1; min-width: 0; }
+.session-view .view-head h1 button { overflow: hidden; text-overflow: ellipsis; max-width: 100%; white-space: nowrap; }
+.setting-help .detail-trigger { border: 0; color: var(--muted); }
+.setting-help .detail-trigger { padding: 4px; min-width: 28px; }
+.setting-help .detail-trigger > .icon:last-child { display: none; }
+.side-nav > :is(.notifications, .search, .recovery) { margin: 0; }
+.session-view { container-type: inline-size; height: 100%; }
+.session-view > .workbench { flex: 1; align-content: stretch; }
+.session-view .workbench-main > .messages { flex: 1; }
+.message-actions { align-self: flex-end; }
+.msg-copy { border: 0 !important; color: var(--muted) !important; margin-top: 6px; }
+.dock-content .files { display: flex; flex-direction: column; height: auto; min-height: 320px; }
+.dock-content .file-tree { max-height: 30dvh; }
+.dock-content .file-pane { min-height: 220px; }
+@container (min-width: 1050px) {
+    .workbench.tools-open { grid-template-columns: minmax(0, 1fr) minmax(340px, 36%); column-gap: 24px; }
+    .tools-open > .workbench-main { grid-row: 1; }
+    .tools-open > .tool-dock { grid-column: 2; grid-row: 1; border-left: 1px solid var(--line); padding-left: 20px; margin: 0; }
+    .tool-dock { justify-self: end; max-width: 100%; }
+    .tools-open > .tool-dock { justify-self: stretch; }
+}
+@media (max-width: 760px) {
+    .dock-tabs { flex: 1; }
+    .dock-tabs > button { min-height: 40px; padding-inline: 10px; }
+    .detail-trigger, button.menu-trigger { min-height: 36px; }
+    .dock-content:not([hidden]) { padding: 16px 0; }
+}

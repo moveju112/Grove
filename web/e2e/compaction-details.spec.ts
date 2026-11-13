@@ -35,6 +35,7 @@ test("실제 압축의 생성 당시 모델·비용을 보존하고 페이지 �
         const applied = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith(`/sessions/${s.id}/compact`));
         const refreshed = page.waitForResponse(async (r) => r.request().method() === "GET" && r.url().endsWith(`/sessions/${s.id}/messages?limit=100`)
             && (await r.json()).items.some((m: { content: { type?: string } }) => m.content.type === "compaction"));
+        await view.getByRole("button", { name: "대화 작업", exact: true }).click();
         await view.getByTestId("context-meter").getByRole("button", { name: "압축", exact: true }).click();
         expect((await applied).status()).toBe(201);
         await refreshed;
@@ -94,6 +95,7 @@ test("usage·가격 누락과 원문 조회 실패를 성공·0 비용으로 표
     await page.route(`**/api/v1/sessions/${s.id}/messages?limit=1&*`, (route) => route.fulfill({
         status: 403, contentType: "application/json", body: JSON.stringify({ error: { code: "forbidden", message: "fixture 접근 거절" } }),
     }));
+    await openDetails(note);
     await note.getByRole("button", { name: "원문 처음으로" }).click();
     await expect(note.getByRole("alert")).toContainText("원문 조회 실패: fixture 접근 거절");
 });

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { audit } from "./a11y-audit";
-import { apiCall, apiText, ensureProjects, login } from "./helpers";
+import { apiCall, apiText, composerOption, ensureProjects, login } from "./helpers";
 
 // 좁은 화면: PC 분할을 강제로 복사하지 않고 단일 pane으로 보인다(FLOW-12).
 test("좁은 화면은 기기별 배치를 따로 쓰고 한 pane만 보여 준다", async ({ page }) => {
@@ -66,7 +66,7 @@ test("모바일 입력창은 Enter가 줄바꿈이고 보내기 버튼으로 보
     await page.getByRole("button", { name: "사이드바" }).click();
     await page.locator(".recent").getByRole("button", { name: /폰 입력 대화/ }).first().click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     const box = view.getByLabel("메시지 입력");
     await expect(box).toHaveAttribute("enterkeyhint", "enter");
     await box.pressSequentially("한 줄");
@@ -106,7 +106,7 @@ test("모바일에서 첨부만 저장하고 원문을 미리본다", async ({ p
     await page.getByRole("button", { name: "사이드바" }).click();
     await page.locator(".recent").getByRole("button", { name: /폰 첨부/ }).first().click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("보내기 방식", { exact: true }).selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     await view.getByLabel("첨부파일 선택").setInputFiles({ name: "폰-원문.txt", mimeType: "text/plain", buffer: Buffer.from("모바일 첨부 원문") });
     await expect(view.getByTestId("attachment-card")).toContainText("폰-원문.txt");
     await view.getByRole("button", { name: "보내기", exact: true }).click();

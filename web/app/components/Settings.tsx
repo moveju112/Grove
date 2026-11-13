@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DetailDialog } from "./ui/Controls";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
@@ -300,8 +301,8 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <label>
                         생각 과정(reasoning){" "}
                         <select aria-label="생각 과정 표시" value={p.reasoning} onChange={(e) => set({ ...p, reasoning: e.target.value as Prefs["reasoning"] })}>
-                            <option value="collapsed">접어서 표시</option>
-                            <option value="expanded">펼쳐서 표시</option>
+                            <option value="collapsed">상세 버튼으로 보기</option>
+                            <option value="expanded">본문에 표시</option>
                             <option value="hidden">숨김</option>
                         </select>
                     </label>
@@ -309,7 +310,7 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                         <input type="checkbox" checked={p.answerOnly} onChange={(e) => set({ ...p, answerOnly: e.target.checked })} /> 답만 보기(도구·실행 기록 숨김, 승인 요청은 항상 표시)
                     </label>
                     <label className="check">
-                        <input type="checkbox" checked={p.expandTools} onChange={(e) => set({ ...p, expandTools: e.target.checked })} /> 도구 실행 세부를 펼쳐서 표시
+                        <input type="checkbox" checked={p.expandTools} onChange={(e) => set({ ...p, expandTools: e.target.checked })} /> 도구 실행 세부를 본문에 표시
                     </label>
                     <DeviceSettingsReset fields={["reasoning", "answerOnly", "expandTools"]} label="대화 표시 기본값 복원" />
                 </Section>
@@ -426,10 +427,9 @@ function Profiles() {
     const isCli = f.protocol === "claude_code" || f.protocol === "codex_cli";
     return (
         <>
-            <details onToggle={(event) => setAgentSetup(event.currentTarget.open)}>
-                <summary>CLI 에이전트 연결</summary>
+            <DetailDialog label="CLI 에이전트 연결" title="CLI 에이전트 연결" onOpenChange={setAgentSetup}>
                 {agentSetup && <AgentConnect disabled={false} onConnected={() => list.reload()} />}
-            </details>
+            </DetailDialog>
             {management !== false && <LocalModelConnection secrets={secrets.data ?? []} onCreate={(body, key) =>
                 api.post("/model-profiles", body, { key, requires: ["model_management_v1"] })
             } />}
@@ -583,8 +583,7 @@ function NewDefinition({ kind }: { kind: string }) {
     const [f, setF] = useState({ id: "", name: "", body: "" });
     const save = useSave();
     return (
-        <details>
-            <summary>새 {kind === "agent" ? "에이전트" : "워크플로우"}</summary>
+        <DetailDialog label={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`} title={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`}>
             <form className="inline wrap" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post(`/definitions/${kind}`, f); setF({ id: "", name: "", body: "" }); }); }}>
                 <input placeholder="ID (소문자-하이픈)" value={f.id} onChange={(e) => setF({ ...f, id: e.target.value })} aria-label="ID" required />
                 <input placeholder="이름" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} aria-label="이름" required />
@@ -592,7 +591,7 @@ function NewDefinition({ kind }: { kind: string }) {
                 <ServerActionButton type="submit">만들기</ServerActionButton>
             </form>
             {save.view}
-        </details>
+        </DetailDialog>
     );
 }
 

@@ -17,6 +17,7 @@ import { RecoveryPanel } from "./RecoveryPanel";
 import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Icon } from "./icons";
+import { ActionMenu } from "./ui/Controls";
 import { SidebarProject } from "./sidebar";
 import { SidebarUsage } from "./sidebar/SidebarUsage";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -217,8 +218,8 @@ export function Workspace() {
                         <section className="projects">
                             <div className="side-section-head">
                                 <h2>프로젝트</h2>
-                                <details className="project-options">
-                                    <summary aria-label="프로젝트 목록 옵션" title="프로젝트 목록 옵션">⋯{labelFilter.length > 0 && <span className="dot" aria-label="라벨 필터 적용 중" />}</summary>
+                                <ActionMenu className="project-options" label="프로젝트 목록 옵션"
+                                    trigger={<>⋯{labelFilter.length > 0 && <span className="dot" aria-label="라벨 필터 적용 중" />}</>}>
                                     <div className="project-options-body">
                                 <select
                                     className="small"
@@ -228,19 +229,18 @@ export function Workspace() {
                                         const v = e.target.value === "recent" ? "recent" : "name";
                                         localStorage.setItem(PROJECT_SORT, v);
                                         setProjectSort(v);
-                                        e.currentTarget.closest("details")?.removeAttribute("open");
                                     }}
                                 >
                                     <option value="name">이름순</option>
                                     <option value="recent">최근 활동순</option>
                                 </select>
                                 <button type="button" className="ghost small" aria-expanded={filtering} aria-label="라벨 필터"
-                                    onClick={(e) => { setFiltering((f) => !f); e.currentTarget.closest("details")?.removeAttribute("open"); }}>
+                                    onClick={() => setFiltering((f) => !f)}>
                                     라벨{labelFilter.length > 0 ? ` (${labelFilter.length})` : ""}
                                 </button>
-                                <button type="button" className="ghost small" aria-expanded={showArchived} onClick={(e) => { setShowArchived((v) => !v); e.currentTarget.closest("details")?.removeAttribute("open"); }}>보관됨</button>
+                                <button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</button>
                                     </div>
-                                </details>
+                                </ActionMenu>
                             </div>
                             {filtering && <LabelFilter labels={labels} selected={labelFilter} onChange={setLabelFilter} />}
                             {showArchived && <ArchivedProjects />}

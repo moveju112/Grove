@@ -32,7 +32,7 @@ for (const width of [390, 1280]) {
                 const ranges = await side.getByRole("group", { name: "시간 범위" }).boundingBox();
                 expect(projectHead!.x).toBe(recentHead!.x);
                 expect(Math.abs(recentHead!.y + recentHead!.height / 2 - ranges!.y - ranges!.height / 2)).toBeLessThan(2);
-                const icons = await side.locator(".side-nav > details > summary .icon").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().x));
+                const icons = await side.locator(".side-nav .detail-trigger > .icon:first-child").evaluateAll((els) => els.map((el) => el.getBoundingClientRect().x));
                 expect(icons.every((x) => x === projectHead!.x)).toBe(true);
                 expect(await side.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
                 await page.screenshot({ path: info.outputPath("empty.png") });
@@ -52,9 +52,9 @@ for (const width of [390, 1280]) {
                 const bounds = await row.boundingBox();
                 expect(bounds!.height).toBeGreaterThanOrEqual(32);
                 expect(bounds!.height).toBeLessThanOrEqual(40);
-                await row.getByLabel("최근 항목 관리").click();
+                await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
                 await expect(row.getByRole("button", { name: "고정", exact: true })).toBeVisible();
-                await row.getByLabel("최근 항목 관리").click();
+                await page.keyboard.press("Escape");
                 await page.screenshot({ path: info.outputPath("populated.png") });
             });
         }

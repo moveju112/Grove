@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { apiCall, ensureProfile, ensureProjects, login } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login } from "./helpers";
 import type { Layout } from "../app/state/layout";
 
 test("키보드로 들어간 pane이 열기·붙여넣기 첨부·입력의 대상이 되고 다른 pane에는 섞이지 않는다", async ({ page }) => {
@@ -34,7 +34,7 @@ test("키보드로 들어간 pane이 열기·붙여넣기 첨부·입력의 대�
     await expect(leftPane.getByLabel("메시지 입력")).toHaveValue("");
 
     // 붙여넣은 파일은 포커스한 pane의 입력에만 첨부된다.
-    await rightPane.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(rightPane, "보내기 방식", "save");
     await rightPane.getByLabel("메시지 입력").evaluate((node) => {
         const data = new DataTransfer();
         data.items.add(new File(["clip"], "clip.txt", { type: "text/plain" }));

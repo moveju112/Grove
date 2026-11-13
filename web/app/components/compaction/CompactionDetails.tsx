@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DetailDialog } from "../ui/Controls";
 import { ApiError, api } from "../../api/client";
 import type { MessagePage } from "../../api/generated";
 import { requestFocus } from "../../state/focus";
@@ -45,11 +46,11 @@ export function CompactionDetails({ sessionId, record: r }: { sessionId: string;
     const usageKnown = r.usage?.input_tokens != null && r.usage?.output_tokens != null
         && r.usage.input_tokens > 0 && r.usage.output_tokens > 0;
     const costKnown = r.cost_status === "estimated" && r.estimated_cost != null && r.pricing?.currency;
-    return <details className="msg note compaction" data-testid="msg-compaction">
-        <summary>
+    return <div className="msg note compaction" data-testid="msg-compaction">
+    <DetailDialog label="대화 압축 기록" title={<>
             이전 대화 요약({r.auto ? "자동" : "수동"} 압축) · 모델에는 이 요약과 이후 대화만 보냅니다
             {r.estimated_before != null && r.estimated_after != null ? ` · 약 ${r.estimated_before}→${r.estimated_after} tokens` : ""}
-        </summary>
+        </>}>
         {r.generation ? <p data-testid="compaction-model">
             생성 당시 프로필: {r.generation.profile_name} · {r.generation.protocol} · 모델 {r.generation.model}
             <span className="muted small"> · 저장된 실행 기록이며 현재 프로필의 수정·삭제와 무관합니다.</span>
@@ -71,11 +72,12 @@ export function CompactionDetails({ sessionId, record: r }: { sessionId: string;
                 {" · 보존된 원문 보기이며 모델 context를 복원하지 않습니다."}
             </p>
             <div className="actions">
-                <button type="button" disabled={busy} onClick={() => void navigate("first")}>원문 처음으로</button>
-                <button type="button" disabled={busy} onClick={() => void navigate("last")}>원문 끝으로</button>
+                <button type="button" data-dialog-close disabled={busy} onClick={() => void navigate("first")}>원문 처음으로</button>
+                <button type="button" data-dialog-close disabled={busy} onClick={() => void navigate("last")}>원문 끝으로</button>
             </div>
         </> : <p className="muted small">원문 범위 미기록: 이동할 수 없습니다.</p>}
-        {error && <p className="err" role="alert">{error}</p>}
         <div className="text">{r.summary}</div>
-    </details>;
+    </DetailDialog>
+    {error && <p className="err" role="alert">{error}</p>}
+    </div>;
 }

@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ActionMenu } from "./ui/Controls";
 import { ApiError, api } from "../api/client";
 import { useBotAvatar } from "../state/botAvatar";
 import type { ModelProfile } from "../api/generated";
@@ -212,8 +213,7 @@ export function BotsPanel({ open }: { open: Opener }) {
                             {b.model_state !== "ok" && b.status !== "deleted" &&
                                 <span className="muted small">{MODEL_STATE[b.model_state]}</span>}
                         </ServerActionButton>
-                        <details className="bot-actions">
-                            <summary aria-label={`${b.name} 관리`}>⋯</summary>
+                        <ActionMenu className="bot-actions" label={`${b.name} 관리`}>
                             {b.status !== "deleted" && <button className="ghost small" onClick={() => setEditing(b)}>편집</button>}
                             {b.status !== "deleted" && <ServerActionButton className="ghost small" onClick={() => void enter(b, "right")}>오른쪽에 열기</ServerActionButton>}
                             {b.status !== "deleted" && <ServerActionButton className="ghost small" onClick={() => void enter(b, "down")}>아래에 열기</ServerActionButton>}
@@ -228,7 +228,7 @@ export function BotsPanel({ open }: { open: Opener }) {
                                 <ServerActionButton className="ghost small danger" onClick={() => { if (confirm(`'${b.name}'을 삭제할까요? 대화는 보관되고 복원할 수 있습니다.`)) void status(b, "delete"); }}>삭제</ServerActionButton>
                             )}
                             {b.status === "deleted" && <ServerActionButton className="ghost small" onClick={() => void status(b, "restore")}>복원</ServerActionButton>}
-                        </details>
+                        </ActionMenu>
                     </li>
                 ))}
             </ul>

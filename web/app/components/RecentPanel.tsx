@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ActionMenu } from "./ui/Controls";
 import { ApiError, api } from "../api/client";
 import type { RecentItem, RecentPage } from "../api/generated";
 import { loadPrefs, savePrefs, usePrefs } from "../state/device";
@@ -131,8 +132,7 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                             <span className="recent-project">{it.project_name}</span>
                             <span className="muted small" data-testid="recent-time"> <When at={it.last_activity_at} relative /></span>
                         </button>
-                        <details className="recent-actions">
-                            <summary aria-label="최근 항목 관리">⋯</summary>
+                        <ActionMenu className="recent-actions" label="최근 항목 관리">
                             <div className="row-actions">
                             <button className="ghost small" title="오른쪽에 열기" aria-label="오른쪽에 열기" onClick={() => openItem(it, "right")}>⇥</button>
                             <button className="ghost small" title="아래에 열기" aria-label="아래에 열기" onClick={() => openItem(it, "down")}>⤓</button>
@@ -144,7 +144,7 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                                 {it.hidden ? "↺" : "–"}
                             </ServerActionButton>
                             </div>
-                        </details>
+                        </ActionMenu>
                     </li>
         );
     }

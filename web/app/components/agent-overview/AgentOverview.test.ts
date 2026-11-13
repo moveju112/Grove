@@ -9,6 +9,10 @@ const { state, get, live } = vi.hoisted(() => ({ state: vi.fn(), get: vi.fn(), l
 vi.mock("react", async (original) => ({ ...await original<typeof import("react")>(), useState: state }));
 vi.mock("../../state/store", () => ({ useLive: () => live.status, subscribeQuery: vi.fn() }));
 vi.mock("../../api/client", () => ({ api: { get } }));
+// 열기·초점은 브라우저 검사에서, 여기서는 열린 상세 내용의 데이터·escape 계약을 확인한다.
+vi.mock("../ui/Controls", () => ({
+    DetailDialog: ({ title, children }: { title: import("react").ReactNode; children: import("react").ReactNode }) => createElement("section", null, title, children),
+}));
 afterEach(() => { vi.clearAllMocks(); live.status = "live"; });
 const data: AgentOverviewData = {
     project_id: "p", session_id: "s",

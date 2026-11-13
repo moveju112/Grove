@@ -18,7 +18,7 @@ async function openGit(page: Page, staged: boolean) {
     const project=await apiCall<{id:string;name:string}>("POST","/projects",{root_path:root});
     await login(page);
     await page.locator(".sidebar .projects").getByRole("button",{name:project.name,exact:true}).click();
-    await page.locator(".git-wrap").locator("summary").first().click();
+    await page.getByRole("tab", { name: "변경", exact: true }).click();
     const panel=page.getByTestId("git-panel");
     await expect(panel).toContainText(staged ? "커밋할 변경 (1)" : "작업 트리 변경 (1)");
     return {root,run,project,panel};
@@ -74,8 +74,9 @@ test("커밋 이중 submit과 응답 유실은 커밋을 한 번만 만들고 �
     });
     await expect(panel.getByTestId("git-unsure")).toBeVisible();
     await panel.getByLabel("커밋 메시지").fill("다음 커밋 초안");
-    await panel.getByTestId("git-unsure").locator("summary").click();
+    await panel.getByTestId("git-unsure").getByRole("button", { name: "원래 요청 대상", exact: true }).click();
     await expect(panel.getByTestId("git-unsure")).toContainText("원래 커밋");
+    await page.keyboard.press("Escape");
     expect(requests).toHaveLength(1);
     expect(run("rev-list","--count","HEAD").trim()).toBe("2");
     lose=false;

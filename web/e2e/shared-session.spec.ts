@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
 
 async function shared(page: Page) {
     const { a } = await ensureProjects();
@@ -25,7 +25,7 @@ async function shared(page: Page) {
     await loaded;
     await expect(page.getByTestId("conn")).toHaveText("연결됨");
     const before = messageQueries;
-    await recent.getByLabel("최근 항목 관리").click();
+    await recent.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
     await recent.getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const left = page.getByTestId("pane").nth(0).getByTestId("session-view");
@@ -50,8 +50,8 @@ test("같은 대화의 두 승인 카드가 동시에 눌려도 도구와 모델
     });
     try {
         await script({ frames: frames.tool("shared-shell", "shell", { command: `printf 'once\\n' >> '${name}'` }) });
-        await left.getByLabel("도구", { exact: true }).check();
-        await left.getByLabel("보내기 방식").selectOption("model");
+        await composerOption(left, "도구", true);
+        await composerOption(left, "보내기 방식", "model");
         await left.getByLabel("메시지 입력").fill(title);
         await left.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(left.getByTestId("approval")).toHaveCount(1);
@@ -90,7 +90,9 @@ test("같은 대화의 서버 초안 충돌은 두 입력을 보존하고 비교
     await expect(conflict).toBeVisible();
     await expect(left.getByLabel("메시지 입력")).toHaveValue(first);
     await expect(right.getByLabel("메시지 입력")).toHaveValue(second);
-    await conflict.locator("summary").click();
+    await conflict.getByRole("button", { name: "서버 초안 보기", exact: true }).click();
+    await expect(conflict.getByRole("dialog", { name: "서버 초안", exact: true })).toBeVisible();
+    await page.keyboard.press("Escape");
     await expect(conflict.locator("pre")).toHaveText(first);
     await conflict.getByRole("button", { name: "합치기", exact: true }).click();
     await expect(right.getByLabel("메시지 입력")).toHaveValue(`${second}\n\n${first}`);

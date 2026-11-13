@@ -41,7 +41,7 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
         await menu.getByRole("button", { name: "닫기" }).click();
 
         // 필터: 라벨 하나, 라벨 없음, 해제. 필터는 새로고침 뒤에도 유지된다
-        await side.getByLabel("프로젝트 목록 옵션", { exact: true }).click();
+        await side.getByRole("button", { name: "프로젝트 목록 옵션", exact: true }).click();
         await side.getByRole("button", { name: "라벨 필터" }).click();
         await side.getByTestId(`label-filter-${urgent}`).click();
         await expect(row(a.name)).toBeVisible();

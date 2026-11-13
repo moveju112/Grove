@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails } from "./helpers";
 
 // DB-018: 프로젝트 화면의 휴지통에서 지운 파일을 복원하고, 확인 문구를 넣어 영구 삭제한다.
 test("휴지통에서 지운 파일을 복원하고 확인 후 영구 삭제한다", async ({ page }) => {
@@ -15,7 +15,7 @@ test("휴지통에서 지운 파일을 복원하고 확인 후 영구 삭제한�
     await login(page);
     await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
     const panel = page.locator(".project-view").filter({ has: page.locator("h1", { hasText: b.name }) }).getByTestId("trash-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     const row = panel.getByTestId("trash-row").filter({ hasText: name });
     await row.getByRole("button", { name: "복원" }).click();
     await expect(row).toHaveCount(0);
@@ -41,7 +41,7 @@ test("복원 응답을 잃어도 같은 요청 결과를 확인하고 다른 창
     await login(page);
     await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
     const panel = page.locator(".project-view").filter({ has: page.locator("h1", { hasText: b.name }) }).getByTestId("trash-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     const row = panel.getByTestId("trash-row").filter({ hasText: name });
     const keys: string[] = [];
     let lose = true;
@@ -73,7 +73,7 @@ test("복원 응답을 잃어도 같은 요청 결과를 확인하고 다른 창
         await login(other);
         await other.locator(".sidebar .projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
         const otherPanel = other.locator(".project-view").filter({ has: other.locator("h1", { hasText: b.name }) }).getByTestId("trash-panel");
-        await otherPanel.locator("summary").click();
+        await openDetails(otherPanel);
         await apiCall("POST", `/projects/${b.id}/files/op`, { op: "delete", path: name, confirm: name });
         const otherRow = otherPanel.getByTestId("trash-row").filter({ hasText: name });
         await expect(otherRow).toHaveCount(1);

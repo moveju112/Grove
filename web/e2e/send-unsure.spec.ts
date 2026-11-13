@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login } from "./helpers";
 
 // UI-028: 서버가 처리했는지 모르는 전송 실패는 입력을 보관하고 자동 재전송하지 않으며, 다시 보내도 중복되지 않는다.
 test("응답을 잃은 전송은 입력을 보관하고, 같은 내용 재전송은 같은 요청으로 처리된다", async ({ page }) => {
@@ -10,7 +10,7 @@ test("응답을 잃은 전송은 입력을 보관하고, 같은 내용 재전송
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     const box = view.getByLabel("메시지 입력");
 
     // 서버에는 도착하지만 응답은 브라우저에 오지 않는다
@@ -60,7 +60,7 @@ test("결과를 모르는 실패 뒤 내용을 고쳐 보내면 새 요청이 �
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     const box = view.getByLabel("메시지 입력");
     const keys: string[] = [];
     let fail = true;

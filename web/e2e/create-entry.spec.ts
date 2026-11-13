@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProjects, login, openDetails, state } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, state } from "./helpers";
 
 type SessionPage = { items: { id: string; title: string }[] };
 
@@ -94,7 +94,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
                 }
                 project = page.locator(".project-view:visible");
                 const text = `생성 진입 ${viewport.width} ${index} ${Date.now()}`;
-                await project.getByLabel("보내기 방식").selectOption("save");
+                await composerOption(project, "보내기 방식", "save");
                 await project.getByLabel("메시지 입력").fill(text);
                 await twice(project.getByRole("button", { name: "보내기", exact: true }));
                 await expect(page.getByTestId("session-view").filter({ hasText: text }).getByTestId("msg-user").filter({ hasText: text })).toHaveCount(1);
@@ -119,7 +119,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             });
             const text = `생성 응답 유실 ${viewport.width} ${Date.now()}`;
             const project = page.locator(".project-view:visible");
-            await project.getByLabel("보내기 방식").selectOption("save");
+            await composerOption(project, "보내기 방식", "save");
             await project.getByLabel("메시지 입력").fill(text);
             await twice(project.getByRole("button", { name: "보내기", exact: true }));
             await expect(project.getByTestId("send-unsure")).toBeVisible();
@@ -143,7 +143,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             const path = join(dirname(state().projA), `create-entry-${viewport.width}-${Date.now()}`);
             await dialog.getByLabel("폴더 경로").fill(path);
             await dialog.getByLabel("폴더가 없으면 마지막 폴더를 새로 만들기").check();
-            await dialog.locator("summary", { hasText: "저장소에서 clone" }).click();
+            await dialog.getByRole("button", { name: "저장소에서 clone", exact: true }).click();
             await dialog.getByLabel("clone할 저장소").fill("owner/repo");
             await dialog.getByLabel("clone 대상 폴더").fill(dirname(path));
             const keys: string[] = [];

@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { DetailDialog } from "../ui/Controls";
 import { getAgentOverview, type AgentOverviewData, type OverviewProfile, type OverviewRole, type OverviewTarget } from "../../api/agentOverview";
 import { subscribeQuery, useLive } from "../../state/store";
 
@@ -109,9 +110,9 @@ export function AgentOverview({ target, onEdit, onLayoutChange }: {
                 <h4>{role.name} <span className="muted small">{role.id}</span></h4>
                 <p>{role.builtin ? "기본 내장" : "사용자 정의"} · {role.modified_fields.length ? `override 수정됨 (${role.modified_fields.join(", ")})` : "원문 변경 없음"} · {role.enabled ? "활성" : "비활성"} · {AVAILABLE[role.availability] ?? "확인 불가"}</p>
                 <p>{role.description}</p>
-                <details><summary>{role.enabled ? "현재 적용 지침" : "비활성 정의 지침 (실행에 사용 안 함)"}</summary>
+                <DetailDialog label="역할 지침" title={role.enabled ? "현재 적용 지침" : "비활성 정의 지침 (실행에 사용 안 함)"}>
                     <pre aria-label={`${role.id} 지침`} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{role.body}</pre>
-                </details>
+                </DetailDialog>
                 <button className="ghost" onClick={() => onEdit(role.id)}>{role.id} 기존 편집 열기</button>
             </article>)}
         </>}

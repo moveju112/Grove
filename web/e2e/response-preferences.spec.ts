@@ -105,6 +105,7 @@ test("지침 파일 모드는 파일을 수정하지 않고 다음 요청에 선
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: "instruction preferences fixture" });
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
     await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("프로젝트 지침 파일");
     const row = page.getByTestId("setting-instructions.mode");

@@ -37,6 +37,7 @@ test("프로젝트 설정은 실제 인증 API에서 안전한 원본 정보만 
     const item = await project();
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: item.name, exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
     await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("원본");
     const panel = page.getByTestId("source-settings");
@@ -122,6 +123,7 @@ test("리소스 형식 오류와 symlink는 원문 없이 표시하고 재조회
     writeFileSync(join(item.root, ".codex/hooks.json"), "source-private-marker malformed");
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: item.name, exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
     await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("원본");
     const panel = page.getByTestId("source-settings");
@@ -150,6 +152,7 @@ test("조회 실패 화면은 서버 오류 본문을 숨기고 다시 조회할
     }));
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: item.name, exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
     await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("원본");
     const panel = page.getByTestId("source-settings");

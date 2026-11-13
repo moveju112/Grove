@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script } from "./helpers";
 import type { Layout } from "../app/state/layout";
 
 async function setup(page: Page) {
@@ -67,8 +67,8 @@ test("숨긴 실행 pane을 닫아 합쳐도 승인·작업은 취소하지 않�
         if (r.method() === "POST" && /\/(cancel|terminate|decision)$/.test(path)) mutations.push(path);
     });
     await script({ marker: title, frames: frames.tool("pane-shell", "shell", { command: "printf 'pane-controls fixture\\n'" }) });
-    await left.getByLabel("도구", { exact: true }).check();
-    await left.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(left, "도구", true);
+    await composerOption(left, "보내기 방식", "model");
     await left.getByLabel("메시지 입력").fill(title);
     await left.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(left.getByTestId("approval")).toBeVisible();

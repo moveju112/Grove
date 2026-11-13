@@ -1,4 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
+import { DetailDialog } from "./ui/Controls";
+import { Icon } from "./icons";
 import { ApiError, api } from "../api/client";
 import { useQuery } from "../state/store";
 import type { ModelProfile } from "../api/generated";
@@ -79,8 +81,7 @@ export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLin
                 const it = eff.data?.items.find((i) => i.key === d.key);
                 return it ? <Row key={d.key} d={d} it={it} t={target} reload={eff.reload} /> : null;
             })}
-            {resetDefs && <details className="settings-area-reset" data-testid="settings-area-reset">
-                <summary>{area} 기본값 복원</summary>
+            {resetDefs && <DetailDialog className="settings-area-reset" data-testid="settings-area-reset" label={`${area} 기본값 복원`} title={`${area} 기본값 복원`}>
                 <p className="muted small">고급 항목 포함. 모델 프로필·키·정의 파일은 유지됩니다.</p>
                 <div className="inline wrap">
                     <select aria-label="영역 복원 범위" value={resetScope} onChange={(event) => setResetScope(event.target.value)}>
@@ -89,8 +90,7 @@ export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLin
                     <SettingsResetButton key={resetScope} defs={resetDefs.filter((d) => d.scopes.includes(resetScope))}
                         target={target} scope={resetScope} scopeId={resetId} targetLabel={resetLabel} label="이 영역의 범위별 설정 복원" saved={eff.reload} />
                 </div>
-                <p className="muted small">미저장 입력은 유지됩니다.</p>
-            </details>}
+            </DetailDialog>}
         </div>
     );
 }
@@ -137,13 +137,12 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                 {d.label} {d.advanced && <span className="muted small">고급</span>}{" "}
                 <a className="muted small" href={`#setting-${encodeURIComponent(d.key)}`} title="이 항목으로 바로 가는 링크" aria-label={`${d.label} 링크`}>#</a>
             </h2>
-            <details className="setting-help">
-                <summary aria-label={`${d.label} 도움말`}>?</summary>
+            <DetailDialog className="setting-help" label={`${d.label} 도움말`} title={`${d.label} 도움말`} trigger={<Icon name="help" size={16} />}>
                 <div>
                     <p>{d.description}</p>
                     <p>실제 적용값: <code>{JSON.stringify(it.effective)}</code> ({SCOPE_LABEL[it.source]}) · 기본값 <code>{JSON.stringify(it.default)}</code></p>
                 </div>
-            </details>
+            </DetailDialog>
             </div>
             <div className="inline wrap">
                 {scopes.length > 1 && (

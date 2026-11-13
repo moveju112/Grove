@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
 
 // RUN-021: 사용자가 정한 예산만 적용하고, 실행 전(다음 요청 예산·출처)과 실행 중(고정값·기준 시각·남은 시간)에 보인다.
 test("예산이 없으면 표시하지 않고, 정하면 실행 전과 실행 중에 범위·기준·남은 시간을 보인다", async ({ page }) => {
@@ -22,7 +22,7 @@ test("예산이 없으면 표시하지 않고, 정하면 실행 전과 실행 �
 
     const before = (await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json()).length as number;
     await script({ frames: frames.text(["진행 중"]).slice(0, 1), hang: true });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("오래 걸리는 일");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const live = view.getByTestId("budget-live");

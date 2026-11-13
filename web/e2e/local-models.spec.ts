@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
-import { apiCall, ensureProjects, login, openDetails, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, sessionView } from "./helpers";
 import { frames } from "./fixture";
 
 type Profile = { id: string; name: string; model: string; revision: number; base_url: string; secret_id: string | null };
@@ -127,7 +127,7 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         await login(app);
         await app.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
         const view = sessionView(app, session.id);
-        await view.getByLabel("보내기 방식").selectOption("model");
+        await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("모델 프로필").selectOption(profile.id);
         const draft = view.getByLabel("메시지 입력");
         await draft.fill("local draft survives reconnect");

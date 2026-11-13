@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiCall, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 async function open(page: Page, title: string) {
@@ -9,7 +9,7 @@ async function open(page: Page, title: string) {
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     return { session, view };
 }
 

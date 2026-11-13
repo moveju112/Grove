@@ -35,7 +35,7 @@ describe("실행 설정의 기존 범위별 편집기 연결", () => {
         const html = render();
         expect(query).toHaveBeenCalledWith("settings:s", expect.any(Function));
         expect(html).toContain('<option value="session" selected="">');
-        expect(html).toContain("실제 적용값:");
+        expect(html).toContain("명령 실행 셸 도움말");
         expect(html).toContain("이 프로젝트");
         expect(html).toContain("이미 계획·승인된 호출의 shell·limits·cwd는 바꾸지 않습니다");
         expect(html).toContain("sandbox가 아닙니다");

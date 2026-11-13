@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails } from "./helpers";
 
 test("기기를 폐기하면 연결 중인 브라우저와 터미널이 차단되고 다른 기기의 공유 실행은 남는다", async ({ page, browser }) => {
     const { a } = await ensureProjects();
@@ -16,7 +16,7 @@ test("기기를 폐기하면 연결 중인 브라우저와 터미널이 차단�
         await expect(other.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         await other.getByRole("button", { name: a.name, exact: true }).first().click();
         const terminals = other.getByTestId("terminal-list");
-        await terminals.locator("summary").click();
+        await openDetails(terminals);
         const before = await apiCall<{ terminals: { id: string }[] }>("GET", `/projects/${a.id}/terminals`);
         await terminals.getByRole("button", { name: "새 터미널" }).click();
         await expect(other.getByTestId("terminal-view")).toHaveAttribute("data-conn", "open");

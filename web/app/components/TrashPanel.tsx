@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Panel } from "./ui/Controls";
 import { ApiError, api, newKey } from "../api/client";
 import { useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -33,8 +34,7 @@ export function TrashPanel({ projectId }: { projectId: string }) {
         }
     };
     return (
-        <details className="trash" data-testid="trash-panel">
-            <summary>휴지통 {items.length > 0 ? `· ${items.length}` : ""}</summary>
+        <Panel className="trash" data-testid="trash-panel" title={`휴지통${items.length > 0 ? ` · ${items.length}` : ""}`}>
             {(err || Boolean(q.error)) && <p className="err" role="alert">{err ?? "휴지통 목록을 불러오지 못했습니다"}</p>}
             {Boolean(q.error) && <button className="ghost small" onClick={q.reload}>목록 다시 불러오기</button>}
             {attempt && !busy && <ServerActionButton className="ghost small" onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>}
@@ -59,6 +59,6 @@ export function TrashPanel({ projectId }: { projectId: string }) {
                     </li>
                 ))}
             </ul>
-        </details>
+        </Panel>
     );
 }
