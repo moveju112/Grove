@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { ApiError, PROTOCOL, checkProtocol, onProtocolMismatch, setServerActionGuard } from "../../api/client";
+import { transportFetch } from "../../api/transport";
 
 export type StorageIssue = "quota" | "unavailable" | "missing" | null;
 export type LifecycleState = {
@@ -119,7 +120,7 @@ export function checkCompatibility(): Promise<void> {
     if (checking) return checking;
     checking = (async () => {
         try {
-            const response = await fetch("/api/v1/health", { cache: "no-store", signal: AbortSignal.timeout(10_000) });
+            const response = await transportFetch("/api/v1/health", { cache: "no-store", signal: AbortSignal.timeout(10_000) });
             checkProtocol(response);
             const health = await response.json() as { protocol?: unknown };
             if (!response.ok || !Number.isSafeInteger(health.protocol)) throw new Error("invalid health response");

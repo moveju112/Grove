@@ -3,6 +3,7 @@
 
 import type { ContractTypes } from "./generated.metadata";
 import { ContractError, parseContract } from "./validation";
+import { transportFetch } from "./transport";
 
 export class ApiError extends Error {
     constructor(
@@ -171,7 +172,7 @@ export function refresh(): Promise<Session | null> {
         refreshing = (async () => {
             try {
                 requireAuthTransport();
-                const resp = await fetch("/api/v1/auth/refresh", { method: "POST", credentials: "same-origin" });
+                const resp = await transportFetch("/api/v1/auth/refresh", { method: "POST", credentials: "same-origin" });
                 checkProtocol(resp);
                 if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
                 if (!resp.ok) {
@@ -205,7 +206,7 @@ export function logout(): Promise<void> {
         await renewal;
         try {
             requireAuthTransport();
-            const response = await fetch("/api/v1/auth/logout", { method: "POST", credentials: "same-origin" });
+            const response = await transportFetch("/api/v1/auth/logout", { method: "POST", credentials: "same-origin" });
             checkProtocol(response);
         } catch {
             // 로컬 종료는 유지한다. 서버 쿠키 폐기를 연결 복구 뒤 자동 재전송하지 않는다.
@@ -255,7 +256,7 @@ async function boundedRequest<T>(opts: Opts, mutation: boolean, operation: (send
         const headers = new Headers(init.headers);
         headers.set("x-request-id", requestId);
         headers.set("x-grove-protocol", String(PROTOCOL));
-        return fetch(url, { ...init, headers, signal: controller.signal });
+        return transportFetch(url, { ...init, headers, signal: controller.signal });
     };
     try {
         if (controller.signal.aborted) return await interrupted;

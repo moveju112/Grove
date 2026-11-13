@@ -1,5 +1,6 @@
 import type { PairingInfo } from "../api/generated";
 import { hostOrigin } from "./hosts";
+import { connectionLink, parseConnectionLink } from "../api/transport";
 
 const codePattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/;
 
@@ -37,6 +38,10 @@ export async function scanPairingImage(file: File): Promise<string> {
         const { default: jsQR } = await import("jsqr");
         const result = jsQR(image.data, image.width, image.height);
         if (!result) throw new Error("QR을 찾지 못했습니다. 선명한 이미지를 선택하거나 링크를 붙여 넣으세요.");
+        if (new URL(result.data).hash.startsWith("#connect=")) {
+            const parsed = parseConnectionLink(result.data);
+            return connectionLink(parsed.connection, parsed.code);
+        }
         const { origin, code } = parsePairingLink(result.data);
         return pairingLink(origin, code);
     } finally {

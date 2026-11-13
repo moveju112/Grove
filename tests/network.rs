@@ -1,6 +1,8 @@
 //! 접속 경로와 무관한 HTTP 계약(NET-005). 실제 TCP 서버에 Host·Origin 경계만 바꿔 요청한다.
 //! 실제 VPN 라우팅·TLS 인증서·방화벽 상태를 검증하는 시험은 아니다.
 mod common;
+#[path = "common/e2ee.rs"]
+mod wire;
 
 use common::*;
 use reqwest::StatusCode;
@@ -21,34 +23,38 @@ async fn local_lan_vpn_and_remote_authorities_share_auth_api_state_and_events() 
     for (index, host) in ["localhost", "grove.lan", "grove.vpn", "grove.example"].into_iter().enumerate() {
         let origin = format!("https://{host}");
         let unauth = s.client.get(format!("{base}/projects")).header("host", host).header("origin", &origin).send().await.unwrap();
-        assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
-        let login = s.client.post(format!("{base}/auth/browser-login"))
-            .header("host", host).header("origin", &origin)
-            .json(&json!({ "token": s.token, "name": format!("network-{index}") })).send().await.unwrap();
-        assert_eq!(login.status(), StatusCode::OK);
-        let cookie = login.headers()["set-cookie"].to_str().unwrap();
+        assert_eq!(unauth.status(), StatusCode::UPGRADE_REQUIRED);
+        let mut login = wire::Channel::open(&s, Some(host), Some(&origin)).await;
+        let metadata = login.request("POST", "/api/v1/auth/browser-login", vec![("content-type", "application/json".into())],
+            json!({ "token": s.token, "name": format!("network-{index}") })).await;
+        assert_eq!(metadata["status"], 200);
+        let cookie = metadata["headers"].as_array().unwrap().iter().find(|h| h[0] == "set-cookie").unwrap()[1].as_str().unwrap();
         assert!(cookie.contains("Secure") && cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
-        let credentials: Value = login.json().await.unwrap();
+        let credentials: Value = serde_json::from_slice(&login.body().await).unwrap();
         let token = credentials["access_token"].as_str().unwrap();
-        let r = s.client.post(format!("{base}/projects")).header("host", host).header("origin", &origin)
-            .bearer_auth(token).header("idempotency-key", "same-project-through-any-network")
-            .json(&json!({ "root_path": root })).send().await.unwrap();
-        assert_eq!(r.status(), StatusCode::CREATED);
-        assert_eq!(r.headers()["x-grove-protocol"], grove::PROTOCOL_VERSION.to_string());
-        let project: Value = r.json().await.unwrap();
+        let mut r = wire::Channel::open(&s, Some(host), Some(&origin)).await;
+        let metadata = r.request("POST", "/api/v1/projects", vec![("authorization", format!("Bearer {token}")),
+            ("content-type", "application/json".into()), ("idempotency-key", "same-project-through-any-network".into())],
+            json!({ "root_path": root })).await;
+        assert_eq!(metadata["status"], 201);
+        assert!(metadata["headers"].as_array().unwrap().iter().any(|h| h[0] == "x-grove-protocol" && h[1] == grove::PROTOCOL_VERSION.to_string()));
+        let project: Value = serde_json::from_slice(&r.body().await).unwrap();
         if let Some(id) = &project_id { assert_eq!(project["id"], *id); }
         else { project_id = Some(project["id"].clone()); }
-        let r = s.client.get(format!("{base}/projects")).header("host", host).header("origin", &origin)
-            .bearer_auth(token).send().await.unwrap();
-        assert_eq!(r.status(), StatusCode::OK);
-        assert_eq!(r.json::<Value>().await.unwrap().as_array().unwrap().len(), 1);
-        let mut events = s.client.get(format!("{base}/events")).header("host", host).header("origin", &origin)
-            .bearer_auth(token).send().await.unwrap();
-        assert_eq!(events.status(), StatusCode::OK);
+        let mut r = wire::Channel::open(&s, Some(host), Some(&origin)).await;
+        let metadata = r.request("GET", "/api/v1/projects", vec![("authorization", format!("Bearer {token}"))], Value::Null).await;
+        assert_eq!(metadata["status"], 200);
+        assert_eq!(serde_json::from_slice::<Value>(&r.body().await).unwrap().as_array().unwrap().len(), 1);
+        let mut events = wire::Channel::open(&s, Some(host), Some(&origin)).await;
+        let metadata = events.request("GET", "/api/v1/events", vec![("authorization", format!("Bearer {token}"))], Value::Null).await;
+        assert_eq!(metadata["status"], 200);
         let mut body = String::new();
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             while !body.contains("\n\n") {
-                body.push_str(&String::from_utf8_lossy(&events.chunk().await.unwrap().unwrap()));
+                let chunk = events.receive().await;
+                assert_eq!(chunk[0], 1);
+                body.push_str(&String::from_utf8_lossy(&chunk[1..]));
+                events.send(&[1]).await;
             }
         }).await.unwrap();
         assert!(body.contains("event: hello"));
@@ -60,6 +66,6 @@ async fn local_lan_vpn_and_remote_authorities_share_auth_api_state_and_events() 
     for (host, origin) in [("attacker.example", "https://attacker.example"), ("grove.example", "https://attacker.example")] {
         let r = s.client.get(format!("{base}/projects")).header("host", host).header("origin", origin)
             .bearer_auth(&s.token).send().await.unwrap();
-        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert_eq!(r.status(), if host == "attacker.example" { StatusCode::FORBIDDEN } else { StatusCode::UPGRADE_REQUIRED });
     }
 }

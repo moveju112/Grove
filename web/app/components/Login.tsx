@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ApiError, lastAuthEnd, login } from "../api/client";
+import { lastAuthEnd, login } from "../api/client";
 import { deviceName } from "../state/device";
 import { Hosts } from "./Hosts";
 import { Icon } from "./icons";
@@ -20,7 +20,7 @@ export function Login() {
             await login(token.trim(), deviceName());
             setToken("");
         } catch (err) {
-            setError(err instanceof ApiError ? err.message : "서버에 연결할 수 없습니다");
+            setError(err instanceof Error ? err.message : "서버에 연결할 수 없습니다");
         } finally {
             setBusy(false);
         }
