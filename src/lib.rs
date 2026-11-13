@@ -29,6 +29,7 @@ pub mod events;
 pub mod files;
 pub mod external_editor;
 pub mod git;
+pub mod git_context;
 pub mod followups;
 pub mod goals;
 pub mod idem;
@@ -306,6 +307,7 @@ pub fn router(app: App) -> Router {
         .route("/projects/{id}/files/ticket", post(files::ticket))
         .route("/file-tickets/{ticket}", get(files::by_ticket))
         .route("/projects/{id}/git/status", get(git::status))
+        .route("/projects/{id}/git/context", get(git_context::show))
         .route("/projects/{id}/git/stashes", get(git::stashes))
         .route("/projects/{id}/git/stash-save", post(git::stash_save))
         .route("/projects/{id}/git/review", post(git::review))

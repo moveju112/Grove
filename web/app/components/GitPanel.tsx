@@ -4,9 +4,10 @@ import { useQuery } from "../state/store";
 import { GitConfirmation } from "./git/GitConfirmation";
 import { confirmationBody, type ConfirmGitBody, type GitReview, type ReviewAction, type Stash } from "./git/types";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { GitContextOverview } from "./git-context/GitContextOverview";
 
 type Entry = { path: string; index: string; worktree: string; kind: string; orig_path?: string };
-type Status = { is_repo: boolean; branch?: { head?: string; ahead?: number; behind?: number }; entries?: Entry[]; fingerprint?: string };
+type Status = { is_repo: boolean; branch?: { head?: string; oid?: string; ahead?: number; behind?: number }; entries?: Entry[]; fingerprint?: string };
 type GitRequest =
     | { op: "stage" | "unstage"; body: { paths: string[]; expected_fingerprint: string | undefined } }
     | { op: "stage-hunks"; body: { path: string; hunks: number[]; unstage: boolean; expected_fingerprint: string | undefined } }
@@ -116,6 +117,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
     );
 
     if (!s) return <section className="git" data-testid="git-panel">
+        <GitContextOverview projectId={projectId} refreshSignal={s} />
         {progress}
         {recovery}
         <p className={status.error ? "err" : "muted"} role={status.error ? "alert" : "status"}>
@@ -124,6 +126,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
         {!!status.error && <button onClick={() => status.reload()}>상태 다시 확인</button>}
     </section>;
     if (!s.is_repo) return <section className="git" data-testid="git-panel">
+        <GitContextOverview projectId={projectId} refreshSignal={s} />
         {progress}
         {recovery}
         <p className="muted">Git 저장소가 아닙니다.</p>
@@ -151,6 +154,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
     );
     return (
         <section className="git" data-testid="git-panel">
+            <GitContextOverview projectId={projectId} head={s.branch?.oid} refreshSignal={s} />
             <h2>
                 Git · {s.branch?.head} {s.branch?.ahead ? `↑${s.branch.ahead}` : ""} {s.branch?.behind ? `↓${s.branch.behind}` : ""}
                 <button className="ghost small" onClick={() => { status.reload(); stashes.reload(); }}>새로고침</button>
