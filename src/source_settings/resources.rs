@@ -233,8 +233,9 @@ fn safe_text(text: &str) -> String {
     // 환경변수 가림 정책을 재사용하고 긴 opaque 토큰/URL 자격증명을 추가 차단한다.
     let lower = text.to_ascii_lowercase();
     if crate::tools::shell::is_sensitive_env(text)
-        || ["sk-", "ghp_", "gho_", "github_pat_", "grv_", "gva_", "bearer ", "://"]
-            .iter().any(|marker| lower.contains(marker))
+        // 종료 문자는 release의 인접 rodata와 접두어가 가짜 PAT로 합쳐지는 것을 막는다.
+        || ["sk-", "ghp_\0", "gho_", "github_pat_", "grv_", "gva_", "bearer ", "://"]
+            .iter().any(|marker| lower.contains(marker.strip_suffix('\0').unwrap_or(marker)))
         || text.split(|c: char| !c.is_ascii_alphanumeric() && !"_+/=-".contains(c))
             .any(|word| word.len() >= 40)
     {
@@ -242,6 +243,14 @@ fn safe_text(text: &str) -> String {
     } else {
         text.to_owned()
     }
+}
+
+#[test]
+fn metadata_token_prefixes_remain_redacted() {
+    for marker in ["sk-", "ghp_", "gho_", "github_pat_", "grv_", "gva_", "bearer ", "://"] {
+        assert_eq!(safe_text(&format!("설명 {}example", marker.to_ascii_uppercase())), "[redacted]");
+    }
+    assert_eq!(safe_text("일반 메타데이터"), "일반 메타데이터");
 }
 
 fn read_hooks(root: &Path, path: &str) -> io::Result<ResourceState<HookMetadata>> {
