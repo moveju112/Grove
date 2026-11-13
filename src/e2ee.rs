@@ -32,6 +32,7 @@ pub const PAGES_ORIGIN: &str = "https://grove.choondoggy.com";
 
 pub struct Transport {
     identity: SigningKey,
+    pub(crate) relay: Option<Arc<crate::relay::Settings>>,
     slots: Arc<Semaphore>,
     bridge_secret: String,
 }
@@ -60,14 +61,19 @@ impl Transport {
             Err(e) => return Err(e),
         };
         let bytes: [u8; 32] = bytes.try_into().map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "E2EE identity key length"))?;
-        Ok(Self { identity: SigningKey::from_bytes(&bytes), slots: Arc::new(Semaphore::new(128)), bridge_secret: crate::util::random_secret(32) })
+        let identity = SigningKey::from_bytes(&bytes);
+        let relay = crate::relay::Settings::load(dir, identity.verifying_key().as_bytes())?;
+        Ok(Self { identity, relay, slots: Arc::new(Semaphore::new(128)), bridge_secret: crate::util::random_secret(32) })
     }
 
     pub fn public_key(&self) -> String { B64.encode(self.identity.verifying_key().as_bytes()) }
+    #[cfg(test)]
+    pub(crate) fn identity_for_test(&self) -> [u8; 32] { self.identity.verifying_key().to_bytes() }
 }
 
 pub async fn identity(State(app): State<App>, _: Owner) -> Json<serde_json::Value> {
-    Json(json!({ "version": 1, "key": app.e2ee.public_key(), "client": PAGES_ORIGIN }))
+    Json(json!({ "version": 1, "key": app.e2ee.public_key(), "client": PAGES_ORIGIN,
+        "endpoint": app.e2ee.relay.as_ref().map(|r| r.endpoint()) }))
 }
 
 #[derive(Clone)]

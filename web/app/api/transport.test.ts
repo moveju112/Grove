@@ -4,6 +4,11 @@ import { Cipher, base64, connectionLink, parseConnectionLink, transportFetch, va
 afterEach(() => vi.unstubAllGlobals());
 const key = base64(new Uint8Array(32).fill(7));
 describe("E2EE connection", () => {
+    it("preserves the relay room while keeping pairing credentials in the fragment", () => {
+        const config = { endpoint: "wss://relay.example/api/e2ee/" + "a".repeat(64), key };
+        expect(parseConnectionLink(connectionLink(config)).connection).toEqual(config);
+        expect(() => validateConnection({ endpoint: config.endpoint + "/control", key })).toThrow();
+    });
     it("uses a fragment for the pin and one-time code, never query parameters", () => {
         const config = { endpoint: "wss://daemon.example/api/e2ee", key };
         const code = "12345678-1234-1234-1234-123456789012." + "a".repeat(43);

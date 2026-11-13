@@ -1,6 +1,10 @@
 /target
 /.dev
 /web/node_modules
+/relay/node_modules
+/.wrangler
+/relay/.wrangler
+/relay/.dev.vars
 /web/build
 /web/.react-router
 /web/test-results

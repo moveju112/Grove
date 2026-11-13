@@ -13,6 +13,7 @@ pub mod approvals;
 mod project_fs;
 pub mod auth;
 pub mod e2ee;
+pub mod relay;
 pub mod backup;
 pub mod cli;
 pub mod exec;

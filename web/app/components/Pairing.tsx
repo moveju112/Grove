@@ -65,9 +65,10 @@ export function Pairings() {
     };
     const issue = async (deviceName: string, replace_id?: string) => {
         let encrypted: Connection | undefined;
-        if (endpoint.trim()) {
-            const identity = await api.get<{ key: string }>("/e2ee/identity");
-            encrypted = validateConnection({ endpoint: endpoint.trim(), key: identity.key });
+        const identity = await api.get<{ key: string; endpoint?: string | null }>("/e2ee/identity");
+        const target = endpoint.trim() || identity.endpoint;
+        if (target) {
+            encrypted = validateConnection({ endpoint: target, key: identity.key });
         }
         const result = await api.post<Issued>("/pairings", { name: deviceName, replace_id }, { requires: ["pairing_v1"] });
         setIssued(result.code ? { ...result, encrypted } : null);

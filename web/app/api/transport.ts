@@ -28,7 +28,7 @@ export function validateConnection(value: Connection): Connection {
     const url = new URL(value.endpoint);
     const local = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
     if ((url.protocol !== "wss:" && !(url.protocol === "ws:" && local))
-        || url.pathname !== "/api/e2ee" || url.search || url.hash || url.username || url.password) {
+        || !/^\/api\/e2ee(?:\/[0-9a-f]{64})?$/.test(url.pathname) || url.search || url.hash || url.username || url.password) {
         throw new Error("wss://서버/api/e2ee 주소를 입력하세요.");
     }
     const bytes = unbase64(value.key);
