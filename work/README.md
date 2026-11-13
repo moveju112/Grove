@@ -26,17 +26,21 @@
 ## 준비 완료된 워크스페이스
 b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/data/project/paseodog_opus/work/COMMON.md`와 번호별 문서다.
 
+현재 운영은 준비 10개·실행/초기화 상한 6개의 제한 실험이며 큐에 `--max-running 6`을 명시한다. `33fcbc0`에 정책, `45ce7bd`에 큐 옵션, `7bbd18c`에 공유 툴체인 보존을 반영했다. 인계된 큐 26개·빌드 실행기 26개 시험은 각 두 파일의 source bytes 일치를 확인해 재사용했고 전체 시험은 반복하지 않았다. 기존 ResourceWarning은 미수정이다.
+34/35/37의 검사 대기 3개 관측으로 추가 시작을 잠시 보류했으며, 이후 실제 프로세스에서 34의 검사 1개만 실행 중이고 추가 lock 대기가 없는 것을 확인한 뒤 38·42를 순차 시작했다. 두 미시작 checkout의 absent `.dev`만 원본 공유 경로 symlink로 연결하고 구형 `env()`의 실제 경로 identity를 검증했다. 기존 34~37·실행 중 검사·설치·환경은 바꾸거나 취소하지 않았다. 두 새 세션은 running·권한 대기 없음·fast=false를 재조회했고 구현 완료는 아니다.
+38의 기준 이후 `Settings::Profiles`·`ProfileCatalog`에는 PWA 차단이 추가됐으므로 통합 때 `ServerActionButton`/`useServerBlockReason`을 보존하고 local-models·기존 offline 경계를 선택 인수한다. 42의 Git/GitPanel 공통 입력은 기준 이후 불변이며 git-context와 기존 Git 변경 요청의 권한/unknown 경계를 선택 인수한다. 완료→통합 대기는 현재 후보 0이고, 앞선 공유 검사 대기와 구분한다. 실행 수 증가는 효율 개선의 검증 근거가 아니다.
+
 | 번호 | 브랜치 | worktree 절대 경로 | workspace ID | 기능 |
 |---|---|---|---|---|
 | 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | `wks_145becb7b1464f70` | 역할별 위임 허용 정책 (`a340d2bccd7860d8452a5513b59c7f8ac215178c` 기준、세션 `b2bec79d-608f-4ece-a288-06e49b5acd1a` 실행 확인) |
 | 35 | parallel/b02-tool-outputs | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-35-tool-outputs | `wks_242996cfa36e0a48` | 큰 도구 결과 파일 보관·범위 조회 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준、세션 `efbea152-d265-4158-9d04-5163ed10d417` 실행 확인) |
 | 36 | parallel/b02-mcp-oauth | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-36-mcp-oauth | `wks_912a0803920b11fa` | HTTP MCP OAuth 연결·명시적 갱신 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준, 세션 `4741efe5-e045-4afd-b63c-b94d901a65e4` 실행 확인) |
 | 37 | parallel/b02-settings-links | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links | `wks_c1844db43036c46f` | 비동기 설정 직접 링크·pane 경계 (`292cf1aff5305b4c039613dfd4266f416cef5f03` 기준、세션 `3f6d6b43-97a0-498b-85b6-28151c4593e1` 실행 확인) |
-| 38 | parallel/b02-local-models | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-38-local-models | `wks_97add2973aa8639a` | 선택적 로컬 HTTP 모델 연결·상태·목록 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, branch/HEAD/clean 확인, 미시작) |
+| 38 | parallel/b02-local-models | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-38-local-models | `wks_97add2973aa8639a` | 선택적 로컬 HTTP 모델 연결·상태·목록 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, 세션 `e60b7aa1-33c3-40c7-b35e-89476f3e0ec2` running 확인) |
 | 39 | parallel/b02-definition-updates | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-39-definition-updates | `wks_10afe7eb9a765704` | 기본 정의 수정본 보존·비교·선택 적용 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, branch/HEAD/clean 확인, 미시작) |
 | 40 | parallel/b02-deferred-tools | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-40-deferred-tools | `wks_bd0e6e72588493d4` | 도구 schema 지연 로딩·모델 입력 안정성 (`f4a4a702bcd342e159efe8801d429ad181391651` 기준, branch/HEAD/clean 확인, 미시작) |
 | 41 | parallel/b02-agent-overview | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-41-agent-overview | `wks_720a531310d51814` | 기본 역할·모델 상속·지침·실행 규칙 개요 (`f4a4a702bcd342e159efe8801d429ad181391651` 기준, branch/HEAD/clean 확인, 미시작) |
-| 42 | parallel/b02-git-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-42-git-context | `wks_b1b9ac86342157d0` | Git 위치·PR·CI·실행 권한 (`6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c` 기준, branch/HEAD/clean 확인, 미시작) |
+| 42 | parallel/b02-git-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-42-git-context | `wks_b1b9ac86342157d0` | Git 위치·PR·CI·실행 권한 (`6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c` 기준, 세션 `f4078561-a613-4208-bd05-8c441790a62c` running 확인) |
 | 43 | parallel/b02-skill-requirements | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-43-skill-requirements | `wks_16d56311c5dc7ab8` | 스킬 요구 도구·플랫폼·의존성 (`6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c` 기준, branch/HEAD/clean 확인, 미시작) |
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
