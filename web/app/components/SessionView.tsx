@@ -27,6 +27,7 @@ import { ApprovalCard, currentApprovalContract } from "./approvals";
 import { TurnTiming } from "./turn-timing/TurnTiming";
 import { useServerBlockReason } from "./pwa/lifecycle";
 import { MessageCopyButton as CopyButton } from "./capabilities/MessageCopyButton";
+import { CompactionDetails, type CompactionRecord } from "./compaction/CompactionDetails";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
@@ -588,25 +589,7 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
         </div>;
     }
     if (m.role === "note" && (m.content as { type?: string }).type === "compaction") {
-        const r = m.content as {
-            summary: string; auto: boolean; estimated_before?: number; estimated_after?: number; profile_id?: string;
-            usage?: { input_tokens?: number; output_tokens?: number }; source?: { from_seq: number; upto_seq: number; messages: number };
-        };
-        return (
-            <details className="msg note compaction" data-testid="msg-compaction">
-                <summary>
-                    이전 대화 요약({r.auto ? "자동" : "수동"} 압축) · 모델에는 이 요약과 이후 대화만 보냅니다
-                    {r.estimated_before ? ` · 약 ${r.estimated_before}→${r.estimated_after} tokens` : ""}
-                </summary>
-                {r.source && (
-                    <p className="muted small" data-testid="compaction-source">
-                        대상 원문 메시지 {r.source.messages}개(#{r.source.from_seq + 1}~#{r.source.upto_seq}) · 원문은 화면 이력에 그대로 남습니다
-                        {r.usage?.input_tokens ? ` · 요약 사용량 입력 ${r.usage.input_tokens}·출력 ${r.usage.output_tokens ?? 0} tokens` : ""}
-                    </p>
-                )}
-                <div className="text">{r.summary}</div>
-            </details>
-        );
+        return <CompactionDetails sessionId={m.session_id} record={m.content as CompactionRecord} />;
     }
     if (m.role === "note" && (m.content as { type?: string }).type === "compaction_failed") {
         const r = m.content as { error?: { message?: string } };
