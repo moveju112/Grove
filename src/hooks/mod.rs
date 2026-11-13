@@ -1,4 +1,6 @@
-//! Hook 설정만 저장한다. 활성화해도 명령을 실행하지 않는다(RESOURCE-015).
+//! Hook 설정과 승인형 lifecycle 실행(RESOURCE-015/016).
+mod execution;
+pub use execution::{capture, execute_call, plan_call, recover, validate_call};
 use crate::{
     App, audit,
     auth::Owner,
@@ -20,6 +22,13 @@ pub const EVENTS: &[&str] = &[
     "SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Stop", "SessionEnd",
 ];
 pub const EXECUTION_STATE: &str = "not_implemented";
+pub const SUPPORTED_EVENTS: &[&str] = if cfg!(target_os = "linux") {
+    &["SessionStart", "UserPromptSubmit", "PostToolUse", "Stop"]
+} else { &[] };
+
+fn execution_state(event: &str) -> &'static str {
+    if SUPPORTED_EVENTS.contains(&event) { "approval_required" } else { EXECUTION_STATE }
+}
 
 #[derive(Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -73,7 +82,7 @@ impl Stored {
             name: self.name.clone(), event: self.event.clone(), matcher: self.matcher.clone(),
             command: if command_redacted { "[redacted]".into() } else { self.command.clone() },
             command_redacted, enabled: self.enabled, revision: self.revision,
-            execution_state: EXECUTION_STATE,
+            execution_state: execution_state(&self.event),
         }
     }
 }
@@ -142,7 +151,22 @@ pub async fn list(State(app): State<App>, Owner(_p): Owner, Query(scope): Query<
         let hooks = c.prepare(&format!("SELECT {COLS} FROM hook_definitions WHERE project_id IS ?1 ORDER BY name,id"))?
             .query_map([&scope.project_id], row)?
             .map(|r| r.map(|h| h.view())).collect::<rusqlite::Result<Vec<_>>>()?;
-        Ok(json!({"hooks":hooks,"events":EVENTS,"matcher_syntax":"glob","execution_state":EXECUTION_STATE}))
+        Ok(json!({"hooks":hooks,"events":EVENTS,"matcher_syntax":"glob",
+            "execution_state":if SUPPORTED_EVENTS.is_empty() { EXECUTION_STATE } else { "partial" },
+            "supported_events":SUPPORTED_EVENTS,
+            "execution_note":"지원 이벤트는 개별 tool_calls 승인 요청을 만듭니다. 원래 작업을 차단하지 않는 독립 실행입니다. Linux bash·sh만 실행하며 PreToolUse·SessionEnd 및 다른 플랫폼·셸은 미지원입니다."}))
+    }).await?))
+}
+
+/// hook 전용 승인 화면. 실행·결정·취소·unknown 검토는 기존 tool_calls API를 그대로 쓴다.
+pub async fn executions(State(app): State<App>, Owner(_p): Owner, Query(scope): Query<Scope>) -> ApiResult<Json<Value>> {
+    Ok(Json(app.db.call(move |c| {
+        scope.check(c)?;
+        let ids = c.prepare(
+            "SELECT id FROM tool_calls WHERE name='hook' AND (?1 IS NULL OR project_id=?1) ORDER BY rowid DESC LIMIT 100"
+        )?.query_map([&scope.project_id], |r| r.get::<_, String>(0))?.collect::<rusqlite::Result<Vec<_>>>()?;
+        let calls = ids.iter().map(|id| crate::approvals::get(c, id)).collect::<ApiResult<Vec<_>>>()?;
+        Ok(json!(calls))
     }).await?))
 }
 

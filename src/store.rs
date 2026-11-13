@@ -916,6 +916,24 @@ pub const MIGRATIONS: &[&str] = &[
         bindings TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(bindings))
     );
     "#,
+    // Hook lifecycle 이벤트와 일회성 실행 결합. 설정 삭제가 기존 receipt를 지우지 않는다.
+    r#"
+    CREATE TABLE hook_events (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        event TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        match_target TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(session_id,event,source_id)
+    );
+    CREATE TABLE hook_runs (
+        event_id TEXT NOT NULL REFERENCES hook_events(id) ON DELETE CASCADE,
+        hook_id TEXT NOT NULL,
+        call_id TEXT NOT NULL UNIQUE REFERENCES tool_calls(id) ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED,
+        PRIMARY KEY(event_id,hook_id)
+    );
+    "#,
 ];
 
 #[cfg(test)]
