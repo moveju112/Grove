@@ -16,6 +16,7 @@ import { Memories } from "./Memories";
 import { useCapability } from "../state/capabilities";
 import { DeviceSettingsReset } from "./SettingsReset";
 import { McpServers } from "./McpServers";
+import { DiagnosticsBundle } from "./DiagnosticsBundle";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -599,6 +600,7 @@ function Health() {
                 진단 정보 복사
             </button>
             {copied && <span className="muted small" role="status"> {copied}</span>}
+            <DiagnosticsBundle />
         </>
     );
 }

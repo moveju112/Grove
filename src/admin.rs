@@ -8,10 +8,11 @@
 
 use crate::App;
 use crate::auth::{Owner, Principal};
-use crate::error::ApiResult;
+use crate::error::{ApiError, ApiResult};
 use axum::Json;
 use axum::extract::State;
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use rusqlite::{Connection, params};
 use serde_json::{Value, json};
 
@@ -50,6 +51,10 @@ pub async fn readiness(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Js
 /// 서버 자원 상태(OBS-004). 소유자 전용 조회이며 상태를 바꾸지 않는다.
 /// CPU·메모리는 Linux `/proc/self`에서 읽고, 다른 OS는 `null`(측정 불가)로 둔다.
 pub async fn metrics(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Json<Value>> {
+    Ok(Json(collect_metrics(&app).await?))
+}
+
+async fn collect_metrics(app: &App) -> ApiResult<Value> {
     let now = app.now();
     let busy = app.db.call(move |c| busy(c, &now)).await?;
     let sessions: i64 = app
@@ -59,7 +64,7 @@ pub async fn metrics(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Json
     let (fair_active, fair_waiting) = app.fair.counts();
     let db = app.cfg.data_dir.join("grove.db");
     let size = |suffix: &str| std::fs::metadata(format!("{}{suffix}", db.display())).map(|m| m.len()).unwrap_or(0);
-    Ok(Json(json!({
+    Ok(json!({
         "process": process_stats(),
         "active_sessions": sessions,
         "work": busy,
@@ -67,7 +72,59 @@ pub async fn metrics(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Json
         "db_bytes": { "main": size(""), "wal": size("-wal") },
         // 이벤트 변경 구독 수. 열린 SSE 연결과 서버 내부 대기(도구 실행 순서 대기 등)를 함께 센다.
         "event_subscribers": app.seq_tx.receiver_count(),
-    })))
+    }))
+}
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiagnosticRequest {
+    pub confirmed: bool,
+}
+
+/// OBS-008: 명시적 요청에만 생성한다. 원문을 수집한 뒤 가리는 대신 고정 수치·상태만 읽는다.
+pub async fn diagnostics(
+    State(app): State<App>, Owner(_p): Owner, Json(request): Json<DiagnosticRequest>,
+) -> ApiResult<Response> {
+    if !request.confirmed {
+        return Err(ApiError::invalid("진단 묶음에 포함되는 정보 범위를 확인하세요"));
+    }
+    let resources = collect_metrics(&app).await?;
+    let counts = app.db.call(|c| {
+        let n = |sql: &str| -> ApiResult<i64> { Ok(c.query_row(sql, [], |r| r.get(0))?) };
+        // 고정 쿼리만 사용한다. 이름·ID·본문·경로·설정·로그·remote 오류 문구는 읽지 않는다.
+        Ok(json!({
+            "projects": n("SELECT COUNT(*) FROM projects")?,
+            "sessions": n("SELECT COUNT(*) FROM sessions")?,
+            "profiles_enabled": n("SELECT COUNT(*) FROM model_profiles WHERE deleted_at IS NULL AND enabled=1")?,
+            "profiles_disabled": n("SELECT COUNT(*) FROM model_profiles WHERE deleted_at IS NULL AND enabled=0")?,
+            "mcp_enabled": n("SELECT COUNT(*) FROM mcp_servers WHERE enabled=1")?,
+            "mcp_disabled": n("SELECT COUNT(*) FROM mcp_servers WHERE enabled=0")?,
+            "turns": {
+                "completed": n("SELECT COUNT(*) FROM turns WHERE status='completed'")?,
+                "failed": n("SELECT COUNT(*) FROM turns WHERE status='failed'")?,
+                "cancelled": n("SELECT COUNT(*) FROM turns WHERE status='cancelled'")?,
+                "interrupted": n("SELECT COUNT(*) FROM turns WHERE status='interrupted'")?,
+            },
+            "unknown_tools": n("SELECT COUNT(*) FROM tool_calls WHERE status='unknown'")?,
+        }))
+    }).await?;
+    let bundle = json!({
+        "format": "grove-diagnostics-v1",
+        "collected_at": app.now(),
+        "server": {
+            "version": crate::VERSION, "protocol": crate::PROTOCOL_VERSION,
+            "schema": app.db.schema_version(), "capabilities": crate::CAPABILITIES,
+            "os": std::env::consts::OS, "arch": std::env::consts::ARCH,
+            "shutting_down": app.is_shutting_down(),
+        },
+        "resources": resources, "counts": counts,
+        "privacy": {
+            "external_upload": false,
+            "collection": "allowlisted_aggregates_only",
+            "excluded": ["tokens", "credentials", "content", "names", "ids", "paths", "urls", "settings", "environment", "logs"],
+        },
+    });
+    Ok(([(axum::http::header::CACHE_CONTROL, "no-store")], Json(bundle)).into_response())
 }
 
 #[cfg(target_os = "linux")]

@@ -32,7 +32,7 @@ async fn devices_share_user_sessions_but_cannot_escalate_to_owner_or_replay_anot
         for path in ["/devices", "/secrets", "/audit", "/pairings", "/admin/update-readiness", "/admin/metrics"] {
             assert_eq!(s.raw(Method::GET, &format!("/api/v1{path}"), None, None, Some(token)).await.status(), StatusCode::FORBIDDEN);
         }
-        for path in ["/devices", "/secrets", "/model-profiles", "/pairings", "/admin/shutdown"] {
+        for path in ["/devices", "/secrets", "/model-profiles", "/pairings", "/admin/shutdown", "/admin/diagnostics"] {
             assert_eq!(s.raw(Method::POST, &format!("/api/v1{path}"), Some(json!({})), Some("cannot-escalate"), Some(token)).await.status(), StatusCode::FORBIDDEN);
         }
     }

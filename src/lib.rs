@@ -82,6 +82,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// 기능을 빼거나 의미를 바꾸면 이름의 버전(`_v2`)을 올린다.
 pub const CAPABILITIES: &[&str] = &[
     "file_log_rotation_v1",
+    "diagnostics_bundle_v1",
     "file_changes_v1",
     "trash_v1",
     "attachments_v1",
@@ -215,6 +216,7 @@ pub fn router(app: App) -> Router {
         .route("/admin/update-readiness", get(admin::readiness))
         .route("/admin/shutdown", post(admin::shutdown))
         .route("/admin/metrics", get(admin::metrics))
+        .route("/admin/diagnostics", post(admin::diagnostics))
         .route("/mcp/servers", get(mcp::list).post(mcp::create))
         .route("/mcp/servers/{id}", axum::routing::put(mcp::update).delete(mcp::remove))
         .route("/mcp/servers/{id}/check", get(mcp::check_result).post(mcp::check))
