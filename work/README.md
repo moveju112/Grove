@@ -37,7 +37,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | `wks_145becb7b1464f70` | 역할별 위임 허용 정책 (`a340d2bccd7860d8452a5513b59c7f8ac215178c` 기준, branch/HEAD/clean 확인, 미시작) |
 | 35 | parallel/b02-tool-outputs | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-35-tool-outputs | `wks_242996cfa36e0a48` | 큰 도구 결과 파일 보관·범위 조회 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준, branch/HEAD/clean 확인, 미시작) |
 | 36 | parallel/b02-mcp-oauth | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-36-mcp-oauth | `wks_912a0803920b11fa` | HTTP MCP OAuth 연결·명시적 갱신 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준, branch/HEAD/clean 확인, 미시작) |
-| 37 | parallel/b02-settings-links | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links | 준비 중 | 비동기 설정 직접 링크·pane 경계 (`work/37.md` 사전 커밋 기준, 미시작) |
+| 37 | parallel/b02-settings-links | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links | `wks_c1844db43036c46f` | 비동기 설정 직접 링크·pane 경계 (`292cf1aff5305b4c039613dfd4266f416cef5f03` 기준, branch/HEAD/clean 확인, 미시작) |
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
@@ -54,7 +54,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 31 | ready · `997c061` 후속 통합·Linux 인수 완료 | 기존 Rust 42개·웹 근거 보존, 기능 E2E 14개 통과. 통합 Rust 8개·타입·E2E 5개 통과. Windows/macOS 실측·향후 hook 결합은 SETTINGS-011과 이월에 보존 |
 | 33 | 기존 세션 브라우저 인수 후속 한 번 접수 | `442e020`의 `work/33.md`에 model-fallback spec·자기 결함 수정 배정. 기존 Rust·웹 근거 보존, fast=false 명시·재조회. `status=sent`이며 완료 확인은 아님 |
 | 29 | 기존 세션 브라우저 인수 후속 한 번 접수 | `35f0baf`의 `work/29.md`에 hook-execution/hooks E2E·자기 결함 수정 배정. 슬롯·idle·clean·fast=false 명시/재조회 뒤 기존 세션에 `status=sent`. 실제 완료 확인은 아님 |
-| 25 | 검증 후속 슬롯 대기 | 구현·선택 Rust/웹 검사는 끝났고 update-settings E2E 4개는 미실행. 기존 오류 retry는 반복하지 않으며 다음 idle 후속은 정확한 spec 소유 배정·슬롯 확인 뒤 진행 |
+| 25 | 기존 세션 후속 배정 · 접수 전 상태 확인 | `work/25.md`에 update-settings E2E·자기 결함 수정 배정. 원래 오류 retry count=1 유지. 정확한 idle·clean·슬롯·fast=false 확인 후 한 번 접수 |
 
 ## 현재 통합 인수
 - 22·28·30의 기존 유효 Rust 35개·웹 단위 114개 근거는 재사용했다. 28의 스킬 관리/선택 E2E 3개와 30의 위치/부모 탐색·pane focus·반응형 회귀 7개가 실제 통합 서버에서 통과했다.
@@ -72,7 +72,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 | 번호 | 작업 브랜치·tip | 통합 SHA | RESULT 경로·검증 근거 | workspace ID·절대 경로 | 정리 상태 | 보충 번호 |
 |---|---|---|---|---|---|---|
-| 31 | `parallel/b02-exec-cwd` · `997c061f5c51ebda94b7a419b3db278222e2959d` | `b95dad4` | `work/RESULT-31.md`; Linux Rust 42·단위 3·기능 E2E 14·통합 Rust 8/타입/E2E 5 통과。플랫폼·hook 결합은 SETTINGS-011과 이월에 보존 | `wks_fe83bf0ff80fb523` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-31-exec-cwd` | workspace·종료 세션 archive·디렉터리 제거 응답 확인, Git/활성 목록 대조 대기; 브랜치 유지 | 37 |
+| 31 | `parallel/b02-exec-cwd` · `997c061f5c51ebda94b7a419b3db278222e2959d` | `b95dad4` | `work/RESULT-31.md`; Linux Rust 42·단위 3·기능 E2E 14·통합 Rust 8/타입/E2E 5 통과. 플랫폼·hook 결합은 SETTINGS-011과 이월에 보존 | `wks_fe83bf0ff80fb523` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-31-exec-cwd` | workspace·종료 세션 archive, 디렉터리·Git 등록·활성 목록 제거 확인; 브랜치 유지 | 37 |
 | 22 | `parallel/b02-create-entry` · `30a5f785cc8628e4b24759837fc49a8cbecae5c2` | `a453f18` | `work/RESULT-22.md`; dialog 후속 단위 35·기능 E2E 8·통합 선택 E2E 16·타입 통과, 기존 Rust 근거 재사용 | `wks_e30bd8e9163a7bb1` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-22-create-entry` | workspace·종료 세션 archive, 디렉터리·Git 등록·활성 목록 제거 확인; 브랜치 유지 | 35 |
 | 32 | `parallel/b02-compaction-details` · `00e06429dc728baa940581f3cfc1bb20828f2836` | `a453f18` | `work/RESULT-32.md`; Rust 신규 4·기존 15·단위 14·기능 E2E 3·통합 E2E 16·타입 통과 | `wks_101ba29980186bf0` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-32-compaction-details` | workspace·종료 세션 archive, 디렉터리·Git 등록·활성 목록 제거 확인; 브랜치 유지 | 36 |
 | 28 | `parallel/b02-skill-management` · `9383ff0fd7d405606d2fe72fd4e6412bdc779eb2` | `07bbd7b` | `work/RESULT-28.md`; Rust 관리 11·skills 17·store 7·웹 단위/타입 및 스킬 관리/선택 E2E 3개 통과. 별도 설정 직접 링크 실패는 SETTINGS-021로 보존 | `wks_e343b3a56e3a22d6` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-28-skill-management` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 34 |
