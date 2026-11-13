@@ -30,10 +30,10 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 |---|---|---|---|---|
 | 27 | parallel/b02-pwa-recovery | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery | `wks_9a7c204337ac8249` | PWA 호환·오프라인·다중 탭 복구 (14 이월, `551f551` 기준) |
 | 30 | parallel/b02-navigation-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context | `wks_73d51bb0a7f9b465` | 호스트·프로젝트·세션 현재 위치와 탐색 (`551f551` 기준) |
-| 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | `wks_145becb7b1464f70` | 역할별 위임 허용 정책 (`a340d2bccd7860d8452a5513b59c7f8ac215178c` 기준, branch/HEAD/clean 확인, 미시작) |
-| 35 | parallel/b02-tool-outputs | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-35-tool-outputs | `wks_242996cfa36e0a48` | 큰 도구 결과 파일 보관·범위 조회 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준, branch/HEAD/clean 확인, 미시작) |
+| 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | `wks_145becb7b1464f70` | 역할별 위임 허용 정책 (`a340d2bccd7860d8452a5513b59c7f8ac215178c` 기준、세션 `b2bec79d-608f-4ece-a288-06e49b5acd1a` 실행 확인) |
+| 35 | parallel/b02-tool-outputs | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-35-tool-outputs | `wks_242996cfa36e0a48` | 큰 도구 결과 파일 보관·범위 조회 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준、세션 `efbea152-d265-4158-9d04-5163ed10d417` 실행 확인) |
 | 36 | parallel/b02-mcp-oauth | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-36-mcp-oauth | `wks_912a0803920b11fa` | HTTP MCP OAuth 연결·명시적 갱신 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준, branch/HEAD/clean 확인, 미시작) |
-| 37 | parallel/b02-settings-links | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links | `wks_c1844db43036c46f` | 비동기 설정 직접 링크·pane 경계 (`292cf1aff5305b4c039613dfd4266f416cef5f03` 기준, branch/HEAD/clean 확인, 미시작) |
+| 37 | parallel/b02-settings-links | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links | `wks_c1844db43036c46f` | 비동기 설정 직접 링크·pane 경계 (`292cf1aff5305b4c039613dfd4266f416cef5f03` 기준、세션 `3f6d6b43-97a0-498b-85b6-28151c4593e1` 실행 확인) |
 | 38 | parallel/b02-local-models | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-38-local-models | `wks_97add2973aa8639a` | 선택적 로컬 HTTP 모델 연결·상태·목록 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, branch/HEAD/clean 확인, 미시작) |
 | 39 | parallel/b02-definition-updates | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-39-definition-updates | `wks_10afe7eb9a765704` | 기본 정의 수정본 보존·비교·선택 적용 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, branch/HEAD/clean 확인, 미시작) |
 | 40 | parallel/b02-deferred-tools | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-40-deferred-tools | `wks_bd0e6e72588493d4` | 도구 schema 지연 로딩·모델 입력 안정성 (`f4a4a702bcd342e159efe8801d429ad181391651` 기준, branch/HEAD/clean 확인, 미시작) |
@@ -50,7 +50,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 |---|---|---|
 | 21 | blocked · `d369ef8` 부분 통합·지원 형식 인수 완료 | 공유 환경 복구 후 typecheck·Vitest 12개·E2E 4개 및 통합 인수 통과, Rust 23개 근거 재사용. inline TOML parser 승인/재사용 parser 제공이 해제 조건이며 RESOURCE-018은 미완료. 같은 blocker로 재개하지 않음 |
 | 22 | ready · `30a5f785` 후속 통합·인수 완료 | 원래 담당이 native modal Tab 이탈을 재현·수정, 기능 E2E 8개 통과. 통합 공통 경계 포함 E2E 16개·Rust 4개·타입 통과. 27의 향후 PWA 결합은 27 담당의 남은 인수로 보존 |
-| 27 | needs-continuation · 기존 세션 후속 접수、실행 중 | 22 `e28dbdf`를 27 branch의 `8da340d`에 동기화한 뒤 기존 세션 `dd2a07fa-fd60-4bfe-ab70-0d3ded54d983`에 한 번 접수。개발 fast=false 명시·재조회 확인。최신 원본 COMMON·27 소유 범위·유효 근거 보존과 structured handoff를 전달했으며 실제 구현·검증 완료는 미확인 |
+| 27 | ready · `2885f69` 후속 완료·통합 인수 중 | 기존 세션의 구현·55개 단위·서로 다른 브라우저 21개 및 `/grove/` 2개 근거를 보존. `f53aa85`에 통합했고 생성 focus·현재 위치·hook/fallback/업데이트와의 공통 경계를 고정 candidate로 검사 중. 실기기 eviction·장기 정책은 미완료 유지 |
 | 31 | ready · `997c061` 후속 통합·Linux 인수 완료 | 기존 Rust 42개·웹 근거 보존, 기능 E2E 14개 통과. 통합 Rust 8개·타입·E2E 5개 및 29 hook 결합 인수 완료. Windows/macOS 실측은 SETTINGS-011에 유지 |
 | 33 | ready · `2127559` 통합·현재 공통 경계 인수 완료 | 기능 Rust 33·웹 단위 3·브라우저 1개 근거 보존. 현재 hook/runner·compaction 공존 인수도 통과. MODEL-019/020 완료, SETTINGS-004 역할별 나머지는 유지 |
 | 29 | ready · `e8695cb` 통합·지원 범위 인수 완료 | 기능 E2E 7개와 통합 hook/cwd/fallback 인수 통과. 일반 API가 없는 zsh를 먼저 거절하는 통합 시험 충돌은 격리 DB의 과거 설정 fixture로 분리했다. 미지원 이벤트·플랫폼은 RESOURCE-016/017 및 이월에 보존 |
@@ -69,6 +69,8 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 - 인수한 고정 candidate 실행기·시험·AGENTS/COMMON/INTEGRATE delta는 소스와 5개 파일이 바이트 단위 일치했고 `48afb71`에 반영했다. 인계의 동일 입력 unittest 10개 통과 근거를 재사용했다. 원본 규칙 변경 구간을 실제 읽었고 기존 heartbeat `5848102f`의 매 진입 INTEGRATE 재로딩 계약을 유지했다. 새 heartbeat·기능 세션은 만들지 않았다.
 - 수정 candidate `43a51d0055a41fe889692fdb04a5e5b204eebf89`를 새 실행기로 독립 clone 검증했다. hook_execution 10·model_fallback 13·update_settings 5, typecheck, hook-execution/exec-cwd/model-fallback/update-settings E2E 10개 통과. migration 7·cwd 8과 기능 웹 단위 근거는 재사용했다. 완료 직후 원본 clean·정확한 HEAD에서 `reusable=true`, 원래 returncode 0을 확인했다. job `/home/ubuntu/.cache/grove-validation/validation-e_dw7k40/state.json`과 `output.log`를 보존한다. 이후 문서만 바뀌면 자동 reusable 판정과 별개로 관련 제품 입력 불변을 대조한다. 실제 Rust·브라우저 경로 적용은 완료했으며 처리량 개선률은 측정하지 않았다.
 - 21·33과 25·29 정리의 네 자리는 38~41로 보충해 기능 workspace 10개를 유지했다. 이번 인계 적용 중에는 명시 요청대로 새 heartbeat·기능 세션을 만들지 않았다. 27의 PWA 후속과 30/37의 설정 직접 링크 인수는 별도 대기이며 미완료 TODO를 유지한다.
+- 사용자 최신 요청으로 인계 적용 중의 신규 시작 일시 제한은 해제됐다. 읽기 전용 큐의 running=0/backlog=2와 준비 기준·세션 이력·clean을 확인하고, 유효하게 검증된 제품 입력을 포함하는 기존 37·34·35를 순차 생성했다. 각 반환 상태가 running이고 pendingPermissions가 없으며 개발 fast=false를 재조회했다. 메인 fast=true도 보존했다. 37의 첫 생성 호출은 provider 형식 검증에서 거부되어 세션을 만들지 않았고, provider/model 형식으로 수정한 호출만 접수됐다. 신규 heartbeat는 만들지 않았다.
+- 27 통합 `f53aa85061cc35198461bb54e1d133218dbb7cad`는 Settings fallback·일반 cwd 문구·compaction/copy·navigation·HookExecutions와 PWA 버튼/가드를 함께 보존해 충돌을 해결했다. background task `job_1794544450869_83b4f5`, 고정 job `/home/ubuntu/.cache/grove-validation/validation-uk_7rvoi`에서 타입·PWA 단위와 create-entry/pwa-recovery/pwa-transport/navigation-context/hook-execution/model-fallback/update-settings E2E를 검사 중이다. 30은 legacy 인계의 남은 중앙 브라우저 인수로 분류했고 SETTINGS-021은 별도 37 소유로 보존했다. 검사 완료 전 27·30을 정리하지 않는다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.

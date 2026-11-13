@@ -135,6 +135,7 @@ Rust 검사는 기능 세션과 같은 잠금(`flock /home/ubuntu/.cache/grove-r
 
 ## 자동 순환(사용자 명시 승인 시)
 - 현재 사용자는 기능 세션 자동 시작과 반복 운영을 승인했고 최신 요청으로 목표를 활성 기능 workspace 10개로 되돌렸다. 20개 증설은 취소됐다. 점검은 메인 세션 대상 3분 heartbeat, 만료·실행 횟수 제한 없음이다. 사용자 중지·권한 철회가 최우선이다.
+- 고정 candidate 실행기 인계 적용 중의 신규 기능 세션 생성 금지는 중복 방지용 일시 제한이었고, 사용자 명시 요청으로 해제됐다. 아래 기준·소유권·backpressure를 만족한 준비 workspace의 신규 시작과 승인된 기존 후속은 정상 진행한다. 기존 heartbeat `5848102f`는 유지하며 새 예약을 만들지 않는다.
 - 새 개발 세션 설정은 Paseo provider `paseodog`, model `openai-oauth/gpt-6.1-sol`, `thinkingOptionId: high`, `modeId: bypass`, `settings.features.fast: false`다. 실제 provider 모델 목록과 반환된 세션 설정으로 확인한다. 승인 경계는 이 문서와 COMMON 그대로이며 도구 실행 모드가 추가 권한을 부여하지 않는다.
 - 사용자 최신 명시 설정은 통합 메인만 `settings.features.fast=true`, 개발 세션은 `settings.features.fast=false`다. 개발 세션 준비·보충·생성과 기존 세션의 승인된 재개에서도 `false`를 명시하고 반환 설정을 확인한다. 이는 최적화만으로 실행 설정을 바꾸지 않는 제한의 명시 예외이며 모델·thinking·mode는 변경하지 않는다. 설정은 다음 턴부터 적용되므로 현재 턴·진행 중 검사를 중단하거나 재시작하지 않는다.
 - 세션 상태는 각 README 행의 정확한 cwd로 조회한다. 무필터 `list_agents`가 호출자 workspace만 반환할 수 있으므로 그 결과를 전체 목록으로 취급하지 않는다. archived 세션도 포함해 미시작과 종료를 구분한다.
