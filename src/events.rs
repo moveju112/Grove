@@ -104,6 +104,16 @@ impl Partials {
             let _ = tx.send((session_id.to_string(), snapshot));
         }
     }
+    /// 재접속은 항상 최신 snapshot을 읽고, 기존 구독자 fanout은 별도로 묶어서 보낸다.
+    pub fn stage(&self, session_id: &str, snapshot: Value) {
+        self.map.lock().expect("partials").insert(session_id.to_string(), snapshot);
+    }
+    pub fn publish(&self, session_id: &str) {
+        let map = self.map.lock().expect("partials");
+        if let (Some(tx), Some(snapshot)) = (&self.tx, map.get(session_id)) {
+            let _ = tx.send((session_id.to_string(), snapshot.clone()));
+        }
+    }
     pub fn clear(&self, session_id: &str) {
         let removed = self.map.lock().expect("partials").remove(session_id).is_some();
         if removed {

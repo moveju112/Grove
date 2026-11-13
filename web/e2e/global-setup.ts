@@ -1,6 +1,6 @@
 // 시험용 grove 서버와 로컬 모델 fixture를 띄운다. 데이터는 매번 새 임시 디렉터리에 둔다.
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, copyFileSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startFixture } from "./fixture";
@@ -14,9 +14,17 @@ export default async function globalSetup() {
     const data = join(work, "data");
     const fixture = await startFixture(17742);
     const bin = process.env.GROVE_BIN ?? join(root, "target/debug/grove");
+    const cliDir = process.env.GROVE_E2E_FAKE_CLI === "1" ? mkdtempSync(join(work, "cli-")) : undefined;
+    if (cliDir) {
+        copyFileSync(join(root, "web/e2e/fixtures/codex.mjs"), join(cliDir, "codex"));
+        chmodSync(join(cliDir, "codex"), 0o700);
+        copyFileSync(join(root, "web/e2e/fixtures/codex.mjs"), join(cliDir, "claude"));
+        chmodSync(join(cliDir, "claude"), 0o700);
+    }
     const child = spawn(bin, ["serve", "--listen", `127.0.0.1:${PORT}`, "--data-dir", data], {
         // 원격 감시 시험은 loopback 평문 fixture를 쓴다(그 밖의 대상은 여전히 HTTPS만).
-        env: { ...process.env, GROVE_WEB_DIR: join(root, "web/build/client"), GROVE_ENABLE_TOOL_LOOP: "1", GROVE_LOG: "warn", GROVE_REMOTE_WATCH_INSECURE_LOOPBACK: "1" },
+        env: { ...process.env, GROVE_WEB_DIR: join(root, "web/build/client"), GROVE_ENABLE_TOOL_LOOP: "1", GROVE_LOG: "warn", GROVE_REMOTE_WATCH_INSECURE_LOOPBACK: "1",
+            ...(cliDir ? { PATH: `${cliDir}:${process.env.PATH}`, CLI_FIXTURE_DIR: cliDir } : {}) },
         stdio: ["ignore", "inherit", "inherit"],
     });
     const deadline = Date.now() + 20_000;
@@ -34,6 +42,6 @@ export default async function globalSetup() {
     // 프로젝트 디렉터리 두 개
     const projA = mkdtempSync(join(work, "alpha-"));
     const projB = mkdtempSync(join(work, "beta-"));
-    writeFileSync(STATE, JSON.stringify({ pid: child.pid, work, token, projA, projB, fixturePort: 17742 }));
+    writeFileSync(STATE, JSON.stringify({ pid: child.pid, work, token, projA, projB, fixturePort: 17742, cliDir }));
     (globalThis as { __fixture?: { close: () => void } }).__fixture = fixture;
 }

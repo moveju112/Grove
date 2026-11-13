@@ -4,15 +4,17 @@ import { messageOffsets, messageRange } from "../state/virtualMessages";
 import { usePaneVisible } from "../state/paneVisibility";
 
 type Anchor = { id: string; offset: number };
-type Geometry = { width: number; height: number; origin: number };
+type Geometry = { width: number; height: number; origin: number; scrollTop: number };
 const geometryOf = (el: HTMLElement, root: HTMLElement): Geometry => ({
-    width: el.clientWidth, height: el.clientHeight,
+    width: el.clientWidth, height: el.clientHeight, scrollTop: el.scrollTop,
     origin: root.getBoundingClientRect().top - el.getBoundingClientRect().top + el.scrollTop,
 });
 const sameGeometry = (a: Geometry | null, b: Geometry) => !a || a.width === b.width && a.height === b.height && Math.abs(a.origin - b.origin) < 1;
 type Props = {
     messages: Message[];
     targetSeq: number | null;
+    restorePosition: { anchorSeq: number | null; offset: number } | null;
+    onRestored: () => void;
     presentationKey: string;
     stick: RefObject<boolean>;
     bottom: RefObject<HTMLDivElement | null>;
@@ -45,7 +47,7 @@ function MeasuredMessage({ message, position, size, presentationKey, states, reg
 }
 
 /// 화면 주변·검색/복원 대상·현재 초점 행만 유지한다. 높이 갱신은 같은 읽기 anchor에 맞춘다.
-export function VirtualMessages({ messages, targetSeq, presentationKey, stick, bottom, onNavigate, render }: Props) {
+export function VirtualMessages({ messages, targetSeq, restorePosition, onRestored, presentationKey, stick, bottom, onNavigate, render }: Props) {
     const visible = usePaneVisible();
     const wasVisible = useRef(visible);
     const root = useRef<HTMLDivElement>(null);
@@ -60,6 +62,7 @@ export function VirtualMessages({ messages, targetSeq, presentationKey, stick, b
     const pendingFocus = useRef<string | null>(null);
     const previousFirst = useRef(messages[0]?.id);
     const previousTarget = useRef(targetSeq);
+    const previousWindow = useRef("");
     const [focused, setFocused] = useState<string | null>(null);
     const [viewport, setViewport] = useState({ top: 0, bottom: 800 });
     const [, measured] = useState(0);
@@ -95,6 +98,15 @@ export function VirtualMessages({ messages, targetSeq, presentationKey, stick, b
         const view = root.current?.closest(".session-view");
         const ro = new ResizeObserver((entries) => {
             if (!el.clientWidth || !el.clientHeight) return;
+            // 사용자의 scroll 이벤트가 아직 전달되지 않은 동안 폼·메시지가 resize될 수 있다.
+            // 이때 이전 stick/anchor로 되돌리지 않고 실제로 이동한 viewport를 먼저 인수한다.
+            if (root.current && geometry.current && Math.abs(el.scrollTop - geometry.current.scrollTop) > 1) {
+                const marker = bottom.current;
+                const margin = marker ? parseFloat(getComputedStyle(marker).scrollMarginBottom) || 0 : 0;
+                stick.current = !!marker && marker.getBoundingClientRect().top <= el.getBoundingClientRect().bottom - margin + 80;
+                geometry.current = geometryOf(el, root.current);
+                updateViewport();
+            }
             let changed = false;
             for (const entry of entries) {
                 const node = entry.target as HTMLElement;
@@ -133,19 +145,51 @@ export function VirtualMessages({ messages, targetSeq, presentationKey, stick, b
         messages.findIndex((m) => m.id === anchor.current?.id),
     ]) if (index >= 0) indices.add(index);
     const ordered = [...indices].sort((a, b) => a - b);
+    const windowKey = ordered.map((index) => messages[index]!.id).join(",");
 
     useLayoutEffect(() => {
         const el = pane();
         if (!el || !root.current) return;
         if (!visible) { wasVisible.current = false; return; }
+        // 새 가상 창의 실제 높이를 다음 범위 계산 전에 반영한다.
+        // ResizeObserver까지 기다리면 추정 높이로 범위를 왕복하며 layout 렌더가 반복될 수 있다.
+        let changed = false;
+        for (const [id, node] of nodes.current) {
+            const height = Math.max(1, node.getBoundingClientRect().height);
+            if (Math.abs((heights.current.get(id) ?? -1) - height) > 0.5) {
+                heights.current.set(id, height);
+                changed = true;
+            }
+        }
+        if (changed) {
+            adjustment.current ??= { point: anchor.current };
+            measured((version) => version + 1);
+        }
         if (!wasVisible.current || !sameGeometry(geometry.current, geometryOf(el, root.current))) {
             adjustment.current = { point: anchor.current };
             wasVisible.current = true;
         }
         const targetChanged = previousTarget.current !== targetSeq;
-        if (targetChanged) {
+        if (targetChanged && targetSeq !== null) {
             anchor.current = null;
             adjustment.current = null;
+        }
+        const restoreMessage = restorePosition && messages.find((message) => message.seq === restorePosition.anchorSeq);
+        const restoreNode = restoreMessage && nodes.current.get(restoreMessage.id);
+        if (restorePosition && restoreMessage && restoreNode) {
+            // 저장 위치 복원과 가상 행 높이 보정의 소유자를 하나로 둔다.
+            // 부모가 먼저 scrollTop을 바꾸면 observer가 복원 전 anchor로 다시 덮을 수 있다.
+            stick.current = false;
+            el.scrollTop += restoreNode.getBoundingClientRect().top - el.getBoundingClientRect().top - restorePosition.offset;
+            anchor.current = { id: restoreMessage.id, offset: restorePosition.offset };
+            adjustment.current = null;
+            previousFirst.current = messages[0]?.id;
+            previousTarget.current = targetSeq;
+            previousWindow.current = windowKey;
+            geometry.current = geometryOf(el, root.current);
+            updateViewport();
+            onRestored();
+            return;
         }
         if (pendingFocus.current) {
             const node = nodes.current.get(pendingFocus.current);
@@ -154,7 +198,8 @@ export function VirtualMessages({ messages, targetSeq, presentationKey, stick, b
                 node.scrollIntoView({ block: "nearest" });
                 pendingFocus.current = null;
             }
-        } else if (!targetChanged && (adjustment.current || previousFirst.current !== messages[0]?.id)) {
+        } else if ((!targetChanged || targetSeq === null)
+            && (adjustment.current || previousFirst.current !== messages[0]?.id || previousWindow.current !== windowKey)) {
             const point = adjustment.current?.point ?? anchor.current;
             if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
             else if (point) {
@@ -165,6 +210,7 @@ export function VirtualMessages({ messages, targetSeq, presentationKey, stick, b
         adjustment.current = null;
         previousFirst.current = messages[0]?.id;
         previousTarget.current = targetSeq;
+        previousWindow.current = windowKey;
         geometry.current = geometryOf(el, root.current);
         updateViewport();
     });

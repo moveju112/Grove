@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProjects, login, state } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, state } from "./helpers";
 
 type SessionPage = { items: { id: string; title: string }[] };
 
@@ -11,6 +11,13 @@ async function twice(button: Locator) {
 async function showSidebar(page: Page) {
     const toggle = page.getByRole("button", { name: "사이드바", exact: true });
     if (await toggle.getAttribute("aria-expanded") !== "true") await toggle.click();
+}
+
+async function startChat(page: Page, projectId: string) {
+    await showSidebar(page);
+    const project = page.locator(`[data-testid="sidebar-project"][data-project-id="${projectId}"]`);
+    await openDetails(project.locator(".sidebar-project-tools"));
+    await project.getByRole("button", { name: "새 대화", exact: true }).click();
 }
 
 for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
@@ -73,15 +80,13 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             await page.setViewportSize(viewport);
             await twice(dialog.getByRole("button", { name: "이 프로젝트에서 새 대화" }));
             await expect(project.getByLabel("메시지 입력")).toHaveValue("보존할 입력");
-            await showSidebar(page);
-            await page.locator(`[data-testid="sidebar-project"][data-project-id="${a.id}"]`).getByRole("button", { name: "새 대화", exact: true }).click();
+            await startChat(page, a.id);
             await expect(project.getByLabel("메시지 입력")).toHaveValue("보존할 입력");
             expect(created).toHaveLength(0);
 
             for (const [index, target] of [a, b, a].entries()) {
                 if (index === 1) {
-                    await showSidebar(page);
-                    await page.locator(`[data-testid="sidebar-project"][data-project-id="${target.id}"]`).getByRole("button", { name: "새 대화", exact: true }).click();
+                    await startChat(page, target.id);
                 } else if (index === 2) {
                     await showSidebar(page);
                     await page.locator(`[data-testid="sidebar-project"][data-project-id="${target.id}"]`)
@@ -103,8 +108,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
         test("세션 생성 응답 유실 뒤 같은 키로 확인하고 대화·메시지를 중복 생성하지 않는다", async ({ page }) => {
             const { a } = await ensureProjects();
             await login(page);
-            await showSidebar(page);
-            await page.locator(`[data-testid="sidebar-project"][data-project-id="${a.id}"]`).getByRole("button", { name: "새 대화", exact: true }).click();
+            await startChat(page, a.id);
             const keys: string[] = [];
             await page.route(`**/api/v1/projects/${a.id}/sessions`, async (route) => {
                 if (route.request().method() !== "POST") return route.continue();

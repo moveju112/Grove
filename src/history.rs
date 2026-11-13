@@ -248,6 +248,28 @@ pub(crate) fn model_chat(conn: &Connection, session: &str, upto: Option<i64>) ->
     Ok(read(conn, session, upto, None)?.items.into_iter().map(|entry| entry.message).collect())
 }
 
+/// CLI resume은 이번 요청만 전달한다. 이전 취소 요청과 이번 user 메시지가 병합되면
+/// 중단한 지시를 다시 실행할 수 있으므로 접수된 메시지 경계 양쪽을 따로 정규화한다.
+pub(crate) fn cli_chat(conn: &Connection, session: &str, request_message: &str) -> ApiResult<Vec<ChatMsg>> {
+    let start: i64 = conn.query_row(
+        "SELECT seq FROM messages WHERE id=?1 AND session_id=?2 AND rewound_at IS NULL",
+        rusqlite::params![request_message, session], |row| row.get(0),
+    )?;
+    let mut messages = model_chat(conn, session, Some(start - 1))?;
+    let mut builder = Builder::new(None);
+    let mut statement = conn.prepare(
+        "SELECT role, CASE WHEN model_input IS NOT NULL AND json_valid(model_input) THEN model_input ELSE content END \
+         FROM messages WHERE session_id=?1 AND rewound_at IS NULL AND seq>=?2 ORDER BY seq",
+    )?;
+    let rows = statement.query_map(rusqlite::params![session, start], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    for row in rows {
+        let (role, input) = row?;
+        builder.feed(&role, &serde_json::from_str(&input).unwrap_or(Value::Null));
+    }
+    messages.extend(builder.finish().items.into_iter().map(|entry| entry.message));
+    Ok(messages)
+}
+
 pub(crate) fn estimated_tokens(conn: &Connection, session: &str) -> ApiResult<u64> {
     Ok((read(conn, session, None, Some((0, 0)))?.estimated_chars as u64).div_ceil(4))
 }

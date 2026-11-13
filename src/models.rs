@@ -25,6 +25,67 @@ pub fn mask(v: &str) -> String {
     format!("****{tail}")
 }
 
+/// 실행 백엔드와 역할 정의는 별개다. 설치 여부는 인증·모델 사용 가능 여부를 뜻하지 않는다.
+#[derive(Debug, Serialize, ts_rs::TS)]
+pub struct AgentBackend {
+    pub protocol: String,
+    pub name: String,
+    pub installed: bool,
+    pub read_only: bool,
+}
+
+#[derive(Debug, Serialize, ts_rs::TS)]
+pub struct AgentBackendCatalog {
+    pub backends: Vec<AgentBackend>,
+}
+
+const AGENT_BACKENDS: &[(&str, &str, &str)] = &[
+    ("codex_cli", "Codex", "codex"),
+    ("claude_code", "Claude Code", "claude"),
+];
+
+/// 사용자가 연결을 선택할 때만 조회한다. CLI 실행·로그인 파일 접근·모델 호출은 하지 않는다.
+pub async fn agent_backends(_p: Principal) -> Json<AgentBackendCatalog> {
+    Json(AgentBackendCatalog {
+        backends: AGENT_BACKENDS.iter().map(|(protocol, name, program)| AgentBackend {
+            protocol: (*protocol).into(),
+            name: (*name).into(),
+            installed: crate::deps::find_in_path(program).is_some(),
+            read_only: true,
+        }).collect(),
+    })
+}
+
+/// 명시적 연결은 프로필 관리 권한을 따른다. 동시 탭·응답 유실 후 재시도도 같은 기본 연결로 수렴한다.
+pub async fn connect_agent_backend(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Path(protocol): Path<String>) -> ApiResult<Response> {
+    let (_, name, program) = AGENT_BACKENDS.iter().find(|(id, _, _)| *id == protocol)
+        .ok_or_else(|| ApiError::invalid("지원하지 않는 에이전트입니다"))?;
+    let hash = idem::body_hash("agent_backend.connect", &json!({ "protocol": protocol }));
+    if let Some(response) = idem::replay(&app, &p, &headers, &hash).await? { return Ok(response); }
+    let name = (*name).to_string();
+    let program = *program;
+    idem::run(&app, &p, &headers, &hash, move |tx, now| {
+        let existing: Option<String> = tx.query_row(
+            "SELECT id FROM model_profiles WHERE protocol=?1 AND model='default' AND enabled=1 AND deleted_at IS NULL AND base_url='' AND secret_id IS NULL ORDER BY created_at, id LIMIT 1",
+            [&protocol], |row| row.get(0),
+        ).optional()?;
+        if let Some(id) = existing {
+            return Ok((StatusCode::OK, serde_json::to_value(get_profile(tx, &id)?)?));
+        }
+        if crate::deps::find_in_path(program).is_none() {
+            return Err(crate::deps::missing(program));
+        }
+        let id = crate::util::new_id();
+        tx.execute(
+            "INSERT INTO model_profiles (id, name, protocol, base_url, model, options, created_at, updated_at, enabled) VALUES (?1, ?2, ?3, '', 'default', '{}', ?4, ?4, 1)",
+            params![id, name, protocol, now],
+        )?;
+        let profile = get_profile(tx, &id)?;
+        events::append(tx, now, "profile.changed", None, None, &serde_json::to_value(&profile)?)?;
+        Ok((StatusCode::CREATED, serde_json::to_value(profile)?))
+    }).await
+}
+
 #[derive(Serialize, ts_rs::TS)]
 pub struct SecretInfo {
     pub id: String,

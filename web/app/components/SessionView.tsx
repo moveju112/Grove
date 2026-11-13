@@ -77,9 +77,34 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const msgsRef = useRef<HTMLDivElement>(null);
     const [savedPosition] = useState(() => loadScrollPosition(tabId, sessionId));
     const pendingPosition = useRef(savedPosition?.atBottom ? null : savedPosition);
+    const [, restoredPosition] = useState(0);
+    const clearPendingPosition = () => {
+        if (!pendingPosition.current) return;
+        pendingPosition.current = null;
+        // 가상 목록에 targetSeq 해제를 같은 layout 단계에서 전달한다.
+        // ref만 지우면 다음 측정이 복원 전 anchor를 다시 적용할 수 있다.
+        restoredPosition((version) => version + 1);
+    };
     const stick = useRef(savedPosition?.atBottom ?? true);
     const [unseen, setUnseen] = useState(false);
     const scroller = () => msgsRef.current?.closest(".pane-body") as HTMLElement | null;
+    const composerElement = () => msgsRef.current?.closest(".session-view")?.querySelector<HTMLElement>(".composer");
+    const messageViewportBottom = () => {
+        const edge = scroller()?.getBoundingClientRect().bottom ?? 0;
+        const composer = composerElement();
+        return composer ? Math.min(edge, composer.getBoundingClientRect().top - 12) : edge;
+    };
+    const updateScrollMargin = () => {
+        const el = scroller();
+        const marker = bottom.current;
+        if (!el || !marker) return;
+        // sticky 입력창 뒤가 아니라 실제로 읽을 수 있는 영역 끝에 최신 메시지를 맞춘다.
+        marker.style.scrollMarginBottom = `${Math.max(0, el.getBoundingClientRect().bottom - messageViewportBottom())}px`;
+    };
+    const scrollEnd = () => {
+        updateScrollMargin();
+        bottom.current?.scrollIntoView({ block: "end" });
+    };
     const capturePosition = () => {
         const el = scroller();
         const data = latestRef.current;
@@ -97,14 +122,14 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         });
     };
     useLayoutEffect(() => () => capturePosition(), [tabId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
-    useEffect(() => {
+    useLayoutEffect(() => {
         const el = scroller();
         if (!el) return;
         const on = () => {
             if (!el.clientHeight || !el.clientWidth) return;
             // 메시지 끝 표시가 스크롤 영역 아래쪽 80px 안에 보이면 '맨 아래를 보는 중'이다(아래 패널·입력창 높이와 무관).
             const b = bottom.current?.getBoundingClientRect();
-            stick.current = !!b && b.top <= el.getBoundingClientRect().bottom + 80;
+            stick.current = !!b && b.top <= messageViewportBottom() + 80;
             if (stick.current) setUnseen(false);
             capturePosition();
         };
@@ -119,17 +144,29 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         };
     }, [!!s, !!latest.data]); // eslint-disable-line react-hooks/exhaustive-deps
     const toBottom = () => {
-        pendingPosition.current = null;
+        clearPendingPosition();
         stick.current = true;
         setUnseen(false);
-        bottom.current?.scrollIntoView({ block: "end" });
+        scrollEnd();
     };
     useEffect(() => {
         if (!visible || pendingPosition.current) return;
-        if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
+        if (stick.current) scrollEnd();
         else if (!savedPosition || (latest.data?.items.at(-1)?.seq ?? 0) > savedPosition.lastSeq || partial?.text) setUnseen(true);
         // 최신 페이지는 항상 최근 N개라 개수가 아니라 마지막 메시지로 새 글을 판단한다.
     }, [visible, !!s, latest.data?.items.at(-1)?.seq, partial?.text]);
+
+    useLayoutEffect(() => {
+        const composer = composerElement();
+        const el = scroller();
+        if (!visible || !composer || !el) return;
+        // resize가 수동 scroll 이벤트보다 먼저 와도 사용자가 읽던 위치를 덮지 않는다.
+        // 위치 보정은 VirtualMessages가 맡고 여기서는 가려지는 영역만 갱신한다.
+        const observer = new ResizeObserver(updateScrollMargin);
+        observer.observe(composer);
+        observer.observe(el);
+        return () => observer.disconnect();
+    }, [visible, !!s, !!latest.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // 최신 화면은 '최근 N개' 창이다. 새 메시지로 창이 밀리면 빠져나간 메시지를 이전 목록으로 옮겨, 읽던 메시지가 사라지지 않게 한다(UI-008).
     // 같은 렌더 안에서 옮겨야 한다: effect로 옮기면 한 번은 위쪽 메시지가 빠졌다 다시 붙어 내용이 밀리고 스크롤이 어긋난다.
@@ -170,26 +207,21 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         const position = pendingPosition.current;
         if (!visible || !position || !latest.data) return;
         if (focusSeq != null || position.timelineRevision !== latest.data.timeline_revision) {
-            pendingPosition.current = null;
+            clearPendingPosition();
             stick.current = focusSeq == null;
             if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
             return;
         }
-        const el = scroller();
-        const row = msgsRef.current?.querySelector<HTMLElement>(`[data-seq="${position.anchorSeq}"]`);
-        if (el && row) {
-            stick.current = false;
-            el.scrollTop += row.getBoundingClientRect().top - el.getBoundingClientRect().top - position.offset;
-            pendingPosition.current = null;
-            setUnseen((latest.data.items.at(-1)?.seq ?? 0) > position.lastSeq || !!partial?.text);
-            capturePosition();
+        if (messages.some((message) => message.seq === position.anchorSeq)) {
+            // 실제 위치는 VirtualMessages가 행 측정과 함께 복원한다.
+            return;
         } else if (hasOlder && (messages[0]?.seq ?? 0) > (position.anchorSeq ?? 0)) {
             if (!loadingOlder.current) {
                 loadingOlder.current = true;
                 void loadOlder().finally(() => (loadingOlder.current = false));
             }
         } else {
-            pendingPosition.current = null;
+            clearPendingPosition();
             stick.current = true;
             bottom.current?.scrollIntoView({ block: "end" });
         }
@@ -401,7 +433,14 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                 >
                     <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={messages}
                         targetSeq={focusSeq ?? pendingPosition.current?.anchorSeq ?? null} presentationKey={JSON.stringify(prefs)}
-                        stick={stick} bottom={bottom} onNavigate={() => { pendingPosition.current = null; stick.current = false; }}
+                        restorePosition={focusSeq == null && pendingPosition.current?.timelineRevision === latest.data?.timeline_revision ? pendingPosition.current : null}
+                        onRestored={() => {
+                            const position = pendingPosition.current;
+                            clearPendingPosition();
+                            setUnseen(!!position && (latest.data?.items.at(-1)?.seq ?? 0) > position.lastSeq || !!partial?.text);
+                            capturePosition();
+                        }}
+                        stick={stick} bottom={bottom} onNavigate={() => { clearPendingPosition(); stick.current = false; }}
                         render={(m) => (
                         <div key={m.id} className={`msg-row${highlight === m.seq ? " focus-hit" : ""}`} data-seq={m.seq}>
                             <MessageView m={m} prefs={prefs} assistantName={assistantName} assistantImage={assistantImage} />

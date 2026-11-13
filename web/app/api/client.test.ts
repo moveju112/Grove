@@ -199,6 +199,56 @@ describe("HTTP 요청 식별·timeout·취소 계약", () => {
         expect(fetch).toHaveBeenCalledTimes(1);
     });
 
+    it.each(["headers", "body"])("읽기 요청의 일시적인 %s 단절은 한 번만 복구한다", async (phase) => {
+        const fetch = vi.fn();
+        if (phase === "headers") fetch.mockRejectedValueOnce(new TypeError("connection lost"));
+        else fetch.mockResolvedValueOnce(new Response(new ReadableStream({
+            start(controller) { controller.error(new TypeError("response lost")); },
+        })));
+        fetch.mockResolvedValueOnce(new Response(JSON.stringify({ id: "project" })));
+        vi.stubGlobal("fetch", fetch);
+        await expect(client.api.get("/projects/project")).resolves.toEqual({ id: "project" });
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("읽기 요청도 두 번 실패하면 멈추며 변경 요청 안내를 붙이지 않는다", async () => {
+        const fetch = vi.fn().mockRejectedValue(new TypeError("connection lost"));
+        vi.stubGlobal("fetch", fetch);
+        await expect(client.api.get("/projects/project")).rejects.toMatchObject({
+            code: "network_error", details: { result_unknown: false },
+        });
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("조회 복구는 로그아웃 후 새 인증으로 넘어가지 않는다", async () => {
+        let rejectRead!: (error: Error) => void;
+        const session = () => new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" }));
+        const fetch = vi.fn()
+            .mockResolvedValueOnce(session())
+            .mockImplementationOnce(() => new Promise((_, reject) => { rejectRead = reject; }))
+            .mockResolvedValueOnce(new Response("{}"))
+            .mockResolvedValueOnce(session());
+        vi.stubGlobal("fetch", fetch);
+        await client.redeemPairing("fixture-first");
+        const result = expect(client.api.get("/projects")).rejects.toMatchObject({ code: "auth_session_changed" });
+        await client.logout();
+        await client.redeemPairing("fixture-second");
+        rejectRead(new TypeError("connection lost"));
+        await result;
+        expect(fetch).toHaveBeenCalledTimes(4);
+    });
+
+    it("조회 재시도에서도 원래 timeout을 연장하지 않는다", async () => {
+        vi.useFakeTimers();
+        const fetch = vi.fn().mockRejectedValueOnce(new TypeError("connection lost"))
+            .mockImplementationOnce(() => new Promise(() => {}));
+        vi.stubGlobal("fetch", fetch);
+        const result = expect(client.api.get("/projects", { timeoutMs: 20 })).rejects.toMatchObject({ code: "request_timeout" });
+        await vi.advanceTimersByTimeAsync(20);
+        await result;
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
     it("바이너리 조회에도 timeout을 적용하고 성공 시 timer를 정리한다", async () => {
         vi.useFakeTimers();
         vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Uint8Array([1, 2]))));

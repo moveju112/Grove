@@ -126,6 +126,14 @@ export type ModelProfile = { id: string, name: string, protocol: string, base_ur
  */
 last_check: { ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null, enabled: boolean, capabilities: ModelCapabilities, };
 
+export type AgentBackend = { protocol: string, name: string, installed: boolean, read_only: boolean, };
+
+export type AgentBackendCatalog = { backends: Array<AgentBackend>, };
+
+export type LoginAttempt = { id: string, state: string, url: string | null, code: string | null, };
+
+export type AgentAuthStatus = { authenticated: boolean | null, attempt: LoginAttempt | null, };
+
 export type ModelCapabilities = { context_tokens: number | null, max_output_tokens: number | null, images: boolean | null, tools: boolean | null, effort: boolean | null, temperature: boolean | null, pdf: boolean, fast: boolean, };
 
 export type AvailableModel = { id: string, name: string, };

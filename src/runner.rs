@@ -584,7 +584,11 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let profile_id = t.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?;
     let (mp, rp) = crate::model_fallback::runtime(c, &def, &profile_id)?;
     let cli_backend = crate::provider::cli::is_cli(&rp.protocol);
-    let mut messages=crate::history::model_chat(c, &t.session_id, None)?;
+    let mut messages = if cli_backend {
+        crate::history::cli_chat(c, &t.session_id, &t.request_message_id)?
+    } else {
+        crate::history::model_chat(c, &t.session_id, None)?
+    };
     crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
     crate::tools::image_read::hydrate(&mut messages, &root)
         .map_err(|e| ApiError::new(axum::http::StatusCode::BAD_REQUEST, e.code, e.message))?;
@@ -790,7 +794,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         let partials = app.partials.clone();
         let sid = input.session_id.clone();
         let tid2 = turn_id.to_string();
-        let mut last = Instant::now() - Duration::from_secs(1);
+        let unpublished = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut last_progress_at = None;
         let step_now = input.step;
         // 실제 진행 시각을 5초 간격으로 DB에 남긴다. 서버가 강제 종료돼도 중단 원인에 마지막 진행 시각이 남는다(RUN-023).
@@ -826,26 +830,44 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 *progress.lock().unwrap_or_else(|e| e.into_inner()) = Some(now.clone());
                 last_progress_at = Some(now);
             }
-            if last.elapsed() >= Duration::from_millis(50) {
-                last = Instant::now();
-                if !o.text.is_empty() || !o.tool_calls.is_empty() {
-                    *evidence.lock().unwrap_or_else(|e| e.into_inner()) = Some(encode_evidence(o, step_now));
-                }
-                partials.set(
-                    &sid,
-                    json!({ "turn_id": tid2, "text": o.text, "reasoning_chars": o.reasoning.chars().count(), "reasoning": reasoning_tail(&o.reasoning),
-                            "tool_calls": o.tool_calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>() }),
-                );
+            if !o.text.is_empty() || !o.tool_calls.is_empty() {
+                *evidence.lock().unwrap_or_else(|e| e.into_inner()) = Some(encode_evidence(o, step_now));
             }
+            // 마지막 조각이 50ms 창 안에 들어와도 버리지 않는다. 재접속 snapshot도 즉시 갱신한다.
+            partials.stage(
+                &sid,
+                json!({ "turn_id": tid2, "text": o.text, "reasoning_chars": o.reasoning.chars().count(), "reasoning": reasoning_tail(&o.reasoning),
+                        "tool_calls": o.tool_calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>() }),
+            );
+            unpublished.store(true, std::sync::atomic::Ordering::Release);
         };
         // 시간 예산(사용자 명시 시만): 남은 시간 안에 응답이 끝나지 않으면 진행 중 응답을 버리고 멈춘다.
         let left = input.deadline.map(|d| (d - time::OffsetDateTime::now_utc()).max(time::Duration::ZERO));
+        // 모델 future와 수명을 공유한다. 취소·예산 종료 뒤 별도 publisher가 남지 않는다.
+        let model = async {
+            if provider::cli::is_cli(&input.profile.protocol) && app.agent_logins.active(&input.profile.protocol).await {
+                return Err(provider::ProviderError::new("authentication_in_progress", "에이전트 로그인을 완료한 뒤 다시 보내 주세요"));
+            }
+            let stream = provider::stream(&input.profile, &input.request, &mut cancel_rx, &mut on_delta);
+            tokio::pin!(stream);
+            let mut interval = tokio::time::interval(Duration::from_millis(50));
+            loop {
+                tokio::select! {
+                    result = &mut stream => break result,
+                    _ = interval.tick() => {
+                        if unpublished.swap(false, std::sync::atomic::Ordering::AcqRel) {
+                            partials.publish(&sid);
+                        }
+                    }
+                }
+            }
+        };
         let result = match left {
             Some(l) => tokio::select! {
-                r = provider::stream(&input.profile, &input.request, &mut cancel_rx, &mut on_delta) => r,
+                r = model => r,
                 _ = tokio::time::sleep(Duration::from_millis(l.whole_milliseconds().max(0) as u64)) => Err(provider::ProviderError::new("time_budget_exceeded", "요청 시간 예산을 넘었습니다")),
             },
-            None => provider::stream(&input.profile, &input.request, &mut cancel_rx, &mut on_delta).await,
+            None => model.await,
         };
         let provider_ms = provider_started.elapsed().as_millis().min(i64::MAX as u128) as i64;
         progress_writer.abort();

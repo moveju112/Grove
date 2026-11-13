@@ -8,7 +8,7 @@ import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
 
 import { AttachmentPicker, useAttachments } from "./Attachments";
-import { CapabilitySummary } from "./ProfileCapabilities";
+import { AgentConnect } from "./AgentConnect";
 import { SessionSkills } from "./skills/SessionSkills";
 import { localDraftStorage, requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 
@@ -438,6 +438,12 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     ))}
                 </ul>
             )}
+            {eff.mode === "model" && boundProfileId === undefined && profiles.data?.length === 0 && (
+                <AgentConnect disabled={busy || !!disabled} onConnected={(profile) => {
+                    profiles.reload();
+                    update({ profileId: profile.id, mode: "model", tools: false });
+                }} />
+            )}
             <AttachmentPicker draft={attachments} disabled={busy || !!disabled} />
             <textarea
                 onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
@@ -462,7 +468,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     <option value="model">모델로 보내기</option>
                     <option value="save">메시지만 저장</option>
                 </select>
-                {eff.mode === "model" && (
+                {eff.mode === "model" && (profiles.data?.length ?? 0) > 0 && (
                     <>
                         <select aria-label="모델 프로필" value={eff.profileId ?? ""} disabled={!ready || boundProfileId !== undefined} onChange={(e) => update({ profileId: e.target.value || null })}>
                             {profileMissing && <option value={eff.profileId!} disabled>선택한 프로필 없음(직접 다른 모델을 선택하세요)</option>}
@@ -470,12 +476,12 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                             {(profiles.data ?? []).length === 0 && <option value="">모델 프로필 없음(설정에서 추가)</option>}
                             {(profiles.data ?? []).map((p) => (
                                 <option key={p.id} value={p.id} disabled={p.enabled === false}>
-                                    {p.name} · {p.model}{p.enabled === false ? " · 비활성" : ""}
+                                    {p.name} · {p.model === "default" ? "기본 모델" : p.model}{p.enabled === false ? " · 비활성" : ""}
                                 </option>
                             ))}
                         </select>
                         <select aria-label="에이전트" value={eff.agentId ?? ""} disabled={boundProfileId !== undefined} onChange={(e) => update({ agentId: e.target.value || null })}>
-                            <option value="">에이전트 없음</option>
+                            <option value="">기본 역할</option>
                             {(agents.data ?? []).map((a) => (
                                 <option key={a.id} value={a.id}>
                                     {a.name}
@@ -513,7 +519,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 </button>
             </div>
             {msg && <p className="muted small" role="status">{msg}</p>}
-            {eff.mode === "model" && selectedProfile && <CapabilitySummary capabilities={selectedProfile.capabilities} />}
             {problem && <p className="warn small" role="status">{problem}</p>}
             {eff.mode === "model" && profileDisabled && <p className="warn small" role="status" data-testid="profile-disabled">선택한 모델 프로필이 비활성화돼 있습니다. 다른 모델로 자동 전환하지 않습니다.</p>}
             {eff.mode === "model" && profileMissing && <p className="warn small" role="status" data-testid="profile-missing">선택한 모델 프로필이 없습니다. 다른 공급자로 자동 전환하지 않습니다. 모델을 직접 선택하세요.</p>}

@@ -89,9 +89,7 @@ export function AttachmentPicker({ draft, disabled }: { draft: ReturnType<typeof
             }
         }}>파일 첨부</button>
         {supportError && <div className="warn small" role="status">{supportError}</div>}
-        <span className="muted small">파일당 4MiB · 전체 8MiB · 최대 8개</span>
-        <div className="muted small">드래그가 안 되면 파일 첨부 버튼을 사용하세요. 일반 첨부에는 파일 시스템 접근 API가 필요하지 않습니다.</div>
-        <div className="muted small">첨부 선택 목록은 이 기기에 저장됩니다. 미전송 파일은 24시간 뒤 만료됩니다.</div>
+        {draft.items.length > 0 && <span className="muted small">최대 8개 · 파일당 4MiB · 전체 8MiB · 미전송 파일은 24시간 뒤 만료</span>}
         {draft.error && <div role="alert">{draft.error}</div>}
         <ul className="attachment-list" aria-label="선택한 첨부파일">
             {draft.items.map((i) => <li key={i.key}>

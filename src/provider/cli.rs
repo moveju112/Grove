@@ -13,7 +13,10 @@
 use super::{ChatMsg, ModelOutput, ModelRequest, OnDelta, Profile, ProviderError, Usage};
 use serde_json::{Value, json};
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
+const MAX_ACTIVITY: usize = 512;
 
 /// 실행 문맥: 작업 디렉터리(프로젝트 root)와 이어 쓸 CLI 세션 ID.
 #[derive(Debug, Clone, Default)]
@@ -89,8 +92,10 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
     let persist = req.cli.is_some();
     let s = |x: &str| x.to_string();
     if profile.protocol == "claude_code" {
-        let mut a = vec![s("-p"), prompt(req, resume.is_some(), false), s("--output-format"), s("stream-json"), s("--verbose")];
-        a.extend([s("--model"), profile.model.clone()]);
+        let mut a = vec![s("-p"), s("--output-format"), s("stream-json"), s("--verbose"), s("--include-partial-messages")];
+        if profile.model != "default" {
+            a.extend([s("--model"), profile.model.clone()]);
+        }
         // 읽기 전용 강제: 사용자 설정(bypassPermissions·hook)과 MCP를 쓰지 않는다.
         a.extend([s("--permission-mode"), s("default"), s("--tools"), s("Read,Glob,Grep"), s("--setting-sources"), s(""), s("--strict-mcp-config")]);
         if !req.system.trim().is_empty() {
@@ -107,7 +112,10 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
         if resume.is_some() {
             a.push(s("resume"));
         }
-        a.extend([s("--json"), s("-m"), profile.model.clone(), s("--skip-git-repo-check")]);
+        a.extend([s("--json"), s("--skip-git-repo-check")]);
+        if profile.model != "default" {
+            a.extend([s("-m"), profile.model.clone()]);
+        }
         // 읽기 전용 강제(resume에도 같은 정책). resume 하위 명령은 -C·--sandbox를 받지 않으므로 -c로 지정한다.
         a.extend([s("-c"), s("sandbox_mode=\"read-only\""), s("-c"), s("approval_policy=\"never\"")]);
         if let Some(e) = &req.effort {
@@ -119,7 +127,8 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
         if let Some(id) = &resume {
             a.push(id.clone());
         }
-        a.push(prompt(req, resume.is_some(), resume.is_none()));
+        // 사용자 메시지·대화 이력은 argv 크기 한도와 프로세스 목록 노출을 피하도록 stdin으로 전달한다.
+        a.push(s("-"));
         (a, s(program(&profile.protocol)))
     }
 }
@@ -216,6 +225,82 @@ fn summarize(v: &Value) -> Value {
     if s.chars().count() > 300 { json!(s.chars().take(300).collect::<String>() + "…") } else { v.clone() }
 }
 
+/// 제공자별 부분 이벤트와 최종 snapshot을 한 응답으로 정규화한다.
+/// 전송 계층·DB에는 기존 ModelOutput 계약만 넘기고 provider 임시 상태는 저장하지 않는다.
+#[derive(Default)]
+struct CliStream {
+    output: ModelOutput,
+    final_text: Option<String>,
+    claude_partial: Option<(usize, usize, bool)>,
+    codex_messages: Vec<(String, String)>,
+    codex_reasoning: Vec<(String, String)>,
+}
+
+impl CliStream {
+    fn apply(&mut self, protocol: &str, event: &Value) -> Result<(), ProviderError> {
+        if protocol == "claude_code" && event["type"] == "stream_event" {
+            let e = &event["event"];
+            if e["type"] == "message_start" {
+                self.claude_partial = Some((self.output.text.len(), self.output.reasoning.len(), false));
+            }
+            let text = if e["type"] == "content_block_delta" { e["delta"]["text"].as_str() }
+                else if e["type"] == "content_block_start" { e["content_block"]["text"].as_str() } else { None };
+            let thinking = if e["type"] == "content_block_delta" { e["delta"]["thinking"].as_str() }
+                else if e["type"] == "content_block_start" { e["content_block"]["thinking"].as_str() } else { None };
+            let state = self.claude_partial.get_or_insert((self.output.text.len(), self.output.reasoning.len(), false));
+            if let Some(text) = text.filter(|text| !text.is_empty()) {
+                if !state.2 && !self.output.text.is_empty() { self.output.text.push_str("\n\n"); }
+                state.2 = true;
+                self.output.text.push_str(text);
+            }
+            if let Some(thinking) = thinking { self.output.reasoning.push_str(thinking); }
+        } else if protocol == "codex_cli" && matches!(event["type"].as_str(), Some("item.started" | "item.updated" | "item.completed"))
+            && matches!(event["item"]["type"].as_str(), Some("agent_message" | "reasoning"))
+            && event["item"]["id"].is_string()
+        {
+            let item = &event["item"];
+            let id = item["id"].as_str().unwrap();
+            let messages = if item["type"] == "reasoning" { &mut self.codex_reasoning } else { &mut self.codex_messages };
+            let text = item["text"].as_str().unwrap_or("");
+            if let Some((_, value)) = messages.iter_mut().find(|(key, _)| key == id) { *value = text.into(); }
+            else { messages.push((id.into(), text.into())); }
+            let combined = messages.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>().join("\n\n");
+            if item["type"] == "reasoning" { self.output.reasoning = combined; } else { self.output.text = combined; }
+        } else {
+            if protocol == "claude_code" && event["type"] == "assistant"
+                && let Some((text, reasoning, _)) = self.claude_partial.take()
+            {
+                self.output.text.truncate(text);
+                self.output.reasoning.truncate(reasoning);
+            }
+            apply_event(protocol, event, &mut self.output, &mut self.final_text)?;
+        }
+        if self.output.text.len() + self.output.reasoning.len() > super::MAX_OUTPUT_BYTES
+            || self.final_text.as_ref().is_some_and(|text| text.len() > super::MAX_OUTPUT_BYTES)
+            || self.output.activity.len() > MAX_ACTIVITY
+            || self.codex_messages.len() + self.codex_reasoning.len() > MAX_ACTIVITY
+        {
+            return Err(ProviderError::new("output_too_large", "에이전트 응답 한도를 초과했습니다"));
+        }
+        Ok(())
+    }
+}
+
+/// 개행이 없는 출력도 메모리 한도를 넘기기 전에 중단한다.
+async fn read_line<R: tokio::io::AsyncRead + Unpin>(reader: &mut BufReader<R>) -> Result<Option<Vec<u8>>, ProviderError> {
+    let mut line = Vec::new();
+    loop {
+        let bytes = reader.fill_buf().await.map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
+        if bytes.is_empty() { return Ok((!line.is_empty()).then_some(line)); }
+        let len = bytes.iter().position(|b| *b == b'\n').map_or(bytes.len(), |i| i + 1);
+        if line.len() + len > MAX_LINE_BYTES { return Err(ProviderError::new("output_too_large", "에이전트 출력 줄이 너무 큽니다")); }
+        let complete = bytes[len - 1] == b'\n';
+        line.extend_from_slice(&bytes[..len]);
+        reader.consume(len);
+        if complete { return Ok(Some(line)); }
+    }
+}
+
 /// 이 호출이 만든 고유 임시 디렉터리(끝나면 지운다).
 struct ScratchDir(std::path::PathBuf);
 impl Drop for ScratchDir {
@@ -253,7 +338,7 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     };
     let cwd = req.cli.as_ref().map(|c| c.cwd.clone()).unwrap_or_else(|| scratch.as_ref().expect("scratch").0.clone());
     let mut cmd = tokio::process::Command::new(&prog);
-    cmd.args(&argv).current_dir(&cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    cmd.args(&argv).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     // 서버 내부 설정은 넘기지 않는다. CLI 인증은 CLI가 자기 설정에서 읽는다.
     for (k, _) in std::env::vars_os() {
         if k.to_str().is_some_and(|k| k.starts_with("GROVE_")) {
@@ -278,22 +363,34 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
         }
     })?;
     let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ProviderError::new("cli_failed", e))?);
+    let mut stdin = child.stdin.take().expect("stdin");
+    let resumed = req.cli.as_ref().and_then(|context| context.resume.as_ref()).is_some();
+    let input = prompt(req, resumed, profile.protocol == "codex_cli" && !resumed);
+    let input_task = tokio::spawn(async move {
+        stdin.write_all(input.as_bytes()).await?;
+        stdin.shutdown().await
+    });
     let stdout = child.stdout.take().expect("stdout");
     let mut stderr = child.stderr.take().expect("stderr");
     let err_task = tokio::spawn(async move {
-        let mut buf = Vec::new();
-        let _ = (&mut stderr).take(16 * 1024).read_to_end(&mut buf).await;
-        String::from_utf8_lossy(&buf).to_string()
+        let mut tail = Vec::new();
+        let mut chunk = [0u8; 4096];
+        loop {
+            let n = stderr.read(&mut chunk).await?;
+            if n == 0 { break; }
+            tail.extend_from_slice(&chunk[..n]);
+            if tail.len() > 16 * 1024 { tail.drain(..tail.len() - 16 * 1024); }
+        }
+        Ok::<_, std::io::Error>(String::from_utf8_lossy(&tail).to_string())
     });
-    let mut out = ModelOutput::default();
-    let mut final_text = None;
-    let mut lines = BufReader::new(stdout).lines();
+    let mut stream = CliStream::default();
+    let mut lines = BufReader::new(stdout);
     // 무진행 감시(RUN-022): 전체 실행 시간이 아니라 출력 줄 사이의 무응답 시간만 프로필 timeout으로 제한한다.
     // 출력이 계속 오는 긴 작업은 끊지 않는다(HTTP provider의 read timeout과 같은 기준).
     let idle = profile.timeout;
     let body = async {
         loop {
-            let next = match tokio::time::timeout(idle, lines.next_line()).await {
+            let next = match tokio::time::timeout(idle, read_line(&mut lines)).await {
                 Err(_) => {
                     return Err(ProviderError {
                         code: "idle_timeout",
@@ -303,22 +400,25 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
                         retry_after_secs: None,
                     });
                 }
-                Ok(r) => r.map_err(|e| ProviderError::new("cli_failed", e.to_string()))?,
+                Ok(r) => r?,
             };
             let Some(line) = next else { break };
-            let Ok(e) = serde_json::from_str::<Value>(&line) else { continue };
-            apply_event(&profile.protocol, &e, &mut out, &mut final_text)?;
-            on_delta(&out);
-            if out.text.len() > super::MAX_OUTPUT_BYTES {
-                return Err(ProviderError::new("output_too_large", "응답이 너무 큽니다"));
-            }
+            let Ok(e) = serde_json::from_slice::<Value>(&line) else { continue };
+            stream.apply(&profile.protocol, &e)?;
+            on_delta(&stream.output);
         }
         Ok::<(), ProviderError>(())
     };
     body.await?;
-    let status = child.wait().await.map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
-    let stderr_text = err_task.await.unwrap_or_default();
-    if out.finish_reason.is_empty() {
+    let status = tokio::time::timeout(idle, child.wait()).await
+        .map_err(|_| ProviderError::new("idle_timeout", "에이전트 프로세스가 종료되지 않았습니다"))?
+        .map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
+    let stderr_text = tokio::time::timeout(idle, err_task).await
+        .map_err(|_| ProviderError::new("idle_timeout", "에이전트 출력 정리가 끝나지 않았습니다"))?
+        .map_err(|e| ProviderError::new("cli_failed", e.to_string()))?
+        .map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
+    let mut out = stream.output;
+    if !status.success() || out.finish_reason.is_empty() {
         // 결과 없이 끝난 프로세스는 일반 실패와 구분한다(RUN-023: 프로세스 종료 원인).
         let tail: String = stderr_text.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" / ");
         #[cfg(unix)]
@@ -335,7 +435,9 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
         };
         return Err(ProviderError::new("cli_exited", format!("{prog} 프로세스가 결과 없이 끝났습니다({how}): {tail}")));
     }
-    if let Some(t) = final_text {
+    input_task.await.map_err(|e| ProviderError::new("cli_failed", e.to_string()))?
+        .map_err(|e| ProviderError::new("cli_failed", format!("에이전트 입력 전달 실패: {e}")))?;
+    if let Some(t) = stream.final_text {
         out.text = t;
     }
     // 이어 쓰지 않는 호출은 세션을 저장하지 않는다.
@@ -393,11 +495,9 @@ mod tests {
 
     #[test]
     fn prompt_includes_history_only_without_resume() {
-        let (a, _) = args(&prof("claude_code"), &req(None), "s");
-        let p = &a[1];
+        let p = prompt(&req(None), false, false);
         assert!(p.contains("[user]\n첫 질문") && p.contains("[assistant]\n첫 답") && p.ends_with("다음 질문"));
-        let (a, _) = args(&prof("claude_code"), &req(Some("r")), "s");
-        assert_eq!(a[1], "다음 질문", "resume이면 마지막 요청만");
+        assert_eq!(prompt(&req(Some("r")), true, false), "다음 질문", "resume이면 마지막 요청만");
         let mut r = req(None);
         r.cli = None;
         let (a, _) = args(&prof("codex_cli"), &r, "s");
@@ -443,9 +543,71 @@ mod tests {
     fn fake_cli(dir: &std::path::Path, script: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let p = dir.join(format!("fake-{}", uuid::Uuid::new_v4()));
-        std::fs::write(&p, format!("#!/bin/bash\n{script}\n")).unwrap();
+        std::fs::write(&p, format!("#!/bin/bash\ninput=\"$(cat)\"\n{script}\n")).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         p
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn terminal_result_does_not_override_failed_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = "echo '{\"type\":\"turn.completed\",\"usage\":{}}'; exit 7";
+        let mut request = req(None);
+        request.cli = None;
+        let result = stream_with(&prof("codex_cli"), &request, &mut |_| {}, Some(&fake_cli(dir.path(), script))).await;
+        assert_eq!(result.unwrap_err().code, "cli_exited");
+    }
+
+    #[test]
+    fn default_model_and_user_input_are_not_forced_into_argv() {
+        for protocol in ["claude_code", "codex_cli"] {
+            let mut profile = prof(protocol);
+            profile.model = "default".into();
+            let (args, _) = args(&profile, &req(None), "session");
+            assert!(!args.iter().any(|arg| arg == "--model" || arg == "-m" || arg.contains("첫 질문") || arg.contains("다음 질문")));
+        }
+    }
+
+    #[test]
+    fn partial_messages_are_streamed_and_final_snapshots_do_not_duplicate_them() {
+        let mut state = CliStream::default();
+        state.apply("claude_code", &json!({"type":"stream_event","event":{"type":"message_start"}})).unwrap();
+        state.apply("claude_code", &json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"첫"}}})).unwrap();
+        assert_eq!(state.output.text, "첫");
+        state.apply("claude_code", &json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":" 답"}}})).unwrap();
+        assert_eq!(state.output.text, "첫 답");
+        state.apply("claude_code", &json!({"type":"assistant","message":{"content":[{"type":"text","text":"첫 답"}]}})).unwrap();
+        assert_eq!(state.output.text, "첫 답");
+        state.apply("claude_code", &json!({"type":"assistant","message":{"content":[{"type":"text","text":"첫 답"}]}})).unwrap();
+        assert_eq!(state.output.text, "첫 답\n\n첫 답", "서로 다른 최종 메시지는 내용이 같아도 유지한다");
+
+        let mut state = CliStream::default();
+        for (event, text) in [("item.started", ""), ("item.updated", "첫"), ("item.updated", "첫 답"), ("item.completed", "첫 답")] {
+            state.apply("codex_cli", &json!({"type":event,"item":{"id":"m1","type":"agent_message","text":text}})).unwrap();
+            assert_eq!(state.output.text, text);
+        }
+        state.apply("codex_cli", &json!({"type":"item.completed","item":{"id":"m2","type":"agent_message","text":"둘째 답"}})).unwrap();
+        assert_eq!(state.output.text, "첫 답\n\n둘째 답");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn large_input_and_stderr_do_not_block_the_stream() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = "test \"${#input}\" -gt 200000 || exit 8; head -c 200000 /dev/zero >&2; echo '{\"type\":\"turn.completed\",\"usage\":{}}'";
+        let mut request = req(None);
+        request.cli = None;
+        request.messages = vec![ChatMsg::User { text: "x".repeat(256 * 1024), images: vec![] }];
+        let output = stream_with(&prof("codex_cli"), &request, &mut |_| {}, Some(&fake_cli(dir.path(), script))).await.unwrap();
+        assert_eq!(output.finish_reason, "stop");
+    }
+
+    #[tokio::test]
+    async fn unterminated_output_is_bounded_before_allocation_grows() {
+        let bytes = vec![b'x'; MAX_LINE_BYTES + 1];
+        let mut reader = BufReader::new(bytes.as_slice());
+        assert_eq!(read_line(&mut reader).await.unwrap_err().code, "output_too_large");
     }
 
     /// 무진행 감시는 출력 사이 간격만 본다: 전체 시간이 timeout보다 길어도 출력이 계속 오면 끝까지 받고,

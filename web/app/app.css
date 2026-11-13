@@ -379,6 +379,9 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 /* 입력창: 떠 있는 카드. 아래 여백을 두어 대화 끝과 겹치지 않게 한다. */
 .composer { width: 100%; max-width: 48em; margin-inline: auto; border: 1px solid var(--line-strong); border-radius: 18px; box-shadow: var(--shadow-float); padding: 0.6em 0.7em 0.5em 0.9em; display: grid; gap: 0.35em; position: sticky; bottom: 0.5em; background: var(--panel); }
 .composer textarea { border: 0; padding: 0.2em 0; background: transparent; resize: none; }
+.agent-connect { display: grid; gap: 8px; padding: 8px 0 12px; }
+.agent-login { padding-block: 8px; }
+.agent-login form input { flex: 1 1 160px; min-width: 0; max-width: 100%; }
 /* 포커스 표시는 입력칸 대신 카드 전체에 그린다. */
 .composer textarea:focus-visible { outline: none; }
 .composer:has(textarea:focus-visible) { outline: 2px solid var(--focus); outline-offset: 1px; }

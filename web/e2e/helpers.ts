@@ -13,7 +13,7 @@ export async function openDetails(details: Locator) {
 import { readFileSync } from "node:fs";
 import { STATE } from "./global-setup";
 
-export type E2EState = { token: string; projA: string; projB: string; fixturePort: number };
+export type E2EState = { token: string; projA: string; projB: string; fixturePort: number; cliDir?: string };
 
 export function state(): E2EState {
     return JSON.parse(readFileSync(STATE, "utf8")) as E2EState;

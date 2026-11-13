@@ -230,6 +230,7 @@ export const REQUEST_TIMEOUT_MS = 300_000;
 
 /// timeout·화면 취소는 응답 대기만 끝낸다. 변경 결과가 불명확하면 같은 idempotency key로만 확인한다.
 async function boundedRequest<T>(opts: Opts, mutation: boolean, operation: (send: (url: string, init?: RequestInit) => Promise<Response>) => Promise<T>): Promise<T> {
+    const owner = authEpoch;
     const timeout = opts.timeoutMs ?? REQUEST_TIMEOUT_MS;
     if (!Number.isFinite(timeout) || timeout <= 0) throw new ApiError(400, "invalid_request", "timeoutMs는 양수여야 합니다");
     const controller = new AbortController();
@@ -260,12 +261,24 @@ async function boundedRequest<T>(opts: Opts, mutation: boolean, operation: (send
     };
     try {
         if (controller.signal.aborted) return await interrupted;
-        return await Promise.race([operation(send), interrupted]);
+        const perform = async () => {
+            try { return await operation(send); }
+            catch (error) {
+                // 조회만 한 번 복구한다. 응답 body 유실도 같은 전체 deadline 안에서 다시 읽는다.
+                // 변경·인증 거부·계약 오류·취소는 재실행하지 않는다.
+                if (mutation || !(error instanceof TypeError) || controller.signal.aborted) throw error;
+                requireAuthGeneration(owner, false);
+                return operation(send);
+            }
+        };
+        return await Promise.race([perform(), interrupted]);
     } catch (error) {
         if (controller.signal.aborted) return await interrupted;
         if (error instanceof ApiError || error instanceof ContractError) throw error;
         if (error instanceof TypeError) {
-            throw new ApiError(0, "network_error", "서버 응답을 받지 못했습니다. 변경 요청은 같은 키로 결과를 확인하세요", true,
+            throw new ApiError(0, "network_error", mutation
+                ? "서버 응답을 받지 못했습니다. 같은 요청으로 결과를 확인하세요"
+                : "서버 응답을 받지 못했습니다. 연결을 확인한 뒤 다시 시도하세요", true,
                 { result_unknown: mutation && requestId !== undefined, idempotency_key: opts.key }, requestId);
         }
         throw error;

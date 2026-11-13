@@ -36,6 +36,7 @@ import { useDefinitionDraft } from "./definition-updates/useDefinitionDraft";
 import { useExecLinkLayout } from "./settings-links/useExecLinkLayout";
 import { AgentOverview } from "./agent-overview/AgentOverview";
 import { BotsPanel } from "./BotsPanel";
+import { AgentConnect } from "./AgentConnect";
 import type { Opener } from "./Workspace";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
@@ -418,12 +419,17 @@ function Profiles() {
     const [f, setF] = useState({ name: "", protocol: "openai", base_url: "https://api.openai.com/v1", model: "", secret_id: "" });
     const save = useSave();
     const management = useCapability("model_management_v1");
+    const [agentSetup, setAgentSetup] = useState(false);
     const presets: Record<string, string> = { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com", claude_code: "", codex_cli: "" };
     // 서버에 설치된 CLI 백엔드는 endpoint·키가 없다(CLI가 자기 로그인을 쓴다). 저가형 기본 모델을 제안한다.
     const cliModels: Record<string, string> = { claude_code: "haiku", codex_cli: "gpt-6-luna" };
     const isCli = f.protocol === "claude_code" || f.protocol === "codex_cli";
     return (
         <>
+            <details onToggle={(event) => setAgentSetup(event.currentTarget.open)}>
+                <summary>CLI 에이전트 연결</summary>
+                {agentSetup && <AgentConnect disabled={false} onConnected={() => list.reload()} />}
+            </details>
             {management !== false && <LocalModelConnection secrets={secrets.data ?? []} onCreate={(body, key) =>
                 api.post("/model-profiles", body, { key, requires: ["model_management_v1"] })
             } />}

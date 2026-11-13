@@ -43,6 +43,7 @@ pub mod model_limits;
 pub mod model_headers;
 pub mod model_fallback;
 pub mod models;
+pub mod agent_auth;
 pub mod changes;
 pub mod procs;
 pub mod project_resources;
@@ -93,6 +94,8 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// 클라이언트는 쓰기 전에 목록을 확인하고, 변경 요청에는 필요한 기능을 `x-grove-require`로 밝힌다.
 /// 기능을 빼거나 의미를 바꾸면 이름의 버전(`_v2`)을 올린다.
 pub const CAPABILITIES: &[&str] = &[
+    "agent_auth_v1",
+    "agent_backends_v1",
     "e2ee_v1",
     "file_log_rotation_v1",
     "diagnostics_bundle_v1",
@@ -122,6 +125,7 @@ pub const CAPABILITIES: &[&str] = &[
 
 #[derive(Clone)]
 pub struct App {
+    pub agent_logins: Arc<agent_auth::Logins>,
     pub e2ee: Arc<e2ee::Transport>,
     pub cfg: Arc<config::Config>,
     pub db: store::Db,
@@ -157,6 +161,7 @@ impl App {
         let (seq_tx, _) = watch::channel(latest);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         Ok(Self {
+            agent_logins: Arc::new(agent_auth::Logins::default()),
             e2ee: Arc::new(e2ee::Transport::load(&cfg.data_dir)?),
             cfg: Arc::new(cfg),
             db,
@@ -388,6 +393,13 @@ pub fn router(app: App) -> Router {
         .route("/secrets", get(models::list_secrets).post(models::create_secret))
         .route("/secrets/{id}", axum::routing::put(models::replace_secret).delete(models::delete_secret))
         .route("/model-profiles", get(models::list_profiles).post(models::create_profile))
+        .route("/agent-backends", get(models::agent_backends))
+        .route("/agent-backends/{protocol}/connect", post(models::connect_agent_backend))
+        .route("/agent-backends/{protocol}/auth", get(agent_auth::status))
+        .route("/agent-backends/{protocol}/login", post(agent_auth::start))
+        .route("/agent-backends/{protocol}/login/code", post(agent_auth::submit))
+        .route("/agent-backends/{protocol}/login/cancel", post(agent_auth::cancel))
+        .route("/agent-backends/{protocol}/logout", post(agent_auth::logout))
         .route("/model-profiles/{id}", axum::routing::put(models::update_profile).delete(models::delete_profile))
         .route("/model-profiles/{id}/check", post(models::check_profile))
         .route("/model-profiles/{id}/models", get(models::catalog))
