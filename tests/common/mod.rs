@@ -29,6 +29,7 @@ pub fn config(data_dir: &Path) -> Config {
         allowed_hosts: vec![],
         tls_terminated: false,
         web_dir: None,
+        web_base: "/".into(),
         enable_tool_loop: true,
         approval_ttl_secs: 1800,
         scheduler_tick_ms: 100,

@@ -4,6 +4,8 @@
 
 pub mod agents;
 pub mod attachments;
+pub mod source_settings;
+pub mod skills;
 pub mod approvals;
 mod project_fs;
 pub mod auth;
@@ -379,5 +381,6 @@ pub fn router(app: App) -> Router {
         .layer(tower_http::limit::RequestBodyLimitLayer::new(8 * 1024 * 1024))
         .layer(axum::middleware::from_fn(web::protocol_guard))
         .layer(axum::middleware::from_fn(web::request_context));
-    Router::new().nest("/api/v1", api).merge(web::static_routes(&app)).with_state(app)
+    Router::new().nest("/api/v1", api).merge(web::static_routes(&app))
+        .with_state(app)
 }

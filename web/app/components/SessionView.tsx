@@ -21,6 +21,9 @@ import { loadScrollPosition, saveScrollPosition } from "../state/scrollPosition"
 import { VirtualMessages } from "./VirtualMessages";
 import { usePaneVisible } from "../state/paneVisibility";
 import { deliveryTiming } from "../state/deliveryTiming";
+import { useBotAvatar } from "../state/botAvatar";
+import { AssistantIdentity } from "./assistant-identity";
+import { ApprovalCard, currentApprovalContract } from "./approvals";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
@@ -47,7 +50,10 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
 
     // 봇 대화도 보고 있는 동안 도착한 메시지는 읽은 것으로 기록한다(서버 위치는 뒤로 가지 않음).
     const botId = s?.bot_id ?? null;
-    const bots = useQuery<{ bots: { id: string; profile_id: string | null }[] }>(botId ? "bots" : null, () => api.get("/bots"));
+    const bots = useQuery<{ bots: { id: string; name: string; avatar_sha256: string | null; profile_id: string | null }[] }>(botId ? "bots" : null, () => api.get("/bots"));
+    const bot = bots.data?.bots.find((b) => b.id === botId);
+    const assistantImage = useBotAvatar(botId, bot?.avatar_sha256 ?? null);
+    const assistantName = bot?.name ?? "어시스턴트";
     useEffect(() => {
         if (visible && botId && lastSeq > 0) void api.post(`/bots/${botId}/seen`, { seq: lastSeq }).catch(() => undefined);
     }, [visible, botId, lastSeq]);
@@ -390,7 +396,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         stick={stick} bottom={bottom} onNavigate={() => { pendingPosition.current = null; stick.current = false; }}
                         render={(m) => (
                         <div key={m.id} className={`msg-row${highlight === m.seq ? " focus-hit" : ""}`} data-seq={m.seq}>
-                            <MessageView m={m} prefs={prefs} />
+                            <MessageView m={m} prefs={prefs} assistantName={assistantName} assistantImage={assistantImage} />
                             {m.role === "user" && (
                                 <button
                                     className="ghost small"
@@ -404,7 +410,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                 </FileRefContext.Provider>
                 {partial && partial.text !== undefined && (
                     <div className="msg assistant partial" data-testid="partial">
-                        <div className="who">응답 중…</div>
+                        <div className="who"><AssistantIdentity name={assistantName} imageUrl={assistantImage} /> 응답 중…</div>
                         {prefs.reasoning !== "hidden" && partial.reasoning && (
                             <div className="muted small reasoning-live" data-testid="partial-reasoning">생각 중: {partial.reasoning.slice(-300)}</div>
                         )}
@@ -426,7 +432,17 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             <RemoteWatchesPanel key={`remote-watches:${sessionId}`} sessionId={sessionId} disabled={archived} />
             <ChangesPanel key={`changes:${sessionId}`} sessionId={sessionId} projectId={projectId} open={open} disabled={archived} />
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
-            {pending.map((c) => <ApprovalCard key={c.id} c={c} act={act} />)}
+            {pending.map((c) => <ApprovalCard key={c.id} call={c} {...currentApprovalContract(c.name)}
+                onDecision={async (r) => {
+                    const result = await api.post<ToolCallRow>(`/tool-calls/${r.id}/decision`, { decision: r.decision, expected_revision: r.revision });
+                    calls.reload();
+                    return result;
+                }}
+                onRefresh={async (r) => {
+                    await api.get<ToolCallRow>(`/tool-calls/${r.id}`);
+                    calls.reload();
+                }}
+            />)}
             {mcpRunning.map((c)=>{
                 const p=mcpProgress?.[c.id] ?? (c.result as {progress?:{value:number;total:number|null}}|null)?.progress;
                 return <section key={c.id} className="stack" data-testid="mcp-running" aria-label="MCP 실행">
@@ -507,7 +523,7 @@ function TurnEvidence({ e }: { e: NonNullable<Turn["evidence"]> }) {
     );
 }
 
-const MessageView = memo(function MessageView({ m, prefs }: { m: Message; prefs: Prefs }) {
+const MessageView = memo(function MessageView({ m, prefs, assistantName, assistantImage }: { m: Message; prefs: Prefs; assistantName: string; assistantImage: string | null }) {
     const nt0 = (m.content as { type?: string }).type;
     // 답만 보기: 도구 결과·CLI 도구 활동·가져온 도구 기록과 글 없는 도구 호출 메시지를 숨긴다(승인 카드는 별도로 항상 표시).
     if (prefs.answerOnly && (m.role === "tool" || (m.role === "note" && (nt0 === "cli_activity" || nt0 === "imported_tool")))) return null;
@@ -699,7 +715,7 @@ const MessageView = memo(function MessageView({ m, prefs }: { m: Message; prefs:
                           ? `예약 '${(c as { source: { name?: string } }).source.name ?? ""}' 실행`
                           : "나"
                     : m.role === "assistant"
-                      ? `모델${c.model ? " · " + c.model : ""}${(m.content as { pending_work?: unknown }).pending_work ? " · 중간 응답(소유 작업 결과 반영 전)" : ""}`
+                      ? <><AssistantIdentity name={assistantName} imageUrl={assistantImage} />{` 모델${c.model ? " · " + c.model : ""}${(m.content as { pending_work?: unknown }).pending_work ? " · 중간 응답(소유 작업 결과 반영 전)" : ""}`}</>
                       : m.role}
             </div>
             {m.role === "assistant" && c.reasoning && prefs.reasoning !== "hidden" && (
@@ -739,67 +755,6 @@ function TurnTiming({ sessionId, turnId, messagesReady }: { sessionId: string; t
             {t.approval_wait_ms > 0 && ` · 승인 대기 ${s(t.approval_wait_ms)}`}
             {deliveryMs != null && <span data-testid="ui-delivery" title="SSE 수신 이후 조회·화면 반영 시간. 네트워크 편도 지연·이전 연결 끊김 시간은 포함하지 않습니다."> · 화면 반영(수신 후) {Math.round(deliveryMs)}ms</span>}
         </p>
-    );
-}
-
-function ApprovalCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unknown>) => Promise<void> }) {
-    const t = c.target as {
-        path?: string; command?: string; cwd?: string; preview?: string; diff?: string; bytes?: number; timeout_ms?: number;
-        action?: string; agent_id?: string; brief?: string; run_id?: string; hold_ms?: number;
-    };
-    return (
-        <div className="approval" role="group" aria-label="승인 요청" data-testid="approval">
-            <div>
-                <strong>{c.name}</strong> 승인 요청 {c.expires_at && <span className="muted small">· <When at={c.expires_at} absolute part="time" />까지</span>}
-            </div>
-            {t.path && <div>대상: <code>{t.path}</code>{t.bytes !== undefined && ` (${t.bytes}바이트)`}</div>}
-            {t.command && (
-                <div>
-                    명령: <code>{t.command}</code> · 위치: <code>{t.cwd}</code>
-                    {t.hold_ms !== undefined && <span className="muted small"> · {t.hold_ms === 0 ? "백그라운드 실행" : `${t.hold_ms}ms 뒤 백그라운드 전환`}</span>}
-                </div>
-            )}
-            {c.name === "apply_patch" && (
-                <div data-testid="approval-patch">
-                    {((c.target as { files?: { op: string; path: string; move_to?: string | null; diff: string }[] }).files ?? []).map((f) => (
-                        <details key={f.path} open>
-                            <summary>
-                                <code>{f.op === "add" ? "추가" : f.op === "delete" ? "삭제" : f.move_to ? "수정·이동" : "수정"}</code> {f.path}
-                                {f.move_to ? ` → ${f.move_to}` : ""}
-                            </summary>
-                            <pre className="diff">{f.diff}</pre>
-                        </details>
-                    ))}
-                </div>
-            )}
-            {c.name === "agent" && (
-                <div data-testid="approval-agent">
-                    {t.action === "spawn" ? "새 자식 에이전트" : "자식 에이전트 후속 지시"}: <code>{t.agent_id ?? t.run_id}</code>
-                    {t.brief && <pre className="preview">{t.brief}</pre>}
-                    <span className="muted small">자식이 쓰는 파일 변경·명령은 따로 승인을 받습니다. 모델 사용 비용이 듭니다.</span>
-                </div>
-            )}
-            {c.name==="mcp_call" && <div data-testid="approval-mcp">
-                <p>MCP 외부 호출: <code>{(c.target as {namespace:string}).namespace}</code> · 서버 revision {(c.target as {server_revision:number}).server_revision}</p>
-                <pre className="preview">{JSON.stringify(c.target,null,2)}</pre>
-                <p className="muted small">원격 read-only 표시는 권한 근거가 아닙니다. 외부 부작용이 발생할 수 있으며 응답 유실은 결과 불명으로 남깁니다.</p>
-            </div>}
-            {t.diff && <pre className="diff">{t.diff}</pre>}
-            {t.preview && <pre className="preview">{t.preview}</pre>}
-            <div className="actions">
-                <button onClick={() => void act(() => api.post(`/tool-calls/${c.id}/decision`, { decision: "approve", expected_revision: c.revision }))}>이번만 승인</button>
-                {c.name !== "agent" && c.name !== "mcp_call" && (
-                    <button
-                        className="ghost"
-                        title={`이 대화에서 ${c.name} 도구는 다시 묻지 않습니다(금지·읽기 전용 정책이 우선, 대화 설정에서 해제)`}
-                        onClick={() => void act(() => api.post(`/tool-calls/${c.id}/decision`, { decision: "approve_session", expected_revision: c.revision }))}
-                    >
-                        이 대화에서 계속 허용
-                    </button>
-                )}
-                <button className="ghost" onClick={() => void act(() => api.post(`/tool-calls/${c.id}/decision`, { decision: "deny", expected_revision: c.revision }))}>거부</button>
-            </div>
-        </div>
     );
 }
 

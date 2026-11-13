@@ -9,7 +9,7 @@ async function openApproval(page: Parameters<typeof login>[0]) {
     const { a } = await ensureProjects();
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `승인 표현 ${test.info().testId}` });
     const path = `approval-presentation-${session.id}.txt`;
-    const call = await apiCall<ToolCallRow>("POST", `/sessions/${session.id}/tool-calls`, {
+    const call = await apiCall<ToolCallRow>("POST", `/sessions/${session.id}/tool-requests`, {
         name: "write", args: { path, content: "approval-private-content" },
     });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
@@ -89,5 +89,13 @@ test("전송 오류는 결과 불명으로 알리고 재승인하지 않는다",
     await expect(card.getByRole("button", { name: "거부", exact: true })).toBeDisabled();
     expect(requests).toBe(1);
     expect(existsSync(join(state().projA, path))).toBe(false);
+    await page.route(`**/api/v1/tool-calls/${call.id}`, (route) => route.fulfill({
+        status: 503, contentType: "application/json",
+        body: JSON.stringify({ error: { code: "unavailable", message: "private-refresh-error", retryable: true } }),
+    }));
+    await card.getByRole("button", { name: "최신 상태 확인", exact: true }).click();
+    await expect(card.getByRole("alert").filter({ hasText: "최신 상태를 가져오지 못했습니다" })).toBeVisible();
+    await expect(card).not.toContainText("private-refresh-error");
+    expect(requests).toBe(1);
     await apiCall("POST", `/tool-calls/${call.id}/decision`, { decision: "deny", expected_revision: call.revision });
 });

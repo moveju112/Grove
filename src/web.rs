@@ -165,6 +165,18 @@ impl CspCache {
     }
 }
 
+pub fn normalize_base(input: &str) -> Result<String, String> {
+    let input = input.trim();
+    if input.starts_with("//") || input.chars().any(|c| matches!(c, ':' | '?' | '#' | '\\' | '%') || c.is_control()) {
+        return Err("GROVE_WEB_BASE는 URL이 아닌 안전한 경로여야 합니다".into());
+    }
+    let parts: Vec<_> = input.split('/').filter(|s| !s.is_empty()).collect();
+    if parts.iter().any(|s| matches!(*s, "." | "..")) || parts.first() == Some(&"api") {
+        return Err("GROVE_WEB_BASE의 예약 경로 또는 상대 경로는 사용할 수 없습니다".into());
+    }
+    Ok(if parts.is_empty() { "/".into() } else { format!("/{}/", parts.join("/")) })
+}
+
 pub fn static_routes(app: &App) -> Router<App> {
     let Some(dir) = app.cfg.web_dir.clone() else {
         return Router::new();
@@ -175,13 +187,22 @@ pub fn static_routes(app: &App) -> Router<App> {
     let assets = Router::new()
         .nest_service("/assets", ServeDir::new(dir.join("assets")))
         .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("public, max-age=31536000, immutable")));
+    let files = ServeDir::new(&dir).fallback(ServeFile::new(index));
     let rest = Router::new()
-        .fallback_service(ServeDir::new(&dir).fallback(ServeFile::new(index)))
+        .route_service("/", files.clone())
+        .route_service("/{*path}", files)
         .layer(SetResponseHeaderLayer::overriding(header::CACHE_CONTROL, HeaderValue::from_static("no-cache")));
-    Router::new()
+    let routes = Router::new()
+        .route("/api", axum::routing::any(|| async { crate::error::ApiError::not_found("요청한 API가 없습니다") }))
+        .route("/api/{*path}", axum::routing::any(|| async { crate::error::ApiError::not_found("요청한 API가 없습니다") }))
         .merge(assets)
         .merge(rest)
         .layer(SetResponseHeaderLayer::if_not_present(header::CONTENT_SECURITY_POLICY, move |_: &axum::http::Response<_>| csp_cache.get()))
         .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
-        .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")))
+        .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("no-referrer")));
+    if app.cfg.web_base == "/" {
+        routes
+    } else {
+        Router::new().nest(&app.cfg.web_base, routes)
+    }
 }

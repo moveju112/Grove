@@ -293,6 +293,7 @@ async fn execute(o: &Opts, prompt: &str, project: &Path, run_dir: &Path, api_key
         allowed_hosts: vec![],
         tls_terminated: false,
         web_dir: None,
+        web_base: "/".into(),
         enable_tool_loop: o.tools,
         approval_ttl_secs: 30 * 60,
         scheduler_tick_ms: 600_000,

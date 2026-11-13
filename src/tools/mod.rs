@@ -3,6 +3,7 @@
 //! 승인은 이 target에 결합되며(SEC-008), 실행 직전에 precondition을 다시 검사한다.
 
 pub mod fs;
+pub mod image_read;
 pub mod patch;
 pub mod search;
 pub mod shell;

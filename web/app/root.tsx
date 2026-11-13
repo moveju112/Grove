@@ -3,6 +3,7 @@ import { useEffect } from "react";
 import "./app.css";
 import { applyPrefs, loadPrefs } from "./state/device";
 import { installAuthCleanup } from "./state/cleanup";
+import { deployment } from "./deployment";
 
 // 로그인 화면을 포함해 첫 화면부터 이 기기 테마를 적용한다(빌드 시 prerender에서는 document가 없다).
 if (typeof document !== "undefined") {
@@ -17,9 +18,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <meta charSet="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
                 <meta name="theme-color" content="#2f6b3f" />
-                <link rel="manifest" href="/manifest.webmanifest" />
-                <link rel="icon" href="/icon.svg" type="image/svg+xml" />
-                <link rel="apple-touch-icon" href="/icon-192.png" />
+                <link rel="manifest" href={deployment.manifest} />
+                <link rel="icon" href={deployment.icon} type="image/svg+xml" />
+                <link rel="apple-touch-icon" href={deployment.appleTouchIcon} />
                 <title>Grove</title>
                 <Meta />
                 <Links />

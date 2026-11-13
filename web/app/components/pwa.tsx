@@ -3,6 +3,7 @@
 
 import { useSyncExternalStore } from "react";
 import { onProtocolMismatch } from "../api/client";
+import { deployment } from "../deployment";
 
 let waiting: ServiceWorker | null = null;
 const subs = new Set<() => void>();
@@ -10,7 +11,7 @@ const emit = () => subs.forEach((f) => f());
 
 export function registerServiceWorker() {
     if (!("serviceWorker" in navigator) || import.meta.env.DEV) return;
-    void navigator.serviceWorker.register("/sw.js", { scope: "/" }).then((reg) => {
+    void navigator.serviceWorker.register(deployment.serviceWorker, { scope: deployment.serviceWorkerScope }).then((reg) => {
         const check = (w: ServiceWorker | null) => {
             if (w && navigator.serviceWorker.controller) {
                 waiting = w;

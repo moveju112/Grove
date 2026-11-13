@@ -870,7 +870,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [x] TOOL-009 ignore와 gitignored 포함 옵션을 모든 검색 도구에서 일관되게 적용한다. 검증: find·glob·grep 공통 walker(`include_noise`), `tools::search::tests::glob_respects_ignore_and_noise`.
 - [x] TOOL-010 `read`의 단일/배치·라인 범위·겹침 병합·인코딩 처리를 구현한다. 검증: 단일 `path` 또는 배치 `files[{path,offset,limit}]`(최대 10, 동시 사용 거부), 같은 파일의 겹치거나 맞닿은 범위 병합, 파일별 오류 격리, 배치 출력 한도, 항목별 경계 재검사, 줄 범위·큰 limit 축소·offset 0·UTF-8 이외 표시(`tools::fs::tests::batch_read_merges_overlaps_and_isolates_errors`, `read_ranges_binary_and_errors`).
 - [x] TOOL-011 대형 파일을 전체 적재하지 않고 bounded range로 읽는다. 검증: 줄 단위 bounded 읽기, `tools::fs::tests::read_ranges_binary_and_errors`.
-- [ ] TOOL-012 이미지 metadata·resize·모델 첨부 표현을 구현한다. 진행: 업로드한 PNG/JPEG/GIF/WebP의 실제 디코딩·해상도/픽셀/할당 제한, 방향 보정·최대 1024px(확대 없음)·투명 배경 합성·첫 프레임 JPEG 입력, OpenAI/Anthropic/Gemini 표현을 검증했다(`src/attachments.rs`, `tests/attachments.rs`, RULEBOOK §24). 남음: 프로젝트 이미지 파일을 `read` 도구에서 같은 표현으로 전달하는 경로.
+- [ ] TOOL-012 이미지 metadata·resize·모델 첨부 표현을 구현한다. 진행: 업로드한 PNG/JPEG/GIF/WebP의 실제 디코딩·해상도/픽셀/할당 제한, 방향 보정·최대 1024px(확대 없음)·투명 배경 합성·첫 프레임 JPEG 입력, OpenAI/Anthropic/Gemini 표현을 검증했다(`src/attachments.rs`, `tests/attachments.rs`, RULEBOOK §24). 프로젝트 이미지 capability 읽기·변환 모듈도 통합하고 이미지 11개·첨부 15개 시험을 통과했다(`tests/image_read.rs`). 남음: 실제 `read` → runner → provider의 typed 이미지 전달·영속화·재시도 연결(`work/RESULT-04.md`).
 - [ ] TOOL-013 PDF 페이지 범위·텍스트 추출·이미지 페이지·OCR 지원을 선택 의존성으로 구현한다.
 - [x] TOOL-014 binary의 제한된 hex와 잘못된 인코딩을 처리한다. 검증: `tools::fs::tests::read_ranges_binary_and_errors`(hex·invalid_utf8).
 - [x] TOOL-015 없는 파일·디렉터리·special file·읽기 실패를 구분한다. 검증: `tools::fs::tests::read_ranges_binary_and_errors`(not_found·is_directory), special_file 분기.
@@ -1182,9 +1182,9 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] RESOURCE-007 서버별 도구 namespace·이름 충돌·schema 갱신을 처리한다. 검증: 저장 registry는 `<서버 이름>/<원격 이름>`으로 구분하고 모델에는 고정 gateway `mcp_tools`·`mcp_call`만 제공한다. 다른 서버의 동명 read/write·내장 read와 충돌하지 않고 server_id와 namespace를 바꿔치기할 수 없다. 승인한 도구 metadata hash와 설정 revision을 고정하며 실행 직전 새 목록과 대조한다. `notifications/tools/list_changed`를 받으면 호출 전 중단하거나 확정 결과와 같은 transaction에서 registry를 무효화한다(`tests/mcp_connect.rs`).
 - [x] RESOURCE-008 MCP 도구에도 같은 승인·deny·read-only·소유권 규칙을 적용한다. 검증: `mcp_call`은 원격 annotation과 무관하게 Execute로 취급하고 기존 `tool_calls` 접수·승인·실행 직전 재검사·프로젝트 guard·취소·복구 경로를 쓴다. 대상 서버·namespace·인자·설정 revision·cwd·한도를 고정한다. 일반 대화와 봇·예약의 기존 정책이 그대로 적용되며 MCP 전체를 묶는 대화 범위 승인은 거절한다. 실제 전송 후 응답 유실·취소는 `unknown`으로 남기고 검토 전 새 MCP 호출을 막는다. 모델 fixture의 목록 조회→승인→도구 결과 전달·기존 권한/도구 회귀와 화면 거부/이번만 승인을 검증했다(`tests/mcp_connect.rs`, `web/e2e/mcp-settings.spec.ts`).
 - [x] RESOURCE-009 세션 종료 후 불필요한 MCP 프로세스·연결을 정리한다. 검증: MCP 검사·호출마다 연결을 열고 완료·실패·timeout·취소·서버 종료 시 닫으며 idle 연결·자식 프로세스를 유지하지 않는다. stdio는 소유 process group/Job, HTTP는 session DELETE·stream 해제로 정리한다. 재시작은 실행 중 MCP tag를 먼저 회수한 뒤 기존 도구 `unknown` 복구를 따르고 자동 재실행하지 않는다. 턴 없는 직접 도구도 approved/running/awaiting_input이면 세션 보관·삭제·rewind를 막아 실행 기록을 보존한다. Linux에서 검사·실제 호출의 부모/자식 종료와 승인 cwd 실행을 확인했다(`tests/mcp_connect.rs`); Windows·macOS 실측은 남는다.
-- [ ] RESOURCE-010 스킬 발견·목록·본문 조회·선택·적용을 구현한다.
+- [ ] RESOURCE-010 스킬 발견·목록·본문 조회·선택·적용을 구현한다. 진행: 독립 catalog·본문·revision 결합 선택과 UI 컴포넌트를 통합하고 Rust 12개·웹 7개 시험을 통과했다. 남음: 인증된 API·화면·선택 상태 및 모델 적용 연결(`work/RESULT-01.md`).
 - [ ] RESOURCE-011 스킬 추가·저장·reload·활성화/비활성화를 구현한다.
-- [ ] RESOURCE-012 전역/프로젝트 스킬 우선순위·alias·중복·symlink를 처리한다.
+- [ ] RESOURCE-012 전역/프로젝트 스킬 우선순위·alias·중복·symlink를 처리한다. 진행: catalog의 우선순위·동명 충돌·내부 alias·외부 symlink 거부 회귀 통과. 남음: 실제 허용 root·인증·화면 연결 검증(`tests/skills.rs`).
 - [ ] RESOURCE-013 스킬 실행 의존성·필요 도구·platform capability를 검증한다.
 - [ ] RESOURCE-014 사용자 선택과 자동 매칭의 적용 규칙을 명시한다.
 - [ ] RESOURCE-015 hook 목록·이벤트·matcher·활성화·설정 저장을 구현한다.
@@ -1222,7 +1222,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] USAGE-004 provider/model/agent/workflow/session별 사용량을 집계한다. 검증: `/usage?group_by=provider|model|profile|agent|workflow|session|project`(`tests/usage.rs` 모델·에이전트 묶음).
 - [x] USAGE-005 일·주·월·사용자 기간과 시간대를 반영한다. 검증: 일·주(월요일 시작)·월 묶음과 클라이언트 시간대 offset, 기간 필터·400일 한도(`usage::tests::week_and_month_buckets_use_client_offset`, `tests/usage.rs`). 고정 offset이라 DST 경계가 걸친 기간은 시작 시점 offset 기준.
 - [ ] USAGE-006 실시간 quota 새로고침의 TTL·동시 요청 합치기·실패 상태를 구현한다.
-- [ ] USAGE-007 사용량 카드·도넛·정렬·색상·텍스트 대체 표시를 구현한다.
+- [x] USAGE-007 사용량 카드·도넛·정렬·색상·텍스트 대체 표시를 구현한다. 검증: 통화별 비용·미보고·0 분모·정렬 단위 7개와 실제 화면의 기간/묶음·키보드·로딩/실패/빈 결과·stale/재시도·실행 용량 E2E 3개 통과(`web/app/components/usage/`, `web/e2e/usage-presentation.spec.ts`).
 - [x] USAGE-008 턴 경과 시간·모델 대기·도구 실행·사용자 대기를 구분한다. 검증: 턴 상세 `timing`(승인 대기·도구 실행 합집합·모델과 처리, 합계 일치), `tests/usage.rs::turn_timing_separates_approval_wait_from_tool_and_model`, 대화 화면 마지막 요청 시간.
 - [ ] USAGE-009 턴 시간 표시 설정·서버 재시작 복구·기기 시계 차이를 처리한다.
 - [ ] USAGE-010 auto effort 실제 적용값과 선택값을 별도로 표시한다.
@@ -1243,9 +1243,9 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] UI-010 Markdown 코드·표·목록·링크·수식·긴 줄을 표시한다. 검증: 모델 답을 문법 트리 → React 요소로 표시(제목·문단 줄바꿈·굵게·기울임·인라인/블록 코드·목록·인용·표·구분선, 닫히지 않은 코드 블록, snake_case 보존), 긴 코드·표는 가로 스크롤, 사용자 글은 평문 유지(`web/app/state/markdown.test.ts`, `web/e2e/markdown.spec.ts`). 수식은 글자 그대로 표시(미지원).
 - [x] UI-011 코드 복사·메시지 복사·선택·파일/라인 링크를 제공한다. 검증: 코드 블록 복사(정확한 원문), 메시지 원문 복사(표시된 Markdown이 아닌 저장 원문), 텍스트 선택은 기본 동작 유지. 답 안의 `경로:줄` 인라인 코드는 상대 경로만 링크로 만들고(절대 경로·URL·`..`·버전 문자열 제외), 누르면 오른쪽 pane에 파일을 열어 해당 줄을 선택한다(`markdown.test.ts`, `web/e2e/markdown.spec.ts` 2개).
 - [x] UI-012 reasoning 숨김·answer-only·세부 실행 펼침 설정을 구현한다. 검증: assistant reasoning을 표시 전용으로 저장(2만 자 상한, 전체 길이는 reasoning_chars)하고 다음 모델 입력에는 넣지 않는다. 진행 중에는 마지막 2천 자만 snapshot. 기기 설정 '대화 표시'에서 생각 과정 접기·펼치기·숨김, 답만 보기(도구 결과·CLI 활동·글 없는 도구 호출 숨김, 승인 카드는 유지), 도구 세부 펼침을 고르며 같은 창·다른 탭에 즉시 반영(`runner::reasoning_tests`, `tests/turns.rs::reasoning_is_stored_for_display_but_not_sent_back`, `web/e2e/transcript-prefs.spec.ts`).
-- [ ] UI-013 assistant 아이콘·사진·이름의 현재 제품 설정을 유지한다.
+- [x] UI-013 assistant 아이콘·사진·이름의 현재 제품 설정을 유지한다. 검증: 봇 이름·인증된 PNG object URL을 확정/스트리밍 assistant에 연결하고 사진 변경·삭제·복원·디코딩 실패·좁은 화면·새로고침 E2E 3개와 단위 50개 통과. 인증 변경/unmount에서 URL을 회수한다. 기존 봇 사진·home 회귀도 통과(`web/e2e/assistant-identity.spec.ts`, `web/app/state/botAvatar.ts`).
 - [x] UI-014 도구 인자·결과·성공/실패·소요 시간·truncation을 표시한다. 검증: 도구 결과 메시지에 표시용 인자 요약(긴 문자열은 300자+길이), 소요 시간(started→finished), 잘림 여부(truncated·limit_clamped·배치 skipped)를 기록하고 모델 입력에는 넣지 않는다. 카드에 상태(성공/실패/거부)·승인 범위·소요 시간·잘림 표시, 펼치면 인자·결과(`approvals::tests::display_helpers_summarize_args_duration_and_truncation`, `tests/turns.rs::read_tool_runs_automatically_and_result_reaches_model`, `web/e2e/workspace.spec.ts`).
-- [ ] UI-015 승인 카드에 대상·부작용·허용 범위·거부 버튼을 표시한다.
+- [x] UI-015 승인 카드에 대상·부작용·허용 범위·거부 버튼을 표시한다. 검증: 실제 요청 ID/revision으로 결정을 전송하고 중복 전송 방지·키보드 거부·403·응답 유실·재조회 실패 E2E 4개와 단위 27개 통과. 인자 원문은 표시하지 않으며 이 대화의 도구 전체 허용 범위를 명시한다. 기존 쓰기·위임 승인 흐름 회귀 통과(`web/e2e/approval-presentation.spec.ts`, `web/e2e/workspace.spec.ts`).
 - [x] UI-016 질문 카드의 선택지·복수 선택·자유 입력·취소를 구현한다. 검증: 질문 카드에 질문·선택지 설명·단일(radio)/복수(checkbox) 선택·허용 시 직접 입력·'답하기'(선택이나 입력 전 비활성)·'답하지 않고 닫기'를 표시하고, 보낸 답이 모델 도구 결과로 전달된다(`web/e2e/question.spec.ts` 2개).
 - [ ] UI-017 handoff 안내·외부 로그인 열기·복귀·완료 상태를 구현한다.
 - [x] UI-018 입력 draft를 호스트/세션별로 보존하고 전송 확정 뒤 정리한다. 검증: `web/app/state/drafts.test.ts`, e2e 새로고침 후 초안 복원.
@@ -1332,7 +1332,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [x] SETTINGS-007 instruction 파일 모드·출력 스타일·프로필·언어 설정을 구현한다. 검증: 기존 범위별 설정에 지침 모드의 읽기 쉬운 이름(AGENTS.md만/CLAUDE.md만/둘 다/전달 안 함)을 보강했다. 격리된 임시 프로젝트의 네 모드를 화면에서 저장하고 실제 fixture 요청에 선택한 지침만 전달됨·turn 응답에는 원문 대신 파일/hash만 남음·지침 파일 자체는 변경되지 않음을 확인했다. 출력 스타일/언어/사용자 프로필은 요청 시작 시 고정되고 승인 대기 중 변경은 다음 요청에 적용되며, 프로필 원문이 도구 쓰기를 승인할 수 없음을 기존 서버 회귀로 재검증했다. 프로필 길이/범위 오류·동시 편집 충돌·상속 복원·새로고침도 보존한다. Rust settings 5개·response_preferences 3개·선택 E2E 6개·타입/빌드 통과(`tests/settings.rs`, `tests/response_preferences.rs`, `web/e2e/response-preferences.spec.ts`, 설정 검색/범위 회귀). 저장소의 사용자 작성 AGENTS.md를 다시 쓴 것은 아니다.
 - [ ] SETTINGS-008 메모리·검색·내장 도구·선택 기능의 활성화 설정을 구현한다.
 - [ ] SETTINGS-009 MCP·스킬·훅 관리 화면을 구현한다.
-- [ ] SETTINGS-010 read-only 원본 Claude/Codex 설정 화면을 구현한다.
+- [ ] SETTINGS-010 read-only 원본 Claude/Codex 설정 화면을 구현한다. 진행: 안전 필드 projection과 출처별 읽기 전용 컴포넌트 통합, Rust 10개·웹 5개 시험 통과. 남음: 인증·서버 root 결정·API·설정 화면 연결. Codex TOML은 미지원으로 표시하며 적용 여부를 추측하지 않는다(`work/RESULT-00.md`).
 - [ ] SETTINGS-011 셸·작업 한도·프로세스 격리·기본 작업 위치 설정을 구현한다.
 - [ ] SETTINGS-012 TTS provider·언어·모델·출력 장치·GPU 설정을 구현한다.
 - [ ] SETTINGS-013 호스트·페어링·릴레이·접속 기기·접속 암호 설정을 구현한다.
@@ -1366,7 +1366,7 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 - [ ] PC-010 브라우저 파일 picker·drag/drop·clipboard와 서버 프로젝트 폴더 탐색을 구분하고 미지원 API 대안을 제공한다.
 - [ ] PC-011 OAuth callback·pairing link·외부 링크의 탭/PWA 복귀와 origin 검증을 구현한다.
 - [ ] PC-012 audio playback을 구현한다.
-- [ ] PC-013 Linux systemd user 서비스 등록·해제·로그아웃 이후 실행 안내를 구현한다.
+- [ ] PC-013 Linux systemd user 서비스 등록·해제·로그아웃 이후 실행 안내를 구현한다. 진행: 명시적 계획/적용 CLI와 등록·해제·반복·실패 복구·데이터 보존 시험 30개 통과(`scripts/test_user_service.py`). 남음: 제품 진입점·배포 경로와 실제 systemd·로그아웃·updater 연동 검증. 현재 호스트 서비스는 변경하지 않았다(`work/RESULT-07.md`).
 - [ ] PC-014 Windows 로그인 자동 시작·서비스/작업 등록 방식을 구현한다.
 - [ ] PC-015 관리자 권한 없이 가능한 설치 범위를 기본으로 한다.
 - [ ] PC-016 조건부: Tauri PC 셸 도입 시에만 Windows WebView2 요구 버전·설치 비용을 검증한다. PWA 기본 의존성으로 넣지 않는다.
@@ -1398,8 +1398,8 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 ## 24. 공용 웹앱/PWA
 
 - [ ] WEB-001 PC/Android와 같은 UI 소스에서 정적 웹 산출물을 생성한다.
-- [ ] WEB-002 루트·하위 경로 배포와 deep link 새로고침을 지원한다.
-- [ ] WEB-003 Cloudflare Pages 등 기존 호스팅의 필요한 routing/header 설정을 정의한다.
+- [x] WEB-002 루트·하위 경로 배포와 deep link 새로고침을 지원한다. 검증: 빌드/서버의 `GROVE_WEB_BASE`와 manifest·icon·service worker를 연결했다. `/`와 `/grove/`로 각각 빌드해 직접 진입·deep link 새로고침·자산·API 제외·사용자 선택 후 worker 갱신 E2E 4개, 서버 경계 2개, base/worker 단위 44개 통과. 기존 PWA 초안·stream 보존 회귀도 통과(`tests/web_base.rs`, `web/e2e/deployment-base.spec.ts`).
+- [ ] WEB-003 Cloudflare Pages 등 기존 호스팅의 필요한 routing/header 설정을 정의한다. 진행: Nginx 루트/하위 경로 예제와 Cloudflare Pages worker·404 설정 및 단위 8개 통과(`web/deployment/`). 실제 원격 호스팅·TLS 검증은 미실행이며 배포하지 않았다.
 - [ ] WEB-004 서버 주소 입력·pairing link·호스트 목록·로그아웃을 구현한다.
 - [ ] WEB-005 HTTPS 페이지에서 로컬/원격 서버 연결 시 mixed content·브라우저 제약을 처리한다.
 - [ ] WEB-006 브라우저 credential 보관과 XSS 위험을 검토한다.

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { ApiError, api, rawGet } from "../api/client";
+import { ApiError, api } from "../api/client";
+import { useBotAvatar } from "../state/botAvatar";
 import type { ModelProfile } from "../api/generated";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
@@ -36,27 +37,8 @@ const loadHidden = (): string[] => {
     }
 };
 
-// 사용자 아바타(BOT-003)는 인증 헤더로 받아 object URL로 보인다. 같은 이미지(sha256)는 한 번만 받는다.
-const avatarUrls = new Map<string, Promise<string>>();
-function avatarUrl(b: Bot): Promise<string> {
-    const key = `${b.id}:${b.avatar_sha256}`;
-    let url = avatarUrls.get(key);
-    if (!url) {
-        url = rawGet(`/bots/${b.id}/avatar`).then((buf) => URL.createObjectURL(new Blob([buf], { type: "image/png" })));
-        url.catch(() => avatarUrls.delete(key));
-        avatarUrls.set(key, url);
-    }
-    return url;
-}
-
 function Avatar({ b }: { b: Bot }) {
-    const [src, setSrc] = useState<string | null>(null);
-    useEffect(() => {
-        let alive = true;
-        setSrc(null);
-        if (b.avatar_sha256) avatarUrl(b).then((u) => { if (alive) setSrc(u); }).catch(() => undefined);
-        return () => { alive = false; };
-    }, [b.id, b.avatar_sha256]); // eslint-disable-line react-hooks/exhaustive-deps
+    const src = useBotAvatar(b.id, b.avatar_sha256);
     // 이미지를 못 받으면(삭제·네트워크) 기본형으로 보인다.
     if (src) return <img className="avatar" src={src} alt="" aria-hidden data-testid="bot-avatar-image" />;
     return (
