@@ -333,9 +333,12 @@ test("설정 검색은 항목과 적용 범위를 보여 주고 기본 에이전
     await expect(page.getByTestId("setting-definitions").getByText("저장됨")).toBeVisible();
     const d =await apiCall<{ modified_fields: string[]; revision: number }>("GET", "/definitions/agent/reviewer");
     expect(d.modified_fields).toEqual(["body"]);
-    page.once("dialog", (dlg) => dlg.accept());
-    await page.getByRole("button", { name: "기본값 복원" }).click();
+    const comparison = page.getByRole("region", { name: "정의 기본값 비교", exact: true });
+    await comparison.getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
+    await comparison.getByLabel("본문 기본값 적용", { exact: true }).check();
+    await comparison.getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
     await expect.poll(async () => (await apiCall<{ modified_fields: string[] }>("GET", "/definitions/agent/reviewer")).modified_fields).toEqual([]);
+    expect((await apiCall<{ body: string }>("GET", "/definitions/agent/reviewer")).body).toBe(original);
 });
 
 test("파일 화면에서 열고 고쳐 저장하며, 외부 변경은 충돌로 알리고 내 편집을 지키며, 이미지는 티켓으로 미리 본다", async ({ page }) => {
