@@ -7,6 +7,7 @@ import { usePaneVisible } from "../state/paneVisibility";
 import { sha256Hex } from "../state/sha256";
 import { ArtifactPreview } from "./ArtifactPreview";
 import { isArtifact } from "../state/artifactPreview";
+import { ExternalEditor } from "./files/ExternalEditor";
 
 type Entry = { name: string; path: string; kind: "dir" | "file" | "link_outside" | "other"; size: number | null; mtime: string | null };
 type Listing = { path: string; entries: Entry[]; truncated: boolean };
@@ -194,6 +195,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
             </aside>
             <section className="file-pane">
                 {copyError && <p className="err" role="alert">{COPY_ERROR}</p>}
+                {openPath && !openPath.startsWith("new:") && <ExternalEditor key={`${projectId}:${openPath}`} projectId={projectId} path={openPath} disabled={locked} />}
                 {openPath ? <FileEditor key={openPath} copyId={tabId} projectId={projectId} path={openPath}
                     onSaved={() => { listing.reload(); if (openPath.startsWith("new:")) selectPath(openPath.slice(4)); }}
                     disabled={mutation.locked} onLock={setEditorLocked} line={openPath === start?.path ? start?.line : undefined} /> : <p className="muted">파일을 고르세요.</p>}
