@@ -2,7 +2,9 @@ import { useState } from "react";
 import { ApiError, lastAuthEnd, login } from "../api/client";
 import { deviceName } from "../state/device";
 import { Hosts } from "./Hosts";
+import { Icon } from "./icons";
 import { PairingLogin } from "./Pairing";
+import { RevealText } from "./RevealText";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 
 export function Login() {
@@ -27,8 +29,8 @@ export function Login() {
     return (
         <main className="login">
             <form onSubmit={submit} aria-label="로그인">
-                <img src="/icon.svg" alt="" width={56} height={56} />
-                <h1>Grove</h1>
+                <span className="login-mark" aria-hidden="true"><Icon name="sprout" size={28} /></span>
+                <h1><RevealText text="Grove" /></h1>
                 <Hosts />
                 {lastAuthEnd() === "expired" && (
                     <p className="warn" role="status" data-testid="auth-expired">

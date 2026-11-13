@@ -55,26 +55,26 @@ test("테마별 대비가 AA 이상이고 system은 OS를, 고정 테마는 OS�
         }
     }
     // 고정 테마는 OS와 무관
-    expect(results["light/dark"]!.bg).toBe("#f7f8f6");
+    expect(results["light/dark"]!.bg).toBe("#f7f7f8");
     expect(results["light/dark"]!.scheme).toBe("light");
-    expect(results["soft/dark"]!.bg).toBe("#f1ece2");
-    expect(results["dark/light"]!.bg).toBe("#121513");
+    expect(results["soft/dark"]!.bg).toBe("#e9ebee");
+    expect(results["dark/light"]!.bg).toBe("#14161b");
     expect(results["dark/light"]!.scheme).toBe("dark");
     // system은 OS를 따른다
-    expect(results["system/light"]!.bg).toBe("#f7f8f6");
-    expect(results["system/dark"]!.bg).toBe("#121513");
+    expect(results["system/light"]!.bg).toBe("#f7f7f8");
+    expect(results["system/dark"]!.bg).toBe("#14161b");
     // 주소창 색
-    expect(results["dark/light"]!.meta).toBe("#121513");
-    expect(results["soft/dark"]!.meta).toBe("#4d6b50");
+    expect(results["dark/light"]!.meta).toBe("#14161b");
+    expect(results["soft/dark"]!.meta).toBe("#e9ebee");
     // 버튼은 테마의 버튼 글자색을 쓴다(다크 테마에서 흰 글자 대비 부족 회귀 방지)
-    expect(results["dark/light"]!.button).toBe("rgb(13, 26, 17)");
+    expect(results["dark/light"]!.button).toBe("rgb(13, 15, 19)");
 
     // system 사용 중 OS가 바뀌면 새로고침 없이 따라간다
     await page.emulateMedia({ colorScheme: "light" });
     await setTheme(page, "system");
     await page.emulateMedia({ colorScheme: "dark" });
-    await expect.poll(async () => (await colors(page)).bg).toBe("#121513");
-    await expect.poll(async () => (await colors(page)).meta).toBe("#121513");
+    await expect.poll(async () => (await colors(page)).bg).toBe("#14161b");
+    await expect.poll(async () => (await colors(page)).meta).toBe("#14161b");
     await page.evaluate(() => localStorage.removeItem("grove.device.prefs"));
 });
 
@@ -86,7 +86,7 @@ test("설정 화면에서 테마를 고르면 바로 적용되고 로그인 화�
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("테마");
     await page.getByLabel("테마", { exact: true }).selectOption("soft");
-    await expect.poll(async () => (await colors(page)).bg).toBe("#f1ece2");
+    await expect.poll(async () => (await colors(page)).bg).toBe("#e9ebee");
     // 로그아웃 상태(로그인 화면)에서도 같은 테마
     await page.context().clearCookies();
     await page.evaluate(() => {
@@ -95,6 +95,6 @@ test("설정 화면에서 테마를 고르면 바로 적용되고 로그인 화�
     });
     await page.goto("/");
     await expect(page.getByRole("form", { name: "로그인" })).toBeVisible();
-    expect((await colors(page)).bg).toBe("#f1ece2");
+    expect((await colors(page)).bg).toBe("#e9ebee");
     await page.evaluate(() => localStorage.removeItem("grove.device.prefs"));
 });

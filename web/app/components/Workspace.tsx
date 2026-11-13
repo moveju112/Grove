@@ -18,7 +18,9 @@ import { RecoveryPanel } from "./RecoveryPanel";
 import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Hosts } from "./Hosts";
+import { Icon } from "./icons";
 import { SidebarProject } from "./sidebar";
+import { SidebarUsage } from "./sidebar/SidebarUsage";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { CreationEntry, CreationFocus } from "./create/CreationEntry";
 import { currentProjectId, projectTarget } from "./create/creation";
@@ -185,51 +187,39 @@ export function Workspace() {
         startProject(p);
     };
 
+    // 넓은 화면에서 사이드바가 열려 있으면 만들기는 사이드바 맨 위 메뉴에, 아니면 상단 바에 하나만 둔다.
+    const createInSidebar = sidebar && !narrow;
+    const create = (inSidebar: boolean) => (
+        <button className={inSidebar ? "ghost side-item" : "ghost icon-btn"} aria-haspopup="dialog" disabled={!layout}
+            title={serverBlocked ?? "새 대화·프로젝트 만들기"}
+            onClick={() => setAdding({ step: "choose", projectId: currentProjectId(layout) })}>
+            <Icon name="edit" /><span className={inSidebar ? "side-label" : "sr-only"}>만들기</span>
+        </button>
+    );
+    const brand = (
+        <span className="brand-row">
+            <span className="brand" aria-hidden="true"><Icon name="sprout" size={20} /></span>
+            <strong className="wordmark">Grove</strong>
+        </span>
+    );
+
     return (
         <CreationFocus.Provider value={creationFocus}>
-        <div className={`ws ${narrow ? "narrow" : ""}`}>
-            <header className="topbar">
-                <button className="ghost icon" aria-label="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
-                    ☰
-                </button>
-                <img src="/icon.svg" alt="" width={22} height={22} />
-                <strong>Grove</strong>
-                <Hosts />
-                <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
-                <span className="spacer" />
-                <button className="ghost" aria-haspopup="dialog" disabled={!layout}
-                    title={serverBlocked ?? undefined}
-                    onClick={() => setAdding({ step: "choose", projectId: currentProjectId(layout) })}>
-                    만들기
-                </button>
-                <button className="ghost" onClick={() => open({ kind: "settings", title: "설정" })}>
-                    설정
-                </button>
-            </header>
-            {adding?.step === "choose" && <CreationEntry projects={projects.data ?? NO_PROJECTS} currentId={adding.projectId}
-                blockedReason={serverBlocked}
-                loading={projects.loading} error={Boolean(projects.error)} onReload={projects.reload}
-                onSelect={startProject} onAddProject={() => setAdding({ step: "project" })} onClose={() => setAdding(null)} />}
-            {adding?.step === "project" && <AddProjectDialog blockedReason={serverBlocked} beforeMutation={requireServerAction} onDone={projectAdded} onClose={() => setAdding(null)} />}
-            {notice && (
-                <div className="notice" role="status">
-                    {notice} <ServerActionButton className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</ServerActionButton>
-                    <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
-                </div>
-            )}
-            <NavigationContext layout={layout} projects={projects.data ?? NO_PROJECTS} host={window.location.origin}
-                open={open} onBrowseProjects={() => setSidebar(true)} sidebarOpen={sidebar} />
-            <div className="body">
-                {sidebar && (
-                    <aside className="sidebar">
+        <div className={`ws ${narrow ? "narrow" : ""} ${sidebar ? "with-sidebar" : ""}`}>
+            {sidebar && (
+                <aside className="sidebar" aria-label="탐색">
+                    {!narrow && <div className="side-head">{brand}</div>}
+                    <div className="side-nav">
+                        {createInSidebar && create(true)}
                         <NotificationsPanel open={open} />
                         <RecoveryPanel open={open} />
-                        <BotsPanel open={open} />
                         <SearchPanel open={open} />
-                        <RecentPanel open={open} linked={splitSessions} />
+                    </div>
+                    <div className="side-scroll">
+                        <BotsPanel open={open} />
                         <section className="projects">
                             <h2>
-                                프로젝트{" "}
+                                <span className="side-section-title">프로젝트</span>
                                 <select
                                     className="small"
                                     aria-label="프로젝트 정렬"
@@ -247,9 +237,9 @@ export function Workspace() {
                                     onClick={() => setFiltering((f) => !f)}>
                                     라벨{labelFilter.length > 0 ? ` (${labelFilter.length})` : ""}
                                 </button>
+                                <button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</button>
                             </h2>
                             {filtering && <LabelFilter labels={labels} selected={labelFilter} onChange={setLabelFilter} />}
-                            <button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</button>
                             {showArchived && <ArchivedProjects />}
                             {shown.map((p) => (
                                 <SidebarProject key={p.id} project={p} open={open} narrow={narrow} onCreate={() => startProject(p)}>
@@ -282,8 +272,39 @@ export function Workspace() {
                                 </p>
                             )}
                         </section>
-                    </aside>
-                )}
+                    </div>
+                    <RecentPanel open={open} linked={splitSessions} />
+                    <SidebarUsage />
+                </aside>
+            )}
+            <div className="ws-main">
+            <header className="topbar">
+                <button className="ghost icon-btn" aria-label="사이드바" title="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
+                    <Icon name="sidebar" />
+                </button>
+                {!createInSidebar && brand}
+                {!createInSidebar && create(false)}
+                <span className="spacer" />
+                <Hosts />
+                <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
+                <button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
+                    <Icon name="settings" /><span className="sr-only">설정</span>
+                </button>
+            </header>
+            {adding?.step === "choose" && <CreationEntry projects={projects.data ?? NO_PROJECTS} currentId={adding.projectId}
+                blockedReason={serverBlocked}
+                loading={projects.loading} error={Boolean(projects.error)} onReload={projects.reload}
+                onSelect={startProject} onAddProject={() => setAdding({ step: "project" })} onClose={() => setAdding(null)} />}
+            {adding?.step === "project" && <AddProjectDialog blockedReason={serverBlocked} beforeMutation={requireServerAction} onDone={projectAdded} onClose={() => setAdding(null)} />}
+            {notice && (
+                <div className="notice" role="status">
+                    {notice} <ServerActionButton className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</ServerActionButton>
+                    <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
+                </div>
+            )}
+            <NavigationContext layout={layout} projects={projects.data ?? NO_PROJECTS} host={window.location.origin}
+                open={open} onBrowseProjects={() => setSidebar(true)} sidebarOpen={sidebar} />
+            <div className="body">
                 <main className="main">
                     {Object.entries(layouts).map(([id, saved]) => (
                         <SavedLayout key={id} id={id} layout={saved} onUpdate={updateAt} onOpen={openAt}
@@ -291,6 +312,7 @@ export function Workspace() {
                     ))}
                     {!layout && <div className="boot">배치 불러오는 중…</div>}
                 </main>
+            </div>
             </div>
         </div>
         </CreationFocus.Provider>
@@ -329,8 +351,9 @@ function ConnStatus({ status, retryAt, onRetry }: { status: string; retryAt?: nu
                     ? "오프라인 · 네트워크 없음"
                     : `서버 연결 끊김 · ${left}초 후 재시도`;
     return (
-        <span className={`conn ${status}`} title="서버 연결 상태" data-testid="conn" role="status">
-            {label}
+        <span className={`conn ${status}`} title={`서버 연결 상태: ${label}`} data-testid="conn" role="status">
+            <span className="conn-dot" aria-hidden="true" />
+            <span className="conn-label">{label}</span>
             {status === "offline" && (
                 <button className="ghost small" onClick={onRetry}>
                     지금 재연결

@@ -3,13 +3,15 @@ import { When } from "./When";
 import { createPortal } from "react-dom";
 import { HOSTS_KEY, insecureRemote, loadHosts, markHostOpened, recentHosts, removeHost, saveHost, type Host } from "../state/hosts";
 
+import { Icon } from "./icons";
+
 /// 호스트별 페이지를 별도 탭으로 열어 요청·stream·메모리 상태를 섞지 않는다.
 export function Hosts() {
     const [open, setOpen] = useState(false);
     return (
         <>
             <button type="button" className="ghost host-picker" onClick={() => setOpen(true)} title={`현재 호스트: ${location.origin}`} aria-label={`호스트 선택: ${location.origin}`}>
-                호스트 · {location.host}
+                <Icon name="server" /><span className="rail-label">호스트 · {location.host}</span>
             </button>
             {open && createPortal(<HostsDialog onClose={() => setOpen(false)} />, document.body)}
         </>

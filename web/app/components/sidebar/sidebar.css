@@ -1,55 +1,180 @@
+/* 프로젝트 트리: 프로젝트 행 → (워크스페이스) → 대화. 행은 한 줄이고 도구는 올리거나 포커스할 때 보인다. */
+/* 프로젝트 행과 도구를 한 줄에 두고, 요약·목록은 그 아래 전체 폭을 쓴다. */
 .sidebar-project {
-    border-bottom: 1px solid var(--line);
-    padding-block: .35rem;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    padding-block: .1rem;
     min-width: 0;
+}
+.sidebar-project > * {
+    grid-column: 1 / -1;
+}
+.sidebar-project > .row {
+    grid-column: 1;
+    grid-row: 1;
+}
+.sidebar-project > .sidebar-project-tools {
+    grid-column: 2;
+    grid-row: 1;
+    flex-wrap: nowrap;
+    gap: 0;
+    padding: 0;
+}
+.sidebar-project-tools > button.ghost {
+    min-width: 22px;
+    padding-inline: .3em;
+}
+.sidebar-project-tools > button:not(.sidebar-expand) {
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+.sidebar-project:hover .sidebar-project-tools > button,
+.sidebar-project-tools:focus-within > button,
+.sidebar-project-tools > button[aria-pressed="true"] {
+    opacity: 1;
+}
+.sidebar-expand {
+    display: inline-flex;
+    align-items: center;
+    gap: .3em;
+}
+.sidebar-count {
+    font-size: .75rem;
+}
+.sidebar-project > p.muted.small {
+    margin: .1rem 0 .3rem .9rem;
+    font-size: .75rem;
+}
+/* 평소 상태(대기·완료·취소)는 기호만 보이고 이름은 보조기술과 title로 전한다. 주의가 필요한 상태는 이름까지 보인다. */
+.sidebar-status-idle > .sidebar-status-label,
+.sidebar-status-completed > .sidebar-status-label,
+.sidebar-status-cancelled > .sidebar-status-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
+}
+.sidebar-project .row > .link {
+    font-weight: 500;
 }
 .sidebar-project-summary,
 .sidebar-toolbar {
     display: flex;
     align-items: center;
     flex-wrap: wrap;
-    gap: .25rem .5rem;
+    gap: .2rem .4rem;
 }
 .sidebar-project-summary {
-    padding-inline: .5rem;
+    padding-inline: .55rem;
+    font-size: .8rem;
+    color: var(--muted);
+}
+.sidebar-project-summary:empty,
+.sidebar-project-summary:has(> .sidebar-status:only-child):has(> :is(.sidebar-status-idle, .sidebar-status-completed, .sidebar-status-cancelled)) {
+    display: none;
 }
 .sidebar-toolbar {
-    padding: .2rem .35rem;
+    padding: .1rem .3rem;
+}
+.sidebar-project > .sidebar-toolbar button.ghost,
+.sidebar-project [role="group"] button.ghost {
+    border-color: transparent;
+    color: var(--muted);
+}
+.sidebar-project > .sidebar-toolbar button.ghost:hover {
+    color: var(--text);
 }
 .sidebar-sessions {
     list-style: none;
     margin: 0;
-    padding: 0 0 0 .65rem;
+    padding: 0 0 0 .9rem;
 }
 .sidebar-workspace-name {
-    margin: .5rem 0 .15rem .65rem;
-    font-size: .8rem;
+    margin: .35rem 0 .1rem .9rem;
+    font-size: .75rem;
     font-weight: 500;
     color: var(--muted);
 }
+.sidebar-workspace .sidebar-sessions {
+    padding-left: 1.4rem;
+}
 .sidebar-session {
-    padding-block: .25rem;
-    border-inline-start: 2px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    border-radius: 8px;
+}
+.sidebar-session > .err {
+    flex-basis: 100%;
+    margin: 0 .5rem .3rem;
+}
+.sidebar-session:hover {
+    background: var(--hover);
 }
 .sidebar-session-open {
     display: flex;
-    flex-wrap: wrap;
-    gap: .2rem .5rem;
-    width: 100%;
+    align-items: center;
+    gap: .5rem;
+    flex: 1;
+    min-width: 0;
+    min-height: 30px;
     text-align: start;
-    padding: .35rem .5rem;
+    padding: .2rem .5rem;
+    color: var(--text-2);
 }
 .sidebar-session-title {
-    flex-basis: 100%;
-    overflow-wrap: anywhere;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+/* 도구 자리는 늘 차지해서 올렸을 때 제목이 밀리지 않게 하고, 보이는 것만 바꾼다. */
+.sidebar-session > .sidebar-toolbar {
+    flex-wrap: nowrap;
+    gap: 0;
+    padding: 0 .15rem;
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+.sidebar-session:hover > .sidebar-toolbar,
+.sidebar-session:focus-within > .sidebar-toolbar,
+.sidebar-session > .sidebar-toolbar:has([aria-pressed="true"]) {
+    opacity: 1;
+}
+.sidebar-session > .sidebar-toolbar button.ghost {
+    min-width: 22px;
+    padding-inline: .3em;
+    border-color: transparent;
+    color: var(--muted);
+}
+.sidebar-session > .sidebar-toolbar button.ghost:not(:disabled):hover {
+    color: var(--text);
+}
+@media (pointer: coarse) {
+    .sidebar-session > .sidebar-toolbar {
+        opacity: 1;
+    }
+    .sidebar-session > .sidebar-toolbar button.ghost,
+    .sidebar-project-tools > button.ghost {
+        min-width: 32px;
+    }
+    .sidebar-project-tools > button:not(.sidebar-expand) {
+        opacity: 1;
+    }
 }
 .sidebar-status,
 .sidebar-unread {
-    font-size: .8rem;
+    font-size: .75rem;
+    white-space: nowrap;
+    color: var(--muted);
 }
 .sidebar-status-running,
 .sidebar-status-queued {
-    color: var(--accent);
+    color: var(--accent-ink);
 }
 .sidebar-status-failed,
 .sidebar-status-unknown_result,
