@@ -201,6 +201,131 @@ async fn turn(s: &TestServer, session: &str, profile: &str, tools: bool, expecte
     s.wait_status(body["turn"]["id"].as_str().unwrap(), expected).await
 }
 
+async fn manage(s: &TestServer, session: &str, body: Value) -> Value {
+    let (status, response) = s.send(Method::PUT, &format!("{}/management", url(session)), body).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+    response
+}
+
+async fn assert_manifest_noop(s: &TestServer, session: &str, file: &Path, selection: &Value, text: &str) {
+    let db = rusqlite::Connection::open_with_flags(
+        s.data_dir().join("grove.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ).unwrap();
+    let event_count = || db.query_row("SELECT COUNT(*) FROM events WHERE kind='skill.changed'", [], |r| r.get::<_, i64>(0)).unwrap();
+    let before_events = event_count();
+    let before = fs::metadata(file).unwrap();
+    let response = manage(s, session, json!({"op":"save","selection":selection,"text":text})).await;
+    assert_eq!(response["revision"], selection["revision"], "같은 본문 저장은 같은 revision이어야 한다");
+    assert_eq!(response["id"], selection["id"]);
+    assert_eq!(event_count(), before_events, "no-op은 skill.changed를 발행하지 않는다");
+    assert_eq!(fs::read_to_string(file).unwrap(), text);
+    let after = fs::metadata(file).unwrap();
+    assert_eq!(after.modified().unwrap(), before.modified().unwrap());
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        assert_eq!(after.ino(), before.ino(), "no-op은 atomic_write로 파일을 교체하지 않는다");
+    }
+}
+
+#[tokio::test]
+async fn manifest_save_response_revision_preserves_explicit_selection_and_recovery() {
+    let mut s = TestServer::start().await;
+    let (_, session, root) = setup(&s, "manifest-save-response").await;
+    skill(&root, "base", None);
+    skill(&root, "review", Some(json!({"version":1,"skills":["base"],"platforms":[std::env::consts::OS]})));
+    let initial = listing(&s, &session, "").await;
+    let base = binding(&initial, "base");
+    let original = binding(&initial, "review");
+    assert_eq!(choose(&s, &session, &base, true, json!({})).await.0, StatusCode::OK);
+    assert_eq!(choose(&s, &session, &original, true, json!({})).await.0, StatusCode::OK);
+    let route = format!("{}/management", url(&session));
+    let request = json!({"op":"save","selection":original,"text":"MANIFEST_SAVED_BODY"});
+    let response = s.raw(Method::PUT, &route, Some(request.clone()), Some("manifest-save-receipt"), None).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let saved: Value = response.json().await.unwrap();
+    let current = listing(&s, &session, "").await;
+    assert_eq!(saved["revision"], binding(&current, "review")["revision"], "실제 저장 응답과 catalog revision이 일치해야 한다");
+    assert_eq!(saved["id"], original["id"]);
+    assert_ne!(saved["revision"], original["revision"]);
+    assert_eq!(current["selected"], json!([base, original]));
+    assert_eq!(current["validation_error"]["code"], "skill_changed");
+    let mut next = original.clone();
+    next["revision"] = saved["revision"].clone(); // 조회 revision으로 바꾸지 않고 저장 응답을 직접 사용한다.
+    assert_eq!(binding(&current, "review"), next);
+    assert_eq!(choose(&s, &session, &next, true, json!({})).await.1["error"]["code"], "skill_changed");
+    let (status, stale) = s.send(Method::PUT, &route, json!({"op":"save","selection":original,"text":"STALE_MUST_NOT_WRITE"})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{stale}");
+    assert_eq!(stale["error"]["code"], "skill_changed");
+    assert_eq!(fs::read_to_string(root.join("review/SKILL.md")).unwrap(), "MANIFEST_SAVED_BODY");
+    assert_eq!(choose(&s, &session, &original, false, json!({})).await.0, StatusCode::OK);
+    assert_eq!(choose(&s, &session, &next, true, json!({})).await.0, StatusCode::OK);
+    let (status, preview) = s.post(&format!("{}/body", url(&session)), json!({"selection":next})).await;
+    assert_eq!(status, StatusCode::OK, "{preview}");
+    assert_eq!(preview["text"], "MANIFEST_SAVED_BODY");
+    s.restart().await;
+    let restored = listing(&s, &session, "").await;
+    assert_eq!(restored["selected"], json!([base, next]));
+    assert!(restored["validation_error"].is_null());
+    // 유실된 응답을 뒤늦게 확인해도 외부 변경이나 현재 선택을 과거 저장으로 되돌리지 않는다.
+    fs::write(root.join("review/SKILL.md"), "AFTER_SAVED_RECEIPT").unwrap();
+    let replay = s.raw(Method::PUT, &route, Some(request), Some("manifest-save-receipt"), None).await;
+    assert_eq!(replay.status(), StatusCode::OK);
+    assert_eq!(replay.headers()["idempotent-replayed"], "true");
+    assert_eq!(replay.json::<Value>().await.unwrap(), saved);
+    assert_eq!(fs::read_to_string(root.join("review/SKILL.md")).unwrap(), "AFTER_SAVED_RECEIPT");
+    let stale = listing(&s, &session, "").await;
+    assert_eq!(stale["selected"], json!([base, next]));
+    assert_eq!(stale["validation_error"]["code"], "skill_changed");
+    assert_eq!(choose(&s, &session, &next, false, json!({})).await.0, StatusCode::OK);
+    assert_eq!(choose(&s, &session, &binding(&stale, "review"), true, json!({})).await.0, StatusCode::OK);
+    assert!(listing(&s, &session, "").await["validation_error"].is_null());
+}
+
+#[tokio::test]
+async fn manifest_save_same_body_is_noop_and_preserves_generation() {
+    let s = TestServer::start().await;
+    let (_, session, root) = setup(&s, "manifest-save-generation").await;
+    skill(&root, "review", Some(json!({"version":1})));
+    let file = root.join("review/SKILL.md");
+    let original = binding(&listing(&s, &session, "").await, "review");
+    assert_eq!(choose(&s, &session, &original, true, json!({})).await.0, StatusCode::OK);
+    assert_manifest_noop(&s, &session, &file, &original, "BODY_review").await;
+    let unchanged = listing(&s, &session, "").await;
+    assert_eq!(unchanged["selected"], json!([original]));
+    assert!(unchanged["validation_error"].is_null());
+    manage(&s, &session, json!({"op":"set_enabled","selection":original,"enabled":false})).await;
+    let disabled = binding(&listing(&s, &session, "").await, "review");
+    manage(&s, &session, json!({"op":"set_enabled","selection":disabled,"enabled":true})).await;
+    let enabled = binding(&listing(&s, &session, "").await, "review");
+    assert_ne!(enabled["revision"], original["revision"]);
+    let db = rusqlite::Connection::open_with_flags(
+        s.data_dir().join("grove.db"), rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+    ).unwrap();
+    let generation = || db.query_row("SELECT generation FROM skill_states WHERE skill_id=?1",
+        [original["id"].as_str().unwrap()], |r| r.get::<_, i64>(0)).unwrap();
+    assert_eq!(generation(), 2, "두 실제 활성 상태 변경만 generation을 증가시킨다");
+    let response = manage(&s, &session, json!({"op":"save","selection":enabled,"text":"SAVED_WITH_GENERATION"})).await;
+    let current = listing(&s, &session, "").await;
+    let next = binding(&current, "review");
+    assert_eq!(response["revision"], next["revision"]);
+    assert_eq!(response["enabled"], true);
+    assert_eq!(generation(), 2, "본문 저장은 활성 generation을 재설정하거나 증가시키지 않는다");
+    let unversioned = entry(&catalog(&root), "review").revision;
+    let expected = grove::util::sha256_hex(format!("grove-skill-state:2:{unversioned}").as_bytes());
+    assert_eq!(next["revision"], expected);
+    assert_ne!(next["revision"], unversioned);
+    assert_manifest_noop(&s, &session, &file, &next, "SAVED_WITH_GENERATION").await;
+    assert_eq!(generation(), 2);
+    assert_eq!(current["selected"], json!([original]));
+    assert_eq!(current["validation_error"]["code"], "skill_changed");
+    assert_eq!(choose(&s, &session, &original, false, json!({})).await.0, StatusCode::OK);
+    let mut from_response = original;
+    from_response["revision"] = response["revision"].clone();
+    assert_eq!(choose(&s, &session, &from_response, true, json!({})).await.0, StatusCode::OK);
+    assert!(listing(&s, &session, "").await["validation_error"].is_null());
+}
+
 #[tokio::test]
 async fn actual_invocation_uses_registered_tools_profile_and_final_policy_without_grants() {
     let s = TestServer::start().await;

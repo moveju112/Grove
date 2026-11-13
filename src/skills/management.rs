@@ -182,7 +182,7 @@ fn execute(c: &Connection, data: &FsPath, session: &str, mutation: &Mutation) ->
             let index = catalog.index(selection).map_err(api_error)?;
             let record = &catalog.records[index];
             let root = &catalog.roots[record.root];
-            let next = revision(&sha256_hex(text.as_bytes()), record.generation);
+            let next = revision(&super::requirements::load(root, &record.name, text.as_bytes()).map_err(api_error)?.0, record.generation);
             let changed = next != selection.revision;
             if changed {
                 root.fs.atomic_write(&root.path.join(&record.name).join("SKILL.md"), text.as_bytes()).map_err(write_error)?;

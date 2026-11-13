@@ -1,8 +1,13 @@
 <!-- grove-handoff:v1
-{"state":"blocked","remaining":[],"blockers":[{"reason":"manifest를 revision에 결합한 catalog와 src/skills/management.rs::execute의 Mutation::Save 응답 계산이 다르다. 관리 구현은 배정 밖이며 좁은 연결의 추가 승인을 받지 못해 수정하지 않았다.","unblock":"management.rs의 Save next 계산 한 곳을 requirements::load(root, &record.name, text.as_bytes())의 revision과 기존 management::revision 세대 계산에 연결하도록 소유권을 승인/배정하고, manifest 포함 본문 저장·같은 본문 재저장 응답의 revision 일치 회귀를 검증한다."}],"integration_checks":["통합으로 관련 입력이 바뀌면 COMMON 환경·전체 명령 잠금 아래 scripts/build.py test --rust skill_requirements skills skill_management --e2e e2e/skill-requirements.spec.ts e2e/skills.spec.ts"]}
+{"state":"ready","remaining":[],"blockers":[],"integration_checks":["통합으로 관련 입력이 바뀌면 COMMON 환경·전체 명령 잠금 아래 scripts/build.py test --rust skill_requirements skills skill_management --e2e e2e/skill-requirements.spec.ts e2e/skills.spec.ts e2e/skill-management.spec.ts"]}
 -->
 
 # 43 — RESOURCE-013
+
+현재 상태는 **ready, blocker 없음**이다. 완료 경계에서 추가 배정된 Save 연결과 관련 로컬 검증을 끝냈다. 통합 인수 완료를 뜻하지 않는다.
+아래 최초 인계의 blocked·실패·미검증 이력은 당시 기록으로 보존하며, 해소 근거와 현재 검증 범위는 마지막 후속 절에 덧붙인다.
+
+## 최초 인계 기록 — `f9098ee1410e6bcbb1e2722c40d10a04fc61412a`
 
 | 항목 | 값 |
 |---|---|
@@ -115,3 +120,76 @@ manifest 스킬의 catalog revision은 본문+manifest+target이므로 이 응�
 실제 적용에는 기존 `api_error` 변환이 필요하다. 저장의 다른 동작/권한/receipt/파일 I/O를 변경할 필요는 없다.
 승인/소유권 배정 후 manifest 포함 본문 저장·같은 본문 재저장·응답 revision을 사용한 명시적 선택·기존 세대 보존 회귀를 추가해 이 경계를 검증해야 한다.
 현재 소유 범위의 실행 가능한 잔여는 없고, 이 승인 경계만 blocker로 남는다. 통합 완료·TODO 완료로 표시하면 안 된다.
+
+## 완료 경계 후속 — Save revision 연결과 blocker 해소
+
+사용자의 새 후속 요청과 갱신된 `/data/project/paseodog_opus/work/43.md`, `COMMON.md`를 확인했다.
+재개 HEAD는 `f9098ee1410e6bcbb1e2722c40d10a04fc61412a`, branch는 `parallel/b02-skill-requirements`, checkout은 clean이었다.
+고정 기준 `6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c`와 이전 작업을 보존했다.
+이전 진행 중 소유권 유지 판단을 확대 해석하지 않았고, 종료 후 새로 배정된 한 연결에만 후속 권한을 적용했다.
+세션 조회에서 `fast=false`를 확인했으며 runtime model/mode나 workspace 상태는 바꾸지 않았다.
+
+### 변경과 계약
+
+이번 후속 변경은 다음 세 파일뿐이다.
+
+- `src/skills/management.rs`: `execute`의 `Mutation::Save`에서 `next` 계산 한 줄만 바꿨다. `requirements::load(root, &record.name, text.as_bytes()).map_err(api_error)?.0`의 기존 manifest-aware hash를 기존 `management::revision(..., record.generation)`에 전달한다.
+- `tests/skill_requirements.rs`: 실제 HTTP manifest 저장 회귀 두 개와 해당 helper를 추가했다.
+- `work/RESULT-43.md`: 최초 이력을 보존하고 현재 structured 상태와 해소 근거를 갱신했다.
+
+다른 management mutation, 권한 검사, receipt 처리, 파일 쓰기/원자성, API/runner/UI, dependency/검사 설정은 바꾸지 않았다.
+manifest가 없는 경우 기존 loader가 본문 SHA-256을 반환하므로 이전 저장 계약을 유지한다.
+새 public export나 route/공통 연결은 없다.
+
+새 회귀가 확인한 동작은 다음과 같다.
+
+- `manifest_save_response_revision_preserves_explicit_selection_and_recovery`: 실제 저장 응답과 독립적인 재조회 catalog의 revision이 일치한다. 응답 revision을 그대로 명시적 선택에 사용할 수 있다. 기존 선택은 자동 갱신되지 않고 stale로 남으며, 해제 전 새 선택과 stale 저장은 거절한다. 의존 스킬/source를 보존한 명시적 재선택과 재시작 복구가 가능하다. 성공 receipt 재조회는 이후 외부 본문 변경이나 현재 선택을 과거 상태로 되돌리지 않는다.
+- `manifest_save_same_body_is_noop_and_preserves_generation`: 최초 generation과 비활성화/재활성화 후 generation 2 모두 같은 본문 재저장 시 revision·mtime·Unix inode·`skill.changed` 이벤트 수가 바뀌지 않는다. 변경 본문 저장은 generation을 2로 보존하며, 기존 세대 결합식으로 계산한 revision과 catalog/응답이 일치한다. 저장 응답 revision으로 명시적 재선택이 가능하다.
+
+### 수정 전 실제 실패와 수정 후 검증
+
+제품 코드를 바꾸기 전에 새 실제 HTTP 회귀만 실행했다.
+두 회귀 모두 예상한 revision 동등성 검사에서 실패했다. 기존 정적 불일치를 실행으로 확인한 것이며, 이 실패를 삭제하거나 통과로 바꾸지 않는다.
+
+```bash
+source /data/project/paseodog_opus/.envrc.dev
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test","--rust","skill_requirements","--filter","manifest_save_"])'
+```
+
+실패 메시지는 각각 `실제 저장 응답과 catalog revision이 일치해야 한다`, `같은 본문 저장은 같은 revision이어야 한다`였다.
+0개 통과·2개 실패·8개 filter 제외, exit 101이다.
+실행기 시간은 37.84s wall / 10.76s CPU였다.
+전체 로그는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_28049fac.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_28049fac.stderr`다.
+
+그 뒤 승인된 한 줄을 수정하고, 실패/영향 범위와 필수 저장·선택 경계를 한 잠금 안에서 실행했다.
+
+```bash
+source /data/project/paseodog_opus/.envrc.dev
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 -c 'from scripts import build; build.DEV="/data/project/paseodog_opus/.dev"; build.main(["test","--rust","skill_requirements","skill_management","--e2e","e2e/skill-management.spec.ts"])'
+```
+
+| 검사 | 결과 | 실행기가 출력한 wall / CPU |
+|---|---|---|
+| `skill_requirements` 기존 8 + 새 manifest-save 2 | 10개 통과 | Rust 단계 합계 아래 |
+| `skill_management` 저장·권한·receipt·symlink·복구 | 11개 통과 | Rust 단계 합계 49.34s / 27.06s |
+| 실제 debug 서버 빌드 | 통과 | 21.38s / 15.85s |
+| 웹 빌드 | 통과 | 9.87s / 5.13s |
+| `e2e/skill-management.spec.ts` 저장 응답 유실·reload 충돌·비활성화·명시적 재선택 | desktop 1개 통과 | 3.95s / 3.44s |
+
+전체 명령 exit 0이다.
+전체 로그는 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_02053afd.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_02053afd.stderr`다.
+웹 빌드의 기존 React Router future flag/chunk 크기 경고는 그대로이며 설정을 바꾸지 않았다.
+공유 잠금 대기 시간은 위 실행기 시간과 구분하며 절감량을 추정하지 않는다.
+
+### 근거 재사용과 현재 인계
+
+최초 Rust 36개의 이력은 보존한다. 그중 Save 변경 영향을 받는 `skill_requirements` 8개와 `skill_management` 11개는 새 회귀 2개와 함께 다시 통과했다.
+Save를 호출하지 않는 기존 `skills` 17개는 source/revision·명시적 선택·모델 적용 관련 코드/시험 입력이 그대로이므로 재사용했다.
+웹 구현·단위 시험·타입 입력은 변경하지 않아 기존 웹 15개와 typecheck 근거를 재사용했다.
+기존 E2E 4개는 관리 Save를 호출하지 않는 선언/명시적 선택/실제 모델 적용/stale·세션 복구 경로로 관련 입력이 그대로다. 그 근거를 재사용하고, 영향받는 관리 저장·선택 브라우저 spec 1개만 추가 실행했다.
+
+새 검사 이후 제품 코드·시험 입력은 변경하지 않았고 이 RESULT만 갱신했다.
+최초의 manifest 포함 Save 미검증과 소유 경계 blocker는 위 새 배정·실제 red→green 회귀로 해소됐다.
+현재 소유 범위의 구현·연결·검증은 끝났고 `remaining=[]`, `blockers=[]`다.
+이는 이 checkout의 로컬 인수 근거이며 메인의 통합 인수, 전체 회귀, release, 외부 모델 또는 타 OS 실기기 인수를 주장하지 않는다.
+다음 통합 단계는 메인이 실제 통합 입력의 변경 범위를 판단하고 필요한 공통 인수를 수행하는 것이다. TODO 체크·merge/rebase/push/deploy·다른 checkout/불변 검증 작업 수정은 하지 않았다.
