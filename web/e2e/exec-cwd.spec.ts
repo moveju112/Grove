@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { apiCall, ensureProfile, login, openDetails, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
@@ -31,7 +31,7 @@ type Call = {
     target: { cwd: string };
     result: { stdout?: string; stdout_tail?: string; background?: boolean; task_id?: string };
 };
-type Turn = { status: string; tool_calls: Call[] };
+type Turn = { status: string; step: number; tool_calls: Call[] };
 type Task = { id: string; cwd: string; status: string; stdout_tail: string };
 
 test("설정 화면에서 바꾼 cwd는 다음 모델 셸에만 적용되고 명시한 점은 root를 유지한다", async ({ page }) => {
@@ -41,9 +41,10 @@ test("설정 화면에서 바꾼 cwd는 다음 모델 셸에만 적용되고 명
     for (const background of [false, true]) {
         await save("work");
         for (const explicit of [false, true]) {
+            const release = `release-${explicit}`;
             await script({ frames: frames.tool("cwd", "shell", {
-                command: "pwd -P",
-                ...(background ? { background: true } : {}),
+                command: background ? `while [ ! -f '${release}' ]; do sleep 0.02; done; pwd -P` : "pwd -P",
+                ...(background ? { background: true, timeout_ms: 10000 } : {}),
                 ...(explicit ? { cwd: "." } : {}),
             }) });
             await script({ frames: frames.text(["끝"]) });
@@ -54,7 +55,13 @@ test("설정 화면에서 바꾼 cwd는 다음 모델 셸에만 적용되고 명
             expect(pending.target.cwd).toBe(explicit ? "." : "work");
             if (!explicit) await save("next");
             await apiCall("POST", `/tool-calls/${pending.id}/decision`, { decision: "approve", expected_revision: pending.revision });
-            await expect.poll(async () => (await apiCall<Turn>("GET", `/turns/${turn.id}`)).status).toBe("completed");
+            if (background) {
+                // 작업 결과를 보지 못한 첫 final은 보류된다. 그 경계를 확인한 뒤 완료 응답과 해제 표식을 준다.
+                await expect.poll(() => apiCall<Turn>("GET", `/turns/${turn.id}`)).toMatchObject({ status: "running", step: 2 });
+                await script({ frames: frames.text(["작업 결과 확인"]) });
+                writeFileSync(join(root, explicit ? "." : "work", release), "release");
+            }
+            await expect.poll(() => apiCall<Turn>("GET", `/turns/${turn.id}`)).toMatchObject({ status: "completed" });
             const done = (await apiCall<Turn>("GET", `/turns/${turn.id}`)).tool_calls[0]!;
             expect(done.target).toEqual(pending.target);
             const result = done.result.background
