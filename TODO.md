@@ -184,7 +184,7 @@ HTTP middleware만으로 WebSocket 메시지별 권한·출력 backpressure가 �
 - 원본 기준은 고정한다. Mixdog·Paseo의 후속 버전이나 변경을 추적·병합하지 않으며 새로 발견한 보안·회귀 문제는 새 제품에서 독립적으로 해결한다.
 - 초기 인프라는 기존 artifact 호스팅·정적 웹 호스팅·릴레이·푸시 서비스를 우선 활용한다. 서비스 의존성은 남지만 자체 운영 시스템은 늘리지 않는다.
 - 서버 core의 필수 상주 런타임은 Rust 실행 파일 하나다. 셸·MCP 등 실제 사용자 작업 자식 프로세스는 별도로 계측한다.
-- 브라우저·로컬 LLM·STT·Office 변환기는 필요 시 설치·실행하고, 미사용 상태의 기본 메모리 예산에 포함시키지 않는다.
+- 브라우저·로컬 LLM·Office 변환기는 필요 시 설치·실행하고, 미사용 상태의 기본 메모리 예산에 포함시키지 않는다.
 - 의존성을 추가할 때 설치 크기·cold/warm 빌드 비용·플랫폼 지원·라이선스·상주 자원 비용을 확인한다.
 - crate나 feature flag는 명확한 격리 이득이 있을 때만 추가한다. 조합별 변형 빌드가 늘어나는 설계는 피한다.
 
@@ -601,7 +601,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 - [ ] DEC-003 Android 최소 OS·지원 브라우저·PWA 설치 조건을 정하고, 네이티브 셸을 채택할 때만 WebView·배포 ABI를 확정한다.
 - [ ] DEC-004 지원 브라우저와 모바일 브라우저 범위를 정한다.
 - [ ] DEC-005 Windows/Linux의 PWA 설치·프로젝트 분할·터미널·파일·링크·로컬 서버 연결과 OS 자동 시작을 실제 브라우저에서 검증한다.
-- [ ] DEC-006 Android PWA에서 Web Push·화면 꺼짐/절전 후 복귀·마이크·QR·파일 선택·링크 복귀 시제품을 검증한다.
+- [ ] DEC-006 Android PWA에서 Web Push·화면 꺼짐/절전 후 복귀·QR·파일 선택·링크 복귀 시제품을 검증한다.
 - [ ] DEC-007 필수 기능의 PWA 한계를 재현하면 웹 대안을 먼저 비교하고, 해결되지 않는 플랫폼만 최소 네이티브 셸 도입 여부를 결정한다.
 - [x] DEC-008 React + React Router Framework SPA + Vite를 우선 검증하고 공용 UI·pane 상태·PWA 경계를 확정한다. 검증: `migration/RULEBOOK.md` §11, 정적 SPA·CSP·SW·분할 pane e2e.
 - [x] DEC-009 Axum + Tokio + 필요한 Tower 계층을 우선 검증하고 SQLite 접근·타입 생성 도구는 지원 환경·동시성·빌드 비용으로 선정한다. 검증: `migration/RULEBOOK.md` §1·§11(Axum/Tokio/tower-http, rusqlite bundled, ts-rs), Rust 통합 시험 전체.
@@ -1334,7 +1334,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 - [ ] SETTINGS-009 MCP·스킬·훅 관리 화면을 구현한다.
 - [ ] SETTINGS-010 read-only 원본 Claude/Codex 설정 화면을 구현한다.
 - [ ] SETTINGS-011 셸·작업 한도·프로세스 격리·기본 작업 위치 설정을 구현한다.
-- [ ] SETTINGS-012 음성 provider·언어·모델·장치·GPU 설정을 구현한다.
+- [ ] SETTINGS-012 TTS provider·언어·모델·출력 장치·GPU 설정을 구현한다.
 - [ ] SETTINGS-013 호스트·페어링·릴레이·접속 기기·접속 암호 설정을 구현한다.
 - [x] SETTINGS-014 알림·작업 완료·승인 요청·소리 설정을 구현한다. 검증: 이 기기 설정으로 작업 완료·실패(`completed`/`failed`/`interrupted`, 사용자 취소 제외), 승인 요청(`awaiting_approval`), 예약·업데이트 서버 알림(`notification.created`)과 소리를 각각 켠다(기본 모두 끔). 종류를 켤 때 브라우저 권한을 묻고 허용/미요청/차단/미지원을 표시하며, 권한이 없으면 화면 알림을 생략하고 소리만 재생한다. 앱이 열린 뒤 받은 이벤트만 다루고 화면을 보고 있으면 알리지 않는다. 같은 브라우저의 여러 탭은 사건 tag를 10분간 공유해 한 번만 알린다. 알림 본문에 대화·오류 내용을 넣지 않고, 누르면 해당 대화를 현재 배치에 연다. 시험 알림·항목/전체 기기 복원 제공. 앱을 닫은 동안의 OS Push는 PWA Push 범위로 별도(서버 영속 알림 목록은 기존대로). 단위 9개(`web/app/state/attention.test.ts`, 시간/기기 복원)·타입/빌드·선택 E2E 8개(`web/e2e/attention.spec.ts`, 알림 목록·설정 복원·시간 표시 회귀) 통과. 실제 OS 알림 센터·소리 출력은 브라우저 대체 객체로만 확인했다.
 - [x] SETTINGS-015 AI 제목·시간 표시·reasoning·테마·글꼴·입력 설정을 구현한다. 검증: AI 제목은 기존 서버/프로젝트/대화 범위 `session.auto_title`(기본 끔), reasoning·답만 보기·도구 펼침·테마·글자 크기·Enter 전송은 기존 기기 설정을 유지한다. 시간 표시는 이 기기 설정으로 시계 형식(시스템·24시간·12시간)과 지난 시각(날짜·시각/7일 이내 상대 시간)을 추가하고, 서버 UTC 값은 바꾸지 않는다. 대화 목록·검색·알림·호스트·기기 토큰·모델 확인·예약 실행 기록을 공용 표시로 모았으며 만료·예정·시작 기준 시각은 항상 절대 시각, 정확한 시각은 `title`로 제공한다. 1분 이내 기기 시계 차이는 "방금 전", 잘못된 값은 "알 수 없는 시각", 알 수 없는 저장값은 기본값으로 읽는다. 항목/전체 기기 복원에 포함. 턴 시간 표시·서버 재시작 복구는 USAGE-009로 별도. 단위 6개(`web/app/state/time.test.ts`, `deviceReset.test.ts`)·타입/빌드·선택 E2E 12개(`web/e2e/time-display.spec.ts`, 설정 복원·검색, 페어링·알림·호스트 회귀) 통과. 예약·검색 패널·모델 목록 조회 시각은 타입/빌드만 확인했다.
@@ -1365,7 +1365,7 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 - [ ] PC-009 OS 알림·알림 클릭·해당 세션 이동을 구현한다.
 - [ ] PC-010 브라우저 파일 picker·drag/drop·clipboard와 서버 프로젝트 폴더 탐색을 구분하고 미지원 API 대안을 제공한다.
 - [ ] PC-011 OAuth callback·pairing link·외부 링크의 탭/PWA 복귀와 origin 검증을 구현한다.
-- [ ] PC-012 마이크 권한·녹음·audio playback을 구현한다.
+- [ ] PC-012 audio playback을 구현한다.
 - [ ] PC-013 Linux systemd user 서비스 등록·해제·로그아웃 이후 실행 안내를 구현한다.
 - [ ] PC-014 Windows 로그인 자동 시작·서비스/작업 등록 방식을 구현한다.
 - [ ] PC-015 관리자 권한 없이 가능한 설치 범위를 기본으로 한다.
@@ -1386,9 +1386,8 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 - [ ] ANDROID-007 Web Push subscription 등록·갱신·해제·알림 권한 요청을 구현하고 브라우저별 지원을 검증한다.
 - [ ] ANDROID-008 완료·승인 요청 알림과 탭 시 정확한 세션 이동을 구현한다.
 - [ ] ANDROID-009 알림 payload에 비밀정보·전체 대화를 넣지 않는다.
-- [ ] ANDROID-010 마이크·카메라·파일 권한의 요청·거부·영구 거부를 처리한다.
+- [ ] ANDROID-010 카메라·파일 권한의 요청·거부·영구 거부를 처리한다.
 - [ ] ANDROID-011 브라우저 이미지/문서 picker·File/Blob·임시 객체 수명·업로드를 구현한다. content URI 처리는 셸 채택 시 별도로 검증한다.
-- [ ] ANDROID-012 녹음 중 interruption·전화·권한 철회·background 전환을 처리한다.
 - [ ] ANDROID-013 한글 IME·키보드 높이·back 동작·텍스트 선택을 검증한다.
 - [ ] ANDROID-014 외부 브라우저 OAuth 후 앱 복귀와 취소를 처리한다.
 - [ ] ANDROID-015 조건부: 네이티브 Android 셸 채택 시에만 APK 설치/업데이트·unknown sources 권한·다운로드 무결성을 처리한다.
@@ -1407,7 +1406,7 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 - [ ] WEB-007 새 UI 버전과 오래 열린 탭의 API 호환·갱신 안내를 구현한다.
 - [x] WEB-008 자산 cache와 사용자 대화 cache의 범위를 분리한다. 검증: service worker cache는 앱 자산(`grove-shell-<version>`)만, `/api/` 응답은 cache하지 않음(활성화 후 cache 항목 검사), 대화·초안은 서버 API와 초안 저장소로 분리(`web/e2e/pwa-update.spec.ts`).
 - [ ] WEB-009 오프라인 화면·draft는 지원하되 서버 작업 실행 가능으로 오인시키지 않는다.
-- [ ] WEB-010 지원 브라우저의 알림·마이크·clipboard·파일 API 차이를 표시한다.
+- [ ] WEB-010 지원 브라우저의 알림·clipboard·파일 API 차이를 표시한다.
 - [ ] WEB-011 기본 제품으로 PWA manifest·설치 안내·service worker·Web Push를 구현하고 지원 브라우저별 한계를 표시한다.
 - [ ] WEB-012 서버 정적 UI 제공을 지원한다면 headless 최소 빌드와 UI 포함 배포를 분리한다.
 - [ ] WEB-013 앱 ID·이름·아이콘·start URL·scope를 정의하고 browser/PWA 링크에서 같은 세션을 복원한다.
@@ -1423,24 +1422,16 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 - [ ] WEB-023 설치형 PWA 미지원 환경에서는 같은 기능의 일반 웹 접속과 제한을 안내한다.
 - [ ] WEB-024 PWA 핵심 흐름 통과 여부를 셸 도입 결정에 연결하고, 미충족 기능을 숨기지 않는다.
 
-## 25. 음성·STT·TTS
+## 25. 음성 재생·TTS
 
-근거: S07, S09의 speech/local-stt/speech-gpu 계열, S11의 voice 메시지.
+사용자 결정: 마이크 녹음·음성 입력·STT는 제품 범위에서 제외한다. TTS·오디오 재생은 별도 기능으로 유지한다. 제외된 항목을 구현 완료로 집계하거나 후속 배치에 다시 배정하지 않는다.
 
-- [ ] AUDIO-001 dictation 입력과 양방향 voice mode의 현재 지원 범위를 확인한다.
-- [ ] AUDIO-002 녹음 시작·중지·취소·장치 선택·권한 오류를 구현한다.
-- [ ] AUDIO-003 audio chunk 순서·encoding·sample rate·resampling을 정의한다.
-- [ ] AUDIO-004 원격 STT provider 선택·인증·언어·모델 설정을 구현한다.
-- [ ] AUDIO-005 로컬 STT 모델 다운로드·검증·선택·삭제를 선택 기능으로 구현한다.
-- [ ] AUDIO-006 Linux x86_64/ARM64·Windows의 CPU 추론 지원을 검증한다.
-- [ ] AUDIO-007 GPU backend는 capability에 따라 노출하고 미지원 환경을 강제하지 않는다.
-- [ ] AUDIO-008 무음·짧은 입력·한국어 경계·중복 전사·최종 전사 병합을 처리한다.
-- [ ] AUDIO-009 전사 결과 편집·전송 전 확인과 자동 전송 설정을 구분한다.
+- [ ] AUDIO-006 Linux x86_64/ARM64·Windows의 TTS CPU 추론 지원을 검증한다.
+- [ ] AUDIO-007 TTS GPU backend는 capability에 따라 노출하고 미지원 환경을 강제하지 않는다.
 - [ ] AUDIO-010 TTS provider·voice·속도·재생·중지·오류를 구현한다.
-- [ ] AUDIO-011 답변 취소·새 음성 입력 때 기존 재생과 모델 요청을 일관되게 처리한다.
-- [ ] AUDIO-012 음성 입력·텍스트 히스토리·모델 context의 중복을 방지한다.
-- [ ] AUDIO-013 오디오를 기본 영구 보관하지 않고 보관 정책과 사용자 동의를 정한다.
-- [ ] AUDIO-014 사용하지 않을 때 STT/TTS 모델·GPU 메모리를 해제한다.
+- [ ] AUDIO-011 답변 취소·새 메시지 입력 때 기존 TTS 재생과 모델 요청을 일관되게 처리한다.
+- [ ] AUDIO-013 생성한 TTS 오디오를 기본 영구 보관하지 않고 보관 정책과 사용자 동의를 정한다.
+- [ ] AUDIO-014 사용하지 않을 때 TTS 모델·GPU 메모리를 해제한다.
 
 ## 26. 외부 연동·선택 도구의 누락 방지
 
@@ -1714,7 +1705,7 @@ Rust가 전체 빌드나 모델 응답 시간을 자동으로 줄인다고 가�
 - [ ] START-005 실제 사용할 계정의 허용된 로그인과 첫 provider streaming 대화를 검증한다. 인증 blocker는 mock 성공으로 대체하지 않는다.
 - [x] START-006 파일 읽기와 승인 필요한 제한된 파일 편집 도구를 연결한다. 검증: `tests/turns.rs::read_tool_runs_automatically_and_result_reaches_model`, `approved_edit_applies_once_and_conflicts_if_file_changed`.
 - [x] START-007 FLOW-03~06에 따라 거부·중복 접수·연결 끊김·서버 재시작을 주입하고 파일 hash·이벤트·작업 ID로 부작용을 검사한다. 검증: `migration/judge/README.md` FLOW-03~06, `tests/turns.rs`.
-- [ ] START-008 Windows/Linux PWA의 분할·터미널·로컬 서버 연결과 Android PWA의 화면 꺼짐/절전 후 푸시·마이크·process death·링크 복귀를 먼저 검증한다. 미충족이 확인될 때만 셸 대안을 비교한다.
+- [ ] START-008 Windows/Linux PWA의 분할·터미널·로컬 서버 연결과 Android PWA의 화면 꺼짐/절전 후 푸시·process death·링크 복귀를 먼저 검증한다. 미충족이 확인될 때만 셸 대안을 비교한다.
 - [ ] START-009 선택한 구조의 빌드·메모리 비용을 측정하고 후속 기능 구현 전에 병목을 확인한다.
 - [ ] START-010 검증된 구조에 P3 이후 상세 기능을 순서대로 연결한다.
 - [ ] START-011 기존 대화·첨부·압축 이력의 비식별 fixture를 import해 열람과 모델 context 재개 가능성을 초기에 확인한다.
@@ -1880,17 +1871,13 @@ Anthropic/OpenAI/Gemini/호환 endpoint의 결과를 각각 기록하고, OpenRo
 - [x] SCHEDULE-006 완료/실패/결과 불명 receipt와 알림 저장을 연결하고 모델 후속 호출을 별도 정책으로 둔다. 검증: AUTO-011·012와 원격 감시(§33). 예약 실행 종료와 원격 감시 종료는 알림·note로 저장하고 모델을 다시 부르지 않으며, 결과 불명은 interrupted·timed_out으로 남긴다(`once_fires_exactly_once_and_leaves_persistent_notification`, `tests/remote_watches.rs`).
 - [x] SCHEDULE-007 고정 시계 시험과 실제 짧은 주기 실행을 병행해 시계 변경·중복 기동·복구·감시 취소를 검증한다. 검증: 고정 시계 단위 시험(시계 역행·도약·놓친 실행)과 100ms 실제 주기 통합 시험을 함께 쓴다. 같은 데이터 디렉터리의 두 번째 서버 시작은 잠금으로 거부되고 예약은 한 번만 실행된다(`duplicate_server_start_is_refused_and_schedule_fires_once`). 재시작 복구·원격 감시 취소는 `restart_interrupts_running_without_replay_and_records_missed`·`cancel_stops_only_watching_and_failure_value_fails`.
 
-### 35.13 음성 입력·재생
+### 35.13 음성 재생
 
-상위: AUDIO-001~014, ANDROID-010~012.
+상위: AUDIO-006·007·010·011·013·014, PC-012.
 
-- [ ] VOICE-001 기기 권한·마이크 선택·녹음 상태·취소·interruption을 플랫폼별로 구현한다.
-- [ ] VOICE-002 chunk sequence·sample rate·encoding·resampling·전송 한도를 처리한다.
-- [ ] VOICE-003 STT 요청과 partial/final 전사를 연결하고 한국어 경계·중복 최종문·무음을 처리한다.
-- [ ] VOICE-004 전사 편집·전송 전 확인·자동 전송 설정과 draft를 연결한다.
 - [ ] VOICE-005 TTS voice/속도·stream 재생·stop·새 입력 때 이전 재생 정리를 구현한다.
-- [ ] VOICE-006 로컬 모델 다운로드·hash·로드·선택 backend·미사용 unload를 선택 기능으로 구현한다.
-- [ ] VOICE-007 실제 지원 기기에서 permission 거부·전화/오디오 중단·background 복귀·네트워크 단절·장시간 자원 해제를 시험한다.
+- [ ] VOICE-006 로컬 TTS 모델 다운로드·hash·로드·선택 backend·미사용 unload를 선택 기능으로 구현한다.
+- [ ] VOICE-007 실제 지원 기기에서 재생 제한·전화/오디오 중단·background 복귀·네트워크 단절·장시간 재생 자원 해제를 시험한다.
 
 ### 35.14 데이터 import·업데이트·복구
 
