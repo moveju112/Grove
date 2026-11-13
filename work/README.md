@@ -34,14 +34,14 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 24 | parallel/b02-exec-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings | `wks_4a12061aaef2c918` | 셸·작업 한도·격리·기본 위치 설정 (`7b3949d` 기준) |
 | 25 | parallel/b02-update-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings | `wks_9ec8fd34396cf19a` | 서버 업데이트 채널·버전 표시 (`7b3949d` 기준) |
 | 26 | parallel/b02-browser-caps | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps | `wks_9d9878d624297a99` | 브라우저 알림·clipboard·파일 API 차이 표시 (`7b3949d` 기준) |
-| 27 | parallel/b02-pwa-recovery | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery | 생성 후 기록 | PWA 호환·오프라인·다중 탭 복구 (14 이월) |
-| 28 | parallel/b02-skill-management | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-28-skill-management | 생성 후 기록 | Grove 스킬 추가·저장·reload·활성화 |
-| 29 | parallel/b02-hook-execution | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-29-hook-execution | 생성 후 기록 | 승인·한도·취소 경계를 따르는 hook 실행 |
-| 30 | parallel/b02-navigation-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context | 생성 후 기록 | 호스트·프로젝트·세션 현재 위치와 탐색 |
+| 27 | parallel/b02-pwa-recovery | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery | `wks_9a7c204337ac8249` | PWA 호환·오프라인·다중 탭 복구 (14 이월, `551f551` 기준) |
+| 28 | parallel/b02-skill-management | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-28-skill-management | `wks_e343b3a56e3a22d6` | Grove 스킬 추가·저장·reload·활성화 (`551f551` 기준) |
+| 29 | parallel/b02-hook-execution | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-29-hook-execution | `wks_31bb4a6cdc6ff8bc` | 승인·한도·취소 경계를 따르는 hook 실행 (`551f551` 기준) |
+| 30 | parallel/b02-navigation-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context | `wks_73d51bb0a7f9b465` | 호스트·프로젝트·세션 현재 위치와 탐색 (`551f551` 기준) |
 
 공통 연결: `src/lib.rs::router`(25·28·29), `src/store.rs` MIGRATIONS 끝(28·29), `Settings.tsx` mount(24·25·26). 27은 PWA/API 요청 경계·서버 작업 차단, 28은 스킬, 29는 hook 이벤트/실행, 30은 Workspace header 밖의 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30으로 분리한다. `src/source_settings/`는 21, `src/skills/`는 28 소유다.
 
-자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 사용자가 승인한 현재 목표는 활성 기능 workspace 20개다. 21~26은 2026-11-13 자동 시작했고 이후 준비 작업도 세션 이력·clean·경로 일치 확인 후 한 번만 자동 시작한다. 25는 모델 제공자 오류로 종료돼 세션과 workspace를 보존하며 자동 재시작하지 않는다.
+자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 최신 사용자 요청으로 목표는 활성 기능 workspace 10개다. 31~40 증설은 취소했고 해당 workspace/기능 세션을 만들지 않았다. 21~26은 자동 시작했으며 21·25의 제공자 시스템 오류는 사용자 승인으로 기존 세션에 1회 재개 요청을 접수했다. 재실패는 자동 반복하지 않고 보존한다. 이후 준비 작업도 세션 이력·clean·경로 일치 확인 후 한 번만 시작한다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.

@@ -100,16 +100,24 @@ Rust 검사는 기능 세션과 같은 잠금(`flock /home/ubuntu/.cache/grove-r
 진행 중인 기능 세션에 메시지를 보내거나 작업을 대신하지 않는다.
 
 ## 자동 순환(사용자 명시 승인 시)
-- 현재 사용자는 기능 세션 자동 시작과 반복 운영, 활성 기능 workspace 20개로의 증설을 승인했다. 점검은 메인 세션을 대상으로 3분 heartbeat, 만료·실행 횟수 제한 없음이다. 사용자 중지·권한 철회가 최우선이다.
+- 현재 사용자는 기능 세션 자동 시작과 반복 운영을 승인했고 최신 요청으로 목표를 활성 기능 workspace 10개로 되돌렸다. 20개 증설은 취소됐다. 점검은 메인 세션 대상 3분 heartbeat, 만료·실행 횟수 제한 없음이다. 사용자 중지·권한 철회가 최우선이다.
 - 새 세션 설정은 Paseo provider `paseodog`, model `openai-oauth/gpt-6.1-sol`, `thinkingOptionId: high`, `modeId: bypass`다. 실제 provider 모델 목록과 반환된 세션 설정으로 확인한다. 승인 경계는 이 문서와 COMMON 그대로이며 도구 실행 모드가 추가 권한을 부여하지 않는다.
 - 세션 상태는 각 README 행의 정확한 cwd로 조회한다. 무필터 `list_agents`가 호출자 workspace만 반환할 수 있으므로 그 결과를 전체 목록으로 취급하지 않는다. archived 세션도 포함해 미시작과 종료를 구분한다.
 - 미시작 판정은 workspace 경로·브랜치·기준 SHA 일치, 세션 이력 없음, 정확한 `RESULT-NN.md` 없음, tracked/untracked clean을 모두 만족해야 한다. `create_agent`는 정확한 workspace ID와 완료 알림을 지정해 한 번만 호출한다. 생성 응답이 유실되면 먼저 그 cwd의 세션 이력을 다시 확인하고 중복 생성하지 않는다.
 - 첫 메시지는 ENTRY·COMMON·번호 문서를 정본으로 지정하고, 번호 문서의 사용자 흐름·소유 경로·완료 조건과 로컬 커밋 권한을 전달한다. 다른 기능·checkout은 수정하지 않고 RESULT와 관련 커밋을 남겨 종료한다. 기능 세션은 재위임·merge·TODO 체크·workspace 정리를 하지 않는다.
-- 작업 완료 알림은 빠른 깨우기 수단이고 heartbeat가 누락을 복구한다. 알림만으로 성공·완료를 판정하지 않고 상태·인계·commit·clean을 다시 확인한다. running/initializing·승인 대기·error·취소·미커밋 상태는 자동 재실행·중단·메시지 전송하지 않는다.
+- 작업 완료 알림은 빠른 깨우기 수단이고 heartbeat가 누락을 복구한다. 알림만으로 성공·완료를 판정하지 않고 상태·인계·commit·clean을 다시 확인한다. running/initializing·승인 대기·취소 상태는 자동 재실행·중단·메시지 전송하지 않는다. 미커밋 변경도 임의 인수하지 않는다. 사용자 승인한 제공자 시스템 오류의 기존 세션 재개만 아래 예외를 따른다.
 - 메인에는 하나의 heartbeat만 유지한다. 같은 이름·대상으로 `create_heartbeat`하면 기존 예약을 갱신하므로 만료·횟수 인자를 생략해 무기한으로 만든다. 예약기는 메인 실행 중 새 실행을 거절하므로 중복 통합을 시작하지 않는다. 메인 세션을 archive하면 감시도 끝나므로 자동 운영 중 archive하지 않는다.
 - MCP의 `list_schedules`·`inspect_schedule`는 new-agent 예약만 대상으로 하므로 heartbeat가 목록에 없거나 `Schedule not found`여도 삭제됐다고 판단하지 않는다. heartbeat 응답의 target/status/nextRunAt/expiresAt/maxRuns와 실제 메인 재진입을 확인한다.
 - 완료 작업의 1~5단계를 마친 뒤 미시작 기존 workspace와 새 보충 workspace를 시작한다. 진행 중인 workspace의 기준·지침은 바꾸지 않는다. TODO가 소진됐거나 남은 후보가 승인·외부 환경·소유권 충돌로 막혔다면 개수를 억지로 채우지 않고 대기하며 이유를 보고한다.
 - 무한 반복은 기존 미완료 TODO를 계속 처리한다는 뜻이다. 새 기능을 임의 발명하거나 같은 항목을 반복 생성하지 않는다. 검증 실패 작업은 보존하고 독립 작업만 계속한다. push·배포·의존성 추가/업그레이드·강제 삭제·브랜치 삭제·운영 서비스 변경은 승인 범위 밖이다.
+
+## 제공자 시스템 오류의 자동 재시도
+사용자는 `An error occurred while processing your request. You can retry your request` 형태의 제공자 오류에서 기존 기능 세션의 자동 재개를 승인했다. 기능 세션당 한 번만 자동 재시도하며 재실패는 보존·보고한다. 취소·권한 거부/대기·검사 실패·quota/인증 오류·메인 통합 실패를 이 예외로 우회하지 않는다.
+1. 정확한 agent ID의 상태가 error이고 activeTurn·pendingPermissions가 없으며 lastError가 해당 시스템 오류인지 확인한다. workspace/cwd/branch와 변경 소유권은 원래 배정과 일치해야 한다.
+2. 에이전트 label `grove.autoloop.system-retry.count`가 없거나 0일 때만 예약한다. `update_agent`로 count=`1`, request-id와 state=`reserved`를 먼저 patch한다. 기존 `paseo.*` label은 보내지 않는다(서버가 관리하며 사용자 label patch는 병합된다).
+3. 오류 직후 연속 재호출하지 않고 다음 3분 점검에서 기존 세션에 `paseo agent send --no-wait --json <exact-agent-id> <resume-prompt>`를 보낸다. 최초 프롬프트·현재 worktree·유효한 검사에서 이어 가고 기존 변경/commit을 보존하라고 지시한다. 새 세션을 만들지 않는다.
+4. `status: sent`는 접수이지 완료가 아니다. 접수 후 retry state를 `sent`로 기록한다. 전송 응답 유실·reserved 상태에서는 새로 보내지 말고 해당 세션의 최신 사용자 메시지/실행 상태로 접수를 판별한다. 성공·error 알림과 heartbeat로 후속 상태를 확인한다.
+5. 재개 후 다시 error면 같은 count를 유지하고 자동 재시도를 멈춘다. stage/commit/TODO 완료·workspace 정리 조건은 정상 작업과 같으며 오류를 통과로 숨기지 않는다.
 
 ## 최종 보고
 통합 기능·커밋, 통과/실패/미실행, 체크한 TODO, 보류 작업, 제거한 정확한 대상,
