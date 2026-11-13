@@ -36,8 +36,8 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 39 | parallel/b02-definition-updates | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-39-definition-updates | `wks_10afe7eb9a765704` | 기본 정의 수정본 보존·비교·선택 적용 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, branch/HEAD/clean 확인, 미시작) |
 | 40 | parallel/b02-deferred-tools | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-40-deferred-tools | `wks_bd0e6e72588493d4` | 도구 schema 지연 로딩·모델 입력 안정성 (`f4a4a702bcd342e159efe8801d429ad181391651` 기준, branch/HEAD/clean 확인, 미시작) |
 | 41 | parallel/b02-agent-overview | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-41-agent-overview | `wks_720a531310d51814` | 기본 역할·모델 상속·지침·실행 규칙 개요 (`f4a4a702bcd342e159efe8801d429ad181391651` 기준, branch/HEAD/clean 확인, 미시작) |
-| 42 | parallel/b02-git-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-42-git-context | 준비 중 | Git 위치·PR·CI·실행 권한 (`work/42.md` 사전 커밋 기준, 미시작) |
-| 43 | parallel/b02-skill-requirements | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-43-skill-requirements | 준비 중 | 스킬 요구 도구·플랫폼·의존성 (`work/43.md` 사전 커밋 기준, 미시작) |
+| 42 | parallel/b02-git-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-42-git-context | `wks_b1b9ac86342157d0` | Git 위치·PR·CI·실행 권한 (`6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c` 기준, branch/HEAD/clean 확인, 미시작) |
+| 43 | parallel/b02-skill-requirements | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-43-skill-requirements | `wks_16d56311c5dc7ab8` | 스킬 요구 도구·플랫폼·의존성 (`6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c` 기준, branch/HEAD/clean 확인, 미시작) |
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
@@ -81,8 +81,8 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 | 번호 | 작업 브랜치·tip | 통합 SHA | RESULT 경로·검증 근거 | workspace ID·절대 경로 | 정리 상태 | 보충 번호 |
 |---|---|---|---|---|---|---|
-| 27 | `parallel/b02-pwa-recovery` · `2885f69f83bf3da190c2c24d74eaeae5969f7619` | `45bdce0` | `work/RESULT-27.md`; 고정 candidate 단위 36·타입·E2E 25 통과. WEB-009 완료; 실기기 잔여는 TODO·이월 보존 | `wks_9a7c204337ac8249` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery` | 종료 세션 archive·디렉터리 제거 응답 확인, Git/활성 목록 대조 대기; 브랜치 유지 | 42 |
-| 30 | `parallel/b02-navigation-context` · `fad671346d99800d1cecdec11cafec9a8027e907` | `45bdce0` | `work/RESULT-30.md`; 기능 단위/Rust 근거와 navigation E2E 3개 포함 고정 인수 통과。UI-003 완료、SETTINGS-021은 37 담당 | `wks_73d51bb0a7f9b465` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context` | 종료 세션 archive·디렉터리 제거 응답 확인, Git/활성 목록 대조 대기; 브랜치 유지 | 43 |
+| 27 | `parallel/b02-pwa-recovery` · `2885f69f83bf3da190c2c24d74eaeae5969f7619` | `45bdce0` | `work/RESULT-27.md`; 고정 candidate 단위 36·타입·E2E 25 통과. WEB-009 완료; 실기기 잔여는 TODO·이월 보존 | `wks_9a7c204337ac8249` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery` | 종료 세션 archive·디렉터리·Git 등록·활성 목록 제거 확인; 브랜치 유지 | 42 |
+| 30 | `parallel/b02-navigation-context` · `fad671346d99800d1cecdec11cafec9a8027e907` | `45bdce0` | `work/RESULT-30.md`; 기능 단위/Rust 근거와 navigation E2E 3개 포함 고정 인수 통과. UI-003 완료, SETTINGS-021은 37 담당 | `wks_73d51bb0a7f9b465` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context` | 종료 세션 archive·디렉터리·Git 등록·활성 목록 제거 확인; 브랜치 유지 | 43 |
 | 25 | `parallel/b02-update-settings` · `f9df06987637afc8c6c8b74e702a0ae489cedf8e` | `502ef6c` | `work/RESULT-25.md`; 기능 Rust/단위/E2E와 고정 candidate 43a51d0의 Rust 28/타입/E2E 10 통과. 실제 자동 설치는 비목표로 보존 | `wks_9ec8fd34396cf19a` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings` | workspace·종료 세션 archive, 디렉터리·Git 등록·활성 목록 제거 확인; 브랜치 유지 | 40 |
 | 29 | `parallel/b02-hook-execution` · `e8695cbeaba3ce56d48af7633c546c508c6c0a31` | `502ef6c` | `work/RESULT-29.md`; 지원 범위 인수·migration 7·cwd 8 및 고정 candidate 검사 통과. 실패/수정과 미지원 범위는 TODO·이월·로그 보존 | `wks_31bb4a6cdc6ff8bc` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-29-hook-execution` | workspace·종료 세션 archive, 디렉터리·Git 등록·활성 목록 제거 확인; 브랜치 유지 | 41 |
 | 21 | `parallel/b02-source-skills-hooks` · `d369ef87845d36f391b4e747c90f6c09b31ed409` | `339f516` | `work/RESULT-21.md`; Rust 23·단위 12·기능 E2E 4 및 통합 관련 E2E 통과. TOML parser 승인 blocker는 RESOURCE-018·이월에 보존 | `wks_ee49ecc425d4a36e` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-21-source-skills-hooks` | workspace·종료 세션 2개 archive, 디렉터리·Git 등록·활성 목록 제거 확인, 브랜치 유지 | 38 |
@@ -132,7 +132,7 @@ b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01
 | 33 | SETTINGS-004 역할별 모델/context/disabled | `work/RESULT-33.md` | HTTP fallback과 hook 결합 포함 현재 통합 인수 완료. 역할별 설정은 별도 미배정 |
 | 29 | RESOURCE-016 미지원 PreToolUse/SessionEnd·나머지 발생 경로, RESOURCE-017 Windows command | `work/RESULT-29.md` | Linux bash/sh 지원 범위 인수 완료. 원래 작업 차단·세션 종료/추가 lifecycle 계약을 정한 후 후속 배정; Windows 실행 환경 필요 |
 | 11 | `RESOURCE-012` metadata/root 간 alias·hardlink 계약, Windows 경로/junction 검증 | `work/RESULT-11.md` | 보류: 지원 계약·Windows 환경 확인 필요 |
-| 14·27 | `WEB-007`·`WEB-016` Safari/iOS/Android 설치형 장기 탭·실제 자동 eviction | `work/RESULT-14.md`, `work/RESULT-27.md` | Linux/Chromium 인증·전송·cold start·多탭·실제 quota/정책 인수 완료. 해당 실기기·저장 압박 환경 확보 뒤 수동 검증; 같은 blocker로 재개하지 않음 |
+| 14·27 | `WEB-007`·`WEB-016` Safari/iOS/Android 설치형 장기 탭·실제 자동 eviction | `work/RESULT-14.md`, `work/RESULT-27.md` | Linux/Chromium 인증·전송·cold start·다중 탭·실제 quota/정책 인수 완료. 해당 실기기·저장 압박 환경 확보 뒤 수동 검증; 같은 blocker로 재개하지 않음 |
 | 20 | `FILEUI-007` 실제 GUI 편집기·Windows/macOS·서비스 세션 검증 | `work/RESULT-20.md` | 보류: 해당 플랫폼·GUI 환경 필요 |
 | 23 | `PC-005` 설치형 standalone PWA native 창 수명 확인 | `work/RESULT-23.md` | 보류: 설치형 PWA 환경 필요 |
 | 24·31 | `SETTINGS-011` Windows/macOS 실행·경계·복구 실측 | `work/RESULT-24.md`, `work/RESULT-31.md` | Linux 연결·브라우저·hook 분리 인수 완료. 플랫폼 실측은 해당 OS 환경 필요 |
