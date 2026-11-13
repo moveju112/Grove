@@ -12,6 +12,7 @@ import { Pairings } from "./Pairing";
 import { ProfileCatalog } from "./ProfileCatalog";
 import { ProfileCapabilities } from "./ProfileCapabilities";
 import { ProfileContextPolicy } from "./ProfileContextPolicy";
+import { ProfileFallback } from "./ProfileFallback";
 import { Memories } from "./Memories";
 import { useCapability } from "../state/capabilities";
 import { DeviceSettingsReset } from "./SettingsReset";
@@ -397,6 +398,7 @@ function Profiles() {
                         <CheckStatus c={p.last_check} />
                         <ProfileCapabilities profile={p} />
                         <ProfileContextPolicy profile={p} />
+                        <ProfileFallback profile={p} profiles={list.data ?? []} />
                         {management !== false && <button className="ghost small" onClick={() => void save.run(() =>
                             api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, enabled: p.enabled === false }, { requires: ["model_management_v1"] })
                         )}>{p.enabled === false ? "활성화" : "비활성화"}</button>}

@@ -35,6 +35,7 @@ pub mod idem;
 pub mod model_capabilities;
 pub mod model_limits;
 pub mod model_headers;
+pub mod model_fallback;
 pub mod models;
 pub mod changes;
 pub mod procs;

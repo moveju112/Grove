@@ -378,6 +378,7 @@ fn validate_options(protocol: &str, o: &Value) -> ApiResult<()> {
                 }
             }
             "capabilities" => {}
+            "fallback" => crate::model_fallback::validate(protocol, v)?,
             // 가격표(USAGE-003): 백만 token당 단가. 통화·버전을 함께 저장하고, 없으면 비용은 "알 수 없음"이다.
             "pricing" => {
                 let p = v.as_object().ok_or_else(|| ApiError::invalid("pricing은 객체여야 합니다"))?;
@@ -430,6 +431,9 @@ pub async fn create_profile(State(app): State<App>, Owner(p): Owner, headers: He
             secret_info(tx, s)?;
         }
         let id = crate::util::new_id();
+        if let Some(fallback) = options.get("fallback") {
+            crate::model_fallback::validate_references(tx, &id, fallback)?;
+        }
         tx.execute(
             "INSERT INTO model_profiles (id, name, protocol, base_url, model, secret_id, options, created_at, updated_at, enabled) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8, ?9)",
             params![id, b.name.trim(), b.protocol, b.base_url.trim().trim_end_matches('/'), b.model.trim(), b.secret_id, options.to_string(), now, enabled],
@@ -487,6 +491,9 @@ pub async fn update_profile(
             options
         });
         crate::model_headers::validate_references(tx, &options)?;
+        if let Some(fallback) = options.get("fallback") {
+            crate::model_fallback::validate_references(tx, &id, fallback)?;
+        }
         let secret = match b.secret_id {
             Some(s) => s,
             None => cur.secret_id.clone(),
