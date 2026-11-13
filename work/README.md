@@ -48,8 +48,9 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 | 번호 | 분류·접수 | 남은 일·다음 조건 |
 |---|---|---|
-| 21 | needs-continuation · 기존 세션 `684c9ba6-fe86-479f-bd81-ade1a401079e`에 후속 요청 접수 | 공유 node_modules의 세 패키지는 메인에서 정상 resolve, 해당 worktree만 react-router MODULE_NOT_FOUND. 본인 shared symlink 복구·타입/단위/E2E·자기 결함 수정. inline TOML parser 승인 blocker는 별도 보존하며 기존 error retry count=1 유지 |
-| 27 | needs-continuation · 소유권 보완 완료, 실행 슬롯 대기 | `work/27.md`에 TerminalView WS 입력/resize·22 생성 진입의 PWA 안내/guard·본인 E2E 소유를 명시. 실제 재개 전 clean/idle/slot 재확인, 22 `e28dbdf`를 메인이 27 branch에 동기화한 뒤 기존 세션 재개. 소유권 확인 상태는 `8b0ffcd`이며 아직 코드 적용·재개 완료가 아님 |
+| 21 | blocked · 후속 종료、tip `d369ef8` | 공유 환경 복구 후 typecheck·Vitest 12개·E2E 4개 통과、기존 Rust 23개 근거 재사용。inline TOML parser 승인/재사용 parser 제공이 해제 조건이며 RESOURCE-018 전체 완료는 아님。기존 error retry count=1 유지 |
+| 22 | needs-continuation · 원래 담당의 focus 결함 수정 준비 | 생성 dialog의 취소→Tab containment E2E 1개 실패、나머지 45개 미실행。`work/22.md`에 CreationDialog 한정 소유와 선택 E2E를 배정。27의 PWA 연결 소유와 분리하며 수정·인수 전 정리하지 않음 |
+| 27 | needs-continuation · 기존 세션 후속 접수、실행 중 | 22 `e28dbdf`를 27 branch의 `8da340d`에 동기화한 뒤 기존 세션 `dd2a07fa-fd60-4bfe-ab70-0d3ded54d983`에 한 번 접수。개발 fast=false 명시·재조회 확인。최신 원본 COMMON·27 소유 범위·유효 근거 보존과 structured handoff를 전달했으며 실제 구현·검증 완료는 미확인 |
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
