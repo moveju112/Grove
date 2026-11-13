@@ -369,8 +369,12 @@ pub async fn recover_on_start(app: &App) -> ApiResult<()> {
             let tx = c.transaction()?;
             let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
             crate::hooks::recover(&tx)?;
-            let mut st = tx.prepare("SELECT id, name FROM tool_calls WHERE status IN ('running','approved')")?;
-            let calls = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+            // 턴뿐 아니라 그 도구의 실행·승인 receipt도 살아 있는 소유자에게 남긴다.
+            let mut st = tx.prepare(
+                "SELECT k.id, k.name FROM tool_calls k WHERE k.status IN ('running','approved') \
+                 AND NOT EXISTS (SELECT 1 FROM turns t WHERE t.id=k.turn_id AND t.owner_epoch=?1)",
+            )?;
+            let calls = st.query_map(params![epoch], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?;
             drop(st);
             for (cid, name) in calls {
                 // 읽기 전용 도구는 부작용이 없으므로 결과 불명이 아니라 실패로 기록한다(RUN-017).
