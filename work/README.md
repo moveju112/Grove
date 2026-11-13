@@ -26,16 +26,13 @@
 ## 준비 완료된 워크스페이스
 | 번호 | 브랜치 | worktree 절대 경로 |
 |---|---|---|
-| 00 | parallel/b01-source-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-00-source-settings |
-| 01 | parallel/b01-skills | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-01-skills |
-| 04 | parallel/b01-image-read | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-04-image-read |
-| 07 | parallel/b01-linux-service | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-07-linux-service |
-| 08 | parallel/b01-web-fetch | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-08-web-fetch |
+| - | 없음 | b01 작업 workspace는 모두 정리했다 |
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
 새 작업을 준비하면 보충 번호를 기록한다. 재실행 시 이미 보충한 자리를 중복 생성하지 않는다.
 06의 사용자 취소는 보충 대상 완료로 세지 않는다. 아래 정리 대상은 `53f634b`에 코드·인계·TODO와 통합 연결이 보존돼 있다. 02의 실제 원격 호스팅·TLS 검증은 미실행이며 `WEB-003`은 미완료로 유지한다.
+00·01·04·07·08은 사용자 요청으로 남은 작업을 `master`에서 이어 하도록 정리했다. 브랜치 코드·RESULT는 통합 SHA에 보존돼 있고, 각 RESULT의 미연결·미검증 항목과 해당 TODO `[ ]`는 그대로 남는다. 08은 `31585a2`에서 도구 목록·승인 화면에 연결했지만 HTML 본문 추출이 미지원이라 `INTEGRATION-002`는 미완료다.
 
 | 번호 | 작업 브랜치·tip | 통합 SHA | RESULT 경로·검증 근거 | workspace ID·절대 경로 | 정리 상태 | 보충 번호 |
 |---|---|---|---|---|---|---|
@@ -43,6 +40,11 @@
 | 03 | `parallel/b01-assistant-identity` · `df94a3056ab58759c488aaecc198f4b7a79f0c14` | `53f634b` | `work/RESULT-03.md`; 단위 50개, identity E2E 3개 및 기존 봇 회귀 통과 | `wks_df7a705fd9c77bdb` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-03-assistant-identity` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
 | 05 | `parallel/b01-usage-ui` · `fd1e3bf4fbd754b2fe6bd963f049042cf9d9e17f` | `53f634b` | `work/RESULT-05.md`; 단위 7개, 사용량 E2E 3개 통과 | `wks_4eb1e336ad21d6c9` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-05-usage-ui` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
 | 09 | `parallel/b01-approval-ui` · `ab5413d2ed6fcd1e543d992bbc7872818d5d9546` | `53f634b` | `work/RESULT-09.md`; 단위 27개, 승인 E2E 4개 및 workspace 회귀 통과 | `wks_424ce685e3fd8e91` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-09-approval-ui` | workspace·종료 세션 archive, 디렉터리·Git 등록 제거 확인; 브랜치 유지 | 미배정 |
+| 00 | `parallel/b01-source-settings` · `241ff11b293eb581ac929717f394b16ca82d02e7` | `53f634b` | `work/RESULT-00.md`; 원본 설정 시험 10개·화면 단위 5개 통과, 화면 연결은 남음 | `wks_91d76c31ae4ecfea` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-00-source-settings` | 남은 작업 `master` 이관 후 archive; 브랜치 유지 | 미배정 |
+| 01 | `parallel/b01-skills` · `44734ca2000a41f95a452735d76663ff286c49fb` | `53f634b` | `work/RESULT-01.md`; 스킬 시험 12개·화면 단위 7개 통과, 모델 경로 연결은 남음 | `wks_16d610705b66acbc` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-01-skills` | 남은 작업 `master` 이관 후 archive; 브랜치 유지 | 미배정 |
+| 04 | `parallel/b01-image-read` · `787b4f14f1334fc91feebea7552a721dcaecd627` | `53f634b` | `work/RESULT-04.md`; 이미지 읽기 11개·첨부 15개 통과, 모델 경로 연결은 남음 | `wks_4d1f2e6439fd1201` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-04-image-read` | 남은 작업 `master` 이관 후 archive; 브랜치 유지 | 미배정 |
+| 07 | `parallel/b01-linux-service` · `37b55bfbe34121592feecf62d015680d29fa09eb` | `53f634b` | `work/RESULT-07.md`; `scripts/test_user_service.py` 통과, 실제 서비스 검증은 남음 | `wks_9b5efc61967806b7` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-07-linux-service` | 남은 작업 `master` 이관 후 archive; 브랜치 유지 | 미배정 |
+| 08 | `parallel/b01-web-fetch` · `840c51ac51c140a64c6994fd10a7e612193302cf` | `31585a2` | `work/RESULT-08.md`; web_fetch 28개·승인 화면 20개 통과, HTML 본문 추출·실제 네트워크 검증은 남음 | `wks_b3a27f07ded8d599` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-08-web-fetch` | 남은 작업 `master` 이관 후 archive; 브랜치 유지 | 미배정 |
 
 ## 통합 담당의 완료 절차
 1. 사용자 통합 요청 뒤 각 worktree의 RESULT와 실제 branch·SHA·diff를 확인한다. 인계 파일만 보고 성공으로 단정하지 않는다.
