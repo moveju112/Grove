@@ -44,13 +44,18 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 41 | parallel/b02-agent-overview | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-41-agent-overview | `wks_720a531310d51814` | 기본 역할·모델 상속·지침·실행 규칙 개요 (`f4a4a702bcd342e159efe8801d429ad181391651` 기준, branch/HEAD/clean 확인, 미시작) |
 | 42 | parallel/b02-git-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-42-git-context | `wks_b1b9ac86342157d0` | Git 위치·PR·CI·실행 권한 (`6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c` 기준, 세션 `f4078561-a613-4208-bd05-8c441790a62c` running 확인) |
 | 43 | parallel/b02-skill-requirements | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-43-skill-requirements | `wks_16d56311c5dc7ab8` | 스킬 요구 도구·플랫폼·의존성 (`6fc2fbb5b36e883d13417fc9c41cf679aed3eb0c` 기준, branch/HEAD/clean 확인, 미시작) |
+| 44 | parallel/b02-recovery-faults | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-44-recovery-faults | 준비 중 | 복구 기록 저장 실패·재시작 수렴 (`7d5a6e5` 검증 기준, 미시작) |
+| 45 | parallel/b02-compaction-faults | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-45-compaction-faults | 준비 중 | 압축 저장 실패·projection 보존 (`7d5a6e5` 검증 기준, 미시작) |
+| 46 | parallel/b02-exec-unknown | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-46-exec-unknown | 준비 중 | 단발 CLI 실행 중 unknown·재조회 (`7d5a6e5` 검증 기준, 미시작) |
+| 47 | parallel/b02-routine-lifecycle | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-47-routine-lifecycle | 준비 중 | Routine 실제 제어 수명주기 (`7d5a6e5` 검증 기준, 미시작) |
+| 48 | parallel/b02-websocket-boundaries | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-48-websocket-boundaries | 준비 중 | WebSocket 인증·한도·재접속 (`7d5a6e5` 검증 기준, 미시작) |
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
-자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 20개 증설은 취소됐고 목표는 활성 기능 workspace 10개다. 31~33은 23·24·26 정리의 세 자리, 34는 28 정리의 한 자리 보충이며 증설이 아니다. 21·25의 제공자 오류는 기존 세션에 1회 재개 요청을 접수했으며 재실패를 자동 반복하지 않는다. 관리 메타데이터 쓰기는 직렬화하고 진행 중 세션은 건드리지 않는다. 34는 backlog 3개 이상인 동안 신규 시작하지 않으며, 생성 시 개발 fast=false 명시·반환 확인이 필요하다.
+자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 현재 목표는 활성 기능 workspace 15개·실행/초기화 상한 10개다. 31~43의 기존 보충 이력은 보존하며 44~48은 최신 요청에 따른 다섯 자리 증설이다. 21·25의 제공자 오류는 기존 세션에 1회 재개 요청을 접수했으며 재실패를 자동 반복하지 않는다. 관리 메타데이터 쓰기는 직렬화하고 진행 중 세션은 건드리지 않는다. backlog 3개 이상이면 신규 시작을 멈추고, 개발 생성 시 fast=false 명시·반환 확인이 필요하다.
 
 ## 명시적 후속 요청 우선순위
-신규 기능보다 verified idle continuation을 우선하며, 기존 기능 running/initializing 총 4개를 넘겨 시작하지 않는다. 이 요청은 provider 시스템 오류 retry가 아니므로 retry count를 초기화하지 않는다.
+신규 기능보다 verified idle continuation을 우선하며, 최신 기능 running/initializing 합계 상한 10개와 backlog 3개 backpressure를 따른다. 이 요청은 provider 시스템 오류 retry가 아니므로 retry count를 초기화하지 않는다.
 
 | 번호 | 분류·접수 | 남은 일·다음 조건 |
 |---|---|---|
