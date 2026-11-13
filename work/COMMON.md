@@ -49,6 +49,7 @@ worktree에는 Rust 툴체인(`.dev`)과 `web/node_modules`가 없다. 설치·�
 - Rust: `source /data/project/paseodog_opus/.envrc.dev`. 자기 worktree의 `.envrc.dev`가 `$PWD/.dev`를 가리키는 옛 버전이어도 이 절대 경로를 source한다.
 - 웹: `web/node_modules`가 없으면 `ln -s /data/project/paseodog_opus/web/node_modules web/node_modules`. Git ignore 대상이라 worktree는 clean으로 남는다. `npm install`·`npm ci`는 하지 않는다.
 - Rust 검사는 여러 세션이 동시에 빌드하지 않도록 `flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust ...`로 실행한다. Vitest·typecheck는 잠금 없이 실행한다.
+- 여러 Rust target은 `--rust target1 target2`처럼 한 옵션 뒤에 함께 쓴다. `--rust target1 --rust target2`는 마지막 옵션만 적용되므로 사용하지 않는다. 신규 배정과 종료 후 승인된 재개부터 이 계약을 읽고, 이미 실행 중인 검사는 취소하거나 같은 입력으로 반복하지 않는다.
 - 배정된 선택 E2E도 `flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e ...`로 서버·웹 빌드부터 브라우저 종료까지 전체 명령을 직렬화한다. 메인의 E2E도 같은 잠금을 써야 한다. 기능 workspace는 E2E 포트·공용 target·검사 설정을 바꾸지 않고, 기존 서버를 중단하지 않는다.
 프로젝트의 해당 선택 검사 진입점을 사용한다. 환경이 없으면 설치나 우회 대신 미실행으로 기록한다.
 시험은 작성하되 미실행을 통과로 보고하지 않는다. 연결 없는 모듈이 기존 검사에서 제외된 사실을 숨기지 않는다.

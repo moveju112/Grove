@@ -96,11 +96,39 @@ class Snapshot(unittest.TestCase):
             "# 인계\n<!-- grove-handoff:v1\n" + json.dumps(data) + "\n-->\n"
         )
 
-    def collect(self, agents):
+    def collect(self, agents, max_running=queue.MAX_RUNNING):
         with patch.object(queue, "git", side_effect=self.git), \
                 patch.object(queue, "read_worktrees", return_value=self.trees), \
                 patch.object(queue, "is_ancestor", side_effect=lambda _, tip, head: tip in self.ancestors):
-            return queue.collect(self.root, agents)
+            return queue.collect(self.root, agents, max_running)
+
+    def test_explicit_six_opens_two_slots_without_changing_default(self):
+        agents = [self.agent(number, "running") for number in (21, 22, 23, 24)]
+        self.assertEqual(self.collect(agents)["start_slots"], 0)
+        result = self.collect(agents, 6)
+        self.assertEqual(result["start_slots"], 2)
+        self.assertEqual(result["max_running"], 6)
+        self.assertEqual(result["running_sessions"], 4)
+
+    def test_backlog_and_uncertainty_still_block_starts_at_six(self):
+        for number in (21, 22, 23):
+            self.result(number)
+        result = self.collect([self.agent(n) for n in (21, 22, 23)], 6)
+        self.assertEqual(result["start_slots"], 0)
+        self.assertEqual(result["continuation_slots"], 6)
+        result = self.collect([self.agent(24, "waiting")], 6)
+        self.assertEqual(result["continuation_slots"], 0)
+
+    def test_reduction_preserves_running_sessions(self):
+        agents = [dict(self.agent(21, "running"), id=str(i)) for i in range(6)]
+        result = self.collect(agents, 4)
+        self.assertEqual(result["running_sessions"], 6)
+        self.assertEqual(result["start_slots"], 0)
+
+    def test_invalid_limit_is_rejected(self):
+        for limit in (0, 11, -1, 4.5, True):
+            with self.subTest(limit=limit), self.assertRaises(ValueError):
+                self.collect([], limit)
 
     def test_running_worktree_is_not_deeply_inspected(self):
         result = self.collect([self.agent(21, "running"), self.agent(21, "idle")])
@@ -184,6 +212,13 @@ class Snapshot(unittest.TestCase):
 
 
 class Commands(unittest.TestCase):
+    def test_cli_passes_explicit_limit(self):
+        with patch.object(queue, "load_agents", return_value=[]), \
+                patch.object(queue, "collect", return_value={}) as collect, \
+                redirect_stdout(StringIO()):
+            self.assertEqual(queue.main(["--max-running", "6"]), 0)
+        self.assertEqual(collect.call_args.args[2], 6)
+
     def test_service_failure_returns_nonzero_without_success_json(self):
         failure = subprocess.CalledProcessError(7, ["paseo"], stderr="private service response")
         with patch.object(queue, "load_agents", side_effect=failure), \

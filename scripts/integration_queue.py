@@ -121,7 +121,9 @@ def is_ancestor(root, tip, head):
     return result.returncode == 0
 
 
-def collect(root, agents):
+def collect(root, agents, max_running=MAX_RUNNING):
+    if type(max_running) is not int or not 1 <= max_running <= 10:
+        raise ValueError("동시 실행 한도는 1..10 정수여야 함")
     root = Path(root).resolve()
     if canonical(git(root, "rev-parse", "--show-toplevel").strip()) != str(root):
         raise ValueError("--root에는 Git top-level 경로가 필요함")
@@ -188,11 +190,11 @@ def collect(root, agents):
     integrated = [item["number"] for item in queue if item["state"] == "integrated-candidate"]
     legacy = [item["number"] for item in queue if item["state"] == "legacy-review"]
     backlog = len(candidates) + len(integrated) + len(legacy)
-    slots = 0 if uncertain else max(0, MAX_RUNNING - running)
+    slots = 0 if uncertain else max(0, max_running - running)
     return {
         "head": head,
         "running_sessions": running,
-        "max_running": MAX_RUNNING,
+        "max_running": max_running,
         "backlog": backlog,
         "start_slots": 0 if backlog >= BATCH_SIZE else slots,
         "continuation_slots": slots,
@@ -209,9 +211,11 @@ def collect(root, agents):
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, default=Path(__file__).resolve().parents[1])
+    parser.add_argument("--max-running", type=int, choices=range(1, 11), default=MAX_RUNNING,
+                        help="승인된 운영 상한. 기본 4, 변경해도 기존 실행은 중단하지 않음")
     args = parser.parse_args(argv)
     try:
-        snapshot = collect(args.root, load_agents(args.root))
+        snapshot = collect(args.root, load_agents(args.root), args.max_running)
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         # 원시 서비스 응답에는 인증 정보가 섞일 수 있으므로 그대로 출력하지 않는다.
         detail = f"exit {error.returncode}" if isinstance(error, subprocess.CalledProcessError) else str(error)
