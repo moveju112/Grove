@@ -233,7 +233,14 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .sidebar input[type="search"] { width: 100%; }
 .sidebar > .recent { flex-shrink: 0; max-height: 34%; overflow: auto; border-top: 1px solid var(--line); padding: 0.5em 0.9em 0.5em; }
 .sidebar > .recent h2 { margin: 0.2em 0 0.3em; }
-.sidebar > .recent > p.muted.small { display: none; }
+.recent-tools { margin-block: 0.35em; }
+.recent-tools > summary { color: var(--muted); font-size: 0.8em; cursor: pointer; }
+.recent-controls { display: flex; gap: 0.3em; margin-top: 0.35em; }
+.recent-controls input { min-width: 0; flex: 1; }
+.recent-actions > summary { list-style: none; cursor: pointer; padding: 0.2em 0.4em; color: var(--muted); }
+.recent-actions > summary::-webkit-details-marker { display: none; }
+.recent-actions[open] { flex-shrink: 0; }
+.recent-list li .recent-actions[open] .row-actions { opacity: 1; flex-wrap: wrap; }
 .chips { display: flex; flex-wrap: wrap; gap: 0.25em; margin: 0.35em 0; }
 .chip { background: transparent; color: var(--muted); border: 0; border-radius: 6px; padding: 0.1em 0.55em; font-size: 0.8em; }
 .chip:hover { background: var(--hover); color: var(--text); }

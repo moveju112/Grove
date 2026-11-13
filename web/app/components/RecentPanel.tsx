@@ -90,7 +90,6 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
     return (
         <section className="recent" aria-label="최근">
             <h2>최근</h2>
-            <p className="muted small">고정 항목 먼저 · 최근 활동순(열기·내 메시지)</p>
             {filter === "all" && (
                 <div className="chips" role="group" aria-label="시간 범위">
                     {[...prefs.recentWindows, "all" as const].map((option) => (
@@ -101,14 +100,17 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                     ))}
                 </div>
             )}
-            <input type="search" placeholder="최근 항목 검색" value={q} onChange={(e) => setQ(e.target.value)} aria-label="최근 항목 검색" />
-            <div className="chips" role="group" aria-label="필터">
-                {FILTERS.map(([k, label]) => (
-                    <button key={k} className={filter === k ? "chip on" : "chip"} aria-pressed={filter === k} onClick={() => setFilter(k)}>
-                        {label}
-                    </button>
-                ))}
-            </div>
+            <details className="recent-tools">
+                <summary aria-label="최근 검색·필터">
+                    {q || filter !== "all" ? `검색·필터 · ${FILTERS.find(([key]) => key === filter)?.[1]}${q ? ` · ${q}` : ""}` : "검색·필터"}
+                </summary>
+                <div className="recent-controls">
+                    <input type="search" placeholder="검색" value={q} onChange={(e) => setQ(e.target.value)} aria-label="최근 항목 검색" />
+                    <select aria-label="최근 필터" value={filter} onChange={(e) => setFilter(e.target.value)}>
+                        {FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
+                    </select>
+                </div>
+            </details>
             {err && <p className="err" role="alert">{err}</p>}
             {Boolean(recent.error) && <p className="err" role="alert">
                 {recent.error instanceof ApiError ? recent.error.message : "최근 목록을 불러오지 못했습니다."}
@@ -126,7 +128,7 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
             {recent.data?.items.length === 0 && <p className="muted">{since ? `${recentWindowLabel(range)} 안에 활동한 항목이 없습니다.` : "항목이 없습니다."}</p>}
             {recent.data?.next_offset != null && (
                 <button className="ghost" onClick={() => setLimit((l) => l + 30)}>
-                    더 보기 ({recent.data.total - recent.data.items.length}개 남음)
+                    더 보기
                 </button>
             )}
         </section>
@@ -149,7 +151,9 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                             {linkedTo && <span className="muted small" aria-label={`분할로 함께 열림: ${linkedTo}`}> ⧉</span>}
                             <span className="muted small" data-testid="recent-time"> <When at={it.last_activity_at} relative /></span>
                         </button>
-                        <span className="row-actions">
+                        <details className="recent-actions">
+                            <summary aria-label="최근 항목 관리">⋯</summary>
+                            <div className="row-actions">
                             <button className="ghost small" title="오른쪽에 열기" aria-label="오른쪽에 열기" onClick={() => openItem(it, "right")}>⇥</button>
                             <button className="ghost small" title="아래에 열기" aria-label="아래에 열기" onClick={() => openItem(it, "down")}>⤓</button>
                             <ServerActionButton className="ghost small pin-toggle" aria-pressed={it.pinned} aria-label={it.pinned ? "고정 해제" : "고정"} title={it.pinned ? "고정 해제" : "고정"} onClick={() => patch(it, { pinned: !it.pinned })}>
@@ -159,7 +163,8 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                                 title={it.hidden ? "다시 표시" : "최근에서 숨기기(삭제 아님, 새 메시지가 오면 다시 보임)"} onClick={() => patch(it, { hidden: !it.hidden })}>
                                 {it.hidden ? "↺" : "–"}
                             </ServerActionButton>
-                        </span>
+                            </div>
+                        </details>
                     </li>
         );
     }

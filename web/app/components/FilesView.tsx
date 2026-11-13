@@ -382,7 +382,6 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
     if (!c) return msg ? <div className="editor" data-testid="file-editor">
         <h2><code>{real}</code></h2>
         <p className="err" role="alert">파일을 열 수 없습니다: {msg.text}</p>
-        <p className="muted small">다른 경로를 추측하거나 파일을 자동으로 다시 만들지 않습니다.</p>
         {saved?.buffer.text != null && <>
             <p className="warn small">이 기기의 저장 전 편집 사본입니다. 원문이 아니며 복사해서 보관할 수 있습니다.</p>
             <textarea className="code" aria-label="복구용 편집 사본" value={saved.buffer.text} readOnly spellCheck={false} />

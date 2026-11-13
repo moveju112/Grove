@@ -258,7 +258,6 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                             );
                         })}
                     </fieldset>
-                    <p className="muted small">마지막 접근·내 메시지 기준입니다. 고정·실행 중·승인/답변 대기 항목은 범위와 관계없이 보입니다. 모두 끄면 기본값(30분·4시간·12시간)을 씁니다.</p>
                     <DeviceSettingsReset fields={["recentWindows", "recentWindow"]} label="최근 범위 기본값 복원" />
                 </Section>
             )}
@@ -284,7 +283,6 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                             <option value="relative">상대 시간(7일 이내)</option>
                         </select>
                     </label>
-                    <p className="muted small">만료·예정·시작 기준 시각은 항상 날짜·시각으로 표시합니다. 정확한 시각은 표시 위에 포인터를 올리면 볼 수 있습니다.</p>
                     <DeviceSettingsReset fields={["clock", "timeStyle"]} label="시간 표시 기본값 복원" />
                     <TurnTimingSetting />
                 </Section>
@@ -345,7 +343,7 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
     ] as const;
     return (
         <>
-            <p className="muted small">앱이 열려 있지만 이 화면을 보고 있지 않을 때 이 기기에서 알립니다. 대화 내용은 알림에 넣지 않으며, 같은 브라우저의 여러 탭은 한 번만 알립니다. 앱을 닫은 동안의 사건은 알림 목록에서 확인하세요.</p>
+            <p className="muted small">앱이 열려 있을 때만 알립니다.</p>
             {kinds.map(([key, label]) => (
                 <label className="check" key={key}>
                     <input type="checkbox" checked={p[key]} onChange={(e) => void toggle(key, e.target.checked)} /> {label}

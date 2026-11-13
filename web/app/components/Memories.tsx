@@ -53,7 +53,7 @@ export function Memories({ projectId, projectName, sessionId }: { projectId?: st
         });
     };
     return <div className="stack" data-testid="memories-panel">
-        <p className="muted small">직접 확인한 장기 선호·제약만 저장하세요. 모델이 임시 작업 결과를 자동 저장하지 않습니다. 범위당 최대 20개·내용은 1000자이며 다음 요청부터 선택 모델에 전달합니다. 비밀정보는 넣지 마세요.</p>
+        <p className="muted small">다음 요청부터 모델에 전달됩니다. 비밀정보는 넣지 마세요.</p>
         <p className="muted small">삭제해도 과거 모델 요청·대화 사본·백업을 소급 삭제하지 않습니다.</p>
         {!!query.error && <p className="err" role="alert">{query.error instanceof Error ? query.error.message : "기억 조회 실패"}</p>}
         <ul>

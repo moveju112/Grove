@@ -37,7 +37,7 @@ function CapacitySection() {
                 서버 전체: 실행 {c.server.running}/{limit(c.limits.max_active)} · 대기 {c.server.waiting}
                 <span className="muted small"> · 기기별 대기 한도 {limit(c.limits.max_queued_per_owner)} · 서버 대기 한도 {limit(c.limits.max_queued_total)}</span>
             </p>
-            <p className="muted small">다른 기기의 대화·대기 순서는 보이지 않습니다. 대기 중인 요청은 모델을 부르기 전에 취소할 수 있습니다.</p>
+            <p className="muted small">이 기기의 요청만 표시합니다.</p>
             {c.requests.length === 0 ? (
                 <p className="muted">이 기기에서 실행·대기 중인 요청이 없습니다.</p>
             ) : (

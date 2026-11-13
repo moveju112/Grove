@@ -78,7 +78,6 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
     if (project.error) return <div className="project-view">
         <h1>프로젝트를 열 수 없습니다</h1>
         <p className="err" role="alert">{project.error instanceof ApiError ? project.error.message : "프로젝트 정보를 불러오지 못했습니다."}</p>
-        <p className="muted small">저장된 프로젝트 ID를 유지합니다. 다른 프로젝트로 바꾸거나 작업을 자동으로 시작하지 않습니다.</p>
         <button className="ghost small" onClick={project.reload}>프로젝트 다시 확인</button>
         {composer}
     </div>;

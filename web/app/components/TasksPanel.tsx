@@ -85,7 +85,6 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
                 <input aria-label="백그라운드 명령" placeholder="명령(대화의 기본 작업 위치에서 실행)" value={cmd} disabled={disabled || busy || attempt !== null} onChange={(e) => setCmd(e.target.value)} />
                 <ServerActionButton type="submit" disabled={disabled || busy || attempt !== null || !cmd.trim()}>실행</ServerActionButton>
             </form>
-            <p className="muted small">새 작업은 대화·프로젝트·서버 순으로 기본 작업 위치를 상속합니다. 아래 실행 위치는 접수 때 고정한 실제 cwd이며, 대화의 실행 root(worktree 포함) 기준 상대 경로입니다. ‘.’은 실행 root입니다.</p>
             {err && <p className="err" role="alert">{err}</p>}
             {attempt && !busy && <div className="inline">
                 <ServerActionButton className="ghost small" disabled={disabled} onClick={() => void start()}>같은 요청 결과 확인</ServerActionButton>

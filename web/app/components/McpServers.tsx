@@ -80,7 +80,7 @@ export function McpServers() {
     const rowBlocked=(server:Server)=>blocked || !!editing || !!deleting || !!testing || !!name
         || server.last_check?.status==="checking" || server.connection_state==="in_use";
     return <div className="stack" data-testid="mcp-panel">
-        <p className="muted small">서버 전체 설정이며 소유자만 관리할 수 있습니다. 저장·사용 설정은 연결 완료가 아닙니다. 연결 확인은 handshake·목록 조회 뒤 닫습니다. 사용 설정되고 확인된 도구는 모델이 mcp_tools로 조회하고 mcp_call로 요청하며 기존 승인·금지·읽기 전용 정책을 따릅니다. 도구 호출마다 연결을 열고 종료합니다.</p>
+        <p className="muted small">서버 전체 설정 · 저장 후 연결을 확인하세요.</p>
         <p className="muted small">비밀 원문을 실행 인자·URL·JSON에 넣지 마세요. 환경변수는 env_secrets, 헤더는 header_secrets에 API 키의 ID를 참조하세요. 헤더 secret에는 필요한 접두사(예: Bearer)까지 저장하세요.</p>
         {!!query.error && <p role="alert" className="err">{query.error instanceof Error ? query.error.message : "MCP 조회 실패"}</p>}
         <ul>{(query.data ?? []).map((server) => <li key={server.id} data-testid="mcp-row">

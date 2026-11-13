@@ -144,7 +144,6 @@ function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDo
             <label className="check">
                 <input type="checkbox" checked={f.featured} onChange={(e) => setF({ ...f, featured: e.target.checked })} /> 대표 봇
             </label>
-            <p className="muted small">저장만으로는 모델을 부르지 않습니다. 모델·persona 변경은 다음 요청부터 적용됩니다.</p>
             <div className="inline">
                 <ServerActionButton type="submit" disabled={!f.name.trim() || !projectId}>{bot ? "저장" : "봇 만들기"}</ServerActionButton>
                 <button type="button" className="ghost" onClick={onDone}>닫기</button>

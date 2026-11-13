@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { apiCall, ensureProfile, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openDetails } from "./helpers";
 import type { Layout } from "../app/state/layout";
 
 // RECENT-001: 원본 최근 탭의 시간 범위·숨김 후 재표시·분할 묶음·경과 시간 흐름을 유지한다.
@@ -24,9 +24,11 @@ test("시간 범위 밖 항목은 기본 4시간에서 빠지고 넓은 범위·
     await expect(recent.getByRole("group", { name: "시간 범위" }).getByRole("button", { name: "최근 12시간 범위" })).toHaveAttribute("aria-pressed", "true");
     await expect(row).toHaveCount(1);
     // 고정 항목은 범위와 무관하게 보인다.
+    await row.getByLabel("최근 항목 관리", { exact: true }).click();
     await row.getByRole("button", { name: "고정", exact: true }).click();
     await ranges.getByRole("button", { name: "최근 30분 범위" }).click();
     await expect(row).toHaveCount(1);
+    await openDetails(row.locator(".recent-actions"));
     await row.getByRole("button", { name: "고정 해제", exact: true }).click();
     await expect(row).toHaveCount(0);
     await ranges.getByRole("button", { name: "최근 전체 범위" }).click();
@@ -52,6 +54,7 @@ test("다른 기기가 먼저 고정해도 이 기기의 숨김은 오류 없이
         }
         await route.continue();
     });
+    await row.getByLabel("최근 항목 관리", { exact: true }).click();
     await row.getByRole("button", { name: "최근에서 숨기기" }).click();
     await expect(row).toHaveCount(0);
     expect(sent).toHaveLength(2);
@@ -88,6 +91,7 @@ test("숨긴 대화는 새 메시지가 오면 다시 보이고, 분할로 함�
     await expect(group).toContainText(two.title);
 
     const row = recent.getByTestId("recent-item").filter({ hasText: hidden.title });
+    await row.getByLabel("최근 항목 관리", { exact: true }).click();
     await row.getByRole("button", { name: "최근에서 숨기기" }).click();
     await expect(row).toHaveCount(0);
     await apiCall("POST", `/sessions/${hidden.id}/messages`, { text: "다시 보여 줘" });

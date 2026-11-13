@@ -65,7 +65,6 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
         <dialog ref={dialog} className="dialog host-dialog" aria-label="호스트 관리" onCancel={(e) => { e.preventDefault(); close(); }}>
             <h2>호스트</h2>
             <p className="small">현재 호스트: <strong className="host-address">{location.origin}</strong></p>
-            <p className="muted small">목록은 이 브라우저의 현재 origin에만 저장합니다. 다른 호스트는 독립된 새 탭에서 열고 그 서버에서 로그인합니다. 토큰·초안·승인·파일을 다른 호스트로 전달하지 않습니다.</p>
             <ul className="host-list" aria-label="등록한 호스트">
                 {recentHosts(hosts).map((host) => (
                     <li key={host.origin} data-testid="host-row">
@@ -74,7 +73,6 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
                         {host.origin === location.origin && <span className="small">현재 호스트</span>}
                         <span className="muted small">
                             {host.lastOpenedAt === null ? "아직 열지 않음" : <>최근 열기: <When at={new Date(host.lastOpenedAt).toISOString()} /></>}
-                            {" · 연결 성공 여부가 아닌 열기 기록"}
                         </span>
                         {insecureRemote(host.origin) && <p className="warn small">암호화되지 않은 HTTP입니다. 토큰과 대화가 노출될 수 있으니 HTTPS 또는 신뢰하는 VPN을 사용하세요.</p>}
                         <div className="row">
