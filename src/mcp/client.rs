@@ -181,7 +181,7 @@ impl Client {
                 let output = BufReader::new(child.stdout.take().expect("piped stdout"));
                 Transport::Stdio(Process { child: Some(child), owned: Some(owned), input: Some(input), output, scratch: Some(scratch) })
             }
-            ServerConfig::Http { endpoint, header_secrets } | ServerConfig::Sse { endpoint, header_secrets } => {
+            ServerConfig::Http { endpoint, header_secrets, .. } | ServerConfig::Sse { endpoint, header_secrets } => {
                 let mut headers = HeaderMap::new();
                 for (name, id) in header_secrets {
                     let name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| protocol())?;
@@ -189,6 +189,12 @@ impl Client {
                         .map_err(|_| ApiError::invalid("MCP secret을 헤더 값으로 사용할 수 없습니다"))?;
                     value.set_sensitive(true);
                     headers.insert(name, value);
+                }
+                if super::oauth::config(config).is_some() {
+                    let token = secrets.get(super::oauth::ACCESS).ok_or_else(|| ApiError::invalid("OAuth 자격이 준비되지 않았습니다"))?;
+                    let mut value = HeaderValue::from_str(&format!("Bearer {token}")).map_err(|_| protocol())?;
+                    value.set_sensitive(true);
+                    headers.insert(reqwest::header::AUTHORIZATION, value);
                 }
                 // 인증 헤더가 다른 origin으로 넘어가지 않게 redirect·환경 proxy를 사용하지 않는다.
                 let client = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).no_proxy().build().map_err(|_| transport())?;
@@ -497,7 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn progress_without_an_active_requested_token_is_not_published() {
-        let config=ServerConfig::Http {endpoint:"http://127.0.0.1:1/mcp".into(),header_secrets:BTreeMap::new()};
+        let config=ServerConfig::Http {endpoint:"http://127.0.0.1:1/mcp".into(),header_secrets:BTreeMap::new(),oauth:None};
         let mut client=Client::open(&config,&BTreeMap::new(),"fixture",Limits::default(),None).await.unwrap();
         let (tx,rx)=tokio::sync::watch::channel(Value::Null);
         client.progress=Some(tx);
