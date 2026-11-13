@@ -10,7 +10,7 @@
 일부 또는 전체 작업이 종료되면 사용자는 메인 세션에 `work/START.md`의 통합 프롬프트를 보낸다. 완료된 작업만 통합하고 나머지는 계속 진행한다.
 통합 담당이 직접 인계 파일과 Git 상태를 읽으므로 사용자에게 결과 복사·실시간 중계를 요구하지 않는다.
 관리·검증 전용 에이전트를 추가로 띄울 필요는 없다. 원본 프로젝트의 메인 세션 하나가 통합을 맡는다. 사용자가 부르는 “00 메인 세션”도 가능하며, 기존 00 원본 설정 기능 worktree와는 구분한다.
-초기 배치는 06을 제외한 00~09, 총 9개 기능 담당이었다. 운영 목표는 활성 10개이며, 정리 직후 같은 흐름에서 목표 수까지 다음 번호로 보충한다. 다음 최초 번호는 10이며 기존 번호는 재사용하지 않는다.
+초기 배치는 06을 제외한 00~09, 총 9개 기능 담당이었다. 현재 운영 목표는 활성 15개·동시 실행/초기화 최대 10개이며, 정리 직후 같은 흐름에서 목표 수까지 다음 번호로 보충한다. 다음 최초 번호는 10이며 기존 번호는 재사용하지 않는다.
 통합·검증·TODO 반영 후 종료된 작업의 worktree와 Paseo 워크스페이스를 정리하고 다음 작업을 자동 준비한다. 세부 절차는 `work/INTEGRATE.md`가 정본이다.
 
 ## b01 고정 기준
@@ -26,14 +26,16 @@
 ## 준비 완료된 워크스페이스
 b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/data/project/paseodog_opus/work/COMMON.md`와 번호별 문서다.
 
-현재 운영은 준비 10개·실행/초기화 상한 6개의 제한 실험이며 큐에 `--max-running 6`을 명시한다. `33fcbc0`에 정책, `45ce7bd`에 큐 옵션, `7bbd18c`에 공유 툴체인 보존을 반영했다. 인계된 큐 26개·빌드 실행기 26개 시험은 각 두 파일의 source bytes 일치를 확인해 재사용했고 전체 시험은 반복하지 않았다. 기존 ResourceWarning은 미수정이다.
+현재 운영은 사용자 최신 명시 요청에 따라 준비 15개·실행/초기화 상한 10개이며 큐에 `--max-running 10`과 `--events /home/ubuntu/.cache/grove-events/events.jsonl`을 명시한다. 이전 10/6 제한 실험은 대체됐다. `45ce7bd`의 큐 옵션과 `7bbd18c`의 공유 툴체인 보존은 유지한다. 인계된 큐 26개·빌드 실행기 26개 시험은 각 두 파일의 source bytes 일치를 확인해 재사용했고 전체 시험은 반복하지 않았다. 기존 ResourceWarning은 미수정이다.
+`3d930c9`에 비식별 구조화 계측과 INTEGRATE의 사이클 계측 절을 적용했다. 관련 6개 Python 파일의 source bytes 일치로 인계 시험 합계 42개 근거를 재사용했다. 기존 heartbeat `5848102f`만 갱신해 큐·이후 고정 검증에 `--events /home/ubuntu/.cache/grove-events/events.jsonl`을 적용한다. 첫 원본 큐 호출의 11개 관측 append·0600을 확인했으며, 기존 11행과 구분한다. 이전 시작/배정/종료 시각은 만들지 않았다. 개발 세션 외부 flock의 정확한 대기 시간은 여전히 미계측이다.
+35는 `80b69f5dda413efcdaf3bb641c0358ec3e657992`·idle·권한 대기 없음·clean·ready 인계를 확인한 뒤 completion-observed/intake-started/merge-started를 기록했다. `src/approvals.rs`·`src/tools/mod.rs`의 hook/cwd/출력 조회를 함께 보존해 `151cbe5ad83129dac9457e628714da069d6e59f4`에 병합했고 merge-finished도 기록했다. 고정 job `/home/ubuntu/.cache/grove-validation/validation-16syoppr`(shell `job_1794546255805_622e98`)은 `--work 35 --rust tool_outputs hook_execution exec_cwd model_input_pages tool_batches --typecheck --e2e e2e/tool-outputs.spec.ts e2e/hook-execution.spec.ts`의 통합 경계를 background 검사 중이다. `--events`·`--work`는 검사 옵션 구분 `--` 앞에 전달했다. 최종 상태·phase_seconds·telemetry_error를 확인하기 전 TODO 완료·정리는 하지 않는다.
 34/35/37의 검사 대기 3개 관측으로 추가 시작을 잠시 보류했으며, 이후 실제 프로세스에서 34의 검사 1개만 실행 중이고 추가 lock 대기가 없는 것을 확인한 뒤 38·42를 순차 시작했다. 두 미시작 checkout의 absent `.dev`만 원본 공유 경로 symlink로 연결하고 구형 `env()`의 실제 경로 identity를 검증했다. 기존 34~37·실행 중 검사·설치·환경은 바꾸거나 취소하지 않았다. 두 새 세션은 running·권한 대기 없음·fast=false를 재조회했고 구현 완료는 아니다.
 38의 기준 이후 `Settings::Profiles`·`ProfileCatalog`에는 PWA 차단이 추가됐으므로 통합 때 `ServerActionButton`/`useServerBlockReason`을 보존하고 local-models·기존 offline 경계를 선택 인수한다. 42의 Git/GitPanel 공통 입력은 기준 이후 불변이며 git-context와 기존 Git 변경 요청의 권한/unknown 경계를 선택 인수한다. 완료→통합 대기는 현재 후보 0이고, 앞선 공유 검사 대기와 구분한다. 실행 수 증가는 효율 개선의 검증 근거가 아니다.
 
 | 번호 | 브랜치 | worktree 절대 경로 | workspace ID | 기능 |
 |---|---|---|---|---|
 | 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | `wks_145becb7b1464f70` | 역할별 위임 허용 정책 (`a340d2bccd7860d8452a5513b59c7f8ac215178c` 기준、세션 `b2bec79d-608f-4ece-a288-06e49b5acd1a` 실행 확인) |
-| 35 | parallel/b02-tool-outputs | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-35-tool-outputs | `wks_242996cfa36e0a48` | 큰 도구 결과 파일 보관·범위 조회 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준、세션 `efbea152-d265-4158-9d04-5163ed10d417` 실행 확인) |
+| 35 | parallel/b02-tool-outputs | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-35-tool-outputs | `wks_242996cfa36e0a48` | 큰 도구 결과 파일 보관·범위 조회 (`80b69f5` 종료·clean 확인, `151cbe5` 병합, 고정 job `validation-16syoppr` 인수 중) |
 | 36 | parallel/b02-mcp-oauth | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-36-mcp-oauth | `wks_912a0803920b11fa` | HTTP MCP OAuth 연결·명시적 갱신 (`11e51d6efaf0b10a6f0c2c682da7bb1db5738955` 기준, 세션 `4741efe5-e045-4afd-b63c-b94d901a65e4` 실행 확인) |
 | 37 | parallel/b02-settings-links | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links | `wks_c1844db43036c46f` | 비동기 설정 직접 링크·pane 경계 (`292cf1aff5305b4c039613dfd4266f416cef5f03` 기준、세션 `3f6d6b43-97a0-498b-85b6-28151c4593e1` 실행 확인) |
 | 38 | parallel/b02-local-models | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-38-local-models | `wks_97add2973aa8639a` | 선택적 로컬 HTTP 모델 연결·상태·목록 (`eb841bb51dfde92a714f48189d02b0f568ad23c0` 기준, 세션 `e60b7aa1-33c3-40c7-b35e-89476f3e0ec2` running 확인) |
