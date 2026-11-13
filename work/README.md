@@ -24,9 +24,22 @@
 - 사용자 결정으로 06 작업은 취소됐고 빈 워크스페이스도 제거했다. 재생성·재배정·통합하지 않는다. 다음 배치는 원본 `TODO.md`의 최신 제외 결정을 따른다.
 
 ## 준비 완료된 워크스페이스
-| 번호 | 브랜치 | worktree 절대 경로 |
-|---|---|---|
-| - | 없음 | b01 작업 workspace는 모두 정리했다 |
+b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/data/project/paseodog_opus/work/COMMON.md`와 번호별 문서다.
+
+| 번호 | 브랜치 | worktree 절대 경로 | workspace ID | 기능 |
+|---|---|---|---|---|
+| 10 | parallel/b02-source-settings-wire | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-10-source-settings-wire | `wks_b997271e9d51ba39` | 원본 설정 조회 연결 (00 이월) |
+| 11 | parallel/b02-skills-wire | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-11-skills-wire | `wks_98d3177f6bbf5a31` | 스킬 선택·적용 연결 (01 이월) |
+| 12 | parallel/b02-image-read-wire | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-12-image-read-wire | `wks_13f52f7f5562939c` | 이미지 읽기 모델 전달 (04 이월) |
+| 13 | parallel/b02-sidebar-status | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-13-sidebar-status | `wks_b6450d7ae495aae8` | 사이드바 상태·읽지 않음·핀 |
+| 14 | parallel/b02-pwa-lifecycle | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-14-pwa-lifecycle | `wks_043964eeb7dd683e` | PWA 버전 갱신·오프라인·저장소 한계 |
+| 15 | parallel/b02-turn-timing | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-15-turn-timing | `wks_16baa50b76c83e71` | 턴 시간 표시 |
+| 16 | parallel/b02-first-start | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-16-first-start | `wks_3e03fb86d3452409` | 서버 첫 시작·오류 안내 |
+| 17 | parallel/b02-hooks-config | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-17-hooks-config | `wks_d3b07706e87b88fc` | hook 목록·설정 |
+| 18 | parallel/b02-terminal-input | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-18-terminal-input | `wks_d50b41aa00282a33` | 터미널 모바일 입력 |
+| 19 | parallel/b02-git-stash | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-19-git-stash | `wks_69960bfc3714a13f` | Git stash·discard |
+
+공통 파일 연결 지점이 겹치는 곳: `src/lib.rs::router`(10·11·13·17·19), `src/store.rs` MIGRATIONS 끝(11·13·17), `Settings.tsx` mount(10·11·15·17), `Composer.tsx`(11·14). 모두 서로 다른 줄의 추가이며 통합 때 순서만 맞춘다. `src/runner.rs`는 11이 지침 조립, 12가 도구 결과→provider 경로만 수정한다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
@@ -46,16 +59,18 @@
 | 07 | `parallel/b01-linux-service` · `37b55bfbe34121592feecf62d015680d29fa09eb` | `53f634b` | `work/RESULT-07.md`; `scripts/test_user_service.py` 통과, 실제 서비스 검증은 남음 | `wks_9b5efc61967806b7` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-07-linux-service` | 남은 작업 `master` 이관 후 archive; 브랜치 유지 | 미배정 |
 | 08 | `parallel/b01-web-fetch` · `840c51ac51c140a64c6994fd10a7e612193302cf` | `31585a2` | `work/RESULT-08.md`; web_fetch 28개·승인 화면 20개 통과, HTML 본문 추출·실제 네트워크 검증은 남음 | `wks_b3a27f07ded8d599` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b01-08-web-fetch` | 남은 작업 `master` 이관 후 archive; 브랜치 유지 | 미배정 |
 
+b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01·04 이월은 10·11·12로 배정했다.
+
 ## 이월 작업
 정리된 작업의 남은 연결·검증이다. 다음 보충에서 우선 배정 후보로 쓴다. 세부 조건은 각 RESULT가 정본이다.
 
 | 출처 | 남은 작업 | 근거 | 배정 |
 |---|---|---|---|
-| 00 | 원본 설정 조회의 서버 라우트·설정 화면 연결 | `work/RESULT-00.md` | 미배정 |
-| 01 | 스킬 선택·적용의 모델 경로 연결 | `work/RESULT-01.md` | 미배정 |
-| 04 | 이미지 읽기 도구의 모델 입력 경로 연결 | `work/RESULT-04.md` | 미배정 |
-| 07 | Linux 사용자 서비스의 실제 설치·재시작 검증 (외부 환경 필요) | `work/RESULT-07.md` | 미배정 |
-| 08 | HTML 본문 추출 방식 결정·실제 네트워크 검증 (`INTEGRATION-002`) | `work/RESULT-08.md` | 미배정 |
+| 00 | 원본 설정 조회의 서버 라우트·설정 화면 연결 | `work/RESULT-00.md` | 10 |
+| 01 | 스킬 선택·적용의 모델 경로 연결 | `work/RESULT-01.md` | 11 |
+| 04 | 이미지 읽기 도구의 모델 입력 경로 연결 | `work/RESULT-04.md` | 12 |
+| 07 | Linux 사용자 서비스의 실제 설치·재시작 검증 (외부 환경 필요) | `work/RESULT-07.md` | 보류: 실제 systemd 사용자 서비스 환경에서 검증 필요 |
+| 08 | HTML 본문 추출 방식 결정·실제 네트워크 검증 (`INTEGRATION-002`) | `work/RESULT-08.md` | 보류: 추출 의존성 추가 승인 필요 |
 
 ## 통합 담당의 완료 절차
 1. 사용자 통합 요청 뒤 각 worktree의 RESULT와 실제 branch·SHA·diff를 확인한다. 인계 파일만 보고 성공으로 단정하지 않는다.
