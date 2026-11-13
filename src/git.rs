@@ -239,6 +239,219 @@ pub async fn branches(State(app): State<App>, _p: Principal, Path(id): Path<Stri
     Ok(Json(json!({ "branches": list })))
 }
 
+#[derive(Clone, serde::Serialize, Deserialize)]
+#[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ReviewAction {
+    Discard { paths: Vec<String> },
+    StashPop { stash_oid: String },
+}
+
+#[derive(Deserialize)]
+pub struct ConfirmGitBody {
+    pub action: ReviewAction,
+    pub expected_fingerprint: String,
+    pub confirmed: bool,
+}
+
+#[derive(Deserialize)]
+pub struct StashSaveBody {
+    pub message: String,
+    pub expected_fingerprint: String,
+}
+
+/// stash는 linked worktree끼리 공유하므로 project_id 잠금만으로는 부족하다.
+async fn stash_lock(locks: &RepoLocks, root: &std::path::Path) -> ApiResult<tokio::sync::OwnedMutexGuard<()>> {
+    let out = git(root, &["rev-parse", "--git-common-dir"], true).await?;
+    if out.code != 0 { return Err(fail(&out, "공유 Git 경로 확인")); }
+    let path = String::from_utf8(out.stdout).map_err(|_| ApiError::invalid("UTF-8 Git 경로만 지원합니다"))?;
+    let common = tokio::fs::canonicalize(root.join(path.trim())).await.map_err(|e| ApiError::internal(e.to_string()))?;
+    Ok(locks.get(&format!("git.stash:{}", common.display())).lock_owned().await)
+}
+
+async fn stash_entries(root: &std::path::Path) -> ApiResult<Vec<Value>> {
+    let out = git(root, &["stash", "list", "--format=%H%x00%gd%x00%gs%x00"], true).await?;
+    if out.code != 0 { return Err(fail(&out, "stash 목록")); }
+    let text = String::from_utf8(out.stdout).map_err(|_| ApiError::invalid("stash 목록이 UTF-8이 아닙니다"))?;
+    let fields: Vec<_> = text.split('\0').collect();
+    Ok(fields.chunks(3).filter_map(|f| {
+        (f.len() == 3).then(|| json!({ "oid": f[0].trim(), "reference": f[1], "subject": f[2] }))
+    }).collect())
+}
+
+pub async fn stashes(State(app): State<App>, p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+    let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app, &id, &p).await?;
+    Ok(Json(json!({ "stashes": stash_entries(&root).await? })))
+}
+
+/// stash identity·확인 대상까지 묶는다. pop이 건드릴 수 있는 untracked 내용도 대조한다.
+async fn review_fingerprint(root: &std::path::Path, action: &ReviewAction) -> ApiResult<String> {
+    use sha2::{Digest, Sha256};
+    use tokio::io::AsyncReadExt;
+    let mut hash = Sha256::new();
+    hash.update(root.as_os_str().as_encoded_bytes());
+    hash.update([0]);
+    hash.update(fingerprint(root).await?.as_bytes());
+    hash.update(serde_json::to_vec(action).map_err(|e| ApiError::internal(e.to_string()))?);
+    hash.update(serde_json::to_vec(&stash_entries(root).await?).map_err(|e| ApiError::internal(e.to_string()))?);
+    let out = git(root, &["ls-files", "--others", "--exclude-standard", "-z"], true).await?;
+    if out.code != 0 { return Err(fail(&out, "untracked 확인")); }
+    for bytes in out.stdout.split(|b| *b == 0).filter(|p| !p.is_empty()) {
+        let path = std::str::from_utf8(bytes).map_err(|_| ApiError::invalid("UTF-8 경로만 확인할 수 있습니다"))?;
+        check_path(path)?;
+        hash.update(bytes);
+        hash.update([0]);
+        let full = root.join(path);
+        let meta = tokio::fs::symlink_metadata(&full).await.map_err(|e| ApiError::internal(e.to_string()))?;
+        if meta.file_type().is_symlink() {
+            hash.update(b"symlink");
+            hash.update(tokio::fs::read_link(&full).await.map_err(|e| ApiError::internal(e.to_string()))?.as_os_str().as_encoded_bytes());
+        } else if meta.is_file() {
+            hash.update(b"file");
+            let mut file = tokio::fs::File::open(&full).await.map_err(|e| ApiError::internal(e.to_string()))?;
+            let mut content = Sha256::new();
+            let mut buf = [0u8; 65536];
+            loop {
+                let n = file.read(&mut buf).await.map_err(|e| ApiError::internal(e.to_string()))?;
+                if n == 0 { break; }
+                content.update(&buf[..n]);
+            }
+            hash.update(content.finalize());
+        } else {
+            return Err(ApiError::invalid("일반 파일·symlink 외 untracked 대상은 확인할 수 없습니다"));
+        }
+    }
+    Ok(format!("{:x}", hash.finalize()))
+}
+
+async fn review_summary(root: &std::path::Path, action: &ReviewAction) -> ApiResult<(Vec<String>, String)> {
+    let (paths, args) = match action {
+        ReviewAction::Discard { paths } => {
+            if paths.is_empty() { return Err(ApiError::invalid("paths가 비어 있습니다")); }
+            let out = git(root, &["status", "--porcelain=v2", "-z", "--untracked-files=all"], true).await?;
+            if out.code != 0 { return Err(fail(&out, "discard 대상 확인")); }
+            let status = parse_status(&out.stdout);
+            for path in paths {
+                check_path(path)?;
+                // pathspec·디렉터리·새 untracked 파일이 선택 범위를 넓히지 못하게 한다.
+                let entries = status["entries"].as_array().unwrap();
+                if entries.iter().any(|e| e["path"] == *path && e["kind"] == "untracked")
+                    || !entries.iter().any(|e| e["path"] == *path && e["kind"] != "untracked") {
+                    return Err(ApiError::invalid("변경된 tracked 파일 경로만 discard할 수 있습니다"));
+                }
+                let indexed = git(root, &["--literal-pathspecs", "ls-files", "--error-unmatch", "--", path], true).await?;
+                if indexed.code != 0 {
+                    if indexed.code != 1 { return Err(fail(&indexed, "index 대상 확인")); }
+                    // staged deletion 뒤 새로 생긴 ignored 파일도 untracked이므로 보존한다.
+                    match tokio::fs::symlink_metadata(root.join(path)).await {
+                        Ok(_) => return Err(ApiError::invalid("index에서 제거된 경로의 새 파일은 discard할 수 없습니다")),
+                        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(e) => return Err(ApiError::internal(e.to_string())),
+                    }
+                }
+            }
+            let mut args = vec!["--literal-pathspecs", "diff", "--no-ext-diff", "--stat", "HEAD", "--"];
+            args.extend(paths.iter().map(String::as_str));
+            (paths.clone(), args)
+        }
+        ReviewAction::StashPop { stash_oid } => {
+            if !stash_entries(root).await?.iter().any(|s| s["oid"] == *stash_oid) {
+                return Err(ApiError::conflict("stash_changed", "선택한 stash가 없습니다. 목록을 다시 확인하세요"));
+            }
+            let out = git(root, &["stash", "show", "--include-untracked", "--name-only", "-z", stash_oid], true).await?;
+            if out.code != 0 { return Err(fail(&out, "stash 대상 확인")); }
+            let text = String::from_utf8(out.stdout).map_err(|_| ApiError::invalid("UTF-8 경로만 확인할 수 있습니다"))?;
+            (text.split('\0').filter(|p| !p.is_empty()).map(str::to_string).collect(),
+                vec!["stash", "show", "--include-untracked", "--stat", stash_oid])
+        }
+    };
+    let out = git(root, &args, true).await?;
+    if out.code != 0 { return Err(fail(&out, "변경 요약")); }
+    // index와 작업 트리가 상쇄되는 경우도 각각 표시한다.
+    let wt = git(root, &["diff", "--no-ext-diff", "--stat"], true).await?;
+    let ix = git(root, &["diff", "--no-ext-diff", "--stat", "--cached"], true).await?;
+    for out in [&wt, &ix] {
+        if out.code != 0 { return Err(fail(out, "현재 변경 요약")); }
+    }
+    Ok((paths, format!("대상 변경:\n{}\n현재 작업 트리:\n{}\n현재 index:\n{}",
+        String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&wt.stdout), String::from_utf8_lossy(&ix.stdout))))
+}
+
+pub async fn review(State(app): State<App>, p: Principal, Path(id): Path<String>, Json(action): Json<ReviewAction>) -> ApiResult<Json<Value>> {
+    let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app, &id, &p).await?;
+    let expected = review_fingerprint(&root, &action).await?;
+    let (paths, summary) = review_summary(&root, &action).await?;
+    if expected != review_fingerprint(&root, &action).await? {
+        return Err(ApiError::conflict("stale_diff", "확인 중 상태가 바뀌었습니다. 변경을 다시 확인하세요"));
+    }
+    Ok(Json(json!({ "action": action, "paths": paths, "summary": summary, "expected_fingerprint": expected })))
+}
+
+pub async fn stash_save(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<StashSaveBody>) -> ApiResult<Response> {
+    if b.message.len() > 20000 || b.message.contains('\0') { return Err(ApiError::invalid("stash 메시지가 올바르지 않습니다")); }
+    let locks = app.repo_locks.clone();
+    mutate(app, p, headers, id, "git.stash_save", json!({ "message": b.message }), Some(b.expected_fingerprint), move |root| {
+        Box::pin(async move {
+            let _stash = stash_lock(&locks, root).await?;
+            let before = stash_entries(root).await?;
+            let out = git(root, &["stash", "push", "-m", &b.message], false).await?;
+            if out.code != 0 { return Err(fail(&out, "stash 저장")); }
+            let stashes = stash_entries(root).await?;
+            if stashes == before {
+                return Err(ApiError::conflict("nothing_to_stash", "저장할 tracked 파일 변경이 없습니다"));
+            }
+            Ok(json!({ "stashes": stashes, "untracked_included": false }))
+        })
+    }).await
+}
+
+pub async fn confirm_git(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<ConfirmGitBody>) -> ApiResult<Response> {
+    if !b.confirmed { return Err(ApiError::invalid("명시적 확인이 필요합니다")); }
+    let locks = app.repo_locks.clone();
+    let body = json!({ "action": b.action, "expected_fingerprint": b.expected_fingerprint, "confirmed": true });
+    mutate(app, p, headers, id, "git.confirm", body, None, move |root| {
+        Box::pin(async move {
+            let _stash = stash_lock(&locks, root).await?;
+            if review_fingerprint(root, &b.action).await? != b.expected_fingerprint {
+                return Err(ApiError::conflict("stale_diff", "확인한 뒤 상태가 바뀌었습니다. 변경을 다시 확인하세요"));
+            }
+            review_summary(root, &b.action).await?;
+            match b.action {
+                ReviewAction::Discard { paths } => {
+                    let mut args = vec!["--literal-pathspecs", "restore", "--source=HEAD", "--staged", "--worktree", "--"];
+                    args.extend(paths.iter().map(String::as_str));
+                    let out = git(root, &args, false).await?;
+                    if out.code != 0 { return Err(fail(&out, "discard")); }
+                    Ok(json!({ "discarded": paths }))
+                }
+                ReviewAction::StashPop { stash_oid } => {
+                    let before = stash_entries(root).await?;
+                    let selected = before.iter().find(|s| s["oid"] == stash_oid).ok_or_else(|| ApiError::conflict("stash_changed", "stash가 바뀌었습니다"))?;
+                    let reference = selected["reference"].as_str().unwrap().to_string();
+                    // OID로 적용하여 다른 stash가 대신 적용되지 않게 한다. 실패하면 drop하지 않는다.
+                    let out = git(root, &["stash", "apply", "--index", &stash_oid], false).await?;
+                    if out.code != 0 {
+                        let status = git(root, &["status", "--porcelain=v2", "-z"], true).await?;
+                        if status.code != 0 { return Err(fail(&status, "충돌 상태 확인")); }
+                        return Err(ApiError::conflict("stash_conflict", "stash 적용이 끝나지 않았습니다. stash를 보존했습니다. 충돌·index·작업 트리를 확인하세요")
+                            .with_details(json!({ "stash_oid": stash_oid, "stash_retained": true, "status": parse_status(&status.stdout) })));
+                    }
+                    if !stash_entries(root).await?.iter().any(|s| s["oid"] == stash_oid && s["reference"] == reference) {
+                        return Err(ApiError::conflict("stash_changed", "적용 후 stash 목록이 바뀌어 삭제하지 않았습니다")
+                            .with_details(json!({ "applied": true, "stash_retained": true })));
+                    }
+                    let drop = git(root, &["stash", "drop", &reference], false).await?;
+                    if drop.code != 0 {
+                        return Err(fail(&drop, "stash 적용 후 삭제").with_details(json!({ "applied": true, "stash_retained": true })));
+                    }
+                    Ok(json!({ "popped": stash_oid }))
+                }
+            }
+        })
+    }).await
+}
+
 /// 변경 작업 공통: 저장소 잠금 → fingerprint 대조 → 실행 → 이벤트 기록(idempotent).
 async fn mutate(
     app: App,

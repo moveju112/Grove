@@ -1,6 +1,8 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import { useQuery } from "../state/store";
+import { GitConfirmation } from "./git/GitConfirmation";
+import { confirmationBody, type ConfirmGitBody, type GitReview, type ReviewAction, type Stash } from "./git/types";
 
 type Entry = { path: string; index: string; worktree: string; kind: string; orig_path?: string };
 type Status = { is_repo: boolean; branch?: { head?: string; ahead?: number; behind?: number }; entries?: Entry[]; fingerprint?: string };
@@ -8,23 +10,33 @@ type GitRequest =
     | { op: "stage" | "unstage"; body: { paths: string[]; expected_fingerprint: string | undefined } }
     | { op: "stage-hunks"; body: { path: string; hunks: number[]; unstage: boolean; expected_fingerprint: string | undefined } }
     | { op: "commit"; body: { message: string; expected_fingerprint: string | undefined } }
+    | { op: "stash-save"; body: { message: string; expected_fingerprint: string | undefined } }
+    | { op: "confirm"; body: ConfirmGitBody }
     | { op: "fetch" | "pull" | "push"; body: Record<string, never> };
 type Attempt = GitRequest & { projectId: string; key: string };
 type MutationState = { phase: "idle" } | { phase: "sending" | "unknown"; attempt: Attempt };
 const LABEL: Record<GitRequest["op"], string> = {
     stage: "올리기", unstage: "내리기", "stage-hunks": "부분 올리기/내리기", commit: "커밋", fetch: "fetch", pull: "pull", push: "push",
+    "stash-save": "stash 저장", confirm: "확인한 Git 작업",
 };
 
 /// 프로젝트 Git 변경 패널. 사용자가 본 상태(fingerprint)와 다르면 서버가 stage·commit을 거부한다.
 export function GitPanel({ projectId }: { projectId: string }) {
     const status = useQuery<Status>(`git:${projectId}:status`, () => api.get(`/projects/${projectId}/git/status`));
+    const stashes = useQuery<{ stashes: Stash[] }>(`git:${projectId}:stashes`, () => api.get(`/projects/${projectId}/git/stashes`));
     const [diff, setDiff] = useState<{ path: string; staged: boolean; text: string; hunks?: string[]; fingerprint?: string } | null>(null);
     const [msg, setMsg] = useState("");
+    const [stashMessage, setStashMessage] = useState("");
+    const [review, setReview] = useState<{ phase: "loading"; projectId: string } | { phase: "ready"; projectId: string; data: GitReview } | null>(null);
     const [err, setErr] = useState<string | null>(null);
     const [mutation, setMutation] = useState<MutationState>({ phase: "idle" });
     const sending = useRef(false);
+    const reviewing = useRef(false);
+    const currentProject = useRef(projectId);
+    currentProject.current = projectId;
+    useEffect(() => { setReview(null); }, [projectId]);
     const s = status.data;
-    const blocked = mutation.phase !== "idle";
+    const blocked = mutation.phase !== "idle" || review !== null;
     const show = async (path: string, isStaged: boolean) => {
         const h = await api.get<{ hunks: string[]; fingerprint: string }>(`/projects/${projectId}/git/hunks?staged=${isStaged}&path=${encodeURIComponent(path)}`);
         if (h.hunks.length > 0) {
@@ -43,6 +55,8 @@ export function GitPanel({ projectId }: { projectId: string }) {
         try {
             await api.post(`/projects/${a.projectId}/git/${a.op}`, a.body, { key: a.key });
             if (a.op === "commit") setMsg((current) => current === a.body.message ? "" : current);
+            if (a.op === "stash-save") setStashMessage((current) => current === a.body.message ? "" : current);
+            if (a.op === "confirm" || a.op === "stash-save") setDiff(null);
             if (a.op === "stage-hunks") await show(a.body.path, a.body.unstage).catch(() => setDiff(null));
             setMutation({ phase: "idle" });
         } catch (e) {
@@ -53,11 +67,28 @@ export function GitPanel({ projectId }: { projectId: string }) {
         } finally {
             sending.current = false;
             status.reload();
+            stashes.reload();
         }
     };
     const start = (request: GitRequest) => {
-        if (sending.current || blocked) return;
+        if (sending.current || reviewing.current || blocked) return;
         void mutate({ ...request, projectId, key: newKey() });
+    };
+    const prepare = async (action: ReviewAction) => {
+        if (blocked || sending.current || reviewing.current) return;
+        reviewing.current = true;
+        setReview({ phase: "loading", projectId });
+        setErr(null);
+        try {
+            const data = await api.post<GitReview>(`/projects/${projectId}/git/review`, action);
+            if (currentProject.current === projectId) setReview({ phase: "ready", projectId, data });
+            else setReview(null);
+        } catch (error) {
+            setReview(null);
+            setErr(error instanceof ApiError ? error.message : "Git 확인 정보 조회 실패");
+        } finally {
+            reviewing.current = false;
+        }
     };
     const progress = mutation.phase === "sending" && <p className="muted small" role="status">Git 요청 처리·결과 확인 중…</p>;
     // 조회가 실패하거나 저장소가 잠시 없어져도 원래 mutation의 결과 확인은 남긴다.
@@ -70,6 +101,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
                 {mutation.attempt.op === "commit" && <pre>{mutation.attempt.body.message}</pre>}
                 {(mutation.attempt.op === "stage" || mutation.attempt.op === "unstage") && <pre>{mutation.attempt.body.paths.join("\n")}</pre>}
                 {mutation.attempt.op === "stage-hunks" && <p>{mutation.attempt.body.path} · 부분 {mutation.attempt.body.hunks.map((i) => i + 1).join(", ")}</p>}
+                {(mutation.attempt.op === "confirm" || mutation.attempt.op === "stash-save") && <pre>{JSON.stringify(mutation.attempt.body, null, 2)}</pre>}
             </details>
             <div className="inline">
                 <button onClick={() => void mutate(mutation.attempt)}>같은 Git 요청 확인</button>
@@ -112,13 +144,15 @@ export function GitPanel({ projectId }: { projectId: string }) {
             >
                 {isStaged ? "내리기" : "올리기"}
             </button>
+            {e.kind !== "untracked" && <button className="ghost small" disabled={blocked}
+                onClick={() => void prepare({ operation: "discard", paths: [e.path] })}>변경 버리기</button>}
         </li>
     );
     return (
         <section className="git" data-testid="git-panel">
             <h2>
                 Git · {s.branch?.head} {s.branch?.ahead ? `↑${s.branch.ahead}` : ""} {s.branch?.behind ? `↓${s.branch.behind}` : ""}
-                <button className="ghost small" onClick={() => status.reload()}>새로고침</button>
+                <button className="ghost small" onClick={() => { status.reload(); stashes.reload(); }}>새로고침</button>
             </h2>
             <div className="inline small">
                 <button className="ghost small" disabled={blocked} onClick={() => remote("fetch")} title="원격 참조만 갱신합니다">가져오기(fetch)</button>
@@ -128,6 +162,26 @@ export function GitPanel({ projectId }: { projectId: string }) {
             {progress}
             {err && <p className="err" role="alert">{err}</p>}
             {recovery}
+            {review?.phase === "loading" && <p role="status">Git 확인 정보 조회 중…</p>}
+            {review?.phase === "ready" && review.projectId === projectId && <GitConfirmation
+                projectId={projectId} review={review.data} onCancel={() => setReview(null)}
+                onConfirm={() => {
+                    if (sending.current) return;
+                    setReview(null);
+                    void mutate({ op: "confirm", body: confirmationBody(review.data), projectId: review.projectId, key: newKey() });
+                }} />}
+            <h3 className="small">stash</h3>
+            <div className="inline wrap">
+                <input aria-label="stash 메시지" placeholder="stash 메시지" value={stashMessage} onChange={(event) => setStashMessage(event.target.value)} />
+                <button disabled={blocked || !s.fingerprint || !entries.some((e) => e.kind !== "untracked")}
+                    onClick={() => start({ op: "stash-save", body: { message: stashMessage, expected_fingerprint: s.fingerprint } })}>stash 저장</button>
+            </div>
+            <p className="muted small">저장은 tracked 파일의 index·작업 트리 변경만 포함합니다. untracked·ignored 파일은 그대로 둡니다.</p>
+            {stashes.error ? <p className="err" role="alert">stash 목록 조회 실패</p> : !stashes.data ? <p role="status">stash 목록 조회 중…</p> :
+                <ul>{stashes.data.stashes.map((stash) => <li key={`${stash.reference}:${stash.oid}`}>
+                    <code>{stash.reference}</code> {stash.subject}
+                    <button className="ghost small" disabled={blocked} onClick={() => void prepare({ operation: "stash_pop", stash_oid: stash.oid })}>stash pop</button>
+                </li>)}</ul>}
             <h3 className="small">커밋할 변경 ({staged.length})</h3>
             <ul className="session-list">{staged.map((e) => row(e, true))}</ul>
             <h3 className="small">작업 트리 변경 ({unstaged.length})</h3>
