@@ -28,18 +28,20 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 | 번호 | 브랜치 | worktree 절대 경로 | workspace ID | 기능 |
 |---|---|---|---|---|
-| 11 | parallel/b02-skills-wire | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-11-skills-wire | `wks_98d3177f6bbf5a31` | 스킬 선택·적용 연결 (01 이월) |
-| 12 | parallel/b02-image-read-wire | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-12-image-read-wire | `wks_13f52f7f5562939c` | 이미지 읽기 모델 전달 (04 이월) |
-| 14 | parallel/b02-pwa-lifecycle | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-14-pwa-lifecycle | `wks_043964eeb7dd683e` | PWA 버전 갱신·오프라인·저장소 한계 |
-| 20 | parallel/b02-external-editor | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-20-external-editor | `wks_7abac678efb30e9a` | 외부 편집기 목록·열기 (`c2eebe6` 기준) |
 | 21 | parallel/b02-source-skills-hooks | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-21-source-skills-hooks | `wks_ee49ecc425d4a36e` | 원본 스킬·hook 읽기 전용 보기 (10 이월, `7b3949d` 기준) |
 | 22 | parallel/b02-create-entry | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-22-create-entry | `wks_e30bd8e9163a7bb1` | 세션·프로젝트 생성 진입점 단순화 (`7b3949d` 기준) |
 | 23 | parallel/b02-tab-close | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-23-tab-close | `wks_2953ff0df5ee7bb2` | 탭·창 닫기 시 서버 작업 유지 (`7b3949d` 기준) |
 | 24 | parallel/b02-exec-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings | `wks_4a12061aaef2c918` | 셸·작업 한도·격리·기본 위치 설정 (`7b3949d` 기준) |
 | 25 | parallel/b02-update-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings | `wks_9ec8fd34396cf19a` | 서버 업데이트 채널·버전 표시 (`7b3949d` 기준) |
 | 26 | parallel/b02-browser-caps | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps | `wks_9d9878d624297a99` | 브라우저 알림·clipboard·파일 API 차이 표시 (`7b3949d` 기준) |
+| 27 | parallel/b02-pwa-recovery | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery | 생성 후 기록 | PWA 호환·오프라인·다중 탭 복구 (14 이월) |
+| 28 | parallel/b02-skill-management | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-28-skill-management | 생성 후 기록 | Grove 스킬 추가·저장·reload·활성화 |
+| 29 | parallel/b02-hook-execution | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-29-hook-execution | 생성 후 기록 | 승인·한도·취소 경계를 따르는 hook 실행 |
+| 30 | parallel/b02-navigation-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context | 생성 후 기록 | 호스트·프로젝트·세션 현재 위치와 탐색 |
 
-공통 파일 연결 지점이 겹치는 곳: `src/lib.rs::router`(11·20·25), `src/store.rs` MIGRATIONS 끝(11), `Settings.tsx` mount(11·24·25·26), `Composer.tsx`(11·14). 모두 서로 다른 줄의 추가이며 통합 때 순서만 맞춘다. `src/runner.rs`는 11이 지침 조립, 12가 도구 결과→provider 경로만 수정한다. `src/source_settings/`는 21, `src/skills/`는 11 소유다.
+공통 연결: `src/lib.rs::router`(25·28·29), `src/store.rs` MIGRATIONS 끝(28·29), `Settings.tsx` mount(24·25·26). 27은 PWA/API 요청 경계·서버 작업 차단, 28은 스킬, 29는 hook 이벤트/실행, 30은 Workspace header 밖의 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30으로 분리한다. `src/source_settings/`는 21, `src/skills/`는 28 소유다.
+
+자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 사용자가 승인한 현재 목표는 활성 기능 workspace 20개다. 21~26은 2026-11-13 자동 시작했고 이후 준비 작업도 세션 이력·clean·경로 일치 확인 후 한 번만 자동 시작한다. 25는 모델 제공자 오류로 종료돼 세션과 workspace를 보존하며 자동 재시작하지 않는다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
@@ -65,6 +67,10 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 16 | `parallel/b02-first-start` · `90aa51f` | `4cb228c` | `work/RESULT-16.md`; `first_start` 9개·기존 `cli`·`api` 27개 통과 | `wks_3e03fb86d3452409` | archive·디렉터리 제거 확인; 브랜치 유지 | 24 |
 | 17 | `parallel/b02-hooks-config` · `3188cf5` | `4cb228c` | `work/RESULT-17.md`; `hooks` 5개·단위 5개·`hooks` E2E 4개 통과 | `wks_d3b07706e87b88fc` | archive·디렉터리 제거 확인; 브랜치 유지 | 25 |
 | 19 | `parallel/b02-git-stash` · `b40e805` | `4cb228c` | `work/RESULT-19.md`; `git_stash` 9개·`git`·`git_receipts`·단위 4개·`git-stash`·`git-recovery` E2E 통과 | `wks_69960bfc3714a13f` | archive·디렉터리 제거 확인; 브랜치 유지 | 26 |
+| 11 | `parallel/b02-skills-wire` · `b171653` | `af0ad28` | `work/RESULT-11.md`; skills 17개·store 7개·화면 단위 7개·타입·스킬 E2E 2개 통과. hook migration 뒤에 skill migration 추가, Composer mount 보존 | `wks_98d3177f6bbf5a31` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-11-skills-wire` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 27 |
+| 12 | `parallel/b02-image-read-wire` · `b575b5d` | `af0ad28` | `work/RESULT-12.md`; image_read 16개·attachments 15개·HTTP 6개·tool_batches 3개·웹 capability·타입 통과. runner 첨부→프로젝트 이미지 복원과 스킬 지침 조립 양쪽 보존 | `wks_13f52f7f5562939c` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-12-image-read-wire` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 28 |
+| 14 | `parallel/b02-pwa-lifecycle` · `4577b43` | `af0ad28` | `work/RESULT-14.md`; lifecycle 12개·API 18개·PWA/연결/응답 유실/승인 포함 E2E 22개 및 루트·`/grove/` 배포 E2E 4개 통과. 공통 변경 요청 경계 누락을 실패 시험으로 재현 후 수정 | `wks_043964eeb7dd683e` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-14-pwa-lifecycle` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 29 |
+| 20 | `parallel/b02-external-editor` · `1b1e438` | `af0ad28` | `work/RESULT-20.md`; 격리 7환경을 실행하는 Rust driver·타입 계약 2개, 웹 단위 4개·타입·외부 편집기 E2E 4개 통과. 실제 GUI·Windows/macOS 미검증 | `wks_7abac678efb30e9a` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-20-external-editor` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 30 |
 
 b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01·04 이월은 10·11·12로 배정했다.
 
@@ -74,12 +80,15 @@ b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01
 | 출처 | 남은 작업 | 근거 | 배정 |
 |---|---|---|---|
 | 00 | 원본 설정 조회의 서버 라우트·설정 화면 연결 | `work/RESULT-00.md` | 10 |
-| 01 | 스킬 선택·적용의 모델 경로 연결 | `work/RESULT-01.md` | 11 |
-| 04 | 이미지 읽기 도구의 모델 입력 경로 연결 | `work/RESULT-04.md` | 12 |
+| 01 | 스킬 선택·적용의 모델 경로 연결 | `work/RESULT-01.md`, `work/RESULT-11.md` | 11에서 통합·검증 완료 |
+| 04 | 이미지 읽기 도구의 모델 입력 경로 연결 | `work/RESULT-04.md`, `work/RESULT-12.md` | 12에서 통합·검증 완료 |
 | 07 | Linux 사용자 서비스의 실제 설치·재시작 검증 (외부 환경 필요) | `work/RESULT-07.md` | 보류: 실제 systemd 사용자 서비스 환경에서 검증 필요 |
 | 08 | HTML 본문 추출 방식 결정·실제 네트워크 검증 (`INTEGRATION-002`) | `work/RESULT-08.md` | 보류: 추출 의존성 추가 승인 필요 |
 | 18 | `TERM-005` Android/iOS 실기기 한글 키보드·클립보드 확인 | `work/RESULT-18.md` | 보류: 실기기 필요 |
 | 10 | `RESOURCE-018` 원본 스킬·hook 정의 읽기 전용 보기 | `work/RESULT-10.md` | 21 |
+| 11 | `RESOURCE-012` metadata/root 간 alias·hardlink 계약, Windows 경로/junction 검증 | `work/RESULT-11.md` | 보류: 지원 계약·Windows 환경 확인 필요 |
+| 14 | `WEB-007`·`WEB-009`·`WEB-016` 인증/나머지 작업 경계·offline cold start·다중 탭·저장소 인수 | `work/RESULT-14.md`, `af0ad28` | 27 |
+| 20 | `FILEUI-007` 실제 GUI 편집기·Windows/macOS·서비스 세션 검증 | `work/RESULT-20.md` | 보류: 해당 플랫폼·GUI 환경 필요 |
 
 ## 통합 담당의 완료 절차
 1. 사용자 통합 요청 뒤 각 worktree의 RESULT와 실제 branch·SHA·diff를 확인한다. 인계 파일만 보고 성공으로 단정하지 않는다.
@@ -97,4 +106,5 @@ b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01
 준비 요청은 기능 세션 실행·stage·commit·merge·push·배포를 자동 승인하지 않는다.
 START의 프롬프트를 사용자가 실제로 보내면 그 세션의 지정 작업과 관련 로컬 커밋을 승인하는 문구가 포함돼 있다.
 START의 통합 프롬프트는 해당 배치의 로컬 통합·검증·관련 커밋, 조건을 충족한 완료 worktree/워크스페이스 정리, 다음 작업 준비를 승인한다.
+현재 사용자의 명시적인 자동 순환 승인은 준비된 기능 세션 자동 시작과 위 범위의 반복 운영도 포함한다. 관련 계약은 `work/INTEGRATE.md`의 자동 순환 절을 따른다.
 원격 push·배포·서비스 중단·강제 삭제·브랜치 삭제·이력 재작성은 포함하지 않는다.

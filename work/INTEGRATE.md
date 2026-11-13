@@ -100,7 +100,7 @@ Rust 검사는 기능 세션과 같은 잠금(`flock /home/ubuntu/.cache/grove-r
 진행 중인 기능 세션에 메시지를 보내거나 작업을 대신하지 않는다.
 
 ## 자동 순환(사용자 명시 승인 시)
-- 현재 사용자는 기능 세션 자동 시작과 반복 운영을 승인했다. 목표는 활성 기능 workspace 10개, 점검은 메인 세션을 대상으로 3분 heartbeat, 만료·실행 횟수 제한 없음이다. 사용자 중지·권한 철회가 최우선이다.
+- 현재 사용자는 기능 세션 자동 시작과 반복 운영, 활성 기능 workspace 20개로의 증설을 승인했다. 점검은 메인 세션을 대상으로 3분 heartbeat, 만료·실행 횟수 제한 없음이다. 사용자 중지·권한 철회가 최우선이다.
 - 새 세션 설정은 Paseo provider `paseodog`, model `openai-oauth/gpt-6.1-sol`, `thinkingOptionId: high`, `modeId: bypass`다. 실제 provider 모델 목록과 반환된 세션 설정으로 확인한다. 승인 경계는 이 문서와 COMMON 그대로이며 도구 실행 모드가 추가 권한을 부여하지 않는다.
 - 세션 상태는 각 README 행의 정확한 cwd로 조회한다. 무필터 `list_agents`가 호출자 workspace만 반환할 수 있으므로 그 결과를 전체 목록으로 취급하지 않는다. archived 세션도 포함해 미시작과 종료를 구분한다.
 - 미시작 판정은 workspace 경로·브랜치·기준 SHA 일치, 세션 이력 없음, 정확한 `RESULT-NN.md` 없음, tracked/untracked clean을 모두 만족해야 한다. `create_agent`는 정확한 workspace ID와 완료 알림을 지정해 한 번만 호출한다. 생성 응답이 유실되면 먼저 그 cwd의 세션 이력을 다시 확인하고 중복 생성하지 않는다.
