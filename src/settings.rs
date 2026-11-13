@@ -450,7 +450,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: "exec.default_cwd",
             menu: "agents",
             label: "기본 작업 위치",
-            description: "cwd를 생략한 새 명령의 프로젝트 안 상대 디렉터리입니다. '/'로 구분하고 '..'·절대 경로는 사용할 수 없습니다. 기본값 '.'은 실행 root입니다. 현재 실행 경로 연결은 통합 대기 중이며 저장만으로 적용되지 않습니다",
+            description: "cwd를 생략한 새 모델 셸·대화 작업의 실행 root(worktree 포함) 안 상대 디렉터리입니다. '/'로 구분하고 '..'·절대 경로는 사용할 수 없습니다. 명시한 cwd가 우선하며 기본값 '.'은 실행 root입니다. 프로젝트 script는 확인한 root에서 실행합니다. 터미널·hook·외부 CLI에는 적용하지 않습니다",
             keywords: "exec cwd directory working default 기본 작업 위치 디렉터리",
             kind: "string",
             options: &[],

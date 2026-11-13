@@ -537,8 +537,8 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         return Ok(r);
     }
     let sid = session_id.clone();
-    let (intent,command)=(b.script.clone(),b.command.clone());
-    let (root, shell, limits, project, script) = app
+    let (intent,command,explicit_cwd)=(b.script.clone(),b.command.clone(),b.cwd.clone());
+    let (root, cwd_rel, shell, limits, project, script) = app
         .db
         .call(move |c| {
             let s = crate::sessions::get_active(c, &sid)?;
@@ -546,8 +546,11 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
             let limits = crate::procs::Limits::effective(c, Some(&s.project_id), Some(&sid))?;
             let shell = crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string();
             let root = crate::sessions::exec_root(c, &sid)?;
+            // 최초 계획에서만 설정을 읽는다. receipt 재전송·실제 spawn에는 고정한 상대 경로를 쓴다.
+            let cwd = crate::settings::execution_cwd(c, &root, Some(&s.project_id), Some(&sid), explicit_cwd.as_deref())?;
+            let cwd_rel = rel_display(&root, &cwd);
             let script = intent.as_ref().map(|intent| crate::project_scripts::prepare(c,&s.project_id,intent,&command,&root,&shell)).transpose()?;
-            Ok((root,shell,limits,s.project_id,script))
+            Ok((root,cwd_rel,shell,limits,s.project_id,script))
         })
         .await?;
     let queue=app.tasks.admission.get(&project);
@@ -555,7 +558,7 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     crate::auth::revalidate(&app,&p).await?;
     if let Some(response)=idem::replay(&app,&p,&headers,&h).await? { return Ok(response); }
     let resource = Some(crate::project_resources::Lease::Write { _guard:app.project_resources.process_start(&app,&project,&p).await? });
-    let cwd = resolve(&root, b.cwd.as_deref().unwrap_or(".")).map_err(|e| ApiError::invalid(e.message))?;
+    let cwd = resolve(&root, &cwd_rel).map_err(|e| ApiError::invalid(e.message))?;
     if !cwd.is_dir() {
         return Err(ApiError::invalid("cwd 디렉터리가 없습니다"));
     }

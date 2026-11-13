@@ -161,7 +161,7 @@ pub async fn run(State(app): State<App>, p: Principal, headers: HeaderMap, Path(
     }
     // 정의를 먼저 다시 읽으면 접수 뒤 삭제·편집된 요청의 응답 확인이 깨지므로 공통 receipt를 먼저 확인한다.
     crate::tasks::start(State(app),p,headers,Path(session),Json(crate::tasks::StartBody {
-        command:body.command,cwd:None,timeout_ms:None,
+        command:body.command,cwd:Some(".".into()),timeout_ms:None,
         script:Some(Intent {id,expected_revision:body.expected_revision,expected_execution:body.expected_execution}),
         setup:body.setup,
     })).await
