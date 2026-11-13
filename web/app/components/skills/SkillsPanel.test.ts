@@ -39,12 +39,12 @@ describe("스킬 조회·명시적 선택", () => {
         copy.source.root_id = "changed";
         expect(entry.source.root_id).toBe("global");
     });
-    it("원문 HTML은 실행 가능한 요소가 아니며 적용 완료로 표시하지 않는다", () => {
+    it("원문 HTML은 실행하지 않고 명시적 선택·모델 적용 규칙을 표시한다", () => {
         const html = render({ selected: [selection] });
         expect(html).toContain("&lt;script&gt;unsafe()&lt;/script&gt;");
         expect(html).not.toContain("<script>");
-        expect(html).toContain("선택됨 · 모델 미적용");
-        expect(html).toContain("자동 매칭·실행은 하지 않습니다");
+        expect(html).toContain("선택됨 · 다음 모델 호출 직전 재검증");
+        expect(html).toContain("자동 매칭 없음");
         expect(html).toContain("선택 해제");
     });
     it("로딩·오류·stale 본문은 표시하거나 선택에 재사용하지 않는다", () => {
@@ -86,7 +86,7 @@ describe("스킬 조회·명시적 선택", () => {
         };
         const controls = buttons(SkillsPanel(wired));
         controls.find((button) => button["aria-label"]?.endsWith("본문 보기"))!.onClick!();
-        controls.find((button) => button.children === "이 revision 선택 · 모델 미적용")!.onClick!();
+        controls.find((button) => button.children === "이 revision 선택 · 다음 모델 호출에 적용")!.onClick!();
         expect(inspected).toEqual([selection]);
         expect(chosen).toEqual([selection]);
         const prior = { ...selection, revision: "old" };
@@ -96,7 +96,7 @@ describe("스킬 조회·명시적 선택", () => {
     it("동명 항목·alias·stale 선택이 있으면 자동 대체를 위한 선택을 허용하지 않는다", () => {
         const other: SkillEntry = { ...entry, id: "other", source: { kind: "project", root_id: "project", project_id: "p" } };
         const selectDisabled = (changes: Partial<SkillsPanelProps>) => buttons(SkillsPanel({ ...props, ...changes }))
-            .find((button) => button.children === "이 revision 선택 · 모델 미적용")!.disabled;
+            .find((button) => button.children === "이 revision 선택 · 다음 모델 호출에 적용")!.disabled;
         expect(selectDisabled({})).toBe(false);
         expect(selectDisabled({ selected: [selection] })).toBe(true);
         expect(selectDisabled({ selected: [{ ...selection, revision: "old" }] })).toBe(true);

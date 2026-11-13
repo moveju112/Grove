@@ -909,6 +909,13 @@ pub const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX hook_definitions_scope ON hook_definitions(project_id,name,id);
     "#,
+    // 세션별 스킬 선택. source·revision은 원래 binding 그대로 보존한다.
+    r#"
+    CREATE TABLE session_skills (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        bindings TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(bindings))
+    );
+    "#,
 ];
 
 #[cfg(test)]

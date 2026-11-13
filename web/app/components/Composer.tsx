@@ -9,6 +9,7 @@ import { useQuery } from "../state/store";
 
 import { AttachmentPicker, useAttachments } from "./Attachments";
 import { CapabilitySummary } from "./ProfileCapabilities";
+import { SessionSkills } from "./skills/SessionSkills";
 
 export type { SendOptions };
 
@@ -360,6 +361,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled, running, on
 
     return (
         <div className="composer">
+            {resourceKey.startsWith("session:") && <SessionSkills key={`${projectId}:${resourceKey}`} sessionId={resourceKey.slice("session:".length)} />}
             {copyError && <p className="err" role="alert">기기에 입력 사본을 보관하지 못했습니다. 화면을 떠나기 전에 내용을 복사하세요.</p>}
             {copies.length > 0 && <details className="draft-note" data-testid="draft-copies">
                 <summary>다른 입력 사본 {copies.length}개</summary>
