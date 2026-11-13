@@ -306,6 +306,57 @@ fn extract(archive: &Path, dest: &Path) -> Result<(), String> {
     Ok(())
 }
 
+/// 파일 크기와 무관하게 고정 크기 버퍼로 hash와 실제 읽은 크기를 계산한다.
+fn file_digest(path: &Path) -> Result<(String, u64), String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut hash = Sha256::new();
+    let mut buffer = [0u8; 64 * 1024];
+    let mut size = 0;
+    loop {
+        let n = match file.read(&mut buffer) {
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            result => result.map_err(|e| e.to_string())?,
+        };
+        if n == 0 { break; }
+        hash.update(&buffer[..n]);
+        size += n as u64;
+    }
+    Ok((crate::util::hex(&hash.finalize()), size))
+}
+
+fn verify_package_files(top: &Path, files: &[Value], workers: usize) -> Result<(), String> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let mut handles = Vec::new();
+        for _ in 0..workers.max(1).min(files.len()) {
+            let next = &next;
+            handles.push(scope.spawn(move || -> Result<(), String> {
+                while let Some(f) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let rel = f["path"].as_str().ok_or("파일 경로 없음")?;
+                    if rel.contains("..") || rel.starts_with('/') {
+                        return Err(format!("허용되지 않는 경로: {rel}"));
+                    }
+                    let (hash, _) = file_digest(&top.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
+                    if hash != f["sha256"].as_str().unwrap_or("") {
+                        return Err(format!("{rel}: hash 불일치"));
+                    }
+                }
+                Ok(())
+            }));
+        }
+        // 오류가 있어도 모든 작업을 회수한 뒤 반환한다.
+        let mut result = Ok(());
+        for handle in handles {
+            let checked = handle.join().unwrap_or_else(|_| Err("패키지 검증 스레드 실패".into()));
+            result = result.and(checked);
+        }
+        result
+    })
+}
+
 /// 풀린 패키지의 최상위 폴더(grove-<ver>-<target>)를 찾아 manifest의 파일 hash를 모두 확인한다.
 fn verify_package_dir(dir: &Path) -> Result<(PathBuf, Value), String> {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(dir).map_err(|e| e.to_string())?.flatten().map(|e| e.path()).collect();
@@ -314,16 +365,8 @@ fn verify_package_dir(dir: &Path) -> Result<(PathBuf, Value), String> {
     }
     let top = entries.remove(0);
     let m: Value = read_json(&top.join("manifest.json"))?;
-    for f in m["files"].as_array().ok_or("manifest files 없음")? {
-        let rel = f["path"].as_str().ok_or("파일 경로 없음")?;
-        if rel.contains("..") || rel.starts_with('/') {
-            return Err(format!("허용되지 않는 경로: {rel}"));
-        }
-        let data = std::fs::read(top.join(rel)).map_err(|e| format!("{rel}: {e}"))?;
-        if crate::util::sha256_hex(&data) != f["sha256"].as_str().unwrap_or("") {
-            return Err(format!("{rel}: hash 불일치"));
-        }
-    }
+    let workers = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+    verify_package_files(&top, m["files"].as_array().ok_or("manifest files 없음")?, workers)?;
     Ok((top, m))
 }
 
@@ -333,9 +376,9 @@ fn probe_version(bin: &Path) -> Result<Value, String> {
     serde_json::from_slice(o.stdout.trim_ascii()).map_err(|e| format!("version --json 해석 실패: {e}"))
 }
 
-/// 패키지 압축본을 검증해 releases/<id>에 둔다. id = <version>-<archive sha 앞 12자>.
-fn stage_release(inst: &Install, archive: &Path) -> Result<(String, Value), String> {
-    let sha = crate::util::sha256_hex(&std::fs::read(archive).map_err(|e| e.to_string())?);
+/// 호출자가 계산·검증한 압축본 hash를 재사용해 releases/<id>에 둔다.
+/// id = <version>-<archive sha 앞 12자>.
+fn stage_release(inst: &Install, archive: &Path, sha: &str) -> Result<(String, Value), String> {
     let cand = inst.root.join("candidates").join(format!("{}.partial", &sha[..12]));
     let _ = std::fs::remove_dir_all(&cand);
     extract(archive, &cand)?;
@@ -542,7 +585,8 @@ pub fn install(root: &Path, package: &Path, data_dir: &Path, listen: &str, trust
     inst.save_trust(&trust)?;
     let cfg = InstallCfg { data_dir: data_dir.to_path_buf(), listen: listen.to_string(), service: service.to_string() };
     write_atomic(&root.join("install.json"), &serde_json::to_vec_pretty(&cfg).unwrap())?;
-    let (id, m) = stage_release(&inst, package)?;
+    let (sha, _) = file_digest(package)?;
+    let (id, m) = stage_release(&inst, package, &sha)?;
     inst.set_pointer("current", &id)?;
     inst.set_state("idle", None, json!({ "installed": id }));
     Ok(json!({ "installed": id, "version": m["version"] }))
@@ -740,18 +784,19 @@ pub fn apply(root: &Path, manifest_src: &str, o: &ApplyOpts) -> Result<Value, St
     let cfg = inst.cfg()?;
     let ext = if art.url.ends_with(".zip") { "zip" } else { "tar.gz" };
     let file = root.join("candidates").join(format!("{}.{ext}", &art.sha256[..12]));
-    if !(file.is_file() && crate::util::sha256_hex(&std::fs::read(&file).unwrap_or_default()) == art.sha256) {
+    if !file_digest(&file).is_ok_and(|(hash, size)| hash == art.sha256 && size == art.size) {
         let part = file.with_extension("download");
         fetch(&art.url, &part)?;
-        let data = std::fs::read(&part).map_err(|e| e.to_string())?;
-        if data.len() as u64 != art.size || crate::util::sha256_hex(&data) != art.sha256 {
+        let (hash, size) = file_digest(&part)?;
+        if size != art.size || hash != art.sha256 {
             let _ = std::fs::remove_file(&part);
             inst.set_state("failed", Some(&r.version), json!({ "error": "hash" }));
             return Err("다운로드한 파일의 크기·hash가 manifest와 다릅니다".into());
         }
         std::fs::rename(&part, &file).map_err(|e| e.to_string())?;
     }
-    let (new_id, nm) = match stage_release(&inst, &file) {
+    // 위에서 실제 bytes를 대조한 hash를 재사용한다. 압축본을 다시 읽어 계산하지 않는다.
+    let (new_id, nm) = match stage_release(&inst, &file, &art.sha256) {
         Ok(x) => x,
         Err(e) => {
             inst.set_state("failed", Some(&r.version), json!({ "error": e }));
@@ -986,6 +1031,67 @@ pub fn migrate_check(db: &Path) -> Result<Value, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn streaming_digest_matches_content_and_size() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("payload");
+        for data in [Vec::new(), b"abc".to_vec(), vec![0x5a; 200_000]] {
+            std::fs::write(&path, &data).unwrap();
+            assert_eq!(file_digest(&path).unwrap(), (crate::util::sha256_hex(&data), data.len() as u64));
+        }
+        assert!(file_digest(&dir.path().join("missing")).is_err());
+    }
+
+    #[test]
+    fn package_verification_preserves_failures_with_multiple_workers() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut files = Vec::new();
+        for i in 0..12 {
+            let name = format!("file-{i}");
+            let data = vec![i as u8; 70_000 + i];
+            std::fs::write(dir.path().join(&name), &data).unwrap();
+            files.push(json!({"path": name, "sha256": crate::util::sha256_hex(&data)}));
+        }
+        for workers in [1, 4] {
+            verify_package_files(dir.path(), &files, workers).unwrap();
+            verify_package_files(dir.path(), &[], workers).unwrap();
+            let mut bad = files.clone();
+            bad[7]["sha256"] = json!("invalid");
+            assert!(verify_package_files(dir.path(), &bad, workers).unwrap_err().contains("hash 불일치"));
+            bad[7]["path"] = json!("../outside");
+            assert!(verify_package_files(dir.path(), &bad, workers).unwrap_err().contains("허용되지 않는 경로"));
+            bad[7]["path"] = json!("missing");
+            assert!(verify_package_files(dir.path(), &bad, workers).is_err());
+            bad[7]["path"] = Value::Null;
+            assert!(verify_package_files(dir.path(), &bad, workers).is_err());
+        }
+    }
+
+    #[test]
+    fn extracted_package_is_verified_before_publication() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = dir.path().join("package.tar.gz");
+        let payload = b"package contents";
+        let manifest = serde_json::to_vec(&json!({
+            "files": [{"path": "web/index.html", "sha256": crate::util::sha256_hex(payload)}]
+        })).unwrap();
+        let writer = flate2::write::GzEncoder::new(std::fs::File::create(&archive).unwrap(), flate2::Compression::default());
+        let mut tar = tar::Builder::new(writer);
+        for (path, data) in [("grove-test/web/index.html", payload.as_slice()), ("grove-test/manifest.json", manifest.as_slice())] {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(data.len() as u64);
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, path, data).unwrap();
+        }
+        tar.into_inner().unwrap().finish().unwrap();
+        let candidate = dir.path().join("candidate");
+        extract(&archive, &candidate).unwrap();
+        let (top, _) = verify_package_dir(&candidate).unwrap();
+        std::fs::write(top.join("web/index.html"), b"tampered").unwrap();
+        assert!(verify_package_dir(&candidate).unwrap_err().contains("hash 불일치"));
+    }
 
     #[tokio::test]
     async fn service_control_http_does_not_follow_redirects() {
