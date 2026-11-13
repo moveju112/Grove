@@ -37,7 +37,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 31 | parallel/b02-exec-cwd | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-31-exec-cwd | `wks_fe83bf0ff80fb523` | 기본 cwd 실제 실행 연결 (24 이월, `9942629` 기준) |
 | 32 | parallel/b02-compaction-details | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-32-compaction-details | `wks_101ba29980186bf0` | 압축 기록 모델·비용·원문 이동 (`9942629` 기준) |
 | 33 | parallel/b02-model-fallback | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-33-model-fallback | `wks_e0883b94183c3f2a` | 명시적 첫 응답 전 HTTP 모델 fallback (`9942629` 기준) |
-| 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | 준비 중 | 역할별 위임 허용 정책 (`work/34.md` 사전 배정 커밋 기준, 미시작) |
+| 34 | parallel/b02-agent-policy | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-34-agent-policy | `wks_145becb7b1464f70` | 역할별 위임 허용 정책 (`a340d2bccd7860d8452a5513b59c7f8ac215178c` 기준, branch/HEAD/clean 확인, 미시작) |
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
