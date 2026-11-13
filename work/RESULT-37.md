@@ -1,8 +1,80 @@
 <!-- grove-handoff:v1
-{"state":"ready","remaining":[],"blockers":[],"integration_checks":[]}
+{"state":"ready","remaining":[],"blockers":[],"integration_checks":["수정 통합 candidate에서 e2e/settings-links.spec.ts 및 e2e/workspace.spec.ts:319, e2e/workspace.spec.ts:799, e2e/workspace.spec.ts:807 선택 인수"]}
 -->
 
 # 37 — 비동기 설정 직접 링크
+
+## 통합 실패 후속 — 현재 인계
+
+- 재개 기준은 `43cf9add981931f74c5665ed0a402e57f31b4a0a`다. 같은 worktree·branch에서 clean 시작했고 기준 변경·merge·rebase·다른 checkout 편집은 없다.
+- worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links`, branch: `parallel/b02-settings-links`.
+- 상태: 기존 브랜치에서 자기 결함을 재현·수정하고 소유 선택 인수를 완료했다. blocker는 없다. 고정 candidate 자체는 수정하거나 재검증한 것으로 주장하지 않으며, 수정 통합 후 인수는 위 `integration_checks`에 남겼다.
+- 별도 분할 생성 시 초안 수명 문제는 **work 49 소유**다. 이번 변경·잔여·blocker에 포함하지 않는다.
+
+### 통합 실패와 원인 재현
+
+고정 candidate `ee8173cf9a4e5dc52b1d4d534202adc3e0aac0a9`의 `/home/ubuntu/.cache/grove-validation/validation-52_pbv0g/output.log` 전체와 `/home/ubuntu/.cache/grove-validation/validation-52_pbv0g/checkout/web/test-results/settings-links-실행-설정의-지연된-행도-전용-영역-안에서-직접-링크로-드러난다-desktop/error-context.md` 전체를 읽었다.
+원래 결과는 Rust 10개·Vitest 7개·typecheck·E2E 첫 4개 통과, exec viewport 실패 1개, 후속 E2E 10개 미실행, job exit 1이다. 이 실패를 이후 통과로 덮어쓰지 않는다.
+
+수정 전 브랜치에서 `python3 scripts/build.py test --e2e settings-links.spec.ts:144` 단독 실행은 통과했다.
+근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_848a56b0.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_848a56b0.stderr`.
+branch와 candidate의 reveal/useSettingsLink/ExecSettings/공통 app.css/전용 E2E는 bytes가 같았다. Settings의 차이는 PWA 버튼·업데이트·fallback 공존이며 ScopedSettings는 저장 버튼의 ServerActionButton 래퍼 차이였다. 그 차이만으로 원인을 단정하지 않았다.
+
+같은 브랜치에서 실제 Definitions 응답도 별도로 보류하는 결정적 fixture로 바꾸고, 제품 수정 전 같은 명령을 실행하자 실패했다.
+effective 응답을 해제하면 exec 행에 scrollIntoView가 한 번 실행되고 viewport 안에 있었지만, 그 앞쪽 Definitions 응답을 나중에 해제·렌더하자 동일한 `viewport ratio 0`이 발생했다.
+진단 기록은 행 top `5721.78125`에서 scroll 직후 `440.78125`, 다음 frame `373.28125`, pane scrollTop `5281`, pane clientHeight `744`였고, 이후 Definitions 렌더 뒤 최종 viewport 검사가 실패했다.
+근거: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_4806ee8f.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_4806ee8f.stderr` (exit 1).
+즉 기존 행 준비 신호는 **앞쪽 비동기 내용의 높이 준비**를 보장하지 않았다. 통합에서만 발생하는 경계가 아니라 브랜치에서도 재현한 결함이다. candidate 내부의 정확한 응답 순서까지 관측했다고 주장하지 않는다.
+
+### 수정과 계약
+
+| 소유 변경 경로 | 내용 |
+| --- | --- |
+| `web/app/components/Settings.tsx` | exec 링크에만 앞쪽 조회 준비를 연결하고, 그 전에는 최초 행 준비 신호 소비를 보류 |
+| `web/app/components/settings-links/useExecLinkLayout.ts` | 기존 viewer와 같은 query key·fetcher 계약으로 앞쪽 내용의 준비를 구독 |
+| `web/app/components/settings-links/useExecLinkLayout.test.ts` | 초기/진행/재조회 보류, 오류 종료, MCP 미지원, 프로젝트 cache 및 비활성 구독 검증 5개 |
+| `web/e2e/settings-links.spec.ts` | effective·Definitions 응답을 독립 보류/해제, 최종 viewport와 이후 재조회 시 사용자 scrollTop 유지; context/exec 두 pane의 초안·고정 대상 검증 |
+| `work/RESULT-37.md` | 이 후속 인계와 이전 기록 보존 |
+
+`useExecLinkLayout(active, projectId, mcpSupported): boolean`은 `definitions:agent`, 프로젝트별 `source-settings`, `hooks:global`, `profiles`, 지원되는 MCP의 `mcp`/`secrets`가 완료될 때만 true다.
+기존 `useQuery`의 같은-key 요청 공유를 재사용하며 새로운 API·서버·dependency·공통 state는 만들지 않았다. 원본 설정 조회는 기존 `getSourceSettings`, hook 경로는 기존 `hookPath`를 사용한다.
+준비 상태를 부모가 함께 구독하므로 준비 완료 render에서 앞쪽 viewer 내용도 commit된 다음 자식 행의 layout effect가 한 번 이동한다.
+다른 영역의 조회 오류는 그 영역의 기존 오류 화면이 렌더되는 종료 상태다. target effective 오류/행 누락은 보류하지 않고 기존 링크 오류 종료로 전달한다. 오류를 숨기거나 무한 재시도하지 않는다.
+링크 완료·취소 시 추가 query 구독은 해제된다. 반복 observer/listener·타이머·재이동은 없다.
+기존 root 검증·키 검증·일회성 소비·scope 변경/unmount 정리는 불변이다. 저장·revision·범위 선택·복원·권한 계약도 바꾸지 않았다.
+Profiles·Definitions·업데이트/MCP mount·공통 CSS·서버·API client·TODO·공유 환경·runtime 설정은 수정하지 않았다.
+진단용 브라우저 prototype 관측 코드는 제거했고, 최종 시험에는 응답 보류/해제와 실제 viewport 기대가 남는다. 임의 sleep·retry·scrollIntoViewIfNeeded는 없다.
+
+### 검증 명령·유효 입력
+
+아래는 모두 같은 worktree에서 `source /data/project/paseodog_opus/.envrc.dev` 후 실행했다. 모든 E2E 전체 명령은 `flock /home/ubuntu/.cache/grove-rust-check.lock`으로 직렬화했고 실행기가 현재 debug 서버와 웹을 빌드했다. 실제 사용자 설정 대신 disposable E2E 서버/DB만 사용했다.
+
+```bash
+python3 scripts/build.py test --typecheck --vitest app/components/settings-links/useExecLinkLayout.test.ts
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e settings-links.spec.ts workspace.spec.ts:319 workspace.spec.ts:799 workspace.spec.ts:807
+flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --e2e settings-links.spec.ts:87
+python3 scripts/build.py test --typecheck
+```
+
+| 실행 근거 | 실제 결과·실행기 wall / CPU |
+| --- | --- |
+| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_48f8ebe0.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_48f8ebe0.stderr` | 신규 Vitest 5개 통과, 2.18s / 2.43s. 당시 typecheck 통과, 14.03s / 14.84s |
+| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3c5577f4.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_3c5577f4.stderr` | 소유 E2E 13개 통과, 10.24s / 9.72s. 서버 빌드 2.45s / 0.36s, 웹 빌드 3.48s / 4.97s |
+| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_4ae99ff8.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_4ae99ff8.stderr` | 다중 pane 시나리오를 context/exec로 확장한 뒤 해당 2개 통과, 4.29s / 4.17s. 서버 빌드 2.95s / 0.3s, 웹 빌드 3.44s / 5.04s |
+| `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5d7cb3c9.stdout`, `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_5d7cb3c9.stderr` | 마지막 시험 변경 이후 최종 typecheck 통과, 8.41s / 12.24s |
+
+두 브라우저 통과 실행 사이 제품 변경은 없고, 산출물은 모두 `app-DVSWb5ck.js`, SW `4c39891ff61424c5`였다.
+13개 통과 실행 이후에는 다중 pane 시험만 context/exec 두 경우로 확장했다. 그 시험을 제외한 나머지 12개의 제품·helper·시험 본문은 그대로여서 재사용했고, 변경/추가한 다중 pane 2개만 다시 실행했다. 따라서 현재 고유 소유 시나리오는 **14개 통과**이며, 한 번에 14개를 실행했다고 표현하지 않는다.
+현재 exec 지연 시험 위치는 `web/e2e/settings-links.spec.ts:147`, 다중 pane 두 경우는 `web/e2e/settings-links.spec.ts:87`이다.
+통합에서 미실행됐던 소유 후속 10개도 위 13개 실행에 모두 포함되어 통과했다. 공통 Settings 링크 연결을 바꿨으므로 영향받는 앞선 소유 2개도 확인했다.
+이후 변경은 RESULT뿐이다. `git diff --check`도 통과했다.
+
+통합에서 이미 통과한 Rust agent_policy/settings_reset 10개, 기존 reveal/ExecSettings Vitest 7개, agent-policy E2E 2개의 근거는 보존했다. 이번 변경은 그 Rust·기존 단위 시험·agent-policy 동작을 바꾸지 않아 반복하지 않았다. 최초 인계의 store 단위 통과도 보존했다.
+전체 workspace·전체 회귀·mobile·다른 플랫폼은 미선택이다. React Router future 및 큰 chunk 경고는 기존대로 남는다.
+공유 잠금 대기 시간과 실제 실행기 wall/CPU 시간은 다르며 여기서 절감량을 추정하지 않았다.
+SETTINGS-021의 실행 가능한 소유 잔여는 없다. 수정 통합 candidate에서 viewport 인수를 마친 뒤 최종 TODO 판단은 통합 담당이 한다.
+
+## 이하 `43cf9ad` 시점 최초 인계 — 기존 근거 보존
 
 - 상태: 소유 구현·연결·선택 브라우저 인수 완료. SETTINGS-021 통합 완료 후보이며 TODO는 수정하지 않았다.
 - worktree: `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-37-settings-links`

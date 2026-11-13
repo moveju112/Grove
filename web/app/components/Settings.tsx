@@ -26,6 +26,7 @@ import { BrowserCapabilitiesSettings, currentNotificationIssue, useBrowserCapabi
 import { requestNotificationAccess } from "./capabilities/browser";
 import { settingLinkKey } from "./settings-links/reveal";
 import { useSettingsLink } from "./settings-links/useSettingsLink";
+import { useExecLinkLayout } from "./settings-links/useExecLinkLayout";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -81,6 +82,12 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
         return true;
     }, []);
     const link = useSettingsLink(registry, JSON.stringify([projectId, sessionId]), prepareLink);
+    const execLink = Boolean(link.key && (registry.data ?? []).some((definition) => definition.key === link.key && isExecSetting(definition)));
+    const execLayoutReady = useExecLinkLayout(execLink, projectId, mcpSupported);
+    const onLinkReady = useCallback((key: string, element: HTMLElement | null) => {
+        if (element && execLink && !execLayoutReady) return;
+        link.ready(key, element);
+    }, [execLink, execLayoutReady, link.ready]);
     const needle = q.trim().toLowerCase();
     const results = useMemo(() => (needle ? ITEMS.filter((i) => (i.id !== "memories" || memoriesSupported !== false)
         && (i.id !== "mcp" || mcpSupported !== false)
@@ -125,7 +132,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {link.error && <p className="err" role="alert">{link.error}</p>}
                 {needle && <p className="muted">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</p>}
                 {serverDefs.filter((d) => !isExecSetting(d)).length > 0 && <ScopedSettings defs={serverDefs.filter((d) => !isExecSetting(d))} target={target}
-                    linkedKey={link.key} onLinkReady={link.ready}
+                    linkedKey={link.key} onLinkReady={onLinkReady}
                     resetDefs={!needle ? (registry.data ?? []).filter((d) => d.menu === menu) : undefined} area={MENUS.find(([id]) => id === menu)?.[1]} />}
                 {hiddenAdvanced > 0 && !showAdvanced && (
                     <button className="ghost" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</button>
@@ -137,7 +144,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {visible("mcp") && mcpSupported !== false && <Section item="mcp"><McpServers /></Section>}
                 {visible("hooks") && <Section item="hooks"><HooksSettings projectId={projectId} projectName={projectName} /></Section>}
                 {(visible("exec-settings") || serverDefs.some(isExecSetting)) && <ExecSettings
-                    linkedKey={link.key} onLinkReady={link.ready}
+                    linkedKey={link.key} onLinkReady={onLinkReady}
                     defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} />}
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
                 {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
