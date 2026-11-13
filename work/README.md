@@ -35,9 +35,9 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 28 | parallel/b02-skill-management | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-28-skill-management | `wks_e343b3a56e3a22d6` | Grove 스킬 추가·저장·reload·활성화 (`551f551` 기준) |
 | 29 | parallel/b02-hook-execution | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-29-hook-execution | `wks_31bb4a6cdc6ff8bc` | 승인·한도·취소 경계를 따르는 hook 실행 (`551f551` 기준) |
 | 30 | parallel/b02-navigation-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context | `wks_73d51bb0a7f9b465` | 호스트·프로젝트·세션 현재 위치와 탐색 (`551f551` 기준) |
-| 31 | parallel/b02-exec-cwd | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-31-exec-cwd | 생성 후 기록 | 기본 cwd 실제 실행 연결 (24 이월) |
-| 32 | parallel/b02-compaction-details | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-32-compaction-details | 생성 후 기록 | 압축 기록 모델·비용·원문 이동 |
-| 33 | parallel/b02-model-fallback | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-33-model-fallback | 생성 후 기록 | 명시적 첫 응답 전 HTTP 모델 fallback |
+| 31 | parallel/b02-exec-cwd | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-31-exec-cwd | `wks_fe83bf0ff80fb523` | 기본 cwd 실제 실행 연결 (24 이월, `9942629` 기준) |
+| 32 | parallel/b02-compaction-details | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-32-compaction-details | `wks_101ba29980186bf0` | 압축 기록 모델·비용·원문 이동 (`9942629` 기준) |
+| 33 | parallel/b02-model-fallback | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-33-model-fallback | `wks_e0883b94183c3f2a` | 명시적 첫 응답 전 HTTP 모델 fallback (`9942629` 기준) |
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
