@@ -6,7 +6,7 @@ export function ExecSettings({ defs, target, linkedKey, onLinkReady }: {
     defs: ExecSettingDef[]; target: SettingsTarget; linkedKey?: string; onLinkReady?: SettingLinkReady;
 }) {
     return <div data-testid="exec-settings">
-        <p className="warn">변경은 다음에 계획하는 실행부터 적용됩니다. 이미 계획·승인된 호출의 shell·limits·cwd는 바꾸지 않습니다.</p>
+        <p className="scope">다음 실행 계획부터 적용 · 기존 계획·승인은 유지</p>
         {defs.map((def) => <div key={def.key}>
             <fieldset disabled={Boolean(def.disabled_reason)} style={{ border: 0, padding: 0, margin: 0 }}>
                 <ScopedSettings defs={[def]} target={target} linkedKey={linkedKey} onLinkReady={onLinkReady} />
@@ -19,7 +19,7 @@ export function ExecSettings({ defs, target, linkedKey, onLinkReady }: {
                 </p>)}
             </fieldset>}
             {def.key === "exec.default_cwd" && <p className="warn" role="status">
-                cwd를 생략한 새 모델 셸·대화 작업에 적용됩니다. 명시한 cwd(‘.’ 포함)가 우선하며, 대화의 실제 실행 root(worktree 포함)를 기준으로 해석합니다. 프로젝트 script는 확인한 root에서 실행하고, 터미널·hook·외부 CLI에는 적용하지 않습니다.
+                새 모델 셸·대화 작업에만 적용 · 명시한 cwd 우선 · 실제 실행 root 기준
             </p>}
         </div>)}
         <p className="warn small">프로세스 트리 격리는 파일·네트워크 sandbox가 아닙니다. 자원 한도 0은 제한 없음입니다.</p>

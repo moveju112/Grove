@@ -32,8 +32,8 @@ test("범위별 셸·한도·작업 위치 저장과 상속 복원은 기존 설
     await cwd.getByLabel("기본 작업 위치", { exact: true }).fill("work");
     await cwd.getByRole("button", { name: "저장", exact: true }).click();
     await expect(cwd.getByRole("status")).toContainText("저장됨");
-    await expect(panel).toContainText("cwd를 생략한 새 모델 셸·대화 작업에 적용됩니다");
-    await expect(panel).toContainText("이미 계획·승인된 호출의 shell·limits·cwd는 바꾸지 않습니다");
+    await expect(panel).toContainText("새 모델 셸·대화 작업에만 적용");
+    await expect(panel).toContainText("기존 계획·승인은 유지");
     const sessionQuery = `/settings/effective?session_id=${session.id}`;
     const inherited = (await apiCall<Effective>("GET", sessionQuery)).items.find((item) => item.key === "exec.max_memory_mb")!;
     expect(inherited.effective).toBe(128);
@@ -65,7 +65,7 @@ test("미지원 격리·셸은 이유와 함께 비활성이고 기존 승인 �
         await expect(option).toBeDisabled();
         await expect(option).toHaveAccessibleName(`${choice.value} · ${choice.reason}`);
     }
-    await expect(panel).toContainText("다음에 계획하는 실행부터 적용됩니다");
+    await expect(panel).toContainText("다음 실행 계획부터 적용");
     await expect(panel).toContainText("파일·네트워크 sandbox가 아닙니다");
 });
 

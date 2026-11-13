@@ -7,6 +7,7 @@ import type { ModelProfile } from "../api/generated";
 import { APPLIES, SCOPE_LABEL, SettingsResetButton } from "./SettingsReset";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { SettingLinkReady } from "./settings-links/reveal";
+import { SettingsGroup } from "./SettingsGroup";
 
 export type SettingDef = {
     key: string;
@@ -54,9 +55,21 @@ function ProfileChoice({ d, value, disabled, edit }: { d: SettingDef; value: unk
 export type SettingsTarget = { projectId?: string; projectName?: string; sessionId?: string; sessionTitle?: string };
 
 /// 범위별 설정 편집기.
-export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLinkReady }: {
+const SETTING_GROUPS: Record<string, string> = {
+    model: "기본 모델", instructions: "대화·응답", output: "대화·응답", user: "대화·응답",
+    session: "대화·응답", sessions: "대화·응답", context: "컨텍스트",
+    agents: "에이전트 실행", tools: "도구·권한", runs: "실행 한도",
+    storage: "보관·정리", approval: "승인",
+};
+
+function initialScope(d: SettingDef, target: SettingsTarget) {
+    return target.sessionId && d.scopes.includes("session") ? "session"
+        : target.projectId && d.scopes.includes("project") ? "project" : "server";
+}
+
+export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLinkReady, grouped = false }: {
     defs: SettingDef[]; target: SettingsTarget; resetDefs?: SettingDef[]; area?: string;
-    linkedKey?: string; onLinkReady?: SettingLinkReady;
+    linkedKey?: string; onLinkReady?: SettingLinkReady; grouped?: boolean;
 }) {
     const p = new URLSearchParams();
     if (target.sessionId) p.set("session_id", target.sessionId);
@@ -75,12 +88,23 @@ export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLin
     const scopes = ["server", ...(target.projectId ? ["project"] : []), ...(target.sessionId ? ["session"] : [])];
     const [resetScope, setResetScope] = useState(scopes.at(-1)!);
     const [resetId, resetLabel] = scopeTarget(resetScope, target);
+    const groups = new Map<string, SettingDef[]>();
+    for (const definition of defs) {
+        const title = SETTING_GROUPS[definition.key.split(".")[0]!] ?? "기본 설정";
+        const group = groups.get(title);
+        if (group) group.push(definition);
+        else groups.set(title, [definition]);
+    }
+    const renderRow = (d: SettingDef) => {
+        const it = eff.data?.items.find((i) => i.key === d.key);
+        return it ? <Row key={d.key} d={d} it={it} t={target} reload={eff.reload} /> : null;
+    };
     return (
-        <div className="scoped" ref={root}>
-            {defs.map((d) => {
-                const it = eff.data?.items.find((i) => i.key === d.key);
-                return it ? <Row key={d.key} d={d} it={it} t={target} reload={eff.reload} /> : null;
-            })}
+        <div className={`scoped${grouped ? " scoped-groups" : ""}`} ref={root}>
+            {grouped ? Array.from(groups, ([title, definitions]) => <SettingsGroup key={title} title={title}
+                scope={[...new Set(definitions.map((definition) => scopeTarget(initialScope(definition, target), target)[1]))].join(" · ")}>
+                {definitions.map(renderRow)}
+            </SettingsGroup>) : defs.map(renderRow)}
             {resetDefs && <DetailDialog className="settings-area-reset" data-testid="settings-area-reset" label={`${area} 기본값 복원`} title={`${area} 기본값 복원`}>
                 <p className="muted small">고급 항목 포함. 모델 프로필·키·정의 파일은 유지됩니다.</p>
                 <div className="inline wrap">
@@ -105,7 +129,7 @@ function scopeTarget(scope: string, t: SettingsTarget): [string, string] {
 function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget; reload: () => void }) {
     const scopes = d.scopes.filter((s) => s === "server" || (s === "project" && t.projectId) || (s === "session" && t.sessionId));
     // 가장 좁은 범위를 기본으로 고른다(연 위치에 맞춤).
-    const [scope, setScope] = useState(scopes.includes("session") ? "session" : scopes.includes("project") ? "project" : "server");
+    const [scope, setScope] = useState<string>(initialScope(d, t));
     const layer = it.layers[scope];
     // SSE가 최신 값을 가져와도 편집 시작 시점의 revision은 바꾸지 않는다(NET-013).
     const [draft, setDraft] = useState<{ value: unknown; revision: number } | undefined>(undefined);
@@ -150,7 +174,7 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                         {scopes.map((s) => <option key={s} value={s}>{SCOPE_LABEL[s]}</option>)}
                     </select>
                 )}
-                <span className="scope">대상: {target}</span>
+                <span className="scope" data-settings-target={target}>대상: {target}</span>
                 {d.kind === "bool" && (
                     <label className="check">
                         <input disabled={saving} type="checkbox" checked={Boolean(value)} onChange={(e) => edit(e.target.checked)} aria-label={d.label} /> 사용
@@ -180,7 +204,7 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                     label="이 범위 값 지우기" disabled={saving || layer?.value === null || layer?.value === undefined} draft={draft?.value}
                     saved={() => { setDraft(undefined); setState({ kind: "saved", msg: APPLIES[d.applies] }); reload(); }} />
             </div>
-            {draft !== undefined && <p className="muted small">저장 안 됨</p>}
+            {draft !== undefined && <p className="muted small" data-settings-unsaved="true">저장 안 됨</p>}
             {state.kind !== "idle" && (
                 <p className={`save-state ${state.kind === "error" || state.kind === "conflict" ? "error" : ""}`} role="status">
                     {state.kind === "saving" ? "저장 중…" : state.kind === "saved" ? `저장됨 · ${state.msg}` : state.kind === "conflict" ? state.msg : `저장 실패(기존 값 유지): ${state.msg}`}

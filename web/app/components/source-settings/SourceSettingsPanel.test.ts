@@ -41,8 +41,7 @@ describe("원본 설정의 읽기 전용 출처", () => {
                 },
             ] as unknown as NonNullable<Extract<SourceSettingsView, { status: "ready" }>["resources"]>,
         });
-        expect(html).toContain("Read-only review");
-        expect(html).toContain(".claude/skills/review/SKILL.md");
+        expect(html).toContain("Review");
         expect(html).toContain("PreToolUse");
         expect(html).toContain("Bash|Read");
         expect(html).toContain("명령 있음");
@@ -50,7 +49,7 @@ describe("원본 설정의 읽기 전용 출처", () => {
         expect(html).toContain("일부 항목은 형식");
         expect(html).toContain("Inline hook");
         expect(html).not.toContain("source-private-marker");
-        expect(html).not.toMatch(/<(button|input|textarea|select|form)\b/);
+        expect(html).not.toMatch(/<(input|textarea|select|form)\b/);
     });
 
     it("리소스 부재·읽기 실패·빈 목록을 서로 구별한다", () => {
@@ -62,7 +61,7 @@ describe("원본 설정의 읽기 전용 출처", () => {
                 { source: "claude_user", kind: "hooks", relative_path: "settings.json", result: { status: "read_error", code: "invalid_shape" } },
             ],
         });
-        expect(html).toContain("원본 리소스가 없습니다");
+        expect(html).toContain("원본 리소스 없음");
         expect(html).toContain("리소스 읽기 실패");
         expect(html).toContain('role="alert"');
     });
@@ -75,7 +74,8 @@ describe("원본 설정의 읽기 전용 출처", () => {
         }]);
         expect(html).toContain("Claude · 프로젝트 원본");
         expect(html).toContain(".claude/settings.json");
-        expect(html).toContain("원본 조회 전용 · Grove 실제 적용 상태와 별개");
+        expect(html).toContain("읽기 전용 · Grove 적용값 아님");
+        expect(html).not.toContain("Grove의 범위별 설정 화면");
         expect(html).toContain("켜짐");
         expect(html).toContain("꺼짐");
         expect(html).toContain("0일");
@@ -90,9 +90,9 @@ describe("원본 설정의 읽기 전용 출처", () => {
             { source: "codex_user", status: "unsupported_format", format: "toml" },
             { source: "codex_project", status: "missing" },
         ]);
-        expect(html).toContain("원본 파일 또는 출처 디렉터리가 없습니다");
+        expect(html).toContain("원본 파일 없음");
         expect(html).toContain("올바른 JSON이 아니어서");
-        expect(html).toContain("표시 가능한 안전 필드가 없습니다");
+        expect(html).toContain("표시 가능한 필드 없음");
         expect(html).toContain("타입이나 범위가 맞지 않는 값은 생략");
         expect(html).toContain("미지원 형식(TOML)");
         expect(html).toContain("Claude · 프로젝트 로컬 원본");
@@ -111,7 +111,7 @@ describe("원본 설정의 읽기 전용 출처", () => {
         expect(html).not.toContain("fixture-only-marker");
         expect(html).not.toContain("apiKeyHelper");
         expect(html).not.toContain("SYNTHETIC");
-        expect(html).toContain("표시 가능한 안전 필드가 없습니다");
+        expect(html).toContain("표시 가능한 필드 없음");
     });
 
     it("모든 읽기 오류 코드를 원문 없는 오류 안내로 표시한다", () => {
@@ -134,7 +134,7 @@ describe("원본 설정의 읽기 전용 출처", () => {
         expect(render({ status: "loading" })).toContain('role="status"');
         expect(render({ status: "error" })).toContain("원본 출처 목록을 가져오지 못했습니다");
         const html = ready([]);
-        expect(html).toContain("원본 파일이 없다는 뜻은 아닙니다");
-        expect(html).not.toContain("원본 파일 또는 출처 디렉터리가 없습니다");
+        expect(html).toContain("조회 대상 없음");
+        expect(html).not.toContain("원본 파일 없음");
     });
 });

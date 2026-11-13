@@ -144,14 +144,35 @@ export async function login(token: string, name: string): Promise<void> {
     });
 }
 
-/// 일회용 등록은 자동 refresh·재시도하지 않는다. 결과 유실 시 소유자가 기기 목록에서 확인한다.
-export async function redeemPairing(code: string): Promise<void> {
+export type PendingPairing = { code: string; verification_code: string; expires_at: string };
+
+export async function requestPairing(code: string, password: string, name: string): Promise<PendingPairing> {
+    if (loggingOut) await loggingOut;
+    if (current) throw new ApiError(409, "already_authenticated", "이미 로그인되어 있습니다. 별도 브라우저에서 등록하세요.");
+    const owner = authEpoch;
+    return boundedRequest({}, true, async (send) => {
+        requireAuthTransport();
+        const resp = await send("/api/v1/auth/pairing", {
+            method: "POST", credentials: "same-origin",
+            headers: { "content-type": "application/json", "x-grove-require": "pairing_approval_v1" },
+            body: JSON.stringify({ code, password, name }),
+        });
+        checkProtocol(resp);
+        const body = await parse(resp);
+        requireAuthGeneration(owner, resp.status !== 401);
+        if (!resp.ok) throw toError(resp.status, body);
+        return body as PendingPairing;
+    });
+}
+
+/// 승인된 요청의 일회용 자격을 받는다. 202만 다시 확인하고 오류·응답 유실은 자동 재시도하지 않는다.
+export async function redeemPairing(code: string): Promise<boolean> {
     if (loggingOut) await loggingOut;
     if (current) throw new ApiError(409, "already_authenticated", "이미 로그인되어 있습니다. 기존 로그인을 덮어쓰지 않고 별도 브라우저에서 등록하세요.");
     const owner = authEpoch;
-    await boundedRequest({}, true, async (send) => {
+    return boundedRequest({}, true, async (send) => {
         requireAuthTransport();
-        const resp = await send("/api/v1/auth/pairing", {
+        const resp = await send("/api/v1/auth/pairing/claim", {
             method: "POST", credentials: "same-origin",
             headers: { "content-type": "application/json" }, body: JSON.stringify({ code }),
         });
@@ -159,8 +180,10 @@ export async function redeemPairing(code: string): Promise<void> {
         const body = await parse(resp);
         requireAuthGeneration(owner, resp.status !== 401);
         if (!resp.ok) throw toError(resp.status, body, resp.headers.get("x-request-id") ?? undefined);
+        if (resp.status === 202) return false;
         const b = body as { access_token: string; expires_at: string };
         setSession({ accessToken: b.access_token, expiresAt: b.expires_at });
+        return true;
     });
 }
 

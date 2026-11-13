@@ -263,11 +263,26 @@ describe("HTTP 요청 식별·timeout·취소 계약", () => {
         vi.stubGlobal("fetch", fetch);
         await expect(client.redeemPairing("one-time-code")).rejects.toMatchObject({ code: "pairing_unavailable" });
         expect(fetch).toHaveBeenCalledTimes(1);
-        expect(fetch.mock.calls[0]![0]).toBe("/api/v1/auth/pairing");
+        expect(fetch.mock.calls[0]![0]).toBe("/api/v1/auth/pairing/claim");
         fetch.mockRejectedValueOnce(new TypeError("connection lost"));
         await expect(client.redeemPairing("one-time-code")).rejects.toMatchObject({
             code: "network_error", details: { result_unknown: true },
         });
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
+    it("비밀번호 확인과 승인 대기에서는 세션을 발급하지 않는다", async () => {
+        const pending = { code: "request.fixture-secret", verification_code: "ABCD-1234", expires_at: "2099-01-01T00:00:00Z" };
+        const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(pending), { status: 202 }))
+            .mockResolvedValueOnce(new Response('{"status":"pending"}', { status: 202 }));
+        vi.stubGlobal("fetch", fetch);
+        expect(await client.requestPairing("link-code", "separate password", "phone")).toEqual(pending);
+        expect(client.isLoggedIn()).toBe(false);
+        expect(await client.redeemPairing(pending.code)).toBe(false);
+        expect(client.isLoggedIn()).toBe(false);
+        const init = fetch.mock.calls[0]![1] as RequestInit;
+        expect(JSON.parse(init.body as string)).toEqual({ code: "link-code", password: "separate password", name: "phone" });
+        expect(new Headers(init.headers).get("x-grove-require")).toBe("pairing_approval_v1");
         expect(fetch).toHaveBeenCalledTimes(2);
     });
 

@@ -155,6 +155,28 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .login label { display: grid; gap: 0.3em; }
 .login h1 { margin: 0; font-size: 1.5em; font-weight: 600; letter-spacing: -0.01em; }
 .login-mark { color: var(--brand); display: inline-flex; }
+.pairing-login { width: 100%; min-width: 0; min-height: 100dvh; padding: 24px 16px; }
+.pairing-login form { width: min(420px, 100%); min-width: 0; padding: 28px; gap: 16px; box-shadow: none; }
+.pairing-login :is(label, input, p, div) { min-width: 0; max-width: 100%; }
+.pairing-login input { width: 100%; min-height: 40px; }
+.pairing-login p { margin: 0; overflow-wrap: anywhere; }
+.pairing-login h1 { font-size: 22px; font-weight: 500; margin-bottom: 8px; }
+.pairing-login button { min-height: 40px; }
+.pairing-file { font-size: 12px; color: var(--muted); }
+.pairing-file input { font-size: 12px; padding: 6px; }
+.pairing-file input::file-selector-button { font: inherit; border: 0; border-radius: 6px; background: var(--raised); color: var(--text); padding: 6px 10px; margin-right: 8px; cursor: pointer; }
+.pairing-wait { display: grid; gap: 16px; }
+.pairing-code { font-size: 28px; letter-spacing: 0.08em; padding: 16px; border-radius: 8px; background: var(--raised); text-align: center; }
+.pairing-issued { display: grid; justify-items: start; gap: 12px; min-width: 0; padding-block: 16px; }
+.pairing-issued label { width: 100%; }
+.pairing-list { list-style: none; padding: 0; margin: 0; min-width: 0; }
+.pairing-list > li { padding-block: 16px; border-top: 1px solid var(--line); }
+.pairing-list-heading, .pairing-request { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+.pairing-list-heading > div:first-child, .pairing-request > div:first-child { display: grid; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
+.pairing-requests { margin-top: 16px; padding: 16px; border-radius: 8px; background: var(--raised); }
+.pairing-requests > p { margin: 0 0 12px; }
+.pairing-request + .pairing-request { margin-top: 16px; }
+.pairing-request code { font-size: 18px; }
 /* 로그인 제목만 한 글자씩 드러낸다(움직임 줄이기 설정이면 바로 보임). */
 .reveal-text > span { display: inline-block; opacity: 0; transform: translateY(0.25em); animation: reveal-in 420ms cubic-bezier(0.2, 0.8, 0.2, 1) forwards; animation-delay: calc(var(--i) * 45ms); }
 @keyframes reveal-in { to { opacity: 1; transform: none; } }
@@ -387,12 +409,12 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .settings-menu button { min-height: 36px; padding: 8px 12px; font-size: 13px; background: transparent; color: var(--text-2); text-align: left; white-space: nowrap; }
 .settings-menu button:hover { background: var(--hover); }
 .settings-menu button.on { background: var(--sel); color: var(--text); font-weight: 500; }
-.settings-body { grid-column: 2; grid-row: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; overflow-wrap: anywhere; }
+.settings-body { grid-column: 2; grid-row: 1; min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: 14px; overflow-wrap: anywhere; }
 .settings-body dd { margin: 4px 0 12px; color: var(--text-2); }
 .settings-heading { font-size: 20px; font-weight: 600; margin: 8px 0 16px; }
 .setting { border: 1px solid var(--line); border-radius: 12px; padding: 0.9em 1em; background: var(--panel); }
 .setting h2 { font-size: 1em; margin: 0 0 0.5em; }
-.settings .setting { min-width: 0; padding: 24px 0; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; }
+.settings .setting { min-width: 0; padding: 24px 0; border: 0; border-bottom: 1px solid var(--line-strong); border-radius: 0; }
 .settings .setting h2 { font-size: 14px; font-weight: 500; margin-bottom: 12px; }
 .settings .setting :is(input, select, textarea) { min-width: 0; max-width: 100%; }
 .settings fieldset { min-inline-size: 0; max-width: 100%; border: 1px solid var(--line); border-radius: 8px; margin: 0; padding: 12px; }
@@ -410,6 +432,41 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .settings .setting table { display: block; max-width: 100%; overflow-x: auto; }
 .settings .scope { background: transparent; color: var(--muted); padding: 0; font-size: 12px; }
 .settings .setting h2 .scope { margin-left: 8px; font-weight: 400; }
+.settings-group { min-width: 0; border: 1px solid color-mix(in srgb, var(--text) 22%, var(--panel)); border-radius: 12px; background: var(--panel); overflow: clip; }
+.settings-group-heading { display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 16px 20px; border-bottom: 1px solid var(--line); }
+.settings .settings-group-heading h2 { min-width: 0; margin: 0; font-size: 14px; font-weight: 500; }
+.settings-group-heading > .icon { flex: 0 0 auto; color: var(--muted); }
+.settings-group-heading > .scope { margin-left: auto; text-align: right; }
+.settings-group-notice { flex-shrink: 0; margin-left: auto; font-size: 12px; color: var(--muted); }
+.settings-group-notice.err { color: var(--err); }
+.settings-group-notice + .scope { margin-left: 0; }
+.settings .settings-group-content { padding: 16px 20px 20px; border: 0; border-radius: 0 0 11px 11px; background: transparent; }
+.settings .settings-group-content > .setting:first-child { padding-top: 4px; }
+.settings .settings-group-content > .setting:last-child { padding-bottom: 0; border-bottom: 0; }
+.scoped-groups { display: grid; gap: 14px; min-width: 0; }
+.settings-body > button { justify-self: start; }
+.settings-list { list-style: none; padding: 0; margin-block: 16px; }
+.settings-list > li { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 64px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.settings-list > li:last-child { border-bottom: 0; }
+.settings-device { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.settings-device > .icon { flex-shrink: 0; color: var(--muted); }
+.settings-device-meta { display: block; color: var(--muted); font-size: 12px; margin-top: 4px; }
+.settings-device-current { margin-left: 8px; color: var(--accent-ink); font-size: 12px; }
+.settings .pairings { margin: 0; padding: 0; }
+.settings .pairings > form { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 12px; margin-top: 16px; }
+.settings .pairings > form > label { grid-column: 1; display: grid; gap: 8px; }
+.settings .pairings > form > .pairing-password { grid-row: 2; }
+.settings .pairings > form > button { grid-column: 2; grid-row: 2; }
+.settings .pairing-advanced { grid-column: 1 / -1; grid-row: 3; color: var(--muted); font-size: 12px; }
+.pairing-advanced > summary { cursor: pointer; min-height: 32px; display: flex; align-items: center; }
+.pairing-advanced label { display: grid; gap: 8px; }
+.settings .source-card { margin-top: 16px; }
+.source-resource { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--line); }
+.source-resource h4 { margin: 0 0 8px; font-size: 13px; font-weight: 500; }
+.source-skills > details { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.source-skills > details:last-child { border-bottom: 0; }
+.source-skills summary { cursor: pointer; min-height: 24px; }
+.settings [data-testid="agent-overview"] > article { padding: 16px 0; border-top: 1px solid var(--line); }
 .setting-heading { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
 .setting-help { font-size: 12px; color: var(--muted); flex: 1; }
 .settings-area-reset { padding: 16px 0; color: var(--muted); font-size: 12px; }
@@ -422,6 +479,15 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
     .settings-body { grid-column: 1 / -1; grid-row: 2; }
     .settings-heading { font-size: 18px; margin: 0 0 8px; }
     .settings .setting { padding: 20px 0; }
+    .settings-group-heading { padding: 16px; flex-wrap: wrap; gap: 8px; }
+    .settings-group-heading > .scope { max-width: 100%; font-size: 11px; }
+    .settings-group-notice { font-size: 11px; }
+    .settings .settings-group-content { padding: 16px; }
+    .settings .pairings > form { grid-template-columns: minmax(0, 1fr); }
+    .settings .pairings > form > button { grid-column: 1; grid-row: 3; justify-self: start; }
+    .settings .pairing-advanced { grid-row: 4; }
+}
+@media (prefers-reduced-motion: reduce) {
 }
 .scope { font-size: 0.7em; font-weight: normal; padding: 0 0.4em; border-radius: 4px; background: var(--accent-weak); color: var(--accent-ink); }
 .save-state { font-size: 0.85em; margin-left: 0.5em; }

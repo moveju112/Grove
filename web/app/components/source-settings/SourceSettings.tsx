@@ -12,7 +12,7 @@ export function SourceSettings({ projectId }: { projectId?: string }) {
             ? { status: "loading" }
             : { status: "ready", items: query.data.items, resources: query.data.resources };
     return <div data-testid="source-settings">
-        <p className="muted small">{projectId ? "선택한 프로젝트 원본" : "서버 사용자 원본"} · 소유자 권한이 필요합니다.</p>
+        <p className="muted small">{projectId ? "프로젝트 원본" : "서버 사용자 원본"} · 소유자 전용</p>
         <SourceSettingsPanel view={view} />
         <button className="ghost" disabled={query.loading} onClick={query.reload}>원본 출처 다시 조회</button>
     </div>;

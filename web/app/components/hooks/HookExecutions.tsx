@@ -26,8 +26,7 @@ export function HookExecutions({ projectId }: { projectId?: string }) {
     };
     return <section className="stack" data-testid="hook-executions" aria-label="hook 실행 요청">
         <h3>hook 실행 요청</h3>
-        <p className="muted small">최근 100개 · {projectId ? "현재 프로젝트" : "모든 프로젝트"}.
-            원래 작업과 별개이며, 매 이벤트마다 새 계획 승인이 필요합니다.</p>
+        <p className="scope">최근 100개 · {projectId ? "현재 프로젝트" : "모든 프로젝트"} · 이벤트마다 개별 승인</p>
         <button onClick={query.reload}>hook 실행 상태 새로고침</button>
         {query.loading && <p role="status">실행 요청 불러오는 중</p>}
         {(query.error || error) && <p role="alert">{error ?? "hook 실행 요청을 조회하지 못했습니다"}</p>}

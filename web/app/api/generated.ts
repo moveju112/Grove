@@ -4,7 +4,9 @@ export type EventRecord = { seq: number, created_at: string, kind: string, proje
 
 export type DeviceInfo = { id: string, kind: string, name: string, created_at: string, last_used_at: string | null, revoked_at: string | null, parent_id: string | null, expires_at: string | null, current: boolean, };
 
-export type PairingInfo = { id: string, name: string, created_at: string, expires_at: string, revoked_at: string | null, consumed_at: string | null, device_id: string | null, };
+export type PairingRequestInfo = { id: string, name: string, verification_code: string, created_at: string, expires_at: string, };
+
+export type PairingInfo = { id: string, name: string, created_at: string, expires_at: string | null, revoked_at: string | null, consumed_at: string | null, device_id: string | null, failed_attempts: number, locked_at: string | null, requests: Array<PairingRequestInfo>, };
 
 export type Notification = { id: string, kind: string, title: string, body: string, project_id: string | null, session_id: string | null, ref_id: string | null, created_at: string, delivered_at: string | null, read_at: string | null, };
 

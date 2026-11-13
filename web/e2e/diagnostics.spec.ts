@@ -11,7 +11,7 @@ test("진단 묶음은 범위 확인 뒤에만 만들고 미리 보기·다운�
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("진단");
     const panel = page.getByTestId("diagnostics-bundle");
-    await expect(panel).toContainText("외부로 자동 전송하지 않습니다");
+    await expect(panel).toContainText("소유자 전용");
     expect(generated).toBe(0);
     await panel.getByRole("button", { name: "진단 묶음 준비", exact: true }).click();
     await expect(panel.getByRole("button", { name: "진단 묶음 생성", exact: true })).toBeDisabled();
@@ -28,6 +28,7 @@ test("진단 묶음은 범위 확인 뒤에만 만들고 미리 보기·다운�
     expect(data.client.connection).toBe("live");
     expect(data.client).not.toHaveProperty("browser");
     expect(generated).toBe(1);
+    await page.keyboard.press("Escape");
     const downloadPromise = page.waitForEvent("download");
     await panel.getByRole("link", { name: "진단 묶음 다운로드", exact: true }).click();
     const download = await downloadPromise;

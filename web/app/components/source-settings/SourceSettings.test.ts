@@ -45,8 +45,9 @@ describe("인증된 원본 설정 조회 연결", () => {
             },
         });
         const html = renderToStaticMarkup(createElement(SourceSettings, { projectId: "project-a" }));
-        expect(html).toContain("Source description");
-        expect(html).toContain(".agents/skills/source-skill/SKILL.md");
+        expect(html).toContain("Codex · 프로젝트 원본");
+        expect(html).toContain(".agents/skills");
+        expect(html).toContain("source-skill");
     });
 
     it("실패 시 오래된 결과와 서버 오류 본문을 표시하지 않는다", () => {
@@ -57,7 +58,7 @@ describe("인증된 원본 설정 조회 연결", () => {
         });
         const html = renderToStaticMarkup(createElement(SourceSettings, { projectId: "project-a" }));
         expect(html).toContain("원본 출처 목록을 가져오지 못했습니다");
-        expect(html).toContain("소유자 권한이 필요합니다");
+        expect(html).toContain("소유자 전용");
         expect(html).not.toContain("source-private-marker");
         expect(html).not.toContain("123456");
     });

@@ -28,7 +28,8 @@ export function useBrowserCapabilities() {
 
 export function BrowserCapabilitiesPanel({ snapshot }: { snapshot: BrowserCapabilities }) {
     return <div data-testid="browser-capabilities">
-        <p>보안 컨텍스트: <strong>{snapshot.secureContext ? "예" : "아니요"}</strong>. 알림·Clipboard·파일 시스템 접근 API는 HTTPS 또는 localhost가 필요합니다. 일반 HTTP의 파일 선택·드래그와는 다릅니다.</p>
+        <p>보안 컨텍스트: <strong>{snapshot.secureContext ? "예" : "아니요"}</strong></p>
+        {!snapshot.secureContext && <p className="warn small">알림·Clipboard·파일 시스템 접근에는 HTTPS 또는 localhost가 필요합니다.</p>}
         <div className="browser-capabilities-table"><table>
             <caption>이 기기의 브라우저 기능</caption>
             <thead><tr><th>기능</th><th>API 지원</th><th>권한</th><th>조건·대안</th></tr></thead>

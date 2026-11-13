@@ -976,6 +976,44 @@ pub const MIGRATIONS: &[&str] = &[
      WHERE EXISTS (SELECT 1 FROM worktrees w WHERE w.project_id = projects.id AND w.status != 'removed')
         OR EXISTS (SELECT 1 FROM sessions s WHERE s.project_id = projects.id AND s.worktree_id IS NOT NULL);
     "#,
+    // 비밀번호와 소유자 승인을 분리한다. 기존 링크는 폐기하되 등록된 기기는 보존한다.
+    r#"
+    CREATE TABLE pairings_secure (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        secret_hash TEXT NOT NULL,
+        issuer_id TEXT NOT NULL REFERENCES tokens(id),
+        created_at TEXT NOT NULL,
+        expires_at TEXT,
+        revoked_at TEXT,
+        consumed_at TEXT,
+        device_id TEXT REFERENCES tokens(id),
+        password_hash BLOB,
+        password_salt TEXT,
+        failed_attempts INTEGER NOT NULL DEFAULT 0 CHECK(failed_attempts BETWEEN 0 AND 5),
+        locked_at TEXT
+    );
+    INSERT INTO pairings_secure(id,name,secret_hash,issuer_id,created_at,expires_at,revoked_at,consumed_at,device_id)
+        SELECT id,name,secret_hash,issuer_id,created_at,expires_at,COALESCE(revoked_at,created_at),consumed_at,device_id FROM pairings;
+    DROP TABLE pairings;
+    ALTER TABLE pairings_secure RENAME TO pairings;
+    CREATE INDEX pairings_issuer ON pairings(issuer_id,created_at);
+    CREATE TABLE pairing_requests (
+        id TEXT PRIMARY KEY,
+        pairing_id TEXT NOT NULL REFERENCES pairings(id),
+        name TEXT NOT NULL,
+        secret_hash TEXT NOT NULL,
+        verification_code TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        approved_at TEXT,
+        rejected_at TEXT,
+        claimed_at TEXT,
+        device_id TEXT REFERENCES tokens(id)
+    );
+    CREATE INDEX pairing_requests_link ON pairing_requests(pairing_id,created_at);
+    CREATE UNIQUE INDEX pairing_one_approval ON pairing_requests(pairing_id) WHERE approved_at IS NOT NULL;
+    "#,
 ];
 
 #[cfg(test)]
@@ -1002,7 +1040,7 @@ mod tests {
     #[test]
     fn workspace_mode_migration_keeps_projects_that_use_worktrees_in_project_mode() {
         let c = rusqlite::Connection::open_in_memory().unwrap();
-        let last = super::MIGRATIONS.len() - 1;
+        let last = 61;
         for migration in &super::MIGRATIONS[..last] { c.execute_batch(migration).unwrap(); }
         let t = "2026-01-01T00:00:00Z";
         for (id, root) in [("plain", "/a"), ("active", "/b"), ("removed", "/c"), ("linked", "/d")] {

@@ -19,9 +19,9 @@ const check: UpdateCheck = {
     release: { current: "0.25.0", available: "0.26.0-beta.1", kind: "upgrade", channel: "beta", platform: "linux-x64", artifact: true, protocol: 1, schema: 42 },
 };
 describe("서버 업데이트 설정 표시", () => {
-    it("서버 버전·protocol·schema와 알림 기본값·미실행 계약을 표시한다", () => {
+    it("현재 버전·protocol·schema와 알림 기본값, 미실행 상태를 짧게 표시한다", () => {
         const html = render();
-        for (const text of ["0.25.0", "서버 protocol", "42", "알림만 (기본값)", "서버 업데이트 설정", "실행하거나 예약하지 않습니다", "아직 서버 업데이트를 확인하지 않았습니다"]) {
+        for (const text of ["0.25.0", "서버 protocol", "42", "알림만 (기본값)", "설정만 저장 · 설치·재시작 없음", "아직 서버 업데이트를 확인하지 않았습니다"]) {
             expect(html).toContain(text);
         }
         expect(html).toContain('<option value="notify_only" selected=""');

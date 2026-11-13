@@ -18,7 +18,8 @@ export function createSettingReveal(root: HTMLElement | null, key: string) {
             if (!pending || candidate !== key) return "ignored";
             if (element && (!root?.contains(element) || element.dataset.settingKey !== key)) return "ignored";
             pending = false;
-            if (!element || !element.isConnected || element.getClientRects().length === 0) return "unavailable";
+            if (!element || !element.isConnected) return "unavailable";
+            if (element.getClientRects().length === 0) return "unavailable";
             element.scrollIntoView({ block: "center", inline: "nearest", behavior: "instant" });
             return "revealed";
         },

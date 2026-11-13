@@ -37,14 +37,12 @@ describe("실행 설정의 기존 범위별 편집기 연결", () => {
         expect(html).toContain('<option value="session" selected="">');
         expect(html).toContain("명령 실행 셸 도움말");
         expect(html).toContain("이 프로젝트");
-        expect(html).toContain("이미 계획·승인된 호출의 shell·limits·cwd는 바꾸지 않습니다");
+        expect(html).toContain("다음 실행 계획부터 적용 · 기존 계획·승인은 유지");
         expect(html).toContain("sandbox가 아닙니다");
         const cwd = render({ ...shell, key: "exec.default_cwd", kind: "string", options: [] });
-        expect(cwd).toContain("cwd를 생략한 새 모델 셸·대화 작업에 적용됩니다");
-        expect(cwd).toContain("명시한 cwd(‘.’ 포함)가 우선");
-        expect(cwd).toContain("실제 실행 root(worktree 포함)");
-        expect(cwd).toContain("프로젝트 script는 확인한 root에서 실행");
-        expect(cwd).toContain("터미널·hook·외부 CLI에는 적용하지 않습니다");
+        expect(cwd).toContain("새 모델 셸·대화 작업에만 적용");
+        expect(cwd).toContain("명시한 cwd 우선");
+        expect(cwd).toContain("실제 실행 root 기준");
     });
 
     it("지원하는 값만 편집기에 전달하고 미지원 선택지는 이유와 함께 비활성으로 표시한다", () => {

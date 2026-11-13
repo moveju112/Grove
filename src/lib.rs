@@ -107,6 +107,7 @@ pub const CAPABILITIES: &[&str] = &[
     "worktrees_v1",
     "dependency_hints_v1",
     "pairing_v1",
+    "pairing_approval_v1",
     "notification_delivery_v1",
     "model_management_v1",
     "model_capabilities_v1",
@@ -424,8 +425,10 @@ pub fn router(app: App) -> Router {
         .route("/auth/refresh", post(auth::browser_refresh))
         .route("/auth/logout", post(auth::browser_logout))
         .route("/auth/pairing", post(pairing::redeem))
+        .route("/auth/pairing/claim", post(pairing::claim))
         .route("/pairings", get(pairing::list).post(pairing::create))
         .route("/pairings/{id}", axum::routing::delete(pairing::revoke))
+        .route("/pairings/{id}/requests/{request_id}", post(pairing::approve).delete(pairing::reject))
         .fallback(|| async { error::ApiError::not_found("요청한 API가 없습니다") })
         .layer(axum::middleware::from_fn_with_state(app.clone(), auth::origin_guard))
         .layer(axum::middleware::from_fn_with_state(app.clone(), web::reject_when_shutting_down))

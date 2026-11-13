@@ -92,6 +92,7 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await expect(page.getByTestId("pane")).toHaveCount(2);
     await expect(sessionView(page, other.id)).toBeVisible();
     await page.getByTestId("project-row").getByRole("button", { name: b.name, exact: true }).click();
+    await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
     await panel.getByRole("button", { name: "개요 다시 조회", exact: true }).click();
     await expect(panel).toContainText("agents.delegation: off · 금지 · 출처: 이 프로젝트");
     await expect(page.getByTestId("settings-origin")).toContainText("overview scoped session");

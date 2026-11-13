@@ -102,6 +102,7 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
             .getByRole("button", { name: "오른쪽에 열기" }).click();
         const left = page.getByTestId("pane").nth(0);
         const right = page.getByTestId("pane").nth(1);
+        await left.getByRole("button", { name: "대화 작업", exact: true }).click();
         await left.getByRole("button", { name: "대화 설정" }).click();
         const leftRow = left.getByTestId(`setting-${key}`);
         await expect(leftRow).toBeInViewport();
@@ -110,6 +111,7 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
         await expect(leftRow).toContainText("저장 안 됨");
         const gate = await holdEffective(page, rightSession.id);
         try {
+            await right.getByRole("button", { name: "대화 작업", exact: true }).click();
             await right.getByRole("button", { name: "대화 설정" }).click();
             await gate.seen;
             await expect(right.getByText("링크한 설정을 불러오는 중…", { exact: true })).toBeVisible();
@@ -181,11 +183,11 @@ test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로
         const definitionsReceived = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/definitions");
         releaseDefinitions();
         await definitionsReceived;
-        await expect(settings.getByTestId("setting-definitions").getByRole("button", { name: /^Reviewer/ })).toBeAttached();
+        await expect(settings.getByTestId("setting-definitions").getByRole("button", { name: /^Reviewer/, includeHidden: true })).toBeAttached();
         // 개요도 앞쪽 높이를 바꾸므로 정의 목록만 준비됐다고 이동하면 안 된다.
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toBeVisible();
         releaseOverview();
-        await expect(settings.getByTestId("agent-overview").getByRole("heading", { name: /등록된 역할/ })).toBeAttached();
+        await expect(settings.getByTestId("agent-overview").getByRole("heading", { name: /등록된 역할/, includeHidden: true })).toBeAttached();
         await expect(row).toBeInViewport();
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
         const current = await apiCall<{ items: { key: string; layers: Record<string, { revision: number }> }[] }>("GET", "/settings/effective");
@@ -195,7 +197,7 @@ test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로
         // 0(제한 없음)을 그대로 저장해 격리 서버의 한도는 바꾸지 않고 재조회만 유도한다.
         await apiCall("PUT", "/settings/server/-/exec.max_memory_mb", { expected_revision: item.layers.server!.revision, value: 0 });
         await refreshed;
-        await expect(row).toContainText("(서버 전체)");
+        await expect(row).toContainText("대상: 서버 전체");
         await expect.poll(() => page.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
     } finally {
         gate.release();

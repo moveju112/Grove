@@ -31,7 +31,7 @@ function render(value: AgentOverviewData = data, status = "ready", key = '["p","
 describe("역할 개요", () => {
     it("실제 상속·다음 요청 기본값·override·정책·실행 미확인을 분리한다", () => {
         const html = render();
-        for (const text of ["부모 모델", "다음 모델", "부모 턴의 모델 프로필과 도구 활성 상태", "override 수정됨", "현재 정책상 사용 가능",
+        for (const text of ["부모 모델", "다음 모델", "현재 부모 턴:", "도구 켜짐", "override 수정됨", "현재 정책상 사용 가능",
             "연결·실행 미확인", "최대 깊이 2", "동시 실행 4", "동시 실행 16", "자동 재실행하지 않습니다", "worker 기존 편집 열기"]) expect(html).toContain(text);
         expect(html).toContain("&lt;script&gt;");
         expect(html).not.toContain("<script>");

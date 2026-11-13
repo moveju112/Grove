@@ -81,8 +81,7 @@ export function McpServers() {
     const rowBlocked=(server:Server)=>blocked || !!editing || !!deleting || !!testing || !!name
         || server.last_check?.status==="checking" || server.connection_state==="in_use";
     return <div className="stack" data-testid="mcp-panel">
-        <p className="muted small">서버 전체 설정 · 저장 후 연결을 확인하세요.</p>
-        <p className="muted small">비밀 원문을 실행 인자·URL·JSON에 넣지 마세요. 환경변수는 env_secrets, 헤더는 header_secrets에 API 키의 ID를 참조하세요. 헤더 secret에는 필요한 접두사(예: Bearer)까지 저장하세요.</p>
+        <p className="muted small">비밀값 대신 env_secrets·header_secrets에 API 키 ID를 사용하세요. 헤더 키에는 Bearer 등 접두사를 포함하세요.</p>
         {!!query.error && <p role="alert" className="err">{query.error instanceof Error ? query.error.message : "MCP 조회 실패"}</p>}
         <ul>{(query.data ?? []).map((server) => <li key={server.id} data-testid="mcp-row">
             <strong>{server.name}</strong> · {server.config.transport} · {server.enabled ? "사용 설정" : "사용 안 함"}

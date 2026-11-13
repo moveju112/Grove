@@ -21,7 +21,7 @@ test("hook 추가·수정·비활성화·삭제는 미실행이며 명령의 비
     const prefix = `hook-ui-${Date.now()}`;
     try {
         const panel = await open(page);
-        await expect(panel).toContainText("아직 실행되지 않음");
+        await expect(panel).toContainText("저장·활성화는 실행 승인이 아닙니다");
         await panel.getByLabel("hook 이름", { exact: true }).fill(prefix);
         await panel.getByLabel("hook 이벤트", { exact: true }).selectOption("PreToolUse");
         await panel.getByLabel("hook matcher", { exact: true }).fill("shell*");

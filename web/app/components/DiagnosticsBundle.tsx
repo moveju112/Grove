@@ -44,6 +44,7 @@ export function DiagnosticsBundle() {
 
     if (supported === false) return null;
     return <div data-testid="diagnostics-bundle">
+        <span className="scope">소유자 전용</span>
         {!preparing && <button type="button" className="ghost small" onClick={() => { setPreparing(true); setError(null); }}>진단 묶음 준비</button>}
         {preparing && <div role="group" aria-label="진단 정보 범위 확인">
             <p className="small">포함: 버전·OS·프로토콜·DB 크기·메모리·실행/대기 수·상태별 개수·이벤트 연결 상태.</p>

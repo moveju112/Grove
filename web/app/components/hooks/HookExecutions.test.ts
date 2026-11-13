@@ -25,7 +25,7 @@ describe("hook 전용 승인·결과 화면", () => {
         expect(html).toContain("이번만 승인");
         expect(html).toContain("거부");
         expect(html).not.toContain("이 대화에서 계속 허용");
-        expect(html).toContain("매 이벤트마다 새 계획 승인");
+        expect(html).toContain("이벤트마다 개별 승인");
         expect(html).toContain("hook_revision");
         expect(html).toContain("environment");
         expect(html).toContain("limits");
