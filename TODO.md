@@ -1233,7 +1233,7 @@ supervisor 모델 미설정·실패 때 임의 모델이나 전체 멤버 자동
 
 - [ ] UI-001 반응형 공용 레이아웃과 플랫폼 capability adapter를 구성한다.
 - [ ] UI-002 welcome·온보딩·서버 연결·계정 설정·첫 프로젝트 흐름을 구현한다.
-- [ ] UI-003 호스트·프로젝트·세션 탐색과 현재 위치를 일관되게 표시한다.
+- [x] UI-003 호스트·프로젝트·세션 탐색과 현재 위치를 일관되게 표시한다. 활성 pane/tab의 실제 ID·부모 탐색·호스트 비밀 비노출·늦은 응답 격리를 연결했다. 기능 단위 60개·Rust split/restart 근거와 통합 navigation-context E2E 3개·타입 검사 통과. 좁은 화면·긴 이름·초안·다른 pane·승인 대기를 보존한다(`work/RESULT-30.md`).
 - [x] UI-004 sidebar의 상태 아이콘·읽지 않음·핀·toolbar를 구현한다. 검증: `GET /projects/{id}/sidebar`의 실제 상태 분류·전체 집계, 텍스트 레이블 상태 아이콘, 서버 저장 읽음(`recent_items.view_state`)·세션 핀, 방향키 toolbar(`web/app/components/sidebar/`). `sessions` lib 4개·단위·`e2e/sidebar-status.spec.ts`와 기존 workspace·최근 탐색 E2E 통과(`work/RESULT-13.md`).
 - [x] UI-005 세션/프로젝트 생성 진입점을 단순화하고 중복 생성 UI를 없앤다. 검증: 머리글·사이드바·프로젝트가 공통 생성 흐름과 기존 입력창을 재사용하며 프로젝트 맥락·초안·중복 방지·응답 유실 동일 키 복구를 보존한다. native modal의 Tab 이탈을 원래 담당이 재현·수정했고 양방향 containment·Escape/취소·초점 복원을 1440/390px에서 확인했다. 단위 35개·기존 sidebar/layout 및 Rust 근거 재사용, 기능 E2E 8개·통합 선택 16개와 타입 통과(`work/RESULT-22.md`). 27의 후속 PWA 결합 인수는 해당 미완료 작업에서 계속한다.
 - [x] UI-006 사용자·assistant·reasoning·도구·오류·알림·압축 항목을 렌더링한다. 검증: 사용자 글(평문)·assistant(Markdown, `markdown.spec.ts`)·reasoning(접기·펼치기·숨김, `transcript-prefs.spec.ts`)·도구(상태·인자·결과·소요 시간, `workspace.spec.ts`)·오류(실패 원인과 자동 재실행 없음 안내, role=alert, `turn-error.spec.ts`)·알림성 기록(자식 에이전트 결과·백그라운드 작업 결과 `workspace.spec.ts`, 가져온 기록 알림 `import.spec.ts`, CLI 도구 활동 `cli-profile.spec.ts`)·압축(`workspace.spec.ts`)·질문(`question.spec.ts`) 항목을 각각 구분해 렌더링한다.
@@ -1403,16 +1403,16 @@ PC 기본 UI는 브라우저/PWA다. Rust 서버 설치는 원격 접속용 UI �
 - [ ] WEB-004 서버 주소 입력·pairing link·호스트 목록·로그아웃을 구현한다.
 - [ ] WEB-005 HTTPS 페이지에서 로컬/원격 서버 연결 시 mixed content·브라우저 제약을 처리한다.
 - [ ] WEB-006 브라우저 credential 보관과 XSS 위험을 검토한다.
-- [ ] WEB-007 새 UI 버전과 오래 열린 탭의 API 호환·갱신 안내를 구현한다. 진행: health 사전 호환 확인·protocol 불일치 차단·사용자 동의 후 worker 전환·버전별 shell 고정, 루트와 `/grove/` 배포 E2E 통과(`work/RESULT-14.md`). 남음: 인증 등 별도 전송 진입점의 공통 호환 경계와 다중 탭 실제 전환 인수.
+- [ ] WEB-007 새 UI 버전과 오래 열린 탭의 API 호환·갱신 안내를 구현한다. 진행: 기존 worker 전환·버전별 shell 고정에 인증·HTTP/WS 호환 경계·실제 multi-tab asset/cache 전환과 `/`·`/grove/` 갱신 인수를 완료했다. 27 기능 브라우저 근거와 고정 candidate의 생성·PWA·탐색·hook/fallback/업데이트 통합 E2E 25개·단위 36개·타입 통과(`work/RESULT-14.md`, `work/RESULT-27.md`). 남음: Safari/iOS/Android 및 장기 중지된 설치형 탭의 실제 수명 검증. 해당 실기기 확보 후 수동 인수한다.
 - [x] WEB-008 자산 cache와 사용자 대화 cache의 범위를 분리한다. 검증: service worker cache는 앱 자산(`grove-shell-<version>`)만, `/api/` 응답은 cache하지 않음(활성화 후 cache 항목 검사), 대화·초안은 서버 API와 초안 저장소로 분리(`web/e2e/pwa-update.spec.ts`).
-- [ ] WEB-009 오프라인 화면·draft는 지원하되 서버 작업 실행 가능으로 오인시키지 않는다. 진행: 열린 탭의 초안 편집·로컬 저장, Composer·승인 버튼 비활성, 공통 API 변경 요청의 fetch 전 차단과 결과 미전송 표시, 복구 후 자동 재전송 없음. 실제 공통 경계 누락을 실패 시험으로 확인해 수정했고 lifecycle 12개·API 18개·오프라인 승인 및 PWA E2E 통과(`work/RESULT-14.md`). 남음: 나머지 서버 작업 버튼의 비활성 이유 연결, 인증을 우회하지 않는 오프라인 cold-start 초안 복구 계약.
+- [x] WEB-009 오프라인 화면·draft는 지원하되 서버 작업 실행 가능으로 오인시키지 않는다. 기존 HTTP 차단에 작업 버튼의 이유·생성 단계별 원래 키·열린 PTY의 키보드/paste/보조키/resize guard와 인증 없는 cold-start 복구 안내를 연결했다. 로컬 탐색·초안 편집·복사·취소를 유지하며 복구 뒤 mutation을 자동 재전송하지 않는다. 다른 계정의 초안을 인증 없이 열지 않고 온라인 복구를 안내한다. 기존 근거·기능 단위 55개/브라우저 21개 및 통합 단위 36개·E2E 25개·타입 검사를 통과했다(`work/RESULT-14.md`, `work/RESULT-27.md`).
 - [ ] WEB-010 지원 브라우저의 알림·clipboard·파일 API 차이를 표시한다. 진행: 이 기기 기능표, 권한 허용/거부/미확인·보안 컨텍스트 구분, 무부작용 탐지·사용자 클릭 전용 권한 요청, 원문 수동 복사·첨부 대안을 실제 설정/메시지/첨부 진입점에 연결했다. 신규 단위 11개·기존 알림 회귀·타입·빌드 및 Chromium E2E 4개 통과(`work/RESULT-26.md`). 남음: Safari/Firefox·iOS/Android 실기기와 실제 비보안 origin의 지원/권한 동작 확인. 신호 mock을 실제 플랫폼 검증으로 간주하지 않는다.
 - [ ] WEB-011 기본 제품으로 PWA manifest·설치 안내·service worker·Web Push를 구현하고 지원 브라우저별 한계를 표시한다.
 - [ ] WEB-012 서버 정적 UI 제공을 지원한다면 headless 최소 빌드와 UI 포함 배포를 분리한다.
 - [ ] WEB-013 앱 ID·이름·아이콘·start URL·scope를 정의하고 browser/PWA 링크에서 같은 세션을 복원한다.
 - [ ] WEB-014 service worker 설치·대기·활성화와 버전별 자산 cache를 구현하고 HTML/JS 혼합 버전을 방지한다.
 - [x] WEB-015 UI 갱신을 알리되 실행·입력 중 강제 reload하지 않는다. 초안 저장·재접속 cursor 확보 후 안전하게 전환한다. 검증: 새 service worker는 대기하고 배너만 표시, 응답 stream 진행·입력 중 강제 reload 없음, 사용자가 고를 때 1회 전환 후 초안·대화·SSE 연결 복원, 턴 재실행 없음(`web/e2e/pwa-update.spec.ts`, 즉시 활성화 결함 주입 사본은 실패).
-- [ ] WEB-016 cache 삭제·storage quota 초과·브라우저 데이터 eviction을 처리하고 로컬 초안의 보존 한계를 명시한다. 진행: quota·저장소 접근 거부·정책 미지원·관측한 데이터 유실·shell cache 유실을 구분하고 영구 보존을 보장하지 않는다고 안내한다. 단위·quota 쓰기 실패/삭제/worker 전환 E2E 통과(`work/RESULT-14.md`). 남음: 다중 탭 cache 정리·실제 브라우저 quota/eviction·저장 정책 인수. 모든 데이터 삭제와 첫 방문은 구분하지 못한다.
+- [ ] WEB-016 cache 삭제·storage quota 초과·브라우저 데이터 eviction을 처리하고 로컬 초안의 보존 한계를 명시한다. 진행: 기존 실패/삭제 안내에 다중 탭 안전 cache 회수·실제 Chrome origin quota 예외·persisted 정책 안내·입력 보존과 무전송을 인수했다(`work/RESULT-14.md`, `work/RESULT-27.md`). 남음: OS/브라우저의 실제 자동 eviction·장기 백그라운드 수명은 승인된 실기기 저장 압박 환경 확보 후 수동 검증한다. 구 UI/버전 불명 탭이 남으면 회수를 보류하며 영구 보존·전체 삭제 복구·첫 방문과 전체 삭제 구분은 보장하지 않는다.
 - [ ] WEB-017 PWA 제거와 서버/계정 삭제를 분리하고 로그아웃 시 cache·push subscription·기기 토큰을 정리한다.
 - [ ] WEB-018 push의 지연·미지원·권한 거부·중복·알림 클릭을 시험하고 수신 성공을 보장한다고 과장하지 않는다.
 - [ ] WEB-019 HTTPS 웹→loopback/LAN/원격 서버 연결을 실제 브라우저에서 검증한다. 보안 설정 해제나 무인증 bridge를 해결책으로 쓰지 않는다.

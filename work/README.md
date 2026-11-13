@@ -50,7 +50,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 |---|---|---|
 | 21 | blocked · `d369ef8` 부분 통합·지원 형식 인수 완료 | 공유 환경 복구 후 typecheck·Vitest 12개·E2E 4개 및 통합 인수 통과, Rust 23개 근거 재사용. inline TOML parser 승인/재사용 parser 제공이 해제 조건이며 RESOURCE-018은 미완료. 같은 blocker로 재개하지 않음 |
 | 22 | ready · `30a5f785` 후속 통합·인수 완료 | 원래 담당이 native modal Tab 이탈을 재현·수정, 기능 E2E 8개 통과. 통합 공통 경계 포함 E2E 16개·Rust 4개·타입 통과. 27의 향후 PWA 결합은 27 담당의 남은 인수로 보존 |
-| 27 | ready · `2885f69` 후속 완료·통합 인수 중 | 기존 세션의 구현·55개 단위·서로 다른 브라우저 21개 및 `/grove/` 2개 근거를 보존. `f53aa85`에 통합했고 생성 focus·현재 위치·hook/fallback/업데이트와의 공통 경계를 고정 candidate로 검사 중. 실기기 eviction·장기 정책은 미완료 유지 |
+| 27 | ready · `2885f69` 후속 완료·통합 인수 완료 | 기능 단위 55개·브라우저 21개와 하위 경로 근거 보존. `f53aa85` 고정 candidate의 단위 36개·E2E 25개·타입 통과. 생성 focus·현재 위치·hook/fallback/업데이트 공존 인수 완료. WEB-009 완료, 실기기 eviction·장기 정책은 미완료 유지 |
 | 31 | ready · `997c061` 후속 통합·Linux 인수 완료 | 기존 Rust 42개·웹 근거 보존, 기능 E2E 14개 통과. 통합 Rust 8개·타입·E2E 5개 및 29 hook 결합 인수 완료. Windows/macOS 실측은 SETTINGS-011에 유지 |
 | 33 | ready · `2127559` 통합·현재 공통 경계 인수 완료 | 기능 Rust 33·웹 단위 3·브라우저 1개 근거 보존. 현재 hook/runner·compaction 공존 인수도 통과. MODEL-019/020 완료, SETTINGS-004 역할별 나머지는 유지 |
 | 29 | ready · `e8695cb` 통합·지원 범위 인수 완료 | 기능 E2E 7개와 통합 hook/cwd/fallback 인수 통과. 일반 API가 없는 zsh를 먼저 거절하는 통합 시험 충돌은 격리 DB의 과거 설정 fixture로 분리했다. 미지원 이벤트·플랫폼은 RESOURCE-016/017 및 이월에 보존 |
@@ -71,6 +71,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 - 21·33과 25·29 정리의 네 자리는 38~41로 보충해 기능 workspace 10개를 유지했다. 이번 인계 적용 중에는 명시 요청대로 새 heartbeat·기능 세션을 만들지 않았다. 27의 PWA 후속과 30/37의 설정 직접 링크 인수는 별도 대기이며 미완료 TODO를 유지한다.
 - 사용자 최신 요청으로 인계 적용 중의 신규 시작 일시 제한은 해제됐다. 읽기 전용 큐의 running=0/backlog=2와 준비 기준·세션 이력·clean을 확인하고, 유효하게 검증된 제품 입력을 포함하는 기존 37·34·35를 순차 생성했다. 각 반환 상태가 running이고 pendingPermissions가 없으며 개발 fast=false를 재조회했다. 메인 fast=true도 보존했다. 37의 첫 생성 호출은 provider 형식 검증에서 거부되어 세션을 만들지 않았고, provider/model 형식으로 수정한 호출만 접수됐다. 신규 heartbeat는 만들지 않았다.
 - 27 통합 `f53aa85061cc35198461bb54e1d133218dbb7cad`는 Settings fallback·일반 cwd 문구·compaction/copy·navigation·HookExecutions와 PWA 버튼/가드를 함께 보존해 충돌을 해결했다. background task `job_1794544450869_83b4f5`, 고정 job `/home/ubuntu/.cache/grove-validation/validation-uk_7rvoi`에서 타입·PWA 단위와 create-entry/pwa-recovery/pwa-transport/navigation-context/hook-execution/model-fallback/update-settings E2E를 검사 중이다. 30은 legacy 인계의 남은 중앙 브라우저 인수로 분류했고 SETTINGS-021은 별도 37 소유로 보존했다. 검사 완료 전 27·30을 정리하지 않는다.
+- 위 고정 job은 exit 0으로 완료했다. 단위 4파일 36개·타입·E2E 25개 통과. inspect의 reusable=false는 원본 HEAD가 `460d058`로 이동했기 때문이며 `f53aa85..460d058`는 INTEGRATE/README 문서만 변경해 제품·시험·환경 입력은 불변이다. 성공 근거를 재사용하고 실행기를 재실행하지 않았다. UI-003·WEB-009를 완료로 반영했고 WEB-007/016의 실기기·장기 수명/eviction과 SETTINGS-021은 미완료 유지한다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
@@ -129,7 +130,7 @@ b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01
 | 33 | SETTINGS-004 역할별 모델/context/disabled | `work/RESULT-33.md` | HTTP fallback과 hook 결합 포함 현재 통합 인수 완료. 역할별 설정은 별도 미배정 |
 | 29 | RESOURCE-016 미지원 PreToolUse/SessionEnd·나머지 발생 경로, RESOURCE-017 Windows command | `work/RESULT-29.md` | Linux bash/sh 지원 범위 인수 완료. 원래 작업 차단·세션 종료/추가 lifecycle 계약을 정한 후 후속 배정; Windows 실행 환경 필요 |
 | 11 | `RESOURCE-012` metadata/root 간 alias·hardlink 계약, Windows 경로/junction 검증 | `work/RESULT-11.md` | 보류: 지원 계약·Windows 환경 확인 필요 |
-| 14 | `WEB-007`·`WEB-009`·`WEB-016` 인증/나머지 작업 경계·offline cold start·다중 탭·저장소 인수 | `work/RESULT-14.md`, `af0ad28` | 27 |
+| 14·27 | `WEB-007`·`WEB-016` Safari/iOS/Android 설치형 장기 탭·실제 자동 eviction | `work/RESULT-14.md`, `work/RESULT-27.md` | Linux/Chromium 인증·전송·cold start·多탭·실제 quota/정책 인수 완료. 해당 실기기·저장 압박 환경 확보 뒤 수동 검증; 같은 blocker로 재개하지 않음 |
 | 20 | `FILEUI-007` 실제 GUI 편집기·Windows/macOS·서비스 세션 검증 | `work/RESULT-20.md` | 보류: 해당 플랫폼·GUI 환경 필요 |
 | 23 | `PC-005` 설치형 standalone PWA native 창 수명 확인 | `work/RESULT-23.md` | 보류: 설치형 PWA 환경 필요 |
 | 24·31 | `SETTINGS-011` Windows/macOS 실행·경계·복구 실측 | `work/RESULT-24.md`, `work/RESULT-31.md` | Linux 연결·브라우저·hook 분리 인수 완료. 플랫폼 실측은 해당 OS 환경 필요 |
