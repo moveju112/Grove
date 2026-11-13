@@ -16,6 +16,34 @@ const PRECACHE = (self.__GROVE_ASSETS__ || ["/", "/manifest.webmanifest", "/icon
     .filter(inScope)
     .map((url) => url.href);
 
+// document의 shell과 controller는 다르다. worker 재시작으로 기록이 없어지면 삭제를 보류한다.
+const reportedShells = new Map();
+async function collectUnusedShells() {
+    const clients = (await self.clients.matchAll({ type: "window", includeUncontrolled: true }))
+        .filter((client) => client.url.startsWith(SCOPE.href));
+    // 한 탭이라도 구 HTML이거나 버전 불명이면 lazy asset을 남긴다. 탭 수만으로 판단하지 않는다.
+    if (clients.some((client) => reportedShells.get(client.id) !== VERSION)) return;
+    if (!(await (await caches.open(CACHE)).match(SCOPE.href, { ignoreSearch: true }))) return;
+    const keys = await caches.keys();
+    // CacheStorage.keys는 생성 순서다. 아직 대기 중이거나 이후 활성화된 cache를 구버전 worker가 지우지 않는다.
+    const previous = keys.slice(0, keys.indexOf(CACHE));
+    if (self.registration.installing || self.registration.waiting) return;
+    await Promise.all(previous.filter((key) => key.startsWith(CACHE_PREFIX)).map((key) => caches.delete(key)));
+    const live = new Set(clients.map((client) => client.id));
+    for (const id of reportedShells.keys()) if (!live.has(id)) reportedShells.delete(id);
+}
+
+async function documentShell(response) {
+    if (!response.headers.get("content-type")?.includes("text/html")) return response;
+    const html = await response.text();
+    const headers = new Headers(response.headers);
+    headers.delete("content-length");
+    headers.delete("content-encoding");
+    // cache에서 제공한 버전만 document에 기록한다. cache 유실 시 network HTML의 버전은 추측하지 않는다.
+    return new Response(html.replace(/<head(?:\s[^>]*)?>/i, `$&<meta name="grove-shell-version" content="${VERSION}">`),
+        { status: response.status, statusText: response.statusText, headers });
+}
+
 self.addEventListener("install", (event) => {
     // 같은 버전의 자산을 한꺼번에 받아 혼합 자산 상태를 피한다.
     event.waitUntil(caches.open(CACHE).then((c) => c.addAll(PRECACHE)));
@@ -24,15 +52,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
     event.waitUntil(
         (async () => {
-            const keys = await caches.keys();
-            // 다른 탭은 아직 이전 HTML로 실행 중일 수 있다. 그 탭의 lazy asset을 지우지 않는다.
-            // 다중 탭에서 남긴 cache는 이후 단일 탭 활성화 때 정리한다.
-            const clients = (await self.clients.matchAll({ type: "window", includeUncontrolled: true }))
-                .filter((client) => client.url.startsWith(SCOPE.href));
-            // 예전의 scope 없는 cache는 소유 배포를 알 수 없으므로 자동 삭제하지 않는다.
-            if (clients.length <= 1) {
-                await Promise.all(keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE).map((k) => caches.delete(k)));
-            }
+            await collectUnusedShells();
             await self.clients.claim();
         })(),
     );
@@ -41,9 +61,14 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("message", (event) => {
     if (event.data && event.data.type === "skip-waiting") self.skipWaiting();
     if (event.data && event.data.type === "shell-status") {
-        event.waitUntil(caches.open(CACHE).then(async (cache) => {
+        event.waitUntil((async () => {
+            if (event.source?.id && event.source.url?.startsWith(SCOPE.href)) {
+                reportedShells.set(event.source.id, event.data.version);
+                await collectUnusedShells();
+            }
+            const cache = await caches.open(CACHE);
             event.source?.postMessage({ type: "shell-status", cached: !!(await cache.match(SCOPE.href, { ignoreSearch: true })) });
-        }));
+        })());
     }
 });
 
@@ -60,9 +85,9 @@ self.addEventListener("fetch", (event) => {
                 const response = await fetch(event.request);
                 if (!response.ok) return response;
                 // cache 유실 때만 온라인 shell로 복구한다. 이를 구 버전 cache에 저장하지 않는다.
-                return shell || response;
+                return shell ? documentShell(shell) : response;
             } catch {
-                return shell || new Response(
+                return shell ? documentShell(shell) : new Response(
                     '<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>Grove 오프라인</title><h1>오프라인 · 앱 cache 없음</h1><p>앱 cache가 삭제됐거나 자동 정리돼 이 화면을 열 수 없습니다. 네트워크 연결 후 다시 불러오세요.</p><p>이 오프라인 화면에서는 새 서버 작업을 실행할 수 없습니다. 다른 탭의 입력은 먼저 복사하세요. 앱 cache 복구는 삭제된 로컬 초안을 복구하지 않습니다.</p></html>',
                     { status: 503, headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" } },
                 );

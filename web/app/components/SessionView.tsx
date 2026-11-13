@@ -28,6 +28,7 @@ import { TurnTiming } from "./turn-timing/TurnTiming";
 import { useServerBlockReason } from "./pwa/lifecycle";
 import { MessageCopyButton as CopyButton } from "./capabilities/MessageCopyButton";
 import { CompactionDetails, type CompactionRecord } from "./compaction/CompactionDetails";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
@@ -315,17 +316,18 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         <div className="session-view" data-testid="session-view" data-session={sessionId}>
             <header className="view-head">
                 <h1>
-                    <button className="link" title="이름 바꾸기" onClick={() => {
+                    <ServerActionButton className="link" title="이름 바꾸기" onClick={() => {
                         const t = prompt("대화 이름", s.title);
                         if (t && t !== s.title) void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, title: t }));
                     }}>
                         {s.title}
-                    </button>
+                    </ServerActionButton>
                 </h1>
                 <select
                     aria-label="워크플로우"
                     value={s.workflow_id ?? "default"}
-                    disabled={archived}
+                    disabled={archived || !!serverBlocked}
+                    title={serverBlocked ?? undefined}
                     onChange={(e) => void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, workflow_id: e.target.value === "default" ? null : e.target.value }))}
                 >
                     {(workflows.data ?? []).filter((w) => w.enabled || w.id === s.workflow_id).map((w) => (
@@ -335,9 +337,9 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         </option>
                     ))}
                 </select>
-                <WorktreeSelect projectId={projectId} sessionId={sessionId} current={s.worktree_id} disabled={archived || !!s.active_turn} onError={setErr} />
+                <WorktreeSelect projectId={projectId} sessionId={sessionId} current={s.worktree_id} disabled={archived || !!s.active_turn || !!serverBlocked} onError={setErr} />
                 {!archived && (
-                    <button
+                    <ServerActionButton
                         className="ghost small"
                         title="모델로 짧은 제목을 만듭니다(모델 비용 발생)"
                         onClick={() =>
@@ -348,26 +350,26 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         }
                     >
                         제목 생성
-                    </button>
+                    </ServerActionButton>
                 )}
                 {s.bot_id && <span className="chip" data-testid="bot-chip" title="모델·persona는 봇 설정을 따릅니다(입력창의 모델·에이전트 선택은 쓰지 않음)">봇 대화</span>}
                 {lastTurn?.agent_id && <span className="chip" title="마지막 요청을 처리한 에이전트">에이전트: {lastTurn.agent_id}</span>}
-                <ContextMeter sessionId={sessionId} profileId={lastTurn?.profile_id ?? null} busy={!!active || archived} onError={setErr} />
-                <button className="ghost small" disabled={archived} onClick={() => {
+                <ContextMeter sessionId={sessionId} profileId={lastTurn?.profile_id ?? null} busy={!!active || archived || !!serverBlocked} onError={setErr} />
+                <ServerActionButton className="ghost small" disabled={archived} onClick={() => {
                     const inherit = confirm("모델 컨텍스트도 이어받을까요?\n확인: 대화와 컨텍스트 계승 / 취소: 대화 기록만 표시하고 새 컨텍스트");
                     void act(async () => {
                         const n = await api.post<Session>(`/sessions/${sessionId}/fork`, { from_seq: s.last_message_seq, inherit_context: inherit });
                         open({ kind: "session", project_id: projectId, resource_id: n.id, title: n.title }, "right");
                     });
-                }}>분기</button>
-                <button className="ghost small" onClick={() => void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, archived: !archived }))}>
+                }}>분기</ServerActionButton>
+                <ServerActionButton className="ghost small" onClick={() => void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, archived: !archived }))}>
                     {archived ? "복원" : "보관"}
-                </button>
+                </ServerActionButton>
                 <button className="ghost small" onClick={() => open({ kind: "settings", project_id: projectId, resource_id: `session:${sessionId}`, title: `설정 · ${s.title}` })}>
                     대화 설정
                 </button>
                 {archived && (
-                    <button
+                    <ServerActionButton
                         className="ghost small danger"
                         onClick={() => {
                             const t = prompt(`영구 삭제는 되돌릴 수 없습니다. 메시지·실행 기록·초안이 모두 지워집니다.\n확인하려면 대화 제목을 그대로 입력하세요: ${s.title}`);
@@ -376,7 +378,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         }}
                     >
                         영구 삭제
-                    </button>
+                    </ServerActionButton>
                 )}
             </header>
             {s.parent_session_id && (
@@ -404,12 +406,12 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         <div key={m.id} className={`msg-row${highlight === m.seq ? " focus-hit" : ""}`} data-seq={m.seq}>
                             <MessageView m={m} prefs={prefs} assistantName={assistantName} assistantImage={assistantImage} />
                             {m.role === "user" && (
-                                <button
+                                <ServerActionButton
                                     className="ghost small"
                                     aria-label="이 메시지 이전으로 되감기"
                                     disabled={archived || !!active || m.seq <= (latest.data?.rewind_boundary_seq ?? 0)}
                                     onClick={() => rewind(m)}
-                                >이전으로 되감기</button>
+                                >이전으로 되감기</ServerActionButton>
                             )}
                         </div>
                     )} />
@@ -455,7 +457,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                 return <section key={c.id} className="stack" data-testid="mcp-running" aria-label="MCP 실행">
                     <p role="status"><code>{(c.target as {namespace:string}).namespace}</code> · MCP 실행 중
                         {p && ` · ${p.value}${p.total===null ? "" : ` / ${p.total}`}`}</p>
-                    <button type="button" onClick={()=>void act(()=>api.post(`/tool-calls/${c.id}/cancel`,{}))}>MCP 호출 중지</button>
+                    <ServerActionButton type="button" onClick={()=>void act(()=>api.post(`/tool-calls/${c.id}/cancel`,{}))}>MCP 호출 중지</ServerActionButton>
                     <p className="muted small">중지는 원격 부작용의 미적용을 보장하지 않습니다. 확정 응답이 없으면 결과 불명으로 남습니다.</p>
                 </section>;
             })}
@@ -473,7 +475,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                           : active.status === "queued"
                             ? "대기 중"
                             : "실행 중"}
-                    <button className="ghost small" onClick={() => void act(() => api.post(`/turns/${active.id}/cancel`))}>취소</button>
+                    <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/turns/${active.id}/cancel`))}>취소</ServerActionButton>
                 </div>
             )}
             {active && <ActiveSettings turn={active} workflows={workflows.data ?? []} />}
@@ -485,18 +487,18 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     {lastTurn.evidence && <TurnEvidence e={lastTurn.evidence} />}
                     {/* RUN-019: 다시 실행(같은 글·설정)·새 요청 쓰기·포기(배너 닫기, 모든 기기) */}
                     <span className="inline">
-                        <button className="ghost small" disabled={archived} onClick={() => void act(() => api.post(`/turns/${lastTurn.id}/retry`))}>
+                        <ServerActionButton className="ghost small" disabled={archived} onClick={() => void act(() => api.post(`/turns/${lastTurn.id}/retry`))}>
                             다시 실행
-                        </button>
+                        </ServerActionButton>
                         <button
                             className="ghost small"
                             onClick={() => (document.querySelector(`[data-session="${sessionId}"] textarea[aria-label="메시지 입력"]`) as HTMLTextAreaElement | null)?.focus()}
                         >
                             새 요청 쓰기
                         </button>
-                        <button className="ghost small" onClick={() => void act(() => api.post(`/turns/${lastTurn.id}/acknowledge`))}>
+                        <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/turns/${lastTurn.id}/acknowledge`))}>
                             닫기(포기)
-                        </button>
+                        </ServerActionButton>
                     </span>
                 </div>
             )}
@@ -797,10 +799,10 @@ function UnknownCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unknow
                             <option value="unsure">모르겠음</option>
                         </select>
                     </label>
-                    <button onClick={() => void act(async () => {
+                    <ServerActionButton onClick={() => void act(async () => {
                         await api.post(`/tool-calls/${c.id}/review`, { expected_revision: obs.revision, fingerprint: obs.fingerprint, outcome });
                         setObs(null);
-                    })}>검토 기록</button>
+                    })}>검토 기록</ServerActionButton>
                 </>
             )}
         </div>
@@ -840,13 +842,13 @@ function FollowupsPanel({ sessionId, running, onError }: { sessionId: string; ru
                         {!!f.attachments?.length && <AttachmentList attachments={f.attachments} />}
                         {f.last_error && <span className="err small"> · {f.last_error.message}</span>}
                         {!running && i === 0 && (
-                            <button className="ghost small" onClick={() => void run(() => api.post(`/sessions/${sessionId}/followups/${f.id}/start`))}>
+                            <ServerActionButton className="ghost small" onClick={() => void run(() => api.post(`/sessions/${sessionId}/followups/${f.id}/start`))}>
                                 지금 시작
-                            </button>
+                            </ServerActionButton>
                         )}
-                        <button className="ghost small" aria-label={`대기 메시지 삭제: ${f.text.slice(0, 20)}`} onClick={() => void run(() => api.del(`/sessions/${sessionId}/followups/${f.id}`))}>
+                        <ServerActionButton className="ghost small" aria-label={`대기 메시지 삭제: ${f.text.slice(0, 20)}`} onClick={() => void run(() => api.del(`/sessions/${sessionId}/followups/${f.id}`))}>
                             삭제
-                        </button>
+                        </ServerActionButton>
                     </li>
                 ))}
             </ol>
@@ -897,12 +899,12 @@ function QuestionCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unkno
                 )}
             </fieldset>
             <div className="inline">
-                <button type="submit" disabled={!canSend}>
+                <ServerActionButton type="submit" disabled={!canSend}>
                     답하기
-                </button>
-                <button type="button" className="ghost" onClick={() => void send({ cancel: true })}>
+                </ServerActionButton>
+                <ServerActionButton type="button" className="ghost" onClick={() => void send({ cancel: true })}>
                     답하지 않고 닫기
-                </button>
+                </ServerActionButton>
             </div>
         </form>
     );

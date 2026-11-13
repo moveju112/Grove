@@ -6,11 +6,17 @@ import { ApiError, api, rawGet } from "../api/client";
 import { TerminalCapture } from "./TerminalCapture";
 import { guardComposition, NO_MODIFIERS, TerminalInput, type Modifiers } from "./terminal/input";
 import { TerminalKeys } from "./terminal/TerminalKeys";
+import { ServerActionButton } from "./pwa/ServerActionButton";
+import { useServerBlockReason } from "./pwa/lifecycle";
+import { terminalAction } from "./pwa/terminalAction";
 
 type TerminalRow = { id: string; name: string; status: "running" | "exited" | "lost"; exit_code: number | null; reason: string | null; revision: number };
 
 /// 터미널 탭. 실행 중이면 일회용 티켓으로 WebSocket에 붙고, 끝났으면 저장된 화면을 읽기 전용으로 보여 준다.
 export function TerminalView({ projectId, terminalId }: { projectId: string; terminalId: string }) {
+    const serverBlocked = useServerBlockReason();
+    const [inputBlocked, setInputBlocked] = useState<string | null>(null);
+    const blockedReason = serverBlocked ?? inputBlocked;
     const host = useRef<HTMLDivElement>(null);
     const sock = useRef<WebSocket | null>(null);
     const [row, setRow] = useState<TerminalRow | null>(null);
@@ -23,8 +29,14 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
 
     const send = (data: string) => {
         const s = sock.current;
-        if (s?.readyState === WebSocket.OPEN) s.send(JSON.stringify({ type: "input", data }));
+        if (s?.readyState === WebSocket.OPEN) terminalAction(() => s.send(JSON.stringify({ type: "input", data })), setInputBlocked);
     };
+
+    useEffect(() => { setInputBlocked(null); }, [serverBlocked]);
+    useEffect(() => {
+        if (terminal.current) terminal.current.options.disableStdin = conn !== "open" || !!blockedReason;
+        if (blockedReason) input.current?.reset();
+    }, [conn, blockedReason]);
 
     useEffect(() => {
         const term = new XTerm({ convertEol: false, cursorBlink: true, fontSize: 13, scrollback: 5000, disableStdin: true });
@@ -42,9 +54,10 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             event.preventDefault();
             event.stopImmediatePropagation();
             if (term.options.disableStdin) return;
-            keyboard.paste(event.clipboardData.getData("text/plain"),
+            const text = event.clipboardData.getData("text/plain");
+            terminalAction(() => keyboard.paste(text,
                 () => confirm("여러 줄을 붙여넣으면 명령이 실행될 수 있어요. 붙여넣을까요?"),
-                (text) => term.paste(text));
+                (text) => term.paste(text)), setInputBlocked);
         };
         const element = host.current!;
         element.addEventListener("paste", paste, true);
@@ -60,11 +73,11 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             setConn("error");
         };
 
-        term.onData((data) => keyboard.data(data));
+        term.onData((data) => terminalAction(() => keyboard.data(data), setInputBlocked));
         const resize = () => {
             fit.fit();
             const s = sock.current;
-            if (s?.readyState === WebSocket.OPEN) s.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+            if (s?.readyState === WebSocket.OPEN) terminalAction(() => s.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })), setInputBlocked);
         };
         const ro = new ResizeObserver(() => resize());
         ro.observe(host.current!);
@@ -112,9 +125,9 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             ws.onopen = () => {
                 if (closed || sock.current !== ws) { ws.close(); return; }
                 attempt = 0;
-                term.options.disableStdin = false;
+                term.options.disableStdin = !terminalAction(() => {}, setInputBlocked);
                 setConn("open");
-                ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+                terminalAction(() => ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows })), setInputBlocked);
             };
             ws.onmessage = (ev) => {
                 if (closed || sock.current !== ws) return;
@@ -175,17 +188,20 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             <div className="inline small">
                 <strong>{row?.name ?? "터미널"}</strong>
                 <span className="muted" data-testid="terminal-status">{statusText}</span>
-                {row?.status === "running" && <button className="ghost small" onClick={() => void kill()}>종료</button>}
+                {row?.status === "running" && <ServerActionButton className="ghost small" onClick={() => void kill()}>종료</ServerActionButton>}
             </div>
             {err && <p className="err" role="alert">{err}</p>}
-            {(conn === "missing" || conn === "error") && <button className="ghost small" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</button>}
+            {blockedReason && <p className="warn" role="status" data-testid="terminal-blocked">
+                {blockedReason} 터미널 입력·크기 전송을 멈췄습니다. PTY를 종료하지 않았으며 차단 중 입력은 복구 후 다시 보내지 않습니다.
+            </p>}
+            {(conn === "missing" || conn === "error") && <ServerActionButton className="ghost small" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</ServerActionButton>}
             <div className="term-host" ref={host} />
             <TerminalCapture key={terminalId} terminalId={terminalId} enabled={conn === "open" || conn === "readonly"} />
             {conn === "open" && (
-                <TerminalKeys modifiers={modifiers}
-                    onToggle={(key) => { input.current?.toggle(key); terminal.current?.focus(); }}
+                <TerminalKeys modifiers={modifiers} blockedReason={blockedReason}
+                    onToggle={(key) => { terminalAction(() => input.current?.toggle(key), setInputBlocked); terminal.current?.focus(); }}
                     onReset={() => { input.current?.reset(); terminal.current?.focus(); }}
-                    onKey={(data) => { input.current?.data(data); terminal.current?.focus(); }} />
+                    onKey={(data) => { terminalAction(() => input.current?.data(data), setInputBlocked); terminal.current?.focus(); }} />
             )}
         </div>
     );

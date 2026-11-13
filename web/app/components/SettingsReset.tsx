@@ -3,6 +3,7 @@ import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../api/client
 import { useCapability } from "../state/capabilities";
 import { defaultPrefs, loadPrefs, restoredPrefs, savePrefs, type Prefs } from "../state/device";
 import type { SettingDef, SettingsTarget } from "./ScopedSettings";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Source = "server" | "project" | "session" | "default";
 export const SCOPE_LABEL: Record<Source, string> & Record<string, string> = { server: "서버 전체", project: "이 프로젝트", session: "이 대화", default: "기본값" };
@@ -110,11 +111,11 @@ export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel,
             }))} />}
             {(review.kind === "load_error" || review.kind === "stale" || review.kind === "uncertain") && <p className="err" role="alert">{review.message}</p>}
             {(review.kind === "load_error" || review.kind === "stale") && <button onClick={() => void compare()}>변경된 값 다시 비교</button>}
-            {review.kind === "ready" && <button onClick={() => void restore(review.plan)}>확인한 범위 복원</button>}
+            {review.kind === "ready" && <ServerActionButton onClick={() => void restore(review.plan)}>확인한 범위 복원</ServerActionButton>}
             {review.kind === "sending" && <p role="status">복원 저장 중…</p>}
             {review.kind === "uncertain" && <>
                 <p className="warn">응답 유실만으로 미실행을 뜻하지 않습니다. 창을 닫아도 접수한 복원은 취소되지 않습니다.</p>
-                <button onClick={() => void restore(review.plan, review.attempt)}>원래 복원 요청 결과 확인</button>
+                <ServerActionButton onClick={() => void restore(review.plan, review.attempt)}>원래 복원 요청 결과 확인</ServerActionButton>
             </>}
             {review.kind === "saved" && <p role="status">복원 저장됨 · {review.count}개 override를 지웠습니다. 미저장된 다른 입력은 저장하지 않았습니다.</p>}
         </Dialog>}

@@ -70,4 +70,18 @@ describe("사용자 동의에 따른 worker 전환", () => {
         expect(reload).toHaveBeenCalledTimes(1);
         expect(registration.waiting!.postMessage).not.toHaveBeenCalled();
     });
+
+    it("대기 worker를 관측하지 못한 탭에도 다른 탭의 전환 후 업데이트 선택을 제공한다", async () => {
+        registration.waiting = null;
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        const next = new Worker();
+        next.state = "activated";
+        service.controller = next;
+        service.dispatchEvent(new Event("controllerchange"));
+        expect(reload).not.toHaveBeenCalled();
+        pwa.applyUpdate();
+        expect(reload).toHaveBeenCalledTimes(1);
+        expect(next.postMessage).not.toHaveBeenCalled();
+    });
 });

@@ -3,6 +3,7 @@ import { ApiError, api, newKey } from "../../api/client";
 import { hookPath, hookUpdate, type Hook, type HookDefinition, type HookListing } from "../../api/hooks";
 import { useQuery } from "../../state/store";
 import { HookExecutions } from "./HookExecutions";
+import { ServerActionButton } from "../pwa/ServerActionButton";
 
 type Attempt = { method: "post" | "put" | "del"; path: string; body?: unknown; key: string };
 type Mutation = { phase: "idle" } | { phase: "sending" | "unknown"; attempt: Attempt };
@@ -77,7 +78,7 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
         {error && <p role="alert">{error}</p>}
         {mutation.phase === "unknown" && <div role="status">
             저장 결과 불명 · 범위를 바꾸거나 새로 저장하기 전에 같은 요청을 확인하세요.
-            <button onClick={() => void mutate(mutation.attempt)}>같은 hook 요청 확인</button>
+            <ServerActionButton onClick={() => void mutate(mutation.attempt)}>같은 hook 요청 확인</ServerActionButton>
         </div>}
         {query.data?.hooks.map((hook) => <article className="setting" key={hook.id} data-testid="hook-row">
             <strong>{hook.name}</strong>
@@ -86,18 +87,18 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
             <pre>{hook.command}</pre>
             {hook.command_redacted && <p className="muted">비밀값 징후가 있어 명령 전체를 가렸습니다.</p>}
             <button disabled={blocked || !!deleting} onClick={() => edit(hook)}>hook 편집</button>
-            <button disabled={blocked || !!editing || !!deleting} onClick={() => void mutate({
+            <ServerActionButton disabled={blocked || !!editing || !!deleting} onClick={() => void mutate({
                 method: "put", path: hookPath(projectId, hook.id), key: newKey(),
                 body: hookUpdate(hook, { ...hook, enabled: !hook.enabled }, false),
-            })}>{hook.enabled ? "hook 비활성화" : "hook 활성화"}</button>
+            })}>{hook.enabled ? "hook 비활성화" : "hook 활성화"}</ServerActionButton>
             <button disabled={blocked || !!editing || !!deleting} onClick={() => setDeleting(hook)}>hook 삭제 확인</button>
         </article>)}
         {query.data?.hooks.length === 0 && <p>저장한 hook이 없습니다.</p>}
         {deleting && <div role="group" aria-label="hook 삭제">
             <p>“{deleting.name}” 설정을 삭제할까요?</p>
-            <button disabled={blocked} onClick={() => void mutate({
+            <ServerActionButton disabled={blocked} onClick={() => void mutate({
                 method: "del", path: hookPath(projectId, deleting.id, deleting.revision), key: newKey(),
-            })}>이 hook 삭제</button>
+            })}>이 hook 삭제</ServerActionButton>
             <button disabled={blocked} onClick={() => setDeleting(null)}>hook 삭제 취소</button>
         </div>}
         <form onSubmit={(e) => {
@@ -126,7 +127,7 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
                     다른 요청으로 바뀌었습니다. 입력을 보존했으니 최신 설정을 확인하세요.
                     {current && <button type="button" onClick={() => edit(current)}>최신 hook 설정 사용</button>}
                 </p>}
-                <button type="submit">hook 설정 저장</button>
+                <ServerActionButton type="submit">hook 설정 저장</ServerActionButton>
                 {editing && <button type="button" onClick={reset}>hook 편집 취소</button>}
             </fieldset>
         </form>

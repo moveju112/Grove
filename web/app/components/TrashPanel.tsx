@@ -1,6 +1,7 @@
 import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import { useQuery } from "../state/store";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Item = { id: string; path: string; deleted_at: string | null; is_dir: boolean; status: "trashed" | "needs_review" | "purging" };
 type Attempt = { id: string; op: "restore" | "delete"; key: string; confirm?: string };
@@ -36,7 +37,7 @@ export function TrashPanel({ projectId }: { projectId: string }) {
             <summary>휴지통 {items.length > 0 ? `· ${items.length}` : ""}</summary>
             {(err || Boolean(q.error)) && <p className="err" role="alert">{err ?? "휴지통 목록을 불러오지 못했습니다"}</p>}
             {Boolean(q.error) && <button className="ghost small" onClick={q.reload}>목록 다시 불러오기</button>}
-            {attempt && !busy && <button className="ghost small" onClick={() => void act(attempt)}>같은 요청 결과 확인</button>}
+            {attempt && !busy && <ServerActionButton className="ghost small" onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>}
             {q.loading && items.length === 0 && <p className="muted small" role="status">불러오는 중…</p>}
             {!q.loading && !q.error && items.length === 0 && <p className="muted small">비어 있습니다</p>}
             <ul className="session-list">
@@ -46,15 +47,15 @@ export function TrashPanel({ projectId }: { projectId: string }) {
                         {t.deleted_at && <span className="muted small">{t.deleted_at.slice(0, 16).replace("T", " ")}</span>}
                         {t.status === "needs_review" && <span className="err small">중단된 작업 · 원본과 휴지통 확인 필요</span>}
                         {t.status === "purging" && <span className="muted small">보존 기간이 지나 정리 중</span>}
-                        <button className="ghost small" disabled={busy || attempt !== null || t.status !== "trashed"} onClick={() => void act({ id: t.id, op: "restore", key: newKey() })}>
+                        <ServerActionButton className="ghost small" disabled={busy || attempt !== null || t.status !== "trashed"} onClick={() => void act({ id: t.id, op: "restore", key: newKey() })}>
                             복원
-                        </button>
-                        <button className="ghost small" disabled={busy || attempt !== null} onClick={() => {
+                        </ServerActionButton>
+                        <ServerActionButton className="ghost small" disabled={busy || attempt !== null} onClick={() => {
                             const c = prompt(`영구 삭제하면 되돌릴 수 없습니다. 확인하려면 ${t.path} 를 그대로 입력하세요`);
                             if (c !== null) void act({ id: t.id, op: "delete", key: newKey(), confirm: c });
                         }}>
                             영구 삭제
-                        </button>
+                        </ServerActionButton>
                     </li>
                 ))}
             </ul>

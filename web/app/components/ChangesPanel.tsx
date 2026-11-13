@@ -4,6 +4,7 @@ import type { FileChange } from "../api/generated";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 import { isArtifact } from "../state/artifactPreview";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 const OP: Record<string, string> = { created: "새 파일", modified: "수정", deleted: "삭제" };
 
@@ -68,7 +69,7 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
                 </p>
             )}
             {attempt && !busy && <div className="inline">
-                <button className="ghost small" disabled={disabled} onClick={() => void act(attempt)}>같은 요청 결과 확인</button>
+                <ServerActionButton className="ghost small" disabled={disabled} onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>
                 <button className="ghost small" onClick={() => { setAttempt(null); setErr(null); }}>원문 확인 후 닫기</button>
                 <span className="muted small">원문과 변경 이력을 확인한 뒤 새 요청을 시작하세요.</span>
             </div>}
@@ -79,12 +80,12 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
                     <div key={g.turn ?? `manual-${gi}`} className="change-group" data-testid="change-group">
                         <div className="inline">
                             <strong className="small">{g.turn ? `요청 ${gi + 1}` : "직접 요청"}</strong>
-                            <button className="ghost small" disabled={locked || applied.length === 0} onClick={() => void act({ op: "undo", ids: applied, key: newKey() })}>
+                            <ServerActionButton className="ghost small" disabled={locked || applied.length === 0} onClick={() => void act({ op: "undo", ids: applied, key: newKey() })}>
                                 이 요청의 변경 되돌리기
-                            </button>
-                            <button className="ghost small" disabled={locked || undone.length === 0} onClick={() => void act({ op: "redo", ids: undone, key: newKey() })}>
+                            </ServerActionButton>
+                            <ServerActionButton className="ghost small" disabled={locked || undone.length === 0} onClick={() => void act({ op: "redo", ids: undone, key: newKey() })}>
                                 다시 적용
-                            </button>
+                            </ServerActionButton>
                         </div>
                         <ul className="session-list">
                             {g.items.map((c) => (

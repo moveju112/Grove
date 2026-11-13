@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { ModelCapabilities, ModelProfile } from "../api/generated";
 import { useCapability } from "../state/capabilities";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 const FEATURES = [
     ["images", "이미지 입력"], ["tools", "Grove 도구 루프"],
@@ -85,7 +86,7 @@ export function ProfileCapabilities({ profile }: { profile: ModelProfile }) {
                 </select>
             </label>)}
             <div className="inline">
-                <button type="submit" disabled={busy}>{busy ? "저장 중…" : "모델 기능 저장"}</button>
+                <ServerActionButton type="submit" disabled={busy}>{busy ? "저장 중…" : "모델 기능 저장"}</ServerActionButton>
                 <button type="button" className="ghost" disabled={busy} onClick={() => setEditing(null)}>취소</button>
                 {editing.revision !== profile.revision && <button type="button" className="ghost" disabled={busy} onClick={() => { setEditing(draft(profile)); setError(null); }}>현재 서버 값 불러오기</button>}
             </div>

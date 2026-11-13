@@ -3,6 +3,7 @@ import { ApiError, lastAuthEnd, login } from "../api/client";
 import { deviceName } from "../state/device";
 import { Hosts } from "./Hosts";
 import { PairingLogin } from "./Pairing";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 export function Login() {
     const [token, setToken] = useState("");
@@ -40,9 +41,9 @@ export function Login() {
                     <input type="password" autoComplete="off" value={token} onChange={(e) => setToken(e.target.value)} placeholder="grv_…" required />
                 </label>
                 {error && <p className="err" role="alert">{error}</p>}
-                <button type="submit" disabled={busy || !token.trim()}>
+                <ServerActionButton type="submit" disabled={busy || !token.trim()}>
                     {busy ? "확인 중…" : "로그인"}
-                </button>
+                </ServerActionButton>
                 <button type="button" className="ghost" disabled={busy} onClick={() => setPairing(true)}>페어링 링크·QR로 등록</button>
             </form>
         </main>

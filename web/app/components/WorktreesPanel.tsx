@@ -3,6 +3,8 @@ import { ApiError, api, newKey } from "../api/client";
 import type { Worktree } from "../api/generated";
 import { useCapability } from "../state/capabilities";
 import { useQuery } from "../state/store";
+import { ServerActionButton } from "./pwa/ServerActionButton";
+import { useServerBlockReason } from "./pwa/lifecycle";
 
 /// 이 화면이 쓰는 서버 기능(NET-001). 서버에 없으면 화면을 숨기고 요청은 서버가 거절한다.
 const WT = ["worktrees_v1"];
@@ -92,7 +94,7 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
             {busy && <p className="muted small" role="status">worktree 요청 처리·결과 확인 중…</p>}
             {attempt && !busy && <div className="notice" role="group" aria-label="worktree 결과 재확인">
                 <p>{attempt.label} 결과 미확정 · <code>{attempt.target}</code>. 원래 요청과 같은 키로만 확인하며 자동 재실행하지 않습니다.</p>
-                <button className="ghost small" onClick={() => void act(attempt)}>같은 요청 결과 확인</button>
+                <ServerActionButton className="ghost small" onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>
                 <button className="ghost small" onClick={() => {
                     if (!confirm("실제 폴더·브랜치·이력과 이전 작업의 결과를 확인했나요?\n이전 요청을 완료로 확정하거나 되돌리지 않습니다. 생성 미확정 worktree의 파일은 그대로 남습니다.")) return;
                     pending.current = null;
@@ -109,20 +111,20 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
                 }}
             >
                 <input aria-label="worktree 이름" placeholder="이름(브랜치 grove/이름)" value={name} onChange={(e) => setName(e.target.value)} required pattern="[A-Za-z0-9._\-]{1,60}" />
-                <button className="small" type="submit" disabled={busy || attempt !== null || !name.trim()}>만들기</button>
+                <ServerActionButton className="small" type="submit" disabled={busy || attempt !== null || !name.trim()}>만들기</ServerActionButton>
             </form>
             {choice?.kind === "dirty" && (
                 <div className="notice" role="group" aria-label="커밋하지 않은 변경 처리">
                     <p><code>grove/{choice.name}</code> · 프로젝트 폴더에 커밋하지 않은 변경 {choice.changed}개가 있습니다. 어느 쪽이든 프로젝트 폴더의 변경은 그대로 남습니다.</p>
-                    <button className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "leave" }, choice.name)}>두고 가기(변경 없이 시작)</button>
-                    <button className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "carry" }, choice.name)}>복사해 가기</button>
+                    <ServerActionButton className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "leave" }, choice.name)}>두고 가기(변경 없이 시작)</ServerActionButton>
+                    <ServerActionButton className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "carry" }, choice.name)}>복사해 가기</ServerActionButton>
                     <button className="ghost small" onClick={() => setChoice(null)}>취소</button>
                 </div>
             )}
             {choice?.kind === "large" && (
                 <div className="notice" role="group" aria-label="큰 저장소 확인">
                     <p><code>grove/{choice.name}</code> · 추적 파일이 {choice.files.toLocaleString()}개인 큰 저장소입니다. 체크아웃에 시간과 디스크가 듭니다.</p>
-                    <button className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, confirm_large: true }, choice.name)}>그래도 만들기</button>
+                    <ServerActionButton className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, confirm_large: true }, choice.name)}>그래도 만들기</ServerActionButton>
                     <button className="ghost small" onClick={() => setChoice(null)}>취소</button>
                 </div>
             )}
@@ -136,12 +138,12 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
                             <span className="muted small">{w.dirty_count ? `변경 ${w.dirty_count}개` : "깨끗함"}{w.sessions > 0 ? ` · 대화 ${w.sessions}개` : ""}</span>
                         )}
                         <code className="muted small"> {w.path}</code>
-                        {w.status === "unknown" && w.exists && <button className="ghost small" disabled={busy || attempt !== null} onClick={() => {
+                        {w.status === "unknown" && w.exists && <ServerActionButton className="ghost small" disabled={busy || attempt !== null} onClick={() => {
                             if (!confirm("실제 폴더·브랜치와 복사된 파일을 검토했나요? 일부 파일이 복사되지 않았을 수 있습니다.\n이전 요청의 완료로 단정하지 않고, 확인한 현재 상태를 새 작업 위치로 사용합니다. 파일은 변경하지 않습니다.")) return;
                             void act({ label: "현재 상태 사용", target: w.path, key: newKey(), run: (key) => api.post(`/worktrees/${w.id}/review`, { reviewed: true }, { key, requires: WT }) });
-                        }}>확인한 현재 상태 사용</button>}
+                        }}>확인한 현재 상태 사용</ServerActionButton>}
                         {w.status === "active" && w.exists && (
-                            <button
+                            <ServerActionButton
                                 className="ghost small"
                                 disabled={busy || attempt !== null}
                                 onClick={() => {
@@ -150,9 +152,9 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
                                 }}
                             >
                                 merge
-                            </button>
+                            </ServerActionButton>
                         )}
-                        <button
+                        <ServerActionButton
                             className="ghost small"
                             disabled={busy || attempt !== null || w.sessions > 0}
                             title={w.sessions > 0 ? "대화를 프로젝트 폴더로 돌린 뒤 제거할 수 있습니다" : undefined}
@@ -175,7 +177,7 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
                             }}
                         >
                             제거
-                        </button>
+                        </ServerActionButton>
                     </li>
                 ))}
             </ul>
@@ -199,9 +201,9 @@ function WorktreesPanelBody({ projectId }: { projectId: string }) {
                 </>
             )}
             {rows.some((w) => !w.exists) && (
-                <button className="ghost small" disabled={busy || attempt !== null} onClick={() => void act({ label: "정리", target: projectId, key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees/prune`, {}, { key, requires: WT }) })}>
+                <ServerActionButton className="ghost small" disabled={busy || attempt !== null} onClick={() => void act({ label: "정리", target: projectId, key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees/prune`, {}, { key, requires: WT }) })}>
                     사라진 worktree 기록 정리
-                </button>
+                </ServerActionButton>
             )}
         </details>
     );
@@ -220,7 +222,7 @@ function RemovedRow({ w, disabled, restore }: { w: Worktree; disabled: boolean; 
         {!state && <button className="ghost small" disabled={disabled} onClick={() => void check()}>복원 검사</button>}
         {state?.kind === "recoverable" && <>
             <span className="muted small"> 브랜치로 <code>{state.path}</code>에 다시 만듭니다.</span>
-            <button className="small" disabled={disabled} onClick={restore}>복원</button>
+            <ServerActionButton className="small" disabled={disabled} onClick={restore}>복원</ServerActionButton>
         </>}
         {state?.kind === "unavailable" && <span className="warn small" role="status"> 복원 불가: {state.message}</span>}
         {err && <span className="err small" role="alert"> {err}</span>}
@@ -234,6 +236,7 @@ export function WorktreeSelect(props: { projectId: string; sessionId: string; cu
 }
 
 function WorktreeSelectBody({ projectId, sessionId, current, disabled, onError }: { projectId: string; sessionId: string; current: string | null; disabled: boolean; onError: (m: string) => void }) {
+    const serverBlocked = useServerBlockReason();
     const q = useQuery<List>(`worktrees:${projectId}`, () => api.get(`/projects/${projectId}/worktrees`, { requires: WT }));
     const rows = (q.data?.worktrees ?? []).filter((w) => w.status === "active" || w.id === current);
     if (!q.data?.is_repo || (rows.length === 0 && !current)) return null;
@@ -241,7 +244,8 @@ function WorktreeSelectBody({ projectId, sessionId, current, disabled, onError }
         <select
             aria-label="작업 위치"
             value={current ?? ""}
-            disabled={disabled}
+            disabled={disabled || !!serverBlocked}
+            title={serverBlocked ?? undefined}
             onChange={(e) => {
                 const worktree_id = e.target.value || null;
                 api.post(`/sessions/${sessionId}/worktree`, { worktree_id }, { requires: WT }).catch((err: Error) => onError(`작업 위치를 바꾸지 못했습니다: ${err.message}`));

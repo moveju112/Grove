@@ -3,6 +3,7 @@ import { api } from "../api/client";
 import type { Label, Project } from "../api/generated";
 import { UNLABELLED } from "../state/projectLabels";
 import { invalidate, useQuery } from "../state/store";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 /// 작업공간(프로젝트) 고정·색상 라벨(PROJECT-008). 서버 팔레트(`src/labels.rs::COLORS`)와 같은 순서.
 export const LABEL_COLORS: Record<string, [string, string]> = {
@@ -61,19 +62,19 @@ export function ProjectMenu({ project, labels, onClose }: { project: Project; la
     };
     return <div className="project-menu" role="dialog" aria-label={`${project.name} 메뉴`}
         onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
-        <button type="button" className="ghost small" disabled={busy}
+        <ServerActionButton type="button" className="ghost small" disabled={busy}
             onClick={() => void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, pinned: !project.pinned_at }), "고정 변경 실패")}>
             {project.pinned_at ? "고정 해제" : "맨 위에 고정"}
-        </button>
+        </ServerActionButton>
         {!creating && <>
             <div role="group" aria-label="라벨">
                 {labels.map((l) => {
                     const on = project.labels.includes(l.id);
-                    return <button key={l.id} type="button" role="menuitemcheckbox" aria-checked={on} className="ghost small label-row" disabled={busy}
+                    return <ServerActionButton key={l.id} type="button" role="menuitemcheckbox" aria-checked={on} className="ghost small label-row" disabled={busy}
                         data-testid={`label-assign-${l.name}`}
                         onClick={() => void run(() => api.put(`/projects/${project.id}/labels/${l.id}`, { assigned: !on }), "라벨 변경 실패")}>
                         {on ? "☑" : "☐"} <LabelChip label={l} />
-                    </button>;
+                    </ServerActionButton>;
                 })}
             </div>
             <button type="button" className="ghost small" onClick={() => { setCreating({ name: "", color: "violet" }); setError(null); }}>+ 새 라벨</button>
@@ -85,15 +86,15 @@ export function ProjectMenu({ project, labels, onClose }: { project: Project; la
             <input aria-label="새 라벨 이름" maxLength={40} value={creating.name} autoFocus onChange={(e) => setCreating({ ...creating, name: e.target.value })} />
             <ColorPicker name={`new-label-${project.id}`} value={creating.color} onChange={(color) => setCreating({ ...creating, color })} />
             <span className="inline">
-                <button type="submit" disabled={busy || !creating.name.trim()}>만들고 붙이기</button>
+                <ServerActionButton type="submit" disabled={busy || !creating.name.trim()}>만들고 붙이기</ServerActionButton>
                 <button type="button" className="ghost" onClick={() => setCreating(null)}>취소</button>
             </span>
         </form>}
         {error && <p className="err" role="alert">{error}</p>}
-        <button type="button" className="ghost small" disabled={busy} onClick={() => {
+        <ServerActionButton type="button" className="ghost small" disabled={busy} onClick={() => {
             if (!confirm(`${project.name}을(를) 보관할까요? 목록에서만 빠지고 폴더·대화는 그대로이며 "보관됨"에서 복원할 수 있습니다.`)) return;
             void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, archived: true }), "보관 실패").then((ok) => { if (ok) onClose(); });
-        }}>보관</button>
+        }}>보관</ServerActionButton>
         <button type="button" className="ghost small" onClick={onClose}>닫기</button>
     </div>;
 }
@@ -142,12 +143,12 @@ function LabelEditor({ label }: { label: Label }) {
     }}>
         <input aria-label={`${label.name} 이름`} maxLength={40} value={name} onChange={(e) => setName(e.target.value)} />
         <ColorPicker name={`label-color-${label.id}`} value={color} onChange={setColor} />
-        <button type="submit" className="small" disabled={busy || !dirty || !name.trim()}>저장</button>
+        <ServerActionButton type="submit" className="small" disabled={busy || !dirty || !name.trim()}>저장</ServerActionButton>
         {!confirm && <button type="button" className="ghost small" onClick={() => setConfirm(true)}>삭제</button>}
         {confirm && <span role="alert" className="warn small">
             프로젝트 {label.project_count}개에서 빠집니다.{" "}
-            <button type="button" className="small" disabled={busy}
-                onClick={() => void act(() => api.del(`/labels/${label.id}?expected_revision=${label.revision}`), "라벨 삭제 실패")}>삭제 확인</button>
+            <ServerActionButton type="button" className="small" disabled={busy}
+                onClick={() => void act(() => api.del(`/labels/${label.id}?expected_revision=${label.revision}`), "라벨 삭제 실패")}>삭제 확인</ServerActionButton>
             <button type="button" className="ghost small" onClick={() => setConfirm(false)}>취소</button>
         </span>}
         {error && <p className="err" role="alert">{error}</p>}

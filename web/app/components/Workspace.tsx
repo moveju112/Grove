@@ -19,9 +19,11 @@ import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Hosts } from "./Hosts";
 import { SidebarProject } from "./sidebar";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 import { CreationEntry, CreationFocus } from "./create/CreationEntry";
 import { currentProjectId, projectTarget } from "./create/creation";
 import { NavigationContext } from "./navigation/NavigationContext";
+import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -159,6 +161,7 @@ export function Workspace() {
     // OS 알림을 누르면 해당 대화를 현재 배치에 연다(SETTINGS-014).
     useEffect(() => onOpenSession((projectId, sessionId) => open({ kind: "session", project_id: projectId, resource_id: sessionId, title: "대화" })), [open]);
 
+    const serverBlocked = useServerBlockReason();
     const [adding, setAdding] = useState<{ step: "choose"; projectId?: string } | { step: "project" } | null>(null);
     const [creationFocus, setCreationFocus] = useState<ContextType<typeof CreationFocus>>(null);
     const startProject = (p: Project) => {
@@ -195,6 +198,7 @@ export function Workspace() {
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
                 <span className="spacer" />
                 <button className="ghost" aria-haspopup="dialog" disabled={!layout}
+                    title={serverBlocked ?? undefined}
                     onClick={() => setAdding({ step: "choose", projectId: currentProjectId(layout) })}>
                     만들기
                 </button>
@@ -203,12 +207,13 @@ export function Workspace() {
                 </button>
             </header>
             {adding?.step === "choose" && <CreationEntry projects={projects.data ?? NO_PROJECTS} currentId={adding.projectId}
+                blockedReason={serverBlocked}
                 loading={projects.loading} error={Boolean(projects.error)} onReload={projects.reload}
                 onSelect={startProject} onAddProject={() => setAdding({ step: "project" })} onClose={() => setAdding(null)} />}
-            {adding?.step === "project" && <AddProjectDialog onDone={projectAdded} onClose={() => setAdding(null)} />}
+            {adding?.step === "project" && <AddProjectDialog blockedReason={serverBlocked} beforeMutation={requireServerAction} onDone={projectAdded} onClose={() => setAdding(null)} />}
             {notice && (
                 <div className="notice" role="status">
-                    {notice} <button className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</button>
+                    {notice} <ServerActionButton className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</ServerActionButton>
                     <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
                 </div>
             )}

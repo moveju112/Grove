@@ -5,6 +5,7 @@ import type { Notification } from "../api/generated";
 import { useCapability } from "../state/capabilities";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 /// 서버에 영속 보관된 알림. 기기가 꺼져 있던 동안의 알림도 접속하면 보인다.
 export function NotificationsPanel({ open }: { open: Opener }) {
@@ -50,13 +51,13 @@ export function NotificationsPanel({ open }: { open: Opener }) {
                     </span>
                 )}
             </summary>
-            {deliveryError && <p className="err" role="alert">앱 전달 미확인: {deliveryError} <button className="ghost small" onClick={() => void confirmDelivery()}>전달 다시 확인</button></p>}
+            {deliveryError && <p className="err" role="alert">앱 전달 미확인: {deliveryError} <ServerActionButton className="ghost small" onClick={() => void confirmDelivery()}>전달 다시 확인</ServerActionButton></p>}
             {readError && <p className="err" role="alert">{readError}</p>}
             {items.length === 0 ? (
                 <p className="muted small">알림이 없습니다.</p>
             ) : (
                 <>
-                    {unread > 0 && <button className="ghost small" onClick={() => void read("/notifications/read-all")}>모두 읽음</button>}
+                    {unread > 0 && <ServerActionButton className="ghost small" onClick={() => void read("/notifications/read-all")}>모두 읽음</ServerActionButton>}
                     <ul className="session-list">
                         {items.map((n) => (
                             <li key={n.id} data-testid="notification" className={n.read_at ? "muted" : ""}>

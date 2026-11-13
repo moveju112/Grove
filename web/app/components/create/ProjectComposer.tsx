@@ -1,13 +1,14 @@
 import { useContext, useEffect, useRef } from "react";
-import { api } from "../../api/client";
+import { ApiError, api } from "../../api/client";
 import type { Session } from "../../api/generated";
 import { Composer, type SendOptions } from "../Composer";
 import type { Opener } from "../Workspace";
 import { CreationFocus } from "./CreationEntry";
 
 // 모든 진입점은 이 입력창으로 이어진다. 진입·초점 이동만으로는 자원을 만들지 않는다.
-export function ProjectComposer({ projectId, tabId, open, disabled }: {
+export function ProjectComposer({ projectId, tabId, open, disabled, blockedReason, beforeMutation }: {
     projectId: string; tabId: string; open: Opener; disabled: string | null;
+    blockedReason?: string | null; beforeMutation?: () => void;
 }) {
     const focus = useContext(CreationFocus);
     const ref = useRef<HTMLDivElement>(null);
@@ -25,12 +26,22 @@ export function ProjectComposer({ projectId, tabId, open, disabled }: {
     // Composer가 보관한 전송 키를 단계별로 파생한다. 재확인은 생성·전송 모두 같은 키를 쓴다.
     const start = async (text: string, o: SendOptions, key: string, _follow?: unknown, attachments: string[] = []) => {
         const title = text.trim().split("\n")[0]!.slice(0, 60);
+        beforeMutation?.();
         const s = await api.post<Session>(`/projects/${projectId}/sessions`, { title }, { key: `${key}:session` });
+        try {
+            beforeMutation?.();
+        } catch (error) {
+            // 생성은 이미 접수됐다. 전송 전 차단이어도 전체 요청의 원래 단계별 키를 보존한다.
+            if (!(error instanceof ApiError)) throw error;
+            throw new ApiError(error.status, error.code, `${error.message} 대화 생성은 접수됐으므로 원래 요청 결과를 확인하세요.`,
+                true, { result_unknown: true, idempotency_key: key });
+        }
         if (o.mode === "save") await api.post(`/sessions/${s.id}/messages`, { text, attachments }, { key: `${key}:send` });
         else await api.post(`/sessions/${s.id}/turns`, { text, attachments, profile_id: o.profileId, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto" }, { key: `${key}:send` });
         open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
     };
     return <div ref={ref} style={{ display: "contents" }}>
+        {blockedReason && <p className="warn" role="status" data-testid="project-creation-blocked">{blockedReason}</p>}
         <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId={tabId} onSend={start} disabled={disabled} />
     </div>;
 }

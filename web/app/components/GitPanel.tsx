@@ -3,6 +3,7 @@ import { ApiError, api, newKey } from "../api/client";
 import { useQuery } from "../state/store";
 import { GitConfirmation } from "./git/GitConfirmation";
 import { confirmationBody, type ConfirmGitBody, type GitReview, type ReviewAction, type Stash } from "./git/types";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Entry = { path: string; index: string; worktree: string; kind: string; orig_path?: string };
 type Status = { is_repo: boolean; branch?: { head?: string; ahead?: number; behind?: number }; entries?: Entry[]; fingerprint?: string };
@@ -104,7 +105,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
                 {(mutation.attempt.op === "confirm" || mutation.attempt.op === "stash-save") && <pre>{JSON.stringify(mutation.attempt.body, null, 2)}</pre>}
             </details>
             <div className="inline">
-                <button onClick={() => void mutate(mutation.attempt)}>같은 Git 요청 확인</button>
+                <ServerActionButton onClick={() => void mutate(mutation.attempt)}>같은 Git 요청 확인</ServerActionButton>
                 <button className="ghost small" onClick={() => {
                     if (!confirm("Git 상태·index·이력·원격 상태에서 이전 요청의 실제 결과를 확인했나요?\n이전 요청을 완료로 확정하거나 되돌리지 않습니다. 새 요청은 새 키로 실행됩니다.")) return;
                     setMutation({ phase: "idle" });
@@ -137,15 +138,15 @@ export function GitPanel({ projectId }: { projectId: string }) {
         <li key={(isStaged ? "s:" : "w:") + e.path}>
             <code className={`status ${e.kind}`}>{isStaged ? e.index : e.worktree === "." ? e.index : e.worktree}</code>
             <button className="link" onClick={() => void show(e.path, isStaged).catch((error) => setErr(error instanceof ApiError ? error.message : "Git diff 조회 실패"))}>{e.path}</button>
-            <button
+            <ServerActionButton
                 className="ghost small"
                 disabled={blocked}
                 onClick={() => start({ op: isStaged ? "unstage" : "stage", body: { paths: [e.path], expected_fingerprint: s.fingerprint } })}
             >
                 {isStaged ? "내리기" : "올리기"}
-            </button>
-            {e.kind !== "untracked" && <button className="ghost small" disabled={blocked}
-                onClick={() => void prepare({ operation: "discard", paths: [e.path] })}>변경 버리기</button>}
+            </ServerActionButton>
+            {e.kind !== "untracked" && <ServerActionButton className="ghost small" disabled={blocked}
+                onClick={() => void prepare({ operation: "discard", paths: [e.path] })}>변경 버리기</ServerActionButton>}
         </li>
     );
     return (
@@ -155,9 +156,9 @@ export function GitPanel({ projectId }: { projectId: string }) {
                 <button className="ghost small" onClick={() => { status.reload(); stashes.reload(); }}>새로고침</button>
             </h2>
             <div className="inline small">
-                <button className="ghost small" disabled={blocked} onClick={() => remote("fetch")} title="원격 참조만 갱신합니다">가져오기(fetch)</button>
-                <button className="ghost small" disabled={blocked} onClick={() => remote("pull")} title="fast-forward만 허용합니다">당겨오기(pull)</button>
-                <button className="ghost small" disabled={blocked} onClick={() => remote("push")} title="강제 push는 하지 않습니다">올리기(push)</button>
+                <ServerActionButton className="ghost small" disabled={blocked} onClick={() => remote("fetch")} title="원격 참조만 갱신합니다">가져오기(fetch)</ServerActionButton>
+                <ServerActionButton className="ghost small" disabled={blocked} onClick={() => remote("pull")} title="fast-forward만 허용합니다">당겨오기(pull)</ServerActionButton>
+                <ServerActionButton className="ghost small" disabled={blocked} onClick={() => remote("push")} title="강제 push는 하지 않습니다">올리기(push)</ServerActionButton>
             </div>
             {progress}
             {err && <p className="err" role="alert">{err}</p>}
@@ -173,14 +174,14 @@ export function GitPanel({ projectId }: { projectId: string }) {
             <h3 className="small">stash</h3>
             <div className="inline wrap">
                 <input aria-label="stash 메시지" placeholder="stash 메시지" value={stashMessage} onChange={(event) => setStashMessage(event.target.value)} />
-                <button disabled={blocked || !s.fingerprint || !entries.some((e) => e.kind !== "untracked")}
-                    onClick={() => start({ op: "stash-save", body: { message: stashMessage, expected_fingerprint: s.fingerprint } })}>stash 저장</button>
+                <ServerActionButton disabled={blocked || !s.fingerprint || !entries.some((e) => e.kind !== "untracked")}
+                    onClick={() => start({ op: "stash-save", body: { message: stashMessage, expected_fingerprint: s.fingerprint } })}>stash 저장</ServerActionButton>
             </div>
             <p className="muted small">저장은 tracked 파일의 index·작업 트리 변경만 포함합니다. untracked·ignored 파일은 그대로 둡니다.</p>
             {stashes.error ? <p className="err" role="alert">stash 목록 조회 실패</p> : !stashes.data ? <p role="status">stash 목록 조회 중…</p> :
                 <ul>{stashes.data.stashes.map((stash) => <li key={`${stash.reference}:${stash.oid}`}>
                     <code>{stash.reference}</code> {stash.subject}
-                    <button className="ghost small" disabled={blocked} onClick={() => void prepare({ operation: "stash_pop", stash_oid: stash.oid })}>stash pop</button>
+                    <ServerActionButton className="ghost small" disabled={blocked} onClick={() => void prepare({ operation: "stash_pop", stash_oid: stash.oid })}>stash pop</ServerActionButton>
                 </li>)}</ul>}
             <h3 className="small">커밋할 변경 ({staged.length})</h3>
             <ul className="session-list">{staged.map((e) => row(e, true))}</ul>
@@ -192,7 +193,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
                     {diff.hunks ? (
                         diff.hunks.map((h, i) => (
                             <div key={i} className="hunk" data-testid="hunk">
-                                <button className="ghost small" disabled={blocked} onClick={() => hunkAct(i)}>{diff.staged ? "이 부분 내리기" : "이 부분 올리기"}</button>
+                                <ServerActionButton className="ghost small" disabled={blocked} onClick={() => hunkAct(i)}>{diff.staged ? "이 부분 내리기" : "이 부분 올리기"}</ServerActionButton>
                                 <pre className="diff">{h}</pre>
                             </div>
                         ))
@@ -209,7 +210,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
                 }}
             >
                 <textarea value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="커밋 메시지" aria-label="커밋 메시지" rows={2} />
-                <button type="submit" disabled={blocked || !msg.trim() || staged.length === 0}>커밋</button>
+                <ServerActionButton type="submit" disabled={blocked || !msg.trim() || staged.length === 0}>커밋</ServerActionButton>
             </form>
         </section>
     );

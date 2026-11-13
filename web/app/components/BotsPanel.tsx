@@ -4,6 +4,8 @@ import { useBotAvatar } from "../state/botAvatar";
 import type { ModelProfile } from "../api/generated";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
+import { ServerActionButton } from "./pwa/ServerActionButton";
+import { useServerBlockReason } from "./pwa/lifecycle";
 
 type Bot = {
     id: string;
@@ -50,6 +52,7 @@ function Avatar({ b }: { b: Bot }) {
 
 /// 아바타 이미지 선택·기본형 복귀. 서버가 형식·크기·디코딩을 검사하고 PNG로 다시 저장한다.
 function AvatarControl({ bot }: { bot: Bot }) {
+    const serverBlocked = useServerBlockReason();
     const [err, setErr] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const run = async (fn: () => Promise<unknown>) => {
@@ -60,7 +63,7 @@ function AvatarControl({ bot }: { bot: Bot }) {
     return <div className="inline" role="group" aria-label="봇 아바타">
         <Avatar b={bot} />
         <label className="small">아바타 이미지
-            <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy} aria-label="아바타 이미지 선택"
+            <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy || !!serverBlocked} title={serverBlocked ?? undefined} aria-label="아바타 이미지 선택"
                 onChange={(e) => {
                     const file = e.target.files?.[0];
                     e.target.value = "";
@@ -74,7 +77,7 @@ function AvatarControl({ bot }: { bot: Bot }) {
                     });
                 }} />
         </label>
-        {bot.avatar_sha256 && <button type="button" className="ghost small" disabled={busy} onClick={() => void run(() => api.del(`/bots/${bot.id}/avatar`))}>기본형으로</button>}
+        {bot.avatar_sha256 && <ServerActionButton type="button" className="ghost small" disabled={busy} onClick={() => void run(() => api.del(`/bots/${bot.id}/avatar`))}>기본형으로</ServerActionButton>}
         {err && <span className="err small" role="alert">{err}</span>}
     </div>;
 }
@@ -133,7 +136,7 @@ function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDo
             </label>
             <p className="muted small">저장만으로는 모델을 부르지 않습니다. 모델·persona 변경은 다음 요청부터 적용됩니다.</p>
             <div className="inline">
-                <button type="submit" disabled={!f.name.trim() || !projectId}>{bot ? "저장" : "봇 만들기"}</button>
+                <ServerActionButton type="submit" disabled={!f.name.trim() || !projectId}>{bot ? "저장" : "봇 만들기"}</ServerActionButton>
                 <button type="button" className="ghost" onClick={onDone}>닫기</button>
             </div>
         </form>
@@ -188,7 +191,7 @@ export function BotsPanel({ open }: { open: Opener }) {
             <ul className="session-list">
                 {visible.map((b, i) => (
                     <li key={b.id} data-testid="bot" data-status={b.status}>
-                        <button className="ghost bot-open" disabled={b.status === "deleted"} onClick={() => void enter(b)}>
+                        <ServerActionButton className="ghost bot-open" disabled={b.status === "deleted"} onClick={() => void enter(b)}>
                             <Avatar b={b} />
                             <span>
                                 {b.featured && <span aria-label="대표">★ </span>}
@@ -201,23 +204,23 @@ export function BotsPanel({ open }: { open: Opener }) {
                             {b.status === "disabled" && <span className="status">비활성</span>}
                             {b.model_state !== "ok" && b.status !== "deleted" &&
                                 <span className="muted small">{MODEL_STATE[b.model_state]}</span>}
-                        </button>
+                        </ServerActionButton>
                         <details className="bot-actions">
                             <summary aria-label={`${b.name} 관리`}>⋯</summary>
                             {b.status !== "deleted" && <button className="ghost small" onClick={() => setEditing(b)}>편집</button>}
-                            {b.status !== "deleted" && <button className="ghost small" onClick={() => void enter(b, "right")}>오른쪽에 열기</button>}
-                            {b.status !== "deleted" && <button className="ghost small" onClick={() => void enter(b, "down")}>아래에 열기</button>}
-                            {i > 0 && !showDeleted && <button className="ghost small" onClick={() => moveUp(i)}>위로</button>}
+                            {b.status !== "deleted" && <ServerActionButton className="ghost small" onClick={() => void enter(b, "right")}>오른쪽에 열기</ServerActionButton>}
+                            {b.status !== "deleted" && <ServerActionButton className="ghost small" onClick={() => void enter(b, "down")}>아래에 열기</ServerActionButton>}
+                            {i > 0 && !showDeleted && <ServerActionButton className="ghost small" onClick={() => moveUp(i)}>위로</ServerActionButton>}
                             <button className="ghost small" onClick={() => toggleHide(b.id)}>{hidden.includes(b.id) ? "이 기기에서 보이기" : "이 기기에서 숨기기"}</button>
-                            {b.status === "active" && <button className="ghost small" onClick={() => void status(b, "disable")}>비활성화</button>}
-                            {b.status === "disabled" && <button className="ghost small" onClick={() => void status(b, "enable")}>다시 켜기</button>}
+                            {b.status === "active" && <ServerActionButton className="ghost small" onClick={() => void status(b, "disable")}>비활성화</ServerActionButton>}
+                            {b.status === "disabled" && <ServerActionButton className="ghost small" onClick={() => void status(b, "enable")}>다시 켜기</ServerActionButton>}
                             {b.status !== "deleted" && b.home_session_id && (
-                                <button className="ghost small" onClick={() => { if (confirm(`'${b.name}' 대화를 보관하고 새로 시작할까요?`)) void status(b, "reset"); }}>대화 초기화</button>
+                                <ServerActionButton className="ghost small" onClick={() => { if (confirm(`'${b.name}' 대화를 보관하고 새로 시작할까요?`)) void status(b, "reset"); }}>대화 초기화</ServerActionButton>
                             )}
                             {b.status !== "deleted" && (
-                                <button className="ghost small danger" onClick={() => { if (confirm(`'${b.name}'을 삭제할까요? 대화는 보관되고 복원할 수 있습니다.`)) void status(b, "delete"); }}>삭제</button>
+                                <ServerActionButton className="ghost small danger" onClick={() => { if (confirm(`'${b.name}'을 삭제할까요? 대화는 보관되고 복원할 수 있습니다.`)) void status(b, "delete"); }}>삭제</ServerActionButton>
                             )}
-                            {b.status === "deleted" && <button className="ghost small" onClick={() => void status(b, "restore")}>복원</button>}
+                            {b.status === "deleted" && <ServerActionButton className="ghost small" onClick={() => void status(b, "restore")}>복원</ServerActionButton>}
                         </details>
                     </li>
                 ))}

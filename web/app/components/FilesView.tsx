@@ -8,6 +8,8 @@ import { sha256Hex } from "../state/sha256";
 import { ArtifactPreview } from "./ArtifactPreview";
 import { isArtifact } from "../state/artifactPreview";
 import { ExternalEditor } from "./files/ExternalEditor";
+import { ServerActionButton } from "./pwa/ServerActionButton";
+import { useServerBlockReason } from "./pwa/lifecycle";
 
 type Entry = { name: string; path: string; kind: "dir" | "file" | "link_outside" | "other"; size: number | null; mtime: string | null };
 type Listing = { path: string; entries: Entry[]; truncated: boolean };
@@ -78,6 +80,7 @@ function fileError(error: unknown): string {
 
 /// 프로젝트 파일 탐색·편집. 저장은 연 시점의 sha256으로 외부 변경을 검사한다.
 export function FilesView({ tabId, projectId, initial: start }: { tabId: string; projectId: string; initial?: { path: string; line?: number } | null }) {
+    const serverBlocked = useServerBlockReason();
     const [openPath, setOpenPath] = useState<string | null>(() => start?.path ?? loadFileView(localStorage, projectId, tabId));
     const [dir, setDir] = useState(openPath?.includes("/") ? openPath.slice(0, openPath.lastIndexOf("/")).replace(/^new:/, "") : ".");
     const [copyError, setCopyError] = useState(false);
@@ -145,19 +148,19 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                 </div>
                 <div className="inline wrap">
                     <button className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 파일 이름"); if (n) selectPath(`new:${join(n)}`); }}>새 파일</button>
-                    <button className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 폴더 이름"); if (n) void op({ op: "mkdir", path: join(n) }); }}>새 폴더</button>
-                    <button className="ghost small" disabled={locked} onClick={() => uploadInput.current?.click()}>{uploads.busy ? "올리는 중…" : "파일 올리기"}</button>
+                    <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 폴더 이름"); if (n) void op({ op: "mkdir", path: join(n) }); }}>새 폴더</ServerActionButton>
+                    <ServerActionButton className="ghost small" disabled={locked} onClick={() => uploadInput.current?.click()}>{uploads.busy ? "올리는 중…" : "파일 올리기"}</ServerActionButton>
                     <input ref={uploadInput} type="file" hidden aria-label="올릴 파일 선택" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void upload(f); }} />
                 </div>
                 {uploadError && <p className="err" role="alert">{uploadError}</p>}
                 {Boolean(uploads.error) && <p className="err" role="alert">{fileError(uploads.error)}</p>}
                 {uploads.attempt && !uploads.busy && <div className="inline wrap">
-                    <button className="ghost small" onClick={() => void uploads.act(uploads.attempt!)}>같은 업로드 결과 확인</button>
+                    <ServerActionButton className="ghost small" onClick={() => void uploads.act(uploads.attempt!)}>같은 업로드 결과 확인</ServerActionButton>
                     <button className="ghost small" onClick={() => { uploads.clear(); listing.reload(); }}>목록 확인 후 닫기</button>
                 </div>}
                 {Boolean(mutation.error) && <p className="err" role="alert">{fileError(mutation.error)}</p>}
                 {mutation.attempt && !mutation.busy && <div className="inline wrap">
-                    <button className="ghost small" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</button>
+                    <ServerActionButton className="ghost small" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</ServerActionButton>
                     <button className="ghost small" onClick={() => { mutation.clear(); listing.reload(); }}>원문 확인 후 닫기</button>
                     <span className="muted small">원문과 대상 경로를 확인한 뒤 새 작업을 시작하세요.</span>
                 </div>}
@@ -175,9 +178,9 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                             <span className="muted small">{e.size !== null ? `${e.size}B` : ""}</span>
                             <details className="row-menu">
                                 <summary aria-label={`${e.name} 작업`}>⋯</summary>
-                                <button className="ghost small" disabled={locked} onClick={() => { const to = prompt("새 이름(경로)", e.path); if (to && to !== e.path) void op({ op: "rename", path: e.path, to }); }}>이름 바꾸기</button>
-                                <button className="ghost small" disabled={locked} onClick={() => { const to = prompt("복제본 경로", `${e.path}.copy`); if (to) void op({ op: "duplicate", path: e.path, to }); }}>복제</button>
-                                <button
+                                <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const to = prompt("새 이름(경로)", e.path); if (to && to !== e.path) void op({ op: "rename", path: e.path, to }); }}>이름 바꾸기</ServerActionButton>
+                                <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const to = prompt("복제본 경로", `${e.path}.copy`); if (to) void op({ op: "duplicate", path: e.path, to }); }}>복제</ServerActionButton>
+                                <ServerActionButton
                                     className="ghost small danger"
                                     disabled={locked}
                                     onClick={() => {
@@ -186,7 +189,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                                     }}
                                 >
                                     삭제
-                                </button>
+                                </ServerActionButton>
                             </details>
                         </li>
                     ))}
@@ -195,7 +198,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
             </aside>
             <section className="file-pane">
                 {copyError && <p className="err" role="alert">{COPY_ERROR}</p>}
-                {openPath && !openPath.startsWith("new:") && <ExternalEditor key={`${projectId}:${openPath}`} projectId={projectId} path={openPath} disabled={locked} />}
+                {openPath && !openPath.startsWith("new:") && <ExternalEditor key={`${projectId}:${openPath}`} projectId={projectId} path={openPath} disabled={locked} blockedReason={serverBlocked} />}
                 {openPath ? <FileEditor key={openPath} copyId={tabId} projectId={projectId} path={openPath}
                     onSaved={() => { listing.reload(); if (openPath.startsWith("new:")) selectPath(openPath.slice(4)); }}
                     disabled={mutation.locked} onLock={setEditorLocked} line={openPath === start?.path ? start?.line : undefined} /> : <p className="muted">파일을 고르세요.</p>}
@@ -380,7 +383,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
                         onChange={(e) => { setText(e.target.value); capture(e.target.value); }}
                         onSelect={() => capture()} onScroll={() => capture()} onBlur={() => capture()} />
                     <div className="inline">
-                        <button disabled={disabled || mutation.locked || (!dirty && !isNew)} onClick={() => void save()}>저장</button>
+                        <ServerActionButton disabled={disabled || mutation.locked || (!dirty && !isNew)} onClick={() => void save()}>저장</ServerActionButton>
                         {conflict && <button className="ghost" onClick={() => { if (confirm("내 편집을 버리고 최신 내용을 불러올까요?")) void load(); }}>최신 내용 불러오기</button>}
                     </div>
                     {isArtifact(real) && <ArtifactPreview path={real} text={text} dirty={dirty} />}
@@ -388,7 +391,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
             )}
             {copyError && <p className="err" role="alert">{COPY_ERROR}</p>}
             {mutation.attempt && !mutation.busy && <div className="inline wrap">
-                <button className="ghost small" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</button>
+                <ServerActionButton className="ghost small" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</ServerActionButton>
                 <button className="ghost small" onClick={() => mutation.clear()}>원문 확인 후 닫기</button>
                 <span className="muted small">입력은 유지합니다. 원문을 확인한 뒤 다음 저장을 시작하세요.</span>
             </div>}

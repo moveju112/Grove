@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import { useAutoOpen } from "../state/autoOpen";
 import { useQuery } from "../state/store";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 export type TaskRow = {
     id: string;
@@ -82,12 +83,12 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
                 }}
             >
                 <input aria-label="백그라운드 명령" placeholder="명령(대화의 기본 작업 위치에서 실행)" value={cmd} disabled={disabled || busy || attempt !== null} onChange={(e) => setCmd(e.target.value)} />
-                <button type="submit" disabled={disabled || busy || attempt !== null || !cmd.trim()}>실행</button>
+                <ServerActionButton type="submit" disabled={disabled || busy || attempt !== null || !cmd.trim()}>실행</ServerActionButton>
             </form>
             <p className="muted small">새 작업은 대화·프로젝트·서버 순으로 기본 작업 위치를 상속합니다. 아래 실행 위치는 접수 때 고정한 실제 cwd이며, 대화의 실행 root(worktree 포함) 기준 상대 경로입니다. ‘.’은 실행 root입니다.</p>
             {err && <p className="err" role="alert">{err}</p>}
             {attempt && !busy && <div className="inline">
-                <button className="ghost small" disabled={disabled} onClick={() => void start()}>같은 요청 결과 확인</button>
+                <ServerActionButton className="ghost small" disabled={disabled} onClick={() => void start()}>같은 요청 결과 확인</ServerActionButton>
                 <button className="ghost small" onClick={() => { setAttempt(null); setCmd(""); setErr(null); }}>다른 명령 입력</button>
                 <span className="muted small">기존 작업 상태는 아래 목록에서 확인하세요.</span>
             </div>}
@@ -103,7 +104,7 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
                         </span>
                         <button className="ghost small" onClick={() => setView(view === t.id ? null : t.id)}>출력</button>
                         {t.status === "running" && (
-                            <button className="ghost small" onClick={() => void act(() => api.post(`/tasks/${t.id}/cancel`))}>취소</button>
+                            <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/tasks/${t.id}/cancel`))}>취소</ServerActionButton>
                         )}
                         {t.status === "unknown" && <span className="muted small" title={t.reason ?? ""}>프로세스가 남아 있을 수 있습니다</span>}
                         {view === t.id && <TaskOutput id={t.id} />}

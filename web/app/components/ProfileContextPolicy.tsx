@@ -2,6 +2,7 @@ import { useState } from "react";
 import { api } from "../api/client";
 import type { ModelProfile } from "../api/generated";
 import { useCapability } from "../state/capabilities";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Draft = { revision: number; options: Record<string, unknown>; minutes: string };
 
@@ -42,7 +43,7 @@ export function ProfileContextPolicy({ profile }: { profile: ModelProfile }) {
                 <input type="number" min="0" max="525600" step="1" aria-label="프로필 idle context 초기화(분)" value={editing.minutes} onChange={(event) => setEditing({ ...editing, minutes: event.target.value })} />
             </label>
             <div className="inline">
-                <button type="submit" disabled={busy}>{busy ? "저장 중…" : "context 정책 저장"}</button>
+                <ServerActionButton type="submit" disabled={busy}>{busy ? "저장 중…" : "context 정책 저장"}</ServerActionButton>
                 <button type="button" className="ghost" disabled={busy} onClick={() => setEditing(null)}>취소</button>
                 {editing.revision !== profile.revision && <button type="button" className="ghost" disabled={busy} onClick={() => { setEditing(draft(profile)); setError(null); }}>현재 서버 값 불러오기</button>}
             </div>

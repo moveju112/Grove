@@ -35,6 +35,13 @@ export function setServerActionGuard(guard: () => void) {
     serverActionGuard = guard;
 }
 
+function requireAuthTransport() {
+    if (protocolMismatch !== null) {
+        throw new ApiError(409, "protocol_mismatch", "화면 버전이 서버와 맞지 않습니다. UI를 업데이트한 뒤 다시 시도하세요.", false, { result_unknown: false });
+    }
+    serverActionGuard?.();
+}
+
 /// 응답의 서버 protocol을 확인한다. 다르면 이후 변경 요청을 막고 새로고침을 안내한다.
 export function checkProtocol(resp: Response) {
     const v = resp.headers.get("x-grove-protocol");
@@ -118,28 +125,38 @@ function toError(status: number, body: unknown, requestId?: string): ApiError {
 
 export async function login(token: string, name: string): Promise<void> {
     if (loggingOut) await loggingOut;
-    const resp = await fetch("/api/v1/auth/browser-login", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ token, name }),
-        credentials: "same-origin",
+    const owner = authEpoch;
+    await boundedRequest({}, true, async (send) => {
+        requireAuthTransport();
+        const resp = await send("/api/v1/auth/browser-login", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ token, name }),
+            credentials: "same-origin",
+        });
+        checkProtocol(resp);
+        const body = await parse(resp);
+        requireAuthGeneration(owner, resp.status !== 401);
+        if (!resp.ok) throw toError(resp.status, body);
+        const b = body as { access_token: string; expires_at: string };
+        setSession({ accessToken: b.access_token, expiresAt: b.expires_at });
     });
-    const body = await parse(resp);
-    if (!resp.ok) throw toError(resp.status, body);
-    const b = body as { access_token: string; expires_at: string };
-    setSession({ accessToken: b.access_token, expiresAt: b.expires_at });
 }
 
 /// 일회용 등록은 자동 refresh·재시도하지 않는다. 결과 유실 시 소유자가 기기 목록에서 확인한다.
 export async function redeemPairing(code: string): Promise<void> {
     if (loggingOut) await loggingOut;
     if (current) throw new ApiError(409, "already_authenticated", "이미 로그인되어 있습니다. 기존 로그인을 덮어쓰지 않고 별도 브라우저에서 등록하세요.");
+    const owner = authEpoch;
     await boundedRequest({}, true, async (send) => {
+        requireAuthTransport();
         const resp = await send("/api/v1/auth/pairing", {
             method: "POST", credentials: "same-origin",
             headers: { "content-type": "application/json" }, body: JSON.stringify({ code }),
         });
+        checkProtocol(resp);
         const body = await parse(resp);
+        requireAuthGeneration(owner, resp.status !== 401);
         if (!resp.ok) throw toError(resp.status, body, resp.headers.get("x-request-id") ?? undefined);
         const b = body as { access_token: string; expires_at: string };
         setSession({ accessToken: b.access_token, expiresAt: b.expires_at });
@@ -153,7 +170,9 @@ export function refresh(): Promise<Session | null> {
         const owner = authEpoch;
         refreshing = (async () => {
             try {
+                requireAuthTransport();
                 const resp = await fetch("/api/v1/auth/refresh", { method: "POST", credentials: "same-origin" });
+                checkProtocol(resp);
                 if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
                 if (!resp.ok) {
                     // 로그인된 상태에서 refresh가 거부되면 만료다(처음 열 때 쿠키 없음은 만료 안내 대상 아님).
@@ -168,10 +187,8 @@ export function refresh(): Promise<Session | null> {
                 return s;
             } catch {
                 return current;
-            } finally {
-                refreshing = null;
             }
-        })();
+        })().finally(() => { refreshing = null; });
     }
     return refreshing;
 }
@@ -180,11 +197,19 @@ export function logout(): Promise<void> {
     if (loggingOut) return loggingOut;
     const renewal = refreshing;
     authEnd = "logout";
+    // cold start 중 로그인·페어링이 아직 응답하지 않았어도 이전 인증을 되살리지 않는다.
+    if (!current) authEpoch++;
     setSession(null);
     // 진행 중 refresh의 cookie rotation 뒤에 폐기하고 다음 로그인과 겹치지 않게 한다.
     loggingOut = (async () => {
         await renewal;
-        await fetch("/api/v1/auth/logout", { method: "POST", credentials: "same-origin" }).catch(() => undefined);
+        try {
+            requireAuthTransport();
+            const response = await fetch("/api/v1/auth/logout", { method: "POST", credentials: "same-origin" });
+            checkProtocol(response);
+        } catch {
+            // 로컬 종료는 유지한다. 서버 쿠키 폐기를 연결 복구 뒤 자동 재전송하지 않는다.
+        }
     })().finally(() => { loggingOut = null; });
     return loggingOut;
 }

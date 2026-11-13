@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { ApiError, api } from "../api/client";
 import { useQuery } from "../state/store";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Usage = {
     context_window: number | null;
@@ -56,9 +57,9 @@ export function ContextMeter({ sessionId, profileId, busy, onError }: { sessionI
             {u.cleared && <span className="muted" data-testid="context-cleared"> · 이전 context 제외됨(화면 이력 유지)</span>}
             {!!u.memory_input_tokens && <span className="muted small"> · 기억 입력 추정 {u.memory_input_tokens.toLocaleString()} tokens 포함</span>}
             {!!u.auto_clear_minutes && <span className="muted small"> · idle {u.auto_clear_minutes}분 뒤 다음 요청에서 초기화</span>}
-            <button className="ghost small" disabled={!profileId || busy || working} onClick={() => void compact()}>
+            <ServerActionButton className="ghost small" disabled={!profileId || busy || working} onClick={() => void compact()}>
                 {working ? "압축 중…" : "압축"}
-            </button>
+            </ServerActionButton>
         </span>
     );
 }
