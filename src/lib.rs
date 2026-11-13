@@ -4,6 +4,7 @@
 
 pub mod agent_policy;
 pub mod agents;
+pub mod agent_overview;
 pub mod attachments;
 pub mod source_settings;
 pub mod skills;
@@ -199,6 +200,7 @@ pub fn router(app: App) -> Router {
     use axum::routing::delete;
     let api = Router::new()
         .route("/auth/whoami", get(auth::whoami))
+        .route("/agent-overview", get(agent_overview::show))
         .route("/devices", get(auth::list_devices).post(auth::create_device))
         .route("/devices/{id}", delete(auth::revoke_device))
         .route("/events", get(events::stream))
