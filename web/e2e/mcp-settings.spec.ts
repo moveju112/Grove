@@ -166,7 +166,7 @@ test("MCP 연결 검사는 실행 확인·handshake·도구 목록·연결 정�
     }
 });
 
-test("MCP 외부 호출은 namespace·대상·인자를 확인한 이번만 승인 뒤에만 실행하고 거부는 전달하지 않는다", async ({ page }) => {
+test("MCP 외부 호출은 인자 원문을 가리고 namespace·대상을 확인한 이번만 승인 뒤에 실행하며 거부는 전달하지 않는다", async ({ page }) => {
     let invocations = 0;
     const remote = createServer(async (request, response) => {
         if (request.method === "DELETE") { response.end(); return; }
@@ -199,9 +199,9 @@ test("MCP 외부 호출은 namespace·대상·인자를 확인한 이번만 승�
         const body = { name: "mcp_call", args: { server_id: server.id, tool: `${name}/echo`, arguments: { message: "approved-argument" } } };
         await apiCall("POST", `/sessions/${session.id}/tool-requests`, body);
         const approval = view.getByTestId("approval");
-        await expect(approval.getByTestId("approval-mcp")).toContainText(`${name}/echo`);
-        await expect(approval.getByTestId("approval-mcp")).toContainText("approved-argument");
-        await expect(approval.getByTestId("approval-mcp")).toContainText(`http://127.0.0.1:${address.port}/mcp`);
+        await expect(approval.getByTestId("approval-target")).toContainText(`${name}/echo`);
+        await expect(approval).not.toContainText("approved-argument");
+        await expect(approval.getByTestId("approval-target")).toContainText(`http://127.0.0.1:${address.port}/mcp`);
         await expect(approval.getByRole("button", { name: "이 대화에서 계속 허용", exact: true })).toHaveCount(0);
         expect(invocations).toBe(0);
         await approval.getByRole("button", { name: "거부", exact: true }).click();
