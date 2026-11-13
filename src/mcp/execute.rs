@@ -59,6 +59,7 @@ pub fn plan_call(c: &Connection, args: &Value, project: &str, session: &str) -> 
     no_unknown(c,session)?;
     let id = args["server_id"].as_str().ok_or_else(|| ApiError::invalid("server_id가 필요합니다"))?;
     let server = get(c,id)?;
+    let credential_identity = super::oauth::identity(c, &server)?;
     if !server.enabled { return Err(fail("mcp_disabled","MCP 서버가 사용 설정되지 않았습니다")); }
     let namespace = args["tool"].as_str().ok_or_else(|| ApiError::invalid("MCP namespace가 필요합니다"))?;
     let tool = registered(c,id,namespace)?;
@@ -71,6 +72,7 @@ pub fn plan_call(c: &Connection, args: &Value, project: &str, session: &str) -> 
     Ok(Planned {
         target:json!({ "server_id":id,"server_name":server.name,"server_revision":server.revision,"namespace":namespace,
             "tool_name":tool["name"],"arguments":arguments,"destination":destination,"timeout_secs":server.timeout_secs,
+            "oauth_identity":credential_identity,
             "cwd":crate::sessions::exec_root(c,session)?.to_string_lossy(),
             "limits":crate::procs::Limits::effective(c,Some(project),Some(session))?.to_json() }),
         precondition:Some(json!({ "tool_sha256":crate::idem::body_hash("mcp.tool",&tool) })),
@@ -83,6 +85,9 @@ pub fn validate_call(c: &Connection, call: &crate::approvals::ToolCallRow) -> Ap
     let target = &call.target;
     let id = target["server_id"].as_str().ok_or_else(|| ApiError::invalid("MCP 대상이 없습니다"))?;
     let server = get(c,id)?;
+    if target["oauth_identity"] != super::oauth::identity(c, &server)? {
+        return Err(fail("mcp_auth_changed","OAuth 자격이 바뀌었습니다. 새 연결 확인·승인이 필요합니다"));
+    }
     if target["cwd"]!=crate::sessions::exec_root(c,&call.session_id)?.to_string_lossy().as_ref() {
         return Err(fail("mcp_cwd_changed","승인한 MCP 실행 위치가 바뀌었습니다. 새 요청·승인이 필요합니다"));
     }
@@ -98,10 +103,11 @@ pub fn validate_call(c: &Connection, call: &crate::approvals::ToolCallRow) -> Ap
 pub async fn execute_call(app: &crate::App, call: &crate::approvals::ToolCallRow, mut cancel: tokio::sync::watch::Receiver<bool>) -> (ToolResult<Value>,bool) {
     let id = call.target["server_id"].as_str().unwrap_or("").to_string();
     let snapshot = call.clone();
+    let now = app.now();
     let loaded = match app.db.call(move |c| {
         validate_call(c,&snapshot)?;
         let server = get(c,&id)?;
-        let secrets = load_secrets(c,&server)?;
+        let secrets = load_secrets(c,&server,&now)?;
         Ok((server,secrets,crate::sessions::exec_root(c,&snapshot.session_id)?))
     }).await {
         Ok(loaded)=>loaded,

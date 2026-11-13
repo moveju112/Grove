@@ -229,6 +229,11 @@ pub fn router(app: App) -> Router {
         .route("/mcp/servers", get(mcp::list).post(mcp::create))
         .route("/mcp/servers/{id}", axum::routing::put(mcp::update).delete(mcp::remove))
         .route("/mcp/servers/{id}/check", get(mcp::check_result).post(mcp::check))
+        .route("/mcp/servers/{id}/oauth", get(mcp::oauth::status))
+        .route("/mcp/servers/{id}/oauth/connect", post(mcp::oauth::connect))
+        .route("/mcp/servers/{id}/oauth/complete", post(mcp::oauth::complete))
+        .route("/mcp/servers/{id}/oauth/cancel", post(mcp::oauth::cancel))
+        .route("/mcp/servers/{id}/oauth/refresh", post(mcp::oauth::refresh))
         .route("/admin/update-receipts/import", post(admin::import_receipts))
         .route("/updates", get(admin::list_updates))
         .route("/bots", get(bots::list).post(bots::create))
@@ -399,6 +404,7 @@ pub fn router(app: App) -> Router {
         .layer(tower_http::limit::RequestBodyLimitLayer::new(8 * 1024 * 1024))
         .layer(axum::middleware::from_fn(web::protocol_guard))
         .layer(axum::middleware::from_fn(web::request_context));
-    Router::new().nest("/api/v1", api).merge(web::static_routes(&app))
+    Router::new().route("/api/mcp-oauth/callback/{id}", get(mcp::oauth::callback))
+        .nest("/api/v1", api).merge(web::static_routes(&app))
         .with_state(app)
 }

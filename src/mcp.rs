@@ -16,6 +16,7 @@ use std::collections::BTreeMap;
 
 mod client;
 mod execute;
+pub mod oauth;
 #[cfg(test)]
 mod redaction_tests;
 pub use execute::{catalog, plan_call, validate_call, execute_call, invalidate_catalog};
@@ -34,6 +35,8 @@ pub enum ServerConfig {
         endpoint: String,
         #[serde(default)]
         header_secrets: BTreeMap<String, String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        oauth: Option<oauth::Config>,
     },
     Sse {
         endpoint: String,
@@ -62,7 +65,7 @@ impl ServerConfig {
                 }
                 env_secrets
             }
-            Self::Http { endpoint, header_secrets } | Self::Sse { endpoint, header_secrets } => {
+            Self::Http { endpoint, header_secrets, .. } | Self::Sse { endpoint, header_secrets } => {
                 let url = reqwest::Url::parse(endpoint.trim()).map_err(|_| ApiError::invalid("MCP endpoint URL이 올바르지 않습니다"))?;
                 if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() || !url.username().is_empty()
                     || url.password().is_some() || url.query().is_some() || url.fragment().is_some() || endpoint.len() > 4096
@@ -92,6 +95,12 @@ impl ServerConfig {
         for id in refs.values() {
             if id.is_empty() || id.len() > 128 {
                 return Err(ApiError::invalid("MCP secret 참조 ID가 올바르지 않습니다"));
+            }
+        }
+        if let Self::Http { endpoint, header_secrets, oauth: Some(config) } = self {
+            config.normalize(endpoint)?;
+            if header_secrets.contains_key("authorization") {
+                return Err(ApiError::invalid("OAuth와 Authorization secret 헤더를 함께 지정할 수 없습니다"));
             }
         }
         if serde_json::to_vec(self)?.len() > 65536 {
@@ -186,6 +195,11 @@ impl SaveServer {
             let exists: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM secrets WHERE id=?1)", [id], |r| r.get(0))?;
             if !exists { return Err(ApiError::invalid("MCP가 참조하는 secret이 없습니다")); }
         }
+        if let Some(config) = oauth::config(&self.config) {
+            if let Some(id) = &config.client_secret_id {
+                crate::models::decrypt_secret(c, id)?;
+            }
+        }
         Ok(())
     }
 }
@@ -232,6 +246,11 @@ pub async fn update(State(app): State<App>, Owner(p): Owner, headers: HeaderMap,
             return Err(ApiError::revision_conflict(serde_json::to_value(current)?));
         }
         ensure_not_checking(tx, &id)?;
+        if serde_json::to_value(&current.config)? != serde_json::to_value(&b.server.config)? {
+            oauth::invalidate(tx, &id)?;
+        } else {
+            oauth::cancel_pending(tx, &id)?;
+        }
         b.server.validate(tx, Some(&id))?;
         tx.execute("DELETE FROM mcp_checks WHERE server_id=?1", [&id])?;
         tx.execute(
@@ -264,7 +283,8 @@ pub async fn remove(State(app): State<App>, Owner(p): Owner, headers: HeaderMap,
 pub fn secret_users(c: &Connection, secret_id: &str) -> ApiResult<Vec<String>> {
     let mut st = c.prepare(
         "SELECT DISTINCT 'MCP: '||m.name FROM mcp_servers m, json_each(m.config, '$.env_secrets') e WHERE e.value=?1
-         UNION SELECT DISTINCT 'MCP: '||m.name FROM mcp_servers m, json_each(m.config, '$.header_secrets') h WHERE h.value=?1 ORDER BY 1",
+         UNION SELECT DISTINCT 'MCP: '||m.name FROM mcp_servers m, json_each(m.config, '$.header_secrets') h WHERE h.value=?1
+         UNION SELECT 'MCP: '||name FROM mcp_servers WHERE json_extract(config,'$.oauth.client_secret_id')=?1 ORDER BY 1",
     )?;
     Ok(st.query_map([secret_id], |r| r.get(0))?.collect::<Result<Vec<_>, _>>()?)
 }
@@ -284,7 +304,8 @@ fn check_summary(c: &Connection, id: &str) -> ApiResult<Option<Value>> {
 fn ensure_not_checking(c: &Connection, id: &str) -> ApiResult<()> {
     let busy: bool = c.query_row(
         "SELECT EXISTS(SELECT 1 FROM mcp_checks WHERE server_id=?1 AND status='checking') OR
-         EXISTS(SELECT 1 FROM tool_calls WHERE name='mcp_call' AND status='running' AND json_extract(target,'$.server_id')=?1)", [id], |r| r.get(0))?;
+         EXISTS(SELECT 1 FROM tool_calls WHERE name='mcp_call' AND status='running' AND json_extract(target,'$.server_id')=?1) OR
+         EXISTS(SELECT 1 FROM mcp_oauth_attempts WHERE server_id=?1 AND status='exchanging')", [id], |r| r.get(0))?;
     if busy { Err(ApiError::busy("MCP 연결 확인 또는 도구 실행 중입니다. 끝난 뒤 설정을 바꾸세요")) } else { Ok(()) }
 }
 
@@ -335,9 +356,10 @@ pub async fn check(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, 
     }).await?;
     if receipt.headers().contains_key("idempotent-replayed") { return Ok(receipt); }
     let sid = id.clone();
+    let credential_now = app.now();
     let loaded = app.db.call(move |c| {
         let server = get(c, &sid)?;
-        let secrets = load_secrets(c,&server)?;
+        let secrets = load_secrets(c,&server,&credential_now)?;
         Ok((server,secrets,crate::procs::Limits::effective(c, None, None)?))
     }).await;
     let result = match loaded {
@@ -407,12 +429,14 @@ fn scrub(value: &mut Value, secrets: &BTreeMap<String,String>) -> ApiResult<()> 
     Ok(())
 }
 
-fn load_secrets(c: &Connection, server: &McpServer) -> ApiResult<BTreeMap<String,String>> {
+fn load_secrets(c: &Connection, server: &McpServer, now: &str) -> ApiResult<BTreeMap<String,String>> {
     let refs=match &server.config {
         ServerConfig::Stdio { env_secrets,.. }=>env_secrets,
         ServerConfig::Http { header_secrets,.. } | ServerConfig::Sse { header_secrets,.. }=>header_secrets,
     };
-    refs.values().map(|id|Ok((id.clone(),crate::models::decrypt_secret(c,id)?))).collect()
+    let mut secrets = refs.values().map(|id|Ok((id.clone(),crate::models::decrypt_secret(c,id)?))).collect::<ApiResult<BTreeMap<_,_>>>()?;
+    oauth::prepare(c, server, now, &mut secrets)?;
+    Ok(secrets)
 }
 
 fn finish_check(c: &Connection, now: &str, id: &str, check_id: &str, status: &str, detail: &Value) -> ApiResult<Value> {
@@ -430,6 +454,7 @@ fn finish_check(c: &Connection, now: &str, id: &str, check_id: &str, status: &st
 
 /// 재시작은 확인을 다시 실행하지 않는다. 남은 소유 프로세스를 정리하고 receipt를 중단으로 확정한다.
 pub async fn recover_on_start(app: &App) -> ApiResult<()> {
+    oauth::recover_on_start(app).await?;
     let running: Vec<(String,String)> = app.db.call(|c| {
         let mut s = c.prepare("SELECT server_id,id FROM mcp_checks WHERE status='checking'")?;
         Ok(s.query_map([],|r| Ok((r.get(0)?,r.get(1)?)))?.collect::<Result<Vec<_>,_>>()?)
@@ -458,11 +483,13 @@ pub async fn recover_on_start(app: &App) -> ApiResult<()> {
 pub fn secret_changed(c: &Connection, now: &str, secret_id: &str) -> ApiResult<()> {
     let mut st = c.prepare(
         "SELECT DISTINCT m.id FROM mcp_servers m, json_each(m.config, '$.env_secrets') e WHERE e.value=?1
-         UNION SELECT DISTINCT m.id FROM mcp_servers m, json_each(m.config, '$.header_secrets') h WHERE h.value=?1",
+         UNION SELECT DISTINCT m.id FROM mcp_servers m, json_each(m.config, '$.header_secrets') h WHERE h.value=?1
+         UNION SELECT id FROM mcp_servers WHERE json_extract(config,'$.oauth.client_secret_id')=?1",
     )?;
     let ids = st.query_map([secret_id],|r| r.get::<_,String>(0))?.collect::<Result<Vec<_>,_>>()?;
     for id in ids {
         ensure_not_checking(c,&id)?;
+        oauth::invalidate(c,&id)?;
         c.execute("DELETE FROM mcp_checks WHERE server_id=?1",[&id])?;
         c.execute("UPDATE mcp_servers SET revision=revision+1,updated_at=?2 WHERE id=?1",params![id,now])?;
         events::append(c,now,"mcp.changed",None,None,&json!({ "id": id }))?;

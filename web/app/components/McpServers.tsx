@@ -2,10 +2,12 @@ import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import { useQuery } from "../state/store";
 import { useCapability } from "../state/capabilities";
+import { McpOAuth } from "./mcp-oauth/McpOAuth";
+import type { McpOAuthConfig } from "../api/mcpOAuth";
 
 type Config =
     | { transport: "stdio"; command: string; args: string[]; env_secrets: Record<string, string> }
-    | { transport: "http" | "sse"; endpoint: string; header_secrets: Record<string, string> };
+    | { transport: "http" | "sse"; endpoint: string; header_secrets: Record<string, string>; oauth?: McpOAuthConfig };
 type Server = {
     id: string; name: string; config: Config; enabled: boolean; timeout_secs: number; revision: number;
     connection_state: "disabled" | "disconnected" | "checking" | "in_use";
@@ -97,6 +99,8 @@ export function McpServers() {
             {server.last_check && <p role="status">마지막 확인: {({ checking: "확인 중", ready: "성공 · 확인 후 연결 닫힘", failed: "실패", interrupted: "중단" })[server.last_check.status]}
                 {server.last_check.tool_count !== null && ` · 도구 ${server.last_check.tool_count}개`}
                 {server.last_check.error && ` · ${server.last_check.error.message}`}</p>}
+            {server.config.transport === "http" && server.config.oauth && <McpOAuth serverId={server.id} revision={server.revision}
+                resource={server.config.endpoint} config={server.config.oauth} disabled={rowBlocked(server)} onChanged={query.reload} />}
         </li>)}</ul>
         {selected && <div role="group" aria-label="MCP 확인 상세">
             {check.error ? <p className="err">연결 확인 결과 조회 실패</p> : <pre>{JSON.stringify(check.data, null, 2)}</pre>}

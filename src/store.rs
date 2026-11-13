@@ -924,6 +924,33 @@ pub const MIGRATIONS: &[&str] = &[
         generation INTEGER NOT NULL CHECK(generation > 0)
     );
     "#,
+    // MCP OAuth 전용 자격·일회용 접수. 비밀은 기존 vault 함수로만 저장한다.
+    r#"
+    CREATE TABLE mcp_oauth_credentials (
+        server_id TEXT PRIMARY KEY REFERENCES mcp_servers(id) ON DELETE CASCADE,
+        identity TEXT NOT NULL,
+        access_token TEXT NOT NULL,
+        refresh_token TEXT,
+        expires_at TEXT NOT NULL,
+        usable INTEGER NOT NULL CHECK(usable IN (0,1))
+    );
+    CREATE TABLE mcp_oauth_attempts (
+        id TEXT PRIMARY KEY,
+        server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+        owner_id TEXT NOT NULL,
+        principal_id TEXT NOT NULL,
+        revision INTEGER NOT NULL,
+        config_hash TEXT NOT NULL,
+        state_hash TEXT UNIQUE,
+        verifier TEXT,
+        status TEXT NOT NULL CHECK(status IN ('pending','exchanging','completed','cancelled','expired','failed','unknown','interrupted')),
+        kind TEXT NOT NULL CHECK(kind IN ('connect','refresh')),
+        expires_at TEXT NOT NULL,
+        receipt_key TEXT,
+        receipt_hash TEXT
+    );
+    CREATE UNIQUE INDEX mcp_oauth_active ON mcp_oauth_attempts(server_id) WHERE status IN ('pending','exchanging');
+    "#,
 ];
 
 #[cfg(test)]
