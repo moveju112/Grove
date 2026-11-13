@@ -54,7 +54,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 
 공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
-자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 현재 목표는 활성 기능 workspace 15개·실행/초기화 상한 10개다. 31~43의 기존 보충 이력은 보존하며 44~48은 최신 요청에 따른 다섯 자리 증설이다. 21·25의 제공자 오류는 기존 세션에 1회 재개 요청을 접수했으며 재실패를 자동 반복하지 않는다. 관리 메타데이터 쓰기는 직렬화하고 진행 중 세션은 건드리지 않는다. backlog 3개 이상이면 신규 시작을 멈추고, 개발 생성 시 fast=false 명시·반환 확인이 필요하다.
+사용자의 최신 “이번꺼까지하고 중단” 요청에 따라 40 공통 인수·관련 완료 정리 뒤 자동 순환을 중단한다. 기존 heartbeat `5848102f` 삭제 성공을 확인했다. 새 명시적 재개 전 신규 시작·자동 재개·보충·예약 재생성을 하지 않으며 이미 실행 중인 기능/검사는 취소하지 않는다. 이전 운영 목표 15/10·31~50의 이력·21/25의 기존 retry 접수는 보존하지만 현재 자동 실행 권한으로 쓰지 않는다.
 
 ## 명시적 후속 요청 우선순위
 신규 기능보다 verified idle continuation을 우선하며, 최신 기능 running/initializing 합계 상한 10개와 backlog 3개 backpressure를 따른다. 이 요청은 provider 시스템 오류 retry가 아니므로 retry count를 초기화하지 않는다.
@@ -70,6 +70,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 25 | ready · `f9df069` 통합·인수 완료 | 기능 update-settings E2E 4개 및 통합 검사 통과. SETTINGS-016 완료; 정책 저장과 실제 자동 설치를 구분. 기존 오류 retry count=1은 재사용하지 않음 |
 
 ## 현재 통합 인수
+- 40 공통 `validation-mohesp79`는 candidate `7ec5119`에서 Rust 106개·typecheck·E2E 6개가 exit 0으로 통과했다. preparing 83.21초·waiting-lock 872.35초·running 295.14초, telemetry_error 없음이다. 현재 HEAD 차이로 reusable=false이나 이후 diff에서 runner/approval/도구 registry/출력/정책/exec 및 선택 시험 입력 불변을 확인했다. definitions 변경은 미전송 override 보존·선택 복원이며 역할 ID/허용 판정 계약을 바꾸지 않는다. 34·40·46의 필수 인수 완료와 AGENT-013/CTX-013/ONCE-008을 반영하고 정확한 종료 세션·workspace·clean·ancestry·RESULT 보존을 확인했다. 37 설정 링크 실패와 나머지 미인수 묶음은 이 성공으로 완료 처리하지 않는다.
 - 45의 `38817444ad229db7686b10767954783272d64b08`·idle/권한 대기 없음/clean·ready와 소유 disposable 실패 주입을 확인했다. 제품 수정 없이 SQLite FULL·실제 journal 권한 거부·보류 응답 재시작·source/timeline 경합·후보 경쟁의 기존 보존 동작을 시험했다. 기능 Rust 30개와 최종 신규 target 6개 재확인 근거를 보존하며 `c3d33d624b9628037c7ffff7fbb6f40288286acd`에 통합했다. 이후 35/40의 history/모델 입력 공통 변경을 고려해 고정 `/home/ubuntu/.cache/grove-validation/validation-3k5fkh0x`(shell `job_1794550044002_1c77ba`)에서 `--rust compaction_faults --e2e e2e/rewind.spec.ts`를 공유 잠금·계측·`--work 45`로 인수한다. CMP-012는 결과 전 완료/정리하지 않는다. 50은 실제 반환 cwd/branch/HEAD/clean을 확인해 prepared를 기록했으며 시작하지 않았다.
 - 42는 필수 인수·TODO·RESULT 보존 뒤 정확한 `wks_b1b9ac86342157d0`을 archive했다. 소속 종료 세션 1개 보관·디렉터리 제거 응답과 cleanup-finished 기록을 확인했고 브랜치는 유지한다. 빈자리는 독립 `UI-002` 첫 프로젝트 온보딩을 50으로 보충한다. 기존 Login/Workspace의 계정·생성·서버 API 연결과 다른 담당 소유권을 확인했으며 현재 미인수 HEAD 대신 검증된 `151cbe5`에서 준비한다.
 - 46의 기존 `validation-09gyyeqp`도 exit 0으로 통과했다. preparing 60.11초·waiting-lock 889.74초·running 126.78초, telemetry_error 없음이다. 이후 40의 runner 도구 목록 입력이 바뀌었으므로 이 성공을 현재 공통 인수 전체로 확대하지 않고 `validation-mohesp79`의 affected exec_unknown 결과를 기다린다. 기존 job을 취소/재시작하거나 실패/미실행 이력을 지우지 않는다.
