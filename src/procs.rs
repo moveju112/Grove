@@ -29,7 +29,11 @@ impl Limits {
     }
     /// 범위별 설정(`exec.max_memory_mb`·`exec.max_cpu_seconds`)의 실제 적용값.
     pub fn effective(c: &rusqlite::Connection, project: Option<&str>, session: Option<&str>) -> crate::error::ApiResult<Self> {
-        let get = |k: &str| -> crate::error::ApiResult<u64> { Ok(crate::settings::effective(c, k, project, session)?.as_u64().unwrap_or(0)) };
+        let get = |k: &str| -> crate::error::ApiResult<u64> {
+            let value = crate::settings::effective(c, k, project, session)?;
+            crate::settings::validate(&crate::settings::def(k).expect("registered resource limit"), &value)?;
+            value.as_u64().ok_or_else(|| crate::error::ApiError::invalid("자원 한도가 올바른 정수가 아닙니다"))
+        };
         Ok(Limits { memory_mb: get("exec.max_memory_mb")?, cpu_seconds: get("exec.max_cpu_seconds")? })
     }
 }
