@@ -216,6 +216,8 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     // 질문 대기(RUN-014): 승인 대기와 다른 호출 상태로 구분해 따로 보여 준다.
     const questions = (calls.data ?? []).filter((c) => (c.status as string) === "awaiting_input");
     const unknown = (calls.data ?? []).filter((c) => c.status === "unknown" && !c.reviewed_at);
+    const mcpRunning=(calls.data ?? []).filter((c)=>c.name==="mcp_call" && c.status==="running");
+    const mcpProgress=useLive((live)=>visible ? live.mcpProgress?.[sessionId] : undefined);
 
     const act = async (f: () => Promise<unknown>) => {
         setErr(null);
@@ -423,6 +425,15 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             <ChangesPanel key={`changes:${sessionId}`} sessionId={sessionId} projectId={projectId} open={open} disabled={archived} />
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
             {pending.map((c) => <ApprovalCard key={c.id} c={c} act={act} />)}
+            {mcpRunning.map((c)=>{
+                const p=mcpProgress?.[c.id] ?? (c.result as {progress?:{value:number;total:number|null}}|null)?.progress;
+                return <section key={c.id} className="stack" data-testid="mcp-running" aria-label="MCP 실행">
+                    <p role="status"><code>{(c.target as {namespace:string}).namespace}</code> · MCP 실행 중
+                        {p && ` · ${p.value}${p.total===null ? "" : ` / ${p.total}`}`}</p>
+                    <button type="button" onClick={()=>void act(()=>api.post(`/tool-calls/${c.id}/cancel`,{}))}>MCP 호출 중지</button>
+                    <p className="muted small">중지는 원격 부작용의 미적용을 보장하지 않습니다. 확정 응답이 없으면 결과 불명으로 남습니다.</p>
+                </section>;
+            })}
             {unknown.map((c) => <UnknownCard key={c.id} c={c} act={act} />)}
             {active && (
                 <div className="turn-status" role="status" data-testid="turn-status">
@@ -828,8 +839,9 @@ function UnknownCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unknow
     return (
         <div className="approval unknown" role="group" aria-label="결과 확인 필요" data-testid="unknown">
             <div>
-                <strong>{c.name}</strong>의 결과를 알 수 없습니다(실행 중 서버가 종료됨). 자동으로 다시 실행하지 않습니다.
+                <strong>{c.name}</strong>의 결과를 알 수 없습니다. 자동으로 다시 실행하지 않습니다.
             </div>
+            {(c.result as {error?:{message?:string}}|null)?.error?.message && <p className="small">{(c.result as {error:{message:string}}).error.message}</p>}
             <div>대상: <code>{JSON.stringify(c.target).slice(0, 300)}</code></div>
             <button className="ghost small" onClick={() => void act(async () => setObs(await api.get(`/tool-calls/${c.id}/observe`)))}>현재 상태 확인</button>
             {obs && (

@@ -1,5 +1,5 @@
 //! MCP의 공개 도구는 두 개의 고정 경계로 제공한다. 원격 이름·annotation으로 권한을 만들지 않는다.
-use super::{client::Client, get, load_secrets, scrub};
+use super::{client::Client, get, load_secrets, scrub, record_progress};
 use crate::error::{ApiError, ApiResult};
 use crate::tools::{Planned, ToolError, ToolResult, MAX_OUTPUT};
 use rusqlite::{Connection, OptionalExtension, params};
@@ -109,10 +109,13 @@ pub async fn execute_call(app: &crate::App, call: &crate::approvals::ToolCallRow
     };
     let (server,secrets,root) = loaded;
     let mut client = None;
-    let mut invocation_started = false;
+    let mut effects_started = false;
+    let (progress_tx,mut progress_rx)=tokio::sync::watch::channel(Value::Null);
     let work = async {
         client = Some(Client::open(&server.config,&secrets,&call.id,crate::procs::Limits::from_json(&call.target["limits"]),Some(&root)).await?);
+        if matches!(&server.config,super::ServerConfig::Stdio { .. }) { effects_started=true; }
         let active = client.as_mut().expect("opened client");
+        active.progress=Some(progress_tx);
         let mut fresh = active.inspect(&server.name).await?;
         scrub(&mut fresh,&secrets)?;
         let tool = fresh["tools"].as_array().and_then(|a|a.iter().find(|t|t["namespace"]==call.target["namespace"]))
@@ -121,16 +124,33 @@ pub async fn execute_call(app: &crate::App, call: &crate::approvals::ToolCallRow
         if call.precondition.as_ref().and_then(|p|p["tool_sha256"].as_str())!=Some(hash.as_str()) {
             return Err(fail("mcp_schema_changed","MCP 도구 정보가 바뀌어 호출하지 않았습니다. 연결을 다시 확인하세요"));
         }
-        invocation_started = true;
-        active.call_tool(call.target["tool_name"].as_str().unwrap_or(""),&call.target["arguments"]).await
+        effects_started = true;
+        active.call_tool(call.target["tool_name"].as_str().unwrap_or(""),&call.target["arguments"],&call.id).await
     };
     let mut shutdown = app.shutdown_rx.clone();
-    let result = tokio::select! {
-        biased;
-        _ = cancel.wait_for(|v|*v) => Err(fail("cancelled","MCP 호출을 중지했습니다")),
-        _ = shutdown.wait_for(|v|*v) => Err(fail("cancelled","서버 종료로 MCP 호출을 중지했습니다")),
-        result = tokio::time::timeout(std::time::Duration::from_secs(server.timeout_secs as u64),work) =>
-            result.unwrap_or_else(|_|Err(fail("mcp_timeout","MCP 호출 시간이 초과됐습니다"))),
+    let result = {
+        tokio::pin!(work);
+        let deadline=tokio::time::sleep(std::time::Duration::from_secs(server.timeout_secs as u64));
+        tokio::pin!(deadline);
+        let mut next_progress=tokio::time::Instant::now();
+        let mut pending_progress=None;
+        loop {
+            tokio::select! {
+                biased;
+                _=async { cancel.wait_for(|v|*v).await.map(|_|()) }=>break Err(fail("cancelled","MCP 호출을 중지했습니다")),
+                _=async { shutdown.wait_for(|v|*v).await.map(|_|()) }=>break Err(fail("cancelled","서버 종료로 MCP 호출을 중지했습니다")),
+                _=&mut deadline=>break Err(fail("mcp_timeout","MCP 호출 시간이 초과됐습니다")),
+                result=&mut work=>break result,
+                changed=progress_rx.changed()=>{
+                    if changed.is_err() { break Err(ApiError::internal("MCP 진행 채널이 닫혔습니다")); }
+                    pending_progress=Some(progress_rx.borrow_and_update().clone());
+                }
+                _=tokio::time::sleep_until(next_progress),if pending_progress.is_some()=>{
+                    if let Err(e)=record_progress(app,call,pending_progress.take().expect("pending progress")).await { break Err(e); }
+                    next_progress=tokio::time::Instant::now()+std::time::Duration::from_millis(250);
+                }
+            }
+        }
     };
     let catalog_changed=client.as_ref().is_some_and(|c|c.catalog_changed);
     if let Some(client) = &mut client { client.close().await; }
@@ -146,8 +166,8 @@ pub async fn execute_call(app: &crate::App, call: &crate::approvals::ToolCallRow
             }
         }
         Err(e) => {
-            if invocation_started && !matches!(e.code,"mcp_rpc"|"mcp_auth_required") {
-                Err(ToolError::new("result_unknown","MCP 요청 전달 후 확정 응답을 받지 못했습니다. 자동 재실행하지 않으며 검토가 필요합니다"))
+            if effects_started && !matches!(e.code,"mcp_rpc"|"mcp_auth_required") {
+                Err(ToolError::new("result_unknown",format!("MCP 프로세스 시작 또는 요청 전달 후 확정 응답을 받지 못했습니다({}). 자동 재실행하지 않으며 검토가 필요합니다",e.code)))
             } else { Err(ToolError::new(e.code,e.message)) }
         }
     };

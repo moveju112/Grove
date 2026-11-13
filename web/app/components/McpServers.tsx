@@ -8,7 +8,8 @@ type Config =
     | { transport: "http" | "sse"; endpoint: string; header_secrets: Record<string, string> };
 type Server = {
     id: string; name: string; config: Config; enabled: boolean; timeout_secs: number; revision: number;
-    connection_state: "disabled" | "disconnected";
+    connection_state: "disabled" | "disconnected" | "checking" | "in_use";
+    active_calls?: number;
     last_check: null | { status: "checking" | "ready" | "failed" | "interrupted"; tool_count: number | null; error: { message: string } | null };
 };
 type Attempt = { method: "post" | "put" | "del"; path: string; body?: unknown; key: string };
@@ -73,20 +74,24 @@ export function McpServers() {
         setConfig(JSON.stringify(server.config, null, 2)); setTimeout(server.timeout_secs); setEnabled(server.enabled); setError(null);
     };
     const current = query.data?.find((s) => s.id === editing?.id);
+    const rowBlocked=(server:Server)=>blocked || !!editing || !!deleting || !!testing || !!name
+        || server.last_check?.status==="checking" || server.connection_state==="in_use";
     return <div className="stack" data-testid="mcp-panel">
         <p className="muted small">서버 전체 설정이며 소유자만 관리할 수 있습니다. 저장·사용 설정은 연결 완료가 아닙니다. 연결 확인은 handshake·목록 조회 뒤 닫습니다. 사용 설정되고 확인된 도구는 모델이 mcp_tools로 조회하고 mcp_call로 요청하며 기존 승인·금지·읽기 전용 정책을 따릅니다. 도구 호출마다 연결을 열고 종료합니다.</p>
         <p className="muted small">비밀 원문을 실행 인자·URL·JSON에 넣지 마세요. 환경변수는 env_secrets, 헤더는 header_secrets에 API 키의 ID를 참조하세요. 헤더 secret에는 필요한 접두사(예: Bearer)까지 저장하세요.</p>
         {!!query.error && <p role="alert" className="err">{query.error instanceof Error ? query.error.message : "MCP 조회 실패"}</p>}
         <ul>{(query.data ?? []).map((server) => <li key={server.id} data-testid="mcp-row">
-            <strong>{server.name}</strong> · {server.config.transport} · {server.enabled ? "사용 설정 · 미연결" : "사용 안 함"} · revision {server.revision}
+            <strong>{server.name}</strong> · {server.config.transport} · {server.enabled ? "사용 설정" : "사용 안 함"}
+            {server.connection_state==="checking" ? " · 연결 확인 중" : server.connection_state==="in_use" ? ` · 호출 ${server.active_calls}개 실행 중` : server.enabled ? " · 미연결" : ""}
+            {" · "}revision {server.revision}
             <div className="inline">
-                <button type="button" disabled={blocked || !!editing || !!deleting || !!testing || !!name || server.last_check?.status === "checking"} onClick={() => edit(server)}>MCP 편집</button>
-                <button type="button" disabled={blocked || !!editing || !!deleting || !!testing || !!name || server.last_check?.status === "checking"} onClick={() => void mutate({
+                <button type="button" disabled={rowBlocked(server)} onClick={() => edit(server)}>MCP 편집</button>
+                <button type="button" disabled={rowBlocked(server)} onClick={() => void mutate({
                     method: "put", path: `/mcp/servers/${server.id}`, key: newKey(),
                     body: { expected_revision: server.revision, server: { name: server.name, config: server.config, timeout_secs: server.timeout_secs, enabled: !server.enabled } },
                 })}>{server.enabled ? "MCP 사용 끄기" : "MCP 사용 켜기"}</button>
-                <button type="button" disabled={blocked || !!editing || !!deleting || !!testing || !!name || server.last_check?.status === "checking"} onClick={() => { setDeleting(server); setError(null); }}>MCP 삭제 확인</button>
-                {checkSupported !== false && <button type="button" disabled={blocked || !!editing || !!deleting || !!testing || !!name || server.last_check?.status === "checking"} onClick={() => { setTesting(server); setError(null); }}>MCP 연결 확인 준비</button>}
+                <button type="button" disabled={rowBlocked(server)} onClick={() => { setDeleting(server); setError(null); }}>MCP 삭제 확인</button>
+                {checkSupported !== false && <button type="button" disabled={rowBlocked(server)} onClick={() => { setTesting(server); setError(null); }}>MCP 연결 확인 준비</button>}
                 {server.last_check && <button type="button" onClick={() => setSelected(server.id)}>MCP 확인 상세</button>}
             </div>
             {server.last_check && <p role="status">마지막 확인: {({ checking: "확인 중", ready: "성공 · 확인 후 연결 닫힘", failed: "실패", interrupted: "중단" })[server.last_check.status]}

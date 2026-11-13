@@ -110,9 +110,15 @@ impl Drop for Http {
 }
 
 async fn terminate_http(client: reqwest::Client, endpoint: reqwest::Url, headers: HeaderMap, session: String, version: Option<String>) {
-    let mut request = client.delete(endpoint).headers(headers).header("mcp-session-id",session);
+    let mut request = client.delete(endpoint).headers(headers).header("mcp-session-id",session_header(&session));
     if let Some(version) = version { request = request.header("mcp-protocol-version",version); }
     let _ = tokio::time::timeout(std::time::Duration::from_secs(1),request.send()).await;
+}
+
+fn session_header(id: &str) -> HeaderValue {
+    let mut value=HeaderValue::from_str(id).expect("validated visible ASCII MCP session id");
+    value.set_sensitive(true);
+    value
 }
 
 enum Transport { Stdio(Process), Http(Http) }
@@ -124,6 +130,9 @@ pub struct Client {
     messages: usize,
     pending: Option<u64>,
     pub(super) catalog_changed: bool,
+    pub(super) progress: Option<tokio::sync::watch::Sender<Value>>,
+    progress_token: Option<String>,
+    last_progress: Option<f64>,
 }
 
 impl Client {
@@ -218,7 +227,8 @@ impl Client {
                 Transport::Http(http)
             }
         };
-        Ok(Self { transport, next_id: 1, bytes: 0, messages: 0, pending: None, catalog_changed:false })
+        Ok(Self { transport, next_id: 1, bytes: 0, messages: 0, pending: None, catalog_changed:false,
+            progress:None,progress_token:None,last_progress:None })
     }
 
     fn count(&mut self, n: usize) -> ApiResult<()> {
@@ -240,7 +250,7 @@ impl Client {
             Transport::Http(h) => {
                 let mut request = h.client.post(h.endpoint.clone()).headers(h.headers.clone())
                     .header("accept", "application/json, text/event-stream").header("content-type", "application/json").body(data);
-                if let Some(session) = &h.session { request = request.header("mcp-session-id", session); }
+                if let Some(session) = &h.session { request = request.header("mcp-session-id", session_header(session)); }
                 if let Some(version) = &h.version { request = request.header("mcp-protocol-version", version); }
                 let response = request.send().await.map_err(|_| transport())?;
                 if !response.status().is_success() { return Err(http_status(response.status())); }
@@ -306,6 +316,19 @@ impl Client {
         }
     }
 
+    fn report_progress(&mut self, params: &Value) {
+        let Some(token)=self.progress_token.as_deref() else { return; };
+        if self.pending.is_none() || params["progressToken"].as_str()!=Some(token) { return; }
+        let Some(value)=params["progress"].as_f64().filter(|v|v.is_finite()) else { return; };
+        if self.last_progress.is_some_and(|last|value<=last) { return; }
+        self.last_progress=Some(value);
+        if let Some(sender)=&self.progress {
+            let total=params.get("total").filter(|v|v.as_f64().is_some_and(f64::is_finite));
+            // 원격 자유문구는 credential을 반사할 수 있으므로 숫자만 전달한다.
+            sender.send_replace(json!({"value":params["progress"],"total":total}));
+        }
+    }
+
     async fn request(&mut self, method: &str, params: Value) -> ApiResult<Value> {
         let id = self.next_id;
         self.next_id += 1;
@@ -322,6 +345,7 @@ impl Client {
             if message["jsonrpc"] != "2.0" || !message.is_object() { return Err(protocol()); }
             if let Some(method) = message.get("method").and_then(Value::as_str) {
                 if method=="notifications/tools/list_changed" { self.catalog_changed=true; }
+                if method=="notifications/progress" && message.get("id").is_none() { self.report_progress(&message["params"]); }
                 if let Some(request_id) = message.get("id") {
                     let answer = if method == "ping" {
                         json!({ "jsonrpc": "2.0", "id": request_id, "result": {} })
@@ -393,8 +417,12 @@ impl Client {
         }))
     }
 
-    pub async fn call_tool(&mut self, name: &str, arguments: &Value) -> ApiResult<Value> {
-        let result=self.request("tools/call",json!({"name":name,"arguments":arguments})).await?;
+    pub async fn call_tool(&mut self, name: &str, arguments: &Value, progress_token: &str) -> ApiResult<Value> {
+        self.progress_token=Some(progress_token.to_string());
+        self.last_progress=None;
+        let result=self.request("tools/call",json!({"name":name,"arguments":arguments,"_meta":{"progressToken":progress_token}})).await;
+        self.progress_token=None;
+        let result=result?;
         if !result.is_object() || (result.get("content").is_some_and(|v|!v.is_array()))
             || (result.get("isError").is_some_and(|v|!v.is_boolean()))
             || (result.get("content").is_none() && !result.get("structuredContent").is_some_and(Value::is_object))
@@ -404,7 +432,8 @@ impl Client {
     }
 
     pub async fn close(&mut self) {
-        if let Some(id) = self.pending.take() {
+        // 프로토콜상 client는 initialize 요청을 취소할 수 없다.
+        if let Some(id) = self.pending.take().filter(|id|*id!=1) {
             let cancellation = json!({ "jsonrpc":"2.0", "method":"notifications/cancelled", "params":{ "requestId":id, "reason":"Connection check ended" } });
             let _ = tokio::time::timeout(std::time::Duration::from_millis(200),self.send(&cancellation)).await;
         }
@@ -460,4 +489,26 @@ fn valid_schema(value: &Value, depth: usize, budget: &mut usize) -> bool {
         if !ok { return false; }
     }
     true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn progress_without_an_active_requested_token_is_not_published() {
+        let config=ServerConfig::Http {endpoint:"http://127.0.0.1:1/mcp".into(),header_secrets:BTreeMap::new()};
+        let mut client=Client::open(&config,&BTreeMap::new(),"fixture",Limits::default(),None).await.unwrap();
+        let (tx,rx)=tokio::sync::watch::channel(Value::Null);
+        client.progress=Some(tx);
+        client.pending=Some(1);
+        client.report_progress(&json!({"progress":50,"total":100}));
+        assert!(!rx.has_changed().unwrap(),"initialize never requested a progress token");
+        client.pending=Some(2);
+        client.progress_token=Some("owned".into());
+        client.report_progress(&json!({"progressToken":"wrong","progress":50}));
+        assert!(!rx.has_changed().unwrap());
+        client.report_progress(&json!({"progressToken":"owned","progress":50}));
+        assert_eq!(rx.borrow()["value"],50);
+    }
 }

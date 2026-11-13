@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { cacheStats, IDLE_ENTRY_LIMIT, invalidate, subscribeQuery } from "./store";
+import { applyEvent, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, resyncAll, setLive, subscribeQuery } from "./store";
+import type { EventRecord } from "../api/generated";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -59,4 +60,36 @@ describe("중복 viewer의 조회 구독(PANE-007)", () => {
         again();
         kept();
     });
+});
+
+it("MCP 진행은 전체 도구 목록을 다시 읽지 않고 해당 대화만 갱신하며 종료 때 메모리를 지운다",async()=>{
+    const fetcher=vi.fn(async()=>[]);
+    const mcpFetcher=vi.fn(async()=>[]);
+    const off=subscribeQuery("calls:progress-a",fetcher,()=>undefined);
+    const offMcp=subscribeQuery("mcp",mcpFetcher,()=>undefined);
+    const event=(kind:string,sid:string,id:string,payload:Record<string,unknown>)=>applyEvent({
+        kind,session_id:sid,project_id:"p",payload:{id,name:"mcp_call",...payload},seq:1,created_at:"2026-01-01T00:00:00Z",
+    } as EventRecord);
+    try {
+        await settle();
+        event("tool_call.progress","progress-a","call-a",{progress:{value:50,total:100}});
+        let first:unknown;
+        setLive((l)=>{first=l.mcpProgress?.["progress-a"];return l;});
+        event("tool_call.progress","progress-b","call-b",{progress:{value:1,total:null}});
+        setLive((l)=>{
+            expect(l.mcpProgress?.["progress-a"]).toBe(first);
+            expect(l.mcpProgress?.["progress-a"]?.["call-a"]).toEqual({value:50,total:100});
+            return l;
+        });
+        await settle();
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        expect(mcpFetcher).toHaveBeenCalledTimes(1);
+        event("tool_call.updated","progress-a","call-a",{status:"unknown"});
+        setLive((l)=>{expect(l.mcpProgress?.["progress-a"]).toBeUndefined();return l;});
+        await settle();
+        expect(fetcher).toHaveBeenCalledTimes(2);
+        expect(mcpFetcher).toHaveBeenCalledTimes(2);
+        resyncAll();
+        setLive((l)=>{expect(l.mcpProgress).toEqual({});return l;});
+    } finally { off();offMcp();clearServerCache(); }
 });

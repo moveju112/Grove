@@ -157,6 +157,26 @@ export function applyEvent(e: EventRecord) {
             }
             invalidate("recent");
             invalidate("recovery");
+            if (sid) {
+                const call=e.payload as {id:string;status:string;name:string};
+                if (call.name==="mcp_call") invalidate("mcp");
+                if (call.status!=="running" && live.mcpProgress?.[sid]?.[call.id]) {
+                    setLive((l)=>{
+                        const mcpProgress={...l.mcpProgress};
+                        const session={...mcpProgress[sid]};
+                        delete session[call.id];
+                        if (Object.keys(session).length) mcpProgress[sid]=session;
+                        else delete mcpProgress[sid];
+                        return {...l,mcpProgress};
+                    });
+                }
+            }
+            break;
+        case "tool_call.progress":
+            if (sid) {
+                const p=e.payload as {id:string;progress:McpProgress};
+                setLive((l)=>({...l,mcpProgress:{...l.mcpProgress,[sid]:{...l.mcpProgress?.[sid],[p.id]:p.progress}}}));
+            }
             break;
         case "file_changes.updated":
             if (sid) invalidate(`changes:${sid}`);
@@ -292,13 +312,15 @@ export function applyEvent(e: EventRecord) {
 
 /// 재동기화: 모든 조회를 다시 읽는다(NET-008).
 export function resyncAll() {
+    setLive((l)=>({...l,mcpProgress:{}}));
     for (const k of entries.keys()) refresh(k);
     refreshFiles();
 }
 
 // ---- 연결 상태·중간 응답(메모리) ----
 
-type Live = { status: "connecting" | "live" | "reconnecting" | "offline" | "auth_expired"; retryAt?: number; partials: Record<string, unknown> };
+type McpProgress={value:number;total:number|null};
+type Live = { status: "connecting" | "live" | "reconnecting" | "offline" | "auth_expired"; retryAt?: number; partials: Record<string, unknown>;mcpProgress?:Record<string,Record<string,McpProgress>> };
 let live: Live = { status: "connecting", partials: {} };
 const liveSubs = new Set<() => void>();
 

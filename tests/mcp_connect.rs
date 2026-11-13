@@ -16,7 +16,7 @@ use tokio_stream::wrappers::ReceiverStream;
 
 const SECRET: &str = "Bearer fixture-mcp-check-private";
 #[derive(Clone, Copy, PartialEq)]
-enum Mode { Json, Sse, Legacy, ForeignEndpoint, Auth, BadVersion, BadId, RpcError, Duplicate, SchemaBad, MalformedSchema, DeepSchema, RepeatedCursor, Redirect, Hang, LoseReply, CallHang, ToolFailure, NotifyDuringCall }
+enum Mode { Json, Sse, Legacy, ForeignEndpoint, Auth, BadVersion, BadId, RpcError, Duplicate, SchemaBad, MalformedSchema, DeepSchema, RepeatedCursor, Redirect, Hang, LoseReply, CallHang, ToolFailure, NotifyDuringCall, Progress, ProgressFlood }
 #[derive(Clone)]
 struct Remote {
     mode: Mode,
@@ -25,6 +25,9 @@ struct Remote {
     deletes: Arc<Mutex<usize>>,
     changed: Arc<std::sync::atomic::AtomicBool>,
     notify: Arc<std::sync::atomic::AtomicBool>,
+    progress_step: Arc<tokio::sync::Notify>,
+    finish: Arc<tokio::sync::Notify>,
+    finished: Arc<tokio::sync::Notify>,
 }
 struct Fixture {
     base: String,
@@ -33,7 +36,8 @@ struct Fixture {
 }
 impl Fixture {
     async fn start(mode: Mode) -> Self {
-        let state = Remote { mode, requests: Arc::default(), channel: Arc::default(), deletes: Arc::default(), changed: Arc::default(), notify: Arc::default() };
+        let state = Remote { mode, requests: Arc::default(), channel: Arc::default(), deletes: Arc::default(), changed: Arc::default(), notify: Arc::default(),
+            progress_step:Arc::default(),finish:Arc::default(),finished:Arc::default() };
         let router = axum::Router::new().route("/mcp",get(legacy).post(rpc).delete(end)).route("/messages",post(rpc)).with_state(state.clone());
         let socket = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}",socket.local_addr().unwrap());
@@ -41,7 +45,7 @@ impl Fixture {
         Self { base,state,task }
     }
 }
-impl Drop for Fixture { fn drop(&mut self) { self.task.abort(); } }
+impl Drop for Fixture { fn drop(&mut self) { self.state.progress_step.notify_one();self.state.finish.notify_one();self.task.abort(); } }
 
 async fn legacy(State(s): State<Remote>) -> Response {
     let (tx,rx) = mpsc::channel(16);
@@ -99,7 +103,39 @@ async fn rpc(State(s): State<Remote>, headers: HeaderMap, Json(q): Json<Value>) 
         response.as_object_mut().unwrap().remove("result");
         response["error"] = json!({ "code": -32603, "message": SECRET, "data": SECRET });
     }
-    if s.mode == Mode::Legacy {
+    if matches!(s.mode,Mode::Progress|Mode::ProgressFlood) && method=="tools/call" {
+        let token=q["params"]["_meta"]["progressToken"].as_str().expect("client progress token").to_string();
+        let event=|token:&str,value:u64|Event::default().data(json!({"jsonrpc":"2.0","method":"notifications/progress",
+            "params":{"progressToken":token,"progress":value,"total":100,"message":SECRET}}).to_string());
+        let (tx,rx)=mpsc::channel::<Result<Event,Infallible>>(16);
+        tx.send(Ok(event("wrong-token",99))).await.unwrap();
+        tx.send(Ok(event(&token,50))).await.unwrap();
+        tx.send(Ok(event(&token,40))).await.unwrap();
+        let (step,finish,finished)=(s.progress_step.clone(),s.finish.clone(),s.finished.clone());
+        let flood=s.mode==Mode::ProgressFlood;
+        tokio::spawn(async move {
+            if flood {
+                let mut ticks=tokio::time::interval(std::time::Duration::from_millis(50));
+                let mut value=51;
+                loop {
+                    tokio::select! {
+                        _=finish.notified()=>break,
+                        _=ticks.tick()=>{
+                            if tx.send(Ok(event(&token,value))).await.is_err() { break; }
+                            value+=1;
+                        }
+                    }
+                }
+            } else {
+                step.notified().await;
+                let _=tx.send(Ok(event(&token,60))).await;
+                finish.notified().await;
+            }
+            let _=tx.send(Ok(Event::default().data(response.to_string()))).await;
+            finished.notify_one();
+        });
+        Sse::new(ReceiverStream::new(rx)).into_response()
+    } else if s.mode == Mode::Legacy {
         let tx = s.channel.lock().unwrap().as_ref().unwrap().clone();
         tx.send(Ok(Event::default().event("message").data(response.to_string()))).await.unwrap();
         StatusCode::ACCEPTED.into_response()
@@ -288,6 +324,9 @@ async fn cancellation_after_invocation_preserves_unknown_and_running_call_protec
     })).await.0;
     assert_eq!(status,StatusCode::CONFLICT);
     assert_eq!(s.get("/api/v1/admin/update-readiness").await.1["busy"]["running_mcp_calls"],1);
+    let runtime=s.get("/api/v1/mcp/servers").await.1;
+    assert_eq!(runtime[0]["active_calls"],1);
+    assert_eq!(runtime[0]["connection_state"],"in_use");
     let session=s.get(&format!("/api/v1/sessions/{sid}")).await.1;
     assert_eq!(s.send(Method::PATCH,&format!("/api/v1/sessions/{sid}"),json!({"expected_revision":session["revision"],"archived":true})).await.0,StatusCode::CONFLICT);
     assert!(s.post(&format!("/api/v1/tool-calls/{}/cancel",call["id"].as_str().unwrap()),json!({})).await.0.is_success());
@@ -442,6 +481,9 @@ async fn remote_protocol_auth_redirect_and_schema_errors_are_bounded_and_do_not_
         assert_eq!(result["status"],"failed","{result}");
         assert_eq!(result["detail"]["error"]["code"],code,"{result}");
         assert!(!result.to_string().contains(SECRET));
+        if mode==Mode::Hang {
+            assert!(f.state.requests.lock().unwrap().iter().all(|(_,q)|q["method"]!="notifications/cancelled"),"initialize cannot be cancelled");
+        }
     }
 }
 
@@ -629,4 +671,128 @@ async fn native_name_collisions_stay_namespaced_and_a_namespace_cannot_select_an
     assert_eq!(call["status"],"failed");
     assert_eq!(call["result"]["error"]["code"],"mcp_tool_missing");
     assert_eq!(invocation_count(&remote),0);
+}
+
+async fn wait_progress(s: &TestServer, call: &Value, value: i64) -> Value {
+    tokio::time::timeout(std::time::Duration::from_secs(3),async {
+        loop {
+            let row=s.get(&format!("/api/v1/tool-calls/{}",call["id"].as_str().unwrap())).await.1;
+            if row["status"]=="running" && row["result"]["progress"]["value"].as_i64()==Some(value) { return row; }
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap()
+}
+
+#[tokio::test]
+async fn progress_is_token_scoped_monotonic_numeric_only_and_persisted_without_model_messages() {
+    let s=TestServer::start().await;
+    let remote=Fixture::start(Mode::Progress).await;
+    let server=ready(&s,&remote).await;
+    let project=s.create_project("mcp-progress").await;
+    let sid=s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let call=request_tool(&s,&sid,&server).await;
+    approve(&s,&call).await;
+    let progress=wait_progress(&s,&call,50).await;
+    assert_eq!(progress["result"]["progress"]["total"],100);
+    assert!(!progress.to_string().contains(SECRET));
+    remote.state.progress_step.notify_one();
+    wait_progress(&s,&call,60).await;
+    let session_id=sid.clone();
+    let messages:i64=s.server.as_ref().unwrap().app.db.call(move |c|Ok(c.query_row("SELECT COUNT(*) FROM messages WHERE session_id=?1",[session_id],|r|r.get(0))?)).await.unwrap();
+    assert_eq!(messages,0,"progress is not a model-history message");
+    let payloads:Vec<String>=s.server.as_ref().unwrap().app.db.call(|c| {
+        let mut st=c.prepare("SELECT payload FROM events WHERE kind='tool_call.progress'")?;
+        Ok(st.query_map([],|r|r.get(0))?.collect::<Result<Vec<_>,_>>()?)
+    }).await.unwrap();
+    assert!(!payloads.is_empty());
+    for text in payloads { assert!(!text.contains(SECRET) && !text.contains("message") && !text.contains("arguments")); }
+    remote.state.finish.notify_one();
+    let done=wait_call(&s,&call,"succeeded").await;
+    assert!(done["result"].get("progress").is_none());
+}
+
+#[tokio::test]
+async fn late_progress_and_response_after_cancellation_cannot_replace_unknown() {
+    let s=TestServer::start().await;
+    let remote=Fixture::start(Mode::Progress).await;
+    let server=ready(&s,&remote).await;
+    let project=s.create_project("mcp-late").await;
+    let sid=s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let call=request_tool(&s,&sid,&server).await;
+    approve(&s,&call).await;
+    wait_progress(&s,&call,50).await;
+    s.post(&format!("/api/v1/tool-calls/{}/cancel",call["id"].as_str().unwrap()),json!({})).await;
+    let unknown=wait_call(&s,&call,"unknown").await;
+    remote.state.progress_step.notify_one();
+    remote.state.finish.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(3),remote.state.finished.notified()).await.unwrap();
+    assert_eq!(s.get(&format!("/api/v1/tool-calls/{}",call["id"].as_str().unwrap())).await.1,unknown);
+    let requests=remote.state.requests.lock().unwrap();
+    let invocation=&requests.iter().find(|(_,q)|q["method"]=="tools/call").unwrap().1;
+    let cancelled=&requests.iter().find(|(_,q)|q["method"]=="notifications/cancelled").unwrap().1;
+    assert_eq!(cancelled["params"]["requestId"],invocation["id"]);
+    assert_eq!(invocation["params"]["_meta"]["progressToken"],call["id"]);
+}
+
+#[tokio::test]
+async fn progress_notifications_never_extend_the_calls_hard_timeout() {
+    let s=TestServer::start().await;
+    let remote=Fixture::start(Mode::ProgressFlood).await;
+    let server=ready(&s,&remote).await;
+    let (_,server)=s.send(Method::PUT,&format!("/api/v1/mcp/servers/{}",server["id"].as_str().unwrap()),json!({
+        "expected_revision":server["revision"],"server":{"name":"fixture","config":server["config"],"enabled":true,"timeout_secs":1}
+    })).await;
+    assert_eq!(check(&s,&server,&s.key()).await["status"],"ready");
+    let project=s.create_project("mcp-progress-deadline").await;
+    let sid=s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let call=request_tool(&s,&sid,&server).await;
+    approve(&s,&call).await;
+    let unknown=wait_call(&s,&call,"unknown").await;
+    assert!(unknown["result"]["error"]["message"].as_str().unwrap().contains("mcp_timeout"),"{unknown}");
+    assert_eq!(invocation_count(&remote),1);
+}
+
+#[tokio::test]
+async fn progress_storage_failure_cannot_turn_an_unconfirmed_remote_effect_into_success() {
+    let s=TestServer::start().await;
+    let remote=Fixture::start(Mode::Progress).await;
+    let server=ready(&s,&remote).await;
+    let project=s.create_project("mcp-progress-store-fail").await;
+    let sid=s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let call=request_tool(&s,&sid,&server).await;
+    s.server.as_ref().unwrap().app.db.call(|c| {
+        c.execute_batch("CREATE TRIGGER fail_mcp_progress BEFORE INSERT ON events WHEN NEW.kind='tool_call.progress' BEGIN SELECT RAISE(FAIL,'fixture progress commit failure'); END;")?;
+        Ok(())
+    }).await.unwrap();
+    approve(&s,&call).await;
+    let unknown=wait_call(&s,&call,"unknown").await;
+    assert_eq!(unknown["result"]["error"]["code"],"result_unknown");
+    assert_eq!(invocation_count(&remote),1);
+}
+
+#[cfg(target_os="linux")]
+#[tokio::test]
+async fn stdio_startup_side_effect_before_handshake_failure_is_unknown_not_unexecuted() {
+    let s=TestServer::start().await;
+    let script=s.dir.path().join("mcp_startup_fixture.py");
+    let marker=s.dir.path().join("startup_probe.jsonl");
+    std::fs::write(&script,STDIO_FIXTURE).unwrap();
+    let project=s.create_project("mcp-startup-effect").await;
+    let sid=s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let (_,server)=s.post("/api/v1/mcp/servers",json!({
+        "name":"fixture","enabled":true,"config":{"transport":"stdio","command":"python3","args":[script,"ok",marker]}
+    })).await;
+    assert_eq!(check(&s,&server,&s.key()).await["status"],"ready");
+    std::fs::write(&script,"from pathlib import Path\nPath('startup-side-effect').write_text('ran')\nraise SystemExit(1)\n").unwrap();
+    let call=request_tool(&s,&sid,&server).await;
+    approve(&s,&call).await;
+    let ended=tokio::time::timeout(std::time::Duration::from_secs(5),async {
+        loop {
+            let row=s.get(&format!("/api/v1/tool-calls/{}",call["id"].as_str().unwrap())).await.1;
+            if matches!(row["status"].as_str(),Some("failed"|"unknown")) { return row; }
+            tokio::task::yield_now().await;
+        }
+    }).await.unwrap();
+    assert_eq!(std::fs::read_to_string(std::path::Path::new(project["root_path"].as_str().unwrap()).join("startup-side-effect")).unwrap(),"ran");
+    assert_eq!(ended["status"],"unknown");
 }

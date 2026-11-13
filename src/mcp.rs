@@ -113,6 +113,7 @@ pub struct McpServer {
     pub updated_at: String,
     pub connection_state: &'static str,
     pub last_check: Option<Value>,
+    pub active_calls: i64,
 }
 
 pub fn get(c: &Connection, id: &str) -> ApiResult<McpServer> {
@@ -121,11 +122,17 @@ pub fn get(c: &Connection, id: &str) -> ApiResult<McpServer> {
         [id],
         |r| Ok((r.get(0)?, r.get(1)?, r.get::<_, String>(2)?, r.get::<_, bool>(3)?, r.get(4)?, r.get(5)?, r.get(6)?, r.get(7)?)),
     ).optional()?.ok_or_else(|| ApiError::not_found("MCP 서버가 없습니다"))?;
+    let last_check=check_summary(c,id)?;
+    let active_calls=c.query_row(
+        "SELECT COUNT(*) FROM tool_calls WHERE name='mcp_call' AND status='running' AND json_extract(target,'$.server_id')=?1",
+        [id],|r|r.get::<_,i64>(0),
+    )?;
+    let connection_state=if last_check.as_ref().is_some_and(|v|v["status"]=="checking") {"checking"}
+        else if active_calls>0 {"in_use"} else if row.3 {"disconnected"} else {"disabled"};
     Ok(McpServer {
         id: row.0, name: row.1, config: serde_json::from_str(&row.2)?, enabled: row.3, timeout_secs: row.4,
         revision: row.5, created_at: row.6, updated_at: row.7,
-        connection_state: if row.3 { "disconnected" } else { "disabled" },
-        last_check: check_summary(c, id)?,
+        connection_state,last_check,active_calls,
     })
 }
 
@@ -460,5 +467,23 @@ pub fn secret_changed(c: &Connection, now: &str, secret_id: &str) -> ApiResult<(
         c.execute("UPDATE mcp_servers SET revision=revision+1,updated_at=?2 WHERE id=?1",params![id,now])?;
         events::append(c,now,"mcp.changed",None,None,&json!({ "id": id }))?;
     }
+    Ok(())
+}
+
+async fn record_progress(app: &App, call: &crate::approvals::ToolCallRow, progress: Value) -> ApiResult<()> {
+    let (id,sid,pid,now)=(call.id.clone(),call.session_id.clone(),call.project_id.clone(),app.now());
+    app.db.call(move |c| {
+        let tx=c.transaction()?;
+        let n=tx.execute(
+            "UPDATE tool_calls SET result=?2,updated_at=?3,revision=revision+1 WHERE id=?1 AND name='mcp_call' AND status='running'",
+            params![id,json!({"progress":progress}).to_string(),now],
+        )?;
+        if n>0 {
+            events::append(&tx,&now,"tool_call.progress",Some(&pid),Some(&sid),&json!({"id":id,"progress":progress}))?;
+        }
+        tx.commit()?;
+        Ok(())
+    }).await?;
+    app.notify_events().await;
     Ok(())
 }

@@ -220,3 +220,73 @@ test("MCP 외부 호출은 namespace·대상·인자를 확인한 이번만 승�
         for (const s of list.filter((s) => s.id === server.id)) await apiCall("DELETE", `/mcp/servers/${s.id}?expected_revision=${s.revision}`);
     }
 });
+
+test("MCP 진행은 새로고침 뒤 복원되고 중지 뒤에는 서버 종료가 아닌 결과 불명 원인을 보여준다",async({page})=>{
+    let invocations=0;
+    const remote=createServer(async(request,response)=>{
+        if (request.method==="DELETE") { response.end();return; }
+        let text="";
+        for await (const chunk of request) text+=chunk.toString();
+        const q=JSON.parse(text) as {id?:number;method:string;params?:{_meta?:{progressToken?:string}}};
+        if (q.method==="notifications/initialized" || q.method==="notifications/cancelled") { response.writeHead(202);response.end();return; }
+        if (q.method==="tools/call") {
+            invocations++;
+            response.setHeader("content-type","text/event-stream");
+            const token=q.params?._meta?.progressToken;
+            for (const [progressToken,progress] of [["wrong-token",99],[token,50],[token,40]] as const) {
+                response.write(`data: ${JSON.stringify({jsonrpc:"2.0",method:"notifications/progress",params:{progressToken,progress,total:100,message:"DO-NOT-STORE-PROGRESS-TEXT"}})}\n\n`);
+            }
+            return;
+        }
+        response.setHeader("content-type","application/json");
+        response.end(JSON.stringify({jsonrpc:"2.0",id:q.id,result:q.method==="initialize"
+            ? {protocolVersion:"2025-06-18",capabilities:{tools:{}},serverInfo:{name:"fixture",version:"1"}}
+            : {tools:[{name:"long_job",inputSchema:{type:"object"}}]}}));
+    });
+    await new Promise<void>((resolve)=>remote.listen(0,"127.0.0.1",resolve));
+    const address=remote.address();
+    if (!address || typeof address==="string") throw new Error("fixture address missing");
+    const name=`mcp-progress-${Date.now()}`;
+    const server=await apiCall<Server>("POST","/mcp/servers",{
+        name,enabled:true,timeout_secs:30,config:{transport:"http",endpoint:`http://127.0.0.1:${address.port}/mcp`},
+    });
+    try {
+        await apiCall("POST",`/mcp/servers/${server.id}/check`,{expected_revision:1,confirmed:true});
+        const {a}=await ensureProjects();
+        const session=await apiCall<{id:string}>("POST",`/projects/${a.id}/sessions`,{title:name});
+        await apiCall("POST","/recent/touch",{kind:"session",project_id:a.id,resource_id:session.id});
+        await login(page);
+        await page.locator(".recent").getByRole("button",{name:new RegExp(name)}).click();
+        const view=sessionView(page,session.id);
+        const call=await apiCall<{id:string}>("POST",`/sessions/${session.id}/tool-requests`,{
+            name:"mcp_call",args:{server_id:server.id,tool:`${name}/long_job`,arguments:{}},
+        });
+        await view.getByTestId("approval").getByRole("button",{name:"이번만 승인",exact:true}).click();
+        await expect(view.getByTestId("mcp-running")).toContainText("50 / 100");
+        await expect(view).not.toContainText("DO-NOT-STORE-PROGRESS-TEXT");
+        await page.getByRole("banner").getByRole("button",{name:"설정",exact:true}).click();
+        await page.getByLabel("설정 검색",{exact:true}).fill("MCP");
+        const row=page.getByTestId("mcp-row").filter({hasText:name});
+        await expect(row).toContainText("호출 1개 실행 중");
+        await expect(row.getByRole("button",{name:"MCP 편집",exact:true})).toBeDisabled();
+        await page.locator(".recent").getByRole("button",{name:new RegExp(name)}).click();
+        await page.reload();
+        await expect(page.getByTestId("conn")).toHaveText("연결됨");
+        await page.locator(".recent").getByRole("button",{name:new RegExp(name)}).click();
+        await expect(view.getByTestId("mcp-running")).toContainText("50 / 100");
+        await view.getByTestId("mcp-running").getByRole("button",{name:"MCP 호출 중지",exact:true}).click();
+        await expect(view.getByTestId("mcp-running")).toHaveCount(0);
+        await expect(view.getByTestId("unknown")).toContainText("cancelled");
+        await expect(view.getByTestId("unknown")).not.toContainText("서버가 종료됨");
+        expect((await apiCall<{status:string}>("GET",`/tool-calls/${call.id}`)).status).toBe("unknown");
+        expect(invocations).toBe(1);
+        await page.getByRole("banner").getByRole("button",{name:"설정",exact:true}).click();
+        await page.getByLabel("설정 검색",{exact:true}).fill("MCP");
+        await expect(row).toContainText("미연결");
+    } finally {
+        remote.closeAllConnections();
+        await new Promise<void>((resolve,reject)=>remote.close((error)=>error?reject(error):resolve()));
+        const list=await apiCall<Server[]>("GET","/mcp/servers");
+        for (const s of list.filter((s)=>s.id===server.id)) await apiCall("DELETE",`/mcp/servers/${s.id}?expected_revision=${s.revision}`);
+    }
+});
