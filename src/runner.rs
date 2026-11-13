@@ -546,10 +546,7 @@ pub fn system_prompt(def: &Value, project_root: &str, tools_enabled: bool) -> St
 }
 
 pub fn tool_defs() -> Vec<ToolDef> {
-    crate::tools::specs()
-        .into_iter()
-        .map(|s| ToolDef { name: s.name.to_string(), description: s.description.to_string(), schema: s.schema })
-        .collect()
+    crate::deferred_tools::definitions(crate::tools::specs(), &[])
 }
 
 // ---------------- 실행 루프 ----------------
@@ -599,18 +596,16 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
         cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system)?
     }) } else { None };
     let tools: Vec<ToolDef> = if t.tools_enabled && !cli_backend {
-        let mcp_ready:bool=c.query_row(
-            "SELECT EXISTS(SELECT 1 FROM mcp_servers m JOIN mcp_checks k ON k.server_id=m.id WHERE m.enabled=1 AND k.status='ready')",
-            [],|r|r.get(0),
-        )?;
-        tool_defs().into_iter().filter(|d|mcp_ready || !matches!(d.name.as_str(),"mcp_tools"|"mcp_call")).collect()
+        crate::deferred_tools::model_tools(c, turn_id, &t.session_id, &def)?
     } else { vec![] };
-    if def.get("fallback").is_some() {
+    if def.get("fallback").is_some() || (!cli_backend && def.get("deferred_tools").is_some()) {
         let usage = crate::context::usage(c, &t.session_id, Some(&profile_id))?;
         let tool_chars: usize = tools.iter().map(|t| t.name.chars().count() + t.description.chars().count() + t.schema.to_string().chars().count() + 64).sum();
         let extra = (system.chars().count() + tool_chars).div_ceil(4) as i64;
         if usage["available_tokens"].as_i64().is_some_and(|left| left < extra) {
-            return Err(ApiError::invalid("fallback 모델의 입력 용량과 출력 여유를 초과합니다"));
+            return Err(ApiError::invalid(if def.get("fallback").is_some() {
+                "fallback 모델의 입력 용량과 출력 여유를 초과합니다"
+            } else { "모델의 입력 용량과 출력 여유를 초과합니다" }));
         }
     }
     Ok(Some(StepInput {
@@ -1393,6 +1388,7 @@ pub(crate) fn enqueue_with_attachments(
     }
     if tools {
         def["agents_available"] = crate::agents::available_for(tx, session_id)?;
+        def["deferred_tools"] = crate::deferred_tools::snapshot();
     }
     // 미완료 Goal은 알림으로만 넣는다(자동 턴 없음, AGENT-018).
     if let Some(r) = crate::goals::reminder(tx, session_id)? {

@@ -69,6 +69,7 @@ pub type ToolResult<T> = Result<T, ToolError>;
 pub fn specs() -> Vec<ToolSpec> {
     vec![
         crate::tool_outputs::spec(),
+        crate::deferred_tools::spec(),
         ToolSpec {
             name: "hook",
             description: "서버가 접수한 lifecycle hook 이벤트의 고정 계획을 승인 후 실행한다. 저장·enabled만으로 실행하지 않으며 같은 이벤트를 반복 실행하지 않는다.",
@@ -404,6 +405,7 @@ pub fn plan(name: &str, args: &Value, root: &Path) -> ToolResult<(ToolSpec, Plan
         "apply_patch" => patch::plan(args, root)?,
         "shell" => shell::plan(args, root)?,
         "agent" => plan_agent(args)?,
+        "load_tool" => crate::deferred_tools::plan(args)?,
         "goal" | "recall" | "mcp_tools" | "mcp_call" | "hook" | "tool_output_read" => Planned { target: args.clone(), precondition: None },
         "ask_user" => plan_ask(args)?,
         "web_fetch" => web_fetch::plan(args)?,
