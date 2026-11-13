@@ -146,6 +146,16 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
 
 test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로 드러난다", async ({ page }) => {
     const gate = await holdEffective(page);
+    let releaseOverview!: () => void;
+    let overviewRequested!: () => void;
+    const overviewHeld = new Promise<void>((resolve) => { releaseOverview = resolve; });
+    const overviewSeen = new Promise<void>((resolve) => { overviewRequested = resolve; });
+    await page.route("**/api/v1/agent-overview?*", async (route) => {
+        const response = await route.fetch();
+        overviewRequested();
+        await overviewHeld;
+        await route.fulfill({ response });
+    });
     let releaseDefinitions!: () => void;
     let definitionsRequested!: () => void;
     const definitionsHeld = new Promise<void>((resolve) => { releaseDefinitions = resolve; });
@@ -160,6 +170,7 @@ test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로
         const settings = await openSettings(page, "exec.max_memory_mb");
         await gate.seen;
         await definitionsSeen;
+        await overviewSeen;
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toBeVisible();
         await gate.deliver();
         const row = settings.getByTestId("exec-settings").getByTestId("setting-exec.max_memory_mb");
@@ -170,6 +181,10 @@ test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로
         releaseDefinitions();
         await definitionsReceived;
         await expect(settings.getByTestId("setting-definitions").getByRole("button", { name: /^Reviewer/ })).toBeAttached();
+        // 개요도 앞쪽 높이를 바꾸므로 정의 목록만 준비됐다고 이동하면 안 된다.
+        await expect(settings.getByText("링크한 설정을 불러오는 중…")).toBeVisible();
+        releaseOverview();
+        await expect(settings.getByTestId("agent-overview").getByRole("heading", { name: /등록된 역할/ })).toBeAttached();
         await expect(row).toBeInViewport();
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
         const current = await apiCall<{ items: { key: string; layers: Record<string, { revision: number }> }[] }>("GET", "/settings/effective");
@@ -184,6 +199,7 @@ test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로
     } finally {
         gate.release();
         releaseDefinitions();
+        releaseOverview();
     }
 });
 

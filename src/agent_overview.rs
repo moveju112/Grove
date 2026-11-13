@@ -164,6 +164,7 @@ fn overview(c: &Connection, q: OverviewQuery) -> ApiResult<Value> {
         json!({"status": if sid.is_some() { "no_active_turn" } else { "no_session" }})
     };
     let candidates = sid.map(|s| agents::available_for(c, s)).transpose()?;
+    let role_policy = sid.map(|s| crate::agent_policy::Policy::for_session(c, s)).transpose()?;
     let policy = if let (Some(p), Some(s)) = (pid, sid) {
         let spec = crate::tools::spec("agent")
             .ok_or_else(|| ApiError::internal("에이전트 도구 정의가 없습니다"))?;
@@ -172,8 +173,11 @@ fn overview(c: &Connection, q: OverviewQuery) -> ApiResult<Value> {
         None
     };
     let approval = if let (Some(p), Some(s), Some(_)) = (pid, sid, mode) {
+        // 승인 판정도 실제 허용 역할 ID가 필요하다. 후보가 없으면 위임할 수 없다.
+        let agent_id = candidates.as_ref().and_then(Value::as_array)
+            .and_then(|roles| roles.first()).and_then(|role| role["id"].as_str());
         match (
-            agents::approval_policy(c, p, s, &json!({"action":"spawn"}))?,
+            agents::approval_policy(c, p, s, &json!({"action":"spawn", "agent_id":agent_id}))?,
             &policy,
         ) {
             (None, _) | (_, Some(crate::approvals::PolicyDecision::Deny(..))) => "blocked",
@@ -190,6 +194,7 @@ fn overview(c: &Connection, q: OverviewQuery) -> ApiResult<Value> {
             else if mode.is_none() { "unknown" }
             else if mode == Some("off") { "delegation_off" }
             else if matches!(policy, Some(crate::approvals::PolicyDecision::Deny(..))) { "policy_denied" }
+            else if role_policy.as_ref().is_some_and(|policy| !policy.allows(&d.id)) { "policy_denied" }
             else if turn.as_ref().is_some_and(|t| !t.tools_enabled) { "tools_disabled" }
             else if let Some(available) = &candidates {
                 if available.as_array().is_some_and(|a| a.iter().any(|a| a["id"] == d.id)) { "available" } else { "depth_limit" }

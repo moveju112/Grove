@@ -148,6 +148,11 @@ async fn scoped_policy_uses_actual_deny_allow_delegation_and_depth() {
         "delegation_off"
     );
     setting(&s, "session", sid, "agents.delegation", json!("auto")).await;
+    let restricted = overview(&s, &query).await;
+    assert_eq!(restricted["delegation"]["mode"], "off");
+    assert_eq!(restricted["delegation"]["approval"], "blocked");
+    assert_eq!(role(&restricted, "worker")["availability"], "delegation_off");
+    setting(&s, "project", pid, "agents.delegation", json!("ask")).await;
     let automatic = overview(&s, &query).await;
     assert_eq!(automatic["delegation"]["mode"], "auto");
     assert_eq!(automatic["delegation"]["source"], "session");
@@ -163,6 +168,17 @@ async fn scoped_policy_uses_actual_deny_allow_delegation_and_depth() {
         "blocked"
     );
     setting(&s, "project", pid, "tools.deny", json!("")).await;
+    setting(&s, "project", pid, "agents.allowed_roles", json!("reviewer")).await;
+    let limited = overview(&s, &query).await;
+    assert_eq!(role(&limited, "worker")["availability"], "policy_denied");
+    assert_eq!(role(&limited, "reviewer")["availability"], "available");
+    assert_eq!(limited["delegation"]["approval"], "auto");
+    setting(&s, "session", sid, "agents.orchestration", json!("solo")).await;
+    let solo = overview(&s, &query).await;
+    assert_eq!(solo["delegation"]["approval"], "blocked");
+    assert_eq!(role(&solo, "reviewer")["availability"], "policy_denied");
+    setting(&s, "session", sid, "agents.orchestration", json!("delegated")).await;
+    setting(&s, "project", pid, "agents.allowed_roles", json!("*")).await;
     let parent = s.create_session(pid).await;
     let parent_id = parent["id"].as_str().unwrap().to_owned();
     let child_id = sid.to_owned();
@@ -175,6 +191,7 @@ async fn scoped_policy_uses_actual_deny_allow_delegation_and_depth() {
         role(&overview(&s, &query).await, "worker")["availability"],
         "depth_limit"
     );
+    assert_eq!(overview(&s, &query).await["delegation"]["approval"], "blocked");
 }
 
 #[tokio::test]
