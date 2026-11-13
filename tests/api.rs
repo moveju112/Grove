@@ -443,7 +443,7 @@ async fn shutdown_rejects_new_mutations() {
     // graceful shutdown은 리스너를 닫으므로, 이미 열려 있던 연결을 흉내 내기 위해 같은 상태로 별도 리스너를 띄운다.
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(axum::serve(listener, grove::router(app.clone())).into_future());
+    tokio::spawn(axum::serve(listener, grove::router(app.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>()).into_future());
     app.shutdown_tx.send_replace(true);
     let dir = s.make_project_dir("z");
     let r = s

@@ -12,6 +12,7 @@ pub mod hooks;
 pub mod approvals;
 mod project_fs;
 pub mod auth;
+pub mod e2ee;
 pub mod backup;
 pub mod cli;
 pub mod exec;
@@ -92,6 +93,7 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// 클라이언트는 쓰기 전에 목록을 확인하고, 변경 요청에는 필요한 기능을 `x-grove-require`로 밝힌다.
 /// 기능을 빼거나 의미를 바꾸면 이름의 버전(`_v2`)을 올린다.
 pub const CAPABILITIES: &[&str] = &[
+    "e2ee_v1",
     "file_log_rotation_v1",
     "diagnostics_bundle_v1",
     "file_changes_v1",
@@ -120,6 +122,7 @@ pub const CAPABILITIES: &[&str] = &[
 
 #[derive(Clone)]
 pub struct App {
+    pub e2ee: Arc<e2ee::Transport>,
     pub cfg: Arc<config::Config>,
     pub db: store::Db,
     pub clock: util::SharedClock,
@@ -154,6 +157,7 @@ impl App {
         let (seq_tx, _) = watch::channel(latest);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         Ok(Self {
+            e2ee: Arc::new(e2ee::Transport::load(&cfg.data_dir)?),
             cfg: Arc::new(cfg),
             db,
             clock,
@@ -199,6 +203,7 @@ async fn tools_list(_p: auth::Principal) -> axum::Json<Vec<tools::ToolSpec>> {
 pub fn router(app: App) -> Router {
     use axum::routing::delete;
     let api = Router::new()
+        .route("/e2ee/identity", get(e2ee::identity))
         .route("/auth/whoami", get(auth::whoami))
         .route("/agent-overview", get(agent_overview::show))
         .route("/devices", get(auth::list_devices).post(auth::create_device))
@@ -414,8 +419,10 @@ pub fn router(app: App) -> Router {
         .layer(axum::middleware::from_fn_with_state(app.clone(), web::reject_when_shutting_down))
         .layer(tower_http::limit::RequestBodyLimitLayer::new(8 * 1024 * 1024))
         .layer(axum::middleware::from_fn(web::protocol_guard))
-        .layer(axum::middleware::from_fn(web::request_context));
+        .layer(axum::middleware::from_fn(web::request_context))
+        .layer(axum::middleware::from_fn_with_state(app.clone(), e2ee::require_encryption));
     Router::new().route("/api/mcp-oauth/callback/{id}", get(mcp::oauth::callback))
+        .route("/api/e2ee", get(e2ee::upgrade))
         .nest("/api/v1", api).merge(web::static_routes(&app))
         .with_state(app)
 }

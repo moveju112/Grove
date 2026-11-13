@@ -19,6 +19,8 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
   grove doctor --offline [--data-dir 경로]               DB 읽기 전용 무결성 검사·복구 안내(서버·migration·모델 호출 없음)
   grove config [--listen 주소:포트] [--data-dir 경로]    실제 적용될 경로·주소·환경 설정 출력(비밀값 없음)
   grove auth token [--data-dir 경로]                     소유자 토큰 출력(= grove token)
+  grove connect-link <wss://서버/api/e2ee> [--data-dir 경로]
+                                                        Pages 앱의 서버 공개키 고정 연결 링크 출력(인증 토큰 미포함)
   grove auth unlock [--data-dir 경로]                    브라우저 로그인 실패 잠금 해제(= grove unlock)
   grove pair [이름] [--listen 주소:포트] [--data-dir 경로]
                                                         실행 중 서버에서 새 기기 토큰 발급(원문은 이때 한 번만 출력)
@@ -191,6 +193,7 @@ pub fn run(args: Vec<String>) -> i32 {
         "status" => status(opts),
         "config" => config_cmd(opts),
         "pair" => pair(opts),
+        "connect-link" => connect_link(opts),
         "doctor" => {
             return match doctor(opts) {
                 Ok(true) => 0,
@@ -224,6 +227,22 @@ pub fn run(args: Vec<String>) -> i32 {
             1
         }
     }
+}
+
+fn connect_link(opts: Opts) -> Result<(), String> {
+    let endpoint = opts.positional.get(1).ok_or("wss://서버/api/e2ee 주소가 필요합니다")?;
+    if opts.positional.len() != 2 { return Err("connect-link는 서버 주소 하나를 받습니다".into()); }
+    let url = reqwest::Url::parse(endpoint).map_err(|_| "서버 주소가 올바르지 않습니다")?;
+    if url.scheme() != "wss" || url.host_str().is_none() || !url.username().is_empty()
+        || url.password().is_some() || url.query().is_some() || url.fragment().is_some() || url.path() != "/api/e2ee"
+    { return Err("인증 정보·query 없는 wss://서버/api/e2ee 주소가 필요합니다".into()); }
+    let cfg = Config::from_env(opts.data_dir, opts.listen)?;
+    let identity = crate::e2ee::Transport::load(&cfg.data_dir).map_err(|e| e.to_string())?;
+    let mut link = reqwest::Url::parse(crate::e2ee::PAGES_ORIGIN).expect("Pages URL");
+    let fragment = reqwest::Url::parse_with_params("https://unused.invalid", &[("connect", url.as_str()), ("key", &identity.public_key())]).unwrap();
+    link.set_fragment(fragment.query());
+    println!("{link}");
+    Ok(())
 }
 
 fn token(opts: Opts) -> Result<(), String> {

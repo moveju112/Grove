@@ -226,6 +226,9 @@ impl FromRequestParts<App> for Owner {
 
 /// 교차 사이트 요청과 DNS rebinding을 차단한다(SEC-002, SEC-004).
 pub async fn origin_guard(State(app): State<App>, req: Request, next: Next) -> Response {
+    if req.extensions().get::<crate::e2ee::Encrypted>().is_some() {
+        return next.run(req).await;
+    }
     if let Err(e) = check_origin(&app, req.headers()) {
         return e.into_response();
     }

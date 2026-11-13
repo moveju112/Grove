@@ -11,7 +11,7 @@ import { createServer } from "node:tls";
 
 type Reply = { status: number; body: unknown };
 type TlsHost = {
-    origin: string; token: string; name: string;
+    origin: string; token: string; name: string; project: string; link: string;
     api: (method: string, path: string, body?: unknown, headers?: Record<string, string>) => Promise<Reply>;
 };
 
@@ -42,7 +42,7 @@ const test = base.extend<{}, { tlsHost: TlsHost }>({
         const origin = `https://127.0.0.1:${port}`;
         let token = "";
         const api: TlsHost["api"] = (method, path, body, extra = {}) => new Promise((resolve, reject) => {
-            const req = request(origin + "/api/v1" + path, {
+            const req = request(origin + (path === "/e2ee" ? "/api/e2ee" : "/api/v1" + path), {
                 method, ca,
                 headers: { ...(token ? { authorization: `Bearer ${token}` } : {}), "content-type": "application/json", "idempotency-key": randomUUID(), ...extra },
             }, (response) => {
@@ -68,12 +68,13 @@ const test = base.extend<{}, { tlsHost: TlsHost }>({
             await expect.poll(async () => {
                 try { return (await api("GET", "/health")).status; }
                 catch { return 0; }
-            }, { timeout: 20_000 }).toBe(200);
+            }, { timeout: 20_000 }).toBe(426);
             token = readFileSync(join(work, "data/owner-token"), "utf8").trim();
             const project = join(work, "project");
             mkdirSync(project);
-            const name = "TLS 전용 프로젝트";
-            expect((await api("POST", "/projects", { root_path: project, name })).status).toBe(201);
+            const name = "project";
+            const link = execFileSync(process.env.GROVE_BIN!, ["connect-link", origin.replace("https:", "wss:") + "/api/e2ee",
+                "--data-dir", join(work, "data")], { encoding: "utf8" }).trim();
             // CA 신뢰 없이는 실제 TLS 인증서 검증이 실패한다.
             await expect(new Promise<void>((resolve, reject) => {
                 const req = request(origin, (response) => { response.resume(); resolve(); });
@@ -86,7 +87,7 @@ const test = base.extend<{}, { tlsHost: TlsHost }>({
                 req.on("error", reject);
                 req.end();
             })).rejects.toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID" });
-            await use({ origin, token, name, api });
+            await use({ origin, token, name, api, project, link });
         } finally {
             child.kill("SIGTERM");
             await exited;
@@ -97,20 +98,30 @@ const test = base.extend<{}, { tlsHost: TlsHost }>({
     }, { scope: "worker" }],
 });
 
-test("실제 HTTPS의 로그인·Secure refresh·SSE와 WSS 터미널은 같은 신뢰 경계를 사용한다", async ({ browser, tlsHost }) => {
+test("실제 TLS proxy 위에서 E2EE 로그인·봉인 refresh·SSE·터미널을 유지하고 평문 API를 막는다", async ({ browser, tlsHost }) => {
     // 브라우저의 인증서 예외는 이 임시 self-signed fixture의 context에만 둔다.
     const context = await browser.newContext({ ignoreHTTPSErrors: true });
     try {
         const page = await context.newPage();
         const socketProtocols: string[] = [];
-        page.on("websocket", (socket) => socketProtocols.push(new URL(socket.url()).protocol));
-        await page.goto(tlsHost.origin);
+        const wire: Buffer[] = [];
+        page.on("websocket", (socket) => {
+            socketProtocols.push(new URL(socket.url()).protocol);
+            socket.on("framesent", ({ payload }) => wire.push(Buffer.from(payload)));
+            socket.on("framereceived", ({ payload }) => wire.push(Buffer.from(payload)));
+        });
+        await page.goto(tlsHost.origin + "/" + new URL(tlsHost.link).hash);
         await page.locator("html[data-hydrated=true]").waitFor();
+        await page.getByRole("button", { name: "서버 확인 후 연결" }).click();
         await page.getByLabel("토큰", { exact: true }).fill(tlsHost.token);
         await page.getByRole("button", { name: "로그인", exact: true }).click();
         await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         const cookies = await context.cookies(tlsHost.origin + "/api/v1/auth/refresh");
-        expect(cookies.some((cookie) => cookie.name.startsWith("grove_refresh_") && cookie.httpOnly && cookie.secure && cookie.sameSite === "Strict")).toBe(true);
+        expect(cookies.some((cookie) => cookie.name.startsWith("grove_refresh_"))).toBe(false);
+        await page.getByRole("button", { name: "만들기", exact: true }).click();
+        await page.getByRole("button", { name: "프로젝트 추가", exact: true }).click();
+        await page.getByLabel("폴더 경로", { exact: true }).fill(tlsHost.project);
+        await page.getByRole("button", { name: "이 폴더를 프로젝트로 추가" }).click();
         await page.getByTestId("project-row").getByRole("button", { name: tlsHost.name, exact: true }).click();
         const terminals = page.getByTestId("terminal-list");
         await terminals.locator("summary").click();
@@ -121,10 +132,8 @@ test("실제 HTTPS의 로그인·Secure refresh·SSE와 WSS 터미널은 같은 
         await page.keyboard.type("echo tls-$((20+22))");
         await page.keyboard.press("Enter");
         await expect(terminal.locator(".xterm-rows")).toContainText("tls-42");
-        const terminalId = (await tlsHost.api("GET", "/projects")).body as { id: string }[];
-        const list = (await tlsHost.api("GET", `/projects/${terminalId[0]!.id}/terminals`)).body as { terminals: { id: string }[] };
-        const ticket = (await tlsHost.api("POST", `/terminals/${list.terminals[0]!.id}/ticket`, {})).body as { url: string };
-        const rejected = await tlsHost.api("GET", ticket.url.slice("/api/v1".length), undefined, {
+        expect((await tlsHost.api("GET", "/projects")).status).toBe(426);
+        const rejected = await tlsHost.api("GET", "/e2ee", undefined, {
             origin: tlsHost.origin.replace("https:", "http:"), "x-forwarded-proto": "https",
             connection: "Upgrade", upgrade: "websocket", "sec-websocket-key": randomBytes(16).toString("base64"), "sec-websocket-version": "13",
         });
@@ -133,7 +142,7 @@ test("실제 HTTPS의 로그인·Secure refresh·SSE와 WSS 터미널은 같은 
             const socket = new WebSocket(`wss://${location.host}${path}`);
             socket.onopen = () => { socket.close(); resolve(true); };
             socket.onerror = () => resolve(false);
-        }), ticket.url);
+        }), "/api/e2ee");
         expect(connected).toBe(true);
         await page.reload();
         await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
@@ -141,6 +150,25 @@ test("실제 HTTPS의 로그인·Secure refresh·SSE와 WSS 터미널은 같은 
         await expect(page.getByTestId("terminal-view").locator(".xterm-rows")).toContainText("tls-42");
         expect(socketProtocols.length >= 3).toBe(true);
         expect(socketProtocols.every((protocol) => protocol === "wss:")).toBe(true);
+        expect(wire.length).toBeGreaterThan(10);
+        expect(wire.some((frame) => frame.includes(Buffer.from(tlsHost.token)))).toBe(false);
+        expect(wire.some((frame) => frame.includes(Buffer.from("echo tls-$((20+22))")))).toBe(false);
+        const sealed = await page.evaluate(async () => {
+            const db = await new Promise<IDBDatabase>((resolve, reject) => {
+                const request = indexedDB.open("grove.e2ee.credentials.v1");
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            const entries = await new Promise<Array<{ key: CryptoKey; data: ArrayBuffer }>>((resolve, reject) => {
+                const request = db.transaction("credentials").objectStore("credentials").getAll();
+                request.onsuccess = () => resolve(request.result);
+                request.onerror = () => reject(request.error);
+            });
+            db.close();
+            return entries.map((entry) => ({ extractable: entry.key.extractable, algorithm: entry.key.algorithm.name, bytes: entry.data.byteLength }));
+        });
+        expect(sealed).toHaveLength(1);
+        expect(sealed[0]).toMatchObject({ extractable: false, algorithm: "AES-GCM" });
         page.once("dialog", (dialog) => dialog.accept());
         await page.getByTestId("terminal-view").getByRole("button", { name: "종료", exact: true }).click();
         await expect(page.getByTestId("terminal-view")).toHaveAttribute("data-conn", "readonly");

@@ -14,6 +14,19 @@ async fn browser_origin_scheme_follows_the_explicit_tls_boundary_not_forwarded_h
         let authority = server.base.strip_prefix("http://").unwrap();
         let expected = format!("{}://{authority}", if terminated { "https" } else { "http" });
         let rejected = format!("{}://{authority}", if terminated { "http" } else { "https" });
+        // TLS 앞단도 E2EE를 대체하지 않는다. Origin 계약 자체는 직접 확인한다.
+        if terminated {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert("host", authority.parse().unwrap());
+            headers.insert("origin", rejected.parse().unwrap());
+            headers.insert("x-forwarded-proto", "https".parse().unwrap());
+            assert!(grove::auth::check_origin(&server.server.as_ref().unwrap().app, &headers).is_err());
+            headers.insert("origin", expected.parse().unwrap());
+            assert!(grove::auth::check_origin(&server.server.as_ref().unwrap().app, &headers).is_ok());
+            let response = server.client.get(format!("{}/api/v1/health", server.base)).send().await.unwrap();
+            assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
+            continue;
+        }
         let response = server.client.post(format!("{}/api/v1/auth/browser-login", server.base))
             .header("origin", &rejected)
             .header("x-forwarded-proto", if terminated { "https" } else { "http" })
@@ -39,7 +52,7 @@ async fn websocket_origin_rejection_does_not_consume_the_single_use_ticket() {
 
     let dir = tempfile::tempdir().unwrap();
     let mut cfg = config(&dir.path().join("data"));
-    cfg.tls_terminated = true;
+    cfg.tls_terminated = false;
     let server = TestServer::start_with(dir, cfg).await;
     let project = server.create_project("websocket-origin").await;
     let (status, terminal) = server.post(&format!("/api/v1/projects/{}/terminals", project["id"].as_str().unwrap()), json!({ "name": "origin" })).await;
@@ -47,7 +60,7 @@ async fn websocket_origin_rejection_does_not_consume_the_single_use_ticket() {
     let id = terminal["id"].as_str().unwrap();
     let (_, ticket) = server.post(&format!("/api/v1/terminals/{id}/ticket"), json!({})).await;
     let socket_url = format!("{}{}", server.base.replace("http://", "ws://"), ticket["url"].as_str().unwrap());
-    for origin in [server.base.clone(), "https://attacker.example".into(), "null".into()] {
+    for origin in [server.base.replace("http://", "https://"), "https://attacker.example".into(), "null".into()] {
         let mut request = socket_url.as_str().into_client_request().unwrap();
         request.headers_mut().insert("origin", origin.parse().unwrap());
         request.headers_mut().insert("x-forwarded-proto", "https".parse().unwrap());
@@ -57,7 +70,7 @@ async fn websocket_origin_rejection_does_not_consume_the_single_use_ticket() {
         }
     }
     let mut request = socket_url.as_str().into_client_request().unwrap();
-    request.headers_mut().insert("origin", server.base.replace("http://", "https://").parse().unwrap());
+    request.headers_mut().insert("origin", server.base.parse().unwrap());
     let (mut socket, response) = tokio_tungstenite::connect_async(request).await.expect("올바른 origin의 첫 사용");
     assert_eq!(response.status(), StatusCode::SWITCHING_PROTOCOLS);
     socket.close(None).await.unwrap();

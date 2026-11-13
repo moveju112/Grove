@@ -5,6 +5,7 @@ import type { EventRecord } from "./generated";
 import { parseContract } from "./validation";
 import { accessToken, checkProtocol, refresh, setCapabilities } from "./client";
 import { Cursor, FrameParser, backoff } from "../state/events";
+import { transportFetch } from "./transport";
 
 export type StreamHandlers = {
     onEvent: (e: EventRecord) => void;
@@ -79,12 +80,12 @@ export class EventStream {
                 const q = new URLSearchParams({ sessions: this.sessions.join(",") });
                 if (this.cursor.seq !== null) q.set("cursor", String(this.cursor.seq));
                 let token = accessToken();
-                let resp = await fetch(`/api/v1/events?${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal });
+                let resp = await transportFetch(`/api/v1/events?${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal });
                 requireActive();
                 if (resp.status === 401 && (await refresh())) {
                     requireActive();
                     token = accessToken();
-                    resp = await fetch(`/api/v1/events?${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal });
+                    resp = await transportFetch(`/api/v1/events?${q}`, { headers: token ? { authorization: `Bearer ${token}` } : {}, signal });
                 }
                 requireActive();
                 checkProtocol(resp);

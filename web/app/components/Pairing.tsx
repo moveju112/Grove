@@ -6,8 +6,9 @@ import { insecureRemote } from "../state/hosts";
 import { pairingLink, pairingStatus, parsePairingLink, scanPairingImage } from "../state/pairing";
 import { useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { connection, connectionLink, parseConnectionLink, validateConnection, type Connection } from "../api/transport";
 
-type Issued = { id: string; code?: string; expires_at: string };
+type Issued = { id: string; code?: string; expires_at: string; encrypted?: Connection };
 
 function PairingQr({ link }: { link: string }) {
     const canvas = useRef<HTMLCanvasElement>(null);
@@ -33,6 +34,7 @@ function PairingQr({ link }: { link: string }) {
 export function Pairings() {
     const list = useQuery<PairingInfo[]>("pairings", () => api.get("/pairings"));
     const [name, setName] = useState("");
+    const [endpoint, setEndpoint] = useState(() => connection()?.endpoint ?? "");
     const [issued, setIssued] = useState<Issued | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -62,11 +64,16 @@ export function Pairings() {
         }
     };
     const issue = async (deviceName: string, replace_id?: string) => {
+        let encrypted: Connection | undefined;
+        if (endpoint.trim()) {
+            const identity = await api.get<{ key: string }>("/e2ee/identity");
+            encrypted = validateConnection({ endpoint: endpoint.trim(), key: identity.key });
+        }
         const result = await api.post<Issued>("/pairings", { name: deviceName, replace_id }, { requires: ["pairing_v1"] });
-        setIssued(result.code ? result : null);
+        setIssued(result.code ? { ...result, encrypted } : null);
         if (!result.code) setError("이미 발급한 요청이라 비밀을 다시 표시할 수 없습니다. 목록에서 링크를 재발급하세요.");
     };
-    const link = issued?.code ? pairingLink(location.origin, issued.code) : null;
+    const link = issued?.code ? (issued.encrypted ? connectionLink(issued.encrypted, issued.code) : pairingLink(location.origin, issued.code)) : null;
     return (
         <section className="pairings" aria-label="기기 페어링">
             <h3>QR·링크로 기기 등록</h3>
@@ -76,6 +83,7 @@ export function Pairings() {
             {["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) && <p className="warn small">현재 주소는 loopback입니다. 다른 기기에 전달하려면 그 기기에서 접속 가능한 HTTPS·VPN 주소로 이 화면을 열어 발급하세요.</p>}
             <form className="row" aria-label="페어링 링크 발급" onSubmit={(e) => { e.preventDefault(); void run(() => issue(name.trim())); }}>
                 <label>등록할 기기 이름<input value={name} maxLength={80} required onChange={(e) => setName(e.target.value)} /></label>
+                <label>외부 암호화 연결 주소<input value={endpoint} placeholder="wss://서버/api/e2ee" onChange={(e) => setEndpoint(e.target.value)} /></label>
                 <ServerActionButton type="submit" disabled={busy || !name.trim()}>페어링 링크 발급</ServerActionButton>
             </form>
             {link && issued && <div className="draft-note">
@@ -112,7 +120,12 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
     const loggedIn = isLoggedIn();
     useEffect(() => () => { sequence.current++; }, []);
     let target: { origin: string; code: string } | null = null;
+    let encryptedTarget: string | null = null;
     try { target = parsePairingLink(link); } catch { /* 제출할 때 오류 안내 */ }
+    try {
+        const parsed = parseConnectionLink(link);
+        encryptedTarget = connectionLink(parsed.connection, parsed.code);
+    } catch { /* 기존 로컬 링크도 지원한다. */ }
     const scan = async (file: File) => {
         const mine = ++sequence.current;
         setError(null);
@@ -127,6 +140,10 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
         <main className="login">
             <form aria-label="페어링 등록" onSubmit={(e) => {
                 e.preventDefault();
+                if (encryptedTarget) {
+                    if (!busy && !checking && !loggedIn) location.assign(encryptedTarget);
+                    return;
+                }
                 let parsed: { origin: string; code: string };
                 try { parsed = parsePairingLink(link); }
                 catch (e) { setError((e as Error).message); return; }
@@ -147,6 +164,7 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                     e.target.value = "";
                 }} /></label>
                 {target && <p>등록 대상: <strong className="host-address">{target.origin}</strong></p>}
+                {encryptedTarget && <p>등록 대상: <strong className="host-address">{new URL(parseConnectionLink(encryptedTarget).connection.endpoint).host}</strong></p>}
                 {checking && <p role="status">기존 로그인 상태 확인 중…</p>}
                 {loggedIn && <p role="status">이미 로그인된 브라우저입니다. 기존 로그인·초안을 덮어쓰지 않습니다. 별도 브라우저 프로필에서 등록하세요.</p>}
                 {target && insecureRemote(target.origin) && <p className="warn">암호화되지 않은 HTTP입니다. HTTPS 또는 신뢰하는 VPN에서 등록하세요.</p>}

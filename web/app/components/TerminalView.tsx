@@ -3,6 +3,7 @@ import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, rawGet } from "../api/client";
+import { terminalSocket, type TerminalSocket } from "../api/transport";
 import { TerminalCapture } from "./TerminalCapture";
 import { guardComposition, NO_MODIFIERS, TerminalInput, type Modifiers } from "./terminal/input";
 import { TerminalKeys } from "./terminal/TerminalKeys";
@@ -18,7 +19,7 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
     const [inputBlocked, setInputBlocked] = useState<string | null>(null);
     const blockedReason = serverBlocked ?? inputBlocked;
     const host = useRef<HTMLDivElement>(null);
-    const sock = useRef<WebSocket | null>(null);
+    const sock = useRef<TerminalSocket | null>(null);
     const [row, setRow] = useState<TerminalRow | null>(null);
     const [conn, setConn] = useState<"connecting" | "open" | "closed" | "readonly" | "missing" | "error">("connecting");
     const [retry, setRetry] = useState(0);
@@ -117,8 +118,7 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
                 throw e;
             }
             if (closed) return;
-            const proto = location.protocol === "https:" ? "wss:" : "ws:";
-            const ws = new WebSocket(`${proto}//${location.host}${url}`);
+            const ws = terminalSocket(url);
             ws.binaryType = "arraybuffer";
             sock.current = ws;
             let first = true;

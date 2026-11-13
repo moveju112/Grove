@@ -10,6 +10,7 @@ import { isArtifact } from "../state/artifactPreview";
 import { ExternalEditor } from "./files/ExternalEditor";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
+import { connection, transportFetch } from "../api/transport";
 
 type Entry = { name: string; path: string; kind: "dir" | "file" | "link_outside" | "other"; size: number | null; mtime: string | null };
 type Listing = { path: string; entries: Entry[]; truncated: boolean };
@@ -319,11 +320,45 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
     }, [projectId, c?.path, isNew, visible]); // eslint-disable-line react-hooks/exhaustive-deps
     // <img>·새 탭은 인증 헤더를 못 보내므로 5분짜리 파일 티켓을 받아 쓴다.
     const [ticket, setTicket] = useState<string | null>(null);
+    const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+    const downloadUrl = useRef<string | null>(null);
+    useEffect(() => () => { if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current); }, []);
+    const encrypted = !!connection();
     useEffect(() => {
         if (isNew || !c) return;
-        api.post<{ url: string }>(`/projects/${projectId}/files/ticket`, { path: real }).then((t) => setTicket(t.url), () => setTicket(null));
+        const abort = new AbortController();
+        let objectUrl: string | null = null;
+        setTicket(null);
+        setPreviewUrl(null);
+        void api.post<{ url: string }>(`/projects/${projectId}/files/ticket`, { path: real }, { signal: abort.signal }).then(async (t) => {
+            if (abort.signal.aborted) return;
+            setTicket(t.url);
+            if (encrypted && ["image", "svg", "pdf"].includes(c.preview)) {
+                const response = await transportFetch(t.url, { signal: abort.signal });
+                if (!response.ok) throw new Error("미리보기를 불러오지 못했습니다.");
+                const blob = await response.blob();
+                if (abort.signal.aborted) return;
+                objectUrl = URL.createObjectURL(blob);
+                setPreviewUrl(objectUrl);
+            }
+        }).catch(() => { if (!abort.signal.aborted) setTicket(null); });
+        return () => { abort.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [c?.sha256]);
+    const download = async () => {
+        if (!ticket) return;
+        try {
+            const response = await transportFetch(`${ticket}?download=true`, { signal: AbortSignal.timeout(300_000) });
+            if (!response.ok) throw new Error("파일을 내려받지 못했습니다.");
+            const url = URL.createObjectURL(await response.blob());
+            if (downloadUrl.current) URL.revokeObjectURL(downloadUrl.current);
+            downloadUrl.current = url;
+            const link = document.createElement("a");
+            link.href = url;
+            link.download = real.split("/").pop() ?? "download";
+            link.click();
+        } catch { setMsg({ kind: "err", text: "파일을 내려받지 못했습니다. 다시 시도하세요." }); }
+    };
     const dirty = c?.text !== null && c !== null && text !== (c.text ?? "");
     const capture = (value = text) => {
         const el = area.current;
@@ -354,7 +389,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
         </>}
         <button className="ghost small" onClick={() => void load(true).catch(loadFailed)}>파일 다시 확인</button>
     </div> : <p className="muted">여는 중…</p>;
-    const raw = ticket;
+    const raw = encrypted ? previewUrl : ticket;
     const save = () => {
         if (disabled || mutation.locked) return;
         setMsg(null);
@@ -369,7 +404,8 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
                 {!isNew && <span className="muted small" data-testid="file-watch-status">
                     {!visible ? "변경 확인 일시정지" : watchError ? "변경 확인 대기" : watchReady ? "자동 확인 · 5초" : "변경 확인 중"}
                 </span>}
-                {raw && <a className="small" href={`${raw}?download=true`} download>내려받기</a>}
+                {encrypted ? ticket && <button className="small ghost" onClick={() => void download()}>내려받기</button>
+                    : raw && <a className="small" href={`${raw}?download=true`} download>내려받기</a>}
             </h2>
             {c.preview === "image" || (c.preview === "svg" && c.text === null) ? (
                 raw ? <img className="preview" src={raw} alt={real} /> : <p className="muted">불러오는 중…</p>

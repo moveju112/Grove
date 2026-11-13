@@ -6,8 +6,13 @@ import { ProtocolBanner, UpdateBanner, registerServiceWorker } from "../componen
 import { PairingLogin } from "../components/Pairing";
 import { AuthRecovery } from "../components/pwa/AuthRecovery";
 import { checkCompatibility, lifecycleSnapshot, serverBlockReason, useLifecycle } from "../components/pwa/lifecycle";
+import { EncryptedConnection } from "../components/EncryptedConnection";
 
 export default function AppRoute() {
+    return <EncryptedConnection><ConnectedApp /></EncryptedConnection>;
+}
+
+function ConnectedApp() {
     const [state, setState] = useState<"checking" | "in" | "out">("checking");
     const lifecycle = useLifecycle();
     const [deferredAuth, setDeferredAuth] = useState(false);

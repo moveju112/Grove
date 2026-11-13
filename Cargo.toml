@@ -42,6 +42,11 @@ flate2 = "1"
 tar = "0.4"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 chacha20poly1305 = "0.10"
+aes-gcm = "=0.10.3"
+hkdf = "=0.12.4"
+curve25519-dalek = "=4.1.3"
+tower = { version = "0.5", features = ["util"] }
+tokio-tungstenite = "0.30"
 cap-std = "=4.0.3"
 
 [target.'cfg(unix)'.dependencies]
@@ -55,7 +60,6 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 tempfile = "3"
 rusqlite = { version = "0.37", features = ["bundled", "backup", "functions"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "blocking"] }
-tokio-tungstenite = "0.30"
 
 [profile.release]
 lto = "thin"
