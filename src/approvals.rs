@@ -207,7 +207,14 @@ pub fn create_call(
 ) -> ApiResult<ToolCallRow> {
     let id = crate::util::new_id();
     let mut scope: Option<&str> = None;
-    let plan=tools::plan(name,args,root).and_then(|(spec,planned)| {
+    let plan=tools::plan(name,args,root).and_then(|(spec,mut planned)| {
+        if spec.name == "shell" && args.get("cwd").is_none() {
+            // 생략한 cwd만 범위별 기본값으로 해석해 최초 승인 대상에 고정한다.
+            // root는 호출자가 sessions::exec_root로 확정한 실제 실행 위치다.
+            let cwd = crate::settings::execution_cwd(c, root, Some(project_id), Some(session_id), None)
+                .map_err(|e| tools::ToolError::new(e.code, e.message))?;
+            planned.target["cwd"] = json!(tools::fs::rel_display(root, &cwd));
+        }
         if spec.name=="mcp_call" {
             crate::mcp::plan_call(c,args,project_id,session_id).map(|p|(spec,p)).map_err(|e|tools::ToolError::new(e.code,e.message))
         } else { Ok((spec,planned)) }

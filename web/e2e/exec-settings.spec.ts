@@ -31,7 +31,7 @@ test("범위별 셸·한도·작업 위치 저장과 상속 복원은 기존 설
     await cwd.getByLabel("기본 작업 위치", { exact: true }).fill("work");
     await cwd.getByRole("button", { name: "저장", exact: true }).click();
     await expect(cwd.getByRole("status")).toContainText("저장됨");
-    await expect(panel).toContainText("통합 전에는 생략한 cwd에 적용되지 않습니다");
+    await expect(panel).toContainText("cwd를 생략한 새 모델 셸·대화 작업에 적용됩니다");
     await expect(panel).toContainText("이미 계획·승인된 호출의 shell·limits·cwd는 바꾸지 않습니다");
     const sessionQuery = `/settings/effective?session_id=${session.id}`;
     const inherited = (await apiCall<Effective>("GET", sessionQuery)).items.find((item) => item.key === "exec.max_memory_mb")!;
