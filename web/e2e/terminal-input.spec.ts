@@ -33,6 +33,9 @@ async function openTerminal(page: Page) {
     const name = `input-${randomUUID()}`;
     const terminal = await apiCall<{ id: string }>("POST", `/projects/${a.id}/terminals`, { name });
     await login(page);
+    // 좁은 화면은 사이드바가 닫힌 상태로 시작한다.
+    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
+    if (await sidebar.getAttribute("aria-expanded") === "false") await sidebar.click();
     await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
     const list = page.getByTestId("terminal-list");
     await openDetails(list);

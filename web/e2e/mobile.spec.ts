@@ -48,7 +48,7 @@ test("모바일 터미널 보조 키로 Ctrl+C와 화살표를 보낼 수 있다
     // 입력한 명령 줄에는 'up-2'가 없으므로(셸이 계산) 개수가 곧 실행 횟수다.
     const runs = async () => ((await apiText(`/terminals/${t.id}/screen`)).match(/up-2/g) ?? []).length;
     await expect.poll(runs).toBe(1);
-    await keys.getByRole("button", { name: "↑" }).click();
+    await keys.getByRole("button", { name: "위 화살표" }).click();
     await view.locator(".xterm").click();
     await page.keyboard.press("Enter");
     await expect.poll(runs).toBe(2);
