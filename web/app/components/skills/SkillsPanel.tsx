@@ -2,6 +2,7 @@ import {
     bindingOf, sameSelection, sameSource, selectionStatus, sourceLabel,
     type SkillBody, type SkillListing, type SkillSelection,
 } from "./types";
+import { Requirements } from "./requirements/Requirements";
 
 export type SkillsPanelProps = {
     listing: SkillListing | null;
@@ -44,6 +45,7 @@ export function SkillsPanel({
         </p>
         <p className="muted small">
             이름은 디렉터리명입니다. metadata의 이름·alias·도구 요구는 해석하지 않습니다.
+            선택적 requirements.grove.json version 1의 tools/platforms/skills 배열만 검증합니다.
             alias는 같은 root 안의 동일 파일 경로로 향하는 symlink만 표시합니다.
             다른 root 간 alias와 hardlink는 판별하지 않습니다.
         </p>
@@ -68,6 +70,7 @@ export function SkillsPanel({
                     {entry.metadata === "opaque_front_matter" && <span className="warn small">front matter는 원문으로만 표시합니다.</span>}
                     <span className="muted small">revision <code>{entry.revision}</code></span>
                     <span role="status">{status === "selected" ? "선택됨 · 다음 모델 호출 직전 재검증" : status === "stale" ? "선택한 revision과 다름 · 다시 확인 필요" : "미선택"}</span>
+                    <Requirements report={entry.requirements} />
                     <div className="inline">
                         <button type="button" className="ghost small" disabled={blocked} onClick={() => onInspect(bindingOf(entry))}
                             aria-label={`${entry.name} · ${sourceLabel(entry.source)} 본문 보기`}>본문 보기</button>
@@ -101,11 +104,13 @@ export function SkillsPanel({
             <h4>{previewEntry.name} · 읽기 전용 본문</h4>
             <p className="muted small">{sourceLabel(previewEntry.source)} · revision <code>{preview.selection.revision}</code></p>
             <p className="warn small">본문 보기만으로 적용하지 않습니다. 선택하면 다음 모델 호출 직전 출처·revision을 검증해 지침에 넣습니다. 명령은 실행하지 않습니다.</p>
+            <Requirements report={preview.requirements ?? previewEntry.requirements} />
             <pre className="text" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: "24rem", overflow: "auto" }}>{preview.text}</pre>
             {onEdit && <button type="button" disabled={blocked || previewEntry.symlink}
                 onClick={() => onEdit(preview)}>본문 편집</button>}
             {onEdit && previewEntry.symlink && <p className="muted small">symlink는 조회만 가능하며 원본을 이 편집기로 저장하지 않습니다.</p>}
-            <button type="button" disabled={blocked || previewEntry.enabled === false || selectionStatus(previewEntry, selected) !== "none"
+            <button type="button" disabled={blocked || (preview.requirements ?? previewEntry.requirements)?.status === "blocked"
+                || previewEntry.enabled === false || selectionStatus(previewEntry, selected) !== "none"
                 || selected.some((selection) => !entries.some((entry) => sameSelection(entry, selection)))
                 || selected.some((selection) => {
                     const other = entries.find((entry) => sameSelection(entry, selection));

@@ -590,7 +590,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
         .as_i64()
         .and_then(|m| Some(crate::util::parse_time(&t.created_at)? + time::Duration::minutes(m)));
     let system = system_prompt(&def, &root.to_string_lossy(), t.tools_enabled)
-        + &crate::skills::api::model_instructions(c, data, &t.session_id)?;
+        + &crate::skills::api::model_instructions(c, data, &t.session_id, t.tools_enabled, mp.capabilities.tools, cli_backend)?;
     // 기억·지침 등 시스템 입력이 바뀌면 옛 입력을 품은 native 대화를 재사용하지 않는다.
     let cli = if cli_backend { Some(crate::provider::cli::CliContext {
         cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system)?

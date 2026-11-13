@@ -4,6 +4,12 @@ export type SkillSource =
     | { kind: "global"; root_id: string }
     | { kind: "project"; root_id: string; project_id: string };
 export type SkillSelection = { id: string; source: SkillSource; revision: string };
+export type SkillRequirements = {
+    declaration: { version: number; tools: string[]; platforms: string[]; skills: string[] } | null;
+    status: "satisfied" | "blocked" | "unknown";
+    problems: { code: string; message: string }[];
+};
+export type SkillCapabilityContext = { profile_id?: string; tools_enabled?: boolean };
 export type SkillEntry = SkillSelection & {
     enabled: boolean;
     name: string;
@@ -12,8 +18,9 @@ export type SkillEntry = SkillSelection & {
     priority: "preferred" | "shadowed" | "conflict" | "incomplete";
     conflicts: string[];
     metadata: "none" | "opaque_front_matter";
+    requirements?: SkillRequirements;
 };
-export type SkillBody = { selection: SkillSelection; text: string };
+export type SkillBody = { selection: SkillSelection; text: string; requirements?: SkillRequirements };
 export type SkillListing = {
     entries: SkillEntry[];
     issues: { source: SkillSource; name: string | null; code: string }[];
@@ -31,11 +38,16 @@ export type SkillChange = { id: string; revision: string; enabled: boolean };
 
 const path = (session: string) => `/sessions/${encodeURIComponent(session)}/skills`;
 export const skillsApi = {
-    list: (session: string, signal?: AbortSignal) => api.get<SessionSkills>(path(session), { signal }),
-    inspect: (session: string, selection: SkillSelection, signal?: AbortSignal) =>
-        api.post<SkillBody>(`${path(session)}/body`, { selection }, { signal }),
-    select: (session: string, selection: SkillSelection, selected: boolean, key: string, signal?: AbortSignal) =>
-        api.put<{ selected: SkillSelection[] }>(`${path(session)}/selection`, { selection, selected }, { key, signal }),
+    list: (session: string, signal?: AbortSignal, context: SkillCapabilityContext = {}) => {
+        const query = new URLSearchParams();
+        if (context.profile_id) query.set("profile_id", context.profile_id);
+        if (context.tools_enabled !== undefined) query.set("tools_enabled", String(context.tools_enabled));
+        return api.get<SessionSkills>(`${path(session)}${query.size ? `?${query}` : ""}`, { signal });
+    },
+    inspect: (session: string, selection: SkillSelection, signal?: AbortSignal, context: SkillCapabilityContext = {}) =>
+        api.post<SkillBody>(`${path(session)}/body`, { selection, context }, { signal }),
+    select: (session: string, selection: SkillSelection, selected: boolean, key: string, signal?: AbortSignal, context: SkillCapabilityContext = {}) =>
+        api.put<{ selected: SkillSelection[] }>(`${path(session)}/selection`, { selection, selected, context }, { key, signal }),
     manage: (session: string, body: SkillMutation, key: string, signal?: AbortSignal) =>
         api.put<SkillChange>(`${path(session)}/management`, body, { key, signal }),
 };
