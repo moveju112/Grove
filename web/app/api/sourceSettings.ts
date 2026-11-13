@@ -1,6 +1,6 @@
 import { api } from "./client";
 
-// src/source_settings의 안전한 직렬화 계약. 원문·경로·적용값은 포함하지 않는다.
+// src/source_settings의 안전한 직렬화 계약. 원문·절대 경로·적용값은 포함하지 않는다.
 export type SourceId = "claude_user" | "claude_project" | "claude_project_local" | "codex_user" | "codex_project";
 
 export type SafeSettings = {
@@ -19,7 +19,20 @@ export type SourceSettings = { source: SourceId } & (
     | { status: "unsupported_format"; format: "toml" }
 );
 
-export function getSourceSettings(projectId?: string): Promise<{ items: SourceSettings[] }> {
+export type ResourceState<T> =
+    | { status: "present"; entries: T[]; ignored_invalid_entries: boolean }
+    | { status: "missing" }
+    | { status: "read_error"; code: ReadErrorCode }
+    | { status: "unsupported_format"; format: "toml" };
+
+export type SkillMetadata = { name: string; description: string | null; relative_path: string };
+export type HookMetadata = { event: string; matcher: string | null; has_command: boolean };
+export type SourceResource = { source: SourceId; relative_path: string } & (
+    | { kind: "skills"; result: ResourceState<SkillMetadata> }
+    | { kind: "hooks"; result: ResourceState<HookMetadata> }
+);
+
+export function getSourceSettings(projectId?: string): Promise<{ items: SourceSettings[]; resources: SourceResource[] }> {
     const query = projectId === undefined ? "" : `?${new URLSearchParams({ project_id: projectId })}`;
     return api.get(`/source-settings${query}`);
 }

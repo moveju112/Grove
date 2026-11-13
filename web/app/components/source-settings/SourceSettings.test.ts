@@ -31,6 +31,24 @@ describe("인증된 원본 설정 조회 연결", () => {
         expect(keyA).not.toBe(keyB);
     });
 
+    it("API 리소스 목록을 원본 출처에 연결한다", () => {
+        query.mockReturnValue({
+            loading: false, error: null, reload: vi.fn(),
+            data: {
+                items: [{ source: "codex_project", status: "missing" }],
+                resources: [{
+                    source: "codex_project", kind: "skills", relative_path: ".agents/skills",
+                    result: { status: "present", ignored_invalid_entries: false, entries: [{
+                        name: "source-skill", description: "Source description", relative_path: ".agents/skills/source-skill/SKILL.md",
+                    }] },
+                }],
+            },
+        });
+        const html = renderToStaticMarkup(createElement(SourceSettings, { projectId: "project-a" }));
+        expect(html).toContain("Source description");
+        expect(html).toContain(".agents/skills/source-skill/SKILL.md");
+    });
+
     it("실패 시 오래된 결과와 서버 오류 본문을 표시하지 않는다", () => {
         query.mockReturnValue({
             loading: false, error: new Error("source-private-marker"),

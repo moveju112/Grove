@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { apiCall, login, state } from "./helpers";
 
@@ -15,9 +15,19 @@ async function project() {
     mkdirSync(join(root, ".codex"));
     const original = JSON.stringify({
         autoMemoryEnabled: true, cleanupPeriodDays: 13,
-        env: { FIXTURE: "source-private-marker" }, hooks: { Stop: "source-private-marker" },
+        env: { FIXTURE: "source-private-marker" },
+        hooks: { PreToolUse: [{ matcher: "Bash|Read", hooks: [{
+            type: "command", command: `touch '${join(root, "must-not-exist")}' source-private-marker`,
+        }] }] },
     });
     writeFileSync(join(root, ".claude/settings.json"), original);
+    mkdirSync(join(root, ".claude/skills/review"), { recursive: true });
+    writeFileSync(join(root, ".claude/skills/review/SKILL.md"), "---\nname: source-review\ndescription: Read-only source review\n---\nsource-private-marker body\n");
+    mkdirSync(join(root, ".agents/skills/codex-review"), { recursive: true });
+    writeFileSync(join(root, ".agents/skills/codex-review/SKILL.md"), "---\nname: codex-review\ndescription: Codex source review\n---\nsource-private-marker body\n");
+    writeFileSync(join(root, ".codex/hooks.json"), JSON.stringify({
+        hooks: { Stop: [{ hooks: [{ type: "command", command: "source-private-marker" }] }] },
+    }));
     writeFileSync(join(root, ".codex/config.toml"), 'private = "source-private-marker"');
     const item = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
     return { ...item, root, original };
@@ -32,16 +42,27 @@ test("프로젝트 설정은 실제 인증 API에서 안전한 원본 정보만 
     const panel = page.getByTestId("source-settings");
     const source = panel.getByRole("region", { name: "Claude · 프로젝트 원본", exact: true });
     await expect(source).toContainText("13일");
+    await expect(source).toContainText("Read-only source review");
+    await expect(source).toContainText(".claude/skills/review/SKILL.md");
+    await expect(source).toContainText("PreToolUse");
+    await expect(source).toContainText("Bash|Read");
+    await expect(source).toContainText("명령 있음");
+    const codex = panel.getByRole("region", { name: "Codex · 프로젝트 원본", exact: true });
+    await expect(codex).toContainText("Codex source review");
+    await expect(codex).toContainText("Stop");
     await expect(panel).toContainText("원본을 조회했다고 Grove에 적용된 것은 아닙니다");
     await expect(panel).toContainText("미지원 형식(TOML)");
     await expect(panel).not.toContainText("source-private-marker");
     await expect(panel).not.toContainText(item.root);
     await expect(panel.locator("input, textarea, select")).toHaveCount(0);
+    await expect(panel.getByRole("button")).toHaveCount(1);
     expect(readFileSync(join(item.root, ".claude/settings.json"), "utf8")).toBe(item.original);
+    expect(existsSync(join(item.root, "must-not-exist"))).toBe(false);
 
     writeFileSync(join(item.root, ".claude/settings.json"), "source-private-marker malformed");
     await panel.getByRole("button", { name: "원본 출처 다시 조회", exact: true }).click();
-    await expect(source.getByRole("alert")).toContainText("올바른 JSON이 아니어서");
+    await expect(source.getByRole("alert")).toHaveCount(2);
+    await expect(source).toContainText("올바른 JSON이 아니어서");
     await expect(panel).not.toContainText("source-private-marker");
     writeFileSync(join(item.root, ".claude/settings.json"), '{"cleanupPeriodDays":17}');
     await panel.getByRole("button", { name: "원본 출처 다시 조회", exact: true }).click();
@@ -68,14 +89,57 @@ test("원본 API는 인증·소유자 경계를 지키고 root 입력과 다른 
         expect(unknown.status()).toBe(404);
         const safe = await request.get(`${base}/source-settings?project_id=${a.id}`, { headers: owner });
         expect(safe.status()).toBe(200);
-        expect(await safe.json()).toEqual({ items: [
+        const data = await safe.json();
+        expect(data.items).toEqual([
             { source: "claude_project", status: "present", projection: { autoMemoryEnabled: true, cleanupPeriodDays: 13 }, ignored_invalid_fields: false },
             { source: "claude_project_local", status: "missing" },
             { source: "codex_project", status: "unsupported_format", format: "toml" },
-        ] });
+        ]);
+        expect(data.resources).toEqual(expect.arrayContaining([
+            {
+                source: "claude_project", kind: "skills", relative_path: ".claude/skills",
+                result: { status: "present", ignored_invalid_entries: false, entries: [{
+                    name: "source-review", description: "Read-only source review", relative_path: ".claude/skills/review/SKILL.md",
+                }] },
+            },
+            {
+                source: "codex_project", kind: "hooks", relative_path: ".codex/hooks.json",
+                result: { status: "present", ignored_invalid_entries: false, entries: [{ event: "Stop", matcher: null, has_command: true }] },
+            },
+        ]));
+        expect(JSON.stringify(data)).not.toContain("source-private-marker");
+        expect(JSON.stringify(data)).not.toContain(a.root);
     } finally {
         await apiCall("DELETE", `/devices/${device.id}`);
     }
+});
+
+test("리소스 형식 오류와 symlink는 원문 없이 표시하고 재조회로 복구한다", async ({ page }) => {
+    const item = await project();
+    writeFileSync(join(item.root, ".claude/skills/review/SKILL.md"), "---\nname: source-review\ndescription: [source-private-marker]\n---\nsource-private-marker");
+    symlinkSync("review", join(item.root, ".claude/skills/alias"));
+    symlinkSync(join(item.root, ".agents/skills/codex-review"), join(item.root, ".claude/skills/escape"));
+    writeFileSync(join(item.root, ".codex/hooks.json"), "source-private-marker malformed");
+    await login(page);
+    await page.getByTestId("project-row").getByRole("button", { name: item.name, exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    await page.getByLabel("설정 검색", { exact: true }).fill("원본");
+    const panel = page.getByTestId("source-settings");
+    const source = panel.getByRole("region", { name: "Claude · 프로젝트 원본", exact: true });
+    const codex = panel.getByRole("region", { name: "Codex · 프로젝트 원본", exact: true });
+    await expect(source).toContainText("일부 항목은 형식");
+    await expect(source).not.toContainText("Codex source review");
+    await expect(codex.getByRole("alert")).toContainText("올바른 JSON이 아니어서");
+    await expect(panel).not.toContainText("source-private-marker");
+    writeFileSync(join(item.root, ".codex/hooks.json"), '{"hooks":{"Stop":[{"matcher":"API_KEY=source-private-marker","hooks":[{"type":"command","command":"source-private-marker"}]}]}}');
+    writeFileSync(join(item.root, ".claude/skills/review/SKILL.md"), "---\nname: Recovered review\ndescription: 'API_KEY=source-private-marker'\n---\nsource-private-marker");
+    await panel.getByRole("button", { name: "원본 출처 다시 조회", exact: true }).click();
+    await expect(source).toContainText("Recovered review");
+    await expect(source).toContainText("[redacted]");
+    await expect(codex.getByRole("alert")).toHaveCount(0);
+    await expect(codex).toContainText("명령 있음");
+    await expect(codex).toContainText("[redacted]");
+    await expect(panel).not.toContainText("source-private-marker");
 });
 
 test("조회 실패 화면은 서버 오류 본문을 숨기고 다시 조회할 수 있다", async ({ page }) => {

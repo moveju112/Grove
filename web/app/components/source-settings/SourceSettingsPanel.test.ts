@@ -13,6 +13,60 @@ function ready(items: SourceSettings[]) {
 }
 
 describe("원본 설정의 읽기 전용 출처", () => {
+    it("출처별 스킬 메타데이터와 hook 존재만 표시하고 원문이나 동작을 추가하지 않는다", () => {
+        const html = render({
+            status: "ready",
+            items: [
+                { source: "claude_project", status: "missing" },
+                { source: "codex_project", status: "missing" },
+            ],
+            resources: [
+                {
+                    source: "claude_project", kind: "skills", relative_path: ".claude/skills",
+                    result: { status: "present", ignored_invalid_entries: false, entries: [{
+                        name: "Review", description: "Read-only review", relative_path: ".claude/skills/review/SKILL.md",
+                        body: "source-private-marker",
+                    }] },
+                },
+                {
+                    source: "codex_project", kind: "hooks", relative_path: ".codex/hooks.json",
+                    result: { status: "present", ignored_invalid_entries: true, entries: [{
+                        event: "PreToolUse", matcher: "Bash|Read", has_command: true,
+                        command: "source-private-marker",
+                    }, { event: "Stop", matcher: null, has_command: false }] },
+                },
+                {
+                    source: "codex_project", kind: "hooks", relative_path: ".codex/config.toml",
+                    result: { status: "unsupported_format", format: "toml" },
+                },
+            ] as unknown as NonNullable<Extract<SourceSettingsView, { status: "ready" }>["resources"]>,
+        });
+        expect(html).toContain("Read-only review");
+        expect(html).toContain(".claude/skills/review/SKILL.md");
+        expect(html).toContain("PreToolUse");
+        expect(html).toContain("Bash|Read");
+        expect(html).toContain("명령 있음");
+        expect(html).toContain("명령 없음");
+        expect(html).toContain("일부 항목은 형식");
+        expect(html).toContain("Inline hook");
+        expect(html).not.toContain("source-private-marker");
+        expect(html).not.toMatch(/<(button|input|textarea|select|form)\b/);
+    });
+
+    it("리소스 부재·읽기 실패·빈 목록을 서로 구별한다", () => {
+        const html = render({
+            status: "ready",
+            items: [{ source: "claude_user", status: "missing" }],
+            resources: [
+                { source: "claude_user", kind: "skills", relative_path: "skills", result: { status: "missing" } },
+                { source: "claude_user", kind: "hooks", relative_path: "settings.json", result: { status: "read_error", code: "invalid_shape" } },
+            ],
+        });
+        expect(html).toContain("원본 리소스가 없습니다");
+        expect(html).toContain("리소스 읽기 실패");
+        expect(html).toContain('role="alert"');
+    });
+
     it("원본과 Grove 실제 적용 설정을 구분하고 쓰기 동작을 제공하지 않는다", () => {
         const html = ready([{
             source: "claude_project", status: "present",
