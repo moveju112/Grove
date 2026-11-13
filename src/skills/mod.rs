@@ -1,4 +1,4 @@
-//! RESOURCE-010/012/014: 허용된 root의 읽기 전용 스킬 목록·본문·명시적 선택.
+//! RESOURCE-010/011/012/014: 허용된 root의 목록·본문·명시적 선택과 Grove 관리.
 //!
 //! 서버가 인증·프로젝트 권한 확인 후 `AllowedRoot`를 구성한다. client 경로를
 //! 받지 않으며, ID는 경로로 역변환하지 않는다. I/O는 기존 ProjectFs capability만 쓴다.
@@ -6,6 +6,7 @@
 //! metadata는 해석하지 않는다. 사용자 선택만 모델 지침에 적용하며 자동 매칭은 없다.
 
 pub mod api;
+pub mod management;
 
 use crate::project_fs::ProjectFs;
 use crate::tools::{ToolError, ToolResult};
@@ -48,6 +49,7 @@ pub struct AllowedRoot {
     source: SkillSource,
     path: PathBuf,
     fs: ProjectFs,
+    direct: bool,
 }
 
 impl AllowedRoot {
@@ -59,7 +61,7 @@ impl AllowedRoot {
         }
         let path = crate::util::canonical(path).map_err(io_error)?;
         let fs = ProjectFs::open(&path).map_err(io_error)?;
-        Ok(Self { source, path, fs })
+        Ok(Self { source, path, fs, direct: true })
     }
 
     /// 서버가 정한 부모에서 capability로 하위 root를 연다. client 경로는 받지 않는다.
@@ -86,7 +88,9 @@ impl AllowedRoot {
             Some(id) => SkillSource::Project { root_id, project_id: id.to_owned() },
             None => SkillSource::Global { root_id },
         };
-        Ok(Some(Self { source, path, fs }))
+        // 내부 root alias는 기존 읽기 정책으로 유지하되 원본 CLI 정의로 우회 저장하지 않는다.
+        let direct = target == relative;
+        Ok(Some(Self { source, path, fs, direct }))
     }
 }
 
@@ -111,7 +115,8 @@ pub struct SkillEntry {
     pub id: String,
     pub name: String,
     pub source: SkillSource,
-    /// 원문 전체 bytes의 SHA-256. metadata가 바뀌어도 기존 선택은 무효다.
+    /// 원문 전체 bytes의 SHA-256. 활성 상태 변경 이력이 있으면 관리 세대도 포함한다.
+    /// metadata 또는 활성 세대가 바뀌면 기존 선택은 무효다.
     pub revision: String,
     pub symlink: bool,
     /// 같은 root에서 같은 canonical 상대 경로로 향하는 다른 항목.
@@ -120,6 +125,7 @@ pub struct SkillEntry {
     pub priority: SkillPriority,
     pub conflicts: Vec<String>,
     pub metadata: MetadataSupport,
+    pub enabled: bool,
 }
 
 impl SkillEntry {
@@ -163,6 +169,7 @@ struct Record {
     root: usize,
     name: String,
     target: PathBuf,
+    generation: i64,
 }
 
 struct Loaded {
@@ -216,6 +223,8 @@ impl SkillCatalog {
                     issues.push(issue(root, None, "unsupported_name"));
                     continue;
                 };
+                // 중단된 추가의 비공개 staging은 완성된 스킬이나 alias 후보가 아니다.
+                if name.starts_with(".grove-skill-") { continue; }
                 let meta = match root.fs.dir.symlink_metadata(name) {
                     Ok(meta) => meta,
                     Err(err) => {
@@ -251,8 +260,9 @@ impl SkillCatalog {
                     priority: SkillPriority::Preferred,
                     conflicts: vec![],
                     metadata: loaded.metadata,
+                    enabled: true,
                 };
-                pairs.push((item, Record { root: index, name: name.to_owned(), target: loaded.target }));
+                pairs.push((item, Record { root: index, name: name.to_owned(), target: loaded.target, generation: 0 }));
             }
         }
         pairs.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
@@ -318,7 +328,7 @@ impl SkillCatalog {
         let index = self.index(selection)?;
         let record = &self.records[index];
         let loaded = load(&self.roots[record.root], &record.name)?;
-        if loaded.target != record.target || loaded.revision != selection.revision {
+        if loaded.target != record.target || management::revision(&loaded.revision, record.generation) != selection.revision {
             return Err(error("skill_changed", "출처 또는 본문이 변경됐습니다. 다시 조회하고 선택하세요"));
         }
         Ok(SkillBody { selection: selection.clone(), text: loaded.text })
@@ -339,6 +349,7 @@ impl SkillSelections {
     /// 같은 이름/같은 root target을 중복 선택하려면 기존 선택을 먼저 명시적으로 해제한다.
     /// 동일 binding 재선택은 live 검증 후 멱등 성공한다. 실패는 상태를 바꾸지 않는다.
     pub fn select(&mut self, catalog: &SkillCatalog, selection: &SkillSelection) -> ToolResult<()> {
+        catalog.require_enabled(selection)?;
         catalog.read(selection)?;
         let index = catalog.index(selection)?;
         for current in &self.bindings {
@@ -366,6 +377,7 @@ impl SkillSelections {
     pub fn validate(&self, catalog: &SkillCatalog) -> ToolResult<Vec<SkillBody>> {
         let mut seen = Vec::new();
         for binding in &self.bindings {
+            catalog.require_enabled(binding)?;
             let index = catalog.index(binding)?;
             if seen.iter().any(|&previous| catalog.conflicting(index, previous)) {
                 return Err(error("selection_conflict", "선택한 스킬이 동명 또는 alias로 겹칩니다. 다시 확인하세요"));
@@ -373,6 +385,18 @@ impl SkillSelections {
             seen.push(index);
         }
         self.bindings.iter().map(|binding| catalog.read(binding)).collect()
+    }
+}
+
+impl SkillCatalog {
+    fn require_enabled(&self, selection: &SkillSelection) -> ToolResult<()> {
+        let entry = self.listing.entries.iter()
+            .find(|entry| entry.id == selection.id && entry.source == selection.source);
+        if entry.is_some_and(|entry| !entry.enabled) {
+            return Err(error("skill_disabled", "비활성 스킬은 적용할 수 없습니다. 기존 선택을 해제하세요"));
+        }
+        self.index(selection)?;
+        Ok(())
     }
 }
 
