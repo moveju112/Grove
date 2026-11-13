@@ -54,7 +54,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 31 | ready · `997c061` 후속 통합·Linux 인수 완료 | 기존 Rust 42개·웹 근거 보존, 기능 E2E 14개 통과. 통합 Rust 8개·타입·E2E 5개 통과. Windows/macOS 실측·향후 hook 결합은 SETTINGS-011과 이월에 보존 |
 | 33 | 기존 세션 브라우저 인수 후속 한 번 접수 | `442e020`의 `work/33.md`에 model-fallback spec·자기 결함 수정 배정. 기존 Rust·웹 근거 보존, fast=false 명시·재조회. `status=sent`이며 완료 확인은 아님 |
 | 29 | 기존 세션 브라우저 인수 후속 한 번 접수 | `35f0baf`의 `work/29.md`에 hook-execution/hooks E2E·자기 결함 수정 배정. 슬롯·idle·clean·fast=false 명시/재조회 뒤 기존 세션에 `status=sent`. 실제 완료 확인은 아님 |
-| 25 | 기존 세션 후속 배정 · 접수 전 상태 확인 | `work/25.md`에 update-settings E2E·자기 결함 수정 배정. 원래 오류 retry count=1 유지. 정확한 idle·clean·슬롯·fast=false 확인 후 한 번 접수 |
+| 25 | 기존 세션 브라우저 인수 후속 한 번 접수 | `4439295`의 `work/25.md`에 update-settings E2E·자기 결함 수정 배정. idle·clean·슬롯·fast=false 명시/재조회 뒤 `status=sent`. 기존 오류 retry count=1 유지하며 별도 정상 후속이다. 실제 완료 확인은 아님 |
 
 ## 현재 통합 인수
 - 22·28·30의 기존 유효 Rust 35개·웹 단위 114개 근거는 재사용했다. 28의 스킬 관리/선택 E2E 3개와 30의 위치/부모 탐색·pane focus·반응형 회귀 7개가 실제 통합 서버에서 통과했다.
@@ -63,6 +63,7 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 - 미해결 설정 직접 링크는 `SETTINGS-021`을 다시 열었다. Settings/ScopedSettings는 이번 22·28·30 통합 diff에서 바뀌지 않았지만 원인·통합 인과는 미확정이다. 관련 없는 스킬 인수·정리는 진행하고, 30의 전체 UI 통합 완료 판단은 이 공통 경계 조사와 함께 보존한다. 22의 focus 실패는 아래 후속 인수에서 해소됐다.
 - 후속 묶음 22·32는 `442e020` 입력에서 Rust compaction_details 4개·typecheck·E2E 16개가 통과했다. 생성 dialog 넓은/좁은 화면·응답 유실, 압축 상세·원문 이동, sidebar·프로젝트 복구·responsive 공통 경계를 인수했다. 코드 변경 없는 기존 기능 검사 근거는 재사용했다. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_70163db4.stdout`와 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_70163db4.stderr`. 이전 focus 실패는 해소됐고 설정 직접 링크 실패는 별개로 유지한다. 22·32의 코드·RESULT·TODO는 원본에 보존했으며 정리 전 정확한 workspace·종료·clean·ancestry를 대조했다.
 - 이어 완료된 31은 `291ec83` 통합 입력에서 exec_cwd Rust 8개·typecheck·exec-cwd/exec-settings E2E 5개가 통과했다. 기능 workspace의 유효 Rust 42개·Vitest 3개·브라우저 14개 근거를 재사용했다. 로그: `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_8c76a313.stdout`와 `/home/ubuntu/.local/share/paseodog/mixdog/data/shell-output/shell_8c76a313.stderr`. Windows/macOS 미검증으로 SETTINGS-011은 체크하지 않고, 29 통합 시 일반 cwd와 hook 계획 분리 인수도 보존한다.
+- 22·32·31 정리의 빈자리는 35·36·37로 보충해 기능 workspace 총 10개를 유지했다. 34~37은 준비 상태이며 신규 시작 없이 기존 후속·인수를 우선한다. 설정 직접 링크 실패의 수정 소유는 `work/37.md`에 배정했고 실제 수정 전까지 SETTINGS-021은 미완료다. 25·29·33 후속과 진행 중 27의 최종 통합 인수는 남아 있다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
