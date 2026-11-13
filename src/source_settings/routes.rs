@@ -1,6 +1,9 @@
 //! 소유자만 조회하며 경로는 서버 환경과 등록된 프로젝트에서 결정한다.
 
-use super::{ReadErrorCode, SourceId, SourceSettings, SourceState, read_source};
+use super::{
+    ReadErrorCode, SourceId, SourceResource, SourceSettings, SourceState,
+    read_codex_user_agents, read_resources, read_source,
+};
 use crate::App;
 use crate::auth::Owner;
 use crate::error::{ApiError, ApiResult};
@@ -19,6 +22,7 @@ pub struct SourceQuery {
 #[derive(Serialize)]
 pub struct SourceList {
     items: Vec<SourceSettings>,
+    resources: Vec<SourceResource>,
 }
 
 /// 클라이언트는 프로젝트 식별자만 지정한다. source 목록·파일명·root는 고정한다.
@@ -38,32 +42,47 @@ pub async fn list(
     } else {
         None
     };
-    let items = tokio::task::spawn_blocking(move || {
-        if let Some(root) = project_root {
+    let user_sources = project_root.is_none();
+    let result = tokio::task::spawn_blocking(move || {
+        let mut resources = Vec::new();
+        let items = if let Some(root) = project_root {
             [
                 SourceId::ClaudeProject,
                 SourceId::ClaudeProjectLocal,
                 SourceId::CodexProject,
             ]
             .into_iter()
-            .map(|source| read_source(&root, source))
+            .map(|source| {
+                resources.extend(read_resources(Some(&root), source));
+                read_source(&root, source)
+            })
             .collect()
         } else {
             user_roots(|key| std::env::var_os(key))
                 .into_iter()
-                .map(|(source, root)| match root {
-                    Some(root) => read_source(&root, source),
-                    None => SourceSettings {
-                        source,
-                        state: SourceState::ReadError { code: ReadErrorCode::Io },
-                    },
+                .map(|(source, root)| {
+                    resources.extend(read_resources(root.as_deref(), source));
+                    match root {
+                        Some(root) => read_source(&root, source),
+                        None => SourceSettings {
+                            source,
+                            state: SourceState::ReadError { code: ReadErrorCode::Io },
+                        },
+                    }
                 })
                 .collect()
+        };
+        if user_sources {
+            // 사용자 스킬의 현재 Codex 위치도 서버 HOME에서만 결정한다.
+            let home = std::env::var_os(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+                .map(PathBuf::from).filter(|path| path.is_absolute());
+            resources.push(read_codex_user_agents(home.as_deref()));
         }
+        SourceList { items, resources }
     })
     .await
     .map_err(|_| ApiError::internal("원본 설정 조회 작업을 완료하지 못했습니다"))?;
-    Ok(Json(SourceList { items }))
+    Ok(Json(result))
 }
 
 fn user_roots(env: impl Fn(&str) -> Option<OsString>) -> [(SourceId, Option<PathBuf>); 2] {

@@ -1,4 +1,5 @@
 import type { ReadErrorCode, SafeSettings, SourceId, SourceSettings, SourceSettingsPanelProps } from "./types";
+import type { SourceResource } from "../../api/sourceSettings";
 
 const SOURCE: Record<SourceId, { label: string; location: string }> = {
     claude_user: { label: "Claude · 사용자 원본", location: "서버에서 결정한 Claude 설정 디렉터리 / settings.json" },
@@ -42,7 +43,38 @@ function Projection({ value }: { value: SafeSettings }) {
     </dl>;
 }
 
-function SourceCard({ item }: { item: SourceSettings }) {
+function ResourceCard({ resource }: { resource: SourceResource }) {
+    const result = resource.result;
+    const label = resource.kind === "skills" ? "스킬" : "Hook 정의";
+    const root = resource.source === "codex_user" && resource.relative_path === ".agents/skills"
+        ? "서버 사용자 홈"
+        : resource.source.endsWith("_user") ? "서버 CLI 설정 디렉터리" : "선택한 프로젝트";
+    return <section aria-label={`${label} · ${resource.relative_path}`}>
+        <h4>{label} · <code>{resource.relative_path}</code></h4>
+        <p className="muted small">리소스 출처: {root} / {resource.relative_path}</p>
+        {result.status === "missing" && <p className="muted small">원본 리소스가 없습니다. 생성하거나 가져오지 않습니다.</p>}
+        {result.status === "read_error" && <p className="err" role="alert">리소스 읽기 실패: {result.code === "too_large" ? "리소스 크기 또는 항목 수가 조회 제한을 넘어 표시하지 않았습니다." : ERROR[result.code]}</p>}
+        {result.status === "unsupported_format" && <p className="warn small">Inline hook · 미지원 형식(TOML). hook의 부재나 Grove 적용 여부를 뜻하지 않습니다.</p>}
+        {result.status === "present" && <>
+            {result.entries.length === 0 && <p className="muted small">표시 가능한 {label} 항목이 없습니다.</p>}
+            {resource.kind === "skills" && resource.result.status === "present" && <dl>
+                {resource.result.entries.map((entry, index) => <div key={index}>
+                    <dt>{entry.name}</dt>
+                    <dd>{entry.description ?? "설명을 표시할 수 없습니다."} · <code>{entry.relative_path}</code></dd>
+                </div>)}
+            </dl>}
+            {resource.kind === "hooks" && resource.result.status === "present" && <dl>
+                {resource.result.entries.map((entry, index) => <div key={index}>
+                    <dt>{entry.event}</dt>
+                    <dd>Matcher: {entry.matcher ?? "지정 없음"} · 명령 {entry.has_command ? "있음" : "없음"} · 명령 원문 비공개</dd>
+                </div>)}
+            </dl>}
+            {result.ignored_invalid_entries && <p className="warn small" role="status">일부 항목은 형식·권한·symlink·읽기 제한 때문에 생략했습니다. 스킬은 바로 아래 폴더의 SKILL.md와 제한된 frontmatter만 지원합니다.</p>}
+        </>}
+    </section>;
+}
+
+function SourceCard({ item, resources }: { item: SourceSettings; resources: readonly SourceResource[] }) {
     const source = SOURCE[item.source];
     return <section className="setting" aria-label={source.label}>
         <h3>{source.label}</h3>
@@ -56,6 +88,7 @@ function SourceCard({ item }: { item: SourceSettings }) {
         {item.status === "missing" && <p className="muted small">원본 파일 또는 출처 디렉터리가 없습니다. 설정을 생성하거나 기본값을 추측하지 않습니다.</p>}
         {item.status === "read_error" && <p className="err" role="alert">읽기 실패: {ERROR[item.code]}</p>}
         {item.status === "unsupported_format" && <p className="warn small">존재함 · 미지원 형식(TOML). 전용 parser가 없어 내용을 읽거나 설정을 추측하지 않습니다.</p>}
+        {resources.map((resource) => <ResourceCard key={`${resource.kind}:${resource.relative_path}`} resource={resource} />)}
     </section>;
 }
 
@@ -70,6 +103,6 @@ export function SourceSettingsPanel({ view }: SourceSettingsPanelProps) {
         {view.status === "error" && <p className="err" role="alert">원본 출처 목록을 가져오지 못했습니다. Grove 설정의 적용 여부와는 관계없습니다.</p>}
         {view.status === "ready" && (view.items.length === 0
             ? <p className="muted small">조회 대상으로 전달된 원본 출처가 없습니다. 원본 파일이 없다는 뜻은 아닙니다.</p>
-            : view.items.map((item) => <SourceCard key={item.source} item={item} />))}
+            : view.items.map((item) => <SourceCard key={item.source} item={item} resources={(view.resources ?? []).filter((resource) => resource.source === item.source)} />))}
     </section>;
 }
