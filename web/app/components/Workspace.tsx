@@ -18,6 +18,7 @@ import { RecoveryPanel } from "./RecoveryPanel";
 import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Hosts } from "./Hosts";
+import { SidebarProject } from "./sidebar";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -220,7 +221,8 @@ export function Workspace() {
                             <button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</button>
                             {showArchived && <ArchivedProjects />}
                             {shown.map((p) => (
-                                <div key={p.id} className="row" data-testid="project-row" data-project={p.name}>
+                                <SidebarProject key={p.id} project={p} open={open} narrow={narrow}>
+                                <div className="row" data-testid="project-row" data-project={p.name}>
                                     <button className="link" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name })} title={p.root_path}>
                                         {p.pinned_at && <span aria-label="고정됨" title="고정됨">📌</span>}
                                         {p.icon && <span className="project-icon" aria-hidden>{p.icon}</span>} {p.name} {!p.available && <em className="warn">(경로 없음)</em>}
@@ -240,6 +242,7 @@ export function Workspace() {
                                         </span>
                                     )}
                                 </div>
+                                </SidebarProject>
                             ))}
                             {projects.data?.length === 0 && <p className="muted">프로젝트를 추가하세요.</p>}
                             {!!projects.data?.length && shown.length === 0 && (

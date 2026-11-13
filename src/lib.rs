@@ -203,6 +203,7 @@ pub fn router(app: App) -> Router {
         .route("/labels/{id}", axum::routing::patch(labels::update).delete(labels::remove))
         .route("/projects/{id}/labels/{label_id}", axum::routing::put(labels::assign))
         .route("/projects/{id}/sessions", get(sessions::list).post(sessions::create))
+        .route("/projects/{id}/sidebar", get(sessions::sidebar))
         .route("/projects/{id}/attachments", post(attachments::upload).layer(axum::extract::DefaultBodyLimit::max(6 * 1024 * 1024)))
         .route("/attachments/{id}", get(attachments::show).delete(attachments::remove))
         .route("/attachments/{id}/content", get(attachments::content))

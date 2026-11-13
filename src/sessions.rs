@@ -344,6 +344,117 @@ pub async fn list(
     Ok(Json(SessionPage { items, next_cursor }))
 }
 
+/// 사이드바는 최근 목록의 시간 범위·숨김과 무관하게 프로젝트의 모든 활성 세션을 탐색한다.
+/// 핀·읽음은 기존 recent_items를 공유하므로 별도 migration이나 기기별 저장소가 필요 없다.
+#[derive(Deserialize)]
+pub struct SidebarQuery {
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+    pub unread_only: Option<bool>,
+}
+
+#[derive(Serialize)]
+pub struct SidebarSession {
+    pub session: Session,
+    pub status: String,
+    pub pinned: bool,
+    pub recent_id: Option<String>,
+    pub recent_revision: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct SidebarPage {
+    pub items: Vec<SidebarSession>,
+    /// 전체 활성 세션의 상태별 수. 페이지·읽지 않음 필터로 집계를 축소하지 않는다.
+    pub statuses: std::collections::BTreeMap<String, i64>,
+    pub unread: i64,
+    pub total: i64,
+    pub filtered_total: i64,
+    pub next_offset: Option<i64>,
+}
+
+fn sidebar_status(session: &Session, last_turn: Option<&str>) -> &'static str {
+    if session.pending_approvals > 0 || session.active_turn.as_deref() == Some("awaiting_approval") {
+        "awaiting_approval"
+    } else if let Some(active) = session.active_turn.as_deref() {
+        match active {
+            "queued" => "queued",
+            "running" => "running",
+            "awaiting_input" => "awaiting_input",
+            _ => "unknown",
+        }
+    } else if session.unreviewed_unknown > 0 {
+        "unknown_result"
+    } else {
+        match last_turn {
+            Some("completed") => "completed",
+            Some("failed") => "failed",
+            Some("cancelled") => "cancelled",
+            Some("interrupted") => "interrupted",
+            None => "idle",
+            _ => "unknown",
+        }
+    }
+}
+
+fn sidebar_page(c: &Connection, project_id: &str, q: SidebarQuery) -> ApiResult<SidebarPage> {
+    projects::get(c, project_id)?;
+    let offset = q.offset.unwrap_or(0).max(0);
+    let limit = q.limit.unwrap_or(30).clamp(1, 200);
+    let sql = format!(
+        "SELECT {COLS}, \
+         (SELECT t.status FROM turns t WHERE t.session_id = s.id ORDER BY t.created_at DESC, t.id DESC LIMIT 1), \
+         COALESCE(r.pinned, 0), r.id, r.revision \
+         FROM sessions s LEFT JOIN recent_items r ON r.kind = 'session' AND r.project_id = s.project_id AND r.resource_id = s.id \
+         WHERE s.project_id = ?1 AND s.archived_at IS NULL \
+         ORDER BY COALESCE(r.pinned, 0) DESC, s.updated_at DESC, s.id DESC"
+    );
+    let mut stmt = c.prepare(&sql)?;
+    let rows = stmt.query_map([project_id], |r| {
+        let session = from_row(r)?;
+        let last_turn: Option<String> = r.get(NCOLS)?;
+        Ok(SidebarSession {
+            status: sidebar_status(&session, last_turn.as_deref()).into(),
+            session,
+            pinned: r.get(NCOLS + 1)?,
+            recent_id: r.get(NCOLS + 2)?,
+            recent_revision: r.get(NCOLS + 3)?,
+        })
+    })?;
+    let mut page = SidebarPage {
+        items: Vec::new(), statuses: Default::default(), unread: 0,
+        total: 0, filtered_total: 0, next_offset: None,
+    };
+    // 집계는 전체를 보되 응답 메모리는 한 페이지로 제한한다.
+    for row in rows {
+        let item = row?;
+        page.total += 1;
+        page.unread += i64::from(item.session.unread);
+        *page.statuses.entry(item.status.clone()).or_default() += 1;
+        if q.unread_only == Some(true) && !item.session.unread {
+            continue;
+        }
+        let index = page.filtered_total;
+        page.filtered_total += 1;
+        if index >= offset && (page.items.len() as i64) < limit {
+            page.items.push(item);
+        }
+    }
+    let end = offset.saturating_add(page.items.len() as i64);
+    page.next_offset = (end < page.filtered_total).then_some(end);
+    Ok(page)
+}
+
+/// 인증된 조회만 제공한다. 변경은 기존 recent.touch/update의 멱등·revision 계약을 따른다.
+pub async fn sidebar(
+    State(app): State<App>,
+    _p: Principal,
+    Path(project_id): Path<String>,
+    Query(q): Query<SidebarQuery>,
+) -> ApiResult<Json<SidebarPage>> {
+    Ok(Json(app.db.call(move |c| sidebar_page(c, &project_id, q)).await?))
+}
+
 #[derive(Deserialize)]
 pub struct DeleteBody {
     pub expected_revision: i64,
@@ -843,4 +954,151 @@ pub async fn fork(
         Ok((StatusCode::CREATED, serde_json::to_value(s)?))
     })
     .await
+}
+
+#[cfg(test)]
+mod sidebar_tests {
+    use super::*;
+
+    const NOW: &str = "2026-01-01T00:00:00Z";
+
+    fn database() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        for migration in crate::store::MIGRATIONS {
+            c.execute_batch(migration).unwrap();
+        }
+        c.execute(
+            "INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','sidebar','/fixture',?1,?1)",
+            [NOW],
+        ).unwrap();
+        c
+    }
+
+    fn session(c: &Connection, id: &str) {
+        c.execute(
+            "INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES(?1,'p',?1,?2,?2)",
+            params![id, NOW],
+        ).unwrap();
+    }
+
+    fn turn(c: &Connection, id: &str, sid: &str, status: &str, at: &str) {
+        c.execute(
+            "INSERT INTO messages(id,session_id,seq,role,content,created_at) VALUES(?1,?2,1,'user','{}',?3)",
+            params![id, sid, at],
+        ).unwrap();
+        c.execute(
+            "INSERT INTO turns(id,session_id,status,request_message_id,owner_epoch,created_at,updated_at) VALUES(?1,?2,?3,?1,'test',?4,?4)",
+            params![id, sid, status, at],
+        ).unwrap();
+    }
+
+    fn page(c: &Connection, offset: i64, limit: i64, unread_only: bool) -> SidebarPage {
+        sidebar_page(c, "p", SidebarQuery { offset: Some(offset), limit: Some(limit), unread_only: Some(unread_only) }).unwrap()
+    }
+
+    #[test]
+    fn sidebar_uses_real_turn_and_approval_states() {
+        let c = database();
+        for status in ["queued", "running", "awaiting_approval", "failed", "completed", "cancelled", "interrupted"] {
+            session(&c, status);
+            turn(&c, &format!("t-{status}"), status, status, NOW);
+        }
+        session(&c, "idle");
+        session(&c, "question");
+        turn(&c, "t-question", "question", "awaiting_approval", NOW);
+        c.execute(
+            "INSERT INTO tool_calls(id,session_id,project_id,turn_id,name,args,target,status,needs_approval,created_at,updated_at) \
+             VALUES('q','question','p','t-question','question','{}','{}','awaiting_input',0,?1,?1)",
+            [NOW],
+        ).unwrap();
+        session(&c, "unknown-result");
+        c.execute(
+            "INSERT INTO tool_calls(id,session_id,project_id,name,args,target,status,needs_approval,created_at,updated_at) \
+             VALUES('u','unknown-result','p','write','{}','{}','unknown',1,?1,?1)",
+            [NOW],
+        ).unwrap();
+        let p = page(&c, 0, 100, false);
+        for status in ["queued", "running", "awaiting_approval", "failed", "completed", "cancelled", "interrupted", "idle", "awaiting_input", "unknown_result"] {
+            assert_eq!(p.statuses.get(status), Some(&1), "{status}");
+        }
+        // 질문과 승인이 동시에 있으면 승인을 우선 표시한다.
+        c.execute(
+            "INSERT INTO tool_calls(id,session_id,project_id,turn_id,name,args,target,status,needs_approval,created_at,updated_at) \
+             VALUES('a','question','p','t-question','write','{}','{}','pending_approval',1,?1,?1)",
+            [NOW],
+        ).unwrap();
+        assert_eq!(page(&c, 0, 100, false).items.iter().find(|i| i.session.id == "question").unwrap().status, "awaiting_approval");
+    }
+
+    #[test]
+    fn sidebar_latest_turn_replaces_old_failure_without_inventing_completion() {
+        let c = database();
+        session(&c, "s");
+        assert_eq!(page(&c, 0, 30, false).items[0].status, "idle");
+        turn(&c, "failed", "s", "failed", NOW);
+        assert_eq!(page(&c, 0, 30, false).items[0].status, "failed");
+        c.execute(
+            "INSERT INTO messages(id,session_id,seq,role,content,created_at) VALUES('new','s',2,'user','{}',?1)",
+            [NOW],
+        ).unwrap();
+        c.execute(
+            "INSERT INTO turns(id,session_id,status,request_message_id,owner_epoch,created_at,updated_at) \
+             VALUES('completed','s','completed','new','test','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z')",
+            [],
+        ).unwrap();
+        assert_eq!(page(&c, 0, 30, false).items[0].status, "completed");
+    }
+
+    #[test]
+    fn sidebar_shares_recent_pins_and_read_positions_and_counts_beyond_page() {
+        let c = database();
+        for id in ["a", "b", "c"] { session(&c, id); }
+        c.execute("UPDATE sessions SET last_message_seq=3", []).unwrap();
+        c.execute(
+            "INSERT INTO recent_items(id,kind,project_id,resource_id,title,last_access_at,pinned,hidden,view_state) \
+             VALUES('r','session','p','a','a',?1,1,1,'{\"last_seen_seq\":2}')",
+            [NOW],
+        ).unwrap();
+        turn(&c, "failure", "c", "failed", NOW);
+        let first = page(&c, 0, 1, false);
+        assert_eq!(first.items[0].session.id, "a"); // 숨긴 최근 항목도 프로젝트 탐색에서는 보인다.
+        assert!(first.items[0].pinned && first.items[0].session.unread);
+        assert_eq!(first.items[0].recent_id.as_deref(), Some("r"));
+        assert_eq!(first.items[0].recent_revision, Some(1));
+        assert_eq!((first.total, first.unread, first.filtered_total), (3, 3, 3));
+        assert_eq!(first.statuses.get("failed"), Some(&1)); // 다음 페이지의 실패도 프로젝트 상태에 포함.
+        assert_eq!(first.next_offset, Some(1));
+        let next = page(&c, 1, 1, false);
+        assert_ne!(first.items[0].session.id, next.items[0].session.id);
+        assert_eq!(next.next_offset, Some(2));
+        // 다른 기기가 읽은 위치를 저장하면 같은 서버 값을 다시 읽어 반영한다.
+        c.execute("UPDATE recent_items SET view_state='{\"last_seen_seq\":3}' WHERE id='r'", []).unwrap();
+        let unread = page(&c, 0, 30, true);
+        assert_eq!((unread.total, unread.unread, unread.filtered_total), (3, 2, 2));
+        assert!(unread.items.iter().all(|i| i.session.id != "a" && i.session.unread));
+        assert!(!page(&c, 0, 30, false).items[0].session.unread);
+    }
+
+    #[test]
+    fn sidebar_is_project_scoped_excludes_archived_and_bounds_pagination() {
+        let c = database();
+        session(&c, "active");
+        session(&c, "archived");
+        c.execute("UPDATE sessions SET archived_at=?1 WHERE id='archived'", [NOW]).unwrap();
+        c.execute(
+            "INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('other','other','/other',?1,?1)",
+            [NOW],
+        ).unwrap();
+        c.execute(
+            "INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES('foreign','other','foreign',?1,?1)",
+            [NOW],
+        ).unwrap();
+        let p = page(&c, -20, 0, false);
+        assert_eq!(p.items.len(), 1);
+        assert_eq!(p.items[0].session.id, "active");
+        assert_eq!(p.total, 1);
+        assert_eq!(p.next_offset, None);
+        assert!(page(&c, i64::MAX, i64::MAX, false).items.is_empty());
+        assert!(sidebar_page(&c, "missing", SidebarQuery { offset: None, limit: None, unread_only: None }).is_err());
+    }
 }
