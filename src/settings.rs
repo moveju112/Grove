@@ -207,10 +207,40 @@ pub fn registry() -> Vec<SettingDef> {
             advanced: true,
         },
         SettingDef {
+            key: "agents.orchestration",
+            menu: "agents",
+            label: "에이전트 실행 방식",
+            description: "solo=자식 시작·후속 지시 금지, delegated=허용 역할 안에서 기존 위임 승인 정책 적용. 상위 범위의 solo는 하위에서 해제할 수 없습니다. 기존 작업 조회·대기·취소는 유지합니다",
+            keywords: "agent orchestration solo delegation 역할 위임",
+            kind: "enum",
+            options: &["solo", "delegated"],
+            min: None,
+            max: None,
+            default: json!("delegated"),
+            scopes: &["server", "project", "session"],
+            applies: "immediate",
+            advanced: false,
+        },
+        SettingDef {
+            key: "agents.allowed_roles",
+            menu: "agents",
+            label: "위임 허용 역할",
+            description: "실제 에이전트 ID를 쉼표로 구분합니다(예: worker,reviewer). *=전체, 빈 문자열=모두 금지. 서버·프로젝트·대화 및 부모 대화의 허용 목록을 교집합으로 적용합니다. 기본 역할 ID는 에이전트 정의에서 확인합니다",
+            keywords: "agent role allow policy 역할 위임 허용",
+            kind: "string",
+            options: &[],
+            min: None,
+            max: Some(4096),
+            default: json!("*"),
+            scopes: &["server", "project", "session"],
+            applies: "immediate",
+            advanced: false,
+        },
+        SettingDef {
             key: "agents.delegation",
             menu: "agents",
             label: "자식 에이전트 위임",
-            description: "모델이 자식 에이전트를 시작·후속 지시할 때: off=금지, ask=매번 승인, auto=자동(한도 안에서)",
+            description: "모델이 허용된 자식 에이전트를 시작·후속 지시할 때: off=금지, ask=매번 승인, auto=자동(한도 안에서). 상위 범위의 off는 하위에서 해제할 수 없습니다",
             keywords: "agent delegation spawn subagent 위임 서브에이전트",
             kind: "enum",
             options: &["off", "ask", "auto"],
@@ -601,6 +631,9 @@ pub fn validate(d: &SettingDef, v: &Value) -> ApiResult<()> {
     if !ok {
         return Err(ApiError::invalid(format!("{}에 허용되지 않는 값입니다", d.label)));
     }
+    if d.key == crate::agent_policy::ROLES && !v.is_null() && !crate::agent_policy::valid_roles(v) {
+        return Err(ApiError::invalid("위임 허용 역할 목록의 형태가 잘못됐습니다"));
+    }
     if let Some(choice) = v.as_str()
         && let Some(reason) = exec_option_reason(d.key, choice)
     {
@@ -709,16 +742,49 @@ pub fn resolve_key(c: &Connection, d: &SettingDef, project: Option<&str>, sessio
         let (v, rev) = r.unwrap_or((Value::Null, 0));
         layers.insert(scope.to_string(), json!({ "scope_id": id, "value": v, "revision": rev }));
     }
-    Ok(resolve_layers(d,layers))
+    if crate::agent_policy::is_policy(d.key) && let Some(session) = session {
+        let mut sid = session.to_string();
+        for depth in 0..=crate::agents::MAX_DEPTH {
+            let Some(run) = crate::agents::run_by_child(c, &sid)? else { break };
+            if depth == crate::agents::MAX_DEPTH {
+                layers.insert("parent:limit".into(), json!({"scope_id": sid, "value": crate::agent_policy::denied_value(d.key), "revision": 0}));
+                break;
+            }
+            sid = run.parent_session_id;
+            let (value, revision) = row(c, "session", &sid, d.key)?.unwrap_or((Value::Null, 0));
+            // 자식은 같은 프로젝트에 속한다. 부모의 원래 계층을 남겨 복원 미리보기도
+            // 변경될 server/project 값을 사용해 실제 적용값과 fingerprint를 계산하게 한다.
+            layers.insert(format!("parent:{sid}"), json!({"scope_id": sid, "value": value, "revision": revision}));
+        }
+    }
+    Ok(resolve_layers(d, layers))
 }
 
-fn resolve_layers(d: &SettingDef, layers: serde_json::Map<String,Value>) -> Value {
+fn resolve_local_layers(d: &SettingDef, layers: &serde_json::Map<String,Value>) -> (Value, &'static str) {
     let mut effective = d.default.clone();
     let mut source = "default";
     for scope in ["server","project","session"] {
         if let Some(layer) = layers.get(scope) && !layer["value"].is_null() {
-            effective = layer["value"].clone();
-            source = scope;
+            let next = crate::agent_policy::inherit(d.key, &effective, &layer["value"]);
+            if next != effective || layer["value"] == next {
+                source = scope;
+            }
+            effective = next;
+        }
+    }
+    (effective, source)
+}
+
+fn resolve_layers(d: &SettingDef, layers: serde_json::Map<String,Value>) -> Value {
+    let (mut effective, mut source) = resolve_local_layers(d, &layers);
+    if crate::agent_policy::is_policy(d.key) {
+        for (_, parent) in layers.iter().filter(|(key, _)| key.starts_with("parent:")) {
+            let mut parent_layers = layers.clone();
+            parent_layers.insert("session".into(), parent.clone());
+            let (inherited, inherited_source) = resolve_local_layers(d, &parent_layers);
+            let next = crate::agent_policy::inherit_parent(d.key, &effective, &inherited);
+            if next != effective { source = inherited_source; }
+            effective = next;
         }
     }
     json!({ "key": d.key, "default": d.default, "layers": layers, "effective": effective, "source": source })
@@ -844,6 +910,9 @@ pub async fn put(
         let old_value = prev.map(|r| r.0).unwrap_or(Value::Null);
         if cur != b.expected_revision {
             return Err(ApiError::revision_conflict(resolve_key(tx, &d, project.as_deref(), session.as_deref())?));
+        }
+        if key == crate::agent_policy::ROLES && !b.value.is_null() {
+            crate::agent_policy::validate_roles(tx, &b.value)?;
         }
         if matches!(key.as_str(), "model.default_profile" | "context.summary_profile")
             && let Some(profile) = b.value.as_str().filter(|value| !value.is_empty())

@@ -2,6 +2,7 @@
 //!
 //! 모듈 경계(설계 문서 §6): 하위 모듈은 상위 모듈을 import하지 않는다.
 
+pub mod agent_policy;
 pub mod agents;
 pub mod attachments;
 pub mod source_settings;
