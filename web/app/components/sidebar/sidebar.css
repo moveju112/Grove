@@ -20,20 +20,12 @@
     flex-wrap: nowrap;
     gap: 0;
     padding: 0;
+    position: relative;
 }
-.sidebar-project-tools > button.ghost {
-    min-width: 22px;
-    padding-inline: .3em;
-}
-.sidebar-project-tools > button:not(.sidebar-expand) {
-    opacity: 0;
-    transition: opacity 120ms ease;
-}
-.sidebar-project:hover .sidebar-project-tools > button,
-.sidebar-project-tools:focus-within > button,
-.sidebar-project-tools > button[aria-pressed="true"] {
-    opacity: 1;
-}
+.sidebar-project-tools > summary { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 32px; min-height: 32px; list-style: none; cursor: pointer; color: var(--muted); }
+.sidebar-project-tools > summary::-webkit-details-marker { display: none; }
+.sidebar-project-tools > .sidebar-toolbar { position: absolute; right: 0; top: 100%; z-index: 3; flex-wrap: nowrap; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow-float); }
+.sidebar-project-tools button.ghost { min-width: 32px; min-height: 32px; padding-inline: 4px; }
 .sidebar-expand {
     display: inline-flex;
     align-items: center;
@@ -132,39 +124,38 @@
     text-overflow: ellipsis;
     white-space: nowrap;
 }
-/* 도구 자리는 늘 차지해서 올렸을 때 제목이 밀리지 않게 하고, 보이는 것만 바꾼다. */
-.sidebar-session > .sidebar-toolbar {
+.sidebar-session-actions { flex: none; position: relative; }
+.sidebar-session-actions > summary {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    list-style: none;
+    cursor: pointer;
+    color: var(--muted);
+}
+.sidebar-session-actions > summary::-webkit-details-marker { display: none; }
+.sidebar-session-actions .sidebar-toolbar {
+    position: absolute;
+    right: 0;
+    top: 100%;
+    z-index: 2;
     flex-wrap: nowrap;
-    gap: 0;
-    padding: 0 .15rem;
-    opacity: 0;
-    transition: opacity 120ms ease;
+    padding: 4px;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    box-shadow: var(--shadow-float);
 }
-.sidebar-session:hover > .sidebar-toolbar,
-.sidebar-session:focus-within > .sidebar-toolbar,
-.sidebar-session > .sidebar-toolbar:has([aria-pressed="true"]) {
-    opacity: 1;
-}
-.sidebar-session > .sidebar-toolbar button.ghost {
-    min-width: 22px;
-    padding-inline: .3em;
+.sidebar-session-actions button.ghost {
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
     border-color: transparent;
     color: var(--muted);
 }
-.sidebar-session > .sidebar-toolbar button.ghost:not(:disabled):hover {
+.sidebar-session-actions button.ghost:not(:disabled):hover {
     color: var(--text);
-}
-@media (pointer: coarse) {
-    .sidebar-session > .sidebar-toolbar {
-        opacity: 1;
-    }
-    .sidebar-session > .sidebar-toolbar button.ghost,
-    .sidebar-project-tools > button.ghost {
-        min-width: 32px;
-    }
-    .sidebar-project-tools > button:not(.sidebar-expand) {
-        opacity: 1;
-    }
 }
 .sidebar-status,
 .sidebar-unread {

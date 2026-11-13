@@ -10,16 +10,6 @@ import { DRAG_OPEN } from "../state/layout";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 
-const FILTERS: [string, string][] = [
-    ["all", "전체"],
-    ["pinned", "고정"],
-    ["running", "실행 중"],
-    ["awaiting_approval", "승인 대기"],
-    ["awaiting_input", "답변 대기"],
-    ["unread", "읽지 않음"],
-    ["hidden", "숨김"],
-];
-
 const STATUS: Record<string, string> = {
     running: "실행 중",
     awaiting_approval: "승인 대기",
@@ -44,16 +34,13 @@ function useMinute(): Date {
 
 /// linked: 현재 배치에서 분할로 함께 열린 대화 ID. 원본처럼 한 묶음으로 보여 준다.
 export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked?: ReadonlySet<string> }) {
-    const [filter, setFilter] = useState("all");
-    const [q, setQ] = useState("");
     const [limit, setLimit] = useState(30);
     const [err, setErr] = useState<string | null>(null);
     const prefs = usePrefs();
     const range = effectiveRecentWindow(prefs.recentWindow, prefs.recentWindows);
     const now = useMinute();
-    // 시간 범위는 기본 "전체" 필터에만 적용한다. 상태·고정·숨김 필터는 범위와 무관하게 모두 보여 준다.
-    const since = filter === "all" && range !== "all" ? recentSince(range, now) : "";
-    const query = new URLSearchParams({ filter, q, limit: String(limit), ...(since ? { since } : {}) }).toString();
+    const since = range !== "all" ? recentSince(range, now) : "";
+    const query = new URLSearchParams({ filter: "all", limit: String(limit), ...(since ? { since } : {}) }).toString();
     const recent = useQuery<RecentPage>(`recent:${query}`, () => api.get(`/recent?${query}`));
 
     const patch = async (it: RecentItem, intent: RecentIntent) => {
@@ -89,8 +76,8 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
 
     return (
         <section className="recent" aria-label="최근">
-            <h2>최근</h2>
-            {filter === "all" && (
+            <div className="recent-head">
+                <h2>최근</h2>
                 <div className="chips" role="group" aria-label="시간 범위">
                     {[...prefs.recentWindows, "all" as const].map((option) => (
                         <button key={option} className={range === option ? "chip on" : "chip"} aria-pressed={range === option}
@@ -99,18 +86,7 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                         </button>
                     ))}
                 </div>
-            )}
-            <details className="recent-tools">
-                <summary aria-label="최근 검색·필터">
-                    {q || filter !== "all" ? `검색·필터 · ${FILTERS.find(([key]) => key === filter)?.[1]}${q ? ` · ${q}` : ""}` : "검색·필터"}
-                </summary>
-                <div className="recent-controls">
-                    <input type="search" placeholder="검색" value={q} onChange={(e) => setQ(e.target.value)} aria-label="최근 항목 검색" />
-                    <select aria-label="최근 필터" value={filter} onChange={(e) => setFilter(e.target.value)}>
-                        {FILTERS.map(([key, label]) => <option key={key} value={key}>{label}</option>)}
-                    </select>
-                </div>
-            </details>
+            </div>
             {err && <p className="err" role="alert">{err}</p>}
             {Boolean(recent.error) && <p className="err" role="alert">
                 {recent.error instanceof ApiError ? recent.error.message : "최근 목록을 불러오지 못했습니다."}
@@ -125,7 +101,7 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                     </li>
                 ))}
             </ul>
-            {recent.data?.items.length === 0 && <p className="muted">{since ? `${recentWindowLabel(range)} 안에 활동한 항목이 없습니다.` : "항목이 없습니다."}</p>}
+            {recent.data?.items.length === 0 && <p className="recent-empty">최근 항목 없음</p>}
             {recent.data?.next_offset != null && (
                 <button className="ghost" onClick={() => setLimit((l) => l + 30)}>
                     더 보기
@@ -145,10 +121,14 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                                 e.dataTransfer.effectAllowed = "copy";
                             }}
                         >
-                            <span className="badge">{it.project_name}</span> {it.title}
-                            {STATUS[it.status] && <span className={`status ${it.status}`}>{STATUS[it.status]}</span>}
-                            {it.unread && <span className="dot" aria-label="읽지 않음" />}
-                            {linkedTo && <span className="muted small" aria-label={`분할로 함께 열림: ${linkedTo}`}> ⧉</span>}
+                            <span className="recent-title">
+                                {it.pinned && <span aria-label="고정됨">★ </span>}
+                                {it.title}
+                                {STATUS[it.status] && <span className={`status ${it.status}`}>{STATUS[it.status]}</span>}
+                                {it.unread && <span className="dot" aria-label="읽지 않음" />}
+                                {linkedTo && <span className="muted small" aria-label={`분할로 함께 열림: ${linkedTo}`}> ⧉</span>}
+                            </span>
+                            <span className="recent-project">{it.project_name}</span>
                             <span className="muted small" data-testid="recent-time"> <When at={it.last_activity_at} relative /></span>
                         </button>
                         <details className="recent-actions">

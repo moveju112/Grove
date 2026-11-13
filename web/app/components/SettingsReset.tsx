@@ -44,9 +44,9 @@ function ComparisonTable({ rows }: { rows: Comparison[] }) {
     </table></div>;
 }
 
-export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel, label, disabled, draft, saved }: {
+export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel, label, disabled, draft, saved, compact = false }: {
     defs: SettingDef[]; target: SettingsTarget; scope: string; scopeId: string; targetLabel: string; label: string;
-    disabled?: boolean; draft?: unknown; saved: () => void;
+    disabled?: boolean; draft?: unknown; saved: () => void; compact?: boolean;
 }) {
     const supported = useCapability("settings_reset_v1");
     const [review, setReview] = useState<Review | null>(null);
@@ -96,7 +96,7 @@ export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel,
     const busy = review?.kind === "sending";
     const close = () => { reading.current?.abort(); setReview(null); };
     return <>
-        <button className="ghost" disabled={disabled || !defs.length} onClick={() => void compare()}>{label}</button>
+        <button className={compact ? "ghost setting-reset-icon" : "ghost"} aria-label={label} title={label} disabled={disabled || !defs.length} onClick={() => void compare()}>{compact ? "↺" : label}</button>
         {review && <Dialog busy={busy} close={close}>
             <h2>기본값 복원 확인</h2>
             <p data-testid="reset-target">대상: <strong>{targetLabel}</strong></p>
@@ -128,7 +128,7 @@ const PREF_LABEL: Record<keyof Prefs, string> = {
     recentWindows: "최근 항목 시간 범위 선택지", recentWindow: "최근 항목 선택 범위",
 };
 type DeviceReview = { kind: "review" | "error"; before: Prefs; message?: string } | { kind: "saved" };
-export function DeviceSettingsReset({ fields, label }: { fields: (keyof Prefs)[]; label: string }) {
+export function DeviceSettingsReset({ fields, label, compact = true }: { fields: (keyof Prefs)[]; label: string; compact?: boolean }) {
     const [review, setReview] = useState<DeviceReview | null>(null);
     const compare = () => setReview({ kind: "review", before: loadPrefs() });
     const restore = () => {
@@ -141,7 +141,7 @@ export function DeviceSettingsReset({ fields, label }: { fields: (keyof Prefs)[]
         }
     };
     return <>
-        <button className="ghost small" onClick={compare}>{label}</button>
+        <button className={compact ? "ghost setting-reset-icon" : "ghost small"} aria-label={label} title={label} onClick={compare}>{compact ? "↺" : label}</button>
         {review && <Dialog busy={false} close={() => setReview(null)}>
             <h2>기본값 복원 확인</h2>
             <p data-testid="reset-target">대상: <strong>이 기기의 화면·입력 설정</strong></p>

@@ -16,6 +16,7 @@ test("프로젝트 아이콘을 바꾸고 최근 활동순 정렬이 새로고�
     await expect(side.getByTestId("project-row").filter({ hasText: a.name })).toContainText("🌿");
 
     // 최근 활동순: 방금 대화가 생긴 프로젝트가 맨 위
+    await side.getByLabel("프로젝트 목록 옵션", { exact: true }).click();
     await side.getByLabel("프로젝트 정렬").selectOption("recent");
     await apiCall("POST", `/projects/${b.id}/sessions`, { title: `정렬 확인 ${Date.now()}` });
     await expect(side.getByTestId("project-row").first()).toContainText(b.name);

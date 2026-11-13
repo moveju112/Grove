@@ -191,9 +191,7 @@ export function BotsPanel({ open }: { open: Opener }) {
     };
     return (
         <section className="bots" data-testid="bots-panel">
-            <h2>
-                봇 <button className="ghost small" onClick={() => setEditing("new")}>+ 봇</button>
-            </h2>
+            <button className="ghost small" onClick={() => setEditing("new")}>봇 만들기</button>
             {err && <p className="err" role="alert">{err}</p>}
             {editing && <Editor bot={editing === "new" ? null : editing}
                 live={editing === "new" ? null : (q.data?.bots.find((x) => x.id === editing.id) ?? null)} onDone={() => { setEditing(null); q.reload(); }} />}

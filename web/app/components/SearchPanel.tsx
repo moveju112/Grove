@@ -5,6 +5,7 @@ import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 import { requestFocus } from "../state/focus";
 import { useCapability } from "../state/capabilities";
+import { Icon } from "./icons";
 
 type Hit = { id: string; title: string; project_id: string; project_name: string; updated_at: string; snippet: string | null; match_seq: number | null; archived_at: string | null; source?: { message_id: string; role: string; seq: number } };
 type Project = { id: string; name: string };
@@ -63,7 +64,7 @@ export function SearchPanel({ open }: { open: Opener }) {
 
     return (
         <details className="search" data-testid="search-panel">
-            <summary>대화 검색</summary>
+            <summary><Icon name="search" size={16} />대화 검색</summary>
             {supported !== false && <select aria-label="검색 방식" value={recall ? "recall" : "sessions"} onChange={(e) => setRecall(e.target.value === "recall")}>
                 <option value="sessions">대화 검색</option><option value="recall">메시지 회상(키워드)</option>
             </select>}

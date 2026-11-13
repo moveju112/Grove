@@ -27,19 +27,17 @@ export function SidebarUsage() {
     const rows = (usage.data?.rows ?? []).filter((r) => totalTokens(r) > 0).slice(0, 3);
     const c = capacity.data;
     const max = c?.limits.max_active ?? null;
-    if (!usage.data && !c) return null;
+    if (rows.length === 0 && (!c || (c.server.running === 0 && c.server.waiting === 0))) return null;
     return (
         <section className="side-usage" aria-label="사용량 요약" data-testid="sidebar-usage">
-            {c && (
+            {c && (c.server.running > 0 || c.server.waiting > 0) && (
                 <Meter label="실행 중" value={max ? `${c.server.running}/${max}` : `${c.server.running}`}
                     share={max ? c.server.running / max : null} note={c.server.waiting > 0 ? `대기 ${c.server.waiting}` : undefined} />
             )}
-            {usage.data && (rows.length === 0
-                ? <p className="side-usage-empty">오늘 사용한 토큰이 없습니다.</p>
-                : rows.map((r) => (
+            {rows.map((r) => (
                     <Meter key={r.key} label={`${r.label} · 오늘`} value={compact(totalTokens(r))}
                         share={tokenShare(totalTokens(r), total)} shareText={formatShare(tokenShare(totalTokens(r), total))} />
-                )))}
+                ))}
         </section>
     );
 }

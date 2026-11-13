@@ -6,6 +6,7 @@ import { useCapability } from "../state/capabilities";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { Icon } from "./icons";
 
 /// 서버에 영속 보관된 알림. 기기가 꺼져 있던 동안의 알림도 접속하면 보인다.
 export function NotificationsPanel({ open }: { open: Opener }) {
@@ -44,6 +45,7 @@ export function NotificationsPanel({ open }: { open: Opener }) {
     return (
         <details className="notifications" data-testid="notifications">
             <summary>
+                <Icon name="bell" size={16} />
                 알림{" "}
                 {unread > 0 && (
                     <span className="badge" data-testid="notifications-unread" aria-label={`읽지 않은 알림 ${unread}개`}>

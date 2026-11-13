@@ -85,6 +85,7 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await expect(panel).toContainText("활성 턴 없음 · 상속 모델 아직 미정");
     await expect(panel).toContainText("미설정 · 선택 필요");
     await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
+    await page.locator(".recent li").filter({ hasText: "overview other session" }).getByLabel("최근 항목 관리").click();
     await page.locator(".recent li").filter({ hasText: "overview other session" }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     await expect(sessionView(page, other.id)).toBeVisible();

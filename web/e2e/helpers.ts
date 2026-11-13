@@ -81,6 +81,12 @@ export async function login(page: Page) {
     await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
 }
 
+export async function openBots(page: Page) {
+    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByLabel("설정 검색").fill("봇");
+    await expect(page.getByTestId("bots-panel")).toBeVisible();
+}
+
 /// 시험이 만든 모델 프로필을 지운다(공유 시험 서버에서 기본 프로필이 바뀌지 않게).
 export async function removeProfiles(match: (name: string) => boolean): Promise<void> {
     const list = await apiCall<{ id: string; name: string }[]>("GET", "/model-profiles");

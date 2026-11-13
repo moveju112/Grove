@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openBots, openDetails, script, sessionView, state } from "./helpers";
 
 test("CSP·보안 헤더와 PWA manifest를 제공한다", async ({ request }) => {
     const r = await request.get("/");
@@ -52,6 +52,7 @@ test("두 프로젝트를 좌우·위아래로 열고 각 탭이 자기 프로�
     await recent.getByRole("button", { name: /A의 대화/ }).click();
     await expect(page.getByTestId("session-view")).toHaveAttribute("data-session", sa.id);
     // B를 오른쪽에 분할로 열기
+    await recent.getByTestId("recent-item").filter({ hasText: "B의 대화" }).getByLabel("최근 항목 관리").click();
     await recent.getByTestId("recent-item").filter({ hasText: "B의 대화" }).getByRole("button", { name: "오른쪽에 열기" }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     await expect(page.getByTestId("split-row")).toBeVisible();
@@ -429,8 +430,9 @@ test("봇을 만들고 home 대화에서 답을 받고, 새로고침·분할 뒤
     await ensureProjects();
     await ensureProfile();
     await login(page);
+    await openBots(page);
     const panel = page.getByTestId("bots-panel");
-    await panel.getByRole("button", { name: "+ 봇" }).click();
+    await panel.getByRole("button", { name: "봇 만들기" }).click();
     const ed = panel.getByTestId("bot-editor");
     await ed.getByLabel("봇 이름").fill("e2e 봇");
     await ed.getByLabel("persona").fill("짧게 답한다");
@@ -455,9 +457,11 @@ test("봇을 만들고 home 대화에서 답을 받고, 새로고침·분할 뒤
     await expect(view.getByTestId("msg-assistant").last()).toContainText("봇 응답", { timeout: 15_000 });
     // 새로고침 뒤 다시 열어도 같은 대화
     await page.reload();
+    await openBots(page);
     await page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" }).locator(".bot-open").click();
     await expect(page.locator(`[data-testid=session-view][data-session="${sid}"]`).first()).toContainText("봇 응답");
     // 기기별 숨김은 실행·목록 데이터와 무관
+    await openBots(page);
     const item2 = page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" });
     await item2.getByLabel("e2e 봇 관리").click();
     await item2.getByRole("button", { name: "이 기기에서 숨기기" }).click();
@@ -484,6 +488,7 @@ test("봇 대화 탭을 닫아도 서버 실행은 계속되고 다시 열면 �
     const b = await apiCall<{ id: string }>("POST", "/bots", { name: `탭닫기 봇 ${Date.now()}`, project_id: a.id, profile_id: prof });
     const home = await apiCall<{ home_session_id: string; name: string }>("POST", `/bots/${b.id}/home`);
     await login(page);
+    await openBots(page);
     const item = page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: home.name });
     await item.locator(".bot-open").click();
     const view = page.locator(`[data-testid=session-view][data-session="${home.home_session_id}"]`).first();
@@ -491,10 +496,11 @@ test("봇 대화 탭을 닫아도 서버 실행은 계속되고 다시 열면 �
     await view.getByLabel("보내기 방식").selectOption("model");
     await view.getByLabel("메시지 입력").fill("천천히");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
-    await expect(item).toContainText("실행 중");
+    await expect(view).toContainText("실행 중");
     // 탭 닫기: 화면 상태만 바뀌고 서버 턴은 취소되지 않는다
     await page.getByRole("button", { name: "탭 닫기" }).last().click();
     await expect(view).toHaveCount(0);
+    await openBots(page);
     await expect(item).not.toContainText("실행 중", { timeout: 15_000 });
     await expect(item.getByTestId("bot-unread")).toBeVisible();
     const turns = await apiCall<{ status: string }[]>("GET", `/sessions/${home.home_session_id}/turns`);
@@ -780,6 +786,7 @@ test("다른 pane에서 다른 대화를 열고 조작해도 열어 둔 설정�
     const left = page.getByTestId("pane").nth(0);
     await expect(left.getByTestId("settings-origin")).toContainText(ta);
     // B를 오른쪽 pane에 열고 그쪽을 조작한다
+    await recent.getByTestId("recent-item").filter({ hasText: tb }).getByLabel("최근 항목 관리").click();
     await recent.getByTestId("recent-item").filter({ hasText: tb }).getByRole("button", { name: "오른쪽에 열기" }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const right = page.getByTestId("pane").nth(1);

@@ -66,6 +66,7 @@ test("영역 복원은 접힌 고급 항목까지 한 범위만 처리하고 서
     await language.getByLabel("응답 언어", { exact: true }).fill("area-unsaved");
     await expect(page.getByTestId("setting-exec.max_memory_mb")).toHaveCount(0);
     const area = page.getByTestId("settings-area-reset");
+    await area.locator("summary").click();
     await expect(area.getByLabel("영역 복원 범위", { exact: true })).toHaveValue("project");
     await area.getByRole("button", { name: "이 영역의 범위별 설정 복원", exact: true }).click();
     await expect(dialog(page).getByTestId("reset-exec.max_memory_mb")).toContainText("1024");

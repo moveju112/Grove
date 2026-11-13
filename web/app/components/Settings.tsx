@@ -35,6 +35,8 @@ import { DefinitionUpdates } from "./definition-updates/DefinitionUpdates";
 import { useDefinitionDraft } from "./definition-updates/useDefinitionDraft";
 import { useExecLinkLayout } from "./settings-links/useExecLinkLayout";
 import { AgentOverview } from "./agent-overview/AgentOverview";
+import { BotsPanel } from "./BotsPanel";
+import type { Opener } from "./Workspace";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -47,6 +49,7 @@ const MENUS: [Menu, string][] = [
     ["server", "서버·데이터"],
 ];
 export const ITEMS: Item[] = [
+    { id: "bots", menu: "agents", label: "봇", keywords: "bot persona 봇", scope: "서버 전체" },
     { id: "secrets", menu: "model", label: "API 키", keywords: "key secret 비밀 openai anthropic gemini", scope: "서버 전체" },
     { id: "profiles", menu: "model", label: "모델 프로필", keywords: "model provider endpoint url 모델 timeout temperature max_tokens", scope: "서버 전체" },
     { id: "definitions", menu: "agents", label: "에이전트·워크플로우 편집", keywords: "agent workflow prompt 지침 기본값 복원 비교", scope: "서버 전체" },
@@ -72,7 +75,7 @@ export const ITEMS: Item[] = [
     { id: "backup", menu: "server", label: "백업·복원", keywords: "backup snapshot restore 백업 복원", scope: "서버 전체" },
 ];
 
-export function Settings({ projectId, projectName, sessionId }: { projectId?: string; projectName?: string; sessionId?: string }) {
+export function Settings({ projectId, projectName, sessionId, open }: { projectId?: string; projectName?: string; sessionId?: string; open: Opener }) {
     const [menu, setMenu] = useState<Menu>(projectId ? "agents" : "model");
     const [q, setQ] = useState("");
     const [showAdvanced, setShowAdvanced] = useState(false);
@@ -128,20 +131,23 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
             }}>
             <nav className="settings-nav" aria-label="설정 메뉴">
                 <input type="search" placeholder="설정 검색" value={q} onChange={(e) => { link.cancel(); setQ(e.target.value); }} aria-label="설정 검색" />
+                <div className="settings-menu">
                 {MENUS.map(([m, label]) => (
-                    <button key={m} className={!results && menu === m ? "on" : ""} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
+                    <button key={m} aria-current={!results && menu === m ? "page" : undefined} className={!results && menu === m ? "on" : ""} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
                         {label}
                     </button>
                 ))}
+                </div>
                 {sessionId ? (
                     <p className="muted small" data-testid="settings-origin">
-                        대화 “{session.data?.title ?? sessionId}”(프로젝트 “{projectName ?? projectId}”)에서 연 설정입니다. 다른 영역·pane을 눌러도 대상은 바뀌지 않습니다.
+                        대화 · {session.data?.title ?? sessionId} ({projectName ?? projectId})
                     </p>
                 ) : (
-                    projectId && <p className="muted small" data-testid="settings-origin">프로젝트 “{projectName ?? projectId}”에서 연 설정입니다. 다른 영역·pane을 눌러도 대상은 바뀌지 않습니다.</p>
+                    projectId && <p className="muted small" data-testid="settings-origin">프로젝트 · {projectName ?? projectId}</p>
                 )}
             </nav>
             <div className="settings-body">
+                <h1 className="settings-heading">{needle ? "검색 결과" : MENUS.find(([id]) => id === menu)?.[1]}</h1>
                 {link.pending && <p className="muted" role="status">링크한 설정을 불러오는 중…</p>}
                 {link.error && <p className="err" role="alert">{link.error}</p>}
                 {needle && <p className="muted">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</p>}
@@ -162,6 +168,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                     defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} />}
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
                 {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
+                {visible("bots") && <Section item="bots"><BotsPanel open={open} /></Section>}
                 {visible("devices") && <Section item="devices"><Hosts /><Devices /></Section>}
                 {visible("browser-capabilities") && <Section item="browser-capabilities"><BrowserCapabilitiesSettings /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
@@ -218,7 +225,6 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
     };
     return (
         <>
-            <DeviceSettingsReset fields={Object.keys(defaultPrefs) as (keyof Prefs)[]} label="이 기기 화면·입력 전체 복원" />
             {show("theme") && (
                 <Section item="theme">
                     <select value={p.theme} onChange={(e) => set({ ...p, theme: e.target.value as Prefs["theme"] })} aria-label="테마">
@@ -307,6 +313,9 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <DeviceSettingsReset fields={["reasoning", "answerOnly", "expandTools"]} label="대화 표시 기본값 복원" />
                 </Section>
             )}
+            <div className="settings-footer">
+                <DeviceSettingsReset compact={false} fields={Object.keys(defaultPrefs) as (keyof Prefs)[]} label="이 기기 화면·입력 전체 복원" />
+            </div>
         </>
     );
 }

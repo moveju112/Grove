@@ -25,6 +25,7 @@ async function session(project: string, title: string) {
 async function openPair(page: Page, first: { title: string }, second: { title: string }) {
     const recent = page.locator(".recent");
     await recent.getByTestId("recent-item").filter({ hasText: first.title }).getByRole("button", { name: new RegExp(first.title) }).click();
+    await recent.getByTestId("recent-item").filter({ hasText: second.title }).getByLabel("최근 항목 관리").click();
     await recent.getByTestId("recent-item").filter({ hasText: second.title }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
 }
@@ -85,7 +86,7 @@ test("같은 프로젝트의 분할 입력도 각 탭의 초안·모델 선택�
         await right.getByLabel("모델 프로필").selectOption(f.secondary);
         await right.getByLabel("메시지 입력").fill("project right draft fixture");
         await page.locator(".sidebar .projects").getByRole("button", { name: f.b.name, exact: true }).click();
-        const recentProject = page.locator(".recent").getByRole("button", { name: `${f.a.name} ${f.a.name}`, exact: true });
+        const recentProject = page.locator(".recent .recent-title").filter({ hasText: f.a.name });
         await recentProject.click();
         await expect(right.getByLabel("메시지 입력")).toHaveValue("project right draft fixture");
         await expect(right.getByLabel("모델 프로필")).toHaveValue(f.secondary);
@@ -164,8 +165,8 @@ test("다른 pane을 선택한 뒤 승인해도 cwd·파일 변경·stream·모�
         writeFileSync(join(b.root_path, name), "b-before");
         await login(page);
         await openPair(page, first, second);
-        const left = page.locator(`[data-session="${first.id}"]`);
-        const right = page.locator(`[data-session="${second.id}"]`);
+        const left = page.locator(`[data-testid="session-view"][data-session="${first.id}"]`);
+        const right = page.locator(`[data-testid="session-view"][data-session="${second.id}"]`);
         for (const [view, model] of [[left, f.primary], [right, f.secondary]] as const) {
             await view.getByLabel("모델 프로필").selectOption(model);
             await view.getByLabel("보내기 방식").selectOption("model");

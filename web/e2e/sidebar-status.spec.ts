@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, sessionView } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openDetails, script, sessionView } from "./helpers";
 
 const row = (page: Page, id: string) => page.locator(`[data-testid="sidebar-session"][data-session="${id}"]`);
 const project = (page: Page, id: string) => page.locator(`[data-testid="sidebar-project"][data-project-id="${id}"]`);
@@ -19,6 +19,8 @@ test("사이드바 핀·읽음은 다른 기기와 새로고침에 유지되고 
         const second = row(other, session.id);
         await expect(first).toContainText("읽지 않음");
         await expect(second).toContainText("읽지 않음");
+        await openDetails(first.locator(".sidebar-session-actions"));
+        await openDetails(second.locator(".sidebar-session-actions"));
         const pin = first.getByRole("button", { name: "세션 고정", exact: true });
         await pin.focus();
         await pin.press("Enter");
@@ -27,6 +29,7 @@ test("사이드바 핀·읽음은 다른 기기와 새로고침에 유지되고 
         await first.getByRole("button", { name: "읽음 표시", exact: true }).click();
         await expect(second.locator(".sidebar-unread")).toHaveCount(0);
         await page.reload();
+        await openDetails(first.locator(".sidebar-session-actions"));
         await expect(first.getByRole("button", { name: "세션 고정 해제", exact: true })).toBeVisible();
         await expect(first.locator(".sidebar-unread")).toHaveCount(0);
         await apiCall("POST", `/sessions/${session.id}/messages`, { text: "읽은 뒤 새 메시지" });
@@ -94,29 +97,35 @@ test("toolbar의 읽지 않음 필터·접기·오류 복구는 서버 상태를
     await apiCall("POST", `/sessions/${session.id}/messages`, { text: "읽지 않음 fixture" });
     await login(page);
     const nav = project(page, a.id);
+    await openDetails(nav.locator(".sidebar-project-tools"));
     const toolbar = nav.getByRole("toolbar", { name: `${a.name} 도구`, exact: true });
+    const clickTool = async (name: string | RegExp) => {
+        await openDetails(nav.locator(".sidebar-project-tools"));
+        await toolbar.getByRole("button", { name }).click();
+    };
     const filter = toolbar.getByRole("button", { name: "읽지 않음만", exact: true });
     await filter.focus();
     await filter.press("End");
     await expect(toolbar.getByRole("button", { name: "목록 새로고침" })).toBeFocused();
     await filter.click();
-    await expect(filter).toHaveAttribute("aria-pressed", "true");
+    await expect(nav.getByLabel("읽지 않음 필터 적용 중")).toBeVisible();
     await expect(row(page, session.id)).toBeVisible();
+    await openDetails(row(page, session.id).locator(".sidebar-session-actions"));
     await row(page, session.id).getByRole("button", { name: "읽음 표시" }).click();
     await expect(row(page, session.id)).toHaveCount(0);
-    await filter.click();
+    await clickTool("읽지 않음만");
     await expect(row(page, session.id)).toBeVisible();
-    await toolbar.getByRole("button", { name: /대화 접기/ }).click();
+    await clickTool(/대화 접기/);
     await expect(row(page, session.id)).toBeHidden();
-    await toolbar.getByRole("button", { name: /대화 펼치기/ }).click();
+    await clickTool(/대화 펼치기/);
     await expect(row(page, session.id)).toBeVisible();
     await page.route(`**/api/v1/projects/${a.id}/sidebar?*`, (route) => route.fulfill({
         status: 503, contentType: "application/json", body: JSON.stringify({ error: { code: "unavailable", message: "fixture" } }),
     }));
-    await toolbar.getByRole("button", { name: "목록 새로고침" }).click();
+    await clickTool("목록 새로고침");
     await expect(nav.getByRole("alert")).toContainText("대화 목록을 불러오지 못했습니다");
     await expect(row(page, session.id)).toBeVisible();
     await page.unroute(`**/api/v1/projects/${a.id}/sidebar?*`);
-    await toolbar.getByRole("button", { name: "목록 새로고침" }).click();
+    await clickTool("목록 새로고침");
     await expect(nav.getByRole("alert")).toHaveCount(0);
 });

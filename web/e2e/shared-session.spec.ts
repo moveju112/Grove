@@ -25,6 +25,7 @@ async function shared(page: Page) {
     await loaded;
     await expect(page.getByTestId("conn")).toHaveText("연결됨");
     const before = messageQueries;
+    await recent.getByLabel("최근 항목 관리").click();
     await recent.getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const left = page.getByTestId("pane").nth(0).getByTestId("session-view");

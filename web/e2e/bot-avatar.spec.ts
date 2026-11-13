@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openBots } from "./helpers";
 
 // 1×1 PNG
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64");
@@ -10,6 +10,7 @@ test("봇 아바타 이미지를 올리고 SVG는 거절하며 기본형으로 �
     const name = `아바타 봇 ${Date.now().toString(36)}`;
     await apiCall("POST", "/bots", { name, project_id: a.id });
     await login(page);
+    await openBots(page);
     const panel = page.getByTestId("bots-panel");
     const item = panel.getByTestId("bot").filter({ hasText: name });
     await expect(item.getByTestId("bot-avatar-image")).toHaveCount(0);

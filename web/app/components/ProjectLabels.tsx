@@ -41,7 +41,7 @@ function ColorPicker({ value, onChange, name }: { value: string; onChange: (c: s
 }
 
 /// 프로젝트 행 메뉴: 고정 전환과 라벨 할당·새 라벨 만들기. 실패하면 입력·선택을 보존하고 오류를 보인다.
-export function ProjectMenu({ project, labels, onClose }: { project: Project; labels: Label[]; onClose: () => void }) {
+export function ProjectMenu({ project, labels, onClose, onSplit }: { project: Project; labels: Label[]; onClose: () => void; onSplit?: (how: "right" | "down") => void }) {
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [creating, setCreating] = useState<{ name: string; color: string } | null>(null);
@@ -62,6 +62,10 @@ export function ProjectMenu({ project, labels, onClose }: { project: Project; la
     };
     return <div className="project-menu" role="dialog" aria-label={`${project.name} 메뉴`}
         onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
+        {onSplit && <>
+            <button type="button" className="ghost small" onClick={() => { onSplit("right"); onClose(); }}>오른쪽에 열기</button>
+            <button type="button" className="ghost small" onClick={() => { onSplit("down"); onClose(); }}>아래에 열기</button>
+        </>}
         <ServerActionButton type="button" className="ghost small" disabled={busy}
             onClick={() => void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, pinned: !project.pinned_at }), "고정 변경 실패")}>
             {project.pinned_at ? "고정 해제" : "맨 위에 고정"}

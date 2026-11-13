@@ -9,7 +9,6 @@ import { LayoutPersistence } from "../state/layoutPersistence";
 import { applyEvent, resyncAll, setLive, useLive, useQuery } from "../state/store";
 import { AddProjectDialog } from "./AddProject";
 import { ArchivedProjects } from "./ArchivedProjects";
-import { BotsPanel } from "./BotsPanel";
 import { NotificationsPanel } from "./NotificationsPanel";
 import { LabelChips, LabelFilter, ProjectMenu, useLabels } from "./ProjectLabels";
 import { filterProjects } from "../state/projectLabels";
@@ -215,10 +214,12 @@ export function Workspace() {
                         <SearchPanel open={open} />
                     </div>
                     <div className="side-scroll">
-                        <BotsPanel open={open} />
                         <section className="projects">
-                            <h2>
-                                <span className="side-section-title">프로젝트</span>
+                            <div className="side-section-head">
+                                <h2>프로젝트</h2>
+                                <details className="project-options">
+                                    <summary aria-label="프로젝트 목록 옵션" title="프로젝트 목록 옵션">⋯{labelFilter.length > 0 && <span className="dot" aria-label="라벨 필터 적용 중" />}</summary>
+                                    <div className="project-options-body">
                                 <select
                                     className="small"
                                     aria-label="프로젝트 정렬"
@@ -227,17 +228,20 @@ export function Workspace() {
                                         const v = e.target.value === "recent" ? "recent" : "name";
                                         localStorage.setItem(PROJECT_SORT, v);
                                         setProjectSort(v);
+                                        e.currentTarget.closest("details")?.removeAttribute("open");
                                     }}
                                 >
                                     <option value="name">이름순</option>
                                     <option value="recent">최근 활동순</option>
                                 </select>
                                 <button type="button" className="ghost small" aria-expanded={filtering} aria-label="라벨 필터"
-                                    onClick={() => setFiltering((f) => !f)}>
+                                    onClick={(e) => { setFiltering((f) => !f); e.currentTarget.closest("details")?.removeAttribute("open"); }}>
                                     라벨{labelFilter.length > 0 ? ` (${labelFilter.length})` : ""}
                                 </button>
-                                <button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</button>
-                            </h2>
+                                <button type="button" className="ghost small" aria-expanded={showArchived} onClick={(e) => { setShowArchived((v) => !v); e.currentTarget.closest("details")?.removeAttribute("open"); }}>보관됨</button>
+                                    </div>
+                                </details>
+                            </div>
                             {filtering && <LabelFilter labels={labels} selected={labelFilter} onChange={setLabelFilter} />}
                             {showArchived && <ArchivedProjects />}
                             {shown.map((p) => (
@@ -250,21 +254,11 @@ export function Workspace() {
                                     </button>
                                     <button type="button" className="ghost small" aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} aria-expanded={menuFor === p.id}
                                         onClick={() => setMenuFor((m) => (m === p.id ? null : p.id))}>⋯</button>
-                                    {menuFor === p.id && <ProjectMenu project={p} labels={labels} onClose={() => setMenuFor(null)} />}
-                                    {!narrow && (
-                                        <span className="row-actions">
-                                            <button className="ghost small" title="오른쪽에 열기" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name }, "right")}>
-                                                ⇥
-                                            </button>
-                                            <button className="ghost small" title="아래에 열기" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name }, "down")}>
-                                                ⤓
-                                            </button>
-                                        </span>
-                                    )}
+                                    {menuFor === p.id && <ProjectMenu project={p} labels={labels} onClose={() => setMenuFor(null)}
+                                        onSplit={narrow ? undefined : (how) => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name }, how)} />}
                                 </div>
                                 </SidebarProject>
                             ))}
-                            {projects.data?.length === 0 && <p className="muted">프로젝트를 추가하세요.</p>}
                             {!!projects.data?.length && shown.length === 0 && (
                                 <p className="muted" role="status">
                                     라벨 조건에 맞는 프로젝트가 없습니다. <button type="button" className="ghost small" onClick={() => setLabelFilter([])}>필터 해제</button>

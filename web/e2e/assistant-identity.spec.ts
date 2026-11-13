@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, sessionView } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openBots, script, sessionView } from "./helpers";
 
 // UI-013 통합 인수 시험. SessionView의 실제 assistant 항목 연결 전에는 통과하지 않는다.
 const PNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -16,8 +16,7 @@ async function makeBot(name: string, image: boolean) {
 
 async function openBot(page: Page, bot: { name: string; sessionId: string }) {
     await login(page);
-    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
-    if (await sidebar.getAttribute("aria-expanded") === "false") await sidebar.click();
+    await openBots(page);
     await page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: bot.name }).locator(".bot-open").click();
     const view = sessionView(page, bot.sessionId);
     await expect(view).toBeVisible();

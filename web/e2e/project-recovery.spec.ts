@@ -39,6 +39,7 @@ test("프로젝트를 보관했다가 복원하고, 제거한 worktree를 브랜
         await row.getByRole("button", { name: "프로젝트 메뉴" }).click();
         await page.getByRole("dialog", { name: `${p.name} 메뉴` }).getByRole("button", { name: "보관" }).click();
         await expect(row).toHaveCount(0);
+        await side.getByLabel("프로젝트 목록 옵션", { exact: true }).click();
         await side.getByRole("button", { name: "보관됨" }).click();
         const archived = side.getByTestId("archived-project").filter({ hasText: p.name });
         await archived.getByRole("button", { name: "복원 검사" }).click();

@@ -34,7 +34,7 @@ function ProfileChoice({ d, value, disabled, edit }: { d: SettingDef; value: unk
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const id = String(value ?? "");
     const selected = profiles.data?.find((profile) => profile.id === id);
-    return <div>
+    return <div className="setting-profile-choice">
         <select aria-label={d.label} value={id} disabled={disabled || !profiles.data} onChange={(event) => edit(event.target.value)}>
             <option value="">{d.key === "context.summary_profile" ? "요청에 쓰는 모델 사용" : "기기 선택 또는 첫 활성 모델"}</option>
             {id && profiles.data && !selected && <option value={id} disabled>사용 불가 모델(삭제됐거나 접근 불가)</option>}
@@ -75,8 +75,13 @@ export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLin
     const [resetId, resetLabel] = scopeTarget(resetScope, target);
     return (
         <div className="scoped" ref={root}>
-            {resetDefs && <div className="setting" data-testid="settings-area-reset">
-                <p>{area}의 범위별 설정 복원 · 접힌 고급 항목도 포함합니다. 모델 프로필·키·정의 파일은 지우지 않습니다.</p>
+            {defs.map((d) => {
+                const it = eff.data?.items.find((i) => i.key === d.key);
+                return it ? <Row key={d.key} d={d} it={it} t={target} reload={eff.reload} /> : null;
+            })}
+            {resetDefs && <details className="settings-area-reset" data-testid="settings-area-reset">
+                <summary>{area} 기본값 복원</summary>
+                <p className="muted small">고급 항목 포함. 모델 프로필·키·정의 파일은 유지됩니다.</p>
                 <div className="inline wrap">
                     <select aria-label="영역 복원 범위" value={resetScope} onChange={(event) => setResetScope(event.target.value)}>
                         {scopes.map((scope) => <option key={scope} value={scope}>{SCOPE_LABEL[scope]}</option>)}
@@ -84,12 +89,8 @@ export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLin
                     <SettingsResetButton key={resetScope} defs={resetDefs.filter((d) => d.scopes.includes(resetScope))}
                         target={target} scope={resetScope} scopeId={resetId} targetLabel={resetLabel} label="이 영역의 범위별 설정 복원" saved={eff.reload} />
                 </div>
-                <p className="muted small">편집 중인 미저장 입력은 적용하거나 버리지 않습니다. 복원 뒤 다시 저장하면 revision 충돌을 확인해야 할 수 있습니다.</p>
-            </div>}
-            {defs.map((d) => {
-                const it = eff.data?.items.find((i) => i.key === d.key);
-                return it ? <Row key={d.key} d={d} it={it} t={target} reload={eff.reload} /> : null;
-            })}
+                <p className="muted small">미저장 입력은 유지됩니다.</p>
+            </details>}
         </div>
     );
 }
@@ -131,11 +132,19 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
     const [, target] = scopeTarget(scope, t);
     return (
         <section className="setting" data-testid={`setting-${d.key}`} data-setting-key={d.key}>
+            <div className="setting-heading">
             <h2>
                 {d.label} {d.advanced && <span className="muted small">고급</span>}{" "}
                 <a className="muted small" href={`#setting-${encodeURIComponent(d.key)}`} title="이 항목으로 바로 가는 링크" aria-label={`${d.label} 링크`}>#</a>
             </h2>
-            <p className="muted small">{d.description}</p>
+            <details className="setting-help">
+                <summary aria-label={`${d.label} 도움말`}>?</summary>
+                <div>
+                    <p>{d.description}</p>
+                    <p>실제 적용값: <code>{JSON.stringify(it.effective)}</code> ({SCOPE_LABEL[it.source]}) · 기본값 <code>{JSON.stringify(it.default)}</code></p>
+                </div>
+            </details>
+            </div>
             <div className="inline wrap">
                 {scopes.length > 1 && (
                     <select disabled={saving} aria-label={`${d.label} 적용 범위`} value={scope} onChange={(e) => { setScope(e.target.value); setDraft(undefined); setState({ kind: "idle" }); }}>
@@ -168,14 +177,11 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                 )}
                 {d.kind === "text" && <textarea disabled={saving} aria-label={d.label} rows={4} value={String(value ?? "")} onChange={(e) => edit(e.target.value)} />}
                 <ServerActionButton disabled={draft === undefined || saving || state.kind === "conflict"} onClick={() => draft && void save(draft.value, draft.revision)}>저장</ServerActionButton>
-                <SettingsResetButton key={scope} defs={[d]} target={t} scope={scope} scopeId={scopeTarget(scope,t)[0]} targetLabel={target}
+                <SettingsResetButton compact key={scope} defs={[d]} target={t} scope={scope} scopeId={scopeTarget(scope,t)[0]} targetLabel={target}
                     label="이 범위 값 지우기" disabled={saving || layer?.value === null || layer?.value === undefined} draft={draft?.value}
                     saved={() => { setDraft(undefined); setState({ kind: "saved", msg: APPLIES[d.applies] }); reload(); }} />
             </div>
-            <p className="muted small">
-                실제 적용값: <code>{JSON.stringify(it.effective)}</code> ({SCOPE_LABEL[it.source]}) · 기본값 <code>{JSON.stringify(it.default)}</code>
-                {draft !== undefined && <strong> · 저장 안 됨</strong>}
-            </p>
+            {draft !== undefined && <p className="muted small">저장 안 됨</p>}
             {state.kind !== "idle" && (
                 <p className={`save-state ${state.kind === "error" || state.kind === "conflict" ? "error" : ""}`} role="status">
                     {state.kind === "saving" ? "저장 중…" : state.kind === "saved" ? `저장됨 · ${state.msg}` : state.kind === "conflict" ? state.msg : `저장 실패(기존 값 유지): ${state.msg}`}

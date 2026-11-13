@@ -246,6 +246,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 {active?.kind === "settings" && (
                     <Settings
                         key={active.id}
+                        open={p.open}
                         projectId={active.project_id ?? undefined}
                         projectName={projectName(active.project_id)}
                         sessionId={active.resource_id?.startsWith("session:") ? active.resource_id.slice(8) : undefined}
@@ -266,8 +267,7 @@ function copyOf(t: L.Tab): Omit<L.Tab, "id"> {
 function EmptyPane() {
     return (
         <div className="empty">
-            <p>왼쪽 최근 목록이나 프로젝트에서 대화를 여세요.</p>
-            <p className="muted">각 영역은 서로 다른 프로젝트를 열 수 있고, 요청은 그 탭의 프로젝트에만 실행됩니다.</p>
+            <p>대화를 선택하세요.</p>
         </div>
     );
 }
