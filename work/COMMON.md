@@ -35,6 +35,10 @@ Rust 전용 모듈은 기존 `ToolResult`·`ToolError`·`Planned`와 권한 경�
 독립 조사·관련 편집은 묶고 유효한 근거는 재사용한다. 보안·오류·복구 분기를 생략하지 않는다.
 실시간 자원 조율은 하지 않는다. E2E·전체 회귀·release·패키징은 통합 단계에서 실행한다.
 완료 직전 자기 기능의 선택 Rust 시험(컴파일 포함)과 Vitest·typecheck를 프로젝트 선택 검사 진입점으로 한 번 실행한다. 컴파일되지 않는 코드를 인계하지 않는다. 실패는 고친 뒤 실패한 검사만 다시 실행한다.
+worktree에는 Rust 툴체인(`.dev`)과 `web/node_modules`가 없다. 설치·복사하지 말고 메인 것을 쓴다:
+- Rust: `source /data/project/paseodog_opus/.envrc.dev`. 자기 worktree의 `.envrc.dev`가 `$PWD/.dev`를 가리키는 옛 버전이어도 이 절대 경로를 source한다.
+- 웹: `web/node_modules`가 없으면 `ln -s /data/project/paseodog_opus/web/node_modules web/node_modules`. Git ignore 대상이라 worktree는 clean으로 남는다. `npm install`·`npm ci`는 하지 않는다.
+- Rust 검사는 여러 세션이 동시에 빌드하지 않도록 `flock /home/ubuntu/.cache/grove-rust-check.lock python3 scripts/build.py test --rust ...`로 실행한다. 웹 검사는 잠금 없이 실행한다.
 프로젝트의 해당 선택 검사 진입점을 사용한다. 환경이 없으면 설치나 우회 대신 미실행으로 기록한다.
 시험은 작성하되 미실행을 통과로 보고하지 않는다. 연결 없는 모듈이 기존 검사에서 제외된 사실을 숨기지 않는다.
 각 worktree에 target·node_modules·툴체인을 통째로 복사하거나 설치하지 않는다.

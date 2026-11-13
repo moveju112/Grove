@@ -1,4 +1,7 @@
 # 이 저장소 전용 Rust 툴체인 환경. 사용: source .envrc.dev
-export CARGO_HOME="$PWD/.dev/cargo"
-export RUSTUP_HOME="$PWD/.dev/rustup"
+# 툴체인은 메인 checkout의 .dev 하나만 쓴다. git worktree에서 source해도 같은 위치를 가리킨다.
+_grove_main="$(cd "$(git rev-parse --path-format=absolute --git-common-dir)/.." && pwd)"
+export CARGO_HOME="$_grove_main/.dev/cargo"
+export RUSTUP_HOME="$_grove_main/.dev/rustup"
 export PATH="$CARGO_HOME/bin:$PATH"
+unset _grove_main
