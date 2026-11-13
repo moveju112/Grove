@@ -354,6 +354,7 @@ pub fn router(app: App) -> Router {
         .route("/model-profiles/{id}/check", post(models::check_profile))
         .route("/model-profiles/{id}/models", get(models::catalog))
         .route("/settings/registry", get(settings::get_registry))
+        .route("/source-settings", get(source_settings::list))
         .route("/settings/effective", get(settings::get_effective))
         .route("/settings/reset-preview", get(settings::reset_preview))
         .route("/settings/reset", post(settings::reset_apply))

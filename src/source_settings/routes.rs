@@ -1,0 +1,110 @@
+//! 소유자만 조회하며 경로는 서버 환경과 등록된 프로젝트에서 결정한다.
+
+use super::{ReadErrorCode, SourceId, SourceSettings, SourceState, read_source};
+use crate::App;
+use crate::auth::Owner;
+use crate::error::{ApiError, ApiResult};
+use axum::Json;
+use axum::extract::{Query, State, rejection::QueryRejection};
+use serde::{Deserialize, Serialize};
+use std::ffi::OsString;
+use std::path::PathBuf;
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SourceQuery {
+    project_id: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct SourceList {
+    items: Vec<SourceSettings>,
+}
+
+/// 클라이언트는 프로젝트 식별자만 지정한다. source 목록·파일명·root는 고정한다.
+pub async fn list(
+    State(app): State<App>,
+    _owner: Owner,
+    query: Result<Query<SourceQuery>, QueryRejection>,
+) -> ApiResult<Json<SourceList>> {
+    let Query(query) = query.map_err(|_| ApiError::invalid("원본 설정 조회 인자가 올바르지 않습니다"))?;
+    let project_root = if let Some(id) = query.project_id {
+        if id.is_empty() {
+            return Err(ApiError::invalid("프로젝트 식별자가 필요합니다"));
+        }
+        // Grove는 단일 사용자 모델이다. Owner는 모든 등록 프로젝트의 관리자이며
+        // 일반 기기에는 원본 설정 접근 권한을 부여하지 않는다.
+        Some(app.db.call(move |c| crate::projects::active_root(c, &id)).await?)
+    } else {
+        None
+    };
+    let items = tokio::task::spawn_blocking(move || {
+        if let Some(root) = project_root {
+            [
+                SourceId::ClaudeProject,
+                SourceId::ClaudeProjectLocal,
+                SourceId::CodexProject,
+            ]
+            .into_iter()
+            .map(|source| read_source(&root, source))
+            .collect()
+        } else {
+            user_roots(|key| std::env::var_os(key))
+                .into_iter()
+                .map(|(source, root)| match root {
+                    Some(root) => read_source(&root, source),
+                    None => SourceSettings {
+                        source,
+                        state: SourceState::ReadError { code: ReadErrorCode::Io },
+                    },
+                })
+                .collect()
+        }
+    })
+    .await
+    .map_err(|_| ApiError::internal("원본 설정 조회 작업을 완료하지 못했습니다"))?;
+    Ok(Json(SourceList { items }))
+}
+
+fn user_roots(env: impl Fn(&str) -> Option<OsString>) -> [(SourceId, Option<PathBuf>); 2] {
+    let home = env(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute());
+    let root = |key: &str, default: &str| match env(key) {
+        Some(value) => Some(PathBuf::from(value)).filter(|path| path.is_absolute()),
+        None => home.as_ref().map(|home| home.join(default)),
+    };
+    [
+        (SourceId::ClaudeUser, root("CLAUDE_CONFIG_DIR", ".claude")),
+        (SourceId::CodexUser, root("CODEX_HOME", ".codex")),
+    ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn roots_use_server_environment_without_guessing_relative_or_missing_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("home");
+        let claude = dir.path().join("claude");
+        let codex = dir.path().join("codex");
+        let home_key = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+        let defaults = user_roots(|key| (key == home_key).then(|| home.clone().into_os_string()));
+        assert_eq!(defaults[0].1, Some(home.join(".claude")));
+        assert_eq!(defaults[1].1, Some(home.join(".codex")));
+        let overrides = user_roots(|key| match key {
+            "CLAUDE_CONFIG_DIR" => Some(claude.clone().into_os_string()),
+            "CODEX_HOME" => Some(codex.clone().into_os_string()),
+            _ => None,
+        });
+        assert_eq!(overrides[0].1, Some(claude));
+        assert_eq!(overrides[1].1, Some(codex));
+        for value in ["", "relative"] {
+            let invalid = user_roots(|_| Some(OsString::from(value)));
+            assert!(invalid.iter().all(|(_, root)| root.is_none()));
+        }
+        assert!(user_roots(|_| None).iter().all(|(_, root)| root.is_none()));
+    }
+}
