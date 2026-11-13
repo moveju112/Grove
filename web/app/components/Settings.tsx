@@ -25,6 +25,7 @@ import { ExecSettings } from "./exec-settings/ExecSettings";
 import { isExecSetting } from "../api/execSettings";
 import { BrowserCapabilitiesSettings, currentNotificationIssue, useBrowserCapabilities } from "./capabilities/BrowserCapabilities";
 import { requestNotificationAccess } from "./capabilities/browser";
+import { UpdateSettings } from "./update/UpdateSettings";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -57,6 +58,7 @@ export const ITEMS: Item[] = [
     { id: "logout", menu: "devices", label: "로그아웃", keywords: "logout sign out", scope: "이 기기" },
     { id: "usage", menu: "model", label: "사용량·비용", keywords: "usage cost token price 사용량 비용 토큰 가격", scope: "서버 전체" },
     { id: "health", menu: "server", label: "서버 상태·버전·진단", keywords: "version health schema diagnostics 버전 상태 진단 정보 복사", scope: "서버 전체" },
+    { id: "server-update", menu: "server", label: "서버 업데이트", keywords: "update stable beta channel protocol schema 버전 채널 확인 자동 적용", scope: "서버 전체" },
     { id: "help", menu: "server", label: "도움말", keywords: "help shortcut 도움말 단축키 사용법", scope: "이 기기" },
     { id: "backup", menu: "server", label: "백업·복원", keywords: "backup snapshot restore 백업 복원", scope: "서버 전체" },
 ];
@@ -136,6 +138,7 @@ export function Settings({ projectId, projectName, sessionId }: { projectId?: st
                 {visible("logout") && <Section item="logout"><button onClick={() => void logout()}>이 브라우저에서 로그아웃</button></Section>}
                 {visible("usage") && <UsagePanel />}
                 {visible("health") && <Section item="health"><Health /></Section>}
+                {visible("server-update") && <Section item="server-update"><UpdateSettings /></Section>}
                 {visible("backup") && (
                     <Section item="backup">
                         <p>서버에서 실행: <code>grove snapshot &lt;파일&gt;</code> (실행 중에도 일관된 시점 복사), 복원은 <code>grove restore &lt;파일&gt; &lt;새 데이터 디렉터리&gt;</code> — 기존 데이터를 덮어쓰지 않습니다.</p>

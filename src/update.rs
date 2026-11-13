@@ -550,20 +550,154 @@ pub fn install(root: &Path, package: &Path, data_dir: &Path, listen: &str, trust
 
 pub fn check(root: &Path, manifest_src: &str) -> Result<Value, String> {
     let inst = Install { root: root.to_path_buf() };
-    let mut trust = inst.trust();
-    let r = verify_manifest(&read_source(manifest_src)?, &mut trust)?;
     let cur = inst.pointer("current").ok_or("설치되어 있지 않습니다(`grove install`)")?;
     let cm = inst.release_manifest(&cur)?;
     let cv = cm["version"].as_str().unwrap_or("0");
+    let out = inspect_manifest(&inst, manifest_src, cv, None)?;
+    inst.set_state(if out["kind"] == "upgrade" && out["artifact"] == true { "available" } else { "idle" }, out["available"].as_str(), out.clone());
+    Ok(out)
+}
+
+// CLI와 설정 화면은 같은 서명·제품·버전 비교 경로를 쓴다. 설정 조회는 설치 상태를 쓰지 않는다.
+fn inspect_manifest(inst: &Install, manifest_src: &str, cv: &str, channel: Option<&str>) -> Result<Value, String> {
+    let mut trust = inst.trust();
+    let r = verify_manifest(&read_source(manifest_src)?, &mut trust)?;
+    if channel.is_some_and(|c| c != r.channel) {
+        return Err("선택한 업데이트 채널과 manifest 채널이 다릅니다".into());
+    }
     let kind = match cmp_version(&r.version, cv) {
         std::cmp::Ordering::Greater => "upgrade",
         std::cmp::Ordering::Equal => "same",
         std::cmp::Ordering::Less => "downgrade",
     };
     let has = r.artifacts.contains_key(platform());
-    let out = json!({ "kind": kind, "current": cv, "available": r.version, "channel": r.channel, "platform": platform(), "artifact": has, "schema": r.schema, "protocol": r.protocol });
-    inst.set_state(if kind == "upgrade" && has { "available" } else { "idle" }, Some(&r.version), out.clone());
-    Ok(out)
+    Ok(json!({ "kind": kind, "current": cv, "available": r.version, "channel": r.channel, "platform": platform(), "artifact": has, "schema": r.schema, "protocol": r.protocol }))
+}
+
+// ---------- 서버 업데이트 설정(실행·예약 기능 없음) ----------
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UpdateChannel {
+    #[default]
+    Stable,
+    Beta,
+}
+
+impl UpdateChannel {
+    fn name(self) -> &'static str {
+        match self { Self::Stable => "stable", Self::Beta => "beta" }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AutoApplyScope {
+    #[default]
+    NotifyOnly,
+    Patch,
+    Minor,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UpdateSettings {
+    pub channel: UpdateChannel,
+    pub auto_apply: AutoApplyScope,
+    pub revision: i64,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SaveUpdateSettings {
+    pub channel: UpdateChannel,
+    pub auto_apply: AutoApplyScope,
+    pub expected_revision: i64,
+}
+
+pub fn settings(c: &rusqlite::Connection) -> crate::error::ApiResult<UpdateSettings> {
+    use rusqlite::OptionalExtension;
+    let row: Option<(String, i64)> = c.query_row(
+        "SELECT value, revision FROM settings WHERE scope='server' AND scope_id='-' AND key='server_update.preferences'",
+        [], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).optional()?;
+    match row {
+        Some((value, revision)) => {
+            let mut s: UpdateSettings = serde_json::from_str(&value)?;
+            s.revision = revision;
+            Ok(s)
+        }
+        None => Ok(UpdateSettings::default()),
+    }
+}
+
+pub fn last_check(c: &rusqlite::Connection) -> crate::error::ApiResult<Option<Value>> {
+    use rusqlite::OptionalExtension;
+    let row: Option<String> = c.query_row(
+        "SELECT value FROM settings WHERE scope='server' AND scope_id='-' AND key='server_update.last_check'",
+        [], |r| r.get(0),
+    ).optional()?;
+    row.map(|v| serde_json::from_str(&v).map_err(Into::into)).transpose()
+}
+
+fn save_setting(c: &rusqlite::Connection, key: &str, value: &Value, now: &str) -> crate::error::ApiResult<()> {
+    c.execute(
+        "INSERT INTO settings(scope,scope_id,key,value,revision,updated_at) VALUES('server','-',?1,?2,1,?3) \
+         ON CONFLICT(scope,scope_id,key) DO UPDATE SET value=excluded.value,revision=settings.revision+1,updated_at=excluded.updated_at",
+        rusqlite::params![key, value.to_string(), now],
+    )?;
+    Ok(())
+}
+
+pub fn require_revision(c: &rusqlite::Connection, revision: i64) -> crate::error::ApiResult<UpdateSettings> {
+    let current = settings(c)?;
+    if current.revision != revision {
+        return Err(crate::error::ApiError::revision_conflict(serde_json::to_value(current)?));
+    }
+    Ok(current)
+}
+
+pub fn save_settings(c: &rusqlite::Connection, request: SaveUpdateSettings, now: &str) -> crate::error::ApiResult<UpdateSettings> {
+    require_revision(c, request.expected_revision)?;
+    let s = UpdateSettings { channel: request.channel, auto_apply: request.auto_apply, revision: request.expected_revision + 1 };
+    save_setting(c, "server_update.preferences", &serde_json::to_value(&s)?, now)?;
+    Ok(s)
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SettingsSource {
+    root: PathBuf,
+    manifests: BTreeMap<String, PathBuf>,
+}
+
+/// 서버 관리자가 로컬에 준비한 서명 manifest만 확인한다. API에서 URL·경로·신뢰 키를 받지 않는다.
+/// 외부 릴리스 서버 접근, 패키지 다운로드, 설치 상태 변경은 하지 않는다.
+fn local_settings_check(data_dir: &Path, channel: UpdateChannel) -> Result<Value, &'static str> {
+    let source: SettingsSource = read_json(&data_dir.join("update-source.json")).map_err(|_| "local_source_unavailable")?;
+    let manifest = source.manifests.get(channel.name()).ok_or("channel_source_unavailable")?;
+    if !source.root.is_absolute() || !manifest.is_absolute() {
+        return Err("local_source_required");
+    }
+    inspect_manifest(&Install { root: source.root }, manifest.to_str().ok_or("local_source_required")?, crate::VERSION, Some(channel.name()))
+        .map_err(|_| "manifest_check_failed")
+}
+
+pub fn check_settings(c: &rusqlite::Connection, data_dir: &Path, revision: i64, now: &str) -> crate::error::ApiResult<Value> {
+    let s = require_revision(c, revision)?;
+    let result = match local_settings_check(data_dir, s.channel) {
+        Ok(release) => json!({
+            "status": if release["kind"] == "upgrade" { "available" } else { "up_to_date" },
+            "release": release,
+        }),
+        // 경로·원문·신뢰 키가 API와 idempotency 저장 응답에 유출되지 않게 고정 코드만 반환한다.
+        Err(code) => json!({ "status": "failed", "error": code }),
+    };
+    let mut result = result;
+    result["channel"] = json!(s.channel);
+    result["checked_at"] = json!(now);
+    result["settings_revision"] = json!(s.revision);
+    save_setting(c, "server_update.last_check", &result, now)?;
+    Ok(result)
 }
 
 pub struct ApplyOpts {
