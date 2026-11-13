@@ -30,18 +30,18 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 |---|---|---|---|---|
 | 21 | parallel/b02-source-skills-hooks | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-21-source-skills-hooks | `wks_ee49ecc425d4a36e` | 원본 스킬·hook 읽기 전용 보기 (10 이월, `7b3949d` 기준) |
 | 22 | parallel/b02-create-entry | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-22-create-entry | `wks_e30bd8e9163a7bb1` | 세션·프로젝트 생성 진입점 단순화 (`7b3949d` 기준) |
-| 23 | parallel/b02-tab-close | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-23-tab-close | `wks_2953ff0df5ee7bb2` | 탭·창 닫기 시 서버 작업 유지 (`7b3949d` 기준) |
-| 24 | parallel/b02-exec-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings | `wks_4a12061aaef2c918` | 셸·작업 한도·격리·기본 위치 설정 (`7b3949d` 기준) |
 | 25 | parallel/b02-update-settings | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-25-update-settings | `wks_9ec8fd34396cf19a` | 서버 업데이트 채널·버전 표시 (`7b3949d` 기준) |
-| 26 | parallel/b02-browser-caps | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps | `wks_9d9878d624297a99` | 브라우저 알림·clipboard·파일 API 차이 표시 (`7b3949d` 기준) |
 | 27 | parallel/b02-pwa-recovery | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-27-pwa-recovery | `wks_9a7c204337ac8249` | PWA 호환·오프라인·다중 탭 복구 (14 이월, `551f551` 기준) |
 | 28 | parallel/b02-skill-management | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-28-skill-management | `wks_e343b3a56e3a22d6` | Grove 스킬 추가·저장·reload·활성화 (`551f551` 기준) |
 | 29 | parallel/b02-hook-execution | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-29-hook-execution | `wks_31bb4a6cdc6ff8bc` | 승인·한도·취소 경계를 따르는 hook 실행 (`551f551` 기준) |
 | 30 | parallel/b02-navigation-context | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-30-navigation-context | `wks_73d51bb0a7f9b465` | 호스트·프로젝트·세션 현재 위치와 탐색 (`551f551` 기준) |
+| 31 | parallel/b02-exec-cwd | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-31-exec-cwd | 생성 후 기록 | 기본 cwd 실제 실행 연결 (24 이월) |
+| 32 | parallel/b02-compaction-details | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-32-compaction-details | 생성 후 기록 | 압축 기록 모델·비용·원문 이동 |
+| 33 | parallel/b02-model-fallback | /home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-33-model-fallback | 생성 후 기록 | 명시적 첫 응답 전 HTTP 모델 fallback |
 
-공통 연결: `src/lib.rs::router`(25·28·29), `src/store.rs` MIGRATIONS 끝(28·29), `Settings.tsx` mount(24·25·26). 27은 PWA/API 요청 경계·서버 작업 차단, 28은 스킬, 29는 hook 이벤트/실행, 30은 Workspace header 밖의 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30으로 분리한다. `src/source_settings/`는 21, `src/skills/`는 28 소유다.
+공통 연결: route/module 등록(25·28·29·33), 독립 migration(28·29), Settings의 서로 다른 mount(25·33). 27은 PWA/auth·작업 차단, 28 스킬, 29 hook, 30 위치 안내다. Workspace 생성 버튼은 22, 위치 mount는 30 소유다. `approvals.rs`의 hook 분기는 29, 일반 shell cwd 계획은 31로 분리한다. `SessionView`의 compaction 분기는 32, fallback 표시 분기는 33이다. `runner`의 hook 호출은 29, 모델 접수/오류 전환은 33 소유다.
 
-자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 최신 사용자 요청으로 목표는 활성 기능 workspace 10개다. 31~40 증설은 취소했고 해당 workspace/기능 세션을 만들지 않았다. 21~26은 자동 시작했으며 21·25의 제공자 시스템 오류는 사용자 승인으로 기존 세션에 1회 재개 요청을 접수했다. 재실패는 자동 반복하지 않고 보존한다. 이후 준비 작업도 세션 이력·clean·경로 일치 확인 후 한 번만 시작한다.
+자동 순환 예약은 메인 세션 대상 `5848102f`(3분, 만료·횟수 제한 없음) 하나다. 20개 증설은 취소됐고 목표는 활성 기능 workspace 10개다. 현재 31~33은 23·24·26 정리의 세 자리 보충이며 증설이 아니다. 21·25의 제공자 오류는 기존 세션에 1회 재개 요청을 접수했으며 재실패를 자동 반복하지 않는다. 관리 메타데이터 쓰기는 직렬화하고 진행 중 세션은 건드리지 않는다.
 
 ## 완료·정리 이력
 통합 담당은 정리 전에 통합 SHA·검증·보존 근거를 기록하고, 서비스 결과 확인 후 정리 상태를 갱신한다.
@@ -71,10 +71,9 @@ b02 기준 SHA: `bc797b36cd0c09ce41eb675d7d152ce95ffa7ef1`. 지시 문서는 `/d
 | 12 | `parallel/b02-image-read-wire` · `b575b5d` | `af0ad28` | `work/RESULT-12.md`; image_read 16개·attachments 15개·HTTP 6개·tool_batches 3개·웹 capability·타입 통과. runner 첨부→프로젝트 이미지 복원과 스킬 지침 조립 양쪽 보존 | `wks_13f52f7f5562939c` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-12-image-read-wire` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 28 |
 | 14 | `parallel/b02-pwa-lifecycle` · `4577b43` | `af0ad28` | `work/RESULT-14.md`; lifecycle 12개·API 18개·PWA/연결/응답 유실/승인 포함 E2E 22개 및 루트·`/grove/` 배포 E2E 4개 통과. 공통 변경 요청 경계 누락을 실패 시험으로 재현 후 수정 | `wks_043964eeb7dd683e` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-14-pwa-lifecycle` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 29 |
 | 20 | `parallel/b02-external-editor` · `1b1e438` | `af0ad28` | `work/RESULT-20.md`; 격리 7환경을 실행하는 Rust driver·타입 계약 2개, 웹 단위 4개·타입·외부 편집기 E2E 4개 통과. 실제 GUI·Windows/macOS 미검증 | `wks_7abac678efb30e9a` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-20-external-editor` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 30 |
-
-| 23 | `parallel/b02-tab-close` · `a8cfe5c` | `b59d9f7` | `work/RESULT-23.md`; 신규 Rust 7개·기존 회귀, 실제 tab/context/browser 종료 E2E 9개 통과 | `wks_2953ff0df5ee7bb2` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-23-tab-close` | 정리 조건 확인 완료·archive 대기; 브랜치 유지 | 31 |
-| 24 | `parallel/b02-exec-settings` · `93a61c0` | `b59d9f7` | `work/RESULT-24.md`; exec_settings 4개·settings/tasks 회귀·웹 단위 3개·타입·E2E 3개 통과. 미지원 fieldset 자체의 잘못된 Playwright 기대만 제거하고 각 radio 비활성 검사 유지 | `wks_4a12061aaef2c918` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings` | 정리 조건 확인 완료·archive 대기; 브랜치 유지 | 32 |
-| 26 | `parallel/b02-browser-caps` · `7fb45ba` | `b59d9f7` | `work/RESULT-26.md`; 신규 단위 11개·기존 알림 회귀·타입·빌드·Chromium E2E 4개 통과 | `wks_9d9878d624297a99` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps` | 정리 조건 확인 완료·archive 대기; 브랜치 유지 | 33 |
+| 23 | `parallel/b02-tab-close` · `a8cfe5c` | `b59d9f7` | `work/RESULT-23.md`; 신규 Rust 7개·기존 회귀、tab/context/browser 종료 E2E 9개 통과 | `wks_2953ff0df5ee7bb2` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-23-tab-close` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 31 |
+| 24 | `parallel/b02-exec-settings` · `93a61c0` | `b59d9f7` | `work/RESULT-24.md`; exec_settings 4개·settings/tasks 회귀·단위 3개·타입·E2E 3개 통과。fieldset 자체 기대만 제거하고 radio 비활성 검사 유지 | `wks_4a12061aaef2c918` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-24-exec-settings` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 32 |
+| 26 | `parallel/b02-browser-caps` · `7fb45ba` | `b59d9f7` | `work/RESULT-26.md`; 신규 단위 11개·알림 회귀·타입·빌드·Chromium E2E 4개 통과 | `wks_9d9878d624297a99` · `/home/ubuntu/.local/share/paseodog/paseo/worktrees/0q796rug/b02-26-browser-caps` | workspace·종료 세션 archive·디렉터리 제거 확인; 브랜치 유지 | 33 |
 
 b01 정리 뒤 활성 0개 → 목표 10개로 보충: 10~19 (`bc797b3`). 00·01·04 이월은 10·11·12로 배정했다.
 
