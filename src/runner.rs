@@ -757,6 +757,22 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 return session_for_partial;
             }
         };
+        let (tid_timing, epoch_timing) = (turn_id.to_string(), app.epoch.clone());
+        let started = app.db.call(move |c| {
+            Ok(c.execute(
+                "UPDATE turns SET provider_started_at=?3 WHERE id=?1 AND owner_epoch=?2 AND status='running'",
+                params![tid_timing, epoch_timing, crate::util::fmt_time(time::OffsetDateTime::now_utc())],
+            )? > 0)
+        }).await;
+        match started {
+            Ok(true) => {}
+            Ok(false) => return session_for_partial,
+            Err(e) => {
+                fail(app, turn_id, json!({"code":e.code,"message":e.message})).await;
+                return session_for_partial;
+            }
+        }
+        let provider_started = Instant::now();
         // 모델 호출과 중간 snapshot
         let partials = app.partials.clone();
         let sid = input.session_id.clone();
@@ -816,6 +832,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             },
             None => provider::stream(&input.profile, &input.request, &mut cancel_rx, &mut on_delta).await,
         };
+        let provider_ms = provider_started.elapsed().as_millis().min(i64::MAX as u128) as i64;
         progress_writer.abort();
         // 응답 없이 끝나면(취소·종료·오류) 마지막 중단 증거를 종료 기록보다 먼저 남긴다. 성공은 확정 commit이 증거를 지운다.
         if result.is_err() {
@@ -827,6 +844,17 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         // 응답을 받으면 바로 반환한다(이후 도구 실행·승인 대기는 슬롯 없이). 오류·취소 경로도 여기서 반환된다.
         drop(permit);
         app.partials.clear(&input.session_id);
+        let (tid_timing, epoch_timing) = (turn_id.to_string(), app.epoch.clone());
+        if let Err(e) = app.db.call(move |c| {
+            c.execute(
+                "UPDATE turns SET provider_ms=provider_ms+?3, provider_started_at=NULL WHERE id=?1 AND owner_epoch=?2",
+                params![tid_timing, epoch_timing, provider_ms],
+            )?;
+            Ok(())
+        }).await {
+            fail(app, turn_id, json!({"code":e.code,"message":e.message})).await;
+            return session_for_partial;
+        }
         let out = match result {
             Ok(o) => o,
             Err(e) if e.code == "cancelled" => {
@@ -1360,8 +1388,8 @@ pub(crate) fn enqueue_with_attachments(
     let msg = crate::sessions::append_message(tx, now, session_id, "user", &content, Some(&tid), attachments.map(|a| &a.model_input))?;
     if let Some(a) = attachments { crate::attachments::bind(tx, now, &msg.id, a)?; }
     let ins = tx.execute(
-        "INSERT INTO turns (id, session_id, status, request_message_id, profile_id, agent_id, workflow_id, definition_snapshot, tools_enabled, owner_epoch, usage, created_at, updated_at, owner_key) \
-         VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6, ?7, ?8, ?9, '{}', ?10, ?10, ?11)",
+        "INSERT INTO turns (id, session_id, status, request_message_id, profile_id, agent_id, workflow_id, definition_snapshot, tools_enabled, owner_epoch, usage, created_at, updated_at, owner_key, provider_ms) \
+         VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6, ?7, ?8, ?9, '{}', ?10, ?10, ?11, 0)",
         params![tid, session_id, msg.id, profile_id, agent_id, wf_id, def.to_string(), tools, epoch, now, owner],
     );
     if let Err(rusqlite::Error::SqliteFailure(f, _)) = &ins

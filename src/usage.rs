@@ -306,11 +306,11 @@ fn merge_len(mut iv: Vec<(OffsetDateTime, OffsetDateTime)>) -> Duration {
     total
 }
 
-/// 턴 경과 시간을 승인 대기·도구 실행·그 밖(모델 대기·처리)으로 나눈다. 모두 서버 시각 기준이라 기기 시계와 무관하다.
+/// 턴 경과 시간을 승인 대기·도구 실행·공급자 호출·기타로 나눈다. 기기 시계와 무관하다.
 /// 겹치는 도구 실행은 합집합으로 센다. 끝나지 않은 턴은 `now`까지 센다.
 pub fn turn_timing(c: &Connection, turn_id: &str, now: OffsetDateTime) -> ApiResult<Value> {
-    let (created, finished, status): (String, Option<String>, String) =
-        c.query_row("SELECT created_at, finished_at, status FROM turns WHERE id = ?1", params![turn_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+    let (created, finished, status, provider_ms, provider_started_at): (String, Option<String>, String, Option<i64>, Option<String>) =
+        c.query_row("SELECT created_at, finished_at, status, provider_ms, provider_started_at FROM turns WHERE id = ?1", params![turn_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)))?;
     let start = crate::util::parse_time(&created).unwrap_or(now);
     let end = finished.as_deref().and_then(crate::util::parse_time).unwrap_or(now).max(start);
     let mut approvals = vec![];
@@ -337,8 +337,15 @@ pub fn turn_timing(c: &Connection, turn_id: &str, now: OffsetDateTime) -> ApiRes
     let tool = ms(merge_len(tools)).min(total - approval);
     // 나머지는 정수 ms에서 계산해 세 값의 합이 항상 total과 같게 한다.
     let other = total - approval - tool;
+    // 종료 시 남은 시작 marker는 프로세스 중단으로 이 구간을 확정하지 못했다는 뜻이다.
+    let provider = provider_ms.filter(|_| finished.is_none() || provider_started_at.is_none()).map(|elapsed| {
+        let inflight = provider_started_at.as_deref().and_then(crate::util::parse_time)
+            .map(|started| ms(end - started)).unwrap_or(0);
+        elapsed.saturating_add(inflight).min(other)
+    });
     Ok(json!({
         "total_ms": total, "approval_wait_ms": approval, "tool_ms": tool, "model_and_other_ms": other,
+        "provider_ms": provider, "other_ms": provider.map(|p| other - p),
         "running": finished.is_none(), "status": status,
     }))
 }

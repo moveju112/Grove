@@ -20,11 +20,13 @@ import { WorktreeSelect } from "./WorktreesPanel";
 import { loadScrollPosition, saveScrollPosition } from "../state/scrollPosition";
 import { VirtualMessages } from "./VirtualMessages";
 import { usePaneVisible } from "../state/paneVisibility";
+import { deliveryTiming } from "../state/deliveryTiming";
 
 type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
 
 export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const visible = usePaneVisible();
+    useEffect(() => visible ? deliveryTiming.watch(sessionId) : undefined, [visible, sessionId]);
     const prefs = usePrefs();
     const session = useQuery<Session>(`session:${sessionId}`, () => api.get(`/sessions/${sessionId}`));
     const latest = useQuery<MessagePage>(`messages:${sessionId}`, () => api.get(`/sessions/${sessionId}/messages?limit=100`));
@@ -475,7 +477,8 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     </span>
                 </div>
             )}
-            {!active && lastTurn && <TurnTiming sessionId={sessionId} turnId={lastTurn.id} />}
+            {!active && lastTurn && <TurnTiming sessionId={sessionId} turnId={lastTurn.id}
+                messagesReady={latest.data?.items.some((m) => m.turn_id === lastTurn.id && m.created_at === lastTurn.finished_at) ?? false} />}
             <BudgetNote sessionId={sessionId} active={active} />
             <FollowupsPanel sessionId={sessionId} running={!!active} onError={setErr} />
             <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands}
@@ -715,19 +718,26 @@ const MessageView = memo(function MessageView({ m, prefs }: { m: Message; prefs:
     );
 });
 
-type Timing = { total_ms: number; approval_wait_ms: number; tool_ms: number; model_and_other_ms: number; running: boolean };
+type Timing = { total_ms: number; approval_wait_ms: number; tool_ms: number; model_and_other_ms: number; provider_ms?: number | null; other_ms?: number | null; running: boolean };
 
 /// 마지막 요청의 경과 시간 분해(서버 시각 기준이라 기기 시계와 무관).
-function TurnTiming({ sessionId, turnId }: { sessionId: string; turnId: string }) {
+function TurnTiming({ sessionId, turnId, messagesReady }: { sessionId: string; turnId: string; messagesReady: boolean }) {
     const q = useQuery<{ timing: Timing }>(`turns:${sessionId}:timing:${turnId}`, () => api.get(`/turns/${turnId}`));
     const t = q.data?.timing;
+    const visible = usePaneVisible();
+    const [deliveryMs, setDeliveryMs] = useState<number | null>(null);
+    useLayoutEffect(() => {
+        if (visible && messagesReady && t && !t.running) setDeliveryMs(deliveryTiming.applied(turnId));
+    }, [visible, messagesReady, t, turnId]);
     if (!t || t.running) return null;
     const s = (ms: number) => `${(ms / 1000).toFixed(1)}초`;
     return (
         <p className="muted small" data-testid="turn-timing">
-            마지막 요청 {s(t.total_ms)} · 모델·처리 {s(t.model_and_other_ms)}
+            마지막 요청 {s(t.total_ms)}
+            {t.provider_ms != null ? ` · 공급자 ${s(t.provider_ms)} · 기타 ${s(t.other_ms ?? 0)}` : ` · 모델·처리 ${s(t.model_and_other_ms)}(공급자 미측정)`}
             {t.tool_ms > 0 && ` · 도구 ${s(t.tool_ms)}`}
             {t.approval_wait_ms > 0 && ` · 승인 대기 ${s(t.approval_wait_ms)}`}
+            {deliveryMs != null && <span data-testid="ui-delivery" title="SSE 수신 이후 조회·화면 반영 시간. 네트워크 편도 지연·이전 연결 끊김 시간은 포함하지 않습니다."> · 화면 반영(수신 후) {Math.round(deliveryMs)}ms</span>}
         </p>
     );
 }

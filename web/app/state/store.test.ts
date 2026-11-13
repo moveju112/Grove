@@ -1,8 +1,29 @@
 import { describe, expect, it, vi } from "vitest";
 import { applyEvent, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, resyncAll, setLive, subscribeQuery } from "./store";
 import type { EventRecord } from "../api/generated";
+import { deliveryTiming } from "./deliveryTiming";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+it("종료 이벤트의 화면 반영 측정은 재동기화·로그아웃 때 정리한다", () => {
+    const off = deliveryTiming.watch("delivery");
+    const event = (id: string, status: string) => applyEvent({
+        kind: "turn.updated", session_id: "delivery", project_id: null,
+        payload: { id, status }, seq: 1, created_at: "2026-01-01T00:00:00Z",
+    });
+    try {
+        event("running", "running");
+        expect(deliveryTiming.applied("running")).toBeNull();
+        event("done", "completed");
+        expect(deliveryTiming.applied("done")).toBeGreaterThanOrEqual(0);
+        resyncAll();
+        expect(deliveryTiming.applied("done")).toBeNull();
+        event("cancelled", "cancelled");
+        expect(deliveryTiming.applied("cancelled")).not.toBeNull();
+        clearServerCache();
+        expect(deliveryTiming.applied("cancelled")).toBeNull();
+    } finally { off(); clearServerCache(); }
+});
 
 describe("중복 viewer의 조회 구독(PANE-007)", () => {
     it("같은 대화를 여러 pane에서 보면 한 번 읽고 무효화도 한 번만 다시 읽는다", async () => {

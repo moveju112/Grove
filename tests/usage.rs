@@ -90,7 +90,7 @@ async fn turn_timing_separates_approval_wait_from_tool_and_model() {
     let p = s.create_project("t").await;
     let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
     f.push(fixture::tool_calls(&[("s1", "shell", json!({ "command": "sleep 0.3" }))]));
-    f.push(fixture::text("끝"));
+    f.push(fixture::slow_text(&["끝", "!"], 150));
     let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "go", "profile_id": prof, "tools": true })).await;
     let tid = v["turn"]["id"].as_str().unwrap().to_string();
     let t = s.wait_status(&tid, "awaiting_approval").await;
@@ -105,5 +105,45 @@ async fn turn_timing_separates_approval_wait_from_tool_and_model() {
     assert!(appr >= 550, "승인 대기 {appr}ms");
     assert!((250..2000).contains(&tool), "도구 실행 {tool}ms");
     assert_eq!(total, appr + tool + other, "{tm}");
+    let provider = tm["provider_ms"].as_i64().unwrap();
+    let overhead = tm["other_ms"].as_i64().unwrap();
+    assert!(provider >= 400, "공급자 호출·stream 대기 {provider}ms");
+    assert!(overhead >= 0);
+    assert_eq!(total, appr + tool + provider + overhead, "{tm}");
     assert_eq!(tm["running"], false);
+    // 이전 버전 또는 강제 중단으로 구간이 미확정이면 0으로 만들지 않는다.
+    let db_tid = tid.clone();
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        c.execute("UPDATE turns SET provider_ms=NULL WHERE id=?1", [&db_tid])?;
+        let legacy = grove::usage::turn_timing(c, &db_tid, time::OffsetDateTime::now_utc())?;
+        assert!(legacy["provider_ms"].is_null() && legacy["other_ms"].is_null(), "{legacy}");
+        c.execute("UPDATE turns SET provider_ms=100,provider_started_at=created_at WHERE id=?1", [&db_tid])?;
+        let interrupted = grove::usage::turn_timing(c, &db_tid, time::OffsetDateTime::now_utc())?;
+        assert!(interrupted["provider_ms"].is_null() && interrupted["other_ms"].is_null(), "{interrupted}");
+        Ok(())
+    }).await.unwrap();
+}
+
+#[tokio::test]
+async fn provider_timing_includes_cancelled_calls_and_is_preserved_after_restart() {
+    let mut s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let prof = s.fixture_profile(&f.base).await;
+    let p = s.create_project("timing cancellation").await;
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let (step, _release) = fixture::gated_text("never released");
+    f.push(step);
+    let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({"text":"wait","profile_id":prof})).await;
+    let tid = v["turn"]["id"].as_str().unwrap();
+    s.wait_turn(tid, |t| t["timing"]["provider_ms"].as_i64().is_some_and(|ms| ms >= 150)).await;
+    let (st, _) = s.post(&format!("/api/v1/turns/{tid}/cancel"), json!({})).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    let finished = s.wait_status(tid, "cancelled").await;
+    assert!(finished["timing"]["provider_ms"].as_i64().unwrap() >= 150, "{finished}");
+    assert_eq!(finished["timing"]["approval_wait_ms"], 0);
+    assert_eq!(finished["timing"]["tool_ms"], 0);
+    s.restart().await;
+    let (_, restored) = s.get(&format!("/api/v1/turns/{tid}")).await;
+    assert_eq!(restored["timing"], finished["timing"]);
+    assert_eq!(f.requests().len(), 1, "다시 시작해도 공급자를 재호출하지 않는다");
 }

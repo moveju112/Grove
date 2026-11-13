@@ -659,6 +659,12 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 진행(MCP-004): tools/call `_meta.progressToken`은 고유 call ID다. 활성 요청에서 이 token과 일치하며 증가하는 유한 수치만 받아 value·선택적 total을 최대 4Hz로 기록한다. 원격 자유문구는 비밀 반사를 막기 위해 버린다. 진행·revision·outbox를 원자적으로 기록하지만 모델 메시지를 만들지 않는다. 저장 실패로 확정 응답이 사라지면 unknown이며, 진행 알림은 공통 hard timeout을 연장하지 않는다. token 없는 초기화 알림·다른 token·역행 값을 무시한다.
 - 진행 전달은 작은 `tool_call.progress` 이벤트를 사용한다. 웹은 해당 session의 live map만 바꾸고 도구 목록·최근 목록·다른 pane을 매번 다시 읽거나 다시 그리지 않는다. 새로고침에는 DB의 진행 snapshot을 사용하고, 종료·resync·로그아웃에는 live map을 지운다. 취소 알림은 원래 요청 ID를 사용하되 initialize에는 보내지 않는다. 취소 뒤 늦은 진행/결과는 terminal 상태를 덮지 않으며 unknown 화면은 실제 원인 코드를 표시한다. HTTP session ID도 자격 헤더처럼 sensitive로 표시한다.
 
+## 40. 실행·화면 지연 구분(OBS-005)
+
+- `/turns/{id}`의 timing은 기존 total_ms·approval_wait_ms·tool_ms·model_and_other_ms를 유지하고 provider_ms·other_ms를 추가한다. 공급자 구간은 슬롯 획득 뒤 호출부터 응답/취소/실패까지 단조 시계로 누적하며 provider 내부 재시도 대기를 포함한다. queue·압축·기타 서버 처리는 other_ms에 남는다. 승인·도구·공급자·기타의 합은 전체 시간과 같도록 표시 구간을 제한한다.
+- 새 턴만 공급자 누적을 0으로 시작하고 기존 턴은 미측정(null)을 유지한다. 호출 전 시작 marker를 기록하며 정상 반환 뒤 누적 시간과 marker 제거를 함께 저장한다. 종료된 턴에 marker가 남으면 강제 중단의 호출 시간을 확정하지 않고 null을 반환한다. 취소/오류도 시간 기록을 보존하며 재시작으로 공급자를 재호출하지 않는다.
+- 화면 반영 시간은 이 기기에서 보이는 대화의 종료 SSE 수신부터 최종 메시지와 시간 조회가 도착한 React commit까지다. 서버·기기 벽시계 차이로 편도 지연을 추정하지 않는다. 서버의 전체 시간과 별도 표시하고 수신 이전 네트워크/오프라인 시간은 제외한다. 최초 commit을 중복 pane이 공유하며 최대 200개·메모리 전용이다. 닫힘·숨김·resync·로그아웃에는 샘플을 정리하고 새로고침/나중에 연 대화의 과거 지연을 만들지 않는다.
+
 ## 11. 결정 기록
 
 | ID | 결정 | 근거 |

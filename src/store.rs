@@ -888,11 +888,33 @@ pub const MIGRATIONS: &[&str] = &[
         request_hash TEXT NOT NULL
     );
     "#,
+    // 56: 공급자 호출 시간(OBS-005). 기존 턴은 미측정(NULL), 호출 중단 증거는 시작 시각으로 남긴다.
+    r#"
+    ALTER TABLE turns ADD COLUMN provider_ms INTEGER CHECK (provider_ms IS NULL OR provider_ms >= 0);
+    ALTER TABLE turns ADD COLUMN provider_started_at TEXT;
+    "#,
 ];
 
 #[cfg(test)]
 mod tests {
     const MIGRATIONS_1_5_SHA16: &str = "40371687b4936aac";
+
+    #[test]
+    fn provider_timing_migration_does_not_invent_measurements_for_old_turns() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        for migration in &super::MIGRATIONS[..55] { c.execute_batch(migration).unwrap(); }
+        c.execute_batch(
+            "INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','fixture','/fixture','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+             INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES('s','p','fixture','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z');
+             INSERT INTO messages(id,session_id,seq,role,content,created_at) VALUES('m','s',1,'user','{}','2026-01-01T00:00:00Z');
+             INSERT INTO turns(id,session_id,status,request_message_id,owner_epoch,created_at,updated_at,finished_at) VALUES('t','s','completed','m','old','2026-01-01T00:00:00Z','2026-01-01T00:00:01Z','2026-01-01T00:00:01Z');"
+        ).unwrap();
+        for migration in &super::MIGRATIONS[55..] { c.execute_batch(migration).unwrap(); }
+        let timing = crate::usage::turn_timing(&c, "t", time::OffsetDateTime::now_utc()).unwrap();
+        assert_eq!(timing["total_ms"], 1000);
+        assert_eq!(timing["model_and_other_ms"], 1000);
+        assert!(timing["provider_ms"].is_null() && timing["other_ms"].is_null());
+    }
 
     #[test]
     fn memories_migration_preserves_existing_native_sessions_as_unknown_system_context() {

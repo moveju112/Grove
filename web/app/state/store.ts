@@ -4,6 +4,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { EventRecord } from "../api/generated";
 import { refreshFiles } from "./fileWatch";
+import { deliveryTiming } from "./deliveryTiming";
 
 // stale: 보는 화면이 없어 무효화를 미뤄 둔 항목. 다시 구독하면 그때 한 번 읽는다(PANE-007).
 type Entry = { data: unknown; error: unknown; loading: boolean; version: number; stale: boolean; fetcher: () => Promise<unknown> };
@@ -141,6 +142,10 @@ export function applyEvent(e: EventRecord) {
             invalidate("search");
             break;
         case "turn.updated":
+            if (sid) {
+                const turn = e.payload as { id: string; status: string };
+                if (["completed", "failed", "cancelled", "interrupted"].includes(turn.status)) deliveryTiming.receive(sid, turn.id);
+            }
             if (sid) {
                 invalidate(`turns:${sid}`);
                 invalidate(`session:${sid}`);
@@ -312,6 +317,7 @@ export function applyEvent(e: EventRecord) {
 
 /// 재동기화: 모든 조회를 다시 읽는다(NET-008).
 export function resyncAll() {
+    deliveryTiming.clear();
     setLive((l)=>({...l,mcpProgress:{}}));
     for (const k of entries.keys()) refresh(k);
     refreshFiles();
@@ -345,6 +351,7 @@ export function useLive<T>(select: (value: Live) => T): T {
 
 /// 로그아웃·인증 만료(UI-032): 서버에서 읽은 모든 상태와 중간 응답을 메모리에서 지운다.
 export function clearServerCache() {
+    deliveryTiming.clear();
     generation += 1;
     entries.clear();
     for (const k of [...subs.keys()]) notify(k);

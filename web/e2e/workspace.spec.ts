@@ -703,12 +703,29 @@ test("사용량 패널은 기간·묶음별 token과 가격 미설정 상태를 
     await login(page);
     await page.locator(".recent").getByRole("button", { name: /사용량 대화/ }).first().click();
     const view = page.getByTestId("session-view").first();
+    // 의도적인 조회 지연도 수신 이후 화면 반영 시간에 포함된다.
+    await page.route("**/api/v1/turns/*", async (route) => {
+        const response = await route.fetch();
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        await route.fulfill({ response });
+    });
+    await page.route(`**/api/v1/sessions/${s.id}/messages?*`, async (route) => {
+        const response = await route.fetch();
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        await route.fulfill({ response });
+    });
     await script({ frames: [...frames.text(["답"]).slice(0, 2), JSON.stringify({ choices: [], usage: { prompt_tokens: 120, completion_tokens: 30 } }), "[DONE]"] });
     await view.getByLabel("보내기 방식").selectOption("model");
     await view.getByLabel("메시지 입력").fill("질문");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").last()).toContainText("답", { timeout: 15_000 });
     await expect(view.getByTestId("turn-timing")).toContainText("마지막 요청");
+    await expect(view.getByTestId("turn-timing")).toContainText("공급자");
+    await expect(view.getByTestId("ui-delivery")).toContainText("화면 반영(수신 후)");
+    expect(Number((await view.getByTestId("ui-delivery").innerText()).match(/(\d+)ms/)?.[1])).toBeGreaterThanOrEqual(450);
+    await page.reload();
+    await expect(view.getByTestId("turn-timing")).toContainText("공급자");
+    await expect(view.getByTestId("ui-delivery")).toHaveCount(0);
     await page.getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("사용량");
     const panel = page.getByTestId("usage-panel");
