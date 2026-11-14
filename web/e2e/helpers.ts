@@ -8,6 +8,10 @@ export function sessionView(page: Page, sessionId: string): Locator {
 /// 탭 패널 또는 상세 대화상자의 실제 사용자 진입점을 연다.
 export async function openDetails(panel: Locator) {
     await expect(panel).toBeAttached();
+    const disclosure = panel.locator("xpath=self::details | ./details").first();
+    if (await disclosure.count() && await disclosure.getAttribute("open") === null) {
+        await disclosure.locator(":scope > summary").click();
+    }
     const tab = panel.locator("xpath=ancestor-or-self::*[@role='tabpanel']").first();
     if (await tab.count()) {
         const button = panel.page().locator(`[role=tab][aria-controls="${await tab.getAttribute("id")}"]`);
@@ -53,19 +57,34 @@ export async function openProjectFiles(page: Page) {
 }
 
 export async function inputOptions(view: Locator) {
-    const trigger = view.getByRole("button", { name: "입력 옵션", exact: true });
+    const trigger = view.getByRole("button", { name: "초안·스킬", exact: true });
     const expanded = await trigger.evaluate((button) => document.getElementById(button.getAttribute("popovertarget")!)!.matches(":popover-open"));
     if (!expanded) await trigger.click();
     await expect(trigger).toHaveAttribute("aria-expanded", "true");
 }
 
 export async function composerOption(view: Locator, label: string, value: string | boolean) {
-    await inputOptions(view);
-    const control = view.getByLabel(label, { exact: true });
-    if (typeof value === "boolean") await control.setChecked(value);
-    else await control.selectOption(value);
-    await view.page().keyboard.press("Escape");
-    await expect(view.getByRole("button", { name: "입력 옵션", exact: true })).toHaveAttribute("aria-expanded", "false");
+    if (label === "보내기 방식" || label === "도구") {
+        const command = label === "도구" ? `/tools ${value ? "on" : "off"}` : `/save ${value === "save" ? "on" : "off"}`;
+        await composerCommand(view, command);
+        return;
+    }
+    await view.getByLabel(label, { exact: true }).selectOption(String(value));
+}
+
+export async function composerCommand(view: Locator, command: string) {
+    const box = view.getByLabel("메시지 입력", { exact: true });
+    const text = await box.inputValue();
+    await box.fill(command);
+    await box.press("Control+Enter");
+    await expect(box).toHaveValue("");
+    await box.fill(text);
+}
+
+export async function profileAction(row: Locator, label: string) {
+    const menu = row.locator(".profile-heading").getByRole("button", { name: / 관리$/ });
+    if (await menu.getAttribute("aria-expanded") !== "true") await menu.click();
+    await row.getByRole("button", { name: label, exact: true }).click();
 }
 import { readFileSync } from "node:fs";
 import { STATE } from "./global-setup";

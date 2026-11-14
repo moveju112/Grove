@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { DetailDialog } from "./ui/Controls";
+import { ActionMenu, DetailDialog } from "./ui/Controls";
+import { HelpTip } from "./HelpTip";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
@@ -446,31 +447,47 @@ function Profiles() {
             {management !== false && <LocalModelConnection secrets={secrets.data ?? []} onCreate={(body, key) =>
                 api.post("/model-profiles", body, { key, requires: ["model_management_v1"] })
             } />}
-            <ul>
+            <ul className="profile-list">
                 {(list.data ?? []).map((p) => (
                     <li key={p.id} data-testid="model-profile">
-                        <strong>{p.name}</strong> · {p.protocol} · <code>{p.model}</code> <span className="muted small">{p.base_url}</span>
-                        {p.enabled === false && <span className="warn small"> · 비활성</span>}
-                        <ServerActionButton className="ghost small" onClick={() => {
-                            const m = prompt("모델 이름", p.model);
-                            if (m && m !== p.model) void save.run(() => api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, model: m }));
-                        }}>모델 변경</ServerActionButton>
-                        <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.del(`/model-profiles/${p.id}`))}>삭제</ServerActionButton>
-                        <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.post(`/model-profiles/${p.id}/check`))}>연결 확인</ServerActionButton>
-                        <CheckStatus c={p.last_check} />
-                        <ProfileCapabilities profile={p} />
-                        <ProfileContextPolicy profile={p} />
-                        <ProfileFallback profile={p} profiles={list.data ?? []} />
-                        {management !== false && <ServerActionButton className="ghost small" onClick={() => void save.run(() =>
-                            api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, enabled: p.enabled === false }, { requires: ["model_management_v1"] })
-                        )}>{p.enabled === false ? "활성화" : "비활성화"}</ServerActionButton>}
-                        <ProfileCatalog profile={p} onChoose={(model, revision) => void save.run(() =>
-                            api.put(`/model-profiles/${p.id}`, { expected_revision: revision, model }, { requires: ["model_management_v1"] })
-                        )} />
+                        <div className="profile-heading">
+                            <div className="profile-identity"><strong>{p.name}</strong><code>{p.model}</code></div>
+                            {p.enabled === false && <span className="warn small"> · 비활성</span>}
+                            <HelpTip label={`${p.name} 연결 정보`}>
+                                <span>{p.protocol}{p.base_url ? ` · ${p.base_url}` : " · 서버 CLI 계정 · 읽기 전용"}</span>
+                            </HelpTip>
+                            <ActionMenu label={`${p.name} 관리`}>
+                                <ServerActionButton className="ghost small" onClick={() => {
+                                    const m = prompt("모델 이름", p.model);
+                                    if (m && m !== p.model) void save.run(() => api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, model: m }));
+                                }}>모델 변경</ServerActionButton>
+                                <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.del(`/model-profiles/${p.id}`))}>삭제</ServerActionButton>
+                                <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.post(`/model-profiles/${p.id}/check`))}>연결 확인</ServerActionButton>
+                                {management !== false && <ServerActionButton className="ghost small" onClick={() => void save.run(() =>
+                                    api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, enabled: p.enabled === false }, { requires: ["model_management_v1"] })
+                                )}>{p.enabled === false ? "활성화" : "비활성화"}</ServerActionButton>}
+                            </ActionMenu>
+                        </div>
+                        {p.last_check?.ok === false && <CheckStatus c={p.last_check} />}
+                        <details className="profile-details">
+                            <summary>상세 설정</summary>
+                            <div className="stack">
+                                <span className="muted small">{p.protocol}{p.base_url && ` · ${p.base_url}`}</span>
+                                {p.last_check?.ok !== false && <CheckStatus c={p.last_check} />}
+                                <ProfileCapabilities profile={p} />
+                                <ProfileContextPolicy profile={p} />
+                                <ProfileFallback profile={p} profiles={list.data ?? []} />
+                                <ProfileCatalog profile={p} onChoose={(model, revision) => void save.run(() =>
+                                    api.put(`/model-profiles/${p.id}`, { expected_revision: revision, model }, { requires: ["model_management_v1"] })
+                                )} />
+                            </div>
+                        </details>
                     </li>
                 ))}
             </ul>
-            <form className="inline wrap" onSubmit={(e) => {
+            <details className="profile-details profile-create">
+            <summary>모델 프로필 추가</summary>
+            <form className="stack" aria-label="모델 프로필 추가" onSubmit={(e) => {
                 e.preventDefault();
                 void save.run(async () => {
                     await api.post("/model-profiles", { ...f, secret_id: f.secret_id || null });
@@ -507,6 +524,7 @@ function Profiles() {
                 )}
                 <ServerActionButton type="submit">추가</ServerActionButton>
             </form>
+            </details>
             {save.view}
         </>
     );

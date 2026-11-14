@@ -208,9 +208,11 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         },
         {
             name: "save",
+            args: "on|off",
             description: "보내기 방식 바꾸기(모델로 ↔ 메시지만 저장)",
-            run: () => {
-                const m = eff.mode === "save" ? "model" : "save";
+            run: (a) => {
+                if (a && a !== "on" && a !== "off") throw new Error("/save on|off");
+                const m = a ? a === "on" ? "save" : "model" : eff.mode === "save" ? "model" : "save";
                 update({ mode: m });
                 return m === "save" ? "메시지만 저장으로 바꿨습니다" : "모델로 보내기로 바꿨습니다";
             },
@@ -461,44 +463,37 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 rows={2}
                 disabled={!!parentDisabled}
             />
+            {((profiles.data?.length ?? 0) > 0 || eff.mode === "save" || eff.profileId) && <div className="composer-models">
+                <select aria-label="모델 프로필" title={selectedProfile ? `${selectedProfile.model === "default" ? "기본 모델" : selectedProfile.model} · ${selectedProfile.name}` : "모델 선택"}
+                    value={eff.mode === "save" ? "__save__" : eff.profileId ?? ""}
+                    disabled={!ready || boundProfileId !== undefined}
+                    onChange={(e) => { update({ profileId: e.target.value || null, mode: "model" }); setMsg(null); }}>
+                    {eff.mode === "save" && <option value="__save__" disabled>메시지만 저장</option>}
+                    {profileMissing && <option value={eff.profileId!} disabled>선택한 프로필 없음(직접 다른 모델을 선택하세요)</option>}
+                    {boundProfileId === null && <option value="">봇 모델 로딩 중 또는 미설정</option>}
+                    {!eff.profileId && boundProfileId !== null && <option value="" disabled>모델 선택</option>}
+                    {(profiles.data ?? []).map((p) => (
+                        <option key={p.id} value={p.id} disabled={p.enabled === false}>
+                            {p.model === "default" ? `${p.name} · 기본 모델` : `${p.model} · ${p.name}`}{p.enabled === false ? " · 비활성" : ""}
+                        </option>
+                    ))}
+                </select>
+            </div>}
             <div className="composer-bar">
                 <AttachmentPicker draft={attachments} disabled={busy || !!disabled} />
-                <ActionMenu label="입력 옵션" trigger={<Icon name="settings" />}>
-                <select aria-label="보내기 방식" value={eff.mode} onChange={(e) => update({ mode: e.target.value as SendOptions["mode"] })}>
-                    <option value="model">모델로 보내기</option>
-                    <option value="save">메시지만 저장</option>
-                </select>
-                {resourceKey.startsWith("session:") && <SessionSkills key={`${projectId}:${resourceKey}`} sessionId={resourceKey.slice("session:".length)} />}
-                {eff.mode === "model" && <select aria-label="에이전트" value={eff.agentId ?? ""} disabled={boundProfileId !== undefined} onChange={(e) => update({ agentId: e.target.value || null })}>
-                    <option value="">기본 역할</option>
-                    {(agents.data ?? []).map((a) => <option key={a.id} value={a.id}>{a.name}</option>)}
-                </select>}
-                {eff.mode === "model" && <label className="check">
-                    <input type="checkbox" checked={eff.tools} disabled={!eff.tools && selectedProfile?.capabilities?.tools === false} onChange={(e) => update({ tools: e.target.checked })} /> 도구
-                </label>}
-                <button className="ghost small" onClick={saveServer} disabled={!text || !!disabled} title={disabled ?? "다른 기기에서 이어서 쓰도록 서버에 저장"}>
-                    초안 서버 저장
-                </button>
+                <ActionMenu label="초안·스킬">
+                    {resourceKey.startsWith("session:") && <SessionSkills key={`${projectId}:${resourceKey}`} sessionId={resourceKey.slice("session:".length)} />}
+                    <button className="ghost small" onClick={saveServer} disabled={!text || !!disabled} title={disabled ?? "다른 기기에서 이어서 쓰도록 서버에 저장"}>
+                        초안 서버 저장
+                    </button>
                 </ActionMenu>
                 {eff.mode === "model" && (profiles.data?.length ?? 0) > 0 && (
-                    <>
-                        <select aria-label="모델 프로필" value={eff.profileId ?? ""} disabled={!ready || boundProfileId !== undefined} onChange={(e) => update({ profileId: e.target.value || null })}>
-                            {profileMissing && <option value={eff.profileId!} disabled>선택한 프로필 없음(직접 다른 모델을 선택하세요)</option>}
-                            {boundProfileId === null && <option value="">봇 모델 로딩 중 또는 미설정</option>}
-                            {(profiles.data ?? []).length === 0 && <option value="">모델 프로필 없음(설정에서 추가)</option>}
-                            {(profiles.data ?? []).map((p) => (
-                                <option key={p.id} value={p.id} disabled={p.enabled === false}>
-                                    {p.name} · {p.model === "default" ? "기본 모델" : p.model}{p.enabled === false ? " · 비활성" : ""}
-                                </option>
-                            ))}
-                        </select>
-                        <select aria-label="추론 강도" value={eff.effort ?? "auto"} onChange={(e) => update({ effort: e.target.value as SendOptions["effort"] })} title="모델이 생각하는 정도. auto는 모델 기본값">
-                            <option value="auto">강도 auto</option>
-                            <option value="low" disabled={selectedProfile?.capabilities?.effort === false}>강도 낮음</option>
-                            <option value="medium" disabled={selectedProfile?.capabilities?.effort === false}>강도 중간</option>
-                            <option value="high" disabled={selectedProfile?.capabilities?.effort === false}>강도 높음</option>
-                        </select>
-                    </>
+                    <select aria-label="추론 강도" value={eff.effort ?? "auto"} onChange={(e) => update({ effort: e.target.value as SendOptions["effort"] })} title="모델이 생각하는 정도. auto는 모델 기본값">
+                        <option value="auto">강도 auto</option>
+                        <option value="low" disabled={selectedProfile?.capabilities?.effort === false}>강도 낮음</option>
+                        <option value="medium" disabled={selectedProfile?.capabilities?.effort === false}>강도 중간</option>
+                        <option value="high" disabled={selectedProfile?.capabilities?.effort === false}>강도 높음</option>
+                    </select>
                 )}
                 {running && eff.mode === "model" && (
                     <select aria-label="실행 중 보내기 방식" value={follow} disabled={!!recovering} onChange={(e) => setFollow(e.target.value as FollowKind)}>

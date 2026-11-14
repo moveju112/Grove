@@ -4,6 +4,7 @@ import { api } from "../api/client";
 import type { ModelCatalog, ModelProfile } from "../api/generated";
 import { useCapability } from "../state/capabilities";
 import { useServerBlockReason } from "./pwa/lifecycle";
+import { HelpTip } from "./HelpTip";
 
 export function ProfileCatalog({ profile, onChoose }: { profile: ModelProfile; onChoose: (model: string, revision: number) => void }) {
     const serverBlocked = useServerBlockReason();
@@ -22,7 +23,7 @@ export function ProfileCatalog({ profile, onChoose }: { profile: ModelProfile; o
     }, [profile.id, profile.revision]);
     if (supported === false) return null;
     if (profile.protocol === "claude_code" || profile.protocol === "codex_cli") {
-        return <span className="muted small">CLI 모델 목록 자동 조회는 미지원입니다. 모델 이름을 수동 입력하세요.</span>;
+        return <HelpTip label="CLI 모델 목록 도움말">CLI 모델 목록 자동 조회는 미지원입니다. 관리 메뉴의 모델 변경에서 모델 이름을 입력하세요.</HelpTip>;
     }
     const stale = catalog !== null && (catalog.profile_id !== profile.id || catalog.profile_revision !== profile.revision);
     const refresh = async () => {

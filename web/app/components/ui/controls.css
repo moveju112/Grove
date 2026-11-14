@@ -45,7 +45,8 @@ button.menu-trigger { display: inline-flex; align-items: center; justify-content
 .composer > textarea { width: 100%; min-height: 48px; }
 .composer-bar { flex-wrap: nowrap; gap: 8px; }
 .composer-bar > select { border-color: transparent; background-color: transparent; max-width: 42%; text-overflow: ellipsis; }
-.composer-bar > select[aria-label="모델 프로필"] { flex: 1; min-width: 0; width: 0; max-width: none; }
+.composer-models { min-width: 0; }
+.composer-models > select { width: 100%; max-width: 100%; min-width: 0; border-color: transparent; background-color: transparent; text-overflow: ellipsis; }
 .composer-bar > select[aria-label="추론 강도"] { flex: none; width: 88px; padding-inline: 4px; }
 .composer-bar > .action-menu { margin-right: auto; }
 .composer-bar .attachment-list:empty { display: none; }

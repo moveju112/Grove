@@ -49,7 +49,7 @@ async function setup(page: Page) {
     await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("모델 프로필", { exact: true }).selectOption(profile.id);
     await view.getByLabel("추론 강도", { exact: true }).selectOption("auto");
-    await view.getByRole("checkbox", { name: "도구", exact: true }).check();
+    await composerOption(view, "도구", true);
     return {
         requests, replies, session, view, root,
         request: (index: number) => requests[index]!,
@@ -104,7 +104,7 @@ test("제한된 첫 schema에서 로딩·다음 요청·실제 승인·결과 �
             expect(flow.request(index).messages.filter((m) => m.role === "tool" && m.tool_call_id === id)).toHaveLength(1);
             expect(flow.request(index).messages.some((m) => m.tool_calls?.some((c) => c.id === id))).toBe(true);
         }
-        const written = flow.view.getByTestId("msg-tool").filter({ hasText: "write" }).filter({ hasText: file }).last();
+        const written = flow.view.getByTestId("msg-tool").filter({ hasText: "write" }).last();
         await openDetails(written);
         await expect(written.getByTestId("tool-output")).toContainText(file);
         writeFileSync(path, "reload must not replay");
@@ -136,7 +136,8 @@ test("읽기 전용에서 금지된 schema는 명시적으로 실패하고 tools
         await openDetails(failure);
         await expect(failure.getByTestId("tool-output")).toContainText("read_only");
         await expect(flow.view.getByTestId("approval")).toHaveCount(0);
-        await flow.view.getByRole("checkbox", { name: "도구", exact: true }).uncheck();
+        await page.keyboard.press("Escape");
+        await composerOption(flow.view, "도구", false);
         flow.replies.push(frames.text(["CTX-013 tools off"]));
         await flow.send("도구 없이 답해");
         await expect(flow.view.getByTestId("msg-assistant").last()).toContainText("CTX-013 tools off");

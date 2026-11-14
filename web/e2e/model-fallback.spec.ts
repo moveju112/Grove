@@ -38,6 +38,7 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
         await page.getByLabel("설정 검색").fill("프로필");
         const row = page.getByTestId("model-profile").filter({ hasText: `${prefix}-source` });
+        await openDetails(row);
         const control = row.getByTestId("profile-fallback");
         await expect(control).toContainText("꺼짐");
         await control.getByRole("button", { name: "fallback 설정", exact: true }).click();
@@ -61,7 +62,7 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         const view = sessionView(app, session.id);
         await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("모델 프로필", { exact: true }).selectOption(primary.id);
-        await view.getByRole("checkbox", { name: "도구", exact: true }).uncheck();
+        await composerOption(view, "도구", false);
         await view.getByLabel("추론 강도", { exact: true }).selectOption("auto");
         await view.getByLabel("메시지 입력").fill("local explicit fallback request");
         await view.getByRole("button", { name: "보내기", exact: true }).click();

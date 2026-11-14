@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, composerOption, login, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, login, openDetails, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 async function profile(name: string) {
@@ -45,7 +45,9 @@ c.close()
     await expect(view.getByTestId("msg-context-clear")).toContainText("화면 이력·파일은 남아");
     await expect(view.getByTestId("msg-context-clear")).toContainText("요약 없이");
     await expect(view.getByTestId("msg-assistant").first()).toContainText("OLD_ANSWER_CONTEXT_FIXTURE");
+    await view.getByRole("button", { name: "대화 작업", exact: true }).click();
     await expect(view.getByTestId("context-cleared")).toBeVisible();
+    await page.keyboard.press("Escape");
     const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as { messages: { content: string }[] }[];
     const sent = [...requests].reverse().find((r) => r.messages.some((m) => m.content.includes("NEW_CONTEXT_QUESTION_FIXTURE")))!;
     expect(JSON.stringify(sent)).not.toContain("OLD_QUESTION_CONTEXT_FIXTURE");
@@ -64,7 +66,9 @@ test("프로필 context override는 상속·0을 구분하고 동시 변경 충�
         await login(page);
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
         await page.getByLabel("설정 검색").fill("프로필");
-        const row = page.getByTestId("model-profile").filter({ hasText: name }).getByTestId("profile-context-policy");
+        const profileRow = page.getByTestId("model-profile").filter({ hasText: name });
+        await openDetails(profileRow);
+        const row = profileRow.getByTestId("profile-context-policy");
         await expect(row).toContainText("범위별 설정 상속");
         await row.getByRole("button", { name: "context 정책 설정", exact: true }).click();
         await row.getByLabel("프로필 idle context 초기화(분)").fill("0");

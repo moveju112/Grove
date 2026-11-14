@@ -319,6 +319,17 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .settings-nav { grid-column: 1; grid-row: 1; position: sticky; top: 0; min-width: 0; display: grid; gap: 16px; align-content: start; padding-block: 8px; background: var(--panel); z-index: 3; }
 .settings-search { width: 100%; min-width: 0; }
 .settings-search input { min-width: 0; font-size: var(--font-size); }
+.pane-body:has(> .settings) { padding-top: 0; }
+.profile-list { list-style: none; margin: 0; padding: 0; }
+.profile-list > li { padding-block: var(--spacing-4); border-bottom: 1px solid var(--line); }
+.profile-heading { display: flex; align-items: center; gap: var(--spacing-2); }
+.profile-identity { display: grid; gap: 4px; flex: 1; min-width: 0; }
+.profile-identity > :is(strong, code) { overflow-wrap: anywhere; }
+.profile-identity > code { color: var(--text-2); font-size: 13px; }
+.profile-details { margin-top: var(--spacing-3); }
+.profile-details > summary { width: fit-content; cursor: pointer; color: var(--text-2); font-size: 13px; padding-block: var(--spacing-2); }
+.profile-details > :not(summary) { margin-top: var(--spacing-3); }
+.profile-create > form { max-width: 480px; }
 .settings-menu { display: grid; gap: 4px; min-width: 0; }
 .settings-menu button { min-height: 36px; padding: 8px 12px; font-size: 13px; background: transparent; color: var(--text-2); text-align: left; white-space: nowrap; }
 .settings-menu button:hover { background: var(--hover); }
@@ -387,7 +398,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .settings-area-reset > .inline { flex-wrap: wrap; }
 .settings-area-reset :is(select, button) { max-width: 100%; }
 @container settings (max-width: 680px) {
-    .settings-nav { grid-column: 1 / -1; grid-row: 1; gap: 8px; padding: 0 0 12px; border-bottom: 1px solid var(--line); }
+    .settings-nav { grid-column: 1 / -1; grid-row: 1; gap: 8px; padding: 12px 0; border-bottom: 1px solid var(--line); }
     .settings-menu { display: flex; overflow-x: auto; gap: 4px; padding-bottom: 4px; }
     .settings-menu button { flex: 0 0 auto; }
     .settings-body { grid-column: 1 / -1; grid-row: 2; }

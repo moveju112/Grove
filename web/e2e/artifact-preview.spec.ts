@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, inputOptions, login, openDetails, openProjectFiles, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, openProjectFiles, script } from "./helpers";
 
 const html = `<!doctype html><html><head>
 <meta http-equiv="refresh" content="0;url=/artifact-probe?refresh">
@@ -65,9 +65,8 @@ test("모델 HTML 산출물을 승인 후 현재 프로젝트에서 미리 보�
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
     const view = page.getByTestId("session-view");
     await view.getByLabel("모델 프로필").selectOption(profile);
-    await inputOptions(view);
-    await view.getByLabel("보내기 방식").selectOption("model");
-    await view.getByLabel("도구", { exact: true }).check();
+    await composerOption(view, "보내기 방식", "model");
+    await composerOption(view, "도구", true);
     await view.getByLabel("메시지 입력").fill(title);
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("approval")).toContainText(name);

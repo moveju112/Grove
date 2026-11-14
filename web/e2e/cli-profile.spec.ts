@@ -6,6 +6,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
     await login(page);
     await page.getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("모델 프로필");
+    await page.locator(".profile-create > summary").click();
     await page.getByLabel("protocol").selectOption("claude_code");
     await expect(page.getByLabel("Base URL")).toHaveCount(0);
     await expect(page.getByLabel("API 키")).toHaveCount(0);

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, ensureProjects, inputOptions, login, openDetails, openTool } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, openTool } from "./helpers";
 
 for (const width of [390, 1528]) {
     test.describe(`${width}px 작업 화면`, () => {
@@ -72,8 +72,7 @@ for (const width of [390, 1528]) {
             if (width < 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
             await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
             const view = page.getByTestId("session-view").filter({ visible: true });
-            await inputOptions(view);
-            await view.getByLabel("보내기 방식", { exact: true }).selectOption("save");
+            await composerOption(view, "보내기 방식", "save");
             await page.keyboard.press("Escape");
             await view.getByLabel("메시지 입력", { exact: true }).fill("새 메시지");
             await view.getByRole("button", { name: "보내기", exact: true }).click();

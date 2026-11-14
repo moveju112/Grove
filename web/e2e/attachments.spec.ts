@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProfile, ensureProjects, inputOptions, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
 import { frames } from "./fixture";
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
 
@@ -30,8 +30,7 @@ test("첨부 업로드와 전송 응답 유실 뒤 같은 요청으로 원문을
     await project.getByTestId("attachment-card").getByRole("button", { name: "미리보기", exact: true }).click();
     await expect(project.locator(".attachment-text")).toHaveText(content);
     await expect(project.locator(".attachment-text script")).toHaveCount(0);
-    await inputOptions(project);
-    await project.getByLabel("보내기 방식", { exact: true }).selectOption("save");
+    await composerOption(project, "보내기 방식", "save");
     const title = `첨부 재확인 ${Date.now()}`;
     await project.getByLabel("메시지 입력").fill(title);
     const sendKeys: string[] = [];
@@ -96,8 +95,7 @@ test("붙여넣기·드롭 첨부 초안을 복원하고 이미지를 모델로 
     await project.getByRole("button", { name: "clipboard.png 첨부 작업", exact: true }).click();
     await card.getByRole("button", { name: "미리보기", exact: true }).click();
     await expect(card.getByRole("img", { name: "clipboard.png" })).toBeVisible();
-    await inputOptions(project);
-    await project.getByLabel("보내기 방식", { exact: true }).selectOption("model");
+    await composerOption(project, "보내기 방식", "model");
     await page.keyboard.press("Escape");
     await project.getByLabel("모델 프로필", { exact: true }).selectOption(profile);
     const marker = `image-ui-${Date.now()}`;
@@ -121,8 +119,7 @@ test("실행 중 첨부를 대기열에 넣고 취소 뒤 직접 이어서 보�
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    await inputOptions(view);
-    await view.getByLabel("보내기 방식", { exact: true }).selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await page.keyboard.press("Escape");
     await view.getByLabel("모델 프로필", { exact: true }).selectOption(profile);
     await script({ frames: [JSON.stringify({ choices: [{ delta: { content: "대기 중 fixture" } }] })], hang: true, marker: title });

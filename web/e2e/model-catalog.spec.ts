@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProjects, login, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openBots, openDetails, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성화해도 선택·초안을 보존하며 재활성화 후 실행한다", async ({ page, browser }) => {
@@ -9,18 +9,20 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
     await login(page);
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("프로필");
+    await page.locator(".profile-create > summary").click();
     const form = page.locator("form").filter({ has: page.getByLabel("프로필 이름") });
     await form.getByLabel("프로필 이름").fill(name);
     await form.getByLabel("Base URL").fill(base);
     await form.getByLabel("모델", { exact: true }).fill("manual-start");
     await form.getByRole("button", { name: "추가", exact: true }).click();
     const row = page.getByTestId("model-profile").filter({ hasText: name });
+    await openDetails(row);
     await expect(row).toContainText(base);
     await row.getByRole("button", { name: "모델 목록 새로고침" }).click();
     await expect(row.getByLabel(`${name} 공급자 모델`)).toBeEnabled();
     await row.getByLabel(`${name} 공급자 모델`).selectOption("fixture-model");
     await expect(row.locator("code")).toHaveText("fixture-model");
-    await expect(row.getByRole("status")).toContainText("프로필이 바뀌었습니다");
+    await expect(row.getByRole("status").filter({ hasText: "프로필이 바뀌었습니다" })).toBeVisible();
     await page.route("**/api/v1/model-profiles/*/models", (route) => route.fulfill({
         status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "catalog_invalid", message: "fixture catalog failure" } }),
     }));
@@ -44,11 +46,17 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
         await login(app);
         await app.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
         const view = sessionView(app, session.id);
-        const botCard = app.getByTestId("bot").filter({ hasText: botName });
+        const home = await context.newPage();
+        await home.goto("http://127.0.0.1:17741/");
+        await expect(home.getByTestId("conn")).toHaveText("연결됨");
+        await openBots(home);
+        const botCard = home.getByTestId("bot").filter({ hasText: botName });
         await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("모델 프로필").selectOption(profile.id);
         await view.getByLabel("메시지 입력").fill("catalog user prompt");
+        await row.getByRole("button", { name: `${name} 관리`, exact: true }).click();
         await row.getByRole("button", { name: "비활성화", exact: true }).click();
+        await row.getByRole("button", { name: `${name} 관리`, exact: true }).click();
         await expect(row.getByRole("button", { name: "활성화", exact: true })).toBeVisible();
         await expect(view.getByTestId("profile-disabled")).toBeVisible();
         await expect(botCard).toContainText("모델 비활성");

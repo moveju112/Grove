@@ -28,16 +28,16 @@ test("slash command 목록·검색·채우기·실행, 알 수 없는 명령은 
     await box.pressSequentially("on");
     await box.press("Control+Enter");
     await expect(view.getByRole("status").filter({ hasText: "도구 사용을 켰습니다" })).toBeVisible();
-    await expect(view.getByLabel("도구", { exact: true })).toBeChecked();
+    await expect(view.getByLabel("도구", { exact: true })).toHaveCount(0);
     await expect(box).toHaveValue("");
 
     // 방향키 선택 + Enter 채우기
     await box.fill("/s");
     await expect(list.getByRole("option")).toHaveCount(1);
     await box.press("Enter");
-    await expect(box).toHaveValue("/save");
+    await expect(box).toHaveValue("/save ");
     await box.press("Control+Enter");
-    await expect(view.getByLabel("보내기 방식")).toHaveValue("save");
+    await expect(view.getByLabel("모델 프로필").locator("option:checked")).toHaveText("메시지만 저장");
 
     // 알 수 없는 명령은 보내지 않는다
     await box.fill("/없는명령 해줘");
