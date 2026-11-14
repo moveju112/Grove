@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import time
+import tempfile
 import urllib.request
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -232,10 +233,14 @@ def wait_ready(timeout=60):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--status", action="store_true")
+    ap.add_argument("--install-cli", metavar="BINARY", help="검증한 CLI만 설치하고 grove 명령 등록(데몬·웹·DB 변경 없음)")
     ap.add_argument("--force", action="store_true", help="실행 중 작업이 있어도 적용(작업 중단)")
     a = ap.parse_args()
     if a.status:
         status()
+        return
+    if a.install_cli:
+        install_cli(os.path.abspath(a.install_cli))
         return
     archive, receipt, manifest = package()
     if not os.path.exists(os.path.join(INSTALL, "current")):
@@ -255,6 +260,36 @@ def main():
     out = status()
     if len(out["daemon_processes"]) != 1:
         sys.exit(f"데몬 프로세스가 {len(out['daemon_processes'])}개입니다(1개여야 함)")
+    install_cli(grove_bin())
+
+
+def install_cli(binary):
+    """설치 중인 서비스와 별개인 관리 CLI·launcher를 같은 업데이트 경로에서 제공한다."""
+    checked = subprocess.run([binary, "pairing", "--help"], capture_output=True, text=True, check=True)
+    if "grove pairing create" not in checked.stdout:
+        sys.exit("이 실행 파일에는 승인형 페어링 CLI가 없습니다")
+    template = os.path.join(REPO, "scripts", "grove_local.sh")
+    launcher = os.path.join(HOME, ".local", "bin", "grove")
+    if os.path.lexists(launcher):
+        if os.path.islink(launcher):
+            sys.exit(f"다른 grove 명령을 덮어쓰지 않았습니다: {launcher}")
+        with open(launcher, "rb") as current, open(template, "rb") as expected:
+            if current.read() != expected.read():
+                sys.exit(f"다른 grove 명령을 덮어쓰지 않았습니다: {launcher}")
+    targets = [(binary, os.path.join(INSTALL, "cli", "grove")), (template, launcher)]
+    for source, target in targets:
+        parent = os.path.dirname(target)
+        os.makedirs(parent, exist_ok=True)
+        fd, temporary = tempfile.mkstemp(prefix=".grove-cli-", dir=parent)
+        os.close(fd)
+        try:
+            shutil.copyfile(source, temporary)
+            os.chmod(temporary, 0o755)
+            os.replace(temporary, target)
+        finally:
+            if os.path.exists(temporary):
+                os.unlink(temporary)
+    print(f"CLI 설치 완료: {launcher} (데몬·웹·DB 변경 없음)")
 
 
 if __name__ == "__main__":
