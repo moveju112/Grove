@@ -41,6 +41,10 @@ import { AgentConnect } from "./AgentConnect";
 import type { Opener } from "./Workspace";
 import { SettingsGroup } from "./SettingsGroup";
 import { Icon, type IconName } from "./icons";
+import { Button } from "../design/Button";
+import { Stack } from "@astryxdesign/core/Stack";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { Switch } from "@astryxdesign/core/Switch";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -134,12 +138,13 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 link.open(key);
             }}>
             <nav className="settings-nav" aria-label="설정 메뉴">
-                <input type="search" placeholder="설정 검색" value={q} onChange={(e) => { link.cancel(); setQ(e.target.value); }} aria-label="설정 검색" />
+                <TextInput type="search" label="설정 검색" isLabelHidden placeholder="설정 검색" value={q}
+                    onChange={(value) => { link.cancel(); setQ(value); }} containerClassName="settings-search" />
                 <div className="settings-menu">
                 {MENUS.map(([m, label]) => (
-                    <button key={m} aria-current={!results && menu === m ? "page" : undefined} className={!results && menu === m ? "on" : ""} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
+                    <Button key={m} aria-current={!results && menu === m ? "page" : undefined} className={!results && menu === m ? "settings-menu-item on" : "settings-menu-item"} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
                         {label}
-                    </button>
+                    </Button>
                 ))}
                 </div>
                 {sessionId ? (
@@ -150,7 +155,7 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                     projectId && <p className="muted small" data-testid="settings-origin">프로젝트 · {projectName ?? projectId}</p>
                 )}
             </nav>
-            <div className="settings-body">
+            <Stack className="settings-body">
                 <h1 className="settings-heading">{needle ? "검색 결과" : MENUS.find(([id]) => id === menu)?.[1]}</h1>
                 {link.pending && <p className="muted" role="status">링크한 설정을 불러오는 중…</p>}
                 {link.error && <p className="err" role="alert">{link.error}</p>}
@@ -188,7 +193,7 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                         </dl>
                     </Section>
                 )}
-            </div>
+            </Stack>
         </div>
     );
 }
@@ -255,9 +260,9 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
             )}
             {show("enter") && (
                 <Section item="enter">
-                    <label className="check">
-                        <input type="checkbox" checked={p.enterToSend} onChange={(e) => set({ ...p, enterToSend: e.target.checked })} /> Enter로 보내기(Shift+Enter 줄바꿈)
-                    </label>
+                    <Switch label="Enter로 보내기" labelPosition="start" labelSpacing="spread" width="100%"
+                        value={p.enterToSend} onChange={(value) => set({ ...p, enterToSend: value })}
+                        labelTooltip="Shift+Enter는 줄바꿈에 사용합니다. 터치 키보드의 Enter는 항상 줄바꿈입니다." />
                     <DeviceSettingsReset fields={["enterToSend"]} label="입력 기본값 복원" />
                 </Section>
             )}

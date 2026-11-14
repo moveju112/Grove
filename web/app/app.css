@@ -6,125 +6,22 @@
     font-style: normal;
     font-display: swap;
 }
-/* 색 토큰. 화이트는 흰 바탕+중성 회색, 다크는 차가운 슬레이트, 포인트는 블루, 브랜드 새싹만 초록이다.
-   --bg는 사이드바·바깥, --panel은 작업 영역, --hover/--sel은 목록 행 상태다. */
-:root {
-    --font-size: 14px;
-    --bg: #f7f7f8;
-    --panel: #ffffff;
-    --raised: #f0f0f2;
-    --hover: #ebebee;
-    --sel: #e6e6ea;
-    --line: #e4e4e8;
-    --line-strong: #d4d4da;
-    --text: #1d1d1f;
-    --text-2: #48494e;
-    --muted: #68686d;
-    --bubble: #f0f0f2;
-    --accent: #3e6ae1;
-    --accent-weak: #eaf0fd;
-    --accent-ink: #3457c5;
-    --warn: #8f5a0c;
-    --err: #c8372a;
-    --ok: #2f9e63;
-    --focus: #3e6ae1;
-    --on-accent: #ffffff;
-    --warn-weak: #fdf3e3;
-    --err-weak: #fcefed;
-    --brand: #2f7d55;
-    --shadow-float: 0 8px 24px rgb(0 0 0 / 0.08), 0 1px 2px rgb(0 0 0 / 0.05);
-    color-scheme: light;
-}
-/* 테마(UI-030): system은 OS 설정을 따르고, light·dark·soft는 OS와 무관하게 고정한다. */
-@media (prefers-color-scheme: dark) {
-    :root:not([data-theme="light"]):not([data-theme="soft"]) {
-        --bg: #14161b;
-        --panel: #171a20;
-        --raised: #1e222a;
-        --hover: #242832;
-        --sel: #2b3039;
-        --line: #262a33;
-        --line-strong: #323743;
-        --text: #f2f3f5;
-        --text-2: #d0d2d8;
-        --muted: #a0a4ad;
-        --bubble: #262b35;
-        --accent: #6c8ef0;
-        --accent-weak: #22304f;
-        --accent-ink: #8ea4f4;
-        --warn: #f0b429;
-        --err: #ff6b5e;
-        --ok: #4cc38a;
-        --focus: #8ea4f4;
-        --on-accent: #0d0f13;
-        --warn-weak: #2e2615;
-        --err-weak: #3a1f1d;
-        --brand: #5fbf8a;
-        --shadow-float: 0 12px 32px rgb(0 0 0 / 0.35);
-        color-scheme: dark;
-    }
-}
-:root[data-theme="dark"] {
-    --bg: #14161b;
-    --panel: #171a20;
-    --raised: #1e222a;
-    --hover: #242832;
-    --sel: #2b3039;
-    --line: #262a33;
-    --line-strong: #323743;
-    --text: #f2f3f5;
-    --text-2: #d0d2d8;
-    --muted: #a0a4ad;
-    --bubble: #262b35;
-    --accent: #6c8ef0;
-    --accent-weak: #22304f;
-    --accent-ink: #8ea4f4;
-    --warn: #f0b429;
-    --err: #ff6b5e;
-    --ok: #4cc38a;
-    --focus: #8ea4f4;
-    --on-accent: #0d0f13;
-    --warn-weak: #2e2615;
-    --err-weak: #3a1f1d;
-    --brand: #5fbf8a;
-    --shadow-float: 0 12px 32px rgb(0 0 0 / 0.35);
-    color-scheme: dark;
-}
-/* soft: 눈부심을 줄인 차가운 저채도 회색(아이보리·베이지 없음). 본문 대비는 AA 유지 */
-:root[data-theme="soft"] {
-    --bg: #e9ebee;
-    --panel: #f3f4f6;
-    --raised: #e4e6ea;
-    --hover: #dfe2e7;
-    --sel: #d8dce2;
-    --line: #d5d8de;
-    --line-strong: #c4c8d0;
-    --text: #2b2d33;
-    --text-2: #43464e;
-    --muted: #5b5f68;
-    --bubble: #e4e6ea;
-    --accent: #3457c5;
-    --accent-weak: #dde5f8;
-    --accent-ink: #2d4bab;
-    --warn: #8a5300;
-    --err: #a8301f;
-    --ok: #2a7d50;
-    --focus: #3457c5;
-    --on-accent: #ffffff;
-    --warn-weak: #f1e7d6;
-    --err-weak: #f3dfdb;
-    --brand: #2f7d55;
-    --shadow-float: 0 8px 24px rgb(20 30 50 / 0.08);
-    color-scheme: light;
-}
+/* 팔레트 정본: design/*.theme.ts. Astryx 정적 테마를 사용한다. */
+:root { --font-size: 15px; color-scheme: light dark; }
+:root[data-theme="light"], :root[data-theme="soft"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 * { box-sizing: border-box; }
 html, body {
     margin: 0; height: 100%; background: var(--bg); color: var(--text);
     font: var(--font-size)/1.5 "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
 }
-button, input, select, textarea { font: inherit; color: inherit; }
-button { background: var(--accent); color: var(--on-accent); border: 0; border-radius: 8px; padding: 0.35em 0.85em; cursor: pointer; transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease; }
+@layer reset {
+    button, input, select, textarea { font: inherit; color: inherit; }
+    button { background: var(--accent); color: var(--on-accent); border: 0; border-radius: var(--radius-element); padding: var(--spacing-2) var(--spacing-3); cursor: pointer; transition: background-color 140ms ease, color 140ms ease, border-color 140ms ease; }
+    input, select, textarea { background: var(--panel); border: 1px solid var(--line-strong); border-radius: var(--radius-element); padding: var(--spacing-2) var(--spacing-3); }
+    input:focus, select:focus, textarea:focus { border-color: var(--accent); }
+}
 button:disabled { opacity: 0.5; cursor: default; }
 button.ghost { background: transparent; color: var(--text); border: 1px solid var(--line-strong); }
 button.ghost:not(:disabled):hover { background: var(--hover); }
@@ -133,8 +30,6 @@ button.link { background: none; border: 0; color: var(--text); padding: 0.2em 0;
 button.link:hover { color: var(--accent-ink); }
 button.icon { border: 0; }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
-input, select, textarea { background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px; padding: 0.3em 0.55em; }
-input:focus, select:focus, textarea:focus { border-color: var(--accent); }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .num { font-variant-numeric: tabular-nums; }
 @media (prefers-reduced-motion: reduce) {
@@ -404,7 +299,8 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 
 .settings { display: grid; grid-template-columns: 184px minmax(0, 1fr); align-items: start; gap: 32px; min-height: 100%; width: 100%; max-width: 1080px; margin-inline: auto; container: settings / inline-size; }
 .settings-nav { grid-column: 1; grid-row: 1; position: sticky; top: 0; min-width: 0; display: grid; gap: 16px; align-content: start; padding-block: 8px; background: var(--panel); z-index: 3; }
-.settings-nav > input { width: 100%; min-width: 0; height: 36px; font-size: 13px; background: var(--bg); border-color: transparent; }
+.settings-search { width: 100%; min-width: 0; }
+.settings-search input { min-width: 0; font-size: var(--font-size); }
 .settings-menu { display: grid; gap: 4px; min-width: 0; }
 .settings-menu button { min-height: 36px; padding: 8px 12px; font-size: 13px; background: transparent; color: var(--text-2); text-align: left; white-space: nowrap; }
 .settings-menu button:hover { background: var(--hover); }
@@ -582,3 +478,58 @@ kbd { border: 1px solid var(--line-strong); border-bottom-width: 2px; border-rad
 .attachment-preview { max-width: min(100%, 360px); max-height: 280px; object-fit: contain; }
 .attachment-text { max-height: 240px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
 .attachment-picker { padding: .3rem 0; }
+
+/* Astryx의 토큰을 공유한다. 파일·터미널·native dialog/popover의 수명과 의미는 보존한다. */
+body > [data-astryx-theme] { min-height: 100%; }
+.pwa-shell { min-height: 100dvh; }
+.sentence-lines > span { display: block; }
+input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color: var(--accent); }
+.grove-button { font: inherit; }
+.grove-button.icon-btn { min-width: var(--spacing-8); }
+.grove-button.side-item, .settings-menu .grove-button { justify-content: flex-start; }
+.side-nav .grove-button { justify-content: flex-start; width: 100%; }
+.settings-menu .grove-button { width: 100%; }
+.login form { border-radius: var(--radius-container); box-shadow: none; padding: var(--spacing-8); gap: var(--spacing-4); }
+.topbar, .side-head { height: calc(var(--spacing-6) * 2); }
+.ws.narrow .sidebar { top: calc(var(--spacing-6) * 2); }
+.pane-body { padding: var(--spacing-6); }
+.tabbar { padding: var(--spacing-2); gap: var(--spacing-1); }
+.tab.on { background: var(--bg); }
+.settings { max-width: 1200px; gap: var(--spacing-8); grid-template-columns: minmax(160px, 220px) minmax(0, 1fr); }
+.settings-group { border: 0; border-bottom: 1px solid var(--line); border-radius: 0; gap: var(--spacing-4); }
+.settings-group-heading { border-radius: var(--radius-inner); background: var(--bg); padding: var(--spacing-3) var(--spacing-2); }
+.settings .settings-group-content { padding: var(--spacing-2) var(--spacing-2) var(--spacing-6); }
+.settings .setting-reset-icon { opacity: 0; transition: opacity 140ms; }
+.settings-group:hover .setting-reset-icon, .settings-group:focus-within .setting-reset-icon { opacity: 1; }
+.home-recent { min-width: 0; gap: var(--spacing-6); }
+.home-recent .recent-head { padding-inline: 0; gap: var(--spacing-4); flex-wrap: wrap; }
+.home-recent .recent-head h1 { margin: 0; font-size: var(--text-heading-1-size); font-weight: 500; }
+.home-recent .recent-head .chip { min-height: var(--spacing-8); padding-inline: var(--spacing-3); }
+.home-recent .recent-list li { min-height: calc(var(--spacing-8) * 2); border-bottom: 1px solid var(--line); border-radius: 0; gap: var(--spacing-3); padding-inline: var(--spacing-2); }
+.home-recent .recent-list li > button.link { min-height: calc(var(--spacing-8) * 2); font-size: var(--font-size); grid-template-columns: minmax(0, 1fr) auto; gap: var(--spacing-1) var(--spacing-4); }
+.home-recent .recent-title { grid-column: 1; grid-row: 1; }
+.home-recent .recent-project { grid-column: 1; grid-row: 2; max-width: 100%; font-size: var(--text-supporting-size); }
+.home-recent [data-testid="recent-time"] { grid-column: 2; grid-row: 1 / 3; }
+.home-recent > .recent-empty { margin: 0; padding-block: var(--spacing-6); font-size: var(--font-size); }
+.workbench-main { gap: var(--spacing-4); }
+.workbench { grid-template-rows: auto minmax(0, 1fr); }
+@container (min-width: 1050px) { .workbench.tools-open { grid-template-rows: minmax(0, 1fr); } }
+.dock-tabs { border-radius: var(--radius-container); background: var(--bg); }
+.action-popover { border-radius: var(--radius-container); padding: var(--spacing-2); background: var(--panel); }
+.dialog, dialog { border: 1px solid var(--line); border-radius: var(--radius-container); box-shadow: var(--shadow-float); background: var(--panel); }
+.view-head { gap: var(--spacing-3); margin-bottom: var(--spacing-5); }
+.view-head h1 { font-size: var(--text-heading-2-size); font-weight: 500; }
+.messages, .composer { max-width: 768px; }
+.messages { gap: var(--spacing-6); }
+.composer { border-radius: var(--radius-container); box-shadow: none; padding: var(--spacing-4); gap: var(--spacing-3); }
+.msg.user { border-radius: var(--radius-container); padding: var(--spacing-3) var(--spacing-4); }
+.files .file-tree { background: var(--bg); border-radius: var(--radius-container); }
+@media (pointer: coarse) { .settings .setting-reset-icon { opacity: 1; } }
+@media (max-width: 760px) {
+    .pane-body { padding: var(--spacing-3); }
+    .home-recent .recent-head { gap: var(--spacing-2); }
+    .home-recent .recent-head .chip { padding-inline: var(--spacing-2); }
+    .settings { gap: var(--spacing-4); grid-template-columns: minmax(0, 1fr); }
+    .settings-menu .grove-button { width: auto; flex-shrink: 0; }
+    .composer { padding: var(--spacing-3); }
+}

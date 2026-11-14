@@ -3,13 +3,16 @@ import { CreationDialog } from "../create/CreationDialog";
 import { Icon } from "../icons";
 import { PaneVisibility, usePaneVisible } from "../../state/paneVisibility";
 import "./controls.css";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Heading } from "@astryxdesign/core/Text";
+import { Button } from "../../design/Button";
 
 // 제목은 제목으로만 쓰고, 보조 정보는 명시적인 버튼으로 연다.
 export function Panel({ title, children, ...props }: Omit<HTMLAttributes<HTMLElement>, "title"> & { title: ReactNode }) {
-    return <section {...props}>
-        <h2 className="panel-title">{title}</h2>
+    return <Stack as="section" gap={4} {...props}>
+        <Heading level={2} className="panel-title">{title}</Heading>
         {children}
-    </section>;
+    </Stack>;
 }
 
 export function DetailDialog({ title, label, trigger, children, inline = false, onOpenChange, ...props }: {
@@ -20,13 +23,13 @@ export function DetailDialog({ title, label, trigger, children, inline = false, 
     const [open, setOpen] = useState(false);
     const change = (value: boolean) => { setOpen(value); onOpenChange?.(value); };
     return <div {...props}>
-        {inline ? <div className="detail-heading">{title}</div> : <button type="button" className="ghost detail-trigger"
+        {inline ? <div className="detail-heading">{title}</div> : <Button type="button" className="ghost detail-trigger"
             aria-label={trigger === undefined ? undefined : label}
-            aria-haspopup="dialog" onClick={() => change(true)}>{trigger ?? title}<Icon name="expand" size={14} /></button>}
+            aria-haspopup="dialog" onClick={() => change(true)}>{trigger ?? title}<Icon name="expand" size={14} /></Button>}
         {inline && children}
         {open && <CreationDialog label={label} onClose={() => change(false)}>
-            <header className="dialog-heading"><h2>{title}</h2>
-                <button type="button" className="ghost icon-btn" aria-label="닫기" onClick={() => change(false)}><Icon name="close" /></button>
+            <header className="dialog-heading"><Heading level={2}>{title}</Heading>
+                <Button type="button" className="ghost icon-btn" aria-label="닫기" onClick={() => change(false)}><Icon name="close" /></Button>
             </header>
             <div className="detail-content" onClick={(event) => {
                 if ((event.target as HTMLElement).closest("[data-dialog-close]")) change(false);
@@ -44,12 +47,12 @@ export function ActionMenu({ label, trigger = "⋯", children, className = "" }:
     const popover = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
     return <div className={`action-menu ${className}`}>
-        <button ref={button} type="button" className="ghost menu-trigger" aria-label={label} title={label}
+        <Button ref={button} type="button" className="ghost menu-trigger" aria-label={label} title={label}
             aria-expanded={open} popoverTarget={id} onClick={() => {
                 const rect = button.current!.getBoundingClientRect();
                 popover.current!.style.setProperty("--menu-left", `${Math.max(8, Math.min(rect.right - 240, window.innerWidth - 248))}px`);
                 popover.current!.style.setProperty("--menu-top", `${Math.min(rect.bottom + 4, window.innerHeight - 80)}px`);
-            }}>{trigger}</button>
+            }}>{trigger}</Button>
         <div ref={popover} id={id} popover="auto" className="action-popover" role="group" aria-label={label}
             onToggle={(event) => {
                 const visible = event.newState === "open";
@@ -64,7 +67,9 @@ export function ActionMenu({ label, trigger = "⋯", children, className = "" }:
             onClick={(event) => {
                 const target = event.target as HTMLElement;
                 const action = target.closest("button");
-                if (action && !action.matches("[aria-haspopup=dialog], [type=submit]") && !target.closest("dialog") && !event.defaultPrevented) popover.current!.hidePopover();
+                // Astryx는 기본 submit 유형을 명시하므로 실제 폼 소속 여부로 구분한다.
+                if (action && !action.matches("[aria-haspopup=dialog]") && !(action.type === "submit" && action.form)
+                    && !target.closest("dialog") && !event.defaultPrevented) popover.current!.hidePopover();
             }}>
             {children}
         </div>
@@ -84,8 +89,8 @@ export function Workbench({ children, tools, label }: { children: ReactNode; too
     };
     const id = useId();
     const tabs = useRef<HTMLDivElement>(null);
-    return <div className={`workbench${active ? " tools-open" : ""}`}>
-        <div className="workbench-main">{children}</div>
+    return <Stack className={`workbench${active ? " tools-open" : ""}`}>
+        <Stack className="workbench-main">{children}</Stack>
         <aside className="tool-dock" aria-label={label}>
             <div className="dock-bar">
                 <div ref={tabs} className="dock-tabs" role="tablist" aria-label={label} onKeyDown={(event) => {
@@ -116,5 +121,5 @@ export function Workbench({ children, tools, label }: { children: ReactNode; too
                 </PaneVisibility.Provider>
             </div>)}
         </aside>
-    </div>;
+    </Stack>;
 }

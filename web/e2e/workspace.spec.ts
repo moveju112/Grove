@@ -360,13 +360,13 @@ test("파일 화면에서 열고 고쳐 저장하며, 외부 변경은 충돌로
     await editor.fill("고침\n");
     await expect(files.getByText("● 저장 안 됨")).toBeVisible();
     await files.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(files.getByRole("status")).toHaveText("저장됨");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toHaveText("저장됨");
     expect(readFileSync(join(proj.root_path, "note.md"), "utf8")).toBe("고침\n");
     // 외부 변경 뒤 저장 → 충돌, 파일과 내 편집 모두 보존
     writeFileSync(join(proj.root_path, "note.md"), "밖에서 바꿈\n");
     await editor.fill("내 편집\n");
     await files.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(files.getByRole("status")).toContainText("파일이 바뀌었습니다");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("파일이 바뀌었습니다");
     await expect(editor).toHaveValue("내 편집\n");
     expect(readFileSync(join(proj.root_path, "note.md"), "utf8")).toBe("밖에서 바꿈\n");
     // 이미지 미리보기: 인증 헤더 없이 티켓 URL로 실제로 그려진다

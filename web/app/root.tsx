@@ -1,6 +1,13 @@
 import { Links, Meta, Outlet, Scripts, ScrollRestoration, isRouteErrorResponse, useRouteError } from "react-router";
 import { useEffect } from "react";
+import "@astryxdesign/core/reset.css";
+import "@astryxdesign/core/astryx.css";
+import "./design/grove.css";
+import "./design/grove-soft.css";
 import "./app.css";
+import { DesignProvider } from "./design/DesignProvider";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Button } from "./design/Button";
 import { applyPrefs, loadPrefs } from "./state/device";
 import { installAuthCleanup } from "./state/cleanup";
 import { deployment } from "./deployment";
@@ -14,7 +21,7 @@ if (typeof document !== "undefined") {
 
 export function Layout({ children }: { children: React.ReactNode }) {
     return (
-        <html lang="ko">
+        <html lang="ko" data-astryx-theme="grove">
             <head>
                 <meta charSet="utf-8" />
                 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
@@ -27,7 +34,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
                 <Links />
             </head>
             <body>
-                {children}
+                <DesignProvider>{children}</DesignProvider>
                 <ScrollRestoration />
                 <Scripts />
             </body>
@@ -40,22 +47,22 @@ export default function Root() {
     useEffect(() => {
         document.documentElement.dataset.hydrated = "true";
     }, []);
-    return <div className="pwa-shell"><LifecycleBanner /><Outlet /></div>;
+    return <Stack className="pwa-shell"><LifecycleBanner /><Outlet /></Stack>;
 }
 
 // 빌드 시 루트 렌더링 동안 보이는 화면(브라우저 API는 여기서 쓰지 않는다).
 export function HydrateFallback() {
-    return <div className="boot">Grove 불러오는 중…</div>;
+    return <Stack className="boot">Grove 불러오는 중…</Stack>;
 }
 
 export function ErrorBoundary() {
     const err = useRouteError();
     const msg = isRouteErrorResponse(err) ? `${err.status} ${err.statusText}` : err instanceof Error ? err.message : "알 수 없는 오류";
     return (
-        <div className="boot error" role="alert">
+        <Stack className="boot error" role="alert">
             <h1>화면 오류</h1>
             <p>{msg}</p>
-            <button onClick={() => location.reload()}>다시 불러오기</button>
-        </div>
+            <Button onClick={() => location.reload()}>다시 불러오기</Button>
+        </Stack>
     );
 }

@@ -37,7 +37,7 @@ test("파일 탭과 최근 항목을 다시 열면 저장 전 편집·선택·�
     await expect(area).toHaveValue(edited);
     await expect.poll(() => area.evaluate((node: HTMLTextAreaElement) => node.selectionStart)).toBe(position.start);
     await files.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(files.getByRole("status")).toHaveText("저장됨");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toHaveText("저장됨");
     expect(readFileSync(join(project.root_path, name), "utf8")).toBe(edited);
 });
 
@@ -67,9 +67,9 @@ test("화면을 떠난 사이 원문이 바뀌면 편집 사본의 이전 해시
     writeFileSync(path, "external edit\n");
     await revisit();
     await expect(area).toHaveValue("my edit\n");
-    await expect(files.getByRole("status")).toContainText("파일이 바뀌었습니다");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("파일이 바뀌었습니다");
     await files.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(files.getByRole("status")).toContainText("파일이 바뀌었습니다");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("파일이 바뀌었습니다");
     expect(readFileSync(path, "utf8")).toBe("external edit\n");
     await expect(area).toHaveValue("my edit\n");
     page.once("dialog", (dialog) => dialog.accept());
@@ -110,7 +110,7 @@ test("저장 응답이 유실된 뒤 탭을 다시 열어도 자동 전송 없�
     expect(sent).toHaveLength(1);
     expect(readFileSync(path, "utf8")).toBe("saved once\n");
     await retry.click();
-    await expect(files.getByRole("status")).toHaveText("저장됨");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toHaveText("저장됨");
     expect(sent).toHaveLength(2);
     expect(sent[1]).toEqual(sent[0]);
     await expect(area).toHaveValue("saved once\n");
@@ -174,7 +174,7 @@ test("기기 저장 공간이 부족하면 사본 실패를 알리고 복구 키
     await area.fill("kept in current editor\n");
     await expect(files.getByRole("alert")).toContainText("편집 사본을 보관하지 못했습니다");
     await files.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(files.getByRole("status")).toContainText("요청 사본을 보관하지 못해 실행하지 않았습니다");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("요청 사본을 보관하지 못해 실행하지 않았습니다");
     await expect(area).toHaveValue("kept in current editor\n");
     expect(requests).toBe(0);
     expect(readFileSync(path, "utf8")).toBe("original\n");

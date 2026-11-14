@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from "react";
 import { DetailDialog } from "./ui/Controls";
-import { Icon } from "./icons";
+import { HelpTip, SentenceText } from "./HelpTip";
 import { ApiError, api } from "../api/client";
 import { useQuery } from "../state/store";
 import type { ModelProfile } from "../api/generated";
@@ -161,12 +161,10 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                 {d.label} {d.advanced && <span className="muted small">고급</span>}{" "}
                 <a className="muted small" href={`#setting-${encodeURIComponent(d.key)}`} title="이 항목으로 바로 가는 링크" aria-label={`${d.label} 링크`}>#</a>
             </h2>
-            <DetailDialog className="setting-help" label={`${d.label} 도움말`} title={`${d.label} 도움말`} trigger={<Icon name="help" size={16} />}>
-                <div>
-                    <p>{d.description}</p>
-                    <p>실제 적용값: <code>{JSON.stringify(it.effective)}</code> ({SCOPE_LABEL[it.source]}) · 기본값 <code>{JSON.stringify(it.default)}</code></p>
-                </div>
-            </DetailDialog>
+            <HelpTip label={`${d.label} 도움말`}>
+                <SentenceText text={d.description} />
+                <p>실제 적용값: <code>{JSON.stringify(it.effective)}</code> ({SCOPE_LABEL[it.source]}) · 기본값 <code>{JSON.stringify(it.default)}</code></p>
+            </HelpTip>
             </div>
             <div className="inline wrap">
                 {scopes.length > 1 && (

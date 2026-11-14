@@ -111,6 +111,7 @@ let osWatch: MediaQueryList | null = null;
 
 export function applyPrefs(p: Prefs) {
     document.documentElement.dataset.theme = p.theme;
+    document.documentElement.dataset.astryxTheme = p.theme === "soft" ? "grove-soft" : "grove";
     // 브라우저 주소창·PWA 상단 색도 테마에 맞춘다. system이면 OS 전환을 따라간다.
     const meta = document.querySelector('meta[name="theme-color"]');
     const sync = () => meta?.setAttribute("content", THEME_COLOR[effectiveTheme(loadPrefs().theme)]);

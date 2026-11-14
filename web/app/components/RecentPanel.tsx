@@ -10,6 +10,8 @@ import { useQuery } from "../state/store";
 import { DRAG_OPEN } from "../state/layout";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Heading } from "@astryxdesign/core/Text";
 
 const STATUS: Record<string, string> = {
     running: "실행 중",
@@ -34,7 +36,9 @@ function useMinute(): Date {
 }
 
 /// linked: 현재 배치에서 분할로 함께 열린 대화 ID. 원본처럼 한 묶음으로 보여 준다.
-export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked?: ReadonlySet<string> }) {
+export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar" }: {
+    open: Opener; linked?: ReadonlySet<string>; presentation?: "sidebar" | "home";
+}) {
     const [limit, setLimit] = useState(30);
     const [err, setErr] = useState<string | null>(null);
     const prefs = usePrefs();
@@ -76,9 +80,9 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
     };
 
     return (
-        <section className="recent" aria-label="최근">
+        <Stack as="section" className={presentation === "home" ? "home-recent" : "recent"} aria-label={presentation === "home" ? "홈 최근" : "최근"}>
             <div className="recent-head">
-                <h2>최근</h2>
+                <Heading level={presentation === "home" ? 1 : 2}>최근</Heading>
                 <div className="chips" role="group" aria-label="시간 범위">
                     {[...prefs.recentWindows, "all" as const].map((option) => (
                         <button key={option} className={range === option ? "chip on" : "chip"} aria-pressed={range === option}
@@ -108,12 +112,12 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                     더 보기
                 </button>
             )}
-        </section>
+        </Stack>
     );
 
     function row(it: RecentItem, linkedTo?: string) {
         return (
-                    <li key={it.id} className={it.unread ? "unread" : ""} data-testid="recent-item">
+                    <li key={it.id} className={it.unread ? "unread" : ""} data-testid={presentation === "home" ? "home-recent-item" : "recent-item"}>
                         <button className="link" onClick={() => openItem(it)} title={`${it.project_name} · ${it.title}${linkedTo ? ` · 분할로 함께 열림: ${linkedTo}` : ""} · 영역이나 가장자리로 끌어서 열 수 있습니다`}
                             draggable={["session", "project", "terminal", "file"].includes(it.kind)}
                             onDragStart={(e) => {

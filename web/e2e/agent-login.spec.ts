@@ -20,7 +20,7 @@ test("소유자가 모바일에서 공식 인증을 시작하고 재접속·취�
     await open();
     const codex = page.getByRole("region", { name: "Codex 계정", exact: true });
     const claude = page.getByRole("region", { name: "Claude Code 계정", exact: true });
-    await expect(codex.getByRole("status")).toHaveText("로그인 필요");
+    await expect(codex.getByRole("status").filter({ hasText: /\S/ })).toHaveText("로그인 필요");
     await codex.getByRole("button", { name: "로그인", exact: true }).click();
     await expect(codex.getByLabel("기기 인증 코드")).toHaveText("ABCD-12345");
     await expect(codex.getByRole("link")).toHaveAttribute("href", "https://auth.openai.com/codex/device");
@@ -42,7 +42,7 @@ test("소유자가 모바일에서 공식 인증을 시작하고 재접속·취�
     await codex.getByRole("button", { name: "로그인", exact: true }).click();
     await expect(codex.getByLabel("기기 인증 코드")).toBeVisible();
     writeFileSync(join(state().cliDir!, "approve-codex"), "approve");
-    await expect(codex.getByRole("status")).toHaveText("로그인됨");
+    await expect(codex.getByRole("status").filter({ hasText: /\S/ })).toHaveText("로그인됨");
     await claude.getByRole("button", { name: "로그인", exact: true }).click();
     await expect(claude.getByRole("link")).toHaveAttribute("href", "https://claude.com/cai/oauth/authorize?state=fixture");
     await claude.scrollIntoViewIfNeeded();
@@ -56,16 +56,16 @@ test("소유자가 모바일에서 공식 인증을 시작하고 재접속·취�
     await page.screenshot({ path: info.outputPath("agent-login-desktop.png") });
     await claude.getByLabel("일회용 인증 코드").fill("fixture-code");
     await claude.getByRole("button", { name: "확인", exact: true }).click();
-    await expect(claude.getByRole("status")).toHaveText("로그인됨");
+    await expect(claude.getByRole("status").filter({ hasText: /\S/ })).toHaveText("로그인됨");
     await expect(claude.getByLabel("일회용 인증 코드")).toHaveCount(0);
     const data = await apiCall("GET", "/agent-backends/claude_code/auth");
     expect(JSON.stringify(data)).not.toContain("must-not-be-returned");
     expect(JSON.stringify(data)).not.toContain("fixture-code");
     page.on("dialog", (dialog) => void dialog.accept());
     await codex.getByRole("button", { name: "로그아웃", exact: true }).click();
-    await expect(codex.getByRole("status")).toHaveText("로그인 필요");
+    await expect(codex.getByRole("status").filter({ hasText: /\S/ })).toHaveText("로그인 필요");
     await claude.getByRole("button", { name: "로그아웃", exact: true }).click();
-    await expect(claude.getByRole("status")).toHaveText("로그인 필요");
+    await expect(claude.getByRole("status").filter({ hasText: /\S/ })).toHaveText("로그인 필요");
 });
 
 test("등록 기기는 인증 상태·코드·계정 변경에 접근하지 못한다", async ({ request }) => {

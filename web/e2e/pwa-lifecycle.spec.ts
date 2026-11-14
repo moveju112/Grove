@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, composerOption, ensureProjects, login, openDetails, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProjects, inputOptions, login, openDetails, sessionView } from "./helpers";
 
 async function openDraft(page: Page, name: string) {
     const { a } = await ensureProjects();
@@ -30,11 +30,15 @@ test("오프라인에서 입력과 로컬 초안은 유지하고 버튼·단축�
         await expect(page.getByTestId("offline-banner")).toBeVisible();
         await view.getByLabel("메시지 입력").fill("오프라인에서 계속 쓴 초안");
         await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
+        await inputOptions(view);
         await expect(view.getByRole("button", { name: "초안 서버 저장" })).toBeDisabled();
+        await page.keyboard.press("Escape");
+        await view.getByRole("button", { name: "대화 작업", exact: true }).click();
         await expect(view.getByRole("button", { name: "제목 생성", exact: true })).toBeDisabled();
         await expect(view.getByRole("button", { name: "제목 생성", exact: true })).toHaveAttribute("title", /오프라인/);
         await expect(view.getByRole("button", { name: "분기", exact: true })).toBeDisabled();
         await expect(view.getByLabel("워크플로우")).toBeDisabled();
+        await page.keyboard.press("Escape");
         await openDetails(view.getByTestId("tasks-panel"));
         await view.getByLabel("백그라운드 명령").fill("fixture command must not execute");
         await expect(view.getByTestId("tasks-panel").getByRole("button", { name: "실행", exact: true })).toBeDisabled();
