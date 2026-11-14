@@ -13,6 +13,25 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import build  # noqa: E402
 
 
+class Environment(unittest.TestCase):
+    def test_explicit_shared_toolchain_and_cache_are_preserved(self):
+        with patch.dict(os.environ, {"CARGO_HOME": "/shared/cargo",
+                                    "RUSTUP_HOME": "/shared/rustup",
+                                    "CARGO_TARGET_DIR": "/shared/target",
+                                    "PATH": "/usr/bin"}, clear=True):
+            result = build.env()
+        self.assertEqual(result["CARGO_HOME"], "/shared/cargo")
+        self.assertEqual(result["RUSTUP_HOME"], "/shared/rustup")
+        self.assertEqual(result["CARGO_TARGET_DIR"], "/shared/target")
+        self.assertEqual(result["PATH"].split(os.pathsep)[0], "/shared/cargo/bin")
+
+    def test_unconfigured_checkout_uses_repository_toolchain(self):
+        with patch.dict(os.environ, {"PATH": "/usr/bin"}, clear=True):
+            result = build.env()
+        self.assertEqual(result["CARGO_HOME"], os.path.join(build.DEV, "cargo"))
+        self.assertEqual(result["RUSTUP_HOME"], os.path.join(build.DEV, "rustup"))
+
+
 class Plan(unittest.TestCase):
     def scope(self, *files):
         return build.plan_for(list(files))
