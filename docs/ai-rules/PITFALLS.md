@@ -1,12 +1,5 @@
 # 혼동하기 쉬운 계약
 
-## 이전 설계 문서를 현재 계약으로 오해
-
-Symptom: `loopback 포함 모든 /api 요청은 Bearer 토큰 필요`를 공개 인증 진입점에도 그대로 적용한다.
-Cause: `migration/RULEBOOK.md`의 과거 일반화를 현재 구현보다 우선했다.
-Fix: [API_RULES.md](API_RULES.md)의 일반 API·Owner·공개 인증 경계를 구분하고 handler를 확인한다.
-근거: `evidence: migration/RULEBOOK.md:56`, `evidence: src/lib.rs:425`.
-
 ## 실행 migration 위치 혼동
 
 Symptom: `migration/`에 SQL 파일을 추가하고 schema 갱신이 끝났다고 판단한다.

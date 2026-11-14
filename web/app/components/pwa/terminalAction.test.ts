@@ -7,6 +7,7 @@ beforeEach(async () => {
     vi.resetModules();
     browser = { onLine: true };
     vi.stubGlobal("navigator", browser);
+    vi.stubGlobal("location", { hash: "", hostname: "localhost" });
     vi.stubGlobal("fetch", vi.fn(async () => new Response('{"protocol":1}')));
     lifecycle = await import("./lifecycle");
     action = await import("./terminalAction");

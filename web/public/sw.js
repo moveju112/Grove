@@ -1,5 +1,6 @@
 // Grove service worker: 등록 scope 안의 정적 앱 화면만 cache한다. API는 절대 cache하지 않는다.
-// 새 버전은 설치 후 대기하고, 사용자가 "지금 업데이트"를 눌렀을 때만 활성화한다(FLOW-16).
+// 새 버전은 설치 후 대기하고, 탭이 skip-waiting을 보낼 때만 활성화한다(FLOW-16).
+// 탭은 입력이 없으면 바로, 입력이 남아 있으면 사용자가 업데이트를 고를 때 보낸다.
 // VERSION은 빌드 후 scripts/stamp-sw.mjs가 자산 목록 hash로 바꾼다.
 const VERSION = "__GROVE_BUILD__";
 const SCOPE = new URL(self.registration.scope);

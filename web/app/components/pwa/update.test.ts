@@ -8,8 +8,11 @@ let pwa: typeof import("../pwa");
 let service: EventTarget & { register: ReturnType<typeof vi.fn>; controller: Worker | null };
 let registration: EventTarget & { waiting: Worker | null; installing: Worker | null; update: ReturnType<typeof vi.fn> };
 let reload: ReturnType<typeof vi.fn>;
+const input = vi.hoisted(() => ({ pending: true }));
+vi.mock("./pendingInput", () => ({ trackPendingInput: () => undefined, hasPendingInput: () => input.pending }));
 beforeEach(async () => {
     vi.resetModules();
+    input.pending = true;
     vi.stubEnv("DEV", false);
     vi.useFakeTimers();
     reload = vi.fn();
@@ -26,8 +29,41 @@ afterEach(() => {
     vi.unstubAllEnvs();
 });
 
-describe("사용자 동의에 따른 worker 전환", () => {
-    it("등록은 한 번만 하고 대기 worker를 자동으로 활성화하지 않는다", async () => {
+describe("입력 유무에 따른 worker 전환", () => {
+    it("입력이 없으면 대기 worker를 바로 한 번만 활성화하고 한 번만 reload한다", async () => {
+        input.pending = false;
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        expect(registration.waiting!.postMessage).toHaveBeenCalledTimes(1);
+        expect(registration.waiting!.postMessage).toHaveBeenCalledWith({ type: "skip-waiting" });
+        await pwa.checkForUpdate();
+        expect(registration.waiting!.postMessage).toHaveBeenCalledTimes(1);
+        service.dispatchEvent(new Event("controllerchange"));
+        service.dispatchEvent(new Event("controllerchange"));
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("오프라인이면 입력이 없어도 자동으로 활성화하지 않는다", async () => {
+        input.pending = false;
+        vi.stubGlobal("navigator", { onLine: false, serviceWorker: service });
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        expect(registration.waiting!.postMessage).not.toHaveBeenCalled();
+    });
+
+    it("다른 탭이 활성화한 worker도 입력이 없으면 바로 reload한다", async () => {
+        registration.waiting = null;
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        input.pending = false;
+        const next = new Worker();
+        next.state = "activated";
+        service.controller = next;
+        service.dispatchEvent(new Event("controllerchange"));
+        expect(reload).toHaveBeenCalledTimes(1);
+    });
+
+    it("입력이 있으면 등록은 한 번만 하고 대기 worker를 자동으로 활성화하지 않는다", async () => {
         pwa.registerServiceWorker();
         pwa.registerServiceWorker();
         await Promise.resolve();

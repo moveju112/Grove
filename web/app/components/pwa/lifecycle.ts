@@ -117,6 +117,11 @@ export function checkCompatibility(): Promise<void> {
     const reconnected = navigator.onLine && !state.online;
     update({ online: navigator.onLine, ...(reconnected ? { connection: "checking" as const } : {}) });
     if (!navigator.onLine) return Promise.resolve();
+    // 공개키 확인 전의 전송 차단은 서버 연결 실패가 아니다.
+    if (location.hash.startsWith("#connect=")) {
+        update({ connection: "checking" });
+        return Promise.resolve();
+    }
     if (checking) return checking;
     checking = (async () => {
         try {

@@ -47,7 +47,7 @@ test("새 버전 발행 중에도 stream과 초안이 유지되고, 사용자가
 
         // 4) 사용자가 고르면 전환: 한 번 다시 불러오고, 초안·대화·연결이 복원된다
         await page.waitForTimeout(1200); // 초안 저장(debounce)
-        await banner.getByRole("button", { name: "지금 업데이트" }).click();
+        await banner.getByRole("button", { name: "업데이트", exact: true }).click();
         await page.waitForFunction(() => (window as unknown as { __marker?: number }).__marker === undefined, undefined, { timeout: 15_000 });
         await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         const v2 = page.getByTestId("session-view");

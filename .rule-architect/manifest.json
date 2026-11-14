@@ -1,0 +1,68 @@
+{
+  "schema": "rule-architect/manifest@3",
+  "files": {
+    ".rule-architect/decisions.json": {
+      "type": "file",
+      "sha256": "cfc4d6077598de02a284c87700137e3703896c55803698024a429fbf518e1b85",
+      "lines": 121
+    },
+    ".rule-architect/quiz/grove-rules-20261114-01.json": {
+      "type": "file",
+      "sha256": "2a75f128f60e9d6af756eed3121162b2b7c1ff57e2412be1ebd4261207638e7d",
+      "lines": 51
+    },
+    "AGENTS.md": {
+      "type": "symlink",
+      "target": "AI_RULES.md"
+    },
+    "AI_RULES.md": {
+      "type": "file",
+      "sha256": "91eb0794ffc82748b6ceb2eec658a5c6c29153a252f101137b766bb1a022d585",
+      "lines": 53
+    },
+    "CLAUDE.md": {
+      "type": "symlink",
+      "target": "AI_RULES.md"
+    },
+    "docs/ai-rules/API_RULES.md": {
+      "type": "file",
+      "sha256": "7d03203ce814ab29476b04fc987f235ef5efa24edd03f4cad14240643a8ef496",
+      "lines": 32
+    },
+    "docs/ai-rules/ARCHITECTURE.md": {
+      "type": "file",
+      "sha256": "79b616408fb74221e3e6dc330ced09351a7c28e13b734bccf32d645f6390be70",
+      "lines": 34
+    },
+    "docs/ai-rules/CODING_RULES.md": {
+      "type": "file",
+      "sha256": "d30d41463880877fc0f9b669accaf708e4fd828b9249cd26de09c03b8364a1fc",
+      "lines": 37
+    },
+    "docs/ai-rules/DB_RULES.md": {
+      "type": "file",
+      "sha256": "2dbeb2bb9d393d8f2f193ff50e4f845288a7fd83088934f80d063712b880a72a",
+      "lines": 25
+    },
+    "docs/ai-rules/DEPLOY.md": {
+      "type": "file",
+      "sha256": "a0ac5ca608fae504477ba778e67b9af94eb21d4616e94b16829b47f202c3c18d",
+      "lines": 30
+    },
+    "docs/ai-rules/ENUM_CODES.md": {
+      "type": "file",
+      "sha256": "08397c0fa76ecddff54c87d5ea5290678653a78be3269e5e4097abb77567bbbc",
+      "lines": 27
+    },
+    "docs/ai-rules/PITFALLS.md": {
+      "type": "file",
+      "sha256": "c49f15087c66aa4fbfcd057a216c5faecd5d19ddda7beb682d7a02b27ea34b47",
+      "lines": 44
+    },
+    "docs/ai-rules/RESPONSE_KEYS.md": {
+      "type": "file",
+      "sha256": "f4f13a5a84210b3e268b019f3831625854f88d82c70b682088d32b8975572da0",
+      "lines": 22
+    }
+  }
+}

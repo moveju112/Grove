@@ -69,7 +69,7 @@ test(`deployment ${paths.base}: worker update waits for user choice`, async ({ p
         await expect(banner).toBeVisible({ timeout: 15_000 });
         await expect(page.getByLabel("토큰")).toHaveValue("local-deployment-check-input");
         expect(await page.evaluate(() => (window as unknown as { deploymentMarker?: boolean }).deploymentMarker)).toBe(true);
-        await banner.getByRole("button", { name: "지금 업데이트" }).click();
+        await banner.getByRole("button", { name: "업데이트", exact: true }).click();
         await page.waitForFunction(() => !(window as unknown as { deploymentMarker?: boolean }).deploymentMarker);
         await expect(page.locator("html")).toHaveAttribute("data-hydrated", "true");
         expect(new URL(page.url()).pathname).toBe(`${paths.base}deployment-check/update`);
@@ -87,6 +87,25 @@ test(`deployment ${paths.base}: worker update waits for user choice`, async ({ p
             expect(url.startsWith(paths.base)).toBe(true);
             expect(url === "/api" || url.startsWith("/api/") || url === `${paths.base}api` || url.startsWith(`${paths.base}api/`)).toBe(false);
         }
+    } finally {
+        writeFileSync(swFile, original);
+    }
+});
+
+test(`deployment ${paths.base}: worker update applies at once without pending input`, async ({ page }) => {
+    const original = readFileSync(swFile, "utf8");
+    try {
+        await page.goto(`${paths.base}deployment-check/auto`);
+        await expect(page.getByLabel("토큰")).toBeVisible();
+        await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+        await page.evaluate(() => { (window as unknown as { deploymentMarker: boolean }).deploymentMarker = true; });
+        writeFileSync(swFile, original.replace(/const VERSION = "([^"]+)"/, 'const VERSION = "$1-deployment-auto"'));
+        await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration(location.href))!.update(); });
+        await page.waitForFunction(() => !(window as unknown as { deploymentMarker?: boolean }).deploymentMarker, undefined, { timeout: 15_000 });
+        await expect(page.locator("html")).toHaveAttribute("data-hydrated", "true");
+        await expect(page.locator('meta[name="grove-shell-version"]')).toHaveAttribute("content", /-deployment-auto$/);
+        await expect(page.getByRole("status").filter({ hasText: "새 버전이 준비되었습니다" })).toHaveCount(0);
+        expect(new URL(page.url()).pathname).toBe(`${paths.base}deployment-check/auto`);
     } finally {
         writeFileSync(swFile, original);
     }

@@ -25,6 +25,7 @@ beforeEach(async () => {
     vi.stubGlobal("navigator", browser);
     vi.stubGlobal("window", { localStorage: local });
     vi.stubGlobal("sessionStorage", new MemoryStorage());
+    vi.stubGlobal("location", { hash: "", hostname: "localhost" });
     lifecycle = await import("./lifecycle");
 });
 afterEach(() => { vi.unstubAllGlobals(); });
@@ -32,6 +33,21 @@ afterEach(() => { vi.unstubAllGlobals(); });
 const health = (protocol: number, version = "any-server-build") => new Response(JSON.stringify({ protocol, version }));
 
 describe("서버 작업 경계", () => {
+    it("암호화 연결 확인 전에는 실패 상태를 만들지 않고 확인 후 실제 서버를 검사한다", async () => {
+        const location = { hash: "#connect=unconfirmed", hostname: "localhost" };
+        vi.stubGlobal("location", location);
+        const fetch = vi.fn(async () => health(1));
+        vi.stubGlobal("fetch", fetch);
+        await lifecycle.checkCompatibility();
+        expect(lifecycle.lifecycleSnapshot().connection).toBe("checking");
+        expect(fetch).not.toHaveBeenCalled();
+        expect(() => lifecycle.requireServerAction()).toThrow("호환성을 확인");
+        location.hash = "";
+        await lifecycle.checkCompatibility();
+        expect(lifecycle.lifecycleSnapshot().connection).toBe("ready");
+        expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
     it.each([null, "original-shell"])("controller가 바뀌어도 현재 document의 shell 버전 %s를 유지한다", (version) => {
         vi.useFakeTimers();
         const postMessage = vi.fn();

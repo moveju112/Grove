@@ -84,7 +84,7 @@ test("다른 탭의 업데이트 후 유일하게 남은 구 문서의 lazy asse
         await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration())!.update(); });
         const banner = (tab: Page) => tab.getByRole("status").filter({ hasText: "새 버전이 준비되었습니다" });
         await expect(banner(page)).toBeVisible();
-        await banner(page).getByRole("button", { name: "지금 업데이트" }).click();
+        await banner(page).getByRole("button", { name: "업데이트", exact: true }).click();
         await expect(page.locator('meta[name="grove-shell-version"]')).toHaveAttribute("content", `${version}-multi-recovery`);
         await expect(second.locator("html")).toHaveAttribute("data-pwa-marker", "old-document");
         await expect(second.locator('meta[name="grove-shell-version"]')).toHaveAttribute("content", version);
@@ -112,8 +112,8 @@ test("다른 탭의 업데이트 후 유일하게 남은 구 문서의 lazy asse
         expect(await second.evaluate(async (name) => (await caches.keys()).includes(name), asset.cache)).toBe(true);
         await expect(sessionView(second, session.id).getByLabel("메시지 입력")).toHaveValue("초안 multi-tab");
         await second.context().setOffline(false);
-        await expect(banner(second).getByRole("button", { name: "지금 업데이트" })).toBeEnabled();
-        await banner(second).getByRole("button", { name: "지금 업데이트" }).click();
+        await expect(banner(second).getByRole("button", { name: "업데이트", exact: true })).toBeEnabled();
+        await banner(second).getByRole("button", { name: "업데이트", exact: true }).click();
         await expect(second.locator('meta[name="grove-shell-version"]')).toHaveAttribute("content", `${version}-multi-recovery`);
         await expect.poll(() => second!.evaluate(async (name) => (await caches.keys()).includes(name), asset.cache)).toBe(false);
         await expect(sessionView(second, session.id).getByLabel("메시지 입력")).toHaveValue("초안 multi-tab");
@@ -220,7 +220,7 @@ test("구 worker는 동의 전 대기하고 동의 후 한 번 전환하며 초�
         await expect(banner).toBeVisible();
         await expect(page.locator("html")).toHaveAttribute("data-pwa-marker", "old-tab");
         await expect(view.getByLabel("메시지 입력")).toHaveValue("초안 update");
-        await banner.getByRole("button", { name: "지금 업데이트" }).click();
+        await banner.getByRole("button", { name: "업데이트", exact: true }).click();
         await page.waitForFunction(() => document.documentElement.dataset.pwaMarker === undefined);
         await expect(page.getByTestId("conn")).toHaveText("연결됨");
         await expect(sessionView(page, session.id).getByLabel("메시지 입력")).toHaveValue("초안 update");

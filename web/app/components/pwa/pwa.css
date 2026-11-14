@@ -54,6 +54,19 @@
     overflow: auto;
 }
 
+.pwa-update {
+    display: flex;
+    flex-direction: column;
+    gap: var(--spacing-3);
+    max-width: 24rem;
+}
+
+.pwa-update-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: var(--spacing-2);
+}
+
 .update-banner[data-testid="protocol-banner"] {
     bottom: auto;
     top: .7em;

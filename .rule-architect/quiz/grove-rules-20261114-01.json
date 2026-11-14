@@ -1,0 +1,50 @@
+{
+  "runId": "grove-rules-20261114-01",
+  "lang": "ko",
+  "questions": [
+    {
+      "id": "Q1",
+      "type": "recall",
+      "question": "DB schema를 바꿀 때 어느 파일의 어느 구조를 수정하고, 이미 배포된 migration은 어떻게 다뤄야 해?",
+      "expected": "src/store.rs의 MIGRATIONS 끝에 추가하고 배포된 항목은 수정하지 않는다. migration/은 실행 SQL 경로가 아니다.",
+      "answer": "src/store.rs의 MIGRATIONS 배열 끝에 새 항목을 추가해. 이미 배포된 migration은 보존해야 해. migration/은 실행 SQL migration 디렉터리가 아니야. 소유권이 분명한 격리된 임시 DB에서 기존 DB·신규 DB 경로를 검사해.",
+      "correct": true
+    },
+    {
+      "id": "Q2",
+      "type": "recall",
+      "question": "Rust 응답 타입을 바꾸면 어떤 생성 산출물을 함께 갱신하고 어떤 명령을 사용해야 해?",
+      "expected": "생성 TypeScript와 runtime metadata를 함께 갱신한다. tests/ts_bindings.rs에 타입을 등록하고 GROVE_UPDATE_BINDINGS=1 python3 scripts/build.py test --rust ts_bindings를 실행한 뒤 갱신 변수 없이 drift를 검사한다.",
+      "answer": "생성 TypeScript와 runtime 검증 metadata를 함께 갱신해. 필요한 타입은 tests/ts_bindings.rs의 생성 목록에 등록하고, GROVE_UPDATE_BINDINGS=1 python3 scripts/build.py test --rust ts_bindings를 실행해. 이후 갱신 환경변수 없이 python3 scripts/build.py test --rust ts_bindings로 drift를 검사하고, 영향받는 웹 타입·계약 검사도 수행해.",
+      "correct": true
+    },
+    {
+      "id": "Q3",
+      "type": "recall",
+      "question": "Codex와 Claude Code의 신규 실행·대화 재개에서 어떤 읽기 전용 제한을 유지해야 해?",
+      "expected": "신규 실행과 재개 모두 Codex sandbox_mode=\"read-only\", Claude Code Read,Glob,Grep 제한을 유지한다. 외부 설정·hook·MCP가 승인 경계를 우회해서는 안 된다.",
+      "answer": "신규 실행과 대화 재개 모두 Codex는 sandbox_mode=\"read-only\", Claude Code는 Read,Glob,Grep 제한을 유지해야 해. 외부 CLI 설정·hook·MCP로 Grove의 승인 경계를 우회하면 안 돼.",
+      "correct": true
+    },
+    {
+      "id": "Q4",
+      "type": "judgment",
+      "question": "셸 작업의 완료 기록 없이 서버가 재시작됐어. 성공 기록이 없으니 같은 작업을 자동 재실행해서 복구해도 될까? 이유도 말해줘.",
+      "expected": "자동 재실행은 허용되지 않는다. 기록 전에 외부 부작용이 발생했을 수 있으므로 중복 실행을 피하고 도구 결과를 unknown으로 보존한다.",
+      "answer": "안 돼. 완료 기록이 없어도 외부 부작용은 이미 발생했을 수 있고, transaction으로 되돌릴 수 있다고 가정하면 안 돼. 자동 재실행은 중복 부작용을 만들 수 있으므로 실행 중이던 도구는 unknown으로 남겨야 해. unknown과 interrupted도 같은 의미로 합치면 안 돼.",
+      "correct": true
+    },
+    {
+      "id": "Q5",
+      "type": "negative",
+      "question": "감사 로그 자동 정리의 기본 보관 기간은 정확히 며칠이야?",
+      "expected": "룰에 없음, 소스 확인 필요",
+      "answer": "룰에 없음, 소스 확인 필요",
+      "correct": true
+    }
+  ],
+  "correct": 5,
+  "total": 5,
+  "negativePassed": true,
+  "passed": true
+}

@@ -1,8 +1,11 @@
-// 새 버전은 확인만 하고, 사용자가 고른 탭에서만 입력을 떠나도록 한다.
+// 입력이 없는 탭은 새 버전을 바로 적용하고, 입력이 남은 탭은 사용자가 고를 때까지 기다린다.
 import { useSyncExternalStore } from "react";
 import { onProtocolMismatch } from "../api/client";
 import { deployment } from "../deployment";
+import { Button } from "../design/Button";
+import { SentenceText } from "./HelpTip";
 import { useLifecycle } from "./pwa/lifecycle";
+import { hasPendingInput, trackPendingInput } from "./pwa/pendingInput";
 
 let waiting: ServiceWorker | null = null;
 let registration: ServiceWorkerRegistration | null = null;
@@ -18,13 +21,15 @@ function publish(worker: ServiceWorker | null, error: string | null = null) {
 function checkWaiting(worker: ServiceWorker | null) {
     if (worker && navigator.serviceWorker.controller && worker !== waiting) {
         waiting = worker;
-        publish(worker);
+        if (navigator.onLine && !hasPendingInput()) applyUpdate();
+        else publish(worker);
     }
 }
 
 export function registerServiceWorker() {
     if (started || !("serviceWorker" in navigator) || import.meta.env.DEV) return;
     started = true;
+    trackPendingInput();
     let controller = navigator.serviceWorker.controller;
     // 첫 claim이나 다른 탭의 동의로 입력 중인 탭을 reload하지 않는다.
     navigator.serviceWorker.addEventListener("controllerchange", () => {
@@ -60,7 +65,7 @@ export async function checkForUpdate() {
     try {
         await registration.update();
         checkWaiting(registration.waiting);
-        if (registration.waiting) publish(registration.waiting);
+        if (registration.waiting && !updateRequested) publish(registration.waiting);
     } catch {
         publish(snapshot.worker, "새 UI 확인에 실패했습니다. 현재 탭은 유지합니다. 연결과 브라우저 저장 공간을 확인하세요.");
     }
@@ -71,6 +76,7 @@ export function applyUpdate() {
     updateRequested = true;
     // 다른 탭에서 이미 활성화한 버전으로 넘어갈 때도 이 탭의 사용자 동의를 기다린다.
     if (waiting.state === "activated" || waiting.state === "redundant") {
+        reloaded = true;
         location.reload();
         return;
     }
@@ -107,10 +113,12 @@ export function UpdateBanner() {
     return (
         <div className="update-banner pwa-update-notices">
             {current.error && <p className="error" role="alert">{current.error}</p>}
-            {current.worker && <div role="status">
-                새 버전이 준비되었습니다. 중요한 입력은 먼저 복사하세요. 로컬 초안 보존은 브라우저 저장소에 의존합니다.
-                <button onClick={applyUpdate} disabled={!online} title={!online ? "연결 후 업데이트할 수 있습니다" : undefined}>지금 업데이트</button>
-                <button className="ghost" onClick={() => publish(null, current.error)}>나중에</button>
+            {current.worker && <div role="status" className="pwa-update">
+                <SentenceText text="새 버전이 준비되었습니다. 업데이트하면 저장하지 않은 입력이 사라질 수 있습니다." />
+                <div className="pwa-update-actions">
+                    <Button type="button" className="ghost small" onClick={() => publish(null, current.error)}>나중에</Button>
+                    <Button type="button" className="small" onClick={applyUpdate} disabled={!online} title={!online ? "연결 후 업데이트할 수 있습니다" : undefined}>업데이트</Button>
+                </div>
             </div>}
         </div>
     );

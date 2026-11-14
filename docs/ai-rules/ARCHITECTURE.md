@@ -28,6 +28,3 @@ HTTP 인증·Origin·호환성 검사 → 도메인 처리 → SQLite transactio
 - **MUST** 서버 상태 변경 뒤 UI 갱신은 도메인 이벤트와 조회 cache 무효화를 함께 연결한다.
   - why: API 성공만으로 다른 pane·기기의 화면이 갱신되지는 않는다.
   - ✅ `pairing.changed`와 `applyEvent`의 `invalidate("pairings")` 연결. `evidence: src/pairing.rs`, `evidence: web/app/state/store.ts`.
-
-상세 설계의 역사적 근거는 `migration/RULEBOOK.md`에 있다.
-과거 고정 SHA·작업 배치·검증 주기를 현재 배포 대상이나 자동 실행 승인으로 해석하지 않는다.

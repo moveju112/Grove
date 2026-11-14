@@ -46,12 +46,12 @@ function ConnectedApp() {
         <>
             <ProtocolBanner />
             <UpdateBanner />
-            {state !== "in" && state !== "checking" && (deferredAuth || serverBlockReason(lifecycle)) ? <AuthRecovery recover={async () => {
+            {pairing ? <PairingLogin key={pairing} initialLink={pairing} checking={state === "checking"} onDone={() => setPairing(null)} onCancel={() => {
+                setPairing(null);
+            }} /> : state !== "in" && state !== "checking" && (deferredAuth || serverBlockReason(lifecycle)) ? <AuthRecovery recover={async () => {
                 const session = await refresh();
                 setState(session ? "in" : "out");
                 if (!serverBlockReason(lifecycleSnapshot())) setDeferredAuth(false);
-            }} /> : pairing ? <PairingLogin key={pairing} initialLink={pairing} checking={state === "checking"} onDone={() => setPairing(null)} onCancel={() => {
-                setPairing(null);
             }} /> : state === "checking" ? <div className="boot">연결 확인 중…</div> : state === "in" ? <Workspace /> : <Login />}
         </>
     );

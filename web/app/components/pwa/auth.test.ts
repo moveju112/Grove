@@ -9,6 +9,7 @@ beforeEach(async () => {
     vi.resetModules();
     browser = { onLine: true };
     vi.stubGlobal("navigator", browser);
+    vi.stubGlobal("location", { hash: "", hostname: "localhost" });
     client = await import("../../api/client");
     lifecycle = await import("./lifecycle");
 });

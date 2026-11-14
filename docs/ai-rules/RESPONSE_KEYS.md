@@ -18,4 +18,3 @@
 
 계약 JSON 숫자는 안전한 정수 범위라는 생성기의 전제를 유지한다.
 시간은 UTC RFC3339 문자열로 반환한다. `evidence: tests/ts_bindings.rs:9`, `evidence: src/util.rs`.
-생성 경로를 우회하는 수동 편집 방지 hook은 별도 승인 없이는 설치하지 않는다.

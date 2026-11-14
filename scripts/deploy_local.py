@@ -11,10 +11,14 @@
 
 업데이트는 release 패키지 → 로컬 키로 서명한 manifest → `grove update apply`다.
 실행 중 작업이 있으면 updater가 적용을 미루며(deferred), 실패하면 이전 release로 복구한다.
+
+로컬 반영 뒤에는 같은 패키지의 웹 자산을 Cloudflare Pages(폰이 여는 공개 주소)에도 배포하고 실제 제공 자산을 대조한다.
 """
 import argparse
+import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,6 +37,8 @@ UNIT = "grove-opus.service"
 WEB_UNIT = "grove-opus-web.service"
 UNIT_DIR = os.path.join(HOME, ".config", "systemd", "user")
 TARGET = "linux-x64"
+PAGES_PROJECT = "grove"
+PAGES_ORIGIN = "https://grove.choondoggy.com"
 
 RUN_SH = f"""#!/bin/sh
 # grove-opus.service 진입점: current 포인터의 release를 실행한다(deploy_local.py가 생성).
@@ -230,11 +236,63 @@ def wait_ready(timeout=60):
     return False
 
 
+def wrangler():
+    path = os.path.join(REPO, "relay", "node_modules", ".bin", "wrangler")
+    if not os.path.exists(path):
+        run(["npm", "ci", "--no-audit", "--no-fund"], cwd=os.path.join(REPO, "relay"))
+    return path
+
+
+def fetch(url):
+    # Cloudflare는 User-Agent 없는 요청을 403으로 막는다.
+    request = urllib.request.Request(url, headers={"User-Agent": "grove-deploy-check/1", "Cache-Control": "no-cache"})
+    with urllib.request.urlopen(request, timeout=30) as response:
+        return response.read()
+
+
+def publish_pages(archive, manifest):
+    """설치한 패키지와 같은 웹 자산을 Pages production에 배포하고 사용자 도메인의 제공 자산을 대조한다."""
+    stage = tempfile.mkdtemp(prefix="grove-pages-")
+    try:
+        run(["tar", "-xzf", archive, "-C", stage])
+        web = next(os.path.join(root, "web") for root, dirs, _ in os.walk(stage) if "web" in dirs)
+        commit = manifest.get("commit") or subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True, check=True).stdout.strip()
+        run([wrangler(), "pages", "deploy", web, "--project-name", PAGES_PROJECT, "--branch", "main",
+             "--commit-hash", commit[:40], "--commit-message", f"grove {manifest['version']} {manifest['source_hash'][:12]}", "--commit-dirty=true"],
+            cwd=stage)  # relay의 Worker용 wrangler.jsonc를 Pages 설정으로 읽지 않게 한다.
+        assets = [f for f in manifest["files"] if f["path"].startswith("web/assets/")]
+        deadline = time.time() + 120
+        while True:
+            mismatched = []
+            for f in assets:
+                try:
+                    if hashlib.sha256(fetch(PAGES_ORIGIN + "/" + f["path"][len("web/"):])).hexdigest() != f["sha256"]:
+                        mismatched.append(f["path"])
+                except OSError:
+                    mismatched.append(f["path"])
+            if not mismatched:
+                break
+            if time.time() > deadline:
+                sys.exit(f"Pages 사용자 도메인이 새 자산을 제공하지 않습니다: {mismatched[:5]}")
+            time.sleep(5)
+        # Cloudflare가 분석 스크립트를 덧붙이므로 HTML 전체 대신 패키지 첫 화면이 참조하는 자산을 대조한다.
+        with open(os.path.join(web, "index.html")) as f:
+            expected = set(re.findall(r'(?:src|href)="(/assets/[^"]+)"', f.read()))
+        served = set(re.findall(r'(?:src|href)="(/assets/[^"]+)"', fetch(PAGES_ORIGIN + "/").decode()))
+        missing = sorted(expected - served)
+        if missing:
+            sys.exit(f"Pages 첫 화면이 새 자산을 참조하지 않습니다: {missing[:5]}")
+        print(json.dumps({"pages": PAGES_ORIGIN, "assets_verified": len(assets)}, ensure_ascii=False))
+    finally:
+        shutil.rmtree(stage)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--install-cli", metavar="BINARY", help="검증한 CLI만 설치하고 grove 명령 등록(데몬·웹·DB 변경 없음)")
     ap.add_argument("--force", action="store_true", help="실행 중 작업이 있어도 적용(작업 중단)")
+    ap.add_argument("--skip-pages", action="store_true", help="공개 Pages 배포 생략(완료 보고에 미반영으로 표시)")
     a = ap.parse_args()
     if a.status:
         status()
@@ -260,7 +318,13 @@ def main():
     out = status()
     if len(out["daemon_processes"]) != 1:
         sys.exit(f"데몬 프로세스가 {len(out['daemon_processes'])}개입니다(1개여야 함)")
+    if out["release"] != f"{manifest['version']}-{receipt['archive_sha256'][:12]}":
+        sys.exit(f"운영 release가 새 패키지가 아닙니다(적용 보류 또는 실패): {out['release']}")
     install_cli(grove_bin())
+    if a.skip_pages:
+        print("공개 Pages: 미반영(--skip-pages)")
+    else:
+        publish_pages(archive, manifest)
 
 
 def install_cli(binary):

@@ -1,0 +1,120 @@
+{
+  "schema": "rule-architect/decisions@1",
+  "root": "/data/project/paseodog_opus",
+  "scanSchema": "rule-architect/scan@3",
+  "gitHead": "7aab4c804e2a84c35958ae8723f62b554b79b034",
+  "truncated": {
+    "bytes": false,
+    "commits": false,
+    "files": false
+  },
+  "decisions": [
+    {
+      "id": "controller",
+      "observed": "not_met",
+      "condition": "dedicated controller/handler layer directory exists",
+      "evidence": [],
+      "defaultDoc": "CONTROLLER_RULES.md",
+      "selectedDoc": null,
+      "resolution": null,
+      "reason": null
+    },
+    {
+      "id": "api",
+      "observed": "met",
+      "condition": "api/routes source layer or explicit /api or /vN routes exist",
+      "evidence": [
+        "web/app/api",
+        "web/app/routes"
+      ],
+      "defaultDoc": "API_RULES.md",
+      "selectedDoc": "docs/ai-rules/API_RULES.md",
+      "resolution": null,
+      "reason": null
+    },
+    {
+      "id": "enum-codes",
+      "observed": "met",
+      "condition": ">=3 files define enum/status-code value sets",
+      "evidence": [
+        "src/approvals.rs",
+        "src/events.rs",
+        "src/fair.rs",
+        "src/files.rs",
+        "src/git.rs"
+      ],
+      "defaultDoc": "ENUM_CODES.md",
+      "selectedDoc": "docs/ai-rules/ENUM_CODES.md",
+      "resolution": null,
+      "reason": null
+    },
+    {
+      "id": "response-keys",
+      "observed": "not_met",
+      "condition": "response serialization or envelope conventions exist in an API/controller layer",
+      "evidence": [],
+      "defaultDoc": "RESPONSE_KEYS.md",
+      "selectedDoc": "docs/ai-rules/RESPONSE_KEYS.md",
+      "resolution": "met",
+      "reason": "평면 Rust API 모듈은 스캔에서 빠졌지만 src/error.rs의 표준 응답과 tests/ts_bindings.rs의 생성 계약을 직접 확인했다."
+    },
+    {
+      "id": "database",
+      "observed": "met",
+      "condition": "ORM, SQL access layer, or migrations exist",
+      "evidence": [
+        "migration"
+      ],
+      "defaultDoc": "DB_RULES.md",
+      "selectedDoc": "docs/ai-rules/DB_RULES.md",
+      "resolution": null,
+      "reason": null
+    },
+    {
+      "id": "deploy",
+      "observed": "met",
+      "condition": "deploy scripts, deployment workflows, unit files, or container files exist",
+      "evidence": [
+        "web/app/deployment/base.test.ts",
+        "web/app/deployment/base.ts",
+        "web/app/deployment/index.ts",
+        "web/app/deployment/pages.test.ts",
+        "web/app/deployment/sw.test.ts"
+      ],
+      "defaultDoc": "DEPLOY.md",
+      "selectedDoc": "docs/ai-rules/DEPLOY.md",
+      "resolution": null,
+      "reason": null
+    },
+    {
+      "id": "recurring-task",
+      "observed": "met",
+      "condition": "a file set changed together >=3 times",
+      "evidence": [
+        "TODO.md + migration/RULEBOOK.md",
+        "TODO.md + src/lib.rs",
+        "TODO.md + src/runner.rs",
+        "TODO.md + work/README.md",
+        "TODO.md + web/app/components/SessionView.tsx"
+      ],
+      "defaultDoc": "tasks/ADD_<TASK>.md",
+      "selectedDoc": null,
+      "resolution": "not_met",
+      "reason": "동시 변경은 TODO.md·migration/RULEBOOK.md의 진행 기록 중심이며 동일 구현 절차의 반복을 입증하지 않는다. 범용 작업 절차를 발명하지 않는다."
+    }
+  ],
+  "sourceFingerprint": "7d54d7c2e7c6328e0fa666272e8e91e419baeddc91fe283f8d8a1b9fcbea7dc2",
+  "scanLimits": {
+    "maxBytes": 209715200,
+    "maxCommits": 500,
+    "maxFiles": 20000
+  },
+  "scanScope": {
+    "docsDir": "docs/ai-rules",
+    "entries": [
+      "CLAUDE.md",
+      "AGENTS.md"
+    ],
+    "excludedDirs": []
+  }
+}
