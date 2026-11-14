@@ -43,8 +43,10 @@ test.describe("모바일 암호화 페어링", () => {
         const url = page.url();
         await page.getByLabel("페어링 링크").fill("https://grove.choondoggy.com/#" + new URLSearchParams({ connect: endpoint, key: identity.key, pairing: pairing.code }));
         await expect(page.getByRole("button", { name: "대상 서버로 이동" })).toHaveCount(0);
-        await page.getByLabel("비밀번호", { exact: true }).fill("same server test password");
-        await page.getByRole("button", { name: "연결 요청", exact: true }).click();
+        await page.getByRole("button", { name: "연결", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "연결 비밀번호" });
+        await dialog.getByLabel("비밀번호", { exact: true }).fill("same server test password");
+        await dialog.getByRole("button", { name: "연결 요청", exact: true }).click();
         await expect(page.locator(".pairing-code")).toBeVisible();
         expect(page.url()).toBe(url);
     });
