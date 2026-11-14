@@ -25,6 +25,7 @@ import { CreationEntry, CreationFocus } from "./create/CreationEntry";
 import { currentProjectId, projectTarget } from "./create/creation";
 import { NavigationContext } from "./navigation/NavigationContext";
 import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
+import { Button } from "../design/Button";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -189,11 +190,11 @@ export function Workspace() {
     // 넓은 화면에서 사이드바가 열려 있으면 만들기는 사이드바 맨 위 메뉴에, 아니면 상단 바에 하나만 둔다.
     const createInSidebar = sidebar && !narrow;
     const create = (inSidebar: boolean) => (
-        <button className={inSidebar ? "ghost side-item" : "ghost icon-btn"} aria-haspopup="dialog" disabled={!layout}
+        <Button className={inSidebar ? "ghost side-item" : "ghost icon-btn"} aria-haspopup="dialog" disabled={!layout}
             title={serverBlocked ?? "새 대화·프로젝트 만들기"}
             onClick={() => setAdding({ step: "choose", projectId: currentProjectId(layout) })}>
             <Icon name="edit" /><span className={inSidebar ? "side-label" : "sr-only"}>만들기</span>
-        </button>
+        </Button>
     );
     const brand = (
         <span className="brand-row">
@@ -272,16 +273,16 @@ export function Workspace() {
             )}
             <div className="ws-main">
             <header className="topbar">
-                <button className="ghost icon-btn" aria-label="사이드바" title="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
+                <Button className="ghost icon-btn" aria-label="사이드바" title="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
                     <Icon name="sidebar" />
-                </button>
+                </Button>
                 {!createInSidebar && brand}
                 {!createInSidebar && create(false)}
                 <span className="spacer" />
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
-                <button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
+                <Button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
                     <Icon name="settings" /><span className="sr-only">설정</span>
-                </button>
+                </Button>
             </header>
             {adding?.step === "choose" && <CreationEntry projects={projects.data ?? NO_PROJECTS} currentId={adding.projectId}
                 blockedReason={serverBlocked}

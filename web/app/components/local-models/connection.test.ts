@@ -1,9 +1,15 @@
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { LocalModelConnection } from "./LocalModelConnection";
 import { LocalProfileCreation, localProfileInput } from "./connection";
+
+// 폼 내용의 계약을 검사한다. 모달 진입·닫힘은 실제 브라우저 시험이 담당한다.
+vi.mock("../ui/Controls", async (original) => ({
+    ...await original<typeof import("../ui/Controls")>(),
+    DetailDialog: ({ children }: { children: ReactNode }) => createElement("section", null, children),
+}));
 
 const draft = { name: " local ", base_url: " http://127.0.0.1:8000/v1/ ", model: " manual ", secret_id: "" };
 
@@ -24,8 +30,8 @@ describe("선택적 로컬 HTTP 연결", () => {
     });
     it("원격 Grove 서버 의미·수동 fallback·선택적 키를 표시하고 처음에는 endpoint가 비어 있다", () => {
         const html = renderToStaticMarkup(createElement(LocalModelConnection, { secrets: [], onCreate: vi.fn() }));
-        expect(html).toContain("이 브라우저·휴대폰이 아니라 Grove 서버");
-        expect(html).toContain("수동 모델은 유지");
+        expect(html).toContain("localhost는 Grove 서버가 실행되는 컴퓨터를 가리킵니다.");
+        expect(html).toContain('aria-label="로컬 수동 모델 ID"');
         expect(html).toContain("키 없음");
         expect(html).toMatch(/aria-label="로컬 endpoint"[^>]*value=""/);
     });

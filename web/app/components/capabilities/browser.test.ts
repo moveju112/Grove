@@ -56,7 +56,8 @@ describe("브라우저 기능의 수동 탐지", () => {
         expect(html).toContain("미결정");
         expect(html).toContain("조회 불가·미확인");
         expect(html).toContain("선택한 파일·폴더마다 확인");
-        expect(html).toContain("HTTPS 또는 localhost");
+        expect(html).toContain("보안 컨텍스트: <strong>예");
+        expect(html).not.toContain("HTTPS 또는 localhost");
         expect(env.notification!.requestPermission).not.toHaveBeenCalled();
         expect(env.clipboard!.readText).not.toHaveBeenCalled();
         expect(env.clipboard!.writeText).not.toHaveBeenCalled();
@@ -85,6 +86,7 @@ describe("브라우저 기능의 수동 탐지", () => {
         expect(attachmentIssue(env)).toBeNull();
         expect(html).toContain("보안 컨텍스트 불필요");
         expect(html).toContain("보안 컨텍스트: <strong>아니요");
+        expect(html).toContain("HTTPS 또는 localhost");
         const hidden = detectBrowserCapabilities(environment({ secureContext: false, notification: undefined, clipboard: undefined }));
         const hiddenHtml = renderToStaticMarkup(createElement(BrowserCapabilitiesPanel, { snapshot: hidden }));
         expect(hiddenHtml).toContain("미노출·보안 컨텍스트에서 재확인");

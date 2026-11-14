@@ -1,4 +1,4 @@
-import { createElement, type ComponentProps } from "react";
+import { createElement, type ComponentProps, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, ApiError } from "../../api/client";
@@ -10,6 +10,10 @@ import { Composer } from "../Composer";
 import { TerminalKeys } from "../terminal/TerminalKeys";
 
 vi.mock("../Composer", () => ({ Composer: vi.fn(() => null) }));
+vi.mock("../ui/Controls", async (original) => ({
+    ...await original<typeof import("../ui/Controls")>(),
+    DetailDialog: ({ children }: { children: ReactNode }) => createElement("section", null, children),
+}));
 beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.restoreAllMocks());
 const project = { id: "fixture-project", name: "Fixture", available: true } as Project;

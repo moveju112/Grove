@@ -7,7 +7,15 @@ type Colors = { bg: string; panel: string; text: string; muted: string; accent: 
 async function colors(page: Page): Promise<Colors> {
     return page.evaluate(() => {
         const cs = getComputedStyle(document.documentElement);
-        const v = (n: string) => cs.getPropertyValue(n).trim();
+        const v = (n: string) => {
+            const probe = document.createElement("span");
+            probe.style.color = `var(${n})`;
+            document.documentElement.appendChild(probe);
+            const color = getComputedStyle(probe).color;
+            probe.remove();
+            return "#" + color.match(/[\d.]+/g)!.slice(0, 3)
+                .map((channel) => Math.round(Number(channel)).toString(16).padStart(2, "0")).join("");
+        };
         const b = document.createElement("button");
         document.body.appendChild(b);
         const button = getComputedStyle(b).color;
@@ -67,7 +75,7 @@ test("테마별 대비가 AA 이상이고 system은 OS를, 고정 테마는 OS�
     expect(results["dark/light"]!.meta).toBe("#14161b");
     expect(results["soft/dark"]!.meta).toBe("#e9ebee");
     // 버튼은 테마의 버튼 글자색을 쓴다(다크 테마에서 흰 글자 대비 부족 회귀 방지)
-    expect(results["dark/light"]!.button).toBe("rgb(13, 15, 19)");
+    expect(results["dark/light"]!.button).toBe("rgb(20, 22, 27)");
 
     // system 사용 중 OS가 바뀌면 새로고침 없이 따라간다
     await page.emulateMedia({ colorScheme: "light" });

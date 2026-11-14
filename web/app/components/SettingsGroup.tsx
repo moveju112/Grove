@@ -1,5 +1,7 @@
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { Icon, type IconName } from "./icons";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Heading } from "@astryxdesign/core/Text";
 
 /** 제목은 탐색 동작이 아니다. 적용 대상·미저장·오류는 본문과 함께 계속 표시한다. */
 export function SettingsGroup({ title, scope, icon = "settings", id, testId, children }: {
@@ -26,15 +28,15 @@ export function SettingsGroup({ title, scope, icon = "settings", id, testId, chi
         sync();
         return () => observer.disconnect();
     }, []);
-    return <section className="settings-group" id={id} data-testid={testId}>
+    return <Stack as="section" className="settings-group" id={id} data-testid={testId}>
         <header className="settings-group-heading">
             <Icon name={icon} size={16} />
-            <h2>{title}</h2>
+            <Heading level={2}>{title}</Heading>
             {(notice.dirty || notice.issue) && <span className={`settings-group-notice ${notice.issue === "error" ? "err" : ""}`} aria-live="polite">
                 {[notice.dirty ? "저장 안 됨" : null, notice.issue === "error" ? "오류" : notice.issue === "attention" ? "확인 필요" : null].filter(Boolean).join(" · ")}
             </span>}
             {(notice.target || scope) && <span className="scope">{notice.target || scope}</span>}
         </header>
         <div ref={content} className="setting settings-group-content">{children}</div>
-    </section>;
+    </Stack>;
 }

@@ -12,7 +12,7 @@ export async function openDetails(panel: Locator) {
     if (await tab.count()) {
         await panel.page().locator(`[role=tab][aria-controls="${await tab.getAttribute("id")}"]`).click();
     }
-    const popup = panel.locator("xpath=ancestor::*[@popover]").first();
+    const popup = panel.locator("xpath=ancestor-or-self::*[@popover] | ./*[@popover]").first();
     if (await popup.count() && !(await popup.isVisible())) {
         await panel.page().locator(`[popovertarget="${await popup.getAttribute("id")}"]`).click();
     }

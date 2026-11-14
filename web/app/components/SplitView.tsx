@@ -8,6 +8,8 @@ import { SessionView } from "./SessionView";
 import { Settings } from "./Settings";
 import { TerminalView } from "./TerminalView";
 import type { Opener } from "./Workspace";
+import { RecentPanel } from "./RecentPanel";
+import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
 
 type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; visible: boolean; projects: Project[] };
 type ViewProps = Props & { maximized: string | null; toggleMaximize: (leafId: string) => void };
@@ -233,7 +235,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 )}
             </div>
             <div className="pane-body">
-                {!active && <EmptyPane />}
+                {!active && <EmptyPane open={p.open} />}
                 {active?.kind === "session" && active.resource_id && active.project_id && (
                     <SessionView key={active.id} tabId={active.id} sessionId={active.resource_id} projectId={active.project_id} open={p.open} />
                 )}
@@ -264,10 +266,8 @@ function copyOf(t: L.Tab): Omit<L.Tab, "id"> {
     return rest;
 }
 
-function EmptyPane() {
-    return (
-        <div className="empty">
-            <p>대화를 선택하세요.</p>
-        </div>
-    );
+function EmptyPane({ open }: { open: Opener }) {
+    return <Layout height="fill" contentWidth={768} content={<LayoutContent padding={6}>
+        <RecentPanel open={open} presentation="home" />
+    </LayoutContent>} />;
 }
