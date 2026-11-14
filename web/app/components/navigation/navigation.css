@@ -1,15 +1,12 @@
-/* 자주 바뀌는 현재 위치는 애니메이션 없이 즉시 갱신한다. 한 줄 높이로 입력 공간을 보존한다. */
+/* 자주 바뀌는 현재 위치는 애니메이션 없이 즉시 갱신한다. 별도 줄 없이 상단 바의 남는 폭을 쓴다. */
 .navigation-context {
     display: flex;
     align-items: center;
     gap: 0.5em;
-    flex: 0 0 auto;
+    flex: 1 1 auto;
     min-width: 0;
-    height: 2.75em;
-    padding: 0 0.7em;
-    border-bottom: 1px solid var(--line);
-    background: var(--panel);
-    font-size: 0.85em;
+    padding: 0 0.35em;
+    font-size: 0.9em;
 }
 .navigation-context ol {
     display: flex;
@@ -61,3 +58,12 @@
     .navigation-context .navigation-current { max-width: none; }
     .navigation-context button { padding-inline: 0.2em; }
 }
+/* 좁은 화면은 호스트·프로젝트 탐색(사이드바 버튼과 중복)을 숨기고 현재 위치 이름만 남긴다. */
+.ws.narrow .navigation-context .navigation-host,
+.ws.narrow .navigation-context .navigation-browse { display: none; }
+.ws.narrow .navigation-context .navigation-browse + li > .navigation-separator { display: none; }
+/* 프로젝트·세션 화면은 제목이 현재 위치를 보여 주므로 좁은 화면에서는 같은 이름을 시각적으로만 숨긴다. */
+.ws.narrow .navigation-context :is(.navigation-project, .navigation-session).navigation-current {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap;
+}.ws.narrow .navigation-context .navigation-project,
+.ws.narrow .navigation-context .navigation-session { max-width: 45%; }

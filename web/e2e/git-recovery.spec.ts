@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, state } from "./helpers";
+import { apiCall, login, openTool, state } from "./helpers";
 
 async function openGit(page: Page, staged: boolean) {
     const root=mkdtempSync(join(dirname(state().projA),"git-recovery-"));
@@ -18,7 +18,7 @@ async function openGit(page: Page, staged: boolean) {
     const project=await apiCall<{id:string;name:string}>("POST","/projects",{root_path:root});
     await login(page);
     await page.locator(".sidebar .projects").getByRole("button",{name:project.name,exact:true}).click();
-    await page.getByRole("tab", { name: "변경", exact: true }).click();
+    await openTool(page, "변경");
     const panel=page.getByTestId("git-panel");
     await expect(panel).toContainText(staged ? "커밋할 변경 (1)" : "작업 트리 변경 (1)");
     return {root,run,project,panel};

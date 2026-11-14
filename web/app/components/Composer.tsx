@@ -458,7 +458,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 enterKeyHint={enterSends ? "send" : "enter"}
                 placeholder={disabled ?? "메시지를 입력하세요"}
                 aria-label="메시지 입력"
-                rows={3}
+                rows={2}
                 disabled={!!parentDisabled}
             />
             <div className="composer-bar">
@@ -521,9 +521,10 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
             {problem && <p className="warn small" role="status">{problem}</p>}
             {eff.mode === "model" && profileDisabled && <p className="warn small" role="status" data-testid="profile-disabled">선택한 모델 프로필이 비활성화돼 있습니다. 다른 모델로 자동 전환하지 않습니다.</p>}
             {eff.mode === "model" && profileMissing && <p className="warn small" role="status" data-testid="profile-missing">선택한 모델 프로필이 없습니다. 다른 공급자로 자동 전환하지 않습니다. 모델을 직접 선택하세요.</p>}
-            {!ready && eff.mode === "model" && <p className="muted small" role="status">
-                {defaults.error || profiles.error ? "모델 선택 정보를 불러오지 못했습니다." : "기본 모델 설정 확인 중…"}
-                {Boolean(defaults.error || profiles.error) && <button className="ghost small" onClick={() => { defaults.reload(); profiles.reload(); }}>모델 설정 다시 확인</button>}
+            {/* 모델 설정 확인 중에는 전송만 막고 문구를 띄우지 않는다. 실패했을 때만 알린다. */}
+            {!ready && eff.mode === "model" && Boolean(defaults.error || profiles.error) && <p className="warn small" role="status">
+                모델 선택 정보를 불러오지 못했습니다.
+                <button className="ghost small" onClick={() => { defaults.reload(); profiles.reload(); }}>모델 설정 다시 확인</button>
             </p>}
         </div>
     );

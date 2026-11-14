@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openProjectFiles } from "./helpers";
 
 async function setup(page: Page) {
     const { a } = await ensureProjects();
@@ -12,7 +12,7 @@ async function setup(page: Page) {
     writeFileSync(path, "original text\n");
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
-    await page.getByRole("button", { name: "파일", exact: true }).click();
+    await openProjectFiles(page);
     const files = page.getByTestId("files-view");
     await files.getByRole("button", { name, exact: true }).click();
     const area = files.getByLabel("파일 내용");

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, inputOptions, login, openDetails, script } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, inputOptions, login, openDetails, openProjectFiles, script } from "./helpers";
 
 const html = `<!doctype html><html><head>
 <meta http-equiv="refresh" content="0;url=/artifact-probe?refresh">
@@ -43,7 +43,7 @@ async function openFile(page: Page, extension: string, content: string) {
     writeFileSync(join(project.root_path, name), content);
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
-    await page.getByRole("button", { name: "파일", exact: true }).click();
+    await openProjectFiles(page);
     await page.getByTestId("files-view").getByRole("button", { name, exact: true }).click();
     await expect(page.getByLabel("파일 내용")).toHaveValue(content);
     return name;
@@ -144,7 +144,7 @@ test("편집 한도를 넘는 SVG도 기존 image preview에서 스크립트·�
     writeFileSync(join(project.root_path, name), source);
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
-    await page.getByRole("button", { name: "파일", exact: true }).click();
+    await openProjectFiles(page);
     await page.getByTestId("files-view").getByRole("button", { name, exact: true }).click();
     const image = page.getByRole("img", { name, exact: true });
     await expect.poll(() => image.evaluate((node: HTMLImageElement) => node.naturalWidth)).toBe(300);

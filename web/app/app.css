@@ -101,6 +101,9 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .brand-row { display: inline-flex; align-items: center; gap: 0.4em; min-width: 0; }
 .brand { color: var(--brand); display: inline-flex; }
 .wordmark { font-size: 1.05em; font-weight: 600; letter-spacing: -0.01em; }
+/* 좁은 화면 상단 바는 새싹 아이콘만 남기고 폭을 현재 위치에 준다. */
+.ws.narrow .topbar .wordmark { display: none; }
+.ws.narrow .topbar { gap: var(--spacing-1); padding-inline: var(--spacing-2); }
 .conn { display: inline-flex; align-items: center; gap: 0.4em; font-size: 0.8em; color: var(--muted); padding: 0.15em 0.55em; border-radius: 99px; }
 .conn-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); flex: none; }
 .conn.offline, .conn.auth_expired { color: var(--err); background: var(--err-weak); }
@@ -247,6 +250,7 @@ pre { white-space: pre-wrap; word-break: break-word; background: var(--bg); bord
 .tab-title[draggable="true"] { cursor: grab; }
 .pane.focused { border-color: var(--accent-weak); }
 .tabbar { display: flex; align-items: center; gap: 0.2em; border-bottom: 1px solid var(--line); padding: 0.25em 0.4em; overflow-x: auto; }
+.tabbar[hidden] { display: none; }
 .tab { display: flex; align-items: center; border-radius: 8px; padding: 0 0.2em; color: var(--muted); }
 .tab:hover { background: var(--hover); }
 .tab.on { background: var(--sel); color: var(--text); }

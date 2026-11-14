@@ -1,5 +1,5 @@
 import { AttachmentList, type Attachment } from "./Attachments";
-import { ActionMenu, DetailDialog, Workbench } from "./ui/Controls";
+import { ActionMenu, DetailDialog, ToolsTrigger, Workbench } from "./ui/Controls";
 import { memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileRefContext, Markdown } from "./Markdown";
 import { type Prefs, usePrefs } from "../state/device";
@@ -419,6 +419,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     </ServerActionButton>
                 )}
                 </ActionMenu>
+                <ToolsTrigger />
             </header>
             {s.parent_session_id && (
                 <p className="muted small">

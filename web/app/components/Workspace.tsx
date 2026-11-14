@@ -279,7 +279,9 @@ export function Workspace() {
                 </Button>
                 {!createInSidebar && brand}
                 {!createInSidebar && create(false)}
-                <span className="spacer" />
+                {/* 현재 위치는 별도 줄 대신 상단 바 안에 둔다. */}
+                <NavigationContext layout={layout} projects={projects.data ?? NO_PROJECTS} host={window.location.origin}
+                    open={open} onBrowseProjects={() => setSidebar(true)} sidebarOpen={sidebar} />
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
                 <Button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
                     <Icon name="settings" /><span className="sr-only">설정</span>
@@ -296,8 +298,6 @@ export function Workspace() {
                     <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
                 </div>
             )}
-            <NavigationContext layout={layout} projects={projects.data ?? NO_PROJECTS} host={window.location.origin}
-                open={open} onBrowseProjects={() => setSidebar(true)} sidebarOpen={sidebar} />
             <div className="body">
                 <main className="main">
                     {Object.entries(layouts).map(([id, saved]) => (

@@ -164,7 +164,8 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
             onDrop={(e) => draggable(e) && drop(e, zone ?? "center")}
         >
             {zone && <div className={`drop-zone ${zone}`} data-testid="drop-zone" data-zone={zone} aria-hidden="true" />}
-            <div className="tabbar" role="tablist">
+            {/* 좁은 화면에서 탭이 하나뿐이면 현재 위치가 상단 바와 같으므로 탭 줄을 숨긴다. */}
+            <div className="tabbar" role="tablist" hidden={p.narrow && others.length === 0 && leaf.tabs.length <= 1}>
                 {leaf.tabs.map((t, i) => (
                     <div key={t.id} className={`tab ${t.id === leaf.active_tab ? "on" : ""}`} role="tab" aria-selected={t.id === leaf.active_tab}
                         onDragOver={(e) => {

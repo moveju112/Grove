@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProjects } from "./helpers";
+import { apiCall, ensureProjects, openProjectFiles } from "./helpers";
 
 const endpoint = "ws://127.0.0.1:17741/api/e2ee";
 
@@ -86,7 +86,7 @@ test.describe("모바일 암호화 페어링", () => {
         const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
         if (await sidebar.getAttribute("aria-expanded") === "false") await sidebar.click();
         await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
-        await page.getByRole("button", { name: "파일", exact: true }).click();
+        await openProjectFiles(page);
         const files = page.getByTestId("files-view");
         await files.getByRole("button", { name: "encrypted.png", exact: true }).click();
         const image = files.locator("img.preview");

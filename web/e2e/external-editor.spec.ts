@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProjects, state } from "./helpers";
+import { apiCall, ensureProjects, openProjectFiles, state } from "./helpers";
 
 async function openFile(page: Page) {
     const { a } = await ensureProjects();
@@ -14,7 +14,7 @@ async function openFile(page: Page) {
     await page.getByLabel("토큰").fill(state().token);
     await page.getByRole("button", { name: "로그인" }).click();
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
-    await page.getByRole("button", { name: "파일", exact: true }).click();
+    await openProjectFiles(page);
     const files = page.getByTestId("files-view");
     await files.getByRole("button", { name, exact: true }).click();
     await expect(files.getByLabel("파일 내용")).toHaveValue("saved text\n");

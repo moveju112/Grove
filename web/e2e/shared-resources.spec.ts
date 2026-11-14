@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openProjectFiles } from "./helpers";
 
 test("백그라운드 작업과 충돌한 파일 저장은 내 편집을 남기고 작업 종료 뒤 저장된다", async ({ page }) => {
     const { a } = await ensureProjects();
@@ -14,7 +14,7 @@ test("백그라운드 작업과 충돌한 파일 저장은 내 편집을 남기�
     try {
         await login(page);
         await page.getByRole("button", { name: a.name, exact: true }).first().click();
-        await page.getByRole("button", { name: "파일", exact: true }).click();
+        await openProjectFiles(page);
         const files = page.getByTestId("files-view");
         await files.getByRole("button", { name, exact: true }).click();
         const editor = files.getByLabel("파일 내용");

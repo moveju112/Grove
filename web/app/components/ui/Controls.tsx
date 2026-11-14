@@ -1,4 +1,4 @@
-import { useId, useRef, useState, type HTMLAttributes, type ReactNode } from "react";
+import { createContext, useContext, useId, useRef, useState, type HTMLAttributes, type ReactNode } from "react";
 import { CreationDialog } from "../create/CreationDialog";
 import { Icon } from "../icons";
 import { PaneVisibility, usePaneVisible } from "../../state/paneVisibility";
@@ -78,20 +78,39 @@ export function ActionMenu({ label, trigger = "⋯", children, className = "" }:
 
 export type DockTool = { id: string; label: string; icon?: "changes" | "file" | "terminal"; activity?: number; lazy?: boolean; content: ReactNode };
 
+type WorkbenchState = { open: boolean; toggle: () => void; activity: number };
+const WorkbenchContext = createContext<WorkbenchState | null>(null);
+
+// 도구 목록은 기본 화면에 늘어놓지 않고 헤더의 버튼 하나 뒤에 둔다. 진행 중 작업 수는 버튼에 표시한다.
+export function ToolsTrigger() {
+    const state = useContext(WorkbenchContext);
+    if (!state) return null;
+    return <Button type="button" className="ghost icon-btn tools-trigger" aria-label="도구 패널" title="도구 패널"
+        aria-expanded={state.open} onClick={state.toggle}>
+        <Icon name="panel" />
+        {state.activity > 0 && <span className="dock-activity" aria-label={`진행 중 ${state.activity}개`}>{state.activity}</span>}
+    </Button>;
+}
+
 // 각 패널을 숨긴 채 유지해 탭 전환으로 미저장 입력·결과 불명 요청을 잃지 않는다.
 export function Workbench({ children, tools, label }: { children: ReactNode; tools: DockTool[]; label: string }) {
     const visible = usePaneVisible();
     const [active, setActive] = useState<string | null>(null);
     const [visited, setVisited] = useState<Set<string>>(() => new Set());
+    const last = useRef<string | null>(null);
     const select = (tool: string) => {
+        last.current = tool;
         setActive(tool);
         setVisited((previous) => new Set(previous).add(tool));
     };
     const id = useId();
     const tabs = useRef<HTMLDivElement>(null);
-    return <Stack className={`workbench${active ? " tools-open" : ""}`}>
+    const activity = tools.reduce((sum, tool) => sum + (tool.activity ?? 0), 0);
+    const toggle = () => active ? setActive(null) : select(last.current ?? tools[0]!.id);
+    return <WorkbenchContext.Provider value={{ open: !!active, toggle, activity }}>
+    <Stack className={`workbench${active ? " tools-open" : ""}`}>
         <Stack className="workbench-main">{children}</Stack>
-        <aside className="tool-dock" aria-label={label}>
+        <aside className="tool-dock" aria-label={label} hidden={!active}>
             <div className="dock-bar">
                 <div ref={tabs} className="dock-tabs" role="tablist" aria-label={label} onKeyDown={(event) => {
                     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
@@ -110,7 +129,8 @@ export function Workbench({ children, tools, label }: { children: ReactNode; too
                         {!!tool.activity && <span className="dock-activity" aria-label={`진행 중 ${tool.activity}개`}>{tool.activity}</span>}</button>)}
                 </div>
                 {active && <button type="button" className="ghost icon-btn" aria-label="도구 패널 닫기" onClick={() => {
-                    tabs.current?.querySelector<HTMLButtonElement>("[aria-selected=true]")?.focus();
+                    // 닫힌 패널 대신 다시 열 수 있는 헤더 버튼으로 초점을 돌려준다.
+                    tabs.current?.closest(".workbench")?.querySelector<HTMLButtonElement>(".tools-trigger")?.focus();
                     setActive(null);
                 }}><Icon name="close" size={16} /></button>}
             </div>
@@ -121,5 +141,6 @@ export function Workbench({ children, tools, label }: { children: ReactNode; too
                 </PaneVisibility.Provider>
             </div>)}
         </aside>
-    </Stack>;
+    </Stack>
+    </WorkbenchContext.Provider>;
 }

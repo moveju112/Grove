@@ -10,7 +10,9 @@ export async function openDetails(panel: Locator) {
     await expect(panel).toBeAttached();
     const tab = panel.locator("xpath=ancestor-or-self::*[@role='tabpanel']").first();
     if (await tab.count()) {
-        await panel.page().locator(`[role=tab][aria-controls="${await tab.getAttribute("id")}"]`).click();
+        const button = panel.page().locator(`[role=tab][aria-controls="${await tab.getAttribute("id")}"]`);
+        await openToolDock(button);
+        await button.click();
     }
     const popup = panel.locator("xpath=ancestor-or-self::*[@popover] | ./*[@popover]").first();
     if (await popup.count() && !(await popup.isVisible())) {
@@ -22,6 +24,32 @@ export async function openDetails(panel: Locator) {
         await expect(panel.getByRole("dialog")).toBeVisible();
     }
     await expect(panel).toBeVisible();
+}
+
+/// 도구 탭은 헤더의 "도구 패널" 버튼 뒤에 있다. 탭이 숨겨져 있으면 같은 작업 영역의 버튼으로 먼저 연다.
+async function openToolDock(tab: Locator) {
+    if (await tab.isVisible()) return;
+    const workbench = tab.locator("xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' workbench ')][1]");
+    await workbench.locator(".view-head").getByRole("button", { name: "도구 패널", exact: true }).click();
+    await expect(tab).toBeVisible();
+}
+
+/// 보이는 대화·프로젝트 화면의 도구 탭을 연다.
+export async function openTool(scope: Locator | Page, name: string) {
+    // has 안의 locator는 바깥 요소 기준으로 다시 찾으므로 page에서 만든다.
+    const page = "page" in scope ? (scope as Locator).page() : scope as Page;
+    const bench = scope.locator(".workbench").filter({ has: page.locator(".view-head").filter({ visible: true }) }).first();
+    const tab = bench.getByRole("tab", { name, exact: true, includeHidden: true });
+    await openToolDock(tab);
+    await tab.click();
+    await expect(tab).toHaveAttribute("aria-selected", "true");
+}
+
+/// 프로젝트 파일을 별도 탭으로 연다(프로젝트 작업 메뉴).
+export async function openProjectFiles(page: Page) {
+    const head = page.locator(".project-view .view-head").filter({ visible: true }).first();
+    await head.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
+    await page.getByRole("button", { name: "파일 탭으로 열기", exact: true }).filter({ visible: true }).click();
 }
 
 export async function inputOptions(view: Locator) {

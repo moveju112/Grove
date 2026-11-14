@@ -84,7 +84,8 @@ test("좁은 화면을 다녀와도 미반영 넓은 화면 배치와 각 기기
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(1);
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-    await expect(page.locator(".tabbar").getByRole("tab", { selected: true })).toContainText("설정");
+    // 좁은 화면의 단일 탭 줄은 숨기므로 현재 탭은 상단 바의 현재 위치로 확인한다.
+    await expect(page.getByTestId("navigation-context").locator('[aria-current="page"]')).toHaveText("설정");
     await page.setViewportSize({ width: 1400, height: 900 });
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(2);
     await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "35");

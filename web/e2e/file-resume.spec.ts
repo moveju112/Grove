@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openProjectFiles } from "./helpers";
 
 test("파일 탭과 최근 항목을 다시 열면 저장 전 편집·선택·스크롤 위치를 복원한다", async ({ page }) => {
     const { a } = await ensureProjects();
@@ -12,7 +12,7 @@ test("파일 탭과 최근 항목을 다시 열면 저장 전 편집·선택·�
     writeFileSync(join(project.root_path, name), original);
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
-    await page.getByRole("button", { name: "파일", exact: true }).click();
+    await openProjectFiles(page);
     const files = page.getByTestId("files-view");
     await files.getByRole("button", { name, exact: true }).click();
     const area = files.getByLabel("파일 내용");
@@ -49,7 +49,7 @@ async function openFixture(page: Page, prefix: string) {
     writeFileSync(path, "original\n");
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
-    await page.getByRole("button", { name: "파일", exact: true }).click();
+    await openProjectFiles(page);
     const files = page.getByTestId("files-view");
     await files.getByRole("button", { name, exact: true }).click();
     const area = files.getByLabel("파일 내용");

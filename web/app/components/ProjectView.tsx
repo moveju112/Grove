@@ -14,7 +14,8 @@ import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 import { Stack } from "@astryxdesign/core/Stack";
-import { ActionMenu, Panel, Workbench } from "./ui/Controls";
+import { ActionMenu, Panel, ToolsTrigger, Workbench } from "./ui/Controls";
+import { Icon } from "./icons";
 
 /// 프로젝트 이름·아이콘 변경(PROJECT-002). revision 충돌이면 최신 값을 다시 불러와 알린다.
 function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
@@ -74,10 +75,17 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
     const [archived, setArchived] = useState(false);
     const [pages, setPages] = useState<string[]>([""]);
     const project = useQuery<Project>(`project:${projectId}`, () => api.get(`/projects/${projectId}`));
+    // 첫 페이지와 같은 key라 같은 요청을 공유한다. 대화가 하나도 없으면 검색 도구를 띄우지 않는다.
+    const firstQs = new URLSearchParams({ limit: "30", q: "", archived: "false" });
+    const first = useQuery<SessionPage>(`sessions:${projectId}:${firstQs}`, () => api.get(`/projects/${projectId}/sessions?${firstQs}`));
+    const filtered = q !== "" || archived;
+    const showSearch = filtered || (first.data?.items.length ?? 0) > 0;
+    const setArchivedView = (value: boolean) => { setArchived(value); setPages([""]); };
 
+    // 확인 중에는 입력을 막지 않는다. 경로 없음·조회 실패만 실행 차단 사유로 표시한다.
     const composer = <ProjectComposer projectId={projectId} tabId={tabId} open={open}
         blockedReason={serverBlocked} beforeMutation={requireServerAction}
-        disabled={project.error ? "프로젝트를 확인할 수 없습니다" : !project.data ? "프로젝트 확인 중…" : !project.data.available ? "프로젝트 경로 없음" : null} />;
+        disabled={project.error ? "프로젝트를 확인할 수 없습니다" : project.data && !project.data.available ? "프로젝트 경로 없음" : null} />;
     if (project.error) return <Stack className="project-view">
         <h1>프로젝트를 열 수 없습니다</h1>
         <p className="err" role="alert">{project.error instanceof ApiError ? project.error.message : "프로젝트 정보를 불러오지 못했습니다."}</p>
@@ -87,21 +95,35 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
 
     return (
         <Stack className="project-view">
+            <Workbench label="프로젝트 도구" tools={[
+                { id: "git", label: "변경", icon: "changes", content: <GitPanel projectId={projectId} /> },
+                { id: "terminals", label: "터미널", icon: "terminal", content: <TerminalList projectId={projectId} open={open} /> },
+                { id: "files", label: "파일", icon: "file", lazy: true, content: <FilesView tabId={`${tabId}:files`} projectId={projectId} /> },
+                { id: "scripts", label: "스크립트", content: <ProjectScripts projectId={projectId} projectName={project.data?.name ?? projectId} open={open} /> },
+                { id: "schedules", label: "예약", content: <SchedulesPanel projectId={projectId} open={open} /> },
+                { id: "worktrees", label: "워크스페이스", content: <WorktreesPanel key={`worktrees:${projectId}`} projectId={projectId} /> },
+                { id: "trash", label: "휴지통", content: <TrashPanel key={`trash:${projectId}`} projectId={projectId} /> },
+            ]}>
             <header className="view-head">
                 <h1>
                     {project.data?.icon && <span className="project-icon" aria-hidden>{project.data.icon} </span>}
                     {project.data?.name ?? "프로젝트"}
                 </h1>
-                <button className="ghost small" onClick={() => open({ kind: "file", project_id: projectId, title: `파일 · ${project.data?.name ?? ""}` })}>
-                    파일
-                </button>
                 <ActionMenu label="프로젝트 작업">
-                {project.data && <ProjectIdentity p={project.data} reload={project.reload} />}
                 <code className="muted small">{project.data?.root_path}</code>
+                <button className="ghost small" onClick={() => open({ kind: "file", project_id: projectId, title: `파일 · ${project.data?.name ?? ""}` })}>
+                    파일 탭으로 열기
+                </button>
+                <button className="ghost small" aria-pressed={archived} onClick={() => setArchivedView(!archived)}>
+                    {archived ? "현재 대화 보기" : "보관된 대화 보기"}
+                </button>
+                {project.data && <ProjectIdentity p={project.data} reload={project.reload} />}
                 <button className="ghost small" onClick={() => open({ kind: "settings", project_id: projectId, resource_id: "settings", title: `설정 · ${project.data?.name ?? ""}` })}>
                     프로젝트 설정
                 </button>
                 </ActionMenu>
+                <ToolsTrigger />
+            </header>
                 {project.data && !project.data.available && (
                     <div className="err" role="alert" data-testid="project-missing">
                         프로젝트 경로에 접근할 수 없습니다(폴더 이동·삭제·권한 변경). 실행 요청은 거절됩니다. 대화 기록은 남아 있습니다.{" "}
@@ -119,26 +141,17 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
                         </ServerActionButton>
                     </div>
                 )}
-            </header>
-            <Workbench label="프로젝트 도구" tools={[
-                { id: "git", label: "변경", icon: "changes", content: <GitPanel projectId={projectId} /> },
-                { id: "terminals", label: "터미널", icon: "terminal", content: <TerminalList projectId={projectId} open={open} /> },
-                { id: "files", label: "파일", icon: "file", lazy: true, content: <FilesView tabId={`${tabId}:files`} projectId={projectId} /> },
-                { id: "scripts", label: "스크립트", content: <ProjectScripts projectId={projectId} projectName={project.data?.name ?? projectId} open={open} /> },
-                { id: "schedules", label: "예약", content: <SchedulesPanel projectId={projectId} open={open} /> },
-                { id: "worktrees", label: "워크스페이스", content: <WorktreesPanel key={`worktrees:${projectId}`} projectId={projectId} /> },
-                { id: "trash", label: "휴지통", content: <TrashPanel key={`trash:${projectId}`} projectId={projectId} /> },
-            ]}>
             <section className="project-conversations" aria-label="프로젝트 대화">
-            <div className="list-tools">
+            {showSearch && <div className="list-tools">
                 <input type="search" placeholder="대화 검색" value={q} onChange={(e) => { setQ(e.target.value); setPages([""]); }} aria-label="대화 검색" />
-                <label className="check">
-                    <input type="checkbox" checked={archived} onChange={(e) => { setArchived(e.target.checked); setPages([""]); }} /> 보관됨
-                </label>
-            </div>
+                {/* 숨겨진 필터가 목록을 바꾸면 활성 상태와 해제 경로를 목록 바로 위에 남긴다. */}
+                {archived && <button type="button" className="ghost small chip" aria-label="보관됨 필터 해제" onClick={() => setArchivedView(false)}>
+                    보관됨 <Icon name="close" size={12} />
+                </button>}
+            </div>}
             <ul className="session-list">
                 {pages.map((cursor, i) => (
-                    <SessionPageList key={cursor + i} projectId={projectId} cursor={cursor} q={q} archived={archived} open={open} onMore={(c) => setPages((p) => (p.includes(c) ? p : [...p, c]))} last={i === pages.length - 1} />
+                    <SessionPageList key={cursor + i} projectId={projectId} cursor={cursor} q={q} archived={archived} filtered={filtered} open={open} onMore={(c) => setPages((p) => (p.includes(c) ? p : [...p, c]))} last={i === pages.length - 1} />
                 ))}
             </ul>
             </section>
@@ -188,7 +201,7 @@ function TerminalList({ projectId, open }: { projectId: string; open: Opener }) 
     );
 }
 
-function SessionPageList(p: { projectId: string; cursor: string; q: string; archived: boolean; open: Opener; onMore: (c: string) => void; last: boolean }) {
+function SessionPageList(p: { projectId: string; cursor: string; q: string; archived: boolean; filtered: boolean; open: Opener; onMore: (c: string) => void; last: boolean }) {
     const qs = new URLSearchParams({ limit: "30", q: p.q, archived: String(p.archived) });
     if (p.cursor) qs.set("cursor", p.cursor);
     const page = useQuery<SessionPage>(`sessions:${p.projectId}:${qs}`, () => api.get(`/projects/${p.projectId}/sessions?${qs}`));
@@ -218,7 +231,8 @@ function SessionPageList(p: { projectId: string; cursor: string; q: string; arch
                     </button>
                 </li>
             )}
-            {p.cursor === "" && page.data?.items.length === 0 && <li className="muted">대화가 없습니다.</li>}
+            {/* 빈 프로젝트는 빈 화면으로 둔다. 필터 결과가 비었을 때만 알린다. */}
+            {p.filtered && p.cursor === "" && page.data?.items.length === 0 && <li className="muted">조건에 맞는 대화가 없습니다.</li>}
         </>
     );
 }

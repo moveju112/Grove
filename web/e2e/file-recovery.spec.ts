@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProjects, login, state } from "./helpers";
+import { apiCall, ensureProjects, login, openProjectFiles, state } from "./helpers";
 
 for (const operation of ["save", "mkdir"] as const) {
     for (const phase of ["before", "after", "commit"] as const) {
@@ -14,7 +14,7 @@ for (const operation of ["save", "mkdir"] as const) {
             if (operation === "save") writeFileSync(target, "before\n");
             await login(page);
             await page.getByRole("button", { name: a.name, exact: true }).first().click();
-            await page.getByRole("button", { name: "파일", exact: true }).click();
+            await openProjectFiles(page);
             const files = page.getByTestId("files-view");
             if (operation === "save") {
                 await files.getByRole("button", { name, exact: true }).click();
@@ -109,7 +109,7 @@ test("파일 올리기 응답을 잃고 새로고침해도 원문 없이 같은 
         const files = page.getByTestId("files-view");
         if (!(await files.isVisible())) {
             await page.getByRole("button", { name: a.name, exact: true }).first().click();
-            await page.getByRole("button", { name: "파일", exact: true }).click();
+            await openProjectFiles(page);
         }
         return files;
     };

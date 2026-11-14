@@ -16,6 +16,10 @@ button.menu-trigger { display: inline-flex; align-items: center; justify-content
 .workbench { display: grid; grid-template-columns: minmax(0, 1fr); min-height: 100%; align-content: start; }
 .workbench-main { display: flex; flex-direction: column; min-width: 0; gap: 12px; grid-column: 1; grid-row: 2; }
 .tool-dock { grid-column: 1; grid-row: 1; min-width: 0; margin-bottom: 20px; }
+.tool-dock[hidden] { display: none; }
+.tools-trigger { position: relative; flex: none; }
+.tools-trigger[aria-expanded="true"] { background: var(--sel); color: var(--text) !important; }
+.tools-trigger > .dock-activity { position: absolute; top: 0; right: 0; min-width: 14px; line-height: 14px; border-radius: 7px; background: var(--panel); }
 .dock-bar { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .dock-tabs { display: flex; align-items: center; gap: 4px; overflow: auto; padding: 4px; background: var(--raised); border-radius: 12px; }
 .dock-tabs > button { display: inline-flex; flex: none; align-items: center; gap: 6px; min-height: 36px; padding: 6px 12px; background: transparent; color: var(--muted); white-space: nowrap; font-size: 13px; }
@@ -30,13 +34,15 @@ button.menu-trigger { display: inline-flex; align-items: center; justify-content
 .dock-content .inline > button { flex-shrink: 0; white-space: nowrap; }
 .dock-content .inline > input:not([type=checkbox]):not([type=radio]) { flex: 1; min-width: 0; }
 .project-view { min-height: 100%; container-type: inline-size; }
-.project-view > .view-head { margin-bottom: 20px; }
+.project-view .view-head { flex-wrap: nowrap; }
+.project-view .view-head > h1 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.project-conversations .list-tools .chip { display: inline-flex; align-items: center; gap: 4px; flex: none; }
 .project-conversations { flex: 1; width: 100%; max-width: 720px; margin-inline: auto; }
 .project-conversations .list-tools { margin-bottom: 12px; flex-wrap: wrap; align-items: center; }
 .project-conversations .list-tools > input { flex: 1 1 160px; width: 0; min-width: 0; }
 .project-conversations .list-tools .check { white-space: nowrap; flex: none; }
 .project-view .composer { margin-top: auto; }
-.composer > textarea { width: 100%; min-height: 88px; }
+.composer > textarea { width: 100%; min-height: 48px; }
 .composer-bar { flex-wrap: nowrap; gap: 8px; }
 .composer-bar > select { border-color: transparent; background-color: transparent; max-width: 42%; text-overflow: ellipsis; }
 .composer-bar > select[aria-label="모델 프로필"] { flex: 1; min-width: 0; width: 0; max-width: none; }
@@ -53,7 +59,8 @@ button.menu-trigger { display: inline-flex; align-items: center; justify-content
 .side-nav .detail-trigger { width: 100%; border: 0; background: transparent; min-height: 36px; padding: 0 8px; font-size: 13px; }
 .side-nav .detail-trigger > .icon:last-child { display: none; }
 .side-nav .detail-trigger > .icon:first-child { display: block; width: 16px; color: var(--muted); margin: 0; }
-.project-view .workbench { min-height: calc(100dvh - 240px); }
+/* 입력창이 pane 아래에 붙도록 남은 높이를 채운다(세션 화면과 같은 방식). */
+.project-view > .workbench { flex: 1; align-content: stretch; }
 .session-view .view-head > h1 { flex: 1; min-width: 0; }
 .session-view .view-head h1 button { overflow: hidden; text-overflow: ellipsis; max-width: 100%; white-space: nowrap; }
 .setting-help .detail-trigger { border: 0; color: var(--muted); }

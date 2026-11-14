@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, inputOptions, login, openBots, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, inputOptions, login, openBots, openDetails, openProjectFiles, openTool, script, sessionView, state } from "./helpers";
 
 test("CSP·보안 헤더와 PWA manifest를 제공한다", async ({ request }) => {
     const r = await request.get("/");
@@ -228,7 +228,7 @@ test("Git 변경에서 hunk 하나만 올리고 커밋하면 나머지 변경은
     writeFileSync(join(proj.root_path, "h.txt"), lines.join(""));
     await login(page);
     await page.getByRole("button", { name: b.name, exact: true }).first().click();
-    await page.getByRole("tab", { name: "변경", exact: true }).click();
+    await openTool(page, "변경");
     const panel = page.getByTestId("git-panel");
     await panel.getByRole("button", { name: "h.txt" }).first().click();
     await expect(panel.getByTestId("hunk")).toHaveCount(2);
@@ -352,7 +352,7 @@ test("파일 화면에서 열고 고쳐 저장하며, 외부 변경은 충돌로
     writeFileSync(join(proj.root_path, "dot.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
-    await page.getByRole("button", { name: "파일", exact: true }).click();
+    await openProjectFiles(page);
     const files = page.getByTestId("files-view");
     await files.getByRole("button", { name: "note.md", exact: true }).click();
     const editor = files.getByLabel("파일 내용");

@@ -40,8 +40,9 @@ for (const width of [390, 1400]) {
                 await view.getByLabel("메시지 입력").fill("기존 대화 입력과 저장을 유지한다.");
                 await view.getByRole("button", { name: "보내기", exact: true }).click();
                 await expect(view.getByTestId("msg-user")).toContainText("기존 대화 입력과 저장");
-                const dock = await view.locator(".tool-dock").boundingBox();
-                expect(dock!.height, "도구 헤더가 남은 화면 높이를 불필요하게 차지하지 않는다").toBeLessThanOrEqual(100);
+                // 도구 탭은 열기 전까지 화면 높이를 차지하지 않는다.
+                await expect(view.locator(".tool-dock")).toBeHidden();
+                await expect(view.locator(".view-head").getByRole("button", { name: "도구 패널", exact: true })).toBeVisible();
                 await page.screenshot({ path: info.outputPath("conversation.png"), fullPage: true });
                 await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
                 await page.getByRole("button", { name: "화면·입력", exact: true }).click();
