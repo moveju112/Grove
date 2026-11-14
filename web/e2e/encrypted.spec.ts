@@ -19,8 +19,35 @@ test("서버 pin 불일치에서는 자격증명 전송과 평문 fallback을 �
     expect(auth).toEqual([]);
 });
 
+test("서버 확인 중에는 복구 화면 대신 상단 진행 표시줄을 보인다", async ({ page }) => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    await page.route("**/api/v1/health", async (route) => { await held; await route.continue(); });
+    await page.goto("/");
+    await expect(page.getByTestId("loading-bar")).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: "서버 연결 확인 중" })).toBeVisible();
+    await expect(page.getByTestId("auth-recovery")).toHaveCount(0);
+    release();
+    await expect(page.getByLabel("토큰")).toBeVisible();
+    await expect(page.getByTestId("loading-bar")).toHaveCount(0);
+});
+
 test.describe("모바일 암호화 페어링", () => {
     test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    test("이미 연결한 서버의 페어링 링크는 이동 없이 이 화면에서 비밀번호를 받는다", async ({ page }) => {
+        const identity = await apiCall<{ key: string }>("GET", "/e2ee/identity");
+        const pairing = await apiCall<{ code: string }>("POST", "/pairings", { name: "same-server", password: "same server test password" });
+        await page.goto("/#" + new URLSearchParams({ connect: endpoint, key: identity.key }));
+        await page.getByRole("button", { name: "서버 확인 후 연결" }).click();
+        await page.getByRole("button", { name: "페어링 링크·QR로 등록" }).click();
+        const url = page.url();
+        await page.getByLabel("페어링 링크").fill("https://grove.choondoggy.com/#" + new URLSearchParams({ connect: endpoint, key: identity.key, pairing: pairing.code }));
+        await expect(page.getByRole("button", { name: "대상 서버로 이동" })).toHaveCount(0);
+        await page.getByLabel("비밀번호", { exact: true }).fill("same server test password");
+        await page.getByRole("button", { name: "연결 요청", exact: true }).click();
+        await expect(page.locator(".pairing-code")).toBeVisible();
+        expect(page.url()).toBe(url);
+    });
     test("일회용 등록·재접속·파일 미리보기·다운로드에서 티켓과 본문을 평문 전송하지 않는다", async ({ page }) => {
         const identity = await apiCall<{ key: string }>("GET", "/e2ee/identity");
         const password = "encrypted test-only password";
