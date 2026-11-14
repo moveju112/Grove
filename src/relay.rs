@@ -65,6 +65,27 @@ async fn bridge(settings: Arc<Settings>, addr: SocketAddr, id: String) -> Result
     let (mut local, _) = tokio::time::timeout(Duration::from_secs(10),
         connect_async_with_config(format!("ws://{addr}/api/e2ee"), Some(config), true)).await??;
     let mut remote = connect(&settings, &format!("data/{id}")).await?;
+    let result = relay_frames(&mut local, &mut remote).await;
+    // 한쪽이 끝나도 다른 쪽을 그냥 drop하지 않는다. close frame을 보내야 직전에 보낸 응답 끝 frame이
+    // 릴레이에 먼저 도착한다. drop하면 TCP가 끊겨 릴레이가 응답 끝 전에 브라우저 연결을 1008로 닫는다.
+    let close = Duration::from_secs(5);
+    // 상대의 close까지 읽어 낸 뒤 끊는다. 읽지 않은 frame이 남은 채 끊으면 TCP RST로 직전 frame이 버려질 수 있다.
+    let _ = tokio::time::timeout(close, async {
+        let _ = remote.close(None).await;
+        while let Some(Ok(_)) = remote.next().await {}
+    }).await;
+    let _ = tokio::time::timeout(close, async {
+        let _ = local.close(None).await;
+        while let Some(Ok(_)) = local.next().await {}
+    }).await;
+    result
+}
+
+async fn relay_frames<L, R>(local: &mut L, remote: &mut R) -> Result<(), Error>
+where
+    L: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+    R: StreamExt<Item = Result<Message, tokio_tungstenite::tungstenite::Error>> + SinkExt<Message, Error = tokio_tungstenite::tungstenite::Error> + Unpin,
+{
     loop {
         tokio::select! {
             message = remote.next() => {
@@ -228,5 +249,76 @@ mod tests {
         server.stop().await;
         drop(fixture.stdin.take());
         assert!(tokio::time::timeout(Duration::from_secs(10), fixture.wait()).await.unwrap().unwrap().success());
+    }
+
+    /// 데몬이 응답 끝 frame을 보낸 직후 연결을 닫아도 릴레이는 끝 frame을 먼저 브라우저에 전달해야 한다.
+    /// bridge가 릴레이 쪽 연결을 close 없이 drop하면 일부 요청이 끝 frame 없이 1008로 끊겼다.
+    #[tokio::test]
+    async fn real_relay_delivers_response_end_before_close() {
+        use base64::{Engine, engine::general_purpose::STANDARD as B64};
+        use curve25519_dalek::montgomery::MontgomeryPoint;
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        use serde_json::{json, Value};
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::config::Config::from_env(Some(dir.path().into()), Some("127.0.0.1:0".parse().unwrap())).unwrap();
+        let server = crate::server::start(cfg, Arc::new(crate::util::SystemClock)).await.unwrap();
+        let identity = server.app.e2ee.identity_for_test();
+        let room: String = Sha256::digest(identity).iter().map(|b| format!("{b:02x}")).collect();
+        let token = crate::util::random_secret(32);
+        let token: String = Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        let mut fixture = tokio::process::Command::new("node").arg("relay/fixture.mjs")
+            .env("TEST_ROOM", &room).env("TEST_TOKEN", &token)
+            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit()).kill_on_drop(true).spawn().unwrap();
+        let mut lines = BufReader::new(fixture.stdout.take().unwrap()).lines();
+        let url = tokio::time::timeout(Duration::from_secs(15), lines.next_line()).await.unwrap().unwrap().unwrap();
+        let base = url.trim_end_matches('/').replace("http:", "ws:");
+        let settings = Arc::new(Settings { base: base.clone(), token, room: room.clone() });
+        // 실서비스와 같은 제어 연결 처리(session)로 요청마다 bridge를 연다.
+        let (_stop, stop_rx) = watch::channel(false);
+        let relay = spawn(settings, server.addr, stop_rx);
+        let mut failures = Vec::new();
+        for attempt in 0..30 {
+            let mut request = format!("{base}/api/e2ee/{room}").into_client_request().unwrap();
+            request.headers_mut().insert("Origin", crate::e2ee::PAGES_ORIGIN.parse().unwrap());
+            // 제어 연결이 붙기 전이면 릴레이가 503을 준다. 시험 시작의 그 상태만 다시 시도한다.
+            let mut socket = loop {
+                match tokio_tungstenite::connect_async(request.clone()).await {
+                    Ok((socket, _)) => break socket,
+                    Err(tokio_tungstenite::tungstenite::Error::Http(r)) if r.status() == 503 && attempt == 0 => {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                    Err(e) => panic!("릴레이 접속 실패: {e}"),
+                }
+            };
+            let secret: [u8; 32] = rand::random();
+            let public = MontgomeryPoint::mul_base_clamped(secret).to_bytes();
+            socket.send(Message::Text(json!({ "version": 1, "key": B64.encode(public) }).to_string().into())).await.unwrap();
+            let hello = tokio::time::timeout(Duration::from_secs(10), socket.next()).await.unwrap().unwrap().unwrap();
+            let hello: Value = serde_json::from_str(hello.to_text().unwrap()).unwrap();
+            let peer: [u8; 32] = B64.decode(hello["key"].as_str().unwrap()).unwrap().try_into().unwrap();
+            let transcript = crate::e2ee::transcript(&public, &peer, &identity);
+            let shared = MontgomeryPoint(peer).mul_clamped(secret).to_bytes();
+            let (mut tx, mut rx) = crate::e2ee::keys(&shared, &transcript);
+            let op = json!({ "kind": "http", "method": "GET", "path": "/api/v1/health", "headers": [], "body": "" });
+            socket.send(Message::Binary(tx.seal(op.to_string().as_bytes()).unwrap().into())).await.unwrap();
+            let mut finished = false;
+            let mut frames = 0;
+            while let Ok(Some(Ok(message))) = tokio::time::timeout(Duration::from_secs(10), socket.next()).await {
+                let Message::Binary(bytes) = message else { break };
+                let plain = rx.open(&bytes).unwrap();
+                frames += 1;
+                if frames == 1 { continue; }
+                if plain == [2] { finished = true; break; }
+                socket.send(Message::Binary(tx.seal(&[1]).unwrap().into())).await.unwrap();
+            }
+            if !finished { failures.push(attempt); }
+            let _ = socket.close(None).await;
+        }
+        relay.abort();
+        server.stop().await;
+        drop(fixture.stdin.take());
+        let _ = tokio::time::timeout(Duration::from_secs(10), fixture.wait()).await;
+        assert!(failures.is_empty(), "응답 끝 frame 없이 끊긴 요청: {failures:?}");
     }
 }
