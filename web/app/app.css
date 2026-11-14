@@ -483,6 +483,14 @@ kbd { border: 1px solid var(--line-strong); border-bottom-width: 2px; border-rad
 body > [data-astryx-theme] { min-height: 100%; }
 .pwa-shell { min-height: 100dvh; }
 .sentence-lines > span { display: block; }
+/* 기다리는 동안 화면 맨 위에 진행 표시줄을 고정하고 기존 화면은 그대로 둔다. */
+.loading-bar { position: fixed; inset: 0 0 auto; z-index: 1000; pointer-events: none; }
+.loading-bar > * { border-radius: 0; }
+.loading-screen { display: grid; place-items: center; min-height: 100dvh; }
+.loading-screen > p { margin: 0; }
+.login > section { width: min(26em, 100%); display: grid; gap: var(--spacing-4); }
+.login > section > :is(h1, p) { margin: 0; }
+.recovery-lead { display: flex; align-items: flex-start; gap: var(--spacing-2); }
 input[type="checkbox"], input[type="radio"], input[type="range"] { accent-color: var(--accent); }
 .grove-button { font: inherit; }
 .grove-button.icon-btn { min-width: var(--spacing-8); }

@@ -7,6 +7,7 @@ import { PairingLogin } from "../components/Pairing";
 import { AuthRecovery } from "../components/pwa/AuthRecovery";
 import { checkCompatibility, lifecycleSnapshot, serverBlockReason, useLifecycle } from "../components/pwa/lifecycle";
 import { EncryptedConnection } from "../components/EncryptedConnection";
+import { LoadingScreen } from "../components/LoadingScreen";
 
 export default function AppRoute() {
     return <EncryptedConnection><ConnectedApp /></EncryptedConnection>;
@@ -46,13 +47,14 @@ function ConnectedApp() {
         <>
             <ProtocolBanner />
             <UpdateBanner />
-            {state !== "in" && state !== "checking" && (deferredAuth || serverBlockReason(lifecycle)) ? <AuthRecovery recover={async () => {
+            {state !== "in" && lifecycle.online && lifecycle.connection === "checking" ? <LoadingScreen label="서버 연결 확인 중…" />
+            : state !== "in" && state !== "checking" && (deferredAuth || serverBlockReason(lifecycle)) ? <AuthRecovery recover={async () => {
                 const session = await refresh();
                 setState(session ? "in" : "out");
                 if (!serverBlockReason(lifecycleSnapshot())) setDeferredAuth(false);
             }} /> : pairing ? <PairingLogin key={pairing} initialLink={pairing} checking={state === "checking"} onDone={() => setPairing(null)} onCancel={() => {
                 setPairing(null);
-            }} /> : state === "checking" ? <div className="boot">연결 확인 중…</div> : state === "in" ? <Workspace /> : <Login />}
+            }} /> : state === "checking" ? <LoadingScreen label="로그인 확인 중…" /> : state === "in" ? <Workspace /> : <Login />}
         </>
     );
 }

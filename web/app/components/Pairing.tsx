@@ -10,6 +10,7 @@ import { connection, connectionLink, parseConnectionLink, validateConnection, ty
 import { deviceName } from "../state/device";
 import { Icon } from "./icons";
 import { DetailDialog } from "./ui/Controls";
+import { LoadingBar } from "./LoadingScreen";
 
 type Issued = { id: string; code?: string; expires_at: string | null; encrypted?: Connection };
 
@@ -153,6 +154,12 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
     const loggedIn = isLoggedIn();
     useEffect(() => () => { sequence.current++; }, []);
     useEffect(() => {
+        // 이동 후 뒤로 가기로 복원된 페이지는 진행 중 상태를 풀어 다시 조작할 수 있게 한다.
+        const restore = (event: PageTransitionEvent) => { if (event.persisted && !submitLock.current) setBusy(false); };
+        window.addEventListener("pageshow", restore);
+        return () => window.removeEventListener("pageshow", restore);
+    }, []);
+    useEffect(() => {
         if (!pending) return;
         let active = true;
         let timer: ReturnType<typeof setTimeout>;
@@ -171,12 +178,16 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
         return () => { active = false; clearTimeout(timer); };
     }, [pending]);
     let target: { origin: string; code: string } | null = null;
-    let encryptedTarget: string | null = null;
+    let encrypted: ReturnType<typeof parseConnectionLink> | null = null;
     try { target = parsePairingLink(link); } catch { /* 제출할 때 오류 안내 */ }
-    try {
-        const parsed = parseConnectionLink(link);
-        encryptedTarget = connectionLink(parsed.connection, parsed.code);
-    } catch { /* 동일 origin 링크도 지원한다. */ }
+    try { encrypted = parseConnectionLink(link); } catch { /* 동일 origin 링크도 지원한다. */ }
+    let current: Connection | null = null;
+    try { current = connection(); } catch { /* 손상된 연결은 이동 경로에서 다시 확인한다. */ }
+    // 이미 이 암호화 서버에 연결돼 있으면 같은 문서의 hash만 바꾸는 이동 대신 이 자리에서 등록한다.
+    const sameServer = !!encrypted && current?.endpoint === encrypted.connection.endpoint && current.key === encrypted.connection.key;
+    const encryptedCode = sameServer ? encrypted!.code ?? null : null;
+    const encryptedTarget = encrypted && !sameServer ? connectionLink(encrypted.connection, encrypted.code) : null;
+    const needsCredentials = !encryptedTarget;
     const scan = async (file: File) => {
         const mine = ++sequence.current;
         setError(null);
@@ -189,13 +200,24 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
     };
     return (
         <main className="login pairing-login">
+            {(busy || checking) && <LoadingBar label={busy ? "기기 연결 진행 중" : "로그인 상태 확인 중"} />}
             <form aria-label="페어링 등록" onSubmit={(e) => {
                 e.preventDefault();
                 if (submitLock.current || checking || loggedIn || pending) return;
-                if (encryptedTarget) { location.assign(encryptedTarget); return; }
+                if (encryptedTarget) {
+                    // 다른 문서로 이동하는 동안 진행 표시를 유지한다.
+                    setBusy(true);
+                    location.assign(encryptedTarget);
+                    return;
+                }
                 let parsed: { origin: string; code: string };
-                try { parsed = parsePairingLink(link); }
-                catch (e) { setError((e as Error).message); return; }
+                if (sameServer) {
+                    if (!encryptedCode) { setError("페어링 코드가 없는 연결 링크입니다."); return; }
+                    parsed = { origin: location.origin, code: encryptedCode };
+                } else {
+                    try { parsed = parsePairingLink(link); }
+                    catch (e) { setError((e as Error).message); return; }
+                }
                 if (parsed.origin !== location.origin) return;
                 submitLock.current = true;
                 setBusy(true);
@@ -221,8 +243,8 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                         e.target.value = "";
                     }} /></label>
                     {target && <p className="small pairing-target">등록 대상: <strong className="host-address">{target.origin}</strong></p>}
-                    {encryptedTarget && <p className="small pairing-target">등록 대상: <strong className="host-address">{new URL(parseConnectionLink(encryptedTarget).connection.endpoint).host}</strong></p>}
-                    {!encryptedTarget && <>
+                    {encrypted && <p className="small pairing-target">등록 대상: <strong className="host-address">{new URL(encrypted.connection.endpoint).host}</strong></p>}
+                    {needsCredentials && <>
                         <label>비밀번호<input type="password" value={password} autoComplete="current-password" maxLength={256} required disabled={busy} onChange={(e) => setPassword(e.target.value)} /></label>
                         <label>이 기기 이름<input value={name} maxLength={80} required disabled={busy} onChange={(e) => setName(e.target.value)} /></label>
                     </>}
@@ -231,7 +253,7 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                     {target && insecureRemote(target.origin) && <p className="warn small">암호화되지 않은 HTTP입니다. HTTPS 또는 신뢰하는 VPN에서 등록하세요.</p>}
                     {target && target.origin !== location.origin
                         ? <a href={pairingLink(target.origin, target.code)} target="_blank" rel="noopener noreferrer">대상 서버에서 등록 확인</a>
-                        : <ServerActionButton type="submit" disabled={busy || checking || loggedIn || !link.trim() || (!encryptedTarget && (!password || !name.trim()))}>{busy ? "확인 중…" : encryptedTarget ? "대상 서버로 이동" : "연결 요청"}</ServerActionButton>}
+                        : <ServerActionButton type="submit" disabled={busy || checking || loggedIn || !link.trim() || (needsCredentials && (!password || !name.trim()))}>{busy ? (encryptedTarget ? "이동 중…" : "확인 중…") : encryptedTarget ? "대상 서버로 이동" : "연결 요청"}</ServerActionButton>}
                     <p className="muted small">링크당 기기 1대만 승인할 수 있습니다. 비밀번호 5회 실패 시 링크가 잠깁니다.</p>
                     <p className="muted small">승인된 기기는 모든 프로젝트·대화·파일에 접근하고 명령·터미널을 실행할 수 있습니다. 소유자 관리 권한은 없습니다.</p>
                 </>}

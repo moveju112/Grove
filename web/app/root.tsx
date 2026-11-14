@@ -12,6 +12,7 @@ import { applyPrefs, loadPrefs } from "./state/device";
 import { installAuthCleanup } from "./state/cleanup";
 import { deployment } from "./deployment";
 import { LifecycleBanner } from "./components/pwa/LifecycleBanner";
+import { LoadingScreen } from "./components/LoadingScreen";
 
 // 로그인 화면을 포함해 첫 화면부터 이 기기 테마를 적용한다(빌드 시 prerender에서는 document가 없다).
 if (typeof document !== "undefined") {
@@ -52,7 +53,7 @@ export default function Root() {
 
 // 빌드 시 루트 렌더링 동안 보이는 화면(브라우저 API는 여기서 쓰지 않는다).
 export function HydrateFallback() {
-    return <Stack className="boot">Grove 불러오는 중…</Stack>;
+    return <LoadingScreen label="Grove 불러오는 중…" />;
 }
 
 export function ErrorBoundary() {
