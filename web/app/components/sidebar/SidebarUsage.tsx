@@ -50,7 +50,7 @@ function Meter({ label, value, share, note, shareText }: { label: string; value:
             <span className="side-meter-value num" title={shareText ? `오늘 전체의 ${shareText}` : undefined}>{value}</span>
             {pct !== null && (
                 <span className="side-meter-track" aria-hidden="true">
-                    <i className={pct >= 0.7 ? "hi" : ""} style={{ width: `${pct * 100}%` }} />
+                    <i className={pct >= 0.7 ? "hi" : ""} style={{ transform: `scaleX(${pct})` }} />
                 </span>
             )}
             {note && <span className="side-meter-note">{note}</span>}

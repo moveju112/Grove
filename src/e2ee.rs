@@ -22,6 +22,8 @@ use tokio::sync::Semaphore;
 use tower::ServiceExt;
 use crate::{App, auth::Owner, error::{ApiError, ApiResult}};
 
+mod mux;
+
 const LABEL: &[u8] = b"grove-e2ee-v1";
 const MAX_FRAME: usize = 12 * 1024 * 1024;
 const MAX_BODY: usize = 8 * 1024 * 1024;
@@ -34,6 +36,7 @@ pub struct Transport {
     identity: SigningKey,
     pub(crate) relay: Option<Arc<crate::relay::Settings>>,
     slots: Arc<Semaphore>,
+    request_slots: Arc<Semaphore>,
     bridge_secret: String,
 }
 
@@ -63,7 +66,7 @@ impl Transport {
         let bytes: [u8; 32] = bytes.try_into().map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "E2EE identity key length"))?;
         let identity = SigningKey::from_bytes(&bytes);
         let relay = crate::relay::Settings::load(dir, identity.verifying_key().as_bytes())?;
-        Ok(Self { identity, relay, slots: Arc::new(Semaphore::new(128)), bridge_secret: crate::util::random_secret(32) })
+        Ok(Self { identity, relay, slots: Arc::new(Semaphore::new(128)), request_slots: Arc::new(Semaphore::new(128)), bridge_secret: crate::util::random_secret(32) })
     }
 
     pub fn public_key(&self) -> String { B64.encode(self.identity.verifying_key().as_bytes()) }
@@ -171,14 +174,15 @@ pub(crate) fn keys(shared: &[u8; 32], transcript: &[u8]) -> (Cipher, Cipher) {
     (Cipher::new(&c2s), Cipher::new(&s2c))
 }
 
-async fn handshake(app: &App, ws: &mut WebSocket) -> Result<(Cipher, Cipher), Failure> {
+/// 1: 연결당 요청 하나. 2: 한 연결에서 여러 HTTP 요청을 stream ID로 다중화한다.
+async fn handshake(app: &App, ws: &mut WebSocket) -> Result<(Cipher, Cipher, u8), Failure> {
     #[derive(Deserialize)]
     #[serde(deny_unknown_fields)]
     struct Hello { version: u8, key: String }
     let Message::Text(text) = ws.recv().await.ok_or_else(invalid)?? else { return Err(invalid()); };
     if text.len() > 256 { return Err(invalid()); }
     let hello: Hello = serde_json::from_str(&text)?;
-    if hello.version != 1 { return Err(invalid()); }
+    if !matches!(hello.version, 1 | 2) { return Err(invalid()); }
     let client: [u8; 32] = B64.decode(&hello.key)?.try_into().map_err(|_| invalid())?;
     let mut secret = [0u8; 32];
     rand::rng().fill_bytes(&mut secret);
@@ -187,8 +191,9 @@ async fn handshake(app: &App, ws: &mut WebSocket) -> Result<(Cipher, Cipher), Fa
     if shared == [0; 32] { return Err(invalid()); }
     let transcript = transcript(&client, &public, app.e2ee.identity.verifying_key().as_bytes());
     let signature = app.e2ee.identity.sign(&transcript);
-    ws.send(Message::Text(json!({ "version": 1, "key": B64.encode(public), "signature": B64.encode(signature.to_bytes()) }).to_string().into())).await?;
-    Ok(keys(&shared, &transcript))
+    ws.send(Message::Text(json!({ "version": hello.version, "key": B64.encode(public), "signature": B64.encode(signature.to_bytes()) }).to_string().into())).await?;
+    let (rx, tx) = keys(&shared, &transcript);
+    Ok((rx, tx, hello.version))
 }
 
 async fn receive(ws: &mut WebSocket, cipher: &mut Cipher) -> Result<Vec<u8>, Failure> {
@@ -225,13 +230,9 @@ fn valid_path(path: &str) -> bool {
         && !path.contains("://") && path.len() <= 8192
 }
 
-async fn serve(app: &App, host: &str, ws: &mut WebSocket) -> Result<(), Failure> {
-    let (mut rx, mut tx) = tokio::time::timeout(HANDSHAKE, handshake(app, ws)).await??;
-    let plain = tokio::time::timeout(HANDSHAKE, receive(ws, &mut rx)).await??;
-    let op: Operation = serde_json::from_slice(&plain)?;
-    if !valid_path(&op.path) { return Err(invalid()); }
-    if op.kind == "ws" { return terminal(app, host, ws, &mut rx, &mut tx, op).await; }
-    if op.kind != "http" || op.headers.len() > 32 { return Err(invalid()); }
+/// 암호화 요청을 내부 API 요청으로 바꾼다. 경로·method·헤더는 API 계약 범위만 허용한다.
+fn http_request(host: &str, op: Operation) -> Result<Request, Failure> {
+    if !valid_path(&op.path) || op.kind != "http" || op.headers.len() > 32 { return Err(invalid()); }
     let body = B64.decode(&op.body)?;
     if body.len() > MAX_BODY { return Err(invalid()); }
     let method: axum::http::Method = op.method.parse()?;
@@ -245,11 +246,26 @@ async fn serve(app: &App, host: &str, ws: &mut WebSocket) -> Result<(), Failure>
     }
     req.headers_mut().insert("host", HeaderValue::from_str(host)?);
     req.extensions_mut().insert(Encrypted);
+    Ok(req)
+}
+
+fn headers_frame(parts: &axum::http::response::Parts) -> Vec<u8> {
+    let headers: Vec<_> = parts.headers.iter().filter_map(|(k, v)| v.to_str().ok().map(|v| (k.as_str(), v))).collect();
+    json!({ "type": "headers", "status": parts.status.as_u16(), "headers": headers }).to_string().into_bytes()
+}
+
+async fn serve(app: &App, host: &str, ws: &mut WebSocket) -> Result<(), Failure> {
+    let (mut rx, mut tx, version) = tokio::time::timeout(HANDSHAKE, handshake(app, ws)).await??;
+    if version == 2 { return mux::serve(app, host, ws, rx, tx).await; }
+    let plain = tokio::time::timeout(HANDSHAKE, receive(ws, &mut rx)).await??;
+    let op: Operation = serde_json::from_slice(&plain)?;
+    if !valid_path(&op.path) { return Err(invalid()); }
+    if op.kind == "ws" { return terminal(app, host, ws, &mut rx, &mut tx, op).await; }
+    let req = http_request(host, op)?;
     // 로그인 시 IP를 위조하지 않는다. 원격 E2EE 로그인은 하나의 잠금 bucket을 공유한다.
     let response = crate::router(app.clone()).oneshot(req).await?;
     let (parts, body) = response.into_parts();
-    let headers: Vec<_> = parts.headers.iter().filter_map(|(k, v)| v.to_str().ok().map(|v| (k.as_str(), v))).collect();
-    send(ws, &mut tx, &json!({ "type": "headers", "status": parts.status.as_u16(), "headers": headers }).to_string().into_bytes()).await?;
+    send(ws, &mut tx, &headers_frame(&parts)).await?;
     let mut stream = body.into_data_stream();
     // 각 chunk를 소비한 뒤 ACK한다. 느린 브라우저에서 WebSocket 메모리가 무한 증가하지 않는다.
     while let Some(bytes) = stream.next().await {

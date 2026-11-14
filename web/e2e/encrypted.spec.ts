@@ -15,7 +15,8 @@ test("서버 pin 불일치에서는 자격증명 전송과 평문 fallback을 �
     await page.getByRole("button", { name: "서버 확인 후 연결" }).click();
     await expect(page.getByTestId("pwa-lifecycle")).toContainText("서버에 연결할 수 없습니다");
     await expect.poll(() => sent.length).toBeGreaterThan(0);
-    expect(sent.every((frame) => typeof frame === "string" && JSON.parse(frame).version === 1)).toBe(true);
+    // HTTP 요청은 다중화 연결(version 2)을 쓴다. pin 확인 전에는 handshake 외의 frame을 보내지 않는다.
+    expect(sent.every((frame) => typeof frame === "string" && JSON.parse(frame).version === 2)).toBe(true);
     expect(auth).toEqual([]);
 });
 

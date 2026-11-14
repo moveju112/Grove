@@ -5,9 +5,11 @@ import { useEffect, useState, useSyncExternalStore } from "react";
 import type { EventRecord } from "../api/generated";
 import { refreshFiles } from "./fileWatch";
 import { deliveryTiming } from "./deliveryTiming";
+import { isTransportError } from "../api/client";
 
 // stale: 보는 화면이 없어 무효화를 미뤄 둔 항목. 다시 구독하면 그때 한 번 읽는다(PANE-007).
-type Entry = { data: unknown; error: unknown; loading: boolean; version: number; stale: boolean; fetcher: () => Promise<unknown> };
+// waiting: 연결 문제로 읽지 못한 항목. 화면에는 오류 대신 기존 값과 로딩 상태를 두고, 연결이 돌아오면 다시 읽는다.
+type Entry = { data: unknown; error: unknown; loading: boolean; version: number; stale: boolean; waiting?: boolean; fetcher: () => Promise<unknown> };
 /// 구독자가 없는 cache 항목의 최대 보관 수. 넘으면 오래된 것부터 버린다.
 export const IDLE_ENTRY_LIMIT = 200;
 
@@ -20,6 +22,10 @@ function notify(key: string) {
     for (const f of subs.get(key) ?? []) f();
 }
 
+let onTransportFailure: (() => void) | null = null;
+/// 연결 상태 소유자(lifecycle)가 등록한다. 조회가 연결 문제로 실패하면 연결 확인을 요청한다.
+export function setTransportFailureHandler(handler: (() => void) | null) { onTransportFailure = handler; }
+
 async function load(key: string) {
     const e = entries.get(key);
     if (!e) return;
@@ -27,19 +33,27 @@ async function load(key: string) {
     const g = generation;
     e.loading = true;
     notify(key);
+    let waiting = false;
     try {
         const data = await e.fetcher();
         if (e.version === v) {
             e.data = data;
             e.error = null;
+            e.waiting = false;
         }
     } catch (err) {
-        if (e.version === v) e.error = err;
+        if (e.version === v) {
+            // 연결 문제는 화면별 오류로 보이지 않는다. 기존 값을 두고 연결 복구 뒤 다시 읽는다.
+            waiting = isTransportError(err);
+            e.waiting = waiting;
+            if (!waiting) e.error = err;
+        }
     } finally {
         // 로그아웃 정리나 보관 상한으로 버린 항목은 늦게 끝난 조회가 되살리지 않는다.
         if (g !== generation || entries.get(key) !== e) return;
+        if (waiting) onTransportFailure?.();
         if (e.version === v) {
-            e.loading = false;
+            e.loading = waiting;
             // 객체 identity를 바꿔 구독자가 다시 그리게 한다.
             entries.set(key, { ...e });
             notify(key);
@@ -110,8 +124,12 @@ export function useQuery<T>(key: string | null, fetcher: () => Promise<T>): { da
         // fetcher는 key가 같으면 같은 대상을 읽는다고 가정한다.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key]);
+    return { ...querySnapshot<T>(key), reload: () => key && void load(key) };
+}
+
+export function querySnapshot<T>(key: string | null): { data: T | undefined; error: unknown; loading: boolean } {
     const e = key ? entries.get(key) : undefined;
-    return { data: e?.data as T | undefined, error: e?.error, loading: e?.loading ?? false, reload: () => key && void load(key) };
+    return { data: e?.data as T | undefined, error: e?.error, loading: e?.loading ?? false };
 }
 
 /// 이벤트 종류 → 무효화할 key 접두사.
@@ -315,6 +333,11 @@ export function applyEvent(e: EventRecord) {
         default:
             break;
     }
+}
+
+/// 연결이 돌아오면 연결 문제로 읽지 못한 조회만 다시 읽는다. 보이지 않는 항목은 다시 볼 때 읽는다.
+export function retryWaiting() {
+    for (const [k, e] of entries) if (e.waiting) refresh(k);
 }
 
 /// 재동기화: 모든 조회를 다시 읽는다(NET-008).

@@ -1,4 +1,4 @@
-import { ApiError } from "../api/client";
+import { ApiError, isTransportError } from "../api/client";
 import { emptyLayout, isValid, type Layout } from "./layout";
 
 type Attempt = { layout: Layout; expected_revision: number; key: string };
@@ -130,11 +130,25 @@ export class LayoutPersistence {
                         this.notice("다른 창에서 바뀐 배치를 이 창의 배치로 덮어씁니다");
                         continue;
                     }
+                    if (isTransportError(error, true)) {
+                        // 연결 문제는 상단 연결 토스트가 알린다. 같은 요청 키로 간격을 늘려 다시 저장한다.
+                        this.retryLater();
+                        return;
+                    }
                     this.notice("배치를 서버에 저장하지 못했습니다(이 기기에는 보존). 다시 저장해 결과를 확인하세요.");
                     return;
                 }
+                this.retryDelay = 0;
             }
         } finally { this.busy = false; }
+    }
+
+    private retryDelay = 0;
+    private retryLater() {
+        if (!this.active()) return;
+        this.retryDelay = Math.min(this.retryDelay ? this.retryDelay * 2 : 2_000, 60_000);
+        if (this.timer) clearTimeout(this.timer);
+        this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, this.retryDelay);
     }
 
     dispose() {

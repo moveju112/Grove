@@ -36,4 +36,8 @@
 
 여러 대상을 지정할 때 `--rust`, `--vitest`, `--e2e`는 각각 한 번만 쓰고 뒤에 대상들을 나열한다.
 E2E는 실제 서버와 빌드된 웹앱을 사용한다. API mock만으로 인증·복구·전송 경계를 검증했다고 하지 않는다.
+relay·암호화 다중화·모바일 복귀 변경은 `python3 scripts/build.py test --relay-e2e`로 배포 없이 검증한다.
+이 명령은 새 임시 데이터의 데몬·정적 웹·Miniflare relay·네트워크 주입 프록시를 띄우고 이번 실행이 만든 스택만 정리한다.
+수동 시험은 `python3 scripts/relay_stack.py up --state /절대/경로/stack.json`으로 시작하며, 같은 상태 파일의 `net --cut`, `net --delay 100`, `net --blackhole on`으로 장애를 주입하고 `down`으로 종료한다.
+`GROVE_RELAY_STATE`로 지정한 외부 대상은 자동 생성·종료하지 않는다. 로컬 통과가 Cloudflare 실제 경로의 검증을 대신하지 않으며, 원격 리소스 생성·배포 승인은 별도로 필요하다.
 계약 변경 시 생성·drift 검사는 [RESPONSE_KEYS.md](RESPONSE_KEYS.md)를 따른다.

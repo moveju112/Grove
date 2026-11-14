@@ -47,7 +47,7 @@ test("서버에 아직 저장하지 못한 탭·분할 방향·비율·활성 pa
         && server.layout.root.children[0].tabs[0]?.project_id).toBe(a.id);
 });
 
-test("저장 응답이 유실돼도 새로고침 후 같은 요청 키로 결과를 확인한다", async ({ page }) => {
+test("저장 응답이 유실돼도 알림 없이 같은 요청 키로 결과를 확인한다", async ({ page }) => {
     const { device } = await seed(page);
     const attempts: { key: string; body: unknown }[] = [];
     let lost = false;
@@ -62,7 +62,9 @@ test("저장 응답이 유실돼도 새로고침 후 같은 요청 키로 결과
     });
     await login(page);
     await page.getByRole("separator").press("ArrowRight");
-    await expect(page.getByRole("status").filter({ hasText: "배치를 서버에 저장하지 못했습니다" })).toBeVisible();
+    await expect.poll(() => attempts.length).toBeGreaterThanOrEqual(1);
+    // 연결 문제는 연결 토스트 하나로만 알린다. 배치 저장 알림을 따로 띄우지 않는다.
+    await expect(page.getByText("배치를 서버에 저장하지 못했습니다")).toHaveCount(0);
     await page.reload();
     await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "45");
     await expect.poll(() => attempts.length).toBe(2);

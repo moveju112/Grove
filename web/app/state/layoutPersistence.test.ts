@@ -212,4 +212,25 @@ describe("기기별 배치 저장", () => {
         expect(f.copy().dirty).toBe(false);
         f.current.dispose();
     });
+
+    it("연결 문제로 저장하지 못하면 알리지 않고 같은 요청 키로 간격을 늘려 다시 저장한다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        const lost = new ApiError(0, "network_error", "서버 응답을 받지 못했습니다", true, { result_unknown: true });
+        f.put.mockRejectedValueOnce(lost).mockRejectedValueOnce(new TypeError("암호화 연결이 끊겼습니다."));
+        f.current.change(setRatio(f.initial, [], 0.3));
+        await f.current.flush();
+        expect(f.put).toHaveBeenCalledTimes(1);
+        await vi.advanceTimersByTimeAsync(2_000);
+        expect(f.put).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(3_999);
+        expect(f.put).toHaveBeenCalledTimes(2);
+        await vi.advanceTimersByTimeAsync(1);
+        expect(f.put).toHaveBeenCalledTimes(3);
+        // 재시도는 원래 요청을 그대로 다시 보낸다(서버가 같은 키를 중복 실행하지 않음).
+        expect(f.put.mock.calls[2]![0]).toEqual(f.put.mock.calls[0]![0]);
+        expect(f.copy().dirty).toBe(false);
+        expect(f.notice).not.toHaveBeenCalled();
+        f.current.dispose();
+    });
 });

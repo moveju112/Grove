@@ -39,6 +39,26 @@ test("unknown rooms, plaintext API, foreign origins, and unauthenticated daemon 
     assert.equal((await request(`/api/e2ee/${room}`, { Origin: origin })).status, 426);
     assert.equal((await request(`/api/e2ee/${room}`, { Upgrade: "websocket", Origin: origin })).status, 503);
 });
+test("PAGES_ORIGIN replaces the production origin instead of adding to it; invalid values fall back to production", async () => {
+    const make = (bindings) => new Miniflare(convertV4MiniflareOptions({
+        modules: true,
+        scriptPath: new URL("./worker.mjs", import.meta.url).pathname,
+        compatibilityDate: "2026-04-07",
+        durableObjects: { RELAY: { className: "GroveRelay", useSQLite: true } },
+        bindings: { ROOM: room, DAEMON_TOKEN: token, ...bindings },
+    }));
+    const staging = make({ PAGES_ORIGIN: "https://staging.grove-cca.pages.dev" });
+    const broken = make({ PAGES_ORIGIN: "javascript:alert(1)" });
+    try {
+        const status = async (mf, origin) => (await mf.dispatchFetch(`https://relay.example/api/e2ee/${room}`,
+            { headers: { Upgrade: "websocket", Origin: origin } })).status;
+        // 제어 연결이 없으면 허용 Origin은 503, 거절 Origin은 403이다.
+        assert.equal(await status(staging, "https://staging.grove-cca.pages.dev"), 503);
+        assert.equal(await status(staging, origin), 403);
+        assert.equal(await status(broken, origin), 503);
+        assert.equal(await status(broken, "javascript:alert(1)"), 403);
+    } finally { await Promise.all([staging.dispose(), broken.dispose()]); }
+});
 test("authenticated daemon pairs isolated opaque channels; disconnect closes peers and supports reconnect", async () => {
     const auth = { Authorization: `Bearer ${token}` };
     let control = await socket(`/relay/${room}/control`, auth);

@@ -128,6 +128,9 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
 
     let router = crate::router(app.clone());
     let mut shutdown = app.shutdown_rx.clone();
+    // 암호화 연결은 ACK·응답 헤더 같은 작은 frame을 주고받는다. Nagle 지연(최대 수십 ms)이 왕복마다 붙지 않게 끈다.
+    use axum::serve::ListenerExt;
+    let listener = listener.tap_io(|tcp| { let _ = tcp.set_nodelay(true); });
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, router.into_make_service_with_connect_info::<SocketAddr>())
             .with_graceful_shutdown(async move {

@@ -1,9 +1,24 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { Cipher, base64, connectionLink, parseConnectionLink, transportFetch, validateConnection } from "./transport";
+import { Cipher, Mux, base64, connectionLink, parseConnectionLink, transportFetch, validateConnection } from "./transport";
 
 afterEach(() => vi.unstubAllGlobals());
 const key = base64(new Uint8Array(32).fill(7));
 describe("E2EE connection", () => {
+    it("rejects a blocked WebSocket even when no close event follows the error", async () => {
+        class BlockedSocket extends EventTarget {
+            onerror: (() => void) | null = null;
+            constructor() {
+                super();
+                queueMicrotask(() => {
+                    this.onerror?.();
+                    this.dispatchEvent(new Event("error"));
+                });
+            }
+            close() {}
+        }
+        vi.stubGlobal("WebSocket", BlockedSocket);
+        await expect(Mux.open({ endpoint: "ws://127.0.0.1/api/e2ee", key })).rejects.toThrow("암호화 연결");
+    });
     it("preserves the relay room while keeping pairing credentials in the fragment", () => {
         const config = { endpoint: "wss://relay.example/api/e2ee/" + "a".repeat(64), key };
         expect(parseConnectionLink(connectionLink(config)).connection).toEqual(config);

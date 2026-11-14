@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { ApiError, PROTOCOL, checkProtocol, onProtocolMismatch, setServerActionGuard } from "../../api/client";
 import { transportFetch } from "../../api/transport";
+import { retryWaiting, setTransportFailureHandler } from "../../state/store";
 
 export type StorageIssue = "quota" | "unavailable" | "missing" | null;
 export type LifecycleState = {
@@ -132,12 +133,17 @@ export function checkCompatibility(): Promise<void> {
             // health의 기존 protocol 필드를 재사용한다. 헤더를 제거하는 proxy도 불일치를 감지한다.
             checkProtocol(new Response(null, { headers: { "x-grove-protocol": String(health.protocol) } }));
             update({ connection: "ready" });
+            // 연결 문제로 읽지 못했던 조회만 다시 읽는다. 변경 작업은 재전송하지 않는다.
+            retryWaiting();
         } catch {
             update({ connection: "unreachable" });
         } finally { checking = null; }
     })();
     return checking;
 }
+
+// 화면 어디서든 조회가 연결 문제로 실패하면 연결 상태를 한 번 확인한다. 동시 실패는 하나의 확인으로 합친다.
+setTransportFailureHandler(() => { void checkCompatibility(); });
 
 /** root의 안내 mount가 소유한다. 네트워크 복구는 조회만 하며 작업을 재전송하지 않는다. */
 export function startLifecycle(): () => void {
@@ -168,7 +174,14 @@ export function startLifecycle(): () => void {
         navigator.serviceWorker.addEventListener("controllerchange", inspect);
     }
     refresh();
-    const timer = setInterval(() => { if (document.visibilityState === "visible") refresh(); }, 30_000);
+    // 연결이 안 될 때는 5초마다, 평소에는 30초마다 확인한다. 보이지 않는 화면은 확인하지 않는다.
+    let last = Date.now();
+    const timer = setInterval(() => {
+        if (document.visibilityState !== "visible") return;
+        if (state.connection !== "unreachable" && Date.now() - last < 30_000) return;
+        last = Date.now();
+        refresh();
+    }, 5_000);
     return () => {
         stopped = true;
         clearInterval(timer);

@@ -1,6 +1,9 @@
 // 릴레이는 암호문만 전달한다. 서버 인증 비밀은 Worker secret, 방 ID는 서버 공개키의 SHA-256이다.
 // 배포 시 ROOM(64자리 소문자 hex)과 DAEMON_TOKEN(64자리 hex)을 secret으로 등록한다.
+// 브라우저 Origin은 운영 Pages 하나만 허용한다. 스테이징·로컬 스택은 PAGES_ORIGIN 변수로 자기 화면 주소 하나를 지정한다.
 const PAGES = "https://grove.choondoggy.com";
+const ORIGIN = /^https?:\/\/[a-z0-9.-]+(?::\d+)?$/;
+const pagesOrigin = (env) => ORIGIN.test(env.PAGES_ORIGIN ?? "") ? env.PAGES_ORIGIN : PAGES;
 const HEX = /^[0-9a-f]{64}$/;
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAX_FRAME = 12 * 1024 * 1024;
@@ -26,7 +29,7 @@ export default {
         const privatePath = new RegExp(`^/relay/${env.ROOM}/(control|data/([0-9a-f-]+))$`).exec(url.pathname);
         if (!client && !privatePath) return fail(404);
         if (client) {
-            if (request.headers.get("Origin") !== PAGES) return fail(403);
+            if (request.headers.get("Origin") !== pagesOrigin(env)) return fail(403);
         } else if (!await authorized(request, env)) return fail(403);
         if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") return fail(426);
         return env.RELAY.getByName(env.ROOM).fetch(request);

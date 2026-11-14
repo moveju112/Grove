@@ -7,12 +7,15 @@ export function LifecycleBanner() {
     useEffect(startLifecycle, []);
     return (
         <aside className="pwa-lifecycle" aria-label="PWA 상태" data-testid="pwa-lifecycle">
-            {!state.online && <div className="update-banner" role="status" data-testid="offline-banner">
-                오프라인 · 초안만 작성할 수 있습니다. 전송·승인·도구 실행은 연결 후 직접 다시 시도하세요. 서버의 기존 작업이 중단됐다는 뜻은 아닙니다.
+            {/* 연결 문제는 이 토스트 하나로만 알린다. 각 화면은 기존 값을 두고 연결이 돌아오면 다시 읽는다. */}
+            {!state.online && <div className="connection-toast" role="status" data-testid="offline-banner">
+                <span className="connection-toast-dot" aria-hidden="true" />
+                <span>오프라인 · 연결되면 다시 불러옵니다</span>
             </div>}
-            {state.online && state.connection === "unreachable" && <div className="update-banner error" role="alert">
-                서버에 연결할 수 없습니다. 현재 탭에서 초안을 작성할 수 있지만 서버 작업은 사용할 수 없습니다.
-                <button onClick={() => void checkCompatibility()}>연결 다시 확인</button>
+            {state.online && state.connection === "unreachable" && <div className="connection-toast error" role="alert" data-testid="connection-toast">
+                <span className="connection-toast-dot" aria-hidden="true" />
+                <span>서버에 연결할 수 없습니다</span>
+                <button type="button" className="ghost small" onClick={() => void checkCompatibility()}>연결 다시 확인</button>
             </div>}
             {state.storageIssue && <div className="update-banner error" role="alert" data-testid="storage-warning">
                 {state.storageIssue === "quota" ? "저장 공간 한도(quota)를 초과해 기기 초안 저장에 실패했습니다. 화면을 떠나거나 업데이트하기 전에 입력을 복사하세요."

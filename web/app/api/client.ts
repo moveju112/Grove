@@ -119,6 +119,15 @@ async function parse(resp: Response): Promise<unknown> {
     }
 }
 
+/// 서버까지 닿지 못했거나 응답을 받지 못한 연결 문제. 화면마다 따로 알리지 않고 상단 연결 표시 하나로 모은다.
+/// 결과 불명(result_unknown)인 변경은 작업별로 확인해야 하므로 여기에 포함하지 않는다.
+export function isTransportError(error: unknown, includeResultUnknown = false): boolean {
+    if (error instanceof TypeError) return true;
+    if (!(error instanceof ApiError) || error.status !== 0) return false;
+    if (!includeResultUnknown && (error.details as { result_unknown?: boolean } | undefined)?.result_unknown === true) return false;
+    return ["network_error", "request_timeout", "offline", "server_unavailable"].includes(error.code);
+}
+
 function toError(status: number, body: unknown, requestId?: string): ApiError {
     const e = (body as { error?: { code?: string; message?: string; retryable?: boolean; details?: unknown } })?.error;
     return new ApiError(status, e?.code ?? "http_" + status, e?.message ?? `HTTP ${status}`, e?.retryable ?? false, e?.details, requestId);

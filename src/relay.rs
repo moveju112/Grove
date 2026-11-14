@@ -24,7 +24,7 @@ impl Settings {
         #[serde(deny_unknown_fields)]
         struct Input { url: String, token: String }
         let input: Input = serde_json::from_slice(&bytes).map_err(|_| std::io::Error::other("relay.json 형식 오류"))?;
-        let base = Self::validate_url(&input.url).ok_or_else(|| std::io::Error::other("릴레이 URL은 경로 없는 wss:// 주소여야 합니다"))?;
+        let base = Self::validate_url(&input.url).ok_or_else(|| std::io::Error::other("릴레이 URL은 경로 없는 wss:// 주소여야 합니다(로컬 시험 스택만 ws://127.0.0.1 허용)"))?;
         if input.token.len() != 64 || !input.token.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b)) {
             return Err(std::io::Error::other("릴레이 인증 비밀은 32-byte hex여야 합니다"));
         }
@@ -40,7 +40,10 @@ impl Settings {
 
     fn validate_url(value: &str) -> Option<String> {
         let url = reqwest::Url::parse(value).ok()?;
-        if url.scheme() != "wss" || url.host_str().is_none() || !url.username().is_empty()
+        // 평문 ws://는 같은 기기의 로컬 시험 스택(scripts/relay_stack.py)에만 허용한다.
+        let loopback = matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"));
+        let secure = url.scheme() == "wss" || (url.scheme() == "ws" && loopback);
+        if !secure || url.host_str().is_none() || !url.username().is_empty()
             || url.password().is_some() || url.query().is_some() || url.fragment().is_some() || url.path() != "/" {
             return None;
         }
@@ -178,10 +181,11 @@ mod tests {
     use super::*;
     #[test]
     fn rejects_unsafe_relay_addresses() {
-        for url in ["ws://example.com", "wss://user:secret@example.com", "wss://example.com/path", "wss://example.com?token=x", "wss://example.com#x"] {
+        for url in ["ws://example.com", "ws://10.0.0.1:8787", "wss://user:secret@example.com", "wss://example.com/path", "wss://example.com?token=x", "wss://example.com#x"] {
             assert!(Settings::validate_url(url).is_none());
         }
         assert_eq!(Settings::validate_url("wss://relay.example.com").unwrap(), "wss://relay.example.com");
+        assert_eq!(Settings::validate_url("ws://127.0.0.1:8787").unwrap(), "ws://127.0.0.1:8787");
     }
     #[test]
     fn absent_is_local_but_invalid_config_is_fatal() {

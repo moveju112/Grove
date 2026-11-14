@@ -25,7 +25,8 @@ async function openTerminal(page: Page) {
         await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
     });
     const list = page.getByTestId("terminal-list");
-    await expect(list).toBeVisible();
+    // 터미널 목록은 도구 패널 탭 안에 있다. openDetails가 패널을 열고 보이는지 확인한다.
+    await expect(list).toBeAttached();
     await openDetails(list);
     await list.getByRole("button", { name, exact: true }).click();
     const view = page.getByTestId("terminal-view");

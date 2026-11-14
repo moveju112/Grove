@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyEvent, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, resyncAll, setLive, subscribeQuery } from "./store";
+import { applyEvent, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, querySnapshot, resyncAll, retryWaiting, setLive, setTransportFailureHandler, subscribeQuery } from "./store";
+import { ApiError, isTransportError } from "../api/client";
 import type { EventRecord } from "../api/generated";
 import { deliveryTiming } from "./deliveryTiming";
 
@@ -23,6 +24,50 @@ it("종료 이벤트의 화면 반영 측정은 재동기화·로그아웃 때 �
         clearServerCache();
         expect(deliveryTiming.applied("cancelled")).toBeNull();
     } finally { off(); clearServerCache(); }
+});
+
+describe("연결 문제 조회", () => {
+    it("연결 문제는 화면 오류로 넘기지 않고 기존 값을 둔 채 연결 확인을 요청하며, 복구되면 다시 읽는다", async () => {
+        const handler = vi.fn();
+        setTransportFailureHandler(handler);
+        let fail: unknown = null;
+        let value = "first";
+        const fetcher = vi.fn(async () => { if (fail) throw fail; return value; });
+        const key = "recent:transport";
+        const off = subscribeQuery(key, fetcher, () => undefined);
+        try {
+            await settle();
+            fail = new ApiError(0, "network_error", "서버 응답을 받지 못했습니다", true, { result_unknown: false });
+            invalidate(key);
+            await settle();
+            expect(handler).toHaveBeenCalledTimes(1);
+            expect(querySnapshot(key)).toEqual({ data: "first", error: null, loading: true });
+            fail = null;
+            value = "second";
+            retryWaiting();
+            await settle();
+            expect(querySnapshot(key)).toEqual({ data: "second", error: null, loading: false });
+            // 연결 문제가 아닌 오류는 화면에 그대로 보이고 연결 복구 재시도 대상이 아니다.
+            const forbidden = new ApiError(403, "forbidden", "권한이 없습니다");
+            fail = forbidden;
+            invalidate(key);
+            await settle();
+            expect(querySnapshot(key)).toEqual({ data: "second", error: forbidden, loading: false });
+            retryWaiting();
+            await settle();
+            // 첫 조회·연결 실패·복구 재조회·403 조회. 403 뒤의 retryWaiting은 다시 읽지 않는다.
+            expect(fetcher).toHaveBeenCalledTimes(4);
+            expect(handler).toHaveBeenCalledTimes(1);
+        } finally { off(); setTransportFailureHandler(null); clearServerCache(); }
+    });
+
+    it("응답을 받지 못한 변경(결과 불명)은 연결 문제로 숨기지 않는다", () => {
+        expect(isTransportError(new TypeError("암호화 연결이 끊겼습니다."))).toBe(true);
+        expect(isTransportError(new ApiError(0, "network_error", "x", true, { result_unknown: false }))).toBe(true);
+        expect(isTransportError(new ApiError(0, "network_error", "x", true, { result_unknown: true }))).toBe(false);
+        expect(isTransportError(new ApiError(0, "network_error", "x", true, { result_unknown: true }), true)).toBe(true);
+        expect(isTransportError(new ApiError(409, "revision_conflict", "x"))).toBe(false);
+    });
 });
 
 describe("중복 viewer의 조회 구독(PANE-007)", () => {

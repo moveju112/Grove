@@ -369,7 +369,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
 
     return (
         <div className="composer">
-            {serverBlocked && <p className="draft-note" role="status" data-testid="composer-blocked">{serverBlocked}</p>}
             {copyError && <p className="err" role="alert">기기에 입력 사본을 보관하지 못했습니다. 화면을 떠나기 전에 내용을 복사하세요.</p>}
             {copies.length > 0 && <DetailDialog className="draft-note" data-testid="draft-copies" label="다른 입력 사본" title={`다른 입력 사본 ${copies.length}개`}>
                 <p className="muted small">선택한 사본을 이 탭에 복제합니다. 현재 입력은 별도 사본으로 남기며 자동 전송하지 않습니다.</p>
@@ -456,7 +455,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 onCompositionStart={() => (composing.current = true)}
                 onCompositionEnd={() => (composing.current = false)}
                 enterKeyHint={enterSends ? "send" : "enter"}
-                placeholder={disabled ?? "메시지를 입력하세요"}
+                // 연결 차단 사유는 상단 연결 토스트가 알린다. 여기에는 이 대화 고유의 사유만 보인다.
+                placeholder={parentDisabled ?? "메시지를 입력하세요"}
                 aria-label="메시지 입력"
                 rows={2}
                 disabled={!!parentDisabled}

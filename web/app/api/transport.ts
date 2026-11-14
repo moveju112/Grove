@@ -128,21 +128,23 @@ class Channel {
         if (this.failure) throw this.failure;
         return new Promise((resolve, reject) => { this.waiter = { resolve, reject }; });
     }
-    async start(pin: string) {
-        const timer = setTimeout(() => this.fail(new Error("암호화 연결 확인 시간이 초과됐습니다.")), 10_000);
+    /// version 1: 연결당 요청 하나(터미널). version 2: 여러 요청을 한 연결에서 다중화한다.
+    async start(pin: string, version: 1 | 2 = 1) {
+        const timer = setTimeout(() => this.fail(new TypeError("암호화 연결 확인 시간이 초과됐습니다.")), 10_000);
         try {
             if (this.failure) throw this.failure;
             await new Promise<void>((resolve, reject) => {
                 this.ws.addEventListener("open", () => resolve(), { once: true });
+                this.ws.addEventListener("error", () => reject(this.failure ?? new TypeError("암호화 연결에 실패했습니다.")), { once: true });
                 this.ws.addEventListener("close", () => reject(this.failure ?? new Error("연결 실패")), { once: true });
             });
             const pair = await crypto.subtle.generateKey({ name: "X25519" }, false, ["deriveBits"]) as CryptoKeyPair;
             const publicKey = new Uint8Array(await crypto.subtle.exportKey("raw", pair.publicKey));
-            this.ws.send(JSON.stringify({ version: 1, key: base64(publicKey) }));
+            this.ws.send(JSON.stringify({ version, key: base64(publicKey) }));
             const raw = await this.next();
             if (typeof raw !== "string" || raw.length > 512) throw new Error("암호화 handshake 형식 오류");
             const hello = JSON.parse(raw) as { version: number; key: string; signature: string };
-            if (hello.version !== 1) throw new Error("지원하지 않는 암호화 버전입니다.");
+            if (hello.version !== version) throw new Error("지원하지 않는 암호화 버전입니다.");
             const server = unbase64(hello.key);
             const identity = unbase64(pin);
             if (server.length !== 32) throw new Error("서버 키 형식 오류");
@@ -182,6 +184,210 @@ class Channel {
     }
 }
 
+// ---- 다중화 연결(handshake version 2). 서버 계약: src/e2ee/mux.rs ----
+const OPEN = 0x01, ACK = 0x02, CANCEL = 0x03, PING = 0x04;
+const HEADERS = 0x11, DATA = 0x12, END = 0x13, FAIL = 0x14, PONG = 0x15;
+/// 연결이 살아 있는 동안 주기적으로 확인한다. 서버는 60초 동안 frame이 없으면 연결을 닫는다.
+const HEARTBEAT_MS = 15_000;
+const PING_TIMEOUT_MS = 10_000;
+/// 백그라운드 복귀처럼 오래 조용했던 연결은 쓰기 전에 짧게 확인한다.
+const QUIET_MS = 20_000;
+const RESUME_PING_MS = 3_000;
+/// 서버가 이미 닫았을 시간이 지나면 확인 없이 새로 연결한다.
+const EXPIRED_MS = 55_000;
+
+type Meta = { type: string; status: number; headers: [string, string][] };
+type MuxStream = {
+    headers: (meta: Meta) => void;
+    data: (bytes: Uint8Array<ArrayBuffer>) => void;
+    end: () => void;
+    fail: (error: Error) => void;
+};
+
+function frame(kind: number, id: number, payload: Uint8Array = new Uint8Array()): Uint8Array<ArrayBuffer> {
+    const bytes = new Uint8Array(5 + payload.length);
+    bytes[0] = kind;
+    new DataView(bytes.buffer).setUint32(1, id);
+    bytes.set(payload, 5);
+    return bytes;
+}
+
+export class Mux {
+    private streams = new Map<number, MuxStream>();
+    private pings = new Map<number, () => void>();
+    private nextId = 1;
+    private lastSeen = Date.now();
+    private checking: Promise<boolean> | null = null;
+    private heartbeat: ReturnType<typeof setInterval>;
+    dead: Error | null = null;
+
+    private constructor(private channel: Channel) {
+        this.heartbeat = setInterval(() => {
+            if (Date.now() - this.lastSeen < HEARTBEAT_MS) return;
+            void this.ping(PING_TIMEOUT_MS).then((alive) => { if (!alive) this.fail(new TypeError("암호화 연결 응답이 없습니다.")); });
+        }, HEARTBEAT_MS);
+        void this.run();
+    }
+
+    static async open(config: Connection): Promise<Mux> {
+        const channel = new Channel(config.endpoint);
+        await channel.start(config.key, 2);
+        return new Mux(channel);
+    }
+
+    private async run() {
+        try {
+            for (;;) {
+                const bytes = await this.channel.receive();
+                this.lastSeen = Date.now();
+                if (bytes.length < 5) throw new Error("암호화 응답 형식 오류");
+                const kind = bytes[0]!;
+                const id = new DataView(bytes.buffer, bytes.byteOffset).getUint32(1);
+                const payload = bytes.slice(5);
+                if (kind === PONG) { this.pings.get(id)?.(); continue; }
+                const stream = this.streams.get(id);
+                if (!stream) continue;
+                if (kind === HEADERS) stream.headers(JSON.parse(decode.decode(payload)) as Meta);
+                else if (kind === DATA) stream.data(payload);
+                else if (kind === END) stream.end();
+                else if (kind === FAIL) stream.fail(new TypeError("서버가 요청을 처리하지 못했습니다."));
+                else throw new Error("암호화 응답 순서 오류");
+            }
+        } catch (error) {
+            this.fail(error instanceof TypeError ? error : new TypeError("암호화 연결이 끊겼습니다."));
+        }
+    }
+
+    /// 연결이 끊기면 진행 중인 모든 요청을 전송 오류로 끝낸다. 다음 요청은 새 연결을 맺는다.
+    fail(error: Error) {
+        if (this.dead) return;
+        this.dead = error;
+        clearInterval(this.heartbeat);
+        this.channel.close();
+        for (const stream of this.streams.values()) stream.fail(error);
+        this.streams.clear();
+        for (const resolve of this.pings.values()) resolve();
+        this.pings.clear();
+    }
+
+    private send(kind: number, id: number, payload?: Uint8Array) {
+        return this.channel.send(frame(kind, id, payload));
+    }
+
+    /// 응답이 오면 true. 시간 안에 오지 않거나 연결이 끊기면 false.
+    ping(timeoutMs: number): Promise<boolean> {
+        if (this.dead) return Promise.resolve(false);
+        const id = this.nextId++;
+        return new Promise<boolean>((resolve) => {
+            const timer = setTimeout(() => { this.pings.delete(id); resolve(false); }, timeoutMs);
+            this.pings.set(id, () => { clearTimeout(timer); this.pings.delete(id); resolve(!this.dead); });
+            this.send(PING, id).catch(() => { clearTimeout(timer); this.pings.delete(id); resolve(false); });
+        });
+    }
+
+    /// 쓰기 전에 연결이 살아 있는지 판단한다. 오래 조용했으면 짧게 확인하고, 죽었으면 닫는다.
+    async usable(): Promise<boolean> {
+        if (this.dead) return false;
+        const quiet = Date.now() - this.lastSeen;
+        if (quiet >= EXPIRED_MS) { this.fail(new TypeError("암호화 연결이 만료됐습니다.")); return false; }
+        if (quiet < QUIET_MS) return true;
+        this.checking ??= this.ping(RESUME_PING_MS).finally(() => { this.checking = null; });
+        const alive = await this.checking;
+        if (!alive) this.fail(new TypeError("암호화 연결 응답이 없습니다."));
+        return alive;
+    }
+
+    request(operation: unknown, method: string, signal?: AbortSignal | null): Promise<{ meta: Meta; body: ReadableStream<Uint8Array<ArrayBuffer>> | null }> {
+        if (this.dead) return Promise.reject(this.dead);
+        const id = this.nextId++;
+        const queue: Uint8Array<ArrayBuffer>[] = [];
+        let waiter: { resolve: (value: Uint8Array<ArrayBuffer> | null) => void; reject: (error: Error) => void } | null = null;
+        let ended = false;
+        let failure: Error | null = null;
+        let headed = false;
+        let consume = true;
+        const done = () => { this.streams.delete(id); signal?.removeEventListener("abort", abort); };
+        const cancel = () => { if (this.streams.has(id)) { done(); void this.send(CANCEL, id).catch(() => undefined); } };
+        const abort = () => stream.fail(new DOMException("요청을 취소했습니다.", "AbortError"));
+        const next = (): Promise<Uint8Array<ArrayBuffer> | null> => {
+            const value = queue.shift();
+            if (value) return Promise.resolve(value);
+            if (failure) return Promise.reject(failure);
+            if (ended) return Promise.resolve(null);
+            return new Promise((resolve, reject) => { waiter = { resolve, reject }; });
+        };
+        let settle!: { resolve: (value: { meta: Meta; body: ReadableStream<Uint8Array<ArrayBuffer>> | null }) => void; reject: (error: Error) => void };
+        const result = new Promise<{ meta: Meta; body: ReadableStream<Uint8Array<ArrayBuffer>> | null }>((resolve, reject) => { settle = { resolve, reject }; });
+        const stream: MuxStream = {
+            headers: (meta) => {
+                if (headed || meta.type !== "headers" || meta.status < 200 || meta.status > 599) { stream.fail(new TypeError("암호화 응답 형식 오류")); return; }
+                headed = true;
+                // 본문 없는 응답도 서버의 끝 frame까지는 받아 ACK 흐름을 맞춘다.
+                consume = !(meta.status === 204 || meta.status === 304 || method === "HEAD");
+                const body = consume ? new ReadableStream<Uint8Array<ArrayBuffer>>({
+                    pull: async (controller) => {
+                        try {
+                            const bytes = await next();
+                            if (bytes === null) { controller.close(); done(); return; }
+                            controller.enqueue(bytes);
+                            void this.send(ACK, id).catch(() => undefined);
+                        } catch (error) { controller.error(error); done(); }
+                    },
+                    cancel: () => cancel(),
+                }, { highWaterMark: 1 }) : null;
+                settle.resolve({ meta, body });
+            },
+            data: (bytes) => {
+                if (!headed || bytes.length > 48 * 1024) { stream.fail(new TypeError("암호화 응답 순서 오류")); return; }
+                if (!consume) { void this.send(ACK, id).catch(() => undefined); return; }
+                if (waiter) { const w = waiter; waiter = null; w.resolve(bytes); } else queue.push(bytes);
+            },
+            end: () => {
+                ended = true;
+                if (!consume) done();
+                if (waiter) { const w = waiter; waiter = null; w.resolve(null); }
+            },
+            fail: (error) => {
+                if (failure || ended) return;
+                failure = error;
+                cancel();
+                if (!headed) settle.reject(error);
+                if (waiter) { const w = waiter; waiter = null; w.reject(error); }
+            },
+        };
+        this.streams.set(id, stream);
+        signal?.addEventListener("abort", abort, { once: true });
+        if (signal?.aborted) abort();
+        else this.send(OPEN, id, text.encode(JSON.stringify(operation))).catch(() => stream.fail(new TypeError("암호화 연결이 끊겼습니다.")));
+        return result;
+    }
+}
+
+// 연결 대상별로 다중화 연결 하나를 공유한다. 연결 중인 요청은 같은 연결을 기다린다.
+let shared: { scope: string; mux: Promise<Mux> } | null = null;
+async function muxFor(config: Connection): Promise<Mux> {
+    const scope = scopeOf(config);
+    for (let attempt = 0; attempt < 2; attempt++) {
+        const current = shared?.scope === scope ? shared : null;
+        if (current) {
+            const mux = await current.mux.catch(() => null);
+            if (mux && await mux.usable()) return mux;
+            // 먼저 확인한 요청 하나만 새 연결을 만든다. 나머지는 그 연결을 함께 기다린다.
+            if (shared !== current) continue;
+        }
+        const opening = Mux.open(config);
+        shared = { scope, mux: opening };
+        opening.catch(() => { if (shared?.mux === opening) shared = null; });
+        return opening;
+    }
+    return shared?.scope === scope ? shared.mux : Mux.open(config);
+}
+
+function transportError(error: unknown): Error {
+    if (error instanceof DOMException && error.name === "AbortError") return error;
+    return error instanceof TypeError ? error : new TypeError(error instanceof Error ? error.message : "암호화 연결에 실패했습니다.");
+}
+
 function scopeOf(config: Connection) { return `${config.endpoint}|${config.key}`; }
 async function cookieFor(config: Connection): Promise<string> {
     return loadCredential(scopeOf(config));
@@ -208,42 +414,28 @@ export async function transportFetch(path: string, init: RequestInit = {}): Prom
     const body = init.body == null ? new Uint8Array() : new Uint8Array(await new Response(init.body).arrayBuffer());
     if (body.length > MAX_BODY) throw new Error("요청 본문은 8MiB 이하여야 합니다.");
     init.signal?.throwIfAborted();
-    const channel = new Channel(config.endpoint, init.signal);
+    const method = init.method ?? "GET";
+    let response: Awaited<ReturnType<Mux["request"]>>;
     try {
-        await channel.start(config.key);
-        await channel.send(text.encode(JSON.stringify({
-            kind: "http", path, method: init.method ?? "GET", headers: [...headers.entries()], body: base64(body),
-        })));
-        const meta = JSON.parse(decode.decode(await channel.receive())) as { type: string; status: number; headers: [string, string][] };
-        if (meta.type !== "headers" || meta.status < 200 || meta.status > 599) throw new Error("암호화 응답 형식 오류");
-        const responseHeaders = new Headers();
-        for (const [name, value] of meta.headers) {
-            if (name.toLowerCase() === "set-cookie") {
-                const first = value.split(";")[0]!;
-                if (!/^grove_refresh[^=]*=/.test(first)) throw new Error("인증 쿠키 형식 오류");
-                await updateCookie(config, /(?:^|;)\s*Max-Age=0(?:;|$)/i.test(value) ? "" : first);
-            } else if (!["content-length", "transfer-encoding", "content-encoding"].includes(name.toLowerCase())) {
-                responseHeaders.append(name, value);
-            }
+        const mux = await muxFor(config);
+        init.signal?.throwIfAborted();
+        response = await mux.request({ kind: "http", path, method, headers: [...headers.entries()], body: base64(body) }, method, init.signal);
+    } catch (error) {
+        // 연결 실패는 모두 전송 오류(TypeError)로 통일한다. 조회는 한 번 재시도하고, 변경은 결과 확인으로 넘어간다.
+        throw transportError(error);
+    }
+    const { meta, body: stream } = response;
+    const responseHeaders = new Headers();
+    for (const [name, value] of meta.headers) {
+        if (name.toLowerCase() === "set-cookie") {
+            const first = value.split(";")[0]!;
+            if (!/^grove_refresh[^=]*=/.test(first)) { await stream?.cancel(); throw new Error("인증 쿠키 형식 오류"); }
+            await updateCookie(config, /(?:^|;)\s*Max-Age=0(?:;|$)/i.test(value) ? "" : first);
+        } else if (!["content-length", "transfer-encoding", "content-encoding"].includes(name.toLowerCase())) {
+            responseHeaders.append(name, value);
         }
-        const stream = new ReadableStream<Uint8Array<ArrayBuffer>>({
-            async pull(controller) {
-                try {
-                    const bytes = await channel.receive();
-                    if (bytes.length === 1 && bytes[0] === 2) { controller.close(); channel.close(); return; }
-                    if (bytes[0] !== 1 || bytes.length > 48 * 1024 + 1) throw new Error("암호화 응답 순서 오류");
-                    controller.enqueue(bytes.slice(1));
-                    await channel.send(new Uint8Array([1]));
-                } catch (error) { controller.error(error); channel.close(); }
-            },
-            cancel() { channel.close(); },
-        }, { highWaterMark: 1 });
-        if (meta.status === 204 || meta.status === 304 || init.method === "HEAD") {
-            await stream.cancel();
-            return new Response(null, { status: meta.status, headers: responseHeaders });
-        }
-        return new Response(stream, { status: meta.status, headers: responseHeaders });
-    } catch (error) { channel.close(); throw error; }
+    }
+    return new Response(stream, { status: meta.status, headers: responseHeaders });
 }
 
 export type TerminalSocket = Pick<WebSocket, "readyState" | "binaryType" | "onopen" | "onmessage" | "onclose" | "send" | "close">;

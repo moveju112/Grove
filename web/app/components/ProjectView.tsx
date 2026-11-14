@@ -12,7 +12,7 @@ import { WorktreesPanel } from "./WorktreesPanel";
 import { ProjectScripts } from "./ProjectScripts";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
-import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
+import { requireServerAction } from "./pwa/lifecycle";
 import { Stack } from "@astryxdesign/core/Stack";
 import { ActionMenu, Panel, ToolsTrigger, Workbench } from "./ui/Controls";
 import { Icon } from "./icons";
@@ -70,7 +70,6 @@ function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
 
 /// 프로젝트 = 단일 작업공간. 중간 생성 단계 없이 입력창에서 바로 새 대화를 시작한다.
 export function ProjectView({ tabId, projectId, open }: { tabId: string; projectId: string; open: Opener }) {
-    const serverBlocked = useServerBlockReason();
     const [q, setQ] = useState("");
     const [archived, setArchived] = useState(false);
     const [pages, setPages] = useState<string[]>([""]);
@@ -84,7 +83,7 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
 
     // 확인 중에는 입력을 막지 않는다. 경로 없음·조회 실패만 실행 차단 사유로 표시한다.
     const composer = <ProjectComposer projectId={projectId} tabId={tabId} open={open}
-        blockedReason={serverBlocked} beforeMutation={requireServerAction}
+        beforeMutation={requireServerAction}
         disabled={project.error ? "프로젝트를 확인할 수 없습니다" : project.data && !project.data.available ? "프로젝트 경로 없음" : null} />;
     if (project.error) return <Stack className="project-view">
         <h1>프로젝트를 열 수 없습니다</h1>

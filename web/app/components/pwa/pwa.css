@@ -30,7 +30,36 @@
     flex-shrink: 0;
     max-height: min(35dvh, 20rem);
     overflow: auto;
-    padding: .25rem .7rem;
+    padding: 0 .7rem;
+}
+
+/* 연결 상태 토스트: 화면을 밀어내지 않고 상단 가운데에 하나만 뜬다. */
+.connection-toast {
+    position: fixed;
+    z-index: 40;
+    top: calc(env(safe-area-inset-top, 0px) + 56px);
+    left: 50%;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: var(--spacing-2);
+    max-width: calc(100vw - 24px);
+    padding: 6px 8px 6px 14px;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    background: var(--panel);
+    color: var(--text);
+    box-shadow: var(--shadow-float);
+    font-size: 13px;
+    white-space: nowrap;
+}
+.connection-toast > span:not(.connection-toast-dot) { overflow: hidden; text-overflow: ellipsis; }
+.connection-toast-dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--muted); }
+.connection-toast.error .connection-toast-dot { background: var(--err); }
+.connection-toast button { flex: none; min-height: 28px; border-radius: 999px; }
+@media (prefers-reduced-motion: no-preference) {
+    .connection-toast { animation: connection-toast-in 160ms ease-out; }
+    @keyframes connection-toast-in { from { opacity: 0; transform: translate(-50%, -4px); } }
 }
 
 .pwa-lifecycle .update-banner {

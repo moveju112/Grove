@@ -163,12 +163,12 @@ def test_steps(a):
     """범위를 추측해 전체로 넓히지 않고, 요청한 검사만 실행한다."""
     if a.e2e_regression and not a.e2e:
         raise ValueError("--e2e-regression에는 --e2e FILE이 필요합니다 (--full은 기존 정책 사용)")
-    if a.full and (a.rust or a.lib or a.filter or a.vitest or a.e2e or a.typecheck):
+    if a.full and (a.rust or a.lib or a.filter or a.vitest or a.e2e or a.typecheck or a.relay_e2e is not None):
         raise ValueError("--full과 선택 검사 옵션은 함께 사용할 수 없습니다")
     if a.filter and not (a.rust or a.lib):
         raise ValueError("--filter에는 --rust 또는 --lib가 필요합니다")
-    if not (a.full or a.rust or a.lib or a.vitest or a.e2e or a.typecheck):
-        raise ValueError("검사 범위를 지정하세요: --rust TARGET, --lib, --vitest FILE, --e2e FILE, --typecheck 또는 --full")
+    if not (a.full or a.rust or a.lib or a.vitest or a.e2e or a.typecheck or a.relay_e2e is not None):
+        raise ValueError("검사 범위를 지정하세요: --rust TARGET, --lib, --vitest FILE, --e2e FILE, --relay-e2e [FILE], --typecheck 또는 --full")
     steps = []
     web = os.path.join(ROOT, "web")
     if a.full or a.rust or a.lib:
@@ -193,6 +193,11 @@ def test_steps(a):
             ("web build", ["npm", "run", "build"], web),
             ("e2e", ["npx", "playwright", "test", *(a.e2e or [])], web),
         ]
+    if a.relay_e2e is not None:
+        # 폰과 같은 relay 경로. 기본은 로컬 스택, GROVE_RELAY_STATE를 주면 그 대상(스테이징)을 시험한다.
+        if not any(step[0] == "server debug build" for step in steps):
+            steps += [("server debug build", ["cargo", "build", "--bin", "grove"], ROOT), ("web build", ["npm", "run", "build"], web)]
+        steps.append(("relay e2e", ["npx", "playwright", "test", "-c", "playwright.relay.config.ts", *a.relay_e2e], web))
     return steps
 
 
@@ -218,6 +223,10 @@ def cmd_test(a):
                         "TMPDIR": tmp, "GROVE_BIN": binary,
                         "GROVE_E2E_FAST": str(int(not a.full and not a.e2e_regression)),
                     })
+            elif name == "relay e2e":
+                # Chrome 소켓 경로 한도 때문에 짧은 TMPDIR을 쓴다(일반 e2e와 같은 이유).
+                with tempfile.TemporaryDirectory(prefix="gpr-", dir="/tmp") as tmp:
+                    run(name, cmd, cwd=cwd, extra_env={"TMPDIR": tmp})
             else:
                 run(name, cmd, cwd=cwd)
         except (SystemExit, subprocess.CalledProcessError, OSError):
@@ -524,6 +533,7 @@ def main(argv=None):
     t.add_argument("--vitest", nargs="+", metavar="FILE", help="Vitest 파일")
     t.add_argument("--e2e", nargs="+", metavar="FILE", help="Playwright spec (debug 서버 사용)")
     t.add_argument("--e2e-regression", action="store_true", help="선택 E2E에 기존 timeout·재시도 정책 사용 (기본: 빠른 실패)")
+    t.add_argument("--relay-e2e", nargs="*", metavar="FILE", help="relay 경로 시험(로컬 스택, GROVE_RELAY_STATE로 스테이징 지정)")
     t.add_argument("--typecheck", action="store_true")
     t.add_argument("--full", action="store_true", help="전체 Rust·타입·Vitest·Playwright 인수 검사")
     t.add_argument("--dry-run", action="store_true", help="실행 없이 선택한 명령 표시")

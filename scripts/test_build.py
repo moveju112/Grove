@@ -160,6 +160,22 @@ class Verification(unittest.TestCase):
         self.assertEqual(calls[-1][1], ["npx", "playwright", "test", "e2e/scroll.spec.ts"])
         self.assertEqual(calls[-1][2]["extra_env"]["GROVE_E2E_FAST"], "0")
 
+    def test_relay_selection_builds_once_and_uses_isolated_browser_tmp(self):
+        calls, code, _ = self.execute("--e2e", "e2e/encrypted.spec.ts", "--relay-e2e", "mobile-relay.spec.ts")
+        self.assertEqual(code, 0)
+        self.assertEqual([name for name, _, _ in calls].count("server debug build"), 1)
+        self.assertEqual([name for name, _, _ in calls].count("web build"), 1)
+        self.assertEqual(calls[-1][1], ["npx", "playwright", "test", "-c", "playwright.relay.config.ts", "mobile-relay.spec.ts"])
+        self.assertTrue(calls[-1][2]["extra_env"]["TMPDIR"].startswith("/tmp/gpr-"))
+
+    def test_relay_without_file_runs_all_relay_scenarios_but_not_full(self):
+        calls, code, _ = self.execute("--relay-e2e")
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[-1][1], ["npx", "playwright", "test", "-c", "playwright.relay.config.ts"])
+        calls, code, _ = self.execute("--full", "--relay-e2e")
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
+
     def test_regression_mode_requires_selected_e2e(self):
         for args in [[], ["--typecheck"], ["--full"]]:
             with self.subTest(args=args):

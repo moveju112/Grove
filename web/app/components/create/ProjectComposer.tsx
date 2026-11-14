@@ -7,9 +7,10 @@ import { useWorkspaceMode, useWorkspaces } from "../../state/workspaces";
 import { CreationFocus } from "./CreationEntry";
 
 // 모든 진입점은 이 입력창으로 이어진다. 진입·초점 이동만으로는 자원을 만들지 않는다.
-export function ProjectComposer({ projectId, tabId, open, disabled, blockedReason, beforeMutation }: {
+// 연결 차단 사유는 상단 연결 토스트가 알린다. 전송 직전 guard(beforeMutation)만 받는다.
+export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutation }: {
     projectId: string; tabId: string; open: Opener; disabled: string | null;
-    blockedReason?: string | null; beforeMutation?: () => void;
+    beforeMutation?: () => void;
 }) {
     const focus = useContext(CreationFocus);
     const ref = useRef<HTMLDivElement>(null);
@@ -47,7 +48,6 @@ export function ProjectComposer({ projectId, tabId, open, disabled, blockedReaso
         open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
     };
     return <div ref={ref} style={{ display: "contents" }}>
-        {blockedReason && <p className="warn" role="status" data-testid="project-creation-blocked">{blockedReason}</p>}
         {projectMode && spaces.length > 0 && (
             <select aria-label="새 대화 워크스페이스" value={target} onChange={(e) => setWorkspace(e.target.value)}>
                 <option value="">워크스페이스: 프로젝트 폴더</option>

@@ -42,8 +42,7 @@ it("프로젝트 등록·clone은 막되 경로 입력·복사·취소를 비활
 it("프로젝트 초안은 parent disabled로 막지 않고 생성 직전·후속 전송 직전에 guard를 호출한다", async () => {
     const beforeMutation = vi.fn();
     renderToStaticMarkup(createElement(ProjectComposer, {
-        projectId: project.id, tabId: "fixture-tab", open: vi.fn(), disabled: null,
-        blockedReason: "오프라인", beforeMutation,
+        projectId: project.id, tabId: "fixture-tab", open: vi.fn(), disabled: null, beforeMutation,
     }));
     const props = vi.mocked(Composer).mock.calls[0]![0] as ComponentProps<typeof Composer>;
     expect(props.disabled).toBeNull();
