@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DetailDialog } from "../ui/Controls";
 import type { SecretInfo } from "../../api/generated";
 import { useServerBlockReason } from "../pwa/lifecycle";
 import { LocalProfileCreation, type CreateLocalProfile, type LocalDraft } from "./connection";
@@ -25,17 +26,8 @@ export function LocalModelConnection({ secrets, onCreate }: { secrets: SecretInf
             setStatus("error");
         }
     };
-    return <details data-testid="local-model-connection">
-        <summary>선택적 로컬 HTTP 모델 연결</summary>
-        <p className="muted small">
-            OpenAI-compatible HTTP 서버의 endpoint를 직접 입력하세요(예: http://127.0.0.1:8000/v1).
-            localhost는 이 브라우저·휴대폰이 아니라 Grove 서버가 실행되는 컴퓨터입니다.
-            설치·자동 시작·다운로드·포트 검색은 하지 않습니다.
-        </p>
-        <p className="muted small">
-            수동 모델 ID와 endpoint를 저장한 뒤 프로필에서 연결 확인·모델 목록 새로고침을 실행하세요.
-            목록이 없거나 미지원이어도 수동 모델은 유지됩니다. 모델은 직접 선택해야 하며 목록 조회는 생성 요청을 보내지 않습니다.
-        </p>
+    return <DetailDialog data-testid="local-model-connection" label="로컬 HTTP 모델 연결" title="로컬 HTTP 모델 연결">
+        <p className="muted small">localhost는 Grove 서버가 실행되는 컴퓨터를 가리킵니다.</p>
         <form className="inline wrap" aria-label="로컬 HTTP 모델 연결" onSubmit={(event) => { event.preventDefault(); void save(); }}>
             <input aria-label="로컬 연결 이름" placeholder="로컬 연결 이름" maxLength={80} required disabled={locked}
                 value={draft.name} onChange={(event) => setDraft({ ...draft, name: event.target.value })} />
@@ -53,10 +45,10 @@ export function LocalModelConnection({ secrets, onCreate }: { secrets: SecretInf
             </button>
         </form>
         {serverBlocked && <p className="warn small" role="status">{serverBlocked}</p>}
-        {status === "saved" && <p role="status">로컬 프로필 저장됨. 연결 상태는 아래 프로필의 연결 확인 결과를 보세요. 사용할 대화에서 프로필을 명시적으로 선택하세요.</p>}
+        {status === "saved" && <p role="status">로컬 프로필 저장됨</p>}
         {status === "error" && <p className="err" role="alert">{error} 입력은 보존했습니다.</p>}
         {status === "error" && creation.pending && <p className="warn" role="status">
             저장 결과가 불명확합니다. 자동 재전송하지 않습니다. 같은 요청을 확인할 때까지 입력을 유지하세요.
         </p>}
-    </details>;
+    </DetailDialog>;
 }

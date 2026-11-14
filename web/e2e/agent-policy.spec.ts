@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, login, openDetails, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Run = { id: string; status: string; child_session_id: string; last_turn_id: string; result: string | null };
@@ -15,13 +15,14 @@ async function setup(settings: Page, chat: Page) {
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
     await login(settings);
     await settings.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
+    await settings.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
     await settings.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
     await save(settings, "agents.allowed_roles", "위임 허용 역할", "reviewer");
     await login(chat);
     await chat.locator(".recent").getByRole("button", { name: new RegExp(session.title) }).click();
     const view = sessionView(chat, session.id);
-    await view.getByLabel("보내기 방식").selectOption("model");
-    await view.getByLabel("도구", { exact: true }).check();
+    await composerOption(view, "보내기 방식", "model");
+    await composerOption(view, "도구", true);
     return { project, session, view };
 }
 
@@ -94,7 +95,7 @@ test("설정한 역할만 안내·실행하고 승인 응답 유실 뒤에도 �
         expect((await latestTurn(session.id)).tool_calls[0]!.result.error?.code).toBe("delegation_disabled");
         const after = (await apiCall<{ runs: Run[] }>("GET", `/sessions/${session.id}/agent-runs`)).runs;
         expect(after).toEqual(list);
-        await openDetails(view.getByTestId("agent-runs").locator("details"));
+        await openDetails(view.getByTestId("agent-runs"));
         await expect(view.getByTestId("agent-run")).toHaveAttribute("data-status", "completed");
         await view.getByTestId("agent-runs").getByRole("button", { name: "자식 대화", exact: true }).click();
         await expect(sessionView(chat, list[0]!.child_session_id).getByTestId("msg-assistant").last()).toContainText("보존할 검토 결과");
@@ -128,7 +129,7 @@ test("승인 대기 중 철회를 실행 직전에 검사하고 solo 전환 뒤�
         const run = view.getByTestId("agent-run");
         await expect(run).toHaveAttribute("data-status", "running");
         await save(page, "agents.orchestration", "에이전트 실행 방식", "solo");
-        await openDetails(view.getByTestId("agent-runs").locator("details"));
+        await openDetails(view.getByTestId("agent-runs"));
         await run.getByRole("button", { name: "취소", exact: true }).click();
         await expect(run).toHaveAttribute("data-status", "cancelled");
         await expect(view.getByTestId("msg-agent-result")).toHaveCount(1);

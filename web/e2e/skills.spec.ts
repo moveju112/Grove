@@ -97,6 +97,7 @@ test("다른 세션으로 전환한 뒤 늦게 도착한 이전 선택 응답을
         await page.locator(".recent").getByRole("button", { name: new RegExp(`${name}-first`) }).click();
         await openDetails(sessionView(page, first.id).getByTestId("skills-disclosure"));
         await started;
+        await page.getByRole("dialog", { name: "대화 스킬", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
         await page.locator(".recent").getByRole("button", { name: new RegExp(`${name}-second`) }).click();
         const view = sessionView(page, second.id);
         await openDetails(view.getByTestId("skills-disclosure"));

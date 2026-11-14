@@ -15,7 +15,7 @@ describe("복구 안내와 서버 작업 버튼", () => {
         expect(html).toContain('disabled=""');
         expect(html).toContain(`title="${reason}"`);
         expect(html).toContain(`aria-description="${reason}"`);
-        expect(html).toContain(">실행</button>");
+        expect(html.replace(/<[^>]+>/g, "")).toBe("실행");
     });
     it("복구 후에도 기능 자체의 disabled·설명은 유지한다", () => {
         vi.spyOn(lifecycle, "useServerBlockReason").mockReturnValue(null);

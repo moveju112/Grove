@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { DetailDialog } from "./ui/Controls";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
@@ -38,6 +39,12 @@ import { AgentOverview } from "./agent-overview/AgentOverview";
 import { BotsPanel } from "./BotsPanel";
 import { AgentConnect } from "./AgentConnect";
 import type { Opener } from "./Workspace";
+import { SettingsGroup } from "./SettingsGroup";
+import { Icon, type IconName } from "./icons";
+import { Button } from "../design/Button";
+import { Stack } from "@astryxdesign/core/Stack";
+import { TextInput } from "@astryxdesign/core/TextInput";
+import { Switch } from "@astryxdesign/core/Switch";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -66,7 +73,7 @@ export const ITEMS: Item[] = [
     { id: "notify", menu: "display", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜 턴 경과 소요 대기", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
-    { id: "devices", menu: "devices", label: "기기 토큰", keywords: "device token pair 페어링 폐기 분실", scope: "서버 전체" },
+    { id: "devices", menu: "devices", label: "등록 기기", keywords: "device token pair 기기 토큰 페어링 폐기 분실", scope: "서버 전체" },
     { id: "browser-capabilities", menu: "devices", label: "브라우저 기능·권한", keywords: "이 기기 browser notification clipboard 알림 복사 붙여넣기 파일 첨부 드래그 HTTPS 보안 권한", scope: "이 기기" },
     { id: "logout", menu: "devices", label: "로그아웃", keywords: "logout sign out", scope: "이 기기" },
     { id: "usage", menu: "model", label: "사용량·비용", keywords: "usage cost token price 사용량 비용 토큰 가격", scope: "서버 전체" },
@@ -131,12 +138,13 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 link.open(key);
             }}>
             <nav className="settings-nav" aria-label="설정 메뉴">
-                <input type="search" placeholder="설정 검색" value={q} onChange={(e) => { link.cancel(); setQ(e.target.value); }} aria-label="설정 검색" />
+                <TextInput type="search" label="설정 검색" isLabelHidden placeholder="설정 검색" value={q}
+                    onChange={(value) => { link.cancel(); setQ(value); }} containerClassName="settings-search" />
                 <div className="settings-menu">
                 {MENUS.map(([m, label]) => (
-                    <button key={m} aria-current={!results && menu === m ? "page" : undefined} className={!results && menu === m ? "on" : ""} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
+                    <Button key={m} aria-current={!results && menu === m ? "page" : undefined} className={!results && menu === m ? "settings-menu-item on" : "settings-menu-item"} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
                         {label}
-                    </button>
+                    </Button>
                 ))}
                 </div>
                 {sessionId ? (
@@ -147,12 +155,12 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                     projectId && <p className="muted small" data-testid="settings-origin">프로젝트 · {projectName ?? projectId}</p>
                 )}
             </nav>
-            <div className="settings-body">
+            <Stack className="settings-body">
                 <h1 className="settings-heading">{needle ? "검색 결과" : MENUS.find(([id]) => id === menu)?.[1]}</h1>
                 {link.pending && <p className="muted" role="status">링크한 설정을 불러오는 중…</p>}
                 {link.error && <p className="err" role="alert">{link.error}</p>}
                 {needle && <p className="muted">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</p>}
-                {serverDefs.filter((d) => !isExecSetting(d)).length > 0 && <ScopedSettings defs={serverDefs.filter((d) => !isExecSetting(d))} target={target}
+                {serverDefs.filter((d) => !isExecSetting(d)).length > 0 && <ScopedSettings grouped defs={serverDefs.filter((d) => !isExecSetting(d))} target={target}
                     linkedKey={link.key} onLinkReady={onLinkReady}
                     resetDefs={!needle ? (registry.data ?? []).filter((d) => d.menu === menu) : undefined} area={MENUS.find(([id]) => id === menu)?.[1]} />}
                 {hiddenAdvanced > 0 && !showAdvanced && (
@@ -164,13 +172,13 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 {visible("source-settings") && <Section item="source-settings"><SourceSettings projectId={projectId} /></Section>}
                 {visible("mcp") && mcpSupported !== false && <Section item="mcp"><McpServers /></Section>}
                 {visible("hooks") && <Section item="hooks"><HooksSettings projectId={projectId} projectName={projectName} /></Section>}
-                {(visible("exec-settings") || serverDefs.some(isExecSetting)) && <ExecSettings
+                {(visible("exec-settings") || serverDefs.some(isExecSetting)) && <Section item="exec-settings"><ExecSettings
                     linkedKey={link.key} onLinkReady={onLinkReady}
-                    defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} />}
+                    defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} /></Section>}
                 {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
                 {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
                 {visible("bots") && <Section item="bots"><BotsPanel open={open} /></Section>}
-                {visible("devices") && <Section item="devices"><Hosts /><Devices /></Section>}
+                {visible("devices") && <Devices />}
                 {visible("browser-capabilities") && <Section item="browser-capabilities"><BrowserCapabilitiesSettings /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
                 {visible("logout") && <Section item="logout"><ServerActionButton onClick={() => void logout()}>이 브라우저에서 로그아웃</ServerActionButton></Section>}
@@ -179,23 +187,30 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 {visible("server-update") && <Section item="server-update"><UpdateSettings /></Section>}
                 {visible("backup") && (
                     <Section item="backup">
-                        <p>서버에서 실행: <code>grove snapshot &lt;파일&gt;</code> (실행 중에도 일관된 시점 복사), 복원은 <code>grove restore &lt;파일&gt; &lt;새 데이터 디렉터리&gt;</code> — 기존 데이터를 덮어쓰지 않습니다.</p>
+                        <dl>
+                            <dt>백업</dt><dd><code>grove snapshot &lt;파일&gt;</code></dd>
+                            <dt>복원</dt><dd><code>grove restore &lt;파일&gt; &lt;새 데이터 디렉터리&gt;</code></dd>
+                        </dl>
                     </Section>
                 )}
-            </div>
+            </Stack>
         </div>
     );
 }
 
+const GROUP_ICONS: Record<string, IconName> = {
+    devices: "monitor", "browser-capabilities": "shield", logout: "user",
+    profiles: "server", definitions: "edit", "source-settings": "edit",
+    mcp: "link", hooks: "settings", notify: "bell", health: "server", backup: "server",
+};
+
 function Section({ item, children }: { item: string; children: React.ReactNode }) {
     const it = ITEMS.find((i) => i.id === item)!;
     return (
-        <section className="setting" id={`setting-${item}`} data-testid={`setting-${item}`}>
-            <h2>
-                {it.label} <span className="scope">{it.scope}</span>
-            </h2>
+        <SettingsGroup title={it.label} scope={it.scope} icon={GROUP_ICONS[item]}
+            id={`setting-${item}`} testId={`setting-${item}`}>
             {children}
-        </section>
+        </SettingsGroup>
     );
 }
 
@@ -245,9 +260,9 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
             )}
             {show("enter") && (
                 <Section item="enter">
-                    <label className="check">
-                        <input type="checkbox" checked={p.enterToSend} onChange={(e) => set({ ...p, enterToSend: e.target.checked })} /> Enter로 보내기(Shift+Enter 줄바꿈)
-                    </label>
+                    <Switch label="Enter로 보내기" labelPosition="start" labelSpacing="spread" width="100%"
+                        value={p.enterToSend} onChange={(value) => set({ ...p, enterToSend: value })}
+                        labelTooltip="Shift+Enter는 줄바꿈에 사용합니다. 터치 키보드의 Enter는 항상 줄바꿈입니다." />
                     <DeviceSettingsReset fields={["enterToSend"]} label="입력 기본값 복원" />
                 </Section>
             )}
@@ -300,17 +315,16 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <label>
                         생각 과정(reasoning){" "}
                         <select aria-label="생각 과정 표시" value={p.reasoning} onChange={(e) => set({ ...p, reasoning: e.target.value as Prefs["reasoning"] })}>
-                            <option value="collapsed">접어서 표시</option>
-                            <option value="expanded">펼쳐서 표시</option>
+                            <option value="collapsed">상세 버튼으로 보기</option>
+                            <option value="expanded">본문에 표시</option>
                             <option value="hidden">숨김</option>
                         </select>
                     </label>
-                    <label className="check">
-                        <input type="checkbox" checked={p.answerOnly} onChange={(e) => set({ ...p, answerOnly: e.target.checked })} /> 답만 보기(도구·실행 기록 숨김, 승인 요청은 항상 표시)
-                    </label>
-                    <label className="check">
-                        <input type="checkbox" checked={p.expandTools} onChange={(e) => set({ ...p, expandTools: e.target.checked })} /> 도구 실행 세부를 펼쳐서 표시
-                    </label>
+                    <Switch label="답만 보기" labelPosition="start" labelSpacing="spread" width="100%"
+                        value={p.answerOnly} onChange={(value) => set({ ...p, answerOnly: value })}
+                        labelTooltip="도구·실행 기록은 숨기지만 승인 요청은 항상 표시합니다." />
+                    <Switch label="도구 실행 세부를 펼쳐서 표시" labelPosition="start" labelSpacing="spread" width="100%"
+                        value={p.expandTools} onChange={(value) => set({ ...p, expandTools: value })} />
                     <DeviceSettingsReset fields={["reasoning", "answerOnly", "expandTools"]} label="대화 표시 기본값 복원" />
                 </Section>
             )}
@@ -354,12 +368,12 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
     ] as const;
     return (
         <>
-            <p className="muted small">앱이 열려 있을 때만 알립니다.</p>
             {kinds.map(([key, label]) => (
                 <label className="check" key={key}>
                     <input type="checkbox" checked={p[key]} onChange={(e) => void toggle(key, e.target.checked)} /> {label}
                 </label>
             ))}
+            <span className="scope">앱 실행 중에만</span>
             <label className="check">
                 <input type="checkbox" checked={p.notifySound} onChange={(e) => set({ ...p, notifySound: e.target.checked })} /> 알림 소리
             </label>
@@ -426,10 +440,9 @@ function Profiles() {
     const isCli = f.protocol === "claude_code" || f.protocol === "codex_cli";
     return (
         <>
-            <details onToggle={(event) => setAgentSetup(event.currentTarget.open)}>
-                <summary>CLI 에이전트 연결</summary>
+            <DetailDialog label="CLI 에이전트 연결" title="CLI 에이전트 연결" onOpenChange={setAgentSetup}>
                 {agentSetup && <AgentConnect disabled={false} onConnected={() => list.reload()} />}
-            </details>
+            </DetailDialog>
             {management !== false && <LocalModelConnection secrets={secrets.data ?? []} onCreate={(body, key) =>
                 api.post("/model-profiles", body, { key, requires: ["model_management_v1"] })
             } />}
@@ -489,7 +502,7 @@ function Profiles() {
                 )}
                 {isCli && (
                     <span className="muted small" data-testid="cli-note">
-                        서버에 설치된 CLI의 로그인을 씁니다. 읽기 도구(파일 읽기·검색)만 허용하며, 파일 변경·명령 실행은 막습니다.
+                        서버 CLI 계정 · 읽기 전용
                     </span>
                 )}
                 <ServerActionButton type="submit">추가</ServerActionButton>
@@ -541,7 +554,7 @@ function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
     const changed = draft !== cur.body;
     const busy = restoring || saving;
     return (
-        <div className="def-editor">
+        <div className="def-editor" data-settings-unsaved={changed ? "true" : undefined}>
             <h3>{cur.name} <span className="muted small">revision {cur.revision}</span></h3>
             <p className="muted small">{cur.description}</p>
             <textarea value={draft} disabled={saving} onChange={(e) => local.write({
@@ -583,8 +596,7 @@ function NewDefinition({ kind }: { kind: string }) {
     const [f, setF] = useState({ id: "", name: "", body: "" });
     const save = useSave();
     return (
-        <details>
-            <summary>새 {kind === "agent" ? "에이전트" : "워크플로우"}</summary>
+        <DetailDialog label={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`} title={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`}>
             <form className="inline wrap" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post(`/definitions/${kind}`, f); setF({ id: "", name: "", body: "" }); }); }}>
                 <input placeholder="ID (소문자-하이픈)" value={f.id} onChange={(e) => setF({ ...f, id: e.target.value })} aria-label="ID" required />
                 <input placeholder="이름" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} aria-label="이름" required />
@@ -592,28 +604,58 @@ function NewDefinition({ kind }: { kind: string }) {
                 <ServerActionButton type="submit">만들기</ServerActionButton>
             </form>
             {save.view}
-        </details>
+        </DetailDialog>
     );
+}
+
+function CurrentDeviceName({ onSaved }: { onSaved?: () => void }) {
+    const query = useQuery<{ id: string; name: string }>("current-device", () => api.get("/auth/device"));
+    const [draft, setDraft] = useState<string | null>(null);
+    const save = useSave();
+    return <form className="inline" onSubmit={(event) => {
+        event.preventDefault();
+        if (draft === null) return;
+        void save.run(async () => {
+            await api.put("/auth/device", { name: draft.trim() });
+            setDraft(null); query.reload(); onSaved?.();
+        });
+    }}>
+        <label>이 기기 이름<input aria-label="이 기기 이름" value={draft ?? query.data?.name ?? ""}
+            disabled={!query.data} maxLength={80} required onChange={(event) => setDraft(event.target.value)} /></label>
+        <ServerActionButton type="submit" disabled={draft === null || !draft.trim()}>이름 저장</ServerActionButton>
+        {draft !== null && <span data-settings-unsaved="true" className="muted small">저장 안 됨</span>}
+        {Boolean(query.error) && <p className="err" role="alert">기기 이름을 읽지 못했습니다.</p>}
+        {save.view}
+    </form>;
 }
 
 function Devices() {
     const list = useQuery<DeviceInfo[]>("devices", () => api.get("/devices"));
     const [issued, setIssued] = useState<string | null>(null);
     const save = useSave();
-    const pairing = useCapability("pairing_v1");
-    if (list.error instanceof ApiError && list.error.code === "forbidden") return <p className="muted">기기 관리는 소유자만 할 수 있습니다.</p>;
+    const pairing = useCapability("pairing_approval_v1");
+    if (list.error instanceof ApiError && list.error.code === "forbidden") return <Section item="devices"><CurrentDeviceName /></Section>;
     return (
         <>
-            <p className="muted small">등록 기기는 모든 프로젝트·대화·파일을 공유하고 명령·터미널을 실행할 수 있습니다. 기기·비밀·모델 프로필 관리는 소유자만 할 수 있습니다.</p>
-            <ul>
+            <Section item="devices">
+            <Hosts />
+            <CurrentDeviceName onSaved={list.reload} />
+            {Boolean(list.error) && <p className="err" role="alert">기기 목록을 읽지 못했습니다.</p>}
+            <p className="muted small">등록 기기는 모든 프로젝트·파일 접근 및 명령 실행 가능 · 기기 관리는 소유자 전용</p>
+            <ul className="settings-list">
                 {(list.data ?? []).filter((d) => d.kind !== "browser" || !d.revoked_at).map((d) => (
                     <li key={d.id}>
-                        {d.name} <span className="muted small">{d.kind === "owner" ? "소유자" : d.kind === "device" ? "기기" : "브라우저 로그인"}</span>
-                        {d.current && <span className="muted small"> (현재)</span>}
-                        {d.revoked_at ? <span className="muted small"> · 폐기됨</span> : d.kind !== "owner" && (
+                        <span className="settings-device">
+                            <Icon name={d.kind === "owner" ? "server" : "monitor"} size={16} />
+                            <span><span>{d.name}{d.current && <span className="settings-device-current">현재</span>}</span>
+                                <span className="settings-device-meta">{d.kind === "owner" ? "소유자" : d.kind === "device" ? "기기" : "브라우저 로그인"}
+                                    {d.last_used_at && <> · <When at={d.last_used_at} /></>}
+                                </span>
+                            </span>
+                        </span>
+                        {d.revoked_at ? <span className="muted small">폐기됨</span> : d.kind === "owner" ? <span className="scope">소유자</span> : (
                             <ServerActionButton className="ghost small" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</ServerActionButton>
                         )}
-                        {d.last_used_at && <span className="muted small"> · 최근 <When at={d.last_used_at} /></span>}
                     </li>
                 ))}
             </ul>
@@ -628,7 +670,10 @@ function Devices() {
                 </div>
             )}
             {save.view}
-            {pairing !== false && <Pairings />}
+            </Section>
+            {pairing !== false && <SettingsGroup title="QR·링크로 기기 등록" scope="서버 전체" icon="link" testId="setting-pairing">
+                <Pairings showHeading={false} />
+            </SettingsGroup>}
         </>
     );
 }

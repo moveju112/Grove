@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, openBots, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, inputOptions, login, openBots, openDetails, script, sessionView, state } from "./helpers";
 
 test("CSP·보안 헤더와 PWA manifest를 제공한다", async ({ request }) => {
     const r = await request.get("/");
@@ -52,7 +52,7 @@ test("두 프로젝트를 좌우·위아래로 열고 각 탭이 자기 프로�
     await recent.getByRole("button", { name: /A의 대화/ }).click();
     await expect(page.getByTestId("session-view")).toHaveAttribute("data-session", sa.id);
     // B를 오른쪽에 분할로 열기
-    await recent.getByTestId("recent-item").filter({ hasText: "B의 대화" }).getByLabel("최근 항목 관리").click();
+    await recent.getByTestId("recent-item").filter({ hasText: "B의 대화" }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
     await recent.getByTestId("recent-item").filter({ hasText: "B의 대화" }).getByRole("button", { name: "오른쪽에 열기" }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     await expect(page.getByTestId("split-row")).toBeVisible();
@@ -62,7 +62,7 @@ test("두 프로젝트를 좌우·위아래로 열고 각 탭이 자기 프로�
     // 각 pane에서 메시지 저장 → 원래 세션에만 기록(FLOW-11)
     for (const [i, text] of [[0, "왼쪽에서"], [1, "오른쪽에서"]] as const) {
         const pane = page.getByTestId("pane").nth(i);
-        await pane.getByLabel("보내기 방식").selectOption("save");
+        await composerOption(pane, "보내기 방식", "save");
         await pane.getByLabel("메시지 입력").fill(text);
         await pane.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(pane.getByTestId("msg-user").last()).toHaveText(new RegExp(text));
@@ -97,7 +97,7 @@ test("모델 응답이 중간 표시 후 확정되고, 쓰기 도구 거부 시 
     const view = page.getByTestId("session-view");
     await expect(view).toHaveAttribute("data-session", s.id);
     await script({ frames: frames.text(["천천히 ", "도착하는 ", "답변"]), delayMs: 400 });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("답해줘");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("partial")).toBeVisible();
@@ -107,7 +107,7 @@ test("모델 응답이 중간 표시 후 확정되고, 쓰기 도구 거부 시 
     // 도구: 쓰기 요청 → 승인 카드 → 거부
     await script({ frames: frames.tool("w1", "write", { path: "made.txt", content: "x" }) });
     await script({ frames: frames.text(["거부 확인"]) });
-    await view.getByLabel("도구").check();
+    await composerOption(view, "도구", true);
     await view.getByLabel("메시지 입력").fill("파일 만들어");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const card = view.getByTestId("approval");
@@ -134,11 +134,12 @@ test("모델 응답이 중간 표시 후 확정되고, 쓰기 도구 거부 시 
     // UI-014: 도구 카드에 인자·소요 시간·결과를 표시한다
     const tool = view.getByTestId("msg-tool").last();
     await expect(tool.getByTestId("tool-duration")).toHaveText(/\d+(ms|\.\d초)/);
-    await tool.locator("summary").click();
+    await openDetails(tool);
     await expect(tool.getByTestId("tool-args")).toContainText("granted2.txt");
     await expect(tool.getByTestId("tool-output")).toBeVisible();
     await expect(tool.getByTestId("tool-truncated")).toHaveCount(0);
-    await view.getByLabel("도구").uncheck();
+    await page.keyboard.press("Escape");
+    await composerOption(view, "도구", false);
 });
 
 test("자식 에이전트 위임을 승인하면 자식 대화가 생기고 결과가 부모 대화에 한 번 보고된다", async ({ page }) => {
@@ -156,8 +157,8 @@ test("자식 에이전트 위임을 승인하면 자식 대화가 생기고 결�
     await script({ frames: frames.text(["검토를 맡겼어"]), marker: prompt });
     await script({ frames: frames.text(["자식 검토 결과를 확인했어"]), marker: prompt });
     await script({ frames: frames.text(["자식 검토 결과: 이상 없음"]), delayMs: 200, marker: "Delegated task" });
-    await view.getByLabel("보내기 방식").selectOption("model");
-    await view.getByLabel("도구").check();
+    await composerOption(view, "보내기 방식", "model");
+    await composerOption(view, "도구", true);
     await view.getByLabel("메시지 입력").fill(prompt);
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const card = view.getByTestId("approval");
@@ -175,7 +176,7 @@ test("자식 에이전트 위임을 승인하면 자식 대화가 생기고 결�
     const runs = view.getByTestId("agent-runs");
     // 진행 중에 자동으로 열린 목록은 끝나도 열린 채 남는다. 상태가 확정된 뒤 닫혀 있을 때만 연다.
     await expect(runs.getByTestId("agent-run").first()).toHaveAttribute("data-status", "completed");
-    await openDetails(runs.locator("details"));
+    await openDetails(runs);
     // 자식 대화를 열면 부모 연결이 보인다
     await runs.getByRole("button", { name: "자식 대화" }).first().click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
@@ -183,7 +184,7 @@ test("자식 에이전트 위임을 승인하면 자식 대화가 생기고 결�
     await expect(child.getByTestId("agent-runs")).toContainText("부모 대화 열기");
     await expect(child.getByTestId("msg-who").first()).toHaveText("부모 에이전트의 지시");
     await expect(child.getByTestId("msg-assistant").last()).toContainText("자식 검토 결과");
-    await view.getByLabel("도구").uncheck();
+    await composerOption(view, "도구", false);
 });
 
 test("Goal을 추가·완료·순서 변경하고 다른 화면의 변경이 실시간 반영된다", async ({ page }) => {
@@ -193,7 +194,7 @@ test("Goal을 추가·완료·순서 변경하고 다른 화면의 변경이 실
     await login(page);
     await page.locator(".recent").getByRole("button", { name: /Goal 대화/ }).first().click();
     const panel = page.getByTestId("goals-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     for (const t of ["첫째", "둘째"]) {
         await panel.getByLabel("새 Goal").fill(t);
         await panel.getByRole("button", { name: "추가" }).click();
@@ -203,7 +204,7 @@ test("Goal을 추가·완료·순서 변경하고 다른 화면의 변경이 실
     await expect(panel.getByTestId("goal").first()).toContainText("둘째");
     await panel.getByTestId("goal").filter({ hasText: "첫째" }).getByRole("checkbox").check();
     await expect(panel.getByTestId("goal").filter({ hasText: "첫째" })).toHaveAttribute("data-status", "done");
-    await expect(panel.locator("summary")).toContainText("남은 1/2");
+    await expect(panel.getByRole("heading")).toContainText("남은 1/2");
     // 다른 기기(API)에서 추가하면 이벤트로 반영
     await apiCall("POST", `/sessions/${s.id}/goals`, { title: "밖에서 추가" });
     await expect(panel.getByTestId("goal").filter({ hasText: "밖에서 추가" })).toHaveCount(1);
@@ -227,8 +228,7 @@ test("Git 변경에서 hunk 하나만 올리고 커밋하면 나머지 변경은
     writeFileSync(join(proj.root_path, "h.txt"), lines.join(""));
     await login(page);
     await page.getByRole("button", { name: b.name, exact: true }).first().click();
-    const wrap = page.locator(".git-wrap");
-    await wrap.locator("summary").first().click();
+    await page.getByRole("tab", { name: "변경", exact: true }).click();
     const panel = page.getByTestId("git-panel");
     await panel.getByRole("button", { name: "h.txt" }).first().click();
     await expect(panel.getByTestId("hunk")).toHaveCount(2);
@@ -250,7 +250,7 @@ test("context 사용량을 추정/실측으로 표시하고 수동 압축 결과
     await login(page);
     await page.locator(".recent").getByRole("button", { name: /압축 대화/ }).first().click();
     const view = page.getByTestId("session-view").first();
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     // 요약이 원문보다 짧아야 적용되므로(CMP-006) 첫 답은 요약보다 길게 둔다
     for (const [q, ans] of [["첫 질문", `첫 답 ${"자세한 설명 ".repeat(20)}`], ["둘째 질문", "둘째 답"]]) {
         await script({ frames: frames.text([ans!]) });
@@ -259,6 +259,7 @@ test("context 사용량을 추정/실측으로 표시하고 수동 압축 결과
         await expect(view.getByTestId("msg-assistant").last()).toContainText(ans!, { timeout: 15_000 });
     }
     const meter = view.getByTestId("context-meter");
+    await view.getByRole("button", { name: "대화 작업", exact: true }).click();
     await expect(meter).toContainText("context");
     await expect(meter).toContainText("(추정)");
     await script({ frames: frames.text(["요약: 첫 질문에 답했다"]), marker: "You compress a conversation" });
@@ -266,7 +267,7 @@ test("context 사용량을 추정/실측으로 표시하고 수동 압축 결과
     await expect(view.getByTestId("msg-compaction")).toHaveCount(1, { timeout: 15_000 });
     await expect(view.getByTestId("msg-compaction")).toContainText("수동 압축");
     // CMP-011: 적용 구간과 원문 보존을 함께 보여 준다
-    await view.getByTestId("msg-compaction").locator("summary").click();
+    await openDetails(view.getByTestId("msg-compaction"));
     await expect(view.getByTestId("compaction-source")).toContainText("원문은 화면 이력에 그대로 남습니다");
     // 화면 이력은 그대로 남는다
     await expect(view.getByTestId("msg-assistant").first()).toContainText("첫 답");
@@ -287,7 +288,7 @@ test("서버 protocol이 바뀌면 새로고침을 안내하고 변경 요청을
     await expect(page.getByTestId("protocol-banner")).toContainText("protocol 999");
     // 변경 요청(새 대화)은 클라이언트에서 막힌다
     const view = page.locator(".project-view").first();
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     await view.getByLabel("메시지 입력").fill("보내지면 안 됨");
     await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
     await view.getByLabel("메시지 입력").press("Control+Enter");
@@ -309,7 +310,8 @@ test("입력 중 초안은 새로고침 후 복원되고 서버 초안 충돌을
     await expect(page.getByTestId("session-view").getByLabel("메시지 입력")).toHaveValue("아직 안 보낸 글");
     // 다른 기기가 서버 초안을 먼저 저장
     await apiCall("PUT", `/drafts/session:${s.id}`, { expected_revision: 0, text: "폰에서 쓴 글", device_name: "Android" });
-    await page.getByTestId("session-view").getByRole("button", { name: "초안 서버 저장" }).click();
+    await inputOptions(view);
+    await view.getByRole("button", { name: "초안 서버 저장" }).click();
     await expect(page.getByRole("alert").filter({ hasText: "다른 기기(Android)" })).toBeVisible();
     // 내 초안은 그대로
     await expect(page.getByTestId("session-view").getByLabel("메시지 입력")).toHaveValue("아직 안 보낸 글");
@@ -352,23 +354,23 @@ test("파일 화면에서 열고 고쳐 저장하며, 외부 변경은 충돌로
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     await page.getByRole("button", { name: "파일", exact: true }).click();
     const files = page.getByTestId("files-view");
-    await files.getByRole("button", { name: "note.md" }).click();
+    await files.getByRole("button", { name: "note.md", exact: true }).click();
     const editor = files.getByLabel("파일 내용");
     await expect(editor).toHaveValue("처음\n");
     await editor.fill("고침\n");
     await expect(files.getByText("● 저장 안 됨")).toBeVisible();
     await files.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(files.getByRole("status")).toHaveText("저장됨");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toHaveText("저장됨");
     expect(readFileSync(join(proj.root_path, "note.md"), "utf8")).toBe("고침\n");
     // 외부 변경 뒤 저장 → 충돌, 파일과 내 편집 모두 보존
     writeFileSync(join(proj.root_path, "note.md"), "밖에서 바꿈\n");
     await editor.fill("내 편집\n");
     await files.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(files.getByRole("status")).toContainText("파일이 바뀌었습니다");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("파일이 바뀌었습니다");
     await expect(editor).toHaveValue("내 편집\n");
     expect(readFileSync(join(proj.root_path, "note.md"), "utf8")).toBe("밖에서 바꿈\n");
     // 이미지 미리보기: 인증 헤더 없이 티켓 URL로 실제로 그려진다
-    await files.getByRole("button", { name: "dot.png" }).click();
+    await files.getByRole("button", { name: "dot.png", exact: true }).click();
     const img = files.locator("img.preview");
     await expect(img).toHaveAttribute("src", /\/api\/v1\/file-tickets\//);
     await expect.poll(() => img.evaluate((el: HTMLImageElement) => el.naturalWidth)).toBe(1);
@@ -440,7 +442,7 @@ test("봇을 만들고 home 대화에서 답을 받고, 새로고침·분할 뒤
     const item = panel.getByTestId("bot").filter({ hasText: "e2e 봇" });
     await expect(item).toContainText("모델 없음");
     // 모델 설정
-    await item.getByLabel("e2e 봇 관리").click();
+    await item.getByRole("button", { name: "e2e 봇 관리", exact: true }).click();
     await item.getByRole("button", { name: "편집" }).click();
     await panel.getByTestId("bot-editor").getByLabel("봇 모델").selectOption({ index: 1 });
     await panel.getByTestId("bot-editor").getByRole("button", { name: "저장" }).click();
@@ -451,7 +453,7 @@ test("봇을 만들고 home 대화에서 답을 받고, 새로고침·분할 뒤
     await expect(view.getByTestId("bot-chip")).toBeVisible();
     const sid = await view.getAttribute("data-session");
     await script({ frames: frames.text(["봇 응답"]) });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("안녕");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").last()).toContainText("봇 응답", { timeout: 15_000 });
@@ -463,7 +465,7 @@ test("봇을 만들고 home 대화에서 답을 받고, 새로고침·분할 뒤
     // 기기별 숨김은 실행·목록 데이터와 무관
     await openBots(page);
     const item2 = page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" });
-    await item2.getByLabel("e2e 봇 관리").click();
+    await item2.getByRole("button", { name: "e2e 봇 관리", exact: true }).click();
     await item2.getByRole("button", { name: "이 기기에서 숨기기" }).click();
     await expect(page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" })).toHaveCount(0);
     await page.getByTestId("bots-panel").getByLabel("숨긴 봇 보기").check();
@@ -471,12 +473,12 @@ test("봇을 만들고 home 대화에서 답을 받고, 새로고침·분할 뒤
     await expect(item3).toBeVisible();
     // 삭제 → 삭제된 봇 목록에서 복원
     page.on("dialog", (d) => void d.accept());
-    await item3.getByLabel("e2e 봇 관리").click();
+    await item3.getByRole("button", { name: "e2e 봇 관리", exact: true }).click();
     await item3.getByRole("button", { name: "삭제" }).click();
     await expect(item3).toHaveCount(0);
     await page.getByTestId("bots-panel").getByLabel("삭제된 봇").check();
     const del = page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" });
-    await del.getByLabel("e2e 봇 관리").click();
+    await del.getByRole("button", { name: "e2e 봇 관리", exact: true }).click();
     await del.getByRole("button", { name: "복원" }).click();
     await page.getByTestId("bots-panel").getByLabel("삭제된 봇").uncheck();
     await expect(page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" })).toHaveAttribute("data-status", "active");
@@ -493,7 +495,7 @@ test("봇 대화 탭을 닫아도 서버 실행은 계속되고 다시 열면 �
     await item.locator(".bot-open").click();
     const view = page.locator(`[data-testid=session-view][data-session="${home.home_session_id}"]`).first();
     await script({ frames: frames.text(["느린 ", "봇 ", "끝까지 도착"]), delayMs: 500 });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("천천히");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view).toContainText("실행 중");
@@ -517,7 +519,7 @@ test("대화 검색은 본문 발췌를 보여 주고 결과를 누르면 그 �
     await apiCall("POST", `/sessions/${s.id}/messages`, { text: `여기에 ${word} 가 있다` });
     await login(page);
     const panel = page.getByTestId("search-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     await panel.getByLabel("대화 검색어").fill(word);
     const hit = panel.getByTestId("search-hit");
     await expect(hit).toHaveCount(1);
@@ -535,7 +537,7 @@ test("예약을 만들고 지금 실행하면 실행 기록과 영속 알림이 
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
-    await panel.locator("summary").first().click();
+    await openDetails(panel);
     await panel.getByLabel("예약 이름").fill("e2e 점검");
     await panel.getByLabel("예약 지시").fill("상태 알려줘");
     await panel.getByLabel("예약 방식").selectOption("interval");
@@ -545,16 +547,15 @@ test("예약을 만들고 지금 실행하면 실행 기록과 영속 알림이 
     await expect(item).toContainText("600분마다");
     await expect(item).toContainText("활성");
     await script({ frames: frames.text(["예약 결과 보고"]) });
-    await item.locator("summary").click();
     await item.getByRole("button", { name: "지금 실행" }).click();
     await expect(item.getByTestId("schedule-runs")).toContainText("완료", { timeout: 15_000 });
     // 일시 정지
     await item.getByRole("button", { name: "일시 정지" }).click();
-    await expect(item.locator("summary").first()).toContainText("일시 정지");
+    await expect(item.getByRole("heading").first()).toContainText("일시 정지");
     // 알림은 서버에 남고 사이드바에서 보인다. 누르면 실행한 대화를 연다
     const notes = page.getByTestId("notifications");
     await expect(notes.getByTestId("notifications-unread")).toBeVisible();
-    await notes.locator("summary").click();
+    await openDetails(notes);
     await notes.getByTestId("notification").filter({ hasText: "e2e 점검" }).first().click();
     await expect(page.getByTestId("session-view").last()).toContainText("예약 결과 보고");
 });
@@ -568,7 +569,7 @@ test("담당 봇 예약은 범위 확인 뒤 저장하고 결과를 봇 대화�
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
-    await panel.locator("summary").first().click();
+    await openDetails(panel);
     await panel.getByLabel("예약 이름").fill(`봇 점검 ${stamp}`);
     await panel.getByLabel("예약 지시").fill("상태 알려줘");
     await panel.getByLabel("예약 방식").selectOption("interval");
@@ -584,8 +585,7 @@ test("담당 봇 예약은 범위 확인 뒤 저장하고 결과를 봇 대화�
     await confirmBox.getByLabel("저장만 하고 일시 정지 상태로 둠").check();
     await add.click();
     const item = panel.getByTestId("schedule").filter({ hasText: `봇 점검 ${stamp}` });
-    await expect(item.locator("summary").first()).toContainText("일시 정지");
-    await item.locator("summary").first().click();
+    await expect(item.getByRole("heading").first()).toContainText("일시 정지");
     await expect(item.getByTestId("schedule-bot")).toContainText(bot.name);
     await expect(item).toContainText("아직 실행 기록이 없습니다");
     await script({ frames: frames.text(["봇 예약 결과"]) });
@@ -606,9 +606,8 @@ test("예약 webhook을 켜고 서명한 요청으로 한 번만 실행한다", 
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
-    await panel.locator("summary").first().click();
+    await openDetails(panel);
     const item = panel.getByTestId("schedule").filter({ hasText: `훅 예약 ${stamp}` });
-    await item.locator("summary").first().click();
     const hook = item.getByTestId("schedule-webhook");
     await expect(hook).toContainText("webhook 꺼짐");
     await hook.getByRole("button", { name: "webhook 켜기" }).click();
@@ -639,7 +638,7 @@ test("결과가 같으면 알림을 생략하고 실행 기록에 변화 없음�
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
-    await panel.locator("summary").first().click();
+    await openDetails(panel);
     await panel.getByLabel("예약 이름").fill(`조용 ${stamp}`);
     await panel.getByLabel("예약 지시").fill("상태 알려줘");
     await panel.getByLabel("예약 방식").selectOption("interval");
@@ -647,7 +646,6 @@ test("결과가 같으면 알림을 생략하고 실행 기록에 변화 없음�
     await panel.getByLabel("결과가 직전과 같으면 알림 생략").check();
     await panel.getByRole("button", { name: "예약 추가" }).click();
     const item = panel.getByTestId("schedule").filter({ hasText: `조용 ${stamp}` });
-    await item.locator("summary").first().click();
     await expect(item).toContainText("직전 완료 결과와 같으면 자동 실행 알림을 생략");
     await item.getByTestId("schedule-webhook").getByRole("button", { name: "webhook 켜기" }).click();
     const secret = (await item.getByTestId("webhook-secret").textContent())!;
@@ -682,7 +680,7 @@ test("예약에 최대 횟수·연속 실패 정지를 정하고, 실패로 자�
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
-    await panel.locator("summary").first().click();
+    await openDetails(panel);
     await panel.getByLabel("예약 이름").fill(`한도 예약 ${stamp}`);
     await panel.getByLabel("예약 지시").fill("상태 알려줘");
     await panel.getByLabel("예약 방식").selectOption("interval");
@@ -691,18 +689,16 @@ test("예약에 최대 횟수·연속 실패 정지를 정하고, 실패로 자�
     await panel.getByLabel("연속 실패 시 정지").fill("2");
     await panel.getByRole("button", { name: "예약 추가" }).click();
     const limited = panel.getByTestId("schedule").filter({ hasText: `한도 예약 ${stamp}` });
-    await limited.locator("summary").click();
     await expect(limited.getByTestId("schedule-limits")).toHaveText("자동 실행 0/3회 · 연속 2회 실패 시 자동 정지");
     const failing = panel.getByTestId("schedule").filter({ hasText: `실패 예약 ${stamp}` });
-    await failing.locator("summary").click();
     // 사용량을 보고해야 token 한도(5)를 넘은 실패가 된다.
     await script({ frames: [...frames.text(["예산을 넘는 긴 답"]).slice(0, 2), JSON.stringify({ choices: [], usage: { prompt_tokens: 120, completion_tokens: 30 } }), "[DONE]"] });
     await failing.getByRole("button", { name: "지금 실행" }).click();
     await expect(failing.getByTestId("schedule-runs")).toContainText("실패", { timeout: 15_000 });
-    await expect(failing.locator("summary").first()).toContainText("일시 정지(연속 실패)");
+    await expect(failing.getByRole("heading").first()).toContainText("일시 정지(연속 실패)");
     await expect(failing.getByTestId("schedule-limits")).toContainText("연속 실패 1회");
     await failing.getByRole("button", { name: "재개" }).click();
-    await expect(failing.locator("summary").first()).toContainText("활성");
+    await expect(failing.getByRole("heading").first()).toContainText("활성");
     await expect(failing.getByTestId("schedule-limits")).not.toContainText("연속 실패 1회");
 });
 
@@ -726,7 +722,7 @@ test("사용량 패널은 기간·묶음별 token과 가격 미설정 상태를 
         await route.fulfill({ response });
     });
     await script({ frames: [...frames.text(["답"]).slice(0, 2), JSON.stringify({ choices: [], usage: { prompt_tokens: 120, completion_tokens: 30 } }), "[DONE]"] });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("질문");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").last()).toContainText("답", { timeout: 15_000 });
@@ -753,6 +749,7 @@ test("대화에서 연 설정은 그 대화를 대상으로 저장하고 프로�
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.locator(`[data-testid=session-view][data-session="${s.id}"]`).first().getByRole("button", { name: "대화 작업", exact: true }).click();
     await page.locator(`[data-testid=session-view][data-session="${s.id}"]`).first().getByRole("button", { name: "대화 설정" }).click();
     await expect(page.getByTestId("settings-origin").last()).toContainText(title);
     await page.getByLabel("설정 검색").last().fill("응답 언어");
@@ -761,7 +758,7 @@ test("대화에서 연 설정은 그 대화를 대상으로 저장하고 프로�
     await row.getByLabel("응답 언어", { exact: true }).fill("English");
     await row.getByRole("button", { name: "저장", exact: true }).click();
     await expect(row).toContainText("저장됨");
-    await expect(row).toContainText("(이 대화)");
+    await expect(row.getByLabel("응답 언어 적용 범위")).toHaveValue("session");
     const se = await apiCall<{ items: { key: string; effective: unknown; source: string }[] }>("GET", `/settings/effective?session_id=${s.id}`);
     expect(se.items.find((i) => i.key === "output.language")).toMatchObject({ effective: "English", source: "session" });
     const pe = await apiCall<{ items: { key: string; source: string }[] }>("GET", `/settings/effective?project_id=${a.id}`);
@@ -782,11 +779,12 @@ test("다른 pane에서 다른 대화를 열고 조작해도 열어 둔 설정�
     await login(page);
     const recent = page.locator(".recent");
     await recent.getByRole("button", { name: new RegExp(ta) }).first().click();
+    await page.locator(`[data-testid=session-view][data-session="${sa.id}"]`).getByRole("button", { name: "대화 작업", exact: true }).click();
     await page.locator(`[data-testid=session-view][data-session="${sa.id}"]`).getByRole("button", { name: "대화 설정" }).click();
     const left = page.getByTestId("pane").nth(0);
     await expect(left.getByTestId("settings-origin")).toContainText(ta);
     // B를 오른쪽 pane에 열고 그쪽을 조작한다
-    await recent.getByTestId("recent-item").filter({ hasText: tb }).getByLabel("최근 항목 관리").click();
+    await recent.getByTestId("recent-item").filter({ hasText: tb }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
     await recent.getByTestId("recent-item").filter({ hasText: tb }).getByRole("button", { name: "오른쪽에 열기" }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const right = page.getByTestId("pane").nth(1);
@@ -824,7 +822,7 @@ test("서버 범위 설정은 대상·적용 시점을 보여 주고 저장 후 
     await expect(row).toContainText("저장 안 됨");
     await row.getByRole("button", { name: "저장", exact: true }).click();
     await expect(row).toContainText("저장됨 · 다음 요청부터 적용");
-    await expect(row).toContainText('"한국어"');
+    await expect(row.getByLabel("응답 언어", { exact: true })).toHaveValue("한국어");
     const eff = await apiCall<{ items: { key: string; effective: unknown }[] }>("GET", "/settings/effective");
     expect(eff.items.find((i) => i.key === "output.language")?.effective).toBe("한국어");
     // 고급 항목은 검색 없이 접혀 있다

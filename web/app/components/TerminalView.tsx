@@ -10,6 +10,7 @@ import { TerminalKeys } from "./terminal/TerminalKeys";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
 import { terminalAction } from "./pwa/terminalAction";
+import { Stack } from "@astryxdesign/core/Stack";
 
 type TerminalRow = { id: string; name: string; status: "running" | "exited" | "lost"; exit_code: number | null; reason: string | null; revision: number };
 
@@ -184,7 +185,7 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             : conn === "open" ? "연결됨" : conn === "connecting" ? "연결 중…" : conn === "closed" ? "끊김 · 다시 연결 중"
                 : row?.status === "lost" ? "서버 재시작으로 종료됨 · 화면만 복원" : `종료됨${row?.exit_code != null ? ` (코드 ${row.exit_code})` : ""}`;
     return (
-        <div className="terminal-view" data-testid="terminal-view" data-conn={conn}>
+        <Stack className="terminal-view" data-testid="terminal-view" data-conn={conn}>
             <div className="inline small">
                 <strong>{row?.name ?? "터미널"}</strong>
                 <span className="muted" data-testid="terminal-status">{statusText}</span>
@@ -203,6 +204,6 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
                     onReset={() => { input.current?.reset(); terminal.current?.focus(); }}
                     onKey={(data) => { terminalAction(() => input.current?.data(data), setInputBlocked); terminal.current?.focus(); }} />
             )}
-        </div>
+        </Stack>
     );
 }

@@ -5,10 +5,39 @@ export function sessionView(page: Page, sessionId: string): Locator {
     return page.locator(`[data-testid="session-view"][data-session="${sessionId}"]`);
 }
 
-/// `<details>`가 닫혀 있을 때만 연다(이미 열려 있으면 그대로). summary를 무조건 누르면 열린 패널이 닫힌다.
-export async function openDetails(details: Locator) {
-    if (!(await details.evaluate((d) => (d as HTMLDetailsElement).open))) await details.locator("summary").first().click();
-    await expect(details).toHaveAttribute("open", "");
+/// 탭 패널 또는 상세 대화상자의 실제 사용자 진입점을 연다.
+export async function openDetails(panel: Locator) {
+    await expect(panel).toBeAttached();
+    const tab = panel.locator("xpath=ancestor-or-self::*[@role='tabpanel']").first();
+    if (await tab.count()) {
+        await panel.page().locator(`[role=tab][aria-controls="${await tab.getAttribute("id")}"]`).click();
+    }
+    const popup = panel.locator("xpath=ancestor-or-self::*[@popover] | ./*[@popover]").first();
+    if (await popup.count() && !(await popup.isVisible())) {
+        await panel.page().locator(`[popovertarget="${await popup.getAttribute("id")}"]`).click();
+    }
+    const trigger = panel.locator(":scope > button[aria-haspopup=dialog], :scope > div > button[aria-haspopup=dialog]");
+    if (await trigger.count() && !(await panel.getByRole("dialog").count())) {
+        await trigger.click();
+        await expect(panel.getByRole("dialog")).toBeVisible();
+    }
+    await expect(panel).toBeVisible();
+}
+
+export async function inputOptions(view: Locator) {
+    const trigger = view.getByRole("button", { name: "입력 옵션", exact: true });
+    const expanded = await trigger.evaluate((button) => document.getElementById(button.getAttribute("popovertarget")!)!.matches(":popover-open"));
+    if (!expanded) await trigger.click();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+}
+
+export async function composerOption(view: Locator, label: string, value: string | boolean) {
+    await inputOptions(view);
+    const control = view.getByLabel(label, { exact: true });
+    if (typeof value === "boolean") await control.setChecked(value);
+    else await control.selectOption(value);
+    await view.page().keyboard.press("Escape");
+    await expect(view.getByRole("button", { name: "입력 옵션", exact: true })).toHaveAttribute("aria-expanded", "false");
 }
 import { readFileSync } from "node:fs";
 import { STATE } from "./global-setup";

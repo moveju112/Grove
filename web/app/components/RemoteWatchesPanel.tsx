@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Panel } from "./ui/Controls";
 import { ApiError, api } from "../api/client";
 import type { Notification, RemoteWatch } from "../api/generated";
 import { useQuery } from "../state/store";
@@ -39,8 +40,7 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
     };
     const split = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
     return (
-        <details className="remote-watches" data-testid="remote-watches">
-            <summary>원격 작업 감시 {watches.length > 0 ? `· 감시 중 ${active}/${watches.length}` : ""}</summary>
+        <Panel className="remote-watches" data-testid="remote-watches" title={`원격 작업 감시${watches.length > 0 ? ` · 감시 중 ${active}/${watches.length}` : ""}`}>
             {err && <p className="err" role="alert">{err}</p>}
             <ul className="session-list">
                 {watches.map((w) => {
@@ -91,7 +91,6 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
                         });
                     }}
                 >
-                    <p className="muted small">정확한 HTTPS URL만 GET으로 조회합니다. redirect를 따르지 않고 인증 정보를 보내지 않으며 원격 작업을 바꾸지 않습니다.</p>
                     <input aria-label="감시 이름" placeholder="이름" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
                     <input aria-label="상태 URL" placeholder="https://…" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
                     <input aria-label="상태 위치(JSON pointer)" value={form.pointer} onChange={(e) => setForm({ ...form, pointer: e.target.value })} />
@@ -102,6 +101,6 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
                     <ServerActionButton type="submit" disabled={!form.title.trim() || !form.url.trim()}>감시 시작</ServerActionButton>
                 </form>
             )}
-        </details>
+        </Panel>
     );
 }

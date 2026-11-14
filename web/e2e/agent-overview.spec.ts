@@ -18,6 +18,7 @@ async function project() {
 async function openProject(page: Page, item: { id: string; name: string }) {
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: item.name, exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
     await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
     const panel = page.getByTestId("agent-overview");
@@ -39,8 +40,9 @@ test("실제 설정 개요에서 override·비활성 지침을 읽고 기존 편
         });
         const worker = panel.getByRole("article", { name: "역할 worker", exact: true });
         await expect(worker).toContainText("기본 내장 · override 수정됨 (body) · 비활성 · 비활성");
-        await worker.locator("summary").click();
+        await worker.getByRole("button", { name: "비활성 정의 지침 (실행에 사용 안 함)", exact: true }).click();
         await expect(worker.getByLabel("worker 지침", { exact: true })).toHaveText("overview 적용 지침");
+        await page.keyboard.press("Escape");
         await expect(panel).toContainText("다음 요청 기본값: fixture · fixture-model");
         await expect(panel).toContainText("출처: 이 프로젝트");
         await expect(panel).toContainText("대화 대상 없음 · 상속 모델 확인 불가");
@@ -53,10 +55,9 @@ test("실제 설정 개요에서 override·비활성 지침을 읽고 기존 편
         expect(writes).toEqual([]);
         await editor.fill("overview 기존 편집 저장 지침");
         await page.locator(".def-editor").getByRole("button", { name: "저장", exact: true }).click();
-        await expect(worker.getByLabel("worker 지침", { exact: true })).toHaveText("overview 기존 편집 저장 지침");
         await page.reload();
         await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
-        await panel.getByRole("article", { name: "역할 worker", exact: true }).locator("summary").click();
+        await panel.getByRole("article", { name: "역할 worker", exact: true }).getByRole("button", { name: "비활성 정의 지침 (실행에 사용 안 함)", exact: true }).click();
         await expect(panel.getByLabel("worker 지침", { exact: true })).toHaveText("overview 기존 편집 저장 지침");
         await expect(page.getByTestId("settings-origin")).toContainText(item.name);
         expect((await apiCall<{ items: unknown[] }>("GET", `/projects/${item.id}/sessions`)).items).toHaveLength(0);
@@ -78,6 +79,7 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: b.id, resource_id: other.id });
     await login(page);
     await page.locator(".recent").getByRole("button", { name: /overview scoped session/ }).click();
+    await sessionView(page, session.id).getByRole("button", { name: "대화 작업", exact: true }).click();
     await sessionView(page, session.id).getByRole("button", { name: "대화 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
     const panel = page.getByTestId("agent-overview");
@@ -85,11 +87,12 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await expect(panel).toContainText("활성 턴 없음 · 상속 모델 아직 미정");
     await expect(panel).toContainText("미설정 · 선택 필요");
     await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
-    await page.locator(".recent li").filter({ hasText: "overview other session" }).getByLabel("최근 항목 관리").click();
+    await page.locator(".recent li").filter({ hasText: "overview other session" }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
     await page.locator(".recent li").filter({ hasText: "overview other session" }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     await expect(sessionView(page, other.id)).toBeVisible();
     await page.getByTestId("project-row").getByRole("button", { name: b.name, exact: true }).click();
+    await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
     await panel.getByRole("button", { name: "개요 다시 조회", exact: true }).click();
     await expect(panel).toContainText("agents.delegation: off · 금지 · 출처: 이 프로젝트");
     await expect(page.getByTestId("settings-origin")).toContainText("overview scoped session");
@@ -164,9 +167,10 @@ test("사용자 정의·모델 비활성·민감정보 가림과 인증 거부�
         await expect(panel).toContainText("overview disabled model · fixture-model (비활성 · 선택 필요)");
         const role = panel.getByRole("article", { name: `역할 ${custom.id}`, exact: true });
         await expect(role).toContainText("사용자 정의");
-        await role.locator("summary").click();
+        await role.getByRole("button", { name: "현재 적용 지침", exact: true }).click();
         await expect(role.getByLabel(`${custom.id} 지침`, { exact: true })).toContainText("안전한 지침");
         await expect(role).toContainText("[redacted]");
+        await page.keyboard.press("Escape");
         for (const value of ["overview-private-secret-value", "/home/fixture-personal", "fixture-private-header"]) await expect(panel).not.toContainText(value);
         expect((await request.get(`http://127.0.0.1:17741/api/v1/agent-overview?project_id=${item.id}`)).status()).toBe(401);
         const original = await apiCall("GET", `/agent-overview?project_id=${item.id}`);

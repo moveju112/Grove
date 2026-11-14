@@ -17,6 +17,7 @@ import { RecoveryPanel } from "./RecoveryPanel";
 import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Icon } from "./icons";
+import { ActionMenu } from "./ui/Controls";
 import { SidebarProject } from "./sidebar";
 import { SidebarUsage } from "./sidebar/SidebarUsage";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -24,6 +25,8 @@ import { CreationEntry, CreationFocus } from "./create/CreationEntry";
 import { currentProjectId, projectTarget } from "./create/creation";
 import { NavigationContext } from "./navigation/NavigationContext";
 import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Button } from "../design/Button";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -188,11 +191,11 @@ export function Workspace() {
     // 넓은 화면에서 사이드바가 열려 있으면 만들기는 사이드바 맨 위 메뉴에, 아니면 상단 바에 하나만 둔다.
     const createInSidebar = sidebar && !narrow;
     const create = (inSidebar: boolean) => (
-        <button className={inSidebar ? "ghost side-item" : "ghost icon-btn"} aria-haspopup="dialog" disabled={!layout}
+        <Button className={inSidebar ? "ghost side-item" : "ghost icon-btn"} aria-haspopup="dialog" disabled={!layout}
             title={serverBlocked ?? "새 대화·프로젝트 만들기"}
             onClick={() => setAdding({ step: "choose", projectId: currentProjectId(layout) })}>
             <Icon name="edit" /><span className={inSidebar ? "side-label" : "sr-only"}>만들기</span>
-        </button>
+        </Button>
     );
     const brand = (
         <span className="brand-row">
@@ -203,7 +206,7 @@ export function Workspace() {
 
     return (
         <CreationFocus.Provider value={creationFocus}>
-        <div className={`ws ${narrow ? "narrow" : ""} ${sidebar ? "with-sidebar" : ""}`}>
+        <Stack direction="horizontal" className={`ws ${narrow ? "narrow" : ""} ${sidebar ? "with-sidebar" : ""}`}>
             {sidebar && (
                 <aside className="sidebar" aria-label="탐색">
                     {!narrow && <div className="side-head">{brand}</div>}
@@ -217,8 +220,8 @@ export function Workspace() {
                         <section className="projects">
                             <div className="side-section-head">
                                 <h2>프로젝트</h2>
-                                <details className="project-options">
-                                    <summary aria-label="프로젝트 목록 옵션" title="프로젝트 목록 옵션">⋯{labelFilter.length > 0 && <span className="dot" aria-label="라벨 필터 적용 중" />}</summary>
+                                <ActionMenu className="project-options" label="프로젝트 목록 옵션"
+                                    trigger={<>⋯{labelFilter.length > 0 && <span className="dot" aria-label="라벨 필터 적용 중" />}</>}>
                                     <div className="project-options-body">
                                 <select
                                     className="small"
@@ -228,19 +231,18 @@ export function Workspace() {
                                         const v = e.target.value === "recent" ? "recent" : "name";
                                         localStorage.setItem(PROJECT_SORT, v);
                                         setProjectSort(v);
-                                        e.currentTarget.closest("details")?.removeAttribute("open");
                                     }}
                                 >
                                     <option value="name">이름순</option>
                                     <option value="recent">최근 활동순</option>
                                 </select>
                                 <button type="button" className="ghost small" aria-expanded={filtering} aria-label="라벨 필터"
-                                    onClick={(e) => { setFiltering((f) => !f); e.currentTarget.closest("details")?.removeAttribute("open"); }}>
+                                    onClick={() => setFiltering((f) => !f)}>
                                     라벨{labelFilter.length > 0 ? ` (${labelFilter.length})` : ""}
                                 </button>
-                                <button type="button" className="ghost small" aria-expanded={showArchived} onClick={(e) => { setShowArchived((v) => !v); e.currentTarget.closest("details")?.removeAttribute("open"); }}>보관됨</button>
+                                <button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</button>
                                     </div>
-                                </details>
+                                </ActionMenu>
                             </div>
                             {filtering && <LabelFilter labels={labels} selected={labelFilter} onChange={setLabelFilter} />}
                             {showArchived && <ArchivedProjects />}
@@ -270,18 +272,18 @@ export function Workspace() {
                     <SidebarUsage />
                 </aside>
             )}
-            <div className="ws-main">
+            <Stack className="ws-main">
             <header className="topbar">
-                <button className="ghost icon-btn" aria-label="사이드바" title="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
+                <Button className="ghost icon-btn" aria-label="사이드바" title="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
                     <Icon name="sidebar" />
-                </button>
+                </Button>
                 {!createInSidebar && brand}
                 {!createInSidebar && create(false)}
                 <span className="spacer" />
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
-                <button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
+                <Button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
                     <Icon name="settings" /><span className="sr-only">설정</span>
-                </button>
+                </Button>
             </header>
             {adding?.step === "choose" && <CreationEntry projects={projects.data ?? NO_PROJECTS} currentId={adding.projectId}
                 blockedReason={serverBlocked}
@@ -305,8 +307,8 @@ export function Workspace() {
                     {!layout && <div className="boot">배치 불러오는 중…</div>}
                 </main>
             </div>
-            </div>
-        </div>
+            </Stack>
+        </Stack>
         </CreationFocus.Provider>
     );
 }

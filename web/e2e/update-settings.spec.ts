@@ -46,7 +46,7 @@ test("서버 버전·채널·저장과 로컬 확인의 새 버전·최신·실�
         await expect(panel).toContainText("서버 protocol");
         await expect(panel).toContainText(`DB schema${initial.server.schema}`);
         await expect(panel.getByLabel("자동 적용 범위", { exact: true })).toHaveValue("notify_only");
-        await expect(panel).toContainText("PWA 화면(UI) 갱신·새로고침과는 별개");
+        await expect(panel).toContainText("설정만 저장 · 설치·재시작 없음");
         await panel.getByRole("button", { name: "서버 업데이트 확인", exact: true }).click();
         await expect(panel.getByTestId("server-update-check-result")).toContainText("새 서버 버전 9999.0.0");
         fixture.manifest("stable", initial.server.version);
@@ -63,7 +63,7 @@ test("서버 버전·채널·저장과 로컬 확인의 새 버전·최신·실�
         fixture.manifest("beta", "9999.1.0-beta.1");
         await panel.getByRole("button", { name: "서버 업데이트 확인", exact: true }).click();
         await expect(panel.getByTestId("server-update-check-result")).toContainText("새 서버 버전 9999.1.0-beta.1");
-        await expect(panel).toContainText("실행하거나 예약하지 않습니다");
+        await expect(panel).toContainText("설치·재시작 없음");
         await page.reload();
         await page.getByLabel("설정 검색").last().fill("서버 업데이트");
         panel = page.getByTestId("server-update-settings").last();
@@ -116,7 +116,7 @@ test("활성 작업 readiness fixture는 적용 보류 이유를 보여 준다",
     await expect(busy).toHaveCount(1);
     await expect(panel).toContainText("실행·대기 턴");
     await expect(panel).toContainText("승인 대기");
-    await expect(panel).toContainText("실행하거나 예약하지 않습니다");
+    await expect(panel).toContainText("설치·재시작 없음");
 });
 
 test("저장 응답 유실은 같은 키로 확인하고 revision 충돌에는 초안을 유지한다", async ({ page }) => {

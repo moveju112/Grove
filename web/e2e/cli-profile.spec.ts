@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login, removeProfiles } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, removeProfiles } from "./helpers";
 
 // 서버에 설치된 CLI 백엔드(Claude Code·Codex) 프로필을 설정 화면에서 만든다. endpoint·API 키 입력이 없고 권한 제한을 안내한다.
 test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만들 수 있고 endpoint·키 입력은 숨겨진다", async ({ page }) => {
@@ -10,7 +10,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
     await expect(page.getByLabel("Base URL")).toHaveCount(0);
     await expect(page.getByLabel("API 키")).toHaveCount(0);
     await expect(page.getByLabel("모델", { exact: true })).toHaveValue("haiku");
-    await expect(page.getByTestId("cli-note")).toContainText("파일 변경·명령 실행은 막습니다");
+    await expect(page.getByTestId("cli-note")).toContainText("서버 CLI 계정 · 읽기 전용");
     const name = `cli-${Date.now()}`;
     try {
         await page.getByLabel("프로필 이름").fill(name);
@@ -48,7 +48,7 @@ test("서버에 설치된 CLI로 프로젝트 파일을 읽어 답하고 도구 
     await login(page);
     await page.locator(".recent").getByRole("button", { name: /CLI 대화/ }).first().click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("모델 프로필").selectOption(prof.id);
     await view.getByLabel("메시지 입력").fill("Read cli-note.txt and tell me the secret word.");
     await view.getByRole("button", { name: "보내기", exact: true }).click();

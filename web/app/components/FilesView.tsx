@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { ActionMenu } from "./ui/Controls";
 import { ApiError, api, isLoggedIn, newKey } from "../api/client";
 import { useQuery } from "../state/store";
 import { fileAttemptKey, loadFileAttempt, loadFileBuffer, loadFileView, saveFileBuffer, saveFileView, type FileAttempt } from "../state/fileState";
@@ -11,6 +12,7 @@ import { ExternalEditor } from "./files/ExternalEditor";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
 import { connection, transportFetch } from "../api/transport";
+import { Stack } from "@astryxdesign/core/Stack";
 
 type Entry = { name: string; path: string; kind: "dir" | "file" | "link_outside" | "other"; size: number | null; mtime: string | null };
 type Listing = { path: string; entries: Entry[]; truncated: boolean };
@@ -128,7 +130,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
     const parent = dir === "." ? null : dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : ".";
     const entries = (listing.data?.entries ?? []).filter((e) => !filter || e.name.toLowerCase().includes(filter.toLowerCase()));
     return (
-        <div className="files" data-testid="files-view">
+        <Stack direction="horizontal" className="files" data-testid="files-view">
             <aside className="file-tree">
                 <div className="inline wrap">
                     <code className="small">{dir}</code>
@@ -177,8 +179,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                                 {e.kind === "dir" ? "📁 " : ""}{e.name}
                             </button>
                             <span className="muted small">{e.size !== null ? `${e.size}B` : ""}</span>
-                            <details className="row-menu">
-                                <summary aria-label={`${e.name} 작업`}>⋯</summary>
+                            <ActionMenu className="row-menu" label={`${e.name} 작업`}>
                                 <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const to = prompt("새 이름(경로)", e.path); if (to && to !== e.path) void op({ op: "rename", path: e.path, to }); }}>이름 바꾸기</ServerActionButton>
                                 <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const to = prompt("복제본 경로", `${e.path}.copy`); if (to) void op({ op: "duplicate", path: e.path, to }); }}>복제</ServerActionButton>
                                 <ServerActionButton
@@ -191,7 +192,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                                 >
                                     삭제
                                 </ServerActionButton>
-                            </details>
+                            </ActionMenu>
                         </li>
                     ))}
                 </ul>
@@ -204,7 +205,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                     onSaved={() => { listing.reload(); if (openPath.startsWith("new:")) selectPath(openPath.slice(4)); }}
                     disabled={mutation.locked} onLock={setEditorLocked} line={openPath === start?.path ? start?.line : undefined} /> : <p className="muted">파일을 고르세요.</p>}
             </section>
-        </div>
+        </Stack>
     );
 }
 

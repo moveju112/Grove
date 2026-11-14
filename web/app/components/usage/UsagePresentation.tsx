@@ -50,7 +50,6 @@ export function TokenDonut({ total }: { total: UsageRow }) {
                 <p><span className="usage-swatch usage-input" aria-hidden="true" />입력 {fmt(total.input_tokens)} tokens · {formatShare(inputShare)}</p>
                 <p><span className="usage-swatch usage-output" aria-hidden="true" />출력 {fmt(total.output_tokens)} tokens · {formatShare(outputShare)}</p>
                 {tokens === 0 && <p className="muted">총 token이 0이라 비율을 계산하지 않습니다.</p>}
-                <p className="muted small">cache·reasoning은 중복 합산하지 않습니다.</p>
             </figcaption>
         </figure>
     );
@@ -95,7 +94,6 @@ export function UsagePresentation({ report, groupLabel }: { report: UsageReport;
                             </select>
                         </label>
                     </div>
-                    {activeSort.startsWith("cost:") && <p className="muted small">선택 통화의 계산된 금액만 정렬합니다. 가격 미설정 token은 제외하며 해당 통화의 추정치가 없는 행은 마지막에 표시합니다.</p>}
                     <div className="usage-table-scroll" role="region" aria-label="사용량 비교 표" tabIndex={0}>
                         <table data-testid="usage-table">
                             <caption>{groupLabel}별 사용량 · 비율 분모: 이 기간의 입력+출력 {fmt(tokens)} tokens</caption>

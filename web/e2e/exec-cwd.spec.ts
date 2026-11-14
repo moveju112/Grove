@@ -11,6 +11,7 @@ async function setup(page: Page) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: project.name });
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
     await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("셸·자원");
     const panel = page.getByTestId("exec-settings");

@@ -7,6 +7,8 @@ use crate::VERSION;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[path = "cli_pairing.rs"]
+mod pairing_cli;
 
 const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
 
@@ -24,6 +26,7 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
   grove auth unlock [--data-dir 경로]                    브라우저 로그인 실패 잠금 해제(= grove unlock)
   grove pair [이름] [--listen 주소:포트] [--data-dir 경로]
                                                         실행 중 서버에서 새 기기 토큰 발급(원문은 이때 한 번만 출력)
+  grove pairing --help                                  비밀번호·소유자 승인형 페어링 링크 관리
   grove snapshot <대상 파일> [--data-dir 경로]           일관된 DB snapshot 생성
   grove restore <snapshot 파일> <새 데이터 디렉터리>     snapshot을 새 디렉터리로 복원·검증
   grove install --install 설치경로 --package 압축본 --data-dir 경로 --listen 주소:포트
@@ -139,6 +142,9 @@ fn update_cmds(o: &Opts) -> Result<i32, String> {
 }
 
 pub fn run(args: Vec<String>) -> i32 {
+    if args.first().is_some_and(|a| a == "pairing") {
+        return pairing_cli::run(&args[1..]);
+    }
     // 단발 실행은 고유 옵션과 종료 코드 계약이 있으므로 서버 옵션 parser를 거치지 않는다(ONCE-001).
     if args.first().is_some_and(|a| a == "exec") {
         return crate::exec::run(&args[1..]);

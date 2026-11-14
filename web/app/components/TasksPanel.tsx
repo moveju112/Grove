@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
-import { useAutoOpen } from "../state/autoOpen";
+import { Panel } from "./ui/Controls";
 import { useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 
@@ -38,8 +38,6 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
     const starting = useRef(false);
     const list = tasks.data?.tasks ?? [];
     const running = list.filter((t) => t.status === "running");
-    // 실행 중인 작업이 생기면 열고, 끝나도 사용자가 연 패널을 닫지 않는다.
-    const details = useAutoOpen(running.length > 0);
     const start = async () => {
         if (starting.current || disabled || !cmd.trim()) return;
         starting.current = true;
@@ -71,10 +69,9 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
         tasks.reload();
     };
     return (
-        <details className="tasks" data-testid="tasks-panel" {...details}>
-            <summary>
+        <Panel className="tasks" data-testid="tasks-panel" title={<>
                 백그라운드 작업 {running.length > 0 ? <strong>· 실행 중 {running.length}</strong> : list.length > 0 ? `· ${list.length}` : ""}
-            </summary>
+            </>}>
             <form
                 className="inline"
                 onSubmit={(e) => {
@@ -82,7 +79,7 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
                     void start();
                 }}
             >
-                <input aria-label="백그라운드 명령" placeholder="명령(대화의 기본 작업 위치에서 실행)" value={cmd} disabled={disabled || busy || attempt !== null} onChange={(e) => setCmd(e.target.value)} />
+                <input aria-label="백그라운드 명령" placeholder="명령을 입력하세요" value={cmd} disabled={disabled || busy || attempt !== null} onChange={(e) => setCmd(e.target.value)} />
                 <ServerActionButton type="submit" disabled={disabled || busy || attempt !== null || !cmd.trim()}>실행</ServerActionButton>
             </form>
             {err && <p className="err" role="alert">{err}</p>}
@@ -110,7 +107,7 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
                     </li>
                 ))}
             </ul>
-        </details>
+        </Panel>
     );
 }
 

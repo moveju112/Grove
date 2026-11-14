@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DetailDialog } from "./ui/Controls";
 import { When } from "./When";
 import { api } from "../api/client";
 import { useQuery } from "../state/store";
@@ -38,19 +39,18 @@ export function RecoveryPanel({ open }: { open: Opener }) {
     const next = more ? more.next_cursor : q.data?.next_cursor;
     if (items.length === 0) return null;
     return (
-        <details className="recovery" data-testid="recovery">
-            <summary>
+        <DetailDialog className="recovery" data-testid="recovery" label="확인 필요한 기록" title={<>
                 확인 필요{" "}
                 <span className="badge" aria-label={`확인할 기록 ${items.length}${next ? "개 이상" : "개"}`}>
                     {items.length}
                     {next ? "+" : ""}
                 </span>
-            </summary>
+            </>}>
             <p className="muted small">자동으로 다시 실행하지 않습니다. 대화에서 결과를 확인한 뒤 다시 실행·검토·닫기를 고르세요.</p>
             <ul className="session-list">
                 {items.map((i) => (
                     <li key={`${i.kind}:${i.id}`} data-testid="recovery-item">
-                        <button className="ghost" onClick={() => open({ kind: "session", project_id: i.project_id, resource_id: i.session_id, title: i.session_title })}>
+                        <button className="ghost" data-dialog-close onClick={() => open({ kind: "session", project_id: i.project_id, resource_id: i.session_id, title: i.session_title })}>
                             <strong>{i.session_title}</strong>
                             <span className="small"> {recoveryLabel(i)}</span>
                             {i.message && <span className="muted small"> · {i.message.slice(0, 80)}</span>}
@@ -65,6 +65,6 @@ export function RecoveryPanel({ open }: { open: Opener }) {
                     더 보기
                 </button>
             )}
-        </details>
+        </DetailDialog>
     );
 }

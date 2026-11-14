@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
+import { DetailDialog } from "../ui/Controls";
 import { getAgentOverview, type AgentOverviewData, type OverviewProfile, type OverviewRole, type OverviewTarget } from "../../api/agentOverview";
 import { subscribeQuery, useLive } from "../../state/store";
 
@@ -85,33 +86,29 @@ export function AgentOverview({ target, onEdit, onLayoutChange }: {
     }, [onLayoutChange, connected, view.key, view.status]);
     return <section data-testid="agent-overview" aria-label="역할·모델·실행 규칙 개요">
         <h3>역할·모델·실행 규칙 개요</h3>
-        <p className="muted small">조회 전용 · 별도 템플릿 설치 없음. 열기·지침 확인은 저장·위임·모델 실행을 하지 않습니다.</p>
         <p data-testid="overview-target">{target.sessionId ? "이 대화 기준" : target.projectId ? "이 프로젝트 기준" : "서버 전체 기준"} · 정의 편집은 서버 전체에 적용됩니다.</p>
         {!connected ? <p role="status">연결 확인 중 · 이전 조회값은 현재 설정으로 표시하지 않습니다.</p>
             : view.status === "error" ? <p role="alert">개요를 읽지 못했습니다. 인증·조회 대상을 확인하고 다시 조회하세요.</p>
                 : view.status === "loading" ? <p role="status">개요를 읽는 중입니다.</p> : null}
         {ready && <>
             <h4>모델 연결</h4>
-            <p>자식은 생성 시 부모 턴의 모델 프로필과 도구 활성 상태를 상속합니다. 역할별 고정 모델·context·disabled 설정은 지원하지 않습니다.</p>
             <p>현재 부모 턴: {ready.parent.status === "active"
                 ? <><Profile value={ready.parent.profile} /> · 도구 {ready.parent.tools_enabled ? "켜짐" : "꺼짐"}</>
                 : ready.parent.status === "no_session" ? "대화 대상 없음 · 상속 모델 확인 불가" : "활성 턴 없음 · 상속 모델 아직 미정"}</p>
             <p>다음 요청 기본값: <Profile value={ready.next_request_default} /> · 출처: {SOURCE[ready.next_request_default.source] ?? "확인 불가"}</p>
-            <p className="muted small">model.default_profile은 새 입력창의 초기값이며 현재 부모 턴·기존 명시적 선택·보류 요청을 바꾸지 않습니다. 미설정일 때 기기 선택·첫 활성 모델을 개요에서 임의로 연결하지 않습니다. endpoint·인증 헤더·비밀값은 표시하지 않습니다.</p>
             <h4>위임 실행 규칙</h4>
             <p>agents.delegation: {ready.delegation.mode === "off" ? "off · 금지" : ready.delegation.mode === "ask" ? "ask · 승인 요청" : ready.delegation.mode === "auto" ? "auto · 자동" : "확인 불가"} · 출처: {SOURCE[ready.delegation.source] ?? "확인 불가"}</p>
-            <p>현재 대화의 시작 승인: {({ blocked: "정책상 금지", auto: "자동 허용", ask: "승인 필요", unknown: "확인 불가 · 대화에서 확인 필요" })[ready.delegation.approval]}. 도구 deny·읽기 전용 정책이 우선하며 tools.allow가 승인 요청을 자동 허용으로 바꿀 수 있습니다.</p>
-            <p>최대 깊이 {ready.limits.max_depth} · 부모 대화당 동시 실행 {ready.limits.max_per_parent} · 서버 전체 동시 실행 {ready.limits.max_running}. 정책상 사용 가능은 여유 한도·모델 연결·실행 성공을 보장하지 않습니다.</p>
-            <p>부모 턴을 취소하면 그 턴이 시작한 실행 중 자식도 취소합니다. 서버 재시작으로 중단된 턴은 interrupted로 보고하며 자동 재실행하지 않습니다.</p>
+            <p>현재 대화의 시작 승인: {({ blocked: "정책상 금지", auto: "자동 허용", ask: "승인 필요", unknown: "확인 불가 · 대화에서 확인 필요" })[ready.delegation.approval]}</p>
+            <p>최대 깊이 {ready.limits.max_depth} · 부모 대화당 동시 실행 {ready.limits.max_per_parent} · 서버 전체 동시 실행 {ready.limits.max_running}</p>
+            <p className="muted small">부모 취소 시 자식도 취소 · 서버 재시작 후 자동 재실행하지 않습니다.</p>
             <h4>등록된 역할 {ready.roles.length}개</h4>
-            <p className="muted small">등록·활성 상태와 지금 대화의 정책상 사용 가능 여부는 다릅니다. 지침은 현재 resolver 적용값이며 실행 중 턴의 저장된 snapshot을 바꾸지 않습니다. 민감정보·개인 경로가 있는 행과 알려진 비밀값은 [redacted]로 가립니다.</p>
             {ready.roles.map((role) => <article key={role.id} aria-label={`역할 ${role.id}`}>
                 <h4>{role.name} <span className="muted small">{role.id}</span></h4>
                 <p>{role.builtin ? "기본 내장" : "사용자 정의"} · {role.modified_fields.length ? `override 수정됨 (${role.modified_fields.join(", ")})` : "원문 변경 없음"} · {role.enabled ? "활성" : "비활성"} · {AVAILABLE[role.availability] ?? "확인 불가"}</p>
-                <p>{role.description}</p>
-                <details><summary>{role.enabled ? "현재 적용 지침" : "비활성 정의 지침 (실행에 사용 안 함)"}</summary>
+                <DetailDialog label="역할 지침" title={role.enabled ? "현재 적용 지침" : "비활성 정의 지침 (실행에 사용 안 함)"}>
+                    <p>{role.description}</p>
                     <pre aria-label={`${role.id} 지침`} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{role.body}</pre>
-                </details>
+                </DetailDialog>
                 <button className="ghost" onClick={() => onEdit(role.id)}>{role.id} 기존 편집 열기</button>
             </article>)}
         </>}

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails } from "./helpers";
 
 async function openSession(page: Page) {
     const { a } = await ensureProjects();
@@ -15,7 +15,7 @@ async function openSession(page: Page) {
         await recent.click();
     };
     const restore = async (text: string) => {
-        await view.getByTestId("draft-copies").locator("summary").first().click();
+        await openDetails(view.getByTestId("draft-copies"));
         await view.getByTestId("draft-copy").filter({ hasText: text }).getByRole("button", { name: "이 사본 이어받기", exact: true }).click();
     };
     return { project: a, session, view, reopen, restore };
@@ -34,8 +34,10 @@ test("닫은 대화를 새 탭에서 열면 입력·첨부 사본을 골라 이�
     await restore(text);
     await expect(view.getByLabel("메시지 입력")).toHaveValue(text);
     await expect(view.getByTestId("attachment-card")).toContainText(name);
+    await openDetails(view.getByTestId("draft-copies"));
     await expect(view.getByTestId("draft-copy").filter({ hasText: "새 탭의 별도 입력" })).toHaveCount(1);
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await page.keyboard.press("Escape");
+    await composerOption(view, "보내기 방식", "save");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByLabel("메시지 첨부파일")).toContainText(name);
     await expect(view.getByLabel("메시지 입력")).toHaveValue("");
@@ -45,7 +47,7 @@ test("응답 유실 후 닫은 탭의 사본을 이어받아도 원래 본문·�
     const { session, view, reopen, restore } = await openSession(page);
     const text = "새 탭에서도 한 번만 저장하는 글";
     await view.getByLabel("메시지 입력").fill(text);
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     await view.getByLabel("첨부파일 선택").setInputFiles({ name: "receipt.txt", mimeType: "text/plain", buffer: Buffer.from("receipt attachment fixture") });
     await expect(view.getByTestId("attachment-card")).toContainText("receipt.txt");
     const sent: { key: string; body: string | null }[] = [];
@@ -115,7 +117,7 @@ test("손상된 보류 전송은 새 키로 보내지 않고 서버 기록 확�
     const { session, view, reopen, restore } = await openSession(page);
     const text = "손상되어도 보존할 입력";
     await view.getByLabel("메시지 입력").fill(text);
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     await page.evaluate(({ id }) => {
         const key = Object.keys(localStorage).find((k) => k.startsWith(`grove.draft.session:${id}#`) && !k.endsWith(":attachments"))!;
         const draft = JSON.parse(localStorage.getItem(key)!);
@@ -134,7 +136,7 @@ test("첫 전송의 응답이 아직 오지 않아도 새 탭은 같은 키로 �
     const { session, view, reopen, restore } = await openSession(page);
     const text = "inflight draft fixture";
     await view.getByLabel("메시지 입력").fill(text);
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     let deliver!: () => void;
     const gate = new Promise<void>((resolve) => { deliver = resolve; });
     let received!: () => void;
@@ -175,7 +177,7 @@ test("첫 전송의 응답이 아직 오지 않아도 새 탭은 같은 키로 �
 test("입력과 첨부를 바꿔도 원래 요청을 확인할 수 있고 현재 입력은 그대로 남는다", async ({ page }) => {
     const { session, view } = await openSession(page);
     await view.getByLabel("메시지 입력").fill("original request fixture");
-    await view.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(view, "보내기 방식", "save");
     await view.getByLabel("첨부파일 선택").setInputFiles({ name: "original.txt", mimeType: "text/plain", buffer: Buffer.from("original attachment fixture") });
     const selected = view.getByLabel("선택한 첨부파일");
     await expect(selected).toContainText("original.txt");

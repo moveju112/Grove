@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DetailDialog } from "../ui/Controls";
 import { api, ApiError, authGeneration, isLoggedIn, newKey, onAuthChange } from "../../api/client";
 import { skillsApi, type SessionSkills as Snapshot, type SkillBody, type SkillMutation, type SkillSelection, type SkillCapabilityContext } from "../../api/skills";
 import { SkillsPanel } from "./SkillsPanel";
@@ -145,8 +146,7 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
 
 export function SessionSkills({ sessionId }: { sessionId: string }) {
     const [open, setOpen] = useState(false);
-    return <details className="draft-note" data-testid="skills-disclosure" onToggle={(event) => setOpen(event.currentTarget.open)}>
-        <summary>대화 스킬</summary>
+    return <DetailDialog className="session-skill-control" data-testid="skills-disclosure" label="대화 스킬" title="스킬" onOpenChange={setOpen}>
         {open && <ConnectedSkills sessionId={sessionId} />}
-    </details>;
+    </DetailDialog>;
 }

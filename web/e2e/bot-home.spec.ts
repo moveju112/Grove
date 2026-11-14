@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, openBots, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openBots, script } from "./helpers";
 
 type Home = { home_session_id: string; name: string };
 
@@ -21,7 +21,7 @@ test("두 봇을 나란히 열고 한쪽 탭을 닫아도 다른 칸의 봇 대�
     const item = (h: Home) => panel.getByTestId("bot").filter({ hasText: h.name });
     await item(one).locator(".bot-open").click();
     await openBots(page);
-    await item(two).getByLabel(`${two.name} 관리`).click();
+    await item(two).getByRole("button", { name: `${two.name} 관리`, exact: true }).click();
     await item(two).getByRole("button", { name: "오른쪽에 열기" }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const left = page.getByTestId("pane").nth(0);
@@ -31,7 +31,7 @@ test("두 봇을 나란히 열고 한쪽 탭을 닫아도 다른 칸의 봇 대�
     await expect(right.locator(`[data-testid=session-view][data-session="${two.home_session_id}"]`)).toBeVisible();
     // 왼쪽 봇에서 느린 답을 받는 중에 오른쪽 탭을 닫는다
     await script({ frames: frames.text(["왼쪽 ", "봇 ", "끝"]), delayMs: 400 });
-    await left.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(left, "보내기 방식", "model");
     await left.getByLabel("메시지 입력").fill("천천히");
     await left.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(left.getByTestId("session-view")).toContainText("실행 중");

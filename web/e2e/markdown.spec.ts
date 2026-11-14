@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
 
 // UI-010·011, SEC-020: 모델 답의 Markdown은 표시하되 HTML·스크립트·위험 링크는 실행되지 않는다.
 test("모델 답의 Markdown을 표시하고 HTML·스크립트·javascript 링크는 실행하지 않는다", async ({ page }) => {
@@ -34,7 +34,7 @@ test("모델 답의 Markdown을 표시하고 HTML·스크립트·javascript 링�
         "<img src=x onerror=alert(1)> <script>alert(2)</script> [위험](javascript:alert(3))",
     ].join("\n");
     await script({ frames: frames.text([answer]) });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("마크다운으로 답해");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const msg = view.getByTestId("msg-assistant").last();
@@ -73,7 +73,7 @@ test("답 안의 파일:줄 참조를 누르면 오른쪽에 그 파일을 열�
     await page.locator(".recent").getByRole("button", { name: /파일 참조 대화/ }).first().click();
     const view = page.getByTestId("session-view");
     await script({ frames: frames.text(["수정할 곳은 `ref-target.md:3` 이고 `/etc/passwd`는 링크가 아니다."]) });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("어디 고쳐?");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const msg = view.getByTestId("msg-assistant").last();

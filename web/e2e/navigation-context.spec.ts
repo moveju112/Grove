@@ -56,7 +56,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
     try {
         await expect(leftPane.getByTestId("approval")).toBeVisible();
         const rightInput = await rightPane.getByLabel("메시지 입력").elementHandle();
-        const tabs = await page.getByRole("tab").count();
+        const tabs = await page.locator(".tabbar").getByRole("tab").count();
         const mutations: string[] = [];
         page.on("request", (request) => {
             if (request.method() !== "GET" && /\/(?:sessions|turns)(?:\/[^/?]+)?(?:\/cancel)?$/.test(request.url())) {
@@ -69,7 +69,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
         await parent.press("Enter");
         await expect(nav.locator('[aria-current="page"]')).toHaveText(a.name);
         await expect(nav).not.toHaveAttribute("data-session-id");
-        await expect(page.getByRole("tab")).toHaveCount(tabs);
+        await expect(page.locator(".tabbar").getByRole("tab")).toHaveCount(tabs);
         await expect(rightPane.getByLabel("메시지 입력")).toHaveValue("오른쪽 초안");
         expect(await rightInput!.evaluate((node) => node.isConnected)).toBe(true);
         expect((await apiCall<{ status: string }>("GET", `/turns/${accepted.turn.id}`)).status).toBe("awaiting_approval");

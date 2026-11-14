@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProjects, login, sessionView, state } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, sessionView, state } from "./helpers";
 
 test("메시지 작성 시각으로 회상하고 페이지 밖의 원문 메시지로 이동한다", async ({ page }) => {
     const { a } = await ensureProjects();
@@ -21,10 +21,9 @@ c.close()
     }
     await login(page);
     const panel = page.getByTestId("search-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     await panel.getByLabel("검색 방식").selectOption("recall");
     await panel.getByLabel("대화 검색어").fill(word);
-    await expect(panel).toContainText("메시지 작성 시각 기준");
     await expect(panel.getByTestId("search-total")).toHaveText("31개");
     await expect(panel.getByTestId("search-hit")).toHaveCount(30);
     await panel.getByLabel("검색 기간").selectOption("1");
@@ -50,7 +49,7 @@ test("보관 포함 회상에서도 대화 영구 삭제 뒤에는 서버와 화
     await apiCall("POST", `/sessions/${session.id}/messages`, { text: `${word} 원문` });
     await login(page);
     const panel = page.getByTestId("search-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     await panel.getByLabel("검색 방식").selectOption("recall");
     await panel.getByLabel("대화 검색어").fill(word);
     await panel.getByRole("checkbox", { name: "보관된 대화·프로젝트 포함" }).check();
@@ -76,7 +75,7 @@ test("이전 서버가 회상 기능을 알리지 않으면 미지원 선택지�
     await page.getByLabel("토큰").fill(state().token);
     await page.getByRole("button", { name: "로그인" }).click();
     const panel = page.getByTestId("search-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     await expect(panel.getByLabel("대화 검색어")).toBeVisible();
     await expect(panel.getByLabel("검색 방식")).toHaveCount(0);
 });
@@ -90,7 +89,7 @@ test("프로젝트 보관 이벤트도 회상 cache를 갱신하고 명시적으
     await apiCall("POST", `/sessions/${session.id}/messages`, { text: `${word} 원문` });
     await login(page);
     const panel = page.getByTestId("search-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     await panel.getByLabel("검색 방식").selectOption("recall");
     await panel.getByLabel("대화 검색어").fill(word);
     await expect(panel.getByTestId("search-hit")).toHaveCount(1);

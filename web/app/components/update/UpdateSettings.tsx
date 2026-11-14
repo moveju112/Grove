@@ -75,7 +75,6 @@ export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
     const [scope, setScope] = useState<AutoApplyScope>(data.settings.auto_apply);
     const dirty = channel !== data.settings.channel || scope !== data.settings.auto_apply;
     return <>
-        <p>서버 실행 파일의 업데이트 설정입니다. PWA 화면(UI) 갱신·새로고침과는 별개입니다.</p>
         <dl className="kv" data-testid="server-update-version">
             <dt>현재 서버 버전</dt><dd>{data.server.version}</dd>
             <dt>서버 protocol</dt><dd>{data.server.protocol}</dd>
@@ -93,18 +92,16 @@ export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
                     <option value="patch">patch 버전까지</option>
                     <option value="minor">minor 버전까지</option>
                 </select></label>
-                <p className="muted">범위는 설정만 저장합니다. 이 화면은 자동 적용·설치·재시작을 실행하거나 예약하지 않습니다.</p>
-                <p className="muted small">patch·minor 범위는 같은 major 버전 안에서만 해당합니다. protocol·schema 변경은 자동 적용 대상이 아닙니다.</p>
+                <p className="scope">설정만 저장 · 설치·재시작 없음</p>
                 <button type="submit" disabled={!dirty}>서버 업데이트 설정 저장</button>
                 <button type="button" disabled={dirty} onClick={onCheck}>서버 업데이트 확인</button>
                 {dirty && <p role="status">변경한 설정을 저장한 뒤 해당 채널을 확인하세요.</p>}
             </fieldset>
         </form>
-        <p role="status">{data.readiness.idle ? "현재 유휴 상태" : "적용 보류 · 진행 중 작업이 있습니다."} · 진행 중 작업이 있으면 업데이트 적용을 미룹니다.</p>
+        <p role="status">{data.readiness.idle ? "현재 유휴 상태" : "적용 보류 · 진행 중 작업이 있습니다."}</p>
         {!data.readiness.idle && <dl className="kv" aria-label="업데이트 보류 대상">
             {Object.entries(data.readiness.busy).filter(([, count]) => count > 0).map(([kind, count]) => <div key={kind}><dt>{busyLabels[kind] ?? kind}</dt><dd>{count}</dd></div>)}
         </dl>}
-        <p className="muted small">확인은 로컬에 준비된 서명 manifest만 읽습니다. 외부 릴리스 서버 접속과 패키지 다운로드는 하지 않습니다.</p>
         {data.last_check && data.last_check.settings_revision !== data.settings.revision
             && <p>이전 설정에서 확인한 결과입니다. 현재 저장된 채널로 다시 확인하세요.</p>}
         <CheckResult check={data.last_check} />
@@ -127,6 +124,5 @@ export function CheckResult({ check }: { check: UpdateCheck | null }) {
         {check.release && <p>후보 protocol {check.release.protocol} · schema {check.release.schema}
             {!check.release.artifact && " · 현재 플랫폼의 패키지가 없습니다."}
             {check.release.kind === "downgrade" && " · 후보는 현재 서버보다 이전 버전입니다."}</p>}
-        <p className="muted small">확인만 완료하며 업데이트를 적용하지 않습니다.</p>
     </div>;
 }

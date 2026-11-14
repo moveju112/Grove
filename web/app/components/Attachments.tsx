@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { Icon } from "./icons";
+import { ActionMenu } from "./ui/Controls";
 import { ApiError, api, authGeneration, newKey, rawGet } from "../api/client";
 import { parseDraftAttachments, type DraftAttachment as Attachment } from "../state/drafts";
 import { attachmentIssue } from "./capabilities/browser";
@@ -80,22 +82,21 @@ export function AttachmentPicker({ draft, disabled }: { draft: ReturnType<typeof
     const [supportError, setSupportError] = useState<string | null>(null);
     return <div className="attachment-picker">
         <input ref={input} type="file" multiple aria-label="첨부파일 선택" hidden disabled={disabled || draft.busy} onChange={(e) => { void draft.add(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-        <button className="ghost small" disabled={disabled || draft.busy} onClick={() => {
+        <button className="ghost icon-btn" aria-label="파일 첨부" title="파일 첨부 · 최대 8개, 파일당 4MiB, 전체 8MiB · 미전송 파일은 24시간 뒤 만료" disabled={disabled || draft.busy} onClick={() => {
             const issue = attachmentIssue();
             setSupportError(issue);
             if (!issue) {
                 try { input.current?.click(); }
                 catch { setSupportError("파일 선택 창을 열지 못했습니다. 브라우저 설정을 확인하거나 파일 내용을 메시지에 붙여 넣으세요."); }
             }
-        }}>파일 첨부</button>
+        }}><Icon name="attachment" /></button>
         {supportError && <div className="warn small" role="status">{supportError}</div>}
-        {draft.items.length > 0 && <span className="muted small">최대 8개 · 파일당 4MiB · 전체 8MiB · 미전송 파일은 24시간 뒤 만료</span>}
         {draft.error && <div role="alert">{draft.error}</div>}
         <ul className="attachment-list" aria-label="선택한 첨부파일">
             {draft.items.map((i) => <li key={i.key}>
-                {i.attachment ? <AttachmentCard attachment={i.attachment} /> : <span>{i.file?.name} · {draft.busy && !i.error ? "업로드 중…" : "업로드되지 않음"}</span>}
+                {i.attachment ? <AttachmentCard attachment={i.attachment} compact /> : <span>{i.file?.name} · {draft.busy && !i.error ? "업로드 중…" : "업로드되지 않음"}</span>}
                 {i.error && <><span role="alert">{i.error}</span><button disabled={disabled || draft.busy} onClick={() => void draft.retry(i)}>업로드 다시 시도</button></>}
-                <button className="ghost small" aria-label={`${i.attachment?.name ?? i.file?.name} 첨부 제거`} disabled={disabled || draft.busy} onClick={() => draft.remove(i.key)}>제거</button>
+                <button className="ghost icon-btn" aria-label={`${i.attachment?.name ?? i.file?.name} 첨부 제거`} disabled={disabled || draft.busy} onClick={() => draft.remove(i.key)}><Icon name="close" size={14} /></button>
             </li>)}
         </ul>
     </div>;
@@ -105,7 +106,7 @@ export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
     return <ul className="attachment-list" aria-label="메시지 첨부파일">{attachments.map((a) => <li key={a.id}><AttachmentCard attachment={a} /></li>)}</ul>;
 }
 
-function AttachmentCard({ attachment: a }: { attachment: Attachment }) {
+function AttachmentCard({ attachment: a, compact = false }: { attachment: Attachment; compact?: boolean }) {
     const [preview, setPreview] = useState<{ url?: string; text?: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -141,16 +142,16 @@ function AttachmentCard({ attachment: a }: { attachment: Attachment }) {
         finally { lock.current = false; if (alive.current) setBusy(false); }
     };
     const canPreview = ["image/png", "image/jpeg", "image/gif", "image/webp", "text/plain"].includes(a.mime);
-    return <div className="attachment-card" data-testid="attachment-card">
+    const hint = a.image ? `모델 입력 ${a.image.model_width}×${a.image.model_height} · 첫 프레임`
+        : a.mime === "text/plain" ? "모델에는 앞 8192자까지 보냅니다" : "모델에는 파일명·크기 등 정보만 보냅니다";
+    const actions = <>
+        {canPreview && <button className="ghost small" disabled={busy || !a.stored} onClick={() => preview ? closePreview() : void read(false)}>{preview ? "미리보기 닫기" : "미리보기"}</button>}
+        <button className="ghost small" disabled={busy || !a.stored} onClick={() => void read(true)}>원문 다운로드</button>
+    </>;
+    return <div className={`attachment-card${compact ? " compact" : ""}`} data-testid="attachment-card" title={hint}>
         <span>{a.name} · {(a.size / 1024).toFixed(1)}KiB{a.image ? ` · ${a.image.width}×${a.image.height}` : ""}</span>
-        {a.image && <span className="muted small">모델 입력 {a.image.model_width}×{a.image.model_height} · 첫 프레임</span>}
-        {a.mime === "text/plain" && <span className="muted small">모델에는 앞 8192자까지 보냅니다</span>}
-        {!a.mime.startsWith("image/") && a.mime !== "text/plain" && <span className="muted small">모델에는 파일명·크기 등 정보만 보냅니다</span>}
         {!a.stored && <span role="alert">원문이 누락되었습니다</span>}
-        <div>
-            {canPreview && <button className="ghost small" disabled={busy || !a.stored} onClick={() => preview ? closePreview() : void read(false)}>{preview ? "미리보기 닫기" : "미리보기"}</button>}
-            <button className="ghost small" disabled={busy || !a.stored} onClick={() => void read(true)}>원문 다운로드</button>
-        </div>
+        {compact ? <ActionMenu label={`${a.name} 첨부 작업`}>{actions}</ActionMenu> : <div>{actions}</div>}
         {error && <div role="alert">{error}</div>}
         {preview?.url && <img className="attachment-preview" src={preview.url} alt={a.name} />}
         {preview?.text !== undefined && <pre className="attachment-text">{preview.text}{a.size > 8192 ? "\n(앞부분만 표시)" : ""}</pre>}

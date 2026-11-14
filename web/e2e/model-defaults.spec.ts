@@ -35,6 +35,7 @@ async function fixture() {
 async function openSettings(page: Page, project: { id: string; name: string }) {
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
     await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
 }
 

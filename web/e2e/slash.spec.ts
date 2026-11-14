@@ -28,7 +28,7 @@ test("slash command 목록·검색·채우기·실행, 알 수 없는 명령은 
     await box.pressSequentially("on");
     await box.press("Control+Enter");
     await expect(view.getByRole("status").filter({ hasText: "도구 사용을 켰습니다" })).toBeVisible();
-    await expect(view.getByLabel("도구")).toBeChecked();
+    await expect(view.getByLabel("도구", { exact: true })).toBeChecked();
     await expect(box).toHaveValue("");
 
     // 방향키 선택 + Enter 채우기

@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { Panel } from "./ui/Controls";
 import { ApiError, api, newKey } from "../api/client";
 import type { FileChange } from "../api/generated";
 import { useQuery } from "../state/store";
@@ -24,7 +25,11 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
     const active = useRef(false);
     const locked = disabled || busy || attempt !== null;
     const list = q.data ?? [];
-    if (list.length === 0) return null;
+    if (list.length === 0) return <Panel className="changes" data-testid="changes-panel" title="파일 변경 이력">
+        <p className={q.error ? "err small" : "muted small"} role={q.error ? "alert" : "status"}>
+            {q.loading ? "불러오는 중…" : q.error ? "파일 변경 이력을 읽지 못했습니다." : "변경 없음"}
+        </p>
+    </Panel>;
     // 턴(요청)별로 묶는다. 사용자가 직접 만든 도구 요청은 turn_id가 없다.
     const groups: { turn: string | null; items: FileChange[] }[] = [];
     for (const c of list) {
@@ -60,8 +65,7 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
         setDiff({ id, text: d.diff ?? (d.unavailable === "binary" ? "(텍스트가 아닌 파일)" : "(내용을 보관하지 않음)") });
     };
     return (
-        <details className="changes" data-testid="changes-panel">
-            <summary>파일 변경 이력 · {list.filter((c) => !c.undone_at).length}/{list.length}</summary>
+        <Panel className="changes" data-testid="changes-panel" title={`파일 변경 이력 · ${list.filter((c) => !c.undone_at).length}/${list.length}`}>
             <p className="muted small">대화 되감기와 별개입니다. 파일만 되돌리며, 기록 뒤 파일이 바뀌었으면 충돌로 알리고 아무것도 바꾸지 않습니다.</p>
             {err && (
                 <p className="err" role="alert">
@@ -124,6 +128,6 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
                     ))}
                 </div>
             )}
-        </details>
+        </Panel>
     );
 }

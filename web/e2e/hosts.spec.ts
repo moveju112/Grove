@@ -112,7 +112,7 @@ test("두 실제 서버의 인증·지연 응답·이벤트·초안이 섞이지
         expect(new URL(other.url()).origin).toBe(remote.origin);
         expect(await other.evaluate(() => window.opener === null)).toBe(true);
         await expect(other.getByRole("form", { name: "로그인" })).toBeVisible();
-        await other.getByLabel("토큰", { exact: true }).fill(remote.token);
+        await other.getByLabel("토큰").fill(remote.token);
         await other.getByRole("button", { name: "로그인", exact: true }).click();
         await expect(other.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         await expect(other.getByTestId("project-row")).toContainText("원격 전용 프로젝트");

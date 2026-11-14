@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { readFileSync, existsSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
-import { apiCall, ensureProjects, login, state } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, state } from "./helpers";
 
 type Call = { id: string; status: string; revision: number };
 
@@ -35,7 +35,7 @@ test("파일 변경 이력에서 patch를 보고 되돌리기·다시 적용하�
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const panel = page.getByTestId("session-view").getByTestId("changes-panel");
-    await panel.locator("summary").click();
+    await openDetails(panel);
     const rows = panel.getByTestId("change-row");
     await expect(rows).toHaveCount(2);
     await rows.first().getByRole("button", { name: "patch" }).click();
@@ -74,7 +74,7 @@ for (const phase of ["before", "after", "commit"] as const) {
         await login(page);
         await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
         const panel = page.getByTestId("session-view").getByTestId("changes-panel");
-        await panel.locator("summary").click();
+        await openDetails(panel);
         const row = panel.getByTestId("change-row");
         await expect(row).toHaveCount(1);
         const sent: { op: string; key: string }[] = [];

@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, inputOptions, login, openDetails, script } from "./helpers";
 
 const html = `<!doctype html><html><head>
 <meta http-equiv="refresh" content="0;url=/artifact-probe?refresh">
@@ -31,7 +31,7 @@ async function preview(page: Page) {
     await page.evaluate(() => { document.documentElement.dataset.artifactExecuted = "no"; });
     const pane = page.getByTestId("artifact-preview");
     const loaded = page.waitForEvent("framenavigated", (frame) => frame.url() === "about:srcdoc");
-    await pane.locator("summary").click();
+    await openDetails(pane);
     const frame = await loaded;
     await frame.waitForLoadState("load");
     return { pane, frame };
@@ -65,6 +65,7 @@ test("모델 HTML 산출물을 승인 후 현재 프로젝트에서 미리 보�
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
     const view = page.getByTestId("session-view");
     await view.getByLabel("모델 프로필").selectOption(profile);
+    await inputOptions(view);
     await view.getByLabel("보내기 방식").selectOption("model");
     await view.getByLabel("도구", { exact: true }).check();
     await view.getByLabel("메시지 입력").fill(title);
@@ -73,7 +74,7 @@ test("모델 HTML 산출물을 승인 후 현재 프로젝트에서 미리 보�
     await view.getByTestId("approval").getByRole("button", { name: "이번만 승인", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "artifact fixture complete" })).toHaveCount(1);
     const changes = view.getByTestId("changes-panel");
-    await changes.locator("summary").click();
+    await openDetails(changes);
     await changes.getByRole("button", { name: "산출물 열기", exact: true }).click();
     await expect(page.getByLabel("파일 내용")).toHaveValue(html);
     const { pane, frame } = await preview(page);
@@ -91,6 +92,8 @@ test("모델 HTML 산출물을 승인 후 현재 프로젝트에서 미리 보�
     expect(await page.evaluate(() => document.documentElement.dataset.artifactExecuted)).toBe("no");
     expect(boundary.requests).toEqual([]);
     expect(boundary.dialogs).toEqual([]);
+    await pane.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(pane.getByRole("dialog")).toHaveCount(0);
     const downloading = page.waitForEvent("download");
     await page.getByRole("link", { name: "내려받기", exact: true }).click();
     const download = await downloading;
@@ -121,8 +124,8 @@ test("Markdown 문서와 저장 전 편집을 안전하게 표시하고 원문 �
     const area = page.getByLabel("파일 내용");
     await area.fill("# Unsaved artifact\n\n**local edit**\n\n<script>alert('artifact')</script>");
     const pane = page.getByTestId("artifact-preview");
-    await pane.locator("summary").click();
-    await expect(pane.locator("summary")).toContainText("저장 전 편집 사본");
+    await openDetails(pane);
+    await expect(pane.getByRole("dialog")).toContainText("저장 전 편집 사본");
     await expect(pane.getByRole("heading", { name: "Unsaved artifact", exact: true })).toBeVisible();
     await expect(pane.locator("strong")).toHaveText("local edit");
     await expect(pane.locator("script, iframe")).toHaveCount(0);

@@ -8,6 +8,7 @@ test("프로젝트 아이콘을 바꾸고 최근 활동순 정렬이 새로고�
     const side = page.locator(".sidebar .projects");
     await side.getByRole("button", { name: new RegExp(a.name) }).first().click();
     const head = page.locator(".view-head").filter({ hasText: a.name }).first();
+    await head.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
     await head.getByRole("button", { name: "이름·아이콘" }).click();
     const form = head.getByRole("form", { name: "프로젝트 이름·아이콘" });
     await form.getByLabel("아이콘").fill("🌿");
@@ -16,7 +17,7 @@ test("프로젝트 아이콘을 바꾸고 최근 활동순 정렬이 새로고�
     await expect(side.getByTestId("project-row").filter({ hasText: a.name })).toContainText("🌿");
 
     // 최근 활동순: 방금 대화가 생긴 프로젝트가 맨 위
-    await side.getByLabel("프로젝트 목록 옵션", { exact: true }).click();
+    await side.getByRole("button", { name: "프로젝트 목록 옵션", exact: true }).click();
     await side.getByLabel("프로젝트 정렬").selectOption("recent");
     await apiCall("POST", `/projects/${b.id}/sessions`, { title: `정렬 확인 ${Date.now()}` });
     await expect(side.getByTestId("project-row").first()).toContainText(b.name);

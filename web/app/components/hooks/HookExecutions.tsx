@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { DetailDialog } from "../ui/Controls";
 import { api } from "../../api/client";
 import type { ToolCallRow } from "../../api/generated";
 import { useQuery } from "../../state/store";
@@ -25,15 +26,14 @@ export function HookExecutions({ projectId }: { projectId?: string }) {
     };
     return <section className="stack" data-testid="hook-executions" aria-label="hook 실행 요청">
         <h3>hook 실행 요청</h3>
-        <p className="muted small">최근 100개 · {projectId ? "현재 프로젝트" : "모든 프로젝트"}.
-            원래 작업과 별개이며, 매 이벤트마다 새 계획 승인이 필요합니다.</p>
+        <p className="scope">최근 100개 · {projectId ? "현재 프로젝트" : "모든 프로젝트"} · 이벤트마다 개별 승인</p>
         <button onClick={query.reload}>hook 실행 상태 새로고침</button>
         {query.loading && <p role="status">실행 요청 불러오는 중</p>}
         {(query.error || error) && <p role="alert">{error ?? "hook 실행 요청을 조회하지 못했습니다"}</p>}
         {query.data?.length === 0 && <p>접수된 hook 실행 요청이 없습니다.</p>}
         {query.data?.map((call) => <article key={call.id} data-testid="hook-execution" data-call-id={call.id}>
             <p>대화 <code>{call.session_id}</code> · {statusLabels[call.status] ?? call.status}</p>
-            <details><summary>승인 계획 · 이벤트·revision·명령·위치·환경·한도</summary><pre>{JSON.stringify(call.target, null, 2)}</pre></details>
+            <DetailDialog label="승인 계획" title="승인 계획"><pre>{JSON.stringify(call.target, null, 2)}</pre></DetailDialog>
             {call.status === "pending_approval" && <ApprovalCard call={call} effect="execute" choices={["approve", "deny"]}
                 onDecision={async (request) => {
                     try {

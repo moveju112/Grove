@@ -13,6 +13,7 @@ const sameGeometry = (a: Geometry | null, b: Geometry) => !a || a.width === b.wi
 type Props = {
     messages: Message[];
     targetSeq: number | null;
+    onTargetReached: (seq: number) => void;
     restorePosition: { anchorSeq: number | null; offset: number } | null;
     onRestored: () => void;
     presentationKey: string;
@@ -22,23 +23,13 @@ type Props = {
     render: (message: Message) => ReactNode;
 };
 
-function MeasuredMessage({ message, position, size, presentationKey, states, register, children }: {
-    message: Message; position: number; size: number; presentationKey: string;
-    states: Map<string, boolean[]>; register: (id: string, node: HTMLDivElement | null) => void; children: ReactNode;
+function MeasuredMessage({ message, position, size, register, children }: {
+    message: Message; position: number; size: number;
+    register: (id: string, node: HTMLDivElement | null) => void; children: ReactNode;
 }) {
-    const previous = useRef<HTMLDivElement | null>(null);
-    const stateKey = `${message.id}:${presentationKey}`;
     const ref = useCallback((node: HTMLDivElement | null) => {
-        if (!node && previous.current) {
-            states.set(stateKey, [...previous.current.querySelectorAll("details")].map((d) => d.open));
-        }
-        if (node) {
-            const saved = states.get(stateKey);
-            if (saved) [...node.querySelectorAll("details")].forEach((d, i) => { if (saved[i] !== undefined) d.open = saved[i]!; });
-        }
-        previous.current = node;
         register(message.id, node);
-    }, [message.id, register, states, stateKey]);
+    }, [message.id, register]);
     return <div ref={ref} role="article" tabIndex={-1} aria-label={`메시지 ${message.seq}`}
         aria-posinset={position + 1} aria-setsize={size} data-virtual-seq={message.seq} data-virtual-id={message.id}
         className="virtual-message" style={{ paddingBottom: position === size - 1 ? 0 : "0.5em" }}>
@@ -47,13 +38,12 @@ function MeasuredMessage({ message, position, size, presentationKey, states, reg
 }
 
 /// 화면 주변·검색/복원 대상·현재 초점 행만 유지한다. 높이 갱신은 같은 읽기 anchor에 맞춘다.
-export function VirtualMessages({ messages, targetSeq, restorePosition, onRestored, presentationKey, stick, bottom, onNavigate, render }: Props) {
+export function VirtualMessages({ messages, targetSeq, onTargetReached, restorePosition, onRestored, presentationKey, stick, bottom, onNavigate, render }: Props) {
     const visible = usePaneVisible();
     const wasVisible = useRef(visible);
     const root = useRef<HTMLDivElement>(null);
     const nodes = useRef(new Map<string, HTMLDivElement>());
     const heights = useRef(new Map<string, number>());
-    const details = useRef(new Map<string, boolean[]>());
     const observer = useRef<ResizeObserver | null>(null);
     const anchor = useRef<Anchor | null>(null);
     const geometry = useRef<Geometry | null>(null);
@@ -174,6 +164,24 @@ export function VirtualMessages({ messages, targetSeq, restorePosition, onRestor
             anchor.current = null;
             adjustment.current = null;
         }
+        const targetMessage = targetSeq !== null && messages.find((message) => message.seq === targetSeq);
+        const targetNode = targetMessage && nodes.current.get(targetMessage.id);
+        if (targetMessage && targetNode && !restorePosition) {
+            // 검색 이동도 행 측정·anchor 보정과 같은 소유자가 확정한다.
+            // 부모에서 먼저 요청을 지우면 이전 viewport가 대상 행을 가상 창 밖으로 밀어낼 수 있다.
+            stick.current = false;
+            adjustment.current = null;
+            targetNode.scrollIntoView({ block: "center" });
+            anchor.current = { id: targetMessage.id, offset: targetNode.getBoundingClientRect().top - el.getBoundingClientRect().top };
+            setFocused(targetMessage.id);
+            previousFirst.current = messages[0]?.id;
+            previousTarget.current = targetSeq;
+            previousWindow.current = windowKey;
+            geometry.current = geometryOf(el, root.current);
+            updateViewport();
+            onTargetReached(targetMessage.seq);
+            return;
+        }
         const restoreMessage = restorePosition && messages.find((message) => message.seq === restorePosition.anchorSeq);
         const restoreNode = restoreMessage && nodes.current.get(restoreMessage.id);
         if (restorePosition && restoreMessage && restoreNode) {
@@ -252,8 +260,8 @@ export function VirtualMessages({ messages, targetSeq, restorePosition, onRestor
             const message = messages[index]!;
             return <Fragment key={message.id}>
                 {before > 0 && <div aria-hidden="true" style={{ height: before }} />}
-                <MeasuredMessage message={message} position={index} size={messages.length} presentationKey={presentationKey}
-                    states={details.current} register={register}>{render(message)}</MeasuredMessage>
+                <MeasuredMessage message={message} position={index} size={messages.length}
+                    register={register}>{render(message)}</MeasuredMessage>
             </Fragment>;
         })}
         <div aria-hidden="true" style={{ height: offsets.at(-1)! - offsets[previous]! }} />

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { ApiError, api } from "../api/client";
-import { useAutoOpen } from "../state/autoOpen";
+import { Panel } from "./ui/Controls";
 import { useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
@@ -17,8 +17,6 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
     const [optimistic, setOptimistic] = useState<Record<string, boolean>>({});
     const goals = q.data?.goals ?? [];
     const open = goals.filter((g) => g.status === "pending" || g.status === "in_progress").length;
-    // 남은 Goal이 생기면 열고, 모두 끝나도 사용자가 연 목록을 닫지 않는다.
-    const details = useAutoOpen(open > 0);
     const act = async (f: () => Promise<unknown>) => {
         setErr(null);
         try {
@@ -34,8 +32,7 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
         void act(() => api.post(`/sessions/${sessionId}/goals/reorder`, { ids }));
     };
     return (
-        <details className="goals" data-testid="goals-panel" {...details}>
-            <summary>Goal {goals.length > 0 ? `· 남은 ${open}/${goals.length}` : ""}</summary>
+        <Panel className="goals" data-testid="goals-panel" title={`Goal${goals.length > 0 ? ` · 남은 ${open}/${goals.length}` : ""}`}>
             {err && <p className="err" role="alert">{err}</p>}
             <ul className="session-list">
                 {goals.map((g, i) => (
@@ -81,6 +78,6 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
                     <ServerActionButton type="submit" disabled={!title.trim()}>추가</ServerActionButton>
                 </form>
             )}
-        </details>
+        </Panel>
     );
 }

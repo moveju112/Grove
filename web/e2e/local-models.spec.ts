@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
-import { apiCall, ensureProjects, login, openDetails, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, sessionView } from "./helpers";
 import { frames } from "./fixture";
 
 type Profile = { id: string; name: string; model: string; revision: number; base_url: string; secret_id: string | null };
@@ -77,7 +77,7 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
     try {
         await login(page);
         const form = await fillLocal(page, name, fixture.base);
-        await expect(page.getByTestId("local-model-connection")).toContainText("이 브라우저·휴대폰이 아니라 Grove 서버");
+        await expect(page.getByTestId("local-model-connection")).toContainText("localhost는 Grove 서버가 실행되는 컴퓨터를 가리킵니다.");
         const keys: string[] = [];
         let lose = true;
         await page.route("**/api/v1/model-profiles", async (route) => {
@@ -95,7 +95,7 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         expect(fixture.calls).toHaveLength(0);
         lose = false;
         await form.getByRole("button", { name: "같은 연결 저장 요청 확인" }).click();
-        await expect(local.getByRole("status")).toContainText("로컬 프로필 저장됨");
+        await expect(local.getByRole("status").filter({ hasText: /\S/ })).toContainText("로컬 프로필 저장됨");
         expect(keys).toHaveLength(2);
         expect(keys[0]).toBeTruthy();
         expect(keys[1]).toBe(keys[0]);
@@ -103,6 +103,7 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         expect(profiles).toHaveLength(1);
         profile = profiles[0]!;
         expect(profile.secret_id).toBeNull();
+        await page.getByRole("dialog", { name: "로컬 HTTP 모델 연결", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
         const row = page.getByTestId("model-profile").filter({ hasText: name });
         const model = row.locator(":scope > code");
         await expect(row.getByTestId("profile-check")).toContainText("연결 확인 안 함");
@@ -127,7 +128,7 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         await login(app);
         await app.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
         const view = sessionView(app, session.id);
-        await view.getByLabel("보내기 방식").selectOption("model");
+        await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("모델 프로필").selectOption(profile.id);
         const draft = view.getByLabel("메시지 입력");
         await draft.fill("local draft survives reconnect");
@@ -188,6 +189,7 @@ test("로컬 목록의 오류·빈 목록·늦은 응답은 수동 선택을 바
         const model = row.locator(":scope > code");
         await expect(row).toBeVisible();
         profile = (await apiCall<Profile[]>("GET", "/model-profiles")).find((p) => p.name === name)!;
+        await page.getByRole("dialog", { name: "로컬 HTTP 모델 연결", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
         const select = row.getByLabel(`${name} 공급자 모델`);
         const refresh = row.getByRole("button", { name: "모델 목록 새로고침" });
         await refresh.click();
@@ -221,7 +223,7 @@ test("로컬 목록의 오류·빈 목록·늦은 응답은 수동 선택을 바
         await expect(model).toHaveText("manual-after-change");
         fixture.resume();
         await expect(select).toBeDisabled();
-        await expect(row.getByRole("status")).toContainText("프로필이 바뀌었습니다");
+        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("프로필이 바뀌었습니다");
         await refresh.click();
         await expect(select).toBeEnabled();
         await expect(select.getByRole("option", { name: /local-chosen/ })).toHaveCount(1);

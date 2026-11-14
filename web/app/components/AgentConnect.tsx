@@ -5,6 +5,7 @@ import { useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useCapability } from "../state/capabilities";
 import { AgentLogin } from "./AgentLogin";
+import { DetailDialog } from "./ui/Controls";
 
 /// 에이전트 연결만 준비한다. 대화 생성과 모델 호출은 사용자가 보내기를 눌러야 시작된다.
 export function AgentConnect({ disabled, onConnected }: { disabled: boolean; onConnected: (profile: ModelProfile) => void }) {
@@ -52,11 +53,10 @@ export function AgentConnect({ disabled, onConnected }: { disabled: boolean; onC
             ))}
         </div>
         {catalog.data && <span className="small muted">서버 CLI 계정 · 읽기 전용</span>}
-        {authSupported && <details onToggle={(event) => setAccountsOpen(event.currentTarget.open)}>
-            <summary>계정 로그인</summary>
+        {authSupported && <DetailDialog label="에이전트 계정 로그인" title="계정 로그인" onOpenChange={setAccountsOpen}>
             {accountsOpen && catalog.data?.backends.filter((backend) => backend.installed).map((backend) =>
                 <AgentLogin key={backend.protocol} protocol={backend.protocol} name={backend.name} disabled={disabled} />)}
-        </details>}
+        </DetailDialog>}
         {!catalog.data && !catalog.error && <p className="muted small" role="status">에이전트 확인 중…</p>}
         {!!catalog.error && <p className="err small" role="alert">에이전트를 확인하지 못했어요. <button type="button" className="ghost small" onClick={catalog.reload}>다시 확인</button></p>}
         {error && <p className="err small" role="alert">{error}</p>}

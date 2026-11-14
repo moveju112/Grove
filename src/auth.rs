@@ -323,6 +323,33 @@ pub struct CreateDevice {
     pub name: String,
 }
 
+pub async fn current_device(State(app): State<App>, p: Principal) -> ApiResult<Json<serde_json::Value>> {
+    let id = if p.is_owner { p.token_id } else { p.root_id };
+    let device = app.db.call(move |c| {
+        let name: String = c.query_row("SELECT name FROM tokens WHERE id = ?1", params![id], |r| r.get(0))?;
+        Ok(json!({ "id": id, "name": name }))
+    }).await?;
+    Ok(Json(device))
+}
+
+pub async fn rename_current_device(
+    State(app): State<App>, p: Principal, headers: HeaderMap, Json(body): Json<CreateDevice>,
+) -> ApiResult<Response> {
+    let name = body.name.trim().to_string();
+    if name.is_empty() || name.chars().count() > 80 {
+        return Err(ApiError::invalid("기기 이름은 1~80자여야 합니다"));
+    }
+    let req_hash = sha256_hex(format!("rename-current:{name}").as_bytes());
+    let actor = p.clone();
+    let id = if p.is_owner { p.token_id.clone() } else { p.root_id.clone() };
+    crate::idem::run(&app, &p, &headers, &req_hash, move |tx, now| {
+        tx.execute("UPDATE tokens SET name = ?2 WHERE id = ?1", params![id, name])?;
+        crate::events::append(tx, now, "device.updated", None, None, &json!({ "id": id }))?;
+        crate::audit::record(tx, now, &actor, "device.updated", &id, json!({ "name": name }))?;
+        Ok((StatusCode::OK, json!({ "id": id, "name": name })))
+    }).await
+}
+
 pub async fn create_device(
     State(app): State<App>,
     Owner(p): Owner,

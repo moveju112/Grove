@@ -22,7 +22,7 @@ test("고정 항목을 먼저 표시하고 고정 해제하면 최근 접근순�
     await expect(items).toHaveCount(2);
     await expect(items.first()).toContainText(`${prefix} second`);
     await expect(first.getByRole("button", { name: "고정", exact: true })).toBeHidden();
-    await first.getByLabel("최근 항목 관리", { exact: true }).focus();
+    await first.getByRole("button", { name: "최근 항목 관리", exact: true }).focus();
     await page.keyboard.press("Enter");
     await first.getByRole("button", { name: "고정", exact: true }).click();
     await expect(first.getByRole("button", { name: "고정 해제", exact: true })).toBeVisible();
@@ -30,7 +30,7 @@ test("고정 항목을 먼저 표시하고 고정 해제하면 최근 접근순�
     await page.reload();
     await expect(page.getByTestId("conn")).toHaveText("연결됨");
     await expect(items.first()).toContainText(`${prefix} first`);
-    await first.getByLabel("최근 항목 관리", { exact: true }).click();
+    await first.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
     await first.getByRole("button", { name: "고정 해제", exact: true }).click();
     await expect(items).toHaveCount(2);
     await expect(items.first()).toContainText(`${prefix} second`);
@@ -52,7 +52,7 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     const secondView = page.locator(`[data-testid=session-view][data-session="${second.id}"]`);
     await firstView.getByLabel("메시지 입력").fill("first pane draft fixture");
     const secondSeen = touched(second.id, true);
-    await secondItem.getByLabel("최근 항목 관리", { exact: true }).click();
+    await secondItem.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
     await secondItem.getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await secondSeen;
     await expect(page.getByTestId("pane")).toHaveCount(2);
@@ -66,7 +66,7 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     await expect(secondView.getByLabel("메시지 입력")).toHaveValue("second pane draft fixture");
     await expect(page.locator(".pane.focused").filter({ has: firstView })).toHaveCount(1);
     await expect(page.locator(".tabbar .tab")).toHaveCount(2);
-    await firstItem.getByLabel("최근 항목 관리", { exact: true }).click();
+    await firstItem.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
     await firstItem.getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(3);
     await expect(firstView).toHaveCount(2);

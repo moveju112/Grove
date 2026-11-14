@@ -18,9 +18,11 @@ export function pairingLink(origin: string, code: string): string {
     return hostOrigin(origin) + "/#pairing=" + code;
 }
 
-export function pairingStatus(info: Pick<PairingInfo, "expires_at" | "revoked_at" | "consumed_at">, now = Date.now()): "대기 중" | "만료됨" | "폐기됨" | "사용됨" {
+export function pairingStatus(info: Pick<PairingInfo, "expires_at" | "revoked_at" | "consumed_at"> & { locked_at?: string | null }, now = Date.now()): "대기 중" | "만료됨" | "폐기됨" | "사용됨" | "잠김" {
     if (info.consumed_at) return "사용됨";
     if (info.revoked_at) return "폐기됨";
+    if (info.locked_at) return "잠김";
+    if (info.expires_at === null) return "대기 중";
     return Date.parse(info.expires_at) > now ? "대기 중" : "만료됨";
 }
 

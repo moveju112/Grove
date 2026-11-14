@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script } from "./helpers";
 
 // UI-006: 실패한 요청은 원인 메시지와 함께 오류로 표시하고, 자동으로 다시 실행하지 않는다고 알린다.
 test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ page }) => {
@@ -18,7 +18,7 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     const f = frames.text(["예산을 넘는 답"]);
     f.splice(1, 0, JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 3 } }));
     await script({ frames: f });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("길게 답해");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const err = view.locator(".turn-status.err");
@@ -29,7 +29,7 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await expect(err).toContainText("자동으로 다시 실행하지 않습니다");
     const cause = view.getByTestId("msg-turn-ended").first();
     await expect(cause).toContainText("budget_exceeded");
-    await cause.locator("summary").click();
+    await openDetails(cause);
     await expect(cause).toContainText("발생 시각:");
     await expect(cause).toContainText("마지막 진행:");
     await expect(cause).toContainText("적용 예산: 1 tokens");
@@ -81,31 +81,35 @@ test("끊긴 응답은 중단 증거로 표시되고 확인 전까지 확인 필
     const view = page.getByTestId("session-view");
     // 완료 신호 없이 연결이 끝나는 응답
     await script({ frames: [JSON.stringify({ choices: [{ delta: { content: "끊기기 전 문장" } }] })] });
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("길게 써 줘");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const err = view.getByTestId("turn-ended");
     await expect(err).toBeVisible({ timeout: 15_000 });
     const evidence = err.getByTestId("turn-evidence");
     await expect(evidence).toContainText("중단 전까지 받은 응답(확정되지 않음 · 8자");
-    await evidence.locator("summary").click();
+    await openDetails(evidence);
     await expect(evidence.locator(".evidence-text")).toHaveText("끊기기 전 문장");
     await expect(view.getByTestId("msg-assistant")).toHaveCount(0);
 
     const panel = page.getByTestId("recovery");
-    await panel.locator("summary").click();
+    await page.keyboard.press("Escape");
+    await openDetails(panel);
     const item = panel.getByTestId("recovery-item").filter({ hasText: title });
     await expect(item).toContainText("요청 실패 · 확정 전 응답 8자 보존");
     // 다른 대화를 연 뒤 목록에서 이 대화로 돌아온다
     const other = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `${title} 다른` });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: other.id });
+    await page.getByRole("dialog", { name: "확인 필요한 기록", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
     await page.locator(".recent").getByRole("button", { name: new RegExp(`${title} 다른`) }).first().click();
+    await openDetails(panel);
     await item.getByRole("button").click();
     await expect(page.getByTestId("session-view").getByTestId("turn-evidence")).toBeVisible();
     await page.reload();
-    await page.getByTestId("recovery").locator("summary").click();
+    await openDetails(page.getByTestId("recovery"));
     await expect(page.getByTestId("recovery-item").filter({ hasText: title })).toHaveCount(1);
     await page.getByTestId("recovery-item").filter({ hasText: title }).getByRole("button").click();
     await page.getByTestId("session-view").getByTestId("turn-ended").getByRole("button", { name: "닫기(포기)" }).click();
-    await expect(page.getByTestId("recovery-item").filter({ hasText: title })).toHaveCount(0);
+    await expect(page.getByTestId("session-view").getByTestId("turn-ended")).toHaveCount(0);
+    expect((await apiCall<{ items: { session_id: string }[] }>("GET", "/recovery")).items.some((item) => item.session_id === s.id)).toBe(false);
 });

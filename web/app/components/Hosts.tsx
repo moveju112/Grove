@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { HOSTS_KEY, insecureRemote, loadHosts, markHostOpened, recentHosts, removeHost, saveHost, type Host } from "../state/hosts";
 
 import { Icon } from "./icons";
+import { SentenceText } from "./HelpTip";
 
 /// 호스트별 페이지를 별도 탭으로 열어 요청·stream·메모리 상태를 섞지 않는다.
 export function Hosts() {
@@ -74,7 +75,7 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
                         <span className="muted small">
                             {host.lastOpenedAt === null ? "아직 열지 않음" : <>최근 열기: <When at={new Date(host.lastOpenedAt).toISOString()} /></>}
                         </span>
-                        {insecureRemote(host.origin) && <p className="warn small">암호화되지 않은 HTTP입니다. 토큰과 대화가 노출될 수 있으니 HTTPS 또는 신뢰하는 VPN을 사용하세요.</p>}
+                        {insecureRemote(host.origin) && <p className="warn small"><SentenceText text="암호화되지 않은 HTTP입니다. 토큰과 대화가 노출될 수 있으니 HTTPS 또는 신뢰하는 VPN을 사용하세요." /></p>}
                         <div className="row">
                             <a href={host.origin + "/"} target="_blank" rel="noopener noreferrer" onClick={(e) => {
                                 if (!change(() => markHostOpened(localStorage, host.origin))) e.preventDefault();
@@ -94,7 +95,7 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
             }}>
                 <label>별명<input value={alias} maxLength={80} required onChange={(e) => setAlias(e.target.value)} autoComplete="off" /></label>
                 <label>서버 주소<input type="url" value={address} required onChange={(e) => setAddress(e.target.value)} placeholder="https://grove.example.com" autoComplete="off" spellCheck={false} /></label>
-                <p className="muted small">서버 주소만 입력하세요. 비밀번호·토큰·페어링 링크는 넣지 마세요.</p>
+                <p className="muted small"><SentenceText text="서버 주소만 입력하세요. 비밀번호·토큰·페어링 링크는 넣지 마세요." /></p>
                 <div className="row">
                     <button type="submit">{editing ? "변경 저장" : "호스트 추가"}</button>
                     {editing && <button type="button" className="ghost" onClick={reset}>수정 취소</button>}

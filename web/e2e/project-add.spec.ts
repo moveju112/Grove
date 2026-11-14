@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { dirname, basename } from "node:path";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login } from "./helpers";
 
 // PROJECT-001: 서버 폴더를 둘러보고 새 폴더로 프로젝트를 만든다.
 test("프로젝트 추가 대화상자에서 폴더를 둘러보고 새 폴더로 프로젝트를 만든다", async ({ page }) => {
@@ -38,7 +38,7 @@ test("프로젝트 추가 대화상자에서 폴더를 둘러보고 새 폴더�
 
     // PROJECT-005: 별도 작업공간 생성 단계 없이 프로젝트 화면 입력창에서 바로 대화를 시작한다
     const pv = page.locator(".project-view").filter({ has: page.locator("h1", { hasText: name }) });
-    await pv.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(pv, "보내기 방식", "save");
     await pv.getByLabel("메시지 입력").fill("새 프로젝트 첫 메시지");
     await pv.getByRole("button", { name: "보내기", exact: true }).click();
     const view = page.getByTestId("session-view");

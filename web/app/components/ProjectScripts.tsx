@@ -5,6 +5,7 @@ import { useQuery } from "../state/store";
 import { confirmRun, forgetRun, newRun, pendingRuns, subscribeScriptRuns, type Execution, type ProjectScript, type RunAttempt, type ScriptListing } from "../state/projectScripts";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { Panel } from "./ui/Controls";
 
 type Editor = { id?: string; revision?: number; name: string; command: string };
 type EditAttempt = { method: "post" | "put" | "del"; path: string; body?: object; key: string };
@@ -109,9 +110,8 @@ export function ProjectScripts({ projectId, projectName, open }: { projectId: st
     if (supported === false) return null;
     const locked = busy || editAttempt !== null;
     const setupId = setup.data?.script?.id ?? null;
-    return <details className="project-scripts" data-testid="project-scripts">
-        <summary>프로젝트 script · {list.data?.scripts.length ?? 0}</summary>
-        <p className="muted small">등록만으로 실행하지 않습니다. 실행 전 프로젝트·작업 경로·셸·명령을 확인하세요. 비밀정보는 명령에 넣지 마세요.</p>
+    return <Panel className="project-scripts" data-testid="project-scripts" title={`스크립트 · ${list.data?.scripts.length ?? 0}`}>
+        <p className="warn small">명령에 비밀정보를 넣지 마세요.</p>
         {Boolean(list.error) && <p className="err" role="alert">script 목록을 읽지 못했습니다. <button onClick={list.reload}>다시 읽기</button></p>}
         {error && <p className="err" role="alert">{error}</p>}
         <ul className="session-list">
@@ -180,7 +180,7 @@ export function ProjectScripts({ projectId, projectName, open }: { projectId: st
         </div>)}
         {review && <RunReview review={review} onClose={() => setReview(null)} onConfirm={() => void run(newRun(review.projectName, review.actorId, review.script, review.execution,
             review.setup ? { worktreeId: review.setup.worktreeId } : undefined))} />}
-    </details>;
+    </Panel>;
 }
 
 function RunReview({ review, onClose, onConfirm }: { review: Review; onClose: () => void; onConfirm: () => void }) {

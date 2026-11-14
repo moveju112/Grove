@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { ensureProjects, login } from "./helpers";
+import { composerOption, ensureProjects, login } from "./helpers";
 
 async function settings(page: Page, search = "브라우저 기능") {
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
@@ -70,7 +70,7 @@ test("미지원 복사·첨부 진입점에서 원문과 대안을 보존한다"
     await expect(project.locator(".attachment-picker")).toContainText("파일 내용을 메시지에 붙여 넣거나");
     expect(dialogs).toBe(0);
     const text = `**수동 복사 원문** <script>not executable</script> ${Date.now()}`;
-    await project.getByLabel("보내기 방식", { exact: true }).selectOption("save");
+    await composerOption(project, "보내기 방식", "save");
     await project.getByLabel("메시지 입력").fill(text);
     await project.getByRole("button", { name: "보내기", exact: true }).click();
     const message = page.getByTestId("msg-user").last();

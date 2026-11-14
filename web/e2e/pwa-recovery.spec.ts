@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProjects, login, openDetails, sessionView, state, useWorkspaces } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, sessionView, state, useWorkspaces } from "./helpers";
 
 for (const width of [1400, 390]) {
     test.describe(`PWA 생성 진입 ${width}px`, () => {
@@ -14,7 +14,7 @@ for (const width of [1400, 390]) {
             if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
             await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
             const project = page.locator(".project-view:visible");
-            await project.getByLabel("보내기 방식").selectOption("save");
+            await composerOption(project, "보내기 방식", "save");
             const text = `PWA 생성 초안 ${width} ${Date.now()}`;
             await project.getByLabel("메시지 입력").fill(text);
             await openDetails(project.getByTestId("terminal-list"));
@@ -43,7 +43,7 @@ for (const width of [1400, 390]) {
                 await expect(add.getByTestId("project-add-blocked")).toContainText("오프라인");
                 await add.getByLabel("폴더 경로").fill("/fixture/not-sent");
                 await expect(add.getByRole("button", { name: "이 폴더를 프로젝트로 추가" })).toBeDisabled();
-                await add.locator("summary", { hasText: "저장소에서 clone" }).click();
+                await add.getByRole("button", { name: "저장소에서 clone", exact: true }).click();
                 await add.getByLabel("clone할 저장소").fill("fixture/not-sent");
                 await add.getByLabel("clone 대상 폴더").fill("/fixture/not-sent");
                 await expect(add.getByRole("button", { name: "clone 후 프로젝트로 추가" })).toBeDisabled();
@@ -68,7 +68,7 @@ test("대화 생성 뒤 offline 전환은 원래 생성·전송 키로만 확인
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
     const project = page.locator(".project-view:visible");
-    await project.getByLabel("보내기 방식").selectOption("save");
+    await composerOption(project, "보내기 방식", "save");
     const text = `PWA 단계 사이 차단 ${Date.now()}`;
     await project.getByLabel("메시지 입력").fill(text);
     const keys: string[] = [];

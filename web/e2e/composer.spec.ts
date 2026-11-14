@@ -1,5 +1,5 @@
 import { expect, test, type Locator } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, inputOptions, login } from "./helpers";
 
 // UI-019: Enter/Shift+Enter·Ctrl+Enter, 한글 IME 조합 중 Enter, 붙여넣기.
 async function keyEnter(el: Locator, init: { keyCode?: number; isComposing?: boolean } = {}) {
@@ -19,6 +19,7 @@ test("입력창 키: Enter 줄바꿈·Ctrl+Enter 보내기, Enter 보내기 설�
     await page.reload();
     await page.locator(".recent").getByRole("button", { name: /입력 키 대화/ }).first().click();
     const view = page.getByTestId("session-view");
+    await inputOptions(view);
     await view.getByLabel("보내기 방식").selectOption("save");
     const box = view.getByLabel("메시지 입력");
     const sent = view.getByTestId("msg-user");
@@ -39,6 +40,7 @@ test("입력창 키: Enter 줄바꿈·Ctrl+Enter 보내기, Enter 보내기 설�
     await page.evaluate(() => localStorage.setItem("grove.device.prefs", JSON.stringify({ enterToSend: true })));
     await page.reload();
     await page.locator(".recent").getByRole("button", { name: /입력 키 대화/ }).first().click();
+    await inputOptions(view);
     await view.getByLabel("보내기 방식").selectOption("save");
     await expect(box).toHaveAttribute("enterkeyhint", "send");
     await box.fill("한글 조합");

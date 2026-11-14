@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import type { Layout, Node } from "../app/state/layout";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
 import { frames } from "./fixture";
 
 // UI-008의 pane당 80행 한도와 서버의 최대 16 pane에서 지킬 브라우저 회귀 예산.
@@ -112,7 +112,7 @@ test("숨긴 pane은 중간 응답을 렌더링하지 않아도 실행을 유지
     const first = page.locator('[data-leaf="pane-0"]');
     await expect(first.getByLabel("메시지 입력")).toBeEnabled();
     await script({ marker: title, frames: [frames.text(["pane stream fixture"])[0]!], hang: true });
-    await first.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(first, "보내기 방식", "model");
     await first.getByLabel("메시지 입력").fill(title);
     await first.getByRole("button", { name: "보내기", exact: true }).click();
     try {

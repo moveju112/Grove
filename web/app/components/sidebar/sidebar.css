@@ -22,9 +22,6 @@
     padding: 0;
     position: relative;
 }
-.sidebar-project-tools > summary { display: flex; align-items: center; justify-content: center; gap: 4px; min-width: 32px; min-height: 32px; list-style: none; cursor: pointer; color: var(--muted); }
-.sidebar-project-tools > summary::-webkit-details-marker { display: none; }
-.sidebar-project-tools > .sidebar-toolbar { position: absolute; right: 0; top: 100%; z-index: 3; flex-wrap: nowrap; padding: 4px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow-float); }
 .sidebar-project-tools button.ghost { min-width: 32px; min-height: 32px; padding-inline: 4px; }
 .sidebar-expand {
     display: inline-flex;
@@ -125,28 +122,6 @@
     white-space: nowrap;
 }
 .sidebar-session-actions { flex: none; position: relative; }
-.sidebar-session-actions > summary {
-    display: grid;
-    place-items: center;
-    width: 32px;
-    height: 32px;
-    list-style: none;
-    cursor: pointer;
-    color: var(--muted);
-}
-.sidebar-session-actions > summary::-webkit-details-marker { display: none; }
-.sidebar-session-actions .sidebar-toolbar {
-    position: absolute;
-    right: 0;
-    top: 100%;
-    z-index: 2;
-    flex-wrap: nowrap;
-    padding: 4px;
-    background: var(--panel);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    box-shadow: var(--shadow-float);
-}
 .sidebar-session-actions button.ghost {
     min-width: 32px;
     min-height: 32px;

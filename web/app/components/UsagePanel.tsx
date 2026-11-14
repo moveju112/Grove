@@ -5,6 +5,7 @@ import { useQuery } from "../state/store";
 import { UsagePresentation } from "./usage/UsagePresentation";
 import type { UsageReport } from "./usage/model";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { SettingsGroup } from "./SettingsGroup";
 
 type CapacityRequest = { turn_id: string; status: string; session_id: string; session_title: string; project_id: string; queue?: QueueInfo };
 type Capacity = {
@@ -37,7 +38,6 @@ function CapacitySection() {
                 서버 전체: 실행 {c.server.running}/{limit(c.limits.max_active)} · 대기 {c.server.waiting}
                 <span className="muted small"> · 기기별 대기 한도 {limit(c.limits.max_queued_per_owner)} · 서버 대기 한도 {limit(c.limits.max_queued_total)}</span>
             </p>
-            <p className="muted small">이 기기의 요청만 표시합니다.</p>
             {c.requests.length === 0 ? (
                 <p className="muted">이 기기에서 실행·대기 중인 요청이 없습니다.</p>
             ) : (
@@ -95,8 +95,7 @@ export function UsagePanel() {
         api.get(`/usage?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&group_by=${group}&tz_offset_minutes=${tz}`),
     );
     return (
-        <section className="setting" data-testid="usage-panel">
-            <h2>사용량</h2>
+        <SettingsGroup title="사용량" scope="서버 전체" testId="usage-panel">
             <CapacitySection />
             <div className="inline wrap">
                 <select aria-label="기간" value={days} onChange={(e) => setDays(Number(e.target.value))}>
@@ -120,6 +119,6 @@ export function UsagePanel() {
             {q.data && !q.loading && !q.error && q.data.rows.length === 0 && (
                 <p className="muted">이 기간에 사용량이 없습니다.</p>
             )}
-        </section>
+        </SettingsGroup>
     );
 }

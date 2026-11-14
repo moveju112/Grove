@@ -1,4 +1,5 @@
 import { useRef, useState } from "react";
+import { DetailDialog } from "../ui/Controls";
 import { ApiError, api, newKey } from "../../api/client";
 import { hookPath, hookUpdate, type Hook, type HookDefinition, type HookListing } from "../../api/hooks";
 import { useQuery } from "../../state/store";
@@ -65,14 +66,15 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
     const current = query.data?.hooks.find((h) => h.id === editing?.id);
     const event = draft.event || query.data?.events[0] || "";
     return <div className="stack" data-testid="hooks-panel">
-        <p className="muted">저장·활성화는 실행 승인이 아닙니다. 지원 이벤트가 발생하면 아래 hook 실행 요청에서 고정 계획을 확인하고 승인하세요.</p>
-        <p className="muted small">{query.data?.execution_note ?? "이 서버의 이벤트 실행 지원 상태를 확인하세요."}</p>
-        <p className="muted small">실행 지원: {query.data?.supported_events?.join(", ") || "없음"}. 미지원 이벤트는 아직 실행되지 않음.</p>
-        <p className="muted small">hook은 원래 작업을 차단하지 않는 독립 실행입니다. 아래 실행 요청에서 취소·결과를, 해당 대화에서 결과 불명 검토를 확인하세요. 연결 종료는 취소가 아닙니다.</p>
-        <p className="muted small">matcher는 glob 문법입니다. *는 모든 대상, ?는 한 글자입니다. 정규식·셸 명령이 아닙니다.</p>
+        <p className="muted">저장·활성화는 실행 승인이 아닙니다. 실행 요청에서 개별 승인하세요.</p>
+        <p className="scope">실행 지원: {query.data?.supported_events?.join(", ") || "없음"}</p>
+        <p className="muted small">연결 종료는 취소가 아닙니다. 실행 요청에서 취소·결과를 확인하세요.</p>
+        <DetailDialog label="Hook 이벤트·패턴 도움말" title="이벤트·패턴 도움말">
+        <p>matcher: glob · *는 모든 대상, ?는 한 글자</p>
         <p className="muted small">PostToolUse는 도구 이름, 다른 지원 이벤트는 대화 ID에 matcher를 적용합니다.
             SessionStart는 직접 대화 생성, UserPromptSubmit은 직접 턴·메시지 접수, Stop은 Grove 턴 종료에 연결됩니다.
             분기·자식/봇 세션 생성, followup/steer 접수와 모델 내부 도구 이벤트는 미연결입니다.</p>
+        </DetailDialog>
         {query.loading && <p role="status">hook 목록 불러오는 중</p>}
         {!!query.error && <p role="alert">{query.error instanceof Error ? query.error.message : "hook 조회 실패"}</p>}
         {error && <p role="alert">{error}</p>}
@@ -115,7 +117,7 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
                 <label>hook 이벤트<select aria-label="hook 이벤트" value={event} onChange={(e) => setDraft({ ...draft, event: e.target.value })}>
                     {query.data?.events.map((value) => <option key={value}>{value}</option>)}
                 </select></label>
-                <label>hook matcher<input aria-label="hook matcher" required value={draft.matcher} onChange={(e) => setDraft({ ...draft, matcher: e.target.value })} /></label>
+                <label>hook matcher (glob)<input aria-label="hook matcher" required value={draft.matcher} onChange={(e) => setDraft({ ...draft, matcher: e.target.value })} /></label>
                 {editing && <label><input type="checkbox" checked={replaceCommand} onChange={(e) => setReplaceCommand(e.target.checked)} />명령 교체</label>}
                 <label>hook 명령<textarea aria-label="hook 명령" autoComplete="off" spellCheck={false}
                     disabled={!!editing && !replaceCommand} required={!editing || replaceCommand} value={draft.command}

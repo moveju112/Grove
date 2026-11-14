@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { DetailDialog } from "./ui/Controls";
 import { ApiError, api } from "../api/client";
 import type { Project } from "../api/generated";
 import { CreationDialog } from "./create/CreationDialog";
@@ -148,10 +149,9 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
                         취소
                     </button>
                 </div>
-                <details className="clone-repo">
-                    <summary>저장소에서 clone</summary>
+                <DetailDialog className="clone-repo" label="저장소에서 clone" title="저장소에서 clone">
                     <CloneRepo target={dirs?.path ?? ""} blockedReason={blockedReason} onCreate={(body) => submit("/projects/clone", body)} />
-                </details>
+                </DetailDialog>
                 </fieldset>
         </CreationDialog>
     );

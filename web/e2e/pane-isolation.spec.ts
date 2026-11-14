@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script, state } from "./helpers";
 
 async function fixture() {
     const { a, b } = await ensureProjects();
@@ -25,7 +25,7 @@ async function session(project: string, title: string) {
 async function openPair(page: Page, first: { title: string }, second: { title: string }) {
     const recent = page.locator(".recent");
     await recent.getByTestId("recent-item").filter({ hasText: first.title }).getByRole("button", { name: new RegExp(first.title) }).click();
-    await recent.getByTestId("recent-item").filter({ hasText: second.title }).getByLabel("최근 항목 관리").click();
+    await recent.getByTestId("recent-item").filter({ hasText: second.title }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
     await recent.getByTestId("recent-item").filter({ hasText: second.title }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
 }
@@ -42,10 +42,10 @@ test("pane별 모델·effort·도구 선택은 초점·탭 전환·새로고침 
         const right = page.locator(`[data-session="${second.id}"]`);
         await left.getByLabel("모델 프로필").selectOption(f.primary);
         await left.getByLabel("추론 강도").selectOption("low");
-        await left.getByLabel("도구", { exact: true }).check();
+        await composerOption(left, "도구", true);
         await right.getByLabel("모델 프로필").selectOption(f.secondary);
         await right.getByLabel("추론 강도").selectOption("high");
-        await right.getByLabel("도구", { exact: true }).uncheck();
+        await composerOption(right, "도구", false);
         await left.getByLabel("메시지 입력").click();
         await expect(right.getByLabel("모델 프로필")).toHaveValue(f.secondary);
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
@@ -108,7 +108,7 @@ test("이전 공유 프로젝트 초안은 지우거나 다른 탭에 자동 배
     await page.locator(".sidebar .projects").getByRole("button", { name: a.name, exact: true }).click();
     const project = page.locator(".project-view");
     await expect(project.getByLabel("메시지 입력")).toHaveValue("");
-    await project.getByTestId("draft-copies").locator("summary").click();
+    await openDetails(project.getByTestId("draft-copies"));
     await project.getByTestId("draft-copy").filter({ hasText: "legacy shared project draft fixture" })
         .getByRole("button", { name: "이 사본 이어받기", exact: true }).click();
     await expect(project.getByLabel("메시지 입력")).toHaveValue("legacy shared project draft fixture");
@@ -122,7 +122,7 @@ test("모델을 바꾼 같은 글은 원래 저장 요청을 확인한 뒤에도
         await page.locator(".recent").getByRole("button", { name: new RegExp(s.title) }).click();
         const view = page.locator(`[data-session="${s.id}"]`);
         await view.getByLabel("모델 프로필").selectOption(f.primary);
-        await view.getByLabel("보내기 방식").selectOption("save");
+        await composerOption(view, "보내기 방식", "save");
         await view.getByLabel("메시지 입력").fill("same text with a different model intent");
         const sent: { key: string; body: string | null }[] = [];
         await page.route(`**/api/v1/sessions/${s.id}/messages`, async (route) => {
@@ -135,7 +135,7 @@ test("모델을 바꾼 같은 글은 원래 저장 요청을 확인한 뒤에도
         });
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("send-unsure")).toBeVisible();
-        await view.getByLabel("보내기 방식").selectOption("model");
+        await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("모델 프로필").selectOption(f.secondary);
         await view.getByRole("button", { name: "원래 요청 결과 확인", exact: true }).click();
         await expect(view.getByTestId("send-unsure")).toHaveCount(0);
@@ -169,8 +169,8 @@ test("다른 pane을 선택한 뒤 승인해도 cwd·파일 변경·stream·모�
         const right = page.locator(`[data-testid="session-view"][data-session="${second.id}"]`);
         for (const [view, model] of [[left, f.primary], [right, f.secondary]] as const) {
             await view.getByLabel("모델 프로필").selectOption(model);
-            await view.getByLabel("보내기 방식").selectOption("model");
-            await view.getByLabel("도구", { exact: true }).check();
+            await composerOption(view, "보내기 방식", "model");
+            await composerOption(view, "도구", true);
         }
         await script({ frames: frames.tool("pane-a-shell", "shell", { command: `printf '%s\\n' "$PWD"; printf 'a-after' > '${name}'` }) });
         await left.getByLabel("메시지 입력").fill(`${f.prefix} prompt a`);

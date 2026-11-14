@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { ActionMenu } from "./ui/Controls";
 import { ApiError, api } from "../api/client";
 import type { RecentItem, RecentPage } from "../api/generated";
 import { loadPrefs, savePrefs, usePrefs } from "../state/device";
@@ -9,6 +10,9 @@ import { useQuery } from "../state/store";
 import { DRAG_OPEN } from "../state/layout";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Heading } from "@astryxdesign/core/Text";
+import { Button } from "../design/Button";
 
 const STATUS: Record<string, string> = {
     running: "실행 중",
@@ -33,7 +37,9 @@ function useMinute(): Date {
 }
 
 /// linked: 현재 배치에서 분할로 함께 열린 대화 ID. 원본처럼 한 묶음으로 보여 준다.
-export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked?: ReadonlySet<string> }) {
+export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar" }: {
+    open: Opener; linked?: ReadonlySet<string>; presentation?: "sidebar" | "home";
+}) {
     const [limit, setLimit] = useState(30);
     const [err, setErr] = useState<string | null>(null);
     const prefs = usePrefs();
@@ -75,9 +81,9 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
     };
 
     return (
-        <section className="recent" aria-label="최근">
-            <div className="recent-head">
-                <h2>최근</h2>
+        <Stack as="section" className={presentation === "home" ? "home-recent" : "recent"} aria-label={presentation === "home" ? "홈 최근" : "최근"}>
+            <Stack direction="horizontal" className="recent-head">
+                <Heading level={presentation === "home" ? 1 : 2}>최근</Heading>
                 <div className="chips" role="group" aria-label="시간 범위">
                     {[...prefs.recentWindows, "all" as const].map((option) => (
                         <button key={option} className={range === option ? "chip on" : "chip"} aria-pressed={range === option}
@@ -86,7 +92,7 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                         </button>
                     ))}
                 </div>
-            </div>
+            </Stack>
             {err && <p className="err" role="alert">{err}</p>}
             {Boolean(recent.error) && <p className="err" role="alert">
                 {recent.error instanceof ApiError ? recent.error.message : "최근 목록을 불러오지 못했습니다."}
@@ -103,16 +109,16 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
             </ul>
             {recent.data?.items.length === 0 && <p className="recent-empty">최근 항목 없음</p>}
             {recent.data?.next_offset != null && (
-                <button className="ghost" onClick={() => setLimit((l) => l + 30)}>
+                <Button className="ghost" onClick={() => setLimit((l) => l + 30)}>
                     더 보기
-                </button>
+                </Button>
             )}
-        </section>
+        </Stack>
     );
 
     function row(it: RecentItem, linkedTo?: string) {
         return (
-                    <li key={it.id} className={it.unread ? "unread" : ""} data-testid="recent-item">
+                    <li key={it.id} className={it.unread ? "unread" : ""} data-testid={presentation === "home" ? "home-recent-item" : "recent-item"}>
                         <button className="link" onClick={() => openItem(it)} title={`${it.project_name} · ${it.title}${linkedTo ? ` · 분할로 함께 열림: ${linkedTo}` : ""} · 영역이나 가장자리로 끌어서 열 수 있습니다`}
                             draggable={["session", "project", "terminal", "file"].includes(it.kind)}
                             onDragStart={(e) => {
@@ -131,8 +137,7 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                             <span className="recent-project">{it.project_name}</span>
                             <span className="muted small" data-testid="recent-time"> <When at={it.last_activity_at} relative /></span>
                         </button>
-                        <details className="recent-actions">
-                            <summary aria-label="최근 항목 관리">⋯</summary>
+                        <ActionMenu className="recent-actions" label="최근 항목 관리">
                             <div className="row-actions">
                             <button className="ghost small" title="오른쪽에 열기" aria-label="오른쪽에 열기" onClick={() => openItem(it, "right")}>⇥</button>
                             <button className="ghost small" title="아래에 열기" aria-label="아래에 열기" onClick={() => openItem(it, "down")}>⤓</button>
@@ -144,7 +149,7 @@ export function RecentPanel({ open, linked = NO_LINKED }: { open: Opener; linked
                                 {it.hidden ? "↺" : "–"}
                             </ServerActionButton>
                             </div>
-                        </details>
+                        </ActionMenu>
                     </li>
         );
     }

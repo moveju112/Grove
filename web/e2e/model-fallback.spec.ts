@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { frames } from "./fixture";
-import { apiCall, ensureProjects, login, openDetails, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, sessionView } from "./helpers";
 
 test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과 이유를 표시한다", async ({ page, browser }) => {
     const prefix = `fallback-${randomUUID()}`;
@@ -59,7 +59,7 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await login(app);
         await app.locator(".recent").getByRole("button", { name: new RegExp(prefix) }).click();
         const view = sessionView(app, session.id);
-        await view.getByLabel("보내기 방식").selectOption("model");
+        await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("모델 프로필", { exact: true }).selectOption(primary.id);
         await view.getByRole("checkbox", { name: "도구", exact: true }).uncheck();
         await view.getByLabel("추론 강도", { exact: true }).selectOption("auto");

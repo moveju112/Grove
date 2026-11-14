@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
 
 // UI-020: 추론 강도 선택(auto·낮음·중간·높음)과 /effort 명령. auto는 provider에 보내지 않는다.
 const requests = async () => (await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json()) as Record<string, unknown>[];
@@ -14,7 +14,7 @@ test("추론 강도를 고르면 모델 요청에 들어가고 auto는 보내지
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     const sel = view.getByLabel("추론 강도");
     await expect(sel).toHaveValue("auto");
     const box = view.getByLabel("메시지 입력");
@@ -58,7 +58,7 @@ test("꺼진 워크플로를 고른 대화는 선택이 남고, 이번 요청은
     const wf = view.getByLabel("워크플로우");
     await expect(wf).toHaveValue(id);
     await expect(wf.locator("option:checked")).toContainText("꺼짐 · 다음 요청은 기본 워크플로우");
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     const before = (await requests()).length;
     await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
     await view.getByLabel("메시지 입력").fill("꺼진 흐름으로");
@@ -80,7 +80,7 @@ test("사용량 화면의 실행 용량에서 이 기기의 실행 중 요청을
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
     await view.getByLabel("메시지 입력").fill("오래 걸리는 일");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
@@ -107,7 +107,7 @@ test("실행 중 강도를 바꾸면 이번 요청은 그대로이고 다음 요
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     const sel = view.getByLabel("추론 강도");
     await sel.selectOption("low");
     const before = (await requests()).length;

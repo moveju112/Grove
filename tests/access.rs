@@ -22,6 +22,41 @@ async fn browser(s: &TestServer, token: &str) -> (String, String) {
 }
 
 #[tokio::test]
+async fn device_name_changes_only_authenticated_root_and_survives_browser_login() {
+    let s = TestServer::start().await;
+    let first = device(&s, "first").await;
+    let second = device(&s, "second").await;
+    let (access, _) = browser(&s, first["token"].as_str().unwrap()).await;
+    let path = "/api/v1/auth/device";
+    let (_, owner_before) = s.get(path).await;
+    let (owner_access, _) = browser(&s, &s.token).await;
+    let renamed_owner_browser = s.raw(Method::PUT, path, Some(json!({ "name": "owner browser" })),
+        Some("rename-owner-browser"), Some(&owner_access)).await;
+    assert_eq!(renamed_owner_browser.status(), StatusCode::OK);
+    let owner_browser: Value = renamed_owner_browser.json().await.unwrap();
+    assert_ne!(owner_browser["id"], owner_before["id"]);
+    assert_eq!(s.get(path).await.1["name"], owner_before["name"]);
+    assert_eq!(s.client.get(format!("{}{path}", s.base)).send().await.unwrap().status(), StatusCode::UNAUTHORIZED);
+    for (index, name) in ["", &"x".repeat(81)].iter().enumerate() {
+        assert_eq!(s.raw(Method::PUT, path, Some(json!({ "name": name })), Some(&format!("invalid-name-{index}")), Some(&access)).await.status(), StatusCode::BAD_REQUEST);
+    }
+    let response = s.raw(Method::PUT, path, Some(json!({ "name": " renamed ", "id": second["id"] })),
+        Some("rename-self"), Some(&access)).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let renamed: Value = response.json().await.unwrap();
+    assert_eq!(renamed["id"], first["id"]);
+    assert_eq!(renamed["name"], "renamed");
+    for (token, expected) in [(first["token"].as_str().unwrap(), "renamed"), (second["token"].as_str().unwrap(), "second")] {
+        let response = s.raw(Method::GET, path, None, None, Some(token)).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["name"], expected);
+    }
+    assert_eq!(s.send(Method::DELETE, &format!("/api/v1/devices/{}", first["id"].as_str().unwrap()), json!({})).await.0, StatusCode::OK);
+    assert_eq!(s.raw(Method::PUT, path, Some(json!({ "name": "forbidden" })), Some("revoked-rename"), Some(&access)).await.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn devices_share_user_sessions_but_cannot_escalate_to_owner_or_replay_another_device() {
     let s = TestServer::start().await;
     let p = s.create_project("shared-user").await;

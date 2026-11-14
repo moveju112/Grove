@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, apiText, ensureProfile, ensureProjects, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, apiText, composerOption, ensureProfile, ensureProjects, login, openDetails, script, sessionView, state } from "./helpers";
 
 type CloseMode = "tab" | "context" | "browser";
 type Turn = { id: string; status: string; error?: { code: string } };
@@ -45,7 +45,7 @@ async function conversation(page: Page) {
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
-    await view.getByLabel("보내기 방식").selectOption("model");
+    await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("모델 프로필").selectOption(profile);
     return { profile, project: a, title, sid: session.id, view };
 }
@@ -101,7 +101,7 @@ for (const mode of ["tab", "context", "browser"] as const) {
                 const prefix = randomUUID();
                 const root = state().projA;
                 const gate = `${prefix}-release`;
-                await view.getByLabel("도구", { exact: true }).check();
+                await composerOption(view, "도구", true);
                 await script({ frames: frames.tool("shell-close", "shell", {
                     command: `printf x >> ${prefix}-shell-count; touch ${prefix}-shell-started; while [ ! -f ${gate} ]; do sleep 0.02; done; printf 'offline shell result'`,
                     background, timeout_ms: 20000,

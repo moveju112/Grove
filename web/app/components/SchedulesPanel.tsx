@@ -1,4 +1,5 @@
 import { type ReactNode, useState } from "react";
+import { Panel } from "./ui/Controls";
 import { When } from "./When";
 import { ApiError, api } from "../api/client";
 import type { ModelProfile } from "../api/generated";
@@ -190,20 +191,18 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
             setForm((f) => ({ ...f, name: "", prompt: "", confirmed: false }));
         });
     return (
-        <details className="schedules" data-testid="schedules-panel">
-            <summary>예약 실행 {list.length > 0 ? `· ${list.filter((s) => s.status === "active").length}개 활성` : ""}</summary>
+        <Panel className="schedules" data-testid="schedules-panel" title={`예약 실행${list.length > 0 ? ` · ${list.filter((s) => s.status === "active").length}개 활성` : ""}`}>
             {err && <p className="err" role="alert">{err}</p>}
             <ul className="session-list">
                 {list.map((s) => (
                     <li key={s.id} data-testid="schedule" data-status={s.status}>
-                        <details>
-                            <summary>
+                        <Panel title={<>
                                 <strong>{s.name}</strong> <span className="muted small">{when(s)}</span>{" "}
                                 <span className={`status ${s.status}`}>
                                     {s.status === "active" ? "활성" : s.status === "paused" ? (s.paused_reason === "failures" ? "일시 정지(연속 실패)" : "일시 정지") : "끝남"}
                                 </span>
                                 {s.next_run_at && s.status === "active" && <span className="muted small"> · 다음 <When at={s.next_run_at} absolute /></span>}
-                            </summary>
+                            </>}>
                             <p className="small">{s.prompt}</p>
                             {s.bot_id && <p className="small" data-testid="schedule-bot">담당 봇: {botName(s.bot_id)} · 결과는 봇 대화에 전달</p>}
                             <p className="muted small">승인 필요 시: {s.on_approval === "wait" ? "승인을 기다림" : "실패로 끝냄"} · 도구 {s.tools_enabled ? "사용" : "끔"}</p>
@@ -224,7 +223,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                             </div>
                             <Webhook s={s} act={act} />
                             <Runs id={s.id} projectId={projectId} open={open} />
-                        </details>
+                        </Panel>
                     </li>
                 ))}
             </ul>
@@ -297,6 +296,6 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                 )}
                 <ServerActionButton type="submit" disabled={!form.name.trim() || !form.prompt.trim() || !profileId || (!!bot && !form.confirmed)}>예약 추가</ServerActionButton>
             </form>
-        </details>
+        </Panel>
     );
 }

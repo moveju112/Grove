@@ -6,6 +6,7 @@ import type { Opener } from "./Workspace";
 import { requestFocus } from "../state/focus";
 import { useCapability } from "../state/capabilities";
 import { Icon } from "./icons";
+import { DetailDialog } from "./ui/Controls";
 
 type Hit = { id: string; title: string; project_id: string; project_name: string; updated_at: string; snippet: string | null; match_seq: number | null; archived_at: string | null; source?: { message_id: string; role: string; seq: number } };
 type Project = { id: string; name: string };
@@ -63,13 +64,11 @@ export function SearchPanel({ open }: { open: Opener }) {
     };
 
     return (
-        <details className="search" data-testid="search-panel">
-            <summary><Icon name="search" size={16} />대화 검색</summary>
+        <DetailDialog className="search" data-testid="search-panel" label="대화 검색" title={<><Icon name="search" size={16} />대화 검색</>}>
             {supported !== false && <select aria-label="검색 방식" value={recall ? "recall" : "sessions"} onChange={(e) => setRecall(e.target.value === "recall")}>
                 <option value="sessions">대화 검색</option><option value="recall">메시지 회상(키워드)</option>
             </select>}
             <input type="search" aria-label="대화 검색어" placeholder={recall ? "과거 메시지의 키워드" : "제목·본문 검색"} value={q} onChange={(e) => setQ(e.target.value)} />
-            {recall && <p className="muted small">의미 검색이 아닌 본문 부분 일치 검색입니다. 기간은 메시지 작성 시각 기준이며, 결과를 누르면 원문으로 이동합니다.</p>}
             <div className="inline wrap small">
                 {!recall && <label className="check"><input type="checkbox" checked={body} onChange={(e) => setBody(e.target.checked)} /> 본문 포함</label>}
                 {recall && <label className="check"><input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} /> 보관된 대화·프로젝트 포함</label>}
@@ -96,6 +95,7 @@ export function SearchPanel({ open }: { open: Opener }) {
                             <li key={`${h.id}:${h.match_seq ?? "-"}`} data-testid="search-hit">
                                 <button
                                     className="ghost"
+                                    data-dialog-close
                                     onClick={() => {
                                         // 본문에서 찾았으면 그 메시지로 이동한다(UI-026).
                                         if (h.match_seq != null) requestFocus(h.id, h.match_seq);
@@ -115,6 +115,6 @@ export function SearchPanel({ open }: { open: Opener }) {
                     </div>}
                 </>
             )}
-        </details>
+        </DetailDialog>
     );
 }
