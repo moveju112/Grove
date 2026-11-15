@@ -4,6 +4,8 @@ use crate::provider::{self, ChatMsg, ToolCall};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 
+mod dedup;
+
 const PREVIEW_CHARS: usize = 4000;
 
 struct Text {
@@ -239,8 +241,22 @@ pub(crate) fn from_rows(rows: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg>
 }
 
 fn read(conn: &Connection, session: &str, upto: Option<i64>, page: Option<(usize, usize)>) -> ApiResult<Output> {
+    // 본문을 모으지 않고 제한된 fingerprint만 먼저 수집한다. 분기·되감기·압축 경계는
+    // 실제 입력과 같은 visitor를 쓰므로 경계 밖 결과로 중복을 판단하지 않는다.
+    let mut duplicates = dedup::Duplicates::default();
+    crate::sessions::visit_model_history(conn, session, upto, &mut |role, input| duplicates.observe(role, input))?;
+    let replacements = duplicates.replacements(conn)?;
     let mut builder = Builder::new(page);
-    crate::sessions::visit_model_history(conn, session, upto, &mut |role, input| builder.feed(role, input))?;
+    crate::sessions::visit_model_history(conn, session, upto, &mut |role, input| {
+        if let Some(output) = (role == "tool").then(|| input["call_id"].as_str())
+            .flatten().and_then(|id| replacements.get(id)) {
+            let mut reduced = input.clone();
+            reduced["output"] = output.clone();
+            builder.feed(role, &reduced);
+        } else {
+            builder.feed(role, input);
+        }
+    })?;
     Ok(builder.finish())
 }
 
