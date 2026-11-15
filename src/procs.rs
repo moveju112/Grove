@@ -4,6 +4,7 @@
 //! - Linux: 셸을 새 process group의 leader로 띄운다. 정리할 때는 leader가 아직 회수되지 않았으면 그룹 전체를,
 //!   회수된 뒤에는 "표식이 일치하는 구성원이 남아 있는 그룹"만 종료한다. 비어 있는 그룹 번호가
 //!   다른 프로세스에 재사용됐을 때 남의 그룹을 죽이지 않기 위해서다(SEC-016).
+//!   새 session·process group으로 분리된 자손도 실행 표식으로 찾아 종료한다.
 //! - Windows: 실행마다 Job Object(`KILL_ON_JOB_CLOSE`)를 만들고 일시정지 상태로 띄운 프로세스를 넣은 뒤 재개한다.
 //!   자손은 자동으로 같은 Job에 들어가고, 서버가 비정상 종료해 handle이 닫히면 OS가 트리 전체를 끝낸다.
 //!   Job에 넣지 못하면 실행을 거부한다(SEC-015).
@@ -125,7 +126,10 @@ impl Owned {
                 }
             }
             #[cfg(target_os = "linux")]
-            linux::kill_group_if_ours(self.pid as i32, &self.tag);
+            {
+                linux::kill_group_if_ours(self.pid as i32, &self.tag);
+                linux::reap(std::slice::from_ref(&self.tag));
+            }
         }
     }
 }
@@ -300,6 +304,37 @@ mod tests {
         assert!(leftovers.iter().all(|p| !alive(*p)), "표식이 확인된 그룹 전체(표식 없는 자식 포함) 종료");
         other.kill().await.unwrap();
         foreign.kill().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn kill_tree_stops_descendants_that_start_a_new_session() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let tag = crate::util::new_id();
+        let mut command = tokio::process::Command::new("bash");
+        command.args(["-c", "setsid sh -c 'echo $$; exec sleep 30' &"])
+            .stdout(std::process::Stdio::piped()).kill_on_drop(true);
+        prepare(&mut command, &tag, Limits::default());
+        let mut child = command.spawn().unwrap();
+        let owned = adopt(&mut child, &tag, Limits::default()).unwrap();
+        let mut pid = String::new();
+        BufReader::new(child.stdout.take().unwrap()).read_line(&mut pid).await.unwrap();
+        let descendant: u32 = pid.trim().parse().unwrap();
+        child.wait().await.unwrap();
+        assert_ne!(unsafe { libc::getsid(descendant as i32) }, unsafe { libc::getsid(0) });
+        let foreign_tag = crate::util::new_id();
+        let mut foreign = spawn(Some(&foreign_tag), "sleep 30");
+        owned.kill_tree(false);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+        while alive(descendant) && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let stopped = !alive(descendant);
+        let foreign_untouched = foreign.try_wait().unwrap().is_none();
+        // 회귀가 실패해도 이 시험이 소유한 별도 session을 남기지 않는다.
+        reap_leftovers(&[tag]);
+        foreign.kill().await.unwrap();
+        assert!(stopped, "새 session으로 분리된 소유 자손도 종료해야 한다");
+        assert!(foreign_untouched, "다른 실행 표식은 건드리지 않는다");
     }
 }
 
