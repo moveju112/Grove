@@ -1,13 +1,20 @@
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hookPath, hookUpdate, type Hook, type HookListing } from "../../api/hooks";
 import { HooksSettings } from "./HooksSettings";
 
 const query = vi.hoisted(() => ({ data: undefined as unknown, error: null as unknown, loading: false }));
-vi.mock("../../state/store", () => ({ useQuery: (key: string) => ({
-    ...query, data: key.startsWith("recovery:hook-executions:") ? [] : query.data, reload: () => {},
-}) }));
+vi.mock("../../state/store", async (original) => ({
+    ...await original<typeof import("../../state/store")>(),
+    useQuery: (key: string) => ({
+        ...query, data: key.startsWith("recovery:hook-executions:") ? [] : query.data, reload: () => {},
+    }),
+}));
+vi.mock("../ui/Controls", async (original) => ({
+    ...await original<typeof import("../ui/Controls")>(),
+    DetailDialog: ({ children }: { children: ReactNode }) => createElement("section", null, children),
+}));
 const hook: Hook = {
     id: "h1", project_id: null, name: "<script>hook</script>", event: "PreToolUse", matcher: "shell*",
     command: "[redacted]", command_redacted: true, enabled: true, revision: 3, execution_state: "not_implemented",
@@ -23,8 +30,8 @@ describe("hook 설정·실행 지원 계약", () => {
         const html = render();
         expect(html).toContain("이벤트 발생 후 개별 승인 필요");
         expect(html).toContain("SessionStart, Stop");
-        expect(html).toContain("저장·활성화는 실행 승인이 아닙니다");
-        expect(html).toContain("연결 종료는 취소가 아닙니다");
+        expect(html).toContain("저장·활성화와 별도로 각 실행 요청에서 승인하세요");
+        expect(html).toContain("연결이 종료돼도 취소되지 않으니");
         expect(html).toContain("실행 요청에서 취소·결과를 확인하세요");
     });
     it("서버의 이벤트·활성 설정과 미실행 상태를 표시하고 HTML을 escape한다", () => {

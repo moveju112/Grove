@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { ApiError, PROTOCOL, checkProtocol, onProtocolMismatch, setServerActionGuard } from "../../api/client";
-import { transportFetch } from "../../api/transport";
+import { transportFetch, transportProtocol } from "../../api/transport";
 import { retryWaiting, setTransportFailureHandler } from "../../state/store";
 
 export type StorageIssue = "quota" | "unavailable" | "missing" | null;
@@ -126,6 +126,13 @@ export function checkCompatibility(): Promise<void> {
     if (checking) return checking;
     checking = (async () => {
         try {
+            const verified = await transportProtocol();
+            if (verified !== null) {
+                checkProtocol(new Response(null, { headers: { "x-grove-protocol": String(verified) } }));
+                update({ connection: "ready" });
+                retryWaiting();
+                return;
+            }
             const response = await transportFetch("/api/v1/health", { cache: "no-store", signal: AbortSignal.timeout(10_000) });
             checkProtocol(response);
             const health = await response.json() as { protocol?: unknown };

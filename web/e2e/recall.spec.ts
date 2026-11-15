@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProjects, login, openDetails, sessionView, state } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, selectChoice, sessionView, state } from "./helpers";
 
 test("메시지 작성 시각으로 회상하고 페이지 밖의 원문 메시지로 이동한다", async ({ page }) => {
     const { a } = await ensureProjects();
@@ -52,7 +52,7 @@ test("보관 포함 회상에서도 대화 영구 삭제 뒤에는 서버와 화
     await openDetails(panel);
     await panel.getByLabel("검색 방식").selectOption("recall");
     await panel.getByLabel("대화 검색어").fill(word);
-    await panel.getByRole("checkbox", { name: "보관된 대화·프로젝트 포함" }).check();
+    await selectChoice(panel.getByLabel("보관된 대화·프로젝트 포함"), "true");
     await expect(panel.getByTestId("search-hit")).toHaveCount(1);
     const before = await apiCall<{ revision: number }>("GET", `/sessions/${session.id}`);
     await apiCall("PATCH", `/sessions/${session.id}`, { expected_revision: before.revision, archived: true });
@@ -96,7 +96,7 @@ test("프로젝트 보관 이벤트도 회상 cache를 갱신하고 명시적으
     const archived = await apiCall<{ revision: number }>("PATCH", `/projects/${project.id}`, { expected_revision: project.revision, archived: true });
     try {
         await expect(panel.getByTestId("search-hit")).toHaveCount(0);
-        await panel.getByRole("checkbox", { name: "보관된 대화·프로젝트 포함" }).check();
+        await selectChoice(panel.getByLabel("보관된 대화·프로젝트 포함"), "true");
         await expect(panel.getByTestId("search-hit")).toHaveCount(1);
     } finally {
         await apiCall("PATCH", `/projects/${project.id}`, { expected_revision: archived.revision, archived: false });

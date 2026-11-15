@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { login } from "./helpers";
+import { login, openSettings, selectChoice } from "./helpers";
 
 for (const width of [320, 390, 1280]) {
     test.describe(`${width}px 설정`, () => {
@@ -8,7 +8,7 @@ for (const width of [320, 390, 1280]) {
             test(`${theme}: 메뉴·입력 정렬과 테마 저장`, async ({ page }, info) => {
                 await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
                 await login(page);
-                await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+                await openSettings(page);
                 await page.evaluate(() => document.fonts.ready);
                 const settings = page.locator(".settings");
                 const search = settings.getByLabel("설정 검색");
@@ -20,6 +20,21 @@ for (const width of [320, 390, 1280]) {
                     await button.click();
                     await expect(button).toHaveAttribute("aria-current", "page");
                     expect((await button.boundingBox())!.height).toBeLessThanOrEqual(40);
+                    const cards = await settings.locator('[data-ui="settings-group"]').evaluateAll((nodes) => nodes
+                        .filter((node) => node.getBoundingClientRect().height > 0)
+                        .map((node) => {
+                            const style = getComputedStyle(node);
+                            return {
+                                title: node.querySelector("h2")?.textContent,
+                                edges: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].map(parseFloat),
+                                radius: parseFloat(style.borderTopLeftRadius),
+                            };
+                        }));
+                    expect(cards.length).toBeGreaterThan(0);
+                    for (const card of cards) {
+                        expect(card.edges.every((edge) => edge >= 1), `${card.title}: 설정 영역은 네 면이 구분돼야 한다`).toBe(true);
+                        expect(card.radius).toBeGreaterThanOrEqual(8);
+                    }
                     const layout = await settings.evaluate((el) => {
                         const edge = el.getBoundingClientRect().right;
                         return {
@@ -46,20 +61,22 @@ for (const width of [320, 390, 1280]) {
                     const menuBox = await settings.locator(".settings-menu").boundingBox();
                     const bodyBox = await settings.locator(".settings-body").boundingBox();
                     expect(menuBox!.y).toBeGreaterThanOrEqual(inputBox!.y + inputBox!.height);
+                    expect(menuBox!.height).toBeLessThanOrEqual(44);
                     expect(bodyBox!.y).toBeGreaterThan(menuBox!.y + menuBox!.height);
+                    expect(bodyBox!.y - menuBox!.y - menuBox!.height).toBeLessThanOrEqual(32);
                 }
                 await page.screenshot({ path: info.outputPath("models.png") });
                 await settings.getByRole("button", { name: "화면·입력", exact: true }).click();
-                await settings.getByLabel("테마", { exact: true }).selectOption(theme);
+                await selectChoice(settings.getByRole("combobox", { name: "테마", exact: true }), theme);
                 await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
                 await page.screenshot({ path: info.outputPath("display.png") });
-                await settings.getByLabel("글자 크기", { exact: true }).focus();
+                await settings.getByRole("slider", { name: "글자 크기", exact: true }).focus();
                 await page.keyboard.press("End");
-                await expect(settings.getByLabel("글자 크기", { exact: true })).toHaveValue("20");
+                await expect(settings.getByRole("slider", { name: "글자 크기", exact: true })).toHaveAttribute("aria-valuenow", "20");
                 expect(await settings.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
                 await page.reload();
                 await search.fill("테마");
-                await expect(settings.getByLabel("테마", { exact: true })).toHaveValue(theme);
+                await expect(settings.getByRole("combobox", { name: "테마", exact: true })).toHaveAttribute("data-selected-value", theme);
             });
         }
     });

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, selectChoice } from "./helpers";
 
 test("시간 표시 설정은 이 기기에서 즉시 적용되고 새로고침 뒤에도 유지되며 정확한 시각을 함께 보여 준다", async ({ page }) => {
     const { a } = await ensureProjects();
@@ -13,8 +13,8 @@ test("시간 표시 설정은 이 기기에서 즉시 적용되고 새로고침 
     const settings = async (style: "relative" | "absolute", clock: "12h" | "24h") => {
         await page.getByRole("button", { name: "설정", exact: true }).first().click();
         await page.getByLabel("설정 검색", { exact: true }).fill("시간 표시");
-        await page.getByLabel("지난 시각 표시", { exact: true }).selectOption(style);
-        await page.getByLabel("시계 형식", { exact: true }).selectOption(clock);
+        await selectChoice(page.getByLabel("지난 시각 표시", { exact: true }), style);
+        await selectChoice(page.getByLabel("시계 형식", { exact: true }), clock);
         await listTab.click();
     };
     await expect(time).toHaveText(/\d/);

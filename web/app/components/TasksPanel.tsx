@@ -1,8 +1,12 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import { Panel } from "./ui/Controls";
 import { useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { TextInput } from "../design/Fields";
 
 export type TaskRow = {
     id: string;
@@ -79,26 +83,26 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
                     void start();
                 }}
             >
-                <input aria-label="백그라운드 명령" placeholder="명령을 입력하세요" value={cmd} disabled={disabled || busy || attempt !== null} onChange={(e) => setCmd(e.target.value)} />
+                <TextInput label="백그라운드 명령" isLabelHidden placeholder="명령을 입력하세요" value={cmd} isDisabled={disabled || busy || attempt !== null} onChange={setCmd} />
                 <ServerActionButton type="submit" disabled={disabled || busy || attempt !== null || !cmd.trim()}>실행</ServerActionButton>
             </form>
-            {err && <p className="err" role="alert">{err}</p>}
-            {attempt && !busy && <div className="inline">
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
+            {attempt && !busy && <GroveStack direction="horizontal" align="center" className="inline">
                 <ServerActionButton className="ghost small" disabled={disabled} onClick={() => void start()}>같은 요청 결과 확인</ServerActionButton>
-                <button className="ghost small" onClick={() => { setAttempt(null); setCmd(""); setErr(null); }}>다른 명령 입력</button>
-                <span className="muted small">기존 작업 상태는 아래 목록에서 확인하세요.</span>
-            </div>}
+                <GroveButton className="ghost small" onClick={() => { setAttempt(null); setCmd(""); setErr(null); }}>다른 명령 입력</GroveButton>
+                <GroveText type="supporting" color="secondary">기존 작업 상태는 아래 목록에서 확인하세요.</GroveText>
+            </GroveStack>}
             <ul className="session-list">
                 {list.slice(0, 20).map((t) => (
                     <li key={t.id} data-testid="task-row" data-status={t.status}>
-                        {t.script && <span className="badge">script · {t.script.name} · r{t.script.revision}</span>}
+                        {t.script && <GroveText type="inherit" color="inherit" className="badge">script · {t.script.name} · r{t.script.revision}</GroveText>}
                         <code className="small">{t.command}</code>
-                        <span className="muted small" data-testid="task-cwd">실행 위치: <code>{t.cwd}</code></span>
-                        <span className={`status ${t.status}`}>
+                        <GroveText type="supporting" color="secondary" data-testid="task-cwd">실행 위치: <code>{t.cwd}</code></GroveText>
+                        <GroveText type="inherit" color="inherit" className={`status ${t.status}`}>
                             {LABEL[t.status]}
                             {t.exit_code !== null && t.status !== "completed" ? ` (코드 ${t.exit_code})` : ""}
-                        </span>
-                        <button className="ghost small" onClick={() => setView(view === t.id ? null : t.id)}>출력</button>
+                        </GroveText>
+                        <GroveButton className="ghost small" onClick={() => setView(view === t.id ? null : t.id)}>출력</GroveButton>
                         {t.status === "running" && (
                             <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/tasks/${t.id}/cancel`))}>취소</ServerActionButton>
                         )}
@@ -145,16 +149,16 @@ function TaskOutput({ id }: { id: string }) {
     }, [id]);
     return (
         <div className="task-output">
-            <div className="inline">
+            <GroveStack direction="horizontal" align="center" className="inline">
                 {(["stdout", "stderr"] as const).map((s) => (
-                    <button key={s} className={stream === s ? "chip on" : "chip"} onClick={() => { setStream(s); void load(s, 0, false); }}>{s}</button>
+                    <GroveButton key={s} className={stream === s ? "chip on" : "chip"} onClick={() => { setStream(s); void load(s, 0, false); }}>{s}</GroveButton>
                 ))}
-                <button className="ghost small" onClick={() => void load(stream, 0, false)}>새로고침</button>
-            </div>
-            {error && <p className="err" role="alert">{error}</p>}
+                <GroveButton className="ghost small" onClick={() => void load(stream, 0, false)}>새로고침</GroveButton>
+            </GroveStack>
+            {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
             <pre className="diff" data-testid="task-output">{text || (error ? "" : "(출력 없음)")}</pre>
-            {info && !info.eof && <button className="ghost small" onClick={() => void load(stream, next, true)}>더 보기</button>}
-            {info && info.dropped_bytes > 0 && <p className="muted small">출력이 커서 앞부분 {info.stored_bytes}바이트만 보관했습니다({info.dropped_bytes}바이트 생략).</p>}
+            {info && !info.eof && <GroveButton className="ghost small" onClick={() => void load(stream, next, true)}>더 보기</GroveButton>}
+            {info && info.dropped_bytes > 0 && <GroveText as="p" display="block" type="supporting" color="secondary">출력이 커서 앞부분 {info.stored_bytes}바이트만 보관했습니다({info.dropped_bytes}바이트 생략).</GroveText>}
         </div>
     );
 }

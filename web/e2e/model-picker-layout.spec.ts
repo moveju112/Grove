@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, openSettings, script, sessionView, state } from "./helpers";
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
-test("채팅의 모델 선택은 별도 줄에서 보이고 저장 모드에서도 모델로 전환해 보낸다", async ({ page }, info) => {
+test("작은 모델 선택기에서 공급자 모델을 골라 보내고 초안·프로필 설정은 보존한다", async ({ page }, info) => {
     const { a } = await ensureProjects();
     await ensureProfile();
     const name = `picker-${Date.now()}`;
@@ -21,14 +21,19 @@ test("채팅의 모델 선택은 별도 줄에서 보이고 저장 모드에서�
         const view = sessionView(page, session.id);
         const picker = view.getByLabel("모델 프로필", { exact: true });
         await expect(picker).toBeVisible();
-        expect((await picker.boundingBox())!.width).toBeGreaterThan(300);
+        expect((await picker.boundingBox())!.width).toBeLessThanOrEqual(220);
         await expect(view.getByRole("button", { name: "입력 옵션", exact: true })).toHaveCount(0);
         for (const label of ["보내기 방식", "에이전트", "도구"]) await expect(view.locator(".composer").getByLabel(label, { exact: true })).toHaveCount(0);
         await view.getByLabel("메시지 입력").fill("모델을 바꿔도 남는 초안");
+        await expect(view.getByLabel("메시지 입력")).toHaveValue("모델을 바꿔도 남는 초안");
         await composerOption(view, "보내기 방식", "save");
         await expect(picker.locator("option:checked")).toHaveText("메시지만 저장");
         await picker.selectOption(profile.id);
         await expect(picker.locator("option:checked")).toHaveText(/^fixture-picker-model ·/);
+        const modelChoice = JSON.stringify([profile.id, "fixture-model"]);
+        await expect(picker.locator(`option[value='${modelChoice}']`)).toBeAttached();
+        await picker.selectOption(modelChoice);
+        await expect(picker.locator("option:checked")).toHaveText(/^fixture-model ·/);
         await expect(view.getByLabel("메시지 입력")).toHaveValue("모델을 바꿔도 남는 초안");
         await page.screenshot({ path: info.outputPath("model-picker-390.png") });
         await script({ marker: name, frames: frames.text(["선택한 모델 응답"]) });
@@ -36,8 +41,18 @@ test("채팅의 모델 선택은 별도 줄에서 보이고 저장 모드에서�
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("msg-assistant").last()).toContainText("선택한 모델 응답");
         await expect(view.getByTestId("turn-status")).toHaveCount(0);
+        const bubble = view.getByTestId("msg-user").last();
+        await expect(bubble.getByTestId("msg-copy")).toHaveCount(0);
+        const copy = view.locator('.msg-row:has([data-testid="msg-user"])').last().getByTestId("msg-copy");
+        const bubbleBox = (await bubble.boundingBox())!;
+        expect((await copy.boundingBox())!.y).toBeGreaterThanOrEqual(bubbleBox.y + bubbleBox.height);
+        expect(bubbleBox.height).toBeLessThan(60);
+        expect((await view.locator(".composer").boundingBox())!.height).toBeLessThanOrEqual(120);
+        await page.screenshot({ path: info.outputPath("chat-390.png") });
         const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as { model: string; messages: unknown[] }[];
-        expect(requests.filter((r) => JSON.stringify(r.messages).includes(name)).map((r) => r.model)).toEqual(["fixture-picker-model"]);
+        expect(requests.filter((r) => JSON.stringify(r.messages).includes(name)).map((r) => r.model)).toEqual(["fixture-model"]);
+        const saved = await apiCall<{ id: string; model: string }[]>("GET", "/model-profiles");
+        expect(saved.find((p) => p.id === profile.id)!.model).toBe("fixture-picker-model");
     } finally {
         await apiCall("DELETE", `/model-profiles/${profile.id}`);
     }
@@ -55,10 +70,33 @@ for (const theme of ["light", "dark"] as const) {
                 name: `간결한 모델 ${i}`, protocol: "codex_cli", base_url: "", model: "default",
             }));
             await login(page);
-            await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+            await openSettings(page);
             await page.getByLabel("설정 검색").fill("모델 프로필");
             const settings = page.locator(".settings");
             const row = settings.getByTestId("model-profile").filter({ hasText: profiles[0]!.name });
+            const nextRow = settings.getByTestId("model-profile").filter({ hasText: profiles[1]!.name });
+            expect(await page.evaluate(async () => {
+                await document.fonts.ready;
+                return [...document.fonts].some((font) => font.family === "Pretendard" && font.status === "loaded");
+            })).toBe(true);
+            expect(await row.evaluate((node) => getComputedStyle(node).fontFamily)).toContain("Pretendard");
+            const card = await row.evaluate((node) => {
+                const style = getComputedStyle(node);
+                return {
+                    edges: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth].map(parseFloat),
+                    radius: parseFloat(style.borderTopLeftRadius),
+                    padding: parseFloat(style.paddingLeft),
+                    background: style.backgroundColor,
+                    surround: getComputedStyle(node.parentElement!.parentElement!).backgroundColor,
+                };
+            });
+            expect(card.edges.every((edge) => edge >= 1), "모델별 카드는 네 면 모두 경계가 있어야 한다").toBe(true);
+            expect(card.radius).toBeGreaterThanOrEqual(8);
+            expect(card.padding).toBeGreaterThanOrEqual(12);
+            expect(card.background).not.toBe(card.surround);
+            const rowBox = (await row.boundingBox())!;
+            const nextBox = (await nextRow.boundingBox())!;
+            expect(nextBox.y - rowBox.y - rowBox.height, "카드 사이에는 별도 여백이 있어야 한다").toBeGreaterThanOrEqual(12);
             await expect(row.getByTestId("model-capabilities")).toBeHidden();
             await expect(row.getByText("CLI fallback 미지원")).toBeHidden();
             await expect(settings.getByRole("form", { name: "모델 프로필 추가", exact: true })).toBeHidden();

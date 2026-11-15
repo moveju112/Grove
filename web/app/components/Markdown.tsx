@@ -1,4 +1,9 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
+import { Link } from "@astryxdesign/core/Link";
+import { Divider } from "@astryxdesign/core/Divider";
 // 모델 답 표시(UI-010·011). 문법 트리를 React 요소로만 그린다: HTML 문자열을 넣지 않으므로 답 안의 <script>·onerror 등은 글자로 보인다.
+import { Button as GroveButton } from "../design/Button";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
 import { fileRef, parseMarkdown, type Block, type Inline } from "../state/markdown";
 
@@ -10,9 +15,9 @@ function InlineCode({ v }: { v: string }) {
     const r = onRef ? fileRef(v) : null;
     if (!r || !onRef) return <code>{v}</code>;
     return (
-        <button className="link file-ref" data-testid="file-ref" title="파일 열기" onClick={() => onRef(r.path, r.line)}>
+        <GroveButton className="link file-ref" data-testid="file-ref" title="파일 열기" onClick={() => onRef(r.path, r.line)}>
             <code>{v}</code>
-        </button>
+        </GroveButton>
     );
 }
 
@@ -31,10 +36,10 @@ function inl(c: Inline[]): ReactNode[] {
                 // 새 창으로 열고 opener·referrer를 넘기지 않는다. 그럴듯한 문구로 다른 곳을 여는 일을 막기 위해 실제 목적지를 함께 보인다(UI-031).
                 const dest = linkDest(x.href);
                 return (
-                    <a key={k} href={x.href} target="_blank" rel="noopener noreferrer nofollow" title={x.href}>
+                    <Link type="inherit" key={k} href={x.href} target="_blank" rel="noopener noreferrer nofollow" tooltip={x.href}>
                         {inl(x.c)}
-                        <span className="link-dest" data-testid="link-dest"> ↗ {dest}</span>
-                    </a>
+                        <GroveText type="inherit" color="inherit" className="link-dest" data-testid="link-dest"> ↗ {dest}</GroveText>
+                    </Link>
                 );
             }
             case "br":
@@ -58,8 +63,8 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
     return (
         <div className="md-code" data-testid="md-code">
             <div className="md-code-bar">
-                <span className="muted small">{lang || "code"}</span>
-                <button
+                <GroveText type="supporting" color="secondary">{lang || "code"}</GroveText>
+                <GroveButton
                     className="ghost small"
                     onClick={() =>
                         void navigator.clipboard?.writeText(text).then(
@@ -72,7 +77,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
                     }
                 >
                     {copied ? "복사됨" : "복사"}
-                </button>
+                </GroveButton>
             </div>
             <pre>
                 <code>{text}</code>
@@ -84,7 +89,7 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
 function block(b: Block, k: number): ReactNode {
     switch (b.t) {
         case "p":
-            return <p key={k}>{inl(b.c)}</p>;
+            return <GroveText as="p" display="block" type="inherit" color="inherit" key={k}>{inl(b.c)}</GroveText>;
         case "h": {
             const H = `h${Math.min(6, b.level + 2)}` as "h3";
             return <H key={k}>{inl(b.c)}</H>;
@@ -112,28 +117,28 @@ function block(b: Block, k: number): ReactNode {
         case "table":
             return (
                 <div key={k} className="md-table">
-                    <table>
-                        <thead>
-                            <tr>
+                    <Table density="compact">
+                        <TableHeader>
+                            <TableRow isHeaderRow>
                                 {b.head.map((h, j) => (
-                                    <th key={j}>{inl(h)}</th>
+                                    <TableHeaderCell scope="col" key={j}>{inl(h)}</TableHeaderCell>
                                 ))}
-                            </tr>
-                        </thead>
-                        <tbody>
+                            </TableRow>
+                        </TableHeader>
+                        <TableBody>
                             {b.rows.map((r, j) => (
-                                <tr key={j}>
+                                <TableRow key={j}>
                                     {r.map((c, n) => (
-                                        <td key={n}>{inl(c)}</td>
+                                        <TableCell key={n}>{inl(c)}</TableCell>
                                     ))}
-                                </tr>
+                                </TableRow>
                             ))}
-                        </tbody>
-                    </table>
+                        </TableBody>
+                    </Table>
                 </div>
             );
         case "hr":
-            return <hr key={k} />;
+            return <Divider key={k} />;
     }
 }
 

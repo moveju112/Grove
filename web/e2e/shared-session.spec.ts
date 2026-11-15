@@ -84,7 +84,7 @@ test("같은 대화의 서버 초안 충돌은 두 입력을 보존하고 비교
     await left.getByLabel("메시지 입력").fill(first);
     await right.getByLabel("메시지 입력").fill(second);
     await left.getByRole("button", { name: "초안 서버 저장", exact: true }).click();
-    await expect(left.getByRole("status")).toContainText("서버에 초안을 저장했습니다");
+    await expect(left.getByRole("status").filter({ hasText: /\S/ })).toContainText("서버에 초안을 저장했습니다");
     await right.getByRole("button", { name: "초안 서버 저장", exact: true }).click();
     const conflict = right.getByRole("alert").filter({ hasText: "서버 초안" });
     await expect(conflict).toBeVisible();
@@ -97,7 +97,7 @@ test("같은 대화의 서버 초안 충돌은 두 입력을 보존하고 비교
     await conflict.getByRole("button", { name: "합치기", exact: true }).click();
     await expect(right.getByLabel("메시지 입력")).toHaveValue(`${second}\n\n${first}`);
     await right.getByRole("button", { name: "초안 서버 저장", exact: true }).click();
-    await expect(right.getByRole("status")).toContainText("서버에 초안을 저장했습니다");
+    await expect(right.getByRole("status").filter({ hasText: /\S/ })).toContainText("서버에 초안을 저장했습니다");
     await expect(left.getByLabel("메시지 입력")).toHaveValue(first);
     const saved = await apiCall<{ revision: number; text: string }>("GET", `/drafts/session:${session.id}`);
     expect(saved).toMatchObject({ revision: 2, text: `${second}\n\n${first}` });

@@ -601,7 +601,8 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
         + &crate::skills::api::model_instructions(c, data, &t.session_id, t.tools_enabled, mp.capabilities.tools, cli_backend)?;
     // 기억·지침 등 시스템 입력이 바뀌면 옛 입력을 품은 native 대화를 재사용하지 않는다.
     let cli = if cli_backend { Some(crate::provider::cli::CliContext {
-        cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system)?
+        cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system)?,
+        service_tier: def["service_tier"].as_str().map(str::to_string),
     }) } else { None };
     let tools: Vec<ToolDef> = if t.tools_enabled && !cli_backend {
         crate::deferred_tools::model_tools(c, turn_id, &t.session_id, &def)?
@@ -1254,8 +1255,30 @@ pub struct CreateTurn {
     pub profile_id: String,
     pub agent_id: Option<String>,
     pub tools: Option<bool>,
-    /// auto(기본)·low·medium·high
+    /// auto(기본) 또는 모델이 제공한 추론 옵션.
     pub effort: Option<String>,
+    pub model: Option<String>,
+    pub service_tier: Option<String>,
+}
+
+pub(crate) fn parse_model(value: Option<&str>) -> ApiResult<Option<String>> {
+    value.map(|model| {
+        if model.is_empty() || model.len() > 200 || model.contains(char::is_whitespace) || model.contains(char::is_control) {
+            Err(ApiError::invalid("model은 공백 없는 200자 이하의 모델 식별자여야 합니다"))
+        } else { Ok(model.to_string()) }
+    }).transpose()
+}
+
+/// 프로필을 수정하지 않고 접수한 요청에만 모델을 고정한다. 봇은 서버 결합을 유지한다.
+pub(crate) fn set_turn_model(tx: &Connection, turn_id: &str, model: Option<&str>) -> ApiResult<()> {
+    let Some(model) = model else { return Ok(()) };
+    let turn = get_turn(tx, turn_id)?;
+    if turn.definition.get("bot").is_some() {
+        return Err(ApiError::invalid("봇 모델은 봇 설정에서 변경하세요"));
+    }
+    tx.execute("UPDATE turns SET definition_snapshot=json_set(definition_snapshot,'$.model_selection',json(?2)) WHERE id=?1",
+        params![turn_id, json!({"profile_id":turn.profile_id,"model":model}).to_string()])?;
+    Ok(())
 }
 
 /// 접수한 턴에 추론 강도를 고정한다(같은 transaction). 이후 단계·승인 뒤 재개에도 같은 값을 쓴다.
@@ -1273,6 +1296,17 @@ pub fn set_turn_effort(tx: &Connection, turn_id: &str, effort: Option<&str>) -> 
     Ok(())
 }
 
+pub(crate) fn set_turn_service_tier(tx: &Connection, turn_id: &str, tier: Option<&str>) -> ApiResult<()> {
+    let Some(tier) = tier else { return Ok(()) };
+    let turn = get_turn(tx, turn_id)?;
+    let profile = crate::models::get_enabled_profile(tx, turn.profile_id.as_deref().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?)?;
+    if profile.protocol != "codex_cli" || !profile.capabilities.fast {
+        return Err(ApiError::unsupported("선택한 모델 프로필은 속도 선택을 지원하지 않습니다"));
+    }
+    tx.execute("UPDATE turns SET definition_snapshot=json_set(definition_snapshot,'$.service_tier',?2) WHERE id=?1", params![turn_id, tier])?;
+    Ok(())
+}
+
 pub async fn create(
     State(app): State<App>,
     p: Principal,
@@ -1286,8 +1320,12 @@ pub async fn create(
         return Err(ApiError::unsupported("이 서버에서는 모델 도구 실행이 꺼져 있습니다(GROVE_ENABLE_TOOL_LOOP=1)"));
     }
     let effort = provider::parse_effort(b.effort.as_deref()).map_err(ApiError::invalid)?;
+    let service_tier = provider::parse_service_tier(b.service_tier.as_deref()).map_err(ApiError::invalid)?;
+    let model = parse_model(b.model.as_deref())?;
     let mut body = json!({ "s": session_id, "t": b.text, "p": b.profile_id, "a": b.agent_id, "tools": tools, "e": effort });
     if !b.attachments.is_empty() { body["attachments"] = json!(b.attachments); }
+    if let Some(model) = &model { body["model"] = json!(model); }
+    if let Some(tier) = &service_tier { body["service_tier"] = json!(tier); }
     let h = idem::body_hash("turn.create", &body);
     let data = app.cfg.data_dir.clone();
     let uploader = p.root_id.clone();
@@ -1298,7 +1336,9 @@ pub async fn create(
         let session = crate::sessions::get_active(tx, &session_id)?;
         let prepared = crate::attachments::prepare(tx, &data, &uploader, &session.project_id, &b.text, &b.attachments)?;
         let (t, msg) = enqueue_with_attachments(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), tools, None, Some(&prepared))?;
+        set_turn_model(tx, &t.id, model.as_deref())?;
         set_turn_effort(tx, &t.id, effort.as_deref())?;
+        set_turn_service_tier(tx, &t.id, service_tier.as_deref())?;
         let t = get_turn(tx, &t.id)?;
         Ok((StatusCode::ACCEPTED, json!({ "turn": t, "message": msg })))
     })
@@ -1552,7 +1592,11 @@ pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         let profile = old.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없는 요청입니다"))?;
         let src = json!({ "kind": "retry", "turn_id": old.id });
         let (t, msg) = enqueue_with_attachments(tx, now, &epoch, &owner, &old.session_id, &text, &profile, old.agent_id.as_deref(), old.tools_enabled, Some(&src), Some(&prepared))?;
+        if old.definition["model_selection"]["profile_id"] == profile.as_str() {
+            set_turn_model(tx, &t.id, old.definition["model_selection"]["model"].as_str())?;
+        }
         set_turn_effort(tx, &t.id, old.definition["effort"].as_str())?;
+        set_turn_service_tier(tx, &t.id, old.definition["service_tier"].as_str())?;
         tx.execute("UPDATE turns SET acknowledged_at = COALESCE(acknowledged_at, ?2) WHERE id = ?1", params![old.id, now])?;
         emit_turn(tx, now, &old.id)?;
         let t = get_turn(tx, &t.id)?;

@@ -1,5 +1,9 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { useRef, useState } from "react";
 import { DetailDialog } from "../ui/Controls";
+import { BooleanSelect } from "../BooleanSelect";
+import { TextInput, TextArea } from "../../design/Fields";
 import { ApiError, api, newKey } from "../../api/client";
 import { hookPath, hookUpdate, type Hook, type HookDefinition, type HookListing } from "../../api/hooks";
 import { useQuery } from "../../state/store";
@@ -66,42 +70,42 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
     const current = query.data?.hooks.find((h) => h.id === editing?.id);
     const event = draft.event || query.data?.events[0] || "";
     return <div className="stack" data-testid="hooks-panel">
-        <p className="muted">저장·활성화는 실행 승인이 아닙니다. 실행 요청에서 개별 승인하세요.</p>
-        <p className="scope">실행 지원: {query.data?.supported_events?.join(", ") || "없음"}</p>
-        <p className="muted small">연결 종료는 취소가 아닙니다. 실행 요청에서 취소·결과를 확인하세요.</p>
+        <GroveText as="p" display="block" type="inherit" color="secondary">저장·활성화와 별도로 각 실행 요청에서 승인하세요.</GroveText>
+        <GroveText as="p" display="block" type="inherit" color="inherit" className="scope">실행 지원: {query.data?.supported_events?.join(", ") || "없음"}</GroveText>
+        <GroveText as="p" display="block" type="supporting" color="secondary">연결이 종료돼도 취소되지 않으니 실행 요청에서 취소·결과를 확인하세요.</GroveText>
         <DetailDialog label="Hook 이벤트·패턴 도움말" title="이벤트·패턴 도움말">
-        <p>matcher: glob · *는 모든 대상, ?는 한 글자</p>
-        <p className="muted small">PostToolUse는 도구 이름, 다른 지원 이벤트는 대화 ID에 matcher를 적용합니다.
+        <GroveText as="p" display="block" type="inherit" color="inherit">matcher: glob · *는 모든 대상, ?는 한 글자</GroveText>
+        <GroveText as="p" display="block" type="supporting" color="secondary">PostToolUse는 도구 이름, 다른 지원 이벤트는 대화 ID에 matcher를 적용합니다.
             SessionStart는 직접 대화 생성, UserPromptSubmit은 직접 턴·메시지 접수, Stop은 Grove 턴 종료에 연결됩니다.
-            분기·자식/봇 세션 생성, followup/steer 접수와 모델 내부 도구 이벤트는 미연결입니다.</p>
+            분기·자식/봇 세션 생성, followup/steer 접수와 모델 내부 도구 이벤트는 미연결입니다.</GroveText>
         </DetailDialog>
-        {query.loading && <p role="status">hook 목록 불러오는 중</p>}
-        {!!query.error && <p role="alert">{query.error instanceof Error ? query.error.message : "hook 조회 실패"}</p>}
-        {error && <p role="alert">{error}</p>}
+        {query.loading && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">hook 목록 불러오는 중</GroveText>}
+        {!!query.error && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">{query.error instanceof Error ? query.error.message : "hook 조회 실패"}</GroveText>}
+        {error && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">{error}</GroveText>}
         {mutation.phase === "unknown" && <div role="status">
             저장 결과 불명 · 범위를 바꾸거나 새로 저장하기 전에 같은 요청을 확인하세요.
             <ServerActionButton onClick={() => void mutate(mutation.attempt)}>같은 hook 요청 확인</ServerActionButton>
         </div>}
         {query.data?.hooks.map((hook) => <article className="setting" key={hook.id} data-testid="hook-row">
             <strong>{hook.name}</strong>
-            <p>{hook.event} · matcher <code>{hook.matcher}</code> · {hook.enabled ? "활성 설정" : "비활성 설정"} · revision {hook.revision}</p>
-            <p>{hook.execution_state === "approval_required" ? "이벤트 발생 후 개별 승인 필요" : "아직 실행되지 않음 · 미지원 이벤트 또는 플랫폼"}</p>
+            <GroveText as="p" display="block" type="inherit" color="inherit">{hook.event} · matcher <code>{hook.matcher}</code> · {hook.enabled ? "활성 설정" : "비활성 설정"} · revision {hook.revision}</GroveText>
+            <GroveText as="p" display="block" type="inherit" color="inherit">{hook.execution_state === "approval_required" ? "이벤트 발생 후 개별 승인 필요" : "아직 실행되지 않음 · 미지원 이벤트 또는 플랫폼"}</GroveText>
             <pre>{hook.command}</pre>
-            {hook.command_redacted && <p className="muted">비밀값 징후가 있어 명령 전체를 가렸습니다.</p>}
-            <button disabled={blocked || !!deleting} onClick={() => edit(hook)}>hook 편집</button>
+            {hook.command_redacted && <GroveText as="p" display="block" type="inherit" color="secondary">비밀값 징후가 있어 명령 전체를 가렸습니다.</GroveText>}
+            <GroveButton disabled={blocked || !!deleting} onClick={() => edit(hook)}>hook 편집</GroveButton>
             <ServerActionButton disabled={blocked || !!editing || !!deleting} onClick={() => void mutate({
                 method: "put", path: hookPath(projectId, hook.id), key: newKey(),
                 body: hookUpdate(hook, { ...hook, enabled: !hook.enabled }, false),
             })}>{hook.enabled ? "hook 비활성화" : "hook 활성화"}</ServerActionButton>
-            <button disabled={blocked || !!editing || !!deleting} onClick={() => setDeleting(hook)}>hook 삭제 확인</button>
+            <GroveButton disabled={blocked || !!editing || !!deleting} onClick={() => setDeleting(hook)}>hook 삭제 확인</GroveButton>
         </article>)}
-        {query.data?.hooks.length === 0 && <p>저장한 hook이 없습니다.</p>}
+        {query.data?.hooks.length === 0 && <GroveText as="p" display="block" type="inherit" color="inherit">저장한 hook이 없습니다.</GroveText>}
         {deleting && <div role="group" aria-label="hook 삭제">
-            <p>“{deleting.name}” 설정을 삭제할까요?</p>
+            <GroveText as="p" display="block" type="inherit" color="inherit">“{deleting.name}” 설정을 삭제할까요?</GroveText>
             <ServerActionButton disabled={blocked} onClick={() => void mutate({
                 method: "del", path: hookPath(projectId, deleting.id, deleting.revision), key: newKey(),
             })}>이 hook 삭제</ServerActionButton>
-            <button disabled={blocked} onClick={() => setDeleting(null)}>hook 삭제 취소</button>
+            <GroveButton disabled={blocked} onClick={() => setDeleting(null)}>hook 삭제 취소</GroveButton>
         </div>}
         <form onSubmit={(e) => {
             e.preventDefault();
@@ -113,24 +117,26 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
         }}>
             <fieldset disabled={blocked || !!deleting || !query.data || !!query.error}>
                 <legend>{editing ? "hook 수정" : "hook 추가"}</legend>
-                <label>hook 이름<input aria-label="hook 이름" required value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></label>
+                <TextInput label="hook 이름" isRequired value={draft.name} onChange={(value) => setDraft({ ...draft, name: value })} />
                 <label>hook 이벤트<select aria-label="hook 이벤트" value={event} onChange={(e) => setDraft({ ...draft, event: e.target.value })}>
                     {query.data?.events.map((value) => <option key={value}>{value}</option>)}
                 </select></label>
-                <label>hook matcher (glob)<input aria-label="hook matcher" required value={draft.matcher} onChange={(e) => setDraft({ ...draft, matcher: e.target.value })} /></label>
-                {editing && <label><input type="checkbox" checked={replaceCommand} onChange={(e) => setReplaceCommand(e.target.checked)} />명령 교체</label>}
-                <label>hook 명령<textarea aria-label="hook 명령" autoComplete="off" spellCheck={false}
-                    disabled={!!editing && !replaceCommand} required={!editing || replaceCommand} value={draft.command}
+                <TextInput label="hook matcher (glob)" aria-label="hook matcher" isRequired value={draft.matcher} onChange={(value) => setDraft({ ...draft, matcher: value })} />
+                {editing && <BooleanSelect label="명령 교체" value={replaceCommand} onChange={setReplaceCommand}
+                    disabled={blocked || !!deleting || !query.data || !!query.error} />}
+                <TextArea label="hook 명령" autoComplete="off" hasSpellCheck={false}
+                    isDisabled={!!editing && !replaceCommand} isRequired={!editing || replaceCommand} value={draft.command}
                     placeholder={editing ? "비워 두면 저장된 원문 유지" : "이벤트 발생 후 승인한 계획만 실행합니다"}
-                    onChange={(e) => setDraft({ ...draft, command: e.target.value })} /></label>
-                <label><input type="checkbox" checked={draft.enabled} onChange={(e) => setDraft({ ...draft, enabled: e.target.checked })} />hook 활성 설정 (별도 승인 필요)</label>
-                {editing && <p>revision {editing.revision} 기준으로 수정합니다.</p>}
-                {editing && current?.revision !== editing.revision && <p role="status">
-                    다른 요청으로 바뀌었습니다. 입력을 보존했으니 최신 설정을 확인하세요.
-                    {current && <button type="button" onClick={() => edit(current)}>최신 hook 설정 사용</button>}
-                </p>}
+                    onChange={(value) => setDraft({ ...draft, command: value })} />
+                <BooleanSelect label="hook 활성 설정 (별도 승인 필요)" value={draft.enabled} onChange={(value) => setDraft({ ...draft, enabled: value })}
+                    disabled={blocked || !!deleting || !query.data || !!query.error} />
+                {editing && <GroveText as="p" display="block" type="inherit" color="inherit">revision {editing.revision} 기준으로 수정합니다.</GroveText>}
+                {editing && current?.revision !== editing.revision && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">
+                    설정이 변경됐으니 보존된 입력과 최신 값을 비교하세요.
+                    {current && <GroveButton type="button" onClick={() => edit(current)}>최신 hook 설정 사용</GroveButton>}
+                </GroveText>}
                 <ServerActionButton type="submit">hook 설정 저장</ServerActionButton>
-                {editing && <button type="button" onClick={reset}>hook 편집 취소</button>}
+                {editing && <GroveButton type="button" onClick={reset}>hook 편집 취소</GroveButton>}
             </fieldset>
         </form>
         <HookExecutions projectId={projectId} />

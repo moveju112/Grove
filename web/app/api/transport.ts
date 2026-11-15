@@ -90,6 +90,7 @@ class Channel {
     private tx: Cipher | null = null;
     private rx: Cipher | null = null;
     private sends: Promise<void> = Promise.resolve();
+    protocol: number | null = null;
     readonly ws: WebSocket;
 
     constructor(endpoint: string, signal?: AbortSignal | null) {
@@ -143,7 +144,7 @@ class Channel {
             this.ws.send(JSON.stringify({ version, key: base64(publicKey) }));
             const raw = await this.next();
             if (typeof raw !== "string" || raw.length > 512) throw new Error("암호화 handshake 형식 오류");
-            const hello = JSON.parse(raw) as { version: number; key: string; signature: string };
+            const hello = JSON.parse(raw) as { version: number; key: string; signature: string; protocol?: number; protocol_signature?: string };
             if (hello.version !== version) throw new Error("지원하지 않는 암호화 버전입니다.");
             const server = unbase64(hello.key);
             const identity = unbase64(pin);
@@ -152,6 +153,18 @@ class Channel {
             const verification = await crypto.subtle.importKey("raw", identity, { name: "Ed25519" }, false, ["verify"]);
             if (!await crypto.subtle.verify("Ed25519", verification, unbase64(hello.signature), transcript)) {
                 throw new Error("서버 공개키가 일치하지 않습니다. 소유자에게 연결 링크를 확인하세요.");
+            }
+            if (hello.protocol !== undefined || hello.protocol_signature !== undefined) {
+                if (!Number.isSafeInteger(hello.protocol) || hello.protocol! < 0 || hello.protocol! > 0xffff_ffff || !hello.protocol_signature) {
+                    throw new Error("서버 protocol 증명 형식 오류");
+                }
+                const version = new Uint8Array(4);
+                new DataView(version.buffer).setUint32(0, hello.protocol!);
+                const proof = concat(text.encode("grove-e2ee-protocol-v1"), transcript, version);
+                if (!await crypto.subtle.verify("Ed25519", verification, unbase64(hello.protocol_signature), proof)) {
+                    throw new Error("서버 protocol 증명을 확인하지 못했습니다.");
+                }
+                this.protocol = hello.protocol!;
             }
             const peer = await crypto.subtle.importKey("raw", server, "X25519", false, []);
             const shared = await crypto.subtle.deriveBits({ name: "X25519", public: peer }, pair.privateKey, 256);
@@ -213,6 +226,7 @@ function frame(kind: number, id: number, payload: Uint8Array = new Uint8Array())
 }
 
 export class Mux {
+    get protocol(): number | null { return this.channel.protocol; }
     private streams = new Map<number, MuxStream>();
     private pings = new Map<number, () => void>();
     private nextId = 1;
@@ -389,6 +403,11 @@ function transportError(error: unknown): Error {
 }
 
 function scopeOf(config: Connection) { return `${config.endpoint}|${config.key}`; }
+/// pin과 연결 transcript에 결합된 protocol만 반환한다. 구형 서버·로컬 HTTP는 기존 health 확인을 쓴다.
+export async function transportProtocol(): Promise<number | null> {
+    const config = connection();
+    return config ? (await muxFor(config)).protocol : null;
+}
 async function cookieFor(config: Connection): Promise<string> {
     return loadCredential(scopeOf(config));
 }

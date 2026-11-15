@@ -1,9 +1,13 @@
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import { ExternalEditorControls, type ExternalEditorControlsProps } from "./ExternalEditor";
 import { openExternalEditor } from "../../api/externalEditor";
 import { api } from "../../api/client";
+
+vi.mock("../HelpTip", () => ({
+    HelpTip: ({ label, children }: { label: string; children: ReactNode }) => createElement("aside", { "aria-label": label }, children),
+}));
 
 const props: ExternalEditorControlsProps = {
     listing: { available: true, reason: null, editors: [{ id: "vscode", name: "VS Code" }, { id: "zed", name: "Zed" }] },
@@ -17,7 +21,7 @@ describe("외부 편집기", () => {
         const html = render();
         expect(html).toContain("VS Code");
         expect(html).toContain("Zed");
-        expect(html).toContain("저장하지 않은 편집은 전달하지 않습니다");
+        expect(html).toContain("저장 전 편집은 전달하지 않습니다");
         expect(html).not.toContain("disabled");
     });
     it("PC capability가 없으면 이유만 표시하고 열기 버튼은 숨긴다", () => {

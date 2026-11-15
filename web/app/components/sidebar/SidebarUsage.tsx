@@ -1,3 +1,4 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
 import { useEffect, useRef } from "react";
 import { api } from "../../api/client";
 import { useQuery } from "../../state/store";
@@ -46,14 +47,14 @@ function Meter({ label, value, share, note, shareText }: { label: string; value:
     const pct = share === null ? null : Math.max(0, Math.min(1, share));
     return (
         <div className="side-meter">
-            <span className="side-meter-label">{label}</span>
+            <GroveText type="inherit" color="inherit" className="side-meter-label">{label}</GroveText>
             <span className="side-meter-value num" title={shareText ? `오늘 전체의 ${shareText}` : undefined}>{value}</span>
             {pct !== null && (
-                <span className="side-meter-track" aria-hidden="true">
+                <GroveText type="inherit" color="inherit" className="side-meter-track" aria-hidden="true">
                     <i className={pct >= 0.7 ? "hi" : ""} style={{ transform: `scaleX(${pct})` }} />
-                </span>
+                </GroveText>
             )}
-            {note && <span className="side-meter-note">{note}</span>}
+            {note && <GroveText type="inherit" color="inherit" className="side-meter-note">{note}</GroveText>}
         </div>
     );
 }

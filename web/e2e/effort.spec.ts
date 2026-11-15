@@ -15,7 +15,7 @@ test("추론 강도를 고르면 모델 요청에 들어가고 auto는 보내지
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "model");
-    const sel = view.getByLabel("추론 강도");
+    const sel = view.getByLabel("추론", { exact: true });
     await expect(sel).toHaveValue("auto");
     const box = view.getByLabel("메시지 입력");
 
@@ -63,7 +63,9 @@ test("꺼진 워크플로를 고른 대화는 선택이 남고, 이번 요청은
     await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
     await view.getByLabel("메시지 입력").fill("꺼진 흐름으로");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
+    await view.getByRole("button", { name: "실행 설정", exact: true }).click();
     await expect(view.getByTestId("active-settings")).toContainText("(꺼진 꺼둘 흐름 대신)");
+    await page.keyboard.press("Escape");
     await expect.poll(async () => (await requests()).length).toBe(before + 1);
     expect(JSON.stringify((await requests())[before])).not.toContain("WF-OFF-BODY");
     await view.getByTestId("turn-status").getByRole("button", { name: "취소" }).click();
@@ -84,7 +86,8 @@ test("사용량 화면의 실행 용량에서 이 기기의 실행 중 요청을
     await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
     await view.getByLabel("메시지 입력").fill("오래 걸리는 일");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
-    await expect(view.getByTestId("active-settings")).toBeVisible();
+    await expect(view.getByTestId("turn-status")).toBeVisible();
+    await expect(view.getByTestId("active-settings")).toHaveCount(0);
     await page.getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("사용량");
     const cap = page.getByTestId("usage-capacity");
@@ -108,20 +111,24 @@ test("실행 중 강도를 바꾸면 이번 요청은 그대로이고 다음 요
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "model");
-    const sel = view.getByLabel("추론 강도");
+    const sel = view.getByLabel("추론", { exact: true });
     await sel.selectOption("low");
     const before = (await requests()).length;
     await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
     await view.getByLabel("메시지 입력").fill("오래 걸리는 일");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const info = view.getByTestId("active-settings");
-    await expect(info).toContainText("강도 low");
+    await expect(info).toHaveCount(0);
+    await view.getByRole("button", { name: "실행 설정", exact: true }).click();
+    await expect(info).toContainText("추론 low");
     // EFF-009: 요청값과 실제 전송값을 구분해 보여 준다
     await expect(info.getByTestId("effort-applied")).toHaveText("(실제 전송 reasoning_effort=low)");
     await expect(info).toContainText("fixture-model");
-    await expect(info).toContainText("다음 요청부터 적용");
+    await page.keyboard.press("Escape");
     await sel.selectOption("high");
-    await expect(info).toContainText("강도 low");
+    await view.getByRole("button", { name: "실행 설정", exact: true }).click();
+    await expect(info).toContainText("추론 low");
+    await page.keyboard.press("Escape");
     await expect.poll(async () => (await requests()).length).toBe(before + 1);
     expect((await requests())[before]!["reasoning_effort"]).toBe("low");
     await view.getByTestId("turn-status").getByRole("button", { name: "취소" }).click();

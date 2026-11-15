@@ -1,3 +1,5 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { useState } from "react";
 import { DetailDialog } from "../ui/Controls";
 import { ApiError, api } from "../../api/client";
@@ -51,33 +53,33 @@ export function CompactionDetails({ sessionId, record: r }: { sessionId: string;
             이전 대화 요약({r.auto ? "자동" : "수동"} 압축) · 모델에는 이 요약과 이후 대화만 보냅니다
             {r.estimated_before != null && r.estimated_after != null ? ` · 약 ${r.estimated_before}→${r.estimated_after} tokens` : ""}
         </>}>
-        {r.generation ? <p data-testid="compaction-model">
+        {r.generation ? <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="compaction-model">
             생성 당시 프로필: {r.generation.profile_name} · {r.generation.protocol} · 모델 {r.generation.model}
-            <span className="muted small"> · 저장된 실행 기록이며 현재 프로필의 수정·삭제와 무관합니다.</span>
-        </p> : <p data-testid="compaction-model">기존 압축 기록: 생성 당시 모델 정보 미기록. 현재 프로필로 소급하지 않습니다.</p>}
-        <p data-testid="compaction-cost">
+            <GroveText type="supporting" color="secondary"> · 저장된 실행 기록이며 현재 프로필의 수정·삭제와 무관합니다.</GroveText>
+        </GroveText> : <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="compaction-model">기존 압축 기록: 생성 당시 모델 정보 미기록. 현재 프로필로 소급하지 않습니다.</GroveText>}
+        <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="compaction-cost">
             {costKnown ? `추정 비용 ${r.estimated_cost!.toLocaleString("en-US", { maximumSignificantDigits: 8 })} ${r.pricing!.currency} · 생성 당시 가격표`
                 : !r.generation ? "추정 비용: 기존 기록에 생성 당시 가격 기준 미기록"
                     : `추정 불가: ${!usageKnown ? "사용량 미보고 또는 0(구분 불가)" : ""}${!usageKnown && !r.pricing ? " · " : ""}${!r.pricing ? "가격 미기록" : ""}`}
             {r.pricing && ` · 통화 ${r.pricing.currency ?? "미기록"} · 가격표 version ${r.pricing.version ?? "미기록"}`}
             {costKnown && " · 실제 청구액이 아닙니다."}
-        </p>
-        <p className="muted small">
+        </GroveText>
+        <GroveText as="p" display="block" type="supporting" color="secondary">
             {usageKnown ? `요약 사용량 입력 ${r.usage!.input_tokens}·출력 ${r.usage!.output_tokens} tokens`
                 : "요약 사용량: 미기록 또는 0(구분 불가)"}
-        </p>
+        </GroveText>
         {r.source ? <>
-            <p className="muted small" data-testid="compaction-source">
+            <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="compaction-source">
                 대상 원문 메시지 {r.source.messages}개(#{r.source.from_seq + 1}~#{r.source.upto_seq}) · 원문은 화면 이력에 그대로 남습니다
                 {" · 보존된 원문 보기이며 모델 context를 복원하지 않습니다."}
-            </p>
+            </GroveText>
             <div className="actions">
-                <button type="button" data-dialog-close disabled={busy} onClick={() => void navigate("first")}>원문 처음으로</button>
-                <button type="button" data-dialog-close disabled={busy} onClick={() => void navigate("last")}>원문 끝으로</button>
+                <GroveButton type="button" data-dialog-close disabled={busy} onClick={() => void navigate("first")}>원문 처음으로</GroveButton>
+                <GroveButton type="button" data-dialog-close disabled={busy} onClick={() => void navigate("last")}>원문 끝으로</GroveButton>
             </div>
-        </> : <p className="muted small">원문 범위 미기록: 이동할 수 없습니다.</p>}
+        </> : <GroveText as="p" display="block" type="supporting" color="secondary">원문 범위 미기록: 이동할 수 없습니다.</GroveText>}
         <div className="text">{r.summary}</div>
     </DetailDialog>
-    {error && <p className="err" role="alert">{error}</p>}
+    {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
     </div>;
 }

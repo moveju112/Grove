@@ -1,8 +1,14 @@
 import { Children, createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SkillsPanel, type SkillsPanelProps } from "./SkillsPanel";
 import { bindingOf, sameSelection, selectionStatus, type SkillEntry } from "./types";
+import { Button } from "../../design/Button";
+
+vi.mock("../HelpTip", () => ({
+    HelpTip: ({ label, children }: { label: string; children: ReactNode }) => createElement("aside", { "aria-label": label }, children),
+    SentenceText: ({ text }: { text: string }) => text,
+}));
 
 const entry: SkillEntry = {
     id: "skill_safe", name: "review", source: { kind: "global", root_id: "global" },
@@ -22,7 +28,7 @@ function buttons(node: ReactNode): ElementProps[] {
     const found: ElementProps[] = [];
     Children.forEach(node, (child) => {
         if (!isValidElement<ElementProps>(child)) return;
-        if (child.type === "button") found.push(child.props);
+        if (child.type === "button" || child.type === Button) found.push(child.props);
         found.push(...buttons(child.props.children));
     });
     return found;
@@ -70,14 +76,14 @@ describe("스킬 조회·명시적 선택", () => {
         expect(render({ error: "조회 실패" })).toContain('role="alert"');
         const html = render({ preview: { selection: { ...selection, revision: "old" }, text: "STALE_BODY" } });
         expect(html).not.toContain("STALE_BODY");
-        expect(html).toContain("현재 목록과 다릅니다");
+        expect(html).toContain("본문의 출처·revision이 목록과 달라");
         expect(html).not.toContain("이 revision 선택");
     });
     it("목록에서 사라진 선택과 바뀐 revision은 보존하며 명시적으로 해제한다", () => {
         const stale = render({ selected: [{ ...selection, revision: "old" }] });
         expect(stale).toContain("다시 확인 필요");
         const orphaned = render({ listing: { entries: [], issues: [] }, selected: [selection], preview: null });
-        expect(orphaned).toContain("현재 목록에서 확인되지 않는 선택");
+        expect(orphaned).toContain("목록에서 사라진 선택이 있으며 자동 대체하지 않습니다");
         expect(orphaned).toContain("이 선택 해제");
     });
     it("우선순위·동명 충돌·alias·미해석 metadata와 부분 실패를 표시한다", () => {

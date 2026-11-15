@@ -80,11 +80,11 @@ test("로딩·실패·빈 결과·0 token 응답과 stale 실패를 구분하고
     });
     try {
         const panel = await openUsage(page);
-        await expect(panel.getByRole("status")).toContainText("불러오는 중");
+        await expect(panel.getByRole("status").filter({ hasText: /\S/ })).toContainText("불러오는 중");
         await expect(panel.getByText("이 기간에 사용량이 없습니다.", { exact: true })).toHaveCount(0);
         mode = "error";
         release();
-        await expect(panel.getByRole("alert")).toContainText("불러오지 못했습니다");
+        await expect(panel.getByRole("alert")).toContainText("사용량 조회 실패");
         await expect(panel.getByTestId("usage-total")).toHaveCount(0);
         mode = "empty";
         await panel.getByRole("button", { name: "다시 시도", exact: true }).click();
@@ -96,7 +96,7 @@ test("로딩·실패·빈 결과·0 token 응답과 stale 실패를 구분하고
         await expect(panel.getByText("이 기간에 사용량이 없습니다.", { exact: true })).toHaveCount(0);
         mode = "error";
         await panel.getByRole("button", { name: "새로고침", exact: true }).click();
-        await expect(panel.getByRole("alert")).toContainText("마지막으로 조회한 값");
+        await expect(panel.getByRole("alert")).toContainText("마지막 조회값 표시");
         await expect(panel.getByTestId("usage-table")).toBeVisible();
     } finally {
         release();

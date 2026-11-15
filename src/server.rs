@@ -20,10 +20,6 @@ pub struct Server {
 }
 
 /// 데이터 디렉터리 단위 단일 실행 잠금. 프로세스가 죽으면 OS가 잠금을 해제하므로 stale lock이 남지 않는다.
-pub(crate) fn acquire_lock(cfg: &Config) -> Result<File, String> {
-    acquire_startup_lock(cfg).map_err(|e| e.to_string())
-}
-
 fn acquire_startup_lock(cfg: &Config) -> Result<File, StartupError> {
     std::fs::create_dir_all(&cfg.data_dir).map_err(|e| StartupError::io(&e, &cfg.data_dir))?;
     let path = cfg.data_dir.join("grove.lock");

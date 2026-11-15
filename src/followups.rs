@@ -35,12 +35,14 @@ pub struct Followup {
     pub tools: bool,
     pub created_at: String,
     pub effort: Option<String>,
+    pub model: Option<String>,
+    pub service_tier: Option<String>,
     /// 자동 시작이 막힌 이유(예: 결과 불명 작업 검토 필요). 사용자가 시작하거나 지울 때까지 남는다.
     pub last_error: Option<Value>,
     pub attachments: Vec<Value>,
 }
 
-const COLS: &str = "id, session_id, kind, text, profile_id, agent_id, tools, created_at, last_error, effort, attachments";
+const COLS: &str = "id, session_id, kind, text, profile_id, agent_id, tools, created_at, last_error, effort, attachments, model, service_tier";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Followup> {
     let err: Option<String> = r.get(8)?;
@@ -54,6 +56,8 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Followup> {
         tools: r.get(6)?,
         created_at: r.get(7)?,
         effort: r.get(9)?,
+        model: r.get(11)?,
+        service_tier: r.get(12)?,
         attachments: serde_json::from_str(&r.get::<_,String>(10)?).map_err(|e|rusqlite::Error::FromSqlConversionFailure(10,rusqlite::types::Type::Text,Box::new(e)))?,
         last_error: err.and_then(|s| serde_json::from_str(&s).ok()),
     })
@@ -168,7 +172,9 @@ fn start_item(tx: &Connection, now: &str, epoch: &str, f: &Followup, owner: &str
             None,
             (!prepared.items.is_empty()).then_some(&prepared),
         )?;
+        crate::runner::set_turn_model(tx, &t.id, f.model.as_deref())?;
         crate::runner::set_turn_effort(tx, &t.id, f.effort.as_deref())?;
+        crate::runner::set_turn_service_tier(tx, &t.id, f.service_tier.as_deref())?;
         tx.execute("DELETE FROM followups WHERE id=?1", [&f.id])?;
         Ok(t.id)
     })();
@@ -258,6 +264,8 @@ pub struct AddBody {
     pub agent_id: Option<String>,
     pub tools: Option<bool>,
     pub effort: Option<String>,
+    pub model: Option<String>,
+    pub service_tier: Option<String>,
     #[serde(default)]
     pub attachments: Vec<String>,
 }
@@ -277,8 +285,12 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
         return Err(ApiError::unsupported("이 서버에서는 모델 도구 실행이 꺼져 있습니다(GROVE_ENABLE_TOOL_LOOP=1)"));
     }
     let effort = crate::provider::parse_effort(b.effort.as_deref()).map_err(ApiError::invalid)?;
+    let service_tier = crate::provider::parse_service_tier(b.service_tier.as_deref()).map_err(ApiError::invalid)?;
+    let model = crate::runner::parse_model(b.model.as_deref())?;
     let mut hash_body=json!({ "s": session_id, "k": b.kind, "t": b.text, "p": b.profile_id, "a": b.agent_id, "tools": tools, "e": effort });
     if !b.attachments.is_empty() {hash_body["attachments"]=json!(b.attachments);}
+    if let Some(model) = &model { hash_body["model"] = json!(model); }
+    if let Some(tier) = &service_tier { hash_body["service_tier"] = json!(tier); }
     let h = idem::body_hash("followup.add", &hash_body);
     let root_owner=p.root_id.clone();
     let data=app.cfg.data_dir.clone();
@@ -289,24 +301,44 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
     let resp = idem::run(&app, &p, &headers, &h, move |tx, now| {
         let s = crate::sessions::get_active(tx, &session_id)?;
         let binding = crate::bots::turn_binding(tx, &session_id)?;
+        if binding.is_some() && model.is_some() { return Err(ApiError::invalid("봇 모델은 봇 설정에서 변경하세요")); }
         let profile = crate::models::get_enabled_profile(tx, binding.as_ref().map_or(b.profile_id.as_str(), |(profile, _)| profile.as_str()))?;
+        if service_tier.is_some() && (profile.protocol != "codex_cli" || !profile.capabilities.fast) {
+            return Err(ApiError::unsupported("선택한 모델 프로필은 속도 선택을 지원하지 않습니다"));
+        }
         let prepared=crate::attachments::prepare(tx,&data,&root_owner,&s.project_id,&b.text,&b.attachments)?;
         profile.check_capabilities(tools, effort.as_deref(), prepared.model_input["images"].as_array().is_some_and(|v| !v.is_empty()))?;
         let Some(active) = active_turn_id(tx, &session_id)? else {
             // 그 사이 턴이 끝났다: 바로 시작한다.
             let (t, msg) = crate::runner::enqueue_with_attachments(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), tools, None, (!prepared.items.is_empty()).then_some(&prepared))?;
+            crate::runner::set_turn_model(tx, &t.id, model.as_deref())?;
             crate::runner::set_turn_effort(tx, &t.id, effort.as_deref())?;
+            crate::runner::set_turn_service_tier(tx, &t.id, service_tier.as_deref())?;
             let t = crate::runner::get_turn(tx, &t.id)?;
             return Ok((StatusCode::ACCEPTED, json!({ "started_turn": t, "message": msg })));
         };
+        if b.kind == "steer" && let Some(model) = &model {
+            let turn = crate::runner::get_turn(tx, &active)?;
+            let current = crate::model_fallback::runtime(tx, &turn.definition, turn.profile_id.as_deref().unwrap_or(""))?.1;
+            if current.model != *model {
+                return Err(ApiError::invalid("실행 중인 모델을 바꾸려면 대기열에 추가하거나 중단하고 보내기를 선택하세요"));
+            }
+        }
+        if b.kind == "steer" {
+            let turn = crate::runner::get_turn(tx, &active)?;
+            if service_tier.as_deref().is_some_and(|tier| turn.definition["service_tier"].as_str() != Some(tier))
+                || effort.as_deref().is_some_and(|effort| turn.definition["effort"].as_str() != Some(effort)) {
+                return Err(ApiError::invalid("실행 중 추론·속도를 바꾸려면 대기열에 추가하거나 중단하고 보내기를 선택하세요"));
+            }
+        }
         let n: i64 = tx.query_row("SELECT COUNT(*) FROM followups WHERE session_id = ?1", params![session_id], |r| r.get(0))?;
         if n >= MAX_ITEMS {
             return Err(ApiError::conflict("followup_limit", format!("대기 메시지는 대화당 {MAX_ITEMS}개까지입니다")));
         }
         let id = crate::util::new_id();
         tx.execute(
-            "INSERT INTO followups (id, session_id, kind, text, profile_id, agent_id, tools, owner_key, created_at, effort, attachments) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
-            params![id, session_id, b.kind, b.text, b.profile_id, b.agent_id, tools, owner, now, effort, json!(prepared.items).to_string()],
+            "INSERT INTO followups (id, session_id, kind, text, profile_id, agent_id, tools, owner_key, created_at, effort, attachments, model, service_tier) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![id, session_id, b.kind, b.text, b.profile_id, b.agent_id, tools, owner, now, effort, json!(prepared.items).to_string(), model, service_tier],
         )?;
         for item in &prepared.items {tx.execute("INSERT INTO followup_attachment_refs(attachment_id,followup_id) VALUES (?1,?2)",params![item["id"].as_str().unwrap(),id])?;}
         emit(tx, now, &session_id)?;

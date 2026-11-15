@@ -6,7 +6,15 @@ const typography = {
     "--font-family-body": '"Pretendard", sans-serif',
     "--font-family-heading": '"Pretendard", sans-serif',
     "--text-body-size": "var(--font-size)",
-    "--text-supporting-size": "calc(var(--font-size) * 0.85)",
+    "--text-supporting-size": "0.85em",
+    "--text-supporting-leading": "inherit",
+    "--text-body-leading": "1.4",
+    "--text-heading-1-size": "20px",
+    "--text-heading-2-size": "16px",
+    "--text-heading-3-size": "14px",
+    "--spacing-4": "12px",
+    "--spacing-6": "20px",
+    "--spacing-8": "24px",
 } as const;
 const tokens = {
     ...typography,
@@ -44,6 +52,16 @@ const tokens = {
 export default defineTheme({
     name: "grove",
     extends: neutralTheme,
+    typography: {
+        body: { family: "Pretendard", fallbacks: "sans-serif" },
+        heading: { family: "Pretendard", fallbacks: "sans-serif" },
+    },
     tokens,
+    components: {
+        text: {
+            "color:error": { color: "var(--err)" },
+            "color:warning": { color: "var(--warn)" },
+        },
+    },
     adaptations: { rules: [{ when: { pointer: "coarse" }, value: { tokens: typography } }] },
 });

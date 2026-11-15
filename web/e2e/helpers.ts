@@ -8,7 +8,7 @@ export function sessionView(page: Page, sessionId: string): Locator {
 /// 탭 패널 또는 상세 대화상자의 실제 사용자 진입점을 연다.
 export async function openDetails(panel: Locator) {
     await expect(panel).toBeAttached();
-    const disclosure = panel.locator("xpath=self::details | ./details").first();
+    const disclosure = panel.locator("xpath=self::details | ./details | .//details[contains(concat(' ', normalize-space(@class), ' '), ' profile-details ')]").first();
     if (await disclosure.count() && await disclosure.getAttribute("open") === null) {
         await disclosure.locator(":scope > summary").click();
     }
@@ -18,7 +18,7 @@ export async function openDetails(panel: Locator) {
         await openToolDock(button);
         await button.click();
     }
-    const popup = panel.locator("xpath=ancestor-or-self::*[@popover] | ./*[@popover]").first();
+    const popup = panel.locator("xpath=ancestor-or-self::*[@popover and not(@role='tooltip')] | ./*[@popover and not(@role='tooltip')]").first();
     if (await popup.count() && !(await popup.isVisible())) {
         await panel.page().locator(`[popovertarget="${await popup.getAttribute("id")}"]`).click();
     }
@@ -158,9 +158,35 @@ export async function login(page: Page) {
 }
 
 export async function openBots(page: Page) {
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").fill("봇");
     await expect(page.getByTestId("bots-panel")).toBeVisible();
+}
+
+export async function openSettings(page: Page) {
+    if (page.viewportSize()!.width <= 760) {
+        const trigger = page.getByRole("button", { name: "사이드바", exact: true });
+        if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
+        const drawer = page.getByRole("dialog", { name: "탐색 메뉴", exact: true });
+        await drawer.getByRole("button", { name: "설정", exact: true }).click();
+        await expect(drawer).not.toBeVisible();
+    } else await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+}
+
+/// 선택 값으로 실제 옵션을 고른다. 전환 중인 화면의 native select와 Astryx Selector를 함께 지원한다.
+export async function selectChoice(control: Locator, value: string) {
+    control = control.and(control.page().getByRole("combobox"));
+    const native = await control.evaluate((node) => node instanceof HTMLSelectElement);
+    if (native) {
+        await control.selectOption(value);
+        return;
+    }
+    await control.click();
+    await expect(control).toHaveAttribute("aria-expanded", "true");
+    const id = await control.getAttribute("aria-controls");
+    const list = control.page().locator(`[id=${JSON.stringify(id)}]`);
+    await list.getByRole("option").filter({ has: control.page().locator(`[data-option-value=${JSON.stringify(value)}]`) }).click();
+    await expect(control).toHaveAttribute("data-selected-value", value);
 }
 
 /// 시험이 만든 모델 프로필을 지운다(공유 시험 서버에서 기본 프로필이 바뀌지 않게).

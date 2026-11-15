@@ -1,6 +1,10 @@
+import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { configureConnection, connection, parseConnectionLink } from "../api/transport";
 import { pairingLink, scanPairingImage } from "../state/pairing";
+import { TextInput } from "../design/Fields";
 
 /** 이미 신뢰한 서버와 같은 연결 링크는 다시 확인하지 않고 페어링 hash로 바꾼다. */
 function adoptKnownLink(): boolean {
@@ -56,8 +60,8 @@ export function EncryptedConnection({ children }: { children: ReactNode }) {
                 setReady(true);
             } catch (cause) { setError(cause instanceof Error ? cause.message : "연결 정보를 저장하지 못했습니다."); }
         }}>
-            <h1>Grove 연결</h1>
-            <label>서버 연결 링크<input value={link} onChange={(event) => { setLink(event.target.value); setError(null); }} autoComplete="off" spellCheck={false} required /></label>
+            <GroveHeading level={1} color="inherit">Grove 연결</GroveHeading>
+            <TextInput label="서버 연결 링크" value={link} onChange={(value) => { setLink(value); setError(null); }} autoComplete="off" hasSpellCheck={false} isRequired />
             <label>연결 QR 사진<input type="file" accept="image/*" capture="environment" onChange={(event) => {
                 const file = event.target.files?.[0];
                 event.target.value = "";
@@ -66,11 +70,11 @@ export function EncryptedConnection({ children }: { children: ReactNode }) {
                 });
             }} /></label>
             {target && <>
-                <p>서버: <code className="host-address">{new URL(target.connection.endpoint).host}</code></p>
-                <label>서버 공개키<input value={target.connection.key} readOnly /></label>
+                <GroveText as="p" display="block" type="inherit" color="inherit">서버: <code className="host-address">{new URL(target.connection.endpoint).host}</code></GroveText>
+                <TextInput label="서버 공개키" value={target.connection.key} isReadOnly />
             </>}
-            {error && <p className="err" role="alert">{error}</p>}
-            <button type="submit" disabled={!target}>서버 확인 후 연결</button>
+            {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
+            <GroveButton type="submit" disabled={!target}>서버 확인 후 연결</GroveButton>
         </form>
     </main>;
 }

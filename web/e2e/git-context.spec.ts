@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, openDetails, state } from "./helpers";
+import { apiCall, login, openTool, state } from "./helpers";
 import type { GitContext, GitContextState } from "../app/api/gitContext";
 import { contextLabel } from "../app/components/git-context/model";
 
@@ -23,7 +23,7 @@ async function repository(name: string) {
 
 async function select(page: Page, project: { name: string }) {
     await page.locator(".sidebar .projects").getByRole("button", { name: project.name, exact: true }).click();
-    await openDetails(page.locator(".git-wrap"));
+    await openTool(page, "변경");
     await expect(page.getByTestId("git-context")).toContainText("Git 위치");
 }
 
@@ -39,8 +39,12 @@ test("실제 Git 위치·권한·detached·dirty를 조회하고 index와 입력
     await expect(overview).toContainText("주 worktree");
     await expect(overview).toContainText("origin 없음");
     await expect(overview).toContainText("모델 도구 정책: read_only");
-    await expect(overview).toContainText("직접 Git API는 인증된 기기에 열려 있습니다");
-    await expect(overview.locator("tr").filter({ has: page.getByRole("cell", { name: "commit", exact: true }) })).toContainText("stage된 변경이 없습니다");
+    await expect(overview).toContainText("조회 결과는 실행 허가가 아닙니다.");
+    await overview.getByRole("button", { name: "Git 실행 권한 도움말", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("tooltip")).toContainText("직접 Git API는 인증된 기기에 열려 있고");
+    await page.keyboard.press("Escape");
+    await expect(overview.locator("tr").filter({ has: page.getByRole("rowheader", { name: "commit", exact: true }) })).toContainText("stage된 변경이 없습니다");
     expect(readFileSync(join(root, ".git/index"))).toEqual(before);
     expect(await overview.innerText()).not.toContain(root);
     await panel.getByLabel("커밋 메시지").fill("보존할 커밋 초안");
@@ -48,7 +52,7 @@ test("실제 Git 위치·권한·detached·dirty를 조회하고 index와 입력
     run("switch", "--detach", "-q");
     await panel.getByRole("button", { name: "새로고침", exact: true }).click();
     await expect(overview).toContainText("detached HEAD");
-    await expect(overview.locator("tr").filter({ has: page.getByRole("cell", { name: "push", exact: true }) })).toContainText("현재 브랜치가 없습니다");
+    await expect(overview.locator("tr").filter({ has: page.getByRole("rowheader", { name: "push", exact: true }) })).toContainText("현재 브랜치가 없습니다");
     writeFileSync(join(root, "file.txt"), "pending edit\n");
     await panel.getByRole("button", { name: "새로고침", exact: true }).click();
     await expect(panel).toContainText("작업 트리 변경 (1)");

@@ -1,6 +1,10 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { newKey } from "../../api/client";
 import { callbackData, mcpOAuth, uncertain, type McpOAuthConfig, type OAuthAttempt, type OAuthStarted, type OAuthStatus } from "../../api/mcpOAuth";
+import { HelpTip, SentenceText } from "../HelpTip";
 
 type Props = { serverId: string; revision: number; resource: string; config: McpOAuthConfig; disabled: boolean; onChanged: () => void };
 const statuses = {
@@ -71,7 +75,9 @@ export function McpOAuth({ serverId, revision, resource, config, disabled, onCha
     const expected_revision = status?.revision ?? revision;
     const blocked = disabled || sending || !!unknown || !status;
     return <section aria-label="MCP OAuth" className="stack">
-        <p className="small">사전 등록 client 전용 · S256 PKCE · Bearer · issuer 응답 확인. 자동 등록·자동 갱신은 하지 않습니다.</p>
+        <GroveText as="p" display="block" type="supporting" color="inherit" className="inline">OAuth <HelpTip label="MCP OAuth 도움말">
+            <SentenceText text="사전 등록 client 전용이며 S256 PKCE·Bearer·issuer 응답을 확인합니다. 자동 등록·자동 갱신은 하지 않습니다. 승인 창이나 설정 화면을 잃으면 상태 확인 후 대기 요청을 취소하세요." />
+        </HelpTip></GroveText>
         <dl className="small">
             <dt>승인 URL</dt><dd>{config.authorization_endpoint}</dd>
             <dt>토큰 전송 대상</dt><dd>{config.token_endpoint}</dd>
@@ -80,33 +86,33 @@ export function McpOAuth({ serverId, revision, resource, config, disabled, onCha
             <dt>scope</dt><dd>{config.scopes.join(" ") || "(없음)"}</dd>
             <dt>등록 반환 URL</dt><dd>{config.redirect_uri}</dd>
         </dl>
-        <p role="status">{status?.attempt ? statuses[status.attempt.status] : "OAuth 미연결"}
-            {status?.credential && ` · 자격 ${status.credential.usable ? "사용 가능" : "만료 또는 비활성"} · ${status.credential.expires_at}`}</p>
-        {status?.attempt?.status === "pending" && <p>승인 기한: {status.attempt.expires_at}</p>}
-        <div className="inline">
-            <button type="button" disabled={blocked || !!active} onClick={() => void send({
+        <GroveText as="p" display="block" type="inherit" color="inherit" role="status">{status?.attempt ? statuses[status.attempt.status] : "OAuth 미연결"}
+            {status?.credential && ` · 자격 ${status.credential.usable ? "사용 가능" : "만료 또는 비활성"} · ${status.credential.expires_at}`}</GroveText>
+        {status?.attempt?.status === "pending" && <GroveText as="p" display="block" type="inherit" color="inherit">승인 기한: {status.attempt.expires_at}</GroveText>}
+        <GroveStack direction="horizontal" align="center" className="inline">
+            <GroveButton type="button" disabled={blocked || !!active} onClick={() => void send({
                 action: "connect", key: newKey(), body: { expected_revision, confirmed: true },
-            })}>OAuth 연결 시작</button>
-            <button type="button" disabled={blocked || !!active || !status?.credential?.refresh_available} onClick={() => void send({
+            })}>OAuth 연결 시작</GroveButton>
+            <GroveButton type="button" disabled={blocked || !!active || !status?.credential?.refresh_available} onClick={() => void send({
                 action: "refresh", key: newKey(), body: { expected_revision, confirmed: true },
-            })}>OAuth 자격 명시적 갱신</button>
-            {active && <button type="button" disabled={sending || !!unknown} onClick={() => void send({
+            })}>OAuth 자격 명시적 갱신</GroveButton>
+            {active && <GroveButton type="button" disabled={sending || !!unknown} onClick={() => void send({
                 action: "cancel", key: newKey(), body: { expected_revision, attempt_id: status!.attempt!.id },
-            })}>OAuth 연결 취소</button>}
-            <button type="button" disabled={sending} onClick={() => { void reload(); onChanged(); }}>OAuth 상태 확인</button>
-        </div>
+            })}>OAuth 연결 취소</GroveButton>}
+            <GroveButton type="button" disabled={sending} onClick={() => { void reload(); onChanged(); }}>OAuth 상태 확인</GroveButton>
+        </GroveStack>
         {authorization && status?.attempt?.status === "pending" && <div>
-            <p>표시된 issuer에서 scope를 승인합니다. 토큰은 화면에 표시하지 않습니다.</p>
-            <button type="button" disabled={blocked} onClick={() => {
+            <GroveText as="p" display="block" type="inherit" color="inherit">표시된 issuer·scope를 확인하고 승인하세요.</GroveText>
+            <GroveButton type="button" disabled={blocked} onClick={() => {
                 popup.current = window.open(authorization, "_blank", "popup,width=680,height=760");
                 if (!popup.current) setError("승인 창이 차단됐습니다. 브라우저에서 팝업을 허용한 뒤 다시 여세요.");
-            }}>OAuth 승인 페이지 열기</button>
+            }}>OAuth 승인 페이지 열기</GroveButton>
         </div>}
-        {!!error && <p role="alert" className="err">{error}</p>}
+        {!!error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
         {unknown && <div role="group" aria-label="OAuth 결과 재확인">
-            <p>요청이 접수됐을 수 있습니다. 새 교환을 시작하지 않고 같은 키의 결과만 확인합니다.</p>
-            <button type="button" disabled={sending} onClick={() => void send(unknown)}>같은 OAuth 요청 결과 확인</button>
+            <GroveText as="p" display="block" type="inherit" color="inherit">접수됐을 수 있으니 같은 키의 결과만 확인하세요.</GroveText>
+            <GroveButton type="button" disabled={sending} onClick={() => void send(unknown)}>같은 OAuth 요청 결과 확인</GroveButton>
         </div>}
-        <p className="muted small">완료·갱신 후 MCP 연결을 다시 확인하고 새 도구 승인을 받아야 합니다. 승인 창이나 설정 화면을 잃으면 상태 확인 후 대기 요청을 취소하세요. unknown 자격은 재사용하지 않습니다.</p>
+        <GroveText as="p" display="block" type="supporting" color="secondary">완료·갱신 후 MCP 연결 확인과 새 도구 승인이 필요하며, unknown 자격은 재사용하지 않습니다.</GroveText>
     </section>;
 }

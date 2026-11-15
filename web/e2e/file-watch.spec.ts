@@ -34,7 +34,7 @@ test("외부 편집을 자동 반영하고 파일 탭을 닫으면 주기 조회
     await page.clock.runFor(5000);
     await expect(area).toHaveValue("external text\n");
     expect(await area.evaluate((node: HTMLTextAreaElement) => [node.selectionStart, node.selectionEnd])).toEqual([2, 5]);
-    await expect(files.getByRole("status")).toContainText("외부 변경을 반영");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("외부 변경을 반영");
     await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
     const before = reads;
     await page.clock.runFor(10_000);
@@ -47,11 +47,11 @@ test("서버 변경 이벤트는 바로 확인하되 저장 전 편집과 이전
     await area.fill("my unsaved edit\n");
     const original = await apiCall<{ sha256: string }>("GET", `/projects/${project.id}/files/content?path=${encodeURIComponent(name)}`);
     await apiCall("PUT", `/projects/${project.id}/files/content`, { path: name, expected_sha256: original.sha256, text: "other device edit\n" });
-    await expect(files.getByRole("status")).toContainText("파일이 바뀌었습니다");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("파일이 바뀌었습니다");
     await expect(area).toHaveValue("my unsaved edit\n");
     await expect(files.getByRole("button", { name: "최신 내용 불러오기", exact: true })).toBeVisible();
     await files.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(files.getByRole("status")).toContainText("파일이 바뀌었습니다");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("파일이 바뀌었습니다");
     expect(readFileSync(path, "utf8")).toBe("other device edit\n");
     await expect(area).toHaveValue("my unsaved edit\n");
 });
@@ -60,10 +60,10 @@ test("파일 삭제를 감지해도 입력을 지우거나 파일을 자동 재�
     const { project, name, files, area } = await setup(page);
     await area.fill("keep this copy\n");
     await apiCall("POST", `/projects/${project.id}/files/op`, { op: "delete", path: name, confirm: name });
-    await expect(files.getByRole("status")).toContainText("파일 변경을 확인하지 못했습니다");
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("파일 변경을 확인하지 못했습니다");
     await expect(area).toHaveValue("keep this copy\n");
     await files.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(files.getByRole("status")).toContainText(/없|사라/);
+    await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText(/없|사라/);
     await expect(area).toHaveValue("keep this copy\n");
 });
 

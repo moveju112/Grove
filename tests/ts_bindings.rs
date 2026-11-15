@@ -37,6 +37,7 @@ fn generate() -> String {
         decl::<grove::agent_auth::AgentAuthStatus>(),
         decl::<grove::model_capabilities::ModelCapabilities>(),
         decl::<grove::provider::AvailableModel>(),
+        decl::<grove::provider::ModelServiceTier>(),
         decl::<grove::models::ModelCatalog>(),
         decl::<grove::runner::Turn>(),
         decl::<grove::approvals::ToolCallRow>(),

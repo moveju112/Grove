@@ -106,3 +106,31 @@ test("지연이 있어도 큰 파일은 흐름 제어 창을 넘어 끝까지 �
     await expect(files.getByLabel("파일 내용")).toHaveValue(content, { timeout: 30_000 });
     await expectNoConnectionNoise(page);
 });
+
+test("지연이 있는 relay 새로고침에서 열린 대화와 초안까지 복원하는 시간을 측정한다", async ({ page }, info) => {
+    test.skip(!local(), "격리된 로컬 스택의 고정 지연으로 비교한다");
+    const p = await project("relay-reload");
+    await enter(page);
+    const view = await openProject(page, p.name);
+    await expect(view.locator(".view-head h1")).toHaveText(p.name);
+    const draft = "새로고침 전의 입력을 보존";
+    await view.getByLabel("메시지 입력", { exact: true }).fill(draft);
+    const layoutKey = await page.evaluate(() => `${localStorage.getItem("grove.device.id")}-narrow`);
+    await expect.poll(async () => {
+        const remote = await api<{ layout: unknown }>("GET", `/layouts/${layoutKey}`);
+        return JSON.stringify(remote.layout).includes(p.id);
+    }).toBe(true);
+    await net("delay", 100);
+    const timings: number[] = [];
+    for (let i = 0; i < 3; i++) {
+        const start = Date.now();
+        await page.reload();
+        const restored = page.locator(".project-view").filter({ visible: true });
+        await expect(restored.locator(".view-head h1")).toHaveText(p.name, { timeout: 20_000 });
+        await expect(restored.getByLabel("메시지 입력", { exact: true })).toHaveValue(draft);
+        timings.push(Date.now() - start);
+    }
+    info.annotations.push({ type: "reload-draft-ms", description: JSON.stringify(timings) });
+    console.log(JSON.stringify({ scenario: "relay reload with 100ms per direction", reloadDraftMs: timings }));
+    expect([...timings].sort((a, b) => a - b)[1], "이전 약 3초의 복원을 2초 미만으로 유지한다").toBeLessThan(2000);
+});

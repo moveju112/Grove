@@ -1,7 +1,7 @@
 // 기기 내 초안 사본과 서버 초안의 충돌 판정(RECENCY-005, FLOW-12).
 // 기기 내 사본은 자동 저장(localStorage)하고, 서버 저장은 사용자가 명시적으로 한다. 무음 덮어쓰기는 없다.
 
-import { sendOptionsSignature, type FollowKind, type SendOptions } from "./sendOptions";
+import { EFFORTS, sendOptionsSignature, type FollowKind, type SendOptions } from "./sendOptions";
 
 export type DraftAttachment = { id: string; project_id: string; name: string; mime: string; size: number; stored: boolean; image?: { width: number; height: number; model_width: number; model_height: number } | null };
 export type PendingSend = { body: string; raw: string; sig: string; key: string; intent: SendOptions; options: SendOptions; attachmentIds: string[]; follow?: FollowKind };
@@ -44,7 +44,9 @@ export function parseDraftAttachments(value: unknown): DraftAttachment[] {
 function validOptions(o: SendOptions | undefined): boolean {
     return !!o && ["model", "save"].includes(o.mode) && (o.profileId === null || typeof o.profileId === "string")
         && (o.agentId === null || typeof o.agentId === "string") && typeof o.tools === "boolean"
-        && (o.effort === undefined || ["auto", "low", "medium", "high"].includes(o.effort));
+        && (o.effort === undefined || EFFORTS.includes(o.effort))
+        && (o.serviceTier == null || (typeof o.serviceTier === "string" && /^[a-zA-Z0-9_-]{1,40}$/.test(o.serviceTier)))
+        && (o.model == null || (typeof o.model === "string" && o.model.length > 0 && o.model.length <= 200 && !/\s/.test(o.model)));
 }
 
 function validPending(p: PendingSend): boolean {

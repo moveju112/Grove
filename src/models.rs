@@ -319,8 +319,19 @@ pub struct ModelCatalog {
 }
 
 pub async fn catalog(State(app): State<App>, Owner(_p): Owner, Path(id): Path<String>) -> ApiResult<Json<ModelCatalog>> {
+    fetch_catalog(&app, id, false).await
+}
+
+/// 대화에서 쓸 모델 목록은 등록 기기도 조회한다. 비활성 프로필 관리·편집 권한은 열지 않는다.
+pub async fn available_models(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<ModelCatalog>> {
+    fetch_catalog(&app, id, true).await
+}
+
+async fn fetch_catalog(app: &App, id: String, enabled_only: bool) -> ApiResult<Json<ModelCatalog>> {
     let pid = id.clone();
-    let (profile, runtime) = app.db.call(move |c| configured_profile(c, &pid)).await?;
+    let (profile, runtime) = app.db.call(move |c| {
+        if enabled_only { runtime_profile(c, &pid) } else { configured_profile(c, &pid) }
+    }).await?;
     let mut models = provider::list_models(&runtime).await.map_err(|error| {
         ApiError::new(StatusCode::BAD_GATEWAY, error.code, scrub_provider_text(&runtime, &error.message))
             .with_details(json!({ "provider_status": error.status, "retryable": error.retryable }))
@@ -330,6 +341,13 @@ pub async fn catalog(State(app): State<App>, Owner(_p): Owner, Path(id): Path<St
             return Err(ApiError::new(StatusCode::BAD_GATEWAY, "catalog_invalid", "공급자가 비밀정보를 포함한 모델 식별자를 반환해 목록을 표시하지 않았습니다"));
         }
         model.name = scrub_provider_text(&runtime, &model.name);
+        for tier in model.service_tiers.iter_mut().flatten() {
+            if scrub_provider_text(&runtime, &tier.id) != tier.id {
+                return Err(ApiError::new(StatusCode::BAD_GATEWAY, "catalog_invalid", "공급자가 비밀정보를 포함한 속도 식별자를 반환했습니다"));
+            }
+            tier.name = scrub_provider_text(&runtime, &tier.name);
+            tier.description = scrub_provider_text(&runtime, &tier.description);
+        }
     }
     let revision = profile.revision;
     app.db.call(move |c| {

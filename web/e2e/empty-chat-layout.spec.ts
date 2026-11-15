@@ -13,6 +13,7 @@ test("모바일 빈 프로젝트는 상단 한 줄·입력창만 보이고 보�
     await login(page);
     await page.getByRole("button", { name: "사이드바", exact: true }).click();
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
+    await expect(page.locator(".mobile-drawer-left")).toBeHidden();
     const view = page.locator(".project-view").filter({ visible: true });
     const composer = view.locator(".composer");
     await expect(composer).toBeVisible();

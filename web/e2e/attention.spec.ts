@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice } from "./helpers";
 
 const notes = (page: Page) => page.evaluate(() => (window as unknown as { __notes: { title: string; opts: { tag: string; body: string } }[] }).__notes.map((n) => ({ title: n.title, tag: n.opts.tag, body: n.opts.body })));
 const setHidden = (page: Page, hidden: boolean) => page.evaluate((h) => { (window as unknown as { __hidden: boolean }).__hidden = h; }, hidden);
@@ -31,10 +31,10 @@ test("화면을 보지 않을 때 켠 종류만 내용 없이 한 번 알리고,
     await page.getByRole("button", { name: "설정", exact: true }).first().click();
     await page.getByLabel("설정 검색", { exact: true }).fill("알림");
     const section = page.getByTestId("setting-notify");
-    await section.getByLabel("작업 완료·실패").check();
-    await section.getByLabel("승인 요청").check();
+    await selectChoice(section.getByLabel("작업 완료·실패"), "true");
+    await selectChoice(section.getByLabel("승인 요청"), "true");
     await expect(section.getByTestId("notify-permission")).toContainText("허용됨");
-    await expect(section.getByLabel("예약·업데이트 알림")).not.toBeChecked();
+    await expect(section.getByRole("combobox", { name: "예약·업데이트 알림", exact: true })).toHaveAttribute("data-selected-value", "false");
 
     await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.locator(`[data-testid=session-view][data-session="${s.id}"]`);

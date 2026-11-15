@@ -5,7 +5,9 @@ import { isExecSetting, type ExecSettingDef } from "../../api/execSettings";
 import { ExecSettings } from "./ExecSettings";
 
 const { query } = vi.hoisted(() => ({ query: vi.fn() }));
-vi.mock("../../state/store", () => ({ useQuery: query }));
+vi.mock("../../state/store", async (original) => ({
+    ...await original<typeof import("../../state/store")>(), useQuery: query,
+}));
 vi.mock("../SettingsReset", () => ({
     SettingsResetButton: () => null,
     APPLIES: { next_turn: "다음 요청부터 적용" },
@@ -50,7 +52,7 @@ describe("실행 설정의 기존 범위별 편집기 연결", () => {
         const html = render();
         expect(html).toContain('<option value="sh" selected="">');
         expect(html).toContain("<legend>명령 실행 셸 미지원 선택지</legend>");
-        expect(html.match(/<input[^>]*value="cmd"[^>]*>/)?.[0]).toContain('disabled=""');
+        expect(html.match(/<select(?=[^>]*aria-label="명령 실행 셸 미지원 선택지")[^>]*>/)?.[0]).toContain('disabled=""');
         expect(html).toContain("cmd · 이 서버 OS에서 지원하지 않습니다");
         const disabled = render({ ...shell, disabled_reason: "이 서버에서는 자원 한도를 지원하지 않습니다" });
         expect(disabled).toContain('<fieldset disabled=""');

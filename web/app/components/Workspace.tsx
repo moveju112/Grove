@@ -1,4 +1,6 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState, type ContextType } from "react";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Heading } from "@astryxdesign/core/Heading";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ContextType, type SetStateAction } from "react";
 import { api, authGeneration, isLoggedIn, newKey } from "../api/client";
 import { EventStream } from "../api/events";
 import type { Project } from "../api/generated";
@@ -9,11 +11,9 @@ import { LayoutPersistence } from "../state/layoutPersistence";
 import { applyEvent, resyncAll, setLive, useLive, useQuery } from "../state/store";
 import { AddProjectDialog } from "./AddProject";
 import { ArchivedProjects } from "./ArchivedProjects";
-import { NotificationsPanel } from "./NotificationsPanel";
 import { LabelChips, LabelFilter, ProjectMenu, useLabels } from "./ProjectLabels";
 import { filterProjects } from "../state/projectLabels";
 import { RecentPanel } from "./RecentPanel";
-import { RecoveryPanel } from "./RecoveryPanel";
 import { SearchPanel } from "./SearchPanel";
 import { SplitView } from "./SplitView";
 import { Icon } from "./icons";
@@ -27,6 +27,7 @@ import { NavigationContext } from "./navigation/NavigationContext";
 import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Button } from "../design/Button";
+import { MobileDrawer, useMobilePanels } from "./MobilePanels";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -63,7 +64,13 @@ export function Workspace() {
     const status = useLive((live) => live.status);
     const retryAt = useLive((live) => live.retryAt);
     const [layouts, setLayouts] = useState<Record<string, L.Layout>>({});
-    const [sidebar, setSidebar] = useState(!isNarrow());
+    const [wideSidebar, setWideSidebar] = useState(true);
+    const mobile = useMobilePanels(narrow);
+    const sidebar = narrow ? mobile.panel === "left" : wideSidebar;
+    const setSidebar = useCallback((value: SetStateAction<boolean>) => {
+        if (narrow) mobile.setPanel((current) => (typeof value === "function" ? value(current === "left") : value) ? "left" : null);
+        else setWideSidebar(value);
+    }, [narrow, mobile.setPanel]);
     const [notice, setNotice] = useState<string | null>(null);
     const persistence = useRef(new Map<string, LayoutPersistence>());
     const key = useMemo(() => layoutKey(), [narrow]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -76,7 +83,8 @@ export function Workspace() {
     }, [layout]);
     // 프로젝트 목록 정렬은 기기별 선택(PROJECT-002): 이름순 또는 최근 활동순.
     const [projectSort, setProjectSort] = useState<"name" | "recent">(() => (localStorage.getItem(PROJECT_SORT) === "recent" ? "recent" : "name"));
-    const projects = useQuery<Project[]>(`projects:${projectSort}`, () => api.get(`/projects?sort=${projectSort}`));
+    const projects = useQuery<Project[]>(`projects:${projectSort}`, () => api.get(`/projects?sort=${projectSort}`),
+        { keepPreviousData: true, scope: "projects" });
     // 라벨 필터는 기기별 선택(PROJECT-008). 삭제된 라벨 id는 필터에서 무시한다.
     const labels = useLabels();
     const [labelFilter, setLabelFilterState] = useState<string[]>(() => {
@@ -127,6 +135,8 @@ export function Workspace() {
             put: ({ key: requestKey, ...body }, signal) => api.put(`/layouts/${key}`, body, { key: requestKey, signal, timeoutMs: 10_000 }),
         });
         persistence.current.set(key, store);
+        const cached = store.restoreLocal();
+        if (cached) setLayouts((cur) => ({ ...cur, [key]: cached }));
         void store.restore().then((restored) => { if (restored) setLayouts((cur) => ({ ...cur, [key]: restored })); });
     }, [key]);
     useEffect(() => {
@@ -158,7 +168,7 @@ export function Workspace() {
             });
             if (small) setSidebar(false);
         },
-        [updateAt],
+        [updateAt, setSidebar],
     );
     const open: Opener = useCallback((t, how) => openAt(key, t, how), [key, openAt]);
     // OS 알림을 누르면 해당 대화를 현재 배치에 연다(SETTINGS-014).
@@ -194,32 +204,38 @@ export function Workspace() {
         <Button className={inSidebar ? "ghost side-item" : "ghost icon-btn"} aria-haspopup="dialog" disabled={!layout}
             title={serverBlocked ?? "새 대화·프로젝트 만들기"}
             onClick={() => setAdding({ step: "choose", projectId: currentProjectId(layout) })}>
-            <Icon name="edit" /><span className={inSidebar ? "side-label" : "sr-only"}>만들기</span>
+            <Icon name="edit" /><GroveText type="inherit" color="inherit" className={inSidebar ? "side-label" : "sr-only"}>만들기</GroveText>
         </Button>
     );
     const brand = (
-        <span className="brand-row">
-            <span className="brand" aria-hidden="true"><Icon name="sprout" size={20} /></span>
+        <GroveText type="inherit" color="inherit" className="brand-row">
+            <GroveText type="inherit" color="inherit" className="brand" aria-hidden="true"><Icon name="sprout" size={20} /></GroveText>
             <strong className="wordmark">Grove</strong>
-        </span>
+        </GroveText>
     );
+    const selectedProjectId = currentProjectId(layout);
+    const selectedProject = projects.data?.find((p) => p.id === selectedProjectId);
+    const mobileTabs = layout ? L.allTabs(layout).filter((tab) => tab.project_id === selectedProjectId || !tab.project_id) : [];
 
     return (
         <CreationFocus.Provider value={creationFocus}>
         <Stack direction="horizontal" className={`ws ${narrow ? "narrow" : ""} ${sidebar ? "with-sidebar" : ""}`}>
-            {sidebar && (
+            <MobileDrawer enabled={narrow} side="left" open={mobile.panel === "left"} drag={mobile.drag}
+                label="탐색 메뉴" onClose={() => mobile.setPanel(null)}>
+            {(sidebar || narrow) && (
                 <aside className="sidebar" aria-label="탐색">
                     {!narrow && <div className="side-head">{brand}</div>}
                     <div className="side-nav">
                         {createInSidebar && create(true)}
-                        <NotificationsPanel open={open} />
-                        <RecoveryPanel open={open} />
                         <SearchPanel open={open} />
+                        {narrow && <Button className="ghost side-item" onClick={() => open({ kind: "settings", title: "설정" })}>
+                            <Icon name="settings" /><GroveText type="inherit" color="inherit">설정</GroveText>
+                        </Button>}
                     </div>
                     <div className="side-scroll">
                         <section className="projects">
                             <div className="side-section-head">
-                                <h2>프로젝트</h2>
+                                <Heading level={2} color="inherit">프로젝트</Heading>
                                 <ActionMenu className="project-options" label="프로젝트 목록 옵션"
                                     trigger={<>⋯{labelFilter.length > 0 && <span className="dot" aria-label="라벨 필터 적용 중" />}</>}>
                                     <div className="project-options-body">
@@ -236,11 +252,11 @@ export function Workspace() {
                                     <option value="name">이름순</option>
                                     <option value="recent">최근 활동순</option>
                                 </select>
-                                <button type="button" className="ghost small" aria-expanded={filtering} aria-label="라벨 필터"
+                                <Button type="button" className="ghost small" aria-expanded={filtering} aria-label="라벨 필터"
                                     onClick={() => setFiltering((f) => !f)}>
                                     라벨{labelFilter.length > 0 ? ` (${labelFilter.length})` : ""}
-                                </button>
-                                <button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</button>
+                                </Button>
+                                <Button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</Button>
                                     </div>
                                 </ActionMenu>
                             </div>
@@ -248,30 +264,31 @@ export function Workspace() {
                             {showArchived && <ArchivedProjects />}
                             {shown.map((p) => (
                                 <SidebarProject key={p.id} project={p} open={open} narrow={narrow} onCreate={() => startProject(p)}>
-                                <div className="row" data-testid="project-row" data-project={p.name}>
-                                    <button className="link" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name })} title={p.root_path}>
+                                <Stack direction="horizontal" align="center" className="row" data-testid="project-row" data-project={p.name}>
+                                    <Button className="link" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name })} title={p.root_path}>
                                         {p.pinned_at && <span aria-label="고정됨" title="고정됨">📌</span>}
-                                        {p.icon && <span className="project-icon" aria-hidden>{p.icon}</span>} {p.name} {!p.available && <em className="warn">(경로 없음)</em>}
+                                        {p.icon && <GroveText type="inherit" color="inherit" className="project-icon" aria-hidden>{p.icon}</GroveText>} {p.name} {!p.available && <em className="warn">(경로 없음)</em>}
                                         <LabelChips project={p} labels={labels} />
-                                    </button>
-                                    <button type="button" className="ghost small" aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} aria-expanded={menuFor === p.id}
-                                        onClick={() => setMenuFor((m) => (m === p.id ? null : p.id))}>⋯</button>
+                                    </Button>
+                                    <Button type="button" className="ghost small" aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} aria-expanded={menuFor === p.id}
+                                        onClick={() => setMenuFor((m) => (m === p.id ? null : p.id))}>⋯</Button>
                                     {menuFor === p.id && <ProjectMenu project={p} labels={labels} onClose={() => setMenuFor(null)}
                                         onSplit={narrow ? undefined : (how) => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name }, how)} />}
-                                </div>
+                                </Stack>
                                 </SidebarProject>
                             ))}
                             {!!projects.data?.length && shown.length === 0 && (
-                                <p className="muted" role="status">
-                                    라벨 조건에 맞는 프로젝트가 없습니다. <button type="button" className="ghost small" onClick={() => setLabelFilter([])}>필터 해제</button>
-                                </p>
+                                <GroveText as="p" display="block" type="inherit" color="secondary" role="status">
+                                    라벨 조건에 맞는 프로젝트가 없습니다. <Button type="button" className="ghost small" onClick={() => setLabelFilter([])}>필터 해제</Button>
+                                </GroveText>
                             )}
                         </section>
+                        <RecentPanel open={open} linked={splitSessions} />
                     </div>
-                    <RecentPanel open={open} linked={splitSessions} />
                     <SidebarUsage />
                 </aside>
             )}
+            </MobileDrawer>
             <Stack className="ws-main">
             <header className="topbar">
                 <Button className="ghost icon-btn" aria-label="사이드바" title="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
@@ -283,9 +300,12 @@ export function Workspace() {
                 <NavigationContext layout={layout} projects={projects.data ?? NO_PROJECTS} host={window.location.origin}
                     open={open} onBrowseProjects={() => setSidebar(true)} sidebarOpen={sidebar} />
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
-                <Button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
-                    <Icon name="settings" /><span className="sr-only">설정</span>
-                </Button>
+                {narrow ? <Button className="ghost icon-btn" aria-label="열린 세션" title="열린 세션"
+                    aria-expanded={mobile.panel === "right"} onClick={() => mobile.setPanel("right")}>
+                    <Icon name="panel" />
+                </Button> : <Button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
+                    <Icon name="settings" /><GroveText type="inherit" color="inherit" className="sr-only">설정</GroveText>
+                </Button>}
             </header>
             {adding?.step === "choose" && <CreationEntry projects={projects.data ?? NO_PROJECTS} currentId={adding.projectId}
                 blockedReason={serverBlocked}
@@ -295,7 +315,7 @@ export function Workspace() {
             {notice && (
                 <div className="notice" role="status">
                     {notice} <ServerActionButton className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</ServerActionButton>
-                    <button className="ghost" onClick={() => setNotice(null)}>닫기</button>
+                    <Button className="ghost" onClick={() => setNotice(null)}>닫기</Button>
                 </div>
             )}
             <div className="body">
@@ -308,6 +328,27 @@ export function Workspace() {
                 </main>
             </div>
             </Stack>
+            <MobileDrawer enabled={narrow} side="right" open={mobile.panel === "right"} drag={mobile.drag}
+                label="열린 세션" onClose={() => mobile.setPanel(null)}>
+                {narrow && <nav className="mobile-open-tabs" aria-label="현재 프로젝트 열린 탭">
+                    {selectedProject && <Heading level={2} color="inherit">{selectedProject.name}</Heading>}
+                    {(["session", "other"] as const).map((kind) => {
+                        const tabs = mobileTabs.filter((tab) => kind === "session" ? tab.kind === "session" : tab.kind !== "session");
+                        return tabs.length > 0 && <section key={kind} aria-label={kind === "session" ? "대화" : "다른 화면"}>
+                            {kind === "other" && <Heading level={3} color="inherit">다른 화면</Heading>}
+                            {tabs.map((tab) => <div key={tab.id} className="mobile-open-tab" data-testid="mobile-open-tab">
+                                <Button type="button" className="link" aria-current={layout && L.focusedLeaf(layout).active_tab === tab.id ? "page" : undefined}
+                                    onClick={() => { updateAt(key, (current) => L.activate(current, tab.id)); mobile.setPanel(null); }}>
+                                    {tab.title}
+                                </Button>
+                                <Button type="button" className="ghost icon-btn" aria-label={`${tab.title} 탭 닫기`}
+                                    title="화면만 닫습니다. 실행과 초안은 유지됩니다."
+                                    onClick={() => updateAt(key, (current) => L.closeTab(current, tab.id))}>×</Button>
+                            </div>)}
+                        </section>;
+                    })}
+                </nav>}
+            </MobileDrawer>
         </Stack>
         </CreationFocus.Provider>
     );
@@ -347,11 +388,11 @@ function ConnStatus({ status, retryAt, onRetry }: { status: string; retryAt?: nu
     return (
         <span className={`conn ${status}`} title={`서버 연결 상태: ${label}`} data-testid="conn" role="status">
             <span className="conn-dot" aria-hidden="true" />
-            <span className="sr-only">{label}</span>
+            <GroveText type="inherit" color="inherit" className="sr-only">{label}</GroveText>
             {status === "offline" && (
-                <button className="ghost small" onClick={onRetry}>
+                <Button className="ghost small" onClick={onRetry}>
                     지금 재연결
-                </button>
+                </Button>
             )}
         </span>
     );

@@ -1,3 +1,4 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
 import { useState } from "react";
 import { Panel } from "./ui/Controls";
 import { ApiError, api } from "../api/client";
@@ -5,6 +6,7 @@ import type { Notification, RemoteWatch } from "../api/generated";
 import { useQuery } from "../state/store";
 import { When } from "./When";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { TextInput } from "../design/Fields";
 
 const STATUS: Record<string, string> = {
     watching: "감시 중",
@@ -41,21 +43,21 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
     const split = (s: string) => s.split(",").map((x) => x.trim()).filter(Boolean);
     return (
         <Panel className="remote-watches" data-testid="remote-watches" title={`원격 작업 감시${watches.length > 0 ? ` · 감시 중 ${active}/${watches.length}` : ""}`}>
-            {err && <p className="err" role="alert">{err}</p>}
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             <ul className="session-list">
                 {watches.map((w) => {
                     const n = notes.data?.items.find((x) => x.id === w.notification_id);
                     return (
                         <li key={w.id} data-testid="remote-watch" data-status={w.status}>
-                            <strong>{w.title}</strong> <span className={`status ${w.status}`}>{STATUS[w.status] ?? w.status}</span>
-                            <span className="muted small"> · 원격 상태 {w.remote_value ?? "아직 없음"} · 확인 {w.checks}회</span>
-                            {w.last_checked_at && <span className="muted small"> · 마지막 확인 <When at={w.last_checked_at} /></span>}
-                            {w.last_error && <span className="small err"> · {w.last_error.message}</span>}
-                            {w.task_id && <span className="muted small"> · 연결된 로컬 명령의 결과는 작업 목록에서 따로 봅니다</span>}
-                            {w.finished_at && <span className="muted small" data-testid="remote-watch-notice"> · {noticePhase(n)}</span>}
+                            <strong>{w.title}</strong> <GroveText type="inherit" color="inherit" className={`status ${w.status}`}>{STATUS[w.status] ?? w.status}</GroveText>
+                            <GroveText type="supporting" color="secondary"> · 원격 상태 {w.remote_value ?? "아직 없음"} · 확인 {w.checks}회</GroveText>
+                            {w.last_checked_at && <GroveText type="supporting" color="secondary"> · 마지막 확인 <When at={w.last_checked_at} /></GroveText>}
+                            {w.last_error && <GroveText type="supporting" color="error"> · {w.last_error.message}</GroveText>}
+                            {w.task_id && <GroveText type="supporting" color="secondary"> · 연결된 로컬 명령의 결과는 작업 목록에서 따로 봅니다</GroveText>}
+                            {w.finished_at && <GroveText type="supporting" color="secondary" data-testid="remote-watch-notice"> · {noticePhase(n)}</GroveText>}
                             <div className="muted small">{w.url}</div>
                             {w.status === "watching" && !disabled && (
-                                <span className="inline">
+                                <GroveText type="inherit" color="inherit" className="inline">
                                     <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/remote-watches/${w.id}/check`, { expected_revision: w.revision }))}>
                                         지금 확인
                                     </ServerActionButton>
@@ -66,7 +68,7 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
                                     >
                                         감시 취소(원격 작업은 계속)
                                     </ServerActionButton>
-                                </span>
+                                </GroveText>
                             )}
                         </li>
                     );
@@ -91,11 +93,11 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
                         });
                     }}
                 >
-                    <input aria-label="감시 이름" placeholder="이름" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} />
-                    <input aria-label="상태 URL" placeholder="https://…" value={form.url} onChange={(e) => setForm({ ...form, url: e.target.value })} />
-                    <input aria-label="상태 위치(JSON pointer)" value={form.pointer} onChange={(e) => setForm({ ...form, pointer: e.target.value })} />
-                    <input aria-label="성공 값(쉼표 구분)" value={form.success} onChange={(e) => setForm({ ...form, success: e.target.value })} />
-                    <input aria-label="실패 값(쉼표 구분)" value={form.failure} onChange={(e) => setForm({ ...form, failure: e.target.value })} />
+                    <TextInput label="감시 이름" isLabelHidden placeholder="이름" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
+                    <TextInput label="상태 URL" isLabelHidden placeholder="https://…" value={form.url} onChange={(value) => setForm({ ...form, url: value })} />
+                    <TextInput label="상태 위치(JSON pointer)" isLabelHidden value={form.pointer} onChange={(value) => setForm({ ...form, pointer: value })} />
+                    <TextInput label="성공 값(쉼표 구분)" isLabelHidden value={form.success} onChange={(value) => setForm({ ...form, success: value })} />
+                    <TextInput label="실패 값(쉼표 구분)" isLabelHidden value={form.failure} onChange={(value) => setForm({ ...form, failure: value })} />
                     <input aria-label="확인 간격(초)" type="number" min={10} max={3600} value={form.interval} onChange={(e) => setForm({ ...form, interval: e.target.value })} />
                     <input aria-label="감시 시간(분)" type="number" min={1} value={form.timeout} onChange={(e) => setForm({ ...form, timeout: e.target.value })} />
                     <ServerActionButton type="submit" disabled={!form.title.trim() || !form.url.trim()}>감시 시작</ServerActionButton>

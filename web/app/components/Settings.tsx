@@ -44,8 +44,12 @@ import { SettingsGroup } from "./SettingsGroup";
 import { Icon, type IconName } from "./icons";
 import { Button } from "../design/Button";
 import { Stack } from "@astryxdesign/core/Stack";
-import { TextInput } from "@astryxdesign/core/TextInput";
-import { Switch } from "@astryxdesign/core/Switch";
+import { Heading, Text } from "@astryxdesign/core/Text";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { TextInput, TextArea } from "../design/Fields";
+import { Slider } from "@astryxdesign/core/Slider";
+import { Select } from "../design/Select";
+import { BooleanSelect } from "./BooleanSelect";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
@@ -125,7 +129,7 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
     const visible = (id: string) => (results ? results.some((r) => r.id === id) : ITEMS.find((i) => i.id === id)?.menu === menu);
     const total = (results?.length ?? 0) + (needle ? serverDefs.length : 0);
     return (
-        <div className="settings" ref={link.root}
+        <Stack className="settings" ref={link.root}
             onWheelCapture={link.cancel} onTouchMoveCapture={link.cancel}
             onKeyDownCapture={link.cancel} onPointerDownCapture={link.cancel}
             onClick={(event) => {
@@ -138,34 +142,34 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 history.replaceState(history.state, "", anchor.getAttribute("href")!);
                 link.open(key);
             }}>
-            <nav className="settings-nav" aria-label="설정 메뉴">
+            <Stack as="nav" className="settings-nav" aria-label="설정 메뉴">
                 <TextInput type="search" label="설정 검색" isLabelHidden placeholder="설정 검색" value={q}
                     onChange={(value) => { link.cancel(); setQ(value); }} containerClassName="settings-search" />
-                <div className="settings-menu">
+                <Stack className="settings-menu">
                 {MENUS.map(([m, label]) => (
                     <Button key={m} aria-current={!results && menu === m ? "page" : undefined} className={!results && menu === m ? "settings-menu-item on" : "settings-menu-item"} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
                         {label}
                     </Button>
                 ))}
-                </div>
+                </Stack>
                 {sessionId ? (
-                    <p className="muted small" data-testid="settings-origin">
+                    <Text as="p" display="block" type="supporting" color="secondary" data-testid="settings-origin">
                         대화 · {session.data?.title ?? sessionId} ({projectName ?? projectId})
-                    </p>
+                    </Text>
                 ) : (
-                    projectId && <p className="muted small" data-testid="settings-origin">프로젝트 · {projectName ?? projectId}</p>
+                    projectId && <Text as="p" display="block" type="supporting" color="secondary" data-testid="settings-origin">프로젝트 · {projectName ?? projectId}</Text>
                 )}
-            </nav>
+            </Stack>
             <Stack className="settings-body">
-                <h1 className="settings-heading">{needle ? "검색 결과" : MENUS.find(([id]) => id === menu)?.[1]}</h1>
-                {link.pending && <p className="muted" role="status">링크한 설정을 불러오는 중…</p>}
-                {link.error && <p className="err" role="alert">{link.error}</p>}
-                {needle && <p className="muted">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</p>}
+                <Heading level={1} color="inherit" className="settings-heading">{needle ? "검색 결과" : MENUS.find(([id]) => id === menu)?.[1]}</Heading>
+                {link.pending && <Text as="p" display="block" type="inherit" color="secondary" role="status">링크한 설정을 불러오는 중…</Text>}
+                {link.error && <Text as="p" display="block" type="inherit" color="error" role="alert">{link.error}</Text>}
+                {needle && <Text as="p" display="block" type="inherit" color="secondary">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</Text>}
                 {serverDefs.filter((d) => !isExecSetting(d)).length > 0 && <ScopedSettings grouped defs={serverDefs.filter((d) => !isExecSetting(d))} target={target}
                     linkedKey={link.key} onLinkReady={onLinkReady}
                     resetDefs={!needle ? (registry.data ?? []).filter((d) => d.menu === menu) : undefined} area={MENUS.find(([id]) => id === menu)?.[1]} />}
                 {hiddenAdvanced > 0 && !showAdvanced && (
-                    <button className="ghost" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</button>
+                    <Button className="ghost" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</Button>
                 )}
                 {visible("secrets") && <Section item="secrets"><Secrets /></Section>}
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
@@ -195,7 +199,7 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                     </Section>
                 )}
             </Stack>
-        </div>
+        </Stack>
     );
 }
 
@@ -228,9 +232,9 @@ function useSave() {
     };
     const view =
         state.kind === "idle" ? null : (
-            <span className={`save-state ${state.kind}`} role="status">
+            <Text as="span" type="inherit" color="inherit" className={`save-state ${state.kind}`} role="status">
                 {state.kind === "saving" ? "저장 중…" : state.kind === "saved" ? "저장됨" : `저장 실패(기존 값 유지): ${state.msg}`}
-            </span>
+            </Text>
         );
     return { run, view };
 }
@@ -244,26 +248,25 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
         <>
             {show("theme") && (
                 <Section item="theme">
-                    <select value={p.theme} onChange={(e) => set({ ...p, theme: e.target.value as Prefs["theme"] })} aria-label="테마">
-                        <option value="system">시스템</option>
-                        <option value="light">밝게</option>
-                        <option value="dark">어둡게</option>
-                        <option value="soft">부드럽게(soft)</option>
-                    </select>
+                    <Select label="테마" hideLabel value={p.theme}
+                        onChange={(value) => set({ ...p, theme: value as Prefs["theme"] })}
+                        options={[{ value: "system", label: "시스템" }, { value: "light", label: "밝게" },
+                            { value: "dark", label: "어둡게" }, { value: "soft", label: "부드럽게(soft)" }]} />
                     <DeviceSettingsReset fields={["theme"]} label="테마 기본값 복원" />
                 </Section>
             )}
             {show("font") && (
                 <Section item="font">
-                    <input type="range" min={12} max={20} value={p.fontSize} onChange={(e) => set({ ...p, fontSize: Number(e.target.value) })} aria-label="글자 크기" /> {p.fontSize}px
+                    <Slider label="글자 크기" isLabelHidden min={12} max={20} value={p.fontSize}
+                        onChange={(value: number) => set({ ...p, fontSize: value })} formatValue={(value) => `${value}px`} valueDisplay="text" />
                     <DeviceSettingsReset fields={["fontSize"]} label="글자 크기 기본값 복원" />
                 </Section>
             )}
             {show("enter") && (
                 <Section item="enter">
-                    <Switch label="Enter로 보내기" labelPosition="start" labelSpacing="spread" width="100%"
+                    <BooleanSelect label="Enter로 보내기"
                         value={p.enterToSend} onChange={(value) => set({ ...p, enterToSend: value })}
-                        labelTooltip="Shift+Enter는 줄바꿈에 사용합니다. 터치 키보드의 Enter는 항상 줄바꿈입니다." />
+                        help="Shift+Enter는 줄바꿈에 사용합니다. 터치 키보드의 Enter는 항상 줄바꿈입니다." />
                     <DeviceSettingsReset fields={["enterToSend"]} label="입력 기본값 복원" />
                 </Section>
             )}
@@ -271,16 +274,14 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                 <Section item="recent">
                     <fieldset>
                         <legend className="small">최근 목록 위에 보일 범위(최대 {MAX_RECENT_WINDOWS}개)</legend>
-                        {RECENT_WINDOW_OPTIONS.map((option) => {
-                            const on = p.recentWindows.includes(option);
-                            return (
-                                <label className="check" key={option}>
-                                    <input type="checkbox" checked={on} disabled={!on && p.recentWindows.length >= MAX_RECENT_WINDOWS}
-                                        onChange={(e) => set({ ...p, recentWindows: normalizeRecentWindows(e.target.checked ? [...p.recentWindows, option] : p.recentWindows.filter((x) => x !== option)) })} />{" "}
-                                    {recentWindowLabel(option)}
-                                </label>
-                            );
-                        })}
+                        {Array.from({ length: MAX_RECENT_WINDOWS }, (_, index) => <Select key={index}
+                            label={`최근 시간 범위 ${index + 1}`} value={p.recentWindows[index] ?? ""}
+                            onChange={(value) => set({ ...p, recentWindows: normalizeRecentWindows([
+                                ...p.recentWindows.filter((_, i) => i !== index), value,
+                            ]) })}
+                            options={[{ value: "", label: "선택 안 함", disabled: p.recentWindows.length === 1 && index === 0 },
+                                ...RECENT_WINDOW_OPTIONS.map((option) => ({ value: option, label: recentWindowLabel(option),
+                                    disabled: p.recentWindows.includes(option) && p.recentWindows[index] !== option }))]} />)}
                     </fieldset>
                     <DeviceSettingsReset fields={["recentWindows", "recentWindow"]} label="최근 범위 기본값 복원" />
                 </Section>
@@ -292,46 +293,34 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
             )}
             {show("time") && (
                 <Section item="time">
-                    <label>
-                        시계 형식{" "}
-                        <select aria-label="시계 형식" value={p.clock} onChange={(e) => set({ ...p, clock: e.target.value as Prefs["clock"] })}>
-                            <option value="system">시스템</option>
-                            <option value="24h">24시간</option>
-                            <option value="12h">12시간(오전/오후)</option>
-                        </select>
-                    </label>
-                    <label>
-                        지난 시각{" "}
-                        <select aria-label="지난 시각 표시" value={p.timeStyle} onChange={(e) => set({ ...p, timeStyle: e.target.value as Prefs["timeStyle"] })}>
-                            <option value="absolute">날짜·시각</option>
-                            <option value="relative">상대 시간(7일 이내)</option>
-                        </select>
-                    </label>
+                    <Select label="시계 형식" value={p.clock}
+                        onChange={(value) => set({ ...p, clock: value as Prefs["clock"] })}
+                        options={[{ value: "system", label: "시스템" }, { value: "24h", label: "24시간" },
+                            { value: "12h", label: "12시간(오전/오후)" }]} />
+                    <Select label="지난 시각 표시" value={p.timeStyle}
+                        onChange={(value) => set({ ...p, timeStyle: value as Prefs["timeStyle"] })}
+                        options={[{ value: "absolute", label: "날짜·시각" }, { value: "relative", label: "상대 시간(7일 이내)" }]} />
                     <DeviceSettingsReset fields={["clock", "timeStyle"]} label="시간 표시 기본값 복원" />
                     <TurnTimingSetting />
                 </Section>
             )}
             {show("transcript") && (
                 <Section item="transcript">
-                    <label>
-                        생각 과정(reasoning){" "}
-                        <select aria-label="생각 과정 표시" value={p.reasoning} onChange={(e) => set({ ...p, reasoning: e.target.value as Prefs["reasoning"] })}>
-                            <option value="collapsed">상세 버튼으로 보기</option>
-                            <option value="expanded">본문에 표시</option>
-                            <option value="hidden">숨김</option>
-                        </select>
-                    </label>
-                    <Switch label="답만 보기" labelPosition="start" labelSpacing="spread" width="100%"
+                    <Select label="생각 과정 표시" value={p.reasoning}
+                        onChange={(value) => set({ ...p, reasoning: value as Prefs["reasoning"] })}
+                        options={[{ value: "collapsed", label: "상세 버튼으로 보기" },
+                            { value: "expanded", label: "본문에 표시" }, { value: "hidden", label: "숨김" }]} />
+                    <BooleanSelect label="답만 보기"
                         value={p.answerOnly} onChange={(value) => set({ ...p, answerOnly: value })}
-                        labelTooltip="도구·실행 기록은 숨기지만 승인 요청은 항상 표시합니다." />
-                    <Switch label="도구 실행 세부를 펼쳐서 표시" labelPosition="start" labelSpacing="spread" width="100%"
+                        help="도구·실행 기록은 숨기지만 승인 요청은 항상 표시합니다." />
+                    <BooleanSelect label="도구 실행 세부를 펼쳐서 표시"
                         value={p.expandTools} onChange={(value) => set({ ...p, expandTools: value })} />
                     <DeviceSettingsReset fields={["reasoning", "answerOnly", "expandTools"]} label="대화 표시 기본값 복원" />
                 </Section>
             )}
-            <div className="settings-footer">
+            <Stack align="start" className="settings-footer">
                 <DeviceSettingsReset compact={false} fields={Object.keys(defaultPrefs) as (keyof Prefs)[]} label="이 기기 화면·입력 전체 복원" />
-            </div>
+            </Stack>
         </>
     );
 }
@@ -370,21 +359,17 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
     return (
         <>
             {kinds.map(([key, label]) => (
-                <label className="check" key={key}>
-                    <input type="checkbox" checked={p[key]} onChange={(e) => void toggle(key, e.target.checked)} /> {label}
-                </label>
+                <BooleanSelect key={key} label={label} value={p[key]} onChange={(value) => void toggle(key, value)} />
             ))}
-            <span className="scope">앱 실행 중에만</span>
-            <label className="check">
-                <input type="checkbox" checked={p.notifySound} onChange={(e) => set({ ...p, notifySound: e.target.checked })} /> 알림 소리
-            </label>
-            <p className="small" data-testid="notify-permission">브라우저 알림 권한: {capabilities && !capabilities.secureContext ? "보안 컨텍스트 필요(HTTPS·localhost)" : PERMISSION_LABEL[permission]}</p>
+            <Text as="span" type="inherit" color="inherit" className="scope">앱 실행 중에만</Text>
+            <BooleanSelect label="알림 소리" value={p.notifySound} onChange={(value) => set({ ...p, notifySound: value })} />
+            <Text as="p" display="block" type="supporting" color="inherit" data-testid="notify-permission">브라우저 알림 권한: {capabilities && !capabilities.secureContext ? "보안 컨텍스트 필요(HTTPS·localhost)" : PERMISSION_LABEL[permission]}</Text>
             {(p.notifyDone || p.notifyApproval || p.notifyServer) && permission !== "granted" && (
-                <p className="warn small" role="status">브라우저 권한이 없어 화면 알림은 표시되지 않습니다{p.notifySound ? ". 소리만 재생합니다." : "."}</p>
+                <Text as="p" display="block" type="supporting" color="warning" role="status">브라우저 권한이 없어 화면 알림은 표시되지 않습니다{p.notifySound ? ". 소리만 재생합니다." : "."}</Text>
             )}
-            {(requestError || notificationIssue) && <p className="warn small" role="status">{requestError || notificationIssue}</p>}
-            {permission === "default" && <button className="ghost small" onClick={() => void request()}>브라우저 알림 허용</button>}
-            <button
+            {(requestError || notificationIssue) && <Text as="p" display="block" type="supporting" color="warning" role="status">{requestError || notificationIssue}</Text>}
+            {permission === "default" && <Button className="ghost small" onClick={() => void request()}>브라우저 알림 허용</Button>}
+            <Button
                 className="ghost small"
                 onClick={() => {
                     showAttention({ kind: "server", tag: `test:${Date.now()}`, title: "Grove 알림 시험", body: "이 기기의 알림이 동작합니다.", projectId: null, sessionId: null }, p.notifySound);
@@ -392,8 +377,8 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
                 }}
             >
                 시험 알림 보내기
-            </button>
-            {testSent && <span className="muted small" role="status"> 보냈습니다{permission === "granted" ? "" : "(권한이 없어 화면 알림은 생략)"}.</span>}
+            </Button>
+            {testSent && <Text as="span" type="supporting" color="secondary" role="status"> 보냈습니다{permission === "granted" ? "" : "(권한이 없어 화면 알림은 생략)"}.</Text>}
             <DeviceSettingsReset fields={["notifyDone", "notifyApproval", "notifyServer", "notifySound"]} label="알림 기본값 복원" />
         </>
     );
@@ -406,21 +391,21 @@ function Secrets() {
     const save = useSave();
     return (
         <>
-            <ul>
+            <List density="compact" edge="flush">
                 {(list.data ?? []).map((s) => (
-                    <li key={s.id}>
-                        {s.label} <code>{s.masked}</code> {s.used_by.length > 0 && <span className="muted small">사용: {s.used_by.join(", ")}</span>}
+                    <ListItem key={s.id} label={<>
+                        {s.label} <code>{s.masked}</code> {s.used_by.length > 0 && <Text as="span" type="supporting" color="secondary">사용: {s.used_by.join(", ")}</Text>}
                         <ServerActionButton className="ghost small" onClick={() => {
                             const v = prompt(`${s.label}의 새 키(이전 키는 저장 성공 후에만 교체)`);
                             if (v) void save.run(() => api.put(`/secrets/${s.id}`, { label: s.label, value: v }));
                         }}>교체</ServerActionButton>
                         <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.del(`/secrets/${s.id}`))}>삭제</ServerActionButton>
-                    </li>
+                    </>} />
                 ))}
-            </ul>
+            </List>
             <form className="inline" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post("/secrets", { label, value }); setLabel(""); setValue(""); }); }}>
-                <input placeholder="이름" value={label} onChange={(e) => setLabel(e.target.value)} aria-label="키 이름" required />
-                <input placeholder="키 값" type="password" autoComplete="off" value={value} onChange={(e) => setValue(e.target.value)} aria-label="키 값" required />
+                <TextInput size="sm" placeholder="이름" value={label} onChange={setLabel} label="키 이름" isLabelHidden isRequired />
+                <TextInput size="sm" placeholder="키 값" type="password" autoComplete="off" value={value} onChange={setValue} label="키 값" isLabelHidden isRequired />
                 <ServerActionButton type="submit">추가</ServerActionButton>
             </form>
             {save.view}
@@ -447,14 +432,14 @@ function Profiles() {
             {management !== false && <LocalModelConnection secrets={secrets.data ?? []} onCreate={(body, key) =>
                 api.post("/model-profiles", body, { key, requires: ["model_management_v1"] })
             } />}
-            <ul className="profile-list">
+            <List density="compact" edge="flush" className="profile-list">
                 {(list.data ?? []).map((p) => (
-                    <li key={p.id} data-testid="model-profile">
-                        <div className="profile-heading">
-                            <div className="profile-identity"><strong>{p.name}</strong><code>{p.model}</code></div>
-                            {p.enabled === false && <span className="warn small"> · 비활성</span>}
+                    <ListItem key={p.id} data-testid="model-profile" label={<>
+                        <Stack direction="horizontal" align="center" className="profile-heading">
+                            <Stack className="profile-identity"><strong>{p.name}</strong><code>{p.model}</code></Stack>
+                            {p.enabled === false && <Text as="span" type="supporting" color="warning"> · 비활성</Text>}
                             <HelpTip label={`${p.name} 연결 정보`}>
-                                <span>{p.protocol}{p.base_url ? ` · ${p.base_url}` : " · 서버 CLI 계정 · 읽기 전용"}</span>
+                                <Text as="span" type="inherit" color="inherit">{p.protocol}{p.base_url ? ` · ${p.base_url}` : " · 서버 CLI 계정 · 읽기 전용"}</Text>
                             </HelpTip>
                             <ActionMenu label={`${p.name} 관리`}>
                                 <ServerActionButton className="ghost small" onClick={() => {
@@ -467,12 +452,12 @@ function Profiles() {
                                     api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, enabled: p.enabled === false }, { requires: ["model_management_v1"] })
                                 )}>{p.enabled === false ? "활성화" : "비활성화"}</ServerActionButton>}
                             </ActionMenu>
-                        </div>
+                        </Stack>
                         {p.last_check?.ok === false && <CheckStatus c={p.last_check} />}
                         <details className="profile-details">
                             <summary>상세 설정</summary>
-                            <div className="stack">
-                                <span className="muted small">{p.protocol}{p.base_url && ` · ${p.base_url}`}</span>
+                            <Stack gap={2}>
+                                <Text as="span" type="supporting" color="secondary">{p.protocol}{p.base_url && ` · ${p.base_url}`}</Text>
                                 {p.last_check?.ok !== false && <CheckStatus c={p.last_check} />}
                                 <ProfileCapabilities profile={p} />
                                 <ProfileContextPolicy profile={p} />
@@ -480,11 +465,11 @@ function Profiles() {
                                 <ProfileCatalog profile={p} onChoose={(model, revision) => void save.run(() =>
                                     api.put(`/model-profiles/${p.id}`, { expected_revision: revision, model }, { requires: ["model_management_v1"] })
                                 )} />
-                            </div>
+                            </Stack>
                         </details>
-                    </li>
+                    </>} />
                 ))}
-            </ul>
+            </List>
             <details className="profile-details profile-create">
             <summary>모델 프로필 추가</summary>
             <form className="stack" aria-label="모델 프로필 추가" onSubmit={(e) => {
@@ -494,33 +479,26 @@ function Profiles() {
                     setF({ ...f, name: "", model: "" });
                 });
             }}>
-                <input placeholder="이름" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} aria-label="프로필 이름" required />
-                <select
+                <TextInput size="sm" placeholder="이름" value={f.name} onChange={(value) => setF({ ...f, name: value })} label="프로필 이름" isLabelHidden isRequired />
+                <Select
                     value={f.protocol}
-                    aria-label="protocol"
-                    onChange={(e) => {
-                        const v = e.target.value;
+                    label="protocol" hideLabel
+                    onChange={(v) => {
                         setF({ ...f, protocol: v, base_url: presets[v] ?? f.base_url, model: cliModels[v] ?? f.model, secret_id: cliModels[v] ? "" : f.secret_id });
                     }}
-                >
-                    <option value="openai">OpenAI 호환</option>
-                    <option value="anthropic">Anthropic</option>
-                    <option value="gemini">Gemini</option>
-                    <option value="claude_code">Claude Code(서버 설치 CLI)</option>
-                    <option value="codex_cli">Codex(서버 설치 CLI)</option>
-                </select>
-                {!isCli && <input placeholder="Base URL" value={f.base_url} onChange={(e) => setF({ ...f, base_url: e.target.value })} aria-label="Base URL" required />}
-                <input placeholder="모델" value={f.model} onChange={(e) => setF({ ...f, model: e.target.value })} aria-label="모델" required />
+                    options={[{ value: "openai", label: "OpenAI 호환" }, { value: "anthropic", label: "Anthropic" },
+                        { value: "gemini", label: "Gemini" }, { value: "claude_code", label: "Claude Code(서버 설치 CLI)" },
+                        { value: "codex_cli", label: "Codex(서버 설치 CLI)" }]} />
+                {!isCli && <TextInput size="sm" placeholder="Base URL" value={f.base_url} onChange={(value) => setF({ ...f, base_url: value })} label="Base URL" isLabelHidden isRequired />}
+                <TextInput size="sm" placeholder="모델" value={f.model} onChange={(value) => setF({ ...f, model: value })} label="모델" isLabelHidden isRequired />
                 {!isCli && (
-                    <select value={f.secret_id} onChange={(e) => setF({ ...f, secret_id: e.target.value })} aria-label="API 키">
-                        <option value="">키 없음</option>
-                        {(secrets.data ?? []).map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
-                    </select>
+                    <Select value={f.secret_id} onChange={(value) => setF({ ...f, secret_id: value })} label="API 키" hideLabel
+                        options={[{ value: "", label: "키 없음" }, ...(secrets.data ?? []).map((s) => ({ value: s.id, label: s.label }))]} />
                 )}
                 {isCli && (
-                    <span className="muted small" data-testid="cli-note">
+                    <Text as="span" type="supporting" color="secondary" data-testid="cli-note">
                         서버 CLI 계정 · 읽기 전용
-                    </span>
+                    </Text>
                 )}
                 <ServerActionButton type="submit">추가</ServerActionButton>
             </form>
@@ -537,26 +515,26 @@ function Definitions({ target, onOverviewLayoutChange }: {
     const [sel, setSel] = useState<string | null>(null);
     const list = useQuery<Definition[]>(`definitions:${kind}`, () => api.get(`/definitions?kind=${kind}`));
     return (
-        <div className="defs">
+        <Stack className="defs">
             <AgentOverview target={target} onEdit={(id) => { setKind("agent"); setSel(id); }} onLayoutChange={onOverviewLayoutChange} />
-            <div className="chips">
-                <button className={kind === "agent" ? "chip on" : "chip"} onClick={() => { setKind("agent"); setSel(null); }}>에이전트</button>
-                <button className={kind === "workflow" ? "chip on" : "chip"} onClick={() => { setKind("workflow"); setSel(null); }}>워크플로우</button>
-            </div>
-            <ul className="def-list">
+            <Stack direction="horizontal" wrap="wrap" className="chips">
+                <Button className={kind === "agent" ? "chip on" : "chip"} onClick={() => { setKind("agent"); setSel(null); }}>에이전트</Button>
+                <Button className={kind === "workflow" ? "chip on" : "chip"} onClick={() => { setKind("workflow"); setSel(null); }}>워크플로우</Button>
+            </Stack>
+            <List density="compact" edge="flush" className="def-list">
                 {(list.data ?? []).map((d) => (
-                    <li key={d.id}>
-                        <button className={`link ${sel === d.id ? "on" : ""}`} onClick={() => setSel(d.id)}>
-                            {d.name} {d.builtin ? <span className="muted small">기본</span> : <span className="muted small">사용자</span>}
-                            {d.modified_fields.length > 0 && <span className="status awaiting_approval">수정됨</span>}
-                            {!d.enabled && <span className="muted small">(비활성)</span>}
-                        </button>
-                    </li>
+                    <ListItem key={d.id} label={<>
+                        <Button className={`link ${sel === d.id ? "on" : ""}`} onClick={() => setSel(d.id)}>
+                            {d.name} {d.builtin ? <Text as="span" type="supporting" color="secondary">기본</Text> : <Text as="span" type="supporting" color="secondary">사용자</Text>}
+                            {d.modified_fields.length > 0 && <Text as="span" type="inherit" color="inherit" className="status awaiting_approval">수정됨</Text>}
+                            {!d.enabled && <Text as="span" type="supporting" color="secondary">(비활성)</Text>}
+                        </Button>
+                    </>} />
                 ))}
-            </ul>
+            </List>
             {sel && <DefinitionEditor key={kind + sel} kind={kind} id={sel} />}
             <NewDefinition kind={kind} />
-        </div>
+        </Stack>
     );
 }
 
@@ -572,15 +550,15 @@ function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
     const changed = draft !== cur.body;
     const busy = restoring || saving;
     return (
-        <div className="def-editor" data-settings-unsaved={changed ? "true" : undefined}>
-            <h3>{cur.name} <span className="muted small">revision {cur.revision}</span></h3>
-            <p className="muted small">{cur.description}</p>
-            <textarea value={draft} disabled={saving} onChange={(e) => local.write({
-                text: e.target.value, baseRevision: local.draft?.baseRevision ?? cur.revision, updatedAt: Date.now(),
-            })} rows={14} aria-label="정의 본문" />
-            {local.error && <p role="alert">{local.error}</p>}
-            {local.draft && local.draft.baseRevision !== cur.revision && <p role="alert">초안 작성 뒤 서버 revision이 바뀌었어. 저장은 이전 revision으로 검사하므로 새 값을 조용히 덮어쓰지 않아. 아래 비교에서 현재 적용값을 확인해.</p>}
-            <div className="actions">
+        <Stack gap={2} className="def-editor" data-settings-unsaved={changed ? "true" : undefined}>
+            <Heading level={3} color="inherit">{cur.name} <Text as="span" type="supporting" color="secondary">revision {cur.revision}</Text></Heading>
+            <Text as="p" display="block" type="supporting" color="secondary">{cur.description}</Text>
+            <TextArea value={draft} isDisabled={saving} onChange={(value) => local.write({
+                text: value, baseRevision: local.draft?.baseRevision ?? cur.revision, updatedAt: Date.now(),
+            })} rows={14} label="정의 본문" isLabelHidden />
+            {local.error && <Text as="p" display="block" type="inherit" color="inherit" role="alert">{local.error}</Text>}
+            {local.draft && local.draft.baseRevision !== cur.revision && <Text as="p" display="block" type="inherit" color="inherit" role="alert">서버 revision이 바뀌어 저장 시 충돌하니, 보존된 초안과 현재 적용값을 비교해.</Text>}
+            <Stack direction="horizontal" wrap="wrap" className="actions">
                 <ServerActionButton disabled={!changed || busy} onClick={() => void save.run(async () => {
                     setSaving(true);
                     try {
@@ -589,7 +567,7 @@ function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
                         d.reload();
                     } finally { setSaving(false); }
                 })}>저장</ServerActionButton>
-                <button className="ghost" disabled={!local.draft || busy} onClick={() => local.write(null)}>편집 취소</button>
+                <Button className="ghost" disabled={!local.draft || busy} onClick={() => local.write(null)}>편집 취소</Button>
                 {!cur.builtin && (
                     <ServerActionButton className="ghost" disabled={busy} onClick={() => {
                         if (confirm("이 정의를 삭제할까요?")) void save.run(() => api.del(`/definitions/${kind}/${id}?expected_revision=${cur.revision}`));
@@ -600,13 +578,13 @@ function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
                         {cur.enabled ? "선택 불가로" : "선택 가능으로"}
                     </ServerActionButton>
                 )}
-            </div>
+            </Stack>
             {save.view}
             {cur.builtin && <DefinitionUpdates definition={cur} draft={local.draft?.text} disabled={saving} onLocked={setRestoring} onApplied={d.reload}
                 onDraftReviewed={(reviewed) => {
                     if (local.draft) local.write({ ...local.draft, baseRevision: reviewed.revision, updatedAt: Date.now() });
                 }} />}
-        </div>
+        </Stack>
     );
 }
 
@@ -616,9 +594,9 @@ function NewDefinition({ kind }: { kind: string }) {
     return (
         <DetailDialog label={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`} title={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`}>
             <form className="inline wrap" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post(`/definitions/${kind}`, f); setF({ id: "", name: "", body: "" }); }); }}>
-                <input placeholder="ID (소문자-하이픈)" value={f.id} onChange={(e) => setF({ ...f, id: e.target.value })} aria-label="ID" required />
-                <input placeholder="이름" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} aria-label="이름" required />
-                <textarea placeholder="본문" value={f.body} onChange={(e) => setF({ ...f, body: e.target.value })} aria-label="본문" required />
+                <TextInput size="sm" placeholder="ID (소문자-하이픈)" value={f.id} onChange={(value) => setF({ ...f, id: value })} label="ID" isLabelHidden isRequired />
+                <TextInput size="sm" placeholder="이름" value={f.name} onChange={(value) => setF({ ...f, name: value })} label="이름" isLabelHidden isRequired />
+                <TextArea placeholder="본문" value={f.body} onChange={(value) => setF({ ...f, body: value })} label="본문" isLabelHidden isRequired />
                 <ServerActionButton type="submit">만들기</ServerActionButton>
             </form>
             {save.view}
@@ -638,11 +616,11 @@ function CurrentDeviceName({ onSaved }: { onSaved?: () => void }) {
             setDraft(null); query.reload(); onSaved?.();
         });
     }}>
-        <label>이 기기 이름<input aria-label="이 기기 이름" value={draft ?? query.data?.name ?? ""}
-            disabled={!query.data} maxLength={80} required onChange={(event) => setDraft(event.target.value)} /></label>
+        <TextInput size="sm" label="이 기기 이름" value={draft ?? query.data?.name ?? ""}
+            isDisabled={!query.data} isRequired onChange={setDraft} maxLength={80} />
         <ServerActionButton type="submit" disabled={draft === null || !draft.trim()}>이름 저장</ServerActionButton>
-        {draft !== null && <span data-settings-unsaved="true" className="muted small">저장 안 됨</span>}
-        {Boolean(query.error) && <p className="err" role="alert">기기 이름을 읽지 못했습니다.</p>}
+        {draft !== null && <Text as="span" type="supporting" color="secondary" data-settings-unsaved="true">저장 안 됨</Text>}
+        {Boolean(query.error) && <Text as="p" display="block" type="inherit" color="error" role="alert">기기 이름을 읽지 못했습니다.</Text>}
         {save.view}
     </form>;
 }
@@ -658,34 +636,34 @@ function Devices() {
             <Section item="devices">
             <Hosts />
             <CurrentDeviceName onSaved={list.reload} />
-            {Boolean(list.error) && <p className="err" role="alert">기기 목록을 읽지 못했습니다.</p>}
-            <p className="muted small">등록 기기는 모든 프로젝트·파일 접근 및 명령 실행 가능 · 기기 관리는 소유자 전용</p>
-            <ul className="settings-list">
+            {Boolean(list.error) && <Text as="p" display="block" type="inherit" color="error" role="alert">기기 목록을 읽지 못했습니다.</Text>}
+            <Text as="p" display="block" type="supporting" color="secondary">등록 기기는 모든 프로젝트·파일 접근 및 명령 실행 가능 · 기기 관리는 소유자 전용</Text>
+            <List density="compact" edge="flush" className="settings-list">
                 {(list.data ?? []).filter((d) => d.kind !== "browser" || !d.revoked_at).map((d) => (
-                    <li key={d.id}>
-                        <span className="settings-device">
+                    <ListItem key={d.id} label={<>
+                        <Text as="span" type="inherit" color="inherit" className="settings-device">
                             <Icon name={d.kind === "owner" ? "server" : "monitor"} size={16} />
-                            <span><span>{d.name}{d.current && <span className="settings-device-current">현재</span>}</span>
-                                <span className="settings-device-meta">{d.kind === "owner" ? "소유자" : d.kind === "device" ? "기기" : "브라우저 로그인"}
+                            <Text as="span" type="inherit" color="inherit"><Text as="span" type="inherit" color="inherit">{d.name}{d.current && <Text as="span" type="inherit" color="inherit" className="settings-device-current">현재</Text>}</Text>
+                                <Text as="span" type="inherit" color="inherit" className="settings-device-meta">{d.kind === "owner" ? "소유자" : d.kind === "device" ? "기기" : "브라우저 로그인"}
                                     {d.last_used_at && <> · <When at={d.last_used_at} /></>}
-                                </span>
-                            </span>
-                        </span>
-                        {d.revoked_at ? <span className="muted small">폐기됨</span> : d.kind === "owner" ? <span className="scope">소유자</span> : (
+                                </Text>
+                            </Text>
+                        </Text>
+                        {d.revoked_at ? <Text as="span" type="supporting" color="secondary">폐기됨</Text> : d.kind === "owner" ? <Text as="span" type="inherit" color="inherit" className="scope">소유자</Text> : (
                             <ServerActionButton className="ghost small" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</ServerActionButton>
                         )}
-                    </li>
+                    </>} />
                 ))}
-            </ul>
+            </List>
             <ServerActionButton onClick={() => {
                 const name = prompt("새 기기 이름");
                 if (name) void save.run(async () => setIssued((await api.post<{ token: string }>("/devices", { name })).token));
             }}>기기 토큰 발급</ServerActionButton>
             {issued && (
-                <div className="draft-note" role="alert">
+                <Stack direction="horizontal" wrap="wrap" align="center" className="draft-note" role="alert">
                     이 토큰은 지금 한 번만 표시됩니다: <code className="selectable">{issued}</code>
-                    <button className="ghost small" onClick={() => setIssued(null)}>닫기</button>
-                </div>
+                    <Button className="ghost small" onClick={() => setIssued(null)}>닫기</Button>
+                </Stack>
             )}
             {save.view}
             </Section>
@@ -733,7 +711,7 @@ function Health() {
                 <dt>화면 빌드</dt><dd><code>{build.data ?? "…"}</code></dd>
                 <dt>이벤트 연결</dt><dd>{status}</dd>
             </dl>
-            <button
+            <Button
                 className="ghost small"
                 onClick={() =>
                     void navigator.clipboard?.writeText(JSON.stringify(diag(), null, 2)).then(
@@ -743,8 +721,8 @@ function Health() {
                 }
             >
                 진단 정보 복사
-            </button>
-            {copied && <span className="muted small" role="status"> {copied}</span>}
+            </Button>
+            {copied && <Text as="span" type="supporting" color="secondary" role="status"> {copied}</Text>}
             <DiagnosticsBundle />
         </>
     );
@@ -752,39 +730,39 @@ function Health() {
 
 function Help() {
     return (
-        <div className="help" data-testid="help">
-            <h4>입력</h4>
-            <ul>
-                <li><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd>: 보내기 · 'Enter로 보내기'를 켜면 <kbd>Enter</kbd> 보내기, <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈(터치 기기는 항상 줄바꿈)</li>
-                <li>한글 조합 중 <kbd>Enter</kbd>는 보내지 않습니다.</li>
-                <li>실행 중에는 '대기열에 추가'(끝난 뒤 새 요청), '지금 반영'(다음 모델 호출에 추가), '중단하고 보내기'를 고릅니다.</li>
-            </ul>
-            <h4>상태</h4>
-            <ul>
-                <li>승인 대기: 파일 쓰기·명령 실행 등 승인이 필요한 도구가 기다립니다. 승인 전에는 실행되지 않습니다.</li>
-                <li>답변 대기: 모델이 사용자만 정할 수 있는 결정을 물었습니다.</li>
-                <li>결과 확인 필요: 서버 재시작 등으로 실행 결과를 알 수 없는 작업입니다. 자동으로 다시 실행하지 않습니다.</li>
-            </ul>
-            <h4>링크</h4>
-            <p>모델 답의 외부 링크는 새 탭에서 열리고, 실제 목적지 주소가 링크 옆에 함께 표시됩니다.</p>
-        </div>
+        <Stack className="help" data-testid="help">
+            <Heading level={4} color="inherit">입력</Heading>
+            <List density="compact" edge="flush" listStyle="disc">
+                <ListItem label={<><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd>: 보내기 · 'Enter로 보내기'를 켜면 <kbd>Enter</kbd> 보내기, <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈(터치 기기는 항상 줄바꿈)</>} />
+                <ListItem label={<>한글 조합 중 <kbd>Enter</kbd>는 보내지 않습니다.</>} />
+                <ListItem label={<>실행 중에는 '대기열에 추가'(끝난 뒤 새 요청), '지금 반영'(다음 모델 호출에 추가), '중단하고 보내기'를 고릅니다.</>} />
+            </List>
+            <Heading level={4} color="inherit">상태</Heading>
+            <List density="compact" edge="flush" listStyle="disc">
+                <ListItem label={<>승인 대기: 파일 쓰기·명령 실행 등 승인이 필요한 도구가 기다립니다. 승인 전에는 실행되지 않습니다.</>} />
+                <ListItem label={<>답변 대기: 모델이 사용자만 정할 수 있는 결정을 물었습니다.</>} />
+                <ListItem label={<>결과 확인 필요: 서버 재시작 등으로 실행 결과를 알 수 없는 작업입니다. 자동으로 다시 실행하지 않습니다.</>} />
+            </List>
+            <Heading level={4} color="inherit">링크</Heading>
+            <Text as="p" display="block" type="inherit" color="inherit">모델 답의 외부 링크는 새 탭에서 열리고, 실제 목적지 주소가 링크 옆에 함께 표시됩니다.</Text>
+        </Stack>
     );
 }
 
 /// 마지막 연결 확인 결과(AUTH-001). 생성 요청 없이 모델 목록·CLI 버전만 확인한다.
 function CheckStatus({ c }: { c: ModelProfile["last_check"] }) {
-    if (!c) return <span className="muted small" data-testid="profile-check"> · 연결 확인 안 함</span>;
+    if (!c) return <Text as="span" type="supporting" color="secondary" data-testid="profile-check"> · 연결 확인 안 함</Text>;
     const d = (c.detail ?? {}) as { models?: number; model_listed?: boolean; cli_version?: string };
     const when = <When at={c.checked_at} />;
     return c.ok ? (
-        <span className="small" data-testid="profile-check">
-            {" "}· <span className="status succeeded">연결됨</span> {c.latency_ms}ms · {when}
+        <Text as="span" type="supporting" color="inherit" data-testid="profile-check">
+            {" "}· <Text as="span" type="inherit" color="inherit" className="status succeeded">연결됨</Text> {c.latency_ms}ms · {when}
             {d.cli_version && ` · ${d.cli_version}`}
             {d.models !== undefined && (d.model_listed ? " · 모델 확인됨" : ` · 목록(${d.models}개)에 이 모델 없음`)}
-        </span>
+        </Text>
     ) : (
-        <span className="small" data-testid="profile-check">
-            {" "}· <span className="status failed">실패</span> <code>{c.code}</code> {c.message} · {when}
-        </span>
+        <Text as="span" type="supporting" color="inherit" data-testid="profile-check">
+            {" "}· <Text as="span" type="inherit" color="inherit" className="status failed">실패</Text> <code>{c.code}</code> {c.message} · {when}
+        </Text>
     );
 }

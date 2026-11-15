@@ -4,6 +4,10 @@ import { Panel } from "./ui/Controls";
 import { useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
+import { BooleanSelect } from "./BooleanSelect";
+import { TextInput } from "../design/Fields";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { Text } from "@astryxdesign/core/Text";
 
 type Goal = { id: string; title: string; status: "pending" | "in_progress" | "done" | "cancelled"; revision: number };
 
@@ -33,18 +37,19 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
     };
     return (
         <Panel className="goals" data-testid="goals-panel" title={`Goal${goals.length > 0 ? ` · 남은 ${open}/${goals.length}` : ""}`}>
-            {err && <p className="err" role="alert">{err}</p>}
-            <ul className="session-list">
+            {err && <Text as="p" display="block" type="inherit" color="error" role="alert">{err}</Text>}
+            <List density="compact" edge="flush" className="session-list">
                 {goals.map((g, i) => (
-                    <li key={g.id} data-testid="goal" data-status={g.status}>
-                        <label className="check">
-                            <input
-                                type="checkbox"
-                                checked={optimistic[g.id] ?? g.status === "done"}
+                    <ListItem key={g.id} data-testid="goal" data-status={g.status}
+                        endContent={<>
+                            {g.status === "in_progress" && <Text type="inherit" color="inherit" className="status running">진행 중</Text>}
+                            {i > 0 && !disabled && <ServerActionButton className="ghost small" aria-label={`${g.title} 위로`} onClick={() => move(i)}>↑</ServerActionButton>}
+                        </>}
+                        label={
+                        <BooleanSelect label={g.title} trueLabel="완료" falseLabel="미완료"
+                                value={optimistic[g.id] ?? g.status === "done"}
                                 disabled={disabled || g.status === "cancelled" || !!serverBlocked}
-                                title={serverBlocked ?? undefined}
-                                onChange={(e) => {
-                                    const done = e.target.checked;
+                                onChange={(done) => {
                                     setOptimistic((o) => ({ ...o, [g.id]: done }));
                                     void act(() =>
                                         api.patch(`/sessions/${sessionId}/goals/${g.id}`, { expected_revision: g.revision, status: done ? "done" : "pending" }),
@@ -56,13 +61,9 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
                                     );
                                 }}
                             />
-                            <span className={g.status === "done" || g.status === "cancelled" ? "muted strike" : ""}>{g.title}</span>
-                        </label>
-                        {g.status === "in_progress" && <span className="status running">진행 중</span>}
-                        {i > 0 && !disabled && <ServerActionButton className="ghost small" aria-label={`${g.title} 위로`} onClick={() => move(i)}>↑</ServerActionButton>}
-                    </li>
+                        } />
                 ))}
-            </ul>
+            </List>
             {!disabled && (
                 <form
                     className="inline"
@@ -74,7 +75,7 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
                         });
                     }}
                 >
-                    <input aria-label="새 Goal" placeholder="할 일 추가" value={title} onChange={(e) => setTitle(e.target.value)} />
+                    <TextInput size="sm" label="새 Goal" isLabelHidden placeholder="할 일 추가" value={title} onChange={setTitle} />
                     <ServerActionButton type="submit" disabled={!title.trim()}>추가</ServerActionButton>
                 </form>
             )}

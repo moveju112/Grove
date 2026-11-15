@@ -1,7 +1,7 @@
 //! 모델 목록은 생성 요청 없이 조회한다. 다음 페이지는 같은 endpoint의 query로만 지정한다.
 
 use super::{Profile, ProviderError, http_client, http_error, send, transport_error};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::{BTreeMap, HashSet}, time::Duration};
 
@@ -9,10 +9,29 @@ const MAX_BYTES: usize = 8 * 1024 * 1024;
 const MAX_MODELS: usize = 2000;
 const MAX_PAGES: usize = 20;
 
-#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+#[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
+pub struct ModelServiceTier {
+    pub id: String,
+    pub name: String,
+    pub description: String,
+}
+
+#[derive(Debug, Clone, Default, Serialize, ts_rs::TS)]
 pub struct AvailableModel {
     pub id: String,
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reasoning_efforts: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub default_reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub service_tiers: Option<Vec<ModelServiceTier>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub is_default: Option<bool>,
 }
 
 fn invalid() -> ProviderError {
@@ -42,7 +61,7 @@ fn page(protocol: &str, value: &Value) -> Result<(Vec<AvailableModel>, Option<St
             Some(Value::String(name)) => name,
             _ => return Err(invalid()),
         };
-        models.push(AvailableModel { id: id.into(), name: name.chars().take(200).collect() });
+        models.push(AvailableModel { id: id.into(), name: name.chars().take(200).collect(), ..Default::default() });
     }
     let next = match protocol {
         "anthropic" => match value["has_more"].as_bool() {
@@ -67,6 +86,9 @@ pub async fn list_models(profile: &Profile) -> Result<Vec<AvailableModel>, Provi
 }
 
 async fn fetch(profile: &Profile) -> Result<Vec<AvailableModel>, ProviderError> {
+    if super::cli::is_cli(&profile.protocol) {
+        return super::cli::list_models(&profile.protocol).await;
+    }
     let base = profile.base_url.trim_end_matches('/');
     let url = match profile.protocol.as_str() {
         "openai" => format!("{base}/models"),

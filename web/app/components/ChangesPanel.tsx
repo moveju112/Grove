@@ -1,3 +1,6 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useRef, useState } from "react";
 import { Panel } from "./ui/Controls";
 import { ApiError, api, newKey } from "../api/client";
@@ -6,6 +9,7 @@ import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 import { isArtifact } from "../state/artifactPreview";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { HelpTip, SentenceText } from "./HelpTip";
 
 const OP: Record<string, string> = { created: "새 파일", modified: "수정", deleted: "삭제" };
 
@@ -26,9 +30,9 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
     const locked = disabled || busy || attempt !== null;
     const list = q.data ?? [];
     if (list.length === 0) return <Panel className="changes" data-testid="changes-panel" title="파일 변경 이력">
-        <p className={q.error ? "err small" : "muted small"} role={q.error ? "alert" : "status"}>
+        <GroveText as="p" display="block" type="supporting" color={q.error ? "error" : "secondary"} role={q.error ? "alert" : "status"}>
             {q.loading ? "불러오는 중…" : q.error ? "파일 변경 이력을 읽지 못했습니다." : "변경 없음"}
-        </p>
+        </GroveText>
     </Panel>;
     // 턴(요청)별로 묶는다. 사용자가 직접 만든 도구 요청은 turn_id가 없다.
     const groups: { turn: string | null; items: FileChange[] }[] = [];
@@ -65,24 +69,26 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
         setDiff({ id, text: d.diff ?? (d.unavailable === "binary" ? "(텍스트가 아닌 파일)" : "(내용을 보관하지 않음)") });
     };
     return (
-        <Panel className="changes" data-testid="changes-panel" title={`파일 변경 이력 · ${list.filter((c) => !c.undone_at).length}/${list.length}`}>
-            <p className="muted small">대화 되감기와 별개입니다. 파일만 되돌리며, 기록 뒤 파일이 바뀌었으면 충돌로 알리고 아무것도 바꾸지 않습니다.</p>
+        <Panel className="changes" data-testid="changes-panel" title={<GroveText type="inherit" color="inherit" className="inline">
+            파일 변경 이력 · {list.filter((c) => !c.undone_at).length}/{list.length}
+            <HelpTip label="파일 변경 복원 도움말"><SentenceText text="대화 되감기와 별개로 파일만 복원합니다. 기록 뒤 파일이 바뀌었으면 충돌로 알리고 아무것도 바꾸지 않습니다." /></HelpTip>
+        </GroveText>}>
             {err && (
-                <p className="err" role="alert">
+                <GroveText as="p" display="block" type="inherit" color="error" role="alert">
                     {err}
-                </p>
+                </GroveText>
             )}
-            {attempt && !busy && <div className="inline">
+            {attempt && !busy && <GroveStack direction="horizontal" align="center" className="inline">
                 <ServerActionButton className="ghost small" disabled={disabled} onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>
-                <button className="ghost small" onClick={() => { setAttempt(null); setErr(null); }}>원문 확인 후 닫기</button>
-                <span className="muted small">원문과 변경 이력을 확인한 뒤 새 요청을 시작하세요.</span>
-            </div>}
+                <GroveButton className="ghost small" onClick={() => { setAttempt(null); setErr(null); }}>원문 확인 후 닫기</GroveButton>
+                <GroveText type="supporting" color="secondary">원문과 변경 이력을 확인한 뒤 새 요청을 시작하세요.</GroveText>
+            </GroveStack>}
             {groups.map((g, gi) => {
                 const applied = g.items.filter((c) => !c.undone_at && c.stored).map((c) => c.id);
                 const undone = g.items.filter((c) => c.undone_at && c.stored).map((c) => c.id);
                 return (
                     <div key={g.turn ?? `manual-${gi}`} className="change-group" data-testid="change-group">
-                        <div className="inline">
+                        <GroveStack direction="horizontal" align="center" className="inline">
                             <strong className="small">{g.turn ? `요청 ${gi + 1}` : "직접 요청"}</strong>
                             <ServerActionButton className="ghost small" disabled={locked || applied.length === 0} onClick={() => void act({ op: "undo", ids: applied, key: newKey() })}>
                                 이 요청의 변경 되돌리기
@@ -90,23 +96,23 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
                             <ServerActionButton className="ghost small" disabled={locked || undone.length === 0} onClick={() => void act({ op: "redo", ids: undone, key: newKey() })}>
                                 다시 적용
                             </ServerActionButton>
-                        </div>
+                        </GroveStack>
                         <ul className="session-list">
                             {g.items.map((c) => (
                                 <li key={c.id} data-testid="change-row" data-state={c.undone_at ? "undone" : "applied"}>
-                                    <code className="small">{c.path}</code> <span className="muted small">{OP[c.op] ?? c.op} · {c.tool}</span>
+                                    <code className="small">{c.path}</code> <GroveText type="supporting" color="secondary">{OP[c.op] ?? c.op} · {c.tool}</GroveText>
                                     {c.undone_at && <em className="small"> 되돌림</em>}
                                     {!c.stored && <em className="small"> (파일이 커서 되돌릴 수 없음)</em>}
-                                    <button className="ghost small" onClick={() => void showDiff(c.id)}>patch</button>
-                                    {c.op !== "deleted" && !c.undone_at && isArtifact(c.path) && <button className="ghost small"
+                                    <GroveButton className="ghost small" onClick={() => void showDiff(c.id)}>patch</GroveButton>
+                                    {c.op !== "deleted" && !c.undone_at && isArtifact(c.path) && <GroveButton className="ghost small"
                                         title="변경 시점의 snapshot이 아니라 현재 파일을 엽니다"
                                         onClick={() => open({ kind: "file", project_id: projectId, resource_id: c.path, filePath: c.path, title: c.path }, "right")}>
                                         산출물 열기
-                                    </button>}
+                                    </GroveButton>}
                                     {c.stored && (
-                                        <button className="ghost small" disabled={locked} onClick={() => void act({ op: c.undone_at ? "redo" : "undo", ids: [c.id], key: newKey() })}>
+                                        <GroveButton className="ghost small" disabled={locked} onClick={() => void act({ op: c.undone_at ? "redo" : "undo", ids: [c.id], key: newKey() })}>
                                             {c.undone_at ? "다시 적용" : "되돌리기"}
-                                        </button>
+                                        </GroveButton>
                                     )}
                                     {diff?.id === c.id && <pre className="diff" data-testid="change-diff">{diff.text}</pre>}
                                 </li>
@@ -115,15 +121,15 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
                     </div>
                 );
             })}
-            <button className="ghost small" onClick={() => void api.get<Review>(`/sessions/${sessionId}/review`).then(setReview)}>
+            <GroveButton className="ghost small" onClick={() => void api.get<Review>(`/sessions/${sessionId}/review`).then(setReview)}>
                 대화 전체 검토(처음 상태와 지금 비교)
-            </button>
+            </GroveButton>
             {review && (
                 <div data-testid="review">
                     {review.files.map((f) => (
                         <div key={f.path}>
-                            <code className="small">{f.path}</code> {f.unchanged && <span className="muted small">처음과 같음</span>}
-                            {f.diff ? <pre className="diff">{f.diff}</pre> : f.unavailable && <p className="muted small">비교할 수 없음({f.unavailable})</p>}
+                            <code className="small">{f.path}</code> {f.unchanged && <GroveText type="supporting" color="secondary">처음과 같음</GroveText>}
+                            {f.diff ? <pre className="diff">{f.diff}</pre> : f.unavailable && <GroveText as="p" display="block" type="supporting" color="secondary">비교할 수 없음({f.unavailable})</GroveText>}
                         </div>
                     ))}
                 </div>

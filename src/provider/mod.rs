@@ -7,7 +7,7 @@
 
 pub mod anthropic;
 mod catalog;
-pub use catalog::{AvailableModel, list_models};
+pub use catalog::{AvailableModel, ModelServiceTier, list_models};
 pub mod cli;
 pub mod gemini;
 pub mod openai;
@@ -82,7 +82,7 @@ pub struct ModelRequest {
     pub tools: Vec<ToolDef>,
     pub max_tokens: Option<u32>,
     pub temperature: Option<f64>,
-    /// 추론 강도(UI-020): low·medium·high. None(auto)이면 보내지 않아 provider 기본값을 쓴다.
+    /// 추론 옵션. None(auto)이면 보내지 않아 provider 기본값을 쓴다.
     pub effort: Option<String>,
     /// CLI 백엔드(claude_code·codex_cli)의 실행 문맥. HTTP provider는 쓰지 않는다.
     pub cli: Option<cli::CliContext>,
@@ -406,9 +406,17 @@ pub async fn stream(
 pub fn parse_effort(v: Option<&str>) -> Result<Option<String>, String> {
     match v {
         None | Some("auto") | Some("") => Ok(None),
-        Some(e @ ("low" | "medium" | "high")) => Ok(Some(e.to_string())),
-        Some(other) => Err(format!("effort는 auto·low·medium·high 중 하나입니다: {other}")),
+        Some(e @ ("low" | "medium" | "high" | "xhigh" | "max" | "ultra")) => Ok(Some(e.to_string())),
+        Some(_) => Err("지원하지 않는 추론 옵션입니다".into()),
     }
+}
+
+pub fn parse_service_tier(value: Option<&str>) -> Result<Option<String>, String> {
+    value.map(|tier| {
+        if tier.is_empty() || tier.len() > 40 || !tier.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
+            Err("지원하지 않는 속도 옵션입니다".into())
+        } else { Ok(tier.to_string()) }
+    }).transpose()
 }
 
 /// 요청한 effort가 이 protocol에서 실제로 어떤 값으로 보내지는지(EFF-002·009). auto는 아무것도 보내지 않는다.
@@ -568,6 +576,17 @@ pub fn tool_content_string(v: &Value) -> String {
 mod effort_tests {
     use super::*;
 
+    #[test]
+    fn service_tiers_cannot_inject_cli_configuration() {
+        for tier in ["default", "priority"] {
+            assert_eq!(parse_service_tier(Some(tier)).unwrap().as_deref(), Some(tier));
+        }
+        for tier in ["", "priority\"\\nother=true", "with space", "日本語"] {
+            assert!(parse_service_tier(Some(tier)).is_err());
+        }
+        assert_eq!(parse_service_tier(None).unwrap(), None);
+    }
+
     fn req(effort: Option<&str>) -> ModelRequest {
         ModelRequest {
             system: "s".into(),
@@ -589,7 +608,10 @@ mod effort_tests {
         assert_eq!(parse_effort(None).unwrap(), None);
         assert_eq!(parse_effort(Some("auto")).unwrap(), None);
         assert_eq!(parse_effort(Some("low")).unwrap().as_deref(), Some("low"));
-        assert!(parse_effort(Some("max")).is_err());
+        for effort in ["xhigh", "max", "ultra"] {
+            assert_eq!(parse_effort(Some(effort)).unwrap().as_deref(), Some(effort));
+        }
+        assert!(parse_effort(Some("invalid")).is_err());
 
         let o = openai::build_body(&prof("openai"), &req(Some("high")));
         assert_eq!(o["reasoning_effort"], "high");

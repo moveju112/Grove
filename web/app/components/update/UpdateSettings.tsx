@@ -1,3 +1,5 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../../api/client";
 import type { AutoApplyScope, SaveUpdatePreferences, ServerUpdateStatus, UpdateChannel, UpdateCheck } from "../../api/updateSettings";
@@ -53,14 +55,14 @@ export function UpdateSettings() {
         }
     };
     return <div className="stack" data-testid="server-update-settings">
-        {query.loading && <p role="status">서버 업데이트 설정 불러오는 중</p>}
-        {!!query.error && <p role="alert">서버 업데이트 설정 조회 실패</p>}
-        {error && <p role="alert">{error}</p>}
-        {message && <p role="status">{message}</p>}
-        {unknown && attempt && <p role="status">결과 불명 · 새 요청 전에 같은 요청으로 확인하세요.
-            <button onClick={() => void mutate(attempt)}>같은 업데이트 요청 확인</button>
-        </p>}
-        <button className="ghost small" disabled={!!attempt || query.loading} onClick={query.reload}>서버 업데이트 상태 새로 조회</button>
+        {query.loading && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">서버 업데이트 설정 불러오는 중</GroveText>}
+        {!!query.error && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">서버 업데이트 설정 조회 실패</GroveText>}
+        {error && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">{error}</GroveText>}
+        {message && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">{message}</GroveText>}
+        {unknown && attempt && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">결과 불명 · 새 요청 전에 같은 요청으로 확인하세요.
+            <GroveButton onClick={() => void mutate(attempt)}>같은 업데이트 요청 확인</GroveButton>
+        </GroveText>}
+        <GroveButton className="ghost small" disabled={!!attempt || query.loading} onClick={query.reload}>서버 업데이트 상태 새로 조회</GroveButton>
         {query.data && <UpdateSettingsPanel key={query.data.settings.revision} data={query.data} blocked={!!attempt || !!query.error || query.loading}
             onSave={(body) => void mutate({ kind: "save", body, key: newKey() })}
             onCheck={() => void mutate({ kind: "check", body: { expected_revision: query.data!.settings.revision }, key: newKey() })} />}
@@ -80,7 +82,7 @@ export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
             <dt>서버 protocol</dt><dd>{data.server.protocol}</dd>
             <dt>DB schema</dt><dd>{data.server.schema}</dd>
         </dl>
-        {!data.can_manage && <p>읽기 전용 · 소유자만 서버 업데이트 설정을 변경하거나 확인할 수 있습니다.</p>}
+        {!data.can_manage && <GroveText as="p" display="block" type="inherit" color="inherit">읽기 전용 · 소유자만 서버 업데이트 설정을 변경하거나 확인할 수 있습니다.</GroveText>}
         <form onSubmit={(e) => { e.preventDefault(); onSave({ channel, auto_apply: scope, expected_revision: data.settings.revision }); }}>
             <fieldset disabled={!data.can_manage || blocked}>
                 <legend>서버 업데이트 설정</legend>
@@ -92,18 +94,18 @@ export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
                     <option value="patch">patch 버전까지</option>
                     <option value="minor">minor 버전까지</option>
                 </select></label>
-                <p className="scope">설정만 저장 · 설치·재시작 없음</p>
-                <button type="submit" disabled={!dirty}>서버 업데이트 설정 저장</button>
-                <button type="button" disabled={dirty} onClick={onCheck}>서버 업데이트 확인</button>
-                {dirty && <p role="status">변경한 설정을 저장한 뒤 해당 채널을 확인하세요.</p>}
+                <GroveText as="p" display="block" type="inherit" color="inherit" className="scope">설정만 저장 · 설치·재시작 없음</GroveText>
+                <GroveButton type="submit" disabled={!dirty}>서버 업데이트 설정 저장</GroveButton>
+                <GroveButton type="button" disabled={dirty} onClick={onCheck}>서버 업데이트 확인</GroveButton>
+                {dirty && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">변경한 설정을 저장한 뒤 해당 채널을 확인하세요.</GroveText>}
             </fieldset>
         </form>
-        <p role="status">{data.readiness.idle ? "현재 유휴 상태" : "적용 보류 · 진행 중 작업이 있습니다."}</p>
+        <GroveText as="p" display="block" type="inherit" color="inherit" role="status">{data.readiness.idle ? "현재 유휴 상태" : "적용 보류 · 진행 중 작업이 있습니다."}</GroveText>
         {!data.readiness.idle && <dl className="kv" aria-label="업데이트 보류 대상">
             {Object.entries(data.readiness.busy).filter(([, count]) => count > 0).map(([kind, count]) => <div key={kind}><dt>{busyLabels[kind] ?? kind}</dt><dd>{count}</dd></div>)}
         </dl>}
         {data.last_check && data.last_check.settings_revision !== data.settings.revision
-            && <p>이전 설정에서 확인한 결과입니다. 현재 저장된 채널로 다시 확인하세요.</p>}
+            && <GroveText as="p" display="block" type="inherit" color="inherit">이전 설정의 결과이니 현재 저장된 채널로 다시 확인하세요.</GroveText>}
         <CheckResult check={data.last_check} />
     </>;
 }
@@ -114,15 +116,15 @@ const busyLabels: Record<string, string> = {
     running_mcp_checks: "MCP 확인", running_mcp_calls: "MCP 호출",
 };
 export function CheckResult({ check }: { check: UpdateCheck | null }) {
-    if (!check) return <p>아직 서버 업데이트를 확인하지 않았습니다.</p>;
+    if (!check) return <GroveText as="p" display="block" type="inherit" color="inherit">아직 서버 업데이트를 확인하지 않았습니다.</GroveText>;
     return <div role="status" data-testid="server-update-check-result">
-        <p>마지막 확인 · {check.channel} · <When at={check.checked_at} /></p>
-        {check.status === "failed" ? <p>서버 업데이트 확인 실패 · {check.error === "manifest_check_failed"
-            ? "manifest 서명·채널·내용을 확인하지 못했습니다." : "로컬 업데이트 소스가 준비되지 않았습니다."}</p>
-            : <p>{check.status === "available" ? `새 서버 버전 ${check.release?.available}`
-                : check.release?.kind === "downgrade" ? "선택한 채널에 더 새로운 서버 버전이 없습니다." : "현재 서버는 선택한 채널의 최신 버전입니다."}</p>}
-        {check.release && <p>후보 protocol {check.release.protocol} · schema {check.release.schema}
+        <GroveText as="p" display="block" type="inherit" color="inherit">마지막 확인 · {check.channel} · <When at={check.checked_at} /></GroveText>
+        {check.status === "failed" ? <GroveText as="p" display="block" type="inherit" color="inherit">서버 업데이트 확인 실패 · {check.error === "manifest_check_failed"
+            ? "manifest 서명·채널·내용을 확인하지 못했습니다." : "로컬 업데이트 소스가 준비되지 않았습니다."}</GroveText>
+            : <GroveText as="p" display="block" type="inherit" color="inherit">{check.status === "available" ? `새 서버 버전 ${check.release?.available}`
+                : check.release?.kind === "downgrade" ? "선택한 채널에 더 새로운 서버 버전이 없습니다." : "현재 서버는 선택한 채널의 최신 버전입니다."}</GroveText>}
+        {check.release && <GroveText as="p" display="block" type="inherit" color="inherit">후보 protocol {check.release.protocol} · schema {check.release.schema}
             {!check.release.artifact && " · 현재 플랫폼의 패키지가 없습니다."}
-            {check.release.kind === "downgrade" && " · 후보는 현재 서버보다 이전 버전입니다."}</p>}
+            {check.release.kind === "downgrade" && " · 후보는 현재 서버보다 이전 버전입니다."}</GroveText>}
     </div>;
 }

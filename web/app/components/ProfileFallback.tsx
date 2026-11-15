@@ -1,6 +1,11 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useState } from "react";
 import { api } from "../api/client";
 import type { ModelProfile } from "../api/generated";
+import { BooleanSelect } from "./BooleanSelect";
+import { HelpTip, SentenceText } from "./HelpTip";
 
 type Candidate = { profile_id: string; revision: number };
 type FallbackOptions = { enabled: boolean; destination_change_confirmed: boolean; candidates: Candidate[] };
@@ -33,7 +38,7 @@ export function ProfileFallback({ profile, profiles }: { profile: ModelProfile; 
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [saved, setSaved] = useState(false);
-    if (!http(profile)) return <p className="muted small">CLI fallback 미지원</p>;
+    if (!http(profile)) return <GroveText as="p" display="block" type="supporting" color="secondary">CLI fallback 미지원</GroveText>;
     const current = fallbackOptions(profile);
     const save = async () => {
         if (!editing) return;
@@ -53,13 +58,15 @@ export function ProfileFallback({ profile, profiles }: { profile: ModelProfile; 
         setConfirmed(false);
     };
     return <div role="group" aria-label={`${profile.name} fallback`} data-testid="profile-fallback">
-        <span className="muted small">fallback: {current.enabled ? `${current.candidates.length}개 명시적 HTTP 순서` : "꺼짐"}</span>
-        {!editing && <button type="button" className="ghost small" onClick={() => {
+        <GroveText type="supporting" color="secondary">fallback: {current.enabled ? `${current.candidates.length}개 명시적 HTTP 순서` : "꺼짐"}</GroveText>
+        {!editing && <GroveButton type="button" className="ghost small" onClick={() => {
             setEditing({ profile, profiles, ids: current.enabled ? current.candidates.map((c) => c.profile_id) : [] });
             setConfirmed(false); setError(null); setSaved(false);
-        }}>fallback 설정</button>}
+        }}>fallback 설정</GroveButton>}
         {editing && <form className="stack" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-            <p>기존 동일 모델 재시도 뒤 첫 응답 전 HTTP 429·provider 5xx만 전환합니다. 취소·인증·입력·timeout·연결 유실·부분 응답·도구 실행 뒤에는 전환하지 않습니다. 권한과 예산은 유지됩니다.</p>
+            <GroveStack direction="horizontal" align="center" className="inline">전환 조건 <HelpTip label="fallback 전환 조건 도움말">
+                <SentenceText text="동일 모델 재시도 후 첫 응답 전 HTTP 429·provider 5xx일 때만 전환합니다. 취소·인증·입력 오류·timeout·연결 유실·부분 응답·도구 실행 뒤에는 전환하지 않으며 권한과 예산은 유지됩니다." />
+            </HelpTip></GroveStack>
             {editing.ids.map((id, index) => {
                 const target = editing.profiles.find((p) => p.id === id);
                 return <div key={index} className="stack">
@@ -69,22 +76,23 @@ export function ProfileFallback({ profile, profiles }: { profile: ModelProfile; 
                             {editing.profiles.filter((p) => p.id !== profile.id && p.enabled && http(p)).map((p) => <option key={p.id} value={p.id}>{p.name} · {p.protocol} · {p.model}</option>)}
                         </select>
                     </label>
-                    {target && <p className="muted small">전송 대상: {target.protocol} · {target.base_url} · {target.model}<br />가격표: {JSON.stringify((target.options as Record<string, unknown>).pricing ?? "미설정(비용 알 수 없음)")}</p>}
-                    <button type="button" disabled={busy} onClick={() => change(editing.ids.filter((_, i) => i !== index))}>후보 {index + 1} 제거</button>
+                    {target && <GroveText as="p" display="block" type="supporting" color="secondary">전송 대상: {target.protocol} · {target.base_url} · {target.model}<br />가격표: {JSON.stringify((target.options as Record<string, unknown>).pricing ?? "미설정(비용 알 수 없음)")}</GroveText>}
+                    <GroveButton type="button" disabled={busy} onClick={() => change(editing.ids.filter((_, i) => i !== index))}>후보 {index + 1} 제거</GroveButton>
                 </div>;
             })}
-            <button type="button" disabled={busy || editing.ids.length >= 4 || !editing.profiles.some((p) => p.id !== profile.id && p.enabled && http(p) && !editing.ids.includes(p.id))} onClick={() => {
+            <GroveButton type="button" disabled={busy || editing.ids.length >= 4 || !editing.profiles.some((p) => p.id !== profile.id && p.enabled && http(p) && !editing.ids.includes(p.id))} onClick={() => {
                 const next = editing.profiles.find((p) => p.id !== profile.id && p.enabled && http(p) && !editing.ids.includes(p.id));
                 if (next) change([...editing.ids, next.id]);
-            }}>마지막에 후보 추가</button>
-            {editing.ids.length > 0 && <label><input type="checkbox" checked={confirmed} disabled={busy} onChange={(e) => setConfirmed(e.target.checked)} />위 순서의 다른 전송 대상·모델·가격으로 대화가 전달되는 것을 확인했습니다</label>}
-            {editing.profile.revision !== profile.revision && <p role="status" className="warn">프로필이 변경됐습니다. 입력은 보존되며 저장 시 revision 충돌을 확인합니다. 취소 후 다시 열어 현재 대상을 확인하세요.</p>}
-            <div className="inline">
-                <button type="submit" disabled={busy || (editing.ids.length > 0 && !confirmed)}>fallback 저장</button>
-                <button type="button" disabled={busy} onClick={() => setEditing(null)}>취소</button>
-            </div>
+            }}>마지막에 후보 추가</GroveButton>
+            {editing.ids.length > 0 && <BooleanSelect label="위 순서의 다른 전송 대상·모델·가격으로 대화가 전달되는 것을 확인했습니다"
+                value={confirmed} disabled={busy} onChange={setConfirmed} trueLabel="확인함" falseLabel="확인 안 함" />}
+            {editing.profile.revision !== profile.revision && <GroveText as="p" display="block" type="inherit" color="warning" role="status">프로필 변경 감지 · 입력 보존 · 저장 시 충돌하니 취소 후 현재 대상을 다시 확인하세요.</GroveText>}
+            <GroveStack direction="horizontal" align="center" className="inline">
+                <GroveButton type="submit" disabled={busy || (editing.ids.length > 0 && !confirmed)}>fallback 저장</GroveButton>
+                <GroveButton type="button" disabled={busy} onClick={() => setEditing(null)}>취소</GroveButton>
+            </GroveStack>
         </form>}
-        {error && <p role="alert" className="err">{error}</p>}
-        {saved && <p role="status">fallback 저장됨</p>}
+        {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
+        {saved && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">fallback 저장됨</GroveText>}
     </div>;
 }

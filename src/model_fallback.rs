@@ -100,13 +100,19 @@ pub fn snapshot(c: &Connection, source: &ModelProfile, budget: &Value) -> ApiRes
 
 /// secret 교체도 profile revision을 올린다. 사용 후보를 몰래 최신 대상으로 바꾸지 않는다.
 pub fn runtime(c: &Connection, definition: &Value, id: &str) -> ApiResult<(ModelProfile, Profile)> {
-    let pair = models::runtime_profile(c, id)?;
+    let mut pair = models::runtime_profile(c, id)?;
     if let Some(fallback) = definition.get("fallback") {
         let candidate = fallback["candidates"].as_array().and_then(|a| a.iter().find(|v| v["profile_id"] == id))
             .ok_or_else(|| ApiError::invalid("접수한 fallback 후보가 없습니다"))?;
         if identity(&pair.0) != *candidate {
             return Err(ApiError::conflict("fallback_changed", "접수한 모델 프로필이 변경됐습니다. 다시 확인한 뒤 새 요청을 보내세요"));
         }
+    }
+    if definition["model_selection"]["profile_id"] == id
+        && let Some(model) = definition["model_selection"]["model"].as_str()
+    {
+        pair.0.model = model.into();
+        pair.1.model = model.into();
     }
     Ok(pair)
 }

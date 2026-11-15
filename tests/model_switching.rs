@@ -5,6 +5,86 @@ use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 
 #[tokio::test]
+async fn request_models_are_isolated_idempotent_and_preserved_for_queued_followups() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let project = s.create_project("request-model").await;
+    let sid = s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let path = format!("/api/v1/sessions/{sid}/turns");
+    f.push(fixture::hang_after("hold"));
+    let body = json!({"profile_id":profile,"text":"selected model","model":"other"});
+    let response = s.raw(Method::POST, &path, Some(body.clone()), Some("model-selection"), None).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let accepted: Value = response.json().await.unwrap();
+    let tid = accepted["turn"]["id"].as_str().unwrap();
+    s.wait_turn(tid, |_| f.requests().len() == 1).await;
+    assert_eq!(f.requests()[0]["model"], "other");
+    let (status, _) = s.post(&format!("/api/v1/sessions/{sid}/followups"), json!({
+        "kind":"steer","profile_id":profile,"text":"do not silently change model","model":"different",
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let replay: Value = s.raw(Method::POST, &path, Some(body.clone()), Some("model-selection"), None).await.json().await.unwrap();
+    assert_eq!(replay["turn"]["id"], tid);
+    let mut changed = body;
+    changed["model"] = json!("different");
+    assert_eq!(s.raw(Method::POST, &path, Some(changed), Some("model-selection"), None).await.status(), StatusCode::CONFLICT);
+    let (_, queued) = s.post(&format!("/api/v1/sessions/{sid}/followups"), json!({
+        "kind":"queue","profile_id":profile,"text":"queued model","model":"fixture-model",
+    })).await;
+    assert_eq!(queued["followup"]["model"], "fixture-model");
+    f.push(fixture::text("queued complete"));
+    s.post(&format!("/api/v1/turns/{tid}/cancel"), json!({})).await;
+    s.wait_status(tid, "cancelled").await;
+    let fid = queued["followup"]["id"].as_str().unwrap();
+    let (_, started) = s.post(&format!("/api/v1/sessions/{sid}/followups/{fid}/start"), json!({})).await;
+    let queued_id = started["turn_id"].as_str().unwrap();
+    s.wait_status(queued_id, "completed").await;
+    assert_eq!(f.requests()[1]["model"], "fixture-model");
+    let (_, profiles) = s.get("/api/v1/model-profiles").await;
+    let saved = profiles.as_array().unwrap().iter().find(|p| p["id"] == profile).unwrap();
+    assert_eq!(saved["model"], "fixture-model");
+    for model in ["", "contains space", "\ninvalid"] {
+        let (status, _) = s.post(&path, json!({"profile_id":profile,"text":"invalid","model":model})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+}
+
+#[tokio::test]
+async fn retry_preserves_the_request_model_without_changing_the_profile_default() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let project = s.create_project("retry-model").await;
+    let sid = s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    f.push(fixture::hang_after("hold"));
+    let (_, accepted) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({
+        "profile_id": profile, "text": "keep this model", "model": "other", "effort": "high",
+    })).await;
+    let tid = accepted["turn"]["id"].as_str().unwrap();
+    s.wait_turn(tid, |_| f.requests().len() == 1).await;
+    s.post(&format!("/api/v1/turns/{tid}/cancel"), json!({})).await;
+    s.wait_status(tid, "cancelled").await;
+    f.push(fixture::text("retry complete"));
+    let path = format!("/api/v1/turns/{tid}/retry");
+    let response = s.raw(Method::POST, &path, Some(json!({})), Some("selected-model-retry"), None).await;
+    assert_eq!(response.status(), StatusCode::ACCEPTED);
+    let retried: Value = response.json().await.unwrap();
+    let retry_id = retried["turn"]["id"].as_str().unwrap();
+    s.wait_status(retry_id, "completed").await;
+    let requests = f.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["model"], "other");
+    assert_eq!(requests[1]["reasoning_effort"], "high");
+    let replay: Value = s.raw(Method::POST, &path, Some(json!({})), Some("selected-model-retry"), None).await.json().await.unwrap();
+    assert_eq!(replay["turn"]["id"], retry_id);
+    assert_eq!(f.requests().len(), 2);
+    let (_, profiles) = s.get("/api/v1/model-profiles").await;
+    let saved = profiles.as_array().unwrap().iter().find(|p| p["id"] == profile).unwrap();
+    assert_eq!(saved["model"], "fixture-model");
+}
+
+#[tokio::test]
 async fn active_turns_cannot_silently_change_model_endpoint_or_credentials() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;

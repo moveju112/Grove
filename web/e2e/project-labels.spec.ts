@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, selectChoice } from "./helpers";
 
 type P = { id: string; revision: number; pinned_at: string | null };
 type L = { id: string; name: string; revision: number };
@@ -25,7 +25,7 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
         const menu = page.getByRole("dialog", { name: `${a.name} 메뉴` });
         await menu.getByRole("button", { name: "+ 새 라벨" }).click();
         await menu.getByLabel("새 라벨 이름").fill(urgent);
-        await menu.getByRole("radio", { name: "빨강" }).check();
+        await selectChoice(menu.getByLabel("라벨 색"), "red");
         await menu.getByRole("button", { name: "만들고 붙이기" }).click();
         await expect(row(a.name).locator(".label-chips").getByTestId(`label-chip-${urgent}`)).toBeVisible();
         await expect(menu.getByTestId(`label-assign-${urgent}`)).toHaveAttribute("aria-checked", "true");
@@ -65,7 +65,7 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
         await expect(editFront.getByRole("alert")).toContainText("같은 이름");
         const renamed = `디자인${suffix}`;
         await editFront.getByLabel(`${front} 이름`).fill(renamed);
-        await editFront.getByRole("radio", { name: "호박" }).check();
+        await selectChoice(editFront.getByLabel("라벨 색"), "amber");
         await editFront.getByRole("button", { name: "저장" }).click();
         await expect(row(a.name).locator(".label-chips").getByTestId(`label-chip-${renamed}`)).toBeVisible();
 

@@ -1,9 +1,15 @@
 import { Children, createElement, isValidElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "../../api/client";
 import { SkillEditor, draftMutation, type SkillDraft } from "./SkillEditor";
 import { uncertainSkillResult } from "./SessionSkills";
+import { Button } from "../../design/Button";
+
+vi.mock("../HelpTip", () => ({
+    HelpTip: ({ label, children }: { label: string; children: ReactNode }) => createElement("aside", { "aria-label": label }, children),
+    SentenceText: ({ text }: { text: string }) => text,
+}));
 
 const selection = { id: "skill_safe", source: { kind: "global" as const, root_id: "approved" }, revision: "old-revision" };
 const draft: SkillDraft = { kind: "save", selection, text: "<script>not executable</script>" };
@@ -12,7 +18,7 @@ function buttons(node: ReactNode): Props[] {
     const found: Props[] = [];
     Children.forEach(node, (child) => {
         if (!isValidElement<Props>(child)) return;
-        if (child.type === "button") found.push(child.props);
+        if (child.type === "button" || child.type === Button) found.push(child.props);
         found.push(...buttons(child.props.children));
     });
     return found;
@@ -35,7 +41,7 @@ describe("Grove 스킬 저장과 결과 불명", () => {
         expect(html).toContain("&lt;script&gt;not executable&lt;/script&gt;");
         expect(html).not.toContain("<script>");
         expect(html).toContain("old-revision");
-        expect(html).toContain("기존 세션 선택을 갱신하지 않습니다");
+        expect(html).toContain("기존 선택을 갱신하지 않으므로");
         expect(html).toContain("원본 Claude/Codex 정의는 변경하지 않습니다");
     });
     it("pending 중에는 초안 수정·닫기·새 저장을 막는다", () => {
@@ -43,7 +49,9 @@ describe("Grove 스킬 저장과 결과 불명", () => {
         const editor = SkillEditor({ draft, busy: true, onChange: () => {}, onSubmit: (value) => sent.push(value), onCancel: () => {} });
         editor.props.onSubmit({ preventDefault: () => {} });
         expect(sent).toEqual([]);
-        expect(buttons(editor).every((button) => button.disabled)).toBe(true);
+        const controls = buttons(editor);
+        expect(controls).toHaveLength(2);
+        expect(controls.every((button) => button.disabled)).toBe(true);
     });
     it("결과 불명 receipt와 전송 중단은 같은 key로 확인하고 revision 충돌은 새 저장으로 재시도하지 않는다", () => {
         for (const error of [

@@ -110,6 +110,8 @@ pub const CAPABILITIES: &[&str] = &[
     "pairing_approval_v1",
     "notification_delivery_v1",
     "model_management_v1",
+    "turn_model_selection_v1",
+    "turn_model_options_v1",
     "model_capabilities_v1",
     "context_auto_clear_v1",
     "recall_keyword_v1",
@@ -405,6 +407,7 @@ pub fn router(app: App) -> Router {
         .route("/model-profiles/{id}", axum::routing::put(models::update_profile).delete(models::delete_profile))
         .route("/model-profiles/{id}/check", post(models::check_profile))
         .route("/model-profiles/{id}/models", get(models::catalog))
+        .route("/model-profiles/{id}/available-models", get(models::available_models))
         .route("/settings/registry", get(settings::get_registry))
         .route("/source-settings", get(source_settings::list))
         .route("/settings/effective", get(settings::get_effective))

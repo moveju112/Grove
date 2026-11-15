@@ -1,7 +1,7 @@
 // 서버 상태 조회 cache. 서버 이벤트가 오면 관련 key만 무효화해 다시 읽는다(FRAME-009).
 // 소유자: 서버 상태 = 이 cache(서버가 원천), 기기별 UI 상태 = layout/drafts(localStorage), 영속 서버 상태는 API로만 변경.
 
-import { useEffect, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { EventRecord } from "../api/generated";
 import { refreshFiles } from "./fileWatch";
 import { deliveryTiming } from "./deliveryTiming";
@@ -116,15 +116,26 @@ export function setData(key: string, data: unknown) {
     }
 }
 
-export function useQuery<T>(key: string | null, fetcher: () => Promise<T>): { data: T | undefined; error: unknown; loading: boolean; reload: () => void } {
+export function useQuery<T>(key: string | null, fetcher: () => Promise<T>, options?: { keepPreviousData: true; scope: string }): { data: T | undefined; error: unknown; loading: boolean; reload: () => void } {
     const [, force] = useState(0);
+    const previous = useRef<{ scope: string; generation: number; data: T } | null>(null);
     useEffect(() => {
         if (!key) return;
         return subscribeQuery(key, fetcher, () => force((x) => x + 1));
         // fetcher는 key가 같으면 같은 대상을 읽는다고 가정한다.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key]);
-    return { ...querySnapshot<T>(key), reload: () => key && void load(key) };
+    // 같은 자원의 시간 조건이 갱신돼도 다음 재검증은 최신 fetcher를 사용한다.
+    useEffect(() => {
+        const entry = key ? entries.get(key) : undefined;
+        if (entry) entry.fetcher = fetcher;
+    });
+    const snapshot = querySnapshot<T>(key);
+    if (options && snapshot.data !== undefined) previous.current = { scope: options.scope, generation, data: snapshot.data };
+    const placeholder = !!key && snapshot.data === undefined && !!options
+        && previous.current?.scope === options.scope && previous.current.generation === generation;
+    return { ...snapshot, data: placeholder ? previous.current!.data : snapshot.data,
+        loading: snapshot.loading || (placeholder && !entries.has(key!)), reload: () => key && void load(key) };
 }
 
 export function querySnapshot<T>(key: string | null): { data: T | undefined; error: unknown; loading: boolean } {

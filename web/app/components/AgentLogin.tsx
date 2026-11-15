@@ -1,7 +1,12 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Link } from "@astryxdesign/core/Link";
+import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import type { AgentAuthStatus } from "../api/generated";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { TextInput } from "../design/Fields";
 
 const active = (status: AgentAuthStatus | null) =>
     ["starting", "waiting", "verifying"].includes(status?.attempt?.state ?? "");
@@ -75,12 +80,12 @@ export function AgentLogin({ protocol, name, disabled }: { protocol: string; nam
     };
     const attempt = status?.attempt;
     return <section className="agent-login" aria-label={`${name} 계정`}>
-        <div className="inline wrap">
+        <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
             <strong>{name}</strong>
-            <span className="small muted" role="status">
+            <GroveText type="supporting" color="secondary" role="status">
                 {active(status) ? labels[attempt!.state] : status?.authenticated === true ? "로그인됨"
                     : status?.authenticated === false ? "로그인 필요" : "상태 확인 필요"}
-            </span>
+            </GroveText>
             {!active(status) && <>
                 <ServerActionButton className="ghost small" disabled={disabled || busy || !status}
                     onClick={() => void act("login")}>{status?.authenticated ? "다시 로그인" : "로그인"}</ServerActionButton>
@@ -89,21 +94,21 @@ export function AgentLogin({ protocol, name, disabled }: { protocol: string; nam
             </>}
             {active(status) && <ServerActionButton className="ghost small" disabled={disabled || busy}
                 onClick={() => void act("login/cancel")}>취소</ServerActionButton>}
-        </div>
+        </GroveStack>
         {attempt?.url && <>
-            <p className="small">이 서버에서 사용할 계정으로 인증해 주세요.</p>
-            <a href={attempt.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">인증 페이지 열기</a>
-            {attempt.code && <p><code aria-label="기기 인증 코드">{attempt.code}</code></p>}
+            <GroveText as="p" display="block" type="supporting" color="inherit">이 서버에서 사용할 계정으로 인증해 주세요.</GroveText>
+            <Link type="inherit" href={attempt.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">인증 페이지 열기</Link>
+            {attempt.code && <GroveText as="p" display="block" type="inherit" color="inherit"><code aria-label="기기 인증 코드">{attempt.code}</code></GroveText>}
             {protocol === "claude_code" && <form className="inline wrap" onSubmit={(event) => { event.preventDefault(); void act("login/code"); }}>
-                <input aria-label="일회용 인증 코드" type="password" autoComplete="off" spellCheck={false}
-                    value={code} onChange={(event) => setCode(event.target.value)} placeholder="인증 페이지의 코드"
-                    disabled={disabled || busy} />
+                <TextInput label="일회용 인증 코드" isLabelHidden type="password" autoComplete="off" hasSpellCheck={false}
+                    value={code} onChange={setCode} placeholder="인증 페이지의 코드"
+                    isDisabled={disabled || busy} />
                 <ServerActionButton type="submit" disabled={disabled || busy || !code.trim()}>확인</ServerActionButton>
             </form>}
         </>}
-        {attempt && ["failed", "expired", "cancelled"].includes(attempt.state) && <p className="small" role="status">{labels[attempt.state]}</p>}
-        {error && <p className="err small" role="alert">{error}</p>}
+        {attempt && ["failed", "expired", "cancelled"].includes(attempt.state) && <GroveText as="p" display="block" type="supporting" color="inherit" role="status">{labels[attempt.state]}</GroveText>}
+        {error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">{error}</GroveText>}
         {!active(status) && (error || status?.authenticated == null) &&
-            <button type="button" className="ghost small" disabled={busy} onClick={() => setRefresh((n) => n + 1)}>상태 확인</button>}
+            <GroveButton type="button" className="ghost small" disabled={busy} onClick={() => setRefresh((n) => n + 1)}>상태 확인</GroveButton>}
     </section>;
 }

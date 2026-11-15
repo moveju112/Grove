@@ -21,7 +21,7 @@ async function setup(page: Page) {
         const response = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/exec.default_cwd"));
         await row.getByRole("button", { name: "저장", exact: true }).click();
         expect((await response).ok()).toBe(true);
-        await expect(row.getByRole("status")).toContainText("저장됨");
+        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
     };
     return { root, project, session, panel, save };
 }

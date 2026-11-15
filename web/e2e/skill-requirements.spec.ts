@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, login, openDetails, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 import type { SessionSkills, SkillSelection } from "../app/api/skills";
 
@@ -45,10 +45,10 @@ test("요구 선언·명시적 의존 선택·실제 호출 capability·응답 �
         await panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
         await expect(row("base")).toContainText("선택됨");
         await panel.getByLabel("검증할 모델").selectOption(profile.id);
-        await expect(panel.getByLabel("검증할 도구 사용")).toBeEnabled();
-        await panel.getByLabel("검증할 도구 사용").selectOption("false");
+        await expect(panel.getByRole("combobox", { name: "검증할 도구 사용", exact: true })).toBeEnabled();
+        await selectChoice(panel.getByLabel("검증할 도구 사용"), "false");
         await expect(row("review")).toContainText("skill_tools_disabled");
-        await panel.getByLabel("검증할 도구 사용").selectOption("true");
+        await selectChoice(panel.getByLabel("검증할 도구 사용"), "true");
         await expect(row("review")).toContainText("관측한 조건에서 요구사항 충족");
         await row("review").getByRole("button", { name: /본문 보기/ }).click();
         const keys: string[] = [];
@@ -146,6 +146,7 @@ test("의존 스킬 해제는 기존 binding을 보존하고 다른 세션에는
         await expect(panel).toContainText("skill_dependency_unselected");
         const snapshot = await apiCall<SessionSkills>("GET", `/sessions/${first.id}/skills`);
         expect(snapshot.selected).toEqual([bindings[1]]);
+        await page.getByRole("dialog", { name: "대화 스킬", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
         await page.locator(".recent").getByRole("button", { name: new RegExp(`${name}-second`) }).click();
         await openDetails(sessionView(page, second.id).getByTestId("skills-disclosure"));
         const other = sessionView(page, second.id).getByTestId("session-skills");

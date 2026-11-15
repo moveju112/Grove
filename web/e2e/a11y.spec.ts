@@ -40,7 +40,7 @@ for (const theme of ["light", "dark", "soft"] as const) {
         await expect(view.getByTestId("question")).toBeVisible({ timeout: 15_000 });
         await check("질문 대기 대화");
         await script({ frames: frames.text(["## 끝\n\n`코드`와 [링크](https://example.com)\n\n```js\nx\n```"]) });
-        await view.getByTestId("question").getByRole("radio", { name: /A/ }).check();
+        await view.getByTestId("question").getByLabel("답변 선택").selectOption("A");
         await view.getByTestId("question").getByRole("button", { name: "답하기" }).click();
         await expect(view.getByTestId("msg-assistant").last()).toContainText("끝", { timeout: 15_000 });
         await composerOption(view, "도구", false);

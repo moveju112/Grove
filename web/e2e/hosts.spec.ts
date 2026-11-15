@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openSettings } from "./helpers";
 
 type Remote = { origin: string; token: string; projectId: string };
 const test = base.extend<{}, { remote: Remote }>({
@@ -42,7 +42,7 @@ const test = base.extend<{}, { remote: Remote }>({
 
 async function openHosts(page: Page) {
     if (await page.locator(".topbar").count()) {
-        await page.getByRole("button", { name: "설정", exact: true }).click();
+        await openSettings(page);
         await page.getByRole("button", { name: "기기·연결", exact: true }).click();
     }
     await page.getByRole("button", { name: /^호스트 선택:/ }).click();

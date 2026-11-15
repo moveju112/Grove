@@ -1,3 +1,5 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { useEffect } from "react";
 import { checkCompatibility, startLifecycle, useLifecycle } from "./lifecycle";
 import "./pwa.css";
@@ -10,12 +12,12 @@ export function LifecycleBanner() {
             {/* 연결 문제는 이 토스트 하나로만 알린다. 각 화면은 기존 값을 두고 연결이 돌아오면 다시 읽는다. */}
             {!state.online && <div className="connection-toast" role="status" data-testid="offline-banner">
                 <span className="connection-toast-dot" aria-hidden="true" />
-                <span>오프라인 · 연결되면 다시 불러옵니다</span>
+                <GroveText type="inherit" color="inherit">오프라인 · 연결되면 다시 불러옵니다</GroveText>
             </div>}
             {state.online && state.connection === "unreachable" && <div className="connection-toast error" role="alert" data-testid="connection-toast">
                 <span className="connection-toast-dot" aria-hidden="true" />
-                <span>서버에 연결할 수 없습니다</span>
-                <button type="button" className="ghost small" onClick={() => void checkCompatibility()}>연결 다시 확인</button>
+                <GroveText type="inherit" color="inherit">서버에 연결할 수 없습니다</GroveText>
+                <GroveButton type="button" className="ghost small" onClick={() => void checkCompatibility()}>연결 다시 확인</GroveButton>
             </div>}
             {state.storageIssue && <div className="update-banner error" role="alert" data-testid="storage-warning">
                 {state.storageIssue === "quota" ? "저장 공간 한도(quota)를 초과해 기기 초안 저장에 실패했습니다. 화면을 떠나거나 업데이트하기 전에 입력을 복사하세요."

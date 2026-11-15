@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-import { composerOption, ensureProjects, login } from "./helpers";
+import { composerOption, ensureProjects, login, openSettings, selectChoice } from "./helpers";
 
 async function settings(page: Page, search = "브라우저 기능") {
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").fill(search);
     return page.getByTestId("setting-browser-capabilities");
 }
@@ -37,7 +37,7 @@ for (const allowed of [true, false]) {
                 await expect(section).toContainText("Ctrl+C");
                 await page.getByLabel("설정 검색").fill("알림·소리");
                 const notify = page.getByTestId("setting-notify");
-                await notify.getByLabel("작업 완료·실패").check();
+                await selectChoice(notify.getByLabel("작업 완료·실패"), "true");
                 await expect(notify).toContainText("브라우저 사이트 설정");
                 expect(await page.evaluate(() => (window as unknown as { __capabilityCalls: string[] }).__capabilityCalls)).toEqual([]);
             }
@@ -73,7 +73,7 @@ test("미지원 복사·첨부 진입점에서 원문과 대안을 보존한다"
     await composerOption(project, "보내기 방식", "save");
     await project.getByLabel("메시지 입력").fill(text);
     await project.getByRole("button", { name: "보내기", exact: true }).click();
-    const message = page.getByTestId("msg-user").last();
+    const message = page.locator(".msg-row").filter({ has: page.getByTestId("msg-user") }).last();
     await message.getByTestId("msg-copy").click();
     const manual = message.getByLabel("메시지 원문 수동 복사");
     await expect(manual).toHaveValue(text);

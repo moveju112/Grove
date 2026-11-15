@@ -31,13 +31,13 @@ export const groveTheme = {
     "--font-size-3xl": "1.8125rem",
     "--font-size-4xl": "2.1875rem",
     "--font-size-5xl": "2.625rem",
-    "--text-heading-1-size": "var(--font-size-2xl)",
+    "--text-heading-1-size": "20px",
     "--text-heading-1-weight": "var(--font-weight-semibold)",
     "--text-heading-1-leading": "1.3333",
-    "--text-heading-2-size": "var(--font-size-xl)",
+    "--text-heading-2-size": "16px",
     "--text-heading-2-weight": "var(--font-weight-semibold)",
     "--text-heading-2-leading": "1.4",
-    "--text-heading-3-size": "var(--font-size-lg)",
+    "--text-heading-3-size": "14px",
     "--text-heading-3-weight": "var(--font-weight-bold)",
     "--text-heading-3-leading": "1.4118",
     "--text-heading-4-size": "var(--font-size-base)",
@@ -51,7 +51,7 @@ export const groveTheme = {
     "--text-heading-6-leading": "1.6",
     "--text-body-size": "var(--font-size)",
     "--text-body-weight": "var(--font-weight-normal)",
-    "--text-body-leading": "1.4286",
+    "--text-body-leading": "1.4",
     "--text-large-size": "var(--font-size-lg)",
     "--text-large-weight": "var(--font-weight-semibold)",
     "--text-large-leading": "1.4118",
@@ -61,9 +61,9 @@ export const groveTheme = {
     "--text-code-size": "var(--font-size-base)",
     "--text-code-weight": "var(--font-weight-normal)",
     "--text-code-leading": "1.4286",
-    "--text-supporting-size": "calc(var(--font-size) * 0.85)",
+    "--text-supporting-size": "0.85em",
     "--text-supporting-weight": "var(--font-weight-normal)",
-    "--text-supporting-leading": "1.6667",
+    "--text-supporting-leading": "inherit",
     "--text-display-1-size": "var(--font-size-5xl)",
     "--text-display-1-weight": "var(--font-weight-normal)",
     "--text-display-1-leading": "1.2381",
@@ -215,6 +215,9 @@ export const groveTheme = {
     "--shadow-inset-success": "inset 0px 0px 0px 2px #2f7d334D",
     "--shadow-inset-warning": "inset 0px 0px 0px 2px #f8d36a4D",
     "--shadow-inset-error": "inset 0px 0px 0px 2px #de47454D",
+    "--spacing-4": "12px",
+    "--spacing-6": "20px",
+    "--spacing-8": "24px",
     "--bg": "light-dark(#f7f7f8, #14161b)",
     "--panel": "light-dark(#ffffff, #171a20)",
     "--raised": "light-dark(#f0f0f2, #1e222a)",
@@ -341,6 +344,12 @@ export const groveTheme = {
         "fontFamily": "var(--font-family-heading)",
         "fontSize": "var(--text-display-3-size)",
         "lineHeight": "var(--text-display-3-leading)"
+      },
+      "color:error": {
+        "color": "var(--err)"
+      },
+      "color:warning": {
+        "color": "var(--warn)"
       }
     },
     "item": {
@@ -508,7 +517,15 @@ export const groveTheme = {
             "--font-family-body": "\"Pretendard\", sans-serif",
             "--font-family-heading": "\"Pretendard\", sans-serif",
             "--text-body-size": "var(--font-size)",
-            "--text-supporting-size": "calc(var(--font-size) * 0.85)"
+            "--text-supporting-size": "0.85em",
+            "--text-supporting-leading": "inherit",
+            "--text-body-leading": "1.4",
+            "--text-heading-1-size": "20px",
+            "--text-heading-2-size": "16px",
+            "--text-heading-3-size": "14px",
+            "--spacing-4": "12px",
+            "--spacing-6": "20px",
+            "--spacing-8": "24px"
           }
         }
       }
@@ -521,12 +538,12 @@ export const groveTheme = {
         "ratio": 1.2
       },
       "body": {
-        "family": "Figtree",
-        "fallbacks": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif"
+        "family": "Pretendard",
+        "fallbacks": "sans-serif"
       },
       "heading": {
-        "family": "Figtree",
-        "fallbacks": "-apple-system, BlinkMacSystemFont, \"Segoe UI\", Roboto, Helvetica, Arial, sans-serif",
+        "family": "Pretendard",
+        "fallbacks": "sans-serif",
         "weights": {
           "3": "bold",
           "4": "bold"

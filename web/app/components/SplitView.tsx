@@ -1,15 +1,19 @@
-import { useEffect, useRef, useState } from "react";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import type { Project } from "../api/generated";
 import * as L from "../state/layout";
 import { PaneVisibility } from "../state/paneVisibility";
 import { FilesView } from "./FilesView";
 import { ProjectView } from "./ProjectView";
 import { SessionView } from "./SessionView";
-import { Settings } from "./Settings";
-import { TerminalView } from "./TerminalView";
 import type { Opener } from "./Workspace";
 import { RecentPanel } from "./RecentPanel";
 import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
+import { LoadingBar } from "./LoadingScreen";
+
+const Settings = lazy(async () => ({ default: (await import("./Settings")).Settings }));
+const TerminalView = lazy(async () => ({ default: (await import("./TerminalView")).TerminalView }));
 
 type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; visible: boolean; projects: Project[] };
 type ViewProps = Props & { maximized: string | null; toggleMaximize: (leafId: string) => void };
@@ -25,7 +29,6 @@ export function SplitView(p: Props) {
         p.update((l) => L.focus(l, id));
         setMaximized(zoom === id ? null : id);
     } };
-    const all = L.leaves(p.layout.root);
     return (
         <div className="split-root" data-layout-mode={p.narrow ? "narrow" : "wide"} hidden={!p.visible} inert={!p.visible} onKeyDownCapture={(e) => {
             if (zoom && e.key === "Escape") {
@@ -34,15 +37,6 @@ export function SplitView(p: Props) {
                 setMaximized(null);
             }
         }}>
-            {p.narrow && all.length > 1 && (
-                <nav className="pane-switch" aria-label="pane 전환">
-                    {all.map((leaf, i) => (
-                        <button key={leaf.id} className={leaf.id === p.layout.focused_leaf ? "on" : ""} onClick={() => p.update((l) => L.focus(l, leaf.id))}>
-                            영역 {i + 1}
-                        </button>
-                    ))}
-                </nav>
-            )}
             <NodeView {...view} node={p.layout.root} path={[]} />
         </div>
     );
@@ -164,8 +158,8 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
             onDrop={(e) => draggable(e) && drop(e, zone ?? "center")}
         >
             {zone && <div className={`drop-zone ${zone}`} data-testid="drop-zone" data-zone={zone} aria-hidden="true" />}
-            {/* 좁은 화면에서 탭이 하나뿐이면 현재 위치가 상단 바와 같으므로 탭 줄을 숨긴다. */}
-            <div className="tabbar" role="tablist" hidden={p.narrow && others.length === 0 && leaf.tabs.length <= 1}>
+            {/* 모바일의 열린 탭은 오른쪽 서랍에서 전환한다. */}
+            <div className="tabbar" role="tablist" hidden={p.narrow}>
                 {leaf.tabs.map((t, i) => (
                     <div key={t.id} className={`tab ${t.id === leaf.active_tab ? "on" : ""}`} role="tab" aria-selected={t.id === leaf.active_tab}
                         onDragOver={(e) => {
@@ -189,23 +183,23 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                                 if (index >= 0 && index < leaf.tabs.length) p.update((l) => L.placeTab(l, t.id, leaf.id, "center", index));
                             }}
                         >
-                            {t.kind !== "settings" && <span className="badge">{projectName(t.project_id) ?? "?"}</span>}
+                            {t.kind !== "settings" && <GroveText type="inherit" color="inherit" className="badge">{projectName(t.project_id) ?? "?"}</GroveText>}
                             {t.kind === "project" ? "대화 목록" : t.title}
                         </button>
-                        <button className="ghost small" aria-label="탭 닫기" title="화면만 닫습니다(작업은 계속)" onClick={() => p.update((l) => L.closeTab(l, t.id))}>
+                        <GroveButton className="ghost small" aria-label="탭 닫기" title="화면만 닫습니다(작업은 계속)" onClick={() => p.update((l) => L.closeTab(l, t.id))}>
                             ×
-                        </button>
+                        </GroveButton>
                     </div>
                 ))}
                 <span className="spacer" />
                 {!p.narrow && active && (
                     <>
-                        <button className="ghost small" title="오른쪽으로 분할" aria-label="오른쪽으로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "row", copyOf(active)))}>
+                        <GroveButton className="ghost small" title="오른쪽으로 분할" aria-label="오른쪽으로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "row", copyOf(active)))}>
                             ◫
-                        </button>
-                        <button className="ghost small" title="아래로 분할" aria-label="아래로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "column", copyOf(active)))}>
+                        </GroveButton>
+                        <GroveButton className="ghost small" title="아래로 분할" aria-label="아래로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "column", copyOf(active)))}>
                             ⊟
-                        </button>
+                        </GroveButton>
                         <select aria-label="탭 이동" value="" onChange={(e) => menu(e.target.value)}>
                             <option value="">이동…</option>
                             {leaf.tabs.length > 1 && <>
@@ -225,22 +219,23 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 )}
                 {others.length > 0 && (
                     <>
-                        {!p.narrow && <button className="ghost small" aria-label={p.maximized === leaf.id ? "분할 복원" : "영역 전체 보기"}
+                        {!p.narrow && <GroveButton className="ghost small" aria-label={p.maximized === leaf.id ? "분할 복원" : "영역 전체 보기"}
                             aria-pressed={p.maximized === leaf.id} title="화면 배치만 변경합니다(작업은 계속)"
                             onClick={() => p.toggleMaximize(leaf.id)}>
                             {p.maximized === leaf.id ? "분할 복원" : "전체 보기"}
-                        </button>}
-                        <button className="ghost small" title="영역 닫기(탭은 인접 영역으로 합침, 작업은 계속)" aria-label="영역 닫기"
-                            onClick={() => p.update((l) => L.closeLeaf(l, leaf.id))}>⊠</button>
+                        </GroveButton>}
+                        <GroveButton className="ghost small" title="영역 닫기(탭은 인접 영역으로 합침, 작업은 계속)" aria-label="영역 닫기"
+                            onClick={() => p.update((l) => L.closeLeaf(l, leaf.id))}>⊠</GroveButton>
                     </>
                 )}
             </div>
             <div className="pane-body">
+                <Suspense fallback={<LoadingBar label="화면 여는 중…" />}>
                 {!active && <EmptyPane open={p.open} />}
                 {active?.kind === "session" && active.resource_id && active.project_id && (
                     <SessionView key={active.id} tabId={active.id} sessionId={active.resource_id} projectId={active.project_id} open={p.open} />
                 )}
-                {active?.kind === "project" && active.project_id && <ProjectView key={active.id} tabId={active.id} projectId={active.project_id} open={p.open} />}
+                {active?.kind === "project" && active.project_id && <ProjectView key={active.id} tabId={active.id} projectId={active.project_id} initialTitle={active.title} open={p.open} />}
                 {active?.kind === "file" && active.project_id && <FilesView key={active.id} tabId={active.id} projectId={active.project_id}
                     initial={L.fileTarget(active)} />}
                 {active?.kind === "terminal" && active.project_id && active.resource_id && (
@@ -255,6 +250,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                         sessionId={active.resource_id?.startsWith("session:") ? active.resource_id.slice(8) : undefined}
                     />
                 )}
+                </Suspense>
             </div>
         </section>
         </PaneVisibility.Provider>

@@ -1,3 +1,6 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Link } from "@astryxdesign/core/Link";
+import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { DetailDialog } from "./ui/Controls";
 import { ApiError, api } from "../api/client";
@@ -46,20 +49,20 @@ export function TerminalCapture({ terminalId, enabled }: { terminalId: string; e
     };
     if (supported === false) return null;
     return <DetailDialog className="terminal-capture" data-testid="terminal-capture" label="화면 텍스트 캡처" title="화면 텍스트 캡처">
-        <p className="warn small">최근 최대 1024줄입니다. 비밀정보가 포함될 수 있으니 다운로드 전에 확인하세요.</p>
+        <GroveText as="p" display="block" type="supporting" color="warning">최근 최대 1024줄입니다. 비밀정보가 포함될 수 있으니 다운로드 전에 확인하세요.</GroveText>
         <form className="inline wrap small" onSubmit={(event) => { event.preventDefault(); void read(); }}>
             <label>시작 줄<input aria-label="캡처 시작 줄" type="number" step="1" placeholder="처음" value={range.start} onChange={(event) => setRange({ ...range, start: event.target.value })} /></label>
             <label>끝 줄<input aria-label="캡처 끝 줄" type="number" step="1" placeholder="마지막" value={range.end} onChange={(event) => setRange({ ...range, end: event.target.value })} /></label>
-            <button disabled={busy || !enabled}>지금 캡처</button>
+            <GroveButton disabled={busy || !enabled}>지금 캡처</GroveButton>
         </form>
-        <p className="muted small">줄 번호는 0부터, 끝 줄을 포함합니다. 음수는 뒤에서 셉니다(-1은 마지막 줄). 화면에서 접힌 줄은 각각 한 줄입니다.</p>
-        {error && <p className="err" role="alert">{error}</p>}
+        <GroveText as="p" display="block" type="supporting" color="secondary">줄 번호는 0부터, 끝 줄을 포함합니다. 음수는 뒤에서 셉니다(-1은 마지막 줄). 화면에서 접힌 줄은 각각 한 줄입니다.</GroveText>
+        {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
         {capture && <div data-testid="terminal-capture-result">
-            <p className="muted small">{capture.source === "live" ? "실행 화면 사본" : capture.source === "saved" ? "보존된 화면 사본" : "이전 형식의 제한된 출력에서 복원한 사본"} · {capture.cols}×{capture.rows} · 전체 {capture.total_lines}줄 중 {capture.lines.length}줄 · 자동 갱신 안 함</p>
+            <GroveText as="p" display="block" type="supporting" color="secondary">{capture.source === "live" ? "실행 화면 사본" : capture.source === "saved" ? "보존된 화면 사본" : "이전 형식의 제한된 출력에서 복원한 사본"} · {capture.cols}×{capture.rows} · 전체 {capture.total_lines}줄 중 {capture.lines.length}줄 · 자동 갱신 안 함</GroveText>
             <pre data-testid="terminal-capture-text">{capture.lines.join("\n") || "(선택한 범위에 줄이 없습니다)"}</pre>
             <div className="inline small">
-                {url && <a href={url} download={`terminal-${terminalId}.txt`}>캡처 텍스트 다운로드</a>}
-                <button className="ghost" onClick={() => setCapture(null)}>캡처 닫기</button>
+                {url && <Link type="inherit" href={url} download={`terminal-${terminalId}.txt`}>캡처 텍스트 다운로드</Link>}
+                <GroveButton className="ghost" onClick={() => setCapture(null)}>캡처 닫기</GroveButton>
             </div>
         </div>}
     </DetailDialog>;

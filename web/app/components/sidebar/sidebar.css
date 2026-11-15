@@ -4,7 +4,7 @@
     display: grid;
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    padding-block: .1rem;
+    padding-block: 0;
     min-width: 0;
 }
 .sidebar-project > * {
@@ -109,7 +109,7 @@
     gap: .5rem;
     flex: 1;
     min-width: 0;
-    min-height: 30px;
+    min-height: 32px;
     text-align: start;
     padding: .2rem .5rem;
     color: var(--text-2);
@@ -154,3 +154,27 @@
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
+
+/* Astryx 내부 label 슬롯까지 폭·정렬을 전달한다. 짧은 제목이 가운데로 돌아가지 않게 한다. */
+.sidebar { font-size: 12px; line-height: 18px; }
+.sidebar .grove-button, .sidebar .side-nav .grove-button {
+    height: 32px;
+    min-height: 32px;
+    padding-block: 0;
+    font-size: 12px;
+    line-height: 18px;
+    justify-content: flex-start;
+}
+.sidebar .grove-button > span:not([role]) { min-width: 0; justify-content: flex-start; }
+.sidebar .grove-button > span:not([role]) > span { flex: 1; min-width: 0; }
+.sidebar .grove-button-content { min-width: 0; width: 100%; justify-content: flex-start; }
+.sidebar .side-nav { padding-block: 4px; gap: 0; }
+.sidebar .side-scroll { padding-top: 0; }
+.sidebar .side-section-head, .sidebar .recent-head { min-height: 28px; margin-bottom: 0; }
+.sidebar .projects .row { min-height: 32px; padding-block: 0; flex-wrap: nowrap; }
+.sidebar .sidebar-session { min-height: 32px; flex-wrap: nowrap; }
+.sidebar .sidebar-session:has(> .err) { flex-wrap: wrap; }
+.sidebar .sidebar-session-open { padding-block: 0; }
+.sidebar .recent-list li { padding-block: 0; }
+.sidebar .recent-list li > button.link { min-height: 32px; padding-block: 0; font-size: 12px; }
+.sidebar .side-scroll > .recent { margin-top: 4px; padding-top: 4px; }

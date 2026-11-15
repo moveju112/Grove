@@ -1,3 +1,6 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import type { AgentBackendCatalog, ModelProfile } from "../api/generated";
@@ -40,26 +43,26 @@ export function AgentConnect({ disabled, onConnected }: { disabled: boolean; onC
             setPending(null);
         }
     };
-    if (supported === false) return <p className="warn small" role="status">에이전트 연결에는 서버 업데이트가 필요합니다.</p>;
+    if (supported === false) return <GroveText as="p" display="block" type="supporting" color="warning" role="status">에이전트 연결에는 서버 업데이트가 필요합니다.</GroveText>;
     return <div className="agent-connect" data-testid="agent-connect">
-        <span className="small muted">대화할 에이전트</span>
-        <div className="inline wrap">
+        <GroveText type="supporting" color="secondary">대화할 에이전트</GroveText>
+        <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
             {catalog.data?.backends.map((backend) => (
                 <ServerActionButton key={backend.protocol} className="ghost" disabled={disabled || pending !== null || !backend.installed}
                     onClick={() => void connect(backend.protocol)}>
                     {pending === backend.protocol ? "연결 중…" : backend.name}
-                    {!backend.installed && <span className="small muted"> · 설치 필요</span>}
+                    {!backend.installed && <GroveText type="supporting" color="secondary"> · 설치 필요</GroveText>}
                 </ServerActionButton>
             ))}
-        </div>
-        {catalog.data && <span className="small muted">서버 CLI 계정 · 읽기 전용</span>}
+        </GroveStack>
+        {catalog.data && <GroveText type="supporting" color="secondary">서버 CLI 계정 · 읽기 전용</GroveText>}
         {authSupported && <DetailDialog label="에이전트 계정 로그인" title="계정 로그인" onOpenChange={setAccountsOpen}>
             {accountsOpen && catalog.data?.backends.filter((backend) => backend.installed).map((backend) =>
                 <AgentLogin key={backend.protocol} protocol={backend.protocol} name={backend.name} disabled={disabled} />)}
         </DetailDialog>}
-        {!catalog.data && !catalog.error && <p className="muted small" role="status">에이전트 확인 중…</p>}
-        {!!catalog.error && <p className="err small" role="alert">에이전트를 확인하지 못했어요. <button type="button" className="ghost small" onClick={catalog.reload}>다시 확인</button></p>}
-        {error && <p className="err small" role="alert">{error}</p>}
-        {connected && <p className="small" role="status">{connected} 프로필 준비됨</p>}
+        {!catalog.data && !catalog.error && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">에이전트 확인 중…</GroveText>}
+        {!!catalog.error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">에이전트를 확인하지 못했어요. <GroveButton type="button" className="ghost small" onClick={catalog.reload}>다시 확인</GroveButton></GroveText>}
+        {error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">{error}</GroveText>}
+        {connected && <GroveText as="p" display="block" type="supporting" color="inherit" role="status">{connected} 프로필 준비됨</GroveText>}
     </div>;
 }

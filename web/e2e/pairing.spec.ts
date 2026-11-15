@@ -1,12 +1,12 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { apiCall, login, state } from "./helpers";
+import { apiCall, login, openSettings, state } from "./helpers";
 import type { PairingInfo } from "../app/api/generated";
 
 const password = "test-only!";
 
 async function manage(page: Page): Promise<Locator> {
     await login(page);
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByRole("button", { name: "기기·연결", exact: true }).click();
     return page.getByRole("region", { name: "기기 페어링" });
 }
@@ -15,10 +15,10 @@ async function issue(panel: Locator, name: string): Promise<string> {
     await panel.getByLabel("등록할 기기 이름", { exact: true }).fill(name);
     await panel.getByLabel("링크 비밀번호", { exact: true }).fill(password);
     await panel.getByRole("button", { name: "페어링 링크 발급", exact: true }).click();
-    await expect(panel.getByLabel("페어링 링크", { exact: true })).toHaveValue(/#pairing=/);
+    await expect(panel.getByRole("textbox", { name: "페어링 링크", exact: true })).toHaveValue(/#pairing=/);
     await expect(panel.getByTestId("pairing-qr")).toHaveAttribute("data-ready", "true");
     expect(await panel.getByLabel("링크 비밀번호", { exact: true }).inputValue()).toBe("");
-    return panel.getByLabel("페어링 링크", { exact: true }).inputValue();
+    return panel.getByRole("textbox", { name: "페어링 링크", exact: true }).inputValue();
 }
 
 async function connect(page: Page, _name: string) {
@@ -58,7 +58,7 @@ test("QR 등록은 비밀번호와 코드 대조 승인 뒤 한 기기에만 자
         const form = other.getByRole("form", { name: "페어링 등록" });
         await form.getByRole("button", { name: "QR", exact: true }).click();
         await form.getByLabel("QR 사진 선택").setInputFiles({ name: "qr.png", mimeType: "image/png", buffer: image });
-        await expect(form.getByLabel("페어링 링크", { exact: true })).toHaveCount(0);
+        await expect(form.getByRole("textbox", { name: "페어링 링크", exact: true })).toHaveCount(0);
         await expect(form.getByText("등록 대상:")).toContainText(new URL(link).origin);
         const code = await connect(other, name);
         const intruder = await attacker.newPage();
@@ -73,7 +73,7 @@ test("QR 등록은 비밀번호와 코드 대조 승인 뒤 한 기기에만 자
         await expect(other.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         await expect(intruder.getByRole("alert")).toContainText("만료되었거나 폐기·사용");
         await expect(row).toContainText("사용됨");
-        await expect(panel.getByLabel("페어링 링크", { exact: true })).toHaveCount(0);
+        await expect(panel.getByRole("textbox", { name: "페어링 링크", exact: true })).toHaveCount(0);
         const linkCode = new URL(link).hash.slice("#pairing=".length);
         expect(requests.every((url) => !url.includes(linkCode) && !url.includes(password))).toBe(true);
         const stored = await other.evaluate(() => JSON.stringify({ ...localStorage }) + JSON.stringify({ ...sessionStorage }) + document.cookie);
@@ -82,7 +82,7 @@ test("QR 등록은 비밀번호와 코드 대조 승인 뒤 한 기기에만 자
         expect(stored).not.toContain(state().token);
         await other.reload();
         await expect(other.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
-        await other.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await openSettings(other);
         await other.getByRole("button", { name: "기기·연결", exact: true }).click();
         const deviceName = other.getByLabel("이 기기 이름", { exact: true });
         await expect(deviceName).toHaveValue("Chrome · Linux");
@@ -94,7 +94,7 @@ test("QR 등록은 비밀번호와 코드 대조 승인 뒤 한 기기에만 자
         await expect(deviceName).toHaveValue("설정에서 변경한 기기");
         expect((await apiCall<{ name: string }[]>("GET", "/devices")).some((entry) => entry.name === "설정에서 변경한 기기")).toBe(true);
         await page.evaluate((hash) => { location.hash = hash; }, new URL(link).hash);
-        await expect(page.getByText("이미 로그인된 브라우저입니다.", { exact: false })).toBeVisible();
+        await expect(page.getByText("이미 로그인된 브라우저이니", { exact: false })).toBeVisible();
         await expect(page.getByRole("button", { name: "연결", exact: true })).toBeDisabled();
         await page.getByRole("button", { name: "토큰 로그인으로 돌아가기" }).click();
         await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });

@@ -1014,6 +1014,10 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX pairing_requests_link ON pairing_requests(pairing_id,created_at);
     CREATE UNIQUE INDEX pairing_one_approval ON pairing_requests(pairing_id) WHERE approved_at IS NOT NULL;
     "#,
+    // 58: 추가 메시지도 요청별 모델 선택을 보존한다(프로필 전역 설정은 바꾸지 않음).
+    "ALTER TABLE followups ADD COLUMN model TEXT;",
+    // 추가 메시지의 속도 선택을 재시작·대기열 시작 뒤에도 보존한다.
+    "ALTER TABLE followups ADD COLUMN service_tier TEXT;",
 ];
 
 #[cfg(test)]

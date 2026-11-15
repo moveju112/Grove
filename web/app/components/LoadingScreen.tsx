@@ -1,3 +1,4 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
 import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 
 /** 화면 상단에 고정되는 진행 표시줄. 기다리는 동안 기존 화면과 입력은 그대로 둔다. */
@@ -11,6 +12,6 @@ export function LoadingBar({ label }: { label: string }) {
 export function LoadingScreen({ label }: { label: string }) {
     return <div className="boot loading-screen" aria-busy="true">
         <LoadingBar label={label} />
-        <p role="status">{label}</p>
+        <GroveText as="p" display="block" type="inherit" color="inherit" role="status">{label}</GroveText>
     </div>;
 }

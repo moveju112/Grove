@@ -78,7 +78,7 @@ test("프로필 context override는 상속·0을 구분하고 동시 변경 충�
         await row.getByLabel("프로필 idle context 초기화(분)").fill("30");
         const latest = (await apiCall<{ id: string; revision: number }[]>("GET", "/model-profiles")).find((p) => p.id === model.id)!;
         await apiCall("PUT", `/model-profiles/${model.id}`, { expected_revision: latest.revision, options: { auto_clear_minutes: 60 } });
-        await expect(row).toContainText("편집 중 프로필이 변경됐습니다");
+        await expect(row).toContainText("프로필 변경 감지 · 입력 보존 · 저장 시 revision 충돌 확인");
         await row.getByRole("button", { name: "context 정책 저장", exact: true }).click();
         await expect(row.getByRole("alert")).toBeVisible();
         await expect(row.getByLabel("프로필 idle context 초기화(분)")).toHaveValue("30");

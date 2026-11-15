@@ -1,5 +1,10 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useEffect, useState } from "react";
 import { ActionMenu } from "./ui/Controls";
+import { BooleanSelect } from "./BooleanSelect";
+import { TextInput, TextArea } from "../design/Fields";
 import { ApiError, api } from "../api/client";
 import { useBotAvatar } from "../state/botAvatar";
 import type { ModelProfile } from "../api/generated";
@@ -45,9 +50,9 @@ function Avatar({ b }: { b: Bot }) {
     // 이미지를 못 받으면(삭제·네트워크) 기본형으로 보인다.
     if (src) return <img className="avatar" src={src} alt="" aria-hidden data-testid="bot-avatar-image" />;
     return (
-        <span className="avatar" style={{ background: b.avatar_color, color: avatarInk(b.avatar_color) }} aria-hidden>
+        <GroveText type="inherit" color="inherit" className="avatar" style={{ background: b.avatar_color, color: avatarInk(b.avatar_color) }} aria-hidden>
             {[...b.name][0] ?? "?"}
-        </span>
+        </GroveText>
     );
 }
 
@@ -71,7 +76,7 @@ function AvatarControl({ bot }: { bot: Bot }) {
         setErr(null);
         try { await fn(); } catch (e) { setErr(e instanceof ApiError ? e.message : "아바타 변경 실패"); } finally { setBusy(false); }
     };
-    return <div className="inline" role="group" aria-label="봇 아바타">
+    return <GroveStack direction="horizontal" align="center" className="inline" role="group" aria-label="봇 아바타">
         <Avatar b={bot} />
         <label className="small">아바타 이미지
             <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy || !!serverBlocked} title={serverBlocked ?? undefined} aria-label="아바타 이미지 선택"
@@ -89,8 +94,8 @@ function AvatarControl({ bot }: { bot: Bot }) {
                 }} />
         </label>
         {bot.avatar_sha256 && <ServerActionButton type="button" className="ghost small" disabled={busy} onClick={() => void run(() => api.del(`/bots/${bot.id}/avatar`))}>기본형으로</ServerActionButton>}
-        {err && <span className="err small" role="alert">{err}</span>}
-    </div>;
+        {err && <GroveText type="supporting" color="error" role="alert">{err}</GroveText>}
+    </GroveStack>;
 }
 
 type Form = { name: string; description: string; persona: string; instructions: string; profile_id: string; project_id: string; featured: boolean };
@@ -129,12 +134,12 @@ function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDo
                 void save();
             }}
         >
-            {err && <p className="err" role="alert">{err}</p>}
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {bot && <AvatarControl bot={live ?? bot} />}
-            <input aria-label="봇 이름" placeholder="이름" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} />
-            <input aria-label="봇 설명" placeholder="설명" value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
-            <textarea aria-label="persona" placeholder="persona(말투·성격)" rows={2} value={f.persona} onChange={(e) => setF({ ...f, persona: e.target.value })} />
-            <textarea aria-label="작업 지침" placeholder="작업 지침" rows={2} value={f.instructions} onChange={(e) => setF({ ...f, instructions: e.target.value })} />
+            <TextInput label="봇 이름" isLabelHidden placeholder="이름" value={f.name} onChange={(value) => setF({ ...f, name: value })} />
+            <TextInput label="봇 설명" isLabelHidden placeholder="설명" value={f.description} onChange={(value) => setF({ ...f, description: value })} />
+            <TextArea label="persona" isLabelHidden placeholder="persona(말투·성격)" rows={2} value={f.persona} onChange={(value) => setF({ ...f, persona: value })} />
+            <TextArea label="작업 지침" isLabelHidden placeholder="작업 지침" rows={2} value={f.instructions} onChange={(value) => setF({ ...f, instructions: value })} />
             <select aria-label="봇 모델" value={f.profile_id} onChange={(e) => setF({ ...f, profile_id: e.target.value })}>
                 <option value="">모델 미설정(실행 불가)</option>
                 {(profiles.data ?? []).map((p) => <option key={p.id} value={p.id} disabled={p.enabled === false}>{p.name} · {p.model}{p.enabled === false ? " · 비활성" : ""}</option>)}
@@ -142,13 +147,11 @@ function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDo
             <select aria-label="봇 프로젝트" value={projectId} disabled={!!bot?.home_session_id} onChange={(e) => setF({ ...f, project_id: e.target.value })}>
                 {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
             </select>
-            <label className="check">
-                <input type="checkbox" checked={f.featured} onChange={(e) => setF({ ...f, featured: e.target.checked })} /> 대표 봇
-            </label>
-            <div className="inline">
+            <BooleanSelect label="대표 봇" value={f.featured} onChange={(value) => setF({ ...f, featured: value })} />
+            <GroveStack direction="horizontal" align="center" className="inline">
                 <ServerActionButton type="submit" disabled={!f.name.trim() || !projectId}>{bot ? "저장" : "봇 만들기"}</ServerActionButton>
-                <button type="button" className="ghost" onClick={onDone}>닫기</button>
-            </div>
+                <GroveButton type="button" className="ghost" onClick={onDone}>닫기</GroveButton>
+            </GroveStack>
         </form>
     );
 }
@@ -192,8 +195,8 @@ export function BotsPanel({ open }: { open: Opener }) {
     };
     return (
         <section className="bots" data-testid="bots-panel">
-            <button className="ghost small" onClick={() => setEditing("new")}>봇 만들기</button>
-            {err && <p className="err" role="alert">{err}</p>}
+            <GroveButton className="ghost small" onClick={() => setEditing("new")}>봇 만들기</GroveButton>
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {editing && <Editor bot={editing === "new" ? null : editing}
                 live={editing === "new" ? null : (q.data?.bots.find((x) => x.id === editing.id) ?? null)} onDone={() => { setEditing(null); q.reload(); }} />}
             <ul className="session-list">
@@ -201,24 +204,24 @@ export function BotsPanel({ open }: { open: Opener }) {
                     <li key={b.id} data-testid="bot" data-status={b.status}>
                         <ServerActionButton className="ghost bot-open" disabled={b.status === "deleted"} onClick={() => void enter(b)}>
                             <Avatar b={b} />
-                            <span>
-                                {b.featured && <span aria-label="대표">★ </span>}
+                            <GroveText type="inherit" color="inherit">
+                                {b.featured && <GroveText type="inherit" color="inherit" aria-label="대표">★ </GroveText>}
                                 {b.name}
                                 {b.unread && <span className="dot" aria-label="읽지 않음" data-testid="bot-unread" />}
-                            </span>
-                            {b.home_status === "running" && <span className="status running">실행 중</span>}
-                            {b.home_status === "awaiting_approval" && <span className="status awaiting_approval">승인 대기</span>}
-                            {b.home_status === "awaiting_input" && <span className="status awaiting_input">답변 대기</span>}
-                            {b.status === "disabled" && <span className="status">비활성</span>}
+                            </GroveText>
+                            {b.home_status === "running" && <GroveText type="inherit" color="inherit" className="status running">실행 중</GroveText>}
+                            {b.home_status === "awaiting_approval" && <GroveText type="inherit" color="inherit" className="status awaiting_approval">승인 대기</GroveText>}
+                            {b.home_status === "awaiting_input" && <GroveText type="inherit" color="inherit" className="status awaiting_input">답변 대기</GroveText>}
+                            {b.status === "disabled" && <GroveText type="inherit" color="inherit" className="status">비활성</GroveText>}
                             {b.model_state !== "ok" && b.status !== "deleted" &&
-                                <span className="muted small">{MODEL_STATE[b.model_state]}</span>}
+                                <GroveText type="supporting" color="secondary">{MODEL_STATE[b.model_state]}</GroveText>}
                         </ServerActionButton>
                         <ActionMenu className="bot-actions" label={`${b.name} 관리`}>
-                            {b.status !== "deleted" && <button className="ghost small" onClick={() => setEditing(b)}>편집</button>}
+                            {b.status !== "deleted" && <GroveButton className="ghost small" onClick={() => setEditing(b)}>편집</GroveButton>}
                             {b.status !== "deleted" && <ServerActionButton className="ghost small" onClick={() => void enter(b, "right")}>오른쪽에 열기</ServerActionButton>}
                             {b.status !== "deleted" && <ServerActionButton className="ghost small" onClick={() => void enter(b, "down")}>아래에 열기</ServerActionButton>}
                             {i > 0 && !showDeleted && <ServerActionButton className="ghost small" onClick={() => moveUp(i)}>위로</ServerActionButton>}
-                            <button className="ghost small" onClick={() => toggleHide(b.id)}>{hidden.includes(b.id) ? "이 기기에서 보이기" : "이 기기에서 숨기기"}</button>
+                            <GroveButton className="ghost small" onClick={() => toggleHide(b.id)}>{hidden.includes(b.id) ? "이 기기에서 보이기" : "이 기기에서 숨기기"}</GroveButton>
                             {b.status === "active" && <ServerActionButton className="ghost small" onClick={() => void status(b, "disable")}>비활성화</ServerActionButton>}
                             {b.status === "disabled" && <ServerActionButton className="ghost small" onClick={() => void status(b, "enable")}>다시 켜기</ServerActionButton>}
                             {b.status !== "deleted" && b.home_session_id && (
@@ -233,8 +236,8 @@ export function BotsPanel({ open }: { open: Opener }) {
                 ))}
             </ul>
             <div className="inline small">
-                {hidden.length > 0 && <label className="check"><input type="checkbox" checked={showHidden} onChange={(e) => setShowHidden(e.target.checked)} /> 숨긴 봇 보기</label>}
-                <label className="check"><input type="checkbox" checked={showDeleted} onChange={(e) => setShowDeleted(e.target.checked)} /> 삭제된 봇</label>
+                {hidden.length > 0 && <BooleanSelect label="숨긴 봇 보기" value={showHidden} onChange={setShowHidden} />}
+                <BooleanSelect label="삭제된 봇" value={showDeleted} onChange={setShowDeleted} />
             </div>
         </section>
     );

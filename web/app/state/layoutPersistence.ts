@@ -67,8 +67,19 @@ export class LayoutPersistence {
         this.timer = setTimeout(() => { this.timer = null; void this.flush(); }, 500);
     }
 
+    /// 인증된 Workspace만 호출한다. 검증된 기기 사본을 먼저 보여 주고 restore가 최신 서버 상태를 병합한다.
+    restoreLocal(): Layout | null {
+        if (!this.active()) return null;
+        const local = this.read();
+        if (!local) return null;
+        this.copy = local;
+        this.writtenEdit = local.edit;
+        return local.layout;
+    }
+
     async restore(): Promise<Layout | null> {
         let local = this.read();
+        const originalEdit = local?.edit;
         let remote: Remote | null = null;
         try { remote = await this.options.get(this.controller.signal); }
         catch { /* 통신 실패 시 검증된 로컬 사본을 쓴다. */ }
@@ -78,7 +89,7 @@ export class LayoutPersistence {
         let server: Layout | null = null;
         try { if (remote && validRevision(remote.revision) && isValid(remote.layout)) server = remote.layout; }
         catch { /* 잘못된 서버 배치는 복원하지 않는다. */ }
-        this.copy = local?.dirty ? local : server && remote ? {
+        this.copy = local && (local.dirty || local.edit !== originalEdit) ? local : server && remote ? {
             format: 1, layout: server, revision: remote.revision, dirty: false, edit: this.options.newKey(),
         } : local ?? {
             format: 1, layout: emptyLayout(), revision: validRevision(remote?.revision) ? remote.revision : 0,

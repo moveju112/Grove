@@ -1,9 +1,14 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
+import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
+import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../api/client";
 import { useCapability } from "../state/capabilities";
 import { defaultPrefs, loadPrefs, restoredPrefs, savePrefs, type Prefs } from "../state/device";
 import type { SettingDef, SettingsTarget } from "./ScopedSettings";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { HelpTip, SentenceText } from "./HelpTip";
 
 type Source = "server" | "project" | "session" | "default";
 export const SCOPE_LABEL: Record<Source, string> & Record<string, string> = { server: "서버 전체", project: "이 프로젝트", session: "이 대화", default: "기본값" };
@@ -27,21 +32,21 @@ function Dialog({ children, busy, close }: { children: ReactNode; busy: boolean;
     useEffect(() => { dialog.current!.showModal(); }, []);
     return <dialog ref={dialog} className="dialog settings-reset-dialog" aria-label="기본값 복원 확인" onCancel={(event) => { event.preventDefault(); if (!busy) close(); }}>
         {children}
-        <button className="ghost" disabled={busy} onClick={close}>복원 창 닫기</button>
+        <GroveButton className="ghost" disabled={busy} onClick={close}>복원 창 닫기</GroveButton>
     </dialog>;
 }
 
 function ComparisonTable({ rows }: { rows: Comparison[] }) {
-    return <div className="settings-reset-table"><table>
-        <thead><tr><th>항목</th><th>현재 범위 값</th><th>현재 적용값</th><th>복원 후 적용값</th><th>제품 기본값</th></tr></thead>
-        <tbody>{rows.map((row) => <tr key={row.key} data-testid={`reset-${row.key}`}>
-            <th>{row.label}<span className="muted small"> · {row.applies}</span></th>
-            <td><code>{row.override === null ? "override 없음" : JSON.stringify(row.override)}</code></td>
-            <td><code>{JSON.stringify(row.before)}</code></td>
-            <td><code>{JSON.stringify(row.after)}</code><span className="muted small"> · {row.source}</span></td>
-            <td><code>{JSON.stringify(row.default)}</code></td>
-        </tr>)}</tbody>
-    </table></div>;
+    return <div className="settings-reset-table"><Table density="compact">
+        <TableHeader><TableRow isHeaderRow><TableHeaderCell scope="col">항목</TableHeaderCell><TableHeaderCell scope="col">현재 범위 값</TableHeaderCell><TableHeaderCell scope="col">현재 적용값</TableHeaderCell><TableHeaderCell scope="col">복원 후 적용값</TableHeaderCell><TableHeaderCell scope="col">제품 기본값</TableHeaderCell></TableRow></TableHeader>
+        <TableBody>{rows.map((row) => <TableRow key={row.key} data-testid={`reset-${row.key}`}>
+            <TableHeaderCell scope="row">{row.label}<GroveText type="supporting" color="secondary"> · {row.applies}</GroveText></TableHeaderCell>
+            <TableCell><code>{row.override === null ? "override 없음" : JSON.stringify(row.override)}</code></TableCell>
+            <TableCell><code>{JSON.stringify(row.before)}</code></TableCell>
+            <TableCell><code>{JSON.stringify(row.after)}</code><GroveText type="supporting" color="secondary"> · {row.source}</GroveText></TableCell>
+            <TableCell><code>{JSON.stringify(row.default)}</code></TableCell>
+        </TableRow>)}</TableBody>
+    </Table></div>;
 }
 
 export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel, label, disabled, draft, saved, compact = false }: {
@@ -96,28 +101,30 @@ export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel,
     const busy = review?.kind === "sending";
     const close = () => { reading.current?.abort(); setReview(null); };
     return <>
-        <button className={compact ? "ghost setting-reset-icon" : "ghost"} aria-label={label} title={label} disabled={disabled || !defs.length} onClick={() => void compare()}>{compact ? "↺" : label}</button>
+        <GroveButton className={compact ? "ghost setting-reset-icon" : "ghost"} aria-label={label} title={label} disabled={disabled || !defs.length} onClick={() => void compare()}>{compact ? "↺" : label}</GroveButton>
         {review && <Dialog busy={busy} close={close}>
-            <h2>기본값 복원 확인</h2>
-            <p data-testid="reset-target">대상: <strong>{targetLabel}</strong></p>
-            <p className="muted small">선택한 범위의 override만 지웁니다. 상위 범위 값을 상속하고 하위 범위 override는 유지하므로 제품 기본값과 다를 수 있습니다. 도구 금지 정책과 시스템 제약도 그대로 적용됩니다.</p>
-            {scope === "server" && <p className="warn">모든 기기·프로젝트에 영향을 줄 수 있습니다. 아래 적용값은 이 설정 탭의 대상 기준이며 다른 프로젝트의 override는 지우지 않습니다.</p>}
-            {draft !== undefined && <p className="warn">미저장 입력 <code>{JSON.stringify(draft)}</code>은 복원 성공 후 버립니다. 취소·충돌·실패 시에는 보존합니다.</p>}
-            {review.kind === "loading" && <p role="status">범위별 값을 비교하는 중…</p>}
+            <GroveHeading level={2} color="inherit" className="inline">기본값 복원 확인 <HelpTip label="설정 복원 도움말">
+                <SentenceText text="선택한 범위의 override만 지우고 상위 범위 값을 상속합니다. 하위 override·도구 금지 정책·시스템 제약은 유지되므로 제품 기본값과 다를 수 있습니다." />
+            </HelpTip></GroveHeading>
+            <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="reset-target">대상: <strong>{targetLabel}</strong></GroveText>
+            <GroveText as="p" display="block" type="supporting" color="secondary">선택한 범위의 override만 복원합니다.</GroveText>
+            {scope === "server" && <GroveText as="p" display="block" type="inherit" color="warning">모든 기기·프로젝트에 영향을 줄 수 있습니다. 아래 적용값은 이 설정 탭의 대상 기준이며 다른 프로젝트의 override는 지우지 않습니다.</GroveText>}
+            {draft !== undefined && <GroveText as="p" display="block" type="inherit" color="warning">미저장 입력 <code>{JSON.stringify(draft)}</code>은 복원 성공 후 버립니다. 취소·충돌·실패 시에는 보존합니다.</GroveText>}
+            {review.kind === "loading" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">범위별 값을 비교하는 중…</GroveText>}
             {plan && <ComparisonTable rows={plan.items.map((item) => ({
                 key: item.key, label: item.label, override: item.before.layers[plan.target.scope]?.value ?? null,
                 before: item.before.effective, after: item.after.effective, default: item.before.default,
                 source: SCOPE_LABEL[item.after.source], applies: APPLIES[item.applies],
             }))} />}
-            {(review.kind === "load_error" || review.kind === "stale" || review.kind === "uncertain") && <p className="err" role="alert">{review.message}</p>}
-            {(review.kind === "load_error" || review.kind === "stale") && <button onClick={() => void compare()}>변경된 값 다시 비교</button>}
+            {(review.kind === "load_error" || review.kind === "stale" || review.kind === "uncertain") && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{review.message}</GroveText>}
+            {(review.kind === "load_error" || review.kind === "stale") && <GroveButton onClick={() => void compare()}>변경된 값 다시 비교</GroveButton>}
             {review.kind === "ready" && <ServerActionButton onClick={() => void restore(review.plan)}>확인한 범위 복원</ServerActionButton>}
-            {review.kind === "sending" && <p role="status">복원 저장 중…</p>}
+            {review.kind === "sending" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">복원 저장 중…</GroveText>}
             {review.kind === "uncertain" && <>
-                <p className="warn">응답 유실만으로 미실행을 뜻하지 않습니다. 창을 닫아도 접수한 복원은 취소되지 않습니다.</p>
+                <GroveText as="p" display="block" type="inherit" color="warning">응답 유실만으로 미실행을 뜻하지 않습니다. 창을 닫아도 접수한 복원은 취소되지 않습니다.</GroveText>
                 <ServerActionButton onClick={() => void restore(review.plan, review.attempt)}>원래 복원 요청 결과 확인</ServerActionButton>
             </>}
-            {review.kind === "saved" && <p role="status">복원 저장됨 · {review.count}개 override를 지웠습니다. 미저장된 다른 입력은 저장하지 않았습니다.</p>}
+            {review.kind === "saved" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">복원 저장됨 · {review.count}개 override 삭제 · 다른 미저장 입력은 유지</GroveText>}
         </Dialog>}
     </>;
 }
@@ -141,21 +148,21 @@ export function DeviceSettingsReset({ fields, label, compact = true }: { fields:
         }
     };
     return <>
-        <button className={compact ? "ghost setting-reset-icon" : "ghost small"} aria-label={label} title={label} onClick={compare}>{compact ? "↺" : label}</button>
+        <GroveButton className={compact ? "ghost setting-reset-icon" : "ghost small"} aria-label={label} title={label} onClick={compare}>{compact ? "↺" : label}</GroveButton>
         {review && <Dialog busy={false} close={() => setReview(null)}>
-            <h2>기본값 복원 확인</h2>
-            <p data-testid="reset-target">대상: <strong>이 기기의 화면·입력 설정</strong></p>
-            <p className="muted small">선택한 표시 설정만 바꿉니다. 서버 설정·다른 기기·기기 ID·대화·초안·배치는 지우지 않습니다.</p>
+            <GroveHeading level={2} color="inherit">기본값 복원 확인</GroveHeading>
+            <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="reset-target">대상: <strong>이 기기의 화면·입력 설정</strong></GroveText>
+            <GroveText as="p" display="block" type="supporting" color="secondary">이 기기의 선택한 표시 설정만 복원하며 서버·대화·초안·배치는 유지합니다.</GroveText>
             {review.kind !== "saved" && <ComparisonTable rows={fields.map((key) => ({
                 key, label: PREF_LABEL[key], override: review.before[key], before: review.before[key], after: defaultPrefs[key],
                 default: defaultPrefs[key], source: "이 기기 기본값", applies: "즉시 적용",
             }))} />}
-            {review.kind === "review" && <button onClick={restore}>확인한 범위 복원</button>}
+            {review.kind === "review" && <GroveButton onClick={restore}>확인한 범위 복원</GroveButton>}
             {review.kind === "error" && <>
-                <p className="err" role="alert">{review.message}</p>
-                <button onClick={compare}>변경된 값 다시 비교</button>
+                <GroveText as="p" display="block" type="inherit" color="error" role="alert">{review.message}</GroveText>
+                <GroveButton onClick={compare}>변경된 값 다시 비교</GroveButton>
             </>}
-            {review.kind === "saved" && <p role="status">복원 저장됨 · 이 기기의 선택한 표시 설정만 바꿨습니다.</p>}
+            {review.kind === "saved" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">복원 저장됨 · 이 기기의 선택한 표시 설정만 바꿨습니다.</GroveText>}
         </Dialog>}
     </>;
 }

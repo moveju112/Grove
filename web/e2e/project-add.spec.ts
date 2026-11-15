@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { dirname, basename } from "node:path";
-import { apiCall, composerOption, ensureProjects, login } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, selectChoice } from "./helpers";
 
 // PROJECT-001: 서버 폴더를 둘러보고 새 폴더로 프로젝트를 만든다.
 test("프로젝트 추가 대화상자에서 폴더를 둘러보고 새 폴더로 프로젝트를 만든다", async ({ page }) => {
@@ -30,11 +30,11 @@ test("프로젝트 추가 대화상자에서 폴더를 둘러보고 새 폴더�
     await dlg.getByLabel("폴더 경로").fill(`${base}/${name}`);
     await dlg.getByRole("button", { name: "이 폴더를 프로젝트로 추가" }).click();
     await expect(dlg.getByRole("alert")).toContainText("존재하지 않는 경로");
-    await dlg.getByLabel("폴더가 없으면 마지막 폴더를 새로 만들기").check();
+    await selectChoice(dlg.getByLabel("폴더가 없으면 마지막 폴더를 새로 만들기"), "true");
     await dlg.getByRole("button", { name: "이 폴더를 프로젝트로 추가" }).click();
     await expect(dlg).toHaveCount(0);
     await expect(page.locator(".view-head h1").filter({ hasText: name })).toBeVisible();
-    await expect(page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(name) })).toBeVisible();
+    await expect(page.locator(".sidebar .projects").getByRole("button", { name, exact: true })).toBeVisible();
 
     // PROJECT-005: 별도 작업공간 생성 단계 없이 프로젝트 화면 입력창에서 바로 대화를 시작한다
     const pv = page.locator(".project-view").filter({ has: page.locator("h1", { hasText: name }) });

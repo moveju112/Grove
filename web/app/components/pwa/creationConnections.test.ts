@@ -36,7 +36,9 @@ it("프로젝트 등록·clone은 막되 경로 입력·복사·취소를 비활
     expect(html).toContain("clone 후 프로젝트로 추가");
     expect(html).not.toMatch(/<fieldset[^>]*disabled/);
     expect(html).not.toMatch(/<input[^>]*disabled/);
-    expect(html).toMatch(/<button class="ghost">취소<\/button>/);
+    const cancel = html.match(/<button(?=[^>]*aria-label="취소")[^>]*>/)?.[0];
+    expect(cancel).toBeDefined();
+    expect(cancel).not.toContain('disabled=""');
 });
 
 it("프로젝트 초안은 parent disabled로 막지 않고 생성 직전·후속 전송 직전에 guard를 호출한다", async () => {
@@ -64,5 +66,7 @@ it("터미널 보조키 차단은 로컬 보조키 해제까지 막지 않는다
         onKey: vi.fn(), onToggle: vi.fn(), onReset: vi.fn(),
     }));
     expect(html).toContain('title="오프라인"');
-    expect(html).toMatch(/<button class="chip">보조키 해제<\/button>/);
+    const reset = html.match(/<button(?=[^>]*aria-label="보조키 해제")[^>]*>/)?.[0];
+    expect(reset).toBeDefined();
+    expect(reset).not.toContain('disabled=""');
 });

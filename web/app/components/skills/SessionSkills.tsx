@@ -1,3 +1,6 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { DetailDialog } from "../ui/Controls";
 import { api, ApiError, authGeneration, isLoggedIn, newKey, onAuthChange } from "../../api/client";
@@ -110,26 +113,25 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
     const snapshot = active ? state.snapshot : null;
     const busy = !active || state.loading || Boolean(state.pending);
     return <div className="stack" data-testid="session-skills">
-        <div className="inline">
-            <button type="button" className="ghost small" disabled={!active || state.loading} onClick={() => void reload()}>스킬 새로고침</button>
-            <button type="button" className="ghost small" disabled={busy || Boolean(state.draft)}
-                onClick={() => setState((s) => ({ ...s, draft: { kind: "add", scope: "project", name: "", text: "" } }))}>Grove 스킬 추가</button>
-        </div>
-        {active && profileError && <p className="warn" role="status">{profileError} · 모델 지원을 추정하지 않습니다.</p>}
+        <GroveStack direction="horizontal" align="center" className="inline">
+            <GroveButton type="button" className="ghost small" disabled={!active || state.loading} onClick={() => void reload()}>스킬 새로고침</GroveButton>
+            <GroveButton type="button" className="ghost small" disabled={busy || Boolean(state.draft)}
+                onClick={() => setState((s) => ({ ...s, draft: { kind: "add", scope: "project", name: "", text: "" } }))}>Grove 스킬 추가</GroveButton>
+        </GroveStack>
+        {active && profileError && <GroveText as="p" display="block" type="inherit" color="warning" role="status">{profileError} · 모델 지원을 추정하지 않습니다.</GroveText>}
         <RequirementContext value={context} profiles={active ? profiles : []} disabled={busy} onChange={setContext} />
         {active && state.pending && !state.loading && <div role="alert">
             변경 결과를 확인하지 못했습니다. 자동으로 다시 변경하지 않습니다.
-            <button type="button" onClick={() => void change(state.pending!)}>같은 요청 결과 확인</button>
-            <p>스킬 새로고침으로 현재 상태를 관측할 수 있습니다. 결과 불명 receipt는 재실행되지 않습니다.</p>
-            <button type="button" onClick={() => setState((s) => ({ ...s, pending: null, error: null, snapshot: null, preview: null }))}>
+            <GroveButton type="button" onClick={() => void change(state.pending!)}>같은 요청 결과 확인</GroveButton>
+            <GroveText as="p" display="block" type="inherit" color="inherit">스킬 새로고침은 조회만 하며 불명 요청을 재실행하지 않습니다.</GroveText>
+            <GroveButton type="button" onClick={() => setState((s) => ({ ...s, pending: null, error: null, snapshot: null, preview: null }))}>
                 불명 요청 닫기 · 다시 조회 필요
-            </button>
+            </GroveButton>
         </div>}
-        {snapshot?.validation_error && <p className="warn" role="alert">
+        {snapshot?.validation_error && <GroveText as="p" display="block" type="inherit" color="warning" role="alert">
             선택한 스킬을 적용할 수 없습니다: {snapshot.validation_error.message} ({snapshot.validation_error.code}).
-            현재 관측 조건에서 적용할 수 없습니다. 실제 호출은 접수된 조건으로 다시 검증합니다.
             기존 선택을 해제하거나 문제를 해결한 뒤 다시 확인하세요.
-        </p>}
+        </GroveText>}
         {active && state.draft && <SkillEditor draft={state.draft} busy={busy || !snapshot}
             onChange={(draft) => setState((s) => ({ ...s, draft }))}
             onCancel={() => setState((s) => ({ ...s, draft: null }))}

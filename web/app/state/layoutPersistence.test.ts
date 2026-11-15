@@ -35,6 +35,25 @@ describe("기기별 배치 저장", () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
 
+    it("인증 후 로컬 배치는 즉시 복원하고 늦은 서버 조회가 그동안의 편집을 덮지 않는다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        f.current.dispose();
+        const remote = deferred<{ layout: unknown; revision: number }>();
+        f.get.mockImplementationOnce(() => remote.promise);
+        const next = new LayoutPersistence("pc", f.options);
+        expect(next.restoreLocal()).toEqual(f.initial);
+        const restoring = next.restore();
+        const edited = setRatio(f.initial, [], 0.6);
+        next.change(edited);
+        remote.resolve({ layout: setRatio(f.initial, [], 0.2), revision: 9 });
+        expect(await restoring).toEqual(edited);
+        expect(f.copy().dirty).toBe(true);
+        next.dispose();
+        f.active.mockReturnValue(false);
+        expect(new LayoutPersistence("pc", f.options).restoreLocal()).toBeNull();
+    });
+
     it("서버에 미반영된 로컬 탭·분할·비율·활성 pane을 먼저 복원한다", async () => {
         const f = fixture();
         await f.current.restore();
@@ -44,6 +63,23 @@ describe("기기별 배치 저장", () => {
         const next = new LayoutPersistence("pc", f.options);
         expect(await next.restore()).toEqual(edited);
         expect(f.copy().dirty).toBe(true);
+        next.dispose();
+    });
+    it("복원 조회 중 편집이 이미 저장됐어도 이전 GET으로 되돌리지 않는다", async () => {
+        const f = fixture();
+        await f.current.restore();
+        f.current.dispose();
+        const remote = deferred<{ layout: unknown; revision: number }>();
+        f.get.mockImplementationOnce(() => remote.promise);
+        const next = new LayoutPersistence("pc", f.options);
+        next.restoreLocal();
+        const restoring = next.restore();
+        const edited = setRatio(f.initial, [], 0.4);
+        next.change(edited);
+        await next.flush();
+        expect(f.copy().dirty).toBe(false);
+        remote.resolve({ layout: f.initial, revision: 3 });
+        expect(await restoring).toEqual(edited);
         next.dispose();
     });
 

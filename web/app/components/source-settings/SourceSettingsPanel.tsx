@@ -1,3 +1,5 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import type { ReadErrorCode, SafeSettings, SourceId, SourceSettings, SourceSettingsPanelProps } from "./types";
 import type { SourceResource } from "../../api/sourceSettings";
 import { DetailDialog } from "../ui/Controls";
@@ -30,7 +32,7 @@ function Projection({ value }: { value: SafeSettings }) {
     const days = value.cleanupPeriodDays;
     const hasDays = typeof days === "number" && Number.isInteger(days) && days >= 0 && days <= 4_294_967_295;
     if (booleans.length === 0 && !hasDays) {
-        return <p className="muted small">표시 가능한 필드 없음</p>;
+        return <GroveText as="p" display="block" type="supporting" color="secondary">표시 가능한 필드 없음</GroveText>;
     }
     return <dl>
         {booleans.map(([key, label]) => <div key={key}>
@@ -48,15 +50,15 @@ function ResourceCard({ resource }: { resource: SourceResource }) {
     const result = resource.result;
     const label = resource.kind === "skills" ? "스킬" : "Hook 정의";
     return <section className="source-resource" aria-label={`${label} · ${resource.relative_path}`}>
-        <h4>{label} · <code>{resource.relative_path}</code></h4>
-        {result.status === "missing" && <p className="muted small">원본 리소스 없음</p>}
-        {result.status === "read_error" && <p className="err" role="alert">리소스 읽기 실패: {result.code === "too_large" ? "리소스 크기 또는 항목 수가 조회 제한을 넘어 표시하지 않았습니다." : ERROR[result.code]}</p>}
-        {result.status === "unsupported_format" && <p className="warn small">Inline hook · 미지원 형식(TOML)</p>}
+        <GroveHeading level={4} color="inherit">{label} · <code>{resource.relative_path}</code></GroveHeading>
+        {result.status === "missing" && <GroveText as="p" display="block" type="supporting" color="secondary">원본 리소스 없음</GroveText>}
+        {result.status === "read_error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">리소스 읽기 실패: {result.code === "too_large" ? "리소스 크기 또는 항목 수가 조회 제한을 넘어 표시하지 않았습니다." : ERROR[result.code]}</GroveText>}
+        {result.status === "unsupported_format" && <GroveText as="p" display="block" type="supporting" color="warning">Inline hook · 미지원 형식(TOML)</GroveText>}
         {result.status === "present" && <>
-            {result.entries.length === 0 && <p className="muted small">{label} 항목 없음</p>}
+            {result.entries.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">{label} 항목 없음</GroveText>}
             {resource.kind === "skills" && resource.result.status === "present" && <div className="source-skills">
                 {resource.result.entries.map((entry, index) => <DetailDialog key={index} label={`${entry.name} 스킬`} title={entry.name}>
-                    {entry.description && <p>{entry.description}</p>}
+                    {entry.description && <GroveText as="p" display="block" type="inherit" color="inherit">{entry.description}</GroveText>}
                     <code className="muted small">{entry.relative_path}</code>
                 </DetailDialog>)}
             </div>}
@@ -66,7 +68,7 @@ function ResourceCard({ resource }: { resource: SourceResource }) {
                     <dd>Matcher: {entry.matcher ?? "지정 없음"} · 명령 {entry.has_command ? "있음" : "없음"}</dd>
                 </div>)}
             </dl>}
-            {result.ignored_invalid_entries && <p className="warn small" role="status">일부 항목은 형식·권한·읽기 제한으로 생략됐습니다.</p>}
+            {result.ignored_invalid_entries && <GroveText as="p" display="block" type="supporting" color="warning" role="status">일부 항목은 형식·권한·읽기 제한으로 생략됐습니다.</GroveText>}
         </>}
     </section>;
 }
@@ -74,15 +76,15 @@ function ResourceCard({ resource }: { resource: SourceResource }) {
 function SourceCard({ item, resources }: { item: SourceSettings; resources: readonly SourceResource[] }) {
     const source = SOURCE[item.source];
     return <section className="setting source-card" aria-label={source.label}>
-        <h3>{source.label}</h3>
-        <p className="muted small">출처: {source.location}</p>
+        <GroveHeading level={3} color="inherit">{source.label}</GroveHeading>
+        <GroveText as="p" display="block" type="supporting" color="secondary">출처: {source.location}</GroveText>
         {item.status === "present" && <>
             <Projection value={item.projection} />
-            {item.ignored_invalid_fields && <p className="warn small">타입이나 범위가 맞지 않는 값은 생략했습니다.</p>}
+            {item.ignored_invalid_fields && <GroveText as="p" display="block" type="supporting" color="warning">타입이나 범위가 맞지 않는 값은 생략했습니다.</GroveText>}
         </>}
-        {item.status === "missing" && <p className="muted small">원본 파일 없음</p>}
-        {item.status === "read_error" && <p className="err" role="alert">읽기 실패: {ERROR[item.code]}</p>}
-        {item.status === "unsupported_format" && <p className="warn small">미지원 형식(TOML)</p>}
+        {item.status === "missing" && <GroveText as="p" display="block" type="supporting" color="secondary">원본 파일 없음</GroveText>}
+        {item.status === "read_error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">읽기 실패: {ERROR[item.code]}</GroveText>}
+        {item.status === "unsupported_format" && <GroveText as="p" display="block" type="supporting" color="warning">미지원 형식(TOML)</GroveText>}
         {resources.map((resource) => <ResourceCard key={`${resource.kind}:${resource.relative_path}`} resource={resource} />)}
     </section>;
 }
@@ -90,11 +92,11 @@ function SourceCard({ item, resources }: { item: SourceSettings; resources: read
 /** 인증된 서버 projection만 주입한다. 이 UI는 조회 API·쓰기·적용 동작을 호출하지 않는다. */
 export function SourceSettingsPanel({ view }: SourceSettingsPanelProps) {
     return <section aria-label="원본 Claude/Codex 설정">
-        <p className="scope">읽기 전용 · Grove 적용값 아님</p>
-        {view.status === "loading" && <p role="status">원본 출처를 확인하는 중입니다.</p>}
-        {view.status === "error" && <p className="err" role="alert">원본 출처 목록을 가져오지 못했습니다.</p>}
+        <GroveText as="p" display="block" type="inherit" color="inherit" className="scope">읽기 전용 · Grove 적용값 아님</GroveText>
+        {view.status === "loading" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">원본 출처를 확인하는 중입니다.</GroveText>}
+        {view.status === "error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">원본 출처 목록을 가져오지 못했습니다.</GroveText>}
         {view.status === "ready" && (view.items.length === 0
-            ? <p className="muted small">조회 대상 없음</p>
+            ? <GroveText as="p" display="block" type="supporting" color="secondary">조회 대상 없음</GroveText>
             : view.items.map((item) => <SourceCard key={item.source} item={item} resources={(view.resources ?? []).filter((resource) => resource.source === item.source)} />))}
     </section>;
 }

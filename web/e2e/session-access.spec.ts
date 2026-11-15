@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProfile, login, script, sessionView, state } from "./helpers";
+import { apiCall, ensureProfile, login, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Call = { status: string; result: { total?: number; scope?: string; items?: { id: string }[]; error?: { code: string } } };
@@ -30,20 +30,21 @@ test("모델의 무관한 대화 조회는 기본 차단되고 대화 범위 허
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: work.id });
     await login(page);
     await page.locator(".recent").getByRole("button", { name: new RegExp(`${word} work`) }).click();
+    await sessionView(page, work.id).getByRole("button", { name: "대화 작업", exact: true }).click();
     await sessionView(page, work.id).getByRole("button", { name: "대화 설정" }).click();
     await page.getByLabel("설정 검색").last().fill("관련 없는 대화");
     const row = page.getByTestId("setting-sessions.allow_unrelated").last();
-    const check = row.getByLabel("모델의 관련 없는 대화 조회 허용", { exact: true });
-    await expect(check).not.toBeChecked();
+    const check = row.getByRole("combobox", { name: "모델의 관련 없는 대화 조회 허용", exact: true });
+    await expect(check).toHaveAttribute("data-selected-value", "false");
     await expect(row).toContainText("분기 시점까지만");
-    await check.check();
+    await selectChoice(check, "true");
     await row.getByRole("button", { name: "저장", exact: true }).click();
     await expect(row).toContainText("저장됨 · 즉시 적용");
     const allowed = await lookup(true);
     expect(allowed.status).toBe("succeeded");
     expect(allowed.result.total).toBe(1);
     expect(allowed.result.items?.[0]?.id).toBe(foreign.id);
-    await check.uncheck();
+    await selectChoice(check, "false");
     await row.getByRole("button", { name: "저장", exact: true }).click();
     await expect(row).toContainText("저장됨 · 즉시 적용");
     const denied = await lookup(true);

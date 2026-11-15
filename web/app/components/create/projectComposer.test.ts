@@ -23,13 +23,13 @@ function renderComposer() {
 it.each(["save", "model"] as const)("기존 %s 전송 계약·첨부·파생 키를 유지한다", async (mode) => {
     const { props, open } = renderComposer();
     vi.mocked(api.post).mockResolvedValueOnce({ id: "session", title: "첫 줄" }).mockResolvedValueOnce({});
-    const options = { mode, profileId: "profile", agentId: "agent", tools: true, effort: "high" as const };
+    const options = { mode, profileId: "profile", model: "request-model", agentId: "agent", tools: true, effort: "high" as const, serviceTier: "priority" };
     await props.onSend("첫 줄\n본문", options, "intent", undefined, ["attachment"]);
     expect(api.post).toHaveBeenNthCalledWith(1, "/projects/project/sessions", { title: "첫 줄" }, { key: "intent:session" });
     expect(api.post).toHaveBeenNthCalledWith(2, `/sessions/session/${mode === "save" ? "messages" : "turns"}`,
         mode === "save" ? { text: "첫 줄\n본문", attachments: ["attachment"] }
-            : { text: "첫 줄\n본문", attachments: ["attachment"], profile_id: "profile", agent_id: "agent", tools: true, effort: "high" },
-        { key: "intent:send" });
+            : { text: "첫 줄\n본문", attachments: ["attachment"], profile_id: "profile", model: "request-model", agent_id: "agent", tools: true, effort: "high", service_tier: "priority" },
+        mode === "save" ? { key: "intent:send" } : { key: "intent:send", requires: ["turn_model_selection_v1", "turn_model_options_v1"] });
     expect(open).toHaveBeenCalledExactlyOnceWith({ kind: "session", project_id: "project", resource_id: "session", title: "첫 줄" });
 });
 

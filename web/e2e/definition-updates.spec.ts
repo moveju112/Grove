@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { DefinitionDetail } from "../app/api/generated";
-import { apiCall, login } from "./helpers";
+import { apiCall, login, openSettings, selectChoice } from "./helpers";
 
 const path = "/definitions/workflow/headless";
 const comparison = (page: Page) => page.getByRole("region", { name: "정의 기본값 비교", exact: true });
@@ -11,7 +11,7 @@ async function edit(values: Partial<DefinitionDetail>) {
 }
 async function open(page: Page, name: string, authenticate = true) {
     if (authenticate) await login(page);
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("에이전트");
     await page.getByRole("button", { name: "워크플로우", exact: true }).click();
     await page.locator(".def-list").getByRole("button", { name: new RegExp(name) }).click();
@@ -31,15 +31,17 @@ test("저장된 수정본과 현재 번들을 비교하고 선택 필드만 적�
     await expect(comparison(page).getByLabel("본문 현재 번들 기본값", { exact: true })).toHaveText(before.baseline_body!);
     await expect(comparison(page).locator("script")).toHaveCount(0);
     await expect(comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true })).toBeDisabled();
-    await comparison(page).getByLabel("본문 기본값 적용", { exact: true }).check();
+    const selector = comparison(page).getByRole("combobox", { name: "본문 기본값 적용", exact: true });
+    expect((await selector.boundingBox())!.width).toBeGreaterThanOrEqual(32);
+    await selectChoice(comparison(page).getByLabel("본문 기본값 적용", { exact: true }), "true");
     await comparison(page).getByRole("button", { name: "비교 취소", exact: true }).click();
     expect(await read()).toEqual(before);
     await expect(body).toHaveValue("아직 저장하지 않은 초안");
     await comparison(page).getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
-    await comparison(page).getByLabel("이름 기본값 적용", { exact: true }).check();
-    await comparison(page).getByLabel("설명 기본값 적용", { exact: true }).check();
+    await selectChoice(comparison(page).getByLabel("이름 기본값 적용", { exact: true }), "true");
+    await selectChoice(comparison(page).getByLabel("설명 기본값 적용", { exact: true }), "true");
     await comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
-    await expect(comparison(page).getByRole("status")).toContainText("선택한 기본값 적용됨");
+    await expect(comparison(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("선택한 기본값 적용됨");
     const restored = await read();
     expect(restored.name).toBe(before.baseline_name);
     expect(restored.description).toBe(before.baseline_description);
@@ -56,14 +58,14 @@ test("저장된 수정본과 현재 번들을 비교하고 선택 필드만 적�
     // 본문만 선택해도 미저장 본문은 별도 초안으로 남는다.
     await body.fill("복원과 별개로 보존할 본문");
     await comparison(page).getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
-    await comparison(page).getByLabel("본문 기본값 적용", { exact: true }).check();
+    await selectChoice(comparison(page).getByLabel("본문 기본값 적용", { exact: true }), "true");
     await comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
-    await expect(comparison(page).getByRole("status")).toContainText("선택한 기본값 적용됨");
+    await expect(comparison(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("선택한 기본값 적용됨");
     expect((await read()).body).toBe(before.baseline_body);
     await expect(body).toHaveValue("복원과 별개로 보존할 본문");
     await comparison(page).getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
-    await expect(comparison(page).getByLabel("이름 기본값 적용", { exact: true })).toBeEnabled();
-    await expect(comparison(page).getByLabel("본문 기본값 적용", { exact: true })).toBeEnabled();
+    await expect(comparison(page).getByRole("combobox", { name: "이름 기본값 적용", exact: true })).toBeEnabled();
+    await expect(comparison(page).getByRole("combobox", { name: "본문 기본값 적용", exact: true })).toBeEnabled();
     await comparison(page).getByRole("button", { name: "비교한 revision으로 초안 저장 준비", exact: true }).click();
     await page.locator(".def-editor").getByRole("button", { name: "저장", exact: true }).click();
     await expect(page.locator(".def-editor").getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
@@ -76,7 +78,7 @@ test("비교 뒤 revision과 번들 metadata가 바뀌면 적용을 거절하고
     const body = page.getByLabel("정의 본문", { exact: true });
     await body.fill("경합 중 보존할 초안");
     await comparison(page).getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
-    await comparison(page).getByLabel("본문 기본값 적용", { exact: true }).check();
+    await selectChoice(comparison(page).getByLabel("본문 기본값 적용", { exact: true }), "true");
     const concurrent = await edit({ body: "다른 기기의 새 수정" });
     await comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
     await expect(comparison(page).getByRole("alert")).toContainText("다시 비교");
@@ -91,18 +93,18 @@ test("비교 뒤 revision과 번들 metadata가 바뀌면 적용을 거절하고
         await route.fulfill({ response, json: { ...data, baseline_name: "이전 번들 이름" } });
     });
     await comparison(page).getByRole("button", { name: "변경된 값 다시 비교", exact: true }).click();
-    await expect(comparison(page).getByLabel("본문 기본값 적용", { exact: true })).not.toBeChecked();
+    await expect(comparison(page).getByRole("combobox", { name: "본문 기본값 적용", exact: true })).toHaveAttribute("data-selected-value", "false");
     await expect(comparison(page).getByLabel("이름 현재 번들 기본값", { exact: true })).toHaveText("이전 번들 이름");
-    await comparison(page).getByLabel("본문 기본값 적용", { exact: true }).check();
+    await selectChoice(comparison(page).getByLabel("본문 기본값 적용", { exact: true }), "true");
     await comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
     await expect(comparison(page).getByRole("alert")).toContainText("번들 기본값이 변경");
     expect(await read()).toEqual(concurrent);
     oldBundle = false;
     await comparison(page).getByRole("button", { name: "변경된 값 다시 비교", exact: true }).click();
-    await expect(comparison(page).getByLabel("본문 기본값 적용", { exact: true })).not.toBeChecked();
-    await comparison(page).getByLabel("본문 기본값 적용", { exact: true }).check();
+    await expect(comparison(page).getByRole("combobox", { name: "본문 기본값 적용", exact: true })).toHaveAttribute("data-selected-value", "false");
+    await selectChoice(comparison(page).getByLabel("본문 기본값 적용", { exact: true }), "true");
     await comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
-    await expect(comparison(page).getByRole("status")).toContainText("선택한 기본값 적용됨");
+    await expect(comparison(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("선택한 기본값 적용됨");
     await expect(body).toHaveValue("경합 중 보존할 초안");
 });
 
@@ -117,7 +119,7 @@ test("응답 유실 후 reload해도 같은 본문·키의 receipt를 확인하�
         else await route.continue();
     });
     await comparison(page).getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
-    await comparison(page).getByLabel("본문 기본값 적용", { exact: true }).check();
+    await selectChoice(comparison(page).getByLabel("본문 기본값 적용", { exact: true }), "true");
     await comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
     await expect(comparison(page).getByRole("button", { name: "원래 복원 요청 결과 확인", exact: true })).toBeVisible();
     await expect(page.locator(".def-editor").getByRole("button", { name: "저장", exact: true })).toBeDisabled();
@@ -137,7 +139,7 @@ test("응답 유실 후 reload해도 같은 본문·키의 receipt를 확인하�
     await expect(recover).toBeEnabled();
     expect(requests).toHaveLength(1);
     await comparison(page).getByRole("button", { name: "원래 복원 요청 결과 확인", exact: true }).click();
-    await expect(comparison(page).getByRole("status")).toContainText("선택한 기본값 적용됨");
+    await expect(comparison(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("선택한 기본값 적용됨");
     expect(requests).toHaveLength(2);
     expect(requests[0]!.key).toBeTruthy();
     expect(requests[1]).toEqual(requests[0]);
@@ -151,7 +153,7 @@ test("오프라인은 정의 저장과 선택 적용을 막고 복구 뒤에도 
     const body = page.getByLabel("정의 본문", { exact: true });
     await body.fill("오프라인에서도 보존할 정의 초안");
     await comparison(page).getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
-    await comparison(page).getByLabel("본문 기본값 적용", { exact: true }).check();
+    await selectChoice(comparison(page).getByLabel("본문 기본값 적용", { exact: true }), "true");
     const apply = comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true });
     const save = page.locator(".def-editor").getByRole("button", { name: "저장", exact: true });
     const mutations: string[] = [];
@@ -177,9 +179,9 @@ test("오프라인은 정의 저장과 선택 적용을 막고 복구 뒤에도 
     expect(mutations).toEqual([]);
     expect(await read()).toEqual(before);
     await expect(body).toHaveValue("오프라인에서 더 편집한 정의 초안");
-    await expect(comparison(page).getByLabel("본문 기본값 적용", { exact: true })).toBeChecked();
+    await expect(comparison(page).getByRole("combobox", { name: "본문 기본값 적용", exact: true })).toHaveAttribute("data-selected-value", "true");
     await apply.click();
-    await expect(comparison(page).getByRole("status")).toContainText("선택한 기본값 적용됨");
+    await expect(comparison(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("선택한 기본값 적용됨");
     const restored = await read();
     expect(restored.body).toBe(before.baseline_body);
     expect(restored.revision).toBe(before.revision + 1);

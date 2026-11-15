@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { apiCall, ensureProjects, login, openDetails } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, openTool } from "./helpers";
 
 test("제어문자를 해석한 화면을 읽기 전용으로 캡처하고 동결된 사본을 다운로드한다", async ({ page }) => {
     const { a } = await ensureProjects();
@@ -9,6 +9,7 @@ test("제어문자를 해석한 화면을 읽기 전용으로 캡처하고 동�
     const terminal = await apiCall<{ id: string }>("POST", `/projects/${a.id}/terminals`, { name });
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
+    await openTool(page, "터미널");
     const list = page.getByTestId("terminal-list");
     await openDetails(list);
     await list.getByRole("button", { name, exact: true }).click();

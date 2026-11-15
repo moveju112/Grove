@@ -1,8 +1,13 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
+import { Button as GroveButton } from "../../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../../api/client";
 import type { DefinitionDetail } from "../../api/generated";
 import { FIELDS, LABELS, loadAttempt, recoveryKey, restoreBody, type Attempt, type Field } from "./model";
 import { ServerActionButton } from "../pwa/ServerActionButton";
+import { BooleanSelect } from "../BooleanSelect";
+import { HelpTip, SentenceText } from "../HelpTip";
 import "./definition-updates.css";
 
 type Review =
@@ -79,44 +84,47 @@ export function DefinitionUpdates({ definition, draft, disabled, onLocked, onApp
     const snapshot = review.kind === "ready" ? review.definition : "attempt" in review ? review.attempt.definition : null;
     const selected = review.kind === "ready" ? review.fields : "attempt" in review ? review.attempt.fields : [];
     return <section aria-label="정의 기본값 비교">
-        <button className="ghost" disabled={disabled || locked || review.kind === "loading"} onClick={() => void compare()}>현재 번들 기본값과 비교</button>
+        <GroveButton className="ghost" disabled={disabled || locked || review.kind === "loading"} onClick={() => void compare()}>현재 번들 기본값과 비교</GroveButton>
         {review.kind !== "closed" && <>
-            <p>명시적으로 선택한 필드의 override만 지워 현재 번들 기본값을 사용해. 선택하지 않은 값·활성 상태·미저장 초안은 유지돼.</p>
+            <GroveText as="p" display="block" type="inherit" color="inherit" className="inline">선택한 필드만 복원해. <HelpTip label="정의 복원 도움말">
+                <SentenceText text="선택한 필드의 override만 지워 현재 번들 기본값을 사용해. 선택하지 않은 값·활성 상태·미저장 초안은 유지돼." />
+            </HelpTip></GroveText>
             {snapshot && <>
-                <p>비교 revision {snapshot.revision} · {snapshot.enabled ? "활성" : "비활성"} · 원문 SHA-256 <code>{snapshot.baseline_sha256}</code></p>
-                <div className="definition-updates-table"><table>
-                    <thead><tr><th>선택</th><th>필드</th><th>현재 적용값</th><th>현재 번들 기본값</th></tr></thead>
-                    <tbody>{FIELDS.map((field) => <tr key={field} data-testid={`definition-compare-${field}`}>
-                        <td><input type="checkbox" aria-label={`${LABELS[field]} 기본값 적용`} checked={selected.includes(field)}
+                <GroveText as="p" display="block" type="inherit" color="inherit">비교 revision {snapshot.revision} · {snapshot.enabled ? "활성" : "비활성"} · 원문 SHA-256 <code>{snapshot.baseline_sha256}</code></GroveText>
+                <div className="definition-updates-table"><Table density="compact">
+                    <TableHeader><TableRow isHeaderRow><TableHeaderCell scope="col">선택</TableHeaderCell><TableHeaderCell scope="col">필드</TableHeaderCell><TableHeaderCell scope="col">현재 적용값</TableHeaderCell><TableHeaderCell scope="col">현재 번들 기본값</TableHeaderCell></TableRow></TableHeader>
+                    <TableBody>{FIELDS.map((field) => <TableRow key={field} data-testid={`definition-compare-${field}`}>
+                        <TableCell><BooleanSelect label={`${LABELS[field]} 기본값 적용`} hideLabel value={selected.includes(field)}
                             disabled={disabled || review.kind !== "ready"}
-                            onChange={(event) => {
-                                if (review.kind === "ready") setReview({ ...review, fields: event.target.checked
+                            trueLabel="기본값 적용" falseLabel="현재 값 유지"
+                            onChange={(value) => {
+                                if (review.kind === "ready") setReview({ ...review, fields: value
                                     ? FIELDS.filter((f) => review.fields.includes(f) || f === field) : review.fields.filter((f) => f !== field) });
-                            }} /></td>
-                        <th>{LABELS[field]}</th>
-                        <td><pre aria-label={`${LABELS[field]} 현재 적용값`}>{snapshot[field]}</pre></td>
-                        <td><pre aria-label={`${LABELS[field]} 현재 번들 기본값`}>{snapshot[`baseline_${field}`]}</pre></td>
-                    </tr>)}</tbody>
-                </table></div>
+                            }} /></TableCell>
+                        <TableHeaderCell scope="row">{LABELS[field]}</TableHeaderCell>
+                        <TableCell><pre aria-label={`${LABELS[field]} 현재 적용값`}>{snapshot[field]}</pre></TableCell>
+                        <TableCell><pre aria-label={`${LABELS[field]} 현재 번들 기본값`}>{snapshot[`baseline_${field}`]}</pre></TableCell>
+                    </TableRow>)}</TableBody>
+                </Table></div>
             </>}
-            {draft !== undefined && <div><p className="warn">미저장 본문은 복원 후에도 초안으로 남고 자동 저장되지 않아.</p><pre aria-label="보존할 미저장 초안">{draft}</pre></div>}
+            {draft !== undefined && <div><GroveText as="p" display="block" type="inherit" color="warning">미저장 본문은 복원 후에도 초안으로 남고 자동 저장되지 않아.</GroveText><pre aria-label="보존할 미저장 초안">{draft}</pre></div>}
             {review.kind === "ready" && <ServerActionButton disabled={disabled || !review.fields.length} onClick={() => void restore({
                 key: newKey(), definition: review.definition, fields: review.fields,
             })}>선택한 필드만 기본값 적용</ServerActionButton>}
             {review.kind === "ready" && draft !== undefined && <>
-                <p>초안을 저장하면 비교한 현재 본문을 초안으로 바꿔. 저장 준비만으로 서버 값은 바뀌지 않아.</p>
-                <button disabled={disabled} onClick={() => onDraftReviewed(review.definition)}>비교한 revision으로 초안 저장 준비</button>
+                <GroveText as="p" display="block" type="inherit" color="inherit">실제 저장 시 비교한 본문이 초안으로 교체돼.</GroveText>
+                <GroveButton disabled={disabled} onClick={() => onDraftReviewed(review.definition)}>비교한 revision으로 초안 저장 준비</GroveButton>
             </>}
-            {review.kind === "loading" && <p role="status">비교하는 중…</p>}
-            {review.kind === "sending" && <p role="status">선택한 기본값을 적용하는 중…</p>}
-            {(review.kind === "stale" || review.kind === "error" || review.kind === "uncertain") && <p className="err" role="alert">{review.message}</p>}
-            {review.kind === "stale" && <button disabled={disabled} onClick={() => void compare()}>변경된 값 다시 비교</button>}
+            {review.kind === "loading" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">비교하는 중…</GroveText>}
+            {review.kind === "sending" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">선택한 기본값을 적용하는 중…</GroveText>}
+            {(review.kind === "stale" || review.kind === "error" || review.kind === "uncertain") && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{review.message}</GroveText>}
+            {review.kind === "stale" && <GroveButton disabled={disabled} onClick={() => void compare()}>변경된 값 다시 비교</GroveButton>}
             {review.kind === "uncertain" && <>
-                <p>응답이 유실돼도 적용됐을 수 있어. 새 복원 대신 원래 요청의 결과만 확인해. 화면을 다시 열어도 복구 요청은 남아.</p>
+                <GroveText as="p" display="block" type="inherit" color="inherit">이미 적용됐을 수 있으니 원래 요청의 결과만 확인해.</GroveText>
                 <ServerActionButton disabled={disabled} onClick={() => void restore(review.attempt)}>원래 복원 요청 결과 확인</ServerActionButton>
             </>}
-            {review.kind === "saved" && <p role="status">선택한 기본값 적용됨 · 미저장 초안은 유지했어.</p>}
-            {!locked && <button className="ghost" disabled={review.kind === "loading"} onClick={() => setReview({ kind: "closed" })}>비교 취소</button>}
+            {review.kind === "saved" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">선택한 기본값 적용됨 · 미저장 초안은 유지했어.</GroveText>}
+            {!locked && <GroveButton className="ghost" disabled={review.kind === "loading"} onClick={() => setReview({ kind: "closed" })}>비교 취소</GroveButton>}
         </>}
     </section>;
 }

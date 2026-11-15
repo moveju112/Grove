@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { dirname, join } from "node:path";
-import { apiCall, composerOption, ensureProjects, login, openDetails, state } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, openSettings, selectChoice, state } from "./helpers";
 
 type SessionPage = { items: { id: string; title: string }[] };
 
@@ -28,7 +28,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             const { a, b } = await ensureProjects();
             await login(page);
             // 전역 설정에는 프로젝트 맥락이 없다.
-            await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+            await openSettings(page);
             const entry = page.getByRole("button", { name: "만들기", exact: true });
             await entry.focus();
             await page.keyboard.press("Enter");
@@ -41,7 +41,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
                 activeTag: document.activeElement?.tagName, activeLabel: document.activeElement?.getAttribute("aria-label"),
             }));
             expect(await dialog.evaluate((node) => node.contains(document.activeElement)), JSON.stringify(focusState)).toBe(true);
-            const firstProject = dialog.getByRole("button", { name: a.name, exact: true });
+            const firstProject = dialog.getByRole("list", { name: "대화 프로젝트 선택" }).getByRole("button").first();
             await expect(firstProject).toBeFocused();
             await page.keyboard.press("Shift+Tab");
             await expect(dialog.getByRole("button", { name: "취소", exact: true })).toBeFocused();
@@ -142,7 +142,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             const dialog = page.getByRole("dialog", { name: "프로젝트 추가", exact: true });
             const path = join(dirname(state().projA), `create-entry-${viewport.width}-${Date.now()}`);
             await dialog.getByLabel("폴더 경로").fill(path);
-            await dialog.getByLabel("폴더가 없으면 마지막 폴더를 새로 만들기").check();
+            await selectChoice(dialog.getByLabel("폴더가 없으면 마지막 폴더를 새로 만들기"), "true");
             await dialog.getByRole("button", { name: "저장소에서 clone", exact: true }).click();
             await dialog.getByLabel("clone할 저장소").fill("owner/repo");
             await dialog.getByLabel("clone 대상 폴더").fill(dirname(path));

@@ -59,7 +59,7 @@ for (const width of [1400, 390]) {
                 const form = page.getByRole("form", { name: "페어링 등록" });
                 await expect(page.getByTestId("pwa-lifecycle")).toContainText("서버에 연결할 수 없습니다");
                 await expect(form).toBeVisible();
-                const initialLink = await form.getByLabel("페어링 링크", { exact: true }).inputValue();
+                const initialLink = await form.getByRole("textbox", { name: "페어링 링크", exact: true }).inputValue();
                 expect(new URL(initialLink).hash === "#pairing=" + pair.code).toBe(true);
                 await expect(form.getByRole("button", { name: "연결", exact: true })).toBeDisabled();
                 await expect(page.getByTestId("auth-recovery")).toHaveCount(0);

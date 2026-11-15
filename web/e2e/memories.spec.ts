@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProfile, login, script, sessionView, state } from "./helpers";
+import { apiCall, ensureProfile, login, openSettings, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Memory = { id: string; body: string; revision: number; project_id: string | null; source: string; source_session_id: string | null };
@@ -16,7 +16,7 @@ async function cleanup(prefix: string, project?: string) {
 }
 async function openGlobal(page: Page) {
     await login(page);
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").last().fill("장기 기억");
     return page.getByTestId("memories-panel").last();
 }
@@ -36,16 +36,16 @@ test("직접 확인한 프로젝트·전역 기억의 출처와 다음 턴 입�
         await sessionView(page, session.id).getByRole("button", { name: "대화 설정" }).click();
         await page.getByLabel("설정 검색").last().fill("장기 기억");
         const panel = page.getByTestId("memories-panel").last();
-        await expect(panel).toContainText("임시 작업 결과를 자동 저장하지 않습니다");
+        await expect(panel).toContainText("다음 요청부터 모델에 전달되니 비밀정보는 넣지 마세요.");
         await expect(panel).toContainText("과거 모델 요청·대화 사본·백업");
-        await expect(panel.getByLabel("기억 적용 범위")).toHaveValue("project");
+        await expect(panel.getByRole("combobox", { name: "기억 적용 범위" })).toHaveAttribute("data-selected-value", "project");
         const local = `${prefix} explicit local preference`;
         const global = `${prefix} explicit global preference`;
         await panel.getByLabel("확인한 기억 내용").fill(local);
         await panel.getByRole("button", { name: "확인하고 기억 저장" }).click();
         await expect(panel.getByTestId("memory-row").filter({ hasText: local })).toContainText(`프로젝트 “${project.name}”`);
         await expect(panel.getByTestId("memory-row").filter({ hasText: local })).toContainText(session.id);
-        await panel.getByLabel("기억 적용 범위").selectOption("global");
+        await selectChoice(panel.getByLabel("기억 적용 범위"), "global");
         await panel.getByLabel("확인한 기억 내용").fill(global);
         await panel.getByRole("button", { name: "확인하고 기억 저장" }).click();
         await expect(panel.getByTestId("memory-row").filter({ hasText: global })).toContainText("전역(모든 프로젝트)");
@@ -61,7 +61,7 @@ test("직접 확인한 프로젝트·전역 기억의 출처와 다음 턴 입�
         expect(turn.definition.memories.some((m) => m.sha256 === createHash("sha256").update(local).digest("hex"))).toBe(true);
         expect(turn.definition.memories.every((m) => m.body === undefined)).toBe(true);
         await page.reload();
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await openSettings(page);
         await page.getByLabel("설정 검색").last().fill("장기 기억");
         await expect(page.getByTestId("memories-panel").last().getByTestId("memory-row").filter({ hasText: global })).toContainText("사용자 직접 입력");
     } finally {
@@ -153,7 +153,7 @@ test("이전 서버에서는 지원하지 않는 장기 기억 편집·자동 �
     await page.locator("html[data-hydrated=true]").waitFor({ state: "attached" });
     await page.getByLabel("토큰").fill(state().token);
     await page.getByRole("button", { name: "로그인" }).click();
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").last().fill("장기 기억");
     await expect(page.getByTestId("memories-panel")).toHaveCount(0);
     await expect(page.locator(".settings-body").last()).toContainText("검색 결과 0개");

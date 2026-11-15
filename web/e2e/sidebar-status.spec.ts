@@ -26,6 +26,7 @@ test("사이드바 핀·읽음은 다른 기기와 새로고침에 유지되고 
         await pin.press("Enter");
         await expect(second.getByRole("button", { name: "세션 고정 해제", exact: true })).toHaveAttribute("aria-pressed", "true");
         await expect(project(page, a.id).getByTestId("sidebar-session").first()).toHaveAttribute("data-session", session.id);
+        await openDetails(first.locator(".sidebar-session-actions"));
         await first.getByRole("button", { name: "읽음 표시", exact: true }).click();
         await expect(second.locator(".sidebar-unread")).toHaveCount(0);
         await page.reload();
@@ -41,6 +42,7 @@ test("사이드바 핀·읽음은 다른 기기와 새로고침에 유지되고 
         await expect(first.locator(".sidebar-unread")).toHaveCount(0);
         await expect(page.locator(".recent").getByTestId("recent-item").filter({ hasText: title })).toBeVisible();
         await second.getByRole("button", { name: "세션 고정 해제", exact: true }).click();
+        await openDetails(first.locator(".sidebar-session-actions"));
         await expect(first.getByRole("button", { name: "세션 고정", exact: true })).toHaveAttribute("aria-pressed", "false");
     } finally {
         await context.close();

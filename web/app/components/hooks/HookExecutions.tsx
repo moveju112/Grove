@@ -1,3 +1,6 @@
+import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { useState } from "react";
 import { DetailDialog } from "../ui/Controls";
 import { api } from "../../api/client";
@@ -25,14 +28,14 @@ export function HookExecutions({ projectId }: { projectId?: string }) {
         }
     };
     return <section className="stack" data-testid="hook-executions" aria-label="hook 실행 요청">
-        <h3>hook 실행 요청</h3>
-        <p className="scope">최근 100개 · {projectId ? "현재 프로젝트" : "모든 프로젝트"} · 이벤트마다 개별 승인</p>
-        <button onClick={query.reload}>hook 실행 상태 새로고침</button>
-        {query.loading && <p role="status">실행 요청 불러오는 중</p>}
-        {(query.error || error) && <p role="alert">{error ?? "hook 실행 요청을 조회하지 못했습니다"}</p>}
-        {query.data?.length === 0 && <p>접수된 hook 실행 요청이 없습니다.</p>}
+        <GroveHeading level={3} color="inherit">hook 실행 요청</GroveHeading>
+        <GroveText as="p" display="block" type="inherit" color="inherit" className="scope">최근 100개 · {projectId ? "현재 프로젝트" : "모든 프로젝트"} · 이벤트마다 개별 승인</GroveText>
+        <GroveButton onClick={query.reload}>hook 실행 상태 새로고침</GroveButton>
+        {query.loading && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">실행 요청 불러오는 중</GroveText>}
+        {(query.error || error) && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">{error ?? "hook 실행 요청을 조회하지 못했습니다"}</GroveText>}
+        {query.data?.length === 0 && <GroveText as="p" display="block" type="inherit" color="inherit">접수된 hook 실행 요청이 없습니다.</GroveText>}
         {query.data?.map((call) => <article key={call.id} data-testid="hook-execution" data-call-id={call.id}>
-            <p>대화 <code>{call.session_id}</code> · {statusLabels[call.status] ?? call.status}</p>
+            <GroveText as="p" display="block" type="inherit" color="inherit">대화 <code>{call.session_id}</code> · {statusLabels[call.status] ?? call.status}</GroveText>
             <DetailDialog label="승인 계획" title="승인 계획"><pre>{JSON.stringify(call.target, null, 2)}</pre></DetailDialog>
             {call.status === "pending_approval" && <ApprovalCard call={call} effect="execute" choices={["approve", "deny"]}
                 onDecision={async (request) => {
@@ -47,8 +50,8 @@ export function HookExecutions({ projectId }: { projectId?: string }) {
                     query.reload();
                 }} />}
             {["approved", "running"].includes(call.status) &&
-                <button disabled={busy !== null} onClick={() => void cancel(call)}>hook 실행 취소</button>}
-            {call.status === "unknown" && <p role="alert">결과 불명 · 자동 반복하지 않습니다. 해당 대화의 결과 불명 카드에서 관찰·검토를 기록하세요.</p>}
+                <GroveButton disabled={busy !== null} onClick={() => void cancel(call)}>hook 실행 취소</GroveButton>}
+            {call.status === "unknown" && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">결과 불명 · 자동 반복하지 않습니다. 해당 대화의 결과 불명 카드에서 관찰·검토를 기록하세요.</GroveText>}
             {!["pending_approval", "approved", "running"].includes(call.status) && <pre>{JSON.stringify(call.result, null, 2)}</pre>}
         </article>)}
     </section>;

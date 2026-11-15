@@ -78,7 +78,7 @@ c.close()
             expect(sent).toHaveLength(2);
             expect(sent[1]).toEqual(sent[0]);
             if (phase === "commit") {
-                const status = operation === "save" ? files.getByRole("status") : files.getByRole("alert");
+                const status = operation === "save" ? files.getByRole("status").filter({ hasText: /\S/ }) : files.getByRole("alert");
                 await expect(status).toContainText("파일 작업 결과를 확정하지 못했습니다");
                 await expect(retry).toBeVisible();
                 await expect(files.getByRole("button", { name: "새 폴더", exact: true })).toBeDisabled();
@@ -86,7 +86,7 @@ c.close()
                 await expect(retry).toBeHidden();
             } else {
                 await expect(retry).toBeHidden();
-                if (operation === "save") await expect(files.getByRole("status")).toHaveText("저장됨");
+                if (operation === "save") await expect(files.getByRole("status").filter({ hasText: /\S/ })).toHaveText("저장됨");
             }
             await expect(files.getByRole("button", { name: "새 폴더", exact: true })).toBeEnabled();
             if (operation === "save") {

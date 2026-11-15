@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProjects, login, removeProfiles } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, removeProfiles, selectChoice } from "./helpers";
 
 // 서버에 설치된 CLI 백엔드(Claude Code·Codex) 프로필을 설정 화면에서 만든다. endpoint·API 키 입력이 없고 권한 제한을 안내한다.
 test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만들 수 있고 endpoint·키 입력은 숨겨진다", async ({ page }) => {
@@ -7,7 +7,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
     await page.getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("모델 프로필");
     await page.locator(".profile-create > summary").click();
-    await page.getByLabel("protocol").selectOption("claude_code");
+    await selectChoice(page.getByLabel("protocol"), "claude_code");
     await expect(page.getByLabel("Base URL")).toHaveCount(0);
     await expect(page.getByLabel("API 키")).toHaveCount(0);
     await expect(page.getByLabel("모델", { exact: true })).toHaveValue("haiku");
@@ -21,7 +21,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
         const p = list.find((x) => x.name === name)!;
         expect([p.protocol, p.base_url, p.model]).toEqual(["claude_code", "", "haiku"]);
         // Codex로 바꾸면 저가형 기본 모델 gpt-6-luna
-        await page.getByLabel("protocol").selectOption("codex_cli");
+        await selectChoice(page.getByLabel("protocol"), "codex_cli");
         await expect(page.getByLabel("모델", { exact: true })).toHaveValue("gpt-6-luna");
     } finally {
         await removeProfiles((n) => n === name);

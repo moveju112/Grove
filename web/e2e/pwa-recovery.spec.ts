@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, composerOption, ensureProjects, login, openDetails, sessionView, state, useWorkspaces } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, openTool, sessionView, state, useWorkspaces } from "./helpers";
 
 for (const width of [1400, 390]) {
     test.describe(`PWA 생성 진입 ${width}px`, () => {
@@ -17,7 +17,8 @@ for (const width of [1400, 390]) {
             await composerOption(project, "보내기 방식", "save");
             const text = `PWA 생성 초안 ${width} ${Date.now()}`;
             await project.getByLabel("메시지 입력").fill(text);
-            await openDetails(project.getByTestId("terminal-list"));
+            await openTool(project, "터미널");
+            await page.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
             const mutations: string[] = [];
             page.on("request", (request) => {
                 if (request.method() !== "GET" && /\/api\/v1\/projects(?:$|\/[^/]+\/(?:sessions|terminals|worktrees)$)/.test(request.url())) mutations.push(request.url());
@@ -35,8 +36,10 @@ for (const width of [1400, 390]) {
                 await expect(project.getByLabel("메시지 입력")).toHaveValue(text);
                 await project.getByLabel("메시지 입력").fill(text + " · 오프라인 수정");
                 await expect(project.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
+                await openTool(project, "터미널");
                 await expect(project.getByRole("button", { name: "새 터미널", exact: true })).toBeDisabled();
                 await expect(project.getByRole("button", { name: "새 터미널", exact: true })).toHaveAttribute("title", /오프라인/);
+                await page.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
                 await entry.click();
                 await choose.getByRole("button", { name: "프로젝트 추가", exact: true }).click();
                 const add = page.getByRole("dialog", { name: "프로젝트 추가", exact: true });
@@ -47,6 +50,7 @@ for (const width of [1400, 390]) {
                 await add.getByLabel("clone할 저장소").fill("fixture/not-sent");
                 await add.getByLabel("clone 대상 폴더").fill("/fixture/not-sent");
                 await expect(add.getByRole("button", { name: "clone 후 프로젝트로 추가" })).toBeDisabled();
+                await page.getByRole("dialog", { name: "저장소에서 clone", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
                 await add.getByRole("button", { name: "취소", exact: true }).click();
                 await expect(add).toHaveCount(0);
                 expect(mutations).toEqual([]);
@@ -127,7 +131,7 @@ test("오프라인 cold start는 인증 전 초안을 숨기고 삭제 없이 �
         await page.context().setOffline(true);
         await page.reload();
         await expect(page.getByTestId("auth-recovery")).toBeVisible();
-        await expect(page.getByTestId("auth-recovery")).toContainText("기존 초안을 삭제하지 않았습니다");
+        await expect(page.getByTestId("auth-recovery")).toContainText("기존 초안은 보존됐으며");
         await expect(page.locator("body")).not.toContainText(privateText);
         await expect(page.getByLabel("메시지 입력")).toHaveCount(0);
         await expect(page.getByRole("button", { name: "연결·로그인 다시 확인" })).toBeDisabled();
@@ -174,6 +178,7 @@ test("실제 프로젝트의 worktree 생성은 offline·protocol 불일치에�
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
     const panel = page.getByTestId("worktrees-panel");
+    await openTool(page, "워크스페이스");
     await openDetails(panel);
     await panel.getByLabel("worktree 이름").fill("blocked-offline");
     const create = panel.getByRole("button", { name: "만들기", exact: true });

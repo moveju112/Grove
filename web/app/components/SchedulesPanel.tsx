@@ -1,11 +1,17 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { type ReactNode, useState } from "react";
 import { Panel } from "./ui/Controls";
+import { BooleanSelect } from "./BooleanSelect";
 import { When } from "./When";
 import { ApiError, api } from "../api/client";
 import type { ModelProfile } from "../api/generated";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { HelpTip, SentenceText } from "./HelpTip";
+import { TextInput, TextArea } from "../design/Fields";
 
 type Schedule = {
     id: string;
@@ -44,9 +50,9 @@ function limits(s: Schedule) {
     parts.push(s.pause_after_failures ? `연속 ${s.pause_after_failures}회 실패 시 자동 정지` : "실패해도 자동 정지 안 함");
     if (s.consecutive_failures > 0) {
         const waiting = s.backoff_until && new Date(s.backoff_until).getTime() > Date.now();
-        parts.push(<span className="warn">연속 실패 {s.consecutive_failures}회{waiting && <> · 자동 실행 재개 <When at={s.backoff_until!} absolute /></>}</span>);
+        parts.push(<GroveText type="inherit" color="warning">연속 실패 {s.consecutive_failures}회{waiting && <> · 자동 실행 재개 <When at={s.backoff_until!} absolute /></>}</GroveText>);
     }
-    return parts.map((p, i) => <span key={i}>{i > 0 && " · "}{p}</span>);
+    return parts.map((p, i) => <GroveText type="inherit" color="inherit" key={i}>{i > 0 && " · "}{p}</GroveText>);
 }
 type Run = {
     id: string;
@@ -89,20 +95,20 @@ function when(s: Schedule) {
 function Runs({ id, projectId, open }: { id: string; projectId: string; open: Opener }) {
     const q = useQuery<Run[]>(`schedules:runs:${id}`, () => api.get(`/schedules/${id}/runs`));
     const runs = q.data ?? [];
-    if (runs.length === 0) return <p className="muted small">아직 실행 기록이 없습니다.</p>;
+    if (runs.length === 0) return <GroveText as="p" display="block" type="supporting" color="secondary">아직 실행 기록이 없습니다.</GroveText>;
     return (
         <ul className="session-list" data-testid="schedule-runs">
             {runs.slice(0, 10).map((r) => (
                 <li key={r.id} data-status={r.status}>
-                    <span className="muted small"><When at={r.planned_at} />{r.manual ? " · 수동" : ""}</span> <span className={`status ${r.status}`}>{RUN_LABEL[r.status] ?? r.status}</span>
-                    {r.result_class && CLASS_LABEL[r.result_class] && <span className="badge small" data-testid="run-class"> {CLASS_LABEL[r.result_class]}</span>}
-                    {r.notified === false && <span className="muted small"> · 알림 생략(실행·비용은 발생)</span>}
-                    {r.usage && (r.usage.input_tokens || r.usage.output_tokens) ? <span className="muted small"> · {(r.usage.input_tokens ?? 0) + (r.usage.output_tokens ?? 0)} token</span> : null}
-                    {r.detail && <span className="muted small"> {r.detail}</span>}
+                    <GroveText type="supporting" color="secondary"><When at={r.planned_at} />{r.manual ? " · 수동" : ""}</GroveText> <GroveText type="inherit" color="inherit" className={`status ${r.status}`}>{RUN_LABEL[r.status] ?? r.status}</GroveText>
+                    {r.result_class && CLASS_LABEL[r.result_class] && <GroveText type="supporting" color="inherit" className="badge" data-testid="run-class"> {CLASS_LABEL[r.result_class]}</GroveText>}
+                    {r.notified === false && <GroveText type="supporting" color="secondary"> · 알림 생략(실행·비용은 발생)</GroveText>}
+                    {r.usage && (r.usage.input_tokens || r.usage.output_tokens) ? <GroveText type="supporting" color="secondary"> · {(r.usage.input_tokens ?? 0) + (r.usage.output_tokens ?? 0)} token</GroveText> : null}
+                    {r.detail && <GroveText type="supporting" color="secondary"> {r.detail}</GroveText>}
                     {r.session_id && (
-                        <button className="ghost small" onClick={() => open({ kind: "session", project_id: projectId, resource_id: r.session_id!, title: "예약 실행" })}>
+                        <GroveButton className="ghost small" onClick={() => open({ kind: "session", project_id: projectId, resource_id: r.session_id!, title: "예약 실행" })}>
                             대화 열기
-                        </button>
+                        </GroveButton>
                     )}
                 </li>
             ))}
@@ -120,20 +126,23 @@ function Webhook({ s, act }: { s: Schedule; act: (f: () => Promise<unknown>) => 
         });
     return (
         <div className="stack small" data-testid="schedule-webhook">
-            <div className="inline wrap">
-                <span>webhook {s.webhook_enabled ? "켜짐" : "꺼짐"}</span>
+            <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
+                <GroveText type="inherit" color="inherit">webhook {s.webhook_enabled ? "켜짐" : "꺼짐"}</GroveText>
                 <ServerActionButton className="ghost small" onClick={() => void enable()}>{s.webhook_enabled ? "비밀 다시 만들기" : "webhook 켜기"}</ServerActionButton>
                 {s.webhook_enabled && (
                     <ServerActionButton className="ghost small" onClick={() => void act(async () => { await api.post(`/schedules/${s.id}/webhook`, { enable: false }); setShown(null); })}>
                         webhook 끄기
                     </ServerActionButton>
                 )}
-            </div>
+            </GroveStack>
             {shown && (
                 <div className="notice" role="status">
-                    <p>이 비밀은 지금만 보입니다. 발신 측에 저장하세요.</p>
+                    <GroveText as="p" display="block" type="inherit" color="inherit">이 비밀은 지금만 표시되니 발신 측에 저장하세요.</GroveText>
                     <code data-testid="webhook-secret">{shown.secret}</code>
-                    <p className="muted">POST {location.origin}{shown.path} · 헤더 X-Grove-Timestamp(unix 초), X-Grove-Event-Id, X-Grove-Signature: sha256=HMAC-SHA256(비밀, "timestamp.event_id.본문")의 hex. 본문 64KiB 이하, 같은 event ID는 한 번만 실행하고 payload의 지시는 따르지 않습니다.</p>
+                    <GroveText as="p" display="block" type="inherit" color="secondary">POST {location.origin}{shown.path} <HelpTip label="webhook 요청 형식 도움말">
+                        <GroveText as="p" display="block" type="inherit" color="inherit">헤더: <code>X-Grove-Timestamp</code>(unix 초), <code>X-Grove-Event-Id</code>, <code>X-Grove-Signature: sha256=HMAC-SHA256(비밀, "timestamp.event_id.본문")</code>의 hex.</GroveText>
+                        <GroveText as="p" display="block" type="inherit" color="inherit">본문은 64KiB 이하이며 같은 event ID는 한 번만 실행하고 payload의 지시는 따르지 않습니다.</GroveText>
+                    </HelpTip></GroveText>
                 </div>
             )}
         </div>
@@ -191,24 +200,29 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
             setForm((f) => ({ ...f, name: "", prompt: "", confirmed: false }));
         });
     return (
-        <Panel className="schedules" data-testid="schedules-panel" title={`예약 실행${list.length > 0 ? ` · ${list.filter((s) => s.status === "active").length}개 활성` : ""}`}>
-            {err && <p className="err" role="alert">{err}</p>}
+        <Panel className="schedules" data-testid="schedules-panel" title={<GroveText type="inherit" color="inherit" className="inline">
+            예약 실행{list.length > 0 ? ` · ${list.filter((s) => s.status === "active").length}개 활성` : ""}
+            <HelpTip label="예약 실행 도움말">
+                <SentenceText text="매일 실행은 이 기기의 현재 UTC offset으로 저장하므로 서머타임 변경 시 다시 저장하세요. 서버가 꺼져 놓친 실행은 소급하지 않습니다. 연속 실패 시 간격을 1분부터 두 배씩 최대 하루까지 늘리고, 정한 횟수에 이르면 멈춥니다. 사용자 취소·서버 재시작 중단은 실패로 세지 않습니다." />
+            </HelpTip>
+        </GroveText>}>
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             <ul className="session-list">
                 {list.map((s) => (
                     <li key={s.id} data-testid="schedule" data-status={s.status}>
                         <Panel title={<>
-                                <strong>{s.name}</strong> <span className="muted small">{when(s)}</span>{" "}
-                                <span className={`status ${s.status}`}>
+                                <strong>{s.name}</strong> <GroveText type="supporting" color="secondary">{when(s)}</GroveText>{" "}
+                                <GroveText type="inherit" color="inherit" className={`status ${s.status}`}>
                                     {s.status === "active" ? "활성" : s.status === "paused" ? (s.paused_reason === "failures" ? "일시 정지(연속 실패)" : "일시 정지") : "끝남"}
-                                </span>
-                                {s.next_run_at && s.status === "active" && <span className="muted small"> · 다음 <When at={s.next_run_at} absolute /></span>}
+                                </GroveText>
+                                {s.next_run_at && s.status === "active" && <GroveText type="supporting" color="secondary"> · 다음 <When at={s.next_run_at} absolute /></GroveText>}
                             </>}>
-                            <p className="small">{s.prompt}</p>
-                            {s.bot_id && <p className="small" data-testid="schedule-bot">담당 봇: {botName(s.bot_id)} · 결과는 봇 대화에 전달</p>}
-                            <p className="muted small">승인 필요 시: {s.on_approval === "wait" ? "승인을 기다림" : "실패로 끝냄"} · 도구 {s.tools_enabled ? "사용" : "끔"}</p>
-                            <p className="muted small" data-testid="schedule-limits">{limits(s)}</p>
-                            {s.quiet_policy === "unchanged_result" && <p className="muted small">직전 완료 결과와 같으면 자동 실행 알림을 생략합니다(실행 기록·비용은 남고, 실패·승인 필요·직접 실행은 항상 알림).</p>}
-                            <div className="inline wrap">
+                            <GroveText as="p" display="block" type="supporting" color="inherit">{s.prompt}</GroveText>
+                            {s.bot_id && <GroveText as="p" display="block" type="supporting" color="inherit" data-testid="schedule-bot">담당 봇: {botName(s.bot_id)} · 결과는 봇 대화에 전달</GroveText>}
+                            <GroveText as="p" display="block" type="supporting" color="secondary">승인 필요 시: {s.on_approval === "wait" ? "승인을 기다림" : "실패로 끝냄"} · 도구 {s.tools_enabled ? "사용" : "끔"}</GroveText>
+                            <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="schedule-limits">{limits(s)}</GroveText>
+                            {s.quiet_policy === "unchanged_result" && <GroveText as="p" display="block" type="supporting" color="secondary">직전 완료 결과와 같으면 자동 실행 알림을 생략합니다(실행 기록·비용은 남고, 실패·승인 필요·직접 실행은 항상 알림).</GroveText>}
+                            <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
                                 <ServerActionButton className="small" onClick={() => void act(() => api.post(`/schedules/${s.id}/run`))}>지금 실행</ServerActionButton>
                                 {s.status === "active" && <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/schedules/${s.id}/pause`, { expected_revision: s.revision }))}>일시 정지</ServerActionButton>}
                                 {s.status === "paused" && <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/schedules/${s.id}/resume`, { expected_revision: s.revision }))}>재개</ServerActionButton>}
@@ -220,7 +234,7 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                                 >
                                     삭제
                                 </ServerActionButton>
-                            </div>
+                            </GroveStack>
                             <Webhook s={s} act={act} />
                             <Runs id={s.id} projectId={projectId} open={open} />
                         </Panel>
@@ -234,9 +248,9 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                     void submit();
                 }}
             >
-                <input aria-label="예약 이름" placeholder="이름" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
-                <textarea aria-label="예약 지시" placeholder="실행할 지시" rows={2} value={form.prompt} onChange={(e) => setForm({ ...form, prompt: e.target.value })} />
-                <div className="inline wrap">
+                <TextInput label="예약 이름" isLabelHidden placeholder="이름" value={form.name} onChange={(value) => setForm({ ...form, name: value })} />
+                <TextArea label="예약 지시" isLabelHidden placeholder="실행할 지시" rows={2} value={form.prompt} onChange={(value) => setForm({ ...form, prompt: value })} />
+                <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
                     <select aria-label="예약 방식" value={form.kind} onChange={(e) => setForm({ ...form, kind: e.target.value })}>
                         <option value="daily">매일</option>
                         <option value="interval">간격</option>
@@ -254,15 +268,13 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                     <select aria-label="예약 모델" value={profileId} disabled={!!bot} onChange={(e) => setForm({ ...form, profile_id: e.target.value })}>
                         {(profiles.data ?? []).map((p) => <option key={p.id} value={p.id} disabled={p.enabled === false}>{p.name}{p.enabled === false ? " · 비활성" : ""}</option>)}
                     </select>
-                    <label className="check">
-                        <input type="checkbox" checked={form.tools} onChange={(e) => setForm({ ...form, tools: e.target.checked })} /> 도구 사용
-                    </label>
+                    <BooleanSelect label="도구 사용" value={form.tools} onChange={(value) => setForm({ ...form, tools: value })} />
                     <select aria-label="승인 필요 시" value={form.on_approval} onChange={(e) => setForm({ ...form, on_approval: e.target.value })}>
                         <option value="wait">승인 필요 시 기다림</option>
                         <option value="fail">승인 필요 시 실패</option>
                     </select>
-                </div>
-                <div className="inline wrap">
+                </GroveStack>
+                <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
                     {form.kind !== "once" && (
                         <>
                             <input aria-label="최대 실행 횟수" type="number" min={1} placeholder="최대 횟수(없음)" value={form.max_runs} onChange={(e) => setForm({ ...form, max_runs: e.target.value })} />
@@ -271,27 +283,20 @@ export function SchedulesPanel({ projectId, open }: { projectId: string; open: O
                             </label>
                         </>
                     )}
-                    <label className="check small">
-                        <input type="checkbox" checked={form.quiet} onChange={(e) => setForm({ ...form, quiet: e.target.checked })} /> 결과가 직전과 같으면 알림 생략
-                    </label>
+                    <BooleanSelect label="결과가 직전과 같으면 알림 생략" value={form.quiet} onChange={(value) => setForm({ ...form, quiet: value })} />
                     <label className="small">
                         연속 실패 시 정지(회){" "}
                         <input aria-label="연속 실패 시 정지" type="number" min={1} max={100} placeholder="정지 안 함" value={form.pause_after_failures} onChange={(e) => setForm({ ...form, pause_after_failures: e.target.value })} />
                     </label>
-                </div>
-                <p className="muted small">매일 실행은 이 기기의 현재 UTC offset으로 저장됩니다. 서머타임이 바뀌면 다시 저장하세요. 서버가 꺼져 있어 놓친 실행은 나중에 몰아서 실행하지 않습니다. 실패가 이어지면 자동 실행 간격을 1분부터 두 배씩(최대 하루) 늘리고, 정한 횟수에 이르면 멈춥니다. 사용자 취소·서버 재시작 중단은 실패로 세지 않습니다.</p>
+                </GroveStack>
                 {bot && (
                     <div className="stack small" data-testid="schedule-confirm">
-                        <p>
+                        <GroveText as="p" display="block" type="inherit" color="inherit">
                             활성화 전 확인: <strong>{bot.name}</strong>이(가) {form.kind === "daily" ? `매일 ${form.daily_time}` : form.kind === "interval" ? `${form.interval_minutes}분마다` : "한 번"} 이 프로젝트에서 모델 {profileName}로 실행합니다. 도구 {form.tools ? "사용" : "끔"}, 승인 필요 시 {form.on_approval === "wait" ? "대기" : "실패"}
                             {form.max_runs ? `, 최대 ${form.max_runs}회` : ""}. 실행마다 모델 비용이 발생하고 결과는 봇 대화에 남습니다.
-                        </p>
-                        <label className="check">
-                            <input type="checkbox" checked={form.confirmed} onChange={(e) => setForm({ ...form, confirmed: e.target.checked })} /> 위 범위를 확인했습니다
-                        </label>
-                        <label className="check">
-                            <input type="checkbox" checked={form.start_paused} onChange={(e) => setForm({ ...form, start_paused: e.target.checked })} /> 저장만 하고 일시 정지 상태로 둠
-                        </label>
+                        </GroveText>
+                        <BooleanSelect label="위 범위를 확인했습니다" value={form.confirmed} trueLabel="확인함" falseLabel="미확인" onChange={(value) => setForm({ ...form, confirmed: value })} />
+                        <BooleanSelect label="저장만 하고 일시 정지 상태로 둠" value={form.start_paused} onChange={(value) => setForm({ ...form, start_paused: value })} />
                     </div>
                 )}
                 <ServerActionButton type="submit" disabled={!form.name.trim() || !form.prompt.trim() || !profileId || (!!bot && !form.confirmed)}>예약 추가</ServerActionButton>

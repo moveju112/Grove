@@ -1,3 +1,4 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal as XTerm } from "@xterm/xterm";
 import "@xterm/xterm/css/xterm.css";
@@ -188,13 +189,13 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
         <Stack className="terminal-view" data-testid="terminal-view" data-conn={conn}>
             <div className="inline small">
                 <strong>{row?.name ?? "터미널"}</strong>
-                <span className="muted" data-testid="terminal-status">{statusText}</span>
+                <GroveText type="inherit" color="secondary" data-testid="terminal-status">{statusText}</GroveText>
                 {row?.status === "running" && <ServerActionButton className="ghost small" onClick={() => void kill()}>종료</ServerActionButton>}
             </div>
-            {err && <p className="err" role="alert">{err}</p>}
-            {blockedReason && <p className="warn" role="status" data-testid="terminal-blocked">
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
+            {blockedReason && <GroveText as="p" display="block" type="inherit" color="warning" role="status" data-testid="terminal-blocked">
                 {blockedReason} 터미널 입력·크기 전송을 멈췄습니다. PTY를 종료하지 않았으며 차단 중 입력은 복구 후 다시 보내지 않습니다.
-            </p>}
+            </GroveText>}
             {(conn === "missing" || conn === "error") && <ServerActionButton className="ghost small" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</ServerActionButton>}
             <div className="term-host" ref={host} />
             <TerminalCapture key={terminalId} terminalId={terminalId} enabled={conn === "open" || conn === "readonly"} />

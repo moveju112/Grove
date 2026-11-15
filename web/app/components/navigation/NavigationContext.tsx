@@ -1,3 +1,5 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { api } from "../../api/client";
 import type { Project, Session } from "../../api/generated";
 import type { Layout } from "../../state/layout";
@@ -37,33 +39,33 @@ export function NavigationContext({ layout, projects, host, open, onBrowseProjec
                 <span aria-label={`현재 호스트: ${address}`} title={`현재 호스트: ${address}`}>{address}</span>
             </li>
             <li className="navigation-browse">
-                <span className="navigation-separator" aria-hidden="true">/</span>
-                <button type="button" className="ghost" onClick={onBrowseProjects}
-                    aria-label="프로젝트 탐색" aria-expanded={sidebarOpen} title="사이드바에서 프로젝트 탐색">프로젝트</button>
+                <GroveText type="inherit" color="inherit" className="navigation-separator" aria-hidden="true">/</GroveText>
+                <GroveButton type="button" className="ghost" onClick={onBrowseProjects}
+                    aria-label="프로젝트 탐색" aria-expanded={sidebarOpen} title="사이드바에서 프로젝트 탐색">프로젝트</GroveButton>
             </li>
             {parentProject && <li className={`navigation-project ${projectCurrent ? "navigation-current" : ""}`}>
-                <span className="navigation-separator" aria-hidden="true">/</span>
+                <GroveText type="inherit" color="inherit" className="navigation-separator" aria-hidden="true">/</GroveText>
                 {projectCurrent
                     ? <span aria-current="page" aria-label={projectLabel} title={projectLabel}>{projectName}</span>
-                    : <button type="button" className="ghost" aria-label={`${projectLabel} 대화 목록으로`}
-                        title={`${projectLabel} 대화 목록으로`} onClick={() => open(parentProject)}>{projectName}</button>}
+                    : <GroveButton type="button" className="ghost" aria-label={`${projectLabel} 대화 목록으로`}
+                        title={`${projectLabel} 대화 목록으로`} onClick={() => open(parentProject)}>{projectName}</GroveButton>}
             </li>}
             {parentSession && <li className={`navigation-session ${sessionCurrent ? "navigation-current" : ""}`}>
-                <span className="navigation-separator" aria-hidden="true">/</span>
+                <GroveText type="inherit" color="inherit" className="navigation-separator" aria-hidden="true">/</GroveText>
                 {sessionCurrent
                     ? <span aria-current="page" aria-label={sessionLabel} title={sessionLabel}>세션 · {sessionName}{session.error ? " · 조회 실패" : ""}</span>
-                    : <button type="button" className="ghost" aria-label={`${sessionLabel} 열기`} title={sessionLabel}
-                        onClick={() => open(parentSession)}>세션 · {sessionName}</button>}
+                    : <GroveButton type="button" className="ghost" aria-label={`${sessionLabel} 열기`} title={sessionLabel}
+                        onClick={() => open(parentSession)}>세션 · {sessionName}</GroveButton>}
             </li>}
             {!projectCurrent && !sessionCurrent && <li className="navigation-current">
-                <span className="navigation-separator" aria-hidden="true">/</span>
+                <GroveText type="inherit" color="inherit" className="navigation-separator" aria-hidden="true">/</GroveText>
                 <span aria-current="page" title={tab ? resourceLabel(tab) : undefined}>
                     {tab ? resourceLabel(tab) : layout ? "빈 영역" : "배치 불러오는 중…"}
                 </span>
             </li>}
         </ol>
-        {context.panes > 1 && <span className="navigation-pane" aria-label={`현재 영역 ${context.pane}, 전체 ${context.panes}개`}>
+        {context.panes > 1 && <GroveText type="inherit" color="inherit" className="navigation-pane" aria-label={`현재 영역 ${context.pane}, 전체 ${context.panes}개`}>
             영역 {context.pane}/{context.panes}
-        </span>}
+        </GroveText>}
     </nav>;
 }

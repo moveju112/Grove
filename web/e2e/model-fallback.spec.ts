@@ -2,12 +2,17 @@ import { expect, test } from "@playwright/test";
 import { createServer } from "node:http";
 import { randomUUID } from "node:crypto";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProjects, login, openDetails, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, openSettings, selectChoice, sessionView } from "./helpers";
 
 test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과 이유를 표시한다", async ({ page, browser }) => {
     const prefix = `fallback-${randomUUID()}`;
     const requests: { model: string }[] = [];
     const fixture = createServer((req, res) => {
+        if (req.method === "GET" && req.url === "/v1/models") {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ data: [{ id: `${prefix}-primary` }, { id: `${prefix}-actual` }] }));
+            return;
+        }
         let body = "";
         req.on("data", (chunk) => { body += chunk; });
         req.on("end", () => {
@@ -35,7 +40,7 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
     const context = await browser.newContext();
     try {
         await login(page);
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await openSettings(page);
         await page.getByLabel("설정 검색").fill("프로필");
         const row = page.getByTestId("model-profile").filter({ hasText: `${prefix}-source` });
         await openDetails(row);
@@ -46,9 +51,9 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await control.getByLabel("fallback 1", { exact: true }).selectOption(backup.id);
         await expect(control).toContainText(`전송 대상: openai · ${base_url} · ${prefix}-actual`);
         await expect(control.getByRole("button", { name: "fallback 저장", exact: true })).toBeDisabled();
-        await control.getByRole("checkbox").check();
+        await selectChoice(control.getByLabel("위 순서의 다른 전송 대상·모델·가격으로 대화가 전달되는 것을 확인했습니다"), "true");
         await control.getByRole("button", { name: "fallback 저장", exact: true }).click();
-        await expect(control.getByRole("status")).toHaveText("fallback 저장됨");
+        await expect(control.getByRole("status").filter({ hasText: /\S/ })).toHaveText("fallback 저장됨");
         const stored = (await apiCall<{ id: string; options: { fallback: { enabled: boolean; candidates: { profile_id: string }[] } } }[]>("GET", "/model-profiles")).find((p) => p.id === primary.id)!;
         expect(stored.options.fallback.enabled).toBe(true);
         expect(stored.options.fallback.candidates.map((c) => c.profile_id)).toEqual([backup.id]);
@@ -63,7 +68,7 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await composerOption(view, "보내기 방식", "model");
         await view.getByLabel("모델 프로필", { exact: true }).selectOption(primary.id);
         await composerOption(view, "도구", false);
-        await view.getByLabel("추론 강도", { exact: true }).selectOption("auto");
+        await view.getByLabel("추론", { exact: true }).selectOption("auto");
         await view.getByLabel("메시지 입력").fill("local explicit fallback request");
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("msg-assistant").last()).toContainText("fallback browser fixture complete");

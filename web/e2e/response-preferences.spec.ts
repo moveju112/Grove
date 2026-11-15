@@ -74,7 +74,7 @@ test("다른 기기의 프로필 변경과 충돌하면 내 초안을 보존하�
     await user.getByRole("button", { name: "이 범위 값 지우기", exact: true }).click();
     const reset = page.getByRole("dialog", { name: "기본값 복원 확인", exact: true });
     await reset.getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
-    await expect(reset.getByRole("status")).toContainText("복원 저장됨");
+    await expect(reset.getByRole("status").filter({ hasText: /\S/ })).toContainText("복원 저장됨");
     await reset.getByRole("button", { name: "복원 창 닫기", exact: true }).click();
     await expect(user.getByLabel("사용자 프로필", { exact: true })).toHaveValue("");
     expect((await settings()).find((item) => item.key === "user.profile")!.effective).toBe("");
@@ -113,7 +113,7 @@ test("지침 파일 모드는 파일을 수정하지 않고 다음 요청에 선
     for (const mode of ["agents_md", "claude_md", "both", "off"]) {
         await row.getByLabel("프로젝트 지침 파일", { exact: true }).selectOption(mode);
         await row.getByRole("button", { name: "저장", exact: true }).click();
-        await expect(row.getByRole("status")).toContainText("저장됨 · 다음 요청부터 적용");
+        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨 · 다음 요청부터 적용");
         const prompt = `${project.id} instruction mode ${mode}`;
         await script({ marker: prompt, frames: frames.text(["instruction fixture complete"]) });
         const accepted = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`, { text: prompt, profile_id: profile });

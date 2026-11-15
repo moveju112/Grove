@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { login } from "./helpers";
+import { login, selectChoice } from "./helpers";
 
 // UI-030: light/dark/soft 테마와 OS 테마 연동, 본문·보조 글·버튼 글자의 대비(WCAG AA 4.5:1).
 type Colors = { bg: string; panel: string; text: string; muted: string; accent: string; onAccent: string; scheme: string; meta: string | null; button: string };
@@ -94,7 +94,7 @@ test("설정 화면에서 테마를 고르면 바로 적용되고 로그인 화�
     await page.reload();
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("테마");
-    await page.getByLabel("테마", { exact: true }).selectOption("soft");
+    await selectChoice(page.getByLabel("테마", { exact: true }), "soft");
     await expect.poll(async () => (await colors(page)).bg).toBe("#e9ebee");
     // 로그아웃 상태(로그인 화면)에서도 같은 테마
     await page.context().clearCookies();

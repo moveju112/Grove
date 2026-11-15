@@ -10,8 +10,8 @@ export function Button({ children, className = "", disabled, type = "submit", re
     return <AstryxButton {...props} {...native} ref={ref} type={type}
         label={props["aria-label"] ?? (typeof children === "string" ? children : "")}
         variant={quiet ? "ghost" : secondary ? "secondary" : "primary"}
-        size={className.includes("small") ? "sm" : "md"}
+        size="sm"
         className={`grove-button ${className}`} isDisabled={disabled}>
-        <HStack as="span" gap={2} vAlign="center" hAlign={quiet ? "start" : "center"}>{children}</HStack>
+        <HStack as="span" className="grove-button-content" gap={2} vAlign="center" hAlign={quiet ? "start" : "center"}>{children}</HStack>
     </AstryxButton>;
 }

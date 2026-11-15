@@ -1,4 +1,5 @@
-import { useEffect, useState } from "react";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { useEffect, useRef, useState } from "react";
 import { ActionMenu } from "./ui/Controls";
 import { ApiError, api } from "../api/client";
 import type { RecentItem, RecentPage } from "../api/generated";
@@ -6,7 +7,7 @@ import { loadPrefs, savePrefs, usePrefs } from "../state/device";
 import { type RecentIntent, retryIntent } from "../state/recentPatch";
 import { effectiveRecentWindow, groupBySplit, recentSince, recentWindowLabel } from "../state/recentWindow";
 import { When } from "./When";
-import { useQuery } from "../state/store";
+import { invalidate, useQuery } from "../state/store";
 import { DRAG_OPEN } from "../state/layout";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -47,7 +48,15 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
     const now = useMinute();
     const since = range !== "all" ? recentSince(range, now) : "";
     const query = new URLSearchParams({ filter: "all", limit: String(limit), ...(since ? { since } : {}) }).toString();
-    const recent = useQuery<RecentPage>(`recent:${query}`, () => api.get(`/recent?${query}`));
+    // 시각은 요청에만 쓰고 cache key는 범위별로 고정한다. 같은 범위는 즉시 다시 연다.
+    const recent = useQuery<RecentPage>(`recent:range:${range}:${limit}`, () => api.get(`/recent?${query}`),
+        { keepPreviousData: true, scope: "recent:range" });
+    const previousMinute = useRef(now);
+    useEffect(() => {
+        if (previousMinute.current === now) return;
+        previousMinute.current = now;
+        invalidate("recent:range");
+    }, [now]);
 
     const patch = async (it: RecentItem, intent: RecentIntent) => {
         setErr(null);
@@ -86,18 +95,18 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
                 <Heading level={presentation === "home" ? 1 : 2}>최근</Heading>
                 <div className="chips" role="group" aria-label="시간 범위">
                     {[...prefs.recentWindows, "all" as const].map((option) => (
-                        <button key={option} className={range === option ? "chip on" : "chip"} aria-pressed={range === option}
+                        <Button key={option} className={range === option ? "chip on" : "chip"} aria-pressed={range === option}
                             aria-label={`최근 ${recentWindowLabel(option)} 범위`} onClick={() => savePrefs({ ...loadPrefs(), recentWindow: option })}>
                             {recentWindowLabel(option)}
-                        </button>
+                        </Button>
                     ))}
                 </div>
             </Stack>
-            {err && <p className="err" role="alert">{err}</p>}
-            {Boolean(recent.error) && <p className="err" role="alert">
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
+            {Boolean(recent.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">
                 {recent.error instanceof ApiError ? recent.error.message : "최근 목록을 불러오지 못했습니다."}
-            </p>}
-            <ul className="recent-list">
+            </GroveText>}
+            <ul className="recent-list" aria-busy={recent.loading}>
                 {groupBySplit(recent.data?.items ?? [], linked).map(({ item, linked: members }) => members.length === 0 ? row(item) : (
                     <li key={item.id} className="recent-split" data-testid="recent-split-group" aria-label="분할로 함께 연 대화">
                         <ul>
@@ -107,7 +116,7 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
                     </li>
                 ))}
             </ul>
-            {recent.data?.items.length === 0 && <p className="recent-empty">최근 항목 없음</p>}
+            {!recent.loading && recent.data?.items.length === 0 && <GroveText as="p" display="block" type="inherit" color="inherit" className="recent-empty">최근 항목 없음</GroveText>}
             {recent.data?.next_offset != null && (
                 <Button className="ghost" onClick={() => setLimit((l) => l + 30)}>
                     더 보기
@@ -127,20 +136,20 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
                                 e.dataTransfer.effectAllowed = "copy";
                             }}
                         >
-                            <span className="recent-title">
-                                {it.pinned && <span aria-label="고정됨">★ </span>}
+                            <GroveText type="inherit" color="inherit" className="recent-title">
+                                {it.pinned && <GroveText type="inherit" color="inherit" aria-label="고정됨">★ </GroveText>}
                                 {it.title}
-                                {STATUS[it.status] && <span className={`status ${it.status}`}>{STATUS[it.status]}</span>}
+                                {STATUS[it.status] && <GroveText type="inherit" color="inherit" className={`status ${it.status}`}>{STATUS[it.status]}</GroveText>}
                                 {it.unread && <span className="dot" aria-label="읽지 않음" />}
-                                {linkedTo && <span className="muted small" aria-label={`분할로 함께 열림: ${linkedTo}`}> ⧉</span>}
-                            </span>
-                            <span className="recent-project">{it.project_name}</span>
-                            <span className="muted small" data-testid="recent-time"> <When at={it.last_activity_at} relative /></span>
+                                {linkedTo && <GroveText type="supporting" color="secondary" aria-label={`분할로 함께 열림: ${linkedTo}`}> ⧉</GroveText>}
+                            </GroveText>
+                            <GroveText type="inherit" color="inherit" className="recent-project">{it.project_name}</GroveText>
+                            <GroveText type="supporting" color="secondary" data-testid="recent-time"> <When at={it.last_activity_at} relative /></GroveText>
                         </button>
                         <ActionMenu className="recent-actions" label="최근 항목 관리">
-                            <div className="row-actions">
-                            <button className="ghost small" title="오른쪽에 열기" aria-label="오른쪽에 열기" onClick={() => openItem(it, "right")}>⇥</button>
-                            <button className="ghost small" title="아래에 열기" aria-label="아래에 열기" onClick={() => openItem(it, "down")}>⤓</button>
+                            <Stack direction="horizontal" align="center" className="row-actions">
+                            <Button className="ghost small" title="오른쪽에 열기" aria-label="오른쪽에 열기" onClick={() => openItem(it, "right")}>⇥</Button>
+                            <Button className="ghost small" title="아래에 열기" aria-label="아래에 열기" onClick={() => openItem(it, "down")}>⤓</Button>
                             <ServerActionButton className="ghost small pin-toggle" aria-pressed={it.pinned} aria-label={it.pinned ? "고정 해제" : "고정"} title={it.pinned ? "고정 해제" : "고정"} onClick={() => patch(it, { pinned: !it.pinned })}>
                                 {it.pinned ? "★" : "☆"}
                             </ServerActionButton>
@@ -148,7 +157,7 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
                                 title={it.hidden ? "다시 표시" : "최근에서 숨기기(삭제 아님, 새 메시지가 오면 다시 보임)"} onClick={() => patch(it, { hidden: !it.hidden })}>
                                 {it.hidden ? "↺" : "–"}
                             </ServerActionButton>
-                            </div>
+                            </Stack>
                         </ActionMenu>
                     </li>
         );

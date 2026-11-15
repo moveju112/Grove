@@ -8,6 +8,8 @@
 - **MUST** blocking I/O와 SQLite 접근은 기존 blocking 경로로 처리한다.
   - why: 웹·스트림·취소 처리가 사용하는 비동기 실행 스레드를 점유하지 않는다.
   - ✅ `Db::call`은 `spawn_blocking` 안에서 연결 잠금을 획득한다. `evidence: src/store.rs`.
+- **MUST** 동일 자원의 조회 조건 변경은 범위가 명시된 cache와 `useQuery`의 `keepPreviousData`를 재사용한다. 기존 목록·입력·스크롤을 지우거나 cache key에 매 렌더 시각을 넣어 반복 조회하지 않는다. 다른 자원·프로젝트·인증 세대 사이에는 이전 내용을 넘기지 않는다. 읽기 재검증과 영속 mutation의 재시도는 구분한다.
+  - ✅ `useQuery(..., { keepPreviousData: true, scope: resourceKey })`. `evidence: web/app/state/store.ts`, `evidence: web/app/components/RecentPanel.tsx`.
 - **MUST** 프로젝트 파일 작업은 `ProjectFs`의 디렉터리 기준 경계와 원자적 발행을 유지한다.
   - why: 문자열 경로 검사만으로는 symlink 교체와 검사 후 사용 경쟁을 막을 수 없다.
   - ✅ `ProjectFs::open`, `read`, `atomic_write`. `evidence: src/project_fs.rs:20`, `evidence: src/project_fs.rs:99`.
@@ -33,6 +35,9 @@
   - why: 기능 시험이 모두 통과해도 버튼이 늘어나고 입력창이 떠 있는 화면이 그대로 배포된 적이 있다.
   - ✅ 새 기능의 진입점은 기존 메뉴·도구 패널 안에 넣고, 시험은 `openTool`·`openProjectFiles`처럼 실제 깊이를 따라 연다. `evidence: web/e2e/helpers.ts`.
   - ❌ 시험이 편하도록 진입 버튼을 기본 화면에 꺼내 두거나 예산 시험의 상한을 올린다.
+- **MUST** 입력창·버튼 어댑터·탐색 밀도를 바꾸면 빈 화면만으로 검증하지 않는다. `web/e2e/chat-chrome.mobile.spec.ts`로 긴 대화의 중간/끝 스크롤·축소 후 복원한 viewport·라이트/다크에서 하단과 좌우 여백의 실제 hit target이 입력 영역인지 확인한다. 짧고 긴 제목 12개의 높이·글자 크기·왼쪽 정렬·노출량도 함께 검사한다.
+  - why: 빈 화면 검사만 통과한 채 sticky 입력창 아래로 본문이 비치고, Astryx 내부 슬롯 때문에 짧은 목록 제목이 가운데로 돌아간 적이 있다.
+  - ✅ 중앙 본문의 양방향 스와이프와 입력·텍스트 선택·가로 스크롤 예외는 `web/e2e/navigation-drawers.mobile.spec.ts`로 실제 터치 이벤트를 검사한다.
 
 여러 대상을 지정할 때 `--rust`, `--vitest`, `--e2e`는 각각 한 번만 쓰고 뒤에 대상들을 나열한다.
 E2E는 실제 서버와 빌드된 웹앱을 사용한다. API mock만으로 인증·복구·전송 경계를 검증했다고 하지 않는다.

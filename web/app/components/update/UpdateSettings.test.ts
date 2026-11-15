@@ -57,7 +57,7 @@ describe("서버 업데이트 설정 표시", () => {
         expect(html).not.toContain("<script>");
     });
     it("이전 설정의 확인 결과를 현재 채널의 결과로 표시하지 않는다", () => {
-        expect(render({ ...data, last_check: check })).toContain("이전 설정에서 확인한 결과");
+        expect(render({ ...data, last_check: check })).toContain("이전 설정의 결과이니 현재 저장된 채널로 다시 확인하세요");
     });
     it("응답 유실·timeout·서버 오류는 같은 키로 확인하고 권한·revision 거부는 새로 편집할 수 있다", () => {
         for (const error of [

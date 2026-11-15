@@ -1,14 +1,14 @@
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { TimingSummary } from "./TurnTiming";
+import { TimingBreakdown, TimingSummary } from "./TurnTiming";
 import { saveTimingEnabled, TIMING_PREF_KEY, timingEnabled } from "./preference";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("턴 시간 표시·설정", () => {
-    function render(status: string, connected = true) {
-        return renderToStaticMarkup(createElement(TimingSummary, {
+    function render(status: string, connected = true, detail = false) {
+        return renderToStaticMarkup(createElement(detail ? TimingBreakdown : TimingSummary, {
             sample: { id: "turn", updated_at: "", receivedAt: 0, status,
                 timing: { total_ms: 12_000, approval_wait_ms: 3000, tool_ms: 1000, model_and_other_ms: 8000, running: status === "awaiting_approval" } },
             total: 12_000, connected,
@@ -17,18 +17,23 @@ describe("턴 시간 표시·설정", () => {
 
     it("승인·질문 대기를 실행 시간으로 부르지 않는다", () => {
         const html = render("awaiting_approval");
-        expect(html).toContain("총 경과");
+        expect(html).toContain("12.0초");
+        expect(html).not.toContain("총 경과");
         expect(html).toContain("승인·답변 대기");
-        expect(html).toContain("대기 포함");
+        expect(render("awaiting_approval", true, true)).toContain("대기 포함");
         expect(html).not.toContain("모델·처리");
     });
 
     it.each(["completed", "interrupted", "failed", "cancelled"])("%s를 고정된 종료 시간으로 표시한다", (status) => {
         const html = render(status);
         expect(html).toContain('data-running="false"');
-        expect(html).toContain("마지막 요청 총 경과");
-        expect(html).toContain("승인 대기 3.0초");
-        expect(html).toContain("도구 1.0초");
+        expect(html).toContain("요청");
+        expect(html).not.toContain("승인 대기 3.0초");
+        expect(html).not.toContain("도구 1.0초");
+        const detail = render(status, true, true);
+        expect(detail).toContain("마지막 요청 총 경과");
+        expect(detail).toContain("승인 대기 3.0초");
+        expect(detail).toContain("도구 1.0초");
         if (status === "interrupted") expect(html).toContain("중단");
     });
 

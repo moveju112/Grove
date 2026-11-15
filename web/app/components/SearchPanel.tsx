@@ -1,3 +1,5 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useEffect, useState } from "react";
 import { When } from "./When";
 import { api } from "../api/client";
@@ -7,6 +9,8 @@ import { requestFocus } from "../state/focus";
 import { useCapability } from "../state/capabilities";
 import { Icon } from "./icons";
 import { DetailDialog } from "./ui/Controls";
+import { BooleanSelect } from "./BooleanSelect";
+import { TextInput } from "../design/Fields";
 
 type Hit = { id: string; title: string; project_id: string; project_name: string; updated_at: string; snippet: string | null; match_seq: number | null; archived_at: string | null; source?: { message_id: string; role: string; seq: number } };
 type Project = { id: string; name: string };
@@ -68,10 +72,10 @@ export function SearchPanel({ open }: { open: Opener }) {
             {supported !== false && <select aria-label="검색 방식" value={recall ? "recall" : "sessions"} onChange={(e) => setRecall(e.target.value === "recall")}>
                 <option value="sessions">대화 검색</option><option value="recall">메시지 회상(키워드)</option>
             </select>}
-            <input type="search" aria-label="대화 검색어" placeholder={recall ? "과거 메시지의 키워드" : "제목·본문 검색"} value={q} onChange={(e) => setQ(e.target.value)} />
+            <TextInput type="search" label="대화 검색어" isLabelHidden placeholder={recall ? "과거 메시지의 키워드" : "제목·본문 검색"} value={q} onChange={setQ} />
             <div className="inline wrap small">
-                {!recall && <label className="check"><input type="checkbox" checked={body} onChange={(e) => setBody(e.target.checked)} /> 본문 포함</label>}
-                {recall && <label className="check"><input type="checkbox" checked={archived} onChange={(e) => setArchived(e.target.checked)} /> 보관된 대화·프로젝트 포함</label>}
+                {!recall && <BooleanSelect label="본문 포함" value={body} onChange={setBody} />}
+                {recall && <BooleanSelect label="보관된 대화·프로젝트 포함" value={archived} onChange={setArchived} />}
                 {!recall && <select aria-label="검색 상태" value={status} onChange={(e) => setStatus(e.target.value)}>
                     {STATUS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                 </select>}
@@ -86,14 +90,14 @@ export function SearchPanel({ open }: { open: Opener }) {
                     <option value={30}>30일</option>
                 </select>
             </div>
-            {err && <p className="err" role="alert">{err}</p>}
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {res && (
                 <>
-                    <p className="muted small" data-testid="search-total">{res.total}개</p>
+                    <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="search-total">{res.total}개</GroveText>
                     <ul className="session-list">
                         {res.items.map((h) => (
                             <li key={`${h.id}:${h.match_seq ?? "-"}`} data-testid="search-hit">
-                                <button
+                                <GroveButton
                                     className="ghost"
                                     data-dialog-close
                                     onClick={() => {
@@ -102,16 +106,16 @@ export function SearchPanel({ open }: { open: Opener }) {
                                         open({ kind: "session", project_id: h.project_id, resource_id: h.id, title: h.title });
                                     }}
                                 >
-                                    <strong>{h.title}</strong> <span className="muted small">{h.project_name} · <When at={h.updated_at} />{h.archived_at ? " · 보관" : ""}</span>
-                                    {h.source && <span className="muted small"> · {h.source.role} · 원문 #{h.source.seq}</span>}
-                                    {h.snippet && <span className="small snippet"> {h.snippet}</span>}
-                                </button>
+                                    <strong>{h.title}</strong> <GroveText type="supporting" color="secondary">{h.project_name} · <When at={h.updated_at} />{h.archived_at ? " · 보관" : ""}</GroveText>
+                                    {h.source && <GroveText type="supporting" color="secondary"> · {h.source.role} · 원문 #{h.source.seq}</GroveText>}
+                                    {h.snippet && <GroveText type="supporting" color="inherit" className="snippet"> {h.snippet}</GroveText>}
+                                </GroveButton>
                             </li>
                         ))}
                     </ul>
                     {recall && <div className="inline small">
-                        <button type="button" className="ghost" disabled={!res.offset} onClick={() => page(Math.max(0, (res.offset ?? 0) - 30))}>이전 회상 결과</button>
-                        <button type="button" className="ghost" disabled={res.next_offset == null} onClick={() => res.next_offset != null && page(res.next_offset)}>다음 회상 결과</button>
+                        <GroveButton type="button" className="ghost" disabled={!res.offset} onClick={() => page(Math.max(0, (res.offset ?? 0) - 30))}>이전 회상 결과</GroveButton>
+                        <GroveButton type="button" className="ghost" disabled={res.next_offset == null} onClick={() => res.next_offset != null && page(res.next_offset)}>다음 회상 결과</GroveButton>
                     </div>}
                 </>
             )}

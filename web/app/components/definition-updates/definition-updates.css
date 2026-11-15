@@ -6,7 +6,13 @@
     table-layout: fixed;
 }
 .definition-updates-table th:first-child {
-    width: 3rem;
+    width: 12rem;
+    max-width: none;
+}
+.definition-updates-table td:first-child {
+    width: 12rem;
+    min-width: 12rem;
+    max-width: none;
 }
 .definition-updates-table th:nth-child(2) {
     width: 4rem;

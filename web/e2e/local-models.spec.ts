@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
-import { apiCall, composerOption, ensureProjects, login, openDetails, profileAction, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, openSettings, profileAction, selectChoice, sessionView } from "./helpers";
 import { frames } from "./fixture";
 
 type Profile = { id: string; name: string; model: string; revision: number; base_url: string; secret_id: string | null };
@@ -53,7 +53,7 @@ async function localFixture() {
 }
 
 async function settings(page: Page) {
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").fill("프로필");
     await openDetails(page.getByTestId("local-model-connection"));
     return page.getByRole("form", { name: "로컬 HTTP 모델 연결", exact: true });
@@ -65,7 +65,7 @@ async function fillLocal(page: Page, name: string, base: string, secret = "") {
     await form.getByLabel("로컬 연결 이름").fill(name);
     await form.getByLabel("로컬 endpoint").fill(base);
     await form.getByLabel("로컬 수동 모델 ID").fill("manual-kept");
-    await form.getByLabel("로컬 인증 비밀").selectOption(secret);
+    await selectChoice(form.getByLabel("로컬 인증 비밀"), secret);
     return form;
 }
 
@@ -198,7 +198,7 @@ test("로컬 목록의 오류·빈 목록·늦은 응답은 수동 선택을 바
         await expect(select).toBeEnabled();
         fixture.setMode("invalid");
         await refresh.click();
-        await expect(row.getByRole("alert")).toContainText("마지막 조회 목록은 보존");
+        await expect(row.getByRole("alert")).toContainText("마지막 조회 목록 보존");
         await expect(select).toBeDisabled();
         await expect(model).toHaveText("manual-kept");
         await profileAction(row, "연결 확인");
@@ -211,7 +211,7 @@ test("로컬 목록의 오류·빈 목록·늦은 응답은 수동 선택을 바
         expect(await row.innerText()).not.toContain(SECRET);
         fixture.setMode("empty");
         await refresh.click();
-        await expect(row).toContainText("조회된 모델이 없습니다");
+        await expect(row).toContainText("조회된 모델 없음 · 수동 입력 가능");
         await expect(model).toHaveText("manual-kept");
         page.once("dialog", (dialog) => void dialog.accept("manual-after-empty"));
         await profileAction(row, "모델 변경");
@@ -225,7 +225,7 @@ test("로컬 목록의 오류·빈 목록·늦은 응답은 수동 선택을 바
         await expect(model).toHaveText("manual-after-change");
         fixture.resume();
         await expect(select).toBeDisabled();
-        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("프로필이 바뀌었습니다");
+        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("프로필이 변경됐으니 목록을 다시 조회하세요.");
         await refresh.click();
         await expect(select).toBeEnabled();
         await expect(select.getByRole("option", { name: /local-chosen/ })).toHaveCount(1);

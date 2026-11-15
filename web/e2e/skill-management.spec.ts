@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, openDetails, sessionView, state } from "./helpers";
+import { apiCall, login, openDetails, selectChoice, sessionView, state } from "./helpers";
 import type { SessionSkills } from "../app/api/skills";
 
 test("스킬 추가·저장 응답 유실·reload 충돌·비활성화를 기존 세션 선택에 연결한다", async ({ page }) => {
@@ -18,7 +18,7 @@ test("스킬 추가·저장 응답 유실·reload 충돌·비활성화를 기존
         const panel = sessionView(page, session.id).getByTestId("session-skills");
         await panel.getByRole("button", { name: "Grove 스킬 추가", exact: true }).click();
         const editor = panel.getByRole("form", { name: "Grove 스킬 편집" });
-        await editor.getByLabel("저장 범위").selectOption("project");
+        await selectChoice(editor.getByLabel("저장 범위"), "project");
         await editor.getByLabel("스킬 이름").fill("managed-review");
         await editor.getByLabel("스킬 본문").fill("FIRST_MANAGED_BODY");
         await editor.getByRole("button", { name: "스킬 저장" }).click();

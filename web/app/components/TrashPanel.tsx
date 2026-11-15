@@ -1,3 +1,5 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useRef, useState } from "react";
 import { Panel } from "./ui/Controls";
 import { ApiError, api, newKey } from "../api/client";
@@ -35,18 +37,18 @@ export function TrashPanel({ projectId }: { projectId: string }) {
     };
     return (
         <Panel className="trash" data-testid="trash-panel" title={`휴지통${items.length > 0 ? ` · ${items.length}` : ""}`}>
-            {(err || Boolean(q.error)) && <p className="err" role="alert">{err ?? "휴지통 목록을 불러오지 못했습니다"}</p>}
-            {Boolean(q.error) && <button className="ghost small" onClick={q.reload}>목록 다시 불러오기</button>}
+            {(err || Boolean(q.error)) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err ?? "휴지통 목록을 불러오지 못했습니다"}</GroveText>}
+            {Boolean(q.error) && <GroveButton className="ghost small" onClick={q.reload}>목록 다시 불러오기</GroveButton>}
             {attempt && !busy && <ServerActionButton className="ghost small" onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>}
-            {q.loading && items.length === 0 && <p className="muted small" role="status">불러오는 중…</p>}
-            {!q.loading && !q.error && items.length === 0 && <p className="muted small">비어 있습니다</p>}
+            {q.loading && items.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">불러오는 중…</GroveText>}
+            {!q.loading && !q.error && items.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">비어 있습니다</GroveText>}
             <ul className="session-list">
                 {items.map((t) => (
                     <li key={t.id} data-testid="trash-row">
                         <code className="small">{t.path}{t.is_dir ? "/" : ""}</code>{" "}
-                        {t.deleted_at && <span className="muted small">{t.deleted_at.slice(0, 16).replace("T", " ")}</span>}
-                        {t.status === "needs_review" && <span className="err small">중단된 작업 · 원본과 휴지통 확인 필요</span>}
-                        {t.status === "purging" && <span className="muted small">보존 기간이 지나 정리 중</span>}
+                        {t.deleted_at && <GroveText type="supporting" color="secondary">{t.deleted_at.slice(0, 16).replace("T", " ")}</GroveText>}
+                        {t.status === "needs_review" && <GroveText type="supporting" color="error">중단된 작업 · 원본과 휴지통 확인 필요</GroveText>}
+                        {t.status === "purging" && <GroveText type="supporting" color="secondary">보존 기간이 지나 정리 중</GroveText>}
                         <ServerActionButton className="ghost small" disabled={busy || attempt !== null || t.status !== "trashed"} onClick={() => void act({ id: t.id, op: "restore", key: newKey() })}>
                             복원
                         </ServerActionButton>

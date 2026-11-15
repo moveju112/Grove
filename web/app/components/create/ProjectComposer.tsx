@@ -2,6 +2,7 @@ import { useContext, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../api/client";
 import type { Session } from "../../api/generated";
 import { Composer, type SendOptions } from "../Composer";
+import { modelOptionCapabilities } from "../../state/sendOptions";
 import type { Opener } from "../Workspace";
 import { useWorkspaceMode, useWorkspaces } from "../../state/workspaces";
 import { CreationFocus } from "./CreationEntry";
@@ -44,10 +45,10 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
                 true, { result_unknown: true, idempotency_key: key });
         }
         if (o.mode === "save") await api.post(`/sessions/${s.id}/messages`, { text, attachments }, { key: `${key}:send` });
-        else await api.post(`/sessions/${s.id}/turns`, { text, attachments, profile_id: o.profileId, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto" }, { key: `${key}:send` });
+        else await api.post(`/sessions/${s.id}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier }, { key: `${key}:send`, requires: modelOptionCapabilities(o) });
         open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
     };
-    return <div ref={ref} style={{ display: "contents" }}>
+    return <div ref={ref} className="project-compose compose-surface">
         {projectMode && spaces.length > 0 && (
             <select aria-label="새 대화 워크스페이스" value={target} onChange={(e) => setWorkspace(e.target.value)}>
                 <option value="">워크스페이스: 프로젝트 폴더</option>

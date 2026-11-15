@@ -1,9 +1,16 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { DetailDialog } from "./ui/Controls";
+import { BooleanSelect } from "./BooleanSelect";
 import { ApiError, api } from "../api/client";
 import type { Project } from "../api/generated";
 import { CreationDialog } from "./create/CreationDialog";
 import { ProjectCreation } from "./create/creation";
+import { TextInput } from "../design/Fields";
+import { Select } from "../design/Select";
 
 type Dirs = { path: string; parent: string | null; entries: { name: string; path: string }[]; truncated: boolean };
 
@@ -80,75 +87,68 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
 
     return (
         <CreationDialog label="프로젝트 추가" onClose={close} busy={busy}>
-                <h2>프로젝트 추가</h2>
-                {blockedReason && <p className="warn" role="status" data-testid="project-add-blocked">{blockedReason} 경로 입력·복사·취소는 계속 사용할 수 있습니다.</p>}
-                {err && <p className="err" role="alert">{err}</p>}
-                {busy && <p role="status">프로젝트 추가 중…</p>}
+                <GroveHeading level={2} color="inherit">프로젝트 추가</GroveHeading>
+                {blockedReason && <GroveText as="p" display="block" type="inherit" color="warning" role="status" data-testid="project-add-blocked">{blockedReason} 경로 입력·복사·취소는 계속 사용할 수 있습니다.</GroveText>}
+                {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
+                {busy && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">프로젝트 추가 중…</GroveText>}
                 {unresolved && !busy && <div className="warn" role="status">
                     생성 결과를 확인하지 못했습니다. 결과 확인 전에는 다른 생성 요청이나 닫기를 사용할 수 없습니다.
-                    <button disabled={!!blockedReason} title={blockedReason ?? undefined} onClick={() => { const request = creation.pending!; void submit(request.path, request.body); }}>같은 생성 요청 결과 확인</button>
+                    <GroveButton disabled={!!blockedReason} title={blockedReason ?? undefined} onClick={() => { const request = creation.pending!; void submit(request.path, request.body); }}>같은 생성 요청 결과 확인</GroveButton>
                 </div>}
                 <fieldset disabled={busy || unresolved} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-                <label>
-                    서버 PC의 폴더 경로
-                    <input
+                    <TextInput label="서버 PC의 폴더 경로"
                         value={path}
-                        onChange={(e) => {
+                        onChange={(value) => {
                             // 직접 입력하면 진행 중인 둘러보기 응답이 입력을 덮어쓰지 않는다.
                             seq.current++;
-                            setPath(e.target.value);
+                            setPath(value);
                         }}
                         onKeyDown={(e) => e.key === "Enter" && void browse(path)}
                         placeholder={dirs?.path ?? "/절대/경로"}
                         aria-label="폴더 경로"
-                        autoFocus
+                        hasAutoFocus
                     />
-                </label>
                 {suggestions.length > 0 && (
                     <ul className="dir-list" aria-label="경로 제안">
                         {suggestions.map((s) => (
-                            <li key={s}><button className="link small" onClick={() => { setSuggestions([]); void browse(s); }}>{s}</button></li>
+                            <li key={s}><GroveButton className="link small" onClick={() => { setSuggestions([]); void browse(s); }}>{s}</GroveButton></li>
                         ))}
                     </ul>
                 )}
-                <div className="row">
-                    <button className="ghost small" onClick={() => void browse(path)}>이 경로 열기</button>
-                    <button className="ghost small" disabled={!dirs?.parent} onClick={() => dirs?.parent && void browse(dirs.parent)}>
+                <GroveStack direction="horizontal" align="center" className="row">
+                    <GroveButton className="ghost small" onClick={() => void browse(path)}>이 경로 열기</GroveButton>
+                    <GroveButton className="ghost small" disabled={!dirs?.parent} onClick={() => dirs?.parent && void browse(dirs.parent)}>
                         상위 폴더
-                    </button>
-                    <label className="small">
-                        <input type="checkbox" checked={hidden} onChange={(e) => setHidden(e.target.checked)} /> 숨김 폴더 표시
-                    </label>
-                </div>
+                    </GroveButton>
+                    <BooleanSelect label="숨김 폴더 표시" value={hidden} onChange={setHidden} />
+                </GroveStack>
                 {dirs && (
-                    <p className="muted small" data-testid="dir-current">
+                    <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="dir-current">
                         현재 위치: <code>{dirs.path}</code>
-                    </p>
+                    </GroveText>
                 )}
                 {dirs && (
                     <ul className="dir-list" aria-label="하위 폴더">
                         {dirs.entries.length === 0 && <li className="muted small">하위 폴더 없음</li>}
                         {dirs.entries.map((d) => (
                             <li key={d.path}>
-                                <button className="link" onClick={() => void browse(d.path)}>
+                                <GroveButton className="link" onClick={() => void browse(d.path)}>
                                     📁 {d.name}
-                                </button>
+                                </GroveButton>
                             </li>
                         ))}
                         {dirs.truncated && <li className="muted small">폴더가 많아 일부만 표시합니다. 경로를 직접 입력하세요</li>}
                     </ul>
                 )}
-                <label className="small">
-                    <input type="checkbox" checked={create} onChange={(e) => setCreate(e.target.checked)} /> 폴더가 없으면 마지막 폴더를 새로 만들기
-                </label>
-                <div className="row">
-                    <button disabled={!path.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void submit("/projects", { root_path: path.trim(), create })}>
+                <BooleanSelect label="폴더가 없으면 마지막 폴더를 새로 만들기" value={create} onChange={setCreate} />
+                <GroveStack direction="horizontal" align="center" className="row">
+                    <GroveButton disabled={!path.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void submit("/projects", { root_path: path.trim(), create })}>
                         이 폴더를 프로젝트로 추가
-                    </button>
-                    <button className="ghost" onClick={close}>
+                    </GroveButton>
+                    <GroveButton className="ghost" onClick={close}>
                         취소
-                    </button>
-                </div>
+                    </GroveButton>
+                </GroveStack>
                 <DetailDialog className="clone-repo" label="저장소에서 clone" title="저장소에서 clone">
                     <CloneRepo target={dirs?.path ?? ""} blockedReason={blockedReason} onCreate={(body) => submit("/projects/clone", body)} />
                 </DetailDialog>
@@ -187,35 +187,28 @@ function CloneRepo({ target: initialTarget, blockedReason, onCreate }: {
         await onCreate(body);
     };
     return <div className="stack" role="group" aria-label="저장소 clone">
-        <div className="row">
-            <input aria-label="GitHub 저장소 검색" placeholder="검색어(비우면 내 저장소)" value={query} onChange={(e) => setQuery(e.target.value)}
+        <GroveStack direction="horizontal" align="center" className="row">
+            <TextInput label="GitHub 저장소 검색" isLabelHidden placeholder="검색어(비우면 내 저장소)" value={query} onChange={setQuery}
                 onKeyDown={(e) => e.key === "Enter" && void find()} />
-            <button className="ghost small" onClick={() => void find()}>검색</button>
-        </div>
-        {search && search.status !== "success" && <p className="warn small" role="status">{search.error}</p>}
+            <GroveButton className="ghost small" onClick={() => void find()}>검색</GroveButton>
+        </GroveStack>
+        {search && search.status !== "success" && <GroveText as="p" display="block" type="supporting" color="warning" role="status">{search.error}</GroveText>}
         {search?.status === "success" && (
             <ul className="dir-list" aria-label="저장소 검색 결과">
                 {search.repositories.length === 0 && <li className="muted small">결과 없음</li>}
                 {search.repositories.map((r) => (
                     <li key={r.full_name}>
-                        <button className="link" onClick={() => setRepo(r.full_name)}>{r.full_name}{r.private ? " 🔒" : ""}</button>
-                        {r.description && <span className="muted small"> {r.description}</span>}
+                        <GroveButton className="link" onClick={() => setRepo(r.full_name)}>{r.full_name}{r.private ? " 🔒" : ""}</GroveButton>
+                        {r.description && <GroveText type="supporting" color="secondary"> {r.description}</GroveText>}
                     </li>
                 ))}
             </ul>
         )}
-        <label>저장소(owner/name 또는 원격 주소)
-            <input aria-label="clone할 저장소" value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="owner/name" />
-        </label>
-        {slug && <label className="small">clone 방식
-            <select aria-label="clone 방식" value={protocol} onChange={(e) => setProtocol(e.target.value === "ssh" ? "ssh" : "https")}>
-                <option value="https">https</option><option value="ssh">ssh</option>
-            </select>
-        </label>}
-        <label>받을 상위 폴더
-            <input aria-label="clone 대상 폴더" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="/절대/경로 또는 ~/code" />
-        </label>
-        {err && <p className="err" role="alert">{err}</p>}
-        <button disabled={!repo.trim() || !target.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void clone()}>clone 후 프로젝트로 추가</button>
+        <TextInput label="저장소(owner/name 또는 원격 주소)" aria-label="clone할 저장소" value={repo} onChange={setRepo} placeholder="owner/name" />
+        {slug && <Select label="clone 방식" value={protocol} onChange={(value) => setProtocol(value === "ssh" ? "ssh" : "https")}
+            options={[{ value: "https", label: "https" }, { value: "ssh", label: "ssh" }]} />}
+        <TextInput label="받을 상위 폴더" aria-label="clone 대상 폴더" value={target} onChange={setTarget} placeholder="/절대/경로 또는 ~/code" />
+        {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
+        <GroveButton disabled={!repo.trim() || !target.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void clone()}>clone 후 프로젝트로 추가</GroveButton>
     </div>;
 }

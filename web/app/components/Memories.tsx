@@ -1,6 +1,13 @@
 import { useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import { useQuery } from "../state/store";
+import { TextArea } from "../design/Fields";
+import { Select } from "../design/Select";
+import { Button } from "../design/Button";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Text } from "@astryxdesign/core/Text";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { SentenceText } from "./HelpTip";
 
 type Memory = {
     id: string; project_id: string | null; body: string; revision: number;
@@ -52,46 +59,47 @@ export function Memories({ projectId, projectName, sessionId }: { projectId?: st
                 : { body, project_id: scope === "project" ? projectId : null, source_session_id: sessionId ?? null, confirmed: true },
         });
     };
-    return <div className="stack" data-testid="memories-panel">
-        <p className="muted small">다음 요청부터 모델에 전달됩니다. 비밀정보는 넣지 마세요.</p>
-        <p className="muted small">삭제해도 과거 모델 요청·대화 사본·백업을 소급 삭제하지 않습니다.</p>
-        {!!query.error && <p className="err" role="alert">{query.error instanceof Error ? query.error.message : "기억 조회 실패"}</p>}
-        <ul>
-            {(query.data?.items ?? []).map((memory) => <li key={memory.id} data-testid="memory-row">
-                <p className="small">적용: {scopeName(memory.project_id)} · 출처: 사용자 직접 입력{memory.source_session_id ? ` · 대화 ${memory.source_session_id}` : ""}</p>
-                <div className="text">{memory.body}</div>
-                <button type="button" className="ghost small" disabled={blocked || !!deleting || !!editing || !!body} onClick={() => { setEditing(memory); setBody(memory.body); setError(null); }}>기억 수정</button>
-                <button type="button" className="ghost small" disabled={blocked || !!deleting || !!editing || !!body} onClick={() => { setDeleting(memory); setError(null); }}>기억 삭제 확인</button>
-            </li>)}
-        </ul>
-        {deleting ? <div role="group" aria-label="기억 삭제 확인">
-            <p>삭제 대상: {scopeName(deleting.project_id)} · revision {deleting.revision}</p>
-            <div className="text">{deleting.body}</div>
-            <button type="button" disabled={blocked} onClick={() => void mutate({
+    return <Stack gap={2} data-testid="memories-panel">
+        <Text as="p" display="block" type="supporting" color="secondary">다음 요청부터 모델에 전달되니 비밀정보는 넣지 마세요.</Text>
+        <Text as="p" display="block" type="supporting" color="secondary">삭제해도 과거 모델 요청·대화 사본·백업을 소급 삭제하지 않습니다.</Text>
+        {!!query.error && <Text as="p" display="block" type="inherit" color="error" role="alert">{query.error instanceof Error ? query.error.message : "기억 조회 실패"}</Text>}
+        <List density="compact" edge="flush">
+            {(query.data?.items ?? []).map((memory) => <ListItem key={memory.id} data-testid="memory-row" label={<Stack gap={2}>
+                <Text as="p" display="block" type="supporting" color="inherit">적용: {scopeName(memory.project_id)} · 출처: 사용자 직접 입력{memory.source_session_id ? ` · 대화 ${memory.source_session_id}` : ""}</Text>
+                <Text as="div" display="block" type="inherit" color="inherit" className="text">{memory.body}</Text>
+                <Stack direction="horizontal" wrap="wrap" gap={2}>
+                    <Button type="button" className="ghost small" disabled={blocked || !!deleting || !!editing || !!body} onClick={() => { setEditing(memory); setBody(memory.body); setError(null); }}>기억 수정</Button>
+                    <Button type="button" className="ghost small" disabled={blocked || !!deleting || !!editing || !!body} onClick={() => { setDeleting(memory); setError(null); }}>기억 삭제 확인</Button>
+                </Stack>
+            </Stack>} />)}
+        </List>
+        {deleting ? <Stack gap={2} role="group" aria-label="기억 삭제 확인">
+            <Text as="p" display="block" type="inherit" color="inherit">삭제 대상: {scopeName(deleting.project_id)} · revision {deleting.revision}</Text>
+            <Text as="div" display="block" type="inherit" color="inherit" className="text">{deleting.body}</Text>
+            <Button type="button" disabled={blocked} onClick={() => void mutate({
                 method: "post", path: `/memories/${deleting.id}/delete`, key: newKey(),
                 body: { expected_revision: deleting.revision, confirmed: true },
-            })}>이 기억 삭제</button>
-            <button type="button" className="ghost" disabled={blocked} onClick={() => setDeleting(null)}>삭제 취소</button>
-        </div> : <form className="stack" onSubmit={(event) => { event.preventDefault(); submit(); }}>
-            {editing ? <p className="small">수정 대상: {scopeName(editing.project_id)} · revision {editing.revision}</p>
-                : <label>기억 적용 범위<select aria-label="기억 적용 범위" value={scope} disabled={blocked} onChange={(e) => setScope(e.target.value)}>
-                    <option value="global">전역(모든 프로젝트)</option>
-                    {projectId && <option value="project">프로젝트 “{projectName ?? projectId}”</option>}
-                </select></label>}
-            <label>확인한 기억 내용<textarea rows={3} aria-label="확인한 기억 내용" value={body} disabled={blocked} onChange={(e) => setBody(e.target.value)} /></label>
-            <div className="inline">
-                <button type="submit" disabled={blocked || !body.trim()}>확인하고 기억 저장</button>
-                {editing && <button type="button" className="ghost" disabled={blocked} onClick={() => { setEditing(null); setBody(""); }}>수정 취소</button>}
-                {editing && current && current.revision !== editing.revision && <button type="button" className="ghost" disabled={blocked}
-                    onClick={() => { setEditing(current); setBody(current.body); setError(null); }}>최신 기억 사용</button>}
-            </div>
-            {editing && current && current.revision !== editing.revision && <p className="warn" role="status">다른 기기에서 먼저 바뀌었습니다. 내 초안·기존 revision을 보존했습니다.</p>}
+            })}>이 기억 삭제</Button>
+            <Button type="button" className="ghost" disabled={blocked} onClick={() => setDeleting(null)}>삭제 취소</Button>
+        </Stack> : <form className="stack" onSubmit={(event) => { event.preventDefault(); submit(); }}>
+            {editing ? <Text as="p" display="block" type="supporting" color="inherit">수정 대상: {scopeName(editing.project_id)} · revision {editing.revision}</Text>
+                : <Select label="기억 적용 범위" value={scope} disabled={blocked} onChange={setScope}
+                    options={[{ value: "global", label: "전역(모든 프로젝트)" },
+                        ...(projectId ? [{ value: "project", label: `프로젝트 “${projectName ?? projectId}”` }] : [])]} />}
+            <TextArea rows={3} label="확인한 기억 내용" value={body} isDisabled={blocked} onChange={setBody} />
+            <Stack direction="horizontal" wrap="wrap" gap={2}>
+                <Button type="submit" disabled={blocked || !body.trim()}>확인하고 기억 저장</Button>
+                {editing && <Button type="button" className="ghost" disabled={blocked} onClick={() => { setEditing(null); setBody(""); }}>수정 취소</Button>}
+                {editing && current && current.revision !== editing.revision && <Button type="button" className="ghost" disabled={blocked}
+                    onClick={() => { setEditing(current); setBody(current.body); setError(null); }}>최신 기억 사용</Button>}
+            </Stack>
+            {editing && current && current.revision !== editing.revision && <Text as="p" display="block" type="inherit" color="warning" role="status"><SentenceText text="다른 기기에서 먼저 바뀌었습니다. 내 초안·기존 revision을 보존했습니다." /></Text>}
         </form>}
-        {mutation.phase === "sending" && <p role="status">기억 요청 처리·결과 확인 중…</p>}
-        {mutation.phase === "unknown" && <div role="group" aria-label="기억 결과 재확인">
-            <p className="warn">결과 불명입니다. 자동으로 새 요청을 보내지 않습니다. 원래 내용·범위·revision·같은 키로만 확인합니다.</p>
-            <button type="button" onClick={() => void mutate(mutation.attempt)}>같은 기억 요청 확인</button>
-        </div>}
-        {error && <p className="err" role="alert">{error}</p>}
-    </div>;
+        {mutation.phase === "sending" && <Text as="p" display="block" type="inherit" color="inherit" role="status">기억 요청 처리·결과 확인 중…</Text>}
+        {mutation.phase === "unknown" && <Stack gap={2} role="group" aria-label="기억 결과 재확인">
+            <Text as="p" display="block" type="inherit" color="warning"><SentenceText text="결과 불명입니다. 자동으로 새 요청을 보내지 않습니다. 원래 내용·범위·revision·같은 키로만 확인합니다." /></Text>
+            <Button type="button" onClick={() => void mutate(mutation.attempt)}>같은 기억 요청 확인</Button>
+        </Stack>}
+        {error && <Text as="p" display="block" type="inherit" color="error" role="alert">{error}</Text>}
+    </Stack>;
 }

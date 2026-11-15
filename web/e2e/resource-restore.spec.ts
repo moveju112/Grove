@@ -42,7 +42,7 @@ for (const operation of ["rename", "delete"] as const) {
         await expect(view.getByLabel("파일 내용")).toHaveValue("my unsaved recovery fixture");
         expect(readFileSync(path, "utf8")).toBe("original disk fixture");
         await view.getByRole("button", { name: "저장", exact: true }).click();
-        await expect(view.getByRole("status")).toHaveText("저장됨");
+        await expect(view.getByRole("status").filter({ hasText: /\S/ })).toHaveText("저장됨");
         expect(readFileSync(path, "utf8")).toBe("my unsaved recovery fixture");
     });
 }

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compare, key, load, save, settleSend, siblingCopies, type DraftAttachment, type PendingSend } from "./drafts";
+import { sendOptionsSignature } from "./sendOptions";
 
 class Mem {
     m = new Map<string, string>();
@@ -29,6 +30,14 @@ const pending: PendingSend = {
 };
 
 describe("drafts", () => {
+    it("확장 추론·Fast 선택과 전송 키를 다시 열 때 보존한다", () => {
+        const store = new Mem();
+        const selected = { ...options, mode: "model" as const, effort: "max" as const, serviceTier: "priority" };
+        const request = { ...pending, options: selected, intent: selected,
+            sig: sendOptionsSignature(selected, pending.attachmentIds) };
+        save(store, "selected", { text: pending.raw, baseRevision: 0, updatedAt: 1, options: selected, pending: request });
+        expect(load(store, "selected")).toMatchObject({ options: selected, pending: request, pendingInvalid: false });
+    });
     it("같은 글이라도 모델 선택이 바뀐 새 입력은 원래 요청 확정으로 지우지 않는다", () => {
         const s = new Mem();
         const next = { ...options, mode: "model" as const, profileId: "next-model" };

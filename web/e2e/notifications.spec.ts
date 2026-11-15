@@ -1,6 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, openDetails, state } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, state } from "./helpers";
 
 type Note = { id: string; title: string; delivered_at: string | null; read_at: string | null };
 type Run = { id: string; status: string; session_id: string | null };
@@ -27,70 +27,41 @@ async function remoteCommand(name: string) {
     return { schedule, runs, notes };
 }
 
-async function openNotes(page: Page) {
-    const notes = page.getByTestId("notifications");
-    await openDetails(notes);
-    return notes;
-}
-
 async function removeSchedule(id: string) {
     const current = await apiCall<{ revision: number }>("GET", `/schedules/${id}`);
     await apiCall("POST", `/schedules/${id}/delete`, { expected_revision: current.revision });
 }
 
-test("원격 접수·저장·앱 전달·명시적 열람은 별개이고 다시 모델을 실행하지 않는다", async ({ page }) => {
+test("알림 메뉴를 제거해도 서버 기록은 보존하고 자동 전달·읽음 처리나 모델 재실행은 하지 않는다", async ({ page }) => {
     const name = `원격 전달 ${Date.now()}`;
     const command = await remoteCommand(name);
     try {
         const saved = (await command.notes()).items[0]!;
         expect(saved.delivered_at).toBeNull();
         expect(saved.read_at).toBeNull();
+        const inboxRequests: string[] = [];
+        page.on("request", (request) => {
+            if (/\/api\/v1\/notifications(?:[/?]|$)/.test(request.url())) inboxRequests.push(request.url());
+        });
         await login(page);
-        await expect.poll(async () => (await command.notes()).items[0]!.delivered_at !== null).toBe(true);
+        await expect(page.getByTestId("notifications")).toHaveCount(0);
+        await expect(page.getByRole("button", { name: "알림", exact: true, includeHidden: true })).toHaveCount(0);
+        expect((await command.notes()).items[0]!.delivered_at).toBeNull();
         expect((await command.notes()).items[0]!.read_at).toBeNull();
-        const notes = await openNotes(page);
-        const item = notes.getByTestId("notification").filter({ hasText: name });
-        await expect(item.getByTestId("notification-delivery")).toHaveText("서버 저장됨 · 앱 전달 확인 · 미열람");
-        await item.getByRole("button").click();
-        await expect.poll(async () => (await command.notes()).items[0]!.read_at !== null).toBe(true);
-        await expect(page.getByTestId("session-view")).toContainText("원격 명령 결과");
-        const confirmed = (await command.notes()).items[0]!;
         await page.reload();
         await expect(page.getByTestId("conn")).toHaveText("연결됨");
-        const after = (await command.notes()).items[0]!;
-        expect(after.delivered_at).toBe(confirmed.delivered_at);
-        expect(after.read_at).toBe(confirmed.read_at);
+        expect(inboxRequests).toEqual([]);
+        const preserved = (await command.notes()).items[0]!;
+        expect(preserved).toEqual(saved);
+        // 메뉴 제거는 기존 API·영속 기록을 삭제하거나 서버 확인 절차를 바꾸지 않는다.
+        await apiCall("POST", "/notifications/delivered", { ids: [saved.id] });
+        await apiCall("POST", `/notifications/${saved.id}/read`);
+        const confirmed = (await command.notes()).items[0]!;
+        expect(confirmed.delivered_at).not.toBeNull();
+        expect(confirmed.read_at).not.toBeNull();
         const runs = await command.runs();
         expect(runs).toHaveLength(1);
         expect(runs[0]!.status).toBe("completed");
-    } finally {
-        await removeSchedule(command.schedule.id);
-    }
-});
-
-test("전달·읽음 응답 실패는 성공으로 표시하지 않고 재확인으로 복구한다", async ({ page }) => {
-    const name = `전달 복구 ${Date.now()}`;
-    const command = await remoteCommand(name);
-    try {
-        await page.route("**/api/v1/notifications/delivered", (route) => route.abort("connectionreset"));
-        await login(page);
-        const notes = await openNotes(page);
-        const item = notes.getByTestId("notification").filter({ hasText: name });
-        await expect(item.getByTestId("notification-delivery")).toContainText("앱 전달 미확인");
-        await expect(notes.getByRole("alert")).toContainText("앱 전달 미확인");
-        expect((await command.notes()).items[0]!.delivered_at).toBeNull();
-        await page.unroute("**/api/v1/notifications/delivered");
-        await notes.getByRole("button", { name: "전달 다시 확인" }).click();
-        await expect(item.getByTestId("notification-delivery")).toHaveText("서버 저장됨 · 앱 전달 확인 · 미열람");
-        expect((await command.notes()).items[0]!.read_at).toBeNull();
-        await page.route("**/api/v1/notifications/*/read", (route) => route.abort("connectionreset"));
-        await item.getByRole("button").click();
-        await expect(notes.getByRole("alert")).toBeVisible();
-        expect((await command.notes()).items[0]!.read_at).toBeNull();
-        await page.unroute("**/api/v1/notifications/*/read");
-        await item.getByRole("button").click();
-        await expect.poll(async () => (await command.notes()).items[0]!.read_at !== null).toBe(true);
-        expect(await command.runs()).toHaveLength(1);
     } finally {
         await removeSchedule(command.schedule.id);
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature } from "./sendOptions";
+import { type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, serviceTierForProfile } from "./sendOptions";
 import type { ModelCapabilities } from "../api/generated";
 
 const base: SendOptions = { mode: "model", profileId: null, agentId: null, tools: false };
@@ -11,7 +11,11 @@ describe("sendOptionsSignature", () => {
     it("대상·권한·첨부 순서 변경은 별도 요청이다", () => {
         const original = sendOptionsSignature(base, ["a", "b"]);
         expect(sendOptionsSignature({ ...base, profileId: "other" }, ["a", "b"])).not.toBe(original);
+        expect(sendOptionsSignature({ ...base, model: "another-model" }, ["a", "b"])).not.toBe(original);
+        expect(sendOptionsSignature({ ...base, model: null }, ["a", "b"])).toBe(original);
         expect(sendOptionsSignature({ ...base, tools: true }, ["a", "b"])).not.toBe(original);
+        expect(sendOptionsSignature({ ...base, serviceTier: "priority" }, ["a", "b"])).not.toBe(original);
+        expect(sendOptionsSignature({ ...base, serviceTier: null }, ["a", "b"])).toBe(original);
         expect(sendOptionsSignature(base, ["b", "a"])).not.toBe(original);
     });
 });
@@ -39,6 +43,16 @@ describe("resolveOptions", () => {
 
 describe("capabilityProblem", () => {
     const unknown: ModelCapabilities = { context_tokens: null, max_output_tokens: null, images: null, tools: null, effort: null, temperature: null, pdf: false, fast: false };
+    it("Fast 꺼짐은 Codex에 명시하고 미지원 공급자로 바꿔도 정상 전송을 막지 않는다", () => {
+        const codex = { ...unknown, fast: true };
+        expect(serviceTierForProfile(undefined, codex)).toBe("default");
+        expect(serviceTierForProfile(null, codex)).toBe("default");
+        expect(serviceTierForProfile("default", codex)).toBe("default");
+        expect(serviceTierForProfile("default", unknown)).toBeNull();
+        expect(serviceTierForProfile(null, unknown)).toBeNull();
+        expect(serviceTierForProfile("priority", unknown)).toBe("priority");
+        expect(capabilityProblem(unknown, { ...base, serviceTier: serviceTierForProfile("default", unknown) }, false)).toBeNull();
+    });
     it("미확인 지원을 미지원으로 단정하지 않는다", () => {
         expect(capabilityProblem(unknown, { ...base, tools: true, effort: "high" }, true)).toBeNull();
         expect(capabilityProblem(undefined, base, false)).toBeNull();
@@ -46,10 +60,17 @@ describe("capabilityProblem", () => {
     it("미지원 요청은 명시적으로 되돌리게 하고 저장 모드는 막지 않는다", () => {
         const no = { ...unknown, images: false, tools: false, effort: false };
         expect(capabilityProblem(no, { ...base, tools: true }, false)).toContain("도구 루프 미지원");
-        expect(capabilityProblem(no, { ...base, effort: "high" }, false)).toContain("추론 강도 미지원");
+        expect(capabilityProblem(no, { ...base, effort: "high" }, false)).toContain("추론 미지원");
         expect(capabilityProblem(no, { ...base, effort: "auto" }, false)).toBeNull();
         expect(capabilityProblem(no, base, true)).toContain("이미지 입력 미지원");
         expect(capabilityProblem(no, { ...base, mode: "save", tools: true }, true)).toBeNull();
+    });
+    it("모델 목록에 없는 추론·속도는 초안을 바꾸지 않고 전송 전에 막는다", () => {
+        const model = { id: "limited", name: "Limited", reasoning_efforts: ["low", "high"], service_tiers: [] };
+        const codex = { ...unknown, fast: true };
+        expect(capabilityProblem(codex, { ...base, effort: "max" }, false, model)).toContain("추론 옵션");
+        expect(capabilityProblem(codex, { ...base, serviceTier: "priority" }, false, model)).toContain("속도");
+        expect(capabilityProblem(codex, { ...base, effort: "high", serviceTier: "default" }, false, model)).toBeNull();
     });
 });
 

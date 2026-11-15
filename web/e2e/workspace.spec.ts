@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, inputOptions, login, openBots, openDetails, openProjectFiles, openTool, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, inputOptions, login, openBots, openDetails, openProjectFiles, openTool, script, selectChoice, sessionView, state } from "./helpers";
 
 test("CSP·보안 헤더와 PWA manifest를 제공한다", async ({ request }) => {
     const r = await request.get("/");
@@ -174,13 +174,14 @@ test("자식 에이전트 위임을 승인하면 자식 대화가 생기고 결�
     expect(turns[0]!.status).toBe("completed");
     expect(turns[0]!.error).toBeNull();
     const runs = view.getByTestId("agent-runs");
-    // 진행 중에 자동으로 열린 목록은 끝나도 열린 채 남는다. 상태가 확정된 뒤 닫혀 있을 때만 연다.
+    await openTool(view, "에이전트");
     await expect(runs.getByTestId("agent-run").first()).toHaveAttribute("data-status", "completed");
     await openDetails(runs);
     // 자식 대화를 열면 부모 연결이 보인다
     await runs.getByRole("button", { name: "자식 대화" }).first().click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const child = page.getByTestId("session-view").nth(1);
+    await openTool(child, "에이전트");
     await expect(child.getByTestId("agent-runs")).toContainText("부모 대화 열기");
     await expect(child.getByTestId("msg-who").first()).toHaveText("부모 에이전트의 지시");
     await expect(child.getByTestId("msg-assistant").last()).toContainText("자식 검토 결과");
@@ -194,6 +195,7 @@ test("Goal을 추가·완료·순서 변경하고 다른 화면의 변경이 실
     await login(page);
     await page.locator(".recent").getByRole("button", { name: /Goal 대화/ }).first().click();
     const panel = page.getByTestId("goals-panel");
+    await openTool(page, "Goal");
     await openDetails(panel);
     for (const t of ["첫째", "둘째"]) {
         await panel.getByLabel("새 Goal").fill(t);
@@ -202,7 +204,7 @@ test("Goal을 추가·완료·순서 변경하고 다른 화면의 변경이 실
     }
     await panel.getByRole("button", { name: "둘째 위로" }).click();
     await expect(panel.getByTestId("goal").first()).toContainText("둘째");
-    await panel.getByTestId("goal").filter({ hasText: "첫째" }).getByRole("checkbox").check();
+    await selectChoice(panel.getByTestId("goal").filter({ hasText: "첫째" }).getByRole("combobox"), "true");
     await expect(panel.getByTestId("goal").filter({ hasText: "첫째" })).toHaveAttribute("data-status", "done");
     await expect(panel.getByRole("heading")).toContainText("남은 1/2");
     // 다른 기기(API)에서 추가하면 이벤트로 반영
@@ -276,6 +278,9 @@ test("context 사용량을 추정/실측으로 표시하고 수동 압축 결과
 test("서버 protocol이 바뀌면 새로고침을 안내하고 변경 요청을 보내지 않는다", async ({ page }) => {
     const { a } = await ensureProjects();
     await login(page);
+    await page.getByRole("button", { name: a.name, exact: true }).first().click();
+    const view = page.locator(".project-view").first();
+    await composerOption(view, "보내기 방식", "save");
     let mutations = 0;
     // 서버만 먼저 업데이트된 상황: 응답 protocol을 다른 값으로 바꾼다
     await page.route("**/api/v1/**", async (route) => {
@@ -283,12 +288,10 @@ test("서버 protocol이 바뀌면 새로고침을 안내하고 변경 요청을
         const r = await route.fetch();
         await route.fulfill({ response: r, headers: { ...r.headers(), "x-grove-protocol": "999" } });
     });
-    await page.getByRole("button", { name: a.name, exact: true }).first().click();
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await expect(page.getByTestId("protocol-banner")).toBeVisible();
     await expect(page.getByTestId("protocol-banner")).toContainText("protocol 999");
     // 변경 요청(새 대화)은 클라이언트에서 막힌다
-    const view = page.locator(".project-view").first();
-    await composerOption(view, "보내기 방식", "save");
     await view.getByLabel("메시지 입력").fill("보내지면 안 됨");
     await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
     await view.getByLabel("메시지 입력").press("Control+Enter");
@@ -338,7 +341,7 @@ test("설정 검색은 항목과 적용 범위를 보여 주고 기본 에이전
     expect(d.modified_fields).toEqual(["body"]);
     const comparison = page.getByRole("region", { name: "정의 기본값 비교", exact: true });
     await comparison.getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
-    await comparison.getByLabel("본문 기본값 적용", { exact: true }).check();
+    await selectChoice(comparison.getByLabel("본문 기본값 적용", { exact: true }), "true");
     await comparison.getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
     await expect.poll(async () => (await apiCall<{ modified_fields: string[] }>("GET", "/definitions/agent/reviewer")).modified_fields).toEqual([]);
     expect((await apiCall<{ body: string }>("GET", "/definitions/agent/reviewer")).body).toBe(original);
@@ -385,6 +388,7 @@ test("백그라운드 작업을 시작·취소하고 결과가 대화에 한 번
     // 앞선 시험이 분할 배치를 남겼을 수 있어 이 대화 화면 안에서만 찾는다.
     const view = sessionView(page, sess.id);
     const panel = view.getByTestId("tasks-panel");
+    await openTool(view, "작업");
     await openDetails(panel);
     await panel.getByLabel("백그라운드 명령").fill("echo 백그라운드-완료");
     await panel.getByRole("button", { name: "실행", exact: true }).click();
@@ -408,6 +412,7 @@ test("터미널을 열어 입력·출력하고, 새로고침하면 화면이 복
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const list = page.getByTestId("terminal-list");
+    await openTool(page, "터미널");
     await openDetails(list);
     await list.getByRole("button", { name: "새 터미널" }).click();
     const view = page.getByTestId("terminal-view");
@@ -468,7 +473,7 @@ test("봇을 만들고 home 대화에서 답을 받고, 새로고침·분할 뒤
     await item2.getByRole("button", { name: "e2e 봇 관리", exact: true }).click();
     await item2.getByRole("button", { name: "이 기기에서 숨기기" }).click();
     await expect(page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" })).toHaveCount(0);
-    await page.getByTestId("bots-panel").getByLabel("숨긴 봇 보기").check();
+    await selectChoice(page.getByTestId("bots-panel").getByLabel("숨긴 봇 보기"), "true");
     const item3 = page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" });
     await expect(item3).toBeVisible();
     // 삭제 → 삭제된 봇 목록에서 복원
@@ -476,11 +481,11 @@ test("봇을 만들고 home 대화에서 답을 받고, 새로고침·분할 뒤
     await item3.getByRole("button", { name: "e2e 봇 관리", exact: true }).click();
     await item3.getByRole("button", { name: "삭제" }).click();
     await expect(item3).toHaveCount(0);
-    await page.getByTestId("bots-panel").getByLabel("삭제된 봇").check();
+    await selectChoice(page.getByTestId("bots-panel").getByLabel("삭제된 봇"), "true");
     const del = page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" });
     await del.getByRole("button", { name: "e2e 봇 관리", exact: true }).click();
     await del.getByRole("button", { name: "복원" }).click();
-    await page.getByTestId("bots-panel").getByLabel("삭제된 봇").uncheck();
+    await selectChoice(page.getByTestId("bots-panel").getByLabel("삭제된 봇"), "false");
     await expect(page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: "e2e 봇" })).toHaveAttribute("data-status", "active");
 });
 
@@ -524,9 +529,9 @@ test("대화 검색은 본문 발췌를 보여 주고 결과를 누르면 그 �
     const hit = panel.getByTestId("search-hit");
     await expect(hit).toHaveCount(1);
     await expect(hit).toContainText(word);
-    await panel.getByLabel("본문 포함").uncheck();
+    await selectChoice(panel.getByLabel("본문 포함"), "false");
     await expect(panel.getByTestId("search-total")).toHaveText("0개");
-    await panel.getByLabel("본문 포함").check();
+    await selectChoice(panel.getByLabel("본문 포함"), "true");
     await hit.click();
     await expect(page.locator(`[data-testid=session-view][data-session="${s.id}"]`).first()).toContainText(word);
 });
@@ -537,6 +542,7 @@ test("예약을 만들고 지금 실행하면 실행 기록과 영속 알림이 
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
+    await openTool(page, "예약");
     await openDetails(panel);
     await panel.getByLabel("예약 이름").fill("e2e 점검");
     await panel.getByLabel("예약 지시").fill("상태 알려줘");
@@ -552,11 +558,9 @@ test("예약을 만들고 지금 실행하면 실행 기록과 영속 알림이 
     // 일시 정지
     await item.getByRole("button", { name: "일시 정지" }).click();
     await expect(item.getByRole("heading").first()).toContainText("일시 정지");
-    // 알림은 서버에 남고 사이드바에서 보인다. 누르면 실행한 대화를 연다
-    const notes = page.getByTestId("notifications");
-    await expect(notes.getByTestId("notifications-unread")).toBeVisible();
-    await openDetails(notes);
-    await notes.getByTestId("notification").filter({ hasText: "e2e 점검" }).first().click();
+    // 별도 알림함 없이 기존 실행 기록에서 결과 대화를 연다.
+    await expect(page.getByTestId("notifications")).toHaveCount(0);
+    await item.getByTestId("schedule-runs").getByRole("button", { name: "대화 열기", exact: true }).first().click();
     await expect(page.getByTestId("session-view").last()).toContainText("예약 결과 보고");
 });
 
@@ -569,6 +573,7 @@ test("담당 봇 예약은 범위 확인 뒤 저장하고 결과를 봇 대화�
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
+    await openTool(page, "예약");
     await openDetails(panel);
     await panel.getByLabel("예약 이름").fill(`봇 점검 ${stamp}`);
     await panel.getByLabel("예약 지시").fill("상태 알려줘");
@@ -581,8 +586,8 @@ test("담당 봇 예약은 범위 확인 뒤 저장하고 결과를 봇 대화�
     await expect(confirmBox).toContainText("600분마다");
     const add = panel.getByRole("button", { name: "예약 추가" });
     await expect(add).toBeDisabled();
-    await confirmBox.getByLabel("위 범위를 확인했습니다").check();
-    await confirmBox.getByLabel("저장만 하고 일시 정지 상태로 둠").check();
+    await selectChoice(confirmBox.getByLabel("위 범위를 확인했습니다"), "true");
+    await selectChoice(confirmBox.getByLabel("저장만 하고 일시 정지 상태로 둠"), "true");
     await add.click();
     const item = panel.getByTestId("schedule").filter({ hasText: `봇 점검 ${stamp}` });
     await expect(item.getByRole("heading").first()).toContainText("일시 정지");
@@ -606,6 +611,7 @@ test("예약 webhook을 켜고 서명한 요청으로 한 번만 실행한다", 
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
+    await openTool(page, "예약");
     await openDetails(panel);
     const item = panel.getByTestId("schedule").filter({ hasText: `훅 예약 ${stamp}` });
     const hook = item.getByTestId("schedule-webhook");
@@ -638,12 +644,13 @@ test("결과가 같으면 알림을 생략하고 실행 기록에 변화 없음�
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
+    await openTool(page, "예약");
     await openDetails(panel);
     await panel.getByLabel("예약 이름").fill(`조용 ${stamp}`);
     await panel.getByLabel("예약 지시").fill("상태 알려줘");
     await panel.getByLabel("예약 방식").selectOption("interval");
     await panel.getByLabel("간격(분)").fill("600");
-    await panel.getByLabel("결과가 직전과 같으면 알림 생략").check();
+    await selectChoice(panel.getByLabel("결과가 직전과 같으면 알림 생략"), "true");
     await panel.getByRole("button", { name: "예약 추가" }).click();
     const item = panel.getByTestId("schedule").filter({ hasText: `조용 ${stamp}` });
     await expect(item).toContainText("직전 완료 결과와 같으면 자동 실행 알림을 생략");
@@ -680,6 +687,7 @@ test("예약에 최대 횟수·연속 실패 정지를 정하고, 실패로 자�
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const panel = page.getByTestId("schedules-panel");
+    await openTool(page, "예약");
     await openDetails(panel);
     await panel.getByLabel("예약 이름").fill(`한도 예약 ${stamp}`);
     await panel.getByLabel("예약 지시").fill("상태 알려줘");
@@ -726,13 +734,20 @@ test("사용량 패널은 기간·묶음별 token과 가격 미설정 상태를 
     await view.getByLabel("메시지 입력").fill("질문");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").last()).toContainText("답", { timeout: 15_000 });
-    await expect(view.getByTestId("turn-timing")).toContainText("마지막 요청");
-    await expect(view.getByTestId("turn-timing")).toContainText("공급자");
+    const timing = view.getByTestId("turn-timing");
+    await expect(timing).toHaveAttribute("data-running", "false");
+    await expect(timing).toContainText("요청");
+    await expect(timing).not.toContainText("공급자");
+    await timing.getByRole("button", { name: "요청 시간 상세", exact: true }).click();
+    const detail = page.getByRole("dialog", { name: "요청 시간 상세" });
+    await expect(detail).toContainText("공급자");
     await expect(view.getByTestId("ui-delivery")).toContainText("화면 반영(수신 후)");
     expect(Number((await view.getByTestId("ui-delivery").innerText()).match(/(\d+)ms/)?.[1])).toBeGreaterThanOrEqual(450);
     await page.reload();
-    await expect(view.getByTestId("turn-timing")).toContainText("공급자");
+    await timing.getByRole("button", { name: "요청 시간 상세", exact: true }).click();
+    await expect(detail).toContainText("공급자");
     await expect(view.getByTestId("ui-delivery")).toHaveCount(0);
+    await detail.getByRole("button", { name: "닫기", exact: true }).click();
     await page.getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("사용량");
     const panel = page.getByTestId("usage-panel");

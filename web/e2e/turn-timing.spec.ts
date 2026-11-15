@@ -13,7 +13,7 @@ type Detail = { id: string; status: string; timing: { total_ms: number; running:
 async function timingSetting(page: Page, title: string, enabled: boolean) {
     await page.getByRole("button", { name: "설정", exact: true }).first().click();
     await page.getByLabel("설정 검색", { exact: true }).fill("턴 경과");
-    await page.getByLabel("턴 시간 표시", { exact: true }).setChecked(enabled);
+    await page.getByLabel("턴 시간 표시", { exact: true }).selectOption(String(enabled));
     // 탭 버튼 이름은 "프로젝트 이름 + 대화 제목"이다.
     await page.getByRole("tab").getByRole("button", { name: title }).click();
 }
@@ -34,8 +34,8 @@ test("진행·완료 시간은 기기 시계 ±5분에도 서버와 같고 끄�
         active = started.turn.id;
         const timing = view.getByTestId("turn-timing");
         await expect(timing).toHaveAttribute("data-running", "true");
-        await expect(timing).toContainText("총 경과");
-        await expect(timing).toContainText("대기 포함");
+        await expect(timing).toContainText(/[\d.]+초/);
+        await expect(timing).not.toContainText("총 경과");
         const actualNow = Date.now();
         for (const skew of [300_000, -300_000]) {
             await page.clock.setFixedTime(actualNow + skew);
@@ -65,7 +65,7 @@ test("진행·완료 시간은 기기 시계 ±5분에도 서버와 같고 끄�
         active = undefined;
         const detail = await apiCall<Detail>("GET", `/turns/${done.turn.id}`);
         await expect(timing).toHaveAttribute("data-elapsed-ms", String(detail.timing.total_ms));
-        await expect(timing).toContainText("마지막 요청 총 경과");
+        await expect(timing).toContainText("요청");
         await page.reload();
         await expect(view.getByTestId("turn-timing")).toHaveAttribute("data-elapsed-ms", String(detail.timing.total_ms));
     } finally {

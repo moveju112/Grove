@@ -7,6 +7,8 @@ import "./design/grove-soft.css";
 import "./app.css";
 import { DesignProvider } from "./design/DesignProvider";
 import { Stack } from "@astryxdesign/core/Stack";
+import { Heading } from "@astryxdesign/core/Heading";
+import { Text } from "@astryxdesign/core/Text";
 import { Button } from "./design/Button";
 import { applyPrefs, loadPrefs } from "./state/device";
 import { installAuthCleanup } from "./state/cleanup";
@@ -61,8 +63,8 @@ export function ErrorBoundary() {
     const msg = isRouteErrorResponse(err) ? `${err.status} ${err.statusText}` : err instanceof Error ? err.message : "알 수 없는 오류";
     return (
         <Stack className="boot error" role="alert">
-            <h1>화면 오류</h1>
-            <p>{msg}</p>
+            <Heading level={1} color="inherit">화면 오류</Heading>
+            <Text as="p" display="block" type="inherit" color="inherit">{msg}</Text>
             <Button onClick={() => location.reload()}>다시 불러오기</Button>
         </Stack>
     );

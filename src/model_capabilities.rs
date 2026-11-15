@@ -38,9 +38,9 @@ pub fn resolve(protocol: &str, options: &Value) -> ModelCapabilities {
         tools: if cli { Some(false) } else { overrides.tools },
         effort: overrides.effort.or(cli.then_some(true)),
         temperature: if cli { Some(false) } else { overrides.temperature },
-        // 현재 어댑터는 native PDF와 fast 요청을 구현하지 않았다.
+        // Codex 속도 선택은 실제 모델 목록의 serviceTiers로 제한한다.
         pdf: false,
-        fast: false,
+        fast: protocol == "codex_cli" && overrides.fast != Some(false),
     }
 }
 
@@ -55,8 +55,8 @@ pub fn validate_options(protocol: &str, options: &Value) -> ApiResult<()> {
     if overrides.max_output_tokens == Some(0) {
         return Err(ApiError::invalid("capabilities.max_output_tokens는 양의 정수여야 합니다"));
     }
-    if overrides.pdf == Some(true) || overrides.fast == Some(true) {
-        return Err(ApiError::unsupported("native PDF·fast는 현재 어댑터에서 지원하지 않습니다"));
+    if overrides.pdf == Some(true) || (overrides.fast == Some(true) && protocol != "codex_cli") {
+        return Err(ApiError::unsupported("native PDF 또는 이 어댑터의 Fast 모드는 지원하지 않습니다"));
     }
     if cli && (overrides.images == Some(true) || overrides.tools == Some(true)
         || overrides.temperature == Some(true) || overrides.max_output_tokens.is_some()
@@ -77,6 +77,9 @@ pub fn validate_options(protocol: &str, options: &Value) -> ApiResult<()> {
 
 impl ModelProfile {
     pub fn check_capabilities(&self, tools: bool, effort: Option<&str>, images: bool) -> ApiResult<()> {
+        if effort.is_some_and(|e| matches!(e, "xhigh" | "max" | "ultra")) && self.protocol != "codex_cli" {
+            return Err(ApiError::unsupported("이 추론 옵션은 Codex 모델에서 선택하세요"));
+        }
         for (unsupported, label) in [
             (tools && self.capabilities.tools == Some(false), "Grove 도구 루프"),
             (effort.is_some() && self.capabilities.effort == Some(false), "추론 강도"),

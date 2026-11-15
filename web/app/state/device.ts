@@ -48,7 +48,7 @@ export type Prefs = {
     recentWindow: RecentWindow | "all";
 };
 export const defaultPrefs: Prefs = {
-    theme: "system", fontSize: 15, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
+    theme: "system", fontSize: 14, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
     notifyDone: false, notifyApproval: false, notifyServer: false, notifySound: false,
     recentWindows: [...DEFAULT_RECENT_WINDOWS], recentWindow: DEFAULT_RECENT_WINDOW,
 };

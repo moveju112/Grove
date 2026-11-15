@@ -1,9 +1,13 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useState } from "react";
 import { api } from "../api/client";
 import type { Label, Project } from "../api/generated";
 import { UNLABELLED } from "../state/projectLabels";
 import { invalidate, useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { TextInput } from "../design/Fields";
+import { Select } from "../design/Select";
 
 /// 작업공간(프로젝트) 고정·색상 라벨(PROJECT-008). 서버 팔레트(`src/labels.rs::COLORS`)와 같은 순서.
 export const LABEL_COLORS: Record<string, [string, string]> = {
@@ -21,23 +25,18 @@ const message = (e: unknown, fallback: string) => (e instanceof Error ? e.messag
 
 export function LabelChip({ label }: { label: Label }) {
     const color = LABEL_COLORS[label.color]?.[0] ?? "#666";
-    return <span className="label-chip" style={{ borderColor: color, color }} data-testid={`label-chip-${label.name}`}>{label.name}</span>;
+    return <GroveText type="inherit" color="inherit" className="label-chip" style={{ borderColor: color, color }} data-testid={`label-chip-${label.name}`}>{label.name}</GroveText>;
 }
 
 export function LabelChips({ project, labels }: { project: Project; labels: Label[] }) {
     const own = labels.filter((l) => project.labels.includes(l.id));
     if (own.length === 0) return null;
-    return <span className="label-chips">{own.map((l) => <LabelChip key={l.id} label={l} />)}</span>;
+    return <GroveText type="inherit" color="inherit" className="label-chips">{own.map((l) => <LabelChip key={l.id} label={l} />)}</GroveText>;
 }
 
 function ColorPicker({ value, onChange, name }: { value: string; onChange: (c: string) => void; name: string }) {
-    return <span role="radiogroup" aria-label="라벨 색" className="label-swatches">
-        {Object.entries(LABEL_COLORS).map(([key, [hex, title]]) => (
-            <label key={key} className="label-swatch" title={title} style={{ background: hex }}>
-                <input type="radio" name={name} aria-label={title} checked={value === key} onChange={() => onChange(key)} />
-            </label>
-        ))}
-    </span>;
+    return <Select label="라벨 색" hideLabel htmlName={name} value={value} onChange={onChange}
+        options={Object.entries(LABEL_COLORS).map(([key, [, title]]) => ({ value: key, label: title }))} />;
 }
 
 /// 프로젝트 행 메뉴: 고정 전환과 라벨 할당·새 라벨 만들기. 실패하면 입력·선택을 보존하고 오류를 보인다.
@@ -63,8 +62,8 @@ export function ProjectMenu({ project, labels, onClose, onSplit }: { project: Pr
     return <div className="project-menu" role="dialog" aria-label={`${project.name} 메뉴`}
         onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
         {onSplit && <>
-            <button type="button" className="ghost small" onClick={() => { onSplit("right"); onClose(); }}>오른쪽에 열기</button>
-            <button type="button" className="ghost small" onClick={() => { onSplit("down"); onClose(); }}>아래에 열기</button>
+            <GroveButton type="button" className="ghost small" onClick={() => { onSplit("right"); onClose(); }}>오른쪽에 열기</GroveButton>
+            <GroveButton type="button" className="ghost small" onClick={() => { onSplit("down"); onClose(); }}>아래에 열기</GroveButton>
         </>}
         <ServerActionButton type="button" className="ghost small" disabled={busy}
             onClick={() => void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, pinned: !project.pinned_at }), "고정 변경 실패")}>
@@ -81,25 +80,26 @@ export function ProjectMenu({ project, labels, onClose, onSplit }: { project: Pr
                     </ServerActionButton>;
                 })}
             </div>
-            <button type="button" className="ghost small" onClick={() => { setCreating({ name: "", color: "violet" }); setError(null); }}>+ 새 라벨</button>
+            <GroveButton type="button" className="ghost small" onClick={() => { setCreating({ name: "", color: "violet" }); setError(null); }}>+ 새 라벨</GroveButton>
         </>}
         {creating && <form className="stack" onSubmit={async (e) => {
             e.preventDefault();
             if (await run(() => api.post("/labels", { name: creating.name, color: creating.color, project_id: project.id }), "라벨 만들기 실패")) setCreating(null);
         }}>
-            <input aria-label="새 라벨 이름" maxLength={40} value={creating.name} autoFocus onChange={(e) => setCreating({ ...creating, name: e.target.value })} />
+            <TextInput size="sm" label="새 라벨 이름" isLabelHidden maxLength={40} value={creating.name} hasAutoFocus
+                onChange={(value) => setCreating({ ...creating, name: value })} />
             <ColorPicker name={`new-label-${project.id}`} value={creating.color} onChange={(color) => setCreating({ ...creating, color })} />
-            <span className="inline">
+            <GroveText type="inherit" color="inherit" className="inline">
                 <ServerActionButton type="submit" disabled={busy || !creating.name.trim()}>만들고 붙이기</ServerActionButton>
-                <button type="button" className="ghost" onClick={() => setCreating(null)}>취소</button>
-            </span>
+                <GroveButton type="button" className="ghost" onClick={() => setCreating(null)}>취소</GroveButton>
+            </GroveText>
         </form>}
-        {error && <p className="err" role="alert">{error}</p>}
+        {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
         <ServerActionButton type="button" className="ghost small" disabled={busy} onClick={() => {
             if (!confirm(`${project.name}을(를) 보관할까요? 목록에서만 빠지고 폴더·대화는 그대로이며 "보관됨"에서 복원할 수 있습니다.`)) return;
             void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, archived: true }), "보관 실패").then((ok) => { if (ok) onClose(); });
         }}>보관</ServerActionButton>
-        <button type="button" className="ghost small" onClick={onClose}>닫기</button>
+        <GroveButton type="button" className="ghost small" onClick={onClose}>닫기</GroveButton>
     </div>;
 }
 
@@ -108,14 +108,14 @@ export function LabelFilter({ labels, selected, onChange }: { labels: Label[]; s
     const [managing, setManaging] = useState(false);
     const toggle = (id: string) => onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
     return <div className="label-filter" role="group" aria-label="라벨 필터">
-        {labels.map((l) => <button key={l.id} type="button" role="menuitemcheckbox" aria-checked={selected.includes(l.id)} className="ghost small"
-            data-testid={`label-filter-${l.name}`} onClick={() => toggle(l.id)}><LabelChip label={l} /></button>)}
-        <button type="button" role="menuitemcheckbox" aria-checked={selected.includes(UNLABELLED)} className="ghost small"
-            data-testid="label-filter-none" onClick={() => toggle(UNLABELLED)}>라벨 없음</button>
-        {selected.length > 0 && <button type="button" className="ghost small" onClick={() => onChange([])}>필터 해제</button>}
-        <button type="button" className="ghost small" aria-expanded={managing} onClick={() => setManaging((m) => !m)}>라벨 관리</button>
+        {labels.map((l) => <GroveButton key={l.id} type="button" role="menuitemcheckbox" aria-checked={selected.includes(l.id)} className="ghost small"
+            data-testid={`label-filter-${l.name}`} onClick={() => toggle(l.id)}><LabelChip label={l} /></GroveButton>)}
+        <GroveButton type="button" role="menuitemcheckbox" aria-checked={selected.includes(UNLABELLED)} className="ghost small"
+            data-testid="label-filter-none" onClick={() => toggle(UNLABELLED)}>라벨 없음</GroveButton>
+        {selected.length > 0 && <GroveButton type="button" className="ghost small" onClick={() => onChange([])}>필터 해제</GroveButton>}
+        <GroveButton type="button" className="ghost small" aria-expanded={managing} onClick={() => setManaging((m) => !m)}>라벨 관리</GroveButton>
         {managing && <div className="stack">
-            {labels.length === 0 && <p className="muted small">아직 라벨이 없습니다. 프로젝트 메뉴에서 만드세요.</p>}
+            {labels.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">프로젝트 메뉴에서 라벨을 만드세요.</GroveText>}
             {labels.map((l) => <LabelEditor key={`${l.id}:${l.revision}`} label={l} />)}
         </div>}
     </div>;
@@ -145,16 +145,16 @@ function LabelEditor({ label }: { label: Label }) {
         e.preventDefault();
         void act(() => api.patch(`/labels/${label.id}`, { expected_revision: label.revision, name, color }), "라벨 저장 실패");
     }}>
-        <input aria-label={`${label.name} 이름`} maxLength={40} value={name} onChange={(e) => setName(e.target.value)} />
+        <TextInput size="sm" label={`${label.name} 이름`} isLabelHidden maxLength={40} value={name} onChange={setName} />
         <ColorPicker name={`label-color-${label.id}`} value={color} onChange={setColor} />
         <ServerActionButton type="submit" className="small" disabled={busy || !dirty || !name.trim()}>저장</ServerActionButton>
-        {!confirm && <button type="button" className="ghost small" onClick={() => setConfirm(true)}>삭제</button>}
-        {confirm && <span role="alert" className="warn small">
+        {!confirm && <GroveButton type="button" className="ghost small" onClick={() => setConfirm(true)}>삭제</GroveButton>}
+        {confirm && <GroveText type="supporting" color="warning" role="alert">
             프로젝트 {label.project_count}개에서 빠집니다.{" "}
             <ServerActionButton type="button" className="small" disabled={busy}
                 onClick={() => void act(() => api.del(`/labels/${label.id}?expected_revision=${label.revision}`), "라벨 삭제 실패")}>삭제 확인</ServerActionButton>
-            <button type="button" className="ghost small" onClick={() => setConfirm(false)}>취소</button>
-        </span>}
-        {error && <p className="err" role="alert">{error}</p>}
+            <GroveButton type="button" className="ghost small" onClick={() => setConfirm(false)}>취소</GroveButton>
+        </GroveText>}
+        {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
     </form>;
 }

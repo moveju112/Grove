@@ -17,6 +17,11 @@ async function setup(page: Page) {
     const requests: Request[] = [];
     const replies: string[][] = [];
     const fixture = createServer((req, res) => {
+        if (req.method === "GET" && req.url === "/v1/models") {
+            res.writeHead(200, { "content-type": "application/json" });
+            res.end(JSON.stringify({ data: [{ id: "local-fixture" }] }));
+            return;
+        }
         let body = "";
         req.on("data", (chunk) => { body += chunk; });
         req.on("end", () => {
@@ -48,7 +53,7 @@ async function setup(page: Page) {
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("모델 프로필", { exact: true }).selectOption(profile.id);
-    await view.getByLabel("추론 강도", { exact: true }).selectOption("auto");
+    await view.getByLabel("추론", { exact: true }).selectOption("auto");
     await composerOption(view, "도구", true);
     return {
         requests, replies, session, view, root,

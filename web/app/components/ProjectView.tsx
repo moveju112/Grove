@@ -1,3 +1,6 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Heading } from "@astryxdesign/core/Heading";
+import { Button as GroveButton } from "../design/Button";
 import { useState } from "react";
 import { When } from "./When";
 import { ApiError, api } from "../api/client";
@@ -16,6 +19,7 @@ import { requireServerAction } from "./pwa/lifecycle";
 import { Stack } from "@astryxdesign/core/Stack";
 import { ActionMenu, Panel, ToolsTrigger, Workbench } from "./ui/Controls";
 import { Icon } from "./icons";
+import { TextInput } from "../design/Fields";
 
 /// 프로젝트 이름·아이콘 변경(PROJECT-002). revision 충돌이면 최신 값을 다시 불러와 알린다.
 function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
@@ -25,7 +29,7 @@ function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
     const [err, setErr] = useState<string | null>(null);
     if (!edit) {
         return (
-            <button
+            <GroveButton
                 className="ghost small"
                 onClick={(event) => {
                     event.preventDefault();
@@ -36,7 +40,7 @@ function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
                 }}
             >
                 이름·아이콘
-            </button>
+            </GroveButton>
         );
     }
     const save = async () => {
@@ -60,16 +64,16 @@ function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
             }}
         >
             <input aria-label="아이콘" value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="예: 🌱" size={4} />
-            <input aria-label="프로젝트 이름" value={name} onChange={(e) => setName(e.target.value)} required />
+            <TextInput label="프로젝트 이름" isLabelHidden value={name} onChange={setName} isRequired />
             <ServerActionButton className="small" type="submit">저장</ServerActionButton>
-            <button className="ghost small" type="button" onClick={() => setEdit(false)}>취소</button>
-            {err && <span className="err" role="alert">{err}</span>}
+            <GroveButton className="ghost small" type="button" onClick={() => setEdit(false)}>취소</GroveButton>
+            {err && <GroveText type="inherit" color="error" role="alert">{err}</GroveText>}
         </form>
     );
 }
 
 /// 프로젝트 = 단일 작업공간. 중간 생성 단계 없이 입력창에서 바로 새 대화를 시작한다.
-export function ProjectView({ tabId, projectId, open }: { tabId: string; projectId: string; open: Opener }) {
+export function ProjectView({ tabId, projectId, open, initialTitle }: { tabId: string; projectId: string; open: Opener; initialTitle?: string }) {
     const [q, setQ] = useState("");
     const [archived, setArchived] = useState(false);
     const [pages, setPages] = useState<string[]>([""]);
@@ -86,9 +90,9 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
         beforeMutation={requireServerAction}
         disabled={project.error ? "프로젝트를 확인할 수 없습니다" : project.data && !project.data.available ? "프로젝트 경로 없음" : null} />;
     if (project.error) return <Stack className="project-view">
-        <h1>프로젝트를 열 수 없습니다</h1>
-        <p className="err" role="alert">{project.error instanceof ApiError ? project.error.message : "프로젝트 정보를 불러오지 못했습니다."}</p>
-        <button className="ghost small" onClick={project.reload}>프로젝트 다시 확인</button>
+        <Heading level={1} color="inherit">프로젝트를 열 수 없습니다</Heading>
+        <GroveText as="p" display="block" type="inherit" color="error" role="alert">{project.error instanceof ApiError ? project.error.message : "프로젝트 정보를 불러오지 못했습니다."}</GroveText>
+        <GroveButton className="ghost small" onClick={project.reload}>프로젝트 다시 확인</GroveButton>
         {composer}
     </Stack>;
 
@@ -104,22 +108,22 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
                 { id: "trash", label: "휴지통", content: <TrashPanel key={`trash:${projectId}`} projectId={projectId} /> },
             ]}>
             <header className="view-head">
-                <h1>
-                    {project.data?.icon && <span className="project-icon" aria-hidden>{project.data.icon} </span>}
-                    {project.data?.name ?? "프로젝트"}
-                </h1>
+                <Heading level={1} color="inherit">
+                    {project.data?.icon && <GroveText type="inherit" color="inherit" className="project-icon" aria-hidden>{project.data.icon} </GroveText>}
+                    {project.data?.name ?? initialTitle ?? "프로젝트"}
+                </Heading>
                 <ActionMenu label="프로젝트 작업">
                 <code className="muted small">{project.data?.root_path}</code>
-                <button className="ghost small" onClick={() => open({ kind: "file", project_id: projectId, title: `파일 · ${project.data?.name ?? ""}` })}>
+                <GroveButton className="ghost small" onClick={() => open({ kind: "file", project_id: projectId, title: `파일 · ${project.data?.name ?? ""}` })}>
                     파일 탭으로 열기
-                </button>
-                <button className="ghost small" aria-pressed={archived} onClick={() => setArchivedView(!archived)}>
+                </GroveButton>
+                <GroveButton className="ghost small" aria-pressed={archived} onClick={() => setArchivedView(!archived)}>
                     {archived ? "현재 대화 보기" : "보관된 대화 보기"}
-                </button>
+                </GroveButton>
                 {project.data && <ProjectIdentity p={project.data} reload={project.reload} />}
-                <button className="ghost small" onClick={() => open({ kind: "settings", project_id: projectId, resource_id: "settings", title: `설정 · ${project.data?.name ?? ""}` })}>
+                <GroveButton className="ghost small" onClick={() => open({ kind: "settings", project_id: projectId, resource_id: "settings", title: `설정 · ${project.data?.name ?? ""}` })}>
                     프로젝트 설정
-                </button>
+                </GroveButton>
                 </ActionMenu>
                 <ToolsTrigger />
             </header>
@@ -142,11 +146,12 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
                 )}
             <section className="project-conversations" aria-label="프로젝트 대화">
             {showSearch && <div className="list-tools">
-                <input type="search" placeholder="대화 검색" value={q} onChange={(e) => { setQ(e.target.value); setPages([""]); }} aria-label="대화 검색" />
+                <TextInput type="search" label="대화 검색" isLabelHidden placeholder="대화 검색" value={q}
+                    onChange={(value) => { setQ(value); setPages([""]); }} />
                 {/* 숨겨진 필터가 목록을 바꾸면 활성 상태와 해제 경로를 목록 바로 위에 남긴다. */}
-                {archived && <button type="button" className="ghost small chip" aria-label="보관됨 필터 해제" onClick={() => setArchivedView(false)}>
+                {archived && <GroveButton type="button" className="ghost small chip" aria-label="보관됨 필터 해제" onClick={() => setArchivedView(false)}>
                     보관됨 <Icon name="close" size={12} />
-                </button>}
+                </GroveButton>}
             </div>}
             <ul className="session-list">
                 {pages.map((cursor, i) => (
@@ -184,12 +189,12 @@ function TerminalList({ projectId, open }: { projectId: string; open: Opener }) 
     return (
         <Panel className="terminals" data-testid="terminal-list" title={`터미널${terms.length > 0 ? ` · ${terms.length}` : ""}`}>
             <ServerActionButton className="ghost small" onClick={() => void create()}>새 터미널</ServerActionButton>
-            {err && <p className="err" role="alert">{err}</p>}
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             <ul className="session-list">
                 {terms.map((t) => (
                     <li key={t.id}>
-                        <button className="link" onClick={() => openTerm(t)}>{t.name}</button>
-                        <span className={`status ${t.status}`}>{t.status === "running" ? "실행 중" : t.status === "lost" ? "재시작으로 종료" : `종료(${t.exit_code ?? "?"})`}</span>
+                        <GroveButton className="link" onClick={() => openTerm(t)}>{t.name}</GroveButton>
+                        <GroveText type="inherit" color="inherit" className={`status ${t.status}`}>{t.status === "running" ? "실행 중" : t.status === "lost" ? "재시작으로 종료" : `종료(${t.exit_code ?? "?"})`}</GroveText>
                         {t.status !== "running" && (
                             <ServerActionButton className="ghost small" onClick={() => void api.del(`/terminals/${t.id}`).then(list.reload)}>기록 삭제</ServerActionButton>
                         )}
@@ -208,26 +213,26 @@ function SessionPageList(p: { projectId: string; cursor: string; q: string; arch
         <>
             {(page.data?.items ?? []).map((s) => (
                 <li key={s.id}>
-                    <button className="link" onClick={() => p.open({ kind: "session", project_id: p.projectId, resource_id: s.id, title: s.title })}>
+                    <GroveButton className="link" onClick={() => p.open({ kind: "session", project_id: p.projectId, resource_id: s.id, title: s.title })}>
                         {s.unread && <span className="dot" aria-label="읽지 않음" data-testid="session-unread" />}
                         {s.title}
-                    </button>
-                    {s.preview && <span className="muted small preview">{s.preview}</span>}
+                    </GroveButton>
+                    {s.preview && <GroveText type="supporting" color="secondary" className="preview">{s.preview}</GroveText>}
                     {s.active_turn === "awaiting_input" ? (
-                        <span className="status awaiting_input">답변 대기</span>
+                        <GroveText type="inherit" color="inherit" className="status awaiting_input">답변 대기</GroveText>
                     ) : (
-                        s.active_turn && <span className="status running">실행 중</span>
+                        s.active_turn && <GroveText type="inherit" color="inherit" className="status running">실행 중</GroveText>
                     )}
-                    {s.pending_approvals > 0 && <span className="status awaiting_approval">승인 {s.pending_approvals}</span>}
-                    {s.unreviewed_unknown > 0 && <span className="status unknown_result">결과 확인 필요</span>}
-                    <span className="muted small" data-testid="session-updated"><When at={s.updated_at} /></span>
+                    {s.pending_approvals > 0 && <GroveText type="inherit" color="inherit" className="status awaiting_approval">승인 {s.pending_approvals}</GroveText>}
+                    {s.unreviewed_unknown > 0 && <GroveText type="inherit" color="inherit" className="status unknown_result">결과 확인 필요</GroveText>}
+                    <GroveText type="supporting" color="secondary" data-testid="session-updated"><When at={s.updated_at} /></GroveText>
                 </li>
             ))}
             {p.last && page.data?.next_cursor && (
                 <li>
-                    <button className="ghost" onClick={() => p.onMore(page.data!.next_cursor!)}>
+                    <GroveButton className="ghost" onClick={() => p.onMore(page.data!.next_cursor!)}>
                         더 보기
-                    </button>
+                    </GroveButton>
                 </li>
             )}
             {/* 빈 프로젝트는 빈 화면으로 둔다. 필터 결과가 비었을 때만 알린다. */}

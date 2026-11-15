@@ -49,6 +49,28 @@ if (args.includes("--version")) {
     console.log("codex-cli fixture");
     process.exit(0);
 }
+if (args[0] === "app-server" || args.includes("--input-format")) {
+    for await (const line of createInterface({ input: process.stdin })) {
+        const request = JSON.parse(line);
+        if (provider === "claude") {
+            emit({ type: "control_response", response: { request_id: request.request_id, subtype: "success",
+                response: { models: [{ value: "fixture-claude", displayName: "Fixture Claude" }] } } });
+            break;
+        }
+        if (request.method === "initialize") emit({ id: request.id, result: {} });
+        if (request.method === "model/list") {
+            emit({ id: request.id, result: { data: [
+                { model: "fixture-codex", displayName: "Fixture Codex", isDefault: true, defaultReasoningEffort: "medium",
+                    supportedReasoningEfforts: ["low", "medium", "high", "xhigh", "max", "ultra"].map((reasoningEffort) => ({ reasoningEffort })),
+                    serviceTiers: [{ id: "priority", name: "Fast", description: "Faster processing, increased usage" }] },
+                { model: "fixture-light", displayName: "Fixture Light",
+                    supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort })), serviceTiers: [] },
+            ] } });
+            break;
+        }
+    }
+    process.exit(0);
+}
 if (!args.includes('sandbox_mode="read-only"') || !args.includes('approval_policy="never"')) {
     emit({ type: "turn.failed", error: { message: "fixture: read-only policy missing" } });
     process.exit(1);
@@ -63,6 +85,7 @@ const state = resume ? JSON.parse(await readFile(path, "utf8")) : { turns: 0 };
 state.turns++;
 await writeFile(path, JSON.stringify(state));
 await writeFile(join(directory, "last-pid"), String(process.pid));
+await writeFile(join(directory, "last-request.json"), JSON.stringify({ args, resume }));
 emit({ type: "thread.started", thread_id: id });
 const item = { id: "answer", type: "agent_message" };
 emit({ type: "item.started", item: { ...item, text: "" } });

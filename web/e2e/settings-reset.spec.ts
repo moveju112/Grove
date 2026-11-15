@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, login, state } from "./helpers";
+import { apiCall, login, selectChoice, state } from "./helpers";
 
 type Item = { key: string; effective: unknown; source: string; layers: Record<string, { value: unknown; revision: number }> };
 type Effective = { items: Item[] };
@@ -50,7 +50,7 @@ test("항목 복원은 실제 상속값과 고정된 프로젝트를 확인하�
         await dialog(page).getByRole("button", { name: "변경된 값 다시 비교", exact: true }).click();
         await expect(comparison).toContainText("changed-parent");
         await dialog(page).getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
-        await expect(dialog(page).getByRole("status")).toContainText("복원 저장됨");
+        await expect(dialog(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("복원 저장됨");
         await dialog(page).getByRole("button", { name: "복원 창 닫기", exact: true }).click();
         await expect(row.getByLabel("응답 언어", { exact: true })).toHaveValue("changed-parent");
         await page.reload();
@@ -73,7 +73,7 @@ test("영역 복원은 접힌 고급 항목까지 한 범위만 처리하고 서
     await expect(dialog(page).getByTestId("reset-exec.max_memory_mb")).toContainText("1024");
     await expect(dialog(page).getByTestId("reset-target")).toContainText(project.name);
     await dialog(page).getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
-    await expect(dialog(page).getByRole("status")).toContainText("3개 override");
+    await expect(dialog(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("3개 override");
     await dialog(page).getByRole("button", { name: "복원 창 닫기", exact: true }).click();
     await expect(language.getByLabel("응답 언어", { exact: true })).toHaveValue("area-unsaved");
     const current = await effective(project.id);
@@ -98,7 +98,7 @@ test("복원 응답 유실은 같은 본문·키로 결과를 확인하고 이�
     await expect(dialog(page).getByRole("button", { name: "원래 복원 요청 결과 확인", exact: true })).toBeVisible();
     await setting("project", project.id, "output.language", "new-after-reset");
     await dialog(page).getByRole("button", { name: "원래 복원 요청 결과 확인", exact: true }).click();
-    await expect(dialog(page).getByRole("status")).toContainText("복원 저장됨");
+    await expect(dialog(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("복원 저장됨");
     expect(requests).toHaveLength(2);
     expect(requests[1]).toEqual(requests[0]);
     expect((await effective(project.id)).items.find((item) => item.key === "output.language")!.effective).toBe("new-after-reset");
@@ -109,7 +109,7 @@ test("기기 기본값 복원은 선택 필드의 동시 변경을 확인하고 
     await page.getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("테마");
     const theme = page.getByTestId("setting-theme");
-    await theme.getByLabel("테마", { exact: true }).selectOption("dark");
+    await selectChoice(theme.getByLabel("테마", { exact: true }), "dark");
     const deviceId = await page.evaluate(() => localStorage.getItem("grove.device.id"));
     await page.evaluate(() => {
         localStorage.setItem("grove.draft.reset-test", "owned-fixture-draft");
@@ -126,9 +126,9 @@ test("기기 기본값 복원은 선택 필드의 동시 변경을 확인하고 
     await expect(dialog(page).getByRole("alert")).toContainText("다시 비교");
     await dialog(page).getByRole("button", { name: "변경된 값 다시 비교", exact: true }).click();
     await dialog(page).getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
-    await expect(dialog(page).getByRole("status")).toContainText("복원 저장됨");
+    await expect(dialog(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("복원 저장됨");
     await dialog(page).getByRole("button", { name: "복원 창 닫기", exact: true }).click();
-    await expect(theme.getByLabel("테마", { exact: true })).toHaveValue("system");
+    await expect(theme.getByRole("combobox", { name: "테마", exact: true })).toHaveAttribute("data-selected-value", "system");
     await page.evaluate(() => {
         const value = JSON.parse(localStorage.getItem("grove.device.prefs")!);
         localStorage.setItem("grove.device.prefs", JSON.stringify({ ...value, fontSize: 20, answerOnly: true, enterToSend: true }));
@@ -137,10 +137,10 @@ test("기기 기본값 복원은 선택 필드의 동시 변경을 확인하고 
     await page.getByRole("button", { name: "이 기기 화면·입력 전체 복원", exact: true }).click();
     await expect(dialog(page).getByTestId("reset-fontSize")).toContainText("20");
     await dialog(page).getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
-    await expect(dialog(page).getByRole("status")).toContainText("복원 저장됨");
+    await expect(dialog(page).getByRole("status").filter({ hasText: /\S/ })).toContainText("복원 저장됨");
     await dialog(page).getByRole("button", { name: "복원 창 닫기", exact: true }).click();
     expect(await page.evaluate(() => JSON.parse(localStorage.getItem("grove.device.prefs")!))).toEqual({
-        theme: "system", fontSize: 15, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
+        theme: "system", fontSize: 14, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
         notifyDone: false, notifyApproval: false, notifyServer: false, notifySound: false,
         recentWindows: ["30m", "4h", "12h"], recentWindow: "4h",
     });

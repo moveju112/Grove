@@ -169,6 +169,9 @@ async fn active_turns_prevent_disabling_and_devices_cannot_refresh_owner_catalog
     let (_, device) = s.post("/api/v1/devices", json!({ "name": "device" })).await;
     let response = s.raw(Method::GET, &format!("/api/v1/model-profiles/{pid}/models"), None, None, Some(device["token"].as_str().unwrap())).await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    let response = s.raw(Method::GET, &format!("/api/v1/model-profiles/{pid}/available-models"), None, None, Some(device["token"].as_str().unwrap())).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(!response.json::<Value>().await.unwrap()["models"].as_array().unwrap().is_empty());
     let tid = turn["turn"]["id"].as_str().unwrap();
     s.post(&format!("/api/v1/turns/{tid}/cancel"), json!({})).await;
     s.wait_status(tid, "cancelled").await;

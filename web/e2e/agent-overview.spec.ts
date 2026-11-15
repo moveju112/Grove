@@ -143,7 +143,7 @@ test("오류·역순 응답·재접속에서 이전값을 숨기고 실제 대�
     } finally { release(); await page.unroute("**/api/v1/agent-overview?*"); }
     await context.setOffline(true);
     expect(await page.evaluate(() => navigator.onLine)).toBe(false);
-    await expect(panel.getByRole("status")).toContainText("연결 확인 중");
+    await expect(panel.getByRole("status").filter({ hasText: /\S/ })).toContainText("연결 확인 중");
     await expect(panel.getByRole("heading", { name: /등록된 역할/ })).toHaveCount(0);
     await setting("project", item.id, "agents.delegation", "off");
     await context.setOffline(false);

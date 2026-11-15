@@ -138,7 +138,9 @@ export type AgentAuthStatus = { authenticated: boolean | null, attempt: LoginAtt
 
 export type ModelCapabilities = { context_tokens: number | null, max_output_tokens: number | null, images: boolean | null, tools: boolean | null, effort: boolean | null, temperature: boolean | null, pdf: boolean, fast: boolean, };
 
-export type AvailableModel = { id: string, name: string, };
+export type AvailableModel = { id: string, name: string, reasoning_efforts?: Array<string>, default_reasoning_effort?: string, service_tiers?: Array<ModelServiceTier>, is_default?: boolean, };
+
+export type ModelServiceTier = { id: string, name: string, description: string, };
 
 export type ModelCatalog = { profile_id: string, profile_revision: number, models: Array<AvailableModel>, fetched_at: string, };
 

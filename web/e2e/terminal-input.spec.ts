@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { apiCall, ensureProjects, login, openDetails } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, openTool } from "./helpers";
 
 // 공통 설정을 바꾸지 않고 이 파일만 모바일 viewport·터치 입력으로 실행한다.
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
@@ -38,6 +38,7 @@ async function openTerminal(page: Page) {
     if (await sidebar.getAttribute("aria-expanded") === "false") await sidebar.click();
     await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
     const list = page.getByTestId("terminal-list");
+    await openTool(page, "터미널");
     await openDetails(list);
     await list.getByRole("button", { name, exact: true }).click();
     const view = page.getByTestId("terminal-view");

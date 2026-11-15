@@ -10,9 +10,9 @@ for (const theme of ["light", "dark"] as const) {
         await page.goto("/");
         await page.getByRole("button", { name: "페어링 링크·QR로 등록" }).click();
         const form = page.getByRole("form", { name: "페어링 등록" });
-        await expect(form.getByLabel("페어링 링크", { exact: true })).toHaveValue("");
+        await expect(form.getByRole("textbox", { name: "페어링 링크", exact: true })).toHaveValue("");
         await page.screenshot({ path: info.outputPath("pairing-empty.png"), fullPage: true });
-        await form.getByLabel("페어링 링크", { exact: true }).fill(link);
+        await form.getByRole("textbox", { name: "페어링 링크", exact: true }).fill(link);
         await form.getByRole("button", { name: "연결", exact: true }).click();
         const dialog = page.getByRole("dialog", { name: "연결 비밀번호" });
         await dialog.getByLabel("비밀번호", { exact: true }).fill("incorrect");

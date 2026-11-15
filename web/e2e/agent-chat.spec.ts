@@ -155,12 +155,12 @@ test("설정의 에이전트 연결은 반복해도 하나이며 삭제 후 새 
     let current: string | undefined;
     try {
         await connect.getByRole("button", { name: "Codex", exact: true }).click();
-        await expect(connect.getByRole("status")).toContainText("프로필 준비됨");
+        await expect(connect.getByRole("status").filter({ hasText: /\S/ })).toContainText("프로필 준비됨");
         const first = await apiCall<{ id: string }[]>("GET", "/model-profiles");
         expect(first).toHaveLength(1);
         current = first[0]!.id;
         await connect.getByRole("button", { name: "Codex", exact: true }).click();
-        await expect(connect.getByRole("status")).toContainText("프로필 준비됨");
+        await expect(connect.getByRole("status").filter({ hasText: /\S/ })).toContainText("프로필 준비됨");
         expect(await apiCall<unknown[]>("GET", "/model-profiles")).toHaveLength(1);
         await apiCall("DELETE", `/model-profiles/${current}`);
         await expect(section.getByTestId("model-profile")).toHaveCount(0);

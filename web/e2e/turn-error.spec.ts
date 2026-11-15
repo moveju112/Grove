@@ -69,8 +69,8 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_tokens`, { expected_revision: 3, value: null });
 });
 
-// REC-009·010: 응답 도중 끊긴 요청은 확정 답변과 분리된 중단 증거로 보여 주고, 사이드바 '확인 필요'에서 해당 대화로 이동한다.
-test("끊긴 응답은 중단 증거로 표시되고 확인 전까지 확인 필요 목록에 남는다", async ({ page }) => {
+// REC-009·010: 별도 확인 필요 메뉴 없이도 대화의 실패·중단 증거와 명시적 확인 절차는 유지한다.
+test("끊긴 응답의 중단 증거는 다른 대화·reload 뒤에도 보존하고 대화에서 명시적으로 확인한다", async ({ page }) => {
     const { a } = await ensureProjects();
     await ensureProfile();
     const title = `중단 증거 ${Date.now()}`;
@@ -92,23 +92,19 @@ test("끊긴 응답은 중단 증거로 표시되고 확인 전까지 확인 필
     await expect(evidence.locator(".evidence-text")).toHaveText("끊기기 전 문장");
     await expect(view.getByTestId("msg-assistant")).toHaveCount(0);
 
-    const panel = page.getByTestId("recovery");
     await page.keyboard.press("Escape");
-    await openDetails(panel);
-    const item = panel.getByTestId("recovery-item").filter({ hasText: title });
-    await expect(item).toContainText("요청 실패 · 확정 전 응답 8자 보존");
-    // 다른 대화를 연 뒤 목록에서 이 대화로 돌아온다
+    await expect(page.getByTestId("recovery")).toHaveCount(0);
+    const recovery = () => apiCall<{ items: { session_id: string; evidence: { text_chars: number } }[] }>("GET", "/recovery");
+    expect((await recovery()).items.find((item) => item.session_id === s.id)?.evidence.text_chars).toBe(8);
+    // 다른 대화를 연 뒤 기존 최근 목록으로 돌아와도 경고와 원문을 잃지 않는다.
     const other = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `${title} 다른` });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: other.id });
-    await page.getByRole("dialog", { name: "확인 필요한 기록", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
     await page.locator(".recent").getByRole("button", { name: new RegExp(`${title} 다른`) }).first().click();
-    await openDetails(panel);
-    await item.getByRole("button").click();
+    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).filter({ hasNotText: `${title} 다른` }).first().click();
     await expect(page.getByTestId("session-view").getByTestId("turn-evidence")).toBeVisible();
     await page.reload();
-    await openDetails(page.getByTestId("recovery"));
-    await expect(page.getByTestId("recovery-item").filter({ hasText: title })).toHaveCount(1);
-    await page.getByTestId("recovery-item").filter({ hasText: title }).getByRole("button").click();
+    expect((await recovery()).items.some((item) => item.session_id === s.id)).toBe(true);
+    await expect(page.getByTestId("session-view").getByTestId("turn-evidence")).toBeVisible();
     await page.getByTestId("session-view").getByTestId("turn-ended").getByRole("button", { name: "닫기(포기)" }).click();
     await expect(page.getByTestId("session-view").getByTestId("turn-ended")).toHaveCount(0);
     expect((await apiCall<{ items: { session_id: string }[] }>("GET", "/recovery")).items.some((item) => item.session_id === s.id)).toBe(false);

@@ -1,3 +1,7 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { createContext } from "react";
 import type { Project } from "../../api/generated";
 import { CreationDialog } from "./CreationDialog";
@@ -11,30 +15,30 @@ export function CreationEntry({ projects, currentId, loading, error, blockedReas
 }) {
     const current = projects.find((project) => project.id === currentId);
     return <CreationDialog label="만들기" onClose={onClose}>
-        <h2>새 대화</h2>
-        {blockedReason && <p className="warn" role="status" data-testid="creation-blocked">{blockedReason} 프로젝트 선택·초안 편집·취소는 계속 사용할 수 있습니다.</p>}
-        {loading && <p role="status">프로젝트 확인 중…</p>}
-        {error && <p className="err" role="alert">프로젝트를 불러오지 못했습니다. <button onClick={onReload}>다시 확인</button></p>}
+        <GroveHeading level={2} color="inherit">새 대화</GroveHeading>
+        {blockedReason && <GroveText as="p" display="block" type="inherit" color="warning" role="status" data-testid="creation-blocked">{blockedReason} 프로젝트 선택·초안 편집·취소는 계속 사용할 수 있습니다.</GroveText>}
+        {loading && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">프로젝트 확인 중…</GroveText>}
+        {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">프로젝트를 불러오지 못했습니다. <GroveButton onClick={onReload}>다시 확인</GroveButton></GroveText>}
         {currentId ? <>
             {current ? <>
-                <p>현재 프로젝트: {current.name}</p>
-                {!current.available && <p className="warn" role="status">프로젝트 경로 없음</p>}
-                <button disabled={!current.available || error || loading} onClick={() => onSelect(current)}>이 프로젝트에서 새 대화</button>
-            </> : !loading && !error && <p className="err" role="alert">현재 프로젝트를 확인할 수 없습니다. 다른 프로젝트로 자동 전환하지 않습니다.</p>}
+                <GroveText as="p" display="block" type="inherit" color="inherit">현재 프로젝트: {current.name}</GroveText>
+                {!current.available && <GroveText as="p" display="block" type="inherit" color="warning" role="status">프로젝트 경로 없음</GroveText>}
+                <GroveButton disabled={!current.available || error || loading} onClick={() => onSelect(current)}>이 프로젝트에서 새 대화</GroveButton>
+            </> : !loading && !error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">현재 프로젝트를 확인할 수 없습니다. 다른 프로젝트로 자동 전환하지 않습니다.</GroveText>}
         </> : <>
-            <p>대화를 시작할 프로젝트를 선택하세요.</p>
+            <GroveText as="p" display="block" type="inherit" color="inherit">대화를 시작할 프로젝트를 선택하세요.</GroveText>
             <ul className="dir-list" aria-label="대화 프로젝트 선택">
                 {projects.map((project) => <li key={project.id}>
-                    <button className="link" disabled={!project.available || error || loading} onClick={() => onSelect(project)}>
+                    <GroveButton className="link" disabled={!project.available || error || loading} onClick={() => onSelect(project)}>
                         {project.name}{!project.available && " (경로 없음)"}
-                    </button>
+                    </GroveButton>
                 </li>)}
             </ul>
-            {!loading && !error && projects.length === 0 && <p role="status">먼저 프로젝트를 추가하세요.</p>}
+            {!loading && !error && projects.length === 0 && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">먼저 프로젝트를 추가하세요.</GroveText>}
         </>}
-        <div className="row">
-            <button className="ghost" onClick={onAddProject}>프로젝트 추가</button>
-            <button className="ghost" onClick={onClose}>취소</button>
-        </div>
+        <GroveStack direction="horizontal" align="center" className="row">
+            <GroveButton className="ghost" onClick={onAddProject}>프로젝트 추가</GroveButton>
+            <GroveButton className="ghost" onClick={onClose}>취소</GroveButton>
+        </GroveStack>
     </CreationDialog>;
 }

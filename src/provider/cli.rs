@@ -23,6 +23,7 @@ const MAX_ACTIVITY: usize = 512;
 pub struct CliContext {
     pub cwd: std::path::PathBuf,
     pub resume: Option<String>,
+    pub service_tier: Option<String>,
 }
 
 /// CLI 연결 확인: 실행 파일이 있고 버전을 출력하는지(로그인 상태는 실제 호출에서 드러난다).
@@ -120,6 +121,9 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
         a.extend([s("-c"), s("sandbox_mode=\"read-only\""), s("-c"), s("approval_policy=\"never\"")]);
         if let Some(e) = &req.effort {
             a.extend([s("-c"), format!("model_reasoning_effort=\"{e}\"")]);
+        }
+        if let Some(tier) = req.cli.as_ref().and_then(|c| c.service_tier.as_deref()) {
+            a.extend([s("-c"), format!("service_tier={}", json!(tier))]);
         }
         if !persist {
             a.push(s("--ephemeral"));
@@ -318,6 +322,110 @@ impl Drop for GroupGuard {
     }
 }
 
+/// 공식 CLI의 초기화/control 응답만 읽는다. 사용자 prompt·생성 요청·프로젝트 설정은 보내지 않는다.
+pub async fn list_models(protocol: &str) -> Result<Vec<super::AvailableModel>, ProviderError> {
+    list_models_with(protocol, None).await
+}
+
+async fn list_models_with(protocol: &str, executable: Option<&std::path::Path>) -> Result<Vec<super::AvailableModel>, ProviderError> {
+    let dir = std::env::temp_dir().join(format!("grove-catalog-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir(&dir).map_err(|_| ProviderError::new("catalog_failed", "목록 조회 임시 디렉터리를 만들지 못했습니다"))?;
+    let scratch = ScratchDir(dir);
+    let prog = executable.map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| program(protocol).into());
+    let mut cmd = tokio::process::Command::new(&prog);
+    if protocol == "claude_code" {
+        cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
+            "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence"]);
+    } else {
+        cmd.args(["app-server", "-c", "sandbox_mode=\"read-only\"", "-c", "approval_policy=\"never\""]);
+    }
+    cmd.current_dir(&scratch.0).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
+    for (key, _) in std::env::vars_os() {
+        if key.to_str().is_some_and(|key| key.starts_with("GROVE_")) { cmd.env_remove(key); }
+    }
+    let tag = crate::util::new_id();
+    let limits = crate::procs::Limits::default();
+    crate::procs::prepare(&mut cmd, &tag, limits);
+    let mut child = cmd.spawn().map_err(|error| {
+        if crate::deps::is_missing(&prog, Some(&error)) { ProviderError::new("cli_not_found", crate::deps::message(&prog)) }
+        else { ProviderError::new("catalog_failed", "모델 목록용 CLI를 실행하지 못했습니다") }
+    })?;
+    let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ProviderError::new("catalog_failed", e))?);
+    let mut input = child.stdin.take().expect("stdin");
+    let mut output = BufReader::new(child.stdout.take().expect("stdout"));
+    let claude = protocol == "claude_code";
+    let init = if claude {
+        json!({"type":"control_request","request_id":"grove-models","request":{"subtype":"initialize"}})
+    } else {
+        json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"grove","version":env!("CARGO_PKG_VERSION")}}})
+    };
+    input.write_all(format!("{init}\n").as_bytes()).await.map_err(|_| ProviderError::new("catalog_failed", "CLI 목록 조회가 끊겼습니다"))?;
+    let mut models = std::collections::BTreeMap::new();
+    let mut pages = 0;
+    let mut bytes = 0;
+    let mut cursors = std::collections::HashSet::new();
+    while let Some(line) = read_line(&mut output).await? {
+        bytes += line.len();
+        if bytes > 8 * 1024 * 1024 { return Err(ProviderError::new("catalog_too_large", "CLI 모델 목록 크기 제한을 넘었습니다")); }
+        let value: Value = serde_json::from_slice(&line).map_err(|_| ProviderError::new("catalog_invalid", "CLI 목록 응답 형식 오류"))?;
+        if !claude && value["id"] == 1 {
+            if value.get("error").is_some() { return Err(ProviderError::new("catalog_failed", "CLI 초기화에 실패했습니다")); }
+            input.write_all(b"{\"method\":\"initialized\"}\n{\"id\":2,\"method\":\"model/list\",\"params\":{}}\n").await
+                .map_err(|_| ProviderError::new("catalog_failed", "CLI 목록 조회가 끊겼습니다"))?;
+            continue;
+        }
+        let result = if claude {
+            if value["type"] != "control_response" || value["response"]["request_id"] != "grove-models" { continue; }
+            if value["response"]["subtype"] != "success" { return Err(ProviderError::new("catalog_failed", "CLI 모델 목록을 확인하지 못했습니다")); }
+            &value["response"]["response"]
+        } else {
+            if value["id"] != 2 { continue; }
+            if value.get("error").is_some() { return Err(ProviderError::new("catalog_failed", "CLI 모델 목록을 확인하지 못했습니다")); }
+            &value["result"]
+        };
+        let rows = result[if claude { "models" } else { "data" }].as_array()
+            .ok_or_else(|| ProviderError::new("catalog_invalid", "CLI 모델 목록 형식 오류"))?;
+        for row in rows {
+            let id = row[if claude { "value" } else { "model" }].as_str()
+                .filter(|id| !id.is_empty() && id.len() <= 200 && !id.contains(char::is_whitespace))
+                .ok_or_else(|| ProviderError::new("catalog_invalid", "CLI 모델 식별자 형식 오류"))?;
+            let name = row["displayName"].as_str().unwrap_or(id).chars().take(200).collect();
+            let mut model = super::AvailableModel { id: id.into(), name, ..Default::default() };
+            if !claude {
+                if let Some(efforts) = row.get("supportedReasoningEfforts") {
+                    let efforts = efforts.as_array().ok_or_else(|| ProviderError::new("catalog_invalid", "CLI 추론 옵션 형식 오류"))?;
+                    let parsed = efforts.iter().map(|e| e["reasoningEffort"].as_str()
+                        .filter(|e| super::parse_effort(Some(e)).is_ok_and(|value| value.is_some()))
+                        .map(str::to_string).ok_or_else(|| ProviderError::new("catalog_invalid", "CLI 추론 옵션 형식 오류")))
+                        .collect::<Result<Vec<_>, _>>()?;
+                    model.reasoning_efforts = Some(parsed);
+                }
+                model.default_reasoning_effort = row["defaultReasoningEffort"].as_str().map(str::to_string);
+                model.is_default = row["isDefault"].as_bool();
+                if let Some(tiers) = row.get("serviceTiers") {
+                    let tiers: Vec<super::ModelServiceTier> = serde_json::from_value(tiers.clone())
+                        .map_err(|_| ProviderError::new("catalog_invalid", "CLI 속도 옵션 형식 오류"))?;
+                    if tiers.len() > 20 || tiers.iter().any(|tier| super::parse_service_tier(Some(&tier.id)).is_err()
+                        || tier.name.len() > 200 || tier.description.len() > 2000) {
+                        return Err(ProviderError::new("catalog_invalid", "CLI 속도 옵션 형식 오류"));
+                    }
+                    model.service_tiers = Some(tiers);
+                }
+            }
+            models.insert(id.to_string(), model);
+        }
+        if models.len() > 2000 { return Err(ProviderError::new("catalog_too_large", "CLI 모델 목록 개수 제한을 넘었습니다")); }
+        let next = result["nextCursor"].as_str().filter(|cursor| !cursor.is_empty());
+        if claude || next.is_none() { return Ok(models.into_values().collect()); }
+        pages += 1;
+        let cursor = next.unwrap();
+        if pages >= 20 || !cursors.insert(cursor.to_string()) { return Err(ProviderError::new("catalog_invalid", "CLI 모델 목록의 다음 페이지가 반복되거나 제한을 넘었습니다")); }
+        let request = json!({"id":2,"method":"model/list","params":{"cursor":cursor}});
+        input.write_all(format!("{request}\n").as_bytes()).await.map_err(|_| ProviderError::new("catalog_failed", "CLI 목록 조회가 끊겼습니다"))?;
+    }
+    Err(ProviderError::new("catalog_failed", "CLI가 모델 목록을 반환하지 않고 종료됐습니다"))
+}
+
 pub async fn stream(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
     stream_with(profile, req, on_delta, None).await
 }
@@ -455,6 +563,43 @@ mod tests {
     fn prof(p: &str) -> Profile {
         Profile { protocol: p.into(), base_url: String::new(), model: "m".into(), api_key: None, timeout: Duration::from_secs(5), extra_headers: vec![], sensitive_headers: vec![] }
     }
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn catalog_initializes_without_user_messages_and_reads_both_official_control_shapes() {
+        use std::os::unix::fs::PermissionsExt;
+        for (protocol, script) in [
+            ("claude_code", r#"read -r init
+[[ "$init" == *'"subtype":"initialize"'* ]] || exit 7
+echo '{"type":"control_response","response":{"request_id":"grove-models","subtype":"success","response":{"models":[{"value":"fixture-claude","displayName":"Claude fixture"}]}}}'
+"#),
+            ("codex_cli", r#"read -r init
+[[ "$init" == *'"method":"initialize"'* ]] || exit 7
+echo '{"id":1,"result":{}}'
+read -r initialized
+read -r listing
+[[ "$listing" == *'"method":"model/list"'* ]] || exit 8
+echo '{"id":2,"result":{"data":[{"model":"fixture-codex","displayName":"Codex fixture","isDefault":true,"defaultReasoningEffort":"medium","supportedReasoningEfforts":[{"reasoningEffort":"low"},{"reasoningEffort":"xhigh"},{"reasoningEffort":"max"}],"serviceTiers":[{"id":"priority","name":"Fast","description":"Increased usage"}]}],"nextCursor":"next"}}'
+read -r listing
+[[ "$listing" == *'"cursor":"next"'* ]] || exit 9
+echo '{"id":2,"result":{"data":[{"model":"fixture-codex-2","displayName":"Second fixture"}]}}'
+"#),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("cli");
+            std::fs::write(&path, format!("#!/bin/bash\n{script}")).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            let result = tokio::time::timeout(Duration::from_secs(5), list_models_with(protocol, Some(&path))).await.unwrap().unwrap();
+            assert_eq!(result.len(), if protocol == "claude_code" { 1 } else { 2 });
+            assert!(result.iter().all(|m| m.id.starts_with("fixture-")));
+            if protocol == "codex_cli" {
+                assert_eq!(result[0].reasoning_efforts.as_ref().unwrap(), &["low", "xhigh", "max"]);
+                assert_eq!(result[0].default_reasoning_effort.as_deref(), Some("medium"));
+                assert_eq!(result[0].is_default, Some(true));
+                let tiers = result[0].service_tiers.as_ref().unwrap();
+                assert_eq!((&tiers[0].id[..], &tiers[0].name[..]), ("priority", "Fast"));
+            }
+        }
+    }
     fn req(resume: Option<&str>) -> ModelRequest {
         ModelRequest {
             system: "sys".into(),
@@ -467,7 +612,7 @@ mod tests {
             max_tokens: None,
             temperature: None,
             effort: None,
-            cli: Some(CliContext { cwd: "/tmp".into(), resume: resume.map(String::from) }),
+            cli: Some(CliContext { cwd: "/tmp".into(), resume: resume.map(String::from), service_tier: None }),
         }
     }
 
@@ -490,6 +635,23 @@ mod tests {
             let j = a.join(" ");
             assert!(j.contains("sandbox_mode=\"read-only\"") && j.contains("approval_policy=\"never\""), "{j}");
             assert!(!j.contains("dangerously") && !j.contains("workspace-write"));
+        }
+    }
+
+    #[test]
+    fn codex_reasoning_and_speed_are_independent_and_preserved_on_resume() {
+        for resume in [None, Some("thread")] {
+            for effort in ["low", "medium", "high", "xhigh", "max", "ultra"] {
+                for tier in ["default", "priority"] {
+                    let mut request = req(resume);
+                    request.effort = Some(effort.into());
+                    request.cli.as_mut().unwrap().service_tier = Some(tier.into());
+                    let (args, _) = args(&prof("codex_cli"), &request, "new");
+                    assert!(args.contains(&format!("model_reasoning_effort=\"{effort}\"")));
+                    assert!(args.contains(&format!("service_tier=\"{tier}\"")));
+                    assert!(args.contains(&"sandbox_mode=\"read-only\"".into()));
+                }
+            }
         }
     }
 

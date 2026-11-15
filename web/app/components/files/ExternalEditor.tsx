@@ -1,7 +1,11 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, newKey } from "../../api/client";
 import { listExternalEditors, openExternalEditor, type ExternalEditorListing } from "../../api/externalEditor";
 import { useCapability } from "../../state/capabilities";
+import { HelpTip } from "../HelpTip";
 
 export type ExternalEditorControlsProps = {
     listing: ExternalEditorListing;
@@ -14,17 +18,17 @@ export type ExternalEditorControlsProps = {
 };
 
 export function ExternalEditorControls({ listing, selected, disabled, blockedReason, busy, onSelect, onOpen }: ExternalEditorControlsProps) {
-    if (!listing.available) return <p className="muted small">{listing.reason}</p>;
-    return <div className="inline wrap">
+    if (!listing.available) return <GroveText as="p" display="block" type="supporting" color="secondary">{listing.reason}</GroveText>;
+    return <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
         <select aria-label="외부 편집기" value={selected} disabled={busy} onChange={(e) => onSelect(e.target.value)}>
             {listing.editors.map((editor) => <option key={editor.id} value={editor.id}>{editor.name}</option>)}
         </select>
-        <button className="ghost small" disabled={disabled || !!blockedReason || busy || !listing.editors.some((e) => e.id === selected)}
+        <GroveButton className="ghost small" disabled={disabled || !!blockedReason || busy || !listing.editors.some((e) => e.id === selected)}
             title={blockedReason ?? undefined} aria-description={blockedReason ?? undefined} onClick={onOpen}>
             {busy ? "여는 중…" : "외부 편집기로 열기"}
-        </button>
-        <span className="muted small">서버 PC의 저장된 파일을 엽니다. 저장하지 않은 편집은 전달하지 않습니다.</span>
-    </div>;
+        </GroveButton>
+        <HelpTip label="외부 편집기 도움말">서버 PC의 저장된 파일을 열며 저장 전 편집은 전달하지 않습니다.</HelpTip>
+    </GroveStack>;
 }
 
 export function ExternalEditor({ projectId, path, disabled = false, blockedReason }: { projectId: string; path: string; disabled?: boolean; blockedReason?: string | null }) {
@@ -73,7 +77,7 @@ export function ExternalEditor({ projectId, path, disabled = false, blockedReaso
     return <div data-testid="external-editor">
         {listing && <ExternalEditorControls listing={listing} selected={selected} disabled={disabled} blockedReason={blockedReason} busy={busy}
             onSelect={(id) => { setSelected(id); setError(null); setStatus(null); }} onOpen={() => void open()} />}
-        {error && <p className="err" role="alert">{error}</p>}
-        {status && <p className="muted small" role="status">{status}</p>}
+        {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
+        {status && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">{status}</GroveText>}
     </div>;
 }

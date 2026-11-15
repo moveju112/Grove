@@ -1,3 +1,6 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Button as GroveButton } from "../design/Button";
 import { useState } from "react";
 import { api } from "../api/client";
 import type { Project } from "../api/generated";
@@ -12,7 +15,7 @@ export function ArchivedProjects() {
     const q = useQuery<Project[]>("projects:archived", () => api.get("/projects?archived=true"));
     const rows = q.data ?? [];
     return <div className="stack" role="group" aria-label="보관된 프로젝트">
-        {q.data && rows.length === 0 && <p className="muted small">보관된 프로젝트가 없습니다.</p>}
+        {q.data && rows.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">보관된 프로젝트가 없습니다.</GroveText>}
         {rows.map((p) => <ArchivedRow key={`${p.id}:${p.revision}`} project={p} />)}
     </div>;
 }
@@ -26,19 +29,19 @@ function ArchivedRow({ project }: { project: Project }) {
         setError(null);
         try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : fallback); } finally { setBusy(false); }
     };
-    return <div className="row" data-testid="archived-project">
-        <span>{project.icon} {project.name}</span>
-        {!state && <button type="button" className="ghost small" disabled={busy}
-            onClick={() => void run(async () => setState(await api.get<Recovery>(`/projects/${project.id}/recovery`)), "복원 검사 실패")}>복원 검사</button>}
+    return <GroveStack direction="horizontal" align="center" className="row" data-testid="archived-project">
+        <GroveText type="inherit" color="inherit">{project.icon} {project.name}</GroveText>
+        {!state && <GroveButton type="button" className="ghost small" disabled={busy}
+            onClick={() => void run(async () => setState(await api.get<Recovery>(`/projects/${project.id}/recovery`)), "복원 검사 실패")}>복원 검사</GroveButton>}
         {state?.kind === "recoverable" && <>
-            {state.action === "unarchive_relink" && <span className="warn small" role="status">{state.message}</span>}
+            {state.action === "unarchive_relink" && <GroveText type="supporting" color="warning" role="status">{state.message}</GroveText>}
             <ServerActionButton type="button" className="small" disabled={busy}
                 onClick={() => void run(async () => {
                     await api.post(`/projects/${project.id}/restore`, { expected_revision: project.revision });
                     invalidate("projects");
                 }, "복원 실패")}>복원</ServerActionButton>
         </>}
-        {state?.kind === "unavailable" && <span className="warn small" role="status">{state.message}</span>}
-        {error && <span className="err small" role="alert">{error}</span>}
-    </div>;
+        {state?.kind === "unavailable" && <GroveText type="supporting" color="warning" role="status">{state.message}</GroveText>}
+        {error && <GroveText type="supporting" color="error" role="alert">{error}</GroveText>}
+    </GroveStack>;
 }

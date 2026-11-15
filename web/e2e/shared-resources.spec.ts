@@ -22,14 +22,14 @@ test("백그라운드 작업과 충돌한 파일 저장은 내 편집을 남기�
         await editor.fill("my edit\n");
         task = (await apiCall<{ id: string }>("POST", `/sessions/${session.id}/tasks`, { command: "sleep 30" })).id;
         await files.getByRole("button", { name: "저장", exact: true }).click();
-        await expect(files.getByRole("status")).toContainText("다른 파일·Git 작업 또는 프로세스");
+        await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("다른 파일·Git 작업 또는 프로세스");
         await expect(editor).toHaveValue("my edit\n");
         expect(readFileSync(path, "utf8")).toBe("original\n");
         await apiCall("POST", `/tasks/${task}/cancel`);
         await apiCall("GET", `/tasks/${task}/wait?timeout_ms=5000`);
         task = undefined;
         await files.getByRole("button", { name: "저장", exact: true }).click();
-        await expect(files.getByRole("status")).toHaveText("저장됨");
+        await expect(files.getByRole("status").filter({ hasText: /\S/ })).toHaveText("저장됨");
         expect(readFileSync(path, "utf8")).toBe("my edit\n");
     } finally {
         if (task) {

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script, selectChoice } from "./helpers";
 
 // UI-012: 생각 과정(reasoning) 접기·펼치기·숨김, 답만 보기, 도구 세부 펼침.
 test("생각 과정 표시·답만 보기·도구 세부 펼침 설정이 대화 표시에 반영된다", async ({ page }) => {
@@ -43,8 +43,8 @@ test("생각 과정 표시·답만 보기·도구 세부 펼침 설정이 대화
     // 설정 변경: 펼치기 + 도구 세부 펼침
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("대화 표시");
-    await page.getByLabel("생각 과정 표시").selectOption("expanded");
-    await page.getByRole("switch", { name: "도구 실행 세부를 펼쳐서 표시", exact: true }).check();
+    await selectChoice(page.getByLabel("생각 과정 표시"), "expanded");
+    await selectChoice(page.getByLabel("도구 실행 세부를 펼쳐서 표시", { exact: true }), "true");
     await openSession();
     await expect(answer.getByTestId("msg-reasoning")).toContainText("목록을 보고 판단한다");
     await expect(view.getByTestId("msg-tool").getByTestId("tool-output")).toBeVisible();
@@ -52,8 +52,8 @@ test("생각 과정 표시·답만 보기·도구 세부 펼침 설정이 대화
     // 숨김 + 답만 보기: 생각 과정·도구 기록·글 없는 도구 호출 메시지가 사라지고 답은 남는다
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("대화 표시");
-    await page.getByLabel("생각 과정 표시").selectOption("hidden");
-    await page.getByRole("switch", { name: "답만 보기", exact: true }).check();
+    await selectChoice(page.getByLabel("생각 과정 표시"), "hidden");
+    await selectChoice(page.getByLabel("답만 보기", { exact: true }), "true");
     await openSession();
     await expect(answer).toBeVisible();
     await expect(view.getByTestId("msg-reasoning")).toHaveCount(0);

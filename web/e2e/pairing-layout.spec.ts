@@ -12,13 +12,13 @@ for (const theme of ["light", "dark"] as const) {
         await expect(form.getByLabel("이 기기 이름")).toHaveCount(0);
         await expect(form.getByLabel("QR 사진 선택")).toHaveCount(0);
         await form.getByRole("button", { name: "QR", exact: true }).click();
-        await expect(form.getByLabel("페어링 링크", { exact: true })).toHaveCount(0);
+        await expect(form.getByRole("textbox", { name: "페어링 링크", exact: true })).toHaveCount(0);
         await expect(form.getByLabel("QR 사진 선택")).toBeVisible();
         await form.getByRole("button", { name: "페어링 링크", exact: true }).click();
         await page.screenshot({ path: info.outputPath("pairing-desktop-empty.png"), fullPage: true });
         const pair = await apiCall<{ code: string; id: string }>("POST", "/pairings", { name: `layout-${theme}`, password: "desktop test-only password" });
         try {
-            await form.getByLabel("페어링 링크", { exact: true }).fill(`http://127.0.0.1:17741/#pairing=${pair.code}`);
+            await form.getByRole("textbox", { name: "페어링 링크", exact: true }).fill(`http://127.0.0.1:17741/#pairing=${pair.code}`);
             await expect(form.getByText("등록 대상:")).toContainText("127.0.0.1:17741");
             const box = await form.boundingBox();
             const width = page.viewportSize()!.width;

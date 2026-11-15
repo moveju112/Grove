@@ -165,6 +165,26 @@ pub(crate) fn transcript(client: &[u8; 32], server: &[u8; 32], identity: &[u8; 3
     [LABEL, client, server, identity].concat()
 }
 
+fn protocol_transcript(handshake: &[u8], protocol: u32) -> Vec<u8> {
+    [b"grove-e2ee-protocol-v1".as_slice(), handshake, &protocol.to_be_bytes()].concat()
+}
+
+#[cfg(test)]
+mod protocol_proof_tests {
+    use super::*;
+    use ed25519_dalek::Verifier;
+
+    #[test]
+    fn protocol_proof_is_bound_to_the_handshake_and_cannot_be_relabelled() {
+        let identity = SigningKey::from_bytes(&[7; 32]);
+        let signature = identity.sign(&protocol_transcript(b"handshake-a", 1));
+        let key = identity.verifying_key();
+        assert!(key.verify(&protocol_transcript(b"handshake-a", 1), &signature).is_ok());
+        assert!(key.verify(&protocol_transcript(b"handshake-a", 2), &signature).is_err());
+        assert!(key.verify(&protocol_transcript(b"handshake-b", 1), &signature).is_err());
+    }
+}
+
 pub(crate) fn keys(shared: &[u8; 32], transcript: &[u8]) -> (Cipher, Cipher) {
     let hk = Hkdf::<Sha256>::new(Some(&Sha256::digest(transcript)), shared);
     let mut c2s = [0u8; 32];
@@ -191,7 +211,14 @@ async fn handshake(app: &App, ws: &mut WebSocket) -> Result<(Cipher, Cipher, u8)
     if shared == [0; 32] { return Err(invalid()); }
     let transcript = transcript(&client, &public, app.e2ee.identity.verifying_key().as_bytes());
     let signature = app.e2ee.identity.sign(&transcript);
-    ws.send(Message::Text(json!({ "version": hello.version, "key": B64.encode(public), "signature": B64.encode(signature.to_bytes()) }).to_string().into())).await?;
+    // 기존 handshake 증명은 그대로 두어 구형 화면을 유지한다. 새 화면은 protocol 증명으로
+    // 자격 전송 전에 호환성을 확인하며, 별도 health 요청의 왕복을 기다리지 않는다.
+    let protocol = crate::PROTOCOL_VERSION;
+    let protocol_signature = app.e2ee.identity.sign(&protocol_transcript(&transcript, protocol));
+    ws.send(Message::Text(json!({
+        "version": hello.version, "key": B64.encode(public), "signature": B64.encode(signature.to_bytes()),
+        "protocol": protocol, "protocol_signature": B64.encode(protocol_signature.to_bytes()),
+    }).to_string().into())).await?;
     let (rx, tx) = keys(&shared, &transcript);
     Ok((rx, tx, hello.version))
 }

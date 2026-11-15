@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { login } from "./helpers";
+import { login, openSettings } from "./helpers";
+
+// Astryx Layer는 Grove 테마의 --spacing-4(12px)를 viewport gutter로 사용한다.
+const gutter = 12;
 
 for (const width of [390, 1400]) {
     test.describe(`${width}px 안내 도움말`, () => {
@@ -9,7 +12,7 @@ for (const width of [390, 1400]) {
             const trigger = page.getByRole("button", { name: "보관 방식 도움말", exact: true });
             const tooltip = page.getByRole("tooltip");
             await expect(tooltip).toHaveCount(0);
-            await expect(page.getByText("토큰은 이 브라우저에 저장하지 않습니다.", { exact: true })).toHaveCount(0);
+            await expect(page.getByText("토큰은 이 브라우저에 저장하지 않습니다.", { exact: true })).not.toBeVisible();
             await trigger.hover();
             await expect(tooltip).toHaveText("토큰은 이 브라우저에 저장하지 않습니다.");
             await tooltip.hover();
@@ -24,23 +27,21 @@ for (const width of [390, 1400]) {
             if (width < 760) await trigger.tap();
             else await trigger.click();
             await expect(tooltip).toBeVisible();
-            const box = await tooltip.boundingBox();
-            expect(box!.x).toBeGreaterThanOrEqual(16);
-            expect(box!.x + box!.width).toBeLessThanOrEqual(width - 16);
+            await expect.poll(async () => (await tooltip.boundingBox())!.x).toBeGreaterThanOrEqual(gutter);
+            await expect.poll(async () => { const box = (await tooltip.boundingBox())!; return box.x + box.width; }).toBeLessThanOrEqual(width - gutter);
             await page.screenshot({ path: info.outputPath("login-help.png"), fullPage: true });
             await page.getByRole("heading", { name: "Grove" }).click();
             await expect(tooltip).toHaveCount(0);
             await login(page);
-            await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+            await openSettings(page);
             await page.getByLabel("설정 검색").fill("응답 언어");
             // Astryx는 포인터 포커스가 아니라 키보드 포커스에서 도움말을 미리 연다.
             await page.keyboard.press("Tab");
             await page.getByRole("button", { name: "응답 언어 도움말", exact: true }).focus();
             await expect(tooltip).toBeVisible();
             await expect(tooltip).toContainText("실제 적용값:");
-            const settingsBox = await tooltip.boundingBox();
-            expect(settingsBox!.x).toBeGreaterThanOrEqual(16);
-            expect(settingsBox!.x + settingsBox!.width).toBeLessThanOrEqual(width - 16);
+            await expect.poll(async () => (await tooltip.boundingBox())!.x).toBeGreaterThanOrEqual(gutter);
+            await expect.poll(async () => { const box = (await tooltip.boundingBox())!; return box.x + box.width; }).toBeLessThanOrEqual(width - gutter);
             await page.screenshot({ path: info.outputPath("settings-help.png"), fullPage: true });
         });
     });

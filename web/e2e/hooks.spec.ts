@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiCall, ensureProjects, login, sessionView } from "./helpers";
+import { apiCall, ensureProjects, login, openSettings, selectChoice, sessionView } from "./helpers";
 import type { Hook, HookListing } from "../app/api/hooks";
 
 async function list(projectId?: string) {
@@ -12,7 +12,7 @@ async function cleanup(prefix: string, projectId?: string) {
 }
 async function open(page: Page) {
     await login(page);
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").last().fill("hook");
     return page.getByTestId("hooks-panel").last();
 }
@@ -21,12 +21,12 @@ test("hook 추가·수정·비활성화·삭제는 미실행이며 명령의 비
     const prefix = `hook-ui-${Date.now()}`;
     try {
         const panel = await open(page);
-        await expect(panel).toContainText("저장·활성화는 실행 승인이 아닙니다");
+        await expect(panel).toContainText("저장·활성화와 별도로 각 실행 요청에서 승인하세요.");
         await panel.getByLabel("hook 이름", { exact: true }).fill(prefix);
         await panel.getByLabel("hook 이벤트", { exact: true }).selectOption("PreToolUse");
         await panel.getByLabel("hook matcher", { exact: true }).fill("shell*");
         await panel.getByLabel("hook 명령", { exact: true }).fill("TOKEN=hooks-ui-fixture-private printf not-run");
-        await panel.getByLabel("hook 활성 설정 (별도 승인 필요)", { exact: true }).check();
+        await selectChoice(panel.getByLabel("hook 활성 설정 (별도 승인 필요)", { exact: true }), "true");
         await panel.getByRole("button", { name: "hook 설정 저장", exact: true }).click();
         const row = panel.getByTestId("hook-row").filter({ hasText: prefix });
         await expect(row).toContainText("revision 1");

@@ -24,14 +24,14 @@ test("범위별 셸·한도·작업 위치 저장과 상속 복원은 기존 설
     const row = panel.getByTestId("setting-exec.max_memory_mb");
     await row.getByLabel("명령 메모리 한도(MB)", { exact: true }).fill("128");
     await row.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(row.getByRole("status")).toContainText("저장됨");
+    await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
     const cwd = panel.getByTestId("setting-exec.default_cwd");
     await cwd.getByLabel("기본 작업 위치", { exact: true }).fill("../outside");
     await cwd.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(cwd.getByRole("status")).toContainText("저장 실패(기존 값 유지)");
+    await expect(cwd.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장 실패(기존 값 유지)");
     await cwd.getByLabel("기본 작업 위치", { exact: true }).fill("work");
     await cwd.getByRole("button", { name: "저장", exact: true }).click();
-    await expect(cwd.getByRole("status")).toContainText("저장됨");
+    await expect(cwd.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
     await expect(panel).toContainText("새 모델 셸·대화 작업에만 적용");
     await expect(panel).toContainText("기존 계획·승인은 유지");
     const sessionQuery = `/settings/effective?session_id=${session.id}`;
@@ -46,7 +46,7 @@ test("범위별 셸·한도·작업 위치 저장과 상속 복원은 기존 설
     const dialog = page.getByRole("dialog", { name: "기본값 복원 확인", exact: true });
     await expect(dialog.getByTestId("reset-target")).toContainText(project.name);
     await dialog.getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
-    await expect(dialog.getByRole("status")).toContainText("복원 저장됨");
+    await expect(dialog.getByRole("status").filter({ hasText: /\S/ })).toContainText("복원 저장됨");
     const after = (await apiCall<Effective>("GET", sessionQuery)).items.find((item) => item.key === "exec.max_memory_mb")!;
     expect(after.layers.project!.value).toBeNull();
     expect(after.source).not.toBe("project");
@@ -55,14 +55,16 @@ test("범위별 셸·한도·작업 위치 저장과 상속 복원은 기존 설
 test("미지원 격리·셸은 이유와 함께 비활성이고 기존 승인 계약을 안내한다", async ({ page }) => {
     const { panel } = await setup(page);
     const unsupported = panel.getByRole("group", { name: "프로세스 격리 수준 미지원 선택지", exact: true });
-    await expect(unsupported.getByRole("radio", { name: /sandbox/ })).toBeDisabled();
+    await expect(unsupported.getByRole("combobox")).toBeDisabled();
+    await expect(unsupported.getByRole("option", { name: /sandbox/ })).toHaveAttribute("value", "sandbox");
     await expect(unsupported).toContainText("아직 구현되지 않았습니다");
-    await expect(unsupported.getByRole("radio", { name: /none/ })).toBeDisabled();
+    await expect(unsupported.getByRole("option", { name: /none/ })).toHaveAttribute("value", "none");
     await expect(panel.getByLabel("프로세스 격리 수준", { exact: true })).toHaveValue("process_tree");
     const registry = await apiCall<{ key: string; unavailable_options?: { value: string; reason: string }[] }[]>("GET", "/settings/registry");
     for (const choice of registry.find((def) => def.key === "exec.shell")!.unavailable_options ?? []) {
-        const option = panel.getByRole("group", { name: "명령 실행 셸 미지원 선택지", exact: true }).getByRole("radio", { name: `${choice.value} · ${choice.reason}`, exact: true });
-        await expect(option).toBeDisabled();
+        const group = panel.getByRole("group", { name: "명령 실행 셸 미지원 선택지", exact: true });
+        await expect(group.getByRole("combobox")).toBeDisabled();
+        const option = group.getByRole("option", { name: `${choice.value} · ${choice.reason}`, exact: true });
         await expect(option).toHaveAccessibleName(`${choice.value} · ${choice.reason}`);
     }
     await expect(panel).toContainText("다음 실행 계획부터 적용");
@@ -80,7 +82,7 @@ test("화면에서 셸·한도를 바꿔도 승인 대상은 고정되고 다음
         const saved = page.waitForResponse((response) => response.request().method() === "PUT" && response.url().endsWith(`/${key}`));
         await row.getByRole("button", { name: "저장", exact: true }).click();
         expect((await saved).ok()).toBe(true);
-        await expect(row.getByRole("status")).toContainText("저장됨");
+        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
     };
     type Call = { id: string; revision: number; target: { shell: string; limits: { memory_mb: number; cpu_seconds: number } }; result: { stdout: string } };
     type Turn = { status: string; tool_calls: Call[] };

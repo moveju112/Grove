@@ -1,3 +1,8 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
+import { Link } from "@astryxdesign/core/Link";
+import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { When } from "./When";
 import { createPortal } from "react-dom";
@@ -5,15 +10,16 @@ import { HOSTS_KEY, insecureRemote, loadHosts, markHostOpened, recentHosts, remo
 
 import { Icon } from "./icons";
 import { SentenceText } from "./HelpTip";
+import { TextInput } from "../design/Fields";
 
 /// 호스트별 페이지를 별도 탭으로 열어 요청·stream·메모리 상태를 섞지 않는다.
 export function Hosts() {
     const [open, setOpen] = useState(false);
     return (
         <>
-            <button type="button" className="ghost host-picker" onClick={() => setOpen(true)} title={`현재 호스트: ${location.origin}`} aria-label={`호스트 선택: ${location.origin}`}>
-                <Icon name="server" /><span className="rail-label">호스트 · {location.host}</span>
-            </button>
+            <GroveButton type="button" className="ghost host-picker" onClick={() => setOpen(true)} title={`현재 호스트: ${location.origin}`} aria-label={`호스트 선택: ${location.origin}`}>
+                <Icon name="server" /><GroveText type="inherit" color="inherit" className="rail-label">호스트 · {location.host}</GroveText>
+            </GroveButton>
             {open && createPortal(<HostsDialog onClose={() => setOpen(false)} />, document.body)}
         </>
     );
@@ -64,45 +70,45 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
     };
     return (
         <dialog ref={dialog} className="dialog host-dialog" aria-label="호스트 관리" onCancel={(e) => { e.preventDefault(); close(); }}>
-            <h2>호스트</h2>
-            <p className="small">현재 호스트: <strong className="host-address">{location.origin}</strong></p>
+            <GroveHeading level={2} color="inherit">호스트</GroveHeading>
+            <GroveText as="p" display="block" type="supporting" color="inherit">현재 호스트: <strong className="host-address">{location.origin}</strong></GroveText>
             <ul className="host-list" aria-label="등록한 호스트">
                 {recentHosts(hosts).map((host) => (
                     <li key={host.origin} data-testid="host-row">
                         <strong>{host.alias}</strong>
                         <code className="host-address">{host.origin}</code>
-                        {host.origin === location.origin && <span className="small">현재 호스트</span>}
-                        <span className="muted small">
+                        {host.origin === location.origin && <GroveText type="supporting" color="inherit">현재 호스트</GroveText>}
+                        <GroveText type="supporting" color="secondary">
                             {host.lastOpenedAt === null ? "아직 열지 않음" : <>최근 열기: <When at={new Date(host.lastOpenedAt).toISOString()} /></>}
-                        </span>
-                        {insecureRemote(host.origin) && <p className="warn small"><SentenceText text="암호화되지 않은 HTTP입니다. 토큰과 대화가 노출될 수 있으니 HTTPS 또는 신뢰하는 VPN을 사용하세요." /></p>}
-                        <div className="row">
-                            <a href={host.origin + "/"} target="_blank" rel="noopener noreferrer" onClick={(e) => {
+                        </GroveText>
+                        {insecureRemote(host.origin) && <GroveText as="p" display="block" type="supporting" color="warning"><SentenceText text="암호화되지 않은 HTTP입니다. 토큰과 대화가 노출될 수 있으니 HTTPS 또는 신뢰하는 VPN을 사용하세요." /></GroveText>}
+                        <GroveStack direction="horizontal" align="center" className="row">
+                            <Link type="inherit" href={host.origin + "/"} target="_blank" rel="noopener noreferrer" onClick={(e) => {
                                 if (!change(() => markHostOpened(localStorage, host.origin))) e.preventDefault();
-                            }}>새 탭에서 열기</a>
-                            <button type="button" className="ghost small" onClick={() => edit(host)}>수정</button>
-                            <button type="button" className="ghost small" onClick={() => {
+                            }}>새 탭에서 열기</Link>
+                            <GroveButton type="button" className="ghost small" onClick={() => edit(host)}>수정</GroveButton>
+                            <GroveButton type="button" className="ghost small" onClick={() => {
                                 if (change(() => removeHost(localStorage, host.origin)) && editing === host.origin) reset();
-                            }}>삭제</button>
-                        </div>
+                            }}>삭제</GroveButton>
+                        </GroveStack>
                     </li>
                 ))}
             </ul>
-            {hosts.length === 0 && <p className="muted">등록한 호스트가 없습니다.</p>}
+            {hosts.length === 0 && <GroveText as="p" display="block" type="inherit" color="secondary">등록한 호스트가 없습니다.</GroveText>}
             <form aria-label={editing ? "호스트 수정" : "호스트 추가"} onSubmit={(e) => {
                 e.preventDefault();
                 if (change(() => saveHost(localStorage, address, alias, editing))) reset();
             }}>
-                <label>별명<input value={alias} maxLength={80} required onChange={(e) => setAlias(e.target.value)} autoComplete="off" /></label>
-                <label>서버 주소<input type="url" value={address} required onChange={(e) => setAddress(e.target.value)} placeholder="https://grove.example.com" autoComplete="off" spellCheck={false} /></label>
-                <p className="muted small"><SentenceText text="서버 주소만 입력하세요. 비밀번호·토큰·페어링 링크는 넣지 마세요." /></p>
-                <div className="row">
-                    <button type="submit">{editing ? "변경 저장" : "호스트 추가"}</button>
-                    {editing && <button type="button" className="ghost" onClick={reset}>수정 취소</button>}
-                </div>
+                <TextInput label="별명" value={alias} maxLength={80} isRequired onChange={setAlias} autoComplete="off" />
+                <TextInput label="서버 주소" type="url" value={address} isRequired onChange={setAddress} placeholder="https://grove.example.com" autoComplete="off" hasSpellCheck={false} />
+                <GroveText as="p" display="block" type="supporting" color="secondary"><SentenceText text="서버 주소만 입력하고 비밀번호·토큰·페어링 링크는 넣지 마세요." /></GroveText>
+                <GroveStack direction="horizontal" align="center" className="row">
+                    <GroveButton type="submit">{editing ? "변경 저장" : "호스트 추가"}</GroveButton>
+                    {editing && <GroveButton type="button" className="ghost" onClick={reset}>수정 취소</GroveButton>}
+                </GroveStack>
             </form>
-            {error && <p className="err" role="alert">{error}</p>}
-            <button type="button" className="ghost" onClick={close}>닫기</button>
+            {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
+            <GroveButton type="button" className="ghost" onClick={close}>닫기</GroveButton>
         </dialog>
     );
 }

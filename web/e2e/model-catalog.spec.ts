@@ -22,12 +22,12 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
     await expect(row.getByLabel(`${name} 공급자 모델`)).toBeEnabled();
     await row.getByLabel(`${name} 공급자 모델`).selectOption("fixture-model");
     await expect(row.locator("code")).toHaveText("fixture-model");
-    await expect(row.getByRole("status").filter({ hasText: "프로필이 바뀌었습니다" })).toBeVisible();
+    await expect(row.getByRole("status").filter({ hasText: "프로필이 변경됐으니 목록을 다시 조회하세요." })).toBeVisible();
     await page.route("**/api/v1/model-profiles/*/models", (route) => route.fulfill({
         status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "catalog_invalid", message: "fixture catalog failure" } }),
     }));
     await row.getByRole("button", { name: "모델 목록 새로고침" }).click();
-    await expect(row.getByRole("alert")).toContainText("마지막 조회 목록은 보존");
+    await expect(row.getByRole("alert")).toContainText("마지막 조회 목록 보존");
     await expect(row).toContainText("1개");
     await page.unroute("**/api/v1/model-profiles/*/models");
     await row.getByRole("button", { name: "모델 목록 새로고침" }).click();

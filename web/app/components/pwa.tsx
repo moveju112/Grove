@@ -1,3 +1,4 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
 // 입력이 없는 탭은 새 버전을 바로 적용하고, 입력이 남은 탭은 사용자가 고를 때까지 기다린다.
 import { useSyncExternalStore } from "react";
 import { onProtocolMismatch } from "../api/client";
@@ -97,7 +98,7 @@ export function ProtocolBanner() {
         <div className="update-banner error" role="alert" data-testid="protocol-banner">
             서버가 새 버전(protocol {server})으로 바뀌어 이 화면에서는 변경 요청을 보낼 수 없습니다.
             새 UI가 준비되면 지금 업데이트를 선택하세요. 초안은 기기 저장소에 의존하므로 중요한 입력은 먼저 복사하세요.
-            <button onClick={() => void checkForUpdate()}>새 UI 확인</button>
+            <Button onClick={() => void checkForUpdate()}>새 UI 확인</Button>
         </div>
     );
 }
@@ -112,7 +113,7 @@ export function UpdateBanner() {
     if (!current.worker && !current.error) return null;
     return (
         <div className="update-banner pwa-update-notices">
-            {current.error && <p className="error" role="alert">{current.error}</p>}
+            {current.error && <GroveText as="p" display="block" type="inherit" color="inherit" className="error" role="alert">{current.error}</GroveText>}
             {current.worker && <div role="status" className="pwa-update">
                 <SentenceText text="새 버전이 준비되었습니다. 업데이트하면 저장하지 않은 입력이 사라질 수 있습니다." />
                 <div className="pwa-update-actions">

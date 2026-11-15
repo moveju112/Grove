@@ -78,19 +78,19 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
         await row.getByLabel("기본 모델 프로필", { exact: true }).selectOption(f.primary.id);
         await expect(row).toContainText("전송 대상:");
         await row.getByRole("button", { name: "저장", exact: true }).click();
-        await expect(row.getByRole("status")).toContainText("저장됨");
+        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
         await row.getByLabel("기본 모델 프로필", { exact: true }).selectOption(f.secondary.id);
         await setting(f.a.id, defaultsKey, f.primary.id);
         await row.getByRole("button", { name: "저장", exact: true }).click();
-        await expect(row.getByRole("status")).toContainText("내 수정은 보존");
+        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("내 수정은 보존");
         await expect(row.getByLabel("기본 모델 프로필", { exact: true })).toHaveValue(f.secondary.id);
         await row.getByRole("button", { name: "내 수정으로 덮어쓰기", exact: true }).click();
-        await expect(row.getByRole("status")).toContainText("저장됨");
+        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
         await search.fill("압축 요약 모델");
         const summary = page.getByTestId(`setting-${summaryKey}`);
         await summary.getByLabel("압축 요약 모델", { exact: true }).selectOption(f.primary.id);
         await summary.getByRole("button", { name: "저장", exact: true }).click();
-        await expect(summary.getByRole("status")).toContainText("저장됨");
+        await expect(summary.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
         const effective = await apiCall<Effective>("GET", `/settings/effective?project_id=${f.a.id}`);
         expect(effective.items.find((item) => item.key === summaryKey)?.effective).toBe(f.primary.id);
         const session = await apiCall<{ id: string }>("POST", `/projects/${f.a.id}/sessions`, { title: `${f.prefix} context` });
@@ -106,7 +106,7 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
             const control = page.getByTestId(`setting-${key}`);
             await control.getByRole("spinbutton").fill(value!);
             await control.getByRole("button", { name: "저장", exact: true }).click();
-            await expect(control.getByRole("status")).toContainText("저장됨");
+            await expect(control.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
         }
         const usage = await apiCall<{ reserve_tokens: number; auto_clear_minutes: number }>("GET", `/sessions/${session.id}/context?profile_id=${f.secondary.id}`);
         expect(usage.reserve_tokens - baseline.reserve_tokens).toBe(500 - previousReserve);

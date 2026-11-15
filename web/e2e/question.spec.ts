@@ -41,20 +41,19 @@ test("단일 선택 질문: 답변 대기로 표시되고, 고른 답으로 이�
     await expect(page.locator(".recent").getByText("답변 대기").first()).toBeVisible();
     const recent = page.locator(".recent");
     const title = (await view.locator("h1").innerText()).trim();
-    await recent.getByRole("button", { name: "답변 대기", exact: true }).click();
     const waiting = recent.getByTestId("recent-item").filter({ hasText: title });
     await expect(waiting).toHaveCount(1);
+    await expect(waiting.getByText("답변 대기", { exact: true })).toBeVisible();
     await expect(card.getByLabel("직접 입력")).toHaveCount(0);
     await expect(card.getByRole("button", { name: "답하기" })).toBeDisabled();
-    await card.getByRole("radio", { name: /SQLite/ }).check();
-    await card.getByRole("radio", { name: /Postgres/ }).check();
-    await expect(card.getByRole("radio", { name: /SQLite/ })).not.toBeChecked();
+    await card.getByLabel("답변 선택").selectOption("SQLite");
+    await card.getByLabel("답변 선택").selectOption("Postgres");
+    await expect(card.getByLabel("답변 선택")).toHaveValue("Postgres");
     await script({ frames: frames.text(["Postgres로 진행"]) });
     await card.getByRole("button", { name: "답하기" }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "Postgres로 진행" })).toHaveCount(1, { timeout: 15_000 });
     await expect(view.getByTestId("question")).toHaveCount(0);
-    await expect(waiting).toHaveCount(0);
-    await recent.getByRole("button", { name: "전체", exact: true }).click();
+    await expect(waiting.getByText("답변 대기", { exact: true })).toHaveCount(0);
     const r = (await requests()).slice(before);
     expect(r).toHaveLength(1);
     expect(toolText(r[0]!)).toContain("Postgres");
@@ -65,8 +64,8 @@ test("복수 선택과 직접 입력을 함께 보내고, 닫기는 답하지 �
     const view = await askInNewSession(page, { question: "무엇을 포함할까요?", options: [{ label: "테스트" }, { label: "문서" }, { label: "CI" }], multi_select: true });
     const card = view.getByTestId("question");
     await expect(card).toContainText("여러 개 선택 가능");
-    await card.getByRole("checkbox", { name: "테스트" }).check();
-    await card.getByRole("checkbox", { name: "CI" }).check();
+    await card.getByLabel("선택 1").selectOption("테스트");
+    await card.getByLabel("선택 2").selectOption("CI");
     await card.getByLabel("직접 입력").fill("CI는 ARM도");
     let before = (await requests()).length;
     // 이어지는 모델 응답: 다시 질문 → 이번에는 닫는다

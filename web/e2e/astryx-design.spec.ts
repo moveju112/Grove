@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProjects, login } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openSettings, selectChoice } from "./helpers";
 
 for (const width of [390, 1400]) {
     for (const theme of ["light", "dark"] as const) {
@@ -44,14 +44,14 @@ for (const width of [390, 1400]) {
                 await expect(view.locator(".tool-dock")).toBeHidden();
                 await expect(view.locator(".view-head").getByRole("button", { name: "도구 패널", exact: true })).toBeVisible();
                 await page.screenshot({ path: info.outputPath("conversation.png"), fullPage: true });
-                await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+                await openSettings(page);
                 await page.getByRole("button", { name: "화면·입력", exact: true }).click();
-                await page.getByRole("switch", { name: "Enter로 보내기", exact: true }).check();
+                await selectChoice(page.getByRole("combobox", { name: "Enter로 보내기", exact: true }), "true");
                 expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
                 await page.screenshot({ path: info.outputPath("settings.png"), fullPage: true });
                 await page.reload();
                 await page.getByLabel("설정 검색").fill("Enter로 보내기");
-                await expect(page.getByRole("switch", { name: "Enter로 보내기", exact: true })).toBeChecked();
+                await expect(page.getByRole("combobox", { name: "Enter로 보내기", exact: true })).toHaveAttribute("data-selected-value", "true");
                 expect(errors).toEqual([]);
             });
         });

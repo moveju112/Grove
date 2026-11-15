@@ -1,3 +1,6 @@
+import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
+import { Button as GroveButton } from "../../design/Button";
 import { useCallback, useEffect, useRef, useState } from "react";
 import "./capabilities.css";
 import {
@@ -28,31 +31,31 @@ export function useBrowserCapabilities() {
 
 export function BrowserCapabilitiesPanel({ snapshot }: { snapshot: BrowserCapabilities }) {
     return <div data-testid="browser-capabilities">
-        <p>보안 컨텍스트: <strong>{snapshot.secureContext ? "예" : "아니요"}</strong></p>
-        {!snapshot.secureContext && <p className="warn small">알림·Clipboard·파일 시스템 접근에는 HTTPS 또는 localhost가 필요합니다.</p>}
-        <div className="browser-capabilities-table"><table>
+        <GroveText as="p" display="block" type="inherit" color="inherit">보안 컨텍스트: <strong>{snapshot.secureContext ? "예" : "아니요"}</strong></GroveText>
+        {!snapshot.secureContext && <GroveText as="p" display="block" type="supporting" color="warning">알림·Clipboard·파일 시스템 접근에는 HTTPS 또는 localhost가 필요합니다.</GroveText>}
+        <div className="browser-capabilities-table"><Table density="compact">
             <caption>이 기기의 브라우저 기능</caption>
-            <thead><tr><th>기능</th><th>API 지원</th><th>권한</th><th>조건·대안</th></tr></thead>
-            <tbody>{snapshot.items.map((item) => <tr key={item.id} data-testid={`browser-capability-${item.id}`}>
-                <th scope="row">{item.label}</th>
-                <td>{item.supported ? "지원" : item.secureRequired && !snapshot.secureContext ? "미노출·보안 컨텍스트에서 재확인" : "미지원"}</td>
-                <td>{item.supported ? PERMISSION_LABEL[item.permission] : item.secureRequired && !snapshot.secureContext ? "보안 컨텍스트에서 재확인" : "해당 없음"}</td>
-                <td>{capabilityIssue(snapshot, item) ?? <>
+            <TableHeader><TableRow isHeaderRow><TableHeaderCell scope="col">기능</TableHeaderCell><TableHeaderCell scope="col">API 지원</TableHeaderCell><TableHeaderCell scope="col">권한</TableHeaderCell><TableHeaderCell scope="col">조건·대안</TableHeaderCell></TableRow></TableHeader>
+            <TableBody>{snapshot.items.map((item) => <TableRow key={item.id} data-testid={`browser-capability-${item.id}`}>
+                <TableHeaderCell scope="row">{item.label}</TableHeaderCell>
+                <TableCell>{item.supported ? "지원" : item.secureRequired && !snapshot.secureContext ? "미노출·보안 컨텍스트에서 재확인" : "미지원"}</TableCell>
+                <TableCell>{item.supported ? PERMISSION_LABEL[item.permission] : item.secureRequired && !snapshot.secureContext ? "보안 컨텍스트에서 재확인" : "해당 없음"}</TableCell>
+                <TableCell>{capabilityIssue(snapshot, item) ?? <>
                     {item.secureRequired ? "보안 컨텍스트 필요. " : "보안 컨텍스트 불필요. "}
                     {item.permission === "unknown" && "권한을 조회할 수 없어 미확인입니다. 거부를 뜻하지 않습니다. "}
                     {item.permission === "per-use" && "선택 전에는 개별 파일·폴더 권한을 조회하지 않습니다. "}
                     {item.alternative}
-                </>}</td>
-            </tr>)}</tbody>
-        </table></div>
+                </>}</TableCell>
+            </TableRow>)}</TableBody>
+        </Table></div>
     </div>;
 }
 
 export function BrowserCapabilitiesSettings() {
     const [snapshot, refresh] = useBrowserCapabilities();
     return <>
-        {snapshot ? <BrowserCapabilitiesPanel snapshot={snapshot} /> : <p role="status">브라우저 기능 확인 중…</p>}
-        <button className="ghost small" onClick={refresh}>브라우저 기능 새로 확인</button>
+        {snapshot ? <BrowserCapabilitiesPanel snapshot={snapshot} /> : <GroveText as="p" display="block" type="inherit" color="inherit" role="status">브라우저 기능 확인 중…</GroveText>}
+        <GroveButton className="ghost small" onClick={refresh}>브라우저 기능 새로 확인</GroveButton>
     </>;
 }
 

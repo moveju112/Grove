@@ -1,11 +1,12 @@
-import { createContext, useContext, useId, useRef, useState, type HTMLAttributes, type ReactNode } from "react";
+import { createContext, useContext, useId, useLayoutEffect, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from "react";
 import { CreationDialog } from "../create/CreationDialog";
 import { Icon } from "../icons";
 import { PaneVisibility, usePaneVisible } from "../../state/paneVisibility";
 import "./controls.css";
 import { Stack } from "@astryxdesign/core/Stack";
-import { Heading } from "@astryxdesign/core/Text";
+import { Heading, Text } from "@astryxdesign/core/Text";
 import { Button } from "../../design/Button";
+import { isNarrow } from "../../state/device";
 
 // 제목은 제목으로만 쓰고, 보조 정보는 명시적인 버튼으로 연다.
 export function Panel({ title, children, ...props }: Omit<HTMLAttributes<HTMLElement>, "title"> & { title: ReactNode }) {
@@ -15,27 +16,28 @@ export function Panel({ title, children, ...props }: Omit<HTMLAttributes<HTMLEle
     </Stack>;
 }
 
-export function DetailDialog({ title, label, trigger, children, inline = false, onOpenChange, ...props }: {
+export function DetailDialog({ title, label, trigger, children, inline = false, showExpand = true, onOpenChange, ...props }: {
     title: ReactNode; label: string; children: ReactNode; inline?: boolean;
     trigger?: ReactNode;
+    showExpand?: boolean;
     onOpenChange?: (open: boolean) => void;
 } & Omit<HTMLAttributes<HTMLDivElement>, "title">) {
     const [open, setOpen] = useState(false);
     const change = (value: boolean) => { setOpen(value); onOpenChange?.(value); };
-    return <div {...props}>
-        {inline ? <div className="detail-heading">{title}</div> : <Button type="button" className="ghost detail-trigger"
+    return <Stack align="start" {...props}>
+        {inline ? <Text display="block" type="inherit" color="inherit" className="detail-heading">{title}</Text> : <Button type="button" className="ghost detail-trigger"
             aria-label={trigger === undefined ? undefined : label}
-            aria-haspopup="dialog" onClick={() => change(true)}>{trigger ?? title}<Icon name="expand" size={14} /></Button>}
+            aria-haspopup="dialog" onClick={() => change(true)}>{trigger ?? title}{showExpand && <Icon name="expand" size={14} />}</Button>}
         {inline && children}
         {open && <CreationDialog label={label} onClose={() => change(false)}>
-            <header className="dialog-heading"><Heading level={2}>{title}</Heading>
+            <Stack as="header" direction="horizontal" align="center" className="dialog-heading"><Heading level={2}>{title}</Heading>
                 <Button type="button" className="ghost icon-btn" aria-label="닫기" onClick={() => change(false)}><Icon name="close" /></Button>
-            </header>
-            <div className="detail-content" onClick={(event) => {
+            </Stack>
+            <Stack className="detail-content" onClick={(event) => {
                 if ((event.target as HTMLElement).closest("[data-dialog-close]")) change(false);
-            }}>{children}</div>
+            }}>{children}</Stack>
         </CreationDialog>}
-    </div>;
+    </Stack>;
 }
 
 // 브라우저 popover의 바깥 클릭·Escape·초점 복귀를 사용한다. 메뉴 안의 폼은 Tab 순서로 조작한다.
@@ -46,7 +48,7 @@ export function ActionMenu({ label, trigger = "⋯", children, className = "" }:
     const button = useRef<HTMLButtonElement>(null);
     const popover = useRef<HTMLDivElement>(null);
     const [open, setOpen] = useState(false);
-    return <div className={`action-menu ${className}`}>
+    return <Stack direction="horizontal" className={`action-menu ${className}`}>
         <Button ref={button} type="button" className="ghost menu-trigger" aria-label={label} title={label}
             aria-expanded={open} popoverTarget={id} onClick={() => {
                 const rect = button.current!.getBoundingClientRect();
@@ -73,10 +75,16 @@ export function ActionMenu({ label, trigger = "⋯", children, className = "" }:
             }}>
             {children}
         </div>
-    </div>;
+    </Stack>;
 }
 
 export type DockTool = { id: string; label: string; icon?: "changes" | "file" | "terminal"; activity?: number; lazy?: boolean; content: ReactNode };
+
+function subscribeCompact(notify: () => void) {
+    const media = window.matchMedia("(max-width: 760px)");
+    media.addEventListener("change", notify);
+    return () => media.removeEventListener("change", notify);
+}
 
 type WorkbenchState = { open: boolean; toggle: () => void; activity: number };
 const WorkbenchContext = createContext<WorkbenchState | null>(null);
@@ -88,13 +96,14 @@ export function ToolsTrigger() {
     return <Button type="button" className="ghost icon-btn tools-trigger" aria-label="도구 패널" title="도구 패널"
         aria-expanded={state.open} onClick={state.toggle}>
         <Icon name="panel" />
-        {state.activity > 0 && <span className="dock-activity" aria-label={`진행 중 ${state.activity}개`}>{state.activity}</span>}
+        {state.activity > 0 && <Text type="inherit" color="inherit" className="dock-activity" aria-label={`진행 중 ${state.activity}개`}>{state.activity}</Text>}
     </Button>;
 }
 
 // 각 패널을 숨긴 채 유지해 탭 전환으로 미저장 입력·결과 불명 요청을 잃지 않는다.
 export function Workbench({ children, tools, label }: { children: ReactNode; tools: DockTool[]; label: string }) {
     const visible = usePaneVisible();
+    const compact = useSyncExternalStore(subscribeCompact, isNarrow, () => false);
     const [active, setActive] = useState<string | null>(null);
     const [visited, setVisited] = useState<Set<string>>(() => new Set());
     const last = useRef<string | null>(null);
@@ -105,14 +114,29 @@ export function Workbench({ children, tools, label }: { children: ReactNode; too
     };
     const id = useId();
     const tabs = useRef<HTMLDivElement>(null);
+    const dialog = useRef<HTMLDialogElement>(null);
+    const opened = active !== null && visible;
+    useLayoutEffect(() => {
+        const surface = dialog.current!;
+        if (opened) {
+            if (compact) surface.showModal();
+            else surface.show();
+        }
+        return () => surface.close();
+    }, [opened, compact]);
     const activity = tools.reduce((sum, tool) => sum + (tool.activity ?? 0), 0);
-    const toggle = () => active ? setActive(null) : select(last.current ?? tools[0]!.id);
+    const close = () => {
+        dialog.current!.close();
+        setActive(null);
+        tabs.current?.closest(".workbench")?.querySelector<HTMLButtonElement>(".tools-trigger")?.focus();
+    };
+    const toggle = () => active ? close() : select(last.current ?? tools[0]!.id);
     return <WorkbenchContext.Provider value={{ open: !!active, toggle, activity }}>
     <Stack className={`workbench${active ? " tools-open" : ""}`}>
         <Stack className="workbench-main">{children}</Stack>
-        <aside className="tool-dock" aria-label={label} hidden={!active}>
-            <div className="dock-bar">
-                <div ref={tabs} className="dock-tabs" role="tablist" aria-label={label} onKeyDown={(event) => {
+        <dialog ref={dialog} className="tool-dock" aria-label={label} onCancel={(event) => { event.preventDefault(); close(); }}>
+            <Stack direction="horizontal" align="center" className="dock-bar">
+                <Stack direction="horizontal" align="center" ref={tabs} className="dock-tabs" role="tablist" aria-label={label} onKeyDown={(event) => {
                     if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
                     const buttons = [...tabs.current!.querySelectorAll<HTMLButtonElement>("[role=tab]")];
                     const current = buttons.indexOf(event.target as HTMLButtonElement);
@@ -123,24 +147,20 @@ export function Workbench({ children, tools, label }: { children: ReactNode; too
                     select(tools[next]!.id);
                     buttons[next]!.focus();
                 }}>
-                    {tools.map((tool, index) => <button key={tool.id} type="button" role="tab" id={`${id}-${tool.id}-tab`}
+                    {tools.map((tool, index) => <Button key={tool.id} type="button" role="tab" id={`${id}-${tool.id}-tab`}
                         aria-controls={`${id}-${tool.id}`} aria-selected={active === tool.id} tabIndex={active === tool.id || (!active && index === 0) ? 0 : -1}
                         onClick={() => select(tool.id)}>{tool.icon && <Icon name={tool.icon} size={16} />}{tool.label}
-                        {!!tool.activity && <span className="dock-activity" aria-label={`진행 중 ${tool.activity}개`}>{tool.activity}</span>}</button>)}
-                </div>
-                {active && <button type="button" className="ghost icon-btn" aria-label="도구 패널 닫기" onClick={() => {
-                    // 닫힌 패널 대신 다시 열 수 있는 헤더 버튼으로 초점을 돌려준다.
-                    tabs.current?.closest(".workbench")?.querySelector<HTMLButtonElement>(".tools-trigger")?.focus();
-                    setActive(null);
-                }}><Icon name="close" size={16} /></button>}
-            </div>
+                        {!!tool.activity && <Text type="inherit" color="inherit" className="dock-activity" aria-label={`진행 중 ${tool.activity}개`}>{tool.activity}</Text>}</Button>)}
+                </Stack>
+                {active && <Button type="button" className="ghost icon-btn" aria-label="도구 패널 닫기" onClick={close}><Icon name="close" size={16} /></Button>}
+            </Stack>
             {tools.map((tool) => <div key={tool.id} id={`${id}-${tool.id}`} role="tabpanel" aria-labelledby={`${id}-${tool.id}-tab`}
                 hidden={active !== tool.id} className="dock-content">
                 <PaneVisibility.Provider value={visible && active === tool.id}>
-                    {(!tool.lazy || visited.has(tool.id)) && tool.content}
+                    {(tool.lazy === false || visited.has(tool.id)) && tool.content}
                 </PaneVisibility.Provider>
             </div>)}
-        </aside>
+        </dialog>
     </Stack>
     </WorkbenchContext.Provider>;
 }
