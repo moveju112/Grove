@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 fn decl<T: TS>() -> String {
     // JSON 숫자는 2^53 안의 정수만 쓰므로 number로 표현한다.
     format!("export {}", T::decl().replace("bigint", "number"))
+        .lines().map(str::trim_end).collect::<Vec<_>>().join("\n")
 }
 
 fn generate() -> String {

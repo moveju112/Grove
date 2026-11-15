@@ -449,7 +449,7 @@ function Profiles() {
                             <Stack gap={1} width="100%"><strong>{p.name}</strong><Text type="code" color="secondary" wordBreak="break-word" data-testid="profile-model">{p.model}</Text></Stack>
                             {p.enabled === false && <Text as="span" type="supporting" color="warning"> · 비활성</Text>}
                             <HelpTip label={`${p.name} 연결 정보`}>
-                                <Text as="span" type="inherit" color="inherit">{p.protocol}{p.base_url ? ` · ${p.base_url}` : " · 서버 CLI 계정 · 읽기 전용"}</Text>
+                                <Text as="span" type="inherit" color="inherit">{p.protocol}{p.base_url ? ` · ${p.base_url}` : " · 서버 CLI 계정 · 프로젝트 수정·검사 가능"}</Text>
                             </HelpTip>
                             <ActionMenu label={`${p.name} 관리`}>
                                 <ServerActionButton variant="secondary" density="compact" onClick={() => {
@@ -505,7 +505,7 @@ function Profiles() {
                 )}
                 {isCli && (
                     <Text as="span" type="supporting" color="secondary" data-testid="cli-note">
-                        서버 CLI 계정 · 읽기 전용
+                        서버 CLI 계정 · 프로젝트 수정·검사 가능
                     </Text>
                 )}
                 <ServerActionButton type="submit">추가</ServerActionButton>

@@ -14,7 +14,7 @@ async fn backend_catalog_requires_auth_and_never_claims_login_readiness() {
     let backends = catalog["backends"].as_array().unwrap();
     assert_eq!(backends.len(), 2);
     for backend in backends {
-        assert_eq!(backend["read_only"], true);
+        assert_eq!(backend["read_only"], false);
         assert!(backend["installed"].is_boolean());
         assert!(backend.get("authenticated").is_none());
         assert!(backend.get("path").is_none(), "서버 실행 경로는 응답하지 않는다");
@@ -69,6 +69,8 @@ async fn connect_uses_runtime_catalog_and_replays_without_duplicates() {
         let created: Value = response.json().await.unwrap();
         assert_eq!(created["model"], "default");
         assert_eq!(created["secret_id"], Value::Null);
+        assert_eq!(created["capabilities"]["native_tools"], true);
+        assert_eq!(created["capabilities"]["tools"], false, "CLI 자체 도구를 Grove 루프로 중복 실행하지 않는다");
         let replay: Value = server.raw(Method::POST, &path, Some(json!({})), Some(&key), None).await.json().await.unwrap();
         assert_eq!(replay["id"], created["id"]);
         let (_, again) = server.post(&path, json!({})).await;

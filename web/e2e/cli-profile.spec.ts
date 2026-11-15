@@ -11,7 +11,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
     await expect(page.getByLabel("Base URL")).toHaveCount(0);
     await expect(page.getByLabel("API 키")).toHaveCount(0);
     await expect(page.getByLabel("모델", { exact: true })).toHaveValue("haiku");
-    await expect(page.getByTestId("cli-note")).toContainText("서버 CLI 계정 · 읽기 전용");
+    await expect(page.getByTestId("cli-note")).toContainText("서버 CLI 계정 · 프로젝트 수정·검사 가능");
     const name = `cli-${Date.now()}`;
     try {
         await page.getByLabel("프로필 이름").fill(name);

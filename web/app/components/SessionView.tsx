@@ -584,6 +584,8 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     </Stack>
                 </Stack>
             )}
+            {!active && lastTurn?.status === "cancelled" && lastTurn.evidence && "cli_execution_attempted" in lastTurn.evidence
+                && !!lastTurn.evidence.cli_execution_attempted && <TurnEvidence e={lastTurn.evidence} />}
             {!active && timedTurn && <TurnTiming sessionId={sessionId} turn={timedTurn}
                 messagesReady={latest.data?.items.some((m) => m.turn_id === timedTurn.id && m.created_at === timedTurn.finished_at) ?? false} />}
             <BudgetNote sessionId={sessionId} active={active} />
@@ -607,10 +609,18 @@ function TurnEvidence({ e }: { e: NonNullable<Turn["evidence"]> }) {
     }
     return (
         <DetailDialog data-testid="turn-evidence" label="중단 전 응답" title={<>
-                중단 전까지 받은 응답(확정되지 않음 · {e.text_chars}자{e.truncated ? ", 앞부분만 보존" : ""}
+                {e.cli_execution_attempted ? "CLI 작업 중단 · 변경 여부 확인 필요" : "중단 전까지 받은 응답"}(확정되지 않음 · {e.text_chars}자{e.truncated ? ", 앞부분만 보존" : ""}
                 {e.tool_calls.length > 0 ? ` · 계획 중이던 도구 ${e.tool_calls.join(", ")}(실행 안 함)` : ""})
             </>}>
             <CodeBlock code={e.text} maxHeight="12em" />
+            {e.cli_execution_attempted && <GroveText as="p" display="block" type="supporting" color="warning">
+                {e.cli_activity_count ? `CLI 도구 활동 ${e.cli_activity_count}건을 받았어요.` : "CLI 도구 활동 보고 전에 중단됐을 수 있어요."}
+                {" "}중단해도 이미 바뀐 파일은 되돌아가지 않아요.
+                다시 실행하기 전에 파일과 diff를 확인하세요.
+            </GroveText>}
+            {e.cli_activity?.map((item, index) => <GroveText key={index} display="block" type="supporting" color="secondary">
+                {item.name} · {item.status ?? "결과 미확인"}
+            </GroveText>)}
         </DetailDialog>
     );
 }

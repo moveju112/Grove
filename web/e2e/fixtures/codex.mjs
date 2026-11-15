@@ -71,8 +71,9 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
     }
     process.exit(0);
 }
-if (!args.includes('sandbox_mode="read-only"') || !args.includes('approval_policy="never"')) {
-    emit({ type: "turn.failed", error: { message: "fixture: read-only policy missing" } });
+if (provider === "codex" && (!args.includes('sandbox_mode="workspace-write"') || !args.includes('approval_policy="never"')
+    || !args.includes("sandbox_workspace_write.writable_roots=[]") || !args.includes("sandbox_workspace_write.network_access=false"))) {
+    emit({ type: "turn.failed", error: { message: "fixture: workspace coding policy missing" } });
     process.exit(1);
 }
 let input = "";

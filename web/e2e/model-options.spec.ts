@@ -55,7 +55,7 @@ for (const theme of ["light", "dark"] as const) {
             active = turns[0]!.id;
             expect(turns[0]!.definition).toMatchObject({ effort: "max", service_tier: "priority" });
             const request = () => JSON.parse(readFileSync(join(state().cliDir!, "last-request.json"), "utf8")) as { args: string[]; resume: boolean };
-            expect(request().args).toEqual(expect.arrayContaining(['model_reasoning_effort="max"', 'service_tier="priority"', 'sandbox_mode="read-only"']));
+            expect(request().args).toEqual(expect.arrayContaining(['model_reasoning_effort="max"', 'service_tier="priority"', 'sandbox_mode="workspace-write"']));
             await expect(view.getByTestId("active-settings")).toHaveCount(0);
             await expect(view.getByTestId("turn-status")).not.toContainText("이번 요청");
             await expect(view.getByTestId("turn-timing")).not.toContainText("총 경과");

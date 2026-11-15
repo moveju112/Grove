@@ -94,7 +94,7 @@ pub struct Turn {
     pub acknowledged_at: Option<String>,
     /// 확정되지 않은 응답의 중단 증거(REC). 없으면 null, 손상되면 `{ corrupt: true, kind, raw_sha256, raw_bytes }`.
     /// 확정 답변과 별개이며 모델 입력에 넣지 않는다.
-    #[ts(type = "{ step: number; text: string; text_chars: number; truncated: boolean; tool_calls: string[]; reasoning_chars: number; captured_at: string; sha256: string } | { corrupt: true; kind: string; raw_sha256: string; raw_bytes: number } | null")]
+    #[ts(type = "{ step: number; text: string; text_chars: number; truncated: boolean; tool_calls: string[]; reasoning_chars: number; captured_at: string; sha256: string; cli_execution_attempted?: boolean; cli_activity_count?: number; cli_activity?: { kind: string; name: string; status: string | null }[] } | { corrupt: true; kind: string; raw_sha256: string; raw_bytes: number } | null")]
     pub evidence: Value,
     /// 실행 슬롯 대기 중이면 대기 정보(FAIR-011). 다른 소유자의 상세는 개수로만.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -605,8 +605,18 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let deadline = def["budget"]["max_minutes"]
         .as_i64()
         .and_then(|m| Some(crate::util::parse_time(&t.created_at)? + time::Duration::minutes(m)));
-    let system = system_prompt(&def, &root.to_string_lossy(), t.tools_enabled)
+    let mut system = system_prompt(&def, &root.to_string_lossy(), t.tools_enabled)
         + &crate::skills::api::model_instructions(c, data, &t.session_id, t.tools_enabled, mp.capabilities.tools, cli_backend)?;
+    if cli_backend {
+        system.push_str("\n# Native project tools\n\
+            You can edit project files and run build/test commands with your native CLI tools inside the workspace sandbox. \
+            These are not Grove tool calls and do not use Grove's per-tool approval dialog. \
+            The user's coding request authorizes relevant reversible edits and local checks, not unrelated mutations. \
+            Do not commit, push, deploy, install or upgrade dependencies, rewrite history, or alter external/shared data without an explicit user request. \
+            Do not disable or escape the sandbox. If access or a command is denied, report the boundary instead of bypassing it. \
+            Cancellation stops execution but does not undo files already changed. Never replay a mutating operation just because its result was interrupted. \
+            Inspect the actual files and diff before continuing after interruption, and report verified results and any remaining uncertainty.\n");
+    }
     // 기억·지침 등 시스템 입력이 바뀌면 옛 입력을 품은 native 대화를 재사용하지 않는다.
     let cli = if cli_backend { Some(crate::provider::cli::CliContext {
         cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system,def.get("bot_room").is_some())?,
@@ -784,11 +794,13 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 return session_for_partial;
             }
         };
-        let (tid_timing, epoch_timing) = (turn_id.to_string(), app.epoch.clone());
+        let native_execution = provider::cli::is_cli(&input.profile.protocol);
+        let initial_evidence = native_execution.then(|| encode_evidence(&provider::ModelOutput::default(), input.step, true));
+        let (tid_timing, epoch_timing, native_receipt) = (turn_id.to_string(), app.epoch.clone(), initial_evidence.clone());
         let started = app.db.call(move |c| {
             Ok(c.execute(
-                "UPDATE turns SET provider_started_at=?3 WHERE id=?1 AND owner_epoch=?2 AND status='running'",
-                params![tid_timing, epoch_timing, crate::util::fmt_time(time::OffsetDateTime::now_utc())],
+                "UPDATE turns SET provider_started_at=?3,evidence=COALESCE(?4,evidence) WHERE id=?1 AND owner_epoch=?2 AND status='running'",
+                params![tid_timing, epoch_timing, crate::util::fmt_time(time::OffsetDateTime::now_utc()), native_receipt],
             )? > 0)
         }).await;
         match started {
@@ -810,7 +822,8 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         // 실제 진행 시각을 5초 간격으로 DB에 남긴다. 서버가 강제 종료돼도 중단 원인에 마지막 진행 시각이 남는다(RUN-023).
         let progress = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
         // 확정 전 응답의 중단 증거(REC). 같은 간격으로 이 단계·이 실행 소유자일 때만 쓴다.
-        let evidence = std::sync::Arc::new(std::sync::Mutex::new(None::<String>));
+        // CLI는 도구 시작 보고보다 먼저 파일을 바꿀 수 있다. 실행 시도 영수증은 호출 전에 영속화한다.
+        let evidence = std::sync::Arc::new(std::sync::Mutex::new(initial_evidence));
         let progress_writer = {
             let (app, tid, progress, evidence, step) = (app.clone(), turn_id.to_string(), progress.clone(), evidence.clone(), input.step);
             tokio::spawn(async move {
@@ -832,7 +845,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 }
             })
         };
-        let mut fallback_emitted = false;
+        let mut fallback_emitted = native_execution;
         let mut on_delta = |o: &provider::ModelOutput| {
             if !o.text.is_empty() || !o.reasoning.is_empty() || !o.tool_calls.is_empty() || !o.activity.is_empty() {
                 fallback_emitted = true;
@@ -840,8 +853,8 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 *progress.lock().unwrap_or_else(|e| e.into_inner()) = Some(now.clone());
                 last_progress_at = Some(now);
             }
-            if !o.text.is_empty() || !o.tool_calls.is_empty() {
-                *evidence.lock().unwrap_or_else(|e| e.into_inner()) = Some(encode_evidence(o, step_now));
+            if !o.text.is_empty() || !o.tool_calls.is_empty() || !o.activity.is_empty() {
+                *evidence.lock().unwrap_or_else(|e| e.into_inner()) = Some(encode_evidence(o, step_now, native_execution));
             }
             // 마지막 조각이 50ms 창 안에 들어와도 버리지 않는다. 재접속 snapshot도 즉시 갱신한다.
             partials.stage(
@@ -1147,7 +1160,7 @@ const EVIDENCE_MAX_CHARS: usize = 32_000;
 
 /// 확정 전 응답의 중단 증거(REC). 숨은 추론 원문은 넣지 않고 글자 수만 남긴다.
 /// 본문 문자열의 sha256을 함께 저장해 손상을 읽을 때 판정한다.
-fn encode_evidence(o: &provider::ModelOutput, step: i64) -> String {
+fn encode_evidence(o: &provider::ModelOutput, step: i64, native_execution: bool) -> String {
     let chars = o.text.chars().count();
     let body = json!({
         "step": step,
@@ -1156,6 +1169,14 @@ fn encode_evidence(o: &provider::ModelOutput, step: i64) -> String {
         "truncated": chars > EVIDENCE_MAX_CHARS,
         "tool_calls": o.tool_calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>(),
         "reasoning_chars": o.reasoning.chars().count(),
+        "cli_execution_attempted": native_execution,
+        // 계획 중인 Grove 도구와 이미 시작됐을 수 있는 CLI 도구를 구분한다. 입력 원문은 복제하지 않는다.
+        "cli_activity_count": o.activity.len(),
+        "cli_activity": o.activity.iter().take(64).map(|item| json!({
+            "kind": item["kind"].as_str().unwrap_or("tool").chars().take(100).collect::<String>(),
+            "name": item["name"].as_str().unwrap_or("tool").chars().take(100).collect::<String>(),
+            "status": item["status"].as_str().map(|s| s.chars().take(100).collect::<String>()),
+        })).collect::<Vec<_>>(),
         "captured_at": crate::util::fmt_time(time::OffsetDateTime::now_utc()),
     })
     .to_string();
@@ -1976,5 +1997,23 @@ mod reasoning_tests {
         let long = "생".repeat(REASONING_KEEP + 5);
         assert_eq!(reasoning_stored(&long).unwrap().chars().count(), REASONING_KEEP);
         assert_eq!(reasoning_stored("짧음").as_deref(), Some("짧음"));
+    }
+
+    #[test]
+    fn native_activity_only_interruption_keeps_bounded_evidence_without_arguments() {
+        let output = provider::ModelOutput {
+            activity: vec![json!({"kind":"command","name":"shell","status":"in_progress","input":"argument payload"})],
+            ..Default::default()
+        };
+        let evidence = read_evidence(Some(encode_evidence(&output, 0, true)));
+        assert_eq!(evidence["text"], "");
+        assert_eq!(evidence["cli_activity_count"], 1);
+        assert_eq!(evidence["cli_execution_attempted"], true);
+        assert_eq!(evidence["cli_activity"][0]["status"], "in_progress");
+        assert!(evidence["cli_activity"][0].get("input").is_none());
+        assert_eq!(evidence["tool_calls"], json!([]), "실행 전 Grove 도구와 실행 중 CLI 도구를 혼동하지 않는다");
+        let before_stdout = read_evidence(Some(encode_evidence(&provider::ModelOutput::default(), 0, true)));
+        assert_eq!(before_stdout["cli_execution_attempted"], true, "도구 시작 stdout이 늦어도 변경 가능성을 보존한다");
+        assert_eq!(before_stdout["cli_activity_count"], 0, "보고받지 않은 활동 건수는 만들어내지 않는다");
     }
 }

@@ -23,7 +23,7 @@ export default defineConfig(({ mode }) => ({
         sourcemap: false,
     },
     test: {
-        include: ["app/**/*.test.ts"],
+        include: ["app/**/*.test.{ts,tsx}"],
         environment: "node",
     },
 }));

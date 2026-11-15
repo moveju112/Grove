@@ -13,9 +13,9 @@
 - **MUST** 프로젝트 파일 작업은 `ProjectFs`의 디렉터리 기준 경계와 원자적 발행을 유지한다.
   - why: 문자열 경로 검사만으로는 symlink 교체와 검사 후 사용 경쟁을 막을 수 없다.
   - ✅ `ProjectFs::open`, `read`, `atomic_write`. `evidence: src/project_fs.rs:20`, `evidence: src/project_fs.rs:99`.
-- **MUST** CLI 에이전트의 신규 실행과 대화 재개 모두 읽기 전용 정책을 유지한다.
-  - why: Grove의 승인 경계를 외부 CLI 설정·hook·MCP로 우회해서는 안 된다.
-  - ✅ Codex의 `sandbox_mode="read-only"`와 Claude Code의 `Read,Glob,Grep` 제한. `evidence: src/provider/cli.rs:90`.
+- **MUST** 외부 CLI의 신규 실행과 대화 재개 모두 프로젝트 범위에서 파일 수정·검사 명령을 허용한다. Codex는 workspace-write, Claude Code는 restricted 파일 경계와 Bash sandbox를 사용하며 경계 밖 실행으로 자동 대체하지 않는다.
+  - why: 구독형 CLI의 자체 도구로 코딩하되 다른 프로젝트·공유 자산까지 수정 권한을 넓히지 않는다. CLI 자체 도구와 Grove의 승인형 도구 루프는 별개이며 화면에서도 구분한다.
+  - ✅ Claude Code의 restricted·sandbox 옵션을 지원하는 버전과 Linux의 bubblewrap·socat이 필요하다. 취소는 변경 rollback이 아니며 중단 기록과 실제 파일을 확인한 뒤 계속한다. `evidence: src/provider/cli.rs`, `evidence: tests/real_cli.rs`.
 
 ## 스타일
 
@@ -25,16 +25,16 @@
 
 ## 검증 범위
 
-- **MUST** 검증 근거는 관련 소스·시험·설정·fixture가 유지되는 동안 재사용하고, 실패하거나 무효화된 검사만 다시 실행한다.
+- **MUST** 검증 근거는 관련 소스·시험·설정·fixture와 실행 조건이 유지되는 동안 재사용하고, 실패하거나 무효화된 검사만 다시 실행한다. 의존성 잠금 파일·도구/runtime 버전·관련 환경변수가 바뀌면 영향받는 검사만 다시 실행한다.
   - why: 무조건적인 전체 재검사와 오래된 성공 근거 재사용을 모두 피한다.
+  - 근거는 명령·대상·관련 소스 상태(commit·관련 미커밋 변경 등)·실행 조건·결과를 대화나 기존 실행 로그에 남긴다. 비밀값은 기록하지 않으며, 별도 기록 파일을 의무화하지 않는다.
   - ✅ 선택 검사와 매번 격리된 E2E 서버 데이터를 사용한다. `evidence: scripts/build.py`, `evidence: web/e2e/global-setup.ts`.
 - **MUST** 화면 배치·조작 진입점을 바꾸면 390px 모바일 스크린샷을 직접 확인하고, 기본 화면 예산은 `web/e2e/empty-chat-layout.spec.ts`로 검사한다.
   - why: 기능 시험이 모두 통과해도 버튼이 늘어나고 입력창이 떠 있는 화면이 그대로 배포된 적이 있다.
   - ✅ 새 기능의 진입점은 기존 메뉴·도구 패널 안에 넣고, 시험은 `openTool`·`openProjectFiles`처럼 실제 깊이를 따라 연다. `evidence: web/e2e/helpers.ts`.
   - ❌ 시험이 편하도록 진입 버튼을 기본 화면에 꺼내 두거나 예산 시험의 상한을 올린다.
-- **MUST** 입력창·버튼 어댑터·탐색 밀도를 바꾸면 빈 화면만으로 검증하지 않는다. `web/e2e/chat-chrome.mobile.spec.ts`로 긴 대화의 중간/끝 스크롤·축소 후 복원한 viewport·라이트/다크에서 하단과 좌우 여백의 실제 hit target이 입력 영역인지 확인한다. 짧고 긴 제목 12개의 높이·글자 크기·왼쪽 정렬·노출량도 함께 검사한다.
+- **MUST** 입력창·버튼 어댑터·탐색 밀도 변경은 `web/e2e/chat-chrome.mobile.spec.ts`, 모바일 서랍·스와이프 변경은 `web/e2e/navigation-drawers.mobile.spec.ts`로 회귀 검사한다. 재현 조건과 세부 판정은 해당 시험에 유지한다.
   - why: 빈 화면 검사만 통과한 채 sticky 입력창 아래로 본문이 비치고, Astryx 내부 슬롯 때문에 짧은 목록 제목이 가운데로 돌아간 적이 있다.
-  - ✅ 중앙 본문의 양방향 스와이프와 입력·텍스트 선택·가로 스크롤 예외는 `web/e2e/navigation-drawers.mobile.spec.ts`로 실제 터치 이벤트를 검사한다.
 
 여러 대상을 지정할 때 `--rust`, `--vitest`, `--e2e`는 각각 한 번만 쓰고 뒤에 대상들을 나열한다.
 E2E는 실제 서버와 빌드된 웹앱을 사용한다. API mock만으로 인증·복구·전송 경계를 검증했다고 하지 않는다.

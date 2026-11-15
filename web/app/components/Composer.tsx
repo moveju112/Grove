@@ -211,11 +211,11 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         {
             name: "tools",
             args: "on|off",
-            description: "모델 도구 사용 켜기·끄기",
+            description: "Grove 도구 루프 켜기·끄기(CLI 자체 도구와 별개)",
             run: (a) => {
                 const on = a ? a === "on" : !eff.tools;
                 update({ tools: on });
-                return `도구 사용을 ${on ? "켰습니다" : "껐습니다"}`;
+                return `Grove 도구 사용을 ${on ? "켰습니다" : "껐습니다"}`;
             },
         },
         {

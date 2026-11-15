@@ -255,7 +255,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: "tools.mode",
             menu: "agents",
             label: "도구 실행 모드",
-            description: "ask=변경 도구는 승인 후 실행, read_only=읽기 도구만 허용(어느 범위에서든 read_only면 적용)",
+            description: "Grove 도구 루프에 적용합니다. ask=변경 도구는 승인 후 실행, read_only=읽기 도구만 허용합니다. CLI 자체 편집·실행 도구는 별도의 프로젝트 sandbox를 사용하며 이 승인 모드를 거치지 않습니다.",
             keywords: "read-only 읽기 전용 도구 정책 policy",
             kind: "enum",
             options: &["ask", "read_only"],

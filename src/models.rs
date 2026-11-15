@@ -51,7 +51,7 @@ pub async fn agent_backends(_p: Principal) -> Json<AgentBackendCatalog> {
             protocol: (*protocol).into(),
             name: (*name).into(),
             installed: crate::deps::find_in_path(program).is_some(),
-            read_only: true,
+            read_only: false,
         }).collect(),
     })
 }

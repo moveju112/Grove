@@ -2,9 +2,9 @@
 //!
 //! - CLI는 자기 안에서 도구를 실행한다. Grove는 CLI의 도구 호출을 `tool_calls`로 받지 않는다(받으면 runner가 다시 실행하려 함).
 //!   대신 표시 전용 `activity`로 기록한다.
-//! - **권한은 사용자 CLI 설정과 무관하게 읽기 전용으로 강제한다**(사용자 설정에 bypassPermissions가 있어도 Grove 승인 없이 변경 금지).
-//!   claude: `--permission-mode default --tools Read,Glob,Grep --setting-sources "" --strict-mcp-config`(사용자 hook·MCP 미사용)
-//!   codex: `--sandbox read-only -c approval_policy="never"`
+//! - CLI 자체 도구로 프로젝트 파일을 수정하고 검사 명령을 실행한다. Grove 도구 루프와 중복 실행하지 않는다.
+//!   Claude는 restricted 파일 경계와 Bash sandbox, Codex는 workspace-write sandbox를 사용한다.
+//!   sandbox 밖 실행·권한 우회는 허용하지 않는다. 사용자 hook·MCP는 불러오지 않는다.
 //! - 대화 연속성: Grove 대화×프로필마다 CLI 세션 ID를 저장하고(runner) 다음 요청에서 resume한다. 저장된 세션이 없으면
 //!   지금까지의 user/assistant 텍스트를 프롬프트에 넣는다. 실행 문맥이 없는 호출(제목·요약)은 빈 임시 디렉터리에서 세션을 남기지 않는다.
 //! - 취소·timeout: 새 process group으로 띄우고, future가 버려지면(취소) group 전체를 종료한다.
@@ -97,8 +97,19 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
         if profile.model != "default" {
             a.extend([s("--model"), profile.model.clone()]);
         }
-        // 읽기 전용 강제: 사용자 설정(bypassPermissions·hook)과 MCP를 쓰지 않는다.
-        a.extend([s("--permission-mode"), s("default"), s("--tools"), s("Read,Glob,Grep"), s("--setting-sources"), s(""), s("--strict-mcp-config")]);
+        // restricted는 파일 도구도 작업 경계 안에 가둔다. Bash는 OS sandbox 안에서만 자동 허용한다.
+        a.extend([s("--restricted"), s("--permission-mode"), s("acceptEdits"), s("--tools"),
+            s(if persist { "Read,Glob,Grep,Edit,Write,Bash" } else { "" }),
+            s("--setting-sources"), s(""), s("--strict-mcp-config")]);
+        if persist {
+            a.extend([s("--settings"), json!({
+                "sandbox": {
+                    "enabled": true, "failIfUnavailable": true, "autoAllowBashIfSandboxed": true,
+                    "allowUnsandboxedCommands": false, "excludedCommands": [],
+                    "network": { "allowLocalBinding": true, "allowedDomains": [] },
+                },
+            }).to_string()]);
+        }
         if !req.system.trim().is_empty() {
             a.extend([s("--append-system-prompt"), req.system.clone()]);
         }
@@ -113,12 +124,16 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
         if resume.is_some() {
             a.push(s("resume"));
         }
-        a.extend([s("--json"), s("--skip-git-repo-check")]);
+        a.extend([s("--json"), s("--skip-git-repo-check"), s("--ignore-user-config")]);
         if profile.model != "default" {
             a.extend([s("-m"), profile.model.clone()]);
         }
-        // 읽기 전용 강제(resume에도 같은 정책). resume 하위 명령은 -C·--sandbox를 받지 않으므로 -c로 지정한다.
-        a.extend([s("-c"), s("sandbox_mode=\"read-only\""), s("-c"), s("approval_policy=\"never\"")]);
+        // resume에도 같은 작업 경계. 사용자 설정에 추가 쓰기 경로나 네트워크 허용이 있어도 확장하지 않는다.
+        a.extend([s("-c"), s("sandbox_mode=\"workspace-write\""), s("-c"), s("approval_policy=\"never\""),
+            s("-c"), s("sandbox_workspace_write.writable_roots=[]"),
+            s("-c"), s("sandbox_workspace_write.network_access=false"),
+            s("-c"), s("sandbox_workspace_write.exclude_slash_tmp=true"),
+            s("-c"), s("sandbox_workspace_write.exclude_tmpdir_env_var=false")]);
         if let Some(e) = &req.effort {
             a.extend([s("-c"), format!("model_reasoning_effort=\"{e}\"")]);
         }
@@ -243,12 +258,25 @@ struct CliStream {
     claude_partial: Option<(usize, usize, bool)>,
     codex_messages: Vec<(String, String)>,
     codex_reasoning: Vec<(String, String)>,
+    native_activity: Vec<(String, Value)>,
 }
 
 impl CliStream {
+    fn activity(&mut self, id: &str, item: Value) {
+        if let Some((_, value)) = self.native_activity.iter_mut().find(|(key, _)| key == id) { *value = item; }
+        else { self.native_activity.push((id.into(), item)); }
+        self.output.activity = self.native_activity.iter().map(|(_, value)| value.clone()).collect();
+    }
+
     fn apply(&mut self, protocol: &str, event: &Value) -> Result<(), ProviderError> {
         if protocol == "claude_code" && event["type"] == "stream_event" {
             let e = &event["event"];
+            if e["type"] == "content_block_start" && e["content_block"]["type"] == "tool_use"
+                && let Some(id) = e["content_block"]["id"].as_str()
+            {
+                let c = &e["content_block"];
+                self.activity(id, json!({"kind":"tool","name":c["name"],"input":summarize(&c["input"]),"status":"running"}));
+            }
             if e["type"] == "message_start" {
                 self.claude_partial = Some((self.output.text.len(), self.output.reasoning.len(), false));
                 self.output.response_parts.push(String::new());
@@ -281,6 +309,13 @@ impl CliStream {
                 self.output.text = combined;
                 self.output.response_parts = messages.iter().map(|(_, text)| text.clone()).collect();
             }
+        } else if protocol == "codex_cli" && matches!(event["type"].as_str(), Some("item.started" | "item.updated" | "item.completed"))
+            && let Some(id) = event["item"]["id"].as_str()
+        {
+            // 실행 시작도 남겨야 완료 이벤트 전 취소·종료를 '실행 안 함'으로 오해하지 않는다.
+            let mut activity = ModelOutput::default();
+            apply_event(protocol, &json!({"type":"item.completed","item":event["item"]}), &mut activity, &mut None)?;
+            if let Some(item) = activity.activity.pop() { self.activity(id, item); }
         } else {
             if protocol == "claude_code" && event["type"] == "assistant"
                 && let Some((text, reasoning, _)) = self.claude_partial.take()
@@ -289,7 +324,29 @@ impl CliStream {
                 self.output.reasoning.truncate(reasoning);
                 self.output.response_parts.pop();
             }
-            apply_event(protocol, event, &mut self.output, &mut self.final_text)?;
+            let mut snapshot = event.clone();
+            if protocol == "claude_code" && event["type"] == "assistant"
+                && let Some(content) = snapshot["message"]["content"].as_array_mut()
+            {
+                for c in content.iter().filter(|c| c["type"] == "tool_use") {
+                    if let Some(id) = c["id"].as_str() {
+                        self.activity(id, json!({"kind":"tool","name":c["name"],"input":summarize(&c["input"]),"status":"running"}));
+                    }
+                }
+                content.retain(|c| c["type"] != "tool_use" || !c["id"].is_string());
+            }
+            if protocol == "claude_code" && event["type"] == "user" {
+                for c in event["message"]["content"].as_array().into_iter().flatten() {
+                    if c["type"] == "tool_result" && let Some(id) = c["tool_use_id"].as_str()
+                        && let Some((_, item)) = self.native_activity.iter().find(|(key, _)| key == id)
+                    {
+                        let mut item = item.clone();
+                        item["status"] = json!(if c["is_error"] == true { "failed" } else { "completed" });
+                        self.activity(id, item);
+                    }
+                }
+            }
+            apply_event(protocol, &snapshot, &mut self.output, &mut self.final_text)?;
         }
         if protocol == "claude_code" && event["type"] == "result"
             && let Some(text) = &self.final_text
@@ -301,6 +358,7 @@ impl CliStream {
             || self.final_text.as_ref().is_some_and(|text| text.len() > super::MAX_OUTPUT_BYTES)
             || self.output.activity.len() > MAX_ACTIVITY
             || self.codex_messages.len() + self.codex_reasoning.len() > MAX_ACTIVITY
+            || self.native_activity.len() > MAX_ACTIVITY || self.output.response_parts.len() > MAX_ACTIVITY
         {
             return Err(ProviderError::new("output_too_large", "에이전트 응답 한도를 초과했습니다"));
         }
@@ -323,14 +381,6 @@ async fn read_line<R: tokio::io::AsyncRead + Unpin>(reader: &mut BufReader<R>) -
     }
 }
 
-/// 이 호출이 만든 고유 임시 디렉터리(끝나면 지운다).
-struct ScratchDir(std::path::PathBuf);
-impl Drop for ScratchDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
 /// 끝나거나 취소(future drop)·timeout되면 소유 프로세스 트리 전체를 종료한다.
 /// leader 회수 여부를 모르므로 표식으로 소유를 확인하는 경로를 쓴다(SEC-016).
 struct GroupGuard(crate::procs::Owned);
@@ -346,18 +396,17 @@ pub async fn list_models(protocol: &str) -> Result<Vec<super::AvailableModel>, P
 }
 
 async fn list_models_with(protocol: &str, executable: Option<&std::path::Path>) -> Result<Vec<super::AvailableModel>, ProviderError> {
-    let dir = std::env::temp_dir().join(format!("grove-catalog-{}", uuid::Uuid::new_v4()));
-    std::fs::create_dir(&dir).map_err(|_| ProviderError::new("catalog_failed", "목록 조회 임시 디렉터리를 만들지 못했습니다"))?;
-    let scratch = ScratchDir(dir);
+    let scratch = tempfile::Builder::new().prefix("grove-catalog-").tempdir()
+        .map_err(|_| ProviderError::new("catalog_failed", "목록 조회 임시 디렉터리를 만들지 못했습니다"))?;
     let prog = executable.map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| program(protocol).into());
     let mut cmd = tokio::process::Command::new(&prog);
     if protocol == "claude_code" {
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
             "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence"]);
     } else {
-        cmd.args(["app-server", "-c", "sandbox_mode=\"read-only\"", "-c", "approval_policy=\"never\""]);
+        cmd.arg("app-server");
     }
-    cmd.current_dir(&scratch.0).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
+    cmd.current_dir(scratch.path()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
     for (key, _) in std::env::vars_os() {
         if key.to_str().is_some_and(|key| key.starts_with("GROVE_")) { cmd.env_remove(key); }
     }
@@ -453,16 +502,11 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     let new_session = uuid::Uuid::new_v4().to_string();
     let (argv, name) = args(profile, req, &new_session);
     let prog = program.map(|p| p.to_string_lossy().to_string()).unwrap_or(name);
-    // 실행 문맥이 없으면(제목·요약) 빈 임시 디렉터리에서 실행한다.
-    let scratch = match req.cli {
-        Some(_) => None,
-        None => {
-            let d = std::env::temp_dir().join(format!("grove-cli-{new_session}"));
-            std::fs::create_dir(&d).map_err(|e| ProviderError::new("cli_failed", format!("임시 디렉터리: {e}")))?;
-            Some(ScratchDir(d))
-        }
-    };
-    let cwd = req.cli.as_ref().map(|c| c.cwd.clone()).unwrap_or_else(|| scratch.as_ref().expect("scratch").0.clone());
+    // /tmp 전체를 쓰기 허용하지 않고 이 호출이 소유한 temp만 전달한다.
+    // 제목·요약은 프로젝트가 아닌 이 빈 디렉터리에서 실행한다.
+    let scratch = tempfile::Builder::new().prefix("grove-cli-").tempdir()
+        .map_err(|e| ProviderError::new("cli_failed", format!("임시 디렉터리: {e}")))?;
+    let cwd = req.cli.as_ref().map(|c| c.cwd.clone()).unwrap_or_else(|| scratch.path().to_path_buf());
     let mut cmd = tokio::process::Command::new(&prog);
     cmd.args(&argv).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     // 서버 내부 설정은 넘기지 않는다. CLI 인증은 CLI가 자기 설정에서 읽는다.
@@ -471,6 +515,7 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
             cmd.env_remove(&k);
         }
     }
+    for key in ["TMPDIR", "TMP", "TEMP"] { cmd.env(key, scratch.path()); }
     // Claude Code는 생각 token 상한 환경 변수로 effort를 받는다.
     if profile.protocol == "claude_code"
         && let Some(e) = &req.effort
@@ -634,25 +679,37 @@ echo '{"id":2,"result":{"data":[{"model":"fixture-codex-2","displayName":"Second
         }
     }
 
-    /// 사용자 CLI 설정과 무관하게 읽기 전용 권한을 강제한다.
+    /// 신규 실행과 resume 모두 프로젝트 코딩을 허용하고 sandbox 우회는 막는다.
     #[test]
-    fn read_only_flags_are_always_forced() {
+    fn coding_permissions_are_workspace_scoped_on_start_and_resume() {
         let (a, p) = args(&prof("claude_code"), &req(None), "sid-1");
         assert_eq!(p, "claude");
         let j = a.join(" ");
-        assert!(j.contains("--permission-mode default") && j.contains("--tools Read,Glob,Grep") && j.contains("--strict-mcp-config"), "{j}");
+        assert!(j.contains("--restricted") && j.contains("--permission-mode acceptEdits") && j.contains("--tools Read,Glob,Grep,Edit,Write,Bash") && j.contains("--strict-mcp-config"), "{j}");
+        let settings: Value = serde_json::from_str(&a[a.iter().position(|v| v == "--settings").unwrap()+1]).unwrap();
+        assert_eq!(settings["sandbox"]["enabled"], true);
+        assert_eq!(settings["sandbox"]["failIfUnavailable"], true);
+        assert_eq!(settings["sandbox"]["allowUnsandboxedCommands"], false);
+        assert_eq!(settings["sandbox"]["autoAllowBashIfSandboxed"], true);
         assert!(a.windows(2).any(|w| w[0] == "--setting-sources" && w[1].is_empty()));
         assert!(j.contains("--session-id sid-1"));
         assert!(!j.contains("bypass") && !j.contains("dangerously"));
         let (a, _) = args(&prof("claude_code"), &req(Some("abc")), "x");
         assert!(a.windows(2).any(|w| w[0] == "--resume" && w[1] == "abc"));
-        assert!(a.join(" ").contains("--permission-mode default"), "resume에도 같은 강제");
+        assert!(a.join(" ").contains("--permission-mode acceptEdits"), "resume에도 같은 경계");
+        let mut summary = req(None);
+        summary.cli = None;
+        let (a, _) = args(&prof("claude_code"), &summary, "x");
+        assert!(a.windows(2).any(|w| w[0] == "--tools" && w[1].is_empty()), "제목·요약은 프로젝트 도구를 쓰지 않는다");
         for r in [None, Some("t1")] {
             let (a, p) = args(&prof("codex_cli"), &req(r), "x");
             assert_eq!(p, "codex");
             let j = a.join(" ");
-            assert!(j.contains("sandbox_mode=\"read-only\"") && j.contains("approval_policy=\"never\""), "{j}");
-            assert!(!j.contains("dangerously") && !j.contains("workspace-write"));
+            assert!(j.contains("sandbox_mode=\"workspace-write\"") && j.contains("approval_policy=\"never\""), "{j}");
+            assert!(j.contains("sandbox_workspace_write.writable_roots=[]"));
+            assert!(j.contains("sandbox_workspace_write.network_access=false"));
+            assert!(a.contains(&"--ignore-user-config".into()), "사용자 MCP·hook 설정을 실행 경계에 섞지 않는다");
+            assert!(!j.contains("dangerously"));
         }
     }
 
@@ -667,7 +724,7 @@ echo '{"id":2,"result":{"data":[{"model":"fixture-codex-2","displayName":"Second
                     let (args, _) = args(&prof("codex_cli"), &request, "new");
                     assert!(args.contains(&format!("model_reasoning_effort=\"{effort}\"")));
                     assert!(args.contains(&format!("service_tier=\"{tier}\"")));
-                    assert!(args.contains(&"sandbox_mode=\"read-only\"".into()));
+                    assert!(args.contains(&"sandbox_mode=\"workspace-write\"".into()));
                 }
             }
         }
@@ -796,6 +853,26 @@ echo '{"id":2,"result":{"data":[{"model":"fixture-codex-2","displayName":"Second
         state.apply("claude_code", &json!({"type":"result","result":"최종 결과야.","usage":{}})).unwrap();
         assert_eq!(state.output.reasoning, "추론추론");
         assert_eq!(state.output.response_parts, ["확인할게.", "최종 결과야."]);
+    }
+
+    #[test]
+    fn native_activity_is_visible_before_completion_and_snapshots_do_not_duplicate_it() {
+        let mut state = CliStream::default();
+        for status in ["in_progress", "completed"] {
+            state.apply("codex_cli", &json!({"type":if status=="completed" {"item.completed"} else {"item.started"},
+                "item":{"id":"shell-1","type":"command_execution","command":"python3 -m unittest","status":status,"exit_code":0}})).unwrap();
+            assert_eq!(state.output.activity.len(), 1);
+            assert_eq!(state.output.activity[0]["status"], status);
+        }
+        let mut state = CliStream::default();
+        let tool = json!({"id":"tool-1","type":"tool_use","name":"Bash","input":{"command":"python3 -m unittest"}});
+        state.apply("claude_code", &json!({"type":"stream_event","event":{"type":"content_block_start","content_block":tool}})).unwrap();
+        assert_eq!(state.output.activity[0]["status"], "running");
+        state.apply("claude_code", &json!({"type":"assistant","message":{"content":[tool]}})).unwrap();
+        assert_eq!(state.output.activity.len(), 1);
+        state.apply("claude_code", &json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","is_error":false,"content":"OK"}]}})).unwrap();
+        assert_eq!(state.output.activity.len(), 1);
+        assert_eq!(state.output.activity[0]["status"], "completed");
     }
 
     #[cfg(unix)]

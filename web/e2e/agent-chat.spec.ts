@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, closeModelSettings, composerSetting, login, removeProfiles, sessionView, state } from "./helpers";
+import { apiCall, closeModelSettings, composerSetting, login, openDetails, removeProfiles, sessionView, state } from "./helpers";
 
 test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "전용 CLI fixture로 실행: GROVE_E2E_FAKE_CLI=1");
 
@@ -106,6 +106,12 @@ for (const width of [390, 1280]) {
             }).toBe(true);
             const turns = await apiCall<{ status: string }[]>("GET", `/sessions/${sessionId}/turns`);
             expect(turns.filter((turn) => turn.status === "cancelled")).toHaveLength(1);
+            const interrupted = view.getByTestId("turn-evidence");
+            await expect(interrupted).toContainText("CLI 작업 중단 · 변경 여부 확인 필요");
+            await openDetails(interrupted);
+            await expect(interrupted.getByRole("dialog")).toContainText("중단해도 이미 바뀐 파일은 되돌아가지 않아요");
+            await page.screenshot({ path: info.outputPath("cancelled.png"), animations: "disabled" });
+            await page.keyboard.press("Escape");
             await view.getByLabel("메시지 입력").fill("fixture-chat:after-cancel");
             await view.getByRole("button", { name: "보내기", exact: true }).click();
             await expect(view.getByTestId("msg-assistant").last()).toContainText("에이전트 답변 4");

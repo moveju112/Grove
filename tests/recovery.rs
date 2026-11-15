@@ -87,7 +87,8 @@ async fn recovery_guard_keeps_health_readable_but_rejects_other_api_requests() {
     let token = grove::auth::ensure_owner_token(&app).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let server = tokio::spawn(axum::serve(listener, grove::router(app.clone())).into_future());
+    let server = tokio::spawn(axum::serve(listener, grove::router(app.clone())
+        .into_make_service_with_connect_info::<std::net::SocketAddr>()).into_future());
     let error = app.db.call::<(), _>(|_| Err(rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(rusqlite::ffi::SQLITE_IOERR), None).into())).await.unwrap_err();
     assert_eq!(error.code, "storage_io");
     let client = reqwest::Client::new();

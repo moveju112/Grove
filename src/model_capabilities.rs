@@ -10,6 +10,10 @@ pub struct ModelCapabilities {
     pub max_output_tokens: Option<u32>,
     pub images: Option<bool>,
     pub tools: Option<bool>,
+    /// Grove 도구 루프와 별개로 CLI 자체 편집·실행 도구를 사용하는지.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub native_tools: Option<bool>,
     pub effort: Option<bool>,
     pub temperature: Option<bool>,
     pub pdf: bool,
@@ -36,6 +40,7 @@ pub fn resolve(protocol: &str, options: &Value) -> ModelCapabilities {
         max_output_tokens: if cli { None } else { overrides.max_output_tokens },
         images: if cli { Some(false) } else { overrides.images },
         tools: if cli { Some(false) } else { overrides.tools },
+        native_tools: Some(cli),
         effort: overrides.effort.or(cli.then_some(true)),
         temperature: if cli { Some(false) } else { overrides.temperature },
         // Codex 속도 선택은 실제 모델 목록의 serviceTiers로 제한한다.
@@ -118,6 +123,9 @@ mod tests {
         assert!(unknown.images.is_none() && unknown.tools.is_none() && unknown.effort.is_none());
         assert!(!unknown.pdf && !unknown.fast);
         assert_eq!(resolve("codex_cli", &json!({})).tools, Some(false));
+        assert_eq!(resolve("codex_cli", &json!({})).native_tools, Some(true));
+        assert_eq!(resolve("claude_code", &json!({})).native_tools, Some(true));
+        assert_eq!(unknown.native_tools, Some(false));
         for capabilities in [json!({"pdf":true}), json!({"fast":true}), json!({"max_output_tokens":0}), json!({"images":"yes"}), json!({"extra":true})] {
             assert!(validate_options("openai", &json!({"capabilities":capabilities})).is_err());
         }

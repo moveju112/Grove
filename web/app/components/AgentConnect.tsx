@@ -54,7 +54,12 @@ export function AgentConnect({ disabled, onConnected }: { disabled: boolean; onC
                     {!backend.installed && <GroveText type="supporting" color="secondary"> · 설치 필요</GroveText>}
                 </ServerActionButton>
             ))}
-        {catalog.data && <HintText type="supporting" color="secondary" hint="서버 CLI 계정 · 읽기 전용">읽기 전용</HintText>}
+        {catalog.data && <HintText type="supporting" color="secondary"
+            hint={catalog.data.backends.every((backend) => !backend.read_only)
+                ? "보낸 코딩 요청은 CLI 자체 도구로 프로젝트 수정·검사를 실행해요. Grove의 개별 도구 승인은 거치지 않으며 중단해도 이미 바뀐 파일은 유지돼요."
+                : "프로젝트 수정·검사를 사용하려면 서버 업데이트가 필요해요."}>
+            {catalog.data.backends.every((backend) => !backend.read_only) ? "코딩 가능" : "서버 CLI"}
+        </HintText>}
         {authSupported && <DetailDialog label="에이전트 계정 로그인" title="계정 로그인" trigger={<Icon name="user" size={16} />} appearance="icon" onOpenChange={setAccountsOpen}>
             {accountsOpen && catalog.data?.backends.filter((backend) => backend.installed).map((backend) =>
                 <AgentLogin key={backend.protocol} protocol={backend.protocol} name={backend.name} disabled={disabled} />)}

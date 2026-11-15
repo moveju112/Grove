@@ -19,7 +19,8 @@ const status = (value: boolean | null | undefined) => value == null ? "미확인
 export function CapabilitySummary({ capabilities: c }: { capabilities?: ModelCapabilities }) {
     return <GroveText type="supporting" color="secondary" data-testid="model-capabilities">
         context {c?.context_tokens ?? "미확인"} · 출력 상한 {c?.max_output_tokens ?? "미확인"} ·{" "}
-        {FEATURES.map(([key, label]) => `${label} ${status(c?.[key])}`).join(" · ")} · native PDF {status(c?.pdf)} · fast {status(c?.fast)}
+        {FEATURES.map(([key, label]) => `${label} ${status(c?.[key])}`).join(" · ")}
+        {c?.native_tools && " · CLI 자체 편집·실행 지원"} · native PDF {status(c?.pdf)} · fast {status(c?.fast)}
     </GroveText>;
 }
 
