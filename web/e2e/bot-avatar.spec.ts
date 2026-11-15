@@ -15,16 +15,16 @@ test("봇 아바타 이미지를 올리고 SVG는 거절하며 기본형으로 �
     const item = panel.getByTestId("bot").filter({ hasText: name });
     await expect(item.getByTestId("bot-avatar-image")).toHaveCount(0);
     await item.getByRole("button", { name: `${name} 관리`, exact: true }).click();
-    await item.getByRole("button", { name: "편집" }).click();
+    await page.getByRole("group", { name: `${name} 관리`, exact: true }).getByRole("button", { name: "편집", exact: true }).click();
     const avatar = panel.getByTestId("bot-editor").getByRole("group", { name: "봇 아바타" });
-    await avatar.getByLabel("아바타 이미지 선택").setInputFiles({ name: "a.png", mimeType: "image/png", buffer: PNG });
+    await avatar.locator('input[type="file"]').setInputFiles({ name: "a.png", mimeType: "image/png", buffer: PNG });
     await expect(item.getByTestId("bot-avatar-image")).toBeVisible();
     await expect(avatar.getByTestId("bot-avatar-image")).toBeVisible();
     // 확장자·MIME을 PNG로 속인 SVG는 거절하고 기존 아바타를 유지한다
-    await avatar.getByLabel("아바타 이미지 선택").setInputFiles({ name: "x.png", mimeType: "image/png", buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') });
+    await avatar.locator('input[type="file"]').setInputFiles({ name: "x.png", mimeType: "image/png", buffer: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>') });
     await expect(avatar.getByRole("alert")).toContainText("PNG·JPEG·GIF·WebP");
     await expect(item.getByTestId("bot-avatar-image")).toBeVisible();
     await avatar.getByRole("button", { name: "기본형으로" }).click();
     await expect(item.getByTestId("bot-avatar-image")).toHaveCount(0);
-    await expect(item.locator("span.avatar")).toBeVisible();
+    await expect(item.getByTestId("bot-avatar-fallback")).toBeVisible();
 });

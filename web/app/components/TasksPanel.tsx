@@ -1,3 +1,8 @@
+import { HintText } from "../design/HintText";
+import { Code } from "@astryxdesign/core/Code";
+import { CodeBlock } from "../design/CodeBlock";
+import { StatusBadge } from "../design/StatusBadge";
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
@@ -73,11 +78,11 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
         tasks.reload();
     };
     return (
-        <Panel className="tasks" data-testid="tasks-panel" title={<>
+        <Panel data-testid="tasks-panel" title={<>
                 백그라운드 작업 {running.length > 0 ? <strong>· 실행 중 {running.length}</strong> : list.length > 0 ? `· ${list.length}` : ""}
             </>}>
-            <form
-                className="inline"
+            <GroveStack as="form"
+                gap={1.5} direction="horizontal" align="center"
                 onSubmit={(e) => {
                     e.preventDefault();
                     void start();
@@ -85,32 +90,32 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
             >
                 <TextInput label="백그라운드 명령" isLabelHidden placeholder="명령을 입력하세요" value={cmd} isDisabled={disabled || busy || attempt !== null} onChange={setCmd} />
                 <ServerActionButton type="submit" disabled={disabled || busy || attempt !== null || !cmd.trim()}>실행</ServerActionButton>
-            </form>
+            </GroveStack>
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
-            {attempt && !busy && <GroveStack direction="horizontal" align="center" className="inline">
-                <ServerActionButton className="ghost small" disabled={disabled} onClick={() => void start()}>같은 요청 결과 확인</ServerActionButton>
-                <GroveButton className="ghost small" onClick={() => { setAttempt(null); setCmd(""); setErr(null); }}>다른 명령 입력</GroveButton>
+            {attempt && !busy && <GroveStack direction="horizontal" align="center" gap={1.5}>
+                <ServerActionButton variant="secondary" density="compact" disabled={disabled} onClick={() => void start()}>같은 요청 결과 확인</ServerActionButton>
+                <GroveButton variant="secondary" density="compact" onClick={() => { setAttempt(null); setCmd(""); setErr(null); }}>다른 명령 입력</GroveButton>
                 <GroveText type="supporting" color="secondary">기존 작업 상태는 아래 목록에서 확인하세요.</GroveText>
             </GroveStack>}
-            <ul className="session-list">
+            <GroveList density="compact" edge="flush" hasDividers>
                 {list.slice(0, 20).map((t) => (
-                    <li key={t.id} data-testid="task-row" data-status={t.status}>
-                        {t.script && <GroveText type="inherit" color="inherit" className="badge">script · {t.script.name} · r{t.script.revision}</GroveText>}
-                        <code className="small">{t.command}</code>
+                    <GroveListItem key={t.id} data-testid="task-row" data-status={t.status} label={<>
+                        {t.script && <StatusBadge>script · {t.script.name} · r{t.script.revision}</StatusBadge>}
+                        <Code>{t.command}</Code>
                         <GroveText type="supporting" color="secondary" data-testid="task-cwd">실행 위치: <code>{t.cwd}</code></GroveText>
-                        <GroveText type="inherit" color="inherit" className={`status ${t.status}`}>
+                        <StatusBadge status={t.status}>
                             {LABEL[t.status]}
                             {t.exit_code !== null && t.status !== "completed" ? ` (코드 ${t.exit_code})` : ""}
-                        </GroveText>
-                        <GroveButton className="ghost small" onClick={() => setView(view === t.id ? null : t.id)}>출력</GroveButton>
+                        </StatusBadge>
+                        <GroveButton variant="secondary" density="compact" onClick={() => setView(view === t.id ? null : t.id)}>출력</GroveButton>
                         {t.status === "running" && (
-                            <ServerActionButton className="ghost small" onClick={() => void act(() => api.post(`/tasks/${t.id}/cancel`))}>취소</ServerActionButton>
+                            <ServerActionButton variant="secondary" density="compact" onClick={() => void act(() => api.post(`/tasks/${t.id}/cancel`))}>취소</ServerActionButton>
                         )}
-                        {t.status === "unknown" && <span className="muted small" title={t.reason ?? ""}>프로세스가 남아 있을 수 있습니다</span>}
+                        {t.status === "unknown" && <HintText type="supporting" color="secondary" hint={t.reason}>프로세스가 남아 있을 수 있습니다</HintText>}
                         {view === t.id && <TaskOutput id={t.id} />}
-                    </li>
+                    </>} />
                 ))}
-            </ul>
+            </GroveList>
         </Panel>
     );
 }
@@ -148,17 +153,17 @@ function TaskOutput({ id }: { id: string }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
     return (
-        <div className="task-output">
-            <GroveStack direction="horizontal" align="center" className="inline">
+        <GroveStack gap={0}>
+            <GroveStack direction="horizontal" align="center" gap={1.5}>
                 {(["stdout", "stderr"] as const).map((s) => (
-                    <GroveButton key={s} className={stream === s ? "chip on" : "chip"} onClick={() => { setStream(s); void load(s, 0, false); }}>{s}</GroveButton>
+                    <GroveButton key={s} appearance="choice" aria-pressed={stream === s} onClick={() => { setStream(s); void load(s, 0, false); }}>{s}</GroveButton>
                 ))}
-                <GroveButton className="ghost small" onClick={() => void load(stream, 0, false)}>새로고침</GroveButton>
+                <GroveButton variant="secondary" density="compact" onClick={() => void load(stream, 0, false)}>새로고침</GroveButton>
             </GroveStack>
             {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
-            <pre className="diff" data-testid="task-output">{text || (error ? "" : "(출력 없음)")}</pre>
-            {info && !info.eof && <GroveButton className="ghost small" onClick={() => void load(stream, next, true)}>더 보기</GroveButton>}
+            <CodeBlock data-testid="task-output" code={text || (error ? "" : "(출력 없음)")} />
+            {info && !info.eof && <GroveButton variant="secondary" density="compact" onClick={() => void load(stream, next, true)}>더 보기</GroveButton>}
             {info && info.dropped_bytes > 0 && <GroveText as="p" display="block" type="supporting" color="secondary">출력이 커서 앞부분 {info.stored_bytes}바이트만 보관했습니다({info.dropped_bytes}바이트 생략).</GroveText>}
-        </div>
+        </GroveStack>
     );
 }

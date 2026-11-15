@@ -415,6 +415,9 @@ fn validate(c: &Connection, project_id: &str, b: &SpecBody, now: OffsetDateTime)
             if s.project_id != project_id {
                 return Err(ApiError::invalid("대화가 이 프로젝트에 속하지 않습니다"));
             }
+            if crate::bot_rooms::is_room(c, sid)? {
+                return Err(ApiError::invalid("그룹 대화 대신 담당 봇을 지정해 예약하세요"));
+            }
         }
         _ => return Err(ApiError::invalid("session_mode는 new·same 중 하나여야 합니다")),
     }

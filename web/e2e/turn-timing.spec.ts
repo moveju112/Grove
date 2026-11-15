@@ -5,7 +5,7 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiCall, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Detail = { id: string; status: string; timing: { total_ms: number; running: boolean } };
@@ -13,7 +13,7 @@ type Detail = { id: string; status: string; timing: { total_ms: number; running:
 async function timingSetting(page: Page, title: string, enabled: boolean) {
     await page.getByRole("button", { name: "설정", exact: true }).first().click();
     await page.getByLabel("설정 검색", { exact: true }).fill("턴 경과");
-    await page.getByLabel("턴 시간 표시", { exact: true }).selectOption(String(enabled));
+    await selectChoice(page.getByRole("combobox", { name: "턴 시간 표시", exact: true }), String(enabled));
     // 탭 버튼 이름은 "프로젝트 이름 + 대화 제목"이다.
     await page.getByRole("tab").getByRole("button", { name: title }).click();
 }
@@ -25,7 +25,7 @@ test("진행·완료 시간은 기기 시계 ±5분에도 서버와 같고 끄�
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     let active: string | undefined;
     try {
@@ -133,7 +133,7 @@ test("격리 서버를 실제 재시작하면 진행 턴은 중단으로 복구�
         await page.getByLabel("토큰").fill(token);
         await page.getByRole("button", { name: "로그인" }).click();
         await expect(page.getByTestId("conn")).toHaveText("연결됨");
-        await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
         await script({ frames: frames.text(["재시작 전"]).slice(0, 1), hang: true, marker: title });
         const started = await request<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`, { text: title, profile_id: profile.id });
         const view = sessionView(page, session.id);

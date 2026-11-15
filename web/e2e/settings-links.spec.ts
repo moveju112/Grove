@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, expectChoice, login } from "./helpers";
 
 const advancedKey = "context.input_reserve_tokens";
 const effectivePath = "/api/v1/settings/effective";
@@ -39,12 +39,12 @@ async function openSettings(page: Page, key: string) {
     await login(page);
     await setLink(page, key);
     await page.getByRole("button", { name: "설정", exact: true }).click();
-    return page.locator(".settings");
+    return page.getByTestId("settings");
 }
 
 async function scrollTop(pane: Locator) {
-    await pane.locator(".pane-body").evaluate((element) => { element.scrollTop = 0; });
-    await expect.poll(() => pane.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
+    await pane.getByTestId("pane-body").evaluate((element) => { element.scrollTop = 0; });
+    await expect.poll(() => pane.getByTestId("pane-body").evaluate((element) => element.scrollTop)).toBe(0);
 }
 
 test("effective 응답을 보류해도 실제 고급 행이 렌더된 뒤 이동하고 재조회는 사용자 스크롤을 빼앗지 않는다", async ({ page }) => {
@@ -54,7 +54,7 @@ test("effective 응답을 보류해도 실제 고급 행이 렌더된 뒤 이동
         await page.clock.install();
         await setLink(page, advancedKey);
         await page.getByRole("button", { name: "설정", exact: true }).click();
-        const settings = page.locator(".settings");
+        const settings = page.getByTestId("settings");
         await gate.seen;
         await expect(settings.getByRole("button", { name: "에이전트·워크플로우", exact: true })).toHaveAttribute("aria-current", "page");
         await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toHaveCount(0);
@@ -77,7 +77,7 @@ test("effective 응답을 보류해도 실제 고급 행이 렌더된 뒤 이동
         });
         await refreshed;
         await expect(row.locator("input[type=number]")).toHaveValue(String(Number(original) + 1));
-        await expect.poll(() => page.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
+        await expect.poll(() => page.getByTestId("pane-body").evaluate((element) => element.scrollTop)).toBe(0);
     } finally {
         gate.release();
     }
@@ -95,11 +95,10 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
         }
         await login(page);
         await setLink(page, key);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(leftTitle) }).first().click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(leftTitle) }).first().click();
         // 분할 생성의 상위 트리 remount와 링크 이동을 분리한다. 초안은 안정된 두 pane에서 만든다.
-        await page.locator(".recent").getByTestId("recent-item").filter({ hasText: rightTitle }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-        await page.locator(".recent").getByTestId("recent-item").filter({ hasText: rightTitle })
-            .getByRole("button", { name: "오른쪽에 열기" }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByTestId("recent-item").filter({ hasText: rightTitle }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
+        await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "오른쪽에 열기" }).click();
         const left = page.getByTestId("pane").nth(0);
         const right = page.getByTestId("pane").nth(1);
         await left.getByRole("button", { name: "대화 작업", exact: true }).click();
@@ -125,12 +124,12 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
             const sessionScope = key === "exec.max_memory_mb";
             await expect(leftRow).toContainText(sessionScope ? `대상: 대화 “${leftTitle}”` : `대상: 프로젝트 “${a.name}”`);
             await expect(rightRow).toContainText(sessionScope ? `대상: 대화 “${rightTitle}”` : `대상: 프로젝트 “${b.name}”`);
-            await expect(leftRow.getByRole("combobox")).toHaveValue(sessionScope ? "session" : "project");
+            await expectChoice(leftRow.getByRole("combobox"), sessionScope ? "session" : "project");
             await expect(left.getByTestId("settings-origin")).toContainText(leftTitle);
             await expect(right.getByTestId("settings-origin")).toContainText(rightTitle);
             await expect(left.getByTestId("setting-output.language")).toContainText(`대상: 대화 “${leftTitle}”`);
             await expect(right.getByTestId("setting-output.language")).toContainText(`대상: 대화 “${rightTitle}”`);
-            await expect.poll(() => left.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
+            await expect.poll(() => left.getByTestId("pane-body").evaluate((element) => element.scrollTop)).toBe(0);
             // 링크 클릭은 이 Settings 인스턴스에서만 처리한다. 키보드 활성화도 같은 경로다.
             const rightDraft = String(Number(await rightRow.locator("input[type=number]").inputValue()) + 9);
             await rightRow.locator("input[type=number]").fill(rightDraft);
@@ -140,7 +139,7 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
             await expect(rightRow.locator("input[type=number]")).toHaveValue(rightDraft);
             await expect(rightRow).toContainText("저장 안 됨");
             await expect(leftRow.locator("input[type=number]")).toHaveValue(draft);
-            await expect.poll(() => left.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
+            await expect.poll(() => left.getByTestId("pane-body").evaluate((element) => element.scrollTop)).toBe(0);
         } finally {
             gate.release();
         }
@@ -198,7 +197,7 @@ test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로
         await apiCall("PUT", "/settings/server/-/exec.max_memory_mb", { expected_revision: item.layers.server!.revision, value: 0 });
         await refreshed;
         await expect(row).toContainText("대상: 서버 전체");
-        await expect.poll(() => page.locator(".pane-body").evaluate((element) => element.scrollTop)).toBe(0);
+        await expect.poll(() => page.getByTestId("pane-body").evaluate((element) => element.scrollTop)).toBe(0);
     } finally {
         gate.release();
         releaseDefinitions();
@@ -271,7 +270,7 @@ for (const hash of ["#setting-does.not.exist", "#setting-%E0%A4%A", "#setting-%2
         await login(page);
         await page.evaluate((value) => history.replaceState(history.state, "", value), hash);
         await page.getByRole("button", { name: "설정", exact: true }).click();
-        const settings = page.locator(".settings");
+        const settings = page.getByTestId("settings");
         await settings.getByRole("button", { name: "에이전트·워크플로우", exact: true }).click();
         await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toBeVisible();
         await settings.getByLabel("설정 검색").fill("입력 여유");

@@ -1,3 +1,4 @@
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Button as GroveButton } from "../design/Button";
 import { useRef, useState } from "react";
 import { DetailDialog } from "./ui/Controls";
@@ -9,7 +10,7 @@ import { ServerActionButton } from "./pwa/ServerActionButton";
 import { McpOAuth } from "./mcp-oauth/McpOAuth";
 import type { McpOAuthConfig } from "../api/mcpOAuth";
 import { HelpTip, SentenceText } from "./HelpTip";
-import { TextInput, TextArea } from "../design/Fields";
+import { TextInput, TextArea, DraftInput } from "../design/Fields";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
 
@@ -86,14 +87,14 @@ export function McpServers() {
     const current = query.data?.find((s) => s.id === editing?.id);
     const rowBlocked=(server:Server)=>blocked || !!editing || !!deleting || !!testing || !!name
         || server.last_check?.status==="checking" || server.connection_state==="in_use";
-    return <div className="stack" data-testid="mcp-panel">
+    return <Stack gap={2} data-testid="mcp-panel">
         <Text as="p" display="block" type="supporting" color="secondary">비밀값 대신 API 키 ID를 사용하세요.</Text>
         {!!query.error && <Text as="p" display="block" type="inherit" color="error" role="alert">{query.error instanceof Error ? query.error.message : "MCP 조회 실패"}</Text>}
-        <ul>{(query.data ?? []).map((server) => <li key={server.id} data-testid="mcp-row">
+        <GroveList density="compact" edge="flush" listStyle="disc">{(query.data ?? []).map((server) => <GroveListItem key={server.id} data-testid="mcp-row" label={<>
             <strong>{server.name}</strong> · {server.config.transport} · {server.enabled ? "사용 설정" : "사용 안 함"}
             {server.connection_state==="checking" ? " · 연결 확인 중" : server.connection_state==="in_use" ? ` · 호출 ${server.active_calls}개 실행 중` : server.enabled ? " · 미연결" : ""}
             {" · "}revision {server.revision}
-            <Stack direction="horizontal" align="center" className="inline">
+            <Stack direction="horizontal" align="center" gap={1.5}>
                 <GroveButton type="button" disabled={rowBlocked(server)} onClick={() => edit(server)}>MCP 편집</GroveButton>
                 <ServerActionButton type="button" disabled={rowBlocked(server)} onClick={() => void mutate({
                     method: "put", path: `/mcp/servers/${server.id}`, key: newKey(),
@@ -108,24 +109,24 @@ export function McpServers() {
                 {server.last_check.error && ` · ${server.last_check.error.message}`}</Text>}
             {server.config.transport === "http" && server.config.oauth && <McpOAuth serverId={server.id} revision={server.revision}
                 resource={server.config.endpoint} config={server.config.oauth} disabled={rowBlocked(server)} onChanged={query.reload} />}
-        </li>)}</ul>
-        {selected && <div role="group" aria-label="MCP 확인 상세">
+        </>} />)}</GroveList>
+        {selected && <Stack gap={0} role="group" aria-label="MCP 확인 상세">
             {check.error ? <Text as="p" display="block" type="inherit" color="error">연결 확인 결과 조회 실패</Text> : <pre>{JSON.stringify(check.data, null, 2)}</pre>}
             <GroveButton type="button" onClick={() => setSelected(null)}>MCP 확인 상세 닫기</GroveButton>
-        </div>}
-        {testing ? <div role="group" aria-label="MCP 실행·외부 연결 확인">
+        </Stack>}
+        {testing ? <Stack gap={0} role="group" aria-label="MCP 실행·외부 연결 확인">
             <Text as="p" display="block" type="inherit" color="inherit">“{testing.name}”(revision {testing.revision})의 {testing.config.transport === "stdio" ? "프로세스를 실행합니다" : "외부 서버에 연결합니다"}. 저장한 secret 참조를 전달하고 handshake·도구 목록을 조회한 뒤 닫습니다. 임의 MCP 프로세스는 OS 파일시스템 sandbox로 격리되지 않습니다.</Text>
             <ServerActionButton type="button" disabled={blocked} onClick={() => void mutate({
                 method: "post", path: `/mcp/servers/${testing.id}/check`, key: newKey(), body: { expected_revision: testing.revision, confirmed: true },
             })}>확인하고 MCP 연결 검사</ServerActionButton>
             <GroveButton type="button" disabled={blocked} onClick={() => setTesting(null)}>MCP 검사 취소</GroveButton>
-        </div> : deleting ? <div role="group" aria-label="MCP 삭제 확인">
+        </Stack> : deleting ? <Stack gap={0} role="group" aria-label="MCP 삭제 확인">
             <Text as="p" display="block" type="inherit" color="inherit">“{deleting.name}” 설정(revision {deleting.revision})만 삭제하며 API 키는 유지합니다.</Text>
             <ServerActionButton type="button" disabled={blocked} onClick={() => void mutate({
                 method: "del", path: `/mcp/servers/${deleting.id}?expected_revision=${deleting.revision}`, key: newKey(),
             })}>이 MCP 설정 삭제</ServerActionButton>
             <GroveButton type="button" disabled={blocked} onClick={() => setDeleting(null)}>삭제 취소</GroveButton>
-        </div> : <form className="stack" onSubmit={(e) => { e.preventDefault(); submit(); }}>
+        </Stack> : <Stack as="form" gap={2} onSubmit={(e) => { e.preventDefault(); submit(); }}>
             <fieldset disabled={blocked || !!query.error}>
                 <legend>{editing ? "MCP 서버 편집" : "MCP 서버 추가"}</legend>
                 <TextInput label="MCP 이름" value={name} maxLength={64} onChange={setName} />
@@ -137,21 +138,21 @@ export function McpServers() {
                 <TextArea label="MCP 설정 JSON" isLabelHidden rows={8} value={config} onChange={setConfig} />
                 </Stack>
                 <DetailDialog label="사용 가능한 API 키 ID" title="사용 가능한 API 키 ID">
-                    <ul>{(secrets.data ?? []).map((s) => <li key={s.id}>{s.label}: <code>{s.id}</code></li>)}</ul>
+                    <GroveList density="compact" edge="flush" listStyle="disc">{(secrets.data ?? []).map((s) => <GroveListItem key={s.id} label={<>{s.label}: <code>{s.id}</code></>} />)}</GroveList>
                 </DetailDialog>
-                <label>MCP timeout(초)<input aria-label="MCP timeout(초)" type="number" min={1} max={300} value={timeout} onChange={(e) => setTimeout(Number(e.target.value))} /></label>
+                <DraftInput label="MCP timeout(초)" type="number" min={1} max={300} value={String(timeout)} onChange={(value) => setTimeout(Number(value))} />
                 <BooleanSelect label="MCP 사용 설정(연결 아님)" value={enabled} onChange={setEnabled} disabled={blocked || !!query.error} />
                 <ServerActionButton type="submit" disabled={!name.trim()}>MCP 설정 저장</ServerActionButton>
                 {editing && <GroveButton type="button" onClick={reset}>MCP 편집 취소</GroveButton>}
                 {editing && current && current.revision !== editing.revision && <GroveButton type="button" onClick={() => edit(current)}>최신 MCP 설정 사용</GroveButton>}
             </fieldset>
             {editing && current && current.revision !== editing.revision && <Text as="p" display="block" type="inherit" color="warning" role="status">다른 기기에서 바뀌었습니다. 내 입력과 원래 revision을 보존했습니다.</Text>}
-        </form>}
+        </Stack>}
         {mutation.phase === "sending" && <Text as="p" display="block" type="inherit" color="inherit" role="status">MCP 설정 결과 확인 중…</Text>}
-        {mutation.phase === "unknown" && <div role="group" aria-label="MCP 결과 재확인">
+        {mutation.phase === "unknown" && <Stack gap={0} role="group" aria-label="MCP 결과 재확인">
             <Text as="p" display="block" type="inherit" color="warning">결과 불명입니다. 새 요청을 만들지 않고 원래 내용·revision·같은 키로 확인합니다.</Text>
             <ServerActionButton type="button" onClick={() => void mutate(mutation.attempt)}>같은 MCP 요청 확인</ServerActionButton>
-        </div>}
+        </Stack>}
         {error && <Text as="p" display="block" type="inherit" color="error" role="alert">{error}</Text>}
-    </div>;
+    </Stack>;
 }

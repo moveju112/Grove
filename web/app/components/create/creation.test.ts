@@ -49,7 +49,7 @@ describe("공통 생성 진입", () => {
             onSelect: vi.fn(), onAddProject: vi.fn(), onClose: vi.fn() };
         const picker = renderToStaticMarkup(createElement(CreationEntry, props));
         expect(picker).toContain('aria-label="대화 프로젝트 선택"');
-        expect(picker).toContain('aria-modal="true"');
+        expect(picker).toContain('aria-label="만들기"');
         const current = renderToStaticMarkup(createElement(CreationEntry, { ...props, currentId: a.id }));
         expect(current).toContain("현재 프로젝트: 프로젝트 A");
         expect(current).not.toContain("대화 프로젝트 선택");

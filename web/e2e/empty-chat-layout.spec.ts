@@ -13,13 +13,13 @@ test("모바일 빈 프로젝트는 상단 한 줄·입력창만 보이고 보�
     await login(page);
     await page.getByRole("button", { name: "사이드바", exact: true }).click();
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
-    await expect(page.locator(".mobile-drawer-left")).toBeHidden();
-    const view = page.locator(".project-view").filter({ visible: true });
-    const composer = view.locator(".composer");
+    await expect(page.getByTestId("mobile-drawer-left")).toBeHidden();
+    const view = page.getByTestId("project-view").filter({ visible: true });
+    const composer = view.getByTestId("composer");
     await expect(composer).toBeVisible();
 
     // 현재 위치는 별도 줄이 아니라 상단 바 안에 있고, 단일 탭 줄은 숨긴다.
-    const topbar = page.locator(".topbar");
+    const topbar = page.getByRole("banner");
     // 프로젝트 화면에서는 제목이 위치를 보여 주므로 상단 바에 이름을 반복하지 않는다(보조 기술용 위치는 유지).
     const nav = page.getByTestId("navigation-context");
     await expect(topbar.getByTestId("navigation-context")).toHaveCount(1);
@@ -27,7 +27,7 @@ test("모바일 빈 프로젝트는 상단 한 줄·입력창만 보이고 보�
     const shownNames = await page.getByText(project.name, { exact: true }).evaluateAll((nodes) =>
         nodes.filter((node) => node.getBoundingClientRect().width > 2).length);
     expect(shownNames).toBe(1);
-    await expect(page.locator(".tabbar").filter({ visible: true })).toHaveCount(0);
+    await expect(page.getByRole("tablist").filter({ visible: true })).toHaveCount(0);
 
     // 도구 탭·대화 검색·보관 필터·내부 확인 문구는 기본 화면에 없다.
     await expect(view.getByRole("tablist", { name: "프로젝트 도구" })).toBeHidden();
@@ -48,13 +48,13 @@ test("모바일 빈 프로젝트는 상단 한 줄·입력창만 보이고 보�
 
     // 입력창은 화면 아래에 붙고, 화면의 절반 이상을 빈 본문으로 남긴다.
     await page.screenshot({ path: info.outputPath("empty-project.png") });
-    const headBottom = await view.locator(".view-head").evaluate((node) => node.getBoundingClientRect().bottom);
+    const headBottom = await view.locator("header").evaluate((node) => node.getBoundingClientRect().bottom);
     const composerBottom = await composer.evaluate((node) => node.getBoundingClientRect().bottom);
     expect(844 - composerBottom).toBeLessThanOrEqual(32);
     expect(composerTop - headBottom).toBeGreaterThanOrEqual(844 * 0.5);
 
     // 숨긴 기능은 한 단계 안에서 바로 열린다.
-    const trigger = view.locator(".view-head").getByRole("button", { name: "도구 패널", exact: true });
+    const trigger = view.getByRole("button", { name: "도구 패널", exact: true });
     await trigger.click();
     await expect(view.getByRole("tab", { name: "변경", exact: true })).toBeVisible();
     await view.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();

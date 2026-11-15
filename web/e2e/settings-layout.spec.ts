@@ -10,11 +10,22 @@ for (const width of [320, 390, 1280]) {
                 await login(page);
                 await openSettings(page);
                 await page.evaluate(() => document.fonts.ready);
-                const settings = page.locator(".settings");
+                const settings = page.getByTestId("settings");
                 const search = settings.getByLabel("설정 검색");
                 const inputBox = await search.boundingBox();
                 expect(inputBox!.height).toBeLessThanOrEqual(40);
                 expect(inputBox!.width).toBeGreaterThanOrEqual(150);
+                if (width < 760) {
+                    const menu = settings.getByTestId("settings-menu");
+                    const shown = await menu.evaluate((node) => {
+                        const bounds = node.getBoundingClientRect();
+                        return [...node.querySelectorAll("button")].filter((button) => {
+                            const rect = button.getBoundingClientRect();
+                            return rect.width > 0 && rect.left >= bounds.left - 1 && rect.right <= bounds.right + 1;
+                        }).length;
+                    });
+                    expect(shown, "설정 메뉴는 한 화면에 최소 두 항목이 온전히 보여야 한다").toBeGreaterThanOrEqual(2);
+                }
                 for (const name of ["모델·키", "에이전트·워크플로우", "화면·입력", "기기·연결", "서버·데이터"]) {
                     const button = settings.getByRole("button", { name, exact: true });
                     await button.click();
@@ -45,21 +56,21 @@ for (const width of [320, 390, 1280]) {
                                 node.clientWidth > 0 && node.scrollWidth > node.clientWidth + 1 && getComputedStyle(node).overflowX === "visible")
                                 .slice(-12).map((node) => ({ tag: node.tagName, class: node.className, width: node.clientWidth, scroll: node.scrollWidth })),
                             overflow: Array.from(el.querySelectorAll("*")).filter((node) =>
-                                !node.closest(".settings-menu") && node.getBoundingClientRect().right > edge + 1)
+                                !node.closest('[data-testid="settings-menu"]') && node.getBoundingClientRect().right > edge + 1)
                                 .slice(0, 12).map((node) => ({ tag: node.tagName, class: node.className, width: node.getBoundingClientRect().width })),
                         };
                     });
                     await page.screenshot({ path: info.outputPath(`menu-${name}.png`) });
                     expect(layout.fits, `${name}: ${JSON.stringify(layout)}`).toBe(true);
-                    expect(await settings.locator(".settings-body").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+                    expect(await settings.getByTestId("settings-body").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
                 }
                 await settings.getByRole("button", { name: "모델·키", exact: true }).click();
                 await expect(settings.getByTestId("setting-model.default_profile")).toBeVisible();
                 await expect(settings.getByTestId("settings-area-reset").getByRole("button", { name: /기본값 복원/ })).toBeVisible();
                 await expect(settings.getByTestId("settings-area-reset").getByRole("combobox")).toHaveCount(0);
                 if (width < 760) {
-                    const menuBox = await settings.locator(".settings-menu").boundingBox();
-                    const bodyBox = await settings.locator(".settings-body").boundingBox();
+                    const menuBox = await settings.getByTestId("settings-menu").boundingBox();
+                    const bodyBox = await settings.getByTestId("settings-body").boundingBox();
                     expect(menuBox!.y).toBeGreaterThanOrEqual(inputBox!.y + inputBox!.height);
                     expect(menuBox!.height).toBeLessThanOrEqual(44);
                     expect(bodyBox!.y).toBeGreaterThan(menuBox!.y + menuBox!.height);

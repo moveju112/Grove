@@ -8,9 +8,8 @@ Grove는 Astryx 기반의 조용하고 정돈된 개발 도구다.
 - **MUST** Grove의 초록색 새싹 아이콘을 보존한다. `web/app/components/icons.tsx`의 `sprout` 도형, 앱 아이콘·favicon, 브랜드 초록색을 다른 아이콘이나 중성색으로 바꾸지 않는다.
 - 브랜드 색은 밝은 화면·soft에서 `#2f7d55`, 어두운 화면에서 `#5fbf8a`다. 새싹 외의 초록색은 성공 상태처럼 의미가 있을 때만 쓴다.
 - Astryx `neutral`을 확장한다. 색·글꼴·반경의 정본은 `web/app/design/grove.theme.ts`와 `web/app/design/grove-soft.theme.ts`이며, 생성 CSS·JS·선언 파일을 직접 편집하지 않는다.
-- 새 화면은 Astryx 템플릿에서 시작한다. 기존 화면은 기능·상태·DOM 의미를 유지하면서 해당 영역에 Astryx 컴포넌트를 적용한다.
+- 새 화면은 Astryx 템플릿에서 시작한다. 기존 화면은 해당 영역에 Astryx 컴포넌트를 적용한다.
 - 레이아웃은 `Stack`·`Layout`, 동작은 공용 `web/app/design/Button.tsx`, 입력은 `TextInput`, 부수 설명은 `InfoTip`을 우선한다. 설정의 선택 항목은 체크박스·라디오·스위치를 나열하지 않고 드롭다운으로 통일하며, boolean은 `BooleanSelect`를 사용한다.
-- 전문 파일 편집기·xterm·드래그 분할·native select·dialog·popover처럼 기존 동작에 의미가 있는 요소는 유지하되 같은 테마 토큰을 사용한다. 시각적 통일을 이유로 승인·취소·복구·키보드 계약을 바꾸지 않는다.
 - 공용 버튼의 native `disabled`, 폼 제출, ref, 접근성 이름과 오프라인 차단 계약을 유지한다. 서버 동작에는 기존 `ServerActionButton`과 실행 직전 guard를 사용한다.
 
 ## 색·글꼴·표면

@@ -17,7 +17,7 @@ test("입력창 키: Enter 줄바꿈·Ctrl+Enter 보내기, Enter 보내기 설�
     await login(page);
     await page.evaluate(() => localStorage.removeItem("grove.device.prefs"));
     await page.reload();
-    await page.locator(".recent").getByRole("button", { name: /입력 키 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /입력 키 대화/ }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "save");
     const box = view.getByLabel("메시지 입력");
@@ -38,7 +38,7 @@ test("입력창 키: Enter 줄바꿈·Ctrl+Enter 보내기, Enter 보내기 설�
     // Enter로 보내기 설정
     await page.evaluate(() => localStorage.setItem("grove.device.prefs", JSON.stringify({ enterToSend: true })));
     await page.reload();
-    await page.locator(".recent").getByRole("button", { name: /입력 키 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /입력 키 대화/ }).first().click();
     await composerOption(view, "보내기 방식", "save");
     await expect(box).toHaveAttribute("enterkeyhint", "send");
     await box.fill("한글 조합");

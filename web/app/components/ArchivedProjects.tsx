@@ -14,10 +14,10 @@ type Recovery = { kind: "recoverable"; action: "unarchive" | "unarchive_relink";
 export function ArchivedProjects() {
     const q = useQuery<Project[]>("projects:archived", () => api.get("/projects?archived=true"));
     const rows = q.data ?? [];
-    return <div className="stack" role="group" aria-label="보관된 프로젝트">
+    return <GroveStack gap={2} role="group" aria-label="보관된 프로젝트">
         {q.data && rows.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">보관된 프로젝트가 없습니다.</GroveText>}
         {rows.map((p) => <ArchivedRow key={`${p.id}:${p.revision}`} project={p} />)}
-    </div>;
+    </GroveStack>;
 }
 
 function ArchivedRow({ project }: { project: Project }) {
@@ -29,13 +29,13 @@ function ArchivedRow({ project }: { project: Project }) {
         setError(null);
         try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : fallback); } finally { setBusy(false); }
     };
-    return <GroveStack direction="horizontal" align="center" className="row" data-testid="archived-project">
+    return <GroveStack direction="horizontal" align="center" gap={1.5} data-testid="archived-project">
         <GroveText type="inherit" color="inherit">{project.icon} {project.name}</GroveText>
-        {!state && <GroveButton type="button" className="ghost small" disabled={busy}
+        {!state && <GroveButton type="button" variant="secondary" density="compact" disabled={busy}
             onClick={() => void run(async () => setState(await api.get<Recovery>(`/projects/${project.id}/recovery`)), "복원 검사 실패")}>복원 검사</GroveButton>}
         {state?.kind === "recoverable" && <>
             {state.action === "unarchive_relink" && <GroveText type="supporting" color="warning" role="status">{state.message}</GroveText>}
-            <ServerActionButton type="button" className="small" disabled={busy}
+            <ServerActionButton type="button" density="compact" disabled={busy}
                 onClick={() => void run(async () => {
                     await api.post(`/projects/${project.id}/restore`, { expected_revision: project.revision });
                     invalidate("projects");

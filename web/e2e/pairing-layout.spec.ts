@@ -10,17 +10,17 @@ for (const theme of ["light", "dark"] as const) {
         await expect(form.getByRole("heading", { name: "기기 연결" })).toBeVisible();
         await expect(form.getByLabel("비밀번호", { exact: true })).toHaveCount(0);
         await expect(form.getByLabel("이 기기 이름")).toHaveCount(0);
-        await expect(form.getByLabel("QR 사진 선택")).toHaveCount(0);
+        await expect(form.locator('input[type="file"]')).toHaveCount(0);
         await form.getByRole("button", { name: "QR", exact: true }).click();
         await expect(form.getByRole("textbox", { name: "페어링 링크", exact: true })).toHaveCount(0);
-        await expect(form.getByLabel("QR 사진 선택")).toBeVisible();
+        await expect(form.getByText("QR 사진 선택", { exact: true })).toBeVisible();
         await form.getByRole("button", { name: "페어링 링크", exact: true }).click();
         await page.screenshot({ path: info.outputPath("pairing-desktop-empty.png"), fullPage: true });
         const pair = await apiCall<{ code: string; id: string }>("POST", "/pairings", { name: `layout-${theme}`, password: "desktop test-only password" });
         try {
             await form.getByRole("textbox", { name: "페어링 링크", exact: true }).fill(`http://127.0.0.1:17741/#pairing=${pair.code}`);
             await expect(form.getByText("등록 대상:")).toContainText("127.0.0.1:17741");
-            const box = await form.boundingBox();
+            const box = await form.locator("..").boundingBox();
             const width = page.viewportSize()!.width;
             expect(box!.width).toBe(420);
             expect(Math.abs(box!.x - (width - box!.x - box!.width))).toBeLessThan(2);

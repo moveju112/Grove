@@ -13,11 +13,12 @@ const total: UsageRow = {
 describe("사용량 텍스트 대체", () => {
     it("도넛 색을 보지 않아도 종류별 값·비율·분모를 읽을 수 있다", () => {
         const html = renderToStaticMarkup(createElement(TokenDonut, { total }));
-        expect(html).toContain('aria-hidden="true"');
+        expect(html.match(/role="progressbar"/g)).toHaveLength(2);
         expect(html).toContain("입력 80 tokens · 80%");
         expect(html).toContain("출력 20 tokens · 20%");
         expect(html).toContain("분모: 입력+출력 100 tokens");
-        expect(html).toContain('stroke-dasharray="80 100"');
+        expect(html).toContain('aria-valuenow="80" aria-valuemin="0" aria-valuemax="100"');
+        expect(html).toContain('aria-valuenow="20" aria-valuemin="0" aria-valuemax="100"');
     });
 
     it("0 token은 계산 불가로, 미보고와 가격 미설정은 별도로 표시한다", () => {
@@ -30,7 +31,8 @@ describe("사용량 텍스트 대체", () => {
         expect(html).toContain("가격 미설정 50 tokens(비용에 포함 안 됨)");
         expect(html).toContain("0 USD");
         expect(html).toContain('scope="row"');
-        expect(html).toContain('aria-label="정렬 기준"');
+        expect(html).toContain("정렬 기준");
+        expect(html).toContain('role="combobox"');
         const unreported = { ...total, reasoning_tokens: 0, reasoning_unreported_responses: 2 };
         const missing = renderToStaticMarkup(createElement(UsagePresentation, { report: { rows: [unreported], total: unreported, pricing_versions: [] }, groupLabel: "모델" }));
         expect(missing).toContain("reasoning: 보고된 값 없음");

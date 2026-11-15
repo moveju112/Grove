@@ -1,4 +1,5 @@
 import { Fragment, useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { Stack } from "@astryxdesign/core/Stack";
 import type { Message } from "../api/generated";
 import { messageOffsets, messageRange } from "../state/virtualMessages";
 import { usePaneVisible } from "../state/paneVisibility";
@@ -30,11 +31,11 @@ function MeasuredMessage({ message, position, size, register, children }: {
     const ref = useCallback((node: HTMLDivElement | null) => {
         register(message.id, node);
     }, [message.id, register]);
-    return <div ref={ref} role="article" tabIndex={-1} aria-label={`메시지 ${message.seq}`}
+    return <Stack ref={ref} gap={0} role="article" tabIndex={-1} aria-label={`메시지 ${message.seq}`}
         aria-posinset={position + 1} aria-setsize={size} data-virtual-seq={message.seq} data-virtual-id={message.id}
-        className="virtual-message" style={{ paddingBottom: position === size - 1 ? 0 : "0.5em" }}>
+        paddingBlockEnd={position === size - 1 ? 0 : 2}>
         {children}
-    </div>;
+    </Stack>;
 }
 
 /// 화면 주변·검색/복원 대상·현재 초점 행만 유지한다. 높이 갱신은 같은 읽기 anchor에 맞춘다.
@@ -56,7 +57,7 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
     const [focused, setFocused] = useState<string | null>(null);
     const [viewport, setViewport] = useState({ top: 0, bottom: 800 });
     const [, measured] = useState(0);
-    const pane = () => root.current?.closest(".pane-body") as HTMLElement | null;
+    const pane = () => root.current?.closest('[data-testid="pane-body"]') as HTMLElement | null;
     const updateViewport = useCallback(() => {
         const el = pane();
         if (!el || !el.clientWidth || !el.clientHeight || !root.current) return;
@@ -85,7 +86,7 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
     useLayoutEffect(() => {
         const el = pane();
         if (!el) return;
-        const view = root.current?.closest(".session-view");
+        const view = root.current?.closest('[data-testid="session-view"]');
         const ro = new ResizeObserver((entries) => {
             if (!el.clientWidth || !el.clientHeight) return;
             // 사용자의 scroll 이벤트가 아직 전달되지 않은 동안 폼·메시지가 resize될 수 있다.
@@ -239,7 +240,7 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
         }
     };
     let previous = 0;
-    return <div ref={root} role="feed" tabIndex={0} aria-label="불러온 대화 메시지" aria-live="off"
+    return <Stack ref={root} gap={0} role="feed" tabIndex={0} aria-label="불러온 대화 메시지" aria-live="off"
         onFocusCapture={(e) => setFocused((e.target as HTMLElement).closest<HTMLElement>("[data-virtual-id]")?.dataset.virtualId ?? null)}
         onBlurCapture={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setFocused(null); }}
         onKeyDown={(e) => {
@@ -259,11 +260,11 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
             previous = index + 1;
             const message = messages[index]!;
             return <Fragment key={message.id}>
-                {before > 0 && <div aria-hidden="true" style={{ height: before }} />}
+                {before > 0 && <Stack aria-hidden="true" height={before} />}
                 <MeasuredMessage message={message} position={index} size={messages.length}
                     register={register}>{render(message)}</MeasuredMessage>
             </Fragment>;
         })}
-        <div aria-hidden="true" style={{ height: offsets.at(-1)! - offsets[previous]! }} />
-    </div>;
+        <Stack aria-hidden="true" height={offsets.at(-1)! - offsets[previous]!} />
+    </Stack>;
 }

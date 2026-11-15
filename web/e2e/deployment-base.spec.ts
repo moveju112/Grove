@@ -97,6 +97,8 @@ test(`deployment ${paths.base}: worker update applies at once without pending in
     try {
         await page.goto(`${paths.base}deployment-check/auto`);
         await expect(page.getByLabel("토큰")).toBeVisible();
+        await expect(page.getByLabel("토큰")).toHaveValue("");
+        await expect(page.getByRole("dialog")).toHaveCount(0);
         await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
         await page.evaluate(() => { (window as unknown as { deploymentMarker: boolean }).deploymentMarker = true; });
         writeFileSync(swFile, original.replace(/const VERSION = "([^"]+)"/, 'const VERSION = "$1-deployment-auto"'));

@@ -397,6 +397,20 @@
     line-height: var(--text-display-3-leading);
   }
 
+  .astryx-heading[data-type="panel"] {
+    font-size: 14px;
+    font-weight: 500;
+    line-height: 20px;
+    margin: 0;
+  }
+
+  .astryx-heading[data-type="navigation"] {
+    font-size: 12px;
+    font-weight: 500;
+    line-height: 18px;
+    margin: 0;
+  }
+
   .astryx-text[data-type="body"] {
     font-family: var(--font-family-body);
     font-size: var(--text-body-size);
@@ -445,6 +459,10 @@
     line-height: var(--text-display-3-leading);
   }
 
+  .astryx-text[data-color="brand"] {
+    color: var(--brand);
+  }
+
   .astryx-text[data-color="error"] {
     color: var(--err);
   }
@@ -472,6 +490,179 @@
   .astryx-button[data-variant="destructive"] {
     background-color: var(--color-error-muted);
     color: var(--color-on-error-muted);
+  }
+
+  .astryx-button {
+    font-size: 13px;
+    font-weight: 400;
+  }
+
+  .astryx-button[data-size="lg"] {
+    min-height: 44px;
+  }
+
+  .astryx-button[data-variant="inline-link"] {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--text);
+    box-shadow: none;
+    text-align: start;
+    padding: 0;
+    min-height: 28px;
+    height: auto;
+  }
+
+  .astryx-button[data-variant="inline-link"]:hover:where(:not(:disabled,[aria-disabled="true"])) {
+    background-color: var(--hover);
+  }
+
+  .astryx-button[data-variant="navigation"] {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--text);
+    box-shadow: none;
+    text-align: start;
+    width: 100%;
+    height: 32px;
+    min-height: 32px;
+    padding: 0 var(--spacing-2);
+    font-size: 12px;
+    line-height: 18px;
+    justify-content: flex-start;
+    border-radius: var(--radius-element);
+    --_button-radius: var(--radius-element);
+  }
+
+  .astryx-button[data-variant="navigation"]:hover:where(:not(:disabled,[aria-disabled="true"])) {
+    background-color: var(--hover);
+  }
+
+  .astryx-button[data-variant="navigation"]:is([aria-current="page"]) {
+    background-color: var(--sel);
+    color: var(--text);
+  }
+
+  .astryx-button[data-variant="navigation"][data-size="lg"] {
+    min-height: 40px;
+    height: 40px;
+    font-size: var(--font-size);
+  }
+
+  .astryx-button[data-variant="choice"][data-size="lg"] {
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px;
+  }
+
+  .astryx-button[data-variant="icon"] {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--muted);
+    box-shadow: none;
+    text-align: start;
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    padding: 0;
+  }
+
+  .astryx-button[data-variant="icon"]:hover:where(:not(:disabled,[aria-disabled="true"])) {
+    background-color: var(--hover);
+  }
+
+  .astryx-button[data-variant="icon"]:is([aria-pressed="true"]) {
+    background-color: var(--sel);
+    color: var(--accent);
+  }
+
+  .astryx-button[data-variant="send"] {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    padding: 0;
+    border-radius: 50%;
+    background-color: var(--text);
+    color: var(--panel);
+    --_button-radius: 50%;
+  }
+
+  .astryx-button[data-variant="choice"] {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--muted);
+    box-shadow: none;
+    text-align: start;
+    padding: 0 var(--spacing-2);
+    min-height: 32px;
+    height: 32px;
+    font-size: 12px;
+  }
+
+  .astryx-button[data-variant="choice"]:hover:where(:not(:disabled,[aria-disabled="true"])) {
+    background-color: var(--hover);
+  }
+
+  .astryx-button[data-variant="choice"]:is([aria-pressed="true"]) {
+    background-color: var(--sel);
+    color: var(--text);
+  }
+
+  .astryx-button[data-variant="settings-menu"] {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--text);
+    box-shadow: none;
+    text-align: start;
+    min-height: 36px;
+    height: auto;
+    padding: var(--spacing-2) var(--spacing-3);
+    font-size: 13px;
+    justify-content: flex-start;
+  }
+
+  .astryx-button[data-variant="settings-menu"]:hover:where(:not(:disabled,[aria-disabled="true"])) {
+    background-color: var(--hover);
+  }
+
+  .astryx-button[data-variant="settings-menu"]:is([aria-current="page"]) {
+    background-color: var(--sel);
+    color: var(--text);
+  }
+
+  .astryx-button[data-variant="menu"] {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--muted);
+    box-shadow: none;
+    text-align: start;
+    min-width: 32px;
+    min-height: 32px;
+    height: 32px;
+    padding: 0 var(--spacing-2);
+  }
+
+  .astryx-button[data-variant="menu"]:hover:where(:not(:disabled,[aria-disabled="true"])) {
+    background-color: var(--hover);
+  }
+
+  .astryx-button[data-variant="disclosure"] {
+    background-color: transparent;
+    border-color: transparent;
+    color: var(--text);
+    box-shadow: none;
+    text-align: start;
+    min-height: 32px;
+    height: auto;
+    max-width: 100%;
+    padding: 0;
+    font-size: 12px;
+    justify-content: flex-start;
+  }
+
+  .astryx-button[data-variant="disclosure"]:hover:where(:not(:disabled,[aria-disabled="true"])) {
+    background-color: var(--hover);
   }
 
   .astryx-badge[data-variant="neutral"] {
@@ -566,8 +757,65 @@
     --astryx-card-padding: var(--spacing-3);
   }
 
+  .astryx-card[data-variant="orange"] {
+    background-color: var(--warn-weak);
+    color: var(--text);
+  }
+
+  .astryx-card[data-variant="yellow"] {
+    background-color: var(--warn-weak);
+    color: var(--text);
+  }
+
+  .astryx-card[data-variant="red"] {
+    background-color: var(--err-weak);
+    color: var(--text);
+  }
+
   .astryx-section {
     --astryx-section-padding: var(--spacing-3);
+  }
+
+  .astryx-drawer {
+    transition-duration: 280ms;
+    transition-timing-function: var(--motion-ease);
+  }
+
+  .astryx-icon[data-size="xsm"] {
+    --_icon-width: 12px;
+    --_icon-height: 12px;
+  }
+
+  .astryx-icon[data-size="sm"] {
+    --_icon-width: 16px;
+    --_icon-height: 16px;
+  }
+
+  .astryx-icon[data-size="md"] {
+    --_icon-width: 18px;
+    --_icon-height: 18px;
+  }
+
+  .astryx-icon[data-size="lg"] {
+    --_icon-width: 24px;
+    --_icon-height: 24px;
+  }
+
+  .astryx-chat-message {
+    font-size: var(--font-size);
+    line-height: 1.5;
+  }
+
+  .astryx-chat-message-bubble[data-sender="user"] {
+    background-color: var(--bubble);
+    color: var(--text);
+    border-radius: 16px 16px 4px 16px;
+    padding: var(--spacing-2) var(--spacing-3);
+  }
+
+  .astryx-list-item:has(button[data-variant="navigation"]) {
+    padding-block: 0;
+    min-height: 32px;
   }
 
   .astryx-text[data-color="primary"] { color: var(--color-text-primary); }

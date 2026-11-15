@@ -8,7 +8,7 @@ test("응답을 잃은 전송은 입력을 보관하고, 같은 내용 재전송
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "save");
     const box = view.getByLabel("메시지 입력");
@@ -58,7 +58,7 @@ test("결과를 모르는 실패 뒤 내용을 고쳐 보내면 새 요청이 �
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "save");
     const box = view.getByLabel("메시지 입력");

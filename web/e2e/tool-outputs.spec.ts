@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, composerOption, ensureProfile, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, login, openDetails, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Call = { id: string; name: string; status: string; result: unknown };
@@ -18,10 +18,10 @@ test("큰 결과는 화면 원문과 모델 참조를 구분하고 실제 범위
     const profile = await ensureProfile();
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
-    await view.getByLabel("모델 프로필").selectOption(profile);
+    await composerOption(view, "모델 프로필", profile);
     await composerOption(view, "도구", true);
     await script({ marker: title, frames: frames.tool("large-original", "shell", { command: "printf run >> executions; cat output.txt" }) });
     await script({ marker: title, frames: frames.text(["큰 결과를 참조로 보관했어"]) });
@@ -38,6 +38,7 @@ test("큰 결과는 화면 원문과 모델 참조를 구분하고 실제 범위
     expect(calls[0]!.status).toBe("succeeded");
     const stored = calls[0]!.result as { stdout: string };
     expect(stored.stdout).toBe(text);
+    await page.keyboard.press("Escape");
     const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as ModelRequest[];
     const sent = requests.flatMap((r) => r.messages).find((m) => m.role === "tool" && m.tool_call_id === "large-original" && m.content.includes(calls[0]!.id))!;
     const reference = JSON.parse(sent.content) as Reference;

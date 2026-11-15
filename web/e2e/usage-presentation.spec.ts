@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import type { UsageReport, UsageRow } from "../app/components/usage/model";
-import { login } from "./helpers";
+import { expectChoice, login, selectChoice } from "./helpers";
 
 const makeRow = (key: string, fields: Partial<UsageRow> = {}): UsageRow => ({
     key, label: key, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
@@ -24,7 +24,7 @@ async function openUsage(page: Page) {
     return page.getByTestId("usage-panel");
 }
 
-test("카드·도넛·통화별 정렬·키보드·기간과 묶음을 보존한다", async ({ page }) => {
+test("카드·입출력 비율·통화별 정렬·키보드·기간과 묶음을 보존한다", async ({ page }) => {
     const queries: URL[] = [];
     await page.route("**/api/v1/usage?*", async (route) => {
         queries.push(new URL(route.request().url()));
@@ -40,24 +40,30 @@ test("카드·도넛·통화별 정렬·키보드·기간과 묶음을 보존한
     await expect(table).toContainText("가격 미설정 50 tokens");
     await expect(table).toContainText("미보고 응답 1개");
     await expect(table.locator("tbody th")).toHaveText(["A", "B", "C"]);
-    await panel.getByLabel("정렬 기준").selectOption("cost:USD");
-    await panel.getByLabel("정렬 방향").selectOption("asc");
+    await selectChoice(panel.getByLabel("정렬 기준"), "cost:USD");
+    await selectChoice(panel.getByLabel("정렬 방향"), "asc");
     await expect(table.locator("tbody th")).toHaveText(["B", "A", "C"]);
-    await panel.getByLabel("정렬 기준").selectOption("cost:EUR");
+    await selectChoice(panel.getByLabel("정렬 기준"), "cost:EUR");
     await expect(table.locator("tbody th")).toHaveText(["A", "B", "C"]);
-    const direction = panel.getByLabel("정렬 방향");
+    const direction = panel.getByRole("combobox", { name: "정렬 방향", exact: true });
     await direction.focus();
+    await direction.press("Enter");
     await direction.press("Home");
-    await expect(direction).toHaveValue("desc");
+    await direction.press("Enter");
+    await expectChoice(direction, "desc");
+    await expect(direction).toBeFocused();
+    const comparison = panel.getByRole("group", { name: "사용량 비교 표", exact: true });
+    // Astryx Table은 실제 가로 스크롤이 필요할 때만 자체 viewport를 Tab 순서에 넣는다.
+    const scrollable = await comparison.evaluate((node) => node.scrollWidth > node.clientWidth + 1);
     await direction.press("Tab");
-    await expect(panel.getByRole("region", { name: "사용량 비교 표" })).toBeFocused();
-    await panel.getByLabel("기간", { exact: true }).selectOption("30");
+    await expect.poll(() => comparison.evaluate((node) => node === document.activeElement)).toBe(scrollable);
+    await selectChoice(panel.getByLabel("기간", { exact: true }), "30");
     await expect.poll(() => queries.at(-1)?.searchParams.get("group_by")).toBe("day");
     await expect.poll(() => {
         const query = queries.at(-1);
         return query ? (Date.parse(query.searchParams.get("to")!) - Date.parse(query.searchParams.get("from")!)) / 86_400_000 : 0;
     }).toBeGreaterThan(29);
-    await panel.getByLabel("묶음", { exact: true }).selectOption("model");
+    await selectChoice(panel.getByLabel("묶음", { exact: true }), "model");
     await expect.poll(() => queries.at(-1)?.searchParams.get("group_by")).toBe("model");
     await expect(table.locator("caption")).toContainText("모델별");
     await expect(panel).toContainText("presentation-v1");

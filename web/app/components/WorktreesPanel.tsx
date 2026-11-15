@@ -1,3 +1,5 @@
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useRef, useState } from "react";
@@ -10,6 +12,9 @@ import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
 import { Panel } from "./ui/Controls";
 import { TextInput } from "../design/Fields";
+import { Code } from "@astryxdesign/core/Code";
+import { Notice } from "../design/Notice";
+import { Select } from "../design/Select";
 type Recovery = { kind: "recoverable"; branch: string; path: string } | { kind: "unavailable"; reason: string; message: string };
 type Attempt = { label: string; target: string; key: string; run: (key: string) => Promise<unknown>; onSuccess?: () => void; onConflict?: (e: ApiError) => boolean };
 type CreateOptions = { carry?: "leave" | "carry"; confirm_large?: boolean };
@@ -41,12 +46,12 @@ function WorkspaceModeSwitch({ projectId }: { projectId: string }) {
         }
     };
     return (
-        <div className="workspace-mode" data-testid="workspace-mode" data-mode={p.workspace_mode}>
-            <ServerActionButton className="ghost small" disabled={busy} onClick={() => void change()}>
+        <GroveStack gap={0} data-testid="workspace-mode" data-mode={p.workspace_mode}>
+            <ServerActionButton variant="secondary" density="compact" disabled={busy} onClick={() => void change()}>
                 {single ? "프로젝트 모드로 전환" : "단일 모드로 전환"}
             </ServerActionButton>
             {err && <GroveText as="p" display="block" type="supporting" color="error" role="alert">{err}</GroveText>}
-        </div>
+        </GroveStack>
     );
 }
 
@@ -120,35 +125,35 @@ function WorktreesPanelBody({ projectId, mode }: { projectId: string; mode: "sin
         });
     };
 
-    if (data && !data.is_repo && !attempt) return <Panel className="worktrees" data-testid="worktrees-panel" title="워크스페이스">
+    if (data && !data.is_repo && !attempt) return <Panel data-testid="worktrees-panel" title="워크스페이스">
         <GroveText as="p" display="block" type="supporting" color="secondary">Git 저장소에서 사용할 수 있습니다.</GroveText>
     </Panel>;
     const rows = data?.worktrees ?? [];
     if (mode === "single") {
         return (
-            <Panel className="worktrees" data-testid="worktrees-panel" title="워크스페이스 · 단일 모드">
+            <Panel data-testid="worktrees-panel" title="워크스페이스 · 단일 모드">
                 <WorkspaceModeSwitch projectId={projectId} />
             </Panel>
         );
     }
     return (
-        <Panel className="worktrees" data-testid="worktrees-panel" title={`워크스페이스${rows.length > 0 ? ` · ${rows.length}` : ""}`}>
+        <Panel data-testid="worktrees-panel" title={`워크스페이스${rows.length > 0 ? ` · ${rows.length}` : ""}`}>
             <WorkspaceModeSwitch projectId={projectId} />
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {Boolean(q.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">worktree 목록을 불러오지 못했습니다</GroveText>}
             {busy && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">worktree 요청 처리·결과 확인 중…</GroveText>}
-            {attempt && !busy && <div className="notice" role="group" aria-label="worktree 결과 재확인">
+            {attempt && !busy && <Notice role="group" aria-label="worktree 결과 재확인">
                 <GroveText as="p" display="block" type="inherit" color="inherit">{attempt.label} 결과 미확정 · <code>{attempt.target}</code> · 원래 키로만 확인하며 자동 재실행하지 않습니다.</GroveText>
-                <ServerActionButton className="ghost small" onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>
-                <GroveButton className="ghost small" onClick={() => {
+                <ServerActionButton variant="secondary" density="compact" onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>
+                <GroveButton variant="secondary" density="compact" onClick={() => {
                     if (!confirm("실제 폴더·브랜치·이력과 이전 작업의 결과를 확인했나요?\n이전 요청을 완료로 확정하거나 되돌리지 않습니다. 생성 미확정 worktree의 파일은 그대로 남습니다.")) return;
                     pending.current = null;
                     setAttempt(null);
                     setErr("이전 요청은 결과 불명 기록으로 남습니다. 다음 작업은 확인한 실제 상태에서 새 키로 시작합니다.");
                 }}>상태 확인 후 새 작업 허용</GroveButton>
-            </div>}
-            <form
-                className="inline"
+            </Notice>}
+            <GroveStack as="form"
+                gap={1.5} direction="horizontal" align="center"
                 onSubmit={(e) => {
                     e.preventDefault();
                     setChoice(null);
@@ -156,40 +161,40 @@ function WorktreesPanelBody({ projectId, mode }: { projectId: string; mode: "sin
                 }}
             >
                 <TextInput label="worktree 이름" isLabelHidden placeholder="이름(브랜치 grove/이름)" value={name} onChange={setName} isRequired pattern="[A-Za-z0-9._\-]{1,60}" />
-                <ServerActionButton className="small" type="submit" disabled={busy || attempt !== null || !name.trim()}>만들기</ServerActionButton>
-            </form>
+                <ServerActionButton density="compact" type="submit" disabled={busy || attempt !== null || !name.trim()}>만들기</ServerActionButton>
+            </GroveStack>
             {choice?.kind === "dirty" && (
-                <div className="notice" role="group" aria-label="커밋하지 않은 변경 처리">
+                <Notice role="group" aria-label="커밋하지 않은 변경 처리">
                     <GroveText as="p" display="block" type="inherit" color="inherit"><code>grove/{choice.name}</code> · 프로젝트 폴더의 미커밋 변경 {choice.changed}개는 어느 쪽을 선택해도 그대로 남습니다.</GroveText>
-                    <ServerActionButton className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "leave" }, choice.name)}>두고 가기(변경 없이 시작)</ServerActionButton>
-                    <ServerActionButton className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "carry" }, choice.name)}>복사해 가기</ServerActionButton>
-                    <GroveButton className="ghost small" onClick={() => setChoice(null)}>취소</GroveButton>
-                </div>
+                    <ServerActionButton density="compact" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "leave" }, choice.name)}>두고 가기(변경 없이 시작)</ServerActionButton>
+                    <ServerActionButton density="compact" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, carry: "carry" }, choice.name)}>복사해 가기</ServerActionButton>
+                    <GroveButton variant="secondary" density="compact" onClick={() => setChoice(null)}>취소</GroveButton>
+                </Notice>
             )}
             {choice?.kind === "large" && (
-                <div className="notice" role="group" aria-label="큰 저장소 확인">
+                <Notice role="group" aria-label="큰 저장소 확인">
                     <GroveText as="p" display="block" type="inherit" color="inherit"><code>grove/{choice.name}</code> · 추적 파일 {choice.files.toLocaleString()}개로 체크아웃에 시간·디스크가 많이 듭니다.</GroveText>
-                    <ServerActionButton className="small" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, confirm_large: true }, choice.name)}>그래도 만들기</ServerActionButton>
-                    <GroveButton className="ghost small" onClick={() => setChoice(null)}>취소</GroveButton>
-                </div>
+                    <ServerActionButton density="compact" disabled={busy || attempt !== null} onClick={() => create({ ...choice.options, confirm_large: true }, choice.name)}>그래도 만들기</ServerActionButton>
+                    <GroveButton variant="secondary" density="compact" onClick={() => setChoice(null)}>취소</GroveButton>
+                </Notice>
             )}
-            <ul className="session-list">
+            <GroveList density="compact" edge="flush" hasDividers>
                 {rows.map((w) => (
-                    <li key={w.id} data-testid="worktree-row" data-status={w.status}>
-                        <strong>{w.name}</strong> <code className="small">{w.branch}</code>{" "}
+                    <GroveListItem key={w.id} data-testid="worktree-row" data-status={w.status} label={<>
+                        <strong>{w.name}</strong> <Code>{w.branch}</Code>{" "}
                         {w.status === "unknown" ? <GroveText type="supporting" color="error">생성 결과 미확정 · 파일 보존</GroveText> : w.status === "missing" || !w.exists ? (
                             <GroveText type="supporting" color="error">경로 없음</GroveText>
                         ) : (
                             <GroveText type="supporting" color="secondary">{w.dirty_count ? `변경 ${w.dirty_count}개` : "깨끗함"}{w.sessions > 0 ? ` · 대화 ${w.sessions}개` : ""}</GroveText>
                         )}
-                        <code className="muted small"> {w.path}</code>
-                        {w.status === "unknown" && w.exists && <ServerActionButton className="ghost small" disabled={busy || attempt !== null} onClick={() => {
+                        <Code color="secondary"> {w.path}</Code>
+                        {w.status === "unknown" && w.exists && <ServerActionButton variant="secondary" density="compact" disabled={busy || attempt !== null} onClick={() => {
                             if (!confirm("실제 폴더·브랜치와 복사된 파일을 검토했나요? 일부 파일이 복사되지 않았을 수 있습니다.\n이전 요청의 완료로 단정하지 않고, 확인한 현재 상태를 새 작업 위치로 사용합니다. 파일은 변경하지 않습니다.")) return;
                             void act({ label: "현재 상태 사용", target: w.path, key: newKey(), run: (key) => api.post(`/worktrees/${w.id}/review`, { reviewed: true }, { key, requires: WT }) });
                         }}>확인한 현재 상태 사용</ServerActionButton>}
                         {w.status === "active" && w.exists && (
                             <ServerActionButton
-                                className="ghost small"
+                                variant="secondary" density="compact"
                                 disabled={busy || attempt !== null}
                                 onClick={() => {
                                     if (confirm(`${w.branch}를 프로젝트 폴더의 현재 브랜치에 merge할까요? 충돌하면 merge 전 상태로 되돌립니다.`))
@@ -200,7 +205,7 @@ function WorktreesPanelBody({ projectId, mode }: { projectId: string; mode: "sin
                             </ServerActionButton>
                         )}
                         <ServerActionButton
-                            className="ghost small"
+                            variant="secondary" density="compact"
                             disabled={busy || attempt !== null || w.sessions > 0}
                             title={w.sessions > 0 ? "대화를 프로젝트 폴더로 돌린 뒤 제거할 수 있습니다" : undefined}
                             onClick={() => {
@@ -223,30 +228,30 @@ function WorktreesPanelBody({ projectId, mode }: { projectId: string; mode: "sin
                         >
                             제거
                         </ServerActionButton>
-                    </li>
+                    </>} />
                 ))}
-            </ul>
+            </GroveList>
             {(data?.unowned.length ?? 0) > 0 && (
                 <>
                     <GroveText as="p" display="block" type="supporting" color="secondary">Grove가 만들지 않은 worktree(표시만 하고 변경하지 않음)</GroveText>
-                    <ul className="session-list">
+                    <GroveList density="compact" edge="flush" hasDividers>
                         {data!.unowned.map((u) => (
-                            <li key={u.path} data-testid="worktree-unowned"><code className="small">{u.path}</code> {u.branch && <code className="muted small">{u.branch}</code>}</li>
+                            <GroveListItem key={u.path} data-testid="worktree-unowned" label={<><Code>{u.path}</Code> {u.branch && <Code color="secondary">{u.branch}</Code>}</>} />
                         ))}
-                    </ul>
+                    </GroveList>
                 </>
             )}
             {(data?.removed?.length ?? 0) > 0 && (
                 <>
                     <GroveText as="p" display="block" type="supporting" color="secondary">제거한 worktree(브랜치가 남아 있으면 같은 경로에 다시 만들 수 있음)</GroveText>
-                    <ul className="session-list">
+                    <GroveList density="compact" edge="flush" hasDividers>
                         {data!.removed!.map((w) => <RemovedRow key={w.id} w={w} disabled={busy || attempt !== null}
                             restore={() => void act({ label: "복원", target: w.path, key: newKey(), run: (key) => api.post(`/worktrees/${w.id}/restore`, {}, { key, requires: WT }) })} />)}
-                    </ul>
+                    </GroveList>
                 </>
             )}
             {rows.some((w) => !w.exists) && (
-                <ServerActionButton className="ghost small" disabled={busy || attempt !== null} onClick={() => void act({ label: "정리", target: projectId, key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees/prune`, {}, { key, requires: WT }) })}>
+                <ServerActionButton variant="secondary" density="compact" disabled={busy || attempt !== null} onClick={() => void act({ label: "정리", target: projectId, key: newKey(), run: (key) => api.post(`/projects/${projectId}/worktrees/prune`, {}, { key, requires: WT }) })}>
                     사라진 worktree 기록 정리
                 </ServerActionButton>
             )}
@@ -262,16 +267,16 @@ function RemovedRow({ w, disabled, restore }: { w: Worktree; disabled: boolean; 
         setErr(null);
         try { setState(await api.get<Recovery>(`/worktrees/${w.id}/recovery`, { requires: WT })); } catch (e) { setErr(e instanceof Error ? e.message : "복원 검사 실패"); }
     };
-    return <li data-testid="worktree-removed">
-        <strong>{w.name}</strong> <code className="small">{w.branch}</code>
-        {!state && <GroveButton className="ghost small" disabled={disabled} onClick={() => void check()}>복원 검사</GroveButton>}
+    return <GroveListItem data-testid="worktree-removed" label={<>
+        <strong>{w.name}</strong> <Code>{w.branch}</Code>
+        {!state && <GroveButton variant="secondary" density="compact" disabled={disabled} onClick={() => void check()}>복원 검사</GroveButton>}
         {state?.kind === "recoverable" && <>
             <GroveText type="supporting" color="secondary"> 브랜치로 <code>{state.path}</code>에 다시 만듭니다.</GroveText>
-            <ServerActionButton className="small" disabled={disabled} onClick={restore}>복원</ServerActionButton>
+            <ServerActionButton density="compact" disabled={disabled} onClick={restore}>복원</ServerActionButton>
         </>}
         {state?.kind === "unavailable" && <GroveText type="supporting" color="warning" role="status"> 복원 불가: {state.message}</GroveText>}
         {err && <GroveText type="supporting" color="error" role="alert"> {err}</GroveText>}
-    </li>;
+    </>} />;
 }
 
 /// 대화의 워크스페이스 선택(GIT-008): 프로젝트 폴더 또는 이 프로젝트의 Grove worktree. 실행 중이면 서버가 거절한다.
@@ -288,20 +293,17 @@ function WorktreeSelectBody({ projectId, sessionId, current, disabled, onError }
     const rows = (q.data?.worktrees ?? []).filter((w) => w.status === "active" || w.id === current);
     if (!q.data?.is_repo || (rows.length === 0 && !current)) return null;
     return (
-        <select
-            aria-label="워크스페이스"
+        <Select
+            label="워크스페이스" hideLabel
             value={current ?? ""}
             disabled={disabled || !!serverBlocked}
-            title={serverBlocked ?? undefined}
-            onChange={(e) => {
-                const worktree_id = e.target.value || null;
+            disabledMessage={serverBlocked ?? undefined}
+            onChange={(value) => {
+                const worktree_id = value || null;
                 api.post(`/sessions/${sessionId}/worktree`, { worktree_id }, { requires: WT }).catch((err: Error) => onError(`작업 위치를 바꾸지 못했습니다: ${err.message}`));
             }}
-        >
-            <option value="">워크스페이스: 프로젝트 폴더</option>
-            {rows.map((w) => (
-                <option key={w.id} value={w.id}>워크스페이스: {w.name}{w.status !== "active" ? " (경로 없음)" : ""}</option>
-            ))}
-        </select>
+            options={[{ value: "", label: "워크스페이스: 프로젝트 폴더" },
+                ...rows.map((w) => ({ value: w.id, label: `워크스페이스: ${w.name}${w.status !== "active" ? " (경로 없음)" : ""}` }))]}
+        />
     );
 }

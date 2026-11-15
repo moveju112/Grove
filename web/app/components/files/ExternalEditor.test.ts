@@ -20,7 +20,7 @@ describe("외부 편집기", () => {
     it("설치된 목록만 보여 주고 저장되지 않은 내용은 전달하지 않는다고 안내한다", () => {
         const html = render();
         expect(html).toContain("VS Code");
-        expect(html).toContain("Zed");
+        expect(render({ selected: "zed" })).toContain("Zed");
         expect(html).toContain("저장 전 편집은 전달하지 않습니다");
         expect(html).not.toContain("disabled");
     });

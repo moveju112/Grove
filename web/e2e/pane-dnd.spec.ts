@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { apiCall, ensureProfile, ensureProjects, login } from "./helpers";
+import { apiCall, choiceOptions, ensureProfile, ensureProjects, login } from "./helpers";
 import { leaves, type Layout } from "../app/state/layout";
 
 async function setup(page: Page) {
@@ -38,7 +38,7 @@ const tabIds = (l: Layout) => leaves(l.root).map((leaf) => leaf.tabs.map((t) => 
 
 test("탭은 키보드·메뉴·drag로 순서를 바꾸거나 다른 영역·새 분할로 옮겨도 같은 탭과 초안을 유지한다", async ({ page }) => {
     const { one, two, left, right, saved } = await setup(page);
-    const title = (t: { title: string }) => page.locator(".tab-title", { hasText: t.title });
+    const title = (t: { title: string }) => page.getByTestId("tab-title").filter({ hasText: t.title });
     await left.getByLabel("메시지 입력").fill("옮겨도 남는 초안");
 
     // 키보드: 두 번째 탭을 앞으로.
@@ -60,12 +60,14 @@ test("탭은 키보드·메뉴·drag로 순서를 바꾸거나 다른 영역·�
     await expect.poll(async () => tabIds(await saved())).toEqual([["two"], ["project", "one"]]);
 
     // 메뉴: 현재 탭을 아래 새 영역으로.
-    await right.getByLabel("탭 이동").selectOption({ label: "아래 새 영역으로" });
+    await (await choiceOptions(right.getByRole("combobox", { name: "탭 이동", exact: true })))
+        .filter({ has: page.locator('[data-option-value="edge:bottom"]') }).click();
     await expect(page.getByTestId("pane")).toHaveCount(3);
     await expect.poll(async () => tabIds(await saved())).toEqual([["two"], ["project"], ["one"]]);
     await expect(page.locator(`[data-testid=session-view][data-session="${one.id}"]`).getByLabel("메시지 입력")).toHaveValue("옮겨도 남는 초안");
     // 영역의 유일한 탭은 자기 영역 분할 메뉴를 제공하지 않는다.
-    await expect(left.getByLabel("탭 이동").locator("option", { hasText: "새 영역으로" })).toHaveCount(0);
+    await expect((await choiceOptions(left.getByRole("combobox", { name: "탭 이동", exact: true }))).filter({ hasText: "새 영역으로" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
 });
 
 test("최근 항목을 영역 가장자리로 끌면 새 분할에 열고 잘못된 외부 drag 데이터는 무시한다", async ({ page }) => {

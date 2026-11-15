@@ -29,7 +29,7 @@ async function connect(page: Page, _name: string) {
     await dialog.getByLabel("비밀번호", { exact: true }).fill(password);
     await dialog.getByRole("button", { name: "연결 요청", exact: true }).click();
     await expect(form.getByText("소유자 승인 대기 중", { exact: true })).toBeVisible();
-    return form.locator(".pairing-code").innerText();
+    return form.getByTestId("pairing-code").innerText();
 }
 
 test("QR 등록은 비밀번호와 코드 대조 승인 뒤 한 기기에만 자격을 부여한다", async ({ page, browser }, info) => {
@@ -57,7 +57,7 @@ test("QR 등록은 비밀번호와 코드 대조 승인 뒤 한 기기에만 자
         await other.getByRole("button", { name: "페어링 링크·QR로 등록" }).click();
         const form = other.getByRole("form", { name: "페어링 등록" });
         await form.getByRole("button", { name: "QR", exact: true }).click();
-        await form.getByLabel("QR 사진 선택").setInputFiles({ name: "qr.png", mimeType: "image/png", buffer: image });
+        await form.locator('input[type="file"]').setInputFiles({ name: "qr.png", mimeType: "image/png", buffer: image });
         await expect(form.getByRole("textbox", { name: "페어링 링크", exact: true })).toHaveCount(0);
         await expect(form.getByText("등록 대상:")).toContainText(new URL(link).origin);
         const code = await connect(other, name);

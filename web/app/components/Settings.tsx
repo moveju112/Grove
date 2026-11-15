@@ -1,3 +1,9 @@
+import { StatusBadge } from "../design/StatusBadge";
+import { Card } from "@astryxdesign/core/Card";
+import { Notice } from "../design/Notice";
+import { Code } from "@astryxdesign/core/Code";
+import { contentStyles } from "../design/content.stylex";
+import { KeyValues } from "../design/KeyValues";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { ActionMenu, DetailDialog } from "./ui/Controls";
 import { HelpTip } from "./HelpTip";
@@ -44,8 +50,11 @@ import { SettingsGroup } from "./SettingsGroup";
 import { Icon, type IconName } from "./icons";
 import { Button } from "../design/Button";
 import { Stack } from "@astryxdesign/core/Stack";
+import { Grid } from "@astryxdesign/core/Grid";
+import { settingsStyles } from "../design/settings.stylex";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { List, ListItem } from "@astryxdesign/core/List";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { TextInput, TextArea } from "../design/Fields";
 import { Slider } from "@astryxdesign/core/Slider";
 import { Select } from "../design/Select";
@@ -77,7 +86,7 @@ export const ITEMS: Item[] = [
     { id: "recent", menu: "display", label: "최근 항목 시간 범위", keywords: "recent window 최근 범위 분 시간 오늘", scope: "이 기기" },
     { id: "notify", menu: "display", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜 턴 경과 소요 대기", scope: "이 기기" },
-    { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
+    { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 추론 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
     { id: "devices", menu: "devices", label: "등록 기기", keywords: "device token pair 기기 토큰 페어링 폐기 분실", scope: "서버 전체" },
     { id: "browser-capabilities", menu: "devices", label: "브라우저 기능·권한", keywords: "이 기기 browser notification clipboard 알림 복사 붙여넣기 파일 첨부 드래그 HTTPS 보안 권한", scope: "이 기기" },
     { id: "logout", menu: "devices", label: "로그아웃", keywords: "logout sign out", scope: "이 기기" },
@@ -129,7 +138,7 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
     const visible = (id: string) => (results ? results.some((r) => r.id === id) : ITEMS.find((i) => i.id === id)?.menu === menu);
     const total = (results?.length ?? 0) + (needle ? serverDefs.length : 0);
     return (
-        <Stack className="settings" ref={link.root}
+        <Grid width="100%" maxWidth={1200} minHeight="100%" gap={8} align="start" xstyle={settingsStyles.layout} data-testid="settings" ref={link.root}
             onWheelCapture={link.cancel} onTouchMoveCapture={link.cancel}
             onKeyDownCapture={link.cancel} onPointerDownCapture={link.cancel}
             onClick={(event) => {
@@ -142,12 +151,12 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 history.replaceState(history.state, "", anchor.getAttribute("href")!);
                 link.open(key);
             }}>
-            <Stack as="nav" className="settings-nav" aria-label="설정 메뉴">
+            <Stack as="nav" gap={4} paddingBlockEnd={2} xstyle={settingsStyles.navigation} aria-label="설정 메뉴">
                 <TextInput type="search" label="설정 검색" isLabelHidden placeholder="설정 검색" value={q}
-                    onChange={(value) => { link.cancel(); setQ(value); }} containerClassName="settings-search" />
-                <Stack className="settings-menu">
+                    onChange={(value) => { link.cancel(); setQ(value); }} width="100%" />
+                <Stack gap={1} xstyle={settingsStyles.menu} data-testid="settings-menu">
                 {MENUS.map(([m, label]) => (
-                    <Button key={m} aria-current={!results && menu === m ? "page" : undefined} className={!results && menu === m ? "settings-menu-item on" : "settings-menu-item"} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
+                    <Button key={m} appearance="settings" width="auto" xstyle={settingsStyles.menuItem} aria-current={!results && menu === m ? "page" : undefined} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
                         {label}
                     </Button>
                 ))}
@@ -160,8 +169,8 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                     projectId && <Text as="p" display="block" type="supporting" color="secondary" data-testid="settings-origin">프로젝트 · {projectName ?? projectId}</Text>
                 )}
             </Stack>
-            <Stack className="settings-body">
-                <Heading level={1} color="inherit" className="settings-heading">{needle ? "검색 결과" : MENUS.find(([id]) => id === menu)?.[1]}</Heading>
+            <Stack gap={4} xstyle={settingsStyles.body} data-testid="settings-body">
+                <Heading level={1} color="inherit">{needle ? "검색 결과" : MENUS.find(([id]) => id === menu)?.[1]}</Heading>
                 {link.pending && <Text as="p" display="block" type="inherit" color="secondary" role="status">링크한 설정을 불러오는 중…</Text>}
                 {link.error && <Text as="p" display="block" type="inherit" color="error" role="alert">{link.error}</Text>}
                 {needle && <Text as="p" display="block" type="inherit" color="secondary">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</Text>}
@@ -169,7 +178,7 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                     linkedKey={link.key} onLinkReady={onLinkReady}
                     resetDefs={!needle ? (registry.data ?? []).filter((d) => d.menu === menu) : undefined} area={MENUS.find(([id]) => id === menu)?.[1]} />}
                 {hiddenAdvanced > 0 && !showAdvanced && (
-                    <Button className="ghost" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</Button>
+                    <Button variant="secondary" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</Button>
                 )}
                 {visible("secrets") && <Section item="secrets"><Secrets /></Section>}
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
@@ -199,7 +208,7 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                     </Section>
                 )}
             </Stack>
-        </Stack>
+        </Grid>
     );
 }
 
@@ -232,7 +241,8 @@ function useSave() {
     };
     const view =
         state.kind === "idle" ? null : (
-            <Text as="span" type="inherit" color="inherit" className={`save-state ${state.kind}`} role="status">
+            <Text as="span" type="supporting" color={state.kind === "error" ? "error" : "secondary"}
+                data-settings-issue={state.kind === "error" ? "error" : undefined} role="status">
                 {state.kind === "saving" ? "저장 중…" : state.kind === "saved" ? "저장됨" : `저장 실패(기존 값 유지): ${state.msg}`}
             </Text>
         );
@@ -273,7 +283,7 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
             {show("recent") && (
                 <Section item="recent">
                     <fieldset>
-                        <legend className="small">최근 목록 위에 보일 범위(최대 {MAX_RECENT_WINDOWS}개)</legend>
+                        <legend>최근 목록 위에 보일 범위(최대 {MAX_RECENT_WINDOWS}개)</legend>
                         {Array.from({ length: MAX_RECENT_WINDOWS }, (_, index) => <Select key={index}
                             label={`최근 시간 범위 ${index + 1}`} value={p.recentWindows[index] ?? ""}
                             onChange={(value) => set({ ...p, recentWindows: normalizeRecentWindows([
@@ -306,10 +316,10 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
             )}
             {show("transcript") && (
                 <Section item="transcript">
-                    <Select label="생각 과정 표시" value={p.reasoning}
+                    <Select label="추론 보기" value={p.reasoning}
                         onChange={(value) => set({ ...p, reasoning: value as Prefs["reasoning"] })}
-                        options={[{ value: "collapsed", label: "상세 버튼으로 보기" },
-                            { value: "expanded", label: "본문에 표시" }, { value: "hidden", label: "숨김" }]} />
+                        options={[{ value: "expanded", label: "항상 보기" },
+                            { value: "collapsed", label: "답변 시 접기" }, { value: "hidden", label: "항상 가림" }]} />
                     <BooleanSelect label="답만 보기"
                         value={p.answerOnly} onChange={(value) => set({ ...p, answerOnly: value })}
                         help="도구·실행 기록은 숨기지만 승인 요청은 항상 표시합니다." />
@@ -318,7 +328,7 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <DeviceSettingsReset fields={["reasoning", "answerOnly", "expandTools"]} label="대화 표시 기본값 복원" />
                 </Section>
             )}
-            <Stack align="start" className="settings-footer">
+            <Stack align="start" paddingBlockStart={8}>
                 <DeviceSettingsReset compact={false} fields={Object.keys(defaultPrefs) as (keyof Prefs)[]} label="이 기기 화면·입력 전체 복원" />
             </Stack>
         </>
@@ -361,16 +371,16 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
             {kinds.map(([key, label]) => (
                 <BooleanSelect key={key} label={label} value={p[key]} onChange={(value) => void toggle(key, value)} />
             ))}
-            <Text as="span" type="inherit" color="inherit" className="scope">앱 실행 중에만</Text>
+            <Text as="span" type="supporting" color="secondary">앱 실행 중에만</Text>
             <BooleanSelect label="알림 소리" value={p.notifySound} onChange={(value) => set({ ...p, notifySound: value })} />
             <Text as="p" display="block" type="supporting" color="inherit" data-testid="notify-permission">브라우저 알림 권한: {capabilities && !capabilities.secureContext ? "보안 컨텍스트 필요(HTTPS·localhost)" : PERMISSION_LABEL[permission]}</Text>
             {(p.notifyDone || p.notifyApproval || p.notifyServer) && permission !== "granted" && (
                 <Text as="p" display="block" type="supporting" color="warning" role="status">브라우저 권한이 없어 화면 알림은 표시되지 않습니다{p.notifySound ? ". 소리만 재생합니다." : "."}</Text>
             )}
             {(requestError || notificationIssue) && <Text as="p" display="block" type="supporting" color="warning" role="status">{requestError || notificationIssue}</Text>}
-            {permission === "default" && <Button className="ghost small" onClick={() => void request()}>브라우저 알림 허용</Button>}
+            {permission === "default" && <Button variant="secondary" density="compact" onClick={() => void request()}>브라우저 알림 허용</Button>}
             <Button
-                className="ghost small"
+                variant="secondary" density="compact"
                 onClick={() => {
                     showAttention({ kind: "server", tag: `test:${Date.now()}`, title: "Grove 알림 시험", body: "이 기기의 알림이 동작합니다.", projectId: null, sessionId: null }, p.notifySound);
                     setTestSent(true);
@@ -395,19 +405,19 @@ function Secrets() {
                 {(list.data ?? []).map((s) => (
                     <ListItem key={s.id} label={<>
                         {s.label} <code>{s.masked}</code> {s.used_by.length > 0 && <Text as="span" type="supporting" color="secondary">사용: {s.used_by.join(", ")}</Text>}
-                        <ServerActionButton className="ghost small" onClick={() => {
+                        <ServerActionButton variant="secondary" density="compact" onClick={() => {
                             const v = prompt(`${s.label}의 새 키(이전 키는 저장 성공 후에만 교체)`);
                             if (v) void save.run(() => api.put(`/secrets/${s.id}`, { label: s.label, value: v }));
                         }}>교체</ServerActionButton>
-                        <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.del(`/secrets/${s.id}`))}>삭제</ServerActionButton>
+                        <ServerActionButton variant="secondary" density="compact" onClick={() => void save.run(() => api.del(`/secrets/${s.id}`))}>삭제</ServerActionButton>
                     </>} />
                 ))}
             </List>
-            <form className="inline" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post("/secrets", { label, value }); setLabel(""); setValue(""); }); }}>
+            <Stack as="form" gap={1.5} direction="horizontal" align="center" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post("/secrets", { label, value }); setLabel(""); setValue(""); }); }}>
                 <TextInput size="sm" placeholder="이름" value={label} onChange={setLabel} label="키 이름" isLabelHidden isRequired />
                 <TextInput size="sm" placeholder="키 값" type="password" autoComplete="off" value={value} onChange={setValue} label="키 값" isLabelHidden isRequired />
                 <ServerActionButton type="submit">추가</ServerActionButton>
-            </form>
+            </Stack>
             {save.view}
         </>
     );
@@ -432,30 +442,29 @@ function Profiles() {
             {management !== false && <LocalModelConnection secrets={secrets.data ?? []} onCreate={(body, key) =>
                 api.post("/model-profiles", body, { key, requires: ["model_management_v1"] })
             } />}
-            <List density="compact" edge="flush" className="profile-list">
+            <List density="balanced" edge="flush">
                 {(list.data ?? []).map((p) => (
-                    <ListItem key={p.id} data-testid="model-profile" label={<>
-                        <Stack direction="horizontal" align="center" className="profile-heading">
-                            <Stack className="profile-identity"><strong>{p.name}</strong><code>{p.model}</code></Stack>
+                    <ListItem key={p.id} label={<Card width="100%" padding={5} data-testid="model-profile"><Stack gap={3}>
+                        <Stack direction="horizontal" align="center" gap={2} data-testid="profile-heading">
+                            <Stack gap={1} width="100%"><strong>{p.name}</strong><Text type="code" color="secondary" wordBreak="break-word" data-testid="profile-model">{p.model}</Text></Stack>
                             {p.enabled === false && <Text as="span" type="supporting" color="warning"> · 비활성</Text>}
                             <HelpTip label={`${p.name} 연결 정보`}>
                                 <Text as="span" type="inherit" color="inherit">{p.protocol}{p.base_url ? ` · ${p.base_url}` : " · 서버 CLI 계정 · 읽기 전용"}</Text>
                             </HelpTip>
                             <ActionMenu label={`${p.name} 관리`}>
-                                <ServerActionButton className="ghost small" onClick={() => {
+                                <ServerActionButton variant="secondary" density="compact" onClick={() => {
                                     const m = prompt("모델 이름", p.model);
                                     if (m && m !== p.model) void save.run(() => api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, model: m }));
                                 }}>모델 변경</ServerActionButton>
-                                <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.del(`/model-profiles/${p.id}`))}>삭제</ServerActionButton>
-                                <ServerActionButton className="ghost small" onClick={() => void save.run(() => api.post(`/model-profiles/${p.id}/check`))}>연결 확인</ServerActionButton>
-                                {management !== false && <ServerActionButton className="ghost small" onClick={() => void save.run(() =>
+                                <ServerActionButton variant="secondary" density="compact" onClick={() => void save.run(() => api.del(`/model-profiles/${p.id}`))}>삭제</ServerActionButton>
+                                <ServerActionButton variant="secondary" density="compact" onClick={() => void save.run(() => api.post(`/model-profiles/${p.id}/check`))}>연결 확인</ServerActionButton>
+                                {management !== false && <ServerActionButton variant="secondary" density="compact" onClick={() => void save.run(() =>
                                     api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, enabled: p.enabled === false }, { requires: ["model_management_v1"] })
                                 )}>{p.enabled === false ? "활성화" : "비활성화"}</ServerActionButton>}
                             </ActionMenu>
                         </Stack>
                         {p.last_check?.ok === false && <CheckStatus c={p.last_check} />}
-                        <details className="profile-details">
-                            <summary>상세 설정</summary>
+                        <Collapsible trigger="상세 설정" defaultIsOpen={false}>
                             <Stack gap={2}>
                                 <Text as="span" type="supporting" color="secondary">{p.protocol}{p.base_url && ` · ${p.base_url}`}</Text>
                                 {p.last_check?.ok !== false && <CheckStatus c={p.last_check} />}
@@ -466,13 +475,12 @@ function Profiles() {
                                     api.put(`/model-profiles/${p.id}`, { expected_revision: revision, model }, { requires: ["model_management_v1"] })
                                 )} />
                             </Stack>
-                        </details>
-                    </>} />
+                        </Collapsible>
+                    </Stack></Card>} />
                 ))}
             </List>
-            <details className="profile-details profile-create">
-            <summary>모델 프로필 추가</summary>
-            <form className="stack" aria-label="모델 프로필 추가" onSubmit={(e) => {
+            <Collapsible trigger="모델 프로필 추가" defaultIsOpen={false}>
+            <Stack as="form" gap={2} maxWidth={480} aria-label="모델 프로필 추가" onSubmit={(e) => {
                 e.preventDefault();
                 void save.run(async () => {
                     await api.post("/model-profiles", { ...f, secret_id: f.secret_id || null });
@@ -501,8 +509,8 @@ function Profiles() {
                     </Text>
                 )}
                 <ServerActionButton type="submit">추가</ServerActionButton>
-            </form>
-            </details>
+            </Stack>
+            </Collapsible>
             {save.view}
         </>
     );
@@ -515,18 +523,18 @@ function Definitions({ target, onOverviewLayoutChange }: {
     const [sel, setSel] = useState<string | null>(null);
     const list = useQuery<Definition[]>(`definitions:${kind}`, () => api.get(`/definitions?kind=${kind}`));
     return (
-        <Stack className="defs">
+        <Stack>
             <AgentOverview target={target} onEdit={(id) => { setKind("agent"); setSel(id); }} onLayoutChange={onOverviewLayoutChange} />
-            <Stack direction="horizontal" wrap="wrap" className="chips">
-                <Button className={kind === "agent" ? "chip on" : "chip"} onClick={() => { setKind("agent"); setSel(null); }}>에이전트</Button>
-                <Button className={kind === "workflow" ? "chip on" : "chip"} onClick={() => { setKind("workflow"); setSel(null); }}>워크플로우</Button>
+            <Stack direction="horizontal" wrap="wrap" gap={1}>
+                <Button appearance="choice" aria-pressed={kind === "agent"} onClick={() => { setKind("agent"); setSel(null); }}>에이전트</Button>
+                <Button appearance="choice" aria-pressed={kind === "workflow"} onClick={() => { setKind("workflow"); setSel(null); }}>워크플로우</Button>
             </Stack>
-            <List density="compact" edge="flush" className="def-list">
+            <List density="compact" edge="flush" hasDividers data-testid="definition-list">
                 {(list.data ?? []).map((d) => (
                     <ListItem key={d.id} label={<>
-                        <Button className={`link ${sel === d.id ? "on" : ""}`} onClick={() => setSel(d.id)}>
+                        <Button appearance="link" aria-pressed={sel === d.id} onClick={() => setSel(d.id)}>
                             {d.name} {d.builtin ? <Text as="span" type="supporting" color="secondary">기본</Text> : <Text as="span" type="supporting" color="secondary">사용자</Text>}
-                            {d.modified_fields.length > 0 && <Text as="span" type="inherit" color="inherit" className="status awaiting_approval">수정됨</Text>}
+                            {d.modified_fields.length > 0 && <StatusBadge status="awaiting_approval">수정됨</StatusBadge>}
                             {!d.enabled && <Text as="span" type="supporting" color="secondary">(비활성)</Text>}
                         </Button>
                     </>} />
@@ -550,7 +558,7 @@ function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
     const changed = draft !== cur.body;
     const busy = restoring || saving;
     return (
-        <Stack gap={2} className="def-editor" data-settings-unsaved={changed ? "true" : undefined}>
+        <Stack gap={2} data-settings-unsaved={changed ? "true" : undefined} data-testid="definition-editor">
             <Heading level={3} color="inherit">{cur.name} <Text as="span" type="supporting" color="secondary">revision {cur.revision}</Text></Heading>
             <Text as="p" display="block" type="supporting" color="secondary">{cur.description}</Text>
             <TextArea value={draft} isDisabled={saving} onChange={(value) => local.write({
@@ -558,7 +566,7 @@ function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
             })} rows={14} label="정의 본문" isLabelHidden />
             {local.error && <Text as="p" display="block" type="inherit" color="inherit" role="alert">{local.error}</Text>}
             {local.draft && local.draft.baseRevision !== cur.revision && <Text as="p" display="block" type="inherit" color="inherit" role="alert">서버 revision이 바뀌어 저장 시 충돌하니, 보존된 초안과 현재 적용값을 비교해.</Text>}
-            <Stack direction="horizontal" wrap="wrap" className="actions">
+            <Stack direction="horizontal" wrap="wrap" gap={2}>
                 <ServerActionButton disabled={!changed || busy} onClick={() => void save.run(async () => {
                     setSaving(true);
                     try {
@@ -567,14 +575,14 @@ function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
                         d.reload();
                     } finally { setSaving(false); }
                 })}>저장</ServerActionButton>
-                <Button className="ghost" disabled={!local.draft || busy} onClick={() => local.write(null)}>편집 취소</Button>
+                <Button variant="secondary" disabled={!local.draft || busy} onClick={() => local.write(null)}>편집 취소</Button>
                 {!cur.builtin && (
-                    <ServerActionButton className="ghost" disabled={busy} onClick={() => {
+                    <ServerActionButton variant="secondary" disabled={busy} onClick={() => {
                         if (confirm("이 정의를 삭제할까요?")) void save.run(() => api.del(`/definitions/${kind}/${id}?expected_revision=${cur.revision}`));
                     }}>삭제</ServerActionButton>
                 )}
                 {kind === "workflow" && id !== "default" && (
-                    <ServerActionButton className="ghost" disabled={busy} onClick={() => void save.run(async () => { await api.put(`/definitions/${kind}/${id}`, { expected_revision: cur.revision, enabled: !cur.enabled }); d.reload(); })}>
+                    <ServerActionButton variant="secondary" disabled={busy} onClick={() => void save.run(async () => { await api.put(`/definitions/${kind}/${id}`, { expected_revision: cur.revision, enabled: !cur.enabled }); d.reload(); })}>
                         {cur.enabled ? "선택 불가로" : "선택 가능으로"}
                     </ServerActionButton>
                 )}
@@ -593,12 +601,12 @@ function NewDefinition({ kind }: { kind: string }) {
     const save = useSave();
     return (
         <DetailDialog label={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`} title={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`}>
-            <form className="inline wrap" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post(`/definitions/${kind}`, f); setF({ id: "", name: "", body: "" }); }); }}>
+            <Stack as="form" gap={1.5} direction="horizontal" align="center" wrap="wrap" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post(`/definitions/${kind}`, f); setF({ id: "", name: "", body: "" }); }); }}>
                 <TextInput size="sm" placeholder="ID (소문자-하이픈)" value={f.id} onChange={(value) => setF({ ...f, id: value })} label="ID" isLabelHidden isRequired />
                 <TextInput size="sm" placeholder="이름" value={f.name} onChange={(value) => setF({ ...f, name: value })} label="이름" isLabelHidden isRequired />
                 <TextArea placeholder="본문" value={f.body} onChange={(value) => setF({ ...f, body: value })} label="본문" isLabelHidden isRequired />
                 <ServerActionButton type="submit">만들기</ServerActionButton>
-            </form>
+            </Stack>
             {save.view}
         </DetailDialog>
     );
@@ -608,7 +616,7 @@ function CurrentDeviceName({ onSaved }: { onSaved?: () => void }) {
     const query = useQuery<{ id: string; name: string }>("current-device", () => api.get("/auth/device"));
     const [draft, setDraft] = useState<string | null>(null);
     const save = useSave();
-    return <form className="inline" onSubmit={(event) => {
+    return <Stack as="form" gap={1.5} direction="horizontal" align="center" onSubmit={(event) => {
         event.preventDefault();
         if (draft === null) return;
         void save.run(async () => {
@@ -622,7 +630,7 @@ function CurrentDeviceName({ onSaved }: { onSaved?: () => void }) {
         {draft !== null && <Text as="span" type="supporting" color="secondary" data-settings-unsaved="true">저장 안 됨</Text>}
         {Boolean(query.error) && <Text as="p" display="block" type="inherit" color="error" role="alert">기기 이름을 읽지 못했습니다.</Text>}
         {save.view}
-    </form>;
+    </Stack>;
 }
 
 function Devices() {
@@ -638,21 +646,15 @@ function Devices() {
             <CurrentDeviceName onSaved={list.reload} />
             {Boolean(list.error) && <Text as="p" display="block" type="inherit" color="error" role="alert">기기 목록을 읽지 못했습니다.</Text>}
             <Text as="p" display="block" type="supporting" color="secondary">등록 기기는 모든 프로젝트·파일 접근 및 명령 실행 가능 · 기기 관리는 소유자 전용</Text>
-            <List density="compact" edge="flush" className="settings-list">
+            <List density="compact" edge="flush" hasDividers>
                 {(list.data ?? []).filter((d) => d.kind !== "browser" || !d.revoked_at).map((d) => (
-                    <ListItem key={d.id} label={<>
-                        <Text as="span" type="inherit" color="inherit" className="settings-device">
-                            <Icon name={d.kind === "owner" ? "server" : "monitor"} size={16} />
-                            <Text as="span" type="inherit" color="inherit"><Text as="span" type="inherit" color="inherit">{d.name}{d.current && <Text as="span" type="inherit" color="inherit" className="settings-device-current">현재</Text>}</Text>
-                                <Text as="span" type="inherit" color="inherit" className="settings-device-meta">{d.kind === "owner" ? "소유자" : d.kind === "device" ? "기기" : "브라우저 로그인"}
-                                    {d.last_used_at && <> · <When at={d.last_used_at} /></>}
-                                </Text>
-                            </Text>
-                        </Text>
-                        {d.revoked_at ? <Text as="span" type="supporting" color="secondary">폐기됨</Text> : d.kind === "owner" ? <Text as="span" type="inherit" color="inherit" className="scope">소유자</Text> : (
-                            <ServerActionButton className="ghost small" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</ServerActionButton>
-                        )}
-                    </>} />
+                    <ListItem key={d.id} startContent={<Icon name={d.kind === "owner" ? "server" : "monitor"} size={16} />}
+                        label={<>{d.name}{d.current && <> <StatusBadge>현재</StatusBadge></>}</>}
+                        description={<>{d.kind === "owner" ? "소유자" : d.kind === "device" ? "기기" : "브라우저 로그인"}
+                            {d.last_used_at && <> · <When at={d.last_used_at} /></>}</>}
+                        endContent={d.revoked_at ? <Text as="span" type="supporting" color="secondary">폐기됨</Text> : d.kind === "owner" ? <Text as="span" type="supporting" color="secondary">소유자</Text> : (
+                            <ServerActionButton variant="secondary" density="compact" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</ServerActionButton>
+                        )} />
                 ))}
             </List>
             <ServerActionButton onClick={() => {
@@ -660,10 +662,10 @@ function Devices() {
                 if (name) void save.run(async () => setIssued((await api.post<{ token: string }>("/devices", { name })).token));
             }}>기기 토큰 발급</ServerActionButton>
             {issued && (
-                <Stack direction="horizontal" wrap="wrap" align="center" className="draft-note" role="alert">
-                    이 토큰은 지금 한 번만 표시됩니다: <code className="selectable">{issued}</code>
-                    <Button className="ghost small" onClick={() => setIssued(null)}>닫기</Button>
-                </Stack>
+                <Notice role="alert">
+                    이 토큰은 지금 한 번만 표시됩니다: <Code xstyle={contentStyles.selectable}>{issued}</Code>
+                    <Button variant="secondary" density="compact" onClick={() => setIssued(null)}>닫기</Button>
+                </Notice>
             )}
             {save.view}
             </Section>
@@ -702,17 +704,17 @@ function Health() {
     });
     return (
         <>
-            <dl className="kv" data-testid="version-details">
-                <dt>상태</dt><dd>{String(h.data?.status ?? "…")}</dd>
-                <dt>서버 버전</dt><dd>{String(h.data?.version ?? "")}</dd>
-                <dt>실행 대상</dt><dd>{String(h.data?.target ?? "")}</dd>
-                <dt>프로토콜</dt><dd>서버 {String(h.data?.protocol ?? "")} · 화면 {PROTOCOL}{h.data && h.data.protocol !== PROTOCOL ? " (다름: 새로고침 필요)" : ""}</dd>
-                <dt>DB schema</dt><dd>{String(h.data?.schema ?? "")}</dd>
-                <dt>화면 빌드</dt><dd><code>{build.data ?? "…"}</code></dd>
-                <dt>이벤트 연결</dt><dd>{status}</dd>
-            </dl>
+            <KeyValues data-testid="version-details" items={[
+                ["상태", String(h.data?.status ?? "…")],
+                ["서버 버전", String(h.data?.version ?? "")],
+                ["실행 대상", String(h.data?.target ?? "")],
+                ["프로토콜", <>서버 {String(h.data?.protocol ?? "")} · 화면 {PROTOCOL}{h.data && h.data.protocol !== PROTOCOL ? " (다름: 새로고침 필요)" : ""}</>],
+                ["DB schema", String(h.data?.schema ?? "")],
+                ["화면 빌드", <code>{build.data ?? "…"}</code>],
+                ["이벤트 연결", status],
+            ]} />
             <Button
-                className="ghost small"
+                variant="secondary" density="compact"
                 onClick={() =>
                     void navigator.clipboard?.writeText(JSON.stringify(diag(), null, 2)).then(
                         () => setCopied("진단 정보를 복사했습니다(토큰·대화 내용은 포함하지 않음)"),
@@ -730,7 +732,7 @@ function Health() {
 
 function Help() {
     return (
-        <Stack className="help" data-testid="help">
+        <Stack gap={2} data-testid="help">
             <Heading level={4} color="inherit">입력</Heading>
             <List density="compact" edge="flush" listStyle="disc">
                 <ListItem label={<><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd>: 보내기 · 'Enter로 보내기'를 켜면 <kbd>Enter</kbd> 보내기, <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈(터치 기기는 항상 줄바꿈)</>} />
@@ -756,13 +758,13 @@ function CheckStatus({ c }: { c: ModelProfile["last_check"] }) {
     const when = <When at={c.checked_at} />;
     return c.ok ? (
         <Text as="span" type="supporting" color="inherit" data-testid="profile-check">
-            {" "}· <Text as="span" type="inherit" color="inherit" className="status succeeded">연결됨</Text> {c.latency_ms}ms · {when}
+            {" "}· <StatusBadge status="succeeded">연결됨</StatusBadge> {c.latency_ms}ms · {when}
             {d.cli_version && ` · ${d.cli_version}`}
             {d.models !== undefined && (d.model_listed ? " · 모델 확인됨" : ` · 목록(${d.models}개)에 이 모델 없음`)}
         </Text>
     ) : (
         <Text as="span" type="supporting" color="inherit" data-testid="profile-check">
-            {" "}· <Text as="span" type="inherit" color="inherit" className="status failed">실패</Text> <code>{c.code}</code> {c.message} · {when}
+            {" "}· <StatusBadge status="failed">실패</StatusBadge> <code>{c.code}</code> {c.message} · {when}
         </Text>
     );
 }

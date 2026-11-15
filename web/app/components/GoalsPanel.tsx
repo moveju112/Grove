@@ -1,3 +1,5 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { StatusBadge } from "../design/StatusBadge";
 import { useState } from "react";
 import { ApiError, api } from "../api/client";
 import { Panel } from "./ui/Controls";
@@ -36,14 +38,14 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
         void act(() => api.post(`/sessions/${sessionId}/goals/reorder`, { ids }));
     };
     return (
-        <Panel className="goals" data-testid="goals-panel" title={`Goal${goals.length > 0 ? ` · 남은 ${open}/${goals.length}` : ""}`}>
+        <Panel data-testid="goals-panel" title={`Goal${goals.length > 0 ? ` · 남은 ${open}/${goals.length}` : ""}`}>
             {err && <Text as="p" display="block" type="inherit" color="error" role="alert">{err}</Text>}
-            <List density="compact" edge="flush" className="session-list">
+            <List density="compact" edge="flush" hasDividers>
                 {goals.map((g, i) => (
                     <ListItem key={g.id} data-testid="goal" data-status={g.status}
                         endContent={<>
-                            {g.status === "in_progress" && <Text type="inherit" color="inherit" className="status running">진행 중</Text>}
-                            {i > 0 && !disabled && <ServerActionButton className="ghost small" aria-label={`${g.title} 위로`} onClick={() => move(i)}>↑</ServerActionButton>}
+                            {g.status === "in_progress" && <StatusBadge status="running">진행 중</StatusBadge>}
+                            {i > 0 && !disabled && <ServerActionButton variant="secondary" density="compact" aria-label={`${g.title} 위로`} onClick={() => move(i)}>↑</ServerActionButton>}
                         </>}
                         label={
                         <BooleanSelect label={g.title} trueLabel="완료" falseLabel="미완료"
@@ -65,8 +67,8 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
                 ))}
             </List>
             {!disabled && (
-                <form
-                    className="inline"
+                <GroveStack as="form"
+                    gap={1.5} direction="horizontal" align="center"
                     onSubmit={(e) => {
                         e.preventDefault();
                         void act(async () => {
@@ -77,7 +79,7 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
                 >
                     <TextInput size="sm" label="새 Goal" isLabelHidden placeholder="할 일 추가" value={title} onChange={setTitle} />
                     <ServerActionButton type="submit" disabled={!title.trim()}>추가</ServerActionButton>
-                </form>
+                </GroveStack>
             )}
         </Panel>
     );

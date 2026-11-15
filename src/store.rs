@@ -1018,6 +1018,27 @@ pub const MIGRATIONS: &[&str] = &[
     "ALTER TABLE followups ADD COLUMN model TEXT;",
     // 추가 메시지의 속도 선택을 재시작·대기열 시작 뒤에도 보존한다.
     "ALTER TABLE followups ADD COLUMN service_tier TEXT;",
+    // 봇 그룹은 기존 세션·턴·승인 경계를 공유한다. 연결 자격은 MCP/vault에만 둔다.
+    r#"
+    CREATE TABLE bot_rooms (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        member_ids TEXT NOT NULL CHECK(json_valid(member_ids)),
+        created_at TEXT NOT NULL
+    );
+    CREATE TABLE bot_room_dispatches (
+        message_id TEXT PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+        session_id TEXT NOT NULL REFERENCES bot_rooms(session_id) ON DELETE CASCADE,
+        current_turn_id TEXT NOT NULL REFERENCES turns(id),
+        remaining_ids TEXT NOT NULL CHECK(json_valid(remaining_ids)),
+        status TEXT NOT NULL CHECK(status IN ('active','completed','stopped'))
+    );
+    CREATE UNIQUE INDEX bot_room_one_dispatch ON bot_room_dispatches(session_id) WHERE status='active';
+    CREATE TABLE bot_connections (
+        bot_id TEXT NOT NULL REFERENCES bots(id) ON DELETE CASCADE,
+        server_id TEXT NOT NULL REFERENCES mcp_servers(id) ON DELETE CASCADE,
+        PRIMARY KEY(bot_id,server_id)
+    );
+    "#,
 ];
 
 #[cfg(test)]

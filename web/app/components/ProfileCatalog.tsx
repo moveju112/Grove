@@ -1,4 +1,5 @@
 import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Select } from "../design/Select";
 import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { When } from "./When";
@@ -45,25 +46,22 @@ export function ProfileCatalog({ profile, onChoose }: { profile: ModelProfile; o
         }
     };
     return (
-        <div className="small" role="group" aria-label={`${profile.name} 모델 목록`}>
-            <GroveButton className="ghost small" type="button" disabled={busy} onClick={() => void refresh()}>
+        <GroveText as="div" display="block" type="supporting" color="inherit" role="group" aria-label={`${profile.name} 모델 목록`}>
+            <GroveButton variant="secondary" density="compact" type="button" disabled={busy} onClick={() => void refresh()}>
                 {busy ? "목록 조회 중…" : "모델 목록 새로고침"}
             </GroveButton>
             {catalog && <>
-                <label>
-                    공급자 모델
-                    <select aria-label={`${profile.name} 공급자 모델`} value={catalog.models.some((model) => model.id === profile.model) ? profile.model : ""}
-                        disabled={busy || stale || error !== null || !!serverBlocked} title={serverBlocked ?? undefined}
-                        onChange={(event) => { if (event.target.value) onChoose(event.target.value, catalog.profile_revision); }}>
-                        <option value="">모델을 선택하세요(수동 입력도 가능)</option>
-                        {catalog.models.map((model) => <option key={model.id} value={model.id}>{model.name} · {model.id}</option>)}
-                    </select>
-                </label>
+                <Select label={`${profile.name} 공급자 모델`}
+                    value={catalog.models.some((model) => model.id === profile.model) ? profile.model : ""}
+                    disabled={busy || stale || error !== null || !!serverBlocked} disabledMessage={serverBlocked ?? undefined}
+                    onChange={(value) => { if (value) onChoose(value, catalog.profile_revision); }}
+                    options={[{ value: "", label: "모델을 선택하세요(수동 입력도 가능)" },
+                        ...catalog.models.map((model) => ({ value: model.id, label: `${model.name} · ${model.id}` }))]} />
                 <GroveText type="inherit" color="secondary"> {catalog.models.length}개 · <When at={catalog.fetched_at} /> 조회</GroveText>
                 {catalog.models.length === 0 && <GroveText type="inherit" color="secondary"> 조회된 모델 없음 · 수동 입력 가능</GroveText>}
                 {stale && <GroveText as="p" display="block" type="inherit" color="warning" role="status">프로필이 변경됐으니 목록을 다시 조회하세요.</GroveText>}
             </>}
             {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}{catalog ? " · 마지막 조회 목록 보존" : ""} · 수동 입력 유지 · 목록 재조회 필요</GroveText>}
-        </div>
+        </GroveText>
     );
 }

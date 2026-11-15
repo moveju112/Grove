@@ -13,7 +13,7 @@ for (const width of [1400, 390]) {
             const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
             if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
             await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
-            const project = page.locator(".project-view:visible");
+            const project = page.getByTestId("project-view").filter({ visible: true });
             await composerOption(project, "보내기 방식", "save");
             const text = `PWA 생성 초안 ${width} ${Date.now()}`;
             await project.getByLabel("메시지 입력").fill(text);
@@ -71,7 +71,7 @@ test("대화 생성 뒤 offline 전환은 원래 생성·전송 키로만 확인
     const { a } = await ensureProjects();
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
-    const project = page.locator(".project-view:visible");
+    const project = page.getByTestId("project-view").filter({ visible: true });
     await composerOption(project, "보내기 방식", "save");
     const text = `PWA 단계 사이 차단 ${Date.now()}`;
     await project.getByLabel("메시지 입력").fill(text);
@@ -112,7 +112,7 @@ test("오프라인 cold start는 인증 전 초안을 숨기고 삭제 없이 �
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     const privateText = "인증 전에는 보이면 안 되는 기존 초안";
     await view.getByLabel("메시지 입력").fill(privateText);

@@ -1,8 +1,9 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
 import { Button as GroveButton } from "../../design/Button";
 import { useCallback, useEffect, useRef, useState } from "react";
-import "./capabilities.css";
+import { ScrollableArea } from "@astryxdesign/core/ScrollableArea";
 import {
     browserEnvironment, capabilityIssue, detectBrowserCapabilities, observeBrowserCapabilities, PERMISSION_LABEL,
     type BrowserCapabilities,
@@ -30,10 +31,10 @@ export function useBrowserCapabilities() {
 }
 
 export function BrowserCapabilitiesPanel({ snapshot }: { snapshot: BrowserCapabilities }) {
-    return <div data-testid="browser-capabilities">
+    return <GroveStack gap={0} data-testid="browser-capabilities">
         <GroveText as="p" display="block" type="inherit" color="inherit">보안 컨텍스트: <strong>{snapshot.secureContext ? "예" : "아니요"}</strong></GroveText>
         {!snapshot.secureContext && <GroveText as="p" display="block" type="supporting" color="warning">알림·Clipboard·파일 시스템 접근에는 HTTPS 또는 localhost가 필요합니다.</GroveText>}
-        <div className="browser-capabilities-table"><Table density="compact">
+        <ScrollableArea axis="inline" label="이 기기의 브라우저 기능 표" maxWidth="100%"><Table density="compact">
             <caption>이 기기의 브라우저 기능</caption>
             <TableHeader><TableRow isHeaderRow><TableHeaderCell scope="col">기능</TableHeaderCell><TableHeaderCell scope="col">API 지원</TableHeaderCell><TableHeaderCell scope="col">권한</TableHeaderCell><TableHeaderCell scope="col">조건·대안</TableHeaderCell></TableRow></TableHeader>
             <TableBody>{snapshot.items.map((item) => <TableRow key={item.id} data-testid={`browser-capability-${item.id}`}>
@@ -47,15 +48,15 @@ export function BrowserCapabilitiesPanel({ snapshot }: { snapshot: BrowserCapabi
                     {item.alternative}
                 </>}</TableCell>
             </TableRow>)}</TableBody>
-        </Table></div>
-    </div>;
+        </Table></ScrollableArea>
+    </GroveStack>;
 }
 
 export function BrowserCapabilitiesSettings() {
     const [snapshot, refresh] = useBrowserCapabilities();
     return <>
         {snapshot ? <BrowserCapabilitiesPanel snapshot={snapshot} /> : <GroveText as="p" display="block" type="inherit" color="inherit" role="status">브라우저 기능 확인 중…</GroveText>}
-        <GroveButton className="ghost small" onClick={refresh}>브라우저 기능 새로 확인</GroveButton>
+        <GroveButton variant="secondary" density="compact" onClick={refresh}>브라우저 기능 새로 확인</GroveButton>
     </>;
 }
 

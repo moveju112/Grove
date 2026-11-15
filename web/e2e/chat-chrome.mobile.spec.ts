@@ -40,8 +40,8 @@ for (const theme of ["light", "dark"] as const) {
         await tree.scrollIntoViewIfNeeded();
         await expect(tree).toBeInViewport();
         const rows = await tree.getByTestId("sidebar-session").evaluateAll((nodes) => nodes.map((node) => {
-            const button = node.querySelector<HTMLElement>(".sidebar-session-open")!;
-            const title = node.querySelector<HTMLElement>(".sidebar-session-title")!;
+            const button = node.querySelector<HTMLElement>('[data-testid="sidebar-session-open"]')!;
+            const title = node.querySelector<HTMLElement>('[data-testid="sidebar-session-title"]')!;
             const bounds = node.getBoundingClientRect();
             return {
                 height: bounds.height,
@@ -57,9 +57,9 @@ for (const theme of ["light", "dark"] as const) {
         await expect(sidebar.getByTestId("notifications")).toHaveCount(0);
         await expect(sidebar.getByTestId("recovery")).toHaveCount(0);
         await page.screenshot({ path: info.outputPath(`sidebar-${theme}-390.png`) });
-        await tree.locator(`[data-session="${session.id}"] .sidebar-session-open`).click();
+        await tree.locator(`[data-session="${session.id}"]`).getByTestId("sidebar-session-open").click();
         const view = sessionView(page, session.id);
-        const pane = page.locator(".pane-body").filter({ has: view });
+        const pane = page.getByTestId("pane-body").filter({ has: view });
         const input = view.getByLabel("메시지 입력", { exact: true });
         await input.fill("화면 크기가 바뀌어도 보존할 초안");
 
@@ -68,8 +68,8 @@ for (const theme of ["light", "dark"] as const) {
             for (const fraction of [0.35, 0.7, 1]) {
                 await pane.evaluate((node, fraction) => { node.scrollTop = (node.scrollHeight - node.clientHeight) * fraction; }, fraction);
                 await expect.poll(() => view.evaluate((node) => {
-                    const pane = node.closest(".pane-body")!;
-                    const footer = node.querySelector<HTMLElement>(".session-compose")!;
+                    const pane = node.closest('[data-testid="pane-body"]')!;
+                    const footer = node.querySelector<HTMLElement>('[data-testid="compose-surface"]')!;
                     const edge = pane.getBoundingClientRect();
                     const box = footer.getBoundingClientRect();
                     const bottom = Math.min(edge.bottom, innerHeight);
@@ -81,7 +81,7 @@ for (const theme of ["light", "dark"] as const) {
                     return {
                         bottomCovered: box.bottom >= bottom - 1,
                         sidesCovered: box.left <= edge.left + 1 && box.right >= edge.right - 1,
-                        hitFooter: points.every((x) => document.elementFromPoint(x, bottom - 2)?.closest(".session-compose") === footer),
+                        hitFooter: points.every((x) => document.elementFromPoint(x, bottom - 2)?.closest('[data-testid="compose-surface"]') === footer),
                         opaque: pixel.getImageData(0, 0, 1, 1).data[3] === 255 && style.opacity === "1",
                     };
                 })).toEqual({ bottomCovered: true, sidesCovered: true, hitFooter: true, opaque: true });

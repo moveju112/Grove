@@ -17,7 +17,7 @@ async function makeBot(name: string, image: boolean) {
 async function openBot(page: Page, bot: { name: string; sessionId: string }) {
     await login(page);
     await openBots(page);
-    await page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: bot.name }).locator(".bot-open").click();
+    await page.getByTestId("bots-panel").getByTestId("bot").filter({ hasText: bot.name }).getByRole("button", { name: bot.name, exact: false }).first().click();
     const view = sessionView(page, bot.sessionId);
     await expect(view).toBeVisible();
     return view;

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 test("소유 작업이 남은 final은 중간 응답으로 표시하고 작업 결과 뒤에 완료한다", async ({ page }) => {
@@ -9,10 +9,10 @@ test("소유 작업이 남은 final은 중간 응답으로 표시하고 작업 �
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
-    await view.getByLabel("모델 프로필").selectOption(profile);
+    await composerOption(view, "모델 프로필", profile);
     await composerOption(view, "도구", true);
     await script({ frames: frames.tool("bg", "shell", { command: "sleep 10", background: true, timeout_ms: 10000 }), marker: title });
     await script({ frames: frames.text(["아직 결과를 모르는 응답"]), marker: title });

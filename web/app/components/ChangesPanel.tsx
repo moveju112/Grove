@@ -1,3 +1,6 @@
+import { CodeBlock } from "../design/CodeBlock";
+import { Code } from "@astryxdesign/core/Code";
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
@@ -29,7 +32,7 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
     const active = useRef(false);
     const locked = disabled || busy || attempt !== null;
     const list = q.data ?? [];
-    if (list.length === 0) return <Panel className="changes" data-testid="changes-panel" title="파일 변경 이력">
+    if (list.length === 0) return <Panel data-testid="changes-panel" title="파일 변경 이력">
         <GroveText as="p" display="block" type="supporting" color={q.error ? "error" : "secondary"} role={q.error ? "alert" : "status"}>
             {q.loading ? "불러오는 중…" : q.error ? "파일 변경 이력을 읽지 못했습니다." : "변경 없음"}
         </GroveText>
@@ -69,70 +72,70 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
         setDiff({ id, text: d.diff ?? (d.unavailable === "binary" ? "(텍스트가 아닌 파일)" : "(내용을 보관하지 않음)") });
     };
     return (
-        <Panel className="changes" data-testid="changes-panel" title={<GroveText type="inherit" color="inherit" className="inline">
+        <Panel data-testid="changes-panel" title={<GroveStack as="span" direction="horizontal" align="center" gap={1.5}>
             파일 변경 이력 · {list.filter((c) => !c.undone_at).length}/{list.length}
             <HelpTip label="파일 변경 복원 도움말"><SentenceText text="대화 되감기와 별개로 파일만 복원합니다. 기록 뒤 파일이 바뀌었으면 충돌로 알리고 아무것도 바꾸지 않습니다." /></HelpTip>
-        </GroveText>}>
+        </GroveStack>}>
             {err && (
                 <GroveText as="p" display="block" type="inherit" color="error" role="alert">
                     {err}
                 </GroveText>
             )}
-            {attempt && !busy && <GroveStack direction="horizontal" align="center" className="inline">
-                <ServerActionButton className="ghost small" disabled={disabled} onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>
-                <GroveButton className="ghost small" onClick={() => { setAttempt(null); setErr(null); }}>원문 확인 후 닫기</GroveButton>
+            {attempt && !busy && <GroveStack direction="horizontal" align="center" gap={1.5}>
+                <ServerActionButton variant="secondary" density="compact" disabled={disabled} onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>
+                <GroveButton variant="secondary" density="compact" onClick={() => { setAttempt(null); setErr(null); }}>원문 확인 후 닫기</GroveButton>
                 <GroveText type="supporting" color="secondary">원문과 변경 이력을 확인한 뒤 새 요청을 시작하세요.</GroveText>
             </GroveStack>}
             {groups.map((g, gi) => {
                 const applied = g.items.filter((c) => !c.undone_at && c.stored).map((c) => c.id);
                 const undone = g.items.filter((c) => c.undone_at && c.stored).map((c) => c.id);
                 return (
-                    <div key={g.turn ?? `manual-${gi}`} className="change-group" data-testid="change-group">
-                        <GroveStack direction="horizontal" align="center" className="inline">
-                            <strong className="small">{g.turn ? `요청 ${gi + 1}` : "직접 요청"}</strong>
-                            <ServerActionButton className="ghost small" disabled={locked || applied.length === 0} onClick={() => void act({ op: "undo", ids: applied, key: newKey() })}>
+                    <GroveStack gap={1} paddingBlock={1} key={g.turn ?? `manual-${gi}`} data-testid="change-group">
+                        <GroveStack direction="horizontal" align="center" gap={1.5}>
+                            <GroveText type="supporting" weight="bold">{g.turn ? `요청 ${gi + 1}` : "직접 요청"}</GroveText>
+                            <ServerActionButton variant="secondary" density="compact" disabled={locked || applied.length === 0} onClick={() => void act({ op: "undo", ids: applied, key: newKey() })}>
                                 이 요청의 변경 되돌리기
                             </ServerActionButton>
-                            <ServerActionButton className="ghost small" disabled={locked || undone.length === 0} onClick={() => void act({ op: "redo", ids: undone, key: newKey() })}>
+                            <ServerActionButton variant="secondary" density="compact" disabled={locked || undone.length === 0} onClick={() => void act({ op: "redo", ids: undone, key: newKey() })}>
                                 다시 적용
                             </ServerActionButton>
                         </GroveStack>
-                        <ul className="session-list">
+                        <GroveList density="compact" edge="flush" hasDividers>
                             {g.items.map((c) => (
-                                <li key={c.id} data-testid="change-row" data-state={c.undone_at ? "undone" : "applied"}>
-                                    <code className="small">{c.path}</code> <GroveText type="supporting" color="secondary">{OP[c.op] ?? c.op} · {c.tool}</GroveText>
-                                    {c.undone_at && <em className="small"> 되돌림</em>}
-                                    {!c.stored && <em className="small"> (파일이 커서 되돌릴 수 없음)</em>}
-                                    <GroveButton className="ghost small" onClick={() => void showDiff(c.id)}>patch</GroveButton>
-                                    {c.op !== "deleted" && !c.undone_at && isArtifact(c.path) && <GroveButton className="ghost small"
+                                <GroveListItem key={c.id} data-testid="change-row" data-state={c.undone_at ? "undone" : "applied"} label={<>
+                                    <Code>{c.path}</Code> <GroveText type="supporting" color="secondary">{OP[c.op] ?? c.op} · {c.tool}</GroveText>
+                                    {c.undone_at && <GroveText type="supporting"> 되돌림</GroveText>}
+                                    {!c.stored && <GroveText type="supporting"> (파일이 커서 되돌릴 수 없음)</GroveText>}
+                                    <GroveButton variant="secondary" density="compact" onClick={() => void showDiff(c.id)}>patch</GroveButton>
+                                    {c.op !== "deleted" && !c.undone_at && isArtifact(c.path) && <GroveButton variant="secondary" density="compact"
                                         title="변경 시점의 snapshot이 아니라 현재 파일을 엽니다"
                                         onClick={() => open({ kind: "file", project_id: projectId, resource_id: c.path, filePath: c.path, title: c.path }, "right")}>
                                         산출물 열기
                                     </GroveButton>}
                                     {c.stored && (
-                                        <GroveButton className="ghost small" disabled={locked} onClick={() => void act({ op: c.undone_at ? "redo" : "undo", ids: [c.id], key: newKey() })}>
+                                        <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => void act({ op: c.undone_at ? "redo" : "undo", ids: [c.id], key: newKey() })}>
                                             {c.undone_at ? "다시 적용" : "되돌리기"}
                                         </GroveButton>
                                     )}
-                                    {diff?.id === c.id && <pre className="diff" data-testid="change-diff">{diff.text}</pre>}
-                                </li>
+                                    {diff?.id === c.id && <CodeBlock data-testid="change-diff" code={diff.text} />}
+                                </>} />
                             ))}
-                        </ul>
-                    </div>
+                        </GroveList>
+                    </GroveStack>
                 );
             })}
-            <GroveButton className="ghost small" onClick={() => void api.get<Review>(`/sessions/${sessionId}/review`).then(setReview)}>
+            <GroveButton variant="secondary" density="compact" onClick={() => void api.get<Review>(`/sessions/${sessionId}/review`).then(setReview)}>
                 대화 전체 검토(처음 상태와 지금 비교)
             </GroveButton>
             {review && (
-                <div data-testid="review">
+                <GroveStack gap={0} data-testid="review">
                     {review.files.map((f) => (
-                        <div key={f.path}>
-                            <code className="small">{f.path}</code> {f.unchanged && <GroveText type="supporting" color="secondary">처음과 같음</GroveText>}
-                            {f.diff ? <pre className="diff">{f.diff}</pre> : f.unavailable && <GroveText as="p" display="block" type="supporting" color="secondary">비교할 수 없음({f.unavailable})</GroveText>}
-                        </div>
+                        <GroveStack gap={0} key={f.path}>
+                            <Code>{f.path}</Code> {f.unchanged && <GroveText type="supporting" color="secondary">처음과 같음</GroveText>}
+                            {f.diff ? <CodeBlock code={f.diff} /> : f.unavailable && <GroveText as="p" display="block" type="supporting" color="secondary">비교할 수 없음({f.unavailable})</GroveText>}
+                        </GroveStack>
                     ))}
-                </div>
+                </GroveStack>
             )}
         </Panel>
     );

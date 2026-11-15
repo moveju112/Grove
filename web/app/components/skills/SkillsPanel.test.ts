@@ -23,13 +23,18 @@ const props: SkillsPanelProps = {
 };
 const render = (changes: Partial<SkillsPanelProps> = {}) => renderToStaticMarkup(createElement(SkillsPanel, { ...props, ...changes }));
 
-type ElementProps = { children?: ReactNode; onClick?: () => void; disabled?: boolean; "aria-label"?: string };
+type ElementProps = {
+    children?: ReactNode; label?: ReactNode; startContent?: ReactNode; endContent?: ReactNode;
+    onClick?: () => void; disabled?: boolean; "aria-label"?: string;
+};
 function buttons(node: ReactNode): ElementProps[] {
     const found: ElementProps[] = [];
     Children.forEach(node, (child) => {
         if (!isValidElement<ElementProps>(child)) return;
         if (child.type === "button" || child.type === Button) found.push(child.props);
-        found.push(...buttons(child.props.children));
+        for (const content of [child.props.children, child.props.label, child.props.startContent, child.props.endContent]) {
+            found.push(...buttons(content));
+        }
     });
     return found;
 }

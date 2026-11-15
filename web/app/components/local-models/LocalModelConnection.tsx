@@ -1,3 +1,4 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { useState } from "react";
@@ -32,7 +33,7 @@ export function LocalModelConnection({ secrets, onCreate }: { secrets: SecretInf
     };
     return <DetailDialog data-testid="local-model-connection" label="로컬 HTTP 모델 연결" title="로컬 HTTP 모델 연결">
         <GroveText as="p" display="block" type="supporting" color="secondary">localhost는 Grove 서버가 실행되는 컴퓨터를 가리킵니다.</GroveText>
-        <form className="inline wrap" aria-label="로컬 HTTP 모델 연결" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+        <GroveStack as="form" gap={1.5} direction="horizontal" align="center" wrap="wrap" aria-label="로컬 HTTP 모델 연결" onSubmit={(event) => { event.preventDefault(); void save(); }}>
             <TextInput label="로컬 연결 이름" isLabelHidden placeholder="로컬 연결 이름" maxLength={80} isRequired isDisabled={locked}
                 value={draft.name} onChange={(value) => setDraft({ ...draft, name: value })} />
             <TextInput label="로컬 endpoint" isLabelHidden placeholder="http://127.0.0.1:8000/v1" isRequired isDisabled={locked}
@@ -46,7 +47,7 @@ export function LocalModelConnection({ secrets, onCreate }: { secrets: SecretInf
             <GroveButton type="submit" disabled={status === "saving" || !!serverBlocked} title={serverBlocked ?? undefined}>
                 {status === "saving" ? "저장 중…" : creation.pending ? "같은 연결 저장 요청 확인" : "로컬 연결 저장"}
             </GroveButton>
-        </form>
+        </GroveStack>
         {serverBlocked && <GroveText as="p" display="block" type="supporting" color="warning" role="status">{serverBlocked}</GroveText>}
         {status === "saved" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">로컬 프로필 저장됨</GroveText>}
         {status === "error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error} 입력은 보존했습니다.</GroveText>}

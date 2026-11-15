@@ -6,6 +6,25 @@ import { deliveryTiming } from "./deliveryTiming";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
+it("봇·연결·대화 변경을 다른 화면의 그룹·허용 연결에도 반영한다", async () => {
+    const keys = ["bots", "bot-connections:b", "bot-rooms", "bot-room:s"];
+    const fetchers = keys.map(() => vi.fn(async () => ({})));
+    const offs = keys.map((key, i) => subscribeQuery(key, fetchers[i]!, () => undefined));
+    try {
+        await settle();
+        applyEvent({ kind: "bot.changed", session_id: null, project_id: "p", payload: { id: "b" }, seq: 1, created_at: "2026-01-01T00:00:00Z" });
+        await settle();
+        for (const f of fetchers) expect(f).toHaveBeenCalledTimes(2);
+        applyEvent({ kind: "mcp.changed", session_id: null, project_id: null, payload: {}, seq: 2, created_at: "2026-01-01T00:00:00Z" });
+        await settle();
+        expect(fetchers[1]).toHaveBeenCalledTimes(3);
+        applyEvent({ kind: "session.updated", session_id: "s", project_id: "p", payload: {}, seq: 3, created_at: "2026-01-01T00:00:00Z" });
+        await settle();
+        expect(fetchers[2]).toHaveBeenCalledTimes(3);
+        expect(fetchers[3]).toHaveBeenCalledTimes(3);
+    } finally { offs.forEach((off) => off()); clearServerCache(); }
+});
+
 it("종료 이벤트의 화면 반영 측정은 재동기화·로그아웃 때 정리한다", () => {
     const off = deliveryTiming.watch("delivery");
     const event = (id: string, status: string) => applyEvent({

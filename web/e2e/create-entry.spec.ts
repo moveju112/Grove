@@ -16,7 +16,7 @@ async function showSidebar(page: Page) {
 async function startChat(page: Page, projectId: string) {
     await showSidebar(page);
     const project = page.locator(`[data-testid="sidebar-project"][data-project-id="${projectId}"]`);
-    await openDetails(project.locator(".sidebar-project-tools"));
+    await openDetails(project.getByTestId("sidebar-project-tools"));
     await project.getByRole("button", { name: "새 대화", exact: true }).click();
 }
 
@@ -33,6 +33,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             await entry.focus();
             await page.keyboard.press("Enter");
             const dialog = page.getByRole("dialog", { name: "만들기", exact: true });
+            await expect(dialog).toHaveAttribute("aria-modal", "true");
             await expect(dialog.getByRole("list", { name: "대화 프로젝트 선택" })).toBeVisible();
             await dialog.getByRole("button", { name: "취소", exact: true }).focus();
             await page.keyboard.press("Tab");
@@ -67,7 +68,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             });
             await entry.click();
             await dialog.getByRole("button", { name: a.name, exact: true }).click();
-            let project = page.locator(".project-view:visible");
+            let project = page.getByTestId("project-view").filter({ visible: true });
             await expect(project.getByLabel("메시지 입력")).toBeFocused();
             await project.getByLabel("메시지 입력").fill("보존할 입력");
             // 현재 맥락에서는 프로젝트 선택을 반복하지 않는다.
@@ -82,6 +83,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             await expect(project.getByLabel("메시지 입력")).toHaveValue("보존할 입력");
             await startChat(page, a.id);
             await expect(project.getByLabel("메시지 입력")).toHaveValue("보존할 입력");
+            await expect(project.getByLabel("메시지 입력")).toBeFocused();
             expect(created).toHaveLength(0);
 
             for (const [index, target] of [a, b, a].entries()) {
@@ -92,7 +94,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
                     await page.locator(`[data-testid="sidebar-project"][data-project-id="${target.id}"]`)
                         .getByTestId("project-row").getByRole("button").first().click();
                 }
-                project = page.locator(".project-view:visible");
+                project = page.getByTestId("project-view").filter({ visible: true });
                 const text = `생성 진입 ${viewport.width} ${index} ${Date.now()}`;
                 await composerOption(project, "보내기 방식", "save");
                 await project.getByLabel("메시지 입력").fill(text);
@@ -118,7 +120,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
                 else await route.fulfill({ response });
             });
             const text = `생성 응답 유실 ${viewport.width} ${Date.now()}`;
-            const project = page.locator(".project-view:visible");
+            const project = page.getByTestId("project-view").filter({ visible: true });
             await composerOption(project, "보내기 방식", "save");
             await project.getByLabel("메시지 입력").fill(text);
             await twice(project.getByRole("button", { name: "보내기", exact: true }));
@@ -162,7 +164,7 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             await expect(dialog).toBeVisible();
             await twice(retry);
             await expect(dialog).toHaveCount(0);
-            await expect(page.locator(".project-view:visible").getByLabel("메시지 입력")).toBeFocused();
+            await expect(page.getByTestId("project-view").filter({ visible: true }).getByLabel("메시지 입력")).toBeFocused();
             expect(keys).toHaveLength(2);
             expect(keys[1]).toBe(keys[0]);
             const projects = await apiCall<{ id: string; root_path: string }[]>("GET", "/projects");

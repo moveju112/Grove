@@ -15,7 +15,7 @@ async function openSession(page: Page, title: string) {
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "model");
     return view;
@@ -31,7 +31,9 @@ test("실행 중 대기열에 넣은 메시지는 끝난 뒤 새 요청으로 �
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("turn-status")).toBeVisible();
     // 실행 중: 방식 선택과 버튼 이름, 중지(취소) 버튼
-    await expect(view.getByLabel("실행 중 보내기 방식")).toHaveValue("queue");
+    await view.getByRole("button", { name: "초안·스킬", exact: true }).click();
+    await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toHaveAttribute("data-selected-value", "queue");
+    await view.page().keyboard.press("Escape");
     await expect(view.getByTestId("turn-status").getByRole("button", { name: "취소" })).toBeVisible();
     await box.fill("다음에 물어볼 것");
     await view.getByRole("button", { name: "대기열에 추가" }).click();
@@ -55,7 +57,7 @@ test("지금 반영(steer)은 도구 결과 뒤 다음 모델 호출에 한 번�
     await box.fill("목록 보고 정리해");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("turn-status")).toBeVisible();
-    await view.getByLabel("실행 중 보내기 방식").selectOption("steer");
+    await composerOption(view, "실행 중 보내기 방식", "steer");
     await box.fill("한국어 표로 정리해");
     await view.getByRole("button", { name: "지금 반영" }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "반영한 답" })).toHaveCount(1, { timeout: 15_000 });
@@ -80,7 +82,7 @@ test("중단하고 보내기는 지금 실행을 취소하고 새 메시지를 �
     await expect(view.getByTestId("turn-status")).toBeVisible();
     // 첫 요청이 모델에 닿은 뒤 끼어든다(대본은 도착 순서로 소비)
     await expect.poll(async () => (await requests()).length).toBe(before + 1);
-    await view.getByLabel("실행 중 보내기 방식").selectOption("interrupt");
+    await composerOption(view, "실행 중 보내기 방식", "interrupt");
     await box.fill("방향 바꿔");
     await view.getByRole("button", { name: "중단하고 보내기" }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "새 방향 답" })).toHaveCount(1, { timeout: 15_000 });

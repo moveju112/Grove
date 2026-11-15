@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, closeModelSettings, composerOption, composerSetting, ensureProfile, ensureProjects, login, script, selectChoice, state } from "./helpers";
 
 // UI-020: 추론 강도 선택(auto·낮음·중간·높음)과 /effort 명령. auto는 provider에 보내지 않는다.
 const requests = async () => (await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json()) as Record<string, unknown>[];
@@ -12,11 +12,12 @@ test("추론 강도를 고르면 모델 요청에 들어가고 auto는 보내지
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "model");
-    const sel = view.getByLabel("추론", { exact: true });
-    await expect(sel).toHaveValue("auto");
+    const sel = await composerSetting(view, "추론");
+    await expect(sel).toHaveAttribute("data-selected-value", "auto");
+    await closeModelSettings(view);
     const box = view.getByLabel("메시지 입력");
 
     let before = (await requests()).length;
@@ -26,7 +27,7 @@ test("추론 강도를 고르면 모델 요청에 들어가고 auto는 보내지
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "자동" })).toHaveCount(1, { timeout: 15_000 });
     expect((await requests()).slice(before)[0]).not.toHaveProperty("reasoning_effort");
 
-    await sel.selectOption("low");
+    await composerOption(view, "추론", "low");
     before = (await requests()).length;
     await script({ frames: frames.text(["낮게 답함"]) });
     await box.fill("낮은 강도");
@@ -37,7 +38,8 @@ test("추론 강도를 고르면 모델 요청에 들어가고 auto는 보내지
     // 명령으로도 바꾼다
     await box.fill("/effort high");
     await box.press("Control+Enter");
-    await expect(sel).toHaveValue("high");
+    await composerSetting(view, "추론");
+    await expect(sel).toHaveAttribute("data-selected-value", "high");
 });
 
 // WORKFLOW-006: 꺼진 워크플로를 고른 대화는 선택을 유지한 채 기본 워크플로로 요청하고 그 사실을 보여 준다.
@@ -53,11 +55,13 @@ test("꺼진 워크플로를 고른 대화는 선택이 남고, 이번 요청은
     await apiCall("PUT", `/definitions/workflow/${id}`, { expected_revision: d.revision, enabled: false });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    const wf = view.getByLabel("워크플로우");
-    await expect(wf).toHaveValue(id);
-    await expect(wf.locator("option:checked")).toContainText("꺼짐 · 다음 요청은 기본 워크플로우");
+    await view.getByRole("button", { name: "대화 작업", exact: true }).click();
+    const wf = view.getByRole("combobox", { name: "워크플로우", exact: true });
+    await expect(wf).toHaveAttribute("data-selected-value", id);
+    await expect(wf).toContainText("꺼짐 · 다음 요청은 기본 워크플로우");
+    await page.keyboard.press("Escape");
     await composerOption(view, "보내기 방식", "model");
     const before = (await requests()).length;
     await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
@@ -80,7 +84,7 @@ test("사용량 화면의 실행 용량에서 이 기기의 실행 중 요청을
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "model");
     await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
@@ -108,11 +112,12 @@ test("실행 중 강도를 바꾸면 이번 요청은 그대로이고 다음 요
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "model");
-    const sel = view.getByLabel("추론", { exact: true });
-    await sel.selectOption("low");
+    const sel = await composerSetting(view, "추론");
+    await selectChoice(sel, "low");
+    await closeModelSettings(view);
     const before = (await requests()).length;
     await script({ frames: frames.text(["진행"]).slice(0, 1), hang: true });
     await view.getByLabel("메시지 입력").fill("오래 걸리는 일");
@@ -125,7 +130,7 @@ test("실행 중 강도를 바꾸면 이번 요청은 그대로이고 다음 요
     await expect(info.getByTestId("effort-applied")).toHaveText("(실제 전송 reasoning_effort=low)");
     await expect(info).toContainText("fixture-model");
     await page.keyboard.press("Escape");
-    await sel.selectOption("high");
+    await composerOption(view, "추론", "high");
     await view.getByRole("button", { name: "실행 설정", exact: true }).click();
     await expect(info).toContainText("추론 low");
     await page.keyboard.press("Escape");

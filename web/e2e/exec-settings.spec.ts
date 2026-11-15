@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, login, script, state } from "./helpers";
+import { apiCall, ensureProfile, login, script, selectChoice, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Effective = { items: { key: string; effective: unknown; source: string; layers: Record<string, { value: unknown; revision: number }> }[] };
@@ -55,17 +55,17 @@ test("범위별 셸·한도·작업 위치 저장과 상속 복원은 기존 설
 test("미지원 격리·셸은 이유와 함께 비활성이고 기존 승인 계약을 안내한다", async ({ page }) => {
     const { panel } = await setup(page);
     const unsupported = panel.getByRole("group", { name: "프로세스 격리 수준 미지원 선택지", exact: true });
-    await expect(unsupported.getByRole("combobox")).toBeDisabled();
-    await expect(unsupported.getByRole("option", { name: /sandbox/ })).toHaveAttribute("value", "sandbox");
+    await expect(unsupported).toHaveAttribute("aria-disabled", "true");
+    await expect(unsupported.getByRole("listitem").filter({ hasText: "sandbox" })).toBeVisible();
     await expect(unsupported).toContainText("아직 구현되지 않았습니다");
-    await expect(unsupported.getByRole("option", { name: /none/ })).toHaveAttribute("value", "none");
-    await expect(panel.getByLabel("프로세스 격리 수준", { exact: true })).toHaveValue("process_tree");
+    await expect(unsupported.getByRole("listitem").filter({ hasText: "none" })).toBeVisible();
+    await expect(panel.getByRole("combobox", { name: "프로세스 격리 수준", exact: true })).toHaveAttribute("data-selected-value", "process_tree");
     const registry = await apiCall<{ key: string; unavailable_options?: { value: string; reason: string }[] }[]>("GET", "/settings/registry");
     for (const choice of registry.find((def) => def.key === "exec.shell")!.unavailable_options ?? []) {
         const group = panel.getByRole("group", { name: "명령 실행 셸 미지원 선택지", exact: true });
-        await expect(group.getByRole("combobox")).toBeDisabled();
-        const option = group.getByRole("option", { name: `${choice.value} · ${choice.reason}`, exact: true });
-        await expect(option).toHaveAccessibleName(`${choice.value} · ${choice.reason}`);
+        await expect(group).toHaveAttribute("aria-disabled", "true");
+        await expect(group.getByRole("listitem").filter({ hasText: `${choice.value} · ${choice.reason}` })).toBeVisible();
+        await expect(group.getByRole("combobox")).toHaveCount(0);
     }
     await expect(panel).toContainText("다음 실행 계획부터 적용");
     await expect(panel).toContainText("파일·네트워크 sandbox가 아닙니다");
@@ -77,7 +77,7 @@ test("화면에서 셸·한도를 바꿔도 승인 대상은 고정되고 다음
     const save = async (key: string, label: string, value: string, select = false) => {
         const row = panel.getByTestId(`setting-${key}`);
         const input = row.getByLabel(label, { exact: true });
-        if (select) await input.selectOption(value);
+        if (select) await selectChoice(input, value);
         else await input.fill(value);
         const saved = page.waitForResponse((response) => response.request().method() === "PUT" && response.url().endsWith(`/${key}`));
         await row.getByRole("button", { name: "저장", exact: true }).click();

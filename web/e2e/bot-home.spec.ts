@@ -19,14 +19,14 @@ test("두 봇을 나란히 열고 한쪽 탭을 닫아도 다른 칸의 봇 대�
     await openBots(page);
     const panel = page.getByTestId("bots-panel");
     const item = (h: Home) => panel.getByTestId("bot").filter({ hasText: h.name });
-    await item(one).locator(".bot-open").click();
+    await item(one).getByRole("button", { name: one.name, exact: false }).first().click();
     await openBots(page);
     await item(two).getByRole("button", { name: `${two.name} 관리`, exact: true }).click();
-    await item(two).getByRole("button", { name: "오른쪽에 열기" }).click();
+    await page.getByRole("group", { name: `${two.name} 관리`, exact: true }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const left = page.getByTestId("pane").nth(0);
     const right = page.getByTestId("pane").nth(1);
-    await left.locator(".tabbar .tab").filter({ hasText: one.name }).locator(".tab-title").click();
+    await left.getByRole("tab").filter({ hasText: one.name }).getByTestId("tab-title").click();
     await expect(left.locator(`[data-testid=session-view][data-session="${one.home_session_id}"]`)).toBeVisible();
     await expect(right.locator(`[data-testid=session-view][data-session="${two.home_session_id}"]`)).toBeVisible();
     // 왼쪽 봇에서 느린 답을 받는 중에 오른쪽 탭을 닫는다
@@ -35,7 +35,7 @@ test("두 봇을 나란히 열고 한쪽 탭을 닫아도 다른 칸의 봇 대�
     await left.getByLabel("메시지 입력").fill("천천히");
     await left.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(left.getByTestId("session-view")).toContainText("실행 중");
-    await right.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
+    await right.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
     await expect(page.locator(`[data-testid=session-view][data-session="${two.home_session_id}"]`)).toHaveCount(0);
     const leftView = page.locator(`[data-testid=session-view][data-session="${one.home_session_id}"]`);
     await expect(leftView).toBeVisible();

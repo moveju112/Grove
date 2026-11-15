@@ -1,3 +1,6 @@
+import { StatusBadge } from "../design/StatusBadge";
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { ApiError, api } from "../api/client";
@@ -59,17 +62,17 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
         }
         q.reload();
     };
-    if (!parent && runs.length === 0) return <Panel className="agent-runs" data-testid="agent-runs" title="맡긴 작업">
+    if (!parent && runs.length === 0) return <Panel data-testid="agent-runs" title="맡긴 작업">
         <GroveText as="p" display="block" type="supporting" color={q.error ? "error" : "secondary"} role={q.error ? "alert" : "status"}>
             {q.loading ? "불러오는 중…" : q.error ? "맡긴 작업을 읽지 못했습니다." : "맡긴 작업 없음"}
         </GroveText>
     </Panel>;
     return (
-        <div className="agent-runs" data-testid="agent-runs">
+        <GroveStack gap={0} data-testid="agent-runs">
             {parent && (
                 <GroveText as="p" display="block" type="supporting" color="inherit">
                     자식 작업({parent.agent_id}, {runLabel(parent).text}) · 결과는 부모 대화에 보고됩니다{" "}
-                    <GroveButton className="link" onClick={() => openSession(parent.parent_session_id, "부모 대화")}>부모 대화 열기</GroveButton>
+                    <GroveButton appearance="link" onClick={() => openSession(parent.parent_session_id, "부모 대화")}>부모 대화 열기</GroveButton>
                 </GroveText>
             )}
             {runs.length > 0 && (
@@ -78,18 +81,18 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
                         {runs.some((r) => r.status === "running") && <strong> · 진행 중 {runs.filter((r) => r.status === "running").length}</strong>}
                         {runs.some((r) => runLabel(r).needsUser) && <strong> · 확인 필요 {runs.filter((r) => runLabel(r).needsUser).length}</strong>}
                     </>}>
-                    <ul className="session-list">
+                    <GroveList density="compact" edge="flush" hasDividers>
                         {runs.map((r) => (
-                            <li key={r.id} data-testid="agent-run" data-status={r.status} data-turn-status={r.turn_status ?? ""}>
-                                <GroveText type="inherit" color="inherit" className="chip">{r.agent_id}</GroveText>
-                                <GroveText type="inherit" color="inherit" className={`status ${runLabel(r).needsUser ? "awaiting_approval" : r.status}`}>{runLabel(r).text}</GroveText>
-                                <GroveButton className="link" onClick={() => openSession(r.child_session_id, r.agent_id)}>자식 대화</GroveButton>
-                                {r.status === "running" && <ServerActionButton className="ghost small" onClick={() => void cancel(r.id)}>취소</ServerActionButton>}
-                            </li>
+                            <GroveListItem key={r.id} data-testid="agent-run" data-status={r.status} data-turn-status={r.turn_status ?? ""} label={<>
+                                <GroveText type="supporting" color="secondary">{r.agent_id}</GroveText>
+                                <StatusBadge status={runLabel(r).needsUser ? "awaiting_approval" : r.status}>{runLabel(r).text}</StatusBadge>
+                                <GroveButton appearance="link" onClick={() => openSession(r.child_session_id, r.agent_id)}>자식 대화</GroveButton>
+                                {r.status === "running" && <ServerActionButton variant="secondary" density="compact" onClick={() => void cancel(r.id)}>취소</ServerActionButton>}
+                            </>} />
                         ))}
-                    </ul>
+                    </GroveList>
                 </Panel>
             )}
-        </div>
+        </GroveStack>
     );
 }

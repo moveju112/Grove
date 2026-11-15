@@ -13,9 +13,9 @@ test("휴지통에서 지운 파일을 복원하고 확인 후 영구 삭제한�
     expect(existsSync(join(root, name))).toBe(false);
 
     await login(page);
-    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
-    const panel = page.locator(".project-view").filter({ has: page.locator("h1", { hasText: b.name }) }).getByTestId("trash-panel");
-    await openDetails(panel);
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
+    const panel = page.getByTestId("project-view").filter({ has: page.locator("h1", { hasText: b.name }) }).getByTestId("trash-panel");
+    await openDetails(panel, "휴지통");
     const row = panel.getByTestId("trash-row").filter({ hasText: name });
     await row.getByRole("button", { name: "복원" }).click();
     await expect(row).toHaveCount(0);
@@ -39,9 +39,9 @@ test("복원 응답을 잃어도 같은 요청 결과를 확인하고 다른 창
     writeFileSync(join(root, name), "응답 유실 원본");
     const deleted = await apiCall<{ trash: string }>("POST", `/projects/${b.id}/files/op`, { op: "delete", path: name, confirm: name });
     await login(page);
-    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
-    const panel = page.locator(".project-view").filter({ has: page.locator("h1", { hasText: b.name }) }).getByTestId("trash-panel");
-    await openDetails(panel);
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
+    const panel = page.getByTestId("project-view").filter({ has: page.locator("h1", { hasText: b.name }) }).getByTestId("trash-panel");
+    await openDetails(panel, "휴지통");
     const row = panel.getByTestId("trash-row").filter({ hasText: name });
     const keys: string[] = [];
     let lose = true;
@@ -71,9 +71,9 @@ test("복원 응답을 잃어도 같은 요청 결과를 확인하고 다른 창
     try {
         const other = await context.newPage();
         await login(other);
-        await other.locator(".sidebar .projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
-        const otherPanel = other.locator(".project-view").filter({ has: other.locator("h1", { hasText: b.name }) }).getByTestId("trash-panel");
-        await openDetails(otherPanel);
+        await other.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
+        const otherPanel = other.getByTestId("project-view").filter({ has: other.locator("h1", { hasText: b.name }) }).getByTestId("trash-panel");
+        await openDetails(otherPanel, "휴지통");
         await apiCall("POST", `/projects/${b.id}/files/op`, { op: "delete", path: name, confirm: name });
         const otherRow = otherPanel.getByTestId("trash-row").filter({ hasText: name });
         await expect(otherRow).toHaveCount(1);

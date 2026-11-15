@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, closeModelSettings, composerSetting, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, script, selectChoice, state } from "./helpers";
 
 type Effective = { items: { key: string; effective: unknown; layers: Record<string, { value: unknown; revision: number }> }[] };
 const defaultsKey = "model.default_profile";
@@ -50,7 +50,7 @@ test("프로젝트 기본값은 새 입력창에만 적용하고 기기 선택·
         await login(page);
         const projects = page.getByTestId("project-row");
         await projects.getByRole("button", { name: f.a.name, exact: true }).click();
-        await expect(page.getByLabel("모델 프로필", { exact: true })).toHaveValue(f.primary.id);
+        await expectComposerSetting(page, "모델 프로필", f.primary.id);
         await script({ marker: f.prefix, frames: frames.text(["default model fixture complete"]) });
         await page.getByLabel("메시지 입력").fill(f.prefix);
         await page.getByRole("button", { name: "보내기", exact: true }).click();
@@ -60,11 +60,11 @@ test("프로젝트 기본값은 새 입력창에만 적용하고 기기 선택·
         expect(requests.filter((request) => JSON.stringify(request.messages).includes(f.prefix)).map((request) => request.model)).toEqual(["fixture-default-a"]);
         expect(await page.evaluate(() => JSON.parse(localStorage.getItem("grove.composer.options")!).profileId)).toBe(f.secondary.id);
         await setting(f.a.id, defaultsKey, f.secondary.id);
-        await expect(view.getByLabel("모델 프로필", { exact: true })).toHaveValue(f.primary.id);
+        await expectComposerSetting(view, "모델 프로필", f.primary.id);
         await page.reload();
-        await expect(view.getByLabel("모델 프로필", { exact: true })).toHaveValue(f.primary.id);
+        await expectComposerSetting(view, "모델 프로필", f.primary.id);
         await projects.getByRole("button", { name: f.b.name, exact: true }).click();
-        await expect(page.getByLabel("모델 프로필", { exact: true })).toHaveValue(f.secondary.id);
+        await expectComposerSetting(page, "모델 프로필", f.secondary.id);
     } finally { await f.cleanup(); }
 });
 
@@ -75,20 +75,20 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
         const search = page.getByLabel("설정 검색");
         await search.fill("기본 모델 프로필");
         const row = page.getByTestId(`setting-${defaultsKey}`);
-        await row.getByLabel("기본 모델 프로필", { exact: true }).selectOption(f.primary.id);
+        await selectChoice(row.getByLabel("기본 모델 프로필", { exact: true }), f.primary.id);
         await expect(row).toContainText("전송 대상:");
         await row.getByRole("button", { name: "저장", exact: true }).click();
         await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
-        await row.getByLabel("기본 모델 프로필", { exact: true }).selectOption(f.secondary.id);
+        await selectChoice(row.getByLabel("기본 모델 프로필", { exact: true }), f.secondary.id);
         await setting(f.a.id, defaultsKey, f.primary.id);
         await row.getByRole("button", { name: "저장", exact: true }).click();
         await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("내 수정은 보존");
-        await expect(row.getByLabel("기본 모델 프로필", { exact: true })).toHaveValue(f.secondary.id);
+        await expectChoice(row.getByLabel("기본 모델 프로필", { exact: true }), f.secondary.id);
         await row.getByRole("button", { name: "내 수정으로 덮어쓰기", exact: true }).click();
         await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
         await search.fill("압축 요약 모델");
         const summary = page.getByTestId(`setting-${summaryKey}`);
-        await summary.getByLabel("압축 요약 모델", { exact: true }).selectOption(f.primary.id);
+        await selectChoice(summary.getByLabel("압축 요약 모델", { exact: true }), f.primary.id);
         await summary.getByRole("button", { name: "저장", exact: true }).click();
         await expect(summary.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
         const effective = await apiCall<Effective>("GET", `/settings/effective?project_id=${f.a.id}`);
@@ -122,7 +122,7 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
         await summary.getByRole("button", { name: "이 범위 값 지우기", exact: true }).click();
         await page.getByRole("dialog", { name: "기본값 복원 확인", exact: true }).getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
         await page.getByRole("dialog", { name: "기본값 복원 확인", exact: true }).getByRole("button", { name: "복원 창 닫기", exact: true }).click();
-        await expect(summary.getByLabel("압축 요약 모델", { exact: true })).toHaveValue("");
+        await expectChoice(summary.getByLabel("압축 요약 모델", { exact: true }), "");
     } finally { await f.cleanup(); }
 });
 
@@ -136,12 +136,12 @@ test("선택한 프로필이 삭제돼도 다른 공급자로 보내지 않고 �
         await login(page);
         await page.getByTestId("project-row").getByRole("button", { name: f.a.name, exact: true }).click();
         const area = page.getByLabel("메시지 입력");
-        await expect(page.getByLabel("모델 프로필", { exact: true })).toHaveValue(f.primary.id);
+        await expectComposerSetting(page, "모델 프로필", f.primary.id);
         await area.fill(`${f.prefix} never send implicitly`);
         await apiCall("DELETE", `/model-profiles/${f.primary.id}`);
         f.removed.add(f.primary.id);
         await expect(page.getByTestId("profile-missing")).toBeVisible();
-        await expect(page.getByLabel("모델 프로필", { exact: true })).toHaveValue(f.primary.id);
+        await expectComposerSetting(page, "모델 프로필", f.primary.id);
         await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
         await page.reload();
         await expect(page.getByTestId("profile-missing")).toBeVisible();
@@ -152,7 +152,8 @@ test("선택한 프로필이 삭제돼도 다른 공급자로 보내지 않고 �
         });
         await area.press("Control+Enter");
         expect(mutations).toEqual([]);
-        await page.getByLabel("모델 프로필", { exact: true }).selectOption(f.secondary.id);
+        await selectChoice(await composerSetting(page, "모델 프로필"), f.secondary.id);
+        await closeModelSettings(page);
         await expect(page.getByTestId("profile-missing")).toHaveCount(0);
         await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeEnabled();
     } finally { await f.cleanup(); }
@@ -172,7 +173,7 @@ test("기본값 조회 실패는 임의 모델로 보내지 않고 재확인 후
         await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
         await page.unrouteAll();
         await page.getByRole("button", { name: "모델 설정 다시 확인", exact: true }).click();
-        await expect(page.getByLabel("모델 프로필", { exact: true })).toHaveValue(f.primary.id);
+        await expectComposerSetting(page, "모델 프로필", f.primary.id);
         await expect(page.getByLabel("메시지 입력")).toHaveValue("keep while defaults unavailable");
         await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeEnabled();
     } finally { await page.unrouteAll(); await f.cleanup(); }

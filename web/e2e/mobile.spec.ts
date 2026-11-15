@@ -9,7 +9,7 @@ test("좁은 화면은 기기별 배치를 따로 쓰고 한 pane만 보여 준�
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
     await page.getByRole("button", { name: "사이드바" }).click();
-    await page.locator(".recent").getByRole("button", { name: /폰 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /폰 대화/ }).first().click();
     await expect(page.getByTestId("pane")).toHaveCount(1);
     await expect(page.getByTestId("session-view")).toHaveAttribute("data-session", s.id);
     await expect(page.getByRole("button", { name: "오른쪽으로 분할" })).toHaveCount(0);
@@ -22,7 +22,7 @@ test("모바일 터미널 보조 키로 Ctrl+C와 화살표를 보낼 수 있다
     await apiCall("POST", "/recent/touch", { kind: "terminal", project_id: a.id, resource_id: t.id, title: "폰 터미널" });
     await login(page);
     await page.getByRole("button", { name: "사이드바" }).click();
-    await page.locator(".recent").getByRole("button", { name: /폰 터미널/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /폰 터미널/ }).first().click();
     const view = page.getByTestId("terminal-view");
     await expect(view).toHaveAttribute("data-conn", "open");
     const keys = view.getByLabel("보조 키");
@@ -64,7 +64,7 @@ test("모바일 입력창은 Enter가 줄바꿈이고 보내기 버튼으로 보
     await page.evaluate(() => localStorage.setItem("grove.device.prefs", JSON.stringify({ enterToSend: true })));
     await page.reload();
     await page.getByRole("button", { name: "사이드바" }).click();
-    await page.locator(".recent").getByRole("button", { name: /폰 입력 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /폰 입력 대화/ }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "save");
     const box = view.getByLabel("메시지 입력");
@@ -93,7 +93,7 @@ test("모바일 주요 화면의 조작 요소는 터치 영역이 충분하고 
     await check("대화 목록");
     await page.getByRole("button", { name: "사이드바" }).click();
     await check("사이드바");
-    await page.locator(".recent").getByRole("button", { name: /폰 접근성 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /폰 접근성 대화/ }).first().click();
     await check("대화");
     expect(problems, problems.join("\n")).toEqual([]);
 });
@@ -104,10 +104,10 @@ test("모바일에서 첨부만 저장하고 원문을 미리본다", async ({ p
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
     await page.getByRole("button", { name: "사이드바" }).click();
-    await page.locator(".recent").getByRole("button", { name: /폰 첨부/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /폰 첨부/ }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "save");
-    await view.getByLabel("첨부파일 선택").setInputFiles({ name: "폰-원문.txt", mimeType: "text/plain", buffer: Buffer.from("모바일 첨부 원문") });
+    await view.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({ name: "폰-원문.txt", mimeType: "text/plain", buffer: Buffer.from("모바일 첨부 원문") });
     await expect(view.getByTestId("attachment-card")).toContainText("폰-원문.txt");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const sent = view.getByLabel("메시지 첨부파일");

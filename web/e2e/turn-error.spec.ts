@@ -12,7 +12,7 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     // 이 대화에만 아주 작은 token 예산 → 첫 응답에서 예산 초과로 실패
     await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_tokens`, { expected_revision: 0, value: 1 });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     // 응답 usage(입력 11·출력 3)를 함께 보내는 대본
     const f = frames.text(["예산을 넘는 답"]);
@@ -21,7 +21,7 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("길게 답해");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
-    const err = view.locator(".turn-status.err");
+    const err = view.getByTestId("turn-ended");
     await expect(err).toBeVisible({ timeout: 15_000 });
     await expect(err).toHaveAttribute("role", "alert");
     await expect(err).toContainText("마지막 요청이 실패했습니다");
@@ -37,7 +37,7 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await expect(cause.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계 · 최종 답변 없음 · 도구 호출 없음");
     await expect(err.getByTestId("end-scope")).toContainText("다음 조치:");
     await page.reload();
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     await expect(err.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계");
 
     // RUN-019: 예산을 풀고 '다시 실행'하면 같은 글로 새 요청을 보낸다
@@ -62,7 +62,7 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await view.getByTestId("turn-ended").getByRole("button", { name: "닫기(포기)" }).click();
     await expect(view.getByTestId("turn-ended")).toHaveCount(0);
     await page.reload();
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     await expect(page.getByTestId("session-view").getByTestId("msg-user").filter({ hasText: "또 길게" })).toHaveCount(1);
     await expect(page.getByTestId("session-view").getByTestId("turn-ended")).toHaveCount(0);
     await expect(page.getByTestId("session-view").getByTestId("msg-turn-ended")).toHaveCount(2);
@@ -77,7 +77,7 @@ test("끊긴 응답의 중단 증거는 다른 대화·reload 뒤에도 보존�
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     // 완료 신호 없이 연결이 끝나는 응답
     await script({ frames: [JSON.stringify({ choices: [{ delta: { content: "끊기기 전 문장" } }] })] });
@@ -89,7 +89,7 @@ test("끊긴 응답의 중단 증거는 다른 대화·reload 뒤에도 보존�
     const evidence = err.getByTestId("turn-evidence");
     await expect(evidence).toContainText("중단 전까지 받은 응답(확정되지 않음 · 8자");
     await openDetails(evidence);
-    await expect(evidence.locator(".evidence-text")).toHaveText("끊기기 전 문장");
+    await expect(evidence.locator("pre code")).toHaveText("끊기기 전 문장");
     await expect(view.getByTestId("msg-assistant")).toHaveCount(0);
 
     await page.keyboard.press("Escape");
@@ -99,8 +99,8 @@ test("끊긴 응답의 중단 증거는 다른 대화·reload 뒤에도 보존�
     // 다른 대화를 연 뒤 기존 최근 목록으로 돌아와도 경고와 원문을 잃지 않는다.
     const other = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `${title} 다른` });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: other.id });
-    await page.locator(".recent").getByRole("button", { name: new RegExp(`${title} 다른`) }).first().click();
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).filter({ hasNotText: `${title} 다른` }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${title} 다른`) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).filter({ hasNotText: `${title} 다른` }).first().click();
     await expect(page.getByTestId("session-view").getByTestId("turn-evidence")).toBeVisible();
     await page.reload();
     expect((await recovery()).items.some((item) => item.session_id === s.id)).toBe(true);

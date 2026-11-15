@@ -8,7 +8,7 @@ async function register(page: Page, form: Locator, id: string) {
     const dialog = page.getByRole("dialog", { name: "연결 비밀번호" });
     await dialog.getByLabel("비밀번호", { exact: true }).fill(password);
     await dialog.getByRole("button", { name: "연결 요청", exact: true }).click();
-    const verification = await form.locator(".pairing-code").innerText();
+    const verification = await form.getByTestId("pairing-code").innerText();
     const requests = async () => {
         const pairs = await apiCall<{ id: string; requests: { id: string; verification_code: string }[] }[]>("GET", "/pairings");
         return pairs.find((pair) => pair.id === id)?.requests ?? [];

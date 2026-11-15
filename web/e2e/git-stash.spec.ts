@@ -17,7 +17,7 @@ async function openGit(page: Page) {
     writeFileSync(join(root, "untracked.txt"), "keep\n");
     const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
     await login(page);
-    await page.locator(".sidebar .projects").getByRole("button", { name: project.name, exact: true }).click();
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: project.name, exact: true }).click();
     await openTool(page, "변경");
     const panel = page.getByTestId("git-panel");
     await expect(panel).toContainText("작업 트리 변경 (2)");
@@ -84,7 +84,7 @@ test("pop 확인 이후 stash 목록만 바뀌어도 실행을 거부한다", as
     await panel.getByRole("button", { name: "stash 저장", exact: true }).click();
     await expect(panel.getByRole("button", { name: "stash pop", exact: true })).toBeVisible();
     await panel.getByRole("button", { name: "stash pop", exact: true }).click();
-    await expect(page.getByRole("dialog")).toBeVisible();
+    await expect(page.getByRole("dialog", { name: "stash pop 확인", exact: true })).toBeVisible();
     writeFileSync(join(root, "a.txt"), "second stash\n");
     run("stash", "push", "-m", "second");
     await page.getByRole("dialog").getByRole("button", { name: "확인하고 stash pop", exact: true }).click();

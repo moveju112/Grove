@@ -19,7 +19,7 @@ mod execute;
 pub mod oauth;
 #[cfg(test)]
 mod redaction_tests;
-pub use execute::{catalog, plan_call, validate_call, execute_call, invalidate_catalog};
+pub use execute::{catalog, catalog_for, plan_call, validate_call, execute_call, invalidate_catalog};
 
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(tag = "transport", rename_all = "snake_case", deny_unknown_fields)]

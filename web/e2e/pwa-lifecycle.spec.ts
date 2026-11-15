@@ -9,7 +9,7 @@ async function openDraft(page: Page, name: string) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "save");
     await view.getByLabel("메시지 입력").fill(`초안 ${name}`);
@@ -37,9 +37,9 @@ test("오프라인에서 입력과 로컬 초안은 유지하고 버튼·단축�
         await expect(view.getByRole("button", { name: "제목 생성", exact: true })).toBeDisabled();
         await expect(view.getByRole("button", { name: "제목 생성", exact: true })).toHaveAttribute("title", /오프라인/);
         await expect(view.getByRole("button", { name: "분기", exact: true })).toBeDisabled();
-        await expect(view.getByLabel("워크플로우")).toBeDisabled();
+        await expect(view.getByRole("combobox", { name: "워크플로우", exact: true })).toBeDisabled();
         await page.keyboard.press("Escape");
-        await openDetails(view.getByTestId("tasks-panel"));
+        await openDetails(view.getByTestId("tasks-panel"), "작업");
         await view.getByLabel("백그라운드 명령").fill("fixture command must not execute");
         await expect(view.getByTestId("tasks-panel").getByRole("button", { name: "실행", exact: true })).toBeDisabled();
         await view.getByLabel("메시지 입력").press("Control+Enter");

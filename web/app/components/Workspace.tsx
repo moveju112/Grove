@@ -1,3 +1,11 @@
+import { HintText } from "../design/HintText";
+import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
+import { LayoutPanel, LayoutHeader } from "@astryxdesign/core/Layout";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
+import { ScrollableArea } from "@astryxdesign/core/ScrollableArea";
+import { Banner } from "@astryxdesign/core/Banner";
+import { Center } from "@astryxdesign/core/Center";
+import { workspaceStyles } from "./workspace.stylex";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading } from "@astryxdesign/core/Heading";
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ContextType, type SetStateAction } from "react";
@@ -25,7 +33,8 @@ import { CreationEntry, CreationFocus } from "./create/CreationEntry";
 import { currentProjectId, projectTarget } from "./create/creation";
 import { NavigationContext } from "./navigation/NavigationContext";
 import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
-import { Stack } from "@astryxdesign/core/Stack";
+import { Stack, StackItem } from "@astryxdesign/core/Stack";
+import { Select } from "../design/Select";
 import { Button } from "../design/Button";
 import { MobileDrawer, useMobilePanels } from "./MobilePanels";
 
@@ -176,6 +185,12 @@ export function Workspace() {
 
     const serverBlocked = useServerBlockReason();
     const [adding, setAdding] = useState<{ step: "choose"; projectId?: string } | { step: "project" } | null>(null);
+    const creationTrigger = useRef<HTMLButtonElement | null>(null);
+    const closeCreation = () => {
+        setAdding(null);
+        // 선택 창에서 프로젝트 추가 창으로 교체되어도 최초 진입 버튼으로 돌아간다.
+        requestAnimationFrame(() => creationTrigger.current?.focus({ preventScroll: true }));
+    };
     const [creationFocus, setCreationFocus] = useState<ContextType<typeof CreationFocus>>(null);
     const startProject = (p: Project) => {
         if (!layout || !p.available) return;
@@ -201,17 +216,17 @@ export function Workspace() {
     // 넓은 화면에서 사이드바가 열려 있으면 만들기는 사이드바 맨 위 메뉴에, 아니면 상단 바에 하나만 둔다.
     const createInSidebar = sidebar && !narrow;
     const create = (inSidebar: boolean) => (
-        <Button className={inSidebar ? "ghost side-item" : "ghost icon-btn"} aria-haspopup="dialog" disabled={!layout}
+        <Button variant="secondary" appearance={inSidebar ? "navigation" : "icon"} aria-haspopup="dialog" disabled={!layout}
             title={serverBlocked ?? "새 대화·프로젝트 만들기"}
-            onClick={() => setAdding({ step: "choose", projectId: currentProjectId(layout) })}>
-            <Icon name="edit" /><GroveText type="inherit" color="inherit" className={inSidebar ? "side-label" : "sr-only"}>만들기</GroveText>
+            onClick={(event) => { creationTrigger.current = event.currentTarget; setAdding({ step: "choose", projectId: currentProjectId(layout) }); }}>
+            <Icon name="edit" />{inSidebar ? <GroveText type="inherit" color="inherit">만들기</GroveText> : <VisuallyHidden>만들기</VisuallyHidden>}
         </Button>
     );
     const brand = (
-        <GroveText type="inherit" color="inherit" className="brand-row">
-            <GroveText type="inherit" color="inherit" className="brand" aria-hidden="true"><Icon name="sprout" size={20} /></GroveText>
-            <strong className="wordmark">Grove</strong>
-        </GroveText>
+        <Stack as="span" direction="horizontal" align="center" gap={1}>
+            <GroveText type="inherit" color="brand" aria-hidden="true"><Icon name="sprout" size={20} /></GroveText>
+            {!narrow && <GroveText weight="semibold">Grove</GroveText>}
+        </Stack>
     );
     const selectedProjectId = currentProjectId(layout);
     const selectedProject = projects.data?.find((p) => p.id === selectedProjectId);
@@ -219,59 +234,60 @@ export function Workspace() {
 
     return (
         <CreationFocus.Provider value={creationFocus}>
-        <Stack direction="horizontal" className={`ws ${narrow ? "narrow" : ""} ${sidebar ? "with-sidebar" : ""}`}>
+        <Stack direction="horizontal" gap={0} height="100%" data-testid="workspace" data-viewport-mode={narrow ? "narrow" : "wide"}>
             <MobileDrawer enabled={narrow} side="left" open={mobile.panel === "left"} drag={mobile.drag}
                 label="탐색 메뉴" onClose={() => mobile.setPanel(null)}>
             {(sidebar || narrow) && (
-                <aside className="sidebar" aria-label="탐색">
-                    {!narrow && <div className="side-head">{brand}</div>}
-                    <div className="side-nav">
+                <LayoutPanel width={narrow ? "100%" : 280} hasDivider={!narrow} padding={0} isScrollable={false}
+                    role="complementary" label="탐색" data-testid="sidebar" xstyle={workspaceStyles.navigation}>
+                    <Stack gap={0} height="100%">
+                    {!narrow && <Stack direction="horizontal" align="center" gap={0} minHeight={40} paddingInline={4}>{brand}</Stack>}
+                    <Stack gap={0} padding={2} data-testid="sidebar-navigation">
                         {createInSidebar && create(true)}
                         <SearchPanel open={open} />
-                        {narrow && <Button className="ghost side-item" onClick={() => open({ kind: "settings", title: "설정" })}>
+                        {narrow && <Button variant="secondary" appearance="navigation" onClick={() => open({ kind: "settings", title: "설정" })}>
                             <Icon name="settings" /><GroveText type="inherit" color="inherit">설정</GroveText>
                         </Button>}
-                    </div>
-                    <div className="side-scroll">
-                        <section className="projects">
-                            <div className="side-section-head">
-                                <Heading level={2} color="inherit">프로젝트</Heading>
-                                <ActionMenu className="project-options" label="프로젝트 목록 옵션"
-                                    trigger={<>⋯{labelFilter.length > 0 && <span className="dot" aria-label="라벨 필터 적용 중" />}</>}>
-                                    <div className="project-options-body">
-                                <select
-                                    className="small"
-                                    aria-label="프로젝트 정렬"
+                    </Stack>
+                    <StackItem size="fill">
+                    <ScrollableArea axis="block" label="프로젝트·최근 목록" height="100%" data-testid="sidebar-scroll">
+                    <Stack gap={1} paddingInline={2}>
+                        <Stack as="section" gap={0} data-testid="projects">
+                            <Stack direction="horizontal" align="center" justify="between" gap={0} minHeight={28} paddingInlineStart={2}>
+                                <Heading level={2} type="navigation" color="secondary">프로젝트</Heading>
+                                <ActionMenu label="프로젝트 목록 옵션"
+                                    trigger={<>⋯{labelFilter.length > 0 && <StatusDot variant="accent" label="라벨 필터 적용 중" />}</>}>
+                                    <Stack gap={1}>
+                                <Select
+                                    label="프로젝트 정렬" hideLabel
                                     value={projectSort}
-                                    onChange={(e) => {
-                                        const v = e.target.value === "recent" ? "recent" : "name";
+                                    onChange={(value) => {
+                                        const v = value === "recent" ? "recent" : "name";
                                         localStorage.setItem(PROJECT_SORT, v);
                                         setProjectSort(v);
                                     }}
-                                >
-                                    <option value="name">이름순</option>
-                                    <option value="recent">최근 활동순</option>
-                                </select>
-                                <Button type="button" className="ghost small" aria-expanded={filtering} aria-label="라벨 필터"
+                                    options={[{ value: "name", label: "이름순" }, { value: "recent", label: "최근 활동순" }]}
+                                />
+                                <Button type="button" variant="secondary" density="compact" aria-expanded={filtering} aria-label="라벨 필터"
                                     onClick={() => setFiltering((f) => !f)}>
                                     라벨{labelFilter.length > 0 ? ` (${labelFilter.length})` : ""}
                                 </Button>
-                                <Button type="button" className="ghost small" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</Button>
-                                    </div>
+                                <Button type="button" variant="secondary" density="compact" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</Button>
+                                    </Stack>
                                 </ActionMenu>
-                            </div>
+                            </Stack>
                             {filtering && <LabelFilter labels={labels} selected={labelFilter} onChange={setLabelFilter} />}
                             {showArchived && <ArchivedProjects />}
                             {shown.map((p) => (
                                 <SidebarProject key={p.id} project={p} open={open} narrow={narrow} onCreate={() => startProject(p)}>
-                                <Stack direction="horizontal" align="center" className="row" data-testid="project-row" data-project={p.name}>
-                                    <Button className="link" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name })} title={p.root_path}>
-                                        {p.pinned_at && <span aria-label="고정됨" title="고정됨">📌</span>}
-                                        {p.icon && <GroveText type="inherit" color="inherit" className="project-icon" aria-hidden>{p.icon}</GroveText>} {p.name} {!p.available && <em className="warn">(경로 없음)</em>}
+                                <Stack direction="horizontal" align="center" gap={0} minHeight={32} data-testid="project-row" data-project={p.name}>
+                                    <Button appearance="navigation" onClick={() => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name })} title={p.root_path}>
+                                        {p.pinned_at && <HintText aria-label="고정됨" hint="고정됨">📌</HintText>}
+                                        {p.icon && <GroveText type="inherit" color="inherit" aria-hidden>{p.icon}</GroveText>} <GroveText type="inherit" color="inherit" maxLines={1}>{p.name}</GroveText> {!p.available && <GroveText type="supporting" color="warning">(경로 없음)</GroveText>}
                                         <LabelChips project={p} labels={labels} />
                                     </Button>
-                                    <Button type="button" className="ghost small" aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} aria-expanded={menuFor === p.id}
-                                        onClick={() => setMenuFor((m) => (m === p.id ? null : p.id))}>⋯</Button>
+                                    <StackItem size="static"><Button type="button" variant="secondary" appearance="icon" width={32} aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} aria-expanded={menuFor === p.id}
+                                        onClick={() => setMenuFor((m) => (m === p.id ? null : p.id))}>⋯</Button></StackItem>
                                     {menuFor === p.id && <ProjectMenu project={p} labels={labels} onClose={() => setMenuFor(null)}
                                         onSplit={narrow ? undefined : (how) => open({ kind: "project", project_id: p.id, resource_id: p.id, title: p.name }, how)} />}
                                 </Stack>
@@ -279,19 +295,23 @@ export function Workspace() {
                             ))}
                             {!!projects.data?.length && shown.length === 0 && (
                                 <GroveText as="p" display="block" type="inherit" color="secondary" role="status">
-                                    라벨 조건에 맞는 프로젝트가 없습니다. <Button type="button" className="ghost small" onClick={() => setLabelFilter([])}>필터 해제</Button>
+                                    라벨 조건에 맞는 프로젝트가 없습니다. <Button type="button" variant="secondary" density="compact" onClick={() => setLabelFilter([])}>필터 해제</Button>
                                 </GroveText>
                             )}
-                        </section>
+                        </Stack>
                         <RecentPanel open={open} linked={splitSessions} />
-                    </div>
+                    </Stack>
+                    </ScrollableArea>
+                    </StackItem>
                     <SidebarUsage />
-                </aside>
+                    </Stack>
+                </LayoutPanel>
             )}
             </MobileDrawer>
-            <Stack className="ws-main">
-            <header className="topbar">
-                <Button className="ghost icon-btn" aria-label="사이드바" title="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
+            <StackItem size="fill"><Stack gap={0} height="100%" xstyle={workspaceStyles.main}>
+            <LayoutHeader height={40} padding={0} hasDivider role="banner">
+            <Stack direction="horizontal" align="center" height="100%" gap={narrow ? 1 : 2} paddingInline={narrow ? 2 : 4}>
+                <Button variant="secondary" appearance="icon" aria-label="사이드바" title="사이드바" aria-expanded={sidebar} onClick={() => setSidebar((s) => !s)}>
                     <Icon name="sidebar" />
                 </Button>
                 {!createInSidebar && brand}
@@ -300,54 +320,55 @@ export function Workspace() {
                 <NavigationContext layout={layout} projects={projects.data ?? NO_PROJECTS} host={window.location.origin}
                     open={open} onBrowseProjects={() => setSidebar(true)} sidebarOpen={sidebar} />
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
-                {narrow ? <Button className="ghost icon-btn" aria-label="열린 세션" title="열린 세션"
+                {narrow ? <Button variant="secondary" appearance="icon" aria-label="열린 세션" title="열린 세션"
                     aria-expanded={mobile.panel === "right"} onClick={() => mobile.setPanel("right")}>
                     <Icon name="panel" />
-                </Button> : <Button className="ghost icon-btn" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
-                    <Icon name="settings" /><GroveText type="inherit" color="inherit" className="sr-only">설정</GroveText>
+                </Button> : <Button variant="secondary" appearance="icon" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
+                    <Icon name="settings" /><VisuallyHidden>설정</VisuallyHidden>
                 </Button>}
-            </header>
+            </Stack>
+            </LayoutHeader>
             {adding?.step === "choose" && <CreationEntry projects={projects.data ?? NO_PROJECTS} currentId={adding.projectId}
                 blockedReason={serverBlocked}
                 loading={projects.loading} error={Boolean(projects.error)} onReload={projects.reload}
-                onSelect={startProject} onAddProject={() => setAdding({ step: "project" })} onClose={() => setAdding(null)} />}
-            {adding?.step === "project" && <AddProjectDialog blockedReason={serverBlocked} beforeMutation={requireServerAction} onDone={projectAdded} onClose={() => setAdding(null)} />}
+                onSelect={startProject} onAddProject={() => setAdding({ step: "project" })} onClose={closeCreation} />}
+            {adding?.step === "project" && <AddProjectDialog blockedReason={serverBlocked} beforeMutation={requireServerAction} onDone={projectAdded} onClose={closeCreation} />}
             {notice && (
-                <div className="notice" role="status">
-                    {notice} <ServerActionButton className="ghost" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</ServerActionButton>
-                    <Button className="ghost" onClick={() => setNotice(null)}>닫기</Button>
-                </div>
+                <Banner status="warning" role="status" title={notice} endContent={<Stack direction="horizontal" gap={2}>
+                    <ServerActionButton variant="secondary" onClick={() => { setNotice(null); for (const store of persistence.current.values()) void store.flush(); }}>배치 다시 저장</ServerActionButton>
+                    <Button variant="secondary" onClick={() => setNotice(null)}>닫기</Button>
+                </Stack>} />
             )}
-            <div className="body">
-                <main className="main">
+            <StackItem size="fill">
+                <Stack as="main" direction="horizontal" gap={0} height="100%">
                     {Object.entries(layouts).map(([id, saved]) => (
                         <SavedLayout key={id} id={id} layout={saved} onUpdate={updateAt} onOpen={openAt}
                             visible={id === key} projects={projects.data ?? NO_PROJECTS} />
                     ))}
-                    {!layout && <div className="boot">배치 불러오는 중…</div>}
-                </main>
-            </div>
-            </Stack>
+                    {!layout && <Center padding={8}><GroveText type="supporting" color="secondary">배치 불러오는 중…</GroveText></Center>}
+                </Stack>
+            </StackItem>
+            </Stack></StackItem>
             <MobileDrawer enabled={narrow} side="right" open={mobile.panel === "right"} drag={mobile.drag}
                 label="열린 세션" onClose={() => mobile.setPanel(null)}>
-                {narrow && <nav className="mobile-open-tabs" aria-label="현재 프로젝트 열린 탭">
-                    {selectedProject && <Heading level={2} color="inherit">{selectedProject.name}</Heading>}
+                {narrow && <Stack as="nav" gap={1} padding={2} aria-label="현재 프로젝트 열린 탭">
+                    {selectedProject && <Heading level={2} type="navigation">{selectedProject.name}</Heading>}
                     {(["session", "other"] as const).map((kind) => {
                         const tabs = mobileTabs.filter((tab) => kind === "session" ? tab.kind === "session" : tab.kind !== "session");
                         return tabs.length > 0 && <section key={kind} aria-label={kind === "session" ? "대화" : "다른 화면"}>
-                            {kind === "other" && <Heading level={3} color="inherit">다른 화면</Heading>}
-                            {tabs.map((tab) => <div key={tab.id} className="mobile-open-tab" data-testid="mobile-open-tab">
-                                <Button type="button" className="link" aria-current={layout && L.focusedLeaf(layout).active_tab === tab.id ? "page" : undefined}
+                            {kind === "other" && <Heading level={3} type="navigation">다른 화면</Heading>}
+                            {tabs.map((tab) => <Stack direction="horizontal" align="center" gap={0} key={tab.id} data-testid="mobile-open-tab">
+                                <Button type="button" appearance="navigation" aria-current={layout && L.focusedLeaf(layout).active_tab === tab.id ? "page" : undefined}
                                     onClick={() => { updateAt(key, (current) => L.activate(current, tab.id)); mobile.setPanel(null); }}>
                                     {tab.title}
                                 </Button>
-                                <Button type="button" className="ghost icon-btn" aria-label={`${tab.title} 탭 닫기`}
+                                <Button type="button" variant="secondary" appearance="icon" aria-label={`${tab.title} 탭 닫기`}
                                     title="화면만 닫습니다. 실행과 초안은 유지됩니다."
                                     onClick={() => updateAt(key, (current) => L.closeTab(current, tab.id))}>×</Button>
-                            </div>)}
+                            </Stack>)}
                         </section>;
                     })}
-                </nav>}
+                </Stack>}
             </MobileDrawer>
         </Stack>
         </CreationFocus.Provider>
@@ -386,14 +407,14 @@ function ConnStatus({ status, retryAt, onRetry }: { status: string; retryAt?: nu
                     ? "오프라인 · 네트워크 없음"
                     : `서버 연결 끊김 · ${left}초 후 재시도`;
     return (
-        <span className={`conn ${status}`} title={`서버 연결 상태: ${label}`} data-testid="conn" role="status">
-            <span className="conn-dot" aria-hidden="true" />
-            <GroveText type="inherit" color="inherit" className="sr-only">{label}</GroveText>
+        <HintText color={status === "offline" || status === "auth_expired" ? "error" : status === "live" ? "secondary" : "warning"} hint={`서버 연결 상태: ${label}`} data-testid="conn" role="status">
+            <StatusDot variant={status === "offline" || status === "auth_expired" ? "error" : status === "live" ? "success" : "warning"} label={label} />
+            <VisuallyHidden>{label}</VisuallyHidden>
             {status === "offline" && (
-                <Button className="ghost small" onClick={onRetry}>
+                <Button variant="secondary" density="compact" onClick={onRetry}>
                     지금 재연결
                 </Button>
             )}
-        </span>
+        </HintText>
     );
 }

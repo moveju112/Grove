@@ -66,6 +66,18 @@ describe("파일 변경 공유 구독", () => {
         expect(a.error).not.toHaveBeenCalled();
         expect(vi.getTimerCount()).toBe(0);
     });
+    it("저장 뒤 재조회가 요청되면 저장 전 진행 중이던 응답은 전달하지 않는다", async () => {
+        let release!: (value: FileContent) => void;
+        const saved = { ...content, sha256: "saved-hash", text: "saved" };
+        vi.mocked(api.get).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }))
+            .mockResolvedValueOnce(saved);
+        const listener = listen();
+        refreshFiles("project");
+        release(content);
+        await vi.advanceTimersByTimeAsync(0);
+        expect(listener.value).toHaveBeenCalledTimes(1);
+        expect(listener.value).toHaveBeenCalledWith(saved);
+    });
     it("이전 구독 해제를 반복해도 같은 파일의 새 구독을 지우지 않는다", async () => {
         const old = listen();
         old.stop();

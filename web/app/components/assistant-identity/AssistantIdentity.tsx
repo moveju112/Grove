@@ -1,8 +1,11 @@
 import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Center } from "@astryxdesign/core/Center";
 import { useState } from "react";
 import { Icon } from "../icons";
 import { safeAssistantImageUrl } from "./imagePolicy";
-import styles from "./AssistantIdentity.module.css";
+import * as stylex from "@stylexjs/stylex";
+import { identityStyles as styles } from "./identity.stylex";
 
 export type AssistantIdentityProps = {
     name: string;
@@ -14,28 +17,29 @@ export type AssistantIdentityProps = {
 };
 
 function DefaultIcon() {
-    return <Icon name="assistant" size="75%" className={styles.icon} data-testid="assistant-default-icon" />;
+    return <Icon name="assistant" size="75%" data-testid="assistant-default-icon" />;
 }
 
-function Avatar({ src }: { src: string | null }) {
+function Avatar({ src, size }: { src: string | null; size: "sm" | "md" | "lg" }) {
     const [state, setState] = useState<"loading" | "ready" | "failed">("loading");
     const ready = src !== null && state === "ready";
-    return <GroveText type="inherit" color="inherit" className={styles.avatar} aria-hidden="true" data-image-state={src ? state : "fallback"}>
+    const dimension = size === "sm" ? "1.25rem" : size === "lg" ? "2.5rem" : "1.75rem";
+    return <Center isInline width={dimension} height={dimension} xstyle={styles.avatar} aria-hidden="true" data-image-state={src ? state : "fallback"}>
         {!ready && <DefaultIcon />}
         {src && state !== "failed" && <img
-            className={`${styles.image}${ready ? "" : ` ${styles.pending}`}`}
+            {...stylex.props(styles.image)} hidden={!ready}
             src={src} alt="" aria-hidden="true" draggable={false} referrerPolicy="no-referrer"
             onLoad={() => setState("ready")} onError={() => setState("failed")}
         />}
-    </GroveText>;
+    </Center>;
 }
 
 /** API 호출·설정 저장 없이 전달받은 identity만 표시한다. */
 export function AssistantIdentity({ name, imageUrl, size = "md", purpose = "label" }: AssistantIdentityProps) {
     const displayName = name.trim() || "어시스턴트";
     const src = safeAssistantImageUrl(imageUrl, typeof window === "undefined" ? "" : window.location.origin);
-    return <GroveText type="inherit" color="inherit"
-        className={styles.identity}
+    return <Stack as="span" direction="horizontal" align="center" gap={2} maxWidth="100%"
+        xstyle={styles.identity}
         data-size={size}
         data-purpose={purpose}
         data-testid="assistant-identity"
@@ -44,7 +48,7 @@ export function AssistantIdentity({ name, imageUrl, size = "md", purpose = "labe
         aria-hidden={purpose === "decorative" ? true : undefined}
     >
         {/* URL 교체 때만 상태를 초기화한다. 실패한 URL은 rerender로 재시도하지 않는다. */}
-        <Avatar key={src ?? "default"} src={src} />
-        {purpose === "label" && <GroveText type="inherit" color="inherit" className={styles.name} dir="auto" data-testid="assistant-name">{displayName}</GroveText>}
-    </GroveText>;
+        <Avatar key={src ?? "default"} src={src} size={size} />
+        {purpose === "label" && <GroveText type="inherit" color="inherit" xstyle={styles.name} dir="auto" data-testid="assistant-name">{displayName}</GroveText>}
+    </Stack>;
 }

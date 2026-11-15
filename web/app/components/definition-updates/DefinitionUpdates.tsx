@@ -1,3 +1,4 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
 import { Button as GroveButton } from "../../design/Button";
@@ -8,7 +9,7 @@ import { FIELDS, LABELS, loadAttempt, recoveryKey, restoreBody, type Attempt, ty
 import { ServerActionButton } from "../pwa/ServerActionButton";
 import { BooleanSelect } from "../BooleanSelect";
 import { HelpTip, SentenceText } from "../HelpTip";
-import "./definition-updates.css";
+import { ScrollableArea } from "@astryxdesign/core/ScrollableArea";
 
 type Review =
     | { kind: "closed" | "loading" }
@@ -84,14 +85,14 @@ export function DefinitionUpdates({ definition, draft, disabled, onLocked, onApp
     const snapshot = review.kind === "ready" ? review.definition : "attempt" in review ? review.attempt.definition : null;
     const selected = review.kind === "ready" ? review.fields : "attempt" in review ? review.attempt.fields : [];
     return <section aria-label="정의 기본값 비교">
-        <GroveButton className="ghost" disabled={disabled || locked || review.kind === "loading"} onClick={() => void compare()}>현재 번들 기본값과 비교</GroveButton>
+        <GroveButton variant="secondary" disabled={disabled || locked || review.kind === "loading"} onClick={() => void compare()}>현재 번들 기본값과 비교</GroveButton>
         {review.kind !== "closed" && <>
-            <GroveText as="p" display="block" type="inherit" color="inherit" className="inline">선택한 필드만 복원해. <HelpTip label="정의 복원 도움말">
+            <GroveStack as="p" direction="horizontal" align="center" gap={1.5}>선택한 필드만 복원해. <HelpTip label="정의 복원 도움말">
                 <SentenceText text="선택한 필드의 override만 지워 현재 번들 기본값을 사용해. 선택하지 않은 값·활성 상태·미저장 초안은 유지돼." />
-            </HelpTip></GroveText>
+            </HelpTip></GroveStack>
             {snapshot && <>
                 <GroveText as="p" display="block" type="inherit" color="inherit">비교 revision {snapshot.revision} · {snapshot.enabled ? "활성" : "비활성"} · 원문 SHA-256 <code>{snapshot.baseline_sha256}</code></GroveText>
-                <div className="definition-updates-table"><Table density="compact">
+                <ScrollableArea axis="inline" label="정의 기본값 비교 표" maxWidth="100%"><Table density="compact">
                     <TableHeader><TableRow isHeaderRow><TableHeaderCell scope="col">선택</TableHeaderCell><TableHeaderCell scope="col">필드</TableHeaderCell><TableHeaderCell scope="col">현재 적용값</TableHeaderCell><TableHeaderCell scope="col">현재 번들 기본값</TableHeaderCell></TableRow></TableHeader>
                     <TableBody>{FIELDS.map((field) => <TableRow key={field} data-testid={`definition-compare-${field}`}>
                         <TableCell><BooleanSelect label={`${LABELS[field]} 기본값 적용`} hideLabel value={selected.includes(field)}
@@ -105,9 +106,9 @@ export function DefinitionUpdates({ definition, draft, disabled, onLocked, onApp
                         <TableCell><pre aria-label={`${LABELS[field]} 현재 적용값`}>{snapshot[field]}</pre></TableCell>
                         <TableCell><pre aria-label={`${LABELS[field]} 현재 번들 기본값`}>{snapshot[`baseline_${field}`]}</pre></TableCell>
                     </TableRow>)}</TableBody>
-                </Table></div>
+                </Table></ScrollableArea>
             </>}
-            {draft !== undefined && <div><GroveText as="p" display="block" type="inherit" color="warning">미저장 본문은 복원 후에도 초안으로 남고 자동 저장되지 않아.</GroveText><pre aria-label="보존할 미저장 초안">{draft}</pre></div>}
+            {draft !== undefined && <GroveStack gap={0}><GroveText as="p" display="block" type="inherit" color="warning">미저장 본문은 복원 후에도 초안으로 남고 자동 저장되지 않아.</GroveText><pre aria-label="보존할 미저장 초안">{draft}</pre></GroveStack>}
             {review.kind === "ready" && <ServerActionButton disabled={disabled || !review.fields.length} onClick={() => void restore({
                 key: newKey(), definition: review.definition, fields: review.fields,
             })}>선택한 필드만 기본값 적용</ServerActionButton>}
@@ -124,7 +125,7 @@ export function DefinitionUpdates({ definition, draft, disabled, onLocked, onApp
                 <ServerActionButton disabled={disabled} onClick={() => void restore(review.attempt)}>원래 복원 요청 결과 확인</ServerActionButton>
             </>}
             {review.kind === "saved" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">선택한 기본값 적용됨 · 미저장 초안은 유지했어.</GroveText>}
-            {!locked && <GroveButton className="ghost" disabled={review.kind === "loading"} onClick={() => setReview({ kind: "closed" })}>비교 취소</GroveButton>}
+            {!locked && <GroveButton variant="secondary" disabled={review.kind === "loading"} onClick={() => setReview({ kind: "closed" })}>비교 취소</GroveButton>}
         </>}
     </section>;
 }

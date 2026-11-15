@@ -1,3 +1,5 @@
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
+import { Code } from "@astryxdesign/core/Code";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useRef, useState } from "react";
@@ -36,31 +38,31 @@ export function TrashPanel({ projectId }: { projectId: string }) {
         }
     };
     return (
-        <Panel className="trash" data-testid="trash-panel" title={`휴지통${items.length > 0 ? ` · ${items.length}` : ""}`}>
+        <Panel data-testid="trash-panel" title={`휴지통${items.length > 0 ? ` · ${items.length}` : ""}`}>
             {(err || Boolean(q.error)) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err ?? "휴지통 목록을 불러오지 못했습니다"}</GroveText>}
-            {Boolean(q.error) && <GroveButton className="ghost small" onClick={q.reload}>목록 다시 불러오기</GroveButton>}
-            {attempt && !busy && <ServerActionButton className="ghost small" onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>}
+            {Boolean(q.error) && <GroveButton variant="secondary" density="compact" onClick={q.reload}>목록 다시 불러오기</GroveButton>}
+            {attempt && !busy && <ServerActionButton variant="secondary" density="compact" onClick={() => void act(attempt)}>같은 요청 결과 확인</ServerActionButton>}
             {q.loading && items.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">불러오는 중…</GroveText>}
             {!q.loading && !q.error && items.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">비어 있습니다</GroveText>}
-            <ul className="session-list">
+            <GroveList density="compact" edge="flush" hasDividers>
                 {items.map((t) => (
-                    <li key={t.id} data-testid="trash-row">
-                        <code className="small">{t.path}{t.is_dir ? "/" : ""}</code>{" "}
+                    <GroveListItem key={t.id} data-testid="trash-row" label={<>
+                        <Code>{t.path}{t.is_dir ? "/" : ""}</Code>{" "}
                         {t.deleted_at && <GroveText type="supporting" color="secondary">{t.deleted_at.slice(0, 16).replace("T", " ")}</GroveText>}
                         {t.status === "needs_review" && <GroveText type="supporting" color="error">중단된 작업 · 원본과 휴지통 확인 필요</GroveText>}
                         {t.status === "purging" && <GroveText type="supporting" color="secondary">보존 기간이 지나 정리 중</GroveText>}
-                        <ServerActionButton className="ghost small" disabled={busy || attempt !== null || t.status !== "trashed"} onClick={() => void act({ id: t.id, op: "restore", key: newKey() })}>
+                        <ServerActionButton variant="secondary" density="compact" disabled={busy || attempt !== null || t.status !== "trashed"} onClick={() => void act({ id: t.id, op: "restore", key: newKey() })}>
                             복원
                         </ServerActionButton>
-                        <ServerActionButton className="ghost small" disabled={busy || attempt !== null} onClick={() => {
+                        <ServerActionButton variant="secondary" density="compact" disabled={busy || attempt !== null} onClick={() => {
                             const c = prompt(`영구 삭제하면 되돌릴 수 없습니다. 확인하려면 ${t.path} 를 그대로 입력하세요`);
                             if (c !== null) void act({ id: t.id, op: "delete", key: newKey(), confirm: c });
                         }}>
                             영구 삭제
                         </ServerActionButton>
-                    </li>
+                    </>} />
                 ))}
-            </ul>
+            </GroveList>
         </Panel>
     );
 }

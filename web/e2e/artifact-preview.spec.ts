@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, openProjectFiles, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, openProjectFiles, script, selectChoice } from "./helpers";
 
 const html = `<!doctype html><html><head>
 <meta http-equiv="refresh" content="0;url=/artifact-probe?refresh">
@@ -62,9 +62,9 @@ test("모델 HTML 산출물을 승인 후 현재 프로젝트에서 미리 보�
     await script({ marker: title, frames: frames.tool("artifact-write", "write", { path: name, content: html }) });
     await script({ marker: title, frames: frames.text(["artifact fixture complete"]) });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
     const view = page.getByTestId("session-view");
-    await view.getByLabel("모델 프로필").selectOption(profile);
+    await composerOption(view, "모델 프로필", profile);
     await composerOption(view, "보내기 방식", "model");
     await composerOption(view, "도구", true);
     await view.getByLabel("메시지 입력").fill(title);
@@ -73,7 +73,7 @@ test("모델 HTML 산출물을 승인 후 현재 프로젝트에서 미리 보�
     await view.getByTestId("approval").getByRole("button", { name: "이번만 승인", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "artifact fixture complete" })).toHaveCount(1);
     const changes = view.getByTestId("changes-panel");
-    await openDetails(changes);
+    await openDetails(changes, "변경");
     await changes.getByRole("button", { name: "산출물 열기", exact: true }).click();
     await expect(page.getByLabel("파일 내용")).toHaveValue(html);
     const { pane, frame } = await preview(page);

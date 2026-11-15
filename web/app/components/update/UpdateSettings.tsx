@@ -1,3 +1,6 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Select } from "../../design/Select";
+import { KeyValues } from "../../design/KeyValues";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { useRef, useState } from "react";
@@ -54,7 +57,7 @@ export function UpdateSettings() {
             sending.current = false;
         }
     };
-    return <div className="stack" data-testid="server-update-settings">
+    return <GroveStack gap={2} data-testid="server-update-settings">
         {query.loading && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">서버 업데이트 설정 불러오는 중</GroveText>}
         {!!query.error && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">서버 업데이트 설정 조회 실패</GroveText>}
         {error && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">{error}</GroveText>}
@@ -62,11 +65,11 @@ export function UpdateSettings() {
         {unknown && attempt && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">결과 불명 · 새 요청 전에 같은 요청으로 확인하세요.
             <GroveButton onClick={() => void mutate(attempt)}>같은 업데이트 요청 확인</GroveButton>
         </GroveText>}
-        <GroveButton className="ghost small" disabled={!!attempt || query.loading} onClick={query.reload}>서버 업데이트 상태 새로 조회</GroveButton>
+        <GroveButton variant="secondary" density="compact" disabled={!!attempt || query.loading} onClick={query.reload}>서버 업데이트 상태 새로 조회</GroveButton>
         {query.data && <UpdateSettingsPanel key={query.data.settings.revision} data={query.data} blocked={!!attempt || !!query.error || query.loading}
             onSave={(body) => void mutate({ kind: "save", body, key: newKey() })}
             onCheck={() => void mutate({ kind: "check", body: { expected_revision: query.data!.settings.revision }, key: newKey() })} />}
-    </div>;
+    </GroveStack>;
 }
 
 export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
@@ -77,33 +80,29 @@ export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
     const [scope, setScope] = useState<AutoApplyScope>(data.settings.auto_apply);
     const dirty = channel !== data.settings.channel || scope !== data.settings.auto_apply;
     return <>
-        <dl className="kv" data-testid="server-update-version">
-            <dt>현재 서버 버전</dt><dd>{data.server.version}</dd>
-            <dt>서버 protocol</dt><dd>{data.server.protocol}</dd>
-            <dt>DB schema</dt><dd>{data.server.schema}</dd>
-        </dl>
+        <KeyValues data-testid="server-update-version" items={[
+            ["현재 서버 버전", data.server.version], ["서버 protocol", data.server.protocol], ["DB schema", data.server.schema],
+        ]} />
         {!data.can_manage && <GroveText as="p" display="block" type="inherit" color="inherit">읽기 전용 · 소유자만 서버 업데이트 설정을 변경하거나 확인할 수 있습니다.</GroveText>}
         <form onSubmit={(e) => { e.preventDefault(); onSave({ channel, auto_apply: scope, expected_revision: data.settings.revision }); }}>
             <fieldset disabled={!data.can_manage || blocked}>
                 <legend>서버 업데이트 설정</legend>
-                <label>업데이트 채널<select aria-label="업데이트 채널" value={channel} onChange={(e) => setChannel(e.target.value as UpdateChannel)}>
-                    <option value="stable">stable · 안정</option><option value="beta">beta · 시험 버전</option>
-                </select></label>
-                <label>자동 적용 범위<select aria-label="자동 적용 범위" value={scope} onChange={(e) => setScope(e.target.value as AutoApplyScope)}>
-                    <option value="notify_only">알림만 (기본값)</option>
-                    <option value="patch">patch 버전까지</option>
-                    <option value="minor">minor 버전까지</option>
-                </select></label>
-                <GroveText as="p" display="block" type="inherit" color="inherit" className="scope">설정만 저장 · 설치·재시작 없음</GroveText>
+                <Select label="업데이트 채널" value={channel} disabled={!data.can_manage || blocked}
+                    onChange={(value) => setChannel(value as UpdateChannel)}
+                    options={[{ value: "stable", label: "stable · 안정" }, { value: "beta", label: "beta · 시험 버전" }]} />
+                <Select label="자동 적용 범위" value={scope} disabled={!data.can_manage || blocked}
+                    onChange={(value) => setScope(value as AutoApplyScope)}
+                    options={[{ value: "notify_only", label: "알림만 (기본값)" },
+                        { value: "patch", label: "patch 버전까지" }, { value: "minor", label: "minor 버전까지" }]} />
+                <GroveText as="p" display="block" type="supporting" color="secondary">설정만 저장 · 설치·재시작 없음</GroveText>
                 <GroveButton type="submit" disabled={!dirty}>서버 업데이트 설정 저장</GroveButton>
                 <GroveButton type="button" disabled={dirty} onClick={onCheck}>서버 업데이트 확인</GroveButton>
                 {dirty && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">변경한 설정을 저장한 뒤 해당 채널을 확인하세요.</GroveText>}
             </fieldset>
         </form>
         <GroveText as="p" display="block" type="inherit" color="inherit" role="status">{data.readiness.idle ? "현재 유휴 상태" : "적용 보류 · 진행 중 작업이 있습니다."}</GroveText>
-        {!data.readiness.idle && <dl className="kv" aria-label="업데이트 보류 대상">
-            {Object.entries(data.readiness.busy).filter(([, count]) => count > 0).map(([kind, count]) => <div key={kind}><dt>{busyLabels[kind] ?? kind}</dt><dd>{count}</dd></div>)}
-        </dl>}
+        {!data.readiness.idle && <KeyValues aria-label="업데이트 보류 대상"
+            items={Object.entries(data.readiness.busy).filter(([, count]) => count > 0).map(([kind, count]) => [busyLabels[kind] ?? kind, count])} />}
         {data.last_check && data.last_check.settings_revision !== data.settings.revision
             && <GroveText as="p" display="block" type="inherit" color="inherit">이전 설정의 결과이니 현재 저장된 채널로 다시 확인하세요.</GroveText>}
         <CheckResult check={data.last_check} />
@@ -117,7 +116,7 @@ const busyLabels: Record<string, string> = {
 };
 export function CheckResult({ check }: { check: UpdateCheck | null }) {
     if (!check) return <GroveText as="p" display="block" type="inherit" color="inherit">아직 서버 업데이트를 확인하지 않았습니다.</GroveText>;
-    return <div role="status" data-testid="server-update-check-result">
+    return <GroveStack gap={0} role="status" data-testid="server-update-check-result">
         <GroveText as="p" display="block" type="inherit" color="inherit">마지막 확인 · {check.channel} · <When at={check.checked_at} /></GroveText>
         {check.status === "failed" ? <GroveText as="p" display="block" type="inherit" color="inherit">서버 업데이트 확인 실패 · {check.error === "manifest_check_failed"
             ? "manifest 서명·채널·내용을 확인하지 못했습니다." : "로컬 업데이트 소스가 준비되지 않았습니다."}</GroveText>
@@ -126,5 +125,5 @@ export function CheckResult({ check }: { check: UpdateCheck | null }) {
         {check.release && <GroveText as="p" display="block" type="inherit" color="inherit">후보 protocol {check.release.protocol} · schema {check.release.schema}
             {!check.release.artifact && " · 현재 플랫폼의 패키지가 없습니다."}
             {check.release.kind === "downgrade" && " · 후보는 현재 서버보다 이전 버전입니다."}</GroveText>}
-    </div>;
+    </GroveStack>;
 }

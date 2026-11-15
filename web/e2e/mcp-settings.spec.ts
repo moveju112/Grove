@@ -194,7 +194,7 @@ test("MCP 외부 호출은 인자 원문을 가리고 namespace·대상을 확�
         const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: name });
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         const view = sessionView(page, session.id);
         const body = { name: "mcp_call", args: { server_id: server.id, tool: `${name}/echo`, arguments: { message: "approved-argument" } } };
         await apiCall("POST", `/sessions/${session.id}/tool-requests`, body);
@@ -256,7 +256,7 @@ test("MCP 진행은 새로고침 뒤 복원되고 중지 뒤에는 서버 종료
         const session=await apiCall<{id:string}>("POST",`/projects/${a.id}/sessions`,{title:name});
         await apiCall("POST","/recent/touch",{kind:"session",project_id:a.id,resource_id:session.id});
         await login(page);
-        await page.locator(".recent").getByRole("button",{name:new RegExp(name)}).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button",{name:new RegExp(name)}).click();
         const view=sessionView(page,session.id);
         const call=await apiCall<{id:string}>("POST",`/sessions/${session.id}/tool-requests`,{
             name:"mcp_call",args:{server_id:server.id,tool:`${name}/long_job`,arguments:{}},
@@ -269,10 +269,10 @@ test("MCP 진행은 새로고침 뒤 복원되고 중지 뒤에는 서버 종료
         const row=page.getByTestId("mcp-row").filter({hasText:name});
         await expect(row).toContainText("호출 1개 실행 중");
         await expect(row.getByRole("button",{name:"MCP 편집",exact:true})).toBeDisabled();
-        await page.locator(".recent").getByRole("button",{name:new RegExp(name)}).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button",{name:new RegExp(name)}).click();
         await page.reload();
         await expect(page.getByTestId("conn")).toHaveText("연결됨");
-        await page.locator(".recent").getByRole("button",{name:new RegExp(name)}).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button",{name:new RegExp(name)}).click();
         await expect(view.getByTestId("mcp-running")).toContainText("50 / 100");
         await view.getByTestId("mcp-running").getByRole("button",{name:"MCP 호출 중지",exact:true}).click();
         await expect(view.getByTestId("mcp-running")).toHaveCount(0);

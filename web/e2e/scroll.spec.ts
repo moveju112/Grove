@@ -9,9 +9,9 @@ test("과거 메시지를 읽는 동안 자동 스크롤하지 않고, 이전 �
     for (let i = 0; i < 160; i++) await apiCall("POST", `/sessions/${s.id}/messages`, { text: `줄 ${i}` });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    const body = page.locator(".pane-body").filter({ has: view });
+    const body = page.getByTestId("pane-body").filter({ has: view });
     // 처음엔 맨 아래
     await expect(view.getByText("줄 159", { exact: true })).toBeInViewport();
 
@@ -56,7 +56,7 @@ test("다른 탭을 다녀와도 이전 페이지의 읽던 메시지와 화면 
     await apiCall("POST", `/sessions/${other.id}/messages`, { text: "other tab fixture" });
     for (const session of [other, reading]) await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
     const view = page.locator(`[data-testid=session-view][data-session="${reading.id}"]`);
     await view.getByRole("button", { name: "이전 메시지", exact: true }).click();
     await expect(view.getByRole("button", { name: "이전 메시지", exact: true })).toHaveCount(0);
@@ -67,13 +67,13 @@ test("다른 탭을 다녀와도 이전 페이지의 읽던 메시지와 화면 
     await target.scrollIntoViewIfNeeded();
     await expect(target).toBeInViewport();
     const y = (await target.boundingBox())!.y;
-    await page.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} other`) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${prefix} other`) }).click();
     await expect(page.getByText("other tab fixture", { exact: true })).toBeVisible();
-    await page.locator(".tabbar .tab-title").filter({ hasText: `${prefix} reading` }).click();
+    await page.getByRole("tablist").getByTestId("tab-title").filter({ hasText: `${prefix} reading` }).click();
     await expect(target).toBeInViewport();
     await expect.poll(async () => Math.abs((await target.boundingBox())!.y - y)).toBeLessThan(8);
-    await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
-    await page.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
+    await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
     await expect(target).toBeInViewport();
     await expect.poll(async () => Math.abs((await target.boundingBox())!.y - y)).toBeLessThan(8);
 });
@@ -85,7 +85,7 @@ test("앱을 닫았다 다시 열어도(탭 저장소 없음) 대화의 마지�
     for (let i = 0; i < 120; i++) await apiCall("POST", `/sessions/${reading.id}/messages`, { text: `${prefix} line ${i}` });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: reading.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
     const view = page.locator(`[data-testid=session-view][data-session="${reading.id}"]`);
     // 첫 페이지는 최근 100개(line 20~119)다. 가상 스크롤이라 화면 밖 메시지는 DOM에 없으므로
     // 키보드로 불러온 첫 메시지(line 20)에서 다섯 칸 내려가 읽던 위치를 만든다.
@@ -105,7 +105,7 @@ test("앱을 닫았다 다시 열어도(탭 저장소 없음) 대화의 마지�
         await expect(again.getByTestId("conn").or(token)).toBeVisible();
         if (await token.isVisible()) await login(again);
         await expect(again.getByTestId("conn")).toHaveText("연결됨");
-        await again.locator(".recent").getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
+        await again.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
         await expect(again.locator(`[data-testid=session-view][data-session="${reading.id}"]`).getByText(`${prefix} line 25`, { exact: true })).toBeInViewport();
         // 직접 로그아웃하면 읽던 위치 사본도 지운다.
         await again.getByRole("button", { name: "설정", exact: true }).first().click();

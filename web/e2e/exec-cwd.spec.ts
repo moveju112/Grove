@@ -38,7 +38,8 @@ type Task = { id: string; cwd: string; status: string; stdout_tail: string };
 test("설정 화면에서 바꾼 cwd는 다음 모델 셸에만 적용되고 명시한 점은 root를 유지한다", async ({ page }) => {
     const { root, session, panel, save } = await setup(page);
     const profile = await ensureProfile();
-    await expect(panel).toContainText("실제 실행 root(worktree 포함)");
+    await expect(panel).toContainText("실행 root(worktree 포함)");
+    await expect(panel).toContainText("실제 실행 root 기준");
     for (const background of [false, true]) {
         await save("work");
         for (const explicit of [false, true]) {
@@ -78,10 +79,9 @@ test("작업 접수 응답을 잃어도 같은 키는 바뀐 기본 cwd를 적�
     await save("work");
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
     await page.reload();
-    await page.locator(".recent").getByRole("button", { name: new RegExp(project.name) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(project.name) }).click();
     const panel = sessionView(page, session.id).getByTestId("tasks-panel");
-    await openDetails(panel);
-    await expect(panel).toContainText("접수 때 고정한 실제 cwd");
+    await openDetails(panel, "작업");
     const keys: string[] = [];
     await page.route(`**/api/v1/sessions/${session.id}/tasks`, async (route) => {
         if (route.request().method() !== "POST") return route.fallback();

@@ -1,3 +1,4 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { getSourceSettings } from "../../api/sourceSettings";
@@ -13,9 +14,9 @@ export function SourceSettings({ projectId }: { projectId?: string }) {
         : query.loading || !query.data
             ? { status: "loading" }
             : { status: "ready", items: query.data.items, resources: query.data.resources };
-    return <div data-testid="source-settings">
+    return <GroveStack gap={0} data-testid="source-settings">
         <GroveText as="p" display="block" type="supporting" color="secondary">{projectId ? "프로젝트 원본" : "서버 사용자 원본"} · 소유자 전용</GroveText>
         <SourceSettingsPanel view={view} />
-        <GroveButton className="ghost" disabled={query.loading} onClick={query.reload}>원본 출처 다시 조회</GroveButton>
-    </div>;
+        <GroveButton variant="secondary" disabled={query.loading} onClick={query.reload}>원본 출처 다시 조회</GroveButton>
+    </GroveStack>;
 }

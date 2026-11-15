@@ -1,3 +1,4 @@
+import { HintText } from "../../design/HintText";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { useEffect, useLayoutEffect, useState } from "react";
@@ -55,7 +56,7 @@ function EnabledTurnTiming({ sessionId, turn, messagesReady }: Props) {
         if (messagesReady && sample && !sample.timing.running) setDeliveryMs(deliveryTiming.applied(turn.id));
     }, [messagesReady, sample, turn.id]);
 
-    const retry = q.error && connected ? <GroveButton className="ghost small" onClick={q.reload}>시간 다시 확인</GroveButton> : null;
+    const retry = q.error && connected ? <GroveButton variant="secondary" density="compact" onClick={q.reload}>시간 다시 확인</GroveButton> : null;
     if (!sample) return q.error ? <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="turn-timing">턴 시간을 확인하지 못했습니다{retry}</GroveText> : null;
     const total = elapsedMs(sample, now, advance);
     return <><TimingSummary sample={sample} total={total} connected={connected && !q.error} deliveryMs={deliveryMs} />{retry}</>;
@@ -65,7 +66,7 @@ export function TimingSummary({ sample, total, connected, deliveryMs = null }: {
     sample: Sample; total: number; connected: boolean; deliveryMs?: number | null;
 }) {
     const status = STATUS[sample.status] ?? "";
-    return <div className="turn-timing muted small" data-testid="turn-timing" data-elapsed-ms={Math.round(total)} data-running={sample.timing.running}>
+    return <GroveText as="div" display="block" type="supporting" color="secondary" data-testid="turn-timing" data-elapsed-ms={Math.round(total)} data-running={sample.timing.running}>
         <DetailDialog label="요청 시간 상세" title="요청 시간" showExpand={false} trigger={<>
             <Icon name="clock" size={14} />
             {!sample.timing.running && "요청 "}{seconds(total)}{status}
@@ -73,7 +74,7 @@ export function TimingSummary({ sample, total, connected, deliveryMs = null }: {
         </>}>
             <TimingBreakdown sample={sample} total={total} connected={connected} deliveryMs={deliveryMs} />
         </DetailDialog>
-    </div>;
+    </GroveText>;
 }
 
 const STATUS: Record<string, string> = {
@@ -86,8 +87,8 @@ export function TimingBreakdown({ sample, total, connected, deliveryMs = null }:
     const t = sample.timing;
     const status = STATUS[sample.status] ?? "";
     return (
-        <p className="timing-breakdown"
-            title="서버가 기록한 시작·종료 시각 기준 총 경과입니다. 큐·승인·질문 대기를 포함하며 순수 실행 시간이 아닙니다.">
+        <HintText as="p" display="block"
+            hint="서버가 기록한 시작·종료 시각 기준 총 경과입니다. 큐·승인·질문 대기를 포함하며 순수 실행 시간이 아닙니다.">
             {t.running ? "총 경과" : "마지막 요청 총 경과"} {seconds(total)}{status}
             {t.running ? " · 대기 포함" : <>
                 {t.provider_ms != null ? ` · 공급자 ${seconds(t.provider_ms)} · 기타 ${seconds(t.other_ms ?? 0)}` : ` · 모델·처리 ${seconds(t.model_and_other_ms)}(공급자 미측정)`}
@@ -95,7 +96,7 @@ export function TimingBreakdown({ sample, total, connected, deliveryMs = null }:
                 {t.approval_wait_ms > 0 && ` · 승인 대기 ${seconds(t.approval_wait_ms)}`}
             </>}
             {t.running && !connected && " · 연결 끊김·마지막 확인 값"}
-            {deliveryMs != null && <span data-testid="ui-delivery" title="SSE 수신 이후 조회·화면 반영 시간. 네트워크 편도 지연·이전 연결 끊김 시간은 포함하지 않습니다."> · 화면 반영(수신 후) {Math.round(deliveryMs)}ms</span>}
-        </p>
+            {deliveryMs != null && <HintText data-testid="ui-delivery" hint="SSE 수신 이후 조회·화면 반영 시간. 네트워크 편도 지연·이전 연결 끊김 시간은 포함하지 않습니다."> · 화면 반영(수신 후) {Math.round(deliveryMs)}ms</HintText>}
+        </HintText>
     );
 }

@@ -1,10 +1,14 @@
+import { Stack } from "@astryxdesign/core/Stack";
+import { Center } from "@astryxdesign/core/Center";
+import { Card } from "@astryxdesign/core/Card";
+import { Code } from "@astryxdesign/core/Code";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { Fragment, useEffect, useState, type ReactNode } from "react";
 import { configureConnection, connection, parseConnectionLink } from "../api/transport";
 import { pairingLink, scanPairingImage } from "../state/pairing";
-import { TextInput } from "../design/Fields";
+import { TextInput, FileInput } from "../design/Fields";
 
 /** 이미 신뢰한 서버와 같은 연결 링크는 다시 확인하지 않고 페어링 hash로 바꾼다. */
 function adoptKnownLink(): boolean {
@@ -44,8 +48,9 @@ export function EncryptedConnection({ children }: { children: ReactNode }) {
     if (ready) return <Fragment key={generation}>{children}</Fragment>;
     let target: ReturnType<typeof parseConnectionLink> | null = null;
     try { target = parseConnectionLink(link); } catch { /* 입력 중에는 오류를 표시하지 않는다. */ }
-    return <main className="login">
-        <form aria-label="암호화 서버 연결" onSubmit={(event) => {
+    return <Center role="main" minHeight="100dvh" padding={4}>
+        <Card width={392} maxWidth="100%" padding={8}>
+        <Stack as="form" gap={4} aria-label="암호화 서버 연결" onSubmit={(event) => {
             event.preventDefault();
             try {
                 const parsed = parseConnectionLink(link);
@@ -62,19 +67,19 @@ export function EncryptedConnection({ children }: { children: ReactNode }) {
         }}>
             <GroveHeading level={1} color="inherit">Grove 연결</GroveHeading>
             <TextInput label="서버 연결 링크" value={link} onChange={(value) => { setLink(value); setError(null); }} autoComplete="off" hasSpellCheck={false} isRequired />
-            <label>연결 QR 사진<input type="file" accept="image/*" capture="environment" onChange={(event) => {
-                const file = event.target.files?.[0];
-                event.target.value = "";
+            <FileInput label="연결 QR 사진" accept="image/*" capture="environment" value={null} onChange={(files) => {
+                const file = Array.isArray(files) ? files[0] : files;
                 if (file) void scanPairingImage(file).then(setLink).catch((cause: unknown) => {
                     setError(cause instanceof Error ? cause.message : "QR 이미지를 읽지 못했습니다.");
                 });
-            }} /></label>
+            }} />
             {target && <>
-                <GroveText as="p" display="block" type="inherit" color="inherit">서버: <code className="host-address">{new URL(target.connection.endpoint).host}</code></GroveText>
+                <GroveText as="p" display="block" type="inherit" color="inherit">서버: <Code>{new URL(target.connection.endpoint).host}</Code></GroveText>
                 <TextInput label="서버 공개키" value={target.connection.key} isReadOnly />
             </>}
             {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
             <GroveButton type="submit" disabled={!target}>서버 확인 후 연결</GroveButton>
-        </form>
-    </main>;
+        </Stack>
+        </Card>
+    </Center>;
 }

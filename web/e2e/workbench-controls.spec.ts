@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, openTool } from "./helpers";
+import { apiCall, closeMobileSidebar, composerOption, ensureProfile, ensureProjects, login, openDetails, openTool } from "./helpers";
 
 for (const width of [390, 1528]) {
     test.describe(`${width}px 작업 화면`, () => {
@@ -16,14 +16,15 @@ for (const width of [390, 1528]) {
             await login(page);
             if (width < 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
             await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
-            const project = page.locator(".project-view").filter({ visible: true });
+            if (width < 760) await closeMobileSidebar(page);
+            const project = page.getByTestId("project-view").filter({ visible: true });
             const input = project.getByLabel("메시지 입력", { exact: true });
             await input.fill("아직 보내지 않은 초안");
             await expect(project.getByText("드래그가 안 되면", { exact: false })).toHaveCount(0);
             await expect(project.getByText("일반 첨부에는 파일 시스템 접근 API가 필요하지 않습니다.", { exact: false })).toHaveCount(0);
             await expect(project.getByTestId("project-scripts")).toBeHidden();
             // 도구 탭은 기본 화면에 없고, 헤더의 버튼 하나로 연다.
-            const trigger = project.locator(".view-head").getByRole("button", { name: "도구 패널", exact: true });
+            const trigger = project.getByRole("button", { name: "도구 패널", exact: true });
             await expect(project.getByRole("tablist", { name: "프로젝트 도구" })).toBeHidden();
             await expect(trigger).toHaveAttribute("aria-expanded", "false");
             await trigger.click();
@@ -59,7 +60,18 @@ for (const width of [390, 1528]) {
             await page.screenshot({ path: info.outputPath("project.png") });
             await openTool(project, "변경");
             await page.screenshot({ path: info.outputPath("project-tools.png") });
-            expect(await project.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
+            const geometry = await project.evaluate((el) => ({
+                width: el.closest('[data-testid="pane-body"]')!.clientWidth,
+                scroll: el.closest('[data-testid="pane-body"]')!.scrollWidth,
+                viewport: innerWidth, document: document.documentElement.scrollWidth,
+                rect: el.getBoundingClientRect().toJSON(),
+                overflow: [...el.querySelectorAll<HTMLElement>("*")].filter((node) => {
+                    const rect = node.getBoundingClientRect();
+                    return rect.width > 0 && rect.right > el.getBoundingClientRect().right + 1;
+                }).slice(0, 8).map((node) => ({ tag: node.tagName, role: node.getAttribute("role"), testId: node.dataset.testid, rect: node.getBoundingClientRect().toJSON(), position: getComputedStyle(node).position })),
+            }));
+            expect(geometry.scroll, JSON.stringify(geometry)).toBeLessThanOrEqual(geometry.width + 1);
+            expect(geometry.document).toBeLessThanOrEqual(geometry.viewport);
         });
 
         test("입력 옵션·첨부 버튼과 검색 대화상자가 키보드·터치로 동작한다", async ({ page }, info) => {
@@ -70,7 +82,8 @@ for (const width of [390, 1528]) {
             await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
             await login(page);
             if (width < 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
-            await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+            await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
+            if (width < 760) await closeMobileSidebar(page);
             const view = page.getByTestId("session-view").filter({ visible: true });
             await composerOption(view, "보내기 방식", "save");
             await page.keyboard.press("Escape");
@@ -84,9 +97,11 @@ for (const width of [390, 1528]) {
             await openTool(view, "작업");
             await expect(view.getByLabel("백그라운드 명령")).toBeVisible();
             await page.screenshot({ path: info.outputPath("session-tools.png") });
+            await view.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
+            await expect(view.getByTestId("tool-dock")).toHaveJSProperty("open", false);
             if (width < 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
             const search = page.getByTestId("search-panel");
-            await openDetails(search);
+            await openDetails(search, "대화 검색");
             const dialog = page.getByRole("dialog", { name: "대화 검색", exact: true });
             await dialog.getByRole("searchbox", { name: "대화 검색어", exact: true }).fill(title);
             await expect(dialog.getByTestId("search-hit").first()).toBeVisible();

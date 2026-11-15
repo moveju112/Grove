@@ -22,7 +22,7 @@ async function repository(name: string) {
 }
 
 async function select(page: Page, project: { name: string }) {
-    await page.locator(".sidebar .projects").getByRole("button", { name: project.name, exact: true }).click();
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: project.name, exact: true }).click();
     await openTool(page, "변경");
     await expect(page.getByTestId("git-context")).toContainText("Git 위치");
 }

@@ -1,4 +1,5 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Select } from "../../design/Select";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { useEffect, useRef, useState } from "react";
@@ -19,11 +20,10 @@ export type ExternalEditorControlsProps = {
 
 export function ExternalEditorControls({ listing, selected, disabled, blockedReason, busy, onSelect, onOpen }: ExternalEditorControlsProps) {
     if (!listing.available) return <GroveText as="p" display="block" type="supporting" color="secondary">{listing.reason}</GroveText>;
-    return <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
-        <select aria-label="외부 편집기" value={selected} disabled={busy} onChange={(e) => onSelect(e.target.value)}>
-            {listing.editors.map((editor) => <option key={editor.id} value={editor.id}>{editor.name}</option>)}
-        </select>
-        <GroveButton className="ghost small" disabled={disabled || !!blockedReason || busy || !listing.editors.some((e) => e.id === selected)}
+    return <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+        <Select label="외부 편집기" hideLabel value={selected} disabled={busy} onChange={onSelect}
+            options={listing.editors.map((editor) => ({ value: editor.id, label: editor.name }))} />
+        <GroveButton variant="secondary" density="compact" disabled={disabled || !!blockedReason || busy || !listing.editors.some((e) => e.id === selected)}
             title={blockedReason ?? undefined} aria-description={blockedReason ?? undefined} onClick={onOpen}>
             {busy ? "여는 중…" : "외부 편집기로 열기"}
         </GroveButton>
@@ -74,10 +74,10 @@ export function ExternalEditor({ projectId, path, disabled = false, blockedReaso
             setBusy(false);
         }
     };
-    return <div data-testid="external-editor">
+    return <GroveStack gap={0} data-testid="external-editor">
         {listing && <ExternalEditorControls listing={listing} selected={selected} disabled={disabled} blockedReason={blockedReason} busy={busy}
             onSelect={(id) => { setSelected(id); setError(null); setStatus(null); }} onOpen={() => void open()} />}
         {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
         {status && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">{status}</GroveText>}
-    </div>;
+    </GroveStack>;
 }

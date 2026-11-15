@@ -1,0 +1,58 @@
+import * as stylex from "@stylexjs/stylex";
+
+// Stack/Grid의 크기·간격 속성으로 표현할 수 없는 스크롤 소유권과 고정 위치만 둔다.
+export const chatLayout = stylex.create({
+    view: { flexGrow: 1, minHeight: "100%", containerType: "inline-size" },
+    headerTitle: { flexGrow: 1, minWidth: 0, overflow: "hidden" },
+    workbench: { flexGrow: 1, minHeight: 0, minWidth: 0 },
+    main: { flexGrow: 1, minHeight: 0, minWidth: 0 },
+    // Grid 항목의 auto 최소 폭이 모델명 전체 폭으로 고정되면 전송 버튼이 화면 밖으로 밀린다.
+    bar: { minWidth: 0 },
+    centered: { alignSelf: "center" },
+    messages: { flexGrow: 1, alignSelf: "center" },
+    surface: {
+        position: "sticky",
+        bottom: 0,
+        zIndex: 2,
+        isolation: "isolate",
+        flexShrink: 0,
+        marginTop: "auto",
+        marginInline: "calc(-1 * var(--pane-inset))",
+        width: "calc(100% + 2 * var(--pane-inset))",
+        maxWidth: "none",
+        paddingTop: "var(--spacing-1)",
+        paddingInline: "var(--pane-inset)",
+        paddingBottom: "calc(var(--pane-inset) + env(safe-area-inset-bottom, 0px))",
+        backgroundColor: "var(--panel)",
+    },
+    composer: {
+        position: "relative",
+        overflow: "visible",
+        alignSelf: "center",
+        marginInline: "auto",
+        borderRadius: 18,
+        borderColor: "var(--line-strong)",
+        ':has(textarea:focus-visible)': {
+            outline: "2px solid var(--focus)",
+            outlineOffset: 1,
+        },
+    },
+    commands: {
+        margin: 0,
+        padding: 0,
+        listStyle: "none",
+        position: "absolute",
+        bottom: "calc(100% + 1px)",
+        left: 0,
+        right: 0,
+        zIndex: 5,
+        maxHeight: "min(20em, 45dvh)",
+        overflowY: "auto",
+        backgroundColor: "var(--panel)",
+        borderRadius: "var(--radius-element)",
+        boxShadow: "var(--shadow-float)",
+    },
+    actions: { alignSelf: "flex-end", minHeight: 28 },
+    focusHit: { outline: "2px solid var(--focus)", outlineOffset: 2 },
+    below: { position: "sticky", bottom: "9em", alignSelf: "center", zIndex: 3 },
+});

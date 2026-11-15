@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, inputOptions, login, script, state } from "./helpers";
 
 async function shared(page: Page) {
     const { a } = await ensureProjects();
@@ -11,8 +11,8 @@ async function shared(page: Page) {
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await expect(page.locator(".boot")).toHaveCount(0);
-    const recent = page.locator(".recent").getByTestId("recent-item").filter({ hasText: title });
+    await expect(page.getByTestId("loading-bar")).toHaveCount(0);
+    const recent = page.getByRole("region", { name: "최근", exact: true }).getByTestId("recent-item").filter({ hasText: title });
     let messageQueries = 0;
     const subscriptions: string[][] = [];
     page.on("request", (r) => {
@@ -26,7 +26,7 @@ async function shared(page: Page) {
     await expect(page.getByTestId("conn")).toHaveText("연결됨");
     const before = messageQueries;
     await recent.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await recent.getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
+    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const left = page.getByTestId("pane").nth(0).getByTestId("session-view");
     const right = page.getByTestId("pane").nth(1).getByTestId("session-view");
@@ -83,8 +83,10 @@ test("같은 대화의 서버 초안 충돌은 두 입력을 보존하고 비교
     const second = "right shared draft fixture";
     await left.getByLabel("메시지 입력").fill(first);
     await right.getByLabel("메시지 입력").fill(second);
+    await inputOptions(left);
     await left.getByRole("button", { name: "초안 서버 저장", exact: true }).click();
     await expect(left.getByRole("status").filter({ hasText: /\S/ })).toContainText("서버에 초안을 저장했습니다");
+    await inputOptions(right);
     await right.getByRole("button", { name: "초안 서버 저장", exact: true }).click();
     const conflict = right.getByRole("alert").filter({ hasText: "서버 초안" });
     await expect(conflict).toBeVisible();
@@ -92,10 +94,11 @@ test("같은 대화의 서버 초안 충돌은 두 입력을 보존하고 비교
     await expect(right.getByLabel("메시지 입력")).toHaveValue(second);
     await conflict.getByRole("button", { name: "서버 초안 보기", exact: true }).click();
     await expect(conflict.getByRole("dialog", { name: "서버 초안", exact: true })).toBeVisible();
+    await expect(conflict.getByRole("dialog", { name: "서버 초안", exact: true }).locator("pre")).toHaveText(first);
     await page.keyboard.press("Escape");
-    await expect(conflict.locator("pre")).toHaveText(first);
     await conflict.getByRole("button", { name: "합치기", exact: true }).click();
     await expect(right.getByLabel("메시지 입력")).toHaveValue(`${second}\n\n${first}`);
+    await inputOptions(right);
     await right.getByRole("button", { name: "초안 서버 저장", exact: true }).click();
     await expect(right.getByRole("status").filter({ hasText: /\S/ })).toContainText("서버에 초안을 저장했습니다");
     await expect(left.getByLabel("메시지 입력")).toHaveValue(first);

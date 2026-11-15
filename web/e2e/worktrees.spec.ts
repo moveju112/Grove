@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, openDetails, sessionView, state, useWorkspaces } from "./helpers";
+import { apiCall, expectChoice, login, openDetails, openTool, selectChoice, sessionView, state, useWorkspaces } from "./helpers";
 
 /// 다른 시험과 저장소를 공유하지 않도록 새 프로젝트 폴더에 저장소를 만든다.
 async function freshRepo(tag: string) {
@@ -35,7 +35,8 @@ test("서버가 worktree 기능을 알리지 않으면 화면에서 숨긴다(�
     await page.locator("html[data-hydrated=true]").waitFor({ state: "attached" });
     await page.getByLabel("토큰").fill(state().token);
     await page.getByRole("button", { name: "로그인" }).click();
-    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
+    await openTool(page, "휴지통");
     await expect(page.getByTestId("trash-panel")).toBeVisible();
     await expect(page.getByTestId("worktrees-panel")).toHaveCount(0);
 });
@@ -44,9 +45,9 @@ test("worktree를 변경 처리 선택 후 만들고, 대화를 그 위치에서
     const { root, run, p } = await freshRepo("ui");
     writeFileSync(join(root, "a.txt"), "one\nwip\n");
     await login(page);
-    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
     const panel = page.getByTestId("worktrees-panel");
-    await openDetails(panel);
+    await openDetails(panel, "워크스페이스");
     await panel.getByLabel("worktree 이름").fill("feat");
     await panel.getByRole("button", { name: "만들기" }).click();
     // 커밋하지 않은 변경이 있으면 두고 갈지·복사해 갈지 묻는다(GIT-009).
@@ -65,14 +66,16 @@ test("worktree를 변경 처리 선택 후 만들고, 대화를 그 위치에서
     // 대화를 worktree로 옮기고 백그라운드 작업이 그 경로에서 실행되는지 확인한다(GIT-008).
     const sess = await apiCall<{ id: string }>("POST", `/projects/${p.id}/sessions`, { title: "wt 대화" });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: p.id, resource_id: sess.id });
-    await page.locator(".recent").getByRole("button", { name: /wt 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /wt 대화/ }).first().click();
     const view = sessionView(page, sess.id);
+    await view.getByRole("button", { name: "대화 작업", exact: true }).click();
     const where = view.getByLabel("워크스페이스");
-    await expect(where).toHaveValue("");
-    await where.selectOption(wt.id);
-    await expect(where).toHaveValue(wt.id);
+    await expectChoice(where, "");
+    await selectChoice(where, wt.id);
+    await expectChoice(where, wt.id);
+    await page.keyboard.press("Escape");
     const tasks = view.getByTestId("tasks-panel");
-    await openDetails(tasks);
+    await openDetails(tasks, "작업");
     await tasks.getByLabel("백그라운드 명령").fill("touch made-here.txt");
     await tasks.getByRole("button", { name: "실행", exact: true }).click();
     await expect(tasks.getByTestId("task-row").first()).toHaveAttribute("data-status", "completed");
@@ -80,15 +83,17 @@ test("worktree를 변경 처리 선택 후 만들고, 대화를 그 위치에서
     expect(existsSync(join(root, "made-here.txt"))).toBe(false);
 
     // 대화가 들어가 있는 동안 제거 버튼은 막혀 있다. 복귀하면 제거할 수 있다(GIT-010).
-    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
-    await openDetails(panel);
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
+    await openDetails(panel, "워크스페이스");
     await expect(row).toContainText("대화 1개");
     await expect(row.getByRole("button", { name: "제거" })).toBeDisabled();
-    await page.locator(".recent").getByRole("button", { name: /wt 대화/ }).first().click();
-    await where.selectOption("");
-    await expect(where).toHaveValue("");
-    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
-    await openDetails(panel);
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /wt 대화/ }).first().click();
+    await view.getByRole("button", { name: "대화 작업", exact: true }).click();
+    await selectChoice(where, "");
+    await expectChoice(where, "");
+    await page.keyboard.press("Escape");
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
+    await openDetails(panel, "워크스페이스");
     await expect(row.getByRole("button", { name: "제거" })).toBeEnabled();
     // 변경이 있는 worktree는 서버가 센 변경 개수로 다시 확인받은 뒤에만 강제 제거한다.
     const asked: string[] = [];

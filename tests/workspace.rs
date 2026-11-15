@@ -3,6 +3,16 @@ mod common;
 use common::*;
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
+use common::fixture::{self, Fixture};
+
+async fn receive_reply(s: &TestServer, fixture: &Fixture, profile: &str, session: &str, text: &str) -> String {
+    fixture.push(fixture::text(text));
+    let (status, accepted) = s.post(&format!("/api/v1/sessions/{session}/turns"), json!({ "text": text, "profile_id": profile, "tools": false })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "completed").await;
+    let (_, messages) = s.get(&format!("/api/v1/sessions/{session}/messages")).await;
+    messages["items"].as_array().unwrap().iter().rev().find(|m| m["role"] == "assistant").unwrap()["created_at"].as_str().unwrap().to_string()
+}
 
 fn layout_two(pa: &str, sa: &str, pb: &str, sb: &str, dir: &str) -> Value {
     json!({
@@ -35,8 +45,8 @@ async fn two_projects_recent_and_split_survive_restart() {
     let (_, recent) = s.get("/api/v1/recent").await;
     let items = recent["items"].as_array().unwrap();
     assert_eq!(items.len(), 2, "같은 자원 재열기는 중복 항목을 만들지 않는다");
-    assert_eq!(items[0]["resource_id"], sa.as_str(), "가장 최근 접근이 먼저");
-    assert_eq!(items[0]["project_name"], "A");
+    assert_eq!(items[0]["resource_id"], sb.as_str(), "답변이 없으면 생성 시각을 쓰고 다시 열어도 순서는 바뀌지 않는다");
+    assert_eq!(items[0]["project_name"], "B");
 
     // 세션 B를 고정하면 맨 앞
     let rb = items.iter().find(|i| i["resource_id"] == sb.as_str()).unwrap();
@@ -116,11 +126,13 @@ async fn drafts_conflict_instead_of_silent_overwrite() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
-/// RECENT-001: 원본 최근 탭처럼 마지막 사용자 메시지로 정렬하고, 숨긴 뒤 새 메시지가 오면 다시 보이며,
+/// RECENT-001: 마지막 확정 답변으로 정렬하고, 숨긴 뒤 새 사용자 메시지가 오면 다시 보이며,
 /// 시간 범위 밖이어도 고정·진행 중 항목은 남는다.
 #[tokio::test]
-async fn recent_follows_last_user_message_window_and_revives_hidden() {
+async fn recent_follows_last_reply_window_and_revives_hidden() {
     let s = TestServer::start().await;
+    let fixture = Fixture::start().await;
+    let profile = s.fixture_profile(&fixture.base).await;
     let pid = s.create_project("p").await["id"].as_str().unwrap().to_string();
     let a = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
     let b = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
@@ -130,11 +142,14 @@ async fn recent_follows_last_user_message_window_and_revives_hidden() {
     let order = |list: &Value| list["items"].as_array().unwrap().iter().map(|i| i["resource_id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
     let (_, list) = s.get("/api/v1/recent").await;
     assert_eq!(order(&list), [b.clone(), a.clone()]);
-    // A에 새 메시지 → 마지막 활동이 늦어져 먼저 보인다(접근 시각은 그대로).
+    // 보내기만 하면 마지막 답변 기준 순서·시각은 바뀌지 않는다.
     s.post(&format!("/api/v1/sessions/{a}/messages"), json!({ "text": "a" })).await;
     let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(order(&list), [b.clone(), a.clone()]);
+    let answered_at = receive_reply(&s, &fixture, &profile, &a, "reply a").await;
+    let (_, list) = s.get("/api/v1/recent").await;
     assert_eq!(order(&list), [a.clone(), b.clone()]);
-    assert_eq!(list["items"][0]["last_activity_at"], list["items"][0]["last_user_message_at"]);
+    assert_eq!(list["items"][0]["last_activity_at"], answered_at);
     assert_eq!(list["items"][0]["last_access_at"], ia["last_access_at"]);
 
     // 숨김 → 새 사용자 메시지가 오면 다시 보인다.
@@ -149,6 +164,7 @@ async fn recent_follows_last_user_message_window_and_revives_hidden() {
     let (_, list) = s.get("/api/v1/recent").await;
     assert_eq!(order(&list), [a.clone(), b.clone()]);
     assert_eq!(list["items"][0]["hidden"], false);
+    assert_eq!(list["items"][0]["last_activity_at"], answered_at, "숨김 복원과 답변 시각 갱신은 별개다");
 
     // 시간 범위: 미래 시각 이후 활동은 없으므로 고정 항목만 남는다. 잘못된 시각은 거절한다.
     let ib = list["items"].as_array().unwrap().iter().find(|i| i["resource_id"] == b.as_str()).unwrap().clone();
@@ -171,6 +187,67 @@ async fn recent_follows_last_user_message_window_and_revives_hidden() {
     assert_eq!(order(&list), [b.clone()]);
     let (_, reopened) = s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": a })).await;
     assert_eq!(reopened["hidden"], false);
+}
+
+#[tokio::test]
+async fn recent_changes_at_reply_completion_not_open_send_or_tool_events() {
+    let mut s = TestServer::start().await;
+    let fixture = Fixture::start().await;
+    let profile = s.fixture_profile(&fixture.base).await;
+    let pid = s.create_project("reply-clock").await["id"].as_str().unwrap().to_string();
+    let a = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    let b = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    for sid in [&a, &b] {
+        s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": sid })).await;
+    }
+    let first_reply = receive_reply(&s, &fixture, &profile, &a, "first reply").await;
+    let second_reply = receive_reply(&s, &fixture, &profile, &b, "second reply").await;
+    let (_, opened) = s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": a })).await;
+    assert_eq!(opened["last_activity_at"], first_reply);
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(list["items"][0]["resource_id"], b);
+    assert_eq!(list["items"][0]["last_activity_at"], second_reply);
+
+    let (step, release) = fixture::gated_text("latest reply");
+    fixture.push(step);
+    let (status, accepted) = s.post(&format!("/api/v1/sessions/{a}/turns"), json!({ "text": "wait for reply", "profile_id": profile, "tools": false })).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "running").await;
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(list["items"][0]["resource_id"], b, "전송·실행 시작은 최근 순서를 바꾸지 않는다");
+    let during = list["items"].as_array().unwrap().iter().find(|i| i["resource_id"] == a).unwrap();
+    assert_eq!(during["last_activity_at"], first_reply);
+    let before_release = grove::util::fmt_time(s.server.as_ref().unwrap().app.clock.now());
+    release.send(true).unwrap();
+    s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "completed").await;
+    let (_, list) = s.get("/api/v1/recent").await;
+    let answered_at = list["items"][0]["last_activity_at"].as_str().unwrap().to_string();
+    assert_eq!(list["items"][0]["resource_id"], a);
+    assert!(grove::util::parse_time(&answered_at).unwrap() >= grove::util::parse_time(&before_release).unwrap());
+    assert_ne!(list["items"][0]["last_activity_at"], list["items"][0]["last_user_message_at"]);
+
+    // 도구·상태 알림과 본문 없는 assistant 메시지는 채팅 답변이 아니다.
+    let sid = a.clone();
+    let now = grove::util::fmt_time(s.server.as_ref().unwrap().app.clock.now());
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        let tx = c.transaction()?;
+        for (role, content) in [("tool", json!({ "text": "tool result" })), ("note", json!({ "text": "status" })), ("assistant", json!({ "text": " \n", "tool_calls": [] }))] {
+            grove::sessions::append_message(&tx, &now, &sid, role, &content, None, None)?;
+        }
+        tx.commit()?;
+        Ok(())
+    }).await.unwrap();
+    s.restart().await;
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(list["items"][0]["last_activity_at"], answered_at, "재시작과 비답변 메시지도 시각을 바꾸지 않는다");
+    let sid = a.clone();
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        c.execute("UPDATE messages SET rewound_at = ?2 WHERE session_id = ?1 AND role = 'assistant' AND created_at = ?2", rusqlite::params![sid, answered_at])?;
+        Ok(())
+    }).await.unwrap();
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert_eq!(list["items"][0]["resource_id"], b, "되돌린 답변은 제외한다");
+    assert_eq!(list["items"][1]["last_activity_at"], first_reply);
 }
 
 #[tokio::test]
@@ -265,6 +342,8 @@ async fn recent_access_from_several_devices_never_regresses_read_state() {
 #[tokio::test]
 async fn large_recent_list_search_sort_and_window_stay_correct_and_bounded() {
     let s = TestServer::start().await;
+    let fixture = Fixture::start().await;
+    let profile = s.fixture_profile(&fixture.base).await;
     let pid = s.create_project("big").await["id"].as_str().unwrap().to_string();
     let mut sessions = Vec::new();
     for _ in 0..1000 {
@@ -281,6 +360,8 @@ async fn large_recent_list_search_sort_and_window_stay_correct_and_bounded() {
             )?;
         }
         for (i, sid) in sids.iter().enumerate() {
+            let created_at = format!("2021-01-01T00:{:02}:{:02}Z", (i / 60) % 60, i % 60);
+            tx.execute("UPDATE sessions SET created_at = ?2 WHERE id = ?1", rusqlite::params![sid, created_at])?;
             tx.execute(
                 "INSERT INTO recent_items (id, kind, project_id, resource_id, title, last_access_at, view_state) VALUES (?1, 'session', ?2, ?3, 't', ?4, '{}')",
                 rusqlite::params![format!("rs{i:05}"), p2, sid, format!("2021-01-01T00:{:02}:{:02}Z", (i / 60) % 60, i % 60)],
@@ -289,9 +370,9 @@ async fn large_recent_list_search_sort_and_window_stay_correct_and_bounded() {
         tx.commit()?;
         Ok(())
     }).await.unwrap();
-    // 마지막 대화 하나에 새 메시지 → 맨 앞으로 오고 시간 범위 안에 든다.
+    // 마지막 대화 하나의 새 답변 → 맨 앞으로 오고 시간 범위 안에 든다.
     let newest = sessions.last().unwrap().clone();
-    s.post(&format!("/api/v1/sessions/{newest}/messages"), json!({ "text": "now" })).await;
+    receive_reply(&s, &fixture, &profile, &newest, "now").await;
     let timed = |path: String| {
         let s = &s;
         async move {
@@ -303,7 +384,7 @@ async fn large_recent_list_search_sort_and_window_stay_correct_and_bounded() {
     };
     let (all, t_all) = timed("/api/v1/recent?limit=50".into()).await;
     assert_eq!(all["total"], 5000);
-    assert_eq!(all["items"][0]["resource_id"], newest.as_str(), "마지막 사용자 메시지가 가장 최근 활동");
+    assert_eq!(all["items"][0]["resource_id"], newest.as_str(), "마지막 확정 답변이 가장 최근 활동");
     assert_eq!(all["items"][1]["kind"], "session", "2021년 대화가 2020년 파일보다 앞");
     let (found, t_q) = timed("/api/v1/recent?limit=50&q=file-03999".into()).await;
     assert_eq!(found["total"], 1);

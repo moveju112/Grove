@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, apiText, composerOption, ensureProfile, ensureProjects, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, apiText, composerOption, ensureProfile, ensureProjects, login, openDetails, script, selectChoice, sessionView, state } from "./helpers";
 
 type CloseMode = "tab" | "context" | "browser";
 type Turn = { id: string; status: string; error?: { code: string } };
@@ -43,10 +43,10 @@ async function conversation(page: Page) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
-    await view.getByLabel("모델 프로필").selectOption(profile);
+    await composerOption(view, "모델 프로필", profile);
     return { profile, project: a, title, sid: session.id, view };
 }
 
@@ -121,7 +121,7 @@ for (const mode of ["tab", "context", "browser"] as const) {
                 terminalId = terminal.id;
                 await c.page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
                 const terminals = c.page.getByTestId("terminal-list");
-                await openDetails(terminals);
+                await openDetails(terminals, "터미널");
                 await terminals.getByRole("button", { name: terminalName, exact: true }).click();
                 const terminalView = c.page.getByTestId("terminal-view");
                 await expect(terminalView).toHaveAttribute("data-conn", "open");

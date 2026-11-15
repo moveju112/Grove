@@ -301,8 +301,11 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
     let resp = idem::run(&app, &p, &headers, &h, move |tx, now| {
         let s = crate::sessions::get_active(tx, &session_id)?;
         let binding = crate::bots::turn_binding(tx, &session_id)?;
-        if binding.is_some() && model.is_some() { return Err(ApiError::invalid("봇 모델은 봇 설정에서 변경하세요")); }
-        let profile = crate::models::get_enabled_profile(tx, binding.as_ref().map_or(b.profile_id.as_str(), |(profile, _)| profile.as_str()))?;
+        let room = crate::bot_rooms::request_binding(tx, &session_id, &b.text)?;
+        if (binding.is_some() || room.is_some()) && model.is_some() { return Err(ApiError::invalid("봇 모델은 봇 설정에서 변경하세요")); }
+        let profile_id = room.as_ref().map(|(_,profile)| profile.as_str())
+            .or_else(|| binding.as_ref().map(|(profile,_)|profile.as_str())).unwrap_or(&b.profile_id);
+        let profile = crate::models::get_enabled_profile(tx, profile_id)?;
         if service_tier.is_some() && (profile.protocol != "codex_cli" || !profile.capabilities.fast) {
             return Err(ApiError::unsupported("선택한 모델 프로필은 속도 선택을 지원하지 않습니다"));
         }
@@ -317,6 +320,12 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
             let t = crate::runner::get_turn(tx, &t.id)?;
             return Ok((StatusCode::ACCEPTED, json!({ "started_turn": t, "message": msg })));
         };
+        if b.kind == "steer" && let Some((ids, _)) = &room {
+            let turn = crate::runner::get_turn(tx, &active)?;
+            if ids.len() != 1 || turn.definition["bot"]["id"].as_str() != Some(ids[0].as_str()) {
+                return Err(ApiError::invalid("다른 봇에게 보낼 때는 대기열에 추가하거나 중단하고 보내기를 선택하세요"));
+            }
+        }
         if b.kind == "steer" && let Some(model) = &model {
             let turn = crate::runner::get_turn(tx, &active)?;
             let current = crate::model_fallback::runtime(tx, &turn.definition, turn.profile_id.as_deref().unwrap_or(""))?.1;
@@ -338,7 +347,7 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
         let id = crate::util::new_id();
         tx.execute(
             "INSERT INTO followups (id, session_id, kind, text, profile_id, agent_id, tools, owner_key, created_at, effort, attachments, model, service_tier) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![id, session_id, b.kind, b.text, b.profile_id, b.agent_id, tools, owner, now, effort, json!(prepared.items).to_string(), model, service_tier],
+            params![id, session_id, b.kind, b.text, profile.id, b.agent_id, tools, owner, now, effort, json!(prepared.items).to_string(), model, service_tier],
         )?;
         for item in &prepared.items {tx.execute("INSERT INTO followup_attachment_refs(attachment_id,followup_id) VALUES (?1,?2)",params![item["id"].as_str().unwrap(),id])?;}
         emit(tx, now, &session_id)?;

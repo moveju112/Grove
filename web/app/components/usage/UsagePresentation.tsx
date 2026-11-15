@@ -1,4 +1,8 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Select } from "../../design/Select";
+import { Card } from "@astryxdesign/core/Card";
+import { Grid, GridSpan } from "@astryxdesign/core/Grid";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
 import { useState } from "react";
@@ -6,7 +10,6 @@ import {
     costCurrencies, formatCost, formatNumber as fmt, formatShare, sortRows, tokenShare, totalTokens,
     type SortDirection, type SortKey, type UsageReport, type UsageRow,
 } from "./model";
-import "./usage.css";
 
 function ReportingDetails({ row }: { row: UsageRow }) {
     return (
@@ -30,31 +33,25 @@ function CostDetails({ row }: { row: UsageRow }) {
     );
 }
 
-/// 색상 정보와 무관하게 같은 수치·분모를 figcaption과 표에서 읽을 수 있다.
+/// 비율은 Astryx의 진행 표시로, 수치·분모는 색에 의존하지 않는 본문으로 제공한다.
 export function TokenDonut({ total }: { total: UsageRow }) {
     const tokens = totalTokens(total);
     const inputShare = tokenShare(total.input_tokens, tokens);
     const outputShare = tokenShare(total.output_tokens, tokens);
     return (
-        <figure className="usage-donut" data-testid="usage-donut">
-            <svg viewBox="0 0 120 120" aria-hidden="true" focusable="false">
-                <circle className="usage-ring-base" cx="60" cy="60" r="44" />
-                {tokens > 0 && (
-                    <g transform="rotate(-90 60 60)">
-                        <circle className="usage-ring-output" cx="60" cy="60" r="44" />
-                        <circle className="usage-ring-input" cx="60" cy="60" r="44" pathLength="100"
-                            strokeDasharray={`${(inputShare ?? 0) * 100} 100`} />
-                    </g>
-                )}
-            </svg>
-            <figcaption>
-                <strong>입력·출력 구성</strong>
-                <GroveText as="p" display="block" type="inherit" color="inherit">분모: 입력+출력 {fmt(tokens)} tokens</GroveText>
-                <GroveText as="p" display="block" type="inherit" color="inherit"><span className="usage-swatch usage-input" aria-hidden="true" />입력 {fmt(total.input_tokens)} tokens · {formatShare(inputShare)}</GroveText>
-                <GroveText as="p" display="block" type="inherit" color="inherit"><span className="usage-swatch usage-output" aria-hidden="true" />출력 {fmt(total.output_tokens)} tokens · {formatShare(outputShare)}</GroveText>
+        <GroveStack as="figure" gap={2} data-testid="usage-donut">
+            <GroveStack as="figcaption" gap={1}>
+                <GroveText weight="bold">입력·출력 구성</GroveText>
+                <GroveText>분모: 입력+출력 {fmt(tokens)} tokens</GroveText>
+                <GroveText>입력 {fmt(total.input_tokens)} tokens · {formatShare(inputShare)}</GroveText>
+                <GroveText>출력 {fmt(total.output_tokens)} tokens · {formatShare(outputShare)}</GroveText>
                 {tokens === 0 && <GroveText as="p" display="block" type="inherit" color="secondary">총 token이 0이라 비율을 계산하지 않습니다.</GroveText>}
-            </figcaption>
-        </figure>
+            </GroveStack>
+            {tokens > 0 && <GroveStack gap={2} maxWidth={320}>
+                <ProgressBar value={total.input_tokens} max={tokens} label="입력 token 비율" />
+                <ProgressBar value={total.output_tokens} max={tokens} label="출력 token 비율" />
+            </GroveStack>}
+        </GroveStack>
     );
 }
 
@@ -73,32 +70,34 @@ export function UsagePresentation({ report, groupLabel }: { report: UsageReport;
         ...currencies.map((currency): [SortKey, string] => [`cost:${currency}`, `추정 비용 (${currency})`]),
     ];
     return (
-        <div className="usage-presentation">
-            <div className="usage-cards" data-testid="usage-total">
-                <div className="usage-card"><GroveText type="inherit" color="inherit">총 token (입력+출력)</GroveText><strong>{fmt(tokens)}</strong></div>
-                <div className="usage-card"><GroveText type="inherit" color="inherit">입력 tokens</GroveText><strong>{fmt(total.input_tokens)}</strong></div>
-                <div className="usage-card"><GroveText type="inherit" color="inherit">출력 tokens</GroveText><strong>{fmt(total.output_tokens)}</strong></div>
-                <div className="usage-card"><GroveText type="inherit" color="inherit">응답</GroveText><strong>{fmt(total.responses)}개</strong></div>
-                <div className="usage-card usage-cost-card"><GroveText type="inherit" color="inherit">추정 비용 · 통화별 별도 금액</GroveText><CostDetails row={total} /></div>
-            </div>
+        <GroveStack gap={3} paddingBlockStart={3}>
+            <Grid gap={2} columns={{ minWidth: 140, repeat: "fit" }} data-testid="usage-total">
+                {[
+                    ["총 token (입력+출력)", fmt(tokens)],
+                    ["입력 tokens", fmt(total.input_tokens)],
+                    ["출력 tokens", fmt(total.output_tokens)],
+                    ["응답", `${fmt(total.responses)}개`],
+                ].map(([label, value]) => <Card key={label} padding={3}>
+                    <GroveStack gap={1}>
+                        <GroveText>{label}</GroveText>
+                        <GroveText size="xl" weight="bold" hasTabularNumbers>{value}</GroveText>
+                    </GroveStack>
+                </Card>)}
+                <GridSpan columns="full"><Card padding={3}>
+                    <GroveStack gap={1}><GroveText>추정 비용 · 통화별 별도 금액</GroveText><CostDetails row={total} /></GroveStack>
+                </Card></GridSpan>
+            </Grid>
             <ReportingDetails row={total} />
             <TokenDonut total={total} />
             {rows.length > 0 && (
                 <>
-                    <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
-                        <label>정렬 기준{" "}
-                            <select aria-label="정렬 기준" value={activeSort} onChange={(e) => setSort(e.target.value as SortKey)}>
-                                {sortOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                            </select>
-                        </label>
-                        <label>정렬 방향{" "}
-                            <select aria-label="정렬 방향" value={direction} onChange={(e) => setDirection(e.target.value as SortDirection)}>
-                                <option value="desc">내림차순</option><option value="asc">오름차순</option>
-                            </select>
-                        </label>
+                    <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+                        <Select label="정렬 기준" value={activeSort} onChange={(value) => setSort(value as SortKey)}
+                            options={sortOptions.map(([value, label]) => ({ value, label }))} />
+                        <Select label="정렬 방향" value={direction} onChange={(value) => setDirection(value as SortDirection)}
+                            options={[{ value: "desc", label: "내림차순" }, { value: "asc", label: "오름차순" }]} />
                     </GroveStack>
-                    <div className="usage-table-scroll" role="region" aria-label="사용량 비교 표" tabIndex={0}>
-                        <Table density="compact" data-testid="usage-table">
+                        <Table density="compact" aria-label="사용량 비교 표" data-testid="usage-table">
                             <caption>{groupLabel}별 사용량 · 비율 분모: 이 기간의 입력+출력 {fmt(tokens)} tokens</caption>
                             <TableHeader>
                                 <TableRow isHeaderRow>
@@ -116,9 +115,8 @@ export function UsagePresentation({ report, groupLabel }: { report: UsageReport;
                                             <TableCell>{fmt(row.input_tokens)}</TableCell><TableCell>{fmt(row.output_tokens)}</TableCell>
                                             <TableCell>
                                                 {fmt(totalTokens(row))} tokens · {formatShare(share)}
-                                                <GroveText type="inherit" color="inherit" className="usage-share-track" aria-hidden="true">
-                                                    <span style={{ width: `${(share ?? 0) * 100}%` }} />
-                                                </GroveText>
+                                                <ProgressBar value={share ?? 0} max={1}
+                                                    label={`${row.label} token 비율`} isLabelHidden aria-hidden="true" />
                                             </TableCell>
                                             <TableCell>{fmt(row.responses)}</TableCell>
                                             <TableCell><ReportingDetails row={row} /></TableCell>
@@ -128,9 +126,8 @@ export function UsagePresentation({ report, groupLabel }: { report: UsageReport;
                                 })}
                             </TableBody>
                         </Table>
-                    </div>
                 </>
             )}
-        </div>
+        </GroveStack>
     );
 }

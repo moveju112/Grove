@@ -240,6 +240,7 @@ fn finish_turn(c: &Connection, now: &str, id: &str, from: &[&str], to: &str, err
         crate::schedules::on_turn_finished(c, now, id, to)?;
         let turn = get_turn(c, id)?;
         crate::hooks::capture(c, now, &turn.session_id, "Stop", id, &turn.session_id)?;
+        crate::bot_rooms::on_turn_finished(c, now, id, to)?;
     }
     Ok(n > 0)
 }
@@ -443,7 +444,9 @@ pub fn to_chat(history: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg> {
     crate::history::from_rows(history)
 }
 
-fn native_resume(c: &Connection, session: &str, profile: &str, system: &str) -> ApiResult<Option<String>> {
+fn native_resume(c: &Connection, session: &str, profile: &str, system: &str, shared_room: bool) -> ApiResult<Option<String>> {
+    // 그룹은 다른 봇이 쓴 이력까지 매번 전달해야 한다. CLI의 마지막 요청만 재개하면 공유 문맥을 잃는다.
+    if shared_room { return Ok(None); }
     Ok(c.query_row("SELECT native_id FROM cli_sessions WHERE session_id=?1 AND profile_id=?2 AND system_sha256=?3",
         params![session,profile,crate::util::sha256_hex(system.as_bytes())],|r|r.get(0)).optional()?)
 }
@@ -464,6 +467,11 @@ pub fn system_prompt(def: &Value, project_root: &str, tools_enabled: bool) -> St
             }
         }
         parts.push(s);
+    }
+    if let Some(room) = def.get("bot_room") {
+        parts.push(format!("You are replying as one member of a shared bot room. Members (data): {}. \
+            Answer only as yourself, considering earlier replies. Mentions select recipients, not permissions. \
+            Do not impersonate another member or start additional bot turns.", room["members"]));
     }
     if let Some(body) = def["user_profile"]["body"].as_str().filter(|s| !s.trim().is_empty()) {
         parts.push(format!(
@@ -601,7 +609,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
         + &crate::skills::api::model_instructions(c, data, &t.session_id, t.tools_enabled, mp.capabilities.tools, cli_backend)?;
     // 기억·지침 등 시스템 입력이 바뀌면 옛 입력을 품은 native 대화를 재사용하지 않는다.
     let cli = if cli_backend { Some(crate::provider::cli::CliContext {
-        cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system)?,
+        cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system,def.get("bot_room").is_some())?,
         service_tier: def["service_tier"].as_str().map(str::to_string),
     }) } else { None };
     let tools: Vec<ToolDef> = if t.tools_enabled && !cli_backend {
@@ -661,6 +669,7 @@ async fn drive(app: App, turn_id: String) {
     app.notify_events().await;
     // 끝났으면 대기 메시지(queue·interrupt)를 시작한다. 승인 대기로 멈춘 경우는 아무것도 하지 않는다.
     crate::followups::after_turn(&app, &turn_id).await;
+    kick_queued(&app).await;
     // 턴과 독립: 제목 생성 실패가 턴 결과에 영향을 주지 않는다.
     crate::titles::after_turn(&app, &turn_id).await;
 }
@@ -837,7 +846,8 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             // 마지막 조각이 50ms 창 안에 들어와도 버리지 않는다. 재접속 snapshot도 즉시 갱신한다.
             partials.stage(
                 &sid,
-                json!({ "turn_id": tid2, "text": o.text, "reasoning_chars": o.reasoning.chars().count(), "reasoning": reasoning_tail(&o.reasoning),
+                json!({ "turn_id": tid2, "text": o.text, "response_parts": o.response_parts,
+                        "reasoning_chars": o.reasoning.chars().count(), "reasoning": reasoning_stored(&o.reasoning),
                         "tool_calls": o.tool_calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>() }),
             );
             unpublished.store(true, std::sync::atomic::Ordering::Release);
@@ -963,7 +973,11 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                     // 표시 전용(UI-012). 서명된 공급자 입력은 별도 model_input에 보존한다.
                     "reasoning": reasoning_stored(&out.reasoning),
                 });
+                if !out.response_parts.is_empty() { content["response_parts"] = json!(out.response_parts); }
                 if completion_pending { content["pending_work"] = pending_work.clone(); }
+                if t.definition.get("bot_room").is_some() {
+                    content["bot"] = json!({"id":t.definition["bot"]["id"],"name":t.definition["bot"]["name"]});
+                }
                 // CLI 백엔드가 자기 안에서 한 도구 활동은 표시 전용 note로 먼저 남긴다(Grove가 다시 실행하지 않음).
                 if !out.activity.is_empty() {
                     crate::sessions::append_message(&tx, &now, &t.session_id, "note", &json!({ "type": "cli_activity", "items": out.activity }), Some(&tid), None)?;
@@ -1381,7 +1395,11 @@ pub(crate) fn enqueue_with_attachments(
             .with_details(json!({ "unreviewed_unknown": s.unreviewed_unknown })));
     }
     // 봇 대화면 요청의 프로필·에이전트 대신 봇 설정을 쓴다(BOT-005: 접수 시점 값으로 고정).
-    let bot = crate::bots::turn_binding(tx, session_id)?;
+    let room = crate::bot_rooms::binding(tx, session_id, text, source)?;
+    let bot = match &room {
+        Some(room) => Some((room.profile.clone(), room.bot.clone())),
+        None => crate::bots::turn_binding(tx, session_id)?,
+    };
     let (profile_id, agent_id) = match &bot {
         Some((p, _)) => (p.as_str(), None),
         None => (profile_id, agent_id),
@@ -1407,6 +1425,9 @@ pub(crate) fn enqueue_with_attachments(
     }
     if let Some((_, b)) = &bot {
         def["bot"] = b.clone();
+    }
+    if let Some(room) = &room {
+        def["bot_room"] = json!({"session_id":session_id,"members":room.room.members});
     }
     // 지침 파일·응답 언어는 턴 시작 시점 값으로 고정한다(실행 중 변경은 다음 턴부터).
     let mode = crate::settings::effective(tx, "instructions.mode", Some(&s.project_id), Some(session_id))?;
@@ -1480,8 +1501,14 @@ pub(crate) fn enqueue_with_attachments(
     }
     let attachments = attachments.filter(|a| !a.items.is_empty());
     if let Some(a) = attachments { content["attachments"] = json!(a.items); }
-    let msg = crate::sessions::append_message(tx, now, session_id, "user", &content, Some(&tid), attachments.map(|a| &a.model_input))?;
-    if let Some(a) = attachments { crate::attachments::bind(tx, now, &msg.id, a)?; }
+    let msg = match room.as_ref().and_then(|r| r.reuse_message.clone()) {
+        Some(msg) => msg,
+        None => {
+            let msg = crate::sessions::append_message(tx, now, session_id, "user", &content, Some(&tid), attachments.map(|a| &a.model_input))?;
+            if let Some(a) = attachments { crate::attachments::bind(tx, now, &msg.id, a)?; }
+            msg
+        }
+    };
     let ins = tx.execute(
         "INSERT INTO turns (id, session_id, status, request_message_id, profile_id, agent_id, workflow_id, definition_snapshot, tools_enabled, owner_epoch, usage, created_at, updated_at, owner_key, provider_ms) \
          VALUES (?1, ?2, 'queued', ?3, ?4, ?5, ?6, ?7, ?8, ?9, '{}', ?10, ?10, ?11, 0)",
@@ -1493,6 +1520,9 @@ pub(crate) fn enqueue_with_attachments(
         return Err(ApiError::busy("이 세션에서 이미 턴이 실행 중입니다"));
     }
     ins?;
+    if let Some(room) = &room {
+        crate::bot_rooms::record(tx, room, &msg.id, &tid)?;
+    }
     if source.is_none() {
         crate::hooks::capture(tx, now, session_id, "UserPromptSubmit", &msg.id, session_id)?;
     }
@@ -1590,7 +1620,8 @@ pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         let session = crate::sessions::get_active(tx, &old.session_id)?;
         let prepared = crate::attachments::prepare(tx, &data, &uploader, &session.project_id, &text, &ids)?;
         let profile = old.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없는 요청입니다"))?;
-        let src = json!({ "kind": "retry", "turn_id": old.id });
+        let mut src = json!({ "kind": "retry", "turn_id": old.id });
+        if old.definition.get("bot_room").is_some() { src["room_retry_bot"] = old.definition["bot"]["id"].clone(); }
         let (t, msg) = enqueue_with_attachments(tx, now, &epoch, &owner, &old.session_id, &text, &profile, old.agent_id.as_deref(), old.tools_enabled, Some(&src), Some(&prepared))?;
         if old.definition["model_selection"]["profile_id"] == profile.as_str() {
             set_turn_model(tx, &t.id, old.definition["model_selection"]["model"].as_str())?;
@@ -1817,12 +1848,13 @@ mod tests {
         let c = Connection::open_in_memory().unwrap();
         c.execute_batch("CREATE TABLE cli_sessions(session_id TEXT,profile_id TEXT,native_id TEXT,system_sha256 TEXT);").unwrap();
         c.execute("INSERT INTO cli_sessions VALUES ('s','p','native',NULL)",[]).unwrap();
-        assert!(native_resume(&c,"s","p","before").unwrap().is_none());
+        assert!(native_resume(&c,"s","p","before",false).unwrap().is_none());
         let hash = crate::util::sha256_hex(b"before");
         c.execute("UPDATE cli_sessions SET system_sha256=?1",[hash]).unwrap();
-        assert_eq!(native_resume(&c,"s","p","before").unwrap().as_deref(),Some("native"));
-        assert!(native_resume(&c,"s","p","after memory deletion").unwrap().is_none());
-        assert!(native_resume(&c,"other","p","before").unwrap().is_none());
+        assert_eq!(native_resume(&c,"s","p","before",false).unwrap().as_deref(),Some("native"));
+        assert!(native_resume(&c,"s","p","before",true).unwrap().is_none(),"그룹은 native 대화 대신 공유 이력을 전달한다");
+        assert!(native_resume(&c,"s","p","after memory deletion",false).unwrap().is_none());
+        assert!(native_resume(&c,"other","p","before",false).unwrap().is_none());
     }
 
     /// 도구 결과를 기다리는 사이 기록된 비동기 결과 note는 tool 짝을 깨지 않고 그 뒤에 들어간다.
@@ -1929,16 +1961,9 @@ fn loop_guard(c: &Connection, turn_id: &str, calls: &[provider::ToolCall]) -> Ap
 
 /// 저장하는 reasoning 상한(표시 전용). 넘으면 앞부분만 남긴다(전체 길이는 reasoning_chars).
 const REASONING_KEEP: usize = 20_000;
-/// 진행 중 표시용 reasoning 꼬리(snapshot 크기 제한).
-const REASONING_TAIL: usize = 2_000;
 
 fn reasoning_stored(r: &str) -> Option<String> {
     (!r.is_empty()).then(|| r.chars().take(REASONING_KEEP).collect())
-}
-
-fn reasoning_tail(r: &str) -> String {
-    let n = r.chars().count();
-    r.chars().skip(n.saturating_sub(REASONING_TAIL)).collect()
 }
 
 #[cfg(test)]
@@ -1950,9 +1975,6 @@ mod reasoning_tests {
         assert_eq!(reasoning_stored(""), None);
         let long = "생".repeat(REASONING_KEEP + 5);
         assert_eq!(reasoning_stored(&long).unwrap().chars().count(), REASONING_KEEP);
-        let t = reasoning_tail(&format!("앞{}", "뒤".repeat(REASONING_TAIL)));
-        assert_eq!(t.chars().count(), REASONING_TAIL);
-        assert!(!t.contains('앞'));
-        assert_eq!(reasoning_tail("짧음"), "짧음");
+        assert_eq!(reasoning_stored("짧음").as_deref(), Some("짧음"));
     }
 }

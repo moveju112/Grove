@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { createServer } from "node:http";
-import { apiCall, composerOption, ensureProjects, login, openDetails, openSettings, profileAction, selectChoice, sessionView } from "./helpers";
+import { apiCall, choiceOptions, composerOption, ensureProjects, expectComposerSetting, login, openDetails, openSettings, profileAction, selectChoice, sessionView } from "./helpers";
 import { frames } from "./fixture";
 
 type Profile = { id: string; name: string; model: string; revision: number; base_url: string; secret_id: string | null };
@@ -106,7 +106,7 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         await page.getByRole("dialog", { name: "로컬 HTTP 모델 연결", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
         const row = page.getByTestId("model-profile").filter({ hasText: name });
         await openDetails(row);
-        const model = row.locator(".profile-identity > code");
+        const model = row.getByTestId("profile-model");
         await expect(row.getByTestId("profile-check")).toContainText("연결 확인 안 함");
         await profileAction(row, "연결 확인");
         await expect(row.getByTestId("profile-check")).toContainText("연결됨");
@@ -116,7 +116,7 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         await expect(select).toBeEnabled();
         await expect(model).toHaveText("manual-kept");
         expect(fixture.calls.every((call) => call.path === "/v1/models" && !call.authenticated)).toBe(true);
-        await select.selectOption("local-chosen");
+        await selectChoice(select, "local-chosen");
         await expect(model).toHaveText("local-chosen");
         await expect(row.getByTestId("profile-check")).toContainText("연결 확인 안 함");
         await expect(select).toBeDisabled();
@@ -127,10 +127,10 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
         const app = await context.newPage();
         await login(app);
-        await app.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+        await app.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         const view = sessionView(app, session.id);
         await composerOption(view, "보내기 방식", "model");
-        await view.getByLabel("모델 프로필").selectOption(profile.id);
+        await composerOption(view, "모델 프로필", profile.id);
         const draft = view.getByLabel("메시지 입력");
         await draft.fill("local draft survives reconnect");
         await context.setOffline(true);
@@ -138,12 +138,12 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         await expect(app.getByTestId("offline-banner")).toBeVisible();
         await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
         await expect(draft).toHaveValue("local draft survives reconnect");
-        await expect(view.getByLabel("모델 프로필")).toHaveValue(profile.id);
+        await expectComposerSetting(view, "모델 프로필", profile.id);
         await context.setOffline(false);
         await app.reload();
         await expect(app.getByTestId("conn")).toHaveText("연결됨", { timeout: 10_000 });
         await expect(draft).toHaveValue("local draft survives reconnect");
-        await expect(view.getByLabel("모델 프로필")).toHaveValue(profile.id);
+        await expectComposerSetting(view, "모델 프로필", profile.id);
         const turns: string[] = [];
         let lostTurn = true;
         await app.route(`**/api/v1/sessions/${session.id}/turns`, async (route) => {
@@ -187,7 +187,7 @@ test("로컬 목록의 오류·빈 목록·늦은 응답은 수동 선택을 바
         const form = await fillLocal(page, name, fixture.base, secret.id);
         await form.getByRole("button", { name: "로컬 연결 저장", exact: true }).click();
         const row = page.getByTestId("model-profile").filter({ hasText: name });
-        const model = row.locator(".profile-identity > code");
+        const model = row.getByTestId("profile-model");
         await expect(row).toBeVisible();
         profile = (await apiCall<Profile[]>("GET", "/model-profiles")).find((p) => p.name === name)!;
         await page.getByRole("dialog", { name: "로컬 HTTP 모델 연결", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
@@ -228,9 +228,10 @@ test("로컬 목록의 오류·빈 목록·늦은 응답은 수동 선택을 바
         await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("프로필이 변경됐으니 목록을 다시 조회하세요.");
         await refresh.click();
         await expect(select).toBeEnabled();
-        await expect(select.getByRole("option", { name: /local-chosen/ })).toHaveCount(1);
+        await expect((await choiceOptions(select)).filter({ hasText: "local-chosen" })).toHaveCount(1);
+        await page.keyboard.press("Escape");
         await expect(model).toHaveText("manual-after-change");
-        await select.selectOption("local-other");
+        await selectChoice(select, "local-other");
         await expect(model).toHaveText("local-other");
         await profileAction(row, "연결 확인");
         await expect(row.getByTestId("profile-check")).toContainText("연결됨");

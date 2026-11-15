@@ -10,6 +10,14 @@ export type PairingInfo = { id: string, name: string, created_at: string, expire
 
 export type Notification = { id: string, kind: string, title: string, body: string, project_id: string | null, session_id: string | null, ref_id: string | null, created_at: string, delivered_at: string | null, read_at: string | null, };
 
+export type RoomMember = { id: string, name: string, profile_id: string | null, status: string, };
+
+export type BotRoom = { session_id: string, project_id: string, name: string, members: Array<RoomMember>, };
+
+export type BotConnection = { id: string, name: string, enabled: boolean, selected: boolean, };
+
+export type BotConnections = { revision: number, servers: Array<BotConnection>, };
+
 export type Project = { id: string, name: string, root_path: string, created_at: string, updated_at: string, revision: number, archived_at: string | null, 
 /**
  * root 경로가 현재 접근 가능한 디렉터리인지
@@ -92,7 +100,7 @@ status: string, unread: boolean,
  */
 last_user_message_at: string | null, 
 /**
- * 정렬·시간 범위 기준: 마지막 접근과 마지막 사용자 메시지 중 늦은 시각.
+ * 정렬·시간 범위 기준: 대화는 마지막 확정 답변 시각(없으면 생성 시각), 다른 자원은 마지막 접근 시각.
  */
 last_activity_at: string, };
 

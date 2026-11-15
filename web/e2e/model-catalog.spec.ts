@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProjects, login, openBots, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProjects, expectComposerSetting, login, openBots, openDetails, profileAction, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성화해도 선택·초안을 보존하며 재활성화 후 실행한다", async ({ page, browser }) => {
@@ -9,7 +9,7 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
     await login(page);
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("프로필");
-    await page.locator(".profile-create > summary").click();
+    await page.getByRole("button", { name: "모델 프로필 추가", exact: true }).click();
     const form = page.locator("form").filter({ has: page.getByLabel("프로필 이름") });
     await form.getByLabel("프로필 이름").fill(name);
     await form.getByLabel("Base URL").fill(base);
@@ -19,9 +19,9 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
     await openDetails(row);
     await expect(row).toContainText(base);
     await row.getByRole("button", { name: "모델 목록 새로고침" }).click();
-    await expect(row.getByLabel(`${name} 공급자 모델`)).toBeEnabled();
-    await row.getByLabel(`${name} 공급자 모델`).selectOption("fixture-model");
-    await expect(row.locator("code")).toHaveText("fixture-model");
+    await expect(row.getByRole("combobox", { name: `${name} 공급자 모델`, exact: true })).toBeEnabled();
+    await selectChoice(row.getByLabel(`${name} 공급자 모델`), "fixture-model");
+    await expect(row.getByTestId("profile-model")).toHaveText("fixture-model");
     await expect(row.getByRole("status").filter({ hasText: "프로필이 변경됐으니 목록을 다시 조회하세요." })).toBeVisible();
     await page.route("**/api/v1/model-profiles/*/models", (route) => route.fulfill({
         status: 502, contentType: "application/json", body: JSON.stringify({ error: { code: "catalog_invalid", message: "fixture catalog failure" } }),
@@ -31,7 +31,7 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
     await expect(row).toContainText("1개");
     await page.unroute("**/api/v1/model-profiles/*/models");
     await row.getByRole("button", { name: "모델 목록 새로고침" }).click();
-    await expect(row.getByLabel(`${name} 공급자 모델`)).toBeEnabled();
+    await expect(row.getByRole("combobox", { name: `${name} 공급자 모델`, exact: true })).toBeEnabled();
     expect((await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as unknown[]).length).toBe(before);
     const profiles = await apiCall<{ id: string; name: string }[]>("GET", "/model-profiles");
     const profile = profiles.find((profile) => profile.name === name)!;
@@ -44,7 +44,7 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
     try {
         const app = await context.newPage();
         await login(app);
-        await app.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+        await app.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         const view = sessionView(app, session.id);
         const home = await context.newPage();
         await home.goto("http://127.0.0.1:17741/");
@@ -52,22 +52,21 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
         await openBots(home);
         const botCard = home.getByTestId("bot").filter({ hasText: botName });
         await composerOption(view, "보내기 방식", "model");
-        await view.getByLabel("모델 프로필").selectOption(profile.id);
+        await composerOption(view, "모델 프로필", profile.id);
         await view.getByLabel("메시지 입력").fill("catalog user prompt");
+        await profileAction(row, "비활성화");
         await row.getByRole("button", { name: `${name} 관리`, exact: true }).click();
-        await row.getByRole("button", { name: "비활성화", exact: true }).click();
-        await row.getByRole("button", { name: `${name} 관리`, exact: true }).click();
-        await expect(row.getByRole("button", { name: "활성화", exact: true })).toBeVisible();
+        await expect(page.getByRole("group", { name: `${name} 관리`, exact: true }).getByRole("button", { name: "활성화", exact: true })).toBeVisible();
         await expect(view.getByTestId("profile-disabled")).toBeVisible();
         await expect(botCard).toContainText("모델 비활성");
-        await expect(view.getByLabel("모델 프로필")).toHaveValue(profile.id);
+        await expectComposerSetting(view, "모델 프로필", profile.id);
         await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
         await expect(view.getByLabel("메시지 입력")).toHaveValue("catalog user prompt");
-        await row.getByRole("button", { name: "활성화", exact: true }).click();
+        await profileAction(row, "활성화");
         await expect(view.getByTestId("profile-disabled")).toHaveCount(0);
         await expect(botCard).not.toContainText("모델 비활성");
         await expect(botCard).not.toContainText("모델 없음");
-        await expect(view.getByLabel("모델 프로필")).toHaveValue(profile.id);
+        await expectComposerSetting(view, "모델 프로필", profile.id);
         await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeEnabled();
         await script({ frames: frames.text(["catalog reply"]) });
         await view.getByRole("button", { name: "보내기", exact: true }).click();

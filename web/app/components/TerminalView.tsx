@@ -12,6 +12,7 @@ import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
 import { terminalAction } from "./pwa/terminalAction";
 import { Stack } from "@astryxdesign/core/Stack";
+import { terminalLayout } from "./terminal/terminal-layout.stylex";
 
 type TerminalRow = { id: string; name: string; status: "running" | "exited" | "lost"; exit_code: number | null; reason: string | null; revision: number };
 
@@ -186,18 +187,18 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             : conn === "open" ? "연결됨" : conn === "connecting" ? "연결 중…" : conn === "closed" ? "끊김 · 다시 연결 중"
                 : row?.status === "lost" ? "서버 재시작으로 종료됨 · 화면만 복원" : `종료됨${row?.exit_code != null ? ` (코드 ${row.exit_code})` : ""}`;
     return (
-        <Stack className="terminal-view" data-testid="terminal-view" data-conn={conn}>
-            <div className="inline small">
+        <Stack gap={1.5} height="100%" minHeight={0} data-testid="terminal-view" data-conn={conn}>
+            <Stack direction="horizontal" align="center" gap={1.5}>
                 <strong>{row?.name ?? "터미널"}</strong>
                 <GroveText type="inherit" color="secondary" data-testid="terminal-status">{statusText}</GroveText>
-                {row?.status === "running" && <ServerActionButton className="ghost small" onClick={() => void kill()}>종료</ServerActionButton>}
-            </div>
+                {row?.status === "running" && <ServerActionButton variant="secondary" density="compact" onClick={() => void kill()}>종료</ServerActionButton>}
+            </Stack>
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {blockedReason && <GroveText as="p" display="block" type="inherit" color="warning" role="status" data-testid="terminal-blocked">
                 {blockedReason} 터미널 입력·크기 전송을 멈췄습니다. PTY를 종료하지 않았으며 차단 중 입력은 복구 후 다시 보내지 않습니다.
             </GroveText>}
-            {(conn === "missing" || conn === "error") && <ServerActionButton className="ghost small" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</ServerActionButton>}
-            <div className="term-host" ref={host} />
+            {(conn === "missing" || conn === "error") && <ServerActionButton variant="secondary" density="compact" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</ServerActionButton>}
+            <Stack gap={0} padding={1} xstyle={terminalLayout.host} ref={host} />
             <TerminalCapture key={terminalId} terminalId={terminalId} enabled={conn === "open" || conn === "readonly"} />
             {conn === "open" && (
                 <TerminalKeys modifiers={modifiers} blockedReason={blockedReason}

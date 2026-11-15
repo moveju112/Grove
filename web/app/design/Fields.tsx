@@ -1,9 +1,41 @@
 import { TextInput as AstryxTextInput, type TextInputProps as AstryxTextInputProps } from "@astryxdesign/core/TextInput";
 import { TextArea as AstryxTextArea, type TextAreaProps as AstryxTextAreaProps } from "@astryxdesign/core/TextArea";
+import { FileInput as AstryxFileInput, type FileInputProps as AstryxFileInputProps } from "@astryxdesign/core/FileInput";
 import type { InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 
 type TextInputProps = AstryxTextInputProps & Pick<InputHTMLAttributes<HTMLInputElement>, "minLength" | "maxLength" | "pattern">;
 type TextAreaProps = AstryxTextAreaProps & Pick<TextareaHTMLAttributes<HTMLTextAreaElement>, "autoComplete">;
+type DraftInputProps = Omit<TextInputProps, "type"> & Pick<InputHTMLAttributes<HTMLInputElement>, "min" | "max" | "step"> & {
+    type: "number" | "time" | "datetime-local";
+};
+
+/** 숫자·시각의 미완성 초안은 앱이 소유한다. blur 때 clamp하거나 값을 확정하지 않는다. */
+export function DraftInput({ type, min, max, step, ref, ...props }: DraftInputProps) {
+    return <TextInput {...props} ref={(node) => {
+        if (node) {
+            node.type = type;
+            for (const [name, value] of Object.entries({ min, max, step })) {
+                if (value === undefined) node.removeAttribute(name);
+                else node.setAttribute(name, String(value));
+            }
+        }
+        if (typeof ref === "function") return ref(node);
+        if (ref) ref.current = node;
+    }} />;
+}
+
+export function FileInput({ ref, capture, isDisabled = false, ...props }:
+    AstryxFileInputProps & Pick<InputHTMLAttributes<HTMLInputElement>, "capture">) {
+    return <AstryxFileInput {...props} isDisabled={isDisabled} ref={(node) => {
+        if (node) {
+            node.disabled = isDisabled;
+            if (capture === undefined || capture === false) node.removeAttribute("capture");
+            else node.setAttribute("capture", capture === true ? "" : capture);
+        }
+        if (typeof ref === "function") return ref(node);
+        if (ref) ref.current = node;
+    }} />;
+}
 
 /** Astryx 입력 표면에 기존 폼의 native 차단·길이·패턴 검증을 결합한다. */
 export function TextInput({ ref, isDisabled = false, minLength, maxLength, pattern, ...props }: TextInputProps) {

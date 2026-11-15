@@ -26,11 +26,14 @@ export function trackPendingInput(): void {
 
 /// 설정은 그룹의 미저장 표시를, 나머지는 사용자가 고쳤거나 복원된 내용이 남은 입력을 기준으로 한다.
 export function hasPendingInput(): boolean {
-    if (document.querySelector('[data-settings-unsaved="true"], dialog[open], [role="dialog"][aria-modal="true"]')) return true;
+    if (document.querySelector('[data-settings-unsaved="true"], dialog[open]')) return true;
+    // Astryx는 닫힌 native dialog도 유지한다. aria-modal만으로 열린 작업으로 판정하지 않는다.
+    if (Array.from(document.querySelectorAll('[role="dialog"][aria-modal="true"]:not(dialog)'))
+        .some((element) => element.getClientRects().length > 0)) return true;
     for (const element of [...edited]) {
         if (!element.isConnected) { edited.delete(element); continue; }
-        if (!element.closest(".settings-group") && filled(element)) return true;
+        if (!element.closest('[data-ui="settings-group"]') && filled(element)) return true;
     }
     return Array.from(document.querySelectorAll("textarea, [contenteditable='true'], [contenteditable='']"))
-        .some((element) => textField(element) && !element.closest(".settings-group") && filled(element));
+        .some((element) => textField(element) && !element.closest('[data-ui="settings-group"]') && filled(element));
 }

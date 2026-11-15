@@ -10,6 +10,8 @@ import { RevealText } from "./RevealText";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { HelpTip, SentenceText } from "./HelpTip";
 import { Stack } from "@astryxdesign/core/Stack";
+import { Center } from "@astryxdesign/core/Center";
+import { Card } from "@astryxdesign/core/Card";
 import { Button } from "../design/Button";
 import { TextInput } from "@astryxdesign/core/TextInput";
 
@@ -33,9 +35,10 @@ export function Login() {
     };
     if (pairing) return <PairingLogin onDone={() => setPairing(false)} onCancel={() => setPairing(false)} />;
     return (
-        <Stack as="main" className="login">
-            <form onSubmit={submit} aria-label="로그인">
-                <GroveText type="inherit" color="inherit" className="login-mark" aria-hidden="true"><Icon name="sprout" size={28} /></GroveText>
+        <Center role="main" minHeight="100dvh" padding={4}>
+            <Card width={392} maxWidth="100%" padding={8}>
+            <Stack as="form" gap={4} onSubmit={submit} aria-label="로그인">
+                <GroveText type="inherit" color="brand" aria-hidden="true" data-testid="brand-mark"><Icon name="sprout" size={28} /></GroveText>
                 <GroveHeading level={1} color="inherit"><RevealText text="Grove" /></GroveHeading>
                 <Hosts />
                 {lastAuthEnd() === "expired" && (
@@ -44,18 +47,19 @@ export function Login() {
                     </GroveText>
                 )}
                 <GroveText as="p" display="block" type="inherit" color="inherit">서버의 소유자 토큰(<code>grove token</code>) 또는 기기 토큰을 입력하세요.</GroveText>
-                <div className="field-label">
+                <Stack direction="horizontal" align="center" gap={1}>
                     <GroveText type="inherit" color="inherit">토큰</GroveText>
                     <HelpTip label="보관 방식 도움말"><SentenceText text="토큰은 이 브라우저에 저장하지 않습니다." /></HelpTip>
-                </div>
+                </Stack>
                 <TextInput label="토큰" isLabelHidden id="login-token" type="password" autoComplete="off"
                     value={token} onChange={setToken} placeholder="grv_…" isRequired />
                 {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert"><SentenceText text={error} /></GroveText>}
                 <ServerActionButton type="submit" disabled={busy || !token.trim()}>
                     {busy ? "확인 중…" : "로그인"}
                 </ServerActionButton>
-                <Button type="button" className="ghost" disabled={busy} onClick={() => setPairing(true)}>페어링 링크·QR로 등록</Button>
-            </form>
-        </Stack>
+                <Button type="button" variant="secondary" disabled={busy} onClick={() => setPairing(true)}>페어링 링크·QR로 등록</Button>
+            </Stack>
+            </Card>
+        </Center>
     );
 }

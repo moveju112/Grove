@@ -9,7 +9,7 @@ test("slash command 목록·검색·채우기·실행, 알 수 없는 명령은 
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view").first();
     const box = view.getByLabel("메시지 입력");
     const list = view.getByTestId("slash-list");
@@ -37,7 +37,7 @@ test("slash command 목록·검색·채우기·실행, 알 수 없는 명령은 
     await box.press("Enter");
     await expect(box).toHaveValue("/save ");
     await box.press("Control+Enter");
-    await expect(view.getByLabel("모델 프로필").locator("option:checked")).toHaveText("메시지만 저장");
+    await expect(view.getByTestId("model-summary")).toHaveText("메시지만 저장");
 
     // 알 수 없는 명령은 보내지 않는다
     await box.fill("/없는명령 해줘");

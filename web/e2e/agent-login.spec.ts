@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { apiCall, login, state } from "./helpers";
+import { apiCall, login, openSettings, state } from "./helpers";
 
 test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "격리된 CLI 인증 fixture 필요");
 test.use({ trace: "retain-on-failure" });
@@ -11,11 +11,11 @@ test("소유자가 모바일에서 공식 인증을 시작하고 재접속·취�
     await page.setViewportSize({ width: 390, height: 844 });
     await login(page);
     const open = async () => {
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await openSettings(page);
         await page.getByRole("searchbox", { name: "설정 검색", exact: true }).fill("모델 프로필");
         const profiles = page.locator('[data-testid="setting-profiles"]:visible');
         await profiles.getByRole("button", { name: "CLI 에이전트 연결", exact: true }).click();
-        await profiles.getByRole("button", { name: "계정 로그인", exact: true }).click();
+        await profiles.getByRole("button", { name: "에이전트 계정 로그인", exact: true }).click();
     };
     await open();
     const codex = page.getByRole("region", { name: "Codex 계정", exact: true });

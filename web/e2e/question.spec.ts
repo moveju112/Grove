@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, choiceOptions, composerOption, ensureProfile, ensureProjects, expectChoice, login, script, selectChoice, state } from "./helpers";
 
 // UI-016, RUN-013·014: 모델 질문 카드(단일·복수 선택·직접 입력·닫기), 승인 대기와 구분된 상태 표시.
 async function requests(): Promise<{ messages: { role: string; content: unknown }[] }[]> {
@@ -15,7 +15,7 @@ async function askInNewSession(page: Page, args: Record<string, unknown>) {
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
     await script({ frames: frames.tool("ask1", "ask_user", args) });
     await composerOption(view, "도구", true);
@@ -35,20 +35,21 @@ test("단일 선택 질문: 답변 대기로 표시되고, 고른 답으로 이�
     const before = (await requests()).length;
     const card = view.getByTestId("question");
     await expect(card).toContainText("어느 DB를 쓸까요?");
-    await expect(card).toContainText("단일 파일");
+    await expect((await choiceOptions(card.getByRole("combobox", { name: "답변 선택", exact: true }))).filter({ hasText: "SQLite" })).toContainText("단일 파일");
+    await page.keyboard.press("Escape");
     await expect(view.getByTestId("turn-status")).toContainText("답변을 기다리는 중");
     await expect(view.getByTestId("approval")).toHaveCount(0);
-    await expect(page.locator(".recent").getByText("답변 대기").first()).toBeVisible();
-    const recent = page.locator(".recent");
+    await expect(page.getByRole("region", { name: "최근", exact: true }).getByText("답변 대기").first()).toBeVisible();
+    const recent = page.getByRole("region", { name: "최근", exact: true });
     const title = (await view.locator("h1").innerText()).trim();
     const waiting = recent.getByTestId("recent-item").filter({ hasText: title });
     await expect(waiting).toHaveCount(1);
     await expect(waiting.getByText("답변 대기", { exact: true })).toBeVisible();
     await expect(card.getByLabel("직접 입력")).toHaveCount(0);
     await expect(card.getByRole("button", { name: "답하기" })).toBeDisabled();
-    await card.getByLabel("답변 선택").selectOption("SQLite");
-    await card.getByLabel("답변 선택").selectOption("Postgres");
-    await expect(card.getByLabel("답변 선택")).toHaveValue("Postgres");
+    await selectChoice(card.getByLabel("답변 선택"), "SQLite");
+    await selectChoice(card.getByLabel("답변 선택"), "Postgres");
+    await expectChoice(card.getByLabel("답변 선택"), "Postgres");
     await script({ frames: frames.text(["Postgres로 진행"]) });
     await card.getByRole("button", { name: "답하기" }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "Postgres로 진행" })).toHaveCount(1, { timeout: 15_000 });
@@ -64,8 +65,8 @@ test("복수 선택과 직접 입력을 함께 보내고, 닫기는 답하지 �
     const view = await askInNewSession(page, { question: "무엇을 포함할까요?", options: [{ label: "테스트" }, { label: "문서" }, { label: "CI" }], multi_select: true });
     const card = view.getByTestId("question");
     await expect(card).toContainText("여러 개 선택 가능");
-    await card.getByLabel("선택 1").selectOption("테스트");
-    await card.getByLabel("선택 2").selectOption("CI");
+    await selectChoice(card.getByLabel("선택 1"), "테스트");
+    await selectChoice(card.getByLabel("선택 2"), "CI");
     await card.getByLabel("직접 입력").fill("CI는 ARM도");
     let before = (await requests()).length;
     // 이어지는 모델 응답: 다시 질문 → 이번에는 닫는다

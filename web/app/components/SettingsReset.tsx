@@ -1,3 +1,4 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
@@ -9,6 +10,8 @@ import { defaultPrefs, loadPrefs, restoredPrefs, savePrefs, type Prefs } from ".
 import type { SettingDef, SettingsTarget } from "./ScopedSettings";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { HelpTip, SentenceText } from "./HelpTip";
+import { CreationDialog } from "./create/CreationDialog";
+import { ScrollableArea } from "@astryxdesign/core/ScrollableArea";
 
 type Source = "server" | "project" | "session" | "default";
 export const SCOPE_LABEL: Record<Source, string> & Record<string, string> = { server: "서버 전체", project: "이 프로젝트", session: "이 대화", default: "기본값" };
@@ -28,16 +31,14 @@ type Review =
 type Comparison = { key: string; label: string; override: unknown; before: unknown; after: unknown; default: unknown; source: string; applies: string };
 
 function Dialog({ children, busy, close }: { children: ReactNode; busy: boolean; close: () => void }) {
-    const dialog = useRef<HTMLDialogElement>(null);
-    useEffect(() => { dialog.current!.showModal(); }, []);
-    return <dialog ref={dialog} className="dialog settings-reset-dialog" aria-label="기본값 복원 확인" onCancel={(event) => { event.preventDefault(); if (!busy) close(); }}>
+    return <CreationDialog label="기본값 복원 확인" width="64em" busy={busy} onClose={() => { if (!busy) close(); }}>
         {children}
-        <GroveButton className="ghost" disabled={busy} onClick={close}>복원 창 닫기</GroveButton>
-    </dialog>;
+        <GroveButton variant="secondary" disabled={busy} onClick={close}>복원 창 닫기</GroveButton>
+    </CreationDialog>;
 }
 
 function ComparisonTable({ rows }: { rows: Comparison[] }) {
-    return <div className="settings-reset-table"><Table density="compact">
+    return <ScrollableArea axis="inline" label="설정 복원 비교 표" maxWidth="100%"><Table density="compact">
         <TableHeader><TableRow isHeaderRow><TableHeaderCell scope="col">항목</TableHeaderCell><TableHeaderCell scope="col">현재 범위 값</TableHeaderCell><TableHeaderCell scope="col">현재 적용값</TableHeaderCell><TableHeaderCell scope="col">복원 후 적용값</TableHeaderCell><TableHeaderCell scope="col">제품 기본값</TableHeaderCell></TableRow></TableHeader>
         <TableBody>{rows.map((row) => <TableRow key={row.key} data-testid={`reset-${row.key}`}>
             <TableHeaderCell scope="row">{row.label}<GroveText type="supporting" color="secondary"> · {row.applies}</GroveText></TableHeaderCell>
@@ -46,7 +47,7 @@ function ComparisonTable({ rows }: { rows: Comparison[] }) {
             <TableCell><code>{JSON.stringify(row.after)}</code><GroveText type="supporting" color="secondary"> · {row.source}</GroveText></TableCell>
             <TableCell><code>{JSON.stringify(row.default)}</code></TableCell>
         </TableRow>)}</TableBody>
-    </Table></div>;
+    </Table></ScrollableArea>;
 }
 
 export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel, label, disabled, draft, saved, compact = false }: {
@@ -101,11 +102,11 @@ export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel,
     const busy = review?.kind === "sending";
     const close = () => { reading.current?.abort(); setReview(null); };
     return <>
-        <GroveButton className={compact ? "ghost setting-reset-icon" : "ghost"} aria-label={label} title={label} disabled={disabled || !defs.length} onClick={() => void compare()}>{compact ? "↺" : label}</GroveButton>
+        <GroveButton variant="secondary" appearance={compact ? "icon" : undefined} aria-label={label} title={label} disabled={disabled || !defs.length} onClick={() => void compare()}>{compact ? "↺" : label}</GroveButton>
         {review && <Dialog busy={busy} close={close}>
-            <GroveHeading level={2} color="inherit" className="inline">기본값 복원 확인 <HelpTip label="설정 복원 도움말">
+            <GroveHeading level={2} color="inherit"><GroveStack as="span" direction="horizontal" align="center" gap={1.5}>기본값 복원 확인 <HelpTip label="설정 복원 도움말">
                 <SentenceText text="선택한 범위의 override만 지우고 상위 범위 값을 상속합니다. 하위 override·도구 금지 정책·시스템 제약은 유지되므로 제품 기본값과 다를 수 있습니다." />
-            </HelpTip></GroveHeading>
+            </HelpTip></GroveStack></GroveHeading>
             <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="reset-target">대상: <strong>{targetLabel}</strong></GroveText>
             <GroveText as="p" display="block" type="supporting" color="secondary">선택한 범위의 override만 복원합니다.</GroveText>
             {scope === "server" && <GroveText as="p" display="block" type="inherit" color="warning">모든 기기·프로젝트에 영향을 줄 수 있습니다. 아래 적용값은 이 설정 탭의 대상 기준이며 다른 프로젝트의 override는 지우지 않습니다.</GroveText>}
@@ -130,7 +131,7 @@ export function SettingsResetButton({ defs, target, scope, scopeId, targetLabel,
 }
 
 const PREF_LABEL: Record<keyof Prefs, string> = {
-    theme: "테마", fontSize: "글자 크기", enterToSend: "Enter로 보내기", reasoning: "생각 과정 표시", answerOnly: "답만 보기", expandTools: "도구 세부 펼침", clock: "시계 형식", timeStyle: "지난 시각 표시",
+    theme: "테마", fontSize: "글자 크기", enterToSend: "Enter로 보내기", reasoning: "추론 보기", answerOnly: "답만 보기", expandTools: "도구 세부 펼침", clock: "시계 형식", timeStyle: "지난 시각 표시",
     notifyDone: "작업 완료·실패 알림", notifyApproval: "승인 요청 알림", notifyServer: "예약·업데이트 알림", notifySound: "알림 소리",
     recentWindows: "최근 항목 시간 범위 선택지", recentWindow: "최근 항목 선택 범위",
 };
@@ -148,7 +149,7 @@ export function DeviceSettingsReset({ fields, label, compact = true }: { fields:
         }
     };
     return <>
-        <GroveButton className={compact ? "ghost setting-reset-icon" : "ghost small"} aria-label={label} title={label} onClick={compare}>{compact ? "↺" : label}</GroveButton>
+        <GroveButton variant="secondary" appearance={compact ? "icon" : undefined} density={compact ? undefined : "compact"} aria-label={label} title={label} onClick={compare}>{compact ? "↺" : label}</GroveButton>
         {review && <Dialog busy={false} close={() => setReview(null)}>
             <GroveHeading level={2} color="inherit">기본값 복원 확인</GroveHeading>
             <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="reset-target">대상: <strong>이 기기의 화면·입력 설정</strong></GroveText>

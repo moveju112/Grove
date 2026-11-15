@@ -29,7 +29,7 @@ test("모델의 무관한 대화 조회는 기본 차단되고 대화 범위 허
     expect(limited.result.scope).toBe("current_and_inherited_history");
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: work.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(`${word} work`) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${word} work`) }).click();
     await sessionView(page, work.id).getByRole("button", { name: "대화 작업", exact: true }).click();
     await sessionView(page, work.id).getByRole("button", { name: "대화 설정" }).click();
     await page.getByLabel("설정 검색").last().fill("관련 없는 대화");

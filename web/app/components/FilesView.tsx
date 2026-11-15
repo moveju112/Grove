@@ -1,3 +1,4 @@
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Link } from "@astryxdesign/core/Link";
@@ -5,11 +6,12 @@ import { Button as GroveButton } from "../design/Button";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ActionMenu } from "./ui/Controls";
 import { BooleanSelect } from "./BooleanSelect";
-import { TextInput } from "../design/Fields";
+import { TextInput, TextArea, FileInput } from "../design/Fields";
+import { Select } from "../design/Select";
 import { ApiError, api, isLoggedIn, newKey } from "../api/client";
 import { useQuery } from "../state/store";
 import { fileAttemptKey, loadFileAttempt, loadFileBuffer, loadFileView, saveFileBuffer, saveFileView, type FileAttempt } from "../state/fileState";
-import { watchFile, type FileContent as Content } from "../state/fileWatch";
+import { refreshFiles, watchFile, type FileContent as Content } from "../state/fileWatch";
 import { usePaneVisible } from "../state/paneVisibility";
 import { sha256Hex } from "../state/sha256";
 import { ArtifactPreview } from "./ArtifactPreview";
@@ -19,6 +21,11 @@ import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
 import { connection, transportFetch } from "../api/transport";
 import { Stack } from "@astryxdesign/core/Stack";
+import { Grid } from "@astryxdesign/core/Grid";
+import { Code } from "@astryxdesign/core/Code";
+import { fileLayout } from "./files/file-layout.stylex";
+import { contentStyles } from "../design/content.stylex";
+import * as stylex from "@stylexjs/stylex";
 
 type Entry = { name: string; path: string; kind: "dir" | "file" | "link_outside" | "other"; size: number | null; mtime: string | null };
 type Listing = { path: string; entries: Entry[]; truncated: boolean };
@@ -136,48 +143,46 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
     const parent = dir === "." ? null : dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : ".";
     const entries = (listing.data?.entries ?? []).filter((e) => !filter || e.name.toLowerCase().includes(filter.toLowerCase()));
     return (
-        <Stack direction="horizontal" className="files" data-testid="files-view">
-            <aside className="file-tree">
-                <Stack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
-                    <code className="small">{dir}</code>
-                    {parent !== null && <GroveButton className="ghost small" disabled={locked} onClick={() => setDir(parent)}>상위 폴더</GroveButton>}
+        <Grid gap={3} height="100%" xstyle={fileLayout.columns} data-testid="files-view">
+            <Stack as="aside" gap={2} padding={2} isScrollable xstyle={fileLayout.tree}>
+                <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+                    <Code>{dir}</Code>
+                    {parent !== null && <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => setDir(parent)}>상위 폴더</GroveButton>}
                 </Stack>
-                {Boolean(listing.error) && <div className="err" role="alert">
+                {Boolean(listing.error) && <GroveText as="div" display="block" type="inherit" color="error" role="alert">
                     {listing.error instanceof ApiError ? listing.error.message : "폴더 목록을 불러오지 못했습니다."}
-                    <GroveButton className="ghost small" onClick={listing.reload}>폴더 다시 확인</GroveButton>
-                </div>}
-                <Stack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
+                    <GroveButton variant="secondary" density="compact" onClick={listing.reload}>폴더 다시 확인</GroveButton>
+                </GroveText>}
+                <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                     <TextInput type="search" label="파일 이름 거르기" isLabelHidden placeholder="이름 거르기" value={filter} onChange={setFilter} />
-                    <select aria-label="정렬" value={sort} onChange={(e) => setSort(e.target.value)}>
-                        <option value="name">이름</option>
-                        <option value="mtime">수정 시각</option>
-                        <option value="size">크기</option>
-                    </select>
+                    <Select label="정렬" hideLabel value={sort} onChange={setSort}
+                        options={[{ value: "name", label: "이름" }, { value: "mtime", label: "수정 시각" }, { value: "size", label: "크기" }]} />
                     <BooleanSelect label="숨김 파일" value={hidden} onChange={setHidden} />
                 </Stack>
-                <Stack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
-                    <GroveButton className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 파일 이름"); if (n) selectPath(`new:${join(n)}`); }}>새 파일</GroveButton>
-                    <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const n = prompt("새 폴더 이름"); if (n) void op({ op: "mkdir", path: join(n) }); }}>새 폴더</ServerActionButton>
-                    <ServerActionButton className="ghost small" disabled={locked} onClick={() => uploadInput.current?.click()}>{uploads.busy ? "올리는 중…" : "파일 올리기"}</ServerActionButton>
-                    <input ref={uploadInput} type="file" hidden aria-label="올릴 파일 선택" onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) void upload(f); }} />
+                <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+                    <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => { const n = prompt("새 파일 이름"); if (n) selectPath(`new:${join(n)}`); }}>새 파일</GroveButton>
+                    <ServerActionButton variant="secondary" density="compact" disabled={locked} onClick={() => { const n = prompt("새 폴더 이름"); if (n) void op({ op: "mkdir", path: join(n) }); }}>새 폴더</ServerActionButton>
+                    <ServerActionButton variant="secondary" density="compact" disabled={locked} onClick={() => uploadInput.current?.click()}>{uploads.busy ? "올리는 중…" : "파일 올리기"}</ServerActionButton>
+                    <Stack hidden><FileInput ref={uploadInput} label="올릴 파일 선택" isLabelHidden value={null}
+                        onChange={(files) => { const file = Array.isArray(files) ? files[0] : files; if (file) void upload(file); }} /></Stack>
                 </Stack>
                 {uploadError && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{uploadError}</GroveText>}
                 {Boolean(uploads.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{fileError(uploads.error)}</GroveText>}
-                {uploads.attempt && !uploads.busy && <Stack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
-                    <ServerActionButton className="ghost small" onClick={() => void uploads.act(uploads.attempt!)}>같은 업로드 결과 확인</ServerActionButton>
-                    <GroveButton className="ghost small" onClick={() => { uploads.clear(); listing.reload(); }}>목록 확인 후 닫기</GroveButton>
+                {uploads.attempt && !uploads.busy && <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+                    <ServerActionButton variant="secondary" density="compact" onClick={() => void uploads.act(uploads.attempt!)}>같은 업로드 결과 확인</ServerActionButton>
+                    <GroveButton variant="secondary" density="compact" onClick={() => { uploads.clear(); listing.reload(); }}>목록 확인 후 닫기</GroveButton>
                 </Stack>}
                 {Boolean(mutation.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{fileError(mutation.error)}</GroveText>}
-                {mutation.attempt && !mutation.busy && <Stack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
-                    <ServerActionButton className="ghost small" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</ServerActionButton>
-                    <GroveButton className="ghost small" onClick={() => { mutation.clear(); listing.reload(); }}>원문 확인 후 닫기</GroveButton>
+                {mutation.attempt && !mutation.busy && <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+                    <ServerActionButton variant="secondary" density="compact" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</ServerActionButton>
+                    <GroveButton variant="secondary" density="compact" onClick={() => { mutation.clear(); listing.reload(); }}>원문 확인 후 닫기</GroveButton>
                     <GroveText type="supporting" color="secondary">원문과 대상 경로를 확인한 뒤 새 작업을 시작하세요.</GroveText>
                 </Stack>}
-                <ul className="session-list">
+                <GroveList density="compact" edge="flush" hasDividers>
                     {entries.map((e) => (
-                        <li key={e.path}>
+                        <GroveListItem key={e.path} label={<>
                             <GroveButton
-                                className="link"
+                                appearance="link"
                                 disabled={locked || e.kind === "link_outside" || e.kind === "other"}
                                 title={e.kind === "link_outside" ? "프로젝트 밖을 가리키는 링크" : undefined}
                                 onClick={() => (e.kind === "dir" ? setDir(e.path) : selectPath(e.path))}
@@ -185,11 +190,11 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                                 {e.kind === "dir" ? "📁 " : ""}{e.name}
                             </GroveButton>
                             <GroveText type="supporting" color="secondary">{e.size !== null ? `${e.size}B` : ""}</GroveText>
-                            <ActionMenu className="row-menu" label={`${e.name} 작업`}>
-                                <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const to = prompt("새 이름(경로)", e.path); if (to && to !== e.path) void op({ op: "rename", path: e.path, to }); }}>이름 바꾸기</ServerActionButton>
-                                <ServerActionButton className="ghost small" disabled={locked} onClick={() => { const to = prompt("복제본 경로", `${e.path}.copy`); if (to) void op({ op: "duplicate", path: e.path, to }); }}>복제</ServerActionButton>
+                            <ActionMenu label={`${e.name} 작업`}>
+                                <ServerActionButton variant="secondary" density="compact" disabled={locked} onClick={() => { const to = prompt("새 이름(경로)", e.path); if (to && to !== e.path) void op({ op: "rename", path: e.path, to }); }}>이름 바꾸기</ServerActionButton>
+                                <ServerActionButton variant="secondary" density="compact" disabled={locked} onClick={() => { const to = prompt("복제본 경로", `${e.path}.copy`); if (to) void op({ op: "duplicate", path: e.path, to }); }}>복제</ServerActionButton>
                                 <ServerActionButton
-                                    className="ghost small danger"
+                                    variant="destructive" density="compact"
                                     disabled={locked}
                                     onClick={() => {
                                         const c = prompt(`삭제하려면 경로를 그대로 입력하세요: ${e.path}\n(서버 휴지통으로 옮겨져 복구할 수 있습니다)`);
@@ -199,19 +204,19 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                                     삭제
                                 </ServerActionButton>
                             </ActionMenu>
-                        </li>
+                        </>} />
                     ))}
-                </ul>
+                </GroveList>
                 {listing.data?.truncated && <GroveText as="p" display="block" type="supporting" color="secondary">항목이 많아 일부만 표시하니 이름으로 거르세요.</GroveText>}
-            </aside>
-            <section className="file-pane">
+            </Stack>
+            <Stack as="section" gap={2} isScrollable xstyle={fileLayout.fill}>
                 {copyError && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{COPY_ERROR}</GroveText>}
                 {openPath && !openPath.startsWith("new:") && <ExternalEditor key={`${projectId}:${openPath}`} projectId={projectId} path={openPath} disabled={locked} blockedReason={serverBlocked} />}
                 {openPath ? <FileEditor key={openPath} copyId={tabId} projectId={projectId} path={openPath}
                     onSaved={() => { listing.reload(); if (openPath.startsWith("new:")) selectPath(openPath.slice(4)); }}
                     disabled={mutation.locked} onLock={setEditorLocked} line={openPath === start?.path ? start?.line : undefined} /> : <GroveText as="p" display="block" type="inherit" color="secondary">파일을 고르세요.</GroveText>}
-            </section>
-        </Stack>
+            </Stack>
+        </Grid>
     );
 }
 
@@ -264,6 +269,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
         setBase(result.sha256);
         setC((current) => current ? { ...current, text: saved, sha256: result.sha256 } : current);
         setMsg({ kind: "ok", text: "저장됨" });
+        refreshFiles(projectId);
         onSaved();
     }, {
         key: fileAttemptKey(projectId, path, copyId),
@@ -386,15 +392,15 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
         window.addEventListener("beforeunload", h);
         return () => window.removeEventListener("beforeunload", h);
     }, [dirty]);
-    if (!c) return msg ? <div className="editor" data-testid="file-editor">
+    if (!c) return msg ? <Stack gap={2} xstyle={fileLayout.fill} data-testid="file-editor">
         <GroveHeading level={2} color="inherit"><code>{real}</code></GroveHeading>
         <GroveText as="p" display="block" type="inherit" color="error" role="alert">파일을 열 수 없습니다: {msg.text}</GroveText>
         {saved?.buffer.text != null && <>
             <GroveText as="p" display="block" type="supporting" color="warning">이 기기의 저장 전 편집 사본입니다. 원문이 아니며 복사해서 보관할 수 있습니다.</GroveText>
-            <textarea className="code" aria-label="복구용 편집 사본" value={saved.buffer.text} readOnly spellCheck={false} />
+            <TextArea label="복구용 편집 사본" isLabelHidden value={saved.buffer.text} isReadOnly hasSpellCheck={false} rows={12} />
         </>}
-        <GroveButton className="ghost small" onClick={() => void load(true).catch(loadFailed)}>파일 다시 확인</GroveButton>
-    </div> : <GroveText as="p" display="block" type="inherit" color="secondary">여는 중…</GroveText>;
+        <GroveButton variant="secondary" density="compact" onClick={() => void load(true).catch(loadFailed)}>파일 다시 확인</GroveButton>
+    </Stack> : <GroveText as="p" display="block" type="inherit" color="secondary">여는 중…</GroveText>;
     const raw = encrypted ? previewUrl : ticket;
     const save = () => {
         if (disabled || mutation.locked) return;
@@ -404,42 +410,42 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
     const conflict = (dirty && !isNew && base !== c.sha256)
         || (mutation.error instanceof ApiError && ["file_changed", "file_missing", "already_exists"].includes(mutation.error.code));
     return (
-        <div className="editor" data-testid="file-editor">
-            <GroveHeading level={2} color="inherit" className="inline">
-                <code>{real}</code> {dirty && <strong className="dirty" title="저장 안 됨">● 저장 안 됨</strong>}
+        <Stack gap={2} xstyle={fileLayout.fill} data-testid="file-editor">
+            <GroveHeading level={2} color="inherit"><Stack as="span" direction="horizontal" align="center" gap={1.5}>
+                <code>{real}</code> {dirty && <GroveText type="supporting" color="warning" weight="bold">● 저장 안 됨</GroveText>}
                 {!isNew && <GroveText type="supporting" color="secondary" data-testid="file-watch-status">
                     {!visible ? "변경 확인 일시정지" : watchError ? "변경 확인 대기" : watchReady ? "자동 확인 · 5초" : "변경 확인 중"}
                 </GroveText>}
-                {encrypted ? ticket && <GroveButton className="small ghost" onClick={() => void download()}>내려받기</GroveButton>
+                {encrypted ? ticket && <GroveButton variant="secondary" density="compact" onClick={() => void download()}>내려받기</GroveButton>
                     : raw && <Link type="supporting" href={`${raw}?download=true`} download>내려받기</Link>}
-            </GroveHeading>
+            </Stack></GroveHeading>
             {c.preview === "image" || (c.preview === "svg" && c.text === null) ? (
-                raw ? <img className="preview" src={raw} alt={real} /> : <GroveText as="p" display="block" type="inherit" color="secondary">불러오는 중…</GroveText>
+                raw ? <img {...stylex.props(contentStyles.previewImage)} src={raw} alt={real} /> : <GroveText as="p" display="block" type="inherit" color="secondary">불러오는 중…</GroveText>
             ) : c.preview === "pdf" ? (
                 raw && <Link type="inherit" href={raw} target="_blank" rel="noopener noreferrer">PDF를 새 탭에서 열기</Link>
             ) : c.text === null ? (
                 <GroveText as="p" display="block" type="inherit" color="secondary">{c.reason === "too_large" ? "편집 한도를 넘는 파일이니 내려받아 확인하세요." : "텍스트가 아닌 파일입니다."}</GroveText>
             ) : (
                 <>
-                    <textarea ref={area} className="code" aria-label="파일 내용" spellCheck={false} readOnly={mutation.locked || disabled} value={text}
-                        onChange={(e) => { setText(e.target.value); capture(e.target.value); }}
+                    <TextArea ref={area} label="파일 내용" isLabelHidden hasSpellCheck={false} isReadOnly={mutation.locked || disabled} value={text} rows={16}
+                        onChange={(value) => { setText(value); capture(value); }}
                         onSelect={() => capture()} onScroll={() => capture()} onBlur={() => capture()} />
-                    <Stack direction="horizontal" align="center" className="inline">
+                    <Stack direction="horizontal" align="center" gap={1.5}>
                         <ServerActionButton disabled={disabled || mutation.locked || (!dirty && !isNew)} onClick={() => void save()}>저장</ServerActionButton>
-                        {conflict && <GroveButton className="ghost" onClick={() => { if (confirm("내 편집을 버리고 최신 내용을 불러올까요?")) void load(); }}>최신 내용 불러오기</GroveButton>}
+                        {conflict && <GroveButton variant="secondary" onClick={() => { if (confirm("내 편집을 버리고 최신 내용을 불러올까요?")) void load(); }}>최신 내용 불러오기</GroveButton>}
                     </Stack>
                     {isArtifact(real) && <ArtifactPreview path={real} text={text} dirty={dirty} />}
                 </>
             )}
             {copyError && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{COPY_ERROR}</GroveText>}
-            {mutation.attempt && !mutation.busy && <Stack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
-                <ServerActionButton className="ghost small" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</ServerActionButton>
-                <GroveButton className="ghost small" onClick={() => mutation.clear()}>원문 확인 후 닫기</GroveButton>
+            {mutation.attempt && !mutation.busy && <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+                <ServerActionButton variant="secondary" density="compact" onClick={() => void mutation.act(mutation.attempt!)}>같은 요청 결과 확인</ServerActionButton>
+                <GroveButton variant="secondary" density="compact" onClick={() => mutation.clear()}>원문 확인 후 닫기</GroveButton>
                 <GroveText type="supporting" color="secondary">입력은 유지되니 원문 확인 후 다시 저장하세요.</GroveText>
             </Stack>}
-            {Boolean(mutation.error) && <GroveText as="p" display="block" type="inherit" color="inherit" className="save-state error" role="status">{fileError(mutation.error)}</GroveText>}
-            {!mutation.error && watchError && <GroveText as="p" display="block" type="inherit" color="inherit" className="save-state error" role="status">{watchError}</GroveText>}
-            {!mutation.error && !watchError && msg && <GroveText as="p" display="block" type="inherit" color="inherit" className={msg.kind === "ok" ? "save-state" : "save-state error"} role="status">{msg.text}</GroveText>}
-        </div>
+            {Boolean(mutation.error) && <GroveText as="p" display="block" type="supporting" color="error" role="status">{fileError(mutation.error)}</GroveText>}
+            {!mutation.error && watchError && <GroveText as="p" display="block" type="supporting" color="error" role="status">{watchError}</GroveText>}
+            {!mutation.error && !watchError && msg && <GroveText as="p" display="block" type="supporting" color={msg.kind === "ok" ? "secondary" : "error"} role="status">{msg.text}</GroveText>}
+        </Stack>
     );
 }

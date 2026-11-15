@@ -18,7 +18,7 @@ test("명시적 스킬 선택·재전송·모델 적용·변경 및 삭제 차�
     try {
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(marker) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(marker) }).click();
         const view = sessionView(page, session.id);
         await openDetails(view.getByTestId("skills-disclosure"));
         const panel = view.getByTestId("session-skills");
@@ -82,14 +82,14 @@ for (const theme of ["light", "dark"] as const) {
             await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
             await login(page);
             await page.getByRole("button", { name: "사이드바", exact: true }).click();
-            await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+            await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
             await openDetails(sessionView(page, session.id).getByTestId("skills-disclosure"));
             const panel = sessionView(page, session.id).getByTestId("session-skills");
             const help = panel.getByRole("button", { name: "스킬 도움말", exact: true });
             await expect(help).toBeVisible();
             await expect(panel).toContainText("스킬 선택은 도구 실행 승인이 아닙니다.");
             await expect(page.getByRole("tooltip")).toBeHidden();
-            const paragraphs = await panel.locator("p.muted").filter({ visible: true }).allTextContents();
+            const paragraphs = await panel.locator('p[data-color="secondary"]').filter({ visible: true }).allTextContents();
             for (const text of paragraphs) {
                 expect(text.trim().length).toBeLessThan(80);
                 expect((text.match(/[.!?。！？](?:\s|$)/gu) ?? []).length).toBeLessThanOrEqual(1);
@@ -142,11 +142,11 @@ test("다른 세션으로 전환한 뒤 늦게 도착한 이전 선택 응답을
     try {
         for (const session of [first, second]) await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(`${name}-first`) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${name}-first`) }).click();
         await openDetails(sessionView(page, first.id).getByTestId("skills-disclosure"));
         await started;
         await page.getByRole("dialog", { name: "대화 스킬", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
-        await page.locator(".recent").getByRole("button", { name: new RegExp(`${name}-second`) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${name}-second`) }).click();
         const view = sessionView(page, second.id);
         await openDetails(view.getByTestId("skills-disclosure"));
         const panel = view.getByTestId("session-skills");

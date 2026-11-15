@@ -1,3 +1,4 @@
+import { Stack } from "@astryxdesign/core/Stack";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
@@ -27,9 +28,9 @@ export function HookExecutions({ projectId }: { projectId?: string }) {
             setBusy(null); query.reload();
         }
     };
-    return <section className="stack" data-testid="hook-executions" aria-label="hook 실행 요청">
+    return <Stack as="section" gap={2} data-testid="hook-executions" aria-label="hook 실행 요청">
         <GroveHeading level={3} color="inherit">hook 실행 요청</GroveHeading>
-        <GroveText as="p" display="block" type="inherit" color="inherit" className="scope">최근 100개 · {projectId ? "현재 프로젝트" : "모든 프로젝트"} · 이벤트마다 개별 승인</GroveText>
+        <GroveText as="p" display="block" type="supporting" color="secondary">최근 100개 · {projectId ? "현재 프로젝트" : "모든 프로젝트"} · 이벤트마다 개별 승인</GroveText>
         <GroveButton onClick={query.reload}>hook 실행 상태 새로고침</GroveButton>
         {query.loading && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">실행 요청 불러오는 중</GroveText>}
         {(query.error || error) && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">{error ?? "hook 실행 요청을 조회하지 못했습니다"}</GroveText>}
@@ -54,5 +55,5 @@ export function HookExecutions({ projectId }: { projectId?: string }) {
             {call.status === "unknown" && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">결과 불명 · 자동 반복하지 않습니다. 해당 대화의 결과 불명 카드에서 관찰·검토를 기록하세요.</GroveText>}
             {!["pending_approval", "approved", "running"].includes(call.status) && <pre>{JSON.stringify(call.result, null, 2)}</pre>}
         </article>)}
-    </section>;
+    </Stack>;
 }

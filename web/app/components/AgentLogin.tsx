@@ -79,36 +79,36 @@ export function AgentLogin({ protocol, name, disabled }: { protocol: string; nam
         }
     };
     const attempt = status?.attempt;
-    return <section className="agent-login" aria-label={`${name} 계정`}>
-        <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
+    return <GroveStack as="section" gap={2} paddingBlock={2} aria-label={`${name} 계정`}>
+        <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
             <strong>{name}</strong>
             <GroveText type="supporting" color="secondary" role="status">
                 {active(status) ? labels[attempt!.state] : status?.authenticated === true ? "로그인됨"
                     : status?.authenticated === false ? "로그인 필요" : "상태 확인 필요"}
             </GroveText>
             {!active(status) && <>
-                <ServerActionButton className="ghost small" disabled={disabled || busy || !status}
+                <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy || !status}
                     onClick={() => void act("login")}>{status?.authenticated ? "다시 로그인" : "로그인"}</ServerActionButton>
-                {status?.authenticated && <ServerActionButton className="ghost small" disabled={disabled || busy}
+                {status?.authenticated && <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy}
                     onClick={() => void act("logout")}>로그아웃</ServerActionButton>}
             </>}
-            {active(status) && <ServerActionButton className="ghost small" disabled={disabled || busy}
+            {active(status) && <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy}
                 onClick={() => void act("login/cancel")}>취소</ServerActionButton>}
         </GroveStack>
         {attempt?.url && <>
             <GroveText as="p" display="block" type="supporting" color="inherit">이 서버에서 사용할 계정으로 인증해 주세요.</GroveText>
             <Link type="inherit" href={attempt.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">인증 페이지 열기</Link>
             {attempt.code && <GroveText as="p" display="block" type="inherit" color="inherit"><code aria-label="기기 인증 코드">{attempt.code}</code></GroveText>}
-            {protocol === "claude_code" && <form className="inline wrap" onSubmit={(event) => { event.preventDefault(); void act("login/code"); }}>
+            {protocol === "claude_code" && <GroveStack as="form" gap={1.5} direction="horizontal" align="center" wrap="wrap" onSubmit={(event) => { event.preventDefault(); void act("login/code"); }}>
                 <TextInput label="일회용 인증 코드" isLabelHidden type="password" autoComplete="off" hasSpellCheck={false}
                     value={code} onChange={setCode} placeholder="인증 페이지의 코드"
                     isDisabled={disabled || busy} />
                 <ServerActionButton type="submit" disabled={disabled || busy || !code.trim()}>확인</ServerActionButton>
-            </form>}
+            </GroveStack>}
         </>}
         {attempt && ["failed", "expired", "cancelled"].includes(attempt.state) && <GroveText as="p" display="block" type="supporting" color="inherit" role="status">{labels[attempt.state]}</GroveText>}
         {error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">{error}</GroveText>}
         {!active(status) && (error || status?.authenticated == null) &&
-            <GroveButton type="button" className="ghost small" disabled={busy} onClick={() => setRefresh((n) => n + 1)}>상태 확인</GroveButton>}
-    </section>;
+            <GroveButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => setRefresh((n) => n + 1)}>상태 확인</GroveButton>}
+    </GroveStack>;
 }

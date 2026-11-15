@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerCommand, composerOption, ensureProfile, ensureProjects, login, openDetails, script, state } from "./helpers";
+import { apiCall, composerCommand, composerOption, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, openDetails, script, selectChoice, state } from "./helpers";
 
 async function fixture() {
     const { a, b } = await ensureProjects();
@@ -23,10 +23,10 @@ async function session(project: string, title: string) {
 }
 
 async function openPair(page: Page, first: { title: string }, second: { title: string }) {
-    const recent = page.locator(".recent");
+    const recent = page.getByRole("region", { name: "최근", exact: true });
     await recent.getByTestId("recent-item").filter({ hasText: first.title }).getByRole("button", { name: new RegExp(first.title) }).click();
     await recent.getByTestId("recent-item").filter({ hasText: second.title }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await recent.getByTestId("recent-item").filter({ hasText: second.title }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
+    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
 }
 
@@ -40,36 +40,36 @@ test("pane별 모델·effort·도구 선택은 초점·탭 전환·새로고침 
         await openPair(page, first, second);
         const left = page.locator(`[data-session="${first.id}"]`);
         const right = page.locator(`[data-session="${second.id}"]`);
-        await left.getByLabel("모델 프로필").selectOption(f.primary);
-        await left.getByLabel("추론", { exact: true }).selectOption("low");
+        await composerOption(left, "모델 프로필", f.primary);
+        await composerOption(left, "추론", "low");
         await composerOption(left, "도구", true);
-        await right.getByLabel("모델 프로필").selectOption(f.secondary);
-        await right.getByLabel("추론", { exact: true }).selectOption("high");
+        await composerOption(right, "모델 프로필", f.secondary);
+        await composerOption(right, "추론", "high");
         await composerOption(right, "도구", false);
         await left.getByLabel("메시지 입력").click();
-        await expect(right.getByLabel("모델 프로필")).toHaveValue(f.secondary);
+        await expectComposerSetting(right, "모델 프로필", f.secondary);
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-        await page.locator(".recent").getByRole("button", { name: new RegExp(first.title) }).click();
-        await expect(left.getByLabel("모델 프로필")).toHaveValue(f.primary);
-        await expect(left.getByLabel("추론", { exact: true })).toHaveValue("low");
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(first.title) }).click();
+        await expectComposerSetting(left, "모델 프로필", f.primary);
+        await expectComposerSetting(left, "추론", "low");
         await composerCommand(left, "/tools");
         await expect(left.getByRole("status").filter({ hasText: "도구 사용을 껐습니다" })).toBeVisible();
         await composerOption(left, "도구", true);
         await right.getByLabel("메시지 입력").click();
-        await page.locator(".recent").getByRole("button", { name: new RegExp(other.title) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(other.title) }).click();
         await expect(page.locator(`[data-testid="session-view"][data-session="${other.id}"]`)).toBeVisible();
         const persisted = page.waitForResponse((r) => r.url().includes("/api/v1/layouts/") && r.request().method() === "PUT");
-        await page.locator(".recent").getByRole("button", { name: new RegExp(second.title) }).click();
-        await expect(right.getByLabel("모델 프로필")).toHaveValue(f.secondary);
-        await expect(right.getByLabel("추론", { exact: true })).toHaveValue("high");
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(second.title) }).click();
+        await expectComposerSetting(right, "모델 프로필", f.secondary);
+        await expectComposerSetting(right, "추론", "high");
         await composerCommand(right, "/tools");
         await expect(right.getByRole("status").filter({ hasText: "도구 사용을 켰습니다" })).toBeVisible();
         await composerOption(right, "도구", false);
         await persisted;
         await page.reload();
         await expect(page.getByTestId("conn")).toHaveText("연결됨");
-        await expect(left.getByLabel("모델 프로필")).toHaveValue(f.primary);
-        await expect(right.getByLabel("모델 프로필")).toHaveValue(f.secondary);
+        await expectComposerSetting(left, "모델 프로필", f.primary);
+        await expectComposerSetting(right, "모델 프로필", f.secondary);
     } finally { await f.cleanup(); }
 });
 
@@ -78,27 +78,27 @@ test("같은 프로젝트의 분할 입력도 각 탭의 초안·모델 선택�
     try {
         await apiCall("POST", "/recent/touch", { kind: "project", project_id: f.a.id, resource_id: f.a.id });
         await login(page);
-        await page.locator(".sidebar .projects").getByRole("button", { name: f.a.name, exact: true }).click();
+        await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: f.a.name, exact: true }).click();
         const leftPane = page.getByTestId("pane").nth(0);
-        const left = leftPane.locator(".project-view");
-        await left.getByLabel("모델 프로필").selectOption(f.primary);
+        const left = leftPane.getByTestId("project-view");
+        await composerOption(left, "모델 프로필", f.primary);
         await left.getByLabel("메시지 입력").fill("project left draft fixture");
         await leftPane.getByRole("button", { name: "오른쪽으로 분할", exact: true }).click();
         const rightPane = page.getByTestId("pane").nth(1);
-        const right = rightPane.locator(".project-view");
+        const right = rightPane.getByTestId("project-view");
         await expect(right.getByLabel("메시지 입력")).toHaveValue("");
-        await right.getByLabel("모델 프로필").selectOption(f.secondary);
+        await composerOption(right, "모델 프로필", f.secondary);
         await right.getByLabel("메시지 입력").fill("project right draft fixture");
-        await page.locator(".sidebar .projects").getByRole("button", { name: f.b.name, exact: true }).click();
-        const recentProject = page.locator(".recent .recent-title").filter({ hasText: f.a.name });
+        await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: f.b.name, exact: true }).click();
+        const recentProject = page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: f.a.name, exact: false }).first();
         await recentProject.click();
         await expect(right.getByLabel("메시지 입력")).toHaveValue("project right draft fixture");
-        await expect(right.getByLabel("모델 프로필")).toHaveValue(f.secondary);
+        await expectComposerSetting(right, "모델 프로필", f.secondary);
         await left.getByLabel("메시지 입력").click();
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
         await recentProject.click();
         await expect(left.getByLabel("메시지 입력")).toHaveValue("project left draft fixture");
-        await expect(left.getByLabel("모델 프로필")).toHaveValue(f.primary);
+        await expectComposerSetting(left, "모델 프로필", f.primary);
         await expect(right.getByLabel("메시지 입력")).toHaveValue("project right draft fixture");
     } finally { await f.cleanup(); }
 });
@@ -109,8 +109,8 @@ test("이전 공유 프로젝트 초안은 지우거나 다른 탭에 자동 배
         text: "legacy shared project draft fixture", baseRevision: 0, updatedAt: 1,
     })), a.id);
     await login(page);
-    await page.locator(".sidebar .projects").getByRole("button", { name: a.name, exact: true }).click();
-    const project = page.locator(".project-view");
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: a.name, exact: true }).click();
+    const project = page.getByTestId("project-view");
     await expect(project.getByLabel("메시지 입력")).toHaveValue("");
     await openDetails(project.getByTestId("draft-copies"));
     await project.getByTestId("draft-copy").filter({ hasText: "legacy shared project draft fixture" })
@@ -123,9 +123,9 @@ test("모델을 바꾼 같은 글은 원래 저장 요청을 확인한 뒤에도
     try {
         const s = await session(f.a.id, `${f.prefix} changed intent`);
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(s.title) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(s.title) }).click();
         const view = page.locator(`[data-session="${s.id}"]`);
-        await view.getByLabel("모델 프로필").selectOption(f.primary);
+        await composerOption(view, "모델 프로필", f.primary);
         await composerOption(view, "보내기 방식", "save");
         await view.getByLabel("메시지 입력").fill("same text with a different model intent");
         const sent: { key: string; body: string | null }[] = [];
@@ -140,17 +140,17 @@ test("모델을 바꾼 같은 글은 원래 저장 요청을 확인한 뒤에도
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("send-unsure")).toBeVisible();
         await composerOption(view, "보내기 방식", "model");
-        await view.getByLabel("모델 프로필").selectOption(f.secondary);
+        await composerOption(view, "모델 프로필", f.secondary);
         await view.getByRole("button", { name: "원래 요청 결과 확인", exact: true }).click();
         await expect(view.getByTestId("send-unsure")).toHaveCount(0);
         await expect(view.getByLabel("메시지 입력")).toHaveValue("same text with a different model intent");
-        await expect(view.getByLabel("모델 프로필")).toHaveValue(f.secondary);
+        await expectComposerSetting(view, "모델 프로필", f.secondary);
         expect(sent).toHaveLength(2);
         expect(sent[1]).toEqual(sent[0]);
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-        await page.locator(".recent").getByRole("button", { name: new RegExp(s.title) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(s.title) }).click();
         await expect(view.getByLabel("메시지 입력")).toHaveValue("same text with a different model intent");
-        await expect(view.getByLabel("모델 프로필")).toHaveValue(f.secondary);
+        await expectComposerSetting(view, "모델 프로필", f.secondary);
     } finally { await f.cleanup(); }
 });
 
@@ -172,7 +172,7 @@ test("다른 pane을 선택한 뒤 승인해도 cwd·파일 변경·stream·모�
         const left = page.locator(`[data-testid="session-view"][data-session="${first.id}"]`);
         const right = page.locator(`[data-testid="session-view"][data-session="${second.id}"]`);
         for (const [view, model] of [[left, f.primary], [right, f.secondary]] as const) {
-            await view.getByLabel("모델 프로필").selectOption(model);
+            await composerOption(view, "모델 프로필", model);
             await composerOption(view, "보내기 방식", "model");
             await composerOption(view, "도구", true);
         }

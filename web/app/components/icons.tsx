@@ -19,6 +19,10 @@ const PATHS = {
     search: <><circle cx="10.5" cy="10.5" r="6.5" /><path d="m16 16 5 5" /></>,
     sidebar: <><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M9 3v18" /></>,
     panel: <><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M15 3v18" /></>,
+    panelBottom: <><rect x="3" y="3" width="18" height="18" rx="3" /><path d="M3 15h18" /></>,
+    pin: <><path d="m16 3 5 5-4 1-4 4v4l-2 2-6-6 2-2h4l4-4zM2 22l6-6" /></>,
+    eyeOff: <><path d="m3 3 18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A10.9 10.9 0 0 1 12 5c6 0 10 7 10 7a19.7 19.7 0 0 1-3.2 3.8M6.2 6.2A20 20 0 0 0 2 12s4 7 10 7a11 11 0 0 0 5.8-1.8" /></>,
+    restore: <><path d="M3 11a9 9 0 1 1 2.6 7M3 4v7h7" /></>,
     edit: <><path d="M12 20h9" /><path d="M16.4 3.6a2 2 0 0 1 2.9 2.9L7 18.8 3 20l1.2-4z" /></>,
     settings: <><path d="M20 7h-9M14 17H5" /><circle cx="17" cy="17" r="3" /><circle cx="7" cy="7" r="3" /></>,
     server: <><rect x="3" y="4" width="18" height="7" rx="2" /><rect x="3" y="13" width="18" height="7" rx="2" /><path d="M7 7.5h.01M7 16.5h.01" /></>,
@@ -27,6 +31,7 @@ const PATHS = {
     shield: <><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z" /><path d="m8 12 3 3 5-6" /></>,
     user: <><circle cx="12" cy="8" r="4" /><path d="M4 21v-2a8 8 0 0 1 16 0v2" /></>,
     chevronRight: <path d="m9 5 7 7-7 7" />,
+    chevronDown: <path d="m6 9 6 6 6-6" />,
     sprout: <><path d="M12 21v-9" /><path d="M12 12c0-3.3 2.4-6 6-6 0 3.3-2.4 6-6 6Z" /><path d="M12 14c0-3-2.2-5.5-5.5-5.5 0 3 2.2 5.5 5.5 5.5Z" /></>,
     assistant: <><path d="M12 3v3M9 3h6" /><rect x="4" y="6" width="16" height="14" rx="4" />
         <path d="M8 15h8M2 10v6M22 10v6" /><circle cx="8.5" cy="11" r=".8" fill="currentColor" stroke="none" />
@@ -44,9 +49,9 @@ function glyph(name: IconName): IconType {
 
 const GLYPHS = Object.fromEntries((Object.keys(PATHS) as IconName[]).map((name) => [name, glyph(name)])) as Record<IconName, IconType>;
 
-export function Icon({ name, size = 18, className = "", ...props }: {
-    name: IconName; size?: number | string; className?: string; "data-testid"?: string;
+export function Icon({ name, size = 18, ...props }: {
+    name: IconName; size?: number | string; "data-testid"?: string;
 }) {
-    return <AstryxIcon {...props} icon={GLYPHS[name]} className={`icon ${className}`} color="inherit"
-        style={{ width: size, height: size }} focusable="false" />;
+    const tier = typeof size !== "number" ? "md" : size <= 12 ? "xsm" : size <= 16 ? "sm" : size <= 20 ? "md" : "lg";
+    return <AstryxIcon {...props} icon={GLYPHS[name]} size={tier} color="inherit" focusable="false" />;
 }

@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { login, selectChoice } from "./helpers";
 
 // UI-030: light/dark/soft 테마와 OS 테마 연동, 본문·보조 글·버튼 글자의 대비(WCAG AA 4.5:1).
-type Colors = { bg: string; panel: string; text: string; muted: string; accent: string; onAccent: string; scheme: string; meta: string | null; button: string };
+type Colors = { bg: string; panel: string; text: string; muted: string; accent: string; onAccent: string; scheme: string; meta: string | null };
 
 async function colors(page: Page): Promise<Colors> {
     return page.evaluate(() => {
@@ -17,10 +17,6 @@ async function colors(page: Page): Promise<Colors> {
             const channels = color.match(/[\d.]+/g)!;
             return "#" + channels.slice(0, 3).map((channel) => Math.round(Number(channel)).toString(16).padStart(2, "0")).join("");
         };
-        const b = document.createElement("button");
-        document.body.appendChild(b);
-        const button = getComputedStyle(b).color;
-        b.remove();
         return {
             bg: v("--bg"),
             panel: v("--panel"),
@@ -30,7 +26,6 @@ async function colors(page: Page): Promise<Colors> {
             onAccent: v("--on-accent"),
             scheme: cs.colorScheme,
             meta: document.querySelector('meta[name="theme-color"]')?.getAttribute("content") ?? null,
-            button,
         };
     });
 }
@@ -59,6 +54,13 @@ test("테마별 대비가 AA 이상이고 system은 OS를, 고정 테마는 OS�
         await setTheme(page, theme);
         const c = await colors(page);
         results[`${theme}/${os}`] = c;
+        const button = await page.getByRole("button", { name: "로그인", exact: true }).evaluate((node) => {
+            const style = getComputedStyle(node);
+            const hex = (color: string) => "#" + color.match(/[\d.]+/g)!.slice(0, 3)
+                .map((channel) => Math.round(Number(channel)).toString(16).padStart(2, "0")).join("");
+            return { text: hex(style.color), background: hex(style.backgroundColor) };
+        });
+        expect(contrast(button.text, button.background), `${theme}/${os} 실제 로그인 버튼`).toBeGreaterThanOrEqual(4.5);
         for (const [fg, bg, name] of [[c.text, c.bg, "본문"], [c.text, c.panel, "패널 본문"], [c.muted, c.panel, "보조 글"], [c.muted, c.bg, "보조 글(배경)"], [c.onAccent, c.accent, "버튼 글자"]] as const) {
             expect(contrast(fg, bg), `${theme}/${os} ${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
         }
@@ -75,9 +77,6 @@ test("테마별 대비가 AA 이상이고 system은 OS를, 고정 테마는 OS�
     // 주소창 색
     expect(results["dark/light"]!.meta).toBe("#14161b");
     expect(results["soft/dark"]!.meta).toBe("#e9ebee");
-    // 버튼은 테마의 버튼 글자색을 쓴다(다크 테마에서 흰 글자 대비 부족 회귀 방지)
-    expect(results["dark/light"]!.button).toBe("rgb(20, 22, 27)");
-
     // system 사용 중 OS가 바뀌면 새로고침 없이 따라간다
     await page.emulateMedia({ colorScheme: "light" });
     await setTheme(page, "system");

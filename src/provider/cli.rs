@@ -147,6 +147,7 @@ pub fn apply_event(protocol: &str, e: &Value, out: &mut ModelOutput, final_text:
                 }
             }
             "assistant" => {
+                let mut text = String::new();
                 for c in e["message"]["content"].as_array().into_iter().flatten() {
                     match c["type"].as_str().unwrap_or("") {
                         "text" => {
@@ -154,12 +155,15 @@ pub fn apply_event(protocol: &str, e: &Value, out: &mut ModelOutput, final_text:
                                 out.text.push_str("\n\n");
                             }
                             out.text.push_str(c["text"].as_str().unwrap_or(""));
+                            if !text.is_empty() { text.push_str("\n\n"); }
+                            text.push_str(c["text"].as_str().unwrap_or(""));
                         }
                         "thinking" => out.reasoning.push_str(c["thinking"].as_str().unwrap_or("")),
                         "tool_use" => out.activity.push(json!({ "kind": "tool", "name": c["name"], "input": summarize(&c["input"]) })),
                         _ => {}
                     }
                 }
+                if !text.is_empty() { out.response_parts.push(text); }
             }
             "result" => {
                 if let Some(id) = e["session_id"].as_str() {
@@ -197,6 +201,7 @@ pub fn apply_event(protocol: &str, e: &Value, out: &mut ModelOutput, final_text:
                             out.text.push_str("\n\n");
                         }
                         out.text.push_str(it["text"].as_str().unwrap_or(""));
+                        out.response_parts.push(it["text"].as_str().unwrap_or("").to_string());
                     }
                     "reasoning" => out.reasoning.push_str(it["text"].as_str().unwrap_or("")),
                     "command_execution" => out.activity.push(json!({ "kind": "command", "name": "shell", "input": it["command"], "status": it["status"], "exit_code": it["exit_code"] })),
@@ -246,6 +251,7 @@ impl CliStream {
             let e = &event["event"];
             if e["type"] == "message_start" {
                 self.claude_partial = Some((self.output.text.len(), self.output.reasoning.len(), false));
+                self.output.response_parts.push(String::new());
             }
             let text = if e["type"] == "content_block_delta" { e["delta"]["text"].as_str() }
                 else if e["type"] == "content_block_start" { e["content_block"]["text"].as_str() } else { None };
@@ -253,6 +259,8 @@ impl CliStream {
                 else if e["type"] == "content_block_start" { e["content_block"]["thinking"].as_str() } else { None };
             let state = self.claude_partial.get_or_insert((self.output.text.len(), self.output.reasoning.len(), false));
             if let Some(text) = text.filter(|text| !text.is_empty()) {
+                if self.output.response_parts.is_empty() { self.output.response_parts.push(String::new()); }
+                self.output.response_parts.last_mut().unwrap().push_str(text);
                 if !state.2 && !self.output.text.is_empty() { self.output.text.push_str("\n\n"); }
                 state.2 = true;
                 self.output.text.push_str(text);
@@ -269,15 +277,25 @@ impl CliStream {
             if let Some((_, value)) = messages.iter_mut().find(|(key, _)| key == id) { *value = text.into(); }
             else { messages.push((id.into(), text.into())); }
             let combined = messages.iter().map(|(_, text)| text.as_str()).collect::<Vec<_>>().join("\n\n");
-            if item["type"] == "reasoning" { self.output.reasoning = combined; } else { self.output.text = combined; }
+            if item["type"] == "reasoning" { self.output.reasoning = combined; } else {
+                self.output.text = combined;
+                self.output.response_parts = messages.iter().map(|(_, text)| text.clone()).collect();
+            }
         } else {
             if protocol == "claude_code" && event["type"] == "assistant"
                 && let Some((text, reasoning, _)) = self.claude_partial.take()
             {
                 self.output.text.truncate(text);
                 self.output.reasoning.truncate(reasoning);
+                self.output.response_parts.pop();
             }
             apply_event(protocol, event, &mut self.output, &mut self.final_text)?;
+        }
+        if protocol == "claude_code" && event["type"] == "result"
+            && let Some(text) = &self.final_text
+        {
+            if let Some(last) = self.output.response_parts.last_mut() { *last = text.clone(); }
+            else { self.output.response_parts.push(text.clone()); }
         }
         if self.output.text.len() + self.output.reasoning.len() > super::MAX_OUTPUT_BYTES
             || self.final_text.as_ref().is_some_and(|text| text.len() > super::MAX_OUTPUT_BYTES)
@@ -751,6 +769,33 @@ echo '{"id":2,"result":{"data":[{"model":"fixture-codex-2","displayName":"Second
         }
         state.apply("codex_cli", &json!({"type":"item.completed","item":{"id":"m2","type":"agent_message","text":"둘째 답"}})).unwrap();
         assert_eq!(state.output.text, "첫 답\n\n둘째 답");
+        assert_eq!(state.output.response_parts, ["첫 답", "둘째 답"]);
+    }
+
+    #[test]
+    fn cli_progress_stays_separate_from_reasoning_and_last_answer() {
+        let mut state = CliStream::default();
+        for item in [
+            json!({"id":"r1","type":"reasoning","text":"링크 대상을 확인해야 한다"}),
+            json!({"id":"m1","type":"agent_message","text":"심볼릭 링크인지 확인할게."}),
+            json!({"id":"c1","type":"command_execution","command":"readlink a","status":"completed","exit_code":0}),
+            json!({"id":"m2","type":"agent_message","text":"맞아. 확인 결과 심볼릭 링크야."}),
+        ] {
+            state.apply("codex_cli", &json!({"type":"item.completed","item":item})).unwrap();
+        }
+        assert_eq!(state.output.reasoning, "링크 대상을 확인해야 한다");
+        assert_eq!(state.output.response_parts, ["심볼릭 링크인지 확인할게.", "맞아. 확인 결과 심볼릭 링크야."]);
+        assert_eq!(state.output.text, "심볼릭 링크인지 확인할게.\n\n맞아. 확인 결과 심볼릭 링크야.");
+
+        let mut state = CliStream::default();
+        for text in ["확인할게.", "결과야."] {
+            state.apply("claude_code", &json!({"type":"stream_event","event":{"type":"message_start"}})).unwrap();
+            state.apply("claude_code", &json!({"type":"stream_event","event":{"type":"content_block_delta","delta":{"text":text}}})).unwrap();
+            state.apply("claude_code", &json!({"type":"assistant","message":{"content":[{"type":"thinking","thinking":"추론"},{"type":"text","text":text}]}})).unwrap();
+        }
+        state.apply("claude_code", &json!({"type":"result","result":"최종 결과야.","usage":{}})).unwrap();
+        assert_eq!(state.output.reasoning, "추론추론");
+        assert_eq!(state.output.response_parts, ["확인할게.", "최종 결과야."]);
     }
 
     #[cfg(unix)]

@@ -1,4 +1,6 @@
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Select } from "../design/Select";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
@@ -36,7 +38,7 @@ function CapacitySection() {
     };
     const limit = (n: number | null) => (n == null ? "제한 없음" : String(n));
     return (
-        <div data-testid="usage-capacity">
+        <GroveStack gap={0} data-testid="usage-capacity">
             <GroveHeading level={3} color="inherit">실행 용량</GroveHeading>
             <GroveText as="p" display="block" type="inherit" color="inherit">
                 서버 전체: 실행 {c.server.running}/{limit(c.limits.max_active)} · 대기 {c.server.waiting}
@@ -45,20 +47,20 @@ function CapacitySection() {
             {c.requests.length === 0 ? (
                 <GroveText as="p" display="block" type="inherit" color="secondary">이 기기에서 실행·대기 중인 요청이 없습니다.</GroveText>
             ) : (
-                <ul className="session-list">
+                <GroveList density="compact" edge="flush" hasDividers>
                     {c.requests.map((r) => (
-                        <li key={r.turn_id} data-testid="capacity-request">
+                        <GroveListItem key={r.turn_id} data-testid="capacity-request" label={<>
                             <GroveText type="inherit" color="inherit">{r.session_title || "제목 없는 대화"}</GroveText>{" "}
                             <GroveText type="supporting" color="secondary">
                                 {r.queue ? queueText(r.queue) : r.status === "awaiting_approval" ? "승인·답변 대기(실행 슬롯 사용 안 함)" : r.status === "queued" ? "대기 중" : "실행 중"}
                             </GroveText>{" "}
-                            <ServerActionButton className="ghost small" onClick={() => void cancel(r.turn_id)}>취소</ServerActionButton>
-                        </li>
+                            <ServerActionButton variant="secondary" density="compact" onClick={() => void cancel(r.turn_id)}>취소</ServerActionButton>
+                        </>} />
                     ))}
-                </ul>
+                </GroveList>
             )}
-            {err && <GroveText as="p" display="block" type="inherit" color="inherit" className="error" role="alert">{err}</GroveText>}
-        </div>
+            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
+        </GroveStack>
     );
 }
 
@@ -102,14 +104,12 @@ export function UsagePanel() {
     return (
         <SettingsGroup title="사용량" scope="서버 전체" testId="usage-panel">
             <CapacitySection />
-            <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
-                <select aria-label="기간" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-                    {PERIODS.map(([d, l]) => <option key={d} value={d}>{l}</option>)}
-                </select>
-                <select aria-label="묶음" value={group} onChange={(e) => setGroup(e.target.value)}>
-                    {GROUPS.map(([g, l]) => <option key={g} value={g}>{l}</option>)}
-                </select>
-                <GroveButton className="ghost" disabled={q.loading} onClick={q.reload}>{q.error ? "다시 시도" : "새로고침"}</GroveButton>
+            <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+                <Select label="기간" hideLabel value={String(days)} onChange={(value) => setDays(Number(value))}
+                    options={PERIODS.map(([value, label]) => ({ value: String(value), label }))} />
+                <Select label="묶음" hideLabel value={group} onChange={setGroup}
+                    options={GROUPS.map(([value, label]) => ({ value, label }))} />
+                <GroveButton variant="secondary" disabled={q.loading} onClick={q.reload}>{q.error ? "다시 시도" : "새로고침"}</GroveButton>
             </GroveStack>
             {!q.data && !q.error && <GroveText as="p" display="block" type="inherit" color="secondary" role="status">사용량 불러오는 중…</GroveText>}
             {q.error != null && (
@@ -117,7 +117,7 @@ export function UsagePanel() {
                     사용량 조회 실패{q.data ? " · 마지막 조회값 표시" : ""}
                 </GroveText>
             )}
-            {q.data && <div aria-busy={q.loading}><UsagePresentation report={q.data} groupLabel={GROUPS.find(([g]) => g === q.data!.group)?.[1] ?? q.data.group} /></div>}
+            {q.data && <GroveStack gap={0} aria-busy={q.loading}><UsagePresentation report={q.data} groupLabel={GROUPS.find(([g]) => g === q.data!.group)?.[1] ?? q.data.group} /></GroveStack>}
             <GroveText as="p" display="block" type="supporting" color="secondary">
                 비용은 모델 프로필 가격표{q.data?.pricing_versions.length ? `(${q.data.pricing_versions.join(", ")})` : ""}로 계산한 추정치이며 계정 청구액·quota와 다를 수 있습니다.
             </GroveText>

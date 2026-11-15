@@ -90,7 +90,11 @@ export async function audit(page: Page, opts: { touch?: boolean } = {}): Promise
                       const r = e.getBoundingClientRect();
                       return r.width < 24 || r.height < 24;
                   })
-                  .map((e) => `${desc(e)} ${Math.round(e.getBoundingClientRect().width)}x${Math.round(e.getBoundingClientRect().height)}`)
+                  .map((e) => {
+                      const rect = e.getBoundingClientRect();
+                      const style = getComputedStyle(e);
+                      return `${e.tagName.toLowerCase()} "${name(e)}" variant=${e.getAttribute("data-variant")} ${rect.width}x${rect.height} minWidth=${style.minWidth} shrink=${style.flexShrink}`;
+                  })
             : [];
         return { unnamed, contrast, small };
     }, !!opts.touch);

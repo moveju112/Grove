@@ -14,7 +14,7 @@ async function open(page: Page, name: string, authenticate = true) {
     await openSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("에이전트");
     await page.getByRole("button", { name: "워크플로우", exact: true }).click();
-    await page.locator(".def-list").getByRole("button", { name: new RegExp(name) }).click();
+    await page.getByTestId("definition-list").getByRole("button", { name: new RegExp(name) }).click();
     await expect(page.getByLabel("정의 본문", { exact: true })).toBeVisible();
 }
 async function prepare() {
@@ -67,8 +67,8 @@ test("저장된 수정본과 현재 번들을 비교하고 선택 필드만 적�
     await expect(comparison(page).getByRole("combobox", { name: "이름 기본값 적용", exact: true })).toBeEnabled();
     await expect(comparison(page).getByRole("combobox", { name: "본문 기본값 적용", exact: true })).toBeEnabled();
     await comparison(page).getByRole("button", { name: "비교한 revision으로 초안 저장 준비", exact: true }).click();
-    await page.locator(".def-editor").getByRole("button", { name: "저장", exact: true }).click();
-    await expect(page.locator(".def-editor").getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
+    await page.getByTestId("definition-editor").getByRole("button", { name: "저장", exact: true }).click();
+    await expect(page.getByTestId("definition-editor").getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
     expect((await read()).body).toBe("복원과 별개로 보존할 본문");
 });
 
@@ -122,7 +122,7 @@ test("응답 유실 후 reload해도 같은 본문·키의 receipt를 확인하�
     await selectChoice(comparison(page).getByLabel("본문 기본값 적용", { exact: true }), "true");
     await comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
     await expect(comparison(page).getByRole("button", { name: "원래 복원 요청 결과 확인", exact: true })).toBeVisible();
-    await expect(page.locator(".def-editor").getByRole("button", { name: "저장", exact: true })).toBeDisabled();
+    await expect(page.getByTestId("definition-editor").getByRole("button", { name: "저장", exact: true })).toBeDisabled();
     const latest = await edit({ body: "복원 뒤 다른 기기의 수정" });
     await page.reload();
     await open(page, latest.name, false);
@@ -155,7 +155,7 @@ test("오프라인은 정의 저장과 선택 적용을 막고 복구 뒤에도 
     await comparison(page).getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
     await selectChoice(comparison(page).getByLabel("본문 기본값 적용", { exact: true }), "true");
     const apply = comparison(page).getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true });
-    const save = page.locator(".def-editor").getByRole("button", { name: "저장", exact: true });
+    const save = page.getByTestId("definition-editor").getByRole("button", { name: "저장", exact: true });
     const mutations: string[] = [];
     page.on("request", (request) => {
         if (new URL(request.url()).pathname.startsWith(`/api/v1${path}`) && request.method() !== "GET") {
@@ -167,7 +167,7 @@ test("오프라인은 정의 저장과 선택 적용을 막고 복구 뒤에도 
         await expect(page.getByTestId("offline-banner")).toBeVisible();
         await expect(apply).toBeDisabled();
         await expect(save).toBeDisabled();
-        await expect(page.locator(".def-editor").getByRole("button", { name: "선택 가능으로", exact: true })).toBeDisabled();
+        await expect(page.getByTestId("definition-editor").getByRole("button", { name: "선택 가능으로", exact: true })).toBeDisabled();
         await body.fill("오프라인에서 더 편집한 정의 초안");
         await expect(body).toHaveValue("오프라인에서 더 편집한 정의 초안");
         expect(mutations).toEqual([]);

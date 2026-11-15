@@ -118,6 +118,8 @@ impl Usage {
 #[derive(Debug, Clone, Default)]
 pub struct ModelOutput {
     pub text: String,
+    /// CLI가 보낸 개별 응답. 앞선 진행 설명과 마지막 답변의 표시 경계를 보존한다.
+    pub response_parts: Vec<String>,
     pub reasoning: String,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Usage,

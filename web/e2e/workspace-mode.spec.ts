@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, composerOption, login, openDetails, state } from "./helpers";
+import { apiCall, composerOption, login, openDetails, selectChoice, state } from "./helpers";
 
 /// 다른 시험과 저장소를 공유하지 않도록 새 프로젝트 폴더에 저장소를 만든다(모드는 기본값 그대로).
 async function freshRepo(tag: string) {
@@ -23,10 +23,10 @@ test("단일 모드는 워크스페이스를 만들지 않고, 프로젝트 모�
     const { run, p } = await freshRepo("ui");
     expect(p.workspace_mode).toBe("single");
     await login(page);
-    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
-    const view = page.locator(".project-view").filter({ has: page.locator(".view-head", { hasText: p.name }) });
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
+    const view = page.getByTestId("project-view").filter({ has: page.getByRole("heading", { name: p.name, exact: true }) });
     const panel = view.getByTestId("worktrees-panel");
-    await openDetails(panel);
+    await openDetails(panel, "워크스페이스");
 
     // 단일 모드: 모드 전환만 보이고 워크스페이스를 만들 입력이 없다. 새 대화의 워크스페이스 선택도 없다.
     await expect(panel.getByTestId("workspace-mode")).toHaveAttribute("data-mode", "single");
@@ -49,7 +49,7 @@ test("단일 모드는 워크스페이스를 만들지 않고, 프로젝트 모�
     expect(run("worktree", "list").trim().split("\n")).toHaveLength(2);
 
     // 새 대화를 워크스페이스에서 시작하면 그 워크스페이스에 연결된다(보내면 대화 화면으로 바뀐다).
-    await view.getByLabel("새 대화 워크스페이스").selectOption(wt.id);
+    await selectChoice(view.getByLabel("새 대화 워크스페이스"), wt.id);
     await view.getByLabel("메시지 입력").fill("워크스페이스 대화");
     await composerOption(view, "보내기 방식", "save");
     await view.getByLabel("메시지 입력").press("Control+Enter");

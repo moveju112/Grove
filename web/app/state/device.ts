@@ -30,7 +30,7 @@ export function deviceName(): string {
     return `${br} · ${os}`;
 }
 
-/// 이 기기 표시 설정. reasoning: 생각 과정 표시(접기·숨김·펼침), answerOnly: 답만(도구·실행 기록 숨김), expandTools: 도구 세부를 펼친 채로.
+/// 이 기기 표시 설정. reasoning: 추론 보기(답변 시 접기·항상 가림·항상 보기), answerOnly: 답만(도구·실행 기록 숨김), expandTools: 도구 세부를 펼친 채로.
 export type Prefs = {
     theme: "system" | "light" | "dark" | "soft";
     fontSize: number;

@@ -1,3 +1,8 @@
+import { HintText } from "../../design/HintText";
+import { Grid } from "@astryxdesign/core/Grid";
+import { Stack } from "@astryxdesign/core/Stack";
+import { ProgressBar } from "@astryxdesign/core/ProgressBar";
+import { Divider } from "@astryxdesign/core/Divider";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { useEffect, useRef } from "react";
 import { api } from "../../api/client";
@@ -30,7 +35,8 @@ export function SidebarUsage() {
     const max = c?.limits.max_active ?? null;
     if (rows.length === 0 && (!c || (c.server.running === 0 && c.server.waiting === 0))) return null;
     return (
-        <section className="side-usage" aria-label="사용량 요약" data-testid="sidebar-usage">
+        <Stack as="section" gap={2} padding={3} aria-label="사용량 요약" data-testid="sidebar-usage">
+            <Divider />
             {c && (c.server.running > 0 || c.server.waiting > 0) && (
                 <Meter label="실행 중" value={max ? `${c.server.running}/${max}` : `${c.server.running}`}
                     share={max ? c.server.running / max : null} note={c.server.waiting > 0 ? `대기 ${c.server.waiting}` : undefined} />
@@ -39,23 +45,23 @@ export function SidebarUsage() {
                     <Meter key={r.key} label={`${r.label} · 오늘`} value={compact(totalTokens(r))}
                         share={tokenShare(totalTokens(r), total)} shareText={formatShare(tokenShare(totalTokens(r), total))} />
                 ))}
-        </section>
+        </Stack>
     );
 }
 
 function Meter({ label, value, share, note, shareText }: { label: string; value: string; share: number | null; note?: string; shareText?: string }) {
     const pct = share === null ? null : Math.max(0, Math.min(1, share));
     return (
-        <div className="side-meter">
-            <GroveText type="inherit" color="inherit" className="side-meter-label">{label}</GroveText>
-            <span className="side-meter-value num" title={shareText ? `오늘 전체의 ${shareText}` : undefined}>{value}</span>
+        <Grid gap={1}>
+            <Stack direction="horizontal" justify="between" align="center" gap={2}>
+            <GroveText type="supporting" color="secondary" maxLines={1}>{label}</GroveText>
+            <HintText hasTabularNumbers data-testid="side-meter-value" hint={shareText ? `오늘 전체의 ${shareText}` : undefined}>{value}</HintText>
+            </Stack>
             {pct !== null && (
-                <GroveText type="inherit" color="inherit" className="side-meter-track" aria-hidden="true">
-                    <i className={pct >= 0.7 ? "hi" : ""} style={{ transform: `scaleX(${pct})` }} />
-                </GroveText>
+                <ProgressBar label={label} isLabelHidden value={pct} max={1} variant={pct >= 0.7 ? "warning" : "neutral"} />
             )}
-            {note && <GroveText type="inherit" color="inherit" className="side-meter-note">{note}</GroveText>}
-        </div>
+            {note && <GroveText type="supporting" color="secondary">{note}</GroveText>}
+        </Grid>
     );
 }
 

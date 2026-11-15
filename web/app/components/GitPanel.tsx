@@ -1,3 +1,6 @@
+import { CodeBlock } from "../design/CodeBlock";
+import { StatusBadge } from "../design/StatusBadge";
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
@@ -102,7 +105,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
     const progress = mutation.phase === "sending" && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">Git 요청 처리·결과 확인 중…</GroveText>;
     // 조회가 실패하거나 저장소가 잠시 없어져도 원래 mutation의 결과 확인은 남긴다.
     const recovery = mutation.phase === "unknown" && (
-        <div key="git-recovery" className="draft-note warn" role="group" aria-label="Git 결과 재확인" data-testid="git-unsure">
+        <GroveText as="div" display="block" type="supporting" color="warning" key="git-recovery" role="group" aria-label="Git 결과 재확인" data-testid="git-unsure">
             <GroveText as="p" display="block" type="inherit" color="inherit">{LABEL[mutation.attempt.op]} 결과를 확정하지 못했습니다. 자동으로 다시 실행하지 않습니다. 재확인은 현재 입력이 아니라 원래 대상·fingerprint·같은 요청 키를 사용합니다.</GroveText>
             <DetailDialog label="원래 Git 요청 대상" title="원래 요청 대상">
                 <code>프로젝트 {mutation.attempt.projectId}</code>
@@ -111,18 +114,18 @@ export function GitPanel({ projectId }: { projectId: string }) {
                 {mutation.attempt.op === "stage-hunks" && <GroveText as="p" display="block" type="inherit" color="inherit">{mutation.attempt.body.path} · 부분 {mutation.attempt.body.hunks.map((i) => i + 1).join(", ")}</GroveText>}
                 {(mutation.attempt.op === "confirm" || mutation.attempt.op === "stash-save") && <pre>{JSON.stringify(mutation.attempt.body, null, 2)}</pre>}
             </DetailDialog>
-            <GroveStack direction="horizontal" align="center" className="inline">
+            <GroveStack direction="horizontal" align="center" gap={1.5}>
                 <ServerActionButton onClick={() => void mutate(mutation.attempt)}>같은 Git 요청 확인</ServerActionButton>
-                <GroveButton className="ghost small" onClick={() => {
+                <GroveButton variant="secondary" density="compact" onClick={() => {
                     if (!confirm("Git 상태·index·이력·원격 상태에서 이전 요청의 실제 결과를 확인했나요?\n이전 요청을 완료로 확정하거나 되돌리지 않습니다. 새 요청은 새 키로 실행됩니다.")) return;
                     setMutation({ phase: "idle" });
                     setErr("이전 요청은 결과 불명 기록으로 남습니다. 다음 작업은 실제 Git 상태를 확인한 뒤 시작하세요.");
                 }}>상태 확인 후 새 작업 허용</GroveButton>
             </GroveStack>
-        </div>
+        </GroveText>
     );
 
-    if (!s) return <section className="git" data-testid="git-panel">
+    if (!s) return <section data-testid="git-panel">
         <GitContextOverview projectId={projectId} refreshSignal={s} />
         {progress}
         {recovery}
@@ -131,7 +134,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
         </GroveText>
         {!!status.error && <GroveButton onClick={() => status.reload()}>상태 다시 확인</GroveButton>}
     </section>;
-    if (!s.is_repo) return <section className="git" data-testid="git-panel">
+    if (!s.is_repo) return <section data-testid="git-panel">
         <GitContextOverview projectId={projectId} refreshSignal={s} />
         {progress}
         {recovery}
@@ -143,32 +146,32 @@ export function GitPanel({ projectId }: { projectId: string }) {
     const hunkAct = (i: number) => start({ op: "stage-hunks", body: { path: diff!.path, hunks: [i], unstage: diff!.staged, expected_fingerprint: diff!.fingerprint } });
     const remote = (op: "fetch" | "pull" | "push") => start({ op, body: {} });
     const row = (e: Entry, isStaged: boolean) => (
-        <li key={(isStaged ? "s:" : "w:") + e.path}>
-            <code className={`status ${e.kind}`}>{isStaged ? e.index : e.worktree === "." ? e.index : e.worktree}</code>
-            <GroveButton className="link" onClick={() => void show(e.path, isStaged).catch((error) => setErr(error instanceof ApiError ? error.message : "Git diff 조회 실패"))}>{e.path}</GroveButton>
+        <GroveListItem key={(isStaged ? "s:" : "w:") + e.path} label={<>
+            <StatusBadge><code>{isStaged ? e.index : e.worktree === "." ? e.index : e.worktree}</code></StatusBadge>
+            <GroveButton appearance="link" onClick={() => void show(e.path, isStaged).catch((error) => setErr(error instanceof ApiError ? error.message : "Git diff 조회 실패"))}>{e.path}</GroveButton>
             <ServerActionButton
-                className="ghost small"
+                variant="secondary" density="compact"
                 disabled={blocked}
                 onClick={() => start({ op: isStaged ? "unstage" : "stage", body: { paths: [e.path], expected_fingerprint: s.fingerprint } })}
             >
                 {isStaged ? "내리기" : "올리기"}
             </ServerActionButton>
-            {e.kind !== "untracked" && <ServerActionButton className="ghost small" disabled={blocked}
+            {e.kind !== "untracked" && <ServerActionButton variant="secondary" density="compact" disabled={blocked}
                 onClick={() => void prepare({ operation: "discard", paths: [e.path] })}>변경 버리기</ServerActionButton>}
-        </li>
+        </>} />
     );
     return (
-        <section className="git" data-testid="git-panel">
+        <section data-testid="git-panel">
             <GitContextOverview projectId={projectId} head={s.branch?.oid} refreshSignal={s} />
             <GroveHeading level={2} color="inherit">
                 Git · {s.branch?.head} {s.branch?.ahead ? `↑${s.branch.ahead}` : ""} {s.branch?.behind ? `↓${s.branch.behind}` : ""}
-                <GroveButton className="ghost small" onClick={() => { status.reload(); stashes.reload(); }}>새로고침</GroveButton>
+                <GroveButton variant="secondary" density="compact" onClick={() => { status.reload(); stashes.reload(); }}>새로고침</GroveButton>
             </GroveHeading>
-            <div className="inline small">
-                <ServerActionButton className="ghost small" disabled={blocked} onClick={() => remote("fetch")} title="원격 참조만 갱신합니다">가져오기(fetch)</ServerActionButton>
-                <ServerActionButton className="ghost small" disabled={blocked} onClick={() => remote("pull")} title="fast-forward만 허용합니다">당겨오기(pull)</ServerActionButton>
-                <ServerActionButton className="ghost small" disabled={blocked} onClick={() => remote("push")} title="강제 push는 하지 않습니다">올리기(push)</ServerActionButton>
-            </div>
+            <GroveStack direction="horizontal" align="center" gap={1.5}>
+                <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => remote("fetch")} title="원격 참조만 갱신합니다">가져오기(fetch)</ServerActionButton>
+                <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => remote("pull")} title="fast-forward만 허용합니다">당겨오기(pull)</ServerActionButton>
+                <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => remote("push")} title="강제 push는 하지 않습니다">올리기(push)</ServerActionButton>
+            </GroveStack>
             {progress}
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {recovery}
@@ -180,39 +183,39 @@ export function GitPanel({ projectId }: { projectId: string }) {
                     setReview(null);
                     void mutate({ op: "confirm", body: confirmationBody(review.data), projectId: review.projectId, key: newKey() });
                 }} />}
-            <GroveHeading level={3} color="inherit" className="small inline">stash <HelpTip label="stash 저장 도움말">
+            <GroveHeading level={3} color="inherit"><GroveStack as="span" direction="horizontal" align="center" gap={1.5}>stash <HelpTip label="stash 저장 도움말">
                 tracked 파일의 index·작업 트리 변경만 저장하며 untracked·ignored 파일은 그대로 둡니다.
-            </HelpTip></GroveHeading>
-            <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
+            </HelpTip></GroveStack></GroveHeading>
+            <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                 <TextInput label="stash 메시지" isLabelHidden placeholder="stash 메시지" value={stashMessage} onChange={setStashMessage} />
                 <ServerActionButton disabled={blocked || !s.fingerprint || !entries.some((e) => e.kind !== "untracked")}
                     onClick={() => start({ op: "stash-save", body: { message: stashMessage, expected_fingerprint: s.fingerprint } })}>stash 저장</ServerActionButton>
             </GroveStack>
             {stashes.error ? <GroveText as="p" display="block" type="inherit" color="error" role="alert">stash 목록 조회 실패</GroveText> : !stashes.data ? <GroveText as="p" display="block" type="inherit" color="inherit" role="status">stash 목록 조회 중…</GroveText> :
-                <ul>{stashes.data.stashes.map((stash) => <li key={`${stash.reference}:${stash.oid}`}>
+                <GroveList density="compact" edge="flush" listStyle="disc">{stashes.data.stashes.map((stash) => <GroveListItem key={`${stash.reference}:${stash.oid}`} label={<>
                     <code>{stash.reference}</code> {stash.subject}
-                    <ServerActionButton className="ghost small" disabled={blocked} onClick={() => void prepare({ operation: "stash_pop", stash_oid: stash.oid })}>stash pop</ServerActionButton>
-                </li>)}</ul>}
-            <GroveHeading level={3} color="inherit" className="small">커밋할 변경 ({staged.length})</GroveHeading>
-            <ul className="session-list">{staged.map((e) => row(e, true))}</ul>
-            <GroveHeading level={3} color="inherit" className="small">작업 트리 변경 ({unstaged.length})</GroveHeading>
-            <ul className="session-list">{unstaged.map((e) => row(e, false))}</ul>
+                    <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => void prepare({ operation: "stash_pop", stash_oid: stash.oid })}>stash pop</ServerActionButton>
+                </>} />)}</GroveList>}
+            <GroveHeading level={3} color="inherit">커밋할 변경 ({staged.length})</GroveHeading>
+            <GroveList density="compact" edge="flush" hasDividers>{staged.map((e) => row(e, true))}</GroveList>
+            <GroveHeading level={3} color="inherit">작업 트리 변경 ({unstaged.length})</GroveHeading>
+            <GroveList density="compact" edge="flush" hasDividers>{unstaged.map((e) => row(e, false))}</GroveList>
             {diff && (
                 <Panel title={<>{diff.path} {diff.staged ? "(stage됨)" : ""}</>}>
                     {diff.hunks ? (
                         diff.hunks.map((h, i) => (
-                            <div key={i} className="hunk" data-testid="hunk">
-                                <ServerActionButton className="ghost small" disabled={blocked} onClick={() => hunkAct(i)}>{diff.staged ? "이 부분 내리기" : "이 부분 올리기"}</ServerActionButton>
-                                <pre className="diff">{h}</pre>
-                            </div>
+                            <GroveStack gap={0} key={i} data-testid="hunk">
+                                <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => hunkAct(i)}>{diff.staged ? "이 부분 내리기" : "이 부분 올리기"}</ServerActionButton>
+                                <CodeBlock code={h} />
+                            </GroveStack>
                         ))
                     ) : (
-                        <pre className="diff">{diff.text}</pre>
+                        <CodeBlock code={diff.text} />
                     )}
                 </Panel>
             )}
-            <form
-                className="inline wrap"
+            <GroveStack as="form"
+                gap={1.5} direction="horizontal" align="center" wrap="wrap"
                 onSubmit={(e) => {
                     e.preventDefault();
                     start({ op: "commit", body: { message: msg, expected_fingerprint: s.fingerprint } });
@@ -220,7 +223,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
             >
                 <TextArea value={msg} onChange={setMsg} placeholder="커밋 메시지" label="커밋 메시지" isLabelHidden rows={2} />
                 <ServerActionButton type="submit" disabled={blocked || !msg.trim() || staged.length === 0}>커밋</ServerActionButton>
-            </form>
+            </GroveStack>
         </section>
     );
 }

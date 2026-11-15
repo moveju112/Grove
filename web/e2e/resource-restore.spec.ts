@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -15,14 +15,14 @@ for (const operation of ["rename", "delete"] as const) {
         writeFileSync(path, "original disk fixture");
         await apiCall("POST", "/recent/touch", { kind: "file", project_id: a.id, resource_id: relative, title: relative });
         await login(page);
-        const recent = page.locator(".recent").getByRole("button", { name: new RegExp(relative) });
+        const recent = page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(relative) });
         await recent.click();
         const view = page.getByTestId("files-view");
         await expect(view.getByLabel("파일 내용")).toHaveValue("original disk fixture");
         await view.getByLabel("파일 내용").fill("my unsaved recovery fixture");
         if (operation === "rename") renameSync(path, moved);
         else unlinkSync(path);
-        await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
+        await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
         let saves = 0;
         page.on("request", (r) => { if (r.method() === "PUT" && r.url().includes(`/projects/${a.id}/files/content`)) saves++; });
         await recent.click();
@@ -58,7 +58,7 @@ test("접근 불가 프로젝트를 최근 항목에서 열어도 새 위치를 
     let starts = 0;
     page.on("request", (r) => { if (r.method() === "POST" && new RegExp(`/projects/${project.id}/(sessions|terminals)$`).test(r.url())) starts++; });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
     await expect(page.getByTestId("project-missing")).toContainText("프로젝트 경로에 접근할 수 없습니다");
     await expect(page.getByLabel("메시지 입력")).toBeDisabled();
     expect(starts).toBe(0);
@@ -103,7 +103,7 @@ for (const status of ["exited", "deleted"] as const) {
             if (r.method() === "POST" && (r.url().endsWith(`/projects/${a.id}/terminals`) || r.url().endsWith(`/terminals/${terminal.id}/ticket`))) mutations++;
         });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         const view = page.getByTestId("terminal-view");
         await expect(view).toHaveAttribute("data-conn", status === "exited" ? "readonly" : "missing");
         await expect(view.getByTestId("terminal-status")).toContainText(status === "exited" ? "종료됨" : "터미널 없음");
@@ -122,33 +122,48 @@ test("터미널을 닫으면 진행 중인 접속 준비를 취소하고 늦은 
     const { a } = await ensureProjects();
     const name = `terminal-close-${Date.now()}`;
     const terminal = await apiCall<{ id: string }>("POST", `/projects/${a.id}/terminals`, { name });
+    await page.addInitScript((id) => {
+        const original = window.fetch;
+        window.fetch = (input, init) => {
+            if (String(input).endsWith(`/terminals/${id}/ticket`)) {
+                init?.signal?.addEventListener("abort", () => { document.documentElement.dataset.terminalTicketAborted = "true"; }, { once: true });
+            }
+            return original(input, init);
+        };
+    }, terminal.id);
     let deliver!: () => void;
     const gate = new Promise<void>((resolve) => { deliver = resolve; });
     let accepted = false;
     let sockets = 0;
+    let responseDelivered!: () => void;
+    const delivered = new Promise<void>((resolve) => { responseDelivered = resolve; });
+    const ticketPath = `**/api/v1/terminals/${terminal.id}/ticket`;
     page.on("websocket", (socket) => { if (new URL(socket.url()).pathname.startsWith("/api/v1/terminal-ws/")) sockets++; });
-    await page.route(`**/api/v1/terminals/${terminal.id}/ticket`, async (route) => {
+    const ticketRoute = async (route: Route) => {
         const response = await route.fetch();
         expect(response.status()).toBe(200);
+        const body = await response.body();
         accepted = true;
         await gate;
-        if (!route.request().failure()) await route.fulfill({ response });
-    });
+        if (!route.request().failure()) await route.fulfill({ status: response.status(), headers: response.headers(), body });
+        responseDelivered();
+    };
+    await page.route(ticketPath, ticketRoute);
     try {
         await apiCall("POST", "/recent/touch", { kind: "terminal", project_id: a.id, resource_id: terminal.id, title: name });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         await expect.poll(() => accepted).toBe(true);
-        const cancelled = page.waitForEvent("requestfailed", (r) => r.url().endsWith(`/terminals/${terminal.id}/ticket`));
-        await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
-        // 중단 이벤트도 보류한 route를 해제한 뒤 관측한다. 응답과 취소를 서로 기다리게 하지 않는다.
-        deliver();
-        await cancelled;
+        await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
         await expect(page.getByTestId("terminal-view")).toHaveCount(0);
+        await expect(page.locator("html")).toHaveAttribute("data-terminal-ticket-aborted", "true");
+        // 실제 fetch의 AbortSignal을 확인한 뒤 늦은 응답을 전달한다.
+        deliver();
+        await delivered;
         expect(sockets).toBe(0);
     } finally {
         deliver();
         try { await apiCall("POST", `/terminals/${terminal.id}/kill`, {}); }
-        finally { await page.unrouteAll({ behavior: "wait" }); }
+        finally { await page.unroute(ticketPath, ticketRoute); }
     }
 });

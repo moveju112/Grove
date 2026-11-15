@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProjects, login, sessionView, state } from "./helpers";
+import { apiCall, choiceOptions, closeModelSettings, composerOption, composerSetting, ensureProjects, expectChoice, login, sessionView, state } from "./helpers";
 
 test.use({ isMobile: true, hasTouch: true });
 
@@ -23,23 +23,31 @@ for (const theme of ["light", "dark"] as const) {
             await page.getByTestId("sidebar-session").filter({ has: page.getByRole("button", { name: title, exact: false }) })
                 .getByRole("button", { name: title, exact: false }).first().click();
             const view = sessionView(page, session.id);
-            const model = view.getByLabel("모델 프로필", { exact: true });
-            await model.selectOption(profile.id);
-            const reasoning = view.getByLabel("추론", { exact: true });
-            await expect(reasoning.locator("option")).toHaveText(["auto", "low", "medium", "high", "xhigh", "max", "ultra"]);
-            await reasoning.selectOption("max");
-            const speed = view.getByRole("button", { name: "Fast", exact: true });
-            await expect(speed).toHaveAttribute("aria-pressed", "false");
-            await expect(speed).toHaveText("");
+            await composerOption(view, "모델 프로필", profile.id);
+            const reasoning = await composerSetting(view, "추론");
+            await test.step("추론 선택지 확인", async () => {
+                await expect(await choiceOptions(reasoning)).toHaveText(["auto", "low", "medium", "high", "xhigh", "max", "ultra"]);
+                await page.screenshot({ path: info.outputPath(`reasoning-open-${theme}-390.png`) });
+            });
+            await test.step("추론 목록 닫기", () => page.keyboard.press("Escape"));
+            await test.step("max 선택", () => composerOption(view, "추론", "max"));
+            const speed = await composerSetting(view, "Fast");
+            await expectChoice(speed, "false");
+            await closeModelSettings(view);
             await expect(view.getByRole("combobox", { name: "속도", exact: true })).toHaveCount(0);
+            const geometry = await view.getByTestId("composer-bar").evaluate((node) => ({
+                viewport: innerWidth, width: node.clientWidth, scroll: node.scrollWidth,
+                right: node.getBoundingClientRect().right,
+            }));
+            expect(geometry.scroll, JSON.stringify(geometry)).toBeLessThanOrEqual(geometry.width + 1);
+            expect(geometry.right, JSON.stringify(geometry)).toBeLessThanOrEqual(geometry.viewport);
             await view.getByLabel("메시지 입력").fill("native session seed");
             await view.getByRole("button", { name: "보내기", exact: true }).click();
             await expect(view.getByTestId("msg-assistant").last()).toContainText("에이전트 답변");
             await expect(view.getByTestId("turn-status")).toHaveCount(0);
             const initialTurns = await apiCall<{ definition: { service_tier: string } }[]>("GET", `/sessions/${session.id}/turns`);
             expect(initialTurns[0]!.definition.service_tier).toBe("default");
-            await speed.click();
-            await expect(speed).toHaveAttribute("aria-pressed", "true");
+            await composerOption(view, "Fast", true);
             await view.getByLabel("메시지 입력").fill("fixture-hold reasoning and fast");
             await view.getByRole("button", { name: "보내기", exact: true }).click();
             await expect(view.getByTestId("partial")).toContainText("중단 대기 중");
@@ -51,18 +59,17 @@ for (const theme of ["light", "dark"] as const) {
             await expect(view.getByTestId("active-settings")).toHaveCount(0);
             await expect(view.getByTestId("turn-status")).not.toContainText("이번 요청");
             await expect(view.getByTestId("turn-timing")).not.toContainText("총 경과");
-            const composer = view.locator(".composer");
+            const composer = view.getByTestId("composer");
             expect(await composer.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
             expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
             const timing = (await view.getByTestId("turn-timing").boundingBox())!;
             expect(timing.y + timing.height).toBeLessThanOrEqual((await composer.boundingBox())!.y);
             await page.screenshot({ path: info.outputPath(`running-${theme}-390.png`) });
 
-            await reasoning.selectOption("xhigh");
-            await speed.click();
-            await expect(speed).toHaveAttribute("aria-pressed", "false");
+            await composerOption(view, "추론", "xhigh");
+            await composerOption(view, "Fast", false);
             await view.getByRole("button", { name: "초안·스킬", exact: true }).click();
-            await expect(view.getByLabel("실행 중 보내기 방식")).toBeVisible();
+            await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toBeVisible();
             await page.keyboard.press("Escape");
             await view.getByLabel("메시지 입력").fill("queued reasoning and normal");
             await view.getByRole("button", { name: "대기열에 추가", exact: true }).click();
@@ -77,13 +84,16 @@ for (const theme of ["light", "dark"] as const) {
             expect(request().args).toEqual(expect.arrayContaining(['model_reasoning_effort="xhigh"', 'service_tier="default"']));
             expect(request().resume).toBe(true);
             await view.getByLabel("메시지 입력").fill("모델 변경 후에도 남는 초안");
-            await model.selectOption(JSON.stringify([profile.id, "fixture-light"]));
-            await expect(reasoning.locator('option[value="max"]')).toHaveCount(0);
+            await composerOption(view, "모델 프로필", JSON.stringify([profile.id, "fixture-light"]));
+            await composerSetting(view, "추론");
+            await expect((await choiceOptions(reasoning)).filter({ hasText: /^max$/ })).toHaveCount(0);
+            await page.keyboard.press("Escape");
+            await closeModelSettings(view);
             await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
             await expect(view.getByLabel("메시지 입력")).toHaveValue("모델 변경 후에도 남는 초안");
             await page.reload();
             await expect(sessionView(page, session.id).getByLabel("메시지 입력")).toHaveValue("모델 변경 후에도 남는 초안");
-            await expect(sessionView(page, session.id).getByLabel("추론", { exact: true })).toHaveValue("xhigh");
+            await expectChoice(await composerSetting(sessionView(page, session.id), "추론"), "xhigh");
         } finally {
             if (active) await apiCall("POST", `/turns/${active}/cancel`);
         }

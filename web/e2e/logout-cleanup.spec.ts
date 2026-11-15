@@ -9,7 +9,7 @@ async function typeDraft(page: Page, title: string, text: string) {
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     await page.getByTestId("session-view").getByLabel("메시지 입력").fill(text);
     await expect.poll(async () => (await keys(page)).some((k) => k.startsWith("grove.draft."))).toBe(true);
 }
@@ -44,6 +44,6 @@ test("인증 만료로 로그인 화면이 되면 초안 사본은 남아 다시
     await page.unrouteAll();
     // 가짜 만료를 걷어 내면 refresh 쿠키로 다시 로그인된다
     await page.reload();
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     await expect(page.getByTestId("session-view").getByLabel("메시지 입력")).toHaveValue("만료돼도 남을 초안");
 });

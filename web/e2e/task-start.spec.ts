@@ -11,9 +11,9 @@ for (const delivered of [false, true]) {
         const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
         const panel = sessionView(page, s.id).getByTestId("tasks-panel");
-        await openDetails(panel);
+        await openDetails(panel, "작업");
         const keys: string[] = [];
         let release = () => {};
         const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -68,9 +68,9 @@ test("최종 접수 기록 실패는 결과 불명과 같은 키를 유지하고
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
     const panel = sessionView(page, s.id).getByTestId("tasks-panel");
-    await openDetails(panel);
+    await openDetails(panel, "작업");
     const keys: string[] = [];
     const db = join(dirname(state().projA), "data", "grove.db");
     await page.route(`**/api/v1/sessions/${s.id}/tasks`, async (route) => {

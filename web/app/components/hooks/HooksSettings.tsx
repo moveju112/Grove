@@ -1,3 +1,5 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Select } from "../../design/Select";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { useRef, useState } from "react";
@@ -18,13 +20,11 @@ const empty: HookDefinition = { name: "", event: "", matcher: "*", command: "", 
 export function HooksSettings({ projectId, projectName }: { projectId?: string; projectName?: string }) {
     const [scope, setScope] = useState<"global" | "project">("global");
     const [blocked, setBlocked] = useState(false);
-    return <div className="stack" data-testid="hooks-settings">
-        <label>hook 범위 <select aria-label="hook 범위" disabled={blocked} value={scope} onChange={(e) => setScope(e.target.value as "global" | "project")}>
-            <option value="global">전역</option>
-            {projectId && <option value="project">프로젝트 · {projectName ?? projectId}</option>}
-        </select></label>
+    return <GroveStack gap={2} data-testid="hooks-settings">
+        <Select label="hook 범위" disabled={blocked} value={scope} onChange={(value) => setScope(value as "global" | "project")}
+            options={[{ value: "global", label: "전역" }, ...(projectId ? [{ value: "project", label: `프로젝트 · ${projectName ?? projectId}` }] : [])]} />
         <HooksEditor key={`${scope}:${projectId ?? ""}`} projectId={scope === "project" ? projectId : undefined} onBlocked={setBlocked} />
-    </div>;
+    </GroveStack>;
 }
 
 function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: (blocked: boolean) => void }) {
@@ -69,9 +69,9 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
     };
     const current = query.data?.hooks.find((h) => h.id === editing?.id);
     const event = draft.event || query.data?.events[0] || "";
-    return <div className="stack" data-testid="hooks-panel">
+    return <GroveStack gap={2} data-testid="hooks-panel">
         <GroveText as="p" display="block" type="inherit" color="secondary">저장·활성화와 별도로 각 실행 요청에서 승인하세요.</GroveText>
-        <GroveText as="p" display="block" type="inherit" color="inherit" className="scope">실행 지원: {query.data?.supported_events?.join(", ") || "없음"}</GroveText>
+        <GroveText as="p" display="block" type="supporting" color="secondary">실행 지원: {query.data?.supported_events?.join(", ") || "없음"}</GroveText>
         <GroveText as="p" display="block" type="supporting" color="secondary">연결이 종료돼도 취소되지 않으니 실행 요청에서 취소·결과를 확인하세요.</GroveText>
         <DetailDialog label="Hook 이벤트·패턴 도움말" title="이벤트·패턴 도움말">
         <GroveText as="p" display="block" type="inherit" color="inherit">matcher: glob · *는 모든 대상, ?는 한 글자</GroveText>
@@ -82,11 +82,11 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
         {query.loading && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">hook 목록 불러오는 중</GroveText>}
         {!!query.error && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">{query.error instanceof Error ? query.error.message : "hook 조회 실패"}</GroveText>}
         {error && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">{error}</GroveText>}
-        {mutation.phase === "unknown" && <div role="status">
+        {mutation.phase === "unknown" && <GroveStack gap={0} role="status">
             저장 결과 불명 · 범위를 바꾸거나 새로 저장하기 전에 같은 요청을 확인하세요.
             <ServerActionButton onClick={() => void mutate(mutation.attempt)}>같은 hook 요청 확인</ServerActionButton>
-        </div>}
-        {query.data?.hooks.map((hook) => <article className="setting" key={hook.id} data-testid="hook-row">
+        </GroveStack>}
+        {query.data?.hooks.map((hook) => <GroveStack as="article" gap={2} padding={3} key={hook.id} data-testid="hook-row">
             <strong>{hook.name}</strong>
             <GroveText as="p" display="block" type="inherit" color="inherit">{hook.event} · matcher <code>{hook.matcher}</code> · {hook.enabled ? "활성 설정" : "비활성 설정"} · revision {hook.revision}</GroveText>
             <GroveText as="p" display="block" type="inherit" color="inherit">{hook.execution_state === "approval_required" ? "이벤트 발생 후 개별 승인 필요" : "아직 실행되지 않음 · 미지원 이벤트 또는 플랫폼"}</GroveText>
@@ -98,15 +98,15 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
                 body: hookUpdate(hook, { ...hook, enabled: !hook.enabled }, false),
             })}>{hook.enabled ? "hook 비활성화" : "hook 활성화"}</ServerActionButton>
             <GroveButton disabled={blocked || !!editing || !!deleting} onClick={() => setDeleting(hook)}>hook 삭제 확인</GroveButton>
-        </article>)}
+        </GroveStack>)}
         {query.data?.hooks.length === 0 && <GroveText as="p" display="block" type="inherit" color="inherit">저장한 hook이 없습니다.</GroveText>}
-        {deleting && <div role="group" aria-label="hook 삭제">
+        {deleting && <GroveStack gap={0} role="group" aria-label="hook 삭제">
             <GroveText as="p" display="block" type="inherit" color="inherit">“{deleting.name}” 설정을 삭제할까요?</GroveText>
             <ServerActionButton disabled={blocked} onClick={() => void mutate({
                 method: "del", path: hookPath(projectId, deleting.id, deleting.revision), key: newKey(),
             })}>이 hook 삭제</ServerActionButton>
             <GroveButton disabled={blocked} onClick={() => setDeleting(null)}>hook 삭제 취소</GroveButton>
-        </div>}
+        </GroveStack>}
         <form onSubmit={(e) => {
             e.preventDefault();
             const definition = { ...draft, event };
@@ -118,9 +118,9 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
             <fieldset disabled={blocked || !!deleting || !query.data || !!query.error}>
                 <legend>{editing ? "hook 수정" : "hook 추가"}</legend>
                 <TextInput label="hook 이름" isRequired value={draft.name} onChange={(value) => setDraft({ ...draft, name: value })} />
-                <label>hook 이벤트<select aria-label="hook 이벤트" value={event} onChange={(e) => setDraft({ ...draft, event: e.target.value })}>
-                    {query.data?.events.map((value) => <option key={value}>{value}</option>)}
-                </select></label>
+                <Select label="hook 이벤트" value={event} disabled={blocked || !!deleting || !query.data || !!query.error}
+                    onChange={(value) => setDraft({ ...draft, event: value })}
+                    options={(query.data?.events ?? []).map((value) => ({ value, label: value }))} />
                 <TextInput label="hook matcher (glob)" aria-label="hook matcher" isRequired value={draft.matcher} onChange={(value) => setDraft({ ...draft, matcher: value })} />
                 {editing && <BooleanSelect label="명령 교체" value={replaceCommand} onChange={setReplaceCommand}
                     disabled={blocked || !!deleting || !query.data || !!query.error} />}
@@ -140,5 +140,5 @@ function HooksEditor({ projectId, onBlocked }: { projectId?: string; onBlocked: 
             </fieldset>
         </form>
         <HookExecutions projectId={projectId} />
-    </div>;
+    </GroveStack>;
 }

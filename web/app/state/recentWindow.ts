@@ -1,5 +1,5 @@
 // 최근 항목 시간 범위(RECENT-001). 원본 최근 탭의 범위 선택·기본값을 따른다.
-// 범위는 마지막 활동(접근·사용자 메시지) 기준이고, 고정·실행 중·승인/답변 대기 항목은 서버가 범위와 무관하게 남긴다.
+// 대화의 범위는 마지막 확정 답변(없으면 생성 시각) 기준이다. 고정·실행 중·승인/답변 대기는 서버가 범위 밖에서도 남긴다.
 export const RECENT_WINDOW_OPTIONS = ["15m", "30m", "1h", "2h", "4h", "8h", "12h", "24h", "today"] as const;
 export type RecentWindow = (typeof RECENT_WINDOW_OPTIONS)[number];
 export const DEFAULT_RECENT_WINDOWS: readonly RecentWindow[] = ["30m", "4h", "12h"];

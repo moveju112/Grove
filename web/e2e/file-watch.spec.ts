@@ -35,7 +35,7 @@ test("외부 편집을 자동 반영하고 파일 탭을 닫으면 주기 조회
     await expect(area).toHaveValue("external text\n");
     expect(await area.evaluate((node: HTMLTextAreaElement) => [node.selectionStart, node.selectionEnd])).toEqual([2, 5]);
     await expect(files.getByRole("status").filter({ hasText: /\S/ })).toContainText("외부 변경을 반영");
-    await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
+    await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
     const before = reads;
     await page.clock.runFor(10_000);
     expect(reads).toBe(before);

@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProjects, login, openDetails, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, selectChoice, sessionView } from "./helpers";
 
 type Request = {
     tools?: { function: { name: string; parameters: unknown; description: string } }[];
@@ -49,11 +49,11 @@ async function setup(page: Page) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: title }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title }).click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
-    await view.getByLabel("모델 프로필", { exact: true }).selectOption(profile.id);
-    await view.getByLabel("추론", { exact: true }).selectOption("auto");
+    await composerOption(view, "모델 프로필", profile.id);
+    await composerOption(view, "추론", "auto");
     await composerOption(view, "도구", true);
     return {
         requests, replies, session, view, root,

@@ -27,7 +27,7 @@ test("실제 압축의 생성 당시 모델·비용을 보존하고 페이지 �
         }
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: /CMP-011 압축 상세/ }).first().click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /CMP-011 압축 상세/ }).first().click();
         const view = sessionView(page, s.id);
         const response = frames.text(["첫 대화의 짧은 요약"]);
         response.splice(response.length - 1, 0, JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 3 } }));
@@ -58,7 +58,7 @@ test("실제 압축의 생성 당시 모델·비용을 보존하고 페이지 �
         await expect(note.getByTestId("compaction-model")).toContainText("CMP-011 생성 당시");
         await expect(note.getByTestId("compaction-cost")).toContainText("0.000034 EUR");
         await note.getByRole("button", { name: "원문 처음으로" }).click();
-        const target = view.locator(".msg-row.focus-hit");
+        const target = view.locator('[data-seq][data-highlighted="true"]');
         await expect(target).toContainText("보존 원문 0");
         await expect(target).toBeInViewport();
     } finally {
@@ -81,7 +81,7 @@ test("usage·가격 누락과 원문 조회 실패를 성공·0 비용으로 표
     await apiCall("POST", `/sessions/${s.id}/compact`, { profile_id: pid });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: /CMP-011 누락/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /CMP-011 누락/ }).first().click();
     const note = sessionView(page, s.id).getByTestId("msg-compaction");
     await openDetails(note);
     await expect(note.getByTestId("compaction-cost")).toContainText("추정 불가: 사용량 미보고 또는 0(구분 불가) · 가격 미기록");
@@ -119,7 +119,7 @@ test("자동 압축 성공과 적용 거절을 구분하고 legacy 기록을 소
         }
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: /CMP-011 자동 기록/ }).first().click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /CMP-011 자동 기록/ }).first().click();
         const view = sessionView(page, s.id);
         const note = view.getByTestId("msg-compaction");
         await expect(note).toHaveCount(1);

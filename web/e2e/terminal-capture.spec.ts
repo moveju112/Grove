@@ -11,7 +11,7 @@ test("제어문자를 해석한 화면을 읽기 전용으로 캡처하고 동�
     await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
     await openTool(page, "터미널");
     const list = page.getByTestId("terminal-list");
-    await openDetails(list);
+    await openDetails(list, "터미널");
     await list.getByRole("button", { name, exact: true }).click();
     const view = page.getByTestId("terminal-view");
     await expect(view).toHaveAttribute("data-conn", "open");

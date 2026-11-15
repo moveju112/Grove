@@ -23,7 +23,7 @@ test("hook 추가·수정·비활성화·삭제는 미실행이며 명령의 비
         const panel = await open(page);
         await expect(panel).toContainText("저장·활성화와 별도로 각 실행 요청에서 승인하세요.");
         await panel.getByLabel("hook 이름", { exact: true }).fill(prefix);
-        await panel.getByLabel("hook 이벤트", { exact: true }).selectOption("PreToolUse");
+        await selectChoice(panel.getByLabel("hook 이벤트", { exact: true }), "PreToolUse");
         await panel.getByLabel("hook matcher", { exact: true }).fill("shell*");
         await panel.getByLabel("hook 명령", { exact: true }).fill("TOKEN=hooks-ui-fixture-private printf not-run");
         await selectChoice(panel.getByLabel("hook 활성 설정 (별도 승인 필요)", { exact: true }), "true");
@@ -35,7 +35,7 @@ test("hook 추가·수정·비활성화·삭제는 미실행이며 명령의 비
         await expect(panel).not.toContainText("hooks-ui-fixture-private");
         await row.getByRole("button", { name: "hook 편집", exact: true }).click();
         await panel.getByLabel("hook 이름", { exact: true }).fill(`${prefix} edited`);
-        await panel.getByLabel("hook 이벤트", { exact: true }).selectOption("Stop");
+        await selectChoice(panel.getByLabel("hook 이벤트", { exact: true }), "Stop");
         await panel.getByRole("button", { name: "hook 설정 저장", exact: true }).click();
         await expect(row).toContainText("revision 2");
         await row.getByRole("button", { name: "hook 비활성화", exact: true }).click();
@@ -87,11 +87,11 @@ test("프로젝트 범위는 전역·다른 프로젝트와 분리하고 기기 
     try {
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(prefix) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(prefix) }).click();
         await sessionView(page, session.id).getByRole("button", { name: "대화 작업", exact: true }).click();
         await sessionView(page, session.id).getByRole("button", { name: "대화 설정" }).click();
         await page.getByLabel("설정 검색").last().fill("hook");
-        await page.getByLabel("hook 범위", { exact: true }).selectOption("project");
+        await selectChoice(page.getByLabel("hook 범위", { exact: true }), "project");
         const panel = page.getByTestId("hooks-panel").last();
         await panel.getByLabel("hook 이름", { exact: true }).fill(prefix);
         await panel.getByLabel("hook 명령", { exact: true }).fill("printf project");
@@ -105,7 +105,7 @@ test("프로젝트 범위는 전역·다른 프로젝트와 분리하고 기기 
         await expect(apiCall("PUT", `/hooks/${hook.id}?project_id=${b.id}`, {
             name: prefix, event: hook.event, matcher: hook.matcher, enabled: true, expected_revision: 1,
         })).rejects.toThrow("404");
-        await page.getByLabel("hook 범위", { exact: true }).selectOption("global");
+        await selectChoice(page.getByLabel("hook 범위", { exact: true }), "global");
         await expect(panel.getByTestId("hook-row").filter({ hasText: prefix })).toHaveCount(0);
     } finally {
         await cleanup(prefix, a.id);
@@ -128,7 +128,7 @@ test("응답 유실 뒤 동일 키로 설정 결과를 확인하고 한 번만 �
         await panel.getByLabel("hook 명령", { exact: true }).fill("printf recovery");
         await panel.getByRole("button", { name: "hook 설정 저장", exact: true }).click();
         await expect(panel).toContainText("저장 결과 불명");
-        await expect(page.getByLabel("hook 범위", { exact: true })).toBeDisabled();
+        await expect(page.getByRole("combobox", { name: "hook 범위", exact: true })).toBeDisabled();
         await panel.getByRole("button", { name: "같은 hook 요청 확인", exact: true }).click();
         await expect(panel).not.toContainText("저장 결과 불명");
         await expect(panel.getByTestId("hook-row").filter({ hasText: prefix })).toContainText("revision 1");

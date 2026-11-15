@@ -1,6 +1,10 @@
+import { Stack, StackItem } from "@astryxdesign/core/Stack";
+import { Drawer } from "@astryxdesign/core/Drawer";
+import { Divider } from "@astryxdesign/core/Divider";
+import { mobilePanelStyles } from "./mobile-panels.stylex";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 export type MobilePanel = "left" | "right";
 type Drag = { side: MobilePanel; progress: number };
@@ -25,16 +29,16 @@ export function useMobilePanels(enabled: boolean) {
         const start = (event: TouchEvent) => {
             if (event.touches.length !== 1) { cancel(); return; }
             gesture = null;
-            if (document.querySelector('dialog:modal:not(.mobile-drawer), [popover]:popover-open')) return;
+            if (document.querySelector('dialog:modal:not([data-mobile-drawer]), [popover]:popover-open')) return;
             const target = event.target as Element;
             if (document.getSelection()?.isCollapsed === false) return;
-            if (target.closest("input, textarea, select, [contenteditable=true], .xterm, .md-code, .md-table, [data-swipe-blocked]")) return;
+            if (target.closest("input, textarea, select, [contenteditable=true], .xterm, [data-testid=md-code], [data-swipe-blocked]")) return;
             if (!current.current && target.closest("button, a[href], summary")) return;
             for (let node: Element | null = target; node && node !== document.body; node = node.parentElement) {
                 if (node.scrollWidth > node.clientWidth + 1 && ["auto", "scroll"].includes(getComputedStyle(node).overflowX)) return;
             }
             const touch = event.touches[0]!;
-            const chat = !!target.closest(".session-view .workbench-main, .project-view .workbench-main");
+            const chat = !!target.closest('[data-testid="session-view"] [data-ui="workbench-main"], [data-testid="project-view"] [data-ui="workbench-main"]');
             if (!current.current && !chat && touch.clientX > 32 && touch.clientX < innerWidth - 32) return;
             gesture = { x: touch.clientX, y: touch.clientY, at: performance.now(), origin: current.current, chat, progress: current.current ? 1 : 0 };
         };
@@ -91,34 +95,22 @@ export function MobileDrawer({ enabled, side, open, drag, label, children, onClo
     enabled: boolean; side: MobilePanel; open: boolean; drag: Drag | null;
     label: string; children: ReactNode; onClose: () => void;
 }) {
-    const dialog = useRef<HTMLDialogElement>(null);
     const [visited, setVisited] = useState(false);
     const progress = drag?.side === side ? drag.progress : open ? 1 : 0;
     useLayoutEffect(() => {
-        const node = dialog.current;
-        if (!enabled || !node) return;
-        if (open) {
-            setVisited(true);
-            if (!node.open) { node.showModal(); node.focus({ preventScroll: true }); }
-            return;
-        }
-        // modal 잠금은 즉시 해제한다. 시각적 퇴장은 CSS의 display·overlay 전환이 담당한다.
-        node.close();
+        if (enabled && open) setVisited(true);
     }, [enabled, open]);
     if (!enabled) return children;
-    return <dialog ref={dialog} tabIndex={-1} className={`mobile-drawer mobile-drawer-${side}`} aria-label={label}
-        aria-hidden={!open || undefined} inert={!open}
-        data-open={open} data-dragging={drag?.side === side || undefined}
-        style={{ "--drawer-progress": progress } as CSSProperties}
-        onCancel={(event) => { event.preventDefault(); onClose(); }}
-        onClick={(event) => {
-            if (event.target !== dialog.current) return;
-            const bounds = event.currentTarget.getBoundingClientRect();
-            if (event.clientX < bounds.left || event.clientX > bounds.right) onClose();
-        }}>
-        <div className="mobile-drawer-heading"><GroveText type="inherit" color="inherit">{label}</GroveText>
-            <GroveButton type="button" className="ghost icon-btn" aria-label={`${label} 닫기`} onClick={onClose}>×</GroveButton>
-        </div>
-        <div className="mobile-drawer-body">{(visited || open) && children}</div>
-    </dialog>;
+    return <Drawer label={label} isOpen={open} side={side === "left" ? "start" : "end"}
+        width="min(88vw, 320px)" padding={0} data-mobile-drawer="true" data-testid={`mobile-drawer-${side}`}
+        xstyle={drag?.side === side && mobilePanelStyles.dragging((side === "left" ? progress - 1 : 1 - progress) * 100, progress)}
+        onOpenChange={(opened) => { if (!opened) onClose(); }}>
+        <Stack gap={0} height="100%">
+        <Stack direction="horizontal" align="center" justify="between" gap={2} paddingInline={3} paddingBlock={1} minHeight={40}><GroveText type="label">{label}</GroveText>
+            <GroveButton type="button" variant="secondary" appearance="icon" aria-label={`${label} 닫기`} onClick={onClose}>×</GroveButton>
+        </Stack>
+        <Divider />
+        <StackItem size="fill" isScrollable aria-label={label}>{(visited || open) && children}</StackItem>
+        </Stack>
+    </Drawer>;
 }

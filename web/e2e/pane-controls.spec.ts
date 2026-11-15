@@ -37,7 +37,7 @@ test("전체 보기·버튼과 Escape 복원은 pane을 재생성하지 않고 �
     const input = await right.getByLabel("메시지 입력").elementHandle();
     await left.getByRole("button", { name: "영역 전체 보기", exact: true }).click();
     await expect(right).toBeHidden();
-    await expect(page.getByRole("separator")).toHaveCount(0);
+    await expect(page.getByRole("separator").and(page.locator("[aria-valuenow]"))).toHaveCount(0);
     await expect(left.getByLabel("메시지 입력")).toHaveValue("left draft");
     await left.getByRole("button", { name: "분할 복원", exact: true }).click();
     await expect(right).toBeVisible();
@@ -47,7 +47,7 @@ test("전체 보기·버튼과 Escape 복원은 pane을 재생성하지 않고 �
     await expect(left).toBeHidden();
     await page.keyboard.press("Escape");
     await expect(left).toBeVisible();
-    await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "35");
+    await expect(page.getByRole("separator").and(page.locator("[aria-valuenow]"))).toHaveAttribute("aria-valuenow", "35");
     await expect(page.getByTestId("split-column")).toBeVisible();
     await expect(right.getByLabel("메시지 입력")).toHaveValue("right draft");
     await left.getByRole("button", { name: "영역 전체 보기", exact: true }).click();
@@ -56,7 +56,7 @@ test("전체 보기·버튼과 Escape 복원은 pane을 재생성하지 않고 �
     await expect(right).toBeVisible();
     await left.getByRole("button", { name: title, exact: true }).click();
     await expect(right).toBeVisible();
-    await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "35");
+    await expect(page.getByRole("separator").and(page.locator("[aria-valuenow]"))).toHaveAttribute("aria-valuenow", "35");
 });
 
 test("숨긴 실행 pane을 닫아 합쳐도 승인·작업은 취소하지 않고 같은 탭에서 한 번만 이어진다", async ({ page }) => {

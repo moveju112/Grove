@@ -23,12 +23,12 @@ test("키보드로 들어간 pane이 열기·붙여넣기 첨부·입력의 대�
     const leftPane = page.locator('[data-leaf="left"]');
     const rightPane = page.locator('[data-leaf="right"]');
     await expect(leftPane.getByTestId("session-view")).toBeVisible();
-    await expect(leftPane).toHaveClass(/focused/);
+    await expect(leftPane).toHaveAttribute("data-focused", "true");
 
     // 키보드 포커스만으로 오른쪽 pane에 들어간다(pointer 없음).
     await rightPane.getByLabel("메시지 입력").focus();
-    await expect(rightPane).toHaveClass(/focused/);
-    await expect(leftPane).not.toHaveClass(/focused/);
+    await expect(rightPane).toHaveAttribute("data-focused", "true");
+    await expect(leftPane).toHaveAttribute("data-focused", "false");
     await page.keyboard.type("오른쪽 입력");
     await expect(rightPane.getByLabel("메시지 입력")).toHaveValue("오른쪽 입력");
     await expect(leftPane.getByLabel("메시지 입력")).toHaveValue("");

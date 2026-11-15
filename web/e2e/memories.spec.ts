@@ -31,7 +31,7 @@ test("직접 확인한 프로젝트·전역 기억의 출처와 다음 턴 입�
     try {
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(prefix) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(prefix) }).click();
         await sessionView(page, session.id).getByRole("button", { name: "대화 작업", exact: true }).click();
         await sessionView(page, session.id).getByRole("button", { name: "대화 설정" }).click();
         await page.getByLabel("설정 검색").last().fill("장기 기억");
@@ -156,5 +156,5 @@ test("이전 서버에서는 지원하지 않는 장기 기억 편집·자동 �
     await openSettings(page);
     await page.getByLabel("설정 검색").last().fill("장기 기억");
     await expect(page.getByTestId("memories-panel")).toHaveCount(0);
-    await expect(page.locator(".settings-body").last()).toContainText("검색 결과 0개");
+    await expect(page.getByTestId("settings-body").last()).toContainText("검색 결과 0개");
 });

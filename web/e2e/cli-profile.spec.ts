@@ -6,7 +6,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
     await login(page);
     await page.getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("모델 프로필");
-    await page.locator(".profile-create > summary").click();
+    await page.getByRole("button", { name: "모델 프로필 추가", exact: true }).click();
     await selectChoice(page.getByLabel("protocol"), "claude_code");
     await expect(page.getByLabel("Base URL")).toHaveCount(0);
     await expect(page.getByLabel("API 키")).toHaveCount(0);
@@ -15,7 +15,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
     const name = `cli-${Date.now()}`;
     try {
         await page.getByLabel("프로필 이름").fill(name);
-        await page.getByRole("button", { name: "추가" }).click();
+        await page.getByRole("form", { name: "모델 프로필 추가", exact: true }).getByRole("button", { name: "추가", exact: true }).click();
         await expect(page.locator("li").filter({ hasText: name })).toContainText("claude_code");
         const list = await apiCall<{ name: string; protocol: string; base_url: string; model: string }[]>("GET", "/model-profiles");
         const p = list.find((x) => x.name === name)!;
@@ -47,10 +47,10 @@ test("서버에 설치된 CLI로 프로젝트 파일을 읽어 답하고 도구 
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: "CLI 대화" });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: /CLI 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /CLI 대화/ }).first().click();
     const view = page.getByTestId("session-view");
     await composerOption(view, "보내기 방식", "model");
-    await view.getByLabel("모델 프로필").selectOption(prof.id);
+    await composerOption(view, "모델 프로필", prof.id);
     await view.getByLabel("메시지 입력").fill("Read cli-note.txt and tell me the secret word.");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").last()).toContainText("PLUM-3", { timeout: 240_000 });

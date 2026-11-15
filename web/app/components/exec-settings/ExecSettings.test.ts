@@ -36,10 +36,10 @@ describe("실행 설정의 기존 범위별 편집기 연결", () => {
     it("대화 대상을 고정하고 상속값·적용 시점·기본 cwd의 적용 범위를 표시한다", () => {
         const html = render();
         expect(query).toHaveBeenCalledWith("settings:s", expect.any(Function));
-        expect(html).toContain('<option value="session" selected="">');
+        expect(html).toContain('data-selected-value="session"');
         expect(html).toContain("명령 실행 셸 도움말");
         expect(html).not.toContain("fixture description");
-        expect(html).toContain("이 프로젝트");
+        expect(html).toContain('data-selected-value="sh"');
         expect(html).toContain("다음 실행 계획부터 적용 · 기존 계획·승인은 유지");
         expect(html).toContain("sandbox가 아닙니다");
         const cwd = render({ ...shell, key: "exec.default_cwd", kind: "string", options: [] });
@@ -50,12 +50,12 @@ describe("실행 설정의 기존 범위별 편집기 연결", () => {
 
     it("지원하는 값만 편집기에 전달하고 미지원 선택지는 이유와 함께 비활성으로 표시한다", () => {
         const html = render();
-        expect(html).toContain('<option value="sh" selected="">');
+        expect(html).toContain('data-selected-value="sh"');
         expect(html).toContain("<legend>명령 실행 셸 미지원 선택지</legend>");
-        expect(html.match(/<select(?=[^>]*aria-label="명령 실행 셸 미지원 선택지")[^>]*>/)?.[0]).toContain('disabled=""');
+        expect(html).toContain('aria-disabled="true"');
         expect(html).toContain("cmd · 이 서버 OS에서 지원하지 않습니다");
         const disabled = render({ ...shell, disabled_reason: "이 서버에서는 자원 한도를 지원하지 않습니다" });
-        expect(disabled).toContain('<fieldset disabled=""');
+        expect(disabled).toMatch(/<fieldset[^>]*disabled=""/);
         expect(disabled).toContain("이 서버에서는 자원 한도를 지원하지 않습니다");
     });
 

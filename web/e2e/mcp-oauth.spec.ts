@@ -136,7 +136,7 @@ test("사전 등록 MCP OAuth는 취소·늦은 callback·완료 응답 유실·
         const { a } = await ensureProjects();
         const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: name });
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
-        await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         const call = await apiCall<{ id: string }>("POST", `/sessions/${session.id}/tool-requests`, {
             name: "mcp_call", args: { server_id: server.id, tool: `${name}/echo`, arguments: { message: "explicitly-approved" } },
         });

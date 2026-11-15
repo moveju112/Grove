@@ -33,7 +33,7 @@ test("파일 변경 이력에서 patch를 보고 되돌리기·다시 적용하�
     expect(readFileSync(join(root, file), "utf8")).toBe("v2\n");
 
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const panel = page.getByTestId("session-view").getByTestId("changes-panel");
     await openTool(page.getByTestId("session-view"), "변경");
     const rows = panel.getByTestId("change-row");
@@ -72,7 +72,7 @@ for (const phase of ["before", "after", "commit"] as const) {
         writeFileSync(file, "before\n");
         await runTool(session.id, "edit", { path: file.slice(root.length + 1), old_string: "before", new_string: "after" });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
         const panel = page.getByTestId("session-view").getByTestId("changes-panel");
         await openTool(page.getByTestId("session-view"), "변경");
         const row = panel.getByTestId("change-row");

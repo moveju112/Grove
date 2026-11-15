@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { audit } from "./a11y-audit";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice } from "./helpers";
 
 // UI-029: 주요 화면의 이름 없는 조작 요소·글자 대비를 테마별로 점검하고, 키보드로 주요 흐름을 조작할 수 있는지 본다.
 async function screens(page: Page, title: string) {
@@ -26,7 +26,7 @@ for (const theme of ["light", "dark", "soft"] as const) {
         };
         await check("작업 공간");
         // 대화: 답·도구 결과·승인 카드·질문 카드가 있는 상태
-        await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
         const view = page.getByTestId("session-view");
         await script({ frames: frames.tool("w1", "write", { path: `a11y-${theme}.txt`, content: "x" }) });
         await composerOption(view, "도구", true);
@@ -40,7 +40,7 @@ for (const theme of ["light", "dark", "soft"] as const) {
         await expect(view.getByTestId("question")).toBeVisible({ timeout: 15_000 });
         await check("질문 대기 대화");
         await script({ frames: frames.text(["## 끝\n\n`코드`와 [링크](https://example.com)\n\n```js\nx\n```"]) });
-        await view.getByTestId("question").getByLabel("답변 선택").selectOption("A");
+        await selectChoice(view.getByTestId("question").getByLabel("답변 선택"), "A");
         await view.getByTestId("question").getByRole("button", { name: "답하기" }).click();
         await expect(view.getByTestId("msg-assistant").last()).toContainText("끝", { timeout: 15_000 });
         await composerOption(view, "도구", false);
@@ -56,7 +56,7 @@ test("키보드만으로 대화를 열고 보내며, 초점이 보인다", async
     const title = `키보드 대화 ${Date.now()}`;
     await screens(page, title);
     await login(page);
-    const item = page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first();
+    const item = page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first();
     await item.focus();
     // 초점 표시(:focus-visible 외곽선)
     await page.keyboard.press("Shift+Tab");

@@ -48,7 +48,7 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await expect(control).toContainText("꺼짐");
         await control.getByRole("button", { name: "fallback 설정", exact: true }).click();
         await control.getByRole("button", { name: "마지막에 후보 추가", exact: true }).click();
-        await control.getByLabel("fallback 1", { exact: true }).selectOption(backup.id);
+        await selectChoice(control.getByLabel("fallback 1", { exact: true }), backup.id);
         await expect(control).toContainText(`전송 대상: openai · ${base_url} · ${prefix}-actual`);
         await expect(control.getByRole("button", { name: "fallback 저장", exact: true })).toBeDisabled();
         await selectChoice(control.getByLabel("위 순서의 다른 전송 대상·모델·가격으로 대화가 전달되는 것을 확인했습니다"), "true");
@@ -63,12 +63,12 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
         const app = await context.newPage();
         await login(app);
-        await app.locator(".recent").getByRole("button", { name: new RegExp(prefix) }).click();
+        await app.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(prefix) }).click();
         const view = sessionView(app, session.id);
         await composerOption(view, "보내기 방식", "model");
-        await view.getByLabel("모델 프로필", { exact: true }).selectOption(primary.id);
+        await composerOption(view, "모델 프로필", primary.id);
         await composerOption(view, "도구", false);
-        await view.getByLabel("추론", { exact: true }).selectOption("auto");
+        await composerOption(view, "추론", "auto");
         await view.getByLabel("메시지 입력").fill("local explicit fallback request");
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("msg-assistant").last()).toContainText("fallback browser fixture complete");

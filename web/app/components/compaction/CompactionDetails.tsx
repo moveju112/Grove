@@ -1,3 +1,4 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { useState } from "react";
@@ -48,8 +49,8 @@ export function CompactionDetails({ sessionId, record: r }: { sessionId: string;
     const usageKnown = r.usage?.input_tokens != null && r.usage?.output_tokens != null
         && r.usage.input_tokens > 0 && r.usage.output_tokens > 0;
     const costKnown = r.cost_status === "estimated" && r.estimated_cost != null && r.pricing?.currency;
-    return <div className="msg note compaction" data-testid="msg-compaction">
-    <DetailDialog label="대화 압축 기록" title={<>
+    return <GroveStack gap={2} data-testid="msg-compaction">
+    <DetailDialog surface="muted" label="대화 압축 기록" title={<>
             이전 대화 요약({r.auto ? "자동" : "수동"} 압축) · 모델에는 이 요약과 이후 대화만 보냅니다
             {r.estimated_before != null && r.estimated_after != null ? ` · 약 ${r.estimated_before}→${r.estimated_after} tokens` : ""}
         </>}>
@@ -73,13 +74,13 @@ export function CompactionDetails({ sessionId, record: r }: { sessionId: string;
                 대상 원문 메시지 {r.source.messages}개(#{r.source.from_seq + 1}~#{r.source.upto_seq}) · 원문은 화면 이력에 그대로 남습니다
                 {" · 보존된 원문 보기이며 모델 context를 복원하지 않습니다."}
             </GroveText>
-            <div className="actions">
+            <GroveStack gap={2} direction="horizontal" align="center" wrap="wrap">
                 <GroveButton type="button" data-dialog-close disabled={busy} onClick={() => void navigate("first")}>원문 처음으로</GroveButton>
                 <GroveButton type="button" data-dialog-close disabled={busy} onClick={() => void navigate("last")}>원문 끝으로</GroveButton>
-            </div>
+            </GroveStack>
         </> : <GroveText as="p" display="block" type="supporting" color="secondary">원문 범위 미기록: 이동할 수 없습니다.</GroveText>}
-        <div className="text">{r.summary}</div>
+        <GroveText as="div" display="block" type="inherit" color="inherit">{r.summary}</GroveText>
     </DetailDialog>
     {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
-    </div>;
+    </GroveStack>;
 }

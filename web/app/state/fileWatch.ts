@@ -20,9 +20,9 @@ async function refresh(watch: Watch) {
     try {
         const content = await api.get<FileContent>(`/projects/${watch.projectId}/files/content?path=${encodeURIComponent(watch.path)}`,
             { signal: watch.controller.signal, timeoutMs: 10_000 });
-        if (active(watch)) for (const listener of watch.listeners) listener.value(content);
+        if (active(watch) && !watch.again) for (const listener of watch.listeners) listener.value(content);
     } catch (error) {
-        if (active(watch)) for (const listener of watch.listeners) listener.error(error);
+        if (active(watch) && !watch.again) for (const listener of watch.listeners) listener.error(error);
     } finally {
         watch.busy = false;
         if (active(watch)) {

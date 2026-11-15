@@ -1,3 +1,4 @@
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
@@ -17,7 +18,13 @@ import { Icon } from "./icons";
 import { SentenceText } from "./HelpTip";
 import { DetailDialog } from "./ui/Controls";
 import { LoadingBar } from "./LoadingScreen";
-import { TextInput } from "../design/Fields";
+import { TextInput, FileInput } from "../design/Fields";
+import { CreationDialog } from "./create/CreationDialog";
+import { Card } from "@astryxdesign/core/Card";
+import { Center } from "@astryxdesign/core/Center";
+import { Code } from "@astryxdesign/core/Code";
+import { contentStyles } from "../design/content.stylex";
+import * as stylex from "@stylexjs/stylex";
 
 type Issued = { id: string; code?: string; expires_at: string | null; encrypted?: Connection };
 
@@ -37,7 +44,7 @@ function PairingQr({ link }: { link: string }) {
         return () => { alive = false; };
     }, [link]);
     return <>
-        <canvas ref={canvas} className="pairing-qr" aria-label="기기 페어링 QR" data-testid="pairing-qr" data-ready={ready} />
+        <canvas ref={canvas} {...stylex.props(contentStyles.qr)} aria-label="기기 페어링 QR" data-testid="pairing-qr" data-ready={ready} />
         {error && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">QR을 만들지 못했습니다. 아래 링크를 사용하세요.</GroveText>}
     </>;
 }
@@ -90,60 +97,60 @@ export function Pairings({ showHeading = true }: { showHeading?: boolean }) {
     };
     const link = issued?.code ? (issued.encrypted ? connectionLink(issued.encrypted, issued.code) : pairingLink(location.origin, issued.code)) : null;
     return (
-        <section className="pairings" aria-label="기기 페어링">
+        <GroveStack as="section" gap={3} aria-label="기기 페어링">
             {showHeading && <GroveHeading level={3} color="inherit">기기 페어링</GroveHeading>}
             <GroveText as="p" display="block" type="supporting" color="secondary">만료 없음 · 링크당 기기 1대 · 비밀번호 5회 실패 시 잠금</GroveText>
             {insecureRemote(location.origin) && <GroveText as="p" display="block" type="inherit" color="warning"><SentenceText text="HTTP로는 비밀번호가 노출될 수 있습니다. HTTPS 또는 신뢰하는 VPN에서 사용하세요." /></GroveText>}
             {["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) && <GroveText as="p" display="block" type="supporting" color="warning">다른 기기 등록은 접속 가능한 HTTPS·VPN 주소에서 발급하세요.</GroveText>}
-            <form className="pairing-issue" aria-label="페어링 링크 발급" onSubmit={(e) => { e.preventDefault(); void run(issue); }}>
+            <GroveStack as="form" gap={3} aria-label="페어링 링크 발급" onSubmit={(e) => { e.preventDefault(); void run(issue); }}>
                 <TextInput label="등록할 기기 이름" value={name} maxLength={80} isRequired onChange={setName} />
-                <TextInput label="링크 비밀번호" containerClassName="pairing-password" ref={passwordInput} type="password" autoComplete="new-password" value={password} minLength={10} maxLength={256} placeholder="10자 이상" isRequired onChange={setPassword} />
-                <DetailDialog className="pairing-advanced" label="고급 연결 설정" title="고급 연결 설정">
+                <TextInput label="링크 비밀번호" ref={passwordInput} type="password" autoComplete="new-password" value={password} minLength={10} maxLength={256} placeholder="10자 이상" isRequired onChange={setPassword} />
+                <DetailDialog label="고급 연결 설정" title="고급 연결 설정">
                     <TextInput label="외부 암호화 연결 주소" value={endpoint} placeholder="wss://서버/api/e2ee" onChange={setEndpoint} />
                 </DetailDialog>
                 <ServerActionButton type="submit" disabled={busy || !name.trim() || [...password].length < 10}>페어링 링크 발급</ServerActionButton>
-            </form>
-            {replacing && <GroveText as="p" display="block" type="supporting" color="inherit">새 링크를 발급하면 선택한 이전 링크가 폐기됩니다. <GroveButton type="button" className="ghost small" onClick={() => setReplacing(undefined)}>재발급 취소</GroveButton></GroveText>}
-            {link && issued && <div className="pairing-issued">
+            </GroveStack>
+            {replacing && <GroveText as="p" display="block" type="supporting" color="inherit">새 링크를 발급하면 선택한 이전 링크가 폐기됩니다. <GroveButton type="button" variant="secondary" density="compact" onClick={() => setReplacing(undefined)}>재발급 취소</GroveButton></GroveText>}
+            {link && issued && <GroveStack gap={3} paddingBlock={4}>
                 <PairingQr link={link} />
-                <TextInput label="페어링 링크" isReadOnly value={link} controlClassName="selectable" />
+                <TextInput label="페어링 링크" isReadOnly value={link} controlXstyle={contentStyles.selectable} />
                 <GroveText as="p" display="block" type="supporting" color="secondary">비밀번호는 링크와 따로 전달하세요.</GroveText>
-                <GroveButton type="button" className="ghost small" onClick={() => setIssued(null)}>링크 숨기기</GroveButton>
-            </div>}
+                <GroveButton type="button" variant="secondary" density="compact" onClick={() => setIssued(null)}>링크 숨기기</GroveButton>
+            </GroveStack>}
             {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
             {!!list.error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">페어링 목록을 읽지 못했습니다.</GroveText>}
-            <ul className="pairing-list">
-                {(list.data ?? []).map((info) => <li key={info.id} data-testid="pairing-row">
-                    <div className="pairing-list-heading">
-                        <div><strong>{info.name}</strong><GroveText type="supporting" color={info.locked_at ? "error" : "secondary"}>{pairingStatus(info, now)}{info.failed_attempts > 0 && ` · 비밀번호 실패 ${info.failed_attempts}/5`}</GroveText></div>
-                        <GroveStack direction="horizontal" align="center" className="row">
-                            {!info.consumed_at && !info.revoked_at && <ServerActionButton type="button" className="ghost small" disabled={busy} onClick={() => void run(async () => {
+            <GroveList density="compact" edge="flush" hasDividers>
+                {(list.data ?? []).map((info) => <GroveListItem key={info.id} data-testid="pairing-row" label={<>
+                    <GroveStack gap={3} direction="horizontal" align="center" justify="between" wrap="wrap">
+                        <GroveStack gap={0}><strong>{info.name}</strong><GroveText type="supporting" color={info.locked_at ? "error" : "secondary"}>{pairingStatus(info, now)}{info.failed_attempts > 0 && ` · 비밀번호 실패 ${info.failed_attempts}/5`}</GroveText></GroveStack>
+                        <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
+                            {!info.consumed_at && !info.revoked_at && <ServerActionButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => void run(async () => {
                                 await api.del(`/pairings/${info.id}`, { requires: ["pairing_approval_v1"] });
                                 if (issued?.id === info.id) setIssued(null);
                             })}>링크 폐기</ServerActionButton>}
-                            <GroveButton type="button" className="ghost small" disabled={busy} onClick={() => {
+                            <GroveButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => {
                                 setReplacing(info.id); setName(info.name); setPassword(""); passwordInput.current?.focus();
                             }}>링크 재발급</GroveButton>
                         </GroveStack>
-                    </div>
-                    {!!info.requests.length && <div className="pairing-requests">
+                    </GroveStack>
+                    {!!info.requests.length && <Card variant="muted" padding={4}><GroveStack gap={4}>
                         <GroveText as="p" display="block" type="supporting" color="warning">새 기기의 확인 코드와 같을 때만 승인하세요.</GroveText>
-                        {info.requests.filter((request) => Date.parse(request.expires_at) > now).map((request) => <div key={request.id} className="pairing-request">
-                            <div><strong>{request.name}</strong><code>{request.verification_code}</code></div>
-                            <GroveStack direction="horizontal" align="center" className="row">
+                        {info.requests.filter((request) => Date.parse(request.expires_at) > now).map((request) => <GroveStack gap={3} direction="horizontal" align="center" justify="between" wrap="wrap" key={request.id}>
+                            <GroveStack gap={0}><strong>{request.name}</strong><code>{request.verification_code}</code></GroveStack>
+                            <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
                                 <ServerActionButton type="button" disabled={busy} aria-label={`${request.verification_code} 기기 승인`} onClick={() => void run(async () => {
                                     await api.post(`/pairings/${info.id}/requests/${request.id}`, {}, { requires: ["pairing_approval_v1"] });
                                 })}>승인</ServerActionButton>
-                                <ServerActionButton type="button" className="ghost" disabled={busy} aria-label={`${request.verification_code} 기기 거절`} onClick={() => void run(async () => {
+                                <ServerActionButton type="button" variant="secondary" disabled={busy} aria-label={`${request.verification_code} 기기 거절`} onClick={() => void run(async () => {
                                     await api.del(`/pairings/${info.id}/requests/${request.id}`, { requires: ["pairing_approval_v1"] });
                                 })}>거절</ServerActionButton>
                             </GroveStack>
-                        </div>)}
-                    </div>}
-                </li>)}
-            </ul>
+                        </GroveStack>)}
+                    </GroveStack></Card>}
+                </>} />)}
+            </GroveList>
             {!!list.data?.length && <GroveText as="p" display="block" type="supporting" color="secondary"><SentenceText text="링크 폐기는 등록 기기를 해제하지 않습니다. 분실 기기는 기기 목록에서 접근을 폐기하세요." /></GroveText>}
-        </section>
+        </GroveStack>
     );
 }
 
@@ -207,9 +214,9 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
         }
     };
     return (
-        <main className="login pairing-login">
+        <Center role="main" minHeight="100dvh" padding={4}>
             {(busy || checking) && <LoadingBar label={busy ? "기기 연결 진행 중" : "로그인 상태 확인 중"} />}
-            <form aria-label="페어링 등록" onSubmit={(e) => {
+            <Card width={420} maxWidth="100%" padding={8}><GroveStack as="form" gap={4} aria-label="페어링 등록" onSubmit={(e) => {
                 e.preventDefault();
                 if (submitLock.current || checking || loggedIn || pending) return;
                 if (encryptedTarget) {
@@ -227,30 +234,29 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                 setError(null);
                 setPasswordOpen(true);
             }}>
-                <GroveText type="inherit" color="inherit" className="login-mark" aria-hidden="true"><Icon name="shield" size={28} /></GroveText>
+                <GroveText type="inherit" color="brand" aria-hidden="true"><Icon name="shield" size={28} /></GroveText>
                 <GroveHeading level={1} color="inherit">기기 연결</GroveHeading>
-                {pending ? <div className="pairing-wait" role="status">
+                {pending ? <GroveStack gap={4} role="status">
                     <GroveText as="p" display="block" type="inherit" color="inherit">소유자 승인 대기 중</GroveText>
-                    <code className="pairing-code">{pending.verification_code}</code>
+                    <Card variant="muted" padding={4}><Code data-testid="pairing-code">{pending.verification_code}</Code></Card>
                     <GroveText as="p" display="block" type="supporting" color="secondary">소유자의 기기에서 설정 · 기기 페어링을 열고 이 코드를 확인해 승인하세요.</GroveText>
                     <GroveText as="p" display="block" type="supporting" color="secondary">승인 요청 만료 <When at={pending.expires_at} absolute /></GroveText>
-                </div> : <>
-                    <div className="pairing-mode" role="group" aria-label="연결 방식">
-                        {(["link", "qr"] as const).map((value) => <GroveButton key={value} type="button" className="ghost"
+                </GroveStack> : <>
+                    <GroveStack direction="horizontal" gap={1} role="group" aria-label="연결 방식">
+                        {(["link", "qr"] as const).map((value) => <GroveButton key={value} type="button" appearance="choice"
                             aria-pressed={mode === value} onClick={() => { sequence.current++; setMode(value); setError(null); }}>
                             {value === "link" ? "페어링 링크" : "QR"}
                         </GroveButton>)}
-                    </div>
+                    </GroveStack>
                     {mode === "link" ? <TextInput label="페어링 링크" value={link} autoComplete="off" hasSpellCheck={false} isDisabled={busy} onChange={(value) => {
                         sequence.current++; setLink(value); setError(null);
                     }} />
-                    : <label className="pairing-file">QR 사진 선택<input type="file" accept="image/*" capture="environment" disabled={busy} onChange={(e) => {
-                        const file = e.target.files?.[0];
+                    : <FileInput label="QR 사진 선택" accept="image/*" capture="environment" isDisabled={busy} value={null} onChange={(files) => {
+                        const file = Array.isArray(files) ? files[0] : files;
                         if (file) void scan(file);
-                        e.target.value = "";
-                    }} /></label>}
-                    {target && <GroveText as="p" display="block" type="supporting" color="inherit" className="pairing-target">등록 대상: <strong className="host-address">{target.origin}</strong></GroveText>}
-                    {encrypted && <GroveText as="p" display="block" type="supporting" color="inherit" className="pairing-target">등록 대상: <strong className="host-address">{new URL(encrypted.connection.endpoint).host}</strong></GroveText>}
+                    }} />}
+                    {target && <GroveText as="p" display="block" type="supporting" color="inherit">등록 대상: <Code>{target.origin}</Code></GroveText>}
+                    {encrypted && <GroveText as="p" display="block" type="supporting" color="inherit">등록 대상: <Code>{new URL(encrypted.connection.endpoint).host}</Code></GroveText>}
                     {checking && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">기존 로그인 상태 확인 중…</GroveText>}
                     {loggedIn && <GroveText as="p" display="block" type="inherit" color="inherit" role="status"><SentenceText text="이미 로그인된 브라우저이니 기존 로그인·초안을 보존하려면 별도 프로필에서 등록하세요." /></GroveText>}
                     {target && insecureRemote(target.origin) && <GroveText as="p" display="block" type="supporting" color="warning"><SentenceText text="암호화되지 않은 HTTP입니다. HTTPS 또는 신뢰하는 VPN에서 등록하세요." /></GroveText>}
@@ -259,8 +265,8 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                         : <ServerActionButton type="submit" disabled={busy || checking || loggedIn || !link.trim()}>{busy ? (encryptedTarget ? "이동 중…" : "확인 중…") : encryptedTarget ? "대상 서버로 이동" : "연결"}</ServerActionButton>}
                 </>}
                 {error && !passwordOpen && <GroveText as="p" display="block" type="inherit" color="error" role="alert"><SentenceText text={error} /></GroveText>}
-                <GroveButton type="button" className="ghost" disabled={busy} onClick={onCancel}>토큰 로그인으로 돌아가기</GroveButton>
-            </form>
+                <GroveButton type="button" variant="secondary" disabled={busy} onClick={onCancel}>토큰 로그인으로 돌아가기</GroveButton>
+            </GroveStack></Card>
             {passwordOpen && <PairingPasswordDialog busy={busy} error={error} onClose={() => { setPasswordOpen(false); setError(null); }}
                 onSubmit={async (password) => {
                     if (submitLock.current || checking || isLoggedIn() || pending || !localCode) return;
@@ -272,22 +278,15 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                     } catch (e) { setError(pairingError(e)); }
                     finally { submitLock.current = false; setBusy(false); }
                 }} />}
-        </main>
+        </Center>
     );
 }
 
 function PairingPasswordDialog({ busy, error, onClose, onSubmit }: {
     busy: boolean; error: string | null; onClose: () => void; onSubmit: (password: string) => Promise<void>;
 }) {
-    const dialog = useRef<HTMLDialogElement>(null);
     const [password, setPassword] = useState("");
-    useEffect(() => {
-        const element = dialog.current!;
-        element.showModal();
-        return () => element.close();
-    }, []);
-    return <dialog ref={dialog} className="dialog pairing-password-dialog" aria-label="연결 비밀번호"
-        onCancel={(event) => { event.preventDefault(); if (!busy) onClose(); }}>
+    return <CreationDialog label="연결 비밀번호" width={420} busy={busy} onClose={() => { if (!busy) onClose(); }}>
         <form onSubmit={(event) => { event.preventDefault(); void onSubmit(password); }}>
             <GroveHeading level={2} color="inherit">비밀번호</GroveHeading>
             <TextInput label="비밀번호" hasAutoFocus type="password" autoComplete="current-password" maxLength={256}
@@ -295,12 +294,12 @@ function PairingPasswordDialog({ busy, error, onClose, onSubmit }: {
             <GroveText as="p" display="block" type="supporting" color="secondary">비밀번호 5회 실패 시 링크가 잠깁니다.</GroveText>
             <GroveText as="p" display="block" type="supporting" color="secondary">승인된 기기는 모든 프로젝트·파일에 접근하고 명령을 실행할 수 있습니다.</GroveText>
             {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert"><SentenceText text={error} /></GroveText>}
-            <div className="actions">
+            <GroveStack gap={2} direction="horizontal" align="center" wrap="wrap">
                 <ServerActionButton type="submit" disabled={busy || !password}>{busy ? "확인 중…" : "연결 요청"}</ServerActionButton>
-                <GroveButton type="button" className="ghost" disabled={busy} onClick={onClose}>취소</GroveButton>
-            </div>
+                <GroveButton type="button" variant="secondary" disabled={busy} onClick={onClose}>취소</GroveButton>
+            </GroveStack>
         </form>
-    </dialog>;
+    </CreationDialog>;
 }
 
 function pairingError(e: unknown): string {

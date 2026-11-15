@@ -1,3 +1,4 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 // 입력이 없는 탭은 새 버전을 바로 적용하고, 입력이 남은 탭은 사용자가 고를 때까지 기다린다.
 import { useSyncExternalStore } from "react";
@@ -7,6 +8,8 @@ import { Button } from "../design/Button";
 import { SentenceText } from "./HelpTip";
 import { useLifecycle } from "./pwa/lifecycle";
 import { hasPendingInput, trackPendingInput } from "./pwa/pendingInput";
+import { Banner } from "@astryxdesign/core/Banner";
+import { noticeStyles } from "../design/notices.stylex";
 
 let waiting: ServiceWorker | null = null;
 let registration: ServiceWorkerRegistration | null = null;
@@ -95,11 +98,10 @@ export function ProtocolBanner() {
     );
     if (server === null) return null;
     return (
-        <div className="update-banner error" role="alert" data-testid="protocol-banner">
-            서버가 새 버전(protocol {server})으로 바뀌어 이 화면에서는 변경 요청을 보낼 수 없습니다.
-            새 UI가 준비되면 지금 업데이트를 선택하세요. 초안은 기기 저장소에 의존하므로 중요한 입력은 먼저 복사하세요.
-            <Button onClick={() => void checkForUpdate()}>새 UI 확인</Button>
-        </div>
+        <Banner status="error" role="alert" data-testid="protocol-banner" xstyle={[noticeStyles.update, noticeStyles.protocol]}
+            title={<>서버가 새 버전(protocol {server})으로 바뀌어 이 화면에서는 변경 요청을 보낼 수 없습니다.
+                새 UI가 준비되면 지금 업데이트를 선택하세요. 초안은 기기 저장소에 의존하므로 중요한 입력은 먼저 복사하세요.</>}
+            endContent={<Button onClick={() => void checkForUpdate()}>새 UI 확인</Button>} />
     );
 }
 
@@ -112,15 +114,14 @@ export function UpdateBanner() {
     );
     if (!current.worker && !current.error) return null;
     return (
-        <div className="update-banner pwa-update-notices">
-            {current.error && <GroveText as="p" display="block" type="inherit" color="inherit" className="error" role="alert">{current.error}</GroveText>}
-            {current.worker && <div role="status" className="pwa-update">
-                <SentenceText text="새 버전이 준비되었습니다. 업데이트하면 저장하지 않은 입력이 사라질 수 있습니다." />
-                <div className="pwa-update-actions">
-                    <Button type="button" className="ghost small" onClick={() => publish(null, current.error)}>나중에</Button>
-                    <Button type="button" className="small" onClick={applyUpdate} disabled={!online} title={!online ? "연결 후 업데이트할 수 있습니다" : undefined}>업데이트</Button>
-                </div>
-            </div>}
-        </div>
+        <GroveStack gap={2} xstyle={noticeStyles.update}>
+            {current.error && <Banner status="error" role="alert" title={current.error} />}
+            {current.worker && <Banner status="info" role="status"
+                title={<SentenceText text="새 버전이 준비되었습니다. 업데이트하면 저장하지 않은 입력이 사라질 수 있습니다." />}
+                endContent={<GroveStack gap={2} direction="horizontal" align="center" wrap="wrap">
+                    <Button type="button" variant="secondary" density="compact" onClick={() => publish(null, current.error)}>나중에</Button>
+                    <Button type="button" density="compact" onClick={applyUpdate} disabled={!online} title={!online ? "연결 후 업데이트할 수 있습니다" : undefined}>업데이트</Button>
+                </GroveStack>} />}
+        </GroveStack>
     );
 }

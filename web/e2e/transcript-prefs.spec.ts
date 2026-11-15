@@ -2,8 +2,8 @@ import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
 import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script, selectChoice } from "./helpers";
 
-// UI-012: 생각 과정(reasoning) 접기·펼치기·숨김, 답만 보기, 도구 세부 펼침.
-test("생각 과정 표시·답만 보기·도구 세부 펼침 설정이 대화 표시에 반영된다", async ({ page }) => {
+// UI-012: 추론 보기(항상 보기·답변 시 접기·항상 가림), 답만 보기, 도구 세부 펼침.
+test("추론 보기·답만 보기·도구 세부 펼침 설정이 대화 표시에 반영된다", async ({ page }) => {
     const { a } = await ensureProjects();
     const profile = await ensureProfile();
     const title = `표시 설정 대화 ${Date.now()}`;
@@ -12,7 +12,7 @@ test("생각 과정 표시·답만 보기·도구 세부 펼침 설정이 대화
     await login(page);
     await page.evaluate(() => localStorage.removeItem("grove.device.prefs"));
     await page.reload();
-    const openSession = () => page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    const openSession = () => page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     await openSession();
     const view = page.getByTestId("session-view");
 
@@ -21,7 +21,7 @@ test("생각 과정 표시·답만 보기·도구 세부 펼침 설정이 대화
     await script({ frames: frames.reasoning("목록을 보고 판단한다", "정리한 답") });
     await composerOption(view, "도구", true);
     await composerOption(view, "보내기 방식", "model");
-    await view.getByLabel("모델 프로필", { exact: true }).selectOption(profile);
+    await composerOption(view, "모델 프로필", profile);
     await view.getByLabel("메시지 입력").fill("목록 보고 답해");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const answer = view.getByTestId("msg-assistant").filter({ hasText: "정리한 답" });
@@ -32,7 +32,7 @@ test("생각 과정 표시·답만 보기·도구 세부 펼침 설정이 대화
     // 기본: 생각 과정은 접힌 채 보이고, 도구 세부도 접혀 있다
     const r = answer.getByTestId("msg-reasoning");
     await expect(r).toBeVisible();
-    await expect(r.getByRole("button")).toContainText("생각 과정 · 11자");
+    await expect(r.getByRole("button")).toContainText("추론 · 11자");
     await expect(r.getByText("목록을 보고 판단한다", { exact: true })).toHaveCount(0);
     await expect(view.getByTestId("msg-tool")).toHaveCount(1);
     await expect(view.getByTestId("msg-tool").getByTestId("tool-output")).toHaveCount(0);
@@ -43,7 +43,7 @@ test("생각 과정 표시·답만 보기·도구 세부 펼침 설정이 대화
     // 설정 변경: 펼치기 + 도구 세부 펼침
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("대화 표시");
-    await selectChoice(page.getByLabel("생각 과정 표시"), "expanded");
+    await selectChoice(page.getByLabel("추론 보기", { exact: true }), "expanded");
     await selectChoice(page.getByLabel("도구 실행 세부를 펼쳐서 표시", { exact: true }), "true");
     await openSession();
     await expect(answer.getByTestId("msg-reasoning")).toContainText("목록을 보고 판단한다");
@@ -52,7 +52,7 @@ test("생각 과정 표시·답만 보기·도구 세부 펼침 설정이 대화
     // 숨김 + 답만 보기: 생각 과정·도구 기록·글 없는 도구 호출 메시지가 사라지고 답은 남는다
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("대화 표시");
-    await selectChoice(page.getByLabel("생각 과정 표시"), "hidden");
+    await selectChoice(page.getByLabel("추론 보기", { exact: true }), "hidden");
     await selectChoice(page.getByLabel("답만 보기", { exact: true }), "true");
     await openSession();
     await expect(answer).toBeVisible();

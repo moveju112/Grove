@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProjects, login, openDetails, openSettings, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProjects, expectComposerSetting, login, openDetails, openSettings, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 test("모델 기능을 설정하면 다른 화면의 미지원 선택·초안은 보존하고 명시적으로 수정한 뒤 보낸다", async ({ page, browser }) => {
@@ -20,11 +20,11 @@ test("모델 기능을 설정하면 다른 화면의 미지원 선택·초안은
     try {
         const app = await context.newPage();
         await login(app);
-        await app.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+        await app.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         const view = sessionView(app, session.id);
         await composerOption(view, "보내기 방식", "model");
-        await view.getByLabel("모델 프로필").selectOption(profile.id);
-        await view.getByLabel("추론", { exact: true }).selectOption("high");
+        await composerOption(view, "모델 프로필", profile.id);
+        await composerOption(view, "추론", "high");
         await composerOption(view, "도구", true);
         await view.getByLabel("메시지 입력").fill("capability draft");
         await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
@@ -39,12 +39,12 @@ test("모델 기능을 설정하면 다른 화면의 미지원 선택·초안은
         await expect(row.getByTestId("model-capabilities")).toContainText("native PDF 미지원");
         await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
         await expect(view).toContainText("Grove 도구 루프 미지원");
-        await expect(view.getByLabel("모델 프로필")).toHaveValue(profile.id);
+        await expectComposerSetting(view, "모델 프로필", profile.id);
         await expect(view.getByLabel("메시지 입력")).toHaveValue("capability draft");
-        await expect(view.getByLabel("추론", { exact: true })).toHaveValue("high");
+        await expectComposerSetting(view, "추론", "high");
         await composerOption(view, "도구", false);
         await expect(view).toContainText("추론 미지원");
-        await view.getByLabel("추론", { exact: true }).selectOption("auto");
+        await composerOption(view, "추론", "auto");
         await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeEnabled();
         await expect(view.getByRole("checkbox", { name: "도구", exact: true })).toHaveCount(0);
         await script({ frames: frames.text(["capability reply"]) });

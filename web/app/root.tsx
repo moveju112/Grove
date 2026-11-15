@@ -4,9 +4,9 @@ import "@astryxdesign/core/reset.css";
 import "@astryxdesign/core/astryx.css";
 import "./design/grove.css";
 import "./design/grove-soft.css";
-import "./app.css";
+import "./design/global.css";
 import { DesignProvider } from "./design/DesignProvider";
-import { Stack } from "@astryxdesign/core/Stack";
+import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { Heading } from "@astryxdesign/core/Heading";
 import { Text } from "@astryxdesign/core/Text";
 import { Button } from "./design/Button";
@@ -50,7 +50,7 @@ export default function Root() {
     useEffect(() => {
         document.documentElement.dataset.hydrated = "true";
     }, []);
-    return <Stack className="pwa-shell"><LifecycleBanner /><Outlet /></Stack>;
+    return <Stack gap={0} height="100dvh"><LifecycleBanner /><StackItem size="fill"><Outlet /></StackItem></Stack>;
 }
 
 // 빌드 시 루트 렌더링 동안 보이는 화면(브라우저 API는 여기서 쓰지 않는다).
@@ -62,7 +62,7 @@ export function ErrorBoundary() {
     const err = useRouteError();
     const msg = isRouteErrorResponse(err) ? `${err.status} ${err.statusText}` : err instanceof Error ? err.message : "알 수 없는 오류";
     return (
-        <Stack className="boot error" role="alert">
+        <Stack padding={8} align="center" gap={3} role="alert">
             <Heading level={1} color="inherit">화면 오류</Heading>
             <Text as="p" display="block" type="inherit" color="inherit">{msg}</Text>
             <Button onClick={() => location.reload()}>다시 불러오기</Button>

@@ -8,6 +8,7 @@ import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:tls";
+import { openTool } from "./helpers";
 
 type Reply = { status: number; body: unknown };
 type TlsHost = {
@@ -113,7 +114,7 @@ test("실제 TLS proxy 위에서 E2EE 로그인·봉인 refresh·SSE·터미널�
         await page.goto(tlsHost.origin + "/" + new URL(tlsHost.link).hash);
         await page.locator("html[data-hydrated=true]").waitFor();
         await page.getByRole("button", { name: "서버 확인 후 연결" }).click();
-        await page.getByLabel("토큰", { exact: true }).fill(tlsHost.token);
+        await page.getByLabel("토큰").fill(tlsHost.token);
         await page.getByRole("button", { name: "로그인", exact: true }).click();
         await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         const cookies = await context.cookies(tlsHost.origin + "/api/v1/auth/refresh");
@@ -124,7 +125,7 @@ test("실제 TLS proxy 위에서 E2EE 로그인·봉인 refresh·SSE·터미널�
         await page.getByRole("button", { name: "이 폴더를 프로젝트로 추가" }).click();
         await page.getByTestId("project-row").getByRole("button", { name: tlsHost.name, exact: true }).click();
         const terminals = page.getByTestId("terminal-list");
-        await terminals.locator("summary").click();
+        await openTool(page.getByTestId("project-view"), "터미널");
         await terminals.getByRole("button", { name: "새 터미널" }).click();
         const terminal = page.getByTestId("terminal-view");
         await expect(terminal).toHaveAttribute("data-conn", "open");

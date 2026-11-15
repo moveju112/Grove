@@ -15,8 +15,8 @@ export function SettingsGroup({ title, scope, icon = "settings", id, testId, chi
     useLayoutEffect(() => {
         const sync = () => {
             const dirty = Boolean(content.current!.querySelector('[data-settings-unsaved="true"]'));
-            const alerts = Array.from(content.current!.querySelectorAll('[role="alert"], .save-state.error, [aria-invalid="true"]'));
-            const issue = content.current!.querySelector('[role="alert"].err, .save-state.error, [aria-invalid="true"]')
+            const alerts = Array.from(content.current!.querySelectorAll('[role="alert"], .save-state.error, [data-settings-issue], [aria-invalid="true"]'));
+            const issue = content.current!.querySelector('[role="alert"].err, [role="alert"][data-color="error"], .save-state.error, [data-settings-issue="error"], [aria-invalid="true"]')
                 ? "error" : alerts.length ? "attention" : null;
             const target = [...new Set(Array.from(content.current!.querySelectorAll<HTMLElement>("[data-settings-target]"))
                 .map((element) => element.dataset.settingsTarget!))].join(" · ");
@@ -25,7 +25,7 @@ export function SettingsGroup({ title, scope, icon = "settings", id, testId, chi
         const observer = new MutationObserver(sync);
         observer.observe(content.current!, {
             childList: true, subtree: true, characterData: true, attributes: true,
-            attributeFilter: ["class", "role", "aria-invalid", "data-settings-unsaved", "data-settings-target"],
+            attributeFilter: ["class", "role", "aria-invalid", "data-color", "data-settings-issue", "data-settings-unsaved", "data-settings-target"],
         });
         sync();
         return () => observer.disconnect();
@@ -35,9 +35,9 @@ export function SettingsGroup({ title, scope, icon = "settings", id, testId, chi
         padding={0} xstyle={settingsStyles.group}>
         <Stack as="header" direction="horizontal" gap={2} padding={3} vAlign="center" xstyle={settingsStyles.heading}>
             <Icon name={icon} size={16} />
-            <Heading level={2} xstyle={settingsStyles.title}>{title}</Heading>
-            {(notice.dirty || notice.issue) && <Text type="supporting" aria-live="polite"
-                xstyle={[settingsStyles.notice, notice.issue === "error" && settingsStyles.error]}>
+            <Heading level={2} type="panel" xstyle={settingsStyles.title}>{title}</Heading>
+            {(notice.dirty || notice.issue) && <Text type="supporting" aria-live="polite" color={notice.issue === "error" ? "error" : "inherit"}
+                xstyle={settingsStyles.notice}>
                 {[notice.dirty ? "저장 안 됨" : null, notice.issue === "error" ? "오류" : notice.issue === "attention" ? "확인 필요" : null].filter(Boolean).join(" · ")}
             </Text>}
             {(notice.target || scope) && <Text type="supporting" xstyle={settingsStyles.scope}>{notice.target || scope}</Text>}

@@ -36,7 +36,7 @@ test("화면을 보지 않을 때 켠 종류만 내용 없이 한 번 알리고,
     await expect(section.getByTestId("notify-permission")).toContainText("허용됨");
     await expect(section.getByRole("combobox", { name: "예약·업데이트 알림", exact: true })).toHaveAttribute("data-selected-value", "false");
 
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.locator(`[data-testid=session-view][data-session="${s.id}"]`);
     await script({ frames: frames.tool("n1", "write", { path: "attention.txt", content: "x" }) });
     await script({ frames: frames.text(["거부 확인"]) });
@@ -48,7 +48,7 @@ test("화면을 보지 않을 때 켠 종류만 내용 없이 한 번 알리고,
     await expect.poll(() => notes(page)).toEqual([{ title: "승인 요청", tag: expect.stringMatching(/^approval:/), body: "대화에서 도구 실행 승인을 기다립니다." }]);
 
     // 알림을 누르면 닫았던 대화를 다시 연다.
-    await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
+    await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
     await expect(view).toHaveCount(0);
     await page.evaluate(() => (window as unknown as { __notes: { onclick: () => void }[] }).__notes[0]!.onclick());
     await expect(view).toBeVisible();

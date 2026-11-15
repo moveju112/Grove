@@ -16,7 +16,7 @@ async function openWorktrees(page: Page) {
     const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
     await useWorkspaces(project.id);
     await login(page);
-    await page.locator(".sidebar .projects").getByRole("button", { name: project.name, exact: true }).click();
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: project.name, exact: true }).click();
     const panel = page.getByTestId("worktrees-panel");
     await openTool(page, "워크스페이스");
     await openDetails(panel);

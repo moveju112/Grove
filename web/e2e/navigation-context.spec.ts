@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import type { Layout } from "../app/state/layout";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { activateMobileTab, apiCall, closeMobileSidebar, ensureProfile, ensureProjects, login, script } from "./helpers";
 
 async function setup(page: Page) {
     const { a, b } = await ensureProjects();
@@ -33,6 +33,23 @@ async function setup(page: Page) {
     return { a, b, left, right, title };
 }
 
+test("현재 위치 설명은 호버로 표시하고 조작·배치를 늘리지 않은 채 Escape로 닫는다", async ({ page }) => {
+    const { left } = await setup(page);
+    await login(page);
+    const nav = page.getByRole("navigation", { name: "현재 위치", exact: true });
+    await expect(nav).toHaveAttribute("data-session-id", left.id);
+    const current = nav.locator('[aria-current="page"]');
+    const before = await current.boundingBox();
+    const actions = await nav.getByRole("button").count();
+    await current.hover();
+    const tip = page.getByRole("tooltip");
+    await expect(tip).toContainText(left.id);
+    await page.keyboard.press("Escape");
+    await expect(tip).toBeHidden();
+    expect(await current.boundingBox()).toEqual(before);
+    await expect(nav.getByRole("button")).toHaveCount(actions);
+});
+
 test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작업을 유지하고 세션을 만들지 않는다", async ({ page }) => {
     const { a, b, left, right, title } = await setup(page);
     const profile = await ensureProfile();
@@ -56,7 +73,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
     try {
         await expect(leftPane.getByTestId("approval")).toBeVisible();
         const rightInput = await rightPane.getByLabel("메시지 입력").elementHandle();
-        const tabs = await page.locator(".tabbar").getByRole("tab").count();
+        const tabs = await page.getByRole("tablist").getByRole("tab").count();
         const mutations: string[] = [];
         page.on("request", (request) => {
             if (request.method() !== "GET" && /\/(?:sessions|turns)(?:\/[^/?]+)?(?:\/cancel)?$/.test(request.url())) {
@@ -69,7 +86,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
         await parent.press("Enter");
         await expect(nav.locator('[aria-current="page"]')).toHaveText(a.name);
         await expect(nav).not.toHaveAttribute("data-session-id");
-        await expect(page.locator(".tabbar").getByRole("tab")).toHaveCount(tabs);
+        await expect(page.getByRole("tablist").getByRole("tab")).toHaveCount(tabs);
         await expect(rightPane.getByLabel("메시지 입력")).toHaveValue("오른쪽 초안");
         expect(await rightInput!.evaluate((node) => node.isConnected)).toBe(true);
         expect((await apiCall<{ status: string }>("GET", `/turns/${accepted.turn.id}`)).status).toBe("awaiting_approval");
@@ -124,27 +141,31 @@ test("긴 이름·좁은 화면에서도 한 줄 위치·부모 탐색·폭별 �
     const longTitle = "아주 긴 현재 세션 이름 ".repeat(12).trim();
     await apiCall("PATCH", `/sessions/${left.id}`, { expected_revision: current.revision, title: longTitle });
     await login(page);
-    const wideInput = page.locator('[data-layout-mode="wide"] [data-leaf="left"]').getByLabel("메시지 입력");
+    const wideInput = page.locator('[data-layout-mode="wide"] [data-leaf="left"]').getByLabel("메시지 입력").filter({ visible: true });
     await wideInput.fill("넓은 화면 초안");
     const wideNode = await wideInput.elementHandle();
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator('[data-layout-mode="narrow"]')).toBeVisible();
     // 기존 sidebar가 열려 있으면 기존 toggle로 닫는다.
-    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
-    if (await sidebar.getAttribute("aria-expanded") === "true") await sidebar.click();
+    await closeMobileSidebar(page);
     const nav = page.getByRole("navigation", { name: "현재 위치", exact: true });
     await expect(nav).toHaveAttribute("data-session-id", left.id);
     await expect(nav.locator('[aria-current="page"]')).toHaveAttribute("aria-label", `세션: ${longTitle} (${left.id})`);
-    const narrowInput = page.locator('[data-layout-mode="narrow"] [data-leaf="left"]').getByLabel("메시지 입력");
+    const narrowInput = page.locator('[data-layout-mode="narrow"] [data-leaf="left"]').getByLabel("메시지 입력").filter({ visible: true });
     await narrowInput.fill("좁은 화면 초안");
     await nav.getByRole("button", { name: `프로젝트: ${a.name} (${a.id}) 대화 목록으로`, exact: true }).click();
     await expect(nav.locator('[aria-current="page"]')).toHaveText(a.name);
-    await page.locator('[data-layout-mode="narrow"] [data-leaf="left"]').getByRole("tab").filter({ hasText: "이전 제목" }).getByRole("button").first().click();
+    await activateMobileTab(page, "이전 제목");
     await expect(narrowInput).toHaveValue("좁은 화면 초안");
-    const switcher = page.getByRole("navigation", { name: "pane 전환" });
-    await switcher.getByRole("button", { name: "영역 2" }).click();
+    const selectSession = async (id: string) => {
+        await page.getByRole("button", { name: "사이드바", exact: true }).click();
+        const drawer = page.getByTestId("mobile-drawer-left");
+        await drawer.locator(`[data-testid="sidebar-session"][data-session="${id}"]`).getByRole("button").first().click();
+        await expect(drawer).toHaveJSProperty("open", false);
+    };
+    await selectSession(right.id);
     await expect(nav).toHaveAttribute("data-session-id", right.id);
-    await switcher.getByRole("button", { name: "영역 1" }).click();
+    await selectSession(left.id);
     await expect(narrowInput).toHaveValue("좁은 화면 초안");
     await page.setViewportSize({ width: 390, height: 430 });
     const bounds = await nav.boundingBox();

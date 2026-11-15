@@ -13,7 +13,7 @@ test("스킬 추가·저장 응답 유실·reload 충돌·비활성화를 기존
     try {
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
         await openDetails(sessionView(page, session.id).getByTestId("skills-disclosure"));
         const panel = sessionView(page, session.id).getByTestId("session-skills");
         await panel.getByRole("button", { name: "Grove 스킬 추가", exact: true }).click();

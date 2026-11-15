@@ -1,3 +1,4 @@
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Text as GroveText } from "@astryxdesign/core/Text";
@@ -27,18 +28,18 @@ export function CreationEntry({ projects, currentId, loading, error, blockedReas
             </> : !loading && !error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">현재 프로젝트를 확인할 수 없습니다. 다른 프로젝트로 자동 전환하지 않습니다.</GroveText>}
         </> : <>
             <GroveText as="p" display="block" type="inherit" color="inherit">대화를 시작할 프로젝트를 선택하세요.</GroveText>
-            <ul className="dir-list" aria-label="대화 프로젝트 선택">
-                {projects.map((project) => <li key={project.id}>
-                    <GroveButton className="link" disabled={!project.available || error || loading} onClick={() => onSelect(project)}>
+            <GroveList density="compact" edge="flush" hasDividers aria-label="대화 프로젝트 선택">
+                {projects.map((project) => <GroveListItem key={project.id} label={
+                    <GroveButton appearance="link" disabled={!project.available || error || loading} onClick={() => onSelect(project)}>
                         {project.name}{!project.available && " (경로 없음)"}
                     </GroveButton>
-                </li>)}
-            </ul>
+                } />)}
+            </GroveList>
             {!loading && !error && projects.length === 0 && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">먼저 프로젝트를 추가하세요.</GroveText>}
         </>}
-        <GroveStack direction="horizontal" align="center" className="row">
-            <GroveButton className="ghost" onClick={onAddProject}>프로젝트 추가</GroveButton>
-            <GroveButton className="ghost" onClick={onClose}>취소</GroveButton>
+        <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
+            <GroveButton variant="secondary" onClick={onAddProject}>프로젝트 추가</GroveButton>
+            <GroveButton variant="secondary" onClick={onClose}>취소</GroveButton>
         </GroveStack>
     </CreationDialog>;
 }

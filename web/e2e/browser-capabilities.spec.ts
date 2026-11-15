@@ -62,18 +62,18 @@ test("미지원 복사·첨부 진입점에서 원문과 대안을 보존한다"
     }
     await page.getByLabel("설정 검색").fill("알림·소리");
     await expect(page.getByTestId("setting-notify")).toContainText("알림 목록");
-    await page.locator(".sidebar .projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
-    const project = page.locator(".project-view");
+    await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
+    const project = page.getByTestId("project-view");
     let dialogs = 0;
     page.on("filechooser", () => { dialogs++; });
     await project.getByRole("button", { name: "파일 첨부", exact: true }).click();
-    await expect(project.locator(".attachment-picker")).toContainText("파일 내용을 메시지에 붙여 넣거나");
+    await expect(project.getByTestId("composer")).toContainText("파일 내용을 메시지에 붙여 넣거나");
     expect(dialogs).toBe(0);
     const text = `**수동 복사 원문** <script>not executable</script> ${Date.now()}`;
     await composerOption(project, "보내기 방식", "save");
     await project.getByLabel("메시지 입력").fill(text);
     await project.getByRole("button", { name: "보내기", exact: true }).click();
-    const message = page.locator(".msg-row").filter({ has: page.getByTestId("msg-user") }).last();
+    const message = page.locator("[data-seq]").filter({ has: page.getByTestId("msg-user") }).last();
     await message.getByTestId("msg-copy").click();
     const manual = message.getByLabel("메시지 원문 수동 복사");
     await expect(manual).toHaveValue(text);

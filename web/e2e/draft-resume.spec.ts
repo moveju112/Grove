@@ -7,11 +7,11 @@ async function openSession(page: Page) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    const recent = page.locator(".recent").getByRole("button", { name: new RegExp(title) });
+    const recent = page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) });
     await recent.click();
     const view = page.getByTestId("session-view");
     const reopen = async () => {
-        await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
+        await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
         await recent.click();
     };
     const restore = async (text: string) => {
@@ -26,7 +26,7 @@ test("닫은 대화를 새 탭에서 열면 입력·첨부 사본을 골라 이�
     const text = "닫은 탭의 입력 사본";
     const name = "resume-draft.txt";
     await view.getByLabel("메시지 입력").fill(text);
-    await view.getByLabel("첨부파일 선택").setInputFiles({ name, mimeType: "text/plain", buffer: Buffer.from("draft attachment fixture") });
+    await view.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({ name, mimeType: "text/plain", buffer: Buffer.from("draft attachment fixture") });
     await expect(view.getByTestId("attachment-card")).toContainText(name);
     await reopen();
     await expect(view.getByLabel("메시지 입력")).toHaveValue("");
@@ -48,7 +48,7 @@ test("응답 유실 후 닫은 탭의 사본을 이어받아도 원래 본문·�
     const text = "새 탭에서도 한 번만 저장하는 글";
     await view.getByLabel("메시지 입력").fill(text);
     await composerOption(view, "보내기 방식", "save");
-    await view.getByLabel("첨부파일 선택").setInputFiles({ name: "receipt.txt", mimeType: "text/plain", buffer: Buffer.from("receipt attachment fixture") });
+    await view.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({ name: "receipt.txt", mimeType: "text/plain", buffer: Buffer.from("receipt attachment fixture") });
     await expect(view.getByTestId("attachment-card")).toContainText("receipt.txt");
     const sent: { key: string; body: string | null }[] = [];
     await page.route(`**/api/v1/sessions/${session.id}/messages`, async (route) => {
@@ -94,7 +94,7 @@ test("로그아웃 뒤 늦게 도착한 업로드 완료가 민감 사본을 다
     });
     try {
         await test.step("지연할 업로드를 서버까지 접수한다", async () => {
-            await view.getByLabel("첨부파일 선택").setInputFiles({ name: "late.txt", mimeType: "text/plain", buffer: Buffer.from("late upload fixture") });
+            await view.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({ name: "late.txt", mimeType: "text/plain", buffer: Buffer.from("late upload fixture") });
             await accepted;
         });
         await test.step("업로드 응답보다 먼저 로그아웃한다", async () => {
@@ -178,7 +178,7 @@ test("입력과 첨부를 바꿔도 원래 요청을 확인할 수 있고 현재
     const { session, view } = await openSession(page);
     await view.getByLabel("메시지 입력").fill("original request fixture");
     await composerOption(view, "보내기 방식", "save");
-    await view.getByLabel("첨부파일 선택").setInputFiles({ name: "original.txt", mimeType: "text/plain", buffer: Buffer.from("original attachment fixture") });
+    await view.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({ name: "original.txt", mimeType: "text/plain", buffer: Buffer.from("original attachment fixture") });
     const selected = view.getByLabel("선택한 첨부파일");
     await expect(selected).toContainText("original.txt");
     const requests: { key: string; body: string | null }[] = [];
@@ -194,7 +194,7 @@ test("입력과 첨부를 바꿔도 원래 요청을 확인할 수 있고 현재
     await expect(view.getByTestId("send-unsure")).toBeVisible();
     await view.getByLabel("메시지 입력").fill("keep this next input");
     await selected.getByRole("button", { name: "original.txt 첨부 제거", exact: true }).click();
-    await view.getByLabel("첨부파일 선택").setInputFiles({ name: "next.txt", mimeType: "text/plain", buffer: Buffer.from("next attachment fixture") });
+    await view.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({ name: "next.txt", mimeType: "text/plain", buffer: Buffer.from("next attachment fixture") });
     await expect(selected).toContainText("next.txt");
     await view.getByRole("button", { name: "원래 요청 결과 확인", exact: true }).click();
     await expect(view.getByTestId("send-unsure")).toHaveCount(0);

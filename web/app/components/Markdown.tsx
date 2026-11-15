@@ -1,7 +1,14 @@
+import { Stack } from "@astryxdesign/core/Stack";
+import { Heading } from "@astryxdesign/core/Heading";
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
 import { Link } from "@astryxdesign/core/Link";
 import { Divider } from "@astryxdesign/core/Divider";
+import { Code } from "@astryxdesign/core/Code";
+import { ScrollableArea } from "@astryxdesign/core/ScrollableArea";
+import { contentStyles } from "../design/content.stylex";
+import { CodeBlock as DisplayCodeBlock } from "../design/CodeBlock";
 // 모델 답 표시(UI-010·011). 문법 트리를 React 요소로만 그린다: HTML 문자열을 넣지 않으므로 답 안의 <script>·onerror 등은 글자로 보인다.
 import { Button as GroveButton } from "../design/Button";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
@@ -13,10 +20,10 @@ export const FileRefContext = createContext<((path: string, line?: number) => vo
 function InlineCode({ v }: { v: string }) {
     const onRef = useContext(FileRefContext);
     const r = onRef ? fileRef(v) : null;
-    if (!r || !onRef) return <code>{v}</code>;
+    if (!r || !onRef) return <Code>{v}</Code>;
     return (
-        <GroveButton className="link file-ref" data-testid="file-ref" title="파일 열기" onClick={() => onRef(r.path, r.line)}>
-            <code>{v}</code>
+        <GroveButton appearance="link" data-testid="file-ref" title="파일 열기" onClick={() => onRef(r.path, r.line)}>
+            <Code>{v}</Code>
         </GroveButton>
     );
 }
@@ -38,7 +45,7 @@ function inl(c: Inline[]): ReactNode[] {
                 return (
                     <Link type="inherit" key={k} href={x.href} target="_blank" rel="noopener noreferrer nofollow" tooltip={x.href}>
                         {inl(x.c)}
-                        <GroveText type="inherit" color="inherit" className="link-dest" data-testid="link-dest"> ↗ {dest}</GroveText>
+                        <GroveText type="supporting" color="inherit" data-testid="link-dest"> ↗ {dest}</GroveText>
                     </Link>
                 );
             }
@@ -60,30 +67,14 @@ function linkDest(href: string): string {
 
 function CodeBlock({ lang, text }: { lang: string; text: string }) {
     const [copied, setCopied] = useState(false);
-    return (
-        <div className="md-code" data-testid="md-code">
-            <div className="md-code-bar">
-                <GroveText type="supporting" color="secondary">{lang || "code"}</GroveText>
-                <GroveButton
-                    className="ghost small"
-                    onClick={() =>
-                        void navigator.clipboard?.writeText(text).then(
-                            () => {
-                                setCopied(true);
-                                setTimeout(() => setCopied(false), 1500);
-                            },
-                            () => setCopied(false),
-                        )
-                    }
-                >
-                    {copied ? "복사됨" : "복사"}
-                </GroveButton>
-            </div>
-            <pre>
-                <code>{text}</code>
-            </pre>
-        </div>
-    );
+    return <DisplayCodeBlock data-testid="md-code" code={text} language={lang || "plaintext"}
+        title={lang || "code"} isWrapped={false} endContent={<GroveButton variant="secondary" density="compact"
+            onClick={() => void navigator.clipboard?.writeText(text).then(() => {
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+            }, () => setCopied(false))}>
+            {copied ? "복사됨" : "복사"}
+        </GroveButton>} />;
 }
 
 function block(b: Block, k: number): ReactNode {
@@ -91,32 +82,32 @@ function block(b: Block, k: number): ReactNode {
         case "p":
             return <GroveText as="p" display="block" type="inherit" color="inherit" key={k}>{inl(b.c)}</GroveText>;
         case "h": {
-            const H = `h${Math.min(6, b.level + 2)}` as "h3";
-            return <H key={k}>{inl(b.c)}</H>;
+            const level = Math.min(6, b.level + 2) as 3 | 4 | 5 | 6;
+            return <Heading level={level} color="inherit" key={k}>{inl(b.c)}</Heading>;
         }
         case "code":
             return <CodeBlock key={k} lang={b.lang} text={b.text} />;
         case "ul":
             return (
-                <ul key={k}>
+                <GroveList density="compact" edge="flush" listStyle="disc" key={k}>
                     {b.items.map((it, j) => (
-                        <li key={j}>{inl(it)}</li>
+                        <GroveListItem key={j} label={inl(it)} />
                     ))}
-                </ul>
+                </GroveList>
             );
         case "ol":
             return (
-                <ol key={k}>
+                <GroveList density="compact" edge="flush" listStyle="decimal" key={k}>
                     {b.items.map((it, j) => (
-                        <li key={j}>{inl(it)}</li>
+                        <GroveListItem key={j} label={inl(it)} />
                     ))}
-                </ol>
+                </GroveList>
             );
         case "quote":
-            return <blockquote key={k}>{b.blocks.map(block)}</blockquote>;
+            return <Stack as="blockquote" gap={2} paddingInlineStart={3} xstyle={contentStyles.quote} key={k}>{b.blocks.map(block)}</Stack>;
         case "table":
             return (
-                <div key={k} className="md-table">
+                <ScrollableArea axis="inline" label="답변 표" maxWidth="100%" key={k} data-swipe-blocked="true" data-testid="md-table">
                     <Table density="compact">
                         <TableHeader>
                             <TableRow isHeaderRow>
@@ -135,7 +126,7 @@ function block(b: Block, k: number): ReactNode {
                             ))}
                         </TableBody>
                     </Table>
-                </div>
+                </ScrollableArea>
             );
         case "hr":
             return <Divider key={k} />;
@@ -144,5 +135,5 @@ function block(b: Block, k: number): ReactNode {
 
 export function Markdown({ text }: { text: string }) {
     const blocks = useMemo(() => parseMarkdown(text), [text]);
-    return <div className="text md">{blocks.map(block)}</div>;
+    return <Stack gap={2} width="100%" maxWidth="100%" data-testid="markdown">{blocks.map(block)}</Stack>;
 }

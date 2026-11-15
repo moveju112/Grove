@@ -3,8 +3,20 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { hookPath, hookUpdate, type Hook, type HookListing } from "../../api/hooks";
 import { HooksSettings } from "./HooksSettings";
+import type { SelectProps } from "../../design/Select";
 
-const query = vi.hoisted(() => ({ data: undefined as unknown, error: null as unknown, loading: false }));
+const { query, choices } = vi.hoisted(() => ({
+    query: { data: undefined as unknown, error: null as unknown, loading: false },
+    choices: vi.fn(),
+}));
+// 닫힌 선택창은 선택된 값만 SSR한다. 제공하는 선택지 계약과 실제 렌더링을 함께 검사한다.
+vi.mock("../../design/Select", async (original) => {
+    const actual = await original<typeof import("../../design/Select")>();
+    return { ...actual, Select: (props: SelectProps) => {
+        choices(props);
+        return createElement(actual.Select, props);
+    } };
+});
 vi.mock("../../state/store", async (original) => ({
     ...await original<typeof import("../../state/store")>(),
     useQuery: (key: string) => ({
@@ -22,7 +34,7 @@ const hook: Hook = {
 const listing: HookListing = { hooks: [hook], events: ["PreToolUse", "Stop"], matcher_syntax: "glob", execution_state: "not_implemented" };
 const render = (projectId?: string) => renderToStaticMarkup(createElement(HooksSettings, { projectId, projectName: "project" }));
 
-beforeEach(() => { query.data = listing; query.error = null; query.loading = false; });
+beforeEach(() => { query.data = listing; query.error = null; query.loading = false; choices.mockClear(); });
 describe("hook 설정·실행 지원 계약", () => {
     it("지원 이벤트와 개별 승인·취소 경계를 짧게 표시한다", () => {
         query.data = { ...listing, supported_events: ["SessionStart", "Stop"],
@@ -42,12 +54,18 @@ describe("hook 설정·실행 지원 계약", () => {
         expect(html).toContain("명령 전체를 가렸습니다");
         expect(html).toContain("&lt;script&gt;hook&lt;/script&gt;");
         expect(html).not.toContain("<script>");
-        expect(html).toContain('<option value="global"');
-        expect(html).not.toContain('<option value="project"');
-        expect(html).toContain("<option>Stop</option>");
+        expect(choices).toHaveBeenCalledWith(expect.objectContaining({
+            label: "hook 범위", value: "global", options: [{ value: "global", label: "전역" }],
+        }));
+        expect(choices).toHaveBeenCalledWith(expect.objectContaining({
+            label: "hook 이벤트", options: [{ value: "PreToolUse", label: "PreToolUse" }, { value: "Stop", label: "Stop" }],
+        }));
     });
     it("프로젝트 context가 있을 때만 해당 범위를 제공한다", () => {
-        expect(render("p1")).toContain('<option value="project"');
+        render("p1");
+        expect(choices).toHaveBeenCalledWith(expect.objectContaining({
+            label: "hook 범위", options: [{ value: "global", label: "전역" }, { value: "project", label: "프로젝트 · project" }],
+        }));
     });
     it("목록 오류·로딩·빈 상태를 명시한다", () => {
         query.data = undefined; query.error = new Error("소유자 권한이 필요합니다");

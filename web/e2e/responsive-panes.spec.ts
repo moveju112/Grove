@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import type { Layout } from "../app/state/layout";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { activateMobileTab, apiCall, closeMobileSidebar, ensureProfile, ensureProjects, login, openSettings, script } from "./helpers";
 
 async function setup(page: Page) {
     const { a } = await ensureProjects();
@@ -35,11 +35,11 @@ async function setup(page: Page) {
     await page.addInitScript((id) => localStorage.setItem("grove.device.id", id), device);
     await login(page);
     await expect(page.locator('[data-leaf="reading"]:visible').getByLabel("메시지 입력")).toBeEnabled();
-    return { session, title, profile };
+    return { session, title, profile, project: a };
 }
 
 test("폭·가로세로·키보드 높이 전환 뒤에도 배치별 입력 DOM·선택·읽던 메시지를 보존한다", async ({ page }) => {
-    await setup(page);
+    const { title, project } = await setup(page);
     const wide = page.locator('[data-layout-mode="wide"]');
     const reading = wide.locator('[data-leaf="reading"]');
     const writing = wide.locator('[data-leaf="writing"]');
@@ -47,7 +47,7 @@ test("폭·가로세로·키보드 높이 전환 뒤에도 배치별 입력 DOM�
     await writing.getByLabel("메시지 입력").fill("wide writing draft");
     await writing.getByLabel("메시지 입력").evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(2, 7));
     const input = await writing.getByLabel("메시지 입력").elementHandle();
-    const body = reading.locator(".pane-body");
+    const body = reading.getByTestId("pane-body");
     await reading.getByRole("feed").focus();
     await page.keyboard.press("Home");
     // 폭 변화로 짧아져도 같은 메시지의 읽던 부분이 viewport 안에 남는 위치를 사용한다.
@@ -69,15 +69,15 @@ test("폭·가로세로·키보드 높이 전환 뒤에도 배치별 입력 DOM�
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(1);
     expect(await input!.evaluate((node) => node.isConnected)).toBe(true);
-    await page.getByRole("button", { name: "사이드바", exact: true }).click();
+    await closeMobileSidebar(page);
     const narrowInput = page.locator('[data-leaf="reading"]:visible').getByLabel("메시지 입력");
     await expect(narrowInput).toBeVisible();
     await narrowInput.fill("narrow reading draft");
     const narrow = await narrowInput.elementHandle();
-    await page.getByRole("navigation", { name: "pane 전환" }).getByRole("button", { name: "영역 2" }).click();
+    await activateMobileTab(page, project.name);
     await page.locator('[data-leaf="writing"]:visible').getByLabel("메시지 입력").fill("narrow writing draft");
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(1);
-    await page.getByRole("navigation", { name: "pane 전환" }).getByRole("button", { name: "영역 1" }).click();
+    await activateMobileTab(page, title);
     await expect(narrowInput).toHaveValue("narrow reading draft");
     expect(await narrow!.evaluate((node) => node.isConnected)).toBe(true);
     await narrowInput.evaluate((node: HTMLTextAreaElement) => node.setSelectionRange(1, 6));
@@ -90,8 +90,8 @@ test("폭·가로세로·키보드 높이 전환 뒤에도 배치별 입력 DOM�
     await expect(writing.getByLabel("메시지 입력")).toHaveValue("wide writing draft");
     expect(await input!.evaluate((node: HTMLTextAreaElement) => ({ connected: node.isConnected, start: node.selectionStart, end: node.selectionEnd })))
         .toEqual({ connected: true, start: 2, end: 7 });
-    await expect.poll(async () => Math.abs(await anchor.evaluate((node) => node.getBoundingClientRect().top - node.closest(".pane-body")!.getBoundingClientRect().top) - before.offset)).toBeLessThan(3);
-    await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "60");
+    await expect.poll(async () => Math.abs(await anchor.evaluate((node) => node.getBoundingClientRect().top - node.closest('[data-testid="pane-body"]')!.getBoundingClientRect().top) - before.offset)).toBeLessThan(3);
+    await expect(page.getByRole("separator").and(page.locator("[aria-valuenow]"))).toHaveAttribute("aria-valuenow", "60");
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(narrowInput).toBeVisible();
     expect(await narrow!.evaluate((node: HTMLTextAreaElement) => ({ connected: node.isConnected, start: node.selectionStart, end: node.selectionEnd, value: node.value })))
@@ -99,7 +99,7 @@ test("폭·가로세로·키보드 높이 전환 뒤에도 배치별 입력 DOM�
 });
 
 test("숨긴 배치의 승인 대기는 유지하고 그동안 도착한 메시지는 읽음 처리하지 않는다", async ({ page }) => {
-    const { session, title, profile } = await setup(page);
+    const { session, title, profile, project } = await setup(page);
     await script({ marker: title, frames: frames.tool("responsive-shell", "shell", { command: "printf 'responsive fixture\\n'" }) });
     const accepted = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`,
         { text: title, profile_id: profile, tools: true });
@@ -107,8 +107,8 @@ test("숨긴 배치의 승인 대기는 유지하고 그동안 도착한 메시�
     await expect(view.getByTestId("approval")).toBeVisible();
     await page.clock.install();
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: "사이드바", exact: true }).click();
-    await page.getByRole("navigation", { name: "pane 전환" }).getByRole("button", { name: "영역 2" }).click();
+    await closeMobileSidebar(page);
+    await activateMobileTab(page, project.name);
     const touches: number[] = [];
     page.on("request", (request) => {
         if (request.method() !== "POST" || !request.url().endsWith("/recent/touch")) return;
@@ -131,7 +131,7 @@ test("숨긴 배치의 승인 대기는 유지하고 그동안 도착한 메시�
     await expect(page.locator('[data-leaf="reading"]').getByTestId("msg-assistant").filter({ hasText: "completed after responsive fixture" }).first()).toHaveCount(1);
     await page.clock.runFor(500);
     expect(touches.filter((seq) => seq >= final.last_message_seq)).toEqual([]);
-    await page.getByRole("navigation", { name: "pane 전환" }).getByRole("button", { name: "영역 1" }).click();
+    await activateMobileTab(page, title);
     const turns = await apiCall<unknown[]>("GET", `/sessions/${session.id}/turns?limit=5`);
     expect(turns).toHaveLength(1);
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "completed after responsive fixture" })).toHaveCount(1);
@@ -139,15 +139,15 @@ test("숨긴 배치의 승인 대기는 유지하고 그동안 도착한 메시�
 
 test("로그아웃은 숨긴 배치까지 폐기하고 늦은 저장이 기기 사본을 다시 만들지 않는다", async ({ page }) => {
     await setup(page);
-    await page.getByRole("separator").press("ArrowRight");
+    await page.getByRole("separator").and(page.locator("[aria-valuenow]")).press("ArrowRight");
     await page.locator('[data-layout-mode="wide"] [data-leaf="writing"]').getByLabel("메시지 입력").fill("private wide draft");
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(1);
-    await page.getByRole("button", { name: "사이드바", exact: true }).click();
+    await closeMobileSidebar(page);
     await page.locator('[data-layout-mode="narrow"] [data-leaf="reading"]').getByLabel("메시지 입력").fill("private narrow draft");
     const wideInput = await page.locator('[data-layout-mode="wide"] [data-leaf="writing"]').getByLabel("메시지 입력").elementHandle();
     const narrowInput = await page.locator('[data-layout-mode="narrow"] [data-leaf="reading"]').getByLabel("메시지 입력").elementHandle();
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").fill("로그아웃");
     await page.getByRole("button", { name: "이 브라우저에서 로그아웃" }).click();
     await expect(page.getByRole("form", { name: "로그인" })).toBeVisible();
@@ -156,5 +156,5 @@ test("로그아웃은 숨긴 배치까지 폐기하고 늦은 저장이 기기 �
     await page.clock.install();
     await page.clock.runFor(1000);
     expect(await page.evaluate(() => Object.keys(localStorage).filter((key) => /^grove\.(draft|layout)\./.test(key)))).toEqual([]);
-    await expect(page.locator(".split-root")).toHaveCount(0);
+    await expect(page.locator('[data-layout-mode]')).toHaveCount(0);
 });

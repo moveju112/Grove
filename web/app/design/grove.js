@@ -302,6 +302,18 @@ export const groveTheme = {
         "fontFamily": "var(--font-family-heading)",
         "fontSize": "var(--text-display-3-size)",
         "lineHeight": "var(--text-display-3-leading)"
+      },
+      "type:panel": {
+        "fontSize": "14px",
+        "fontWeight": "500",
+        "lineHeight": "20px",
+        "margin": "0"
+      },
+      "type:navigation": {
+        "fontSize": "12px",
+        "fontWeight": "500",
+        "lineHeight": "18px",
+        "margin": "0"
       }
     },
     "text": {
@@ -345,6 +357,9 @@ export const groveTheme = {
         "fontSize": "var(--text-display-3-size)",
         "lineHeight": "var(--text-display-3-leading)"
       },
+      "color:brand": {
+        "color": "var(--brand)"
+      },
       "color:error": {
         "color": "var(--err)"
       },
@@ -376,6 +391,154 @@ export const groveTheme = {
       "variant:destructive": {
         "backgroundColor": "var(--color-error-muted)",
         "color": "var(--color-on-error-muted)"
+      },
+      "base": {
+        "fontSize": "13px",
+        "fontWeight": "400"
+      },
+      "size:lg": {
+        "minHeight": "44px"
+      },
+      "variant:inline-link": {
+        "backgroundColor": "transparent",
+        "borderColor": "transparent",
+        "color": "var(--text)",
+        "boxShadow": "none",
+        "textAlign": "start",
+        ":hover": {
+          "backgroundColor": "var(--hover)"
+        },
+        "padding": "0",
+        "minHeight": "28px",
+        "height": "auto"
+      },
+      "variant:navigation": {
+        "backgroundColor": "transparent",
+        "borderColor": "transparent",
+        "color": "var(--text)",
+        "boxShadow": "none",
+        "textAlign": "start",
+        ":hover": {
+          "backgroundColor": "var(--hover)"
+        },
+        "width": "100%",
+        "height": "32px",
+        "minHeight": "32px",
+        "padding": "0 var(--spacing-2)",
+        "fontSize": "12px",
+        "lineHeight": "18px",
+        "justifyContent": "flex-start",
+        "borderRadius": "var(--radius-element)",
+        ":is([aria-current=\"page\"])": {
+          "backgroundColor": "var(--sel)",
+          "color": "var(--text)"
+        }
+      },
+      "variant:navigation+size:lg": {
+        "minHeight": "40px",
+        "height": "40px",
+        "fontSize": "var(--font-size)"
+      },
+      "variant:choice+size:lg": {
+        "minWidth": "44px",
+        "minHeight": "44px",
+        "height": "44px"
+      },
+      "variant:icon": {
+        "backgroundColor": "transparent",
+        "borderColor": "transparent",
+        "color": "var(--muted)",
+        "boxShadow": "none",
+        "textAlign": "start",
+        ":hover": {
+          "backgroundColor": "var(--hover)"
+        },
+        "width": "32px",
+        "height": "32px",
+        "minWidth": "32px",
+        "minHeight": "32px",
+        "padding": "0",
+        ":is([aria-pressed=\"true\"])": {
+          "backgroundColor": "var(--sel)",
+          "color": "var(--accent)"
+        }
+      },
+      "variant:send": {
+        "width": "36px",
+        "height": "36px",
+        "minWidth": "36px",
+        "minHeight": "36px",
+        "padding": "0",
+        "borderRadius": "50%",
+        "backgroundColor": "var(--text)",
+        "color": "var(--panel)"
+      },
+      "variant:choice": {
+        "backgroundColor": "transparent",
+        "borderColor": "transparent",
+        "color": "var(--muted)",
+        "boxShadow": "none",
+        "textAlign": "start",
+        ":hover": {
+          "backgroundColor": "var(--hover)"
+        },
+        "padding": "0 var(--spacing-2)",
+        "minHeight": "32px",
+        "height": "32px",
+        "fontSize": "12px",
+        ":is([aria-pressed=\"true\"])": {
+          "backgroundColor": "var(--sel)",
+          "color": "var(--text)"
+        }
+      },
+      "variant:settings-menu": {
+        "backgroundColor": "transparent",
+        "borderColor": "transparent",
+        "color": "var(--text)",
+        "boxShadow": "none",
+        "textAlign": "start",
+        ":hover": {
+          "backgroundColor": "var(--hover)"
+        },
+        "minHeight": "36px",
+        "height": "auto",
+        "padding": "var(--spacing-2) var(--spacing-3)",
+        "fontSize": "13px",
+        "justifyContent": "flex-start",
+        ":is([aria-current=\"page\"])": {
+          "backgroundColor": "var(--sel)",
+          "color": "var(--text)"
+        }
+      },
+      "variant:menu": {
+        "backgroundColor": "transparent",
+        "borderColor": "transparent",
+        "color": "var(--muted)",
+        "boxShadow": "none",
+        "textAlign": "start",
+        ":hover": {
+          "backgroundColor": "var(--hover)"
+        },
+        "minWidth": "32px",
+        "minHeight": "32px",
+        "height": "32px",
+        "padding": "0 var(--spacing-2)"
+      },
+      "variant:disclosure": {
+        "backgroundColor": "transparent",
+        "borderColor": "transparent",
+        "color": "var(--text)",
+        "boxShadow": "none",
+        "textAlign": "start",
+        ":hover": {
+          "backgroundColor": "var(--hover)"
+        },
+        "minHeight": "32px",
+        "height": "auto",
+        "maxWidth": "100%",
+        "padding": "0",
+        "fontSize": "12px",
+        "justifyContent": "flex-start"
       }
     },
     "badge": {
@@ -459,11 +622,69 @@ export const groveTheme = {
     "card": {
       "base": {
         "padding": "var(--spacing-3)"
+      },
+      "variant:orange": {
+        "backgroundColor": "var(--warn-weak)",
+        "color": "var(--text)"
+      },
+      "variant:yellow": {
+        "backgroundColor": "var(--warn-weak)",
+        "color": "var(--text)"
+      },
+      "variant:red": {
+        "backgroundColor": "var(--err-weak)",
+        "color": "var(--text)"
       }
     },
     "section": {
       "base": {
         "padding": "var(--spacing-3)"
+      }
+    },
+    "drawer": {
+      "base": {
+        "transitionDuration": "280ms",
+        "transitionTimingFunction": "var(--motion-ease)"
+      }
+    },
+    "icon": {
+      "size:xsm": {
+        "width": "12px",
+        "height": "12px"
+      },
+      "size:sm": {
+        "width": "16px",
+        "height": "16px"
+      },
+      "size:md": {
+        "width": "18px",
+        "height": "18px"
+      },
+      "size:lg": {
+        "width": "24px",
+        "height": "24px"
+      }
+    },
+    "chat-message": {
+      "base": {
+        "fontSize": "var(--font-size)",
+        "lineHeight": "1.5"
+      }
+    },
+    "chat-message-bubble": {
+      "sender:user": {
+        "backgroundColor": "var(--bubble)",
+        "color": "var(--text)",
+        "borderRadius": "16px 16px 4px 16px",
+        "padding": "var(--spacing-2) var(--spacing-3)"
+      }
+    },
+    "list-item": {
+      "base": {
+        ":has(button[data-variant=\"navigation\"])": {
+          "paddingBlock": "0",
+          "minHeight": "32px"
+        }
       }
     }
   },

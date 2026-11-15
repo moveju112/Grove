@@ -1,3 +1,5 @@
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useEffect, useState } from "react";
@@ -11,6 +13,7 @@ import { Icon } from "./icons";
 import { DetailDialog } from "./ui/Controls";
 import { BooleanSelect } from "./BooleanSelect";
 import { TextInput } from "../design/Fields";
+import { Select } from "../design/Select";
 
 type Hit = { id: string; title: string; project_id: string; project_name: string; updated_at: string; snippet: string | null; match_seq: number | null; archived_at: string | null; source?: { message_id: string; role: string; seq: number } };
 type Project = { id: string; name: string };
@@ -68,37 +71,32 @@ export function SearchPanel({ open }: { open: Opener }) {
     };
 
     return (
-        <DetailDialog className="search" data-testid="search-panel" label="대화 검색" title={<><Icon name="search" size={16} />대화 검색</>}>
-            {supported !== false && <select aria-label="검색 방식" value={recall ? "recall" : "sessions"} onChange={(e) => setRecall(e.target.value === "recall")}>
-                <option value="sessions">대화 검색</option><option value="recall">메시지 회상(키워드)</option>
-            </select>}
+        <DetailDialog data-testid="search-panel" label="대화 검색" appearance="navigation" showExpand={false} title={<><Icon name="search" size={16} />대화 검색</>}>
+            {supported !== false && <Select label="검색 방식" hideLabel value={recall ? "recall" : "sessions"}
+                onChange={(value) => setRecall(value === "recall")}
+                options={[{ value: "sessions", label: "대화 검색" }, { value: "recall", label: "메시지 회상(키워드)" }]} />}
             <TextInput type="search" label="대화 검색어" isLabelHidden placeholder={recall ? "과거 메시지의 키워드" : "제목·본문 검색"} value={q} onChange={setQ} />
-            <div className="inline wrap small">
+            <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                 {!recall && <BooleanSelect label="본문 포함" value={body} onChange={setBody} />}
                 {recall && <BooleanSelect label="보관된 대화·프로젝트 포함" value={archived} onChange={setArchived} />}
-                {!recall && <select aria-label="검색 상태" value={status} onChange={(e) => setStatus(e.target.value)}>
-                    {STATUS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-                </select>}
-                <select aria-label="검색 프로젝트" value={project} onChange={(e) => setProject(e.target.value)}>
-                    <option value="">모든 프로젝트</option>
-                    {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                </select>
-                <select aria-label="검색 기간" value={days} onChange={(e) => setDays(Number(e.target.value))}>
-                    <option value={0}>전체 기간</option>
-                    <option value={1}>1일</option>
-                    <option value={7}>7일</option>
-                    <option value={30}>30일</option>
-                </select>
-            </div>
+                {!recall && <Select label="검색 상태" hideLabel value={status} onChange={setStatus}
+                    options={STATUS.map(([value, label]) => ({ value, label }))} />}
+                <Select label="검색 프로젝트" hideLabel value={project} onChange={setProject}
+                    options={[{ value: "", label: "모든 프로젝트" },
+                        ...(projects.data ?? []).map((p) => ({ value: p.id, label: p.name }))]} />
+                <Select label="검색 기간" hideLabel value={String(days)} onChange={(value) => setDays(Number(value))}
+                    options={[{ value: "0", label: "전체 기간" }, { value: "1", label: "1일" },
+                        { value: "7", label: "7일" }, { value: "30", label: "30일" }]} />
+            </GroveStack>
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {res && (
                 <>
                     <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="search-total">{res.total}개</GroveText>
-                    <ul className="session-list">
+                    <GroveList density="compact" edge="flush" hasDividers>
                         {res.items.map((h) => (
-                            <li key={`${h.id}:${h.match_seq ?? "-"}`} data-testid="search-hit">
+                            <GroveListItem key={`${h.id}:${h.match_seq ?? "-"}`} data-testid="search-hit" label={
                                 <GroveButton
-                                    className="ghost"
+                                    variant="secondary"
                                     data-dialog-close
                                     onClick={() => {
                                         // 본문에서 찾았으면 그 메시지로 이동한다(UI-026).
@@ -108,15 +106,15 @@ export function SearchPanel({ open }: { open: Opener }) {
                                 >
                                     <strong>{h.title}</strong> <GroveText type="supporting" color="secondary">{h.project_name} · <When at={h.updated_at} />{h.archived_at ? " · 보관" : ""}</GroveText>
                                     {h.source && <GroveText type="supporting" color="secondary"> · {h.source.role} · 원문 #{h.source.seq}</GroveText>}
-                                    {h.snippet && <GroveText type="supporting" color="inherit" className="snippet"> {h.snippet}</GroveText>}
+                                    {h.snippet && <GroveText type="supporting" color="inherit"> {h.snippet}</GroveText>}
                                 </GroveButton>
-                            </li>
+                            } />
                         ))}
-                    </ul>
-                    {recall && <div className="inline small">
-                        <GroveButton type="button" className="ghost" disabled={!res.offset} onClick={() => page(Math.max(0, (res.offset ?? 0) - 30))}>이전 회상 결과</GroveButton>
-                        <GroveButton type="button" className="ghost" disabled={res.next_offset == null} onClick={() => res.next_offset != null && page(res.next_offset)}>다음 회상 결과</GroveButton>
-                    </div>}
+                    </GroveList>
+                    {recall && <GroveStack direction="horizontal" align="center" gap={1.5}>
+                        <GroveButton type="button" variant="secondary" disabled={!res.offset} onClick={() => page(Math.max(0, (res.offset ?? 0) - 30))}>이전 회상 결과</GroveButton>
+                        <GroveButton type="button" variant="secondary" disabled={res.next_offset == null} onClick={() => res.next_offset != null && page(res.next_offset)}>다음 회상 결과</GroveButton>
+                    </GroveStack>}
                 </>
             )}
         </DetailDialog>

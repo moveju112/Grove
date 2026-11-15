@@ -1,10 +1,15 @@
+import { StatusBadge } from "../design/StatusBadge";
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Avatar as AstryxAvatar } from "@astryxdesign/core/Avatar";
+import { botAvatarStyles } from "./bot-avatar.stylex";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useEffect, useState } from "react";
 import { ActionMenu } from "./ui/Controls";
 import { BooleanSelect } from "./BooleanSelect";
-import { TextInput, TextArea } from "../design/Fields";
+import { TextInput, TextArea, FileInput } from "../design/Fields";
+import { Select } from "../design/Select";
 import { ApiError, api } from "../api/client";
 import { useBotAvatar } from "../state/botAvatar";
 import type { ModelProfile } from "../api/generated";
@@ -12,6 +17,9 @@ import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
+import { BotRooms } from "./BotRooms";
+import { BotConnections } from "./BotConnections";
+import { useCapability } from "../state/capabilities";
 
 type Bot = {
     id: string;
@@ -47,13 +55,9 @@ const loadHidden = (): string[] => {
 
 function Avatar({ b }: { b: Bot }) {
     const src = useBotAvatar(b.id, b.avatar_sha256);
-    // 이미지를 못 받으면(삭제·네트워크) 기본형으로 보인다.
-    if (src) return <img className="avatar" src={src} alt="" aria-hidden data-testid="bot-avatar-image" />;
-    return (
-        <GroveText type="inherit" color="inherit" className="avatar" style={{ background: b.avatar_color, color: avatarInk(b.avatar_color) }} aria-hidden>
-            {[...b.name][0] ?? "?"}
-        </GroveText>
-    );
+    return <AstryxAvatar src={src ?? undefined} name={[...b.name][0] ?? "?"} size={24} tooltip={false}
+        aria-hidden="true" data-testid={src ? "bot-avatar-image" : "bot-avatar-fallback"}
+        xstyle={botAvatarStyles.custom(b.avatar_color, avatarInk(b.avatar_color))} />;
 }
 
 /// 기본형 아바타 글자색: 흰색과 거의 검은색 중 바탕과 대비가 큰 쪽(초록·주황 바탕의 흰 글자는 AA 미달).
@@ -76,13 +80,11 @@ function AvatarControl({ bot }: { bot: Bot }) {
         setErr(null);
         try { await fn(); } catch (e) { setErr(e instanceof ApiError ? e.message : "아바타 변경 실패"); } finally { setBusy(false); }
     };
-    return <GroveStack direction="horizontal" align="center" className="inline" role="group" aria-label="봇 아바타">
+    return <GroveStack direction="horizontal" align="center" gap={1.5} role="group" aria-label="봇 아바타">
         <Avatar b={bot} />
-        <label className="small">아바타 이미지
-            <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy || !!serverBlocked} title={serverBlocked ?? undefined} aria-label="아바타 이미지 선택"
-                onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = "";
+            <FileInput label="아바타 이미지 선택" accept="image/png,image/jpeg,image/gif,image/webp" isDisabled={busy || !!serverBlocked} disabledMessage={serverBlocked ?? undefined} value={null}
+                onChange={(files) => {
+                    const file = Array.isArray(files) ? files[0] : files;
                     if (!file) return;
                     void run(async () => {
                         if (file.size > 2 * 1024 * 1024) throw new ApiError(413, "too_large", "아바타 이미지는 2MiB 이하여야 합니다", false);
@@ -92,8 +94,7 @@ function AvatarControl({ bot }: { bot: Bot }) {
                         await api.put(`/bots/${bot.id}/avatar`, { data_base64: btoa(binary) });
                     });
                 }} />
-        </label>
-        {bot.avatar_sha256 && <ServerActionButton type="button" className="ghost small" disabled={busy} onClick={() => void run(() => api.del(`/bots/${bot.id}/avatar`))}>기본형으로</ServerActionButton>}
+        {bot.avatar_sha256 && <ServerActionButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => void run(() => api.del(`/bots/${bot.id}/avatar`))}>기본형으로</ServerActionButton>}
         {err && <GroveText type="supporting" color="error" role="alert">{err}</GroveText>}
     </GroveStack>;
 }
@@ -126,8 +127,7 @@ function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDo
         }
     };
     return (
-        <form
-            className="stack bot-editor"
+        <GroveStack as="form" gap={2}
             data-testid="bot-editor"
             onSubmit={(e) => {
                 e.preventDefault();
@@ -140,29 +140,33 @@ function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDo
             <TextInput label="봇 설명" isLabelHidden placeholder="설명" value={f.description} onChange={(value) => setF({ ...f, description: value })} />
             <TextArea label="persona" isLabelHidden placeholder="persona(말투·성격)" rows={2} value={f.persona} onChange={(value) => setF({ ...f, persona: value })} />
             <TextArea label="작업 지침" isLabelHidden placeholder="작업 지침" rows={2} value={f.instructions} onChange={(value) => setF({ ...f, instructions: value })} />
-            <select aria-label="봇 모델" value={f.profile_id} onChange={(e) => setF({ ...f, profile_id: e.target.value })}>
-                <option value="">모델 미설정(실행 불가)</option>
-                {(profiles.data ?? []).map((p) => <option key={p.id} value={p.id} disabled={p.enabled === false}>{p.name} · {p.model}{p.enabled === false ? " · 비활성" : ""}</option>)}
-            </select>
-            <select aria-label="봇 프로젝트" value={projectId} disabled={!!bot?.home_session_id} onChange={(e) => setF({ ...f, project_id: e.target.value })}>
-                {(projects.data ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-            </select>
+            <Select label="봇 모델" hideLabel value={f.profile_id} onChange={(value) => setF({ ...f, profile_id: value })}
+                options={[{ value: "", label: "모델 미설정(실행 불가)" }, ...(profiles.data ?? []).map((p) => ({
+                    value: p.id, label: `${p.name} · ${p.model}${p.enabled === false ? " · 비활성" : ""}`, disabled: p.enabled === false,
+                }))]} />
+            <Select label="봇 프로젝트" hideLabel value={projectId} disabled={!!bot?.home_session_id}
+                onChange={(value) => setF({ ...f, project_id: value })}
+                options={(projects.data ?? []).map((p) => ({ value: p.id, label: p.name }))} />
             <BooleanSelect label="대표 봇" value={f.featured} onChange={(value) => setF({ ...f, featured: value })} />
-            <GroveStack direction="horizontal" align="center" className="inline">
+            <GroveStack direction="horizontal" align="center" gap={1.5}>
                 <ServerActionButton type="submit" disabled={!f.name.trim() || !projectId}>{bot ? "저장" : "봇 만들기"}</ServerActionButton>
-                <GroveButton type="button" className="ghost" onClick={onDone}>닫기</GroveButton>
+                <GroveButton type="button" variant="secondary" onClick={onDone}>닫기</GroveButton>
             </GroveStack>
-        </form>
+        </GroveStack>
     );
 }
 
 /// 봇 목록: 위임 역할과 별개로, 사용자가 직접 대화하는 상대.
 export function BotsPanel({ open }: { open: Opener }) {
+    const roomsSupported = useCapability("bot_rooms_v1");
+    const connectionsSupported = useCapability("bot_connections_v1");
     const q = useQuery<{ bots: Bot[]; order_revision: number }>("bots", () => api.get("/bots"));
     const [hidden, setHidden] = useState<string[]>(loadHidden);
     const [showHidden, setShowHidden] = useState(false);
     const [showDeleted, setShowDeleted] = useState(false);
     const [editing, setEditing] = useState<Bot | "new" | null>(null);
+    const [creatingRoom, setCreatingRoom] = useState(false);
+    const [connections, setConnections] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
     const all = q.data?.bots ?? [];
     const act = async (f: () => Promise<unknown>) => {
@@ -194,51 +198,60 @@ export function BotsPanel({ open }: { open: Opener }) {
         void act(() => api.post("/bots/order", { expected_revision: q.data?.order_revision ?? 0, ids }));
     };
     return (
-        <section className="bots" data-testid="bots-panel">
-            <GroveButton className="ghost small" onClick={() => setEditing("new")}>봇 만들기</GroveButton>
+        <GroveStack as="section" gap={3} data-testid="bots-panel">
+            <ActionMenu label="봇 작업">
+                <GroveButton variant="secondary" density="compact" onClick={() => setEditing("new")}>봇 만들기</GroveButton>
+                {roomsSupported !== false && <GroveButton variant="secondary" density="compact" onClick={() => setCreatingRoom(true)}>그룹 만들기</GroveButton>}
+            </ActionMenu>
+            {roomsSupported !== false && <BotRooms bots={all} creating={creatingRoom} onDone={() => setCreatingRoom(false)} open={open} />}
+            {connectionsSupported !== false && connections && <GroveStack gap={2}>
+                <BotConnections key={connections} botId={connections} />
+                <GroveButton variant="secondary" density="compact" onClick={() => setConnections(null)}>연결 설정 닫기</GroveButton>
+            </GroveStack>}
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {editing && <Editor bot={editing === "new" ? null : editing}
                 live={editing === "new" ? null : (q.data?.bots.find((x) => x.id === editing.id) ?? null)} onDone={() => { setEditing(null); q.reload(); }} />}
-            <ul className="session-list">
+            <GroveList density="compact" edge="flush" hasDividers>
                 {visible.map((b, i) => (
-                    <li key={b.id} data-testid="bot" data-status={b.status}>
-                        <ServerActionButton className="ghost bot-open" disabled={b.status === "deleted"} onClick={() => void enter(b)}>
+                    <GroveListItem key={b.id} data-testid="bot" data-status={b.status} label={<>
+                        <ServerActionButton appearance="navigation" disabled={b.status === "deleted"} onClick={() => void enter(b)}>
                             <Avatar b={b} />
                             <GroveText type="inherit" color="inherit">
                                 {b.featured && <GroveText type="inherit" color="inherit" aria-label="대표">★ </GroveText>}
                                 {b.name}
-                                {b.unread && <span className="dot" aria-label="읽지 않음" data-testid="bot-unread" />}
+                                {b.unread && <GroveText type="supporting" color="secondary" aria-label="읽지 않음" data-testid="bot-unread">●</GroveText>}
                             </GroveText>
-                            {b.home_status === "running" && <GroveText type="inherit" color="inherit" className="status running">실행 중</GroveText>}
-                            {b.home_status === "awaiting_approval" && <GroveText type="inherit" color="inherit" className="status awaiting_approval">승인 대기</GroveText>}
-                            {b.home_status === "awaiting_input" && <GroveText type="inherit" color="inherit" className="status awaiting_input">답변 대기</GroveText>}
-                            {b.status === "disabled" && <GroveText type="inherit" color="inherit" className="status">비활성</GroveText>}
+                            {b.home_status === "running" && <StatusBadge status="running">실행 중</StatusBadge>}
+                            {b.home_status === "awaiting_approval" && <StatusBadge status="awaiting_approval">승인 대기</StatusBadge>}
+                            {b.home_status === "awaiting_input" && <StatusBadge status="awaiting_input">답변 대기</StatusBadge>}
+                            {b.status === "disabled" && <StatusBadge>비활성</StatusBadge>}
                             {b.model_state !== "ok" && b.status !== "deleted" &&
                                 <GroveText type="supporting" color="secondary">{MODEL_STATE[b.model_state]}</GroveText>}
                         </ServerActionButton>
-                        <ActionMenu className="bot-actions" label={`${b.name} 관리`}>
-                            {b.status !== "deleted" && <GroveButton className="ghost small" onClick={() => setEditing(b)}>편집</GroveButton>}
-                            {b.status !== "deleted" && <ServerActionButton className="ghost small" onClick={() => void enter(b, "right")}>오른쪽에 열기</ServerActionButton>}
-                            {b.status !== "deleted" && <ServerActionButton className="ghost small" onClick={() => void enter(b, "down")}>아래에 열기</ServerActionButton>}
-                            {i > 0 && !showDeleted && <ServerActionButton className="ghost small" onClick={() => moveUp(i)}>위로</ServerActionButton>}
-                            <GroveButton className="ghost small" onClick={() => toggleHide(b.id)}>{hidden.includes(b.id) ? "이 기기에서 보이기" : "이 기기에서 숨기기"}</GroveButton>
-                            {b.status === "active" && <ServerActionButton className="ghost small" onClick={() => void status(b, "disable")}>비활성화</ServerActionButton>}
-                            {b.status === "disabled" && <ServerActionButton className="ghost small" onClick={() => void status(b, "enable")}>다시 켜기</ServerActionButton>}
+                        <ActionMenu label={`${b.name} 관리`}>
+                            {connectionsSupported !== false && b.status !== "deleted" && <GroveButton variant="secondary" density="compact" onClick={() => setConnections(b.id)}>외부 연결</GroveButton>}
+                            {b.status !== "deleted" && <GroveButton variant="secondary" density="compact" onClick={() => setEditing(b)}>편집</GroveButton>}
+                            {b.status !== "deleted" && <ServerActionButton variant="secondary" density="compact" onClick={() => void enter(b, "right")}>오른쪽에 열기</ServerActionButton>}
+                            {b.status !== "deleted" && <ServerActionButton variant="secondary" density="compact" onClick={() => void enter(b, "down")}>아래에 열기</ServerActionButton>}
+                            {i > 0 && !showDeleted && <ServerActionButton variant="secondary" density="compact" onClick={() => moveUp(i)}>위로</ServerActionButton>}
+                            <GroveButton variant="secondary" density="compact" onClick={() => toggleHide(b.id)}>{hidden.includes(b.id) ? "이 기기에서 보이기" : "이 기기에서 숨기기"}</GroveButton>
+                            {b.status === "active" && <ServerActionButton variant="secondary" density="compact" onClick={() => void status(b, "disable")}>비활성화</ServerActionButton>}
+                            {b.status === "disabled" && <ServerActionButton variant="secondary" density="compact" onClick={() => void status(b, "enable")}>다시 켜기</ServerActionButton>}
                             {b.status !== "deleted" && b.home_session_id && (
-                                <ServerActionButton className="ghost small" onClick={() => { if (confirm(`'${b.name}' 대화를 보관하고 새로 시작할까요?`)) void status(b, "reset"); }}>대화 초기화</ServerActionButton>
+                                <ServerActionButton variant="secondary" density="compact" onClick={() => { if (confirm(`'${b.name}' 대화를 보관하고 새로 시작할까요?`)) void status(b, "reset"); }}>대화 초기화</ServerActionButton>
                             )}
                             {b.status !== "deleted" && (
-                                <ServerActionButton className="ghost small danger" onClick={() => { if (confirm(`'${b.name}'을 삭제할까요? 대화는 보관되고 복원할 수 있습니다.`)) void status(b, "delete"); }}>삭제</ServerActionButton>
+                                <ServerActionButton variant="destructive" density="compact" onClick={() => { if (confirm(`'${b.name}'을 삭제할까요? 대화는 보관되고 복원할 수 있습니다.`)) void status(b, "delete"); }}>삭제</ServerActionButton>
                             )}
-                            {b.status === "deleted" && <ServerActionButton className="ghost small" onClick={() => void status(b, "restore")}>복원</ServerActionButton>}
+                            {b.status === "deleted" && <ServerActionButton variant="secondary" density="compact" onClick={() => void status(b, "restore")}>복원</ServerActionButton>}
                         </ActionMenu>
-                    </li>
+                    </>} />
                 ))}
-            </ul>
-            <div className="inline small">
+            </GroveList>
+            <GroveStack direction="horizontal" align="center" gap={1.5}>
                 {hidden.length > 0 && <BooleanSelect label="숨긴 봇 보기" value={showHidden} onChange={setShowHidden} />}
                 <BooleanSelect label="삭제된 봇" value={showDeleted} onChange={setShowDeleted} />
-            </div>
-        </section>
+            </GroveStack>
+        </GroveStack>
     );
 }

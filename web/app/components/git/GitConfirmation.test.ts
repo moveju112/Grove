@@ -20,7 +20,7 @@ function render(data = review) {
 describe("Git 명시적 확인", () => {
     it("discard 대상·요약·index 영향·untracked 보존과 취소를 보여 준다", () => {
         const html = render();
-        for (const text of ["<dialog", "aria-labelledby", "취소", "선택한 파일.txt", "index 변경도 버림",
+        for (const text of ["<dialog", 'aria-label="파일 변경 버리기 확인"', "취소", "선택한 파일.txt", "index 변경도 버림",
             "project-reviewed", "index·작업 트리", "untracked 파일은 삭제하지 않습니다", "확인하고 변경 버리기", "상태가 바뀌면 실행하지 않습니다"]) {
             expect(html).toContain(text);
         }

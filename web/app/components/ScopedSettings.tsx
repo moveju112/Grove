@@ -1,4 +1,5 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Grid } from "@astryxdesign/core/Grid";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Link } from "@astryxdesign/core/Link";
@@ -14,7 +15,8 @@ import { APPLIES, SCOPE_LABEL, SettingsResetButton } from "./SettingsReset";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { SettingLinkReady } from "./settings-links/reveal";
 import { SettingsGroup } from "./SettingsGroup";
-import { TextInput, TextArea } from "../design/Fields";
+import { TextInput, TextArea, DraftInput } from "../design/Fields";
+import { Select } from "../design/Select";
 
 export type SettingDef = {
     key: string;
@@ -44,18 +46,16 @@ function ProfileChoice({ d, value, disabled, edit }: { d: SettingDef; value: unk
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const id = String(value ?? "");
     const selected = profiles.data?.find((profile) => profile.id === id);
-    return <div className="setting-profile-choice">
-        <select aria-label={d.label} value={id} disabled={disabled || !profiles.data} onChange={(event) => edit(event.target.value)}>
-            <option value="">{d.key === "context.summary_profile" ? "요청에 쓰는 모델 사용" : "기기 선택 또는 첫 활성 모델"}</option>
-            {id && profiles.data && !selected && <option value={id} disabled>사용 불가 모델(삭제됐거나 접근 불가)</option>}
-            {(profiles.data ?? []).map((profile) => <option key={profile.id} value={profile.id} disabled={profile.enabled === false}>
-                {profile.name} · {profile.protocol} · {profile.model}{profile.enabled === false ? " · 비활성" : ""}
-            </option>)}
-        </select>
+    return <GroveStack gap={1} width={220} maxWidth="100%">
+        <Select label={d.label} hideLabel value={id} disabled={disabled || !profiles.data} onChange={edit}
+            options={[{ value: "", label: d.key === "context.summary_profile" ? "요청에 쓰는 모델 사용" : "기기 선택 또는 첫 활성 모델" },
+                ...(id && profiles.data && !selected ? [{ value: id, label: "사용 불가 모델(삭제됐거나 접근 불가)", disabled: true }] : []),
+                ...(profiles.data ?? []).map((profile) => ({ value: profile.id, disabled: profile.enabled === false,
+                    label: `${profile.name} · ${profile.protocol} · ${profile.model}${profile.enabled === false ? " · 비활성" : ""}` }))]} />
         {selected && <GroveText type="supporting" color="secondary"> 전송 대상: {selected.base_url || "서버 설치 CLI"} · {selected.model}</GroveText>}
         {id && profiles.data && (!selected || selected.enabled === false) && <GroveText as="p" display="block" type="supporting" color="warning" role="status">현재 모델을 사용할 수 없습니다. 다른 모델로 자동 전환하지 않습니다.</GroveText>}
-        {Boolean(profiles.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">모델 목록을 읽지 못했습니다. <GroveButton className="ghost small" onClick={profiles.reload}>다시 읽기</GroveButton></GroveText>}
-    </div>;
+        {Boolean(profiles.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">모델 목록을 읽지 못했습니다. <GroveButton variant="secondary" density="compact" onClick={profiles.reload}>다시 읽기</GroveButton></GroveText>}
+    </GroveStack>;
 }
 
 /// 연 위치(프로젝트·대화)를 정확히 가리키는 대상 정보. 탭을 열 때 고정되어 pane 전환으로 바뀌지 않는다(CONFIG-005, SETTINGS-024).
@@ -107,22 +107,21 @@ export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLin
         return it ? <Row key={d.key} d={d} it={it} t={target} reload={eff.reload} /> : null;
     };
     return (
-        <div className={`scoped${grouped ? " scoped-groups" : ""}`} ref={root}>
+        <Grid gap={grouped ? 4 : 0} ref={root}>
             {grouped ? Array.from(groups, ([title, definitions]) => <SettingsGroup key={title} title={title}
                 scope={[...new Set(definitions.map((definition) => scopeTarget(initialScope(definition, target), target)[1]))].join(" · ")}>
                 {definitions.map(renderRow)}
             </SettingsGroup>) : defs.map(renderRow)}
-            {resetDefs && <DetailDialog className="settings-area-reset" data-testid="settings-area-reset" label={`${area} 기본값 복원`} title={`${area} 기본값 복원`}>
+            {resetDefs && <DetailDialog data-testid="settings-area-reset" label={`${area} 기본값 복원`} title={`${area} 기본값 복원`}>
                 <GroveText as="p" display="block" type="supporting" color="secondary">고급 항목 포함. 모델 프로필·키·정의 파일은 유지됩니다.</GroveText>
-                <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
-                    <select aria-label="영역 복원 범위" value={resetScope} onChange={(event) => setResetScope(event.target.value)}>
-                        {scopes.map((scope) => <option key={scope} value={scope}>{SCOPE_LABEL[scope]}</option>)}
-                    </select>
+                <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+                    <Select label="영역 복원 범위" hideLabel value={resetScope} onChange={setResetScope}
+                        options={scopes.map((value) => ({ value, label: SCOPE_LABEL[value] }))} />
                     <SettingsResetButton key={resetScope} defs={resetDefs.filter((d) => d.scopes.includes(resetScope))}
                         target={target} scope={resetScope} scopeId={resetId} targetLabel={resetLabel} label="이 영역의 범위별 설정 복원" saved={eff.reload} />
                 </GroveStack>
             </DetailDialog>}
-        </div>
+        </Grid>
     );
 }
 
@@ -162,8 +161,8 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
     };
     const [, target] = scopeTarget(scope, t);
     return (
-        <section className="setting" data-testid={`setting-${d.key}`} data-setting-key={d.key}>
-            <div className="setting-heading">
+        <GroveStack as="section" gap={2} padding={3} data-testid={`setting-${d.key}`} data-setting-key={d.key}>
+            <GroveStack gap={1.5} direction="horizontal" align="center" wrap="wrap">
             <GroveHeading level={2} color="inherit">
                 {d.label} {d.advanced && <GroveText type="supporting" color="secondary">고급</GroveText>}{" "}
                 <Link type="supporting" color="secondary" href={`#setting-${encodeURIComponent(d.key)}`} tooltip="이 항목으로 바로 가는 링크" aria-label={`${d.label} 링크`}>#</Link>
@@ -172,24 +171,23 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
                 <SentenceText text={d.description} />
                 <GroveText type="inherit" color="inherit">실제 적용값: <code>{JSON.stringify(it.effective)}</code> ({SCOPE_LABEL[it.source]}) · 기본값 <code>{JSON.stringify(it.default)}</code></GroveText>
             </HelpTip>
-            </div>
-            <GroveStack direction="horizontal" align="center" wrap="wrap" className="inline wrap">
+            </GroveStack>
+            <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                 {scopes.length > 1 && (
-                    <select disabled={saving} aria-label={`${d.label} 적용 범위`} value={scope} onChange={(e) => { setScope(e.target.value); setDraft(undefined); setState({ kind: "idle" }); }}>
-                        {scopes.map((s) => <option key={s} value={s}>{SCOPE_LABEL[s]}</option>)}
-                    </select>
+                    <Select disabled={saving} label={`${d.label} 적용 범위`} hideLabel value={scope}
+                        onChange={(value) => { setScope(value); setDraft(undefined); setState({ kind: "idle" }); }}
+                        options={scopes.map((value) => ({ value, label: SCOPE_LABEL[value] }))} />
                 )}
-                <GroveText type="inherit" color="inherit" className="scope" data-settings-target={target}>대상: {target}</GroveText>
+                <GroveText type="supporting" color="secondary" data-settings-target={target}>대상: {target}</GroveText>
                 {d.kind === "bool" && (
                     <BooleanSelect label={d.label} hideLabel value={Boolean(value)} disabled={saving} onChange={edit} />
                 )}
                 {d.kind === "enum" && (
-                    <select disabled={saving} aria-label={d.label} value={String(value ?? "")} onChange={(e) => edit(e.target.value)}>
-                        {d.options.map((o) => <option key={o} value={o}>{ENUM_LABEL[d.key]?.[o] ?? o}</option>)}
-                    </select>
+                    <Select disabled={saving} label={d.label} hideLabel value={String(value ?? "")} onChange={edit}
+                        options={d.options.map((value) => ({ value, label: ENUM_LABEL[d.key]?.[value] ?? value }))} />
                 )}
                 {d.kind === "int" && (
-                    <input disabled={saving} type="number" aria-label={d.label} min={d.min ?? undefined} max={d.max ?? undefined} value={Number(value ?? 0)} onChange={(e) => edit(Number(e.target.value))} />
+                    <DraftInput isDisabled={saving} type="number" label={d.label} isLabelHidden min={d.min ?? undefined} max={d.max ?? undefined} value={String(Number(value ?? 0))} onChange={(value) => edit(Number(value))} />
                 )}
                 {PROFILE_KEYS.has(d.key) && <ProfileChoice d={d} value={value} disabled={saving} edit={edit} />}
                 {((d.kind === "string" && !PROFILE_KEYS.has(d.key)) || d.kind === "tool_list") && (
@@ -209,16 +207,17 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
             </GroveStack>
             {draft !== undefined && <GroveText as="p" display="block" type="supporting" color="secondary" data-settings-unsaved="true">저장 안 됨</GroveText>}
             {state.kind !== "idle" && (
-                <GroveText as="p" display="block" type="inherit" color="inherit" className={`save-state ${state.kind === "error" || state.kind === "conflict" ? "error" : ""}`} role="status">
+                <GroveText as="p" display="block" type="supporting" color={state.kind === "error" || state.kind === "conflict" ? "error" : "secondary"}
+                    data-settings-issue={state.kind === "error" || state.kind === "conflict" ? "error" : undefined} role="status">
                     {state.kind === "saving" ? "저장 중…" : state.kind === "saved" ? `저장됨 · ${state.msg}` : state.kind === "conflict" ? state.msg : `저장 실패(기존 값 유지): ${state.msg}`}
                 </GroveText>
             )}
             {state.kind === "conflict" && (
-                <div className="actions">
-                    <GroveButton className="ghost" onClick={() => { setDraft(undefined); setState({ kind: "idle" }); }}>최신 값 사용</GroveButton>
+                <GroveStack gap={2} direction="horizontal" align="center" wrap="wrap">
+                    <GroveButton variant="secondary" onClick={() => { setDraft(undefined); setState({ kind: "idle" }); }}>최신 값 사용</GroveButton>
                     {draft && <ServerActionButton onClick={() => void save(draft.value, layer?.revision ?? 0)}>내 수정으로 덮어쓰기</ServerActionButton>}
-                </div>
+                </GroveStack>
             )}
-        </section>
+        </GroveStack>
     );
 }

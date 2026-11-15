@@ -48,7 +48,7 @@ test.describe("모바일 암호화 페어링", () => {
         const dialog = page.getByRole("dialog", { name: "연결 비밀번호" });
         await dialog.getByLabel("비밀번호", { exact: true }).fill("same server test password");
         await dialog.getByRole("button", { name: "연결 요청", exact: true }).click();
-        await expect(page.locator(".pairing-code")).toBeVisible();
+        await expect(page.getByTestId("pairing-code")).toBeVisible();
         expect(page.url()).toBe(url);
     });
     test("일회용 등록·재접속·파일 미리보기·다운로드에서 티켓과 본문을 평문 전송하지 않는다", async ({ page }) => {
@@ -73,7 +73,7 @@ test.describe("모바일 암호화 페어링", () => {
         await page.getByRole("button", { name: "연결", exact: true }).click();
         await page.getByLabel("비밀번호", { exact: true }).fill(password);
         await page.getByRole("button", { name: "연결 요청", exact: true }).click();
-        const code = await page.locator(".pairing-code").innerText();
+        const code = await page.getByTestId("pairing-code").innerText();
         await expect.poll(async () => {
             const pairs = await apiCall<{ id: string; requests: { id: string; verification_code: string }[] }[]>("GET", "/pairings");
             return pairs.find((pair) => pair.id === pairing.id)?.requests.some((request) => request.verification_code === code);
@@ -90,7 +90,7 @@ test.describe("모바일 암호화 페어링", () => {
         await openProjectFiles(page);
         const files = page.getByTestId("files-view");
         await files.getByRole("button", { name: "encrypted.png", exact: true }).click();
-        const image = files.locator("img.preview");
+        const image = files.getByRole("img");
         await expect(image).toHaveAttribute("src", /^blob:/);
         await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1);
         const downloading = page.waitForEvent("download");

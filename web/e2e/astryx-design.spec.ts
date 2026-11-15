@@ -10,9 +10,9 @@ for (const width of [390, 1400]) {
                 const errors: string[] = [];
                 page.on("pageerror", (error) => errors.push(error.message));
                 await page.goto("/");
-                await expect(page.locator(".login-mark svg path")).toHaveCount(3);
-                await expect(page.locator(".login-mark svg path").first()).toHaveAttribute("d", "M12 21v-9");
-                await expect(page.locator(".login-mark")).toHaveCSS("color", theme === "dark" ? "rgb(95, 191, 138)" : "rgb(47, 125, 85)");
+                await expect(page.getByTestId("brand-mark").locator("svg path")).toHaveCount(3);
+                await expect(page.getByTestId("brand-mark").locator("svg path").first()).toHaveAttribute("d", "M12 21v-9");
+                await expect(page.getByTestId("brand-mark")).toHaveCSS("color", theme === "dark" ? "rgb(95, 191, 138)" : "rgb(47, 125, 85)");
                 const help = page.getByRole("button", { name: "보관 방식 도움말", exact: true });
                 await page.locator("html[data-hydrated=true]").waitFor({ state: "attached" });
                 await help.click();
@@ -26,13 +26,13 @@ for (const width of [390, 1400]) {
                 await login(page);
                 await page.evaluate(() => document.fonts.ready);
                 expect(await page.evaluate(() => [...document.fonts].some((font) => font.family === "Pretendard" && font.status === "loaded"))).toBe(true);
-                const home = page.locator(".home-recent");
+                const home = page.getByRole("region", { name: "홈 최근", exact: true });
                 await expect(home.getByRole("heading", { name: "최근" })).toBeVisible();
                 expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
                 await page.screenshot({ path: info.outputPath("home.png"), fullPage: true });
                 const item = home.getByTestId("home-recent-item").filter({ hasText: title });
                 await item.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-                await item.getByRole("button", { name: "고정", exact: true }).click();
+                await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "고정", exact: true }).click();
                 await expect(item.getByRole("button", { name: "최근 항목 관리", exact: true })).toHaveAttribute("aria-expanded", "false");
                 await home.getByRole("button", { name: new RegExp(title) }).click();
                 const view = page.getByTestId("session-view");
@@ -41,8 +41,8 @@ for (const width of [390, 1400]) {
                 await view.getByRole("button", { name: "보내기", exact: true }).click();
                 await expect(view.getByTestId("msg-user")).toContainText("기존 대화 입력과 저장");
                 // 도구 탭은 열기 전까지 화면 높이를 차지하지 않는다.
-                await expect(view.locator(".tool-dock")).toBeHidden();
-                await expect(view.locator(".view-head").getByRole("button", { name: "도구 패널", exact: true })).toBeVisible();
+                await expect(view.getByTestId("tool-dock")).toBeHidden();
+                await expect(view.getByRole("button", { name: "도구 패널", exact: true })).toBeVisible();
                 await page.screenshot({ path: info.outputPath("conversation.png"), fullPage: true });
                 await openSettings(page);
                 await page.getByRole("button", { name: "화면·입력", exact: true }).click();

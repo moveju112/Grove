@@ -1,3 +1,9 @@
+import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { FileInput } from "../design/Fields";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { contentStyles } from "../design/content.stylex";
+import * as stylex from "@stylexjs/stylex";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
@@ -79,36 +85,43 @@ export function useAttachments(draftKey: string, projectId: string, initial?: At
         ids: items.flatMap((i) => i.attachment ? [i.attachment.id] : []), ready: items.every((i) => !!i.attachment) };
 }
 
-export function AttachmentPicker({ draft, disabled }: { draft: ReturnType<typeof useAttachments>; disabled: boolean }) {
+export function AttachmentPicker({ draft, disabled, onIssue }: { draft: ReturnType<typeof useAttachments>; disabled: boolean; onIssue: (issue: string | null) => void }) {
     const input = useRef<HTMLInputElement>(null);
-    const [supportError, setSupportError] = useState<string | null>(null);
-    return <div className="attachment-picker">
-        <input ref={input} type="file" multiple aria-label="첨부파일 선택" hidden disabled={disabled || draft.busy} onChange={(e) => { void draft.add(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-        <GroveButton className="ghost icon-btn" aria-label="파일 첨부" title="파일 첨부 · 최대 8개, 파일당 4MiB, 전체 8MiB · 미전송 파일은 24시간 뒤 만료" disabled={disabled || draft.busy} onClick={() => {
+    return <GroveStack direction="horizontal" align="center" gap={0} width={32} data-testid="attachment-picker">
+        <GroveStack hidden><FileInput ref={input} isMultiple label="첨부파일 선택" isLabelHidden
+            isDisabled={disabled || draft.busy} value={null}
+            onChange={(files) => { if (files) void draft.add(Array.isArray(files) ? files : [files]); }} /></GroveStack>
+        <GroveButton variant="secondary" appearance="icon" aria-label="파일 첨부" title="파일 첨부 · 최대 8개, 파일당 4MiB, 전체 8MiB · 미전송 파일은 24시간 뒤 만료" disabled={disabled || draft.busy} onClick={() => {
             const issue = attachmentIssue();
-            setSupportError(issue);
+            onIssue(issue);
             if (!issue) {
                 try { input.current?.click(); }
-                catch { setSupportError("파일 선택 창을 열지 못했습니다. 브라우저 설정을 확인하거나 파일 내용을 메시지에 붙여 넣으세요."); }
+                catch { onIssue("파일 선택 창을 열지 못했습니다. 브라우저 설정을 확인하거나 파일 내용을 메시지에 붙여 넣으세요."); }
             }
         }}><Icon name="attachment" /></GroveButton>
-        {supportError && <div className="warn small" role="status">{supportError}</div>}
-        {draft.error && <div role="alert">{draft.error}</div>}
-        <ul className="attachment-list" aria-label="선택한 첨부파일">
-            {draft.items.map((i) => <li key={i.key}>
+    </GroveStack>;
+}
+
+export function AttachmentSelection({ draft, disabled }: { draft: ReturnType<typeof useAttachments>; disabled: boolean }) {
+    if (!draft.items.length && !draft.error) return null;
+    return <GroveStack gap={1} data-testid="attachment-selection">
+        {draft.error && <GroveText as="div" display="block" type="inherit" color="error" role="alert">{draft.error}</GroveText>}
+        <List density="compact" edge="flush" aria-label="선택한 첨부파일">
+            {draft.items.map((i) => <ListItem key={i.key} label={<>
                 {i.attachment ? <AttachmentCard attachment={i.attachment} compact /> : <GroveText type="inherit" color="inherit">{i.file?.name} · {draft.busy && !i.error ? "업로드 중…" : "업로드되지 않음"}</GroveText>}
                 {i.error && <><GroveText type="inherit" color="inherit" role="alert">{i.error}</GroveText><GroveButton disabled={disabled || draft.busy} onClick={() => void draft.retry(i)}>업로드 다시 시도</GroveButton></>}
-                <GroveButton className="ghost icon-btn" aria-label={`${i.attachment?.name ?? i.file?.name} 첨부 제거`} disabled={disabled || draft.busy} onClick={() => draft.remove(i.key)}><Icon name="close" size={14} /></GroveButton>
-            </li>)}
-        </ul>
-    </div>;
+                <GroveButton variant="secondary" appearance="icon" aria-label={`${i.attachment?.name ?? i.file?.name} 첨부 제거`} disabled={disabled || draft.busy} onClick={() => draft.remove(i.key)}><Icon name="close" size={14} /></GroveButton>
+            </>} />)}
+        </List>
+    </GroveStack>;
 }
 
 export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
-    return <ul className="attachment-list" aria-label="메시지 첨부파일">{attachments.map((a) => <li key={a.id}><AttachmentCard attachment={a} /></li>)}</ul>;
+    return <List density="compact" edge="flush" aria-label="메시지 첨부파일">{attachments.map((a) => <ListItem key={a.id} label={<AttachmentCard attachment={a} />} />)}</List>;
 }
 
 function AttachmentCard({ attachment: a, compact = false }: { attachment: Attachment; compact?: boolean }) {
+    const hintAnchor = useRef<HTMLDivElement>(null);
     const [preview, setPreview] = useState<{ url?: string; text?: string } | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -147,15 +160,15 @@ function AttachmentCard({ attachment: a, compact = false }: { attachment: Attach
     const hint = a.image ? `모델 입력 ${a.image.model_width}×${a.image.model_height} · 첫 프레임`
         : a.mime === "text/plain" ? "모델에는 앞 8192자까지 보냅니다" : "모델에는 파일명·크기 등 정보만 보냅니다";
     const actions = <>
-        {canPreview && <GroveButton className="ghost small" disabled={busy || !a.stored} onClick={() => preview ? closePreview() : void read(false)}>{preview ? "미리보기 닫기" : "미리보기"}</GroveButton>}
-        <GroveButton className="ghost small" disabled={busy || !a.stored} onClick={() => void read(true)}>원문 다운로드</GroveButton>
+        {canPreview && <GroveButton variant="secondary" density="compact" disabled={busy || !a.stored} onClick={() => preview ? closePreview() : void read(false)}>{preview ? "미리보기 닫기" : "미리보기"}</GroveButton>}
+        <GroveButton variant="secondary" density="compact" disabled={busy || !a.stored} onClick={() => void read(true)}>원문 다운로드</GroveButton>
     </>;
-    return <div className={`attachment-card${compact ? " compact" : ""}`} data-testid="attachment-card" title={hint}>
+    return <><GroveStack ref={hintAnchor} direction="horizontal" align="center" wrap="wrap" gap={1} maxWidth="100%" data-testid="attachment-card">
         <GroveText type="inherit" color="inherit">{a.name} · {(a.size / 1024).toFixed(1)}KiB{a.image ? ` · ${a.image.width}×${a.image.height}` : ""}</GroveText>
         {!a.stored && <GroveText type="inherit" color="inherit" role="alert">원문이 누락되었습니다</GroveText>}
-        {compact ? <ActionMenu label={`${a.name} 첨부 작업`}>{actions}</ActionMenu> : <div>{actions}</div>}
-        {error && <div role="alert">{error}</div>}
-        {preview?.url && <img className="attachment-preview" src={preview.url} alt={a.name} />}
-        {preview?.text !== undefined && <pre className="attachment-text">{preview.text}{a.size > 8192 ? "\n(앞부분만 표시)" : ""}</pre>}
-    </div>;
+        {compact ? <ActionMenu label={`${a.name} 첨부 작업`}>{actions}</ActionMenu> : <GroveStack direction="horizontal" gap={2}>{actions}</GroveStack>}
+        {error && <GroveText as="div" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
+        {preview?.url && <img {...stylex.props(contentStyles.attachmentImage)} src={preview.url} alt={a.name} />}
+        {preview?.text !== undefined && <pre {...stylex.props(contentStyles.attachmentText)} data-testid="attachment-text">{preview.text}{a.size > 8192 ? "\n(앞부분만 표시)" : ""}</pre>}
+    </GroveStack><Tooltip anchorRef={hintAnchor} content={hint} hasHoverIndication={false} touchTrigger="none" focusTrigger="never" /></>;
 }

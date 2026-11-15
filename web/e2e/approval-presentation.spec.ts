@@ -14,7 +14,7 @@ async function openApproval(page: Parameters<typeof login>[0]) {
     });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: `승인 표현 ${test.info().testId}` }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: `승인 표현 ${test.info().testId}` }).click();
     const card = sessionView(page, session.id).getByTestId("approval");
     await expect(card).toHaveAttribute("data-approval-id", call.id);
     return { card, call, path };

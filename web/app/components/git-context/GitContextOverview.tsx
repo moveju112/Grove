@@ -1,3 +1,4 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Table, TableHeader, TableBody, TableRow, TableHeaderCell, TableCell } from "@astryxdesign/core/Table";
@@ -43,8 +44,8 @@ export function GitContextOverview({ projectId, head, refreshSignal }: {
     const authority = data?.authority;
     const githubCurrent = data?.status === "ok" && github?.head === location?.head;
     return <section data-testid="git-context" aria-label="Git 위치와 실행 권한">
-        <GroveHeading level={3} color="inherit" className="small">Git 위치 · PR/CI · 실행 권한</GroveHeading>
-        <GroveButton className="ghost small" onClick={() => setRefresh((n) => n + 1)} disabled={!!unavailable}>개요 다시 확인</GroveButton>
+        <GroveHeading level={3} color="inherit">Git 위치 · PR/CI · 실행 권한</GroveHeading>
+        <GroveButton variant="secondary" density="compact" onClick={() => setRefresh((n) => n + 1)} disabled={!!unavailable}>개요 다시 확인</GroveButton>
         {unavailable ? <GroveText as="p" display="block" type="inherit" color="inherit" role="status">{unavailable}</GroveText> :
             !data ? <GroveText as="p" display="block" type="inherit" color="inherit" role="status">{result?.owner === owner && result.error ? result.error === "denied" ? "프로젝트 개요 접근 거부 또는 대상 접근 불가" : result.error === "missing" ? "서버 Git 실행 파일 없음" : contextLabel[result.error] : "Git 개요 확인 중…"}</GroveText> :
             data.status === "not_repo" ? <GroveText as="p" display="block" type="inherit" color="inherit">Git 저장소가 아닙니다.</GroveText> : <>
@@ -54,13 +55,13 @@ export function GitContextOverview({ projectId, head, refreshSignal }: {
                     <dt>HEAD</dt><dd><code>{location.head ?? "없음"}</code></dd>
                     <dt>프로젝트 / worktree</dt><dd>프로젝트 {projectId} · {location.worktree === "linked" ? "linked worktree" : "주 worktree"} · 프로젝트 상대 위치 <code>{location.project_relative_to_worktree ?? "확인 불가"}</code> · Git 등록 {location.git_registered ? "확인" : "확인 불가"} · 총 {location.worktree_count}개</dd>
                 </dl>}
-                {github && <div>
+                {github && <GroveStack gap={0}>
                     <GroveText as="p" display="block" type="supporting" color="inherit">GitHub {github.repository ?? "대상 없음"} · {github.remote} · 정확한 HEAD만 조회</GroveText>
                     <GroveText as="p" display="block" type="inherit" color="inherit">PR: {contextLabel[githubCurrent ? github.pr.status : "stale"] ?? contextLabel.unknown}
                         {githubCurrent && github.pr.status === "ok" && github.pr.items?.map((pr) => <GroveText type="inherit" color="inherit" key={pr.number}> · #{pr.number} {pr.state}{pr.draft ? " draft" : ""}</GroveText>)}</GroveText>
                     <GroveText as="p" display="block" type="inherit" color="inherit">CI: {contextLabel[githubCurrent ? github.ci.status : "stale"] ?? contextLabel.unknown}{githubCurrent && github.ci.count !== undefined && ` (${github.ci.count}개 check/status)`}</GroveText>
-                </div>}
-                {authority && <div>
+                </GroveStack>}
+                {authority && <GroveStack gap={0}>
                     <GroveText as="p" display="block" type="supporting" color="inherit">기기 권한: {authority.is_owner ? "소유자" : "인증된 기기"}</GroveText>
                     <GroveText as="p" display="block" type="supporting" color="inherit">모델 도구 정책: {authority.tool_mode} <HelpTip label="Git 실행 권한 도움말">
                         <SentenceText text="프로젝트 기준이며 대화별 정책은 별도입니다. read_only는 모델 도구만 제한하며 직접 Git 버튼의 권한은 아닙니다. 직접 Git API는 인증된 기기에 열려 있고, 실행 시 서버가 최종 판정합니다. 원격 쓰기 권한은 미확인이며 오프라인 제한은 별도입니다. 자동 fetch·로그인·PR 변경·CI 재실행은 하지 않습니다." />
@@ -69,7 +70,7 @@ export function GitContextOverview({ projectId, head, refreshSignal }: {
                     {data.status !== "stale" && <Table density="compact"><TableHeader><TableRow isHeaderRow><TableHeaderCell scope="col">작업</TableHeaderCell><TableHeaderCell scope="col">현재 제한</TableHeaderCell></TableRow></TableHeader><TableBody>
                         {authority.actions.map((action) => <TableRow key={action.id}><TableHeaderCell scope="row">{action.id}</TableHeaderCell><TableCell>{action.status === "blocked" ? "제한" : "실행 시 재검사"} · {action.reason}</TableCell></TableRow>)}
                     </TableBody></Table>}
-                </div>}
+                </GroveStack>}
                 <GroveText as="p" display="block" type="supporting" color="secondary">조회 시점 {data.observed_at}</GroveText>
             </>}
     </section>;

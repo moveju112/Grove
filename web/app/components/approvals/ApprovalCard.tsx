@@ -1,3 +1,5 @@
+import { Heading } from "@astryxdesign/core/Heading";
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { useEffect, useId, useRef, useState } from "react";
@@ -7,7 +9,8 @@ import {
     approvalExpired, approvalKey, displayText, effectLabels, projectApproval, record, sameApproval, statusLabels,
     type ApprovalDecision, type ApprovalEffect, type ApprovalFailure, type ApprovalIdentity, type ApprovalRequest,
 } from "./projection";
-import "./approval.css";
+import { Card } from "@astryxdesign/core/Card";
+import { KeyValues } from "../../design/KeyValues";
 
 export type ApprovalFeedback = ApprovalIdentity & (
     | { phase: "pending" }
@@ -110,32 +113,32 @@ function ApprovalCardInstance({ call, effect, choices, onDecision, feedback, onR
     };
 
     return (
-        <section className="approval approval-presentation" aria-labelledby={title} aria-describedby={statusId}
+        <Card variant="orange" padding={3} role="region" aria-labelledby={title} aria-describedby={statusId}
             aria-busy={pending} data-testid="approval" data-approval-id={call.id} data-revision={call.revision}>
-            <h3 id={title} tabIndex={-1} ref={heading}>{displayText(call.name, 80)} 승인 요청</h3>
-            <GroveText as="p" display="block" type="inherit" color="inherit" className="approval-presentation-identity">요청 <code>{displayText(call.id, 100)}</code> · revision {call.revision}</GroveText>
+            <GroveStack gap={2}>
+            <Heading level={3} id={title} tabIndex={-1} ref={heading}>{displayText(call.name, 80)} 승인 요청</Heading>
+            <GroveText as="p" display="block" type="supporting" color="secondary">요청 <code>{displayText(call.id, 100)}</code> · revision {call.revision}</GroveText>
             {call.expires_at && <GroveText as="p" display="block" type="inherit" color="inherit">승인 기한: <time dateTime={call.expires_at}>{Number.isFinite(Date.parse(call.expires_at)) ? new Date(call.expires_at).toLocaleString("ko-KR") : "기한 확인 불가"}</time></GroveText>}
-            <dl className="approval-presentation-target" data-testid="approval-target">
-                {projection.fields.map((field, index) => <div key={index}><dt>{field.label}</dt><dd><code>{field.value}</code></dd></div>)}
-            </dl>
+            <KeyValues data-testid="approval-target" items={projection.fields.map((field) => [field.label, <code>{field.value}</code>])} />
             <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="approval-effect"><strong>부작용 · {effectInfo?.label ?? "확인되지 않음"}</strong>: {effectInfo?.consequence ?? "서버의 도구 분류를 확인하기 전에는 승인할 수 없습니다."}</GroveText>
-            {projection.notices.map((notice) => <GroveText as="p" display="block" type="inherit" color="inherit" className="approval-presentation-note" key={notice}>{notice}</GroveText>)}
-            <div data-testid="approval-allowed-scope">
+            {projection.notices.map((notice) => <GroveText as="p" display="block" type="supporting" color="secondary" key={notice}>{notice}</GroveText>)}
+            <GroveStack gap={0} data-testid="approval-allowed-scope">
                 <GroveText as="p" display="block" type="inherit" color="inherit">허용 범위: 이번만 승인은 이 요청의 서버 계획 1회에만 적용됩니다.</GroveText>
                 {choices.includes("approve_session") && <GroveText as="p" display="block" type="inherit" color="inherit">이 대화에서 계속 허용: 이 대화의 <code>{displayText(call.name, 80)}</code> 도구 전체에 적용되며, 위 대상에만 한정되지 않습니다. 금지·읽기 전용 정책이 우선하며 대화 설정에서 해제할 수 있습니다.</GroveText>}
                 <GroveText as="p" display="block" type="inherit" color="inherit">거부하면 이 요청은 실행하지 않습니다. 승인 완료는 실행 성공을 뜻하지 않습니다.</GroveText>
-            </div>
+            </GroveStack>
             <GroveText as="p" display="block" type="inherit" color="inherit" id={statusId} role={failure || policyBlocked ? "alert" : "status"} aria-live={failure || policyBlocked ? "assertive" : "polite"} aria-atomic="true" data-testid="approval-status">
                 {policyBlocked ? "권한 또는 도구 정책으로 실행이 차단되었습니다." : status}
             </GroveText>
             {effective.approval_scope && <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="approval-scope">{effective.approval_scope === "once" ? "이번만 승인" : effective.approval_scope === "session" ? "이 대화에서 허용됨" : effective.approval_scope === "policy" ? "정책(tools.allow)으로 허용" : "허용 범위 확인 필요"}</GroveText>}
-            <div className="actions">
+            <GroveStack gap={2} direction="horizontal" align="center" wrap="wrap">
                 {choices.includes("approve") && <GroveButton disabled={disabled || !effect} onClick={() => submit("approve")}>이번만 승인</GroveButton>}
-                {choices.includes("approve_session") && <GroveButton className="ghost" disabled={disabled || !effect} onClick={() => submit("approve_session")}>이 대화에서 계속 허용</GroveButton>}
-                {choices.includes("deny") && <GroveButton ref={deny} className="ghost" disabled={disabled} onClick={() => submit("deny")}>거부</GroveButton>}
-                {onRefresh && (failure || expired || closed) && <GroveButton className="ghost" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "최신 상태 확인 중" : "최신 상태 확인"}</GroveButton>}
-            </div>
+                {choices.includes("approve_session") && <GroveButton variant="secondary" disabled={disabled || !effect} onClick={() => submit("approve_session")}>이 대화에서 계속 허용</GroveButton>}
+                {choices.includes("deny") && <GroveButton ref={deny} variant="secondary" disabled={disabled} onClick={() => submit("deny")}>거부</GroveButton>}
+                {onRefresh && (failure || expired || closed) && <GroveButton variant="secondary" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "최신 상태 확인 중" : "최신 상태 확인"}</GroveButton>}
+            </GroveStack>
             {refreshFailed && <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">최신 상태를 가져오지 못했습니다. 승인·실행 결과는 확정되지 않았습니다.</GroveText>}
-        </section>
+            </GroveStack>
+        </Card>
     );
 }

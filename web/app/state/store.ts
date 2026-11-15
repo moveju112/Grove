@@ -223,6 +223,8 @@ export function applyEvent(e: EventRecord) {
             if (sid) invalidate(`session:${sid}`);
             invalidate("recent");
             invalidate("search");
+            invalidate("bot-rooms");
+            if (sid) invalidate(`bot-room:${sid}`);
             // 대화 활동이 바뀌면 최근 활동 순 프로젝트 목록 순서도 바뀐다(PROJECT-002).
             invalidate("projects:recent");
             break;
@@ -233,11 +235,13 @@ export function applyEvent(e: EventRecord) {
             invalidate("recent");
             invalidate("search");
             invalidate("memories");
+            invalidate("bot-rooms");
             break;
         }
         case "project.created":
         case "project.updated":
             invalidate("projects");
+            invalidate("bot-rooms");
             // 워크스페이스 모드 등 프로젝트 화면·입력창이 쓰는 단건 조회도 갱신한다(다른 기기의 변경 포함).
             if (pid) invalidate(`project:${pid}`);
             if (pid) invalidate(`setup:${pid}`);
@@ -266,6 +270,7 @@ export function applyEvent(e: EventRecord) {
             break;
         case "mcp.changed":
             invalidate("mcp");
+            invalidate("bot-connections");
             invalidate("mcp-check");
             invalidate("secrets");
             break;
@@ -308,6 +313,13 @@ export function applyEvent(e: EventRecord) {
         case "bot.seen":
         case "bot.order":
             invalidate("bots");
+            invalidate("bot-connections");
+            invalidate("bot-rooms");
+            invalidate("bot-room");
+            break;
+        case "bot_room.changed":
+            invalidate("bot-rooms");
+            if (sid) invalidate(`bot-room:${sid}`);
             break;
         case "schedule.changed":
         case "schedule.run":

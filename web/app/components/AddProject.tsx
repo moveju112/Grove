@@ -1,3 +1,4 @@
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Text as GroveText } from "@astryxdesign/core/Text";
@@ -10,6 +11,7 @@ import type { Project } from "../api/generated";
 import { CreationDialog } from "./create/CreationDialog";
 import { ProjectCreation } from "./create/creation";
 import { TextInput } from "../design/Fields";
+import { DisabledGroup } from "../design/DisabledGroup";
 import { Select } from "../design/Select";
 
 type Dirs = { path: string; parent: string | null; entries: { name: string; path: string }[]; truncated: boolean };
@@ -91,11 +93,11 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
                 {blockedReason && <GroveText as="p" display="block" type="inherit" color="warning" role="status" data-testid="project-add-blocked">{blockedReason} 경로 입력·복사·취소는 계속 사용할 수 있습니다.</GroveText>}
                 {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
                 {busy && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">프로젝트 추가 중…</GroveText>}
-                {unresolved && !busy && <div className="warn" role="status">
+                {unresolved && !busy && <GroveText as="div" display="block" type="inherit" color="warning" role="status">
                     생성 결과를 확인하지 못했습니다. 결과 확인 전에는 다른 생성 요청이나 닫기를 사용할 수 없습니다.
                     <GroveButton disabled={!!blockedReason} title={blockedReason ?? undefined} onClick={() => { const request = creation.pending!; void submit(request.path, request.body); }}>같은 생성 요청 결과 확인</GroveButton>
-                </div>}
-                <fieldset disabled={busy || unresolved} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
+                </GroveText>}
+                <DisabledGroup disabled={busy || unresolved}>
                     <TextInput label="서버 PC의 폴더 경로"
                         value={path}
                         onChange={(value) => {
@@ -109,15 +111,15 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
                         hasAutoFocus
                     />
                 {suggestions.length > 0 && (
-                    <ul className="dir-list" aria-label="경로 제안">
+                    <GroveList density="compact" edge="flush" hasDividers aria-label="경로 제안">
                         {suggestions.map((s) => (
-                            <li key={s}><GroveButton className="link small" onClick={() => { setSuggestions([]); void browse(s); }}>{s}</GroveButton></li>
+                            <GroveListItem key={s} label={<GroveButton density="compact" appearance="link" onClick={() => { setSuggestions([]); void browse(s); }}>{s}</GroveButton>} />
                         ))}
-                    </ul>
+                    </GroveList>
                 )}
-                <GroveStack direction="horizontal" align="center" className="row">
-                    <GroveButton className="ghost small" onClick={() => void browse(path)}>이 경로 열기</GroveButton>
-                    <GroveButton className="ghost small" disabled={!dirs?.parent} onClick={() => dirs?.parent && void browse(dirs.parent)}>
+                <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
+                    <GroveButton variant="secondary" density="compact" onClick={() => void browse(path)}>이 경로 열기</GroveButton>
+                    <GroveButton variant="secondary" density="compact" disabled={!dirs?.parent} onClick={() => dirs?.parent && void browse(dirs.parent)}>
                         상위 폴더
                     </GroveButton>
                     <BooleanSelect label="숨김 폴더 표시" value={hidden} onChange={setHidden} />
@@ -128,31 +130,31 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
                     </GroveText>
                 )}
                 {dirs && (
-                    <ul className="dir-list" aria-label="하위 폴더">
-                        {dirs.entries.length === 0 && <li className="muted small">하위 폴더 없음</li>}
+                    <GroveList density="compact" edge="flush" hasDividers aria-label="하위 폴더">
+                        {dirs.entries.length === 0 && <GroveListItem label={<GroveText type="supporting" color="secondary">하위 폴더 없음</GroveText>} />}
                         {dirs.entries.map((d) => (
-                            <li key={d.path}>
-                                <GroveButton className="link" onClick={() => void browse(d.path)}>
+                            <GroveListItem key={d.path} label={
+                                <GroveButton appearance="link" onClick={() => void browse(d.path)}>
                                     📁 {d.name}
                                 </GroveButton>
-                            </li>
+                            } />
                         ))}
-                        {dirs.truncated && <li className="muted small">폴더가 많아 일부만 표시합니다. 경로를 직접 입력하세요</li>}
-                    </ul>
+                        {dirs.truncated && <GroveListItem label={<GroveText type="supporting" color="secondary">폴더가 많아 일부만 표시합니다. 경로를 직접 입력하세요</GroveText>} />}
+                    </GroveList>
                 )}
                 <BooleanSelect label="폴더가 없으면 마지막 폴더를 새로 만들기" value={create} onChange={setCreate} />
-                <GroveStack direction="horizontal" align="center" className="row">
+                <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
                     <GroveButton disabled={!path.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void submit("/projects", { root_path: path.trim(), create })}>
                         이 폴더를 프로젝트로 추가
                     </GroveButton>
-                    <GroveButton className="ghost" onClick={close}>
+                    <GroveButton variant="secondary" onClick={close}>
                         취소
                     </GroveButton>
                 </GroveStack>
-                <DetailDialog className="clone-repo" label="저장소에서 clone" title="저장소에서 clone">
+                <DetailDialog label="저장소에서 clone" title="저장소에서 clone">
                     <CloneRepo target={dirs?.path ?? ""} blockedReason={blockedReason} onCreate={(body) => submit("/projects/clone", body)} />
                 </DetailDialog>
-                </fieldset>
+                </DisabledGroup>
         </CreationDialog>
     );
 }
@@ -186,23 +188,23 @@ function CloneRepo({ target: initialTarget, blockedReason, onCreate }: {
         const body = { repo: repo.trim(), target_directory: target.trim(), ...(slug ? { protocol } : {}) };
         await onCreate(body);
     };
-    return <div className="stack" role="group" aria-label="저장소 clone">
-        <GroveStack direction="horizontal" align="center" className="row">
+    return <GroveStack gap={2} role="group" aria-label="저장소 clone">
+        <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
             <TextInput label="GitHub 저장소 검색" isLabelHidden placeholder="검색어(비우면 내 저장소)" value={query} onChange={setQuery}
                 onKeyDown={(e) => e.key === "Enter" && void find()} />
-            <GroveButton className="ghost small" onClick={() => void find()}>검색</GroveButton>
+            <GroveButton variant="secondary" density="compact" onClick={() => void find()}>검색</GroveButton>
         </GroveStack>
         {search && search.status !== "success" && <GroveText as="p" display="block" type="supporting" color="warning" role="status">{search.error}</GroveText>}
         {search?.status === "success" && (
-            <ul className="dir-list" aria-label="저장소 검색 결과">
-                {search.repositories.length === 0 && <li className="muted small">결과 없음</li>}
+            <GroveList density="compact" edge="flush" hasDividers>
+                {search.repositories.length === 0 && <GroveListItem label={<GroveText type="supporting" color="secondary">결과 없음</GroveText>} />}
                 {search.repositories.map((r) => (
-                    <li key={r.full_name}>
-                        <GroveButton className="link" onClick={() => setRepo(r.full_name)}>{r.full_name}{r.private ? " 🔒" : ""}</GroveButton>
+                    <GroveListItem key={r.full_name} label={<>
+                        <GroveButton appearance="link" onClick={() => setRepo(r.full_name)}>{r.full_name}{r.private ? " 🔒" : ""}</GroveButton>
                         {r.description && <GroveText type="supporting" color="secondary"> {r.description}</GroveText>}
-                    </li>
+                    </>} />
                 ))}
-            </ul>
+            </GroveList>
         )}
         <TextInput label="저장소(owner/name 또는 원격 주소)" aria-label="clone할 저장소" value={repo} onChange={setRepo} placeholder="owner/name" />
         {slug && <Select label="clone 방식" value={protocol} onChange={(value) => setProtocol(value === "ssh" ? "ssh" : "https")}
@@ -210,5 +212,5 @@ function CloneRepo({ target: initialTarget, blockedReason, onCreate }: {
         <TextInput label="받을 상위 폴더" aria-label="clone 대상 폴더" value={target} onChange={setTarget} placeholder="/절대/경로 또는 ~/code" />
         {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
         <GroveButton disabled={!repo.trim() || !target.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void clone()}>clone 후 프로젝트로 추가</GroveButton>
-    </div>;
+    </GroveStack>;
 }

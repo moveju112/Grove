@@ -40,7 +40,7 @@ test("경로 제안으로 폴더를 고르고, 원격 저장소를 clone해 프�
         await box.getByLabel("clone 대상 폴더").fill(target);
         await box.getByRole("button", { name: "clone 후 프로젝트로 추가" }).click();
         await expect(dialog).toHaveCount(0);
-        await expect(page.locator(".sidebar .projects").getByTestId("project-row").filter({ hasText: repoName })).toHaveCount(1);
+        await expect(page.getByTestId("sidebar").getByTestId("projects").getByTestId("project-row").filter({ hasText: repoName })).toHaveCount(1);
         expect(existsSync(join(target, repoName, "README"))).toBe(true);
 
         // 같은 대상에 다시 받으면 기존 폴더를 지키고 이유를 보인다
@@ -53,7 +53,7 @@ test("경로 제안으로 폴더를 고르고, 원격 저장소를 clone해 프�
         await expect(dialog.getByRole("alert")).toContainText("이미 있는 경로");
         // owner/name이면 방식을 고르게 한다
         await box.getByLabel("clone할 저장소").fill("octo/hello");
-        await expect(box.getByLabel("clone 방식")).toHaveValue("https");
+        await expect(box.getByRole("combobox", { name: "clone 방식", exact: true })).toHaveAttribute("data-selected-value", "https");
     } finally {
         const list = await apiCall<P[]>("GET", "/projects");
         created = list.find((p) => p.root_path.endsWith(`/${repoName}`)) ?? null;

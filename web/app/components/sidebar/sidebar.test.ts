@@ -1,4 +1,4 @@
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Session } from "../../api/generated";
@@ -14,6 +14,10 @@ vi.mock("../../api/client", () => ({
     api: { post: vi.fn(), patch: vi.fn() },
 }));
 vi.mock("../../state/store", () => ({ invalidate: vi.fn(), useQuery: vi.fn() }));
+// 메뉴 내용의 행 계약은 레이어 수명과 분리한다. 실제 열기·포커스·모바일 노출은 sidebar-status E2E가 검사한다.
+vi.mock("../ui/Controls", () => ({
+    ActionMenu: ({ label, children }: { label: string; children: ReactNode }) => createElement("section", { "aria-label": label }, children),
+}));
 
 const session: Session = {
     id: "s", project_id: "p", title: "<대화>", created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",

@@ -1,0 +1,46 @@
+/* Pretendard v1.3.9, SIL OFL 1.1 (public/fonts/OFL.txt). 컴포넌트 표현은 Grove 테마가 소유한다. */
+@font-face {
+    font-family: "Pretendard";
+    src: url("/fonts/PretendardVariable.woff2") format("woff2");
+    font-weight: 100 900;
+    font-style: normal;
+    font-display: swap;
+}
+
+:root {
+    --font-size: 14px;
+    --motion-ease: cubic-bezier(0.22, 1, 0.36, 1);
+    --motion-reveal: 200ms;
+    color-scheme: light dark;
+}
+:root[data-theme="light"], :root[data-theme="soft"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font: var(--font-size)/1.4 "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+* { box-sizing: border-box; }
+body > [data-astryx-theme] { min-height: 100%; }
+/* Astryx 레이아웃의 display보다 native hidden을 우선한다. */
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* 스와이프 탐색이 브라우저의 가로 뒤로 가기로 전달되지 않게 한다. */
+html:has([data-viewport-mode="narrow"]) { overscroll-behavior-x: contain; }
+pre:not(.astryx-code-block) {
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 24em;
+    overflow: auto;
+}
+code, kbd { font-family: ui-monospace, Menlo, Consolas, monospace; }
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        transition-duration: 0ms !important;
+        animation-duration: 0ms !important;
+        animation-iteration-count: 1 !important;
+    }
+}

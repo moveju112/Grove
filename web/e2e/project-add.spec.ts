@@ -33,11 +33,11 @@ test("프로젝트 추가 대화상자에서 폴더를 둘러보고 새 폴더�
     await selectChoice(dlg.getByLabel("폴더가 없으면 마지막 폴더를 새로 만들기"), "true");
     await dlg.getByRole("button", { name: "이 폴더를 프로젝트로 추가" }).click();
     await expect(dlg).toHaveCount(0);
-    await expect(page.locator(".view-head h1").filter({ hasText: name })).toBeVisible();
-    await expect(page.locator(".sidebar .projects").getByRole("button", { name, exact: true })).toBeVisible();
+    await expect(page.getByTestId("project-view").getByRole("heading", { level: 1, name })).toBeVisible();
+    await expect(page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name, exact: true })).toBeVisible();
 
     // PROJECT-005: 별도 작업공간 생성 단계 없이 프로젝트 화면 입력창에서 바로 대화를 시작한다
-    const pv = page.locator(".project-view").filter({ has: page.locator("h1", { hasText: name }) });
+    const pv = page.getByTestId("project-view").filter({ has: page.locator("h1", { hasText: name }) });
     await composerOption(pv, "보내기 방식", "save");
     await pv.getByLabel("메시지 입력").fill("새 프로젝트 첫 메시지");
     await pv.getByRole("button", { name: "보내기", exact: true }).click();

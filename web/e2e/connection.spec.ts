@@ -15,9 +15,9 @@ test("이벤트 연결이 끊기면 재시도 시간을 보이고, 지금 재연
     // 서버 연결 실패: 이벤트 요청을 끊는다. 대화를 열면 구독이 바뀌어 다시 연결하다 실패한다.
     let block = true;
     await page.route("**/api/v1/events?**", (r) => (block ? r.abort("connectionrefused") : r.continue()));
-    await page.locator(".recent").getByRole("button", { name: /연결 상태 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /연결 상태 대화/ }).first().click();
     await expect(conn).toContainText(/서버 연결 끊김 · \d+초 후 재시도/);
-    await expect(conn).toHaveClass(/offline/);
+    await expect(conn).toHaveAttribute("data-color", "error");
     block = false;
     await conn.getByRole("button", { name: "지금 재연결" }).click();
     await expect(conn).toHaveText("연결됨");
@@ -26,7 +26,7 @@ test("이벤트 연결이 끊기면 재시도 시간을 보이고, 지금 재연
     block = true;
     await page.context().setOffline(true);
     // 다른 대화를 열어 구독을 바꾸면 다시 연결하다 실패한다
-    await page.locator(".recent").getByRole("button", { name: /연결 상태 둘째/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /연결 상태 둘째/ }).first().click();
     await expect(conn).toContainText("오프라인 · 네트워크 없음");
     block = false;
     await page.context().setOffline(false);

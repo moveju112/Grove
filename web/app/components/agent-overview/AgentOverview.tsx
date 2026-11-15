@@ -1,4 +1,5 @@
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
+import { CodeBlock } from "../../design/CodeBlock";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { useEffect, useLayoutEffect, useState, useSyncExternalStore } from "react";
@@ -110,11 +111,11 @@ export function AgentOverview({ target, onEdit, onLayoutChange }: {
                 <GroveText as="p" display="block" type="inherit" color="inherit">{role.builtin ? "기본 내장" : "사용자 정의"} · {role.modified_fields.length ? `override 수정됨 (${role.modified_fields.join(", ")})` : "원문 변경 없음"} · {role.enabled ? "활성" : "비활성"} · {AVAILABLE[role.availability] ?? "확인 불가"}</GroveText>
                 <DetailDialog label="역할 지침" title={role.enabled ? "현재 적용 지침" : "비활성 정의 지침 (실행에 사용 안 함)"}>
                     <GroveText as="p" display="block" type="inherit" color="inherit">{role.description}</GroveText>
-                    <pre aria-label={`${role.id} 지침`} style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{role.body}</pre>
+                    <CodeBlock aria-label={`${role.id} 지침`} code={role.body} />
                 </DetailDialog>
-                <GroveButton className="ghost" onClick={() => onEdit(role.id)}>{role.id} 기존 편집 열기</GroveButton>
+                <GroveButton variant="secondary" onClick={() => onEdit(role.id)}>{role.id} 기존 편집 열기</GroveButton>
             </article>)}
         </>}
-        <GroveButton className="ghost" disabled={!connected || view.status === "loading"} onClick={reload}>개요 다시 조회</GroveButton>
+        <GroveButton variant="secondary" disabled={!connected || view.status === "loading"} onClick={reload}>개요 다시 조회</GroveButton>
     </section>;
 }

@@ -54,7 +54,7 @@ test("실제 설정 개요에서 override·비활성 지침을 읽고 기존 편
         await expect(editor).toHaveValue("overview 적용 지침");
         expect(writes).toEqual([]);
         await editor.fill("overview 기존 편집 저장 지침");
-        await page.locator(".def-editor").getByRole("button", { name: "저장", exact: true }).click();
+        await page.getByTestId("definition-editor").getByRole("button", { name: "저장", exact: true }).click();
         await page.reload();
         await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
         await panel.getByRole("article", { name: "역할 worker", exact: true }).getByRole("button", { name: "비활성 정의 지침 (실행에 사용 안 함)", exact: true }).click();
@@ -78,7 +78,7 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: b.id, resource_id: other.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: /overview scoped session/ }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /overview scoped session/ }).click();
     await sessionView(page, session.id).getByRole("button", { name: "대화 작업", exact: true }).click();
     await sessionView(page, session.id).getByRole("button", { name: "대화 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
@@ -87,8 +87,8 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await expect(panel).toContainText("활성 턴 없음 · 상속 모델 아직 미정");
     await expect(panel).toContainText("미설정 · 선택 필요");
     await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
-    await page.locator(".recent li").filter({ hasText: "overview other session" }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.locator(".recent li").filter({ hasText: "overview other session" }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
+    await page.getByTestId("recent-item").filter({ hasText: "overview other session" }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
+    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     await expect(sessionView(page, other.id)).toBeVisible();
     await page.getByTestId("project-row").getByRole("button", { name: b.name, exact: true }).click();

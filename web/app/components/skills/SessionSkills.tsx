@@ -112,22 +112,22 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
     };
     const snapshot = active ? state.snapshot : null;
     const busy = !active || state.loading || Boolean(state.pending);
-    return <div className="stack" data-testid="session-skills">
-        <GroveStack direction="horizontal" align="center" className="inline">
-            <GroveButton type="button" className="ghost small" disabled={!active || state.loading} onClick={() => void reload()}>스킬 새로고침</GroveButton>
-            <GroveButton type="button" className="ghost small" disabled={busy || Boolean(state.draft)}
+    return <GroveStack gap={2} data-testid="session-skills">
+        <GroveStack direction="horizontal" align="center" gap={1.5}>
+            <GroveButton type="button" variant="secondary" density="compact" disabled={!active || state.loading} onClick={() => void reload()}>스킬 새로고침</GroveButton>
+            <GroveButton type="button" variant="secondary" density="compact" disabled={busy || Boolean(state.draft)}
                 onClick={() => setState((s) => ({ ...s, draft: { kind: "add", scope: "project", name: "", text: "" } }))}>Grove 스킬 추가</GroveButton>
         </GroveStack>
         {active && profileError && <GroveText as="p" display="block" type="inherit" color="warning" role="status">{profileError} · 모델 지원을 추정하지 않습니다.</GroveText>}
         <RequirementContext value={context} profiles={active ? profiles : []} disabled={busy} onChange={setContext} />
-        {active && state.pending && !state.loading && <div role="alert">
+        {active && state.pending && !state.loading && <GroveStack gap={0} role="alert">
             변경 결과를 확인하지 못했습니다. 자동으로 다시 변경하지 않습니다.
             <GroveButton type="button" onClick={() => void change(state.pending!)}>같은 요청 결과 확인</GroveButton>
             <GroveText as="p" display="block" type="inherit" color="inherit">스킬 새로고침은 조회만 하며 불명 요청을 재실행하지 않습니다.</GroveText>
             <GroveButton type="button" onClick={() => setState((s) => ({ ...s, pending: null, error: null, snapshot: null, preview: null }))}>
                 불명 요청 닫기 · 다시 조회 필요
             </GroveButton>
-        </div>}
+        </GroveStack>}
         {snapshot?.validation_error && <GroveText as="p" display="block" type="inherit" color="warning" role="alert">
             선택한 스킬을 적용할 수 없습니다: {snapshot.validation_error.message} ({snapshot.validation_error.code}).
             기존 선택을 해제하거나 문제를 해결한 뒤 다시 확인하세요.
@@ -143,12 +143,12 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
             onDeselect={(selection) => void change({ kind: "select", selection, selected: false, key: newKey(), context: { ...context } })}
             onEdit={(body) => setState((s) => s.draft ? s : ({ ...s, draft: { kind: "save", selection: body.selection, text: body.text } }))}
             onSetEnabled={(selection, enabled) => void change({ kind: "manage", body: { op: "set_enabled", selection, enabled }, key: newKey() })} />
-    </div>;
+    </GroveStack>;
 }
 
 export function SessionSkills({ sessionId }: { sessionId: string }) {
     const [open, setOpen] = useState(false);
-    return <DetailDialog className="session-skill-control" data-testid="skills-disclosure" label="대화 스킬" title="스킬" onOpenChange={setOpen}>
+    return <DetailDialog data-testid="skills-disclosure" label="대화 스킬" title="스킬" onOpenChange={setOpen}>
         {open && <ConnectedSkills sessionId={sessionId} />}
     </DetailDialog>;
 }

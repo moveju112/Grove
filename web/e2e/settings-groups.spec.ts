@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login, openSettings } from "./helpers";
+import { apiCall, ensureProjects, login, openSettings, selectChoice } from "./helpers";
 import type { DeviceInfo } from "../app/api/generated";
 
 for (const width of [390, 1280]) {
@@ -21,7 +21,7 @@ for (const width of [390, 1280]) {
                         return route.fulfill({ json: [] });
                     });
                     await openSettings(page);
-                    const settings = page.locator(".settings");
+                    const settings = page.getByTestId("settings");
                     await settings.getByRole("button", { name: "기기·연결", exact: true }).click();
                     const pairing = settings.getByTestId("setting-pairing");
                     const capabilities = settings.getByTestId("setting-browser-capabilities");
@@ -57,7 +57,7 @@ for (const width of [390, 1280]) {
                 await page.route("**/api/v1/pairings", (route) => route.fulfill({ json: [] }));
                 await login(page);
                 await openSettings(page);
-                const settings = page.locator(".settings");
+                const settings = page.getByTestId("settings");
                 await settings.getByRole("button", { name: "기기·연결", exact: true }).click();
                 await expect(settings.getByTestId("setting-devices").locator("li")).toHaveCount(0);
                 await expect(settings.getByRole("button", { name: "기기 토큰 발급" })).toBeVisible();
@@ -97,9 +97,9 @@ test("그룹의 적용 대상은 선택한 범위를 따른다", async ({ page }
     const row = page.getByTestId("setting-output.language");
     const heading = row.locator("xpath=ancestor::*[@data-ui='settings-group'][1]").locator(":scope > header");
     await expect(heading).toContainText(a.name);
-    await row.getByLabel("응답 언어 적용 범위", { exact: true }).selectOption("server");
+    await selectChoice(row.getByLabel("응답 언어 적용 범위", { exact: true }), "server");
     await expect(heading).toContainText("서버 전체");
     await expect(heading).not.toContainText(a.name);
-    await row.getByLabel("응답 언어 적용 범위", { exact: true }).selectOption("project");
+    await selectChoice(row.getByLabel("응답 언어 적용 범위", { exact: true }), "project");
     await expect(heading).toContainText(a.name);
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, script, selectChoice } from "./helpers";
 import { frames } from "./fixture";
 
 test("긴 대화의 이전 페이지를 계속 불러와도 렌더링한 메시지 수는 viewport 크기에 머문다", async ({ page }) => {
@@ -11,21 +11,21 @@ test("긴 대화의 이전 페이지를 계속 불러와도 렌더링한 메시�
     }
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
     const view = page.getByTestId("session-view");
     await expect(view.getByText(`${title} line 449`, { exact: true })).toBeInViewport();
-    await expect.poll(() => view.locator(".msg-row").count()).toBeLessThan(80);
+    await expect.poll(() => view.locator("[data-seq]").count()).toBeLessThan(80);
     for (let i = 0; i < 4; i++) {
         const response = page.waitForResponse((r) => r.url().includes(`/sessions/${session.id}/messages?`) && r.url().includes("before_seq="));
         await view.getByRole("button", { name: "이전 메시지", exact: true }).click();
         await response;
-        await expect.poll(() => view.locator(".msg-row").count()).toBeLessThan(80);
+        await expect.poll(() => view.locator("[data-seq]").count()).toBeLessThan(80);
     }
     await expect(view.getByRole("button", { name: "이전 메시지", exact: true })).toHaveCount(0);
-    const body = page.locator(".pane-body").filter({ has: view });
+    const body = page.getByTestId("pane-body").filter({ has: view });
     await body.evaluate((el) => { el.scrollTop = 0; });
     await expect(view.getByText(`${title} line 0`, { exact: false })).toBeInViewport();
-    await expect.poll(() => view.locator(".msg-row").count()).toBeLessThan(80);
+    await expect.poll(() => view.locator("[data-seq]").count()).toBeLessThan(80);
     await view.getByRole("feed", { name: "불러온 대화 메시지" }).focus();
     await page.keyboard.press("End");
     await expect(view.locator('[data-virtual-seq="450"]')).toBeFocused();
@@ -47,8 +47,8 @@ test("생각 과정을 본문에 표시한 상태는 화면 밖으로 나가도 
     await login(page);
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("대화 표시");
-    await page.getByLabel("생각 과정 표시").selectOption("expanded");
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+    await selectChoice(page.getByLabel("추론 보기", { exact: true }), "expanded");
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
     const view = page.getByTestId("session-view");
     const feed = view.getByRole("feed", { name: "불러온 대화 메시지" });
     await view.getByRole("button", { name: "이전 메시지", exact: true }).click();
@@ -63,13 +63,13 @@ test("생각 과정을 본문에 표시한 상태는 화면 밖으로 나가도 
     await expect(reasoning).toHaveCount(0);
     await page.keyboard.press("Home");
     await expect(reasoning.getByText("가변 높이의 긴 생각 과정과 줄바꿈을 확인한다.", { exact: false })).toBeVisible();
-    const body = page.locator(".pane-body").filter({ has: view });
+    const body = page.getByTestId("pane-body").filter({ has: view });
     const article = reasoning.locator("xpath=ancestor::*[@data-virtual-id]");
     await body.evaluate((el) => { el.scrollTop += 250; });
     await expect(article).toBeInViewport();
     const before = (await article.boundingBox())!;
-    await page.setViewportSize({ width: 1000, height: page.viewportSize()!.height });
+    await page.setViewportSize({ width: 900, height: page.viewportSize()!.height });
     await expect.poll(async () => (await article.boundingBox())!.height).toBeGreaterThan(before.height);
     await expect.poll(async () => Math.abs((await article.boundingBox())!.y - before.y)).toBeLessThan(3);
-    await expect.poll(() => view.locator(".msg-row").count()).toBeLessThan(80);
+    await expect.poll(() => view.locator("[data-seq]").count()).toBeLessThan(80);
 });

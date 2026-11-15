@@ -16,12 +16,18 @@ test("모델 답의 Markdown을 표시하고 HTML·스크립트·javascript 링�
         void d.dismiss();
     });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: /마크다운 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /마크다운 대화/ }).first().click();
     const view = page.getByTestId("session-view");
     const answer = [
         "## 결과",
         "",
         "**굵게** 와 `코드` 그리고 [문서](https://example.com/doc)",
+        "",
+        "- 목록 하나",
+        "- 목록 둘",
+        "",
+        "1. 순서 하나",
+        "2. 순서 둘",
         "",
         "| 항목 | 값 |",
         "|---|---|",
@@ -40,6 +46,8 @@ test("모델 답의 Markdown을 표시하고 HTML·스크립트·javascript 링�
     const msg = view.getByTestId("msg-assistant").last();
     await expect(msg.locator("h4")).toHaveText("결과", { timeout: 15_000 });
     await expect(msg.locator("strong")).toHaveText("굵게");
+    await expect(msg.locator("ul").getByRole("listitem")).toHaveText(["목록 하나", "목록 둘"]);
+    await expect(msg.locator("ol").getByRole("listitem")).toHaveText(["순서 하나", "순서 둘"]);
     await expect(msg.locator("table td").first()).toHaveText("a");
     await expect(msg.getByRole("link", { name: "문서" })).toHaveAttribute("href", "https://example.com/doc");
     await expect(msg.getByRole("link", { name: "문서" })).toHaveAttribute("rel", /noopener/);
@@ -70,7 +78,7 @@ test("답 안의 파일:줄 참조를 누르면 오른쪽에 그 파일을 열�
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: "파일 참조 대화" });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: /파일 참조 대화/ }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /파일 참조 대화/ }).first().click();
     const view = page.getByTestId("session-view");
     await script({ frames: frames.text(["수정할 곳은 `ref-target.md:3` 이고 `/etc/passwd`는 링크가 아니다."]) });
     await composerOption(view, "보내기 방식", "model");

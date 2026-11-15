@@ -234,6 +234,77 @@ async fn model_discovers_namespaced_schema_then_receives_an_approved_mcp_result_
 }
 
 #[tokio::test]
+async fn bot_connections_filter_discovery_require_approval_and_revocation_blocks_pending_invocations() {
+    let s=TestServer::start().await;
+    let remote=Fixture::start(Mode::Json).await;
+    let server=ready(&s,&remote).await;
+    let model=common::fixture::Fixture::start().await;
+    let profile=s.fixture_profile(&model.base).await;
+    let project=s.create_project("bot-mcp").await;
+    let (_,bot)=s.post("/api/v1/bots",json!({"name":"mail-bot","project_id":project["id"],"profile_id":profile})).await;
+    let id=bot["id"].as_str().unwrap();
+    let (_,home)=s.post(&format!("/api/v1/bots/{id}/home"),json!({})).await;
+    let sid=home["home_session_id"].as_str().unwrap();
+    let (_,catalog)=s.post(&format!("/api/v1/sessions/{sid}/tool-requests"),json!({"name":"mcp_tools","args":{}})).await;
+    assert_eq!(wait_call(&s,&catalog,"succeeded").await["result"]["items"],json!([]));
+    let denied=request_tool(&s,sid,&server).await;
+    assert_eq!(denied["status"],"failed");
+    assert_eq!(denied["result"]["error"]["code"],"bot_connection_denied");
+    let connections=format!("/api/v1/bots/{id}/connections");
+    let (_,view)=s.get(&connections).await;
+    assert_eq!(s.send(Method::PUT,&connections,json!({"expected_revision":view["revision"],"server_ids":[server["id"]]})).await.0,StatusCode::OK);
+    model.push(common::fixture::tool_calls(&[("catalog","mcp_tools",json!({}))]));
+    model.push(common::fixture::tool_calls(&[("call","mcp_call",json!({"server_id":server["id"],"tool":"fixture/read","arguments":{}}))]));
+    model.push(common::fixture::text("승인된 외부 결과"));
+    let (_,t)=s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":"연결 사용","profile_id":"ignored","tools":true})).await;
+    let tid=t["turn"]["id"].as_str().unwrap();
+    let t=s.wait_status(tid,"awaiting_approval").await;
+    let call=t["tool_calls"].as_array().unwrap().iter().find(|c|c["name"]=="mcp_call").unwrap();
+    assert_eq!(invocation_count(&remote),0);
+    assert!(model.requests()[1].to_string().contains("fixture/read"));
+    approve(&s,call).await;
+    s.wait_status(tid,"completed").await;
+    assert_eq!(invocation_count(&remote),1);
+    // 이후 호출은 승인 대기 중 연결을 해제하면 실행하지 않는다.
+    let call=request_tool(&s,sid,&server).await;
+    assert_eq!(call["status"],"pending_approval");
+    let (_,view)=s.get(&connections).await;
+    assert_eq!(s.send(Method::PUT,&connections,json!({"expected_revision":view["revision"],"server_ids":[]})).await.0,StatusCode::OK);
+    approve(&s,&call).await;
+    let call=wait_call(&s,&call,"failed").await;
+    assert_eq!(call["result"]["error"]["code"],"bot_connection_denied");
+    assert_eq!(invocation_count(&remote),1);
+}
+
+#[tokio::test]
+async fn group_recipient_cannot_use_another_members_connection() {
+    let s=TestServer::start().await;
+    let remote=Fixture::start(Mode::Json).await;
+    let server=ready(&s,&remote).await;
+    let model=common::fixture::Fixture::start().await;
+    let profile=s.fixture_profile(&model.base).await;
+    let project=s.create_project("group-mcp").await;
+    let mut bots=vec![];
+    for name in ["allowed","blocked"] {
+        bots.push(s.post("/api/v1/bots",json!({"name":name,"project_id":project["id"],"profile_id":profile})).await.1);
+    }
+    let first=bots[0]["id"].as_str().unwrap();
+    assert_eq!(s.send(Method::PUT,&format!("/api/v1/bots/{first}/connections"),json!({"expected_revision":bots[0]["revision"],"server_ids":[server["id"]]})).await.0,StatusCode::OK);
+    let (_,room)=s.post("/api/v1/bot-rooms",json!({"name":"group","project_id":project["id"],"member_ids":[bots[0]["id"],bots[1]["id"]]})).await;
+    let sid=room["session_id"].as_str().unwrap();
+    model.push(common::fixture::tool_calls(&[("catalog","mcp_tools",json!({}))]));
+    model.push(common::fixture::tool_calls(&[("call","mcp_call",json!({"server_id":server["id"],"tool":"fixture/read","arguments":{}}))]));
+    model.push(common::fixture::text("허용되지 않은 연결"));
+    let (_,turn)=s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":"@blocked 확인","profile_id":"ignored","tools":true})).await;
+    let turn=s.wait_status(turn["turn"]["id"].as_str().unwrap(),"completed").await;
+    assert_eq!(turn["definition"]["bot"]["id"],bots[1]["id"]);
+    assert!(!model.requests()[1].to_string().contains("fixture/read"));
+    let call=turn["tool_calls"].as_array().unwrap().iter().find(|c|c["name"]=="mcp_call").unwrap();
+    assert_eq!(call["result"]["error"]["code"],"bot_connection_denied");
+    assert_eq!(invocation_count(&remote),0);
+}
+
+#[tokio::test]
 async fn remote_read_only_hint_never_bypasses_project_policy_or_pending_approval() {
     for policy in ["read_only","deny"] {
         let s=TestServer::start().await;

@@ -1,3 +1,7 @@
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Card } from "@astryxdesign/core/Card";
+import { Divider } from "@astryxdesign/core/Divider";
+import { Code } from "@astryxdesign/core/Code";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import type { ReadErrorCode, SafeSettings, SourceId, SourceSettings, SourceSettingsPanelProps } from "./types";
@@ -35,47 +39,48 @@ function Projection({ value }: { value: SafeSettings }) {
         return <GroveText as="p" display="block" type="supporting" color="secondary">표시 가능한 필드 없음</GroveText>;
     }
     return <dl>
-        {booleans.map(([key, label]) => <div key={key}>
+        {booleans.map(([key, label]) => <GroveStack gap={0} key={key}>
             <dt>{label}</dt>
             <dd>{value[key] ? "켜짐" : "꺼짐"}</dd>
-        </div>)}
-        {hasDays && <div>
+        </GroveStack>)}
+        {hasDays && <GroveStack gap={0}>
             <dt>대화 보관 기간</dt>
             <dd>{days}일</dd>
-        </div>}
+        </GroveStack>}
     </dl>;
 }
 
 function ResourceCard({ resource }: { resource: SourceResource }) {
     const result = resource.result;
     const label = resource.kind === "skills" ? "스킬" : "Hook 정의";
-    return <section className="source-resource" aria-label={`${label} · ${resource.relative_path}`}>
+    return <GroveStack as="section" gap={2} paddingBlockStart={4} aria-label={`${label} · ${resource.relative_path}`}>
+        <Divider />
         <GroveHeading level={4} color="inherit">{label} · <code>{resource.relative_path}</code></GroveHeading>
         {result.status === "missing" && <GroveText as="p" display="block" type="supporting" color="secondary">원본 리소스 없음</GroveText>}
         {result.status === "read_error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">리소스 읽기 실패: {result.code === "too_large" ? "리소스 크기 또는 항목 수가 조회 제한을 넘어 표시하지 않았습니다." : ERROR[result.code]}</GroveText>}
         {result.status === "unsupported_format" && <GroveText as="p" display="block" type="supporting" color="warning">Inline hook · 미지원 형식(TOML)</GroveText>}
         {result.status === "present" && <>
             {result.entries.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">{label} 항목 없음</GroveText>}
-            {resource.kind === "skills" && resource.result.status === "present" && <div className="source-skills">
+            {resource.kind === "skills" && resource.result.status === "present" && <GroveStack gap={2}>
                 {resource.result.entries.map((entry, index) => <DetailDialog key={index} label={`${entry.name} 스킬`} title={entry.name}>
                     {entry.description && <GroveText as="p" display="block" type="inherit" color="inherit">{entry.description}</GroveText>}
-                    <code className="muted small">{entry.relative_path}</code>
+                    <Code color="secondary">{entry.relative_path}</Code>
                 </DetailDialog>)}
-            </div>}
+            </GroveStack>}
             {resource.kind === "hooks" && resource.result.status === "present" && <dl>
-                {resource.result.entries.map((entry, index) => <div key={index}>
+                {resource.result.entries.map((entry, index) => <GroveStack gap={0} key={index}>
                     <dt>{entry.event}</dt>
                     <dd>Matcher: {entry.matcher ?? "지정 없음"} · 명령 {entry.has_command ? "있음" : "없음"}</dd>
-                </div>)}
+                </GroveStack>)}
             </dl>}
             {result.ignored_invalid_entries && <GroveText as="p" display="block" type="supporting" color="warning" role="status">일부 항목은 형식·권한·읽기 제한으로 생략됐습니다.</GroveText>}
         </>}
-    </section>;
+    </GroveStack>;
 }
 
 function SourceCard({ item, resources }: { item: SourceSettings; resources: readonly SourceResource[] }) {
     const source = SOURCE[item.source];
-    return <section className="setting source-card" aria-label={source.label}>
+    return <Card padding={3} role="region" aria-label={source.label}><GroveStack gap={2}>
         <GroveHeading level={3} color="inherit">{source.label}</GroveHeading>
         <GroveText as="p" display="block" type="supporting" color="secondary">출처: {source.location}</GroveText>
         {item.status === "present" && <>
@@ -86,13 +91,13 @@ function SourceCard({ item, resources }: { item: SourceSettings; resources: read
         {item.status === "read_error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">읽기 실패: {ERROR[item.code]}</GroveText>}
         {item.status === "unsupported_format" && <GroveText as="p" display="block" type="supporting" color="warning">미지원 형식(TOML)</GroveText>}
         {resources.map((resource) => <ResourceCard key={`${resource.kind}:${resource.relative_path}`} resource={resource} />)}
-    </section>;
+    </GroveStack></Card>;
 }
 
 /** 인증된 서버 projection만 주입한다. 이 UI는 조회 API·쓰기·적용 동작을 호출하지 않는다. */
 export function SourceSettingsPanel({ view }: SourceSettingsPanelProps) {
     return <section aria-label="원본 Claude/Codex 설정">
-        <GroveText as="p" display="block" type="inherit" color="inherit" className="scope">읽기 전용 · Grove 적용값 아님</GroveText>
+        <GroveText as="p" display="block" type="supporting" color="secondary">읽기 전용 · Grove 적용값 아님</GroveText>
         {view.status === "loading" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">원본 출처를 확인하는 중입니다.</GroveText>}
         {view.status === "error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">원본 출처 목록을 가져오지 못했습니다.</GroveText>}
         {view.status === "ready" && (view.items.length === 0

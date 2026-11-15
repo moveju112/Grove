@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, openSettings, script, sessionView, state } from "./helpers";
+import { apiCall, choiceOptions, closeModelSettings, composerOption, composerSetting, ensureProfile, ensureProjects, login, openDetails, openSettings, script, selectChoice, sessionView, state } from "./helpers";
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
@@ -17,23 +17,30 @@ test("작은 모델 선택기에서 공급자 모델을 골라 보내고 초안�
     try {
         await login(page);
         await page.getByRole("button", { name: "사이드바", exact: true }).click();
-        await page.locator(".recent").getByRole("button", { name }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name }).click();
+        await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
         const view = sessionView(page, session.id);
-        const picker = view.getByLabel("모델 프로필", { exact: true });
+        const summary = view.getByTestId("model-summary");
+        const picker = await composerSetting(view, "모델 프로필");
         await expect(picker).toBeVisible();
-        expect((await picker.boundingBox())!.width).toBeLessThanOrEqual(220);
+        expect((await picker.boundingBox())!.width).toBeLessThanOrEqual(390);
+        await closeModelSettings(view);
         await expect(view.getByRole("button", { name: "입력 옵션", exact: true })).toHaveCount(0);
-        for (const label of ["보내기 방식", "에이전트", "도구"]) await expect(view.locator(".composer").getByLabel(label, { exact: true })).toHaveCount(0);
+        for (const label of ["보내기 방식", "에이전트", "도구"]) await expect(view.getByTestId("composer").getByLabel(label, { exact: true })).toHaveCount(0);
         await view.getByLabel("메시지 입력").fill("모델을 바꿔도 남는 초안");
         await expect(view.getByLabel("메시지 입력")).toHaveValue("모델을 바꿔도 남는 초안");
         await composerOption(view, "보내기 방식", "save");
-        await expect(picker.locator("option:checked")).toHaveText("메시지만 저장");
-        await picker.selectOption(profile.id);
-        await expect(picker.locator("option:checked")).toHaveText(/^fixture-picker-model ·/);
+        await expect(summary).toHaveText("메시지만 저장");
+        await composerOption(view, "모델 프로필", profile.id);
+        await composerSetting(view, "모델 프로필");
+        await expect(picker).toContainText(/^fixture-picker-model ·/);
         const modelChoice = JSON.stringify([profile.id, "fixture-model"]);
-        await expect(picker.locator(`option[value='${modelChoice}']`)).toBeAttached();
-        await picker.selectOption(modelChoice);
-        await expect(picker.locator("option:checked")).toHaveText(/^fixture-model ·/);
+        await expect((await choiceOptions(picker)).filter({ has: page.locator(`[data-option-value=${JSON.stringify(modelChoice)}]`) })).toHaveCount(1);
+        await page.keyboard.press("Escape");
+        await selectChoice(picker, modelChoice);
+        await expect(picker).toContainText(/^fixture-model ·/);
+        await closeModelSettings(view);
+        await expect(summary).toHaveText("fixture-model");
         await expect(view.getByLabel("메시지 입력")).toHaveValue("모델을 바꿔도 남는 초안");
         await page.screenshot({ path: info.outputPath("model-picker-390.png") });
         await script({ marker: name, frames: frames.text(["선택한 모델 응답"]) });
@@ -43,11 +50,11 @@ test("작은 모델 선택기에서 공급자 모델을 골라 보내고 초안�
         await expect(view.getByTestId("turn-status")).toHaveCount(0);
         const bubble = view.getByTestId("msg-user").last();
         await expect(bubble.getByTestId("msg-copy")).toHaveCount(0);
-        const copy = view.locator('.msg-row:has([data-testid="msg-user"])').last().getByTestId("msg-copy");
+        const copy = view.locator('[data-seq]:has([data-testid="msg-user"])').last().getByTestId("msg-copy");
         const bubbleBox = (await bubble.boundingBox())!;
         expect((await copy.boundingBox())!.y).toBeGreaterThanOrEqual(bubbleBox.y + bubbleBox.height);
         expect(bubbleBox.height).toBeLessThan(60);
-        expect((await view.locator(".composer").boundingBox())!.height).toBeLessThanOrEqual(120);
+        expect((await view.getByTestId("composer").boundingBox())!.height).toBeLessThanOrEqual(120);
         await page.screenshot({ path: info.outputPath("chat-390.png") });
         const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as { model: string; messages: unknown[] }[];
         expect(requests.filter((r) => JSON.stringify(r.messages).includes(name)).map((r) => r.model)).toEqual(["fixture-model"]);
@@ -72,7 +79,7 @@ for (const theme of ["light", "dark"] as const) {
             await login(page);
             await openSettings(page);
             await page.getByLabel("설정 검색").fill("모델 프로필");
-            const settings = page.locator(".settings");
+            const settings = page.getByTestId("settings");
             const row = settings.getByTestId("model-profile").filter({ hasText: profiles[0]!.name });
             const nextRow = settings.getByTestId("model-profile").filter({ hasText: profiles[1]!.name });
             expect(await page.evaluate(async () => {
@@ -107,17 +114,17 @@ for (const theme of ["light", "dark"] as const) {
             await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
             const context = row.getByLabel("context token 수", { exact: true });
             await context.fill("12345");
-            await row.locator("summary").click();
-            await row.locator("summary").click();
+            await row.getByRole("button", { name: "상세 설정", exact: true }).click();
+            await row.getByRole("button", { name: "상세 설정", exact: true }).click();
             await expect(context).toHaveValue("12345");
             await row.getByRole("button", { name: "취소", exact: true }).click();
-            await row.locator("summary").click();
+            await row.getByRole("button", { name: "상세 설정", exact: true }).click();
             await page.screenshot({ path: info.outputPath(`profiles-${theme}-390.png`) });
             const pane = settings.locator("..");
             await pane.evaluate((node) => { node.scrollTop = 300; });
             const paneBox = (await pane.boundingBox())!;
             const covered = await page.evaluate(({ x, y }) =>
-                Boolean(document.elementFromPoint(x, y)?.closest(".settings-nav")),
+                Boolean(document.elementFromPoint(x, y)?.closest('[aria-label="설정 메뉴"]')),
             { x: paneBox.x + paneBox.width / 2, y: paneBox.y + 2 });
             expect(covered, "검색창 위쪽도 고정 탐색 영역의 불투명 배경으로 덮여야 한다").toBe(true);
             expect(await settings.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);

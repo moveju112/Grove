@@ -12,9 +12,9 @@ test("누락·손상된 작업 로그를 빈 출력과 구분하고 다른 스�
     expect(ended.status).toBe("completed");
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
     const panel = sessionView(page, session.id).getByTestId("tasks-panel");
-    await openDetails(panel);
+    await openDetails(panel, "작업");
     await panel.getByRole("button", { name: "출력", exact: true }).click();
     await expect(panel.getByTestId("task-output")).toHaveText("trusted");
     // globalSetup이 소유한 시험 서버의 해당 로그만 바꾼다.

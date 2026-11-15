@@ -24,8 +24,8 @@ describe("서버 업데이트 설정 표시", () => {
         for (const text of ["0.25.0", "서버 protocol", "42", "알림만 (기본값)", "설정만 저장 · 설치·재시작 없음", "아직 서버 업데이트를 확인하지 않았습니다"]) {
             expect(html).toContain(text);
         }
-        expect(html).toContain('<option value="notify_only" selected=""');
-        expect(html).toContain('<option value="stable" selected=""');
+        expect(html).toContain('data-selected-value="notify_only"');
+        expect(html).toContain('data-selected-value="stable"');
     });
     it("일반 기기와 전송 중에는 변경·확인을 막는다", () => {
         const html = render({ ...data, can_manage: false });

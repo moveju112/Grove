@@ -1,3 +1,6 @@
+import { Grid } from "@astryxdesign/core/Grid";
+import { chatLayout } from "../chat-layout.stylex";
+import { Select } from "../../design/Select";
 import { useContext, useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../api/client";
 import type { Session } from "../../api/generated";
@@ -22,13 +25,21 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
     const target = projectMode && spaces.some((w) => w.id === workspace) ? workspace : "";
     useEffect(() => {
         if (!focus || focus.tabId !== tabId || disabled) return;
-        const frame = requestAnimationFrame(() => {
+        const focusInput = () => {
             const node = ref.current;
             if (!node || node.closest("[hidden], [inert]")) return;
             if (node.closest("[data-layout-mode]")?.getAttribute("data-layout-mode") !== (focus.narrow ? "narrow" : "wide")) return;
-            node.querySelector("textarea")?.focus();
-        });
-        return () => cancelAnimationFrame(frame);
+            const input = node.querySelector("textarea");
+            input?.focus();
+            if (input === document.activeElement) document.removeEventListener("close", focusInput, true);
+        };
+        // Drawer는 퇴장이 끝날 때 modal 잠금을 해제한다. 그 전의 focus 요청은 브라우저가 무시한다.
+        document.addEventListener("close", focusInput, true);
+        const frame = requestAnimationFrame(focusInput);
+        return () => {
+            cancelAnimationFrame(frame);
+            document.removeEventListener("close", focusInput, true);
+        };
     }, [focus, tabId, disabled]);
 
     // Composer가 보관한 전송 키를 단계별로 파생한다. 재확인은 생성·전송 모두 같은 키를 쓴다.
@@ -48,13 +59,12 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
         else await api.post(`/sessions/${s.id}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier }, { key: `${key}:send`, requires: modelOptionCapabilities(o) });
         open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
     };
-    return <div ref={ref} className="project-compose compose-surface">
+    return <Grid ref={ref} gap={1} xstyle={chatLayout.surface} data-testid="compose-surface">
         {projectMode && spaces.length > 0 && (
-            <select aria-label="새 대화 워크스페이스" value={target} onChange={(e) => setWorkspace(e.target.value)}>
-                <option value="">워크스페이스: 프로젝트 폴더</option>
-                {spaces.map((w) => <option key={w.id} value={w.id}>워크스페이스: {w.name}</option>)}
-            </select>
+            <Select label="새 대화 워크스페이스" hideLabel placement="above" value={target} onChange={setWorkspace}
+                options={[{ value: "", label: "워크스페이스: 프로젝트 폴더" },
+                    ...spaces.map((w) => ({ value: w.id, label: `워크스페이스: ${w.name}` }))]} />
         )}
         <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId={tabId} onSend={start} disabled={disabled} />
-    </div>;
+    </Grid>;
 }

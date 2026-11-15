@@ -1,3 +1,12 @@
+import { Grid } from "@astryxdesign/core/Grid";
+import { Card } from "@astryxdesign/core/Card";
+import { Notice } from "../design/Notice";
+import { chatLayout } from "./chat-layout.stylex";
+import { Select } from "../design/Select";
+import { TextArea } from "../design/Fields";
+import { composerStyles } from "./composer.stylex";
+import { CommandPaletteList, CommandPaletteItem } from "@astryxdesign/core/CommandPalette";
+import { Stack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
@@ -11,7 +20,8 @@ import { EFFORTS, type FollowKind, type SendOptions, capabilityProblem, initialP
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
 
-import { AttachmentPicker, useAttachments } from "./Attachments";
+import { AttachmentPicker, AttachmentSelection, useAttachments } from "./Attachments";
+import { BooleanSelect } from "./BooleanSelect";
 import { AgentConnect } from "./AgentConnect";
 import { SessionSkills } from "./skills/SessionSkills";
 import { ModelSelect, useModelCatalog } from "./ModelSelect";
@@ -87,6 +97,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const [copyError, setCopyError] = useState(false);
     const [busy, setBusy] = useState(false);
     const [msg, setMsg] = useState<string | null>(null);
+    const [expandedModel, setExpandedModel] = useState(false);
     const [conflict, setConflict] = useState<D.ServerDraft | null>(null);
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const defaults = useQuery<{ items: { key: string; effective: unknown }[] }>(boundProfileId === undefined ? `settings:${projectId}` : null,
@@ -247,7 +258,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const [hideSugg, setHideSugg] = useState(false);
     const sugg = hideSugg ? [] : suggest(text, allCmds);
     const commandListId = useId();
-    const commandList = useRef<HTMLUListElement>(null);
+    const commandList = useRef<HTMLDivElement>(null);
     const selectedCommand = sugg.length > 0 ? Math.min(sel, sugg.length - 1) : -1;
     const activeCommandId = selectedCommand >= 0 ? `${commandListId}-${sugg[selectedCommand]!.name}` : undefined;
     useLayoutEffect(() => {
@@ -389,74 +400,76 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     };
 
     return (
-        <div className="composer">
+        <Card width="100%" maxWidth="48em" padding={2} elevation="low" xstyle={chatLayout.composer} data-testid="composer">
+        <Grid gap={1}>
             {copyError && <GroveText as="p" display="block" type="inherit" color="error" role="alert">기기에 입력 사본을 보관하지 못했습니다. 화면을 떠나기 전에 내용을 복사하세요.</GroveText>}
-            {copies.length > 0 && <DetailDialog className="draft-note" data-testid="draft-copies" label="다른 입력 사본" title={`다른 입력 사본 ${copies.length}개`}>
+            {copies.length > 0 && <DetailDialog surface="muted" data-testid="draft-copies" label="다른 입력 사본" title={`다른 입력 사본 ${copies.length}개`}>
                 <GroveText as="p" display="block" type="supporting" color="secondary">선택한 사본을 이 탭에 복제합니다. 현재 입력은 별도 사본으로 남기며 자동 전송하지 않습니다.</GroveText>
-                {copies.map((copy) => <div key={copy.key} data-testid="draft-copy">
+                {copies.map((copy) => <Stack gap={0} key={copy.key} data-testid="draft-copy">
                     <pre>{copy.draft.text}</pre>
                     {copy.draft.options && <GroveText as="p" display="block" type="supporting" color="secondary">
                         {copy.draft.options.mode === "save" ? "메시지만 저장" : `모델: ${profiles.data?.find((p) => p.id === copy.draft.options!.profileId)?.name ?? copy.draft.options.profileId ?? "기본"} · 추론: ${copy.draft.options.effort ?? "auto"} · 도구 ${copy.draft.options.tools ? "사용" : "끔"}`}
                     </GroveText>}
                     {!!copy.draft.attachments?.length && <GroveText as="p" display="block" type="supporting" color="inherit">첨부: {copy.draft.attachments.map((a) => a.name).join(", ")}</GroveText>}
                     {copy.draft.pending && <GroveText as="p" display="block" type="supporting" color="warning">전송 결과 확인 필요 · 원래 요청 키 유지</GroveText>}
-                    <GroveButton className="ghost small" data-dialog-close disabled={busy || attachments.busy} onClick={() => restoreCopy(copy.draft)}>이 사본 이어받기</GroveButton>
-                </div>)}
+                    <GroveButton variant="secondary" density="compact" data-dialog-close disabled={busy || attachments.busy} onClick={() => restoreCopy(copy.draft)}>이 사본 이어받기</GroveButton>
+                </Stack>)}
             </DetailDialog>}
-            {pendingInvalid && <div className="draft-note warn" role="alert">
+            {pendingInvalid && <Notice tone="yellow" role="alert">
                 전송 사본이 손상되어 원래 요청을 확인할 수 없습니다. 서버 대화·실행 기록을 먼저 확인하세요.
-                <GroveButton className="ghost small" onClick={() => setPendingInvalid(false)}>기록 확인 후 새 전송 허용</GroveButton>
-            </div>}
+                <GroveButton variant="secondary" density="compact" onClick={() => setPendingInvalid(false)}>기록 확인 후 새 전송 허용</GroveButton>
+            </Notice>}
             {state?.kind === "server_newer" && (
-                <div className="draft-note">
+                <Notice>
                     다른 기기({state.server.device_name}) 또는 입력 사본에서 저장한 서버 초안이 있습니다.
-                    <GroveButton className="ghost small" onClick={() => loadServer(state.server, "replace")}>불러오기</GroveButton>
-                </div>
+                    <GroveButton variant="secondary" density="compact" onClick={() => loadServer(state.server, "replace")}>불러오기</GroveButton>
+                </Notice>
             )}
             {conflict && (
-                <div className="draft-note warn" role="alert">
+                <Notice tone="yellow" role="alert">
                     서버 초안이 다른 기기({conflict.device_name}) 또는 입력 사본에서 바뀌었습니다. 내 초안은 이 탭에 보존되어 있습니다.
                     <DetailDialog label="서버 초안" title="서버 초안 보기">
                         <pre>{conflict.text}</pre>
                     </DetailDialog>
-                    <GroveButton className="ghost small" onClick={() => loadServer(conflict, "replace")}>서버 것으로 바꾸기</GroveButton>
-                    <GroveButton className="ghost small" onClick={() => loadServer(conflict, "append")}>합치기</GroveButton>
-                    <GroveButton className="ghost small" disabled={!!disabled} onClick={() => { base.current = conflict.revision; setConflict(null); void saveServer(); }}>
+                    <GroveButton variant="secondary" density="compact" onClick={() => loadServer(conflict, "replace")}>서버 것으로 바꾸기</GroveButton>
+                    <GroveButton variant="secondary" density="compact" onClick={() => loadServer(conflict, "append")}>합치기</GroveButton>
+                    <GroveButton variant="secondary" density="compact" disabled={!!disabled} onClick={() => { base.current = conflict.revision; setConflict(null); void saveServer(); }}>
                         내 것으로 덮어쓰기
                     </GroveButton>
-                </div>
+                </Notice>
             )}
             {pending && !busy && (
-                <div className="draft-note warn" role="alert" data-testid="send-unsure">
+                <Notice tone="yellow" role="alert" data-testid="send-unsure">
                     보냈는지 확인할 수 없습니다(연결 문제). 입력은 그대로 보관했고 자동으로 다시 보내지 않습니다.
                     글·모델/도구 옵션·첨부를 바꾸지 않고 확인하면 원래 전송 위치·옵션·같은 요청 키를 사용합니다.
                     {!recovering && <>
                         <DetailDialog label="원래 전송 요청" title="원래 요청 보기"><pre>{pending.raw}</pre>
                             <GroveText as="p" display="block" type="supporting" color="inherit">모델: {pending.options.profileId ?? "없음"} · 첨부 {pending.attachmentIds.length}개 · {pending.follow ? FOLLOW_LABEL[pending.follow] : pending.options.mode === "save" ? "메시지만 저장" : "모델로 보내기"}</GroveText>
                         </DetailDialog>
-                        <GroveButton className="ghost small" disabled={busy || attachments.busy || !!disabled}
+                        <GroveButton variant="secondary" density="compact" disabled={busy || attachments.busy || !!disabled}
                             onClick={() => void sendText(pending.body, pending.raw, pending)}>원래 요청 결과 확인</GroveButton>
                         <GroveText type="supporting" color="inherit">현재 입력과 새 첨부는 보존합니다. 현재 내용을 보내면 별도의 새 요청입니다.</GroveText>
                     </>}
-                </div>
+                </Notice>
             )}
             {sugg.length > 0 && (
-                <ul ref={commandList} id={commandListId} className="slash-list" role="listbox" aria-label="명령" data-testid="slash-list">
+                <CommandPaletteList ref={commandList} id={commandListId} xstyle={chatLayout.commands} label="명령" data-testid="slash-list">
                     {sugg.map((c, i) => (
-                        <li
+                        <CommandPaletteItem
                             key={c.name}
                             id={`${commandListId}-${c.name}`}
-                            role="option"
-                            aria-selected={i === selectedCommand}
+                            value={c.name}
+                            isSelected={i === selectedCommand}
+                            isHighlighted={i === selectedCommand}
                             onMouseDown={(e) => {
                                 e.preventDefault();
-                                complete(c);
                             }}
+                            onSelect={() => complete(c)}
                         >
                             <code>/{c.name}{c.args ? ` ${c.args}` : ""}</code> <GroveText type="supporting" color="secondary">{c.description}</GroveText>
-                        </li>
+                        </CommandPaletteItem>
                     ))}
-                </ul>
+                </CommandPaletteList>
             )}
             {eff.mode === "model" && boundProfileId === undefined && profiles.data?.length === 0 && (
                 <AgentConnect disabled={busy || !!disabled} onConnected={(profile) => {
@@ -464,13 +477,14 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     update({ profileId: profile.id, mode: "model", tools: false });
                 }} />
             )}
-            <textarea
+            <AttachmentSelection draft={attachments} disabled={busy || !!disabled} />
+            <TextArea label="메시지 입력" isLabelHidden controlXstyle={composerStyles.inputControl}
                 onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
                 onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); if (!busy && !disabled) void attachments.add(Array.from(e.dataTransfer.files)); } }}
                 onPaste={(e) => { if (e.clipboardData.files.length && !busy && !disabled) { e.preventDefault(); void attachments.add(Array.from(e.clipboardData.files)); } }}
                 value={text}
-                onChange={(e) => {
-                    setText(e.target.value);
+                onChange={(value) => {
+                    setText(value);
                     setHideSugg(false);
                     setSel(0);
                 }}
@@ -492,43 +506,44 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     node.style.height = "auto";
                     node.style.height = `${Math.min(node.scrollHeight, 160)}px`;
                 }}
-                disabled={!!parentDisabled}
+                isDisabled={!!parentDisabled}
             />
-            <div className="composer-bar">
-                <AttachmentPicker draft={attachments} disabled={busy || !!disabled} />
+            <Grid gap={1} xstyle={[chatLayout.bar, composerStyles.toolbar]} data-testid="composer-bar" data-model-expanded={expandedModel}>
+                <Stack gap={0} data-composer-fixed xstyle={[composerStyles.attachmentSlot, expandedModel && composerStyles.secondRow]}>
+                    <AttachmentPicker draft={attachments} disabled={busy || !!disabled} onIssue={setMsg} />
+                </Stack>
+                <Stack gap={0} xstyle={[composerStyles.modelSlot, expandedModel && composerStyles.expandedModel]}>
                 {((profiles.data?.length ?? 0) > 0 || eff.mode === "save" || eff.profileId) && <ModelSelect
                     profiles={profiles.data ?? []} profileId={eff.profileId} model={eff.model} ready={ready}
                     save={eff.mode === "save"} bound={boundProfileId !== undefined}
-                    onChange={(profileId, model) => { update({ profileId, model, mode: "model" }); setMsg(null); }} />}
+                    onExpandedChange={setExpandedModel}
+                    onChange={(profileId, model) => { update({ profileId, model, mode: "model" }); setMsg(null); }}>
+                    {eff.mode === "model" && <Select label="추론" value={eff.effort ?? "auto"} width="100%"
+                        aria-description="auto는 모델 기본값" onChange={(value) => update({ effort: value as SendOptions["effort"] })}
+                        options={[{ value: "auto", label: "auto" },
+                            ...(eff.effort && eff.effort !== "auto" && !efforts.includes(eff.effort)
+                                ? [{ value: eff.effort, label: `${eff.effort} · 미지원`, disabled: true }] : []),
+                            ...efforts.map((value) => ({ value, label: value, disabled: selectedProfile?.capabilities?.effort === false }))]} />}
+                    {eff.mode === "model" && (fastTier || fastEnabled) && <BooleanSelect label="Fast" value={fastEnabled}
+                        disabled={!fastEnabled && !fastTier} help="켜면 사용량이 늘어날 수 있어요."
+                        onChange={(on) => update({ serviceTier: on ? fastTier!.id : "default" })} />}
+                </ModelSelect>}
+                </Stack>
+                <Stack gap={0} data-composer-fixed xstyle={[composerStyles.menuSlot, expandedModel && composerStyles.secondRow]}>
                 <ActionMenu label="초안·스킬">
-                    {running && eff.mode === "model" && <label>전송 방식
-                        <select aria-label="실행 중 보내기 방식" value={follow} disabled={!!recovering} onChange={(e) => setFollow(e.target.value as FollowKind)}>
-                            <option value="queue">대기열</option>
-                            <option value="steer">지금 반영</option>
-                            <option value="interrupt">중단 후 전송</option>
-                        </select>
-                    </label>}
+                    {running && eff.mode === "model" && <Select label="실행 중 보내기 방식" value={follow} disabled={!!recovering}
+                        onChange={(value) => setFollow(value as FollowKind)}
+                        options={[{ value: "queue", label: "대기열" }, { value: "steer", label: "지금 반영" }, { value: "interrupt", label: "중단 후 전송" }]} />}
                     {resourceKey.startsWith("session:") && <SessionSkills key={`${projectId}:${resourceKey}`} sessionId={resourceKey.slice("session:".length)} />}
-                    <GroveButton className="ghost small" onClick={saveServer} disabled={!text || !!disabled} title={disabled ?? "다른 기기에서 이어서 쓰도록 서버에 저장"}>
+                    <GroveButton variant="secondary" density="compact" onClick={saveServer} disabled={!text || !!disabled} title={disabled ?? "다른 기기에서 이어서 쓰도록 서버에 저장"}>
                         초안 서버 저장
                     </GroveButton>
                 </ActionMenu>
-                {eff.mode === "model" && (profiles.data?.length ?? 0) > 0 && (
-                    <select className="composer-reasoning" aria-label="추론" value={eff.effort ?? "auto"} onChange={(e) => update({ effort: e.target.value as SendOptions["effort"] })} title="추론 · auto는 모델 기본값">
-                        <option value="auto">auto</option>
-                        {eff.effort && eff.effort !== "auto" && !efforts.includes(eff.effort) && <option value={eff.effort} disabled>{eff.effort} · 미지원</option>}
-                        {efforts.map((value) => <option key={value} value={value} disabled={selectedProfile?.capabilities?.effort === false}>{value}</option>)}
-                    </select>
-                )}
-                {eff.mode === "model" && (fastTier || fastEnabled) && <GroveButton type="button"
-                    className="icon-btn composer-speed" aria-label="Fast" aria-pressed={fastEnabled}
-                    title={fastEnabled ? "Fast 켜짐 · 끄기" : "Fast 꺼짐 · 켜면 사용량이 늘어날 수 있습니다"}
-                    disabled={!fastEnabled && !fastTier}
-                    onClick={() => update({ serviceTier: fastEnabled ? "default" : fastTier!.id })}>
-                    <Icon name="fast" size={16} />
-                </GroveButton>}
+                </Stack>
+                <Stack gap={0} data-composer-fixed xstyle={[composerStyles.sendSlot, expandedModel && composerStyles.secondRow]}>
                 <GroveButton
-                    className="send-button"
+                    appearance="send"
+                    width="100%"
                     aria-label={busy ? checking.current ? "확인 중…" : "보내는 중…" : recovering ? "같은 요청 확인" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
                     onClick={send}
                     disabled={busy || pendingInvalid || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (!!problem || (eff.mode === "model" && (!ready || !eff.profileId || profileDisabled || profileMissing)) || (!!running && eff.mode === "save")))}
@@ -536,7 +551,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 >
                     <Icon name="send" />
                 </GroveButton>
-            </div>
+                </Stack>
+            </Grid>
             {msg && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">{msg}</GroveText>}
             {problem && <GroveText as="p" display="block" type="supporting" color="warning" role="status">{problem}</GroveText>}
             {eff.mode === "model" && profileDisabled && <GroveText as="p" display="block" type="supporting" color="warning" role="status" data-testid="profile-disabled">선택한 모델 프로필이 비활성화돼 있습니다. 다른 모델로 자동 전환하지 않습니다.</GroveText>}
@@ -544,8 +560,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
             {/* 모델 설정 확인 중에는 전송만 막고 문구를 띄우지 않는다. 실패했을 때만 알린다. */}
             {!ready && eff.mode === "model" && Boolean(defaults.error || profiles.error) && <GroveText as="p" display="block" type="supporting" color="warning" role="status">
                 모델 선택 정보를 불러오지 못했습니다.
-                <GroveButton className="ghost small" onClick={() => { defaults.reload(); profiles.reload(); }}>모델 설정 다시 확인</GroveButton>
+                <GroveButton variant="secondary" density="compact" onClick={() => { defaults.reload(); profiles.reload(); }}>모델 설정 다시 확인</GroveButton>
             </GroveText>}
-        </div>
+        </Grid>
+        </Card>
     );
 }

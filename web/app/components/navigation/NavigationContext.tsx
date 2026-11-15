@@ -1,3 +1,6 @@
+import { HintText } from "../../design/HintText";
+import { Breadcrumbs, BreadcrumbItem } from "@astryxdesign/core/Breadcrumbs";
+import { Stack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import { api } from "../../api/client";
@@ -6,7 +9,7 @@ import type { Layout } from "../../state/layout";
 import { useQuery } from "../../state/store";
 import type { Opener } from "../Workspace";
 import { hostAddress, navigationContext, projectTarget, resourceLabel, sessionTarget } from "./context";
-import "./navigation.css";
+import { navigationStyles } from "./navigation.stylex";
 
 export type NavigationContextProps = {
     layout?: Layout;
@@ -32,40 +35,37 @@ export function NavigationContext({ layout, projects, host, open, onBrowseProjec
     const tab = context.tab;
     const projectCurrent = tab?.kind === "project";
     const sessionCurrent = tab?.kind === "session";
-    return <nav className="navigation-context" aria-label="현재 위치" data-testid="navigation-context"
-        data-project-id={context.projectId} data-session-id={context.sessionId}>
-        <ol>
-            <li className="navigation-host">
-                <span aria-label={`현재 호스트: ${address}`} title={`현재 호스트: ${address}`}>{address}</span>
-            </li>
-            <li className="navigation-browse">
-                <GroveText type="inherit" color="inherit" className="navigation-separator" aria-hidden="true">/</GroveText>
-                <GroveButton type="button" className="ghost" onClick={onBrowseProjects}
+    return <Stack direction="horizontal" align="center" gap={1} xstyle={navigationStyles.root}>
+        <Breadcrumbs label="현재 위치" variant="supporting" xstyle={navigationStyles.trail} data-testid="navigation-context"
+            data-project-id={context.projectId} data-session-id={context.sessionId}
+            separator={<GroveText color="secondary" aria-hidden="true">/</GroveText>}>
+            <BreadcrumbItem xstyle={navigationStyles.host} isCurrent={false}>
+                <HintText aria-label={`현재 호스트: ${address}`} hint={`현재 호스트: ${address}`}>{address}</HintText>
+            </BreadcrumbItem>
+            <BreadcrumbItem xstyle={navigationStyles.browse} isCurrent={false}>
+                <GroveButton type="button" appearance="link" onClick={onBrowseProjects}
                     aria-label="프로젝트 탐색" aria-expanded={sidebarOpen} title="사이드바에서 프로젝트 탐색">프로젝트</GroveButton>
-            </li>
-            {parentProject && <li className={`navigation-project ${projectCurrent ? "navigation-current" : ""}`}>
-                <GroveText type="inherit" color="inherit" className="navigation-separator" aria-hidden="true">/</GroveText>
+            </BreadcrumbItem>
+            {parentProject && <BreadcrumbItem xstyle={[navigationStyles.item, projectCurrent && navigationStyles.current, projectCurrent && navigationStyles.duplicate]} isCurrent={false}>
                 {projectCurrent
-                    ? <span aria-current="page" aria-label={projectLabel} title={projectLabel}>{projectName}</span>
-                    : <GroveButton type="button" className="ghost" aria-label={`${projectLabel} 대화 목록으로`}
-                        title={`${projectLabel} 대화 목록으로`} onClick={() => open(parentProject)}>{projectName}</GroveButton>}
-            </li>}
-            {parentSession && <li className={`navigation-session ${sessionCurrent ? "navigation-current" : ""}`}>
-                <GroveText type="inherit" color="inherit" className="navigation-separator" aria-hidden="true">/</GroveText>
+                    ? <HintText display="block" maxLines={1} xstyle={navigationStyles.duplicate} aria-current="page" aria-label={projectLabel} hint={projectLabel}>{projectName}</HintText>
+                    : <GroveButton type="button" appearance="link" aria-label={`${projectLabel} 대화 목록으로`}
+                        title={`${projectLabel} 대화 목록으로`} onClick={() => open(parentProject)}><GroveText type="inherit" color="inherit" maxLines={1}>{projectName}</GroveText></GroveButton>}
+            </BreadcrumbItem>}
+            {parentSession && <BreadcrumbItem xstyle={[navigationStyles.item, sessionCurrent && navigationStyles.current, sessionCurrent && navigationStyles.duplicate]} isCurrent={false}>
                 {sessionCurrent
-                    ? <span aria-current="page" aria-label={sessionLabel} title={sessionLabel}>세션 · {sessionName}{session.error ? " · 조회 실패" : ""}</span>
-                    : <GroveButton type="button" className="ghost" aria-label={`${sessionLabel} 열기`} title={sessionLabel}
-                        onClick={() => open(parentSession)}>세션 · {sessionName}</GroveButton>}
-            </li>}
-            {!projectCurrent && !sessionCurrent && <li className="navigation-current">
-                <GroveText type="inherit" color="inherit" className="navigation-separator" aria-hidden="true">/</GroveText>
-                <span aria-current="page" title={tab ? resourceLabel(tab) : undefined}>
+                    ? <HintText display="block" maxLines={1} xstyle={navigationStyles.duplicate} aria-current="page" aria-label={sessionLabel} hint={sessionLabel}>세션 · {sessionName}{session.error ? " · 조회 실패" : ""}</HintText>
+                    : <GroveButton type="button" appearance="link" aria-label={`${sessionLabel} 열기`} title={sessionLabel}
+                        onClick={() => open(parentSession)}><GroveText type="inherit" color="inherit" maxLines={1}>세션 · {sessionName}</GroveText></GroveButton>}
+            </BreadcrumbItem>}
+            {!projectCurrent && !sessionCurrent && <BreadcrumbItem xstyle={navigationStyles.current} isCurrent={false}>
+                <HintText display="block" aria-current="page" hint={tab ? resourceLabel(tab) : undefined}>
                     {tab ? resourceLabel(tab) : layout ? "빈 영역" : "배치 불러오는 중…"}
-                </span>
-            </li>}
-        </ol>
-        {context.panes > 1 && <GroveText type="inherit" color="inherit" className="navigation-pane" aria-label={`현재 영역 ${context.pane}, 전체 ${context.panes}개`}>
+                </HintText>
+            </BreadcrumbItem>}
+        </Breadcrumbs>
+        {context.panes > 1 && <GroveText type="supporting" color="secondary" xstyle={navigationStyles.pane} aria-label={`현재 영역 ${context.pane}, 전체 ${context.panes}개`}>
             영역 {context.pane}/{context.panes}
         </GroveText>}
-    </nav>;
+    </Stack>;
 }

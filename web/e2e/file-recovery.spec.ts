@@ -127,7 +127,7 @@ test("파일 올리기 응답을 잃고 새로고침해도 원문 없이 같은 
         expect(response.headers()["idempotent-replayed"]).toBe("true");
         await route.fulfill({ response });
     });
-    await files.getByLabel("올릴 파일 선택").setInputFiles({ name, mimeType: "application/octet-stream", buffer: bytes });
+    await files.locator('input[type="file"]').setInputFiles({ name, mimeType: "application/octet-stream", buffer: bytes });
     await expect(files.getByRole("button", { name: "같은 업로드 결과 확인" })).toBeVisible();
     expect(sent[0]!.body.data_base64).toBe(bytes.toString("base64"));
     expect(readFileSync(join(project.root_path, name))).toEqual(bytes);
@@ -144,11 +144,11 @@ test("파일 올리기 응답을 잃고 새로고침해도 원문 없이 같은 
     await expect(files.getByRole("button", { name, exact: true })).toBeVisible();
     // 같은 이름을 다시 올리면 덮어쓰지 않는다
     await page.unroute(`**/api/v1/projects/${a.id}/files/upload`);
-    await files.getByLabel("올릴 파일 선택").setInputFiles({ name, mimeType: "application/octet-stream", buffer: Buffer.from("other") });
+    await files.locator('input[type="file"]').setInputFiles({ name, mimeType: "application/octet-stream", buffer: Buffer.from("other") });
     await expect(files.getByRole("alert").filter({ hasText: "이미 있습니다" })).toBeVisible();
     expect(readFileSync(join(project.root_path, name))).toEqual(bytes);
     // 상한을 넘는 파일은 보내지 않는다
-    await files.getByLabel("올릴 파일 선택").setInputFiles({ name: "too-big.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(5 * 1024 * 1024 + 1) });
+    await files.locator('input[type="file"]').setInputFiles({ name: "too-big.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(5 * 1024 * 1024 + 1) });
     await expect(files.getByRole("alert").filter({ hasText: "5MiB까지" })).toBeVisible();
     expect(existsSync(join(project.root_path, "too-big.bin"))).toBe(false);
 });

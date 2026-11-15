@@ -63,6 +63,8 @@ mod task_logs;
 pub mod admin;
 pub mod bot_avatars;
 pub mod bots;
+pub mod bot_rooms;
+pub mod bot_connections;
 pub mod notifications;
 pub mod schedules;
 pub mod remote_watches;
@@ -94,6 +96,8 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// 클라이언트는 쓰기 전에 목록을 확인하고, 변경 요청에는 필요한 기능을 `x-grove-require`로 밝힌다.
 /// 기능을 빼거나 의미를 바꾸면 이름의 버전(`_v2`)을 올린다.
 pub const CAPABILITIES: &[&str] = &[
+    "bot_rooms_v1",
+    "bot_connections_v1",
     "agent_auth_v1",
     "agent_backends_v1",
     "e2ee_v1",
@@ -272,6 +276,9 @@ pub fn router(app: App) -> Router {
         .route("/bots/{id}/home", post(bots::open_home))
         .route("/bots/{id}/status", post(bots::set_status))
         .route("/bots/{id}/seen", post(bots::seen))
+        .route("/bots/{id}/connections", get(bot_connections::show).put(bot_connections::save))
+        .route("/bot-rooms", get(bot_rooms::list).post(bot_rooms::create))
+        .route("/sessions/{id}/bot-room", get(bot_rooms::show))
         .route("/notifications", get(notifications::list))
         .route("/notifications/delivered", post(notifications::delivered))
         .route("/notifications/read-all", post(notifications::read_all))

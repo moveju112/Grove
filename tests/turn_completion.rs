@@ -140,7 +140,7 @@ async fn deferred_completion_obeys_cancel_time_budget_and_restart_without_replay
         };
         let t = s.wait_status(&tid, status).await;
         assert_eq!(t["error"]["code"], code, "{t}");
-        assert_eq!(t["error"]["scope"]["running_tasks"][0]["id"], task_id);
+        assert_eq!(t["error"]["scope"]["running_tasks"][0]["id"], task_id, "{mode}: {t}");
         if mode != "restart" {
             s.post(&format!("/api/v1/tasks/{task_id}/cancel"), json!({})).await;
             let result = s.get(&format!("/api/v1/tasks/{task_id}/wait?timeout_ms=5000")).await.1;

@@ -13,7 +13,8 @@ async function conversation(page: Page) {
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
     await page.getByRole("button", { name: "사이드바", exact: true }).click();
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
+    await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
     const view = sessionView(page, session.id);
     await expect(view.getByLabel("메시지 입력", { exact: true })).toBeVisible();
     return { view, session, profile, title };
@@ -23,7 +24,7 @@ for (const theme of ["light", "dark"] as const) {
     test(`${theme}: 명령 목록을 검색해도 입력창은 움직이지 않고 키보드 선택을 따라간다`, async ({ page }, info) => {
         await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
         const { view } = await conversation(page);
-        const composer = view.locator(".composer");
+        const composer = view.getByTestId("composer");
         const input = view.getByLabel("메시지 입력", { exact: true });
         const original = (await composer.boundingBox())!;
         await input.fill("/");
@@ -34,7 +35,16 @@ for (const theme of ["light", "dark"] as const) {
         expect(all.y + all.height).toBeLessThanOrEqual(original.y);
         await input.press("ArrowDown");
         const selected = list.getByRole("option", { selected: true });
-        await expect(selected).toBeInViewport();
+        const commandGeometry = await selected.evaluate((node) => {
+            const parents = [];
+            for (let parent: HTMLElement | null = node as HTMLElement; parent; parent = parent.parentElement) {
+                const style = getComputedStyle(parent);
+                parents.push({ tag: parent.tagName, role: parent.getAttribute("role"), rect: parent.getBoundingClientRect().toJSON(), overflow: style.overflow, maxHeight: style.maxHeight });
+                if (parents.length === 8) break;
+            }
+            return parents;
+        });
+        await expect(selected, JSON.stringify(commandGeometry)).toBeInViewport();
         await expect(input).toHaveAttribute("aria-activedescendant", (await selected.getAttribute("id"))!);
         await input.fill("/save");
         const filtered = (await list.boundingBox())!;
@@ -51,7 +61,7 @@ for (const theme of ["light", "dark"] as const) {
 test("메시지 시각은 말풍선 밖에 표시하고 응답 시간의 세부 수치는 열어서 확인한다", async ({ page }, info) => {
     const { view, session, profile, title } = await conversation(page);
     const message = await apiCall<Message>("POST", `/sessions/${session.id}/messages`, { text: "짧은 사용자 메시지" });
-    const row = view.locator(".msg-row").filter({ has: page.getByTestId("msg-user").filter({ hasText: "짧은 사용자 메시지" }) });
+    const row = view.locator("[data-seq]").filter({ has: page.getByTestId("msg-user").filter({ hasText: "짧은 사용자 메시지" }) });
     const timestamp = row.locator("time");
     await expect(timestamp).toHaveAttribute("datetime", message.created_at);
     const bubble = (await row.getByTestId("msg-user").boundingBox())!;

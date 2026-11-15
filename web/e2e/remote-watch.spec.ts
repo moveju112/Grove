@@ -20,10 +20,10 @@ test("원격 작업 감시는 원격 성공과 알림 단계를 따로 보여 �
         const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
         const panel = page.getByTestId("session-view").getByTestId("remote-watches");
         await openTool(page.getByTestId("session-view"), "원격 감시");
-        await openDetails(panel);
+        await openDetails(panel, "원격 감시");
         const add = async (name: string, path: string) => {
             await panel.getByLabel("감시 이름").fill(name);
             await panel.getByLabel("상태 URL").fill(`http://127.0.0.1:${port}${path}`);

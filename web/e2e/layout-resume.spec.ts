@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { apiCall, ensureProjects, login, openSettings } from "./helpers";
 import type { Layout } from "../app/state/layout";
 
 async function seed(page: import("@playwright/test").Page) {
@@ -27,18 +27,18 @@ test("서버에 아직 저장하지 못한 탭·분할 방향·비율·활성 pa
     await page.route(`**/api/v1/layouts/${device}`, (route) =>
         route.request().method() === "PUT" ? route.abort("failed") : route.continue());
     await login(page);
-    const divider = page.getByRole("separator");
+    const divider = page.getByRole("separator").and(page.locator("[aria-valuenow]"));
     await divider.press("ArrowRight");
     await divider.dblclick();
-    await page.getByTestId("pane").first().locator(".tabbar").getByRole("tab").click();
+    await page.getByTestId("pane").first().getByRole("tablist").getByRole("tab").click();
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-    await expect(page.getByTestId("pane").first().locator(".tabbar").getByRole("tab", { selected: true })).toContainText("설정");
+    await expect(page.getByTestId("pane").first().getByRole("tablist").getByRole("tab", { selected: true })).toContainText("설정");
     await page.reload();
     await expect(page.getByTestId("split-column")).toBeVisible();
-    await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "45");
-    await expect(page.getByTestId("pane").first()).toHaveClass(/focused/);
-    await expect(page.getByTestId("pane").first().locator(".tabbar").getByRole("tab", { selected: true })).toContainText("설정");
-    await page.getByTestId("pane").first().locator(".tab-title").filter({ hasText: "대화 목록" }).click();
+    await expect(page.getByRole("separator").and(page.locator("[aria-valuenow]"))).toHaveAttribute("aria-valuenow", "45");
+    await expect(page.getByTestId("pane").first()).toHaveAttribute("data-focused", "true");
+    await expect(page.getByTestId("pane").first().getByRole("tablist").getByRole("tab", { selected: true })).toContainText("설정");
+    await page.getByTestId("pane").first().getByTestId("tab-title").filter({ hasText: "대화 목록" }).click();
     await expect(page.getByTestId("pane").first().getByLabel("메시지 입력")).toBeEnabled();
     const server = await apiCall<{ revision: number; layout: Layout }>("GET", `/layouts/${device}`);
     expect(server.revision).toBe(1);
@@ -61,12 +61,12 @@ test("저장 응답이 유실돼도 알림 없이 같은 요청 키로 결과를
         } else await route.continue();
     });
     await login(page);
-    await page.getByRole("separator").press("ArrowRight");
+    await page.getByRole("separator").and(page.locator("[aria-valuenow]")).press("ArrowRight");
     await expect.poll(() => attempts.length).toBeGreaterThanOrEqual(1);
     // 연결 문제는 연결 토스트 하나로만 알린다. 배치 저장 알림을 따로 띄우지 않는다.
     await expect(page.getByText("배치를 서버에 저장하지 못했습니다")).toHaveCount(0);
     await page.reload();
-    await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "45");
+    await expect(page.getByRole("separator").and(page.locator("[aria-valuenow]"))).toHaveAttribute("aria-valuenow", "45");
     await expect.poll(() => attempts.length).toBe(2);
     expect(attempts[1]).toEqual(attempts[0]);
     await expect.poll(async () => {
@@ -82,15 +82,15 @@ test("좁은 화면을 다녀와도 미반영 넓은 화면 배치와 각 기기
     await page.route(`**/api/v1/layouts/${device}`, (route) =>
         route.request().method() === "PUT" ? route.abort("failed") : route.continue());
     await login(page);
-    await page.getByRole("separator").press("ArrowLeft");
+    await page.getByRole("separator").and(page.locator("[aria-valuenow]")).press("ArrowLeft");
     await page.setViewportSize({ width: 390, height: 844 });
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(1);
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     // 좁은 화면의 단일 탭 줄은 숨기므로 현재 탭은 상단 바의 현재 위치로 확인한다.
     await expect(page.getByTestId("navigation-context").locator('[aria-current="page"]')).toHaveText("설정");
     await page.setViewportSize({ width: 1400, height: 900 });
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(2);
-    await expect(page.getByRole("separator")).toHaveAttribute("aria-valuenow", "35");
+    await expect(page.getByRole("separator").and(page.locator("[aria-valuenow]"))).toHaveAttribute("aria-valuenow", "35");
     const narrow = await page.evaluate((key) => JSON.parse(localStorage.getItem(`grove.layout.${key}-narrow`)!), device);
     expect(narrow.layout.root.tabs[0].kind).toBe("settings");
     expect(narrow.revision).toBeLessThan(2);

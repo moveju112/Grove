@@ -9,14 +9,29 @@ fn fail(code: &'static str, message: &str) -> ApiError { ApiError::conflict(code
 
 /// 저장된 목록만 읽으며 MCP 프로세스·네트워크 연결은 만들지 않는다.
 pub fn catalog(c: &Connection, args: &Value) -> ApiResult<Value> {
+    catalog_for(c,args,None)
+}
+
+pub fn catalog_for(c: &Connection, args: &Value, context: Option<(&str, Option<&str>)>) -> ApiResult<Value> {
     let server = args["server_id"].as_str();
+    let bot = context.map(|(session,turn)| crate::bot_connections::execution_bot(c,session,turn)).transpose()?.flatten();
+    let allowed = bot.as_ref().map(|b| -> ApiResult<Vec<String>> {
+        let id = b["id"].as_str().ok_or_else(|| ApiError::invalid("봇 실행 정보가 없습니다"))?;
+        let mut ids = crate::bot_connections::selected(c,id)?;
+        if let Some(snapshot) = b.get("connections") {
+            ids.retain(|id| snapshot.as_array().is_some_and(|a| a.iter().any(|v| v == id)));
+        }
+        Ok(ids)
+    }).transpose()?;
+    let allowed = allowed.map(|ids| serde_json::to_string(&ids)).transpose()?;
     let offset = args["offset"].as_u64().unwrap_or(0).min(i64::MAX as u64) as i64;
     let limit = args["limit"].as_u64().unwrap_or(10).clamp(1,50) as i64;
     let filter = "FROM mcp_servers m JOIN mcp_checks k ON k.server_id=m.id, json_each(k.detail,'$.tools') t
-        WHERE m.enabled=1 AND k.status='ready' AND (?1 IS NULL OR m.id=?1)";
-    let total: i64 = c.query_row(&format!("SELECT COUNT(*) {filter}"),params![server],|r|r.get(0))?;
+        WHERE m.enabled=1 AND k.status='ready' AND (?1 IS NULL OR m.id=?1)
+        AND (?4 IS NULL OR m.id IN (SELECT value FROM json_each(?4)))";
+    let total: i64 = c.query_row(&format!("SELECT COUNT(*) {filter}"),params![server,limit,offset,allowed],|r|r.get(0))?;
     let mut st = c.prepare(&format!("SELECT m.id,m.name,t.value {filter} ORDER BY m.name,CAST(t.key AS INTEGER) LIMIT ?2 OFFSET ?3"))?;
-    let rows = st.query_map(params![server,limit,offset],|r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))?;
+    let rows = st.query_map(params![server,limit,offset,allowed],|r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,String>(2)?)))?;
     let mut items = vec![];
     let mut bytes = 256;
     for row in rows {
@@ -58,6 +73,7 @@ fn no_unknown(c: &Connection, session: &str) -> ApiResult<()> {
 pub fn plan_call(c: &Connection, args: &Value, project: &str, session: &str) -> ApiResult<Planned> {
     no_unknown(c,session)?;
     let id = args["server_id"].as_str().ok_or_else(|| ApiError::invalid("server_id가 필요합니다"))?;
+    crate::bot_connections::check_access(c,session,None,id)?;
     let server = get(c,id)?;
     let credential_identity = super::oauth::identity(c, &server)?;
     if !server.enabled { return Err(fail("mcp_disabled","MCP 서버가 사용 설정되지 않았습니다")); }
@@ -84,6 +100,7 @@ pub fn validate_call(c: &Connection, call: &crate::approvals::ToolCallRow) -> Ap
     crate::sessions::get_active(c,&call.session_id)?;
     let target = &call.target;
     let id = target["server_id"].as_str().ok_or_else(|| ApiError::invalid("MCP 대상이 없습니다"))?;
+    crate::bot_connections::check_access(c,&call.session_id,call.turn_id.as_deref(),id)?;
     let server = get(c,id)?;
     if target["oauth_identity"] != super::oauth::identity(c, &server)? {
         return Err(fail("mcp_auth_changed","OAuth 자격이 바뀌었습니다. 새 연결 확인·승인이 필요합니다"));

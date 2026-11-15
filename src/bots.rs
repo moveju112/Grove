@@ -288,6 +288,11 @@ pub async fn update(State(app): State<App>, p: Principal, headers: HeaderMap, Pa
         if cur.home_session_id.is_some() && s.project_id != cur.project_id {
             return Err(ApiError::conflict("project_locked", "대화가 있는 봇의 프로젝트는 바꿀 수 없습니다. 대화를 초기화한 뒤 바꾸세요"));
         }
+        if s.project_id != cur.project_id && tx.query_row(
+            "SELECT EXISTS(SELECT 1 FROM bot_rooms r,json_each(r.member_ids) m WHERE m.value=?1)", [&id], |r| r.get::<_,bool>(0),
+        )? {
+            return Err(ApiError::conflict("project_locked", "그룹에 참여 중인 봇의 프로젝트는 바꿀 수 없습니다"));
+        }
         tx.execute(
             "UPDATE bots SET name = ?2, description = ?3, persona = ?4, instructions = ?5, profile_id = ?6, project_id = ?7, avatar_color = ?8, \
              revision = revision + 1, updated_at = ?9 WHERE id = ?1",
@@ -452,6 +457,11 @@ pub fn turn_binding(c: &Connection, session_id: &str) -> ApiResult<Option<(Strin
     let Some(b) = by_session(c, session_id)? else {
         return Ok(None);
     };
+    binding_for(c, &b.id).map(Some)
+}
+
+pub(crate) fn binding_for(c: &Connection, id: &str) -> ApiResult<(String, Value)> {
+    let b = get(c, id)?;
     match b.status.as_str() {
         "active" => {}
         "disabled" => return Err(ApiError::conflict("bot_disabled", "비활성화된 봇입니다. 다시 켠 뒤 보내세요")),
@@ -461,10 +471,11 @@ pub fn turn_binding(c: &Connection, session_id: &str) -> ApiResult<Option<(Strin
     if model_state(c, Some(&profile))? == "deleted" {
         return Err(ApiError::conflict("model_deleted", "이 봇의 모델 프로필이 삭제됐습니다. 봇 편집에서 다른 모델을 고르세요"));
     }
-    Ok(Some((
+    Ok((
         profile,
-        json!({ "id": b.id, "name": b.name, "revision": b.revision, "persona": b.persona, "instructions": b.instructions }),
-    )))
+        json!({ "id": b.id, "name": b.name, "revision": b.revision, "persona": b.persona, "instructions": b.instructions,
+            "connections": crate::bot_connections::selected(c, &b.id)? }),
+    ))
 }
 
 #[cfg(test)]

@@ -12,17 +12,17 @@ test("검색 결과를 누르면 오래된 메시지까지 이전 페이지를 �
     }
     await login(page);
     const panel = page.getByTestId("search-panel");
-    await openDetails(panel);
+    await openDetails(panel, "대화 검색");
     await panel.getByLabel("대화 검색어").fill(word);
     const hit = panel.getByTestId("search-hit");
     await expect(hit).toHaveCount(1);
     await hit.getByRole("button").click();
     const view = page.getByTestId("session-view");
-    const target = view.locator(".msg-row.focus-hit");
+    const target = view.locator('[data-seq][data-highlighted="true"]');
     await expect(target).toHaveCount(1, { timeout: 15_000 });
     await expect(target).toContainText(word);
     await expect(target).toBeInViewport();
     // 강조는 잠시 뒤 사라진다
-    await expect(view.locator(".msg-row.focus-hit")).toHaveCount(0, { timeout: 8_000 });
+    await expect(view.locator('[data-seq][data-highlighted="true"]')).toHaveCount(0, { timeout: 8_000 });
     await expect(view.getByText(`여기에 ${word} 가 있다`)).toBeVisible();
 });

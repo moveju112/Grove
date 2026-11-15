@@ -21,13 +21,13 @@ test("프로젝트를 보관했다가 복원하고, 제거한 worktree를 브랜
     try {
         await login(page);
         page.on("dialog", (d) => void d.accept());
-        const side = page.locator(".sidebar .projects");
+        const side = page.getByTestId("sidebar").getByTestId("projects");
         const row = side.getByTestId("project-row").filter({ hasText: p.name });
 
         // 제거한 worktree: 검사 결과를 본 뒤 복원
         await row.getByRole("button", { name: new RegExp(p.name) }).first().click();
-        const panel = page.locator(".project-view").filter({ has: page.locator(".view-head", { hasText: p.name }) }).getByTestId("worktrees-panel");
-        await openDetails(panel);
+        const panel = page.getByTestId("project-view").filter({ has: page.getByRole("heading", { name: p.name, exact: true }) }).getByTestId("worktrees-panel");
+        await openDetails(panel, "워크스페이스");
         const removed = panel.getByTestId("worktree-removed").filter({ hasText: "again" });
         await removed.getByRole("button", { name: "복원 검사" }).click();
         await expect(removed).toContainText("브랜치로");

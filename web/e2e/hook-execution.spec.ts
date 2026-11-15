@@ -100,6 +100,8 @@ test("SessionStart는 승인 후 한 번 실행하고 기록을 복원하며 거
         await expect(view).toContainText('"limits"');
         await expect(view).toContainText("hook-local-fixture");
         expect((await getCall(f.call.id)).status).toBe("pending_approval");
+        await view.getByRole("dialog", { name: "승인 계획", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
+        await expect(view.getByRole("dialog", { name: "승인 계획", exact: true })).toHaveCount(0);
         await view.getByRole("button", { name: "이번만 승인", exact: true }).click();
         await expect(view).toContainText("실행 완료");
         await expect(view).toContainText('"stdout": "hook-local-fixture"');

@@ -31,7 +31,7 @@ test("요구 선언·명시적 의존 선택·실제 호출 capability·응답 �
     try {
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         const view = sessionView(page, session.id);
         await openDetails(view.getByTestId("skills-disclosure"));
         const panel = view.getByTestId("session-skills");
@@ -44,7 +44,7 @@ test("요구 선언·명시적 의존 선택·실제 호출 capability·응답 �
         await row("base").getByRole("button", { name: /본문 보기/ }).click();
         await panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
         await expect(row("base")).toContainText("선택됨");
-        await panel.getByLabel("검증할 모델").selectOption(profile.id);
+        await selectChoice(panel.getByLabel("검증할 모델"), profile.id);
         await expect(panel.getByRole("combobox", { name: "검증할 도구 사용", exact: true })).toBeEnabled();
         await selectChoice(panel.getByLabel("검증할 도구 사용"), "false");
         await expect(row("review")).toContainText("skill_tools_disabled");
@@ -137,7 +137,7 @@ test("의존 스킬 해제는 기존 binding을 보존하고 다른 세션에는
         for (const selection of bindings) await apiCall("PUT", `/sessions/${first.id}/skills/selection`, { selection, selected: true });
         for (const session of [first, second]) await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
         await login(page);
-        await page.locator(".recent").getByRole("button", { name: new RegExp(`${name}-first`) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${name}-first`) }).click();
         const view = sessionView(page, first.id);
         await openDetails(view.getByTestId("skills-disclosure"));
         const panel = view.getByTestId("session-skills");
@@ -147,7 +147,7 @@ test("의존 스킬 해제는 기존 binding을 보존하고 다른 세션에는
         const snapshot = await apiCall<SessionSkills>("GET", `/sessions/${first.id}/skills`);
         expect(snapshot.selected).toEqual([bindings[1]]);
         await page.getByRole("dialog", { name: "대화 스킬", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
-        await page.locator(".recent").getByRole("button", { name: new RegExp(`${name}-second`) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${name}-second`) }).click();
         await openDetails(sessionView(page, second.id).getByTestId("skills-disclosure"));
         const other = sessionView(page, second.id).getByTestId("session-skills");
         await expect(other).toContainText("skill_dependency_unselected");

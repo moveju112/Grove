@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
+import { apiCall, choiceOptions, closeModelSettings, composerOption, composerSetting, ensureProfile, ensureProjects, expectComposerSetting, inputOptions, login, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 async function open(page: Page, title: string) {
@@ -7,7 +7,7 @@ async function open(page: Page, title: string) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
     return { session, view };
@@ -17,7 +17,7 @@ test("응답 유실 뒤 실행 중 화면으로 바뀌어도 새 followup 대신
     const profile = await ensureProfile();
     const text = `uncertain running ${Date.now()}`;
     const { session, view } = await open(page, text);
-    await view.getByLabel("모델 프로필").selectOption(profile);
+    await composerOption(view, "모델 프로필", profile);
     const turns: string[] = [];
     const followups: string[] = [];
     let lost = true;
@@ -41,7 +41,9 @@ test("응답 유실 뒤 실행 중 화면으로 바뀌어도 새 followup 대신
         await view.getByLabel("메시지 입력").fill(text);
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("send-unsure")).toBeVisible();
-        await expect(view.getByLabel("실행 중 보내기 방식")).toBeVisible();
+        await inputOptions(view);
+        await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toBeVisible();
+        await view.getByRole("button", { name: "초안·스킬", exact: true }).click();
         await expect.poll(async () => JSON.stringify(await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json())).toContain(text);
         await expect(view.getByLabel("메시지 입력")).toHaveValue(text);
         lost = false;
@@ -64,7 +66,7 @@ test("followup 응답 유실 뒤 실행이 종료돼도 같은 전송 위치와 
     const profile = await ensureProfile();
     const title = `followup recovery ${Date.now()}`;
     const { session, view } = await open(page, title);
-    await view.getByLabel("모델 프로필").selectOption(profile);
+    await composerOption(view, "모델 프로필", profile);
     const keys: string[] = [];
     const turnRequests: string[] = [];
     let lost = true;
@@ -89,7 +91,9 @@ test("followup 응답 유실 뒤 실행이 종료돼도 같은 전송 위치와 
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         original = ((await (await response).json()) as { turn: { id: string } }).turn.id;
         await expect.poll(async () => JSON.stringify(await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json())).toContain(title);
-        await expect(view.getByLabel("실행 중 보내기 방식")).toBeVisible();
+        await inputOptions(view);
+        await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toBeVisible();
+        await view.getByRole("button", { name: "초안·스킬", exact: true }).click();
         await view.getByLabel("메시지 입력").fill("queued once");
         await view.getByRole("button", { name: "대기열에 추가", exact: true }).click();
         await expect(view.getByTestId("send-unsure")).toBeVisible();
@@ -122,7 +126,7 @@ test("기본값으로 보낸 모델은 사용 선택으로 고정되고 다른 �
     let added: string | undefined;
     try {
         const { view } = await open(page, `pin default ${suffix}`);
-        await expect(view.getByLabel("모델 프로필")).toHaveValue(preferred.id);
+        await expectComposerSetting(view, "모델 프로필", preferred.id);
         await script({ frames: frames.text(["pinned first reply"]) });
         await view.getByLabel("메시지 입력").fill("use visible default");
         await view.getByRole("button", { name: "보내기", exact: true }).click();
@@ -133,8 +137,9 @@ test("기본값으로 보낸 모델은 사용 선택으로 고정되고 다른 �
             name, protocol: "openai", base_url, model: "other-model",
         });
         added = other.id;
-        await expect(view.getByLabel("모델 프로필").getByRole("option", { name: new RegExp(name) })).toHaveCount(1);
-        await expect(view.getByLabel("모델 프로필")).toHaveValue(preferred.id);
+        await expect((await choiceOptions(await composerSetting(view, "모델 프로필"))).filter({ hasText: name })).toHaveCount(1);
+        await page.keyboard.press("Escape");
+        await expectComposerSetting(view, "모델 프로필", preferred.id);
     } finally {
         if (added) await apiCall("DELETE", `/model-profiles/${added}`);
         await apiCall("DELETE", `/model-profiles/${preferred.id}`);

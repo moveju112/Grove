@@ -9,7 +9,7 @@ for (const width of [390, 1280]) {
                 await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
                 await login(page);
                 await openSettings(page);
-                const settings = page.locator(".settings");
+                const settings = page.getByTestId("settings");
                 await settings.getByRole("button", { name: "화면·입력", exact: true }).click();
                 const font = settings.getByRole("slider", { name: "글자 크기", exact: true });
                 const enter = settings.getByRole("combobox", { name: "Enter로 보내기", exact: true });

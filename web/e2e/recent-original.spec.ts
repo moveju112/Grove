@@ -12,7 +12,7 @@ test("시간 범위 밖 항목은 기본 4시간에서 빠지고 넓은 범위·
     // 이 기기 시계를 5시간 뒤로 두면 방금 연 항목은 4시간 범위 밖, 12시간 범위 안이다.
     await page.clock.install({ time: new Date(Date.now() + 5 * 3_600_000) });
     await login(page);
-    const recent = page.locator(".recent");
+    const recent = page.getByRole("region", { name: "최근", exact: true });
     const ranges = recent.getByRole("group", { name: "시간 범위" });
     await expect(ranges.getByRole("button", { name: "최근 4시간 범위" })).toHaveAttribute("aria-pressed", "true");
     const row = recent.getByTestId("recent-item").filter({ hasText: old.title });
@@ -25,11 +25,11 @@ test("시간 범위 밖 항목은 기본 4시간에서 빠지고 넓은 범위·
     await expect(row).toHaveCount(1);
     // 고정 항목은 범위와 무관하게 보인다.
     await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await row.getByRole("button", { name: "고정", exact: true }).click();
+    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "고정", exact: true }).click();
     await ranges.getByRole("button", { name: "최근 30분 범위" }).click();
     await expect(row).toHaveCount(1);
-    await openDetails(row.locator(".recent-actions"));
-    await row.getByRole("button", { name: "고정 해제", exact: true }).click();
+    await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
+    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "고정 해제", exact: true }).click();
     await expect(row).toHaveCount(0);
     await ranges.getByRole("button", { name: "최근 전체 범위" }).click();
     await expect(row).toHaveCount(1);
@@ -41,7 +41,7 @@ test("다른 기기가 먼저 고정해도 이 기기의 숨김은 오류 없이
     const s = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title: `devices-${randomUUID()}` });
     const touched = await apiCall<{ id: string; revision: number }>("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
-    const recent = page.locator(".recent");
+    const recent = page.getByRole("region", { name: "최근", exact: true });
     const row = recent.getByTestId("recent-item").filter({ hasText: s.title });
     await expect(row).toHaveCount(1);
     const sent: unknown[] = [];
@@ -55,7 +55,7 @@ test("다른 기기가 먼저 고정해도 이 기기의 숨김은 오류 없이
         await route.continue();
     });
     await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await row.getByRole("button", { name: "최근에서 숨기기" }).click();
+    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "최근에서 숨기기" }).click();
     await expect(row).toHaveCount(0);
     expect(sent).toHaveLength(2);
     expect(sent[1]).toMatchObject({ hidden: true });
@@ -84,7 +84,7 @@ test("숨긴 대화는 새 메시지가 오면 다시 보이고, 분할로 함�
     await apiCall("PUT", `/layouts/${device}`, { expected_revision: 0, layout });
     await page.addInitScript((id) => localStorage.setItem("grove.device.id", id), device);
     await login(page);
-    const recent = page.locator(".recent");
+    const recent = page.getByRole("region", { name: "최근", exact: true });
     const group = recent.getByTestId("recent-split-group");
     await expect(group.getByTestId("recent-item")).toHaveCount(2);
     await expect(group).toContainText(one.title);
@@ -92,7 +92,7 @@ test("숨긴 대화는 새 메시지가 오면 다시 보이고, 분할로 함�
 
     const row = recent.getByTestId("recent-item").filter({ hasText: hidden.title });
     await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await row.getByRole("button", { name: "최근에서 숨기기" }).click();
+    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "최근에서 숨기기" }).click();
     await expect(row).toHaveCount(0);
     await apiCall("POST", `/sessions/${hidden.id}/messages`, { text: "다시 보여 줘" });
     await expect(row).toHaveCount(1);

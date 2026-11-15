@@ -25,15 +25,16 @@ test("파일 탭과 최근 항목을 다시 열면 저장 전 편집·선택·�
         return { start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection, top: node.scrollTop };
     });
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-    await page.locator(".tabbar .tab-title").filter({ hasText: `파일 · ${a.name}` }).click();
+    await expect(page.getByLabel("설정 검색")).toBeVisible();
+    await page.getByRole("tablist").getByTestId("tab-title").filter({ hasText: `파일 · ${a.name}` }).click();
     await expect(area).toHaveValue(edited);
     await expect.poll(() => area.evaluate((node: HTMLTextAreaElement) => ({
         start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection, top: node.scrollTop,
     }))).toEqual(position);
     await expect(files.getByText("● 저장 안 됨", { exact: true })).toBeVisible();
     expect(readFileSync(join(project.root_path, name), "utf8")).toBe(original);
-    await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
-    await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+    await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
     await expect(area).toHaveValue(edited);
     await expect.poll(() => area.evaluate((node: HTMLTextAreaElement) => node.selectionStart)).toBe(position.start);
     await files.getByRole("button", { name: "저장", exact: true }).click();
@@ -56,7 +57,8 @@ async function openFixture(page: Page, prefix: string) {
     await expect(area).toHaveValue("original\n");
     const revisit = async (title = `파일 · ${a.name}`) => {
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-        await page.locator(".tabbar .tab-title").filter({ hasText: title }).click();
+        await expect(page.getByLabel("설정 검색")).toBeVisible();
+        await page.getByRole("tablist").getByTestId("tab-title").filter({ hasText: title }).click();
     };
     return { project: a, name, path, files, area, revisit };
 }
@@ -99,12 +101,12 @@ test("저장 응답이 유실된 뒤 탭을 다시 열어도 자동 전송 없�
     await files.getByRole("button", { name: "저장", exact: true }).click();
     const retry = files.getByRole("button", { name: "같은 요청 결과 확인", exact: true });
     await expect(retry).toBeVisible();
-    await page.locator(".tabbar .tab.on").getByRole("button", { name: "탭 닫기", exact: true }).click();
-    await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+    await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
     await expect(retry).toBeVisible();
     // 새 탭에 이어받은 보류 요청도 다시 화면을 바꾼 뒤까지 유지한다.
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-    await page.locator(".tabbar .tab-title").filter({ hasText: name }).click();
+    await page.getByRole("tablist").getByTestId("tab-title").filter({ hasText: name }).click();
     await expect(retry).toBeVisible();
     await expect(area).toHaveJSProperty("readOnly", true);
     expect(sent).toHaveLength(1);
@@ -137,7 +139,7 @@ test("최근 파일 이름 끝의 콜론과 숫자를 줄 번호로 해석하지
     writeFileSync(join(project.root_path, name), "literal colon filename fixture");
     await apiCall("POST", "/recent/touch", { kind: "file", project_id: a.id, resource_id: name, title: name });
     await login(page);
-    await page.locator(".recent").getByRole("button", { name: new RegExp(name) }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
     await expect(page.getByTestId("files-view").getByLabel("파일 내용")).toHaveValue("literal colon filename fixture");
 });
 

@@ -88,6 +88,27 @@ await writeFile(join(directory, "last-pid"), String(process.pid));
 await writeFile(join(directory, "last-request.json"), JSON.stringify({ args, resume }));
 emit({ type: "thread.started", thread_id: id });
 const item = { id: "answer", type: "agent_message" };
+if (input.includes("fixture-response-boundaries")) {
+    emit({ type: "item.completed", item: { id: "reasoning", type: "reasoning", text: "링크 대상을 확인한다.\n" + "추론 내용을 생략하지 않고 표시한다.\n".repeat(120) } });
+    emit({ type: "item.completed", item: { id: "progress", type: "agent_message", text: "심볼릭 링크인지, 실제로 어느 파일을 가리키는지 확인할게." } });
+    emit({ type: "item.completed", item: { id: "tool", type: "command_execution", command: "readlink example", status: "completed", exit_code: 0 } });
+    emit({ type: "item.started", item: { ...item, text: "" } });
+    await new Promise((resolve) => {
+        const watcher = watch(directory, (_event, name) => {
+            if (name === `response-release-${process.pid}`) { watcher.close(); resolve(); }
+        });
+        writeFile(join(directory, `response-ready-${process.pid}`), "").catch((error) => { watcher.close(); throw error; });
+    });
+    emit({ type: "item.completed", item: { ...item, text: "맞아. 확인 결과 심볼릭 링크야." } });
+    await new Promise((resolve) => {
+        const watcher = watch(directory, (_event, name) => {
+            if (name === `response-finish-${process.pid}`) { watcher.close(); resolve(); }
+        });
+        writeFile(join(directory, `response-answer-ready-${process.pid}`), "").catch((error) => { watcher.close(); throw error; });
+    });
+    emit({ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 5 } });
+    process.exit(0);
+}
 emit({ type: "item.started", item: { ...item, text: "" } });
 if (input.includes("fixture-hold")) {
     emit({ type: "item.updated", item: { ...item, text: "중단 대기 중" } });

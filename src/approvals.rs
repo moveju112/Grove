@@ -169,9 +169,9 @@ pub fn tool_policy(c: &Connection, project_id: &str, session_id: &str, spec: &to
     use crate::settings::{all_layers, tool_names};
     let (p, s) = (Some(project_id), Some(session_id));
     // 봇 대화의 도구는 실행 직전까지 봇이 활성인지 다시 확인한다(BOT-005-D·006-B). 턴 snapshot은 비활성화·삭제를 무효화하지 못한다.
-    let bot_status: Option<String> = c
-        .query_row("SELECT b.status FROM sessions s JOIN bots b ON b.id = s.bot_id WHERE s.id = ?1", params![session_id], |r| r.get(0))
-        .optional()?;
+    let bot_status = crate::bot_connections::execution_bot(c, session_id, None)?
+        .and_then(|b| b["id"].as_str().map(str::to_string))
+        .map(|id| crate::bots::get(c, &id).map(|b| b.status)).transpose()?;
     if bot_status.is_some_and(|st| st != "active") {
         return Ok(PolicyDecision::Deny("bot_inactive", format!("봇이 비활성화되거나 삭제돼 {}을(를) 실행하지 않았습니다", spec.name)));
     }
@@ -538,8 +538,8 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                     .map_err(|e| tools::ToolError::new(e.code,e.message))
             }
             Ok(_) if call.name=="mcp_tools" => {
-                let args=call.target.clone();
-                app.db.call(move |c|crate::mcp::catalog(c,&args)).await.map_err(|e|tools::ToolError::new(e.code,e.message))
+                let (args, session, turn)=(call.target.clone(),call.session_id.clone(),call.turn_id.clone());
+                app.db.call(move |c|crate::mcp::catalog_for(c,&args,Some((&session,turn.as_deref())))).await.map_err(|e|tools::ToolError::new(e.code,e.message))
             }
             Ok(_) if call.name=="mcp_call" => {
                 let (outcome,stale)=crate::mcp::execute_call(&app,&call,cancel_rx).await;

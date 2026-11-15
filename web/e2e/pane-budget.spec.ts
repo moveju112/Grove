@@ -63,7 +63,7 @@ async function checkBudget(page: Page, count: number, shared: boolean) {
     // 최초 조회와 cursor 없는 첫 hello의 snapshot 재동기화만 허용한다. pane 수만큼 늘어나면 실패한다.
     expect(messageReads).toBeGreaterThanOrEqual(ids.length);
     expect(messageReads).toBeLessThanOrEqual(2 * ids.length);
-    const rows = await page.locator(".msg-row").count();
+    const rows = await page.locator("[data-seq]").count();
     expect(rows).toBeLessThan(80 * count);
     await cdp.send("HeapProfiler.collectGarbage");
     const heap = await cdp.send("Runtime.getHeapUsage");

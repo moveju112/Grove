@@ -1150,8 +1150,9 @@ async fn cost_budget_needs_pricing_and_stops_when_estimate_exceeds() {
 #[tokio::test]
 async fn effort_is_fixed_at_acceptance_and_sent_to_provider() {
     let (s, f, prof, sid, _) = setup().await;
-    let (st, _) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "x", "profile_id": prof, "effort": "max" })).await;
-    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, rejected) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "x", "profile_id": prof, "effort": "max" })).await;
+    assert_eq!(st, StatusCode::UNPROCESSABLE_ENTITY, "{rejected}");
+    assert_eq!(rejected["error"]["code"], "unsupported");
     f.push(fixture::text("낮게"));
     let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "낮은 강도", "profile_id": prof, "effort": "low" })).await;
     assert_eq!(st, StatusCode::ACCEPTED, "{v}");

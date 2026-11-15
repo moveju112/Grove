@@ -35,7 +35,7 @@ pub struct RecentItem {
     pub unread: bool,
     /// 대화의 마지막 사용자 메시지 시각(되돌린 메시지 제외). 다른 종류는 없음.
     pub last_user_message_at: Option<String>,
-    /// 정렬·시간 범위 기준: 마지막 접근과 마지막 사용자 메시지 중 늦은 시각.
+    /// 정렬·시간 범위 기준: 대화는 마지막 확정 답변 시각(없으면 생성 시각), 다른 자원은 마지막 접근 시각.
     pub last_activity_at: String,
 }
 
@@ -49,15 +49,10 @@ const RCOLS: &str = "r.id, r.kind, r.project_id, p.name, r.resource_id, r.title,
     (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id = s.id AND c.status = 'pending_approval'), \
     (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id = s.id AND c.status = 'unknown' AND c.reviewed_at IS NULL), \
     COALESCE(s.title, r.title), r.hidden_at, \
-    (SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'user' AND m.rewound_at IS NULL ORDER BY m.seq DESC LIMIT 1)";
-
-/// 늦은 시각. 형식이 다른 RFC3339 문자열도 실제 시각으로 비교한다.
-fn later(a: &str, b: Option<&str>) -> String {
-    match b {
-        Some(b) if parse_time(b).zip(parse_time(a)).is_some_and(|(b, a)| b > a) => b.to_string(),
-        _ => a.to_string(),
-    }
-}
+    (SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'user' AND m.rewound_at IS NULL ORDER BY m.seq DESC LIMIT 1), \
+    COALESCE((SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'assistant' \
+        AND m.rewound_at IS NULL AND TRIM(COALESCE(json_extract(m.content, '$.text'), ''), char(9) || char(10) || char(13) || ' ') != '' \
+        ORDER BY m.seq DESC LIMIT 1), s.created_at, r.last_access_at)";
 
 const RFROM: &str = "FROM recent_items r JOIN projects p ON p.id = r.project_id \
     LEFT JOIN sessions s ON r.kind = 'session' AND s.id = r.resource_id";
@@ -105,7 +100,7 @@ fn recent_from_row(r: &Row) -> rusqlite::Result<RecentItem> {
         project_name: r.get(3)?,
         resource_id: r.get(4)?,
         title: r.get(19)?,
-        last_activity_at: later(&last_access, last_user.as_deref()),
+        last_activity_at: r.get(22)?,
         last_access_at: last_access,
         pinned: r.get(7)?,
         hidden,
@@ -224,11 +219,11 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
             // 상태 필터는 서버 상태로 계산하므로 전체를 정렬한 뒤 걸러낸다. PERF(port): 항목 수가 매우 많으면 SQL 조건으로 내린다.
             let sql = format!(
                 "SELECT {RCOLS} {RFROM} WHERE (?1 IS NULL OR r.project_id = ?1) \
-                 ORDER BY r.pinned DESC, r.last_access_at DESC, r.id DESC"
+                 ORDER BY r.pinned DESC, r.id DESC"
             );
             let mut st = c.prepare(&sql)?;
             let mut all = st.query_map(params![project], recent_from_row)?.collect::<Result<Vec<_>, _>>()?;
-            // 고정 먼저, 그다음 마지막 활동(접근·사용자 메시지) 최신순. 같은 시각은 SQL 순서를 유지한다.
+            // 고정 먼저, 그다음 마지막 확정 답변(다른 자원은 접근) 최신순. 같은 시각은 ID 순서를 유지한다.
             let activity = |i: &RecentItem| parse_time(&i.last_activity_at);
             all.sort_by(|a, b| b.pinned.cmp(&a.pinned).then_with(|| activity(b).cmp(&activity(a))));
             let filtered: Vec<RecentItem> = all

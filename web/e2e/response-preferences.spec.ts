@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { createHash } from "node:crypto";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProfile, login, script, state } from "./helpers";
+import { apiCall, choiceOptions, ensureProfile, login, script, selectChoice, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Item = { key: string; effective: unknown; layers: { server: { value: unknown; revision: number } } };
@@ -31,7 +31,7 @@ test("출력 스타일과 사용자 프로필을 저장해 다음 요청에 반�
     await page.getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("출력 스타일");
     const style = page.getByTestId("setting-output.style");
-    await style.getByLabel("출력 스타일", { exact: true }).selectOption("concise");
+    await selectChoice(style.getByLabel("출력 스타일", { exact: true }), "concise");
     await style.getByRole("button", { name: "저장", exact: true }).click();
     await expect(style).toContainText("저장됨 · 다음 요청부터 적용");
     await page.getByLabel("설정 검색").fill("사용자 프로필");
@@ -109,9 +109,11 @@ test("지침 파일 모드는 파일을 수정하지 않고 다음 요청에 선
     await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("프로젝트 지침 파일");
     const row = page.getByTestId("setting-instructions.mode");
-    await expect(row.getByRole("option", { name: "AGENTS.md만 전달", exact: true })).toHaveAttribute("value", "agents_md");
+    const options = await choiceOptions(row.getByRole("combobox", { name: "프로젝트 지침 파일", exact: true }));
+    await expect(options.filter({ has: page.locator('[data-option-value="agents_md"]') })).toContainText("AGENTS.md만 전달");
+    await page.keyboard.press("Escape");
     for (const mode of ["agents_md", "claude_md", "both", "off"]) {
-        await row.getByLabel("프로젝트 지침 파일", { exact: true }).selectOption(mode);
+        await selectChoice(row.getByLabel("프로젝트 지침 파일", { exact: true }), mode);
         await row.getByRole("button", { name: "저장", exact: true }).click();
         await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨 · 다음 요청부터 적용");
         const prompt = `${project.id} instruction mode ${mode}`;

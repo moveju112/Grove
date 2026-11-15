@@ -1,3 +1,6 @@
+import { StatusBadge } from "../design/StatusBadge";
+import { Card } from "@astryxdesign/core/Card";
+import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { useEffect, useRef, useState } from "react";
 import { ActionMenu } from "./ui/Controls";
@@ -13,6 +16,7 @@ import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Heading } from "@astryxdesign/core/Text";
+import { Icon } from "./icons";
 import { Button } from "../design/Button";
 
 const STATUS: Record<string, string> = {
@@ -83,42 +87,44 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
         else if (it.kind === "terminal") open({ kind: "terminal", project_id: it.project_id, resource_id: it.resource_id, title: it.title }, how);
         else if (it.kind === "file") open({ kind: "file", project_id: it.project_id, resource_id: it.resource_id, filePath: it.resource_id, title: it.title }, how);
         else return;
-        // 이미 보이는 탭으로 이동해 컴포넌트가 다시 mount되지 않아도 접근 시각은 갱신한다.
+        // 접근 기록은 갱신하되 대화의 정렬·시간 표시는 마지막 확정 답변을 그대로 쓴다.
         // view_state를 보내지 않아 읽던 위치·읽음 정보는 그대로 둔다.
         void api.post("/recent/touch", { kind: it.kind, project_id: it.project_id, resource_id: it.resource_id, title: it.title })
             .catch((e) => setErr(e instanceof ApiError ? e.message : "최근 접근 기록을 갱신하지 못했습니다."));
     };
 
     return (
-        <Stack as="section" className={presentation === "home" ? "home-recent" : "recent"} aria-label={presentation === "home" ? "홈 최근" : "최근"}>
-            <Stack direction="horizontal" className="recent-head">
-                <Heading level={presentation === "home" ? 1 : 2}>최근</Heading>
-                <div className="chips" role="group" aria-label="시간 범위">
+        <Stack as="section" gap={2} paddingBlock={2} aria-label={presentation === "home" ? "홈 최근" : "최근"}>
+            <Stack direction="horizontal" align="center" justify="between" gap={2} paddingInline={2} minHeight={32}>
+                <Heading level={presentation === "home" ? 1 : 2} type={presentation === "home" ? undefined : "navigation"}>최근</Heading>
+                <Stack direction="horizontal" gap={0} role="group" aria-label="시간 범위">
                     {[...prefs.recentWindows, "all" as const].map((option) => (
-                        <Button key={option} className={range === option ? "chip on" : "chip"} aria-pressed={range === option}
+                        <Button key={option} appearance="choice" aria-pressed={range === option}
                             aria-label={`최근 ${recentWindowLabel(option)} 범위`} onClick={() => savePrefs({ ...loadPrefs(), recentWindow: option })}>
                             {recentWindowLabel(option)}
                         </Button>
                     ))}
-                </div>
+                </Stack>
             </Stack>
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {Boolean(recent.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">
                 {recent.error instanceof ApiError ? recent.error.message : "최근 목록을 불러오지 못했습니다."}
             </GroveText>}
-            <ul className="recent-list" aria-busy={recent.loading}>
+            <GroveList density="compact" edge="flush" data-testid="recent-list" aria-busy={recent.loading}>
                 {groupBySplit(recent.data?.items ?? [], linked).map(({ item, linked: members }) => members.length === 0 ? row(item) : (
-                    <li key={item.id} className="recent-split" data-testid="recent-split-group" aria-label="분할로 함께 연 대화">
-                        <ul>
+                    <GroveListItem key={item.id} data-testid="recent-split-group" aria-label="분할로 함께 연 대화" label={
+                        <Card variant="muted" padding={0}>
+                        <GroveList density="compact" edge="flush">
                             {row(item, members.map((m) => m.title).join(", "))}
                             {members.map((m) => row(m, item.title))}
-                        </ul>
-                    </li>
+                        </GroveList>
+                        </Card>
+                    } />
                 ))}
-            </ul>
-            {!recent.loading && recent.data?.items.length === 0 && <GroveText as="p" display="block" type="inherit" color="inherit" className="recent-empty">최근 항목 없음</GroveText>}
+            </GroveList>
+            {!recent.loading && recent.data?.items.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">최근 항목 없음</GroveText>}
             {recent.data?.next_offset != null && (
-                <Button className="ghost" onClick={() => setLimit((l) => l + 30)}>
+                <Button variant="secondary" onClick={() => setLimit((l) => l + 30)}>
                     더 보기
                 </Button>
             )}
@@ -127,8 +133,8 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
 
     function row(it: RecentItem, linkedTo?: string) {
         return (
-                    <li key={it.id} className={it.unread ? "unread" : ""} data-testid={presentation === "home" ? "home-recent-item" : "recent-item"}>
-                        <button className="link" onClick={() => openItem(it)} title={`${it.project_name} · ${it.title}${linkedTo ? ` · 분할로 함께 열림: ${linkedTo}` : ""} · 영역이나 가장자리로 끌어서 열 수 있습니다`}
+                    <GroveListItem key={it.id} data-testid={presentation === "home" ? "home-recent-item" : "recent-item"} label={
+                        <Button type="button" appearance="navigation" density={presentation === "home" ? "touch" : undefined} onClick={() => openItem(it)} title={`${it.project_name} · ${it.title}${linkedTo ? ` · 분할로 함께 열림: ${linkedTo}` : ""} · 영역이나 가장자리로 끌어서 열 수 있습니다`}
                             draggable={["session", "project", "terminal", "file"].includes(it.kind)}
                             onDragStart={(e) => {
                                 const target = { kind: it.kind, project_id: it.project_id, resource_id: it.resource_id, title: it.title, ...(it.kind === "file" ? { filePath: it.resource_id } : {}) };
@@ -136,30 +142,31 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
                                 e.dataTransfer.effectAllowed = "copy";
                             }}
                         >
-                            <GroveText type="inherit" color="inherit" className="recent-title">
+                            <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} weight={it.unread ? "bold" : "normal"}>
                                 {it.pinned && <GroveText type="inherit" color="inherit" aria-label="고정됨">★ </GroveText>}
                                 {it.title}
-                                {STATUS[it.status] && <GroveText type="inherit" color="inherit" className={`status ${it.status}`}>{STATUS[it.status]}</GroveText>}
-                                {it.unread && <span className="dot" aria-label="읽지 않음" />}
+                                {STATUS[it.status] && <StatusBadge status={it.status}>{STATUS[it.status]}</StatusBadge>}
+                                {it.unread && <GroveText type="supporting" color="secondary" aria-label="읽지 않음"> ●</GroveText>}
                                 {linkedTo && <GroveText type="supporting" color="secondary" aria-label={`분할로 함께 열림: ${linkedTo}`}> ⧉</GroveText>}
                             </GroveText>
-                            <GroveText type="inherit" color="inherit" className="recent-project">{it.project_name}</GroveText>
+                            <GroveText type="supporting" color="secondary" maxLines={1} hasTruncateTooltip={false}>{it.project_name}</GroveText>
                             <GroveText type="supporting" color="secondary" data-testid="recent-time"> <When at={it.last_activity_at} relative /></GroveText>
-                        </button>
-                        <ActionMenu className="recent-actions" label="최근 항목 관리">
-                            <Stack direction="horizontal" align="center" className="row-actions">
-                            <Button className="ghost small" title="오른쪽에 열기" aria-label="오른쪽에 열기" onClick={() => openItem(it, "right")}>⇥</Button>
-                            <Button className="ghost small" title="아래에 열기" aria-label="아래에 열기" onClick={() => openItem(it, "down")}>⤓</Button>
-                            <ServerActionButton className="ghost small pin-toggle" aria-pressed={it.pinned} aria-label={it.pinned ? "고정 해제" : "고정"} title={it.pinned ? "고정 해제" : "고정"} onClick={() => patch(it, { pinned: !it.pinned })}>
-                                {it.pinned ? "★" : "☆"}
+                        </Button>
+                    } endContent={
+                        <ActionMenu label="최근 항목 관리">
+                            <Stack gap={0.5}>
+                            <Button appearance="navigation" title="오른쪽에 열기" aria-label="오른쪽에 열기" onClick={() => openItem(it, "right")}><Icon name="panel" />오른쪽에 열기</Button>
+                            <Button appearance="navigation" title="아래에 열기" aria-label="아래에 열기" onClick={() => openItem(it, "down")}><Icon name="panelBottom" />아래에 열기</Button>
+                            <ServerActionButton appearance="navigation" aria-pressed={it.pinned} aria-label={it.pinned ? "고정 해제" : "고정"} title={it.pinned ? "고정 해제" : "고정"} onClick={() => patch(it, { pinned: !it.pinned })}>
+                                <Icon name="pin" />{it.pinned ? "고정 해제" : "고정"}
                             </ServerActionButton>
-                            <ServerActionButton className="ghost small" aria-label={it.hidden ? "다시 표시" : "최근에서 숨기기"}
+                            <ServerActionButton appearance="navigation" aria-label={it.hidden ? "다시 표시" : "최근에서 숨기기"}
                                 title={it.hidden ? "다시 표시" : "최근에서 숨기기(삭제 아님, 새 메시지가 오면 다시 보임)"} onClick={() => patch(it, { hidden: !it.hidden })}>
-                                {it.hidden ? "↺" : "–"}
+                                <Icon name={it.hidden ? "restore" : "eyeOff"} />{it.hidden ? "다시 표시" : "최근에서 숨기기"}
                             </ServerActionButton>
                             </Stack>
                         </ActionMenu>
-                    </li>
+                    } />
         );
     }
 }

@@ -1,3 +1,9 @@
+import { HintText } from "../../design/HintText";
+import { Icon } from "../icons";
+import { List, ListItem } from "@astryxdesign/core/List";
+import { Stack as GroveStack, StackItem } from "@astryxdesign/core/Stack";
+import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
+import { StatusDot } from "@astryxdesign/core/StatusDot";
 import { Heading } from "@astryxdesign/core/Heading";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
@@ -9,14 +15,15 @@ import { useQuery } from "../../state/store";
 import type { Opener } from "../Workspace";
 import { useWorkspaces } from "../../state/workspaces";
 import { groupByWorkspace, markSessionRead, pinSession, projectStatus, STATUS, type SidebarPage, type SidebarSession } from "./state";
-import "./sidebar.css";
 
 export function StatusIcon({ status }: { status: string }) {
     const value = STATUS[status] ?? STATUS.unknown!;
-    // Text는 native title을 받지 않는다. 상태 기호의 hover 설명은 이 의미 있는 경계에 유지한다.
-    return <span className={`sidebar-status sidebar-status-${status}`} data-testid="sidebar-status" title={value.label}>
-        <GroveText type="inherit" color="inherit" aria-hidden="true">{value.icon}</GroveText> <GroveText type="inherit" color="inherit" className="sidebar-status-label">{value.label}</GroveText>
-    </span>;
+    const quiet = status === "idle" || status === "completed" || status === "cancelled";
+    return <HintText type="supporting" color={status === "failed" ? "error" : status === "unknown_result" || status === "interrupted" ? "warning" : "secondary"}
+        data-testid="sidebar-status" hint={value.label}>
+        <GroveText type="inherit" color="inherit" aria-hidden="true">{value.icon}</GroveText>{" "}
+        {quiet ? <VisuallyHidden>{value.label}</VisuallyHidden> : <GroveText type="inherit" color="inherit">{value.label}</GroveText>}
+    </HintText>;
 }
 
 // Tab으로도 모든 버튼을 사용할 수 있고 toolbar 안에서는 방향키로 빠르게 이동한다.
@@ -43,29 +50,28 @@ export function SessionRow({ item, open, narrow }: { item: SidebarSession; open:
         catch (e) { setError(e instanceof ApiError ? e.message : "변경 결과를 확인하지 못했습니다. 목록을 새로고침해 확인하세요."); }
         finally { setBusy(false); }
     };
-    return <li className="sidebar-session" data-testid="sidebar-session" data-session={s.id}>
-        <GroveButton type="button" className="link sidebar-session-open" onClick={() => open(target)} title={s.preview ?? s.title}>
-            <GroveText type="inherit" color="inherit" className="sidebar-session-title">{item.pinned && <GroveText type="inherit" color="inherit" aria-label="고정됨">★ </GroveText>}{s.title}</GroveText>
+    return <ListItem data-testid="sidebar-session" data-session={s.id} label={<>
+        <GroveButton type="button" appearance="navigation" data-testid="sidebar-session-open" onClick={() => open(target)} title={s.preview ?? s.title}>
+            <StackItem as="span" size="fill"><GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} data-testid="sidebar-session-title">{item.pinned && <GroveText type="inherit" color="inherit" aria-label="고정됨">★ </GroveText>}{s.title}</GroveText></StackItem>
             <StatusIcon status={item.status} />
-            {s.unread && <GroveText type="inherit" color="inherit" className="sidebar-unread">● 읽지 않음</GroveText>}
+            {s.unread && <GroveText type="supporting" color="secondary" weight="semibold" data-testid="sidebar-unread">● 읽지 않음</GroveText>}
         </GroveButton>
-        <ActionMenu className="sidebar-session-actions" label={`${s.title} 도구`}>
-            <div role="toolbar" aria-label={`${s.title} 도구`} className="sidebar-toolbar" onKeyDown={toolbarKeys}>
-            <GroveButton type="button" className="ghost small pin-toggle" disabled={busy} aria-pressed={item.pinned}
+        {error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">{error}</GroveText>}
+    </>} endContent={<ActionMenu label={`${s.title} 도구`} data-testid="sidebar-session-actions">
+            <GroveStack gap={1} role="toolbar" aria-label={`${s.title} 도구`} onKeyDown={toolbarKeys}>
+            <GroveButton type="button" appearance="navigation" disabled={busy} aria-pressed={item.pinned}
                 aria-label={item.pinned ? "세션 고정 해제" : "세션 고정"} title={item.pinned ? "고정 해제" : "고정"}
                 onClick={() => void run(() => pinSession(item, !item.pinned))}>
-                {item.pinned ? "★" : "☆"}
+                <Icon name="pin" />{item.pinned ? "고정 해제" : "고정"}
             </GroveButton>
-            <GroveButton type="button" className="ghost small" disabled={busy || !s.unread} aria-label="읽음 표시" title="읽음 표시"
-                onClick={() => void run(() => markSessionRead(item))}>✓</GroveButton>
+            <GroveButton type="button" appearance="navigation" disabled={busy || !s.unread} aria-label="읽음 표시" title="읽음 표시"
+                onClick={() => void run(() => markSessionRead(item))}><Icon name="check" />읽음 표시</GroveButton>
             {!narrow && <>
-                <GroveButton type="button" className="ghost small" aria-label="세션 오른쪽에 열기" onClick={() => open(target, "right")}>⇥</GroveButton>
-                <GroveButton type="button" className="ghost small" aria-label="세션 아래에 열기" onClick={() => open(target, "down")}>⤓</GroveButton>
+                <GroveButton type="button" appearance="navigation" aria-label="세션 오른쪽에 열기" onClick={() => open(target, "right")}><Icon name="panel" />오른쪽에 열기</GroveButton>
+                <GroveButton type="button" appearance="navigation" aria-label="세션 아래에 열기" onClick={() => open(target, "down")}><Icon name="panelBottom" />아래에 열기</GroveButton>
             </>}
-            </div>
-        </ActionMenu>
-        {error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">{error}</GroveText>}
-    </li>;
+            </GroveStack>
+        </ActionMenu>} />;
 }
 
 /// children은 Workspace의 기존 프로젝트 메뉴·라벨·분할 열기다. 최근 탭의 렌더링은 바꾸지 않는다.
@@ -86,54 +92,56 @@ export function SidebarProject({ project, children, open, narrow, onCreate }: {
     const projectMode = project.workspace_mode === "project";
     const spaces = useWorkspaces(project.id, projectMode);
     const groups = projectMode ? groupByWorkspace(data?.items ?? [], spaces) : [];
-    return <section className="sidebar-project" aria-label={`${project.name} 탐색`} data-testid="sidebar-project" data-project-id={project.id}>
-        {children}
-        <div className="sidebar-project-summary">
-            {status && <StatusIcon status={status} />}
-            {unread > 0 && <GroveText type="inherit" color="inherit" className="sidebar-unread" aria-label={`읽지 않은 세션 ${unread}개`}>● 읽지 않음 {unread}</GroveText>}
-            {!project.available && <GroveText type="inherit" color="warning">프로젝트 경로 없음</GroveText>}
-        </div>
+    return <GroveStack as="section" gap={0} aria-label={`${project.name} 탐색`} data-testid="sidebar-project" data-project-id={project.id}>
+        <GroveStack direction="horizontal" align="center" gap={0}>
+        <StackItem size="fill">{children}</StackItem>
         {/* 프로젝트 행 오른쪽의 작은 도구. 이름은 접근성 이름으로 두고 화면에는 기호만 보인다. */}
-        <ActionMenu className="sidebar-project-tools" label={`${project.name} 대화 도구`} trigger={<>
-                {unreadOnly && <span className="dot" aria-label="읽지 않음 필터 적용 중" />}
-                {data && <GroveText hasTabularNumbers type="inherit" color="inherit" className="sidebar-count">{data.total}</GroveText>}<GroveText type="inherit" color="inherit" aria-hidden="true">⌄</GroveText>
+        <ActionMenu data-testid="sidebar-project-tools" label={`${project.name} 대화 도구`} trigger={<>
+                {unreadOnly && <StatusDot variant="accent" label="읽지 않음 필터 적용 중" />}
+                {data && <GroveText hasTabularNumbers type="supporting" color="secondary">{data.total}</GroveText>}<GroveText type="inherit" color="inherit" aria-hidden="true">⌄</GroveText>
             </>}>
-        <div className="sidebar-toolbar" role="toolbar" aria-label={`${project.name} 도구`} onKeyDown={toolbarKeys}>
-            <GroveButton type="button" className="ghost small" disabled={!project.available} onClick={onCreate} aria-label="새 대화" title="새 대화">+</GroveButton>
-            <GroveButton type="button" className="ghost small sidebar-expand" aria-expanded={expanded} aria-controls={listId}
+        <GroveStack gap={1} role="toolbar" aria-label={`${project.name} 도구`} onKeyDown={toolbarKeys}>
+            <GroveButton type="button" appearance="navigation" disabled={!project.available} onClick={onCreate} aria-label="새 대화" title="새 대화"><Icon name="edit" />새 대화</GroveButton>
+            <GroveButton type="button" appearance="navigation" aria-expanded={expanded} aria-controls={listId}
                 aria-label={`대화 ${expanded ? "접기" : "펼치기"}${data ? ` (${data.total})` : ""}`} title={expanded ? "대화 접기" : "대화 펼치기"}
                 onClick={() => setExpanded((v) => !v)}>
-                {data && <GroveText hasTabularNumbers type="inherit" color="inherit" className="sidebar-count">{data.total}</GroveText>}<GroveText type="inherit" color="inherit" aria-hidden="true">{expanded ? "▾" : "▸"}</GroveText>
+                <Icon name="chevronRight" />대화 {expanded ? "접기" : "펼치기"}{data && <GroveText hasTabularNumbers type="supporting" color="secondary">({data.total})</GroveText>}
             </GroveButton>
-            <GroveButton type="button" className="ghost small" aria-pressed={unreadOnly} aria-label="읽지 않음만" title="읽지 않음만"
-                onClick={() => { setUnreadOnly((v) => !v); setOffset(0); }}>●</GroveButton>
-            <GroveButton type="button" className="ghost small" onClick={page.reload} aria-label="목록 새로고침" title="목록 새로고침">↻</GroveButton>
-        </div>
+            <GroveButton type="button" appearance="navigation" aria-pressed={unreadOnly} aria-label="읽지 않음만" title="읽지 않음만"
+                onClick={() => { setUnreadOnly((v) => !v); setOffset(0); }}><Icon name="bell" />읽지 않음만</GroveButton>
+            <GroveButton type="button" appearance="navigation" onClick={page.reload} aria-label="목록 새로고침" title="목록 새로고침"><Icon name="restore" />목록 새로고침</GroveButton>
+        </GroveStack>
         </ActionMenu>
+        </GroveStack>
+        {(unread > 0 || !project.available || (status && !["idle", "completed", "cancelled"].includes(status))) && <GroveStack direction="horizontal" align="center" wrap="wrap" paddingInline={2} gap={1} data-testid="sidebar-project-summary">
+            {status && <StatusIcon status={status} />}
+            {unread > 0 && <GroveText type="supporting" color="secondary" weight="semibold" aria-label={`읽지 않은 세션 ${unread}개`}>● 읽지 않음 {unread}</GroveText>}
+            {!project.available && <GroveText type="supporting" color="warning">프로젝트 경로 없음</GroveText>}
+        </GroveStack>}
         {Boolean(page.error) && <GroveText as="p" display="block" type="supporting" color="error" role="alert">대화 목록을 불러오지 못했습니다. 목록 새로고침으로 다시 시도하세요.</GroveText>}
         {!data && page.loading && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">대화 불러오는 중…</GroveText>}
-        <div id={listId} hidden={!expanded}>
+        <GroveStack gap={0} paddingInlineStart={3} id={listId} hidden={!expanded}>
             {projectMode ? (
                 // 프로젝트 모드: 프로젝트 → 워크스페이스 → 대화. 프로젝트 폴더가 기본 워크스페이스다.
                 groups.map((g) => (
-                    <section key={g.id ?? "root"} className="sidebar-workspace" aria-label={`워크스페이스 ${g.name}`} data-testid="sidebar-workspace" data-worktree={g.id ?? ""}>
-                        <Heading level={3} color="inherit" className="sidebar-workspace-name">{g.name}</Heading>
-                        <ul className="sidebar-sessions">
+                    <GroveStack as="section" gap={0} paddingInlineStart={2} key={g.id ?? "root"} aria-label={`워크스페이스 ${g.name}`} data-testid="sidebar-workspace" data-worktree={g.id ?? ""}>
+                        <Heading level={3} type="navigation" color="secondary">{g.name}</Heading>
+                        <List density="compact" edge="flush">
                             {g.items.map((item) => <SessionRow key={item.session.id} item={item} open={open} narrow={narrow} />)}
-                        </ul>
-                    </section>
+                        </List>
+                    </GroveStack>
                 ))
             ) : (
                 // 단일 모드: 프로젝트 → 대화
-                <ul className="sidebar-sessions">
+                <List density="compact" edge="flush">
                     {data?.items.map((item) => <SessionRow key={item.session.id} item={item} open={open} narrow={narrow} />)}
-                </ul>
+                </List>
             )}
             {data?.items.length === 0 && unreadOnly && <GroveText as="p" display="block" type="supporting" color="secondary">읽지 않은 대화가 없습니다.</GroveText>}
-            <div className="sidebar-toolbar" role="group" aria-label="대화 페이지">
-                {offset > 0 && <GroveButton type="button" className="ghost small" onClick={() => setOffset(Math.max(0, offset - 30))}>이전 대화</GroveButton>}
-                {data?.next_offset != null && <GroveButton type="button" className="ghost small" onClick={() => setOffset(data.next_offset!)}>다음 대화</GroveButton>}
-            </div>
-        </div>
-    </section>;
+            <GroveStack gap={1} direction="horizontal" align="center" wrap="wrap" role="group" aria-label="대화 페이지">
+                {offset > 0 && <GroveButton type="button" variant="secondary" density="compact" onClick={() => setOffset(Math.max(0, offset - 30))}>이전 대화</GroveButton>}
+                {data?.next_offset != null && <GroveButton type="button" variant="secondary" density="compact" onClick={() => setOffset(data.next_offset!)}>다음 대화</GroveButton>}
+            </GroveStack>
+        </GroveStack>
+    </GroveStack>;
 }

@@ -18,7 +18,7 @@ test("새 버전 발행 중에도 stream과 초안이 유지되고, 사용자가
         await login(page);
         await page.waitForFunction(() => navigator.serviceWorker.controller !== null, undefined, { timeout: 15_000 });
         const oldScript = await page.evaluate(() => navigator.serviceWorker.controller!.scriptURL);
-        await page.locator(".recent").getByRole("button", { name: /PWA 업데이트 대화/ }).first().click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /PWA 업데이트 대화/ }).first().click();
         const view = page.getByTestId("session-view");
         await expect(view).toHaveAttribute("data-session", s.id);
 

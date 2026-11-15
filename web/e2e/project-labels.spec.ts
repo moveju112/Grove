@@ -11,8 +11,9 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
     const urgent = `급함${suffix}`, front = `화면${suffix}`;
     try {
         await login(page);
-        const side = page.locator(".sidebar .projects");
+        const side = page.getByTestId("sidebar").getByTestId("projects");
         const row = (name: string) => side.getByTestId("project-row").filter({ hasText: name }).first();
+        const projectButton = row(a.name).getByRole("button", { name: new RegExp(a.name) }).first();
 
         // 고정하면 맨 위, 새로고침 뒤에도 유지
         await row(b.name).getByRole("button", { name: "프로젝트 메뉴" }).click();
@@ -27,7 +28,7 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
         await menu.getByLabel("새 라벨 이름").fill(urgent);
         await selectChoice(menu.getByLabel("라벨 색"), "red");
         await menu.getByRole("button", { name: "만들고 붙이기" }).click();
-        await expect(row(a.name).locator(".label-chips").getByTestId(`label-chip-${urgent}`)).toBeVisible();
+        await expect(projectButton.getByTestId(`label-chip-${urgent}`)).toBeVisible();
         await expect(menu.getByTestId(`label-assign-${urgent}`)).toHaveAttribute("aria-checked", "true");
         // 같은 이름(대소문자·공백 무시)은 거절하고 입력을 보존한다
         await menu.getByRole("button", { name: "+ 새 라벨" }).click();
@@ -37,7 +38,7 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
         await expect(menu.getByLabel("새 라벨 이름")).toHaveValue(` ${urgent} `);
         await menu.getByLabel("새 라벨 이름").fill(front);
         await menu.getByRole("button", { name: "만들고 붙이기" }).click();
-        await expect(row(a.name).locator(".label-chips").getByTestId(`label-chip-${front}`)).toBeVisible();
+        await expect(projectButton.getByTestId(`label-chip-${front}`)).toBeVisible();
         await menu.getByRole("button", { name: "닫기" }).click();
 
         // 필터: 라벨 하나, 라벨 없음, 해제. 필터는 새로고침 뒤에도 유지된다
@@ -47,7 +48,7 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
         await expect(row(a.name)).toBeVisible();
         await expect(side.getByTestId("project-row").filter({ hasText: b.name })).toHaveCount(0);
         await page.reload();
-        await expect(page.locator(".sidebar .projects").getByTestId(`label-filter-${urgent}`)).toHaveAttribute("aria-checked", "true");
+        await expect(page.getByTestId("sidebar").getByTestId("projects").getByTestId(`label-filter-${urgent}`)).toHaveAttribute("aria-checked", "true");
         await expect(side.getByTestId("project-row").filter({ hasText: b.name })).toHaveCount(0);
         await side.getByTestId(`label-filter-${urgent}`).click();
         await side.getByTestId("label-filter-none").click();
@@ -67,14 +68,14 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
         await editFront.getByLabel(`${front} 이름`).fill(renamed);
         await selectChoice(editFront.getByLabel("라벨 색"), "amber");
         await editFront.getByRole("button", { name: "저장" }).click();
-        await expect(row(a.name).locator(".label-chips").getByTestId(`label-chip-${renamed}`)).toBeVisible();
+        await expect(projectButton.getByTestId(`label-chip-${renamed}`)).toBeVisible();
 
         // 삭제는 영향받는 프로젝트 수를 확인한 뒤 할당과 함께 지운다
         const editUrgent = side.getByRole("form", { name: `${urgent} 라벨 편집` });
         await editUrgent.getByRole("button", { name: "삭제" }).click();
         await expect(editUrgent.getByRole("alert")).toContainText("프로젝트 1개");
         await editUrgent.getByRole("button", { name: "삭제 확인" }).click();
-        await expect(row(a.name).locator(".label-chips").getByTestId(`label-chip-${urgent}`)).toHaveCount(0);
+        await expect(row(a.name).getByTestId(`label-chip-${urgent}`)).toHaveCount(0);
         await expect(side.getByTestId(`label-filter-${urgent}`)).toHaveCount(0);
     } finally {
         const labels = await apiCall<L[]>("GET", "/labels");

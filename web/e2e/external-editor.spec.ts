@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProjects, openProjectFiles, state } from "./helpers";
+import { apiCall, ensureProjects, openProjectFiles, selectChoice, state } from "./helpers";
 
 async function openFile(page: Page) {
     const { a } = await ensureProjects();
@@ -29,7 +29,7 @@ test("PC capability가 있으면 고정 ID로 저장된 파일을 열도록 요�
     await page.route("**/api/v1/projects/*/external-editor", (route) => route.fulfill({ status: 202, json: { launched: true } }));
     const { a, name, files } = await openFile(page);
     await files.getByLabel("파일 내용").fill("unsaved text");
-    await files.getByLabel("외부 편집기", { exact: true }).selectOption("zed");
+    await selectChoice(files.getByLabel("외부 편집기", { exact: true }), "zed");
     const request = page.waitForRequest((request) => request.method() === "POST" && request.url().endsWith(`/projects/${a.id}/external-editor`));
     await files.getByRole("button", { name: "외부 편집기로 열기", exact: true }).click();
     expect((await request).postDataJSON()).toEqual({ editor_id: "zed", path: name });

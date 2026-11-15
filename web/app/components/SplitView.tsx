@@ -1,3 +1,8 @@
+import { Stack, StackItem } from "@astryxdesign/core/Stack";
+import { splitStyles } from "./split-layout.stylex";
+import { Divider } from "@astryxdesign/core/Divider";
+import { Select } from "../design/Select";
+import { StatusBadge } from "../design/StatusBadge";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
@@ -30,7 +35,7 @@ export function SplitView(p: Props) {
         setMaximized(zoom === id ? null : id);
     } };
     return (
-        <div className="split-root" data-layout-mode={p.narrow ? "narrow" : "wide"} hidden={!p.visible} inert={!p.visible} onKeyDownCapture={(e) => {
+        <Stack gap={0} xstyle={splitStyles.fill} data-layout-mode={p.narrow ? "narrow" : "wide"} hidden={!p.visible} inert={!p.visible} onKeyDownCapture={(e) => {
             if (zoom && e.key === "Escape") {
                 e.preventDefault();
                 e.stopPropagation();
@@ -38,7 +43,7 @@ export function SplitView(p: Props) {
             }
         }}>
             <NodeView {...view} node={p.layout.root} path={[]} />
-        </div>
+        </Stack>
     );
 }
 
@@ -72,27 +77,27 @@ function NodeView(p: ViewProps & { node: L.Node; path: number[] }) {
         }
     };
     return (
-        <div ref={ref} className={`split ${n.direction}`} data-testid={`split-${n.direction}`}>
-            <div className="split-child" hidden={!shown(n.children[0])} style={{ flexBasis: single ? "100%" : `${n.ratio * 100}%` }}>
+        <Stack ref={ref} gap={0} direction={n.direction === "row" ? "horizontal" : "vertical"} xstyle={splitStyles.fill} data-testid={`split-${n.direction}`}>
+            <Stack direction="horizontal" gap={0} xstyle={splitStyles.child(single ? "100%" : `${n.ratio * 100}%`)} hidden={!shown(n.children[0])}>
                 <NodeView {...p} node={n.children[0]} path={[...p.path, 0]} />
-            </div>
-            <div
-                className="divider"
+            </Stack>
+            <Divider
+                xstyle={[splitStyles.divider, n.direction === "row" ? splitStyles.horizontal : splitStyles.vertical]}
                 hidden={!!single}
                 role="separator"
-                aria-orientation={n.direction === "row" ? "vertical" : "horizontal"}
+                orientation={n.direction === "row" ? "vertical" : "horizontal"}
                 aria-valuenow={Math.round(n.ratio * 100)}
                 aria-label="영역 크기 조절"
                 tabIndex={0}
                 onPointerDown={onDrag}
                 onKeyDown={onKey}
                 onDoubleClick={() => p.update((l) => L.setDirection(l, p.path, n.direction === "row" ? "column" : "row"))}
-                title="끌어서 크기 조절 · 더블클릭으로 방향 전환"
+                aria-description="끌어서 크기 조절 · 더블클릭으로 방향 전환"
             />
-            <div className="split-child" hidden={!shown(n.children[1])} style={{ flexBasis: single ? "100%" : `${(1 - n.ratio) * 100}%` }}>
+            <Stack direction="horizontal" gap={0} xstyle={splitStyles.child(single ? "100%" : `${(1 - n.ratio) * 100}%`)} hidden={!shown(n.children[1])}>
                 <NodeView {...p} node={n.children[1]} path={[...p.path, 1]} />
-            </div>
-        </div>
+            </Stack>
+        </Stack>
     );
 }
 
@@ -143,7 +148,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     };
     return (
         <PaneVisibility.Provider value={visible}>
-        <section className={`pane ${focused ? "focused" : ""}`} data-testid="pane" data-leaf={leaf.id}
+        <Stack as="section" gap={0} xstyle={splitStyles.pane} data-focused={focused} data-testid="pane" data-leaf={leaf.id}
             // pointer뿐 아니라 키보드(Tab) 포커스 진입도 현재 pane으로 삼아, 사이드바에서 여는 항목이 입력 중인 pane에 열리게 한다(PANE-006).
             onPointerDownCapture={() => !focused && p.update((l) => L.focus(l, leaf.id))}
             onFocusCapture={() => !focused && visible && p.update((l) => L.focus(l, leaf.id))}
@@ -157,11 +162,11 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
             onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setZone(null)}
             onDrop={(e) => draggable(e) && drop(e, zone ?? "center")}
         >
-            {zone && <div className={`drop-zone ${zone}`} data-testid="drop-zone" data-zone={zone} aria-hidden="true" />}
+            {zone && <Stack xstyle={splitStyles.drop} data-testid="drop-zone" data-zone={zone} aria-hidden="true" />}
             {/* 모바일의 열린 탭은 오른쪽 서랍에서 전환한다. */}
-            <div className="tabbar" role="tablist" hidden={p.narrow}>
+            <Stack direction="horizontal" align="center" gap={1} padding={2} isScrollable xstyle={splitStyles.tabs} role="tablist" hidden={p.narrow}>
                 {leaf.tabs.map((t, i) => (
-                    <div key={t.id} className={`tab ${t.id === leaf.active_tab ? "on" : ""}`} role="tab" aria-selected={t.id === leaf.active_tab}
+                    <Stack direction="horizontal" align="center" gap={0.5} key={t.id} xstyle={splitStyles.tab} role="tab" aria-selected={t.id === leaf.active_tab}
                         onDragOver={(e) => {
                             if (!draggable(e)) return;
                             e.preventDefault();
@@ -170,7 +175,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                         }}
                         onDrop={(e) => draggable(e) && drop(e, "center", i)}
                     >
-                        <button className="tab-title" onClick={() => p.update((l) => L.activate(l, t.id))} title={`${t.title} · 끌어서 다른 영역이나 가장자리로 이동(Alt+Shift+←/→ 순서 변경)`}
+                        <GroveButton type="button" appearance="link" xstyle={splitStyles.title} data-testid="tab-title" onClick={() => p.update((l) => L.activate(l, t.id))} title={`${t.title} · 끌어서 다른 영역이나 가장자리로 이동(Alt+Shift+←/→ 순서 변경)`}
                             draggable
                             onDragStart={(e) => {
                                 e.dataTransfer.setData(DRAG_TAB, t.id);
@@ -183,53 +188,46 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                                 if (index >= 0 && index < leaf.tabs.length) p.update((l) => L.placeTab(l, t.id, leaf.id, "center", index));
                             }}
                         >
-                            {t.kind !== "settings" && <GroveText type="inherit" color="inherit" className="badge">{projectName(t.project_id) ?? "?"}</GroveText>}
+                            {t.kind !== "settings" && <StatusBadge>{projectName(t.project_id) ?? "?"}</StatusBadge>}
                             {t.kind === "project" ? "대화 목록" : t.title}
-                        </button>
-                        <GroveButton className="ghost small" aria-label="탭 닫기" title="화면만 닫습니다(작업은 계속)" onClick={() => p.update((l) => L.closeTab(l, t.id))}>
+                        </GroveButton>
+                        <GroveButton variant="secondary" density="compact" aria-label="탭 닫기" title="화면만 닫습니다(작업은 계속)" onClick={() => p.update((l) => L.closeTab(l, t.id))}>
                             ×
                         </GroveButton>
-                    </div>
+                    </Stack>
                 ))}
-                <span className="spacer" />
+                <StackItem as="span" size="fill" aria-hidden="true" />
                 {!p.narrow && active && (
                     <>
-                        <GroveButton className="ghost small" title="오른쪽으로 분할" aria-label="오른쪽으로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "row", copyOf(active)))}>
+                        <GroveButton variant="secondary" density="compact" title="오른쪽으로 분할" aria-label="오른쪽으로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "row", copyOf(active)))}>
                             ◫
                         </GroveButton>
-                        <GroveButton className="ghost small" title="아래로 분할" aria-label="아래로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "column", copyOf(active)))}>
+                        <GroveButton variant="secondary" density="compact" title="아래로 분할" aria-label="아래로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "column", copyOf(active)))}>
                             ⊟
                         </GroveButton>
-                        <select aria-label="탭 이동" value="" onChange={(e) => menu(e.target.value)}>
-                            <option value="">이동…</option>
-                            {leaf.tabs.length > 1 && <>
-                                <option value="order:-1" disabled={activeIndex <= 0}>탭을 앞으로</option>
-                                <option value="order:1" disabled={activeIndex >= leaf.tabs.length - 1}>탭을 뒤로</option>
-                            </>}
-                            {others.map((o, i) => (
-                                <option key={o.id} value={`leaf:${o.id}`}>
-                                    영역 {i + 1}
-                                </option>
-                            ))}
-                            {leaf.tabs.length > 1 && splittable && L.SPLIT_EDGES.map((edge) => (
-                                <option key={edge} value={`edge:${edge}`}>{EDGE_LABEL[edge]} 새 영역으로</option>
-                            ))}
-                        </select>
+                        <StackItem size="static"><Select label="탭 이동" hideLabel value="" onChange={menu}
+                            options={[{ value: "", label: "이동…" }, ...(leaf.tabs.length > 1 ? [
+                                { value: "order:-1", label: "탭을 앞으로", disabled: activeIndex <= 0 },
+                                { value: "order:1", label: "탭을 뒤로", disabled: activeIndex >= leaf.tabs.length - 1 },
+                            ] : []), ...others.map((o, i) => ({ value: `leaf:${o.id}`, label: `영역 ${i + 1}` })),
+                            ...(leaf.tabs.length > 1 && splittable ? L.SPLIT_EDGES.map((edge) => ({
+                                value: `edge:${edge}`, label: `${EDGE_LABEL[edge]} 새 영역으로`,
+                            })) : [])]} /></StackItem>
                     </>
                 )}
                 {others.length > 0 && (
                     <>
-                        {!p.narrow && <GroveButton className="ghost small" aria-label={p.maximized === leaf.id ? "분할 복원" : "영역 전체 보기"}
+                        {!p.narrow && <GroveButton variant="secondary" density="compact" aria-label={p.maximized === leaf.id ? "분할 복원" : "영역 전체 보기"}
                             aria-pressed={p.maximized === leaf.id} title="화면 배치만 변경합니다(작업은 계속)"
                             onClick={() => p.toggleMaximize(leaf.id)}>
                             {p.maximized === leaf.id ? "분할 복원" : "전체 보기"}
                         </GroveButton>}
-                        <GroveButton className="ghost small" title="영역 닫기(탭은 인접 영역으로 합침, 작업은 계속)" aria-label="영역 닫기"
+                        <GroveButton variant="secondary" density="compact" title="영역 닫기(탭은 인접 영역으로 합침, 작업은 계속)" aria-label="영역 닫기"
                             onClick={() => p.update((l) => L.closeLeaf(l, leaf.id))}>⊠</GroveButton>
                     </>
                 )}
-            </div>
-            <div className="pane-body">
+            </Stack>
+            <StackItem size="fill" isScrollable xstyle={splitStyles.body} data-testid="pane-body">
                 <Suspense fallback={<LoadingBar label="화면 여는 중…" />}>
                 {!active && <EmptyPane open={p.open} />}
                 {active?.kind === "session" && active.resource_id && active.project_id && (
@@ -251,8 +249,8 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                     />
                 )}
                 </Suspense>
-            </div>
-        </section>
+            </StackItem>
+        </Stack>
         </PaneVisibility.Provider>
     );
 }

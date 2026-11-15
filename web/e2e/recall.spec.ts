@@ -21,15 +21,15 @@ c.close()
     }
     await login(page);
     const panel = page.getByTestId("search-panel");
-    await openDetails(panel);
-    await panel.getByLabel("검색 방식").selectOption("recall");
+    await openDetails(panel, "대화 검색");
+    await selectChoice(panel.getByLabel("검색 방식"), "recall");
     await panel.getByLabel("대화 검색어").fill(word);
     await expect(panel.getByTestId("search-total")).toHaveText("31개");
     await expect(panel.getByTestId("search-hit")).toHaveCount(30);
-    await panel.getByLabel("검색 기간").selectOption("1");
+    await selectChoice(panel.getByLabel("검색 기간"), "1");
     await expect(panel.getByTestId("search-total")).toHaveText("30개");
     await expect(panel.getByRole("button", { name: "다음 회상 결과" })).toBeDisabled();
-    await panel.getByLabel("검색 기간").selectOption("0");
+    await selectChoice(panel.getByLabel("검색 기간"), "0");
     await expect(panel.getByTestId("search-total")).toHaveText("31개");
     await panel.getByRole("button", { name: "다음 회상 결과" }).click();
     await expect(panel.getByTestId("search-hit")).toHaveCount(1);
@@ -37,7 +37,7 @@ c.close()
     await expect(hit).toContainText(`오래된 원문 ${word}`);
     await expect(hit).toContainText("원문 #1");
     await hit.getByRole("button").click();
-    const target = sessionView(page, session.id).locator(".msg-row.focus-hit");
+    const target = sessionView(page, session.id).locator('[data-seq][data-highlighted="true"]');
     await expect(target).toContainText(`오래된 원문 ${word}`);
     await expect(target).toBeInViewport();
 });
@@ -49,8 +49,8 @@ test("보관 포함 회상에서도 대화 영구 삭제 뒤에는 서버와 화
     await apiCall("POST", `/sessions/${session.id}/messages`, { text: `${word} 원문` });
     await login(page);
     const panel = page.getByTestId("search-panel");
-    await openDetails(panel);
-    await panel.getByLabel("검색 방식").selectOption("recall");
+    await openDetails(panel, "대화 검색");
+    await selectChoice(panel.getByLabel("검색 방식"), "recall");
     await panel.getByLabel("대화 검색어").fill(word);
     await selectChoice(panel.getByLabel("보관된 대화·프로젝트 포함"), "true");
     await expect(panel.getByTestId("search-hit")).toHaveCount(1);
@@ -75,7 +75,7 @@ test("이전 서버가 회상 기능을 알리지 않으면 미지원 선택지�
     await page.getByLabel("토큰").fill(state().token);
     await page.getByRole("button", { name: "로그인" }).click();
     const panel = page.getByTestId("search-panel");
-    await openDetails(panel);
+    await openDetails(panel, "대화 검색");
     await expect(panel.getByLabel("대화 검색어")).toBeVisible();
     await expect(panel.getByLabel("검색 방식")).toHaveCount(0);
 });
@@ -89,8 +89,8 @@ test("프로젝트 보관 이벤트도 회상 cache를 갱신하고 명시적으
     await apiCall("POST", `/sessions/${session.id}/messages`, { text: `${word} 원문` });
     await login(page);
     const panel = page.getByTestId("search-panel");
-    await openDetails(panel);
-    await panel.getByLabel("검색 방식").selectOption("recall");
+    await openDetails(panel, "대화 검색");
+    await selectChoice(panel.getByLabel("검색 방식"), "recall");
     await panel.getByLabel("대화 검색어").fill(word);
     await expect(panel.getByTestId("search-hit")).toHaveCount(1);
     const archived = await apiCall<{ revision: number }>("PATCH", `/projects/${project.id}`, { expected_revision: project.revision, archived: true });

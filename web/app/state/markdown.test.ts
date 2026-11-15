@@ -64,6 +64,7 @@ describe("markdown", () => {
     it("renders code blocks with a copy button", () => {
         const out = html("```js\nconst a = '<b>';\n```");
         expect(out).toContain("복사");
-        expect(out).toContain("const a = &#x27;&lt;b&gt;&#x27;;");
+        expect(out.replace(/<[^>]+>/g, "")).toContain("const a = &#x27;&lt;b&gt;&#x27;;");
+        expect(out).not.toContain("<b>");
     });
 });
