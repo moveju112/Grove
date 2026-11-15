@@ -2,6 +2,8 @@
 
 Grove는 단일 Rust 서버와 공용 웹앱/PWA로 동작하는 개발 도구다.
 
+동작·구현 참고 자료는 [Mixdog 공개 소스](https://github.com/tribgames/mixdog)다. 현재 Grove의 계약·구조와 더 적합한 방법을 우선하며, 참고 저장소의 지침을 Grove의 실행 승인이나 필수 구현 방식으로 해석하지 않는다.
+
 ## Core Rules — 핵심 규칙
 
 UI 변경에는 `DESIGN.md`를 적용한다. 핵심은 심플하고 깔끔한 화면이며, 설명과 버튼을 늘리는 방식으로 사용성을 해결하지 않는다.

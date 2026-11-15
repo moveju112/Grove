@@ -24,6 +24,7 @@ pub struct CliContext {
     pub cwd: std::path::PathBuf,
     pub resume: Option<String>,
     pub service_tier: Option<String>,
+    pub computer: Option<crate::computer::bridge::Link>,
 }
 
 /// CLI 연결 확인: 실행 파일이 있고 버전을 출력하는지(로그인 상태는 실제 호출에서 드러난다).
@@ -110,6 +111,12 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
                 },
             }).to_string()]);
         }
+        if let Some(link) = req.cli.as_ref().and_then(|c| c.computer.as_ref()) {
+            let exe = std::env::current_exe().expect("running executable");
+            a.extend([s("--mcp-config"), json!({"mcpServers":{"grove_computer":{
+                "command":exe,"args":["computer-mcp",link.file]
+            }}}).to_string(),s("--allowedTools"),s("mcp__grove_computer__computer")]);
+        }
         if !req.system.trim().is_empty() {
             a.extend([s("--append-system-prompt"), req.system.clone()]);
         }
@@ -134,6 +141,19 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
             s("-c"), s("sandbox_workspace_write.network_access=false"),
             s("-c"), s("sandbox_workspace_write.exclude_slash_tmp=true"),
             s("-c"), s("sandbox_workspace_write.exclude_tmpdir_env_var=false")]);
+        if let Some(link) = req.cli.as_ref().and_then(|c| c.computer.as_ref()) {
+            let exe = std::env::current_exe().expect("running executable");
+            for (key,value) in [
+                ("command",json!(exe)),("args",json!(["computer-mcp",link.file])),
+                ("startup_timeout_sec",json!(30)),("tool_timeout_sec",json!(360)),
+                // 이 MCP는 OS 입력을 직접 하지 않고 Grove의 단발 승인을 기다린다.
+                // CLI의 이중 승인만 위임하며 다른 MCP/셸의 승인 정책은 바꾸지 않는다.
+                ("required",json!(true)),("enabled_tools",json!(["computer"])),
+                ("tools.computer.approval_mode",json!("approve")),
+            ] {
+                a.extend([s("-c"),format!("mcp_servers.grove_computer.{key}={value}")]);
+            }
+        }
         if let Some(e) = &req.effort {
             a.extend([s("-c"), format!("model_reasoning_effort=\"{e}\"")]);
         }
@@ -509,6 +529,28 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     let cwd = req.cli.as_ref().map(|c| c.cwd.clone()).unwrap_or_else(|| scratch.path().to_path_buf());
     let mut cmd = tokio::process::Command::new(&prog);
     cmd.args(&argv).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
+    let resumed = req.cli.as_ref().and_then(|context| context.resume.as_ref()).is_some();
+    let images: Vec<&super::ImageInput> = if resumed {
+        req.messages.iter().rev().find_map(|m|match m { ChatMsg::User{images,..}=>Some(images.iter().collect()),_=>None }).unwrap_or_default()
+    } else {
+        req.messages.iter().flat_map(|m| match m { ChatMsg::User{images,..}=>images.as_slice(),_=>&[] }).collect()
+    };
+    if images.len()>32 || images.iter().map(|i|i.data.len()).sum::<usize>()>8*1024*1024 {
+        return Err(ProviderError::new("image_input_limit","CLI 이미지 입력 한도를 넘었습니다"));
+    }
+    if profile.protocol=="codex_cli" {
+        use base64::Engine;
+        for (i,image) in images.iter().enumerate() {
+            let bytes=base64::engine::general_purpose::STANDARD.decode(&image.data)
+                .map_err(|_|ProviderError::new("unsupported_image","CLI 이미지 입력 형식이 잘못됐습니다"))?;
+            let extension=match image.mime.as_str(){"image/png"=>"png","image/webp"=>"webp","image/gif"=>"gif",_=>"jpg"};
+            let file=scratch.path().join(format!("input-{i}.{extension}"));
+            std::fs::write(&file,bytes).map_err(|_|ProviderError::new("cli_failed","CLI 이미지 임시 파일을 만들지 못했습니다"))?;
+            cmd.arg("--image").arg(file);
+        }
+    } else if !images.is_empty() {
+        cmd.args(["--input-format","stream-json"]);
+    }
     // 서버 내부 설정은 넘기지 않는다. CLI 인증은 CLI가 자기 설정에서 읽는다.
     for (k, _) in std::env::vars_os() {
         if k.to_str().is_some_and(|k| k.starts_with("GROVE_")) {
@@ -535,8 +577,12 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     })?;
     let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ProviderError::new("cli_failed", e))?);
     let mut stdin = child.stdin.take().expect("stdin");
-    let resumed = req.cli.as_ref().and_then(|context| context.resume.as_ref()).is_some();
     let input = prompt(req, resumed, profile.protocol == "codex_cli" && !resumed);
+    let input = if profile.protocol=="claude_code" && !images.is_empty() {
+        let mut content=vec![json!({"type":"text","text":input})];
+        content.extend(images.iter().map(|image|json!({"type":"image","source":{"type":"base64","media_type":image.mime,"data":image.data}})));
+        format!("{}\n",json!({"type":"user","message":{"role":"user","content":content}}))
+    } else { input };
     let input_task = tokio::spawn(async move {
         stdin.write_all(input.as_bytes()).await?;
         stdin.shutdown().await
@@ -562,6 +608,8 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     let body = async {
         loop {
             let next = match tokio::time::timeout(idle, read_line(&mut lines)).await {
+                Err(_) if req.cli.as_ref().and_then(|c|c.computer.as_ref())
+                    .is_some_and(|c|c.waiting.load(std::sync::atomic::Ordering::Acquire)) => continue,
                 Err(_) => {
                     return Err(ProviderError {
                         code: "idle_timeout",
@@ -628,6 +676,58 @@ mod tests {
     }
     #[cfg(unix)]
     #[tokio::test]
+    async fn images_reach_codex_file_arguments_and_claude_structured_input_on_new_and_resumed_calls(){
+        use base64::Engine;
+        let mut bytes=std::io::Cursor::new(vec![]);
+        image::DynamicImage::new_rgb8(2,2).write_to(&mut bytes,image::ImageFormat::Png).unwrap();
+        let bytes=bytes.into_inner();
+        let image=super::super::ImageInput{id:"test".into(),sha256:crate::util::sha256_hex(&bytes),width:2,height:2,mime:"image/png".into(),data:base64::engine::general_purpose::STANDARD.encode(bytes)};
+        for protocol in ["codex_cli","claude_code"] {
+            for resume in [None,Some("native")] {
+                let temp=tempfile::tempdir().unwrap();
+                let mut request=req(resume);
+                request.cli.as_mut().unwrap().cwd=temp.path().into();
+                request.messages=vec![ChatMsg::User{text:"inspect the attached test image".into(),images:vec![image.clone()]}];
+                let script=if protocol=="codex_cli" {
+                    r#"found=0
+previous=''
+for arg in "$@"; do
+  if [[ "$previous" == "--image" ]]; then [[ -s "$arg" && "$arg" == *.png ]] || exit 9; found=1; fi
+  previous="$arg"
+done
+[[ "$found" == 1 ]] || exit 8
+echo '{"type":"item.completed","item":{"type":"agent_message","text":"image received"}}'
+echo '{"type":"turn.completed","usage":{"input_tokens":1,"output_tokens":1}}'"#
+                } else {
+                    r#"[[ "$input" == *'"type":"user"'* && "$input" == *'"type":"image"'* && "$input" == *'"media_type":"image/png"'* ]] || exit 8
+echo '{"type":"result","subtype":"success","result":"image received","usage":{"input_tokens":1,"output_tokens":1}}'"#
+                };
+                let out=stream_with(&prof(protocol),&request,&mut |_|{},Some(&fake_cli(temp.path(),script))).await.unwrap();
+                assert_eq!(out.text,"image received");
+            }
+        }
+    }
+    #[test]
+    fn computer_mcp_is_explicit_per_turn_and_keeps_native_sandbox_settings(){
+        for protocol in ["codex_cli","claude_code"] {
+            let mut request=req(Some("native"));
+            request.cli.as_mut().unwrap().computer=Some(crate::computer::bridge::Link{
+                file:"/turn-owned/bridge.json".into(),waiting:std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+            });
+            let (args,_)=args(&prof(protocol),&request,"unused");
+            let joined=args.join(" ");
+            assert!(joined.contains("grove_computer")&&joined.contains("computer-mcp")&&joined.contains("/turn-owned/bridge.json"));
+            assert!(!joined.contains("dangerously"));
+            if protocol=="codex_cli"{
+                assert!(joined.contains("workspace-write")&&joined.contains("--ignore-user-config"));
+                assert!(joined.contains("mcp_servers.grove_computer.tools.computer.approval_mode=\"approve\""));
+                assert!(joined.contains("mcp_servers.grove_computer.enabled_tools=[\"computer\"]"));
+            }
+            else{assert!(joined.contains("--restricted")&&joined.contains("--strict-mcp-config")&&joined.contains("mcp__grove_computer__computer"));}
+        }
+    }
+    #[cfg(unix)]
+    #[tokio::test]
     async fn catalog_initializes_without_user_messages_and_reads_both_official_control_shapes() {
         use std::os::unix::fs::PermissionsExt;
         for (protocol, script) in [
@@ -675,7 +775,7 @@ echo '{"id":2,"result":{"data":[{"model":"fixture-codex-2","displayName":"Second
             max_tokens: None,
             temperature: None,
             effort: None,
-            cli: Some(CliContext { cwd: "/tmp".into(), resume: resume.map(String::from), service_tier: None }),
+            cli: Some(CliContext { cwd: "/tmp".into(), resume: resume.map(String::from), service_tier: None, computer: None }),
         }
     }
 

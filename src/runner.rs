@@ -600,6 +600,8 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
     crate::tools::image_read::hydrate(&mut messages, &root)
         .map_err(|e| ApiError::new(axum::http::StatusCode::BAD_REQUEST, e.code, e.message))?;
+    crate::computer::hydrate(data, &t.session_id, &mut messages)
+        .map_err(|e| ApiError::new(axum::http::StatusCode::BAD_REQUEST, e.code, e.message))?;
     mp.check_capabilities(t.tools_enabled, def["effort"].as_str(), messages.iter().any(|m| matches!(m, ChatMsg::User { images, .. } if !images.is_empty())))?;
     let (max_tokens, temperature) = mp.generation_options();
     let deadline = def["budget"]["max_minutes"]
@@ -621,6 +623,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let cli = if cli_backend { Some(crate::provider::cli::CliContext {
         cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system,def.get("bot_room").is_some())?,
         service_tier: def["service_tier"].as_str().map(str::to_string),
+        computer: None,
     }) } else { None };
     let tools: Vec<ToolDef> = if t.tools_enabled && !cli_backend {
         crate::deferred_tools::model_tools(c, turn_id, &t.session_id, &def)?
@@ -714,7 +717,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             let tid = tid.clone();
             { let data=app.cfg.data_dir.clone(); move |c| load_step(c, &tid, &epoch, &data) }
         });
-        let input = match step.await {
+        let mut input = match step.await {
             Ok(Some(i)) => i,
             Ok(None) => return session_for_partial,
             Err(e) => {
@@ -872,6 +875,14 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             if provider::cli::is_cli(&input.profile.protocol) && app.agent_logins.active(&input.profile.protocol).await {
                 return Err(provider::ProviderError::new("authentication_in_progress", "에이전트 로그인을 완료한 뒤 다시 보내 주세요"));
             }
+            let _computer_bridge = if provider::cli::is_cli(&input.profile.protocol) {
+                let bridge = crate::computer::bridge::Bridge::start(app, turn_id, &input.session_id, cancel_rx.clone()).await
+                    .map_err(|e| provider::ProviderError::new(e.code,e.message))?;
+                if let Some(bridge) = &bridge && let Some(context) = &mut input.request.cli {
+                    context.computer = Some(bridge.link.clone());
+                }
+                bridge
+            } else { None };
             let stream = provider::stream(&input.profile, &input.request, &mut cancel_rx, &mut on_delta);
             tokio::pin!(stream);
             let mut interval = tokio::time::interval(Duration::from_millis(50));

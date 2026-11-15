@@ -81,7 +81,7 @@ export function ProfileCapabilities({ profile }: { profile: ModelProfile }) {
             <DraftInput type="number" min="1" max="4294967295" step="1" label="요청 출력 token 수" value={editing.requested} isDisabled={cli} onChange={(value) => setEditing({ ...editing, requested: value })} />
             <DraftInput type="number" min="0" max="2" step="any" label="요청 temperature" value={editing.temperature} isDisabled={cli} onChange={(value) => setEditing({ ...editing, temperature: value })} />
             {FEATURES.map(([key, label]) => <Select key={key} label={`${label} 지원 여부`}
-                value={editing.features[key]} disabled={cli && key !== "effort"}
+                value={editing.features[key]} disabled={cli && key !== "effort" && key !== "images"}
                 onChange={(value) => setEditing({ ...editing, features: { ...editing.features, [key]: value } })}
                 options={[{ value: "", label: "미확인" }, { value: "true", label: "지원" }, { value: "false", label: "미지원" }]} />)}
             <GroveStack direction="horizontal" align="center" gap={1.5}>

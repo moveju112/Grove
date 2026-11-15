@@ -2,6 +2,8 @@
 
 export type EventRecord = { seq: number, created_at: string, kind: string, project_id: string | null, session_id: string | null, payload: unknown, };
 
+export type ComputerStatus = { enabled: boolean, target: string, platform: string, platform_supported: boolean, desktop_session_present: boolean, backend: string, note: string, };
+
 export type DeviceInfo = { id: string, kind: string, name: string, created_at: string, last_used_at: string | null, revoked_at: string | null, parent_id: string | null, expires_at: string | null, current: boolean, };
 
 export type PairingRequestInfo = { id: string, name: string, verification_code: string, created_at: string, expires_at: string, };

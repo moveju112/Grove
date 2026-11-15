@@ -16,6 +16,8 @@
 - **MUST** 외부 CLI의 신규 실행과 대화 재개 모두 프로젝트 범위에서 파일 수정·검사 명령을 허용한다. Codex는 workspace-write, Claude Code는 restricted 파일 경계와 Bash sandbox를 사용하며 경계 밖 실행으로 자동 대체하지 않는다.
   - why: 구독형 CLI의 자체 도구로 코딩하되 다른 프로젝트·공유 자산까지 수정 권한을 넓히지 않는다. CLI 자체 도구와 Grove의 승인형 도구 루프는 별개이며 화면에서도 구분한다.
   - ✅ Claude Code의 restricted·sandbox 옵션을 지원하는 버전과 Linux의 bubblewrap·socat이 필요하다. 취소는 변경 rollback이 아니며 중단 기록과 실제 파일을 확인한 뒤 계속한다. `evidence: src/provider/cli.rs`, `evidence: tests/real_cli.rs`.
+- **MUST** Computer Use는 소유자가 켠 서버 PC만 대상으로 하며, 관찰도 포함해 각 요청을 이번만 승인한다. CLI에는 턴 한정 Computer Use MCP만 연결하고 사용자 MCP·hook이나 sandbox 경계를 함께 열지 않는다. 오래된 화면·다른 대화의 frame은 거부하고 결과 불명 입력을 재실행하지 않는다. 물리 포인터·전역 키 상태를 바꾸지 않는 X11 창 메시지를 사용하며, 지원하지 않는 앱·OS를 다른 입력 방식으로 우회하지 않는다.
+  - ✅ `src/computer/`, `tests/computer.rs`, 격리 Xvfb 검사 `python3 tests/fixtures/computer_x11.py /절대/경로/grove`.
 
 ## 스타일
 

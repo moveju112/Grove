@@ -2,6 +2,7 @@
 
 Grove는 단일 Rust crate 서버와 공용 웹앱/PWA로 구성된다.
 기존 제품은 동작 참고 자료이며 런타임 서버 의존성이 아니다.
+Computer Use 등 기존 동작은 [Mixdog 공개 소스](https://github.com/tribgames/mixdog)를 참고할 수 있다. 코드를 가져오면 해당 라이선스·고지 의무를 유지하고 Grove의 인증·승인·취소 경계에 맞춰 통합한다.
 
 | 영역 | 책임과 근거 |
 |---|---|
@@ -10,6 +11,7 @@ Grove는 단일 Rust crate 서버와 공용 웹앱/PWA로 구성된다.
 | HTTP 경계 | `src/auth.rs`, `src/error.rs`, `src/idem.rs`, `src/web.rs` |
 | 실행·복구 | `src/runner.rs`, `src/startup.rs`, `src/approvals.rs`, `src/tasks.rs` |
 | 모델·CLI | `src/provider/`, `src/agent_auth.rs`, `src/history.rs` |
+| 서버 PC 제어·턴 한정 CLI MCP | `src/computer/`, `src/provider/cli.rs`; 현재 Linux X11 창 메시지 backend |
 | 파일 경계 | `src/project_fs.rs`, `src/tools/`, `src/files.rs` |
 | 암호화 전송 | `src/e2ee.rs`, `web/app/api/transport.ts` |
 | 웹 화면·조회 투영 | `web/app/components/`, `web/app/state/store.ts` |

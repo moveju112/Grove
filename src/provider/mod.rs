@@ -337,9 +337,6 @@ pub async fn stream(
     if *cancel.borrow() {
         return Err(ProviderError::new("cancelled", "취소되었습니다"));
     }
-    if cli::is_cli(&profile.protocol) && req.messages.iter().any(|m|matches!(m,ChatMsg::User{images,..} if !images.is_empty())) {
-        return Err(ProviderError::new("unsupported_image", "CLI 백엔드는 이미지 첨부를 지원하지 않습니다. HTTP 모델 프로필을 선택하세요"));
-    }
     // 다른 공급자·endpoint·모델로 전환해도 서명된 원문을 유출하지 않는다.
     let filtered;
     let req = if req.messages.iter().any(|m| matches!(m, ChatMsg::Assistant { native: Some(native), .. } if !native.matches(profile))) {

@@ -38,7 +38,7 @@ pub fn resolve(protocol: &str, options: &Value) -> ModelCapabilities {
     ModelCapabilities {
         context_tokens: options["context_window"].as_u64(),
         max_output_tokens: if cli { None } else { overrides.max_output_tokens },
-        images: if cli { Some(false) } else { overrides.images },
+        images: overrides.images.or(cli.then_some(true)),
         tools: if cli { Some(false) } else { overrides.tools },
         native_tools: Some(cli),
         effort: overrides.effort.or(cli.then_some(true)),
@@ -63,10 +63,10 @@ pub fn validate_options(protocol: &str, options: &Value) -> ApiResult<()> {
     if overrides.pdf == Some(true) || (overrides.fast == Some(true) && protocol != "codex_cli") {
         return Err(ApiError::unsupported("native PDF 또는 이 어댑터의 Fast 모드는 지원하지 않습니다"));
     }
-    if cli && (overrides.images == Some(true) || overrides.tools == Some(true)
+    if cli && (overrides.tools == Some(true)
         || overrides.temperature == Some(true) || overrides.max_output_tokens.is_some()
         || options.get("max_tokens").is_some() || options.get("temperature").is_some()) {
-        return Err(ApiError::unsupported("CLI 어댑터는 이미지·Grove 도구 루프·출력 token 상한·temperature 옵션을 지원하지 않습니다"));
+        return Err(ApiError::unsupported("CLI 어댑터의 Grove 도구 루프·출력 token 상한·temperature 옵션은 지원하지 않습니다"));
     }
     let caps = resolve(protocol, options);
     if caps.temperature == Some(false) && options.get("temperature").is_some() {

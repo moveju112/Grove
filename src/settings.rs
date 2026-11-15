@@ -42,6 +42,13 @@ pub struct SettingDef {
 pub fn registry() -> Vec<SettingDef> {
     vec![
         SettingDef {
+            key: crate::computer::ENABLED, menu: "agents", label: "서버 PC 제어",
+            description: "켜면 이 서버 PC의 창 목록·화면 읽기·입력을 요청할 수 있습니다. 각 요청은 이번만 승인해야 합니다. Linux X11 활성 창만 지원하며 휴대전화·다른 PC·Wayland는 제어하지 않습니다. 화면은 선택한 모델 제공자에게 전달되고 대화에 보관됩니다.",
+            keywords: "computer use desktop screen capture 컴퓨터 화면 마우스 키보드",
+            kind: "bool", options: &[], min: None, max: None, default: json!(false),
+            scopes: &["server"], applies: "next_turn", advanced: false,
+        },
+        SettingDef {
             key: "model.default_profile",
             menu: "model",
             label: "기본 모델 프로필",
@@ -885,6 +892,9 @@ pub async fn put(
     Json(b): Json<PutSetting>,
 ) -> ApiResult<Response> {
     let d = def(&key).ok_or_else(|| ApiError::not_found("알 수 없는 설정입니다"))?;
+    if key == crate::computer::ENABLED && !p.is_owner {
+        return Err(ApiError::forbidden("서버 PC 제어는 소유자만 설정할 수 있습니다"));
+    }
     if !d.scopes.contains(&scope.as_str()) {
         return Err(ApiError::invalid(format!("{}은(는) {scope} 범위에서 바꿀 수 없습니다", d.label)));
     }

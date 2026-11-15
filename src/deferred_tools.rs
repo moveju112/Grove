@@ -70,6 +70,7 @@ fn available(c: &Connection, session_id: &str, def: &Value) -> ApiResult<Vec<Too
     let allowed = def["limits"]["allowed_tools"].as_array();
     let mut specs = vec![];
     for spec in tools::specs() {
+        if spec.name == crate::computer::NAME && !crate::computer::enabled(c)? { continue; }
         if !mcp_ready && matches!(spec.name, "mcp_tools" | "mcp_call") {
             continue;
         }

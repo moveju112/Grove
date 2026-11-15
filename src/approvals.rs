@@ -215,7 +215,9 @@ pub fn create_call(
                 .map_err(|e| tools::ToolError::new(e.code, e.message))?;
             planned.target["cwd"] = json!(tools::fs::rel_display(root, &cwd));
         }
-        if spec.name=="mcp_call" {
+        if spec.name == crate::computer::NAME {
+            crate::computer::plan(c,args).map(|p|(spec,p)).map_err(|e|tools::ToolError::new(e.code,e.message))
+        } else if spec.name=="mcp_call" {
             crate::mcp::plan_call(c,args,project_id,session_id).map(|p|(spec,p)).map_err(|e|tools::ToolError::new(e.code,e.message))
         } else if spec.name == "hook" {
             crate::hooks::plan_call(c,args,project_id,session_id,&id).map(|p|(spec,p)).map_err(|e|tools::ToolError::new(e.code,e.message))
@@ -240,14 +242,14 @@ pub fn create_call(
             };
             let policy = tool_policy(c, project_id, session_id, &spec)?;
             // 이 대화에서 계속 허용한 도구(SEC-009). 금지·읽기 전용이 먼저이고, 위임(agent)에는 쓰지 않는다.
-            let granted = !matches!(spec.name,"agent"|"mcp_call")
+            let granted = !matches!(spec.name,"agent"|"mcp_call"|"computer")
                 && c.query_row("SELECT 1 FROM session_tool_grants WHERE session_id = ?1 AND tool = ?2", params![session_id, spec.name], |_| Ok(()))
                     .optional()?
                     .is_some();
             let decision = match (&policy, base) {
                 (PolicyDecision::Deny(..), _) => None,
                 // lifecycle 발생·저장·enabled·과거 grant는 이번 명령 계획의 승인이 아니다.
-                (_, Some(true)) if spec.name == "hook" => Some(true),
+                (_, Some(true)) if matches!(spec.name, "hook" | "computer") => Some(true),
                 (PolicyDecision::Allow, Some(true)) => {
                     scope = Some("policy");
                     Some(false)
@@ -277,6 +279,7 @@ pub fn create_call(
         }
         Err(e) => ("failed", false, json!({}), None, Some(e.to_json())),
     };
+    let ttl_secs = if name=="computer" {ttl_secs.min(300)}else{ttl_secs};
     let expires = needs.then(|| {
         let t = crate::util::parse_time(now).unwrap_or_else(time::OffsetDateTime::now_utc) + time::Duration::seconds(ttl_secs);
         crate::util::fmt_time(t)
@@ -380,12 +383,14 @@ fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiResult<Option<
     let policy = tool_policy(c,&call.project_id,&call.session_id,&spec)?;
     let needs = if call.name=="agent" { crate::agents::approval_policy(c,&call.project_id,&call.session_id,&call.target)? }
         else { Some(tools::needs_approval(spec.effect)) };
-    let granted = !matches!(call.name.as_str(),"agent"|"mcp_call") && c.query_row(
+    let granted = !matches!(call.name.as_str(),"agent"|"mcp_call"|"computer") && c.query_row(
         "SELECT EXISTS(SELECT 1 FROM session_tool_grants WHERE session_id=?1 AND tool=?2)",
         params![call.session_id,call.name],|r|r.get::<_,bool>(0),
     )?;
     let blocked = match policy {
         PolicyDecision::Deny(code,message) => Some((code,message)),
+        _ if call.name=="computer" && call.approval_scope.as_deref()!=Some("once") =>
+            Some(("approval_revoked","PC 제어는 이번 요청에 대한 승인이 필요합니다".into())),
         _ if needs.is_none() => Some(("delegation_disabled","위임 정책이 변경돼 실행하지 않았습니다".into())),
         PolicyDecision::Allow => None,
         _ if needs==Some(true) && call.approval_scope.as_deref()!=Some("once") && !granted =>
@@ -397,6 +402,9 @@ fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiResult<Option<
         return Ok(Some(tools::ToolError::new(e.code,e.message)));
     }
     if call.name=="hook" && let Err(e)=crate::hooks::validate_call(c,call) {
+        return Ok(Some(tools::ToolError::new(e.code,e.message)));
+    }
+    if call.name=="computer" && let Err(e)=crate::computer::validate_call(c,call) {
         return Ok(Some(tools::ToolError::new(e.code,e.message)));
     }
     Ok(None)
@@ -510,6 +518,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
             Err(e) => Err(tools::ToolError::new("project_unavailable", e.message)),
             Ok(_) if call.name == "agent" => crate::agents::execute_tool(&app, &call, cancel_rx).await,
             Ok(_) if call.name == "hook" => crate::hooks::execute_call(&app, &call, cancel_rx).await,
+            Ok(_) if call.name == crate::computer::NAME => crate::computer::execute(&app, &call, cancel_rx).await,
             Ok(_) if call.name == crate::deferred_tools::NAME => {
                 let call = call.clone();
                 app.db.call(move |c| crate::deferred_tools::execute_tool(c, &call)).await
@@ -740,6 +749,9 @@ pub async fn decide(
         }
         if b.decision=="approve_session" && cur.name=="mcp_call" {
             return Err(ApiError::invalid("MCP 외부 호출은 서로 다른 서버·도구를 묶어 대화 범위로 허용할 수 없습니다. 이번만 승인하거나 명시적 도구 정책을 사용하세요"));
+        }
+        if b.decision=="approve_session" && cur.name=="computer" {
+            return Err(ApiError::invalid("PC 제어는 대화 전체를 허용할 수 없습니다. 대상 창·동작을 확인해 이번만 승인하세요"));
         }
         if approving
             && let Some(spec) = tools::spec(&cur.name)

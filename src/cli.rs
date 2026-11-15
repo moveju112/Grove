@@ -40,6 +40,7 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
   grove release sign --key 개인키 [--key 개인키]… <release.json> <출력>
   grove migrate-check <DB 복사본>                                      이 버전의 migration 사전 시험
   grove exec --base-url URL --model 이름 --prompt 텍스트 [...]          개인 문맥 없는 단발 실행(grove exec --help)
+  grove computer-mcp <턴 연결 파일>                      CLI용 Computer Use MCP(내부 전용)
   grove --version | -V [--json]                          버전
   grove --help | -h                                      이 도움말
 
@@ -142,6 +143,12 @@ fn update_cmds(o: &Opts) -> Result<i32, String> {
 }
 
 pub fn run(args: Vec<String>) -> i32 {
+    if args.first().is_some_and(|a| a == "computer-worker") {
+        return crate::computer::worker_main();
+    }
+    if args.first().is_some_and(|a| a == "computer-mcp") {
+        return crate::computer::bridge::mcp_main(args.get(1));
+    }
     if args.first().is_some_and(|a| a == "pairing") {
         return pairing_cli::run(&args[1..]);
     }
