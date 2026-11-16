@@ -17,7 +17,7 @@ export function elapsedMs(sample: TimingSample, monotonicNow: number, advance: b
 }
 
 export function seconds(ms: number): string {
-    return `${(Math.max(0, ms) / 1000).toFixed(1)}초`;
+    return `${Math.floor(Math.max(0, ms) / 1000)}초`;
 }
 
 export function startTimingTimer(enabled: boolean, tick: () => void): () => void {

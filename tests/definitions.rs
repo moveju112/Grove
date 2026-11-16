@@ -23,7 +23,7 @@ async fn builtin_agents_and_workflows_preserved_byte_for_byte() {
 }
 
 #[tokio::test]
-async fn edit_compare_restore_and_conflict() {
+async fn edit_and_conflict_without_default_restore() {
     let s = TestServer::start().await;
     let (_, orig) = s.get("/api/v1/definitions/agent/reviewer").await;
     let (st, v) = s.send(Method::PUT, "/api/v1/definitions/agent/reviewer", json!({ "expected_revision": 0, "body": "내 리뷰 지침" })).await;
@@ -35,23 +35,15 @@ async fn edit_compare_restore_and_conflict() {
     let (st, v) = s.send(Method::PUT, "/api/v1/definitions/agent/reviewer", json!({ "expected_revision": 0, "body": "다른" })).await;
     assert_eq!(st, StatusCode::CONFLICT);
     assert_eq!(v["error"]["details"]["current"]["body"], "내 리뷰 지침");
-    // 이름만 바꾸고 이름만 복원
+    // 이름만 바꿔도 기존 본문은 보존하며 복원 API는 제공하지 않는다.
     let (_, v) = s.send(Method::PUT, "/api/v1/definitions/agent/reviewer", json!({ "expected_revision": 1, "name": "검토자" })).await;
     assert_eq!(v["modified_fields"], json!(["name", "body"]));
-    let (st, v) = s.post("/api/v1/definitions/agent/reviewer/restore", json!({ "expected_revision": 2, "fields": ["name"] })).await;
-    assert_eq!(st, StatusCode::OK);
-    assert_eq!(v["modified_fields"], json!(["body"]));
-    assert_eq!(v["body"], "내 리뷰 지침");
-    // 전체 복원
-    let (_, v) = s.post("/api/v1/definitions/agent/reviewer/restore", json!({ "expected_revision": 3 })).await;
-    assert_eq!(v["body"], orig["body"]);
-    assert!(v["modified_fields"].as_array().unwrap().is_empty());
-    assert_eq!(v["revision"], 4, "복원도 revision을 올려 ABA를 막는다");
+    assert_eq!(s.post("/api/v1/definitions/agent/reviewer/restore", json!({ "expected_revision": 2 })).await.0, StatusCode::NOT_FOUND);
     // 빈 본문 거절
-    let (st, _) = s.send(Method::PUT, "/api/v1/definitions/agent/reviewer", json!({ "expected_revision": 4, "body": "  " })).await;
+    let (st, _) = s.send(Method::PUT, "/api/v1/definitions/agent/reviewer", json!({ "expected_revision": 2, "body": "  " })).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
     // 원문과 같은 값으로 저장하면 수정 없음으로 계산
-    let (_, v) = s.send(Method::PUT, "/api/v1/definitions/agent/reviewer", json!({ "expected_revision": 4, "body": orig["body"] })).await;
+    let (_, v) = s.send(Method::PUT, "/api/v1/definitions/agent/reviewer", json!({ "expected_revision": 2, "name": orig["name"], "body": orig["body"] })).await;
     assert!(v["modified_fields"].as_array().unwrap().is_empty());
 }
 

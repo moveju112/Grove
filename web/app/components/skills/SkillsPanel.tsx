@@ -4,6 +4,8 @@ import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
+import { Card } from "@astryxdesign/core/Card";
+import { DetailDialog } from "../ui/Controls";
 import {
     bindingOf, sameSelection, sameSource, selectionStatus, sourceLabel,
     type SkillBody, type SkillListing, type SkillSelection,
@@ -52,25 +54,29 @@ export function SkillsPanel({
         <GroveText as="p" display="block" type="supporting" color="secondary">스킬 선택은 도구 실행 승인이 아닙니다.</GroveText>
         {loading && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">스킬 목록·본문을 읽는 중…</GroveText>}
         {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
-        {!loading && !error && listing && entries.length === 0 && <GroveText as="p" display="block" type="inherit" color="inherit">허용된 출처에서 조회 가능한 스킬이 없습니다.</GroveText>}
+        {!loading && !error && listing && entries.length === 0 && <GroveText as="p" display="block" type="inherit" color="inherit">등록된 스킬이 없습니다.</GroveText>}
         {!loading && !error && !listing && <GroveText as="p" display="block" type="inherit" color="secondary">스킬 목록이 아직 연결되지 않았습니다.</GroveText>}
-        {listing && <GroveList density="compact" edge="flush" hasDividers aria-label="스킬 목록">
+        {listing && <GroveList density="compact" edge="flush" aria-label="스킬 목록">
             {entries.map((entry) => {
                 const status = selectionStatus(entry, selected);
                 const prior = selected.find((selection) => selection.id === entry.id && sameSource(selection.source, entry.source));
-                return <GroveListItem key={entry.id} label={<>
-                    <strong>{entry.name}</strong>
-                    <GroveText type="inherit" color="inherit">{entry.enabled === false ? "비활성 · 모델 적용 불가" : "활성"}</GroveText>
-                    <GroveText type="supporting" color="secondary">{sourceLabel(entry.source)}</GroveText>
-                    <GroveText type="supporting" color="inherit">{priorityLabel[entry.priority]}</GroveText>
-                    {entry.conflicts.length > 0 && <GroveText type="supporting" color="inherit">동명 후보 {entry.conflicts.length}개 · 아래 목록의 출처로 구분하세요.</GroveText>}
-                    {entry.symlink && <GroveText type="supporting" color="secondary">허용된 root 내부 symlink</GroveText>}
-                    {entry.alias_of && <GroveText type="supporting" color="secondary">
-                        alias · {entries.find((candidate) => candidate.id === entry.alias_of)?.name ?? entry.alias_of}
-                    </GroveText>}
-                    {entry.metadata === "opaque_front_matter" && <GroveText type="supporting" color="warning">front matter는 원문으로만 표시합니다.</GroveText>}
-                    <GroveText type="supporting" color="secondary">revision <code>{entry.revision}</code></GroveText>
-                    <GroveText type="inherit" color="inherit" role="status">{status === "selected" ? "선택됨 · 다음 모델 호출 직전 재검증" : status === "stale" ? "선택한 revision과 다름 · 다시 확인 필요" : "미선택"}</GroveText>
+                return <GroveListItem key={entry.id} label={<Card padding={3}><GroveStack gap={2}>
+                    <GroveStack direction="horizontal" align="center" justify="between" wrap="wrap" gap={2}>
+                        <strong>{entry.name}</strong>
+                        {status !== "none" && <GroveText type="supporting" color={status === "stale" ? "warning" : "inherit"} role="status">
+                            {status === "selected" ? "선택됨" : "내용 변경 · 다시 확인 필요"}
+                        </GroveText>}
+                    </GroveStack>
+                    <GroveText type="supporting" color="secondary">{entry.source.kind === "project" ? "프로젝트" : "전역"}{entry.enabled === false && " · 비활성 · 모델 적용 불가"}</GroveText>
+                    {entry.priority !== "preferred" && <GroveText type="supporting" color="warning">{priorityLabel[entry.priority]}</GroveText>}
+                    {entry.conflicts.length > 0 && <GroveText type="supporting" color="warning">동명 후보 {entry.conflicts.length}개 · 출처 확인 필요</GroveText>}
+                    <DetailDialog label={`${entry.name} 스킬 정보`} title="스킬 정보">
+                        <GroveText type="supporting" color="secondary">{sourceLabel(entry.source)}</GroveText>
+                        <GroveText type="supporting" color="secondary">revision <code>{entry.revision}</code></GroveText>
+                        {entry.symlink && <GroveText type="supporting" color="secondary">허용된 root 내부 symlink</GroveText>}
+                        {entry.alias_of && <GroveText type="supporting" color="secondary">alias · {entries.find((candidate) => candidate.id === entry.alias_of)?.name ?? entry.alias_of}</GroveText>}
+                        {entry.metadata === "opaque_front_matter" && <GroveText type="supporting" color="secondary">front matter는 원문으로만 표시합니다.</GroveText>}
+                    </DetailDialog>
                     <Requirements report={entry.requirements} />
                     <GroveStack direction="horizontal" align="center" gap={1.5}>
                         <GroveButton type="button" variant="secondary" density="compact" disabled={blocked} onClick={() => onInspect(bindingOf(entry))}
@@ -81,7 +87,7 @@ export function SkillsPanel({
                             aria-label={`${entry.name} · ${sourceLabel(entry.source)} ${entry.enabled ? "비활성화" : "활성화"}`}
                             onClick={() => onSetEnabled(bindingOf(entry), !entry.enabled)}>{entry.enabled ? "비활성화" : "활성화"}</GroveButton>}
                     </GroveStack>
-                </>} />;
+                </GroveStack></Card>} />;
             })}
         </GroveList>}
         {!loading && listing && listing.issues.length > 0 && <GroveText as="div" display="block" type="supporting" color="warning" role="status">
@@ -102,8 +108,8 @@ export function SkillsPanel({
             본문의 출처·revision이 목록과 달라 다시 조회해야 합니다.
         </GroveText>}
         {preview && previewEntry && !loading && !error && <GroveStack gap={2} aria-label="스킬 본문">
-            <GroveHeading level={4} color="inherit">{previewEntry.name} · 읽기 전용 본문</GroveHeading>
-            <GroveText as="p" display="block" type="supporting" color="secondary">{sourceLabel(previewEntry.source)} · revision <code>{preview.selection.revision}</code></GroveText>
+            <GroveHeading level={4} color="inherit">{previewEntry.name}</GroveHeading>
+            <GroveText as="p" display="block" type="supporting" color="secondary">{previewEntry.source.kind === "project" ? "프로젝트" : "전역"} · 읽기 전용</GroveText>
             <Requirements report={preview.requirements ?? previewEntry.requirements} />
             <CodeBlock code={preview.text} maxHeight="24rem" />
             {onEdit && <GroveButton type="button" disabled={blocked || previewEntry.symlink}
@@ -117,7 +123,7 @@ export function SkillsPanel({
                     return other && (other.name === previewEntry.name
                         || (other.alias_of ?? other.id) === (previewEntry.alias_of ?? previewEntry.id));
                 })}
-                onClick={() => onSelect(bindingOf(previewEntry))}>이 revision 선택 · 다음 모델 호출에 적용</GroveButton>
+                onClick={() => onSelect(bindingOf(previewEntry))}>이 스킬 사용</GroveButton>
         </GroveStack>}
     </GroveStack>;
 }

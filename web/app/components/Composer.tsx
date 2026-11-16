@@ -400,21 +400,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     };
 
     return (
-        <Card width="100%" maxWidth="48em" padding={2} elevation="low" xstyle={chatLayout.composer} data-testid="composer">
+        <Card width="100%" maxWidth="48em" padding={2} elevation="low" xstyle={chatLayout.composer} data-ui="composer" data-testid="composer">
         <Grid gap={1}>
             {copyError && <GroveText as="p" display="block" type="inherit" color="error" role="alert">기기에 입력 사본을 보관하지 못했습니다. 화면을 떠나기 전에 내용을 복사하세요.</GroveText>}
-            {copies.length > 0 && <DetailDialog surface="muted" data-testid="draft-copies" label="다른 입력 사본" title={`다른 입력 사본 ${copies.length}개`}>
-                <GroveText as="p" display="block" type="supporting" color="secondary">선택한 사본을 이 탭에 복제합니다. 현재 입력은 별도 사본으로 남기며 자동 전송하지 않습니다.</GroveText>
-                {copies.map((copy) => <Stack gap={0} key={copy.key} data-testid="draft-copy">
-                    <pre>{copy.draft.text}</pre>
-                    {copy.draft.options && <GroveText as="p" display="block" type="supporting" color="secondary">
-                        {copy.draft.options.mode === "save" ? "메시지만 저장" : `모델: ${profiles.data?.find((p) => p.id === copy.draft.options!.profileId)?.name ?? copy.draft.options.profileId ?? "기본"} · 추론: ${copy.draft.options.effort ?? "auto"} · 도구 ${copy.draft.options.tools ? "사용" : "끔"}`}
-                    </GroveText>}
-                    {!!copy.draft.attachments?.length && <GroveText as="p" display="block" type="supporting" color="inherit">첨부: {copy.draft.attachments.map((a) => a.name).join(", ")}</GroveText>}
-                    {copy.draft.pending && <GroveText as="p" display="block" type="supporting" color="warning">전송 결과 확인 필요 · 원래 요청 키 유지</GroveText>}
-                    <GroveButton variant="secondary" density="compact" data-dialog-close disabled={busy || attachments.busy} onClick={() => restoreCopy(copy.draft)}>이 사본 이어받기</GroveButton>
-                </Stack>)}
-            </DetailDialog>}
             {pendingInvalid && <Notice tone="yellow" role="alert">
                 전송 사본이 손상되어 원래 요청을 확인할 수 없습니다. 서버 대화·실행 기록을 먼저 확인하세요.
                 <GroveButton variant="secondary" density="compact" onClick={() => setPendingInvalid(false)}>기록 확인 후 새 전송 허용</GroveButton>
@@ -515,6 +503,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 <Stack gap={0} xstyle={[composerStyles.modelSlot, expandedModel && composerStyles.expandedModel]}>
                 {((profiles.data?.length ?? 0) > 0 || eff.mode === "save" || eff.profileId) && <ModelSelect
                     profiles={profiles.data ?? []} profileId={eff.profileId} model={eff.model} ready={ready}
+                    effort={eff.mode === "model" ? eff.effort ?? "auto" : undefined} fast={fastEnabled}
                     save={eff.mode === "save"} bound={boundProfileId !== undefined}
                     onExpandedChange={setExpandedModel}
                     onChange={(profileId, model) => { update({ profileId, model, mode: "model" }); setMsg(null); }}>
@@ -531,6 +520,18 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 </Stack>
                 <Stack gap={0} data-composer-fixed xstyle={[composerStyles.menuSlot, expandedModel && composerStyles.secondRow]}>
                 <ActionMenu label="초안·스킬">
+                    {copies.length > 0 && <DetailDialog data-testid="draft-copies" label="다른 입력 사본" title={`다른 입력 사본 ${copies.length}개`}>
+                        <GroveText as="p" display="block" type="supporting" color="secondary">선택한 사본을 이 탭에 복제합니다. 현재 입력은 별도 사본으로 남기며 자동 전송하지 않습니다.</GroveText>
+                        {copies.map((copy) => <Stack gap={0} key={copy.key} data-testid="draft-copy">
+                            <pre>{copy.draft.text}</pre>
+                            {copy.draft.options && <GroveText as="p" display="block" type="supporting" color="secondary">
+                                {copy.draft.options.mode === "save" ? "메시지만 저장" : `모델: ${profiles.data?.find((p) => p.id === copy.draft.options!.profileId)?.name ?? copy.draft.options.profileId ?? "기본"} · 추론: ${copy.draft.options.effort ?? "auto"} · 도구 ${copy.draft.options.tools ? "사용" : "끔"}`}
+                            </GroveText>}
+                            {!!copy.draft.attachments?.length && <GroveText as="p" display="block" type="supporting" color="inherit">첨부: {copy.draft.attachments.map((a) => a.name).join(", ")}</GroveText>}
+                            {copy.draft.pending && <GroveText as="p" display="block" type="supporting" color="warning">전송 결과 확인 필요 · 원래 요청 키 유지</GroveText>}
+                            <GroveButton variant="secondary" density="compact" data-dialog-close disabled={busy || attachments.busy} onClick={() => restoreCopy(copy.draft)}>이 사본 이어받기</GroveButton>
+                        </Stack>)}
+                    </DetailDialog>}
                     {running && eff.mode === "model" && <Select label="실행 중 보내기 방식" value={follow} disabled={!!recovering}
                         onChange={(value) => setFollow(value as FollowKind)}
                         options={[{ value: "queue", label: "대기열" }, { value: "steer", label: "지금 반영" }, { value: "interrupt", label: "중단 후 전송" }]} />}

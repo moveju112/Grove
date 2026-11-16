@@ -21,8 +21,8 @@ describe("승인 카드 표현", () => {
         expect(html).not.toContain("not-for-display");
     });
 
-    it("agent·MCP에서 대화 전체 허용을 제공하지 않는다", () => {
-        for (const name of ["agent", "mcp_call"]) {
+    it("agent·PC 제어에서 대화 전체 허용을 제공하지 않는다", () => {
+        for (const name of ["agent", "computer"]) {
             const html = render({ call: approvalFixture({ name }) });
             expect(html).not.toContain("이 대화에서 계속 허용");
             expect(html).toContain("이번만 승인");

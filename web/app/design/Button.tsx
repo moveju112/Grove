@@ -1,6 +1,12 @@
 import { Button as AstryxButton, type ButtonVariant, type ButtonProps as AstryxButtonProps } from "@astryxdesign/core/Button";
 import { HStack } from "@astryxdesign/core/Stack";
 import type { ButtonHTMLAttributes, Ref } from "react";
+import * as stylex from "@stylexjs/stylex";
+
+// 앱이 추출한 Astryx atomic CSS보다 테마의 여백 선언이 뒤로 밀리지 않도록 같은 경로에서 합친다.
+const styles = stylex.create({
+    flush: { paddingBlock: 0, paddingInline: 0 },
+});
 
 const APPEARANCE = {
     link: "inline-link",
@@ -27,14 +33,17 @@ export type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
 };
 
 /** 폼 제출·취소·native disabled·ref 계약을 보존하는 Astryx 어댑터. */
-export function Button({ children, disabled, type = "submit", ref, variant, density, appearance, width, ...props }: ButtonProps) {
+export function Button({ children, disabled, type = "submit", ref, variant, density, appearance, width, xstyle, ...props }: ButtonProps) {
     const quiet = appearance !== undefined;
+    const iconOnly = appearance === "icon" || appearance === "send";
     const resolvedVariant = appearance ? APPEARANCE[appearance] : variant ?? "primary";
     const native = { disabled };
     return <AstryxButton {...props} {...native} ref={ref} type={type}
+        xstyle={[(appearance === "link" || appearance === "disclosure") && styles.flush, xstyle]}
         label={props["aria-label"] ?? (typeof children === "string" ? children : "")}
         variant={resolvedVariant} size={density === "touch" ? "lg" : density === "compact" ? "sm" : "md"}
-        width={width ?? (appearance ? DEFAULT_WIDTH[appearance] : undefined)} isDisabled={disabled}>
-        <HStack as="span" width="100%" gap={2} vAlign="center" hAlign={quiet ? "start" : "center"}>{children}</HStack>
+        width={width ?? (appearance ? DEFAULT_WIDTH[appearance] : undefined)} isDisabled={disabled}
+        isIconOnly={iconOnly} icon={iconOnly ? children : undefined}>
+        {iconOnly ? null : <HStack as="span" width="100%" gap={2} vAlign="center" hAlign={quiet ? "start" : "center"}>{children}</HStack>}
     </AstryxButton>;
 }

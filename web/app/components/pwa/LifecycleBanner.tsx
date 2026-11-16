@@ -12,7 +12,7 @@ export function LifecycleBanner() {
     return (
         <GroveStack as="aside" gap={1} paddingInline={2} xstyle={noticeStyles.lifecycle} aria-label="PWA 상태" data-testid="pwa-lifecycle">
             {/* 연결 문제는 이 토스트 하나로만 알린다. 각 화면은 기존 값을 두고 연결이 돌아오면 다시 읽는다. */}
-            {!state.online && <Banner status="info" role="status" data-testid="offline-banner" xstyle={noticeStyles.connection}
+            {!state.online && <Banner status="info" role="status" data-testid="offline-banner" xstyle={[noticeStyles.connection, noticeStyles.passiveConnection]}
                 title="오프라인 · 연결되면 다시 불러옵니다" />}
             {state.online && state.connection === "unreachable" && <Banner status="error" role="alert" data-testid="connection-toast"
                 xstyle={noticeStyles.connection} title="서버에 연결할 수 없습니다"

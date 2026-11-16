@@ -30,9 +30,12 @@ pub struct RecentItem {
     #[ts(type = "unknown")]
     pub view_state: Value,
     pub revision: i64,
-    /// 서버 상태로 계산한 값: active | running | awaiting_approval | awaiting_input | unknown_result | archived | missing | project_unavailable
+    /// 서버 상태로 계산한 값: active | queued | running | awaiting_approval | awaiting_input | completed | failed | interrupted | cancelled | unknown_result | archived | missing | project_unavailable
     pub status: String,
     pub unread: bool,
+    /// 가장 최근의 유효한 턴이 성공한 경우의 ID. 완료 확인은 메시지 읽음과 별개다.
+    pub completed_turn_id: Option<String>,
+    pub completion_unread: bool,
     /// 대화의 마지막 사용자 메시지 시각(되돌린 메시지 제외). 다른 종류는 없음.
     pub last_user_message_at: Option<String>,
     /// 정렬·시간 범위 기준: 대화는 마지막 확정 답변 시각(없으면 생성 시각), 다른 자원은 마지막 접근 시각.
@@ -52,10 +55,16 @@ const RCOLS: &str = "r.id, r.kind, r.project_id, p.name, r.resource_id, r.title,
     (SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'user' AND m.rewound_at IS NULL ORDER BY m.seq DESC LIMIT 1), \
     COALESCE((SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'assistant' \
         AND m.rewound_at IS NULL AND TRIM(COALESCE(json_extract(m.content, '$.text'), ''), char(9) || char(10) || char(13) || ' ') != '' \
-        ORDER BY m.seq DESC LIMIT 1), s.created_at, r.last_access_at)";
+        ORDER BY m.seq DESC LIMIT 1), s.created_at, r.last_access_at), \
+    recent_turn.status, recent_turn.id, recent_request.seq";
 
 const RFROM: &str = "FROM recent_items r JOIN projects p ON p.id = r.project_id \
-    LEFT JOIN sessions s ON r.kind = 'session' AND s.id = r.resource_id";
+    LEFT JOIN sessions s ON r.kind = 'session' AND s.id = r.resource_id \
+    LEFT JOIN turns recent_turn ON recent_turn.id = ( \
+        SELECT t.id FROM turns t JOIN messages request ON request.id = t.request_message_id \
+        WHERE t.session_id = s.id AND request.rewound_at IS NULL \
+        ORDER BY request.seq DESC, t.created_at DESC, t.id DESC LIMIT 1) \
+    LEFT JOIN messages recent_request ON recent_request.id = recent_turn.request_message_id";
 
 fn recent_from_row(r: &Row) -> rusqlite::Result<RecentItem> {
     let kind: String = r.get(1)?;
@@ -69,6 +78,9 @@ fn recent_from_row(r: &Row) -> rusqlite::Result<RecentItem> {
     let active: Option<String> = r.get(16)?;
     let pending: i64 = r.get(17)?;
     let unknown: i64 = r.get(18)?;
+    let last_turn_status: Option<String> = r.get(23)?;
+    let last_turn_id: Option<String> = r.get(24)?;
+    let last_request_seq: Option<i64> = r.get(25)?;
     let status = if project_archived.is_some() || !std::path::Path::new(&root).is_dir() {
         "project_unavailable"
     } else if kind == "session" && sid.is_none() {
@@ -79,14 +91,21 @@ fn recent_from_row(r: &Row) -> rusqlite::Result<RecentItem> {
         "awaiting_approval"
     } else if active.as_deref() == Some("awaiting_input") {
         "awaiting_input"
+    } else if active.as_deref() == Some("queued") {
+        "queued"
     } else if active.is_some() {
         "running"
     } else if unknown > 0 {
         "unknown_result"
     } else {
-        "active"
+        last_turn_status.as_deref()
+            .filter(|status| matches!(*status, "completed" | "failed" | "interrupted" | "cancelled"))
+            .unwrap_or("active")
     };
     let seen = view_state.get("last_seen_seq").and_then(Value::as_i64).unwrap_or(0);
+    let completed_seen = view_state.get("last_seen_completed_seq").and_then(Value::as_i64).unwrap_or(0);
+    let completion_unread = status == "completed" && last_request_seq.is_some_and(|seq| seq > completed_seen);
+    let completed_turn_id = (status == "completed").then_some(last_turn_id).flatten();
     let last_access: String = r.get(6)?;
     let hidden_at: Option<String> = r.get(20)?;
     let last_user: Option<String> = r.get(21)?;
@@ -108,6 +127,8 @@ fn recent_from_row(r: &Row) -> rusqlite::Result<RecentItem> {
         revision: r.get(10)?,
         status: status.into(),
         unread: last_seq.is_some_and(|s| s > seen),
+        completed_turn_id,
+        completion_unread,
         last_user_message_at: last_user,
     })
 }
@@ -125,6 +146,7 @@ pub struct Touch {
     pub resource_id: String,
     pub title: Option<String>,
     pub view_state: Option<Value>,
+    pub seen_completed_turn_id: Option<String>,
 }
 
 fn validate_view_state(v: &Value) -> ApiResult<()> {
@@ -146,7 +168,14 @@ pub async fn touch(State(app): State<App>, p: Principal, headers: HeaderMap, Jso
     if let Some(v) = &b.view_state {
         validate_view_state(v)?;
     }
-    let h = idem::body_hash("recent.touch", &json!({ "k": b.kind, "p": b.project_id, "r": b.resource_id, "t": b.title, "v": b.view_state }));
+    if b.seen_completed_turn_id.is_some() && b.kind != "session" {
+        return Err(ApiError::invalid("완료 확인은 대화에만 사용할 수 있습니다"));
+    }
+    let mut intent = json!({ "k": b.kind, "p": b.project_id, "r": b.resource_id, "t": b.title, "v": b.view_state });
+    if let Some(id) = &b.seen_completed_turn_id {
+        intent["seen_completed_turn_id"] = json!(id);
+    }
+    let h = idem::body_hash("recent.touch", &intent);
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         crate::projects::get(tx, &b.project_id)?;
         let title = match b.kind.as_str() {
@@ -160,20 +189,39 @@ pub async fn touch(State(app): State<App>, p: Principal, headers: HeaderMap, Jso
             "project" => crate::projects::get(tx, &b.resource_id)?.name,
             _ => b.title.clone().unwrap_or_else(|| b.resource_id.clone()),
         };
+        let completed_seq = if let Some(id) = &b.seen_completed_turn_id {
+            Some(tx.query_row(
+                "SELECT m.seq FROM turns t JOIN messages m ON m.id = t.request_message_id \
+                 WHERE t.id = ?1 AND t.session_id = ?2 AND t.status = 'completed' AND m.rewound_at IS NULL",
+                params![id, b.resource_id], |row| row.get::<_, i64>(0),
+            ).optional()?.ok_or_else(|| ApiError::invalid("이 대화의 완료된 요청만 확인할 수 있습니다"))?)
+        } else {
+            None
+        };
+        let mut view_state = b.view_state.clone().unwrap_or(json!({}));
+        // 완료 위치는 검증한 턴 ID로만 전진시킨다. 오래된 기기의 view_state로 덮어쓰지 않는다.
+        view_state.as_object_mut().unwrap().remove("last_seen_completed_seq");
         let id = crate::util::new_id();
         tx.execute(
             "INSERT INTO recent_items (id, kind, project_id, resource_id, title, last_access_at, view_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
              ON CONFLICT(kind, project_id, resource_id) DO UPDATE SET last_access_at = ?6, hidden = 0, hidden_at = NULL, title = ?5, \
-             view_state = CASE WHEN ?8 THEN json_set(?7, '$.last_seen_seq', \
+             view_state = CASE WHEN ?8 THEN json_set(json_patch(view_state, ?7), '$.last_seen_seq', \
                  MAX(COALESCE(json_extract(view_state, '$.last_seen_seq'), 0), COALESCE(json_extract(?7, '$.last_seen_seq'), 0))) \
                  ELSE view_state END, revision = revision + 1",
-            params![id, b.kind, b.project_id, b.resource_id, title, now, b.view_state.clone().unwrap_or(json!({})).to_string(), b.view_state.is_some()],
+            params![id, b.kind, b.project_id, b.resource_id, title, now, view_state.to_string(), b.view_state.is_some()],
         )?;
         let rid: String = tx.query_row(
             "SELECT id FROM recent_items WHERE kind = ?1 AND project_id = ?2 AND resource_id = ?3",
             params![b.kind, b.project_id, b.resource_id],
             |r| r.get(0),
         )?;
+        if let Some(seq) = completed_seq {
+            tx.execute(
+                "UPDATE recent_items SET view_state = json_set(view_state, '$.last_seen_completed_seq', \
+                 MAX(COALESCE(json_extract(view_state, '$.last_seen_completed_seq'), 0), ?2)) WHERE id = ?1",
+                params![rid, seq],
+            )?;
+        }
         let item = get_recent(tx, &rid)?;
         events::append(tx, now, "recent.updated", Some(&b.project_id), None, &serde_json::to_value(&item)?)?;
         Ok((StatusCode::OK, serde_json::to_value(item)?))
@@ -241,7 +289,7 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
                 .filter(|i| {
                     let Some(since) = since else { return true };
                     i.pinned
-                        || matches!(i.status.as_str(), "running" | "awaiting_approval" | "awaiting_input")
+                        || matches!(i.status.as_str(), "queued" | "running" | "awaiting_approval" | "awaiting_input")
                         || parse_time(&i.last_activity_at).is_some_and(|t| t >= since)
                 })
                 .filter(|i| {
@@ -527,4 +575,46 @@ pub async fn put_draft(
         Ok((StatusCode::OK, serde_json::to_value(d)?))
     })
     .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn recent_distinguishes_running_from_queued_and_unsuccessful_endings() {
+        let root = tempfile::tempdir().unwrap();
+        let c = Connection::open_in_memory().unwrap();
+        for migration in crate::store::MIGRATIONS {
+            c.execute_batch(migration).unwrap();
+        }
+        let now = "2026-01-01T00:00:00Z";
+        c.execute(
+            "INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','p',?1,?2,?2)",
+            params![root.path().to_str().unwrap(), now],
+        ).unwrap();
+        for status in ["queued", "running", "awaiting_approval", "completed", "failed", "cancelled", "interrupted"] {
+            let request = format!("request-{status}");
+            c.execute(
+                "INSERT INTO sessions(id,project_id,title,created_at,updated_at,last_message_seq) VALUES(?1,'p',?1,?2,?2,1)",
+                params![status, now],
+            ).unwrap();
+            c.execute(
+                "INSERT INTO messages(id,session_id,seq,role,content,created_at) VALUES(?1,?2,1,'user','{}',?3)",
+                params![request, status, now],
+            ).unwrap();
+            c.execute(
+                "INSERT INTO turns(id,session_id,status,request_message_id,owner_epoch,created_at,updated_at) VALUES(?1,?1,?1,?2,'test',?3,?3)",
+                params![status, request, now],
+            ).unwrap();
+            c.execute(
+                "INSERT INTO recent_items(id,kind,project_id,resource_id,title,last_access_at) VALUES(?1,'session','p',?1,?1,?2)",
+                params![status, now],
+            ).unwrap();
+            let item = get_recent(&c, status).unwrap();
+            assert_eq!(item.status, status);
+            assert_eq!(item.completion_unread, status == "completed");
+            assert_eq!(item.completed_turn_id.as_deref(), (status == "completed").then_some(status));
+        }
+    }
 }

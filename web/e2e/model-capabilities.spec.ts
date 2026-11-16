@@ -20,7 +20,8 @@ test("모델 기능을 설정하면 다른 화면의 미지원 선택·초안은
     try {
         const app = await context.newPage();
         await login(app);
-        await app.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
+        await app.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
+        await app.getByTestId("project-view").getByRole("button", { name: new RegExp(`${name}$`) }).click();
         const view = sessionView(app, session.id);
         await composerOption(view, "보내기 방식", "model");
         await composerOption(view, "모델 프로필", profile.id);
@@ -33,8 +34,7 @@ test("모델 기능을 설정하면 다른 화면의 미지원 선택·초안은
         for (const label of ["이미지 입력", "Grove 도구 루프", "추론", "temperature"]) {
             await selectChoice(row.getByLabel(`${label} 지원 여부`, { exact: true }), "false");
         }
-        await row.getByRole("button", { name: "모델 기능 저장", exact: true }).click();
-        await expect(row.getByRole("button", { name: "모델 기능 설정", exact: true })).toBeVisible();
+        await expect(row.getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
         await expect(row.getByTestId("model-capabilities")).toContainText("context 16000");
         await expect(row.getByTestId("model-capabilities")).toContainText("native PDF 미지원");
         await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
@@ -71,13 +71,12 @@ test("모델 기능 편집은 다른 기기의 변경 revision을 자동 인수�
         await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
         await row.getByLabel("context token 수", { exact: true }).fill("32000");
         await apiCall("PUT", `/model-profiles/${profile.id}`, { expected_revision: profile.revision, options: { context_window: 8000 } });
-        await expect(row).toContainText("프로필 변경 감지 · 입력 보존 · 저장 시 revision 충돌 확인");
-        await row.getByRole("button", { name: "모델 기능 저장", exact: true }).click();
-        await expect(row.getByRole("alert")).toBeVisible();
+        await row.getByLabel("context token 수", { exact: true }).blur();
+        await expect(row).toContainText("다른 기기에서 먼저 바뀌었어요");
         await expect(row.getByLabel("context token 수", { exact: true })).toHaveValue("32000");
         const stored = (await apiCall<{ id: string; capabilities: { context_tokens: number } }[]>("GET", "/model-profiles")).find((p) => p.id === profile.id)!;
         expect(stored.capabilities.context_tokens).toBe(8000);
-        await row.getByRole("button", { name: "현재 서버 값 불러오기", exact: true }).click();
+        await row.getByRole("button", { name: "최신 값 사용", exact: true }).click();
         await expect(row.getByLabel("context token 수", { exact: true })).toHaveValue("8000");
     } finally {
         await apiCall("DELETE", `/model-profiles/${profile.id}`);

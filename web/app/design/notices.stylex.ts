@@ -17,6 +17,7 @@ export const noticeStyles = stylex.create({
         maxWidth: "calc(100vw - 24px)",
         width: "max-content",
     },
+    passiveConnection: { pointerEvents: "none" },
     update: {
         position: "fixed",
         zIndex: 40,

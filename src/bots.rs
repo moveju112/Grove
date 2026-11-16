@@ -473,9 +473,36 @@ pub(crate) fn binding_for(c: &Connection, id: &str) -> ApiResult<(String, Value)
     }
     Ok((
         profile,
-        json!({ "id": b.id, "name": b.name, "revision": b.revision, "persona": b.persona, "instructions": b.instructions,
-            "connections": crate::bot_connections::selected(c, &b.id)? }),
+        json!({ "id": b.id, "name": b.name, "revision": b.revision, "persona": b.persona, "instructions": b.instructions }),
     ))
+}
+
+/// 자식 에이전트에도 부모 봇의 활성 상태 검사를 적용한다.
+pub(crate) fn execution_bot(c: &Connection, session: &str, turn: Option<&str>) -> ApiResult<Option<Value>> {
+    let mut session = session.to_string();
+    let mut turn = turn.map(str::to_string);
+    for _ in 0..32 {
+        let def: Option<String> = match &turn {
+            Some(id) => c.query_row("SELECT definition_snapshot FROM turns WHERE id=?1 AND session_id=?2", params![id,session], |r| r.get(0)).optional()?,
+            None => c.query_row("SELECT definition_snapshot FROM turns WHERE session_id=?1 AND status IN ('queued','running','awaiting_approval') ORDER BY created_at DESC LIMIT 1", [&session], |r| r.get(0)).optional()?,
+        };
+        if let Some(def) = def {
+            let def: Value = serde_json::from_str(&def)?;
+            if def["bot"].is_object() { return Ok(Some(def["bot"].clone())); }
+        }
+        if let Some(bot) = by_session(c, &session)? {
+            return Ok(Some(json!({"id":bot.id})));
+        }
+        let parent: Option<(String, Option<String>)> = c.query_row(
+            "SELECT parent_session_id,parent_turn_id FROM agent_runs WHERE child_session_id=?1",
+            [&session], |r| Ok((r.get(0)?,r.get(1)?)),
+        ).optional()?;
+        match parent {
+            Some((sid, tid)) => { session = sid; turn = tid; }
+            None => return Ok(None),
+        }
+    }
+    Err(ApiError::conflict("bot_scope_invalid", "봇 실행 범위를 확인할 수 없습니다"))
 }
 
 #[cfg(test)]

@@ -62,7 +62,7 @@ async fn invalid_values_scope_and_conflicts_keep_previous() {
     for (path, body) in [
         ("/api/v1/settings/server/-/approval.ttl_secs", json!({ "expected_revision": 1, "value": 1 })),
         ("/api/v1/settings/server/-/approval.ttl_secs", json!({ "expected_revision": 1, "value": "600" })),
-        ("/api/v1/settings/server/-/instructions.mode", json!({ "expected_revision": 0, "value": "everything" })),
+        ("/api/v1/settings/server/-/output.style", json!({ "expected_revision": 0, "value": "everything" })),
         ("/api/v1/settings/server/x/output.language", json!({ "expected_revision": 0, "value": "a" })),
     ] {
         let (st, v) = s.send(Method::PUT, path, body).await;
@@ -113,7 +113,7 @@ async fn profile_settings_require_an_existing_enabled_target_and_allow_inheritan
 }
 
 #[tokio::test]
-async fn instructions_and_language_reach_model_and_are_fixed_per_turn() {
+async fn language_reaches_model_without_injecting_project_instruction_files() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;
     let prof = s.fixture_profile(&f.base).await;
@@ -122,53 +122,58 @@ async fn instructions_and_language_reach_model_and_are_fixed_per_turn() {
     std::fs::write(format!("{root}/AGENTS.md"), "항상 테스트를 먼저 작성한다").unwrap();
     std::fs::write(format!("{root}/CLAUDE.md"), "클로드 지침").unwrap();
     let pid = p["id"].as_str().unwrap();
-    s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/instructions.mode"), json!({ "expected_revision": 0, "value": "agents_md" })).await;
     s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/output.language"), json!({ "expected_revision": 0, "value": "한국어" })).await;
     let sid = s.create_session(pid).await["id"].as_str().unwrap().to_string();
     f.push(fixture::text("ok"));
     let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "hi", "profile_id": prof })).await;
     let t = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
     let sys = f.requests()[0]["messages"][0]["content"].as_str().unwrap().to_string();
-    assert!(sys.contains("항상 테스트를 먼저 작성한다"));
-    assert!(!sys.contains("클로드 지침"), "agents_md 모드에서는 CLAUDE.md를 넣지 않는다");
+    assert!(!sys.contains("항상 테스트를 먼저 작성한다"));
+    assert!(!sys.contains("클로드 지침"));
     assert!(sys.contains("Respond in 한국어"));
-    assert_eq!(t["definition"]["instructions"][0]["file"], "AGENTS.md");
-    assert!(t["definition"]["instructions"][0].get("body").is_none(), "응답에는 원문 대신 hash만");
-    // 끄면 다음 턴부터 빠진다
-    s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/instructions.mode"), json!({ "expected_revision": 1, "value": "off" })).await;
+    assert!(t["definition"].get("instructions").is_none());
+    // 파일은 수정하지 않고 CLI 기본 로더가 읽도록 둔다.
+    assert_eq!(std::fs::read_to_string(format!("{root}/AGENTS.md")).unwrap(), "항상 테스트를 먼저 작성한다");
+    assert_eq!(std::fs::read_to_string(format!("{root}/CLAUDE.md")).unwrap(), "클로드 지침");
+    s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/output.language"), json!({ "expected_revision": 1, "value": "English" })).await;
     f.push(fixture::text("ok"));
     let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "hi2", "profile_id": prof })).await;
     s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
     let sys = f.requests()[1]["messages"][0]["content"].as_str().unwrap().to_string();
-    assert!(!sys.contains("항상 테스트를 먼저 작성한다"));
+    assert!(sys.contains("Respond in English") && !sys.contains("Respond in 한국어"));
 }
 
 #[tokio::test]
-async fn oversized_instruction_prefix_and_its_hash_reach_the_model_without_the_tail() {
-    use std::io::{Seek, SeekFrom, Write};
+async fn retired_instruction_setting_is_hidden_and_ignored_even_with_saved_overrides() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;
     let profile = s.fixture_profile(&f.base).await;
-    let project = s.create_project("instruction-limit").await;
+    let project = s.create_project("retired-instructions").await;
     let pid = project["id"].as_str().unwrap();
     let path = std::path::Path::new(project["root_path"].as_str().unwrap()).join("AGENTS.md");
-    let mut file = std::fs::File::create(path).unwrap();
-    file.write_all(&vec![b'x'; 64 * 1024]).unwrap();
-    file.set_len(4 * 1024 * 1024).unwrap();
-    file.seek(SeekFrom::End(-32)).unwrap();
-    file.write_all(b"UNSENT_INSTRUCTION_TAIL_FIXTURE").unwrap();
-    drop(file);
-    let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/instructions.mode"), json!({"expected_revision":0,"value":"agents_md"})).await;
-    assert_eq!(status, StatusCode::OK);
+    std::fs::write(path, "RETIRED_INSTRUCTION_FIXTURE").unwrap();
+    {
+        let c = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+        for (scope, id) in [("server", "-"), ("project", pid)] {
+            c.execute("INSERT INTO settings(scope,scope_id,key,value,revision,updated_at) VALUES(?1,?2,'instructions.mode','\"both\"',1,?3)",
+                rusqlite::params![scope, id, grove::util::fmt_time(time::OffsetDateTime::now_utc())]).unwrap();
+        }
+    }
+    let (_, registry) = s.get("/api/v1/settings/registry").await;
+    assert!(registry.as_array().unwrap().iter().all(|d| d["key"] != "instructions.mode"));
+    let (_, effective) = s.get(&format!("/api/v1/settings/effective?project_id={pid}")).await;
+    assert!(effective["items"].as_array().unwrap().iter().all(|d| d["key"] != "instructions.mode"));
+    for (scope, id) in [("server", "-"), ("project", pid)] {
+        let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/{scope}/{id}/instructions.mode"),
+            json!({"expected_revision":1,"value":"both"})).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
     let session = s.create_session(pid).await;
     f.push(fixture::text("ok"));
     let (_, accepted) = s.post(&format!("/api/v1/sessions/{}/turns", session["id"].as_str().unwrap()), json!({"text":"hi","profile_id":profile})).await;
     let turn = s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "completed").await;
-    let expected = format!("{}\n…(지침 파일이 65536바이트를 넘어 잘림)", "x".repeat(64 * 1024));
     let request = &f.requests()[0];
     let system = request["messages"][0]["content"].as_str().unwrap();
-    assert!(system.contains(&serde_json::to_string(&expected).unwrap()));
-    assert!(!system.contains("UNSENT_INSTRUCTION_TAIL_FIXTURE"));
-    assert_eq!(turn["definition"]["instructions"][0]["sha256"], grove::util::sha256_hex(expected.as_bytes()));
-    assert!(turn["definition"]["instructions"][0].get("body").is_none());
+    assert!(!system.contains("RETIRED_INSTRUCTION_FIXTURE"));
+    assert!(turn["definition"].get("instructions").is_none());
 }

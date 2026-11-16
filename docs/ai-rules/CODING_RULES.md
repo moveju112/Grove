@@ -13,10 +13,15 @@
 - **MUST** 프로젝트 파일 작업은 `ProjectFs`의 디렉터리 기준 경계와 원자적 발행을 유지한다.
   - why: 문자열 경로 검사만으로는 symlink 교체와 검사 후 사용 경쟁을 막을 수 없다.
   - ✅ `ProjectFs::open`, `read`, `atomic_write`. `evidence: src/project_fs.rs:20`, `evidence: src/project_fs.rs:99`.
-- **MUST** 외부 CLI의 신규 실행과 대화 재개 모두 프로젝트 범위에서 파일 수정·검사 명령을 허용한다. Codex는 workspace-write, Claude Code는 restricted 파일 경계와 Bash sandbox를 사용하며 경계 밖 실행으로 자동 대체하지 않는다.
-  - why: 구독형 CLI의 자체 도구로 코딩하되 다른 프로젝트·공유 자산까지 수정 권한을 넓히지 않는다. CLI 자체 도구와 Grove의 승인형 도구 루프는 별개이며 화면에서도 구분한다.
-  - ✅ Claude Code의 restricted·sandbox 옵션을 지원하는 버전과 Linux의 bubblewrap·socat이 필요하다. 취소는 변경 rollback이 아니며 중단 기록과 실제 파일을 확인한 뒤 계속한다. `evidence: src/provider/cli.rs`, `evidence: tests/real_cli.rs`.
-- **MUST** Computer Use는 소유자가 켠 서버 PC만 대상으로 하며, 관찰도 포함해 각 요청을 이번만 승인한다. CLI에는 턴 한정 Computer Use MCP만 연결하고 사용자 MCP·hook이나 sandbox 경계를 함께 열지 않는다. 오래된 화면·다른 대화의 frame은 거부하고 결과 불명 입력을 재실행하지 않는다. 데몬 OS로 Windows Win32 / Linux X11 backend를 자동 선택하며, 접속한 브라우저 OS로 판단하지 않는다. 물리 포인터·전역 키 상태를 바꾸지 않는 창 메시지를 사용하고, 잠금 화면·Session 0·지원하지 않는 앱·OS를 권한 상승이나 다른 입력 방식으로 우회하지 않는다.
+- **MUST** 외부 CLI의 신규 실행과 대화 재개 모두 sandbox·대화형 권한 확인 없이 서버 계정 권한으로 실행한다. Codex 일반 대화는 `app-server`의 `sandbox_mode="danger-full-access"`·`approval_policy="never"`와 thread/turn의 같은 권한 설정을 사용한다. 제목·요약용 `exec`는 `--dangerously-bypass-approvals-and-sandbox`, Claude Code는 `--dangerously-skip-permissions`와 `sandbox.enabled=false`를 사용한다. 프로젝트 밖 파일·네트워크·로컬 소켓을 Grove가 CLI 옵션으로 제한하지 않는다.
+  - why: 사용자가 요청한 Release·SSH·로컬 검사 작업을 CLI sandbox로 차단하지 않는다. CLI 자체 도구와 Grove의 승인형 도구 루프·`ProjectFs` API 경계는 별개다. OS·상위 실행 환경의 제한이나 관리 정책까지 해제하지는 않는다.
+  - ✅ sandbox 실행용 bubblewrap·socat은 필요하지 않다. 취소는 변경 rollback이 아니며 중단 기록과 실제 파일을 확인한 뒤 계속한다. `evidence: src/provider/cli.rs`, `evidence: tests/real_cli.rs`.
+- **MUST** 일반 대화의 전역·프로젝트 지침은 각 외부 CLI의 기본 로더에 맡긴다. Grove는 `AGENTS.md`·`CLAUDE.md`를 직접 읽어 중복 주입하거나 전달 모드를 제공하지 않는다. API 모델과 `grove exec`에도 지침 파일을 자동 주입하지 않는다.
+  - ✅ 일반 대화의 장기 기억·hook·MCP도 외부 CLI의 원래 설정에 맡기며 Grove의 별도 관리·주입·실행 경로는 제공하지 않는다. 제목·요약 같은 내부 호출만 사용자 hook·MCP·설정을 제외한다. `evidence: src/provider/cli.rs`, `evidence: tests/native_integrations.rs`.
+- **MUST** `tools.full_access`는 기본으로 켜진 일반 도구의 포괄 허용이다. 별도 설정 없이 파일 수정·셸 실행은 자동 승인하고 foreground·background 셸에 계정 환경변수를 상속하되 `GROVE_*`는 제외한다. 서버·프로젝트에서 명시적으로 끄거나 지정한 deny·read_only와 PC 제어·위임의 별도 정책은 유지하며, 대기 중 전체 권한이 철회되면 자격증명 사용 계획을 실행하지 않는다. 파일 API의 `ProjectFs` 경계는 넓히지 않는다.
+  - why: 일반 코딩·SSH·Release 작업은 반복 승인 없이 허용하면서, 서버 내부 설정이나 별도 승인 기능까지 포괄 허용으로 오인하지 않는다. 셸 자체는 프로젝트 밖·네트워크 접근이나 위험 명령을 차단하는 sandbox가 아니다.
+  - ✅ 기본값은 전체 허용이며 저장된 제한 설정은 덮어쓰지 않는다. 승인·제한 회귀 시험은 제한을 명시해 해당 정책을 검사한다. `evidence: src/settings.rs`, `evidence: src/approvals.rs`, `evidence: src/tools/shell.rs`, `evidence: src/tasks.rs`.
+- **MUST** Computer Use는 소유자가 켠 서버 PC만 대상으로 하며, 관찰도 포함해 각 요청을 이번만 승인한다. CLI의 기본 MCP·hook과 별개로 Grove는 턴 한정 Computer Use MCP를 추가하며, 이 내부 연결의 승인 경계를 바꾸지 않는다.
   - ✅ `src/computer/`, `tests/computer.rs`, 격리 Xvfb 검사 `python3 tests/fixtures/computer_x11.py /절대/경로/grove`.
 
 ## 스타일

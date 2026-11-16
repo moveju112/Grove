@@ -45,7 +45,7 @@ export function LocalModelConnection({ secrets, onCreate }: { secrets: SecretInf
                 options={[{ value: "", label: "키 없음(인증이 필요 없을 때)" },
                     ...secrets.map((secret) => ({ value: secret.id, label: `${secret.label} · ${secret.masked}` }))]} />
             <GroveButton type="submit" disabled={status === "saving" || !!serverBlocked} title={serverBlocked ?? undefined}>
-                {status === "saving" ? "저장 중…" : creation.pending ? "같은 연결 저장 요청 확인" : "로컬 연결 저장"}
+                {status === "saving" ? "연결 추가 중…" : creation.pending ? "요청 결과 확인" : "연결 추가"}
             </GroveButton>
         </GroveStack>
         {serverBlocked && <GroveText as="p" display="block" type="supporting" color="warning" role="status">{serverBlocked}</GroveText>}

@@ -6,7 +6,7 @@ import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useState } from "react";
 import { api } from "../api/client";
-import type { Label, Project } from "../api/generated";
+import type { Label, Project, ProjectFolder } from "../api/generated";
 import { UNLABELLED } from "../state/projectLabels";
 import { invalidate, useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -44,7 +44,9 @@ function ColorPicker({ value, onChange, name }: { value: string; onChange: (c: s
 }
 
 /// 프로젝트 행 메뉴: 고정 전환과 라벨 할당·새 라벨 만들기. 실패하면 입력·선택을 보존하고 오류를 보인다.
-export function ProjectMenu({ project, labels, onClose, onSplit }: { project: Project; labels: Label[]; onClose: () => void; onSplit?: (how: "right" | "down") => void }) {
+export function ProjectMenu({ project, labels, folders, onClose, onSplit }: {
+    project: Project; labels: Label[]; folders?: ProjectFolder[]; onClose: () => void; onSplit?: (how: "right" | "down") => void;
+}) {
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [creating, setCreating] = useState<{ name: string; color: string } | null>(null);
@@ -63,13 +65,16 @@ export function ProjectMenu({ project, labels, onClose, onSplit }: { project: Pr
             setBusy(false);
         }
     };
-    return <Card width="100%" padding={2} role="dialog" aria-label={`${project.name} 메뉴`}
-        onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}>
-        <GroveStack gap={1}>
+    return <GroveStack gap={1}>
         {onSplit && <>
             <GroveButton type="button" variant="secondary" density="compact" onClick={() => { onSplit("right"); onClose(); }}>오른쪽에 열기</GroveButton>
             <GroveButton type="button" variant="secondary" density="compact" onClick={() => { onSplit("down"); onClose(); }}>아래에 열기</GroveButton>
         </>}
+        {folders && <Select label="폴더 이동" value={project.folder_id ?? ""} disabled={busy}
+            onChange={(value) => void run(() => api.patch(`/projects/${project.id}`,
+                { expected_revision: project.revision, folder_id: value || null }, { requires: ["project_folders_v1"] }), "폴더 이동 실패")
+                .then((ok) => { if (ok) onClose(); })}
+            options={[{ value: "", label: "폴더 없음" }, ...folders.map((folder) => ({ value: folder.id, label: folder.name }))]} />}
         <ServerActionButton type="button" variant="secondary" density="compact" disabled={busy}
             onClick={() => void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, pinned: !project.pinned_at }), "고정 변경 실패")}>
             {project.pinned_at ? "고정 해제" : "맨 위에 고정"}
@@ -105,8 +110,7 @@ export function ProjectMenu({ project, labels, onClose, onSplit }: { project: Pr
             void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, archived: true }), "보관 실패").then((ok) => { if (ok) onClose(); });
         }}>보관</ServerActionButton>
         <GroveButton type="button" variant="secondary" density="compact" onClick={onClose}>닫기</GroveButton>
-        </GroveStack>
-    </Card>;
+    </GroveStack>;
 }
 
 /// 라벨 필터(기기별) 겸 라벨 관리. 선택한 라벨 중 하나라도 붙은 프로젝트(또는 라벨 없음)를 보인다.

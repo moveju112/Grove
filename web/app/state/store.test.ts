@@ -1,13 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyEvent, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, querySnapshot, resyncAll, retryWaiting, setLive, setTransportFailureHandler, subscribeQuery } from "./store";
+import { applyEvent, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, querySnapshot, resyncAll, retryWaiting, setTransportFailureHandler, subscribeQuery } from "./store";
 import { ApiError, isTransportError } from "../api/client";
-import type { EventRecord } from "../api/generated";
 import { deliveryTiming } from "./deliveryTiming";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-it("봇·연결·대화 변경을 다른 화면의 그룹·허용 연결에도 반영한다", async () => {
-    const keys = ["bots", "bot-connections:b", "bot-rooms", "bot-room:s"];
+it("봇·대화 변경을 다른 화면의 그룹에도 반영한다", async () => {
+    const keys = ["bots", "bot-rooms", "bot-room:s"];
     const fetchers = keys.map(() => vi.fn(async () => ({})));
     const offs = keys.map((key, i) => subscribeQuery(key, fetchers[i]!, () => undefined));
     try {
@@ -15,13 +14,10 @@ it("봇·연결·대화 변경을 다른 화면의 그룹·허용 연결에도 �
         applyEvent({ kind: "bot.changed", session_id: null, project_id: "p", payload: { id: "b" }, seq: 1, created_at: "2026-01-01T00:00:00Z" });
         await settle();
         for (const f of fetchers) expect(f).toHaveBeenCalledTimes(2);
-        applyEvent({ kind: "mcp.changed", session_id: null, project_id: null, payload: {}, seq: 2, created_at: "2026-01-01T00:00:00Z" });
-        await settle();
-        expect(fetchers[1]).toHaveBeenCalledTimes(3);
         applyEvent({ kind: "session.updated", session_id: "s", project_id: "p", payload: {}, seq: 3, created_at: "2026-01-01T00:00:00Z" });
         await settle();
+        expect(fetchers[1]).toHaveBeenCalledTimes(3);
         expect(fetchers[2]).toHaveBeenCalledTimes(3);
-        expect(fetchers[3]).toHaveBeenCalledTimes(3);
     } finally { offs.forEach((off) => off()); clearServerCache(); }
 });
 
@@ -145,36 +141,4 @@ describe("중복 viewer의 조회 구독(PANE-007)", () => {
         again();
         kept();
     });
-});
-
-it("MCP 진행은 전체 도구 목록을 다시 읽지 않고 해당 대화만 갱신하며 종료 때 메모리를 지운다",async()=>{
-    const fetcher=vi.fn(async()=>[]);
-    const mcpFetcher=vi.fn(async()=>[]);
-    const off=subscribeQuery("calls:progress-a",fetcher,()=>undefined);
-    const offMcp=subscribeQuery("mcp",mcpFetcher,()=>undefined);
-    const event=(kind:string,sid:string,id:string,payload:Record<string,unknown>)=>applyEvent({
-        kind,session_id:sid,project_id:"p",payload:{id,name:"mcp_call",...payload},seq:1,created_at:"2026-01-01T00:00:00Z",
-    } as EventRecord);
-    try {
-        await settle();
-        event("tool_call.progress","progress-a","call-a",{progress:{value:50,total:100}});
-        let first:unknown;
-        setLive((l)=>{first=l.mcpProgress?.["progress-a"];return l;});
-        event("tool_call.progress","progress-b","call-b",{progress:{value:1,total:null}});
-        setLive((l)=>{
-            expect(l.mcpProgress?.["progress-a"]).toBe(first);
-            expect(l.mcpProgress?.["progress-a"]?.["call-a"]).toEqual({value:50,total:100});
-            return l;
-        });
-        await settle();
-        expect(fetcher).toHaveBeenCalledTimes(1);
-        expect(mcpFetcher).toHaveBeenCalledTimes(1);
-        event("tool_call.updated","progress-a","call-a",{status:"unknown"});
-        setLive((l)=>{expect(l.mcpProgress?.["progress-a"]).toBeUndefined();return l;});
-        await settle();
-        expect(fetcher).toHaveBeenCalledTimes(2);
-        expect(mcpFetcher).toHaveBeenCalledTimes(2);
-        resyncAll();
-        setLive((l)=>{expect(l.mcpProgress).toEqual({});return l;});
-    } finally { off();offMcp();clearServerCache(); }
 });

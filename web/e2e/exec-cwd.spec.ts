@@ -1,13 +1,14 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, ensureProfile, login, openDetails, requireToolApproval, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 async function setup(page: Page) {
     const root = mkdtempSync(join(state().projA, "exec-cwd-"));
     for (const dir of ["work", "next"]) mkdirSync(join(root, dir));
     const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+    await requireToolApproval(project.id);
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: project.name });
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
@@ -19,7 +20,7 @@ async function setup(page: Page) {
     const save = async (value: string) => {
         await row.getByLabel("기본 작업 위치", { exact: true }).fill(value);
         const response = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/exec.default_cwd"));
-        await row.getByRole("button", { name: "저장", exact: true }).click();
+        await row.getByLabel("기본 작업 위치", { exact: true }).blur();
         expect((await response).ok()).toBe(true);
         await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
     };

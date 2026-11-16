@@ -5,13 +5,13 @@ import { ApiError, api, newKey } from "../../api/client";
 import type { Project } from "../../api/generated";
 import * as L from "../../state/layout";
 import { CreationEntry } from "./CreationEntry";
-import { currentProjectId, projectTarget, ProjectCreation } from "./creation";
+import { CreationRequest, currentProjectId, projectTarget, ProjectCreation } from "./creation";
 
 vi.mock("../../api/client", () => ({
     ApiError: class extends Error {
         constructor(public status: number, public code: string, message: string, public retryable = false, public details?: unknown) { super(message); }
     },
-    api: { post: vi.fn() },
+    api: { post: vi.fn(), patch: vi.fn() },
     newKey: vi.fn(),
 }));
 
@@ -44,31 +44,41 @@ describe("공통 생성 진입", () => {
         expect(L.allTabs(layout)).toHaveLength(2);
         expect(api.post).not.toHaveBeenCalled();
     });
-    it("맥락이 없을 때만 선택 목록을 보이고 누락된 현재 프로젝트를 다른 것으로 대체하지 않는다", () => {
-        const props = { projects: [a, b], loading: false, error: false, onReload: vi.fn(),
-            onSelect: vi.fn(), onAddProject: vi.fn(), onClose: vi.fn() };
-        const picker = renderToStaticMarkup(createElement(CreationEntry, props));
-        expect(picker).toContain('aria-label="대화 프로젝트 선택"');
-        expect(picker).toContain('aria-label="만들기"');
-        const current = renderToStaticMarkup(createElement(CreationEntry, { ...props, currentId: a.id }));
-        expect(current).toContain("현재 프로젝트: 프로젝트 A");
-        expect(current).not.toContain("대화 프로젝트 선택");
-        const missing = renderToStaticMarkup(createElement(CreationEntry, { ...props, currentId: "missing" }));
-        expect(missing).toContain("다른 프로젝트로 자동 전환하지 않습니다");
-        expect(missing).not.toContain("대화 프로젝트 선택");
-    });
-    it("접근할 수 없는 프로젝트는 생성 선택을 막는다", () => {
+    it("전역 +는 프로젝트·폴더 추가용이며 대화 선택이나 서버 생성을 시작하지 않는다", () => {
         const html = renderToStaticMarkup(createElement(CreationEntry, {
-            projects: [{ ...a, available: false }], currentId: a.id, loading: false, error: false,
-            onReload: vi.fn(), onSelect: vi.fn(), onAddProject: vi.fn(), onClose: vi.fn(),
+            foldersSupported: true, onTrigger: vi.fn(), onAddProject: vi.fn(), onAddFolder: vi.fn(),
         }));
-        expect(html).toContain("프로젝트 경로 없음");
-        expect(html).toContain('disabled=""');
+        expect(html).toContain('aria-label="프로젝트·폴더 추가"');
+        expect(html).not.toContain("새 대화");
+        expect(html).not.toContain("대화 프로젝트 선택");
+        expect(api.post).not.toHaveBeenCalled();
+    });
+});
+
+describe("정리용 폴더 요청", () => {
+    it("생성 응답 유실 뒤에는 같은 이름·같은 요청 키로만 확인한다", async () => {
+        const folder = { id: "folder", name: "Work" };
+        vi.mocked(api.post).mockRejectedValueOnce(new Error("response lost")).mockResolvedValueOnce(folder);
+        const request = new CreationRequest<typeof folder>();
+        await expect(request.run("/project-folders", { name: "Work" })).rejects.toThrow("response lost");
+        await expect(request.run("/project-folders", { name: "Other" })).rejects.toThrow("먼저 확인");
+        expect(await request.run("/project-folders", { name: "Work" })).toEqual(folder);
+        expect(vi.mocked(api.post).mock.calls[1]).toEqual(vi.mocked(api.post).mock.calls[0]);
+        expect(vi.mocked(api.post).mock.calls[0]![2]?.requires).toEqual(["project_folders_v1"]);
+    });
+    it("이름 변경도 원래 revision과 키를 보존한다", async () => {
+        vi.mocked(api.patch).mockRejectedValueOnce(new Error("response lost")).mockResolvedValueOnce({ id: "folder" });
+        const request = new CreationRequest<{ id: string }>("patch");
+        const body = { name: "Next", expected_revision: 3 };
+        await expect(request.run("/project-folders/folder", body)).rejects.toThrow("response lost");
+        await expect(request.run("/project-folders/folder", { ...body, expected_revision: 4 })).rejects.toThrow("먼저 확인");
+        expect(await request.run("/project-folders/folder", body)).toEqual({ id: "folder" });
+        expect(vi.mocked(api.patch).mock.calls[1]).toEqual(vi.mocked(api.patch).mock.calls[0]);
     });
 });
 
 describe("프로젝트 생성 잠금·재확인", () => {
-    const body = { root_path: "/work/new", create: true };
+    const body = { root_path: "/work/project" };
     it("동일 tick의 중복 등록·clone을 하나의 요청으로 제한한다", async () => {
         let finish!: (project: Project) => void;
         vi.mocked(api.post).mockImplementation(() => new Promise((resolve) => { finish = resolve as typeof finish; }));
@@ -92,6 +102,7 @@ describe("프로젝트 생성 잠금·재확인", () => {
         vi.mocked(api.post).mockRejectedValueOnce(error).mockResolvedValueOnce(a);
         const creation = new ProjectCreation();
         await expect(creation.run("/projects", body)).rejects.toBe(error);
+        await expect(creation.run("/projects", { root_path: "/work/other" })).rejects.toThrow("먼저 확인");
         await expect(creation.run("/projects/clone", { repo: "a/b" })).rejects.toThrow("먼저 확인");
         expect(api.post).toHaveBeenCalledTimes(1);
         expect(await creation.run("/projects", { ...body })).toEqual(a);
@@ -104,7 +115,7 @@ describe("프로젝트 생성 잠금·재확인", () => {
         await expect(creation.run("/projects", body)).rejects.toThrow("권한 없음");
         expect(creation.pending).toBeNull();
         expect(api.post).toHaveBeenCalledTimes(1);
-        await creation.run("/projects", { ...body, create: false });
+        await creation.run("/projects", { root_path: "/work/other" });
         expect(vi.mocked(api.post).mock.calls[1]![2]?.key).not.toBe(vi.mocked(api.post).mock.calls[0]![2]?.key);
     });
     it("clone도 같은 잠금과 재확인 키를 쓰고 기존 응답의 project를 반환한다", async () => {
@@ -116,10 +127,10 @@ describe("프로젝트 생성 잠금·재확인", () => {
         expect(vi.mocked(api.post).mock.calls[1]).toEqual(vi.mocked(api.post).mock.calls[0]);
     });
     it("본문 필드 순서가 달라도 같은 생성 요청으로 확인한다", async () => {
-        vi.mocked(api.post).mockRejectedValueOnce(new Error("response lost")).mockResolvedValueOnce(a);
+        vi.mocked(api.post).mockRejectedValueOnce(new Error("response lost")).mockResolvedValueOnce({ project: a });
         const creation = new ProjectCreation();
-        await expect(creation.run("/projects", body)).rejects.toThrow("response lost");
-        expect(await creation.run("/projects", { create: true, root_path: "/work/new" })).toEqual(a);
+        await expect(creation.run("/projects/clone", { repo: "owner/repo", target_directory: "/work", protocol: "https" })).rejects.toThrow("response lost");
+        expect(await creation.run("/projects/clone", { protocol: "https", target_directory: "/work", repo: "owner/repo" })).toEqual(a);
         expect(vi.mocked(api.post).mock.calls[1]).toEqual(vi.mocked(api.post).mock.calls[0]);
     });
 });

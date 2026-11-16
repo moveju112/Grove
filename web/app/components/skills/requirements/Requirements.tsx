@@ -5,20 +5,19 @@ import type { SkillCapabilityContext, SkillRequirements } from "../../../api/ski
 import { HelpTip, SentenceText } from "../../HelpTip";
 
 export function Requirements({ report }: { report?: SkillRequirements }) {
-    if (!report) return null;
+    if (!report || (!report.declaration && report.status === "satisfied" && report.problems.length === 0)) return null;
     const declaration = report.declaration;
     return <GroveText as="div" display="block" type="supporting" color="inherit" aria-label="스킬 요구사항">
-        <GroveText type="inherit" color="inherit">{!declaration && report.status === "satisfied" ? "요구 선언 없음 · 기존 동작 유지"
-            : report.status === "blocked" ? "요구사항 불충족 · 적용 불가"
+        <GroveText type="inherit" color="inherit">{report.status === "blocked" ? "요구사항 불충족 · 적용 불가"
                 : report.status === "unknown" ? "요구사항 미확정 · 실제 호출 전에 확인 필요" : "관측한 조건에서 요구사항 충족"}</GroveText>
-        {declaration && <>
+        {declaration && <HelpTip label="요구사항 상세">
             <GroveText type="inherit" color="inherit">요구 도구: {declaration.tools.join(", ") || "없음"}</GroveText>
             <GroveText type="inherit" color="inherit">서버 플랫폼: {declaration.platforms.join(", ") || "제한 없음"}</GroveText>
             <GroveText type="inherit" color="inherit">명시적 의존 스킬: {declaration.skills.join(", ") || "없음"}</GroveText>
-        </>}
+            <GroveText type="inherit" color="secondary">도구 실행은 기존 정책·승인을 따릅니다.</GroveText>
+        </HelpTip>}
         {report.problems.length > 0 && <GroveList density="compact" edge="flush" listStyle="disc">{report.problems.map((problem, index) =>
             <GroveListItem key={index} label={<>{problem.message} (<code>{problem.code}</code>)</>} />)}</GroveList>}
-        {declaration && <GroveText type="inherit" color="secondary">도구 실행은 기존 정책·승인을 따릅니다.</GroveText>}
     </GroveText>;
 }
 

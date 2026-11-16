@@ -32,8 +32,6 @@ pub fn busy(c: &Connection, now: &str) -> ApiResult<Value> {
         "running_terminals": n("SELECT COUNT(*) FROM terminals WHERE status = 'running'")?,
         "schedules_within_10m": schedules_soon,
         "running_schedule_runs": n("SELECT COUNT(*) FROM schedule_runs WHERE status = 'running'")?,
-        "running_mcp_checks": n("SELECT COUNT(*) FROM mcp_checks WHERE status = 'checking'")?,
-        "running_mcp_calls": n("SELECT COUNT(*) FROM tool_calls WHERE name='mcp_call' AND status='running'")?,
     });
     Ok(v)
 }
@@ -146,8 +144,6 @@ pub async fn diagnostics(
             "sessions": n("SELECT COUNT(*) FROM sessions")?,
             "profiles_enabled": n("SELECT COUNT(*) FROM model_profiles WHERE deleted_at IS NULL AND enabled=1")?,
             "profiles_disabled": n("SELECT COUNT(*) FROM model_profiles WHERE deleted_at IS NULL AND enabled=0")?,
-            "mcp_enabled": n("SELECT COUNT(*) FROM mcp_servers WHERE enabled=1")?,
-            "mcp_disabled": n("SELECT COUNT(*) FROM mcp_servers WHERE enabled=0")?,
             "turns": {
                 "completed": n("SELECT COUNT(*) FROM turns WHERE status='completed'")?,
                 "failed": n("SELECT COUNT(*) FROM turns WHERE status='failed'")?,

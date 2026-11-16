@@ -5,14 +5,45 @@ export function sessionView(page: Page, sessionId: string): Locator {
     return page.locator(`[data-testid="session-view"][data-session="${sessionId}"]`);
 }
 
+export async function openAddMenu(page: Page) {
+    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
+    if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
+    await page.getByRole("button", { name: "프로젝트·폴더 추가", exact: true }).click();
+    const menu = page.getByRole("menu").filter({ visible: true });
+    await expect(menu.getByRole("menuitem", { name: "프로젝트 추가", exact: true })).toBeVisible();
+    return menu;
+}
+
+export async function openAddProject(page: Page) {
+    const menu = await openAddMenu(page);
+    await menu.getByRole("menuitem", { name: "프로젝트 추가", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "프로젝트 추가", exact: true });
+    await expect(dialog).toBeVisible();
+    return dialog;
+}
+
+export async function startProjectConversation(view: Locator) {
+    await view.getByRole("button", { name: "새 대화", exact: true }).click();
+    await expect(view.getByLabel("메시지 입력", { exact: true })).toBeFocused();
+}
+
+// 승인 대기 시험은 기본 전체 권한에 기대지 않고 격리된 시험 프로젝트의 정책을 명시한다.
+export async function requireToolApproval(projectId: string) {
+    const settings = await apiCall<{ items: { key: string; layers: { project?: { revision: number } } }[] }>(
+        "GET", `/settings/effective?project_id=${projectId}`);
+    const permission = settings.items.find((item) => item.key === "tools.full_access")!;
+    await apiCall("PUT", `/settings/project/${projectId}/tools.full_access`, {
+        expected_revision: permission.layers.project?.revision ?? 0, value: false,
+    });
+}
+
 /// 탭 패널 또는 상세 대화상자의 실제 사용자 진입점을 연다.
 export async function openDetails(panel: Locator, tool?: string, scope: Locator | Page = panel.page()) {
-    if (tool === "대화 검색") await panel.page().getByRole("button", { name: "대화 검색", exact: true }).click();
-    else if (tool) await openTool(scope, tool);
+    if (tool) await openTool(scope, tool);
     await expect(panel).toBeAttached();
     const disclosure = panel.getByRole("button", { name: "상세 설정", exact: true }).first();
     if (await disclosure.count() && await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
-    const tab = panel.locator("xpath=ancestor-or-self::*[@role='tabpanel']").first();
+    const tab = panel.locator("xpath=ancestor-or-self::*[@role='tabpanel' and ancestor::*[@data-ui='workbench']]").first();
     if (await tab.count()) {
         const button = panel.page().locator(`[role=tab][aria-controls="${await tab.getAttribute("id")}"]`);
         await openToolDock(button);
@@ -208,7 +239,7 @@ export async function openBots(page: Page) {
     await expect(page.getByTestId("bots-panel")).toBeVisible();
 }
 
-export async function openSettings(page: Page) {
+export async function openSettings(page: Page, area: "local" | "daemon" = "daemon") {
     if (page.viewportSize()!.width <= 760) {
         const trigger = page.getByRole("button", { name: "사이드바", exact: true });
         if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
@@ -216,6 +247,7 @@ export async function openSettings(page: Page) {
         await drawer.getByRole("button", { name: "설정", exact: true }).click();
         await expect(drawer).toHaveJSProperty("open", false);
     } else await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByTestId("settings").getByRole("tab", { name: area === "local" ? "로컬 설정" : "데몬 설정", exact: true }).click();
 }
 
 export async function activateMobileTab(page: Page, title: string) {

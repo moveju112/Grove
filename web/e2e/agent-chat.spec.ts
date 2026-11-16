@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, closeModelSettings, composerSetting, login, openDetails, removeProfiles, sessionView, state } from "./helpers";
+import { apiCall, closeModelSettings, composerSetting, login, openDetails, removeProfiles, sessionView, startProjectConversation, state } from "./helpers";
 
 test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "전용 CLI fixture로 실행: GROVE_E2E_FAKE_CLI=1");
 
@@ -42,6 +42,7 @@ for (const width of [390, 1280]) {
             if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
             await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
             if (width < 760) await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
+            await startProjectConversation(page.getByTestId("project-view").filter({ visible: true }));
             const connect = page.getByTestId("agent-connect");
             await expect(connect).toBeVisible();
             expect(reads).toBe(2);
@@ -151,8 +152,13 @@ test("등록한 모바일 기기는 암호화 연결로 에이전트와 대화�
         if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
         await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
         await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
+        await startProjectConversation(page.getByTestId("project-view").filter({ visible: true }));
         await page.getByLabel("메시지 입력").fill("encrypted-agent-chat-first");
         await page.getByRole("button", { name: "보내기", exact: true }).click();
+        const owned = await apiCall<{ items: { id: string }[] }>("GET", `/projects/${project.id}/sessions`);
+        expect(owned.items).toHaveLength(1);
+        await expect.poll(async () => (await apiCall<{ status: string }[]>("GET", `/sessions/${owned.items[0]!.id}/turns`)).map((turn) => turn.status))
+            .toEqual(["completed"]);
         await expect(page.getByTestId("msg-assistant").last()).toContainText("에이전트 답변 1");
         await page.reload();
         await expect(page.getByTestId("conn")).toHaveText("연결됨");
@@ -169,6 +175,7 @@ test("등록한 모바일 기기는 암호화 연결로 에이전트와 대화�
 test("설정의 에이전트 연결은 반복해도 하나이며 삭제 후 새 연결을 만든다", async ({ page }) => {
     await login(page);
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByRole("tab", { name: "데몬 설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("모델 프로필");
     const section = page.getByTestId("setting-profiles");
     await section.getByText("CLI 에이전트 연결", { exact: true }).click();

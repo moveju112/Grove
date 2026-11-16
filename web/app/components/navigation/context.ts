@@ -28,16 +28,6 @@ export function navigationContext(layout: Layout | undefined, projects: Project[
     };
 }
 
-export function hostAddress(address: string): string {
-    try {
-        const url = new URL(address);
-        // 현재 HTTP origin만 표시한다. userinfo·path·query·fragment는 표시·tooltip에 넘기지 않는다.
-        return url.protocol === "https:" || url.protocol === "http:" ? url.host : "호스트 확인 불가";
-    } catch {
-        return "호스트 확인 불가";
-    }
-}
-
 export function resourceLabel(tab: Tab): string {
     switch (tab.kind) {
         case "settings": return "설정";
@@ -52,12 +42,5 @@ export function projectTarget(context: NavigationContext): Omit<Tab, "id"> | und
     return context.projectId ? {
         kind: "project", project_id: context.projectId, resource_id: context.projectId,
         title: context.project?.name ?? `프로젝트 ${context.projectId}`,
-    } : undefined;
-}
-
-export function sessionTarget(context: NavigationContext): Omit<Tab, "id"> | undefined {
-    return context.projectId && context.sessionId ? {
-        kind: "session", project_id: context.projectId, resource_id: context.sessionId,
-        title: context.session?.title ?? `세션 ${context.sessionId}`,
     } : undefined;
 }

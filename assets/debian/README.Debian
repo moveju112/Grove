@@ -1,0 +1,41 @@
+Grove Debian/Ubuntu package
+==========================
+
+이 패키지는 /usr/bin/grove와 /usr/lib/grove의 프로그램·웹 파일을 설치한다.
+root 서버, 시스템 서비스, 사용자 계정, 자동 시작, 자동 재시작을 만들지 않는다.
+외부 모델 CLI와 해당 로그인은 사용자가 별도로 준비한다.
+
+실행:
+  /usr/bin/grove serve
+
+선택적 사용자 서비스:
+  systemctl --user daemon-reload
+  systemctl --user enable --now grove.service
+
+서비스는 로그인한 사용자 권한으로 실행한다. linger는 자동으로 켜지 않는다.
+사용자별 PATH·환경 설정은 systemctl --user edit grove.service로 지정한다.
+기존 ~/.config/systemd/user/grove.service가 있으면 패키지 unit보다 우선하므로
+systemctl --user cat grove.service로 실제 대상을 확인한 뒤 선택한다.
+~/.local/bin/grove가 있으면 /usr/bin/grove보다 우선할 수 있다.
+
+데이터는 기존 기본값인 $XDG_DATA_HOME/grove 또는 ~/.local/share/grove에 저장한다.
+GROVE_DATA_DIR 또는 --data-dir로 변경할 수 있다.
+기존 자체 updater 설치의 데이터·서비스·포트는 가져오거나 변경하지 않는다.
+같은 데이터를 두 서버가 동시에 열지 않도록 실제 config와 서비스 대상을 확인한다.
+
+업데이트:
+실행 중 작업이 끝난 뒤 사용하는 Grove 프로세스/사용자 서비스만 명시적으로 멈춘다.
+새 패키지는 sudo apt install ./grove_<version>_<architecture>.deb로 설치하고
+기존 실행 방식으로 다시 시작한다. 패키지는 서비스를 자동으로 멈추거나 재시작하지 않는다.
+업그레이드 전에 데이터를 백업한다. DB schema 변경 후 구버전 패키지로 내려가는 것은
+자동 복구가 아니며, 새 데이터를 과거 snapshot으로 덮어쓰지 않는다.
+
+/usr 아래의 파일은 apt/dpkg만 관리한다. grove update apply의 --install 대상으로
+/usr 또는 /usr/lib/grove를 지정하지 않는다. 자체 updater는 별도 사용자 설치에서만 쓴다.
+패키지 서명 검증·APT 저장소 배포는 별도이며 SHA256SUMS만으로 출처를 보증하지 않는다.
+
+제거:
+사용 중인 프로세스를 먼저 멈추고, 이 unit을 사용했다면
+systemctl --user disable --now grove.service를 실행한다.
+sudo apt remove grove 또는 sudo apt purge grove 후 systemctl --user daemon-reload를 실행한다.
+remove/purge 모두 사용자 DB·토큰·설정·프로젝트 파일은 삭제하지 않는다.

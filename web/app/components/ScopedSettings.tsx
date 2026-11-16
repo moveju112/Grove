@@ -5,14 +5,14 @@ import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Link } from "@astryxdesign/core/Link";
 import { Button as GroveButton } from "../design/Button";
 import { useLayoutEffect, useRef, useState } from "react";
-import { DetailDialog } from "./ui/Controls";
 import { BooleanSelect } from "./BooleanSelect";
 import { HelpTip, SentenceText } from "./HelpTip";
 import { ApiError, api } from "../api/client";
 import { useQuery } from "../state/store";
 import type { ModelProfile } from "../api/generated";
-import { APPLIES, SCOPE_LABEL, SettingsResetButton } from "./SettingsReset";
-import { ServerActionButton } from "./pwa/ServerActionButton";
+import { APPLIES, SCOPE_LABEL } from "./settings/constants";
+import { useAutosave } from "./settings/useAutosave";
+import { AutosaveStatus } from "./settings/AutosaveStatus";
 import type { SettingLinkReady } from "./settings-links/reveal";
 import { SettingsGroup } from "./SettingsGroup";
 import { TextInput, TextArea, DraftInput } from "../design/Fields";
@@ -38,7 +38,6 @@ type Item = { key: string; default: unknown; layers: Record<string, Layer>; effe
 
 const ENUM_LABEL: Record<string, Record<string, string>> = {
     "output.style": { default: "모델 기본", concise: "간결하게", detailed: "자세하게" },
-    "instructions.mode": { agents_md: "AGENTS.md만 전달", claude_md: "CLAUDE.md만 전달", both: "두 지침 파일 전달", off: "지침 파일 전달 안 함" },
 };
 const PROFILE_KEYS = new Set(["model.default_profile", "context.summary_profile"]);
 
@@ -63,7 +62,7 @@ export type SettingsTarget = { projectId?: string; projectName?: string; session
 
 /// 범위별 설정 편집기.
 const SETTING_GROUPS: Record<string, string> = {
-    model: "기본 모델", instructions: "대화·응답", output: "대화·응답", user: "대화·응답",
+    model: "기본 모델", output: "대화·응답", user: "대화·응답",
     session: "대화·응답", sessions: "대화·응답", context: "컨텍스트",
     agents: "에이전트 실행", tools: "도구·권한", runs: "실행 한도",
     storage: "보관·정리", approval: "승인",
@@ -74,8 +73,8 @@ function initialScope(d: SettingDef, target: SettingsTarget) {
         : target.projectId && d.scopes.includes("project") ? "project" : "server";
 }
 
-export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLinkReady, grouped = false }: {
-    defs: SettingDef[]; target: SettingsTarget; resetDefs?: SettingDef[]; area?: string;
+export function ScopedSettings({ defs, target, linkedKey, onLinkReady, grouped = false }: {
+    defs: SettingDef[]; target: SettingsTarget;
     linkedKey?: string; onLinkReady?: SettingLinkReady; grouped?: boolean;
 }) {
     const p = new URLSearchParams();
@@ -92,9 +91,6 @@ export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLin
             .find((element) => element.dataset.settingKey === linkedKey) ?? null;
         onLinkReady(linkedKey, row);
     }, [linkedKey, onLinkReady, defs, eff.data, eff.error, eff.loading]);
-    const scopes = ["server", ...(target.projectId ? ["project"] : []), ...(target.sessionId ? ["session"] : [])];
-    const [resetScope, setResetScope] = useState(scopes.at(-1)!);
-    const [resetId, resetLabel] = scopeTarget(resetScope, target);
     const groups = new Map<string, SettingDef[]>();
     for (const definition of defs) {
         const title = SETTING_GROUPS[definition.key.split(".")[0]!] ?? "기본 설정";
@@ -104,7 +100,7 @@ export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLin
     }
     const renderRow = (d: SettingDef) => {
         const it = eff.data?.items.find((i) => i.key === d.key);
-        return it ? <Row key={d.key} d={d} it={it} t={target} reload={eff.reload} /> : null;
+        return it ? <Row key={`${d.key}:${target.sessionId ?? target.projectId ?? "-"}`} d={d} it={it} t={target} reload={eff.reload} /> : null;
     };
     return (
         <Grid gap={grouped ? 4 : 0} ref={root}>
@@ -112,15 +108,6 @@ export function ScopedSettings({ defs, target, resetDefs, area, linkedKey, onLin
                 scope={[...new Set(definitions.map((definition) => scopeTarget(initialScope(definition, target), target)[1]))].join(" · ")}>
                 {definitions.map(renderRow)}
             </SettingsGroup>) : defs.map(renderRow)}
-            {resetDefs && <DetailDialog data-testid="settings-area-reset" label={`${area} 기본값 복원`} title={`${area} 기본값 복원`}>
-                <GroveText as="p" display="block" type="supporting" color="secondary">고급 항목 포함. 모델 프로필·키·정의 파일은 유지됩니다.</GroveText>
-                <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
-                    <Select label="영역 복원 범위" hideLabel value={resetScope} onChange={setResetScope}
-                        options={scopes.map((value) => ({ value, label: SCOPE_LABEL[value] }))} />
-                    <SettingsResetButton key={resetScope} defs={resetDefs.filter((d) => d.scopes.includes(resetScope))}
-                        target={target} scope={resetScope} scopeId={resetId} targetLabel={resetLabel} label="이 영역의 범위별 설정 복원" saved={eff.reload} />
-                </GroveStack>
-            </DetailDialog>}
         </Grid>
     );
 }
@@ -134,31 +121,32 @@ function scopeTarget(scope: string, t: SettingsTarget): [string, string] {
 
 function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget; reload: () => void }) {
     const scopes = d.scopes.filter((s) => s === "server" || (s === "project" && t.projectId) || (s === "session" && t.sessionId));
-    // 가장 좁은 범위를 기본으로 고른다(연 위치에 맞춤).
     const [scope, setScope] = useState<string>(initialScope(d, t));
+    return <SettingValue key={scope} d={d} it={it} t={t} reload={reload} scope={scope} scopes={scopes} setScope={setScope} />;
+}
+
+function SettingValue({ d, it, t, reload, scope, scopes, setScope }: {
+    d: SettingDef; it: Item; t: SettingsTarget; reload: () => void; scope: string; scopes: string[]; setScope: (scope: string) => void;
+}) {
     const layer = it.layers[scope];
-    // SSE가 최신 값을 가져와도 편집 시작 시점의 revision은 바꾸지 않는다(NET-013).
-    const [draft, setDraft] = useState<{ value: unknown; revision: number } | undefined>(undefined);
-    const [state, setState] = useState<{ kind: "idle" | "saving" | "saved" | "error" | "conflict"; msg?: string }>({ kind: "idle" });
-    const value = draft !== undefined ? draft.value : (layer?.value ?? it.effective);
-    const saving = state.kind === "saving";
-    const edit = (value: unknown) => {
-        setDraft((prev) => ({ value, revision: prev?.revision ?? layer?.revision ?? 0 }));
-        if (state.kind !== "conflict") setState({ kind: "idle" });
+    const normalize = (item: Item) => {
+        const value = item.layers[scope]?.value ?? item.effective;
+        return d.kind === "int" ? String(value ?? "") : value ?? "";
     };
-    const save = async (v: unknown, revision: number) => {
-        setState({ kind: "saving" });
-        try {
-            const [id] = scopeTarget(scope, t);
-            await api.put(`/settings/${scope}/${id}/${d.key}`, { expected_revision: revision, value: v });
-            setDraft(undefined);
-            setState({ kind: "saved", msg: APPLIES[d.applies] });
-        } catch (e) {
-            if (e instanceof ApiError && e.code === "revision_conflict") setState({ kind: "conflict", msg: "다른 기기에서 먼저 바뀌었습니다. 내 수정은 보존했습니다" });
-            else setState({ kind: "error", msg: e instanceof ApiError ? e.message : "저장 실패" });
-        }
-        reload();
-    };
+    const state = useAutosave<unknown>({
+        id: `${scope}:${scopeTarget(scope, t)[0]}:${d.key}`, value: normalize(it), revision: layer?.revision ?? 0,
+        save: async (value, revision, key) => {
+            if (d.kind === "int" && !/^-?\d+$/.test(String(value))) throw new ApiError(422, "invalid_input", "정수를 입력하세요.");
+            try {
+                const result = await api.put<{ item: Item }>(`/settings/${scope}/${scopeTarget(scope, t)[0]}/${d.key}`,
+                    { expected_revision: revision, value: d.kind === "int" ? Number(value) : value }, { key });
+                return { value: normalize(result.item), revision: result.item.layers[scope]!.revision };
+            } finally { reload(); }
+        },
+    });
+    const value = state.value;
+    const edit = state.change;
+    const choose = (value: unknown) => { edit(value); state.commit(); };
     const [, target] = scopeTarget(scope, t);
     return (
         <GroveStack as="section" gap={2} padding={3} data-testid={`setting-${d.key}`} data-setting-key={d.key}>
@@ -174,50 +162,39 @@ function Row({ d, it, t, reload }: { d: SettingDef; it: Item; t: SettingsTarget;
             </GroveStack>
             <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                 {scopes.length > 1 && (
-                    <Select disabled={saving} label={`${d.label} 적용 범위`} hideLabel value={scope}
-                        onChange={(value) => { setScope(value); setDraft(undefined); setState({ kind: "idle" }); }}
+                    <Select disabled={state.phase === "saving" || state.phase === "uncertain"} label={`${d.label} 적용 범위`} hideLabel value={scope}
+                        onChange={setScope}
                         options={scopes.map((value) => ({ value, label: SCOPE_LABEL[value] }))} />
                 )}
                 <GroveText type="supporting" color="secondary" data-settings-target={target}>대상: {target}</GroveText>
                 {d.kind === "bool" && (
-                    <BooleanSelect label={d.label} hideLabel value={Boolean(value)} disabled={saving} onChange={edit} />
+                    <BooleanSelect label={d.label} hideLabel value={Boolean(value)} onChange={choose} />
                 )}
                 {d.kind === "enum" && (
-                    <Select disabled={saving} label={d.label} hideLabel value={String(value ?? "")} onChange={edit}
+                    <Select label={d.label} hideLabel value={String(value ?? "")} onChange={choose}
                         options={d.options.map((value) => ({ value, label: ENUM_LABEL[d.key]?.[value] ?? value }))} />
                 )}
                 {d.kind === "int" && (
-                    <DraftInput isDisabled={saving} type="number" label={d.label} isLabelHidden min={d.min ?? undefined} max={d.max ?? undefined} value={String(Number(value ?? 0))} onChange={(value) => edit(Number(value))} />
+                    <DraftInput type="number" label={d.label} isLabelHidden min={d.min ?? undefined} max={d.max ?? undefined} value={String(value)} onChange={edit} onBlur={state.blur} />
                 )}
-                {PROFILE_KEYS.has(d.key) && <ProfileChoice d={d} value={value} disabled={saving} edit={edit} />}
+                {PROFILE_KEYS.has(d.key) && <ProfileChoice d={d} value={value} disabled={false} edit={choose} />}
                 {((d.kind === "string" && !PROFILE_KEYS.has(d.key)) || d.kind === "tool_list") && (
                     <TextInput
-                        isDisabled={saving}
                         label={d.label} isLabelHidden
                         placeholder={d.kind === "tool_list" ? "예: shell, write_file" : undefined}
                         value={String(value ?? "")}
                         onChange={edit}
+                        onBlur={state.blur}
                     />
                 )}
-                {d.kind === "text" && <TextArea isDisabled={saving} label={d.label} isLabelHidden rows={4} value={String(value ?? "")} onChange={edit} />}
-                <ServerActionButton disabled={draft === undefined || saving || state.kind === "conflict"} onClick={() => draft && void save(draft.value, draft.revision)}>저장</ServerActionButton>
-                <SettingsResetButton compact key={scope} defs={[d]} target={t} scope={scope} scopeId={scopeTarget(scope,t)[0]} targetLabel={target}
-                    label="이 범위 값 지우기" disabled={saving || layer?.value === null || layer?.value === undefined} draft={draft?.value}
-                    saved={() => { setDraft(undefined); setState({ kind: "saved", msg: APPLIES[d.applies] }); reload(); }} />
+                {d.kind === "text" && <TextArea label={d.label} isLabelHidden rows={4} value={String(value ?? "")} onChange={edit} onBlur={state.blur} />}
             </GroveStack>
-            {draft !== undefined && <GroveText as="p" display="block" type="supporting" color="secondary" data-settings-unsaved="true">저장 안 됨</GroveText>}
-            {state.kind !== "idle" && (
-                <GroveText as="p" display="block" type="supporting" color={state.kind === "error" || state.kind === "conflict" ? "error" : "secondary"}
-                    data-settings-issue={state.kind === "error" || state.kind === "conflict" ? "error" : undefined} role="status">
-                    {state.kind === "saving" ? "저장 중…" : state.kind === "saved" ? `저장됨 · ${state.msg}` : state.kind === "conflict" ? state.msg : `저장 실패(기존 값 유지): ${state.msg}`}
+            {d.key === "tools.full_access" && (Boolean(value) || Boolean(it.effective)) && (
+                <GroveText as="p" display="block" type="supporting" color="warning">
+                    셸이 프로젝트 밖 파일·네트워크·서버 계정의 자격증명에 접근할 수 있어요. 임의 명령을 허용하므로 신뢰하는 작업에만 켜세요.
                 </GroveText>
             )}
-            {state.kind === "conflict" && (
-                <GroveStack gap={2} direction="horizontal" align="center" wrap="wrap">
-                    <GroveButton variant="secondary" onClick={() => { setDraft(undefined); setState({ kind: "idle" }); }}>최신 값 사용</GroveButton>
-                    {draft && <ServerActionButton onClick={() => void save(draft.value, layer?.revision ?? 0)}>내 수정으로 덮어쓰기</ServerActionButton>}
-                </GroveStack>
-            )}
+            <AutosaveStatus state={state} applies={APPLIES[d.applies]} />
         </GroveStack>
     );
 }

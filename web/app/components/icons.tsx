@@ -1,14 +1,16 @@
-import { Icon as AstryxIcon, type IconType } from "@astryxdesign/core/Icon";
+import { Icon as AstryxIcon, type IconColor, type IconType } from "@astryxdesign/core/Icon";
 import type { SVGProps } from "react";
 
 // 앱 고유 도형은 Astryx Icon의 component mode로 렌더링한다. 새싹 도형은 브랜드 계약이다.
 const PATHS = {
+    plus: <path d="M12 5v14M5 12h14" />,
+    folder: <path d="M3 7V5a2 2 0 0 1 2-2h5l2 3h7a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7Z" />,
     close: <path d="m6 6 12 12M6 18 18 6" />,
     help: <><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 0 1 5 .5c0 1.5-2.5 1.5-2.5 3M12 17h.01" /></>,
     check: <path d="m5 12 4 4L19 6" />,
     copy: <><rect x="8" y="8" width="13" height="13" rx="2" /><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3" /></>,
     send: <path d="M12 20V4m-7 7 7-7 7 7" />,
-    fast: <path d="m13 2-9 12h7l-1 8 10-12h-7z" />,
+    fast: <path d="m13 2-9 12h7l-1 8 10-12h-7z" fill="currentColor" stroke="none" />,
     expand: <><path d="M14 3h7v7M21 3l-9 9M10 21H3v-7" /></>,
     changes: <><path d="M4 7h16M4 17h16M9 3v8M15 13v8" /></>,
     file: <><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z" /><path d="M14 2v6h6" /></>,
@@ -49,9 +51,9 @@ function glyph(name: IconName): IconType {
 
 const GLYPHS = Object.fromEntries((Object.keys(PATHS) as IconName[]).map((name) => [name, glyph(name)])) as Record<IconName, IconType>;
 
-export function Icon({ name, size = 18, ...props }: {
-    name: IconName; size?: number | string; "data-testid"?: string;
+export function Icon({ name, size = 18, color = "inherit", ...props }: {
+    name: IconName; size?: number | string; color?: IconColor; "data-testid"?: string;
 }) {
     const tier = typeof size !== "number" ? "md" : size <= 12 ? "xsm" : size <= 16 ? "sm" : size <= 20 ? "md" : "lg";
-    return <AstryxIcon {...props} icon={GLYPHS[name]} size={tier} color="inherit" focusable="false" />;
+    return <AstryxIcon {...props} icon={GLYPHS[name]} size={tier} color={color} focusable="false" />;
 }

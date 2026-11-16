@@ -1,4 +1,4 @@
-// 검색 결과 → 정확한 메시지로 이동(UI-026). 탭 배치(서버 검증 대상)에 넣지 않는 일회성 화면 요청이다.
+// 원문 근거의 정확한 메시지로 이동한다. 탭 배치(서버 검증 대상)에 넣지 않는 일회성 화면 요청이다.
 import { useEffect, useState } from "react";
 
 const pending = new Map<string, number>();

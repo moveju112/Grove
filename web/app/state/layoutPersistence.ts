@@ -12,6 +12,7 @@ type Options = {
     newKey: () => string;
     active: () => boolean;
     notice: (message: string) => void;
+    initial?: () => Layout;
 };
 
 const validRevision = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
@@ -92,8 +93,8 @@ export class LayoutPersistence {
         this.copy = local && (local.dirty || local.edit !== originalEdit) ? local : server && remote ? {
             format: 1, layout: server, revision: remote.revision, dirty: false, edit: this.options.newKey(),
         } : local ?? {
-            format: 1, layout: emptyLayout(), revision: validRevision(remote?.revision) ? remote.revision : 0,
-            dirty: false, edit: this.options.newKey(),
+            format: 1, layout: this.options.initial?.() ?? emptyLayout(), revision: validRevision(remote?.revision) ? remote.revision : 0,
+            dirty: !!this.options.initial && remote?.layout === null && remote.revision === 0, edit: this.options.newKey(),
         };
         this.writtenEdit = local?.edit ?? null;
         if (this.write() && this.copy.dirty) this.schedule();

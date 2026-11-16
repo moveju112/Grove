@@ -32,7 +32,7 @@ async function save(page: Page, key: string, label: string, value: string) {
     const control = row.getByLabel(label, { exact: true });
     if (key === "agents.allowed_roles") await control.fill(value);
     else await selectChoice(control, value);
-    await row.getByRole("button", { name: "저장", exact: true }).click();
+    if (key === "agents.allowed_roles") await control.blur();
     await expect(row).toContainText("저장됨 · 즉시 적용");
     return row;
 }

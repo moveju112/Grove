@@ -35,9 +35,9 @@ test("명시적 스킬 선택·재전송·모델 적용·변경 및 삭제 차�
             if (sent.length === 1) { await route.fetch(); await route.abort(); }
             else await route.continue();
         });
-        await panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
+        await panel.getByRole("button", { name: "이 스킬 사용" }).click();
         await panel.getByRole("button", { name: "같은 요청 결과 확인" }).click();
-        await expect(panel).toContainText("선택됨 · 다음 모델 호출 직전 재검증");
+        await expect(panel).toContainText("선택됨");
         expect(sent).toHaveLength(2);
         expect(sent[0]).toBe(sent[1]);
         const selections = () => apiCall<SessionSkills>("GET", `/sessions/${session.id}/skills`);
@@ -53,7 +53,7 @@ test("명시적 스킬 선택·재전송·모델 적용·변경 및 삭제 차�
         await page.reload();
         await openDetails(sessionView(page, session.id).getByTestId("skills-disclosure"));
         const restored = sessionView(page, session.id).getByTestId("session-skills");
-        await expect(restored).toContainText("선택됨 · 다음 모델 호출 직전 재검증");
+        await expect(restored).toContainText("선택됨");
         writeFileSync(file, "CHANGED_SKILL_MUST_NOT_APPLY");
         await restored.getByRole("button", { name: "스킬 새로고침" }).click();
         await expect(restored).toContainText("선택한 스킬을 적용할 수 없습니다");
@@ -86,6 +86,7 @@ for (const theme of ["light", "dark"] as const) {
             await openDetails(sessionView(page, session.id).getByTestId("skills-disclosure"));
             const panel = sessionView(page, session.id).getByTestId("session-skills");
             const help = panel.getByRole("button", { name: "스킬 도움말", exact: true });
+            await expect(panel.getByRole("region", { name: "스킬 탐색과 선택", exact: true })).toHaveAttribute("aria-busy", "false");
             await expect(help).toBeVisible();
             await expect(panel).toContainText("스킬 선택은 도구 실행 승인이 아닙니다.");
             await expect(page.getByRole("tooltip")).toBeHidden();
@@ -95,6 +96,11 @@ for (const theme of ["light", "dark"] as const) {
                 expect((text.match(/[.!?。！？](?:\s|$)/gu) ?? []).length).toBeLessThanOrEqual(1);
             }
             await page.screenshot({ path: info.outputPath("skills-compact.png"), fullPage: true });
+            expect(await help.evaluate((node) => {
+                const rect = node.getBoundingClientRect();
+                return document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2)
+                    ?.closest("button")?.getAttribute("aria-label");
+            })).toBe("스킬 도움말");
             await help.tap();
             await expect(page.getByRole("tooltip")).toContainText("requirements.grove.json");
             const foreground = theme === "light" ? "rgb(255, 255, 255)" : "rgb(23, 26, 32)";
@@ -150,10 +156,11 @@ test("다른 세션으로 전환한 뒤 늦게 도착한 이전 선택 응답을
         const view = sessionView(page, second.id);
         await openDetails(view.getByTestId("skills-disclosure"));
         const panel = view.getByTestId("session-skills");
-        await expect(panel).toContainText("미선택");
+        await expect(panel.getByRole("button", { name: /review .*본문 보기/ })).toBeVisible();
+        await expect(panel).not.toContainText("선택됨");
         release();
         await returned;
-        await expect(panel).not.toContainText("선택됨 · 다음 모델 호출 직전 재검증");
+        await expect(panel).not.toContainText("선택됨");
     } finally {
         release();
         rmSync(root, { recursive: true });

@@ -65,7 +65,10 @@ test("다른 기기가 먼저 고정해도 이 기기의 숨김은 오류 없이
     expect(hidden).toMatchObject({ pinned: true, hidden: true });
 });
 
-test("숨긴 대화는 새 메시지가 오면 다시 보이고, 분할로 함께 연 대화는 한 묶음으로 보인다", async ({ page }) => {
+for (const theme of ["light", "dark", "soft"] as const) {
+test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 세션은 파란 묶음으로 구분한다`, async ({ page }, info) => {
+    await page.emulateMedia({ colorScheme: theme === "dark" ? "dark" : "light", reducedMotion: "reduce" });
+    await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
     const { a } = await ensureProjects();
     await ensureProfile();
     const make = async (title: string) => {
@@ -89,6 +92,33 @@ test("숨긴 대화는 새 메시지가 오면 다시 보이고, 분할로 함�
     await expect(group.getByTestId("recent-item")).toHaveCount(2);
     await expect(group).toContainText(one.title);
     await expect(group).toContainText(two.title);
+    const colors = await group.getByTestId("recent-split-surface").evaluate((node) => {
+        const context = document.createElement("canvas").getContext("2d")!;
+        const rgb = (color: string) => {
+            context.clearRect(0, 0, 1, 1);
+            context.fillStyle = color;
+            context.fillRect(0, 0, 1, 1);
+            return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
+        };
+        const luminance = (channels: number[]) => channels.map((channel) => {
+            const value = channel / 255;
+            return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+        }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index]!, 0);
+        const style = getComputedStyle(node);
+        const background = rgb(style.backgroundColor);
+        return {
+            blue: background[2]! > background[0]!,
+            border: parseFloat(style.borderInlineStartWidth),
+            contrasts: [style.color, style.getPropertyValue("--muted")].map((color) => {
+                const values = [luminance(rgb(color)), luminance(background)].sort((a, b) => b - a);
+                return (values[0]! + 0.05) / (values[1]! + 0.05);
+            }),
+        };
+    });
+    expect(colors.blue).toBe(true);
+    expect(colors.border).toBeGreaterThanOrEqual(3);
+    expect(colors.contrasts.every((contrast) => contrast >= 4.5), JSON.stringify(colors)).toBe(true);
+    await page.screenshot({ path: info.outputPath(`recent-split-${theme}.png`) });
 
     const row = recent.getByTestId("recent-item").filter({ hasText: hidden.title });
     await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
@@ -96,4 +126,9 @@ test("숨긴 대화는 새 메시지가 오면 다시 보이고, 분할로 함�
     await expect(row).toHaveCount(0);
     await apiCall("POST", `/sessions/${hidden.id}/messages`, { text: "다시 보여 줘" });
     await expect(row).toHaveCount(1);
+    await page.locator('[data-leaf="r"]').getByRole("button", { name: "영역 닫기", exact: true }).click();
+    await expect(group).toHaveCount(0);
+    await expect(recent.getByTestId("recent-item").filter({ hasText: one.title })).toHaveCount(1);
+    await expect(recent.getByTestId("recent-item").filter({ hasText: two.title })).toHaveCount(1);
 });
+}

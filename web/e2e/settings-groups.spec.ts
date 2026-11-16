@@ -36,6 +36,8 @@ for (const width of [390, 1280]) {
                     await expect(dialog.getByLabel("외부 암호화 연결 주소", { exact: true })).toBeVisible();
                     await page.keyboard.press("Escape");
                     await expect(input).toHaveValue("보존할 기기 이름");
+                    await settings.getByRole("tab", { name: "로컬 설정", exact: true }).click();
+                    await settings.getByRole("button", { name: "기기·연결", exact: true }).click();
                     const refresh = capabilities.getByRole("button", { name: "브라우저 기능 새로 확인" });
                     await refresh.focus();
                     await page.keyboard.press("Enter");
@@ -44,6 +46,7 @@ for (const width of [390, 1280]) {
                     expect(await page.evaluate(() => [...document.fonts].some((font) => font.family === "Pretendard" && font.status === "loaded"))).toBe(true);
                     expect(await settings.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
                     await page.screenshot({ path: info.outputPath("devices.png"), fullPage: true });
+                    await settings.getByRole("tab", { name: "데몬 설정", exact: true }).click();
                     await settings.getByLabel("설정 검색").fill("기기 토큰");
                     await expect(settings.getByRole("button", { name: "기기 토큰 발급" })).toBeVisible();
                 } finally {
@@ -71,17 +74,16 @@ for (const width of [390, 1280]) {
 test("미저장 값과 저장 실패를 본문·그룹 제목에 함께 표시한다", async ({ page }) => {
     await login(page);
     await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByRole("tab", { name: "데몬 설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("응답 언어");
     const row = page.getByTestId("setting-output.language");
     const group = row.locator("xpath=ancestor::*[@data-ui='settings-group'][1]");
     const heading = group.locator(":scope > header");
     await row.getByLabel("응답 언어", { exact: true }).fill("보존할 미저장 값");
     await expect(heading).toContainText("저장 안 됨");
-    await heading.getByRole("heading").click();
-    await expect(row.getByLabel("응답 언어", { exact: true })).toHaveValue("보존할 미저장 값");
     await page.route("**/api/v1/settings/server/-/output.language", (route) =>
-        route.fulfill({ status: 500, json: { error: { code: "internal", message: "설정 저장 확인용 오류", retryable: false } } }));
-    await row.getByRole("button", { name: "저장", exact: true }).click();
+        route.fulfill({ status: 422, json: { error: { code: "invalid_input", message: "설정 저장 확인용 오류", retryable: false } } }));
+    await heading.getByRole("heading").click();
     await expect(row.getByRole("status").filter({ hasText: "저장 실패" })).toContainText("기존 값 유지");
     await expect(heading).toContainText("저장 안 됨 · 오류");
     await expect(row.getByLabel("응답 언어", { exact: true })).toHaveValue("보존할 미저장 값");

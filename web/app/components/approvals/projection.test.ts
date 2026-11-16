@@ -11,7 +11,9 @@ describe("승인 projection과 현재 서버 계약", () => {
         expect(currentApprovalContract("write").effect).toBe("write");
         expect(currentApprovalContract("shell").effect).toBe("execute");
         expect(currentApprovalContract("agent")).toEqual({ effect: "delegate", choices: ["approve", "deny"] });
-        expect(currentApprovalContract("mcp_call")).toEqual({ effect: "execute", choices: ["approve", "deny"] });
+        for (const name of ["mcp_call", "mcp_tools", "hook"]) {
+            expect(currentApprovalContract(name)).toEqual({ effect: null, choices: [] });
+        }
         expect(currentApprovalContract("computer")).toEqual({ effect: "execute", choices: ["approve", "deny"] });
         expect(currentApprovalContract("future-tool")).toEqual({ effect: null, choices: [] });
         expect(currentApprovalContract("__proto__")).toEqual({ effect: null, choices: [] });

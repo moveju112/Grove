@@ -11,15 +11,15 @@ export type ApprovalFailure = { kind: "expired" | "processed" | "permission" | "
 const effects: Readonly<Record<string, ApprovalEffect>> = {
     read: "read", list: "read", glob: "read", find: "read", grep: "read",
     write: "write", edit: "write", apply_patch: "write",
-    shell: "execute", mcp_call: "execute", web_fetch: "execute", computer: "execute", agent: "delegate",
-    goal: "conversation", recall: "conversation", mcp_tools: "conversation", ask_user: "conversation",
+    shell: "execute", web_fetch: "execute", computer: "execute", agent: "delegate",
+    goal: "conversation", recall: "conversation", ask_user: "conversation",
 };
 
 export function currentApprovalContract(name: string): { effect: ApprovalEffect | null; choices: readonly ApprovalDecision[] } {
     const effect = Object.hasOwn(effects, name) ? effects[name]! : null;
     return {
         effect,
-        choices: !effect || name === "ask_user" ? [] : name === "agent" || name === "mcp_call" || name === "computer"
+        choices: !effect || name === "ask_user" ? [] : name === "agent" || name === "computer"
             ? ["approve", "deny"] : ["approve", "approve_session", "deny"],
     };
 }

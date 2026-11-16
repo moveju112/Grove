@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, composerOption, ensureProjects, login, openDetails, openTool, sessionView, state, useWorkspaces } from "./helpers";
+import { apiCall, closeMobileSidebar, composerOption, ensureProjects, login, openAddProject, openDetails, openTool, sessionView, startProjectConversation, state, useWorkspaces } from "./helpers";
 
 for (const width of [1400, 390]) {
     test.describe(`PWA 생성 진입 ${width}px`, () => {
@@ -13,7 +13,9 @@ for (const width of [1400, 390]) {
             const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
             if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
             await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
+            if (width === 390) await closeMobileSidebar(page);
             const project = page.getByTestId("project-view").filter({ visible: true });
+            await startProjectConversation(project);
             await composerOption(project, "보내기 방식", "save");
             const text = `PWA 생성 초안 ${width} ${Date.now()}`;
             await project.getByLabel("메시지 입력").fill(text);
@@ -26,12 +28,14 @@ for (const width of [1400, 390]) {
             try {
                 await page.context().setOffline(true);
                 await expect(page.getByTestId("offline-banner")).toBeVisible();
-                const entry = page.getByRole("button", { name: "만들기", exact: true });
-                await expect(entry).toBeEnabled();
-                await entry.click();
-                const choose = page.getByRole("dialog", { name: "만들기", exact: true });
-                await expect(choose.getByTestId("creation-blocked")).toContainText("오프라인");
-                await choose.getByRole("button", { name: "이 프로젝트에서 새 대화" }).click();
+                await test.step("오프라인에서 프로젝트 +로 초안 입력에 복귀", async () => {
+                    const button = project.getByRole("button", { name: "새 대화", exact: true });
+                    await expect.poll(() => button.evaluate((node) => {
+                        const bounds = node.getBoundingClientRect();
+                        return node.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+                    })).toBe(true);
+                    await startProjectConversation(project);
+                });
                 await expect(project.getByLabel("메시지 입력")).toBeEnabled();
                 await expect(project.getByLabel("메시지 입력")).toHaveValue(text);
                 await project.getByLabel("메시지 입력").fill(text + " · 오프라인 수정");
@@ -40,19 +44,19 @@ for (const width of [1400, 390]) {
                 await expect(project.getByRole("button", { name: "새 터미널", exact: true })).toBeDisabled();
                 await expect(project.getByRole("button", { name: "새 터미널", exact: true })).toHaveAttribute("title", /오프라인/);
                 await page.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
-                await entry.click();
-                await choose.getByRole("button", { name: "프로젝트 추가", exact: true }).click();
-                const add = page.getByRole("dialog", { name: "프로젝트 추가", exact: true });
+                const add = await openAddProject(page);
                 await expect(add.getByTestId("project-add-blocked")).toContainText("오프라인");
                 await add.getByLabel("폴더 경로").fill("/fixture/not-sent");
                 await expect(add.getByRole("button", { name: "이 폴더를 프로젝트로 추가" })).toBeDisabled();
                 await add.getByRole("button", { name: "저장소에서 clone", exact: true }).click();
-                await add.getByLabel("clone할 저장소").fill("fixture/not-sent");
-                await add.getByLabel("clone 대상 폴더").fill("/fixture/not-sent");
-                await expect(add.getByRole("button", { name: "clone 후 프로젝트로 추가" })).toBeDisabled();
-                await page.getByRole("dialog", { name: "저장소에서 clone", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
+                const clone = page.getByRole("dialog", { name: "저장소에서 clone", exact: true });
+                await clone.getByLabel("clone할 저장소").fill("fixture/not-sent");
+                await clone.getByLabel("clone 대상 폴더").fill("/fixture/not-sent");
+                await expect(clone.getByRole("button", { name: "clone 후 프로젝트로 추가" })).toBeDisabled();
+                await clone.getByRole("button", { name: "닫기", exact: true }).click();
                 await add.getByRole("button", { name: "취소", exact: true }).click();
                 await expect(add).toHaveCount(0);
+                if (width === 390) await closeMobileSidebar(page);
                 expect(mutations).toEqual([]);
             } finally {
                 await page.context().setOffline(false);
@@ -72,6 +76,7 @@ test("대화 생성 뒤 offline 전환은 원래 생성·전송 키로만 확인
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
     const project = page.getByTestId("project-view").filter({ visible: true });
+    await startProjectConversation(project);
     await composerOption(project, "보내기 방식", "save");
     const text = `PWA 단계 사이 차단 ${Date.now()}`;
     await project.getByLabel("메시지 입력").fill(text);

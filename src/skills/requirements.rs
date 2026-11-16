@@ -104,10 +104,6 @@ pub struct Capabilities {
 impl Capabilities {
     pub fn observe(c: &Connection, session: &str, invocation: Invocation) -> ApiResult<Self> {
         let project = super::api::scope(c, session)?.0;
-        let mcp_ready: bool = c.query_row(
-            "SELECT EXISTS(SELECT 1 FROM mcp_servers m JOIN mcp_checks k ON k.server_id=m.id WHERE m.enabled=1 AND k.status='ready')",
-            [], |r| r.get(0),
-        )?;
         let mut available = BTreeMap::new();
         for spec in tools::specs() {
             let mut report = Report::default();
@@ -120,9 +116,6 @@ impl Capabilities {
             };
             if let PolicyDecision::Deny(code, message) = approvals::tool_policy(c, &project, session, &spec)? {
                 reject(code, message, Status::Blocked);
-            }
-            if matches!(spec.name, "mcp_tools" | "mcp_call") && !mcp_ready {
-                reject("skill_tool_unavailable", format!("{}: 사용 설정되고 연결 확인된 MCP 서버가 없습니다", spec.name), Status::Blocked);
             }
             if invocation.tools_enabled == Some(false) {
                 reject("skill_tools_disabled", format!("{}: 이 호출의 Grove 도구가 꺼져 있습니다", spec.name), Status::Blocked);

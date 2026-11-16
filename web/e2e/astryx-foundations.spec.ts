@@ -7,7 +7,7 @@ for (const theme of ["light", "dark"] as const) {
     test(`${theme}: Astryx 설정 카드와 선택기는 터치·키보드로 설정하고 새로고침 뒤 유지한다`, async ({ page }, info) => {
         await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
         await login(page);
-        await openSettings(page);
+        await openSettings(page, "local");
         await page.getByLabel("설정 검색").fill("Enter로");
         const group = page.getByRole("region", { name: "Enter로 보내기", exact: true });
         await expect(group).toBeVisible();

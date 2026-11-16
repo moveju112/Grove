@@ -7,6 +7,7 @@ import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import type { ReadErrorCode, SafeSettings, SourceId, SourceSettings, SourceSettingsPanelProps } from "./types";
 import type { SourceResource } from "../../api/sourceSettings";
 import { DetailDialog } from "../ui/Controls";
+import { HelpTip } from "../HelpTip";
 
 const SOURCE: Record<SourceId, { label: string; location: string }> = {
     claude_user: { label: "Claude · 사용자 원본", location: "Claude / settings.json" },
@@ -55,7 +56,9 @@ function ResourceCard({ resource }: { resource: SourceResource }) {
     const label = resource.kind === "skills" ? "스킬" : "Hook 정의";
     return <GroveStack as="section" gap={2} paddingBlockStart={4} aria-label={`${label} · ${resource.relative_path}`}>
         <Divider />
-        <GroveHeading level={4} color="inherit">{label} · <code>{resource.relative_path}</code></GroveHeading>
+        <GroveHeading level={4} color="inherit"><GroveStack as="span" direction="horizontal" align="center" gap={2}>{label}
+            <HelpTip label={`${label} 경로`}><Code color="secondary">{resource.relative_path}</Code></HelpTip>
+        </GroveStack></GroveHeading>
         {result.status === "missing" && <GroveText as="p" display="block" type="supporting" color="secondary">원본 리소스 없음</GroveText>}
         {result.status === "read_error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">리소스 읽기 실패: {result.code === "too_large" ? "리소스 크기 또는 항목 수가 조회 제한을 넘어 표시하지 않았습니다." : ERROR[result.code]}</GroveText>}
         {result.status === "unsupported_format" && <GroveText as="p" display="block" type="supporting" color="warning">Inline hook · 미지원 형식(TOML)</GroveText>}
@@ -81,8 +84,9 @@ function ResourceCard({ resource }: { resource: SourceResource }) {
 function SourceCard({ item, resources }: { item: SourceSettings; resources: readonly SourceResource[] }) {
     const source = SOURCE[item.source];
     return <Card padding={3} role="region" aria-label={source.label}><GroveStack gap={2}>
-        <GroveHeading level={3} color="inherit">{source.label}</GroveHeading>
-        <GroveText as="p" display="block" type="supporting" color="secondary">출처: {source.location}</GroveText>
+        <GroveHeading level={3} color="inherit"><GroveStack as="span" direction="horizontal" align="center" gap={2}>{source.label}
+            <HelpTip label={`${source.label} 경로`}><Code color="secondary">{source.location}</Code></HelpTip>
+        </GroveStack></GroveHeading>
         {item.status === "present" && <>
             <Projection value={item.projection} />
             {item.ignored_invalid_fields && <GroveText as="p" display="block" type="supporting" color="warning">타입이나 범위가 맞지 않는 값은 생략했습니다.</GroveText>}
@@ -96,12 +100,12 @@ function SourceCard({ item, resources }: { item: SourceSettings; resources: read
 
 /** 인증된 서버 projection만 주입한다. 이 UI는 조회 API·쓰기·적용 동작을 호출하지 않는다. */
 export function SourceSettingsPanel({ view }: SourceSettingsPanelProps) {
-    return <section aria-label="원본 Claude/Codex 설정">
+    return <GroveStack as="section" gap={3} aria-label="원본 Claude/Codex 설정">
         <GroveText as="p" display="block" type="supporting" color="secondary">읽기 전용 · Grove 적용값 아님</GroveText>
         {view.status === "loading" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">원본 출처를 확인하는 중입니다.</GroveText>}
         {view.status === "error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">원본 출처 목록을 가져오지 못했습니다.</GroveText>}
         {view.status === "ready" && (view.items.length === 0
             ? <GroveText as="p" display="block" type="supporting" color="secondary">조회 대상 없음</GroveText>
             : view.items.map((item) => <SourceCard key={item.source} item={item} resources={(view.resources ?? []).filter((resource) => resource.source === item.source)} />))}
-    </section>;
+    </GroveStack>;
 }

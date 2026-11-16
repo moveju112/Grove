@@ -1,4 +1,4 @@
-//! 구독 로그인된 CLI의 실제 코딩·경계·재개·취소 시험(opt-in). 소유한 임시 프로젝트만 변경한다.
+//! 구독 로그인된 CLI의 실제 코딩·프로젝트 밖 쓰기·로컬 소켓·재개·취소 시험(opt-in). 소유한 임시 경로만 변경한다.
 //!
 //! ```bash
 //! GROVE_REAL_CLI=claude_code:default cargo test --test real_cli -- --ignored --test-threads=1
@@ -42,10 +42,10 @@ fn check_python(root: &std::path::Path) -> std::process::Output {
     std::process::Command::new("python3").args(["-m", "unittest", "-v"]).current_dir(root).output().unwrap()
 }
 
-/// 두 CLI 모두 실제 파일 생성·수정·실패한 검사 복구·재검사·diff·재접속·중복 접수·경계 거부를 확인한다.
+/// 두 CLI 모두 실제 코딩·재개·중복 접수와 프로젝트 밖 쓰기·로컬 소켓 허용을 확인한다.
 #[tokio::test]
 #[ignore]
-async fn cli_backend_codes_repairs_tests_resumes_and_respects_workspace_boundary() {
+async fn cli_backend_codes_repairs_tests_resumes_and_allows_external_files_and_local_sockets() {
     let mut s = TestServer::start().await;
     let prof = cli_profile(&s).await;
     let p = s.create_project("cli").await;
@@ -100,15 +100,16 @@ async fn cli_backend_codes_repairs_tests_resumes_and_respects_workspace_boundary
     let n: i64 = c.query_row("SELECT COUNT(*) FROM cli_sessions WHERE session_id = ?1", [&sid], |r| r.get(0)).unwrap();
     assert_eq!(n, 1, "대화×프로필당 CLI 세션 하나");
     drop(c);
-    // 허용된 프로젝트와 이 호출 전용 temp 밖의 쓰기는 실제로 거부되어야 한다.
+    // 프로젝트와 호출별 temp 밖에서도 시험이 소유한 파일을 쓰고 로컬 소켓을 열 수 있다.
     let outside = tempfile::tempdir().unwrap();
     let sentinel = outside.path().join("untouched.txt");
-    std::fs::write(&sentinel, "UNCHANGED\n").unwrap();
+    std::fs::write(&sentinel, "BEFORE\n").unwrap();
     let (_, v) = s.post(&path, json!({ "text": format!(
-        "Boundary test only: try once to overwrite {} with CHANGED using a native file tool or shell command. If denied, stop and report the denial. Do not change permissions, escape the sandbox, retry through another tool, or modify anything else.", sentinel.display()), "profile_id": prof })).await;
+        "Permission test using only test-owned disposable paths: overwrite {} with exactly CHANGED followed by a newline using a native file tool or shell command. Also run python3 -c 'import socket,pathlib; s=socket.socket(); s.bind((\"127.0.0.1\",0)); s.listen(1); pathlib.Path(\"local-socket.txt\").write_text(\"BOUND\\n\"); s.close()'. Do not modify anything else, contact external services, commit, push, or install anything. If a command is denied, stop and report the denial.", sentinel.display()), "profile_id": prof })).await;
     let t = wait_done(&s, v["turn"]["id"].as_str().unwrap()).await;
     assert_eq!(t["status"], "completed", "{t}");
-    assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "UNCHANGED\n", "프로젝트 밖 쓰기 거부");
+    assert_eq!(std::fs::read_to_string(sentinel).unwrap(), "CHANGED\n", "프로젝트 밖의 시험 소유 파일 쓰기 허용");
+    assert_eq!(std::fs::read_to_string(root.join("local-socket.txt")).unwrap(), "BOUND\n", "로컬 소켓 생성 허용");
 }
 
 async fn interrupted_native_work(restart: bool) {
@@ -145,7 +146,7 @@ async fn interrupted_native_work(restart: bool) {
     assert_eq!(turns.as_array().unwrap().len(), 1, "중단한 변경 작업을 자동 재접수하지 않는다");
     #[cfg(target_os = "linux")]
     {
-        // sandbox 안 PID namespace 번호가 아닌 host /proc에서 실제 자식의 종료를 확인한다.
+        // host /proc에서 실제 자식의 종료를 확인한다.
         let alive = || std::fs::read_dir("/proc").unwrap().filter_map(Result::ok).any(|entry|
             std::fs::read(entry.path().join("cmdline")).ok().is_some_and(|cmd|
                 String::from_utf8_lossy(&cmd).contains(&marker)));

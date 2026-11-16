@@ -13,7 +13,7 @@ pub struct Resources {
 
 pub fn limits(c: &Connection, profile: &Profile) -> ApiResult<(usize, Resources)> {
     let read = |key: &str| -> ApiResult<usize> {
-        Ok(crate::settings::effective(c, key, None, None)?.as_u64().unwrap_or(4).max(1) as usize)
+        Ok(crate::settings::effective(c, key, None, None)?.as_u64().unwrap_or(crate::settings::DEFAULT_MODEL_CONCURRENCY).max(1) as usize)
     };
     let provider = if crate::provider::cli::is_cli(&profile.protocol) {
         format!("cli:{}", profile.protocol)

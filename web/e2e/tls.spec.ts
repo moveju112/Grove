@@ -119,8 +119,8 @@ test("실제 TLS proxy 위에서 E2EE 로그인·봉인 refresh·SSE·터미널�
         await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         const cookies = await context.cookies(tlsHost.origin + "/api/v1/auth/refresh");
         expect(cookies.some((cookie) => cookie.name.startsWith("grove_refresh_"))).toBe(false);
-        await page.getByRole("button", { name: "만들기", exact: true }).click();
-        await page.getByRole("button", { name: "프로젝트 추가", exact: true }).click();
+        await page.getByRole("button", { name: "프로젝트·폴더 추가", exact: true }).click();
+        await page.getByRole("menuitem", { name: "프로젝트 추가", exact: true }).click();
         await page.getByLabel("폴더 경로", { exact: true }).fill(tlsHost.project);
         await page.getByRole("button", { name: "이 폴더를 프로젝트로 추가" }).click();
         await page.getByTestId("project-row").getByRole("button", { name: tlsHost.name, exact: true }).click();

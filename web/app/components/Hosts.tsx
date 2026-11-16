@@ -34,6 +34,7 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
     const [alias, setAlias] = useState("");
     const [address, setAddress] = useState("");
     const [error, setError] = useState<string | null>(null);
+    const [original, setOriginal] = useState({ alias: "", address: "" });
     useEffect(() => {
         const changed = (e: StorageEvent) => {
             if (e.key === HOSTS_KEY || e.key === null) setHosts(loadHosts(localStorage));
@@ -52,6 +53,7 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
         setEditing(host.origin);
         setAlias(host.alias);
         setAddress(host.origin);
+        setOriginal({ alias: host.alias, address: host.origin });
         setError(null);
     };
     const change = (operation: () => Host[]) => {
@@ -65,6 +67,14 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
         }
     };
     const close = onClose;
+    const commitEdit = () => {
+        if (!editing || (alias === original.alias && address === original.address)) return true;
+        if (!change(() => saveHost(localStorage, address, alias, editing))) return false;
+        const origin = new URL(address).origin;
+        setEditing(origin);
+        setOriginal({ alias, address });
+        return true;
+    };
     return (
         <CreationDialog label="호스트 관리" onClose={close}>
             <GroveHeading level={2} color="inherit">호스트</GroveHeading>
@@ -94,14 +104,15 @@ function HostsDialog({ onClose }: { onClose: () => void }) {
             {hosts.length === 0 && <GroveText as="p" display="block" type="inherit" color="secondary">등록한 호스트가 없습니다.</GroveText>}
             <form aria-label={editing ? "호스트 수정" : "호스트 추가"} onSubmit={(e) => {
                 e.preventDefault();
-                if (change(() => saveHost(localStorage, address, alias, editing))) reset();
+                if (editing) commitEdit();
+                else if (change(() => saveHost(localStorage, address, alias))) reset();
             }}>
-                <TextInput label="별명" value={alias} maxLength={80} isRequired onChange={setAlias} autoComplete="off" />
-                <TextInput label="서버 주소" type="url" value={address} isRequired onChange={setAddress} placeholder="https://grove.example.com" autoComplete="off" hasSpellCheck={false} />
+                <TextInput label="별명" value={alias} maxLength={80} isRequired onChange={setAlias} onBlur={() => { if (editing) commitEdit(); }} autoComplete="off" />
+                <TextInput label="서버 주소" type="url" value={address} isRequired onChange={setAddress} onBlur={() => { if (editing) commitEdit(); }} placeholder="https://grove.example.com" autoComplete="off" hasSpellCheck={false} />
                 <GroveText as="p" display="block" type="supporting" color="secondary"><SentenceText text="서버 주소만 입력하고 비밀번호·토큰·페어링 링크는 넣지 마세요." /></GroveText>
                 <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
-                    <GroveButton type="submit">{editing ? "변경 저장" : "호스트 추가"}</GroveButton>
-                    {editing && <GroveButton type="button" variant="secondary" onClick={reset}>수정 취소</GroveButton>}
+                    {!editing && <GroveButton type="submit">호스트 추가</GroveButton>}
+                    {editing && <GroveButton type="button" variant="secondary" onClick={() => { if (commitEdit()) reset(); }}>수정 마치기</GroveButton>}
                 </GroveStack>
             </form>
             {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}

@@ -5,7 +5,6 @@ import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { DetailDialog } from "./ui/Controls";
-import { BooleanSelect } from "./BooleanSelect";
 import { ApiError, api } from "../api/client";
 import type { Project } from "../api/generated";
 import { CreationDialog } from "./create/CreationDialog";
@@ -16,14 +15,12 @@ import { Select } from "../design/Select";
 
 type Dirs = { path: string; parent: string | null; entries: { name: string; path: string }[]; truncated: boolean };
 
-/// 프로젝트 추가(PROJECT-001): 서버 PC의 폴더를 둘러보거나 경로를 입력해 등록하고, 없으면 새 폴더로 만든다.
+/// 프로젝트 추가(PROJECT-001): 서버 PC의 기존 폴더를 둘러보거나 경로를 입력해 등록한다.
 export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutation }: {
     onDone: (p: Project) => void; onClose: () => void; blockedReason?: string | null; beforeMutation?: () => void;
 }) {
     const [path, setPath] = useState("");
     const [dirs, setDirs] = useState<Dirs | null>(null);
-    const [hidden, setHidden] = useState(false);
-    const [create, setCreate] = useState(false);
     const [err, setErr] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const [creation] = useState(() => new ProjectCreation());
@@ -34,7 +31,7 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
     // 늦게 도착한 이전 요청의 응답이 최근 이동을 덮어쓰지 않게 마지막 요청만 반영한다.
     const seq = useRef(0);
 
-    /// `fill`이 거짓이면 목록만 바꾸고 경로 칸은 건드리지 않는다(처음 열 때·숨김 전환).
+    /// `fill`이 거짓이면 목록만 바꾸고 경로 칸은 건드리지 않는다(처음 열 때).
     /// 사용자가 입력하는 도중에 응답이 와서 칸 내용이 바뀌는 일을 막는다.
     const browse = async (p?: string, fill = true) => {
         const my = ++seq.current;
@@ -42,7 +39,6 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
         try {
             const q = new URLSearchParams();
             if (p) q.set("path", p);
-            if (hidden) q.set("hidden", "true");
             const d = await api.get<Dirs>(`/fs/dirs?${q}`);
             if (my !== seq.current) return;
             setDirs(d);
@@ -66,11 +62,11 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
         }, 250);
         return () => clearTimeout(t);
     }, [path, dirs?.path]);
-    // 처음 열면 서버 사용자의 홈 폴더를 보여 준다. 숨김 표시를 바꾸면 같은 폴더를 다시 읽는다.
+    // 처음 열면 서버 사용자의 홈 폴더를 보여 준다.
     useEffect(() => {
         void browse(dirs?.path, false);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [hidden]);
+    }, []);
 
     const submit = async (endpoint: "/projects" | "/projects/clone", body: Record<string, unknown>) => {
         if (creation.busy) return;
@@ -88,7 +84,19 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
     };
 
     return (
-        <CreationDialog label="프로젝트 추가" onClose={close} busy={busy}>
+        <CreationDialog label="프로젝트 추가" onClose={close} busy={busy} footer={
+            <DisabledGroup disabled={busy || unresolved}>
+                <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
+                    <GroveButton disabled={!path.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void submit("/projects", { root_path: path.trim() })}>
+                        이 폴더를 프로젝트로 추가
+                    </GroveButton>
+                    <GroveButton variant="secondary" onClick={close}>취소</GroveButton>
+                </GroveStack>
+                <DetailDialog label="저장소에서 clone" title="저장소에서 clone">
+                    <CloneRepo target={dirs?.path ?? ""} blockedReason={blockedReason} onCreate={(body) => submit("/projects/clone", body)} />
+                </DetailDialog>
+            </DisabledGroup>
+        }>
                 <GroveHeading level={2} color="inherit">프로젝트 추가</GroveHeading>
                 {blockedReason && <GroveText as="p" display="block" type="inherit" color="warning" role="status" data-testid="project-add-blocked">{blockedReason} 경로 입력·복사·취소는 계속 사용할 수 있습니다.</GroveText>}
                 {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
@@ -122,7 +130,6 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
                     <GroveButton variant="secondary" density="compact" disabled={!dirs?.parent} onClick={() => dirs?.parent && void browse(dirs.parent)}>
                         상위 폴더
                     </GroveButton>
-                    <BooleanSelect label="숨김 폴더 표시" value={hidden} onChange={setHidden} />
                 </GroveStack>
                 {dirs && (
                     <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="dir-current">
@@ -142,18 +149,6 @@ export function AddProjectDialog({ onDone, onClose, blockedReason, beforeMutatio
                         {dirs.truncated && <GroveListItem label={<GroveText type="supporting" color="secondary">폴더가 많아 일부만 표시합니다. 경로를 직접 입력하세요</GroveText>} />}
                     </GroveList>
                 )}
-                <BooleanSelect label="폴더가 없으면 마지막 폴더를 새로 만들기" value={create} onChange={setCreate} />
-                <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
-                    <GroveButton disabled={!path.trim() || !!blockedReason} title={blockedReason ?? undefined} onClick={() => void submit("/projects", { root_path: path.trim(), create })}>
-                        이 폴더를 프로젝트로 추가
-                    </GroveButton>
-                    <GroveButton variant="secondary" onClick={close}>
-                        취소
-                    </GroveButton>
-                </GroveStack>
-                <DetailDialog label="저장소에서 clone" title="저장소에서 clone">
-                    <CloneRepo target={dirs?.path ?? ""} blockedReason={blockedReason} onCreate={(body) => submit("/projects/clone", body)} />
-                </DetailDialog>
                 </DisabledGroup>
         </CreationDialog>
     );

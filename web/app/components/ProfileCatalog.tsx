@@ -7,6 +7,7 @@ import { api } from "../api/client";
 import type { ModelCatalog, ModelProfile } from "../api/generated";
 import { useCapability } from "../state/capabilities";
 import { useServerBlockReason } from "./pwa/lifecycle";
+import { sortModels } from "./model-catalog";
 
 export function ProfileCatalog({ profile, onChoose }: { profile: ModelProfile; onChoose: (model: string, revision: number) => void }) {
     const serverBlocked = useServerBlockReason();
@@ -56,7 +57,7 @@ export function ProfileCatalog({ profile, onChoose }: { profile: ModelProfile; o
                     disabled={busy || stale || error !== null || !!serverBlocked} disabledMessage={serverBlocked ?? undefined}
                     onChange={(value) => { if (value) onChoose(value, catalog.profile_revision); }}
                     options={[{ value: "", label: "모델을 선택하세요(수동 입력도 가능)" },
-                        ...catalog.models.map((model) => ({ value: model.id, label: `${model.name} · ${model.id}` }))]} />
+                        ...sortModels(catalog.models).map((model) => ({ value: model.id, label: `${model.name} · ${model.id}` }))]} />
                 <GroveText type="inherit" color="secondary"> {catalog.models.length}개 · <When at={catalog.fetched_at} /> 조회</GroveText>
                 {catalog.models.length === 0 && <GroveText type="inherit" color="secondary"> 조회된 모델 없음 · 수동 입력 가능</GroveText>}
                 {stale && <GroveText as="p" display="block" type="inherit" color="warning" role="status">프로필이 변경됐으니 목록을 다시 조회하세요.</GroveText>}

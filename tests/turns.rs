@@ -946,7 +946,7 @@ async fn approval_expires() {
     let dir = tempfile::tempdir().unwrap();
     let mut cfg = config(&dir.path().join("data"));
     cfg.approval_ttl_secs = 1;
-    let s = TestServer::start_with(dir, cfg).await;
+    let s = TestServer::start_with_restricted_permissions(dir, cfg).await;
     let p = s.create_project("p").await;
     let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
     let (_, c) = s.post(&format!("/api/v1/sessions/{sid}/tool-requests"), json!({ "name": "write", "args": { "path": "x", "content": "y" } })).await;

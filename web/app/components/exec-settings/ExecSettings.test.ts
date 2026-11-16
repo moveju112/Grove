@@ -8,11 +8,6 @@ const { query } = vi.hoisted(() => ({ query: vi.fn() }));
 vi.mock("../../state/store", async (original) => ({
     ...await original<typeof import("../../state/store")>(), useQuery: query,
 }));
-vi.mock("../SettingsReset", () => ({
-    SettingsResetButton: () => null,
-    APPLIES: { next_turn: "다음 요청부터 적용" },
-    SCOPE_LABEL: { default: "기본값", server: "서버 전체", project: "이 프로젝트", session: "이 대화" },
-}));
 afterEach(() => vi.clearAllMocks());
 
 const shell: ExecSettingDef = {

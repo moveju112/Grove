@@ -2,14 +2,15 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import type { Layout } from "../app/state/layout";
 import { frames } from "./fixture";
-import { activateMobileTab, apiCall, closeMobileSidebar, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { activateMobileTab, apiCall, closeMobileSidebar, ensureProfile, ensureProjects, login, requireToolApproval, script } from "./helpers";
 
-async function setup(page: Page) {
+async function setup(page: Page, crossProject = false) {
     const { a, b } = await ensureProjects();
     const device = `nav-${randomUUID()}`;
     const title = `동일 제목 ${device}`;
     const left = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title });
-    const right = await apiCall<{ id: string; title: string }>("POST", `/projects/${b.id}/sessions`, { title });
+    const rightProject = crossProject ? b : a;
+    const right = await apiCall<{ id: string; title: string }>("POST", `/projects/${rightProject.id}/sessions`, { title });
     const layout: Layout = { schema: 1, focused_leaf: "left", root: {
         type: "split", direction: "row", ratio: 0.6, children: [
             { type: "leaf", id: "left", active_tab: "left-session", tabs: [
@@ -17,7 +18,7 @@ async function setup(page: Page) {
                 { id: "left-project", kind: "project", project_id: a.id, resource_id: a.id, title: a.name },
             ] },
             { type: "leaf", id: "right", active_tab: "right-session", tabs: [
-                { id: "right-session", kind: "session", project_id: b.id, resource_id: right.id, title: "이전 제목" },
+                { id: "right-session", kind: "session", project_id: rightProject.id, resource_id: right.id, title: "오른쪽 이전 제목" },
             ] },
         ],
     } };
@@ -34,16 +35,16 @@ async function setup(page: Page) {
 }
 
 test("현재 위치 설명은 호버로 표시하고 조작·배치를 늘리지 않은 채 Escape로 닫는다", async ({ page }) => {
-    const { left } = await setup(page);
+    const { a, left } = await setup(page);
     await login(page);
     const nav = page.getByRole("navigation", { name: "현재 위치", exact: true });
     await expect(nav).toHaveAttribute("data-session-id", left.id);
-    const current = nav.locator('[aria-current="page"]');
+    const current = nav.getByRole("button", { name: `프로젝트: ${a.name} (${a.id}) 대화 목록으로`, exact: true });
     const before = await current.boundingBox();
     const actions = await nav.getByRole("button").count();
     await current.hover();
     const tip = page.getByRole("tooltip");
-    await expect(tip).toContainText(left.id);
+    await expect(tip).toContainText(a.id);
     await page.keyboard.press("Escape");
     await expect(tip).toBeHidden();
     expect(await current.boundingBox()).toEqual(before);
@@ -51,7 +52,8 @@ test("현재 위치 설명은 호버로 표시하고 조작·배치를 늘리지
 });
 
 test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작업을 유지하고 세션을 만들지 않는다", async ({ page }) => {
-    const { a, b, left, right, title } = await setup(page);
+    const { a, left, right, title } = await setup(page);
+    await requireToolApproval(a.id);
     const profile = await ensureProfile();
     await login(page);
     const nav = page.getByRole("navigation", { name: "현재 위치", exact: true });
@@ -62,7 +64,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
     await expect(nav).toHaveAttribute("data-project-id", a.id);
     await leftPane.getByLabel("메시지 입력").fill("왼쪽 초안");
     await rightPane.getByLabel("메시지 입력").fill("오른쪽 초안");
-    await expect(nav).toHaveAttribute("data-project-id", b.id);
+    await expect(nav).toHaveAttribute("data-project-id", a.id);
     await expect(nav).toHaveAttribute("data-session-id", right.id);
     // 키보드 포커스만 옮겨도 현재 위치는 해당 pane을 따른다.
     await leftPane.getByLabel("메시지 입력").focus();
@@ -73,7 +75,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
     try {
         await expect(leftPane.getByTestId("approval")).toBeVisible();
         const rightInput = await rightPane.getByLabel("메시지 입력").elementHandle();
-        const tabs = await page.getByRole("tablist").getByRole("tab").count();
+        const tabs = await page.getByRole("tablist", { name: "열린 대화와 화면" }).getByRole("tab").count();
         const mutations: string[] = [];
         page.on("request", (request) => {
             if (request.method() !== "GET" && /\/(?:sessions|turns)(?:\/[^/?]+)?(?:\/cancel)?$/.test(request.url())) {
@@ -86,7 +88,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
         await parent.press("Enter");
         await expect(nav.locator('[aria-current="page"]')).toHaveText(a.name);
         await expect(nav).not.toHaveAttribute("data-session-id");
-        await expect(page.getByRole("tablist").getByRole("tab")).toHaveCount(tabs);
+        await expect(page.getByRole("tablist", { name: "열린 대화와 화면" }).getByRole("tab")).toHaveCount(tabs);
         await expect(rightPane.getByLabel("메시지 입력")).toHaveValue("오른쪽 초안");
         expect(await rightInput!.evaluate((node) => node.isConnected)).toBe(true);
         expect((await apiCall<{ status: string }>("GET", `/turns/${accepted.turn.id}`)).status).toBe("awaiting_approval");
@@ -95,13 +97,16 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
         await expect(leftPane.getByLabel("메시지 입력")).toHaveValue("왼쪽 초안");
         await expect(leftPane.getByTestId("approval")).toBeVisible();
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-        await expect(nav.locator('[aria-current="page"]')).toHaveText("설정");
-        await expect(nav).not.toHaveAttribute("data-project-id");
-        await expect(nav).not.toHaveAttribute("data-session-id");
-        // 프로젝트 탐색은 기존 sidebar만 열고 현재 작업을 바꾸지 않는다.
-        await nav.getByRole("button", { name: "프로젝트 탐색", exact: true }).click();
+        await expect(page.getByRole("dialog", { name: "설정", exact: true })).toBeVisible();
+        await expect(nav).toHaveAttribute("data-project-id", a.id);
+        await expect(nav).toHaveAttribute("data-session-id", left.id);
+        await expect(page.getByRole("tablist", { name: "열린 대화와 화면" }).getByRole("tab")).toHaveCount(tabs);
+        await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
+        // 설정 창과 프로젝트 탐색은 현재 작업을 바꾸지 않는다.
+        await page.getByRole("button", { name: "사이드바", exact: true }).click();
+        await page.getByRole("button", { name: "사이드바", exact: true }).click();
         await expect(page.getByRole("button", { name: "사이드바", exact: true })).toHaveAttribute("aria-expanded", "true");
-        await expect(nav.locator('[aria-current="page"]')).toHaveText("설정");
+        await expect(nav).toHaveAttribute("data-session-id", left.id);
         expect(mutations).toEqual([]);
     } finally {
         await apiCall("POST", `/turns/${accepted.turn.id}/cancel`, {});
@@ -109,7 +114,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
 });
 
 test("다른 프로젝트로 이동한 뒤 도착한 세션 응답은 현재 위치를 되돌리지 않는다", async ({ page }) => {
-    const { b, left, right } = await setup(page);
+    const { b, left, right } = await setup(page, true);
     let release!: () => void;
     let fetched!: () => void;
     const ready = new Promise<void>((resolve) => { fetched = resolve; });
@@ -124,10 +129,10 @@ test("다른 프로젝트로 이동한 뒤 도착한 세션 응답은 현재 위
         await login(page);
         await ready;
         const nav = page.getByRole("navigation", { name: "현재 위치", exact: true });
-        await page.locator('[data-layout-mode="wide"] [data-leaf="right"]').getByLabel("메시지 입력").focus();
+        await page.getByTestId("project-row").getByRole("button", { name: b.name, exact: true }).click();
         await expect(nav).toHaveAttribute("data-session-id", right.id);
         release();
-        await expect(page.locator(`[data-session="${left.id}"][data-testid="session-view"]`)).toBeVisible();
+        await expect(page.locator(`[data-session="${left.id}"][data-testid="session-view"]`)).toBeHidden();
         await expect(nav).toHaveAttribute("data-project-id", b.id);
         await expect(nav).toHaveAttribute("data-session-id", right.id);
     } finally {
@@ -158,10 +163,13 @@ test("긴 이름·좁은 화면에서도 한 줄 위치·부모 탐색·폭별 �
     await activateMobileTab(page, "이전 제목");
     await expect(narrowInput).toHaveValue("좁은 화면 초안");
     const selectSession = async (id: string) => {
+        await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: id });
         await page.getByRole("button", { name: "사이드바", exact: true }).click();
         const drawer = page.getByTestId("mobile-drawer-left");
-        await drawer.locator(`[data-testid="sidebar-session"][data-session="${id}"]`).getByRole("button").first().click();
+        await drawer.getByRole("region", { name: "최근", exact: true }).getByTestId("recent-item")
+            .getByRole("button", { name: new RegExp(`^${id === left.id ? longTitle : right.title}`) }).click();
         await expect(drawer).toHaveJSProperty("open", false);
+        await expect(nav).toHaveAttribute("data-session-id", id);
     };
     await selectSession(right.id);
     await expect(nav).toHaveAttribute("data-session-id", right.id);

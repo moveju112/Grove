@@ -36,6 +36,38 @@ async fn cancel(s: &TestServer, turn: &str) {
 }
 
 #[tokio::test]
+async fn defaults_allow_ten_concurrent_calls_and_queue_the_eleventh() {
+    let s = TestServer::start().await;
+    let (status, registry) = s.get("/api/v1/settings/registry").await;
+    assert_eq!(status, StatusCode::OK);
+    for key in ["runs.max_active", "runs.provider_max_active", "runs.account_max_active"] {
+        let setting = registry.as_array().unwrap().iter().find(|setting| setting["key"] == key).unwrap();
+        assert_eq!(setting["default"], 10, "{key}");
+    }
+    let f = Fixture::start().await;
+    let p = profile(&s, &f, "synthetic-default-account").await;
+    let project = s.create_project("default-limits").await["id"].as_str().unwrap().to_string();
+    let mut active = Vec::new();
+    for index in 0..10 {
+        let marker = format!("MARK_HOLD_{index}_");
+        f.push_for(&marker, fixture::Step::Hang(vec![]));
+        let (_, id) = turn(&s, &project, &p, &marker).await;
+        s.wait_turn(&id, |_| f.requests().len() == index + 1).await;
+        active.push(id);
+    }
+    assert_eq!(s.server.as_ref().unwrap().app.fair.counts(), (10, 0));
+    let (_, queued) = turn(&s, &project, &p, "MARK_ELEVENTH").await;
+    let waiting = s.wait_turn(&queued, |turn| turn["queue"]["limit"] == 10).await;
+    assert_eq!(waiting["queue"]["active"], 10);
+    assert_eq!(f.requests().len(), 10);
+    cancel(&s, &queued).await;
+    for id in active {
+        cancel(&s, &id).await;
+    }
+    assert_eq!(s.server.as_ref().unwrap().app.fair.counts(), (0, 0));
+}
+
+#[tokio::test]
 async fn profiles_with_identical_credentials_share_accounts_without_blocking_other_accounts() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;

@@ -39,11 +39,12 @@ test("요구 선언·명시적 의존 선택·실제 호출 capability·응답 �
         await expect(row("blocked")).toContainText("skill_tool_unregistered");
         await expect(row("review")).toContainText("skill_dependency_unselected");
         await row("review").getByRole("button", { name: /본문 보기/ }).click();
-        await expect(panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" })).toBeDisabled();
+        await expect(panel.getByRole("button", { name: "이 스킬 사용" })).toBeDisabled();
         expect((await snapshot()).selected).toHaveLength(0);
         await row("base").getByRole("button", { name: /본문 보기/ }).click();
-        await panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
+        await panel.getByRole("button", { name: "이 스킬 사용" }).click();
         await expect(row("base")).toContainText("선택됨");
+        await panel.getByRole("button", { name: "검증 조건", exact: true }).click();
         await selectChoice(panel.getByLabel("검증할 모델"), profile.id);
         await expect(panel.getByRole("combobox", { name: "검증할 도구 사용", exact: true })).toBeEnabled();
         await selectChoice(panel.getByLabel("검증할 도구 사용"), "false");
@@ -57,7 +58,7 @@ test("요구 선언·명시적 의존 선택·실제 호출 capability·응답 �
             if (keys.length === 1) { await route.fetch(); await route.abort(); }
             else await route.continue();
         });
-        await panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
+        await panel.getByRole("button", { name: "이 스킬 사용" }).click();
         await panel.getByRole("button", { name: "같은 요청 결과 확인" }).click();
         await expect(row("review")).toContainText("선택됨");
         expect(keys).toHaveLength(2);
@@ -102,7 +103,7 @@ test("요구 선언·명시적 의존 선택·실제 호출 capability·응답 �
         const currentReview = restored.getByRole("list", { name: "스킬 목록", exact: true }).locator(":scope > li")
             .filter({ has: page.getByText("review", { exact: true }) });
         await currentReview.getByRole("button", { name: /본문 보기/ }).click();
-        await restored.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
+        await restored.getByRole("button", { name: "이 스킬 사용" }).click();
         await expect(currentReview).toContainText("선택됨");
         const recovered = (await snapshot()).selected;
         expect(recovered).toHaveLength(2);
@@ -152,7 +153,7 @@ test("의존 스킬 해제는 기존 binding을 보존하고 다른 세션에는
         const other = sessionView(page, second.id).getByTestId("session-skills");
         await expect(other).toContainText("skill_dependency_unselected");
         expect((await apiCall<SessionSkills>("GET", `/sessions/${second.id}/skills`)).selected).toEqual([]);
-        await expect(other).not.toContainText("선택됨 · 다음 모델 호출 직전 재검증");
+        await expect(other).not.toContainText("선택됨");
     } finally {
         rmSync(root, { recursive: true });
     }

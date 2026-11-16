@@ -18,8 +18,8 @@ async function openTerminal(page: Page) {
     const terminal = await apiCall<{ id: string }>("POST", `/projects/${a.id}/terminals`, { name });
     await login(page);
     await test.step("배치 복원 완료 뒤 프로젝트 열기", async () => {
-        // SSE 연결만으로는 폭별 배치 복원이 끝난 것이 아니다. 준비 전 탐색 클릭은 탭을 열지 못한다.
-        await expect(page.getByRole("button", { name: "만들기", exact: true })).toBeEnabled();
+        // 프로젝트 목록이 준비된 뒤 탐색한다. 전역 추가 메뉴는 배치 준비 여부와 무관하다.
+        await expect(page.getByTestId("projects")).toBeAttached();
         const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
         if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
         await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();

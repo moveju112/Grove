@@ -74,8 +74,13 @@ async fn approval_barriers_preserve_order_and_denial_does_not_block_later_author
 
 #[tokio::test]
 async fn queued_tools_revalidate_revoked_permissions_and_turn_cancellation_before_starting() {
-    for mode in ["read_only","revoke","cancel"] {
-        let (s,f,profile,sid,project) = setup(true).await;
+    for mode in ["read_only","revoke","cancel","full_access","full_access_with_allow"] {
+        let (s,f,profile,sid,project) = setup(mode!="full_access").await;
+        if mode.starts_with("full_access") {
+            let (st,body) = s.send(Method::PUT,&format!("/api/v1/settings/project/{}/tools.full_access",project["id"].as_str().unwrap()),
+                json!({"expected_revision":0,"value":true})).await;
+            assert_eq!(st,StatusCode::OK,"{body}");
+        }
         let root = std::path::Path::new(project["root_path"].as_str().unwrap());
         f.push(fixture::tool_calls(&[
             ("first","shell",json!({"command":"while [ ! -f release ]; do sleep 0.02; done; printf first","timeout_ms":10000})),
@@ -88,7 +93,9 @@ async fn queued_tools_revalidate_revoked_permissions_and_turn_cancellation_befor
         if mode=="cancel" {
             s.post(&format!("/api/v1/turns/{tid}/cancel"),json!({})).await;
         } else {
-            let (key,revision,value) = if mode=="read_only" { ("tools.mode",0,"read_only") } else { ("tools.allow",1,"") };
+            let (key,revision,value) = if mode=="read_only" { ("tools.mode",0,json!("read_only")) }
+                else if mode.starts_with("full_access") { ("tools.full_access",1,json!(false)) }
+                else { ("tools.allow",1,json!("")) };
             let (st,body) = s.send(Method::PUT,&format!("/api/v1/settings/project/{}/{key}",project["id"].as_str().unwrap()),
                 json!({"expected_revision":revision,"value":value})).await;
             assert_eq!(st,StatusCode::OK,"{body}");

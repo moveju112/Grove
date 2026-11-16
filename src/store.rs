@@ -1039,11 +1039,39 @@ pub const MIGRATIONS: &[&str] = &[
         PRIMARY KEY(bot_id,server_id)
     );
     "#,
+    // 사이드바 정리용 폴더. 삭제해도 실제 파일·프로젝트·대화는 남는다.
+    r#"
+    CREATE TABLE project_folders (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        name_key TEXT NOT NULL UNIQUE,
+        revision INTEGER NOT NULL DEFAULT 1,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+    );
+    ALTER TABLE projects ADD COLUMN folder_id TEXT REFERENCES project_folders(id) ON DELETE SET NULL;
+    CREATE INDEX projects_folder ON projects(folder_id);
+    "#,
 ];
 
 #[cfg(test)]
 mod tests {
     const MIGRATIONS_1_5_SHA16: &str = "40371687b4936aac";
+
+    #[test]
+    fn project_folder_migration_preserves_existing_projects_and_folder_deletion_keeps_them() {
+        let conn = rusqlite::Connection::open_in_memory().unwrap();
+        conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        for migration in &super::MIGRATIONS[..super::MIGRATIONS.len() - 1] { conn.execute_batch(migration).unwrap(); }
+        conn.execute_batch("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','Original','/fixture/project','2026-01-01','2026-01-01');").unwrap();
+        conn.execute_batch(super::MIGRATIONS.last().unwrap()).unwrap();
+        assert_eq!(conn.query_row("SELECT folder_id FROM projects WHERE id='p'", [], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
+        conn.execute_batch("INSERT INTO project_folders(id,name,name_key,created_at,updated_at) VALUES('f','Folder','folder','2026-01-01','2026-01-01');
+            UPDATE projects SET folder_id='f' WHERE id='p'; DELETE FROM project_folders WHERE id='f';").unwrap();
+        let project = conn.query_row("SELECT name,root_path,folder_id FROM projects WHERE id='p'", [], |r| Ok((r.get::<_, String>(0)?,r.get::<_, String>(1)?,r.get::<_, Option<String>>(2)?))).unwrap();
+        assert_eq!(project, ("Original".into(), "/fixture/project".into(), None));
+        assert!(conn.prepare("PRAGMA foreign_key_check").unwrap().query([]).unwrap().next().unwrap().is_none());
+    }
 
     #[test]
     fn provider_timing_migration_does_not_invent_measurements_for_old_turns() {

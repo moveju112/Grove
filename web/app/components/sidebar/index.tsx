@@ -75,8 +75,19 @@ export function SessionRow({ item, open, narrow }: { item: SidebarSession; open:
 }
 
 /// children은 Workspace의 기존 프로젝트 메뉴·라벨·분할 열기다. 최근 탭의 렌더링은 바꾸지 않는다.
-export function SidebarProject({ project, children, open, narrow, onCreate }: {
-    project: Project; children: ReactNode; open: Opener; narrow: boolean; onCreate: () => void;
+export function SidebarProject({ project, children, open, narrow }: {
+    project: Project; children: ReactNode; open: Opener; narrow: boolean;
+}) {
+    if (project.workspace_mode !== "project") {
+        return <GroveStack as="section" gap={0} aria-label={`${project.name} 탐색`} data-testid="sidebar-project" data-project-id={project.id}>
+            {children}
+        </GroveStack>;
+    }
+    return <ProjectWorkspaceTree project={project} open={open} narrow={narrow}>{children}</ProjectWorkspaceTree>;
+}
+
+function ProjectWorkspaceTree({ project, children, open, narrow }: {
+    project: Project; children: ReactNode; open: Opener; narrow: boolean;
 }) {
     const [expanded, setExpanded] = useState(true);
     const [unreadOnly, setUnreadOnly] = useState(false);
@@ -89,9 +100,8 @@ export function SidebarProject({ project, children, open, narrow, onCreate }: {
     const data = page.data;
     const unread = data?.unread ?? 0;
     const status = data ? projectStatus(data.statuses) : null;
-    const projectMode = project.workspace_mode === "project";
-    const spaces = useWorkspaces(project.id, projectMode);
-    const groups = projectMode ? groupByWorkspace(data?.items ?? [], spaces) : [];
+    const spaces = useWorkspaces(project.id, true);
+    const groups = groupByWorkspace(data?.items ?? [], spaces);
     return <GroveStack as="section" gap={0} aria-label={`${project.name} 탐색`} data-testid="sidebar-project" data-project-id={project.id}>
         <GroveStack direction="horizontal" align="center" gap={0}>
         <StackItem size="fill">{children}</StackItem>
@@ -101,7 +111,6 @@ export function SidebarProject({ project, children, open, narrow, onCreate }: {
                 {data && <GroveText hasTabularNumbers type="supporting" color="secondary">{data.total}</GroveText>}<GroveText type="inherit" color="inherit" aria-hidden="true">⌄</GroveText>
             </>}>
         <GroveStack gap={1} role="toolbar" aria-label={`${project.name} 도구`} onKeyDown={toolbarKeys}>
-            <GroveButton type="button" appearance="navigation" disabled={!project.available} onClick={onCreate} aria-label="새 대화" title="새 대화"><Icon name="edit" />새 대화</GroveButton>
             <GroveButton type="button" appearance="navigation" aria-expanded={expanded} aria-controls={listId}
                 aria-label={`대화 ${expanded ? "접기" : "펼치기"}${data ? ` (${data.total})` : ""}`} title={expanded ? "대화 접기" : "대화 펼치기"}
                 onClick={() => setExpanded((v) => !v)}>
@@ -121,22 +130,15 @@ export function SidebarProject({ project, children, open, narrow, onCreate }: {
         {Boolean(page.error) && <GroveText as="p" display="block" type="supporting" color="error" role="alert">대화 목록을 불러오지 못했습니다. 목록 새로고침으로 다시 시도하세요.</GroveText>}
         {!data && page.loading && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">대화 불러오는 중…</GroveText>}
         <GroveStack gap={0} paddingInlineStart={3} id={listId} hidden={!expanded}>
-            {projectMode ? (
-                // 프로젝트 모드: 프로젝트 → 워크스페이스 → 대화. 프로젝트 폴더가 기본 워크스페이스다.
-                groups.map((g) => (
+            {/* 프로젝트 모드: 프로젝트 → 워크스페이스 → 대화. */}
+            {groups.map((g) => (
                     <GroveStack as="section" gap={0} paddingInlineStart={2} key={g.id ?? "root"} aria-label={`워크스페이스 ${g.name}`} data-testid="sidebar-workspace" data-worktree={g.id ?? ""}>
                         <Heading level={3} type="navigation" color="secondary">{g.name}</Heading>
                         <List density="compact" edge="flush">
                             {g.items.map((item) => <SessionRow key={item.session.id} item={item} open={open} narrow={narrow} />)}
                         </List>
                     </GroveStack>
-                ))
-            ) : (
-                // 단일 모드: 프로젝트 → 대화
-                <List density="compact" edge="flush">
-                    {data?.items.map((item) => <SessionRow key={item.session.id} item={item} open={open} narrow={narrow} />)}
-                </List>
-            )}
+                ))}
             {data?.items.length === 0 && unreadOnly && <GroveText as="p" display="block" type="supporting" color="secondary">읽지 않은 대화가 없습니다.</GroveText>}
             <GroveStack gap={1} direction="horizontal" align="center" wrap="wrap" role="group" aria-label="대화 페이지">
                 {offset > 0 && <GroveButton type="button" variant="secondary" density="compact" onClick={() => setOffset(Math.max(0, offset - 30))}>이전 대화</GroveButton>}

@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice, startProjectConversation, state } from "./helpers";
 import { frames } from "./fixture";
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
 
@@ -8,6 +8,7 @@ test("첨부 업로드와 전송 응답 유실 뒤 같은 요청으로 원문을
     await login(page);
     await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
     const project = page.getByTestId("project-view");
+    await startProjectConversation(project);
     const name = `attachment-${Date.now()}.html`;
     const content = "<script>alert('fixture')</script> 원문";
     const uploadKeys: string[] = [];
@@ -72,6 +73,7 @@ test("붙여넣기·드롭 첨부 초안을 복원하고 이미지를 모델로 
     await login(page);
     await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
     const project = page.getByTestId("project-view");
+    await startProjectConversation(project);
     const input = project.getByLabel("메시지 입력");
     await input.evaluate((el, data) => {
         const dt = new DataTransfer();
@@ -83,6 +85,7 @@ test("붙여넣기·드롭 첨부 초안을 복원하고 이미지를 모델로 
     await page.keyboard.press("Escape");
     await expect(page.getByRole("tooltip")).toBeHidden();
     await page.reload();
+    await startProjectConversation(project);
     await expect(project.getByTestId("attachment-card")).toContainText("clipboard.png");
     await input.evaluate((el) => {
         const dt = new DataTransfer(); dt.items.add(new File(["dropped text"], "drop.txt", { type: "text/plain" }));

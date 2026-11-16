@@ -1,6 +1,5 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
-import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
 import type { SkillMutation, SkillSelection } from "../../api/skills";
 import { HelpTip, SentenceText } from "../HelpTip";
@@ -38,7 +37,7 @@ export function SkillEditor({ draft, busy, onChange, onSubmit, onCancel }: Skill
                 options={[{ value: "project", label: "현재 프로젝트 실행 root" }, { value: "global", label: "Grove 전역" }]} />
             <TextInput label="스킬 이름" value={draft.name} maxLength={128} isRequired isDisabled={busy}
                 onChange={(value) => onChange({ ...draft, name: value })} />
-        </> : <GroveText as="p" display="block" type="supporting" color="secondary">편집 기준 revision <code>{draft.selection.revision}</code></GroveText>}
+        </> : <HelpTip label="편집 기준 버전">revision <code>{draft.selection.revision}</code></HelpTip>}
         <TextArea label="스킬 본문" value={draft.text} rows={10} isDisabled={busy}
             onChange={(value) => onChange({ ...draft, text: value })} />
         <GroveStack direction="horizontal" align="center" gap={1.5}>

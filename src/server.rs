@@ -59,7 +59,6 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
     cfg.listen = addr;
     let app = App::new(cfg.clone(), clock).map_err(|e| StartupError::database(&cfg, &e.to_string()))?;
     let owner_token = crate::auth::ensure_owner_token(&app).map_err(|e| StartupError::api(&cfg, e))?;
-    crate::mcp::recover_on_start(&app).await.map_err(|e| StartupError::api(&cfg, e))?;
     crate::runner::recover_on_start(&app).await.map_err(|e| StartupError::api(&cfg, e))?;
     let now = app.now();
     app.db

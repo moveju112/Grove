@@ -54,11 +54,6 @@ export const defaultPrefs: Prefs = {
 };
 const CLOCKS: readonly Prefs["clock"][] = ["system", "24h", "12h"];
 const TIME_STYLES: readonly Prefs["timeStyle"][] = ["absolute", "relative"];
-export function restoredPrefs(current: Prefs, expected: Prefs, fields: (keyof Prefs)[]): Prefs {
-    // 배열 값도 있으므로 값으로 비교한다.
-    if (fields.some((key) => JSON.stringify(current[key]) !== JSON.stringify(expected[key]))) throw new Error("확인 후 기기 설정이 바뀌었습니다. 다시 비교하세요.");
-    return { ...current, ...Object.fromEntries(fields.map((key) => [key, defaultPrefs[key]])) };
-}
 const PREFS_EVENT = "grove-prefs";
 
 export function loadPrefs(): Prefs {

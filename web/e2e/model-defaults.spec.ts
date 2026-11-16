@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { frames } from "./fixture";
-import { apiCall, closeModelSettings, composerSetting, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, script, selectChoice, state } from "./helpers";
+import { apiCall, closeModelSettings, composerSetting, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, script, selectChoice, startProjectConversation, state } from "./helpers";
 
 type Effective = { items: { key: string; effective: unknown; layers: Record<string, { value: unknown; revision: number }> }[] };
 const defaultsKey = "model.default_profile";
@@ -50,6 +50,7 @@ test("프로젝트 기본값은 새 입력창에만 적용하고 기기 선택·
         await login(page);
         const projects = page.getByTestId("project-row");
         await projects.getByRole("button", { name: f.a.name, exact: true }).click();
+        await startProjectConversation(page.getByTestId("project-view").filter({ visible: true }));
         await expectComposerSetting(page, "모델 프로필", f.primary.id);
         await script({ marker: f.prefix, frames: frames.text(["default model fixture complete"]) });
         await page.getByLabel("메시지 입력").fill(f.prefix);
@@ -64,6 +65,7 @@ test("프로젝트 기본값은 새 입력창에만 적용하고 기기 선택·
         await page.reload();
         await expectComposerSetting(view, "모델 프로필", f.primary.id);
         await projects.getByRole("button", { name: f.b.name, exact: true }).click();
+        await startProjectConversation(page.getByTestId("project-view").filter({ visible: true }));
         await expectComposerSetting(page, "모델 프로필", f.secondary.id);
     } finally { await f.cleanup(); }
 });
@@ -77,19 +79,19 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
         const row = page.getByTestId(`setting-${defaultsKey}`);
         await selectChoice(row.getByLabel("기본 모델 프로필", { exact: true }), f.primary.id);
         await expect(row).toContainText("전송 대상:");
-        await row.getByRole("button", { name: "저장", exact: true }).click();
         await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
+        await page.route(`**/api/v1/settings/project/${f.a.id}/${defaultsKey}`, async (route) => {
+            await setting(f.a.id, defaultsKey, f.primary.id);
+            await route.continue();
+        }, { times: 1 });
         await selectChoice(row.getByLabel("기본 모델 프로필", { exact: true }), f.secondary.id);
-        await setting(f.a.id, defaultsKey, f.primary.id);
-        await row.getByRole("button", { name: "저장", exact: true }).click();
-        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("내 수정은 보존");
+        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("내 입력은 보존");
         await expectChoice(row.getByLabel("기본 모델 프로필", { exact: true }), f.secondary.id);
-        await row.getByRole("button", { name: "내 수정으로 덮어쓰기", exact: true }).click();
+        await row.getByRole("button", { name: "내 수정 적용", exact: true }).click();
         await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
         await search.fill("압축 요약 모델");
         const summary = page.getByTestId(`setting-${summaryKey}`);
         await selectChoice(summary.getByLabel("압축 요약 모델", { exact: true }), f.primary.id);
-        await summary.getByRole("button", { name: "저장", exact: true }).click();
         await expect(summary.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
         const effective = await apiCall<Effective>("GET", `/settings/effective?project_id=${f.a.id}`);
         expect(effective.items.find((item) => item.key === summaryKey)?.effective).toBe(f.primary.id);
@@ -105,7 +107,7 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
             await search.fill(query!);
             const control = page.getByTestId(`setting-${key}`);
             await control.getByRole("spinbutton").fill(value!);
-            await control.getByRole("button", { name: "저장", exact: true }).click();
+            await control.getByRole("spinbutton").blur();
             await expect(control.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
         }
         const usage = await apiCall<{ reserve_tokens: number; auto_clear_minutes: number }>("GET", `/sessions/${session.id}/context?profile_id=${f.secondary.id}`);
@@ -119,9 +121,8 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
         const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as { model: string; messages: unknown[] }[];
         expect(requests.filter((request) => JSON.stringify(request.messages).includes(f.prefix)).map((request) => request.model)).toEqual(["fixture-default-a"]);
         await search.fill("압축 요약 모델");
-        await summary.getByRole("button", { name: "이 범위 값 지우기", exact: true }).click();
-        await page.getByRole("dialog", { name: "기본값 복원 확인", exact: true }).getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
-        await page.getByRole("dialog", { name: "기본값 복원 확인", exact: true }).getByRole("button", { name: "복원 창 닫기", exact: true }).click();
+        await selectChoice(summary.getByLabel("압축 요약 모델", { exact: true }), "");
+        await expect(summary).toContainText("저장됨");
         await expectChoice(summary.getByLabel("압축 요약 모델", { exact: true }), "");
     } finally { await f.cleanup(); }
 });
@@ -135,6 +136,7 @@ test("선택한 프로필이 삭제돼도 다른 공급자로 보내지 않고 �
         })), f.primary.id);
         await login(page);
         await page.getByTestId("project-row").getByRole("button", { name: f.a.name, exact: true }).click();
+        await startProjectConversation(page.getByTestId("project-view").filter({ visible: true }));
         const area = page.getByLabel("메시지 입력");
         await expectComposerSetting(page, "모델 프로필", f.primary.id);
         await area.fill(`${f.prefix} never send implicitly`);
@@ -168,6 +170,7 @@ test("기본값 조회 실패는 임의 모델로 보내지 않고 재확인 후
         }));
         await login(page);
         await page.getByTestId("project-row").getByRole("button", { name: f.a.name, exact: true }).click();
+        await startProjectConversation(page.getByTestId("project-view").filter({ visible: true }));
         await page.getByLabel("메시지 입력").fill("keep while defaults unavailable");
         await expect(page.getByText("모델 선택 정보를 불러오지 못했습니다.", { exact: false })).toBeVisible();
         await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();

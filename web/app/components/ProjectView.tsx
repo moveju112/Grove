@@ -1,6 +1,5 @@
 import { StatusBadge } from "../design/StatusBadge";
 import { Code } from "@astryxdesign/core/Code";
-import { StackItem } from "@astryxdesign/core/Stack";
 import { chatLayout } from "./chat-layout.stylex";
 import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Text as GroveText } from "@astryxdesign/core/Text";
@@ -20,7 +19,8 @@ import { WorktreesPanel } from "./WorktreesPanel";
 import { ProjectScripts } from "./ProjectScripts";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
-import { requireServerAction } from "./pwa/lifecycle";
+import { localDraftStorage, requireServerAction } from "./pwa/lifecycle";
+import { hasProjectInput } from "../state/drafts";
 import { Stack } from "@astryxdesign/core/Stack";
 import { ActionMenu, Panel, ToolsTrigger, Workbench } from "./ui/Controls";
 import { Icon } from "./icons";
@@ -77,23 +77,18 @@ function ProjectIdentity({ p, reload }: { p: Project; reload: () => void }) {
     );
 }
 
-/// 프로젝트 = 단일 작업공간. 중간 생성 단계 없이 입력창에서 바로 새 대화를 시작한다.
+/// 프로젝트 홈은 대화 목록이다. +로 입력창을 열고 전송할 때만 새 대화를 접수한다.
 export function ProjectView({ tabId, projectId, open, initialTitle }: { tabId: string; projectId: string; open: Opener; initialTitle?: string }) {
-    const [q, setQ] = useState("");
+    const [composeVersion, setComposeVersion] = useState(() => hasProjectInput(localDraftStorage(), projectId, tabId) ? 1 : 0);
     const [archived, setArchived] = useState(false);
     const [pages, setPages] = useState<string[]>([""]);
     const project = useQuery<Project>(`project:${projectId}`, () => api.get(`/projects/${projectId}`));
-    // 첫 페이지와 같은 key라 같은 요청을 공유한다. 대화가 하나도 없으면 검색 도구를 띄우지 않는다.
-    const firstQs = new URLSearchParams({ limit: "30", q: "", archived: "false" });
-    const first = useQuery<SessionPage>(`sessions:${projectId}:${firstQs}`, () => api.get(`/projects/${projectId}/sessions?${firstQs}`));
-    const filtered = q !== "" || archived;
-    const showSearch = filtered || (first.data?.items.length ?? 0) > 0;
     const setArchivedView = (value: boolean) => { setArchived(value); setPages([""]); };
 
     // 확인 중에는 입력을 막지 않는다. 경로 없음·조회 실패만 실행 차단 사유로 표시한다.
-    const composer = <ProjectComposer projectId={projectId} tabId={tabId} open={open}
+    const composer = composeVersion > 0 ? <ProjectComposer projectId={projectId} tabId={tabId} open={open} focusVersion={composeVersion}
         beforeMutation={requireServerAction}
-        disabled={project.error ? "프로젝트를 확인할 수 없습니다" : project.data && !project.data.available ? "프로젝트 경로 없음" : null} />;
+        disabled={project.error ? "프로젝트를 확인할 수 없습니다" : project.data && !project.data.available ? "프로젝트 경로 없음" : null} /> : null;
     if (project.error) return <Stack as="section" data-testid="project-view" gap={2} xstyle={chatLayout.view}>
         <Heading level={1} color="inherit">프로젝트를 열 수 없습니다</Heading>
         <GroveText as="p" display="block" type="inherit" color="error" role="alert">{project.error instanceof ApiError ? project.error.message : "프로젝트 정보를 불러오지 못했습니다."}</GroveText>
@@ -112,11 +107,15 @@ export function ProjectView({ tabId, projectId, open, initialTitle }: { tabId: s
                 { id: "worktrees", label: "워크스페이스", content: <WorktreesPanel key={`worktrees:${projectId}`} projectId={projectId} /> },
                 { id: "trash", label: "휴지통", content: <TrashPanel key={`trash:${projectId}`} projectId={projectId} /> },
             ]}>
-            <Stack as="header" direction="horizontal" align="center" gap={2}>
-                <Heading level={1} color="inherit" xstyle={chatLayout.headerTitle}>
+            <Stack as="header" direction="horizontal" align="center" justify="end" gap={2}>
+                <Heading level={1} color="inherit" xstyle={[chatLayout.headerTitle, chatLayout.projectTitle]}>
                     {project.data?.icon && <GroveText type="inherit" color="inherit" aria-hidden>{project.data.icon} </GroveText>}
                     {project.data?.name ?? initialTitle ?? "프로젝트"}
                 </Heading>
+                <GroveButton type="button" appearance="icon" aria-label="새 대화" title="새 대화"
+                    disabled={project.data?.available === false} onClick={() => setComposeVersion((version) => version + 1)}>
+                    <Icon name="plus" />
+                </GroveButton>
                 <ActionMenu label="프로젝트 작업">
                 <Code color="secondary">{project.data?.root_path}</Code>
                 <GroveButton variant="secondary" density="compact" onClick={() => open({ kind: "file", project_id: projectId, title: `파일 · ${project.data?.name ?? ""}` })}>
@@ -150,17 +149,15 @@ export function ProjectView({ tabId, projectId, open, initialTitle }: { tabId: s
                     </GroveText>
                 )}
             <Stack as="section" gap={3} width="100%" maxWidth={720} xstyle={chatLayout.centered} aria-label="프로젝트 대화">
-            {showSearch && <Stack direction="horizontal" align="center" gap={2}>
-                <StackItem size="fill"><TextInput type="search" label="대화 검색" isLabelHidden placeholder="대화 검색" value={q}
-                    onChange={(value) => { setQ(value); setPages([""]); }} /></StackItem>
+            {archived && <Stack direction="horizontal" align="center" gap={2}>
                 {/* 숨겨진 필터가 목록을 바꾸면 활성 상태와 해제 경로를 목록 바로 위에 남긴다. */}
-                {archived && <GroveButton type="button" variant="secondary" density="compact" appearance="choice" aria-label="보관됨 필터 해제" onClick={() => setArchivedView(false)}>
+                <GroveButton type="button" variant="secondary" density="compact" appearance="choice" aria-label="보관됨 필터 해제" onClick={() => setArchivedView(false)}>
                     보관됨 <Icon name="close" size={12} />
-                </GroveButton>}
+                </GroveButton>
             </Stack>}
             <GroveList density="compact" edge="flush" hasDividers>
                 {pages.map((cursor, i) => (
-                    <SessionPageList key={cursor + i} projectId={projectId} cursor={cursor} q={q} archived={archived} filtered={filtered} open={open} onMore={(c) => setPages((p) => (p.includes(c) ? p : [...p, c]))} last={i === pages.length - 1} />
+                    <SessionPageList key={cursor + i} projectId={projectId} cursor={cursor} archived={archived} open={open} onMore={(c) => setPages((p) => (p.includes(c) ? p : [...p, c]))} last={i === pages.length - 1} />
                 ))}
             </GroveList>
             </Stack>
@@ -210,19 +207,21 @@ function TerminalList({ projectId, open }: { projectId: string; open: Opener }) 
     );
 }
 
-function SessionPageList(p: { projectId: string; cursor: string; q: string; archived: boolean; filtered: boolean; open: Opener; onMore: (c: string) => void; last: boolean }) {
-    const qs = new URLSearchParams({ limit: "30", q: p.q, archived: String(p.archived) });
+function SessionPageList(p: { projectId: string; cursor: string; archived: boolean; open: Opener; onMore: (c: string) => void; last: boolean }) {
+    const qs = new URLSearchParams({ limit: "30", archived: String(p.archived) });
     if (p.cursor) qs.set("cursor", p.cursor);
     const page = useQuery<SessionPage>(`sessions:${p.projectId}:${qs}`, () => api.get(`/projects/${p.projectId}/sessions?${qs}`));
     return (
         <>
             {(page.data?.items ?? []).map((s) => (
                 <GroveListItem key={s.id} label={<Stack direction="horizontal" align="center" gap={1}>
-                    <GroveButton appearance="link" onClick={() => p.open({ kind: "session", project_id: p.projectId, resource_id: s.id, title: s.title })}>
+                    <GroveButton appearance="link" xstyle={chatLayout.sessionTitle} onClick={() => p.open({ kind: "session", project_id: p.projectId, resource_id: s.id, title: s.title })}>
+                        <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false}>
                         {s.unread && <GroveText type="supporting" color="secondary" aria-label="읽지 않음" data-testid="session-unread">● </GroveText>}
                         {s.title}
+                        </GroveText>
                     </GroveButton>
-                    {s.preview && <GroveText type="supporting" color="secondary" maxLines={1}>{s.preview}</GroveText>}
+                    {s.preview && <GroveText type="supporting" color="secondary" maxLines={1} xstyle={chatLayout.sessionPreview}>{s.preview}</GroveText>}
                     {s.active_turn === "awaiting_input" ? (
                         <StatusBadge status="awaiting_input">답변 대기</StatusBadge>
                     ) : (
@@ -230,8 +229,7 @@ function SessionPageList(p: { projectId: string; cursor: string; q: string; arch
                     )}
                     {s.pending_approvals > 0 && <StatusBadge status="awaiting_approval">승인 {s.pending_approvals}</StatusBadge>}
                     {s.unreviewed_unknown > 0 && <StatusBadge status="unknown_result">결과 확인 필요</StatusBadge>}
-                    <GroveText type="supporting" color="secondary" data-testid="session-updated"><When at={s.updated_at} /></GroveText>
-                </Stack>} />
+                </Stack>} endContent={<GroveText type="supporting" color="secondary" justify="end" textWrap="nowrap" hasTabularNumbers data-testid="session-updated"><When at={s.updated_at} /></GroveText>} />
             ))}
             {p.last && page.data?.next_cursor && (
                 <GroveListItem label={
@@ -240,8 +238,8 @@ function SessionPageList(p: { projectId: string; cursor: string; q: string; arch
                     </GroveButton>
                 } />
             )}
-            {/* 빈 프로젝트는 빈 화면으로 둔다. 필터 결과가 비었을 때만 알린다. */}
-            {p.filtered && p.cursor === "" && page.data?.items.length === 0 && <GroveListItem label={<GroveText color="secondary">조건에 맞는 대화가 없습니다.</GroveText>} />}
+            {/* 빈 프로젝트는 빈 화면으로 두고 보관된 대화가 없을 때만 알린다. */}
+            {p.archived && p.cursor === "" && page.data?.items.length === 0 && <GroveListItem label={<GroveText color="secondary">보관된 대화가 없어요.</GroveText>} />}
         </>
     );
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, state } from "./helpers";
+import { apiCall, login, startProjectConversation, state } from "./helpers";
 
 // DESIGN.md "빈 대화 화면": 보조 기능은 깊이로 숨기고, 기본 화면은 위치 한 줄·입력창·빈 본문만 남긴다.
 // 버튼을 다시 늘어놓는 변경이 들어오면 이 시험이 막는다.
@@ -15,12 +15,14 @@ test("모바일 빈 프로젝트는 상단 한 줄·입력창만 보이고 보�
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
     await expect(page.getByTestId("mobile-drawer-left")).toBeHidden();
     const view = page.getByTestId("project-view").filter({ visible: true });
+    await expect(view.getByTestId("composer")).toHaveCount(0);
+    await startProjectConversation(view);
     const composer = view.getByTestId("composer");
     await expect(composer).toBeVisible();
 
     // 현재 위치는 별도 줄이 아니라 상단 바 안에 있고, 단일 탭 줄은 숨긴다.
     const topbar = page.getByRole("banner");
-    // 프로젝트 화면에서는 제목이 위치를 보여 주므로 상단 바에 이름을 반복하지 않는다(보조 기술용 위치는 유지).
+    // 프로젝트 이름은 상단 바에서 한 번만 보이고 문서의 제목 의미는 유지한다.
     const nav = page.getByTestId("navigation-context");
     await expect(topbar.getByTestId("navigation-context")).toHaveCount(1);
     await expect(nav.locator('[aria-current="page"]')).toHaveText(project.name);

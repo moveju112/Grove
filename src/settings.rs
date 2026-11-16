@@ -16,9 +16,9 @@ use axum::response::Response;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-mod reset;
-pub use reset::{apply as reset_apply, preview as reset_preview};
-use std::io::Read;
+
+pub const FULL_ACCESS: &str = "tools.full_access";
+pub const DEFAULT_MODEL_CONCURRENCY: u64 = 10;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingDef {
@@ -59,21 +59,6 @@ pub fn registry() -> Vec<SettingDef> {
             min: None,
             max: None,
             default: Value::Null,
-            scopes: &["server", "project"],
-            applies: "next_turn",
-            advanced: false,
-        },
-        SettingDef {
-            key: "instructions.mode",
-            menu: "agents",
-            label: "프로젝트 지침 파일",
-            description: "프로젝트 root의 지침 파일을 모델 입력에 넣는 방식",
-            keywords: "AGENTS.md CLAUDE.md instruction 지침",
-            kind: "enum",
-            options: &["agents_md", "claude_md", "both", "off"],
-            min: None,
-            max: None,
-            default: json!("both"),
             scopes: &["server", "project"],
             applies: "next_turn",
             advanced: false,
@@ -262,7 +247,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: "tools.mode",
             menu: "agents",
             label: "도구 실행 모드",
-            description: "Grove 도구 루프에 적용합니다. ask=변경 도구는 승인 후 실행, read_only=읽기 도구만 허용합니다. CLI 자체 편집·실행 도구는 별도의 프로젝트 sandbox를 사용하며 이 승인 모드를 거치지 않습니다.",
+            description: "Grove 도구에 적용합니다. 일반 파일 수정·셸 실행은 기본으로 자동 허용합니다. ask=사전 허용하지 않은 도구는 승인 후 실행, read_only=읽기 도구만 허용합니다. 일반 도구 전체 권한을 끄면 파일 수정·셸도 승인 후 실행합니다. 외부 CLI는 이 승인 모드와 별개로 sandbox 없이 실행합니다.",
             keywords: "read-only 읽기 전용 도구 정책 policy",
             kind: "enum",
             options: &["ask", "read_only"],
@@ -270,6 +255,21 @@ pub fn registry() -> Vec<SettingDef> {
             max: None,
             default: json!("ask"),
             scopes: &["server", "project", "session"],
+            applies: "immediate",
+            advanced: false,
+        },
+        SettingDef {
+            key: FULL_ACCESS,
+            menu: "agents",
+            label: "일반 도구 전체 권한",
+            description: "기본으로 사용합니다. 파일 수정·셸 실행을 매번 승인하지 않고 허용합니다. 끄면 일반 도구도 개별 사전 허용이나 승인이 필요합니다. 셸은 서버 계정 권한으로 프로젝트 밖 파일·네트워크·SSH agent·환경변수의 자격증명에 접근할 수 있습니다. Grove 내부 환경변수는 전달하지 않습니다. 금지 도구·읽기 전용·PC 제어·에이전트 위임 정책은 유지합니다.",
+            keywords: "full access permission 권한 자동 승인 파일 셸 실행 SSH 배포 Release",
+            kind: "bool",
+            options: &[],
+            min: None,
+            max: None,
+            default: json!(true),
+            scopes: &["server", "project"],
             applies: "immediate",
             advanced: false,
         },
@@ -313,7 +313,7 @@ pub fn registry() -> Vec<SettingDef> {
             options: &[],
             min: Some(1),
             max: Some(64),
-            default: json!(4),
+            default: json!(DEFAULT_MODEL_CONCURRENCY),
             scopes: &["server"],
             applies: "immediate",
             advanced: true,
@@ -328,7 +328,7 @@ pub fn registry() -> Vec<SettingDef> {
             options: &[],
             min: Some(1),
             max: Some(64),
-            default: json!(4),
+            default: json!(DEFAULT_MODEL_CONCURRENCY),
             scopes: &["server"],
             applies: "next_turn",
             advanced: true,
@@ -343,7 +343,7 @@ pub fn registry() -> Vec<SettingDef> {
             options: &[],
             min: Some(1),
             max: Some(64),
-            default: json!(4),
+            default: json!(DEFAULT_MODEL_CONCURRENCY),
             scopes: &["server"],
             applies: "next_turn",
             advanced: true,
@@ -487,7 +487,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: "exec.default_cwd",
             menu: "agents",
             label: "기본 작업 위치",
-            description: "cwd를 생략한 새 모델 셸·대화 작업의 실행 root(worktree 포함) 안 상대 디렉터리입니다. '/'로 구분하고 '..'·절대 경로는 사용할 수 없습니다. 명시한 cwd가 우선하며 기본값 '.'은 실행 root입니다. 프로젝트 script는 확인한 root에서 실행합니다. 터미널·hook·외부 CLI에는 적용하지 않습니다",
+            description: "cwd를 생략한 새 모델 셸·대화 작업의 실행 root(worktree 포함) 안 상대 디렉터리입니다. '/'로 구분하고 '..'·절대 경로는 사용할 수 없습니다. 명시한 cwd가 우선하며 기본값 '.'은 실행 root입니다. 프로젝트 script는 확인한 root에서 실행합니다. 터미널·외부 CLI에는 적용하지 않습니다",
             keywords: "exec cwd directory working default 기본 작업 위치 디렉터리",
             kind: "string",
             options: &[],
@@ -759,8 +759,7 @@ pub fn resolve_key(c: &Connection, d: &SettingDef, project: Option<&str>, sessio
             }
             sid = run.parent_session_id;
             let (value, revision) = row(c, "session", &sid, d.key)?.unwrap_or((Value::Null, 0));
-            // 자식은 같은 프로젝트에 속한다. 부모의 원래 계층을 남겨 복원 미리보기도
-            // 변경될 server/project 값을 사용해 실제 적용값과 fingerprint를 계산하게 한다.
+            // 자식은 같은 프로젝트에 속한다. 부모의 원래 계층을 남겨 변경된 server/project 값을 상속한다.
             layers.insert(format!("parent:{sid}"), json!({"scope_id": sid, "value": value, "revision": revision}));
         }
     }
@@ -820,6 +819,10 @@ pub fn all_layers(c: &Connection, key: &str, project: Option<&str>, session: Opt
 pub fn effective(c: &Connection, key: &str, project: Option<&str>, session: Option<&str>) -> ApiResult<Value> {
     let d = def(key).ok_or_else(|| ApiError::internal(format!("unknown setting {key}")))?;
     Ok(resolve_key(c, &d, project, session)?["effective"].clone())
+}
+
+pub fn full_access(c: &Connection, project: &str, session: &str) -> ApiResult<bool> {
+    Ok(effective(c, FULL_ACCESS, Some(project), Some(session))?.as_bool().unwrap_or(false))
 }
 
 pub async fn get_registry(_p: Principal) -> Json<Vec<Value>> {
@@ -967,110 +970,9 @@ pub async fn put(
     .await
 }
 
-const INSTRUCTION_LIMIT: usize = 64 * 1024;
-
-fn instruction_text(reader: impl Read) -> std::io::Result<String> {
-    let mut bytes = Vec::with_capacity(INSTRUCTION_LIMIT + 1);
-    reader.take((INSTRUCTION_LIMIT + 1) as u64).read_to_end(&mut bytes)?;
-    Ok(if bytes.len() <= INSTRUCTION_LIMIT {
-        String::from_utf8_lossy(&bytes).to_string()
-    } else {
-        format!("{}\n…(지침 파일이 {}바이트를 넘어 잘림)", String::from_utf8_lossy(&bytes[..INSTRUCTION_LIMIT]), INSTRUCTION_LIMIT)
-    })
-}
-
-fn instruction_file(path: &std::path::Path) -> std::io::Result<Option<String>> {
-    let mut options = std::fs::OpenOptions::new();
-    options.read(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        // 경로 확인 뒤 바뀐 leaf symlink를 따라가거나 FIFO의 writer를 기다리지 않는다.
-        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    if !file.metadata()?.is_file() { return Ok(None); }
-    instruction_text(file).map(Some)
-}
-
-/// 지침 파일 읽기(CTX-014~017). 프로젝트 root의 파일만, 크기 제한, 같은 파일(symlink) 중복 제거.
-pub fn load_instructions(root: &std::path::Path, mode: &str) -> Vec<(String, String)> {
-    let names: &[&str] = match mode {
-        "agents_md" => &["AGENTS.md"],
-        "claude_md" => &["CLAUDE.md"],
-        "both" => &["AGENTS.md", "CLAUDE.md"],
-        _ => &[],
-    };
-    let mut seen = std::collections::HashSet::new();
-    let mut out = vec![];
-    for n in names {
-        let p = root.join(n);
-        let Ok(canon) = crate::util::canonical(&p) else { continue };
-        // 프로젝트 밖을 가리키는 symlink는 읽지 않는다.
-        if !canon.starts_with(crate::util::canonical(root).unwrap_or_else(|_| root.to_path_buf())) || !seen.insert(canon.clone()) {
-            continue;
-        }
-        let Ok(Some(text)) = instruction_file(&canon) else { continue };
-        out.push((n.to_string(), text));
-    }
-    out
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn instruction_reads_are_bounded_even_when_metadata_understates_the_content() {
-        struct Fixture { consumed: usize }
-        impl Read for Fixture {
-            fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-                let remaining = INSTRUCTION_LIMIT + 1 - self.consumed;
-                if remaining == 0 { return Err(std::io::Error::other("fixture: read beyond the input budget")); }
-                let n = buf.len().min(remaining);
-                buf[..n].fill(b'x');
-                self.consumed += n;
-                Ok(n)
-            }
-        }
-        let mut reader = Fixture { consumed: 0 };
-        let text = instruction_text(&mut reader).expect("길이 판정용 한 바이트 뒤는 읽지 않는다");
-        assert_eq!(reader.consumed, INSTRUCTION_LIMIT + 1);
-        assert!(text.starts_with(&"x".repeat(INSTRUCTION_LIMIT)));
-        assert!(text.ends_with("바이트를 넘어 잘림)"));
-    }
-
-    #[test]
-    fn shrinking_instructions_do_not_panic_and_exact_limit_is_not_truncated() {
-        let text = instruction_text(std::io::Cursor::new(b"short")).unwrap();
-        assert_eq!(text, "short");
-        let text = instruction_text(std::io::Cursor::new(vec![b'x'; INSTRUCTION_LIMIT])).unwrap();
-        assert_eq!(text, "x".repeat(INSTRUCTION_LIMIT));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn instruction_leaf_replacement_and_fifo_do_not_read_or_block() {
-        use std::os::unix::ffi::OsStrExt;
-        let d = tempfile::tempdir().unwrap();
-        let root = d.path().join("project");
-        std::fs::create_dir(&root).unwrap();
-        let path = root.join("AGENTS.md");
-        std::fs::write(&path, "original").unwrap();
-        let prepared = std::fs::canonicalize(&path).unwrap();
-        let outside = d.path().join("outside");
-        std::fs::write(&outside, "outside secret fixture").unwrap();
-        std::fs::remove_file(&path).unwrap();
-        std::os::unix::fs::symlink(&outside, &path).unwrap();
-        assert!(instruction_file(&prepared).is_err(), "경로 확인 뒤 교체된 symlink를 읽지 않는다");
-        std::fs::remove_file(&path).unwrap();
-        let cpath = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
-        assert_eq!(unsafe { libc::mkfifo(cpath.as_ptr(), 0o600) }, 0);
-        let (tx, rx) = std::sync::mpsc::channel();
-        let reader = std::thread::spawn(move || { tx.send(instruction_file(&prepared)).unwrap(); });
-        assert!(rx.recv_timeout(std::time::Duration::from_secs(2)).expect("FIFO writer를 기다리지 않는다").unwrap().is_none());
-        reader.join().unwrap();
-    }
 
     #[test]
     fn validation() {
@@ -1078,55 +980,8 @@ mod tests {
         assert!(validate(&d, &json!(60)).is_ok());
         assert!(validate(&d, &json!(5)).is_err());
         assert!(validate(&d, &json!("60")).is_err());
-        let e = def("instructions.mode").unwrap();
-        assert!(validate(&e, &json!("both")).is_ok());
+        let e = def("output.style").unwrap();
+        assert!(validate(&e, &json!("concise")).is_ok());
         assert!(validate(&e, &json!("all")).is_err());
-    }
-
-    #[test]
-    fn instructions_dedupe_and_boundary() {
-        let d = tempfile::tempdir().unwrap();
-        let root = d.path().join("p");
-        std::fs::create_dir(&root).unwrap();
-        std::fs::write(root.join("AGENTS.md"), "규칙").unwrap();
-        std::fs::write(d.path().join("outside.md"), "밖").unwrap();
-        #[cfg(unix)]
-        {
-            std::os::unix::fs::symlink(root.join("AGENTS.md"), root.join("CLAUDE.md")).unwrap();
-        }
-        let v = load_instructions(&root, "both");
-        assert_eq!(v.len(), 1, "같은 파일은 한 번만: {v:?}");
-        assert!(load_instructions(&root, "off").is_empty());
-        // 크기 초과는 잘라서 표시, 디렉터리 같은 읽기 불가 대상은 건너뛴다
-        let big = root.join("big");
-        std::fs::create_dir(&big).unwrap();
-        std::fs::write(big.join("AGENTS.md"), "가".repeat(40_000)).unwrap();
-        std::fs::create_dir(big.join("CLAUDE.md")).unwrap();
-        let v = load_instructions(&big, "both");
-        assert_eq!(v.len(), 1);
-        assert!(v[0].1.ends_with("바이트를 넘어 잘림)"), "잘림 표시");
-        #[cfg(unix)]
-        {
-            std::fs::remove_file(root.join("CLAUDE.md")).unwrap();
-            std::os::unix::fs::symlink(d.path().join("outside.md"), root.join("CLAUDE.md")).unwrap();
-            let v = load_instructions(&root, "claude_md");
-            assert!(v.is_empty(), "프로젝트 밖 symlink는 읽지 않는다");
-        }
-    }
-
-    /// CTX-014: 실행 위치 루트의 파일만 AGENTS.md → CLAUDE.md 순서로 읽고, 상위 폴더·하위 폴더 지침은 자동으로 읽지 않는다.
-    #[test]
-    fn instruction_files_load_from_exec_root_only_in_fixed_order() {
-        let d = tempfile::tempdir().unwrap();
-        std::fs::write(d.path().join("AGENTS.md"), "상위 폴더 지침").unwrap();
-        let root = d.path().join("p");
-        std::fs::create_dir_all(root.join("sub")).unwrap();
-        std::fs::write(root.join("CLAUDE.md"), "클로드").unwrap();
-        std::fs::write(root.join("AGENTS.md"), "에이전트").unwrap();
-        std::fs::write(root.join("sub/AGENTS.md"), "하위 지침").unwrap();
-        let v = load_instructions(&root, "both");
-        assert_eq!(v, vec![("AGENTS.md".to_string(), "에이전트".to_string()), ("CLAUDE.md".to_string(), "클로드".to_string())]);
-        std::fs::remove_file(root.join("AGENTS.md")).unwrap();
-        assert!(load_instructions(&root, "agents_md").is_empty(), "프로젝트에 없으면 상위 폴더 파일로 대신하지 않는다");
     }
 }

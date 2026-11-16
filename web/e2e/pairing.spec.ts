@@ -82,14 +82,15 @@ test("QR 등록은 비밀번호와 코드 대조 승인 뒤 한 기기에만 자
         expect(stored).not.toContain(state().token);
         await other.reload();
         await expect(other.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
-        await openSettings(other);
+        await openSettings(other, "local");
         await other.getByRole("button", { name: "기기·연결", exact: true }).click();
         const deviceName = other.getByLabel("이 기기 이름", { exact: true });
         await expect(deviceName).toHaveValue("Chrome · Linux");
         await deviceName.fill("설정에서 변경한 기기");
-        await other.getByRole("button", { name: "이름 저장", exact: true }).click();
-        await expect(other.getByTestId("setting-devices").getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
+        await other.getByLabel("이 기기 이름", { exact: true }).blur();
+        await expect(other.getByTestId("setting-device-name").getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
         await other.reload();
+        await openSettings(other, "local");
         await other.getByRole("button", { name: "기기·연결", exact: true }).click();
         await expect(deviceName).toHaveValue("설정에서 변경한 기기");
         expect((await apiCall<{ name: string }[]>("GET", "/devices")).some((entry) => entry.name === "설정에서 변경한 기기")).toBe(true);

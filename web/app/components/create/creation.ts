@@ -12,16 +12,19 @@ export function projectTarget(project: Pick<Project, "id" | "name">) {
     return { kind: "project" as const, project_id: project.id, resource_id: project.id, title: project.name };
 }
 
-type ProjectRequest = { path: "/projects" | "/projects/clone"; body: Record<string, unknown>; key: string };
+type CreationPath = "/projects" | "/projects/clone" | "/project-folders" | `/project-folders/${string}`;
+type ProjectRequest<P extends CreationPath> = { path: P; body: Record<string, unknown>; key: string };
 
-// 폴더 등록과 clone은 하나의 생성 잠금·미확정 요청을 공유한다.
-export class ProjectCreation {
+// 생성·이름 변경은 원래 본문과 키를 보관하고 결과 불명일 때 다른 요청으로 바꾸지 않는다.
+export class CreationRequest<T = Project, P extends CreationPath = CreationPath> {
     busy = false;
-    pending: ProjectRequest | null = null;
+    pending: ProjectRequest<P> | null = null;
+    constructor(private method: "post" | "patch" = "post") {}
 
-    async run(path: ProjectRequest["path"], body: ProjectRequest["body"]): Promise<Project | undefined> {
+    async run(path: P, body: Record<string, unknown>): Promise<T | undefined> {
         if (this.busy) return undefined;
-        const fields = path === "/projects" ? ["root_path", "create"] : ["repo", "target_directory", "protocol"];
+        const fields = path === "/projects" ? ["root_path"] : path === "/projects/clone"
+            ? ["repo", "target_directory", "protocol"] : ["name", "expected_revision"];
         const pending = this.pending;
         if (pending && (pending.path !== path || fields.some((field) => pending.body[field] !== body[field]))) {
             throw new Error("이전 생성 요청의 결과를 먼저 확인하세요.");
@@ -30,9 +33,11 @@ export class ProjectCreation {
         this.pending = request;
         this.busy = true;
         try {
-            const result = path === "/projects"
-                ? await api.post<Project>(path, request.body, { key: request.key })
-                : (await api.post<{ project: Project }>(path, request.body, { key: request.key })).project;
+            const options = { key: request.key, requires: path.startsWith("/project-folders") ? ["project_folders_v1"] : undefined };
+            const result = path === "/projects/clone"
+                ? (await api.post<{ project: T }>(path, request.body, options)).project
+                : this.method === "patch" ? await api.patch<T>(path, request.body, options)
+                : await api.post<T>(path, request.body, options);
             this.pending = null;
             return result;
         } catch (e) {
@@ -45,3 +50,5 @@ export class ProjectCreation {
         }
     }
 }
+
+export class ProjectCreation extends CreationRequest<Project, "/projects" | "/projects/clone"> {}

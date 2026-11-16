@@ -10,6 +10,8 @@ import type { AvailableModel, ModelCatalog, ModelProfile } from "../api/generate
 import { api } from "../api/client";
 import { useQuery } from "../state/store";
 import { useCapability } from "../state/capabilities";
+import { sortModels } from "./model-catalog";
+import type { SendOptions } from "../state/sendOptions";
 
 export function useModelCatalog(profile: ModelProfile | undefined, bound = false) {
     const supported = useCapability("turn_model_selection_v1");
@@ -42,7 +44,7 @@ function ProfileModels({ profile, profileId, model, onChange }: {
         menuDataTestId={`model-profile-models-${profile.id}`}>
         <DropdownMenuRadioGroup label={`${profile.name} 모델`} value={selected}
             onChange={(id) => onChange(profile.id, !automatic && id === profile.model ? null : id)}>
-            {models.map((item) => <DropdownMenuRadioItem key={item.id} value={item.id} label={item.name}
+            {sortModels(models).map((item) => <DropdownMenuRadioItem key={item.id} value={item.id} label={item.name}
                 data-option-value={!automatic && item.id === profile.model
                     ? profile.id : JSON.stringify([profile.id, item.id])} />)}
         </DropdownMenuRadioGroup>
@@ -55,8 +57,21 @@ function ProfileModels({ profile, profileId, model, onChange }: {
     </DropdownMenuSubMenu>;
 }
 
-export function ModelSelect({ profiles, profileId, model, ready, bound, save, onChange, children, onExpandedChange }: {
+function ModelSummary({ name, effort, fast, measuring = false }: {
+    name: string; effort?: SendOptions["effort"]; fast: boolean; measuring?: boolean;
+}) {
+    return <GroveStack as="span" direction="horizontal" align="center" wrap="wrap" gap={1} xstyle={composerStyles.modelName}>
+        <GroveText as="span" type="inherit" data-testid={measuring ? undefined : "model-summary"}>{name}</GroveText>
+        {effort && <GroveText as="span" type="inherit" color="secondary" data-testid={measuring ? undefined : "model-effort"}>· {effort}</GroveText>}
+        {fast && <GroveStack as="span" direction="horizontal" align="center" gap={0} role="img" aria-label="Fast 켜짐">
+            <Icon name="fast" size={14} color="blue" />
+        </GroveStack>}
+    </GroveStack>;
+}
+
+export function ModelSelect({ profiles, profileId, model, effort, fast = false, ready, bound, save, onChange, children, onExpandedChange }: {
     profiles: ModelProfile[]; profileId: string | null; model?: string | null;
+    effort?: SendOptions["effort"]; fast?: boolean;
     ready: boolean; bound: boolean; save: boolean;
     onChange: (profileId: string, model: string | null) => void;
     children?: ReactNode;
@@ -76,6 +91,9 @@ export function ModelSelect({ profiles, profileId, model, ready, bound, save, on
         ?? (profileId ? "선택한 프로필 없음" : "모델 선택");
     const detail = save || !profile || automatic && !selected && !model
         ? summary : `${summary} · ${profile.name}`;
+    const shownEffort = save ? undefined : effort;
+    const shownFast = !save && fast;
+    const description = [summary, shownEffort, shownFast ? "Fast" : null].filter(Boolean).join(" · ");
     // 버튼의 자연 폭으로 판단한다. 두 줄 배치에서도 같은 폭을 재므로 크기 경계에서 왕복하지 않는다.
     useLayoutEffect(() => {
         const probe = measurement.current;
@@ -92,12 +110,14 @@ export function ModelSelect({ profiles, profileId, model, ready, bound, save, on
         observer.observe(probe);
         measure();
         return () => observer.disconnect();
-    }, [summary, onExpandedChange]);
+    }, [summary, shownEffort, shownFast, onExpandedChange]);
     return <GroveStack gap={0} width="100%" xstyle={composerStyles.modelControl}>
-        <Button ref={trigger} type="button" appearance="disclosure" width="100%" aria-label="모델 설정" title={summary} xstyle={composerStyles.modelTrigger}>
-            <GroveText as="span" type="inherit" xstyle={composerStyles.modelName} data-testid="model-summary">{summary}</GroveText>
+        <Button ref={trigger} type="button" appearance="disclosure" width="100%" aria-label="모델 설정" title={description} xstyle={composerStyles.modelTrigger}>
+            <ModelSummary name={summary} effort={shownEffort} fast={shownFast} />
             <Icon name="chevronDown" size={16} />
-            <GroveText as="span" type="inherit" ref={measurement} aria-hidden="true" xstyle={composerStyles.modelMeasurement}>{summary}<Icon name="chevronDown" size={16} /></GroveText>
+            <GroveText as="span" type="inherit" ref={measurement} aria-hidden="true" xstyle={composerStyles.modelMeasurement}>
+                <ModelSummary name={summary} effort={shownEffort} fast={shownFast} measuring /><Icon name="chevronDown" size={16} />
+            </GroveText>
         </Button>
         <Popover anchorRef={trigger} label="모델 설정" data-testid="model-settings" placement="above" alignment="start"
             presentation="adaptive" width={360} padding={3} isOpen={open} onOpenChange={setOpen}

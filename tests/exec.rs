@@ -48,6 +48,7 @@ async fn success_excludes_project_instructions_and_show_does_not_rerun() {
     assert_eq!(r.out["status"], "succeeded");
     assert_eq!(r.out["text"], "완료했어");
     assert_eq!(r.out["isolation"], "none");
+    assert_eq!(r.out["included_context"], json!([]));
     let req = f.requests()[0].to_string();
     assert!(req.contains("요약해 줘") && !req.contains("PROJECT_RULE_MARKER"), "지침 파일 기본 제외: {req}");
     assert!(!r.err.contains("sk-test-secret-value-7777") && !r.out.to_string().contains("sk-test-secret-value-7777"));
@@ -63,12 +64,11 @@ async fn success_excludes_project_instructions_and_show_does_not_rerun() {
     let r = run(cmd(&p, &rd, &f, &["--prompt", "또"])).await;
     assert_eq!(r.code, 2, "{}", r.err);
     assert_eq!(f.requests().len(), 1);
-    // 명시적으로 넣으면 지침이 들어간다
-    f.push(fixture::text("지침 포함"));
+    // 제거한 지침 주입 옵션은 모델 호출 전에 거부한다.
     let r = run(cmd(&p, &d.path().join("run2"), &f, &["--prompt", "다시", "--with-project-instructions"])).await;
-    assert_eq!(r.code, 0, "{}", r.err);
-    assert!(f.requests()[1].to_string().contains("PROJECT_RULE_MARKER"));
-    assert_eq!(r.out["included_context"][0]["kind"], "project_instructions");
+    assert_eq!(r.code, 2, "{}", r.err);
+    assert!(r.err.contains("알 수 없는 exec 옵션: --with-project-instructions"));
+    assert_eq!(f.requests().len(), 1);
     // 응답이 중간에 끊기면 실행 실패(1)
     f.push(fixture::truncated());
     let r = run(cmd(&p, &d.path().join("run3"), &f, &["--prompt", "끊김"])).await;

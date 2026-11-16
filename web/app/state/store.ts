@@ -191,26 +191,6 @@ export function applyEvent(e: EventRecord) {
             }
             invalidate("recent");
             invalidate("recovery");
-            if (sid) {
-                const call=e.payload as {id:string;status:string;name:string};
-                if (call.name==="mcp_call") invalidate("mcp");
-                if (call.status!=="running" && live.mcpProgress?.[sid]?.[call.id]) {
-                    setLive((l)=>{
-                        const mcpProgress={...l.mcpProgress};
-                        const session={...mcpProgress[sid]};
-                        delete session[call.id];
-                        if (Object.keys(session).length) mcpProgress[sid]=session;
-                        else delete mcpProgress[sid];
-                        return {...l,mcpProgress};
-                    });
-                }
-            }
-            break;
-        case "tool_call.progress":
-            if (sid) {
-                const p=e.payload as {id:string;progress:McpProgress};
-                setLive((l)=>({...l,mcpProgress:{...l.mcpProgress,[sid]:{...l.mcpProgress?.[sid],[p.id]:p.progress}}}));
-            }
             break;
         case "file_changes.updated":
             if (sid) invalidate(`changes:${sid}`);
@@ -234,13 +214,13 @@ export function applyEvent(e: EventRecord) {
             if (id) invalidate(`session:${id}`);
             invalidate("recent");
             invalidate("search");
-            invalidate("memories");
             invalidate("bot-rooms");
             break;
         }
         case "project.created":
         case "project.updated":
             invalidate("projects");
+            invalidate("project-folders");
             invalidate("bot-rooms");
             // 워크스페이스 모드 등 프로젝트 화면·입력창이 쓰는 단건 조회도 갱신한다(다른 기기의 변경 포함).
             if (pid) invalidate(`project:${pid}`);
@@ -255,6 +235,10 @@ export function applyEvent(e: EventRecord) {
         case "label.deleted":
             invalidate("labels");
             break;
+        case "project_folder.changed":
+        case "project_folder.deleted":
+            invalidate("project-folders");
+            break;
         case "definition.changed":
         case "definition.deleted":
             invalidate("definitions");
@@ -268,12 +252,6 @@ export function applyEvent(e: EventRecord) {
             invalidate("profiles");
             invalidate("bots");
             break;
-        case "mcp.changed":
-            invalidate("mcp");
-            invalidate("bot-connections");
-            invalidate("mcp-check");
-            invalidate("secrets");
-            break;
         case "device.created":
         case "device.revoked":
             invalidate("devices");
@@ -283,10 +261,6 @@ export function applyEvent(e: EventRecord) {
             break;
         case "setting.changed":
             invalidate("settings");
-            break;
-        case "memories.changed":
-            invalidate("memories");
-            invalidate("context");
             break;
         case "git.changed":
             if (pid) invalidate(`git:${pid}`);
@@ -313,7 +287,6 @@ export function applyEvent(e: EventRecord) {
         case "bot.seen":
         case "bot.order":
             invalidate("bots");
-            invalidate("bot-connections");
             invalidate("bot-rooms");
             invalidate("bot-room");
             break;
@@ -366,15 +339,13 @@ export function retryWaiting() {
 /// 재동기화: 모든 조회를 다시 읽는다(NET-008).
 export function resyncAll() {
     deliveryTiming.clear();
-    setLive((l)=>({...l,mcpProgress:{}}));
     for (const k of entries.keys()) refresh(k);
     refreshFiles();
 }
 
 // ---- 연결 상태·중간 응답(메모리) ----
 
-type McpProgress={value:number;total:number|null};
-type Live = { status: "connecting" | "live" | "reconnecting" | "offline" | "auth_expired"; retryAt?: number; partials: Record<string, unknown>;mcpProgress?:Record<string,Record<string,McpProgress>> };
+type Live = { status: "connecting" | "live" | "reconnecting" | "offline" | "auth_expired"; retryAt?: number; partials: Record<string, unknown> };
 let live: Live = { status: "connecting", partials: {} };
 const liveSubs = new Set<() => void>();
 

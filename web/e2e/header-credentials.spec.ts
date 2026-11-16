@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, login, openDetails, profileAction, state } from "./helpers";
+import { apiCall, login, openDetails, openSettings, profileAction, state } from "./helpers";
 
 test("프로필 기능 편집은 비공개 헤더 참조를 보존하고 키 교체 뒤 연결 확인을 지운다", async ({ page }) => {
     const name = `private header ${Date.now()}`;
@@ -11,14 +11,14 @@ test("프로필 기능 편집은 비공개 헤더 참조를 보존하고 키 교
     });
     try {
         await login(page);
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await openSettings(page);
         await page.getByLabel("설정 검색").fill("프로필");
         const row = page.getByTestId("model-profile").filter({ hasText: name });
         await openDetails(row);
         await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
         await row.getByLabel("context token 수", { exact: true }).fill("16000");
-        await row.getByRole("button", { name: "모델 기능 저장", exact: true }).click();
-        await expect(row.getByRole("button", { name: "모델 기능 설정", exact: true })).toBeVisible();
+        await row.getByLabel("context token 수", { exact: true }).blur();
+        await expect(row.getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
         const all = await apiCall<{ id: string; options: { headers: { "X-Client-Name": { secret_id: string } } } }[]>("GET", "/model-profiles");
         const stored = all.find((p) => p.id === profile.id)!;
         expect(stored.options.headers["X-Client-Name"]).toEqual({ secret_id: secret.id });

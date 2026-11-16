@@ -23,6 +23,8 @@ const tokens = {
     "--raised": ["#f0f0f2", "#1e222a"],
     "--hover": ["#ebebee", "#242832"],
     "--sel": ["#e6e6ea", "#2b3039"],
+    "--split-bg": ["#eaf2fc", "#1d3049"],
+    "--split-line": ["#2476c5", "#75b2ef"],
     "--line": ["#e4e4e8", "#262a33"],
     "--line-strong": ["#d4d4da", "#323743"],
     "--text": ["#1d1d1f", "#f2f3f5"],
@@ -79,7 +81,7 @@ export default defineTheme({
             base: { fontSize: "13px", fontWeight: "400" },
             "size:lg": { minHeight: "44px" },
             "variant:inline-link": {
-                ...quietButton, padding: "0", minHeight: "28px", height: "auto",
+                ...quietButton, minHeight: "28px", height: "auto",
             },
             "variant:navigation": {
                 ...quietButton, width: "100%", height: "32px", minHeight: "32px",
@@ -115,7 +117,7 @@ export default defineTheme({
             },
             "variant:disclosure": {
                 ...quietButton, minHeight: "32px", height: "auto", maxWidth: "100%",
-                padding: "0", fontSize: "12px", justifyContent: "flex-start",
+                fontSize: "12px", justifyContent: "flex-start",
             },
         },
         icon: {

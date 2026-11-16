@@ -84,22 +84,26 @@ export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
             ["현재 서버 버전", data.server.version], ["서버 protocol", data.server.protocol], ["DB schema", data.server.schema],
         ]} />
         {!data.can_manage && <GroveText as="p" display="block" type="inherit" color="inherit">읽기 전용 · 소유자만 서버 업데이트 설정을 변경하거나 확인할 수 있습니다.</GroveText>}
-        <form onSubmit={(e) => { e.preventDefault(); onSave({ channel, auto_apply: scope, expected_revision: data.settings.revision }); }}>
             <fieldset disabled={!data.can_manage || blocked}>
                 <legend>서버 업데이트 설정</legend>
                 <Select label="업데이트 채널" value={channel} disabled={!data.can_manage || blocked}
-                    onChange={(value) => setChannel(value as UpdateChannel)}
+                    onChange={(value) => {
+                        if (value === channel) return;
+                        setChannel(value as UpdateChannel);
+                        onSave({ channel: value as UpdateChannel, auto_apply: scope, expected_revision: data.settings.revision });
+                    }}
                     options={[{ value: "stable", label: "stable · 안정" }, { value: "beta", label: "beta · 시험 버전" }]} />
                 <Select label="자동 적용 범위" value={scope} disabled={!data.can_manage || blocked}
-                    onChange={(value) => setScope(value as AutoApplyScope)}
+                    onChange={(value) => {
+                        if (value === scope) return;
+                        setScope(value as AutoApplyScope);
+                        onSave({ channel, auto_apply: value as AutoApplyScope, expected_revision: data.settings.revision });
+                    }}
                     options={[{ value: "notify_only", label: "알림만 (기본값)" },
                         { value: "patch", label: "patch 버전까지" }, { value: "minor", label: "minor 버전까지" }]} />
                 <GroveText as="p" display="block" type="supporting" color="secondary">설정만 저장 · 설치·재시작 없음</GroveText>
-                <GroveButton type="submit" disabled={!dirty}>서버 업데이트 설정 저장</GroveButton>
                 <GroveButton type="button" disabled={dirty} onClick={onCheck}>서버 업데이트 확인</GroveButton>
-                {dirty && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">변경한 설정을 저장한 뒤 해당 채널을 확인하세요.</GroveText>}
             </fieldset>
-        </form>
         <GroveText as="p" display="block" type="inherit" color="inherit" role="status">{data.readiness.idle ? "현재 유휴 상태" : "적용 보류 · 진행 중 작업이 있습니다."}</GroveText>
         {!data.readiness.idle && <KeyValues aria-label="업데이트 보류 대상"
             items={Object.entries(data.readiness.busy).filter(([, count]) => count > 0).map(([kind, count]) => [busyLabels[kind] ?? kind, count])} />}
@@ -112,7 +116,6 @@ export function UpdateSettingsPanel({ data, blocked, onSave, onCheck }: {
 const busyLabels: Record<string, string> = {
     active_turns: "실행·대기 턴", awaiting_approval: "승인 대기", running_tasks: "실행 중 작업",
     running_terminals: "실행 중 터미널", schedules_within_10m: "10분 내 예약", running_schedule_runs: "실행 중 예약",
-    running_mcp_checks: "MCP 확인", running_mcp_calls: "MCP 호출",
 };
 export function CheckResult({ check }: { check: UpdateCheck | null }) {
     if (!check) return <GroveText as="p" display="block" type="inherit" color="inherit">아직 서버 업데이트를 확인하지 않았습니다.</GroveText>;

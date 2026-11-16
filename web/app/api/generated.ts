@@ -16,10 +16,6 @@ export type RoomMember = { id: string, name: string, profile_id: string | null, 
 
 export type BotRoom = { session_id: string, project_id: string, name: string, members: Array<RoomMember>, };
 
-export type BotConnection = { id: string, name: string, enabled: boolean, selected: boolean, };
-
-export type BotConnections = { revision: number, servers: Array<BotConnection>, };
-
 export type Project = { id: string, name: string, root_path: string, created_at: string, updated_at: string, revision: number, archived_at: string | null,
 /**
  * root 경로가 현재 접근 가능한 디렉터리인지
@@ -48,7 +44,13 @@ setup_script_id: string | null,
 /**
  * 워크스페이스 모드: "single" | "project"
  */
-workspace_mode: string, };
+workspace_mode: string,
+/**
+ * 사이드바 정리용 폴더. 실제 root 경로와는 무관하다.
+ */
+folder_id?: string, };
+
+export type ProjectFolder = { id: string, name: string, revision: number, created_at: string, updated_at: string, project_count: number, };
 
 export type Label = { id: string, name: string, color: string, revision: number, created_at: string, updated_at: string,
 /**
@@ -94,9 +96,13 @@ rewind_boundary_seq: number | null, };
 
 export type RecentItem = { id: string, kind: string, project_id: string, project_name: string, resource_id: string, title: string, last_access_at: string, pinned: boolean, hidden: boolean, view_state: unknown, revision: number,
 /**
- * 서버 상태로 계산한 값: active | running | awaiting_approval | awaiting_input | unknown_result | archived | missing | project_unavailable
+ * 서버 상태로 계산한 값: active | queued | running | awaiting_approval | awaiting_input | completed | failed | interrupted | cancelled | unknown_result | archived | missing | project_unavailable
  */
 status: string, unread: boolean,
+/**
+ * 가장 최근의 유효한 턴이 성공한 경우의 ID. 완료 확인은 메시지 읽음과 별개다.
+ */
+completed_turn_id: string | null, completion_unread: boolean,
 /**
  * 대화의 마지막 사용자 메시지 시각(되돌린 메시지 제외). 다른 종류는 없음.
  */
@@ -175,7 +181,7 @@ queue?: { ahead: number; active: number; limit: number; reason?: "provider" | "a
 
 export type ToolCallRow = { id: string, session_id: string, project_id: string, turn_id: string | null, provider_call_id: string | null, name: string, args: unknown, target: unknown, status: string, needs_approval: boolean, revision: number, result: unknown, expires_at: string | null, created_at: string, updated_at: string, decided_at: string | null, started_at: string | null, finished_at: string | null, reviewed_at: string | null, review: unknown,
 /**
- * 실행을 허락한 범위: once(이번만) | session(이 대화에서 계속) | policy(tools.allow) | null(승인 불필요·미결정)
+ * 실행을 허락한 범위: once(이번만) | session(이 대화에서 계속) | policy(설정으로 사전 허용) | null(승인 불필요·미결정)
  */
 approval_scope: string | null, };
 

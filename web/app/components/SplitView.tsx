@@ -1,8 +1,6 @@
 import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { splitStyles } from "./split-layout.stylex";
 import { Divider } from "@astryxdesign/core/Divider";
-import { Select } from "../design/Select";
-import { StatusBadge } from "../design/StatusBadge";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { Suspense, lazy, useEffect, useRef, useState } from "react";
@@ -16,11 +14,13 @@ import type { Opener } from "./Workspace";
 import { RecentPanel } from "./RecentPanel";
 import { Layout, LayoutContent } from "@astryxdesign/core/Layout";
 import { LoadingBar } from "./LoadingScreen";
+import { Icon } from "./icons";
+import { DRAG_PROJECT, parseProjectDrag } from "../state/projectOrder";
 
-const Settings = lazy(async () => ({ default: (await import("./Settings")).Settings }));
 const TerminalView = lazy(async () => ({ default: (await import("./TerminalView")).TerminalView }));
 
-type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; visible: boolean; projects: Project[] };
+type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; visible: boolean; projects: Project[];
+    projectLabel?: string; onProjectDrop?: (target: Omit<L.Tab, "id">, edge: L.DropEdge) => void; onCloseProject?: () => void };
 type ViewProps = Props & { maximized: string | null; toggleMaximize: (leafId: string) => void };
 
 export function SplitView(p: Props) {
@@ -102,7 +102,6 @@ function NodeView(p: ViewProps & { node: L.Node; path: number[] }) {
 }
 
 const { DRAG_TAB, DRAG_OPEN } = L;
-const EDGE_LABEL: Record<(typeof L.SPLIT_EDGES)[number], string> = { left: "왼쪽", right: "오른쪽", top: "위", bottom: "아래" };
 
 // pane 가장자리 25% 안이면 그 방향 분할, 아니면 그 pane에 넣는다. 좁은 화면은 분할하지 않는다.
 function dropZone(e: React.DragEvent<HTMLElement>, narrow: boolean): L.DropEdge {
@@ -115,36 +114,47 @@ function dropZone(e: React.DragEvent<HTMLElement>, narrow: boolean): L.DropEdge 
     return dist < 0.25 ? edge : "center";
 }
 
-const draggable = (e: React.DragEvent) => e.dataTransfer.types.includes(DRAG_TAB) || e.dataTransfer.types.includes(DRAG_OPEN);
+const draggable = (e: React.DragEvent) => [DRAG_TAB, DRAG_OPEN, DRAG_PROJECT].some((kind) => e.dataTransfer.types.includes(kind));
 
 function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     const { leaf } = p;
     const focused = p.layout.focused_leaf === leaf.id;
     const active = leaf.tabs.find((t) => t.id === leaf.active_tab);
-    const activeIndex = leaf.tabs.findIndex((t) => t.id === leaf.active_tab);
     const others = L.leaves(p.layout.root).filter((x) => x.id !== leaf.id);
     const projectName = (id?: string) => p.projects.find((x) => x.id === id)?.name;
     const visible = p.visible && (!p.narrow || focused) && (!p.maximized || p.maximized === leaf.id);
     const [zone, setZone] = useState<L.DropEdge | null>(null);
+    const tabList = useRef<HTMLDivElement>(null);
+    useEffect(() => {
+        const list = tabList.current;
+        if (!list || p.narrow || !visible) return;
+        const reveal = () => list.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest", inline: "nearest" });
+        reveal();
+        const observer = new ResizeObserver(reveal);
+        observer.observe(list);
+        return () => observer.disconnect();
+    }, [leaf.active_tab, p.narrow, visible]);
     const splittable = L.canSplit(p.layout, leaf.id);
     const drop = (e: React.DragEvent, edge: L.DropEdge, index?: number) => {
         e.preventDefault();
         e.stopPropagation();
         setZone(null);
+        if (e.dataTransfer.types.includes(DRAG_PROJECT)) {
+            const target = parseProjectDrag(e.dataTransfer.getData(DRAG_PROJECT));
+            if (target) p.onProjectDrop?.(target, edge);
+            return;
+        }
         const tabId = e.dataTransfer.getData(DRAG_TAB);
         if (tabId) {
             p.update((l) => L.placeTab(l, tabId, leaf.id, edge, index));
             return;
         }
         const target = L.parseOpenTarget(e.dataTransfer.getData(DRAG_OPEN));
-        if (target) p.update((l) => L.openAtEdge(l, leaf.id, edge, target));
-    };
-    const menu = (value: string) => {
-        if (!active || !value) return;
-        const [kind, arg] = value.split(":") as [string, string];
-        if (kind === "leaf") p.update((l) => L.moveTab(l, active.id, arg));
-        else if (kind === "order") p.update((l) => L.placeTab(l, active.id, leaf.id, "center", activeIndex + Number(arg)));
-        else if (kind === "edge") p.update((l) => L.placeTab(l, active.id, leaf.id, arg as L.DropEdge));
+        if (target) {
+            const projectId = L.allTabs(p.layout).find((tab) => tab.project_id)?.project_id;
+            if (projectId !== target.project_id) p.open(target);
+            else p.update((l) => L.openAtEdge(l, leaf.id, edge, target));
+        }
     };
     return (
         <PaneVisibility.Provider value={visible}>
@@ -157,14 +167,26 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 e.preventDefault();
                 e.dataTransfer.dropEffect = e.dataTransfer.types.includes(DRAG_TAB) ? "move" : "copy";
                 const next = dropZone(e, p.narrow);
-                setZone(next !== "center" && !splittable ? "center" : next);
+                setZone(next !== "center" && !splittable && !e.dataTransfer.types.includes(DRAG_PROJECT) ? "center" : next);
             }}
             onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setZone(null)}
             onDrop={(e) => draggable(e) && drop(e, zone ?? "center")}
         >
             {zone && <Stack xstyle={splitStyles.drop} data-testid="drop-zone" data-zone={zone} aria-hidden="true" />}
             {/* 모바일의 열린 탭은 오른쪽 서랍에서 전환한다. */}
-            <Stack direction="horizontal" align="center" gap={1} padding={2} isScrollable xstyle={splitStyles.tabs} role="tablist" hidden={p.narrow}>
+            <Stack direction="horizontal" align="center" gap={0} xstyle={splitStyles.tabs} hidden={p.narrow}
+                // 탭 줄은 pane의 위쪽 가장자리여도 분할하지 않고 탭을 합친다.
+                onDragOver={(e) => {
+                    if (!draggable(e)) return;
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.dataTransfer.dropEffect = e.dataTransfer.types.includes(DRAG_TAB) ? "move" : "copy";
+                    setZone(null);
+                }}
+                onDrop={(e) => draggable(e) && drop(e, "center")}
+            >
+                {p.projectLabel && <GroveText type="supporting" color="secondary" maxLines={1} xstyle={splitStyles.projectName}>{p.projectLabel}</GroveText>}
+                <Stack ref={tabList} direction="horizontal" align="center" gap={0} isScrollable xstyle={splitStyles.tabList} role="tablist" aria-label="열린 대화와 화면">
                 {leaf.tabs.map((t, i) => (
                     <Stack direction="horizontal" align="center" gap={0.5} key={t.id} xstyle={splitStyles.tab} role="tab" aria-selected={t.id === leaf.active_tab}
                         onDragOver={(e) => {
@@ -175,7 +197,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                         }}
                         onDrop={(e) => draggable(e) && drop(e, "center", i)}
                     >
-                        <GroveButton type="button" appearance="link" xstyle={splitStyles.title} data-testid="tab-title" onClick={() => p.update((l) => L.activate(l, t.id))} title={`${t.title} · 끌어서 다른 영역이나 가장자리로 이동(Alt+Shift+←/→ 순서 변경)`}
+                        <GroveButton type="button" appearance="disclosure" density="compact" xstyle={splitStyles.title} data-testid="tab-title" onClick={() => p.update((l) => L.activate(l, t.id))} title={`${projectName(t.project_id) ?? ""} · ${t.title} · 끌어서 다른 영역이나 가장자리로 이동(Alt+Shift+←/→ 순서 변경)`}
                             draggable
                             onDragStart={(e) => {
                                 e.dataTransfer.setData(DRAG_TAB, t.id);
@@ -188,32 +210,30 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                                 if (index >= 0 && index < leaf.tabs.length) p.update((l) => L.placeTab(l, t.id, leaf.id, "center", index));
                             }}
                         >
-                            {t.kind !== "settings" && <StatusBadge>{projectName(t.project_id) ?? "?"}</StatusBadge>}
-                            {t.kind === "project" ? "대화 목록" : t.title}
+                            <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} xstyle={splitStyles.titleText}>
+                                {t.kind === "project" ? projectName(t.project_id) ?? t.title : t.title}
+                            </GroveText>
                         </GroveButton>
-                        <GroveButton variant="secondary" density="compact" aria-label="탭 닫기" title="화면만 닫습니다(작업은 계속)" onClick={() => p.update((l) => L.closeTab(l, t.id))}>
-                            ×
+                        <GroveButton appearance="icon" density="compact" xstyle={splitStyles.close} aria-label="탭 닫기" title="화면만 닫습니다(작업은 계속)" onClick={() => p.update((l) => L.closeTab(l, t.id))}>
+                            <Icon name="close" size={12} />
                         </GroveButton>
                     </Stack>
                 ))}
-                <StackItem as="span" size="fill" aria-hidden="true" />
+                </Stack>
+                <Stack direction="horizontal" align="center" gap={1} xstyle={splitStyles.tabActions}>
+                {p.onCloseProject && <GroveButton variant="secondary" appearance="icon" density="compact" aria-label="프로젝트 분할 닫기"
+                    title="프로젝트 화면만 닫습니다. 탭·초안·실행은 유지됩니다." onClick={p.onCloseProject}><Icon name="close" size={12} /></GroveButton>}
                 {!p.narrow && active && (
-                    <>
-                        <GroveButton variant="secondary" density="compact" title="오른쪽으로 분할" aria-label="오른쪽으로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "row", copyOf(active)))}>
-                            ◫
+                    <Stack direction="horizontal" align="center" gap={0} xstyle={splitStyles.splitActions} role="group" aria-label="화면 분할">
+                        <GroveButton appearance="icon" density="compact" xstyle={[splitStyles.splitAction, splitStyles.splitActionStart]}
+                            title="오른쪽으로 분할" aria-label="오른쪽으로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "row", copyOf(active)))}>
+                            <Icon name="panel" size={24} />
                         </GroveButton>
-                        <GroveButton variant="secondary" density="compact" title="아래로 분할" aria-label="아래로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "column", copyOf(active)))}>
-                            ⊟
+                        <GroveButton appearance="icon" density="compact" xstyle={[splitStyles.splitAction, splitStyles.splitActionEnd]}
+                            title="아래로 분할" aria-label="아래로 분할" onClick={() => p.update((l) => L.splitLeaf(l, leaf.id, "column", copyOf(active)))}>
+                            <Icon name="panelBottom" size={24} />
                         </GroveButton>
-                        <StackItem size="static"><Select label="탭 이동" hideLabel value="" onChange={menu}
-                            options={[{ value: "", label: "이동…" }, ...(leaf.tabs.length > 1 ? [
-                                { value: "order:-1", label: "탭을 앞으로", disabled: activeIndex <= 0 },
-                                { value: "order:1", label: "탭을 뒤로", disabled: activeIndex >= leaf.tabs.length - 1 },
-                            ] : []), ...others.map((o, i) => ({ value: `leaf:${o.id}`, label: `영역 ${i + 1}` })),
-                            ...(leaf.tabs.length > 1 && splittable ? L.SPLIT_EDGES.map((edge) => ({
-                                value: `edge:${edge}`, label: `${EDGE_LABEL[edge]} 새 영역으로`,
-                            })) : [])]} /></StackItem>
-                    </>
+                    </Stack>
                 )}
                 {others.length > 0 && (
                     <>
@@ -226,6 +246,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                             onClick={() => p.update((l) => L.closeLeaf(l, leaf.id))}>⊠</GroveButton>
                     </>
                 )}
+                </Stack>
             </Stack>
             <StackItem size="fill" isScrollable xstyle={splitStyles.body} data-testid="pane-body">
                 <Suspense fallback={<LoadingBar label="화면 여는 중…" />}>
@@ -238,15 +259,6 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                     initial={L.fileTarget(active)} />}
                 {active?.kind === "terminal" && active.project_id && active.resource_id && (
                     <TerminalView key={active.id} projectId={active.project_id} terminalId={active.resource_id} />
-                )}
-                {active?.kind === "settings" && (
-                    <Settings
-                        key={active.id}
-                        open={p.open}
-                        projectId={active.project_id ?? undefined}
-                        projectName={projectName(active.project_id)}
-                        sessionId={active.resource_id?.startsWith("session:") ? active.resource_id.slice(8) : undefined}
-                    />
                 )}
                 </Suspense>
             </StackItem>

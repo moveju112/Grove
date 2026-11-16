@@ -38,14 +38,12 @@ test("모델의 무관한 대화 조회는 기본 차단되고 대화 범위 허
     await expect(check).toHaveAttribute("data-selected-value", "false");
     await expect(row).toContainText("분기 시점까지만");
     await selectChoice(check, "true");
-    await row.getByRole("button", { name: "저장", exact: true }).click();
     await expect(row).toContainText("저장됨 · 즉시 적용");
     const allowed = await lookup(true);
     expect(allowed.status).toBe("succeeded");
     expect(allowed.result.total).toBe(1);
     expect(allowed.result.items?.[0]?.id).toBe(foreign.id);
     await selectChoice(check, "false");
-    await row.getByRole("button", { name: "저장", exact: true }).click();
     await expect(row).toContainText("저장됨 · 즉시 적용");
     const denied = await lookup(true);
     expect(denied.status).toBe("failed");

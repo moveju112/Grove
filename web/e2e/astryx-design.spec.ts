@@ -44,7 +44,7 @@ for (const width of [390, 1400]) {
                 await expect(view.getByTestId("tool-dock")).toBeHidden();
                 await expect(view.getByRole("button", { name: "도구 패널", exact: true })).toBeVisible();
                 await page.screenshot({ path: info.outputPath("conversation.png"), fullPage: true });
-                await openSettings(page);
+                await openSettings(page, "local");
                 await page.getByRole("button", { name: "화면·입력", exact: true }).click();
                 await selectChoice(page.getByRole("combobox", { name: "Enter로 보내기", exact: true }), "true");
                 expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);

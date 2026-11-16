@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, composerOption, ensureProjects, login, openDetails, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, sessionView, state } from "./helpers";
 
 test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "전용 CLI fixture로 실행: GROVE_E2E_FAKE_CLI=1");
 
@@ -23,11 +23,9 @@ for (const theme of ["light", "dark"] as const) {
             await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
             const view = sessionView(page, session.id);
             try {
-                await composerOption(view, "모델 프로필", profile.id);
-                await composerOption(view, "보내기 방식", "model");
-                await composerOption(view, "도구", false);
-                await view.getByLabel("메시지 입력").fill("fixture-response-boundaries");
-                await view.getByRole("button", { name: "보내기", exact: true }).click();
+                await apiCall("POST", `/sessions/${session.id}/turns`, {
+                    profile_id: profile.id, text: "fixture-response-boundaries", tools: false,
+                });
                 await expect(view.getByTestId("partial")).toBeVisible();
                 const pid = Number(readFileSync(join(state().cliDir!, "last-pid"), "utf8"));
                 await expect.poll(() => existsSync(join(state().cliDir!, `response-ready-${pid}`))).toBe(true);
@@ -67,6 +65,15 @@ for (const theme of ["light", "dark"] as const) {
                 expect(saved.response_parts).toEqual(["심볼릭 링크인지, 실제로 어느 파일을 가리키는지 확인할게.", "맞아. 확인 결과 심볼릭 링크야."]);
                 expect(saved.reasoning).not.toContain("심볼릭 링크인지");
                 if (mode === "collapsed") {
+                    // 접힌 버튼의 글자도 답변과 같은 왼쪽 기준선에서 시작한다.
+                    const progressStart = await answer.getByTestId("msg-progress").getByRole("button").evaluate((node) => {
+                        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+                        const range = document.createRange();
+                        range.selectNodeContents(walker.nextNode()!);
+                        return range.getBoundingClientRect().x;
+                    });
+                    const answerStart = (await answer.getByTestId("msg-answer").boundingBox())!.x;
+                    expect(progressStart).toBeCloseTo(answerStart, 0);
                     await openDetails(answer.getByTestId("msg-progress"));
                     await expect(answer.getByRole("dialog")).toContainText("심볼릭 링크인지");
                     await page.keyboard.press("Escape");

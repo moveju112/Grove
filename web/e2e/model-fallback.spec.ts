@@ -50,10 +50,9 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await control.getByRole("button", { name: "마지막에 후보 추가", exact: true }).click();
         await selectChoice(control.getByLabel("fallback 1", { exact: true }), backup.id);
         await expect(control).toContainText(`전송 대상: openai · ${base_url} · ${prefix}-actual`);
-        await expect(control.getByRole("button", { name: "fallback 저장", exact: true })).toBeDisabled();
+        await expect(control.getByRole("button", { name: "fallback 저장", exact: true })).toHaveCount(0);
         await selectChoice(control.getByLabel("위 순서의 다른 전송 대상·모델·가격으로 대화가 전달되는 것을 확인했습니다"), "true");
-        await control.getByRole("button", { name: "fallback 저장", exact: true }).click();
-        await expect(control.getByRole("status").filter({ hasText: /\S/ })).toHaveText("fallback 저장됨");
+        await expect(control.getByRole("status").filter({ hasText: /\S/ })).toHaveText("저장됨");
         const stored = (await apiCall<{ id: string; options: { fallback: { enabled: boolean; candidates: { profile_id: string }[] } } }[]>("GET", "/model-profiles")).find((p) => p.id === primary.id)!;
         expect(stored.options.fallback.enabled).toBe(true);
         expect(stored.options.fallback.candidates.map((c) => c.profile_id)).toEqual([backup.id]);
@@ -63,7 +62,8 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
         const app = await context.newPage();
         await login(app);
-        await app.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(prefix) }).click();
+        await app.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
+        await app.getByTestId("project-view").getByRole("button", { name: new RegExp(`${prefix}$`) }).click();
         const view = sessionView(app, session.id);
         await composerOption(view, "보내기 방식", "model");
         await composerOption(view, "모델 프로필", primary.id);

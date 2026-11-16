@@ -5,9 +5,9 @@ use common::*;
 use reqwest::{Method, StatusCode};
 use serde_json::json;
 
-/// PROJECT-001: 서버 폴더 둘러보기(폴더 이름만)와 새 폴더로 프로젝트 만들기.
+/// PROJECT-001: 숨김을 포함한 서버 폴더 둘러보기와 기존 폴더 등록.
 #[tokio::test]
-async fn browse_dirs_and_create_project_in_new_folder() {
+async fn browse_dirs_and_register_only_existing_folders() {
     let s = TestServer::start().await;
     let base = s.make_project_dir("browse");
     std::fs::create_dir(base.join("alpha")).unwrap();
@@ -17,9 +17,9 @@ async fn browse_dirs_and_create_project_in_new_folder() {
     let (st, v) = s.get(&q(&base, "")).await;
     assert_eq!(st, StatusCode::OK, "{v}");
     let names: Vec<&str> = v["entries"].as_array().unwrap().iter().map(|e| e["name"].as_str().unwrap()).collect();
-    assert_eq!(names, vec!["alpha"], "폴더만, 숨김 제외");
+    assert_eq!(names, vec![".hidden", "alpha"], "숨김 폴더도 기본으로 표시하고 파일은 제외한다");
     assert_eq!(v["parent"].as_str().unwrap(), base.canonicalize().unwrap().parent().unwrap().to_str().unwrap());
-    let (_, v) = s.get(&q(&base, "&hidden=true")).await;
+    let (_, v) = s.get(&q(&base, "&hidden=false")).await;
     assert_eq!(v["entries"].as_array().unwrap().len(), 2);
     let (st, _) = s.get(&q(&base.join("nope"), "")).await;
     assert_eq!(st, StatusCode::NOT_FOUND);
@@ -28,22 +28,22 @@ async fn browse_dirs_and_create_project_in_new_folder() {
     let r = s.raw(Method::GET, &q(&base, ""), None, None, Some("bad-token")).await;
     assert_eq!(r.status(), StatusCode::UNAUTHORIZED, "인증 필요");
 
-    // 없는 경로: create 없이는 거부, create면 마지막 폴더 하나만 만든다
+    // 없는 경로는 만들지 않는다. 이전 클라이언트의 create 플래그도 부작용을 만들지 않는다.
     let new = base.join("fresh");
     let (st, _) = s.post("/api/v1/projects", json!({ "root_path": new })).await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
     assert!(!new.exists());
     let (st, v) = s.post("/api/v1/projects", json!({ "root_path": new, "create": true })).await;
-    assert_eq!(st, StatusCode::CREATED, "{v}");
-    assert!(new.is_dir());
-    assert_eq!(v["name"], "fresh");
+    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
+    assert!(!new.exists());
     let deep = base.join("missing-parent").join("child");
     let (st, v) = s.post("/api/v1/projects", json!({ "root_path": deep, "create": true })).await;
     assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
     assert!(!base.join("missing-parent").exists(), "상위 폴더까지 만들지 않는다");
-    // 이미 있는 폴더에 create를 줘도 그대로 등록한다
-    let (st, _) = s.post("/api/v1/projects", json!({ "root_path": base.join("alpha"), "create": true })).await;
+    // 기존 폴더는 정상 등록한다.
+    let (st, v) = s.post("/api/v1/projects", json!({ "root_path": base.join("alpha") })).await;
     assert_eq!(st, StatusCode::CREATED);
+    assert_eq!(v["name"], "alpha");
 }
 
 /// PROJECT-002: 아이콘 설정·해제와 이름순·최근 활동순 정렬.

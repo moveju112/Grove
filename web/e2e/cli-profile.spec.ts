@@ -5,6 +5,7 @@ import { apiCall, composerOption, ensureProjects, login, removeProfiles, selectC
 test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만들 수 있고 endpoint·키 입력은 숨겨진다", async ({ page }) => {
     await login(page);
     await page.getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByRole("tab", { name: "데몬 설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("모델 프로필");
     await page.getByRole("button", { name: "모델 프로필 추가", exact: true }).click();
     await selectChoice(page.getByLabel("protocol"), "claude_code");

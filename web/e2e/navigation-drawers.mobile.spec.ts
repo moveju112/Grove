@@ -1,5 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiCall, ensureProfile, ensureProjects, login, script, sessionView } from "./helpers";
+import { mkdtempSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { apiCall, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 async function swipe(page: Page, x: number, y: number, toX: number, toY = y) {
@@ -17,9 +19,17 @@ for (const theme of ["light", "dark"] as const) {
     test(`${theme}: 양쪽 가장자리 스와이프로 메뉴·현재 프로젝트 세션을 열고 초안을 유지한다`, async ({ page }, info) => {
         await page.emulateMedia({ colorScheme: theme });
         await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
-        const { a, b } = await ensureProjects();
+        // 다른 시험에서 프로젝트 모드를 바꿔도 단일 모드 탐색을 독립적으로 확인한다.
+        const createProject = () => apiCall<{ id: string; name: string }>("POST", "/projects", {
+            root_path: mkdtempSync(join(dirname(state().projA), "000-drawers-")),
+        });
+        const a = await createProject();
+        const b = await createProject();
         const first = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `첫 대화 ${theme}` });
         const second = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `둘째 대화 ${theme}` });
+        for (const session of [first, second]) {
+            await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
+        }
         await apiCall("POST", `/projects/${b.id}/sessions`, { title: `다른 프로젝트 ${theme}` });
         await login(page);
         await swipe(page, 10, 400, 230);
@@ -29,8 +39,10 @@ for (const theme of ["light", "dark"] as const) {
         await expect(left).toHaveJSProperty("open", true);
         await expect(left).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
         await expect(left.getByRole("button", { name: "설정", exact: true })).toBeVisible();
-        await expect(left.getByTestId("sidebar-session").filter({ hasText: `첫 대화 ${theme}` })).toBeVisible();
-        expect((await left.getByTestId("sidebar-session").filter({ hasText: `첫 대화 ${theme}` }).boundingBox())!.height).toBeLessThanOrEqual(36);
+        const project = left.locator(`[data-testid="sidebar-project"][data-project-id="${a.id}"]`);
+        await expect(project.getByTestId("sidebar-session")).toHaveCount(0);
+        await expect(project.getByTestId("project-row")).toBeVisible();
+        expect((await project.getByTestId("project-row").boundingBox())!.height).toBeLessThanOrEqual(36);
         const horizontalScroll = await left.getByTestId("sidebar-scroll").evaluate((node) => {
             const previous = node.scrollLeft;
             node.scrollLeft = 100;

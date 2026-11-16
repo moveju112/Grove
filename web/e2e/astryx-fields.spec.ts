@@ -38,8 +38,8 @@ test("Astryx 입력에서도 필수 값 검증은 서버 전송 전에 동작한
 
 test("Astryx 기기 이름은 기존 native 길이 제한을 유지한다", async ({ page }) => {
     await login(page);
-    await openSettings(page);
-    await page.getByLabel("설정 검색").fill("등록 기기");
+    await openSettings(page, "local");
+    await page.getByLabel("설정 검색").fill("클라이언트 이름");
     const input = page.getByLabel("이 기기 이름", { exact: true });
     await expect(input).toBeEnabled();
     await input.fill("가".repeat(81));

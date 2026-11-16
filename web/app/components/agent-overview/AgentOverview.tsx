@@ -1,4 +1,7 @@
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
+import { Stack as GroveStack } from "@astryxdesign/core/Stack";
+import { Card } from "@astryxdesign/core/Card";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { CodeBlock } from "../../design/CodeBlock";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
@@ -88,12 +91,13 @@ export function AgentOverview({ target, onEdit, onLayoutChange }: {
         onLayoutChange?.(connected && view.status !== "loading");
         return () => onLayoutChange?.(false);
     }, [onLayoutChange, connected, view.key, view.status]);
-    return <section data-testid="agent-overview" aria-label="역할·모델·실행 규칙 개요">
-        <GroveHeading level={3} color="inherit">역할·모델·실행 규칙 개요</GroveHeading>
-        <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="overview-target">{target.sessionId ? "이 대화 기준" : target.projectId ? "이 프로젝트 기준" : "서버 전체 기준"} · 정의 편집은 서버 전체에 적용됩니다.</GroveText>
+    return <GroveStack as="section" gap={2} data-testid="agent-overview" aria-label="역할·모델·실행 규칙 개요">
+        <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="overview-target">{target.sessionId ? "이 대화 기준" : target.projectId ? "이 프로젝트 기준" : "서버 전체 기준"} · 정의 편집은 서버 전체에 적용</GroveText>
         {!connected ? <GroveText as="p" display="block" type="inherit" color="inherit" role="status">연결 확인 중 · 이전 조회값은 현재 설정으로 표시하지 않습니다.</GroveText>
             : view.status === "error" ? <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">개요를 읽지 못했습니다. 인증·조회 대상을 확인하고 다시 조회하세요.</GroveText>
                 : view.status === "loading" ? <GroveText as="p" display="block" type="inherit" color="inherit" role="status">개요를 읽는 중입니다.</GroveText> : null}
+        <Collapsible trigger="모델·실행 정보" defaultIsOpen={false}>
+        <GroveStack gap={3}>
         {ready && <>
             <GroveHeading level={4} color="inherit">모델 연결</GroveHeading>
             <GroveText as="p" display="block" type="inherit" color="inherit">현재 부모 턴: {ready.parent.status === "active"
@@ -106,16 +110,18 @@ export function AgentOverview({ target, onEdit, onLayoutChange }: {
             <GroveText as="p" display="block" type="inherit" color="inherit">최대 깊이 {ready.limits.max_depth} · 부모 대화당 동시 실행 {ready.limits.max_per_parent} · 서버 전체 동시 실행 {ready.limits.max_running}</GroveText>
             <GroveText as="p" display="block" type="supporting" color="secondary">부모 취소 시 자식도 취소 · 서버 재시작 후 자동 재실행하지 않습니다.</GroveText>
             <GroveHeading level={4} color="inherit">등록된 역할 {ready.roles.length}개</GroveHeading>
-            {ready.roles.map((role) => <article key={role.id} aria-label={`역할 ${role.id}`}>
+            {ready.roles.map((role) => <Card key={role.id} padding={3} role="article" aria-label={`역할 ${role.id}`}><GroveStack gap={2}>
                 <GroveHeading level={4} color="inherit">{role.name} <GroveText type="supporting" color="secondary">{role.id}</GroveText></GroveHeading>
                 <GroveText as="p" display="block" type="inherit" color="inherit">{role.builtin ? "기본 내장" : "사용자 정의"} · {role.modified_fields.length ? `override 수정됨 (${role.modified_fields.join(", ")})` : "원문 변경 없음"} · {role.enabled ? "활성" : "비활성"} · {AVAILABLE[role.availability] ?? "확인 불가"}</GroveText>
                 <DetailDialog label="역할 지침" title={role.enabled ? "현재 적용 지침" : "비활성 정의 지침 (실행에 사용 안 함)"}>
                     <GroveText as="p" display="block" type="inherit" color="inherit">{role.description}</GroveText>
                     <CodeBlock aria-label={`${role.id} 지침`} code={role.body} />
                 </DetailDialog>
-                <GroveButton variant="secondary" onClick={() => onEdit(role.id)}>{role.id} 기존 편집 열기</GroveButton>
-            </article>)}
+                <GroveButton variant="secondary" aria-label={`${role.id} 기존 편집 열기`} onClick={() => onEdit(role.id)}>편집</GroveButton>
+            </GroveStack></Card>)}
         </>}
         <GroveButton variant="secondary" disabled={!connected || view.status === "loading"} onClick={reload}>개요 다시 조회</GroveButton>
-    </section>;
+        </GroveStack>
+        </Collapsible>
+    </GroveStack>;
 }

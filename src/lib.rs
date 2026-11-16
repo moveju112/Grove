@@ -8,7 +8,6 @@ pub mod agent_overview;
 pub mod attachments;
 pub mod source_settings;
 pub mod skills;
-pub mod hooks;
 pub mod approvals;
 mod project_fs;
 pub mod auth;
@@ -26,7 +25,6 @@ pub mod deps;
 pub mod context;
 pub mod computer;
 pub mod recall;
-pub mod memories;
 mod history;
 pub mod definitions;
 pub mod deferred_tools;
@@ -50,7 +48,7 @@ pub mod procs;
 pub mod project_resources;
 pub mod storage;
 pub mod labels;
-pub mod mcp;
+pub mod project_folders;
 pub mod projects;
 pub mod repos;
 pub mod provider;
@@ -65,7 +63,6 @@ pub mod admin;
 pub mod bot_avatars;
 pub mod bots;
 pub mod bot_rooms;
-pub mod bot_connections;
 pub mod notifications;
 pub mod schedules;
 pub mod remote_watches;
@@ -97,9 +94,9 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// 클라이언트는 쓰기 전에 목록을 확인하고, 변경 요청에는 필요한 기능을 `x-grove-require`로 밝힌다.
 /// 기능을 빼거나 의미를 바꾸면 이름의 버전(`_v2`)을 올린다.
 pub const CAPABILITIES: &[&str] = &[
+    "project_folders_v1",
     "computer_use_v1",
     "bot_rooms_v1",
-    "bot_connections_v1",
     "agent_auth_v1",
     "agent_backends_v1",
     "e2ee_v1",
@@ -121,15 +118,10 @@ pub const CAPABILITIES: &[&str] = &[
     "model_capabilities_v1",
     "context_auto_clear_v1",
     "recall_keyword_v1",
-    "user_memories_v1",
     "model_session_access_v1",
     "private_model_headers_v1",
     "project_scripts_v1",
     "terminal_capture_v1",
-    "settings_reset_v1",
-    "mcp_settings_v1",
-    "mcp_check_v1",
-    "mcp_tools_v1",
 ];
 
 #[derive(Clone)]
@@ -236,6 +228,8 @@ pub fn router(app: App) -> Router {
         .route("/projects/clone", post(repos::clone))
         .route("/projects/{id}", get(projects::show).patch(projects::update))
         .route("/labels", get(labels::list).post(labels::create))
+        .route("/project-folders", get(project_folders::list).post(project_folders::create))
+        .route("/project-folders/{id}", axum::routing::patch(project_folders::update).delete(project_folders::remove))
         .route("/labels/{id}", axum::routing::patch(labels::update).delete(labels::remove))
         .route("/projects/{id}/labels/{label_id}", axum::routing::put(labels::assign))
         .route("/projects/{id}/sessions", get(sessions::list).post(sessions::create))
@@ -258,14 +252,6 @@ pub fn router(app: App) -> Router {
         .route("/admin/shutdown", post(admin::shutdown))
         .route("/admin/metrics", get(admin::metrics))
         .route("/admin/diagnostics", post(admin::diagnostics))
-        .route("/mcp/servers", get(mcp::list).post(mcp::create))
-        .route("/mcp/servers/{id}", axum::routing::put(mcp::update).delete(mcp::remove))
-        .route("/mcp/servers/{id}/check", get(mcp::check_result).post(mcp::check))
-        .route("/mcp/servers/{id}/oauth", get(mcp::oauth::status))
-        .route("/mcp/servers/{id}/oauth/connect", post(mcp::oauth::connect))
-        .route("/mcp/servers/{id}/oauth/complete", post(mcp::oauth::complete))
-        .route("/mcp/servers/{id}/oauth/cancel", post(mcp::oauth::cancel))
-        .route("/mcp/servers/{id}/oauth/refresh", post(mcp::oauth::refresh))
         .route("/admin/update-receipts/import", post(admin::import_receipts))
         .route("/updates", get(admin::list_updates))
         .route("/bots", get(bots::list).post(bots::create))
@@ -281,7 +267,6 @@ pub fn router(app: App) -> Router {
         .route("/bots/{id}/home", post(bots::open_home))
         .route("/bots/{id}/status", post(bots::set_status))
         .route("/bots/{id}/seen", post(bots::seen))
-        .route("/bots/{id}/connections", get(bot_connections::show).put(bot_connections::save))
         .route("/bot-rooms", get(bot_rooms::list).post(bot_rooms::create))
         .route("/sessions/{id}/bot-room", get(bot_rooms::show))
         .route("/notifications", get(notifications::list))
@@ -298,9 +283,6 @@ pub fn router(app: App) -> Router {
         .route("/schedules/{id}/runs", get(schedules::runs))
         .route("/schedules/{id}/webhook", post(schedules::set_webhook))
         .route("/hooks/schedules/{id}", post(schedules::receive_hook))
-        .route("/hooks", get(hooks::list).post(hooks::create))
-        .route("/hooks/executions", get(hooks::executions))
-        .route("/hooks/{id}", put(hooks::update).delete(hooks::remove))
         .route("/sessions/{id}/context", get(context::get_usage))
         .route("/sessions/{id}/model-input", get(context::get_model_input))
         .route("/sessions/{id}/skills", get(skills::api::list))
@@ -376,9 +358,6 @@ pub fn router(app: App) -> Router {
         .route("/projects/{id}/git/compare", get(git::compare))
         .route("/sessions/search", get(sessions::search))
         .route("/recall", get(recall::get))
-        .route("/memories", get(memories::get_list).post(memories::create))
-        .route("/memories/{id}", put(memories::update))
-        .route("/memories/{id}/delete", post(memories::delete))
         .route("/sessions/{id}/delete", post(sessions::delete_permanently))
         .route("/sessions/{id}/title", post(titles::post_generate))
         .route("/sessions/{id}", get(sessions::show).patch(sessions::update))
@@ -423,8 +402,6 @@ pub fn router(app: App) -> Router {
         .route("/settings/registry", get(settings::get_registry))
         .route("/source-settings", get(source_settings::list))
         .route("/settings/effective", get(settings::get_effective))
-        .route("/settings/reset-preview", get(settings::reset_preview))
-        .route("/settings/reset", post(settings::reset_apply))
         .route("/settings/{scope}/{scope_id}/{key}", axum::routing::put(settings::put))
         .route("/recent", get(workspace::list))
         .route("/recent/touch", post(workspace::touch))
@@ -434,7 +411,6 @@ pub fn router(app: App) -> Router {
         .route("/definitions", get(definitions::list))
         .route("/definitions/{kind}", post(definitions::create))
         .route("/definitions/{kind}/{id}", get(definitions::show).put(definitions::update).delete(definitions::delete))
-        .route("/definitions/{kind}/{id}/restore", post(definitions::restore))
         // 인증 없이 접근 가능한 경로(origin 검사는 handler 안에서 수행)
         .route("/health", get(web::health))
         .route("/auth/browser-login", post(auth::browser_login))
@@ -452,8 +428,7 @@ pub fn router(app: App) -> Router {
         .layer(axum::middleware::from_fn(web::protocol_guard))
         .layer(axum::middleware::from_fn(web::request_context))
         .layer(axum::middleware::from_fn_with_state(app.clone(), e2ee::require_encryption));
-    Router::new().route("/api/mcp-oauth/callback/{id}", get(mcp::oauth::callback))
-        .route("/api/e2ee", get(e2ee::upgrade))
+    Router::new().route("/api/e2ee", get(e2ee::upgrade))
         .nest("/api/v1", api).merge(web::static_routes(&app))
         .with_state(app)
 }

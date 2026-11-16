@@ -4,7 +4,7 @@ import { createHmac } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, expectChoice, inputOptions, login, openBots, openDetails, openProjectFiles, openTool, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, expectChoice, inputOptions, login, openBots, openDetails, openProjectFiles, openTool, script, selectChoice, sessionView, startProjectConversation, state } from "./helpers";
 
 test("CSP·보안 헤더와 PWA manifest를 제공한다", async ({ request }) => {
     const r = await request.get("/");
@@ -280,6 +280,7 @@ test("서버 protocol이 바뀌면 새로고침을 안내하고 변경 요청을
     await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     const view = page.getByTestId("project-view").first();
+    await startProjectConversation(view);
     await composerOption(view, "보내기 방식", "save");
     let mutations = 0;
     // 서버만 먼저 업데이트된 상황: 응답 protocol을 다른 값으로 바꾼다
@@ -329,21 +330,19 @@ test("설정 검색은 항목과 적용 범위를 보여 주고 기본 에이전
     await expect(page.getByTestId("setting-theme")).toContainText("이 기기");
     await expect(page.getByTestId("setting-secrets")).toHaveCount(0);
     await page.getByLabel("설정 검색").fill("");
+    await page.getByRole("tab", { name: "데몬 설정", exact: true }).click();
     await page.getByRole("button", { name: "에이전트·워크플로우" }).click();
     // 사이드바 세션 목록에도 "Reviewer: …" 대화가 보일 수 있어 설정 정의 영역으로 범위를 좁힌다.
     await page.getByTestId("setting-definitions").getByRole("button", { name: /^Reviewer/ }).click();
     const editor = page.getByLabel("정의 본문");
     const original = await editor.inputValue();
     await editor.fill(original + "\n추가 지침");
-    await page.getByTestId("setting-definitions").getByRole("button", { name: "저장", exact: true }).click();
+    await editor.blur();
     await expect(page.getByTestId("setting-definitions").getByText("저장됨")).toBeVisible();
     const d =await apiCall<{ modified_fields: string[]; revision: number }>("GET", "/definitions/agent/reviewer");
     expect(d.modified_fields).toEqual(["body"]);
-    const comparison = page.getByRole("region", { name: "정의 기본값 비교", exact: true });
-    await comparison.getByRole("button", { name: "현재 번들 기본값과 비교", exact: true }).click();
-    await selectChoice(comparison.getByLabel("본문 기본값 적용", { exact: true }), "true");
-    await comparison.getByRole("button", { name: "선택한 필드만 기본값 적용", exact: true }).click();
-    await expect.poll(async () => (await apiCall<{ modified_fields: string[] }>("GET", "/definitions/agent/reviewer")).modified_fields).toEqual([]);
+    await expect(page.getByRole("region", { name: "정의 기본값 비교", exact: true })).toHaveCount(0);
+    await apiCall("PUT", "/definitions/agent/reviewer", { expected_revision: d.revision, body: original });
     expect((await apiCall<{ body: string }>("GET", "/definitions/agent/reviewer")).body).toBe(original);
 });
 
@@ -451,7 +450,7 @@ test("봇을 만들고 home 대화에서 답을 받고, 새로고침·분할 뒤
     await item.getByRole("button", { name: "e2e 봇 관리", exact: true }).click();
     await page.getByRole("group", { name: "e2e 봇 관리", exact: true }).getByRole("button", { name: "편집", exact: true }).click();
     await selectChoice(panel.getByTestId("bot-editor").getByLabel("봇 모델"), profile);
-    await panel.getByTestId("bot-editor").getByRole("button", { name: "저장" }).click();
+    await expect(panel.getByTestId("bot-editor")).toContainText("저장됨");
     await expect(item).not.toContainText("모델 없음");
     // home 대화
     await item.getByRole("button", { name: "e2e 봇", exact: false }).first().click();
@@ -516,25 +515,6 @@ test("봇 대화 탭을 닫아도 서버 실행은 계속되고 다시 열면 �
     await item.getByRole("button", { name: home.name, exact: false }).first().click();
     await expect(page.locator(`[data-testid=session-view][data-session="${home.home_session_id}"]`).first()).toContainText("끝까지 도착");
     await expect(item.getByTestId("bot-unread")).toHaveCount(0);
-});
-
-test("대화 검색은 본문 발췌를 보여 주고 결과를 누르면 그 대화를 연다", async ({ page }) => {
-    const { a } = await ensureProjects();
-    const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: "검색 대상" });
-    const word = `zebra${Date.now()}`;
-    await apiCall("POST", `/sessions/${s.id}/messages`, { text: `여기에 ${word} 가 있다` });
-    await login(page);
-    const panel = page.getByTestId("search-panel");
-    await openDetails(panel, "대화 검색");
-    await panel.getByLabel("대화 검색어").fill(word);
-    const hit = panel.getByTestId("search-hit");
-    await expect(hit).toHaveCount(1);
-    await expect(hit).toContainText(word);
-    await selectChoice(panel.getByLabel("본문 포함"), "false");
-    await expect(panel.getByTestId("search-total")).toHaveText("0개");
-    await selectChoice(panel.getByLabel("본문 포함"), "true");
-    await hit.click();
-    await expect(page.locator(`[data-testid=session-view][data-session="${s.id}"]`).first()).toContainText(word);
 });
 
 test("예약을 만들고 지금 실행하면 실행 기록과 영속 알림이 생기고 알림에서 대화를 연다", async ({ page }) => {
@@ -772,7 +752,7 @@ test("대화에서 연 설정은 그 대화를 대상으로 저장하고 프로�
     const row = page.getByTestId("setting-output.language").last();
     await expect(row).toContainText(`대상: 대화 “${title}”`);
     await row.getByLabel("응답 언어", { exact: true }).fill("English");
-    await row.getByRole("button", { name: "저장", exact: true }).click();
+    await row.getByLabel("응답 언어", { exact: true }).blur();
     await expect(row).toContainText("저장됨");
     await expectChoice(row.getByLabel("응답 언어 적용 범위"), "session");
     const se = await apiCall<{ items: { key: string; effective: unknown; source: string }[] }>("GET", `/settings/effective?session_id=${s.id}`);
@@ -812,7 +792,7 @@ test("다른 pane에서 다른 대화를 열고 조작해도 열어 둔 설정�
     const row = left.getByTestId("setting-output.language");
     await expect(row).toContainText(`대상: 대화 “${ta}”`);
     await row.getByLabel("응답 언어", { exact: true }).fill("日本語");
-    await row.getByRole("button", { name: "저장", exact: true }).click();
+    await row.getByLabel("응답 언어", { exact: true }).blur();
     await expect(row).toContainText("저장됨");
     const ea = await apiCall<{ items: { key: string; effective: unknown }[] }>("GET", `/settings/effective?session_id=${sa.id}`);
     const eb = await apiCall<{ items: { key: string; effective: unknown }[] }>("GET", `/settings/effective?session_id=${sb.id}`);
@@ -831,12 +811,13 @@ test("설정 직접 링크는 접힌 고급 항목도 펼쳐서 보여 준다", 
 test("서버 범위 설정은 대상·적용 시점을 보여 주고 저장 후 실제 적용값이 바뀐다", async ({ page }) => {
     await login(page);
     await page.getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByRole("tab", { name: "데몬 설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("응답 언어");
     const row = page.getByTestId("setting-output.language");
     await expect(row).toContainText("대상: 서버 전체");
     await row.getByLabel("응답 언어", { exact: true }).fill("한국어");
     await expect(row).toContainText("저장 안 됨");
-    await row.getByRole("button", { name: "저장", exact: true }).click();
+    await row.getByLabel("응답 언어", { exact: true }).blur();
     await expect(row).toContainText("저장됨 · 다음 요청부터 적용");
     await expect(row.getByLabel("응답 언어", { exact: true })).toHaveValue("한국어");
     const eff = await apiCall<{ items: { key: string; effective: unknown }[] }>("GET", "/settings/effective");

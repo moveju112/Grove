@@ -86,7 +86,7 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
             if (lose) { await route.fetch(); return route.abort("connectionreset"); }
             return route.fallback();
         });
-        await form.getByRole("button", { name: "로컬 연결 저장", exact: true }).click();
+        await form.getByRole("button", { name: "연결 추가", exact: true }).click();
         const local = page.getByTestId("local-model-connection");
         await expect(local.getByRole("alert")).toContainText("입력은 보존");
         await expect(form.getByLabel("로컬 endpoint")).toHaveValue(fixture.base);
@@ -94,7 +94,7 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         expect(keys).toHaveLength(1);
         expect(fixture.calls).toHaveLength(0);
         lose = false;
-        await form.getByRole("button", { name: "같은 연결 저장 요청 확인" }).click();
+        await form.getByRole("button", { name: "요청 결과 확인" }).click();
         await expect(local.getByRole("status").filter({ hasText: /\S/ })).toContainText("로컬 프로필 저장됨");
         expect(keys).toHaveLength(2);
         expect(keys[0]).toBeTruthy();
@@ -185,7 +185,7 @@ test("로컬 목록의 오류·빈 목록·늦은 응답은 수동 선택을 바
     try {
         await login(page);
         const form = await fillLocal(page, name, fixture.base, secret.id);
-        await form.getByRole("button", { name: "로컬 연결 저장", exact: true }).click();
+        await form.getByRole("button", { name: "연결 추가", exact: true }).click();
         const row = page.getByTestId("model-profile").filter({ hasText: name });
         const model = row.getByTestId("profile-model");
         await expect(row).toBeVisible();

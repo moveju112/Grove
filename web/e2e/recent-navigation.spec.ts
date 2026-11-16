@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice, sessionView, useWorkspaces } from "./helpers";
 import { frames } from "./fixture";
 
 async function reply(session: string, profile: string, text: string) {
@@ -130,6 +130,7 @@ test.describe("390px 탐색 더보기", () => {
             await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
             await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
             const { prefix, first, project } = await sessions();
+            await useWorkspaces(project.id);
             await login(page);
             await page.getByRole("button", { name: "사이드바", exact: true }).click();
             const drawer = page.getByTestId("mobile-drawer-left");
@@ -153,7 +154,7 @@ test.describe("390px 탐색 더보기", () => {
             await page.keyboard.press("Escape");
             await drawer.getByRole("button", { name: `${project.name} 대화 도구`, exact: true }).click();
             const tools = page.getByRole("toolbar", { name: `${project.name} 도구`, exact: true });
-            for (const label of ["새 대화", "읽지 않음만", "목록 새로고침"]) {
+            for (const label of ["읽지 않음만", "목록 새로고침"]) {
                 await expect(tools.getByRole("button", { name: label, exact: true })).toContainText(label);
             }
             await expect(tools.getByRole("button", { name: /대화 접기/ })).toContainText("대화 접기");

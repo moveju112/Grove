@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, login, script, sessionView, state } from "./helpers";
+import { apiCall, ensureProfile, login, script, sessionView, state, useWorkspaces } from "./helpers";
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
@@ -11,6 +11,7 @@ for (const theme of ["light", "dark"] as const) {
         await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
         const root = mkdtempSync(join(dirname(state().projA), "000-chat-chrome-"));
         const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+        await useWorkspaces(project.id);
         const profile = await ensureProfile();
         const sessions: { id: string; title: string }[] = [];
         for (let i = 0; i < 12; i++) {
@@ -43,15 +44,19 @@ for (const theme of ["light", "dark"] as const) {
             const button = node.querySelector<HTMLElement>('[data-testid="sidebar-session-open"]')!;
             const title = node.querySelector<HTMLElement>('[data-testid="sidebar-session-title"]')!;
             const bounds = node.getBoundingClientRect();
+            const style = getComputedStyle(button);
             return {
                 height: bounds.height,
-                font: parseFloat(getComputedStyle(button).fontSize),
+                font: parseFloat(style.fontSize),
+                padding: parseFloat(style.paddingLeft),
+                border: parseFloat(style.borderLeftWidth),
                 inset: title.getBoundingClientRect().left - button.getBoundingClientRect().left,
                 visible: bounds.top >= 0 && bounds.bottom <= innerHeight,
             };
         }));
         expect(rows.every((row) => row.height >= 32 && row.height <= 32.5), JSON.stringify(rows)).toBe(true);
-        expect(rows.every((row) => row.font <= 13 && row.inset >= 0 && row.inset <= 10), JSON.stringify(rows)).toBe(true);
+        // spacing 토큰의 실제 값은 글자 크기를 따른다. 고정 px 대신 CSS 콘텐츠 시작점으로 왼쪽 정렬을 확인한다.
+        expect(rows.every((row) => row.font <= 13 && Math.abs(row.inset - row.padding - row.border) <= 1), JSON.stringify(rows)).toBe(true);
         expect(rows.filter((row) => row.visible).length).toBeGreaterThanOrEqual(10);
         expect(await sidebar.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
         await expect(sidebar.getByTestId("notifications")).toHaveCount(0);

@@ -10,14 +10,16 @@ describe("턴 시간 표시·설정", () => {
     function render(status: string, connected = true, detail = false) {
         return renderToStaticMarkup(createElement(detail ? TimingBreakdown : TimingSummary, {
             sample: { id: "turn", updated_at: "", receivedAt: 0, status,
-                timing: { total_ms: 12_000, approval_wait_ms: 3000, tool_ms: 1000, model_and_other_ms: 8000, running: status === "awaiting_approval" } },
-            total: 12_000, connected,
+                timing: { total_ms: 12_345, approval_wait_ms: 3000, tool_ms: 1000, model_and_other_ms: 8000, running: status === "awaiting_approval" } },
+            total: 12_345, connected,
         }));
     }
 
     it("승인·질문 대기를 실행 시간으로 부르지 않는다", () => {
         const html = render("awaiting_approval");
-        expect(html).toContain("12.0초");
+        expect(html).toContain("12초");
+        expect(html).not.toMatch(/\d+\.\d+초/);
+        expect(html).toContain('data-elapsed-ms="12345"');
         expect(html).not.toContain("총 경과");
         expect(html).toContain("승인·답변 대기");
         expect(render("awaiting_approval", true, true)).toContain("대기 포함");
@@ -28,12 +30,13 @@ describe("턴 시간 표시·설정", () => {
         const html = render(status);
         expect(html).toContain('data-running="false"');
         expect(html).toContain("요청");
-        expect(html).not.toContain("승인 대기 3.0초");
-        expect(html).not.toContain("도구 1.0초");
+        expect(html).not.toContain("승인 대기 3초");
+        expect(html).not.toContain("도구 1초");
         const detail = render(status, true, true);
         expect(detail).toContain("마지막 요청 총 경과");
-        expect(detail).toContain("승인 대기 3.0초");
-        expect(detail).toContain("도구 1.0초");
+        expect(detail).toContain("승인 대기 3초");
+        expect(detail).toContain("도구 1초");
+        expect(detail).not.toMatch(/\d+\.\d+초/);
         if (status === "interrupted") expect(html).toContain("중단");
     });
 

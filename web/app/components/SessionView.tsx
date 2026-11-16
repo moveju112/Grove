@@ -50,6 +50,7 @@ import { chatLayout } from "./chat-layout.stylex";
 import { LoadingBar } from "./LoadingScreen";
 import { TextArea } from "../design/Fields";
 import { AssistantResponse, splitResponse, type ResponseContent } from "./AssistantResponse";
+import { cliActivitySummary, type CliActivity } from "./cli-activity";
 
 const GoalsPanel = lazy(() => import("./GoalsPanel").then(({ GoalsPanel }) => ({ default: GoalsPanel })));
 
@@ -57,12 +58,20 @@ type Props = { tabId: string; sessionId: string; projectId: string; open: Opener
 
 export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const visible = usePaneVisible();
+    const [pageVisible, setPageVisible] = useState(() => typeof document !== "undefined" && document.visibilityState === "visible");
+    useEffect(() => {
+        const changed = () => setPageVisible(document.visibilityState === "visible");
+        document.addEventListener("visibilitychange", changed);
+        return () => document.removeEventListener("visibilitychange", changed);
+    }, []);
     const serverBlocked = useServerBlockReason();
     useEffect(() => visible ? deliveryTiming.watch(sessionId) : undefined, [visible, sessionId]);
     const prefs = usePrefs();
     const session = useQuery<Session>(`session:${sessionId}`, () => api.get(`/sessions/${sessionId}`));
     const latest = useQuery<MessagePage>(`messages:${sessionId}`, () => api.get(`/sessions/${sessionId}/messages?limit=100`));
     const turns = useQuery<Turn[]>(`turns:${sessionId}`, () => api.get(`/sessions/${sessionId}/turns?limit=5`));
+    const lastTurn = turns.data?.[0];
+    const completedTurnId = lastTurn?.status === "completed" ? lastTurn.id : undefined;
     const calls = useQuery<ToolCallRow[]>(`calls:${sessionId}`, () => api.get(`/tool-calls?session_id=${sessionId}&limit=200`));
     const workflows = useQuery<Definition[]>("definitions:workflow", () => api.get("/definitions?kind=workflow"));
     const partial = useLive((live) => visible ? live.partials[sessionId] : undefined) as (ResponseContent & { turn_id: string; tool_calls: string[] }) | null | undefined;
@@ -90,17 +99,21 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const activeBotName = (turns.data?.find((t) => ["queued", "running", "awaiting_approval"].includes(t.status))?.definition as { bot?: { name?: string } } | undefined)?.bot?.name;
     const assistantName = room.data ? activeBotName ?? "어시스턴트" : bot?.name ?? "어시스턴트";
     useEffect(() => {
-        if (visible && botId && lastSeq > 0) void api.post(`/bots/${botId}/seen`, { seq: lastSeq }).catch(() => undefined);
-    }, [visible, botId, lastSeq]);
+        if (visible && pageVisible && document.visibilityState === "visible" && botId && lastSeq > 0) void api.post(`/bots/${botId}/seen`, { seq: lastSeq }).catch(() => undefined);
+    }, [visible, pageVisible, botId, lastSeq]);
     useEffect(() => {
-        if (!s || !visible) return;
+        if (!s || !visible || !pageVisible || serverBlocked) return;
         const t = setTimeout(() => {
+            if (document.visibilityState !== "visible") return;
             void api
-                .post<RecentItem>("/recent/touch", { kind: "session", project_id: projectId, resource_id: sessionId, view_state: { last_seen_seq: lastSeq } })
-                .catch(() => undefined);
+                .post<RecentItem>("/recent/touch", {
+                    kind: "session", project_id: projectId, resource_id: sessionId, view_state: { last_seen_seq: lastSeq },
+                    ...(completedTurnId ? { seen_completed_turn_id: completedTurnId } : {}),
+                })
+                .catch((error) => setErr(error instanceof ApiError ? error.message : "대화 확인 상태를 저장하지 못했습니다."));
         }, 300);
         return () => clearTimeout(t);
-    }, [visible, sessionId, projectId, lastSeq, !!s]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [visible, pageVisible, serverBlocked, sessionId, projectId, lastSeq, completedTurnId, !!s]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // 자동 스크롤(UI-009): 맨 아래 근처를 보고 있을 때만 새 내용을 따라 내려간다. 위를 읽는 중이면 위치를 그대로 두고 알림만 띄운다.
     const msgsRef = useRef<HTMLDivElement>(null);
@@ -282,14 +295,11 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     }, [focusSeq, messages.length, latest.data]);
 
     const active = turns.data?.find((t) => ["queued", "running", "awaiting_approval"].includes(t.status));
-    const lastTurn = turns.data?.[0];
     const timedTurn = active ?? lastTurn;
     const pending = (calls.data ?? []).filter((c) => c.status === "pending_approval");
     // 질문 대기(RUN-014): 승인 대기와 다른 호출 상태로 구분해 따로 보여 준다.
     const questions = (calls.data ?? []).filter((c) => (c.status as string) === "awaiting_input");
     const unknown = (calls.data ?? []).filter((c) => c.status === "unknown" && !c.reviewed_at);
-    const mcpRunning=(calls.data ?? []).filter((c)=>c.name==="mcp_call" && c.status==="running");
-    const mcpProgress=useLive((live)=>visible ? live.mcpProgress?.[sessionId] : undefined);
 
     const act = async (f: () => Promise<unknown>) => {
         setErr(null);
@@ -530,15 +540,6 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     calls.reload();
                 }}
             />)}
-            {mcpRunning.map((c)=>{
-                const p=mcpProgress?.[c.id] ?? (c.result as {progress?:{value:number;total:number|null}}|null)?.progress;
-                return <Stack as="section" gap={2} key={c.id} data-testid="mcp-running" aria-label="MCP 실행">
-                    <GroveText as="p" display="block" type="inherit" color="inherit" role="status"><code>{(c.target as {namespace:string}).namespace}</code> · MCP 실행 중
-                        {p && ` · ${p.value}${p.total===null ? "" : ` / ${p.total}`}`}</GroveText>
-                    <ServerActionButton type="button" onClick={()=>void act(()=>api.post(`/tool-calls/${c.id}/cancel`,{}))}>MCP 호출 중지</ServerActionButton>
-                    <GroveText as="p" display="block" type="supporting" color="secondary">중지해도 원격 부작용이 남을 수 있으며, 확정 응답이 없으면 결과 불명입니다.</GroveText>
-                </Stack>;
-            })}
             {unknown.map((c) => <UnknownCard key={c.id} c={c} act={act} />)}
             <Stack gap={1} xstyle={chatLayout.surface} data-testid="compose-surface">
             {active && (
@@ -739,11 +740,10 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
     }
     const nt = (m.content as { type?: string }).type;
     if (m.role === "note" && nt === "cli_activity") {
-        const r = m.content as { items: { kind: string; name: string; input?: unknown; status?: string }[] };
+        const r = m.content as { items: CliActivity[] };
         return (
-            <DetailDialog surface="muted" data-testid="msg-cli-activity" label="CLI 도구 활동" inline={prefs.expandTools} title={<>
-                    CLI가 사용한 도구 {r.items.length}개 · {r.items.map((i) => (i.kind === "denied" ? `${i.name}(거부됨)` : i.name)).join(", ")}
-                </>}>
+            <DetailDialog surface="muted" data-testid="msg-cli-activity" label="CLI 도구 활동" inline={prefs.expandTools}
+                title={cliActivitySummary(r.items)}>
                 <pre>{JSON.stringify(r.items, null, 2).slice(0, 20000)}</pre>
             </DetailDialog>
         );
@@ -784,7 +784,7 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
     }
     return (
         <ChatMessage sender={m.role === "assistant" ? "assistant" : "system"} density="compact" data-testid={`msg-${m.role}`}
-            name={<GroveText type="supporting" color="secondary" data-testid="msg-who">
+            name={<GroveText type="inherit" color="secondary" data-testid="msg-who">
                 {m.role === "assistant"
                       ? <><AssistantIdentity name={assistantName} imageUrl={assistantImage} />{` 모델${c.model ? " · " + c.model : ""}${(m.content as { pending_work?: unknown }).pending_work ? " · 중간 응답(소유 작업 결과 반영 전)" : ""}`}</>
                       : m.role}

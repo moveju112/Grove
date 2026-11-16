@@ -16,7 +16,6 @@ type Usage = {
     available_tokens: number | null;
     auto_clear_minutes?: number;
     cleared?: { upto_seq: number } | null;
-    memory_input_tokens?: number;
 };
 
 /// 대화 context 사용량(실측/추정 구분)과 수동 압축.
@@ -57,7 +56,6 @@ export function ContextMeter({ sessionId, profileId, busy, onError }: { sessionI
             </GroveText>
             {short && <GroveText type="inherit" color="warning" data-testid="context-short"> · 여유 부족(압축 권장)</GroveText>}
             {u.cleared && <GroveText type="inherit" color="secondary" data-testid="context-cleared"> · 이전 context 제외됨(화면 이력 유지)</GroveText>}
-            {!!u.memory_input_tokens && <GroveText type="supporting" color="secondary"> · 기억 입력 추정 {u.memory_input_tokens.toLocaleString()} tokens 포함</GroveText>}
             {!!u.auto_clear_minutes && <GroveText type="supporting" color="secondary"> · idle {u.auto_clear_minutes}분 뒤 다음 요청에서 초기화</GroveText>}
             <ServerActionButton variant="secondary" density="compact" disabled={!profileId || busy || working} onClick={() => void compact()}>
                 {working ? "압축 중…" : "압축"}

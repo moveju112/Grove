@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Project, Session } from "../../api/generated";
 import * as L from "../../state/layout";
-import { hostAddress, navigationContext, projectTarget, resourceLabel, sessionTarget } from "./context";
+import { navigationContext, projectTarget, resourceLabel } from "./context";
 
 const projects = [{ id: "a", name: "같은 이름" }, { id: "b", name: "같은 이름" }] as Project[];
 const session = { id: "sa", project_id: "a", title: "서버에서 바뀐 제목" } as Session;
@@ -36,7 +36,7 @@ describe("실제 활성 pane·tab의 위치", () => {
     it("프로젝트·세션 설정은 layout에 명시된 부모만 제공한다", () => {
         const scoped = L.openResource(layout, { kind: "settings", project_id: "a", resource_id: "session:sa", title: "잘못된 표시 제목" });
         const context = navigationContext(scoped, projects, session);
-        expect(sessionTarget(context)).toEqual({ kind: "session", project_id: "a", resource_id: "sa", title: session.title });
+        expect(context).toMatchObject({ projectId: "a", sessionId: "sa", session });
         expect(projectTarget(context)).toEqual({ kind: "project", project_id: "a", resource_id: "a", title: projects[0]!.name });
         const projectSettings = L.openResource(layout, { kind: "settings", project_id: "b", resource_id: "settings", title: "설정" });
         expect(navigationContext(projectSettings, projects, session).sessionId).toBeUndefined();
@@ -44,7 +44,7 @@ describe("실제 활성 pane·tab의 위치", () => {
     it("목록에서 사라져도 ID를 보존하고 다른 프로젝트 이름으로 추정하지 않는다", () => {
         const context = navigationContext(layout, [], undefined);
         expect(projectTarget(context)).toEqual({ kind: "project", project_id: "a", resource_id: "a", title: "프로젝트 a" });
-        expect(sessionTarget(context)?.title).toBe("세션 sa");
+        expect(context.sessionId).toBe("sa");
     });
     it("부모 열기는 기존 열기 계약으로 탭 ID·다른 pane·원본 배치를 보존한다", () => {
         const before = structuredClone(layout);
@@ -66,14 +66,4 @@ describe("실제 활성 pane·tab의 위치", () => {
         expect(resourceLabel({ ...a, kind: "terminal", title: "터미널 1" })).toBe("터미널 · 터미널 1");
         expect(resourceLabel({ ...a, kind: "settings" })).toBe("설정");
     });
-});
-
-describe("호스트 표시의 비밀 경계", () => {
-    it.each([
-        ["https://user:private-password@grove.example:8443/path?token=private-query#private-fragment", "grove.example:8443"],
-        ["http://127.0.0.1:7740", "127.0.0.1:7740"],
-        ["https://[::1]:7740/", "[::1]:7740"],
-        ["javascript:private-value", "호스트 확인 불가"],
-        ["not-a-url", "호스트 확인 불가"],
-    ])("%s는 host만 표시한다", (input, expected) => expect(hostAddress(input)).toBe(expected));
 });

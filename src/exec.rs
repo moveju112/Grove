@@ -43,7 +43,6 @@ pub const HELP: &str = "grove exec — 개인 문맥 없이 명시한 모델로 
   --read-only               읽기 도구만 허용
   --effort low|medium|high  추론 강도(기본: 보내지 않음)
   --max-tokens N            요청 token 예산   --max-minutes N   요청 시간 예산
-  --with-project-instructions   프로젝트 AGENTS.md·CLAUDE.md를 넣음(기본 제외)
   --run-dir 경로            작업 데이터·receipt 저장 위치(없거나 빈 폴더, 기본 <데이터 경로>/exec-runs/<run ID>)
 
 기본 제외: 기존 대화·장기 기억·사용자 배경·프로젝트 지침 파일·봇·예약·자식 에이전트 자동 시작.
@@ -66,7 +65,6 @@ struct Opts {
     effort: Option<String>,
     max_tokens: Option<i64>,
     max_minutes: Option<i64>,
-    instructions: bool,
     run_dir: Option<PathBuf>,
 }
 
@@ -90,7 +88,6 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             "--effort" => o.effort = Some(val(&mut it, a)?),
             "--max-tokens" => o.max_tokens = Some(num(val(&mut it, a)?, a)?),
             "--max-minutes" => o.max_minutes = Some(num(val(&mut it, a)?, a)?),
-            "--with-project-instructions" => o.instructions = true,
             "--run-dir" => o.run_dir = Some(PathBuf::from(val(&mut it, a)?)),
             "--api-key" => return Err("API 키는 인자로 받지 않습니다. --api-key-env로 환경변수 이름을 주세요".into()),
             other => return Err(format!("알 수 없는 exec 옵션: {other}")),
@@ -122,7 +119,7 @@ fn outcome(run_id: &str, run_dir: &Path, status: &str, exit: i32, extra: Value) 
     let mut v = json!({
         "schema": SCHEMA, "run_id": run_id, "run_dir": run_dir, "status": status, "exit_code": exit,
         "isolation": "none",
-        "excluded_context": ["sessions", "memories", "user_profile", "bots", "schedules"],
+        "excluded_context": ["sessions", "user_profile", "bots", "schedules"],
     });
     if let (Some(o), Some(e)) = (v.as_object_mut(), extra.as_object()) {
         for (k, x) in e {
@@ -222,12 +219,7 @@ pub fn run(args: &[String]) -> i32 {
         }
     };
     let (status, exit, mut extra) = rt.block_on(execute(&o, &prompt, &project, &run_dir, api_key));
-    // 명시적으로 넣은 문맥은 출처와 범위를 함께 남긴다(ONCE-003).
-    extra["included_context"] = if o.instructions {
-        json!([{ "kind": "project_instructions", "files": ["AGENTS.md", "CLAUDE.md"], "root": project }])
-    } else {
-        json!([])
-    };
+    extra["included_context"] = json!([]);
     let result = outcome(&run_id, &run_dir, status, exit, extra);
     if let Err(e) = std::fs::write(run_dir.join("result.json"), serde_json::to_vec_pretty(&result).unwrap_or_default()) {
         eprintln!("경고: 결과 receipt를 저장하지 못했습니다: {e}");
@@ -312,9 +304,8 @@ async fn execute(o: &Opts, prompt: &str, project: &Path, run_dir: &Path, api_key
 async fn drive(api: &Api, o: &Opts, prompt: &str, project: &Path, api_key: Option<String>) -> (&'static str, i32, Value) {
     use reqwest::Method;
     let config_err = |e: (u16, Value)| ("config_error", code::CONFIG, json!({ "error": api_error(e) }));
-    // 기본 제외: 프로젝트 지침 파일. 필요하면 명시적으로 넣는다(ONCE-003).
-    let mode = if o.instructions { "both" } else { "off" };
-    if let Err(e) = api.setting("server/-", "instructions.mode", json!(mode)).await {
+    // 단발 실행은 --allow-tool에 명시한 범위만 허용하는 별도 계약을 유지한다.
+    if let Err(e) = api.setting("server/-", crate::settings::FULL_ACCESS, json!(false)).await {
         return config_err(e);
     }
     if o.read_only {
@@ -455,6 +446,6 @@ mod tests {
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--protocol", "cohere"])).is_err());
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--max-tokens", "0"])).is_err());
         let o = parse(&args(&["--base-url", "http://x", "--model", "m", "--stdin", "--tools", "--allow-tool", "write", "--max-minutes", "3"])).unwrap();
-        assert!(o.stdin && o.tools && o.allow == ["write"] && o.max_minutes == Some(3) && !o.instructions);
+        assert!(o.stdin && o.tools && o.allow == ["write"] && o.max_minutes == Some(3));
     }
 }

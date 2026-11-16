@@ -1,8 +1,12 @@
-import { createElement } from "react";
+import { createElement, type ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { SourceSettingsPanel } from "./SourceSettingsPanel";
 import type { ReadErrorCode, SafeSettings, SourceSettings, SourceSettingsView } from "./types";
+
+vi.mock("../HelpTip", () => ({
+    HelpTip: ({ children }: { children: ReactNode }) => createElement("aside", null, children),
+}));
 
 function render(view: SourceSettingsView) {
     return renderToStaticMarkup(createElement(SourceSettingsPanel, { view }));

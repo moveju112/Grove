@@ -40,6 +40,10 @@ pub struct Project {
     pub setup_script_id: Option<String>,
     /// 워크스페이스 모드: "single" | "project"
     pub workspace_mode: String,
+    /// 사이드바 정리용 폴더. 실제 root 경로와는 무관하다.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub folder_id: Option<String>,
 }
 
 pub const SINGLE: &str = "single";
@@ -70,7 +74,7 @@ fn workspaces_in_use(conn: &Connection, id: &str) -> ApiResult<(i64, i64)> {
 const COLS: &str = "id, name, root_path, created_at, updated_at, revision, archived_at, icon, \
     COALESCE((SELECT s.updated_at FROM sessions s WHERE s.project_id = projects.id AND julianday(s.updated_at) > julianday(projects.updated_at) \
               ORDER BY julianday(s.updated_at) DESC LIMIT 1), projects.updated_at) AS last_activity_at, pinned_at, \
-    (SELECT group_concat(label_id, ',') FROM (SELECT label_id FROM project_labels WHERE project_id = projects.id ORDER BY label_id)), setup_script_id, workspace_mode";
+    (SELECT group_concat(label_id, ',') FROM (SELECT label_id FROM project_labels WHERE project_id = projects.id ORDER BY label_id)), setup_script_id, workspace_mode, folder_id";
 
 /// 아이콘 최대 길이(문자). 이모지 조합(ZWJ·피부색)까지 담을 수 있게 넉넉히 둔다.
 const MAX_ICON_CHARS: usize = 8;
@@ -93,6 +97,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Project> {
         labels: r.get::<_, Option<String>>(10)?.map(|s| s.split(',').map(String::from).collect()).unwrap_or_default(),
         setup_script_id: r.get(11)?,
         workspace_mode: r.get(12)?,
+        folder_id: r.get(13)?,
     })
 }
 
@@ -119,16 +124,11 @@ pub fn active_root(conn: &Connection, id: &str) -> ApiResult<std::path::PathBuf>
 pub struct CreateProject {
     pub root_path: String,
     pub name: Option<String>,
-    /// 경로가 없으면 마지막 폴더 하나만 새로 만든다(상위 폴더는 이미 있어야 한다, PROJECT-001).
-    #[serde(default)]
-    pub create: bool,
 }
 
 #[derive(Deserialize)]
 pub struct DirsQuery {
     pub path: Option<String>,
-    #[serde(default)]
-    pub hidden: bool,
 }
 
 const MAX_DIR_ENTRIES: usize = 500;
@@ -154,9 +154,9 @@ pub async fn browse_dirs(_p: Principal, Query(q): Query<DirsQuery>) -> ApiResult
         let mut entries: Vec<(String, String)> = rd
             .flatten()
             .filter(|e| e.file_type().is_ok_and(|t| t.is_dir()))
-            .filter_map(|e| {
+            .map(|e| {
                 let name = e.file_name().to_string_lossy().to_string();
-                (q.hidden || !name.starts_with('.')).then(|| (name, e.path().to_string_lossy().to_string()))
+                (name, e.path().to_string_lossy().to_string())
             })
             .collect();
         entries.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
@@ -182,23 +182,6 @@ pub async fn create(
     let raw = body.root_path.trim();
     if raw.is_empty() {
         return Err(ApiError::invalid("root_path가 필요합니다"));
-    }
-    if body.create && !std::path::Path::new(raw).exists() {
-        let want = std::path::Path::new(raw);
-        if !want.is_absolute() {
-            return Err(ApiError::invalid("절대 경로를 입력하세요"));
-        }
-        let parent = want.parent().filter(|p| p.is_dir()).ok_or_else(|| ApiError::invalid("상위 폴더가 없습니다. 상위 폴더부터 만들어 주세요"))?;
-        let leaf = want.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default();
-        if leaf.is_empty() || leaf == "." || leaf == ".." {
-            return Err(ApiError::invalid("새 폴더 이름이 올바르지 않습니다"));
-        }
-        // 마지막 폴더 하나만 만든다. 같은 이름이 동시에 생기면 기존 폴더를 그대로 쓴다.
-        match std::fs::create_dir(parent.join(&leaf)) {
-            Ok(()) => {}
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
-            Err(e) => return Err(ApiError::new(StatusCode::FORBIDDEN, "permission_denied", format!("폴더를 만들 수 없습니다: {e}"))),
-        }
     }
     let canon = crate::util::canonical(raw).map_err(|_| ApiError::invalid("존재하지 않는 경로입니다"))?;
     if !canon.is_dir() {
@@ -277,6 +260,8 @@ pub struct UpdateProject {
     pub setup_script_id: Option<Option<String>>,
     /// 워크스페이스 모드 변경: "single" | "project"
     pub workspace_mode: Option<String>,
+    #[serde(default, deserialize_with = "crate::util::double_option")]
+    pub folder_id: Option<Option<String>>,
 }
 
 /// 보관된 프로젝트 복원 검사(PROJECT-009). 폴더가 있으면 그대로 보관 해제, 없으면 해제 뒤 새 경로로 다시 연결해야 한다.
@@ -370,19 +355,24 @@ pub async fn update(
     if mode.as_deref().is_some_and(|m| m != SINGLE && m != PROJECT_MODE) {
         return Err(ApiError::invalid("workspace_mode는 single 또는 project입니다"));
     }
-    let h = idem::body_hash(
-        "project.update",
-        &json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon, "pinned": body.pinned, "setup": body.setup_script_id, "mode": mode }),
-    );
+    let mut mutation = json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon, "pinned": body.pinned, "setup": body.setup_script_id, "mode": mode });
+    // 새 필드가 없으면 기존 클라이언트의 미확정 요청도 같은 digest로 재확인한다.
+    if let Some(folder) = &body.folder_id { mutation["folder"] = json!({ "value": folder }); }
+    let h = idem::body_hash("project.update", &mutation);
     let setup = body.setup_script_id.clone();
     let rev = body.expected_revision;
     let archived = body.archived;
     let pinned = body.pinned;
-    let pin_only = body.name.is_none() && body.archived.is_none() && body.root_path.is_none() && body.icon.is_none() && body.setup_script_id.is_none() && body.workspace_mode.is_none();
+    let folder_id = body.folder_id;
+    let organization_only = body.name.is_none() && body.archived.is_none() && body.root_path.is_none() && body.icon.is_none() && body.setup_script_id.is_none() && body.workspace_mode.is_none();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let cur = get(tx, &id)?;
         if cur.revision != rev {
             return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));
+        }
+        if let Some(folder) = &folder_id {
+            if let Some(id) = folder { crate::project_folders::get(tx, id)?; }
+            tx.execute("UPDATE projects SET folder_id=?2 WHERE id=?1", params![id, folder])?;
         }
         if let Some(r) = new_root.as_deref().filter(|r| *r != cur.root_path) {
             let other: Option<String> = tx.query_row("SELECT id FROM projects WHERE root_path = ?1", params![r], |x| x.get(0)).optional()?;
@@ -409,8 +399,8 @@ pub async fn update(
         };
         tx.execute(
             "UPDATE projects SET name = ?2, archived_at = ?3, updated_at = ?4, icon = ?5, pinned_at = ?6, revision = revision + 1 WHERE id = ?1",
-            // 고정만 바꾸면 활동 시각(최근 활동순 정렬)을 건드리지 않는다.
-            params![id, new_name, archived_at, if pin_only { cur.updated_at.as_str() } else { now }, new_icon, pinned_at],
+            // 고정·정리용 폴더만 바꾸면 실제 활동 시각은 유지한다.
+            params![id, new_name, archived_at, if organization_only { cur.updated_at.as_str() } else { now }, new_icon, pinned_at],
         )?;
         if let Some(script) = &setup {
             if let Some(sid) = script {

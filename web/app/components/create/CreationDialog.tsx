@@ -1,6 +1,6 @@
 import { useEffect, useRef, type ReactNode } from "react";
 import { Dialog } from "@astryxdesign/core/Dialog";
-import { Stack } from "@astryxdesign/core/Stack";
+import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { usePaneVisible } from "../../state/paneVisibility";
 
 // native modal도 마지막 Tab에서 브라우저 UI로 초점을 넘길 수 있어 양 끝을 명시적으로 순환한다.
@@ -23,8 +23,8 @@ export function containCreationTab(dialog: HTMLDialogElement, event: KeyboardEve
 }
 
 // 표면·중첩 레이어·Escape·초점 복귀는 Astryx가 소유한다.
-export function CreationDialog({ label, onClose, children, busy = false, width = "36em" }: {
-    label: string; onClose: () => void; children: ReactNode; busy?: boolean; width?: number | string;
+export function CreationDialog({ label, onClose, children, footer, busy = false, width = "36em" }: {
+    label: string; onClose: () => void; children: ReactNode; footer?: ReactNode; busy?: boolean; width?: number | string;
 }) {
     const ref = useRef<HTMLDialogElement>(null);
     const visible = usePaneVisible();
@@ -50,6 +50,9 @@ export function CreationDialog({ label, onClose, children, busy = false, width =
     }, [visible]);
     return <Dialog ref={ref} isOpen={visible} width={width} maxHeight="calc(100dvh - 24px)" padding={4}
         aria-label={label} aria-busy={busy} onOpenChange={(open) => { if (!open) close.current(); }}>
-        <Stack gap={2}>{children}</Stack>
+        <StackItem size="fill" isScrollable aria-label={`${label} 내용`}>
+            <Stack gap={2}>{children}</Stack>
+        </StackItem>
+        {footer && <StackItem size="static"><Stack gap={2} paddingBlockStart={2}>{footer}</Stack></StackItem>}
     </Dialog>;
 }

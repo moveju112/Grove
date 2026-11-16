@@ -4,7 +4,7 @@ import { dirname, join } from "node:path";
 import { apiCall, login, openDetails, selectChoice, sessionView, state } from "./helpers";
 import type { SessionSkills } from "../app/api/skills";
 
-test("스킬 추가·저장 응답 유실·reload 충돌·비활성화를 기존 세션 선택에 연결한다", async ({ page }) => {
+test("스킬 추가·저장 응답 유실·reload 충돌·비활성화를 기존 세션 선택에 연결한다", async ({ page }, info) => {
     const root = mkdtempSync(join(dirname(state().projA), "skill-management-"));
     const title = `managed-skills-${Date.now()}`;
     const project = await apiCall<{ id: string }>("POST", "/projects", { root_path: root });
@@ -22,10 +22,20 @@ test("스킬 추가·저장 응답 유실·reload 충돌·비활성화를 기존
         await editor.getByLabel("스킬 이름").fill("managed-review");
         await editor.getByLabel("스킬 본문").fill("FIRST_MANAGED_BODY");
         await editor.getByRole("button", { name: "스킬 저장" }).click();
+        const entry = (await snapshot()).listing.entries.find((entry) => entry.name === "managed-review")!;
+        const listing = panel.getByRole("list", { name: "스킬 목록", exact: true });
+        await expect(listing).not.toContainText(entry.source.root_id);
+        await expect(listing).not.toContainText(entry.revision);
+        await listing.getByRole("button", { name: "스킬 정보", exact: true }).click();
+        const information = listing.getByRole("dialog", { name: "managed-review 스킬 정보", exact: true });
+        await expect(information).toContainText(entry.source.root_id);
+        await expect(information).toContainText(entry.revision);
+        await page.keyboard.press("Escape");
         const inspect = panel.getByRole("button", { name: /managed-review .*본문 보기/ });
         await inspect.click();
-        await panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
-        await expect(panel).toContainText("선택됨 · 다음 모델 호출 직전 재검증");
+        await page.screenshot({ path: info.outputPath("skill-with-content.png"), fullPage: true });
+        await panel.getByRole("button", { name: "이 스킬 사용" }).click();
+        await expect(panel).toContainText("선택됨");
         const original = (await snapshot()).selected[0];
         await inspect.click();
         await panel.getByRole("button", { name: "본문 편집", exact: true }).click();
@@ -62,8 +72,8 @@ test("스킬 추가·저장 응답 유실·reload 충돌·비활성화를 기존
         expect((await snapshot()).selected).toEqual([original]);
         await panel.getByRole("button", { name: "선택 해제", exact: true }).click();
         await inspect.click();
-        await panel.getByRole("button", { name: "이 revision 선택 · 다음 모델 호출에 적용" }).click();
-        await expect(panel).toContainText("선택됨 · 다음 모델 호출 직전 재검증");
+        await panel.getByRole("button", { name: "이 스킬 사용" }).click();
+        await expect(panel).toContainText("선택됨");
         expect((await snapshot()).selected[0]).not.toEqual(original);
     } finally {
         rmSync(root, { recursive: true });

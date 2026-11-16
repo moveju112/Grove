@@ -203,6 +203,11 @@ export function closeTab(l: Layout, tabId: string): Layout {
     return collapseEmpty({ ...l, root: mapLeaf(l.root, leaf.id, (x) => removeFromLeaf(x as Leaf, tabId)) });
 }
 
+/// 설정은 별도 창에서 연다. 이전 배치의 설정 탭만 제거하고 작업 탭과 ID는 유지한다.
+export function withoutSettingsTabs(l: Layout): Layout {
+    return allTabs(l).filter((tab) => tab.kind === "settings").reduce((next, tab) => closeTab(next, tab.id), l);
+}
+
 /// 빈 pane을 제거하고 형제를 승격한다. 마지막 pane은 남긴다.
 export function collapseEmpty(l: Layout): Layout {
     const go = (n: Node): Node | null => {

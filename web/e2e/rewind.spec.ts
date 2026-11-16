@@ -5,7 +5,7 @@ import { apiCall, ensureProfile, ensureProjects, login, openDetails, script } fr
 type Session = { id: string; revision: number; last_message_seq: number };
 type Message = { id: string; seq: number };
 
-test("메시지 ID로 되감으면 화면·검색이 갱신되고 새로고침 후에도 유지된다", async ({ page }) => {
+test("메시지 ID로 되감으면 화면·서버 기록이 갱신되고 새로고침 후에도 유지된다", async ({ page }) => {
     const { a } = await ensureProjects();
     const title = `되감기 대화 ${Date.now()}`;
     const s = await apiCall<Session>("POST", `/projects/${a.id}/sessions`, { title });
@@ -17,11 +17,7 @@ test("메시지 ID로 되감으면 화면·검색이 갱신되고 새로고침 �
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.getByTestId("session-view");
-    const search = page.getByTestId("search-panel");
-    await openDetails(search, "대화 검색");
-    await search.getByLabel("대화 검색어").fill(needle);
-    await expect(search.getByTestId("search-hit")).toHaveCount(1);
-    await page.getByRole("dialog", { name: "대화 검색", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
+    expect((await apiCall<{ total: number }>("GET", `/sessions/search?q=${needle}&body=true`)).total).toBe(1);
     const row = view.locator("[data-seq]").filter({ has: page.getByTestId("msg-user").filter({ hasText: needle }) });
     page.once("dialog", (d) => d.dismiss());
     await row.getByRole("button", { name: "메시지 작업", exact: true }).click();
@@ -36,8 +32,7 @@ test("메시지 ID로 되감으면 화면·검색이 갱신되고 새로고침 �
     await expect(view.getByTestId("msg-rewind")).toContainText("2개를 제외");
     await expect(view.getByTestId("msg-user")).toHaveCount(1);
     await expect(view.getByText("남길 메시지", { exact: true })).toBeVisible();
-    await openDetails(search, "대화 검색");
-    await expect(search.getByTestId("search-total")).toHaveText("0개");
+    expect((await apiCall<{ total: number }>("GET", `/sessions/search?q=${needle}&body=true`)).total).toBe(0);
     await page.reload();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     await expect(view.getByTestId("msg-rewind")).toBeVisible();

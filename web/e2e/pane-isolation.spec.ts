@@ -2,10 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerCommand, composerOption, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, openDetails, script, selectChoice, state } from "./helpers";
+import { apiCall, composerCommand, composerOption, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, inputOptions, login, openDetails, requireToolApproval, script, selectChoice, startProjectConversation, state } from "./helpers";
 
 async function fixture() {
     const { a, b } = await ensureProjects();
+    await requireToolApproval(a.id);
+    await requireToolApproval(b.id);
     const primary = await ensureProfile();
     const prefix = `pane-isolation-${Date.now()}`;
     const secret = await apiCall<{ id: string }>("POST", "/secrets", { label: prefix, value: "sk-e2e-fixture-0000" });
@@ -34,8 +36,8 @@ test("pane별 모델·effort·도구 선택은 초점·탭 전환·새로고침 
     const f = await fixture();
     try {
         const first = await session(f.a.id, `${f.prefix} first`);
-        const second = await session(f.b.id, `${f.prefix} second`);
-        const other = await session(f.b.id, `${f.prefix} other`);
+        const second = await session(f.a.id, `${f.prefix} second`);
+        const other = await session(f.a.id, `${f.prefix} other`);
         await login(page);
         await openPair(page, first, second);
         const left = page.locator(`[data-session="${first.id}"]`);
@@ -49,7 +51,8 @@ test("pane별 모델·effort·도구 선택은 초점·탭 전환·새로고침 
         await left.getByLabel("메시지 입력").click();
         await expectComposerSetting(right, "모델 프로필", f.secondary);
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(first.title) }).click();
+        await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`^${first.title}`) }).click();
         await expectComposerSetting(left, "모델 프로필", f.primary);
         await expectComposerSetting(left, "추론", "low");
         await composerCommand(left, "/tools");
@@ -59,7 +62,7 @@ test("pane별 모델·effort·도구 선택은 초점·탭 전환·새로고침 
         await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(other.title) }).click();
         await expect(page.locator(`[data-testid="session-view"][data-session="${other.id}"]`)).toBeVisible();
         const persisted = page.waitForResponse((r) => r.url().includes("/api/v1/layouts/") && r.request().method() === "PUT");
-        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(second.title) }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`^${second.title}`) }).click();
         await expectComposerSetting(right, "모델 프로필", f.secondary);
         await expectComposerSetting(right, "추론", "high");
         await composerCommand(right, "/tools");
@@ -79,13 +82,15 @@ test("같은 프로젝트의 분할 입력도 각 탭의 초안·모델 선택�
         await apiCall("POST", "/recent/touch", { kind: "project", project_id: f.a.id, resource_id: f.a.id });
         await login(page);
         await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: f.a.name, exact: true }).click();
-        const leftPane = page.getByTestId("pane").nth(0);
+        const leftPane = page.getByTestId("pane").filter({ visible: true }).nth(0);
         const left = leftPane.getByTestId("project-view");
+        await startProjectConversation(left);
         await composerOption(left, "모델 프로필", f.primary);
         await left.getByLabel("메시지 입력").fill("project left draft fixture");
         await leftPane.getByRole("button", { name: "오른쪽으로 분할", exact: true }).click();
-        const rightPane = page.getByTestId("pane").nth(1);
+        const rightPane = page.getByTestId("pane").filter({ visible: true }).nth(1);
         const right = rightPane.getByTestId("project-view");
+        await startProjectConversation(right);
         await expect(right.getByLabel("메시지 입력")).toHaveValue("");
         await composerOption(right, "모델 프로필", f.secondary);
         await right.getByLabel("메시지 입력").fill("project right draft fixture");
@@ -96,6 +101,7 @@ test("같은 프로젝트의 분할 입력도 각 탭의 초안·모델 선택�
         await expectComposerSetting(right, "모델 프로필", f.secondary);
         await left.getByLabel("메시지 입력").click();
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
         await recentProject.click();
         await expect(left.getByLabel("메시지 입력")).toHaveValue("project left draft fixture");
         await expectComposerSetting(left, "모델 프로필", f.primary);
@@ -111,7 +117,10 @@ test("이전 공유 프로젝트 초안은 지우거나 다른 탭에 자동 배
     await login(page);
     await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: a.name, exact: true }).click();
     const project = page.getByTestId("project-view");
+    await startProjectConversation(project);
     await expect(project.getByLabel("메시지 입력")).toHaveValue("");
+    await expect(project.getByTestId("draft-copies")).toBeHidden();
+    await inputOptions(project);
     await openDetails(project.getByTestId("draft-copies"));
     await project.getByTestId("draft-copy").filter({ hasText: "legacy shared project draft fixture" })
         .getByRole("button", { name: "이 사본 이어받기", exact: true }).click();
@@ -148,13 +157,14 @@ test("모델을 바꾼 같은 글은 원래 저장 요청을 확인한 뒤에도
         expect(sent).toHaveLength(2);
         expect(sent[1]).toEqual(sent[0]);
         await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
         await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(s.title) }).click();
         await expect(view.getByLabel("메시지 입력")).toHaveValue("same text with a different model intent");
         await expectComposerSetting(view, "모델 프로필", f.secondary);
     } finally { await f.cleanup(); }
 });
 
-test("다른 pane을 선택한 뒤 승인해도 cwd·파일 변경·stream·모델은 원래 대화에 귀속된다", async ({ page }) => {
+test("다른 프로젝트를 선택한 뒤 승인해도 cwd·파일 변경·stream·모델은 원래 대화에 귀속된다", async ({ page }) => {
     const f = await fixture();
     const ids: string[] = [];
     let release = () => {};
@@ -168,18 +178,23 @@ test("다른 pane을 선택한 뒤 승인해도 cwd·파일 변경·stream·모�
         writeFileSync(join(a.root_path, name), "a-before");
         writeFileSync(join(b.root_path, name), "b-before");
         await login(page);
-        await openPair(page, first, second);
+        const show = async (target: { title: string }) => {
+            await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(target.title) }).click();
+        };
         const left = page.locator(`[data-testid="session-view"][data-session="${first.id}"]`);
         const right = page.locator(`[data-testid="session-view"][data-session="${second.id}"]`);
-        for (const [view, model] of [[left, f.primary], [right, f.secondary]] as const) {
+        for (const [target, view, model] of [[first, left, f.primary], [second, right, f.secondary]] as const) {
+            await show(target);
             await composerOption(view, "모델 프로필", model);
             await composerOption(view, "보내기 방식", "model");
             await composerOption(view, "도구", true);
         }
+        await show(first);
         await script({ frames: frames.tool("pane-a-shell", "shell", { command: `printf '%s\\n' "$PWD"; printf 'a-after' > '${name}'` }) });
         await left.getByLabel("메시지 입력").fill(`${f.prefix} prompt a`);
         await left.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(left.getByTestId("approval")).toBeVisible();
+        await show(second);
         await script({ frames: frames.tool("pane-b-shell", "shell", { command: `printf '%s\\n' "$PWD"; printf 'b-after' > '${name}'` }) });
         await right.getByLabel("메시지 입력").fill(`${f.prefix} prompt b`);
         await right.getByRole("button", { name: "보내기", exact: true }).click();
@@ -190,18 +205,20 @@ test("다른 pane을 선택한 뒤 승인해도 cwd·파일 변경·stream·모�
         let held = false;
         await page.route(`**/api/v1/tool-calls/${call.id}/decision`, async (route) => { held = true; await gate; await route.continue(); });
         await script({ frames: frames.text(["pane a ", "complete"]), delayMs: 400 });
+        await show(first);
         await left.getByTestId("approval").getByRole("button", { name: "이번만 승인", exact: true }).click();
         await expect.poll(() => held).toBe(true);
-        await right.getByLabel("메시지 입력").click();
+        await show(second);
         release();
-        await expect(left.getByTestId("partial")).toContainText("pane a");
         await expect(right).not.toContainText("pane a complete");
         await expect(left.getByTestId("msg-assistant").filter({ hasText: "pane a complete" })).toHaveCount(1);
+        await show(first);
         await openDetails(left.getByTestId("msg-tool"));
         await expect(left.getByTestId("msg-tool")).toContainText(a.root_path);
         await page.keyboard.press("Escape");
         expect(readFileSync(join(a.root_path, name), "utf8")).toBe("a-after");
         expect(readFileSync(join(b.root_path, name), "utf8")).toBe("b-before");
+        await show(second);
         await expect(right.getByTestId("approval")).toBeVisible();
         await script({ frames: frames.text(["pane b complete"]) });
         await right.getByTestId("approval").getByRole("button", { name: "이번만 승인", exact: true }).click();

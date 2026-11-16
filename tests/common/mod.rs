@@ -38,9 +38,29 @@ pub fn config(data_dir: &Path) -> Config {
 }
 
 impl TestServer {
+    /// 승인·거부 회귀의 공용 fixture는 제한 정책을 명시한다. 제품 기본 권한 검사는 start_default_permissions를 쓴다.
     pub async fn start() -> Self {
         let dir = tempfile::tempdir().unwrap();
         let cfg = config(&dir.path().join("data"));
+        Self::start_with_restricted_permissions(dir, cfg).await
+    }
+
+    pub async fn start_default_permissions() -> Self {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(&dir.path().join("data"));
+        Self::start_with(dir, cfg).await
+    }
+
+    pub async fn start_with_restricted_permissions(dir: tempfile::TempDir, cfg: Config) -> Self {
+        assert!(cfg.data_dir.starts_with(dir.path()), "fixture DB는 소유한 임시 디렉터리에만 만든다");
+        std::fs::create_dir_all(&cfg.data_dir).unwrap();
+        let db = grove::store::Db::open(&cfg.data_dir.join("grove.db")).unwrap();
+        let now = grove::util::fmt_time(time::OffsetDateTime::now_utc());
+        db.call_sync(move |c| {
+            c.execute("INSERT INTO settings(scope,scope_id,key,value,revision,updated_at) VALUES('server','-','tools.full_access','false',1,?1)", [&now])?;
+            Ok(())
+        }).unwrap();
+        drop(db);
         Self::start_with(dir, cfg).await
     }
 

@@ -2,12 +2,12 @@ import { expect, test, type Page } from "@playwright/test";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, login, selectChoice } from "./helpers";
+import { apiCall, login, openSettings, selectChoice } from "./helpers";
 import { STATE } from "./global-setup";
 import type { ServerUpdateStatus } from "../app/api/updateSettings";
 
 async function open(page: Page) {
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").last().fill("서버 업데이트");
     return page.getByTestId("server-update-settings").last();
 }
@@ -57,14 +57,13 @@ test("서버 버전·채널·저장과 로컬 확인의 새 버전·최신·실�
         await expect(panel.getByTestId("server-update-check-result")).toContainText("확인 실패");
         await selectChoice(panel.getByLabel("업데이트 채널", { exact: true }), "beta");
         await selectChoice(panel.getByLabel("자동 적용 범위", { exact: true }), "patch");
-        await expect(panel.getByRole("button", { name: "서버 업데이트 확인", exact: true })).toBeDisabled();
-        await panel.getByRole("button", { name: "서버 업데이트 설정 저장", exact: true }).click();
         await expect(panel).toContainText("서버에 저장됨");
         fixture.manifest("beta", "9999.1.0-beta.1");
         await panel.getByRole("button", { name: "서버 업데이트 확인", exact: true }).click();
         await expect(panel.getByTestId("server-update-check-result")).toContainText("새 서버 버전 9999.1.0-beta.1");
         await expect(panel).toContainText("설치·재시작 없음");
         await page.reload();
+        await openSettings(page);
         await page.getByLabel("설정 검색").last().fill("서버 업데이트");
         panel = page.getByTestId("server-update-settings").last();
         await expect(panel.getByRole("combobox", { name: "업데이트 채널", exact: true })).toHaveAttribute("data-selected-value", "beta");
@@ -125,21 +124,23 @@ test("저장 응답 유실은 같은 키로 확인하고 revision 충돌에는 �
         await login(page);
         const panel = await open(page);
         const target = initial.settings.channel === "stable" ? "beta" : "stable";
-        await selectChoice(panel.getByLabel("업데이트 채널", { exact: true }), target);
         await page.route("**/api/v1/updates/settings", async (route) => {
             if (route.request().method() !== "PUT") return route.continue();
             await route.fetch();
             await route.abort("failed");
         }, { times: 1 });
-        await panel.getByRole("button", { name: "서버 업데이트 설정 저장", exact: true }).click();
+        await selectChoice(panel.getByLabel("업데이트 채널", { exact: true }), target);
         await expect(panel).toContainText("결과 불명");
         await panel.getByRole("button", { name: "같은 업데이트 요청 확인", exact: true }).click();
         await expect(panel).toContainText("서버에 저장됨");
         const saved = await apiCall<ServerUpdateStatus>("GET", "/updates/settings");
         expect(saved.settings.revision).toBe(initial.settings.revision + 1);
+        await page.route("**/api/v1/updates/settings", async (route) => {
+            if (route.request().method() !== "PUT") return route.continue();
+            await apiCall("PUT", "/updates/settings", { channel: target, auto_apply: "patch", expected_revision: saved.settings.revision });
+            await route.continue();
+        }, { times: 1 });
         await selectChoice(panel.getByLabel("자동 적용 범위", { exact: true }), "minor");
-        await apiCall("PUT", "/updates/settings", { channel: target, auto_apply: "patch", expected_revision: saved.settings.revision });
-        await panel.getByRole("button", { name: "서버 업데이트 설정 저장", exact: true }).click();
         await expect(panel.getByRole("alert")).toContainText("다른 요청으로 변경");
         await expect(panel.getByRole("combobox", { name: "자동 적용 범위", exact: true })).toHaveAttribute("data-selected-value", "minor");
     } finally {

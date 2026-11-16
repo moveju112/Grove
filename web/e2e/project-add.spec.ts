@@ -1,51 +1,90 @@
 import { expect, test } from "@playwright/test";
-import { dirname, basename } from "node:path";
-import { apiCall, composerOption, ensureProjects, login, selectChoice } from "./helpers";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { dirname, basename, join } from "node:path";
+import { apiCall, composerOption, ensureProjects, login, openAddProject, startProjectConversation, state } from "./helpers";
 
-// PROJECT-001: 서버 폴더를 둘러보고 새 폴더로 프로젝트를 만든다.
-test("프로젝트 추가 대화상자에서 폴더를 둘러보고 새 폴더로 프로젝트를 만든다", async ({ page }) => {
-    const { a } = await ensureProjects();
-    const list = await apiCall<{ id: string; root_path: string }[]>("GET", "/projects");
-    const root = list.find((p) => p.id === a.id)?.root_path;
-    if (!root) throw new Error("e2e 프로젝트 A가 없습니다");
-    const base = dirname(root);
-    const existing = basename(root);
+// PROJECT-001: 폴더를 생성하지 않고 기존 폴더만 등록한다.
+test("프로젝트 추가에서 폴더를 둘러보고 없는 경로는 거부한 뒤 기존 폴더를 등록한다", async ({ page }) => {
+    await ensureProjects();
+    const base = dirname(state().projA);
+    const root = mkdtempSync(join(base, "기존프로젝트-"));
+    const name = basename(root);
     await login(page);
-    await page.getByRole("button", { name: "만들기", exact: true }).click();
-    await page.getByRole("dialog", { name: "만들기", exact: true }).getByRole("button", { name: "프로젝트 추가", exact: true }).click();
-    const dlg = page.getByRole("dialog", { name: "프로젝트 추가" });
-    await expect(dlg).toBeVisible();
-    // 홈 폴더에서 시작한 뒤 입력한 경로로 이동
-    await dlg.getByLabel("폴더 경로").fill(base);
-    await dlg.getByRole("button", { name: "이 경로 열기" }).click();
-    const dirs = dlg.getByRole("list", { name: "하위 폴더" });
-    await expect(dirs.getByRole("button", { name: new RegExp(existing) })).toBeVisible();
-    // 하위 폴더로 들어갔다가 상위로
-    await dirs.getByRole("button", { name: new RegExp(existing) }).click();
-    await expect(dlg.getByLabel("폴더 경로")).toHaveValue(new RegExp(`${existing}$`));
-    await dlg.getByRole("button", { name: "상위 폴더" }).click();
-    await expect(dlg.getByLabel("폴더 경로")).toHaveValue(base);
-    // 없는 폴더: 새로 만들기 없이 추가하면 오류, 선택하면 만들어 등록
-    const name = `새폴더-${Date.now()}`;
-    await dlg.getByLabel("폴더 경로").fill(`${base}/${name}`);
-    await dlg.getByRole("button", { name: "이 폴더를 프로젝트로 추가" }).click();
-    await expect(dlg.getByRole("alert")).toContainText("존재하지 않는 경로");
-    await selectChoice(dlg.getByLabel("폴더가 없으면 마지막 폴더를 새로 만들기"), "true");
-    await dlg.getByRole("button", { name: "이 폴더를 프로젝트로 추가" }).click();
-    await expect(dlg).toHaveCount(0);
-    await expect(page.getByTestId("project-view").getByRole("heading", { level: 1, name })).toBeVisible();
+    const dialog = await openAddProject(page);
+    await dialog.getByLabel("폴더 경로").fill(base);
+    await dialog.getByRole("button", { name: "이 경로 열기" }).click();
+    const dirs = dialog.getByRole("list", { name: "하위 폴더", exact: true });
+    await dirs.getByRole("button", { name: `📁 ${name}`, exact: true }).click();
+    await expect(dialog.getByLabel("폴더 경로")).toHaveValue(root);
+    await dialog.getByRole("button", { name: "상위 폴더" }).click();
+    await expect(dialog.getByLabel("폴더 경로")).toHaveValue(base);
+    const missing = join(root, "없는폴더");
+    await dialog.getByLabel("폴더 경로").fill(missing);
+    await dialog.getByRole("button", { name: "이 폴더를 프로젝트로 추가", exact: true }).click();
+    await expect(dialog.getByRole("alert")).toContainText("존재하지 않는 경로");
+    expect(existsSync(missing)).toBe(false);
+    await dialog.getByLabel("폴더 경로").fill(root);
+    await dialog.getByRole("button", { name: "이 폴더를 프로젝트로 추가", exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+    const view = page.getByTestId("project-view").filter({ visible: true });
+    await expect(view.getByRole("heading", { level: 1, name, exact: true })).toBeAttached();
     await expect(page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name, exact: true })).toBeVisible();
-
-    // PROJECT-005: 별도 작업공간 생성 단계 없이 프로젝트 화면 입력창에서 바로 대화를 시작한다
-    const pv = page.getByTestId("project-view").filter({ has: page.locator("h1", { hasText: name }) });
-    await composerOption(pv, "보내기 방식", "save");
-    await pv.getByLabel("메시지 입력").fill("새 프로젝트 첫 메시지");
-    await pv.getByRole("button", { name: "보내기", exact: true }).click();
-    const view = page.getByTestId("session-view");
-    await expect(view.getByTestId("msg-user").filter({ hasText: "새 프로젝트 첫 메시지" })).toHaveCount(1);
+    await startProjectConversation(view);
+    await composerOption(view, "보내기 방식", "save");
+    await view.getByLabel("메시지 입력").fill("새 프로젝트 첫 메시지");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    const session = page.getByTestId("session-view");
+    await expect(session.getByTestId("msg-user").filter({ hasText: "새 프로젝트 첫 메시지" })).toHaveCount(1);
     const projects = await apiCall<{ id: string; name: string }[]>("GET", "/projects");
-    const p = projects.find((x) => x.name === name)!;
-    const sessions = await apiCall<{ items: { id: string }[] }>("GET", `/projects/${p.id}/sessions`);
+    const project = projects.find((item) => item.name === name)!;
+    const sessions = await apiCall<{ items: { id: string }[] }>("GET", `/projects/${project.id}/sessions`);
     expect(sessions.items).toHaveLength(1);
-    await expect(view).toHaveAttribute("data-session", sessions.items[0]!.id);
+    await expect(session).toHaveAttribute("data-session", sessions.items[0]!.id);
 });
+
+for (const theme of ["light", "dark"] as const) {
+    for (const viewport of [{ width: 1180, height: 800 }, { width: 390, height: 844 }, { width: 390, height: 430 }]) {
+        test(`${theme} ${viewport.width}x${viewport.height}: 숨김 폴더를 기본 표시하고 긴 목록만 스크롤하며 하단 조작은 가리지 않는다`, async ({ page }, info) => {
+            const root = mkdtempSync(join(dirname(state().projA), "many-folders-"));
+            mkdirSync(join(root, ".hidden"));
+            for (let i = 0; i < 80; i++) {
+                mkdirSync(join(root, `folder-${String(i).padStart(3, "0")}`));
+                writeFileSync(join(root, `file-${String(i).padStart(3, "0")}.txt`), "fixture");
+            }
+            await page.setViewportSize(viewport);
+            await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+            await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
+            await login(page);
+            const dialog = await openAddProject(page);
+            await dialog.getByLabel("폴더 경로").fill(root);
+            await dialog.getByRole("button", { name: "이 경로 열기" }).click();
+            await expect(dialog.getByTestId("dir-current")).toContainText(root);
+            const dirs = dialog.getByRole("list", { name: "하위 폴더", exact: true });
+            await expect(dirs.getByRole("button")).toHaveCount(81);
+            await expect(dirs.getByRole("button", { name: "📁 .hidden", exact: true })).toBeAttached();
+            await expect(dirs.getByRole("button", { name: /file-000/ })).toHaveCount(0);
+            await expect(dialog.getByLabel("숨김 폴더 표시", { exact: true })).toHaveCount(0);
+            await expect(dialog.getByLabel("폴더가 없으면 마지막 폴더를 새로 만들기", { exact: true })).toHaveCount(0);
+            const add = dialog.getByRole("button", { name: "이 폴더를 프로젝트로 추가", exact: true });
+            const cancel = dialog.getByRole("button", { name: "취소", exact: true });
+            const clone = dialog.getByRole("button", { name: "저장소에서 clone", exact: true });
+            for (const button of [add, cancel, clone]) await expect(button).toBeInViewport({ ratio: 1 });
+            const bounds = (await dialog.boundingBox())!;
+            expect(bounds.y).toBeGreaterThanOrEqual(0);
+            expect(bounds.y + bounds.height).toBeLessThanOrEqual(viewport.height);
+            expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+            const content = dialog.getByRole("group", { name: "프로젝트 추가 내용", exact: true });
+            const scroll = await content.evaluate((node) => ({ content: node.scrollHeight, viewport: node.clientHeight }));
+            expect(scroll.content).toBeGreaterThan(scroll.viewport);
+            const before = (await cancel.boundingBox())!.y;
+            await content.evaluate((node) => { node.scrollTop = node.scrollHeight; });
+            await expect(dirs.getByRole("button", { name: "📁 folder-079", exact: true })).toBeInViewport({ ratio: 1 });
+            for (const button of [add, cancel, clone]) await expect(button).toBeInViewport({ ratio: 1 });
+            expect(Math.abs((await cancel.boundingBox())!.y - before)).toBeLessThanOrEqual(1);
+            await page.screenshot({ path: info.outputPath(`project-add-${theme}-${viewport.width}x${viewport.height}.png`) });
+            await cancel.click();
+            await expect(dialog).toHaveCount(0);
+            await expect(page.getByRole("button", { name: "프로젝트·폴더 추가", exact: true })).toBeFocused();
+        });
+    }
+}

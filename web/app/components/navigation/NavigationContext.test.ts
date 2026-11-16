@@ -16,7 +16,7 @@ const layout: Layout = { schema: 1, focused_leaf: "pane", root: {
 const project = { id: "p", name: "<프로젝트>" } as Project;
 const session = { id: "s", project_id: "p", title: "<현재 대화>" } as Session;
 const render = (overrides: Partial<NavigationContextProps> = {}) => renderToStaticMarkup(createElement(NavigationContext, {
-    layout, projects: [project], host: "https://user:private-password@host.test:8443/path?token=private-query#private-fragment",
+    layout, projects: [project],
     open: vi.fn(), onBrowseProjects: vi.fn(), sidebarOpen: false, ...overrides,
 }));
 
@@ -25,17 +25,17 @@ beforeEach(() => {
 });
 
 describe("현재 위치의 접근성·오류 표시", () => {
-    it("현재 페이지와 실제 ID를 명시하고 호스트 전환 링크나 비밀을 만들지 않는다", () => {
+    it("프로젝트 이름만 표시하고 현재 대화와 실제 ID는 접근성 맥락으로 유지한다", () => {
         const html = render();
         expect(html).toContain('aria-label="현재 위치"');
         expect(html).toContain('aria-current="page"');
         expect(html).toContain('data-project-id="p" data-session-id="s"');
-        expect(html).toContain("host.test:8443");
+        expect(html).not.toContain("127.0.0.1");
         expect(html).not.toMatch(/private-|<a /);
         expect(html).toContain("&lt;현재 대화&gt;");
         expect(html).toContain("&lt;프로젝트&gt;");
         expect(html).not.toContain("古いタイトル");
-        expect(html).toContain('aria-label="프로젝트 탐색" aria-expanded="false"');
+        expect(html).not.toContain("Breadcrumb");
     });
     it("조회 실패를 알려도 다른 세션 이름이나 서버 오류 내용을 노출하지 않는다", () => {
         vi.mocked(useQuery).mockReturnValue({ data: { ...session, id: "old" }, error: new Error("private-error"), loading: false, reload: vi.fn() });

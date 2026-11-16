@@ -223,6 +223,8 @@ export const groveTheme = {
     "--raised": "light-dark(#f0f0f2, #1e222a)",
     "--hover": "light-dark(#ebebee, #242832)",
     "--sel": "light-dark(#e6e6ea, #2b3039)",
+    "--split-bg": "light-dark(#eaf2fc, #1d3049)",
+    "--split-line": "light-dark(#2476c5, #75b2ef)",
     "--line": "light-dark(#e4e4e8, #262a33)",
     "--line-strong": "light-dark(#d4d4da, #323743)",
     "--text": "light-dark(#1d1d1f, #f2f3f5)",
@@ -408,7 +410,6 @@ export const groveTheme = {
         ":hover": {
           "backgroundColor": "var(--hover)"
         },
-        "padding": "0",
         "minHeight": "28px",
         "height": "auto"
       },
@@ -536,7 +537,6 @@ export const groveTheme = {
         "minHeight": "32px",
         "height": "auto",
         "maxWidth": "100%",
-        "padding": "0",
         "fontSize": "12px",
         "justifyContent": "flex-start"
       }

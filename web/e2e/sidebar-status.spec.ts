@@ -1,6 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, openDetails, script, sessionView } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openDetails, script, sessionView, useWorkspaces } from "./helpers";
 
 const row = (page: Page, id: string) => page.locator(`[data-testid="sidebar-session"][data-session="${id}"]`);
 const project = (page: Page, id: string) => page.locator(`[data-testid="sidebar-project"][data-project-id="${id}"]`);
@@ -15,6 +15,7 @@ async function sessionMenu(page: Page, id: string) {
 
 test("사이드바 핀·읽음은 다른 기기와 새로고침에 유지되고 최근·분할 열기를 보존한다", async ({ page, browser, baseURL }) => {
     const { a } = await ensureProjects();
+    await useWorkspaces(a.id);
     const title = `sidebar-shared-${Date.now()}`;
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", `/sessions/${session.id}/messages`, { text: "기기 간 읽지 않음" });
@@ -56,6 +57,7 @@ test("사이드바 핀·읽음은 다른 기기와 새로고침에 유지되고 
 
 test("실제 턴의 실행 중·승인 대기·완료·오류를 프로젝트와 세션에 표시한다", async ({ page }) => {
     const { a } = await ensureProjects();
+    await useWorkspaces(a.id);
     const profile = await ensureProfile();
     const marker = `sidebar-status-${Date.now()}`;
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: marker });
@@ -100,6 +102,7 @@ test("실제 턴의 실행 중·승인 대기·완료·오류를 프로젝트와
 
 test("toolbar의 읽지 않음 필터·접기·오류 복구는 서버 상태를 지우지 않는다", async ({ page }) => {
     const { a } = await ensureProjects();
+    await useWorkspaces(a.id);
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `sidebar-toolbar-${Date.now()}` });
     await apiCall("POST", `/sessions/${session.id}/messages`, { text: "읽지 않음 fixture" });
     await login(page);

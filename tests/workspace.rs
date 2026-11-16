@@ -14,6 +14,12 @@ async fn receive_reply(s: &TestServer, fixture: &Fixture, profile: &str, session
     messages["items"].as_array().unwrap().iter().rev().find(|m| m["role"] == "assistant").unwrap()["created_at"].as_str().unwrap().to_string()
 }
 
+async fn recent_session(s: &TestServer, session: &str) -> Value {
+    let (status, recent) = s.get("/api/v1/recent").await;
+    assert_eq!(status, StatusCode::OK, "{recent}");
+    recent["items"].as_array().unwrap().iter().find(|item| item["resource_id"] == session).unwrap().clone()
+}
+
 fn layout_two(pa: &str, sa: &str, pb: &str, sb: &str, dir: &str) -> Value {
     json!({
         "schema": 1,
@@ -335,6 +341,99 @@ async fn recent_access_from_several_devices_never_regresses_read_state() {
     assert_eq!(st, StatusCode::OK);
     assert_eq!(after["pinned"], true);
     assert_eq!(after["hidden"], true);
+}
+
+#[tokio::test]
+async fn completed_recent_is_acknowledged_separately_and_never_regresses() {
+    let mut s = TestServer::start().await;
+    let fixture = Fixture::start().await;
+    let profile = s.fixture_profile(&fixture.base).await;
+    let pid = s.create_project("completion").await["id"].as_str().unwrap().to_string();
+    let sid = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    s.post("/api/v1/recent/touch", json!({
+        "kind": "session", "project_id": pid, "resource_id": sid,
+        "view_state": { "last_seen_seq": 0, "scroll": 42 },
+    })).await;
+    receive_reply(&s, &fixture, &profile, &sid, "first completion").await;
+    let first = recent_session(&s, &sid).await;
+    assert_eq!(first["status"], "completed");
+    assert_eq!(first["completion_unread"], true);
+    let first_turn = first["completed_turn_id"].as_str().unwrap().to_string();
+    let (_, session) = s.get(&format!("/api/v1/sessions/{sid}")).await;
+    let (_, read) = s.post("/api/v1/recent/touch", json!({
+        "kind": "session", "project_id": pid, "resource_id": sid,
+        "view_state": { "last_seen_seq": session["last_message_seq"] },
+    })).await;
+    assert_eq!(read["unread"], false);
+    assert_eq!(read["completion_unread"], true, "메시지를 읽었더라도 완료 확인은 별개다");
+    assert_eq!(read["view_state"]["scroll"], 42);
+    let ack = |id: &str| json!({
+        "kind": "session", "project_id": pid, "resource_id": sid, "seen_completed_turn_id": id,
+    });
+    let (status, read) = s.post("/api/v1/recent/touch", ack(&first_turn)).await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["completion_unread"], false);
+    assert_eq!(read["last_activity_at"], first["last_activity_at"], "확인은 답변 정렬 시각을 바꾸지 않는다");
+    let first_seen = read["view_state"]["last_seen_completed_seq"].as_i64().unwrap();
+    receive_reply(&s, &fixture, &profile, &sid, "second completion").await;
+    let second = recent_session(&s, &sid).await;
+    assert_eq!(second["completion_unread"], true);
+    let second_turn = second["completed_turn_id"].as_str().unwrap().to_string();
+    assert_ne!(first_turn, second_turn);
+    let (_, stale) = s.post("/api/v1/recent/touch", ack(&first_turn)).await;
+    assert_eq!(stale["completion_unread"], true, "이전 완료 클릭으로 새 완료를 지우지 않는다");
+    let (_, forged) = s.post("/api/v1/recent/touch", json!({
+        "kind": "session", "project_id": pid, "resource_id": sid,
+        "view_state": { "last_seen_seq": 0, "last_seen_completed_seq": i64::MAX },
+    })).await;
+    assert_eq!(forged["completion_unread"], true, "완료 위치는 요청 ID 확인으로만 전진한다");
+    assert_eq!(forged["view_state"]["last_seen_completed_seq"], first_seen);
+    assert_eq!(forged["view_state"]["scroll"], 42);
+    let (_, latest) = s.post("/api/v1/recent/touch", ack(&second_turn)).await;
+    assert_eq!(latest["completion_unread"], false);
+    let second_seen = latest["view_state"]["last_seen_completed_seq"].as_i64().unwrap();
+    assert!(second_seen > first_seen);
+    let (_, stale) = s.post("/api/v1/recent/touch", ack(&first_turn)).await;
+    assert_eq!(stale["view_state"]["last_seen_completed_seq"], second_seen);
+    assert_eq!(stale["completion_unread"], false);
+    s.restart().await;
+    assert_eq!(recent_session(&s, &sid).await["completion_unread"], false);
+}
+
+#[tokio::test]
+async fn completion_ack_rejects_other_sessions_and_running_turns() {
+    let s = TestServer::start().await;
+    let fixture = Fixture::start().await;
+    let profile = s.fixture_profile(&fixture.base).await;
+    let pid = s.create_project("completion-boundary").await["id"].as_str().unwrap().to_string();
+    let a = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    let b = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": a })).await;
+    receive_reply(&s, &fixture, &profile, &a, "done").await;
+    let done = recent_session(&s, &a).await;
+    let (status, _) = s.post("/api/v1/recent/touch", json!({
+        "kind": "session", "project_id": pid, "resource_id": b, "seen_completed_turn_id": done["completed_turn_id"],
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(recent_session(&s, &a).await["completion_unread"], true);
+    let (step, release) = fixture::gated_text("running");
+    fixture.push(step);
+    let (_, accepted) = s.post(&format!("/api/v1/sessions/{a}/turns"), json!({
+        "text": "running", "profile_id": profile, "tools": false,
+    })).await;
+    let id = accepted["turn"]["id"].as_str().unwrap();
+    s.wait_status(id, "running").await;
+    let running = recent_session(&s, &a).await;
+    assert_eq!(running["status"], "running");
+    assert_eq!(running["completion_unread"], false);
+    assert!(running["completed_turn_id"].is_null());
+    let (status, _) = s.post("/api/v1/recent/touch", json!({
+        "kind": "session", "project_id": pid, "resource_id": a, "seen_completed_turn_id": id,
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    release.send(true).unwrap();
+    s.wait_status(id, "completed").await;
+    assert_eq!(recent_session(&s, &a).await["completion_unread"], true);
 }
 
 /// RECENCY-007: 대량 최근 목록(파일 4,000 + 대화 1,000)의 정렬·검색·시간 범위·상태 필터 결과와 응답 시간.

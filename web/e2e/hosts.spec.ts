@@ -42,7 +42,7 @@ const test = base.extend<{}, { remote: Remote }>({
 
 async function openHosts(page: Page) {
     if (await page.getByRole("banner").count()) {
-        await openSettings(page);
+        await openSettings(page, "local");
         await page.getByRole("button", { name: "기기·연결", exact: true }).click();
     }
     await page.getByRole("button", { name: /^호스트 선택:/ }).click();
@@ -64,7 +64,7 @@ test("로그인 전 호스트 등록·수정·삭제·영속화와 좁은 화면
     await expect(dialog.getByTestId("host-row")).toContainText("https://example.test");
     await dialog.getByRole("button", { name: "수정", exact: true }).click();
     await dialog.getByLabel("별명", { exact: true }).fill("이름 변경");
-    await dialog.getByRole("button", { name: "변경 저장" }).click();
+    await dialog.getByLabel("별명", { exact: true }).press("Tab");
     const focused = await page.evaluate(() => document.activeElement?.closest("dialog") !== null);
     expect(focused).toBe(true);
     await page.keyboard.press("Escape");
@@ -126,6 +126,7 @@ test("두 실제 서버의 인증·지연 응답·이벤트·초안이 섞이지
         expect(remoteCopies).not.toContain("다른 서버");
         await expect(dialog.getByTestId("host-row")).toContainText("최근 열기:");
         await dialog.getByRole("button", { name: "닫기", exact: true }).click();
+        await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
         await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title }).click();
 
         // 같은 hostname·다른 port에서도 양쪽 refresh 쿠키가 유지된다.

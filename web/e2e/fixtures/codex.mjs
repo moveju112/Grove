@@ -54,7 +54,10 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
         const request = JSON.parse(line);
         if (provider === "claude") {
             emit({ type: "control_response", response: { request_id: request.request_id, subtype: "success",
-                response: { models: [{ value: "fixture-claude", displayName: "Fixture Claude" }] } } });
+                response: { models: [
+                    { value: "fixture-claude", displayName: "Fixture Claude" },
+                    { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus" },
+                ] } } });
             break;
         }
         if (request.method === "initialize") emit({ id: request.id, result: {} });
@@ -65,15 +68,18 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
                     serviceTiers: [{ id: "priority", name: "Fast", description: "Faster processing, increased usage" }] },
                 { model: "fixture-light", displayName: "Fixture Light",
                     supportedReasoningEfforts: ["low", "medium", "high"].map((reasoningEffort) => ({ reasoningEffort })), serviceTiers: [] },
+                { model: "gpt-5.6", displayName: "GPT-5.6" },
+                { model: "gpt-6.1", displayName: "GPT-6.1" },
+                { model: "gpt-5.10", displayName: "GPT-5.10" },
             ] } });
             break;
         }
     }
     process.exit(0);
 }
-if (provider === "codex" && (!args.includes('sandbox_mode="workspace-write"') || !args.includes('approval_policy="never"')
-    || !args.includes("sandbox_workspace_write.writable_roots=[]") || !args.includes("sandbox_workspace_write.network_access=false"))) {
-    emit({ type: "turn.failed", error: { message: "fixture: workspace coding policy missing" } });
+if (provider === "codex" && (!args.includes("--dangerously-bypass-approvals-and-sandbox")
+    || args.some((arg) => arg.startsWith("sandbox_") || arg.startsWith("approval_policy=")))) {
+    emit({ type: "turn.failed", error: { message: "fixture: unrestricted coding policy missing" } });
     process.exit(1);
 }
 let input = "";

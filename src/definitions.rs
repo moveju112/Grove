@@ -382,88 +382,6 @@ pub async fn update(
 }
 
 #[derive(Deserialize)]
-pub struct RestoreDef {
-    pub expected_revision: i64,
-    /// 복원할 필드. 생략하면 전체(name, description, body), 빈 배열은 거절.
-    pub fields: Option<Vec<String>>,
-    /// 비교한 번들 identity. 생략한 기존 클라이언트의 복원 계약은 유지한다.
-    pub expected_baseline: Option<RestoreBaseline>,
-}
-
-#[derive(Deserialize, Serialize)]
-pub struct RestoreBaseline {
-    pub name: String,
-    pub description: String,
-    pub body: String,
-    pub sha256: String,
-}
-
-fn check_restore_baseline(cur: &DefinitionDetail, expected: &RestoreBaseline) -> ApiResult<()> {
-    if cur.baseline_name.as_deref() != Some(expected.name.as_str())
-        || cur.baseline_description.as_deref() != Some(expected.description.as_str())
-        || cur.baseline_body.as_deref() != Some(expected.body.as_str())
-        || cur.def.baseline_sha256.as_deref() != Some(expected.sha256.as_str())
-    {
-        return Err(ApiError::conflict("baseline_conflict", "번들 기본값이 변경되었습니다. 다시 비교하세요")
-            .with_details(json!({ "current": cur })));
-    }
-    Ok(())
-}
-
-pub async fn restore(
-    State(app): State<App>,
-    p: Principal,
-    headers: HeaderMap,
-    Path((kind, id)): Path<(String, String)>,
-    Json(b): Json<RestoreDef>,
-) -> ApiResult<Response> {
-    check_kind(&kind)?;
-    let fields = b.fields.unwrap_or_else(|| vec!["name".into(), "description".into(), "body".into()]);
-    if fields.is_empty() || fields.iter().any(|f| !matches!(f.as_str(), "name" | "description" | "body")) {
-        return Err(ApiError::invalid("복원 가능한 필드는 name, description, body입니다"));
-    }
-    let mut identity = json!({ "kind": kind, "id": id, "rev": b.expected_revision, "f": fields });
-    if let Some(expected) = &b.expected_baseline {
-        identity["baseline"] = serde_json::to_value(expected)?;
-    }
-    let h = idem::body_hash("def.restore", &identity);
-    idem::run(&app, &p, &headers, &h, move |tx, now| {
-        let cur = resolve(tx, &kind, &id)?;
-        if !cur.def.builtin {
-            return Err(ApiError::invalid("사용자 정의는 복원할 기본값이 없습니다"));
-        }
-        if cur.def.revision != b.expected_revision {
-            return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));
-        }
-        if let Some(expected) = &b.expected_baseline {
-            check_restore_baseline(&cur, expected)?;
-        }
-        let row = load_row(tx, &kind, &id)?;
-        let (mut n, mut d, mut body, en) = match row {
-            Some((_, n, d, b, en, _, _)) => (n, d, b, en),
-            None => (None, None, None, true),
-        };
-        for f in &fields {
-            match f.as_str() {
-                "name" => n = None,
-                "description" => d = None,
-                _ => body = None,
-            }
-        }
-        tx.execute(
-            "INSERT INTO definitions (kind, id, builtin, name, description, body, enabled, revision, created_at, updated_at) \
-             VALUES (?1, ?2, 1, ?3, ?4, ?5, ?6, ?7, ?8, ?8) \
-             ON CONFLICT(kind, id) DO UPDATE SET name = ?3, description = ?4, body = ?5, revision = ?7, updated_at = ?8",
-            params![kind, id, n, d, body, en, cur.def.revision + 1, now],
-        )?;
-        let res = resolve(tx, &kind, &id)?;
-        events::append(tx, now, "definition.changed", None, None, &json!({ "kind": kind, "id": id, "revision": res.def.revision }))?;
-        Ok((StatusCode::OK, serde_json::to_value(res)?))
-    })
-    .await
-}
-
-#[derive(Deserialize)]
 pub struct DeleteQuery {
     pub expected_revision: i64,
 }
@@ -480,7 +398,7 @@ pub async fn delete(
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         let cur = resolve(tx, &kind, &id)?;
         if cur.def.builtin {
-            return Err(ApiError::invalid("기본 정의는 삭제할 수 없습니다. 복원을 사용하세요"));
+            return Err(ApiError::invalid("기본 정의는 삭제할 수 없습니다"));
         }
         if cur.def.revision != q.expected_revision {
             return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));

@@ -1,22 +1,21 @@
 import { Grid } from "@astryxdesign/core/Grid";
 import { chatLayout } from "../chat-layout.stylex";
 import { Select } from "../../design/Select";
-import { useContext, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ApiError, api } from "../../api/client";
 import type { Session } from "../../api/generated";
 import { Composer, type SendOptions } from "../Composer";
 import { modelOptionCapabilities } from "../../state/sendOptions";
 import type { Opener } from "../Workspace";
 import { useWorkspaceMode, useWorkspaces } from "../../state/workspaces";
-import { CreationFocus } from "./CreationEntry";
 
 // 모든 진입점은 이 입력창으로 이어진다. 진입·초점 이동만으로는 자원을 만들지 않는다.
 // 연결 차단 사유는 상단 연결 토스트가 알린다. 전송 직전 guard(beforeMutation)만 받는다.
-export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutation }: {
+export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutation, focusVersion = 0 }: {
     projectId: string; tabId: string; open: Opener; disabled: string | null;
     beforeMutation?: () => void;
+    focusVersion?: number;
 }) {
-    const focus = useContext(CreationFocus);
     const ref = useRef<HTMLDivElement>(null);
     // 프로젝트 모드에서만 새 대화의 워크스페이스를 고른다. 단일 모드는 항상 프로젝트 폴더다.
     const projectMode = useWorkspaceMode(projectId) === "project";
@@ -24,11 +23,10 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
     const [workspace, setWorkspace] = useState("");
     const target = projectMode && spaces.some((w) => w.id === workspace) ? workspace : "";
     useEffect(() => {
-        if (!focus || focus.tabId !== tabId || disabled) return;
+        if (!focusVersion || disabled) return;
         const focusInput = () => {
             const node = ref.current;
             if (!node || node.closest("[hidden], [inert]")) return;
-            if (node.closest("[data-layout-mode]")?.getAttribute("data-layout-mode") !== (focus.narrow ? "narrow" : "wide")) return;
             const input = node.querySelector("textarea");
             input?.focus();
             if (input === document.activeElement) document.removeEventListener("close", focusInput, true);
@@ -40,7 +38,7 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
             cancelAnimationFrame(frame);
             document.removeEventListener("close", focusInput, true);
         };
-    }, [focus, tabId, disabled]);
+    }, [focusVersion, tabId, disabled]);
 
     // Composer가 보관한 전송 키를 단계별로 파생한다. 재확인은 생성·전송 모두 같은 키를 쓴다.
     const start = async (text: string, o: SendOptions, key: string, _follow?: unknown, attachments: string[] = []) => {

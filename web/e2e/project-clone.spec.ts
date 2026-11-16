@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, state } from "./helpers";
+import { apiCall, login, openAddProject, state } from "./helpers";
 
 type P = { id: string; name: string; root_path: string; revision: number };
 
@@ -23,9 +23,7 @@ test("경로 제안으로 폴더를 고르고, 원격 저장소를 clone해 프�
     let created: P | null = null;
     try {
         await login(page);
-        await page.getByRole("button", { name: "만들기", exact: true }).click();
-        await page.getByRole("dialog", { name: "만들기", exact: true }).getByRole("button", { name: "프로젝트 추가", exact: true }).click();
-        const dialog = page.getByRole("dialog", { name: "프로젝트 추가" });
+        const dialog = await openAddProject(page);
         // 경로 제안: 입력한 접두어에 맞는 하위 폴더를 고르면 그 폴더로 이동한다
         await dialog.getByLabel("폴더 경로").fill(join(base, "zeta-s"));
         const suggest = dialog.getByRole("list", { name: "경로 제안" });
@@ -34,7 +32,8 @@ test("경로 제안으로 폴더를 고르고, 원격 저장소를 clone해 프�
 
         // clone: 대상 폴더 아래 저장소 이름으로 받고 프로젝트로 등록한다
         await dialog.getByRole("button", { name: "저장소에서 clone", exact: true }).click();
-        const box = dialog.getByRole("group", { name: "저장소 clone" });
+        const clone = page.getByRole("dialog", { name: "저장소에서 clone", exact: true });
+        const box = clone.getByRole("group", { name: "저장소 clone" });
         await box.getByLabel("clone할 저장소").fill(`file://${join(base, `${repoName}.git`)}`);
         await expect(box.getByLabel("clone 방식")).toHaveCount(0);
         await box.getByLabel("clone 대상 폴더").fill(target);
@@ -44,13 +43,14 @@ test("경로 제안으로 폴더를 고르고, 원격 저장소를 clone해 프�
         expect(existsSync(join(target, repoName, "README"))).toBe(true);
 
         // 같은 대상에 다시 받으면 기존 폴더를 지키고 이유를 보인다
-        await page.getByRole("button", { name: "만들기", exact: true }).click();
-        await page.getByRole("dialog", { name: "만들기", exact: true }).getByRole("button", { name: "프로젝트 추가", exact: true }).click();
+        await openAddProject(page);
         await dialog.getByRole("button", { name: "저장소에서 clone", exact: true }).click();
         await box.getByLabel("clone할 저장소").fill(`file://${join(base, `${repoName}.git`)}`);
         await box.getByLabel("clone 대상 폴더").fill(target);
         await box.getByRole("button", { name: "clone 후 프로젝트로 추가" }).click();
+        await clone.getByRole("button", { name: "닫기", exact: true }).click();
         await expect(dialog.getByRole("alert")).toContainText("이미 있는 경로");
+        await dialog.getByRole("button", { name: "저장소에서 clone", exact: true }).click();
         // owner/name이면 방식을 고르게 한다
         await box.getByLabel("clone할 저장소").fill("octo/hello");
         await expect(box.getByRole("combobox", { name: "clone 방식", exact: true })).toHaveAttribute("data-selected-value", "https");

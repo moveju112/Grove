@@ -106,8 +106,7 @@ fn secret_info(c: &Connection, id: &str) -> ApiResult<SecretInfo> {
         .optional()?
         .ok_or_else(|| ApiError::not_found("비밀이 없습니다"))?;
     let mut st = c.prepare(&format!("SELECT p.name FROM model_profiles p WHERE p.deleted_at IS NULL AND {} ORDER BY p.name", crate::model_headers::SECRET_USAGE))?;
-    let mut used_by = st.query_map(params![id], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
-    used_by.extend(crate::mcp::secret_users(c, id)?);
+    let used_by = st.query_map(params![id], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
     // 해독할 수 없으면(키 파일 없음·손상) 마스킹하지 않은 안내 문구로 알린다.
     let masked = value.as_deref().map(mask).unwrap_or_else(|| "(해독 불가: secret.key 없음·손상 — 키를 다시 입력하세요)".into());
     Ok(SecretInfo { id: id.into(), label, masked, created_at, updated_at, used_by })
@@ -163,7 +162,6 @@ pub async fn replace_secret(
         let unchanged: bool = tx.query_row("SELECT COALESCE(grove_try_decrypt(value)=?2,0) FROM secrets WHERE id=?1",
             params![id, b.value.trim()], |row| row.get(0)).optional()?.ok_or_else(|| ApiError::not_found("비밀이 없습니다"))?;
         if !unchanged {
-            crate::mcp::secret_changed(tx, now, &id)?;
             let active: bool = tx.query_row(
                 &format!("SELECT EXISTS(SELECT 1 FROM turns t JOIN model_profiles p ON p.id=t.profile_id \
                  WHERE {} AND t.status IN ('queued','running','awaiting_approval'))", crate::model_headers::SECRET_USAGE),

@@ -2,10 +2,11 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import type { Layout } from "../app/state/layout";
 import { frames } from "./fixture";
-import { activateMobileTab, apiCall, closeMobileSidebar, ensureProfile, ensureProjects, login, openSettings, script } from "./helpers";
+import { activateMobileTab, apiCall, closeMobileSidebar, ensureProfile, ensureProjects, login, openSettings, requireToolApproval, script, startProjectConversation } from "./helpers";
 
 async function setup(page: Page) {
     const { a } = await ensureProjects();
+    await requireToolApproval(a.id);
     const profile = await ensureProfile();
     const device = `responsive-${randomUUID()}`;
     const title = device;
@@ -35,6 +36,7 @@ async function setup(page: Page) {
     await page.addInitScript((id) => localStorage.setItem("grove.device.id", id), device);
     await login(page);
     await expect(page.locator('[data-leaf="reading"]:visible').getByLabel("메시지 입력")).toBeEnabled();
+    await startProjectConversation(page.locator('[data-leaf="writing"]:visible'));
     return { session, title, profile, project: a };
 }
 
@@ -75,6 +77,7 @@ test("폭·가로세로·키보드 높이 전환 뒤에도 배치별 입력 DOM�
     await narrowInput.fill("narrow reading draft");
     const narrow = await narrowInput.elementHandle();
     await activateMobileTab(page, project.name);
+    await startProjectConversation(page.locator('[data-leaf="writing"]:visible'));
     await page.locator('[data-leaf="writing"]:visible').getByLabel("메시지 입력").fill("narrow writing draft");
     await expect(page.locator('[data-testid="pane"]:visible')).toHaveCount(1);
     await activateMobileTab(page, title);
@@ -109,6 +112,7 @@ test("숨긴 배치의 승인 대기는 유지하고 그동안 도착한 메시�
     await page.setViewportSize({ width: 390, height: 844 });
     await closeMobileSidebar(page);
     await activateMobileTab(page, project.name);
+    await startProjectConversation(page.locator('[data-leaf="writing"]:visible'));
     const touches: number[] = [];
     page.on("request", (request) => {
         if (request.method() !== "POST" || !request.url().endsWith("/recent/touch")) return;
@@ -147,7 +151,7 @@ test("로그아웃은 숨긴 배치까지 폐기하고 늦은 저장이 기기 �
     await page.locator('[data-layout-mode="narrow"] [data-leaf="reading"]').getByLabel("메시지 입력").fill("private narrow draft");
     const wideInput = await page.locator('[data-layout-mode="wide"] [data-leaf="writing"]').getByLabel("메시지 입력").elementHandle();
     const narrowInput = await page.locator('[data-layout-mode="narrow"] [data-leaf="reading"]').getByLabel("메시지 입력").elementHandle();
-    await openSettings(page);
+    await openSettings(page, "local");
     await page.getByLabel("설정 검색").fill("로그아웃");
     await page.getByRole("button", { name: "이 브라우저에서 로그아웃" }).click();
     await expect(page.getByRole("form", { name: "로그인" })).toBeVisible();

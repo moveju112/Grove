@@ -365,7 +365,7 @@ async fn read_only_unknown_tools_platform_and_cli_are_explicit_selection_errors(
     for (name, manifest, code) in [
         ("unregistered", json!({"version":1,"tools":["not_registered"]}), "skill_tool_unregistered"),
         ("platform", json!({"version":1,"platforms":["not_a_server_os"]}), "skill_platform_unsupported"),
-        ("mcp", json!({"version":1,"tools":["mcp_call"]}), "skill_tool_unavailable"),
+        ("mcp", json!({"version":1,"tools":["mcp_call"]}), "skill_tool_unregistered"),
     ] {
         skill(&root, name, Some(manifest));
         let selected = binding(&listing(&s, &session, "").await, name);

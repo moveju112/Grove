@@ -60,20 +60,13 @@ fn api_error(e: ToolError) -> ApiError {
     ApiError::new(axum::http::StatusCode::BAD_REQUEST, e.code, e.message)
 }
 
-/// 현재 정책과 로컬 MCP 연결 확인 기록만 본다. 원격 조회·동적 등록은 하지 않는다.
+/// 현재 내장 도구 정책만 본다. 원격 조회·동적 등록은 하지 않는다.
 fn available(c: &Connection, session_id: &str, def: &Value) -> ApiResult<Vec<ToolSpec>> {
     let session = crate::sessions::get(c, session_id)?;
-    let mcp_ready: bool = c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM mcp_servers m JOIN mcp_checks k ON k.server_id=m.id WHERE m.enabled=1 AND k.status='ready')",
-        [], |r| r.get(0),
-    )?;
     let allowed = def["limits"]["allowed_tools"].as_array();
     let mut specs = vec![];
     for spec in tools::specs() {
         if spec.name == crate::computer::NAME && !crate::computer::enabled(c)? { continue; }
-        if !mcp_ready && matches!(spec.name, "mcp_tools" | "mcp_call") {
-            continue;
-        }
         if allowed.is_some_and(|a| !a.iter().any(|n| n.as_str() == Some(spec.name))) {
             continue;
         }

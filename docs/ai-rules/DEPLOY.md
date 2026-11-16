@@ -33,3 +33,27 @@
 | 로컬 반영만(공개 Pages 미반영) | `python3 scripts/deploy_local.py --skip-pages` |
 
 고정 포트·unit·경로는 `scripts/deploy_local.py`를 정본으로 삼는다.
+
+## Linux Debian/Ubuntu 패키징
+
+- **MUST** `.tar.gz` 배포와 자체 updater는 유지하고 `package --deb`로 `.deb`를 추가 생성한다. 패키징·빌드 준비 요청만으로 실사용 설치·서비스 변경·Pages 배포를 수행하지 않는다.
+- **MUST** `.deb`의 `/usr/bin/grove`, `/usr/lib/grove`와 배포된 사용자 unit은 apt/dpkg만 관리한다. 자체 updater는 별도 사용자 설치 경로에서만 쓰며 `/usr`를 `--install` 대상으로 사용하지 않는다.
+- **MUST** `.deb`는 root 서버·시스템 서비스·계정·linger를 만들거나 사용자 서비스를 자동 시작·중단·재시작하지 않는다. 공용 `grove.service` 템플릿으로 사용자 unit을 제공하고 사용자가 명시적으로 선택한다. 기존 사용자 unit·CLI·데이터를 덮어쓰거나 자동 이전하지 않는다.
+- **MUST** 사용자 데이터는 기존 `GROVE_DATA_DIR`/XDG 기본 경로에 두며 remove·purge에서도 DB·토큰·프로젝트를 보존한다. maintainer script로 데이터 migration·네트워크 다운로드를 하지 않는다.
+- **MUST** ELF runtime 의존성은 대상 머신의 `dpkg-shlibdeps`로 계산하고 누락 정보를 무시하거나 최소 glibc 버전을 추측하지 않는다. x64는 amd64, ARM64는 arm64로 각각 해당 아키텍처 Linux에서 native 빌드한다. `.tar.gz`의 cross 빌드와 달리 `.deb` cross 빌드는 현재 지원하지 않는다.
+- **MUST** 패키징 호스트에는 기존 Rust·Node 빌드 환경과 `dpkg`, `dpkg-dev`, `binutils`가 필요하다. 의존성을 자동 설치하거나 업그레이드하지 않는다. 생성 호스트보다 오래된 배포판 호환성은 `Depends`로 제한하며 별도 검증 없이 주장하지 않는다.
+- **MUST** Cargo prerelease는 Debian `~`로 변환하고 packaging revision을 붙인다(예: `0.1.0-beta.1` → `0.1.0~beta.1-1`). 같은 upstream의 패키징 변경은 `--deb-revision`을 올린다.
+- **MUST** `.deb` metadata·파일 권한·root 소유권·추출 payload를 확인하고 격리된 데이터로 추출된 CLI·웹·health를 검사한다. 이 검사는 실제 apt 설치·업그레이드·제거 검증을 대신하지 않는다.
+- **MUST** 빌드 중 입력 소스 해시가 바뀌면 성공 receipt를 발행하지 않는다. 다른 작업이 편집 중인 checkout은 고유한 소스 복사본에서 패키징하며, 산출물의 source hash는 해당 복사본을 기준으로 한다.
+- **MUST** apt 업그레이드·제거 전에는 실행 중 작업을 마치고 사용 중인 프로세스를 명시적으로 멈춘다. 업그레이드 전 데이터 백업과 schema 호환성을 확인하며, schema 변경 후 `apt` downgrade를 안전한 rollback으로 간주하지 않는다. SHA256SUMS는 무결성 확인일 뿐 배포자 인증이 아니며 APT 저장소·서명 배포는 별도 범위다.
+
+| 목적 | 명령 |
+|---|---|
+| 현재 Linux의 `.tar.gz`와 `.deb` 준비 | `python3 scripts/build.py package --deb` |
+| x64 패키지 준비(amd64 Linux에서) | `python3 scripts/build.py package --targets linux-x64 --deb` |
+| ARM64 패키지 준비(arm64 Linux에서) | `python3 scripts/build.py package --targets linux-arm64 --deb` |
+| 실행 없는 빌드 계획 | `python3 scripts/build.py package --deb --dry-run` |
+| 패키징 회귀 검사 | `python3 -m unittest scripts.test_debian scripts.test_build` |
+
+산출물은 `dist/release/grove-<version>-<target>/`에 압축본·`.deb`·manifest·SBOM·SHA256SUMS로 모은다.
+설치·사용자 서비스 선택·업데이트·제거 절차는 패키지의 `assets/debian/README.Debian`을 따른다.

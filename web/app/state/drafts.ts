@@ -81,6 +81,12 @@ export function load(store: Store, k: string): LocalDraft | null {
     }
 }
 
+/// 해당 탭에서 작성 중인 내용만 입력창을 복원한다. 다른 탭의 사본은 자동으로 열지 않는다.
+export function hasProjectInput(store: Store | null, projectId: string, tabId: string): boolean {
+    const draft = store ? load(store, key(`project:${projectId}`, tabId)) : null;
+    return !!draft && !!(draft.text || draft.attachments?.length || draft.pending || draft.pendingInvalid);
+}
+
 export function save(store: Store, k: string, d: LocalDraft): void {
     if (d.attachments !== undefined) store.setItem(`${k}:attachments`, JSON.stringify(d.attachments));
     if (d.text === "" && !d.attachments?.length && !d.pending && !d.pendingInvalid && !d.options) store.removeItem(k);

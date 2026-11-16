@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, closeMobileSidebar, composerOption, ensureProfile, ensureProjects, login, openDetails, openTool } from "./helpers";
+import { apiCall, closeMobileSidebar, composerOption, ensureProfile, ensureProjects, login, openTool, startProjectConversation } from "./helpers";
 
 for (const width of [390, 1528]) {
     test.describe(`${width}px 작업 화면`, () => {
@@ -18,6 +18,7 @@ for (const width of [390, 1528]) {
             await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
             if (width < 760) await closeMobileSidebar(page);
             const project = page.getByTestId("project-view").filter({ visible: true });
+            await startProjectConversation(project);
             const input = project.getByLabel("메시지 입력", { exact: true });
             await input.fill("아직 보내지 않은 초안");
             await expect(project.getByText("드래그가 안 되면", { exact: false })).toHaveCount(0);
@@ -74,7 +75,7 @@ for (const width of [390, 1528]) {
             expect(geometry.document).toBeLessThanOrEqual(geometry.viewport);
         });
 
-        test("입력 옵션·첨부 버튼과 검색 대화상자가 키보드·터치로 동작한다", async ({ page }, info) => {
+        test("입력 옵션·첨부 버튼과 도구 패널이 키보드·터치로 동작한다", async ({ page }, info) => {
             const { a } = await ensureProjects();
             const title = `작업 화면 ${width} ${Date.now()}`;
             const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
@@ -99,16 +100,7 @@ for (const width of [390, 1528]) {
             await page.screenshot({ path: info.outputPath("session-tools.png") });
             await view.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
             await expect(view.getByTestId("tool-dock")).toHaveJSProperty("open", false);
-            if (width < 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
-            const search = page.getByTestId("search-panel");
-            await openDetails(search, "대화 검색");
-            const dialog = page.getByRole("dialog", { name: "대화 검색", exact: true });
-            await dialog.getByRole("searchbox", { name: "대화 검색어", exact: true }).fill(title);
-            await expect(dialog.getByTestId("search-hit").first()).toBeVisible();
-            await dialog.getByRole("button", { name: "닫기", exact: true }).focus();
-            await page.keyboard.press("Escape");
-            await expect(dialog).toHaveCount(0);
-            await expect(search.getByRole("button", { name: "대화 검색", exact: true })).toBeFocused();
+            await expect(view.getByRole("button", { name: "도구 패널", exact: true })).toBeFocused();
         });
     });
 }

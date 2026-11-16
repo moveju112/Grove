@@ -1,6 +1,33 @@
 import * as stylex from "@stylexjs/stylex";
 
 export const settingsStyles = stylex.create({
+    areaSelector: {
+        padding: 4,
+        gap: 4,
+        flexShrink: 0,
+        borderWidth: 1,
+        borderStyle: "solid",
+        borderColor: "var(--line-strong)",
+        borderRadius: 12,
+        backgroundColor: "var(--bg)",
+    },
+    areaTab: {
+        minHeight: 52,
+        paddingInline: 4,
+        gap: 4,
+        fontSize: "1rem",
+        fontWeight: 600,
+        borderWidth: 1,
+        borderStyle: "solid",
+        borderColor: "var(--line-strong)",
+        borderRadius: 8,
+        color: "var(--text)",
+        ':is([aria-selected="true"])': {
+            backgroundColor: "var(--text)",
+            borderColor: "var(--text)",
+            color: "var(--panel)",
+        },
+    },
     layout: {
         marginInline: "auto",
         containerName: "settings",
@@ -13,9 +40,9 @@ export const settingsStyles = stylex.create({
         },
     },
     navigation: {
-        position: "sticky", top: "calc(-1 * var(--pane-inset))", zIndex: 3, backgroundColor: "var(--panel)",
-        marginBlockStart: "calc(-1 * var(--pane-inset))",
-        paddingBlockStart: "var(--pane-inset)",
+        position: "sticky", top: "calc(-1 * var(--pane-inset, 0px))", zIndex: 3, backgroundColor: "var(--panel)",
+        marginBlockStart: "calc(-1 * var(--pane-inset, 0px))",
+        paddingBlockStart: "var(--pane-inset, 0px)",
         gridColumn: { default: null, "@container settings (max-width: 680px)": "1 / -1" },
         gridRow: { default: null, "@container settings (max-width: 680px)": "1" },
     },
@@ -48,6 +75,12 @@ export const settingsStyles = stylex.create({
     content: {
         minWidth: 0,
         backgroundColor: "var(--bg)",
+    },
+    definitionList: {
+        gridTemplateColumns: {
+            default: "repeat(2, minmax(0, 1fr))",
+            "@container settings (max-width: 680px)": "minmax(0, 1fr)",
+        },
     },
     notice: {
         flexShrink: 0,

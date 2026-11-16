@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, login, script, selectChoice, state } from "./helpers";
+import { apiCall, ensureProfile, login, requireToolApproval, script, selectChoice, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Effective = { items: { key: string; effective: unknown; source: string; layers: Record<string, { value: unknown; revision: number }> }[] };
@@ -10,6 +10,7 @@ async function setup(page: Page) {
     const root = mkdtempSync(join(state().projA, "exec-settings-"));
     mkdirSync(join(root, "work"));
     const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+    await requireToolApproval(project.id);
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, {});
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
@@ -19,18 +20,18 @@ async function setup(page: Page) {
     return { project, session, panel: page.getByTestId("exec-settings") };
 }
 
-test("범위별 셸·한도·작업 위치 저장과 상속 복원은 기존 설정 API를 쓴다", async ({ page }) => {
+test("범위별 셸·한도·작업 위치는 blur 때 저장하고 기본값 복원은 제공하지 않는다", async ({ page }) => {
     const { project, session, panel } = await setup(page);
     const row = panel.getByTestId("setting-exec.max_memory_mb");
     await row.getByLabel("명령 메모리 한도(MB)", { exact: true }).fill("128");
-    await row.getByRole("button", { name: "저장", exact: true }).click();
+    await row.getByLabel("명령 메모리 한도(MB)", { exact: true }).blur();
     await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
     const cwd = panel.getByTestId("setting-exec.default_cwd");
     await cwd.getByLabel("기본 작업 위치", { exact: true }).fill("../outside");
-    await cwd.getByRole("button", { name: "저장", exact: true }).click();
+    await cwd.getByLabel("기본 작업 위치", { exact: true }).blur();
     await expect(cwd.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장 실패(기존 값 유지)");
     await cwd.getByLabel("기본 작업 위치", { exact: true }).fill("work");
-    await cwd.getByRole("button", { name: "저장", exact: true }).click();
+    await cwd.getByLabel("기본 작업 위치", { exact: true }).blur();
     await expect(cwd.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
     await expect(panel).toContainText("새 모델 셸·대화 작업에만 적용");
     await expect(panel).toContainText("기존 계획·승인은 유지");
@@ -42,14 +43,10 @@ test("범위별 셸·한도·작업 위치 저장과 상속 복원은 기존 설
     expect((await apiCall<Effective>("GET", sessionQuery)).items.find((item) => item.key === "exec.max_memory_mb")!.effective).toBe(256);
     await apiCall("PUT", `/settings/session/${session.id}/exec.max_memory_mb`, { expected_revision: 1, value: null });
     expect((await apiCall<Effective>("GET", sessionQuery)).items.find((item) => item.key === "exec.max_memory_mb")!.effective).toBe(128);
-    await row.getByRole("button", { name: "이 범위 값 지우기", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "기본값 복원 확인", exact: true });
-    await expect(dialog.getByTestId("reset-target")).toContainText(project.name);
-    await dialog.getByRole("button", { name: "확인한 범위 복원", exact: true }).click();
-    await expect(dialog.getByRole("status").filter({ hasText: /\S/ })).toContainText("복원 저장됨");
+    await expect(row.getByRole("button", { name: "이 범위 값 지우기", exact: true })).toHaveCount(0);
     const after = (await apiCall<Effective>("GET", sessionQuery)).items.find((item) => item.key === "exec.max_memory_mb")!;
-    expect(after.layers.project!.value).toBeNull();
-    expect(after.source).not.toBe("project");
+    expect(after.layers.project!.value).toBe(128);
+    expect(after.source).toBe("project");
 });
 
 test("미지원 격리·셸은 이유와 함께 비활성이고 기존 승인 계약을 안내한다", async ({ page }) => {
@@ -77,10 +74,9 @@ test("화면에서 셸·한도를 바꿔도 승인 대상은 고정되고 다음
     const save = async (key: string, label: string, value: string, select = false) => {
         const row = panel.getByTestId(`setting-${key}`);
         const input = row.getByLabel(label, { exact: true });
-        if (select) await selectChoice(input, value);
-        else await input.fill(value);
         const saved = page.waitForResponse((response) => response.request().method() === "PUT" && response.url().endsWith(`/${key}`));
-        await row.getByRole("button", { name: "저장", exact: true }).click();
+        if (select) await selectChoice(input, value);
+        else { await input.fill(value); await input.blur(); }
         expect((await saved).ok()).toBe(true);
         await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
     };

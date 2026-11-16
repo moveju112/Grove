@@ -121,15 +121,19 @@ pub fn is_sensitive_env(name: &str) -> bool {
     EXACT.contains(&n.as_str()) || PARTS.iter().any(|p| n.contains(p))
 }
 
-/// 셸 명령. stdin 없음, stdout/stderr pipe, 민감 환경변수 제거.
+fn remove_env(name: &str, inherit_credentials: bool) -> bool {
+    if inherit_credentials { name.to_ascii_uppercase().starts_with("GROVE_") } else { is_sensitive_env(name) }
+}
+
+/// 셸 명령. 전체 권한을 명시한 계획만 계정 자격증명을 상속하며 Grove 내부 환경변수는 항상 제거한다.
 /// 소유권 표식·process group·Job Object는 `procs::prepare`/`procs::adopt`가 맡는다(`tag`는 실행 표식).
-pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str, limits: crate::procs::Limits) -> tokio::process::Command {
+pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str, limits: crate::procs::Limits, inherit_credentials: bool) -> tokio::process::Command {
     let (program, args) = shell_argv(shell);
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).arg(command);
     cmd.current_dir(cwd).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     for (k, _) in std::env::vars_os() {
-        if k.to_str().is_none_or(is_sensitive_env) {
+        if k.to_str().is_none_or(|name| remove_env(name, inherit_credentials)) {
             cmd.env_remove(&k);
         }
     }
@@ -145,7 +149,7 @@ pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver
     let tag = crate::util::new_id();
     let limits = crate::procs::Limits::from_json(&planned.target["limits"]);
     let shell = planned.target["shell"].as_str().unwrap_or("default");
-    let mut cmd = self::command(shell, command, &cwd, &tag, limits);
+    let mut cmd = self::command(shell, command, &cwd, &tag, limits, planned.target["inherit_credentials"].as_bool().unwrap_or(false));
     let started = std::time::Instant::now();
     let mut child = cmd.spawn().map_err(|e| {
         let (code, msg) = spawn_message(shell, &e);
@@ -232,6 +236,22 @@ mod tests {
         }
         for n in ["PATH", "HOME", "LANG", "TERM", "CARGO_HOME", "USER"] {
             assert!(!is_sensitive_env(n), "{n}");
+        }
+    }
+
+    #[test]
+    fn full_access_keeps_account_credentials_but_not_server_environment() {
+        for name in ["SSH_AUTH_SOCK", "GPG_AGENT_INFO", "GIT_ASKPASS", "GH_TOKEN", "AWS_SECRET_ACCESS_KEY"] {
+            assert!(remove_env(name, false), "{name}");
+            assert!(!remove_env(name, true), "{name}");
+        }
+        for name in ["GROVE_DATA_DIR", "GROVE_MODEL_KEY", "grove_internal"] {
+            assert!(remove_env(name, false), "{name}");
+            assert!(remove_env(name, true), "{name}");
+        }
+        for name in ["PATH", "HOME", "LANG"] {
+            assert!(!remove_env(name, false), "{name}");
+            assert!(!remove_env(name, true), "{name}");
         }
     }
 

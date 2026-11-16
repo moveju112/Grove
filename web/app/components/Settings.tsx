@@ -4,17 +4,17 @@ import { Notice } from "../design/Notice";
 import { Code } from "@astryxdesign/core/Code";
 import { contentStyles } from "../design/content.stylex";
 import { KeyValues } from "../design/KeyValues";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useState } from "react";
 import { ActionMenu, DetailDialog } from "./ui/Controls";
 import { HelpTip } from "./HelpTip";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
-import { type Prefs, defaultPrefs, savePrefs, usePrefs } from "../state/device";
+import { type Prefs, loadPrefs, savePrefs, usePrefs } from "../state/device";
 import { When } from "./When";
 import { notificationPermission, showAttention } from "../state/attention";
 import { MAX_RECENT_WINDOWS, normalizeRecentWindows, RECENT_WINDOW_OPTIONS, recentWindowLabel } from "../state/recentWindow";
-import { useLive, useQuery } from "../state/store";
+import { invalidate, useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
 import { UsagePanel } from "./UsagePanel";
 import { Pairings } from "./Pairing";
@@ -24,14 +24,12 @@ import { LocalModelConnection } from "./local-models/LocalModelConnection";
 import { ProfileCapabilities } from "./ProfileCapabilities";
 import { ProfileContextPolicy } from "./ProfileContextPolicy";
 import { ProfileFallback } from "./ProfileFallback";
-import { Memories } from "./Memories";
 import { useCapability } from "../state/capabilities";
-import { DeviceSettingsReset } from "./SettingsReset";
-import { McpServers } from "./McpServers";
+import { useAutosave } from "./settings/useAutosave";
+import { AutosaveStatus } from "./settings/AutosaveStatus";
 import { DiagnosticsBundle } from "./DiagnosticsBundle";
 import { SourceSettings } from "./source-settings/SourceSettings";
 import { TurnTimingSetting } from "./turn-timing/TurnTimingSetting";
-import { HooksSettings } from "./hooks/HooksSettings";
 import { ExecSettings } from "./exec-settings/ExecSettings";
 import { isExecSetting } from "../api/execSettings";
 import { BrowserCapabilitiesSettings, currentNotificationIssue, useBrowserCapabilities } from "./capabilities/BrowserCapabilities";
@@ -39,7 +37,6 @@ import { requestNotificationAccess } from "./capabilities/browser";
 import { UpdateSettings } from "./update/UpdateSettings";
 import { settingLinkKey } from "./settings-links/reveal";
 import { useSettingsLink } from "./settings-links/useSettingsLink";
-import { DefinitionUpdates } from "./definition-updates/DefinitionUpdates";
 import { useDefinitionDraft } from "./definition-updates/useDefinitionDraft";
 import { useExecLinkLayout } from "./settings-links/useExecLinkLayout";
 import { AgentOverview } from "./agent-overview/AgentOverview";
@@ -55,30 +52,34 @@ import { settingsStyles } from "../design/settings.stylex";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Collapsible } from "@astryxdesign/core/Collapsible";
-import { TextInput, TextArea } from "../design/Fields";
+import { Tab, TabList } from "@astryxdesign/core/TabList";
+import { TextInput, TextArea, DraftInput } from "../design/Fields";
 import { Slider } from "@astryxdesign/core/Slider";
 import { Select } from "../design/Select";
 import { BooleanSelect } from "./BooleanSelect";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
-type Menu = "model" | "agents" | "display" | "devices" | "server";
+type Menu = "model" | "agents" | "display" | "devices" | "server" | "help";
+type SettingsArea = "local" | "daemon";
 const MENUS: [Menu, string][] = [
     ["model", "모델·키"],
     ["agents", "에이전트·워크플로우"],
     ["display", "화면·입력"],
     ["devices", "기기·연결"],
     ["server", "서버·데이터"],
+    ["help", "도움말"],
 ];
+const AREA_MENUS: Record<SettingsArea, Menu[]> = {
+    local: ["display", "devices", "help"],
+    daemon: ["model", "agents", "devices", "server"],
+};
 export const ITEMS: Item[] = [
     { id: "bots", menu: "agents", label: "봇", keywords: "bot persona 봇", scope: "서버 전체" },
     { id: "secrets", menu: "model", label: "API 키", keywords: "key secret 비밀 openai anthropic gemini", scope: "서버 전체" },
     { id: "profiles", menu: "model", label: "모델 프로필", keywords: "model provider endpoint url 모델 timeout temperature max_tokens", scope: "서버 전체" },
-    { id: "definitions", menu: "agents", label: "에이전트·워크플로우 편집", keywords: "agent workflow prompt 지침 기본값 복원 비교", scope: "서버 전체" },
-    { id: "source-settings", menu: "agents", label: "원본 Claude/Codex 설정", keywords: "원본 출처 읽기 전용 claude codex source settings", scope: "전역·프로젝트" },
-    { id: "memories", menu: "agents", label: "확인한 장기 기억", keywords: "memory preference 기억 선호 제약 전역 프로젝트", scope: "전역·프로젝트" },
-    { id: "mcp", menu: "agents", label: "MCP 서버", keywords: "mcp transport stdio http sse 도구 연결 secret", scope: "서버 전체" },
-    { id: "hooks", menu: "agents", label: "hook 설정", keywords: "hook 훅 이벤트 matcher 명령 활성화", scope: "전역·프로젝트" },
+    { id: "definitions", menu: "agents", label: "에이전트·워크플로우 편집", keywords: "agent workflow prompt 지침", scope: "서버 전체" },
+    { id: "source-settings", menu: "agents", label: "원본 Claude/Codex 설정", keywords: "원본 출처 읽기 전용 claude codex source settings 스킬 skill hook", scope: "전역·프로젝트" },
     { id: "exec-settings", menu: "agents", label: "셸·자원 한도·격리·작업 위치", keywords: "exec shell limits isolation cwd bash sh cpu memory 셸 자원 한도 격리 기본 작업 위치 대화", scope: "전역·프로젝트" },
     { id: "theme", menu: "display", label: "테마", keywords: "dark light 다크 라이트 색", scope: "이 기기" },
     { id: "font", menu: "display", label: "글자 크기", keywords: "font size 글꼴", scope: "이 기기" },
@@ -88,36 +89,40 @@ export const ITEMS: Item[] = [
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜 턴 경과 소요 대기", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 추론 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
     { id: "devices", menu: "devices", label: "등록 기기", keywords: "device token pair 기기 토큰 페어링 폐기 분실", scope: "서버 전체" },
+    { id: "hosts", menu: "devices", label: "데몬 연결", keywords: "host 서버 연결 주소 별명 데몬", scope: "이 기기" },
+    { id: "device-name", menu: "devices", label: "클라이언트 이름", keywords: "이 기기 이름 device name 클라이언트", scope: "이 기기" },
+    { id: "client-status", menu: "devices", label: "클라이언트 상태", keywords: "web build version protocol 웹 화면 빌드 버전 이벤트 연결", scope: "이 기기" },
     { id: "browser-capabilities", menu: "devices", label: "브라우저 기능·권한", keywords: "이 기기 browser notification clipboard 알림 복사 붙여넣기 파일 첨부 드래그 HTTPS 보안 권한", scope: "이 기기" },
     { id: "logout", menu: "devices", label: "로그아웃", keywords: "logout sign out", scope: "이 기기" },
     { id: "usage", menu: "model", label: "사용량·비용", keywords: "usage cost token price 사용량 비용 토큰 가격", scope: "서버 전체" },
     { id: "health", menu: "server", label: "서버 상태·버전·진단", keywords: "version health schema diagnostics 버전 상태 진단 정보 복사", scope: "서버 전체" },
     { id: "server-update", menu: "server", label: "서버 업데이트", keywords: "update stable beta channel protocol schema 버전 채널 확인 자동 적용", scope: "서버 전체" },
-    { id: "help", menu: "server", label: "도움말", keywords: "help shortcut 도움말 단축키 사용법", scope: "이 기기" },
+    { id: "help", menu: "help", label: "도움말", keywords: "help shortcut 도움말 단축키 사용법", scope: "이 기기" },
     { id: "backup", menu: "server", label: "백업·복원", keywords: "backup snapshot restore 백업 복원", scope: "서버 전체" },
 ];
 
 export function Settings({ projectId, projectName, sessionId, open }: { projectId?: string; projectName?: string; sessionId?: string; open: Opener }) {
-    const [menu, setMenu] = useState<Menu>(projectId ? "agents" : "model");
+    const [area, setArea] = useState<SettingsArea>(projectId ? "daemon" : "local");
+    const [menu, setMenu] = useState<Menu>(projectId ? "agents" : "display");
+    const panelId = useId();
     const [q, setQ] = useState("");
     const [showAdvanced, setShowAdvanced] = useState(false);
     const registry = useQuery<SettingDef[]>("settings-registry", () => api.get("/settings/registry"));
     const session = useQuery<{ title: string } | null>(`session:${sessionId ?? "-"}`, () => (sessionId ? api.get(`/sessions/${sessionId}`) : Promise.resolve(null)));
     const target: SettingsTarget = { projectId, projectName, sessionId, sessionTitle: session.data?.title };
-    const memoriesSupported = useCapability("user_memories_v1");
-    const mcpSupported = useCapability("mcp_settings_v1");
 
     // 직접 링크(#setting-<key>): 해당 메뉴를 열고 고급 항목이면 펼친 뒤 그 항목으로 이동한다(SETTINGS-021).
     const prepareLink = useCallback((d: SettingDef) => {
         if (!MENUS.some(([id]) => id === d.menu)) return false;
         setQ("");
+        setArea("daemon");
         setMenu(d.menu as Menu);
         if (d.advanced) setShowAdvanced(true);
         return true;
     }, []);
     const link = useSettingsLink(registry, JSON.stringify([projectId, sessionId]), prepareLink);
     const execLink = Boolean(link.key && (registry.data ?? []).some((definition) => definition.key === link.key && isExecSetting(definition)));
-    const execLayoutReady = useExecLinkLayout(execLink, projectId, mcpSupported);
+    const execLayoutReady = useExecLinkLayout(execLink, projectId);
     const overviewTargetKey = JSON.stringify([projectId ?? null, sessionId ?? null]);
     const [readyOverviewTarget, setReadyOverviewTarget] = useState<string | null>(null);
     const onOverviewLayoutChange = useCallback((ready: boolean) => {
@@ -128,17 +133,18 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
         link.ready(key, element);
     }, [execLink, execLayoutReady, menu, readyOverviewTarget, overviewTargetKey, link.ready]);
     const needle = q.trim().toLowerCase();
-    const results = useMemo(() => (needle ? ITEMS.filter((i) => (i.id !== "memories" || memoriesSupported !== false)
-        && (i.id !== "mcp" || mcpSupported !== false)
-        && (i.label + " " + i.keywords).toLowerCase().includes(needle)) : null), [needle, memoriesSupported, mcpSupported]);
-    const serverDefs = (registry.data ?? []).filter((d) =>
+    const matchesArea = (item: Item) => (item.scope === "이 기기" ? "local" : "daemon") === area;
+    const results = useMemo(() => (needle ? ITEMS.filter((i) => (i.scope === "이 기기" ? "local" : "daemon") === area
+        && (i.label + " " + i.keywords).toLowerCase().includes(needle)) : null), [area, needle]);
+    const serverDefs = area === "daemon" ? (registry.data ?? []).filter((d) =>
         needle ? (d.label + " " + d.keywords + " " + d.description).toLowerCase().includes(needle) : d.menu === menu && (showAdvanced || !d.advanced),
-    );
-    const hiddenAdvanced = !needle ? (registry.data ?? []).filter((d) => d.menu === menu && d.advanced).length : 0;
-    const visible = (id: string) => (results ? results.some((r) => r.id === id) : ITEMS.find((i) => i.id === id)?.menu === menu);
+    ) : [];
+    const hiddenAdvanced = area === "daemon" && !needle ? (registry.data ?? []).filter((d) => d.menu === menu && d.advanced).length : 0;
+    const visible = (id: string) => results ? results.some((r) => r.id === id)
+        : ITEMS.some((i) => i.id === id && matchesArea(i) && i.menu === menu);
     const total = (results?.length ?? 0) + (needle ? serverDefs.length : 0);
     return (
-        <Grid width="100%" maxWidth={1200} minHeight="100%" gap={8} align="start" xstyle={settingsStyles.layout} data-testid="settings" ref={link.root}
+        <Stack width="100%" gap={4} data-testid="settings" ref={link.root}
             onWheelCapture={link.cancel} onTouchMoveCapture={link.cancel}
             onKeyDownCapture={link.cancel} onPointerDownCapture={link.cancel}
             onClick={(event) => {
@@ -151,23 +157,36 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 history.replaceState(history.state, "", anchor.getAttribute("href")!);
                 link.open(key);
             }}>
+            <TabList value={area} onChange={(value) => {
+                link.cancel();
+                const next = value as SettingsArea;
+                setArea(next); setQ("");
+                setMenu(next === "local" ? "display" : projectId ? "agents" : "model");
+            }} role="tablist" aria-label="설정 구분" size="lg" layout="fill" xstyle={settingsStyles.areaSelector}>
+                <Tab value="local" label="로컬 설정" panelId={panelId}
+                    icon={<Icon name="monitor" size={18} />} xstyle={settingsStyles.areaTab} />
+                <Tab value="daemon" label="데몬 설정" panelId={panelId}
+                    icon={<Icon name="server" size={18} />} xstyle={settingsStyles.areaTab} />
+            </TabList>
+        <Grid id={panelId} role="tabpanel" aria-label={area === "local" ? "로컬 설정" : "데몬 설정"}
+            width="100%" maxWidth={1200} gap={8} align="start" xstyle={settingsStyles.layout}>
             <Stack as="nav" gap={4} paddingBlockEnd={2} xstyle={settingsStyles.navigation} aria-label="설정 메뉴">
                 <TextInput type="search" label="설정 검색" isLabelHidden placeholder="설정 검색" value={q}
                     onChange={(value) => { link.cancel(); setQ(value); }} width="100%" />
                 <Stack gap={1} xstyle={settingsStyles.menu} data-testid="settings-menu">
-                {MENUS.map(([m, label]) => (
+                {MENUS.filter(([m]) => AREA_MENUS[area].includes(m)).map(([m, label]) => (
                     <Button key={m} appearance="settings" width="auto" xstyle={settingsStyles.menuItem} aria-current={!results && menu === m ? "page" : undefined} onClick={() => { link.cancel(); setQ(""); setMenu(m); }}>
                         {label}
                     </Button>
                 ))}
                 </Stack>
-                {sessionId ? (
+                {area === "daemon" && (sessionId ? (
                     <Text as="p" display="block" type="supporting" color="secondary" data-testid="settings-origin">
                         대화 · {session.data?.title ?? sessionId} ({projectName ?? projectId})
                     </Text>
                 ) : (
                     projectId && <Text as="p" display="block" type="supporting" color="secondary" data-testid="settings-origin">프로젝트 · {projectName ?? projectId}</Text>
-                )}
+                ))}
             </Stack>
             <Stack gap={4} xstyle={settingsStyles.body} data-testid="settings-body">
                 <Heading level={1} color="inherit">{needle ? "검색 결과" : MENUS.find(([id]) => id === menu)?.[1]}</Heading>
@@ -175,8 +194,7 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 {link.error && <Text as="p" display="block" type="inherit" color="error" role="alert">{link.error}</Text>}
                 {needle && <Text as="p" display="block" type="inherit" color="secondary">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</Text>}
                 {serverDefs.filter((d) => !isExecSetting(d)).length > 0 && <ScopedSettings grouped defs={serverDefs.filter((d) => !isExecSetting(d))} target={target}
-                    linkedKey={link.key} onLinkReady={onLinkReady}
-                    resetDefs={!needle ? (registry.data ?? []).filter((d) => d.menu === menu) : undefined} area={MENUS.find(([id]) => id === menu)?.[1]} />}
+                    linkedKey={link.key} onLinkReady={onLinkReady} />}
                 {hiddenAdvanced > 0 && !showAdvanced && (
                     <Button variant="secondary" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</Button>
                 )}
@@ -184,15 +202,15 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
                 {visible("definitions") && <Section item="definitions"><Definitions target={target} onOverviewLayoutChange={onOverviewLayoutChange} /></Section>}
                 {visible("source-settings") && <Section item="source-settings"><SourceSettings projectId={projectId} /></Section>}
-                {visible("mcp") && mcpSupported !== false && <Section item="mcp"><McpServers /></Section>}
-                {visible("hooks") && <Section item="hooks"><HooksSettings projectId={projectId} projectName={projectName} /></Section>}
                 {(visible("exec-settings") || serverDefs.some(isExecSetting)) && <Section item="exec-settings"><ExecSettings
                     linkedKey={link.key} onLinkReady={onLinkReady}
                     defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} /></Section>}
-                {visible("memories") && memoriesSupported !== false && <Section item="memories"><Memories projectId={projectId} projectName={projectName} sessionId={sessionId} /></Section>}
                 {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
                 {visible("bots") && <Section item="bots"><BotsPanel open={open} /></Section>}
                 {visible("devices") && <Devices />}
+                {visible("hosts") && <Section item="hosts"><Hosts /></Section>}
+                {visible("device-name") && <Section item="device-name"><CurrentDeviceName onSaved={() => invalidate("devices")} /></Section>}
+                {visible("client-status") && <Section item="client-status"><ClientStatus /></Section>}
                 {visible("browser-capabilities") && <Section item="browser-capabilities"><BrowserCapabilitiesSettings /></Section>}
                 {visible("help") && <Section item="help"><Help /></Section>}
                 {visible("logout") && <Section item="logout"><ServerActionButton onClick={() => void logout()}>이 브라우저에서 로그아웃</ServerActionButton></Section>}
@@ -209,13 +227,15 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 )}
             </Stack>
         </Grid>
+        </Stack>
     );
 }
 
 const GROUP_ICONS: Record<string, IconName> = {
     devices: "monitor", "browser-capabilities": "shield", logout: "user",
+    hosts: "server", "device-name": "monitor", "client-status": "monitor",
     profiles: "server", definitions: "edit", "source-settings": "edit",
-    mcp: "link", hooks: "settings", notify: "bell", health: "server", backup: "server",
+    notify: "bell", health: "server", backup: "server",
 };
 
 function Section({ item, children }: { item: string; children: React.ReactNode }) {
@@ -249,6 +269,31 @@ function useSave() {
     return { run, view };
 }
 
+function FontSize({ value }: { value: number }) {
+    const [draft, setDraft] = useState<string | null>(null);
+    const [error, setError] = useState<string | null>(null);
+    const commit = (raw: string) => {
+        const next = Number(raw);
+        if (!/^\d+$/.test(raw) || !Number.isInteger(next) || next < 12 || next > 20) {
+            setError("글자 크기는 12~20px의 정수로 입력하세요.");
+            return;
+        }
+        try {
+            const latest = loadPrefs();
+            if (latest.fontSize !== next) savePrefs({ ...latest, fontSize: next });
+            setDraft(null); setError(null);
+        } catch { setError("글자 크기를 저장하지 못했어요. 입력은 보존했어요."); }
+    };
+    return <Stack gap={2}>
+        <Slider label="글자 크기" isLabelHidden min={12} max={20} value={value}
+            onChange={(value: number) => { setDraft(String(value)); commit(String(value)); }}
+            formatValue={(value) => `${value}px`} valueDisplay="text" />
+        <DraftInput type="number" label="글자 크기 입력(px)" min={12} max={20} step={1} value={draft ?? String(value)}
+            onChange={(value) => { setDraft(value); setError(null); }} onBlur={() => { if (draft !== null) commit(draft); }} />
+        {error && <Text as="p" display="block" type="supporting" color="error" role="alert">{error}</Text>}
+    </Stack>;
+}
+
 function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
     const p = usePrefs();
     const set = (n: Prefs) => {
@@ -262,14 +307,11 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                         onChange={(value) => set({ ...p, theme: value as Prefs["theme"] })}
                         options={[{ value: "system", label: "시스템" }, { value: "light", label: "밝게" },
                             { value: "dark", label: "어둡게" }, { value: "soft", label: "부드럽게(soft)" }]} />
-                    <DeviceSettingsReset fields={["theme"]} label="테마 기본값 복원" />
                 </Section>
             )}
             {show("font") && (
                 <Section item="font">
-                    <Slider label="글자 크기" isLabelHidden min={12} max={20} value={p.fontSize}
-                        onChange={(value: number) => set({ ...p, fontSize: value })} formatValue={(value) => `${value}px`} valueDisplay="text" />
-                    <DeviceSettingsReset fields={["fontSize"]} label="글자 크기 기본값 복원" />
+                    <FontSize value={p.fontSize} />
                 </Section>
             )}
             {show("enter") && (
@@ -277,7 +319,6 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <BooleanSelect label="Enter로 보내기"
                         value={p.enterToSend} onChange={(value) => set({ ...p, enterToSend: value })}
                         help="Shift+Enter는 줄바꿈에 사용합니다. 터치 키보드의 Enter는 항상 줄바꿈입니다." />
-                    <DeviceSettingsReset fields={["enterToSend"]} label="입력 기본값 복원" />
                 </Section>
             )}
             {show("recent") && (
@@ -293,7 +334,6 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                                 ...RECENT_WINDOW_OPTIONS.map((option) => ({ value: option, label: recentWindowLabel(option),
                                     disabled: p.recentWindows.includes(option) && p.recentWindows[index] !== option }))]} />)}
                     </fieldset>
-                    <DeviceSettingsReset fields={["recentWindows", "recentWindow"]} label="최근 범위 기본값 복원" />
                 </Section>
             )}
             {show("notify") && (
@@ -310,7 +350,6 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                     <Select label="지난 시각 표시" value={p.timeStyle}
                         onChange={(value) => set({ ...p, timeStyle: value as Prefs["timeStyle"] })}
                         options={[{ value: "absolute", label: "날짜·시각" }, { value: "relative", label: "상대 시간(7일 이내)" }]} />
-                    <DeviceSettingsReset fields={["clock", "timeStyle"]} label="시간 표시 기본값 복원" />
                     <TurnTimingSetting />
                 </Section>
             )}
@@ -325,12 +364,8 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                         help="도구·실행 기록은 숨기지만 승인 요청은 항상 표시합니다." />
                     <BooleanSelect label="도구 실행 세부를 펼쳐서 표시"
                         value={p.expandTools} onChange={(value) => set({ ...p, expandTools: value })} />
-                    <DeviceSettingsReset fields={["reasoning", "answerOnly", "expandTools"]} label="대화 표시 기본값 복원" />
                 </Section>
             )}
-            <Stack align="start" paddingBlockStart={8}>
-                <DeviceSettingsReset compact={false} fields={Object.keys(defaultPrefs) as (keyof Prefs)[]} label="이 기기 화면·입력 전체 복원" />
-            </Stack>
         </>
     );
 }
@@ -389,7 +424,6 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
                 시험 알림 보내기
             </Button>
             {testSent && <Text as="span" type="supporting" color="secondary" role="status"> 보냈습니다{permission === "granted" ? "" : "(권한이 없어 화면 알림은 생략)"}.</Text>}
-            <DeviceSettingsReset fields={["notifyDone", "notifyApproval", "notifyServer", "notifySound"]} label="알림 기본값 복원" />
         </>
     );
 }
@@ -523,23 +557,27 @@ function Definitions({ target, onOverviewLayoutChange }: {
     const [sel, setSel] = useState<string | null>(null);
     const list = useQuery<Definition[]>(`definitions:${kind}`, () => api.get(`/definitions?kind=${kind}`));
     return (
-        <Stack>
+        <Stack gap={3}>
             <AgentOverview target={target} onEdit={(id) => { setKind("agent"); setSel(id); }} onLayoutChange={onOverviewLayoutChange} />
             <Stack direction="horizontal" wrap="wrap" gap={1}>
                 <Button appearance="choice" aria-pressed={kind === "agent"} onClick={() => { setKind("agent"); setSel(null); }}>에이전트</Button>
                 <Button appearance="choice" aria-pressed={kind === "workflow"} onClick={() => { setKind("workflow"); setSel(null); }}>워크플로우</Button>
             </Stack>
-            <List density="compact" edge="flush" hasDividers data-testid="definition-list">
+            <Grid gap={2} xstyle={settingsStyles.definitionList} data-testid="definition-list">
                 {(list.data ?? []).map((d) => (
-                    <ListItem key={d.id} label={<>
-                        <Button appearance="link" aria-pressed={sel === d.id} onClick={() => setSel(d.id)}>
-                            {d.name} {d.builtin ? <Text as="span" type="supporting" color="secondary">기본</Text> : <Text as="span" type="supporting" color="secondary">사용자</Text>}
-                            {d.modified_fields.length > 0 && <StatusBadge status="awaiting_approval">수정됨</StatusBadge>}
-                            {!d.enabled && <Text as="span" type="supporting" color="secondary">(비활성)</Text>}
+                    <Card key={d.id} padding={2}>
+                        <Button appearance="settings" width="100%" aria-pressed={sel === d.id}
+                            aria-current={sel === d.id ? "page" : undefined} onClick={() => setSel(d.id)}>
+                            <Stack as="span" width="100%" direction="horizontal" align="center" justify="between" gap={2}>
+                                {d.name}
+                                <Text as="span" type="supporting" color="secondary">
+                                    {!d.enabled ? "비활성" : d.modified_fields.length > 0 ? "수정됨" : d.builtin ? "기본" : "사용자"}
+                                </Text>
+                            </Stack>
                         </Button>
-                    </>} />
+                    </Card>
                 ))}
-            </List>
+            </Grid>
             {sel && <DefinitionEditor key={kind + sel} kind={kind} id={sel} />}
             <NewDefinition kind={kind} />
         </Stack>
@@ -548,50 +586,53 @@ function Definitions({ target, onOverviewLayoutChange }: {
 
 function DefinitionEditor({ kind, id }: { kind: string; id: string }) {
     const d = useQuery<DefinitionDetail>(`definitions:${kind}:${id}`, () => api.get(`/definitions/${kind}/${id}`));
+    return d.data ? <DefinitionBody kind={kind} id={id} cur={d.data} reload={d.reload} /> : null;
+}
+
+function DefinitionBody({ kind, id, cur, reload }: { kind: string; id: string; cur: DefinitionDetail; reload: () => void }) {
     const local = useDefinitionDraft(kind, id);
-    const [restoring, setRestoring] = useState(false);
-    const [saving, setSaving] = useState(false);
     const save = useSave();
-    if (!d.data) return null;
-    const cur = d.data;
-    const draft = local.draft?.text ?? cur.body;
-    const changed = draft !== cur.body;
-    const busy = restoring || saving;
+    const state = useAutosave({
+        id: `definition:${kind}:${id}`, value: cur.body, revision: cur.revision,
+        draft: local.draft ? { value: local.draft.text, revision: local.draft.baseRevision } : undefined,
+        save: async (body, revision, key) => {
+            try {
+                const result = await api.put<DefinitionDetail>(`/definitions/${kind}/${id}`, { expected_revision: revision, body }, { key });
+                return { value: result.body, revision: result.revision };
+            } finally { reload(); }
+        },
+        onSaved: (value, saved) => {
+            if (local.draft?.text === value) local.write(null);
+            else if (local.draft) local.write({ ...local.draft, baseRevision: saved.revision });
+        },
+    });
+    const busy = state.phase === "saving" || state.phase === "uncertain";
     return (
-        <Stack gap={2} data-settings-unsaved={changed ? "true" : undefined} data-testid="definition-editor">
-            <Heading level={3} color="inherit">{cur.name} <Text as="span" type="supporting" color="secondary">revision {cur.revision}</Text></Heading>
-            <Text as="p" display="block" type="supporting" color="secondary">{cur.description}</Text>
-            <TextArea value={draft} isDisabled={saving} onChange={(value) => local.write({
-                text: value, baseRevision: local.draft?.baseRevision ?? cur.revision, updatedAt: Date.now(),
-            })} rows={14} label="정의 본문" isLabelHidden />
+        <Stack gap={2} data-testid="definition-editor">
+            <Heading level={3} color="inherit"><Stack as="span" direction="horizontal" align="center" gap={2}>{cur.name}
+                <HelpTip label="정의 정보"><Text type="supporting" color="inherit">revision {cur.revision}</Text>
+                    <Text as="p" display="block" type="inherit" color="inherit">{cur.description}</Text>
+                </HelpTip>
+            </Stack></Heading>
+            <TextArea value={state.value} onChange={(value) => {
+                state.change(value);
+                local.write({ text: value, baseRevision: state.revision, updatedAt: Date.now() });
+            }} onBlur={state.blur} rows={14} label="정의 본문" isLabelHidden />
             {local.error && <Text as="p" display="block" type="inherit" color="inherit" role="alert">{local.error}</Text>}
-            {local.draft && local.draft.baseRevision !== cur.revision && <Text as="p" display="block" type="inherit" color="inherit" role="alert">서버 revision이 바뀌어 저장 시 충돌하니, 보존된 초안과 현재 적용값을 비교해.</Text>}
             <Stack direction="horizontal" wrap="wrap" gap={2}>
-                <ServerActionButton disabled={!changed || busy} onClick={() => void save.run(async () => {
-                    setSaving(true);
-                    try {
-                        await api.put(`/definitions/${kind}/${id}`, { expected_revision: local.draft?.baseRevision ?? cur.revision, body: draft });
-                        local.write(null);
-                        d.reload();
-                    } finally { setSaving(false); }
-                })}>저장</ServerActionButton>
-                <Button variant="secondary" disabled={!local.draft || busy} onClick={() => local.write(null)}>편집 취소</Button>
                 {!cur.builtin && (
                     <ServerActionButton variant="secondary" disabled={busy} onClick={() => {
                         if (confirm("이 정의를 삭제할까요?")) void save.run(() => api.del(`/definitions/${kind}/${id}?expected_revision=${cur.revision}`));
                     }}>삭제</ServerActionButton>
                 )}
                 {kind === "workflow" && id !== "default" && (
-                    <ServerActionButton variant="secondary" disabled={busy} onClick={() => void save.run(async () => { await api.put(`/definitions/${kind}/${id}`, { expected_revision: cur.revision, enabled: !cur.enabled }); d.reload(); })}>
+                    <ServerActionButton variant="secondary" disabled={busy || state.dirty} onClick={() => void save.run(async () => { await api.put(`/definitions/${kind}/${id}`, { expected_revision: state.revision, enabled: !cur.enabled }); reload(); })}>
                         {cur.enabled ? "선택 불가로" : "선택 가능으로"}
                     </ServerActionButton>
                 )}
             </Stack>
+            <AutosaveStatus state={{ ...state, useRemote: () => { state.useRemote(); local.write(null); } }} />
             {save.view}
-            {cur.builtin && <DefinitionUpdates definition={cur} draft={local.draft?.text} disabled={saving} onLocked={setRestoring} onApplied={d.reload}
-                onDraftReviewed={(reviewed) => {
-                    if (local.draft) local.write({ ...local.draft, baseRevision: reviewed.revision, updatedAt: Date.now() });
-                }} />}
         </Stack>
     );
 }
@@ -614,23 +655,26 @@ function NewDefinition({ kind }: { kind: string }) {
 
 function CurrentDeviceName({ onSaved }: { onSaved?: () => void }) {
     const query = useQuery<{ id: string; name: string }>("current-device", () => api.get("/auth/device"));
-    const [draft, setDraft] = useState<string | null>(null);
-    const save = useSave();
-    return <Stack as="form" gap={1.5} direction="horizontal" align="center" onSubmit={(event) => {
-        event.preventDefault();
-        if (draft === null) return;
-        void save.run(async () => {
-            await api.put("/auth/device", { name: draft.trim() });
-            setDraft(null); query.reload(); onSaved?.();
-        });
-    }}>
-        <TextInput size="sm" label="이 기기 이름" value={draft ?? query.data?.name ?? ""}
-            isDisabled={!query.data} isRequired onChange={setDraft} maxLength={80} />
-        <ServerActionButton type="submit" disabled={draft === null || !draft.trim()}>이름 저장</ServerActionButton>
-        {draft !== null && <Text as="span" type="supporting" color="secondary" data-settings-unsaved="true">저장 안 됨</Text>}
+    return <Stack gap={1.5}>
+        {query.data && <DeviceNameInput key={query.data.id} name={query.data.name} reload={() => { query.reload(); onSaved?.(); }} />}
         {Boolean(query.error) && <Text as="p" display="block" type="inherit" color="error" role="alert">기기 이름을 읽지 못했습니다.</Text>}
-        {save.view}
     </Stack>;
+}
+
+function DeviceNameInput({ name, reload }: { name: string; reload: () => void }) {
+    const state = useAutosave({
+        id: "current-device-name", value: name, revision: 0, unversioned: true,
+        save: async (name, revision, key) => {
+            if (!name.trim()) throw new ApiError(422, "invalid_input", "기기 이름을 입력하세요.");
+            const result = await api.put<{ name: string }>("/auth/device", { name: name.trim() }, { key });
+            reload();
+            return { value: result.name, revision: revision + 1 };
+        },
+    });
+    return <>
+        <TextInput size="sm" label="이 기기 이름" value={state.value} isRequired onChange={state.change} onBlur={state.blur} maxLength={80} />
+        <AutosaveStatus state={state} />
+    </>;
 }
 
 function Devices() {
@@ -638,12 +682,12 @@ function Devices() {
     const [issued, setIssued] = useState<string | null>(null);
     const save = useSave();
     const pairing = useCapability("pairing_approval_v1");
-    if (list.error instanceof ApiError && list.error.code === "forbidden") return <Section item="devices"><CurrentDeviceName /></Section>;
+    if (list.error instanceof ApiError && list.error.code === "forbidden") return <Section item="devices">
+        <Text as="p" display="block" type="supporting" color="secondary">등록 기기는 데몬 소유자만 관리할 수 있어요.</Text>
+    </Section>;
     return (
         <>
             <Section item="devices">
-            <Hosts />
-            <CurrentDeviceName onSaved={list.reload} />
             {Boolean(list.error) && <Text as="p" display="block" type="inherit" color="error" role="alert">기기 목록을 읽지 못했습니다.</Text>}
             <Text as="p" display="block" type="supporting" color="secondary">등록 기기는 모든 프로젝트·파일 접근 및 명령 실행 가능 · 기기 관리는 소유자 전용</Text>
             <List density="compact" edge="flush" hasDividers>
@@ -686,6 +730,16 @@ async function webBuild(): Promise<string> {
     }
 }
 
+function ClientStatus() {
+    const build = useQuery<string>("web-build", webBuild);
+    const status = useLive((live) => live.status);
+    return <KeyValues data-testid="client-version-details" items={[
+        ["화면 빌드", <code>{build.data ?? "…"}</code>],
+        ["프로토콜", String(PROTOCOL)],
+        ["이벤트 연결", status],
+    ]} />;
+}
+
 function Health() {
     const h = useQuery<Record<string, unknown>>("health", () => api.get("/health"));
     const build = useQuery<string>("web-build", webBuild);
@@ -710,8 +764,6 @@ function Health() {
                 ["실행 대상", String(h.data?.target ?? "")],
                 ["프로토콜", <>서버 {String(h.data?.protocol ?? "")} · 화면 {PROTOCOL}{h.data && h.data.protocol !== PROTOCOL ? " (다름: 새로고침 필요)" : ""}</>],
                 ["DB schema", String(h.data?.schema ?? "")],
-                ["화면 빌드", <code>{build.data ?? "…"}</code>],
-                ["이벤트 연결", status],
             ]} />
             <Button
                 variant="secondary" density="compact"

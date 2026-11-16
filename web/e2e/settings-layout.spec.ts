@@ -8,9 +8,42 @@ for (const width of [320, 390, 1280]) {
             test(`${theme}: 메뉴·입력 정렬과 테마 저장`, async ({ page }, info) => {
                 await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
                 await login(page);
-                await openSettings(page);
+                await openSettings(page, "local");
                 await page.evaluate(() => document.fonts.ready);
                 const settings = page.getByTestId("settings");
+                const areas = settings.getByRole("tablist", { name: "설정 구분", exact: true });
+                const local = areas.getByRole("tab", { name: "로컬 설정", exact: true });
+                const daemon = areas.getByRole("tab", { name: "데몬 설정", exact: true });
+                await expect(areas).toBeInViewport({ ratio: 1 });
+                for (const tab of [local, daemon]) {
+                    const box = (await tab.boundingBox())!;
+                    expect(box.height).toBeGreaterThanOrEqual(48);
+                    expect(box.width).toBeGreaterThanOrEqual(((await areas.boundingBox())!.width - 16) / 2);
+                }
+                const contrast = await local.evaluate((node) => {
+                    const context = document.createElement("canvas").getContext("2d")!;
+                    const luminance = (color: string) => {
+                        context.fillStyle = color;
+                        context.fillRect(0, 0, 1, 1);
+                        return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3).map((channel) => {
+                            const value = channel / 255;
+                            return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+                        }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index]!, 0);
+                    };
+                    const style = getComputedStyle(node);
+                    const values = [luminance(style.color), luminance(style.backgroundColor)].sort((a, b) => b - a);
+                    return (values[0]! + 0.05) / (values[1]! + 0.05);
+                });
+                expect(contrast).toBeGreaterThanOrEqual(4.5);
+                await local.focus();
+                await page.keyboard.press("ArrowRight");
+                await expect(daemon).toBeFocused();
+                await page.keyboard.press("Enter");
+                await expect(daemon).toHaveAttribute("aria-selected", "true");
+                await page.keyboard.press("ArrowLeft");
+                await expect(local).toBeFocused();
+                await page.keyboard.press("Enter");
+                await expect(local).toHaveAttribute("aria-selected", "true");
                 const search = settings.getByLabel("설정 검색");
                 const inputBox = await search.boundingBox();
                 expect(inputBox!.height).toBeLessThanOrEqual(40);
@@ -26,7 +59,9 @@ for (const width of [320, 390, 1280]) {
                     });
                     expect(shown, "설정 메뉴는 한 화면에 최소 두 항목이 온전히 보여야 한다").toBeGreaterThanOrEqual(2);
                 }
-                for (const name of ["모델·키", "에이전트·워크플로우", "화면·입력", "기기·연결", "서버·데이터"]) {
+                for (const [area, name] of [["daemon", "모델·키"], ["daemon", "에이전트·워크플로우"],
+                    ["local", "화면·입력"], ["local", "기기·연결"], ["daemon", "기기·연결"], ["daemon", "서버·데이터"]] as const) {
+                    await settings.getByRole("tab", { name: area === "local" ? "로컬 설정" : "데몬 설정", exact: true }).click();
                     const button = settings.getByRole("button", { name, exact: true });
                     await button.click();
                     await expect(button).toHaveAttribute("aria-current", "page");
@@ -64,10 +99,11 @@ for (const width of [320, 390, 1280]) {
                     expect(layout.fits, `${name}: ${JSON.stringify(layout)}`).toBe(true);
                     expect(await settings.getByTestId("settings-body").evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
                 }
+                await settings.getByRole("tab", { name: "데몬 설정", exact: true }).click();
                 await settings.getByRole("button", { name: "모델·키", exact: true }).click();
                 await expect(settings.getByTestId("setting-model.default_profile")).toBeVisible();
-                await expect(settings.getByTestId("settings-area-reset").getByRole("button", { name: /기본값 복원/ })).toBeVisible();
-                await expect(settings.getByTestId("settings-area-reset").getByRole("combobox")).toHaveCount(0);
+                await expect(settings.getByTestId("settings-area-reset")).toHaveCount(0);
+                await expect(settings.getByRole("button", { name: /기본값 복원|이 범위 값 지우기|^저장$/ })).toHaveCount(0);
                 if (width < 760) {
                     const menuBox = await settings.getByTestId("settings-menu").boundingBox();
                     const bodyBox = await settings.getByTestId("settings-body").boundingBox();
@@ -77,6 +113,7 @@ for (const width of [320, 390, 1280]) {
                     expect(bodyBox!.y - menuBox!.y - menuBox!.height).toBeLessThanOrEqual(32);
                 }
                 await page.screenshot({ path: info.outputPath("models.png") });
+                await settings.getByRole("tab", { name: "로컬 설정", exact: true }).click();
                 await settings.getByRole("button", { name: "화면·입력", exact: true }).click();
                 await selectChoice(settings.getByRole("combobox", { name: "테마", exact: true }), theme);
                 await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
@@ -86,6 +123,7 @@ for (const width of [320, 390, 1280]) {
                 await expect(settings.getByRole("slider", { name: "글자 크기", exact: true })).toHaveAttribute("aria-valuenow", "20");
                 expect(await settings.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
                 await page.reload();
+                await openSettings(page, "local");
                 await search.fill("테마");
                 await expect(settings.getByRole("combobox", { name: "테마", exact: true })).toHaveAttribute("data-selected-value", theme);
             });

@@ -35,6 +35,38 @@ describe("기기별 배치 저장", () => {
     beforeEach(() => vi.useFakeTimers());
     afterEach(() => vi.useRealTimers());
 
+    it("새 프로젝트 배치만 원본에서 이관하고 저장된 빈 배치는 다시 채우지 않는다", async () => {
+        const f = fixture();
+        f.get.mockResolvedValue({ layout: null, revision: 0 });
+        const migrated = new LayoutPersistence("project", { ...f.options, initial: () => f.initial });
+        expect(await migrated.restore()).toEqual(f.initial);
+        await migrated.flush();
+        expect(f.put).toHaveBeenCalledWith(expect.objectContaining({ layout: f.initial, expected_revision: 0 }), expect.any(AbortSignal));
+        const empty = emptyLayout();
+        migrated.change(empty);
+        await migrated.flush();
+        migrated.dispose();
+        f.get.mockResolvedValue({ layout: empty, revision: 7 });
+        const restored = new LayoutPersistence("project", { ...f.options, initial: () => f.initial });
+        expect(await restored.restore()).toEqual(empty);
+        restored.dispose();
+    });
+
+    it("서버 조회 실패 중 표시한 이관 배치를 자동 저장해 기존 프로젝트 배치를 덮지 않는다", async () => {
+        const f = fixture();
+        f.get.mockRejectedValueOnce(new Error("offline"));
+        const migrated = new LayoutPersistence("project", { ...f.options, initial: () => f.initial });
+        expect(await migrated.restore()).toEqual(f.initial);
+        await vi.advanceTimersByTimeAsync(600);
+        expect(f.put).not.toHaveBeenCalled();
+        migrated.dispose();
+        const empty = emptyLayout();
+        f.get.mockResolvedValueOnce({ layout: empty, revision: 7 });
+        const online = new LayoutPersistence("project", { ...f.options, initial: () => f.initial });
+        expect(await online.restore()).toEqual(empty);
+        online.dispose();
+    });
+
     it("인증 후 로컬 배치는 즉시 복원하고 늦은 서버 조회가 그동안의 편집을 덮지 않는다", async () => {
         const f = fixture();
         await f.current.restore();

@@ -17,9 +17,10 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
 
         // 고정하면 맨 위, 새로고침 뒤에도 유지
         await row(b.name).getByRole("button", { name: "프로젝트 메뉴" }).click();
-        await row(b.name).getByRole("button", { name: "맨 위에 고정" }).click();
+        await page.getByRole("dialog", { name: `${b.name} 메뉴`, exact: true }).getByRole("button", { name: "맨 위에 고정" }).click();
         await expect(side.getByTestId("project-row").first()).toContainText(b.name);
         await expect(row(b.name).getByLabel("고정됨")).toBeVisible();
+        await page.getByRole("dialog", { name: `${b.name} 메뉴`, exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
 
         // 메뉴에서 새 라벨 만들고 붙이기
         await row(a.name).getByRole("button", { name: "프로젝트 메뉴" }).click();

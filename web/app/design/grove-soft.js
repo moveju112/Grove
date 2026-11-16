@@ -223,6 +223,8 @@ export const groveSoftTheme = {
     "--raised": "#e4e6ea",
     "--hover": "#dfe2e7",
     "--sel": "#d8dce2",
+    "--split-bg": "#dce7f5",
+    "--split-line": "#2f72b8",
     "--line": "#d5d8de",
     "--line-strong": "#c4c8d0",
     "--text": "#2b2d33",
@@ -408,7 +410,6 @@ export const groveSoftTheme = {
         ":hover": {
           "backgroundColor": "var(--hover)"
         },
-        "padding": "0",
         "minHeight": "28px",
         "height": "auto"
       },
@@ -536,7 +537,6 @@ export const groveSoftTheme = {
         "minHeight": "32px",
         "height": "auto",
         "maxWidth": "100%",
-        "padding": "0",
         "fontSize": "12px",
         "justifyContent": "flex-start"
       }

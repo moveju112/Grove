@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
-import { composerOption, ensureProjects, login, openSettings, selectChoice } from "./helpers";
+import { composerOption, ensureProjects, login, openSettings, selectChoice, startProjectConversation } from "./helpers";
 
 async function settings(page: Page, search = "브라우저 기능") {
-    await openSettings(page);
+    await openSettings(page, "local");
     await page.getByLabel("설정 검색").fill(search);
     return page.getByTestId("setting-browser-capabilities");
 }
@@ -62,8 +62,10 @@ test("미지원 복사·첨부 진입점에서 원문과 대안을 보존한다"
     }
     await page.getByLabel("설정 검색").fill("알림·소리");
     await expect(page.getByTestId("setting-notify")).toContainText("알림 목록");
+    await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
     await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(b.name) }).first().click();
     const project = page.getByTestId("project-view");
+    await startProjectConversation(project);
     let dialogs = 0;
     page.on("filechooser", () => { dialogs++; });
     await project.getByRole("button", { name: "파일 첨부", exact: true }).click();

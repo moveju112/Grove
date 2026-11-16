@@ -20,10 +20,10 @@ export const FileRefContext = createContext<((path: string, line?: number) => vo
 function InlineCode({ v }: { v: string }) {
     const onRef = useContext(FileRefContext);
     const r = onRef ? fileRef(v) : null;
-    if (!r || !onRef) return <Code>{v}</Code>;
+    if (!r || !onRef) return <Code size="inherit">{v}</Code>;
     return (
-        <GroveButton appearance="link" data-testid="file-ref" title="파일 열기" onClick={() => onRef(r.path, r.line)}>
-            <Code>{v}</Code>
+        <GroveButton appearance="link" xstyle={contentStyles.inlineLink} data-testid="file-ref" title="파일 열기" onClick={() => onRef(r.path, r.line)}>
+            <Code size="inherit">{v}</Code>
         </GroveButton>
     );
 }
@@ -91,7 +91,7 @@ function block(b: Block, k: number): ReactNode {
             return (
                 <GroveList density="compact" edge="flush" listStyle="disc" key={k}>
                     {b.items.map((it, j) => (
-                        <GroveListItem key={j} label={inl(it)} />
+                        <GroveListItem key={j} align="first-line" label={inl(it)} />
                     ))}
                 </GroveList>
             );
@@ -99,7 +99,7 @@ function block(b: Block, k: number): ReactNode {
             return (
                 <GroveList density="compact" edge="flush" listStyle="decimal" key={k}>
                     {b.items.map((it, j) => (
-                        <GroveListItem key={j} label={inl(it)} />
+                        <GroveListItem key={j} align="first-line" label={inl(it)} />
                     ))}
                 </GroveList>
             );
@@ -135,5 +135,5 @@ function block(b: Block, k: number): ReactNode {
 
 export function Markdown({ text }: { text: string }) {
     const blocks = useMemo(() => parseMarkdown(text), [text]);
-    return <Stack gap={2} width="100%" maxWidth="100%" data-testid="markdown">{blocks.map(block)}</Stack>;
+    return <Stack gap={2} width="100%" maxWidth="100%" xstyle={contentStyles.markdown} data-testid="markdown">{blocks.map(block)}</Stack>;
 }

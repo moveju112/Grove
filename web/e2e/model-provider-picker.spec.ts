@@ -38,6 +38,9 @@ for (const mobile of [false, true]) {
                 else { await codexCategory.focus(); await codexCategory.press("ArrowRight"); }
                 const codexModels = page.getByTestId(`model-profile-models-${codex.id}`);
                 await expect(codexModels.getByRole("menuitemradio", { name: "Fixture Light", exact: true })).toBeVisible();
+                await expect(codexModels.getByRole("menuitemradio")).toHaveText([
+                    "GPT-6.1", "GPT-5.10", "GPT-5.6", "Fixture Codex", "Fixture Light",
+                ]);
                 await expect(codexModels).not.toContainText("기본 모델");
                 await expect(picker).toHaveAttribute("data-selected-value", initial);
                 await expect(summary).toHaveText("fixture-model");
@@ -51,6 +54,7 @@ for (const mobile of [false, true]) {
                 await page.getByRole("menuitem", { name: "Claude", exact: true }).click();
                 const claudeModels = page.getByTestId(`model-profile-models-${claude.id}`);
                 await expect(claudeModels.getByRole("menuitemradio", { name: "Fixture Claude", exact: true })).toBeVisible();
+                await expect(claudeModels.getByRole("menuitemradio")).toHaveText(["Opus 5.5", "Fixture Claude"]);
                 await expect(claudeModels).not.toContainText("기본 모델");
                 await expect(picker).toHaveAttribute("data-selected-value", chosenCodex);
                 await expect(summary).toHaveText("Fixture Light");

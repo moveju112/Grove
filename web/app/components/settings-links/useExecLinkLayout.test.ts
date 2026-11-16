@@ -9,9 +9,9 @@ const { queries, query } = vi.hoisted(() => ({
 }));
 vi.mock("../../state/store", () => ({ useQuery: query }));
 
-function render(active = true, mcpSupported: boolean | null = true, projectId?: string) {
+function render(active = true, projectId?: string) {
     function Probe() {
-        return String(useExecLinkLayout(active, projectId, mcpSupported));
+        return String(useExecLinkLayout(active, projectId));
     }
     return renderToStaticMarkup(createElement(Probe));
 }
@@ -25,7 +25,7 @@ beforeEach(() => {
 });
 
 describe("exec 앞쪽 비동기 메뉴의 최초 렌더 준비", () => {
-    const keys = ["definitions:agent", "source-settings:null", "hooks:global", "profiles", "mcp", "secrets"];
+    const keys = ["definitions:agent", "source-settings:null", "profiles"];
     it("기존 조회들이 준비됐으면 이동을 허용한다", () => {
         expect(render()).toBe("true");
         expect(query.mock.calls.map(([key]) => key)).toEqual(keys);
@@ -47,16 +47,10 @@ describe("exec 앞쪽 비동기 메뉴의 최초 렌더 준비", () => {
         for (const key of keys) queries.set(key, { data: undefined, error: new Error("fixture"), loading: false });
         expect(render()).toBe("true");
     });
-    it("미지원 MCP의 조회를 시작하거나 기다리지 않는다", () => {
-        queries.set("mcp", { data: undefined, error: null, loading: false });
-        queries.set("secrets", { data: undefined, error: null, loading: false });
-        expect(render(true, false)).toBe("true");
-        expect(query.mock.calls.map(([key]) => key)).toEqual([...keys.slice(0, 4), null, null]);
-    });
     it("프로젝트별 원본 cache를 공유하며 완료·취소·다른 링크에서는 추가 구독하지 않는다", () => {
         queries.set('source-settings:"project-a"', { data: undefined, error: null, loading: true });
-        expect(render(true, null, "project-a")).toBe("false");
-        expect(render(true, null, "project-b")).toBe("true");
+        expect(render(true, "project-a")).toBe("false");
+        expect(render(true, "project-b")).toBe("true");
         query.mockClear();
         expect(render(false)).toBe("true");
         expect(query.mock.calls.every(([key]) => key === null)).toBe(true);

@@ -8,6 +8,7 @@ import { skillsApi, type SessionSkills as Snapshot, type SkillBody, type SkillMu
 import { SkillsPanel } from "./SkillsPanel";
 import { SkillEditor, type SkillDraft } from "./SkillEditor";
 import { RequirementContext } from "./requirements/Requirements";
+import { Collapsible } from "@astryxdesign/core/Collapsible";
 
 type Intent = { kind: "select"; selection: SkillSelection; selected: boolean; key: string; context: SkillCapabilityContext }
     | { kind: "manage"; body: SkillMutation; key: string };
@@ -119,7 +120,9 @@ function ConnectedSkills({ sessionId }: { sessionId: string }) {
                 onClick={() => setState((s) => ({ ...s, draft: { kind: "add", scope: "project", name: "", text: "" } }))}>Grove 스킬 추가</GroveButton>
         </GroveStack>
         {active && profileError && <GroveText as="p" display="block" type="inherit" color="warning" role="status">{profileError} · 모델 지원을 추정하지 않습니다.</GroveText>}
-        <RequirementContext value={context} profiles={active ? profiles : []} disabled={busy} onChange={setContext} />
+        <Collapsible trigger="검증 조건" defaultIsOpen={false}>
+            <RequirementContext value={context} profiles={active ? profiles : []} disabled={busy} onChange={setContext} />
+        </Collapsible>
         {active && state.pending && !state.loading && <GroveStack gap={0} role="alert">
             변경 결과를 확인하지 못했습니다. 자동으로 다시 변경하지 않습니다.
             <GroveButton type="button" onClick={() => void change(state.pending!)}>같은 요청 결과 확인</GroveButton>

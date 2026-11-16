@@ -10,6 +10,7 @@
     scripts/build.py test --full         # 명시적으로 전체 인수 검사
     scripts/build.py plan --changed F..  # 변경 파일 → 영향 범위(서버/웹/protocol/전체/없음)
     scripts/build.py package [--targets linux-x64,linux-arm64,windows-x64] [--dry-run] [--jobs N]
+    scripts/build.py package --deb       # 현재 Linux의 압축본 + .deb(설치·배포 없음)
 
 package 동작
 - 웹 정적 산출물은 한 번 만들고 모든 target이 같은 bytes를 쓴다(BUILD-017).
@@ -33,6 +34,8 @@ import tempfile
 import time
 import urllib.request
 import zipfile
+
+import debian
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 DEV = os.path.join(ROOT, ".dev")
@@ -363,7 +366,7 @@ def sbom(target):
     return {"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1, "components": sorted(comps, key=lambda c: c["purl"])}
 
 
-def verify_package(name, archive, manifest):
+def verify_package(name, archive, manifest, deb=False):
     """압축을 풀어 실제로 실행해 본다. 실행 불가 target은 이유를 남긴다."""
     triple, _, exe, fmt = TARGETS[name]
     runner = None
@@ -378,13 +381,15 @@ def verify_package(name, archive, manifest):
     tmp = tempfile.mkdtemp(prefix="gverify-", dir="/tmp")
     proc = None
     try:
-        if fmt == "zip":
+        if deb:
+            subprocess.run(["dpkg-deb", "--extract", archive, tmp], check=True)
+        elif fmt == "zip":
             zipfile.ZipFile(archive).extractall(tmp)
         else:
             with tarfile.open(archive) as t:
                 t.extractall(tmp, filter="data")
-        top = os.path.join(tmp, os.listdir(tmp)[0])
-        binp = os.path.join(top, exe)
+        top = os.path.join(tmp, "usr", "lib", "grove") if deb else os.path.join(tmp, os.listdir(tmp)[0])
+        binp = os.path.join(tmp, "usr", "bin", "grove") if deb else os.path.join(top, exe)
         os.chmod(binp, 0o755)
         e = env()
         if runner:
@@ -419,11 +424,37 @@ def verify_package(name, archive, manifest):
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def add_deb(receipt, rdir, name, revision):
+    inputs = tree_hash(debian.INPUTS, f"{receipt['archive_sha256']}:{revision}")
+    previous = receipt.get("deb", {})
+    path = os.path.join(rdir, previous.get("file", ""))
+    if previous.get("inputs") == inputs and os.path.isfile(path) and sha256(path) == previous.get("sha256"):
+        print(f"{name}: .deb hash 일치 → 재사용")
+        return
+    result = debian.package(os.path.join(rdir, receipt["archive"]), rdir, name, receipt["version"], revision)
+    manifest = json.load(open(os.path.join(rdir, "manifest.json")))
+    result["verify"] = verify_package(name, os.path.join(rdir, result["file"]), manifest, deb=True)
+    result["inputs"] = inputs
+    receipt["deb"] = result
+    json.dump(receipt, open(os.path.join(rdir, "receipt.json"), "w"), indent=2, ensure_ascii=False)
+    sums = [receipt["archive"], "manifest.json", "sbom.cdx.json", result["file"]]
+    with open(os.path.join(rdir, "SHA256SUMS"), "w") as stream:
+        for filename in sorted(sums):
+            stream.write(f"{sha256(os.path.join(rdir, filename))}  {filename}\n")
+
+
+def require_unchanged_sources(server_inputs, web_inputs, toolchain, node):
+    if tree_hash(SERVER_INPUTS, toolchain) != server_inputs or tree_hash(WEB_INPUTS, node) != web_inputs:
+        raise SystemExit("빌드 중 소스가 변경되었습니다. 성공 receipt를 발행하지 않습니다. 고정된 소스 복사본에서 다시 빌드하세요")
+
+
 def cmd_package(a):
-    names = a.targets.split(",") if a.targets else list(TARGETS)
+    names = a.targets.split(",") if a.targets else (["linux-arm64" if os.uname().machine == "aarch64" else "linux-x64"] if a.deb else list(TARGETS))
     for n in names:
         if n not in TARGETS:
             raise SystemExit(f"알 수 없는 target: {n} (가능: {', '.join(TARGETS)})")
+    if a.deb:
+        debian.validate(names, a.deb_revision)
     version = next(l.split('"')[1] for l in open(os.path.join(ROOT, "Cargo.toml")) if l.startswith("version"))
     toolchain = out(["rustc", "-V"])
     node = out(["node", "-v"])
@@ -431,7 +462,6 @@ def cmd_package(a):
     web_h = tree_hash(WEB_INPUTS, node)
     source_h = hashlib.sha256((server_h + web_h).encode()).hexdigest()
     dist = os.path.join(ROOT, "dist")
-    os.makedirs(dist, exist_ok=True)
     jobs = a.jobs or default_jobs()
     plan = []
     for n in names:
@@ -448,10 +478,18 @@ def cmd_package(a):
     if a.dry_run:
         _, wh, wreuse = build_web(dist, True)
         print(f"웹: {'재사용' if wreuse else '빌드'} {wh[:12]} (dry-run: 아무것도 만들지 않음)")
+        if a.deb:
+            print(f".deb: native Linux, revision={a.deb_revision}, apt 소유·서비스 자동 시작 없음")
         return
     if all(p["action"] == "reuse" for p in plan):
-        print("변경 없음: 빌드·패키징을 하지 않습니다(BUILD-026)")
+        if a.deb:
+            for p in plan:
+                rdir = os.path.join(ROOT, p["dir"])
+                receipt = json.load(open(os.path.join(rdir, "receipt.json")))
+                add_deb(receipt, rdir, p["target"], a.deb_revision)
+        print("압축본 재사용: .deb 준비 완료" if a.deb else "변경 없음: 빌드·패키징을 하지 않습니다(BUILD-026)")
         return
+    os.makedirs(dist, exist_ok=True)
     web_dir, web_inputs, _ = build_web(dist, False)
     # 버전 정보는 호스트 target 실행 파일에서 읽는다(같은 소스). 호스트 target 빌드와 같은 경로·옵션이라 cache를 공유한다.
     host = next(l.split(": ", 1)[1] for l in out(["rustc", "-vV"]).splitlines() if l.startswith("host: "))
@@ -465,6 +503,8 @@ def cmd_package(a):
         if p["action"] == "reuse":
             print(f"{n}: 입력·artifact hash 일치 → 재사용")
             results.append(json.load(open(os.path.join(ROOT, p["dir"], "receipt.json"))))
+            if a.deb:
+                add_deb(results[-1], os.path.join(ROOT, p["dir"]), n, a.deb_revision)
             continue
         print(f"{n}: 빌드")
         binp = build_server(n, jobs)
@@ -510,12 +550,15 @@ def cmd_package(a):
         json.dump(sbom(TARGETS[n][0]), open(os.path.join(rdir, "sbom.cdx.json"), "w"), indent=1)
         verify = verify_package(n, archive, manifest)
         print(f"{n}: 실행 검증 {verify}")
+        require_unchanged_sources(server_h, web_h, toolchain, node)
         sums = {os.path.basename(x): sha256(x) for x in [archive, os.path.join(rdir, "manifest.json"), os.path.join(rdir, "sbom.cdx.json")]}
         with open(os.path.join(rdir, "SHA256SUMS"), "w") as f:
             f.writelines(f"{h}  {k}\n" for k, h in sorted(sums.items()))
         receipt = {"target": n, "inputs": p["inputs"], "archive": os.path.basename(archive), "archive_sha256": sums[os.path.basename(archive)],
                    "size": os.path.getsize(archive), "verify": verify, "version": version, "protocol": manifest["protocol"], "schema": manifest["schema"]}
         json.dump(receipt, open(os.path.join(rdir, "receipt.json"), "w"), indent=2, ensure_ascii=False)
+        if a.deb:
+            add_deb(receipt, rdir, n, a.deb_revision)
         results.append(receipt)
     log = {"at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "jobs": jobs, "steps": LOG, "results": results}
     json.dump(log, open(os.path.join(dist, "build-log.json"), "w"), indent=2, ensure_ascii=False)
@@ -543,6 +586,8 @@ def main(argv=None):
     pk.add_argument("--targets")
     pk.add_argument("--dry-run", action="store_true")
     pk.add_argument("--jobs", type=int)
+    pk.add_argument("--deb", action="store_true", help="Linux native .deb도 생성(기본 target: 현재 아키텍처, 설치·배포 없음)")
+    pk.add_argument("--deb-revision", default="1", help="Debian packaging revision (기본: 1)")
     sp.add_parser("bench")
     a = ap.parse_args(argv)
     # 하위 도구(라이선스·SBOM 포함)가 모두 저장소 전용 툴체인을 쓰게 한다.

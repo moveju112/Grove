@@ -13,13 +13,14 @@ import { Select } from "../design/Select";
 import { ApiError, api } from "../api/client";
 import { useBotAvatar } from "../state/botAvatar";
 import type { ModelProfile } from "../api/generated";
-import { useQuery } from "../state/store";
+import { invalidate, useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
 import { BotRooms } from "./BotRooms";
-import { BotConnections } from "./BotConnections";
 import { useCapability } from "../state/capabilities";
+import { useAutosave } from "./settings/useAutosave";
+import { AutosaveStatus } from "./settings/AutosaveStatus";
 
 type Bot = {
     id: string;
@@ -101,57 +102,56 @@ function AvatarControl({ bot }: { bot: Bot }) {
 
 type Form = { name: string; description: string; persona: string; instructions: string; profile_id: string; project_id: string; featured: boolean };
 
+function form(bot: Bot | null): Form {
+    return { name: bot?.name ?? "", description: bot?.description ?? "", persona: bot?.persona ?? "",
+        instructions: bot?.instructions ?? "", profile_id: bot?.profile_id ?? "", project_id: bot?.project_id ?? "", featured: bot?.featured ?? false };
+}
+
 function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDone: () => void }) {
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const projects = useQuery<Project[]>("projects", () => api.get("/projects"));
-    const [f, setF] = useState<Form>({
-        name: bot?.name ?? "",
-        description: bot?.description ?? "",
-        persona: bot?.persona ?? "",
-        instructions: bot?.instructions ?? "",
-        profile_id: bot?.profile_id ?? "",
-        project_id: bot?.project_id ?? "",
-        featured: bot?.featured ?? false,
+    const state = useAutosave({
+        id: `bot:${bot?.id ?? "new"}`, value: form(live ?? bot), revision: (live ?? bot)?.revision ?? 0, flush: !!bot,
+        save: async (value, revision, key) => {
+            const body = { ...value, profile_id: value.profile_id || null };
+            const result = bot ? await api.patch<Bot>(`/bots/${bot.id}`, { ...body, expected_revision: revision }, { key })
+                : await api.post<Bot>("/bots", body, { key });
+            return { value: form(result), revision: result.revision };
+        },
+        onSaved: () => { invalidate("bots"); if (!bot) onDone(); },
     });
-    const [err, setErr] = useState<string | null>(null);
+    const f = state.value;
+    const setF = state.change;
+    const choose = (value: Form) => { setF(value); if (bot) state.commit(); };
     const projectId = f.project_id || projects.data?.[0]?.id || "";
-    const save = async () => {
-        setErr(null);
-        const body = { ...f, project_id: projectId, profile_id: f.profile_id || null };
-        try {
-            if (bot) await api.patch(`/bots/${bot.id}`, { ...body, expected_revision: bot.revision });
-            else await api.post("/bots", body);
-            onDone();
-        } catch (e) {
-            setErr(e instanceof ApiError ? (e.code === "revision_conflict" ? "다른 곳에서 먼저 바뀌었습니다. 다시 열어 수정하세요" : e.message) : "저장 실패");
-        }
-    };
     return (
         <GroveStack as="form" gap={2}
             data-testid="bot-editor"
             onSubmit={(e) => {
                 e.preventDefault();
-                void save();
+                if (!projectId) return;
+                if (!bot) state.change({ ...f, project_id: projectId });
+                state.commit();
             }}
         >
-            {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {bot && <AvatarControl bot={live ?? bot} />}
-            <TextInput label="봇 이름" isLabelHidden placeholder="이름" value={f.name} onChange={(value) => setF({ ...f, name: value })} />
-            <TextInput label="봇 설명" isLabelHidden placeholder="설명" value={f.description} onChange={(value) => setF({ ...f, description: value })} />
-            <TextArea label="persona" isLabelHidden placeholder="persona(말투·성격)" rows={2} value={f.persona} onChange={(value) => setF({ ...f, persona: value })} />
-            <TextArea label="작업 지침" isLabelHidden placeholder="작업 지침" rows={2} value={f.instructions} onChange={(value) => setF({ ...f, instructions: value })} />
-            <Select label="봇 모델" hideLabel value={f.profile_id} onChange={(value) => setF({ ...f, profile_id: value })}
+            <TextInput label="봇 이름" isLabelHidden placeholder="이름" isRequired value={f.name} onChange={(value) => setF({ ...f, name: value })} onBlur={bot ? state.blur : undefined} />
+            <TextInput label="봇 설명" isLabelHidden placeholder="설명" value={f.description} onChange={(value) => setF({ ...f, description: value })} onBlur={bot ? state.blur : undefined} />
+            <TextArea label="persona" isLabelHidden placeholder="persona(말투·성격)" rows={2} value={f.persona} onChange={(value) => setF({ ...f, persona: value })} onBlur={bot ? state.blur : undefined} />
+            <TextArea label="작업 지침" isLabelHidden placeholder="작업 지침" rows={2} value={f.instructions} onChange={(value) => setF({ ...f, instructions: value })} onBlur={bot ? state.blur : undefined} />
+            <Select label="봇 모델" hideLabel value={f.profile_id} onChange={(value) => choose({ ...f, profile_id: value })}
                 options={[{ value: "", label: "모델 미설정(실행 불가)" }, ...(profiles.data ?? []).map((p) => ({
                     value: p.id, label: `${p.name} · ${p.model}${p.enabled === false ? " · 비활성" : ""}`, disabled: p.enabled === false,
                 }))]} />
             <Select label="봇 프로젝트" hideLabel value={projectId} disabled={!!bot?.home_session_id}
-                onChange={(value) => setF({ ...f, project_id: value })}
+                onChange={(value) => choose({ ...f, project_id: value })}
                 options={(projects.data ?? []).map((p) => ({ value: p.id, label: p.name }))} />
-            <BooleanSelect label="대표 봇" value={f.featured} onChange={(value) => setF({ ...f, featured: value })} />
+            <BooleanSelect label="대표 봇" value={f.featured} onChange={(value) => choose({ ...f, featured: value })} />
             <GroveStack direction="horizontal" align="center" gap={1.5}>
-                <ServerActionButton type="submit" disabled={!f.name.trim() || !projectId}>{bot ? "저장" : "봇 만들기"}</ServerActionButton>
+                {!bot && <ServerActionButton type="submit" disabled={!f.name.trim() || !projectId || state.phase === "saving" || state.phase === "uncertain"}>봇 만들기</ServerActionButton>}
                 <GroveButton type="button" variant="secondary" onClick={onDone}>닫기</GroveButton>
             </GroveStack>
+            <AutosaveStatus state={state} />
         </GroveStack>
     );
 }
@@ -159,14 +159,12 @@ function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDo
 /// 봇 목록: 위임 역할과 별개로, 사용자가 직접 대화하는 상대.
 export function BotsPanel({ open }: { open: Opener }) {
     const roomsSupported = useCapability("bot_rooms_v1");
-    const connectionsSupported = useCapability("bot_connections_v1");
     const q = useQuery<{ bots: Bot[]; order_revision: number }>("bots", () => api.get("/bots"));
     const [hidden, setHidden] = useState<string[]>(loadHidden);
     const [showHidden, setShowHidden] = useState(false);
     const [showDeleted, setShowDeleted] = useState(false);
     const [editing, setEditing] = useState<Bot | "new" | null>(null);
     const [creatingRoom, setCreatingRoom] = useState(false);
-    const [connections, setConnections] = useState<string | null>(null);
     const [err, setErr] = useState<string | null>(null);
     const all = q.data?.bots ?? [];
     const act = async (f: () => Promise<unknown>) => {
@@ -204,10 +202,6 @@ export function BotsPanel({ open }: { open: Opener }) {
                 {roomsSupported !== false && <GroveButton variant="secondary" density="compact" onClick={() => setCreatingRoom(true)}>그룹 만들기</GroveButton>}
             </ActionMenu>
             {roomsSupported !== false && <BotRooms bots={all} creating={creatingRoom} onDone={() => setCreatingRoom(false)} open={open} />}
-            {connectionsSupported !== false && connections && <GroveStack gap={2}>
-                <BotConnections key={connections} botId={connections} />
-                <GroveButton variant="secondary" density="compact" onClick={() => setConnections(null)}>연결 설정 닫기</GroveButton>
-            </GroveStack>}
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {editing && <Editor bot={editing === "new" ? null : editing}
                 live={editing === "new" ? null : (q.data?.bots.find((x) => x.id === editing.id) ?? null)} onDone={() => { setEditing(null); q.reload(); }} />}
@@ -229,7 +223,6 @@ export function BotsPanel({ open }: { open: Opener }) {
                                 <GroveText type="supporting" color="secondary">{MODEL_STATE[b.model_state]}</GroveText>}
                         </ServerActionButton>
                         <ActionMenu label={`${b.name} 관리`}>
-                            {connectionsSupported !== false && b.status !== "deleted" && <GroveButton variant="secondary" density="compact" onClick={() => setConnections(b.id)}>외부 연결</GroveButton>}
                             {b.status !== "deleted" && <GroveButton variant="secondary" density="compact" onClick={() => setEditing(b)}>편집</GroveButton>}
                             {b.status !== "deleted" && <ServerActionButton variant="secondary" density="compact" onClick={() => void enter(b, "right")}>오른쪽에 열기</ServerActionButton>}
                             {b.status !== "deleted" && <ServerActionButton variant="secondary" density="compact" onClick={() => void enter(b, "down")}>아래에 열기</ServerActionButton>}

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiCall, composerOption, ensureProjects, login, openDetails } from "./helpers";
+import { apiCall, composerOption, ensureProjects, inputOptions, login, openDetails } from "./helpers";
 
 async function openSession(page: Page) {
     const { a } = await ensureProjects();
@@ -15,8 +15,10 @@ async function openSession(page: Page) {
         await recent.click();
     };
     const restore = async (text: string) => {
+        await inputOptions(view);
         await openDetails(view.getByTestId("draft-copies"));
         await view.getByTestId("draft-copy").filter({ hasText: text }).getByRole("button", { name: "이 사본 이어받기", exact: true }).click();
+        await page.keyboard.press("Escape");
     };
     return { project: a, session, view, reopen, restore };
 }
@@ -34,8 +36,10 @@ test("닫은 대화를 새 탭에서 열면 입력·첨부 사본을 골라 이�
     await restore(text);
     await expect(view.getByLabel("메시지 입력")).toHaveValue(text);
     await expect(view.getByTestId("attachment-card")).toContainText(name);
+    await inputOptions(view);
     await openDetails(view.getByTestId("draft-copies"));
     await expect(view.getByTestId("draft-copy").filter({ hasText: "새 탭의 별도 입력" })).toHaveCount(1);
+    await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     await composerOption(view, "보내기 방식", "save");
     await view.getByRole("button", { name: "보내기", exact: true }).click();

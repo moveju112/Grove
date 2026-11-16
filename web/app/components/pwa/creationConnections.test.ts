@@ -18,13 +18,11 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(() => vi.restoreAllMocks());
 const project = { id: "fixture-project", name: "Fixture", available: true } as Project;
 
-it.each(["오프라인", "protocol 불일치"])("%s에도 프로젝트 선택·추가 화면·취소는 로컬 진입으로 남긴다", (blockedReason) => {
+it.each(["오프라인", "protocol 불일치"])("%s에도 전역 추가 메뉴는 로컬 진입으로 남긴다", () => {
     const html = renderToStaticMarkup(createElement(CreationEntry, {
-        projects: [project], loading: false, error: false, blockedReason,
-        onSelect: vi.fn(), onAddProject: vi.fn(), onClose: vi.fn(), onReload: vi.fn(),
+        foldersSupported: true, onTrigger: vi.fn(), onAddProject: vi.fn(), onAddFolder: vi.fn(),
     }));
-    expect(html).toContain(blockedReason);
-    expect(html).toContain("프로젝트 선택·초안 편집·취소는 계속");
+    expect(html).toContain('aria-label="프로젝트·폴더 추가"');
     expect(html).not.toContain('disabled=""');
 });
 

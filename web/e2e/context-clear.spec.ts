@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, composerOption, login, openDetails, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, composerOption, login, openDetails, openSettings, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 async function profile(name: string) {
@@ -15,7 +15,7 @@ test("idle context 초기화는 다음 요청만 바꾸고 화면 이력·파일
     const name = `context clear ${Date.now()}`;
     const model = await profile(name);
     const root = mkdtempSync(join(dirname(state().projA), "context-clear-"));
-    const project = await apiCall<{ id: string }>("POST", "/projects", { root_path: root });
+    const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: name });
     const file = join(root, "keep.txt");
     writeFileSync(file, "user file fixture");
@@ -34,7 +34,8 @@ c.close()
 `, join(dirname(state().projA), "data", "grove.db"), session.id]);
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
     await login(page);
-    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
+    await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
+    await page.getByTestId("project-view").getByRole("button", { name: new RegExp(`${name}$`) }).click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
     await composerOption(view, "모델 프로필", model.id);
@@ -64,7 +65,7 @@ test("프로필 context override는 상속·0을 구분하고 동시 변경 충�
     const model = await profile(name);
     try {
         await login(page);
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await openSettings(page);
         await page.getByLabel("설정 검색").fill("프로필");
         const profileRow = page.getByTestId("model-profile").filter({ hasText: name });
         await openDetails(profileRow);
@@ -72,20 +73,18 @@ test("프로필 context override는 상속·0을 구분하고 동시 변경 충�
         await expect(row).toContainText("범위별 설정 상속");
         await row.getByRole("button", { name: "context 정책 설정", exact: true }).click();
         await row.getByLabel("프로필 idle context 초기화(분)").fill("0");
-        await row.getByRole("button", { name: "context 정책 저장", exact: true }).click();
+        await row.getByLabel("프로필 idle context 초기화(분)").blur();
         await expect(row).toContainText("시간 제한 없이 유지");
-        await row.getByRole("button", { name: "context 정책 설정", exact: true }).click();
         await row.getByLabel("프로필 idle context 초기화(분)").fill("30");
         const latest = (await apiCall<{ id: string; revision: number }[]>("GET", "/model-profiles")).find((p) => p.id === model.id)!;
         await apiCall("PUT", `/model-profiles/${model.id}`, { expected_revision: latest.revision, options: { auto_clear_minutes: 60 } });
-        await expect(row).toContainText("프로필 변경 감지 · 입력 보존 · 저장 시 revision 충돌 확인");
-        await row.getByRole("button", { name: "context 정책 저장", exact: true }).click();
-        await expect(row.getByRole("alert")).toBeVisible();
+        await row.getByLabel("프로필 idle context 초기화(분)").blur();
+        await expect(row).toContainText("다른 기기에서 먼저 바뀌었어요");
         await expect(row.getByLabel("프로필 idle context 초기화(분)")).toHaveValue("30");
-        await row.getByRole("button", { name: "현재 서버 값 불러오기", exact: true }).click();
+        await row.getByRole("button", { name: "최신 값 사용", exact: true }).click();
         await expect(row.getByLabel("프로필 idle context 초기화(분)")).toHaveValue("60");
         await row.getByLabel("프로필 idle context 초기화(분)").fill("");
-        await row.getByRole("button", { name: "context 정책 저장", exact: true }).click();
+        await row.getByLabel("프로필 idle context 초기화(분)").blur();
         await expect(row).toContainText("범위별 설정 상속");
         const stored = (await apiCall<{ id: string; options: Record<string, unknown> }[]>("GET", "/model-profiles")).find((p) => p.id === model.id)!;
         expect(stored.options.auto_clear_minutes).toBeUndefined();

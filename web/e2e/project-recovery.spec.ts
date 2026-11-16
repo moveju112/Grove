@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { apiCall, login, openDetails, state, useWorkspaces } from "./helpers";
 
@@ -9,7 +9,8 @@ type P = { id: string; name: string; root_path: string; revision: number; archiv
 // PROJECT-009: 프로젝트 보관 → 보관됨 목록에서 복원 검사·복원, 제거한 worktree의 복원 검사·복원.
 test("프로젝트를 보관했다가 복원하고, 제거한 worktree를 브랜치에서 다시 만든다", async ({ page }) => {
     const root = join(dirname(state().projA), `recov-${Date.now().toString(36)}`);
-    const p = await apiCall<P>("POST", "/projects", { root_path: root, create: true });
+    mkdirSync(root);
+    const p = await apiCall<P>("POST", "/projects", { root_path: root });
     const git = (...args: string[]) => execFileSync("git", args, { cwd: p.root_path });
     git("init", "-q", "-b", "main");
     writeFileSync(join(p.root_path, "a.txt"), "one\n");

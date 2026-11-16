@@ -9,6 +9,9 @@ vi.mock("../HelpTip", () => ({
     HelpTip: ({ label, children }: { label: string; children: ReactNode }) => createElement("aside", { "aria-label": label }, children),
     SentenceText: ({ text }: { text: string }) => text,
 }));
+vi.mock("../ui/Controls", () => ({
+    DetailDialog: ({ title, children }: { title: ReactNode; children: ReactNode }) => createElement("section", null, title, children),
+}));
 
 const entry: SkillEntry = {
     id: "skill_safe", name: "review", source: { kind: "global", root_id: "global" },
@@ -55,7 +58,7 @@ describe("스킬 조회·명시적 선택", () => {
         const html = render({ selected: [selection] });
         expect(html).toContain("&lt;script&gt;unsafe()&lt;/script&gt;");
         expect(html).not.toContain("<script>");
-        expect(html).toContain("선택됨 · 다음 모델 호출 직전 재검증");
+        expect(html).toContain("선택됨");
         expect(html).toContain("자동 매칭 없음");
         expect(html).toContain("선택 해제");
     });
@@ -68,7 +71,7 @@ describe("스킬 조회·명시적 선택", () => {
             onSetEnabled: (binding, enabled) => toggled.push({ binding, enabled }),
             onEdit: (body) => edited.push(body),
         }));
-        expect(controls.find((button) => button.children === "이 revision 선택 · 다음 모델 호출에 적용")!.disabled).toBe(true);
+        expect(controls.find((button) => button.children === "이 스킬 사용")!.disabled).toBe(true);
         controls.find((button) => button.children === "활성화")!.onClick!();
         controls.find((button) => button.children === "본문 편집")!.onClick!();
         expect(toggled).toEqual([{ binding: selection, enabled: true }]);
@@ -82,7 +85,7 @@ describe("스킬 조회·명시적 선택", () => {
         const html = render({ preview: { selection: { ...selection, revision: "old" }, text: "STALE_BODY" } });
         expect(html).not.toContain("STALE_BODY");
         expect(html).toContain("본문의 출처·revision이 목록과 달라");
-        expect(html).not.toContain("이 revision 선택");
+        expect(html).not.toContain("이 스킬 사용");
     });
     it("목록에서 사라진 선택과 바뀐 revision은 보존하며 명시적으로 해제한다", () => {
         const stale = render({ selected: [{ ...selection, revision: "old" }] });
@@ -114,7 +117,7 @@ describe("스킬 조회·명시적 선택", () => {
         };
         const controls = buttons(SkillsPanel(wired));
         controls.find((button) => button["aria-label"]?.endsWith("본문 보기"))!.onClick!();
-        controls.find((button) => button.children === "이 revision 선택 · 다음 모델 호출에 적용")!.onClick!();
+        controls.find((button) => button.children === "이 스킬 사용")!.onClick!();
         expect(inspected).toEqual([selection]);
         expect(chosen).toEqual([selection]);
         const prior = { ...selection, revision: "old" };
@@ -124,7 +127,7 @@ describe("스킬 조회·명시적 선택", () => {
     it("동명 항목·alias·stale 선택이 있으면 자동 대체를 위한 선택을 허용하지 않는다", () => {
         const other: SkillEntry = { ...entry, id: "other", source: { kind: "project", root_id: "project", project_id: "p" } };
         const selectDisabled = (changes: Partial<SkillsPanelProps>) => buttons(SkillsPanel({ ...props, ...changes }))
-            .find((button) => button.children === "이 revision 선택 · 다음 모델 호출에 적용")!.disabled;
+            .find((button) => button.children === "이 스킬 사용")!.disabled;
         expect(selectDisabled({})).toBe(false);
         expect(selectDisabled({ selected: [selection] })).toBe(true);
         expect(selectDisabled({ selected: [{ ...selection, revision: "old" }] })).toBe(true);
