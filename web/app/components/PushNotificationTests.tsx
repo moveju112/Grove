@@ -5,11 +5,12 @@ import { ApiError, newKey } from "../api/client";
 import type { PushTest } from "../api/generated";
 import { createPushTest, getPushTest, type PushTestRequest } from "../api/pushTests";
 import { pushRegistration } from "../state/webPush";
+import { pushBrowserMessage, readPushBrowserStatus } from "../state/pushDiagnostics";
 import { requireServerAction } from "./pwa/lifecycle";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 
 type Attempt = { body: PushTestRequest; key: string };
-type Row = { receipt?: PushTest; message?: string };
+type Row = { receipt?: PushTest; message?: string; browserMessage?: string };
 const CASES = [
     { delay: 0, label: "7. 실제 Push 지금 시험" },
     { delay: 10, label: "8. 실제 Push 10초 뒤 예약" },
@@ -59,6 +60,13 @@ export function PushNotificationTests() {
         try {
             const latest = await getPushTest(receipt.id);
             setRows((current) => ({ ...current, [delay]: { receipt: latest } }));
+            try {
+                const browser = await readPushBrowserStatus(receipt.id);
+                setRows((current) => ({ ...current, [delay]: { receipt: latest, browserMessage: pushBrowserMessage(browser) } }));
+            } catch (error) {
+                setRows((current) => ({ ...current, [delay]: { receipt: latest,
+                    browserMessage: error instanceof Error ? error.message : "브라우저 수신 기록을 조회하지 못했어." } }));
+            }
         } catch {
             setRows((current) => ({ ...current, [delay]: { ...current[delay], message: "전송 상태 조회에 실패했어. 이전 결과는 보존했어." } }));
         } finally { sending.current = false; setBusy(false); }
@@ -72,6 +80,8 @@ export function PushNotificationTests() {
                 color={rows[delay].message || rows[delay].receipt?.state === "failed" ? "warning" : "secondary"}>
                 {rows[delay].message ?? (rows[delay].receipt && pushTestMessage(rows[delay].receipt))}
             </Text>}
+            {rows[delay]?.browserMessage && <Text as="p" type="supporting" role="status" color="secondary"
+                data-testid={`push-browser-result-${delay}`}>{rows[delay].browserMessage}</Text>}
             {rows[delay]?.receipt && <ServerActionButton type="button" variant="secondary" density="compact" disabled={busy}
                 onClick={() => void refresh(delay, rows[delay]!.receipt!)}>{delay === 0 ? "7번 전송 상태 확인" : "8번 전송 상태 확인"}</ServerActionButton>}
         </Stack>)}

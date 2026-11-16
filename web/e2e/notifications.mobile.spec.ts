@@ -131,5 +131,6 @@ test("실제 Push 시험은 인증된 서버에 접수하고 응답 유실은 �
         await panel.getByRole("button", { name: "8번 전송 상태 확인", exact: true }).click();
         return panel.getByTestId("push-test-result-10").textContent();
     }).toContain("push_subscription_expired");
+    await expect(panel.getByTestId("push-browser-result-10")).toContainText("수신 기록 없음");
     await page.screenshot({ path: info.outputPath("real-push-tests-390.png") });
 });
