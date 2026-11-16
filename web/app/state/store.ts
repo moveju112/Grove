@@ -173,7 +173,17 @@ export function applyEvent(e: EventRecord) {
         case "turn.updated":
             if (sid) {
                 const turn = e.payload as { id: string; status: string };
-                if (["completed", "failed", "cancelled", "interrupted"].includes(turn.status)) deliveryTiming.receive(sid, turn.id);
+                if (["completed", "failed", "cancelled", "interrupted"].includes(turn.status)) {
+                    deliveryTiming.receive(sid, turn.id);
+                    // 이전 턴의 종료 이벤트가 다음 턴의 응답을 지우면 안 된다.
+                    if ((live.partials[sid] as { turn_id?: string } | null)?.turn_id === turn.id) {
+                        setLive((l) => {
+                            const partials = { ...l.partials };
+                            delete partials[sid];
+                            return { ...l, partials };
+                        });
+                    }
+                }
             }
             if (sid) {
                 invalidate(`turns:${sid}`);
@@ -339,6 +349,7 @@ export function retryWaiting() {
 /// 재동기화: 모든 조회를 다시 읽는다(NET-008).
 export function resyncAll() {
     deliveryTiming.clear();
+    setLive((l) => ({ ...l, partials: {} }));
     for (const k of entries.keys()) refresh(k);
     refreshFiles();
 }

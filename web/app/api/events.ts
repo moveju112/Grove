@@ -110,10 +110,11 @@ export class EventStream {
                             const c = JSON.parse(f.data) as { cursor: number; capabilities?: unknown };
                             setCapabilities(c.capabilities);
                             if (this.cursor.seq === null) {
-                                // cursor 없이 처음 붙으면 조회와 연결 사이에 생긴 변경을 놓칠 수 있으므로 snapshot을 다시 읽는다.
                                 this.cursor.seq = c.cursor;
-                                this.h.onResync();
                             }
+                            // partial 삭제는 cursor로 재생되지 않는다. 접속마다 이전 임시 응답을
+                            // 비우고 확정 상태를 다시 읽은 뒤, 이 연결의 최신 snapshot만 받는다.
+                            this.h.onResync();
                         } else if (f.event === "event") {
                             const e = parseContract("EventRecord", JSON.parse(f.data));
                             if (this.cursor.accept(e.seq)) this.h.onEvent(e);

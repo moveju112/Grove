@@ -71,10 +71,14 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const latest = useQuery<MessagePage>(`messages:${sessionId}`, () => api.get(`/sessions/${sessionId}/messages?limit=100`));
     const turns = useQuery<Turn[]>(`turns:${sessionId}`, () => api.get(`/sessions/${sessionId}/turns?limit=5`));
     const lastTurn = turns.data?.[0];
+    const active = turns.data?.find((t) => ["queued", "running", "awaiting_approval"].includes(t.status));
     const completedTurnId = lastTurn?.status === "completed" ? lastTurn.id : undefined;
     const calls = useQuery<ToolCallRow[]>(`calls:${sessionId}`, () => api.get(`/tool-calls?session_id=${sessionId}&limit=200`));
     const workflows = useQuery<Definition[]>("definitions:workflow", () => api.get("/definitions?kind=workflow"));
-    const partial = useLive((live) => visible ? live.partials[sessionId] : undefined) as (ResponseContent & { turn_id: string; tool_calls: string[] }) | null | undefined;
+    const partial = useLive((live) => {
+        const snapshot = live.partials[sessionId] as (ResponseContent & { turn_id: string; tool_calls: string[] }) | null | undefined;
+        return visible && active?.status === "running" && snapshot?.turn_id === active.id ? snapshot : undefined;
+    });
     const [older, setOlder] = useState<Message[]>([]);
     const [olderMore, setOlderMore] = useState<boolean | null>(null);
     const latestRef = useRef(latest.data);
@@ -294,7 +298,6 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [focusSeq, messages.length, latest.data]);
 
-    const active = turns.data?.find((t) => ["queued", "running", "awaiting_approval"].includes(t.status));
     const timedTurn = active ?? lastTurn;
     const pending = (calls.data ?? []).filter((c) => c.status === "pending_approval");
     // 질문 대기(RUN-014): 승인 대기와 다른 호출 상태로 구분해 따로 보여 준다.

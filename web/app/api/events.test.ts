@@ -3,11 +3,60 @@ import { EventStream, type StreamHandlers } from "./events";
 
 afterEach(() => vi.unstubAllGlobals());
 const hello = new TextEncoder().encode('event: hello\ndata: {"cursor":0,"capabilities":[]}\n\n');
-const handlers = (onStatus: StreamHandlers["onStatus"], onPartial = vi.fn()): StreamHandlers => ({
+const handlers = (onStatus: StreamHandlers["onStatus"], onPartial: StreamHandlers["onPartial"] = vi.fn()): StreamHandlers => ({
     onStatus, onPartial, onEvent: vi.fn(), onResync: vi.fn(),
 });
 
 describe("대화 상세 stream 소유권", () => {
+    it("cursor 재연결에서 삭제 신호를 놓쳤어도 최신 partial을 받기 전에 이전 임시 응답을 비운다", async () => {
+        let controller!: ReadableStreamDefaultController<Uint8Array>;
+        let first!: () => void, second!: () => void, received!: () => void;
+        const firstLive = new Promise<void>((resolve) => { first = resolve; });
+        const secondLive = new Promise<void>((resolve) => { second = resolve; });
+        let partialReceived = new Promise<void>((resolve) => { received = resolve; });
+        const urls: string[] = [];
+        let live = 0;
+        let snapshots: Record<string, unknown> = {};
+        const order: string[] = [];
+        const onResync = vi.fn(() => { snapshots = {}; order.push("reset"); });
+        vi.stubGlobal("fetch", vi.fn((url: string, init: RequestInit) => {
+            urls.push(url);
+            return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+                start(c) {
+                    controller = c;
+                    c.enqueue(new TextEncoder().encode('event: hello\ndata: {"cursor":10,"capabilities":[]}\n\n'));
+                    init.signal!.addEventListener("abort", () => c.error(new DOMException("fixture abort", "AbortError")), { once: true });
+                },
+            }), { headers: { "content-type": "text/event-stream" } }));
+        }));
+        const stream = new EventStream({
+            ...handlers((status) => {
+                if (status === "live") { live++; if (live === 1) first(); else if (live === 2) second(); }
+                if (status === "offline") queueMicrotask(() => stream.retryNow());
+            }, (sid, snapshot) => { snapshots[sid] = snapshot; order.push("partial"); received(); }),
+            onResync,
+        });
+        stream.setSessions(["s"]);
+        stream.start(null);
+        try {
+            await firstLive;
+            controller.enqueue(new TextEncoder().encode('event: partial\ndata: {"session_id":"s","snapshot":{"turn_id":"previous","text":"이전 진행 설명"}}\n\n'));
+            await partialReceived;
+            expect(snapshots.s).toEqual({ turn_id: "previous", text: "이전 진행 설명" });
+            partialReceived = new Promise<void>((resolve) => { received = resolve; });
+            // 서버에서는 이 사이 완료되었고, 비영속 partial:null은 연결 밖으로 유실된다.
+            controller.error(new TypeError("fixture connection lost"));
+            await secondLive;
+            expect(new URL(urls[1]!, "http://fixture").searchParams.get("cursor")).toBe("10");
+            expect(onResync).toHaveBeenCalledTimes(2);
+            expect(snapshots).toEqual({});
+            controller.enqueue(new TextEncoder().encode('event: partial\ndata: {"session_id":"s","snapshot":{"turn_id":"next","text":"다음 응답"}}\n\n'));
+            await partialReceived;
+            expect(snapshots.s).toEqual({ turn_id: "next", text: "다음 응답" });
+            expect(order).toEqual(["reset", "partial", "reset", "partial"]);
+        } finally { stream.stop(); }
+    });
+
     it("잘못된 frame으로 재연결 대기에 들어갈 때도 이전 reader를 해제한다", async () => {
         let controller!: ReadableStreamDefaultController<Uint8Array>;
         let ready!: () => void, waiting!: () => void;

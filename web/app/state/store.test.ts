@@ -1,9 +1,50 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyEvent, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, querySnapshot, resyncAll, retryWaiting, setTransportFailureHandler, subscribeQuery } from "./store";
+import { applyEvent, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, querySnapshot, resyncAll, retryWaiting, setLive, setTransportFailureHandler, subscribeQuery } from "./store";
 import { ApiError, isTransportError } from "../api/client";
 import { deliveryTiming } from "./deliveryTiming";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+describe("임시 응답의 수명", () => {
+    function partials() {
+        let result: Record<string, unknown> = {};
+        setLive((l) => { result = l.partials; return l; });
+        return result;
+    }
+    function turn(id: string, status: string) {
+        applyEvent({
+            kind: "turn.updated", session_id: "s", project_id: "p",
+            payload: { id, status }, seq: 1, created_at: "2026-01-01T00:00:00Z",
+        });
+    }
+    it.each(["completed", "failed", "cancelled", "interrupted"])("%s이면 같은 턴의 임시 응답만 지운다", (status) => {
+        try {
+            const other = { turn_id: "other", text: "다른 대화" };
+            setLive((l) => ({ ...l, partials: { s: { turn_id: "done", text: "이전 응답" }, other } }));
+            turn("done", status);
+            expect(partials()).toEqual({ other });
+        } finally { clearServerCache(); }
+    });
+    it("이전 턴의 종료 이벤트가 다음 턴의 임시 응답을 지우지 않는다", () => {
+        try {
+            const next = { turn_id: "next", text: "다음 응답" };
+            setLive((l) => ({ ...l, partials: { s: next } }));
+            turn("previous", "completed");
+            turn("next", "running");
+            expect(partials()).toEqual({ s: next });
+        } finally { clearServerCache(); }
+    });
+    it("재동기화하면 삭제 신호를 놓친 숨겨진 대화의 임시 응답도 비운다", () => {
+        try {
+            setLive((l) => ({ ...l, status: "live", partials: {
+                visible: { turn_id: "done", text: "이전 응답" },
+                hidden: { turn_id: "hidden-done", text: "숨긴 응답" },
+            } }));
+            resyncAll();
+            expect(partials()).toEqual({});
+        } finally { clearServerCache(); }
+    });
+});
 
 it("봇·대화 변경을 다른 화면의 그룹에도 반영한다", async () => {
     const keys = ["bots", "bot-rooms", "bot-room:s"];
