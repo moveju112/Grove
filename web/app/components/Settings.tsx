@@ -12,7 +12,9 @@ import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
 import { type Prefs, loadPrefs, savePrefs, usePrefs } from "../state/device";
 import { When } from "./When";
-import { notificationPermission, showAttention } from "../state/attention";
+import { PushNotifications } from "./PushNotifications";
+import { NotificationTests } from "./NotificationTests";
+import { notificationPermission } from "../state/attention";
 import { MAX_RECENT_WINDOWS, normalizeRecentWindows, RECENT_WINDOW_OPTIONS, recentWindowLabel } from "../state/recentWindow";
 import { invalidate, useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
@@ -373,8 +375,8 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
 const PERMISSION_LABEL: Record<NotificationPermission | "unsupported", string> = {
     granted: "허용됨",
     default: "아직 묻지 않음",
-    denied: "브라우저에서 차단됨(브라우저 사이트 설정에서 바꿀 수 있습니다)",
-    unsupported: "이 브라우저는 알림을 지원하지 않습니다",
+    denied: "차단됨 · 사이트 설정에서 변경",
+    unsupported: "알림 미지원",
 };
 
 function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void }) {
@@ -390,7 +392,6 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
         setRequestError(result.message ?? null);
         refresh();
     };
-    const [testSent, setTestSent] = useState(false);
     // 알림 종류를 켜면 그때 브라우저 권한을 묻는다. 거부돼도 소리 설정은 따로 쓸 수 있다.
     const toggle = async (key: "notifyDone" | "notifyApproval" | "notifyServer", on: boolean) => {
         set({ ...p, [key]: on });
@@ -406,24 +407,17 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
             {kinds.map(([key, label]) => (
                 <BooleanSelect key={key} label={label} value={p[key]} onChange={(value) => void toggle(key, value)} />
             ))}
-            <Text as="span" type="supporting" color="secondary">앱 실행 중에만</Text>
+            <Text as="span" type="supporting" color="secondary">아래 종류는 앱 실행 중에 알림</Text>
             <BooleanSelect label="알림 소리" value={p.notifySound} onChange={(value) => set({ ...p, notifySound: value })} />
+            <BooleanSelect label="알림 진동" value={p.notifyVibrate} onChange={(value) => set({ ...p, notifyVibrate: value })} />
+            <PushNotifications vibrate={p.notifyVibrate} />
             <Text as="p" display="block" type="supporting" color="inherit" data-testid="notify-permission">브라우저 알림 권한: {capabilities && !capabilities.secureContext ? "보안 컨텍스트 필요(HTTPS·localhost)" : PERMISSION_LABEL[permission]}</Text>
             {(p.notifyDone || p.notifyApproval || p.notifyServer) && permission !== "granted" && (
                 <Text as="p" display="block" type="supporting" color="warning" role="status">브라우저 권한이 없어 화면 알림은 표시되지 않습니다{p.notifySound ? ". 소리만 재생합니다." : "."}</Text>
             )}
             {(requestError || notificationIssue) && <Text as="p" display="block" type="supporting" color="warning" role="status">{requestError || notificationIssue}</Text>}
             {permission === "default" && <Button variant="secondary" density="compact" onClick={() => void request()}>브라우저 알림 허용</Button>}
-            <Button
-                variant="secondary" density="compact"
-                onClick={() => {
-                    showAttention({ kind: "server", tag: `test:${Date.now()}`, title: "Grove 알림 시험", body: "이 기기의 알림이 동작합니다.", projectId: null, sessionId: null }, p.notifySound);
-                    setTestSent(true);
-                }}
-            >
-                시험 알림 보내기
-            </Button>
-            {testSent && <Text as="span" type="supporting" color="secondary" role="status"> 보냈습니다{permission === "granted" ? "" : "(권한이 없어 화면 알림은 생략)"}.</Text>}
+            <NotificationTests sound={p.notifySound} vibrate={p.notifyVibrate} />
         </>
     );
 }

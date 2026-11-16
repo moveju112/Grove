@@ -12,6 +12,14 @@ export type PairingInfo = { id: string, name: string, created_at: string, expire
 
 export type Notification = { id: string, kind: string, title: string, body: string, project_id: string | null, session_id: string | null, ref_id: string | null, created_at: string, delivered_at: string | null, read_at: string | null, };
 
+export type PushConfig = { public_key: string, subscriptions: Array<PushSubscription>, };
+
+export type PushSubscription = { endpoint: string, revision: number, last_error: string | null, };
+
+export type PushTestState = "queued" | "sent" | "failed";
+
+export type PushTest = { id: string, state: PushTestState, error: string | null, created_at: string, scheduled_at: string, };
+
 export type RoomMember = { id: string, name: string, profile_id: string | null, status: string, };
 
 export type BotRoom = { session_id: string, project_id: string, name: string, members: Array<RoomMember>, };

@@ -64,6 +64,7 @@ pub mod bot_avatars;
 pub mod bots;
 pub mod bot_rooms;
 pub mod notifications;
+pub mod web_push;
 pub mod schedules;
 pub mod remote_watches;
 pub mod terminals;
@@ -112,6 +113,8 @@ pub const CAPABILITIES: &[&str] = &[
     "pairing_v1",
     "pairing_approval_v1",
     "notification_delivery_v1",
+    "web_push_v1",
+    "web_push_tests_v1",
     "model_management_v1",
     "turn_model_selection_v1",
     "turn_model_options_v1",
@@ -269,6 +272,9 @@ pub fn router(app: App) -> Router {
         .route("/bots/{id}/seen", post(bots::seen))
         .route("/bot-rooms", get(bot_rooms::list).post(bot_rooms::create))
         .route("/sessions/{id}/bot-room", get(bot_rooms::show))
+        .route("/web-push", get(web_push::configuration).put(web_push::subscribe).delete(web_push::unsubscribe))
+        .route("/web-push/tests", post(web_push::tests_api::create))
+        .route("/web-push/tests/{id}", get(web_push::tests_api::show))
         .route("/notifications", get(notifications::list))
         .route("/notifications/delivered", post(notifications::delivered))
         .route("/notifications/read-all", post(notifications::read_all))

@@ -1052,6 +1052,43 @@ pub const MIGRATIONS: &[&str] = &[
     ALTER TABLE projects ADD COLUMN folder_id TEXT REFERENCES project_folders(id) ON DELETE SET NULL;
     CREATE INDEX projects_folder ON projects(folder_id);
     "#,
+    // 대기 중인 네이티브 스킬 선택은 다른 모델·프로젝트의 목록에 다시 결합하지 않는다.
+    "ALTER TABLE followups ADD COLUMN native_command TEXT;",
+    // Web Push: credentials stay local; queued deliveries commit with completion events.
+    r#"
+    CREATE TABLE web_push_key (singleton INTEGER PRIMARY KEY CHECK(singleton=1), pkcs8 TEXT NOT NULL);
+    CREATE TABLE web_push_subscriptions (
+        endpoint TEXT PRIMARY KEY, root_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+        token_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+        p256dh BLOB NOT NULL, auth TEXT NOT NULL, scope TEXT NOT NULL, server TEXT NOT NULL,
+        vibrate INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 1, last_error TEXT
+    );
+    CREATE TABLE web_push_receipts (
+        endpoint TEXT NOT NULL REFERENCES web_push_subscriptions(endpoint) ON DELETE CASCADE,
+        turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+        PRIMARY KEY(endpoint,turn_id)
+    );
+    CREATE TABLE web_push_outbox (
+        endpoint TEXT NOT NULL REFERENCES web_push_subscriptions(endpoint) ON DELETE CASCADE,
+        event_key TEXT NOT NULL, payload TEXT NOT NULL, created_at INTEGER NOT NULL,
+        attempts INTEGER NOT NULL DEFAULT 0, next_attempt INTEGER NOT NULL,
+        PRIMARY KEY(endpoint,event_key)
+    );
+    "#,
+    // 실제 Push 시험 접수와 전송 결과를 보존한다. 만료된 구독을 지워도 실패 원인은 남긴다.
+    r#"
+    CREATE TABLE web_push_tests (
+        id TEXT PRIMARY KEY,
+        root_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+        token_id TEXT NOT NULL REFERENCES tokens(id) ON DELETE CASCADE,
+        endpoint TEXT NOT NULL,
+        state TEXT NOT NULL CHECK(state IN ('queued','sent','failed')),
+        error TEXT,
+        created_at TEXT NOT NULL,
+        scheduled_at TEXT NOT NULL
+    );
+    CREATE INDEX web_push_tests_endpoint_created ON web_push_tests(endpoint,created_at);
+    "#,
 ];
 
 #[cfg(test)]
@@ -1062,9 +1099,10 @@ mod tests {
     fn project_folder_migration_preserves_existing_projects_and_folder_deletion_keeps_them() {
         let conn = rusqlite::Connection::open_in_memory().unwrap();
         conn.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
-        for migration in &super::MIGRATIONS[..super::MIGRATIONS.len() - 1] { conn.execute_batch(migration).unwrap(); }
+        let index = super::MIGRATIONS.iter().position(|sql| sql.contains("CREATE TABLE project_folders")).unwrap();
+        for migration in &super::MIGRATIONS[..index] { conn.execute_batch(migration).unwrap(); }
         conn.execute_batch("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','Original','/fixture/project','2026-01-01','2026-01-01');").unwrap();
-        conn.execute_batch(super::MIGRATIONS.last().unwrap()).unwrap();
+        conn.execute_batch(super::MIGRATIONS[index]).unwrap();
         assert_eq!(conn.query_row("SELECT folder_id FROM projects WHERE id='p'", [], |r| r.get::<_, Option<String>>(0)).unwrap(), None);
         conn.execute_batch("INSERT INTO project_folders(id,name,name_key,created_at,updated_at) VALUES('f','Folder','folder','2026-01-01','2026-01-01');
             UPDATE projects SET folder_id='f' WHERE id='p'; DELETE FROM project_folders WHERE id='f';").unwrap();

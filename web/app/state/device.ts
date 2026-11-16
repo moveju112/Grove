@@ -44,12 +44,13 @@ export type Prefs = {
     notifyApproval: boolean;
     notifyServer: boolean;
     notifySound: boolean;
+    notifyVibrate: boolean;
     recentWindows: RecentWindow[];
     recentWindow: RecentWindow | "all";
 };
 export const defaultPrefs: Prefs = {
     theme: "system", fontSize: 14, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
-    notifyDone: false, notifyApproval: false, notifyServer: false, notifySound: false,
+    notifyDone: false, notifyApproval: false, notifyServer: false, notifySound: false, notifyVibrate: true,
     recentWindows: [...DEFAULT_RECENT_WINDOWS], recentWindow: DEFAULT_RECENT_WINDOW,
 };
 const CLOCKS: readonly Prefs["clock"][] = ["system", "24h", "12h"];

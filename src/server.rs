@@ -111,6 +111,7 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
     background.push(crate::approvals::spawn_expiry(app.clone()));
     background.push(crate::schedules::spawn(app.clone()));
     background.push(crate::remote_watches::spawn(app.clone()));
+    background.push(crate::web_push::spawn(app.clone()));
     background.push(crate::terminals::spawn_saver(app.clone()));
     if let Some(settings) = app.e2ee.relay.clone() {
         // 외부 릴레이에서 받은 URL로 로컬 목적지를 바꾸지 않는다.

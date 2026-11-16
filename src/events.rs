@@ -47,7 +47,9 @@ pub fn append(
         "INSERT INTO events (created_at, kind, project_id, session_id, payload) VALUES (?1, ?2, ?3, ?4, ?5)",
         params![now, kind, project_id, session_id, payload.to_string()],
     )?;
-    Ok(conn.last_insert_rowid())
+    let seq = conn.last_insert_rowid();
+    crate::web_push::enqueue(conn, now, kind, project_id, session_id, payload)?;
+    Ok(seq)
 }
 
 pub fn latest_seq(conn: &Connection) -> ApiResult<i64> {

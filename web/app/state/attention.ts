@@ -1,8 +1,8 @@
+import { pushServerId } from "./webPush";
 import type { EventRecord } from "../api/generated";
 import { loadPrefs, type Prefs } from "./device";
 
-// 화면을 보고 있지 않을 때 이 기기에서 알리는 사건(SETTINGS-014). 서버 영속 알림·Push와는 별개이며
-// 앱이 열린 뒤 받은 이벤트만 다룬다. 잠금 화면 노출을 막기 위해 대화 내용은 넣지 않는다.
+// 화면을 보고 있지 않을 때 받은 이벤트를 기기 알림으로 표시한다. 잠금 화면 노출을 막기 위해 대화 내용은 넣지 않는다.
 export type AttentionKind = "done" | "failed" | "approval" | "server";
 export type Attention = { kind: AttentionKind; tag: string; title: string; body: string; projectId: string | null; sessionId: string | null };
 
@@ -50,9 +50,9 @@ export function notificationPermission(): NotificationPermission | "unsupported"
     return typeof Notification === "undefined" ? "unsupported" : Notification.permission;
 }
 
-function beep() {
+export function playAttentionSound(): AudioContextState | "unsupported" {
     const Ctx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-    if (!Ctx) return;
+    if (!Ctx) return "unsupported";
     const ctx = new Ctx();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
@@ -62,17 +62,35 @@ function beep() {
     osc.start();
     osc.stop(ctx.currentTime + 0.15);
     osc.onended = () => void ctx.close();
+    return ctx.state;
 }
 
-export function showAttention(a: Attention, sound: boolean) {
-    if (sound) beep();
-    if (notificationPermission() !== "granted") return;
-    const n = new Notification(a.title, { body: a.body, tag: a.tag });
-    n.onclick = () => {
-        window.focus();
-        if (a.projectId && a.sessionId) window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { projectId: a.projectId, sessionId: a.sessionId } }));
-        n.close();
-    };
+export async function showAttention(a: Attention, sound: boolean, vibrate = false): Promise<boolean> {
+    if (sound) { try { playAttentionSound(); } catch { /* OS/browser may block audio until interaction. */ } }
+    if (notificationPermission() !== "granted") {
+        if (vibrate) navigator.vibrate?.([180, 80, 180]);
+        return false;
+    }
+    try {
+        const registration = "serviceWorker" in navigator ? await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL) : undefined;
+        if (registration?.active) {
+            const server = await pushServerId();
+            const options: NotificationOptions & { vibrate: number[] } = {
+                body: a.body, tag: `${server}:${a.tag}`, data: { ...a, server },
+                vibrate: vibrate ? [180, 80, 180] : [],
+            };
+            await registration.showNotification(a.title, options);
+            return true;
+        }
+        const n = new Notification(a.title, { body: a.body, tag: a.tag });
+        if (vibrate) navigator.vibrate?.([180, 80, 180]);
+        n.onclick = () => {
+            window.focus();
+            if (a.projectId && a.sessionId) window.dispatchEvent(new CustomEvent(OPEN_EVENT, { detail: { projectId: a.projectId, sessionId: a.sessionId } }));
+            n.close();
+        };
+        return true;
+    } catch { return false; }
 }
 
 function watching(): boolean {
@@ -84,14 +102,25 @@ export function notifyAttention(e: EventRecord) {
     const prefs = loadPrefs();
     const a = attentionFor(e, prefs);
     if (!a || watching() || !claimAttention(a.tag, Date.now())) return;
-    showAttention(a, prefs.notifySound);
+    void showAttention(a, prefs.notifySound, prefs.notifyVibrate);
 }
 
 export function onOpenSession(open: (projectId: string, sessionId: string) => void): () => void {
-    const handler = (e: Event) => {
-        const d = (e as CustomEvent<{ projectId: string; sessionId: string }>).detail;
-        if (d?.projectId && d.sessionId) open(d.projectId, d.sessionId);
+    let active = true;
+    const receive = async (d: { projectId?: string; sessionId?: string; server?: string }) => {
+        if (typeof d?.projectId !== "string" || typeof d.sessionId !== "string" || !/^[A-Za-z0-9_-]{1,128}$/.test(d.projectId) || !/^[A-Za-z0-9_-]{1,128}$/.test(d.sessionId)) return;
+        if (d.server && d.server !== await pushServerId()) return;
+        if (active) open(d.projectId, d.sessionId);
     };
+    const handler = (e: Event) => { void receive((e as CustomEvent).detail); };
+    const message = (e: MessageEvent) => { if (e.data?.type === "open-session") void receive(e.data); };
     window.addEventListener(OPEN_EVENT, handler);
-    return () => window.removeEventListener(OPEN_EVENT, handler);
+    navigator.serviceWorker?.addEventListener("message", message);
+    const url = new URL(location.href);
+    if (url.searchParams.has("notify_session")) {
+        void receive({ projectId: url.searchParams.get("notify_project") ?? undefined, sessionId: url.searchParams.get("notify_session") ?? undefined, server: url.searchParams.get("notify_server") ?? undefined });
+        for (const name of ["notify_project", "notify_session", "notify_server"]) url.searchParams.delete(name);
+        history.replaceState(history.state, "", url);
+    }
+    return () => { active = false; window.removeEventListener(OPEN_EVENT, handler); navigator.serviceWorker?.removeEventListener("message", message); };
 }

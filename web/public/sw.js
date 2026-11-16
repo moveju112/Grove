@@ -117,3 +117,48 @@ self.addEventListener("fetch", (event) => {
         }),
     );
 });
+
+const notificationId = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
+
+// Push payloads contain identifiers and generic completion status, never conversation text.
+self.addEventListener("push", (event) => {
+    event.waitUntil((async () => {
+        let data;
+        try { data = event.data?.json(); } catch { return; }
+        if (!data || data.scope !== SCOPE.href || !/^[0-9a-f]{64}$/.test(data.server)
+            || typeof data.tag !== "string" || data.tag.length > 200) return;
+        const test = data.test === true;
+        if (test ? !notificationId(data.testId) || data.tag !== `test:${data.testId}`
+            : !notificationId(data.projectId) || !notificationId(data.sessionId)) return;
+        await self.registration.showNotification(test ? "Grove 실제 Push 시험" : data.failed ? "작업 실패" : "작업 완료", {
+            body: test ? "서버에서 Push로 도착한 시험 알림이야." : data.failed ? "대화의 요청 처리가 실패하거나 중단됐습니다." : "대화의 요청 처리가 끝났습니다.",
+            tag: `${data.server}:${data.tag}`, data,
+            icon: new URL("icon-192.png", SCOPE).href,
+            vibrate: data.vibrate ? [180, 80, 180] : [],
+        });
+    })());
+});
+self.addEventListener("notificationclick", (event) => {
+    event.notification.close();
+    const data = event.notification.data;
+    if (!data || !/^[0-9a-f]{64}$/.test(data.server)) return;
+    const test = data.test === true && notificationId(data.testId) && data.tag === `test:${data.testId}` && data.scope === SCOPE.href;
+    if (!test && (!notificationId(data.projectId) || !notificationId(data.sessionId))) return;
+    event.waitUntil((async () => {
+        // The app validates the server fingerprint before opening an identifier.
+        const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+        const client = clients.find((c) => c.url.startsWith(SCOPE.href));
+        if (client) {
+            if (!test) client.postMessage({ type: "open-session", projectId: data.projectId, sessionId: data.sessionId, server: data.server });
+            await client.focus();
+            return;
+        }
+        const url = new URL(SCOPE);
+        if (!test) {
+            url.searchParams.set("notify_project", data.projectId);
+            url.searchParams.set("notify_session", data.sessionId);
+            url.searchParams.set("notify_server", data.server);
+        }
+        await self.clients.openWindow(url.href);
+    })());
+});
