@@ -1,18 +1,56 @@
-//! 제한된 X11 창 메시지 backend. 사용자 물리 포인터·전역 키 상태를 바꾸지 않는다.
-use crate::tools::{ToolError, ToolResult};
+//! 데몬 OS에 맞는 창 메시지 backend. 사용자 물리 포인터·전역 키 상태를 바꾸지 않는다.
+use crate::tools::ToolResult;
+#[cfg(not(windows))]
+use crate::tools::ToolError;
 use serde_json::Value;
+
+#[cfg(windows)]
+#[path = "windows.rs"]
+mod windows;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Backend { X11, Win32 }
+
+impl Backend {
+    pub fn name(self)->&'static str {
+        match self { Self::X11=>"x11_window_messages",Self::Win32=>"win32_window_messages" }
+    }
+    pub fn note(self)->&'static str {
+        match self {
+            Self::X11=>"이 Linux 서버 PC의 X11 활성 창을 제어합니다. libX11이 필요하며 Wayland·화면 없는 환경은 지원하지 않습니다. 일부 앱은 창 메시지를 거부합니다.",
+            Self::Win32=>"이 Windows 서버 PC의 활성 창을 제어합니다. 로그인된 사용자 데스크톱이 필요하며 서비스 Session 0·잠금 화면·권한이 다른 앱은 제어하지 않습니다. 일부 앱은 창 메시지를 거부합니다.",
+        }
+    }
+}
+
+pub fn backend_for(os:&str)->Option<Backend>{
+    match os {"linux"=>Some(Backend::X11),"windows"=>Some(Backend::Win32),_=>None}
+}
+
+pub fn current_backend()->Option<Backend>{backend_for(std::env::consts::OS)}
+
+pub fn desktop_session_present()->bool{
+    #[cfg(windows)] {windows::desktop_session_present()}
+    #[cfg(target_os="linux")] {std::env::var_os("DISPLAY").is_some()&&std::env::var_os("WAYLAND_DISPLAY").is_none()}
+    #[cfg(not(any(windows,target_os="linux")))] {false}
+}
+
+#[cfg(windows)]
+pub(super) fn verify_parent()->ToolResult<()>{windows::verify_parent()}
 
 pub fn execute(command: &Value) -> ToolResult<Value> {
     #[cfg(target_os = "linux")]
     {
         x11::execute(command)
     }
-    #[cfg(not(target_os = "linux"))]
+    #[cfg(windows)]
+    { windows::execute(command) }
+    #[cfg(not(any(windows,target_os = "linux")))]
     {
         let _ = command;
         Err(ToolError::new(
             "display_unavailable",
-            "이 버전의 서버 PC 제어는 Linux X11만 지원합니다",
+            "서버 PC 제어는 Windows와 Linux X11 데몬에서 지원합니다",
         ))
     }
 }

@@ -56,7 +56,7 @@ libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
 # 소유 프로세스 트리 Job Object(SEC-014). 이미 의존성 그래프에 있는 버전을 쓴다.
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_JobObjects", "Win32_System_Threading", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Console", "Win32_Graphics_Gdi", "Win32_Storage_Xps", "Win32_System_StationsAndDesktops", "Win32_System_RemoteDesktop", "Win32_System_SystemServices", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_WindowsAndMessaging"] }
 
 [dev-dependencies]
 rusqlite = { version = "0.37", features = ["bundled", "backup", "functions"] }

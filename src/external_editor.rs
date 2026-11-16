@@ -109,7 +109,7 @@ fn has_gui() -> bool {
         }
         let mut session = 0;
         unsafe {
-            use windows_sys::Win32::System::Threading::{GetCurrentProcessId, ProcessIdToSessionId};
+            use windows_sys::Win32::System::{Threading::GetCurrentProcessId, RemoteDesktop::ProcessIdToSessionId};
             if ProcessIdToSessionId(GetCurrentProcessId(), &mut session) == 0 || session == 0 { return false; }
             let desktop = OpenInputDesktop(0, 0, 0x0001);
             if desktop.is_null() { return false; }

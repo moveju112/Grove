@@ -11,7 +11,7 @@ Computer Use 등 기존 동작은 [Mixdog 공개 소스](https://github.com/trib
 | HTTP 경계 | `src/auth.rs`, `src/error.rs`, `src/idem.rs`, `src/web.rs` |
 | 실행·복구 | `src/runner.rs`, `src/startup.rs`, `src/approvals.rs`, `src/tasks.rs` |
 | 모델·CLI | `src/provider/`, `src/agent_auth.rs`, `src/history.rs` |
-| 서버 PC 제어·턴 한정 CLI MCP | `src/computer/`, `src/provider/cli.rs`; 현재 Linux X11 창 메시지 backend |
+| 서버 PC 제어·턴 한정 CLI MCP | `src/computer/`, `src/provider/cli.rs`; 데몬 OS로 Windows Win32 / Linux X11 창 메시지 backend를 자동 선택 |
 | 파일 경계 | `src/project_fs.rs`, `src/tools/`, `src/files.rs` |
 | 암호화 전송 | `src/e2ee.rs`, `web/app/api/transport.ts` |
 | 웹 화면·조회 투영 | `web/app/components/`, `web/app/state/store.ts` |

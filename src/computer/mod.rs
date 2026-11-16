@@ -72,7 +72,7 @@ pub fn spec() -> ToolSpec {
                 "direction":{"type":"string","enum":["up","down"]},
                 "amount":{"type":"integer","minimum":1,"maximum":10},
                 "key":{"type":"string","enum":["Enter","Tab","Escape","Backspace","Delete","Left","Right","Up","Down","Home","End"]},
-                "text":{"type":"string","maxLength":512,"description":"type에 쓸 ASCII 텍스트. 비밀번호·인증코드 입력 금지"}
+                "text":{"type":"string","maxLength":512,"description":"type에 쓸 텍스트. Windows는 Unicode, Linux X11은 ASCII를 지원한다. 비밀번호·인증코드 입력 금지"}
             },"required":["type"],"additionalProperties":false}}
         },"required":["target","action"],"additionalProperties":false}),
     }
@@ -233,17 +233,20 @@ pub fn validate(args: &Value) -> ToolResult<()> {
             ));
         }
         if step["type"] == "type"
-            && step["text"].as_str().is_none_or(|s| {
-                s.is_empty() || s.len() > 512 || !s.bytes().all(|b| (32..=126).contains(&b))
-            })
+            && step["text"].as_str().is_none_or(|s| !text_supported(std::env::consts::OS,s))
         {
             return Err(ToolError::new(
                 "invalid_arguments",
-                "현재 직접 입력은 1~512자의 영문·숫자·ASCII 기호만 지원합니다",
+                "텍스트는 1~512자이며 제어 문자는 사용할 수 없습니다. Linux X11에서는 ASCII만 지원합니다",
             ));
         }
     }
     Ok(())
+}
+
+fn text_supported(os:&str,text:&str)->bool {
+    !text.is_empty()&&text.chars().count()<=512&&!text.chars().any(char::is_control)
+        &&(os=="windows"||text.is_ascii())
 }
 
 pub fn validate_call(c: &rusqlite::Connection, call: &ToolCallRow) -> ApiResult<()> {
@@ -275,17 +278,19 @@ pub fn validate_call(c: &rusqlite::Connection, call: &ToolCallRow) -> ApiResult<
     Ok(())
 }
 
-/// 초기 버전은 실제 로그인된 X11 화면을 명시적으로 지원한다. 무화면·Wayland에서 입력을 우회하지 않는다.
+/// 접속한 브라우저가 아니라 데몬 OS와 데스크톱 세션을 기준으로 backend를 선택한다.
 pub async fn status(
     State(app): State<App>,
     crate::auth::Owner(_): crate::auth::Owner,
 ) -> ApiResult<Json<ComputerStatus>> {
     let on = app.db.call(|c| enabled(c)).await?;
+    let backend=native::current_backend();
+    let desktop=tokio::task::spawn_blocking(native::desktop_session_present).await
+        .map_err(|e|ApiError::internal(e.to_string()))?;
     Ok(Json(ComputerStatus {enabled:on,target:"server".into(),platform:std::env::consts::OS.into(),
-        platform_supported:cfg!(target_os="linux"),
-        desktop_session_present:std::env::var_os("DISPLAY").is_some()&&std::env::var_os("WAYLAND_DISPLAY").is_none(),
-        backend:"x11_window_messages".into(),
-        note:"이 서버 PC의 활성 창을 제어합니다. Linux X11·libX11이 필요하고 일부 앱은 창 메시지를 거부합니다. 실제 준비 여부는 승인 후 list로 확인하세요.".into()}))
+        platform_supported:backend.is_some(),desktop_session_present:desktop,
+        backend:backend.map(|b|b.name()).unwrap_or("unsupported").into(),
+        note:backend.map(|b|b.note()).unwrap_or("이 데몬의 OS에서는 PC 제어를 지원하지 않습니다.").into()}))
 }
 
 async fn take_frame(
@@ -322,13 +327,15 @@ async fn worker(
     }
     let exe = std::env::current_exe()
         .map_err(|_| ToolError::new("computer_unavailable", "실행 파일을 찾지 못했습니다"))?;
-    let mut child = tokio::process::Command::new(exe)
-        .arg("computer-worker")
+    let mut command_process = tokio::process::Command::new(exe);
+    command_process.arg("computer-worker")
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::null())
-        .kill_on_drop(true)
-        .spawn()
+        .kill_on_drop(true);
+    #[cfg(windows)]
+    command_process.creation_flags(windows_sys::Win32::System::Threading::CREATE_NO_WINDOW);
+    let mut child=command_process.spawn()
         .map_err(|_| {
             ToolError::new(
                 "computer_unavailable",
@@ -596,7 +603,8 @@ pub fn worker_main() -> i32 {
     let mut bytes = vec![];
     use std::io::Read;
     if std::io::stdin()
-        .take(32 * 1024)
+        // 최대 길이 Unicode 작업 묶음과 Windows의 긴 data 경로도 수용한다.
+        .take(256 * 1024)
         .read_to_end(&mut bytes)
         .is_err()
     {
@@ -641,6 +649,8 @@ fn authorize_worker(envelope: &Value, args: &Value) -> ToolResult<()> {
             return Err(denied());
         }
     }
+    #[cfg(windows)]
+    native::verify_parent()?;
     let data = envelope["data_dir"]
         .as_str()
         .map(std::path::PathBuf::from)
@@ -691,7 +701,6 @@ mod tests {
             json!({"target":"phone"}),
             json!({"frame_id":""}),
             json!({"actions":[]}),
-            json!({"actions":[{"type":"type","text":"비밀"}]}),
             json!({"actions":[{"type":"click","x":-1,"y":0}]}),
             json!({"actions":[{"type":"key","key":"Alt+F4"}]}),
             json!({"actions":[{"type":"key","key":"Enter","command":"hidden"}]}),
@@ -702,6 +711,23 @@ mod tests {
                 args[k] = v.clone();
             }
             assert!(validate(&args).is_err(), "{args}");
+        }
+    }
+    #[test]
+    fn daemon_os_selects_the_backend_and_text_capabilities(){
+        assert_eq!(native::backend_for("windows"),Some(native::Backend::Win32));
+        assert_eq!(native::backend_for("linux"),Some(native::Backend::X11));
+        assert_eq!(native::backend_for("macos"),None);
+        assert_eq!(native::current_backend(),native::backend_for(std::env::consts::OS));
+        assert!(text_supported("windows","한글🪟"));
+        assert!(text_supported("windows",&"🪟".repeat(512)));
+        assert!(!text_supported("windows",&"🪟".repeat(513)));
+        assert!(!text_supported("linux","한글"));
+        assert!(text_supported("linux","ASCII 123"));
+        for os in ["windows","linux"]{
+            assert!(!text_supported(os,""));
+            assert!(!text_supported(os,"bad\ncontrol"));
+            assert!(!text_supported(os,&"a".repeat(513)));
         }
     }
     #[tokio::test]

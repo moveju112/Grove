@@ -82,6 +82,10 @@ async fn default_off_owner_only_and_exact_once_approval_even_with_allow_policy()
     assert_eq!(st, StatusCode::OK);
     assert_eq!(status["enabled"], false);
     assert_eq!(status["target"], "server");
+    assert_eq!(status["platform"],std::env::consts::OS);
+    assert_eq!(status["backend"],match std::env::consts::OS{
+        "windows"=>"win32_window_messages","linux"=>"x11_window_messages",_=>"unsupported",
+    });
     let call = request(&s, &sid, json!({"target":"server","action":"list"})).await;
     assert_eq!(call["status"], "failed");
     assert_eq!(call["result"]["error"]["code"], "computer_disabled");

@@ -43,7 +43,7 @@ pub fn registry() -> Vec<SettingDef> {
     vec![
         SettingDef {
             key: crate::computer::ENABLED, menu: "agents", label: "서버 PC 제어",
-            description: "켜면 이 서버 PC의 창 목록·화면 읽기·입력을 요청할 수 있습니다. 각 요청은 이번만 승인해야 합니다. Linux X11 활성 창만 지원하며 휴대전화·다른 PC·Wayland는 제어하지 않습니다. 화면은 선택한 모델 제공자에게 전달되고 대화에 보관됩니다.",
+            description: "데몬 OS에 맞춰 Windows 또는 Linux X11의 활성 창을 제어합니다. 각 요청은 이번만 승인해야 합니다. 로그인된 사용자 화면이 필요하며 휴대전화·다른 PC·Windows 서비스 Session 0·잠금 화면·Wayland는 제어하지 않습니다. 화면은 선택한 모델 제공자에게 전달되고 대화에 보관됩니다.",
             keywords: "computer use desktop screen capture 컴퓨터 화면 마우스 키보드",
             kind: "bool", options: &[], min: None, max: None, default: json!(false),
             scopes: &["server"], applies: "next_turn", advanced: false,
