@@ -73,7 +73,7 @@ export async function modelSettings(scope: Locator | Page) {
 }
 
 export async function composerSetting(scope: Locator | Page, label: string) {
-    return (await modelSettings(scope)).getByRole("combobox", { name: label, exact: true });
+    return (await modelSettings(scope)).getByRole(label === "모델 프로필" ? "button" : "combobox", { name: label, exact: true });
 }
 
 export async function closeModelSettings(scope: Locator | Page) {
@@ -234,8 +234,16 @@ export async function closeMobileSidebar(page: Page) {
     if (page.viewportSize()!.width <= 760) await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
 }
 
-/// 실제 Astryx 선택창을 열어 값에 해당하는 옵션을 고른다.
+/// 실제 Astryx 선택창이나 모델 하위 메뉴를 열어 값을 고른다.
 export async function selectChoice(control: Locator, value: string) {
+    control = control.and(control.page().locator("button"));
+    if (await control.getAttribute("aria-haspopup") === "menu") {
+        const profileId = value.startsWith("[") ? (JSON.parse(value) as string[])[0]! : value;
+        const choices = await modelChoices(control, profileId);
+        await choices.and(control.page().locator(`[data-option-value=${JSON.stringify(value)}]`)).click();
+        await expect(control).toHaveAttribute("data-selected-value", value);
+        return;
+    }
     control = control.and(control.page().getByRole("combobox"));
     await control.click();
     await expect(control).toHaveAttribute("aria-expanded", "true");
@@ -246,10 +254,25 @@ export async function selectChoice(control: Locator, value: string) {
 }
 
 export async function expectChoice(control: Locator, value: string) {
-    await expect(control.and(control.page().getByRole("combobox"))).toHaveAttribute("data-selected-value", value);
+    await expect(control.and(control.page().locator("button"))).toHaveAttribute("data-selected-value", value);
+}
+
+async function modelChoices(control: Locator, profileId: string) {
+    if (await control.getAttribute("aria-expanded") !== "true") await control.click();
+    const menu = control.page().getByTestId(`model-profile-models-${profileId}`).filter({ visible: true });
+    if (!await menu.isVisible()) {
+        const id = await control.getAttribute("aria-controls");
+        await control.page().locator(`[id=${JSON.stringify(id)}]`).locator(`[data-profile-id=${JSON.stringify(profileId)}]`).click();
+    }
+    await expect(menu).toBeVisible();
+    return menu.getByRole("menuitemradio");
 }
 
 export async function choiceOptions(control: Locator) {
+    control = control.and(control.page().locator("button"));
+    if (await control.getAttribute("aria-haspopup") === "menu") {
+        return modelChoices(control, (await control.getAttribute("data-selected-profile"))!);
+    }
     control = control.and(control.page().getByRole("combobox"));
     if (await control.getAttribute("aria-expanded") !== "true") await control.click();
     await expect(control).toHaveAttribute("aria-expanded", "true");

@@ -35,7 +35,7 @@ test("작은 모델 선택기에서 공급자 모델을 골라 보내고 초안�
         await composerSetting(view, "모델 프로필");
         await expect(picker).toContainText(/^fixture-picker-model ·/);
         const modelChoice = JSON.stringify([profile.id, "fixture-model"]);
-        await expect((await choiceOptions(picker)).filter({ has: page.locator(`[data-option-value=${JSON.stringify(modelChoice)}]`) })).toHaveCount(1);
+        await expect((await choiceOptions(picker)).and(page.locator(`[data-option-value=${JSON.stringify(modelChoice)}]`))).toHaveCount(1);
         await page.keyboard.press("Escape");
         await selectChoice(picker, modelChoice);
         await expect(picker).toContainText(/^fixture-model ·/);

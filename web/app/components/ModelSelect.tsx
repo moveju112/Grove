@@ -1,12 +1,12 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Popover } from "@astryxdesign/core/Popover";
 import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { Select } from "../design/Select";
+import { DropdownMenu, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSubMenu } from "@astryxdesign/core/DropdownMenu";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button } from "../design/Button";
 import { Icon } from "./icons";
 import { composerStyles } from "./composer.stylex";
-import type { ModelCatalog, ModelProfile } from "../api/generated";
+import type { AvailableModel, ModelCatalog, ModelProfile } from "../api/generated";
 import { api } from "../api/client";
 import { useQuery } from "../state/store";
 import { useCapability } from "../state/capabilities";
@@ -15,6 +15,44 @@ export function useModelCatalog(profile: ModelProfile | undefined, bound = false
     const supported = useCapability("turn_model_selection_v1");
     return useQuery<ModelCatalog>(supported === false || bound || !profile?.enabled ? null : `models:${profile.id}:${profile.revision}`,
         () => api.getContract("ModelCatalog", `/model-profiles/${profile!.id}/available-models`, { requires: ["turn_model_selection_v1"], timeoutMs: 35_000 }));
+}
+
+function isAutomatic(profile: ModelProfile | undefined) {
+    return profile?.model === "default" && (profile.protocol === "codex_cli" || profile.protocol === "claude_code");
+}
+
+function ProfileModels({ profile, profileId, model, onChange }: {
+    profile: ModelProfile; profileId: string | null; model?: string | null;
+    onChange: (profileId: string, model: string | null) => void;
+}) {
+    const [expanded, setExpanded] = useState(false);
+    const supported = useCapability("turn_model_selection_v1");
+    const catalog = useModelCatalog(profile, !expanded);
+    const automatic = isAutomatic(profile);
+    const cli = profile.protocol === "codex_cli" || profile.protocol === "claude_code";
+    const models: AvailableModel[] = (catalog.data?.models ?? []).filter((item) => !cli || item.id !== "default");
+    if (!automatic && !models.some((item) => item.id === profile.model)) {
+        models.unshift({ id: profile.model, name: profile.model });
+    }
+    const selected = profileId === profile.id
+        ? model ?? (automatic ? models.find((item) => item.is_default)?.id : profile.model)
+        : undefined;
+    return <DropdownMenuSubMenu label={profile.name} isDisabled={!profile.enabled}
+        data-profile-id={profile.id} onOpenChange={setExpanded} hasSpinner={catalog.loading}
+        menuDataTestId={`model-profile-models-${profile.id}`}>
+        <DropdownMenuRadioGroup label={`${profile.name} 모델`} value={selected}
+            onChange={(id) => onChange(profile.id, !automatic && id === profile.model ? null : id)}>
+            {models.map((item) => <DropdownMenuRadioItem key={item.id} value={item.id} label={item.name}
+                data-option-value={!automatic && item.id === profile.model
+                    ? profile.id : JSON.stringify([profile.id, item.id])} />)}
+        </DropdownMenuRadioGroup>
+        {!catalog.loading && !catalog.error && models.length === 0 && <DropdownMenuItem
+            label={supported === false ? "이 서버는 모델 목록 조회를 지원하지 않아요." : "사용 가능한 모델이 없어요."} isDisabled />}
+        {catalog.error instanceof Error && <DropdownMenuItem isDisabled
+            label={<GroveText type="supporting" color="error" role="alert">{catalog.error.message}</GroveText>} />}
+        {supported !== false && <DropdownMenuItem label="모델 목록 새로고침"
+            isDisabled={catalog.loading} hasCloseOnSelect={false} onClick={() => catalog.reload()} />}
+    </DropdownMenuSubMenu>;
 }
 
 export function ModelSelect({ profiles, profileId, model, ready, bound, save, onChange, children, onExpandedChange }: {
@@ -28,21 +66,16 @@ export function ModelSelect({ profiles, profileId, model, ready, bound, save, on
     const trigger = useRef<HTMLButtonElement>(null!);
     const measurement = useRef<HTMLSpanElement>(null);
     const profile = profiles.find((p) => p.id === profileId);
-    const supported = useCapability("turn_model_selection_v1");
     const catalog = useModelCatalog(profile, bound);
-    const choices = profiles.flatMap((p) => [
-        { value: p.id, profileId: p.id, model: null as string | null, name: p.model === "default" ? `${p.name} · 기본 모델` : `${p.model} · ${p.name}`, disabled: !p.enabled },
-        ...(p.id === profileId ? (catalog.data?.models ?? []).filter((m) => m.id !== p.model).map((m) => ({
-            value: JSON.stringify([p.id, m.id]), profileId: p.id, model: m.id,
-            name: `${m.name} · ${p.name}`, disabled: !p.enabled,
-        })) : []),
-    ]);
+    const automatic = isAutomatic(profile);
     const value = save ? "__save__" : model ? JSON.stringify([profileId, model]) : profileId ?? "";
     const selected = catalog.data?.models.find((m) => m.id === (model ?? profile?.model))
-        ?? (profile?.model === "default" && !model ? catalog.data?.models.find((m) => m.is_default) : undefined);
+        ?? (automatic && !model ? catalog.data?.models.find((m) => m.is_default) : undefined);
     const summary = save ? "메시지만 저장" : selected?.name ?? model
-        ?? (profile?.model === "default" ? `${profile.name} · 기본 모델` : profile?.model)
+        ?? (automatic ? bound ? profile?.name : "모델 선택" : profile?.model)
         ?? (profileId ? "선택한 프로필 없음" : "모델 선택");
+    const detail = save || !profile || automatic && !selected && !model
+        ? summary : `${summary} · ${profile.name}`;
     // 버튼의 자연 폭으로 판단한다. 두 줄 배치에서도 같은 폭을 재므로 크기 경계에서 왕복하지 않는다.
     useLayoutEffect(() => {
         const probe = measurement.current;
@@ -73,20 +106,13 @@ export function ModelSelect({ profiles, profileId, model, ready, bound, save, on
                     <GroveText type="supporting" color="secondary">모델 설정</GroveText>
                     <Button type="button" appearance="icon" aria-label="모델 설정 닫기" onClick={() => setOpen(false)}><Icon name="close" size={16} /></Button>
                 </GroveStack>
-        <Select label="모델 프로필" width="100%"
-            value={value} disabled={!ready || bound} onChange={(value) => {
-                if (value === "__reload__") { catalog.reload(); return; }
-                const choice = choices.find((c) => c.value === value);
-                if (choice) onChange(choice.profileId, choice.model);
-            }} options={[
-                ...(save ? [{ value: "__save__", label: "메시지만 저장", disabled: true }] : []),
-                ...(!choices.some((c) => c.value === value) && !save
-                    ? [{ value, label: model ?? (profileId ? "선택한 프로필 없음" : "모델 선택"), disabled: true }] : []),
-                ...choices.map((c) => ({ value: c.value, label: `${c.name}${c.disabled ? " · 비활성" : ""}`, disabled: c.disabled })),
-                ...(catalog.loading ? [{ value: "__loading__", label: "모델 목록 조회 중…", disabled: true }] : []),
-                ...(!catalog.loading && supported !== false && !bound && profile?.enabled
-                    ? [{ value: "__reload__", label: "모델 목록 새로고침" }] : []),
-            ]} />
+        <DropdownMenu placement="above" alignment="start"
+            renderTrigger={(props) => <Button {...props} type="button" variant="secondary" width="100%"
+                aria-label="모델 프로필" data-selected-value={value} data-selected-profile={profileId ?? ""}
+                disabled={!ready || bound}>{detail}<Icon name="chevronDown" size={16} /></Button>}>
+            {profiles.map((item) => <ProfileModels key={item.id} profile={item} profileId={profileId}
+                model={model} onChange={onChange} />)}
+        </DropdownMenu>
         {catalog.error instanceof Error && <GroveText type="supporting" color="error" role="alert">{catalog.error.message}</GroveText>}
         {bound && <GroveText type="supporting" color="secondary">모델은 봇 설정에서 변경해요.</GroveText>}
         {children}
