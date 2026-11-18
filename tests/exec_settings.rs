@@ -32,7 +32,6 @@ async fn execution_settings_inherit_and_clear_each_scope_without_cross_project_o
         ("exec.shell", json!("default"), json!("default"), json!("default")),
         ("exec.max_memory_mb", json!(0), json!(if cfg!(any(target_os = "linux", windows)) { 128 } else { 0 }), json!(0)),
         ("exec.max_cpu_seconds", json!(0), json!(if cfg!(any(target_os = "linux", windows)) { 3 } else { 0 }), json!(0)),
-        ("exec.isolation", json!("process_tree"), json!("process_tree"), json!("process_tree")),
         ("exec.default_cwd", json!("server"), json!("project"), json!("session")),
     ];
     for (key, server, project, session) in keys {
@@ -68,8 +67,6 @@ async fn invalid_execution_values_and_unavailable_choices_keep_revisions_and_val
         ("exec.max_memory_mb", json!("128"), 0),
         ("exec.max_cpu_seconds", json!(1.5), 1),
         ("exec.max_cpu_seconds", json!(86_401), 1),
-        ("exec.isolation", json!("none"), 0),
-        ("exec.isolation", json!("sandbox"), 0),
     ] {
         let (status, result) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
             json!({ "expected_revision": revision, "value": value })).await;
@@ -84,13 +81,14 @@ async fn invalid_execution_values_and_unavailable_choices_keep_revisions_and_val
 
     let (status, registry) = s.get("/api/v1/settings/registry").await;
     assert_eq!(status, StatusCode::OK);
-    for def in registry.as_array().unwrap().iter().filter(|def| matches!(def["key"].as_str(), Some("exec.shell" | "exec.isolation"))) {
-        for choice in def["unavailable_options"].as_array().unwrap() {
-            assert!(!choice["reason"].as_str().unwrap().is_empty());
-            assert!(!def["options"].as_array().unwrap().contains(&choice["value"]));
+    let shell = registry.as_array().unwrap().iter().find(|def| def["key"] == "exec.shell").unwrap();
+    assert!(shell.get("unavailable_options").is_none());
+    assert!(!registry.as_array().unwrap().iter().any(|def| def["key"] == "exec.isolation"));
+    for choice in grove::tools::shell::SHELL_CHOICES {
+        if !shell["options"].as_array().unwrap().contains(&json!(choice)) {
             let (status, result) = s.send(Method::PUT,
-                &format!("/api/v1/settings/server/-/{}", def["key"].as_str().unwrap()),
-                json!({ "expected_revision": 0, "value": choice["value"] })).await;
+                "/api/v1/settings/server/-/exec.shell",
+                json!({ "expected_revision": 0, "value": choice })).await;
             assert_eq!(status, StatusCode::BAD_REQUEST, "{result}");
         }
     }

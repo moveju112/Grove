@@ -11,34 +11,37 @@ import { workspaceStyles } from "./workspace.stylex";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading } from "@astryxdesign/core/Heading";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { api } from "../api/client";
+import { ApiError, api, isTransportError } from "../api/client";
 import { EventStream } from "../api/events";
 import type { Project } from "../api/generated";
 import { notifyAttention, onOpenSession } from "../state/attention";
-import { applyPrefs, isNarrow, layoutKey, loadPrefs } from "../state/device";
+import { applyPrefs, isNarrow, layoutKey, loadPrefs, usePrefs } from "../state/device";
+import { applyTabShortcut } from "../state/shortcuts";
+import { useWorkspaceShortcuts } from "./shortcuts/useWorkspaceShortcuts";
 import * as L from "../state/layout";
 import { useProjectLayouts } from "../state/useProjectLayouts";
 import { useProjectSplits } from "../state/useProjectSplits";
 import { activeProjectSplits, placeProject, projectGeometry } from "../state/projectSplits";
 import { projectLayoutKey } from "../state/projectLayout";
-import { DRAG_PROJECT, PROJECT_ORDER, loadProjectOrder, moveProject, orderProjects, parseProjectDrag, type ProjectSort } from "../state/projectOrder";
+import { DRAG_PROJECT, PROJECT_ORDER, loadProjectOrder, moveProject, orderProjects, parseProjectDrag, projectFolderDropAt, type ProjectDrop, type ProjectSort } from "../state/projectOrder";
 import { applyEvent, resyncAll, setLive, useLive, useQuery } from "../state/store";
 import { AddProjectDialog } from "./AddProject";
 import { ArchivedProjects } from "./ArchivedProjects";
 import { LabelChips, LabelFilter, ProjectMenu, useLabels } from "./ProjectLabels";
 import { filterProjects } from "../state/projectLabels";
 import { RecentPanel } from "./RecentPanel";
-import { SplitView } from "./SplitView";
+import { SplitView, type RecentPaneReveal } from "./SplitView";
 import { ProjectSplitDividers } from "./ProjectSplitDividers";
-import { splitStyles } from "./split-layout.stylex";
+import { PANE_REVEAL_DURATION, splitStyles } from "./split-layout.stylex";
 import { Icon } from "./icons";
 import { ActionMenu } from "./ui/Controls";
 import { SidebarProject } from "./sidebar";
-import { SidebarUsage } from "./sidebar/SidebarUsage";
+import { useTouchProjectOrder } from "./sidebar/useTouchProjectOrder";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { CreationEntry } from "./create/CreationEntry";
 import { ProjectFolderDialog, ProjectFolderTree, useProjectFolders } from "./ProjectFolders";
-import { projectTarget } from "./create/creation";
+import { requestNewConversation } from "../state/newConversation";
+import { CreationRequest, projectTarget } from "./create/creation";
 import { NavigationContext } from "./navigation/NavigationContext";
 import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 import { Stack, StackItem } from "@astryxdesign/core/Stack";
@@ -46,6 +49,17 @@ import { Select } from "../design/Select";
 import { Button } from "../design/Button";
 import { MobileDrawer, useMobilePanels } from "./MobilePanels";
 import { SettingsDialog } from "./SettingsDialog";
+import { PushStatusContext, usePushSync } from "./PushNotifications";
+import { ProjectHistoryDialog } from "./ProjectHistoryDialog";
+import { ProjectRenameDialog } from "./ProjectRenameDialog";
+import { ComposerMemoryProvider } from "../state/useComposerMemory";
+import { hideSessionRecent } from "../state/recentPatch";
+import { LoadingBar } from "./LoadingScreen";
+import { UsagePanel } from "./UsagePanel";
+import { CreationDialog } from "./create/CreationDialog";
+import { useUsageNavigation } from "./usage/useUsageNavigation";
+import { PaneVisibility } from "../state/paneVisibility";
+import { HeaderUpdates } from "./update/HeaderUpdates";
 
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
@@ -56,19 +70,24 @@ const NO_PROJECTS: Project[] = [];
 
 type LayoutActions = {
     onUpdate: (id: string, f: (layout: L.Layout) => L.Layout) => void;
+    onCloseTab: (id: string, tabId: string) => void;
+    closingTabs: ReadonlySet<string>;
     onOpen: (id: string, target: OpenTarget, how?: "here" | "right" | "down") => void;
     onProjectDrop: (id: string, target: OpenTarget, edge: L.DropEdge) => void;
     onCloseProject?: (id: string) => void;
 };
-const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, projectLabel, onUpdate, onOpen, onProjectDrop, onCloseProject }: LayoutActions & {
-    id: string; layout: L.Layout; visible: boolean; projects: Project[]; projectLabel?: string;
+const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, projectLabel, recentReveal, onUpdate, onCloseTab, closingTabs, onOpen, onProjectDrop, onCloseProject }: LayoutActions & {
+    id: string; layout: L.Layout; visible: boolean; projects: Project[]; projectLabel?: string; recentReveal?: RecentPaneReveal;
 }) {
     const update = useCallback((f: (layout: L.Layout) => L.Layout) => onUpdate(id, f), [id, onUpdate]);
     const open: Opener = useCallback((target, how) => onOpen(id, target, how), [id, onOpen]);
     const drop = useCallback((target: OpenTarget, edge: L.DropEdge) => onProjectDrop(id, target, edge), [id, onProjectDrop]);
     const close = useCallback(() => onCloseProject?.(id), [id, onCloseProject]);
-    return <SplitView layout={layout} update={update} open={open} narrow={id.endsWith("-narrow")} visible={visible} projects={projects}
-        projectLabel={projectLabel} onProjectDrop={drop} onCloseProject={onCloseProject ? close : undefined} />;
+    const closeTab = useCallback((tabId: string) => onCloseTab(id, tabId), [id, onCloseTab]);
+    return <ComposerMemoryProvider copies={L.allTabs(layout).map((tab) => tab.id)}>
+        <SplitView layout={layout} update={update} closeTab={closeTab} closingTabs={closingTabs} open={open} narrow={id.endsWith("-narrow")} visible={visible} projects={projects}
+            projectLabel={projectLabel} recentReveal={recentReveal} onProjectDrop={drop} onCloseProject={onCloseProject ? close : undefined} />
+    </ComposerMemoryProvider>;
 });
 
 function useNarrow(): boolean {
@@ -84,6 +103,10 @@ function useNarrow(): boolean {
 
 export function Workspace() {
     const narrow = useNarrow();
+    const { usageOpen, usageVisited, openUsage, closeUsage, leaveUsage } = useUsageNavigation();
+    const serverBlocked = useServerBlockReason();
+    const { keyboardShortcuts, notifyPush, notifyVibrate } = usePrefs();
+    const pushStatus = usePushSync(notifyPush, notifyVibrate, !!serverBlocked);
     const [settingsTarget, setSettingsTarget] = useState<OpenTarget | null>(null);
     const status = useLive((live) => live.status);
     const retryAt = useLive((live) => live.retryAt);
@@ -109,6 +132,49 @@ export function Workspace() {
     const [notice, setNotice] = useState<string | null>(null);
     const baseKey = useMemo(() => layoutKey(), [narrow]); // eslint-disable-line react-hooks/exhaustive-deps
     const { key, projectId: selectedProjectId, layout, layouts, updateAt, openAt: openProjectAt, flush, focusAt, projectAt, ensureProject } = useProjectLayouts(baseKey, setNotice);
+    const closing = useRef(new Set<string>());
+    const [closingTabs, setClosingTabs] = useState<ReadonlySet<string>>(() => new Set());
+    const [closeError, setCloseError] = useState<string | null>(null);
+    const terminalPending = useRef(false);
+    const [openingTerminal, setOpeningTerminal] = useState(false);
+    const closeTab = useCallback((id: string, tabId: string) => {
+        const current = layouts[id];
+        if (!current) return;
+        const tab = L.allTabs(current).find((item) => item.id === tabId);
+        if (!tab || closing.current.has(tabId)) return;
+        const session = tab.kind === "session" && tab.project_id && tab.resource_id
+            && !L.allTabs(current).some((other) => other.id !== tabId && other.kind === "session" && other.resource_id === tab.resource_id);
+        if ((!session && tab.kind !== "terminal") || !tab.resource_id) {
+            updateAt(id, (current) => L.closeTab(current, tabId));
+            return;
+        }
+        closing.current.add(tabId);
+        setClosingTabs(new Set(closing.current));
+        setCloseError(null);
+        void (async () => {
+            try {
+                if (session) {
+                    await hideSessionRecent(tab.project_id!, tab.resource_id!);
+                } else {
+                    try {
+                        const result = await api.post<{ status: string }>(`/terminals/${tab.resource_id}/kill`);
+                        if (result.status === "running") throw new Error("터미널 종료를 확인하지 못했어요. 탭을 다시 닫아 주세요.");
+                    } catch (error) {
+                        // 이미 삭제된 터미널은 종료할 프로세스가 없으므로 탭만 제거한다.
+                        if (!(error instanceof ApiError && error.status === 404)) throw error;
+                    }
+                }
+                updateAt(id, (current) => L.closeTab(current, tabId));
+            } catch (error) {
+                setCloseError(error instanceof ApiError ? error.message : session
+                    ? "최근 목록에서 대화를 닫지 못했어요. 탭을 다시 닫아 주세요."
+                    : "터미널 종료를 확인하지 못했어요. 탭을 다시 닫아 주세요.");
+            } finally {
+                closing.current.delete(tabId);
+                setClosingTabs(new Set(closing.current));
+            }
+        })();
+    }, [layouts, updateAt]);
     const projectSplits = useProjectSplits(baseKey, selectedProjectId, setNotice);
     const projectGroup = useMemo(() => narrow ? activeProjectSplits(null, selectedProjectId) : projectSplits.layout,
         [narrow, selectedProjectId, projectSplits.layout]);
@@ -133,19 +199,33 @@ export function Workspace() {
         return value === "manual" || value === "recent" ? value : "name";
     });
     const [projectOrder, setProjectOrder] = useState(() => loadProjectOrder(localStorage));
-    const draggingProject = useRef<string | null>(null);
-    const [orderDrop, setOrderDrop] = useState<{ id: string; after: boolean } | null>(null);
+    const [draggingProject, setDraggingProject] = useState<string | null>(null);
+    const [desktopDrop, setDesktopDrop] = useState<ProjectDrop | null>(null);
     const projects = useQuery<Project[]>(`projects:${projectSort}`, () => api.get(`/projects?sort=${projectSort === "recent" ? "recent" : "name"}`),
         { keepPreviousData: true, scope: "projects" });
     // 라벨 필터는 기기별 선택(PROJECT-008). 삭제된 라벨 id는 필터에서 무시한다.
     const labels = useLabels();
     const folders = useProjectFolders();
+    const [folderMoveRequest] = useState(() => new CreationRequest<Project, `/projects/${string}`>("patch"));
+    const [folderMoveBusy, setFolderMoveBusy] = useState(false);
+    const [folderMoveError, setFolderMoveError] = useState<string | null>(null);
     const [labelFilter, setLabelFilterState] = useState<string[]>(() => {
         try { const v = JSON.parse(localStorage.getItem(LABEL_FILTER) ?? "[]"); return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []; } catch { return []; }
     });
     const setLabelFilter = (next: string[]) => { localStorage.setItem(LABEL_FILTER, JSON.stringify(next)); setLabelFilterState(next); };
     const [filtering, setFiltering] = useState(labelFilter.length > 0);
     const [menuFor, setMenuFor] = useState<string | null>(null);
+    const [historyProject, setHistoryProject] = useState<Project | null>(null);
+    const [renamingProject, setRenamingProject] = useState<Project | null>(null);
+    const projectMenuTrigger = useRef<HTMLButtonElement | null>(null);
+    const closeHistory = () => {
+        setHistoryProject(null);
+        requestAnimationFrame(() => projectMenuTrigger.current?.focus({ preventScroll: true }));
+    };
+    const closeRename = () => {
+        setRenamingProject(null);
+        requestAnimationFrame(() => projectMenuTrigger.current?.focus({ preventScroll: true }));
+    };
     const [showArchived, setShowArchived] = useState(false);
     const shown = filterProjects(projectSort === "manual" ? orderProjects(projects.data ?? NO_PROJECTS, projectOrder) : projects.data ?? NO_PROJECTS, labelFilter, labels);
     const reorder = (sourceId: string, targetId: string, after: boolean) => {
@@ -160,6 +240,42 @@ export function Workspace() {
             localStorage.setItem(PROJECT_SORT, "manual");
         } catch { setNotice("이 기기에 프로젝트 순서를 보존하지 못했습니다. 저장 공간을 확인하세요."); }
     };
+    const saveFolderMove = async (path: `/projects/${string}`, body: Record<string, unknown>) => {
+        if (folderMoveRequest.busy) return;
+        setFolderMoveBusy(true);
+        setFolderMoveError(null);
+        try {
+            requireServerAction();
+            await folderMoveRequest.run(path, body);
+        } catch (error) {
+            if (folderMoveRequest.pending) setFolderMoveError("프로젝트 이동 결과를 확인하지 못했어요.");
+            else if (!isTransportError(error)) setFolderMoveError(error instanceof Error ? error.message : "프로젝트를 옮기지 못했어요.");
+        } finally {
+            projects.reload();
+            folders.reload();
+            setFolderMoveBusy(false);
+        }
+    };
+    const canMoveToFolder = (sourceId: string, folderId: string | null) => {
+        if (serverBlocked || folders.supported === false || folderMoveRequest.busy || folderMoveRequest.pending) return false;
+        const source = shown.find((p) => p.id === sourceId);
+        return !!source && (source.folder_id ?? null) !== folderId
+            && (folderId === null || !!folders.data?.some((folder) => folder.id === folderId));
+    };
+    const applySidebarDrop = (sourceId: string, target: ProjectDrop) => {
+        if (target.kind === "order") { reorder(sourceId, target.id, target.after); return; }
+        const source = shown.find((p) => p.id === sourceId);
+        if (source && canMoveToFolder(sourceId, target.folderId)) {
+            void saveFolderMove(`/projects/${source.id}`, { expected_revision: source.revision, folder_id: target.folderId });
+        }
+    };
+    const touchOrder = useTouchProjectOrder(narrow && sidebar, shown, canMoveToFolder, applySidebarDrop);
+    const drop = narrow ? touchOrder?.target : desktopDrop;
+    const projectDrop = drop?.kind === "order" ? drop : null;
+    const dropFolderId = drop?.kind === "folder" ? drop.folderId : undefined;
+    const draggedId = narrow ? touchOrder?.id : draggingProject;
+    const showUnfiledDrop = !!draggedId && canMoveToFolder(draggedId, null);
+    const pendingFolderMove = folderMoveRequest.pending;
 
     useEffect(() => applyPrefs(loadPrefs()), []);
 
@@ -189,20 +305,46 @@ export function Workspace() {
         stream.current?.setSessions(visible);
     }, [layouts]);
 
+    const openRequest = useRef(0);
+    const [recentReveal, setRecentReveal] = useState<(RecentPaneReveal & { layoutId: string }) | null>(null);
+    useEffect(() => {
+        if (!recentReveal) return;
+        const timeout = window.setTimeout(() => setRecentReveal(null), PANE_REVEAL_DURATION);
+        return () => window.clearTimeout(timeout);
+    }, [recentReveal]);
     const openAt = useCallback(
-        (id: string, t: OpenTarget, how: "here" | "right" | "down" = "here") => {
+        (id: string, t: OpenTarget, how: "here" | "right" | "down" = "here", fromRecent = false) => {
+            const request = ++openRequest.current;
+            setRecentReveal(null);
             const small = id.endsWith("-narrow");
             if (t.kind === "settings") {
                 setSettingsTarget(t);
                 if (small) setSidebar(false);
                 return;
             }
-            openProjectAt(id, t, how);
+            leaveUsage();
+            const opened = openProjectAt(id, t, how);
+            if (fromRecent && !small && t.kind === "session" && how === "here") {
+                void opened.then((result) => {
+                    if (!result || request !== openRequest.current) return;
+                    // 세션 ID 대신 실제로 활성화된 탭 사본을 가리킨다.
+                    const leaf = L.focusedLeaf(result.layout);
+                    const tab = leaf.tabs.find((item) => item.id === leaf.active_tab);
+                    if (tab?.kind === "session" && tab.project_id === t.project_id && tab.resource_id === t.resource_id) {
+                        setRecentReveal({ layoutId: result.id, leafId: leaf.id, tabId: tab.id, request });
+                    }
+                });
+            }
+            if (t.kind === "session" && t.project_id && t.resource_id && !serverBlocked) {
+                void api.post("/recent/touch", { kind: "session", project_id: t.project_id, resource_id: t.resource_id })
+                    .catch((error) => setCloseError(error instanceof ApiError ? error.message : "최근 목록을 갱신하지 못했어요."));
+            }
             if (small) setSidebar(false);
         },
-        [openProjectAt, setSidebar],
+        [openProjectAt, serverBlocked, setSidebar, leaveUsage],
     );
     const open: Opener = useCallback((t, how) => openAt(baseKey, t, how), [baseKey, openAt]);
+    const openRecent: Opener = useCallback((t, how) => openAt(baseKey, t, how, true), [baseKey, openAt]);
     const dropProject = useCallback((source: string, target: OpenTarget, edge: L.DropEdge) => {
         if (!projects.data?.some((project) => project.id === target.project_id)) return;
         const sourceId = projectAt(source) ?? selectedProjectId;
@@ -224,7 +366,6 @@ export function Workspace() {
     // OS 알림을 누르면 해당 대화를 현재 배치에 연다(SETTINGS-014).
     useEffect(() => onOpenSession((projectId, sessionId) => open({ kind: "session", project_id: projectId, resource_id: sessionId, title: "대화" })), [open]);
 
-    const serverBlocked = useServerBlockReason();
     const [adding, setAdding] = useState<"project" | "folder" | null>(null);
     const creationTrigger = useRef<HTMLButtonElement | null>(null);
     const closeCreation = () => {
@@ -262,27 +403,75 @@ export function Workspace() {
         </Button>
     );
     const settingsControl = (
-        <Button variant="secondary" appearance="icon" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
-            <Icon name="settings" /><VisuallyHidden>설정</VisuallyHidden>
+        <Button variant="secondary" appearance="icon" aria-label="설정" title="설정" onClick={() => open({ kind: "settings", title: "설정" })}>
+            <Icon name="settings" />
         </Button>
     );
+    const usageControl = (
+        <Button type="button" appearance={narrow ? "navigation" : "icon"}
+            aria-label="사용량" title={narrow ? undefined : "사용량"} aria-haspopup="dialog" aria-expanded={usageOpen}
+            onClick={() => { openUsage(); if (narrow) mobile.setPanel(null); }}>
+            <Icon name="usage" size={16} />{narrow && "사용량"}
+        </Button>
+    );
+    const newTerminal = async () => {
+        if (!selectedProjectId || !layout || terminalPending.current || serverBlocked) return;
+        if (L.allTabs(layout).length >= L.MAX_TABS) {
+            setCloseError("열린 탭이 많아요. 탭을 닫고 다시 시도해 주세요.");
+            return;
+        }
+        terminalPending.current = true;
+        setOpeningTerminal(true);
+        setCloseError(null);
+        try {
+            const terminal = await api.post<{ id: string; name: string }>(`/projects/${selectedProjectId}/terminals`, { name: "터미널" });
+            openAt(key, { kind: "terminal", project_id: selectedProjectId, resource_id: terminal.id, title: terminal.name });
+        } catch (error) {
+            setCloseError(error instanceof ApiError ? error.message : "터미널을 열지 못했어요.");
+        } finally {
+            terminalPending.current = false;
+            setOpeningTerminal(false);
+        }
+    };
+    useWorkspaceShortcuts(keyboardShortcuts, (action) => {
+        if (action === "settings") {
+            open({ kind: "settings", title: "설정" });
+        } else if (action === "newTerminal") {
+            void newTerminal();
+        } else if (action === "toggleSidebar") {
+            if (!narrow) focusSidebarToggle.current = true;
+            setSidebar((current) => !current);
+        } else if (action === "closeTab") {
+            if (usageOpen) { closeUsage(); return; }
+            const tabId = layout && L.focusedLeaf(layout).active_tab;
+            if (tabId) closeTab(key, tabId);
+        } else {
+            if (usageOpen) return;
+            updateAt(key, (current) => applyTabShortcut(current, action, selectedProjectId ?? undefined));
+        }
+    });
     const selectedProject = projects.data?.find((p) => p.id === selectedProjectId);
     const mobileTabs = layout ? L.allTabs(layout).filter((tab) => tab.project_id === selectedProjectId || !tab.project_id) : [];
     const renderProject = (p: Project) => (
         <SidebarProject key={p.id} project={p} open={open} narrow={narrow}>
-            <Stack direction="horizontal" align="center" gap={0} minHeight={32} data-testid="project-row" data-project={p.name}
-                data-order-drop={orderDrop?.id === p.id ? orderDrop.after ? "after" : "before" : undefined}
-                xstyle={workspaceStyles.projectRow}
+            <Stack direction="horizontal" align="center" gap={0} minHeight={32} data-testid="project-row" data-project={p.name} data-project-order-id={p.id}
+                data-order-drop={projectDrop?.id === p.id ? projectDrop.after ? "after" : "before" : undefined}
+                data-order-dragging={touchOrder?.id === p.id ? "true" : undefined}
+                xstyle={[workspaceStyles.projectRow, touchOrder?.id === p.id && workspaceStyles.projectLift(touchOrder.dx, touchOrder.dy)]}
                 onDragOver={(event) => {
-                    const source = projects.data?.find((item) => item.id === draggingProject.current);
+                    const source = projects.data?.find((item) => item.id === draggingProject);
                     if (!event.dataTransfer.types.includes(DRAG_PROJECT) || !source || source.id === p.id
                         || (source.folder_id ?? null) !== (p.folder_id ?? null)) return;
                     event.preventDefault();
                     event.dataTransfer.dropEffect = "move";
                     const box = event.currentTarget.getBoundingClientRect();
-                    setOrderDrop({ id: p.id, after: event.clientY > box.top + box.height / 2 });
+                    setDesktopDrop({ kind: "order", id: p.id, after: event.clientY > box.top + box.height / 2 });
                 }}
-                onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setOrderDrop(null); }}
+                onDragLeave={(event) => {
+                    if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                        setDesktopDrop((current) => current?.kind === "order" && current.id === p.id ? null : current);
+                    }
+                }}
                 onDrop={(event) => {
                     const target = parseProjectDrag(event.dataTransfer.getData(DRAG_PROJECT));
                     if (!target?.project_id) return;
@@ -290,15 +479,17 @@ export function Workspace() {
                     event.stopPropagation();
                     const box = event.currentTarget.getBoundingClientRect();
                     reorder(target.project_id, p.id, event.clientY > box.top + box.height / 2);
-                    setOrderDrop(null);
+                    setDraggingProject(null);
+                    setDesktopDrop(null);
                 }}>
                 <Button appearance="navigation" aria-current={selectedProjectId === p.id ? "page" : undefined}
-                    draggable onDragStart={(event) => {
-                        draggingProject.current = p.id;
+                    data-project-drag={p.id} data-swipe-blocked={narrow ? "true" : undefined} xstyle={workspaceStyles.projectDragHandle}
+                    draggable={!narrow} onDragStart={(event) => {
+                        setDraggingProject(p.id);
                         event.dataTransfer.setData(DRAG_PROJECT, JSON.stringify(projectTarget(p)));
                         event.dataTransfer.effectAllowed = "copyMove";
                     }}
-                    onDragEnd={() => { draggingProject.current = null; setOrderDrop(null); }}
+                    onDragEnd={() => { setDraggingProject(null); setDesktopDrop(null); }}
                     onKeyDown={(event) => {
                         if (!event.altKey || !event.shiftKey || !["ArrowUp", "ArrowDown"].includes(event.key)) return;
                         event.preventDefault();
@@ -307,7 +498,7 @@ export function Workspace() {
                         if (next) reorder(p.id, next.id, event.key === "ArrowDown");
                     }}
                     onClick={() => { openProjectAt(baseKey, projectTarget(p), "here", true); if (narrow) setSidebar(false); }}
-                    title={`${p.root_path} · 끌어서 순서 변경 또는 프로젝트 분할(Alt+Shift+↑/↓ 순서 변경)`}>
+                    title={`${p.root_path} · ${narrow ? "길게 눌러 끌기" : "끌어서 순서 변경, 폴더 이동 또는 프로젝트 분할"} (Alt+Shift+↑/↓ 순서 변경)`}>
                     {p.pinned_at && <HintText aria-label="고정됨" hint="고정됨">📌</HintText>}
                     {p.icon && <GroveText type="inherit" color="inherit" aria-hidden>{p.icon}</GroveText>} <GroveText type="inherit" color="inherit" maxLines={1}>{p.name}</GroveText> {!p.available && <GroveText type="supporting" color="warning">(경로 없음)</GroveText>}
                     <LabelChips project={p} labels={labels} />
@@ -316,11 +507,11 @@ export function Workspace() {
                     <Popover label={`${p.name} 메뉴`} isOpen={menuFor === p.id}
                         onOpenChange={(value) => setMenuFor(value ? p.id : null)}
                         placement="below" alignment="end" width={240} padding={2} isModal={false} hasCloseButton={false}
-                        content={menuFor === p.id ? <ProjectMenu project={p} labels={labels} folders={folders.data} onClose={() => setMenuFor(null)}
-                            onSplit={narrow ? undefined : (how) => p.id === selectedProjectId
-                                ? open(projectTarget(p), how) : dropProject(key, projectTarget(p), how === "right" ? "right" : "bottom")} /> : null}>
+                        content={menuFor === p.id ? <ProjectMenu project={p} labels={labels} onClose={() => setMenuFor(null)} onHistory={() => setHistoryProject(p)}
+                            onRename={() => setRenamingProject(p)}
+                            onSettings={() => open({ kind: "settings", project_id: p.id, resource_id: "settings", title: `설정 · ${p.name}` })} /> : null}>
                         <Button type="button" variant="secondary" appearance="icon" width={32}
-                            aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`}>⋯</Button>
+                            aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} onClick={(event) => { projectMenuTrigger.current = event.currentTarget; }}>⋯</Button>
                     </Popover>
                 </StackItem>
             </Stack>
@@ -333,33 +524,53 @@ export function Workspace() {
                 role="navigation" label="빠른 탐색" data-testid="sidebar-rail" xstyle={[workspaceStyles.navigation, workspaceStyles.rail]}>
                 <Stack align="center" gap={0} height="100%">
                     <Stack align="center" justify="center" minHeight={40}>{sidebarControl}</Stack>
-                    <StackItem size="fill" />
-                    <Stack align="center" paddingBlock={2}>{settingsControl}</Stack>
+                    {usageControl}{settingsControl}
                 </Stack>
             </LayoutPanel>}
             <MobileDrawer enabled={narrow} side="left" open={mobile.panel === "left"} drag={mobile.drag}
-                label="탐색 메뉴" onClose={() => mobile.setPanel(null)}>
+                label="탐색 메뉴" headerActions={<>{create()}{settingsControl}</>} onClose={() => mobile.setPanel(null)}>
                 <LayoutPanel width={narrow ? "100%" : undefined} resizable={narrow ? undefined : navigation}
                     hasDivider={!narrow} padding={0} isScrollable={false}
                     role="complementary" label="탐색" data-testid="sidebar" xstyle={workspaceStyles.navigation}>
                     <Stack gap={0} height="100%">
                     {!narrow && <Stack direction="horizontal" align="center" justify="between" gap={0} minHeight={40} paddingInline={4}>
                         {brand}{wideSidebar && <Stack direction="horizontal" align="center" gap={0}>
-                            {create()}{sidebarControl}
+                            {usageControl}{settingsControl}{sidebarControl}
                         </Stack>}
-                    </Stack>}
-                    {narrow && <Stack gap={0} padding={2} data-testid="sidebar-navigation">
-                        {create()}
-                        <Button variant="secondary" appearance="navigation" onClick={() => open({ kind: "settings", title: "설정" })}>
-                            <Icon name="settings" /><GroveText type="inherit" color="inherit">설정</GroveText>
-                        </Button>
                     </Stack>}
                     <StackItem size="fill" xstyle={workspaceStyles.projects}>
                     <ScrollableArea axis="block" label="프로젝트 목록" height="100%" data-testid="sidebar-scroll">
                     <Stack gap={1} paddingInline={2}>
-                        <Stack as="section" gap={0} data-testid="projects">
+                        <Stack as="section" gap={0} data-testid="projects"
+                            onDragOver={(event) => {
+                                if (event.defaultPrevented || !draggingProject || !event.dataTransfer.types.includes(DRAG_PROJECT)) return;
+                                const folderId = projectFolderDropAt(event.target);
+                                if (folderId === undefined || !canMoveToFolder(draggingProject, folderId)) { setDesktopDrop(null); return; }
+                                event.preventDefault();
+                                event.dataTransfer.dropEffect = "move";
+                                setDesktopDrop((current) => current?.kind === "folder" && current.folderId === folderId
+                                    ? current : { kind: "folder", folderId });
+                            }}
+                            onDragLeave={(event) => {
+                                const folderId = projectFolderDropAt(event.target);
+                                if (folderId === projectFolderDropAt(event.relatedTarget)) return;
+                                setDesktopDrop((current) => current?.kind === "folder" && current.folderId === folderId ? null : current);
+                            }}
+                            onDrop={(event) => {
+                                const folderId = projectFolderDropAt(event.target);
+                                if (folderId === undefined || !draggingProject
+                                    || parseProjectDrag(event.dataTransfer.getData(DRAG_PROJECT))?.project_id !== draggingProject) return;
+                                event.preventDefault();
+                                setDraggingProject(null);
+                                setDesktopDrop(null);
+                                applySidebarDrop(draggingProject, { kind: "folder", folderId });
+                            }}>
                             <Stack direction="horizontal" align="center" justify="between" gap={0} minHeight={28} paddingInlineStart={2}>
-                                <Heading level={2} type="navigation" color="secondary">프로젝트</Heading>
+                                <StackItem size="fill" data-testid="project-list-heading" data-project-folder-drop={showUnfiledDrop ? "" : undefined}
+                                    data-folder-drop={dropFolderId === null || undefined} xstyle={[workspaceStyles.projectListHeading, dropFolderId === null && workspaceStyles.folderDrop]}>
+                                    <Heading level={2} type="navigation" color="secondary">{showUnfiledDrop ? "폴더 밖으로 이동" : "프로젝트"}</Heading>
+                                </StackItem>
+                                {!narrow && create()}
                                 <ActionMenu label="프로젝트 목록 옵션"
                                     trigger={<>⋯{labelFilter.length > 0 && <StatusDot variant="accent" label="라벨 필터 적용 중" />}</>}>
                                     <Stack gap={1}>
@@ -384,7 +595,12 @@ export function Workspace() {
                             {filtering && <LabelFilter labels={labels} selected={labelFilter} onChange={setLabelFilter} />}
                             {showArchived && <ArchivedProjects />}
                             {Boolean(folders.error) && <GroveText type="supporting" color="error" role="alert">폴더를 불러오지 못했어요. <Button type="button" appearance="link" onClick={folders.reload}>다시 확인</Button></GroveText>}
-                            <ProjectFolderTree projects={shown} folders={folders.data ?? []} renderProject={renderProject} />
+                            {folderMoveBusy && <GroveText type="supporting" role="status">프로젝트 이동 중…</GroveText>}
+                            {folderMoveError && <GroveText type="supporting" color="error" role="alert">{folderMoveError}{pendingFolderMove && <>{" "}
+                                <ServerActionButton type="button" appearance="link" onClick={() => void saveFolderMove(pendingFolderMove.path, pendingFolderMove.body)}>같은 요청 결과 확인</ServerActionButton>
+                            </>}</GroveText>}
+                            <VisuallyHidden role="status">{touchOrder ? `${shown.find((p) => p.id === touchOrder.id)?.name ?? ""} 이동 중` : ""}</VisuallyHidden>
+                            <ProjectFolderTree projects={shown} folders={folders.data ?? []} dropFolderId={dropFolderId} renderProject={renderProject} />
                             {!!projects.data?.length && shown.length === 0 && (
                                 <GroveText as="p" display="block" type="inherit" color="secondary" role="status">
                                     라벨 조건에 맞는 프로젝트가 없습니다. <Button type="button" variant="secondary" density="compact" onClick={() => setLabelFilter([])}>필터 해제</Button>
@@ -395,8 +611,8 @@ export function Workspace() {
                     </ScrollableArea>
                     </StackItem>
                     <Stack gap={0} paddingInline={2} xstyle={workspaceStyles.recentDock}>
-                        <SidebarUsage />
-                        <RecentPanel open={open} linked={splitSessions} />
+                        <RecentPanel open={openRecent} linked={splitSessions} />
+                        {narrow && usageControl}
                     </Stack>
                     </Stack>
                 </LayoutPanel>
@@ -410,15 +626,24 @@ export function Workspace() {
                 <NavigationContext layout={layout} projects={projects.data ?? NO_PROJECTS}
                     open={open} onBrowseProjects={() => setSidebar(true)} sidebarOpen={sidebar} />
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
-                {narrow ? <Button variant="secondary" appearance="icon" aria-label="열린 세션" title="열린 세션"
+                {narrow && <Button variant="secondary" appearance="icon" aria-label="새 대화" title="새 대화"
+                    disabled={!selectedProject || !selectedProject.available} onClick={() => {
+                        if (!selectedProject) return;
+                        open(projectTarget(selectedProject));
+                        requestNewConversation(selectedProject.id);
+                    }}><Icon name="plus" /></Button>}
+                {narrow && <Button variant="secondary" appearance="icon" aria-label="열린 세션" title="열린 세션"
                     aria-expanded={mobile.panel === "right"} onClick={() => mobile.setPanel("right")}>
                     <Icon name="panel" />
-                </Button> : wideSidebar && settingsControl}
+                </Button>}
             </Stack>
             </LayoutHeader>
-            {settingsTarget && <SettingsDialog key={`${settingsTarget.project_id ?? ""}:${settingsTarget.resource_id ?? ""}`}
+            {historyProject && <ProjectHistoryDialog key={historyProject.id} project={historyProject} onClose={closeHistory}
+                open={(target, how) => { setHistoryProject(null); open(target, how); }} />}
+            {renamingProject && <ProjectRenameDialog key={renamingProject.id} project={renamingProject} onClose={closeRename} />}
+            {settingsTarget && <PushStatusContext.Provider value={pushStatus}><SettingsDialog key={`${settingsTarget.project_id ?? ""}:${settingsTarget.resource_id ?? ""}`}
                 target={settingsTarget} projectName={projects.data?.find((p) => p.id === settingsTarget.project_id)?.name}
-                open={open} onClose={() => setSettingsTarget(null)} />}
+                open={open} onClose={() => setSettingsTarget(null)} /></PushStatusContext.Provider>}
             {adding === "project" && <AddProjectDialog blockedReason={serverBlocked} beforeMutation={requireServerAction} onDone={projectAdded} onClose={closeCreation} />}
             {adding === "folder" && <ProjectFolderDialog onDone={() => { setAdding(null); folders.reload(); }} onClose={closeCreation} />}
             {notice && (
@@ -427,6 +652,13 @@ export function Workspace() {
                     <Button variant="secondary" onClick={() => setNotice(null)}>닫기</Button>
                 </Stack>} />
             )}
+            {closeError && <Banner status="error" role="alert" title={closeError} data-testid="tab-close-error"
+                endContent={<Button variant="secondary" onClick={() => setCloseError(null)}>닫기</Button>} />}
+            {openingTerminal && <LoadingBar label="터미널 여는 중…" />}
+            {usageVisited && <CreationDialog label="사용량" isOpen={usageOpen} onClose={closeUsage} width="88em">
+                <PaneVisibility value={usageOpen}><UsagePanel onClose={closeUsage}
+                    onAuthenticate={(protocol) => { leaveUsage(); open({ kind: "settings", resource_id: `agent-auth:${protocol}`, title: "설정" }); }} /></PaneVisibility>
+            </CreationDialog>}
             <StackItem size="fill">
                 <Stack as="main" ref={projectContainer} direction="horizontal" gap={0} height="100%" xstyle={splitStyles.projectRoot}>
                     {Object.entries(layouts).map(([id, saved]) => {
@@ -438,8 +670,9 @@ export function Workspace() {
                             xstyle={splitStyles.projectPane(rect?.x ?? 0, rect?.y ?? 0, rect?.width ?? 1, rect?.height ?? 1)}
                             onPointerDownCapture={() => rect && projectId !== selectedProjectId && focusAt(id)}
                             onFocusCapture={() => rect && projectId !== selectedProjectId && focusAt(id)}>
-                            <SavedLayout id={id} layout={saved} onUpdate={updateAt} onOpen={openAt} onProjectDrop={dropProject}
+                            <SavedLayout id={id} layout={saved} onUpdate={updateAt} onCloseTab={closeTab} closingTabs={closingTabs} onOpen={openAt} onProjectDrop={dropProject}
                                 onCloseProject={geometry.panes.length > 1 ? closeProject : undefined} projectLabel={label}
+                                recentReveal={recentReveal?.layoutId === id && id === key ? recentReveal : undefined}
                                 visible={!!rect} projects={projects.data ?? NO_PROJECTS} />
                         </Stack>;
                     })}
@@ -461,12 +694,13 @@ export function Workspace() {
                             {kind === "other" && <Heading level={3} type="navigation">다른 화면</Heading>}
                             {tabs.map((tab) => <Stack direction="horizontal" align="center" gap={0} key={tab.id} data-testid="mobile-open-tab">
                                 <Button type="button" appearance="navigation" aria-current={layout && L.focusedLeaf(layout).active_tab === tab.id ? "page" : undefined}
-                                    onClick={() => { updateAt(key, (current) => L.activate(current, tab.id)); mobile.setPanel(null); }}>
-                                    {tab.title}
+                                    onClick={() => { leaveUsage(); updateAt(key, (current) => L.activate(current, tab.id)); mobile.setPanel(null); }}>
+                                    {L.tabTitle(tab)}
                                 </Button>
-                                <Button type="button" variant="secondary" appearance="icon" aria-label={`${tab.title} 탭 닫기`}
-                                    title="화면만 닫습니다. 실행과 초안은 유지됩니다."
-                                    onClick={() => updateAt(key, (current) => L.closeTab(current, tab.id))}>×</Button>
+                                <Button type="button" variant="secondary" appearance="icon" aria-label={`${L.tabTitle(tab)} 탭 닫기`}
+                                    title={closingTabs.has(tab.id) ? "탭 닫는 중…" : tab.kind === "terminal" ? "탭을 닫고 터미널 프로세스를 종료합니다" : tab.kind === "session" ? "탭을 닫고 최근 목록에서 숨깁니다. 대화와 실행 중인 작업은 유지됩니다." : "화면만 닫습니다. 실행은 계속되며 작성 중인 입력은 저장되지 않습니다."}
+                                    disabled={closingTabs.has(tab.id)} aria-busy={closingTabs.has(tab.id)}
+                                    onClick={() => closeTab(key, tab.id)}>{closingTabs.has(tab.id) ? "…" : "×"}</Button>
                             </Stack>)}
                         </section>;
                     })}
@@ -508,14 +742,17 @@ function ConnStatus({ status, retryAt, onRetry }: { status: string; retryAt?: nu
                     ? "오프라인 · 네트워크 없음"
                     : `서버 연결 끊김 · ${left}초 후 재시도`;
     return (
-        <HintText color={status === "offline" || status === "auth_expired" ? "error" : status === "live" ? "secondary" : "warning"} hint={`서버 연결 상태: ${label}`} data-testid="conn" role="status">
-            <StatusDot variant={status === "offline" || status === "auth_expired" ? "error" : status === "live" ? "success" : "warning"} label={label} />
+        <>
+        <HeaderUpdates connected={status === "live"} online={online} />
+        {status !== "live" && <HintText color={status === "offline" || status === "auth_expired" ? "error" : "warning"} hint={`서버 연결 상태: ${label}`} data-testid="conn" role="status">
+            <StatusDot variant={status === "offline" || status === "auth_expired" ? "error" : "warning"} label={label} />
             <VisuallyHidden>{label}</VisuallyHidden>
             {status === "offline" && (
                 <Button variant="secondary" density="compact" onClick={onRetry}>
                     지금 재연결
                 </Button>
             )}
-        </HintText>
+        </HintText>}
+        </>
     );
 }

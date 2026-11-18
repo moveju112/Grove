@@ -29,9 +29,9 @@ for (const theme of ["light", "dark"] as const) {
         await dialog.getByLabel("비밀번호", { exact: true }).fill(password);
         await dialog.getByRole("button", { name: "연결 요청", exact: true }).click();
         await expect(form.getByTestId("pairing-code")).toHaveText(/^[A-F0-9]{4}-[A-F0-9]{4}$/);
-        await expect(form.getByText("소유자 승인 대기 중", { exact: true })).toBeVisible();
+        await expect(form.getByText("기기 승인 대기 중", { exact: true })).toBeVisible();
         await page.screenshot({ path: info.outputPath("pairing-pending.png"), fullPage: true });
         await apiCall("DELETE", `/pairings/${pair.id}`);
-        await expect(form.getByRole("alert")).toContainText("만료되었거나 폐기·사용");
+        await expect(form.getByRole("alert")).toContainText("만료됐거나 이미 사용됐어요");
     });
 }

@@ -12,6 +12,11 @@ export const MAX_LEAVES = 16;
 export const MAX_TABS = 64;
 export const MAX_DEPTH = 8;
 
+// 프로젝트 참조 탭도 대화 전송 전의 입력 화면이다. 저장된 이름과 무관하게 같은 제목으로 표시한다.
+export function tabTitle(tab: Pick<Tab, "kind" | "title">): string {
+    return tab.kind === "project" ? "새 대화" : tab.title;
+}
+
 let counter = 0;
 export function uid(prefix: string): string {
     counter += 1;
@@ -57,6 +62,8 @@ export function fileTarget(tab: Pick<Tab, "resource_id" | "title" | "filePath" |
 
 function sameResource(a: Tab, b: Tab): boolean {
     if (a.kind !== b.kind || a.project_id !== b.project_id) return false;
+    // 아직 전송하지 않은 새 대화는 같은 프로젝트여도 서로 독립된 입력창이다.
+    if (a.kind === "project" && (!a.resource_id || !b.resource_id)) return false;
     if (a.kind !== "file") return a.resource_id === b.resource_id;
     const x = fileTarget(a), y = fileTarget(b);
     return x?.path === y?.path && x?.line === y?.line;
@@ -73,6 +80,15 @@ export function openTab(l: Layout, leafId: string, tab: Omit<Tab, "id"> & { id?:
     if (allTabs(l).length >= MAX_TABS) return l;
     const t: Tab = { ...tab, id: tab.id ?? uid("t") } as Tab;
     return { ...l, root: mapLeaf(l.root, leafId, (x) => ({ ...(x as Leaf), tabs: [...(x as Leaf).tabs, t], active_tab: t.id })), focused_leaf: leafId };
+}
+
+// 첫 전송이 완료되면 새 대화 탭을 실제 세션으로 바꾼다. 다른 탭의 포커스는 빼앗지 않는다.
+export function replaceTab(l: Layout, tabId: string, tab: Omit<Tab, "id">): Layout {
+    const leaf = leaves(l.root).find((x) => x.tabs.some((t) => t.id === tabId));
+    if (!leaf) return l;
+    return { ...l, root: mapLeaf(l.root, leaf.id, (x) => ({
+        ...x, tabs: x.tabs.map((t) => t.id === tabId ? { ...tab, id: tabId } : t),
+    })) };
 }
 
 /// 기본 열기는 현재 pane의 사본을 우선하고 다른 pane에 있으면 그 탭으로 이동한다.
@@ -132,6 +148,32 @@ function splitWith(root: Node, leafId: string, edge: (typeof SPLIT_EDGES)[number
     return mapLeaf(root, leafId, (x) => ({ type: "split", direction, ratio: 0.5, children: before ? [added, x] : [x, added] }));
 }
 
+export function splitRegionCount(node: Node, direction: Split["direction"]): number {
+    if (node.type !== "split" || node.direction !== direction) return 1;
+    return splitRegionCount(node.children[0], direction) + splitRegionCount(node.children[1], direction);
+}
+
+function balanceRegions(node: Node, direction: Split["direction"]): Node {
+    if (node.type !== "split" || node.direction !== direction) return node;
+    const [a, b] = node.children;
+    const first = splitRegionCount(a, direction);
+    const second = splitRegionCount(b, direction);
+    return { ...node, ratio: clampRatio(first / (first + second)), children: [balanceRegions(a, direction), balanceRegions(b, direction)] };
+}
+
+// 새 영역과 같은 방향으로 이어진 분할만 다시 나눈다. 반대 방향의 하위 배치는 한 영역으로 센다.
+function balanceSplit(root: Node, leafId: string, direction: Split["direction"]): Node {
+    const inGroup = (node: Node): boolean => node.type === "leaf" ? node.id === leafId
+        : node.direction === direction && node.children.some(inGroup);
+    const visit = (node: Node): Node => {
+        if (node.type === "leaf") return node;
+        if (inGroup(node)) return balanceRegions(node, direction);
+        const [a, b] = node.children;
+        return { ...node, children: depthOf(a, leafId) >= 0 ? [visit(a), b] : [a, visit(b)] };
+    };
+    return visit(root);
+}
+
 const clampIndex = (i: number | undefined, length: number) => Math.min(length, Math.max(0, i ?? length));
 
 /// 기존 tab을 drop 위치로 옮긴다. tab ID를 유지하므로 초안·스크롤·서버 작업은 그대로다.
@@ -153,7 +195,8 @@ export function placeTab(l: Layout, tabId: string, toLeafId: string, edge: DropE
     if ((from.id === to.id && from.tabs.length === 1) || !canSplit(l, to.id)) return l;
     const id = uid("L");
     const root = mapLeaf(l.root, from.id, (x) => removeFromLeaf(x as Leaf, tabId));
-    return collapseEmpty({ ...l, root: splitWith(root, to.id, edge, { type: "leaf", id, tabs: [tab], active_tab: tab.id }), focused_leaf: id });
+    const next = collapseEmpty({ ...l, root: splitWith(root, to.id, edge, { type: "leaf", id, tabs: [tab], active_tab: tab.id }), focused_leaf: id });
+    return { ...next, root: balanceSplit(next.root, id, EDGE[edge].direction) };
 }
 
 /// 최근 항목 등 새 자원을 drop 위치에 연다. center는 그 pane의 같은 자원을 재사용한다.
@@ -162,8 +205,8 @@ export function openAtEdge(l: Layout, toLeafId: string, edge: DropEdge, tab: Omi
     if (edge === "center") return openTab(l, toLeafId, tab);
     if (!canSplit(l, toLeafId) || allTabs(l).length >= MAX_TABS) return l;
     const id = uid("L");
-    const next = { ...l, root: splitWith(l.root, toLeafId, edge, { type: "leaf", id, tabs: [], active_tab: null }), focused_leaf: id };
-    return openTab(next, id, tab);
+    const root = splitWith(l.root, toLeafId, edge, { type: "leaf", id, tabs: [], active_tab: null });
+    return openTab({ ...l, root: balanceSplit(root, id, EDGE[edge].direction), focused_leaf: id }, id, tab);
 }
 
 export const DRAG_TAB = "application/x-grove-tab";
@@ -196,11 +239,11 @@ function removeFromLeaf(leaf: Leaf, tabId: string): Leaf {
     return { ...leaf, tabs, active_tab: active };
 }
 
-/// tab 닫기. 화면만 닫으며 서버 작업은 계속된다(PANE-005).
+/// 배치에서 탭만 제거한다. 터미널 종료 같은 서버 동작은 호출부에서 먼저 처리한다.
 export function closeTab(l: Layout, tabId: string): Layout {
     const leaf = leaves(l.root).find((x) => x.tabs.some((t) => t.id === tabId));
     if (!leaf) return l;
-    return collapseEmpty({ ...l, root: mapLeaf(l.root, leaf.id, (x) => removeFromLeaf(x as Leaf, tabId)) });
+    return collapseEmpty({ ...l, root: mapLeaf(l.root, leaf.id, (x) => removeFromLeaf(x as Leaf, tabId)) }, { rebalance: true });
 }
 
 /// 설정은 별도 창에서 연다. 이전 배치의 설정 탭만 제거하고 작업 탭과 ID는 유지한다.
@@ -209,13 +252,19 @@ export function withoutSettingsTabs(l: Layout): Layout {
 }
 
 /// 빈 pane을 제거하고 형제를 승격한다. 마지막 pane은 남긴다.
-export function collapseEmpty(l: Layout): Layout {
+export function collapseEmpty(l: Layout, { rebalance = false } = {}): Layout {
     const go = (n: Node): Node | null => {
         if (n.type === "leaf") return n.tabs.length === 0 ? null : n;
         const a = go(n.children[0]);
         const b = go(n.children[1]);
-        if (a && b) return { ...n, children: [a, b] };
-        return a ?? b;
+        if (a && b) {
+            const next: Split = { ...n, children: [a, b] };
+            // 닫혀서 같은 축의 영역 수가 바뀐 그룹만 균등하게 나눈다.
+            return rebalance && splitRegionCount(n, n.direction) !== splitRegionCount(next, n.direction)
+                ? balanceRegions(next, n.direction) : next;
+        }
+        const remaining = a ?? b;
+        return remaining && rebalance ? balanceRegions(remaining, n.direction) : remaining;
     };
     const root = go(l.root);
     if (!root) {
@@ -243,12 +292,14 @@ export function closeLeaf(l: Layout, leafId: string): Layout {
     root = mapLeaf(root, target.id, (x) => ({
         ...x as Leaf, tabs: [...(x as Leaf).tabs, ...leaf.tabs], active_tab: leaf.active_tab ?? (x as Leaf).active_tab,
     }));
-    return collapseEmpty({ ...l, root, focused_leaf: target.id });
+    return collapseEmpty({ ...l, root, focused_leaf: target.id }, { rebalance: true });
 }
+
+const clampRatio = (ratio: number) => Math.min(0.9, Math.max(0.1, ratio));
 
 /// path: 루트에서 split까지 children 인덱스 배열.
 export function setRatio(l: Layout, path: number[], ratio: number): Layout {
-    const r = Math.min(0.9, Math.max(0.1, ratio));
+    const r = clampRatio(ratio);
     const go = (n: Node, p: number[]): Node => {
         if (n.type !== "split") return n;
         if (p.length === 0) return { ...n, ratio: r };

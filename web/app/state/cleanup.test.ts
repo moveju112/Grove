@@ -26,7 +26,7 @@ class MemStorage implements Storage {
 describe("logout cleanup", () => {
     it("removes conversation copies and layout but keeps device id and display prefs", () => {
         const s = new MemStorage();
-        for (const k of ["grove.draft.session:1:tab", "grove.draft.project:2:new", "grove.file.buffer.copy", "grove.file.attempt.copy", "grove.file.view.copy", "grove.layout.desktop", "grove.script.run.project.key", "grove.composer.options", "grove.bots.hidden", "grove.device.id", "grove.device.prefs", "other.app"]) {
+        for (const k of ["grove.draft.session:1:tab", "grove.draft.project:2:new", "grove.send.session:1#tab", "grove.draft.definition.agent.id", "grove.file.buffer.copy", "grove.file.attempt.copy", "grove.file.view.copy", "grove.layout.desktop", "grove.script.run.project.key", "grove.composer.options", "grove.bots.hidden", "grove.device.id", "grove.device.prefs", "other.app"]) {
             s.setItem(k, "x");
         }
         clearDeviceCopies(s);

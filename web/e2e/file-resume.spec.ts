@@ -24,8 +24,7 @@ test("파일 탭과 최근 항목을 다시 열면 저장 전 편집·선택·�
         node.dispatchEvent(new Event("scroll", { bubbles: true }));
         return { start: node.selectionStart, end: node.selectionEnd, direction: node.selectionDirection, top: node.scrollTop };
     });
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-    await expect(page.getByLabel("설정 검색")).toBeVisible();
+    await page.getByRole("button", { name: "새 대화 탭", exact: true }).click();
     await page.getByRole("tablist").getByTestId("tab-title").filter({ hasText: `파일 · ${a.name}` }).click();
     await expect(area).toHaveValue(edited);
     await expect.poll(() => area.evaluate((node: HTMLTextAreaElement) => ({
@@ -56,8 +55,7 @@ async function openFixture(page: Page, prefix: string) {
     const area = files.getByLabel("파일 내용");
     await expect(area).toHaveValue("original\n");
     const revisit = async (title = `파일 · ${a.name}`) => {
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
-        await expect(page.getByLabel("설정 검색")).toBeVisible();
+        await page.getByRole("button", { name: "새 대화 탭", exact: true }).click();
         await page.getByRole("tablist").getByTestId("tab-title").filter({ hasText: title }).click();
     };
     return { project: a, name, path, files, area, revisit };
@@ -105,7 +103,7 @@ test("저장 응답이 유실된 뒤 탭을 다시 열어도 자동 전송 없�
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
     await expect(retry).toBeVisible();
     // 새 탭에 이어받은 보류 요청도 다시 화면을 바꾼 뒤까지 유지한다.
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByRole("button", { name: "새 대화 탭", exact: true }).click();
     await page.getByRole("tablist").getByTestId("tab-title").filter({ hasText: name }).click();
     await expect(retry).toBeVisible();
     await expect(area).toHaveJSProperty("readOnly", true);
@@ -125,7 +123,7 @@ test("로그아웃은 파일 편집·위치·보류 요청 사본을 정리한�
     const { area } = await openFixture(page, "resume-logout");
     await area.fill("private file edit fixture");
     await expect.poll(() => page.evaluate(() => Object.keys(localStorage).some((k) => k.startsWith("grove.file.buffer.")))).toBe(true);
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("로그아웃");
     await page.getByRole("button", { name: "이 브라우저에서 로그아웃" }).click();
     await expect(page.getByRole("form", { name: "로그인" })).toBeVisible();

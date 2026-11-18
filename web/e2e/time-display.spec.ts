@@ -9,14 +9,22 @@ test("시간 표시 설정은 이 기기에서 즉시 적용되고 새로고침 
     await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
     const row = page.getByRole("listitem").filter({ hasText: title });
     const time = row.getByTestId("session-updated").locator("time");
-    const listTab = page.getByRole("tab").getByRole("button", { name: `${a.name} 대화 목록`, exact: true });
+    const history = page.getByRole("dialog", { name: `${a.name} 기록`, exact: true });
+    const openHistory = async () => {
+        await page.getByTestId("project-row").filter({ hasText: a.name }).getByRole("button", { name: "프로젝트 메뉴", exact: true }).click();
+        await page.getByRole("dialog", { name: `${a.name} 메뉴`, exact: true }).getByRole("button", { name: "기록", exact: true }).click();
+        await expect(history).toBeVisible();
+    };
     const settings = async (style: "relative" | "absolute", clock: "12h" | "24h") => {
+        await history.getByRole("button", { name: "기록 닫기", exact: true }).click();
         await page.getByRole("button", { name: "설정", exact: true }).first().click();
         await page.getByLabel("설정 검색", { exact: true }).fill("시간 표시");
         await selectChoice(page.getByLabel("지난 시각 표시", { exact: true }), style);
         await selectChoice(page.getByLabel("시계 형식", { exact: true }), clock);
-        await listTab.click();
+        await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
+        await openHistory();
     };
+    await openHistory();
     await expect(time).toHaveText(/\d/);
     await expect(time).not.toHaveText("방금 전");
 
@@ -25,7 +33,7 @@ test("시간 표시 설정은 이 기기에서 즉시 적용되고 새로고침 
     await expect(time).toHaveAttribute("title", /AM|PM|오전|오후/);
 
     await page.reload();
-    await listTab.click();
+    await openHistory();
     await expect(time).toHaveText("방금 전");
     await settings("absolute", "24h");
     await expect(time).not.toHaveText(/방금 전|AM|PM|오전|오후/);

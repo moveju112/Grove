@@ -36,7 +36,7 @@ export function fallbackPayload(profile: ModelProfile, profiles: ModelProfile[],
 
 export function ProfileFallback({ profile, profiles }: { profile: ModelProfile; profiles: ModelProfile[] }) {
     const [editing, setEditing] = useState(false);
-    if (!http(profile)) return <GroveText as="p" display="block" type="supporting" color="secondary">CLI fallback 미지원</GroveText>;
+    if (!http(profile)) return null;
     const current = fallbackOptions(profile);
     return <GroveStack gap={0} role="group" aria-label={`${profile.name} fallback`} data-testid="profile-fallback">
         <GroveText type="supporting" color="secondary">fallback: {current.enabled ? `${current.candidates.length}개 명시적 HTTP 순서` : "꺼짐"}</GroveText>

@@ -39,6 +39,26 @@ for (const theme of ["light", "dark"] as const) {
         await expect(left).toHaveJSProperty("open", true);
         await expect(left).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
         await expect(left.getByRole("button", { name: "설정", exact: true })).toBeVisible();
+        const header = left.getByTestId("mobile-drawer-header");
+        await expect(header.getByRole("button")).toHaveCount(3);
+        for (const [index, name] of ["프로젝트·폴더 추가", "설정", "탐색 메뉴 닫기"].entries()) {
+            await expect(header.getByRole("button").nth(index)).toHaveAccessibleName(name);
+        }
+        const controls = await header.getByRole("button").evaluateAll((buttons) => buttons.map((button) => {
+            const box = button.getBoundingClientRect();
+            return { x: box.x, y: box.y, right: box.right, width: box.width, height: box.height };
+        }));
+        for (const [index, box] of controls.entries()) {
+            expect(box.width).toBeGreaterThanOrEqual(32);
+            expect(box.height).toBeGreaterThanOrEqual(32);
+            expect(box.y).toBe(controls[0]!.y);
+            if (index > 0) expect(controls[index - 1]!.right).toBeLessThanOrEqual(box.x);
+        }
+        await header.getByRole("button", { name: "프로젝트·폴더 추가", exact: true }).click();
+        await expect(page.getByRole("menuitem", { name: "프로젝트 추가", exact: true })).toBeVisible();
+        await expect(page.getByRole("menuitem", { name: "폴더 추가", exact: true })).toBeVisible();
+        await page.keyboard.press("Escape");
+        await expect(header.getByRole("button", { name: "프로젝트·폴더 추가", exact: true })).toBeFocused();
         const project = left.locator(`[data-testid="sidebar-project"][data-project-id="${a.id}"]`);
         await expect(project.getByTestId("sidebar-session")).toHaveCount(0);
         await expect(project.getByTestId("project-row")).toBeVisible();
@@ -81,11 +101,13 @@ for (const theme of ["light", "dark"] as const) {
         await page.getByRole("button", { name: "열린 세션", exact: true }).click();
         await right.getByRole("button", { name: `첫 대화 ${theme}`, exact: true }).click();
         await expect(right).toHaveJSProperty("open", false);
+        // 열린 탭을 오가는 동안 입력은 메모리에 남고, 서랍을 열고 닫아도 유지된다.
         await expect(sessionView(page, first.id).getByLabel("메시지 입력")).toHaveValue("첫 대화의 보존할 초안");
         await swipe(page, 110, 400, 350);
         await expect(left).toBeVisible();
         await swipe(page, 240, 400, 10);
         await expect(left).toHaveJSProperty("open", false);
+        await expect(sessionView(page, first.id).getByLabel("메시지 입력")).toHaveValue("첫 대화의 보존할 초안");
         await swipe(page, 10, 400, 12, 200);
         await expect(left).toHaveJSProperty("open", false);
         await page.getByRole("button", { name: "열린 세션", exact: true }).click();

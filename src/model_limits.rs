@@ -18,7 +18,12 @@ pub fn limits(c: &Connection, profile: &Profile) -> ApiResult<(usize, Resources)
     let provider = if crate::provider::cli::is_cli(&profile.protocol) {
         format!("cli:{}", profile.protocol)
     } else {
-        reqwest::Url::parse(&profile.base_url).map_err(|_| ApiError::invalid("모델 endpoint가 올바르지 않습니다"))?.origin().ascii_serialization()
+        let base_url = if profile.protocol == crate::provider::codex_oauth::PROTOCOL {
+            crate::provider::codex_oauth::BASE
+        } else {
+            &profile.base_url
+        };
+        reqwest::Url::parse(base_url).map_err(|_| ApiError::invalid("모델 endpoint가 올바르지 않습니다"))?.origin().ascii_serialization()
     };
     // 임의의 추가 헤더를 바꿔 같은 API key의 한도를 우회하지 않는다.
     // API key가 없는 헤더 인증/익명 endpoint는 계정을 추측하지 않고 origin 하나로 보수적으로 묶는다.
@@ -45,4 +50,33 @@ pub async fn auxiliary(
     }).await?;
     app.fair.acquire_scoped(&owner, &format!("aux:{}", crate::util::new_id()), max, Some(resources), cancel).await
         .map_err(|AcquireError::Cancelled| ApiError::conflict("cancelled", "모델 호출 대기가 취소됐습니다"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_oauth_limits_use_the_fixed_endpoint_for_blank_profiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let db = crate::store::Db::open(&dir.path().join("grove.db")).unwrap();
+        db.call_sync(|c| {
+            let mut profile = Profile {
+                protocol: crate::provider::codex_oauth::PROTOCOL.into(),
+                base_url: String::new(),
+                model: "default".into(),
+                api_key: None,
+                timeout: std::time::Duration::from_secs(5),
+                extra_headers: vec![],
+                sensitive_headers: vec![],
+            };
+            let (_, default) = limits(c, &profile)?;
+            assert_eq!(default.provider, "https://chatgpt.com");
+            profile.model = "another-model".into();
+            assert_eq!(limits(c, &profile)?.1.account, default.account);
+            profile.protocol = "openai".into();
+            assert_eq!(limits(c, &profile).err().unwrap().code, "invalid_request");
+            Ok(())
+        }).unwrap();
+    }
 }

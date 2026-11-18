@@ -49,7 +49,6 @@ export function DiagnosticsBundle() {
 
     if (supported === false) return null;
     return <GroveStack gap={0} data-testid="diagnostics-bundle">
-        <GroveText type="supporting" color="secondary">소유자 전용</GroveText>
         {!preparing && <GroveButton type="button" variant="secondary" density="compact" onClick={() => { setPreparing(true); setError(null); }}>진단 묶음 준비</GroveButton>}
         {preparing && <GroveStack gap={0} role="group" aria-label="진단 정보 범위 확인">
             <GroveText as="p" display="block" type="supporting" color="inherit">포함: 버전·OS·프로토콜·DB 크기·메모리·실행/대기 수·상태별 개수·이벤트 연결 상태.</GroveText>

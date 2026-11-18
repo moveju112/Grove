@@ -34,10 +34,10 @@ for (const width of [390, 1400]) {
             await expect(tooltip).toHaveCount(0);
             await login(page);
             await openSettings(page);
-            await page.getByLabel("설정 검색").fill("응답 언어");
+            await page.getByLabel("설정 검색").fill("출력 스타일");
             // Astryx는 포인터 포커스가 아니라 키보드 포커스에서 도움말을 미리 연다.
             await page.keyboard.press("Tab");
-            await page.getByRole("button", { name: "응답 언어 도움말", exact: true }).focus();
+            await page.getByRole("button", { name: "출력 스타일 도움말", exact: true }).focus();
             await expect(tooltip).toBeVisible();
             await expect(tooltip).toContainText("실제 적용값:");
             await expect.poll(async () => (await tooltip.boundingBox())!.x).toBeGreaterThanOrEqual(gutter);

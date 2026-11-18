@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, inputOptions, login, script, state } from "./helpers";
+import { splitRecentItem, apiCall, composerOption, ensureProfile, ensureProjects, login, requireToolApproval, script, state } from "./helpers";
 
 async function shared(page: Page) {
     const { a } = await ensureProjects();
@@ -25,8 +25,7 @@ async function shared(page: Page) {
     await loaded;
     await expect(page.getByTestId("conn")).toHaveText("연결됨");
     const before = messageQueries;
-    await recent.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
+    await splitRecentItem(recent);
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const left = page.getByTestId("pane").nth(0).getByTestId("session-view");
     const right = page.getByTestId("pane").nth(1).getByTestId("session-view");
@@ -38,6 +37,7 @@ async function shared(page: Page) {
 
 test("같은 대화의 두 승인 카드가 동시에 눌려도 도구와 모델 실행은 한 번만 이어진다", async ({ page }) => {
     const { project, session, title, left, right } = await shared(page);
+    await requireToolApproval(project.id);
     const name = `${title}.txt`;
     const p = await apiCall<{ root_path: string }>("GET", `/projects/${project.id}`);
     const path = join(p.root_path, name);
@@ -77,31 +77,14 @@ test("같은 대화의 두 승인 카드가 동시에 눌려도 도구와 모델
     }
 });
 
-test("같은 대화의 서버 초안 충돌은 두 입력을 보존하고 비교·합치기를 명시적으로 선택한다", async ({ page }) => {
-    const { session, left, right } = await shared(page);
-    const first = "left shared draft fixture";
-    const second = "right shared draft fixture";
+test("같은 대화의 분할 입력은 화면별 메모리에만 남고 서로 덮어쓰지 않는다", async ({ page }) => {
+    const { left, right } = await shared(page);
+    const first = "left independent input";
+    const second = "right independent input";
     await left.getByLabel("메시지 입력").fill(first);
     await right.getByLabel("메시지 입력").fill(second);
-    await inputOptions(left);
-    await left.getByRole("button", { name: "초안 서버 저장", exact: true }).click();
-    await expect(left.getByRole("status").filter({ hasText: /\S/ })).toContainText("서버에 초안을 저장했습니다");
-    await inputOptions(right);
-    await right.getByRole("button", { name: "초안 서버 저장", exact: true }).click();
-    const conflict = right.getByRole("alert").filter({ hasText: "서버 초안" });
-    await expect(conflict).toBeVisible();
     await expect(left.getByLabel("메시지 입력")).toHaveValue(first);
     await expect(right.getByLabel("메시지 입력")).toHaveValue(second);
-    await conflict.getByRole("button", { name: "서버 초안 보기", exact: true }).click();
-    await expect(conflict.getByRole("dialog", { name: "서버 초안", exact: true })).toBeVisible();
-    await expect(conflict.getByRole("dialog", { name: "서버 초안", exact: true }).locator("pre")).toHaveText(first);
-    await page.keyboard.press("Escape");
-    await conflict.getByRole("button", { name: "합치기", exact: true }).click();
-    await expect(right.getByLabel("메시지 입력")).toHaveValue(`${second}\n\n${first}`);
-    await inputOptions(right);
-    await right.getByRole("button", { name: "초안 서버 저장", exact: true }).click();
-    await expect(right.getByRole("status").filter({ hasText: /\S/ })).toContainText("서버에 초안을 저장했습니다");
-    await expect(left.getByLabel("메시지 입력")).toHaveValue(first);
-    const saved = await apiCall<{ revision: number; text: string }>("GET", `/drafts/session:${session.id}`);
-    expect(saved).toMatchObject({ revision: 2, text: `${second}\n\n${first}` });
+    expect(await page.evaluate(() => JSON.stringify(Object.values(localStorage)))).not.toContain(first);
+    expect(await page.evaluate(() => JSON.stringify(Object.values(localStorage)))).not.toContain(second);
 });

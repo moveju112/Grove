@@ -20,13 +20,19 @@ html, body {
     height: 100%;
     background: var(--bg);
     color: var(--text);
-    font: var(--font-size)/1.4 "Pretendard", -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif;
+    font: var(--font-size)/1.4 var(--font-family-body);
     -webkit-font-smoothing: antialiased;
 }
 * { box-sizing: border-box; }
 body > [data-astryx-theme] { min-height: 100%; }
 /* Astryx 레이아웃의 display보다 native hidden을 우선한다. */
 [hidden] { display: none !important; }
+/* Astryx Button의 label 슬롯까지 채워 탐색·설정의 짧은 제목도 왼쪽에 둔다.
+   공용 어댑터의 콘텐츠만 선택하며 spinner·터치 확장·상태 슬롯은 건드리지 않는다. */
+.astryx-button[data-grove-button-layout="fill"] > span > span:has(> [data-grove-button-content]) {
+    flex: 1 1 0;
+    min-width: 0;
+}
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
 /* 메시지 입력은 캐럿으로 위치를 표시한다. 입력 카드 안에 초점 테두리를 중복해서 그리지 않는다. */
 [data-ui="composer"] textarea:focus-visible { outline: none; }

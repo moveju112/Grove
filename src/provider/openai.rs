@@ -41,9 +41,8 @@ pub fn build_body(profile: &Profile, req: &ModelRequest) -> Value {
         "stream_options": { "include_usage": true },
     });
     if !req.tools.is_empty() {
-        body["tools"] = req
-            .tools
-            .iter()
+        body["tools"] = super::prompt_cache::tools(req)
+            .into_iter()
             .map(|t| json!({ "type": "function", "function": { "name": t.name, "description": t.description, "parameters": t.schema } }))
             .collect();
     }
@@ -56,6 +55,7 @@ pub fn build_body(profile: &Profile, req: &ModelRequest) -> Value {
     if let Some(e) = &req.effort {
         body["reasoning_effort"] = json!(e);
     }
+    super::prompt_cache::openai(profile, req, &mut body);
     body
 }
 
@@ -85,7 +85,7 @@ impl Accumulator {
                 input_tokens: u["prompt_tokens"].as_u64().unwrap_or(0),
                 output_tokens: u["completion_tokens"].as_u64().unwrap_or(0),
                 cache_read_tokens: u["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0),
-                cache_write_tokens: None,
+                cache_write_tokens: u["prompt_tokens_details"]["cache_write_tokens"].as_u64(),
                 reasoning_tokens: u["completion_tokens_details"]["reasoning_tokens"].as_u64(),
             };
         }
@@ -144,7 +144,7 @@ impl Accumulator {
 
     pub fn finish(self, saw_done: bool) -> Result<ModelOutput, ProviderError> {
         if !self.finished && !saw_done {
-            return Err(ProviderError { code: "stream_incomplete", message: "응답 stream이 완료 전에 끊겼습니다".into(), status: None, retryable: true, retry_after_secs: None });
+            return Err(ProviderError { retryable: true, ..ProviderError::new("stream_incomplete", "응답 stream이 완료 전에 끊겼습니다") });
         }
         let mut o = self.out.clone();
         o.tool_calls = self.calls_vec();

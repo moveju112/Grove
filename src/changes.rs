@@ -14,7 +14,7 @@ use crate::idem;
 use crate::tools::fs::{atomic_write, resolve, unified_diff};
 use crate::util::sha256_hex;
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use rusqlite::{Connection, params};
@@ -274,6 +274,75 @@ pub async fn list(State(app): State<App>, _p: Principal, Path(session_id): Path<
             })
             .await?,
     ))
+}
+
+#[derive(Deserialize)]
+pub struct ChangePageQuery {
+    pub before_seq: Option<i64>,
+    pub limit: Option<usize>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub struct FileChangeGroup {
+    pub turn_id: Option<String>,
+    pub applied: usize,
+    pub undone: usize,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub struct FileChangePage {
+    pub items: Vec<FileChange>,
+    pub groups: Vec<FileChangeGroup>,
+    pub total: usize,
+    pub applied: usize,
+    pub through_seq: i64,
+    pub next_before_seq: Option<i64>,
+}
+
+pub async fn page(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<ChangePageQuery>) -> ApiResult<Json<FileChangePage>> {
+    if q.before_seq.is_some_and(|seq| seq < 1) { return Err(ApiError::invalid("변경 이력 위치가 잘못되었습니다")); }
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let result = app.db.call(move |c| {
+        crate::sessions::get(c, &id)?;
+        let (total, applied, through_seq): (usize, usize, i64) = c.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(undone_at IS NULL), 0), COALESCE(MAX(seq), 0) FROM file_changes WHERE session_id = ?1",
+            params![id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        let before = q.before_seq.unwrap_or(i64::MAX);
+        let mut st = c.prepare(&format!("SELECT {COLS} FROM file_changes WHERE session_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3"))?;
+        let mut items = st.query_map(params![id, before, limit + 1], row)?.collect::<Result<Vec<_>, _>>()?;
+        let more = items.len() > limit;
+        items.truncate(limit);
+        items.reverse();
+        let next_before_seq = more.then(|| items[0].seq);
+        // 표시한 턴의 전체 건수만 구한다. 페이지 밖의 원문·행을 내려받지 않아도 그룹 작업의 의미는 유지한다.
+        let mut st = c.prepare(
+            "WITH visible AS (SELECT turn_id FROM file_changes WHERE session_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3) \
+             SELECT turn_id, COALESCE(SUM(stored AND undone_at IS NULL), 0), COALESCE(SUM(stored AND undone_at IS NOT NULL), 0) \
+             FROM file_changes WHERE session_id = ?1 AND seq <= ?4 AND \
+             (turn_id IN (SELECT turn_id FROM visible) OR (turn_id IS NULL AND EXISTS(SELECT 1 FROM visible WHERE turn_id IS NULL))) GROUP BY turn_id")?;
+        let groups = st.query_map(params![id, before, limit, through_seq], |r| Ok(FileChangeGroup {
+            turn_id: r.get(0)?, applied: r.get(1)?, undone: r.get(2)?,
+        }))?.collect::<Result<_, _>>()?;
+        Ok(FileChangePage { items, groups, total, applied, through_seq, next_before_seq })
+    }).await?;
+    Ok(Json(result))
+}
+
+#[derive(Deserialize)]
+pub struct ChangeGroupQuery {
+    pub turn_id: Option<String>,
+    pub through_seq: i64,
+    pub undone: bool,
+}
+
+pub async fn group_ids(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<ChangeGroupQuery>) -> ApiResult<Json<Vec<String>>> {
+    if q.through_seq < 1 { return Err(ApiError::invalid("변경 이력 위치가 잘못되었습니다")); }
+    let ids = app.db.call(move |c| {
+        crate::sessions::get(c, &id)?;
+        let mut st = c.prepare("SELECT id FROM file_changes WHERE session_id = ?1 AND turn_id IS ?2 AND seq <= ?3 AND stored = 1 AND (undone_at IS NOT NULL) = ?4 ORDER BY seq")?;
+        Ok(st.query_map(params![id, q.turn_id, q.through_seq, q.undone], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?)
+    }).await?;
+    Ok(Json(ids))
 }
 
 fn text_of(data_dir: &FsPath, sha: Option<&str>) -> Result<String, &'static str> {

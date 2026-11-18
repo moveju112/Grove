@@ -99,6 +99,17 @@ for (const width of [390, 1280]) {
             const pid = Number(readFileSync(join(state().cliDir!, "last-pid"), "utf8"));
             await page.reload();
             await expect(view.getByTestId("partial")).toContainText("중단 대기 중");
+            const cancel = view.getByTestId("turn-status").getByRole("button", { name: "취소", exact: true });
+            const dialog = page.waitForEvent("dialog");
+            const click = cancel.click();
+            const confirmation = await dialog;
+            expect(confirmation.type()).toBe("confirm");
+            expect(confirmation.message()).toBe("진행 중인 요청을 취소할까요?\n이미 변경된 파일은 되돌리지 않아요.");
+            await confirmation.dismiss();
+            await click;
+            await expect(view.getByTestId("partial")).toContainText("중단 대기 중");
+            expect((await apiCall<{ status: string }[]>("GET", `/sessions/${sessionId}/turns`))[0]!.status).toBe("running");
+            page.once("dialog", (dialog) => dialog.accept());
             await view.getByTestId("turn-status").getByRole("button", { name: "취소", exact: true }).click();
             await expect(view.getByTestId("turn-status")).toHaveCount(0);
             await expect.poll(() => {
@@ -108,7 +119,7 @@ for (const width of [390, 1280]) {
             const turns = await apiCall<{ status: string }[]>("GET", `/sessions/${sessionId}/turns`);
             expect(turns.filter((turn) => turn.status === "cancelled")).toHaveLength(1);
             const interrupted = view.getByTestId("turn-evidence");
-            await expect(interrupted).toContainText("CLI 작업 중단 · 변경 여부 확인 필요");
+            await expect(interrupted).toContainText("파일이 변경됐을 수 있으니 다시 실행하기 전에 diff를 확인하세요.");
             await openDetails(interrupted);
             await expect(interrupted.getByRole("dialog")).toContainText("중단해도 이미 바뀐 파일은 되돌아가지 않아요");
             await page.screenshot({ path: info.outputPath("cancelled.png"), animations: "disabled" });
@@ -174,7 +185,7 @@ test("등록한 모바일 기기는 암호화 연결로 에이전트와 대화�
 
 test("설정의 에이전트 연결은 반복해도 하나이며 삭제 후 새 연결을 만든다", async ({ page }) => {
     await login(page);
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByRole("tab", { name: "데몬 설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("모델 프로필");
     const section = page.getByTestId("setting-profiles");

@@ -30,6 +30,33 @@ afterEach(() => {
 });
 
 describe("입력 유무에 따른 worker 전환", () => {
+    it("등록이 끝날 때 이미 설치 중인 worker도 상태를 관찰한다", async () => {
+        const worker = new Worker();
+        worker.state = "installing";
+        registration.waiting = null;
+        registration.installing = worker;
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        worker.state = "installed";
+        registration.waiting = worker;
+        registration.installing = null;
+        worker.dispatchEvent(new Event("statechange"));
+        expect(worker.postMessage).not.toHaveBeenCalled();
+        pwa.applyUpdate();
+        expect(worker.postMessage).toHaveBeenCalledWith({ type: "skip-waiting" });
+    });
+
+    it("updatefound 처리 전에 설치가 끝나도 대기 worker를 놓치지 않는다", async () => {
+        registration.waiting = null;
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        const worker = new Worker();
+        registration.waiting = worker;
+        registration.dispatchEvent(new Event("updatefound"));
+        pwa.applyUpdate();
+        expect(worker.postMessage).toHaveBeenCalledWith({ type: "skip-waiting" });
+    });
+
     it("입력이 없으면 대기 worker를 바로 한 번만 활성화하고 한 번만 reload한다", async () => {
         input.pending = false;
         pwa.registerServiceWorker();
@@ -119,5 +146,44 @@ describe("입력 유무에 따른 worker 전환", () => {
         pwa.applyUpdate();
         expect(reload).toHaveBeenCalledTimes(1);
         expect(next.postMessage).not.toHaveBeenCalled();
+    });
+});
+
+describe("상태 점의 수동 웹 확인", () => {
+    it("새 worker의 설치 결과를 기다리고 빈 탭도 자동 전환하지 않는다", async () => {
+        input.pending = false;
+        registration.waiting = null;
+        const worker = new Worker();
+        worker.state = "installing";
+        registration.update.mockImplementation(async () => {
+            registration.installing = worker;
+            registration.dispatchEvent(new Event("updatefound"));
+        });
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        const check = pwa.checkWebUpdate();
+        expect(pwa.checkWebUpdate()).toBe(check);
+        await Promise.resolve();
+        await Promise.resolve();
+        worker.state = "installed";
+        registration.installing = null;
+        registration.waiting = worker;
+        worker.dispatchEvent(new Event("statechange"));
+        await expect(check).resolves.toBe("available");
+        expect(registration.update).toHaveBeenCalledTimes(1);
+        expect(worker.postMessage).not.toHaveBeenCalled();
+        expect(reload).not.toHaveBeenCalled();
+        pwa.applyUpdate();
+        expect(worker.postMessage).toHaveBeenCalledWith({ type: "skip-waiting" });
+    });
+
+    it("확인 불가·최신·확인 실패를 구분한다", async () => {
+        await expect(pwa.checkWebUpdate()).resolves.toBe("unavailable");
+        registration.waiting = null;
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        await expect(pwa.checkWebUpdate()).resolves.toBe("up_to_date");
+        registration.update.mockRejectedValueOnce(new Error());
+        await expect(pwa.checkWebUpdate()).resolves.toBe("failed");
     });
 });

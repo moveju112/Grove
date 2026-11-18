@@ -152,7 +152,8 @@ async fn cost_reuses_cache_pricing_and_automatic_summary_profile_selection() {
     let (_, session) = s.get(&format!("/api/v1/sessions/{sid}")).await;
     let project = session["project_id"].as_str().unwrap();
     for (key, value) in [("summary_profile", json!(summary)), ("auto_compact_percent", json!(1)), ("compact_min_tokens", json!(0))] {
-        let (st, r) = s.send(Method::PUT, &format!("/api/v1/settings/project/{project}/context.{key}"), json!({ "expected_revision": 0, "value": value })).await;
+        let (scope, id) = if key == "summary_profile" { ("server", "-") } else { ("project", project) };
+        let (st, r) = s.send(Method::PUT, &format!("/api/v1/settings/{scope}/{id}/context.{key}"), json!({ "expected_revision": 0, "value": value })).await;
         assert_eq!(st, StatusCode::OK, "{r}");
     }
     let (_, usage) = s.get(&format!("/api/v1/sessions/{sid}/context?profile_id={normal}")).await;

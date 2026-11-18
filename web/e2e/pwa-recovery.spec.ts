@@ -28,11 +28,12 @@ for (const width of [1400, 390]) {
             try {
                 await page.context().setOffline(true);
                 await expect(page.getByTestId("offline-banner")).toBeVisible();
-                await test.step("오프라인에서 프로젝트 +로 초안 입력에 복귀", async () => {
-                    const button = project.getByRole("button", { name: "새 대화", exact: true });
-                    await expect.poll(() => button.evaluate((node) => {
+                await test.step("오프라인에서 기존 초안 입력에 복귀", async () => {
+                    const entry = width <= 760 ? page.getByRole("banner").getByRole("button", { name: "새 대화", exact: true }) : project.getByLabel("메시지 입력", { exact: true });
+                    await expect.poll(() => entry.evaluate((node) => {
                         const bounds = node.getBoundingClientRect();
-                        return node.contains(document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2));
+                        const hit = document.elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+                        return node.contains(hit) ? true : hit?.outerHTML.slice(0, 500);
                     })).toBe(true);
                     await startProjectConversation(project);
                 });
@@ -111,7 +112,7 @@ test("대화 생성 뒤 offline 전환은 원래 생성·전송 키로만 확인
     }
 });
 
-test("오프라인 cold start는 인증 전 초안을 숨기고 삭제 없이 명시적인 온라인 복구를 안내한다", async ({ page }) => {
+test("오프라인 cold start는 미전송 입력을 저장하지 않고 명시적인 온라인 복구를 안내한다", async ({ page }) => {
     const { a } = await ensureProjects();
     const title = `Cold start ${Date.now()}`;
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
@@ -123,7 +124,7 @@ test("오프라인 cold start는 인증 전 초안을 숨기고 삭제 없이 �
     await view.getByLabel("메시지 입력").fill(privateText);
     const drafts = () => page.evaluate(() => Object.fromEntries(Object.keys(localStorage)
         .filter((key) => key.startsWith("grove.draft.")).map((key) => [key, localStorage.getItem(key)])));
-    await expect.poll(async () => JSON.stringify(await drafts())).toContain(privateText);
+    expect(await drafts()).toEqual({});
     const before = await drafts();
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
     // 시험 소유 쿠키만 제거해, 다른 사용자/인증 없는 브라우저의 재시작을 재현한다.
@@ -136,7 +137,7 @@ test("오프라인 cold start는 인증 전 초안을 숨기고 삭제 없이 �
         await page.context().setOffline(true);
         await page.reload();
         await expect(page.getByTestId("auth-recovery")).toBeVisible();
-        await expect(page.getByTestId("auth-recovery")).toContainText("기존 초안은 보존됐으며");
+        await expect(page.getByTestId("auth-recovery")).toContainText("대화 기록에서 결과를 확인");
         await expect(page.locator("body")).not.toContainText(privateText);
         await expect(page.getByLabel("메시지 입력")).toHaveCount(0);
         await expect(page.getByRole("button", { name: "연결·로그인 다시 확인" })).toBeDisabled();
@@ -149,13 +150,12 @@ test("오프라인 cold start는 인증 전 초안을 숨기고 삭제 없이 �
     await expect(page.getByTestId("auth-recovery")).toBeVisible();
     expect(mutations).toEqual([]);
     await page.getByRole("button", { name: "연결·로그인 다시 확인" }).click();
-    await expect(page.getByLabel("토큰")).toBeVisible();
+    await expect(page.getByRole("button", { name: "페어링 링크·QR로 등록" })).toBeVisible();
     expect(mutations.map((url) => new URL(url).pathname)).toEqual(["/api/v1/auth/refresh"]);
     expect(await drafts()).toEqual(before);
-    await page.getByLabel("토큰").fill(state().token);
-    await page.getByRole("button", { name: "로그인", exact: true }).click();
+    await login(page);
     await expect(page.getByTestId("conn")).toHaveText("연결됨");
-    await expect(sessionView(page, session.id).getByLabel("메시지 입력")).toHaveValue(privateText);
+    await expect(sessionView(page, session.id).getByLabel("메시지 입력")).toHaveValue("");
     expect(mutations.some((url) => /\/sessions\/[^/]+\/(turns|messages|followups)/.test(url))).toBe(false);
 });
 
@@ -171,7 +171,7 @@ test("cold start의 protocol 불일치는 로그인·페어링·refresh를 전�
     await expect(page.getByTestId("protocol-banner")).toContainText("protocol 2");
     await expect(page.getByTestId("auth-recovery")).toBeVisible();
     await expect(page.getByRole("button", { name: "연결·로그인 다시 확인" })).toBeDisabled();
-    await expect(page.getByLabel("토큰")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "페어링 링크·QR로 등록" })).toHaveCount(0);
     expect(mutations).toEqual([]);
 });
 

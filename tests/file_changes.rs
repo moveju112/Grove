@@ -30,6 +30,43 @@ fn ids(changes: &Value, turn: &str) -> Vec<Value> {
 }
 
 #[tokio::test]
+async fn change_pages_preserve_whole_group_undo_and_redo() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let project = s.create_project("paged-changes").await;
+    let sid = s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let mut patch = String::from("*** Begin Patch\n");
+    for i in 0..121 { patch.push_str(&format!("*** Add File: bulk/item-{i:03}.txt\n+{i}\n")); }
+    patch.push_str("*** End Patch\n");
+    f.push(fixture::tool_calls(&[("bulk", "apply_patch", json!({ "patch": patch }))]));
+    f.push(fixture::text("done"));
+    let turn = run_turn(&s, &sid, &profile, "bulk").await;
+    let (status, first) = s.get(&format!("/api/v1/sessions/{sid}/file-changes/page?limit=50")).await;
+    assert_eq!(status, StatusCode::OK, "{first}");
+    assert_eq!(first["total"], 121);
+    assert_eq!(first["items"].as_array().unwrap().len(), 50);
+    assert_eq!(first["groups"][0]["applied"], 121);
+    let before = first["next_before_seq"].as_i64().unwrap();
+    let (_, second) = s.get(&format!("/api/v1/sessions/{sid}/file-changes/page?limit=50&before_seq={before}")).await;
+    assert_eq!(second["items"].as_array().unwrap().len(), 50);
+    assert!(second["items"].as_array().unwrap().iter().all(|item| item["seq"].as_i64().unwrap() < before));
+    let through = first["through_seq"].as_i64().unwrap();
+    let (_, ids) = s.get(&format!("/api/v1/sessions/{sid}/file-changes/ids?turn_id={turn}&through_seq={through}&undone=false")).await;
+    assert_eq!(ids.as_array().unwrap().len(), 121);
+    let (status, result) = s.post(&format!("/api/v1/sessions/{sid}/file-changes/undo"), json!({ "change_ids": ids })).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let (_, page) = s.get(&format!("/api/v1/sessions/{sid}/file-changes/page?limit=50")).await;
+    assert_eq!(page["applied"], 0);
+    assert_eq!(page["groups"][0]["undone"], 121);
+    let (_, ids) = s.get(&format!("/api/v1/sessions/{sid}/file-changes/ids?turn_id={turn}&through_seq={through}&undone=true")).await;
+    let (status, result) = s.post(&format!("/api/v1/sessions/{sid}/file-changes/redo"), json!({ "change_ids": ids })).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    let root = std::path::Path::new(project["root_path"].as_str().unwrap());
+    assert_eq!(std::fs::read_to_string(root.join("bulk/item-120.txt")).unwrap(), "120\n");
+}
+
+#[tokio::test]
 async fn file_changes_patch_review_undo_redo() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;

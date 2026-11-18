@@ -1,4 +1,4 @@
-//! 최근 항목(RECENT/RECENCY)·기기별 분할 배치(LAYOUT/PANE)·서버 초안(RECENCY-005).
+//! 최근 항목(RECENT/RECENCY)·기기별 분할 배치(LAYOUT/PANE).
 
 use crate::App;
 use crate::auth::Principal;
@@ -54,7 +54,7 @@ const RCOLS: &str = "r.id, r.kind, r.project_id, p.name, r.resource_id, r.title,
     COALESCE(s.title, r.title), r.hidden_at, \
     (SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'user' AND m.rewound_at IS NULL ORDER BY m.seq DESC LIMIT 1), \
     COALESCE((SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'assistant' \
-        AND m.rewound_at IS NULL AND TRIM(COALESCE(json_extract(m.content, '$.text'), ''), char(9) || char(10) || char(13) || ' ') != '' \
+        AND m.rewound_at IS NULL AND m.history_has_text=1 \
         ORDER BY m.seq DESC LIMIT 1), s.created_at, r.last_access_at), \
     recent_turn.status, recent_turn.id, recent_request.seq";
 
@@ -134,7 +134,7 @@ fn recent_from_row(r: &Row) -> rusqlite::Result<RecentItem> {
 }
 
 fn get_recent(conn: &Connection, id: &str) -> ApiResult<RecentItem> {
-    conn.query_row(&format!("SELECT {RCOLS} {RFROM} WHERE r.id = ?1"), params![id], recent_from_row)
+    conn.query_row(&format!("SELECT {RCOLS} {RFROM} WHERE r.id = ?1 AND r.kind != 'terminal'"), params![id], recent_from_row)
         .optional()?
         .ok_or_else(|| ApiError::not_found("최근 항목이 없습니다"))
 }
@@ -147,6 +147,8 @@ pub struct Touch {
     pub title: Option<String>,
     pub view_state: Option<Value>,
     pub seen_completed_turn_id: Option<String>,
+    /// 읽음·화면 위치 갱신은 false로 보내며, 명시적으로 다시 열 때만 숨김을 해제한다.
+    pub reopen: Option<bool>,
 }
 
 fn validate_view_state(v: &Value) -> ApiResult<()> {
@@ -159,7 +161,10 @@ fn validate_view_state(v: &Value) -> ApiResult<()> {
 /// 자원을 열 때 호출한다. 같은 자원은 항목 하나만 유지하고 접근 시각만 갱신한다(RECENCY-002).
 /// 여러 기기가 같은 대화를 보면 늦게 갱신된 기기의 낮은 `last_seen_seq`가 읽음을 되돌리지 않도록 큰 값을 유지한다(RECENT-006).
 pub async fn touch(State(app): State<App>, p: Principal, headers: HeaderMap, Json(b): Json<Touch>) -> ApiResult<Response> {
-    if !matches!(b.kind.as_str(), "session" | "file" | "terminal" | "project") {
+    if b.kind == "terminal" {
+        return Err(ApiError::invalid("터미널은 최근 항목에 기록하지 않습니다"));
+    }
+    if !matches!(b.kind.as_str(), "session" | "file" | "project") {
         return Err(ApiError::invalid("알 수 없는 항목 종류입니다"));
     }
     if b.resource_id.is_empty() || b.resource_id.len() > 4096 {
@@ -174,6 +179,9 @@ pub async fn touch(State(app): State<App>, p: Principal, headers: HeaderMap, Jso
     let mut intent = json!({ "k": b.kind, "p": b.project_id, "r": b.resource_id, "t": b.title, "v": b.view_state });
     if let Some(id) = &b.seen_completed_turn_id {
         intent["seen_completed_turn_id"] = json!(id);
+    }
+    if let Some(reopen) = b.reopen {
+        intent["reopen"] = json!(reopen);
     }
     let h = idem::body_hash("recent.touch", &intent);
     idem::run(&app, &p, &headers, &h, move |tx, now| {
@@ -204,11 +212,12 @@ pub async fn touch(State(app): State<App>, p: Principal, headers: HeaderMap, Jso
         let id = crate::util::new_id();
         tx.execute(
             "INSERT INTO recent_items (id, kind, project_id, resource_id, title, last_access_at, view_state) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
-             ON CONFLICT(kind, project_id, resource_id) DO UPDATE SET last_access_at = ?6, hidden = 0, hidden_at = NULL, title = ?5, \
+             ON CONFLICT(kind, project_id, resource_id) DO UPDATE SET last_access_at = ?6, \
+             hidden = CASE WHEN ?9 THEN 0 ELSE hidden END, hidden_at = CASE WHEN ?9 THEN NULL ELSE hidden_at END, title = ?5, \
              view_state = CASE WHEN ?8 THEN json_set(json_patch(view_state, ?7), '$.last_seen_seq', \
                  MAX(COALESCE(json_extract(view_state, '$.last_seen_seq'), 0), COALESCE(json_extract(?7, '$.last_seen_seq'), 0))) \
                  ELSE view_state END, revision = revision + 1",
-            params![id, b.kind, b.project_id, b.resource_id, title, now, view_state.to_string(), b.view_state.is_some()],
+            params![id, b.kind, b.project_id, b.resource_id, title, now, view_state.to_string(), b.view_state.is_some(), b.reopen.unwrap_or(true)],
         )?;
         let rid: String = tx.query_row(
             "SELECT id FROM recent_items WHERE kind = ?1 AND project_id = ?2 AND resource_id = ?3",
@@ -266,7 +275,7 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
         .call(move |c| {
             // 상태 필터는 서버 상태로 계산하므로 전체를 정렬한 뒤 걸러낸다. PERF(port): 항목 수가 매우 많으면 SQL 조건으로 내린다.
             let sql = format!(
-                "SELECT {RCOLS} {RFROM} WHERE (?1 IS NULL OR r.project_id = ?1) \
+                "SELECT {RCOLS} {RFROM} WHERE r.kind != 'terminal' AND (?1 IS NULL OR r.project_id = ?1) \
                  ORDER BY r.pinned DESC, r.id DESC"
             );
             let mut st = c.prepare(&sql)?;
@@ -296,8 +305,8 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
                     needle.is_empty()
                         || i.title.to_lowercase().contains(&needle)
                         || i.project_name.to_lowercase().contains(&needle)
-                        // 파일·터미널은 경로/이름으로 찾되, 세션·프로젝트의 내부 UUID는 검색 대상이 아니다.
-                        || (matches!(i.kind.as_str(), "file" | "terminal") && i.resource_id.to_lowercase().contains(&needle))
+                        // 파일은 경로로도 찾되, 세션·프로젝트의 내부 UUID는 검색 대상이 아니다.
+                        || (i.kind == "file" && i.resource_id.to_lowercase().contains(&needle))
                 })
                 .collect();
             let total = filtered.len() as i64;
@@ -354,11 +363,13 @@ pub async fn update(
     .await
 }
 
-// ---------------- 기기별 레이아웃 ----------------
+// ---------------- 기기 배치와 공유 대화 탭 ----------------
 
 pub const LAYOUT_SCHEMA: i64 = 1;
 const MAX_LEAVES: usize = 16;
 const MAX_TABS: usize = 64;
+const WORKSPACE_TABS_PREFIX: &str = "workspace-tabs-";
+const WORKSPACE_RESUME: &str = "workspace-resume";
 
 /// split tree 검증(PANE-001, PANE-002, PANE-008).
 /// node = {type:"split", direction:"row"|"column", ratio:0.1..0.9, children:[node,node]}
@@ -446,11 +457,17 @@ pub async fn get_layout(State(app): State<App>, _p: Principal, Path(device): Pat
     let v = app
         .db
         .call(move |c| {
-            let row: Option<(String, i64, String)> = c
-                .query_row("SELECT layout, revision, updated_at FROM layouts WHERE device_id = ?1", params![device], |r| {
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?))
-                })
-                .optional()?;
+            let sql = if device == WORKSPACE_RESUME {
+                "SELECT l.layout, l.revision, l.updated_at FROM projects p
+                 JOIN layouts l ON l.device_id = ?1 || p.id
+                 WHERE p.archived_at IS NULL AND json_array_length(l.layout, '$.root.tabs') > 0
+                 ORDER BY l.updated_at DESC, l.rowid DESC LIMIT 1"
+            } else {
+                "SELECT layout, revision, updated_at FROM layouts WHERE device_id = ?1"
+            };
+            let key = if device == WORKSPACE_RESUME { WORKSPACE_TABS_PREFIX } else { &device };
+            let row: Option<(String, i64, String)> =
+                c.query_row(sql, params![key], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?;
             Ok(match row {
                 Some((l, rev, at)) => json!({ "layout": serde_json::from_str::<Value>(&l)?, "revision": rev, "updated_at": at }),
                 None => json!({ "layout": null, "revision": 0, "updated_at": null }),
@@ -475,6 +492,20 @@ pub async fn put_layout(
 ) -> ApiResult<Response> {
     valid_device_id(&device)?;
     validate_layout(&b.layout)?;
+    if device == WORKSPACE_RESUME {
+        return Err(ApiError::invalid("이어갈 작업 공간은 직접 저장할 수 없습니다"));
+    }
+    if let Some(project) = device.strip_prefix(WORKSPACE_TABS_PREFIX) {
+        let root = &b.layout["root"];
+        let tabs = root["tabs"].as_array().ok_or_else(|| ApiError::invalid("공유 대화 탭은 한 목록으로 저장해야 합니다"))?;
+        let mut sessions = std::collections::HashSet::new();
+        if root["type"] != "leaf" || project.is_empty() || tabs.iter().any(|tab| {
+            tab["kind"] != "session" || tab["project_id"] != project
+                || !tab["resource_id"].as_str().is_some_and(|id| !id.is_empty() && sessions.insert(id))
+        }) {
+            return Err(ApiError::invalid("공유 대화 탭은 한 프로젝트에 속하고 중복되지 않아야 합니다"));
+        }
+    }
     if b.layout.to_string().len() > 64 * 1024 {
         return Err(ApiError::invalid("layout은 64KiB 이하여야 합니다"));
     }
@@ -495,84 +526,6 @@ pub async fn put_layout(
         )?;
         events::append(tx, now, "layout.updated", None, None, &json!({ "device_id": device, "revision": cur_rev + 1 }))?;
         Ok((StatusCode::OK, json!({ "layout": b.layout, "revision": cur_rev + 1, "updated_at": now })))
-    })
-    .await
-}
-
-// ---------------- 서버 초안 ----------------
-
-fn check_resource_key(conn: &Connection, key: &str) -> ApiResult<()> {
-    match key.split_once(':') {
-        Some(("session", id)) => crate::sessions::get(conn, id).map(|_| ()),
-        Some(("project", id)) => crate::projects::get(conn, id).map(|_| ()),
-        _ => Err(ApiError::invalid("resource_key는 session:<id> 또는 project:<id>여야 합니다")),
-    }
-}
-
-#[derive(Serialize, ts_rs::TS)]
-pub struct Draft {
-    pub resource_key: String,
-    pub text: String,
-    pub revision: i64,
-    pub device_name: String,
-    pub updated_at: Option<String>,
-}
-
-fn load_draft(conn: &Connection, key: &str) -> ApiResult<Draft> {
-    Ok(conn
-        .query_row("SELECT text, revision, device_name, updated_at FROM drafts WHERE resource_key = ?1", params![key], |r| {
-            Ok(Draft { resource_key: key.into(), text: r.get(0)?, revision: r.get(1)?, device_name: r.get(2)?, updated_at: r.get(3)? })
-        })
-        .optional()?
-        .unwrap_or(Draft { resource_key: key.into(), text: String::new(), revision: 0, device_name: String::new(), updated_at: None }))
-}
-
-pub async fn get_draft(State(app): State<App>, _p: Principal, Path(key): Path<String>) -> ApiResult<Json<Draft>> {
-    Ok(Json(
-        app.db
-            .call(move |c| {
-                check_resource_key(c, &key)?;
-                load_draft(c, &key)
-            })
-            .await?,
-    ))
-}
-
-#[derive(Deserialize)]
-pub struct PutDraft {
-    pub expected_revision: i64,
-    pub text: String,
-    pub device_name: String,
-}
-
-/// 명시적 기기 간 초안 저장. revision이 다르면 서버 값을 돌려주고 덮어쓰지 않는다(무음 덮어쓰기 금지).
-pub async fn put_draft(
-    State(app): State<App>,
-    p: Principal,
-    headers: HeaderMap,
-    Path(key): Path<String>,
-    Json(b): Json<PutDraft>,
-) -> ApiResult<Response> {
-    if b.text.chars().count() > crate::sessions::MAX_MESSAGE_CHARS {
-        return Err(ApiError::invalid("초안이 너무 깁니다"));
-    }
-    let device_name: String = b.device_name.chars().take(80).collect();
-    let h = idem::body_hash("draft.put", &json!({ "k": key, "rev": b.expected_revision, "t": b.text, "d": device_name }));
-    idem::run(&app, &p, &headers, &h, move |tx, now| {
-        check_resource_key(tx, &key)?;
-        let cur = load_draft(tx, &key)?;
-        if cur.revision != b.expected_revision {
-            return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));
-        }
-        let rev = cur.revision + 1;
-        tx.execute(
-            "INSERT INTO drafts (resource_key, text, revision, device_name, updated_at) VALUES (?1, ?2, ?3, ?4, ?5) \
-             ON CONFLICT(resource_key) DO UPDATE SET text = ?2, revision = ?3, device_name = ?4, updated_at = ?5",
-            params![key, b.text, rev, device_name, now],
-        )?;
-        let d = load_draft(tx, &key)?;
-        events::append(tx, now, "draft.updated", None, None, &json!({ "resource_key": key, "revision": rev, "device_name": device_name }))?;
-        Ok((StatusCode::OK, serde_json::to_value(d)?))
     })
     .await
 }

@@ -24,7 +24,7 @@ async function repository(name: string) {
 async function select(page: Page, project: { name: string }) {
     await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: project.name, exact: true }).click();
     await openTool(page, "변경");
-    await expect(page.getByTestId("git-context")).toContainText("Git 위치");
+    await expect(page.getByTestId("git-context").filter({ visible: true })).toContainText("Git 위치");
 }
 
 test("실제 Git 위치·권한·detached·dirty를 조회하고 index와 입력·미확정 요청을 보존한다", async ({ page }) => {
@@ -33,12 +33,12 @@ test("실제 Git 위치·권한·detached·dirty를 조회하고 index와 입력
     await apiCall("PUT", `/settings/project/${project.id}/tools.mode`, { expected_revision: 0, value: "read_only" });
     await login(page);
     await select(page, project);
-    const overview = page.getByTestId("git-context");
+    const overview = page.getByTestId("git-context").filter({ visible: true });
     const panel = page.getByTestId("git-panel");
     await expect(overview).toContainText(run("rev-parse", "HEAD"));
     await expect(overview).toContainText("주 worktree");
     await expect(overview).toContainText("origin 없음");
-    await expect(overview).toContainText("모델 도구 정책: read_only");
+    await expect(overview.locator("dt").filter({ hasText: "모델 도구 정책:" }).locator("..")).toContainText("read_only");
     await expect(overview).toContainText("조회 결과는 실행 허가가 아닙니다.");
     await overview.getByRole("button", { name: "Git 실행 권한 도움말", exact: true }).focus();
     await page.keyboard.press("Enter");
@@ -85,7 +85,7 @@ test("GitHub 표시 fixture는 오류·없음·stale을 성공과 구분하고 �
     let status: GitContextState = "ok";
     let mismatch = false;
     // GitHub 표시 계약만 대체한다. 로컬 위치·권한은 실제 API, gh argv/HEAD 검증은 Rust 격리 fixture가 담당한다.
-    await page.route(`**/projects/${project.id}/git/context`, async (route) => {
+    await page.route(`**/projects/${project.id}/git/context*`, async (route) => {
         const response = await route.fetch();
         const data = await response.json() as GitContext;
         data.github = {
@@ -97,22 +97,24 @@ test("GitHub 표시 fixture는 오류·없음·stale을 성공과 구분하고 �
     });
     await login(page);
     await select(page, project);
-    const overview = page.getByTestId("git-context");
+    const overview = page.getByTestId("git-context").filter({ visible: true });
+    const pr = overview.locator("dt").filter({ hasText: "PR:" }).locator("..");
+    const ci = overview.locator("dt").filter({ hasText: "CI:" }).locator("..");
     await expect(overview).toContainText("#42 open");
-    await expect(overview).toContainText("CI: 성공");
+    await expect(ci).toContainText(contextLabel.success);
     for (const next of ["none", "unsupported", "missing", "unauthenticated", "denied", "timeout", "unknown", "stale"] as const) {
         status = next;
         await overview.getByRole("button", { name: "개요 다시 확인" }).click();
-        await expect(overview).toContainText(`PR: ${contextLabel[next]}`);
+        await expect(pr).toContainText(contextLabel[next]);
         await expect(overview).not.toContainText("#42");
-        await expect(overview).not.toContainText("CI: 성공");
+        await expect(ci).not.toContainText(contextLabel.success);
     }
     status = "ok";
     mismatch = true;
     await overview.getByRole("button", { name: "개요 다시 확인" }).click();
-    await expect(overview).toContainText(`PR: ${contextLabel.stale}`);
+    await expect(pr).toContainText(contextLabel.stale);
     await expect(overview).not.toContainText("#42");
-    await expect(overview).not.toContainText("CI: 성공");
+    await expect(ci).not.toContainText(contextLabel.success);
 });
 
 test("늦은 응답은 새 조회와 다른 프로젝트를 덮지 않고 재접속은 최신 HEAD를 다시 읽는다", async ({ page, context }) => {
@@ -123,18 +125,23 @@ test("늦은 응답은 새 조회와 다른 프로젝트를 덮지 않고 재접
     let started = () => {};
     let requestStarted = Promise.resolve();
     let responseDone = Promise.resolve();
+    let responseFinished = Promise.resolve();
+    let finished = () => {};
     const arm = () => {
         hold = true;
         requestStarted = new Promise<void>((resolve) => { started = resolve; });
         responseDone = new Promise<void>((resolve) => {
             release = resolve;
         });
+        responseFinished = new Promise<void>((resolve) => { finished = resolve; });
     };
-    await page.route(`**/projects/${a.project.id}/git/context`, async (route) => {
+    await page.route(`**/projects/${a.project.id}/git/context*`, async (route) => {
         const response = await route.fetch();
         const data = await response.json() as GitContext;
+        let finish = () => {};
         if (hold) {
             hold = false;
+            finish = finished;
             started();
             await responseDone;
             data.github = {
@@ -143,28 +150,27 @@ test("늦은 응답은 새 조회와 다른 프로젝트를 덮지 않고 재접
             };
         }
         await route.fulfill({ response, json: data });
+        finish();
     });
     await login(page);
     await select(page, a.project);
-    const overview = page.getByTestId("git-context");
+    const overview = page.getByTestId("git-context").filter({ visible: true });
     await expect(overview).toContainText(a.run("rev-parse", "HEAD"));
     arm();
     await overview.getByRole("button", { name: "개요 다시 확인" }).click();
     await requestStarted;
     await overview.getByRole("button", { name: "개요 다시 확인" }).click();
     await expect(overview).toContainText("origin 없음");
-    const late = page.waitForResponse((response) => response.url().endsWith(`/projects/${a.project.id}/git/context`));
     release();
-    await late;
+    await responseFinished;
     await expect(overview).not.toContainText("#999");
     arm();
     await overview.getByRole("button", { name: "개요 다시 확인" }).click();
     await requestStarted;
     await select(page, b.project);
     await expect(overview).toContainText(`프로젝트 ${b.project.id}`);
-    const oldProject = page.waitForResponse((response) => response.url().endsWith(`/projects/${a.project.id}/git/context`));
     release();
-    await oldProject;
+    await responseFinished;
     await expect(overview).toContainText(`프로젝트 ${b.project.id}`);
     await expect(overview).not.toContainText("#999");
     await context.setOffline(true);

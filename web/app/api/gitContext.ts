@@ -16,12 +16,15 @@ export type GitContext = {
         ci: { status: GitContextState; count?: number };
     };
     authority?: {
-        authenticated: boolean; is_owner: boolean; tool_mode: string;
+        authenticated: boolean; tool_mode: string;
         direct_git: "authenticated"; remote_permission: "unknown";
         actions: { id: string; status: "blocked" | "conditional"; reason: string }[];
     };
 };
 
-export function readGitContext(projectId: string, head?: string) {
-    return api.get<GitContext>(`/projects/${encodeURIComponent(projectId)}/git/context${head ? `?head=${encodeURIComponent(head)}` : ""}`);
+export function readGitContext(projectId: string, head?: string, options?: { cached?: boolean; signal?: AbortSignal }) {
+    const query = new URLSearchParams();
+    if (head) query.set("head", head);
+    if (options?.cached) query.set("cached", "true");
+    return api.get<GitContext>(`/projects/${encodeURIComponent(projectId)}/git/context?${query}`, { signal: options?.signal });
 }

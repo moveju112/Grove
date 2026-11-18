@@ -1,4 +1,4 @@
-import type { Store } from "./drafts";
+type Store = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 export type FileBuffer = {
     text: string | null;

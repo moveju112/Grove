@@ -1,10 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, composerCommand, composerOption, ensureProfile, ensureProjects, login, openDetails, requireToolApproval, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 test("소유 작업이 남은 final은 중간 응답으로 표시하고 작업 결과 뒤에 완료한다", async ({ page }) => {
-    const profile = await ensureProfile();
+    await ensureProfile();
     const { a } = await ensureProjects();
+    await requireToolApproval(a.id);
     const title = `owned completion ${Date.now()}`;
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
@@ -12,7 +13,7 @@ test("소유 작업이 남은 final은 중간 응답으로 표시하고 작업 �
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
-    await composerOption(view, "모델 프로필", profile);
+    await composerCommand(view, "/model fixture");
     await composerOption(view, "도구", true);
     await script({ frames: frames.tool("bg", "shell", { command: "sleep 10", background: true, timeout_ms: 10000 }), marker: title });
     await script({ frames: frames.text(["아직 결과를 모르는 응답"]), marker: title });
@@ -32,16 +33,23 @@ test("소유 작업이 남은 final은 중간 응답으로 표시하고 작업 �
         expect(tasks.tasks).toHaveLength(1);
         expect(tasks.tasks[0]!.status).toBe("running");
         await apiCall("POST", `/tasks/${tasks.tasks[0]!.id}/cancel`);
-        await expect(view.getByTestId("msg-task-result")).toContainText("cancelled");
         await expect(view.getByTestId("msg-assistant").last()).toContainText("성공으로 처리하지 않았어");
+        await expect(view.getByTestId("msg-task-result")).toHaveCount(0);
         await expect(view.getByTestId("turn-status")).toHaveCount(0);
         const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as { messages: unknown[] }[];
         const last = JSON.stringify(requests.filter((request) => JSON.stringify(request.messages).includes(title)).at(-1));
         expect(last).toContain("[background task result]");
         expect(last).toContain("cancelled");
         await page.reload();
-        await expect(sessionView(page, session.id).getByTestId("msg-completion-deferred")).toBeVisible();
-        await expect(sessionView(page, session.id).getByTestId("msg-assistant").filter({ hasText: "아직 결과를 모르는 응답" }).getByTestId("msg-who")).toContainText("중간 응답");
+        const restored = sessionView(page, session.id);
+        await expect(restored.getByTestId("msg-completion-deferred")).toBeVisible();
+        const reply = restored.getByTestId("msg-assistant");
+        await expect(reply).toHaveCount(1);
+        await expect(reply.getByTestId("msg-answer")).toContainText("성공으로 처리하지 않았어");
+        const progress = reply.getByTestId("msg-progress");
+        await openDetails(progress);
+        await expect(progress.getByRole("dialog")).toContainText("아직 결과를 모르는 응답");
+        await expect(restored.getByTestId("msg-task-result")).toHaveCount(0);
     } finally {
         const tasks = await apiCall<{ tasks: { id: string; status: string }[] }>("GET", `/sessions/${session.id}/tasks`);
         for (const task of tasks.tasks.filter((task) => task.status === "running")) await apiCall("POST", `/tasks/${task.id}/cancel`);

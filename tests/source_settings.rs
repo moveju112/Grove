@@ -221,9 +221,8 @@ async fn http_project_projection_is_scoped_safe_read_only_and_available_to_owner
         assert!(!value.to_string().contains(root.to_str().unwrap()));
         assert!(!value.to_string().contains("source-private-marker"));
     }
-    let (status, browser) = server.post("/api/v1/auth/browser-login", json!({"token": server.token})).await;
-    assert_eq!(status, StatusCode::OK);
-    let response = server.raw(Method::GET, &path, None, None, Some(browser["access_token"].as_str().unwrap())).await;
+    let browser = server.registered_device("source settings").await;
+    let response = server.raw(Method::GET, &path, None, None, browser["token"].as_str()).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.json::<Value>().await.unwrap()["items"], expected["items"]);
     assert_eq!(std::fs::read(root.join(SourceId::ClaudeProject.relative_path())).unwrap(), bytes);
@@ -239,16 +238,13 @@ async fn http_project_projection_is_scoped_safe_read_only_and_available_to_owner
 }
 
 #[tokio::test]
-async fn http_denies_anonymous_devices_and_device_browsers_for_every_project_and_user_sources() {
+async fn http_denies_anonymous_but_allows_registered_devices_for_project_and_user_sources() {
     use common::TestServer;
     use reqwest::{Method, StatusCode};
     let server = TestServer::start().await;
     let a = server.create_project("sources-a").await;
     let b = server.create_project("sources-b").await;
-    let (status, device) = server.post("/api/v1/devices", json!({"name":"source-reader"})).await;
-    assert_eq!(status, StatusCode::CREATED);
-    let (status, browser) = server.post("/api/v1/auth/browser-login", json!({"token":device["token"]})).await;
-    assert_eq!(status, StatusCode::OK);
+    let device = server.registered_device("source-reader").await;
     for path in [
         "/api/v1/source-settings".to_string(),
         format!("/api/v1/source-settings?project_id={}", a["id"].as_str().unwrap()),
@@ -257,11 +253,8 @@ async fn http_denies_anonymous_devices_and_device_browsers_for_every_project_and
     ] {
         let response = server.raw(Method::GET, &path, None, None, Some("")).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-        for token in [device["token"].as_str().unwrap(), browser["access_token"].as_str().unwrap()] {
-            let response = server.raw(Method::GET, &path, None, None, Some(token)).await;
-            assert_eq!(response.status(), StatusCode::FORBIDDEN);
-            assert_eq!(response.json::<Value>().await.unwrap()["error"]["code"], "forbidden");
-        }
+        let response = server.raw(Method::GET, &path, None, None, device["token"].as_str()).await;
+        assert_eq!(response.status(), if path.ends_with("=unknown") { StatusCode::NOT_FOUND } else { StatusCode::OK });
     }
 }
 
@@ -362,7 +355,7 @@ fn source_skills_report_missing_roots_invalid_metadata_unreadable_and_oversize_e
         b"---\nname: demo\ndescription: [source-private-marker]\n---\nbody",
         b"---\nname: demo\nname: duplicate\ndescription: source-private-marker\n---\nbody",
         b"\xff",
-        &vec![b'x'; grove::skills::MAX_BODY_BYTES as usize + 1],
+        &vec![b'x'; grove::source_settings::MAX_BODY_BYTES as usize + 1],
     ] {
         file(root.path(), ".claude/skills/demo/SKILL.md", bytes);
         assert_eq!(resource(root.path(), SourceId::ClaudeProject, "skills", ".claude/skills")["result"],
@@ -435,7 +428,7 @@ fn source_hook_errors_and_partial_invalid_entries_are_sanitized_and_bounded() {
     file(root.path(), "hooks.json", &vec![b' '; MAX_SOURCE_BYTES as usize + 1]);
     assert_eq!(resource(root.path(), SourceId::CodexUser, "hooks", "hooks.json")["result"],
         json!({"status":"read_error","code":"too_large"}));
-    let handlers = vec![json!({"type":"command","command":"not executed"}); grove::skills::MAX_SKILLS + 1];
+    let handlers = vec![json!({"type":"command","command":"not executed"}); grove::source_settings::MAX_SKILLS + 1];
     file(root.path(), "hooks.json", &serde_json::to_vec(&json!({"hooks":{"Stop":[{"hooks":handlers}]}})).unwrap());
     assert_eq!(resource(root.path(), SourceId::CodexUser, "hooks", "hooks.json")["result"]["code"], "too_large");
 }
@@ -456,13 +449,13 @@ fn source_metadata_redacts_credential_markers_including_matchers_and_never_retur
 #[test]
 fn source_skill_listing_enforces_entry_and_scan_limits_without_partial_results() {
     let root = TempDir::new().unwrap();
-    for index in 0..=grove::skills::MAX_SKILLS {
+    for index in 0..=grove::source_settings::MAX_SKILLS {
         file(root.path(), &format!("skills/demo-{index}/SKILL.md"),
             b"---\nname: demo\ndescription: Allowed\n---\nbody");
     }
     assert_eq!(resource(root.path(), SourceId::ClaudeUser, "skills", "skills")["result"],
         json!({"status":"read_error","code":"too_large"}));
-    for index in 0..=grove::skills::MAX_SCANNED_ENTRIES {
+    for index in 0..=grove::source_settings::MAX_SCANNED_ENTRIES {
         file(root.path(), &format!(".agents/skills/not-a-skill-{index}"), b"ignored");
     }
     assert_eq!(resource(root.path(), SourceId::CodexProject, "skills", ".agents/skills")["result"],

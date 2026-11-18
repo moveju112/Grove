@@ -2,7 +2,8 @@ import { expect, test, type Route } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
-import { apiCall, ensureProjects, login, state } from "./helpers";
+import { apiCall, ensureProjects, login, openProjectTerminal, state } from "./helpers";
+import { projectLayoutKey } from "../app/state/projectLayout";
 
 for (const operation of ["rename", "delete"] as const) {
     test(`파일 ${operation} 뒤 최근 항목은 다른 대상을 추측하거나 재생성하지 않고 편집 사본만 복구한다`, async ({ page }) => {
@@ -60,7 +61,9 @@ test("접근 불가 프로젝트를 최근 항목에서 열어도 새 위치를 
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
     await expect(page.getByTestId("project-missing")).toContainText("프로젝트 경로에 접근할 수 없습니다");
-    await expect(page.getByLabel("메시지 입력")).toBeDisabled();
+    await expect(page.getByTestId("project-view").getByRole("button", { name: "새 대화", exact: true })).toHaveCount(0);
+    await expect(page.getByLabel("메시지 입력")).toBeVisible();
+    await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
     expect(starts).toBe(0);
     expect(existsSync(root)).toBe(false);
 });
@@ -80,33 +83,43 @@ test("배치에 남은 없는 프로젝트 ID는 오류로 표시하고 다른 �
     }) : route.continue());
     await login(page);
     await expect(page.getByRole("heading", { name: "프로젝트를 열 수 없습니다", exact: true })).toBeVisible();
-    await expect(page.getByLabel("메시지 입력")).toBeDisabled();
-    await expect(page.getByLabel("메시지 입력")).toHaveValue("missing project draft fixture");
+    await expect(page.getByLabel("메시지 입력")).toBeVisible();
+    await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
     await expect(page.getByRole("button", { name: "프로젝트 다시 확인", exact: true })).toBeVisible();
     const checked = page.waitForResponse((r) => r.url().endsWith(`/projects/${missing}`) && r.request().method() === "GET");
     await page.getByRole("button", { name: "프로젝트 다시 확인", exact: true }).click();
     expect((await checked).status()).toBe(404);
-    await expect(page.getByLabel("메시지 입력")).toHaveValue("missing project draft fixture");
+    await expect(page.getByLabel("메시지 입력")).toBeVisible();
+    await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
 });
 
 for (const status of ["exited", "deleted"] as const) {
-    test(`${status} 터미널을 최근 항목에서 열어도 새 프로세스나 접속 티켓을 만들지 않는다`, async ({ page }) => {
+    test(`${status} 터미널 탭을 복원해도 새 프로세스나 접속 티켓을 만들지 않는다`, async ({ page }) => {
         const { a } = await ensureProjects();
         const name = `restore-terminal-${status}-${Date.now()}`;
         const terminal = await apiCall<{ id: string }>("POST", `/projects/${a.id}/terminals`, { name });
         const killed = await apiCall<{ status: string }>("POST", `/terminals/${terminal.id}/kill`, {});
         expect(killed.status).toBe("exited");
-        await apiCall("POST", "/recent/touch", { kind: "terminal", project_id: a.id, resource_id: terminal.id, title: name });
+        const device = `terminal-restore-${randomUUID()}`;
+        await apiCall("PUT", `/layouts/${projectLayoutKey(device, a.id)}`, { expected_revision: 0, layout: {
+            schema: 1, focused_leaf: "main", root: { type: "leaf", id: "main", active_tab: "term", tabs: [
+                { id: "term", kind: "terminal", project_id: a.id, resource_id: terminal.id, title: name },
+            ] },
+        } });
+        await page.addInitScript(({ device, project }) => {
+            localStorage.setItem("grove.device.id", device);
+            localStorage.setItem(`grove.layout.selected.${device}`, project);
+        }, { device, project: a.id });
         if (status === "deleted") await apiCall("DELETE", `/terminals/${terminal.id}`, {});
         let mutations = 0;
         page.on("request", (r) => {
             if (r.method() === "POST" && (r.url().endsWith(`/projects/${a.id}/terminals`) || r.url().endsWith(`/terminals/${terminal.id}/ticket`))) mutations++;
         });
         await login(page);
-        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         const view = page.getByTestId("terminal-view");
         await expect(view).toHaveAttribute("data-conn", status === "exited" ? "readonly" : "missing");
-        await expect(view.getByTestId("terminal-status")).toContainText(status === "exited" ? "종료됨" : "터미널 없음");
+        await expect(view.getByTestId("terminal-status")).toHaveCount(0);
+        if (status === "deleted") await expect(view.getByRole("alert")).toContainText("터미널이 없습니다");
         await expect(view.getByRole("button", { name: "종료", exact: true })).toHaveCount(0);
         if (status === "deleted") {
             const checked = page.waitForResponse((r) => r.url().endsWith(`/projects/${a.id}/terminals`) && r.request().method() === "GET");
@@ -150,9 +163,8 @@ test("터미널을 닫으면 진행 중인 접속 준비를 취소하고 늦은 
     };
     await page.route(ticketPath, ticketRoute);
     try {
-        await apiCall("POST", "/recent/touch", { kind: "terminal", project_id: a.id, resource_id: terminal.id, title: name });
         await login(page);
-        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
+        await openProjectTerminal(page, a.name, name);
         await expect.poll(() => accepted).toBe(true);
         await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
         await expect(page.getByTestId("terminal-view")).toHaveCount(0);

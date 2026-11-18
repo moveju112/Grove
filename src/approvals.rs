@@ -181,9 +181,9 @@ pub fn tool_policy(c: &Connection, project_id: &str, session_id: &str, spec: &to
     if listed("tools.deny")? {
         return Ok(PolicyDecision::Deny("policy_denied", format!("도구 정책(tools.deny)으로 {}을(를) 쓸 수 없습니다", spec.name)));
     }
-    let read_only = all_layers(c, "tools.mode", p, s)?.iter().any(|v| v == "read_only");
+    let read_only = crate::agents::is_helper_session(c, session_id)? || all_layers(c, "tools.mode", p, s)?.iter().any(|v| v == "read_only");
     if read_only && !matches!(spec.effect, tools::Effect::Read | tools::Effect::Conversation) {
-        return Ok(PolicyDecision::Deny("read_only", format!("읽기 전용 모드(tools.mode=read_only)라 {}을(를) 실행할 수 없습니다", spec.name)));
+        return Ok(PolicyDecision::Deny("read_only", format!("읽기 전용 역할 또는 설정이라 {}을(를) 실행할 수 없습니다", spec.name)));
     }
     if listed("tools.allow")? {
         return Ok(PolicyDecision::Allow);
@@ -245,13 +245,17 @@ pub fn create_call(
             };
             let policy = tool_policy(c, project_id, session_id, &spec)?;
             // 이 대화에서 계속 허용한 도구(SEC-009). 금지·읽기 전용이 먼저이고, 위임(agent)에는 쓰지 않는다.
-            let granted = !matches!(spec.name,"agent"|"computer")
+            let granted = spec.name != "agent"
                 && c.query_row("SELECT 1 FROM session_tool_grants WHERE session_id = ?1 AND tool = ?2", params![session_id, spec.name], |_| Ok(()))
                     .optional()?
                     .is_some();
             let decision = match (&policy, base) {
                 (PolicyDecision::Deny(..), _) => None,
-                (_, Some(true)) if spec.name == "computer" => Some(true),
+                (_, Some(true)) if spec.name == "computer" => {
+                    // PC 제어는 tools.allow가 아니라 사용자의 명시적 대화 승인만 재사용한다.
+                    if granted { scope = Some("session"); }
+                    Some(!granted)
+                },
                 (PolicyDecision::Allow, Some(true)) => {
                     scope = Some("policy");
                     Some(false)
@@ -380,12 +384,12 @@ enum ExecutionClaim {
     Run(ToolCallRow, ApiResult<std::path::PathBuf>),
 }
 
-fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiResult<Option<tools::ToolError>> {
+pub(crate) fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiResult<Option<tools::ToolError>> {
     let Some(spec) = tools::spec(&call.name) else { return Ok(None); };
     let policy = tool_policy(c,&call.project_id,&call.session_id,&spec)?;
     let needs = if call.name=="agent" { crate::agents::approval_policy(c,&call.project_id,&call.session_id,&call.target)? }
         else { Some(tools::needs_approval(spec.effect)) };
-    let granted = !matches!(call.name.as_str(),"agent"|"computer") && c.query_row(
+    let granted = call.name != "agent" && c.query_row(
         "SELECT EXISTS(SELECT 1 FROM session_tool_grants WHERE session_id=?1 AND tool=?2)",
         params![call.session_id,call.name],|r|r.get::<_,bool>(0),
     )?;
@@ -394,8 +398,8 @@ fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiResult<Option<
         _ if call.name=="shell" && call.target["inherit_credentials"]==true
             && !crate::settings::full_access(c,&call.project_id,&call.session_id)? =>
             Some(("approval_revoked","일반 도구 전체 권한이 해제돼 계정 자격증명을 사용하는 명령을 실행하지 않았습니다".into())),
-        _ if call.name=="computer" && call.approval_scope.as_deref()!=Some("once") =>
-            Some(("approval_revoked","PC 제어는 이번 요청에 대한 승인이 필요합니다".into())),
+        _ if call.name=="computer" && call.approval_scope.as_deref()!=Some("once") && !granted =>
+            Some(("approval_revoked","PC 제어 승인이 해제돼 실행하지 않았습니다. 새 승인이 필요합니다".into())),
         _ if needs.is_none() => Some(("delegation_disabled","위임 정책이 변경돼 실행하지 않았습니다".into())),
         PolicyDecision::Allow => None,
         _ if needs==Some(true) && call.approval_scope.as_deref()!=Some("once") && !granted =>
@@ -521,6 +525,15 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 app.db.call(move |c| crate::deferred_tools::execute_tool(c, &call)).await
                     .map_err(|e| tools::ToolError::new(e.code, e.message))
             }
+            Ok(_) if call.name == crate::continuations::NAME => {
+                let (args,turn,now)=(call.target.clone(),call.turn_id.clone(),app.now());
+                app.db.call(move |c| {
+                    let tx=c.transaction()?;
+                    let turn=turn.ok_or_else(||ApiError::invalid("원래 턴이 필요합니다"))?;
+                    let v=crate::continuations::execute_tool(&tx,&now,&turn,&args)?;
+                    tx.commit()?; Ok(v)
+                }).await.map_err(|e|tools::ToolError::new(e.code,e.message))
+            }
             Ok(_) if call.name == "goal" => {
                 let (sid, args, now) = (call.session_id.clone(), call.target.clone(), app.now());
                 app.db
@@ -543,7 +556,8 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 app.db.call(move |c| crate::tool_outputs::execute(c,&data,&sid,&args)).await
                     .map_err(|e| tools::ToolError::new(e.code,e.message))
             }
-            // hold_ms가 있는 셸은 백그라운드 작업으로 실행한다(EXEC-004).
+            // 새 셸은 기본 hold 동안 기다리고, 장시간 작업만 백그라운드로 전환한다.
+            // 업데이트 전에 승인된 계획은 저장된 hold·timeout 그대로 처리한다.
             Ok(_) if call.name == "shell" && call.target.get("hold_ms").is_some() => {
                 let s = crate::tasks::Spawn {
                     session_id: call.session_id.clone(),
@@ -553,12 +567,15 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                     inherit_credentials: call.target["inherit_credentials"].as_bool().unwrap_or(false),
                     command: call.target["command"].as_str().unwrap_or("").to_string(),
                     cwd_rel: call.target["cwd"].as_str().unwrap_or(".").to_string(),
-                    timeout_ms: call.target["timeout_ms"].as_u64().unwrap_or(tools::shell::MAX_BACKGROUND_TIMEOUT_MS),
+                    timeout_ms: call.target["timeout_ms"].as_u64().unwrap_or(0),
                     detached: false,
                     script: None,
                     setup: false,
                 };
-                crate::tasks::run_with_hold(&app, s, call.target["hold_ms"].as_u64().unwrap_or(0), cancel_rx).await
+                let output = if call.args.get("hold_ms").is_some() || call.args["background"] == true {
+                    crate::tasks::HeldOutput::Summary
+                } else { crate::tasks::HeldOutput::Capture };
+                crate::tasks::run_with_hold(&app, s, call.target["hold_ms"].as_u64().unwrap_or(0), output, cancel_rx).await
             }
             Ok(root) => {
                 let planned = Planned { target: call.target.clone(), precondition: call.precondition.clone() };
@@ -730,9 +747,6 @@ pub async fn decide(
         }
         if b.decision == "approve_session" && cur.name == "agent" {
             return Err(ApiError::invalid("자식 에이전트 위임은 대화 범위로 허용할 수 없습니다(위임 정책 agents.delegation을 쓰세요)"));
-        }
-        if b.decision=="approve_session" && cur.name=="computer" {
-            return Err(ApiError::invalid("PC 제어는 대화 전체를 허용할 수 없습니다. 대상 창·동작을 확인해 이번만 승인하세요"));
         }
         if approving
             && let Some(spec) = tools::spec(&cur.name)

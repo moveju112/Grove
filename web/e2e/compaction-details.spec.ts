@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, login, openDetails, script, sessionView, state } from "./helpers";
+import { apiCall, ensureProfile, login, openContext, openDetails, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
+
+type Effective = { items: { key: string; layers: Record<string, { value: unknown; revision: number }> }[] };
 
 async function project() {
     return apiCall<{ id: string }>("POST", "/projects", { root_path: mkdtempSync(join(state().projA, "cmp-details-")) });
@@ -16,9 +18,10 @@ test("실제 압축의 생성 당시 모델·비용을 보존하고 페이지 �
         base_url: `http://127.0.0.1:${state().fixturePort}/v1`,
         options: { pricing: { currency: "EUR", version: "fixture-v1", input_per_mtok: 2, output_per_mtok: 4 } },
     });
+    const previous = (await apiCall<Effective>("GET", "/settings/effective")).items.find((item) => item.key === "context.summary_profile")!.layers.server!;
     try {
         const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: "CMP-011 압축 상세" });
-        await apiCall("PUT", `/settings/project/${a.id}/context.summary_profile`, { expected_revision: 0, value: summary.id });
+        await apiCall("PUT", "/settings/server/-/context.summary_profile", { expected_revision: previous.revision, value: summary.id });
         for (let i = 0; i < 115; i++) await apiCall("POST", `/sessions/${s.id}/messages`, { text: `보존 원문 ${i}` });
         for (const text of ["첫 질문", "최근 질문"]) {
             await script({ frames: frames.text(["긴 답변 ".repeat(50)]) });
@@ -35,8 +38,8 @@ test("실제 압축의 생성 당시 모델·비용을 보존하고 페이지 �
         const applied = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith(`/sessions/${s.id}/compact`));
         const refreshed = page.waitForResponse(async (r) => r.request().method() === "GET" && r.url().endsWith(`/sessions/${s.id}/messages?limit=100`)
             && (await r.json()).items.some((m: { content: { type?: string } }) => m.content.type === "compaction"));
-        await view.getByRole("button", { name: "대화 작업", exact: true }).click();
-        await view.getByTestId("context-meter").getByRole("button", { name: "압축", exact: true }).click();
+        const context = await openContext(view);
+        await context.getByRole("button", { name: "압축", exact: true }).click();
         expect((await applied).status()).toBe(201);
         await refreshed;
         // 긴 대화는 화면 밖 행을 렌더링하지 않는다. 기존 feed 탐색으로 마지막 기록을 연다.
@@ -62,6 +65,8 @@ test("실제 압축의 생성 당시 모델·비용을 보존하고 페이지 �
         await expect(target).toContainText("보존 원문 0");
         await expect(target).toBeInViewport();
     } finally {
+        const current = (await apiCall<Effective>("GET", "/settings/effective")).items.find((item) => item.key === "context.summary_profile")!.layers.server!;
+        await apiCall("PUT", "/settings/server/-/context.summary_profile", { expected_revision: current.revision, value: previous.value });
         // 삭제는 멱등이 아니므로 아직 남은 시험 소유 프로필만 정리한다.
         const profiles = await apiCall<{ id: string }[]>("GET", "/model-profiles");
         if (profiles.some((p) => p.id === summary.id)) await apiCall("DELETE", `/model-profiles/${summary.id}`);

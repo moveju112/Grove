@@ -1,5 +1,5 @@
 // 작은 Markdown 파서(UI-010, SEC-020). 결과는 문법 트리이고, 화면은 React 요소로만 그린다(innerHTML 없음 → HTML 삽입 불가).
-// 지원: 문단·줄바꿈, 제목, 코드 블록(``` 닫힘 없으면 끝까지), 인라인 코드, 굵게·기울임, 링크(http·https·mailto만),
+// 지원: 문단·줄바꿈, 제목, 코드 블록(``` 닫힘 없으면 끝까지), 인라인 코드, 굵게·기울임, 외부 링크·프로젝트 파일 링크·이미지,
 // 목록(-·*·1.), 인용, 표(| 구분 + 구분선), 구분선. 그 밖의 문법은 글자 그대로 보인다.
 
 export type Inline =
@@ -8,6 +8,8 @@ export type Inline =
     | { t: "b"; c: Inline[] }
     | { t: "i"; c: Inline[] }
     | { t: "a"; href: string; c: Inline[] }
+    | { t: "file"; href: string; c: Inline[] }
+    | { t: "image"; href: string; alt: string }
     | { t: "br" };
 
 export type Block =
@@ -45,11 +47,20 @@ export function parseInline(s: string): Inline[] {
         } else if ((m = rest.match(/^\*([^*\s][^*]*?)\*/)) || (m = rest.match(/^_([^_\s][^_]*?)_(?![A-Za-z0-9])/))) {
             flush();
             out.push({ t: "i", c: parseInline(m[1]!) });
-        } else if ((m = rest.match(/^\[([^\]]+)\]\(([^)\s]+)\)/))) {
-            const href = safeHref(m[2]!);
-            if (href) {
+        } else if ((m = rest.match(/^!\[([^\]]*)\]\((?:<([^<>\r\n]+)>|([^\s)]+))\)/))) {
+            const target = m[2] ?? m[3]!;
+            if (imageFile(target)) {
                 flush();
-                out.push({ t: "a", href, c: parseInline(m[1]!) });
+                out.push({ t: "image", href: target, alt: m[1]! });
+            } else {
+                buf += m[0];
+            }
+        } else if ((m = rest.match(/^\[([^\]]+)\]\((?:<([^<>\r\n]+)>|([^\s)]+))\)/))) {
+            const target = m[2] ?? m[3]!;
+            const href = safeHref(target);
+            if (href || fileLink(target)) {
+                flush();
+                out.push({ t: href ? "a" : "file", href: href ?? target, c: parseInline(m[1]!) });
             } else {
                 buf += m[0];
             }
@@ -155,5 +166,39 @@ export function fileRef(code: string): { path: string; line?: number } | null {
     if (!m) return null;
     const path = m[1]!;
     if (path.split("/").some((p) => p === ".." || p === ".")) return null;
+    // 경로·줄 표시 없는 흔한 웹 도메인은 인라인 코드로 유지한다.
+    if (!m[2] && /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|edu|gov|io|dev|app|co)$/i.test(path)) return null;
     return m[2] ? { path, line: Number(m[2]) } : { path };
+}
+
+// 이미지도 기존 프로젝트 파일 경계를 사용한다. URL·data:·상위 경로는 파일 API로 보내지 않는다.
+export function imageFile(href: string, rootPath?: string): { path: string; mime: string } | null {
+    const ref = fileLink(href, rootPath);
+    if (!ref || ref.line) return null;
+    const ext = ref.path.split(".").pop()?.toLowerCase();
+    const mime = ({ png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
+        svg: "image/svg+xml", bmp: "image/bmp", ico: "image/x-icon", avif: "image/avif" } as Record<string, string>)[ext ?? ""];
+    return typeof mime === "string" ? { path: ref.path, mime } : null;
+}
+
+/// Markdown 파일 링크. 절대 경로는 표시할 프로젝트 루트에 속할 때만 상대 경로로 바꾼다.
+/// 브라우저 URL로 이동시키지 않으며 서버의 파일·Git API가 권한과 경계를 다시 검사한다.
+export function fileLink(href: string, rootPath?: string): { path: string; line?: number } | null {
+    let value: string;
+    try { value = decodeURIComponent(href); } catch { return null; }
+    if (!value || /[\x00-\x1f\x7f\\<>?#]/.test(value) || value.startsWith("//")) return null;
+    const match = value.match(/^(.*?)(?::(\d+)(?::\d+)?)?$/);
+    if (!match) return null;
+    let path = match[1]!;
+    if (path.includes(":")) return null;
+    if (path.startsWith("/") && rootPath !== undefined) {
+        const root = rootPath.replace(/\/+$/, "") + "/";
+        if (!path.startsWith(root)) return null;
+        path = path.slice(root.length);
+    }
+    const parts = path.replace(/^\//, "").split("/");
+    if (parts.some((part) => !part || part === "." || part === "..") || path.startsWith("-")) return null;
+    const line = match[2] ? Number(match[2]) : undefined;
+    if (line !== undefined && (!Number.isSafeInteger(line) || line < 1)) return null;
+    return { path, ...(line === undefined ? {} : { line }) };
 }

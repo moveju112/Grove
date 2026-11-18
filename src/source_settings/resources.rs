@@ -2,10 +2,12 @@
 
 use super::{MAX_SOURCE_BYTES, ReadErrorCode, SourceId};
 use crate::project_fs::ProjectFs;
-use crate::skills::{MAX_BODY_BYTES, MAX_SCANNED_ENTRIES, MAX_SKILLS};
 use serde::Serialize;
 use serde_json::Value;
 use std::io;
+pub const MAX_BODY_BYTES: u64 = 64 * 1024;
+pub const MAX_SCANNED_ENTRIES: usize = 4096;
+pub const MAX_SKILLS: usize = 256;
 use std::path::{Component, Path};
 
 #[derive(Debug, Serialize)]

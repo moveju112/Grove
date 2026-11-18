@@ -62,7 +62,7 @@ async fn real_model_flow_preserves_original_pair_identity_and_reads_every_remain
     let project = s.create_project("outputs").await;
     let sid = s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
     std::fs::write(std::path::Path::new(project["root_path"].as_str().unwrap()).join("output.txt"),
-        format!("시작😀{}OUTPUT-END", "x".repeat(45000))).unwrap();
+        format!("시작😀{}OUTPUT-END", "x".repeat(70_000))).unwrap();
     let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{}/tools.allow", project["id"].as_str().unwrap()),
         json!({"expected_revision":0,"value":"shell"})).await;
     assert_eq!(st, StatusCode::OK);
@@ -154,6 +154,28 @@ async fn fork_visibility_excludes_future_rewound_uninherited_and_other_session_o
         Ok(())
     }).await.unwrap();
     assert_eq!(read(&s, &child, &id, 0, 100).await["result"]["error"]["code"], "not_found");
+}
+
+#[tokio::test]
+async fn file_reads_below_fifty_kib_reach_the_model_without_followup_reads() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let project = s.create_project("inline-read").await;
+    let project_id = project["id"].as_str().unwrap();
+    let sid = s.create_session(project_id).await["id"].as_str().unwrap().to_string();
+    let text = format!("{}READ-END\n", "abcdefghijklmnopqrstuvwxyz0123456789\n".repeat(1000));
+    std::fs::write(std::path::Path::new(project["root_path"].as_str().unwrap()).join("input.txt"), text).unwrap();
+    f.push(fixture::tool_calls(&[("read-inline", "read", json!({"path":"input.txt"}))]));
+    f.push(fixture::text("읽었어"));
+    let (_, turn) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({"text":"읽어줘","profile_id":profile,"tools":true})).await;
+    s.wait_status(turn["turn"]["id"].as_str().unwrap(), "completed").await;
+    let requests = f.requests();
+    let result = requests[1]["messages"].as_array().unwrap().iter()
+        .find(|m| m["tool_call_id"] == "read-inline").unwrap()["content"].as_str().unwrap();
+    assert!((16 * 1024..50 * 1024).contains(&result.len()));
+    assert!(result.contains("READ-END"));
+    assert!(!result.contains("tool_output_reference"));
 }
 
 #[tokio::test]
@@ -310,7 +332,7 @@ async fn final_storage_failure_does_not_change_execution_or_replay_after_restart
     let mut s = TestServer::start().await;
     let project = s.create_project("copy-failure").await;
     let root = std::path::Path::new(project["root_path"].as_str().unwrap());
-    let text = format!("{}END", "가😀\n".repeat(4000));
+    let text = format!("{}END", "가😀 abcdefghijklmnop\n".repeat(2300));
     std::fs::write(root.join("output.txt"), &text).unwrap();
     std::fs::write(s.data_dir().join("tool-outputs"), "blocked").unwrap();
     let sid = s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();

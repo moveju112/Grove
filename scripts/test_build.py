@@ -31,6 +31,12 @@ class Environment(unittest.TestCase):
         self.assertEqual(result["CARGO_HOME"], os.path.join(build.DEV, "cargo"))
         self.assertEqual(result["RUSTUP_HOME"], os.path.join(build.DEV, "rustup"))
 
+    def test_release_binary_uses_cargo_reported_shared_target(self):
+        metadata = json.dumps({"target_directory": "/shared/cargo-target"})
+        with patch.object(build, "run"), patch.object(build, "out", return_value=metadata):
+            binary = build.build_server("linux-x64", 2)
+        self.assertEqual(binary, "/shared/cargo-target/x86_64-unknown-linux-gnu/release/grove")
+
 
 class Plan(unittest.TestCase):
     def scope(self, *files):

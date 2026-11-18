@@ -131,9 +131,7 @@ async fn completion_enqueues_atomically_once_and_revocation_cascades_without_pla
 async fn device_scoping_and_revocation_stop_push() {
     let s = TestServer::start().await;
     let (_, config) = s.get("/api/v1/web-push").await;
-    let (_, device) = s
-        .post("/api/v1/devices", json!({"name":"isolated push device"}))
-        .await;
+    let device = s.registered_device("isolated push device").await;
     let body = subscription(
         config["public_key"].as_str().unwrap(),
         "https://fcm.googleapis.com/fcm/send/isolated-device",
@@ -212,7 +210,7 @@ async fn push_test_is_scoped_durable_idempotent_and_never_fakes_a_completed_turn
     assert_eq!(s.raw(Method::POST, route, Some(body.clone()), Some(&s.key()), Some("")).await.status(), StatusCode::UNAUTHORIZED);
     assert_eq!(s.raw(Method::POST, route, Some(body.clone()), None, None).await.status(), StatusCode::BAD_REQUEST);
     assert_eq!(s.post(route, json!({"endpoint":endpoint,"delay_seconds":1})).await.0, StatusCode::BAD_REQUEST);
-    let (_, device) = s.post("/api/v1/devices", json!({"name":"other push tester"})).await;
+    let device = s.registered_device("other push tester").await;
     assert_eq!(s.raw(Method::POST, route, Some(body.clone()), Some(&s.key()), device["token"].as_str()).await.status(), StatusCode::NOT_FOUND);
     let key = s.key();
     let response = s.raw(Method::POST, route, Some(body.clone()), Some(&key), None).await;

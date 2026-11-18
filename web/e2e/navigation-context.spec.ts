@@ -39,7 +39,7 @@ test("현재 위치 설명은 호버로 표시하고 조작·배치를 늘리지
     await login(page);
     const nav = page.getByRole("navigation", { name: "현재 위치", exact: true });
     await expect(nav).toHaveAttribute("data-session-id", left.id);
-    const current = nav.getByRole("button", { name: `프로젝트: ${a.name} (${a.id}) 대화 목록으로`, exact: true });
+    const current = nav.getByRole("button", { name: `프로젝트: ${a.name} (${a.id}) 프로젝트 화면으로`, exact: true });
     const before = await current.boundingBox();
     const actions = await nav.getByRole("button").count();
     await current.hover();
@@ -83,7 +83,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
             }
         });
         // native 버튼의 키보드 활성화로 이미 열린 프로젝트 탭을 재사용한다.
-        const parent = nav.getByRole("button", { name: `프로젝트: ${a.name} (${a.id}) 대화 목록으로`, exact: true });
+        const parent = nav.getByRole("button", { name: `프로젝트: ${a.name} (${a.id}) 프로젝트 화면으로`, exact: true });
         await parent.focus();
         await parent.press("Enter");
         await expect(nav.locator('[aria-current="page"]')).toHaveText(a.name);
@@ -96,7 +96,7 @@ test("실제 pane·탭의 부모 탐색은 다른 pane·초안·진행 중 작�
         await expect(nav).toHaveAttribute("data-session-id", left.id);
         await expect(leftPane.getByLabel("메시지 입력")).toHaveValue("왼쪽 초안");
         await expect(leftPane.getByTestId("approval")).toBeVisible();
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
         await expect(page.getByRole("dialog", { name: "설정", exact: true })).toBeVisible();
         await expect(nav).toHaveAttribute("data-project-id", a.id);
         await expect(nav).toHaveAttribute("data-session-id", left.id);
@@ -158,7 +158,7 @@ test("긴 이름·좁은 화면에서도 한 줄 위치·부모 탐색·폭별 �
     await expect(nav.locator('[aria-current="page"]')).toHaveAttribute("aria-label", `세션: ${longTitle} (${left.id})`);
     const narrowInput = page.locator('[data-layout-mode="narrow"] [data-leaf="left"]').getByLabel("메시지 입력").filter({ visible: true });
     await narrowInput.fill("좁은 화면 초안");
-    await nav.getByRole("button", { name: `프로젝트: ${a.name} (${a.id}) 대화 목록으로`, exact: true }).click();
+    await nav.getByRole("button", { name: `프로젝트: ${a.name} (${a.id}) 프로젝트 화면으로`, exact: true }).click();
     await expect(nav.locator('[aria-current="page"]')).toHaveText(a.name);
     await activateMobileTab(page, "이전 제목");
     await expect(narrowInput).toHaveValue("좁은 화면 초안");

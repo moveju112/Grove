@@ -45,7 +45,7 @@ for (const theme of ["light", "dark", "soft"] as const) {
         await expect(view.getByTestId("msg-assistant").last()).toContainText("끝", { timeout: 15_000 });
         await composerOption(view, "도구", false);
         await check("완료된 대화");
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
         await check("설정");
         await page.evaluate(() => localStorage.removeItem("grove.device.prefs"));
         expect(problems, problems.join("\n")).toEqual([]);

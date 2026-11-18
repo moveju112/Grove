@@ -57,7 +57,7 @@ export function EncryptedConnection({ children }: { children: ReactNode }) {
                 const previous = connection();
                 // Pages origin의 기존 초안·cache를 다른 서버에 붙이지 않는다.
                 if (previous && (previous.endpoint !== parsed.connection.endpoint || previous.key !== parsed.connection.key)) {
-                    throw new Error("등록된 서버와 키가 다릅니다. 소유자에게 확인하고 다른 서버는 별도 브라우저 프로필에서 연결하세요.");
+                    throw new Error("등록된 서버와 키가 달라요. 링크를 발급한 기기에서 확인하고, 다른 서버는 별도 브라우저 프로필에서 연결하세요.");
                 }
                 configureConnection(parsed.connection);
                 const hash = parsed.code ? new URL(pairingLink(location.origin, parsed.code)).hash : "";

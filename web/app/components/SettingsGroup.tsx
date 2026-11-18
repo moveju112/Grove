@@ -30,7 +30,7 @@ export function SettingsGroup({ title, scope, icon = "settings", id, testId, chi
         sync();
         return () => observer.disconnect();
     }, []);
-    const compact = id === "setting-theme" || id === "setting-font" || id === "setting-enter";
+    const compact = id === "setting-theme" || id === "setting-font" || id === "setting-enter" || id === "setting-running-send";
     return <Card id={id} data-testid={testId} data-ui="settings-group" role="region" aria-label={title}
         padding={0} xstyle={settingsStyles.group}>
         <Stack as="header" direction="horizontal" gap={2} padding={3} vAlign="center" xstyle={settingsStyles.heading}>

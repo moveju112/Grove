@@ -15,18 +15,29 @@ function render(overrides: Partial<ApprovalCardProps> = {}) {
 describe("승인 카드 표현", () => {
     it("대상·부작용·넓은 대화 허용 범위·거부·알림을 표시한다", () => {
         const html = render();
-        for (const text of ["note.txt", "쓰기", "도구 전체", "위 대상에만 한정되지 않습니다", "거부", "실행 성공을 뜻하지 않습니다", 'role="status"', "aria-labelledby=", "aria-describedby="]) {
+        for (const text of ["note.txt", "생성·수정·삭제", "도구 전체", "이 대화에서 승인", "거부", 'role="status"', "aria-labelledby=", "aria-describedby="]) {
             expect(html).toContain(text);
         }
         expect(html).not.toContain("not-for-display");
     });
 
-    it("agent·PC 제어에서 대화 전체 허용을 제공하지 않는다", () => {
-        for (const name of ["agent", "computer"]) {
-            const html = render({ call: approvalFixture({ name }) });
-            expect(html).not.toContain("이 대화에서 계속 허용");
-            expect(html).toContain("이번만 승인");
+    it("agent 위임만 대화 전체 승인에서 제외한다", () => {
+        const html = render({ call: approvalFixture({ name: "agent" }) });
+        expect(html).not.toContain("이 대화에서 승인");
+        expect(html).toContain("이번만 승인");
+    });
+
+    it("PC 제어는 짧은 범위 안내와 대화 승인을 먼저 표시한다", () => {
+        const html = render({ call: approvalFixture({ name: "computer", target: {
+            action: "act", window_id: "46137423", frame_id: "frame-private", actions: [{ type: "click", x: 168, y: 32 }],
+        } }) });
+        expect(html).toContain("PC 제어 승인 요청");
+        expect(html).toContain("서버 PC 화면 공유·조작을 이 대화에서 계속 허용합니다.");
+        expect(html.indexOf("이 대화에서 승인")).toBeLessThan(html.indexOf("이번만 승인"));
+        for (const text of ["revision", "승인 기한", "46137423", "frame-private", "부작용", "비밀값 보호", "입력 내용은 표시하지 않습니다", "허용 범위:"]) {
+            expect(html).not.toContain(text === "revision" ? "· revision" : text);
         }
+        expect(html).not.toContain('data-testid="approval-target"');
     });
 
     it.each(["expired", "denied", "failed", "unknown", "approved", "running", "succeeded", "cancelled"])("%s에서 재승인을 막고 상태를 구분한다", (status) => {

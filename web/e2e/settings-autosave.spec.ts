@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, login, openSettings, selectChoice, state } from "./helpers";
+import { apiCall, login, openSettings, openProjectSettings, selectChoice, state } from "./helpers";
 
 type Effective = { items: { key: string; effective: unknown; layers: Record<string, { value: unknown; revision: number }> }[] };
 async function projectSettings(page: Page, width: number) {
@@ -9,8 +9,7 @@ async function projectSettings(page: Page, width: number) {
     await login(page);
     if (width === 390) await page.getByRole("button", { name: "사이드바", exact: true }).click();
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    await openProjectSettings(page);
     return project;
 }
 async function effective(id: string, key: string) {
@@ -28,20 +27,20 @@ for (const width of [390, 1280]) {
             await selectChoice(style.getByLabel("출력 스타일", { exact: true }), "detailed");
             await expect(style).toContainText("저장됨");
             expect((await effective(project.id, "output.style")).effective).toBe("detailed");
-            await settings.getByLabel("설정 검색").fill("응답 언어");
-            const row = settings.getByTestId("setting-output.language");
-            const input = row.getByLabel("응답 언어", { exact: true });
-            await input.fill("autosave-language");
-            expect((await effective(project.id, "output.language")).layers.project!.value).toBeNull();
+            await settings.getByLabel("설정 검색").fill("요청당 시간 예산");
+            const row = settings.getByTestId("setting-runs.budget.max_minutes");
+            const input = row.getByLabel("요청당 시간 예산(분)", { exact: true });
+            await input.fill("15");
+            expect((await effective(project.id, "runs.budget.max_minutes")).layers.project!.value).toBeNull();
             await input.press("Tab");
             await expect(row).toContainText("저장됨");
-            expect((await effective(project.id, "output.language")).effective).toBe("autosave-language");
+            expect((await effective(project.id, "runs.budget.max_minutes")).effective).toBe(15);
             await expect(settings.getByRole("button", { name: /저장|기본값.*복원|이 범위 값 지우기/ })).toHaveCount(0);
             await page.screenshot({ path: info.outputPath("settings-autosave.png") });
-            await input.fill("saved-on-close");
+            await input.fill("25");
             await page.keyboard.press("Escape");
             await expect(settings).toHaveCount(0);
-            await expect.poll(async () => (await effective(project.id, "output.language")).effective).toBe("saved-on-close");
+            await expect.poll(async () => (await effective(project.id, "runs.budget.max_minutes")).effective).toBe(25);
         });
 
         test("글자 크기 직접 입력은 blur 때 저장하고 미완성·범위 밖 값은 적용하지 않는다", async ({ page }, info) => {
@@ -78,32 +77,32 @@ for (const width of [390, 1280]) {
 
 test("느린 저장 응답이 새 입력을 지우지 않고 후속 blur는 다음 revision으로 한 번만 저장한다", async ({ page }) => {
     const project = await projectSettings(page, 1280);
-    await page.getByLabel("설정 검색").fill("응답 언어");
-    const row = page.getByTestId("setting-output.language");
-    const input = row.getByLabel("응답 언어", { exact: true });
-    const requests: { value: string; expected_revision: number }[] = [];
+    await page.getByLabel("설정 검색").fill("요청당 시간 예산");
+    const row = page.getByTestId("setting-runs.budget.max_minutes");
+    const input = row.getByLabel("요청당 시간 예산(분)", { exact: true });
+    const requests: { value: number; expected_revision: number }[] = [];
     let release!: () => void;
     let received!: () => void;
     const held = new Promise<void>((resolve) => { release = resolve; });
     const seen = new Promise<void>((resolve) => { received = resolve; });
-    await page.route(`**/api/v1/settings/project/${project.id}/output.language`, async (route) => {
+    await page.route(`**/api/v1/settings/project/${project.id}/runs.budget.max_minutes`, async (route) => {
         requests.push(route.request().postDataJSON());
         const response = await route.fetch();
         if (requests.length === 1) { received(); await held; }
         await route.fulfill({ response });
     });
     try {
-        await input.fill("first");
+        await input.fill("10");
         await input.blur();
         await seen;
-        await input.fill("latest");
+        await input.fill("20");
         await input.blur();
-        expect(requests).toEqual([{ value: "first", expected_revision: 0 }]);
+        expect(requests).toEqual([{ value: 10, expected_revision: 0 }]);
         release();
         await expect(row).toContainText("저장됨");
-        await expect(input).toHaveValue("latest");
-        await expect.poll(async () => (await effective(project.id, "output.language")).effective).toBe("latest");
-        expect(requests).toEqual([{ value: "first", expected_revision: 0 }, { value: "latest", expected_revision: 1 }]);
+        await expect(input).toHaveValue("20");
+        await expect.poll(async () => (await effective(project.id, "runs.budget.max_minutes")).effective).toBe(20);
+        expect(requests).toEqual([{ value: 10, expected_revision: 0 }, { value: 20, expected_revision: 1 }]);
         await input.focus(); await input.blur();
         expect(requests).toHaveLength(2);
     } finally { release(); }
@@ -112,22 +111,21 @@ test("느린 저장 응답이 새 입력을 지우지 않고 후속 blur는 다�
 test("설정을 닫은 뒤 저장이 실패해도 다시 열면 입력과 오류가 남는다", async ({ page }) => {
     const project = await projectSettings(page, 1280);
     const search = page.getByLabel("설정 검색");
-    await search.fill("응답 언어");
-    const row = page.getByTestId("setting-output.language");
-    const input = row.getByLabel("응답 언어", { exact: true });
+    await search.fill("요청당 시간 예산");
+    const row = page.getByTestId("setting-runs.budget.max_minutes");
+    const input = row.getByLabel("요청당 시간 예산(분)", { exact: true });
     let failed!: () => void;
     const seen = new Promise<void>((resolve) => { failed = resolve; });
-    await page.route(`**/api/v1/settings/project/${project.id}/output.language`, async (route) => {
+    await page.route(`**/api/v1/settings/project/${project.id}/runs.budget.max_minutes`, async (route) => {
         await route.fulfill({ status: 422, json: { error: { code: "invalid_input", message: "fixture validation failure", retryable: false } } });
         failed();
     });
-    await input.fill("keep after close");
+    await input.fill("30");
     await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
     await seen;
-    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
-    await search.fill("응답 언어");
-    await expect(input).toHaveValue("keep after close");
+    await openProjectSettings(page);
+    await search.fill("요청당 시간 예산");
+    await expect(input).toHaveValue("30");
     await expect(row).toContainText("저장 실패(기존 값 유지)");
-    expect((await effective(project.id, "output.language")).layers.project!.value).toBeNull();
+    expect((await effective(project.id, "runs.budget.max_minutes")).layers.project!.value).toBeNull();
 });

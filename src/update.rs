@@ -637,9 +637,9 @@ impl UpdateChannel {
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AutoApplyScope {
-    #[default]
     NotifyOnly,
     Patch,
+    #[default]
     Minor,
 }
 

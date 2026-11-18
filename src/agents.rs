@@ -163,7 +163,7 @@ pub fn approval_policy(c: &Connection, project_id: &str, session_id: &str, targe
 
 fn last_assistant_text(c: &Connection, turn_id: &str) -> ApiResult<Option<String>> {
     let s: Option<String> = c
-        .query_row("SELECT content FROM messages WHERE turn_id = ?1 AND role = 'assistant' ORDER BY seq DESC LIMIT 1", params![turn_id], |r| r.get(0))
+        .query_row("SELECT content FROM message_history WHERE turn_id = ?1 AND role = 'assistant' ORDER BY seq DESC LIMIT 1", params![turn_id], |r| r.get(0))
         .optional()?;
     Ok(s.and_then(|s| serde_json::from_str::<Value>(&s).ok()).and_then(|v| v["text"].as_str().map(str::to_string)))
 }
@@ -242,6 +242,21 @@ fn tool_err(e: ApiError) -> ToolError {
     ToolError::new(code, e.message)
 }
 
+/// 기본 보조 역할은 재귀 위임이나 Grove 쓰기 도구를 실행하지 않는다.
+pub(crate) fn is_helper_session(c: &Connection, session_id: &str) -> ApiResult<bool> {
+    let role: Option<String> = c.query_row("SELECT agent_id FROM agent_runs WHERE child_session_id=?1", [session_id], |r| r.get(0)).optional()?;
+    Ok(role.is_some_and(|id| crate::definitions::execution("agent", &id)=="helper"))
+}
+
+fn role_profile(c: &Connection, session: &crate::sessions::Session, role: &str, fallback: &str) -> ApiResult<crate::models::ModelSelection> {
+    let chosen = crate::definitions::profile_key(role)
+        .map(|key| crate::settings::effective(c, key, Some(&session.project_id), Some(&session.id))).transpose()?;
+    let selection = chosen.as_ref().map(crate::models::ModelSelection::parse).transpose()?.flatten()
+        .unwrap_or_else(|| crate::models::ModelSelection::from_profile(fallback.into()));
+    crate::models::get_enabled_profile(c, &selection.profile_id)?;
+    Ok(selection)
+}
+
 /// spawn: 자식 세션·run·첫 턴을 한 transaction에서 만든다.
 #[allow(clippy::too_many_arguments)]
 fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str, parent_turn_id: &str, parent_call_id: &str, agent_id: &str, brief: &str) -> ApiResult<AgentRun> {
@@ -264,7 +279,8 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
         return Err(ApiError::conflict("disabled", format!("비활성화된 에이전트입니다: {agent_id}")));
     }
     let pt = crate::runner::get_turn(tx, parent_turn_id)?;
-    let profile = pt.profile_id.clone().ok_or_else(|| ApiError::invalid("부모 턴에 모델 프로필이 없습니다"))?;
+    let selection = role_profile(tx, &parent, agent_id, pt.profile_id.as_deref().ok_or_else(|| ApiError::invalid("부모 턴에 모델 프로필이 없습니다"))?)?;
+    let profile = &selection.profile_id;
     let child_id = crate::util::new_id();
     let first = brief.lines().next().unwrap_or("").chars().take(50).collect::<String>();
     let title = format!("{}: {}", def.def.name, first);
@@ -285,6 +301,8 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
     // 자식은 부모 턴의 소유자를 물려받는다(위임으로 한도를 우회하지 못하게).
     let owner = parent_owner(tx, parent_session_id)?;
     let (t, _) = crate::runner::enqueue_turn(tx, now, epoch, &owner, &child_id, brief, &profile, Some(agent_id), pt.tools_enabled, Some(&src))?;
+    crate::runner::set_turn_model(tx, &t.id, selection.model.as_deref())?;
+    crate::runner::set_turn_effort(tx, &t.id, selection.effort.as_deref())?;
     tx.execute("UPDATE agent_runs SET last_turn_id = ?2 WHERE id = ?1", params![run_id, t.id])?;
     let run = get(tx, &run_id)?;
     emit(tx, now, &run)?;
@@ -301,13 +319,19 @@ fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str
     if running_for_parent(tx, &run.parent_session_id)? >= MAX_PER_PARENT {
         return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "limit", format!("한 대화에서 자식 에이전트는 동시에 {MAX_PER_PARENT}개까지 실행할 수 있습니다")));
     }
+    let parent = crate::sessions::get_active(tx, &run.parent_session_id)?;
+    let fallback = parent_turn_id.map(|id| crate::runner::get_turn(tx,id)).transpose()?.and_then(|t| t.profile_id).unwrap_or_else(||run.profile_id.clone());
+    let selection = role_profile(tx, &parent, &run.agent_id, &fallback)?;
+    let profile = &selection.profile_id;
     let src = json!({ "kind": "agent_run", "run_id": run.id, "parent_session_id": run.parent_session_id, "parent_turn_id": parent_turn_id });
     let owner = parent_owner(tx, &run.parent_session_id)?;
-    let (t, _) = crate::runner::enqueue_turn(tx, now, epoch, &owner, &run.child_session_id, brief, &run.profile_id, Some(&run.agent_id), run.tools_enabled, Some(&src))?;
+    let (t, _) = crate::runner::enqueue_turn(tx, now, epoch, &owner, &run.child_session_id, brief, &profile, Some(&run.agent_id), run.tools_enabled, Some(&src))?;
+    crate::runner::set_turn_model(tx, &t.id, selection.model.as_deref())?;
+    crate::runner::set_turn_effort(tx, &t.id, selection.effort.as_deref())?;
     tx.execute(
         "UPDATE agent_runs SET status = 'running', last_turn_id = ?2, result = NULL, error = NULL, ended_at = NULL, updated_at = ?3, \
-         parent_turn_id=?4, parent_call_id=?5 WHERE id = ?1",
-        params![run_id, t.id, now, parent_turn_id, parent_call_id],
+         parent_turn_id=?4, parent_call_id=?5, profile_id=?6 WHERE id = ?1",
+        params![run_id, t.id, now, parent_turn_id, parent_call_id, profile],
     )?;
     let run = get(tx, run_id)?;
     emit(tx, now, &run)?;

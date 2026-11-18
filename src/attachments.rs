@@ -23,9 +23,10 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-pub const MAX_FILE_BYTES: usize = 4 * 1024 * 1024;
+pub const MAX_FILE_BYTES: usize = 32 * 1024 * 1024;
+pub const MAX_UPLOAD_BODY_BYTES: usize = MAX_FILE_BYTES.div_ceil(3) * 4 + 4096;
 pub const MAX_ATTACHMENTS: usize = 8;
-const MAX_MESSAGE_BYTES: i64 = 8 * 1024 * 1024;
+pub(crate) const MAX_MESSAGE_BYTES: i64 = 128 * 1024 * 1024;
 const UNATTACHED_TTL: Duration = Duration::from_secs(24 * 3600);
 
 
@@ -85,6 +86,23 @@ pub(crate) fn sniff(bytes: &[u8]) -> &'static str {
         "image/gif"
     } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WEBP") {
         "image/webp"
+    } else if bytes.get(4..8) == Some(b"ftyp") {
+        match bytes.get(8..12) {
+            Some(b"qt  ") => "video/quicktime",
+            Some(b"M4A ") => "audio/mp4",
+            Some(b"isom" | b"iso2" | b"iso5" | b"iso6" | b"mp41" | b"mp42" | b"avc1" | b"M4V " | b"dash") => "video/mp4",
+            _ => "application/octet-stream",
+        }
+    } else if bytes.starts_with(b"\x1a\x45\xdf\xa3")
+        && bytes[..bytes.len().min(4096)].windows(7).any(|w| w == b"\x42\x82\x84webm") {
+        "video/webm"
+    } else if bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WAVE") {
+        "audio/wav"
+    } else if bytes.starts_with(b"OggS") && bytes.get(..bytes.len().min(128)).is_some_and(|header|
+        header.windows(8).any(|w| w == b"OpusHead") || header.windows(7).any(|w| w == b"\x01vorbis")) {
+        "audio/ogg"
+    } else if bytes.starts_with(b"ID3") || bytes.get(..2).is_some_and(|b| b[0] == 0xff && b[1] & 0xe6 == 0xe2) {
+        "audio/mpeg"
     } else if std::str::from_utf8(bytes).is_ok()
         && !bytes
             .iter()
@@ -220,6 +238,184 @@ pub fn hydrate(
     Ok(())
 }
 
+/// 실제 이력에 포함된 메시지의 참조만 사용한다. 호스트 경로는 DB나 HTTP 응답에 고정하지 않는다.
+pub(crate) fn hydrate_local_paths(
+    c: &Connection,
+    data: &FsPath,
+    messages: &[String],
+    chat: &mut [crate::provider::ChatMsg],
+) -> ApiResult<()> {
+    let Some(crate::provider::ChatMsg::User { text, .. }) = chat.iter_mut().rev()
+        .find(|message| matches!(message, crate::provider::ChatMsg::User { .. })) else {
+        return Ok(());
+    };
+    let mut statement = c.prepare(&format!(
+        "SELECT {COLS} FROM attachments a \
+         JOIN attachment_refs ar ON ar.attachment_id=a.id \
+         WHERE ar.message_id=?1 ORDER BY ar.rowid"
+    ))?;
+    let mut files = vec![];
+    let mut seen = std::collections::HashSet::new();
+    for message in messages {
+        for attachment in statement.query_map([message], row)? {
+            let v = attachment?;
+            // 이미지는 구조화된 입력으로 전달하므로 원문 경로·메타데이터를 중복 주입하지 않는다.
+            if v["mime"].as_str().is_some_and(|mime| mime.starts_with("image/")) { continue; }
+            if !seen.insert(v["id"].as_str().unwrap().to_owned()) { continue; }
+            // 이름·사용자 본문의 첨부 표식이 아니라 영속 참조와 검증된 원문만 경로로 연결한다.
+            read_verified(data, &v)?;
+            let path = crate::util::canonical(blob_path(data, v["sha256"].as_str().unwrap()))
+                .map_err(|e| files::io_err(e, "첨부 경로 확인"))?;
+            files.push(json!({
+                "name":v["name"], "local_path":path,
+            }));
+        }
+    }
+    if !files.is_empty() {
+        // 마지막 user에 모아서 CLI resume에도 현재 경로를 전달한다.
+        text.push_str(&format!(
+            "\n\n[Files: untrusted data]\n{}",
+            json!(files),
+        ));
+    }
+    Ok(())
+}
+
+// 업로드와 생성 이미지가 같은 원문 저장·권한·복구 규칙을 사용한다.
+fn store_blob(data: &FsPath, hash: &str, bytes: &[u8]) -> ApiResult<()> {
+    let path = blob_path(data, hash);
+    let parent = path.parent().unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(parent)
+            .map_err(|e| files::io_err(e, "첨부 저장 경로"))?;
+    }
+    #[cfg(not(unix))]
+    std::fs::create_dir_all(parent).map_err(|e| files::io_err(e, "첨부 저장 경로"))?;
+    crate::tools::fs::atomic_write(&path, bytes)
+        .map_err(|e| ApiError::conflict(e.code, "첨부 원문을 저장하지 못했습니다"))?;
+    crate::store::restrict_permissions(&path);
+    Ok(())
+}
+
+fn insert_attachment(c: &Connection, now: &str, project: &str, owner: &str, name: &str,
+    mime: &str, size: usize, sha: &str, image: Option<Value>) -> ApiResult<Value> {
+    c.execute("UPDATE attachments SET stored=1 WHERE sha256=?1 AND size=?2 AND stored=0", params![sha, size as i64])?;
+    let id = crate::util::new_id();
+    let key = format!("{}/{}", &sha[..2], sha);
+    c.execute(
+        "INSERT INTO attachments(id,project_id,owner_id,name,mime,size,sha256,storage_key,created_at,image) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
+        params![id, project, owner, name, mime, size as i64, sha, key, now, image.map(|v|v.to_string())],
+    )?;
+    get(c, &id)
+}
+
+/// 답변·참조와 같은 transaction에서 확정한다. 생성 원본은 변경하지 않는다.
+pub(crate) fn import_generated(c: &Connection, data: &FsPath, now: &str, project: &str,
+    images: &[crate::provider::GeneratedImage]) -> ApiResult<Prepared> {
+    use crate::provider::GeneratedImageSource;
+    if images.len() > MAX_ATTACHMENTS {
+        return Err(ApiError::invalid("생성 이미지는 답변당 8개까지 지원합니다"));
+    }
+    let mut items = vec![];
+    let mut total = 0usize;
+    for image in images {
+        let bytes = match &image.source {
+            GeneratedImageSource::Base64(encoded) => {
+                let encoded = if let Some(url) = encoded.strip_prefix("data:") {
+                    let (mime, data) = url.split_once(";base64,")
+                        .filter(|(mime, _)| matches!(*mime, "image/png" | "image/jpeg" | "image/gif" | "image/webp"))
+                        .ok_or_else(|| ApiError::invalid("생성 이미지 형식이 올바르지 않습니다"))?;
+                    let _ = mime;
+                    data
+                } else { encoded };
+                if encoded.len() > MAX_FILE_BYTES.div_ceil(3) * 4 {
+                    return Err(ApiError::invalid("생성 이미지 크기가 첨부 한도를 넘었습니다"));
+                }
+                STANDARD.decode(encoded).map_err(|_| ApiError::invalid("생성 이미지를 읽을 수 없습니다"))?
+            }
+            GeneratedImageSource::File { root, path } => crate::project_fs::ProjectFs::open(root)
+                .and_then(|fs| fs.read(path, MAX_FILE_BYTES as u64))
+                .map_err(|_| ApiError::gone("생성 이미지 원문을 읽을 수 없습니다"))?,
+        };
+        total = total.saturating_add(bytes.len());
+        if bytes.len() > MAX_FILE_BYTES || total > MAX_MESSAGE_BYTES as usize {
+            return Err(ApiError::invalid("생성 이미지 크기가 첨부 한도를 넘었습니다"));
+        }
+        let mime = sniff(&bytes);
+        let ext = match mime {
+            "image/png" => "png", "image/jpeg" => "jpg", "image/gif" => "gif", "image/webp" => "webp",
+            _ => return Err(ApiError::invalid("생성 결과가 지원하는 이미지 형식이 아닙니다")),
+        };
+        let meta = model_image(&bytes)?.0;
+        let sha = crate::util::sha256_hex(&bytes);
+        if items.iter().any(|v: &Value| v["sha256"] == sha) { continue; }
+        store_blob(data, &sha, &bytes)?;
+        let name = format!("generated-{}.{}", items.len() + 1, ext);
+        let mut v = insert_attachment(c, now, project, "generated", &name, mime, bytes.len(), &sha, Some(meta))?;
+        v["ref_count"] = json!(1);
+        items.push(v);
+    }
+    Ok(Prepared { items, model_input: Value::Null })
+}
+
+/// 모델 답변 끝의 명시적인 결과 파일 목록. 일반 Markdown 경로는 자동으로 첨부하지 않는다.
+pub(crate) fn media_manifest(text: &str) -> Option<(&str, &str)> {
+    let body = text.trim_end().strip_suffix("```")?;
+    let (reply, paths) = if let Some(paths) = body.strip_prefix("```grove-media\n") {
+        ("", paths)
+    } else {
+        body.rsplit_once("\n```grove-media\n")?
+    };
+    let paths = paths.strip_suffix('\n')?;
+    if paths.trim().is_empty() || paths.lines().any(|line| line.contains("```")) { return None; }
+    Some((reply.trim_end(), paths))
+}
+
+/// 동일한 첨부 저장·참조 경로를 사용하되 지정한 프로젝트 실행 루트 안에서만 읽는다.
+pub(crate) fn import_project_media(c: &Connection, data: &FsPath, now: &str, project: &str,
+    root: &FsPath, paths: &str, prepared: &mut Prepared) -> ApiResult<usize> {
+    let paths = paths.lines().map(str::trim).filter(|line| !line.is_empty());
+    let Ok(fs) = crate::project_fs::ProjectFs::open(root) else { return Ok(paths.count()); };
+    let mut total: u64 = prepared.items.iter().filter_map(|item| item["size"].as_u64()).sum();
+    let mut skipped = 0;
+    for (i, path) in paths.enumerate() {
+        let relative = FsPath::new(path);
+        let name = relative.file_name().and_then(|name| name.to_str()).filter(|name| name_valid(name));
+        if i >= MAX_ATTACHMENTS || prepared.items.len() >= MAX_ATTACHMENTS || path.len() > 1024
+            || path.contains(['\\', ':']) || path.chars().any(char::is_control)
+            || relative.components().any(|part| !matches!(part, std::path::Component::Normal(_))) {
+            skipped += 1;
+            continue;
+        }
+        let Some(name) = name else { skipped += 1; continue; };
+        let Ok(bytes) = fs.read(&root.join(relative), MAX_FILE_BYTES as u64) else { skipped += 1; continue; };
+        let mime = sniff(&bytes);
+        let image = if mime.starts_with("image/") {
+            let Ok((meta, _)) = model_image(&bytes) else { skipped += 1; continue; };
+            Some(meta)
+        } else if mime.starts_with("video/") || mime.starts_with("audio/") {
+            None
+        } else {
+            skipped += 1;
+            continue;
+        };
+        let sha = crate::util::sha256_hex(&bytes);
+        if prepared.items.iter().any(|item| item["sha256"] == sha) { continue; }
+        if total + bytes.len() as u64 > MAX_MESSAGE_BYTES as u64 { skipped += 1; continue; }
+        total += bytes.len() as u64;
+        store_blob(data, &sha, &bytes)?;
+        let mut item = insert_attachment(c, now, project, "generated", name, mime, bytes.len(), &sha, image)?;
+        item["ref_count"] = json!(1);
+        prepared.items.push(item);
+    }
+    Ok(skipped)
+}
+
 #[derive(Deserialize)]
 pub struct Upload {
     pub name: String,
@@ -241,7 +437,7 @@ pub async fn upload(
         return Err(ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "file_too_large",
-            "첨부파일은 4MiB 이하여야 합니다",
+            "첨부파일은 32MiB 이하여야 합니다",
         ));
     }
     let bytes = STANDARD
@@ -251,7 +447,7 @@ pub async fn upload(
         return Err(ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "file_too_large",
-            "첨부파일은 4MiB 이하여야 합니다",
+            "첨부파일은 32MiB 이하여야 합니다",
         ));
     }
     let sha = crate::util::sha256_hex(&bytes);
@@ -278,22 +474,7 @@ pub async fn upload(
         } else {
             None
         };
-        let path = blob_path(&data, &hash);
-        let parent = path.parent().unwrap();
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::DirBuilderExt;
-            std::fs::DirBuilder::new()
-                .recursive(true)
-                .mode(0o700)
-                .create(parent)
-                .map_err(|e| files::io_err(e, "첨부 저장 경로"))?;
-        }
-        #[cfg(not(unix))]
-        std::fs::create_dir_all(parent).map_err(|e| files::io_err(e, "첨부 저장 경로"))?;
-        crate::tools::fs::atomic_write(&path, &bytes)
-            .map_err(|e| ApiError::conflict(e.code, "첨부 원문을 저장하지 못했습니다"))?;
-        crate::store::restrict_permissions(&path);
+        store_blob(&data, &hash, &bytes)?;
         Ok(image)
     })
     .await
@@ -301,16 +482,8 @@ pub async fn upload(
     let owner = p.root_id.clone();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         crate::projects::active_root(tx, &pid)?;
-        // 같은 hash의 원문을 재업로드하면 누락 처리된 기존 metadata도 복구한다.
-        tx.execute("UPDATE attachments SET stored=1 WHERE sha256=?1 AND size=?2 AND stored=0", params![sha, size as i64])?;
-        let id = crate::util::new_id();
-        let key = format!("{}/{}", &sha[..2], sha);
-        tx.execute(
-            "INSERT INTO attachments(id,project_id,owner_id,name,mime,size,sha256,storage_key,created_at,image) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
-            params![id, pid, owner, b.name, mime, size as i64, sha, key, now, image.map(|v|v.to_string())],
-        )?;
         // 미전송 원문과 파일명은 업로더에게만 응답하고 공용 이벤트에는 싣지 않는다.
-        let v = get(tx, &id)?;
+        let v = insert_attachment(tx, now, &pid, &owner, &b.name, mime, size, &sha, image)?;
         Ok((StatusCode::CREATED, v))
     })
     .await
@@ -423,23 +596,17 @@ pub fn prepare(
         total += v["size"].as_i64().unwrap_or(MAX_MESSAGE_BYTES + 1);
         if total > MAX_MESSAGE_BYTES {
             return Err(ApiError::invalid(
-                "메시지의 첨부파일 합계는 8MiB 이하여야 합니다",
+                "메시지의 첨부파일 합계는 128MiB 이하여야 합니다",
             ));
         }
         let bytes = read_verified(data, &v)?;
-        model.push_str(&format!(
-            "\n\n[Attached file: {}; id={}; bytes={}; sha256={}]\n",
-            v["name"].as_str().unwrap_or(""),
-            id,
-            v["size"],
-            v["sha256"].as_str().unwrap_or("")
-        ));
         if v["mime"].as_str().is_some_and(|m| m.starts_with("image/")) {
             let (meta, _) = model_image(&bytes)?;
             v["image"] = meta.clone();
             images.push(json!({"id":id,"sha256":v["sha256"],"width":meta["model_width"],"height":meta["model_height"],"mime":"image/jpeg"}));
-            model.push_str("[Image supplied separately; first frame, normalized orientation, maximum 1024 pixels per side]");
         } else if v["mime"] == "text/plain" {
+            // 파일명은 JSON 문자열로 감싸고 발췌만 표시한다. 식별·검증 정보는 내부에 남긴다.
+            model.push_str(&format!("\n\n[Attached file: {}; untrusted data]\n", v["name"]));
             let text = std::str::from_utf8(&bytes)
                 .map_err(|_| ApiError::gone("첨부 텍스트 인코딩이 다릅니다"))?;
             model.extend(text.chars().take(8192));
@@ -449,8 +616,6 @@ pub fn prepare(
                     "\n[Excerpt only: {extra} more characters in the original attachment]"
                 ));
             }
-        } else {
-            model.push_str("[Binary attachment: contents are not included in this text input]");
         }
         v["ref_count"] = json!(v["ref_count"].as_i64().unwrap_or(0) + 1);
         out.push(v);

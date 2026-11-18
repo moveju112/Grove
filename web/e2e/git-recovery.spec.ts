@@ -17,12 +17,42 @@ async function openGit(page: Page, staged: boolean) {
     if (staged) run("add","a.txt");
     const project=await apiCall<{id:string;name:string}>("POST","/projects",{root_path:root});
     await login(page);
+    if (page.viewportSize()!.width <= 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
     await page.getByTestId("sidebar").getByTestId("projects").getByRole("button",{name:project.name,exact:true}).click();
     await openTool(page, "변경");
     const panel=page.getByTestId("git-panel");
     await expect(panel).toContainText(staged ? "커밋할 변경 (1)" : "작업 트리 변경 (1)");
     return {root,run,project,panel};
 }
+
+test.describe("390px Git diff", () => {
+test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+test("Git 변경은 추가·삭제 줄을 구분하고 모바일에서 긴 줄을 내부 스크롤한다", async ({ page }, info) => {
+    const { root, run, panel } = await openGit(page, false);
+    const content = `changed ${"long line ".repeat(40)}\n`;
+    writeFileSync(join(root, "a.txt"), content);
+    const index = readFileSync(join(root, ".git/index"));
+    await panel.getByRole("button", { name: "a.txt", exact: true }).click();
+    const hunk = panel.getByTestId("hunk");
+    await expect(hunk.locator('[data-diff="removed"]')).toHaveText("-before");
+    await expect(hunk.locator('[data-diff="added"]')).toHaveText(`+${content.trim()}`);
+    const code = hunk.locator("code");
+    await expect(code).toHaveCSS("white-space", "pre");
+    const scrolling = await code.evaluate((element) => {
+        let parent = element.parentElement;
+        while (parent && parent.scrollWidth <= parent.clientWidth) parent = parent.parentElement;
+        return !!parent && ["auto", "scroll"].includes(getComputedStyle(parent).overflowX);
+    });
+    expect(scrolling).toBe(true);
+    await hunk.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath("git-diff-390.png"), animations: "disabled" });
+    expect(readFileSync(join(root, ".git/index"))).toEqual(index);
+    expect(readFileSync(join(root, "a.txt"), "utf8")).toBe(content);
+    await hunk.getByRole("button", { name: "이 부분 올리기", exact: true }).click();
+    await expect(panel).toContainText("커밋할 변경 (1)");
+    expect(run("show", ":a.txt")).toBe(content);
+});
+});
 
 test("stage 응답 유실 뒤 상태와 파일이 바뀌어도 같은 요청 확인은 원래 key와 fingerprint로 재생한다",async({page})=>{
     const {root,run,project,panel}=await openGit(page,false);
@@ -38,7 +68,7 @@ test("stage 응답 유실 뒤 상태와 파일이 바뀌어도 같은 요청 확
     await expect(panel.getByTestId("git-unsure")).toBeVisible();
     expect(run("show",":a.txt")).toBe("first request\n");
     writeFileSync(join(root,"a.txt"),"new unaccepted edit\n");
-    const refreshed=page.waitForResponse((response)=>response.request().method()==="GET" && response.url().endsWith(`/projects/${project.id}/git/status`));
+    const refreshed=page.waitForResponse((response)=>response.request().method()==="GET" && new URL(response.url()).pathname.endsWith(`/projects/${project.id}/git/status`) && new URL(response.url()).searchParams.get("summary") === "true");
     await panel.getByRole("button",{name:"새로고침",exact:true}).click();
     const current=await (await refreshed).json() as {fingerprint:string};
     expect(requests).toHaveLength(1);
@@ -110,7 +140,7 @@ test("응답 유실 뒤 저장소를 조회할 수 없어도 원래 요청을 �
     const hidden=join(root,".git.after-fixture");
     renameSync(gitPath,hidden);
     try {
-        const refreshed=page.waitForResponse((response)=>response.request().method()==="GET" && response.url().endsWith(`/projects/${project.id}/git/status`));
+        const refreshed=page.waitForResponse((response)=>response.request().method()==="GET" && new URL(response.url()).pathname.endsWith(`/projects/${project.id}/git/status`) && new URL(response.url()).searchParams.get("summary") === "true");
         await panel.getByRole("button",{name:"새로고침",exact:true}).click();
         expect((await (await refreshed).json() as {is_repo:boolean}).is_repo).toBe(false);
         await expect(panel).toContainText("Git 저장소가 아닙니다");

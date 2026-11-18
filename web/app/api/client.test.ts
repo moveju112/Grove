@@ -11,6 +11,50 @@ afterEach(() => {
 });
 
 describe("HTTP 요청 식별·timeout·취소 계약", () => {
+    it.each([403, 408, 429, 500, 503])("refresh HTTP %s는 인증·초안 정리나 만료를 일으키지 않는다", async (status) => {
+        const session = () => new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" }));
+        const fetch = vi.fn().mockResolvedValueOnce(session()).mockImplementation(() => Promise.resolve(new Response("{}", { status })));
+        vi.stubGlobal("fetch", fetch);
+        await client.redeemPairing("fixture-pairing");
+        const generation = client.authGeneration();
+        const ended = vi.fn();
+        const off = client.onAuthChange((s) => { if (!s) ended(); });
+        try {
+            expect(await client.refresh()).toEqual({ accessToken: "fixture-access", expiresAt: "" });
+            expect(client.authGeneration()).toBe(generation);
+            expect(client.lastAuthEnd()).toBeNull();
+            expect(client.needsAuthRecovery()).toBe(true);
+            expect(ended).not.toHaveBeenCalled();
+            expect(fetch).toHaveBeenCalledTimes(status === 403 ? 2 : 3);
+        } finally { off(); }
+    });
+
+    it("refresh 응답 유실은 동일한 요청 키로 한 번만 확인한다", async () => {
+        const session = () => new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" }));
+        const fetch = vi.fn().mockResolvedValueOnce(session())
+            .mockRejectedValueOnce(new TypeError("fixture lost response")).mockResolvedValueOnce(session());
+        vi.stubGlobal("fetch", fetch);
+        await client.redeemPairing("fixture-pairing");
+        await client.refresh();
+        expect(fetch).toHaveBeenCalledTimes(3);
+        const keys = fetch.mock.calls.slice(1).map((call) => new Headers((call[1] as RequestInit).headers).get("idempotency-key"));
+        expect(keys[0]).toBeTruthy();
+        expect(keys[1]).toBe(keys[0]);
+        expect(client.lastAuthEnd()).toBeNull();
+    });
+
+    it("refresh의 실제 401은 기존처럼 인증을 종료한다", async () => {
+        const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" })))
+            .mockResolvedValueOnce(new Response("{}", { status: 401 }));
+        vi.stubGlobal("fetch", fetch);
+        await client.redeemPairing("fixture-pairing");
+        expect(await client.refresh()).toBeNull();
+        expect(client.isLoggedIn()).toBe(false);
+        expect(client.lastAuthEnd()).toBe("expired");
+        expect(client.needsAuthRecovery()).toBe(false);
+        expect(fetch).toHaveBeenCalledTimes(2);
+    });
+
     it.each(["json", "binary"] as const)("headers 뒤에 인증이 바뀌어도 늦은 %s 오류 본문을 전달하지 않는다", async (kind) => {
         let body!: ReadableStreamDefaultController<Uint8Array>;
         const response = new Response(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } }), { status: 403 });

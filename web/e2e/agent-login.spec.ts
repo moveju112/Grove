@@ -2,12 +2,12 @@ import { test, expect } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { apiCall, login, openSettings, state } from "./helpers";
+import { apiCall, login, openSettings, registerBrowser, state } from "./helpers";
 
 test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "격리된 CLI 인증 fixture 필요");
 test.use({ trace: "retain-on-failure" });
 
-test("소유자가 모바일에서 공식 인증을 시작하고 재접속·취소·재로그인·로그아웃한다", async ({ page }, info) => {
+test("등록 기기가 모바일에서 공식 인증을 시작하고 재접속·취소·재로그인·로그아웃한다", async ({ page }, info) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await login(page);
     const open = async () => {
@@ -50,6 +50,7 @@ test("소유자가 모바일에서 공식 인증을 시작하고 재접속·취�
     await page.screenshot({ path: info.outputPath("agent-login-mobile.png") });
     await page.setViewportSize({ width: 1280, height: 900 });
     // 모바일·PC는 별도 workspace 배치다. PC 설정을 다시 열어 같은 인증 작업을 이어 간다.
+    await page.reload();
     await open();
     await claude.scrollIntoViewIfNeeded();
     expect(await claude.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
@@ -68,17 +69,14 @@ test("소유자가 모바일에서 공식 인증을 시작하고 재접속·취�
     await expect(claude.getByRole("status").filter({ hasText: /\S/ })).toHaveText("로그인 필요");
 });
 
-test("등록 기기는 인증 상태·코드·계정 변경에 접근하지 못한다", async ({ request }) => {
-    const device = await apiCall<{ id: string; token: string }>("POST", "/devices", { name: "login-denied-fixture" });
+test("계정 인증 상태는 등록 기기만 읽을 수 있다", async ({ page, request }) => {
+    const device = await registerBrowser(page);
     try {
-        for (const [method, path] of [["GET", "auth"], ["POST", "login"], ["POST", "login/code"], ["POST", "login/cancel"], ["POST", "logout"]]) {
-            const response = await request.fetch(`http://127.0.0.1:17741/api/v1/agent-backends/codex_cli/${path}`, {
-                method, headers: { Authorization: `Bearer ${device.token}`, "Idempotency-Key": randomUUID() },
-                ...(method === "POST" ? { data: { id: randomUUID(), code: "fixture-code" } } : {}),
-            });
-            expect(response.status()).toBe(403);
-            expect(await response.text()).not.toContain("ABCD-12345");
-        }
+        const status = "http://127.0.0.1:17741/api/v1/agent-backends/codex_cli/auth";
+        expect((await request.get(status)).status()).toBe(401);
+        const response = await request.get(status, { headers: { Authorization: `Bearer ${device.token}` } });
+        expect(response.status()).toBe(200);
+        expect(await response.text()).not.toContain("ABCD-12345");
     } finally {
         await apiCall("DELETE", `/devices/${device.id}`);
     }

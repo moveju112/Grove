@@ -49,7 +49,7 @@ pub fn build_body(profile: &Profile, req: &ModelRequest) -> Value {
         body["system"] = json!(req.system);
     }
     if !req.tools.is_empty() {
-        body["tools"] = req.tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema })).collect();
+        body["tools"] = super::prompt_cache::tools(req).into_iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema })).collect();
     }
     if let Some(t) = req.temperature {
         body["temperature"] = json!(t);
@@ -62,6 +62,7 @@ pub fn build_body(profile: &Profile, req: &ModelRequest) -> Value {
             o.remove("temperature");
         }
     }
+    super::prompt_cache::anthropic(profile, &mut body);
     body
 }
 
@@ -162,6 +163,7 @@ impl Accumulator {
                     status: None,
                     retryable: code != "provider_error",
                     retry_after_secs: None,
+                    stream_failure: None,
                 });
             }
             _ => {}
@@ -191,7 +193,7 @@ impl Accumulator {
 
     pub fn finish(self) -> Result<ModelOutput, ProviderError> {
         if !self.stopped {
-            return Err(ProviderError { code: "stream_incomplete", message: "응답 stream이 완료 전에 끊겼습니다".into(), status: None, retryable: true, retry_after_secs: None });
+            return Err(ProviderError { retryable: true, ..ProviderError::new("stream_incomplete", "응답 stream이 완료 전에 끊겼습니다") });
         }
         let mut o = self.out.clone();
         o.tool_calls = self.calls();

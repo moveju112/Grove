@@ -22,7 +22,9 @@ Computer Use 등 기존 동작은 [Mixdog 공개 소스](https://github.com/trib
 
 HTTP 인증·Origin·호환성 검사 → 도메인 처리 → SQLite transaction → 상태·이벤트 commit → 응답과 구독자 알림.
 웹은 API snapshot과 SSE 이벤트를 통해 서버 상태를 투영한다.
-기기별 레이아웃·표시 설정과 영속 서버 상태를 같은 저장소로 취급하지 않는다.
+프로젝트별로 열린 대화와 이어갈 대화는 데몬에 저장한다. 분할 배치와 표시 설정은 기기별로 유지한다.
+
+기본 Codex 연결(`codex_oauth`)은 Grove 이력과 도구 루프를 Codex Responses API에 연결한다. `store: false`로 호출하며 Codex CLI의 스레드를 시작하거나 재개하지 않는다. CLI 로그인 파일의 계정 자격은 메모리에서만 사용하고, 필요한 갱신은 계정 전용 CLI 호출에 맡긴다. `evidence: src/provider/codex_oauth.rs`.
 
 - **MUST** 서버에 전역적인 현재 프로젝트·대화 상태를 추가하지 않고 요청마다 실행 대상을 명시한다.
   - why: 여러 pane과 기기의 요청 대상이 서로 덮어써지면 안 된다.

@@ -53,29 +53,31 @@ function Projection({ value }: { value: SafeSettings }) {
 
 function ResourceCard({ resource }: { resource: SourceResource }) {
     const result = resource.result;
-    const label = resource.kind === "skills" ? "스킬" : "Hook 정의";
+    const label = resource.kind === "skills" ? "스킬" : "자동 실행";
+    if (result.status === "missing" || (result.status === "present" && result.entries.length === 0 && !result.ignored_invalid_entries)) return null;
     return <GroveStack as="section" gap={2} paddingBlockStart={4} aria-label={`${label} · ${resource.relative_path}`}>
         <Divider />
         <GroveHeading level={4} color="inherit"><GroveStack as="span" direction="horizontal" align="center" gap={2}>{label}
             <HelpTip label={`${label} 경로`}><Code color="secondary">{resource.relative_path}</Code></HelpTip>
         </GroveStack></GroveHeading>
-        {result.status === "missing" && <GroveText as="p" display="block" type="supporting" color="secondary">원본 리소스 없음</GroveText>}
         {result.status === "read_error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">리소스 읽기 실패: {result.code === "too_large" ? "리소스 크기 또는 항목 수가 조회 제한을 넘어 표시하지 않았습니다." : ERROR[result.code]}</GroveText>}
         {result.status === "unsupported_format" && <GroveText as="p" display="block" type="supporting" color="warning">Inline hook · 미지원 형식(TOML)</GroveText>}
         {result.status === "present" && <>
-            {result.entries.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">{label} 항목 없음</GroveText>}
             {resource.kind === "skills" && resource.result.status === "present" && <GroveStack gap={2}>
                 {resource.result.entries.map((entry, index) => <DetailDialog key={index} label={`${entry.name} 스킬`} title={entry.name}>
                     {entry.description && <GroveText as="p" display="block" type="inherit" color="inherit">{entry.description}</GroveText>}
                     <Code color="secondary">{entry.relative_path}</Code>
                 </DetailDialog>)}
             </GroveStack>}
-            {resource.kind === "hooks" && resource.result.status === "present" && <dl>
-                {resource.result.entries.map((entry, index) => <GroveStack gap={0} key={index}>
-                    <dt>{entry.event}</dt>
-                    <dd>Matcher: {entry.matcher ?? "지정 없음"} · 명령 {entry.has_command ? "있음" : "없음"}</dd>
-                </GroveStack>)}
-            </dl>}
+            {resource.kind === "hooks" && resource.result.status === "present" && resource.result.entries.length > 0 &&
+                <DetailDialog label="자동 실행 상세" title={`자동 실행 ${resource.result.entries.length}개`}>
+                    <dl>
+                        {resource.result.entries.map((entry, index) => <GroveStack gap={0} key={index}>
+                            <dt>{entry.event}</dt>
+                            <dd>Matcher: {entry.matcher ?? "지정 없음"} · 명령 {entry.has_command ? "있음" : "없음"}</dd>
+                        </GroveStack>)}
+                    </dl>
+                </DetailDialog>}
             {result.ignored_invalid_entries && <GroveText as="p" display="block" type="supporting" color="warning" role="status">일부 항목은 형식·권한·읽기 제한으로 생략됐습니다.</GroveText>}
         </>}
     </GroveStack>;

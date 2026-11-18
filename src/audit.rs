@@ -3,10 +3,10 @@
 //! - 변경과 같은 transaction에서 기록한다(변경만 되고 기록이 빠지는 일 없음).
 //! - 비밀 값·토큰 원문·hash는 넣지 않는다. `detail`은 호출하는 쪽이 고른 식별 정보뿐이며,
 //!   저장 전에 `scrub`이 비밀처럼 보이는 key를 한 번 더 지운다.
-//! - 이벤트와 달리 정리(prune)하지 않는다. 조회는 소유자만.
+//! - 이벤트와 달리 정리(prune)하지 않는다. 조회에는 등록 기기 인증이 필요하다.
 
 use crate::App;
-use crate::auth::{Owner, Principal};
+use crate::auth::Principal;
 use crate::error::ApiResult;
 use axum::Json;
 use axum::extract::{Query, State};
@@ -47,7 +47,7 @@ pub struct AuditQuery {
     pub limit: Option<i64>,
 }
 
-pub async fn list(State(app): State<App>, Owner(_p): Owner, Query(q): Query<AuditQuery>) -> ApiResult<Json<Value>> {
+pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<AuditQuery>) -> ApiResult<Json<Value>> {
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     let v = app
         .db

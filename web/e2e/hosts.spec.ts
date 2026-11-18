@@ -4,7 +4,7 @@ import { once } from "node:events";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiCall, ensureProjects, login, openSettings } from "./helpers";
+import { finishSetup, apiCall, ensureProjects, login, openSettings, registerBrowser } from "./helpers";
 
 type Remote = { origin: string; token: string; projectId: string };
 const test = base.extend<{}, { remote: Remote }>({
@@ -111,9 +111,10 @@ test("두 실제 서버의 인증·지연 응답·이벤트·초안이 섞이지
         await other.locator("html[data-hydrated=true]").waitFor();
         expect(new URL(other.url()).origin).toBe(remote.origin);
         expect(await other.evaluate(() => window.opener === null)).toBe(true);
-        await expect(other.getByRole("form", { name: "로그인" })).toBeVisible();
-        await other.getByLabel("토큰").fill(remote.token);
-        await other.getByRole("button", { name: "로그인", exact: true }).click();
+        await expect(other.getByRole("button", { name: "페어링 링크·QR로 등록" })).toBeVisible();
+        await registerBrowser(other, remote.origin, remote.token);
+        await other.reload();
+        await finishSetup(other);
         await expect(other.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         await expect(other.getByTestId("project-row")).toContainText("원격 전용 프로젝트");
         release();
@@ -132,7 +133,7 @@ test("두 실제 서버의 인증·지연 응답·이벤트·초안이 섞이지
         // 같은 hostname·다른 port에서도 양쪽 refresh 쿠키가 유지된다.
         await page.reload();
         await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
-        await expect(page.getByTestId("session-view").getByLabel("메시지 입력")).toHaveValue("로컬 호스트에서만 보이는 초안");
+        await expect(page.getByTestId("session-view").getByLabel("메시지 입력")).toHaveValue("");
         await other.reload();
         await expect(other.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         await expect(other.getByTestId("project-row")).toContainText("원격 전용 프로젝트");
@@ -143,9 +144,10 @@ test("두 실제 서버의 인증·지연 응답·이벤트·초안이 섞이지
         // 한 호스트의 API 연결 실패·복구는 다른 호스트의 인증·stream을 건드리지 않는다.
         await other.route("**/api/v1/auth/refresh", (route) => route.abort("connectionrefused"));
         await other.reload();
-        await expect(other.getByRole("form", { name: "로그인" })).toBeVisible();
+        await expect(other.getByTestId("auth-recovery")).toBeVisible();
+        await expect(other.getByRole("form", { name: "로그인" })).toHaveCount(0);
         await expect(page.getByTestId("conn")).toHaveText("연결됨");
-        await expect(page.getByTestId("session-view").getByLabel("메시지 입력")).toHaveValue("로컬 호스트에서만 보이는 초안");
+        await expect(page.getByTestId("session-view").getByLabel("메시지 입력")).toHaveValue("");
         await other.unrouteAll();
         await other.reload();
         await expect(other.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });

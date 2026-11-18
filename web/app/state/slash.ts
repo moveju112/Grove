@@ -22,6 +22,6 @@ export function suggest(input: string, cmds: SlashCommand[]): SlashCommand[] {
     const m = input.match(/^\/([^\s/]*)$/);
     if (!m) return [];
     const q = m[1]!.toLowerCase();
-    const starts = cmds.filter((c) => c.name.startsWith(q));
-    return starts.length > 0 ? starts : cmds.filter((c) => c.name.includes(q) || c.description.includes(q));
+    const starts = cmds.filter((c) => c.name.toLowerCase().startsWith(q));
+    return starts.length > 0 ? starts : cmds.filter((c) => c.name.toLowerCase().includes(q) || c.description.toLowerCase().includes(q));
 }

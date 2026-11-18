@@ -3,21 +3,23 @@ import { StatusBadge } from "../design/StatusBadge";
 import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
+import { Tooltip } from "@astryxdesign/core/Tooltip";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
 import { DetailDialog, Panel } from "./ui/Controls";
 import { ApiError, api, newKey } from "../api/client";
-import { useQuery } from "../state/store";
+import { invalidate, useQuery } from "../state/store";
 import { GitConfirmation } from "./git/GitConfirmation";
 import { confirmationBody, type ConfirmGitBody, type GitReview, type ReviewAction, type Stash } from "./git/types";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { GitContextOverview } from "./git-context/GitContextOverview";
 import { HelpTip } from "./HelpTip";
 import { TextInput, TextArea } from "../design/Fields";
+import { GitChangeList, type GitEntry } from "./git/GitChangeList";
+import { gitPanelStyles } from "./git/git-panel.stylex";
 
-type Entry = { path: string; index: string; worktree: string; kind: string; orig_path?: string };
-type Status = { is_repo: boolean; branch?: { head?: string; oid?: string; ahead?: number; behind?: number }; entries?: Entry[]; fingerprint?: string };
+type Status = { is_repo: boolean; branch?: { head?: string; oid?: string; ahead?: number; behind?: number }; counts?: { staged: number; unstaged: number; tracked: boolean }; fingerprint?: string };
 type GitRequest =
     | { op: "stage" | "unstage"; body: { paths: string[]; expected_fingerprint: string | undefined } }
     | { op: "stage-hunks"; body: { path: string; hunks: number[]; unstage: boolean; expected_fingerprint: string | undefined } }
@@ -34,7 +36,7 @@ const LABEL: Record<GitRequest["op"], string> = {
 
 /// 프로젝트 Git 변경 패널. 사용자가 본 상태(fingerprint)와 다르면 서버가 stage·commit을 거부한다.
 export function GitPanel({ projectId }: { projectId: string }) {
-    const status = useQuery<Status>(`git:${projectId}:status`, () => api.get(`/projects/${projectId}/git/status`));
+    const status = useQuery<Status>(`git:${projectId}:status`, () => api.get(`/projects/${projectId}/git/status?summary=true`, { requires: ["paged_reads_v1"] }));
     const stashes = useQuery<{ stashes: Stash[] }>(`git:${projectId}:stashes`, () => api.get(`/projects/${projectId}/git/stashes`));
     const [diff, setDiff] = useState<{ path: string; staged: boolean; text: string; hunks?: string[]; fingerprint?: string } | null>(null);
     const [msg, setMsg] = useState("");
@@ -78,8 +80,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
             setMutation(unknown ? { phase: "unknown", attempt: a } : { phase: "idle" });
         } finally {
             sending.current = false;
-            status.reload();
-            stashes.reload();
+            invalidate(`git:${projectId}`);
         }
     };
     const start = (request: GitRequest) => {
@@ -126,7 +127,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
     );
 
     if (!s) return <section data-testid="git-panel">
-        <GitContextOverview projectId={projectId} refreshSignal={s} />
+        {!!status.error && <GitContextOverview projectId={projectId} refreshSignal={s} />}
         {progress}
         {recovery}
         <GroveText as="p" display="block" type="inherit" color={status.error ? "error" : "secondary"} role={status.error ? "alert" : "status"}>
@@ -140,34 +141,37 @@ export function GitPanel({ projectId }: { projectId: string }) {
         {recovery}
         <GroveButton onClick={() => status.reload()}>상태 다시 확인</GroveButton>
     </section>;
-    const entries = s.entries ?? [];
-    const staged = entries.filter((e) => e.index !== "." && e.index !== "?");
-    const unstaged = entries.filter((e) => e.worktree !== "." || e.index === "?");
     const hunkAct = (i: number) => start({ op: "stage-hunks", body: { path: diff!.path, hunks: [i], unstage: diff!.staged, expected_fingerprint: diff!.fingerprint } });
     const remote = (op: "fetch" | "pull" | "push") => start({ op, body: {} });
-    const row = (e: Entry, isStaged: boolean) => (
-        <GroveListItem key={(isStaged ? "s:" : "w:") + e.path} label={<>
-            <StatusBadge><code>{isStaged ? e.index : e.worktree === "." ? e.index : e.worktree}</code></StatusBadge>
-            <GroveButton appearance="link" onClick={() => void show(e.path, isStaged).catch((error) => setErr(error instanceof ApiError ? error.message : "Git diff 조회 실패"))}>{e.path}</GroveButton>
+    const row = (e: GitEntry, isStaged: boolean, fingerprint: string | null) => (
+        <GroveListItem key={(isStaged ? "s:" : "w:") + e.path} data-testid="git-change-row"
+            startContent={<StatusBadge xstyle={gitPanelStyles.actions}><code>{isStaged ? e.index : e.worktree === "." ? e.index : e.worktree}</code></StatusBadge>}
+            label={<GroveButton type="button" appearance="navigation" density="compact" width="100%" xstyle={gitPanelStyles.path} title={e.orig_path ? `${e.orig_path} → ${e.path}` : e.path}
+                onClick={() => void show(e.path, isStaged).catch((error) => setErr(error instanceof ApiError ? error.message : "Git diff 조회 실패"))}>
+                <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} xstyle={gitPanelStyles.path}>{e.path}</GroveText>
+            </GroveButton>}
+            endContent={<GroveStack direction="horizontal" align="center" gap={2} xstyle={gitPanelStyles.actions}>
             <ServerActionButton
                 variant="secondary" density="compact"
-                disabled={blocked}
-                onClick={() => start({ op: isStaged ? "unstage" : "stage", body: { paths: [e.path], expected_fingerprint: s.fingerprint } })}
+                disabled={blocked || !fingerprint}
+                onClick={() => start({ op: isStaged ? "unstage" : "stage", body: { paths: [e.path], expected_fingerprint: fingerprint ?? undefined } })}
             >
                 {isStaged ? "내리기" : "올리기"}
             </ServerActionButton>
             {e.kind !== "untracked" && <ServerActionButton variant="secondary" density="compact" disabled={blocked}
                 onClick={() => void prepare({ operation: "discard", paths: [e.path] })}>변경 버리기</ServerActionButton>}
-        </>} />
+        </GroveStack>} />
     );
     return (
-        <section data-testid="git-panel">
+        <GroveStack as="section" gap={4} xstyle={gitPanelStyles.shrink} data-testid="git-panel">
             <GitContextOverview projectId={projectId} head={s.branch?.oid} refreshSignal={s} />
+            <GroveStack direction="horizontal" align="center" justify="between" gap={2}>
             <GroveHeading level={2} color="inherit">
                 Git · {s.branch?.head} {s.branch?.ahead ? `↑${s.branch.ahead}` : ""} {s.branch?.behind ? `↓${s.branch.behind}` : ""}
-                <GroveButton variant="secondary" density="compact" onClick={() => { status.reload(); stashes.reload(); }}>새로고침</GroveButton>
             </GroveHeading>
-            <GroveStack direction="horizontal" align="center" gap={1.5}>
+            <GroveButton variant="secondary" density="compact" onClick={() => invalidate(`git:${projectId}`)}>새로고침</GroveButton>
+            </GroveStack>
+            <GroveStack direction="horizontal" align="center" justify="end" wrap="wrap" gap={2}>
                 <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => remote("fetch")} title="원격 참조만 갱신합니다">가져오기(fetch)</ServerActionButton>
                 <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => remote("pull")} title="fast-forward만 허용합니다">당겨오기(pull)</ServerActionButton>
                 <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => remote("push")} title="강제 push는 하지 않습니다">올리기(push)</ServerActionButton>
@@ -186,44 +190,45 @@ export function GitPanel({ projectId }: { projectId: string }) {
             <GroveHeading level={3} color="inherit"><GroveStack as="span" direction="horizontal" align="center" gap={1.5}>stash <HelpTip label="stash 저장 도움말">
                 tracked 파일의 index·작업 트리 변경만 저장하며 untracked·ignored 파일은 그대로 둡니다.
             </HelpTip></GroveStack></GroveHeading>
-            <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+            <GroveStack direction="horizontal" align="center" justify="end" wrap="wrap" gap={2}>
                 <TextInput label="stash 메시지" isLabelHidden placeholder="stash 메시지" value={stashMessage} onChange={setStashMessage} />
-                <ServerActionButton disabled={blocked || !s.fingerprint || !entries.some((e) => e.kind !== "untracked")}
+                <ServerActionButton disabled={blocked || !s.fingerprint || !s.counts?.tracked}
                     onClick={() => start({ op: "stash-save", body: { message: stashMessage, expected_fingerprint: s.fingerprint } })}>stash 저장</ServerActionButton>
             </GroveStack>
             {stashes.error ? <GroveText as="p" display="block" type="inherit" color="error" role="alert">stash 목록 조회 실패</GroveText> : !stashes.data ? <GroveText as="p" display="block" type="inherit" color="inherit" role="status">stash 목록 조회 중…</GroveText> :
-                <GroveList density="compact" edge="flush" listStyle="disc">{stashes.data.stashes.map((stash) => <GroveListItem key={`${stash.reference}:${stash.oid}`} label={<>
-                    <code>{stash.reference}</code> {stash.subject}
+                <GroveList density="compact" edge="flush">{stashes.data.stashes.map((stash) => <GroveListItem key={`${stash.reference}:${stash.oid}`}
+                    label={<Tooltip content={`${stash.reference} ${stash.subject}`} hasHoverIndication={false}>
+                        <GroveText maxLines={1} hasTruncateTooltip={false}><code>{stash.reference}</code> {stash.subject}</GroveText>
+                    </Tooltip>}
+                    endContent={<GroveStack direction="horizontal" align="center" gap={2} xstyle={gitPanelStyles.actions}>
                     <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => void prepare({ operation: "stash_pop", stash_oid: stash.oid })}>stash pop</ServerActionButton>
-                </>} />)}</GroveList>}
-            <GroveHeading level={3} color="inherit">커밋할 변경 ({staged.length})</GroveHeading>
-            <GroveList density="compact" edge="flush" hasDividers>{staged.map((e) => row(e, true))}</GroveList>
-            <GroveHeading level={3} color="inherit">작업 트리 변경 ({unstaged.length})</GroveHeading>
-            <GroveList density="compact" edge="flush" hasDividers>{unstaged.map((e) => row(e, false))}</GroveList>
+                </GroveStack>} />)}</GroveList>}
+            <GitChangeList key={`${projectId}:staged`} title="커밋할 변경" projectId={projectId} snapshot={s.fingerprint} staged renderRow={(entry, fingerprint) => row(entry, true, fingerprint)} />
+            <GitChangeList key={`${projectId}:unstaged`} title="작업 트리 변경" projectId={projectId} snapshot={s.fingerprint} staged={false} renderRow={(entry, fingerprint) => row(entry, false, fingerprint)} />
             {diff && (
                 <Panel title={<>{diff.path} {diff.staged ? "(stage됨)" : ""}</>}>
                     {diff.hunks ? (
                         diff.hunks.map((h, i) => (
                             <GroveStack gap={0} key={i} data-testid="hunk">
                                 <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => hunkAct(i)}>{diff.staged ? "이 부분 내리기" : "이 부분 올리기"}</ServerActionButton>
-                                <CodeBlock code={h} />
+                                <CodeBlock code={h} language="plaintext" isDiff isWrapped={false} />
                             </GroveStack>
                         ))
                     ) : (
-                        <CodeBlock code={diff.text} />
+                        <CodeBlock code={diff.text} language="plaintext" isDiff isWrapped={false} />
                     )}
                 </Panel>
             )}
             <GroveStack as="form"
-                gap={1.5} direction="horizontal" align="center" wrap="wrap"
+                gap={2} align="end"
                 onSubmit={(e) => {
                     e.preventDefault();
                     start({ op: "commit", body: { message: msg, expected_fingerprint: s.fingerprint } });
                 }}
             >
-                <TextArea value={msg} onChange={setMsg} placeholder="커밋 메시지" label="커밋 메시지" isLabelHidden rows={2} />
-                <ServerActionButton type="submit" disabled={blocked || !msg.trim() || staged.length === 0}>커밋</ServerActionButton>
+                <GroveStack width="100%"><TextArea value={msg} onChange={setMsg} placeholder="커밋 메시지" label="커밋 메시지" isLabelHidden rows={2} /></GroveStack>
+                <ServerActionButton type="submit" disabled={blocked || !msg.trim() || !s.counts?.staged}>커밋</ServerActionButton>
             </GroveStack>
-        </section>
+        </GroveStack>
     );
 }

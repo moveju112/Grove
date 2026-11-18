@@ -71,7 +71,7 @@ test("모델 답의 Markdown을 표시하고 HTML·스크립트·javascript 링�
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(answer);
 });
 
-test("답 안의 파일:줄 참조를 누르면 오른쪽에 그 파일을 열고 해당 줄을 선택한다", async ({ page }) => {
+test("답 안의 파일:줄 참조는 변경점부터 열고 명시적으로 원문의 줄로 이동한다", async ({ page }) => {
     const { a } = await ensureProjects();
     await ensureProfile();
     writeFileSync(join(state().projA, "ref-target.md"), "첫째 줄\n둘째 줄\n찾는 줄입니다\n넷째 줄\n");
@@ -87,6 +87,10 @@ test("답 안의 파일:줄 참조를 누르면 오른쪽에 그 파일을 열�
     const msg = view.getByTestId("msg-assistant").last();
     await expect(msg.getByTestId("file-ref")).toHaveCount(1, { timeout: 15_000 });
     await msg.getByTestId("file-ref").click();
+    const diff = page.getByRole("dialog", { name: "ref-target.md 변경점", exact: true });
+    await expect(diff).toBeVisible();
+    await expect(page.getByTestId("files-view")).toHaveCount(0);
+    await diff.getByRole("button", { name: "파일 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const files = page.getByTestId("files-view");
     const area = files.getByLabel("파일 내용");

@@ -6,7 +6,7 @@ export type OverviewProfile =
     | { status: "unset" | "missing" | "unknown" };
 export type OverviewRole = {
     id: string; name: string; description: string; body: string;
-    builtin: boolean; modified_fields: string[]; enabled: boolean; revision: number;
+    execution: string; builtin: boolean; modified_fields: string[]; enabled: boolean; revision: number;
     availability: "disabled" | "unknown" | "delegation_off" | "policy_denied" | "tools_disabled" | "available" | "depth_limit" | "needs_session";
 };
 export type AgentOverviewData = {

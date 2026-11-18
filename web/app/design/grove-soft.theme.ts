@@ -1,8 +1,8 @@
 import { defineTheme } from "@astryxdesign/core/theme";
-import grove from "./grove.theme";
+import grove, { uiFontStack } from "./grove.theme";
 
 const tokens = {
-    "--font-family-body": '"Pretendard", sans-serif',
+    "--font-family-body": uiFontStack,
     "--bg": "#e9ebee",
     "--panel": "#f3f4f6",
     "--raised": "#e4e6ea",

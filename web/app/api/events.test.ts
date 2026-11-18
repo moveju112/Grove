@@ -8,6 +8,51 @@ const handlers = (onStatus: StreamHandlers["onStatus"], onPartial: StreamHandler
 });
 
 describe("대화 상세 stream 소유권", () => {
+    it("만료된 access와 일시적인 갱신 오류가 겹쳐도 인증 종료 대신 backoff 후 연결을 복구한다", async () => {
+        const client = await import("./client");
+        let blocked = true;
+        let refreshed = 0;
+        const statuses: string[] = [];
+        let live!: () => void, failed!: (error: Error) => void;
+        const ready = new Promise<void>((resolve, reject) => { live = resolve; failed = reject; });
+        vi.stubGlobal("fetch", vi.fn((url: string, init: RequestInit) => {
+            if (url.endsWith("/pairing/claim")) return Promise.resolve(new Response(JSON.stringify({ access_token: "fixture-access", expires_at: "" })));
+            if (url.endsWith("/auth/logout")) return Promise.resolve(new Response("{}"));
+            if (url.endsWith("/auth/refresh")) {
+                refreshed++;
+                return Promise.resolve(new Response("{}", { status: 503 }));
+            }
+            if (blocked) return Promise.resolve(new Response("{}", { status: 401 }));
+            return Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+                start(c) {
+                    c.enqueue(hello);
+                    init.signal!.addEventListener("abort", () => c.error(new DOMException("fixture abort", "AbortError")), { once: true });
+                },
+            })));
+        }));
+        await client.redeemPairing("fixture-pairing");
+        const stream = new EventStream(handlers((status) => {
+            statuses.push(status);
+            if (status === "auth_expired") failed(new Error("일시 오류가 인증을 종료함"));
+            if (status === "offline") {
+                blocked = false;
+                queueMicrotask(() => stream.retryNow());
+            }
+            if (status === "live") live();
+        }));
+        try {
+            stream.start(null);
+            await ready;
+            expect(client.isLoggedIn()).toBe(true);
+            expect(statuses).toContain("offline");
+            expect(statuses).not.toContain("auth_expired");
+            expect(refreshed).toBe(2);
+        } finally {
+            stream.stop();
+            await client.logout();
+        }
+    });
+
     it("cursor 재연결에서 삭제 신호를 놓쳤어도 최신 partial을 받기 전에 이전 임시 응답을 비운다", async () => {
         let controller!: ReadableStreamDefaultController<Uint8Array>;
         let first!: () => void, second!: () => void, received!: () => void;

@@ -1,0 +1,201 @@
+import { Card } from "@astryxdesign/core/Card";
+import { Stack } from "@astryxdesign/core/Stack";
+import { Switch } from "@astryxdesign/core/Switch";
+import { Tab, TabList } from "@astryxdesign/core/TabList";
+import { Text } from "@astryxdesign/core/Text";
+import * as stylex from "@stylexjs/stylex";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { api } from "../../api/client";
+import type { Definition } from "../../api/generated";
+import { useQuery } from "../../state/store";
+import { Button } from "../../design/Button";
+import { Select } from "../../design/Select";
+import { Icon, type IconName } from "../icons";
+import { HelpTip, SentenceText } from "../HelpTip";
+import { useServerBlockReason } from "../pwa/lifecycle";
+import { initialScope, ProfileChoice, profileChoiceValue, scopeTarget, useEffectiveSettings, useSettingAutosave,
+    type SettingDef, type SettingItem, type SettingsTarget } from "../ScopedSettings";
+import type { SettingLinkReady } from "../settings-links/reveal";
+import { AutosaveStatus } from "./AutosaveStatus";
+import { APPLIES, SCOPE_LABEL } from "./constants";
+import { useAutosave } from "./useAutosave";
+import { workflowStyles as styles } from "./workflow.stylex";
+
+type Feature = { id: string; label: string; icon: IconName; model: string; flag?: string };
+const FEATURES: Feature[] = [
+    { id: "title-generator", label: "대화 제목 자동 생성", icon: "panel", model: "session.title_profile", flag: "session.auto_title" },
+    { id: "context-compressor", label: "컨텍스트 압축", icon: "changes", model: "context.summary_profile" },
+    { id: "context-explorer", label: "컨텍스트 탐색", icon: "search", model: "agents.profile.context-explorer" },
+    { id: "failure-analyst", label: "실패 분석", icon: "file", model: "agents.profile.failure-analyst" },
+    { id: "handoff-summarizer", label: "인계 요약", icon: "file", model: "agents.profile.handoff-summarizer" },
+    { id: "maintainer", label: "Maintainer", icon: "server", model: "memory.profile", flag: "memory.enabled" },
+];
+
+export function isWorkflowSetting(key: string) {
+    return FEATURES.some(({ model, flag }) => key === model || key === flag);
+}
+
+export function WorkflowSettings({ defs, target, linkedKey, matchedKeys, search, onLinkReady, renderRoleName, definitions }: {
+    defs: SettingDef[]; target: SettingsTarget; linkedKey?: string; matchedKeys: string[]; search: string;
+    onLinkReady: SettingLinkReady; renderRoleName: (role: Definition) => ReactNode; definitions: ReactNode;
+}) {
+    const panelId = useId();
+    const [tab, setTab] = useState("workflow");
+    const [open, setOpen] = useState<string | null>(FEATURES[0]!.id);
+    const roles = useQuery<Definition[]>("definitions:agent", () => api.get("/definitions?kind=agent"));
+    const server = useEffectiveSettings({});
+    // 자동 제목과 메모리 정리만 프로젝트 override를 지원한다. 모델은 항상 서버 전체다.
+    const project = useEffectiveSettings({ projectId: target.projectId });
+    const linked = FEATURES.find(({ model, flag }) => linkedKey && (linkedKey === model || linkedKey === flag));
+    const match = search ? FEATURES.find(({ label, model, flag }) => matchedKeys.includes(model)
+        || (flag && matchedKeys.includes(flag)) || label.toLowerCase().includes(search)) : undefined;
+    useLayoutEffect(() => {
+        if (linked || match) {
+            setTab("workflow");
+            setOpen((linked ?? match)!.id);
+        }
+    }, [linked, match, search]);
+
+    const error = Boolean(roles.error || server.error || project.error);
+    const loaded = Boolean(roles.data && server.data && project.data && defs.length);
+    const rows = FEATURES.flatMap((feature) => {
+        const role = roles.data?.find((d) => d.id === feature.id);
+        const model = defs.find((d) => d.key === feature.model);
+        const item = server.data?.items.find((d) => d.key === feature.model);
+        const flag = defs.find((d) => d.key === feature.flag);
+        const projectFlag = project.data?.items.find((d) => d.key === feature.flag);
+        const serverFlag = server.data?.items.find((d) => d.key === feature.flag);
+        if (!role || !model || !item || (feature.flag && (!flag || !projectFlag || !serverFlag))) return [];
+        return [{ feature, role, model, item, scoped: flag && projectFlag && serverFlag ? { d: flag, projectFlag, serverFlag } : undefined }];
+    });
+    const missing = linked && !rows.some(({ feature }) => feature === linked);
+    useLayoutEffect(() => {
+        if (linkedKey && linked && (error || (loaded && missing))) onLinkReady(linkedKey, null);
+    }, [error, loaded, missing, linkedKey, linked, onLinkReady]);
+    return <Stack gap={2}>
+        <TabList value={tab} onChange={setTab} role="tablist" aria-label="기본 역할·워크플로우" size="sm" hasDivider>
+            <Tab value="roles" label="기본 역할" panelId={panelId} />
+            <Tab value="workflow" label="워크플로우" panelId={panelId} />
+        </TabList>
+        {error && <Text type="supporting" color="error" role="alert">워크플로우 설정을 읽지 못했어요.</Text>}
+        <Stack id={panelId} role="tabpanel" aria-label={tab === "roles" ? "기본 역할" : "워크플로우"} gap={1}>
+            {tab === "roles" ? FEATURES.map(({ id }) => {
+                const role = roles.data?.find((d) => d.id === id);
+                return role && <Card key={id} padding={2} data-testid={`definition-${id}`}>
+                    <Stack gap={1}>{renderRoleName(role)}<Text type="supporting" color="secondary">{role.description}</Text></Stack>
+                </Card>;
+            }) : <>
+                {rows.map(({ feature, role, model, item, scoped }) => <WorkflowRow key={feature.id} feature={feature} role={role}
+                    model={model} item={item} scoped={scoped} target={target} expanded={open === feature.id}
+                    onExpand={() => setOpen(open === feature.id ? null : feature.id)} linkedKey={linkedKey} onLinkReady={onLinkReady}
+                    reloadServer={server.reload} reloadProject={project.reload} />)}
+                {!search && definitions}
+            </>}
+        </Stack>
+    </Stack>;
+}
+
+function isPending(phase: string) { return phase === "saving" || phase === "uncertain"; }
+
+type WorkflowRowProps = {
+    feature: Feature; role: Definition; model: SettingDef; item: SettingItem; target: SettingsTarget;
+    scoped?: { d: SettingDef; projectFlag: SettingItem; serverFlag: SettingItem };
+    expanded: boolean; onExpand: () => void; linkedKey?: string; onLinkReady: SettingLinkReady;
+    reloadServer: () => void; reloadProject: () => void;
+};
+
+function WorkflowRow(props: WorkflowRowProps) {
+    const { role, scoped } = props;
+    const enabled = useAutosave({
+        id: `definition-enabled:${role.id}`, value: role.enabled, revision: role.revision,
+        save: async (value, revision, key) => {
+            const saved = await api.put<Definition>(`/definitions/agent/${role.id}`, { expected_revision: revision, enabled: value }, { key });
+            return { value: saved.enabled, revision: saved.revision };
+        },
+    });
+    const saveEnabled = (value: boolean) => { enabled.change(value); enabled.commit(); };
+    return scoped ? <ScopedWorkflowRow {...props} scoped={scoped} enabled={enabled} saveEnabled={saveEnabled} />
+        : <WorkflowRowView {...props} on={enabled.value} toggle={saveEnabled}
+            locked={isPending(enabled.phase) || enabled.phase === "conflict"} statuses={<AutosaveStatus state={enabled} />} />;
+}
+
+function ScopedWorkflowRow({ scoped, enabled, saveEnabled, ...props }: WorkflowRowProps & {
+    scoped: NonNullable<WorkflowRowProps["scoped"]>; enabled: ReturnType<typeof useAutosave<boolean>>;
+    saveEnabled: (value: boolean) => void;
+}) {
+    const { target, feature, reloadServer, reloadProject } = props;
+    const [scope, setScope] = useState(() => initialScope(scoped.d, target));
+    const [, targetLabel] = scopeTarget(scope, target);
+    // Scoped features also have a legacy server-wide role gate. Turning them off only
+    // changes their scoped flag; a legacy-disabled role is restored on explicit opt-in.
+    const flag = useSettingAutosave({ d: scoped.d, it: scope === "project" ? scoped.projectFlag : scoped.serverFlag,
+        t: target, scope, reload: scope === "project" ? reloadProject : reloadServer,
+        onSaved: (value) => { if (value === true && !enabled.value) saveEnabled(true); },
+    });
+    const locked = [enabled.phase, flag.phase].some((phase) => isPending(phase) || phase === "conflict");
+    const toggle = (value: boolean) => {
+        if (value !== flag.value) { flag.change(value); flag.commit(); }
+        else saveEnabled(value);
+    };
+    return <WorkflowRowView {...props} on={enabled.value && flag.value === true} toggle={toggle} locked={locked} targetLabel={targetLabel}
+        statuses={<><AutosaveStatus state={enabled} /><AutosaveStatus state={flag} applies={APPLIES[scoped.d.applies]} /></>}
+        extra={<Stack direction="horizontal" align="center" gap={2} wrap="wrap">
+            {target.projectId && <Select label={`${feature.label} 적용 범위`} hideLabel value={scope} disabled={locked}
+                aria-description={targetLabel} onChange={setScope}
+                options={["project", "server"].map((value) => ({ value, label: SCOPE_LABEL[value] }))} />}
+            <HelpTip label={`${feature.label} 도움말`}><SentenceText text={scoped.d.description} />
+                <Text type="supporting">스위치: {targetLabel} · 모델: 서버 전체</Text>
+            </HelpTip>
+        </Stack>} />;
+}
+
+function WorkflowRowView({ feature, model, item, expanded, onExpand, linkedKey, onLinkReady, reloadServer,
+    on, toggle, locked, targetLabel, extra, statuses }: WorkflowRowProps & {
+    on: boolean; toggle: (value: boolean) => void; locked: boolean;
+    targetLabel?: string; extra?: ReactNode; statuses: ReactNode;
+}) {
+    const id = useId();
+    const header = useRef<HTMLDivElement>(null);
+    const detail = useRef<HTMLDivElement>(null);
+    const reason = useServerBlockReason();
+    const selection = useSettingAutosave({ d: model, it: item, t: {}, scope: "server", reload: reloadServer });
+    const saveSelection = (value: unknown) => { selection.change(value); selection.commit(); };
+    const chooseModel = (value: unknown) => {
+        if (profileChoiceValue(value) !== profileChoiceValue(selection.value)) saveSelection(value);
+    };
+    useLayoutEffect(() => {
+        if (linkedKey === feature.flag && linkedKey) onLinkReady(linkedKey, header.current);
+        if (linkedKey === model.key && expanded) onLinkReady(linkedKey, detail.current);
+    }, [linkedKey, expanded, feature.flag, model.key, onLinkReady]);
+
+    return <Card padding={0} data-testid={`workflow-${feature.id}`} xstyle={[styles.row, expanded && styles.expandedRow]}>
+        <Stack ref={header} direction="horizontal" align="center" gap={2} xstyle={styles.header}
+            data-setting-key={feature.flag} data-settings-target={targetLabel} data-testid={feature.flag ? `setting-${feature.flag}` : undefined}>
+            <span {...stylex.props(styles.icon)}><Icon name={feature.icon} size={14} color="secondary" /></span>
+            <Text xstyle={styles.label}>{feature.label}</Text>
+            <Stack direction="horizontal" align="center" gap={1} xstyle={styles.actions}>
+                <Text type="supporting" color={on ? "inherit" : "secondary"} aria-hidden="true">{on ? "켜짐" : "꺼짐"}</Text>
+                <Switch label={`${feature.label} 사용`} isLabelHidden value={on} size="sm" isDisabled={locked || !!reason}
+                    disabledMessage={reason ?? undefined} onChange={toggle} />
+                <Button type="button" appearance="icon" density="compact" aria-label={`${feature.label} ${expanded ? "접기" : "펼치기"}`}
+                    aria-expanded={expanded} aria-controls={id} onClick={onExpand}>
+                    <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} />
+                </Button>
+            </Stack>
+        </Stack>
+        <div id={id} hidden={!expanded}>
+            {expanded && <Stack ref={detail} gap={2} padding={3} xstyle={styles.details}
+                data-setting-key={model.key} data-testid={`setting-${model.key}`} data-settings-target="서버 전체">
+                <ProfileChoice d={model} value={selection.value} disabled={!!reason || isPending(selection.phase) || selection.phase === "conflict"}
+                    edit={chooseModel} onEffortChange={saveSelection} workflow />
+                {model.key === "session.title_profile" && !selection.value &&
+                    <Text type="supporting" color="secondary">모델을 선택하기 전에는 기존 제목이 유지돼요.</Text>}
+                {extra}
+            </Stack>}
+        </div>
+        <Stack gap={1} xstyle={styles.statuses}>
+            <AutosaveStatus state={selection} applies={APPLIES[model.applies]} />
+            {statuses}
+        </Stack>
+    </Card>;
+}

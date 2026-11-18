@@ -2,8 +2,8 @@
 //!
 //! - 모든 `/api` 요청은 loopback이어도 Bearer 토큰이 필요하다(SEC-002). 예외: health, 브라우저 로그인/갱신.
 //! - 토큰 형식 `grv_<id>.<secret>`, DB에는 secret의 SHA-256만 저장한다.
-//! - 소유자 토큰은 데이터 디렉터리의 `owner-token`(0600)에 둔다.
-//! - 브라우저: 소유자/기기 토큰으로 로그인 → HttpOnly refresh 쿠키 + 메모리 전용 access token(서버 재시작 시 무효).
+//! - 기존 `owner-token` 파일은 로컬 데몬 관리용 자격이다. 브라우저 로그인이나 암호화 원격 API에는 사용할 수 없다.
+//! - 브라우저는 페어링으로 HttpOnly refresh 쿠키와 메모리 전용 access token을 받는다.
 
 use crate::App;
 use crate::error::{ApiError, ApiResult};
@@ -29,10 +29,9 @@ pub const REFRESH_COOKIE: &str = "grove_refresh";
 pub struct Principal {
     /// 요청을 인증한 토큰 ID(브라우저면 브라우저 세션 ID)
     pub token_id: String,
-    /// 소유 주체 ID(소유자 또는 기기 토큰). idempotency 범위로 쓴다.
+    /// 등록 기기 또는 로컬 관리 주체의 ID. idempotency 범위로 쓴다.
     pub root_id: String,
     pub kind: String,
-    pub is_owner: bool,
     /// 티켓·장기 연결도 발급 당시 access 자격의 수명 이상으로 권한을 연장하지 않는다.
     #[serde(skip)]
     valid_until: Option<time::OffsetDateTime>,
@@ -101,12 +100,12 @@ pub(crate) fn verify_row(conn: &Connection, id: &str, secret: Option<&str>, now:
     let root_id = match (&kind[..], parent) {
         ("browser", Some(p)) => {
             let parent_ok: Option<(String, Option<String>, Option<String>)> = conn
-                .query_row("SELECT kind, revoked_at, expires_at FROM tokens WHERE id = ?1", params![p], |r| {
+                .query_row("SELECT t.kind,t.revoked_at,t.expires_at FROM tokens t WHERE t.id=?1 AND EXISTS(SELECT 1 FROM pairings WHERE device_id=t.id AND consumed_at IS NOT NULL)", params![p], |r| {
                     Ok((r.get(0)?, r.get(1)?, r.get(2)?))
                 })
                 .optional()?;
             match parent_ok {
-                Some((kind, None, exp)) if matches!(kind.as_str(), "owner" | "device")
+                Some((kind, None, exp)) if kind == "device"
                     && exp.as_deref().is_none_or(|e| e > now) => {
                     valid_until = valid_until.into_iter().chain(exp.as_deref().and_then(parse_time)).min();
                     p
@@ -117,20 +116,13 @@ pub(crate) fn verify_row(conn: &Connection, id: &str, secret: Option<&str>, now:
         ("owner" | "device", None) => id.to_string(),
         _ => return Err(ApiError::unauthorized("토큰의 권한 계층이 올바르지 않습니다")),
     };
-    let is_owner = if kind == "owner" {
-        true
-    } else if kind == "browser" {
-        conn.query_row("SELECT kind = 'owner' FROM tokens WHERE id = ?1", params![root_id], |r| r.get::<_, bool>(0))?
-    } else {
-        false
-    };
-    Ok(Principal { token_id: id.to_string(), root_id, kind, is_owner, valid_until })
+    Ok(Principal { token_id: id.to_string(), root_id, kind, valid_until })
 }
 
 /// 이미 인증한 주체를 현재 DB 상태와 다시 대조한다. 원문 토큰을 티켓에 보관하지 않는다.
 pub(crate) fn check_principal(conn: &Connection, p: &Principal, now: &str) -> ApiResult<Option<time::OffsetDateTime>> {
     let current = verify_row(conn, &p.token_id, None, now)?;
-    if current.root_id != p.root_id || current.kind != p.kind || current.is_owner != p.is_owner {
+    if current.root_id != p.root_id || current.kind != p.kind {
         return Err(ApiError::unauthorized("인증 주체의 권한이 변경되었습니다"));
     }
     let until = p.valid_until.into_iter().chain(current.valid_until).min();
@@ -167,6 +159,10 @@ pub(crate) async fn wait_until_invalid(app: App, p: Principal) -> ApiError {
 }
 
 pub async fn authenticate(app: &App, headers: &HeaderMap) -> ApiResult<Principal> {
+    authenticate_request(app, headers, false).await
+}
+
+async fn authenticate_request(app: &App, headers: &HeaderMap, local: bool) -> ApiResult<Principal> {
     let raw = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
@@ -184,14 +180,16 @@ pub async fn authenticate(app: &App, headers: &HeaderMap) -> ApiResult<Principal
             Ok(p)
         }).await;
     }
+    if !local {
+        return Err(ApiError::unauthorized("기기 페어링이 필요합니다"));
+    }
     let (id, secret) = parse_token(&raw).ok_or_else(|| ApiError::unauthorized("토큰 형식이 올바르지 않습니다"))?;
     let (id, secret) = (id.to_string(), secret.to_string());
     app.db
         .call(move |c| {
             let p = verify_row(c, &id, Some(&secret), &now_s)?;
-            if p.kind == "browser" {
-                // refresh 비밀은 Bearer로 쓸 수 없다.
-                return Err(ApiError::unauthorized("브라우저 refresh 자격은 API 호출에 사용할 수 없습니다"));
+            if p.kind != "owner" {
+                return Err(ApiError::unauthorized("기기 페어링이 필요합니다"));
             }
             c.execute("UPDATE tokens SET last_used_at = ?2 WHERE id = ?1", params![id, now_s])?;
             Ok(p)
@@ -205,22 +203,18 @@ impl FromRequestParts<App> for Principal {
         if let Some(p) = parts.extensions.get::<Principal>() {
             return Ok(p.clone());
         }
-        let p = authenticate(app, &parts.headers).await?;
+        let local = parts.extensions.get::<crate::e2ee::Encrypted>().is_none()
+            && parts.extensions.get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                .is_some_and(|peer| peer.ip().is_loopback())
+            && !parts.headers.contains_key(header::ORIGIN)
+            && !parts.headers.contains_key("sec-fetch-site");
+        let p = if local {
+            authenticate_request(app, &parts.headers, true).await?
+        } else {
+            authenticate(app, &parts.headers).await?
+        };
         parts.extensions.insert(p.clone());
         Ok(p)
-    }
-}
-
-/// 소유자 전용 작업용 추출기.
-pub struct Owner(pub Principal);
-impl FromRequestParts<App> for Owner {
-    type Rejection = ApiError;
-    async fn from_request_parts(parts: &mut Parts, app: &App) -> Result<Self, Self::Rejection> {
-        let p = Principal::from_request_parts(parts, app).await?;
-        if !p.is_owner {
-            return Err(ApiError::forbidden("소유자 권한이 필요합니다"));
-        }
-        Ok(Owner(p))
     }
 }
 
@@ -324,7 +318,7 @@ pub struct CreateDevice {
 }
 
 pub async fn current_device(State(app): State<App>, p: Principal) -> ApiResult<Json<serde_json::Value>> {
-    let id = if p.is_owner { p.token_id } else { p.root_id };
+    let id = p.root_id;
     let device = app.db.call(move |c| {
         let name: String = c.query_row("SELECT name FROM tokens WHERE id = ?1", params![id], |r| r.get(0))?;
         Ok(json!({ "id": id, "name": name }))
@@ -341,7 +335,7 @@ pub async fn rename_current_device(
     }
     let req_hash = sha256_hex(format!("rename-current:{name}").as_bytes());
     let actor = p.clone();
-    let id = if p.is_owner { p.token_id.clone() } else { p.root_id.clone() };
+    let id = p.root_id.clone();
     crate::idem::run(&app, &p, &headers, &req_hash, move |tx, now| {
         tx.execute("UPDATE tokens SET name = ?2 WHERE id = ?1", params![id, name])?;
         crate::events::append(tx, now, "device.updated", None, None, &json!({ "id": id }))?;
@@ -350,40 +344,13 @@ pub async fn rename_current_device(
     }).await
 }
 
-pub async fn create_device(
-    State(app): State<App>,
-    Owner(p): Owner,
-    headers: HeaderMap,
-    Json(body): Json<CreateDevice>,
-) -> ApiResult<Response> {
-    let name = body.name.trim().to_string();
-    if name.is_empty() || name.chars().count() > 80 {
-        return Err(ApiError::invalid("기기 이름은 1~80자여야 합니다"));
-    }
-    let req_hash = sha256_hex(name.as_bytes());
-    let actor = p.clone();
-    crate::idem::run_redacted(&app, &p, &headers, &req_hash, &["token"], move |tx, now| {
-        let id = new_id();
-        let secret = random_secret(32);
-        tx.execute(
-            "INSERT INTO tokens (id, kind, name, secret_hash, created_at) VALUES (?1, 'device', ?2, ?3, ?4)",
-            params![id, name, sha256_hex(secret.as_bytes()), now],
-        )?;
-        crate::events::append(tx, now, "device.created", None, None, &json!({ "id": id, "name": name }))?;
-        crate::audit::record(tx, now, &actor, "device.created", &id, json!({ "name": name }))?;
-        // 토큰 원문은 이 응답에서만 한 번 보여준다. idempotency 저장본에는 넣지 않는다.
-        Ok((StatusCode::CREATED, json!({ "id": id, "name": name, "token": format_token(&id, &secret) })))
-    })
-    .await
-}
-
-pub async fn list_devices(State(app): State<App>, Owner(p): Owner) -> ApiResult<Json<Vec<DeviceInfo>>> {
+pub async fn list_devices(State(app): State<App>, p: Principal) -> ApiResult<Json<Vec<DeviceInfo>>> {
     let cur = p.token_id.clone();
     let list = app
         .db
         .call(move |c| {
             let mut s = c.prepare(
-                "SELECT id, kind, name, created_at, last_used_at, revoked_at, parent_id, expires_at FROM tokens ORDER BY created_at",
+                "SELECT id, kind, name, created_at, last_used_at, revoked_at, parent_id, expires_at FROM tokens t WHERE kind IN ('device','browser') AND EXISTS(SELECT 1 FROM pairings WHERE device_id=COALESCE(t.parent_id,t.id) AND consumed_at IS NOT NULL) ORDER BY created_at",
             )?;
             let rows = s.query_map([], |r| {
                 Ok(DeviceInfo {
@@ -410,7 +377,7 @@ pub async fn list_devices(State(app): State<App>, Owner(p): Owner) -> ApiResult<
 
 pub async fn revoke_device(
     State(app): State<App>,
-    Owner(p): Owner,
+    p: Principal,
     headers: HeaderMap,
     Path(id): Path<String>,
 ) -> ApiResult<Response> {
@@ -423,7 +390,7 @@ pub async fn revoke_device(
             tx.query_row("SELECT kind FROM tokens WHERE id = ?1", params![id], |r| r.get(0)).optional()?;
         match kind.as_deref() {
             None => return Err(ApiError::not_found("토큰이 없습니다")),
-            Some("owner") => return Err(ApiError::forbidden("소유자 토큰은 여기서 폐기할 수 없습니다")),
+            Some("owner") => return Err(ApiError::not_found("등록 기기가 아닙니다")),
             _ => {}
         }
         tx.execute(
@@ -452,12 +419,6 @@ pub async fn revoke_device(
 }
 
 // ---------- 브라우저 로그인 (SEC-004, WEB-006) ----------
-
-#[derive(Deserialize)]
-pub struct BrowserLogin {
-    pub token: String,
-    pub name: Option<String>,
-}
 
 fn refresh_cookie_name(headers: &HeaderMap) -> String {
     // 쿠키는 port를 구분하지 않는다. 같은 hostname의 서로 다른 Grove 서버가 덮어쓰지 않게 한다.
@@ -489,102 +450,34 @@ fn cookie_value(headers: &HeaderMap, name: &str) -> Option<String> {
     })
 }
 
-/// 같은 클라이언트의 로그인 실패 한도와 잠금 시간(NET-021: 기존 5회 정책 유지).
-pub const LOGIN_MAX_FAILURES: i64 = 5;
-pub const LOGIN_WINDOW: Duration = Duration::minutes(15);
-pub const LOGIN_LOCK: Duration = Duration::minutes(15);
-
-fn client_key(req: &Request) -> String {
-    req.extensions()
-        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-        .map(|c| c.0.ip().to_string())
-        .unwrap_or_else(|| "unknown".into())
+fn refresh_key(headers: &HeaderMap) -> ApiResult<Option<String>> {
+    headers.contains_key(crate::idem::HEADER).then(|| crate::idem::key_from(headers)).transpose()
 }
 
-/// 잠금 상태 확인. 잠겨 있으면 남은 시간을 담은 오류.
-fn check_lock(c: &Connection, client: &str, now: &str) -> ApiResult<()> {
-    let until: Option<Option<String>> =
-        c.query_row("SELECT locked_until FROM login_failures WHERE client = ?1", params![client], |r| r.get(0)).optional()?;
-    if let Some(Some(u)) = until {
-        if u.as_str() > now {
-            return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "locked", "로그인 실패가 많아 잠시 잠겼습니다. 서버에서 `grove unlock`으로 해제할 수 있습니다")
-                .with_details(json!({ "locked_until": u })));
+/// 살아 있는 브라우저·부모를 먼저 검증한다. 이전 비밀은 직전 요청 ID와 함께만 재생할 수 있다.
+fn verify_refresh(c: &Connection, id: &str, secret: &str, key: Option<&str>, now: &str) -> ApiResult<()> {
+    let p = verify_row(c, id, None, now)?;
+    if p.kind != "browser" {
+        return Err(ApiError::unauthorized("브라우저 세션이 아닙니다"));
+    }
+    let hash: String = c.query_row("SELECT secret_hash FROM tokens WHERE id=?1", [id], |r| r.get(0))?;
+    let presented = sha256_hex(secret.as_bytes());
+    if ct_eq(hash.as_bytes(), presented.as_bytes()) {
+        return Ok(());
+    }
+    if let Some(key) = key {
+        let previous: Option<String> = c.query_row(
+            "SELECT previous_hash FROM browser_refresh_receipts WHERE browser_id=?1 AND request_key=?2",
+            params![id, key], |r| r.get(0),
+        ).optional()?;
+        if previous.is_some_and(|old| ct_eq(old.as_bytes(), presented.as_bytes())) {
+            return Ok(());
         }
     }
-    Ok(())
+    Err(ApiError::unauthorized("토큰이 올바르지 않습니다"))
 }
 
-fn record_failure(c: &Connection, client: &str, now: time::OffsetDateTime) -> ApiResult<()> {
-    let now_s = fmt_time(now);
-    let window_start = fmt_time(now - LOGIN_WINDOW);
-    let row: Option<(i64, String)> =
-        c.query_row("SELECT count, first_at FROM login_failures WHERE client = ?1", params![client], |r| Ok((r.get(0)?, r.get(1)?))).optional()?;
-    let (count, first) = match row {
-        Some((n, f)) if f >= window_start => (n + 1, f),
-        _ => (1, now_s.clone()),
-    };
-    let locked = (count >= LOGIN_MAX_FAILURES).then(|| fmt_time(now + LOGIN_LOCK));
-    c.execute(
-        "INSERT INTO login_failures (client, count, first_at, locked_until) VALUES (?1, ?2, ?3, ?4) \
-         ON CONFLICT(client) DO UPDATE SET count = ?2, first_at = ?3, locked_until = ?4",
-        params![client, if locked.is_some() { 0 } else { count }, first, locked],
-    )?;
-    Ok(())
-}
-
-/// 로컬 복구 경로: 서버 PC에서 모든 로그인 잠금을 해제한다.
-pub fn clear_lockouts(c: &Connection) -> ApiResult<usize> {
-    Ok(c.execute("DELETE FROM login_failures", [])?)
-}
-
-pub async fn browser_login(State(app): State<App>, req: Request) -> ApiResult<Response> {
-    let headers = req.headers().clone();
-    check_origin(&app, &headers)?;
-    let client = client_key(&req);
-    let bytes = axum::body::to_bytes(req.into_body(), 64 * 1024).await.map_err(|_| ApiError::invalid("요청 본문이 너무 큽니다"))?;
-    let body: BrowserLogin = serde_json::from_slice(&bytes).map_err(|e| ApiError::invalid(format!("JSON 형식 오류: {e}")))?;
-    let now = app.clock.now();
-    let now_s = fmt_time(now);
-    {
-        let (client, now_s) = (client.clone(), now_s.clone());
-        app.db.call(move |c| check_lock(c, &client, &now_s)).await?;
-    }
-    let Some((id, secret)) = parse_token(body.token.trim()).map(|(a, b)| (a.to_string(), b.to_string())) else {
-        let client = client.clone();
-        app.db.call(move |c| record_failure(c, &client, now)).await?;
-        return Err(ApiError::unauthorized("토큰 형식이 올바르지 않습니다"));
-    };
-    let exp_s = fmt_time(now + REFRESH_TTL);
-    let name = body.name.unwrap_or_else(|| "browser".into()).chars().take(80).collect::<String>();
-    let client2 = client.clone();
-    let result = app
-        .db
-        .call(move |c| {
-            let p = match verify_row(c, &id, Some(&secret), &now_s) {
-                Ok(p) => p,
-                Err(e) => {
-                    record_failure(c, &client2, now)?;
-                    return Err(e);
-                }
-            };
-            c.execute("DELETE FROM login_failures WHERE client = ?1", params![client2])?;
-            if p.kind == "browser" {
-                return Err(ApiError::unauthorized("브라우저 세션으로 다시 로그인할 수 없습니다"));
-            }
-            let bid = new_id();
-            let refresh = random_secret(32);
-            c.execute(
-                "INSERT INTO tokens (id, kind, name, secret_hash, parent_id, created_at, expires_at) VALUES (?1, 'browser', ?2, ?3, ?4, ?5, ?6)",
-                params![bid, name, sha256_hex(refresh.as_bytes()), p.token_id, now_s, exp_s],
-            )?;
-            Ok((bid, refresh))
-        })
-        .await;
-    let (bid, refresh) = result?;
-    Ok(browser_session_response(&app, &headers, &bid, &refresh, REFRESH_TTL.whole_seconds()))
-}
-
-/// refresh 쿠키로 새 access token을 받는다. refresh 비밀은 매번 교체한다.
+/// 비밀 회전과 재생 결과는 함께 commit한다. 갱신 성공부터 30일 동안 다시 로그인하지 않아도 된다.
 pub async fn browser_refresh(State(app): State<App>, headers: HeaderMap) -> ApiResult<Response> {
     check_origin(&app, &headers)?;
     let raw = cookie_value(&headers, &refresh_cookie_name(&headers))
@@ -592,34 +485,50 @@ pub async fn browser_refresh(State(app): State<App>, headers: HeaderMap) -> ApiR
         .ok_or_else(|| ApiError::unauthorized("로그인이 필요합니다"))?;
     let (id, secret) = parse_token(&raw).ok_or_else(|| ApiError::unauthorized("로그인이 필요합니다"))?;
     let (id, secret) = (id.to_string(), secret.to_string());
+    let key = refresh_key(&headers)?;
     let now = app.clock.now();
     let now_s = fmt_time(now);
     let (bid, refresh, expires_at) = app
         .db
         .call(move |c| {
-            let p = verify_row(c, &id, Some(&secret), &now_s)?;
-            if p.kind != "browser" {
-                return Err(ApiError::unauthorized("브라우저 세션이 아닙니다"));
+            let tx = c.transaction()?;
+            verify_refresh(&tx, &id, &secret, key.as_deref(), &now_s)?;
+            if let Some(key) = &key {
+                let replay: Option<String> = tx.query_row(
+                    "SELECT grove_decrypt(next_secret) FROM browser_refresh_receipts WHERE browser_id=?1 AND request_key=?2",
+                    params![id, key], |r| r.get(0),
+                ).optional()?;
+                if let Some(refresh) = replay {
+                    let exp: Option<String> = tx.query_row("SELECT expires_at FROM tokens WHERE id=?1", [&id], |r| r.get(0))?;
+                    tx.commit()?;
+                    return Ok((id, refresh, exp));
+                }
             }
             let refresh = random_secret(32);
-            let n = c.execute(
-                "UPDATE tokens SET secret_hash = ?2, last_used_at = ?3 WHERE id = ?1 AND secret_hash = ?4",
-                params![id, sha256_hex(refresh.as_bytes()), now_s, sha256_hex(secret.as_bytes())],
+            let expires = fmt_time(now + REFRESH_TTL);
+            tx.execute(
+                "UPDATE tokens SET secret_hash=?2,last_used_at=?3,expires_at=?4 WHERE id=?1",
+                params![id, sha256_hex(refresh.as_bytes()), now_s, expires],
             )?;
-            if n != 1 {
-                return Err(ApiError::unauthorized("동시에 갱신되었습니다. 다시 로그인하세요"));
+            tx.execute("DELETE FROM browser_refresh_receipts WHERE browser_id=?1", [&id])?;
+            if let Some(key) = key {
+                tx.execute(
+                    "INSERT INTO browser_refresh_receipts(browser_id,request_key,previous_hash,next_secret) VALUES(?1,?2,?3,grove_encrypt(?4))",
+                    params![id, key, sha256_hex(secret.as_bytes()), refresh],
+                )?;
             }
-            let exp: Option<String> = c.query_row("SELECT expires_at FROM tokens WHERE id = ?1", params![id], |r| r.get(0))?;
-            Ok((id, refresh, exp))
+            tx.commit()?;
+            Ok((id, refresh, Some(expires)))
         })
         .await?;
-    // refresh 만료 시각은 고정(최초 로그인 기준). 남은 시간만큼 쿠키 유지.
+    // 재생은 만료를 더 연장하지 않는다.
     let remaining = expires_at.as_deref().and_then(parse_time).map(|e| (e - now).whole_seconds()).unwrap_or(0).max(0);
     Ok(browser_session_response(&app, &headers, &bid, &refresh, remaining))
 }
 
 pub async fn browser_logout(State(app): State<App>, headers: HeaderMap) -> ApiResult<Response> {
     check_origin(&app, &headers)?;
+    let key = refresh_key(&headers)?;
     if let Some(raw) = cookie_value(&headers, &refresh_cookie_name(&headers)).or_else(|| cookie_value(&headers, REFRESH_COOKIE)) {
         if let Some((id, secret)) = parse_token(&raw) {
             let (id, secret) = (id.to_string(), secret.to_string());
@@ -627,14 +536,14 @@ pub async fn browser_logout(State(app): State<App>, headers: HeaderMap) -> ApiRe
             let id2 = id.clone();
             app.db
                 .call(move |c| {
-                    let p = verify_row(c, &id2, Some(&secret), &now)?;
-                    if p.kind != "browser" {
-                        return Err(ApiError::unauthorized("브라우저 세션이 아닙니다"));
-                    }
-                    c.execute(
+                    let tx = c.transaction()?;
+                    verify_refresh(&tx, &id2, &secret, key.as_deref(), &now)?;
+                    tx.execute(
                         "UPDATE tokens SET revoked_at = COALESCE(revoked_at, ?2) WHERE id = ?1 AND kind = 'browser'",
                         params![id2, now],
                     )?;
+                    tx.execute("DELETE FROM browser_refresh_receipts WHERE browser_id=?1", [&id2])?;
+                    tx.commit()?;
                     Ok(())
                 })
                 .await?;
@@ -671,14 +580,19 @@ mod tests {
             data_dir: dir.path().to_path_buf(), listen: "127.0.0.1:0".parse().unwrap(),
             allowed_origins: vec![], allowed_hosts: vec![], tls_terminated: false, web_dir: None,
             web_base: "/".into(),
-            enable_tool_loop: true, approval_ttl_secs: 1800, scheduler_tick_ms: 100, remote_watch_insecure_loopback: false, gh_command: "gh".into(),
+            approval_ttl_secs: 1800, scheduler_tick_ms: 100, remote_watch_insecure_loopback: false, gh_command: "gh".into(),
         };
         let app = App::new(cfg, clock.clone()).unwrap();
-        let owner = ensure_owner_token(&app).unwrap();
-        let parent = parse_token(&owner).unwrap().0.to_string();
+        let local = ensure_owner_token(&app).unwrap();
+        let issuer = parse_token(&local).unwrap().0.to_owned();
+        let parent = new_id();
         let browser_id = new_id();
         let (bid, now) = (browser_id.clone(), app.now());
         app.db.call(move |c| {
+            c.execute("INSERT INTO tokens (id,kind,name,secret_hash,created_at) VALUES (?1,'device','test',?2,?3)",
+                params![parent, sha256_hex(random_secret(32).as_bytes()), now])?;
+            c.execute("INSERT INTO pairings(id,name,secret_hash,issuer_id,created_at,device_id,consumed_at) VALUES(?1,'test','unused',?2,?3,?4,?3)",
+                params![new_id(), issuer, now, parent])?;
             c.execute("INSERT INTO tokens (id,kind,name,secret_hash,parent_id,created_at) VALUES (?1,'browser','expiry',?2,?3,?4)",
                 params![bid, sha256_hex(b"test-refresh-secret"), parent, now])?;
             Ok(())

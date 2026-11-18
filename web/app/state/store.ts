@@ -1,15 +1,17 @@
 // 서버 상태 조회 cache. 서버 이벤트가 오면 관련 key만 무효화해 다시 읽는다(FRAME-009).
-// 소유자: 서버 상태 = 이 cache(서버가 원천), 기기별 UI 상태 = layout/drafts(localStorage), 영속 서버 상태는 API로만 변경.
+// 소유자: 서버 상태 = 이 cache(서버가 원천), 기기별 UI 상태 = layout(localStorage), 영속 서버 상태는 API로만 변경.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { EventRecord } from "../api/generated";
 import { refreshFiles } from "./fileWatch";
 import { deliveryTiming } from "./deliveryTiming";
 import { isTransportError } from "../api/client";
+import { usePageVisible, usePaneVisible } from "./paneVisibility";
 
 // stale: 보는 화면이 없어 무효화를 미뤄 둔 항목. 다시 구독하면 그때 한 번 읽는다(PANE-007).
 // waiting: 연결 문제로 읽지 못한 항목. 화면에는 오류 대신 기존 값과 로딩 상태를 두고, 연결이 돌아오면 다시 읽는다.
-type Entry = { data: unknown; error: unknown; loading: boolean; version: number; stale: boolean; waiting?: boolean; fetcher: () => Promise<unknown> };
+type Flight = { again: boolean };
+type Entry = { data: unknown; error: unknown; loading: boolean; version: number; stale: boolean; waiting?: boolean; flight?: Flight; fetcher: () => Promise<unknown> };
 /// 구독자가 없는 cache 항목의 최대 보관 수. 넘으면 오래된 것부터 버린다.
 export const IDLE_ENTRY_LIMIT = 200;
 
@@ -29,33 +31,45 @@ export function setTransportFailureHandler(handler: (() => void) | null) { onTra
 async function load(key: string) {
     const e = entries.get(key);
     if (!e) return;
-    const v = ++e.version;
+    if (e.flight) {
+        e.flight.again = true;
+        return;
+    }
+    const flight: Flight = { again: false };
+    e.flight = flight;
+    ++e.version;
     const g = generation;
     e.loading = true;
     notify(key);
     let waiting = false;
     try {
         const data = await e.fetcher();
-        if (e.version === v) {
-            e.data = data;
-            e.error = null;
-            e.waiting = false;
+        const current = entries.get(key);
+        if (g === generation && current?.flight === flight && !flight.again) {
+            current.data = data;
+            current.error = null;
+            current.waiting = false;
         }
     } catch (err) {
-        if (e.version === v) {
+        const current = entries.get(key);
+        if (g === generation && current?.flight === flight) {
             // 연결 문제는 화면별 오류로 보이지 않는다. 기존 값을 두고 연결 복구 뒤 다시 읽는다.
             waiting = isTransportError(err);
-            e.waiting = waiting;
-            if (!waiting) e.error = err;
+            current.waiting = waiting;
+            if (!waiting && !flight.again) current.error = err;
         }
     } finally {
         // 로그아웃 정리나 보관 상한으로 버린 항목은 늦게 끝난 조회가 되살리지 않는다.
-        if (g !== generation || entries.get(key) !== e) return;
+        const current = entries.get(key);
+        if (g !== generation || current?.flight !== flight) return;
+        current.flight = undefined;
+        current.stale = flight.again;
+        current.loading = waiting;
         if (waiting) onTransportFailure?.();
-        if (e.version === v) {
-            e.loading = waiting;
-            // 객체 identity를 바꿔 구독자가 다시 그리게 한다.
-            entries.set(key, { ...e });
+        if (flight.again && !waiting && subs.get(key)?.size) {
+            current.stale = false;
+            void load(key);
+        } else {
             notify(key);
         }
     }
@@ -117,25 +131,28 @@ export function setData(key: string, data: unknown) {
 }
 
 export function useQuery<T>(key: string | null, fetcher: () => Promise<T>, options?: { keepPreviousData: true; scope: string }): { data: T | undefined; error: unknown; loading: boolean; reload: () => void } {
+    const paneVisible = usePaneVisible();
+    const pageVisible = usePageVisible();
+    const visible = paneVisible && pageVisible;
     const [, force] = useState(0);
     const previous = useRef<{ scope: string; generation: number; data: T } | null>(null);
     useEffect(() => {
-        if (!key) return;
+        if (!key || !visible) return;
         return subscribeQuery(key, fetcher, () => force((x) => x + 1));
         // fetcher는 key가 같으면 같은 대상을 읽는다고 가정한다.
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key]);
+    }, [key, visible]);
     // 같은 자원의 시간 조건이 갱신돼도 다음 재검증은 최신 fetcher를 사용한다.
     useEffect(() => {
         const entry = key ? entries.get(key) : undefined;
-        if (entry) entry.fetcher = fetcher;
+        if (entry && visible) entry.fetcher = fetcher;
     });
     const snapshot = querySnapshot<T>(key);
     if (options && snapshot.data !== undefined) previous.current = { scope: options.scope, generation, data: snapshot.data };
     const placeholder = !!key && snapshot.data === undefined && !!options
         && previous.current?.scope === options.scope && previous.current.generation === generation;
     return { ...snapshot, data: placeholder ? previous.current!.data : snapshot.data,
-        loading: snapshot.loading || (placeholder && !entries.has(key!)), reload: () => key && void load(key) };
+        loading: snapshot.loading || (placeholder && !entries.has(key!)), reload: () => key && refresh(key) };
 }
 
 export function querySnapshot<T>(key: string | null): { data: T | undefined; error: unknown; loading: boolean } {
@@ -148,7 +165,13 @@ export function applyEvent(e: EventRecord) {
     const sid = e.session_id;
     const pid = e.project_id;
     switch (e.kind) {
+        case "layout.updated": {
+            const id = (e.payload as { device_id?: string })?.device_id;
+            if (id?.startsWith("workspace-tabs-")) invalidate(`workspace-layout:${id}`);
+            break;
+        }
         case "message.created":
+            invalidate("usage:dashboard:");
             if (sid) {
                 invalidate(`messages:${sid}`);
                 invalidate(`context:${sid}`);
@@ -206,6 +229,9 @@ export function applyEvent(e: EventRecord) {
             if (sid) invalidate(`changes:${sid}`);
             refreshFiles(pid ?? undefined);
             break;
+        case "memory.updated":
+            invalidate("memory");
+            break;
         case "session.created":
         case "session.updated":
             if (pid) invalidate(`sessions:${pid}`);
@@ -255,6 +281,7 @@ export function applyEvent(e: EventRecord) {
             break;
         case "profile.changed":
             invalidate("profiles");
+            invalidate("usage:accounts");
             invalidate("bots");
             break;
         case "secret.changed":
@@ -332,9 +359,6 @@ export function applyEvent(e: EventRecord) {
                 invalidate(`git:${pid}`);
                 invalidate(`trash:${pid}`);
             }
-            break;
-        case "draft.updated":
-            invalidate(`draft:${(e.payload as { resource_key?: string })?.resource_key ?? ""}`);
             break;
         default:
             break;

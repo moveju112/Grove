@@ -91,9 +91,9 @@ export function useMobilePanels(enabled: boolean) {
     return { panel, setPanel, drag };
 }
 
-export function MobileDrawer({ enabled, side, open, drag, label, children, onClose }: {
+export function MobileDrawer({ enabled, side, open, drag, label, headerActions, children, onClose }: {
     enabled: boolean; side: MobilePanel; open: boolean; drag: Drag | null;
-    label: string; children: ReactNode; onClose: () => void;
+    label: string; headerActions?: ReactNode; children: ReactNode; onClose: () => void;
 }) {
     const [visited, setVisited] = useState(false);
     const progress = drag?.side === side ? drag.progress : open ? 1 : 0;
@@ -106,8 +106,11 @@ export function MobileDrawer({ enabled, side, open, drag, label, children, onClo
         xstyle={drag?.side === side && mobilePanelStyles.dragging((side === "left" ? progress - 1 : 1 - progress) * 100, progress)}
         onOpenChange={(opened) => { if (!opened) onClose(); }}>
         <Stack gap={0} height="100%">
-        <Stack direction="horizontal" align="center" justify="between" gap={2} paddingInline={3} paddingBlock={1} minHeight={40}><GroveText type="label">{label}</GroveText>
-            <GroveButton type="button" variant="secondary" appearance="icon" aria-label={`${label} 닫기`} onClick={onClose}>×</GroveButton>
+        <Stack direction="horizontal" align="center" justify="between" gap={2} paddingInline={3} paddingBlock={1} minHeight={40} data-testid="mobile-drawer-header"><GroveText type="label">{label}</GroveText>
+            <Stack direction="horizontal" align="center" gap={0}>
+                {headerActions}
+                <GroveButton type="button" variant="secondary" appearance="icon" aria-label={`${label} 닫기`} onClick={onClose}>×</GroveButton>
+            </Stack>
         </Stack>
         <Divider />
         <StackItem size="fill" isScrollable aria-label={label}>{(visited || open) && children}</StackItem>

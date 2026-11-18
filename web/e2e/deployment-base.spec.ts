@@ -14,7 +14,7 @@ test(`deployment ${paths.base}: direct entry, deep-link refresh, assets, manifes
     });
     await page.goto(paths.base);
     await expect(page.locator("html")).toHaveAttribute("data-hydrated", "true");
-    await expect(page.getByLabel("토큰")).toBeVisible();
+    await expect(page.getByRole("button", { name: "페어링 링크·QR로 등록" })).toBeVisible();
     await expect(page.locator('link[rel="manifest"]')).toHaveAttribute("href", paths.manifest);
     await expect(page.locator('link[rel="icon"]')).toHaveAttribute("href", paths.icon);
     const assets = await page.locator('script[src], link[rel="stylesheet"][href], link[rel="modulepreload"][href]').evaluateAll((elements) =>
@@ -59,15 +59,15 @@ test(`deployment ${paths.base}: worker update waits for user choice`, async ({ p
     const original = readFileSync(swFile, "utf8");
     try {
         await page.goto(`${paths.base}deployment-check/update`);
-        await expect(page.getByLabel("토큰")).toBeVisible();
+        await page.getByRole("button", { name: "페어링 링크·QR로 등록" }).click();
         await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-        await page.getByLabel("토큰").fill("local-deployment-check-input");
+        await page.getByRole("textbox", { name: "페어링 링크" }).fill("local-deployment-check-input");
         await page.evaluate(() => { (window as unknown as { deploymentMarker: boolean }).deploymentMarker = true; });
         writeFileSync(swFile, original.replace(/const VERSION = "([^"]+)"/, 'const VERSION = "$1-deployment-next"'));
         await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration(location.href))!.update(); });
         const banner = page.getByRole("status").filter({ hasText: "새 버전이 준비되었습니다" });
         await expect(banner).toBeVisible({ timeout: 15_000 });
-        await expect(page.getByLabel("토큰")).toHaveValue("local-deployment-check-input");
+        await expect(page.getByRole("textbox", { name: "페어링 링크" })).toHaveValue("local-deployment-check-input");
         expect(await page.evaluate(() => (window as unknown as { deploymentMarker?: boolean }).deploymentMarker)).toBe(true);
         await banner.getByRole("button", { name: "업데이트", exact: true }).click();
         await page.waitForFunction(() => !(window as unknown as { deploymentMarker?: boolean }).deploymentMarker);
@@ -96,8 +96,8 @@ test(`deployment ${paths.base}: worker update applies at once without pending in
     const original = readFileSync(swFile, "utf8");
     try {
         await page.goto(`${paths.base}deployment-check/auto`);
-        await expect(page.getByLabel("토큰")).toBeVisible();
-        await expect(page.getByLabel("토큰")).toHaveValue("");
+        await expect(page.getByRole("button", { name: "페어링 링크·QR로 등록" })).toBeVisible();
+        await expect(page.getByRole("textbox", { name: "페어링 링크" })).toHaveCount(0);
         await expect(page.getByRole("dialog")).toHaveCount(0);
         await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
         await page.evaluate(() => { (window as unknown as { deploymentMarker: boolean }).deploymentMarker = true; });

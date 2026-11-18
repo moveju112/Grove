@@ -10,10 +10,10 @@ const profile = (id: string, protocol = "openai", enabled = true) => ({
 
 describe("명시적 HTTP fallback 설정", () => {
     const a = profile("a"), b = profile("b"), c = profile("c");
-    it("기본 꺼짐이며 CLI는 미지원으로 표시한다", () => {
+    it("기본 꺼짐이며 CLI에는 fallback 설정을 표시하지 않는다", () => {
         expect(fallbackOptions(a).enabled).toBe(false);
         expect(renderToStaticMarkup(createElement(ProfileFallback, { profile: a, profiles: [a, b] }))).toContain("꺼짐");
-        expect(renderToStaticMarkup(createElement(ProfileFallback, { profile: profile("cli", "codex_cli"), profiles: [] }))).toContain("CLI fallback 미지원");
+        expect(renderToStaticMarkup(createElement(ProfileFallback, { profile: profile("cli", "codex_cli"), profiles: [] }))).toBe("");
     });
     it("전송 확인과 revision을 포함하고 순서·기존 옵션을 보존한다", () => {
         const payload = fallbackPayload(a, [a, b, c], ["c", "b"], true);

@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiCall, ensureProjects, expectChoice, login } from "./helpers";
+import { apiCall, ensureProjects, expectChoice, login, openTool, settingsGroupHeader } from "./helpers";
 
 const advancedKey = "context.input_reserve_tokens";
 const effectivePath = "/api/v1/settings/effective";
@@ -17,7 +17,7 @@ async function holdEffective(page: Page, sessionId?: string) {
         requested();
         await held;
         await route.fulfill({ response });
-    });
+    }, { times: 1 });
     return {
         seen,
         release,
@@ -38,6 +38,7 @@ async function setLink(page: Page, key: string) {
 async function openSettings(page: Page, key: string) {
     await login(page);
     await setLink(page, key);
+    if (page.viewportSize()!.width <= 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
     await page.getByRole("button", { name: "설정", exact: true }).click();
     return page.getByTestId("settings");
 }
@@ -46,6 +47,40 @@ async function scrollTop(page: Page) {
     await page.getByTestId("settings-scroll").evaluate((element) => { element.scrollTop = 0; });
     await expect.poll(() => page.getByTestId("settings-scroll").evaluate((element) => element.scrollTop)).toBe(0);
 }
+
+for (const width of [1280, 390]) {
+    test(`${width}px: 설정 링크 아이콘 없이도 주소로 항목을 바로 연다`, async ({ page }, info) => {
+        await page.setViewportSize({ width, height: 844 });
+        const settings = await openSettings(page, "tools.mode");
+        await expect(settings.getByRole("button", { name: "도구·권한", exact: true })).toHaveAttribute("aria-current", "page");
+        const row = settings.getByTestId("setting-tools.mode");
+        await expect(row).toBeInViewport();
+        await expect(row.getByRole("heading", { name: "도구 실행 모드", exact: true })).toBeVisible();
+        await expect(row.getByRole("combobox", { name: "도구 실행 모드", exact: true })).toBeVisible();
+        await expect(settings.locator('a[href^="#setting-"]')).toHaveCount(0);
+        await page.screenshot({ path: info.outputPath(`settings-without-link-icons-${width}.png`) });
+    });
+}
+
+test("제목 모델 링크를 열면 자동 생성 설정과 함께 표시한다", async ({ page }) => {
+    const settings = await openSettings(page, "session.title_profile");
+    const title = settings.getByTestId("setting-basic-definitions").getByTestId("workflow-title-generator");
+    await expect(settings.getByRole("button", { name: "워크플로우·메모리", exact: true })).toHaveAttribute("aria-current", "page");
+    await expect(title.getByTestId("setting-session.auto_title")).toBeVisible();
+    const model = title.getByTestId("setting-session.title_profile");
+    await expect(model.getByRole("button", { name: "제목 생성 모델", exact: true })).toBeVisible();
+    await expect(model).toBeInViewport();
+    await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
+});
+
+test("접힌 보조 기능의 모델 링크는 해당 워크플로우 행을 펼친다", async ({ page }) => {
+    const settings = await openSettings(page, "agents.profile.handoff-summarizer");
+    const row = settings.getByTestId("workflow-handoff-summarizer");
+    await expect(row.getByRole("button", { name: "인계 요약 접기", exact: true })).toHaveAttribute("aria-expanded", "true");
+    await expect(row.getByTestId("setting-agents.profile.handoff-summarizer")).toBeInViewport();
+    await expect(settings.getByTestId("setting-session.title_profile")).toHaveCount(0);
+    await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
+});
 
 test("effective 응답을 보류해도 실제 고급 행이 렌더된 뒤 이동하고 재조회는 사용자 스크롤을 빼앗지 않는다", async ({ page }) => {
     const gate = await holdEffective(page);
@@ -56,7 +91,7 @@ test("effective 응답을 보류해도 실제 고급 행이 렌더된 뒤 이동
         await page.getByRole("button", { name: "설정", exact: true }).click();
         const settings = page.getByTestId("settings");
         await gate.seen;
-        await expect(settings.getByRole("button", { name: "에이전트·워크플로우", exact: true })).toHaveAttribute("aria-current", "page");
+        await expect(settings.getByRole("button", { name: "대화·컨텍스트", exact: true })).toHaveAttribute("aria-current", "page");
         await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toHaveCount(0);
         await expect(settings.getByTestId(`setting-${advancedKey}`)).toHaveCount(0);
         // 실제 sleep 없이 느린 조회 중에도 시간이 흐르는 상황을 고정한다.
@@ -109,8 +144,9 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
         await expect(right).toBeVisible();
         await left.getByLabel("메시지 입력").fill("왼쪽 작업 초안");
         await right.getByLabel("메시지 입력").fill("오른쪽 작업 초안");
-        const tabCount = await page.getByRole("tablist").getByRole("tab").count();
-        await left.getByRole("button", { name: "대화 작업", exact: true }).click();
+        const workTabs = page.getByRole("tablist", { name: "열린 대화와 화면", exact: true }).getByRole("tab");
+        const tabCount = await workTabs.count();
+        await openTool(left, "대화");
         await left.getByRole("button", { name: "대화 설정" }).click();
         const leftRow = page.getByTestId("settings").getByTestId(`setting-${key}`);
         await expect(leftRow).toBeInViewport();
@@ -120,9 +156,10 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
         await expect(page.getByTestId("settings-origin")).toContainText(leftTitle);
         await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
         await expect(left.getByLabel("메시지 입력")).toHaveValue("왼쪽 작업 초안");
+        await left.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
         const gate = await holdEffective(page, rightSession.id);
         try {
-            await right.getByRole("button", { name: "대화 작업", exact: true }).click();
+            await openTool(right, "대화");
             await right.getByRole("button", { name: "대화 설정" }).click();
             await gate.seen;
             const settings = page.getByTestId("settings");
@@ -133,21 +170,24 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
             await expect(rightRow.locator("input").filter({ visible: true })).not.toHaveValue(draft);
             // context 여유분은 프로젝트까지, exec 한도는 대화 범위까지 지원한다.
             const sessionScope = key === "exec.max_memory_mb";
-            await expect(rightRow).toContainText(sessionScope ? `대상: 대화 “${rightTitle}”` : `대상: 프로젝트 “${b.name}”`);
+            await expect(settingsGroupHeader(rightRow)).toContainText(sessionScope ? `대화 “${rightTitle}”` : `프로젝트 “${b.name}”`);
             await expectChoice(rightRow.getByRole("combobox"), sessionScope ? "session" : "project");
             await expect(settings.getByTestId("settings-origin")).toContainText(rightTitle);
-            await expect(settings.getByTestId("setting-output.language")).toContainText(`대상: 대화 “${rightTitle}”`);
-            // 링크 클릭은 이 Settings 인스턴스에서만 처리한다. 키보드 활성화도 같은 경로다.
+            if (sessionScope) {
+                await expect(settings.getByRole("button", { name: "실행·한도", exact: true })).toHaveAttribute("aria-current", "page");
+            } else {
+                await expect(settingsGroupHeader(settings.getByTestId("setting-output.style"))).toContainText(`대화 “${rightTitle}”`);
+            }
+            // 직접 링크로 연 창에서도 링크 아이콘 없이 대상과 초안을 유지한다.
             const rightDraft = String(Number(await rightRow.locator("input").filter({ visible: true }).inputValue()) + 9);
             await rightRow.locator("input").filter({ visible: true }).fill(rightDraft);
-            await rightRow.locator("a").focus();
-            await page.keyboard.press("Enter");
+            await expect(settings.locator('a[href^="#setting-"]')).toHaveCount(0);
             await expect(rightRow).toBeInViewport();
             await expect(rightRow.locator("input").filter({ visible: true })).toHaveValue(rightDraft);
             await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
             await expect(left.getByLabel("메시지 입력")).toHaveValue("왼쪽 작업 초안");
             await expect(right.getByLabel("메시지 입력")).toHaveValue("오른쪽 작업 초안");
-            await expect(page.getByRole("tablist").getByRole("tab")).toHaveCount(tabCount);
+            await expect(workTabs).toHaveCount(tabCount);
         } finally {
             gate.release();
         }
@@ -156,45 +196,18 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
 
 test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로 드러난다", async ({ page }) => {
     const gate = await holdEffective(page);
-    let releaseOverview!: () => void;
-    let overviewRequested!: () => void;
-    const overviewHeld = new Promise<void>((resolve) => { releaseOverview = resolve; });
-    const overviewSeen = new Promise<void>((resolve) => { overviewRequested = resolve; });
-    await page.route("**/api/v1/agent-overview?*", async (route) => {
-        const response = await route.fetch();
-        overviewRequested();
-        await overviewHeld;
-        await route.fulfill({ response });
-    });
-    let releaseDefinitions!: () => void;
-    let definitionsRequested!: () => void;
-    const definitionsHeld = new Promise<void>((resolve) => { releaseDefinitions = resolve; });
-    const definitionsSeen = new Promise<void>((resolve) => { definitionsRequested = resolve; });
-    await page.route((url) => url.pathname === "/api/v1/definitions" && url.searchParams.get("kind") === "agent", async (route) => {
-        const response = await route.fetch();
-        definitionsRequested();
-        await definitionsHeld;
-        await route.fulfill({ response });
-    });
     try {
         const settings = await openSettings(page, "exec.max_memory_mb");
         await gate.seen;
-        await definitionsSeen;
-        await overviewSeen;
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toBeVisible();
-        await gate.deliver();
         const row = settings.getByTestId("exec-settings").getByTestId("setting-exec.max_memory_mb");
-        await expect(row).toBeVisible();
-        // 행만 준비됐어도 앞쪽 내용이 미완성이면 최초 이동을 아직 소비하지 않는다.
-        await expect(settings.getByText("링크한 설정을 불러오는 중…")).toBeVisible();
-        const definitionsReceived = page.waitForResponse((response) => new URL(response.url()).pathname === "/api/v1/definitions");
-        releaseDefinitions();
-        await definitionsReceived;
-        await expect(settings.getByTestId("setting-definitions").getByRole("button", { name: /^Reviewer/, includeHidden: true })).toBeAttached();
-        // 개요도 앞쪽 높이를 바꾸므로 정의 목록만 준비됐다고 이동하면 안 된다.
-        await expect(settings.getByText("링크한 설정을 불러오는 중…")).toBeVisible();
-        releaseOverview();
-        await expect(settings.getByTestId("agent-overview").getByRole("heading", { name: /등록된 역할/, includeHidden: true })).toBeAttached();
+        await expect(row).toHaveCount(0);
+        await gate.deliver();
+        // 명령 실행이 원본 설정보다 앞에 있어, 원본 조회와 무관하게 이동할 수 있다.
+        await expect.poll(() => settings.getByRole("region").evaluateAll((regions) =>
+            regions.map((region) => region.getAttribute("aria-label")).filter((label) => label === "명령 실행" || label === "원본 Claude/Codex 설정")
+        )).toEqual(["명령 실행", "원본 Claude/Codex 설정"]);
+        await expect(settings.getByTestId("setting-basic-definitions")).toHaveCount(0);
         await expect(row).toBeInViewport();
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
         const current = await apiCall<{ items: { key: string; layers: Record<string, { revision: number }> }[] }>("GET", "/settings/effective");
@@ -204,12 +217,10 @@ test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로
         // 0(제한 없음)을 그대로 저장해 격리 서버의 한도는 바꾸지 않고 재조회만 유도한다.
         await apiCall("PUT", "/settings/server/-/exec.max_memory_mb", { expected_revision: item.layers.server!.revision, value: 0 });
         await refreshed;
-        await expect(row).toContainText("대상: 서버 전체");
+        await expect(settingsGroupHeader(row)).toContainText("서버 전체");
         await expect.poll(() => page.getByTestId("settings-scroll").evaluate((element) => element.scrollTop)).toBe(0);
     } finally {
         gate.release();
-        releaseDefinitions();
-        releaseOverview();
     }
 });
 
@@ -244,7 +255,7 @@ test("닫은 설정의 늦은 응답은 다시 연 설정의 기본 접힘을 �
         await page.getByRole("button", { name: "설정", exact: true }).click();
         await expect(settings.getByTestId(`setting-${advancedKey}`)).toHaveCount(0);
         await settings.getByRole("tab", { name: "데몬 설정", exact: true }).click();
-        await settings.getByRole("button", { name: "에이전트·워크플로우", exact: true }).click();
+        await settings.getByRole("button", { name: "대화·컨텍스트", exact: true }).click();
         await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toBeVisible();
         await settings.getByLabel("설정 검색").fill("입력 여유");
         await expect(settings.getByTestId(`setting-${advancedKey}`)).toBeVisible();
@@ -265,7 +276,7 @@ for (const mode of ["조회 오류", "응답에 항목 없음"] as const) {
             }
         });
         const settings = await openSettings(page, advancedKey);
-        await expect(settings.getByRole("alert")).toHaveText("링크한 설정을 불러오지 못했습니다.");
+        await expect(settings.getByRole("alert").filter({ hasText: "링크한 설정을 불러오지 못했습니다." })).toBeVisible();
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
         await expect(settings.getByTestId(`setting-${advancedKey}`)).toHaveCount(0);
         await settings.getByRole("tab", { name: "로컬 설정", exact: true }).click();
@@ -283,7 +294,7 @@ for (const hash of ["#setting-does.not.exist", "#setting-%E0%A4%A", "#setting-%2
         await page.getByRole("button", { name: "설정", exact: true }).click();
         const settings = page.getByTestId("settings");
         await settings.getByRole("tab", { name: "데몬 설정", exact: true }).click();
-        await settings.getByRole("button", { name: "에이전트·워크플로우", exact: true }).click();
+        await settings.getByRole("button", { name: "대화·컨텍스트", exact: true }).click();
         await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toBeVisible();
         await settings.getByLabel("설정 검색").fill("입력 여유");
         await expect(settings.getByTestId(`setting-${advancedKey}`)).toBeVisible();

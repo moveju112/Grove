@@ -95,28 +95,38 @@ async fn steer_is_applied_once_at_next_model_call_after_tool_results() {
 }
 
 #[tokio::test]
-async fn queue_starts_after_completion_and_late_steer_becomes_next_turn() {
+async fn queue_waits_until_late_steers_finish_in_current_turn() {
     let (s, f, prof, sid) = setup().await;
     f.push(fixture::slow_text(&["첫", "답"], 200));
     f.push(fixture::text("둘째 답"));
     f.push(fixture::text("셋째 답"));
     let tid = start_turn(&s, &sid, &prof, "처음", false).await;
     s.wait_status(&tid, "running").await;
+    wait_requests(&f, 1).await;
     // 실행 중 일반 전송은 거절(대기열을 써야 함)
     let (st, _) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "x", "profile_id": prof })).await;
     assert_eq!(st, StatusCode::CONFLICT);
     assert_eq!(add(&s, &sid, &prof, "queue", "다음 질문").await.0, StatusCode::CREATED);
-    // 도구 없이 바로 끝나는 턴: 모델 호출 경계가 다시 오지 않으므로 steer는 다음 턴으로 넘어간다
+    // 도구가 없어도 합치기는 같은 턴의 다음 모델 호출로 이어지고, 대기열보다 먼저 반영한다.
     assert_eq!(add(&s, &sid, &prof, "steer", "늦은 지시").await.0, StatusCode::CREATED);
-    let t = wait_turn_count(&s, &sid, 3).await;
+    assert_eq!(add(&s, &sid, &prof, "steer", "두 번째 지시").await.0, StatusCode::CREATED);
+    s.wait_status(&tid, "completed").await;
+    let t = wait_turn_count(&s, &sid, 2).await;
     for x in &t {
         s.wait_status(x["id"].as_str().unwrap(), "completed").await;
     }
     let reqs = f.requests();
     assert_eq!(reqs.len(), 3);
-    assert_eq!(count_text(&reqs[1], "다음 질문"), 1, "queue가 먼저");
-    assert_eq!(count_text(&reqs[1], "늦은 지시"), 0);
-    assert_eq!(count_text(&reqs[2], "늦은 지시"), 1);
+    assert_eq!(count_text(&reqs[1], "다음 질문"), 0, "대기열은 합치기가 끝난 뒤 별도 턴으로 보낸다");
+    assert_eq!(count_text(&reqs[1], "늦은 지시"), 1);
+    assert_eq!(count_text(&reqs[1], "두 번째 지시"), 1);
+    assert_eq!(count_text(&reqs[2], "다음 질문"), 1);
+    assert_eq!(turns(&s, &sid).await.len(), 2);
+    let (_, messages) = s.get(&format!("/api/v1/sessions/{sid}/messages")).await;
+    let steers: Vec<_> = messages["items"].as_array().unwrap().iter()
+        .filter(|message| message["content"]["source"]["kind"] == "steer").collect();
+    assert_eq!(steers.len(), 2);
+    assert!(steers.iter().all(|message| message["turn_id"] == tid.as_str()));
     assert!(items(&s, &sid).await.is_empty());
 }
 

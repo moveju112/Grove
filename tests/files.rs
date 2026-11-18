@@ -39,6 +39,50 @@ async fn list_sorts_dirs_first_hides_dotfiles_and_blocks_escape() {
 }
 
 #[tokio::test]
+async fn file_pages_search_the_entire_directory_without_returning_every_row() {
+    let (s, pid, root) = setup().await;
+    for i in 0..121 { std::fs::write(root.join(format!("item-{i:03}.txt")), format!("{i}")).unwrap(); }
+    let (_, page) = s.get(&format!("/api/v1/projects/{pid}/files?limit=50")).await;
+    assert_eq!(page["total"], 121);
+    assert_eq!(page["entries"].as_array().unwrap().len(), 50);
+    assert_eq!(page["entries"][0]["name"], "item-000.txt");
+    assert_eq!(page["has_more"], true);
+    let (_, page) = s.get(&format!("/api/v1/projects/{pid}/files?limit=50&offset=100")).await;
+    assert_eq!(page["entries"].as_array().unwrap().len(), 21);
+    assert_eq!(page["entries"][0]["name"], "item-100.txt");
+    assert_eq!(page["has_more"], false);
+    let (_, page) = s.get(&format!("/api/v1/projects/{pid}/files?limit=50&filter=ITEM-120")).await;
+    assert_eq!(page["total"], 1);
+    assert_eq!(page["entries"][0]["name"], "item-120.txt");
+}
+
+#[tokio::test]
+async fn file_watch_revalidates_metadata_and_skips_oversize_hashing() {
+    let (s, pid, root) = setup().await;
+    std::fs::write(root.join("small.txt"), "before").unwrap();
+    let (_, initial) = s.get(&format!("/api/v1/projects/{pid}/files/content?path=small.txt")).await;
+    let stamp = initial["stamp"].as_str().unwrap();
+    let (_, unchanged) = s.get(&format!("/api/v1/projects/{pid}/files/content?path=small.txt&known_stamp={stamp}")).await;
+    assert_eq!(unchanged, json!({ "unchanged": true, "stamp": stamp }));
+    std::fs::write(root.join("small.txt"), "after!").unwrap();
+    let (_, changed) = s.get(&format!("/api/v1/projects/{pid}/files/content?path=small.txt&known_stamp={stamp}")).await;
+    assert_eq!(changed["text"], "after!");
+    assert_ne!(changed["stamp"], initial["stamp"]);
+    assert_eq!(changed["sha256"], grove::util::sha256_hex(b"after!"));
+    let large = std::fs::File::create(root.join("large.bin")).unwrap();
+    large.set_len(128 * 1024 * 1024).unwrap();
+    let (status, result) = s.get(&format!("/api/v1/projects/{pid}/files/content?path=large.bin")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(result["reason"], "too_large");
+    assert!(result["sha256"].is_null());
+    assert!(result["text"].is_null());
+    assert!(result.to_string().len() < 1024);
+    let stamp = result["stamp"].as_str().unwrap();
+    let (_, same) = s.get(&format!("/api/v1/projects/{pid}/files/content?path=large.bin&known_stamp={stamp}")).await;
+    assert_eq!(same["unchanged"], true);
+}
+
+#[tokio::test]
 async fn save_detects_external_change_and_converges_on_replay() {
     let (s, pid, root) = setup().await;
     std::fs::write(root.join("a.md"), "one\n").unwrap();

@@ -10,26 +10,33 @@ use serde_json::{Value, json};
 
 #[tokio::test]
 async fn local_lan_vpn_and_remote_authorities_share_auth_api_state_and_events() {
-    let dir = tempfile::tempdir().unwrap();
-    let mut cfg = config(&dir.path().join("data"));
+    let mut s = TestServer::start().await;
+    let (_, enrolled) = s.pair_browser("network").await;
+    let cookie_value = |cookie: &str| cookie.split(';').next().unwrap().split_once('=').unwrap().1.to_string();
+    let mut refresh_value = cookie_value(enrolled.headers()["set-cookie"].to_str().unwrap());
+    let mut cfg = config(&s.data_dir());
     cfg.listen = "0.0.0.0:0".parse().unwrap();
     cfg.allowed_hosts = vec!["localhost".into(), "grove.lan".into(), "grove.vpn".into(), "grove.example".into()];
     cfg.tls_terminated = true;
-    let s = TestServer::start_with(dir, cfg).await;
-    let port = s.server.as_ref().unwrap().addr.port();
+    s.stop().await;
+    let running = grove::server::start(cfg, std::sync::Arc::new(grove::util::SystemClock)).await.unwrap();
+    let port = running.addr.port();
+    s.base = format!("http://127.0.0.1:{port}");
+    s.server = Some(running);
     let base = format!("http://127.0.0.1:{port}/api/v1");
     let root = s.make_project_dir("network");
     let mut project_id = None;
-    for (index, host) in ["localhost", "grove.lan", "grove.vpn", "grove.example"].into_iter().enumerate() {
+    for host in ["localhost", "grove.lan", "grove.vpn", "grove.example"] {
         let origin = format!("https://{host}");
         let unauth = s.client.get(format!("{base}/projects")).header("host", host).header("origin", &origin).send().await.unwrap();
         assert_eq!(unauth.status(), StatusCode::UPGRADE_REQUIRED);
         let mut login = wire::Channel::open(&s, Some(host), Some(&origin)).await;
-        let metadata = login.request("POST", "/api/v1/auth/browser-login", vec![("content-type", "application/json".into())],
-            json!({ "token": s.token, "name": format!("network-{index}") })).await;
+        let metadata = login.request("POST", "/api/v1/auth/refresh",
+            vec![("cookie", format!("grove_refresh={refresh_value}"))], Value::Null).await;
         assert_eq!(metadata["status"], 200);
         let cookie = metadata["headers"].as_array().unwrap().iter().find(|h| h[0] == "set-cookie").unwrap()[1].as_str().unwrap();
         assert!(cookie.contains("Secure") && cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict"));
+        refresh_value = cookie_value(cookie);
         let credentials: Value = serde_json::from_slice(&login.body().await).unwrap();
         let token = credentials["access_token"].as_str().unwrap();
         let mut r = wire::Channel::open(&s, Some(host), Some(&origin)).await;

@@ -1,7 +1,7 @@
-"""실제 PC 대신 고유 Xvfb 화면에서 native 창 캡처·메시지 입력을 검사한다.
+"""실제 PC 대신 고유 Xvfb 화면에서 창 전환·캡처·XTEST 입력을 검사한다.
 
 실행: python3 tests/fixtures/computer_x11.py /절대/경로/grove
-필요: Xvfb, libX11. 사용자 DISPLAY나 기존 창을 사용하지 않는다.
+필요: Xvfb, libX11, libXtst. 사용자 DISPLAY나 기존 창을 사용하지 않는다.
 """
 import ctypes as c
 import json
@@ -14,6 +14,13 @@ import socket
 import urllib.request
 import uuid
 import argparse
+import threading
+
+
+class ClientMessage(c.Structure):
+    _fields_ = [("kind", c.c_int), ("serial", c.c_ulong), ("synthetic", c.c_int),
+                ("display", c.c_void_p), ("window", c.c_ulong), ("message_type", c.c_ulong),
+                ("format", c.c_int), ("data", c.c_long * 5)]
 
 
 def main():
@@ -31,6 +38,9 @@ def main():
             display = None
             x = None
             grove = None
+            manager = None
+            manager_thread = None
+            stopped = threading.Event()
             try:
                 assert select.select([server.stdout], [], [], 10)[0], "Xvfb startup timed out"
                 number = server.stdout.readline().decode().strip()
@@ -39,6 +49,7 @@ def main():
                 env.pop("WAYLAND_DISPLAY", None)
                 x = c.CDLL("libX11.so.6")
                 signatures = {
+                    "XInitThreads": ([], c.c_int),
                     "XOpenDisplay": ([c.c_char_p], c.c_void_p),
                     "XCloseDisplay": ([c.c_void_p], c.c_int),
                     "XDefaultRootWindow": ([c.c_void_p], c.c_ulong),
@@ -57,29 +68,58 @@ def main():
                     "XDefaultGC": ([c.c_void_p, c.c_int], c.c_void_p),
                     "XSetForeground": ([c.c_void_p, c.c_void_p, c.c_ulong], c.c_int),
                     "XDrawString": ([c.c_void_p, c.c_ulong, c.c_void_p, c.c_int, c.c_int, c.c_char_p, c.c_int], c.c_int),
+                    "XRaiseWindow": ([c.c_void_p, c.c_ulong], c.c_int),
                 }
                 for name, (arg_types, result) in signatures.items():
                     fn = getattr(x, name)
                     fn.argtypes, fn.restype = arg_types, result
+                assert x.XInitThreads()
                 display = x.XOpenDisplay(env["DISPLAY"].encode())
                 assert display, "isolated X11 connection failed"
                 root = x.XDefaultRootWindow(display)
                 window = x.XCreateSimpleWindow(display, root, 100, 100, 240, 160, 0, 0, 0x336699)
+                other = x.XCreateSimpleWindow(display, root, 400, 100, 240, 160, 0, 0, 0x663399)
 
-                def prop(w, name, values, kind=6):
+                def prop(w, name, values, kind=6, connection=display):
                     data = (c.c_ulong * len(values))(*values)
-                    x.XChangeProperty(display, w, x.XInternAtom(display, name.encode(), 0), kind, 32, 0, data, len(values))
+                    x.XChangeProperty(connection, w, x.XInternAtom(connection, name.encode(), 0), kind, 32, 0, data, len(values))
 
-                prop(root, "_NET_CLIENT_LIST", [window], 33)
+                prop(root, "_NET_CLIENT_LIST", [window, other], 33)
                 prop(root, "_NET_ACTIVE_WINDOW", [window], 33)
                 prop(window, "_NET_WM_PID", [os.getpid()])
+                prop(other, "_NET_WM_PID", [os.getpid()])
                 title = b"Grove isolated computer fixture"
                 x.XChangeProperty(display, window, x.XInternAtom(display, b"_NET_WM_NAME", 0),
                                   x.XInternAtom(display, b"UTF8_STRING", 0), 8, 0, c.c_char_p(title), len(title))
                 x.XSelectInput(display, window, 1 | 2 | 4 | 8)
                 x.XMapWindow(display, window)
+                x.XMapWindow(display, other)
                 x.XSetInputFocus(display, window, 1, 0)
                 x.XSync(display, 0)
+                manager = x.XOpenDisplay(env["DISPLAY"].encode())
+                assert manager
+                active_atom = x.XInternAtom(manager, b"_NET_ACTIVE_WINDOW", 0)
+                x.XSelectInput(manager, root, 1 << 19)
+                x.XSync(manager, 0)
+
+                def window_manager():
+                    fd = x.XConnectionNumber(manager)
+                    while not stopped.is_set():
+                        if not x.XPending(manager) and not select.select([fd], [], [], 0.05)[0]:
+                            continue
+                        if not x.XPending(manager):
+                            continue
+                        event = (c.c_long * 24)()
+                        x.XNextEvent(manager, event)
+                        msg = c.cast(event, c.POINTER(ClientMessage)).contents
+                        if (msg.kind, msg.message_type, msg.format, msg.data[0]) == (33, active_atom, 32, 2) and msg.window in (window, other):
+                            x.XRaiseWindow(manager, msg.window)
+                            x.XSetInputFocus(manager, msg.window, 1, 0)
+                            prop(root, "_NET_ACTIVE_WINDOW", [msg.window], 33, manager)
+                            x.XSync(manager, 0)
+
+                manager_thread = threading.Thread(target=window_manager)
+                manager_thread.start()
 
                 with socket.socket() as listener:
                     listener.bind(("127.0.0.1", 0))
@@ -112,13 +152,20 @@ def main():
                 p = api("POST", "/projects", {"root_path": project})
                 session = api("POST", f"/projects/{p['id']}/sessions", {"title": "isolated native check"})["id"]
 
+                approved_session = False
+
                 def run(command):
+                    nonlocal approved_session
                     call = api("POST", f"/sessions/{session}/tool-requests", {"name": "computer", "args": command})
-                    assert call["status"] == "pending_approval", call
+                    assert call["status"] == ("approved" if approved_session else "pending_approval"), call
+                    if approved_session:
+                        assert call["approval_scope"] == "session", call
                     request = urllib.request.Request(base + "/events", headers={"Authorization": "Bearer " + token})
                     with urllib.request.urlopen(request, timeout=15) as events:
-                        api("POST", f"/tool-calls/{call['id']}/decision",
-                            {"decision": "approve", "expected_revision": call["revision"]})
+                        if not approved_session:
+                            api("POST", f"/tool-calls/{call['id']}/decision",
+                                {"decision": "approve_session", "expected_revision": call["revision"]})
+                            approved_session = True
                         current = api("GET", f"/tool-calls/{call['id']}")
                         if current["status"] in ("succeeded", "failed", "unknown", "cancelled"):
                             return current["result"]
@@ -132,38 +179,63 @@ def main():
                     raise AssertionError("native call did not finish")
 
                 listed = run({"target": "server", "action": "list"})
+                assert "windows" in listed, listed
                 assert listed["windows"][0]["window_id"] == str(window), listed
                 assert listed["windows"][0]["active"] is True
+                assert listed["windows"][1]["active"] is False
+                old = run({"target": "server", "action": "capture", "window_id": str(window)})
+                activated = run({"target": "server", "action": "focus", "window_id": str(other)})
+                assert activated == {"window_id": str(other), "active": True}, activated
+                second = run({"target": "server", "action": "capture", "window_id": str(other)})
+                assert second["frame_id"] and second["pixels_sha256"] != old["pixels_sha256"], second
+                activated = run({"target": "server", "action": "focus", "window_id": str(window)})
+                assert activated == {"window_id": str(window), "active": True}, activated
+                retired = run({"target": "server", "action": "act", "window_id": str(window),
+                               "frame_id": old["frame_id"], "actions": [{"type": "key", "key": "Enter"}]})
+                assert retired["error"]["code"] == "stale_frame", retired
                 captured = run({"target": "server", "action": "capture", "window_id": str(window)})
                 assert "error" not in captured, captured
                 assert (captured["width"], captured["height"]) == (240, 160)
                 with open(os.path.join(data, "computer", session, captured["image_sha256"]), "rb") as f:
                     assert f.read(2) == b"\xff\xd8", "real JPEG capture expected"
-                expected = captured
                 command = {
                     "target": "server", "action": "act", "window_id": str(window), "frame_id": captured["frame_id"],
                     "actions": [{"type": "click", "x": 20, "y": 30}, {"type": "type", "text": "Ab1"}, {"type": "key", "key": "Enter"}],
                 }
                 result = run(command)
                 assert "error" not in result, result
-                assert result["effect"] == "messages_delivered_goal_unverified"
-                assert result["pointer"] == expected["pointer"], "physical pointer changed"
+                assert result["effect"] == "input_delivered_goal_unverified"
+                assert result["pointer"] == [120, 130], "pointer didn't move to the target"
                 events = []
                 fd = x.XConnectionNumber(display)
-                while len(events) < 10:
+                while len(events) < 12:
                     if not x.XPending(display):
                         assert select.select([fd], [], [], 3)[0], "expected fixture input events"
                     event = (c.c_long * 24)()
                     x.XNextEvent(display, event)
-                    events.append(c.cast(event, c.POINTER(c.c_int))[0])
+                    kind = c.cast(event, c.POINTER(c.c_int))[0]
+                    if kind in (2, 3, 4, 5):
+                        assert not c.cast(event, c.POINTER(ClientMessage)).contents.synthetic, "client-only event"
+                        events.append(kind)
                 assert events.count(4) == 1 and events.count(5) == 1, events
-                assert events.count(2) == 4 and events.count(3) == 4, events
+                assert events.count(2) == 5 and events.count(3) == 5, events
                 x.XSetWindowBackground(display, window, 0x993366)
                 x.XClearWindow(display, window)
                 x.XSync(display, 0)
                 command["frame_id"] = result["frame_id"]
                 refused = run(command)
                 assert refused["error"]["code"] == "stale_frame", refused
+                # Reject a visible overlay even when the intended window still owns keyboard focus.
+                clear = run({"target": "server", "action": "capture", "window_id": str(window)})
+                cover = x.XCreateSimpleWindow(display, root, 115, 125, 20, 20, 0, 0, 0x0)
+                x.XSelectInput(display, cover, 4 | 8)
+                x.XMapWindow(display, cover)
+                x.XSync(display, 0)
+                covered = run({"target": "server", "action": "capture", "window_id": str(window)})
+                assert covered["frame_id"] != clear["frame_id"], covered
+                refused = run({**command, "frame_id": covered["frame_id"], "actions": command["actions"][:1]})
+                assert refused["error"]["code"] == "focus_required", refused
+                assert not x.XPending(display), "click escaped the observed window"
                 prop(root, "_NET_ACTIVE_WINDOW", [root], 33)
                 x.XSync(display, 0)
                 refused = run({"target": "server", "action": "capture", "window_id": str(window)})
@@ -222,8 +294,14 @@ def main():
                     print(json.dumps({"real_cli": args.real_cli, "mcp_list_capture_approved": True, "model_read_screenshot_code": True}))
                 print(json.dumps({"status": "passed", "isolated_x11": True, "jpeg_capture": True,
                                   "click_text_key_events": True, "stale_frame_refused": True,
-                                  "focus_change_refused": True, "physical_pointer_unchanged": True, "approval_path": True}))
+                                  "focus_change_refused": True, "app_switch": True, "overlay_refused": True,
+                                  "approval_path": True}))
             finally:
+                stopped.set()
+                if manager_thread:
+                    manager_thread.join(timeout=2)
+                if manager:
+                    x.XCloseDisplay(manager)
                 if grove:
                     grove.terminate()
                     grove.wait(timeout=15)

@@ -27,6 +27,72 @@ async function reply(session: string, profile: string, marker: string, delayMs =
     return apiCall<{ turn: { id: string } }>("POST", `/sessions/${session}/turns`, { text: marker, profile_id: profile, tools: false });
 }
 
+test("390px: 모션을 바꿔도 실행 중 시간과 제목은 움직이지 않는다", async ({ page }, info) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ reducedMotion: "no-preference" });
+    const { session, profile, title } = await setup(page, "light");
+    await page.getByRole("button", { name: "사이드바", exact: true }).click();
+    await expect(page.getByTestId("mobile-drawer-left")).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
+    const recent = page.getByRole("region", { name: "최근", exact: true });
+    const row = recent.locator(`[data-testid="recent-item"][data-session="${session.id}"]`);
+    const button = row.getByRole("button", { name: new RegExp(title) });
+    const label = button.getByText(title);
+    const time = row.getByTestId("recent-time");
+    const ring = time.getByRole("progressbar", { name: "실행 중", exact: true });
+    const track = ring.locator("rect").first();
+    const sweep = ring.locator("rect").last();
+    const geometry = async () => Promise.all([button.locator("[data-grove-button-content]"), time].map(async (node) => {
+        const { x, width } = (await node.boundingBox())!;
+        return { x, width };
+    }));
+    await expect(time).toHaveText("0m");
+    await expect(ring).toHaveCount(0);
+    const idle = await geometry();
+
+    const marker = `motion-${randomUUID()}`;
+    await script({ marker, frames: frames.text([marker]).slice(0, 1), hang: true });
+    const { turn } = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`, { text: marker, profile_id: profile, tools: false });
+    try {
+        await expect(ring).toBeVisible();
+        await expect(button).toHaveAccessibleDescription("실행 중");
+        await expect(label).toHaveCSS("font-weight", "400");
+        await expect(time).toHaveText("0m");
+        expect(await geometry()).toEqual(idle);
+        await expect(sweep).toHaveCSS("animation-iteration-count", "infinite");
+        const offset = await sweep.evaluate((node) => getComputedStyle(node).strokeDashoffset);
+        await expect.poll(() => sweep.evaluate((node) => getComputedStyle(node).strokeDashoffset)).not.toBe(offset);
+        await page.screenshot({ path: info.outputPath("recent-time-motion-390.png") });
+
+        await page.emulateMedia({ reducedMotion: "reduce" });
+        await expect(ring).toBeVisible();
+        await expect(track).toHaveCSS("opacity", "1");
+        await expect(sweep).toHaveCSS("animation-name", "none");
+        await expect(sweep).toBeHidden();
+        expect(await geometry()).toEqual(idle);
+        await page.screenshot({ path: info.outputPath("recent-time-static-390.png") });
+    } finally {
+        await apiCall("POST", `/turns/${turn.id}/cancel`);
+    }
+    await expect(ring).toHaveCount(0);
+    await expect(label).toHaveCSS("font-weight", "400");
+    expect(await geometry()).toEqual(idle);
+});
+
+test("확인하지 않은 최종 답변이 있을 때만 최근 제목이 굵어진다", async ({ page }) => {
+    const { session, profile, title } = await setup(page, "light");
+    const recent = page.getByRole("region", { name: "최근", exact: true });
+    const row = recent.locator(`[data-testid="recent-item"][data-session="${session.id}"]`);
+    const button = row.getByRole("button", { name: new RegExp(title) });
+    const label = button.getByText(title);
+    await expect(label).toHaveCSS("font-weight", "400");
+    await reply(session.id, profile, `최근 제목 강조 ${session.id}`);
+    await expect(row.getByTestId("recent-completed")).toBeVisible();
+    await expect(label).toHaveCSS("font-weight", "700");
+    await button.click();
+    await expect(row.getByTestId("recent-completed")).toHaveCount(0);
+    await expect(label).toHaveCSS("font-weight", "400");
+});
+
 for (const width of [390, 1280]) {
     test.describe(`${width}px 최근 상태`, () => {
         test.use({ viewport: { width, height: 844 }, isMobile: width < 760, hasTouch: width < 760 });

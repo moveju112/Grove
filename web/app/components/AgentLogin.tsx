@@ -7,6 +7,7 @@ import { ApiError, api, newKey } from "../api/client";
 import type { AgentAuthStatus } from "../api/generated";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { TextInput } from "../design/Fields";
+import { invalidate } from "../state/store";
 
 const active = (status: AgentAuthStatus | null) =>
     ["starting", "waiting", "verifying"].includes(status?.attempt?.state ?? "");
@@ -16,7 +17,9 @@ const labels: Record<string, string> = {
     failed: "로그인 실패. 다시 시도해 주세요.",
 };
 
-export function AgentLogin({ protocol, name, disabled }: { protocol: string; name: string; disabled: boolean }) {
+export function AgentLogin({ protocol, name, disabled, signInOnly = false }: {
+    protocol: string; name: string; disabled: boolean; signInOnly?: boolean;
+}) {
     const [status, setStatus] = useState<AgentAuthStatus | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
@@ -26,6 +29,9 @@ export function AgentLogin({ protocol, name, disabled }: { protocol: string; nam
     const mounted = useRef(false);
     const base = `/agent-backends/${protocol}`;
     const requirements = { requires: ["agent_auth_v1"] };
+    useEffect(() => {
+        if (status && !active(status)) invalidate("usage:accounts");
+    }, [status?.authenticated, status?.attempt?.state]);
     useEffect(() => {
         mounted.current = true;
         const controller = new AbortController();
@@ -86,7 +92,7 @@ export function AgentLogin({ protocol, name, disabled }: { protocol: string; nam
                 {active(status) ? labels[attempt!.state] : status?.authenticated === true ? "로그인됨"
                     : status?.authenticated === false ? "로그인 필요" : "상태 확인 필요"}
             </GroveText>
-            {!active(status) && <>
+            {!active(status) && !(signInOnly && status?.authenticated) && <>
                 <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy || !status}
                     onClick={() => void act("login")}>{status?.authenticated ? "다시 로그인" : "로그인"}</ServerActionButton>
                 {status?.authenticated && <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy}

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, login, sessionView, state } from "./helpers";
+import { splitRecentItem, apiCall, ensureProfile, login, openProjectSettings, openTool, sessionView, state } from "./helpers";
 
 type Effective = { items: { key: string; layers: Record<string, { revision: number }> }[] };
 type Definition = { id: string; body: string; revision: number; enabled: boolean };
@@ -18,13 +18,12 @@ async function project() {
 async function openProject(page: Page, item: { id: string; name: string }) {
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: item.name, exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
-    await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
+    await openProjectSettings(page);
+    await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
     const panel = page.getByTestId("agent-overview");
-    await expect(panel.getByRole("button", { name: "모델·실행 정보", exact: true })).toHaveAttribute("aria-expanded", "false");
-    await expect(page.getByTestId("definition-list").getByRole("button", { name: /^Worker / })).toBeVisible();
-    await panel.getByRole("button", { name: "모델·실행 정보", exact: true }).click();
+    await expect(panel.getByRole("button", { name: "역할 상세", exact: true })).toHaveAttribute("aria-expanded", "false");
+    await expect(page.getByTestId("definition-worker").getByRole("button", { name: /^Worker / }).and(page.locator("[aria-pressed]"))).toBeVisible();
+    await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
     await expect(panel.getByRole("heading", { name: /등록된 역할/ })).toBeVisible();
     return panel;
 }
@@ -46,11 +45,7 @@ test("실제 설정 개요에서 override·비활성 지침을 읽고 기존 편
         await worker.getByRole("button", { name: "비활성 정의 지침 (실행에 사용 안 함)", exact: true }).click();
         await expect(worker.getByLabel("worker 지침", { exact: true })).toHaveText("overview 적용 지침");
         await page.keyboard.press("Escape");
-        await expect(panel).toContainText("다음 요청 기본값: fixture · fixture-model");
-        await expect(panel).toContainText("출처: 이 프로젝트");
-        await expect(panel).toContainText("대화 대상 없음 · 상속 모델 확인 불가");
-        await expect(panel).toContainText("연결·실행 미확인");
-        await expect(panel).toContainText("자동 재실행하지 않습니다");
+        await expect(panel).not.toContainText(/현재 부모 턴|다음 요청 기본값|현재 대화의 시작 승인|서버 전체 동시 실행/);
         expect(writes).toEqual([]);
         await worker.getByRole("button", { name: "worker 기존 편집 열기", exact: true }).click();
         const editor = page.getByLabel("정의 본문", { exact: true });
@@ -60,10 +55,9 @@ test("실제 설정 개요에서 override·비활성 지침을 읽고 기존 편
         await page.getByTestId("definition-editor").getByLabel("정의 본문", { exact: true }).blur();
         await expect(page.getByTestId("definition-editor")).toContainText("저장됨");
         await page.reload();
-        await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-        await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
-        await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
-        await panel.getByRole("button", { name: "모델·실행 정보", exact: true }).click();
+        await openProjectSettings(page);
+        await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
+        await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
         await panel.getByRole("article", { name: "역할 worker", exact: true }).getByRole("button", { name: "비활성 정의 지침 (실행에 사용 안 함)", exact: true }).click();
         await expect(panel.getByLabel("worker 지침", { exact: true })).toHaveText("overview 기존 편집 저장 지침");
         await expect(page.getByTestId("settings-origin")).toContainText(item.name);
@@ -74,7 +68,7 @@ test("실제 설정 개요에서 override·비활성 지침을 읽고 기존 편
     }
 });
 
-test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도 정책·모델을 혼동하지 않는다", async ({ page }) => {
+test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도 역할의 정책 상태를 혼동하지 않는다", async ({ page }) => {
     const a = await project();
     const b = await project();
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: "overview scoped session" });
@@ -86,39 +80,35 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: b.id, resource_id: other.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /overview scoped session/ }).click();
-    await sessionView(page, session.id).getByRole("button", { name: "대화 작업", exact: true }).click();
+    await openTool(sessionView(page, session.id), "대화");
     await sessionView(page, session.id).getByRole("button", { name: "대화 설정", exact: true }).click();
-    await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
+    await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
     const panel = page.getByTestId("agent-overview");
-    await panel.getByRole("button", { name: "모델·실행 정보", exact: true }).click();
-    await expect(panel).toContainText("agents.delegation: off · 금지 · 출처: 이 프로젝트");
-    await expect(panel).toContainText("활성 턴 없음 · 상속 모델 아직 미정");
-    await expect(panel).toContainText("미설정 · 선택 필요");
+    await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
     await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
     await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
-    await page.getByTestId("recent-item").filter({ hasText: "overview other session" }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
+    await splitRecentItem(page.getByTestId("recent-item").filter({ hasText: "overview other session" }));
     await expect(page.getByTestId("pane")).toHaveCount(2);
     await expect(sessionView(page, other.id)).toBeVisible();
     await page.getByTestId("project-row").getByRole("button", { name: b.name, exact: true }).click();
-    await sessionView(page, other.id).getByRole("button", { name: "대화 작업", exact: true }).click();
+    await openTool(sessionView(page, other.id), "대화");
     await sessionView(page, other.id).getByRole("button", { name: "대화 설정", exact: true }).click();
-    await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
-    await panel.getByRole("button", { name: "모델·실행 정보", exact: true }).click();
+    await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
+    await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
     await panel.getByRole("button", { name: "개요 다시 조회", exact: true }).click();
-    await expect(panel).toContainText("agents.delegation: off · 금지 · 출처: 이 프로젝트");
+    await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
     await expect(page.getByTestId("settings-origin")).toContainText("overview other session");
     await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /overview scoped session/ }).click();
-    await sessionView(page, session.id).getByRole("button", { name: "대화 작업", exact: true }).click();
+    await openTool(sessionView(page, session.id), "대화");
     await sessionView(page, session.id).getByRole("button", { name: "대화 설정", exact: true }).click();
     await expect(page.getByTestId("settings-origin")).toContainText("overview scoped session");
     await page.reload();
-    await sessionView(page, session.id).getByRole("button", { name: "대화 작업", exact: true }).click();
+    await openTool(sessionView(page, session.id), "대화");
     await sessionView(page, session.id).getByRole("button", { name: "대화 설정", exact: true }).click();
-    await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
-    await panel.getByRole("button", { name: "모델·실행 정보", exact: true }).click();
-    await expect(panel).toContainText("agents.delegation: off · 금지 · 출처: 이 프로젝트");
+    await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
+    await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
+    await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
     await expect(panel.getByTestId("overview-target")).toContainText("이 대화 기준");
     expect(await apiCall<unknown[]>("GET", `/sessions/${session.id}/turns`)).toHaveLength(0);
     expect(await apiCall<unknown[]>("GET", `/sessions/${other.id}/turns`)).toHaveLength(0);
@@ -126,6 +116,7 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
 
 test("오류·역순 응답·재접속에서 이전값을 숨기고 실제 대상의 최신값으로 복구한다", async ({ page, context }) => {
     const item = await project();
+    await setting("project", item.id, "agents.delegation", "off");
     const panel = await openProject(page, item);
     await page.route("**/api/v1/agent-overview?*", (route) => route.fulfill({
         status: 503, json: { error: { code: "fixture_unavailable", message: "fixture failure" } },
@@ -155,11 +146,11 @@ test("오류·역순 응답·재접속에서 이전값을 숨기고 실제 대�
         await snapshot;
         await expect(panel.getByRole("heading", { name: /등록된 역할/ })).toHaveCount(0);
         await setting("project", item.id, "agents.delegation", "auto");
-        await expect(panel).toContainText("agents.delegation: auto · 자동");
+        await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("대화에서 사용 가능 여부 확인 필요");
         const late = page.waitForResponse((response) => response.url().includes("/agent-overview?") && response.status() === 200);
         release();
         await late;
-        await expect(panel).toContainText("agents.delegation: auto · 자동");
+        await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("대화에서 사용 가능 여부 확인 필요");
     } finally { release(); await page.unroute("**/api/v1/agent-overview?*"); }
     await context.setOffline(true);
     expect(await page.evaluate(() => navigator.onLine)).toBe(false);
@@ -167,8 +158,7 @@ test("오류·역순 응답·재접속에서 이전값을 숨기고 실제 대�
     await expect(panel.getByRole("heading", { name: /등록된 역할/ })).toHaveCount(0);
     await setting("project", item.id, "agents.delegation", "off");
     await context.setOffline(false);
-    await expect(panel).toContainText("agents.delegation: off · 금지", { timeout: 15_000 });
-    await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
+    await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지", { timeout: 15_000 });
 });
 
 test("사용자 정의·모델 비활성·민감정보 가림과 인증 거부를 실제 API에서 확인한다", async ({ page, request }) => {
@@ -184,7 +174,6 @@ test("사용자 정의·모델 비활성·민감정보 가림과 인증 거부�
         await setting("project", item.id, "model.default_profile", profile.id);
         await apiCall("PUT", `/model-profiles/${profile.id}`, { expected_revision: profile.revision, enabled: false });
         const panel = await openProject(page, item);
-        await expect(panel).toContainText("overview disabled model · fixture-model (비활성 · 선택 필요)");
         const role = panel.getByRole("article", { name: `역할 ${custom.id}`, exact: true });
         await expect(role).toContainText("사용자 정의");
         await role.getByRole("button", { name: "현재 적용 지침", exact: true }).click();
@@ -194,6 +183,7 @@ test("사용자 정의·모델 비활성·민감정보 가림과 인증 거부�
         for (const value of ["overview-private-secret-value", "/home/fixture-personal", "fixture-private-header"]) await expect(panel).not.toContainText(value);
         expect((await request.get(`http://127.0.0.1:17741/api/v1/agent-overview?project_id=${item.id}`)).status()).toBe(401);
         const original = await apiCall("GET", `/agent-overview?project_id=${item.id}`);
+        expect(original).toMatchObject({ next_request_default: { status: "disabled", name: "overview disabled model", model: "fixture-model" } });
         await page.route("**/api/v1/agent-overview?*", (route) => route.fulfill({
             status: 403, json: { error: { code: "forbidden", message: "fixture denied" } },
         }));
@@ -214,6 +204,7 @@ test("사용자 정의·모델 비활성·민감정보 가림과 인증 거부�
 
 test("닫힌 개요의 늦은 응답은 다시 연 개요의 최신값을 덮어쓰지 않는다", async ({ page }) => {
     const item = await project();
+    await setting("project", item.id, "agents.delegation", "off");
     const panel = await openProject(page, item);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -234,12 +225,12 @@ test("닫힌 개요의 늦은 응답은 다시 연 개요의 최신값을 덮어
         await page.getByLabel("설정 검색", { exact: true }).fill("테마");
         await expect(panel).toHaveCount(0);
         await setting("project", item.id, "agents.delegation", "auto");
-        await page.getByLabel("설정 검색", { exact: true }).fill("에이전트·워크플로우 편집");
-        await panel.getByRole("button", { name: "모델·실행 정보", exact: true }).click();
-        await expect(panel).toContainText("agents.delegation: auto · 자동");
+        await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
+        await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
+        await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("대화에서 사용 가능 여부 확인 필요");
         const late = page.waitForResponse((response) => response.url().includes("/agent-overview?") && response.status() === 200);
         release();
         await late;
-        await expect(panel).toContainText("agents.delegation: auto · 자동");
+        await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("대화에서 사용 가능 여부 확인 필요");
     } finally { release(); }
 });

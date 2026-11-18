@@ -117,8 +117,7 @@ for (const theme of ["light", "dark"] as const) {
             await row.getByRole("button", { name: "상세 설정", exact: true }).click();
             await row.getByRole("button", { name: "상세 설정", exact: true }).click();
             await expect(context).toHaveValue("12345");
-            await row.getByRole("button", { name: "취소", exact: true }).click();
-            await row.getByRole("button", { name: "상세 설정", exact: true }).click();
+            await expect(row.getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
             await page.screenshot({ path: info.outputPath(`profiles-${theme}-390.png`) });
             const pane = settings.locator("..");
             await pane.evaluate((node) => { node.scrollTop = 300; });

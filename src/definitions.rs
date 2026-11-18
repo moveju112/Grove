@@ -71,6 +71,43 @@ pub static BUILTINS: &[Builtin] = &[
 
 pub const BASELINE_MANIFEST: &str = include_str!("../assets/baseline-manifest.json");
 
+/// Paseodog의 Solo 기본 역할과 내부 유지관리 역할을 위임 역할에서 구분한다.
+pub fn execution(kind: &str, id: &str) -> &'static str {
+    if kind == "workflow" { return "workflow"; }
+    match id {
+        "title-generator" | "context-compressor" | "maintainer" => "background",
+        "context-explorer" | "failure-analyst" | "handoff-summarizer" => "helper",
+        _ => "orchestrated",
+    }
+}
+
+pub const ROLE_PROFILES: &[(&str, &str, &str)] = &[
+    ("context-explorer", "agents.profile.context-explorer", "Context Explorer 모델"),
+    ("failure-analyst", "agents.profile.failure-analyst", "Failure Analyst 모델"),
+    ("handoff-summarizer", "agents.profile.handoff-summarizer", "Handoff Summarizer 모델"),
+    ("advisor", "agents.profile.advisor", "Advisor 모델"),
+    ("front-worker", "agents.profile.front-worker", "Front Worker 모델"),
+    ("heavy-worker", "agents.profile.heavy-worker", "Heavy Worker 모델"),
+    ("reviewer", "agents.profile.reviewer", "Reviewer 모델"),
+    ("security", "agents.profile.security", "Security 모델"),
+    ("worker", "agents.profile.worker", "Worker 모델"),
+    ("writer", "agents.profile.writer", "Writer 모델"),
+];
+
+pub fn profile_key(id: &str) -> Option<&'static str> {
+    match id {
+        "title-generator" => Some("session.title_profile"),
+        "context-compressor" => Some("context.summary_profile"),
+        "maintainer" => Some("memory.profile"),
+        _ => ROLE_PROFILES.iter().find(|(role, _, _)| *role == id).map(|(_, key, _)| *key),
+    }
+}
+
+/// 프런트 매터는 실행 지침에 포함하지 않는다. 사용자 수정본도 같은 resolver를 거친다.
+pub fn instructions(def: &Definition) -> String {
+    split_front_matter(&def.body).1.trim().to_string()
+}
+
 /// 원문에서 이름·설명·본문을 추출한다. 에이전트는 agent.json, 워크플로우는 front matter.
 pub fn builtin_fields(b: &Builtin) -> (String, String, String) {
     if let Some(meta) = b.meta_raw {
@@ -120,6 +157,9 @@ pub struct Definition {
     /// 기본 원문과 다른 필드 목록(builtin일 때)
     pub modified_fields: Vec<String>,
     pub enabled: bool,
+    /// background | helper | orchestrated | workflow
+    pub execution: String,
+    pub profile_key: Option<String>,
     pub revision: i64,
     pub body_sha256: String,
     /// 기본 원문 파일 sha256(builtin일 때)
@@ -184,6 +224,8 @@ pub fn resolve(conn: &Connection, kind: &str, id: &str) -> ApiResult<DefinitionD
                 builtin: true,
                 modified_fields: modified,
                 enabled,
+                execution: execution(kind, id).into(),
+                profile_key: (kind == "agent").then(|| profile_key(id)).flatten().map(str::to_string),
                 revision,
                 baseline_sha256: Some(sha256_hex(b.raw.as_bytes())),
             },
@@ -204,6 +246,8 @@ pub fn resolve(conn: &Connection, kind: &str, id: &str) -> ApiResult<DefinitionD
                 builtin: false,
                 modified_fields: vec![],
                 enabled: en,
+                execution: execution(kind, id).into(),
+                profile_key: (kind == "agent").then(|| profile_key(id)).flatten().map(str::to_string),
                 revision: rev,
                 baseline_sha256: None,
             },

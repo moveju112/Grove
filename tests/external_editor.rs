@@ -1,5 +1,7 @@
 //! 외부 편집기는 격리된 자식 시험 프로세스의 임시 PATH만 사용한다. 실제 GUI는 띄우지 않는다.
 mod common;
+#[path = "common/e2ee.rs"]
+mod wire;
 
 use common::*;
 use reqwest::{Method, StatusCode};
@@ -57,6 +59,42 @@ async fn pc_fixture() {
         s.base = format!("http://127.0.0.1:{}", s.server.as_ref().unwrap().addr.port());
         s
     } else { TestServer::start().await };
+    if matches!(scenario.as_str(), "public" | "tls") {
+        // 공개 listener·TLS 종단의 API는 평문을 거절한다. 암호화 연결 안에서도
+        // 외부 편집기의 로컬 PC 제한이 유지되는지 확인한다.
+        assert_eq!(s.get("/api/v1/external-editors").await.0, StatusCode::UPGRADE_REQUIRED);
+        let mut channel = wire::Channel::open(&s, None, None).await;
+        let headers = || vec![
+            ("authorization", format!("Bearer {}", s.token)),
+            ("content-type", "application/json".into()),
+            ("idempotency-key", s.key()),
+        ];
+        let unauthenticated = channel.request("GET", "/api/v1/external-editors", vec![], serde_json::Value::Null).await;
+        assert_eq!(unauthenticated["status"], 401);
+        channel.body().await;
+        let root = s.make_project_dir("editor");
+        std::fs::write(root.join("file.txt"), "keep me").unwrap();
+        // 이 wire helper의 v1 연결은 요청 하나만 처리한다.
+        let mut channel = wire::Channel::open(&s, None, None).await;
+        let created = channel.request("POST", "/api/v1/projects", headers(), json!({"root_path":root})).await;
+        assert_eq!(created["status"], 201, "{created}");
+        let project: serde_json::Value = serde_json::from_slice(&channel.body().await).unwrap();
+        let mut channel = wire::Channel::open(&s, None, None).await;
+        let listing = channel.request("GET", "/api/v1/external-editors", headers(), serde_json::Value::Null).await;
+        assert_eq!(listing["status"], 200, "{listing}");
+        let listing: serde_json::Value = serde_json::from_slice(&channel.body().await).unwrap();
+        assert_eq!(listing["available"], false);
+        assert_eq!(listing["editors"], json!([]));
+        assert!(listing["reason"].as_str().unwrap().contains("로컬"));
+        let mut channel = wire::Channel::open(&s, None, None).await;
+        let denied = channel.request("POST", &format!("/api/v1/projects/{}/external-editor", project["id"].as_str().unwrap()),
+            headers(), json!({"editor_id":"vscode","path":"file.txt"})).await;
+        assert_eq!(denied["status"], 403, "{denied}");
+        channel.body().await;
+        assert!(!std::path::PathBuf::from(std::env::var_os("EDITOR_RECORD").unwrap()).exists());
+        s.stop().await;
+        return;
+    }
     let project = s.create_project("editor").await;
     let id = project["id"].as_str().unwrap();
     let root = std::path::PathBuf::from(project["root_path"].as_str().unwrap());
@@ -77,7 +115,7 @@ async fn pc_fixture() {
         assert_eq!(listing["available"], false, "{listing}");
         assert_eq!(listing["editors"], json!([]));
         let reason = listing["reason"].as_str().unwrap();
-        assert!(reason.contains(match scenario.as_str() { "missing" => "찾지 못", "public" | "tls" => "로컬", _ => "GUI" }), "{reason}");
+        assert!(reason.contains(match scenario.as_str() { "missing" => "찾지 못", _ => "GUI" }), "{reason}");
         let (status, _) = s.post(&route, body).await;
         assert_eq!(status, StatusCode::FORBIDDEN);
         assert!(!std::path::PathBuf::from(std::env::var_os("EDITOR_RECORD").unwrap()).exists());

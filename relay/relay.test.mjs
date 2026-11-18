@@ -2,6 +2,7 @@ import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes } from "node:crypto";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
+import { GroveRelay } from "./worker.mjs";
 
 let mf;
 const room = randomBytes(32).toString("hex");
@@ -78,6 +79,11 @@ test("authenticated daemon pairs isolated opaque channels; disconnect closes pee
     const fromDaemon = next(client);
     data.send(opaque);
     assert.deepEqual(Buffer.from((await fromDaemon).data), opaque);
+    // 16MiB 첨부는 JSON과 암호화 전송 envelope의 base64를 거치면 약 29MiB다.
+    const large = Buffer.alloc(Math.ceil(Math.ceil(16 * 1024 * 1024 / 3) * 4 / 3) * 4 + 4096, 0x78);
+    const largeFromClient = next(data);
+    client.send(large);
+    assert.deepEqual(Buffer.from((await largeFromClient).data), large);
     const closedClient = next(client, "close", "client");
     const closedData = next(data, "close", "data");
     const closedControl = next(control, "close", "control");
@@ -90,4 +96,157 @@ test("authenticated daemon pairs isolated opaque channels; disconnect closes pee
     const done = next(control, "close");
     control.close();
     await done;
+});
+
+// close 이벤트가 오지 않고 readyState도 OPEN에 머무는 단절을 재현한다.
+// 실제 WebSocket·인증 경계는 위 Miniflare 시험에서 별도로 확인한다.
+async function leaseFixture(t, attachments = []) {
+    let now = 1_000_000;
+    t.mock.method(Date, "now", () => now);
+    const sockets = [];
+    const makeSocket = (attachment = {}) => ({
+        readyState: 1, attachment: structuredClone(attachment), messages: [], closes: 0,
+        deserializeAttachment() { return structuredClone(this.attachment); },
+        serializeAttachment(value) { this.attachment = structuredClone(value); },
+        send(value) { this.messages.push(value); },
+        close() { this.closes++; },
+    });
+    const NativeResponse = globalThis.Response;
+    t.mock.method(globalThis, "Response", function (body, init) {
+        return init?.status === 101 ? { status: 101, webSocket: init.webSocket } : new NativeResponse(body, init);
+    });
+    globalThis.WebSocketPair = class {
+        constructor() { return { 0: makeSocket(), 1: makeSocket() }; }
+    };
+    t.after(() => { delete globalThis.WebSocketPair; });
+    let alarm = null;
+    const values = new Map();
+    const ctx = {
+        gate: Promise.resolve(),
+        blockConcurrencyWhile(callback) {
+            const pending = this.gate.then(callback);
+            this.gate = pending.then(() => undefined);
+            return pending;
+        },
+        storage: {
+            async getAlarm() { return alarm; },
+            async setAlarm(value) { alarm = value; },
+            async deleteAlarm() { alarm = null; },
+            async get(key) { return values.get(key); },
+            async put(key, value) { values.set(key, value); },
+        },
+        getWebSockets(tag) { return sockets.filter((ws) => !tag || ws.tags.includes(tag)); },
+        acceptWebSocket(ws, tags) { ws.tags = tags; sockets.push(ws); },
+    };
+    for (const attachment of attachments) {
+        const ws = makeSocket(attachment);
+        ctx.acceptWebSocket(ws, [attachment.role, `${attachment.role}:${attachment.id}`, `generation:${attachment.generation}`]);
+    }
+    const relay = new GroveRelay(ctx);
+    await ctx.gate;
+    return {
+        relay, ctx, sockets, values, alarm: () => alarm, at: (value) => { now = value; },
+        request: (role) => relay.fetch(new Request(`https://relay.example/relay/room/${role}`)),
+    };
+}
+const controlState = (id = "old") => ({ role: "control", id, generation: id, leaseUntil: 1_070_000 });
+
+test("a lost control expires without a close event and retires only its own generation", async (t) => {
+    const f = await leaseFixture(t, [
+        controlState(),
+        { role: "client", id: "stream", generation: "old", pending: false },
+        { role: "data", id: "stream", generation: "old" },
+        { role: "data", id: "unrelated", generation: "other" },
+    ]);
+    assert.equal(f.alarm(), 1_070_000);
+    f.at(1_070_000);
+    await f.relay.alarm();
+    assert.deepEqual(f.sockets.map((ws) => ws.closes > 0), [true, true, true, false]);
+    assert.equal(f.relay.sockets("control").length, 0);
+    assert.equal(f.alarm(), null);
+    // 인증·페어링 저장소를 바꾸지 않고 통신 연결만 정리한다.
+    assert.equal(f.values.size, 0);
+});
+
+test("heartbeat renews the lease across hibernation and an old alarm cannot expire a live control", async (t) => {
+    const f = await leaseFixture(t, [controlState()]);
+    const control = f.sockets[0];
+    f.at(1_020_000);
+    await f.relay.webSocketMessage(control, "ping");
+    assert.deepEqual(control.messages, ["pong"]);
+    assert.equal(f.alarm(), 1_090_000);
+    const resumed = new GroveRelay(f.ctx);
+    await f.ctx.gate;
+    f.at(1_070_000);
+    await resumed.alarm();
+    assert.equal(control.closes, 0);
+    assert.equal(f.alarm(), 1_090_000);
+    f.at(1_090_000);
+    await resumed.alarm();
+    assert.ok(control.closes > 0);
+});
+
+test("a late heartbeat cannot revive an expired generation", async (t) => {
+    const f = await leaseFixture(t, [controlState()]);
+    f.at(1_070_000);
+    await f.relay.webSocketMessage(f.sockets[0], "ping");
+    assert.deepEqual(f.sockets[0].messages, []);
+    assert.equal(f.relay.sockets("control").length, 0);
+});
+
+test("reconnect retires a stale OPEN socket; delayed old events do not close the replacement", async (t) => {
+    const f = await leaseFixture(t, [controlState()]);
+    assert.equal((await f.request("control")).status, 409);
+    f.at(1_070_000);
+    assert.equal((await f.request("control")).status, 101);
+    const current = f.relay.sockets("control")[0];
+    assert.notEqual(current, f.sockets[0]);
+    assert.equal(f.relay.sockets("control").length, 1);
+    await f.relay.webSocketClose(f.sockets[0]);
+    await f.relay.webSocketError(f.sockets[0]);
+    await f.relay.webSocketMessage(f.sockets[0], "ping");
+    assert.equal(current.closes, 0);
+    assert.equal(f.relay.sockets("control").length, 1);
+});
+
+test("simultaneous reconnects admit one control, not two", async (t) => {
+    const f = await leaseFixture(t, [controlState()]);
+    f.at(1_070_000);
+    const responses = await Promise.all([f.request("control"), f.request("control")]);
+    assert.deepEqual(responses.map((r) => r.status).sort(), [101, 409]);
+    assert.equal(f.relay.sockets("control").length, 1);
+});
+
+test("client admission reaps stale controls even when the alarm has not run", async (t) => {
+    const f = await leaseFixture(t, [controlState()]);
+    f.at(1_070_000);
+    const response = await f.relay.fetch(new Request("https://relay.example/api/e2ee/room"));
+    assert.equal(response.status, 503);
+    assert.equal(f.relay.sockets("control").length, 0);
+});
+
+test("deployment grants legacy controls one lease, not an unlimited lease on each wake", async (t) => {
+    const f = await leaseFixture(t, [{ role: "control", id: "old", generation: "old", deadline: 10 }]);
+    assert.equal(f.sockets[0].attachment.leaseUntil, 1_070_000);
+    f.at(1_040_000);
+    const resumed = new GroveRelay(f.ctx);
+    await f.ctx.gate;
+    assert.equal(f.sockets[0].attachment.leaseUntil, 1_070_000);
+    f.at(1_070_000);
+    await resumed.alarm();
+    assert.equal(resumed.sockets("control").length, 0);
+});
+
+test("the shared alarm preserves the earlier pending handshake deadline", async (t) => {
+    const id = "12345678-1234-4234-8234-123456789abc";
+    const f = await leaseFixture(t, [
+        controlState(),
+        { role: "client", id, generation: "old", pending: true, deadline: 1_010_000 },
+    ]);
+    assert.equal(f.alarm(), 1_010_000);
+    f.at(1_010_000);
+    await f.relay.alarm();
+    assert.equal(f.sockets[0].closes, 0);
+    assert.ok(f.sockets[1].closes > 0);
+    assert.equal(f.alarm(), 1_070_000);
 });

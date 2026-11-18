@@ -75,6 +75,16 @@ describe("정리용 폴더 요청", () => {
         expect(await request.run("/project-folders/folder", body)).toEqual({ id: "folder" });
         expect(vi.mocked(api.patch).mock.calls[1]).toEqual(vi.mocked(api.patch).mock.calls[0]);
     });
+    it("폴더 이동 응답이 유실되면 같은 폴더와 revision, 요청 키로 확인한다", async () => {
+        vi.mocked(api.patch).mockRejectedValueOnce(new Error("response lost")).mockResolvedValueOnce(a);
+        const request = new CreationRequest<Project, `/projects/${string}`>("patch");
+        const body = { expected_revision: 3, folder_id: null };
+        await expect(request.run("/projects/a", body)).rejects.toThrow("response lost");
+        await expect(request.run("/projects/a", { ...body, folder_id: "other" })).rejects.toThrow("먼저 확인");
+        expect(await request.run("/projects/a", body)).toEqual(a);
+        expect(vi.mocked(api.patch).mock.calls[1]).toEqual(vi.mocked(api.patch).mock.calls[0]);
+        expect(vi.mocked(api.patch).mock.calls[0]![2]?.requires).toEqual(["project_folders_v1"]);
+    });
 });
 
 describe("프로젝트 생성 잠금·재확인", () => {

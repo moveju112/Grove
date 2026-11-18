@@ -2,16 +2,19 @@ import { Text } from "@astryxdesign/core/Text";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Button } from "../../design/Button";
 import type { SaveSnapshot } from "../../state/autosave";
+import { APPLIES } from "./constants";
 
 export function AutosaveStatus({ state, applies }: {
     state: SaveSnapshot<unknown> & { useRemote: () => void; applyMine: () => void; retry: () => void }; applies?: string;
 }) {
     const failed = state.phase === "error" || state.phase === "conflict" || state.phase === "uncertain";
     return <>
-        {state.dirty && <Text type="supporting" color="secondary" data-settings-unsaved="true">저장 안 됨</Text>}
+        {state.dirty && state.phase === "idle" && <Text type="supporting" color="secondary" data-settings-unsaved="true">저장 안 됨</Text>}
         {state.phase !== "idle" && <Text as="p" display="block" type="supporting" color={failed ? "error" : "secondary"}
-            data-settings-issue={failed ? "error" : undefined} role="status">
-            {state.phase === "saving" ? "저장 중…" : state.phase === "saved" ? `저장됨${applies ? ` · ${applies}` : ""}`
+            data-settings-unsaved={state.dirty ? "true" : undefined}
+            data-settings-issue={failed ? "error" : undefined} role="status"
+            aria-description={state.phase === "saved" ? applies : undefined}>
+            {state.phase === "saving" ? "저장 중…" : state.phase === "saved" ? `저장됨${applies === APPLIES.restart ? ` · ${applies}` : ""}`
                 : state.phase === "conflict" ? "다른 기기에서 먼저 바뀌었어요. 내 입력은 보존했어요."
                 : state.phase === "uncertain" ? "저장 결과를 확인하지 못했어요. 새 변경을 보내기 전에 원래 요청을 확인하세요."
                 : `저장 실패(기존 값 유지): ${state.message}`}

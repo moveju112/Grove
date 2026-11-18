@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, composerOption, ensureProfile, login, openDetails, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, login, openDetails, openProjectSettings, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Run = { id: string; status: string; child_session_id: string; last_turn_id: string; result: string | null };
@@ -15,8 +15,8 @@ async function setup(settings: Page, chat: Page) {
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
     await login(settings);
     await settings.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
-    await settings.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await settings.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    await openProjectSettings(settings);
+    await settings.getByTestId("settings-menu").getByRole("button", { name: "위임 에이전트", exact: true }).click();
     await save(settings, "agents.allowed_roles", "위임 허용 역할", "reviewer");
     await login(chat);
     await chat.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(session.title) }).click();
@@ -33,7 +33,9 @@ async function save(page: Page, key: string, label: string, value: string) {
     if (key === "agents.allowed_roles") await control.fill(value);
     else await selectChoice(control, value);
     if (key === "agents.allowed_roles") await control.blur();
-    await expect(row).toContainText("저장됨 · 즉시 적용");
+    const status = row.getByRole("status").filter({ hasText: "저장됨" });
+    await expect(status).toHaveText("저장됨");
+    await expect(status).toHaveAttribute("aria-description", "즉시 적용");
     return row;
 }
 
@@ -70,7 +72,7 @@ test("설정한 역할만 안내·실행하고 승인 응답 유실 뒤에도 �
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         const approval = view.getByTestId("approval");
         await expect(approval).toContainText("reviewer");
-        await expect(approval.getByRole("button", { name: "이 대화에서 계속 허용" })).toHaveCount(0);
+        await expect(approval.getByRole("button", { name: "이 대화에서 승인" })).toHaveCount(0);
         const requests: { key: string; body: unknown }[] = [];
         await chat.route("**/api/v1/tool-calls/*/decision", async (route) => {
             requests.push({ key: route.request().headers()["idempotency-key"]!, body: route.request().postDataJSON() });
@@ -129,7 +131,7 @@ test("승인 대기 중 철회를 실행 직전에 검사하고 solo 전환 뒤�
         const run = view.getByTestId("agent-run");
         await openDetails(view.getByTestId("agent-runs"), "에이전트", view);
         await expect(run).toHaveAttribute("data-status", "running");
-        await save(page, "agents.orchestration", "에이전트 실행 방식", "solo");
+        await save(page, "agents.orchestration", "오케스트레이션", "solo");
         await openDetails(view.getByTestId("agent-runs"), "에이전트", view);
         await run.getByRole("button", { name: "취소", exact: true }).click();
         await expect(run).toHaveAttribute("data-status", "cancelled");

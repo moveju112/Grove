@@ -63,8 +63,8 @@ const COLS: &str = "s.id, s.project_id, s.title, s.created_at, s.updated_at, s.r
         FROM turns t WHERE t.session_id = s.id AND t.status IN ('queued','running','awaiting_approval')), \
     (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id = s.id AND c.status = 'pending_approval'), \
     (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id = s.id AND c.status = 'unknown' AND c.reviewed_at IS NULL), s.bot_id, \
-    (SELECT substr(json_extract(m.content, '$.text'), 1, 120) FROM messages m WHERE m.session_id = s.id AND m.rewound_at IS NULL AND m.role IN ('user','assistant') \
-       AND json_extract(m.content, '$.text') != '' ORDER BY m.seq DESC LIMIT 1), \
+    (SELECT m.history_preview FROM messages m WHERE m.session_id = s.id AND m.rewound_at IS NULL AND m.role IN ('user','assistant') \
+       AND m.history_preview != '' ORDER BY m.seq DESC LIMIT 1), \
     COALESCE((SELECT json_extract(r.view_state, '$.last_seen_seq') FROM recent_items r WHERE r.kind = 'session' AND r.resource_id = s.id), 0), \
     s.worktree_id";
 
@@ -206,7 +206,8 @@ pub fn append_message(
 /// 필요한 모델 입력 구간만 한 행씩 읽는다. 표시용 content와 model_input을 중복해서 가져오지 않는다.
 /// 분기 원본도 fork 경계 이전의 압축·상위 분기를 사용해 원래 전체 이력을 재적재하지 않는다(DB-012).
 pub(crate) fn visit_model_history(
-    conn: &Connection, session_id: &str, upto: Option<i64>, visit: &mut dyn FnMut(&str, &Value),
+    conn: &Connection, session_id: &str, upto: Option<i64>,
+    visit: &mut dyn FnMut(Option<&str>, &str, &Value) -> ApiResult<()>,
 ) -> ApiResult<()> {
     let mut segments = Vec::new();
     let (mut id, mut end) = (session_id.to_string(), upto);
@@ -227,18 +228,18 @@ pub(crate) fn visit_model_history(
     for (id, end, compaction) in segments.into_iter().rev() {
         let start = compaction.as_ref().map_or(0, |cp| cp.upto_seq);
         if let Some(summary) = compaction.and_then(|cp| cp.summary) {
-            visit("user", &json!({ "text": crate::context::summary_block(&summary) }));
+            visit(None, "user", &json!({ "text": crate::context::summary_block(&summary) }))?;
         }
         let mut statement = conn.prepare(
-            "SELECT role, CASE WHEN model_input IS NOT NULL AND json_valid(model_input) THEN model_input ELSE content END \
-             FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND seq > ?2 AND seq <= ?3 ORDER BY seq",
+            "SELECT id, role, CASE WHEN model_input IS NOT NULL AND json_valid(model_input) THEN model_input ELSE content END \
+             FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL AND seq > ?2 AND seq <= ?3 ORDER BY seq",
         )?;
         let rows = statement.query_map(params![id, start, end.unwrap_or(i64::MAX)], |row| {
-            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
         })?;
         for row in rows {
-            let (role, input) = row?;
-            visit(&role, &serde_json::from_str(&input).unwrap_or(Value::Null));
+            let (message, role, input) = row?;
+            visit(Some(&message), &role, &serde_json::from_str(&input).unwrap_or(Value::Null))?;
         }
     }
     Ok(())
@@ -278,7 +279,7 @@ pub async fn create(
         }
         let id = crate::util::new_id();
         tx.execute(
-            "INSERT INTO sessions (id, project_id, title, created_at, updated_at, worktree_id) VALUES (?1, ?2, ?3, ?4, ?4, ?5)",
+            "INSERT INTO sessions (id, project_id, title, created_at, updated_at, worktree_id, title_origin) VALUES (?1, ?2, ?3, ?4, ?4, ?5, 'provisional')",
             params![id, project_id, title, now, wt],
         )?;
         let s = get(tx, &id)?;
@@ -463,7 +464,7 @@ pub struct DeleteBody {
 }
 
 /// 보관된 대화의 영구 삭제(SESSION-004, DB-018). 되돌릴 수 없으므로 보관 상태에서만, 다른 기록이 의존하지 않을 때만 허용한다.
-/// 삭제 범위: 메시지·턴·도구 호출·작업·Goal·대화 범위 설정·초안·최근 항목·이 대화의 이벤트 payload·작업 로그 파일.
+/// 삭제 범위: 메시지·턴·도구 호출·작업·Goal·대화 범위 설정·최근 항목·이 대화의 이벤트 payload·작업 로그 파일.
 /// 예약 실행 기록·알림은 남기고 대화 연결만 끊는다.
 pub async fn delete_permanently(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, Json(b): Json<DeleteBody>) -> ApiResult<Response> {
     let h = idem::body_hash("session.delete", &json!({ "i": id, "r": b.expected_revision }));
@@ -498,6 +499,7 @@ pub async fn delete_permanently(State(app): State<App>, p: Principal, headers: H
         }
         for sql in [
             "DELETE FROM goals WHERE session_id = ?1",
+            "DELETE FROM continuations WHERE session_id = ?1",
             // 초기 설정 실행 기록은 작업과 함께 사라진다(PROJECT-010).
             "DELETE FROM setup_runs WHERE task_id IN (SELECT id FROM tasks WHERE session_id = ?1)",
             "DELETE FROM tasks WHERE session_id = ?1",
@@ -508,6 +510,7 @@ pub async fn delete_permanently(State(app): State<App>, p: Principal, headers: H
             "DELETE FROM turns WHERE session_id = ?1",
             "DELETE FROM messages WHERE session_id = ?1",
             "DELETE FROM settings WHERE scope = 'session' AND scope_id = ?1",
+            // 제거된 기능의 이전 버전 데이터도 대화 영구 삭제 시 함께 정리한다.
             "DELETE FROM drafts WHERE resource_key = 'session:' || ?1",
             "DELETE FROM recent_items WHERE kind = 'session' AND resource_id = ?1",
             "DELETE FROM events WHERE session_id = ?1",
@@ -578,6 +581,7 @@ pub async fn search(State(app): State<App>, _p: Principal, Query(q): Query<Searc
     let limit = q.limit.unwrap_or(30).clamp(1, 100);
     let offset = q.offset.unwrap_or(0).max(0);
     let needle = q.q.clone().unwrap_or_default().trim().to_lowercase();
+    let search_match = crate::history_storage::search_match(&needle);
     if needle.chars().count() > 200 {
         return Err(ApiError::invalid("검색어는 200자 이하여야 합니다"));
     }
@@ -596,9 +600,11 @@ pub async fn search(State(app): State<App>, _p: Principal, Query(q): Query<Searc
             // 시간 비교는 문자열 대신 julianday로 해 소수 초 표기 차이에 영향받지 않게 한다.
             let sql = format!(
                 "SELECT {COLS}, p.name, \
-                   (SELECT m.seq FROM messages m WHERE ?2 = 1 AND ?1 != '' AND m.session_id = s.id AND m.rewound_at IS NULL AND m.role IN ('user','assistant') \
+                   (SELECT m.seq FROM message_history m WHERE ?2 = 1 AND ?1 != '' AND m.session_id = s.id AND m.rewound_at IS NULL AND m.role IN ('user','assistant') \
+                      AND (?6 IS NULL OR m.history_search_id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?6)) \
                       AND instr(lower(COALESCE(json_extract(m.content, '$.text'), '')), ?1) > 0 ORDER BY m.seq DESC LIMIT 1), \
-                   (SELECT json_extract(m.content, '$.text') FROM messages m WHERE ?2 = 1 AND ?1 != '' AND m.session_id = s.id AND m.rewound_at IS NULL AND m.role IN ('user','assistant') \
+                   (SELECT json_extract(m.content, '$.text') FROM message_history m WHERE ?2 = 1 AND ?1 != '' AND m.session_id = s.id AND m.rewound_at IS NULL AND m.role IN ('user','assistant') \
+                      AND (?6 IS NULL OR m.history_search_id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?6)) \
                       AND instr(lower(COALESCE(json_extract(m.content, '$.text'), '')), ?1) > 0 ORDER BY m.seq DESC LIMIT 1) \
                  FROM sessions s JOIN projects p ON p.id = s.project_id \
                  WHERE p.archived_at IS NULL AND (?3 IS NULL OR s.project_id = ?3) \
@@ -606,7 +612,7 @@ pub async fn search(State(app): State<App>, _p: Principal, Query(q): Query<Searc
                  ORDER BY s.updated_at DESC, s.id DESC"
             );
             let mut st = c.prepare(&sql)?;
-            let rows = st.query_map(params![needle, q.body, q.project_id, q.from, q.to], |r| {
+            let rows = st.query_map(params![needle, q.body, q.project_id, q.from, q.to, search_match], |r| {
                 Ok((from_row(r)?, r.get::<_, String>(NCOLS)?, r.get::<_, Option<i64>>(NCOLS + 1)?, r.get::<_, Option<String>>(NCOLS + 2)?))
             })?;
             let mut hits = vec![];
@@ -701,8 +707,9 @@ pub async fn update(
             None => cur.workflow_id.clone(),
         };
         tx.execute(
-            "UPDATE sessions SET title = ?2, archived_at = ?3, workflow_id = ?4, revision = revision + 1, updated_at = ?5 WHERE id = ?1",
-            params![id, title.unwrap_or(cur.title.clone()), archived_at, new_wf, now],
+            "UPDATE sessions SET title = ?2, archived_at = ?3, workflow_id = ?4, revision = revision + 1, updated_at = ?5, \
+             title_origin = CASE WHEN ?6 THEN 'manual' ELSE title_origin END WHERE id = ?1",
+            params![id, title.clone().unwrap_or(cur.title.clone()), archived_at, new_wf, now, title.is_some()],
         )?;
         let s = get(tx, &id)?;
         events::append(tx, now, "session.updated", Some(&s.project_id), Some(&id), &serde_json::to_value(&s)?)?;
@@ -736,6 +743,7 @@ pub async fn messages(
     Query(q): Query<MessagesQuery>,
 ) -> ApiResult<Json<MessagePage>> {
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let now = crate::util::fmt_time(app.clock.now());
     let page = app
         .db
         .call(move |c| {
@@ -744,12 +752,12 @@ pub async fn messages(
             let rewind_boundary_seq = crate::context::latest_compaction(c, &id, None)?.map(|cp| cp.upto_seq);
             let cols = "id, session_id, seq, role, content, turn_id, created_at";
             let mut items = if let Some(after) = q.after_seq {
-                let mut st = c.prepare(&format!("SELECT {cols} FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND seq > ?2 ORDER BY seq LIMIT ?3"))?;
+                let mut st = c.prepare(&format!("SELECT {cols} FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL AND seq > ?2 ORDER BY seq LIMIT ?3"))?;
                 st.query_map(params![id, after, limit + 1], msg_from_row)?.collect::<Result<Vec<_>, _>>()?
             } else {
                 let before = q.before_seq.unwrap_or(i64::MAX);
                 let mut st = c.prepare(&format!(
-                    "SELECT {cols} FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND seq < ?2 ORDER BY seq DESC LIMIT ?3"
+                    "SELECT {cols} FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL AND seq < ?2 ORDER BY seq DESC LIMIT ?3"
                 ))?;
                 let mut v = st.query_map(params![id, before, limit + 1], msg_from_row)?.collect::<Result<Vec<_>, _>>()?;
                 v.reverse();
@@ -771,6 +779,7 @@ pub async fn messages(
                 let max: i64 = c.query_row("SELECT COALESCE(MAX(seq),0) FROM messages WHERE session_id = ?1 AND rewound_at IS NULL", params![id], |r| r.get(0))?;
                 (more, last < max)
             };
+            crate::history_storage::restore_page(c, &now, &id, &items)?;
             Ok(MessagePage { items, has_more_before, has_more_after, timeline_revision, rewind_boundary_seq })
         })
         .await?;
@@ -899,7 +908,7 @@ pub async fn rewind(
         // 압축 기록은 실제 기록 시각보다 앞선 구간을 요약한다. 경계 이후 rewind에서도 유효한 요약은 유지한다.
         let removed = tx.execute(
             "UPDATE messages SET rewound_at = ?3 WHERE session_id = ?1 AND seq >= ?2 AND rewound_at IS NULL \
-             AND NOT (role = 'note' AND COALESCE(json_extract(content, '$.type'), '') = 'compaction')",
+             AND NOT (role = 'note' AND COALESCE(json_extract(grove_history_text(content), '$.type'), '') = 'compaction')",
             params![id, seq, now],
         )?;
         // CLI 자체 세션에는 되감은 대화가 남아 있으므로 재사용하지 않는다.

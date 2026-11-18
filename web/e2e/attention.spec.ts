@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openSettings, requireToolApproval, script, selectChoice } from "./helpers";
+
+test.use({ serviceWorkers: "block" });
 
 const notes = (page: Page) => page.evaluate(() => (window as unknown as { __notes: { title: string; opts: { tag: string; body: string } }[] }).__notes.map((n) => ({ title: n.title, tag: n.opts.tag, body: n.opts.body })));
 const setHidden = (page: Page, hidden: boolean) => page.evaluate((h) => { (window as unknown as { __hidden: boolean }).__hidden = h; }, hidden);
@@ -10,7 +12,6 @@ test("화면을 보지 않을 때 켠 종류만 내용 없이 한 번 알리고,
         const w = window as unknown as { __notes: unknown[]; __hidden: boolean; Notification: unknown };
         w.__notes = [];
         w.__hidden = false;
-        Object.defineProperty(document, "visibilityState", { get: () => (w.__hidden ? "hidden" : "visible") });
         document.hasFocus = () => !w.__hidden;
         class FakeNotification {
             static permission = "granted";
@@ -22,28 +23,30 @@ test("화면을 보지 않을 때 켠 종류만 내용 없이 한 번 알리고,
         w.Notification = FakeNotification;
     });
     const { a } = await ensureProjects();
-    await ensureProfile();
+    await requireToolApproval(a.id);
+    const profile = await ensureProfile();
     const title = `알림 대화 ${Date.now()}`;
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
 
-    await page.getByRole("button", { name: "설정", exact: true }).first().click();
+    await openSettings(page, "local");
     await page.getByLabel("설정 검색", { exact: true }).fill("알림");
     const section = page.getByTestId("setting-notify");
-    await selectChoice(section.getByLabel("작업 완료·실패"), "true");
-    await selectChoice(section.getByLabel("승인 요청"), "true");
     await expect(section.getByTestId("notify-permission")).toContainText("허용됨");
-    await expect(section.getByRole("combobox", { name: "예약·업데이트 알림", exact: true })).toHaveAttribute("data-selected-value", "false");
+    const serverAlerts = section.getByRole("combobox", { name: "예약·업데이트 알림", exact: true });
+    await selectChoice(serverAlerts, "false");
+    await expect(serverAlerts).toHaveAttribute("data-selected-value", "false");
+    await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
 
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = page.locator(`[data-testid=session-view][data-session="${s.id}"]`);
-    await script({ frames: frames.tool("n1", "write", { path: "attention.txt", content: "x" }) });
-    await script({ frames: frames.text(["거부 확인"]) });
-    await composerOption(view, "도구", true);
-    await view.getByLabel("메시지 입력").fill("비밀 내용으로 파일 만들어");
-    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    const marker = `비밀 내용으로 파일 만들어 ${s.id}`;
+    await script({ marker, frames: frames.tool("load-write", "load_tool", { names: ["write"] }) });
+    await script({ marker, frames: frames.tool("n1", "write", { path: "attention.txt", content: "x" }) });
+    await script({ marker, frames: frames.text(["거부 확인"]) });
     await setHidden(page, true);
+    await apiCall("POST", `/sessions/${s.id}/turns`, { text: marker, profile_id: profile, tools: true });
     await expect(view.getByTestId("approval")).toContainText("attention.txt", { timeout: 15_000 });
     await expect.poll(() => notes(page)).toEqual([{ title: "승인 요청", tag: expect.stringMatching(/^approval:/), body: "대화에서 도구 실행 승인을 기다립니다." }]);
 
@@ -60,10 +63,9 @@ test("화면을 보지 않을 때 켠 종류만 내용 없이 한 번 알리고,
 
     // 화면을 보고 있으면 알리지 않는다.
     await setHidden(page, false);
-    await script({ frames: frames.text(["보는 중"]) });
-    await composerOption(view, "도구", false);
-    await view.getByLabel("메시지 입력").fill("다시");
-    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    const visibleText = `보는 동안 다시 요청 ${s.id}`;
+    await script({ marker: visibleText, frames: frames.text(["보는 중"]) });
+    await apiCall("POST", `/sessions/${s.id}/turns`, { text: visibleText, profile_id: profile, tools: false });
     await expect(view.getByTestId("msg-assistant").last()).toContainText("보는 중", { timeout: 15_000 });
     expect(await notes(page)).toHaveLength(2);
 });

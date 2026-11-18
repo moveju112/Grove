@@ -7,18 +7,10 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 async fn device(s: &TestServer, name: &str) -> Value {
-    let (status, body) = s.post("/api/v1/devices", json!({ "name": name })).await;
-    assert_eq!(status, StatusCode::CREATED);
-    body
-}
-
-async fn browser(s: &TestServer, token: &str) -> (String, String) {
-    let response = s.client.post(format!("{}/api/v1/auth/browser-login", s.base))
-        .json(&json!({ "token": token })).send().await.unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    let (id, response) = s.pair_browser(name).await;
     let cookie = response.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap().to_string();
     let body: Value = response.json().await.unwrap();
-    (body["access_token"].as_str().unwrap().to_string(), cookie)
+    json!({ "id": id, "token": body["access_token"], "cookie": cookie })
 }
 
 #[tokio::test]
@@ -26,16 +18,8 @@ async fn device_name_changes_only_authenticated_root_and_survives_browser_login(
     let s = TestServer::start().await;
     let first = device(&s, "first").await;
     let second = device(&s, "second").await;
-    let (access, _) = browser(&s, first["token"].as_str().unwrap()).await;
+    let access = first["token"].as_str().unwrap();
     let path = "/api/v1/auth/device";
-    let (_, owner_before) = s.get(path).await;
-    let (owner_access, _) = browser(&s, &s.token).await;
-    let renamed_owner_browser = s.raw(Method::PUT, path, Some(json!({ "name": "owner browser" })),
-        Some("rename-owner-browser"), Some(&owner_access)).await;
-    assert_eq!(renamed_owner_browser.status(), StatusCode::OK);
-    let owner_browser: Value = renamed_owner_browser.json().await.unwrap();
-    assert_ne!(owner_browser["id"], owner_before["id"]);
-    assert_eq!(s.get(path).await.1["name"], owner_before["name"]);
     assert_eq!(s.client.get(format!("{}{path}", s.base)).send().await.unwrap().status(), StatusCode::UNAUTHORIZED);
     for (index, name) in ["", &"x".repeat(81)].iter().enumerate() {
         assert_eq!(s.raw(Method::PUT, path, Some(json!({ "name": name })), Some(&format!("invalid-name-{index}")), Some(&access)).await.status(), StatusCode::BAD_REQUEST);
@@ -57,18 +41,15 @@ async fn device_name_changes_only_authenticated_root_and_survives_browser_login(
 }
 
 #[tokio::test]
-async fn devices_share_user_sessions_but_cannot_escalate_to_owner_or_replay_another_device() {
+async fn devices_share_full_access_without_sharing_idempotency_receipts() {
     let s = TestServer::start().await;
     let p = s.create_project("shared-user").await;
     let first = device(&s, "first").await;
     let second = device(&s, "second").await;
-    let (access, _) = browser(&s, first["token"].as_str().unwrap()).await;
-    for token in [first["token"].as_str().unwrap(), &access] {
+    let access = first["token"].as_str().unwrap();
+    for token in [access, second["token"].as_str().unwrap()] {
         for path in ["/devices", "/secrets", "/audit", "/pairings", "/admin/update-readiness", "/admin/metrics"] {
-            assert_eq!(s.raw(Method::GET, &format!("/api/v1{path}"), None, None, Some(token)).await.status(), StatusCode::FORBIDDEN);
-        }
-        for path in ["/devices", "/secrets", "/model-profiles", "/pairings", "/admin/shutdown", "/admin/diagnostics"] {
-            assert_eq!(s.raw(Method::POST, &format!("/api/v1{path}"), Some(json!({})), Some("cannot-escalate"), Some(token)).await.status(), StatusCode::FORBIDDEN);
+            assert_eq!(s.raw(Method::GET, &format!("/api/v1{path}"), None, None, Some(token)).await.status(), StatusCode::OK);
         }
     }
     let path = format!("/api/v1/projects/{}/sessions", p["id"].as_str().unwrap());
@@ -88,7 +69,7 @@ async fn devices_share_user_sessions_but_cannot_escalate_to_owner_or_replay_anot
     let session: Value = response.json().await.unwrap();
     assert_eq!(session["id"], ids[0], "동일 기기의 브라우저는 부모의 접수 범위를 사용한다");
     assert_eq!(s.send(Method::DELETE, &format!("/api/v1/devices/{}", first["id"].as_str().unwrap()), json!({})).await.0, StatusCode::OK);
-    for token in [first["token"].as_str().unwrap(), &access] {
+    for token in [access] {
         for path in [format!("/api/v1/sessions/{}", ids[0]), format!("/api/v1/sessions/{}/tasks", ids[0]), "/api/v1/tasks/missing/output".into()] {
             assert_eq!(s.raw(Method::GET, &path, None, None, Some(token)).await.status(), StatusCode::UNAUTHORIZED);
         }
@@ -103,9 +84,8 @@ async fn revocation_invalidates_preissued_file_links_without_affecting_another_d
     std::fs::write(project["root_path"].as_str().unwrap().to_string() + "/note.txt", "private").unwrap();
     let first = device(&s, "first").await;
     let second = device(&s, "second").await;
-    let (access, _) = browser(&s, first["token"].as_str().unwrap()).await;
     let mut links = Vec::new();
-    for token in [first["token"].as_str().unwrap(), &access, second["token"].as_str().unwrap()] {
+    for token in [first["token"].as_str().unwrap(), second["token"].as_str().unwrap()] {
         let response = s.raw(Method::POST, &format!("/api/v1/projects/{}/files/ticket", project["id"].as_str().unwrap()),
             Some(json!({ "path": "note.txt" })), None, Some(token)).await;
         assert_eq!(response.status(), StatusCode::OK);
@@ -114,18 +94,18 @@ async fn revocation_invalidates_preissued_file_links_without_affecting_another_d
     }
     assert_eq!(s.client.get(format!("{}{}", s.base, links[0])).send().await.unwrap().status(), StatusCode::OK);
     assert_eq!(s.send(Method::DELETE, &format!("/api/v1/devices/{}", first["id"].as_str().unwrap()), json!({})).await.0, StatusCode::OK);
-    for link in &links[..2] {
+    for link in &links[..1] {
         assert_eq!(s.client.get(format!("{}{link}", s.base)).send().await.unwrap().status(), StatusCode::UNAUTHORIZED,
             "폐기한 기기와 자식 브라우저의 이전 링크도 차단해야 한다");
     }
-    assert_eq!(s.client.get(format!("{}{}", s.base, links[2])).send().await.unwrap().status(), StatusCode::OK);
+    assert_eq!(s.client.get(format!("{}{}", s.base, links[1])).send().await.unwrap().status(), StatusCode::OK);
 }
 
 #[tokio::test]
 async fn expired_parent_cannot_authorize_browser_access_or_refresh() {
     let s = TestServer::start().await;
     let d = device(&s, "expires").await;
-    let (access, cookie) = browser(&s, d["token"].as_str().unwrap()).await;
+    let (access, cookie) = (d["token"].as_str().unwrap(), d["cookie"].as_str().unwrap());
     let id = d["id"].as_str().unwrap().to_string();
     s.server.as_ref().unwrap().app.db.call(move |c| {
         c.execute("UPDATE tokens SET expires_at = '2000-01-01T00:00:00Z' WHERE id = ?1", [id])?;
@@ -158,7 +138,7 @@ async fn revocation_closes_existing_idle_event_stream() {
 async fn forged_logout_cookie_cannot_revoke_a_known_browser_id() {
     let s = TestServer::start().await;
     let d = device(&s, "logout-proof").await;
-    let (access, cookie) = browser(&s, d["token"].as_str().unwrap()).await;
+    let (access, cookie) = (d["token"].as_str().unwrap(), d["cookie"].as_str().unwrap());
     let (prefix, _) = cookie.split_once('.').unwrap();
     let forged = format!("{prefix}.wrong-secret");
     let response = s.client.post(format!("{}/api/v1/auth/logout", s.base)).header("cookie", forged).send().await.unwrap();
@@ -169,9 +149,11 @@ async fn forged_logout_cookie_cannot_revoke_a_known_browser_id() {
 #[tokio::test]
 async fn logout_only_revokes_its_browser_and_closes_its_event_stream() {
     let s = TestServer::start().await;
-    let d = device(&s, "two-browsers").await;
-    let (first, cookie) = browser(&s, d["token"].as_str().unwrap()).await;
-    let (second, _) = browser(&s, d["token"].as_str().unwrap()).await;
+    let a = device(&s, "browser-a").await;
+    let b = device(&s, "browser-b").await;
+    let first = a["token"].as_str().unwrap();
+    let cookie = a["cookie"].as_str().unwrap();
+    let second = b["token"].as_str().unwrap();
     let response = s.raw(Method::GET, "/api/v1/events", None, None, Some(&first)).await;
     let mut stream = response.bytes_stream();
     assert!(stream.next().await.unwrap().is_ok());
@@ -180,8 +162,39 @@ async fn logout_only_revokes_its_browser_and_closes_its_event_stream() {
     tokio::time::timeout(Duration::from_secs(3), async {
         while let Some(chunk) = stream.next().await { chunk.unwrap(); }
     }).await.expect("로그아웃한 브라우저의 SSE는 종료한다");
-    for token in [d["token"].as_str().unwrap(), &second] {
-        assert_eq!(s.raw(Method::GET, "/api/v1/auth/whoami", None, None, Some(token)).await.status(), StatusCode::OK);
+    assert_eq!(s.raw(Method::GET, "/api/v1/auth/whoami", None, None, Some(second)).await.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn local_service_credential_cannot_log_in_a_browser() {
+    let s = TestServer::start().await;
+    let legacy = s.client.post(format!("{}/api/v1/auth/browser-login", s.base))
+        .json(&json!({ "token": s.token })).send().await.unwrap();
+    assert_eq!(legacy.status(), StatusCode::NOT_FOUND);
+    let with_browser_origin = s.client.get(format!("{}/api/v1/admin/metrics", s.base))
+        .header("origin", &s.base).bearer_auth(&s.token).send().await.unwrap();
+    assert_eq!(with_browser_origin.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(s.get("/api/v1/admin/metrics").await.0, StatusCode::OK);
+}
+
+#[tokio::test]
+async fn a_legacy_token_login_must_pair_before_getting_device_permissions() {
+    let s = TestServer::start().await;
+    let owner = grove::auth::parse_token(&s.token).unwrap().0.to_owned();
+    let app = &s.server.as_ref().unwrap().app;
+    app.db.call(move |c| {
+        c.execute("INSERT INTO tokens(id,kind,name,secret_hash,created_at) VALUES('legacy-device','device','legacy','unused','2026-01-01T00:00:00Z')", [])?;
+        for (browser, parent) in [("from-local", owner.as_str()), ("from-device", "legacy-device")] {
+            c.execute("INSERT INTO tokens(id,kind,name,secret_hash,parent_id,created_at) VALUES(?1,'browser','legacy',?2,?3,'2026-01-01T00:00:00Z')",
+                rusqlite::params![browser, grove::util::sha256_hex(b"fixture-legacy-secret"), parent])?;
+        }
+        Ok(())
+    }).await.unwrap();
+    for browser in ["from-local", "from-device"] {
+        let token = grove::auth::format_token(browser, "fixture-legacy-secret");
+        let response = s.client.post(format!("{}/api/v1/auth/refresh", s.base))
+            .header("cookie", format!("grove_refresh={token}")).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }
 

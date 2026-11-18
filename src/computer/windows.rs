@@ -2,7 +2,7 @@
 use crate::tools::{ToolError, ToolResult};
 use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
-use std::{ffi::OsString, mem::{size_of, zeroed}, os::windows::ffi::OsStringExt, ptr};
+use std::{ffi::OsString, mem::{size_of, zeroed}, os::windows::ffi::OsStringExt, ptr, thread, time::{Duration, Instant}};
 use windows_sys::Win32::{
     Foundation::{CloseHandle, HANDLE, HWND, INVALID_HANDLE_VALUE, LPARAM, POINT, RECT},
     Graphics::Gdi::*,
@@ -114,15 +114,40 @@ unsafe extern "system" fn enumerate(window:HWND,context:LPARAM)->i32 {
     }
 }
 
+fn require_idle()->ToolResult<()> {
+    if [VK_LBUTTON,VK_RBUTTON,VK_MBUTTON,VK_SHIFT,VK_CONTROL,VK_MENU,VK_LWIN,VK_RWIN].iter()
+        .any(|key|unsafe{GetAsyncKeyState(*key as i32)}<0) {
+        return Err(ToolError::new("focus_required","사용자가 키·마우스 버튼을 놓은 뒤 다시 관찰하세요"));
+    }
+    Ok(())
+}
+
+fn focus(window:HWND)->ToolResult<Value> {
+    unsafe {
+        if !desktop_session_present()||IsWindowVisible(window)==0||GetAncestor(window,GA_ROOT)!=window{return Err(unavailable());}
+        require_idle()?;
+        if GetForegroundWindow()!=window {
+            if IsIconic(window)!=0 {ShowWindowAsync(window,SW_RESTORE);}
+            // OS의 foreground 제한을 우회하거나 전역 키 입력을 보내지 않는다.
+            SetForegroundWindow(window);
+            let deadline=Instant::now()+Duration::from_millis(750);
+            while GetForegroundWindow()!=window||IsIconic(window)!=0 {
+                if Instant::now()>=deadline {
+                    return Err(ToolError::new("focus_required","Windows가 창을 활성화하지 않았습니다. 사용자가 대상 창을 활성화해야 합니다"));
+                }
+                thread::sleep(Duration::from_millis(20));
+            }
+        }
+    }
+    Ok(json!({"window_id":id(window),"active":true}))
+}
+
 fn state(window:HWND)->ToolResult<Value>{
     unsafe {
         if !desktop_session_present(){return Err(unavailable());}
         if IsWindow(window)==0||IsWindowVisible(window)==0||IsIconic(window)!=0{return Err(unavailable());}
-        if GetForegroundWindow()!=window{return Err(ToolError::new("focus_required","사용자가 대상 Windows 창을 활성화한 뒤 다시 capture해야 합니다"));}
-        if [VK_LBUTTON,VK_RBUTTON,VK_MBUTTON,VK_SHIFT,VK_CONTROL,VK_MENU,VK_LWIN,VK_RWIN].iter()
-            .any(|key|GetAsyncKeyState(*key as i32)<0) {
-            return Err(ToolError::new("focus_required","사용자가 키·마우스 버튼을 놓은 뒤 다시 관찰하세요"));
-        }
+        if GetForegroundWindow()!=window{return Err(ToolError::new("focus_required","대상 Windows 창에 focus를 실행한 뒤 다시 capture하세요"));}
+        require_idle()?;
         let mut pid=0;
         let thread=GetWindowThreadProcessId(window,&mut pid);
         if pid==0||thread==0{return Err(unavailable());}
@@ -302,9 +327,10 @@ pub(super) fn execute(command:&Value)->ToolResult<Value>{
         let mut windows:Vec<Value>=vec![];
         unsafe{EnumWindows(Some(enumerate),(&mut windows as *mut Vec<Value>) as isize);}
         return Ok(json!({"target":"server","platform":"windows","windows":windows,"delivery":"window_messages",
-            "limitations":"Windows interactive desktop; target must already be active; PrintWindow client capture; some apps reject window messages; no elevation or physical input fallback"}));
+            "limitations":"Windows interactive desktop; focus inactive windows before capture; OS may deny focus; some apps reject window messages; no elevation or physical input fallback"}));
     }
     let window=parse_id(&command["window_id"])?;
+    if command["action"]=="focus" {return focus(window);}
     let mut result=capture(window)?;
     if command["action"]=="act" {
         let mut observed=result.clone();observed.as_object_mut().unwrap().remove("jpeg");

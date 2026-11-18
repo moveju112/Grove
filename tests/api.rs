@@ -42,14 +42,15 @@ async fn cross_site_and_foreign_host_are_rejected() {
     let r = s.client.get(&url).bearer_auth(&s.token).header("Host", "evil.example").send().await.unwrap();
     assert_eq!(r.status(), StatusCode::FORBIDDEN);
     // 같은 origin은 허용, 기존 연결 유지
-    let r = s.client.get(&url).bearer_auth(&s.token).header("Origin", &s.base).send().await.unwrap();
+    let device = s.registered_device("same-origin browser").await;
+    let r = s.client.get(&url).bearer_auth(device["token"].as_str().unwrap()).header("Origin", &s.base).send().await.unwrap();
     assert_eq!(r.status(), StatusCode::OK);
     // 로그인 경로도 교차 사이트 거부
     let r = s
         .client
-        .post(format!("{}/api/v1/auth/browser-login", s.base))
+        .post(format!("{}/api/v1/auth/pairing", s.base))
         .header("Origin", "https://evil.example")
-        .json(&json!({ "token": s.token }))
+        .json(&json!({ "code": "wrong", "password": "test-only password", "name": "browser" }))
         .send()
         .await
         .unwrap();
@@ -277,54 +278,40 @@ async fn sse_expired_cursor_requires_resync() {
 #[tokio::test]
 async fn devices_issue_list_revoke() {
     let s = TestServer::start().await;
-    let (st, v) = s.post("/api/v1/devices", json!({ "name": "폰" })).await;
-    assert_eq!(st, StatusCode::CREATED);
+    let v = s.registered_device("폰").await;
     let dev_token = v["token"].as_str().unwrap().to_string();
     let dev_id = v["id"].as_str().unwrap().to_string();
-    // 기기 토큰으로 일반 API 사용 가능, 기기 관리 불가
+    // 등록 기기는 일반 API와 기기 관리 모두 가능하다.
     let r = s.raw(Method::GET, "/api/v1/projects", None, None, Some(&dev_token)).await;
     assert_eq!(r.status(), StatusCode::OK);
     let r = s.raw(Method::GET, "/api/v1/devices", None, None, Some(&dev_token)).await;
-    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert_eq!(r.status(), StatusCode::OK);
     let (_, list) = s.get("/api/v1/devices").await;
     assert!(list.as_array().unwrap().iter().any(|d| d["id"] == dev_id.as_str()));
     // 토큰 원문은 목록·idempotency 저장본에 없다
-    assert!(!list.to_string().contains(dev_token.split('.').nth(1).unwrap()));
+    assert!(!list.to_string().contains(&dev_token));
     let (st, _) = s.send(Method::DELETE, &format!("/api/v1/devices/{dev_id}"), json!({})).await;
     assert_eq!(st, StatusCode::OK);
     let r = s.raw(Method::GET, "/api/v1/projects", None, None, Some(&dev_token)).await;
     assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
-    // 소유자 토큰은 폐기 불가
+    // 로컬 운영 자격은 등록 기기 목록이나 폐기 대상으로 노출하지 않는다.
     let (oid, _) = grove::auth::parse_token(&s.token).unwrap();
     let (st, _) = s.send(Method::DELETE, &format!("/api/v1/devices/{oid}"), json!({})).await;
-    assert_eq!(st, StatusCode::FORBIDDEN);
+    assert_eq!(st, StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
-async fn device_token_redacted_on_replay() {
+async fn a_token_cannot_be_issued_without_pairing() {
     let s = TestServer::start().await;
-    let body = json!({ "name": "pc" });
-    let r1 = s.raw(Method::POST, "/api/v1/devices", Some(body.clone()), Some("dev-1"), None).await;
-    let v1: Value = r1.json().await.unwrap();
-    assert!(v1["token"].is_string());
-    let r2 = s.raw(Method::POST, "/api/v1/devices", Some(body), Some("dev-1"), None).await;
-    let v2: Value = r2.json().await.unwrap();
-    assert!(v2.get("token").is_none());
-    assert_eq!(v2["token_redacted"], true);
-    assert_eq!(v1["id"], v2["id"]);
+    let r = s.raw(Method::POST, "/api/v1/devices", Some(json!({ "name": "pc" })), Some("dev-1"), None).await;
+    assert_eq!(r.status(), StatusCode::METHOD_NOT_ALLOWED);
 }
 
 #[tokio::test]
 async fn browser_login_refresh_logout() {
     let s = TestServer::start().await;
     let client = reqwest::Client::new();
-    let login = client
-        .post(format!("{}/api/v1/auth/browser-login", s.base))
-        .header("Origin", &s.base)
-        .json(&json!({ "token": s.token, "name": "chrome" }))
-        .send()
-        .await
-        .unwrap();
+    let (_, login) = s.pair_browser("chrome").await;
     assert_eq!(login.status(), StatusCode::OK);
     let cookie = login.headers().get("set-cookie").unwrap().to_str().unwrap().to_string();
     assert!(cookie.contains("HttpOnly") && cookie.contains("SameSite=Strict") && cookie.contains("Path=/api/v1/auth"));
@@ -334,7 +321,7 @@ async fn browser_login_refresh_logout() {
     assert_eq!(r.status(), StatusCode::OK);
     let who: Value = r.json().await.unwrap();
     assert_eq!(who["kind"], "browser");
-    assert_eq!(who["is_owner"], true);
+    assert!(who.get("is_owner").is_none());
 
     // refresh 쿠키 원문은 Bearer로 쓸 수 없다
     let refresh_raw = cookie.split(';').next().unwrap().split_once('=').unwrap().1.to_string();
@@ -359,43 +346,13 @@ async fn browser_login_refresh_logout() {
     assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
 }
 
-/// NET-020/021: 5회 실패 시 잠금, 재시작 후에도 유지, 로컬 복구로 해제.
-#[tokio::test]
-async fn browser_login_lockout_persists_and_can_be_cleared_locally() {
-    let mut s = TestServer::start().await;
-    let url = |s: &TestServer| format!("{}/api/v1/auth/browser-login", s.base);
-    for _ in 0..5 {
-        let r = s.client.post(url(&s)).json(&json!({ "token": "grv_x.y" })).send().await.unwrap();
-        assert_eq!(r.status(), StatusCode::UNAUTHORIZED);
-    }
-    // 올바른 토큰도 잠금 중에는 거절
-    let r = s.client.post(url(&s)).json(&json!({ "token": s.token })).send().await.unwrap();
-    assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS);
-    s.restart().await;
-    let r = s.client.post(url(&s)).json(&json!({ "token": s.token })).send().await.unwrap();
-    assert_eq!(r.status(), StatusCode::TOO_MANY_REQUESTS, "잠금은 재시작 후에도 유지");
-    // Bearer API는 잠금과 무관(토큰 자체가 256bit 비밀)
-    let (st, _) = s.get("/api/v1/projects").await;
-    assert_eq!(st, StatusCode::OK);
-    let app = s.server.as_ref().unwrap().app.clone();
-    app.db.call(|c| grove::auth::clear_lockouts(c)).await.unwrap();
-    let r = s.client.post(url(&s)).json(&json!({ "token": s.token })).send().await.unwrap();
-    assert_eq!(r.status(), StatusCode::OK);
-}
-
 #[tokio::test]
 async fn access_tokens_do_not_survive_restart_but_data_does() {
     let mut s = TestServer::start().await;
     let p = s.create_project("p").await;
     let sess = s.create_session(p["id"].as_str().unwrap()).await;
     s.post(&format!("/api/v1/sessions/{}/messages", sess["id"].as_str().unwrap()), json!({ "text": "보존" })).await;
-    let r = s
-        .client
-        .post(format!("{}/api/v1/auth/browser-login", s.base))
-        .json(&json!({ "token": s.token }))
-        .send()
-        .await
-        .unwrap();
+    let (_, r) = s.pair_browser("restart fixture").await;
     let access = r.json::<Value>().await.unwrap()["access_token"].as_str().unwrap().to_string();
     let owner_before = s.token.clone();
     s.restart().await;

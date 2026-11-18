@@ -326,6 +326,11 @@ async fn call(
 
 /// 공식 CLI가 stdio MCP로 시작한다. 한 줄 JSON-RPC, stdout에는 protocol 외 출력을 쓰지 않는다.
 pub fn mcp_main(file: Option<&String>) -> i32 {
+    stdio_main(file,"grove-computer",vec![super::spec()])
+}
+
+/// Shared bounded stdio transport; the HTTP bridges retain independent authorization boundaries.
+pub(crate) fn stdio_main(file:Option<&String>,server_name:&str,specs:Vec<crate::tools::ToolSpec>) -> i32 {
     let result = (|| -> Result<(), String> {
         let file = file.ok_or("턴 연결 파일이 필요합니다")?;
         let mut bytes = vec![];
@@ -385,14 +390,14 @@ pub fn mcp_main(file: Option<&String>) -> i32 {
             };
             let answer = match request["method"].as_str() {
                 Some("initialize") => {
-                    json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":"grove-computer","version":crate::VERSION}})
+                    json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":server_name,"version":crate::VERSION}})
                 }
                 Some("ping") => json!({}),
                 Some("tools/list") => {
-                    json!({"tools":[{"name":"computer","description":super::spec().description,"inputSchema":super::spec().schema}]})
+                    json!({"tools":specs.iter().map(|s|json!({"name":s.name,"description":s.description,"inputSchema":s.schema})).collect::<Vec<_>>()})
                 }
-                Some("tools/call") if request["params"]["name"] == "computer" => {
-                    let body = json!({"request_id":crate::util::new_id(),"arguments":request["params"]["arguments"]});
+                Some("tools/call") if specs.iter().any(|s|request["params"]["name"]==s.name) => {
+                    let body = json!({"request_id":crate::util::new_id(),"name":request["params"]["name"],"arguments":request["params"]["arguments"]});
                     // 변경 요청은 자동 재시도하지 않는다. 응답 유실은 결과 불명으로 반환한다.
                     rt.block_on(async {
                         let response=client.post(&url).bearer_auth(&token).json(&body).send().await;
@@ -404,7 +409,7 @@ pub fn mcp_main(file: Option<&String>) -> i32 {
                             Ok(response)=>{
                                 let status=response.status();
                                 match response.json::<Value>().await{
-                                    Ok(error)=>json!({"content":[{"type":"text","text":format!("Computer request refused (HTTP {}): {}",status.as_u16(),error["error"]["code"])}],"isError":true}),
+                                    Ok(error)=>json!({"content":[{"type":"text","text":format!("Tool request refused (HTTP {}): {}",status.as_u16(),error["error"]["code"])}],"isError":true}),
                                     Err(_)=>unknown_result(),
                                 }
                             },
@@ -428,7 +433,7 @@ pub fn mcp_main(file: Option<&String>) -> i32 {
         Ok(())
     })();
     if result.is_err() {
-        eprintln!("Computer Use MCP 연결을 종료했습니다");
+        eprintln!("턴 도구 MCP 연결을 종료했습니다");
         1
     } else {
         0
@@ -436,5 +441,5 @@ pub fn mcp_main(file: Option<&String>) -> i32 {
 }
 
 fn unknown_result() -> Value {
-    json!({"content":[{"type":"text","text":"Computer request outcome is unknown or unavailable. Do not replay input. Inspect the approval/call status and fresh target state."}],"isError":true})
+    json!({"content":[{"type":"text","text":"Tool request outcome is unknown or unavailable. Do not replay input. Inspect the approval/call and continuation/task status, then fresh target state."}],"isError":true})
 }

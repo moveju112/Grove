@@ -1,0 +1,30 @@
+import * as stylex from "@stylexjs/stylex";
+
+export const attachmentStyles = stylex.create({
+    row: { minWidth: 0, width: "100%" },
+    info: { flexGrow: 1, flexShrink: 1, minWidth: 0 },
+    name: { display: "block", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" },
+    actions: { flexShrink: 0 },
+    strip: { minWidth: 0, maxWidth: "100%", overflowX: "auto", overflowY: "hidden", paddingBlock: 4, flexWrap: "nowrap", overscrollBehaviorX: "contain" },
+    tile: { position: "relative", width: 80, flexShrink: 0 },
+    inlineTile: { display: "inline-flex", verticalAlign: "middle", maxWidth: "100%" },
+    thumbnail: {
+        width: 80,
+        height: 80,
+        minWidth: 80,
+        minHeight: 80,
+        paddingBlock: 0,
+        paddingInline: 0,
+        borderWidth: 0,
+        boxShadow: "none",
+        flexShrink: 0,
+        overflow: "hidden",
+        borderRadius: 8,
+        backgroundColor: "var(--panel)",
+        color: "var(--muted)",
+    },
+    removeImage: { position: "absolute", top: 0, right: 0, zIndex: 1, borderRadius: "50%", backgroundColor: "var(--raised)" },
+    image: { display: "block", width: 80, height: 80, objectFit: "cover" },
+    player: { display: "block", maxWidth: "100%", maxHeight: "60vh" },
+    fileIcon: { width: 32, height: 32, alignItems: "center", justifyContent: "center", flexShrink: 0, color: "var(--muted)" },
+});

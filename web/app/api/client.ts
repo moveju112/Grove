@@ -4,6 +4,7 @@
 import type { ContractTypes } from "./generated.metadata";
 import { ContractError, parseContract } from "./validation";
 import { transportFetch } from "./transport";
+import { clearRefreshRequestKey, pendingRefreshKey, refreshRequestKey, withRefreshLock } from "./refreshSession";
 
 export class ApiError extends Error {
     constructor(
@@ -77,6 +78,8 @@ export function hasCapability(name: string): boolean | null {
 }
 
 let current: Session | null = null;
+let refreshUnavailable = false;
+export function needsAuthRecovery(): boolean { return refreshUnavailable; }
 let refreshing: Promise<Session | null> | null = null;
 let loggingOut: Promise<void> | null = null;
 let authEpoch = 0;
@@ -97,6 +100,7 @@ export function lastAuthEnd(): "expired" | "logout" | null {
 function setSession(s: Session | null) {
     if (!s && current) authEpoch++;
     if (s) authEnd = null;
+    refreshUnavailable = false;
     current = s;
     for (const l of listeners) l(s);
 }
@@ -131,26 +135,6 @@ export function isTransportError(error: unknown, includeResultUnknown = false): 
 function toError(status: number, body: unknown, requestId?: string): ApiError {
     const e = (body as { error?: { code?: string; message?: string; retryable?: boolean; details?: unknown } })?.error;
     return new ApiError(status, e?.code ?? "http_" + status, e?.message ?? `HTTP ${status}`, e?.retryable ?? false, e?.details, requestId);
-}
-
-export async function login(token: string, name: string): Promise<void> {
-    if (loggingOut) await loggingOut;
-    const owner = authEpoch;
-    await boundedRequest({}, true, async (send) => {
-        requireAuthTransport();
-        const resp = await send("/api/v1/auth/browser-login", {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ token, name }),
-            credentials: "same-origin",
-        });
-        checkProtocol(resp);
-        const body = await parse(resp);
-        requireAuthGeneration(owner, resp.status !== 401);
-        if (!resp.ok) throw toError(resp.status, body);
-        const b = body as { access_token: string; expires_at: string };
-        setSession({ accessToken: b.access_token, expiresAt: b.expires_at });
-    });
 }
 
 export type PendingPairing = { code: string; verification_code: string; expires_at: string };
@@ -196,32 +180,58 @@ export async function redeemPairing(code: string): Promise<boolean> {
     });
 }
 
-/// refresh 쿠키로 access token을 다시 받는다. 동시 호출은 하나로 합친다(singleflight).
+/// 탭 내부는 singleflight, 탭 사이는 Web Locks로 갱신한다. 응답 유실은 같은 키로 한 번 확인한다.
 export function refresh(): Promise<Session | null> {
     if (lastAuthEnd() === "logout") return Promise.resolve(null);
     if (!refreshing) {
         const owner = authEpoch;
-        refreshing = (async () => {
+        refreshing = withRefreshLock(async () => {
             try {
+                if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
                 requireAuthTransport();
-                const resp = await transportFetch("/api/v1/auth/refresh", { method: "POST", credentials: "same-origin" });
-                checkProtocol(resp);
-                if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
-                if (!resp.ok) {
-                    // 로그인된 상태에서 refresh가 거부되면 만료다(처음 열 때 쿠키 없음은 만료 안내 대상 아님).
-                    if (current) authEnd = "expired";
-                    setSession(null);
-                    return null;
+                const key = refreshRequestKey();
+                for (let attempt = 0; attempt < 2; attempt++) {
+                    try {
+                        requireAuthTransport();
+                        const resp = await transportFetch("/api/v1/auth/refresh", {
+                            method: "POST", credentials: "same-origin", headers: { "idempotency-key": key },
+                        });
+                        checkProtocol(resp);
+                        if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
+                        if (resp.status === 401) {
+                            clearRefreshRequestKey(key);
+                            if (current) authEnd = "expired";
+                            setSession(null);
+                            return null;
+                        }
+                        if (!resp.ok) {
+                            if (attempt === 0 && (resp.status >= 500 || resp.status === 408 || resp.status === 429)) {
+                                await resp.body?.cancel();
+                                continue;
+                            }
+                            await resp.body?.cancel();
+                            refreshUnavailable = true;
+                            return current;
+                        }
+                        const b = (await resp.json()) as { access_token: string; expires_at: string };
+                        if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
+                        clearRefreshRequestKey(key);
+                        const s = { accessToken: b.access_token, expiresAt: b.expires_at };
+                        setSession(s);
+                        return s;
+                    } catch (error) {
+                        if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
+                        if (attempt === 0 && isTransportError(error)) continue;
+                        refreshUnavailable = true;
+                        return current;
+                    }
                 }
-                const b = (await resp.json()) as { access_token: string; expires_at: string };
-                if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
-                const s = { accessToken: b.access_token, expiresAt: b.expires_at };
-                setSession(s);
-                return s;
+                return current;
             } catch {
+                if (owner === authEpoch && lastAuthEnd() !== "logout") refreshUnavailable = true;
                 return current;
             }
-        })().finally(() => { refreshing = null; });
+        }).finally(() => { refreshing = null; });
     }
     return refreshing;
 }
@@ -238,8 +248,14 @@ export function logout(): Promise<void> {
         await renewal;
         try {
             requireAuthTransport();
-            const response = await transportFetch("/api/v1/auth/logout", { method: "POST", credentials: "same-origin" });
-            checkProtocol(response);
+            await withRefreshLock(async () => {
+                const key = pendingRefreshKey();
+                const response = await transportFetch("/api/v1/auth/logout", {
+                    method: "POST", credentials: "same-origin", headers: key ? { "idempotency-key": key } : {},
+                });
+                checkProtocol(response);
+                if (response.ok && key) clearRefreshRequestKey(key);
+            });
         } catch {
             // 로컬 종료는 유지한다. 서버 쿠키 폐기를 연결 복구 뒤 자동 재전송하지 않는다.
         }

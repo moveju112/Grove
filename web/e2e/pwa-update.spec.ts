@@ -45,14 +45,13 @@ test("새 버전 발행 중에도 stream과 초안이 유지되고, 사용자가
         const marker = await page.evaluate(() => ((window as unknown as { __marker?: number }).__marker = 1));
         expect(marker).toBe(1);
 
-        // 4) 사용자가 고르면 전환: 한 번 다시 불러오고, 초안·대화·연결이 복원된다
-        await page.waitForTimeout(1200); // 초안 저장(debounce)
+        // 4) 사용자가 고르면 전환: 대화·연결은 복원하지만 미전송 입력은 저장하지 않는다.
         await banner.getByRole("button", { name: "업데이트", exact: true }).click();
         await page.waitForFunction(() => (window as unknown as { __marker?: number }).__marker === undefined, undefined, { timeout: 15_000 });
         await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         const v2 = page.getByTestId("session-view");
         await expect(v2).toHaveAttribute("data-session", s.id);
-        await expect(v2.getByLabel("메시지 입력")).toHaveValue("업데이트 중에 쓰는 글");
+        await expect(v2.getByLabel("메시지 입력")).toHaveValue("");
         await expect(v2.getByTestId("msg-assistant")).toHaveCount(1);
         await expect(v2.getByTestId("msg-assistant").last()).toContainText("업데이트 중에도 끊기지 않는 답변");
         // 새 worker가 제어하고, 같은 턴이 다시 실행되지 않았다

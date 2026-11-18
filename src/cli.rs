@@ -20,13 +20,9 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
   grove doctor [--listen 주소:포트] [--data-dir 경로]    프로세스·API 준비·인증·모델 설정을 각각 진단(문제 있으면 종료 코드 1)
   grove doctor --offline [--data-dir 경로]               DB 읽기 전용 무결성 검사·복구 안내(서버·migration·모델 호출 없음)
   grove config [--listen 주소:포트] [--data-dir 경로]    실제 적용될 경로·주소·환경 설정 출력(비밀값 없음)
-  grove auth token [--data-dir 경로]                     소유자 토큰 출력(= grove token)
   grove connect-link <wss://서버/api/e2ee> [--data-dir 경로]
                                                         Pages 앱의 서버 공개키 고정 연결 링크 출력(인증 토큰 미포함)
-  grove auth unlock [--data-dir 경로]                    브라우저 로그인 실패 잠금 해제(= grove unlock)
-  grove pair [이름] [--listen 주소:포트] [--data-dir 경로]
-                                                        실행 중 서버에서 새 기기 토큰 발급(원문은 이때 한 번만 출력)
-  grove pairing --help                                  비밀번호·소유자 승인형 페어링 링크 관리
+  grove pairing --help                                  첫 기기 등록과 페어링 링크 관리
   grove snapshot <대상 파일> [--data-dir 경로]           일관된 DB snapshot 생성
   grove restore <snapshot 파일> <새 데이터 디렉터리>     snapshot을 새 디렉터리로 복원·검증
   grove install --install 설치경로 --package 압축본 --data-dir 경로 --listen 주소:포트
@@ -45,7 +41,7 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
   grove --help | -h                                      이 도움말
 
 환경변수: GROVE_DATA_DIR, GROVE_LISTEN, GROVE_ALLOWED_ORIGINS, GROVE_ALLOWED_HOSTS,
-          GROVE_WEB_DIR, GROVE_TLS_TERMINATED=1, GROVE_ENABLE_TOOL_LOOP=1";
+          GROVE_WEB_DIR, GROVE_TLS_TERMINATED=1";
 
 #[derive(Default)]
 struct Opts {
@@ -146,6 +142,9 @@ pub fn run(args: Vec<String>) -> i32 {
     if args.first().is_some_and(|a| a == "computer-worker") {
         return crate::computer::worker_main();
     }
+    if args.first().is_some_and(|a| a == "continuation-mcp") {
+        return crate::continuations::bridge::mcp_main(args.get(1));
+    }
     if args.first().is_some_and(|a| a == "computer-mcp") {
         return crate::computer::bridge::mcp_main(args.get(1));
     }
@@ -192,16 +191,9 @@ pub fn run(args: Vec<String>) -> i32 {
     }
     let result = match cmd {
         "serve" if opts.positional.len() == 1 || opts.positional.is_empty() => return serve(opts),
-        "token" => token(opts),
-        "unlock" => unlock(opts),
-        "auth" => match opts.positional.get(1).map(String::as_str) {
-            Some("token") => token(opts),
-            Some("unlock") => unlock(opts),
-            _ => Err(format!("auth 하위 명령은 token 또는 unlock입니다\n\n{HELP}")),
-        },
+        "token" | "auth" | "pair" | "unlock" => Err("기기는 `grove pairing create`로 등록하세요".into()),
         "status" => status(opts),
         "config" => config_cmd(opts),
-        "pair" => pair(opts),
         "connect-link" => connect_link(opts),
         "doctor" => {
             return match doctor(opts) {
@@ -251,23 +243,6 @@ fn connect_link(opts: Opts) -> Result<(), String> {
     Ok(())
 }
 
-fn token(opts: Opts) -> Result<(), String> {
-    let cfg = Config::from_env(opts.data_dir, opts.listen)?;
-    let path = cfg.data_dir.join("owner-token");
-    let t = std::fs::read_to_string(&path).map_err(|e| format!("{}: {e} (서버를 한 번 실행하면 생성됩니다)", path.display()))?;
-    println!("{}", t.trim());
-    Ok(())
-}
-
-/// 로그인 잠금 해제(로컬 복구 경로, NET-020). 서버 실행 중에도 DB에 직접 적용된다.
-fn unlock(opts: Opts) -> Result<(), String> {
-    let cfg = Config::from_env(opts.data_dir, opts.listen)?;
-    let db = crate::store::Db::open(&cfg.db_path()).map_err(|e| e.to_string())?;
-    let n = db.call_sync(|c| crate::auth::clear_lockouts(c)).map_err(|e| e.message)?;
-    println!("로그인 잠금 {n}건을 해제했습니다");
-    Ok(())
-}
-
 fn status(opts: Opts) -> Result<(), String> {
     let cfg = Config::from_env(opts.data_dir, opts.listen)?;
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
@@ -290,7 +265,7 @@ fn config_cmd(opts: Opts) -> Result<(), String> {
     print_json(Ok(serde_json::json!({
         "data_dir": cfg.data_dir, "db_path": cfg.db_path(), "owner_token_file": cfg.data_dir.join("owner-token"),
         "listen": cfg.listen.to_string(), "allowed_origins": cfg.allowed_origins, "allowed_hosts": cfg.allowed_hosts,
-        "tls_terminated": cfg.tls_terminated, "web_dir": cfg.web_dir, "enable_tool_loop": cfg.enable_tool_loop,
+        "tls_terminated": cfg.tls_terminated, "web_dir": cfg.web_dir,
         "approval_ttl_secs": cfg.approval_ttl_secs, "scheduler_tick_ms": cfg.scheduler_tick_ms,
     })))
 }
@@ -407,33 +382,6 @@ fn doctor(opts: Opts) -> Result<bool, String> {
     out["healthy"] = serde_json::json!(healthy);
     println!("{}", serde_json::to_string_pretty(&out).unwrap_or_default());
     Ok(healthy)
-}
-
-/// 실행 중 서버에서 새 기기 토큰을 발급한다(ARCH-007). 원문 토큰은 이 출력에서만 볼 수 있다.
-fn pair(opts: Opts) -> Result<(), String> {
-    let name = opts.positional.get(1).cloned().unwrap_or_else(|| "새 기기".into());
-    let cfg = Config::from_env(opts.data_dir, opts.listen)?;
-    let token = owner_token(&cfg).ok_or("owner-token 파일이 없습니다. 서버를 한 번 실행하세요")?;
-    let base = local_base(&cfg);
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
-    rt.block_on(async {
-        let r = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none()).build().map_err(|e| e.to_string())?
-            .post(format!("{base}/api/v1/devices"))
-            .bearer_auth(&token)
-            .header("idempotency-key", crate::util::new_id())
-            .header(crate::web::PROTOCOL_HEADER, crate::PROTOCOL_VERSION.to_string())
-            .json(&serde_json::json!({ "name": name }))
-            .timeout(std::time::Duration::from_secs(10))
-            .send()
-            .await
-            .map_err(|e| format!("{base}: 서버에 연결할 수 없습니다 ({e})"))?;
-        let st = r.status();
-        let v: serde_json::Value = r.json().await.unwrap_or_default();
-        if !st.is_success() {
-            return Err(format!("기기 등록 실패({}): {}", st.as_u16(), v["error"]["message"].as_str().unwrap_or("")));
-        }
-        print_json(Ok(serde_json::json!({ "id": v["id"], "name": v["name"], "token": v["token"], "server": base })))
-    })
 }
 
 fn serve(opts: Opts) -> i32 {

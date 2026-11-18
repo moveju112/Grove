@@ -146,6 +146,13 @@ fn tail(path: &std::path::Path, n: u64) -> String {
     String::from_utf8_lossy(&buf).to_string()
 }
 
+fn head(path: &std::path::Path, n: usize) -> String {
+    let Ok(f) = crate::task_logs::open_read(path) else { return String::new() };
+    let mut buf = vec![];
+    let _ = f.take(n as u64).read_to_end(&mut buf);
+    String::from_utf8_lossy(&buf).to_string()
+}
+
 #[derive(Clone)]
 pub struct Spawn {
     pub session_id: String,
@@ -226,6 +233,15 @@ fn record_start(c: &Connection, id: &str, s: &Spawn, now: &str, expected_root: O
             params![id, sess.project_id, sess.worktree_id, script.id, now],
         )?;
     }
+    if let Some(call_id)=&s.call_id {
+        let call=crate::approvals::get(c,call_id)?;
+        if let Some(prompt)=call.target["follow_up"].as_str() {
+            let turn=call.turn_id.as_deref().ok_or_else(||ApiError::invalid("후속 보고에는 원래 턴이 필요합니다"))?;
+            let t=crate::runner::get_turn(c,turn)?;
+            crate::continuations::check_permission(c,&t,crate::continuations::NAME)?;
+            crate::continuations::register(c,now,turn,&json!({"action":"task","request_id":format!("shell:{call_id}"),"prompt":prompt,"task_id":id}))?;
+        }
+    }
     crate::task_logs::begin(c,id,now)?;
     let t=get(c,id)?;
     events::append(c,now,"task.changed",Some(&t.project_id),Some(&t.session_id),&serde_json::to_value(&t)?)?;
@@ -282,7 +298,7 @@ async fn launch(app: &App, s: Spawn, id: String, root: PathBuf, _resource: Optio
     tokio::spawn(async move {
         let end = tokio::select! {
             r = child.wait() => match r { Ok(st) => End::Exit(st), Err(e) => End::WaitErr(e.to_string()) },
-            _ = tokio::time::sleep(Duration::from_millis(s.timeout_ms)) => End::Timeout,
+            _ = crate::tools::shell::wait_deadline(s.timeout_ms) => End::Timeout,
             _ = cancel_rx.wait_for(|c| *c) => End::Cancelled("user"),
             _ = shutdown.wait_for(|v| *v) => End::Cancelled("server_shutdown"),
         };
@@ -429,8 +445,10 @@ pub async fn summary(app: &App, t: &Task) -> ApiResult<Value> {
     }).await
 }
 
+pub(crate) enum HeldOutput { Capture, Summary }
+
 /// 도구 호출 경로: hold 동안 기다리고, 안 끝나면 분리(detach)한다. 분리와 완료는 DB에서 원자적으로 경합한다.
-pub async fn run_with_hold(app: &App, s: Spawn, hold_ms: u64, mut cancel: watch::Receiver<bool>) -> Result<Value, crate::tools::ToolError> {
+pub(crate) async fn run_with_hold(app: &App, s: Spawn, hold_ms: u64, output: HeldOutput, mut cancel: watch::Receiver<bool>) -> Result<Value, crate::tools::ToolError> {
     use crate::tools::ToolError;
     let t = spawn_with_cancel(app, s, &mut cancel).await.map_err(|e| ToolError::new(e.code, e.message))?;
     if let Some(mut done) = app.tasks.done_rx(&t.id) {
@@ -453,14 +471,33 @@ pub async fn run_with_hold(app: &App, s: Spawn, hold_ms: u64, mut cancel: watch:
         .map_err(|e| ToolError::new("internal", e.message))?;
     let id = t.id.clone();
     let t = app.db.call(move |c| get(c, &id)).await.map_err(|e| ToolError::new("internal", e.message))?;
-    let v = summary(app, &t).await.map_err(|e| ToolError::new(e.code, e.message))?;
     if detached {
+        let v = summary(app, &t).await.map_err(|e| ToolError::new(e.code, e.message))?;
         return Ok(json!({ "task_id": t.id, "status": "running", "background": true,
             "note": "hold 시간 안에 끝나지 않아 백그라운드로 전환했습니다. 끝나면 결과가 대화에 기록됩니다.",
             "stdout_tail": v["stdout_tail"], "stderr_tail": v["stderr_tail"] }));
     }
+    let v = match output {
+        HeldOutput::Summary => summary(app, &t).await.map_err(|e| ToolError::new(e.code, e.message))?,
+        HeldOutput::Capture => {
+            // 기존 foreground 결과 필드를 유지한다. 파일에서 제한된 앞부분만 읽는다.
+            let paths = (log_path(app, &t.id, "out"), log_path(app, &t.id, "err"));
+            let (stdout, stderr) = tokio::task::spawn_blocking(move || {
+                let n = crate::tools::shell::MAX_CAPTURE;
+                (head(&paths.0, n), head(&paths.1, n))
+            }).await.map_err(|_| ToolError::new("internal", "작업 출력을 읽지 못했습니다"))?;
+            let limit = crate::tools::shell::MAX_CAPTURE as i64;
+            let duration_ms = t.ended_at.as_deref().and_then(crate::util::parse_time)
+                .zip(crate::util::parse_time(&t.started_at))
+                .map(|(end, start)| (end - start).whole_milliseconds().max(0) as u64);
+            json!({ "command":t.command, "cwd":t.cwd, "stdout":stdout, "stderr":stderr, "duration_ms":duration_ms,
+                "stdout_bytes":t.stdout_bytes, "stderr_bytes":t.stderr_bytes, "exit_code":t.exit_code, "signal":t.signal,
+                "truncated":t.stdout_bytes > limit || t.stderr_bytes > limit })
+        }
+    };
     match t.status.as_str() {
-        "completed" | "failed" => Ok(v),
+        "completed" => Ok(v),
+        "failed" if t.exit_code.is_some() || t.signal.is_some() => Ok(v),
         "cancelled" => Err(ToolError::new("cancelled", "사용자 취소로 종료했습니다. 부분 실행됐을 수 있습니다").with_output(v)),
         "timeout" => Err(ToolError::new("timeout", "hard timeout으로 종료했습니다. 부분 실행됐을 수 있습니다").with_output(v)),
         _ => Err(ToolError::new("failed", t.reason.clone().unwrap_or_default()).with_output(v)),
@@ -528,13 +565,20 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     if b.command.trim().is_empty() || b.command.len() > 64 * 1024 {
         return Err(ApiError::invalid("command가 비어 있거나 너무 깁니다"));
     }
-    let timeout = b.timeout_ms.unwrap_or(crate::tools::shell::MAX_BACKGROUND_TIMEOUT_MS).clamp(100, crate::tools::shell::MAX_BACKGROUND_TIMEOUT_MS);
+    let timeout = b.timeout_ms.unwrap_or(0);
+    if timeout > crate::tools::shell::MAX_EXPLICIT_TIMEOUT_MS {
+        return Err(ApiError::invalid("timeout_ms가 저장할 수 있는 범위를 넘었습니다"));
+    }
     // 같은 Idempotency-Key 재전송이 프로세스를 두 번 띄우지 않게, 기록된 응답이 있으면 그대로 돌려준다.
     let mut hash_body = json!({ "s": session_id, "c": b.command, "w": b.cwd, "t": timeout });
     if let Some(script) = &b.script { hash_body["script"] = json!(script); }
     if b.setup { hash_body["setup"] = json!(true); }
-    let h = idem::body_hash("task.start", &hash_body);
-    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
+    let h = idem::body_hash("task.start.v2", &hash_body);
+    // 이전 서버가 기본값·범위 밖 입력을 정규화한 receipt도 업그레이드 후 재실행하지 않는다.
+    const LEGACY_TIMEOUT: u64 = 24 * 3600 * 1000;
+    hash_body["t"] = json!(b.timeout_ms.unwrap_or(LEGACY_TIMEOUT).clamp(100, LEGACY_TIMEOUT));
+    let legacy = idem::body_hash("task.start", &hash_body);
+    if let Some(r) = idem::replay_matching(&app, &p, &headers, &[&h, &legacy]).await? {
         return Ok(r);
     }
     let sid = session_id.clone();
@@ -557,7 +601,7 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     let queue=app.tasks.admission.get(&project);
     let admission=queue.lock().await;
     crate::auth::revalidate(&app,&p).await?;
-    if let Some(response)=idem::replay(&app,&p,&headers,&h).await? { return Ok(response); }
+    if let Some(response)=idem::replay_matching(&app,&p,&headers,&[&h,&legacy]).await? { return Ok(response); }
     let resource = Some(crate::project_resources::Lease::Write { _guard:app.project_resources.process_start(&app,&project,&p).await? });
     let cwd = resolve(&root, &cwd_rel).map_err(|e| ApiError::invalid(e.message))?;
     if !cwd.is_dir() {

@@ -17,11 +17,11 @@
   - why: 사용자가 요청한 Release·SSH·로컬 검사 작업을 CLI sandbox로 차단하지 않는다. CLI 자체 도구와 Grove의 승인형 도구 루프·`ProjectFs` API 경계는 별개다. OS·상위 실행 환경의 제한이나 관리 정책까지 해제하지는 않는다.
   - ✅ sandbox 실행용 bubblewrap·socat은 필요하지 않다. 취소는 변경 rollback이 아니며 중단 기록과 실제 파일을 확인한 뒤 계속한다. `evidence: src/provider/cli.rs`, `evidence: tests/real_cli.rs`.
 - **MUST** 일반 대화의 전역·프로젝트 지침은 각 외부 CLI의 기본 로더에 맡긴다. Grove는 `AGENTS.md`·`CLAUDE.md`를 직접 읽어 중복 주입하거나 전달 모드를 제공하지 않는다. API 모델과 `grove exec`에도 지침 파일을 자동 주입하지 않는다.
-  - ✅ 일반 대화의 장기 기억·hook·MCP도 외부 CLI의 원래 설정에 맡기며 Grove의 별도 관리·주입·실행 경로는 제공하지 않는다. 제목·요약 같은 내부 호출만 사용자 hook·MCP·설정을 제외한다. `evidence: src/provider/cli.rs`, `evidence: tests/native_integrations.rs`.
+  - ✅ 일반 대화의 스킬·장기 기억·hook·MCP도 외부 CLI의 원래 설정에 맡긴다. 스킬은 실제 CLI 목록을 조회해 `/이름`으로 호출하고 Grove는 본문·활성화·영속 선택을 별도 관리하거나 중복 주입하지 않는다. 제목·요약 같은 내부 호출만 사용자 hook·MCP·설정을 제외한다. `evidence: src/provider/cli.rs`, `evidence: src/native_commands.rs`, `evidence: tests/native_integrations.rs`.
 - **MUST** `tools.full_access`는 기본으로 켜진 일반 도구의 포괄 허용이다. 별도 설정 없이 파일 수정·셸 실행은 자동 승인하고 foreground·background 셸에 계정 환경변수를 상속하되 `GROVE_*`는 제외한다. 서버·프로젝트에서 명시적으로 끄거나 지정한 deny·read_only와 PC 제어·위임의 별도 정책은 유지하며, 대기 중 전체 권한이 철회되면 자격증명 사용 계획을 실행하지 않는다. 파일 API의 `ProjectFs` 경계는 넓히지 않는다.
   - why: 일반 코딩·SSH·Release 작업은 반복 승인 없이 허용하면서, 서버 내부 설정이나 별도 승인 기능까지 포괄 허용으로 오인하지 않는다. 셸 자체는 프로젝트 밖·네트워크 접근이나 위험 명령을 차단하는 sandbox가 아니다.
   - ✅ 기본값은 전체 허용이며 저장된 제한 설정은 덮어쓰지 않는다. 승인·제한 회귀 시험은 제한을 명시해 해당 정책을 검사한다. `evidence: src/settings.rs`, `evidence: src/approvals.rs`, `evidence: src/tools/shell.rs`, `evidence: src/tasks.rs`.
-- **MUST** Computer Use는 소유자가 켠 서버 PC만 대상으로 하며, 관찰도 포함해 각 요청을 이번만 승인한다. CLI의 기본 MCP·hook과 별개로 Grove는 턴 한정 Computer Use MCP를 추가하며, 이 내부 연결의 승인 경계를 바꾸지 않는다.
+- **MUST** Computer Use는 소유자가 켠 서버 PC만 대상으로 하며, 관찰도 포함해 최초 승인이 필요하며 명시적 대화 범위 승인은 해당 대화에서만 재사용한다. `tools.allow`만으로 최초 승인을 생략하지 않으며 금지·읽기 전용 정책과 승인 해제가 우선한다. CLI의 기본 MCP·hook과 별개로 Grove는 턴 한정 Computer Use MCP를 추가하며, 이 내부 연결의 승인 경계를 바꾸지 않는다.
   - ✅ `src/computer/`, `tests/computer.rs`, 격리 Xvfb 검사 `python3 tests/fixtures/computer_x11.py /절대/경로/grove`.
 
 ## 스타일

@@ -11,7 +11,7 @@ test("진단 묶음은 범위 확인 뒤에만 만들고 미리 보기·다운�
     await openSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("진단");
     const panel = page.getByTestId("diagnostics-bundle");
-    await expect(panel).toContainText("소유자 전용");
+    await expect(panel).toBeVisible();
     expect(generated).toBe(0);
     await panel.getByRole("button", { name: "진단 묶음 준비", exact: true }).click();
     await expect(panel.getByRole("button", { name: "진단 묶음 생성", exact: true })).toBeDisabled();

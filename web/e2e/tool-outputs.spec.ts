@@ -1,27 +1,28 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, composerOption, ensureProfile, login, openDetails, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, composerCommand, composerOption, ensureProfile, login, requireToolApproval, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Call = { id: string; name: string; status: string; result: unknown };
 type Reference = { kind: string; call_id: string; complete: boolean; total_bytes: number; excerpt: string; next_offset: number };
 type ModelRequest = { messages: { role: string; tool_call_id?: string; content: string }[] };
 
-test("큰 결과는 화면 원문과 모델 참조를 구분하고 실제 범위 조회·reload 뒤 재실행하지 않는다", async ({ page }) => {
+test("큰 결과는 저장 원문과 모델 참조를 구분하고 화면에 표시하거나 재실행하지 않는다", async ({ page }) => {
     const title = `CTX-012-${Date.now()}`;
     const root = mkdtempSync(join(state().projA, "tool-output-"));
-    const text = `BEGIN-UTF8-가😀${"x".repeat(5000)}ORIGINAL-ONLY${"y".repeat(30000)}OUTPUT-END`;
+    const text = `BEGIN-UTF8-가😀${"x".repeat(5000)}ORIGINAL-ONLY${"y".repeat(65000)}OUTPUT-END`;
     writeFileSync(join(root, "output.txt"), text);
     const project = await apiCall<{ id: string }>("POST", "/projects", { root_path: root });
+    await requireToolApproval(project.id);
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title });
-    const profile = await ensureProfile();
+    await ensureProfile();
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
-    await composerOption(view, "모델 프로필", profile);
+    await composerCommand(view, "/model fixture");
     await composerOption(view, "도구", true);
     await script({ marker: title, frames: frames.tool("large-original", "shell", { command: "printf run >> executions; cat output.txt" }) });
     await script({ marker: title, frames: frames.text(["큰 결과를 참조로 보관했어"]) });
@@ -29,16 +30,12 @@ test("큰 결과는 화면 원문과 모델 참조를 구분하고 실제 범위
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await view.getByTestId("approval").getByRole("button", { name: "이번만 승인", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "큰 결과를 참조로 보관했어" })).toBeVisible();
-    const original = view.getByTestId("msg-tool").first();
-    await openDetails(original);
-    await expect(original.getByTestId("tool-output")).toContainText("ORIGINAL-ONLY");
-    await expect(original.getByTestId("tool-output")).not.toContainText("tool_output_reference");
+    await expect(view).not.toContainText("ORIGINAL-ONLY");
     const calls = await apiCall<Call[]>("GET", `/tool-calls?session_id=${session.id}`);
     expect(calls).toHaveLength(1);
     expect(calls[0]!.status).toBe("succeeded");
     const stored = calls[0]!.result as { stdout: string };
     expect(stored.stdout).toBe(text);
-    await page.keyboard.press("Escape");
     const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as ModelRequest[];
     const sent = requests.flatMap((r) => r.messages).find((m) => m.role === "tool" && m.tool_call_id === "large-original" && m.content.includes(calls[0]!.id))!;
     const reference = JSON.parse(sent.content) as Reference;
@@ -61,13 +58,12 @@ test("큰 결과는 화면 원문과 모델 참조를 구분하고 실제 범위
     await view.getByLabel("메시지 입력").fill(`${title} 나머지 조회`);
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "나머지 조회를 확인했어" })).toBeVisible();
-    const retrieved = view.getByTestId("msg-tool").filter({ hasText: "tool_output_read" });
-    await openDetails(retrieved);
-    await expect(retrieved.getByTestId("tool-output")).toContainText("ORIGINAL-ONLY");
-    await expect(retrieved.getByTestId("tool-output")).toContainText('"source": "database"');
+    await expect(view.getByTestId("msg-tool")).toHaveCount(0);
     const updated = await apiCall<Call[]>("GET", `/tool-calls?session_id=${session.id}`);
     expect(updated).toHaveLength(2);
-    expect(updated.find((c) => c.name === "tool_output_read")!.status).toBe("succeeded");
+    const retrieved = updated.find((c) => c.name === "tool_output_read")!;
+    expect(retrieved.status).toBe("succeeded");
+    expect(retrieved.result).toMatchObject({ source: "database", text: expect.stringContaining("ORIGINAL-ONLY") });
     const after = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as ModelRequest[];
     const modelRead = after.flatMap((r) => r.messages).find((m) => m.tool_call_id === "bounded-read")!;
     const result = JSON.parse(modelRead.content) as { text: string; offset: number; end_offset: number; next_offset: number; call_id: string };

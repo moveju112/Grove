@@ -134,9 +134,10 @@ fn has_gui() -> bool {
     false
 }
 
-fn local_request(app: &App, peer: SocketAddr, headers: &HeaderMap) -> bool {
+fn local_request(app: &App, peer: Option<SocketAddr>, headers: &HeaderMap) -> bool {
     // 프록시·공개 listen·원격 호스트는 loopback 프록시를 거쳐도 PC로 판단하지 않는다.
-    if !app.cfg.listen.ip().is_loopback() || app.cfg.tls_terminated || !peer.ip().is_loopback()
+    // 암호화 전송처럼 직접 연결 정보가 없는 요청도 로컬 PC로 간주하지 않는다.
+    if !app.cfg.listen.ip().is_loopback() || app.cfg.tls_terminated || !peer.is_some_and(|p| p.ip().is_loopback())
         || ["forwarded", "x-forwarded-for", "x-forwarded-host", "x-forwarded-proto"].iter().any(|h| headers.contains_key(*h)) {
         return false;
     }
@@ -147,7 +148,7 @@ fn local_request(app: &App, peer: SocketAddr, headers: &HeaderMap) -> bool {
     local && !["mobile", "android", "iphone", "ipad", "ipod"].iter().any(|s| ua.contains(s))
 }
 
-fn listing(app: &App, peer: SocketAddr, headers: &HeaderMap) -> Listing {
+fn listing(app: &App, peer: Option<SocketAddr>, headers: &HeaderMap) -> Listing {
     let reason = if !local_request(app, peer, headers) {
         Some("외부 편집기는 서버 PC의 로컬 데스크톱에서만 사용할 수 있습니다.")
     } else if !has_gui() {
@@ -164,8 +165,8 @@ fn listing(app: &App, peer: SocketAddr, headers: &HeaderMap) -> Listing {
     }
 }
 
-pub async fn list(State(app): State<App>, _p: Principal, ConnectInfo(peer): ConnectInfo<SocketAddr>, headers: HeaderMap) -> Json<Listing> {
-    Json(listing(&app, peer, &headers))
+pub async fn list(State(app): State<App>, _p: Principal, peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>, headers: HeaderMap) -> Json<Listing> {
+    Json(listing(&app, peer.ok().map(|p| p.0), &headers))
 }
 
 #[derive(Deserialize, Serialize)]
@@ -209,12 +210,12 @@ fn launch(editor: &Editor, root: &FsPath, rel: &str) -> ApiResult<()> {
 }
 
 pub async fn open(
-    State(app): State<App>, p: Principal, ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    State(app): State<App>, p: Principal, peer: Result<ConnectInfo<SocketAddr>, axum::extract::rejection::ExtensionRejection>,
     headers: HeaderMap, Path(id): Path<String>, Json(body): Json<OpenBody>,
 ) -> ApiResult<Response> {
     let hash = idem::body_hash("external_editor.open", &json!({"project_id":id,"request":body}));
     let _resource = app.project_resources.ui_write(&app, &id, &p).await?;
-    let available = listing(&app, peer, &headers);
+    let available = listing(&app, peer.ok().map(|p| p.0), &headers);
     if !available.available {
         return Err(ApiError::forbidden(available.reason.unwrap_or_default()));
     }

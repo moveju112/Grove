@@ -12,15 +12,51 @@ import { CodeBlock as DisplayCodeBlock } from "../design/CodeBlock";
 // 모델 답 표시(UI-010·011). 문법 트리를 React 요소로만 그린다: HTML 문자열을 넣지 않으므로 답 안의 <script>·onerror 등은 글자로 보인다.
 import { Button as GroveButton } from "../design/Button";
 import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
-import { fileRef, parseMarkdown, type Block, type Inline } from "../state/markdown";
+import { fileLink, fileRef, imageFile, parseMarkdown, type Block, type Inline } from "../state/markdown";
+import { CreationDialog } from "./create/CreationDialog";
+import { FileChangePreview } from "./files/FileChangePreview";
+import { ImageAttachment } from "./Attachments";
+import { attachmentStyles } from "./attachments.stylex";
 
 /// 답 안의 `경로:줄` 참조를 눌렀을 때(UI-011). 없으면 평범한 코드로 보인다.
 export const FileRefContext = createContext<((path: string, line?: number) => void) | null>(null);
+export const FileLinkContext = createContext<{ projectId: string; rootPath: string } | null>(null);
+
+function MarkdownImage({ href, alt, inline = true }: { href: string; alt: string; inline?: boolean }) {
+    const project = useContext(FileLinkContext);
+    const ref = project ? imageFile(href, project.rootPath) : null;
+    if (!project || !ref) return alt || "이미지";
+    return <ImageAttachment name={alt || ref.path.split("/").pop() || "이미지"} inline={inline}
+        projectFile={{ projectId: project.projectId, ...ref }} />;
+}
+
+function FileLink({ href, children, testId = "file-link" }: { href: string; children: ReactNode; testId?: string }) {
+    const project = useContext(FileLinkContext);
+    const open = useContext(FileRefContext);
+    const [expanded, setExpanded] = useState(false);
+    const ref = project ? fileLink(href, project.rootPath) : null;
+    const label = <FileRefContext.Provider value={null}>{children}</FileRefContext.Provider>;
+    if (!ref || !project || !open) return label;
+    return <>
+        <GroveButton appearance="link" xstyle={contentStyles.inlineLink} title={`${ref.path} 변경점`}
+            aria-haspopup="dialog" aria-expanded={expanded} data-testid={testId} onClick={() => setExpanded(true)}>{label}</GroveButton>
+        {expanded && <CreationDialog label={`${ref.path} 변경점`} onClose={() => setExpanded(false)} width="64em">
+            <Stack as="header" direction="horizontal" align="center" justify="between" gap={2}>
+                <Heading level={2}>{ref.path} · 현재 변경점</Heading>
+                <GroveButton variant="secondary" density="compact" onClick={() => setExpanded(false)}>닫기</GroveButton>
+            </Stack>
+            <FileChangePreview projectId={project.projectId} path={ref.path}
+                onOpen={() => { setExpanded(false); open(ref.path, ref.line); }} />
+        </CreationDialog>}
+    </>;
+}
 
 function InlineCode({ v }: { v: string }) {
     const onRef = useContext(FileRefContext);
+    const project = useContext(FileLinkContext);
     const r = onRef ? fileRef(v) : null;
     if (!r || !onRef) return <Code size="inherit">{v}</Code>;
+    if (project) return <FileLink href={v} testId="file-ref"><Code size="inherit">{v}</Code></FileLink>;
     return (
         <GroveButton appearance="link" xstyle={contentStyles.inlineLink} data-testid="file-ref" title="파일 열기" onClick={() => onRef(r.path, r.line)}>
             <Code size="inherit">{v}</Code>
@@ -49,10 +85,20 @@ function inl(c: Inline[]): ReactNode[] {
                     </Link>
                 );
             }
+            case "file":
+                if (imageFile(x.href)) return <MarkdownImage key={k} href={x.href} alt={inlineLabel(x.c)} />;
+                return <FileLink key={k} href={x.href}>{inl(x.c)}</FileLink>;
+            case "image":
+                return <MarkdownImage key={k} href={x.href} alt={x.alt} />;
             case "br":
                 return <br key={k} />;
         }
     });
+}
+
+function inlineLabel(nodes: Inline[]): string {
+    return nodes.map((node) => node.t === "text" || node.t === "code" ? node.v
+        : node.t === "image" ? node.alt : node.t === "br" ? " " : inlineLabel(node.c)).join("");
 }
 
 /// 링크 목적지 표시: http(s)는 host, mailto는 주소.
@@ -67,7 +113,9 @@ function linkDest(href: string): string {
 
 function CodeBlock({ lang, text }: { lang: string; text: string }) {
     const [copied, setCopied] = useState(false);
-    return <DisplayCodeBlock data-testid="md-code" code={text} language={lang || "plaintext"}
+    const diff = lang === "diff" || lang.startsWith("diff-");
+    const language = diff ? lang.slice(5) || "plaintext" : lang || "plaintext";
+    return <DisplayCodeBlock data-testid="md-code" code={text} language={language} isDiff={diff}
         title={lang || "code"} isWrapped={false} endContent={<GroveButton variant="secondary" density="compact"
             onClick={() => void navigator.clipboard?.writeText(text).then(() => {
                 setCopied(true);
@@ -79,8 +127,15 @@ function CodeBlock({ lang, text }: { lang: string; text: string }) {
 
 function block(b: Block, k: number): ReactNode {
     switch (b.t) {
-        case "p":
+        case "p": {
+            const content = b.c.filter((node) => node.t !== "br" && !(node.t === "text" && !node.v.trim()));
+            if (content.length && content.every((node) => node.t === "image" || (node.t === "file" && imageFile(node.href)))) {
+                return <Stack direction="horizontal" gap={2} xstyle={attachmentStyles.strip} role="list" aria-label="답변 이미지"
+                    data-swipe-blocked key={k}>{content.map((node, index) => node.t === "image" || node.t === "file"
+                        ? <MarkdownImage key={index} href={node.href} alt={node.t === "image" ? node.alt : inlineLabel(node.c)} inline={false} /> : null)}</Stack>;
+            }
             return <GroveText as="p" display="block" type="inherit" color="inherit" key={k}>{inl(b.c)}</GroveText>;
+        }
         case "h": {
             const level = Math.min(6, b.level + 2) as 3 | 4 | 5 | 6;
             return <Heading level={level} color="inherit" key={k}>{inl(b.c)}</Heading>;

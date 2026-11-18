@@ -308,9 +308,7 @@ async fn authentication_target_validation_and_device_read_contract() {
         .raw(Method::GET, "/api/v1/agent-overview", None, None, Some(""))
         .await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    let (_, device) = s
-        .post("/api/v1/devices", json!({"name":"overview-device"}))
-        .await;
+    let device = s.registered_device("overview-device").await;
     let response = s
         .raw(
             Method::GET,

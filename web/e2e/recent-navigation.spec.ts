@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice, sessionView, useWorkspaces } from "./helpers";
+import { splitRecentItem, apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice, sessionView, useWorkspaces } from "./helpers";
 import { frames } from "./fixture";
 
 async function reply(session: string, profile: string, text: string) {
@@ -23,29 +23,21 @@ async function sessions() {
     return { prefix, first, second, profile, firstReply, secondReply, project: a };
 }
 
-test("고정 항목을 먼저 표시하고 고정 해제하면 마지막 답변순으로 돌아가며 새로고침 뒤에도 유지된다", async ({ page }) => {
-    const { prefix } = await sessions();
+test("최근 행에는 열기와 x 숨김만 남고 키보드로 숨길 수 있다", async ({ page }) => {
+    const { prefix, project } = await sessions();
     await login(page);
     const recent = page.getByRole("region", { name: "최근", exact: true });
-    await expect(recent.getByLabel("최근 항목 검색")).toHaveCount(0);
-    await expect(recent.getByLabel("최근 검색·필터", { exact: true })).toHaveCount(0);
-    const items = recent.getByTestId("recent-item").filter({ hasText: prefix });
-    const first = items.filter({ hasText: `${prefix} first` });
-    await expect(items).toHaveCount(2);
-    await expect(items.first()).toContainText(`${prefix} second`);
-    await expect(first.getByRole("button", { name: "고정", exact: true })).toBeHidden();
-    await first.getByRole("button", { name: "최근 항목 관리", exact: true }).focus();
+    const first = recent.getByTestId("recent-item").filter({ hasText: `${prefix} first` });
+    await expect(first.getByRole("button")).toHaveCount(2);
+    await expect(first).not.toContainText(project.name);
+    await expect(first.getByRole("button").first()).toHaveAttribute("title", new RegExp(project.name));
+    await expect(first.getByRole("button", { name: "최근 항목 관리", exact: true })).toHaveCount(0);
+    await first.getByRole("button", { name: "최근에서 숨기기", exact: true }).focus();
     await page.keyboard.press("Enter");
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "고정", exact: true }).click();
-    await expect(first.getByLabel("고정됨", { exact: true })).toBeVisible();
-    await expect(items.first()).toContainText(`${prefix} first`);
+    await expect(first).toHaveCount(0);
     await page.reload();
-    await expect(page.getByTestId("conn")).toHaveText("연결됨");
-    await expect(items.first()).toContainText(`${prefix} first`);
-    await first.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "고정 해제", exact: true }).click();
-    await expect(items).toHaveCount(2);
-    await expect(items.first()).toContainText(`${prefix} second`);
+    await expect(recent.getByTestId("recent-list")).toHaveAttribute("aria-busy", "false");
+    await expect(first).toHaveCount(0);
 });
 
 test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인 분할만 새 사본을 만든다", async ({ page }) => {
@@ -64,8 +56,7 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     const secondView = page.locator(`[data-testid=session-view][data-session="${second.id}"]`);
     await firstView.getByLabel("메시지 입력").fill("first pane draft fixture");
     const secondSeen = touched(second.id, true);
-    await secondItem.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
+    await splitRecentItem(secondItem);
     await secondSeen;
     await expect(page.getByTestId("pane")).toHaveCount(2);
     await secondView.getByLabel("메시지 입력").fill("second pane draft fixture");
@@ -76,18 +67,17 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     await expect(firstView).toHaveCount(1);
     await expect(firstView.getByLabel("메시지 입력")).toHaveValue("first pane draft fixture");
     await expect(secondView.getByLabel("메시지 입력")).toHaveValue("second pane draft fixture");
-    await expect(page.getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ has: firstView })).toHaveCount(1);
-    await expect(page.getByRole("tablist").getByRole("tab")).toHaveCount(2);
-    await firstItem.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
+    await expect(page.getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ visible: true }).filter({ has: firstView })).toHaveCount(1);
+    await expect(page.locator('[role="tablist"][aria-label="열린 대화와 화면"] [role="tab"]')).toHaveCount(2);
+    await splitRecentItem(firstItem);
     await expect(page.getByTestId("pane")).toHaveCount(3);
     await expect(firstView).toHaveCount(2);
-    const copy = page.getByTestId("pane").and(page.locator('[data-focused="true"]')).getByLabel("메시지 입력");
+    const copy = page.getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ visible: true }).getByLabel("메시지 입력");
     await copy.fill("explicit copy draft fixture");
     await firstItem.getByRole("button", { name: new RegExp(`${prefix} first`) }).click();
-    await expect(page.getByTestId("pane").and(page.locator('[data-focused="true"]')).getByLabel("메시지 입력")).toHaveValue("explicit copy draft fixture");
+    await expect(page.getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ visible: true }).getByLabel("메시지 입력")).toHaveValue("explicit copy draft fixture");
     await expect(firstView).toHaveCount(2);
-    await expect(page.getByRole("tablist").getByRole("tab")).toHaveCount(3);
+    await expect(page.locator('[role="tablist"][aria-label="열린 대화와 화면"] [role="tab"]')).toHaveCount(3);
 });
 
 test("열기·보내기는 최근 시각을 바꾸지 않고 답변이 도착해야 순서와 표시 시각이 갱신된다", async ({ page }) => {
@@ -126,7 +116,7 @@ test("열기·보내기는 최근 시각을 바꾸지 않고 답변이 도착해
 test.describe("390px 탐색 더보기", () => {
     test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     for (const theme of ["light", "dark"] as const) {
-        test(`${theme}: 최근·세션·프로젝트 메뉴는 아이콘과 동작 명칭을 함께 표시한다`, async ({ page }, info) => {
+        test(`${theme}: 최근은 작은 x만 표시하고 세션·프로젝트 메뉴는 동작 명칭을 표시한다`, async ({ page }, info) => {
             await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
             await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
             const { prefix, first, project } = await sessions();
@@ -135,16 +125,19 @@ test.describe("390px 탐색 더보기", () => {
             await page.getByRole("button", { name: "사이드바", exact: true }).click();
             const drawer = page.getByTestId("mobile-drawer-left");
             const row = drawer.getByRole("region", { name: "최근", exact: true }).getByTestId("recent-item").filter({ hasText: `${prefix} first` });
-            await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-            const menu = page.getByRole("dialog", { name: "최근 항목 관리", exact: true });
-            for (const label of ["오른쪽에 열기", "아래에 열기", "고정", "최근에서 숨기기"]) {
-                await expect(menu.getByRole("button", { name: label, exact: true })).toContainText(label);
-            }
-            const bounds = (await menu.boundingBox())!;
-            expect(bounds.x).toBeGreaterThanOrEqual(0);
-            expect(bounds.x + bounds.width).toBeLessThanOrEqual(390);
-            await page.screenshot({ path: info.outputPath(`recent-menu-${theme}-390.png`), animations: "disabled" });
-            await page.keyboard.press("Escape");
+            await expect(row.getByRole("button")).toHaveCount(2);
+            await expect(row).not.toContainText(project.name);
+            const close = row.getByRole("button", { name: "최근에서 숨기기", exact: true });
+            await expect(close).toBeVisible();
+            await expect(row.getByTestId("recent-time")).toHaveText("0m");
+            const timeBounds = (await row.getByTestId("recent-time").boundingBox())!;
+            const closeBounds = (await close.boundingBox())!;
+            expect(closeBounds.x - timeBounds.x - timeBounds.width).toBeLessThanOrEqual(1);
+            expect(closeBounds.width).toBeLessThanOrEqual(24);
+            expect(closeBounds.height).toBe(24);
+            expect((await row.getByRole("button").first().boundingBox())!.height).toBe(24);
+            expect((await close.locator("svg").boundingBox())!.width).toBe(12);
+            await page.screenshot({ path: info.outputPath(`recent-close-${theme}-390.png`), animations: "disabled" });
             const session = drawer.locator(`[data-testid="sidebar-session"][data-session="${first.id}"]`);
             await session.getByRole("button", { name: `${prefix} first 도구`, exact: true }).click();
             const actions = page.getByRole("toolbar", { name: `${prefix} first 도구`, exact: true });

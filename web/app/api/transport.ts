@@ -5,8 +5,10 @@ const CONNECTION_KEY = "grove.e2ee.connection.v1";
 const LABEL = new TextEncoder().encode("grove-e2ee-v1");
 const text = new TextEncoder();
 const decode = new TextDecoder();
-const MAX_FRAME = 12 * 1024 * 1024;
-const MAX_BODY = 8 * 1024 * 1024;
+// 큰 HTTP 본문은 작은 암호화 frame으로 나눠 릴레이의 메시지 상한을 지킨다.
+const MAX_FRAME = 32 * 1024 * 1024;
+const MAX_BODY = 48 * 1024 * 1024;
+const BODY_CHUNK = 1024 * 1024;
 const MAX_QUEUE = 2 * 1024 * 1024;
 
 export function base64(bytes: Uint8Array): string {
@@ -91,6 +93,7 @@ class Channel {
     private rx: Cipher | null = null;
     private sends: Promise<void> = Promise.resolve();
     protocol: number | null = null;
+    requestBodyChunks = false;
     readonly ws: WebSocket;
 
     constructor(endpoint: string, signal?: AbortSignal | null) {
@@ -144,7 +147,7 @@ class Channel {
             this.ws.send(JSON.stringify({ version, key: base64(publicKey) }));
             const raw = await this.next();
             if (typeof raw !== "string" || raw.length > 512) throw new Error("암호화 handshake 형식 오류");
-            const hello = JSON.parse(raw) as { version: number; key: string; signature: string; protocol?: number; protocol_signature?: string };
+            const hello = JSON.parse(raw) as { version: number; key: string; signature: string; protocol?: number; protocol_signature?: string; request_body_chunks?: boolean };
             if (hello.version !== version) throw new Error("지원하지 않는 암호화 버전입니다.");
             const server = unbase64(hello.key);
             const identity = unbase64(pin);
@@ -152,7 +155,7 @@ class Channel {
             const transcript = concat(LABEL, publicKey, server, identity);
             const verification = await crypto.subtle.importKey("raw", identity, { name: "Ed25519" }, false, ["verify"]);
             if (!await crypto.subtle.verify("Ed25519", verification, unbase64(hello.signature), transcript)) {
-                throw new Error("서버 공개키가 일치하지 않습니다. 소유자에게 연결 링크를 확인하세요.");
+                throw new Error("서버 공개키가 일치하지 않아요. 링크를 발급한 기기에서 주소를 확인하세요.");
             }
             if (hello.protocol !== undefined || hello.protocol_signature !== undefined) {
                 if (!Number.isSafeInteger(hello.protocol) || hello.protocol! < 0 || hello.protocol! > 0xffff_ffff || !hello.protocol_signature) {
@@ -166,6 +169,7 @@ class Channel {
                 }
                 this.protocol = hello.protocol!;
             }
+            this.requestBodyChunks = hello.request_body_chunks === true;
             const peer = await crypto.subtle.importKey("raw", server, "X25519", false, []);
             const shared = await crypto.subtle.deriveBits({ name: "X25519", public: peer }, pair.privateKey, 256);
             const material = await crypto.subtle.importKey("raw", shared, "HKDF", false, ["deriveKey"]);
@@ -185,7 +189,12 @@ class Channel {
         this.sends = this.sends.then(async () => {
             if (this.failure) throw this.failure;
             const sealed = await this.tx!.seal(bytes);
-            if (this.ws.bufferedAmount > MAX_QUEUE) throw new Error("전송 대기량을 초과했습니다.");
+            const deadline = Date.now() + 60_000;
+            while (this.ws.bufferedAmount > MAX_QUEUE) {
+                if (this.failure) throw this.failure;
+                if (Date.now() >= deadline) throw new Error("전송 대기 시간이 초과됐어요.");
+                await new Promise((resolve) => setTimeout(resolve, 16));
+            }
             this.ws.send(sealed);
         });
         return this.sends;
@@ -199,7 +208,9 @@ class Channel {
 
 // ---- 다중화 연결(handshake version 2). 서버 계약: src/e2ee/mux.rs ----
 const OPEN = 0x01, ACK = 0x02, CANCEL = 0x03, PING = 0x04;
+const OPEN_BODY = 0x05, BODY = 0x06, BODY_END = 0x07;
 const HEADERS = 0x11, DATA = 0x12, END = 0x13, FAIL = 0x14, PONG = 0x15;
+const BODY_ACK = 0x16;
 /// 연결이 살아 있는 동안 주기적으로 확인한다. 서버는 60초 동안 frame이 없으면 연결을 닫는다.
 const HEARTBEAT_MS = 15_000;
 const PING_TIMEOUT_MS = 10_000;
@@ -215,6 +226,7 @@ type MuxStream = {
     data: (bytes: Uint8Array<ArrayBuffer>) => void;
     end: () => void;
     fail: (error: Error) => void;
+    uploadAck: () => void;
 };
 
 function frame(kind: number, id: number, payload: Uint8Array = new Uint8Array()): Uint8Array<ArrayBuffer> {
@@ -227,6 +239,7 @@ function frame(kind: number, id: number, payload: Uint8Array = new Uint8Array())
 
 export class Mux {
     get protocol(): number | null { return this.channel.protocol; }
+    get requestBodyChunks(): boolean { return this.channel.requestBodyChunks; }
     private streams = new Map<number, MuxStream>();
     private pings = new Map<number, () => void>();
     private nextId = 1;
@@ -265,6 +278,7 @@ export class Mux {
                 else if (kind === DATA) stream.data(payload);
                 else if (kind === END) stream.end();
                 else if (kind === FAIL) stream.fail(new TypeError("서버가 요청을 처리하지 못했습니다."));
+                else if (kind === BODY_ACK && payload.length === 0) stream.uploadAck();
                 else throw new Error("암호화 응답 순서 오류");
             }
         } catch (error) {
@@ -311,7 +325,7 @@ export class Mux {
         return alive;
     }
 
-    request(operation: unknown, method: string, signal?: AbortSignal | null): Promise<{ meta: Meta; body: ReadableStream<Uint8Array<ArrayBuffer>> | null }> {
+    request(operation: unknown, method: string, signal?: AbortSignal | null, uploadBody?: Uint8Array): Promise<{ meta: Meta; body: ReadableStream<Uint8Array<ArrayBuffer>> | null }> {
         if (this.dead) return Promise.reject(this.dead);
         const id = this.nextId++;
         const queue: Uint8Array<ArrayBuffer>[] = [];
@@ -320,6 +334,7 @@ export class Mux {
         let failure: Error | null = null;
         let headed = false;
         let consume = true;
+        let uploadAck: { resolve: () => void; reject: (error: Error) => void } | null = null;
         const done = () => { this.streams.delete(id); signal?.removeEventListener("abort", abort); };
         const cancel = () => { if (this.streams.has(id)) { done(); void this.send(CANCEL, id).catch(() => undefined); } };
         const abort = () => stream.fail(new DOMException("요청을 취소했습니다.", "AbortError"));
@@ -333,9 +348,17 @@ export class Mux {
         let settle!: { resolve: (value: { meta: Meta; body: ReadableStream<Uint8Array<ArrayBuffer>> | null }) => void; reject: (error: Error) => void };
         const result = new Promise<{ meta: Meta; body: ReadableStream<Uint8Array<ArrayBuffer>> | null }>((resolve, reject) => { settle = { resolve, reject }; });
         const stream: MuxStream = {
+            uploadAck: () => {
+                if (!uploadAck) { stream.fail(new TypeError("업로드 응답 순서 오류")); return; }
+                uploadAck.resolve();
+                uploadAck = null;
+            },
             headers: (meta) => {
                 if (headed || meta.type !== "headers" || meta.status < 200 || meta.status > 599) { stream.fail(new TypeError("암호화 응답 형식 오류")); return; }
                 headed = true;
+                // 인증 오류처럼 본문 수신 전 응답한 경우에도 원래 HTTP 상태와 본문을 반환한다.
+                uploadAck?.reject(new DOMException("서버가 이미 응답했습니다.", "AbortError"));
+                uploadAck = null;
                 // 본문 없는 응답도 서버의 끝 frame까지는 받아 ACK 흐름을 맞춘다.
                 consume = !(meta.status === 204 || meta.status === 304 || method === "HEAD");
                 const body = consume ? new ReadableStream<Uint8Array<ArrayBuffer>>({
@@ -364,6 +387,8 @@ export class Mux {
             fail: (error) => {
                 if (failure || ended) return;
                 failure = error;
+                uploadAck?.reject(error);
+                uploadAck = null;
                 cancel();
                 if (!headed) settle.reject(error);
                 if (waiter) { const w = waiter; waiter = null; w.reject(error); }
@@ -372,7 +397,29 @@ export class Mux {
         this.streams.set(id, stream);
         signal?.addEventListener("abort", abort, { once: true });
         if (signal?.aborted) abort();
-        else this.send(OPEN, id, text.encode(JSON.stringify(operation))).catch(() => stream.fail(new TypeError("암호화 연결이 끊겼습니다.")));
+        else {
+            const sendUpload = async (kind: number, payload: Uint8Array) => {
+                if (failure) throw failure;
+                if (headed) throw new DOMException("서버가 이미 응답했습니다.", "AbortError");
+                await new Promise<void>((resolve, reject) => {
+                    const timer = setTimeout(() => reject(new TypeError("업로드 응답 시간이 초과됐어요.")), 60_000);
+                    uploadAck = { resolve: () => { clearTimeout(timer); resolve(); }, reject: (error) => { clearTimeout(timer); reject(error); } };
+                    void this.send(kind, id, payload).catch(uploadAck.reject);
+                });
+                if (failure) throw failure;
+            };
+            const upload = async () => {
+                const metadata = text.encode(JSON.stringify(operation));
+                if (uploadBody === undefined) { await this.send(OPEN, id, metadata); return; }
+                await sendUpload(OPEN_BODY, metadata);
+                for (let offset = 0; offset < uploadBody.length; offset += BODY_CHUNK) {
+                    await sendUpload(BODY, uploadBody.subarray(offset, offset + BODY_CHUNK));
+                }
+                if (failure) throw failure;
+                await this.send(BODY_END, id);
+            };
+            void upload().catch((error) => { if (!headed) stream.fail(transportError(error)); });
+        }
         return result;
     }
 }
@@ -431,14 +478,16 @@ export async function transportFetch(path: string, init: RequestInit = {}): Prom
     const cookie = await cookieFor(config);
     if (cookie) headers.set("cookie", cookie);
     const body = init.body == null ? new Uint8Array() : new Uint8Array(await new Response(init.body).arrayBuffer());
-    if (body.length > MAX_BODY) throw new Error("요청 본문은 8MiB 이하여야 합니다.");
+    if (body.length > MAX_BODY) throw new Error("요청 본문이 전송 가능한 크기를 넘었어요.");
     init.signal?.throwIfAborted();
     const method = init.method ?? "GET";
     let response: Awaited<ReturnType<Mux["request"]>>;
     try {
         const mux = await muxFor(config);
         init.signal?.throwIfAborted();
-        response = await mux.request({ kind: "http", path, method, headers: [...headers.entries()], body: base64(body) }, method, init.signal);
+        const chunked = body.length > BODY_CHUNK && mux.requestBodyChunks;
+        if (!chunked && body.length > 24 * 1024 * 1024 - 4096) throw new Error("큰 첨부를 보내려면 서버를 업데이트해 주세요.");
+        response = await mux.request({ kind: "http", path, method, headers: [...headers.entries()], body: chunked ? "" : base64(body) }, method, init.signal, chunked ? body : undefined);
     } catch (error) {
         // 연결 실패는 모두 전송 오류(TypeError)로 통일한다. 조회는 한 번 재시도하고, 변경은 결과 확인으로 넘어간다.
         throw transportError(error);

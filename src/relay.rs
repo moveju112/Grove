@@ -54,17 +54,55 @@ impl Settings {
 }
 
 type Error = Box<dyn std::error::Error + Send + Sync>;
+#[derive(Debug, thiserror::Error)]
+enum SessionError {
+    #[error("heartbeat_timeout")]
+    HeartbeatTimeout,
+    #[error("invalid_control")]
+    InvalidControl,
+    #[error("control_closed")]
+    ControlClosed,
+}
+
+// 원본 오류에는 URL·응답 헤더가 포함될 수 있다. 로그에는 분류와 HTTP 상태만 남긴다.
+fn failure_details(error: &Error) -> (&'static str, Option<u16>) {
+    if let Some(error) = error.downcast_ref::<SessionError>() {
+        return (match error {
+            SessionError::HeartbeatTimeout => "heartbeat_timeout",
+            SessionError::InvalidControl => "invalid_control",
+            SessionError::ControlClosed => "control_closed",
+        }, None);
+    }
+    if error.is::<tokio::time::error::Elapsed>() { return ("timeout", None); }
+    if let Some(error) = error.downcast_ref::<tokio_tungstenite::tungstenite::Error>() {
+        use tokio_tungstenite::tungstenite::Error;
+        return match error {
+            Error::Http(response) => (match response.status().as_u16() {
+                401 | 403 => "authentication_rejected",
+                409 => "control_conflict",
+                429 => "rate_limited",
+                _ => "http_rejected",
+            }, Some(response.status().as_u16())),
+            Error::Io(_) => ("network", None),
+            Error::Tls(_) => ("tls", None),
+            Error::ConnectionClosed | Error::AlreadyClosed => ("connection_closed", None),
+            _ => ("websocket", None),
+        };
+    }
+    ("transport", None)
+}
+
 async fn connect(settings: &Settings, path: &str) -> Result<tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>, Error> {
     let mut request = format!("{}/relay/{}/{}", settings.base, settings.room, path).into_client_request()?;
     request.headers_mut().insert("Authorization", format!("Bearer {}", settings.token).parse()?);
-    let config = WebSocketConfig::default().max_message_size(Some(12 * 1024 * 1024))
-        .max_frame_size(Some(12 * 1024 * 1024));
+    let config = WebSocketConfig::default().max_message_size(Some(crate::e2ee::MAX_FRAME))
+        .max_frame_size(Some(crate::e2ee::MAX_FRAME));
     Ok(tokio::time::timeout(Duration::from_secs(10), connect_async_with_config(request, Some(config), true)).await??.0)
 }
 
 async fn bridge(settings: Arc<Settings>, addr: SocketAddr, id: String) -> Result<(), Error> {
-    let config = WebSocketConfig::default().max_message_size(Some(12 * 1024 * 1024))
-        .max_frame_size(Some(12 * 1024 * 1024));
+    let config = WebSocketConfig::default().max_message_size(Some(crate::e2ee::MAX_FRAME))
+        .max_frame_size(Some(crate::e2ee::MAX_FRAME));
     let (mut local, _) = tokio::time::timeout(Duration::from_secs(10),
         connect_async_with_config(format!("ws://{addr}/api/e2ee"), Some(config), true)).await??;
     let mut remote = connect(&settings, &format!("data/{id}")).await?;
@@ -122,30 +160,37 @@ async fn session(settings: Arc<Settings>, addr: SocketAddr) -> Result<(), Error>
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                if !alive { break; }
+                if !alive { return Err(SessionError::HeartbeatTimeout.into()); }
                 alive = false;
                 tokio::time::timeout(Duration::from_secs(10), control.send(Message::Text("ping".into()))).await??;
             }
             message = control.next() => {
-                let Some(message) = message else { break; };
+                let Some(message) = message else { return Err(SessionError::ControlClosed.into()); };
                 match message? {
                     Message::Text(text) if text == "pong" => alive = true,
                     Message::Text(text) => {
-                        if text.len() > 256 { break; }
+                        if text.len() > 256 { return Err(SessionError::InvalidControl.into()); }
                         #[derive(serde::Deserialize)]
                         #[serde(deny_unknown_fields)]
                         struct Open { r#type: String, id: String }
-                        let open: Open = serde_json::from_str(&text)?;
-                        let id = uuid::Uuid::parse_str(&open.id)?;
-                        if open.r#type != "open" || id.get_version_num() != 4 || id.to_string() != open.id { break; }
+                        let open: Open = serde_json::from_str(&text).map_err(|_| SessionError::InvalidControl)?;
+                        let id = uuid::Uuid::parse_str(&open.id).map_err(|_| SessionError::InvalidControl)?;
+                        if open.r#type != "open" || id.get_version_num() != 4 || id.to_string() != open.id {
+                            return Err(SessionError::InvalidControl.into());
+                        }
                         if children.len() < 64 {
                             let settings = settings.clone();
-                            children.spawn(async move { let _ = bridge(settings, addr, open.id).await; });
+                            children.spawn(async move {
+                                if let Err(error) = bridge(settings, addr, open.id).await {
+                                    let (reason, http_status) = failure_details(&error);
+                                    tracing::warn!(reason, http_status, "릴레이 데이터 연결에 실패했습니다");
+                                }
+                            });
                         }
                     }
                     Message::Close(_) => break,
                     Message::Ping(_) | Message::Pong(_) => {},
-                    _ => break,
+                    _ => return Err(SessionError::InvalidControl.into()),
                 }
             }
             _ = children.join_next(), if !children.is_empty() => {},
@@ -160,13 +205,14 @@ pub fn spawn(settings: Arc<Settings>, addr: SocketAddr, mut shutdown: watch::Rec
         let mut delay = 1;
         while !*shutdown.borrow() {
             let began = std::time::Instant::now();
-            tokio::select! {
+            let result = tokio::select! {
                 _ = shutdown.wait_for(|v| *v) => break,
-                _ = session(settings.clone(), addr) => {},
-            }
+                result = session(settings.clone(), addr) => result,
+            };
             if *shutdown.borrow() { break; }
             if began.elapsed() > Duration::from_secs(60) { delay = 1; }
-            tracing::warn!("릴레이 연결이 종료됐습니다. 다시 연결합니다");
+            let (reason, http_status) = result.as_ref().err().map(failure_details).unwrap_or(("control_closed", None));
+            tracing::warn!(reason, http_status, retry_after_seconds = delay, "릴레이 연결이 종료됐습니다. 다시 연결합니다");
             tokio::select! {
                 _ = shutdown.wait_for(|v| *v) => break,
                 _ = tokio::time::sleep(Duration::from_secs(delay)) => {},
@@ -179,6 +225,20 @@ pub fn spawn(settings: Arc<Settings>, addr: SocketAddr, mut shutdown: watch::Rec
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn relay_failures_report_only_classification_and_http_status() {
+        use tokio_tungstenite::tungstenite::{Error as WsError, http::Response};
+        for (status, expected) in [(401, "authentication_rejected"), (403, "authentication_rejected"),
+            (409, "control_conflict"), (429, "rate_limited"), (503, "http_rejected")] {
+            let error: Error = WsError::Http(Box::new(Response::builder().status(status).body(None).unwrap())).into();
+            assert_eq!(failure_details(&error), (expected, Some(status)));
+        }
+        let error: Error = SessionError::HeartbeatTimeout.into();
+        assert_eq!(failure_details(&error), ("heartbeat_timeout", None));
+        let error: Error = SessionError::InvalidControl.into();
+        assert_eq!(failure_details(&error), ("invalid_control", None));
+    }
+
     #[test]
     fn rejects_unsafe_relay_addresses() {
         for url in ["ws://example.com", "ws://10.0.0.1:8787", "wss://user:secret@example.com", "wss://example.com/path", "wss://example.com?token=x", "wss://example.com#x"] {

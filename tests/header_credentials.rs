@@ -14,7 +14,7 @@ async fn credential_header_literals_require_an_encrypted_vault_reference() {
         "name":"header credential", "protocol":"openai", "base_url":f.base, "model":"fixture-model",
         "options":{"headers":{"X-Custom-Token":HEADER_KEY}},
     })).await;
-    let (_, device) = s.post("/api/v1/devices", json!({"name":"header read fixture"})).await;
+    let device = s.registered_device("header read fixture").await;
     let listed = s.client.get(format!("{}/api/v1/model-profiles", s.base))
         .bearer_auth(device["token"].as_str().unwrap()).send().await.unwrap();
     assert_eq!(listed.status(), StatusCode::OK);

@@ -108,7 +108,7 @@ async fn persona_and_model_changes_apply_from_next_turn() {
 
 /// BOT-008: 봇 home도 일반 대화와 같은 승인·취소·초안 경로를 쓴다.
 #[tokio::test]
-async fn bot_home_supports_approval_cancel_and_drafts_like_sessions() {
+async fn bot_home_supports_approval_and_cancel_like_sessions() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;
     let prof = s.fixture_profile(&f.base).await;
@@ -143,11 +143,6 @@ async fn bot_home_supports_approval_cancel_and_drafts_like_sessions() {
     s.wait_status(&tid, "cancelled").await;
     let (_, bv) = s.get(&format!("/api/v1/bots/{id}")).await;
     assert_eq!(bv["home_status"], "idle");
-    // 초안은 봇 대화 단위로 보존
-    let (st, d) = s.send(reqwest::Method::PUT, &format!("/api/v1/drafts/session:{sid}"), json!({ "expected_revision": 0, "text": "봇 초안", "device_name": "t" })).await;
-    assert_eq!(st, StatusCode::OK, "{d}");
-    let (_, d) = s.get(&format!("/api/v1/drafts/session:{sid}")).await;
-    assert_eq!(d["text"], "봇 초안");
 }
 
 /// BOT-005-D·006-B: 승인 대기 중 봇을 비활성화하면 승인해도 도구를 실행하지 않고, 새 턴도 거부한다.

@@ -8,11 +8,12 @@ import { connect, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:tls";
-import { openTool } from "./helpers";
+import { finishSetup, openTool } from "./helpers";
 
 type Reply = { status: number; body: unknown };
 type TlsHost = {
-    origin: string; token: string; name: string; project: string; link: string;
+    origin: string; token: string; name: string; project: string; link: string; password: string;
+    approve: (verification: string) => void;
     api: (method: string, path: string, body?: unknown, headers?: Record<string, string>) => Promise<Reply>;
 };
 
@@ -74,8 +75,17 @@ const test = base.extend<{}, { tlsHost: TlsHost }>({
             const project = join(work, "project");
             mkdirSync(project);
             const name = "project";
-            const link = execFileSync(process.env.GROVE_BIN!, ["connect-link", origin.replace("https:", "wss:") + "/api/e2ee",
-                "--data-dir", join(work, "data")], { encoding: "utf8" }).trim();
+            const cli = (args: string[], input?: string) => execFileSync(process.env.GROVE_BIN!, [
+                "pairing", ...args, "--data-dir", join(work, "data"), "--listen", "127.0.0.1:17745",
+            ], { encoding: "utf8", input });
+            const password = "TLS pairing fixture password";
+            const issued = JSON.parse(cli(["create", "TLS 테스트", "--endpoint", origin.replace("https:", "wss:") + "/api/e2ee",
+                "--password-stdin", "--json"], password + "\n")) as { id: string; link: string };
+            const approve = (verification: string) => {
+                const rows = JSON.parse(cli(["list"])) as { id: string; requests: { id: string; verification_code: string }[] }[];
+                const pending = rows.find((row) => row.id === issued.id)!.requests.find((item) => item.verification_code === verification)!;
+                cli(["approve", issued.id, pending.id, verification]);
+            };
             // CA 신뢰 없이는 실제 TLS 인증서 검증이 실패한다.
             await expect(new Promise<void>((resolve, reject) => {
                 const req = request(origin, (response) => { response.resume(); resolve(); });
@@ -88,7 +98,7 @@ const test = base.extend<{}, { tlsHost: TlsHost }>({
                 req.on("error", reject);
                 req.end();
             })).rejects.toMatchObject({ code: "ERR_TLS_CERT_ALTNAME_INVALID" });
-            await use({ origin, token, name, api, project, link });
+            await use({ origin, token, name, api, project, link: issued.link, password, approve });
         } finally {
             child.kill("SIGTERM");
             await exited;
@@ -114,8 +124,12 @@ test("실제 TLS proxy 위에서 E2EE 로그인·봉인 refresh·SSE·터미널�
         await page.goto(tlsHost.origin + "/" + new URL(tlsHost.link).hash);
         await page.locator("html[data-hydrated=true]").waitFor();
         await page.getByRole("button", { name: "서버 확인 후 연결" }).click();
-        await page.getByLabel("토큰").fill(tlsHost.token);
-        await page.getByRole("button", { name: "로그인", exact: true }).click();
+        await page.getByRole("button", { name: "연결", exact: true }).click();
+        const dialog = page.getByRole("dialog", { name: "연결 비밀번호" });
+        await dialog.getByLabel("비밀번호", { exact: true }).fill(tlsHost.password);
+        await dialog.getByRole("button", { name: "연결 요청" }).click();
+        tlsHost.approve(await page.getByTestId("pairing-code").innerText());
+        await finishSetup(page);
         await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
         const cookies = await context.cookies(tlsHost.origin + "/api/v1/auth/refresh");
         expect(cookies.some((cookie) => cookie.name.startsWith("grove_refresh_"))).toBe(false);
@@ -170,9 +184,8 @@ test("실제 TLS proxy 위에서 E2EE 로그인·봉인 refresh·SSE·터미널�
         });
         expect(sealed).toHaveLength(1);
         expect(sealed[0]).toMatchObject({ extractable: false, algorithm: "AES-GCM" });
-        page.once("dialog", (dialog) => dialog.accept());
-        await page.getByTestId("terminal-view").getByRole("button", { name: "종료", exact: true }).click();
-        await expect(page.getByTestId("terminal-view")).toHaveAttribute("data-conn", "readonly");
+        await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+        await expect(page.getByTestId("terminal-view")).toHaveCount(0);
     } finally {
         await context.close();
     }

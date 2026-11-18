@@ -26,6 +26,11 @@ const PER_KIND: usize = MAX_PER_RUN / 5;
 const TRASH_META_BYTES: u64 = 256 * 1024;
 const TRASH_DEPTH: usize = 64;
 
+/// 정기 유지보수와 격리 시험에서 같은 자동 압축 경로를 사용한다.
+pub fn compress_history(app: &App) -> ApiResult<usize> {
+    app.db.call_sync(|c| crate::history_storage::compress_idle(c, app.clock.now()))
+}
+
 #[derive(Default)]
 pub struct Storage {
     // GC와 UI 파일 삭제·복원·영구 삭제를 직렬화한다. 다른 프로젝트 실행 상태와는 독립이다.

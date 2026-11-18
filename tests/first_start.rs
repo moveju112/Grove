@@ -1,5 +1,9 @@
 //! PC-003: 실제 CLI의 첫 시작·재시작·시작 실패. 데이터와 프로세스는 모두 시험 소유다.
 
+mod common;
+#[path = "common/e2ee.rs"]
+mod wire;
+use common::TestServer;
 use serde_json::{Value, json};
 use std::io::{BufRead, BufReader};
 use std::path::Path;
@@ -84,13 +88,18 @@ impl Running {
 
     fn stop(&mut self, data: &Path, base: &str) -> (ExitStatus, String, String) {
         let token = std::fs::read_to_string(data.join("owner-token")).unwrap();
-        let response = reqwest::blocking::Client::builder().timeout(Duration::from_secs(5)).build().unwrap()
-            .post(format!("{base}/api/v1/admin/shutdown"))
-            .bearer_auth(token.trim())
-            .header("x-grove-protocol", grove::PROTOCOL_VERSION.to_string())
-            .header("idempotency-key", uuid::Uuid::new_v4().to_string())
-            .send().unwrap();
-        assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+        // 공개 listener의 관리 API도 암호화가 필요하다. 시험 소유 서버의 키로만 pin한다.
+        let key: [u8; 32] = std::fs::read(data.join("e2ee-identity.key")).unwrap().try_into().unwrap();
+        let identity = ed25519_dalek::SigningKey::from_bytes(&key).verifying_key().to_bytes();
+        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
+            let mut channel = wire::Channel::open_with_identity(base, identity, None, None).await;
+            let response = channel.request("POST", "/api/v1/admin/shutdown", vec![
+                ("authorization", format!("Bearer {}", token.trim())),
+                ("x-grove-protocol", grove::PROTOCOL_VERSION.to_string()),
+                ("idempotency-key", uuid::Uuid::new_v4().to_string()),
+            ], Value::Null).await;
+            assert_eq!(response["status"], 202);
+        });
         self.finish()
     }
 }
@@ -192,7 +201,7 @@ fn human_guidance_covers_first_start_restart_paths_and_wildcard_address() {
         let ready = server.ready(false);
         assert!(ready.contains(&format!("서버 준비 완료 ({mode})")));
         assert!(ready.contains(&format!("데이터 위치: {}", data.display())));
-        assert!(ready.contains(&format!("owner token 파일: {}", data.join("owner-token").display())));
+        assert!(ready.contains("첫 기기 등록: 서버 터미널에서 grove pairing create"));
         assert!(ready.contains("재시작:"));
         assert!(ready.contains("grove doctor --data-dir"));
         let url = ready.lines().find_map(|l| l.strip_prefix("접속 주소: ")).unwrap();

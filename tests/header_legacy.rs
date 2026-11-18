@@ -26,15 +26,29 @@ async fn legacy_headers_are_encrypted_before_serving_and_receipts_replay_without
     let db = common::config(&s.data_dir()).db_path();
     s.stop().await;
     {
-        let conn = rusqlite::Connection::open(&db).unwrap();
-        // 후속 migration의 새 표·열을 제거해 v39의 backfill 전 데이터를 구성한다.
-        conn.execute_batch("DROP TABLE mcp_oauth_attempts; DROP TABLE mcp_oauth_credentials; DROP TABLE hook_runs; DROP TABLE hook_events; DROP TABLE skill_states; DROP TABLE session_skills; DROP TABLE hook_definitions; ALTER TABLE projects DROP COLUMN workspace_mode; ALTER TABLE turns DROP COLUMN provider_started_at; ALTER TABLE turns DROP COLUMN provider_ms; DROP TABLE mcp_checks; DROP TABLE mcp_servers;").unwrap();
-        conn.execute_batch("ALTER TABLE schedules DROP COLUMN quiet_policy; ALTER TABLE schedule_runs DROP COLUMN result_class; ALTER TABLE schedule_runs DROP COLUMN result_sha256; ALTER TABLE schedule_runs DROP COLUMN result_evidence; ALTER TABLE schedule_runs DROP COLUMN notified; DROP TABLE webhook_receipts; DROP TABLE schedule_webhooks; DROP INDEX schedules_bot; ALTER TABLE schedules DROP COLUMN bot_id; DROP TABLE bot_avatars; DROP TABLE setup_runs; ALTER TABLE projects DROP COLUMN setup_script_id; DROP TABLE project_labels; DROP TABLE labels; ALTER TABLE projects DROP COLUMN pinned_at; DROP TABLE remote_watches; ALTER TABLE turns DROP COLUMN evidence; ALTER TABLE schedules DROP COLUMN max_runs; ALTER TABLE schedules DROP COLUMN end_at; ALTER TABLE schedules DROP COLUMN pause_after_failures; ALTER TABLE schedules DROP COLUMN consecutive_failures; ALTER TABLE schedules DROP COLUMN last_failed_at; ALTER TABLE schedules DROP COLUMN paused_reason; ALTER TABLE recent_items DROP COLUMN hidden_at; ALTER TABLE tasks DROP COLUMN script_snapshot; DROP TABLE project_scripts; DROP TABLE memories; ALTER TABLE cli_sessions DROP COLUMN system_sha256; DROP TABLE credential_backfills; PRAGMA user_version=39;").unwrap();
+        // 최신 schema를 수동으로 되돌리지 않고 실제 v39 DB에 시험 데이터를 옮긴다.
+        let staged = tempfile::NamedTempFile::new_in(s.dir.path()).unwrap();
+        let conn = rusqlite::Connection::open(staged.path()).unwrap();
+        for migration in grove::store::MIGRATIONS.iter().take(39) {
+            conn.execute_batch(migration).unwrap();
+        }
+        conn.pragma_update(None, "user_version", 39).unwrap();
+        conn.execute("ATTACH DATABASE ?1 AS latest", [db.to_str().unwrap()]).unwrap();
+        for table in ["tokens", "model_profiles", "idempotency", "events", "settings"] {
+            let columns: Vec<String> = conn.prepare(&format!("PRAGMA table_info({table})")).unwrap()
+                .query_map([], |r| r.get(1)).unwrap().collect::<Result<_,_>>().unwrap();
+            let columns = columns.join(",");
+            conn.execute_batch(&format!("INSERT INTO {table}({columns}) SELECT {columns} FROM latest.{table};")).unwrap();
+        }
+        conn.execute_batch("DETACH DATABASE latest").unwrap();
         conn.execute("UPDATE model_profiles SET options=?1 WHERE id=?2", rusqlite::params![body["options"].to_string(), id]).unwrap();
         conn.execute("INSERT INTO events(created_at,kind,payload) VALUES(?1,'profile.changed',?2)",
             rusqlite::params![legacy["updated_at"].as_str().unwrap(), legacy.to_string()]).unwrap();
         conn.execute("UPDATE idempotency SET request_hash=?1,response=?2 WHERE key=?3",
             rusqlite::params![hash, legacy.to_string(), RECEIPT]).unwrap();
+        let mut target = rusqlite::Connection::open(&db).unwrap();
+        rusqlite::backup::Backup::new(&conn, &mut target).unwrap()
+            .run_to_completion(256, std::time::Duration::from_millis(5), None).unwrap();
     }
     s.restart().await;
     let (_, profiles) = s.get("/api/v1/model-profiles").await;

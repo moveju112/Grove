@@ -45,7 +45,7 @@ test("refresh가 거부되면 재시도를 멈추고 로그인 화면에서 만�
         if (r.url().includes("/api/v1/events?")) events += 1;
     });
     // 구독을 바꿔 다시 연결하게 한다
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
     await page.route("**/api/v1/**", (r) => (r.request().url().includes("/auth/") || r.request().url().includes("/events?") ? r.fallback() : r.fulfill({ status: 401, body: "" })));
     await expect(page.getByRole("form", { name: "로그인" })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId("auth-expired")).toContainText("로그인이 만료");

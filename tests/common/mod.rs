@@ -30,10 +30,10 @@ pub fn config(data_dir: &Path) -> Config {
         tls_terminated: false,
         web_dir: None,
         web_base: "/".into(),
-        enable_tool_loop: true,
         approval_ttl_secs: 1800,
         scheduler_tick_ms: 100,
-        remote_watch_insecure_loopback: true, gh_command: "gh".into(),
+        remote_watch_insecure_loopback: true,
+        gh_command: "gh".into(),
     }
 }
 
@@ -52,7 +52,10 @@ impl TestServer {
     }
 
     pub async fn start_with_restricted_permissions(dir: tempfile::TempDir, cfg: Config) -> Self {
-        assert!(cfg.data_dir.starts_with(dir.path()), "fixture DB는 소유한 임시 디렉터리에만 만든다");
+        assert!(
+            cfg.data_dir.starts_with(dir.path()),
+            "fixture DB는 소유한 임시 디렉터리에만 만든다"
+        );
         std::fs::create_dir_all(&cfg.data_dir).unwrap();
         let db = grove::store::Db::open(&cfg.data_dir.join("grove.db")).unwrap();
         let now = grove::util::fmt_time(time::OffsetDateTime::now_utc());
@@ -65,10 +68,19 @@ impl TestServer {
     }
 
     pub async fn start_with(dir: tempfile::TempDir, cfg: Config) -> Self {
-        let server = grove::server::start(cfg, Arc::new(SystemClock)).await.expect("server start");
+        let server = grove::server::start(cfg, Arc::new(SystemClock))
+            .await
+            .expect("server start");
         let base = format!("http://{}", server.addr);
         let token = server.owner_token.clone();
-        Self { server: Some(server), base, token, client: Client::new(), dir, counter: AtomicU64::new(0) }
+        Self {
+            server: Some(server),
+            base,
+            token,
+            client: Client::new(),
+            dir,
+            counter: AtomicU64::new(0),
+        }
     }
 
     pub fn data_dir(&self) -> PathBuf {
@@ -86,8 +98,17 @@ impl TestServer {
         format!("k-{}", self.counter.fetch_add(1, Ordering::SeqCst))
     }
 
-    pub async fn raw(&self, method: Method, path: &str, body: Option<Value>, key: Option<&str>, token: Option<&str>) -> Response {
-        let mut rb = self.client.request(method, format!("{}{}", self.base, path));
+    pub async fn raw(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<Value>,
+        key: Option<&str>,
+        token: Option<&str>,
+    ) -> Response {
+        let mut rb = self
+            .client
+            .request(method, format!("{}{}", self.base, path));
         if let Some(t) = token.or(Some(self.token.as_str())) {
             if !t.is_empty() {
                 rb = rb.bearer_auth(t);
@@ -119,9 +140,33 @@ impl TestServer {
         self.send(Method::POST, path, body).await
     }
 
+    pub async fn pair_browser(&self, name: &str) -> (String, reqwest::Response) {
+        let password = "test-only pairing password";
+        let (status, link) = self.post("/api/v1/pairings", json!({ "name": name, "password": password })).await;
+        assert_eq!(status, StatusCode::CREATED, "{link}");
+        let (status, request) = self.post("/api/v1/auth/pairing", json!({ "code": link["code"], "password": password, "name": name })).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{request}");
+        let claim = request["code"].as_str().unwrap();
+        let request_id = claim.split_once('.').unwrap().0;
+        let (status, approved) = self.post(&format!("/api/v1/pairings/{}/requests/{request_id}", link["id"].as_str().unwrap()), json!({})).await;
+        assert_eq!(status, StatusCode::OK, "{approved}");
+        let response = self.client.post(format!("{}/api/v1/auth/pairing/claim", self.base))
+            .json(&json!({ "code": claim })).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        (approved["device_id"].as_str().unwrap().into(), response)
+    }
+
+    pub async fn registered_device(&self, name: &str) -> Value {
+        let (id, response) = self.pair_browser(name).await;
+        let body: Value = response.json().await.unwrap();
+        json!({ "id": id, "token": body["access_token"] })
+    }
+
     pub async fn create_project(&self, name: &str) -> Value {
         let dir = self.make_project_dir(name);
-        let (s, v) = self.post("/api/v1/projects", json!({ "root_path": dir })).await;
+        let (s, v) = self
+            .post("/api/v1/projects", json!({ "root_path": dir }))
+            .await;
         assert_eq!(s, StatusCode::CREATED, "{v}");
         v
     }
@@ -130,21 +175,35 @@ impl TestServer {
     pub async fn use_workspaces(&self, project_id: &str) -> Value {
         let (_, p) = self.get(&format!("/api/v1/projects/{project_id}")).await;
         let (s, v) = self
-            .send(Method::PATCH, &format!("/api/v1/projects/{project_id}"), json!({ "expected_revision": p["revision"], "workspace_mode": "project" }))
+            .send(
+                Method::PATCH,
+                &format!("/api/v1/projects/{project_id}"),
+                json!({ "expected_revision": p["revision"], "workspace_mode": "project" }),
+            )
             .await;
         assert_eq!(s, StatusCode::OK, "{v}");
         v
     }
 
     pub async fn create_session(&self, project_id: &str) -> Value {
-        let (s, v) = self.post(&format!("/api/v1/projects/{project_id}/sessions"), json!({})).await;
+        let (s, v) = self
+            .post(
+                &format!("/api/v1/projects/{project_id}/sessions"),
+                json!({}),
+            )
+            .await;
         assert_eq!(s, StatusCode::CREATED, "{v}");
         v
     }
 
     /// fixture endpoint를 가리키는 OpenAI 호환 모델 프로필을 만든다.
     pub async fn fixture_profile(&self, base_url: &str) -> String {
-        let (st, sec) = self.post("/api/v1/secrets", json!({ "label": "fixture", "value": "sk-test-secret-value-1234" })).await;
+        let (st, sec) = self
+            .post(
+                "/api/v1/secrets",
+                json!({ "label": "fixture", "value": "sk-test-secret-value-1234" }),
+            )
+            .await;
         assert_eq!(st, StatusCode::CREATED, "{sec}");
         let (st, p) = self
             .post(
@@ -173,7 +232,8 @@ impl TestServer {
 
     pub async fn wait_status(&self, turn_id: &str, status: &str) -> Value {
         let s = status.to_string();
-        self.wait_turn(turn_id, move |t| t["status"] == s.as_str()).await
+        self.wait_turn(turn_id, move |t| t["status"] == s.as_str())
+            .await
     }
 
     pub async fn stop(&mut self) {
@@ -186,15 +246,32 @@ impl TestServer {
     pub async fn restart(&mut self) {
         self.stop().await;
         let cfg = config(&self.data_dir());
-        let server = grove::server::start(cfg, Arc::new(SystemClock)).await.expect("server restart");
+        let server = grove::server::start(cfg, Arc::new(SystemClock))
+            .await
+            .expect("server restart");
         self.base = format!("http://{}", server.addr);
         self.token = server.owner_token.clone();
         self.server = Some(server);
     }
 
     /// SSE를 cursor부터 읽어 `n`개의 `event` 이벤트 또는 timeout까지 모은다.
-    pub async fn read_events(&self, cursor: Option<i64>, sessions: &str, want: usize, timeout_ms: u64) -> Vec<(String, Value)> {
-        read_sse(&self.client, &self.base, &self.token, cursor, sessions, want, timeout_ms).await
+    pub async fn read_events(
+        &self,
+        cursor: Option<i64>,
+        sessions: &str,
+        want: usize,
+        timeout_ms: u64,
+    ) -> Vec<(String, Value)> {
+        read_sse(
+            &self.client,
+            &self.base,
+            &self.token,
+            cursor,
+            sessions,
+            want,
+            timeout_ms,
+        )
+        .await
     }
 }
 
@@ -252,7 +329,10 @@ pub async fn read_sse(
 }
 
 pub fn events_of<'a>(evs: &'a [(String, Value)], kind: &str) -> Vec<&'a Value> {
-    evs.iter().filter(|(n, v)| n == "event" && v["kind"] == kind).map(|(_, v)| v).collect()
+    evs.iter()
+        .filter(|(n, v)| n == "event" && v["kind"] == kind)
+        .map(|(_, v)| v)
+        .collect()
 }
 
 pub fn file_sha(path: &Path) -> String {

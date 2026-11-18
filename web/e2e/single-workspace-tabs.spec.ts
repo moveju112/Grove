@@ -4,6 +4,7 @@ import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { apiCall, login, sessionView, state } from "./helpers";
 import type { Layout } from "../app/state/layout";
+import { workspaceTabs, workspaceTabsKey } from "../app/state/workspaceTabs";
 
 for (const theme of ["light", "dark"] as const) {
     test(`${theme}: 단일 모드는 프로젝트 한 행만 표시하고 많은 대화 탭은 겹치지 않고 스크롤된다`, async ({ page }, info) => {
@@ -11,7 +12,7 @@ for (const theme of ["light", "dark"] as const) {
         const root = mkdtempSync(join(dirname(state().projA), "single-tabs-"));
         const project = await apiCall<{ id: string; name: string; workspace_mode: string }>("POST", "/projects", { root_path: root });
         expect(project.workspace_mode).toBe("single");
-        // 프로젝트 목록이 화면보다 길어도 하단 최근 영역의 다섯 행을 압축하지 않는다.
+        // 프로젝트 목록이 화면보다 길어도 하단 최근 영역의 여섯 행을 압축하지 않는다.
         for (let i = 0; i < 24; i++) {
             await apiCall("POST", "/projects", { root_path: mkdtempSync(join(dirname(state().projA), "sidebar-overflow-")) });
         }
@@ -23,7 +24,9 @@ for (const theme of ["light", "dark"] as const) {
             tabs.tabs.push({ id: `session-${i}`, kind: "session", project_id: project.id, resource_id: session.id, title });
         }
         const device = `single-tabs-${randomUUID()}`;
-        await apiCall("PUT", `/layouts/${device}`, { expected_revision: 0, layout: { schema: 1, focused_leaf: "tabs", root: tabs } });
+        const layout: Layout = { schema: 1, focused_leaf: "tabs", root: tabs };
+        await apiCall("PUT", `/layouts/${device}`, { expected_revision: 0, layout });
+        await apiCall("PUT", `/layouts/${workspaceTabsKey(project.id)}`, { expected_revision: 0, layout: workspaceTabs(layout) });
         await page.addInitScript((id) => localStorage.setItem("grove.device.id", id), device);
         await login(page);
         const tree = page.locator(`[data-testid="sidebar-project"][data-project-id="${project.id}"]`);
@@ -37,7 +40,11 @@ for (const theme of ["light", "dark"] as const) {
         const checkDock = async () => {
             await expect.poll(() => recent.evaluate((node) => {
                 const sidebar = node.closest('[data-testid="sidebar"]')!;
-                return Math.abs(node.getBoundingClientRect().bottom - sidebar.getBoundingClientRect().bottom);
+                const usage = node.nextElementSibling?.getBoundingClientRect();
+                const bottom = node.getBoundingClientRect().bottom;
+                const gapAboveUsage = usage ? Math.abs(bottom - usage.top) : 0;
+                const gapBelowUsage = Math.abs((usage?.bottom ?? bottom) - sidebar.getBoundingClientRect().bottom);
+                return Math.max(gapAboveUsage, gapBelowUsage);
             })).toBeLessThanOrEqual(12);
             const geometry = await recentScroll.evaluate((node) => {
                 node.scrollTop = 0;
@@ -55,8 +62,9 @@ for (const theme of ["light", "dark"] as const) {
                 };
             });
             expect(geometry.scrolls).toBe(true);
-            expect(geometry.height).toBeLessThanOrEqual(177);
-            expect(geometry.visible, JSON.stringify(geometry)).toBe(5);
+            expect(geometry.height).toBe(144);
+            expect(geometry.rows).toEqual(Array.from({ length: 6 }, (_, i) => ({ top: i * 24, height: 24 })));
+            expect(geometry.visible, JSON.stringify(geometry)).toBe(6);
         };
         const checkSelected = async () => {
             const selected = strip.getByRole("tab", { selected: true });

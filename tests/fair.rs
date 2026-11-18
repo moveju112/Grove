@@ -58,7 +58,7 @@ async fn newcomer_runs_next_queue_limits_and_control_stays_responsive() {
     for _ in 0..5 {
         sids.push(s.create_session(&pid).await["id"].as_str().unwrap().to_string());
     }
-    let (_, dev) = s.post("/api/v1/devices", json!({ "name": "phone" })).await;
+    let dev = s.registered_device("phone").await;
     let dev_token = dev["token"].as_str().unwrap().to_string();
     for m in ["MARK_A1", "MARK_A2", "MARK_A3", "MARK_B1"] {
         f.push_for(m, fixture::slow_text(&["ok"], 400));

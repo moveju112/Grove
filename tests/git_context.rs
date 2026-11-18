@@ -93,6 +93,25 @@ else: raise AssertionError("unsupported fixture operation")
 
 #[cfg(unix)]
 #[tokio::test]
+async fn automatic_github_reads_share_a_short_cache_but_manual_refresh_revalidates() {
+    let (s, root, id) = fixture().await;
+    let uri = format!("/api/v1/projects/{id}/git/context?cached=true");
+    let (_, first) = s.get(&uri).await;
+    assert_eq!(first["github"]["ci"]["status"], "success");
+    let count = || std::fs::read_to_string(s.dir.path().join("calls")).unwrap().lines().count();
+    assert_eq!(count(), 3);
+    std::fs::write(root.join("file.txt"), "dirty").unwrap();
+    let (_, next) = s.get(&uri).await;
+    assert_eq!(next["github"]["ci"]["status"], "success");
+    assert_eq!(action(&next, "stage")["status"], "conditional");
+    assert_eq!(count(), 3);
+    std::fs::write(s.dir.path().join("mode"), "failure").unwrap();
+    assert_eq!(context(&s, &id).await["github"]["ci"]["status"], "failure");
+    assert_eq!(count(), 6);
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn exact_head_pr_ci_read_is_non_mutating_and_redacted() {
     let (s, root, id) = fixture().await;
     let before = [".git/index", ".git/HEAD", ".git/config"].map(|p| std::fs::read(root.join(p)).unwrap());
@@ -184,12 +203,12 @@ async fn unborn_detached_linked_nested_and_actual_device_authority() {
     assert_eq!(status, StatusCode::OK);
     let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{id}/tools.mode"), json!({"expected_revision": 0, "value": "ask"})).await;
     assert_eq!(status, StatusCode::OK);
-    let (_, device) = s.post("/api/v1/devices", json!({"name": "fixture-device"})).await;
+    let device = s.registered_device("fixture-device").await;
     let token = device["token"].as_str().unwrap();
     let response = s.raw(Method::GET, &format!("/api/v1/projects/{id}/git/context"), None, None, Some(token)).await;
     assert_eq!(response.status(), StatusCode::OK);
     let data: Value = response.json().await.unwrap();
-    assert_eq!(data["authority"]["is_owner"], false);
+    assert!(data["authority"].get("is_owner").is_none());
     assert_eq!(data["authority"]["tool_mode"], "read_only");
     assert_eq!(data["authority"]["direct_git"], "authenticated");
     let (_, status) = s.get(&format!("/api/v1/projects/{id}/git/status")).await;
@@ -255,8 +274,7 @@ async fn head_race_and_expected_head_mismatch_clear_results_and_permissions() {
 #[tokio::test]
 async fn device_revoked_during_gh_read_cannot_receive_project_results() {
     let (s, _, id) = fixture().await;
-    let (status, device) = s.post("/api/v1/devices", json!({"name": "revoked-during-read"})).await;
-    assert_eq!(status, StatusCode::CREATED);
+    let device = s.registered_device("revoked-during-read").await;
     std::fs::write(s.dir.path().join("mode"), "race").unwrap();
     let path = format!("/api/v1/projects/{id}/git/context");
     let request = s.raw(Method::GET, &path, None, None, Some(device["token"].as_str().unwrap()));

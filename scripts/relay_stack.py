@@ -123,7 +123,7 @@ def up(a):
             json.dump({"url": f"ws://127.0.0.1:{ports['proxy']}", "token": token}, f)
         state["pids"]["daemon"] = spawn([binary, "serve", "--listen", f"127.0.0.1:{daemon_port}", "--data-dir", data],
                                         os.path.join(work, "daemon.log"),
-                                        {"GROVE_WEB_DIR": web, "GROVE_ENABLE_TOOL_LOOP": "1", "GROVE_LOG": "warn"})
+                                        {"GROVE_WEB_DIR": web, "GROVE_LOG": "warn"})
         state["token_file"] = os.path.join(data, "owner-token")
         state["page"] = f"{origin}/#connect={urllib.request.quote(state['endpoint'], safe='')}&key={urllib.request.quote(ident['key'], safe='')}"
         with open(a.state, "w") as f:

@@ -8,6 +8,8 @@ use std::{path::Path as FsPath, process::Stdio, time::Duration};
 #[derive(Deserialize)]
 pub struct ContextQuery {
     pub head: Option<String>,
+    #[serde(default)]
+    pub cached: bool,
 }
 
 async fn read(root: &FsPath, args: &[&str]) -> ApiResult<git::GitOut> {
@@ -207,7 +209,13 @@ pub async fn show(State(app): State<App>, p: Principal, Path(id): Path<String>, 
     } else {
         let repo = repo.as_deref().expect("validated repo");
         let head = head.as_deref().expect("existing HEAD");
-        (pull_requests(&app, repo, head).await, ci(&app, repo, head).await)
+        app.github_reads.read(format!("{repo}:{head}"), !q.cached, || async {
+            let pr = pull_requests(&app, repo, head).await;
+            let ci = ci(&app, repo, head).await;
+            let cacheable = matches!(pr["status"].as_str(), Some("ok" | "none"))
+                && matches!(ci["status"].as_str(), Some("success" | "failure" | "pending" | "neutral" | "none"));
+            Ok(((pr, ci), if cacheable { Duration::from_secs(30) } else { Duration::ZERO }))
+        }).await?
     };
     let current_root = git::root_of(&app, &id).await?;
     let now = checked(&root, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"]).await?;
@@ -235,7 +243,7 @@ pub async fn show(State(app): State<App>, p: Principal, Path(id): Path<String>, 
         },
         "github": {"repository": repo, "remote": "origin", "head": head, "pr": prs, "ci": checks},
         "authority": {
-            "authenticated": true, "is_owner": p.is_owner, "tool_mode": tool_mode,
+            "authenticated": true, "tool_mode": tool_mode,
             "direct_git": "authenticated", "remote_permission": "unknown",
             "actions": if stale { vec![] } else { actions(&local, !remote.is_empty()) },
         }

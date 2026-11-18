@@ -65,6 +65,22 @@ async fn aggregates_by_dimension_with_estimated_cost_and_unpriced_tokens() {
     assert_eq!(v["total"]["reasoning_unreported_responses"], 3, "보고 안 된 reasoning은 0이 아니라 미보고로 센다");
     assert_eq!(v["pricing_versions"], json!(["v-test"]));
     assert_eq!(v["cost_is_estimate"], true);
+    let (st, dashboard) = s.get(&format!("/api/v1/usage/dashboard?from={from}&to={to}&group_by=hour&tz_offset_minutes=540")).await;
+    assert_eq!(st, StatusCode::OK, "{dashboard}");
+    for field in ["input_tokens", "output_tokens", "responses", "cache_read_tokens", "reasoning_tokens"] {
+        assert_eq!(dashboard["total"][field], v["total"][field]);
+        let sum: u64 = dashboard["models"].as_array().unwrap().iter().map(|row| row["metrics"][field].as_u64().unwrap()).sum();
+        assert_eq!(sum, dashboard["total"][field].as_u64().unwrap());
+        let sum: u64 = dashboard["series"].as_array().unwrap().iter().map(|bucket| bucket["total"][field].as_u64().unwrap()).sum();
+        assert_eq!(sum, dashboard["total"][field].as_u64().unwrap());
+    }
+    assert_eq!(dashboard["estimated_cost"], v["total"]["estimated_cost"]);
+    assert_eq!(dashboard["unpriced_tokens"], 14);
+    assert_eq!(dashboard["providers"][0]["provider"], "openai");
+    let (st, _) = s.get(&format!("/api/v1/usage/dashboard?from={from}&to={to}&group_by=model")).await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = s.get("/api/v1/usage/dashboard?from=2026-01-01T00:00:00Z&to=2026-02-01T00:00:00Z&group_by=hour").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST, "긴 기간에 시간별 버킷을 무제한 만들지 않는다");
     // 에이전트별
     let (_, a) = s.get(&format!("/api/v1/usage?from={from}&to={to}&group_by=agent")).await;
     assert_eq!(row(&a, "reviewer")["responses"], 2);
@@ -90,7 +106,9 @@ async fn turn_timing_separates_approval_wait_from_tool_and_model() {
     let p = s.create_project("t").await;
     let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
     f.push(fixture::tool_calls(&[("s1", "shell", json!({ "command": "sleep 0.3" }))]));
-    f.push(fixture::slow_text(&["끝", "!"], 150));
+    let fixture::Step::Frames(mut frames, delay) = fixture::slow_text(&["끝", "!"], 150) else { unreachable!() };
+    frames.insert(frames.len() - 1, json!({"choices": [], "usage": {"prompt_tokens": 100, "completion_tokens": 20}}).to_string());
+    f.push(fixture::Step::Frames(frames, delay));
     let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "go", "profile_id": prof, "tools": true })).await;
     let tid = v["turn"]["id"].as_str().unwrap().to_string();
     let t = s.wait_status(&tid, "awaiting_approval").await;
@@ -111,6 +129,13 @@ async fn turn_timing_separates_approval_wait_from_tool_and_model() {
     assert!(overhead >= 0);
     assert_eq!(total, appr + tool + provider + overhead, "{tm}");
     assert_eq!(tm["running"], false);
+    let now = time::OffsetDateTime::now_utc();
+    let fmt = |at: time::OffsetDateTime| at.format(&time::format_description::well_known::Rfc3339).unwrap();
+    let (_, dashboard) = s.get(&format!("/api/v1/usage/dashboard?from={}&to={}&group_by=day", fmt(now - time::Duration::days(1)), fmt(now + time::Duration::days(1)))).await;
+    let measured_ms = dashboard["total"]["response_ms"].as_i64().unwrap();
+    assert!(measured_ms >= 400 && measured_ms <= provider + 2, "승인 대기·Grove 도구 시간을 속도 분모에 넣지 않는다: {dashboard}");
+    let output = dashboard["total"]["measured_output_tokens"].as_f64().unwrap();
+    assert!((dashboard["total"]["tok_per_second"].as_f64().unwrap() - output * 1000.0 / measured_ms as f64).abs() < 0.000001);
     // 이전 버전 또는 강제 중단으로 구간이 미확정이면 0으로 만들지 않는다.
     let db_tid = tid.clone();
     s.server.as_ref().unwrap().app.db.call(move |c| {

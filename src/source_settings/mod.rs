@@ -14,6 +14,7 @@ mod routes;
 mod resources;
 pub use routes::list;
 pub use resources::{SourceResource, read_resources, read_codex_user_agents};
+pub use resources::{MAX_BODY_BYTES, MAX_SCANNED_ENTRIES, MAX_SKILLS};
 
 /// 실제 읽기는 기존 capability 기반 파일 경계와 크기 제한을 재사용한다.
 pub const MAX_SOURCE_BYTES: u64 = 256 * 1024;

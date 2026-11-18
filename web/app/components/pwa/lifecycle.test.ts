@@ -95,9 +95,9 @@ describe("서버 작업 경계", () => {
         browser.onLine = false;
         await lifecycle.checkCompatibility();
         expect(fetch).not.toHaveBeenCalled();
-        expect(() => lifecycle.requireServerAction()).toThrow("오프라인에서는 초안만");
+        expect(() => lifecycle.requireServerAction()).toThrow("오프라인에서는 입력만");
         browser.onLine = true;
-        expect(() => lifecycle.requireServerAction()).toThrow("오프라인에서는 초안만");
+        expect(() => lifecycle.requireServerAction()).toThrow("오프라인에서는 입력만");
         await lifecycle.checkCompatibility();
         expect(() => lifecycle.requireServerAction()).not.toThrow();
         expect(fetch).toHaveBeenCalledTimes(1);
@@ -134,35 +134,35 @@ describe("서버 작업 경계", () => {
     });
 });
 
-describe("초안 저장소", () => {
-    it("실제 초안 쓰기의 quota 초과를 구분하고 기존 초안을 지우거나 오류를 삼키지 않는다", () => {
-        const storage = lifecycle.localDraftStorage()!;
-        storage.setItem("grove.draft.fixture", "existing draft");
-        local.failKey = "grove.draft.";
+describe("전송 확인 저장소", () => {
+    it("확인 기록 쓰기의 quota 초과를 구분하고 기존 기록을 지우거나 오류를 삼키지 않는다", () => {
+        const storage = lifecycle.localRecoveryStorage()!;
+        storage.setItem("grove.send.fixture", "existing request");
+        local.failKey = "grove.send.";
         local.fail = "QuotaExceededError";
-        expect(() => storage.setItem("grove.draft.fixture", "new input")).toThrow();
+        expect(() => storage.setItem("grove.send.fixture", "new request")).toThrow();
         expect(lifecycle.lifecycleSnapshot().storageIssue).toBe("quota");
-        expect(local.getItem("grove.draft.fixture")).toBe("existing draft");
+        expect(local.getItem("grove.send.fixture")).toBe("existing request");
         local.fail = null;
-        lifecycle.inspectLocalDrafts();
+        lifecycle.inspectLocalStorageState();
         expect(lifecycle.lifecycleSnapshot().storageIssue).toBe("quota");
-        storage.setItem("grove.draft.fixture", "new input");
+        storage.setItem("grove.send.fixture", "new request");
         expect(lifecycle.lifecycleSnapshot().storageIssue).toBeNull();
     });
 
     it("Storage 접근 거부와 quota 초과를 구분한다", () => {
         vi.stubGlobal("window", { get localStorage() { throw new DOMException("denied", "SecurityError"); } });
-        expect(lifecycle.localDraftStorage()).toBeNull();
+        expect(lifecycle.localRecoveryStorage()).toBeNull();
         expect(lifecycle.lifecycleSnapshot().storageIssue).toBe("unavailable");
         expect(lifecycle.storageFailure(new DOMException("", "NS_ERROR_DOM_QUOTA_REACHED"))).toBe("quota");
     });
 
     it("첫 방문을 eviction으로 오인하지 않으며, 관측한 저장 데이터 유실은 경고한다", () => {
-        lifecycle.inspectLocalDrafts();
+        lifecycle.inspectLocalStorageState();
         expect(lifecycle.lifecycleSnapshot().storageIssue).toBeNull();
         local.clear();
-        lifecycle.inspectLocalDrafts();
+        lifecycle.inspectLocalStorageState();
         expect(lifecycle.lifecycleSnapshot().storageIssue).toBe("missing");
-        expect(local.getItem("grove.draft.fixture")).toBeNull();
+        expect(local.getItem("grove.send.fixture")).toBeNull();
     });
 });

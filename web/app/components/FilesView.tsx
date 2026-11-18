@@ -26,9 +26,8 @@ import { Code } from "@astryxdesign/core/Code";
 import { fileLayout } from "./files/file-layout.stylex";
 import { contentStyles } from "../design/content.stylex";
 import * as stylex from "@stylexjs/stylex";
-
-type Entry = { name: string; path: string; kind: "dir" | "file" | "link_outside" | "other"; size: number | null; mtime: string | null };
-type Listing = { path: string; entries: Entry[]; truncated: boolean };
+import type { FileList as Listing } from "../api/generated";
+import { useDebouncedValue } from "../state/useDebouncedValue";
 
 const enc = encodeURIComponent;
 
@@ -108,10 +107,14 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
     const [hidden, setHidden] = useState(false);
     const [sort, setSort] = useState("name");
     const [filter, setFilter] = useState("");
+    const settledFilter = useDebouncedValue(filter);
+    const [page, setPage] = useState(0);
     const [editorLocked, setEditorLocked] = useState(false);
-    const listing = useQuery<Listing>(`files:${projectId}:${dir}:${hidden}:${sort}`, () =>
-        api.get(`/projects/${projectId}/files?path=${enc(dir)}&hidden=${hidden}&sort=${sort}`),
-    );
+    const listingScope = `files:${projectId}:${dir}:${hidden}:${sort}:${settledFilter}`;
+    const listing = useQuery<Listing>(`${listingScope}:${page}`, () =>
+        api.getContract("FileList", `/projects/${projectId}/files?path=${enc(dir)}&hidden=${hidden}&sort=${sort}&offset=${page * 50}&limit=50&filter=${enc(settledFilter)}`, { requires: ["paged_reads_v1"] }),
+        { keepPreviousData: true, scope: listingScope });
+    const changeDir = (value: string) => { setDir(value); setPage(0); };
     const mutation = useFileMutation<unknown>(() => listing.reload(), {
         key: fileAttemptKey(projectId, "", tabId, "op"), endpoint: `/projects/${projectId}/files/op`, method: "post",
     });
@@ -141,23 +144,23 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
     };
     const join = (name: string) => (dir === "." ? name : `${dir}/${name}`);
     const parent = dir === "." ? null : dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : ".";
-    const entries = (listing.data?.entries ?? []).filter((e) => !filter || e.name.toLowerCase().includes(filter.toLowerCase()));
+    const entries = listing.data?.entries ?? [];
     return (
         <Grid gap={3} height="100%" xstyle={fileLayout.columns} data-testid="files-view">
             <Stack as="aside" gap={2} padding={2} isScrollable xstyle={fileLayout.tree}>
                 <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                     <Code>{dir}</Code>
-                    {parent !== null && <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => setDir(parent)}>상위 폴더</GroveButton>}
+                    {parent !== null && <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => changeDir(parent)}>상위 폴더</GroveButton>}
                 </Stack>
                 {Boolean(listing.error) && <GroveText as="div" display="block" type="inherit" color="error" role="alert">
                     {listing.error instanceof ApiError ? listing.error.message : "폴더 목록을 불러오지 못했습니다."}
                     <GroveButton variant="secondary" density="compact" onClick={listing.reload}>폴더 다시 확인</GroveButton>
                 </GroveText>}
                 <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
-                    <TextInput type="search" label="파일 이름 거르기" isLabelHidden placeholder="이름 거르기" value={filter} onChange={setFilter} />
-                    <Select label="정렬" hideLabel value={sort} onChange={setSort}
+                    <TextInput type="search" label="파일 이름 거르기" isLabelHidden placeholder="이름 거르기" value={filter} onChange={(value) => { setFilter(value); setPage(0); }} />
+                    <Select label="정렬" hideLabel value={sort} onChange={(value) => { setSort(value); setPage(0); }}
                         options={[{ value: "name", label: "이름" }, { value: "mtime", label: "수정 시각" }, { value: "size", label: "크기" }]} />
-                    <BooleanSelect label="숨김 파일" value={hidden} onChange={setHidden} />
+                    <BooleanSelect label="숨김 파일" value={hidden} onChange={(value) => { setHidden(value); setPage(0); }} />
                 </Stack>
                 <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                     <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => { const n = prompt("새 파일 이름"); if (n) selectPath(`new:${join(n)}`); }}>새 파일</GroveButton>
@@ -180,16 +183,17 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                 </Stack>}
                 <GroveList density="compact" edge="flush" hasDividers>
                     {entries.map((e) => (
-                        <GroveListItem key={e.path} label={<>
+                        <GroveListItem key={e.path} data-testid="file-row" label={<>
                             <GroveButton
-                                appearance="link"
+                                appearance="navigation" density="compact"
                                 disabled={locked || e.kind === "link_outside" || e.kind === "other"}
                                 title={e.kind === "link_outside" ? "프로젝트 밖을 가리키는 링크" : undefined}
-                                onClick={() => (e.kind === "dir" ? setDir(e.path) : selectPath(e.path))}
+                                onClick={() => (e.kind === "dir" ? changeDir(e.path) : selectPath(e.path))}
                             >
                                 {e.kind === "dir" ? "📁 " : ""}{e.name}
                             </GroveButton>
-                            <GroveText type="supporting" color="secondary">{e.size !== null ? `${e.size}B` : ""}</GroveText>
+                            <GroveText type="supporting" color="secondary">{e.size !== null ? ` · ${e.size}B` : ""}</GroveText>
+                        </>} endContent={
                             <ActionMenu label={`${e.name} 작업`}>
                                 <ServerActionButton variant="secondary" density="compact" disabled={locked} onClick={() => { const to = prompt("새 이름(경로)", e.path); if (to && to !== e.path) void op({ op: "rename", path: e.path, to }); }}>이름 바꾸기</ServerActionButton>
                                 <ServerActionButton variant="secondary" density="compact" disabled={locked} onClick={() => { const to = prompt("복제본 경로", `${e.path}.copy`); if (to) void op({ op: "duplicate", path: e.path, to }); }}>복제</ServerActionButton>
@@ -204,10 +208,16 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                                     삭제
                                 </ServerActionButton>
                             </ActionMenu>
-                        </>} />
+                        } />
                     ))}
                 </GroveList>
-                {listing.data?.truncated && <GroveText as="p" display="block" type="supporting" color="secondary">항목이 많아 일부만 표시하니 이름으로 거르세요.</GroveText>}
+                {listing.data && (listing.data.total > 50 || page > 0) && <Stack direction="horizontal" align="center" justify="between" gap={2}>
+                    <GroveText type="supporting" color="secondary">전체 {listing.data.total}개 · {page + 1}페이지</GroveText>
+                    <Stack direction="horizontal" align="center" gap={2}>
+                        <GroveButton type="button" variant="secondary" density="compact" aria-label="파일 이전 페이지" disabled={page === 0 || listing.loading} onClick={() => setPage((n) => n - 1)}>이전</GroveButton>
+                        <GroveButton type="button" variant="secondary" density="compact" aria-label="파일 다음 페이지" disabled={!listing.data.has_more || listing.loading} onClick={() => setPage((n) => n + 1)}>다음</GroveButton>
+                    </Stack>
+                </Stack>}
             </Stack>
             <Stack as="section" gap={2} isScrollable xstyle={fileLayout.fill}>
                 {copyError && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{COPY_ERROR}</GroveText>}
@@ -305,7 +315,8 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
     }, [path]);
     const receive = useRef<(content: Content) => void>(() => {});
     receive.current = (content) => {
-        if (!c || c.sha256 === content.sha256) return;
+        if (!c) return;
+        if (c.sha256 !== null && c.sha256 === content.sha256 || c.stamp && c.stamp === content.stamp) return;
         const keep = text !== (c.text ?? "") || mutation.locked;
         setC(content);
         if (keep) {
@@ -329,7 +340,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
                 setWatchReady(false);
                 setWatchError(`파일 변경을 확인하지 못했습니다. 편집은 유지합니다. ${error instanceof ApiError ? error.message : "서버 연결을 확인하세요."}`);
             },
-        });
+        }, c);
     }, [projectId, c?.path, isNew, visible]); // eslint-disable-line react-hooks/exhaustive-deps
     // <img>·새 탭은 인증 헤더를 못 보내므로 5분짜리 파일 티켓을 받아 쓴다.
     const [ticket, setTicket] = useState<string | null>(null);
@@ -357,7 +368,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
         }).catch(() => { if (!abort.signal.aborted) setTicket(null); });
         return () => { abort.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [c?.sha256]);
+    }, [c?.sha256, c?.sha256 === null ? c?.stamp : undefined]);
     const download = async () => {
         if (!ticket) return;
         try {

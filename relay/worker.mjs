@@ -6,7 +6,9 @@ const ORIGIN = /^https?:\/\/[a-z0-9.-]+(?::\d+)?$/;
 const pagesOrigin = (env) => ORIGIN.test(env.PAGES_ORIGIN ?? "") ? env.PAGES_ORIGIN : PAGES;
 const HEX = /^[0-9a-f]{64}$/;
 const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const MAX_FRAME = 12 * 1024 * 1024;
+const MAX_FRAME = 32 * 1024 * 1024;
+// 서버의 20초 heartbeat 세 번을 놓쳐도 여유를 둔다. 로그인·페어링 수명과는 무관하다.
+const CONTROL_LEASE_MS = 70_000;
 const fail = (status) => new Response(null, { status });
 const close = (ws) => { if (ws.readyState !== 3) ws.close(1008, "relay disconnected"); };
 
@@ -37,9 +39,49 @@ export default {
 };
 
 export class GroveRelay {
-    constructor(ctx) { this.ctx = ctx; }
-    sockets(tag) { return this.ctx.getWebSockets(tag).filter((ws) => ws.readyState === 1); }
-    async fetch(request) {
+    constructor(ctx) {
+        this.ctx = ctx;
+        ctx.blockConcurrencyWhile(async () => {
+            this.expireControls();
+            await this.scheduleAlarm();
+        });
+    }
+    sockets(tag) {
+        // close 완료를 기다리지 않는다. 네트워크가 끊겨도 OPEN으로 남는 소켓은 재접속을 막으면 안 된다.
+        return this.ctx.getWebSockets(tag).filter((ws) => ws.readyState === 1 && !ws.deserializeAttachment().retired);
+    }
+    expireControls() {
+        const now = Date.now();
+        for (const ws of this.sockets("control")) {
+            const state = ws.deserializeAttachment();
+            if (state.leaseUntil === undefined) {
+                // 배포 이전 연결에는 한 번만 유예한다. 이후 재기동·hibernation은 만료 시각을 연장하지 않는다.
+                ws.serializeAttachment({ ...state, leaseUntil: now + CONTROL_LEASE_MS });
+            } else if (state.leaseUntil <= now) this.disconnect(ws);
+        }
+    }
+    async scheduleAlarm() {
+        let deadline = Infinity;
+        for (const ws of this.sockets("control")) deadline = Math.min(deadline, ws.deserializeAttachment().leaseUntil);
+        for (const ws of this.sockets("client")) {
+            const state = ws.deserializeAttachment();
+            if (state.pending) deadline = Math.min(deadline, state.deadline);
+        }
+        const scheduled = await this.ctx.storage.getAlarm();
+        if (deadline !== Infinity) {
+            if (scheduled !== deadline) await this.ctx.storage.setAlarm(deadline);
+        } else if (scheduled !== null) await this.ctx.storage.deleteAlarm();
+    }
+    fetch(request) {
+        // 만료 확인부터 새 연결 등록까지 직렬화해 동시 재접속이 제어 연결을 두 개 만들지 않게 한다.
+        return this.ctx.blockConcurrencyWhile(async () => {
+            const response = await this.admit(request);
+            await this.scheduleAlarm();
+            return response;
+        });
+    }
+    async admit(request) {
+        this.expireControls();
         const path = new URL(request.url).pathname;
         const role = path.includes("/api/e2ee/") ? "client" : path.endsWith("/control") ? "control" : "data";
         let id = role === "data" ? path.split("/").at(-1) : crypto.randomUUID();
@@ -48,16 +90,13 @@ export class GroveRelay {
         if (role === "client") {
             if (!this.sockets("control").length) return fail(503);
             if (this.sockets("client").length >= 64) return fail(429);
-            const allowed = await this.ctx.blockConcurrencyWhile(async () => {
-                const now = Math.floor(Date.now() / 60000);
-                const rate = await this.ctx.storage.get("admission") ?? { minute: now, count: 0 };
-                if (rate.minute !== now) { rate.minute = now; rate.count = 0; }
-                if (rate.count >= 600) return false;
-                rate.count++;
-                await this.ctx.storage.put("admission", rate);
-                return true;
-            });
-            if (!allowed) return fail(429);
+            const now = Math.floor(Date.now() / 60000);
+            const rate = await this.ctx.storage.get("admission") ?? { minute: now, count: 0 };
+            if (rate.minute !== now) { rate.minute = now; rate.count = 0; }
+            if (rate.count >= 600) return fail(429);
+            rate.count++;
+            await this.ctx.storage.put("admission", rate);
+            this.expireControls();
             if (!this.sockets("control").length || this.sockets("client").length >= 64) return fail(503);
         }
         const [client, server] = Object.values(new WebSocketPair());
@@ -65,10 +104,12 @@ export class GroveRelay {
             ? this.sockets("control")[0].deserializeAttachment().id
             : this.sockets(`client:${id}`)[0].deserializeAttachment().generation;
         this.ctx.acceptWebSocket(server, [role, `${role}:${id}`, `generation:${generation}`]);
-        server.serializeAttachment({ role, id, generation, pending: role === "client", deadline: Date.now() + 10000 });
+        server.serializeAttachment({ role, id, generation, pending: role === "client", deadline: Date.now() + 10000,
+            ...(role === "control" ? { leaseUntil: Date.now() + CONTROL_LEASE_MS } : {}) });
         if (role === "client") {
-            this.sockets("control")[0].send(JSON.stringify({ type: "open", id }));
-            if (await this.ctx.storage.getAlarm() === null) await this.ctx.storage.setAlarm(Date.now() + 10000);
+            const control = this.sockets("control")[0];
+            try { control.send(JSON.stringify({ type: "open", id })); }
+            catch { this.disconnect(control); return fail(503); }
         }
         if (role === "data") {
             const peer = this.sockets(`client:${id}`)[0];
@@ -80,14 +121,22 @@ export class GroveRelay {
     }
     webSocketMessage(ws, message) {
         const state = ws.deserializeAttachment();
+        if (state.retired) { close(ws); return; }
         if (state.role === "control") {
-            if (message === "ping") ws.send("pong");
-            else this.disconnect(ws);
-            return;
+            return this.ctx.blockConcurrencyWhile(async () => {
+                this.expireControls();
+                const current = ws.deserializeAttachment();
+                if (!current.retired && message === "ping") {
+                    ws.serializeAttachment({ ...current, leaseUntil: Date.now() + CONTROL_LEASE_MS });
+                    try { ws.send("pong"); } catch { this.disconnect(ws); }
+                } else this.disconnect(ws);
+                await this.scheduleAlarm();
+            });
         }
         const size = typeof message === "string" ? new TextEncoder().encode(message).length : message.byteLength;
         if (size > MAX_FRAME) { this.disconnect(ws); return; }
-        const peer = this.sockets(`${state.role === "client" ? "data" : "client"}:${state.id}`)[0];
+        const peer = this.sockets(`${state.role === "client" ? "data" : "client"}:${state.id}`)
+            .find((peer) => peer.deserializeAttachment().generation === state.generation);
         if (peer) {
             try { peer.send(message); } catch { this.disconnect(ws); }
         } else if (state.role === "client" && state.pending && !state.hello && typeof message === "string" && size <= 256) {
@@ -97,21 +146,33 @@ export class GroveRelay {
     }
     disconnect(ws) {
         const state = ws.deserializeAttachment();
+        if (state.retired) { close(ws); return; }
         const peers = state.role === "control" ? this.ctx.getWebSockets(`generation:${state.id}`) :
             this.ctx.getWebSockets(`${state.role === "client" ? "data" : "client"}:${state.id}`);
-        for (const peer of peers) close(peer);
+        ws.serializeAttachment({ ...state, retired: true });
+        for (const peer of peers) {
+            const attachment = peer.deserializeAttachment();
+            if (attachment.generation !== state.generation) continue;
+            peer.serializeAttachment({ ...attachment, retired: true });
+            close(peer);
+        }
         close(ws);
     }
-    webSocketClose(ws) { this.disconnect(ws); }
-    webSocketError(ws) { this.disconnect(ws); }
-    async alarm() {
-        let deadline = Infinity;
-        for (const ws of this.sockets("client")) {
-            const state = ws.deserializeAttachment();
-            if (!state.pending) continue;
-            if (state.deadline <= Date.now()) this.disconnect(ws);
-            else deadline = Math.min(deadline, state.deadline);
-        }
-        if (deadline !== Infinity) await this.ctx.storage.setAlarm(deadline);
+    webSocketClose(ws) {
+        return this.ctx.blockConcurrencyWhile(async () => {
+            this.disconnect(ws);
+            await this.scheduleAlarm();
+        });
+    }
+    webSocketError(ws) { return this.webSocketClose(ws); }
+    alarm() {
+        return this.ctx.blockConcurrencyWhile(async () => {
+            this.expireControls();
+            for (const ws of this.sockets("client")) {
+                const state = ws.deserializeAttachment();
+                if (state.pending && state.deadline <= Date.now()) this.disconnect(ws);
+            }
+            await this.scheduleAlarm();
+        });
     }
 }

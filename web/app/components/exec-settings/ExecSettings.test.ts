@@ -14,7 +14,6 @@ const shell: ExecSettingDef = {
     key: "exec.shell", menu: "agents", label: "명령 실행 셸", description: "fixture description", keywords: "shell",
     kind: "enum", options: ["default", "sh"], min: null, max: null, default: "default",
     scopes: ["server", "project", "session"], applies: "next_turn", advanced: false,
-    unavailable_options: [{ value: "cmd", reason: "이 서버 OS에서 지원하지 않습니다" }],
 };
 
 function render(def: ExecSettingDef = shell, target = { projectId: "p", sessionId: "s" }) {
@@ -35,30 +34,28 @@ describe("실행 설정의 기존 범위별 편집기 연결", () => {
         expect(html).toContain("명령 실행 셸 도움말");
         expect(html).not.toContain("fixture description");
         expect(html).toContain('data-selected-value="sh"');
-        expect(html).toContain("다음 실행 계획부터 적용 · 기존 계획·승인은 유지");
-        expect(html).toContain("sandbox가 아닙니다");
-        const cwd = render({ ...shell, key: "exec.default_cwd", kind: "string", options: [] });
-        expect(cwd).toContain("새 모델 셸·대화 작업에만 적용");
-        expect(cwd).toContain("명시한 cwd 우선");
-        expect(cwd).toContain("실제 실행 root 기준");
+        expect(html).toContain("다음 실행부터 적용");
+        expect(html).toContain("파일·네트워크 접근은 제한하지 않아요");
+        const cwd = render({ ...shell, key: "exec.default_cwd", label: "기본 작업 위치", kind: "string", options: [] });
+        expect(cwd).toContain("기본 작업 위치 도움말");
     });
 
-    it("지원하는 값만 편집기에 전달하고 미지원 선택지는 이유와 함께 비활성으로 표시한다", () => {
+    it("지원하는 값만 표시하고 미지원 선택지 설명은 제공하지 않는다", () => {
         const html = render();
         expect(html).toContain('data-selected-value="sh"');
-        expect(html).toContain("<legend>명령 실행 셸 미지원 선택지</legend>");
-        expect(html).toContain('aria-disabled="true"');
-        expect(html).toContain("cmd · 이 서버 OS에서 지원하지 않습니다");
+        expect(html).not.toContain("미지원 선택지");
+        expect(html).not.toContain("cmd");
         const disabled = render({ ...shell, disabled_reason: "이 서버에서는 자원 한도를 지원하지 않습니다" });
         expect(disabled).toMatch(/<fieldset[^>]*disabled=""/);
         expect(disabled).toContain("이 서버에서는 자원 한도를 지원하지 않습니다");
     });
 
     it("실행 설정만 분류하고 다른 설정을 전용 영역으로 옮기지 않는다", () => {
-        for (const key of ["exec.shell", "exec.max_memory_mb", "exec.max_cpu_seconds", "exec.isolation", "exec.default_cwd"]) {
+        for (const key of ["exec.shell", "exec.max_memory_mb", "exec.max_cpu_seconds", "exec.default_cwd"]) {
             expect(isExecSetting({ ...shell, key })).toBe(true);
         }
-        expect(isExecSetting({ ...shell, key: "output.language" })).toBe(false);
+        expect(isExecSetting({ ...shell, key: "exec.isolation" })).toBe(false);
+        expect(isExecSetting({ ...shell, key: "output.style" })).toBe(false);
         expect(isExecSetting({ ...shell, key: "exec.unknown" })).toBe(false);
     });
 });

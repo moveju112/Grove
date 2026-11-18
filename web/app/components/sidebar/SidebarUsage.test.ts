@@ -1,0 +1,97 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it } from "vitest";
+import type { AccountUsageReport } from "../../api/generated";
+import { UsageSummary } from "./SidebarUsage";
+
+const report: AccountUsageReport = { accounts: [
+    { protocol: "codex_cli", name: "Codex", status: "available", checked_at: "2026-01-01T00:00:00Z", limits: [
+        { label: "5시간", remaining_percent: 82, remaining: null, resets_at: null },
+        { label: "주간", remaining_percent: 0, remaining: null, resets_at: null },
+        { label: "Spark 5시간", remaining_percent: 45.5, remaining: null, resets_at: null },
+        { label: "크레딧", remaining_percent: null, remaining: "12.5", resets_at: null },
+    ] },
+    { protocol: "claude_code", name: "Claude", status: "available", checked_at: "2026-01-01T00:00:00Z", limits: [
+        { label: "5시간", remaining_percent: 95.5, remaining: null, resets_at: null },
+        { label: "주간", remaining_percent: 8, remaining: null, resets_at: null },
+        { label: "Opus 주간", remaining_percent: 40, remaining: null, resets_at: null },
+    ] },
+] };
+
+describe("탐색 하단 잔여 한도", () => {
+    it("Claude·Codex의 5시간·주간 네 한도만 실제 잔여율과 게이지로 표시한다", () => {
+        const html = renderToStaticMarkup(createElement(UsageSummary, { report }));
+        for (const text of ["Claude 5시간", "Claude 주간", "Codex 5시간", "Codex 주간", "82%", "0%", "95.5%", "8%"]) {
+            expect(html).toContain(text);
+        }
+        for (const text of ["Spark", "Opus", "크레딧", "12.5"]) expect(html).not.toContain(text);
+        expect(html).not.toContain("codex_cli");
+        expect(html).not.toContain("토큰");
+        expect(html.match(/role="progressbar"/g)).toHaveLength(4);
+        expect(html).toContain('aria-valuenow="0"');
+        expect(html.indexOf("Claude 5시간")).toBeLessThan(html.indexOf("Codex 5시간"));
+    });
+
+    it("빈 계정은 숨기고 미지원·조회 제한은 0%로 꾸미지 않는다", () => {
+        expect(renderToStaticMarkup(createElement(UsageSummary, { report: { accounts: [] } }))).toBe("");
+        const html = renderToStaticMarkup(createElement(UsageSummary, { report: { accounts: [
+            { ...report.accounts[1]!, status: "unsupported" },
+            { ...report.accounts[0]!, status: "rate_limited", limits: [] },
+        ] } }));
+        expect(html).toContain("한도 조회 미지원");
+        expect(html).toContain("조회 제한");
+        expect(html).not.toContain("%");
+        expect(html).not.toContain('role="progressbar"');
+    });
+
+    it("인증 필요·인증 상태 조회 실패를 한도 미지원과 구분한다", () => {
+        for (const [status, text] of [
+            ["authentication_required", "인증 필요"],
+            ["unavailable", "조회 실패"],
+        ] as const) {
+            const html = renderToStaticMarkup(createElement(UsageSummary, { report: { accounts: [
+                { ...report.accounts[1]!, status, limits: [] },
+            ] } }));
+            expect(html).toContain(text);
+            expect(html).not.toContain("한도 조회 미지원");
+            expect(html).not.toContain("%");
+            expect(html).not.toContain('role="progressbar"');
+        }
+    });
+
+    it("인증이 필요한 계정에만 이름이 구분되는 설정 열기 버튼을 표시한다", () => {
+        const html = renderToStaticMarkup(createElement(UsageSummary, { onAuthenticate: () => {}, report: { accounts: [
+            { ...report.accounts[1]!, status: "authentication_required", limits: [] },
+            { ...report.accounts[0]!, status: "unsupported", limits: [] },
+        ] } }));
+        expect(html).toContain('aria-label="Claude 인증 설정 열기"');
+        expect(html).toContain('aria-haspopup="dialog"');
+        expect(html).not.toContain('aria-label="Codex 인증 설정 열기"');
+        expect(html).toContain("한도 조회 미지원");
+    });
+
+    it("리셋 시각이 지난 수치를 새 한도로 오인하지 않게 한다", () => {
+        const html = renderToStaticMarkup(createElement(UsageSummary, { failed: true, now: Date.parse("2026-01-02T00:00:00Z"),
+            report: { accounts: [{ ...report.accounts[0]!, limits: [
+                { label: "5시간", remaining_percent: 15, remaining: null, resets_at: "2026-01-01T00:00:00Z" },
+            ] }] } }));
+        expect(html).toContain("갱신 대기");
+        expect(html).toContain("갱신 실패 · 이전 값");
+        expect(html).not.toContain("15%");
+        expect(html).not.toContain('role="progressbar"');
+    });
+
+    it("모델별 한도를 전체 한도로 대체하지 않고 작은 잔여율을 0%로 반올림하지 않는다", () => {
+        const html = renderToStaticMarkup(createElement(UsageSummary, { report: { accounts: [
+            { ...report.accounts[0]!, limits: [
+                { label: "5시간", remaining_percent: 0.01, remaining: null, resets_at: null },
+                { label: "Spark 주간", remaining_percent: 70, remaining: null, resets_at: null },
+            ] },
+        ] } }));
+        expect(html).toContain("&lt;0.1%");
+        expect(html).toContain("Codex 주간");
+        expect(html).toContain("—");
+        expect(html).not.toContain("70%");
+        expect(html.match(/role="progressbar"/g)).toHaveLength(1);
+    });
+});

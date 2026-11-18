@@ -86,8 +86,11 @@ for (const theme of ["light", "dark"] as const) {
         await page.reload();
         await expect(divider).toHaveAttribute("aria-valuenow", "55");
         await expect(divider).toHaveAttribute("data-direction", "column");
-        await expect(view(0).getByLabel("메시지 입력")).toHaveValue("Ubuntu project draft");
-        await expect(view(1).getByLabel("메시지 입력")).toHaveValue("collector project draft");
+        // 작성 중 입력은 영속 초안으로 저장하지 않는다. 복원된 배치에서 새로 입력한 값의 화면 전환 보존을 확인한다.
+        await expect(view(0).getByLabel("메시지 입력")).toHaveValue("");
+        await expect(view(1).getByLabel("메시지 입력")).toHaveValue("");
+        await view(1).getByLabel("메시지 입력").fill("collector project draft");
+        await view(0).getByLabel("메시지 입력").fill("Ubuntu project draft");
         const top = (await panel(a).boundingBox())!, bottom = (await panel(b).boundingBox())!;
         expect(bottom.y).toBeGreaterThanOrEqual(top.y + top.height - 1);
         await page.screenshot({ path: info.outputPath(`project-split-${theme}-1400.png`) });

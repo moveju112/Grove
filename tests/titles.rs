@@ -23,8 +23,8 @@ async fn title_and_summary_models_are_configured_separately_from_main_model() {
     let pid = p["id"].as_str().unwrap();
     let (_, sv) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({ "title": "원래" })).await;
     let sid = sv["id"].as_str().unwrap().to_string();
-    for key in ["session.title_profile", "context.summary_profile"] {
-        let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/{key}"), json!({ "expected_revision": 0, "value": aux_prof })).await;
+    for (key, model, effort) in [("session.title_profile", "title-small", "low"), ("context.summary_profile", "summary-large", "high")] {
+        let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"), json!({ "expected_revision": 0, "value": {"profile_id": aux_prof, "model": model, "effort": effort} })).await;
         assert!(st.is_success(), "{key}: {v}");
     }
     main.push(fixture::text(&format!("첫 답 {}", "길게 ".repeat(40))));
@@ -42,49 +42,92 @@ async fn title_and_summary_models_are_configured_separately_from_main_model() {
     assert_eq!(st, reqwest::StatusCode::CREATED, "{v}");
     assert_eq!(aux.requests().len(), 2, "제목·요약은 보조 모델로");
     assert_eq!(main.requests().len(), 2, "주 대화 모델은 대화 요청만");
+    let requests = aux.requests();
+    assert_eq!(requests[0]["model"], "title-small");
+    assert_eq!(requests[0]["reasoning_effort"], "low");
+    assert_eq!(requests[1]["model"], "summary-large");
+    assert_eq!(requests[1]["reasoning_effort"], "high");
+    let (_, profiles) = s.get("/api/v1/model-profiles").await;
+    assert_eq!(profiles.as_array().unwrap().iter().find(|p| p["id"] == aux_prof).unwrap()["model"], "fixture-model");
 }
 
 #[tokio::test]
-async fn auto_title_is_off_by_default_and_generates_once_when_enabled() {
-    let s = TestServer::start().await;
-    let f = Fixture::start().await;
-    let prof = s.fixture_profile(&f.base).await;
-    let p = s.create_project("t").await;
-    let pid = p["id"].as_str().unwrap();
-    // 기본 꺼짐: 턴 하나에 모델 요청 하나
-    let (_, sv) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({ "title": "첫 줄 제목" })).await;
-    let sid = sv["id"].as_str().unwrap().to_string();
-    f.push(fixture::text("답"));
-    let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "배포 스크립트를 봐줘", "profile_id": prof })).await;
-    s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(f.requests().len(), 1);
-    assert_eq!(title_of(&s, &sid).await, "첫 줄 제목");
-
-    // 켜면 첫 완료 턴 뒤 한 번 생성
-    s.send(Method::PUT, "/api/v1/settings/server/-/session.auto_title", json!({ "expected_revision": 0, "value": true })).await;
-    let (_, sv) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({ "title": "임시" })).await;
-    let sid2 = sv["id"].as_str().unwrap().to_string();
-    f.push(fixture::text("확인했어"));
-    f.push(fixture::text("\"배포 스크립트 점검\""));
-    let (_, t) = s.post(&format!("/api/v1/sessions/{sid2}/turns"), json!({ "text": "배포 스크립트를 봐줘", "profile_id": prof })).await;
-    s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
-    for _ in 0..50 {
-        if title_of(&s, &sid2).await != "임시" {
-            break;
+async fn auto_title_uses_server_model_with_server_or_project_auto_title() {
+    for scope in ["server", "project"] {
+        let s = TestServer::start().await;
+        let main = Fixture::start().await;
+        let aux = Fixture::start().await;
+        let prof = s.fixture_profile(&main.base).await;
+        let aux_prof = s.fixture_profile(&aux.base).await;
+        let p = s.create_project("title-model").await;
+        let pid = p["id"].as_str().unwrap();
+        let scope_id = if scope == "server" { "-" } else { pid };
+        for (key, value) in [("session.auto_title", json!(true)), ("session.title_profile", json!({"profile_id":aux_prof,"model":"auto-title-small"}))] {
+            let (scope, scope_id) = if key == "session.title_profile" { ("server", "-") } else { (scope, scope_id) };
+            let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/{scope}/{scope_id}/{key}"), json!({ "expected_revision": 0, "value": value })).await;
+            assert!(st.is_success(), "{key}: {v}");
         }
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        let (_, session) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({ "title": "임시" })).await;
+        let sid = session["id"].as_str().unwrap();
+        main.push(fixture::text("대화 응답"));
+        aux.push(fixture::text("전용 모델 제목"));
+        let (_, turn) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "제목 모델 분리 확인", "profile_id": prof })).await;
+        s.wait_status(turn["turn"]["id"].as_str().unwrap(), "completed").await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while title_of(&s, sid).await != "전용 모델 제목" {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        }).await.expect("설정한 전용 모델로 자동 제목을 생성해야 한다");
+        assert_eq!(main.requests().len(), 1, "{scope}: 대화 모델은 대화 요청만");
+        assert_eq!(aux.requests().len(), 1, "{scope}: 제목은 전용 모델로");
+        assert_eq!(aux.requests()[0]["model"],"auto-title-small");
+        assert!(aux.requests()[0]["messages"][0]["content"].as_str().unwrap().contains("You name conversations"));
     }
-    assert_eq!(title_of(&s, &sid2).await, "배포 스크립트 점검");
-    let reqs = f.requests();
-    assert!(reqs.last().unwrap()["messages"][0]["content"].as_str().unwrap().contains("You name conversations"));
-    // 두 번째 턴 뒤에는 다시 만들지 않는다
-    f.push(fixture::text("또"));
-    let n = f.requests().len();
-    let (_, t) = s.post(&format!("/api/v1/sessions/{sid2}/turns"), json!({ "text": "다음", "profile_id": prof })).await;
-    s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    assert_eq!(f.requests().len(), n + 1);
+}
+
+#[tokio::test]
+async fn auto_title_requires_own_model_updates_each_turn_and_preserves_manual_titles() {
+    let s = TestServer::start().await;
+    let main = Fixture::start().await;
+    let aux = Fixture::start().await;
+    let profile = s.fixture_profile(&main.base).await;
+    let title_profile = s.fixture_profile(&aux.base).await;
+    let pid = s.create_project("title-flow").await["id"].as_str().unwrap().to_string();
+    let sid = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    s.send(Method::PUT, "/api/v1/settings/server/-/agents.orchestration", json!({"expected_revision":0,"value":"solo"})).await;
+    s.send(Method::PUT, "/api/v1/settings/server/-/agents.delegation", json!({"expected_revision":0,"value":"off"})).await;
+    // 자동 생성 기본 꺼짐. 켠 뒤에도 전용 모델이 없으면 대화 모델을 빌리지 않는다.
+    for enabled in [false,true] {
+        if enabled { s.send(Method::PUT, "/api/v1/settings/server/-/session.auto_title", json!({"expected_revision":0,"value":true})).await; }
+        main.push(fixture::text("답변"));
+        let (_,t) = s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":"첫 목표","profile_id":profile})).await;
+        s.wait_status(t["turn"]["id"].as_str().unwrap(),"completed").await;
+        grove::titles::after_turn(&s.server.as_ref().unwrap().app,t["turn"]["id"].as_str().unwrap()).await;
+    }
+    assert_eq!(main.requests().len(),2);
+    assert!(aux.requests().is_empty());
+    s.send(Method::PUT, "/api/v1/settings/server/-/session.title_profile", json!({"expected_revision":0,"value":title_profile})).await;
+    for (prompt,title) in [("배포 스크립트 점검","배포 스크립트 점검"),("작업을 바꿔 로그인 오류 수정","로그인 오류 수정")] {
+        main.push(fixture::text("처리 결과"));
+        aux.push(fixture::text(title));
+        let (_,t) = s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":prompt,"profile_id":profile})).await;
+        s.wait_status(t["turn"]["id"].as_str().unwrap(),"completed").await;
+        tokio::time::timeout(Duration::from_secs(3),async { while title_of(&s,&sid).await!=title { tokio::time::sleep(Duration::from_millis(20)).await; } }).await.unwrap();
+    }
+    let request = aux.requests().last().unwrap().clone();
+    let source = request["messages"][1]["content"].as_str().unwrap();
+    assert!(source.contains("로그인 오류 수정"));
+    assert!(source.contains("currentTitle"));
+    assert!(request["tools"].is_null() || request["tools"].as_array().is_some_and(Vec::is_empty));
+    assert_eq!(main.requests().len(),4);
+    let (_,session) = s.get(&format!("/api/v1/sessions/{sid}")).await;
+    s.send(Method::PATCH,&format!("/api/v1/sessions/{sid}"),json!({"expected_revision":session["revision"],"title":"직접 정한 제목"})).await;
+    main.push(fixture::text("후속 답변"));
+    let (_,t) = s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":"다른 목표","profile_id":profile})).await;
+    s.wait_status(t["turn"]["id"].as_str().unwrap(),"completed").await;
+    grove::titles::after_turn(&s.server.as_ref().unwrap().app,t["turn"]["id"].as_str().unwrap()).await;
+    assert_eq!(title_of(&s,&sid).await,"직접 정한 제목");
+    assert_eq!(aux.requests().len(),2);
 }
 
 #[tokio::test]

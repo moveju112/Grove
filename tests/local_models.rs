@@ -122,9 +122,9 @@ async fn local_profile_inputs_reject_url_credentials_and_mutations_and_catalogs_
     let mut unsupported = input(&f.base);
     unsupported["protocol"] = json!("ollama");
     assert_eq!(s.post("/api/v1/model-profiles", unsupported).await.0, StatusCode::BAD_REQUEST);
-    let (_, device) = s.post("/api/v1/devices", json!({"name":"local non-owner"})).await;
-    for token in ["", device["token"].as_str().unwrap()] {
-        let expected = if token.is_empty() { StatusCode::UNAUTHORIZED } else { StatusCode::FORBIDDEN };
+    {
+        let token = "";
+        let expected = StatusCode::UNAUTHORIZED;
         for (method, url, body) in [
             (Method::POST, "/api/v1/model-profiles".to_string(), Some(input(&f.base))),
             (Method::PUT, path.clone(), Some(json!({"expected_revision":1, "model":"other"}))),

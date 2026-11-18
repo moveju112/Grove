@@ -3,7 +3,7 @@ import { api } from "./client";
 import { ContractError, parseContract } from "./validation";
 
 const event = { seq: 1, created_at: "2026-11-11T00:00:00Z", kind: "message.created", project_id: null, session_id: "s", payload: { text: "hello" } };
-const draft = { resource_key: "session:s", text: "", revision: 1, device_name: "browser", updated_at: null };
+const folder = { id: "f", name: "folder", project_count: 0, revision: 1, created_at: "", updated_at: "" };
 
 afterEach(() => vi.unstubAllGlobals());
 
@@ -11,7 +11,7 @@ describe("Rust 계약에서 생성한 런타임 검증", () => {
     it("nullable·임의 JSON·추가 필드를 보존한다", () => {
         const value = { ...event, future: true };
         expect(parseContract("EventRecord", value)).toBe(value);
-        expect(parseContract("Draft", draft)).toBe(draft);
+        expect(parseContract("ProjectFolder", folder)).toBe(folder);
     });
 
     it("누락·타입 오류·배열·비유한 숫자를 거절하고 응답 값을 노출하지 않는다", () => {
@@ -42,9 +42,9 @@ describe("Rust 계약에서 생성한 런타임 검증", () => {
     });
 
     it("HTTP 성공 응답도 계약이 틀리면 상태에 넣기 전에 거절한다", async () => {
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...draft, revision: "bad" }))));
-        await expect(api.getContract("Draft", "/drafts/session:s")).rejects.toThrow("$.revision");
-        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(draft))));
-        await expect(api.getContract("Draft", "/drafts/session:s")).resolves.toEqual(draft);
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ ...folder, revision: "bad" }))));
+        await expect(api.getContract("ProjectFolder", "/project-folders/f")).rejects.toThrow("$.revision");
+        vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify(folder))));
+        await expect(api.getContract("ProjectFolder", "/project-folders/f")).resolves.toEqual(folder);
     });
 });

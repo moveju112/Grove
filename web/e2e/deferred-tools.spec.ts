@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProjects, login, openDetails, selectChoice, sessionView } from "./helpers";
+import { apiCall, composerCommand, composerOption, ensureProjects, login, requireToolApproval, sessionView } from "./helpers";
 
 type Request = {
     tools?: { function: { name: string; parameters: unknown; description: string } }[];
@@ -44,6 +44,7 @@ async function setup(page: Page) {
         name: title, protocol: "openai", base_url: `http://127.0.0.1:${address.port}/v1`, model: "local-fixture",
     });
     const { a } = await ensureProjects();
+    await requireToolApproval(a.id);
     const projects = await apiCall<{ id: string; root_path: string }[]>("GET", "/projects");
     const root = projects.find((p) => p.id === a.id)!.root_path;
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
@@ -52,7 +53,7 @@ async function setup(page: Page) {
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title }).click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
-    await composerOption(view, "모델 프로필", profile.id);
+    await composerCommand(view, `/model ${title}`);
     await composerOption(view, "추론", "auto");
     await composerOption(view, "도구", true);
     return {
@@ -109,9 +110,8 @@ test("제한된 첫 schema에서 로딩·다음 요청·실제 승인·결과 �
             expect(flow.request(index).messages.filter((m) => m.role === "tool" && m.tool_call_id === id)).toHaveLength(1);
             expect(flow.request(index).messages.some((m) => m.tool_calls?.some((c) => c.id === id))).toBe(true);
         }
-        const written = flow.view.getByTestId("msg-tool").filter({ hasText: "write" }).last();
-        await openDetails(written);
-        await expect(written.getByTestId("tool-output")).toContainText(file);
+        expect(JSON.stringify((await flow.turn()).tool_calls.find((call) => call.name === "write")!.result)).toContain(file);
+        await expect(flow.view.getByTestId("msg-tool")).toHaveCount(0);
         writeFileSync(path, "reload must not replay");
         await page.reload();
         await expect(sessionView(page, flow.session.id).getByTestId("msg-assistant").last()).toContainText("CTX-013 승인 결과를 확인했어");
@@ -136,12 +136,11 @@ test("읽기 전용에서 금지된 schema는 명시적으로 실패하고 tools
         const first = flow.request(0);
         expect(first.tools!.some((t) => t.function.name === "edit")).toBe(false);
         expect(first.tools!.find((t) => t.function.name === "load_tool")!.function.description).not.toContain("write:");
-        expect((await flow.turn()).tool_calls[0]!.status).toBe("failed");
-        const failure = flow.view.getByTestId("msg-tool").filter({ hasText: "load_tool" });
-        await openDetails(failure);
-        await expect(failure.getByTestId("tool-output")).toContainText("read_only");
+        const failure = (await flow.turn()).tool_calls[0]!;
+        expect(failure.status).toBe("failed");
+        expect(JSON.stringify(failure.result)).toContain("read_only");
+        await expect(flow.view.getByTestId("msg-tool")).toHaveCount(0);
         await expect(flow.view.getByTestId("approval")).toHaveCount(0);
-        await page.keyboard.press("Escape");
         await composerOption(flow.view, "도구", false);
         flow.replies.push(frames.text(["CTX-013 tools off"]));
         await flow.send("도구 없이 답해");
@@ -164,6 +163,7 @@ test("schema 로딩 뒤 승인 대기에서 취소하면 재접속해도 파일�
         await flow.send("schema만 로딩하고 승인 대기해");
         await expect(flow.view.getByTestId("approval")).toBeVisible();
         expect(flow.requests).toHaveLength(2);
+        page.once("dialog", (dialog) => dialog.accept());
         await flow.view.getByRole("button", { name: "취소", exact: true }).click();
         await expect.poll(async () => (await flow.turn()).status).toBe("cancelled");
         await page.reload();

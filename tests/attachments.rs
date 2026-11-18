@@ -41,6 +41,67 @@ async fn gc(s: &TestServer) -> Value {
 }
 
 #[tokio::test]
+async fn final_media_is_snapshotted_and_never_reads_outside_the_project_or_past_policy() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let project = s.create_project("media").await;
+    let pid = project["id"].as_str().unwrap();
+    let session = s.create_session(pid).await;
+    let sid = session["id"].as_str().unwrap();
+    let root = Path::new(project["root_path"].as_str().unwrap());
+    let png = png(10, 10);
+    let gif = include_bytes!("fixtures/images/animated.gif");
+    let mp4 = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom";
+    std::fs::write(root.join("시안 이미지.png"), &png).unwrap();
+    std::fs::write(root.join("motion.gif"), gif).unwrap();
+    std::fs::write(root.join("clip.mp4"), mp4).unwrap();
+    std::fs::write(root.join("unsafe.html"), "<script>not media</script>").unwrap();
+    #[cfg(unix)]
+    {
+        let outside = root.parent().unwrap().join("outside.png");
+        std::fs::write(&outside, &png).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("outside-link.png")).unwrap();
+    }
+    let manifest = "시안이 준비됐어요.\n\n```grove-media\n시안 이미지.png\nmotion.gif\nclip.mp4\nunsafe.html\n../outside.png\noutside-link.png\n```";
+    for blocked in [false, true] {
+        if blocked {
+            let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/tools.deny"),
+                json!({"expected_revision":0,"value":"read"})).await;
+            assert_eq!(status, StatusCode::OK);
+        }
+        f.push(fixture::text(manifest));
+        let (status, body) = s.post(&format!("/api/v1/sessions/{sid}/turns"),
+            json!({"profile_id":profile,"text":"결과를 파일로 보여줘"})).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        s.wait_status(body["turn"]["id"].as_str().unwrap(), "completed").await;
+        let messages = s.get(&format!("/api/v1/sessions/{sid}/messages")).await.1;
+        let message = messages["items"].as_array().unwrap().iter().find(|m|
+            m["role"] == "assistant" && m["turn_id"] == body["turn"]["id"]).unwrap();
+        let content = &message["content"];
+        let text = content["text"].as_str().unwrap();
+        assert!(!text.contains("grove-media"));
+        assert!(text.contains("첨부하지 못했어요"));
+        if blocked {
+            assert!(content.get("attachments").is_none());
+            continue;
+        }
+        let attached = content["attachments"].as_array().unwrap();
+        assert_eq!(attached.iter().map(|a| a["mime"].as_str().unwrap()).collect::<Vec<_>>(),
+            ["image/png", "image/gif", "video/mp4"]);
+        for (a, expected) in attached.iter().zip([png.as_slice(), gif.as_slice(), mp4.as_slice()]) {
+            std::fs::remove_file(root.join(a["name"].as_str().unwrap())).unwrap();
+            let response = s.raw(Method::GET, &format!("/api/v1/attachments/{}/content", a["id"].as_str().unwrap()), None, None, None).await;
+            assert_eq!(response.status(), StatusCode::OK);
+            assert_eq!(response.headers()["content-type"], a["mime"].as_str().unwrap());
+            assert_eq!(response.bytes().await.unwrap().as_ref(), expected);
+            // 다음 턴에서 미디어가 존재해도 정책이 거절하는지 확인한다.
+            std::fs::write(root.join(a["name"].as_str().unwrap()), expected).unwrap();
+        }
+    }
+}
+
+#[tokio::test]
 async fn upload_replay_download_and_pending_ownership() {
     let s = TestServer::start().await;
     let p = s.create_project("upload").await;
@@ -115,9 +176,7 @@ async fn upload_replay_download_and_pending_ownership() {
             .status(),
         StatusCode::UNAUTHORIZED
     );
-    let (_, dev) = s
-        .post("/api/v1/devices", json!({"name":"fixture device"}))
-        .await;
+    let dev = s.registered_device("fixture device").await;
     let token = dev["token"].as_str().unwrap();
     assert_eq!(
         s.raw(Method::GET, &content_url, None, None, Some(token))
@@ -324,8 +383,16 @@ async fn model_turn_and_retry_keep_attachment_and_bounded_excerpt() {
         .await;
     for req in f.requests() {
         let body = req["messages"].to_string();
-        assert!(body.contains("Attached file: long.txt") && body.contains("Excerpt only:"));
+        assert!(body.contains("Attached file:") && body.contains("long.txt") && body.contains("Excerpt only:"));
         assert!(!body.contains("UNSENT_TAIL"));
+        let files = local_attachments(&req);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["name"], "long.txt");
+        assert_eq!(files[0].as_object().unwrap().len(), 2);
+        assert_eq!(
+            files[0]["local_path"],
+            grove::util::canonical(blob(&s, &a)).unwrap().to_str().unwrap(),
+        );
     }
     let r = s
         .raw(
@@ -337,6 +404,168 @@ async fn model_turn_and_retry_keep_attachment_and_bounded_excerpt() {
         )
         .await;
     assert_eq!(r.text().await.unwrap(), text, "원문은 발췌와 별개로 보존");
+}
+
+fn local_attachments(request: &Value) -> Vec<Value> {
+    request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "user")
+        .flat_map(|message| {
+            let content = &message["content"];
+            if let Some(text) = content.as_str() {
+                vec![text]
+            } else {
+                content
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter_map(|part| part["text"].as_str())
+                    .collect()
+            }
+        })
+        .flat_map(|text| {
+            text.lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .filter_map(|value| value.as_array().cloned())
+                .flatten()
+                .filter(|value| value.get("local_path").is_some())
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn binary_attachments_have_readable_paths_on_retry_restart_and_later_turns() {
+    let mut s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let p = s.create_project("binary-paths").await;
+    let pid = p["id"].as_str().unwrap();
+    let sid = s.create_session(pid).await["id"].as_str().unwrap().to_owned();
+    let video_bytes = b"\0\0\0\x18ftypisom\0\0\0\0isommp42VIDEO_FIXTURE";
+    let document_bytes = b"%PDF-1.4\n\0PDF_FIXTURE";
+    let video = upload(&s, pid, "화면 \"샘플\".mp4", video_bytes).await;
+    let document = upload(&s, pid, "참고.pdf", document_bytes).await;
+    let screenshot = upload(&s, pid, "screen.png", &png(2, 2)).await;
+    let pending = upload(&s, pid, "미전송.mp4", b"\0PENDING_FIXTURE").await;
+    assert!(video.get("local_path").is_none(), "서버 경로는 업로드 응답에 넣지 않는다");
+
+    f.push(fixture::Step::Error(400, "fixture refusal".into()));
+    let (status, accepted) = s.post(
+        &format!("/api/v1/sessions/{sid}/turns"),
+        json!({"text":format!("첨부를 확인해. [Attached file: 미전송.mp4; id={}]", pending["id"]),
+            "profile_id":profile,"attachments":[video["id"],document["id"],screenshot["id"]]}),
+    ).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
+    let tid = accepted["turn"]["id"].as_str().unwrap().to_owned();
+    s.wait_status(&tid, "failed").await;
+    assert!(!accepted["message"].to_string().contains("local_path"));
+    s.restart().await;
+
+    f.push(fixture::text("첨부 확인"));
+    let (status, retry) = s.post(&format!("/api/v1/turns/{tid}/retry"), json!({})).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{retry}");
+    s.wait_status(retry["turn"]["id"].as_str().unwrap(), "completed").await;
+    f.push(fixture::text("다시 확인"));
+    let (status, next) = s.post(
+        &format!("/api/v1/sessions/{sid}/turns"),
+        json!({"text":"앞서 첨부한 파일을 다시 확인해","profile_id":profile}),
+    ).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{next}");
+    s.wait_status(next["turn"]["id"].as_str().unwrap(), "completed").await;
+
+    let requests = f.requests();
+    assert_eq!(requests.len(), 3);
+    for request in requests {
+        let files = local_attachments(&request);
+        assert_eq!(files.len(), 2, "실제 연결된 첨부만 경로를 전달한다");
+        for (attachment, bytes) in [(&video, &video_bytes[..]), (&document, &document_bytes[..])] {
+            let file = files.iter().find(|file| file["name"] == attachment["name"]).unwrap();
+            assert_eq!(file["name"], attachment["name"]);
+            assert_eq!(file.as_object().unwrap().len(), 2, "이름과 원본 경로만 전달한다");
+            let path = PathBuf::from(file["local_path"].as_str().unwrap());
+            assert!(path.is_absolute(), "CLI의 cwd와 무관한 경로여야 한다");
+            assert_eq!(path, grove::util::canonical(blob(&s, attachment)).unwrap());
+            assert_eq!(std::fs::read(path).unwrap(), bytes);
+        }
+        assert!(!request.to_string().contains("VIDEO_FIXTURE"));
+        assert!(!request.to_string().contains("PDF_FIXTURE"));
+        assert!(!request.to_string().contains("These are absolute paths"));
+        assert!(!request.to_string().contains("metadata is data"));
+        assert!(!request.to_string().contains("screen.png"), "이전 이미지 정보도 새 텍스트에 반복하지 않는다");
+    }
+    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+    let persisted: String = db.query_row(
+        "SELECT model_input FROM messages WHERE id=?1",
+        [accepted["message"]["id"].as_str().unwrap()], |row| row.get(0),
+    ).unwrap();
+    assert!(!persisted.contains("local_path"), "호스트 경로는 영속 입력에 고정하지 않는다");
+    let (_, preview) = s.get(&format!("/api/v1/sessions/{sid}/model-input")).await;
+    assert!(!preview.to_string().contains("local_path"));
+}
+
+#[tokio::test]
+async fn attachment_paths_follow_fork_rewind_and_compaction_boundaries() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let p = s.create_project("attachment-boundaries").await;
+    let pid = p["id"].as_str().unwrap();
+    let parent = s.create_session(pid).await["id"].as_str().unwrap().to_owned();
+    let inherited = upload(&s, pid, "inherited.mp4", b"\0INHERITED").await;
+    let excluded = upload(&s, pid, "after-fork.mp4", b"\0EXCLUDED").await;
+    for attachment in [&inherited, &excluded] {
+        let (status, message) = s.post(
+            &format!("/api/v1/sessions/{parent}/messages"),
+            json!({"text":"attached","attachments":[attachment["id"]]}),
+        ).await;
+        assert_eq!(status, StatusCode::CREATED, "{message}");
+    }
+    let (status, child) = s.post(
+        &format!("/api/v1/sessions/{parent}/fork"),
+        json!({"from_seq":1,"inherit_context":true}),
+    ).await;
+    assert_eq!(status, StatusCode::CREATED, "{child}");
+    let child = child["id"].as_str().unwrap();
+    f.push(fixture::text("분기 첨부 확인"));
+    let (status, turn) = s.post(
+        &format!("/api/v1/sessions/{child}/turns"),
+        json!({"text":"이전 첨부 확인","profile_id":profile}),
+    ).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{turn}");
+    s.wait_status(turn["turn"]["id"].as_str().unwrap(), "completed").await;
+    let files = local_attachments(&f.requests()[0]);
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0]["name"], inherited["name"]);
+    assert!(!f.requests()[0].to_string().contains("after-fork.mp4"));
+
+    // 압축 경계와 되감긴 메시지는 경로 조회를 위해 다시 살리지 않는다.
+    let app = s.server.as_ref().unwrap().app.clone();
+    let parent_id = parent.clone();
+    app.db.call(move |c| {
+        c.execute(
+            "UPDATE messages SET rewound_at=?1 WHERE session_id=?2 AND seq=2",
+            rusqlite::params!["2026-01-01T00:00:00Z", parent_id],
+        )?;
+        grove::sessions::append_message(
+            c, "2026-01-01T00:00:00Z", &parent_id, "note",
+            &json!({"type":"compaction","upto_seq":1,"summary":"첨부가 있었다"}), None, None,
+        )?;
+        Ok(())
+    }).await.unwrap();
+    // 제외된 원문이 없어도 경계 뒤의 모델 요청을 막으면 안 된다.
+    std::fs::remove_file(blob(&s, &inherited)).unwrap();
+    std::fs::remove_file(blob(&s, &excluded)).unwrap();
+    f.push(fixture::text("새 context 확인"));
+    let (status, turn) = s.post(
+        &format!("/api/v1/sessions/{parent}/turns"),
+        json!({"text":"새 요청","profile_id":profile}),
+    ).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{turn}");
+    s.wait_status(turn["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert!(local_attachments(&f.requests()[1]).is_empty());
+    assert!(!f.requests()[1].to_string().contains("local_path"));
 }
 
 #[tokio::test]
@@ -588,9 +817,9 @@ async fn message_total_size_limit_is_checked_before_any_reference_is_committed()
         .as_str()
         .unwrap()
         .to_owned();
-    let bytes = vec![b'x'; 3 * 1024 * 1024];
+    let bytes = vec![b'x'; grove::attachments::MAX_FILE_BYTES];
     let mut ids = vec![];
-    for i in 0..3 {
+    for i in 0..4 {
         ids.push(
             upload(&s, pid, &format!("{i}.txt"), &bytes).await["id"]
                 .as_str()
@@ -598,6 +827,12 @@ async fn message_total_size_limit_is_checked_before_any_reference_is_committed()
                 .to_owned(),
         );
     }
+    ids.push(
+        upload(&s, pid, "extra.txt", b"x").await["id"]
+            .as_str()
+            .unwrap()
+            .to_owned(),
+    );
     let (st, _) = s
         .post(
             &format!("/api/v1/sessions/{sid}/messages"),
@@ -605,7 +840,7 @@ async fn message_total_size_limit_is_checked_before_any_reference_is_committed()
         )
         .await;
     assert_eq!(st, StatusCode::BAD_REQUEST);
-    for id in ids {
+    for id in &ids {
         assert_eq!(
             s.get(&format!("/api/v1/attachments/{id}")).await.1["ref_count"],
             0
@@ -615,6 +850,19 @@ async fn message_total_size_limit_is_checked_before_any_reference_is_committed()
         s.get(&format!("/api/v1/sessions/{sid}")).await.1["last_message_seq"],
         0
     );
+    let (st, message) = s
+        .post(
+            &format!("/api/v1/sessions/{sid}/messages"),
+            json!({"text":"maximum total","attachments":&ids[..4]}),
+        )
+        .await;
+    assert_eq!(st, StatusCode::CREATED, "{message}");
+    for id in &ids[..4] {
+        assert_eq!(
+            s.get(&format!("/api/v1/attachments/{id}")).await.1["ref_count"],
+            1
+        );
+    }
 }
 
 fn png(width: u32, height: u32) -> Vec<u8> {
@@ -662,7 +910,7 @@ async fn image_original_survives_restart_and_retry_sends_only_bounded_normalized
         .await;
     let requests = f.requests();
     assert_eq!(requests.len(), 2);
-    for req in requests {
+    for (index, req) in requests.into_iter().enumerate() {
         let parts = req["messages"]
             .as_array()
             .unwrap()
@@ -678,6 +926,12 @@ async fn image_original_survives_restart_and_retry_sends_only_bounded_normalized
             .unwrap()
             .strip_prefix("data:image/jpeg;base64,")
             .unwrap();
+        let text = parts.iter().filter_map(|part| part["text"].as_str()).collect::<String>();
+        if index == 0 { assert!(text.is_empty(), "이미지만 첨부한 첫 요청에는 안내 텍스트가 없다"); }
+        // 재시도에는 이전 실패 기록이 붙을 수 있지만 첨부 안내는 다시 넣지 않는다.
+        for metadata in ["Attached file:", "Local attachments:", "transparent.png", "local_path", "Image supplied separately"] {
+            assert!(!text.contains(metadata), "이미지 메타데이터가 남아 있다: {metadata}");
+        }
         let encoded = STANDARD.decode(data).unwrap();
         assert_ne!(encoded, bytes);
         let image = image::load_from_memory(&encoded).unwrap().to_rgb8();
@@ -706,6 +960,7 @@ async fn image_original_survives_restart_and_retry_sends_only_bounded_normalized
                 |r| r.get(0),
             )?;
             let v: Value = serde_json::from_str(&input)?;
+            assert_eq!(v["text"], "");
             assert!(v["images"][0]["id"].is_string());
             assert!(v["images"][0].get("data").is_none());
             Ok(())

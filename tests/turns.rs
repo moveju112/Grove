@@ -22,6 +22,22 @@ async fn start_turn(s: &TestServer, sid: &str, prof: &str, text: &str, tools: bo
 }
 
 #[tokio::test]
+async fn a_progressing_turn_can_finish_after_more_than_twenty_five_tool_rounds() {
+    let (s, f, profile, sid, _) = setup().await;
+    for i in 0..26 {
+        let id = format!("list-{i}");
+        f.push(fixture::tool_calls(&[(&id, "list", json!({"offset":i}))]));
+    }
+    f.push(fixture::text("모든 단계 완료"));
+    let v = start_turn(&s, &sid, &profile, "목록을 검토해", true).await;
+    let turn = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert_eq!(turn["step"], 27);
+    let calls = turn["tool_calls"].as_array().unwrap();
+    assert_eq!(calls.len(), 26);
+    assert!(calls.iter().all(|call| call["status"] == "succeeded"), "{calls:?}");
+}
+
+#[tokio::test]
 async fn text_turn_streams_partial_then_persists_answer() {
     let (s, f, prof, sid, _) = setup().await;
     f.push(fixture::slow_text(&["안녕", "하세요", "!"], 150));

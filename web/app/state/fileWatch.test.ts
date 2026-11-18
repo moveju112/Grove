@@ -17,6 +17,7 @@ const listen = (project = "project", path = "a.txt") => {
 beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal("window", new EventTarget());
+    vi.stubGlobal("document", Object.assign(new EventTarget(), { visibilityState: "visible" }));
     vi.mocked(api.get).mockReset().mockResolvedValue(content);
     auth.owner = 0;
     auth.loggedIn = true;
@@ -28,6 +29,28 @@ afterEach(() => {
 });
 
 describe("파일 변경 공유 구독", () => {
+    it("바뀌지 않은 파일은 stamp로 확인하고 원문을 다시 받지 않는다", async () => {
+        const original = { ...content, stamp: "same" };
+        vi.mocked(api.get).mockResolvedValueOnce(original).mockResolvedValueOnce({ unchanged: true, stamp: "same" });
+        const a = listen();
+        await vi.advanceTimersByTimeAsync(0);
+        await vi.advanceTimersByTimeAsync(5000);
+        expect(api.get).toHaveBeenLastCalledWith(expect.stringContaining("known_stamp=same"), expect.anything());
+        expect(a.value).toHaveBeenLastCalledWith(original);
+    });
+    it("브라우저가 숨겨지면 폴링을 멈추고 돌아올 때 원문을 다시 확인한다", async () => {
+        listen();
+        await vi.advanceTimersByTimeAsync(0);
+        Object.assign(document, { visibilityState: "hidden" });
+        document.dispatchEvent(new Event("visibilitychange"));
+        await vi.advanceTimersByTimeAsync(30_000);
+        expect(api.get).toHaveBeenCalledTimes(1);
+        Object.assign(document, { visibilityState: "visible" });
+        document.dispatchEvent(new Event("visibilitychange"));
+        await vi.advanceTimersByTimeAsync(0);
+        expect(api.get).toHaveBeenCalledTimes(2);
+        expect(vi.mocked(api.get).mock.calls[1]![0]).not.toContain("known_stamp");
+    });
     it("같은 파일의 조회와 5초 주기를 공유하고 마지막 해제 때만 요청·타이머를 폐기한다", async () => {
         const a = listen(), b = listen();
         await vi.advanceTimersByTimeAsync(0);

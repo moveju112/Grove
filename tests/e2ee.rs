@@ -9,12 +9,125 @@ use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
 use wire::Channel;
 
 #[tokio::test]
+async fn chunked_requests_require_auth_cancel_without_writes_and_release_slots() {
+    let server = TestServer::start().await;
+    let (_, browser) = server.pair_browser("encrypted upload").await;
+    let browser: Value = browser.json().await.unwrap();
+    let access = browser["access_token"].as_str().unwrap();
+    let project = server.create_project("chunk-cancellation").await;
+    let path = format!("/api/v1/projects/{}/attachments", project["id"].as_str().unwrap());
+    let operation = |authenticated: bool| json!({
+        "kind":"http", "method":"POST", "path":path,
+        "headers":if authenticated { vec![
+            ("authorization", format!("Bearer {access}")),
+            ("content-type", "application/json".into()),
+            ("idempotency-key", "cancelled-upload".into()),
+        ] } else { vec![] },
+    }).to_string();
+    let mut channel = Channel::open_mux(&server).await;
+    channel.mux_send(0x05, 1, operation(false).as_bytes()).await;
+    let (kind, id, headers) = channel.mux_receive().await;
+    assert_eq!((kind, id), (0x11, 1));
+    assert_eq!(serde_json::from_slice::<Value>(&headers).unwrap()["status"], 401);
+    loop {
+        let (kind, id, _) = channel.mux_receive().await;
+        assert_eq!(id, 1);
+        if kind == 0x13 { break; }
+        assert_eq!(kind, 0x12);
+        channel.mux_send(0x02, id, &[]).await;
+    }
+
+    // 완성되지 않은 요청은 handler를 실행하지 않는다. 네 슬롯이 차도 연결은 유지한다.
+    for id in [3, 5, 7, 9] {
+        channel.mux_send(0x05, id, operation(true).as_bytes()).await;
+        assert_eq!(channel.mux_receive().await, (0x16, id, vec![]));
+    }
+    channel.mux_send(0x05, 11, operation(true).as_bytes()).await;
+    assert_eq!(channel.mux_receive().await, (0x14, 11, vec![]));
+    channel.mux_send(0x06, 3, br#"{"name":"cancelled.txt","data_base64":"eA=="}"#).await;
+    assert_eq!(channel.mux_receive().await, (0x16, 3, vec![]));
+    channel.mux_send(0x03, 3, &[]).await;
+    channel.mux_send(0x07, 3, &[]).await;
+    assert_eq!(channel.mux_receive().await, (0x14, 3, vec![]));
+    channel.mux_send(0x05, 13, operation(true).as_bytes()).await;
+    assert_eq!(channel.mux_receive().await, (0x16, 13, vec![]));
+    // 큰 조각·잘못된 종료는 해당 업로드만 폐기하고 슬롯을 돌려준다.
+    channel.mux_send(0x06, 13, &vec![0; 1024 * 1024 + 1]).await;
+    assert_eq!(channel.mux_receive().await, (0x14, 13, vec![]));
+    channel.mux_send(0x05, 15, operation(true).as_bytes()).await;
+    assert_eq!(channel.mux_receive().await, (0x16, 15, vec![]));
+    channel.mux_send(0x07, 15, b"invalid").await;
+    assert_eq!(channel.mux_receive().await, (0x14, 15, vec![]));
+    for id in [5, 7, 9] { channel.mux_send(0x03, id, &[]).await; }
+    channel.mux_send(0x04, 17, &[]).await;
+    assert_eq!(channel.mux_receive().await, (0x15, 17, vec![]));
+    let app = &server.server.as_ref().unwrap().app;
+    assert_eq!(app.db.call(|c| Ok(c.query_row("SELECT COUNT(*) FROM attachments", [], |r| r.get::<_, i64>(0))?)).await.unwrap(), 0);
+
+    // 같은 요청 키로 완성해 보내면 한 번 저장하고, 재전송도 같은 결과로 수렴한다.
+    let body = br#"{"name":"complete.txt","data_base64":"eA=="}"#;
+    let mut previous = Value::Null;
+    for _ in 0..2 {
+        let mut channel = Channel::open_mux(&server).await;
+        let (meta, response) = channel.request_body("POST", &path, vec![
+            ("authorization", format!("Bearer {access}")),
+            ("content-type", "application/json".into()),
+            ("idempotency-key", "cancelled-upload".into()),
+        ], body).await;
+        assert_eq!(meta["status"], 201);
+        let saved: Value = serde_json::from_slice(&response).unwrap();
+        if previous.is_null() { previous = saved; } else { assert_eq!(saved, previous); }
+    }
+    assert_eq!(app.db.call(|c| Ok(c.query_row("SELECT COUNT(*) FROM attachments", [], |r| r.get::<_, i64>(0))?)).await.unwrap(), 1);
+}
+
+#[tokio::test]
+async fn encrypted_attachment_accepts_maximum_size_and_downloads_original() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+
+    let server = TestServer::start().await;
+    let project = server.create_project("encrypted-attachment-limit").await;
+    let (_, browser) = server.pair_browser("encrypted attachment").await;
+    let browser: Value = browser.json().await.unwrap();
+    let access = browser["access_token"].as_str().unwrap();
+    let bytes = vec![b'x'; grove::attachments::MAX_FILE_BYTES];
+    let mut channel = Channel::open_mux(&server).await;
+    channel.receive_timeout = std::time::Duration::from_secs(30);
+    let (meta, response) = channel.request_body("POST", &format!("/api/v1/projects/{}/attachments", project["id"].as_str().unwrap()), vec![
+        ("authorization", format!("Bearer {access}")),
+        ("content-type", "application/json".into()),
+        ("idempotency-key", "encrypted-maximum-attachment".into()),
+    ], json!({"name":"maximum.txt","data_base64":STANDARD.encode(&bytes)}).to_string().as_bytes()).await;
+    assert_eq!(meta["status"], 201);
+    let attachment: Value = serde_json::from_slice(&response).unwrap();
+    assert_eq!(attachment["size"], bytes.len());
+
+    let mut channel = Channel::open(&server, None, None).await;
+    channel.receive_timeout = std::time::Duration::from_secs(30);
+    let meta = channel.request("GET", &format!("/api/v1/attachments/{}/content", attachment["id"].as_str().unwrap()),
+        vec![("authorization", format!("Bearer {access}"))], Value::Null).await;
+    assert_eq!(meta["status"], 200);
+    assert_eq!(channel.body().await, bytes);
+}
+
+#[tokio::test]
 async fn encrypted_login_api_idempotency_and_stream_preserve_existing_contracts() {
     let server = TestServer::start().await;
+    let password = "test-only encrypted pairing password";
+    let (status, link) = server.post("/api/v1/pairings", json!({ "name": "encrypted browser", "password": password })).await;
+    assert_eq!(status, reqwest::StatusCode::CREATED);
     let mut c = Channel::open(&server, None, Some("https://grove.choondoggy.com")).await;
-    let meta = c.request("POST", "/api/v1/auth/browser-login",
+    let meta = c.request("POST", "/api/v1/auth/pairing",
         vec![("content-type", "application/json".into())],
-        json!({ "token": server.token, "name": "encrypted-browser" })).await;
+        json!({ "code": link["code"], "password": password, "name": "encrypted browser" })).await;
+    assert_eq!(meta["status"], 202);
+    let request: Value = serde_json::from_slice(&c.body().await).unwrap();
+    let code = request["code"].as_str().unwrap();
+    let request_id = code.split_once('.').unwrap().0;
+    assert_eq!(server.post(&format!("/api/v1/pairings/{}/requests/{request_id}", link["id"].as_str().unwrap()), json!({})).await.0, reqwest::StatusCode::OK);
+    let mut c = Channel::open(&server, None, Some("https://grove.choondoggy.com")).await;
+    let meta = c.request("POST", "/api/v1/auth/pairing/claim",
+        vec![("content-type", "application/json".into())], json!({ "code": code })).await;
     assert_eq!(meta["status"], 200);
     let headers = meta["headers"].as_array().unwrap();
     assert!(headers.iter().any(|h| h[0] == "set-cookie" && h[1].as_str().unwrap().contains("HttpOnly")));
@@ -48,14 +161,13 @@ async fn external_plaintext_and_spoofed_proxy_headers_are_rejected() {
     cfg.tls_terminated = true;
     cfg.allowed_hosts = vec!["grove.example".into()];
     let server = TestServer::start_with(dir, cfg).await;
-    let response = server.client.post(format!("{}/api/v1/auth/browser-login", server.base))
+    let response = server.client.post(format!("{}/api/v1/auth/pairing", server.base))
         .header("host", "grove.example").header("x-forwarded-proto", "https")
         .header("x-grove-e2ee-bridge", "forged").json(&json!({ "token": server.token, "name": "plain" })).send().await.unwrap();
     assert_eq!(response.status(), 426);
     let mut c = Channel::open(&server, Some("grove.example"), Some("https://grove.choondoggy.com")).await;
     let meta = c.request("GET", "/api/v1/projects", vec![("authorization", format!("Bearer {}", server.token))], Value::Null).await;
-    assert_eq!(meta["status"], 200);
-    assert_eq!(serde_json::from_slice::<Value>(&c.body().await).unwrap(), json!([]));
+    assert_eq!(meta["status"], 401, "로컬 관리 토큰은 원격 암호화 API의 자격이 아니다");
 }
 
 #[tokio::test]

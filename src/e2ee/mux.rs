@@ -7,10 +7,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 use axum::extract::{Request, ws::{Message, WebSocket}};
+use axum::response::{IntoResponse, Response};
 use futures_util::{Sink, SinkExt, StreamExt};
-use tokio::sync::{Semaphore, mpsc};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc};
 use tower::ServiceExt;
-use super::{CHUNK, Cipher, Failure, IO_WAIT, Operation, headers_frame, http_request, invalid};
+use super::{CHUNK, Cipher, Failure, IO_WAIT, MAX_BODY, Operation, headers_frame, http_request, invalid};
 use crate::App;
 
 // 브라우저 → 서버
@@ -18,12 +19,24 @@ pub(super) const OPEN: u8 = 0x01;
 pub(super) const ACK: u8 = 0x02;
 pub(super) const CANCEL: u8 = 0x03;
 pub(super) const PING: u8 = 0x04;
+pub(super) const OPEN_BODY: u8 = 0x05;
+pub(super) const BODY: u8 = 0x06;
+pub(super) const BODY_END: u8 = 0x07;
 // 서버 → 브라우저
 pub(super) const HEADERS: u8 = 0x11;
 pub(super) const DATA: u8 = 0x12;
 pub(super) const END: u8 = 0x13;
 pub(super) const FAIL: u8 = 0x14;
 pub(super) const PONG: u8 = 0x15;
+pub(super) const BODY_ACK: u8 = 0x16;
+
+const BODY_CHUNK: usize = 1024 * 1024;
+struct Incoming {
+    request: Request,
+    bytes: Vec<u8>,
+    permits: [OwnedSemaphorePermit; 3],
+    updated: tokio::time::Instant,
+}
 
 /// 연결당 동시에 처리하는 stream 수. 넘으면 그 요청만 실패로 알린다.
 const STREAMS: usize = 64;
@@ -50,12 +63,26 @@ pub(super) async fn serve(app: &App, host: &str, ws: &mut WebSocket, mut rx: Cip
     let (out, mut outgoing) = mpsc::channel::<Vec<u8>>(256);
     // stream별 ACK 전달. sender를 버리면(CANCEL·연결 종료) task가 응답 전송을 멈춘다.
     let mut streams: HashMap<u32, mpsc::Sender<()>> = HashMap::new();
+    let mut incoming: HashMap<u32, Incoming> = HashMap::new();
+    let mut expiry = tokio::time::interval(Duration::from_secs(5));
+    let idle = tokio::time::sleep(IDLE);
+    tokio::pin!(idle);
     let slots = Arc::new(Semaphore::new(STREAMS));
     loop {
         tokio::select! {
+            _ = &mut idle => return Err(invalid()),
+            _ = expiry.tick() => {
+                let expired: Vec<_> = incoming.iter().filter(|(_, upload)| upload.updated.elapsed() >= IO_WAIT)
+                    .map(|(id, _)| *id).collect();
+                for id in expired {
+                    incoming.remove(&id);
+                    write(&mut sink, &mut tx, &frame(FAIL, id, &[])).await?;
+                }
+            }
             Some(plain) = outgoing.recv() => write(&mut sink, &mut tx, &plain).await?,
-            message = tokio::time::timeout(IDLE, stream.next()) => {
-                let message = message.map_err(|_| invalid())?.ok_or_else(invalid)??;
+            message = stream.next() => {
+                let message = message.ok_or_else(invalid)??;
+                idle.as_mut().reset(tokio::time::Instant::now() + IDLE);
                 let bytes = match message {
                     Message::Binary(bytes) => bytes,
                     Message::Ping(_) | Message::Pong(_) => continue,
@@ -69,13 +96,68 @@ pub(super) async fn serve(app: &App, host: &str, ws: &mut WebSocket, mut rx: Cip
                 match plain[0] {
                     PING => write(&mut sink, &mut tx, &frame(PONG, id, &[])).await?,
                     ACK => { if let Some(ack) = streams.get(&id) { let _ = ack.try_send(()); } }
-                    CANCEL => { streams.remove(&id); }
+                    CANCEL => { streams.remove(&id); incoming.remove(&id); }
+                    OPEN_BODY => {
+                        streams.retain(|_, ack| !ack.is_closed());
+                        if streams.contains_key(&id) || incoming.contains_key(&id) { return Err(invalid()); }
+                        let request = (payload.len() <= 64 * 1024).then(|| serde_json::from_slice::<Operation>(payload).ok())
+                            .flatten().filter(|op| op.body.is_empty()).and_then(|op| http_request(host, op).ok());
+                        let Some(request) = request.filter(|_| streams.len() + incoming.len() < STREAMS) else {
+                            write(&mut sink, &mut tx, &frame(FAIL, id, &[])).await?;
+                            continue;
+                        };
+                        // 큰 본문용 슬롯은 인증한 요청만 쓴다. 완성 뒤에도 API의 원래 인증·권한 검사를 거친다.
+                        if let Err(error) = crate::auth::authenticate(app, request.headers()).await {
+                            let (ack, acks) = mpsc::channel(WINDOW);
+                            streams.insert(id, ack);
+                            let out = out.clone();
+                            tokio::spawn(async move { respond_response(error.into_response(), id, out, acks).await; });
+                            continue;
+                        }
+                        let permits = slots.clone().try_acquire_owned().ok()
+                            .zip(app.e2ee.request_slots.clone().try_acquire_owned().ok())
+                            .zip(app.e2ee.upload_slots.clone().try_acquire_owned().ok());
+                        let Some(((connection, request_slot), upload)) = permits else {
+                            write(&mut sink, &mut tx, &frame(FAIL, id, &[])).await?;
+                            continue;
+                        };
+                        incoming.insert(id, Incoming { request, bytes: vec![], permits: [connection, request_slot, upload], updated: tokio::time::Instant::now() });
+                        write(&mut sink, &mut tx, &frame(BODY_ACK, id, &[])).await?;
+                    }
+                    BODY => {
+                        let valid = incoming.get_mut(&id).filter(|upload| !payload.is_empty()
+                            && payload.len() <= BODY_CHUNK && payload.len() <= MAX_BODY - upload.bytes.len());
+                        if let Some(upload) = valid {
+                            upload.bytes.extend_from_slice(payload);
+                            upload.updated = tokio::time::Instant::now();
+                            write(&mut sink, &mut tx, &frame(BODY_ACK, id, &[])).await?;
+                        } else {
+                            incoming.remove(&id);
+                            write(&mut sink, &mut tx, &frame(FAIL, id, &[])).await?;
+                        }
+                    }
+                    BODY_END => {
+                        let upload = incoming.remove(&id).filter(|_| payload.is_empty());
+                        let Some(mut upload) = upload else {
+                            write(&mut sink, &mut tx, &frame(FAIL, id, &[])).await?;
+                            continue;
+                        };
+                        *upload.request.body_mut() = axum::body::Body::from(upload.bytes);
+                        let (ack, acks) = mpsc::channel(WINDOW);
+                        streams.insert(id, ack);
+                        let (app, out) = (app.clone(), out.clone());
+                        tokio::spawn(async move {
+                            // 전송 중단·연결 종료로 실행 중인 handler의 슬롯이 먼저 풀리지 않게 한다.
+                            let _permits = upload.permits;
+                            respond(app, upload.request, id, out, acks).await;
+                        });
+                    }
                     OPEN => {
                         streams.retain(|_, ack| !ack.is_closed());
-                        if streams.contains_key(&id) { return Err(invalid()); }
+                        if streams.contains_key(&id) || incoming.contains_key(&id) { return Err(invalid()); }
                         let request = serde_json::from_slice::<Operation>(payload).ok()
                             .and_then(|op| http_request(host, op).ok());
-                        let Some(request) = request.filter(|_| streams.len() < STREAMS) else {
+                        let Some(request) = request.filter(|_| streams.len() + incoming.len() < STREAMS) else {
                             write(&mut sink, &mut tx, &frame(FAIL, id, &[])).await?;
                             continue;
                         };
@@ -203,9 +285,13 @@ mod tests {
     }
 }
 
-async fn respond(app: App, request: Request, id: u32, out: mpsc::Sender<Vec<u8>>, mut acks: mpsc::Receiver<()>) {
+async fn respond(app: App, request: Request, id: u32, out: mpsc::Sender<Vec<u8>>, acks: mpsc::Receiver<()>) {
     // 로그인 시 IP를 위조하지 않는다. 원격 E2EE 로그인은 하나의 잠금 bucket을 공유한다.
     let response = match crate::router(app).oneshot(request).await { Ok(response) => response, Err(never) => match never {} };
+    respond_response(response, id, out, acks).await;
+}
+
+async fn respond_response(response: Response, id: u32, out: mpsc::Sender<Vec<u8>>, mut acks: mpsc::Receiver<()>) {
     let (parts, body) = response.into_parts();
     if out.send(frame(HEADERS, id, &headers_frame(&parts))).await.is_err() { return; }
     let mut body = body.into_data_stream();

@@ -2,11 +2,12 @@ import { expect, test } from "@playwright/test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolCallRow } from "../app/api/generated";
-import { apiCall, ensureProjects, login, sessionView, state } from "./helpers";
+import { apiCall, ensureProjects, login, requireToolApproval, sessionView, state } from "./helpers";
 
 // SessionView에서 새 ApprovalCard를 연결한 뒤 실행하는 실제 서버/브라우저 인수 시험.
 async function openApproval(page: Parameters<typeof login>[0]) {
     const { a } = await ensureProjects();
+    await requireToolApproval(a.id);
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `승인 표현 ${test.info().testId}` });
     const path = `approval-presentation-${session.id}.txt`;
     const call = await apiCall<ToolCallRow>("POST", `/sessions/${session.id}/tool-requests`, {
@@ -15,16 +16,21 @@ async function openApproval(page: Parameters<typeof login>[0]) {
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: `승인 표현 ${test.info().testId}` }).click();
-    const card = sessionView(page, session.id).getByTestId("approval");
+    const view = sessionView(page, session.id);
+    const card = view.getByTestId("approval");
     await expect(card).toHaveAttribute("data-approval-id", call.id);
-    return { card, call, path };
+    return { card, call, path, view };
 }
 
 test("대상·부작용·넓은 허용 범위를 읽고 키보드로 거부하면 파일이 생기지 않는다", async ({ page }) => {
-    const { card, call, path } = await openApproval(page);
+    const { card, call, path, view } = await openApproval(page);
+    const approval = (await card.boundingBox())!;
+    const composer = (await view.getByTestId("composer").boundingBox())!;
+    expect(approval.x).toBeCloseTo(composer.x, 0);
+    expect(approval.width).toBeCloseTo(composer.width, 0);
     await expect(card.getByTestId("approval-target")).toContainText(path);
-    await expect(card.getByTestId("approval-effect")).toContainText("쓰기");
-    await expect(card.getByTestId("approval-allowed-scope")).toContainText("위 대상에만 한정되지 않습니다");
+    await expect(card.getByTestId("approval-effect")).toContainText("생성·수정·삭제");
+    await expect(card.getByTestId("approval-allowed-scope")).toContainText("도구 전체에 적용됩니다");
     await expect(card).not.toContainText("approval-private-content");
     const deny = card.getByRole("button", { name: "거부", exact: true });
     await deny.focus();
@@ -43,7 +49,7 @@ test("오프라인에서는 승인·거부를 잠그고 복구 후에도 자동�
     });
     try {
         await page.context().setOffline(true);
-        for (const name of ["이번만 승인", "이 대화에서 계속 허용", "거부"]) {
+        for (const name of ["이번만 승인", "이 대화에서 승인", "거부"]) {
             await expect(card.getByRole("button", { name, exact: true })).toBeDisabled();
         }
         await expect(card.getByTestId("approval-status")).toContainText("오프라인");
@@ -75,7 +81,7 @@ test("응답 대기 중 승인·거부를 잠가 요청을 중복 전송하지 �
         await card.getByRole("button", { name: "거부", exact: true }).click();
         await requestArrived;
         await expect(card.getByTestId("approval-status")).toContainText("처리 중");
-        for (const name of ["이번만 승인", "이 대화에서 계속 허용", "거부"]) {
+        for (const name of ["이번만 승인", "이 대화에서 승인", "거부"]) {
             await expect(card.getByRole("button", { name, exact: true })).toBeDisabled();
         }
         expect(requests).toBe(1);

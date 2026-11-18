@@ -1,22 +1,28 @@
 import * as stylex from "@stylexjs/stylex";
 
+export const CHAT_COLUMN_WIDTH = "48em";
+
 // Stack/Grid의 크기·간격 속성으로 표현할 수 없는 스크롤 소유권과 고정 위치만 둔다.
 export const chatLayout = stylex.create({
     view: { flexGrow: 1, minHeight: "100%", containerType: "inline-size" },
     headerTitle: { flexGrow: 1, minWidth: 0, overflow: "hidden" },
-    // 모바일 프로젝트 이름은 상단 바에 한 번만 표시한다. 문서의 제목 의미는 남긴다.
-    projectTitle: {
-        position: { default: null, "@media (max-width: 760px)": "absolute" },
-        width: { default: null, "@media (max-width: 760px)": 1 },
-        height: { default: null, "@media (max-width: 760px)": 1 },
-        clipPath: { default: null, "@media (max-width: 760px)": "inset(50%)" },
-        whiteSpace: { default: null, "@media (max-width: 760px)": "nowrap" },
-    },
     workbench: { flexGrow: 1, minHeight: 0, minWidth: 0 },
     main: { flexGrow: 1, minHeight: 0, minWidth: 0 },
     // Grid 항목의 auto 최소 폭이 모델명 전체 폭으로 고정되면 전송 버튼이 화면 밖으로 밀린다.
     bar: { minWidth: 0 },
     centered: { alignSelf: "center" },
+    turnError: {
+        alignSelf: "center",
+        width: "100%",
+        maxWidth: "48em",
+        minWidth: 0,
+        boxSizing: "border-box",
+        overflowWrap: "anywhere",
+        backgroundColor: "var(--raised)",
+        borderColor: "var(--line-strong)",
+    },
+    turnErrorMeta: { flexShrink: 0, whiteSpace: "nowrap" },
+    turnErrorRetry: { flexShrink: 0, marginInlineStart: "auto" },
     sessionTitle: { flexShrink: 0, maxWidth: "60%" },
     sessionPreview: { flexGrow: 1, flexBasis: 0, minWidth: 0 },
     messages: { flexGrow: 1, alignSelf: "center" },
@@ -43,6 +49,10 @@ export const chatLayout = stylex.create({
         borderRadius: 18,
         borderColor: "var(--line-strong)",
     },
+    turnStatus: { borderBottomWidth: 1, borderBottomStyle: "solid", borderBottomColor: "var(--line)", minWidth: 0 },
+    turnStatusSummary: { flexGrow: 1, minWidth: 0, overflowWrap: "anywhere" },
+    turnStatusAction: { flexShrink: 0 },
+    turnStatusIndicator: { flexShrink: 0, color: "var(--brand)" },
     commands: {
         margin: 0,
         padding: 0,

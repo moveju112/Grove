@@ -17,7 +17,7 @@ function ready(items: SourceSettings[]) {
 }
 
 describe("원본 설정의 읽기 전용 출처", () => {
-    it("출처별 스킬 메타데이터와 hook 존재만 표시하고 원문이나 동작을 추가하지 않는다", () => {
+    it("스킬과 자동 실행의 진입점만 표시하고 기술 상세와 원문은 노출하지 않는다", () => {
         const html = render({
             status: "ready",
             items: [
@@ -46,26 +46,29 @@ describe("원본 설정의 읽기 전용 출처", () => {
             ] as unknown as NonNullable<Extract<SourceSettingsView, { status: "ready" }>["resources"]>,
         });
         expect(html).toContain("Review");
-        expect(html).toContain("PreToolUse");
-        expect(html).toContain("Bash|Read");
-        expect(html).toContain("명령 있음");
-        expect(html).toContain("명령 없음");
+        expect(html).toContain("자동 실행 2개");
+        expect(html).not.toContain("PreToolUse");
+        expect(html).not.toContain("Bash|Read");
+        expect(html).not.toContain("명령 있음");
+        expect(html).not.toContain("명령 없음");
         expect(html).toContain("일부 항목은 형식");
         expect(html).toContain("Inline hook");
         expect(html).not.toContain("source-private-marker");
         expect(html).not.toMatch(/<(input|textarea|select|form)\b/);
     });
 
-    it("리소스 부재·읽기 실패·빈 목록을 서로 구별한다", () => {
+    it("없는 리소스와 빈 목록은 생략하되 읽기 실패는 표시한다", () => {
         const html = render({
             status: "ready",
             items: [{ source: "claude_user", status: "missing" }],
             resources: [
                 { source: "claude_user", kind: "skills", relative_path: "skills", result: { status: "missing" } },
+                { source: "claude_user", kind: "skills", relative_path: ".claude/skills", result: { status: "present", entries: [], ignored_invalid_entries: false } },
                 { source: "claude_user", kind: "hooks", relative_path: "settings.json", result: { status: "read_error", code: "invalid_shape" } },
             ],
         });
-        expect(html).toContain("원본 리소스 없음");
+        expect(html).not.toContain("원본 리소스 없음");
+        expect(html).not.toContain("스킬 항목 없음");
         expect(html).toContain("리소스 읽기 실패");
         expect(html).toContain('role="alert"');
     });

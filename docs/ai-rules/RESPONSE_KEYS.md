@@ -18,3 +18,5 @@
 
 계약 JSON 숫자는 안전한 정수 범위라는 생성기의 전제를 유지한다.
 시간은 UTC RFC3339 문자열로 반환한다. `evidence: tests/ts_bindings.rs:9`, `evidence: src/util.rs`.
+역할 모델 설정의 `kind: "model"`은 기존 프로필 ID 문자열·빈 문자열과 `ModelSelection` 객체(`profile_id`, `model`)를 받는다.
+연결과 실제 모델은 같은 revision·transaction으로 저장하고, 실제 모델 지정은 공유 프로필을 변경하지 않는다.

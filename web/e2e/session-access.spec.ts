@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, ensureProfile, login, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, ensureProfile, login, openTool, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Call = { status: string; result: { total?: number; scope?: string; items?: { id: string }[]; error?: { code: string } } };
@@ -30,7 +30,7 @@ test("모델의 무관한 대화 조회는 기본 차단되고 대화 범위 허
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: work.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${word} work`) }).click();
-    await sessionView(page, work.id).getByRole("button", { name: "대화 작업", exact: true }).click();
+    await openTool(sessionView(page, work.id), "대화");
     await sessionView(page, work.id).getByRole("button", { name: "대화 설정" }).click();
     await page.getByLabel("설정 검색").last().fill("관련 없는 대화");
     const row = page.getByTestId("setting-sessions.allow_unrelated").last();

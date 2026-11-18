@@ -13,11 +13,20 @@ use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::sync::watch;
 
 pub const MAX_CAPTURE: usize = 128 * 1024;
-pub const DEFAULT_TIMEOUT_MS: u64 = 120_000;
-/// 백그라운드 작업 hard timeout 상한(24시간).
-pub const MAX_BACKGROUND_TIMEOUT_MS: u64 = 24 * 3600 * 1000;
+/// 오래 걸리는 명령은 강제 종료하지 않고 이 시간이 지나면 백그라운드로 넘긴다.
+pub const DEFAULT_HOLD_MS: u64 = 60_000;
 /// foreground hold 상한(10분).
 pub const MAX_HOLD_MS: u64 = 600_000;
+/// 영속 작업·웹 API에서 손실 없이 표현하는 정수 범위. 0은 종료 시한 없음이다.
+pub const MAX_EXPLICIT_TIMEOUT_MS: u64 = (1 << 53) - 1;
+
+pub(crate) async fn wait_deadline(timeout_ms: u64) {
+    if timeout_ms == 0 {
+        std::future::pending().await
+    } else {
+        tokio::time::sleep(Duration::from_millis(timeout_ms)).await
+    }
+}
 
 pub fn plan(args: &Value, root: &Path) -> ToolResult<Planned> {
     let command = args["command"].as_str().unwrap_or("").to_string();
@@ -35,12 +44,15 @@ pub fn plan(args: &Value, root: &Path) -> ToolResult<Planned> {
     // background=true: 즉시 백그라운드. hold_ms: 그 시간 안에 안 끝나면 백그라운드로 전환(EXEC-004).
     let background = args["background"].as_bool().unwrap_or(false);
     let hold = args["hold_ms"].as_u64();
-    let default_timeout = if background || hold.is_some() { MAX_BACKGROUND_TIMEOUT_MS } else { DEFAULT_TIMEOUT_MS };
-    let timeout = args["timeout_ms"].as_u64().unwrap_or(default_timeout).clamp(100, MAX_BACKGROUND_TIMEOUT_MS);
-    let mut target = json!({ "command": command, "cwd": rel_display(root, &cwd), "shell": shell_name(), "timeout_ms": timeout });
-    if background || hold.is_some() {
-        target["hold_ms"] = json!(if background { 0 } else { hold.unwrap_or(0).min(MAX_HOLD_MS) });
+    if let Some(prompt)=args["follow_up"].as_str() {
+        if !background { return Err(ToolError::new("invalid_arguments","follow_up은 background=true와 함께 사용하세요")); }
+        crate::continuations::validate_prompt(prompt).map_err(|e|ToolError::new(e.code,e.message))?;
     }
+    let timeout = args["timeout_ms"].as_u64().unwrap_or(0);
+    let hold_ms = if background { 0 } else { hold.unwrap_or(DEFAULT_HOLD_MS) };
+    let mut target = json!({ "command": command, "cwd": rel_display(root, &cwd), "shell": shell_name(),
+        "timeout_ms": timeout, "hold_ms": hold_ms });
+    if let Some(prompt)=args["follow_up"].as_str() { target["follow_up"]=json!(prompt); }
     Ok(Planned { target, precondition: None })
 }
 
@@ -145,7 +157,7 @@ pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str, limits: crate:
 pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver<bool>) -> ToolResult<Value> {
     let cwd = resolve(root, planned.target["cwd"].as_str().unwrap_or("."))?;
     let command = planned.target["command"].as_str().unwrap_or("");
-    let timeout = Duration::from_millis(planned.target["timeout_ms"].as_u64().unwrap_or(DEFAULT_TIMEOUT_MS));
+    let timeout_ms = planned.target["timeout_ms"].as_u64().unwrap_or(0);
     let tag = crate::util::new_id();
     let limits = crate::procs::Limits::from_json(&planned.target["limits"]);
     let shell = planned.target["shell"].as_str().unwrap_or("default");
@@ -166,7 +178,7 @@ pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver
     }
     let end = tokio::select! {
         r = child.wait() => match r { Ok(s) => End::Exit(s), Err(e) => End::WaitErr(e.to_string()) },
-        _ = tokio::time::sleep(timeout) => End::Timeout,
+        _ = wait_deadline(timeout_ms) => End::Timeout,
         _ = cancel.wait_for(|c| *c) => End::Cancelled,
     };
     if !matches!(end, End::Exit(_)) {
@@ -197,7 +209,7 @@ pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver
             }
             Ok(v)
         }
-        End::Timeout => Err(ToolError::new("timeout", format!("{}ms 안에 끝나지 않아 종료했습니다. 부분 실행됐을 수 있습니다", timeout.as_millis()))
+        End::Timeout => Err(ToolError::new("timeout", format!("{timeout_ms}ms 안에 끝나지 않아 종료했습니다. 부분 실행됐을 수 있습니다"))
             .with_output(v)),
         End::Cancelled => Err(ToolError::new("cancelled", "사용자 취소로 종료했습니다. 부분 실행됐을 수 있습니다").with_output(v)),
         End::WaitErr(e) => Err(ToolError::new("wait_failed", e).with_output(v)),
@@ -227,6 +239,21 @@ mod tests {
 
     fn planned(cmd: &str, root: &Path, timeout: u64) -> Planned {
         plan(&json!({ "command": cmd, "timeout_ms": timeout }), root).unwrap()
+    }
+
+    #[test]
+    fn plan_waits_one_minute_without_killing_and_keeps_explicit_deadlines() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = crate::util::canonical(dir.path()).unwrap();
+        let ordinary = plan(&json!({"command":"echo done"}), &root).unwrap();
+        assert_eq!(ordinary.target["hold_ms"], 60_000);
+        assert_eq!(ordinary.target["timeout_ms"], 0);
+        let detached = plan(&json!({"command":"echo done","background":true}), &root).unwrap();
+        assert_eq!(detached.target["hold_ms"], 0);
+        assert_eq!(detached.target["timeout_ms"], 0);
+        let explicit = plan(&json!({"command":"echo done","timeout_ms":90_000_000,"hold_ms":200}), &root).unwrap();
+        assert_eq!(explicit.target["hold_ms"], 200);
+        assert_eq!(explicit.target["timeout_ms"], 90_000_000);
     }
 
     #[test]

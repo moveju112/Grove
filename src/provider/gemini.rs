@@ -51,7 +51,8 @@ pub fn build_body(req: &ModelRequest) -> Value {
         body["systemInstruction"] = json!({ "parts": [{ "text": req.system }] });
     }
     if !req.tools.is_empty() {
-        body["tools"] = json!([{ "functionDeclarations": req.tools.iter().map(|t| json!({ "name": t.name, "description": t.description, "parameters": t.schema })).collect::<Vec<_>>() }]);
+        // Gemini의 암묵적 캐시는 전용 필드 없이 같은 prefix를 재사용한다.
+        body["tools"] = json!([{ "functionDeclarations": super::prompt_cache::tools(req).into_iter().map(|t| json!({ "name": t.name, "description": t.description, "parameters": t.schema })).collect::<Vec<_>>() }]);
     }
     let mut gc = json!({});
     if let Some(m) = req.max_tokens {
@@ -127,7 +128,7 @@ impl Accumulator {
     }
     pub fn finish(self) -> Result<ModelOutput, ProviderError> {
         if !self.finished {
-            return Err(ProviderError { code: "stream_incomplete", message: "응답 stream이 완료 전에 끊겼습니다".into(), status: None, retryable: true, retry_after_secs: None });
+            return Err(ProviderError { retryable: true, ..ProviderError::new("stream_incomplete", "응답 stream이 완료 전에 끊겼습니다") });
         }
         let mut out = self.out;
         out.native = Some(NativeContent {

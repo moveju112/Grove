@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { DEFAULT_RECENT_WINDOW, DEFAULT_RECENT_WINDOWS, isRecentWindow, normalizeRecentWindows, type RecentWindow } from "./recentWindow";
+import type { FollowKind } from "./sendOptions";
+import { DEFAULT_SHORTCUTS, normalizeShortcuts, type KeyboardShortcuts } from "./shortcuts";
 // 기기 식별(레이아웃·초안 사본용)과 기기 로컬 설정. 서버 비밀은 저장하지 않는다.
 
 const ID_KEY = "grove.device.id";
@@ -30,14 +32,22 @@ export function deviceName(): string {
     return `${br} · ${os}`;
 }
 
-/// 이 기기 표시 설정. reasoning: 추론 보기(답변 시 접기·항상 가림·항상 보기), answerOnly: 답만(도구·실행 기록 숨김), expandTools: 도구 세부를 펼친 채로.
+export const VINE_GROUPS = [2, 3, 4, 5, 6, 7] as const;
+
+/// 이 기기 표시 설정.
 export type Prefs = {
+    initialSetupComplete?: true;
     theme: "system" | "light" | "dark" | "soft";
     fontSize: number;
     enterToSend: boolean;
-    reasoning: "collapsed" | "hidden" | "expanded";
-    answerOnly: boolean;
-    expandTools: boolean;
+    confirmTerminalPaste: boolean;
+    keyboardShortcuts: KeyboardShortcuts;
+    runningSendMode: FollowKind;
+    progressVisibility: "collapse" | "hidden";
+    sessionVines: boolean;
+    sessionVineLength: "short" | "medium" | "long";
+    sessionVineSpeed: "slow" | "normal" | "fast";
+    sessionVineGroups: (typeof VINE_GROUPS)[number];
     clock: "system" | "24h" | "12h";
     timeStyle: "absolute" | "relative";
     notifyDone: boolean;
@@ -45,26 +55,54 @@ export type Prefs = {
     notifyServer: boolean;
     notifySound: boolean;
     notifyVibrate: boolean;
+    notifyPush: boolean;
     recentWindows: RecentWindow[];
-    recentWindow: RecentWindow | "all";
+    recentWindow: RecentWindow;
 };
+
+// 예전 클라이언트는 작업 공간을 연 뒤에만 배치용 기기 ID를 만들었다.
+export function hasLocalSetup(): boolean {
+    try {
+        return loadPrefs().initialSetupComplete === true || /^[A-Za-z0-9_-]{1,64}$/.test(localStorage.getItem(ID_KEY) ?? "");
+    } catch { return false; }
+}
+
+export const themeOptions = [{ value: "system", label: "시스템" }, { value: "light", label: "밝게" },
+    { value: "dark", label: "어둡게" }, { value: "soft", label: "부드럽게" }] as const;
 export const defaultPrefs: Prefs = {
-    theme: "system", fontSize: 14, enterToSend: false, reasoning: "collapsed", answerOnly: false, expandTools: false, clock: "system", timeStyle: "absolute",
-    notifyDone: false, notifyApproval: false, notifyServer: false, notifySound: false, notifyVibrate: true,
+    theme: "system", fontSize: 14, enterToSend: false, confirmTerminalPaste: true, clock: "system", timeStyle: "absolute",
+    notifyDone: true, notifyApproval: true, notifyServer: true, notifySound: true, notifyVibrate: true, notifyPush: true,
     recentWindows: [...DEFAULT_RECENT_WINDOWS], recentWindow: DEFAULT_RECENT_WINDOW,
+    runningSendMode: "steer",
+    progressVisibility: "collapse",
+    keyboardShortcuts: DEFAULT_SHORTCUTS,
+    sessionVines: true, sessionVineLength: "medium", sessionVineSpeed: "normal", sessionVineGroups: 2,
 };
 const CLOCKS: readonly Prefs["clock"][] = ["system", "24h", "12h"];
 const TIME_STYLES: readonly Prefs["timeStyle"][] = ["absolute", "relative"];
+const RUNNING_SEND_MODES: readonly FollowKind[] = ["queue", "steer", "interrupt"];
+const VINE_LENGTHS: readonly Prefs["sessionVineLength"][] = ["short", "medium", "long"];
+const VINE_SPEEDS: readonly Prefs["sessionVineSpeed"][] = ["slow", "normal", "fast"];
 const PREFS_EVENT = "grove-prefs";
 
 export function loadPrefs(): Prefs {
     try {
-        const prefs = { ...defaultPrefs, ...(JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as Partial<Prefs>) };
+        const { reasoning: _legacyReasoning, ...saved } = JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as Partial<Prefs> & { reasoning?: unknown };
+        const prefs = { ...defaultPrefs, ...saved };
         // 다른 버전이 남긴 알 수 없는 시간 형식은 기본값으로 읽는다(저장값은 사용자가 바꿀 때까지 그대로 둔다).
         if (!CLOCKS.includes(prefs.clock)) prefs.clock = defaultPrefs.clock;
         if (!TIME_STYLES.includes(prefs.timeStyle)) prefs.timeStyle = defaultPrefs.timeStyle;
+        if (!RUNNING_SEND_MODES.includes(prefs.runningSendMode)) prefs.runningSendMode = defaultPrefs.runningSendMode;
+        if (prefs.progressVisibility !== "collapse" && prefs.progressVisibility !== "hidden") prefs.progressVisibility = defaultPrefs.progressVisibility;
+        prefs.keyboardShortcuts = normalizeShortcuts(prefs.keyboardShortcuts);
+        if (typeof prefs.confirmTerminalPaste !== "boolean") prefs.confirmTerminalPaste = defaultPrefs.confirmTerminalPaste;
+        if (typeof prefs.notifyPush !== "boolean") prefs.notifyPush = defaultPrefs.notifyPush;
+        if (typeof prefs.sessionVines !== "boolean") prefs.sessionVines = defaultPrefs.sessionVines;
+        if (!VINE_LENGTHS.includes(prefs.sessionVineLength)) prefs.sessionVineLength = defaultPrefs.sessionVineLength;
+        if (!VINE_SPEEDS.includes(prefs.sessionVineSpeed)) prefs.sessionVineSpeed = defaultPrefs.sessionVineSpeed;
+        if (!VINE_GROUPS.includes(prefs.sessionVineGroups)) prefs.sessionVineGroups = defaultPrefs.sessionVineGroups;
         prefs.recentWindows = normalizeRecentWindows(Array.isArray(prefs.recentWindows) ? prefs.recentWindows : []);
-        if (prefs.recentWindow !== "all" && !isRecentWindow(prefs.recentWindow)) prefs.recentWindow = defaultPrefs.recentWindow;
+        if (!isRecentWindow(prefs.recentWindow)) prefs.recentWindow = defaultPrefs.recentWindow;
         return prefs;
     } catch {
         return defaultPrefs;
@@ -110,11 +148,14 @@ export function applyPrefs(p: Prefs) {
     document.documentElement.dataset.astryxTheme = p.theme === "soft" ? "grove-soft" : "grove";
     // 브라우저 주소창·PWA 상단 색도 테마에 맞춘다. system이면 OS 전환을 따라간다.
     const meta = document.querySelector('meta[name="theme-color"]');
-    const sync = () => meta?.setAttribute("content", THEME_COLOR[effectiveTheme(loadPrefs().theme)]);
-    sync();
+    if (meta) meta.setAttribute("content", THEME_COLOR[effectiveTheme(p.theme)]);
     if (!osWatch && typeof matchMedia === "function") {
         osWatch = matchMedia("(prefers-color-scheme: dark)");
-        osWatch.addEventListener("change", sync);
+        osWatch.addEventListener("change", () => {
+            if (document.documentElement.dataset.theme === "system") {
+                document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLOR[effectiveTheme("system")]);
+            }
+        });
     }
     document.documentElement.style.setProperty("--font-size", `${p.fontSize}px`);
 }

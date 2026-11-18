@@ -47,12 +47,26 @@ impl Fixture {
             .route("/v1/chat/completions", post(openai))
             .route("/v1/messages", post(openai))
             // 연결 확인(AUTH-001): 모델 목록. /bad는 인증 헤더를 오류 본문에 되돌려 비밀 가림을 시험한다.
-            .route("/v1/models", axum::routing::get(|| async { axum::Json(json!({ "data": [{ "id": "fixture-model" }, { "id": "other" }] })) }))
+            .route(
+                "/v1/models",
+                axum::routing::get(|| async {
+                    axum::Json(json!({ "data": [{ "id": "fixture-model" }, { "id": "other" }] }))
+                }),
+            )
             .route(
                 "/bad/models",
                 axum::routing::get(|h: HeaderMap| async move {
-                    let auth = h.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
-                    (StatusCode::UNAUTHORIZED, axum::Json(json!({ "error": { "message": format!("invalid key: {auth}") } })))
+                    let auth = h
+                        .get("authorization")
+                        .and_then(|v| v.to_str().ok())
+                        .unwrap_or("")
+                        .to_string();
+                    (
+                        StatusCode::UNAUTHORIZED,
+                        axum::Json(
+                            json!({ "error": { "message": format!("invalid key: {auth}") } }),
+                        ),
+                    )
                 }),
             )
             .with_state(f.clone());
@@ -73,7 +87,13 @@ impl Fixture {
         }
     }
     pub fn requests(&self) -> Vec<Value> {
-        self.inner.lock().unwrap().requests.iter().map(|r| r.1.clone()).collect()
+        self.inner
+            .lock()
+            .unwrap()
+            .requests
+            .iter()
+            .map(|r| r.1.clone())
+            .collect()
     }
     pub fn headers(&self, i: usize) -> HeaderMap {
         self.inner.lock().unwrap().requests[i].0.clone()
@@ -85,7 +105,11 @@ async fn openai(State(f): State<Fixture>, headers: HeaderMap, body: String) -> R
     let step = {
         let mut i = f.inner.lock().unwrap();
         // 표식이 등록된 요청은 그 대본만 쓴다(비었으면 일반 대본으로 넘어가지 않고 실패).
-        let routed = i.routed.iter_mut().find(|(m, _)| body.contains(m.as_str())).map(|(_, q)| q.pop_front());
+        let routed = i
+            .routed
+            .iter_mut()
+            .find(|(m, _)| body.contains(m.as_str()))
+            .map(|(_, q)| q.pop_front());
         i.requests.push((headers, v));
         match routed {
             Some(step) => step,
@@ -93,37 +117,63 @@ async fn openai(State(f): State<Fixture>, headers: HeaderMap, body: String) -> R
         }
     };
     match step {
-        None => (StatusCode::INTERNAL_SERVER_ERROR, "fixture script exhausted").into_response(),
-        Some(Step::Error(code, msg)) => (StatusCode::from_u16(code).unwrap(), axum::Json(json!({ "error": { "message": msg } }))).into_response(),
+        None => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "fixture script exhausted",
+        )
+            .into_response(),
+        Some(Step::Error(code, msg)) => (
+            StatusCode::from_u16(code).unwrap(),
+            axum::Json(json!({ "error": { "message": msg } })),
+        )
+            .into_response(),
         Some(Step::Frames(frames, delay)) => {
             let stream = async_stream(frames, delay, false);
-            Response::builder().header("content-type", "text/event-stream").body(Body::from_stream(stream)).unwrap()
+            Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(Body::from_stream(stream))
+                .unwrap()
         }
         Some(Step::Hang(frames)) => {
             let stream = async_stream(frames, 0, true);
-            Response::builder().header("content-type", "text/event-stream").body(Body::from_stream(stream)).unwrap()
+            Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(Body::from_stream(stream))
+                .unwrap()
         }
         Some(Step::Gated(frames, mut gate)) => {
-            gate.wait_for(|ready| *ready).await.expect("fixture gate sender");
-            Response::builder().header("content-type", "text/event-stream").body(Body::from_stream(async_stream(frames, 0, false))).unwrap()
+            gate.wait_for(|ready| *ready)
+                .await
+                .expect("fixture gate sender");
+            Response::builder()
+                .header("content-type", "text/event-stream")
+                .body(Body::from_stream(async_stream(frames, 0, false)))
+                .unwrap()
         }
     }
 }
 
-fn async_stream(frames: Vec<String>, delay: u64, hang: bool) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>> {
-    futures_util::stream::unfold((frames.into_iter(), hang, false), move |(mut it, hang, first)| async move {
-        if first && delay > 0 {
-            tokio::time::sleep(Duration::from_millis(delay)).await;
-        }
-        match it.next() {
-            Some(f) => Some((Ok(Bytes::from(format!("data: {f}\n\n"))), (it, hang, true))),
-            None if hang => {
-                tokio::time::sleep(Duration::from_secs(3600)).await;
-                None
+fn async_stream(
+    frames: Vec<String>,
+    delay: u64,
+    hang: bool,
+) -> impl futures_util::Stream<Item = Result<Bytes, std::io::Error>> {
+    futures_util::stream::unfold(
+        (frames.into_iter(), hang, false),
+        move |(mut it, hang, first)| async move {
+            if first && delay > 0 {
+                tokio::time::sleep(Duration::from_millis(delay)).await;
             }
-            None => None,
-        }
-    })
+            match it.next() {
+                Some(f) => Some((Ok(Bytes::from(format!("data: {f}\n\n"))), (it, hang, true))),
+                None if hang => {
+                    tokio::time::sleep(Duration::from_secs(3600)).await;
+                    None
+                }
+                None => None,
+            }
+        },
+    )
 }
 
 // ---- OpenAI 형식 대본 도우미 ----
@@ -141,7 +191,8 @@ fn text_frames(t: &str) -> Vec<String> {
     vec![
         json!({ "choices": [{ "delta": { "content": t } }] }).to_string(),
         json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] }).to_string(),
-        json!({ "choices": [], "usage": { "prompt_tokens": 11, "completion_tokens": 3 } }).to_string(),
+        json!({ "choices": [], "usage": { "prompt_tokens": 11, "completion_tokens": 3 } })
+            .to_string(),
         "[DONE]".into(),
     ]
 }
@@ -160,7 +211,10 @@ pub fn reasoning_text(reasoning: &str, t: &str) -> Step {
 }
 
 pub fn slow_text(parts: &[&str], delay_ms: u64) -> Step {
-    let mut frames: Vec<String> = parts.iter().map(|p| json!({ "choices": [{ "delta": { "content": p } }] }).to_string()).collect();
+    let mut frames: Vec<String> = parts
+        .iter()
+        .map(|p| json!({ "choices": [{ "delta": { "content": p } }] }).to_string())
+        .collect();
     frames.push(json!({ "choices": [{ "delta": {}, "finish_reason": "stop" }] }).to_string());
     frames.push("[DONE]".into());
     Step::Frames(frames, delay_ms)
@@ -171,7 +225,11 @@ pub fn tool_calls(calls: &[(&str, &str, Value)]) -> Step {
     for (i, (id, name, args)) in calls.iter().enumerate() {
         let a = args.to_string();
         // 두 조각으로 나눠 보내되 UTF-8 문자 경계에서 자른다.
-        let mid = a.char_indices().nth(a.chars().count() / 2).map(|(i, _)| i).unwrap_or(0);
+        let mid = a
+            .char_indices()
+            .nth(a.chars().count() / 2)
+            .map(|(i, _)| i)
+            .unwrap_or(0);
         let (h1, h2) = a.split_at(mid);
         frames.push(json!({ "choices": [{ "delta": { "tool_calls": [{ "index": i, "id": id, "type": "function", "function": { "name": name, "arguments": h1 } }] } }] }).to_string());
         frames.push(json!({ "choices": [{ "delta": { "tool_calls": [{ "index": i, "function": { "arguments": h2 } }] } }] }).to_string());
@@ -182,9 +240,14 @@ pub fn tool_calls(calls: &[(&str, &str, Value)]) -> Step {
 }
 
 pub fn truncated() -> Step {
-    Step::Frames(vec![json!({ "choices": [{ "delta": { "content": "부분" } }] }).to_string()], 0)
+    Step::Frames(
+        vec![json!({ "choices": [{ "delta": { "content": "부분" } }] }).to_string()],
+        0,
+    )
 }
 
 pub fn hang_after(t: &str) -> Step {
-    Step::Hang(vec![json!({ "choices": [{ "delta": { "content": t } }] }).to_string()])
+    Step::Hang(vec![
+        json!({ "choices": [{ "delta": { "content": t } }] }).to_string(),
+    ])
 }

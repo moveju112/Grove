@@ -18,8 +18,6 @@ pub struct Config {
     /// 정적 웹앱 경로(없으면 웹 제공 안 함).
     pub web_dir: Option<PathBuf>,
     pub web_base: String,
-    /// 실험용 모델 도구 루프 허용(서버 opt-in).
-    pub enable_tool_loop: bool,
     /// 승인 요청 만료(초).
     pub approval_ttl_secs: i64,
     /// 예약 실행 점검 주기(ms). 기본 15초.
@@ -55,7 +53,6 @@ impl Config {
             tls_terminated: std::env::var("GROVE_TLS_TERMINATED").is_ok_and(|v| v == "1"),
             web_dir,
             web_base: crate::web::normalize_base(&std::env::var("GROVE_WEB_BASE").unwrap_or_default())?,
-            enable_tool_loop: std::env::var("GROVE_ENABLE_TOOL_LOOP").is_ok_and(|v| v == "1"),
             approval_ttl_secs: std::env::var("GROVE_APPROVAL_TTL_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(30 * 60),
             scheduler_tick_ms: std::env::var("GROVE_SCHEDULER_TICK_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(15_000).clamp(100, 600_000),
             remote_watch_insecure_loopback: std::env::var("GROVE_REMOTE_WATCH_INSECURE_LOOPBACK").is_ok_and(|v| v == "1"),
@@ -125,7 +122,6 @@ mod tests {
             tls_terminated: false,
             web_dir: None,
             web_base: "/".into(),
-            enable_tool_loop: false,
             approval_ttl_secs: 60,
             scheduler_tick_ms: 15_000,
             remote_watch_insecure_loopback: false, gh_command: "gh".into(),

@@ -92,8 +92,8 @@ export const groveTheme = {
     "--_astryx-pre-tempo-duration-slow": "700ms",
     "--_astryx-pre-tempo-duration-slow-max": "935ms",
     "--_astryx-motion-tempo": "1",
-    "--font-family-body": "\"Pretendard\", sans-serif",
-    "--font-family-heading": "\"Pretendard\", sans-serif",
+    "--font-family-body": "\"Pretendard\", -apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Segoe UI\", \"Malgun Gothic\", \"Noto Sans KR\", system-ui, sans-serif",
+    "--font-family-heading": "\"Pretendard\", -apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Segoe UI\", \"Malgun Gothic\", \"Noto Sans KR\", system-ui, sans-serif",
     "--font-family-code": "ui-monospace, \"SF Mono\", Monaco, Consolas, \"Liberation Mono\", \"Courier New\", monospace",
     "--color-syntax-keyword": "light-dark(#6b187c, #efa8ff)",
     "--color-syntax-string": "light-dark(#0b5615, #a4d6a3)",
@@ -735,8 +735,8 @@ export const groveTheme = {
         },
         "value": {
           "tokens": {
-            "--font-family-body": "\"Pretendard\", sans-serif",
-            "--font-family-heading": "\"Pretendard\", sans-serif",
+            "--font-family-body": "\"Pretendard\", -apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Segoe UI\", \"Malgun Gothic\", \"Noto Sans KR\", system-ui, sans-serif",
+            "--font-family-heading": "\"Pretendard\", -apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Segoe UI\", \"Malgun Gothic\", \"Noto Sans KR\", system-ui, sans-serif",
             "--text-body-size": "var(--font-size)",
             "--text-supporting-size": "0.85em",
             "--text-supporting-leading": "inherit",
@@ -760,11 +760,11 @@ export const groveTheme = {
       },
       "body": {
         "family": "Pretendard",
-        "fallbacks": "sans-serif"
+        "fallbacks": "-apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Segoe UI\", \"Malgun Gothic\", \"Noto Sans KR\", system-ui, sans-serif"
       },
       "heading": {
         "family": "Pretendard",
-        "fallbacks": "sans-serif",
+        "fallbacks": "-apple-system, BlinkMacSystemFont, \"Apple SD Gothic Neo\", \"Segoe UI\", \"Malgun Gothic\", \"Noto Sans KR\", system-ui, sans-serif",
         "weights": {
           "3": "bold",
           "4": "bold"

@@ -2,9 +2,11 @@ import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { apiCall, ensureProfile, ensureProjects, login, openDetails } from "./helpers";
 import type { Layout } from "../app/state/layout";
+import { projectLayoutKey } from "../app/state/projectLayout";
+import { workspaceTabs, workspaceTabsKey } from "../app/state/workspaceTabs";
 
 // RECENT-001: 원본 최근 탭의 시간 범위·숨김 후 재표시·분할 묶음·경과 시간 흐름을 유지한다.
-test("시간 범위 밖 항목은 기본 4시간에서 빠지고 넓은 범위·전체·고정에서는 보이며 선택을 기억한다", async ({ page }) => {
+test("시간 범위 밖 항목은 기본 4시간에서 빠지고 넓은 범위·고정에서는 보이며 선택을 기억한다", async ({ page }) => {
     const { a } = await ensureProjects();
     await ensureProfile();
     const old = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title: `range-old-${randomUUID()}` });
@@ -14,25 +16,37 @@ test("시간 범위 밖 항목은 기본 4시간에서 빠지고 넓은 범위·
     await login(page);
     const recent = page.getByRole("region", { name: "최근", exact: true });
     const ranges = recent.getByRole("group", { name: "시간 범위" });
+    await expect(ranges.getByRole("button", { name: "최근 전체 범위" })).toHaveCount(0);
     await expect(ranges.getByRole("button", { name: "최근 4시간 범위" })).toHaveAttribute("aria-pressed", "true");
     const row = recent.getByTestId("recent-item").filter({ hasText: old.title });
     await expect(row).toHaveCount(0);
     await ranges.getByRole("button", { name: "최근 12시간 범위" }).click();
     await expect(row).toHaveCount(1);
-    await expect(row.getByTestId("recent-time")).toHaveText(/5시간 전/);
+    await expect(row.getByTestId("recent-time")).toHaveText("5h");
     await page.reload();
     await expect(recent.getByRole("group", { name: "시간 범위" }).getByRole("button", { name: "최근 12시간 범위" })).toHaveAttribute("aria-pressed", "true");
     await expect(row).toHaveCount(1);
     // 고정 항목은 범위와 무관하게 보인다.
-    await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "고정", exact: true }).click();
+    const pinned = (await apiCall<{ items: { id: string; revision: number; resource_id: string }[] }>("GET", "/recent?filter=all&limit=200")).items.find((item) => item.resource_id === old.id)!;
+    const updated = await apiCall<{ revision: number }>("PATCH", `/recent/${pinned.id}`, { expected_revision: pinned.revision, pinned: true });
     await ranges.getByRole("button", { name: "최근 30분 범위" }).click();
     await expect(row).toHaveCount(1);
-    await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "고정 해제", exact: true }).click();
+    await apiCall("PATCH", `/recent/${pinned.id}`, { expected_revision: updated.revision, pinned: false });
     await expect(row).toHaveCount(0);
-    await ranges.getByRole("button", { name: "최근 전체 범위" }).click();
+    await ranges.getByRole("button", { name: "최근 12시간 범위" }).click();
     await expect(row).toHaveCount(1);
+});
+
+test("모바일에서 기존 전체 선택은 4시간으로 돌아오고 시간 범위만 보인다", async ({ page }, info) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.addInitScript(() => localStorage.setItem("grove.device.prefs", JSON.stringify({ recentWindow: "all" })));
+    await login(page);
+    await page.getByRole("button", { name: "사이드바", exact: true }).click();
+    const ranges = page.getByRole("region", { name: "최근", exact: true }).getByRole("group", { name: "시간 범위" });
+    await expect(ranges.getByRole("button")).toHaveCount(3);
+    await expect(ranges.getByRole("button", { name: "최근 전체 범위" })).toHaveCount(0);
+    await expect(ranges.getByRole("button", { name: "최근 4시간 범위" })).toHaveAttribute("aria-pressed", "true");
+    await page.screenshot({ path: info.outputPath("recent-mobile.png"), animations: "disabled" });
 });
 
 test("다른 기기가 먼저 고정해도 이 기기의 숨김은 오류 없이 그 필드만 다시 적용하고 고정을 유지한다(RECENT-006)", async ({ page }) => {
@@ -54,8 +68,7 @@ test("다른 기기가 먼저 고정해도 이 기기의 숨김은 오류 없이
         }
         await route.continue();
     });
-    await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "최근에서 숨기기" }).click();
+    await row.getByRole("button", { name: "최근에서 숨기기", exact: true }).click();
     await expect(row).toHaveCount(0);
     expect(sent).toHaveLength(2);
     expect(sent[1]).toMatchObject({ hidden: true });
@@ -84,14 +97,25 @@ test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 세션은 
         { type: "leaf", id: "l", active_tab: "t1", tabs: [{ id: "t1", kind: "session", project_id: a.id, resource_id: one.id, title: one.title }] },
         { type: "leaf", id: "r", active_tab: "t2", tabs: [{ id: "t2", kind: "session", project_id: a.id, resource_id: two.id, title: two.title }] },
     ] } };
-    await apiCall("PUT", `/layouts/${device}`, { expected_revision: 0, layout });
-    await page.addInitScript((id) => localStorage.setItem("grove.device.id", id), device);
+    await apiCall("PUT", `/layouts/${projectLayoutKey(device, a.id)}`, { expected_revision: 0, layout });
+    const sharedPath = `/layouts/${workspaceTabsKey(a.id)}`;
+    const shared = await apiCall<{ revision: number }>("GET", sharedPath);
+    await apiCall("PUT", sharedPath, { expected_revision: shared.revision, layout: workspaceTabs(layout) });
+    await page.addInitScript(({ device, project }) => {
+        localStorage.setItem("grove.device.id", device);
+        localStorage.setItem(`grove.layout.selected.${device}`, project);
+    }, { device, project: a.id });
     await login(page);
     const recent = page.getByRole("region", { name: "최근", exact: true });
     const group = recent.getByTestId("recent-split-group");
     await expect(group.getByTestId("recent-item")).toHaveCount(2);
     await expect(group).toContainText(one.title);
     await expect(group).toContainText(two.title);
+    const row = recent.getByTestId("recent-item").filter({ hasText: hidden.title });
+    await expect(row).toBeVisible();
+    const titleStart = (id: string) => recent.locator(`[data-testid="recent-item"][data-session="${id}"]`)
+        .locator("[data-grove-button-content]").evaluate((node) => node.getBoundingClientRect().x);
+    expect(await titleStart(one.id)).toBe(await titleStart(hidden.id));
     const colors = await group.getByTestId("recent-split-surface").evaluate((node) => {
         const context = document.createElement("canvas").getContext("2d")!;
         const rgb = (color: string) => {
@@ -108,7 +132,7 @@ test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 세션은 
         const background = rgb(style.backgroundColor);
         return {
             blue: background[2]! > background[0]!,
-            border: parseFloat(style.borderInlineStartWidth),
+            border: parseFloat(getComputedStyle(node, "::after").borderInlineStartWidth),
             contrasts: [style.color, style.getPropertyValue("--muted")].map((color) => {
                 const values = [luminance(rgb(color)), luminance(background)].sort((a, b) => b - a);
                 return (values[0]! + 0.05) / (values[1]! + 0.05);
@@ -120,9 +144,7 @@ test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 세션은 
     expect(colors.contrasts.every((contrast) => contrast >= 4.5), JSON.stringify(colors)).toBe(true);
     await page.screenshot({ path: info.outputPath(`recent-split-${theme}.png`) });
 
-    const row = recent.getByTestId("recent-item").filter({ hasText: hidden.title });
-    await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "최근에서 숨기기" }).click();
+    await row.getByRole("button", { name: "최근에서 숨기기", exact: true }).click();
     await expect(row).toHaveCount(0);
     await apiCall("POST", `/sessions/${hidden.id}/messages`, { text: "다시 보여 줘" });
     await expect(row).toHaveCount(1);

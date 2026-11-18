@@ -26,6 +26,31 @@ async fn repo() -> (TestServer, String, std::path::PathBuf) {
 }
 
 #[tokio::test]
+async fn status_pages_share_the_viewed_snapshot_but_writes_always_check_live_files() {
+    let (s, pid, root) = repo().await;
+    std::fs::write(root.join("a.txt"), "viewed\n").unwrap();
+    for i in 0..121 { std::fs::write(root.join(format!("new-{i:03}")), "new").unwrap(); }
+    let (_, summary) = s.get(&format!("/api/v1/projects/{pid}/git/status?summary=true")).await;
+    let fingerprint = summary["fingerprint"].as_str().unwrap();
+    assert_eq!(summary["counts"]["unstaged"], 122);
+    assert!(summary.get("entries").is_none());
+    std::fs::write(root.join("a.txt"), "changed after viewing\n").unwrap();
+    let (_, page) = s.get(&format!("/api/v1/projects/{pid}/git/status?staged=false&limit=50&offset=50&snapshot={fingerprint}")).await;
+    assert_eq!(page["entries"].as_array().unwrap().len(), 50);
+    assert_eq!(page["total"], 122);
+    assert_eq!(page["fingerprint"], fingerprint);
+    let (_, filtered) = s.get(&format!("/api/v1/projects/{pid}/git/status?staged=false&limit=50&filter=new-120&snapshot={fingerprint}")).await;
+    assert_eq!(filtered["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(filtered["entries"][0]["path"], "new-120");
+    let (status, rejected) = s.post(&format!("/api/v1/projects/{pid}/git/stage"), json!({ "paths": ["a.txt"], "expected_fingerprint": fingerprint })).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{rejected}");
+    assert_eq!(rejected["error"]["code"], "stale_diff");
+    assert_eq!(sh(&root, &["diff", "--cached", "--name-only"]), "");
+    let (_, fresh) = s.get(&format!("/api/v1/projects/{pid}/git/status?summary=true")).await;
+    assert_ne!(fresh["fingerprint"], fingerprint);
+}
+
+#[tokio::test]
 async fn status_diff_stage_commit_with_stale_protection() {
     let (s, pid, root) = repo().await;
     std::fs::write(root.join("a.txt"), "one\ntwo\n").unwrap();

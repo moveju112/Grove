@@ -3,7 +3,7 @@
 
 import type { EventRecord } from "./generated";
 import { parseContract } from "./validation";
-import { accessToken, checkProtocol, refresh, setCapabilities } from "./client";
+import { accessToken, checkProtocol, isLoggedIn, refresh, setCapabilities } from "./client";
 import { Cursor, FrameParser, backoff } from "../state/events";
 import { transportFetch } from "./transport";
 
@@ -90,6 +90,8 @@ export class EventStream {
                 requireActive();
                 checkProtocol(resp);
                 if (resp.status === 401) {
+                    // 갱신 서버의 일시 오류로 이전 access만 남았다면 backoff로 복구한다.
+                    if (isLoggedIn()) throw new Error("events authentication check unavailable");
                     // refresh도 거부됨: 만료. 재시도해도 소용없으므로 멈춘다(로그인 화면이 이유를 안내한다).
                     this.h.onStatus("auth_expired");
                     break;

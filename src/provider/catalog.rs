@@ -86,6 +86,9 @@ pub async fn list_models(profile: &Profile) -> Result<Vec<AvailableModel>, Provi
 }
 
 async fn fetch(profile: &Profile) -> Result<Vec<AvailableModel>, ProviderError> {
+    if profile.protocol == super::codex_oauth::PROTOCOL {
+        return super::codex_oauth::list_models().await;
+    }
     if super::cli::is_cli(&profile.protocol) {
         return super::cli::list_models(&profile.protocol).await;
     }

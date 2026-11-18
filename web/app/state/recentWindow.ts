@@ -18,9 +18,9 @@ export function normalizeRecentWindows(windows: readonly unknown[]): RecentWindo
     return picked.length > 0 ? picked : [...DEFAULT_RECENT_WINDOWS];
 }
 
-/// 고른 범위가 목록에서 빠졌으면 그보다 넓은 첫 범위, 없으면 가장 넓은 범위를 쓴다. "all"은 그대로.
-export function effectiveRecentWindow(selected: RecentWindow | "all", windows: readonly RecentWindow[]): RecentWindow | "all" {
-    if (selected === "all" || windows.includes(selected)) return selected;
+/// 고른 범위가 목록에서 빠졌으면 그보다 넓은 첫 범위, 없으면 가장 넓은 범위를 쓴다.
+export function effectiveRecentWindow(selected: RecentWindow, windows: readonly RecentWindow[]): RecentWindow {
+    if (windows.includes(selected)) return selected;
     const rank = RECENT_WINDOW_OPTIONS.indexOf(selected);
     return windows.find((o) => RECENT_WINDOW_OPTIONS.indexOf(o) >= rank) ?? windows[windows.length - 1]!;
 }
@@ -33,8 +33,7 @@ export function recentSince(window: RecentWindow, now: Date): string {
     return new Date(at).toISOString();
 }
 
-export function recentWindowLabel(window: RecentWindow | "all"): string {
-    if (window === "all") return "전체";
+export function recentWindowLabel(window: RecentWindow): string {
     if (window === "today") return "오늘";
     const m = MINUTES[window];
     return m < 60 ? `${m}분` : `${m / 60}시간`;

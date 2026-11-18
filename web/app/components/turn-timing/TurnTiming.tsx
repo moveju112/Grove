@@ -7,12 +7,12 @@ import type { Turn } from "../../api/generated";
 import { deliveryTiming } from "../../state/deliveryTiming";
 import { usePaneVisible } from "../../state/paneVisibility";
 import { useLive, useQuery } from "../../state/store";
-import { elapsedMs, seconds, startTimingTimer, type TimingSample } from "./model";
+import { elapsedMs, formatDuration, startTimingTimer, type TimingSample } from "./model";
 import { useTimingEnabled } from "./preference";
 import { DetailDialog } from "../ui/Controls";
 import { Icon } from "../icons";
 
-type Props = { sessionId: string; turn: Turn; messagesReady: boolean };
+type Props = { sessionId: string; turn: Turn; messagesReady: boolean; showStatus?: boolean; compact?: boolean };
 type Sample = TimingSample & { id: string; status: string; updated_at: string };
 const ACTIVE = ["queued", "running", "awaiting_approval"];
 
@@ -23,7 +23,7 @@ export function TurnTiming(props: Props) {
     return enabled && visible ? <EnabledTurnTiming key={props.turn.id} {...props} /> : null;
 }
 
-function EnabledTurnTiming({ sessionId, turn, messagesReady }: Props) {
+function EnabledTurnTiming({ sessionId, turn, messagesReady, showStatus = true, compact = false }: Props) {
     const connected = useLive((live) => live.status === "live");
     const q = useQuery<Sample>(`turns:${sessionId}:timing:${turn.id}`, async () => {
         const detail = await api.get<Omit<Sample, "receivedAt">>(`/turns/${turn.id}`);
@@ -59,17 +59,17 @@ function EnabledTurnTiming({ sessionId, turn, messagesReady }: Props) {
     const retry = q.error && connected ? <GroveButton variant="secondary" density="compact" onClick={q.reload}>시간 다시 확인</GroveButton> : null;
     if (!sample) return q.error ? <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="turn-timing">턴 시간을 확인하지 못했습니다{retry}</GroveText> : null;
     const total = elapsedMs(sample, now, advance);
-    return <><TimingSummary sample={sample} total={total} connected={connected && !q.error} deliveryMs={deliveryMs} />{retry}</>;
+    return <><TimingSummary sample={sample} total={total} connected={connected && !q.error} deliveryMs={deliveryMs} showStatus={showStatus} compact={compact} />{retry}</>;
 }
 
-export function TimingSummary({ sample, total, connected, deliveryMs = null }: {
-    sample: Sample; total: number; connected: boolean; deliveryMs?: number | null;
+export function TimingSummary({ sample, total, connected, deliveryMs = null, showStatus = true, compact = false }: {
+    sample: Sample; total: number; connected: boolean; deliveryMs?: number | null; showStatus?: boolean; compact?: boolean;
 }) {
-    const status = STATUS[sample.status] ?? "";
+    const status = showStatus ? STATUS[sample.status] ?? "" : "";
     return <GroveText as="div" display="block" type="supporting" color="secondary" data-testid="turn-timing" data-elapsed-ms={Math.round(total)} data-running={sample.timing.running}>
-        <DetailDialog label="요청 시간 상세" title="요청 시간" showExpand={false} trigger={<>
-            <Icon name="clock" size={14} />
-            {!sample.timing.running && "요청 "}{seconds(total)}{status}
+        <DetailDialog label="요청 시간 상세" title="요청 시간" showExpand={false} appearance={compact ? "choice" : "disclosure"} trigger={<>
+            {!compact && <Icon name="clock" size={14} />}
+            {sample.timing.running ? compact ? "" : "경과 " : "소요 시간 "}{formatDuration(total)}{status}
             {sample.timing.running && !connected && " · 연결 끊김·마지막 확인 값"}
         </>}>
             <TimingBreakdown sample={sample} total={total} connected={connected} deliveryMs={deliveryMs} />
@@ -89,11 +89,11 @@ export function TimingBreakdown({ sample, total, connected, deliveryMs = null }:
     return (
         <HintText as="p" display="block"
             hint="서버가 기록한 시작·종료 시각 기준 총 경과입니다. 큐·승인·질문 대기를 포함하며 순수 실행 시간이 아닙니다.">
-            {t.running ? "총 경과" : "마지막 요청 총 경과"} {seconds(total)}{status}
+            {t.running ? "총 경과" : "마지막 요청 총 경과"} {formatDuration(total)}{status}
             {t.running ? " · 대기 포함" : <>
-                {t.provider_ms != null ? ` · 공급자 ${seconds(t.provider_ms)} · 기타 ${seconds(t.other_ms ?? 0)}` : ` · 모델·처리 ${seconds(t.model_and_other_ms)}(공급자 미측정)`}
-                {t.tool_ms > 0 && ` · 도구 ${seconds(t.tool_ms)}`}
-                {t.approval_wait_ms > 0 && ` · 승인 대기 ${seconds(t.approval_wait_ms)}`}
+                {t.provider_ms != null ? ` · 공급자 ${formatDuration(t.provider_ms)} · 기타 ${formatDuration(t.other_ms ?? 0)}` : ` · 모델·처리 ${formatDuration(t.model_and_other_ms)}(공급자 미측정)`}
+                {t.tool_ms > 0 && ` · 도구 ${formatDuration(t.tool_ms)}`}
+                {t.approval_wait_ms > 0 && ` · 승인 대기 ${formatDuration(t.approval_wait_ms)}`}
             </>}
             {t.running && !connected && " · 연결 끊김·마지막 확인 값"}
             {deliveryMs != null && <HintText data-testid="ui-delivery" hint="SSE 수신 이후 조회·화면 반영 시간. 네트워크 편도 지연·이전 연결 끊김 시간은 포함하지 않습니다."> · 화면 반영(수신 후) {Math.round(deliveryMs)}ms</HintText>}

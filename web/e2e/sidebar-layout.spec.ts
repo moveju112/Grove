@@ -9,12 +9,6 @@ for (const width of [390, 1280]) {
                 await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
                 await page.route("**/api/v1/projects", (route) => route.fulfill({ json: [] }));
                 await page.route("**/api/v1/recent?*", (route) => route.fulfill({ json: { items: [], total: 0, next_offset: null } }));
-                await page.route("**/api/v1/usage/capacity", (route) => route.fulfill({ json: {
-                    limits: { max_active: 4 }, server: { running: 0, waiting: 0 },
-                } }));
-                await page.route("**/api/v1/usage?*", (route) => route.fulfill({ json: {
-                    rows: [], total: { input_tokens: 0, output_tokens: 0 }, pricing_versions: [],
-                } }));
                 await login(page);
                 await page.evaluate(() => document.fonts.ready);
                 expect(await page.evaluate(() => [...document.fonts].some((font) => font.family === "Pretendard" && font.status === "loaded"))).toBe(true);
@@ -32,9 +26,37 @@ for (const width of [390, 1280]) {
                 const ranges = await side.getByRole("group", { name: "시간 범위" }).boundingBox();
                 expect(projectHead!.x).toBe(recentHead!.x);
                 expect(Math.abs(recentHead!.y + recentHead!.height / 2 - ranges!.y - ranges!.height / 2)).toBeLessThan(2);
-                const icons = await side.getByTestId("sidebar-navigation").locator('button[data-variant="navigation"] svg').evaluateAll((els) => els.map((el) => el.getBoundingClientRect().x));
-                expect(icons.length).toBeGreaterThan(0);
-                expect(icons.every((x) => x === projectHead!.x)).toBe(true);
+                const navigation = width < 760 ? page.getByTestId("mobile-drawer-left") : side;
+                const add = navigation.getByRole("button", { name: "프로젝트·폴더 추가", exact: true });
+                await expect(add).toHaveCount(1);
+                if (width < 760) {
+                    await expect(side.getByRole("button", { name: "프로젝트·폴더 추가", exact: true })).toHaveCount(0);
+                    await expect(side.getByRole("button", { name: "설정", exact: true })).toHaveCount(0);
+                    await expect(side.getByRole("button", { name: "사용량", exact: true })).toHaveText("사용량");
+                } else {
+                    const settings = side.getByRole("button", { name: "설정", exact: true });
+                    const usage = side.getByRole("button", { name: "사용량", exact: true });
+                    const options = side.getByRole("button", { name: "프로젝트 목록 옵션", exact: true });
+                    await expect(page.getByRole("banner").getByRole("button", { name: "설정", exact: true })).toHaveCount(0);
+                    await expect(usage).toHaveText("");
+                    const [plus, more, meter, gear, collapse] = await Promise.all(
+                        [add, options, usage, settings, toggle].map((button) => button.boundingBox()),
+                    );
+                    expect(plus!.x).toBeGreaterThan(projectHead!.x);
+                    expect(plus!.x + plus!.width).toBeLessThanOrEqual(more!.x);
+                    expect(Math.abs(plus!.y + plus!.height / 2 - more!.y - more!.height / 2)).toBeLessThan(2);
+                    expect(meter!.y).toBe(gear!.y);
+                    expect(gear!.y).toBe(collapse!.y);
+                    expect(meter!.x).toBeLessThan(gear!.x);
+                    expect(gear!.x).toBeLessThan(collapse!.x);
+
+                    await usage.click();
+                    const dialog = page.getByRole("dialog", { name: "사용량", exact: true });
+                    await expect(dialog).toBeVisible();
+                    await page.keyboard.press("Escape");
+                    await expect(dialog).toBeHidden();
+                    await expect(usage).toBeFocused();
+                }
                 expect(await side.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
                 await page.screenshot({ path: info.outputPath("empty.png") });
 
@@ -51,11 +73,9 @@ for (const width of [390, 1280]) {
                 await expect(row).toBeVisible();
                 expect(await side.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
                 const bounds = await row.boundingBox();
-                expect(bounds!.height).toBeGreaterThanOrEqual(32);
-                expect(bounds!.height).toBeLessThanOrEqual(40);
-                await row.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-                await expect(page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "고정", exact: true })).toBeVisible();
-                await page.keyboard.press("Escape");
+                expect(bounds!.height).toBe(24);
+                await expect(row.getByRole("button", { name: "최근에서 숨기기", exact: true })).toBeVisible();
+                await expect(row.getByRole("button")).toHaveCount(2);
                 await page.screenshot({ path: info.outputPath("populated.png") });
             });
         }

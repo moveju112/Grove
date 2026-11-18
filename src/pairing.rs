@@ -1,7 +1,7 @@
-//! 만료 없는 링크 + 별도 비밀번호 + 소유자의 기기별 승인. 링크 하나로 기기 한 대만 등록한다.
+//! 만료 없는 링크 + 별도 비밀번호 + 등록 기기 또는 로컬 CLI의 승인.
 
 use crate::App;
-use crate::auth::{self, Owner};
+use crate::auth::{self, Principal};
 use crate::error::{ApiError, ApiResult};
 use crate::util::{ct_eq, fmt_time, new_id, random_secret, sha256_hex};
 use axum::Json;
@@ -76,11 +76,11 @@ fn no_store(mut response: Response) -> Response {
 }
 
 fn unavailable() -> ApiError {
-    ApiError::new(StatusCode::GONE, "pairing_unavailable", "페어링 링크가 만료되었거나 폐기·사용되었습니다. 소유자에게 재발급을 요청하세요")
+    ApiError::new(StatusCode::GONE, "pairing_unavailable", "페어링 링크가 만료됐거나 이미 사용됐어요. 새 링크를 발급받으세요.")
 }
 
 fn locked() -> ApiError {
-    ApiError::new(StatusCode::LOCKED, "pairing_locked", "비밀번호를 5회 틀려 링크가 잠겼습니다. 소유자에게 재발급을 요청하세요")
+    ApiError::new(StatusCode::LOCKED, "pairing_locked", "비밀번호를 5번 틀려 링크가 잠겼어요. 새 링크를 발급받으세요.")
 }
 
 struct Link {
@@ -105,25 +105,25 @@ fn active_link(c: &Connection, id: &str, secret: &str, now: &str) -> ApiResult<L
     }
     if lock.is_some() { return Err(locked()); }
     let (Some(password_hash), Some(salt)) = (hash, salt) else { return Err(unavailable()); };
-    if !auth::verify_row(c, &issuer, None, now)?.is_owner { return Err(unavailable()); }
+    auth::verify_row(c, &issuer, None, now).map_err(|_| unavailable())?;
     Ok(Link { issuer, password_hash, salt })
 }
 
 pub async fn create(
-    State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Json(body): Json<CreatePairing>,
+    State(app): State<App>, p: Principal, headers: HeaderMap, Json(body): Json<CreatePairing>,
 ) -> ApiResult<Response> {
     let name = device_name(&body.name)?;
     if body.password.chars().count() < 10 || body.password.len() > 256 {
         return Err(ApiError::invalid("비밀번호는 10자 이상, 256바이트 이하여야 합니다"));
     }
-    // 소유자·요청 키마다 고유한 salt. 재전송 hash에도 빠른 비밀번호 hash를 남기지 않는다.
+    // 등록 기기·요청 키마다 고유한 salt. 재전송 hash에도 빠른 비밀번호 hash를 남기지 않는다.
     let salt = format!("grove-pairing:{}:{}", p.root_id, crate::idem::key_from(&headers)?);
     let password = password_hash(body.password, salt.clone()).await?;
     let hash = crate::idem::body_hash("pairing.create", &json!({ "name": name, "replace_id": body.replace_id, "password": password }));
     let issuer = p.root_id.clone();
     let response = crate::idem::run_redacted(&app, &p.clone(), &headers, &hash, &["code"], move |tx, now| {
         if let Some(id) = body.replace_id {
-            let n = tx.execute("UPDATE pairings SET revoked_at=COALESCE(revoked_at,?3) WHERE id=?1 AND issuer_id=?2", params![id, issuer, now])?;
+            let n = tx.execute("UPDATE pairings SET revoked_at=COALESCE(revoked_at,?2) WHERE id=?1", params![id, now])?;
             if n != 1 { return Err(ApiError::not_found("페어링 링크가 없습니다")); }
             crate::audit::record(tx, now, &p, "pairing.revoked", &id, json!({}))?;
         }
@@ -147,13 +147,13 @@ pub async fn create(
     Ok(no_store(response))
 }
 
-pub async fn list(State(app): State<App>, Owner(p): Owner) -> ApiResult<Json<Vec<PairingInfo>>> {
+pub async fn list(State(app): State<App>, _p: Principal) -> ApiResult<Json<Vec<PairingInfo>>> {
     let now = fmt_time(app.clock.now());
     let rows = app.db.call(move |c| {
         let mut statement = c.prepare(
-            "SELECT id,name,created_at,expires_at,revoked_at,consumed_at,device_id,failed_attempts,locked_at FROM pairings WHERE issuer_id=?1 ORDER BY created_at DESC,id DESC LIMIT 100",
+            "SELECT id,name,created_at,expires_at,revoked_at,consumed_at,device_id,failed_attempts,locked_at FROM pairings ORDER BY created_at DESC,id DESC LIMIT 100",
         )?;
-        let mut rows = statement.query_map([p.root_id], |r| Ok(PairingInfo {
+        let mut rows = statement.query_map([], |r| Ok(PairingInfo {
             id: r.get(0)?, name: r.get(1)?, created_at: r.get(2)?, expires_at: r.get(3)?,
             revoked_at: r.get(4)?, consumed_at: r.get(5)?, device_id: r.get(6)?,
             failed_attempts: r.get(7)?, locked_at: r.get(8)?, requests: vec![],
@@ -172,12 +172,12 @@ pub async fn list(State(app): State<App>, Owner(p): Owner) -> ApiResult<Json<Vec
     Ok(Json(rows))
 }
 
-pub async fn revoke(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
+pub async fn revoke(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
     let hash = crate::idem::body_hash("pairing.revoke", &json!({ "id": id }));
     crate::idem::run(&app, &p.clone(), &headers, &hash, move |tx, now| {
         let n = tx.execute(
-            "UPDATE pairings SET revoked_at=COALESCE(revoked_at,?3) WHERE id=?1 AND issuer_id=?2",
-            params![id, p.root_id, now],
+            "UPDATE pairings SET revoked_at=COALESCE(revoked_at,?2) WHERE id=?1",
+            params![id, now],
         )?;
         if n != 1 { return Err(ApiError::not_found("페어링 링크가 없습니다")); }
         crate::audit::record(tx, now, &p, "pairing.revoked", &id, json!({}))?;
@@ -233,7 +233,7 @@ async fn redeem_inner(app: App, headers: HeaderMap, body: RedeemPairing) -> ApiR
             "SELECT COUNT(*) FROM pairing_requests WHERE pairing_id=?1 AND rejected_at IS NULL AND expires_at>?2",
             params![id, now_s], |r| r.get(0),
         )?;
-        if count >= MAX_PENDING { return Err(ApiError::conflict("pairing_request_limit", "승인 대기 요청이 많습니다. 소유자가 요청을 거절한 뒤 다시 시도하세요")); }
+        if count >= MAX_PENDING { return Err(ApiError::conflict("pairing_request_limit", "승인 대기 요청이 많아요. 등록한 기기에서 대기 요청을 정리한 뒤 다시 시도하세요.")); }
         let request_id = new_id();
         let request_secret = random_secret(32);
         let verification = sha256_hex(request_secret.as_bytes())[..8].to_ascii_uppercase();
@@ -252,14 +252,15 @@ async fn redeem_inner(app: App, headers: HeaderMap, body: RedeemPairing) -> ApiR
     Ok((StatusCode::ACCEPTED, Json(result?)).into_response())
 }
 
-pub async fn approve(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Path((id, request_id)): Path<(String, String)>) -> ApiResult<Response> {
+pub async fn approve(State(app): State<App>, p: Principal, headers: HeaderMap, Path((id, request_id)): Path<(String, String)>) -> ApiResult<Response> {
     let hash = crate::idem::body_hash("pairing.approve", &json!({ "id": id, "request_id": request_id }));
     crate::idem::run(&app, &p.clone(), &headers, &hash, move |tx, now| {
-        let name: Option<String> = tx.query_row(
-            "SELECT r.name FROM pairing_requests r JOIN pairings p ON p.id=r.pairing_id WHERE p.id=?1 AND p.issuer_id=?2 AND r.id=?3 AND p.revoked_at IS NULL AND p.consumed_at IS NULL AND p.locked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?4) AND r.rejected_at IS NULL AND r.approved_at IS NULL AND r.expires_at>?4",
-            params![id, p.root_id, request_id, now], |r| r.get(0),
+        let request: Option<(String, String)> = tx.query_row(
+            "SELECT r.name,p.issuer_id FROM pairing_requests r JOIN pairings p ON p.id=r.pairing_id WHERE p.id=?1 AND r.id=?2 AND p.revoked_at IS NULL AND p.consumed_at IS NULL AND p.locked_at IS NULL AND (p.expires_at IS NULL OR p.expires_at>?3) AND r.rejected_at IS NULL AND r.approved_at IS NULL AND r.expires_at>?3",
+            params![id, request_id, now], |r| Ok((r.get(0)?, r.get(1)?)),
         ).optional()?;
-        let Some(name) = name else { return Err(unavailable()); };
+        let Some((name, issuer)) = request else { return Err(unavailable()); };
+        auth::verify_row(tx, &issuer, None, now).map_err(|_| unavailable())?;
         let device_id = new_id();
         tx.execute(
             "INSERT INTO tokens(id,kind,name,secret_hash,created_at) VALUES(?1,'device',?2,?3,?4)",
@@ -275,12 +276,12 @@ pub async fn approve(State(app): State<App>, Owner(p): Owner, headers: HeaderMap
     }).await
 }
 
-pub async fn reject(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Path((id, request_id)): Path<(String, String)>) -> ApiResult<Response> {
+pub async fn reject(State(app): State<App>, p: Principal, headers: HeaderMap, Path((id, request_id)): Path<(String, String)>) -> ApiResult<Response> {
     let hash = crate::idem::body_hash("pairing.reject", &json!({ "id": id, "request_id": request_id }));
     crate::idem::run(&app, &p.clone(), &headers, &hash, move |tx, now| {
         let n = tx.execute(
-            "UPDATE pairing_requests SET rejected_at=COALESCE(rejected_at,?4) WHERE id=?1 AND pairing_id=?2 AND approved_at IS NULL AND EXISTS(SELECT 1 FROM pairings WHERE id=?2 AND issuer_id=?3)",
-            params![request_id, id, p.root_id, now],
+            "UPDATE pairing_requests SET rejected_at=COALESCE(rejected_at,?3) WHERE id=?1 AND pairing_id=?2 AND approved_at IS NULL",
+            params![request_id, id, now],
         )?;
         if n != 1 { return Err(unavailable()); }
         crate::audit::record(tx, now, &p, "pairing.rejected", &id, json!({ "request_id": request_id }))?;
@@ -319,7 +320,7 @@ async fn claim_inner(app: App, headers: HeaderMap, body: ClaimPairing) -> ApiRes
             || rejected.is_some() || claimed.is_some() || revoked.is_some()
         { return Err(unavailable()); }
         if lock.is_some() { return Err(locked()); }
-        if !auth::verify_row(&tx, &issuer, None, &now_s)?.is_owner { return Err(unavailable()); }
+        auth::verify_row(&tx, &issuer, None, &now_s).map_err(|_| unavailable())?;
         let Some(device_id) = device else { return Ok(None); };
         auth::verify_row(&tx, &device_id, None, &now_s)?;
         let browser_id = new_id();

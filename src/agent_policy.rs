@@ -84,6 +84,7 @@ pub fn denied_value(key: &str) -> Value {
 
 pub struct Policy {
     enabled: bool,
+    orchestrated: bool,
     roles: Value,
     pub needs_approval: bool,
 }
@@ -95,14 +96,17 @@ impl Policy {
         let mode = crate::settings::effective(c, "agents.delegation", Some(&session.project_id), Some(session_id))?;
         let orchestration = crate::settings::effective(c, ORCHESTRATION, Some(&session.project_id), Some(session_id))?;
         Ok(Self {
-            enabled: mode != "off" && orchestration != "solo",
+            enabled: mode != "off" && !crate::agents::is_helper_session(c, session_id)?,
+            orchestrated: orchestration != "solo",
             needs_approval: mode != "auto",
             roles: crate::settings::effective(c, ROLES, Some(&session.project_id), Some(session_id))?,
         })
     }
 
     pub fn allows(&self, id: &str) -> bool {
-        self.enabled && (self.roles == "*" || role_ids(self.roles.as_str().unwrap_or("")).contains(id))
+        let execution = crate::definitions::execution("agent", id);
+        execution != "background" && self.enabled && (self.orchestrated || execution == "helper")
+            && (self.roles == "*" || role_ids(self.roles.as_str().unwrap_or("")).contains(id))
     }
 
     pub fn allows_defined(&self, c: &Connection, id: &str) -> ApiResult<bool> {

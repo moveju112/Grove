@@ -318,7 +318,8 @@ def build_server(name, jobs):
         run(f"server release {name}", ["cargo", "build", "--release", "--locked", "--target", triple], extra_env=extra)
     else:
         run(f"server release {name}", ["cargo", "zigbuild", "--release", "--locked", "--target", how.split(":", 1)[1]], extra_env=extra)
-    return os.path.join(ROOT, "target", triple, "release", exe)
+    target_dir = json.loads(out(["cargo", "metadata", "--no-deps", "--format-version", "1"]))["target_directory"]
+    return os.path.join(target_dir, triple, "release", exe)
 
 
 # 실제 비밀값 형식만 찾는다(접두어 상수·파일 이름 같은 형식 정의는 비밀이 아니다).

@@ -62,7 +62,7 @@ async fn password_requires_ten_characters_and_keeps_the_byte_limit() {
 }
 
 #[tokio::test]
-async fn password_only_requests_access_and_owner_approval_registers_one_non_owner_browser() {
+async fn password_requests_access_and_pairing_registers_a_full_access_browser() {
     let server = TestServer::start().await;
     let pair = issue(&server, "phone", None).await;
     let request = pending(&server, &pair).await;
@@ -82,12 +82,15 @@ async fn password_only_requests_access_and_owner_approval_registers_one_non_owne
     let access = body["access_token"].as_str().unwrap();
     let who = server.raw(Method::GET, "/api/v1/auth/whoami", None, None, Some(access)).await;
     let who: Value = who.json().await.unwrap();
-    assert_eq!(who["is_owner"], false);
+    assert!(who.get("is_owner").is_none());
     assert_eq!(who["kind"], "browser");
-    for (method, route) in [(Method::GET, "/api/v1/pairings".to_string()), (Method::POST, path(&pair, &request)), (Method::DELETE, path(&pair, &request))] {
-        let response = server.raw(method, &route, Some(json!({})), Some("not-owner"), Some(access)).await;
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    for route in ["/pairings", "/devices", "/audit", "/secrets", "/admin/update-readiness"] {
+        let response = server.raw(Method::GET, &format!("/api/v1{route}"), None, None, Some(access)).await;
+        assert_eq!(response.status(), StatusCode::OK);
     }
+    let new_link = server.raw(Method::POST, "/api/v1/pairings",
+        Some(json!({ "name": "next device", "password": PASSWORD })), Some("registered-browser-issues"), Some(access)).await;
+    assert_eq!(new_link.status(), StatusCode::CREATED);
     assert_eq!(claim(&server, &request).await.status(), StatusCode::GONE);
     assert_eq!(request_pair_status(&server, &pair).await, StatusCode::GONE);
     let (status, _) = server.send(Method::DELETE, &format!("/api/v1/devices/{}", approved["device_id"].as_str().unwrap()), json!({})).await;

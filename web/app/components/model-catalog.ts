@@ -1,4 +1,13 @@
-import type { AvailableModel } from "../api/generated";
+import type { AvailableModel, ModelProfile } from "../api/generated";
+
+export function catalogModel(models: readonly AvailableModel[] | undefined, profile: ModelProfile | undefined, model?: string | null) {
+    return models?.find((entry) => entry.id === (model ?? profile?.model))
+        ?? (profile?.model === "default" && !model ? models?.find((entry) => entry.is_default) : undefined);
+}
+
+export function modelEfforts(profile: ModelProfile | undefined, model: AvailableModel | undefined) {
+    return profile?.protocol === "codex_cli" || profile?.protocol === "codex_oauth" ? model?.reasoning_efforts ?? [] : ["low", "medium", "high"];
+}
 
 function version(model: AvailableModel): number[] {
     const match = model.name.match(/\d+(?:[.-]\d+)*/) ?? model.id.match(/\d+(?:[.-]\d+)*/);

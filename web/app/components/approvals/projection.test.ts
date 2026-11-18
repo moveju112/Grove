@@ -14,7 +14,7 @@ describe("승인 projection과 현재 서버 계약", () => {
         for (const name of ["mcp_call", "mcp_tools", "hook"]) {
             expect(currentApprovalContract(name)).toEqual({ effect: null, choices: [] });
         }
-        expect(currentApprovalContract("computer")).toEqual({ effect: "execute", choices: ["approve", "deny"] });
+        expect(currentApprovalContract("computer")).toEqual({ effect: "execute", choices: ["approve", "approve_session", "deny"] });
         expect(currentApprovalContract("future-tool")).toEqual({ effect: null, choices: [] });
         expect(currentApprovalContract("__proto__")).toEqual({ effect: null, choices: [] });
         expect(currentApprovalContract("ask_user").choices).toEqual([]);
@@ -64,7 +64,7 @@ describe("승인 projection과 현재 서버 계약", () => {
         expect(p.fields).toContainEqual({ label: "대상 창", value: "42" });
         expect(p.fields).toContainEqual({ label: "click", value: "10, 20 · left" });
         expect(p.fields).toContainEqual({ label: "type", value: "입력 13자" });
-        expect(p.notices.join(" ")).toContain("모델 제공자");
+        expect(p.notices).toEqual([]);
         expect(JSON.stringify(p)).not.toContain("private-input");
     });
 

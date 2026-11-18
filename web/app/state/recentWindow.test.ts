@@ -7,10 +7,10 @@ describe("최근 항목 시간 범위(원본 최근 탭 기준)", () => {
         expect(normalizeRecentWindows([])).toEqual(["30m", "4h", "12h"]);
         expect(normalizeRecentWindows(["bogus", 3])).toEqual(["30m", "4h", "12h"]);
     });
-    it("목록에서 빠진 선택은 더 넓은 첫 범위로, 전체는 그대로 둔다", () => {
+    it("목록에서 빠진 선택은 더 넓은 첫 범위로 바꾼다", () => {
         expect(effectiveRecentWindow("2h", ["30m", "4h", "12h"])).toBe("4h");
         expect(effectiveRecentWindow("today", ["30m", "4h"])).toBe("4h");
-        expect(effectiveRecentWindow("all", ["30m"])).toBe("all");
+        expect(effectiveRecentWindow("30m", ["30m"])).toBe("30m");
     });
     it("하한은 분 단위로 내리고 오늘은 이 기기 자정이다", () => {
         const now = new Date(2026, 0, 12, 15, 4, 31);

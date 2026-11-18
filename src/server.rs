@@ -102,6 +102,12 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
                             Ok(Err(e)) => tracing::warn!(code = e.code, "저장 공간 정리 실패"),
                             Err(_) => tracing::warn!("저장 공간 정리 작업 실패"),
                         }
+                        let a = app.clone();
+                        match tokio::task::spawn_blocking(move || crate::storage::compress_history(&a)).await {
+                            Ok(Ok(_)) => {}
+                            Ok(Err(e)) => tracing::warn!(code = e.code, "대화 기록 자동 압축 실패"),
+                            Err(_) => tracing::warn!("대화 기록 자동 압축 작업 실패"),
+                        }
                     }
                     _ = rx.changed() => break,
                 }
@@ -110,6 +116,8 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
     }
     background.push(crate::approvals::spawn_expiry(app.clone()));
     background.push(crate::schedules::spawn(app.clone()));
+    background.push(crate::memory::spawn(app.clone()));
+    background.push(crate::continuations::spawn(app.clone()));
     background.push(crate::remote_watches::spawn(app.clone()));
     background.push(crate::web_push::spawn(app.clone()));
     background.push(crate::terminals::spawn_saver(app.clone()));

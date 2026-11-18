@@ -1089,11 +1089,161 @@ pub const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX web_push_tests_endpoint_created ON web_push_tests(endpoint,created_at);
     "#,
+    // 대화 저장 압축: FK·메시지 ID·시각은 그대로, 원문 payload만 검증된 BLOB으로 교체한다.
+    r#"
+    ALTER TABLE sessions ADD COLUMN history_accessed_at TEXT;
+    ALTER TABLE messages ADD COLUMN history_checked_at TEXT;
+    ALTER TABLE messages ADD COLUMN history_preview TEXT;
+    ALTER TABLE messages ADD COLUMN history_has_text INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE messages ADD COLUMN history_search_id INTEGER;
+    UPDATE messages SET history_preview=substr(json_extract(content,'$.text'),1,120),
+        history_has_text=TRIM(COALESCE(json_extract(content,'$.text'),''),char(9)||char(10)||char(13)||' ')!='',
+        history_search_id=rowid;
+    CREATE INDEX messages_history_unchecked ON messages(session_id) WHERE history_checked_at IS NULL;
+    CREATE UNIQUE INDEX messages_history_search_id ON messages(history_search_id);
+    CREATE VIEW message_history AS SELECT rowid, id, session_id, seq, role,
+        grove_history_text(content) AS content, turn_id, grove_history_text(model_input) AS model_input,
+        created_at, rewound_at, history_preview, history_has_text, history_search_id FROM messages;
+    CREATE VIRTUAL TABLE message_search USING fts5(text,content='',contentless_delete=1,tokenize='trigram',detail=none);
+    INSERT INTO message_search(rowid,text) SELECT history_search_id,COALESCE(json_extract(content,'$.text'),'')
+        FROM messages WHERE role IN ('user','assistant');
+    CREATE TRIGGER messages_history_insert AFTER INSERT ON messages BEGIN
+        UPDATE messages SET history_preview=substr(json_extract(NEW.content,'$.text'),1,120),
+            history_has_text=TRIM(COALESCE(json_extract(NEW.content,'$.text'),''),char(9)||char(10)||char(13)||' ')!='',
+            history_search_id=(SELECT COALESCE(MAX(history_search_id),0)+1 FROM messages)
+            WHERE id=NEW.id;
+        INSERT INTO message_search(rowid,text) SELECT history_search_id,COALESCE(json_extract(NEW.content,'$.text'),'')
+            FROM messages WHERE id=NEW.id AND NEW.role IN ('user','assistant');
+    END;
+    CREATE TRIGGER messages_history_update AFTER UPDATE OF content,role ON messages
+        WHEN typeof(NEW.content)='text' AND (NEW.content IS NOT OLD.content OR NEW.role IS NOT OLD.role) BEGIN
+        UPDATE messages SET history_preview=substr(json_extract(NEW.content,'$.text'),1,120),
+            history_has_text=TRIM(COALESCE(json_extract(NEW.content,'$.text'),''),char(9)||char(10)||char(13)||' ')!=''
+            WHERE id=NEW.id;
+        DELETE FROM message_search WHERE rowid=OLD.history_search_id;
+        INSERT INTO message_search(rowid,text) SELECT NEW.history_search_id,COALESCE(json_extract(NEW.content,'$.text'),'')
+            WHERE NEW.role IN ('user','assistant');
+    END;
+    CREATE TRIGGER messages_history_delete AFTER DELETE ON messages BEGIN
+        DELETE FROM message_search WHERE rowid=OLD.history_search_id;
+    END;
+    CREATE TRIGGER messages_history_dirty AFTER UPDATE OF content,model_input ON messages
+        WHEN OLD.history_checked_at IS NOT NULL AND NEW.history_checked_at IS OLD.history_checked_at
+          AND (NEW.content IS NOT OLD.content OR NEW.model_input IS NOT OLD.model_input) BEGIN
+        UPDATE messages SET history_checked_at=NULL WHERE id=NEW.id;
+    END;
+    "#,
+    // 브라우저 갱신 응답 유실 복구. 직전 요청만 저장하고 새 비밀은 vault로 암호화한다.
+    r#"
+    CREATE TABLE browser_refresh_receipts (
+        browser_id TEXT PRIMARY KEY REFERENCES tokens(id) ON DELETE CASCADE,
+        request_key TEXT NOT NULL,
+        previous_hash TEXT NOT NULL,
+        next_secret TEXT NOT NULL
+    );
+    "#,
+    // native 합치기는 전달 전에 접수하고, 결과 불명·거절을 자동 재전송하지 않는다.
+    r#"
+    ALTER TABLE followups ADD COLUMN delivery_state TEXT NOT NULL DEFAULT 'pending'
+        CHECK(delivery_state IN ('pending','sending','rejected','unknown'));
+    ALTER TABLE followups ADD COLUMN delivery_turn_id TEXT REFERENCES turns(id);
+    CREATE INDEX followups_live_delivery ON followups(delivery_turn_id) WHERE delivery_state='sending';
+    "#,
+    // One-shot follow-up requests survive restart; terminal turns are never reopened.
+    r#"
+    CREATE TABLE continuations (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        origin_turn_id TEXT NOT NULL REFERENCES turns(id) ON DELETE CASCADE,
+        owner_key TEXT NOT NULL,
+        request_id TEXT NOT NULL,
+        input TEXT NOT NULL,
+        kind TEXT NOT NULL CHECK(kind IN ('timer','task','external')),
+        prompt TEXT NOT NULL,
+        task_id TEXT REFERENCES tasks(id),
+        due_at TEXT NOT NULL,
+        completion TEXT,
+        status TEXT NOT NULL CHECK(status IN ('waiting','queued','cancelled','blocked')),
+        result_turn_id TEXT REFERENCES turns(id),
+        error_code TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        UNIQUE(origin_turn_id,request_id)
+    );
+    CREATE INDEX continuations_waiting ON continuations(status,due_at);
+    CREATE INDEX continuations_task ON continuations(task_id) WHERE task_id IS NOT NULL;
+    CREATE UNIQUE INDEX continuations_result ON continuations(result_turn_id) WHERE result_turn_id IS NOT NULL;
+    "#,
+    // 기본 워크플로우: 수동 제목 소유권과 재시작 가능한 메모리 처리 위치.
+    r#"
+    ALTER TABLE sessions ADD COLUMN title_origin TEXT NOT NULL DEFAULT 'unknown'
+        CHECK(title_origin IN ('unknown','provisional','generated','manual'));
+    CREATE TABLE memory_checkpoints (
+        session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,
+        timeline_revision INTEGER NOT NULL,
+        upto_seq INTEGER NOT NULL,
+        error_code TEXT,
+        attempted_at TEXT NOT NULL
+    );
+    CREATE TABLE memory_notes (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        timeline_revision INTEGER NOT NULL,
+        from_seq INTEGER NOT NULL,
+        upto_seq INTEGER NOT NULL,
+        source_at TEXT NOT NULL,
+        body TEXT NOT NULL,
+        profile_id TEXT NOT NULL REFERENCES model_profiles(id),
+        created_at TEXT NOT NULL,
+        UNIQUE(session_id,timeline_revision,upto_seq)
+    );
+    CREATE INDEX memory_notes_source ON memory_notes(session_id,timeline_revision,upto_seq);
+    "#,
+    // Codex 대화는 기존 Grove 프로필·메시지를 그대로 쓰고 CLI 스레드 재개를 중단한다.
+    r#"
+    DELETE FROM profile_checks WHERE profile_id IN (
+        SELECT id FROM model_profiles WHERE protocol='codex_cli' AND deleted_at IS NULL
+    );
+    UPDATE model_profiles
+       SET protocol='codex_oauth', revision=revision+1, secret_id=NULL,
+           options=json_remove(options, '$.headers', '$.capabilities.tools')
+     WHERE protocol='codex_cli' AND deleted_at IS NULL;
+    "#,
+    // 기존에 소유자가 만들어진 설치는 웹 초기 설정을 다시 요구하지 않는다.
+    r#"
+    CREATE TABLE daemon_setup (
+        id INTEGER PRIMARY KEY CHECK(id=1),
+        completed INTEGER NOT NULL CHECK(completed IN (0,1))
+    );
+    INSERT INTO daemon_setup (id, completed)
+        SELECT 1, EXISTS(SELECT 1 FROM tokens WHERE kind='owner');
+    "#,
+    // 브라우저 자격을 검증할 때 등록이 완료된 기기만 찾는다.
+    r#"
+    CREATE INDEX pairings_registered_device ON pairings(device_id) WHERE consumed_at IS NOT NULL;
+    "#,
 ];
 
 #[cfg(test)]
 mod tests {
     const MIGRATIONS_1_5_SHA16: &str = "40371687b4936aac";
+
+    #[test]
+    fn basic_workflow_migration_preserves_old_titles_and_memory_has_session_ownership() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+        let index = super::MIGRATIONS.iter().position(|sql| sql.contains("CREATE TABLE memory_checkpoints")).unwrap();
+        for migration in &super::MIGRATIONS[..index] { c.execute_batch(migration).unwrap(); }
+        c.execute_batch("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','fixture','/fixture','t','t');
+            INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES('s','p','직접 정한 기존 제목','t','t');").unwrap();
+        c.execute_batch(super::MIGRATIONS[index]).unwrap();
+        let (title,origin):(String,String) = c.query_row("SELECT title,title_origin FROM sessions WHERE id='s'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(title,"직접 정한 기존 제목");
+        assert_eq!(origin,"unknown");
+        c.execute_batch("INSERT INTO memory_checkpoints VALUES('s',0,0,NULL,'t'); DELETE FROM sessions WHERE id='s';").unwrap();
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM memory_checkpoints",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+        assert_eq!(c.query_row("SELECT COUNT(*) FROM pragma_foreign_key_check",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
 
     #[test]
     fn project_folder_migration_preserves_existing_projects_and_folder_deletion_keeps_them() {
@@ -1163,6 +1313,56 @@ mod tests {
         let binding: (String,Option<String>) = c.query_row("SELECT native_id,system_sha256 FROM cli_sessions",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
         assert_eq!(binding,("native".into(),None));
         assert_eq!(c.query_row("SELECT COUNT(*) FROM memories",[],|r|r.get::<_,i64>(0)).unwrap(),0);
+    }
+
+    #[test]
+    fn setup_migration_grandfathers_only_initialized_daemons() {
+        for owner_exists in [false, true] {
+            let c = rusqlite::Connection::open_in_memory().unwrap();
+            let last = super::MIGRATIONS.iter().position(|sql| sql.contains("CREATE TABLE daemon_setup")).unwrap();
+            for migration in &super::MIGRATIONS[..last] { c.execute_batch(migration).unwrap(); }
+            if owner_exists {
+                c.execute("INSERT INTO tokens(id,kind,name,secret_hash,created_at) VALUES ('id','owner','owner','hash','t')", []).unwrap();
+            }
+            c.execute_batch(super::MIGRATIONS[last]).unwrap();
+            let completed = c.query_row("SELECT completed FROM daemon_setup WHERE id=1", [], |r| r.get::<_, bool>(0)).unwrap();
+            assert_eq!(completed, owner_exists);
+        }
+    }
+
+    #[test]
+    fn codex_oauth_migration_keeps_grove_history_and_profile_selection() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        let last = super::MIGRATIONS.iter().position(|sql| sql.contains("SET protocol='codex_oauth'")).unwrap();
+        for migration in &super::MIGRATIONS[..last] { c.execute_batch(migration).unwrap(); }
+        c.execute_batch(r#"
+            INSERT INTO model_profiles(id,name,protocol,base_url,model,options,created_at,updated_at,revision)
+                VALUES ('p','Codex','codex_cli','','default','{"capabilities":{"tools":false,"fast":false}}','t','t',7),
+                       ('other','Claude','claude_code','','default','{}','t','t',4);
+            INSERT INTO profile_checks(profile_id,ok,latency_ms,checked_at) VALUES ('p',1,1,'t'), ('other',1,1,'t');
+            INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES ('project','fixture','/fixture','t','t');
+            INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES ('s','project','fixture','t','t');
+            INSERT INTO messages(id,session_id,seq,role,content,created_at)
+                VALUES ('m','s',1,'user','{"text":"existing message"}','t');
+            INSERT INTO turns(id,session_id,status,request_message_id,profile_id,owner_epoch,created_at,updated_at)
+                VALUES ('turn','s','completed','m','p','epoch','t','t');
+            INSERT INTO cli_sessions(session_id,profile_id,native_id,updated_at) VALUES ('s','p','native','t');
+        "#).unwrap();
+        c.execute_batch(super::MIGRATIONS[last]).unwrap();
+        let profile = super::super::models::get_profile(&c, "p").unwrap();
+        assert_eq!(profile.protocol, "codex_oauth");
+        assert_eq!(profile.revision, 8);
+        assert_eq!(profile.capabilities.tools, Some(true));
+        assert_eq!(profile.capabilities.native_tools, Some(false));
+        assert!(!profile.capabilities.fast);
+        assert!(profile.last_check.is_none());
+        assert!(super::super::models::get_profile(&c, "other").unwrap().last_check.is_some());
+        let text: String = c.query_row(
+            "SELECT json_extract(m.content,'$.text') FROM turns t JOIN messages m ON t.request_message_id=m.id WHERE t.profile_id='p'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(text, "existing message");
+        assert!(!c.prepare("PRAGMA foreign_key_check").unwrap().exists([]).unwrap());
     }
 
     #[test]
@@ -1280,6 +1480,7 @@ impl Db {
         conn.pragma_update(None, "foreign_keys", "ON")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         crate::vault::register(&conn, path.parent().unwrap_or(Path::new(".")))?;
+        crate::history_storage::register(&conn)?;
         let mut db = Self { conn: Arc::new(Mutex::new(conn)), path: path.to_path_buf(), recovery: tokio::sync::watch::channel(None).0 };
         db.migrate()?;
         restrict_permissions(path);

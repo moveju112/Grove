@@ -91,7 +91,7 @@ test("설정 화면에서 테마를 고르면 바로 적용되고 로그인 화�
     await login(page);
     await page.evaluate(() => localStorage.removeItem("grove.device.prefs"));
     await page.reload();
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("테마");
     await selectChoice(page.getByLabel("테마", { exact: true }), "soft");
     await expect.poll(async () => (await colors(page)).bg).toBe("#e9ebee");

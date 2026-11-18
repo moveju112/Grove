@@ -717,7 +717,7 @@ pub fn on_turn_finished(c: &Connection, now: &str, turn_id: &str, to: &str) -> A
     let (name, project_id, quiet): (String, String, String) =
         c.query_row("SELECT name, project_id, quiet_policy FROM schedules WHERE id = ?1", params![sched_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
     let text: Option<String> = if status == "completed" {
-        c.query_row("SELECT content FROM messages WHERE turn_id = ?1 AND role = 'assistant' ORDER BY seq DESC LIMIT 1", params![turn_id], |r| r.get::<_, String>(0))
+        c.query_row("SELECT content FROM message_history WHERE turn_id = ?1 AND role = 'assistant' ORDER BY seq DESC LIMIT 1", params![turn_id], |r| r.get::<_, String>(0))
             .optional()?
             .and_then(|t| serde_json::from_str::<Value>(&t).ok())
             .and_then(|v| v["text"].as_str().map(String::from))

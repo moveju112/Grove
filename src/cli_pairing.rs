@@ -5,7 +5,7 @@ use reqwest::{Client, Method, Url};
 use serde_json::{Value, json};
 use std::io::{BufRead, IsTerminal, Read, Write};
 
-const HELP: &str = "grove pairing — 비밀번호·소유자 승인형 기기 등록
+const HELP: &str = "grove pairing — 비밀번호·확인 코드로 기기 등록
 
   grove pairing create [이름] [--endpoint wss://주소] [--password-stdin] [--json]
   grove pairing list
@@ -17,6 +17,7 @@ const HELP: &str = "grove pairing — 비밀번호·소유자 승인형 기기 �
 create는 기본적으로 터미널에서 비밀번호를 숨김 입력받습니다(10자 이상).
 자동화에는 --password-stdin을 쓰세요. 비밀번호 인자·환경변수는 받지 않습니다.
 링크와 비밀번호는 따로 전달하고, 양쪽 기기의 확인 코드를 대조한 뒤 승인하세요.
+릴레이가 없으면 서버 PC에서 열 수 있는 로컬 링크를 발급합니다.
 revoke는 링크만 폐기합니다. 등록된 기기의 접근은 기기 관리에서 따로 폐기하세요.";
 
 #[derive(Default)]
@@ -116,17 +117,23 @@ fn execute(opts: Options) -> Result<(), String> {
             "create" => {
                 let identity = request(&client, &base, &token, Method::GET, "/e2ee/identity", None).await?;
                 let address = opts.endpoint.as_deref().or_else(|| identity["endpoint"].as_str())
-                    .ok_or("외부 암호화 연결이 없습니다. 릴레이를 설정하거나 --endpoint wss://주소를 지정하세요")?;
-                let address = endpoint(address)?;
+                    .map(endpoint).transpose()?;
                 let key = identity["key"].as_str().ok_or("서버 공개키 응답 형식 오류")?;
                 let name = opts.args.get(1).map(String::as_str).unwrap_or("새 기기");
                 if name.trim().is_empty() || name.trim().chars().count() > 80 { return Err("기기 이름은 1~80자여야 합니다".into()); }
                 let password = password(opts.stdin)?;
                 let issued = request(&client, &base, &token, Method::POST, "/pairings", Some(json!({"name": name, "password": password}))).await?;
                 let code = issued["code"].as_str().ok_or("링크 비밀을 받지 못했습니다. 목록을 확인한 뒤 필요하면 폐기하세요")?;
-                let query = Url::parse_with_params("https://unused.invalid", &[("connect", address.as_str()), ("key", key), ("pairing", code)]).unwrap();
-                let mut link = Url::parse(crate::e2ee::PAGES_ORIGIN).unwrap();
-                link.set_fragment(query.query());
+                let link = if let Some(address) = address {
+                    let query = Url::parse_with_params("https://unused.invalid", &[("connect", address.as_str()), ("key", key), ("pairing", code)]).unwrap();
+                    let mut link = Url::parse(crate::e2ee::PAGES_ORIGIN).unwrap();
+                    link.set_fragment(query.query());
+                    link
+                } else {
+                    let mut link = Url::parse(&format!("{base}{}", cfg.web_base)).map_err(|_| "로컬 연결 주소 형식 오류")?;
+                    link.set_fragment(Some(&format!("pairing={code}")));
+                    link
+                };
                 if opts.json {
                     print_json(Ok(json!({"id": issued["id"], "name": issued["name"], "expires_at": issued["expires_at"], "link": link.as_str()})))
                 } else { println!("{link}"); Ok(()) }

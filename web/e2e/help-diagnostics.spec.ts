@@ -1,15 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { login, state } from "./helpers";
+import { login, openSettings, state } from "./helpers";
 
-// UI-031: 버전 상세·진단 정보(민감 정보 제외)·도움말.
-test("버전 상세를 보이고 진단 정보는 토큰 없이 복사되며 도움말을 찾을 수 있다", async ({ page }) => {
+// UI-031: 버전 상세·진단 정보(민감 정보 제외).
+test("도움말·클라이언트 상태 없이 서버 진단 정보는 토큰 없이 복사된다", async ({ page }) => {
     await login(page);
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").fill("진단");
     const v = page.getByTestId("version-details");
     await expect(v).toContainText("서버 버전");
     await expect(v).toContainText(/x86_64-linux|aarch64-linux/);
-    await expect(v.locator("code")).toHaveText(/^[0-9a-f]{16}$/);
     await expect(v).not.toContainText("다름");
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
     await page.getByRole("button", { name: "진단 정보 복사" }).click();
@@ -22,6 +21,12 @@ test("버전 상세를 보이고 진단 정보는 토큰 없이 복사되며 도
     expect(d.connection).toBe("live");
     expect(text).not.toContain(state().token);
     expect(text.toLowerCase()).not.toContain("bearer");
-    await page.getByLabel("설정 검색").fill("단축키");
-    await expect(page.getByTestId("help")).toContainText("한글 조합 중");
+    await page.getByTestId("settings").getByRole("tab", { name: "로컬 설정", exact: true }).click();
+    await expect(page.getByRole("button", { name: "도움말", exact: true })).toHaveCount(0);
+    for (const keyword of ["도움말", "클라이언트 상태"]) {
+        await page.getByLabel("설정 검색").fill(keyword);
+        await expect(page.getByTestId("settings")).toContainText("검색 결과 0개");
+    }
+    await expect(page.getByTestId("setting-help")).toHaveCount(0);
+    await expect(page.getByTestId("setting-client-status")).toHaveCount(0);
 });

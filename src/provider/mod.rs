@@ -9,8 +9,12 @@ pub mod anthropic;
 mod catalog;
 pub use catalog::{AvailableModel, ModelServiceTier, list_models};
 pub mod cli;
+pub(crate) mod codex_oauth;
 pub mod gemini;
 pub mod openai;
+mod prompt_cache;
+#[cfg(test)]
+mod prompt_cache_tests;
 pub mod sse;
 
 use serde::{Deserialize, Serialize};
@@ -115,6 +119,15 @@ impl Usage {
     }
 }
 
+/// CLI의 현재 문맥 점유량. 여러 요청을 합산하는 과금 Usage와 분리한다.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, ts_rs::TS)]
+pub struct ContextUsage {
+    #[ts(type = "number | null")]
+    pub tokens: Option<u64>,
+    #[ts(type = "number | null")]
+    pub context_window: Option<u64>,
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct ModelOutput {
     pub text: String,
@@ -123,12 +136,33 @@ pub struct ModelOutput {
     pub reasoning: String,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Usage,
+    pub context_usage: Option<ContextUsage>,
     pub finish_reason: String,
     /// CLI 백엔드가 알려 준 자기 세션 ID(다음 요청에서 resume)
     pub native_session: Option<String>,
     /// CLI 백엔드가 자기 안에서 실행한 도구 활동(표시 전용, Grove가 다시 실행하지 않음)
     pub activity: Vec<Value>,
     pub native: Option<NativeContent>,
+    /// 표시할 생성 이미지. 원문·호스트 경로는 첨부로 가져온 뒤 HTTP 응답에서 제외한다.
+    pub generated_images: Vec<GeneratedImage>,
+}
+
+#[derive(Clone)]
+pub struct GeneratedImage {
+    pub id: String,
+    pub source: GeneratedImageSource,
+}
+
+#[derive(Clone)]
+pub enum GeneratedImageSource {
+    Base64(String),
+    File { root: std::path::PathBuf, path: std::path::PathBuf },
+}
+
+impl std::fmt::Debug for GeneratedImage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GeneratedImage").finish_non_exhaustive()
+    }
 }
 
 /// 진행 중 delta를 UI snapshot으로 보내기 위한 콜백.
@@ -142,14 +176,28 @@ pub struct ProviderError {
     pub retryable: bool,
     /// provider가 Retry-After로 알려 준 대기 시간(초)
     pub retry_after_secs: Option<u64>,
+    stream_failure: Option<StreamFailure>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize)]
+struct StreamFailure {
+    event: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    code: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    incomplete_reason: Option<String>,
 }
 
 impl ProviderError {
     pub fn new(code: &'static str, message: impl Into<String>) -> Self {
-        Self { code, message: message.into(), status: None, retryable: false, retry_after_secs: None }
+        Self { code, message: message.into(), status: None, retryable: false, retry_after_secs: None, stream_failure: None }
     }
     pub fn to_json(&self) -> Value {
-        json!({ "code": self.code, "message": self.message, "status": self.status, "retryable": self.retryable })
+        let mut error = json!({ "code": self.code, "message": self.message, "status": self.status, "retryable": self.retryable });
+        if let Some(detail) = &self.stream_failure {
+            error["provider_stream"] = json!(detail);
+        }
+        error
     }
 }
 
@@ -179,14 +227,14 @@ pub(crate) fn scrub_provider_text(profile: &Profile, text: &str) -> String {
 
 /// endpoint·모델·timeout 정규화와 요청 전 검증(ADAPTER-001).
 pub fn validate_profile(protocol: &str, base_url: &str, model: &str) -> Result<(), String> {
-    if !matches!(protocol, "openai" | "anthropic" | "gemini" | "claude_code" | "codex_cli") {
-        return Err("protocol은 openai, anthropic, gemini, claude_code, codex_cli 중 하나여야 합니다".into());
+    if !matches!(protocol, "openai" | "anthropic" | "gemini" | "claude_code" | "codex_cli" | codex_oauth::PROTOCOL) {
+        return Err("지원하지 않는 모델 protocol입니다".into());
     }
     let u = base_url.trim();
-    // CLI 백엔드는 endpoint가 없다(서버에 설치된 claude·codex를 실행).
-    if cli::is_cli(protocol) {
+    // CLI와 Codex OAuth는 사용자가 설정하는 endpoint를 쓰지 않는다.
+    if cli::is_cli(protocol) || protocol == codex_oauth::PROTOCOL {
         if !u.is_empty() {
-            return Err("CLI 백엔드에는 base_url을 쓰지 않습니다(비워 두세요)".into());
+            return Err("이 연결은 base_url을 쓰지 않습니다(비워 두세요)".into());
         }
     } else if !(u.starts_with("http://") || u.starts_with("https://")) || u.len() < 10 || u.contains(char::is_whitespace) {
         return Err("base_url은 http(s) URL이어야 합니다".into());
@@ -334,6 +382,16 @@ pub async fn stream(
     cancel: &mut watch::Receiver<bool>,
     on_delta: OnDelta<'_>,
 ) -> Result<ModelOutput, ProviderError> {
+    stream_with_service_tier(profile, req, None, cancel, on_delta).await
+}
+
+pub(crate) async fn stream_with_service_tier(
+    profile: &Profile,
+    req: &ModelRequest,
+    service_tier: Option<&str>,
+    cancel: &mut watch::Receiver<bool>,
+    on_delta: OnDelta<'_>,
+) -> Result<ModelOutput, ProviderError> {
     if *cancel.borrow() {
         return Err(ProviderError::new("cancelled", "취소되었습니다"));
     }
@@ -363,6 +421,7 @@ pub async fn stream(
         let fut = async {
             match profile.protocol.as_str() {
                 "claude_code" | "codex_cli" => cli::stream(profile, req, &mut wrapped).await,
+                codex_oauth::PROTOCOL => codex_oauth::stream(&client, profile, req, service_tier, &mut wrapped).await,
                 "openai" => openai::stream(&client, profile, req, &mut wrapped).await,
                 "anthropic" => anthropic::stream(&client, profile, req, &mut wrapped).await,
                 "gemini" => gemini::stream(&client, profile, req, &mut wrapped).await,
@@ -429,6 +488,7 @@ pub fn effort_application(protocol: &str, effort: Option<&str>) -> serde_json::V
         "anthropic" => ("thinking.budget_tokens", serde_json::json!(effort_budget(e))),
         "gemini" => ("thinkingConfig.thinkingBudget", serde_json::json!(effort_budget(e))),
         "codex_cli" => ("model_reasoning_effort", serde_json::json!(e)),
+        codex_oauth::PROTOCOL => ("reasoning.effort", serde_json::json!(e)),
         "claude_code" => ("MAX_THINKING_TOKENS", serde_json::json!(effort_budget(e))),
         _ => return serde_json::json!({ "requested": e, "field": null, "value": null }),
     };
@@ -451,7 +511,8 @@ pub async fn check(profile: &Profile) -> Result<Value, ProviderError> {
         return cli::check(profile).await;
     }
     let models = list_models(profile).await?;
-    let listed = models.iter().any(|m| m.id == profile.model);
+    let listed = models.iter().any(|m| m.id == profile.model
+        || (profile.protocol == codex_oauth::PROTOCOL && profile.model == "default" && m.is_default == Some(true)));
     Ok(json!({ "models": models.len(), "model_listed": listed }))
 }
 
@@ -482,7 +543,7 @@ pub async fn http_error(resp: reqwest::Response) -> ProviderError {
     }
     // Retry-After는 초 단위만 쓴다(HTTP 날짜 형식은 무시하고 backoff로 대체).
     let retry_after_secs = retry_after.and_then(|r| r.trim().parse::<u64>().ok());
-    ProviderError { code, message: msg, status: Some(status), retryable, retry_after_secs }
+    ProviderError { code, message: msg, status: Some(status), retryable, retry_after_secs, stream_failure: None }
 }
 
 /// 요청 단계(MODEL-014): timeout이 연결·첫 응답·무응답 중 어디서 났는지 구분한다.
@@ -512,7 +573,7 @@ pub fn transport_error_in(e: reqwest::Error, phase: Phase) -> ProviderError {
         _ => "transport",
     };
     // URL에 키가 들어갈 수 있는 provider가 있으므로 URL은 제거한다.
-    ProviderError { code, message: e.without_url().to_string(), status: None, retryable: true, retry_after_secs: None }
+    ProviderError { code, message: e.without_url().to_string(), status: None, retryable: true, retry_after_secs: None, stream_failure: None }
 }
 
 /// HTTP 오류 정규화(MODEL-015). 상태 코드만으로 구분되지 않는 context 초과·모델 미지원은 provider 오류 code·본문으로 가린다.

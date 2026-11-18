@@ -7,7 +7,7 @@ pub mod agents;
 pub mod agent_overview;
 pub mod attachments;
 pub mod source_settings;
-pub mod skills;
+pub mod native_commands;
 pub mod approvals;
 mod project_fs;
 pub mod auth;
@@ -25,7 +25,9 @@ pub mod deps;
 pub mod context;
 pub mod computer;
 pub mod recall;
+pub mod memory;
 mod history;
+mod history_storage;
 pub mod definitions;
 pub mod deferred_tools;
 pub mod error;
@@ -56,6 +58,7 @@ pub mod tools;
 pub mod tool_outputs;
 pub mod sessions;
 pub mod settings;
+pub mod setup;
 pub mod store;
 pub mod tasks;
 mod task_logs;
@@ -66,6 +69,7 @@ pub mod bot_rooms;
 pub mod notifications;
 pub mod web_push;
 pub mod schedules;
+pub mod continuations;
 pub mod remote_watches;
 pub mod terminals;
 mod terminal_capture;
@@ -75,6 +79,7 @@ pub mod fair;
 pub mod update;
 pub mod vault;
 pub mod usage;
+pub mod account_usage;
 pub mod util;
 pub mod web;
 pub mod workspace;
@@ -95,12 +100,18 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// 클라이언트는 쓰기 전에 목록을 확인하고, 변경 요청에는 필요한 기능을 `x-grove-require`로 밝힌다.
 /// 기능을 빼거나 의미를 바꾸면 이름의 버전(`_v2`)을 올린다.
 pub const CAPABILITIES: &[&str] = &[
+    "daemon_setup_v1",
+    "paged_reads_v1",
+    "continuations_v1",
+    "account_usage_v1",
+    "native_skills_v1",
     "project_folders_v1",
     "computer_use_v1",
     "bot_rooms_v1",
     "agent_auth_v1",
     "agent_backends_v1",
     "e2ee_v1",
+    "e2ee_request_body_chunks_v1",
     "file_log_rotation_v1",
     "diagnostics_bundle_v1",
     "file_changes_v1",
@@ -129,6 +140,7 @@ pub const CAPABILITIES: &[&str] = &[
 
 #[derive(Clone)]
 pub struct App {
+    pub account_usage: Arc<account_usage::Cache>,
     pub computer: Arc<computer::Computer>,
     pub agent_logins: Arc<agent_auth::Logins>,
     pub e2ee: Arc<e2ee::Transport>,
@@ -141,6 +153,8 @@ pub struct App {
     pub cancels: Arc<runner::Cancels>,
     pub fair: fair::Fair,
     pub repo_locks: Arc<git::RepoLocks>,
+    pub git_reads: Arc<git::ReadCache<std::path::PathBuf, Arc<serde_json::Value>>>,
+    pub github_reads: Arc<git::ReadCache<String, (serde_json::Value, serde_json::Value)>>,
     pub project_resources: Arc<project_resources::ProjectResources>,
     pub tickets: Arc<files::Tickets>,
     pub tasks: Arc<tasks::Tasks>,
@@ -166,6 +180,7 @@ impl App {
         let (seq_tx, _) = watch::channel(latest);
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         Ok(Self {
+            account_usage: Arc::new(account_usage::Cache::default()),
             computer: Arc::new(computer::Computer::default()),
             agent_logins: Arc::new(agent_auth::Logins::default()),
             e2ee: Arc::new(e2ee::Transport::load(&cfg.data_dir)?),
@@ -178,6 +193,8 @@ impl App {
             cancels: Arc::new(runner::Cancels::default()),
             fair: fair::Fair::default(),
             repo_locks: Arc::new(git::RepoLocks::default()),
+            git_reads: Arc::new(git::ReadCache::default()),
+            github_reads: Arc::new(git::ReadCache::default()),
             project_resources: Arc::new(project_resources::ProjectResources::default()),
             tickets: Arc::new(files::Tickets::default()),
             tasks: Arc::new(tasks::Tasks::default()),
@@ -219,7 +236,7 @@ pub fn router(app: App) -> Router {
         .route("/auth/device", get(auth::current_device).put(auth::rename_current_device))
         .route("/agent-overview", get(agent_overview::show))
         .route("/computer/status", get(computer::status))
-        .route("/devices", get(auth::list_devices).post(auth::create_device))
+        .route("/devices", get(auth::list_devices))
         .route("/devices/{id}", delete(auth::revoke_device))
         .route("/events", get(events::stream))
         .route("/projects", get(projects::list).post(projects::create))
@@ -236,8 +253,9 @@ pub fn router(app: App) -> Router {
         .route("/labels/{id}", axum::routing::patch(labels::update).delete(labels::remove))
         .route("/projects/{id}/labels/{label_id}", axum::routing::put(labels::assign))
         .route("/projects/{id}/sessions", get(sessions::list).post(sessions::create))
+        .route("/projects/{id}/native-commands", get(native_commands::list))
         .route("/projects/{id}/sidebar", get(sessions::sidebar))
-        .route("/projects/{id}/attachments", post(attachments::upload).layer(axum::extract::DefaultBodyLimit::max(6 * 1024 * 1024)))
+        .route("/projects/{id}/attachments", post(attachments::upload).layer(axum::extract::DefaultBodyLimit::max(attachments::MAX_UPLOAD_BODY_BYTES)))
         .route("/attachments/{id}", get(attachments::show).delete(attachments::remove))
         .route("/attachments/{id}/content", get(attachments::content))
         .route("/projects/{id}/terminals", get(terminals::list).post(terminals::create))
@@ -248,7 +266,9 @@ pub fn router(app: App) -> Router {
         .route("/terminals/{id}/ticket", post(terminals::ticket))
         .route("/terminal-ws/{ticket}", get(terminals::ws))
         .route("/usage", get(usage::get_usage))
+        .route("/usage/dashboard", get(usage::get_dashboard))
         .route("/usage/capacity", get(usage::capacity))
+        .route("/usage/accounts", get(account_usage::get))
         .route("/admin/update-readiness", get(admin::readiness))
         .route("/updates/settings", get(admin::update_settings).put(admin::save_update_settings))
         .route("/updates/check", post(admin::check_update))
@@ -291,10 +311,6 @@ pub fn router(app: App) -> Router {
         .route("/hooks/schedules/{id}", post(schedules::receive_hook))
         .route("/sessions/{id}/context", get(context::get_usage))
         .route("/sessions/{id}/model-input", get(context::get_model_input))
-        .route("/sessions/{id}/skills", get(skills::api::list))
-        .route("/sessions/{id}/skills/body", post(skills::api::inspect))
-        .route("/sessions/{id}/skills/selection", put(skills::api::select))
-        .route("/sessions/{id}/skills/management", put(skills::management::mutate))
         .route("/sessions/{id}/compact", post(context::post_compact))
         .route("/sessions/{id}/rewind", post(sessions::rewind))
         .route("/sessions/{id}/followups", get(followups::get_list).post(followups::post_add))
@@ -312,6 +328,8 @@ pub fn router(app: App) -> Router {
         .route("/sessions/{id}/scripts/{script}/run", post(project_scripts::run))
         .route("/projects/{id}/setup", get(project_scripts::setup_status))
         .route("/sessions/{id}/file-changes", get(changes::list))
+        .route("/sessions/{id}/file-changes/page", get(changes::page))
+        .route("/sessions/{id}/file-changes/ids", get(changes::group_ids))
         .route("/sessions/{id}/file-changes/undo", post(changes::undo))
         .route("/sessions/{id}/file-changes/redo", post(changes::redo))
         .route("/sessions/{id}/review", get(changes::review))
@@ -364,6 +382,7 @@ pub fn router(app: App) -> Router {
         .route("/projects/{id}/git/compare", get(git::compare))
         .route("/sessions/search", get(sessions::search))
         .route("/recall", get(recall::get))
+        .route("/memory", get(memory::list))
         .route("/sessions/{id}/delete", post(sessions::delete_permanently))
         .route("/sessions/{id}/title", post(titles::post_generate))
         .route("/sessions/{id}", get(sessions::show).patch(sessions::update))
@@ -372,6 +391,10 @@ pub fn router(app: App) -> Router {
         .route("/sessions/{id}/turns", get(runner::list).post(runner::create))
         .route("/sessions/{id}/tool-requests", post(approvals::create_request))
         .route("/turns/{id}", get(runner::show))
+        .route("/turns/{id}/continuations", post(continuations::create))
+        .route("/continuations/{id}/complete", post(continuations::complete))
+        .route("/continuations/{id}/cancel", post(continuations::cancel))
+        .route("/sessions/{id}/continuations", get(continuations::list))
         .route("/turns/{id}/cancel", post(runner::cancel))
         .route("/turns/{id}/retry", post(runner::retry))
         .route("/turns/{id}/acknowledge", post(runner::acknowledge))
@@ -408,18 +431,17 @@ pub fn router(app: App) -> Router {
         .route("/settings/registry", get(settings::get_registry))
         .route("/source-settings", get(source_settings::list))
         .route("/settings/effective", get(settings::get_effective))
+        .route("/daemon-setup", get(setup::show).put(setup::complete))
         .route("/settings/{scope}/{scope_id}/{key}", axum::routing::put(settings::put))
         .route("/recent", get(workspace::list))
         .route("/recent/touch", post(workspace::touch))
         .route("/recent/{id}", axum::routing::patch(workspace::update))
         .route("/layouts/{device}", get(workspace::get_layout).put(workspace::put_layout))
-        .route("/drafts/{key}", get(workspace::get_draft).put(workspace::put_draft))
         .route("/definitions", get(definitions::list))
         .route("/definitions/{kind}", post(definitions::create))
         .route("/definitions/{kind}/{id}", get(definitions::show).put(definitions::update).delete(definitions::delete))
         // 인증 없이 접근 가능한 경로(origin 검사는 handler 안에서 수행)
         .route("/health", get(web::health))
-        .route("/auth/browser-login", post(auth::browser_login))
         .route("/auth/refresh", post(auth::browser_refresh))
         .route("/auth/logout", post(auth::browser_logout))
         .route("/auth/pairing", post(pairing::redeem))
@@ -430,7 +452,7 @@ pub fn router(app: App) -> Router {
         .fallback(|| async { error::ApiError::not_found("요청한 API가 없습니다") })
         .layer(axum::middleware::from_fn_with_state(app.clone(), auth::origin_guard))
         .layer(axum::middleware::from_fn_with_state(app.clone(), web::reject_when_shutting_down))
-        .layer(tower_http::limit::RequestBodyLimitLayer::new(8 * 1024 * 1024))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(e2ee::MAX_BODY))
         .layer(axum::middleware::from_fn(web::protocol_guard))
         .layer(axum::middleware::from_fn(web::request_context))
         .layer(axum::middleware::from_fn_with_state(app.clone(), e2ee::require_encryption));

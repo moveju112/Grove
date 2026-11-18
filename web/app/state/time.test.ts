@@ -24,6 +24,18 @@ describe("시각 표시 설정", () => {
         expect(displayTime(later, relative, now)).toBe(absoluteTime(later, relative));
         expect(displayTime(afternoon, relative, now, { absolute: true, part: "time" })).toBe(absoluteTime(afternoon, relative, "time"));
     });
+    it("최근의 짧은 표시는 가장 큰 단위만 남기고 내림한다", () => {
+        for (const [elapsed, expected] of [
+            [-30_000, "0m"], [30_000, "0m"], [60_000, "1m"], [3_599_999, "59m"],
+            [3_600_000, "1h"], [80 * 60_000, "1h"], [86_399_999, "23h"],
+            [86_400_000, "1d"], [8 * 86_400_000, "8d"],
+        ] as const) {
+            expect(displayTime(new Date(now - elapsed).toISOString(), relative, now, { compact: true })).toBe(expected);
+        }
+        const future = new Date(now + 10 * 60_000).toISOString();
+        expect(displayTime(future, relative, now, { compact: true })).toBe(absoluteTime(future, relative));
+        expect(displayTime("", relative, now, { compact: true })).toBe(UNKNOWN_TIME);
+    });
     it("잘못된 시각은 Invalid Date 대신 알 수 없음으로 표시한다", () => {
         expect(displayTime("", relative, now)).toBe(UNKNOWN_TIME);
         expect(absoluteTime("not-a-date", relative)).toBe(UNKNOWN_TIME);

@@ -73,7 +73,11 @@ test("다른 탭을 다녀와도 이전 페이지의 읽던 메시지와 화면 
     await expect(target).toBeInViewport();
     await expect.poll(async () => Math.abs((await target.boundingBox())!.y - y)).toBeLessThan(8);
     await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
-    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
+    // 닫은 대화는 최근 목록에서 숨겨지므로 프로젝트 기록에서 다시 연다.
+    await page.locator(`[data-testid="sidebar-project"][data-project-id="${a.id}"]`)
+        .getByRole("button", { name: "프로젝트 메뉴", exact: true }).click();
+    await page.getByRole("dialog", { name: `${a.name} 메뉴`, exact: true }).getByRole("button", { name: "기록", exact: true }).click();
+    await page.getByRole("dialog", { name: `${a.name} 기록`, exact: true }).getByRole("button", { name: `${prefix} reading`, exact: true }).click();
     await expect(target).toBeInViewport();
     await expect.poll(async () => Math.abs((await target.boundingBox())!.y - y)).toBeLessThan(8);
 });
@@ -101,9 +105,9 @@ test("앱을 닫았다 다시 열어도(탭 저장소 없음) 대화의 마지�
     try {
         const again = await restarted.newPage();
         await again.goto("/");
-        const token = again.getByLabel("토큰");
-        await expect(again.getByTestId("conn").or(token)).toBeVisible();
-        if (await token.isVisible()) await login(again);
+        const pair = again.getByRole("button", { name: "페어링 링크·QR로 등록" });
+        await expect(again.getByTestId("conn").or(pair)).toBeVisible();
+        if (await pair.isVisible()) await login(again);
         await expect(again.getByTestId("conn")).toHaveText("연결됨");
         await again.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`${prefix} reading`) }).click();
         await expect(again.locator(`[data-testid=session-view][data-session="${reading.id}"]`).getByText(`${prefix} line 25`, { exact: true })).toBeInViewport();

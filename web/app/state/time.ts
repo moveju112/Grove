@@ -25,11 +25,16 @@ export function absoluteTime(at: string, p: TimePrefs, part: TimePart = "datetim
 }
 
 /// absolute: 만료·예정·기준 시각처럼 상대 표시가 오해를 부르는 값은 항상 절대 시각으로 표시한다.
-export function displayTime(at: string, p: TimePrefs, now: number, opts: { absolute?: boolean; part?: TimePart } = {}): string {
+export function displayTime(at: string, p: TimePrefs, now: number, opts: { absolute?: boolean; compact?: boolean; part?: TimePart } = {}): string {
     const time = new Date(at).getTime();
     if (Number.isNaN(time)) return UNKNOWN_TIME;
     const ago = now - time;
-    if (p.timeStyle !== "relative" || opts.absolute || ago < -CLOCK_SKEW || ago >= RELATIVE_LIMIT) return absoluteTime(at, p, opts.part);
+    if (p.timeStyle !== "relative" || opts.absolute || ago < -CLOCK_SKEW || (!opts.compact && ago >= RELATIVE_LIMIT)) return absoluteTime(at, p, opts.part);
+    if (opts.compact) {
+        if (ago < HOUR) return `${Math.max(0, Math.floor(ago / MINUTE))}m`;
+        if (ago < DAY) return `${Math.floor(ago / HOUR)}h`;
+        return `${Math.floor(ago / DAY)}d`;
+    }
     if (ago < MINUTE) return "방금 전";
     const format = new Intl.RelativeTimeFormat("ko", { numeric: "auto" });
     if (ago < HOUR) return format.format(-Math.floor(ago / MINUTE), "minute");

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { elapsedMs, seconds, startTimingTimer, type TimingSample } from "./model";
+import { elapsedMs, formatDuration, startTimingTimer, type TimingSample } from "./model";
 
 const sample = (running = true): TimingSample => ({
     receivedAt: 500,
@@ -25,15 +25,18 @@ describe("서버 기준 턴 시간", () => {
     it("새 서버 조회로 복구하고 대기를 순수 실행으로 빼거나 중복 합산하지 않는다", () => {
         expect(elapsedMs({ ...sample(), receivedAt: 10_000 }, 11_000, true)).toBe(13_000);
         expect(elapsedMs(sample(), 100, true)).toBe(12_000);
-        expect(seconds(12_345)).toBe("12초");
-        expect(seconds(-1)).toBe("0초");
+        expect(formatDuration(12_345)).toBe("12초");
+        expect(formatDuration(-1)).toBe("0초");
     });
 
     it.each([
         [-1, "0초"], [0, "0초"], [999, "0초"],
         [1000, "1초"], [1999, "1초"], [12_999, "12초"],
-    ])("%dms는 소수점 없이 지난 정수 초인 %s로 표시한다", (ms, expected) => {
-        expect(seconds(ms)).toBe(expected);
+        [59_999, "59초"], [60_000, "1m 0s"], [65_999, "1m 5s"],
+        [3_599_999, "59m 59s"], [3_600_000, "1h 0m 0s"],
+        [3_725_999, "1h 2m 5s"], [90_061_000, "25h 1m 1s"],
+    ])("%dms는 경과 시간 %s로 표시한다", (ms, expected) => {
+        expect(formatDuration(ms)).toBe(expected);
     });
 
     it("끄면 timer도 계산도 시작하지 않고 해제 뒤에는 갱신하지 않는다", () => {

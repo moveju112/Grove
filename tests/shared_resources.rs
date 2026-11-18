@@ -182,7 +182,7 @@ async fn queued_ui_access_revalidates_the_device_after_the_project_guard_becomes
         h
     };
     let owner=grove::auth::authenticate(&app,&headers(&s.token)).await.unwrap();
-    let (_,device)=s.post("/api/v1/devices",json!({"name":"queued device"})).await;
+    let device=s.registered_device("queued device").await;
     let principal=grove::auth::authenticate(&app,&headers(device["token"].as_str().unwrap())).await.unwrap();
     let held=app.project_resources.ui_write(&app,pid,&owner).await.unwrap();
     let waiting=app.project_resources.ui_write(&app,pid,&principal);

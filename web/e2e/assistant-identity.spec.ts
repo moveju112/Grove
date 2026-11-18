@@ -33,6 +33,79 @@ async function answer(view: Locator, marker: string) {
     return message.getByTestId("assistant-identity");
 }
 
+// 클래스나 flex 속성 대신 실제 글자 상자를 비교해 중첩된 inline 요소의 기준선 차이도 잡는다.
+async function expectAlignedLabel(scope: Locator, detail: string) {
+    await expect(scope).toContainText(detail);
+    const metrics = await scope.evaluate((node, suffix) => {
+        const name = node.querySelector('[data-testid="assistant-name"]')!;
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+        let detailText: Text | null = null;
+        while (walker.nextNode()) {
+            if (walker.currentNode.textContent?.includes(suffix)) {
+                detailText = walker.currentNode as Text;
+                break;
+            }
+        }
+        const glyph = (text: Node, offset: number) => {
+            const range = document.createRange();
+            range.setStart(text, offset);
+            range.setEnd(text, offset + 1);
+            const box = range.getBoundingClientRect();
+            return { top: box.top, height: box.height };
+        };
+        return {
+            name: glyph(name.firstChild!, 0),
+            detail: glyph(detailText!, detailText!.textContent!.indexOf(suffix)),
+        };
+    }, detail);
+    expect(Math.abs(metrics.name.top - metrics.detail.top), JSON.stringify(metrics)).toBeLessThanOrEqual(0.5);
+    expect(Math.abs(metrics.name.height - metrics.detail.height), JSON.stringify(metrics)).toBeLessThanOrEqual(0.5);
+}
+
+for (const width of [390, 1400]) {
+    for (const image of [false, true]) {
+        test(`${width}px에서 사진 ${image ? "있음" : "없음"}: 이름·작업 상태·모델 정보의 글자 높이가 같다`, async ({ page }, info) => {
+            await page.setViewportSize({ width, height: 844 });
+            const bot = await makeBot(`어시스턴트${width === 390 ? "가" : "나"}${image ? "유" : "무"}`, image);
+            const view = await openBot(page, bot);
+            // 기기별 사용자 글꼴처럼 x-height가 다른 글꼴에서도 기준선이 같아야 한다.
+            await view.evaluate((node) => {
+                (node as HTMLElement).style.fontFamily = "serif";
+                (node as HTMLElement).style.setProperty("--font-family-body", "serif");
+            });
+            await composerOption(view, "보내기 방식", "model");
+            for (const [index, delta, status] of [
+                [0, { content: "" }, "작업 중…"],
+                [1, { reasoning_content: "확인하는 중" }, "작업 중…"],
+                [2, { content: "답변하는 중" }, "응답 중…"],
+            ] as const) {
+                const marker = `identity-align-${bot.id}-${index}`;
+                await script({ frames: [JSON.stringify({ choices: [{ delta }] })], hang: true, marker });
+                await view.getByLabel("메시지 입력").fill(marker);
+                await view.getByRole("button", { name: "보내기", exact: true }).click();
+                const partial = view.getByTestId("partial");
+                await expect(partial).toBeVisible();
+                await expectAlignedLabel(partial, status);
+                await partial.evaluate((node) => {
+                    const label = document.getElementById(node.getAttribute("aria-labelledby")!)!;
+                    label.style.fontSize = "1.25em";
+                });
+                await expectAlignedLabel(partial, status);
+                if (width === 390 && index === 0) await page.screenshot({ path: info.outputPath("assistant-label-mobile.png") });
+                page.once("dialog", (dialog) => dialog.accept());
+                await view.getByRole("button", { name: "취소", exact: true }).click();
+                await expect(partial).toHaveCount(0);
+            }
+            const marker = `identity-align-done-${bot.id}`;
+            await answer(view, marker);
+            const label = view.getByTestId("msg-assistant").filter({ hasText: marker }).getByTestId("msg-who");
+            await expectAlignedLabel(label, "모델");
+            await label.evaluate((node) => { (node as HTMLElement).style.fontSize = "1.25em"; });
+            await expectAlignedLabel(label, "모델");
+        });
+    }
+}
+
 test("실제 assistant는 설정된 이름을 HTML이 아닌 텍스트와 기본 아이콘으로 표시한다", async ({ page }) => {
     const name = `<b>도우미</b> ${Date.now().toString(36)}`;
     const bot = await makeBot(name, false);

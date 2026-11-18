@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, login, requireToolApproval, script, selectChoice, state } from "./helpers";
+import { apiCall, ensureProfile, login, openProjectSettings, requireToolApproval, script, selectChoice, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Effective = { items: { key: string; effective: unknown; source: string; layers: Record<string, { value: unknown; revision: number }> }[] };
@@ -14,9 +14,9 @@ async function setup(page: Page) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, {});
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
-    await page.getByLabel("설정 검색", { exact: true }).fill("셸·자원");
+    await openProjectSettings(page);
+    await page.getByTestId("settings-menu").getByRole("button", { name: "실행·한도", exact: true }).click();
+    await page.getByTestId("settings").getByRole("button", { name: /고급 항목 \d+개 펼치기/ }).click();
     return { project, session, panel: page.getByTestId("exec-settings") };
 }
 
@@ -33,8 +33,7 @@ test("범위별 셸·한도·작업 위치는 blur 때 저장하고 기본값 �
     await cwd.getByLabel("기본 작업 위치", { exact: true }).fill("work");
     await cwd.getByLabel("기본 작업 위치", { exact: true }).blur();
     await expect(cwd.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
-    await expect(panel).toContainText("새 모델 셸·대화 작업에만 적용");
-    await expect(panel).toContainText("기존 계획·승인은 유지");
+    await expect(panel).toContainText("다음 실행부터 적용");
     const sessionQuery = `/settings/effective?session_id=${session.id}`;
     const inherited = (await apiCall<Effective>("GET", sessionQuery)).items.find((item) => item.key === "exec.max_memory_mb")!;
     expect(inherited.effective).toBe(128);
@@ -49,23 +48,18 @@ test("범위별 셸·한도·작업 위치는 blur 때 저장하고 기본값 �
     expect(after.source).toBe("project");
 });
 
-test("미지원 격리·셸은 이유와 함께 비활성이고 기존 승인 계약을 안내한다", async ({ page }) => {
+test("격리 선택과 미지원 셸 설명은 없고 지원하는 셸만 표시한다", async ({ page }, info) => {
     const { panel } = await setup(page);
-    const unsupported = panel.getByRole("group", { name: "프로세스 격리 수준 미지원 선택지", exact: true });
-    await expect(unsupported).toHaveAttribute("aria-disabled", "true");
-    await expect(unsupported.getByRole("listitem").filter({ hasText: "sandbox" })).toBeVisible();
-    await expect(unsupported).toContainText("아직 구현되지 않았습니다");
-    await expect(unsupported.getByRole("listitem").filter({ hasText: "none" })).toBeVisible();
-    await expect(panel.getByRole("combobox", { name: "프로세스 격리 수준", exact: true })).toHaveAttribute("data-selected-value", "process_tree");
-    const registry = await apiCall<{ key: string; unavailable_options?: { value: string; reason: string }[] }[]>("GET", "/settings/registry");
-    for (const choice of registry.find((def) => def.key === "exec.shell")!.unavailable_options ?? []) {
-        const group = panel.getByRole("group", { name: "명령 실행 셸 미지원 선택지", exact: true });
-        await expect(group).toHaveAttribute("aria-disabled", "true");
-        await expect(group.getByRole("listitem").filter({ hasText: `${choice.value} · ${choice.reason}` })).toBeVisible();
-        await expect(group.getByRole("combobox")).toHaveCount(0);
-    }
-    await expect(panel).toContainText("다음 실행 계획부터 적용");
-    await expect(panel).toContainText("파일·네트워크 sandbox가 아닙니다");
+    await expect(panel.getByTestId("setting-exec.isolation")).toHaveCount(0);
+    await expect(panel.getByText(/미지원 선택지/)).toHaveCount(0);
+    const registry = await apiCall<{ key: string; options: string[]; unavailable_options?: unknown }[]>("GET", "/settings/registry");
+    expect(registry.some((def) => def.key === "exec.isolation")).toBe(false);
+    expect(registry.find((def) => def.key === "exec.shell")!.unavailable_options).toBeUndefined();
+    await expect(panel.getByRole("combobox", { name: "명령 실행 셸", exact: true })).toContainText("기본 셸");
+    await expect(panel).toContainText("다음 실행부터 적용");
+    await expect(panel).toContainText("파일·네트워크 접근은 제한하지 않아요");
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.screenshot({ path: info.outputPath("exec-settings-390.png") });
 });
 
 test("화면에서 셸·한도를 바꿔도 승인 대상은 고정되고 다음 계획만 새 값을 사용한다", async ({ page }) => {
@@ -102,6 +96,8 @@ test("화면에서 셸·한도를 바꿔도 승인 대상은 고정되고 다음
     const old = await plan();
     expect(old.call.target.shell).toBe("sh");
     expect(old.call.target.limits).toEqual({ memory_mb: 128, cpu_seconds: 3 });
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
     await save("exec.shell", "명령 실행 셸", "bash", true);
     await save("exec.max_memory_mb", "명령 메모리 한도(MB)", "256");
     await save("exec.max_cpu_seconds", "명령 CPU 시간 한도(초)", "5");

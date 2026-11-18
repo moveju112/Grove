@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice, startProjectConversation, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, runningSendMode, script, selectChoice, startProjectConversation, state } from "./helpers";
 import { frames } from "./fixture";
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgAAIAAAUAAXpeqz8AAAAASUVORK5CYII=", "base64");
 
@@ -52,8 +52,9 @@ test("첨부 업로드와 전송 응답 유실 뒤 같은 요청으로 원문을
     await expect(sent).toContainText(name);
     expect(sendKeys).toHaveLength(2);
     expect(sendKeys[1]).toBe(sendKeys[0]);
+    await sent.getByRole("button", { name: `${name} 첨부 작업`, exact: true }).click();
     const downloadEvent = page.waitForEvent("download");
-    await sent.getByRole("button", { name: "원문 다운로드" }).click();
+    await page.getByRole("group", { name: `${name} 첨부 작업`, exact: true }).getByRole("button", { name: "원문 다운로드" }).click();
     const download = await downloadEvent;
     expect(download.suggestedFilename()).toBe(name);
     const chunks: Buffer[] = [];
@@ -67,7 +68,7 @@ test("첨부 업로드와 전송 응답 유실 뒤 같은 요청으로 원문을
     await expect(page.getByTestId("session-view").getByLabel("메시지 첨부파일")).toContainText(name);
 });
 
-test("붙여넣기·드롭 첨부 초안을 복원하고 이미지를 모델로 보낸다", async ({ page }, testInfo) => {
+test("미전송 첨부는 새로고침 뒤 복원하지 않고 붙여넣기·드롭으로 선택한 이미지를 모델로 보낸다", async ({ page }, testInfo) => {
     const { b } = await ensureProjects();
     const profile = await ensureProfile();
     await login(page);
@@ -75,18 +76,19 @@ test("붙여넣기·드롭 첨부 초안을 복원하고 이미지를 모델로 
     const project = page.getByTestId("project-view");
     await startProjectConversation(project);
     const input = project.getByLabel("메시지 입력");
-    await input.evaluate((el, data) => {
+    const pasteImage = () => input.evaluate((el, data) => {
         const dt = new DataTransfer();
         dt.items.add(new File([Uint8Array.from(atob(data), (c) => c.charCodeAt(0))], "clipboard.png", { type: "image/png" }));
         el.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
     }, png.toString("base64"));
-    await project.getByTestId("attachment-card").hover();
-    await expect(page.getByRole("tooltip")).toContainText("모델 입력 1×1");
-    await page.keyboard.press("Escape");
-    await expect(page.getByRole("tooltip")).toBeHidden();
+    await pasteImage();
+    await expect(project.getByRole("img", { name: "clipboard.png", exact: true })).toBeVisible();
     await page.reload();
     await startProjectConversation(project);
-    await expect(project.getByTestId("attachment-card")).toContainText("clipboard.png");
+    await expect(project.getByTestId("attachment-card")).toHaveCount(0);
+    await pasteImage();
+    await expect(project.getByRole("img", { name: "clipboard.png", exact: true })).toBeVisible();
+    await expect(project.getByRole("button", { name: "파일 첨부", exact: true })).toBeEnabled();
     await input.evaluate((el) => {
         const dt = new DataTransfer(); dt.items.add(new File(["dropped text"], "drop.txt", { type: "text/plain" }));
         el.dispatchEvent(new DragEvent("drop", { dataTransfer: dt, bubbles: true, cancelable: true }));
@@ -95,12 +97,13 @@ test("붙여넣기·드롭 첨부 초안을 복원하고 이미지를 모델로 
     await project.getByRole("button", { name: "drop.txt 첨부 제거" }).click();
     const card = project.getByTestId("attachment-card");
     await expect(card).toHaveCount(1);
-    await project.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({ name: "too-large.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(4 * 1024 * 1024 + 1) });
-    await expect(project.getByRole("alert")).toContainText("파일당 4MiB");
+    await project.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({ name: "too-large.bin", mimeType: "application/octet-stream", buffer: Buffer.alloc(32 * 1024 * 1024 + 1) });
+    await expect(project.getByRole("alert")).toContainText("파일당 32MiB");
     await expect(card).toHaveCount(1);
-    await project.getByRole("button", { name: "clipboard.png 첨부 작업", exact: true }).click();
-    await page.getByRole("group", { name: "clipboard.png 첨부 작업", exact: true }).getByRole("button", { name: "미리보기", exact: true }).click();
-    await expect(card.getByRole("img", { name: "clipboard.png" })).toBeVisible();
+    await project.getByRole("button", { name: "clipboard.png 미리보기", exact: true }).click();
+    const preview = page.getByRole("dialog", { name: "clipboard.png 미리보기", exact: true });
+    await expect(preview.getByRole("img", { name: "clipboard.png" })).toBeVisible();
+    await preview.getByRole("button", { name: "미리보기 닫기", exact: true }).click();
     await composerOption(project, "보내기 방식", "model");
     await page.keyboard.press("Escape");
     await composerOption(project, "모델 프로필", profile);
@@ -128,19 +131,23 @@ test("실행 중 첨부를 대기열에 넣고 취소 뒤 직접 이어서 보�
     await composerOption(view, "보내기 방식", "model");
     await page.keyboard.press("Escape");
     await composerOption(view, "모델 프로필", profile);
+    await runningSendMode(page, "queue");
     await script({ frames: [JSON.stringify({ choices: [{ delta: { content: "대기 중 fixture" } }] })], hang: true, marker: title });
     await view.getByLabel("메시지 입력").fill(title);
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("partial")).toContainText("대기 중 fixture");
     await view.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({ name: "queued.png", mimeType: "image/png", buffer: png });
-    await expect(view.getByTestId("attachment-selection").getByTestId("attachment-card")).toContainText("queued.png");
-    await view.getByRole("button", { name: "대기열에 추가", exact: true }).click();
-    await expect(view.getByTestId("followups")).toContainText("queued.png");
+    await expect(view.getByTestId("attachment-selection").getByRole("img", { name: "queued.png", exact: true })).toBeVisible();
+    const queuedText = `queued-image-${Date.now()}`;
+    await view.getByLabel("메시지 입력").fill(queuedText);
+    await view.getByRole("button", { name: "대기열", exact: true }).click();
+    await expect(view.getByTestId("followups").getByRole("img", { name: "queued.png", exact: true })).toBeVisible();
+    page.once("dialog", (dialog) => dialog.accept());
     await view.getByTestId("turn-status").getByRole("button", { name: "취소", exact: true }).click();
     await expect(view.getByTestId("followups").getByRole("button", { name: "지금 시작" })).toBeVisible();
-    await script({ frames: frames.text(["첨부 대기열 완료"]), marker: "queued.png" });
+    await script({ frames: frames.text(["첨부 대기열 완료"]), marker: queuedText });
     await view.getByTestId("followups").getByRole("button", { name: "지금 시작" }).click();
     await expect(view.getByTestId("followups")).toHaveCount(0);
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "첨부 대기열 완료" })).toBeVisible();
-    await expect(view.getByLabel("메시지 첨부파일")).toContainText("queued.png");
+    await expect(view.getByLabel("메시지 첨부파일").getByRole("img", { name: "queued.png", exact: true })).toBeVisible();
 });

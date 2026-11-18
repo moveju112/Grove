@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, login, startProjectConversation, state } from "./helpers";
+import { apiCall, login, openTool, startProjectConversation, state } from "./helpers";
 
 // DESIGN.md "빈 대화 화면": 보조 기능은 깊이로 숨기고, 기본 화면은 위치 한 줄·입력창·빈 본문만 남긴다.
 // 버튼을 다시 늘어놓는 변경이 들어오면 이 시험이 막는다.
@@ -15,17 +15,31 @@ test("모바일 빈 프로젝트는 상단 한 줄·입력창만 보이고 보�
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
     await expect(page.getByTestId("mobile-drawer-left")).toBeHidden();
     const view = page.getByTestId("project-view").filter({ visible: true });
-    await expect(view.getByTestId("composer")).toHaveCount(0);
+    await expect(view.getByTestId("composer")).toBeVisible();
     await startProjectConversation(view);
     const composer = view.getByTestId("composer");
     await expect(composer).toBeVisible();
 
     // 현재 위치는 별도 줄이 아니라 상단 바 안에 있고, 단일 탭 줄은 숨긴다.
     const topbar = page.getByRole("banner");
-    // 프로젝트 이름은 상단 바에서 한 번만 보이고 문서의 제목 의미는 유지한다.
+    const plus = topbar.getByRole("button", { name: "새 대화", exact: true });
+    const connection = await topbar.getByTestId("conn").boundingBox();
+    const plusBox = await plus.boundingBox();
+    const panelBox = await topbar.getByRole("button", { name: "열린 세션", exact: true }).boundingBox();
+    expect(connection!.x + connection!.width).toBeLessThanOrEqual(plusBox!.x);
+    expect(plusBox!.x + plusBox!.width).toBeLessThanOrEqual(panelBox!.x);
+    await view.getByLabel("메시지 입력", { exact: true }).fill("보존할 새 대화 입력");
+    await plus.click();
+    await expect(view.getByLabel("메시지 입력", { exact: true })).toHaveValue("보존할 새 대화 입력");
+    await expect(view.getByLabel("메시지 입력", { exact: true })).toBeFocused();
+    await expect.poll(async () => (await apiCall<{ items: unknown[] }>("GET", `/projects/${project.id}/sessions`)).items.length).toBe(0);
+    await view.getByLabel("메시지 입력", { exact: true }).fill("");
+
+    // 프로젝트 이름은 상단 바에만 남기고 입력 화면 안의 중복 제목은 제거한다.
     const nav = page.getByTestId("navigation-context");
     await expect(topbar.getByTestId("navigation-context")).toHaveCount(1);
     await expect(nav.locator('[aria-current="page"]')).toHaveText(project.name);
+    await expect(view.getByRole("heading", { name: project.name, exact: true })).toHaveCount(0);
     const shownNames = await page.getByText(project.name, { exact: true }).evaluateAll((nodes) =>
         nodes.filter((node) => node.getBoundingClientRect().width > 2).length);
     expect(shownNames).toBe(1);
@@ -60,7 +74,10 @@ test("모바일 빈 프로젝트는 상단 한 줄·입력창만 보이고 보�
     await trigger.click();
     await expect(view.getByRole("tab", { name: "변경", exact: true })).toBeVisible();
     await view.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
-    await view.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await expect(page.getByRole("button", { name: "보관된 대화 보기", exact: true })).toBeVisible();
+    await openTool(view, "파일");
+    for (const name of ["프로젝트", "휴지통", "예약"]) {
+        await expect(view.getByRole("tab", { name, exact: true })).toHaveCount(0);
+    }
+    await expect(page.getByRole("button", { name: "보관된 대화 보기", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "파일 탭으로 열기", exact: true })).toBeVisible();
 });

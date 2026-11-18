@@ -880,28 +880,31 @@ async fn gc_finish_is_bounded_and_advances_past_preserved_entries() {
 
 #[tokio::test]
 async fn migration_adds_purge_journal_and_resumes_legacy_purging_metadata() {
-    let mut s = TestServer::start().await;
-    let p = s.create_project("journal-migration").await;
-    let pid = p["id"].as_str().unwrap();
-    let dir = s.data_dir().join("trash/legacy-purging");
+    // 실제 버전 34 DB를 만든다. 최신 schema에서 열을 일일이 지우면 새 migration마다
+    // 뒤의 결과가 남아 재실행 충돌이 생기므로 과거 schema 자체를 fixture로 사용한다.
+    let owned = tempfile::tempdir().unwrap();
+    let data = owned.path().join("data");
+    let root = owned.path().join("journal-migration");
+    std::fs::create_dir_all(&data).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    let db = rusqlite::Connection::open(data.join("grove.db")).unwrap();
+    db.execute_batch("PRAGMA foreign_keys=ON;").unwrap();
+    for migration in grove::store::MIGRATIONS.iter().take(34) {
+        db.execute_batch(migration).unwrap();
+    }
+    db.pragma_update(None, "user_version", 34).unwrap();
+    let now = grove::util::fmt_time(time::OffsetDateTime::now_utc());
+    let pid = "journal-migration-project";
+    db.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES(?1,'journal-migration',?2,?3,?3)",
+        rusqlite::params![pid,root.to_str().unwrap(),now]).unwrap();
+    db.execute("INSERT INTO settings(scope,scope_id,key,value,revision,updated_at) VALUES('server','-','storage.trash_retention_days','2',1,?1)", [&now]).unwrap();
+    let dir = data.join("trash/legacy-purging");
     std::fs::create_dir_all(&dir).unwrap();
     let origin = json!({"format":2,"state":"purging","project_id":pid,"path":"gone","deleted_at":"2000-01-01T00:00:00Z"}).to_string();
     std::fs::write(dir.join("origin.json"), &origin).unwrap();
-    s.send(
-        Method::PUT,
-        "/api/v1/settings/server/-/storage.trash_retention_days",
-        json!({"expected_revision":0,"value":2}),
-    )
-    .await;
-    s.stop().await;
-    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
-    // 버전 34 상태를 흉내 낸다: 35(trash_gc)와 그 뒤 migration의 결과를 모두 되돌린다.
-    db.execute_batch("DROP TABLE mcp_oauth_attempts; DROP TABLE mcp_oauth_credentials; DROP TABLE hook_runs; DROP TABLE hook_events; DROP TABLE skill_states; DROP TABLE session_skills; DROP TABLE hook_definitions; ALTER TABLE projects DROP COLUMN workspace_mode; ALTER TABLE turns DROP COLUMN provider_started_at; ALTER TABLE turns DROP COLUMN provider_ms; DROP TABLE mcp_checks; DROP TABLE mcp_servers;").unwrap();
-    db.execute_batch(
-        "ALTER TABLE schedules DROP COLUMN quiet_policy; ALTER TABLE schedule_runs DROP COLUMN result_class; ALTER TABLE schedule_runs DROP COLUMN result_sha256; ALTER TABLE schedule_runs DROP COLUMN result_evidence; ALTER TABLE schedule_runs DROP COLUMN notified; DROP TABLE webhook_receipts; DROP TABLE schedule_webhooks; DROP INDEX schedules_bot; ALTER TABLE schedules DROP COLUMN bot_id; DROP TABLE bot_avatars; DROP TABLE setup_runs; ALTER TABLE projects DROP COLUMN setup_script_id; DROP TABLE project_labels; DROP TABLE labels; ALTER TABLE projects DROP COLUMN pinned_at; DROP TABLE remote_watches; ALTER TABLE turns DROP COLUMN evidence; ALTER TABLE schedules DROP COLUMN max_runs; ALTER TABLE schedules DROP COLUMN end_at; ALTER TABLE schedules DROP COLUMN pause_after_failures; ALTER TABLE schedules DROP COLUMN consecutive_failures; ALTER TABLE schedules DROP COLUMN last_failed_at; ALTER TABLE schedules DROP COLUMN paused_reason; ALTER TABLE recent_items DROP COLUMN hidden_at; ALTER TABLE tasks DROP COLUMN script_snapshot; DROP TABLE project_scripts; DROP TABLE memories; ALTER TABLE cli_sessions DROP COLUMN system_sha256; DROP TABLE credential_backfills; ALTER TABLE model_profiles DROP COLUMN enabled; DROP INDEX notifications_ref_created; ALTER TABLE notifications DROP COLUMN delivered_at; DROP TABLE pairings; DROP TABLE trash_gc; DROP TABLE worktrees; ALTER TABLE sessions DROP COLUMN worktree_id; PRAGMA user_version=34;",
-    )
-    .unwrap();
-    s.restart().await;
+    drop(db);
+    let s = TestServer::start_with(owned, config(&data)).await;
+    let db = rusqlite::Connection::open(data.join("grove.db")).unwrap();
     assert_eq!(
         std::fs::read_to_string(dir.join("origin.json")).unwrap(),
         origin

@@ -40,6 +40,15 @@ for (const width of [390, 1280]) {
                 if (width === 390) await page.getByRole("button", { name: "사이드바", exact: true }).click();
                 const sidebar = page.getByTestId("sidebar");
                 await expectIconsUnclipped(sidebar);
+                const settings = page.getByRole("button", { name: "설정", exact: true });
+                await expect(settings).toHaveText("");
+                await expect(settings.locator("svg")).toBeVisible();
+                await settings.click();
+                await expect(page.getByTestId("settings")).toBeVisible();
+                await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
+                if (width === 390) await page.getByRole("button", { name: "사이드바", exact: true }).click();
+                await expect(sidebar).toBeInViewport({ ratio: 1 });
+                await page.screenshot({ path: info.outputPath(`settings-icon-${width}-${theme}.png`) });
                 await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
                 if (width === 390) await expect(page.getByTestId("mobile-drawer-left")).toBeHidden();
                 const view = page.getByTestId("project-view").filter({ visible: true });

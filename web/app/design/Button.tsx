@@ -39,11 +39,12 @@ export function Button({ children, disabled, type = "submit", ref, variant, dens
     const resolvedVariant = appearance ? APPEARANCE[appearance] : variant ?? "primary";
     const native = { disabled };
     return <AstryxButton {...props} {...native} ref={ref} type={type}
+        data-grove-button-layout={appearance === "navigation" || appearance === "settings" ? "fill" : undefined}
         xstyle={[(appearance === "link" || appearance === "disclosure") && styles.flush, xstyle]}
         label={props["aria-label"] ?? (typeof children === "string" ? children : "")}
         variant={resolvedVariant} size={density === "touch" ? "lg" : density === "compact" ? "sm" : "md"}
         width={width ?? (appearance ? DEFAULT_WIDTH[appearance] : undefined)} isDisabled={disabled}
         isIconOnly={iconOnly} icon={iconOnly ? children : undefined}>
-        {iconOnly ? null : <HStack as="span" width="100%" gap={2} vAlign="center" hAlign={quiet ? "start" : "center"}>{children}</HStack>}
+        {iconOnly ? null : <HStack as="span" data-grove-button-content="" width="100%" gap={2} vAlign="center" hAlign={quiet ? "start" : "center"}>{children}</HStack>}
     </AstryxButton>;
 }

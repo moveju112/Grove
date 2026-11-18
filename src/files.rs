@@ -21,7 +21,7 @@ use axum::response::{IntoResponse, Response};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::path::{Path as FsPath, PathBuf};
-use std::io::{Read, Seek, SeekFrom};
+use std::io::Read;
 
 /// 편집기로 여는 텍스트 상한.
 pub const MAX_TEXT: u64 = 2 * 1024 * 1024;
@@ -85,52 +85,89 @@ pub struct ListQuery {
     pub hidden: bool,
     /// name | mtime | size
     pub sort: Option<String>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+    pub filter: Option<String>,
 }
 
-pub async fn list(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<ListQuery>) -> ApiResult<Json<Value>> {
-    let root = root_of(&app, &id).await?;
-    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
+#[derive(Serialize, ts_rs::TS)]
+pub struct FileEntry {
+    pub name: String,
+    pub path: String,
+    #[ts(type = "\"dir\" | \"file\" | \"link_outside\" | \"other\"")]
+    pub kind: String,
+    pub symlink: bool,
+    pub size: Option<u64>,
+    pub mtime: Option<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub struct FileList {
+    pub path: String,
+    pub entries: Vec<FileEntry>,
+    pub truncated: bool,
+    pub total: usize,
+    pub offset: usize,
+    pub has_more: bool,
+}
+
+fn listing_entry(scope: &ProjectFs, root: &FsPath, dir: &FsPath, name: String) -> Option<FileEntry> {
+    let path = dir.join(&name);
+    let lm = scope.symlink_metadata(&path).ok()?;
+    let is_link = lm.file_type().is_symlink();
+    let target = resolve(root, &path.to_string_lossy());
+    let target_ok = !is_link || target.is_ok();
+    let m = if is_link && target_ok { target.ok().and_then(|p| scope.metadata(&p).ok()).unwrap_or(lm) } else { lm };
+    let kind = if is_link && !target_ok { "link_outside" } else if m.is_dir() { "dir" } else if m.is_file() { "file" } else { "other" };
+    Some(FileEntry {
+        name, path: rel_display(root, &path), kind: kind.into(), symlink: is_link,
+        size: m.is_file().then(|| m.len()),
+        mtime: m.modified().ok().map(|t| crate::util::fmt_time(time::OffsetDateTime::from(t.into_std()))),
+    })
+}
+
+fn list_directory(root: PathBuf, q: ListQuery) -> ApiResult<FileList> {
     let dir = resolve_api(&root, q.path.as_deref().unwrap_or("."))?;
     let scope = ProjectFs::open(&root).map_err(|e| io_err(e, "프로젝트 열기"))?;
     let rd = scope.dir.read_dir(scope.relative(&dir).map_err(|e| io_err(e, "폴더 경로"))?).map_err(|e| io_err(e, "폴더 열기"))?;
-    let mut entries = vec![];
-    let mut truncated = false;
-    for e in rd.flatten() {
+    let offset = q.offset.unwrap_or(0);
+    let limit = q.limit.map(|n| n.clamp(1, 200)).unwrap_or(MAX_ENTRIES);
+    let filter = q.filter.unwrap_or_default().to_lowercase();
+    let key = match q.sort.as_deref() { Some("mtime") => "mtime", Some("size") => "size", _ => "name" };
+    let mut names = vec![];
+    for e in rd {
+        let e = e.map_err(|e| io_err(e, "폴더 항목 읽기"))?;
         let name = e.file_name().to_string_lossy().to_string();
-        if !q.hidden && name.starts_with('.') {
+        if (!q.hidden && name.starts_with('.')) || (!filter.is_empty() && !name.to_lowercase().contains(&filter)) {
             continue;
         }
-        if entries.len() >= MAX_ENTRIES {
-            truncated = true;
-            break;
-        }
-        let path = dir.join(&name);
-        let Ok(lm) = scope.symlink_metadata(&path) else { continue };
-        let is_link = lm.file_type().is_symlink();
-        // symlink는 대상이 프로젝트 안일 때만 종류를 따라간다.
-        let target = resolve(&root, &path.to_string_lossy());
-        let target_ok = !is_link || target.is_ok();
-        let m = if is_link && target_ok { target.ok().and_then(|p| scope.metadata(&p).ok()).unwrap_or(lm.clone()) } else { lm.clone() };
-        let kind = if is_link && !target_ok { "link_outside" } else if m.is_dir() { "dir" } else if m.is_file() { "file" } else { "other" };
-        entries.push(json!({
-            "name": name,
-            "path": rel_display(&root, &dir.join(&name)),
-            "kind": kind,
-            "symlink": is_link,
-            "size": if m.is_file() { Some(m.len()) } else { None },
-            "mtime": m.modified().ok().map(|t| crate::util::fmt_time(time::OffsetDateTime::from(t.into_std()))),
-        }));
+        let ty = e.file_type().map_err(|e| io_err(e, "파일 종류 확인"))?;
+        let is_dir = ty.is_dir() || (ty.is_symlink() && listing_entry(&scope, &root, &dir, name.clone()).is_some_and(|e| e.kind == "dir"));
+        names.push((name.to_lowercase(), name, is_dir));
     }
-    let key = q.sort.as_deref().unwrap_or("name");
-    entries.sort_by(|a, b| {
-        let dir_first = (b["kind"] == "dir").cmp(&(a["kind"] == "dir"));
-        dir_first.then_with(|| match key {
-            "mtime" => b["mtime"].as_str().cmp(&a["mtime"].as_str()),
-            "size" => b["size"].as_u64().cmp(&a["size"].as_u64()),
-            _ => a["name"].as_str().unwrap_or("").to_lowercase().cmp(&b["name"].as_str().unwrap_or("").to_lowercase()),
-        })
-    });
-    Ok(Json(json!({ "path": rel_display(&root, &dir), "entries": entries, "truncated": truncated })))
+    let total = names.len();
+    let entries = if key == "name" {
+        // 기본 이름 정렬에서는 전체 파일의 stat·크기·시각을 읽지 않고 현재 페이지에만 조회한다.
+        names.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(&b.0)).then_with(|| a.1.cmp(&b.1)));
+        names.into_iter().skip(offset).take(limit).filter_map(|(_, name, _)| listing_entry(&scope, &root, &dir, name)).collect()
+    } else {
+        let mut entries: Vec<_> = names.into_iter().filter_map(|(_, name, _)| listing_entry(&scope, &root, &dir, name)).collect();
+        entries.sort_by(|a, b| (b.kind == "dir").cmp(&(a.kind == "dir")).then_with(|| match key {
+            "mtime" => b.mtime.cmp(&a.mtime),
+            "size" => b.size.cmp(&a.size),
+            _ => a.name.cmp(&b.name),
+        }).then_with(|| a.name.cmp(&b.name)));
+        entries.into_iter().skip(offset).take(limit).collect()
+    };
+    let has_more = offset.saturating_add(limit) < total;
+    Ok(FileList { path: rel_display(&root, &dir), entries, total, offset, has_more, truncated: has_more })
+}
+
+pub async fn list(State(app): State<App>, p: Principal, Path(id): Path<String>, Query(q): Query<ListQuery>) -> ApiResult<Json<FileList>> {
+    let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app, &id, &p).await?;
+    let result = tokio::task::spawn_blocking(move || list_directory(root, q)).await.map_err(|e| ApiError::internal(e.to_string()))??;
+    Ok(Json(result))
 }
 
 #[derive(Deserialize)]
@@ -148,38 +185,93 @@ fn preview_kind(p: &FsPath) -> &'static str {
     }
 }
 
-pub async fn content(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<PathQuery>) -> ApiResult<Json<Value>> {
-    let root = root_of(&app, &id).await?;
-    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
+#[derive(Deserialize)]
+pub struct ContentQuery {
+    pub path: String,
+    pub known_stamp: Option<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub struct FileContent {
+    pub path: String,
+    pub size: u64,
+    pub sha256: Option<String>,
+    #[ts(type = "\"text\" | \"image\" | \"svg\" | \"pdf\" | \"html\"")]
+    pub preview: String,
+    pub text: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub mtime: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reason: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub stamp: Option<String>,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+pub struct FileUnchanged {
+    #[ts(type = "true")]
+    pub unchanged: bool,
+    pub stamp: String,
+}
+
+#[derive(Serialize, ts_rs::TS)]
+#[serde(untagged)]
+pub enum FileRead {
+    Content(FileContent),
+    Unchanged(FileUnchanged),
+}
+
+fn content_stamp(m: &std::fs::Metadata) -> String {
+    #[cfg(unix)]
+    let identity = {
+        use std::os::unix::fs::MetadataExt;
+        format!("{}:{}:{}:{}", m.dev(), m.ino(), m.ctime(), m.ctime_nsec())
+    };
+    #[cfg(not(unix))]
+    let identity = format!("{:?}", m.created().ok());
+    crate::util::sha256_hex(format!("{identity}:{}:{:?}", m.len(), m.modified().ok()).as_bytes())
+}
+
+fn read_content(root: PathBuf, q: ContentQuery) -> ApiResult<FileRead> {
     let p = resolve_api(&root, &q.path)?;
     let scope = ProjectFs::open(&root).map_err(|e| io_err(e, "프로젝트 열기"))?;
-    let mut file = scope.open_file(&p).map_err(|e| io_err(e, "파일 열기"))?;
+    let file = scope.open_file(&p).map_err(|e| io_err(e, "파일 열기"))?;
     let m = file.metadata().map_err(|e| io_err(e, "파일"))?;
     if !m.is_file() {
         return Err(ApiError::invalid("파일이 아닙니다"));
     }
-    let sha = reader_sha(&mut file).map_err(|e| io_err(e, "파일 읽기"))?;
-    let kind = preview_kind(&p);
-    let base = json!({ "path": rel_display(&root, &p), "size": m.len(), "mtime": mtime(&m), "sha256": sha, "preview": kind });
-    if m.len() > MAX_TEXT || matches!(kind, "image" | "pdf") {
-        let mut v = base;
-        v["text"] = Value::Null;
-        v["reason"] = json!(if m.len() > MAX_TEXT { "too_large" } else { "binary" });
-        return Ok(Json(v));
+    let stamp = content_stamp(&m);
+    if q.known_stamp.as_deref() == Some(&stamp) {
+        return Ok(FileRead::Unchanged(FileUnchanged { unchanged: true, stamp }));
     }
-    file.seek(SeekFrom::Start(0)).map_err(|e| io_err(e, "파일 읽기"))?;
+    let kind = preview_kind(&p);
+    let mut content = FileContent {
+        path: rel_display(&root, &p), size: m.len(), sha256: None, preview: kind.into(), text: None, mtime: mtime(&m), reason: None, stamp: Some(stamp),
+    };
+    // 크기·미리보기 종류를 먼저 판정한다. 표시하지 못할 파일을 해시하려고 끝까지 읽지 않는다.
+    if m.len() > MAX_TEXT || matches!(kind, "image" | "pdf") {
+        content.reason = Some(if m.len() > MAX_TEXT { "too_large" } else { "binary" }.into());
+        return Ok(FileRead::Content(content));
+    }
     let mut bytes = Vec::new();
     file.take(MAX_TEXT + 1).read_to_end(&mut bytes).map_err(|e| io_err(e, "파일 읽기"))?;
     if bytes.len() as u64 > MAX_TEXT { return Err(ApiError::new(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "파일 크기 제한을 넘었습니다")); }
-    let mut v = base;
+    content.sha256 = Some(crate::util::sha256_hex(&bytes));
     match String::from_utf8(bytes) {
-        Ok(t) if !t.contains('\0') => v["text"] = json!(t),
-        _ => {
-            v["text"] = Value::Null;
-            v["reason"] = json!("binary");
-        }
+        Ok(t) if !t.contains('\0') => content.text = Some(t),
+        _ => content.reason = Some("binary".into()),
     }
-    Ok(Json(v))
+    Ok(FileRead::Content(content))
+}
+
+pub async fn content(State(app): State<App>, p: Principal, Path(id): Path<String>, Query(q): Query<ContentQuery>) -> ApiResult<Json<FileRead>> {
+    let root = root_of(&app, &id).await?;
+    let _resource = app.project_resources.ui_read(&app, &id, &p).await?;
+    let result = tokio::task::spawn_blocking(move || read_content(root, q)).await.map_err(|e| ApiError::internal(e.to_string()))??;
+    Ok(Json(result))
 }
 
 /// `<img>`·새 탭처럼 Authorization 헤더를 보낼 수 없는 요청용 단기 티켓(FILEUI-005).

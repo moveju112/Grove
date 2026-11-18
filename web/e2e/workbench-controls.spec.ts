@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, closeMobileSidebar, composerOption, ensureProfile, ensureProjects, login, openTool, startProjectConversation } from "./helpers";
+import { apiCall, closeMobileSidebar, composerOption, ensureProfile, ensureProjects, login, openTool, startProjectConversation, toolTrigger } from "./helpers";
 
 for (const width of [390, 1528]) {
     test.describe(`${width}px 작업 화면`, () => {
@@ -24,8 +24,15 @@ for (const width of [390, 1528]) {
             await expect(project.getByText("드래그가 안 되면", { exact: false })).toHaveCount(0);
             await expect(project.getByText("일반 첨부에는 파일 시스템 접근 API가 필요하지 않습니다.", { exact: false })).toHaveCount(0);
             await expect(project.getByTestId("project-scripts")).toBeHidden();
-            // 도구 탭은 기본 화면에 없고, 헤더의 버튼 하나로 연다.
-            const trigger = project.getByRole("button", { name: "도구 패널", exact: true });
+            // 본문의 중복 생성·더보기 버튼은 없고, 도구는 pane당 버튼 하나로 연다.
+            const trigger = toolTrigger(project);
+            await expect(project.getByRole("button", { name: "새 대화", exact: true })).toHaveCount(0);
+            await expect(project.getByRole("button", { name: "프로젝트 작업", exact: true })).toHaveCount(0);
+            if (width > 760) {
+                const pane = project.locator("xpath=ancestor::*[@data-testid='pane'][1]");
+                await expect(pane.getByTestId("pane-tab-actions").getByRole("button", { name: "도구 패널", exact: true })).toBeVisible();
+                await expect(project.getByRole("button", { name: "도구 패널", exact: true })).toHaveCount(0);
+            }
             await expect(project.getByRole("tablist", { name: "프로젝트 도구" })).toBeHidden();
             await expect(trigger).toHaveAttribute("aria-expanded", "false");
             await trigger.click();
@@ -39,7 +46,10 @@ for (const width of [390, 1528]) {
             const scripts = project.getByTestId("project-scripts");
             await scripts.getByRole("button", { name: "script 추가", exact: true }).click();
             await scripts.getByLabel("script 이름", { exact: true }).fill("미저장 스크립트");
-            for (const name of ["변경", "터미널", "파일", "예약", "워크스페이스", "휴지통", "스크립트"]) {
+            for (const name of ["프로젝트", "휴지통", "예약"]) {
+                await expect(project.getByRole("tab", { name, exact: true })).toHaveCount(0);
+            }
+            for (const name of ["변경", "터미널", "파일", "워크스페이스", "스크립트"]) {
                 const tab = project.getByRole("tab", { name, exact: true });
                 await tab.click();
                 await expect(tab).toHaveAttribute("aria-selected", "true");
@@ -100,7 +110,7 @@ for (const width of [390, 1528]) {
             await page.screenshot({ path: info.outputPath("session-tools.png") });
             await view.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
             await expect(view.getByTestId("tool-dock")).toHaveJSProperty("open", false);
-            await expect(view.getByRole("button", { name: "도구 패널", exact: true })).toBeFocused();
+            await expect(toolTrigger(view)).toBeFocused();
         });
     });
 }

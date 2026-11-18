@@ -4,6 +4,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { composerOption, openProjectFiles } from "../e2e/helpers";
+import { projectLayoutKey } from "../app/state/projectLayout";
 import { api, enter, expectNoConnectionNoise, freeze, net, target } from "./relay";
 
 const local = () => target().target === "local";
@@ -26,7 +27,8 @@ async function openProject(page: Page, name: string) {
     const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
     if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
     await page.getByTestId("project-row").getByRole("button", { name, exact: true }).click();
-    const view = page.locator(".project-view").filter({ visible: true });
+    await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
+    const view = page.getByTestId("project-view").filter({ visible: true });
     await expect(view.getByLabel("메시지 입력", { exact: true })).toBeVisible();
     return view;
 }
@@ -43,7 +45,7 @@ test("첫 화면·프로젝트·메시지 저장은 암호화 연결 하나로 �
     info.annotations.push({ type: "first-screen-ms", description: String(Date.now() - started) });
     const view = await openProject(page, p.name);
     await composerOption(view, "보내기 방식", "save");
-    await expect(view.locator(".view-head h1")).toHaveText(p.name);
+    await expect(page.getByTestId("navigation-context").locator('[aria-current="page"]')).toHaveText(p.name);
     await page.screenshot({ path: info.outputPath("relay-project-390.png") });
     const text = `relay 저장 ${Date.now()}`;
     await view.getByLabel("메시지 입력", { exact: true }).fill(text);
@@ -52,6 +54,34 @@ test("첫 화면·프로젝트·메시지 저장은 암호화 연결 하나로 �
     await expectNoConnectionNoise(page);
     // 연결 확인·로그인·목록·이벤트·전송이 모두 같은 연결을 쓴다(요청마다 새 연결을 열지 않음).
     expect(sockets.length, sockets.join("\n")).toBe(1);
+});
+
+test("32MiB 첨부를 암호화 중계로 업로드하고 저장한 원문을 내려받는다", async ({ page }, info) => {
+    test.skip(!local(), "대용량 첨부 경계는 격리된 로컬 스택에서만 검사한다");
+    const p = await project("relay-attachment-limit");
+    await enter(page);
+    const view = await openProject(page, p.name);
+    await composerOption(view, "보내기 방식", "save");
+    const bytes = Buffer.alloc(32 * 1024 * 1024, 0x78);
+    const started = Date.now();
+    await view.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({
+        name: "maximum.txt", mimeType: "text/plain", buffer: bytes,
+    });
+    // debug 서버의 대용량 복호화를 포함해 업로드 완료를 기다린다.
+    await expect(view.getByTestId("attachment-card")).toContainText("maximum.txt", { timeout: 60_000 });
+    info.annotations.push({ type: "attachment-upload-ms", description: String(Date.now() - started) });
+    await view.getByLabel("메시지 입력", { exact: true }).fill("최대 용량 첨부");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    const sent = page.getByTestId("session-view").filter({ visible: true }).getByLabel("메시지 첨부파일");
+    await expect(sent).toContainText("maximum.txt");
+    await sent.getByRole("button", { name: "maximum.txt 첨부 작업", exact: true }).click();
+    const downloadEvent = page.waitForEvent("download");
+    await page.getByRole("group", { name: "maximum.txt 첨부 작업", exact: true }).getByRole("button", { name: "원문 다운로드" }).click();
+    const download = await downloadEvent;
+    const chunks: Buffer[] = [];
+    for await (const chunk of (await download.createReadStream())!) chunks.push(Buffer.from(chunk));
+    expect(Buffer.concat(chunks)).toEqual(bytes);
+    await expectNoConnectionNoise(page);
 });
 
 test("백그라운드 중 소켓이 정리돼도 복귀 후 오류 없이 다시 연결한다", async ({ page }) => {
@@ -107,30 +137,51 @@ test("지연이 있어도 큰 파일은 흐름 제어 창을 넘어 끝까지 �
     await expectNoConnectionNoise(page);
 });
 
-test("지연이 있는 relay 새로고침에서 열린 대화와 초안까지 복원하는 시간을 측정한다", async ({ page }, info) => {
+test("지연이 있는 relay 새로고침에서 프로젝트를 복원하고 미전송 입력은 저장하지 않는다", async ({ page }, info) => {
     test.skip(!local(), "격리된 로컬 스택의 고정 지연으로 비교한다");
     const p = await project("relay-reload");
     await enter(page);
     const view = await openProject(page, p.name);
-    await expect(view.locator(".view-head h1")).toHaveText(p.name);
-    const draft = "새로고침 전의 입력을 보존";
+    await expect(page.getByTestId("navigation-context").locator('[aria-current="page"]')).toHaveText(p.name);
+    const draft = "새로고침 전의 미전송 입력";
     await view.getByLabel("메시지 입력", { exact: true }).fill(draft);
     const layoutKey = await page.evaluate(() => `${localStorage.getItem("grove.device.id")}-narrow`);
+    const savedLayoutKey = projectLayoutKey(layoutKey, p.id);
     await expect.poll(async () => {
-        const remote = await api<{ layout: unknown }>("GET", `/layouts/${layoutKey}`);
+        const remote = await api<{ layout: unknown }>("GET", `/layouts/${encodeURIComponent(savedLayoutKey)}`);
         return JSON.stringify(remote.layout).includes(p.id);
     }).toBe(true);
     await net("delay", 100);
+    // Playwright assertion의 재확인 간격이 아니라 브라우저가 실제 화면을 그린 시각을 잰다.
+    await page.addInitScript((name) => {
+        const state = window as unknown as { projectRestoredAt?: number };
+        const check = () => {
+            if (state.projectRestoredAt !== undefined) return;
+            const current = document.querySelector('[data-testid="navigation-context"] [aria-current="page"]');
+            const view = [...document.querySelectorAll<HTMLElement>('[data-testid="project-view"]')]
+                .find((node) => node.getBoundingClientRect().width > 0 && node.getBoundingClientRect().height > 0);
+            const input = view?.querySelector<HTMLTextAreaElement>('textarea[aria-label="메시지 입력"]');
+            if (current?.textContent?.trim() !== name || !input || input.value !== "") return;
+            requestAnimationFrame(() => {
+                if (state.projectRestoredAt === undefined) state.projectRestoredAt = performance.now();
+                observer.disconnect();
+            });
+        };
+        const observer = new MutationObserver(check);
+        observer.observe(document, { childList: true, subtree: true, characterData: true });
+        check();
+    }, p.name);
     const timings: number[] = [];
     for (let i = 0; i < 3; i++) {
-        const start = Date.now();
         await page.reload();
-        const restored = page.locator(".project-view").filter({ visible: true });
-        await expect(restored.locator(".view-head h1")).toHaveText(p.name, { timeout: 20_000 });
-        await expect(restored.getByLabel("메시지 입력", { exact: true })).toHaveValue(draft);
-        timings.push(Date.now() - start);
+        const restored = page.getByTestId("project-view").filter({ visible: true });
+        await expect(page.getByTestId("navigation-context").locator('[aria-current="page"]')).toHaveText(p.name, { timeout: 20_000 });
+        await expect(restored.getByLabel("메시지 입력", { exact: true })).toHaveValue("");
+        await expect.poll(() => page.evaluate(() => typeof (window as unknown as { projectRestoredAt?: number }).projectRestoredAt)).toBe("number");
+        timings.push(await page.evaluate(() => Math.round((window as unknown as { projectRestoredAt: number }).projectRestoredAt)));
     }
-    info.annotations.push({ type: "reload-draft-ms", description: JSON.stringify(timings) });
-    console.log(JSON.stringify({ scenario: "relay reload with 100ms per direction", reloadDraftMs: timings }));
+    info.annotations.push({ type: "reload-project-ms", description: JSON.stringify(timings) });
+    console.log(JSON.stringify({ scenario: "relay reload with 100ms per direction", reloadProjectMs: timings }));
+    await page.screenshot({ path: info.outputPath("relay-restored-project-390.png"), animations: "disabled" });
     expect([...timings].sort((a, b) => a - b)[1], "이전 약 3초의 복원을 2초 미만으로 유지한다").toBeLessThan(2000);
 });

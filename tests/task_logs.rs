@@ -218,14 +218,28 @@ async fn migration_adopts_legacy_logs_without_rewriting_original_bytes() {
     let t = run(&s, &sid, "printf legacy").await;
     let id = t["id"].as_str().unwrap();
     s.stop().await;
-    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
-    // 버전 33 상태를 흉내 낸다: 34(task_logs) 이후 migration의 결과를 모두 되돌린다.
-    db.execute_batch("DROP TABLE mcp_oauth_attempts; DROP TABLE mcp_oauth_credentials; DROP TABLE hook_runs; DROP TABLE hook_events; DROP TABLE skill_states; DROP TABLE session_skills; DROP TABLE hook_definitions; ALTER TABLE projects DROP COLUMN workspace_mode; ALTER TABLE turns DROP COLUMN provider_started_at; ALTER TABLE turns DROP COLUMN provider_ms; DROP TABLE mcp_checks; DROP TABLE mcp_servers;").unwrap();
-    db.execute_batch(
-        "ALTER TABLE schedules DROP COLUMN quiet_policy; ALTER TABLE schedule_runs DROP COLUMN result_class; ALTER TABLE schedule_runs DROP COLUMN result_sha256; ALTER TABLE schedule_runs DROP COLUMN result_evidence; ALTER TABLE schedule_runs DROP COLUMN notified; DROP TABLE webhook_receipts; DROP TABLE schedule_webhooks; DROP INDEX schedules_bot; ALTER TABLE schedules DROP COLUMN bot_id; DROP TABLE bot_avatars; DROP TABLE setup_runs; ALTER TABLE projects DROP COLUMN setup_script_id; DROP TABLE project_labels; DROP TABLE labels; ALTER TABLE projects DROP COLUMN pinned_at; DROP TABLE remote_watches; ALTER TABLE turns DROP COLUMN evidence; ALTER TABLE schedules DROP COLUMN max_runs; ALTER TABLE schedules DROP COLUMN end_at; ALTER TABLE schedules DROP COLUMN pause_after_failures; ALTER TABLE schedules DROP COLUMN consecutive_failures; ALTER TABLE schedules DROP COLUMN last_failed_at; ALTER TABLE schedules DROP COLUMN paused_reason; ALTER TABLE recent_items DROP COLUMN hidden_at; ALTER TABLE tasks DROP COLUMN script_snapshot; DROP TABLE project_scripts; DROP TABLE memories; ALTER TABLE cli_sessions DROP COLUMN system_sha256; DROP TABLE credential_backfills; ALTER TABLE model_profiles DROP COLUMN enabled; DROP INDEX notifications_ref_created; ALTER TABLE notifications DROP COLUMN delivered_at; DROP TABLE pairings; DROP TABLE trash_gc; DROP TABLE task_logs; DROP TABLE worktrees; ALTER TABLE sessions DROP COLUMN worktree_id; PRAGMA user_version=33;",
-    )
-    .unwrap();
-    drop(db);
+    {
+        // 실제 v33 schema의 열만 복사한다. 새 migration을 추가해도 과거 fixture는 바뀌지 않는다.
+        let staged = tempfile::NamedTempFile::new_in(s.dir.path()).unwrap();
+        let legacy = rusqlite::Connection::open(staged.path()).unwrap();
+        for migration in grove::store::MIGRATIONS.iter().take(33) {
+            legacy.execute_batch(migration).unwrap();
+        }
+        legacy.pragma_update(None, "user_version", 33).unwrap();
+        legacy.execute("ATTACH DATABASE ?1 AS latest", [s.data_dir().join("grove.db").to_str().unwrap()]).unwrap();
+        let tables: Vec<String> = legacy.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").unwrap()
+            .query_map([], |r|r.get(0)).unwrap().collect::<Result<_,_>>().unwrap();
+        for table in tables {
+            let columns: Vec<String> = legacy.prepare(&format!("PRAGMA table_info({table})")).unwrap()
+                .query_map([], |r|r.get(1)).unwrap().collect::<Result<_,_>>().unwrap();
+            let columns = columns.join(",");
+            legacy.execute_batch(&format!("DELETE FROM {table}; INSERT INTO {table}({columns}) SELECT {columns} FROM latest.{table};")).unwrap();
+        }
+        legacy.execute_batch("DETACH DATABASE latest").unwrap();
+        let mut target = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+        rusqlite::backup::Backup::new(&legacy, &mut target).unwrap()
+            .run_to_completion(256, std::time::Duration::from_millis(5), None).unwrap();
+    }
     s.restart().await;
     let (_, t) = s.get(&format!("/api/v1/tasks/{id}")).await;
     assert_eq!(t["logs"][0]["state"], "writing");

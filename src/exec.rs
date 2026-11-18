@@ -119,7 +119,7 @@ fn outcome(run_id: &str, run_dir: &Path, status: &str, exit: i32, extra: Value) 
     let mut v = json!({
         "schema": SCHEMA, "run_id": run_id, "run_dir": run_dir, "status": status, "exit_code": exit,
         "isolation": "none",
-        "excluded_context": ["sessions", "user_profile", "bots", "schedules"],
+        "excluded_context": ["sessions", "bots", "schedules"],
     });
     if let (Some(o), Some(e)) = (v.as_object_mut(), extra.as_object()) {
         for (k, x) in e {
@@ -286,7 +286,6 @@ async fn execute(o: &Opts, prompt: &str, project: &Path, run_dir: &Path, api_key
         tls_terminated: false,
         web_dir: None,
         web_base: "/".into(),
-        enable_tool_loop: o.tools,
         approval_ttl_secs: 30 * 60,
         scheduler_tick_ms: 600_000,
         remote_watch_insecure_loopback: false, gh_command: "gh".into(),

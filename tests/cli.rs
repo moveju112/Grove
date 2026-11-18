@@ -29,11 +29,11 @@ fn invalid_arguments_fail_without_side_effects() {
 }
 
 #[test]
-fn token_before_first_start_explains() {
+fn legacy_token_login_commands_direct_to_pairing() {
     let d = tempfile::tempdir().unwrap();
     let out = grove().args(["token", "--data-dir"]).arg(d.path()).output().unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("서버를 한 번 실행하면"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("grove pairing create"));
 }
 
 #[test]
@@ -175,25 +175,12 @@ fn doctor_config_auth_and_pair_against_running_server() {
     assert_eq!(v["healthy"], false);
     assert_eq!(out.status.code(), Some(1));
 
-    // auth token은 token과 같은 값
-    let a = run(&["auth", "token"]);
-    let t = run(&["token"]);
-    assert!(a.status.success());
-    assert_eq!(a.stdout, t.stdout);
-    assert!(!run(&["auth", "nope"]).status.success());
-
-    // pair: 새 기기 토큰으로 인증되고, 소유자 토큰과 다르다
-    let out = run(&["pair", "폰"]);
-    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
-    let p = json_out(&out);
-    assert_eq!(p["name"], "폰");
-    let tok = p["token"].as_str().unwrap();
-    assert_ne!(tok, String::from_utf8_lossy(&t.stdout).trim());
-    let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
-    let who: serde_json::Value = rt.block_on(async {
-        reqwest::Client::new().get(format!("http://{listen}/api/v1/auth/whoami")).bearer_auth(tok).send().await.unwrap().json().await.unwrap()
-    });
-    assert_eq!(who["kind"], "device", "{who}");
+    for args in [&["auth", "token"][..], &["token"][..], &["pair", "폰"][..], &["unlock"][..]] {
+        let out = run(args);
+        assert!(!out.status.success());
+        assert!(out.stdout.is_empty());
+        assert!(String::from_utf8_lossy(&out.stderr).contains("grove pairing create"));
+    }
 
     server.kill().unwrap();
     server.wait().unwrap();
@@ -201,20 +188,4 @@ fn doctor_config_auth_and_pair_against_running_server() {
     assert_eq!(v["process"]["status"], "stopped", "프로세스가 죽으면 잠금도 풀린다: {v}");
     assert_eq!(v["api"]["status"], "unreachable");
     assert_eq!(v["auth"]["status"], "skipped");
-    assert!(!run(&["pair"]).status.success(), "서버가 없으면 실패");
-}
-
-#[test]
-fn unlock_clears_lockouts() {
-    let d = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(d.path()).unwrap();
-    let db = grove::store::Db::open(&d.path().join("grove.db")).unwrap();
-    db.call_sync(|c| {
-        c.execute("INSERT INTO login_failures (client, count, first_at, locked_until) VALUES ('1.2.3.4', 0, 't', '9999')", [])?;
-        Ok(())
-    })
-    .unwrap();
-    let out = grove().args(["unlock", "--data-dir"]).arg(d.path()).output().unwrap();
-    assert!(out.status.success());
-    assert!(String::from_utf8_lossy(&out.stdout).contains("1건"));
 }

@@ -196,7 +196,8 @@ async fn accepted_but_unlaunched_task_recovers_as_unknown_without_execution() {
     let id = grove::util::new_id();
     let now = grove::util::fmt_time(time::OffsetDateTime::now_utc());
     let cmd = "printf forbidden >> marker";
-    let timeout = grove::tools::shell::MAX_BACKGROUND_TIMEOUT_MS;
+    // 이전 버전이 timeout 생략을 24시간으로 정규화해 저장한 receipt.
+    let timeout = 24 * 3600 * 1000;
     let hash = grove::idem::body_hash("task.start", &json!({"s":sid,"c":cmd,"w":null,"t":timeout}));
     let pending =
         grove::error::ApiError::conflict("result_unknown", "fixture interrupted acceptance")

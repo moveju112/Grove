@@ -29,10 +29,16 @@ async fn background_task_records_result_once_and_output_is_readable() {
     assert_eq!(r.status(), StatusCode::CREATED);
     let t: Value = r.json().await.unwrap();
     assert_eq!(t["status"], "running");
+    assert_eq!(t["timeout_ms"], 0, "기본 강제 종료 시한 없음");
     let id = t["id"].as_str().unwrap().to_string();
     // 같은 키 재전송은 프로세스를 다시 띄우지 않는다
-    let r = s.raw(Method::POST, &format!("/api/v1/sessions/{sid}/tasks"), Some(body), Some("task-1"), None).await;
+    let r = s.raw(Method::POST, &format!("/api/v1/sessions/{sid}/tasks"), Some(body.clone()), Some("task-1"), None).await;
     assert_eq!(r.headers().get("idempotent-replayed").unwrap(), "true");
+    let mut explicit = body;
+    explicit["timeout_ms"] = json!(86_400_000);
+    let r = s.raw(Method::POST, &format!("/api/v1/sessions/{sid}/tasks"), Some(explicit), Some("task-1"), None).await;
+    assert_eq!(r.status(), StatusCode::CONFLICT);
+    assert_eq!(r.json::<Value>().await.unwrap()["error"]["code"], "idempotency_conflict");
     let (_, w) = s.get(&format!("/api/v1/tasks/{id}/wait?timeout_ms=10000")).await;
     assert_eq!(w["status"], "failed", "{w}");
     assert_eq!(w["exit_code"], 2);
@@ -292,7 +298,7 @@ async fn model_shell_with_hold_detaches_and_result_reaches_next_turn() {
     assert!(notes(&s, &sid).await.is_empty(), "hold 안에 끝나면 note를 남기지 않는다");
 
     // 오래 걸리는 명령: hold가 지나면 task_id를 돌려주고 턴은 계속, 끝나면 note
-    f.push(fixture::tool_calls(&[("q2", "shell", json!({ "command": "while [ ! -f release ]; do sleep 0.02; done; echo late", "hold_ms": 100, "timeout_ms":10000 }))]));
+    f.push(fixture::tool_calls(&[("q2", "shell", json!({ "command": "while [ ! -f release ]; do sleep 0.02; done; echo late", "hold_ms": 100 }))]));
     f.push(fixture::text("백그라운드로 보냄"));
     f.push(fixture::text("백그라운드 결과 확인"));
     let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "go2", "profile_id": prof, "tools": true })).await;
@@ -308,6 +314,7 @@ async fn model_shell_with_hold_detaches_and_result_reaches_next_turn() {
     let task_id = r["task_id"].as_str().unwrap();
     let (_, w) = s.get(&format!("/api/v1/tasks/{task_id}/wait?timeout_ms=10000")).await;
     assert_eq!(w["status"], "completed");
+    assert_eq!(w["timeout_ms"], 0);
     assert_eq!(w["call_id"], c["id"]);
     let all = notes(&s, &sid).await;
     assert!(all.iter().any(|m| m["content"]["type"] == "completion_deferred"));

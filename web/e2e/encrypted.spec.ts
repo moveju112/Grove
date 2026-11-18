@@ -29,7 +29,7 @@ test("서버 확인 중에는 복구 화면 대신 상단 진행 표시줄을 �
     await expect(page.getByRole("status").filter({ hasText: "서버 연결 확인 중" })).toBeVisible();
     await expect(page.getByTestId("auth-recovery")).toHaveCount(0);
     release();
-    await expect(page.getByLabel("토큰")).toBeVisible();
+    await expect(page.getByRole("button", { name: "페어링 링크·QR로 등록" })).toBeVisible();
     await expect(page.getByTestId("loading-bar")).toHaveCount(0);
 });
 

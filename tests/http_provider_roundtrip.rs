@@ -100,12 +100,12 @@ fn steps(protocol: &str) -> Vec<Reply> {
             Reply::Events(vec![
                 data(json!({ "choices": [{ "delta": { "reasoning_content": "계획", "content": "읽을게", "tool_calls": [{ "index": 0, "id": "native-read", "type": "function", "function": { "name": "read", "arguments": "{\"path\":" } }] } }] })),
                 data(json!({ "choices": [{ "delta": { "tool_calls": [{ "index": 0, "function": { "arguments": "\"notes.txt\"}" } }] }, "finish_reason": "tool_calls" }],
-                    "usage": { "prompt_tokens": 7, "completion_tokens": 5, "prompt_tokens_details": { "cached_tokens": 2 } } })),
+                    "usage": { "prompt_tokens": 7, "completion_tokens": 5, "prompt_tokens_details": { "cached_tokens": 2, "cache_write_tokens": 1 } } })),
                 "data: [DONE]\n\n".into(),
             ]),
             Reply::Events(vec![
                 data(json!({ "choices": [{ "delta": { "content": "완료" }, "finish_reason": "stop" }],
-                    "usage": { "prompt_tokens": 11, "completion_tokens": 4, "prompt_tokens_details": { "cached_tokens": 3 } } })),
+                    "usage": { "prompt_tokens": 11, "completion_tokens": 4, "prompt_tokens_details": { "cached_tokens": 3, "cache_write_tokens": 0 } } })),
                 "data: [DONE]\n\n".into(),
             ]),
         ],
@@ -172,11 +172,14 @@ async fn roundtrip(protocol: &str) {
         }
         _ => {
             assert!(requests[0].0.starts_with("/chat/completions"));
+            assert!(requests.iter().all(|(_, body, _)| body.get("prompt_cache_key").is_none() && body.get("cache_control").is_none()),
+                "호환 endpoint에는 공식 공급자 전용 캐시 필드를 보내지 않는다");
             assert_eq!(second["messages"][2]["tool_calls"][0]["id"], "native-read");
             assert_eq!(second["messages"][3]["tool_call_id"], "native-read");
             assert!(second["messages"][3]["content"].as_str().unwrap().contains("문서"));
             assert_eq!(done["usage"]["input_tokens"], 18);
             assert_eq!(done["usage"]["output_tokens"], 9);
+            assert_eq!(done["usage"]["cache_write_tokens"], 1);
         }
     }
     assert_eq!(done["usage"]["cache_read_tokens"], 5);

@@ -29,7 +29,7 @@ describe("복구 안내와 서버 작업 버튼", () => {
         vi.spyOn(lifecycle, "useLifecycle").mockReturnValue({ ...lifecycle.lifecycleSnapshot(), online: false });
         const recover = vi.fn();
         const html = renderToStaticMarkup(createElement(AuthRecovery, { recover }));
-        for (const text of ["기존 초안은 보존", "원래 계정", "초안을 숨긴 이유", "자동 재전송하지 않으며"]) {
+        for (const text of ["원래 계정", "대화 기록", "자동 재전송하지 않으며"]) {
             expect(html).toContain(text);
         }
         expect(html).not.toContain("<textarea");

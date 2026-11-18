@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, choiceOptions, closeModelSettings, composerOption, composerSetting, ensureProjects, expectChoice, login, sessionView, state } from "./helpers";
+import { apiCall, choiceOptions, closeModelSettings, composerOption, composerSetting, ensureProjects, expectChoice, login, modelSettings, sessionView, state } from "./helpers";
 
 test.use({ isMobile: true, hasTouch: true });
 
@@ -9,7 +9,7 @@ for (const theme of ["light", "dark"] as const) {
     test(`390px ${theme}: Codex 추론·Fast를 실제 CLI 인자와 대기열에 보존하고 입력 카드가 넘치지 않는다`, async ({ page }, info) => {
         await page.setViewportSize({ width: 390, height: 844 });
         await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-        await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
+        await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme, runningSendMode: "queue" })), theme);
         const { a } = await ensureProjects();
         const profile = await apiCall<{ id: string }>("POST", "/model-profiles", {
             name: `options-${theme}`, protocol: "codex_cli", base_url: "", model: "fixture-codex",
@@ -36,7 +36,47 @@ for (const theme of ["light", "dark"] as const) {
             await test.step("max 선택", () => composerOption(view, "추론", "max"));
             await expect(view.getByTestId("model-effort")).toHaveText("· max");
             const speed = await composerSetting(view, "Fast");
-            await expectChoice(speed, "false");
+            await expect(speed).not.toBeChecked();
+            const panel = await modelSettings(view);
+            await expect(panel.getByRole("combobox", { name: "Fast", exact: true })).toHaveCount(0);
+            for (const { width, height } of [{ width: 360, height: 844 }, { width: 390, height: 460 }, { width: 390, height: 844 }]) {
+                await closeModelSettings(view);
+                await page.setViewportSize({ width, height });
+                await modelSettings(view);
+                await expect.poll(() => panel.evaluate((node) => {
+                    const box = node.getBoundingClientRect();
+                    return box.height <= 200 && box.width <= 304 && box.left >= 0 && box.right <= innerWidth
+                        && box.top >= 0 && box.bottom <= innerHeight;
+                })).toBe(true);
+            }
+            // 라벨과 값은 같은 행에 있고, 메뉴는 입력 카드와 간격을 둔다.
+            for (const [label, control] of [["모델", panel.getByRole("button", { name: "모델 프로필", exact: true })],
+                ["추론", panel.getByRole("combobox", { name: "추론", exact: true })]] as const) {
+                const labelBox = (await panel.getByText(label, { exact: true }).first().boundingBox())!;
+                const controlBox = (await control.boundingBox())!;
+                expect(labelBox.x + labelBox.width).toBeLessThanOrEqual(controlBox.x);
+                expect(Math.abs(labelBox.y + labelBox.height / 2 - controlBox.y - controlBox.height / 2)).toBeLessThanOrEqual(2);
+                const target = await control.evaluate((node) =>
+                    (node.closest(".astryx-selector") ?? node).getBoundingClientRect().height);
+                expect(target).toBeGreaterThanOrEqual(44);
+            }
+            const menuBox = (await panel.boundingBox())!;
+            expect((await view.getByTestId("composer").boundingBox())!.y - menuBox.y - menuBox.height).toBeGreaterThanOrEqual(8);
+            await speed.focus();
+            await speed.press("Space");
+            await expect(speed).toBeChecked();
+            // 토글의 모션이 시작된 다음 완료를 확인해 손잡이가 사라진 중간 프레임을 피한다.
+            await panel.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            await expect.poll(() => panel.locator(".astryx-switch-thumb").evaluate(node =>
+                getComputedStyle(node).opacity === "1" && node.getAnimations().every(animation => animation.playState === "finished"))).toBe(true);
+            await page.screenshot({ path: info.outputPath(`model-settings-fast-on-${theme}-390.png`) });
+            await speed.press("Space");
+            await expect(speed).not.toBeChecked();
+            // 토글의 모션이 시작된 다음 완료를 확인해 손잡이가 사라진 중간 프레임을 피한다.
+            await panel.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+            await expect.poll(() => panel.locator(".astryx-switch-thumb").evaluate(node =>
+                getComputedStyle(node).opacity === "1" && node.getAnimations().every(animation => animation.playState === "finished"))).toBe(true);
+            await page.screenshot({ path: info.outputPath(`model-settings-fast-off-${theme}-390.png`) });
             await closeModelSettings(view);
             await expect(view.getByRole("combobox", { name: "속도", exact: true })).toHaveCount(0);
             const geometry = await view.getByTestId("composer-bar").evaluate((node) => ({
@@ -95,27 +135,30 @@ for (const theme of ["light", "dark"] as const) {
             const turns = await apiCall<{ id: string; definition: { effort: string; service_tier: string } }[]>("GET", `/sessions/${session.id}/turns`);
             active = turns[0]!.id;
             expect(turns[0]!.definition).toMatchObject({ effort: "max", service_tier: "priority" });
-            const request = () => JSON.parse(readFileSync(join(state().cliDir!, "last-request.json"), "utf8")) as { args: string[]; resume: boolean };
-            expect(request().args).toEqual(expect.arrayContaining(['model_reasoning_effort="max"', 'service_tier="priority"', "--dangerously-bypass-approvals-and-sandbox"]));
-            await expect(view.getByTestId("active-settings")).toHaveCount(0);
+            const requests = () => readFileSync(join(state().cliDir!, "app-server-requests.jsonl"), "utf8")
+                .trim().split("\n").map((line) => JSON.parse(line) as { method: string; params: Record<string, unknown> });
+            const request = () => requests().filter((item) => item.method === "turn/start").at(-1)!.params;
+            expect(request()).toMatchObject({ effort: "max", serviceTier: "priority",
+                approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } });
+            await expect(view.getByRole("button", { name: "실행 설정", exact: true })).toHaveCount(0);
             await expect(view.getByTestId("turn-status")).not.toContainText("이번 요청");
             await expect(view.getByTestId("turn-timing")).not.toContainText("총 경과");
             const composer = view.getByTestId("composer");
             expect(await composer.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
             expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
             const timing = (await view.getByTestId("turn-timing").boundingBox())!;
-            expect(timing.y + timing.height).toBeLessThanOrEqual((await composer.boundingBox())!.y);
+            // 실행 상태는 입력 카드의 윗줄에 있고 실제 메시지 입력칸을 덮지 않는다.
+            expect(timing.y).toBeGreaterThanOrEqual((await composer.boundingBox())!.y);
+            expect(timing.y + timing.height).toBeLessThanOrEqual((await view.getByLabel("메시지 입력").boundingBox())!.y);
             await page.screenshot({ path: info.outputPath(`running-${theme}-390.png`) });
 
             await composerOption(view, "추론", "xhigh");
             await composerOption(view, "Fast", false);
             await expect(view.getByTestId("model-effort")).toHaveText("· xhigh");
             await expect(view.getByRole("img", { name: "Fast 켜짐", exact: true })).toHaveCount(0);
-            await view.getByRole("button", { name: "초안·스킬", exact: true }).click();
-            await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toBeVisible();
-            await page.keyboard.press("Escape");
+            await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toHaveCount(0);
             await view.getByLabel("메시지 입력").fill("queued reasoning and normal");
-            await view.getByRole("button", { name: "대기열에 추가", exact: true }).click();
+            await view.getByRole("button", { name: "대기열", exact: true }).click();
             const queued = await apiCall<{ items: { id: string; effort: string; service_tier: string }[] }>("GET", `/sessions/${session.id}/followups`);
             expect(queued.items[0]).toMatchObject({ effort: "xhigh", service_tier: "default" });
             await apiCall("POST", `/turns/${active}/cancel`);
@@ -124,8 +167,9 @@ for (const theme of ["light", "dark"] as const) {
             await apiCall("POST", `/sessions/${session.id}/followups/${queued.items[0]!.id}/start`);
             await expect(view.getByTestId("msg-assistant")).toHaveCount(2);
             await expect(view.getByTestId("msg-assistant").last()).toContainText("에이전트 답변");
-            expect(request().args).toEqual(expect.arrayContaining(['model_reasoning_effort="xhigh"', 'service_tier="default"']));
-            expect(request().resume).toBe(true);
+            expect(request()).toMatchObject({ effort: "xhigh", serviceTier: "default",
+                approvalPolicy: "never", sandboxPolicy: { type: "dangerFullAccess" } });
+            expect(requests().filter((item) => item.method === "thread/resume").at(-1)!.params.threadId).toBe(request().threadId);
             await view.getByLabel("메시지 입력").fill("모델 변경 후에도 남는 초안");
             await composerOption(view, "모델 프로필", JSON.stringify([profile.id, "fixture-light"]));
             await composerSetting(view, "추론");
@@ -135,7 +179,7 @@ for (const theme of ["light", "dark"] as const) {
             await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
             await expect(view.getByLabel("메시지 입력")).toHaveValue("모델 변경 후에도 남는 초안");
             await page.reload();
-            await expect(sessionView(page, session.id).getByLabel("메시지 입력")).toHaveValue("모델 변경 후에도 남는 초안");
+            await expect(sessionView(page, session.id).getByLabel("메시지 입력")).toHaveValue("");
             await expectChoice(await composerSetting(sessionView(page, session.id), "추론"), "xhigh");
         } finally {
             if (active) await apiCall("POST", `/turns/${active}/cancel`);

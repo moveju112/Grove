@@ -53,7 +53,6 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
     const pendingFocus = useRef<string | null>(null);
     const previousFirst = useRef(messages[0]?.id);
     const previousTarget = useRef(targetSeq);
-    const previousWindow = useRef("");
     const [focused, setFocused] = useState<string | null>(null);
     const [viewport, setViewport] = useState({ top: 0, bottom: 800 });
     const [, measured] = useState(0);
@@ -136,7 +135,6 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
         messages.findIndex((m) => m.id === anchor.current?.id),
     ]) if (index >= 0) indices.add(index);
     const ordered = [...indices].sort((a, b) => a - b);
-    const windowKey = ordered.map((index) => messages[index]!.id).join(",");
 
     useLayoutEffect(() => {
         const el = pane();
@@ -177,7 +175,6 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
             setFocused(targetMessage.id);
             previousFirst.current = messages[0]?.id;
             previousTarget.current = targetSeq;
-            previousWindow.current = windowKey;
             geometry.current = geometryOf(el, root.current);
             updateViewport();
             onTargetReached(targetMessage.seq);
@@ -194,7 +191,6 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
             adjustment.current = null;
             previousFirst.current = messages[0]?.id;
             previousTarget.current = targetSeq;
-            previousWindow.current = windowKey;
             geometry.current = geometryOf(el, root.current);
             updateViewport();
             onRestored();
@@ -208,7 +204,9 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
                 pendingFocus.current = null;
             }
         } else if ((!targetChanged || targetSeq === null)
-            && (adjustment.current || previousFirst.current !== messages[0]?.id || previousWindow.current !== windowKey)) {
+            && (adjustment.current || previousFirst.current !== messages[0]?.id)) {
+            // 스크롤로 표시 범위만 바뀌면 위치를 보정하지 않는다.
+            // 맨 아래 80px 안에서는 stick이 유지되므로 매번 끝으로 맞추면 느린 터치 스크롤을 되돌린다.
             const point = adjustment.current?.point ?? anchor.current;
             if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
             else if (point) {
@@ -219,7 +217,6 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
         adjustment.current = null;
         previousFirst.current = messages[0]?.id;
         previousTarget.current = targetSeq;
-        previousWindow.current = windowKey;
         geometry.current = geometryOf(el, root.current);
         updateViewport();
     });

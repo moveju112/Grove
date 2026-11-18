@@ -6,19 +6,18 @@ import { Select } from "../design/Select";
 import { CodeBlock } from "../design/CodeBlock";
 import { StatusBadge } from "../design/StatusBadge";
 import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
-import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { AttachmentList, type Attachment } from "./Attachments";
-import { ActionMenu, DetailDialog, ToolsTrigger, Workbench } from "./ui/Controls";
+import { ActionMenu, DetailDialog, Panel, ToolsTrigger, Workbench } from "./ui/Controls";
 import { Suspense, lazy, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { FileRefContext, Markdown } from "./Markdown";
-import { type Prefs, usePrefs } from "../state/device";
+import { FileLinkContext, FileRefContext, Markdown } from "./Markdown";
+import { usePrefs } from "../state/device";
 import { When } from "./When";
 import { useFocusRequest } from "../state/focus";
 import { queueText } from "../state/queue";
 import { ApiError, api, isLoggedIn } from "../api/client";
-import type { BotRoom, Definition, Message, MessagePage, ModelProfile, RecentItem, Session, ToolCallRow, Turn } from "../api/generated";
+import type { BotRoom, Definition, Followup as FollowupInfo, Message, MessagePage, Project, RecentItem, Session, ToolCallRow, Turn } from "../api/generated";
 import { useLive, useQuery } from "../state/store";
 import { Composer, type FollowKind, type RunCommand, type SendOptions } from "./Composer";
 import { modelOptionCapabilities } from "../state/sendOptions";
@@ -46,17 +45,18 @@ import { MessageCopyButton as CopyButton } from "./capabilities/MessageCopyButto
 import { CompactionDetails, type CompactionRecord } from "./compaction/CompactionDetails";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { Stack } from "@astryxdesign/core/Stack";
-import { chatLayout } from "./chat-layout.stylex";
+import { Spinner } from "@astryxdesign/core/Spinner";
+import { CHAT_COLUMN_WIDTH, chatLayout } from "./chat-layout.stylex";
 import { LoadingBar } from "./LoadingScreen";
 import { TextArea } from "../design/Fields";
 import { AssistantResponse, splitResponse, type ResponseContent } from "./AssistantResponse";
-import { cliActivitySummary, type CliActivity } from "./cli-activity";
+import { assistantTranscript, type AssistantRow } from "./assistantTranscript";
 
 const GoalsPanel = lazy(() => import("./GoalsPanel").then(({ GoalsPanel }) => ({ default: GoalsPanel })));
 
-type Props = { tabId: string; sessionId: string; projectId: string; open: Opener };
+type Props = { tabId: string; sessionId: string; projectId: string; open: Opener; onTitleChange: (title: string) => void };
 
-export function SessionView({ tabId, sessionId, projectId, open }: Props) {
+export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }: Props) {
     const visible = usePaneVisible();
     const [pageVisible, setPageVisible] = useState(() => typeof document !== "undefined" && document.visibilityState === "visible");
     useEffect(() => {
@@ -68,10 +68,15 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     useEffect(() => visible ? deliveryTiming.watch(sessionId) : undefined, [visible, sessionId]);
     const prefs = usePrefs();
     const session = useQuery<Session>(`session:${sessionId}`, () => api.get(`/sessions/${sessionId}`));
+    useEffect(() => {
+        if (session.data) onTitleChange(session.data.title);
+    }, [session.data?.title, onTitleChange]);
+    const project = useQuery<Project>(`project:${projectId}`, () => api.get(`/projects/${projectId}`));
     const latest = useQuery<MessagePage>(`messages:${sessionId}`, () => api.get(`/sessions/${sessionId}/messages?limit=100`));
     const turns = useQuery<Turn[]>(`turns:${sessionId}`, () => api.get(`/sessions/${sessionId}/turns?limit=5`));
     const lastTurn = turns.data?.[0];
     const active = turns.data?.find((t) => ["queued", "running", "awaiting_approval"].includes(t.status));
+    const failedTurn = !active && lastTurn && ["failed", "interrupted"].includes(lastTurn.status) && !lastTurn.acknowledged_at ? lastTurn : undefined;
     const completedTurnId = lastTurn?.status === "completed" ? lastTurn.id : undefined;
     const calls = useQuery<ToolCallRow[]>(`calls:${sessionId}`, () => api.get(`/tool-calls?session_id=${sessionId}&limit=200`));
     const workflows = useQuery<Definition[]>("definitions:workflow", () => api.get("/definitions?kind=workflow"));
@@ -112,6 +117,7 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
             void api
                 .post<RecentItem>("/recent/touch", {
                     kind: "session", project_id: projectId, resource_id: sessionId, view_state: { last_seen_seq: lastSeq },
+                    reopen: false,
                     ...(completedTurnId ? { seen_completed_turn_id: completedTurnId } : {}),
                 })
                 .catch((error) => setErr(error instanceof ApiError ? error.message : "대화 확인 상태를 저장하지 못했습니다."));
@@ -198,9 +204,9 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     useEffect(() => {
         if (!visible || pendingPosition.current) return;
         if (stick.current) scrollEnd();
-        else if (!savedPosition || (latest.data?.items.at(-1)?.seq ?? 0) > savedPosition.lastSeq || partial?.text || partial?.reasoning) setUnseen(true);
+        else if (!savedPosition || (latest.data?.items.at(-1)?.seq ?? 0) > savedPosition.lastSeq || partial?.text) setUnseen(true);
         // 최신 페이지는 항상 최근 N개라 개수가 아니라 마지막 메시지로 새 글을 판단한다.
-    }, [visible, !!s, latest.data?.items.at(-1)?.seq, partial?.text, partial?.reasoning]);
+    }, [visible, !!s, latest.data?.items.at(-1)?.seq, partial?.text]);
 
     useLayoutEffect(() => {
         const composer = composerElement();
@@ -233,10 +239,10 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     }
     const latestFirst = latest.data?.items[0]?.seq ?? Number.MAX_SAFE_INTEGER;
     const messages = [...older.filter((m) => m.seq < latestFirst), ...(latest.data?.items ?? [])];
-    const answeredTurns = new Set(messages.filter((m) => {
-        return m.role === "assistant" && splitResponse(m.content as ResponseContent).answer.trim();
-    }).map((m) => m.turn_id));
-    if (partial && splitResponse(partial).answer.trim()) answeredTurns.add(partial.turn_id);
+    const liveResponse = partial?.text === undefined ? undefined : partial;
+    const showProgress = prefs.progressVisibility !== "hidden";
+    const transcript = assistantTranscript(messages, liveResponse, showProgress);
+    const groupedSeq = (seq: number | null) => seq === null ? null : transcript.anchors.get(seq) ?? seq;
     // 앞에 붙인 페이지와 측정 높이의 위치 보정은 VirtualMessages가 같은 읽기 anchor로 처리한다.
     const loadOlder = async () => {
         const first = messages[0]?.seq;
@@ -253,6 +259,9 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     const [highlight, setHighlight] = useState<number | null>(null);
     const [focusMiss, setFocusMiss] = useState(false);
     const loadingOlder = useRef(false);
+    const position = pendingPosition.current;
+    const restorePosition = focusSeq == null && position && position.timelineRevision === latest.data?.timeline_revision
+        ? { ...position, anchorSeq: groupedSeq(position.anchorSeq) } : null;
     useLayoutEffect(() => {
         const position = pendingPosition.current;
         if (!visible || !position || !latest.data) return;
@@ -320,11 +329,11 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
         toBottom();
         if (follow) {
             // 실행 중 추가 메시지(RUN-007): 서버가 실행 상태를 다시 확인하고, 그 사이 끝났으면 바로 새 요청으로 시작한다.
-            await api.post(`/sessions/${sessionId}/followups`, { kind: follow, text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier }, request);
+            await api.post(`/sessions/${sessionId}/followups`, { kind: follow, text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, request);
             return;
         }
         if (o.mode === "save") await api.post(`/sessions/${sessionId}/messages`, { text, attachments }, { key });
-        else await api.post(`/sessions/${sessionId}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier }, request);
+        else await api.post(`/sessions/${sessionId}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, request);
     };
 
     const rewind = (m: Message) => {
@@ -394,73 +403,47 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                 </Suspense> },
                 { id: "agents", label: "에이전트", activity: delegated.data?.runs.filter((r) => r.status === "running").length, content: <AgentRunsPanel sessionId={sessionId} projectId={projectId} open={open} onError={setErr} /> },
                 { id: "watches", label: "원격 감시", content: <RemoteWatchesPanel key={`remote-watches:${sessionId}`} sessionId={sessionId} disabled={archived} /> },
-            ]}>
-            <Stack as="header" direction="horizontal" align="center" gap={2}>
-                <GroveHeading level={1} color="inherit" xstyle={chatLayout.headerTitle}>
-                    <ServerActionButton appearance="link" title="이름 바꾸기" onClick={() => {
-                        const t = prompt("대화 이름", s.title);
-                        if (t && t !== s.title) void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, title: t }));
-                    }}>
-                        {s.title}
+                { id: "session", label: "대화", content: <Panel title="대화 관리">
+                    <Select label="워크플로우" value={s.workflow_id ?? "default"}
+                        disabled={archived || !!serverBlocked} disabledMessage={serverBlocked ?? undefined}
+                        onChange={(value) => void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, workflow_id: value === "default" ? null : value }))}
+                        options={(workflows.data ?? []).filter((w) => w.enabled || w.id === s.workflow_id)
+                            .map((w) => ({ value: w.id, label: `워크플로우: ${w.name}${!w.enabled ? " (꺼짐 · 다음 요청은 기본 워크플로우)" : ""}` }))} />
+                    <WorktreeSelect projectId={projectId} sessionId={sessionId} current={s.worktree_id} disabled={archived || !!s.active_turn || !!serverBlocked} onError={setErr} />
+                    <ServerActionButton variant="secondary" density="compact" onClick={() => {
+                        const title = prompt("대화 이름", s.title);
+                        if (title && title !== s.title) void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, title }));
+                    }}>이름 바꾸기</ServerActionButton>
+                    {!archived && <ServerActionButton variant="secondary" density="compact"
+                        title="모델로 짧은 제목을 만듭니다(모델 비용 발생)" onClick={() => void act(async () => {
+                            const r = await api.post<{ applied: boolean; message?: string }>(`/sessions/${sessionId}/title`, {});
+                            if (!r.applied) setErr(`제목을 바꾸지 않았습니다: ${r.message ?? ""}`);
+                        })}>제목 생성</ServerActionButton>}
+                    <ServerActionButton variant="secondary" density="compact" disabled={archived} onClick={() => {
+                        const inherit = confirm("모델 컨텍스트도 이어받을까요?\n확인: 대화와 컨텍스트 계승 / 취소: 대화 기록만 표시하고 새 컨텍스트");
+                        void act(async () => {
+                            const n = await api.post<Session>(`/sessions/${sessionId}/fork`, { from_seq: s.last_message_seq, inherit_context: inherit });
+                            open({ kind: "session", project_id: projectId, resource_id: n.id, title: n.title }, "right");
+                        });
+                    }}>분기</ServerActionButton>
+                    <ServerActionButton variant="secondary" density="compact" onClick={() => void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, archived: !archived }))}>
+                        {archived ? "복원" : "보관"}
                     </ServerActionButton>
-                </GroveHeading>
+                    <GroveButton variant="secondary" appearance="icon" aria-label="대화 설정" title="대화 설정" onClick={() => open({ kind: "settings", project_id: projectId, resource_id: `session:${sessionId}`, title: `설정 · ${s.title}` })}>
+                        <Icon name="settings" />
+                    </GroveButton>
+                    {archived && <ServerActionButton variant="destructive" density="compact" onClick={() => {
+                        const t = prompt(`영구 삭제는 되돌릴 수 없습니다. 메시지·실행 기록이 모두 지워집니다.\n확인하려면 대화 제목을 그대로 입력하세요: ${s.title}`);
+                        if (t === null) return;
+                        void act(() => api.post(`/sessions/${sessionId}/delete`, { expected_revision: s.revision, confirm_title: t }));
+                    }}>영구 삭제</ServerActionButton>}
+                </Panel> },
+            ]}>
+            {s.bot_id || room.data ? <Stack as="header" direction="horizontal" align="center" gap={2}>
                 {s.bot_id && <HintText data-testid="bot-chip" hint="모델·persona는 봇 설정을 따릅니다(입력창의 모델·에이전트 선택은 쓰지 않음)">봇 대화</HintText>}
                 {room.data && <HintText data-testid="bot-room-chip" hint={`@{봇 이름}으로 답할 봇을 지정해요. 여러 봇을 지정하면 순서대로 답하고, 지정하지 않으면 첫 봇이 답해요. 참여: ${room.data.members.map((m) => m.name).join(", ")}`}>봇 그룹</HintText>}
-                {lastTurn?.agent_id && <HintText hint="마지막 요청을 처리한 에이전트">에이전트: {lastTurn.agent_id}</HintText>}
-                <ActionMenu label="대화 작업">
-                <Select
-                    label="워크플로우" hideLabel
-                    value={s.workflow_id ?? "default"}
-                    disabled={archived || !!serverBlocked}
-                    disabledMessage={serverBlocked ?? undefined}
-                    onChange={(value) => void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, workflow_id: value === "default" ? null : value }))}
-                    options={(workflows.data ?? []).filter((w) => w.enabled || w.id === s.workflow_id)
-                        .map((w) => ({ value: w.id, label: `워크플로우: ${w.name}${!w.enabled ? " (꺼짐 · 다음 요청은 기본 워크플로우)" : ""}` }))}
-                />
-                <WorktreeSelect projectId={projectId} sessionId={sessionId} current={s.worktree_id} disabled={archived || !!s.active_turn || !!serverBlocked} onError={setErr} />
-                {!archived && (
-                    <ServerActionButton
-                        variant="secondary" density="compact"
-                        title="모델로 짧은 제목을 만듭니다(모델 비용 발생)"
-                        onClick={() =>
-                            void act(async () => {
-                                const r = await api.post<{ applied: boolean; message?: string }>(`/sessions/${sessionId}/title`, {});
-                                if (!r.applied) setErr(`제목을 바꾸지 않았습니다: ${r.message ?? ""}`);
-                            })
-                        }
-                    >
-                        제목 생성
-                    </ServerActionButton>
-                )}
-                <ContextMeter sessionId={sessionId} profileId={lastTurn?.profile_id ?? null} busy={!!active || archived || !!serverBlocked} onError={setErr} />
-                <ServerActionButton variant="secondary" density="compact" disabled={archived} onClick={() => {
-                    const inherit = confirm("모델 컨텍스트도 이어받을까요?\n확인: 대화와 컨텍스트 계승 / 취소: 대화 기록만 표시하고 새 컨텍스트");
-                    void act(async () => {
-                        const n = await api.post<Session>(`/sessions/${sessionId}/fork`, { from_seq: s.last_message_seq, inherit_context: inherit });
-                        open({ kind: "session", project_id: projectId, resource_id: n.id, title: n.title }, "right");
-                    });
-                }}>분기</ServerActionButton>
-                <ServerActionButton variant="secondary" density="compact" onClick={() => void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, archived: !archived }))}>
-                    {archived ? "복원" : "보관"}
-                </ServerActionButton>
-                <GroveButton variant="secondary" density="compact" onClick={() => open({ kind: "settings", project_id: projectId, resource_id: `session:${sessionId}`, title: `설정 · ${s.title}` })}>
-                    대화 설정
-                </GroveButton>
-                {archived && (
-                    <ServerActionButton
-                        variant="destructive" density="compact"
-                        onClick={() => {
-                            const t = prompt(`영구 삭제는 되돌릴 수 없습니다. 메시지·실행 기록·초안이 모두 지워집니다.\n확인하려면 대화 제목을 그대로 입력하세요: ${s.title}`);
-                            if (t === null) return;
-                            void act(() => api.post(`/sessions/${sessionId}/delete`, { expected_revision: s.revision, confirm_title: t }));
-                        }}
-                    >
-                        영구 삭제
-                    </ServerActionButton>
-                )}
-                </ActionMenu>
                 <ToolsTrigger />
-            </Stack>
+            </Stack> : <ToolsTrigger inlineHeader />}
             {s.parent_session_id && (
                 <GroveText as="p" display="block" type="supporting" color="secondary">
                     분기된 대화 · {s.fork_inherits_context ? "모델 컨텍스트 계승" : "대화 기록만 표시(새 컨텍스트)"}
@@ -474,20 +457,22 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                     <HelpTip label="대화 되감기 도움말">압축 구간 이후 사용자 메시지 직전으로만 되감기할 수 있습니다.</HelpTip>
                 </GroveText>
             )}
-            <Stack gap={4} width="100%" maxWidth="48em" xstyle={chatLayout.messages} aria-live="polite" data-session-msgs={sessionId} ref={msgsRef}>
+            <Stack gap={4} width="100%" maxWidth={CHAT_COLUMN_WIDTH} xstyle={chatLayout.messages} aria-live="polite" data-session-msgs={sessionId} ref={msgsRef}>
                 {hasOlder && <GroveButton variant="secondary" onClick={loadOlder}>이전 메시지</GroveButton>}
                 <FileRefContext.Provider
                     value={(path, line) => open({ kind: "file", project_id: projectId, resource_id: path, filePath: path, fileLine: line, title: line ? `${path}:${line}` : path }, "right")}
                 >
-                    <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={messages}
-                        targetSeq={focusSeq ?? pendingPosition.current?.anchorSeq ?? null} presentationKey={JSON.stringify(prefs)}
+                    <FileLinkContext.Provider value={project.data ? { projectId, rootPath: project.data.root_path } : null}>
+                    <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={transcript.rows.filter((m) =>
+                        !(failedTurn && m.turn_id === failedTurn.id && m.role === "note" && (m.content as { type?: string }).type === "turn_ended"))}
+                        targetSeq={groupedSeq(focusSeq ?? position?.anchorSeq ?? null)} presentationKey={JSON.stringify(prefs)}
                         onTargetReached={(seq) => {
                             if (focusSeq == null) return;
                             setHighlight(seq);
                             setFocusMiss(false);
                             focusDone();
                         }}
-                        restorePosition={focusSeq == null && pendingPosition.current?.timelineRevision === latest.data?.timeline_revision ? pendingPosition.current : null}
+                        restorePosition={restorePosition}
                         onRestored={() => {
                             const position = pendingPosition.current;
                             clearPendingPosition();
@@ -497,8 +482,10 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                         stick={stick} bottom={bottom} onNavigate={() => { clearPendingPosition(); stick.current = false; }}
                         render={(m) => (
                         <Stack gap={0} key={m.id} xstyle={highlight === m.seq && chatLayout.focusHit} data-seq={m.seq} data-highlighted={highlight === m.seq}>
-                            <MessageView m={m} prefs={prefs} assistantName={assistantName} assistantImage={assistantImage}
-                                answered={!!m.turn_id && answeredTurns.has(m.turn_id)} />
+                            {m.role === "assistant"
+                                ? <AssistantTurn row={transcript.assistants.get(m.id)!} name={assistantName} image={assistantImage}
+                                    showProgress={showProgress} progressOpen={!!active && active.id === m.turn_id} />
+                                : <MessageView m={m} />}
                             {m.role === "user" && (
                                 <Stack direction="horizontal" align="center" gap={1} xstyle={chatLayout.actions}>
                                 <When at={m.created_at} absolute part="time" titlePart="datetime" />
@@ -515,14 +502,15 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                             )}
                         </Stack>
                     )} />
-                </FileRefContext.Provider>
-                {partial && partial.text !== undefined && (
+                {liveResponse && !transcript.handlesLive && (
                     <ChatMessage sender="assistant" density="compact" data-testid="partial"
-                        name={<><AssistantIdentity name={assistantName} imageUrl={assistantImage} /> {partial.text?.trim() ? "응답 중…" : partial.reasoning ? "추론 중…" : "작업 중…"}</>}>
-                        <AssistantResponse content={partial} mode={prefs.reasoning} live answered={answeredTurns.has(partial.turn_id)} />
-                        {partial.tool_calls?.length > 0 && <GroveText as="div" display="block" type="supporting" color="secondary">도구 호출 준비: {partial.tool_calls.join(", ")}</GroveText>}
+                        name={<AssistantIdentity name={assistantName} imageUrl={assistantImage}
+                            detail={liveResponse.text?.trim() ? "응답 중…" : "작업 중…"} />}>
+                        <AssistantResponse content={liveResponse} live showProgress={showProgress} />
                     </ChatMessage>
                 )}
+                    </FileLinkContext.Provider>
+                </FileRefContext.Provider>
                 <Stack gap={0} ref={bottom} />
             </Stack>
             {unseen && (
@@ -531,70 +519,92 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
                 </GroveButton>
             )}
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
-            {pending.map((c) => <ApprovalCard key={c.id} call={c} {...currentApprovalContract(c.name)}
-                blockedReason={serverBlocked}
-                onDecision={async (r) => {
-                    const result = await api.post<ToolCallRow>(`/tool-calls/${r.id}/decision`, { decision: r.decision, expected_revision: r.revision });
-                    calls.reload();
-                    return result;
-                }}
-                onRefresh={async (r) => {
-                    await api.get<ToolCallRow>(`/tool-calls/${r.id}`);
-                    calls.reload();
-                }}
-            />)}
-            {unknown.map((c) => <UnknownCard key={c.id} c={c} act={act} />)}
-            <Stack gap={1} xstyle={chatLayout.surface} data-testid="compose-surface">
-            {active && (
-                <Stack direction="horizontal" align="center" wrap="wrap" gap={2} role="status" data-testid="turn-status">
-                    {active.status === "awaiting_approval"
-                        ? questions.length > 0 && pending.length > 0
-                            ? "승인과 답변을 기다리는 중"
-                            : questions.length > 0
-                              ? "답변을 기다리는 중"
-                              : "승인을 기다리는 중"
-                        : active.queue
-                          ? queueText(active.queue)
-                          : active.status === "queued"
-                            ? "대기 중"
-                            : "실행 중"}
-                    <TurnTiming sessionId={sessionId} turn={active} messagesReady={false} />
-                    <DetailDialog label="실행 설정" title="실행 설정" showExpand={false} trigger={<Icon name="help" size={14} />}>
-                        <ActiveSettings turn={active} workflows={workflows.data ?? []} />
-                    </DetailDialog>
-                    <ServerActionButton variant="secondary" density="compact" onClick={() => void act(() => api.post(`/turns/${active.id}/cancel`))}>취소</ServerActionButton>
+            {pending.length > 0 && (
+                <Stack gap={2} width="100%" maxWidth={CHAT_COLUMN_WIDTH} xstyle={chatLayout.centered}>
+                    {pending.map((c) => <ApprovalCard key={c.id} call={c} {...currentApprovalContract(c.name)}
+                        blockedReason={serverBlocked}
+                        onDecision={async (r) => {
+                            const result = await api.post<ToolCallRow>(`/tool-calls/${r.id}/decision`, { decision: r.decision, expected_revision: r.revision });
+                            calls.reload();
+                            return result;
+                        }}
+                        onRefresh={async (r) => {
+                            await api.get<ToolCallRow>(`/tool-calls/${r.id}`);
+                            calls.reload();
+                        }}
+                    />)}
                 </Stack>
             )}
-            {!active && lastTurn && ["failed", "interrupted"].includes(lastTurn.status) && !lastTurn.acknowledged_at && (
-                <Stack direction="horizontal" align="center" wrap="wrap" gap={2} role="alert" data-testid="turn-ended">
-                    마지막 요청이 {lastTurn.status === "failed" ? "실패" : "중단"}했습니다: {(lastTurn.error as { message?: string })?.message ?? ""}
-                    <GroveText type="supporting" color="secondary"> (자동으로 다시 실행하지 않습니다)</GroveText>
-                    {(lastTurn.error as { scope?: EndScopeData })?.scope && <EndScope s={(lastTurn.error as { scope: EndScopeData }).scope} />}
-                    {lastTurn.evidence && <TurnEvidence e={lastTurn.evidence} />}
-                    {/* RUN-019: 다시 실행(같은 글·설정)·새 요청 쓰기·포기(배너 닫기, 모든 기기) */}
-                    <Stack direction="horizontal" align="center" gap={1.5}>
-                        <ServerActionButton variant="secondary" density="compact" disabled={archived} onClick={() => void act(() => api.post(`/turns/${lastTurn.id}/retry`))}>
-                            다시 실행
-                        </ServerActionButton>
-                        <GroveButton
-                            variant="secondary" density="compact"
-                            onClick={() => (document.querySelector(`[data-session="${sessionId}"] textarea[aria-label="메시지 입력"]`) as HTMLTextAreaElement | null)?.focus()}
-                        >
-                            새 요청 쓰기
-                        </GroveButton>
-                        <ServerActionButton variant="secondary" density="compact" onClick={() => void act(() => api.post(`/turns/${lastTurn.id}/acknowledge`))}>
-                            닫기(포기)
-                        </ServerActionButton>
+            {unknown.map((c) => <UnknownCard key={c.id} c={c} act={act} />)}
+            <Stack gap={1} xstyle={chatLayout.surface} data-testid="compose-surface">
+            {failedTurn && (
+                <Card variant="muted" padding={3} xstyle={chatLayout.turnError} role="alert" data-testid="turn-ended">
+                    <Stack gap={2}>
+                        <Stack gap={1}>
+                            <Stack as="header" direction="horizontal" align="center" justify="between" gap={2}>
+                                <Stack direction="horizontal" align="center" gap={1.5}>
+                                    <Icon name="warning" size={16} color="warning" />
+                                    <GroveText weight="semibold">요청이 {failedTurn.status === "failed" ? "실패" : "중단"}했어요</GroveText>
+                                </Stack>
+                                <Stack direction="horizontal" align="center" gap={1} xstyle={chatLayout.turnErrorMeta}>
+                                    <TurnTiming sessionId={sessionId} turn={failedTurn} messagesReady={false} showStatus={false} />
+                                    <ServerActionButton type="button" appearance="icon" density="compact" aria-label="닫기(포기)" title="닫기(포기)"
+                                        onClick={() => void act(() => api.post(`/turns/${failedTurn.id}/acknowledge`))}>
+                                        <Icon name="close" size={16} />
+                                    </ServerActionButton>
+                                </Stack>
+                            </Stack>
+                            <GroveText type="supporting">{(failedTurn.error as EndErrorData)?.message}</GroveText>
+                            <GroveText type="supporting" color="secondary">자동으로 다시 실행하지 않아요.</GroveText>
+                        </Stack>
+                        {(failedTurn.error as EndErrorData)?.scope && <EndScope s={(failedTurn.error as EndErrorData).scope!} warningsOnly />}
+                        {failedTurn.evidence && !("corrupt" in failedTurn.evidence) && failedTurn.evidence.cli_execution_attempted && <TurnEvidenceWarning />}
+                        <Stack as="footer" direction="horizontal" align="center" wrap="wrap" gap={1.5}>
+                            {failedTurn.evidence && <TurnEvidence e={failedTurn.evidence} compact />}
+                            <TurnEndRecord status={failedTurn.status} error={(failedTurn.error ?? {}) as EndErrorData} compact />
+                            <ServerActionButton type="button" variant="primary" density="compact" disabled={archived} xstyle={chatLayout.turnErrorRetry}
+                                onClick={() => void act(() => api.post(`/turns/${failedTurn.id}/retry`))}>
+                                <Icon name="restore" size={14} />다시 실행
+                            </ServerActionButton>
+                        </Stack>
                     </Stack>
-                </Stack>
+                </Card>
             )}
             {!active && lastTurn?.status === "cancelled" && lastTurn.evidence && "cli_execution_attempted" in lastTurn.evidence
                 && !!lastTurn.evidence.cli_execution_attempted && <TurnEvidence e={lastTurn.evidence} />}
-            {!active && timedTurn && <TurnTiming sessionId={sessionId} turn={timedTurn}
-                messagesReady={latest.data?.items.some((m) => m.turn_id === timedTurn.id && m.created_at === timedTurn.finished_at) ?? false} />}
+            {!active && !failedTurn && timedTurn && <Stack width="100%" maxWidth="48em" align="end" xstyle={chatLayout.centered}><TurnTiming sessionId={sessionId} turn={timedTurn}
+                messagesReady={latest.data?.items.some((m) => m.turn_id === timedTurn.id && m.created_at === timedTurn.finished_at) ?? false} /></Stack>}
             <BudgetNote sessionId={sessionId} active={active} />
             <FollowupsPanel sessionId={sessionId} running={!!active} onError={setErr} />
             <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands}
+                statusAccessory={active && <Stack direction="horizontal" align="center" justify="between" gap={2} paddingInline={2} paddingBlock={1}
+                    xstyle={chatLayout.turnStatus} data-testid="turn-status">
+                    <Stack direction="horizontal" align="center" gap={2} xstyle={chatLayout.turnStatusSummary}>
+                        <Stack gap={0} aria-hidden="true" xstyle={chatLayout.turnStatusIndicator}>
+                            {active.status === "running" ? <Spinner size="md" shade="inherit" /> : <Icon name="clock" size={16} />}
+                        </Stack>
+                        <Stack direction="horizontal" align="center" wrap="wrap" gap={2} xstyle={chatLayout.turnStatusSummary}>
+                            <GroveText type="supporting" role="status">{active.status === "awaiting_approval"
+                                ? questions.length > 0 && pending.length > 0
+                                    ? "승인과 답변을 기다리는 중"
+                                    : questions.length > 0
+                                      ? "답변을 기다리는 중"
+                                      : "승인을 기다리는 중"
+                                : active.queue
+                                  ? queueText(active.queue)
+                                  : active.status === "queued"
+                                    ? "대기 중"
+                                    : "실행 중"}</GroveText>
+                            <TurnTiming sessionId={sessionId} turn={active} messagesReady={false} compact showStatus={false} />
+                        </Stack>
+                    </Stack>
+                    <ServerActionButton appearance="choice" density="compact" aria-label="취소" xstyle={chatLayout.turnStatusAction}
+                        onClick={() => {
+                            if (!confirm("진행 중인 요청을 취소할까요?\n이미 변경된 파일은 되돌리지 않아요.")) return;
+                            void act(() => api.post(`/turns/${active.id}/cancel`));
+                        }}><Icon name="stop" size={16} />취소</ServerActionButton>
+                </Stack>}
+                sendAccessory={<ContextMeter sessionId={sessionId} profileId={active?.profile_id ?? lastTurn?.profile_id ?? null} activeTurnId={active?.id} busy={!!active || archived || !!serverBlocked} onError={setErr} />}
                 boundProfileId={room.data ? room.data.members.find((m) => m.profile_id)?.profile_id ?? null : s.bot_id ? bots.data?.bots.find((bot) => bot.id === s.bot_id)?.profile_id ?? null : undefined} />
             </Stack>
             </Workbench>
@@ -602,8 +612,14 @@ export function SessionView({ tabId, sessionId, projectId, open }: Props) {
     );
 }
 
+function TurnEvidenceWarning() {
+    return <GroveText type="supporting" color="warning">
+        파일이 변경됐을 수 있으니 다시 실행하기 전에 diff를 확인하세요.
+    </GroveText>;
+}
+
 /// 확정되지 않은 응답의 중단 증거(REC-010). 답변 목록과 분리해 표시하고 모델 입력에는 쓰지 않는다.
-function TurnEvidence({ e }: { e: NonNullable<Turn["evidence"]> }) {
+function TurnEvidence({ e, compact = false }: { e: NonNullable<Turn["evidence"]>; compact?: boolean }) {
     if ("corrupt" in e) {
         return (
             <GroveText as="p" display="block" type="supporting" color="inherit" data-testid="turn-evidence">
@@ -612,31 +628,40 @@ function TurnEvidence({ e }: { e: NonNullable<Turn["evidence"]> }) {
         );
     }
     return (
-        <DetailDialog data-testid="turn-evidence" label="중단 전 응답" title={<>
-                {e.cli_execution_attempted ? "CLI 작업 중단 · 변경 여부 확인 필요" : "중단 전까지 받은 응답"}(확정되지 않음 · {e.text_chars}자{e.truncated ? ", 앞부분만 보존" : ""}
-                {e.tool_calls.length > 0 ? ` · 계획 중이던 도구 ${e.tool_calls.join(", ")}(실행 안 함)` : ""})
-            </>}>
+        <Stack gap={1} data-testid="turn-evidence">
+        {!compact && e.cli_execution_attempted && <TurnEvidenceWarning />}
+        <DetailDialog label="중단 전 응답" title={`확정되지 않은 응답 · ${e.text_chars}자`} appearance={compact ? "link" : undefined}>
+            {e.truncated && <GroveText type="supporting" color="secondary">앞부분만 보존했어요.</GroveText>}
             <CodeBlock code={e.text} maxHeight="12em" />
-            {e.cli_execution_attempted && <GroveText as="p" display="block" type="supporting" color="warning">
-                {e.cli_activity_count ? `CLI 도구 활동 ${e.cli_activity_count}건을 받았어요.` : "CLI 도구 활동 보고 전에 중단됐을 수 있어요."}
-                {" "}중단해도 이미 바뀐 파일은 되돌아가지 않아요.
-                다시 실행하기 전에 파일과 diff를 확인하세요.
-            </GroveText>}
-            {e.cli_activity?.map((item, index) => <GroveText key={index} display="block" type="supporting" color="secondary">
-                {item.name} · {item.status ?? "결과 미확인"}
-            </GroveText>)}
         </DetailDialog>
+        </Stack>
     );
 }
 
-const MessageView = memo(function MessageView({ m, prefs, assistantName, assistantImage, answered }: { m: Message; prefs: Prefs; assistantName: string; assistantImage: string | null; answered: boolean }) {
-    const replyingBot = (m.content as { bot?: { name?: string } }).bot;
-    if (replyingBot?.name) { assistantName = replyingBot.name; assistantImage = null; }
+function AssistantTurn({ row, name, image, showProgress, progressOpen }: {
+    row: AssistantRow; name: string; image: string | null; showProgress: boolean; progressOpen: boolean;
+}) {
+    const { latest, content, prior, attachments, live } = row;
+    const meta = latest.content as { model?: string; bot?: { name?: string } };
+    const { answer } = splitResponse(content);
+    const detail = live ? (answer.trim() ? "응답 중…" : "작업 중…")
+        : `모델${meta.model ? " · " + meta.model : ""}${content.pending_work ? " · 중간 응답" : ""}`;
+    return <ChatMessage sender="assistant" density="compact" data-testid={live ? "partial" : "msg-assistant"}
+        name={<GroveText type="inherit" color="secondary" data-testid="msg-who">
+            <AssistantIdentity name={meta.bot?.name || name} imageUrl={meta.bot?.name ? null : image} detail={detail} />
+        </GroveText>}>
+        <AssistantResponse content={content} prior={prior} live={live} showProgress={showProgress} progressOpen={progressOpen} />
+        {!live && answer.trim() && <Stack direction="horizontal" align="center" gap={2}>
+            <CopyButton text={answer} />
+            <When at={latest.created_at} absolute part="time" titlePart="datetime" />
+        </Stack>}
+        {attachments.length > 0 && <AttachmentList attachments={attachments} />}
+    </ChatMessage>;
+}
+
+const MessageView = memo(function MessageView({ m }: { m: Message }) {
     const nt0 = (m.content as { type?: string }).type;
-    // 답만 보기: 도구 결과·CLI 도구 활동과 글 없는 도구 호출 메시지를 숨긴다(승인 카드는 별도로 항상 표시).
-    if (prefs.answerOnly && (m.role === "tool" || (m.role === "note" && nt0 === "cli_activity"))) return null;
-    if (prefs.answerOnly && m.role === "assistant" && !(m.content as { text?: string }).text) return null;
-    const c = m.content as Omit<ResponseContent, "tool_calls"> & { attachments?: Attachment[]; tool_calls?: { id: string; name: string }[]; name?: string; status?: string; output?: unknown; model?: string; approval_scope?: string | null; args?: unknown; duration_ms?: number | null; truncated?: boolean };
+    const c = m.content as { text?: string; attachments?: Attachment[] };
     if (m.role === "note" && (nt0 === "bot_room_next" || nt0 === "bot_room_stopped")) {
         return <GroveText as="div" display="block" type="supporting" color={nt0 === "bot_room_stopped" ? "warning" : "secondary"}
             role={nt0 === "bot_room_stopped" ? "alert" : undefined}>{c.text}</GroveText>;
@@ -669,34 +694,8 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
         return <GroveText as="div" display="block" type="supporting" color="secondary" data-testid="msg-rewind">{r.text} 활성 이력에서 {r.removed_count}개를 제외했습니다. 원문은 보관되며 자동 복원 UI는 없습니다.</GroveText>;
     }
     if (m.role === "note" && nt0 === "turn_ended") {
-        const r = m.content as {
-            status: string;
-            error: {
-                code: string; message: string; at?: string; last_progress_at?: string;
-                budget?: { max_tokens?: number; max_minutes?: number; max_cost_cents?: number; currency?: string };
-                settings?: { provider_timeout_secs?: number };
-                scope?: EndScopeData;
-            };
-        };
-        const e = r.error;
-        return (
-            <DetailDialog surface="orange" data-testid="msg-turn-ended" label="요청 종료 기록"
-                title={<>요청 종료 · {e.message} (<code>{e.code}</code>)</>}>
-                <GroveText as="p" display="block" type="inherit" color="inherit">상태: {r.status}</GroveText>
-                {e.at && <GroveText as="p" display="block" type="inherit" color="inherit">발생 시각: <time dateTime={e.at}>{e.at}</time></GroveText>}
-                {e.last_progress_at && <GroveText as="p" display="block" type="inherit" color="inherit">마지막 진행: <time dateTime={e.last_progress_at}>{e.last_progress_at}</time></GroveText>}
-                {e.budget && (
-                    <GroveText as="p" display="block" type="inherit" color="inherit">
-                        적용 예산:
-                        {e.budget.max_tokens != null && ` ${e.budget.max_tokens} tokens`}
-                        {e.budget.max_minutes != null && ` ${e.budget.max_minutes}분`}
-                        {e.budget.max_cost_cents != null && ` ${e.budget.max_cost_cents / 100} ${e.budget.currency ?? "USD"}`}
-                    </GroveText>
-                )}
-                {e.settings?.provider_timeout_secs != null && <GroveText as="p" display="block" type="inherit" color="inherit">provider timeout: {e.settings.provider_timeout_secs}초</GroveText>}
-                {e.scope && <EndScope s={e.scope} />}
-            </DetailDialog>
-        );
+        const r = m.content as { status: string; error: EndErrorData };
+        return <TurnEndRecord status={r.status} error={r.error} />;
     }
     if (m.role === "note" && (m.content as { type?: string }).type === "context_clear") {
         const r = m.content as { idle_minutes: number };
@@ -727,56 +726,9 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
             </DetailDialog>
         );
     }
-    if (m.role === "note" && (m.content as { type?: string }).type === "task_result") {
-        const r = m.content as { command: string; status: string; exit_code: number | null; reason: string | null; stdout_tail: string; stderr_tail: string; truncated: boolean; log_errors?: unknown[] };
-        return (
-            <DetailDialog surface="muted" data-testid="msg-task-result" label="백그라운드 작업 결과" title={<>
-                    백그라운드 작업 <code>{r.command}</code> · {r.status}
-                    {r.exit_code !== null ? ` (코드 ${r.exit_code})` : ""} {r.reason ? `· ${r.reason}` : ""}
-                </>}>
-                {r.stdout_tail && <CodeBlock code={r.stdout_tail} />}
-                {r.stderr_tail && <GroveText as="div" display="block" color="error"><pre>{r.stderr_tail}</pre></GroveText>}
-                {!!r.log_errors?.length && <GroveText as="p" display="block" type="inherit" color="error" role="alert">로그 저장에 실패했습니다. 출력이 누락됐을 수 있습니다.</GroveText>}
-                {r.truncated && <GroveText as="p" display="block" type="supporting" color="secondary">끝부분만 표시합니다. 전체 출력은 백그라운드 작업 목록에서 보세요.</GroveText>}
-            </DetailDialog>
-        );
-    }
-    const nt = (m.content as { type?: string }).type;
-    if (m.role === "note" && nt === "cli_activity") {
-        const r = m.content as { items: CliActivity[] };
-        return (
-            <DetailDialog surface="muted" data-testid="msg-cli-activity" label="CLI 도구 활동" inline={prefs.expandTools}
-                title={cliActivitySummary(r.items)}>
-                <pre>{JSON.stringify(r.items, null, 2).slice(0, 20000)}</pre>
-            </DetailDialog>
-        );
-    }
-    if (m.role === "tool") {
-        return (
-            <DetailDialog surface="muted" data-testid="msg-tool" label="도구 실행 세부" inline={prefs.expandTools} title={<>
-                    도구 {c.name} · <StatusBadge status={c.status}>{c.status}</StatusBadge>
-                    {c.approval_scope && (
-                        <GroveText type="supporting" color="secondary" data-testid="approval-scope">
-                            {" "}· {c.approval_scope === "once" ? "이번만 승인" : c.approval_scope === "session" ? "이 대화에서 허용됨" : "정책(tools.allow)으로 허용"}
-                        </GroveText>
-                    )}
-                    {typeof c.duration_ms === "number" && <GroveText type="supporting" color="secondary" data-testid="tool-duration"> · {fmtDuration(c.duration_ms)}</GroveText>}
-                    {c.truncated && <GroveText type="supporting" color="secondary" data-testid="tool-truncated"> · 결과 일부만(잘림)</GroveText>}
-                </>}>
-                {c.args !== undefined && (
-                    <>
-                        <GroveText as="div" display="block" type="supporting" color="secondary">인자</GroveText>
-                        <pre data-testid="tool-args">{JSON.stringify(c.args, null, 2)?.slice(0, 20000)}</pre>
-                    </>
-                )}
-                <GroveText as="div" display="block" type="supporting" color="secondary">{c.status === "succeeded" ? "결과" : "결과·오류"}</GroveText>
-                <pre data-testid="tool-output">{JSON.stringify(c.output, null, 2)?.slice(0, 20000)}</pre>
-            </DetailDialog>
-        );
-    }
     if (m.role === "user") {
         const source = (c as { source?: { kind?: string; name?: string } }).source;
-        const origin = source?.kind === "agent_run" ? "부모 에이전트의 지시" : source?.kind === "schedule" ? `예약 '${source.name ?? ""}' 실행` : null;
+        const origin = source?.kind === "agent_run" ? "부모 에이전트의 지시" : source?.kind === "schedule" ? `예약 '${source.name ?? ""}' 실행` : source?.kind === "continuation" ? "예약된 후속 확인" : null;
         return <ChatMessage sender="user" density="compact" data-testid="msg-user">
             <ChatMessageBubble>
                 {origin && <GroveText as="div" display="block" type="supporting" color="secondary" data-testid="msg-who">{origin}</GroveText>}
@@ -786,60 +738,68 @@ const MessageView = memo(function MessageView({ m, prefs, assistantName, assista
         </ChatMessage>;
     }
     return (
-        <ChatMessage sender={m.role === "assistant" ? "assistant" : "system"} density="compact" data-testid={`msg-${m.role}`}
-            name={<GroveText type="inherit" color="secondary" data-testid="msg-who">
-                {m.role === "assistant"
-                      ? <><AssistantIdentity name={assistantName} imageUrl={assistantImage} />{` 모델${c.model ? " · " + c.model : ""}${(m.content as { pending_work?: unknown }).pending_work ? " · 중간 응답(소유 작업 결과 반영 전)" : ""}`}</>
-                      : m.role}
-            </GroveText>}>
-            {m.role === "assistant" ? <AssistantResponse content={c} mode={prefs.reasoning} answered={answered} />
-                : c.text && <GroveText as="div" display="block" type="inherit" color="inherit" xstyle={contentStyles.plainText}>{c.text}</GroveText>}
+        <ChatMessage sender="system" density="compact" data-testid={`msg-${m.role}`}
+            name={<GroveText type="inherit" color="secondary" data-testid="msg-who">{m.role}</GroveText>}>
+            {c.text && <GroveText as="div" display="block" type="inherit" color="inherit" xstyle={contentStyles.plainText}>{c.text}</GroveText>}
             {c.text && <Stack direction="horizontal" align="center" gap={2}>
-                <CopyButton text={m.role === "assistant" ? splitResponse(c).answer || c.text : c.text} />
-                {m.role === "assistant" && <When at={m.created_at} absolute part="time" titlePart="datetime" />}
+                <CopyButton text={c.text} />
             </Stack>}
             {Array.isArray(c.attachments) && c.attachments.length > 0 && <AttachmentList attachments={c.attachments as Attachment[]} />}
-            {c.tool_calls && c.tool_calls.length > 0 && <GroveText as="div" display="block" type="supporting" color="secondary">도구 호출: {c.tool_calls.map((t) => t.name).join(", ")}</GroveText>}
         </ChatMessage>
     );
 });
 
-type EndScopeData = { steps: number; tool_calls: Record<string, number>; running_tasks: { id: string; command: string }[]; running_agents?: { id: string; agent_id: string; child_session_id: string }[] };
-
-// tool_calls.status 값(store.rs CHECK 제약)과 같은 이름.
-const CALL_STATUS: Record<string, string> = {
-    succeeded: "완료",
-    failed: "실패",
-    cancelled: "실행 안 함·취소",
-    denied: "거부",
-    expired: "승인 만료",
-    unknown: "결과 불명",
-    running: "실행 중(결과 미확정)",
-    approved: "승인됨(실행 전)",
-    pending_approval: "승인 대기",
-    awaiting_input: "답변 대기",
+type EndErrorData = {
+    code?: string; message?: string; at?: string; last_progress_at?: string;
+    budget?: { max_tokens?: number; max_minutes?: number; max_cost_cents?: number; currency?: string };
+    settings?: { provider_timeout_secs?: number };
+    provider_stream?: { event: string; code?: string; incomplete_reason?: string };
+    scope?: EndScopeData;
 };
 
+function TurnEndRecord({ status, error: e, compact = false }: { status: string; error: EndErrorData; compact?: boolean }) {
+    return <DetailDialog surface={compact ? undefined : "orange"} appearance={compact ? "link" : undefined} data-testid="msg-turn-ended" label="요청 종료 기록"
+        title={compact ? "오류 상세" : <>요청 종료 · {e.message} (<code>{e.code}</code>)</>}>
+        {compact && e.message && <GroveText as="p" display="block" type="inherit">{e.message}</GroveText>}
+        <GroveText as="p" display="block" type="inherit">상태: {status} · <code>{e.code}</code></GroveText>
+        {e.at && <GroveText as="p" display="block" type="inherit">발생 시각: <time dateTime={e.at}>{e.at}</time></GroveText>}
+        {e.last_progress_at && <GroveText as="p" display="block" type="inherit">마지막 진행: <time dateTime={e.last_progress_at}>{e.last_progress_at}</time></GroveText>}
+        {e.budget && <GroveText as="p" display="block" type="inherit">
+            적용 예산:
+            {e.budget.max_tokens != null && ` ${e.budget.max_tokens} tokens`}
+            {e.budget.max_minutes != null && ` ${e.budget.max_minutes}분`}
+            {e.budget.max_cost_cents != null && ` ${e.budget.max_cost_cents / 100} ${e.budget.currency ?? "USD"}`}
+        </GroveText>}
+        {e.provider_stream && <GroveText as="p" display="block" type="inherit">Codex 이벤트: <code>{e.provider_stream.event}</code></GroveText>}
+        {e.provider_stream?.code && <GroveText as="p" display="block" type="inherit">Codex 오류 코드: <code>{e.provider_stream.code}</code></GroveText>}
+        {e.provider_stream?.incomplete_reason && <GroveText as="p" display="block" type="inherit">미완료 사유: <code>{e.provider_stream.incomplete_reason}</code></GroveText>}
+        {e.settings?.provider_timeout_secs != null && <GroveText as="p" display="block" type="inherit">모델 응답 대기 한도(설정): {e.settings.provider_timeout_secs}초</GroveText>}
+        {e.scope && <EndScope s={e.scope} />}
+    </DetailDialog>;
+}
+
+type EndScopeData = { steps: number; tool_calls: Record<string, number>; running_tasks: { id: string; command: string }[]; running_agents?: { id: string; agent_id: string; child_session_id: string }[] };
+
 /// 중단 시점의 미완료 범위와 다음 조치(RUN-024). 서버가 기록한 값이라 새로고침·다른 기기에서도 같다.
-function EndScope({ s }: { s: EndScopeData }) {
-    const calls = Object.entries(s.tool_calls ?? {});
+function EndScope({ s, warningsOnly = false }: { s: EndScopeData; warningsOnly?: boolean }) {
     const unknown = (s.tool_calls?.unknown ?? 0) + (s.tool_calls?.running ?? 0);
     const tasks = s.running_tasks ?? [];
+    if (warningsOnly && !unknown && !tasks.length && !s.running_agents?.length) return null;
     return (
         <GroveText as="div" display="block" type="supporting" color="inherit" data-testid="end-scope">
-            <GroveText as="p" display="block" type="inherit" color="inherit">
+            {!warningsOnly && <GroveText as="p" display="block" type="inherit" color="inherit">
                 진행 범위: 모델 응답 {s.steps}단계 · 최종 답변 없음
-                {calls.length > 0 ? ` · 도구 ${calls.map(([k, n]) => `${CALL_STATUS[k] ?? k} ${n}`).join(", ")}` : " · 도구 호출 없음"}
-            </GroveText>
+            </GroveText>}
             {tasks.length > 0 && (
                 <GroveText as="p" display="block" type="inherit" color="inherit">
-                    계속 실행 중인 백그라운드 작업 {tasks.length}개: {tasks.map((t) => <code key={t.id}>{t.command}</code>)} — 작업 목록에서 확인·취소할 수 있습니다
+                    아직 실행 중인 작업이 {tasks.length}개 있어요. 작업 목록에서 확인하거나 취소할 수 있어요.
                 </GroveText>
             )}
             {!!s.running_agents?.length && <GroveText as="p" display="block" type="inherit" color="inherit">미완료 자식 작업 {s.running_agents.length}개: {s.running_agents.map((a) => <code key={a.id}>{a.agent_id} </code>)} — 자식 목록에서 확인할 수 있습니다</GroveText>}
-            <GroveText as="p" display="block" type="inherit" color="inherit">
-                다음 조치: {unknown > 0 ? "결과가 확정되지 않은 작업을 먼저 확인하세요. " : ""}같은 요청 다시 실행 · 새 요청 쓰기 · 닫기(포기)
-            </GroveText>
+            {(unknown > 0 || !warningsOnly) && <GroveText as="p" display="block" type="inherit" color="inherit">
+                {unknown > 0 && "결과가 확정되지 않은 작업을 먼저 확인하세요."}
+                {!warningsOnly && " 다음 조치: 같은 요청 다시 실행 · 입력창에서 새 메시지 보내기 · 닫기(포기)"}
+            </GroveText>}
         </GroveText>
     );
 }
@@ -871,12 +831,8 @@ function UnknownCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unknow
     );
 }
 
-function fmtDuration(ms: number): string {
-    return ms < 1000 ? `${ms}ms` : ms < 60_000 ? `${(ms / 1000).toFixed(1)}초` : `${Math.floor(ms / 60_000)}분 ${Math.round((ms % 60_000) / 1000)}초`;
-}
-
-type Followup = { attachments?: Attachment[]; id: string; kind: FollowKind; text: string; created_at: string; last_error?: { code: string; message: string } | null };
-const FOLLOW_KIND: Record<FollowKind, string> = { queue: "대기", steer: "반영 예정", interrupt: "끼어들기" };
+type Followup = { attachments?: Attachment[]; id: string; kind: FollowKind; text: string; created_at: string; delivery_state?: FollowupInfo["delivery_state"]; last_error?: { code: string; message: string } | null };
+const FOLLOW_KIND: Record<FollowKind, string> = { queue: "대기열", steer: "합치기", interrupt: "중단 후 전송" };
 
 /// 실행 중 보낸 추가 메시지(UI-021). 실행 중이면 순서대로 기다리고, 실패·취소로 멈추면 직접 시작하거나 지운다.
 function FollowupsPanel({ sessionId, running, onError }: { sessionId: string; running: boolean; onError: (m: string) => void }) {
@@ -892,26 +848,35 @@ function FollowupsPanel({ sessionId, running, onError }: { sessionId: string; ru
         q.reload();
     };
     return (
-        <Card variant="muted" padding={2} data-testid="followups" role="region" aria-label="대기 중인 메시지"><Stack gap={2}>
+        <Card variant="muted" padding={2} width="100%" maxWidth="48em" xstyle={chatLayout.centered}
+            data-testid="followups" role="region" aria-label="대기 중인 메시지"><Stack gap={2}>
             <GroveText as="div" display="block" type="supporting" color="secondary">
-                {running ? "실행이 끝나면 순서대로 보냅니다" : "이전 실행이 완료되지 않아 멈췄습니다. 직접 시작하거나 지우세요"}
+                {items.some((item) => item.delivery_state === "unknown" || item.delivery_state === "rejected") ? "합치기 전달 결과를 확인해 주세요"
+                    : !running ? "이전 실행이 완료되지 않아 멈췄습니다. 직접 시작하거나 지우세요"
+                    : items.some((item) => item.delivery_state === "sending") ? "실행 중인 응답에 전달하고 있습니다"
+                    : items.every((item) => item.kind === "steer") ? "합치기 전달을 기다리고 있습니다"
+                    : items.every((item) => item.kind === "queue") ? "실행이 끝나면 순서대로 보냅니다"
+                    : "선택한 방식으로 추가 메시지를 보냅니다"}
             </GroveText>
             <GroveList density="compact" edge="flush" listStyle="decimal">
                 {items.map((f, i) => (
-                    <GroveListItem key={f.id} data-testid="followup" label={<>
-                        <StatusBadge>{FOLLOW_KIND[f.kind]}</StatusBadge>
-                        <GroveText type="inherit" color="inherit" xstyle={contentStyles.plainText}>{f.text.length > 120 ? `${f.text.slice(0, 120)}…` : f.text}</GroveText>
+                    <GroveListItem key={f.id} data-testid="followup" label={<Stack gap={1}>
+                        <Stack direction="horizontal" align="start" gap={1.5} xstyle={chatLayout.bar}>
+                            <StatusBadge>{f.delivery_state === "sending" ? "전달 중" : FOLLOW_KIND[f.kind]}</StatusBadge>
+                            <GroveText type="inherit" color="inherit" xstyle={[contentStyles.plainText, chatLayout.sessionPreview]}>{f.text.length > 120 ? `${f.text.slice(0, 120)}…` : f.text}</GroveText>
+                        </Stack>
                         {!!f.attachments?.length && <AttachmentList attachments={f.attachments} />}
                         {f.last_error && <GroveText type="supporting" color="error"> · {f.last_error.message}</GroveText>}
-                        {!running && i === 0 && (
+                    </Stack>} endContent={<Stack direction="horizontal" align="center" gap={1}>
+                        {!running && i === 0 && (!f.delivery_state || f.delivery_state === "pending") && (
                             <ServerActionButton variant="secondary" density="compact" onClick={() => void run(() => api.post(`/sessions/${sessionId}/followups/${f.id}/start`))}>
                                 지금 시작
                             </ServerActionButton>
                         )}
-                        <ServerActionButton variant="secondary" density="compact" aria-label={`대기 메시지 삭제: ${f.text.slice(0, 20)}`} onClick={() => void run(() => api.del(`/sessions/${sessionId}/followups/${f.id}`))}>
+                        <ServerActionButton variant="secondary" density="compact" disabled={f.delivery_state === "sending"} aria-label={`대기 메시지 삭제: ${f.text.slice(0, 20)}`} onClick={() => void run(() => api.del(`/sessions/${sessionId}/followups/${f.id}`))}>
                             삭제
                         </ServerActionButton>
-                    </>} />
+                    </Stack>} />
                 ))}
             </GroveList>
         </Stack></Card>
@@ -1017,36 +982,6 @@ function BudgetNote({ sessionId, active }: { sessionId: string; active?: Turn })
             {m > 0 && <> 시간 {m}분(시작부터, 승인·답변 대기 포함 · {SOURCE[mins!.source] ?? mins!.source} 설정)</>}
             {t > 0 && <> · token {t}({SOURCE[toks!.source] ?? toks!.source} 설정)</>}
             {c > 0 && <> · 추정 비용 {(c / 100).toFixed(2)}(프로필 가격표 통화, {SOURCE[cost!.source] ?? cost!.source} 설정)</>} · 넘으면 남은 작업을 멈춥니다
-        </GroveText>
-    );
-}
-
-/// 요청한 강도와 provider에 실제로 보낸 값을 구분한다(EFF-009). 보내지 않은 값은 적용된 것처럼 쓰지 않는다.
-export function effortApplied(a: { field: string | null; value: string | number | null } | undefined): string {
-    if (!a) return "";
-    if (!a.field) return "(보내지 않음: 모델 기본값)";
-    return `(실제 전송 ${a.field}=${a.value})`;
-}
-
-/// 실행 중 요청에 고정된 설정(RUN-009). 접수 때 정해져 실행 중 바꿔도 이 요청에는 적용되지 않는다.
-function ActiveSettings({ turn, workflows }: { turn: Turn; workflows: Definition[] }) {
-    const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
-    const def = (turn.definition ?? {}) as {
-        effort?: string; effort_applied?: { field: string | null; value: string | number | null }; service_tier?: string;
-        workflow?: { id?: string; disabled_selection?: string }; agent?: { id?: string };
-    };
-    const p = profiles.data?.find((x) => x.id === turn.profile_id);
-    const wf = workflows.find((w) => w.id === (def.workflow?.id ?? turn.workflow_id));
-    const skipped = def.workflow?.disabled_selection;
-    const skippedName = skipped && (workflows.find((w) => w.id === skipped)?.name ?? skipped);
-    return (
-        <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="active-settings">
-            이번 요청: {p ? `${p.name} · ${p.model}` : "모델 프로필"} · 추론 {def.effort ?? "auto"}
-            {def.service_tier && ` · 속도 ${def.service_tier === "priority" ? "Fast" : def.service_tier === "default" ? "Normal" : def.service_tier}`}
-            <GroveText type="inherit" color="inherit" data-testid="effort-applied">{effortApplied(def.effort_applied)}</GroveText> · 워크플로 {wf?.name ?? def.workflow?.id ?? "기본"}
-            {skippedName && `(꺼진 ${skippedName} 대신)`}
-            {def.agent?.id && ` · 에이전트 ${def.agent.id}`}
-            <HelpTip label="실행 중 설정 도움말">모델·추론·속도·워크플로 변경은 다음 요청부터 적용됩니다.</HelpTip>
         </GroveText>
     );
 }

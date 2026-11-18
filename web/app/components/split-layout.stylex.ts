@@ -1,5 +1,14 @@
 import * as stylex from "@stylexjs/stylex";
 
+export const SPLIT_DIVIDER_SIZE = 6;
+export const PANE_REVEAL_DURATION = 1000;
+const TAB_ROW_HEIGHT = 32;
+const compactTabs = "@container split-pane (max-width: 192px)";
+const recentReveal = stylex.keyframes({
+    from: { opacity: 1 },
+    to: { opacity: 0 },
+});
+
 // 비율은 서버에 저장한 중첩 배치의 값이다. Resizable의 픽셀 선택 모델로 대체하지 않는다.
 export const splitStyles = stylex.create({
     fill: { flexGrow: 1, minWidth: 0, minHeight: 0 },
@@ -13,22 +22,31 @@ export const splitStyles = stylex.create({
     projectDivider: (left: string, top: string, width: string, height: string, row: boolean) => ({
         position: "absolute", left, top, width, height, zIndex: 2, transform: row ? "translateX(-50%)" : "translateY(-50%)",
     }),
-    projectName: { maxWidth: 100, flexShrink: 0, paddingInline: "var(--spacing-2)", fontSize: 12 },
-    child: (basis: string) => ({ flexBasis: basis, flexGrow: 0, flexShrink: 1, minWidth: "8em", minHeight: "6em" }),
+    projectName: { maxWidth: 100, flexShrink: 0, paddingInline: "var(--spacing-2)", fontSize: 12, lineHeight: `${TAB_ROW_HEIGHT}px` },
+    child: (basis: string) => ({ flexBasis: basis, flexGrow: 0, flexShrink: 1, minWidth: 0, minHeight: 0 }),
     divider: {
-        position: "relative", flexBasis: 6, flexGrow: 0, flexShrink: 0,
+        position: "relative", flexBasis: SPLIT_DIVIDER_SIZE, flexGrow: 0, flexShrink: 0,
         backgroundColor: "transparent", touchAction: "none", alignSelf: "stretch",
         "::after": { content: '""', position: "absolute", backgroundColor: "var(--line)" },
         ":hover::after": { backgroundColor: "var(--accent)" },
         ":focus::after": { backgroundColor: "var(--accent)" },
     },
-    horizontal: { cursor: "col-resize", width: 6, height: "auto", "::after": { inset: "0 2.5px" } },
-    vertical: { cursor: "row-resize", height: 6, width: "auto", "::after": { inset: "2.5px 0" } },
+    horizontal: { cursor: "col-resize", width: SPLIT_DIVIDER_SIZE, height: "auto", "::after": { inset: "0 2.5px" } },
+    vertical: { cursor: "row-resize", height: SPLIT_DIVIDER_SIZE, width: "auto", "::after": { inset: "2.5px 0" } },
     pane: {
         position: "relative", flexGrow: 1, minWidth: 0, minHeight: 0,
+        containerType: "inline-size", containerName: "split-pane",
         backgroundColor: "var(--panel)", borderWidth: 1, borderStyle: "solid", borderColor: "transparent",
         ':is([data-focused="true"])': { borderColor: "var(--accent-weak)" },
     },
+    recentReveal: {
+        position: "absolute", inset: 0, zIndex: 5, pointerEvents: "none",
+        borderWidth: 2, borderStyle: "solid", borderColor: "var(--focus)",
+        animationName: { default: "none", "@media (prefers-reduced-motion: no-preference)": recentReveal },
+        animationDuration: `${PANE_REVEAL_DURATION / 2}ms`, animationIterationCount: 2,
+        animationTimingFunction: "ease-in", animationFillMode: "forwards",
+    },
+    viewport: { position: "relative", flexGrow: 1, minWidth: 0, minHeight: 0 },
     drop: {
         position: "absolute", zIndex: 5, pointerEvents: "none", backgroundColor: "var(--accent-weak)",
         borderWidth: 2, borderStyle: "dashed", borderColor: "var(--accent)", opacity: 0.7, inset: 0,
@@ -37,24 +55,23 @@ export const splitStyles = stylex.create({
         ':is([data-zone="top"])': { bottom: "50%" },
         ':is([data-zone="bottom"])': { top: "50%" },
     },
-    tabs: { flexShrink: 0, minWidth: 0, backgroundColor: "var(--bg)", borderBottomWidth: 1, borderBottomStyle: "solid", borderBottomColor: "var(--line)" },
-    tabList: { flexGrow: 1, flexBasis: 0, minWidth: 0, overflowX: "auto", overflowY: "hidden", scrollbarWidth: "thin" },
-    tabActions: { flexShrink: 0, paddingInline: "var(--spacing-1)" },
-    splitActions: {
-        flexShrink: 0, borderWidth: 1, borderStyle: "solid", borderColor: "var(--line)",
-        borderRadius: 8, backgroundColor: "var(--panel)",
+    tabs: {
+        flexShrink: 0, minWidth: 0, backgroundColor: "var(--bg)", borderBottomWidth: 1, borderBottomStyle: "solid", borderBottomColor: "var(--line)",
+        // 폭이 좁을 때도 탭과 조작 버튼을 모두 탭 줄 안에서 스크롤해 접근한다.
+        overflowX: { default: "visible", [compactTabs]: "scroll" },
+        overflowY: { default: "visible", [compactTabs]: "hidden" },
+        scrollbarWidth: "thin",
     },
-    splitAction: {
-        flexShrink: 0, width: 32, minWidth: 32, height: 30, minHeight: 30,
-        paddingInline: 0, paddingBlock: 0, borderRadius: 0, color: "var(--text)",
+    // 클래식 가로 스크롤바 자리를 미리 확보해 탭이 넘쳐도 본문 시작선이 움직이지 않게 한다.
+    tabList: {
+        flexGrow: 0, flexShrink: { default: 1, [compactTabs]: 0 }, flexBasis: "auto", minWidth: 0, minHeight: TAB_ROW_HEIGHT,
+        overflowX: { default: "scroll", [compactTabs]: "visible" },
+        overflowY: { default: "hidden", [compactTabs]: "visible" }, scrollbarWidth: "thin",
     },
-    splitActionStart: { borderTopLeftRadius: 7, borderBottomLeftRadius: 7 },
-    splitActionEnd: {
-        borderTopRightRadius: 7, borderBottomRightRadius: 7,
-        borderInlineStartWidth: 1, borderInlineStartStyle: "solid", borderInlineStartColor: "var(--line)",
-    },
+    newConversation: { flexShrink: 0, width: 32, minWidth: 32, height: TAB_ROW_HEIGHT, minHeight: TAB_ROW_HEIGHT },
+    tabActions: { flexShrink: 0, minHeight: TAB_ROW_HEIGHT, marginInlineStart: "auto", paddingInline: "var(--spacing-1)" },
     tab: {
-        flexShrink: 0, width: "auto", minWidth: 128, maxWidth: 208, height: 32, borderRadius: 0, color: "var(--muted)",
+        flexShrink: 0, width: "auto", minWidth: 128, maxWidth: 208, height: TAB_ROW_HEIGHT, borderRadius: 0, color: "var(--muted)",
         "--tab-close-opacity": 0,
         borderBottomWidth: 2, borderBottomStyle: "solid", borderBottomColor: "transparent",
         borderInlineEndWidth: 1, borderInlineEndStyle: "solid", borderInlineEndColor: "var(--line)",

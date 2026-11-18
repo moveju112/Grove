@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ApiError } from "../api/client";
 import { emptyLayout, openTab, setDirection, setRatio, splitLeaf, type Layout } from "./layout";
 import { LayoutPersistence } from "./layoutPersistence";
+import { mergeWorkspaceTabs, workspaceTabs } from "./workspaceTabs";
 
 function layout(): Layout {
     const base = emptyLayout();
@@ -215,6 +216,25 @@ describe("기기별 배치 저장", () => {
         expect(f.copy().dirty).toBe(true);
         expect(f.notice).toHaveBeenLastCalledWith(expect.stringContaining("서버에 저장하지 못했습니다"));
         f.current.dispose();
+    });
+
+    it("공유 대화는 CAS 충돌 시 다른 기기에서 연 탭을 보존한다", async () => {
+        const f = fixture(workspaceTabs(emptyLayout()));
+        const added = (name: string) => workspaceTabs(openTab(f.initial, f.initial.focused_leaf,
+            { kind: "session", project_id: "A", resource_id: name, title: name }));
+        const remote = added("desktop");
+        const onRemote = vi.fn();
+        const shared = new LayoutPersistence("shared", { ...f.options, merge: mergeWorkspaceTabs, onRemote });
+        await shared.restore();
+        f.put.mockRejectedValueOnce(new ApiError(409, "revision_conflict", "conflict", false, { current: { revision: 4, layout: remote } }));
+        shared.change(added("phone"));
+        shared.acceptRemote({ revision: 4, layout: remote });
+        await shared.flush();
+        expect(f.put.mock.calls[1]![0]).toMatchObject({ expected_revision: 4, layout: {
+            root: { tabs: [{ resource_id: "desktop" }, { resource_id: "phone" }] },
+        } });
+        expect(onRemote).toHaveBeenCalledTimes(1);
+        shared.dispose();
     });
 
     it("로그아웃 뒤 늦은 저장 완료는 삭제한 사본이나 안내를 다시 만들지 않는다", async () => {

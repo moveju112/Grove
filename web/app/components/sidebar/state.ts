@@ -84,6 +84,7 @@ export async function markSessionRead(item: SidebarSession): Promise<void> {
     try {
         await api.post("/recent/touch", {
             kind: "session", project_id: item.session.project_id, resource_id: item.session.id,
+            reopen: false,
             view_state: { last_seen_seq: item.session.last_message_seq },
         });
     } finally {

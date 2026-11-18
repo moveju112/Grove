@@ -21,9 +21,11 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
         const list = await apiCall<{ name: string; protocol: string; base_url: string; model: string }[]>("GET", "/model-profiles");
         const p = list.find((x) => x.name === name)!;
         expect([p.protocol, p.base_url, p.model]).toEqual(["claude_code", "", "haiku"]);
-        // Codex로 바꾸면 저가형 기본 모델 gpt-6-luna
-        await selectChoice(page.getByLabel("protocol"), "codex_cli");
-        await expect(page.getByLabel("모델", { exact: true })).toHaveValue("gpt-6-luna");
+        // Codex 계정 연결은 API에서 기본 모델을 확인한다.
+        await selectChoice(page.getByLabel("protocol"), "codex_oauth");
+        await expect(page.getByLabel("Base URL")).toHaveCount(0);
+        await expect(page.getByLabel("API 키")).toHaveCount(0);
+        await expect(page.getByLabel("모델", { exact: true })).toHaveValue("default");
     } finally {
         await removeProfiles((n) => n === name);
     }
@@ -32,7 +34,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
 // 실제 CLI(opt-in): GROVE_REAL_CLI=claude_code:haiku 또는 codex_cli:gpt-6-luna
 const REAL = process.env.GROVE_REAL_CLI;
 
-test("서버에 설치된 CLI로 프로젝트 파일을 읽어 답하고 도구 활동이 표시된다(실제 CLI, opt-in)", async ({ page }) => {
+test("서버에 설치된 CLI로 파일을 읽어 답하되 도구 기록은 보이지 않는다(실제 CLI, opt-in)", async ({ page }) => {
     test.skip(!REAL, "실제 CLI opt-in 시험: GROVE_REAL_CLI가 없어 건너뜀");
     if (process.env.GROVE_E2E_FAST !== "1") test.setTimeout(300_000);
     const [protocol, model] = REAL!.split(":");
@@ -56,7 +58,7 @@ test("서버에 설치된 CLI로 프로젝트 파일을 읽어 답하고 도구 
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").last()).toContainText("PLUM-3", { timeout: 240_000 });
     await expect(view.getByTestId("turn-status")).toHaveCount(0, { timeout: 60_000 });
-    if (protocol === "claude_code") await expect(view.getByTestId("msg-cli-activity").last()).toContainText("Read");
+    await expect(view.getByTestId("msg-cli-activity")).toHaveCount(0);
     } finally {
         await removeProfiles((n) => n === prof.name);
     }

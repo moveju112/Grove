@@ -4,7 +4,13 @@ import { parseOpenTarget } from "./layout";
 export const DRAG_PROJECT = "application/x-grove-project";
 export const PROJECT_ORDER = "grove.layout.projectOrder";
 export type ProjectSort = "name" | "recent" | "manual";
+export type ProjectDrop = { kind: "order"; id: string; after: boolean } | { kind: "folder"; folderId: string | null };
 type Item = Pick<Project, "id" | "folder_id">;
+
+export function projectFolderDropAt(target: EventTarget | null): string | null | undefined {
+    const id = target instanceof Element ? target.closest<HTMLElement>("[data-project-folder-drop]")?.dataset.projectFolderDrop : undefined;
+    return id === "" ? null : id;
+}
 
 export function parseProjectDrag(raw: string) {
     const target = parseOpenTarget(raw);

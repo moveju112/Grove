@@ -1,13 +1,13 @@
 //! 관리 API(UPDATE-004, 006, 017~019): 업데이트 도구가 쓰는 readiness·종료 요청과 업데이트 결과 조회.
 //!
 //! - readiness는 서비스를 멈추지 않고 실행 중인 일을 센다(업데이트 확인은 무중단).
-//! - 종료 요청은 소유자만. 정상 종료 순서(신규 접수 중단 → 실행 정리 → flush)는 신호 종료와 같다.
+//! - 종료 요청은 인증이 필요하다. 정상 종료 순서(신규 접수 중단 → 실행 정리 → flush)는 신호 종료와 같다.
 //! - 업데이트 결과는 updater가 데이터 디렉터리의 `update-receipts/`에 먼저 파일로 남기고,
 //!   준비된 서버에 가져오기를 요청해 알림으로 알린다. 요청한 세션이 사라지거나 updater가 중간에 끝나도
 //!   파일은 남으므로 `/updates`로 조회할 수 있다.
 
 use crate::App;
-use crate::auth::{Owner, Principal};
+use crate::auth::Principal;
 use crate::error::{ApiError, ApiResult};
 use axum::Json;
 use axum::extract::State;
@@ -36,7 +36,7 @@ pub fn busy(c: &Connection, now: &str) -> ApiResult<Value> {
     Ok(v)
 }
 
-pub async fn readiness(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Json<Value>> {
+pub async fn readiness(State(app): State<App>, _p: Principal) -> ApiResult<Json<Value>> {
     let now = app.now();
     let b = app.db.call(move |c| busy(c, &now)).await?;
     let idle = b.as_object().map(|o| o.values().all(|v| v.as_i64() == Some(0))).unwrap_or(false);
@@ -46,8 +46,7 @@ pub async fn readiness(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Js
     })))
 }
 
-/// 일반 기기는 조회만 가능하다. updater의 소유자 전용 readiness 경계는 유지한다.
-pub async fn update_settings(State(app): State<App>, p: Principal) -> ApiResult<Json<Value>> {
+pub async fn update_settings(State(app): State<App>, _p: Principal) -> ApiResult<Json<Value>> {
     let now = app.now();
     let value = app.db.call(move |c| {
         let b = busy(c, &now)?;
@@ -56,7 +55,7 @@ pub async fn update_settings(State(app): State<App>, p: Principal) -> ApiResult<
             "server": { "version": crate::VERSION, "protocol": crate::PROTOCOL_VERSION, "schema": crate::store::MIGRATIONS.len() },
             "settings": crate::update::settings(c)?,
             "last_check": crate::update::last_check(c)?,
-            "can_manage": p.is_owner,
+            "can_manage": true,
             "readiness": { "idle": idle, "busy": b },
             "automatic_application": "not_enabled",
         }))
@@ -65,7 +64,7 @@ pub async fn update_settings(State(app): State<App>, p: Principal) -> ApiResult<
 }
 
 pub async fn save_update_settings(
-    State(app): State<App>, Owner(p): Owner, headers: axum::http::HeaderMap,
+    State(app): State<App>, p: Principal, headers: axum::http::HeaderMap,
     Json(request): Json<crate::update::SaveUpdateSettings>,
 ) -> ApiResult<Response> {
     let hash = crate::idem::body_hash("server_update.settings", &serde_json::to_value(&request)?);
@@ -84,7 +83,7 @@ pub struct UpdateCheckRequest {
 }
 
 pub async fn check_update(
-    State(app): State<App>, Owner(p): Owner, headers: axum::http::HeaderMap,
+    State(app): State<App>, p: Principal, headers: axum::http::HeaderMap,
     Json(request): Json<UpdateCheckRequest>,
 ) -> ApiResult<Response> {
     let hash = crate::idem::body_hash("server_update.check", &serde_json::to_value(&request)?);
@@ -95,9 +94,9 @@ pub async fn check_update(
     }).await
 }
 
-/// 서버 자원 상태(OBS-004). 소유자 전용 조회이며 상태를 바꾸지 않는다.
+/// 서버 자원 상태(OBS-004). 상태를 바꾸지 않는다.
 /// CPU·메모리는 Linux `/proc/self`에서 읽고, 다른 OS는 `null`(측정 불가)로 둔다.
-pub async fn metrics(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Json<Value>> {
+pub async fn metrics(State(app): State<App>, _p: Principal) -> ApiResult<Json<Value>> {
     Ok(Json(collect_metrics(&app).await?))
 }
 
@@ -130,7 +129,7 @@ pub struct DiagnosticRequest {
 
 /// OBS-008: 명시적 요청에만 생성한다. 원문을 수집한 뒤 가리는 대신 고정 수치·상태만 읽는다.
 pub async fn diagnostics(
-    State(app): State<App>, Owner(_p): Owner, Json(request): Json<DiagnosticRequest>,
+    State(app): State<App>, _p: Principal, Json(request): Json<DiagnosticRequest>,
 ) -> ApiResult<Response> {
     if !request.confirmed {
         return Err(ApiError::invalid("진단 묶음에 포함되는 정보 범위를 확인하세요"));
@@ -194,14 +193,14 @@ fn process_stats() -> Value {
     json!({ "rss_bytes": null, "threads": null, "cpu_seconds": null })
 }
 
-pub async fn shutdown(State(app): State<App>, Owner(_p): Owner) -> (StatusCode, Json<Value>) {
+pub async fn shutdown(State(app): State<App>, _p: Principal) -> (StatusCode, Json<Value>) {
     app.exit_tx.send_replace(true);
     (StatusCode::ACCEPTED, Json(json!({ "shutting_down": true })))
 }
 
 /// updater가 결과 파일을 쓴 뒤 호출한다. 서버 시작 시에는 가져오지 않는다:
 /// 새 버전의 readiness 확인 중 시스템 기록이 생기면 "새 쓰기 있음"으로 오판해 안전한 복구를 막기 때문이다.
-pub async fn import_receipts(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Json<Value>> {
+pub async fn import_receipts(State(app): State<App>, _p: Principal) -> ApiResult<Json<Value>> {
     let a = app.clone();
     let n = tokio::task::spawn_blocking(move || import_update_receipts(&a)).await.unwrap_or(0);
     app.notify_events().await;

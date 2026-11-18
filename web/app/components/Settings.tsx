@@ -4,21 +4,23 @@ import { Notice } from "../design/Notice";
 import { Code } from "@astryxdesign/core/Code";
 import { contentStyles } from "../design/content.stylex";
 import { KeyValues } from "../design/KeyValues";
-import { useCallback, useEffect, useId, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ActionMenu, DetailDialog } from "./ui/Controls";
 import { HelpTip } from "./HelpTip";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
-import { type Prefs, loadPrefs, savePrefs, usePrefs } from "../state/device";
+import { type Prefs, loadPrefs, savePrefs, usePrefs, VINE_GROUPS } from "../state/device";
 import { When } from "./When";
-import { PushNotifications } from "./PushNotifications";
+import { PushNotifications, PushStatusContext } from "./PushNotifications";
+import { AppNotificationPermission } from "./AppNotificationPermission";
 import { NotificationTests } from "./NotificationTests";
 import { notificationPermission } from "../state/attention";
 import { MAX_RECENT_WINDOWS, normalizeRecentWindows, RECENT_WINDOW_OPTIONS, recentWindowLabel } from "../state/recentWindow";
 import { invalidate, useLive, useQuery } from "../state/store";
-import { type SettingDef, type SettingsTarget, ScopedSettings } from "./ScopedSettings";
-import { UsagePanel } from "./UsagePanel";
+import { type SettingDef, type SettingsTarget, ScopedSettings, isRoleProfile, useEffectiveSettings } from "./ScopedSettings";
+import { RoleModelChoice } from "./settings/RoleModelChoice";
+import { isWorkflowSetting, WorkflowSettings } from "./settings/WorkflowSettings";
 import { Pairings } from "./Pairing";
 import { Hosts } from "./Hosts";
 import { ProfileCatalog } from "./ProfileCatalog";
@@ -37,10 +39,10 @@ import { isExecSetting } from "../api/execSettings";
 import { BrowserCapabilitiesSettings, currentNotificationIssue, useBrowserCapabilities } from "./capabilities/BrowserCapabilities";
 import { requestNotificationAccess } from "./capabilities/browser";
 import { UpdateSettings } from "./update/UpdateSettings";
-import { settingLinkKey } from "./settings-links/reveal";
 import { useSettingsLink } from "./settings-links/useSettingsLink";
+import type { SettingLinkReady } from "./settings-links/reveal";
 import { useDefinitionDraft } from "./definition-updates/useDefinitionDraft";
-import { useExecLinkLayout } from "./settings-links/useExecLinkLayout";
+import { MemoryActivity } from "./memory/MemoryActivity";
 import { AgentOverview } from "./agent-overview/AgentOverview";
 import { BotsPanel } from "./BotsPanel";
 import { AgentConnect } from "./AgentConnect";
@@ -48,7 +50,7 @@ import type { Opener } from "./Workspace";
 import { SettingsGroup } from "./SettingsGroup";
 import { Icon, type IconName } from "./icons";
 import { Button } from "../design/Button";
-import { Stack } from "@astryxdesign/core/Stack";
+import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { Grid } from "@astryxdesign/core/Grid";
 import { settingsStyles } from "../design/settings.stylex";
 import { Heading, Text } from "@astryxdesign/core/Text";
@@ -59,117 +61,125 @@ import { TextInput, TextArea, DraftInput } from "../design/Fields";
 import { Slider } from "@astryxdesign/core/Slider";
 import { Select } from "../design/Select";
 import { BooleanSelect } from "./BooleanSelect";
+import { ShortcutSettings } from "./shortcuts/ShortcutSettings";
 
 // 설정 registry(CONFIG-001): 메뉴·이름·검색어·적용 범위. 검색은 이 표를 기준으로 한다.
 type Item = { id: string; menu: Menu; label: string; keywords: string; scope: "이 기기" | "서버 전체" | "전역·프로젝트" };
-type Menu = "model" | "agents" | "display" | "devices" | "server" | "help";
+type Menu = "model" | "conversation" | "workflow" | "agents" | "permissions" | "execution" | "display" | "notifications" | "shortcuts" | "devices" | "server";
 type SettingsArea = "local" | "daemon";
 const MENUS: [Menu, string][] = [
     ["model", "모델·키"],
-    ["agents", "에이전트·워크플로우"],
+    ["conversation", "대화·컨텍스트"],
+    ["workflow", "워크플로우·메모리"],
+    ["agents", "위임 에이전트"],
+    ["permissions", "도구·권한"],
+    ["execution", "실행·한도"],
     ["display", "화면·입력"],
+    ["notifications", "알림"],
+    ["shortcuts", "단축키"],
     ["devices", "기기·연결"],
     ["server", "서버·데이터"],
-    ["help", "도움말"],
 ];
 const AREA_MENUS: Record<SettingsArea, Menu[]> = {
-    local: ["display", "devices", "help"],
-    daemon: ["model", "agents", "devices", "server"],
+    local: ["display", "notifications", "shortcuts", "devices"],
+    daemon: ["model", "conversation", "workflow", "agents", "permissions", "execution", "devices", "server"],
 };
+const SETTING_MENUS: Record<string, Menu> = {
+    output: "conversation", session: "conversation", sessions: "conversation", context: "conversation",
+    computer: "permissions", tools: "permissions", approval: "permissions",
+    exec: "execution", runs: "execution",
+    "agents.allowed_roles": "agents", "agents.delegation": "agents",
+};
+const settingMenu = (def: SettingDef) => isWorkflowSetting(def.key) ? "workflow"
+    : SETTING_MENUS[def.key] ?? SETTING_MENUS[def.key.split(".")[0]!] ?? def.menu;
 export const ITEMS: Item[] = [
-    { id: "bots", menu: "agents", label: "봇", keywords: "bot persona 봇", scope: "서버 전체" },
+    { id: "basic-definitions", menu: "workflow", label: "기본 역할·워크플로우", keywords: "기본 보조 메모리 maintainer title generator compressor solo 컨텍스트 압축 컨텍스트 탐색 실패 분석 인계 요약", scope: "서버 전체" },
+    { id: "memory", menu: "workflow", label: "메모리 기록", keywords: "memory recap maintainer 기억 메모리 정리 결과 실패", scope: "전역·프로젝트" },
+    { id: "bots", menu: "workflow", label: "봇", keywords: "bot persona 봇", scope: "서버 전체" },
     { id: "secrets", menu: "model", label: "API 키", keywords: "key secret 비밀 openai anthropic gemini", scope: "서버 전체" },
     { id: "profiles", menu: "model", label: "모델 프로필", keywords: "model provider endpoint url 모델 timeout temperature max_tokens", scope: "서버 전체" },
-    { id: "definitions", menu: "agents", label: "에이전트·워크플로우 편집", keywords: "agent workflow prompt 지침", scope: "서버 전체" },
-    { id: "source-settings", menu: "agents", label: "원본 Claude/Codex 설정", keywords: "원본 출처 읽기 전용 claude codex source settings 스킬 skill hook", scope: "전역·프로젝트" },
-    { id: "exec-settings", menu: "agents", label: "셸·자원 한도·격리·작업 위치", keywords: "exec shell limits isolation cwd bash sh cpu memory 셸 자원 한도 격리 기본 작업 위치 대화", scope: "전역·프로젝트" },
+    { id: "definitions", menu: "agents", label: "위임 에이전트", keywords: "agent workflow prompt 지침", scope: "서버 전체" },
+    { id: "source-settings", menu: "execution", label: "원본 Claude/Codex 설정", keywords: "원본 출처 읽기 전용 claude codex source settings 스킬 skill hook", scope: "전역·프로젝트" },
+    { id: "exec-settings", menu: "execution", label: "명령 실행", keywords: "exec shell limits cwd bash sh cpu memory 셸 자원 한도 기본 작업 위치 대화", scope: "전역·프로젝트" },
     { id: "theme", menu: "display", label: "테마", keywords: "dark light 다크 라이트 색", scope: "이 기기" },
     { id: "font", menu: "display", label: "글자 크기", keywords: "font size 글꼴", scope: "이 기기" },
     { id: "enter", menu: "display", label: "Enter로 보내기", keywords: "enter send 입력 단축키", scope: "이 기기" },
+    { id: "terminal-paste", menu: "display", label: "터미널 여러 줄 붙여넣기 확인", keywords: "terminal clipboard paste 터미널 붙여넣기 복사 여러줄 다시 묻지 않기", scope: "이 기기" },
+    { id: "shortcuts", menu: "shortcuts", label: "키보드 단축키", keywords: "keyboard shortcut preset ctrl cmd control 단축키 프리셋 키보드 새 세션 탭 닫기", scope: "이 기기" },
+    { id: "running-send", menu: "display", label: "실행 중 보내기 방식", keywords: "followup queue steer interrupt 채팅 추가 메시지 대기열 합치기 반영 중단", scope: "이 기기" },
     { id: "recent", menu: "display", label: "최근 항목 시간 범위", keywords: "recent window 최근 범위 분 시간 오늘", scope: "이 기기" },
-    { id: "notify", menu: "display", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
+    { id: "notify", menu: "notifications", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜 턴 경과 소요 대기", scope: "이 기기" },
-    { id: "transcript", menu: "display", label: "대화 표시", keywords: "reasoning 추론 생각 thinking answer only 답만 도구 세부 펼침", scope: "이 기기" },
+    { id: "transcript", menu: "display", label: "대화 표시", keywords: "진행사항 보기 진행 설명 완료 시 접기 progress", scope: "이 기기" },
+    { id: "leaves", menu: "display", label: "잎 애니메이션", keywords: "대기 중 새싹 표시 잎 무리 수 잎 무리 길이 잎 회전 속도 줄기 인디케이터", scope: "이 기기" },
     { id: "devices", menu: "devices", label: "등록 기기", keywords: "device token pair 기기 토큰 페어링 폐기 분실", scope: "서버 전체" },
     { id: "hosts", menu: "devices", label: "데몬 연결", keywords: "host 서버 연결 주소 별명 데몬", scope: "이 기기" },
     { id: "device-name", menu: "devices", label: "클라이언트 이름", keywords: "이 기기 이름 device name 클라이언트", scope: "이 기기" },
-    { id: "client-status", menu: "devices", label: "클라이언트 상태", keywords: "web build version protocol 웹 화면 빌드 버전 이벤트 연결", scope: "이 기기" },
     { id: "browser-capabilities", menu: "devices", label: "브라우저 기능·권한", keywords: "이 기기 browser notification clipboard 알림 복사 붙여넣기 파일 첨부 드래그 HTTPS 보안 권한", scope: "이 기기" },
     { id: "logout", menu: "devices", label: "로그아웃", keywords: "logout sign out", scope: "이 기기" },
-    { id: "usage", menu: "model", label: "사용량·비용", keywords: "usage cost token price 사용량 비용 토큰 가격", scope: "서버 전체" },
     { id: "health", menu: "server", label: "서버 상태·버전·진단", keywords: "version health schema diagnostics 버전 상태 진단 정보 복사", scope: "서버 전체" },
-    { id: "server-update", menu: "server", label: "서버 업데이트", keywords: "update stable beta channel protocol schema 버전 채널 확인 자동 적용", scope: "서버 전체" },
-    { id: "help", menu: "help", label: "도움말", keywords: "help shortcut 도움말 단축키 사용법", scope: "이 기기" },
-    { id: "backup", menu: "server", label: "백업·복원", keywords: "backup snapshot restore 백업 복원", scope: "서버 전체" },
+    { id: "server-update", menu: "server", label: "서버 업데이트", keywords: "update automatic on off 자동 업데이트", scope: "서버 전체" },
 ];
 
 export function Settings({ projectId, projectName, sessionId, open }: { projectId?: string; projectName?: string; sessionId?: string; open: Opener }) {
     const [area, setArea] = useState<SettingsArea>(projectId ? "daemon" : "local");
-    const [menu, setMenu] = useState<Menu>(projectId ? "agents" : "display");
+    const [menu, setMenu] = useState<Menu>(projectId ? "workflow" : "display");
     const panelId = useId();
+    const scroll = useRef<HTMLDivElement>(null);
     const [q, setQ] = useState("");
     const [showAdvanced, setShowAdvanced] = useState(false);
+    const [leavesOpen, setLeavesOpen] = useState(false);
     const registry = useQuery<SettingDef[]>("settings-registry", () => api.get("/settings/registry"));
     const session = useQuery<{ title: string } | null>(`session:${sessionId ?? "-"}`, () => (sessionId ? api.get(`/sessions/${sessionId}`) : Promise.resolve(null)));
     const target: SettingsTarget = { projectId, projectName, sessionId, sessionTitle: session.data?.title };
 
     // 직접 링크(#setting-<key>): 해당 메뉴를 열고 고급 항목이면 펼친 뒤 그 항목으로 이동한다(SETTINGS-021).
     const prepareLink = useCallback((d: SettingDef) => {
-        if (!MENUS.some(([id]) => id === d.menu)) return false;
+        const nextMenu = AREA_MENUS.daemon.find((id) => id === settingMenu(d));
+        if (!nextMenu) return false;
         setQ("");
         setArea("daemon");
-        setMenu(d.menu as Menu);
+        setMenu(nextMenu);
         if (d.advanced) setShowAdvanced(true);
         return true;
     }, []);
     const link = useSettingsLink(registry, JSON.stringify([projectId, sessionId]), prepareLink);
-    const execLink = Boolean(link.key && (registry.data ?? []).some((definition) => definition.key === link.key && isExecSetting(definition)));
-    const execLayoutReady = useExecLinkLayout(execLink, projectId);
-    const overviewTargetKey = JSON.stringify([projectId ?? null, sessionId ?? null]);
-    const [readyOverviewTarget, setReadyOverviewTarget] = useState<string | null>(null);
-    const onOverviewLayoutChange = useCallback((ready: boolean) => {
-        setReadyOverviewTarget(ready ? overviewTargetKey : null);
-    }, [overviewTargetKey]);
-    const onLinkReady = useCallback((key: string, element: HTMLElement | null) => {
-        if (element && execLink && (!execLayoutReady || (menu === "agents" && readyOverviewTarget !== overviewTargetKey))) return;
-        link.ready(key, element);
-    }, [execLink, execLayoutReady, menu, readyOverviewTarget, overviewTargetKey, link.ready]);
+    const onLinkReady = link.ready;
     const needle = q.trim().toLowerCase();
     const matchesArea = (item: Item) => (item.scope === "이 기기" ? "local" : "daemon") === area;
     const results = useMemo(() => (needle ? ITEMS.filter((i) => (i.scope === "이 기기" ? "local" : "daemon") === area
         && (i.label + " " + i.keywords).toLowerCase().includes(needle)) : null), [area, needle]);
+    useEffect(() => {
+        if (results?.some((item) => item.id === "leaves")) setLeavesOpen(true);
+    }, [results]);
     const serverDefs = area === "daemon" ? (registry.data ?? []).filter((d) =>
-        needle ? (d.label + " " + d.keywords + " " + d.description).toLowerCase().includes(needle) : d.menu === menu && (showAdvanced || !d.advanced),
+        needle ? (d.label + " " + d.keywords + " " + d.description).toLowerCase().includes(needle) : settingMenu(d) === menu && (showAdvanced || !d.advanced),
     ) : [];
-    const hiddenAdvanced = area === "daemon" && !needle ? (registry.data ?? []).filter((d) => d.menu === menu && d.advanced).length : 0;
+    const hiddenAdvanced = area === "daemon" && !needle ? (registry.data ?? []).filter((d) => settingMenu(d) === menu && d.advanced).length : 0;
+    const roleModels = serverDefs.filter((d) => isRoleProfile(d.key));
+    const agentModelMatches = roleModels.some((d) => settingMenu(d) === "agents");
+    const workflowKeys = serverDefs.filter((d) => isWorkflowSetting(d.key)).map((d) => d.key);
+    const standaloneDefs = serverDefs.filter((d) => !isWorkflowSetting(d.key) && !isRoleProfile(d.key) && !isExecSetting(d));
     const visible = (id: string) => results ? results.some((r) => r.id === id)
         : ITEMS.some((i) => i.id === id && matchesArea(i) && i.menu === menu);
     const total = (results?.length ?? 0) + (needle ? serverDefs.length : 0);
     return (
-        <Stack width="100%" gap={4} data-testid="settings" ref={link.root}
+        <Stack width="100%" height="100%" gap={4} data-testid="settings" ref={link.root}
             onWheelCapture={link.cancel} onTouchMoveCapture={link.cancel}
-            onKeyDownCapture={link.cancel} onPointerDownCapture={link.cancel}
-            onClick={(event) => {
-                if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-                const anchor = (event.target as Element).closest<HTMLAnchorElement>("a");
-                if (!anchor || !event.currentTarget.contains(anchor)) return;
-                const key = settingLinkKey(anchor.getAttribute("href") ?? "");
-                if (!key) return;
-                event.preventDefault();
-                history.replaceState(history.state, "", anchor.getAttribute("href")!);
-                link.open(key);
-            }}>
+            onKeyDownCapture={link.cancel} onPointerDownCapture={link.cancel}>
             <TabList value={area} onChange={(value) => {
                 link.cancel();
                 const next = value as SettingsArea;
                 setArea(next); setQ("");
-                setMenu(next === "local" ? "display" : projectId ? "agents" : "model");
+                setMenu(next === "local" ? "display" : projectId ? "workflow" : "model");
+                scroll.current?.scrollTo({ top: 0 });
             }} role="tablist" aria-label="설정 구분" size="lg" layout="fill" xstyle={settingsStyles.areaSelector}>
                 <Tab value="local" label="로컬 설정" panelId={panelId}
                     icon={<Icon name="monitor" size={18} />} xstyle={settingsStyles.areaTab} />
                 <Tab value="daemon" label="데몬 설정" panelId={panelId}
                     icon={<Icon name="server" size={18} />} xstyle={settingsStyles.areaTab} />
             </TabList>
+        <StackItem ref={scroll} size="fill" isScrollable data-testid="settings-scroll">
         <Grid id={panelId} role="tabpanel" aria-label={area === "local" ? "로컬 설정" : "데몬 설정"}
             width="100%" maxWidth={1200} gap={8} align="start" xstyle={settingsStyles.layout}>
             <Stack as="nav" gap={4} paddingBlockEnd={2} xstyle={settingsStyles.navigation} aria-label="설정 메뉴">
@@ -191,53 +201,53 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 ))}
             </Stack>
             <Stack gap={4} xstyle={settingsStyles.body} data-testid="settings-body">
-                <Heading level={1} color="inherit">{needle ? "검색 결과" : MENUS.find(([id]) => id === menu)?.[1]}</Heading>
                 {link.pending && <Text as="p" display="block" type="inherit" color="secondary" role="status">링크한 설정을 불러오는 중…</Text>}
                 {link.error && <Text as="p" display="block" type="inherit" color="error" role="alert">{link.error}</Text>}
-                {needle && <Text as="p" display="block" type="inherit" color="secondary">검색 결과 {total}개{total === 0 && " — 다른 낱말로 찾아보세요"}</Text>}
-                {serverDefs.filter((d) => !isExecSetting(d)).length > 0 && <ScopedSettings grouped defs={serverDefs.filter((d) => !isExecSetting(d))} target={target}
+                {needle && total === 0 && <Text as="p" display="block" type="inherit" color="secondary">검색 결과 0개 — 다른 낱말로 찾아보세요</Text>}
+                {(visible("basic-definitions") || workflowKeys.length > 0) && <Section item="basic-definitions"><WorkflowSettings
+                    defs={registry.data ?? []} target={target} search={needle} matchedKeys={workflowKeys} linkedKey={link.key} onLinkReady={onLinkReady}
+                    renderRoleName={(role) => <DetailDialog label={role.name} title={role.name}>
+                        <DefinitionEditor kind="agent" id={role.id} />
+                    </DetailDialog>}
+                    definitions={<Collapsible trigger="워크플로우 정의" defaultIsOpen={false}>
+                        <Definitions target={target} kind="workflow" defs={[]} onLinkReady={onLinkReady} />
+                    </Collapsible>} /></Section>}
+                {standaloneDefs.length > 0 && <ScopedSettings grouped defs={standaloneDefs} target={target}
                     linkedKey={link.key} onLinkReady={onLinkReady} />}
                 {hiddenAdvanced > 0 && !showAdvanced && (
                     <Button variant="secondary" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</Button>
                 )}
                 {visible("secrets") && <Section item="secrets"><Secrets /></Section>}
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
-                {visible("definitions") && <Section item="definitions"><Definitions target={target} onOverviewLayoutChange={onOverviewLayoutChange} /></Section>}
-                {visible("source-settings") && <Section item="source-settings"><SourceSettings projectId={projectId} /></Section>}
+                {(visible("definitions") || agentModelMatches) && <Section item="definitions"><Definitions target={target} kind="agent"
+                    defs={registry.data ?? []} modelSearch={needle && agentModelMatches ? needle : undefined} linkedKey={link.key} hasLinkError={Boolean(link.error)} onLinkReady={onLinkReady} /></Section>}
+                {visible("memory") && <Section item="memory"><MemoryActivity target={target} /></Section>}
                 {(visible("exec-settings") || serverDefs.some(isExecSetting)) && <Section item="exec-settings"><ExecSettings
                     linkedKey={link.key} onLinkReady={onLinkReady}
                     defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} /></Section>}
-                {(["theme", "font", "enter", "recent", "notify", "time", "transcript"] as const).some(visible) && <DisplayPrefs show={visible} />}
+                {visible("source-settings") && <Section item="source-settings"><SourceSettings projectId={projectId} /></Section>}
+                {(["theme", "font", "enter", "terminal-paste", "shortcuts", "running-send", "recent", "notify", "time", "transcript", "leaves"] as const).some(visible)
+                    && <DisplayPrefs show={visible} leavesOpen={leavesOpen} onLeavesOpenChange={setLeavesOpen} />}
                 {visible("bots") && <Section item="bots"><BotsPanel open={open} /></Section>}
                 {visible("devices") && <Devices />}
                 {visible("hosts") && <Section item="hosts"><Hosts /></Section>}
                 {visible("device-name") && <Section item="device-name"><CurrentDeviceName onSaved={() => invalidate("devices")} /></Section>}
-                {visible("client-status") && <Section item="client-status"><ClientStatus /></Section>}
                 {visible("browser-capabilities") && <Section item="browser-capabilities"><BrowserCapabilitiesSettings /></Section>}
-                {visible("help") && <Section item="help"><Help /></Section>}
                 {visible("logout") && <Section item="logout"><ServerActionButton onClick={() => void logout()}>이 브라우저에서 로그아웃</ServerActionButton></Section>}
-                {visible("usage") && <UsagePanel />}
                 {visible("health") && <Section item="health"><Health /></Section>}
                 {visible("server-update") && <Section item="server-update"><UpdateSettings /></Section>}
-                {visible("backup") && (
-                    <Section item="backup">
-                        <dl>
-                            <dt>백업</dt><dd><code>grove snapshot &lt;파일&gt;</code></dd>
-                            <dt>복원</dt><dd><code>grove restore &lt;파일&gt; &lt;새 데이터 디렉터리&gt;</code></dd>
-                        </dl>
-                    </Section>
-                )}
             </Stack>
         </Grid>
+        </StackItem>
         </Stack>
     );
 }
 
 const GROUP_ICONS: Record<string, IconName> = {
     devices: "monitor", "browser-capabilities": "shield", logout: "user",
-    hosts: "server", "device-name": "monitor", "client-status": "monitor",
+    hosts: "server", "device-name": "monitor",
     profiles: "server", definitions: "edit", "source-settings": "edit",
-    notify: "bell", health: "server", backup: "server",
+    notify: "bell", health: "server",
 };
 
 function Section({ item, children }: { item: string; children: React.ReactNode }) {
@@ -296,7 +306,9 @@ function FontSize({ value }: { value: number }) {
     </Stack>;
 }
 
-function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
+function DisplayPrefs({ show, leavesOpen, onLeavesOpenChange }: {
+    show: (id: string) => boolean; leavesOpen: boolean; onLeavesOpenChange: (open: boolean) => void;
+}) {
     const p = usePrefs();
     const set = (n: Prefs) => {
         savePrefs(n);
@@ -320,13 +332,37 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
                 <Section item="enter">
                     <BooleanSelect label="Enter로 보내기"
                         value={p.enterToSend} onChange={(value) => set({ ...p, enterToSend: value })}
-                        help="Shift+Enter는 줄바꿈에 사용합니다. 터치 키보드의 Enter는 항상 줄바꿈입니다." />
+                        help="Shift+Enter로 줄바꿈해요. 터치 키보드는 Enter도 줄바꿈이에요." />
+                </Section>
+            )}
+            {show("terminal-paste") && (
+                <Section item="terminal-paste">
+                    <BooleanSelect label="터미널 여러 줄 붙여넣기 확인"
+                        value={p.confirmTerminalPaste} onChange={(value) => set({ ...p, confirmTerminalPaste: value })} />
+                </Section>
+            )}
+            {show("running-send") && (
+                <Section item="running-send">
+                    <Select label="실행 중 보내기 방식" hideLabel value={p.runningSendMode}
+                        onChange={(value) => set({ ...p, runningSendMode: value as Prefs["runningSendMode"] })}
+                        options={[{ value: "queue", label: "대기열" }, { value: "steer", label: "합치기" },
+                            { value: "interrupt", label: "중단 후 전송" }]} />
+                    <HelpTip label="실행 중 보내기 방식 도움말">
+                        대기열은 현재 응답이 정상 종료되면 실행해요.
+                        합치기는 현재 요청을 유지한 채 다음 응답에 반영해요.
+                        중단 후 전송은 실행을 취소하지만 이미 바뀐 파일은 되돌리지 않아요.
+                    </HelpTip>
+                </Section>
+            )}
+            {show("shortcuts") && (
+                <Section item="shortcuts">
+                    <ShortcutSettings value={p.keyboardShortcuts} onChange={(keyboardShortcuts) => set({ ...p, keyboardShortcuts })} />
                 </Section>
             )}
             {show("recent") && (
                 <Section item="recent">
                     <fieldset>
-                        <legend>최근 목록 위에 보일 범위(최대 {MAX_RECENT_WINDOWS}개)</legend>
+                        <legend>표시할 시간 범위(최대 {MAX_RECENT_WINDOWS}개)</legend>
                         {Array.from({ length: MAX_RECENT_WINDOWS }, (_, index) => <Select key={index}
                             label={`최근 시간 범위 ${index + 1}`} value={p.recentWindows[index] ?? ""}
                             onChange={(value) => set({ ...p, recentWindows: normalizeRecentWindows([
@@ -357,16 +393,35 @@ function DisplayPrefs({ show }: { show: (id: string) => boolean }) {
             )}
             {show("transcript") && (
                 <Section item="transcript">
-                    <Select label="추론 보기" value={p.reasoning}
-                        onChange={(value) => set({ ...p, reasoning: value as Prefs["reasoning"] })}
-                        options={[{ value: "expanded", label: "항상 보기" },
-                            { value: "collapsed", label: "답변 시 접기" }, { value: "hidden", label: "항상 가림" }]} />
-                    <BooleanSelect label="답만 보기"
-                        value={p.answerOnly} onChange={(value) => set({ ...p, answerOnly: value })}
-                        help="도구·실행 기록은 숨기지만 승인 요청은 항상 표시합니다." />
-                    <BooleanSelect label="도구 실행 세부를 펼쳐서 표시"
-                        value={p.expandTools} onChange={(value) => set({ ...p, expandTools: value })} />
+                    <Select label="진행사항 보기" value={p.progressVisibility}
+                        onChange={(value) => set({ ...p, progressVisibility: value as Prefs["progressVisibility"] })}
+                        options={[{ value: "collapse", label: "완료 시 접기" }, { value: "hidden", label: "안 보기" }]} />
                 </Section>
+            )}
+            {show("leaves") && (
+                <Card id="setting-leaves" data-testid="setting-leaves" data-ui="settings-group" role="region"
+                    aria-label="잎 애니메이션" padding={3} xstyle={settingsStyles.group}>
+                    <Collapsible isOpen={leavesOpen} onOpenChange={onLeavesOpenChange} trigger={
+                        <Stack as="span" direction="horizontal" justify="between" gap={2}>
+                            <Text as="span">잎 애니메이션</Text>
+                            <Text as="span" type="supporting" color="secondary">이 기기</Text>
+                        </Stack>
+                    }>
+                        <Stack gap={2} paddingBlockStart={2}>
+                            <BooleanSelect label="대기 중 새싹 표시" value={p.sessionVines}
+                                onChange={(value) => set({ ...p, sessionVines: value })} />
+                            <Select label="잎 무리 수" value={String(p.sessionVineGroups)} disabled={!p.sessionVines}
+                                onChange={(value) => set({ ...p, sessionVineGroups: Number(value) as Prefs["sessionVineGroups"] })}
+                                options={VINE_GROUPS.map((count) => ({ value: String(count), label: `${count}개` }))} />
+                            <Select label="잎 무리 길이" value={p.sessionVineLength} disabled={!p.sessionVines}
+                                onChange={(value) => set({ ...p, sessionVineLength: value as Prefs["sessionVineLength"] })}
+                                options={[{ value: "short", label: "짧게" }, { value: "medium", label: "기본" }, { value: "long", label: "길게" }]} />
+                            <Select label="잎 회전 속도" value={p.sessionVineSpeed} disabled={!p.sessionVines}
+                                onChange={(value) => set({ ...p, sessionVineSpeed: value as Prefs["sessionVineSpeed"] })}
+                                options={[{ value: "slow", label: "느리게" }, { value: "normal", label: "기본" }, { value: "fast", label: "빠르게" }]} />
+                        </Stack>
+                    </Collapsible>
+                </Card>
             )}
         </>
     );
@@ -380,9 +435,12 @@ const PERMISSION_LABEL: Record<NotificationPermission | "unsupported", string> =
 };
 
 function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void }) {
+    const pushStatus = useContext(PushStatusContext);
     const [permission, setPermission] = useState(notificationPermission);
     const [capabilities, refresh] = useBrowserCapabilities();
     const [requestError, setRequestError] = useState<string | null>(null);
+    const [appPermissionRequest, setAppPermissionRequest] = useState(0);
+    const showAppPermission = () => setAppPermissionRequest((current) => current + 1);
     const notificationIssue = currentNotificationIssue(capabilities);
     useEffect(() => { setPermission(notificationPermission()); }, [capabilities]);
     useEffect(() => { setRequestError(null); }, [permission]);
@@ -390,10 +448,12 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
         const result = await requestNotificationAccess();
         if (result.permission) setPermission(result.permission);
         setRequestError(result.message ?? null);
+        if (result.permission === "granted") showAppPermission();
+        pushStatus?.refreshPermission();
         refresh();
     };
     // 알림 종류를 켜면 그때 브라우저 권한을 묻는다. 거부돼도 소리 설정은 따로 쓸 수 있다.
-    const toggle = async (key: "notifyDone" | "notifyApproval" | "notifyServer", on: boolean) => {
+    const toggle = async (key: "notifyDone" | "notifyApproval" | "notifyServer" | "notifyPush", on: boolean) => {
         set({ ...p, [key]: on });
         if (on) await request();
     };
@@ -410,9 +470,10 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
             <Text as="span" type="supporting" color="secondary">아래 종류는 앱 실행 중에 알림</Text>
             <BooleanSelect label="알림 소리" value={p.notifySound} onChange={(value) => set({ ...p, notifySound: value })} />
             <BooleanSelect label="알림 진동" value={p.notifyVibrate} onChange={(value) => set({ ...p, notifyVibrate: value })} />
-            <PushNotifications vibrate={p.notifyVibrate} />
+            <PushNotifications enabled={p.notifyPush} onChange={(on) => void toggle("notifyPush", on)} />
             <Text as="p" display="block" type="supporting" color="inherit" data-testid="notify-permission">브라우저 알림 권한: {capabilities && !capabilities.secureContext ? "보안 컨텍스트 필요(HTTPS·localhost)" : PERMISSION_LABEL[permission]}</Text>
-            {(p.notifyDone || p.notifyApproval || p.notifyServer) && permission !== "granted" && (
+            <AppNotificationPermission request={appPermissionRequest} />
+            {(p.notifyDone || p.notifyApproval || p.notifyServer || p.notifyPush) && permission !== "granted" && (
                 <Text as="p" display="block" type="supporting" color="warning" role="status">브라우저 권한이 없어 화면 알림은 표시되지 않습니다{p.notifySound ? ". 소리만 재생합니다." : "."}</Text>
             )}
             {(requestError || notificationIssue) && <Text as="p" display="block" type="supporting" color="warning" role="status">{requestError || notificationIssue}</Text>}
@@ -458,10 +519,10 @@ function Profiles() {
     const save = useSave();
     const management = useCapability("model_management_v1");
     const [agentSetup, setAgentSetup] = useState(false);
-    const presets: Record<string, string> = { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com", claude_code: "", codex_cli: "" };
+    const presets: Record<string, string> = { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com", claude_code: "", codex_oauth: "" };
     // 서버에 설치된 CLI 백엔드는 endpoint·키가 없다(CLI가 자기 로그인을 쓴다). 저가형 기본 모델을 제안한다.
-    const cliModels: Record<string, string> = { claude_code: "haiku", codex_cli: "gpt-6-luna" };
-    const isCli = f.protocol === "claude_code" || f.protocol === "codex_cli";
+    const accountModels: Record<string, string> = { claude_code: "haiku", codex_oauth: "default" };
+    const isAccountModel = f.protocol in accountModels;
     return (
         <>
             <DetailDialog label="CLI 에이전트 연결" title="CLI 에이전트 연결" onOpenChange={setAgentSetup}>
@@ -477,7 +538,7 @@ function Profiles() {
                             <Stack gap={1} width="100%"><strong>{p.name}</strong><Text type="code" color="secondary" wordBreak="break-word" data-testid="profile-model">{p.model}</Text></Stack>
                             {p.enabled === false && <Text as="span" type="supporting" color="warning"> · 비활성</Text>}
                             <HelpTip label={`${p.name} 연결 정보`}>
-                                <Text as="span" type="inherit" color="inherit">{p.protocol}{p.base_url ? ` · ${p.base_url}` : " · 서버 CLI 계정 · 프로젝트 수정·검사 가능"}</Text>
+                                <Text as="span" type="inherit" color="inherit">{p.protocol === "codex_oauth" ? "Codex · 계정 로그인" : p.protocol}{p.base_url ? ` · ${p.base_url}` : p.protocol === "codex_oauth" ? "" : " · 서버 CLI 계정 · 프로젝트 수정·검사 가능"}</Text>
                             </HelpTip>
                             <ActionMenu label={`${p.name} 관리`}>
                                 <ServerActionButton variant="secondary" density="compact" onClick={() => {
@@ -520,20 +581,20 @@ function Profiles() {
                     value={f.protocol}
                     label="protocol" hideLabel
                     onChange={(v) => {
-                        setF({ ...f, protocol: v, base_url: presets[v] ?? f.base_url, model: cliModels[v] ?? f.model, secret_id: cliModels[v] ? "" : f.secret_id });
+                        setF({ ...f, protocol: v, base_url: presets[v] ?? f.base_url, model: accountModels[v] ?? f.model, secret_id: accountModels[v] ? "" : f.secret_id });
                     }}
                     options={[{ value: "openai", label: "OpenAI 호환" }, { value: "anthropic", label: "Anthropic" },
                         { value: "gemini", label: "Gemini" }, { value: "claude_code", label: "Claude Code(서버 설치 CLI)" },
-                        { value: "codex_cli", label: "Codex(서버 설치 CLI)" }]} />
-                {!isCli && <TextInput size="sm" placeholder="Base URL" value={f.base_url} onChange={(value) => setF({ ...f, base_url: value })} label="Base URL" isLabelHidden isRequired />}
+                        { value: "codex_oauth", label: "Codex(계정 로그인)" }]} />
+                {!isAccountModel && <TextInput size="sm" placeholder="Base URL" value={f.base_url} onChange={(value) => setF({ ...f, base_url: value })} label="Base URL" isLabelHidden isRequired />}
                 <TextInput size="sm" placeholder="모델" value={f.model} onChange={(value) => setF({ ...f, model: value })} label="모델" isLabelHidden isRequired />
-                {!isCli && (
+                {!isAccountModel && (
                     <Select value={f.secret_id} onChange={(value) => setF({ ...f, secret_id: value })} label="API 키" hideLabel
                         options={[{ value: "", label: "키 없음" }, ...(secrets.data ?? []).map((s) => ({ value: s.id, label: s.label }))]} />
                 )}
-                {isCli && (
+                {isAccountModel && (
                     <Text as="span" type="supporting" color="secondary" data-testid="cli-note">
-                        서버 CLI 계정 · 프로젝트 수정·검사 가능
+                        {f.protocol === "codex_oauth" ? "Codex Desktop에 새 대화가 생기지 않아요." : "서버 CLI 계정 · 프로젝트 수정·검사 가능"}
                     </Text>
                 )}
                 <ServerActionButton type="submit">추가</ServerActionButton>
@@ -544,22 +605,25 @@ function Profiles() {
     );
 }
 
-function Definitions({ target, onOverviewLayoutChange }: {
-    target: SettingsTarget; onOverviewLayoutChange: (ready: boolean) => void;
+function Definitions({ target, kind, defs, modelSearch, linkedKey, hasLinkError, onLinkReady }: {
+    target: SettingsTarget; kind: "agent" | "workflow";
+    defs: SettingDef[]; modelSearch?: string; linkedKey?: string; hasLinkError?: boolean; onLinkReady: SettingLinkReady;
 }) {
-    const [kind, setKind] = useState<"agent" | "workflow">("agent");
+    const save = useSave();
     const [sel, setSel] = useState<string | null>(null);
+    useEffect(() => {
+        if (modelSearch || (linkedKey && isRoleProfile(linkedKey))) setSel(null);
+    }, [modelSearch, linkedKey]);
     const list = useQuery<Definition[]>(`definitions:${kind}`, () => api.get(`/definitions?kind=${kind}`));
+    const modelSettings = useEffectiveSettings({});
     return (
         <Stack gap={3}>
-            <AgentOverview target={target} onEdit={(id) => { setKind("agent"); setSel(id); }} onLayoutChange={onOverviewLayoutChange} />
-            <Stack direction="horizontal" wrap="wrap" gap={1}>
-                <Button appearance="choice" aria-pressed={kind === "agent"} onClick={() => { setKind("agent"); setSel(null); }}>에이전트</Button>
-                <Button appearance="choice" aria-pressed={kind === "workflow"} onClick={() => { setKind("workflow"); setSel(null); }}>워크플로우</Button>
-            </Stack>
+            {kind === "agent" && <AgentOverview target={target} onEdit={setSel} />}
+            {kind === "agent" && !linkedKey && !hasLinkError && Boolean(modelSettings.error) && <Text type="supporting" color="error" role="alert">모델 설정을 읽지 못했어요.</Text>}
             <Grid gap={2} xstyle={settingsStyles.definitionList} data-testid="definition-list">
-                {(list.data ?? []).map((d) => (
-                    <Card key={d.id} padding={2}>
+                {(list.data ?? []).filter((d) => d.kind === "workflow" || d.execution === "orchestrated").map((d) => {
+                    const profile = defs.find((setting) => setting.key === d.profile_key);
+                    return <Card key={d.id} padding={2} data-testid={`definition-${d.id}`}>
                         <Button appearance="settings" width="100%" aria-pressed={sel === d.id}
                             aria-current={sel === d.id ? "page" : undefined} onClick={() => setSel(d.id)}>
                             <Stack as="span" width="100%" direction="horizontal" align="center" justify="between" gap={2}>
@@ -569,9 +633,14 @@ function Definitions({ target, onOverviewLayoutChange }: {
                                 </Text>
                             </Stack>
                         </Button>
-                    </Card>
-                ))}
+                        {d.kind === "agent" && (profile
+                            ? <RoleModelChoice role={d} d={profile}
+                                settings={modelSettings} linkedKey={linkedKey} onLinkReady={onLinkReady} />
+                            : <BooleanSelect label={`${d.name} 사용`} value={d.enabled} onChange={(enabled) => void save.run(() => api.put(`/definitions/agent/${d.id}`, { expected_revision: d.revision, enabled }))} />)}
+                    </Card>;
+                })}
             </Grid>
+            {save.view}
             {sel && <DefinitionEditor key={kind + sel} kind={kind} id={sel} />}
             <NewDefinition kind={kind} />
         </Stack>
@@ -673,38 +742,24 @@ function DeviceNameInput({ name, reload }: { name: string; reload: () => void })
 
 function Devices() {
     const list = useQuery<DeviceInfo[]>("devices", () => api.get("/devices"));
-    const [issued, setIssued] = useState<string | null>(null);
     const save = useSave();
     const pairing = useCapability("pairing_approval_v1");
-    if (list.error instanceof ApiError && list.error.code === "forbidden") return <Section item="devices">
-        <Text as="p" display="block" type="supporting" color="secondary">등록 기기는 데몬 소유자만 관리할 수 있어요.</Text>
-    </Section>;
     return (
         <>
             <Section item="devices">
             {Boolean(list.error) && <Text as="p" display="block" type="inherit" color="error" role="alert">기기 목록을 읽지 못했습니다.</Text>}
-            <Text as="p" display="block" type="supporting" color="secondary">등록 기기는 모든 프로젝트·파일 접근 및 명령 실행 가능 · 기기 관리는 소유자 전용</Text>
+            <Text as="p" display="block" type="supporting" color="secondary">등록한 기기는 프로젝트와 파일에 접근하고, 명령을 실행하거나 다른 기기를 관리할 수 있어요.</Text>
             <List density="compact" edge="flush" hasDividers>
                 {(list.data ?? []).filter((d) => d.kind !== "browser" || !d.revoked_at).map((d) => (
-                    <ListItem key={d.id} startContent={<Icon name={d.kind === "owner" ? "server" : "monitor"} size={16} />}
+                    <ListItem key={d.id} startContent={<Icon name="monitor" size={16} />}
                         label={<>{d.name}{d.current && <> <StatusBadge>현재</StatusBadge></>}</>}
-                        description={<>{d.kind === "owner" ? "소유자" : d.kind === "device" ? "기기" : "브라우저 로그인"}
+                        description={<>{d.kind === "device" ? "기기" : "브라우저 로그인"}
                             {d.last_used_at && <> · <When at={d.last_used_at} /></>}</>}
-                        endContent={d.revoked_at ? <Text as="span" type="supporting" color="secondary">폐기됨</Text> : d.kind === "owner" ? <Text as="span" type="supporting" color="secondary">소유자</Text> : (
+                        endContent={d.revoked_at ? <Text as="span" type="supporting" color="secondary">폐기됨</Text> : (
                             <ServerActionButton variant="secondary" density="compact" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</ServerActionButton>
                         )} />
                 ))}
             </List>
-            <ServerActionButton onClick={() => {
-                const name = prompt("새 기기 이름");
-                if (name) void save.run(async () => setIssued((await api.post<{ token: string }>("/devices", { name })).token));
-            }}>기기 토큰 발급</ServerActionButton>
-            {issued && (
-                <Notice role="alert">
-                    이 토큰은 지금 한 번만 표시됩니다: <Code xstyle={contentStyles.selectable}>{issued}</Code>
-                    <Button variant="secondary" density="compact" onClick={() => setIssued(null)}>닫기</Button>
-                </Notice>
-            )}
             {save.view}
             </Section>
             {pairing !== false && <SettingsGroup title="QR·링크로 기기 등록" scope="서버 전체" icon="link" testId="setting-pairing">
@@ -722,16 +777,6 @@ async function webBuild(): Promise<string> {
     } catch {
         return "unknown";
     }
-}
-
-function ClientStatus() {
-    const build = useQuery<string>("web-build", webBuild);
-    const status = useLive((live) => live.status);
-    return <KeyValues data-testid="client-version-details" items={[
-        ["화면 빌드", <code>{build.data ?? "…"}</code>],
-        ["프로토콜", String(PROTOCOL)],
-        ["이벤트 연결", status],
-    ]} />;
 }
 
 function Health() {
@@ -776,27 +821,6 @@ function Health() {
     );
 }
 
-function Help() {
-    return (
-        <Stack gap={2} data-testid="help">
-            <Heading level={4} color="inherit">입력</Heading>
-            <List density="compact" edge="flush" listStyle="disc">
-                <ListItem label={<><kbd>Ctrl</kbd>/<kbd>⌘</kbd>+<kbd>Enter</kbd>: 보내기 · 'Enter로 보내기'를 켜면 <kbd>Enter</kbd> 보내기, <kbd>Shift</kbd>+<kbd>Enter</kbd> 줄바꿈(터치 기기는 항상 줄바꿈)</>} />
-                <ListItem label={<>한글 조합 중 <kbd>Enter</kbd>는 보내지 않습니다.</>} />
-                <ListItem label={<>실행 중에는 '대기열에 추가'(끝난 뒤 새 요청), '지금 반영'(다음 모델 호출에 추가), '중단하고 보내기'를 고릅니다.</>} />
-            </List>
-            <Heading level={4} color="inherit">상태</Heading>
-            <List density="compact" edge="flush" listStyle="disc">
-                <ListItem label={<>승인 대기: 파일 쓰기·명령 실행 등 승인이 필요한 도구가 기다립니다. 승인 전에는 실행되지 않습니다.</>} />
-                <ListItem label={<>답변 대기: 모델이 사용자만 정할 수 있는 결정을 물었습니다.</>} />
-                <ListItem label={<>결과 확인 필요: 서버 재시작 등으로 실행 결과를 알 수 없는 작업입니다. 자동으로 다시 실행하지 않습니다.</>} />
-            </List>
-            <Heading level={4} color="inherit">링크</Heading>
-            <Text as="p" display="block" type="inherit" color="inherit">모델 답의 외부 링크는 새 탭에서 열리고, 실제 목적지 주소가 링크 옆에 함께 표시됩니다.</Text>
-        </Stack>
-    );
-}
-
 /// 마지막 연결 확인 결과(AUTH-001). 생성 요청 없이 모델 목록·CLI 버전만 확인한다.
 function CheckStatus({ c }: { c: ModelProfile["last_check"] }) {
     if (!c) return <Text as="span" type="supporting" color="secondary" data-testid="profile-check"> · 연결 확인 안 함</Text>;
@@ -804,7 +828,7 @@ function CheckStatus({ c }: { c: ModelProfile["last_check"] }) {
     const when = <When at={c.checked_at} />;
     return c.ok ? (
         <Text as="span" type="supporting" color="inherit" data-testid="profile-check">
-            {" "}· <StatusBadge status="succeeded">연결됨</StatusBadge> {c.latency_ms}ms · {when}
+            {" "}· <StatusBadge status="succeeded">{d.cli_version !== undefined ? "설치됨" : "연결됨"}</StatusBadge> {c.latency_ms}ms · {when}
             {d.cli_version && ` · ${d.cli_version}`}
             {d.models !== undefined && (d.model_listed ? " · 모델 확인됨" : ` · 목록(${d.models}개)에 이 모델 없음`)}
         </Text>

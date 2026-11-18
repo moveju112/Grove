@@ -206,7 +206,7 @@ async fn definitions_reject_duplicate_invalid_and_oversized_values_without_mutat
 async fn another_authentication_cannot_turn_result_confirmation_into_a_new_execution() {
     let (s,p,session,script)=setup().await;
     let body=request(&s,&p,&script).await;
-    let (_,device)=s.post("/api/v1/devices",json!({"name":"fixture other device"})).await;
+    let device=s.registered_device("fixture other device").await;
     let path=format!("/api/v1/sessions/{}/scripts/{}/run",session["id"].as_str().unwrap(),script["id"].as_str().unwrap());
     let response=s.raw(Method::POST,&path,Some(body),Some("original-owner-run"),device["token"].as_str()).await;
     assert_eq!(response.status(),StatusCode::FORBIDDEN);

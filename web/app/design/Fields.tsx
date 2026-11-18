@@ -3,7 +3,7 @@ import { TextArea as AstryxTextArea, type TextAreaProps as AstryxTextAreaProps }
 import { FileInput as AstryxFileInput, type FileInputProps as AstryxFileInputProps } from "@astryxdesign/core/FileInput";
 import type { InputHTMLAttributes, TextareaHTMLAttributes } from "react";
 
-type NativeDraftType = "number" | "time" | "datetime-local";
+type NativeDraftType = "number" | "time" | "datetime-local" | "date";
 type TextInputProps = Omit<AstryxTextInputProps, "type"> & Pick<InputHTMLAttributes<HTMLInputElement>, "minLength" | "maxLength" | "pattern"> & {
     type?: AstryxTextInputProps["type"] | NativeDraftType;
 };

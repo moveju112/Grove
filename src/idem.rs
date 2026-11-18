@@ -98,6 +98,11 @@ where
 /// 외부 부작용(프로세스·Git)을 transaction 밖에서 일으키는 요청용: 같은 키의 기록이 있으면 실행 없이 저장된 응답을 돌려준다.
 /// 다른 요청에 쓰인 키면 충돌. 기록이 없으면 None이며, 부작용 전 접수·직렬화는 호출자가 보장해야 한다.
 pub async fn replay(app: &App, p: &Principal, headers: &HeaderMap, request_hash: &str) -> ApiResult<Option<Response>> {
+    replay_matching(app, p, headers, &[request_hash]).await
+}
+
+/// 버전이 바뀐 입력 정규화도 안전하게 재생하되, 새 접수는 현재 hash만 저장한다.
+pub(crate) async fn replay_matching(app: &App, p: &Principal, headers: &HeaderMap, accepted_hashes: &[&str]) -> ApiResult<Option<Response>> {
     let key = key_from(headers)?;
     let owner = p.root_id.clone();
     let prior: Option<(String, i64, String)> = app
@@ -112,7 +117,7 @@ pub async fn replay(app: &App, p: &Principal, headers: &HeaderMap, request_hash:
         })
         .await?;
     let Some((hash, status, response)) = prior else { return Ok(None) };
-    if hash != request_hash {
+    if !accepted_hashes.contains(&hash.as_str()) {
         return Err(ApiError::conflict("idempotency_conflict", "같은 Idempotency-Key가 다른 요청에 이미 사용되었습니다"));
     }
     let body: Value = serde_json::from_str(&response)?;

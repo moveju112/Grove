@@ -19,7 +19,7 @@ export function currentApprovalContract(name: string): { effect: ApprovalEffect 
     const effect = Object.hasOwn(effects, name) ? effects[name]! : null;
     return {
         effect,
-        choices: !effect || name === "ask_user" ? [] : name === "agent" || name === "computer"
+        choices: !effect || name === "ask_user" ? [] : name === "agent"
             ? ["approve", "deny"] : ["approve", "approve_session", "deny"],
     };
 }
@@ -112,7 +112,6 @@ export function projectApproval(call: Pick<ToolCallRow, "name" | "target">): App
                 fields.push({ label: kind, value: detail });
             }
         }
-        notices.push("화면이 모델 제공자에게 전달되고 대화에 보관됩니다. 입력은 창·앱·외부 서비스에 영향을 줄 수 있습니다. 입력 내용은 표시하지 않습니다.");
     }
     if (call.name === "web_fetch") {
         text("url", "요청 URL", 1000);
@@ -120,7 +119,6 @@ export function projectApproval(call: Pick<ToolCallRow, "name" | "target">): App
         notices.push("공개 인터넷 주소로 익명 GET 요청을 보냅니다. 받은 본문은 신뢰할 수 없는 데이터로 다룹니다.");
     }
     if (!fields.length) notices.push("서버가 표시 가능한 대상 정보를 제공하지 않았습니다.");
-    notices.push("비밀값 보호를 위해 파일 내용·diff·위임 지시·외부 도구 인자는 표시하지 않습니다. 긴 대상은 일부만 표시하며, 승인은 생략된 부분을 포함한 서버 계획 전체에 적용됩니다.");
     return { fields, notices };
 }
 

@@ -1,7 +1,7 @@
-//! 데몬 OS에 맞는 창 메시지 backend. 사용자 물리 포인터·전역 키 상태를 바꾸지 않는다.
-use crate::tools::ToolResult;
+//! 데몬 OS에 맞는 창 제어 backend.
 #[cfg(not(windows))]
 use crate::tools::ToolError;
+use crate::tools::ToolResult;
 use serde_json::Value;
 
 #[cfg(windows)]
@@ -9,34 +9,61 @@ use serde_json::Value;
 mod windows;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Backend { X11, Win32 }
+pub enum Backend {
+    X11,
+    Win32,
+}
 
 impl Backend {
-    pub fn name(self)->&'static str {
-        match self { Self::X11=>"x11_window_messages",Self::Win32=>"win32_window_messages" }
-    }
-    pub fn note(self)->&'static str {
+    pub fn name(self) -> &'static str {
         match self {
-            Self::X11=>"이 Linux 서버 PC의 X11 활성 창을 제어합니다. libX11이 필요하며 Wayland·화면 없는 환경은 지원하지 않습니다. 일부 앱은 창 메시지를 거부합니다.",
-            Self::Win32=>"이 Windows 서버 PC의 활성 창을 제어합니다. 로그인된 사용자 데스크톱이 필요하며 서비스 Session 0·잠금 화면·권한이 다른 앱은 제어하지 않습니다. 일부 앱은 창 메시지를 거부합니다.",
+            Self::X11 => "x11_xtest",
+            Self::Win32 => "win32_window_messages",
+        }
+    }
+    pub fn note(self) -> &'static str {
+        match self {
+            Self::X11 => {
+                "서버 PC의 X11 앱 창을 전환하고 마우스·키보드로 제어합니다. XTEST가 필요하며 Wayland·화면 없는 환경은 지원하지 않습니다."
+            }
+            Self::Win32 => {
+                "서버 PC의 Windows 앱 창을 전환하고 제어합니다. OS가 전환을 거부하거나 앱이 창 메시지를 받지 않으면 제어할 수 없습니다. 서비스 Session 0·잠금 화면·권한이 다른 앱은 지원하지 않습니다."
+            }
         }
     }
 }
 
-pub fn backend_for(os:&str)->Option<Backend>{
-    match os {"linux"=>Some(Backend::X11),"windows"=>Some(Backend::Win32),_=>None}
+pub fn backend_for(os: &str) -> Option<Backend> {
+    match os {
+        "linux" => Some(Backend::X11),
+        "windows" => Some(Backend::Win32),
+        _ => None,
+    }
 }
 
-pub fn current_backend()->Option<Backend>{backend_for(std::env::consts::OS)}
+pub fn current_backend() -> Option<Backend> {
+    backend_for(std::env::consts::OS)
+}
 
-pub fn desktop_session_present()->bool{
-    #[cfg(windows)] {windows::desktop_session_present()}
-    #[cfg(target_os="linux")] {std::env::var_os("DISPLAY").is_some()&&std::env::var_os("WAYLAND_DISPLAY").is_none()}
-    #[cfg(not(any(windows,target_os="linux")))] {false}
+pub fn desktop_session_present() -> bool {
+    #[cfg(windows)]
+    {
+        windows::desktop_session_present()
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::env::var_os("DISPLAY").is_some() && std::env::var_os("WAYLAND_DISPLAY").is_none()
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    {
+        false
+    }
 }
 
 #[cfg(windows)]
-pub(super) fn verify_parent()->ToolResult<()>{windows::verify_parent()}
+pub(super) fn verify_parent() -> ToolResult<()> {
+    windows::verify_parent()
+}
 
 pub fn execute(command: &Value) -> ToolResult<Value> {
     #[cfg(target_os = "linux")]
@@ -44,8 +71,10 @@ pub fn execute(command: &Value) -> ToolResult<Value> {
         x11::execute(command)
     }
     #[cfg(windows)]
-    { windows::execute(command) }
-    #[cfg(not(any(windows,target_os = "linux")))]
+    {
+        windows::execute(command)
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = command;
         Err(ToolError::new(
@@ -65,6 +94,8 @@ mod x11 {
         ffi::CString,
         ptr,
         sync::atomic::{AtomicBool, Ordering},
+        thread,
+        time::{Duration, Instant},
     };
     type Display = c_void;
     type Window = c_ulong;
@@ -72,6 +103,90 @@ mod x11 {
     unsafe extern "C" fn on_error(_: *mut Display, _: *mut c_void) -> c_int {
         X_ERROR.store(true, Ordering::SeqCst);
         0
+    }
+
+    struct XTest {
+        lib: *mut c_void,
+        query: unsafe extern "C" fn(
+            *mut Display,
+            *mut c_int,
+            *mut c_int,
+            *mut c_int,
+            *mut c_int,
+        ) -> c_int,
+        motion: unsafe extern "C" fn(*mut Display, c_int, c_int, c_int, c_ulong) -> c_int,
+        button: unsafe extern "C" fn(*mut Display, c_uint, c_int, c_ulong) -> c_int,
+        key: unsafe extern "C" fn(*mut Display, c_uint, c_int, c_ulong) -> c_int,
+    }
+
+    impl XTest {
+        fn unavailable() -> ToolError {
+            ToolError::new(
+                "computer_unavailable",
+                "X11 입력에는 libXtst와 XTEST 확장이 필요합니다",
+            )
+        }
+
+        fn open() -> ToolResult<Self> {
+            unsafe {
+                let lib = libc::dlopen(c"libXtst.so.6".as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL);
+                if lib.is_null() {
+                    return Err(Self::unavailable());
+                }
+                macro_rules! symbol {
+                    ($name:literal, $signature:ty) => {{
+                        let ptr = libc::dlsym(lib, $name.as_ptr());
+                        if ptr.is_null() {
+                            libc::dlclose(lib);
+                            return Err(Self::unavailable());
+                        }
+                        std::mem::transmute::<*mut c_void, $signature>(ptr)
+                    }};
+                }
+                Ok(Self {
+                    lib,
+                    query: symbol!(
+                        c"XTestQueryExtension",
+                        unsafe extern "C" fn(
+                            *mut Display,
+                            *mut c_int,
+                            *mut c_int,
+                            *mut c_int,
+                            *mut c_int,
+                        ) -> c_int
+                    ),
+                    motion: symbol!(
+                        c"XTestFakeMotionEvent",
+                        unsafe extern "C" fn(*mut Display, c_int, c_int, c_int, c_ulong) -> c_int
+                    ),
+                    button: symbol!(
+                        c"XTestFakeButtonEvent",
+                        unsafe extern "C" fn(*mut Display, c_uint, c_int, c_ulong) -> c_int
+                    ),
+                    key: symbol!(
+                        c"XTestFakeKeyEvent",
+                        unsafe extern "C" fn(*mut Display, c_uint, c_int, c_ulong) -> c_int
+                    ),
+                })
+            }
+        }
+
+        fn require_extension(&self, display: *mut Display) -> ToolResult<()> {
+            let (mut event, mut error, mut major, mut minor) = (0, 0, 0, 0);
+            if unsafe { (self.query)(display, &mut event, &mut error, &mut major, &mut minor) } == 0
+            {
+                return Err(Self::unavailable());
+            }
+            Ok(())
+        }
+    }
+
+    impl Drop for XTest {
+        fn drop(&mut self) {
+            unsafe {
+                libc::dlclose(self.lib);
+            }
+        }
     }
 
     // Xlib의 공개 ABI. 정적 link/개발 패키지는 요구하지 않고 데스크톱의 런타임 library를 사용한다.
@@ -119,8 +234,17 @@ mod x11 {
             XTranslateCoordinates(*mut Display,Window,Window,c_int,c_int,*mut c_int,*mut c_int,*mut Window)->c_int;
             XStringToKeysym(*const c_char)->c_ulong;
             XKeysymToKeycode(*mut Display,c_ulong)->u8;
-            XKeycodeToKeysym(*mut Display,u8,c_int)->c_ulong;
             XSendEvent(*mut Display,Window,c_int,c_long,*mut Event)->c_int;
+            XKeycodeToKeysym(*mut Display,u8,c_int)->c_ulong;
+            XGetInputFocus(*mut Display,*mut Window,*mut c_int)->c_int;
+            XQueryTree(*mut Display,Window,*mut Window,*mut Window,*mut *mut Window,*mut c_uint)->c_int;
+            XQueryKeymap(*mut Display,*mut c_char)->c_int;
+            XGrabServer(*mut Display)->c_int;
+            XUngrabServer(*mut Display)->c_int;
+            XGrabPointer(*mut Display,Window,c_int,c_uint,c_int,c_int,Window,c_ulong,c_ulong)->c_int;
+            XUngrabPointer(*mut Display,c_ulong)->c_int;
+            XGrabKeyboard(*mut Display,Window,c_int,c_int,c_int,c_ulong)->c_int;
+            XUngrabKeyboard(*mut Display,c_ulong)->c_int;
         }
         impl Drop for X {
             fn drop(&mut self) {
@@ -193,16 +317,149 @@ mod x11 {
                 .copied()
                 .unwrap_or(0) as Window
             }
-            fn state(&self, window: Window) -> ToolResult<Value> {
-                if self.active() != window {
+            fn input_focus(&self) -> Window {
+                let (mut focus, mut revert) = (0, 0);
+                unsafe {
+                    (self.XGetInputFocus)(self.display, &mut focus, &mut revert);
+                }
+                focus
+            }
+            fn parent(&self, window: Window) -> Option<Window> {
+                let (mut root, mut parent, mut count, mut children) = (0, 0, 0, ptr::null_mut());
+                unsafe {
+                    let ok = (self.XQueryTree)(
+                        self.display,
+                        window,
+                        &mut root,
+                        &mut parent,
+                        &mut children,
+                        &mut count,
+                    );
+                    if !children.is_null() {
+                        (self.XFree)(children.cast());
+                    }
+                    (ok != 0 && parent != 0).then_some(parent)
+                }
+            }
+            fn contains(&self, window: Window, mut child: Window) -> bool {
+                for _ in 0..64 {
+                    if child == window {
+                        return true;
+                    }
+                    if child <= 1 {
+                        break;
+                    }
+                    let Some(parent) = self.parent(child) else {
+                        break;
+                    };
+                    child = parent;
+                }
+                false
+            }
+            fn pointer(&self, window: Window) -> ToolResult<(i32, i32, Window, u32)> {
+                let (mut root, mut child, mut rx, mut ry, mut wx, mut wy, mut mask) =
+                    (0, 0, 0, 0, 0, 0, 0);
+                let same_screen = unsafe {
+                    (self.XQueryPointer)(
+                        self.display,
+                        window,
+                        &mut root,
+                        &mut child,
+                        &mut rx,
+                        &mut ry,
+                        &mut wx,
+                        &mut wy,
+                        &mut mask,
+                    )
+                };
+                if same_screen == 0 {
+                    return Err(unavailable());
+                }
+                Ok((rx, ry, child, mask))
+            }
+            fn require_idle(&self, mask: u32) -> ToolResult<()> {
+                let mut keys = [0; 32];
+                unsafe {
+                    (self.XQueryKeymap)(self.display, keys.as_mut_ptr());
+                }
+                if mask & 0x1f4d != 0 || keys.iter().any(|&key| key != 0) {
                     return Err(ToolError::new(
                         "focus_required",
-                        "사용자가 대상 창을 활성화한 뒤 다시 capture해야 합니다",
+                        "사용자가 키·버튼을 놓은 뒤 다시 관찰하세요",
+                    ));
+                }
+                Ok(())
+            }
+            fn focus(&self, root: Window, window: Window) -> ToolResult<Value> {
+                let clients = self.property(root, "_NET_CLIENT_LIST").0;
+                if !clients.contains(&(window as u64))
+                    || self
+                        .property(window, "_NET_WM_PID")
+                        .0
+                        .first()
+                        .copied()
+                        .unwrap_or(0)
+                        == 0
+                {
+                    return Err(unavailable());
+                }
+                self.require_idle(self.pointer(root)?.3)?;
+                if self.active() != window || !self.contains(window, self.input_focus()) {
+                    let active_atom = unsafe {
+                        (self.XInternAtom)(self.display, c"_NET_ACTIVE_WINDOW".as_ptr(), 1)
+                    };
+                    if active_atom == 0 {
+                        return Err(unavailable());
+                    }
+                    let mut event = Event { pad: [0; 24] };
+                    event.client = ClientEvent {
+                        kind: 33,
+                        serial: 0,
+                        send_event: 1,
+                        display: self.display,
+                        window,
+                        message_type: active_atom,
+                        format: 32,
+                        // EWMH: source 2는 사용자 동작을 대리하는 창 전환 도구다.
+                        data: [2, 0, 0, 0, 0],
+                    };
+                    let sent = unsafe {
+                        let ok = (self.XSendEvent)(
+                            self.display,
+                            root,
+                            0,
+                            (1 << 19) | (1 << 20),
+                            &mut event,
+                        );
+                        (self.XSync)(self.display, 0);
+                        ok
+                    };
+                    if sent == 0 || X_ERROR.swap(false, Ordering::SeqCst) {
+                        return Err(unavailable());
+                    }
+                    let deadline = Instant::now() + Duration::from_secs(1);
+                    while self.active() != window || !self.contains(window, self.input_focus()) {
+                        if Instant::now() >= deadline {
+                            return Err(ToolError::new(
+                                "focus_required",
+                                "창 관리자가 대상 창을 활성화하지 않았습니다",
+                            ));
+                        }
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                }
+                Ok(json!({"window_id":format!("{window}"),"active":true}))
+            }
+            fn state(&self, window: Window) -> ToolResult<Value> {
+                let focus = self.input_focus();
+                if self.active() != window || !self.contains(window, focus) {
+                    return Err(ToolError::new(
+                        "focus_required",
+                        "대상 창에 focus를 실행한 뒤 다시 capture하세요",
                     ));
                 }
                 let mut root = 0;
                 let (mut x, mut y, mut w, mut h, mut border, mut depth) = (0, 0, 0, 0, 0, 0);
-                let (mut child, mut rx, mut ry, mut wx, mut wy, mut mask) = (0, 0, 0, 0, 0, 0);
                 unsafe {
                     if (self.XGetGeometry)(
                         self.display,
@@ -222,28 +479,25 @@ mod x11 {
                     {
                         return Err(unavailable());
                     }
-                    (self.XQueryPointer)(
+                    let mut child = 0;
+                    if (self.XTranslateCoordinates)(
                         self.display,
                         window,
-                        &mut root,
+                        root,
+                        0,
+                        0,
+                        &mut x,
+                        &mut y,
                         &mut child,
-                        &mut rx,
-                        &mut ry,
-                        &mut wx,
-                        &mut wy,
-                        &mut mask,
-                    );
-                    (self.XSync)(self.display, 0);
+                    ) == 0
+                    {
+                        return Err(unavailable());
+                    }
                 }
+                let (rx, ry, _, mask) = self.pointer(window)?;
+                self.require_idle(mask)?;
                 if X_ERROR.swap(false, Ordering::SeqCst) {
                     return Err(unavailable());
-                }
-                // 누른 실제 키/버튼이 있으면 사용자의 조작 중으로 간주한다.
-                if mask & 0x1f4d != 0 {
-                    return Err(ToolError::new(
-                        "focus_required",
-                        "사용자가 키·버튼을 놓은 뒤 다시 관찰하세요",
-                    ));
                 }
                 let pid = self
                     .property(window, "_NET_WM_PID")
@@ -255,7 +509,7 @@ mod x11 {
                     return Err(unavailable());
                 }
                 Ok(
-                    json!({"window_id":format!("{window}"),"pid":pid,"native_width":w,"native_height":h,"pointer":[rx,ry],"geometry":[x,y,w,h]}),
+                    json!({"window_id":format!("{window}"),"pid":pid,"native_width":w,"native_height":h,"pointer":[rx,ry],"geometry":[x,y,w,h],"focus_window":format!("{focus}")}),
                 )
             }
             fn capture(&self, window: Window) -> ToolResult<Value> {
@@ -315,61 +569,43 @@ mod x11 {
                 }
                 Ok(state)
             }
-            fn send(
-                &self,
-                window: Window,
-                kind: i32,
-                code: u32,
-                x: i32,
-                y: i32,
-                state: u32,
-            ) -> ToolResult<()> {
-                let root = unsafe { (self.XDefaultRootWindow)(self.display) };
-                let (mut root_x, mut root_y, mut child) = (0, 0, 0);
-                unsafe {
-                    (self.XTranslateCoordinates)(
-                        self.display,
-                        window,
-                        root,
-                        x,
-                        y,
-                        &mut root_x,
-                        &mut root_y,
-                        &mut child,
-                    );
-                }
-                let mut event = Event { pad: [0; 24] };
-                event.input = InputEvent {
-                    kind,
-                    serial: 0,
-                    send_event: 1,
-                    display: self.display,
-                    window,
-                    root,
-                    subwindow: 0,
-                    time: 0,
-                    x,
-                    y,
-                    x_root: root_x,
-                    y_root: root_y,
-                    state,
-                    code,
-                    same_screen: 1,
-                };
-                let mask = match kind {
-                    2 => 1,
-                    3 => 2,
-                    4 => 4,
-                    _ => 8,
-                };
-                unsafe {
-                    if (self.XSendEvent)(self.display, window, 1, mask, &mut event) == 0 {
-                        return Err(unavailable());
+            fn pointer_target(&self, root: Window) -> ToolResult<Window> {
+                let mut parent = root;
+                for _ in 0..64 {
+                    let (_, _, child, _) = self.pointer(parent)?;
+                    if child == 0 {
+                        return Ok(parent);
                     }
+                    parent = child;
+                }
+                Err(unavailable())
+            }
+            fn require_ungrabbed(&self, root: Window, pointer: bool) -> ToolResult<()> {
+                // 메뉴·드래그 등이 입력을 선점했다면 화면 좌표나 키 포커스만으로 수신 창을 보장할 수 없다.
+                let status = unsafe {
+                    if pointer {
+                        let status = (self.XGrabPointer)(self.display, root, 0, 0, 1, 1, 0, 0, 0);
+                        if status == 0 {
+                            (self.XUngrabPointer)(self.display, 0);
+                        }
+                        status
+                    } else {
+                        let status = (self.XGrabKeyboard)(self.display, root, 0, 1, 1, 0);
+                        if status == 0 {
+                            (self.XUngrabKeyboard)(self.display, 0);
+                        }
+                        status
+                    }
+                };
+                if status != 0 {
+                    return Err(ToolError::new(
+                        "focus_required",
+                        "다른 창이나 메뉴가 입력을 사용 중입니다",
+                    ));
                 }
                 Ok(())
             }
-            fn key(&self, window: Window, name: &str) -> ToolResult<()> {
+            fn resolve_key(&self, name: &str) -> ToolResult<(u32, Option<u32>)> {
                 let name = CString::new(name).map_err(|_| unavailable())?;
                 let symbol = unsafe { (self.XStringToKeysym)(name.as_ptr()) };
                 let code = unsafe { (self.XKeysymToKeycode)(self.display, symbol) };
@@ -391,8 +627,46 @@ mod x11 {
                         ));
                     }
                 };
-                self.send(window, 2, code as u32, 0, 0, shift as u32)?;
-                self.send(window, 3, code as u32, 0, 0, shift as u32)
+                let modifier = if shift {
+                    let shift_code = unsafe { (self.XKeysymToKeycode)(self.display, 0xffe1) };
+                    if shift_code == 0 {
+                        return Err(unavailable());
+                    }
+                    Some(u32::from(shift_code))
+                } else {
+                    None
+                };
+                Ok((u32::from(code), modifier))
+            }
+            fn send_keys(&self, xtest: &XTest, keys: &[(u32, Option<u32>)]) -> ToolResult<()> {
+                for &(code, shift) in keys {
+                    let fake = |key, down| unsafe { (xtest.key)(self.display, key, down, 0) != 0 };
+                    let modifier = shift.is_none_or(|key| fake(key, 1));
+                    let pressed = modifier && fake(code, 1);
+                    let released = fake(code, 0);
+                    let modifier_released = shift.is_none_or(|key| fake(key, 0));
+                    if !(pressed && released && modifier_released) {
+                        return Err(unavailable());
+                    }
+                }
+                Ok(())
+            }
+        }
+        struct ServerGrab<'a>(&'a X);
+        impl<'a> ServerGrab<'a> {
+            fn new(x: &'a X) -> Self {
+                unsafe {
+                    (x.XGrabServer)(x.display);
+                }
+                Self(x)
+            }
+        }
+        impl Drop for ServerGrab<'_> {
+            fn drop(&mut self) {
+                unsafe {
+                    (self.0.XUngrabServer)(self.0.display);
+                    (self.0.XSync)(self.0.display, 0);
+                }
             }
         }
         pub(crate) fn execute(command: &Value) -> ToolResult<Value> {
@@ -403,23 +677,29 @@ mod x11 {
                     "Wayland는 이 버전에서 지원하지 않습니다. X11 로그인 세션이 필요합니다",
                 ));
             }
+            // Xlib가 display 종료 중 호출하는 확장 callback보다 libXtst가 오래 살아야 한다.
+            let xtest;
             let x = unsafe { X::open()? };
             let root = unsafe { (x.XDefaultRootWindow)(x.display) };
             if command["action"] == "list" {
+                let active = x.active();
                 let windows=x.property(root,"_NET_CLIENT_LIST").0.into_iter().take(128).map(|w|{
                     let title=x.property(w as Window,"_NET_WM_NAME").1;
                     json!({"window_id":format!("{w}"),"pid":x.property(w as Window,"_NET_WM_PID").0.first().copied().unwrap_or(0),
-                        "title":String::from_utf8_lossy(&title),"active":x.active()==w as Window})
+                        "title":String::from_utf8_lossy(&title),"active":active==w as Window})
                 }).collect::<Vec<_>>();
                 return Ok(
-                    json!({"target":"server","windows":windows,"delivery":"window_messages","limitations":"Linux X11; target must already be active; some apps reject synthetic messages; ASCII text only"}),
+                    json!({"target":"server","windows":windows,"delivery":"xtest","limitations":"Linux X11; focus inactive windows before capture; XTEST required for input; ASCII text only"}),
                 );
             }
             let window = command["window_id"]
                 .as_str()
-                .and_then(|s| s.parse::<u64>().ok())
-                .filter(|w| *w > 0)
-                .ok_or_else(unavailable)? as Window;
+                .and_then(|s| s.parse::<Window>().ok())
+                .filter(|w| *w > 1 && *w <= u32::MAX.into())
+                .ok_or_else(unavailable)?;
+            if command["action"] == "focus" {
+                return x.focus(root, window);
+            }
             let mut capture = x.capture(window)?;
             if command["action"] == "act" {
                 let mut observed = capture.clone();
@@ -437,18 +717,23 @@ mod x11 {
                         "창·화면·사용자 포인터가 관찰 뒤 변경돼 입력하지 않았습니다",
                     ));
                 }
+                xtest = XTest::open()?;
+                xtest.require_extension(x.display)?;
+                let mut guard_state = observed.clone();
+                for k in ["width", "height", "pixels_sha256"] {
+                    guard_state.as_object_mut().unwrap().remove(k);
+                }
+                let mut delivered = false;
                 let delivery = (|| -> ToolResult<()> {
                     for step in command["actions"].as_array().ok_or_else(unavailable)? {
-                        if x.state(window)? != {
-                            let mut s = observed.clone();
-                            for k in ["width", "height", "pixels_sha256"] {
-                                s.as_object_mut().unwrap().remove(k);
-                            }
-                            s
-                        } {
+                        // 확인부터 입력 쌍까지 다른 X11 클라이언트가 창을 바꾸지 못하게 한다.
+                        // 앱이 입력을 처리할 수 있도록 각 동작 뒤 즉시 해제한다.
+                        let grab = ServerGrab::new(&x);
+                        let current = x.state(window)?;
+                        if current != guard_state {
                             return Err(ToolError::new(
-                                "result_unknown",
-                                "사용자 개입이나 창 전환으로 멈췄습니다. 앞 동작은 전달됐을 수 있습니다",
+                                "stale_frame",
+                                "사용자 개입이나 창 전환으로 입력을 멈췄습니다",
                             ));
                         }
                         let px = (step["x"].as_u64().unwrap_or(0)
@@ -467,8 +752,8 @@ mod x11 {
                                         >= observed["height"].as_u64().unwrap()
                                 {
                                     return Err(ToolError::new(
-                                        "result_unknown",
-                                        "이미지 밖 좌표로 입력하지 않았습니다. 앞 동작이 있다면 확인하세요",
+                                        "invalid_arguments",
+                                        "이미지 밖 좌표로 입력하지 않았습니다",
                                     ));
                                 }
                                 let button = if step["type"] == "scroll" {
@@ -478,20 +763,46 @@ mod x11 {
                                 } else {
                                     1
                                 };
+                                let rx = observed["geometry"][0].as_i64().unwrap() as i32 + px;
+                                let ry = observed["geometry"][1].as_i64().unwrap() as i32 + py;
+                                x.require_ungrabbed(root, true)?;
+                                unsafe {
+                                    if (xtest.motion)(x.display, -1, rx, ry, 0) == 0 {
+                                        return Err(unavailable());
+                                    }
+                                }
+                                let (mx, my, _, mask) = x.pointer(root)?;
+                                x.require_idle(mask)?;
+                                if (mx, my) != (rx, ry)
+                                    || !x.contains(window, x.pointer_target(root)?)
+                                {
+                                    return Err(ToolError::new(
+                                        "focus_required",
+                                        "다른 창이 좌표를 가리고 있어 클릭하지 않았습니다",
+                                    ));
+                                }
+                                guard_state["pointer"] = json!([rx, ry]);
+                                delivered = true;
                                 for _ in 0..step["amount"].as_u64().unwrap_or(1) {
-                                    x.send(window, 4, button, px, py, 0)?;
-                                    x.send(window, 5, button, px, py, 0)?;
+                                    let down = unsafe { (xtest.button)(x.display, button, 1, 0) };
+                                    let up = unsafe { (xtest.button)(x.display, button, 0, 0) };
+                                    if down == 0 || up == 0 {
+                                        return Err(unavailable());
+                                    }
                                 }
                             }
-                            "key" => x.key(
-                                window,
-                                match step["key"].as_str().unwrap() {
+                            "key" => {
+                                let key = x.resolve_key(match step["key"].as_str().unwrap() {
                                     "Enter" => "Return",
                                     "Backspace" => "BackSpace",
                                     s => s,
-                                },
-                            )?,
+                                })?;
+                                x.require_ungrabbed(root, false)?;
+                                delivered = true;
+                                x.send_keys(&xtest, &[key])?;
+                            }
                             "type" => {
+                                let mut keys = Vec::new();
                                 for c in step["text"].as_str().unwrap().chars() {
                                     let names = [
                                         (' ', "space"),
@@ -534,32 +845,30 @@ mod x11 {
                                         .find(|(ch, _)| *ch == c)
                                         .map(|(_, s)| *s)
                                         .unwrap_or(&text);
-                                    x.key(window, name)?;
+                                    keys.push(x.resolve_key(name)?);
                                 }
+                                x.require_ungrabbed(root, false)?;
+                                delivered = true;
+                                x.send_keys(&xtest, &keys)?;
                             }
                             _ => return Err(unavailable()),
                         }
-                        unsafe {
-                            (x.XSync)(x.display, 0);
-                        }
+                        drop(grab);
                         if X_ERROR.swap(false, Ordering::SeqCst) {
                             return Err(ToolError::new(
                                 "result_unknown",
-                                "창 메시지 전달 결과를 확인하지 못했습니다",
+                                "X11 입력 전달 결과를 확인하지 못했습니다",
                             ));
                         }
                     }
                     Ok(())
                 })();
-                delivery.map_err(|_|ToolError::new("result_unknown","창 입력이 일부 전달됐을 수 있습니다. 새 상태를 확인하고 입력은 반복하지 마세요"))?;
+                delivery.map_err(|e| if delivered { ToolError::new("result_unknown","창 입력이 일부 전달됐을 수 있습니다. 새 상태를 확인하고 입력은 반복하지 마세요") } else { e })?;
                 // 고정 지연으로 성공을 추정하지 않는다. 현재 관찰을 반환하고 목표 확인은 별개로 표시한다.
-                capture = x.capture(window).map_err(|_| {
-                    ToolError::new(
-                        "result_unknown",
-                        "입력 후 창을 관찰하지 못했습니다. 입력을 반복하지 마세요",
-                    )
-                })?;
-                capture["effect"] = json!("messages_delivered_goal_unverified");
+                capture = x.capture(window).unwrap_or_else(
+                    |_| json!({"window_id":format!("{window}"),"observe_again":true}),
+                );
+                capture["effect"] = json!("input_delivered_goal_unverified");
             }
             Ok(capture)
         }
@@ -584,27 +893,20 @@ mod x11 {
     }
     #[repr(C)]
     #[derive(Clone, Copy)]
-    struct InputEvent {
+    struct ClientEvent {
         kind: c_int,
         serial: c_ulong,
         send_event: c_int,
         display: *mut Display,
         window: Window,
-        root: Window,
-        subwindow: Window,
-        time: c_ulong,
-        x: c_int,
-        y: c_int,
-        x_root: c_int,
-        y_root: c_int,
-        state: c_uint,
-        code: c_uint,
-        same_screen: c_int,
+        message_type: c_ulong,
+        format: c_int,
+        data: [c_long; 5],
     }
     #[repr(C)]
     union Event {
         pad: [c_long; 24],
-        input: InputEvent,
+        client: ClientEvent,
     }
     fn unavailable() -> ToolError {
         ToolError::new(

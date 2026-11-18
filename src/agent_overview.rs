@@ -36,14 +36,14 @@ pub async fn show(
     ))
 }
 
-struct Redactor {
+pub(crate) struct Redactor {
     secrets: Vec<String>,
     sensitive: Regex,
     pem: Regex,
 }
 
 impl Redactor {
-    fn new(c: &Connection) -> ApiResult<Self> {
+    pub(crate) fn new(c: &Connection) -> ApiResult<Self> {
         // 원문에 복사된 vault 값도 응답하지 않는다. 복호화 실패 시 원문을 보내지 않는다.
         let mut st = c.prepare("SELECT id FROM secrets")?;
         let ids = st
@@ -69,7 +69,7 @@ impl Redactor {
         })
     }
 
-    fn text(&self, raw: &str) -> String {
+    pub(crate) fn text(&self, raw: &str) -> String {
         let mut text = raw.to_string();
         for secret in &self.secrets {
             text = text.replace(secret, "[redacted]");
@@ -202,7 +202,7 @@ fn overview(c: &Connection, q: OverviewQuery) -> ApiResult<Value> {
         json!({
             "id":d.id, "name":redact.text(&d.name), "description":redact.text(&d.description),
             "body":redact.text(&d.body), "builtin":d.builtin, "modified_fields":d.modified_fields,
-            "enabled":d.enabled, "revision":d.revision, "availability":availability,
+            "enabled":d.enabled, "revision":d.revision, "availability":availability, "execution":d.execution,
         })
     }).collect();
     Ok(json!({

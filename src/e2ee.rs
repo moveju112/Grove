@@ -20,13 +20,14 @@ use sha2::{Digest, Sha256};
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::sync::Semaphore;
 use tower::ServiceExt;
-use crate::{App, auth::Owner, error::{ApiError, ApiResult}};
+use crate::{App, auth::Principal, error::{ApiError, ApiResult}};
 
 mod mux;
 
 const LABEL: &[u8] = b"grove-e2ee-v1";
-const MAX_FRAME: usize = 12 * 1024 * 1024;
-const MAX_BODY: usize = 8 * 1024 * 1024;
+// 개별 frame은 릴레이 상한 안에 두고, 큰 요청 본문은 mux에서 조각으로 받는다.
+pub(crate) const MAX_FRAME: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_BODY: usize = 48 * 1024 * 1024;
 const CHUNK: usize = 48 * 1024;
 const HANDSHAKE: Duration = Duration::from_secs(10);
 const IO_WAIT: Duration = Duration::from_secs(60);
@@ -37,6 +38,7 @@ pub struct Transport {
     pub(crate) relay: Option<Arc<crate::relay::Settings>>,
     slots: Arc<Semaphore>,
     request_slots: Arc<Semaphore>,
+    upload_slots: Arc<Semaphore>,
     bridge_secret: String,
 }
 
@@ -66,7 +68,7 @@ impl Transport {
         let bytes: [u8; 32] = bytes.try_into().map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "E2EE identity key length"))?;
         let identity = SigningKey::from_bytes(&bytes);
         let relay = crate::relay::Settings::load(dir, identity.verifying_key().as_bytes())?;
-        Ok(Self { identity, relay, slots: Arc::new(Semaphore::new(128)), request_slots: Arc::new(Semaphore::new(128)), bridge_secret: crate::util::random_secret(32) })
+        Ok(Self { identity, relay, slots: Arc::new(Semaphore::new(128)), request_slots: Arc::new(Semaphore::new(128)), upload_slots: Arc::new(Semaphore::new(4)), bridge_secret: crate::util::random_secret(32) })
     }
 
     pub fn public_key(&self) -> String { B64.encode(self.identity.verifying_key().as_bytes()) }
@@ -74,7 +76,7 @@ impl Transport {
     pub(crate) fn identity_for_test(&self) -> [u8; 32] { self.identity.verifying_key().to_bytes() }
 }
 
-pub async fn identity(State(app): State<App>, _: Owner) -> Json<serde_json::Value> {
+pub async fn identity(State(app): State<App>, _: Principal) -> Json<serde_json::Value> {
     Json(json!({ "version": 1, "key": app.e2ee.public_key(), "client": PAGES_ORIGIN,
         "endpoint": app.e2ee.relay.as_ref().map(|r| r.endpoint()) }))
 }
@@ -102,7 +104,16 @@ pub async fn require_encryption(State(app): State<App>, mut req: Request, next: 
     }
     let local = !app.cfg.tls_terminated && app.cfg.listen.ip().is_loopback()
         && peer.is_some_and(|p| p.ip().is_loopback()) && local_host(host);
-    if req.extensions().get::<Encrypted>().is_none() && !local {
+    // TLS 앞단과 별개로 OS 계정이 직접 데몬 loopback 포트에서 첫 페어링을 발급·승인한다.
+    // 이 예외는 로컬 관리 자격을 검증하는 페어링 API에만 적용한다.
+    let local_pairing = app.cfg.listen.ip().is_loopback()
+        && host == app.cfg.listen.to_string()
+        && peer.is_some_and(|p| p.ip().is_loopback())
+        && !req.headers().contains_key("origin") && !req.headers().contains_key("sec-fetch-site")
+        && req.headers().get("authorization").and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("Bearer grv_"))
+        && (matches!(req.uri().path(), "/e2ee/identity" | "/pairings") || req.uri().path().starts_with("/pairings/"));
+    if req.extensions().get::<Encrypted>().is_none() && !local && !local_pairing {
         return ApiError::new(StatusCode::UPGRADE_REQUIRED, "e2ee_required", "암호화 연결이 필요합니다. 서버의 연결 링크로 다시 연결하세요.").into_response();
     }
     next.run(req).await
@@ -218,6 +229,7 @@ async fn handshake(app: &App, ws: &mut WebSocket) -> Result<(Cipher, Cipher, u8)
     ws.send(Message::Text(json!({
         "version": hello.version, "key": B64.encode(public), "signature": B64.encode(signature.to_bytes()),
         "protocol": protocol, "protocol_signature": B64.encode(protocol_signature.to_bytes()),
+        "request_body_chunks": true,
     }).to_string().into())).await?;
     let (rx, tx) = keys(&shared, &transcript);
     Ok((rx, tx, hello.version))

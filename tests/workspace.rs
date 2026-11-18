@@ -85,6 +85,38 @@ async fn two_projects_recent_and_split_survive_restart() {
 }
 
 #[tokio::test]
+async fn terminals_are_not_recorded_or_listed_as_recent() {
+    let s = TestServer::start().await;
+    let project = s.create_project("terminal-recent").await;
+    let pid = project["id"].as_str().unwrap();
+    let (status, response) = s.post("/api/v1/recent/touch", json!({
+        "kind": "terminal", "project_id": pid, "resource_id": "new-terminal",
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+
+    let session = s.create_session(pid).await;
+    let (status, response) = s.post("/api/v1/recent/touch", json!({
+        "kind": "session", "project_id": pid, "resource_id": session["id"],
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{response}");
+
+    // 이전 버전에서 기록된 터미널은 고정되어 있어도 페이지에 포함하지 않는다.
+    let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+    db.execute(
+        "INSERT INTO recent_items (id, kind, project_id, resource_id, title, last_access_at, pinned) \
+         VALUES ('legacy-recent', 'terminal', ?1, 'legacy-terminal', 'Legacy terminal', '2026-01-01T00:00:00Z', 1)",
+        [pid],
+    ).unwrap();
+    drop(db);
+
+    let (status, page) = s.get("/api/v1/recent?limit=1").await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert_eq!(page["items"][0]["resource_id"], session["id"]);
+    assert_eq!(page["total"], 1);
+    assert!(page["next_offset"].is_null());
+}
+
+#[tokio::test]
 async fn layout_validation_and_conflict() {
     let s = TestServer::start().await;
     let bad = [
@@ -110,26 +142,56 @@ async fn layout_validation_and_conflict() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
-/// FLOW-12: 동시 초안은 무음 덮어쓰기 없이 충돌로 알린다.
 #[tokio::test]
-async fn drafts_conflict_instead_of_silent_overwrite() {
+async fn shared_workspace_tabs_resume_after_restart() {
+    let mut s = TestServer::start().await;
+    let project = s.create_project("shared").await;
+    let project_id = project["id"].as_str().unwrap();
+    let session = s.create_session(project_id).await;
+    let key = format!("/api/v1/layouts/workspace-tabs-{project_id}");
+    let resume = "/api/v1/layouts/workspace-resume";
+    let layout = json!({
+        "schema": 1, "focused_leaf": "workspace-tabs",
+        "root": { "type": "leaf", "id": "workspace-tabs", "active_tab": "tab", "tabs": [
+            { "id": "tab", "kind": "session", "project_id": project_id, "resource_id": session["id"], "title": "Shared" }
+        ] }
+    });
+    let (_, empty) = s.get(resume).await;
+    assert!(empty["layout"].is_null());
+    let (status, _) = s.send(Method::PUT, resume, json!({ "expected_revision": 0, "layout": layout })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let mut wrong_project = layout.clone();
+    wrong_project["root"]["tabs"][0]["project_id"] = json!("another-project");
+    let (status, _) = s.send(Method::PUT, &key, json!({ "expected_revision": 0, "layout": wrong_project })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, result) = s.send(Method::PUT, &key, json!({ "expected_revision": 0, "layout": layout })).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    s.restart().await;
+    let (_, resumed) = s.get(resume).await;
+    assert_eq!(resumed["layout"], layout);
+    assert_eq!(resumed["revision"], 1);
+    let mut closed = layout.clone();
+    closed["root"]["tabs"] = json!([]);
+    closed["root"]["active_tab"] = Value::Null;
+    let (status, _) = s.send(Method::PUT, &key, json!({ "expected_revision": 1, "layout": closed })).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, resumed) = s.get(resume).await;
+    assert!(resumed["layout"].is_null());
+}
+
+/// 제거한 초안 API는 조회·저장 모두 제공하지 않는다.
+#[tokio::test]
+async fn draft_endpoints_are_not_available() {
     let s = TestServer::start().await;
     let p = s.create_project("p").await;
     let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
     let key = format!("session:{sid}");
-    let (_, d) = s.get(&format!("/api/v1/drafts/{key}")).await;
-    assert_eq!(d["revision"], 0);
-    let (st, _) = s.send(Method::PUT, &format!("/api/v1/drafts/{key}"), json!({ "expected_revision": 0, "text": "PC 초안", "device_name": "pc" })).await;
-    assert_eq!(st, StatusCode::OK);
-    // 폰이 오래된 revision으로 저장 시도
-    let (st, v) = s.send(Method::PUT, &format!("/api/v1/drafts/{key}"), json!({ "expected_revision": 0, "text": "폰 초안", "device_name": "phone" })).await;
-    assert_eq!(st, StatusCode::CONFLICT);
-    assert_eq!(v["error"]["details"]["current"]["text"], "PC 초안");
-    assert_eq!(v["error"]["details"]["current"]["device_name"], "pc");
-    let (_, d) = s.get(&format!("/api/v1/drafts/{key}")).await;
-    assert_eq!(d["text"], "PC 초안");
-    let (st, _) = s.get("/api/v1/drafts/other:1").await;
-    assert_eq!(st, StatusCode::BAD_REQUEST);
+    for key in [key, format!("project:{}", p["id"].as_str().unwrap())] {
+        let (st, _) = s.get(&format!("/api/v1/drafts/{key}")).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+        let (st, _) = s.send(Method::PUT, &format!("/api/v1/drafts/{key}"), json!({ "expected_revision": 0, "text": "unused", "device_name": "pc" })).await;
+        assert_eq!(st, StatusCode::NOT_FOUND);
+    }
 }
 
 /// RECENT-001: 마지막 확정 답변으로 정렬하고, 숨긴 뒤 새 사용자 메시지가 오면 다시 보이며,
@@ -193,6 +255,31 @@ async fn recent_follows_last_reply_window_and_revives_hidden() {
     assert_eq!(order(&list), [b.clone()]);
     let (_, reopened) = s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": a })).await;
     assert_eq!(reopened["hidden"], false);
+}
+
+#[tokio::test]
+async fn background_recent_touch_keeps_closed_session_hidden_until_explicit_reopen() {
+    let s = TestServer::start().await;
+    let pid = s.create_project("closed-recent").await["id"].as_str().unwrap().to_string();
+    let sid = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    s.post(&format!("/api/v1/sessions/{sid}/messages"), json!({ "text": "keep history" })).await;
+    let (_, item) = s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": sid })).await;
+    let (status, hidden) = s.send(Method::PATCH, &format!("/api/v1/recent/{}", item["id"].as_str().unwrap()),
+        json!({ "expected_revision": item["revision"], "hidden": true, "pinned": true })).await;
+    assert_eq!(status, StatusCode::OK, "{hidden}");
+    let (status, read) = s.post("/api/v1/recent/touch", json!({
+        "kind": "session", "project_id": pid, "resource_id": sid,
+        "reopen": false, "view_state": { "last_seen_seq": 1 },
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{read}");
+    assert_eq!(read["hidden"], true);
+    assert_eq!(read["pinned"], true);
+    assert_eq!(read["view_state"]["last_seen_seq"], 1);
+    let (_, list) = s.get("/api/v1/recent").await;
+    assert!(list["items"].as_array().unwrap().is_empty());
+    let (_, reopened) = s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": sid })).await;
+    assert_eq!(reopened["hidden"], false);
+    assert_eq!(reopened["pinned"], true);
 }
 
 #[tokio::test]

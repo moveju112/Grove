@@ -33,7 +33,7 @@ export function resourceLabel(tab: Tab): string {
         case "settings": return "설정";
         case "file": return `파일 · ${fileTarget(tab)?.path ?? "파일 탐색기"}`;
         case "terminal": return `터미널 · ${tab.title || tab.resource_id || "터미널"}`;
-        case "project": return "대화 목록";
+        case "project": return "프로젝트";
         case "session": return "세션";
     }
 }

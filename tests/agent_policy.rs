@@ -334,3 +334,43 @@ async fn spawn_transaction_rechecks_withdrawal_and_auto_to_ask_after_claim() {
     }
     s.post(&format!("/api/v1/turns/{turn_id}/cancel"), json!({})).await;
 }
+
+#[tokio::test]
+async fn solo_helpers_use_role_model_reject_writes_and_do_not_delegate() {
+    let (s, main, profile, project, session)=setup().await;
+    let aux=Fixture::start().await;
+    let model=s.fixture_profile(&aux.base).await;
+    setting(&s,"project",&project,MODE,json!("solo")).await;
+    setting(&s,"project",&project,"agents.delegation",json!("auto")).await;
+    setting(&s,"server","-","agents.profile.context-explorer",json!({"profile_id":model,"model":"helper-small"})).await;
+    assert_eq!(available(&s,&session).await,["context-explorer","failure-analyst","handoff-summarizer"]);
+    main.push(fixture::tool_calls(&[("start","agent",json!({"action":"spawn","agent_id":"context-explorer","brief":"읽기만 해줘"}))]));
+    main.push(fixture::text("기본 보조 역할 접수"));
+    main.push(fixture::text("보조 결과 확인 완료"));
+    aux.push(fixture::tool_calls(&[("write","write",json!({"path":"helper-must-not-write.txt","content":"forbidden"})),
+        ("nested","agent",json!({"action":"spawn","agent_id":"failure-analyst","brief":"재귀 호출 금지"}))]));
+    aux.push(fixture::text("읽기 전용 결과"));
+    let parent=turn(&s,&session,&profile).await;
+    s.wait_status(&parent,"completed").await;
+    let run=run_status(&s,&session,"completed").await;
+    assert_eq!(run["profile_id"],model);
+    let child=run["child_session_id"].as_str().unwrap();
+    let done=s.wait_status(run["last_turn_id"].as_str().unwrap(),"completed").await;
+    assert_eq!(done["definition"]["model_selection"]["model"],"helper-small");
+    assert!(aux.requests().iter().all(|request| request["model"]=="helper-small"));
+    let calls=done["tool_calls"].as_array().unwrap();
+    assert_eq!(calls.iter().find(|c|c["provider_call_id"]=="write").unwrap()["result"]["error"]["code"],"read_only");
+    assert_eq!(calls.iter().find(|c|c["provider_call_id"]=="nested").unwrap()["result"]["error"]["code"],"read_only");
+    assert!(available(&s,child).await.is_empty());
+    let (_,p)=s.get(&format!("/api/v1/projects/{project}")).await;
+    assert!(!std::path::Path::new(p["root_path"].as_str().unwrap()).join("helper-must-not-write.txt").exists());
+    // 후속 요청의 모델 변경도 다음 자식 턴부터 적용한다.
+    setting(&s,"server","-","agents.profile.context-explorer",json!({"profile_id":profile,"model":"helper-followup"})).await;
+    main.push(fixture::text("새 모델로 후속 확인"));
+    assert_eq!(request(&s,&session,json!({"action":"send","run_id":run["id"],"brief":"다시 읽기"})).await["status"],"succeeded");
+    let run=run_status(&s,&session,"completed").await;
+    assert_eq!(run["profile_id"],profile);
+    let done=s.wait_status(run["last_turn_id"].as_str().unwrap(),"completed").await;
+    assert_eq!(done["definition"]["model_selection"]["model"],"helper-followup");
+    assert_eq!(main.requests().last().unwrap()["model"],"helper-followup");
+}

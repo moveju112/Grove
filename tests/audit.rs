@@ -8,9 +8,8 @@ use serde_json::json;
 #[tokio::test]
 async fn audit_records_changes_by_actor_without_secrets() {
     let s = TestServer::start().await;
-    // 기기 연결(토큰 원문은 응답에만)
-    let (st, dev) = s.post("/api/v1/devices", json!({ "name": "phone" })).await;
-    assert_eq!(st, StatusCode::CREATED, "{dev}");
+    // 페어링 후 접근 자격은 응답에만 있다.
+    let dev = s.registered_device("phone").await;
     let dev_token = dev["token"].as_str().unwrap().to_string();
     // 비밀 저장
     let (st, sec) = s.post("/api/v1/secrets", json!({ "label": "openai", "value": "sk-audit-secret-9999" })).await;
@@ -61,9 +60,9 @@ async fn audit_records_changes_by_actor_without_secrets() {
 }
 
 #[tokio::test]
-async fn audit_is_owner_only() {
+async fn audit_requires_a_registered_device() {
     let s = TestServer::start().await;
-    let (_, dev) = s.post("/api/v1/devices", json!({ "name": "tablet" })).await;
+    let dev = s.registered_device("tablet").await;
     let r = s.client.get(format!("{}/api/v1/audit", s.base)).bearer_auth(dev["token"].as_str().unwrap()).send().await.unwrap();
-    assert_eq!(r.status(), StatusCode::FORBIDDEN);
+    assert_eq!(r.status(), StatusCode::OK);
 }

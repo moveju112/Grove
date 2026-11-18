@@ -15,6 +15,7 @@ import { CreationDialog } from "./create/CreationDialog";
 import { CreationRequest } from "./create/creation";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { requireServerAction } from "./pwa/lifecycle";
+import { workspaceStyles } from "./workspace.stylex";
 
 const requirements = { requires: ["project_folders_v1"] };
 
@@ -63,7 +64,7 @@ export function ProjectFolderDialog({ folder, onDone, onClose }: {
     </CreationDialog>;
 }
 
-function FolderSection({ folder, children }: { folder: ProjectFolder; children: ReactNode }) {
+function FolderSection({ folder, dropActive, children }: { folder: ProjectFolder; dropActive: boolean; children: ReactNode }) {
     const id = useId();
     const [expanded, setExpanded] = useState(true);
     const [renaming, setRenaming] = useState(false);
@@ -82,7 +83,8 @@ function FolderSection({ folder, children }: { folder: ProjectFolder; children: 
         } finally { removing.current = false; setBusy(false); }
     };
     return <Stack as="section" gap={0} aria-label={`${folder.name} 폴더`} data-testid="project-folder" data-folder-id={folder.id}>
-        <Stack direction="horizontal" align="center" gap={0} minHeight={32}>
+        <Stack direction="horizontal" align="center" gap={0} minHeight={32} data-project-folder-drop={folder.id}
+            data-folder-drop={dropActive || undefined} xstyle={dropActive && workspaceStyles.folderDrop}>
             <Button type="button" appearance="navigation" aria-expanded={expanded} aria-controls={id} onClick={() => setExpanded((value) => !value)}>
                 <Icon name={expanded ? "chevronDown" : "chevronRight"} size={12} />
                 <Icon name="folder" size={16} />
@@ -99,10 +101,10 @@ function FolderSection({ folder, children }: { folder: ProjectFolder; children: 
     </Stack>;
 }
 
-export function ProjectFolderTree({ projects, folders, renderProject }: {
-    projects: Project[]; folders: ProjectFolder[]; renderProject: (project: Project) => ReactNode;
+export function ProjectFolderTree({ projects, folders, dropFolderId, renderProject }: {
+    projects: Project[]; folders: ProjectFolder[]; dropFolderId?: string | null; renderProject: (project: Project) => ReactNode;
 }) {
     return <>{groupProjects(projects, folders).map((group) => group.folder
-        ? <FolderSection key={group.folder.id} folder={group.folder}>{group.projects.map(renderProject)}</FolderSection>
+        ? <FolderSection key={group.folder.id} folder={group.folder} dropActive={dropFolderId === group.folder.id}>{group.projects.map(renderProject)}</FolderSection>
         : <Stack key="unfiled" gap={0}>{group.projects.map(renderProject)}</Stack>)}</>;
 }

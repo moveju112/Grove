@@ -3,7 +3,7 @@
 //! - queue: 지금 턴이 completed로 끝나면 순서대로 새 턴으로 시작한다. 실패·취소·중단으로 끝나면 멈춘 채 남고
 //!   사용자가 시작하거나 지운다(실패한 흐름을 자동으로 이어 가지 않는다).
 //! - steer: 실행 중인 턴의 다음 모델 호출 직전, 그 턴의 도구 호출이 모두 끝난 경계에서 user 메시지로 넣는다.
-//!   반영과 삭제가 같은 transaction이라 입력을 잃거나 두 번 넣지 않는다. 그 경계 없이 턴이 끝나면 queue로 바뀐다.
+//!   도구 없는 응답 뒤에도 같은 턴을 이어 반영한다. 반영과 삭제는 같은 transaction이며, 중단돼 남은 항목은 queue로 보존한다.
 //! - interrupt: 지금 턴을 취소하고 그 메시지를 맨 앞에서 바로 시작한다.
 //! - 보낼 때 실행 중인 턴이 없으면(그 사이 끝남) 종류와 관계없이 바로 새 턴으로 시작한다(입력 유실 방지).
 
@@ -20,11 +20,13 @@ use rusqlite::{Connection, OptionalExtension, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+pub(crate) mod live;
+
 /// 대화당 대기 항목 상한.
 pub const MAX_ITEMS: i64 = 20;
 const TERMINAL: &[&str] = &["completed", "failed", "cancelled", "interrupted"];
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
 pub struct Followup {
     pub id: String,
     pub session_id: String,
@@ -37,12 +39,17 @@ pub struct Followup {
     pub effort: Option<String>,
     pub model: Option<String>,
     pub service_tier: Option<String>,
+    pub native_command: Option<String>,
     /// 자동 시작이 막힌 이유(예: 결과 불명 작업 검토 필요). 사용자가 시작하거나 지울 때까지 남는다.
+    #[ts(type = "{ code: string, message: string } | null")]
     pub last_error: Option<Value>,
+    #[ts(type = "unknown[]")]
     pub attachments: Vec<Value>,
+    #[ts(type = "\"pending\" | \"sending\" | \"rejected\" | \"unknown\"")]
+    pub delivery_state: String,
 }
 
-const COLS: &str = "id, session_id, kind, text, profile_id, agent_id, tools, created_at, last_error, effort, attachments, model, service_tier";
+const COLS: &str = "id, session_id, kind, text, profile_id, agent_id, tools, created_at, last_error, effort, attachments, model, service_tier, native_command, delivery_state";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<Followup> {
     let err: Option<String> = r.get(8)?;
@@ -58,6 +65,8 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<Followup> {
         effort: r.get(9)?,
         model: r.get(11)?,
         service_tier: r.get(12)?,
+        native_command: r.get(13)?,
+        delivery_state: r.get(14)?,
         attachments: serde_json::from_str(&r.get::<_,String>(10)?).map_err(|e|rusqlite::Error::FromSqlConversionFailure(10,rusqlite::types::Type::Text,Box::new(e)))?,
         last_error: err.and_then(|s| serde_json::from_str(&s).ok()),
     })
@@ -95,7 +104,7 @@ pub fn apply_steers(tx: &Connection, now: &str, turn_id: &str, data: &std::path:
     if open > 0 {
         return Ok(0);
     }
-    let items: Vec<_> = list(tx, &session_id)?.into_iter().filter(|f| f.kind == "steer").collect();
+    let items: Vec<_> = list(tx, &session_id)?.into_iter().filter(|f| f.kind == "steer" && f.delivery_state == "pending").collect();
     let mut applied = 0;
     for f in &items {
         tx.execute_batch("SAVEPOINT steer_attachment")?;
@@ -105,22 +114,7 @@ pub fn apply_steers(tx: &Connection, now: &str, turn_id: &str, data: &std::path:
             let turn = crate::runner::get_turn(tx, turn_id)?;
             let profile = crate::models::get_enabled_profile(tx, turn.profile_id.as_deref().ok_or_else(|| ApiError::invalid("모델 프로필이 없습니다"))?)?;
             profile.check_capabilities(false, None, prepared.model_input["images"].as_array().is_some_and(|v| !v.is_empty()))?;
-            let mut content = json!({"text":f.text,"source":{"kind":"steer","followup_id":f.id}});
-            if !prepared.items.is_empty() {
-                content["attachments"] = json!(prepared.items);
-            }
-            let m = crate::sessions::append_message(
-                tx,
-                now,
-                &session_id,
-                "user",
-                &content,
-                Some(turn_id),
-                (!prepared.items.is_empty()).then_some(&prepared.model_input),
-            )?;
-            crate::attachments::bind(tx, now, &m.id, &prepared)?;
-            tx.execute("DELETE FROM followups WHERE id=?1", [&f.id])?;
-            Ok(())
+            append_steer(tx, now, turn_id, f, &prepared)
         })();
         match result {
             Ok(()) => {
@@ -142,6 +136,17 @@ pub fn apply_steers(tx: &Connection, now: &str, turn_id: &str, data: &std::path:
     Ok(applied)
 }
 
+fn append_steer(tx: &Connection, now: &str, turn_id: &str, f: &Followup, prepared: &crate::attachments::Prepared) -> ApiResult<()> {
+    let mut content = json!({"text":f.text,"source":{"kind":"steer","followup_id":f.id}});
+    if !prepared.items.is_empty() { content["attachments"] = json!(prepared.items); }
+    let m = crate::sessions::append_message(tx, now, &f.session_id, "user", &content, Some(turn_id),
+        (!prepared.items.is_empty()).then_some(&prepared.model_input))?;
+    crate::attachments::bind(tx, now, &m.id, prepared)?;
+    tx.execute("UPDATE turns SET definition_snapshot=json_remove(definition_snapshot,'$.native_command') WHERE id=?1", [turn_id])?;
+    tx.execute("DELETE FROM followups WHERE id=?1", [&f.id])?;
+    Ok(())
+}
+
 // 큐 참조를 메시지 참조로 바꾸는 같은 transaction/savepoint 안에서만 호출한다.
 fn prepare_item(tx: &Connection, data: &std::path::Path, f: &Followup, owner: &str) -> ApiResult<crate::attachments::Prepared> {
     let s = crate::sessions::get_active(tx, &f.session_id)?;
@@ -156,6 +161,9 @@ fn prepare_item(tx: &Connection, data: &std::path::Path, f: &Followup, owner: &s
 
 /// 항목 하나를 새 턴으로 시작한다. 실패하면 참조까지 되돌리고 이유를 항목에 남긴다.
 fn start_item(tx: &Connection, now: &str, epoch: &str, f: &Followup, owner: &str, data: &std::path::Path) -> ApiResult<Result<String, ApiError>> {
+    if f.delivery_state != "pending" {
+        return Ok(Err(ApiError::conflict("steer_delivery_unresolved", "전달 중이거나 결과 확인이 필요한 메시지입니다. 대화를 확인한 뒤 새 메시지로 보내세요")));
+    }
     tx.execute_batch("SAVEPOINT followup_start")?;
     let result = (|| -> ApiResult<String> {
         let prepared = prepare_item(tx, data, f, owner)?;
@@ -168,13 +176,14 @@ fn start_item(tx: &Connection, now: &str, epoch: &str, f: &Followup, owner: &str
             &f.text,
             &f.profile_id,
             f.agent_id.as_deref(),
-            f.tools,
+            Some(f.tools),
             None,
             (!prepared.items.is_empty()).then_some(&prepared),
         )?;
         crate::runner::set_turn_model(tx, &t.id, f.model.as_deref())?;
         crate::runner::set_turn_effort(tx, &t.id, f.effort.as_deref())?;
         crate::runner::set_turn_service_tier(tx, &t.id, f.service_tier.as_deref())?;
+        crate::runner::set_turn_native_command(tx, &t.id, f.native_command.as_deref())?;
         tx.execute("DELETE FROM followups WHERE id=?1", [&f.id])?;
         Ok(t.id)
     })();
@@ -227,12 +236,12 @@ pub async fn after_turn(app: &App, turn_id: &str) {
             if active_turn_id(&tx, &session_id)?.is_some() {
                 return Ok(false);
             }
-            // 반영 경계 없이 끝난 steer는 다음 턴이 된다(잃지 않음).
+            // 이미 종료된 턴에 남은 steer도 잃지 않는다. 실패·취소 뒤에는 대기열로 남겨 직접 재시작한다.
             let converted = tx.execute("UPDATE followups SET kind = 'queue' WHERE session_id = ?1 AND kind = 'steer'", params![session_id])?;
             let items = list(&tx, &session_id)?;
             let next = match status.as_str() {
-                "completed" => items.first().cloned(),
-                "cancelled" => items.iter().find(|f| f.kind == "interrupt").cloned(),
+                "completed" => items.first().filter(|f| f.delivery_state == "pending").cloned(),
+                "cancelled" => items.iter().find(|f| f.kind == "interrupt" && f.delivery_state == "pending").cloned(),
                 _ => None,
             };
             let mut started = false;
@@ -266,6 +275,7 @@ pub struct AddBody {
     pub effort: Option<String>,
     pub model: Option<String>,
     pub service_tier: Option<String>,
+    pub native_command: Option<String>,
     #[serde(default)]
     pub attachments: Vec<String>,
 }
@@ -280,17 +290,19 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
     if !["queue", "steer", "interrupt"].contains(&b.kind.as_str()) {
         return Err(ApiError::invalid("kind는 queue·steer·interrupt 중 하나입니다"));
     }
-    let tools = b.tools.unwrap_or(false);
-    if tools && !app.cfg.enable_tool_loop {
-        return Err(ApiError::unsupported("이 서버에서는 모델 도구 실행이 꺼져 있습니다(GROVE_ENABLE_TOOL_LOOP=1)"));
-    }
     let effort = crate::provider::parse_effort(b.effort.as_deref()).map_err(ApiError::invalid)?;
     let service_tier = crate::provider::parse_service_tier(b.service_tier.as_deref()).map_err(ApiError::invalid)?;
     let model = crate::runner::parse_model(b.model.as_deref())?;
-    let mut hash_body=json!({ "s": session_id, "k": b.kind, "t": b.text, "p": b.profile_id, "a": b.agent_id, "tools": tools, "e": effort });
+    let native_command = crate::provider::cli::commands::parse_id(b.native_command.as_deref()).map_err(ApiError::invalid)?;
+    if native_command.is_some() && b.kind == "steer" {
+        return Err(ApiError::invalid("CLI 스킬은 대기열에 추가하거나 중단하고 보내기를 선택하세요"));
+    }
+    let mut hash_body=json!({ "s": session_id, "k": b.kind, "t": b.text, "p": b.profile_id, "a": b.agent_id, "tools": b.tools.unwrap_or(false), "e": effort });
+    if b.tools.is_none() { hash_body["tools_default"] = json!(true); }
     if !b.attachments.is_empty() {hash_body["attachments"]=json!(b.attachments);}
     if let Some(model) = &model { hash_body["model"] = json!(model); }
     if let Some(tier) = &service_tier { hash_body["service_tier"] = json!(tier); }
+    if let Some(command) = &native_command { hash_body["native_command"] = json!(command); }
     let h = idem::body_hash("followup.add", &hash_body);
     let root_owner=p.root_id.clone();
     let data=app.cfg.data_dir.clone();
@@ -306,17 +318,22 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
         let profile_id = room.as_ref().map(|(_,profile)| profile.as_str())
             .or_else(|| binding.as_ref().map(|(profile,_)|profile.as_str())).unwrap_or(&b.profile_id);
         let profile = crate::models::get_enabled_profile(tx, profile_id)?;
-        if service_tier.is_some() && (profile.protocol != "codex_cli" || !profile.capabilities.fast) {
+        let tools = profile.turn_tools(b.tools);
+        if native_command.is_some() && !crate::provider::cli::is_cli(&profile.protocol) {
+            return Err(ApiError::unsupported("CLI 모델에서만 스킬·명령을 사용할 수 있습니다"));
+        }
+        if service_tier.is_some() && (!crate::model_capabilities::is_codex(&profile.protocol) || !profile.capabilities.fast) {
             return Err(ApiError::unsupported("선택한 모델 프로필은 속도 선택을 지원하지 않습니다"));
         }
         let prepared=crate::attachments::prepare(tx,&data,&root_owner,&s.project_id,&b.text,&b.attachments)?;
         profile.check_capabilities(tools, effort.as_deref(), prepared.model_input["images"].as_array().is_some_and(|v| !v.is_empty()))?;
         let Some(active) = active_turn_id(tx, &session_id)? else {
             // 그 사이 턴이 끝났다: 바로 시작한다.
-            let (t, msg) = crate::runner::enqueue_with_attachments(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), tools, None, (!prepared.items.is_empty()).then_some(&prepared))?;
+            let (t, msg) = crate::runner::enqueue_with_attachments(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), Some(tools), None, (!prepared.items.is_empty()).then_some(&prepared))?;
             crate::runner::set_turn_model(tx, &t.id, model.as_deref())?;
             crate::runner::set_turn_effort(tx, &t.id, effort.as_deref())?;
             crate::runner::set_turn_service_tier(tx, &t.id, service_tier.as_deref())?;
+            crate::runner::set_turn_native_command(tx, &t.id, native_command.as_deref())?;
             let t = crate::runner::get_turn(tx, &t.id)?;
             return Ok((StatusCode::ACCEPTED, json!({ "started_turn": t, "message": msg })));
         };
@@ -346,8 +363,8 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
         }
         let id = crate::util::new_id();
         tx.execute(
-            "INSERT INTO followups (id, session_id, kind, text, profile_id, agent_id, tools, owner_key, created_at, effort, attachments, model, service_tier) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-            params![id, session_id, b.kind, b.text, profile.id, b.agent_id, tools, owner, now, effort, json!(prepared.items).to_string(), model, service_tier],
+            "INSERT INTO followups (id, session_id, kind, text, profile_id, agent_id, tools, owner_key, created_at, effort, attachments, model, service_tier, native_command) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+            params![id, session_id, b.kind, b.text, profile.id, b.agent_id, tools, owner, now, effort, json!(prepared.items).to_string(), model, service_tier, native_command],
         )?;
         for item in &prepared.items {tx.execute("INSERT INTO followup_attachment_refs(attachment_id,followup_id) VALUES (?1,?2)",params![item["id"].as_str().unwrap(),id])?;}
         emit(tx, now, &session_id)?;
@@ -382,6 +399,11 @@ pub async fn delete(State(app): State<App>, _p: Principal, Path((session_id, fid
         .call(move |c| {
             let tx = c.transaction()?;
             let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
+            let sending: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM followups WHERE id=?1 AND session_id=?2 AND delivery_state='sending')",
+                params![fid, session_id], |r| r.get(0),
+            )?;
+            if sending { return Err(ApiError::conflict("steer_delivery_in_progress", "Codex에 전달 중입니다. 결과를 확인한 뒤 삭제하세요")); }
             if tx.execute("DELETE FROM followups WHERE id = ?1 AND session_id = ?2", params![fid, session_id])? == 0 {
                 return Err(ApiError::not_found("대기 메시지가 없습니다(이미 반영·시작되었을 수 있습니다)"));
             }

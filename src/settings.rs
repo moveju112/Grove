@@ -27,7 +27,7 @@ pub struct SettingDef {
     pub label: &'static str,
     pub description: &'static str,
     pub keywords: &'static str,
-    /// bool | int | string | text | enum
+    /// bool | int | string | enum | tool_list | model
     pub kind: &'static str,
     pub options: &'static [&'static str],
     pub min: Option<i64>,
@@ -40,10 +40,10 @@ pub struct SettingDef {
 }
 
 pub fn registry() -> Vec<SettingDef> {
-    vec![
+    let mut defs = vec![
         SettingDef {
-            key: crate::computer::ENABLED, menu: "agents", label: "서버 PC 제어",
-            description: "데몬 OS에 맞춰 Windows 또는 Linux X11의 활성 창을 제어합니다. 각 요청은 이번만 승인해야 합니다. 로그인된 사용자 화면이 필요하며 휴대전화·다른 PC·Windows 서비스 Session 0·잠금 화면·Wayland는 제어하지 않습니다. 화면은 선택한 모델 제공자에게 전달되고 대화에 보관됩니다.",
+            key: crate::computer::ENABLED, menu: "workflow", label: "서버 PC 제어",
+            description: "서버 PC의 Windows 또는 Linux X11 앱 창을 전환하고 제어합니다. Linux X11에서는 마우스 포인터가 움직입니다. 한 번 승인하면 해당 대화에서 계속 허용하며 대화 설정에서 해제할 수 있습니다. 로그인된 사용자 화면이 필요하며 휴대전화·다른 PC·Windows 서비스 Session 0·잠금 화면·Wayland는 제어하지 않습니다. 화면은 선택한 모델 제공자에게 전달되고 대화에 보관됩니다.",
             keywords: "computer use desktop screen capture 컴퓨터 화면 마우스 키보드",
             kind: "bool", options: &[], min: None, max: None, default: json!(false),
             scopes: &["server"], applies: "next_turn", advanced: false,
@@ -64,28 +64,13 @@ pub fn registry() -> Vec<SettingDef> {
             advanced: false,
         },
         SettingDef {
-            key: "output.language",
-            menu: "agents",
-            label: "응답 언어",
-            description: "비우면 모델 기본값. 예: 한국어",
-            keywords: "language 언어 korean",
-            kind: "string",
-            options: &[],
-            min: None,
-            max: None,
-            default: json!(""),
-            scopes: &["server", "project", "session"],
-            applies: "next_turn",
-            advanced: false,
-        },
-        SettingDef {
             key: "output.style",
-            menu: "agents",
+            menu: "workflow",
             label: "출력 스타일",
-            description: "모델 기본·간결하게·자세하게 중 선택합니다. 간결한 답변도 중요한 실패·위험·필요한 행동은 생략하지 않습니다.",
-            keywords: "output style concise detailed 출력 스타일 간결 자세히",
+            description: "디폴트는 스타일 지시를 추가하지 않습니다. 디테일은 근거·원리·예외까지, 심플은 핵심 설명까지, 미니멀은 결론·원인·결정적 사실을, 익스트림 미니멀은 보통 한두 문장으로 답합니다. 중요한 실패·위험·확인하지 못한 내용은 유지합니다.",
+            keywords: "output response answer style default detailed simple minimal extreme concise 답변 출력 스타일 디폴트 디테일 심플 미니멀 익스트림 간결 자세히",
             kind: "enum",
-            options: &["default", "concise", "detailed"],
+            options: &["default", "detailed", "simple", "minimal", "extreme-minimal"],
             min: None,
             max: None,
             default: json!("default"),
@@ -95,7 +80,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "context.auto_clear_minutes",
-            menu: "agents",
+            menu: "workflow",
             label: "idle 뒤 모델 context 초기화(분)",
             description: "새 사용자 요청 접수 시 마지막 대화·요청 종료 뒤 이 시간 이상 idle이면 이전 context를 요약 없이 제외합니다. 화면 이력·파일은 지우지 않습니다. 0이면 시간 제한 없이 유지(기본). 프로필별 값이 우선하며 실행·승인·추가 메시지 대기 중에는 초기화하지 않습니다.",
             keywords: "auto clear idle context 자동 초기화 유휴",
@@ -110,7 +95,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "sessions.allow_unrelated",
-            menu: "agents",
+            menu: "workflow",
             label: "모델의 관련 없는 대화 조회 허용",
             description: "기본 끔: recall 도구는 현재 대화와 실제 상속한 원본의 분기 시점까지만 조회합니다. 켜면 같은 프로젝트의 다른 대화를, scope=all이면 모든 프로젝트의 대화를 조회할 수 있습니다. 사용자 직접 검색과는 별도이며 변경 즉시 실행 직전에 적용합니다. 이미 전달한 결과·사본은 회수하지 않습니다.",
             keywords: "session access recall privacy unrelated 대화 접근 조회 회상 개인정보",
@@ -124,55 +109,25 @@ pub fn registry() -> Vec<SettingDef> {
             advanced: true,
         },
         SettingDef {
-            key: "user.profile",
-            menu: "agents",
-            label: "사용자 프로필",
-            description: "모든 프로젝트의 다음 모델 요청에 전달할 배경 정보입니다(최대 4000자). 비밀정보는 넣지 마세요. 지워도 이전 요청 기록은 지우지 않습니다.",
-            keywords: "user profile background experience 사용자 프로필 배경 경험",
-            kind: "text",
+            key: "context.summary_profile",
+            menu: "workflow",
+            label: "압축 요약 모델",
+            description: "Context Compressor 전용 모델이에요. 역할을 켜고 모델을 선택하면 이 모델만 사용해요. 선택하지 않거나 역할을 끄면 기존 대화 모델로 압축해요",
+            keywords: "compact summary 요약 압축 모델",
+            kind: "model",
             options: &[],
             min: None,
-            max: Some(4000),
+            max: None,
             default: json!(""),
             scopes: &["server"],
-            applies: "next_turn",
-            advanced: false,
-        },
-        SettingDef {
-            key: "tools.default_enabled",
-            menu: "agents",
-            label: "도구 기본 사용",
-            description: "새 요청에서 도구 사용을 기본으로 켤지",
-            keywords: "tools 도구 기본",
-            kind: "bool",
-            options: &[],
-            min: None,
-            max: None,
-            default: json!(false),
-            scopes: &["server", "project", "session"],
-            applies: "next_turn",
-            advanced: false,
-        },
-        SettingDef {
-            key: "context.summary_profile",
-            menu: "agents",
-            label: "압축 요약 모델",
-            description: "대화 압축에 쓸 모델 프로필 ID. 비우면 요청에 쓰는 모델을 그대로 쓴다",
-            keywords: "compact summary 요약 압축 모델",
-            kind: "string",
-            options: &[],
-            min: None,
-            max: None,
-            default: json!(""),
-            scopes: &["server", "project"],
             applies: "immediate",
-            advanced: true,
+            advanced: false,
         },
         SettingDef {
             key: "session.auto_title",
-            menu: "agents",
+            menu: "workflow",
             label: "대화 제목 자동 생성",
-            description: "첫 요청이 끝나면 모델로 짧은 제목을 만든다(모델 비용 발생). 끄면 첫 줄을 제목으로 쓴다",
+            description: "매 요청이 끝나면 최근 대화의 목표에 맞춰 짧은 제목을 만들어요. 전용 모델을 선택해야 하며 모델 비용이 발생해요. 직접 바꾼 제목은 유지해요",
             keywords: "title 제목 자동 생성 naming",
             kind: "bool",
             options: &[],
@@ -185,24 +140,24 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "session.title_profile",
-            menu: "agents",
+            menu: "workflow",
             label: "제목 생성 모델",
-            description: "제목 생성에 쓸 모델 프로필 ID. 비우면 그 대화의 마지막 요청 모델을 쓴다",
+            description: "Title Generator 전용 모델이에요. 선택하지 않으면 자동 제목을 만들지 않아요. 대화·메모리 모델을 대신 사용하지 않아요.",
             keywords: "title 제목 모델",
-            kind: "string",
+            kind: "model",
             options: &[],
             min: None,
             max: None,
             default: json!(""),
-            scopes: &["server", "project"],
+            scopes: &["server"],
             applies: "immediate",
-            advanced: true,
+            advanced: false,
         },
         SettingDef {
             key: "agents.orchestration",
             menu: "agents",
-            label: "에이전트 실행 방식",
-            description: "solo=자식 시작·후속 지시 금지, delegated=허용 역할 안에서 기존 위임 승인 정책 적용. 상위 범위의 solo는 하위에서 해제할 수 없습니다. 기존 작업 조회·대기·취소는 유지합니다",
+            label: "오케스트레이션",
+            description: "Solo에서는 기본 보조 역할만 호출하고, 켜면 작업자·검토자에게도 위임합니다. 제목·압축·메모리 정리는 별도로 동작해요. 상위 범위의 Solo 제한과 위임 권한은 유지합니다",
             keywords: "agent orchestration solo delegation 역할 위임",
             kind: "enum",
             options: &["solo", "delegated"],
@@ -215,7 +170,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "agents.allowed_roles",
-            menu: "agents",
+            menu: "workflow",
             label: "위임 허용 역할",
             description: "실제 에이전트 ID를 쉼표로 구분합니다(예: worker,reviewer). *=전체, 빈 문자열=모두 금지. 서버·프로젝트·대화 및 부모 대화의 허용 목록을 교집합으로 적용합니다. 기본 역할 ID는 에이전트 정의에서 확인합니다",
             keywords: "agent role allow policy 역할 위임 허용",
@@ -230,7 +185,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "agents.delegation",
-            menu: "agents",
+            menu: "workflow",
             label: "자식 에이전트 위임",
             description: "모델이 허용된 자식 에이전트를 시작·후속 지시할 때: off=금지, ask=매번 승인, auto=자동(한도 안에서). 상위 범위의 off는 하위에서 해제할 수 없습니다",
             keywords: "agent delegation spawn subagent 위임 서브에이전트",
@@ -245,7 +200,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "tools.mode",
-            menu: "agents",
+            menu: "workflow",
             label: "도구 실행 모드",
             description: "Grove 도구에 적용합니다. 일반 파일 수정·셸 실행은 기본으로 자동 허용합니다. ask=사전 허용하지 않은 도구는 승인 후 실행, read_only=읽기 도구만 허용합니다. 일반 도구 전체 권한을 끄면 파일 수정·셸도 승인 후 실행합니다. 외부 CLI는 이 승인 모드와 별개로 sandbox 없이 실행합니다.",
             keywords: "read-only 읽기 전용 도구 정책 policy",
@@ -260,7 +215,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: FULL_ACCESS,
-            menu: "agents",
+            menu: "workflow",
             label: "일반 도구 전체 권한",
             description: "기본으로 사용합니다. 파일 수정·셸 실행을 매번 승인하지 않고 허용합니다. 끄면 일반 도구도 개별 사전 허용이나 승인이 필요합니다. 셸은 서버 계정 권한으로 프로젝트 밖 파일·네트워크·SSH agent·환경변수의 자격증명에 접근할 수 있습니다. Grove 내부 환경변수는 전달하지 않습니다. 금지 도구·읽기 전용·PC 제어·에이전트 위임 정책은 유지합니다.",
             keywords: "full access permission 권한 자동 승인 파일 셸 실행 SSH 배포 Release",
@@ -275,7 +230,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "tools.deny",
-            menu: "agents",
+            menu: "workflow",
             label: "금지 도구",
             description: "쉼표로 구분한 도구 이름. 어느 범위에 있든 금지가 우선한다",
             keywords: "deny 금지 도구 정책 policy",
@@ -290,7 +245,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "tools.allow",
-            menu: "agents",
+            menu: "workflow",
             label: "승인 없이 실행할 도구",
             description: "쉼표로 구분한 도구 이름. 금지·읽기 전용이 아닐 때만 승인을 건너뛴다(대화 범위에서는 넓힐 수 없음)",
             keywords: "allow 허용 자동 승인 도구 정책 policy",
@@ -425,7 +380,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "exec.shell",
-            menu: "agents",
+            menu: "workflow",
             label: "명령 실행 셸",
             description: "모델 셸 도구·백그라운드 작업·새 터미널에 쓸 셸. 기본은 Linux bash(터미널은 로그인 셸), Windows PowerShell",
             keywords: "shell bash zsh pwsh powershell cmd 셸 터미널",
@@ -440,7 +395,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "exec.max_memory_mb",
-            menu: "agents",
+            menu: "workflow",
             label: "명령 메모리 한도(MB)",
             description: "모델 셸 도구·백그라운드 작업의 메모리 한도. 0이면 제한 없음. Linux는 프로세스마다 주소 공간, Windows는 작업 트리 합계 기준",
             keywords: "memory ram limit 메모리 한도 셸 작업",
@@ -455,7 +410,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "exec.max_cpu_seconds",
-            menu: "agents",
+            menu: "workflow",
             label: "명령 CPU 시간 한도(초)",
             description: "모델 셸 도구·백그라운드 작업이 쓸 수 있는 CPU 시간. 0이면 제한 없음. 경과 시간 제한(timeout)과 별개. Linux는 프로세스마다, Windows는 작업 트리 합계 기준",
             keywords: "cpu limit 한도 셸 작업 시간",
@@ -469,23 +424,8 @@ pub fn registry() -> Vec<SettingDef> {
             advanced: true,
         },
         SettingDef {
-            key: "exec.isolation",
-            menu: "agents",
-            label: "프로세스 격리 수준",
-            description: "항상 소유 프로세스 트리를 격리·정리합니다. Unix는 process group, Windows는 Job Object를 사용합니다. 파일·네트워크 접근을 막는 보안 sandbox는 아닙니다",
-            keywords: "exec isolation process group job sandbox 프로세스 격리",
-            kind: "enum",
-            options: &["process_tree"],
-            min: None,
-            max: None,
-            default: json!("process_tree"),
-            scopes: &["server", "project", "session"],
-            applies: "next_turn",
-            advanced: false,
-        },
-        SettingDef {
             key: "exec.default_cwd",
-            menu: "agents",
+            menu: "workflow",
             label: "기본 작업 위치",
             description: "cwd를 생략한 새 모델 셸·대화 작업의 실행 root(worktree 포함) 안 상대 디렉터리입니다. '/'로 구분하고 '..'·절대 경로는 사용할 수 없습니다. 명시한 cwd가 우선하며 기본값 '.'은 실행 root입니다. 프로젝트 script는 확인한 root에서 실행합니다. 터미널·외부 CLI에는 적용하지 않습니다",
             keywords: "exec cwd directory working default 기본 작업 위치 디렉터리",
@@ -512,6 +452,21 @@ pub fn registry() -> Vec<SettingDef> {
             scopes: &["server"],
             applies: "immediate",
             advanced: true,
+        },
+        SettingDef {
+            key: "storage.history_compress_after_days",
+            menu: "server",
+            label: "대화 기록 자동 압축(일)",
+            description: "마지막 대화 활동이나 열람 후 이 기간이 지나면 원문을 자동 압축해요. 기본은 7일이에요. 대화를 열면 필요한 부분만 원문 그대로 복원하며, 다시 사용하지 않으면 같은 기간 후 재압축해요. 제목·미리보기·검색은 그대로 사용할 수 있어요.",
+            keywords: "history compression archive 저장 공간 대화 기록 압축 보관 기간",
+            kind: "int",
+            options: &[],
+            min: Some(1),
+            max: Some(3650),
+            default: json!(7),
+            scopes: &["server"],
+            applies: "immediate",
+            advanced: false,
         },
         SettingDef {
             key: "storage.task_log_retention_days",
@@ -545,7 +500,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "context.auto_compact_percent",
-            menu: "agents",
+            menu: "workflow",
             label: "자동 압축 기준(%)",
             description: "context 사용률이 이 값을 넘으면 다음 턴 전에 압축을 제안한다. 0이면 끔",
             keywords: "compact 압축 context",
@@ -560,7 +515,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "context.input_reserve_tokens",
-            menu: "agents",
+            menu: "workflow",
             label: "입력 여유분(token)",
             description: "응답 최대 출력 외에 도구 결과·다음 입력을 위해 비워 둘 token. 여유가 모자라면 자동 압축이 켜져 있을 때 다음 턴 전에 압축한다",
             keywords: "buffer reserve 여유 context token",
@@ -575,7 +530,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "context.compaction_checks",
-            menu: "agents",
+            menu: "workflow",
             label: "압축 후보 추가 검사",
             description: "최소 대상 생략·원문보다 긴 요약 거부·연속 실패 정지를 쓴다. 끄면 이전 압축 방식으로 돌아가며 원문·기존 요약·되감기 보호는 그대로다",
             keywords: "compact 압축 policy 정책 rollback",
@@ -590,7 +545,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "context.compact_min_tokens",
-            menu: "agents",
+            menu: "workflow",
             label: "자동 압축 최소 대상(token)",
             description: "요약할 이전 대화가 이보다 작으면 자동 압축을 건너뛰고 원문을 그대로 보낸다. 수동 압축에는 적용하지 않는다",
             keywords: "compact 압축 minimum 최소",
@@ -605,7 +560,7 @@ pub fn registry() -> Vec<SettingDef> {
         },
         SettingDef {
             key: "context.auto_compact_max_failures",
-            menu: "agents",
+            menu: "workflow",
             label: "자동 압축 연속 실패 한도",
             description: "마지막 압축 이후 자동 압축이 이 횟수만큼 실패하면 같은 대화의 자동 압축을 멈춘다. 압축이 한 번 성공하면 다시 센다",
             keywords: "compact 압축 retry 실패",
@@ -618,7 +573,36 @@ pub fn registry() -> Vec<SettingDef> {
             applies: "next_turn",
             advanced: true,
         },
-    ]
+    ];
+    defs.extend([
+        SettingDef {
+            key: "memory.enabled", menu: "workflow", label: "메모리 자동 정리",
+            description: "완료된 대화에서 재사용할 사실·결정·미완료 작업을 Maintainer로 정리해 회상 검색에 남겨요. 전용 모델이 필요하며 모델 비용이 발생해요. Claude/Codex 자체 메모리 파일은 바꾸지 않아요.",
+            keywords: "memory recap maintainer 메모리 기억 정리", kind: "bool", options: &[],
+            min: None, max: None, default: json!(false), scopes: &["server", "project"], applies: "immediate", advanced: false,
+        },
+        SettingDef {
+            key: "memory.profile", menu: "workflow", label: "메모리 정리 모델",
+            description: "Maintainer 전용 모델이에요. 선택하지 않으면 메모리를 정리하지 않아요. 제목·대화 모델을 대신 사용하지 않아요.",
+            keywords: "memory recap maintainer 메모리 모델", kind: "model", options: &[],
+            min: None, max: None, default: json!(""), scopes: &["server"], applies: "immediate", advanced: false,
+        },
+        SettingDef {
+            key: "memory.interval_minutes", menu: "workflow", label: "메모리 정리 간격(분)",
+            description: "새로 완료된 대화가 있을 때만 이 간격으로 정리해요. 서버 재시작 뒤에도 처리 위치를 이어가요.",
+            keywords: "memory maintainer interval 메모리 주기 간격", kind: "int", options: &[],
+            min: Some(1), max: Some(1440), default: json!(10), scopes: &["server", "project"], applies: "immediate", advanced: true,
+        },
+    ]);
+    for &(id, key, label) in crate::definitions::ROLE_PROFILES {
+        defs.push(SettingDef {
+            key, menu: if crate::definitions::execution("agent", id) == "helper" { "workflow" } else { "agents" }, label,
+            description: "이 역할의 전용 모델이에요. 비우면 부모 대화의 모델을 사용해요. 선택한 모델을 사용할 수 없으면 다른 모델로 전환하지 않아요.",
+            keywords: "agent role model 에이전트 역할 모델", kind: "model", options: &[],
+            min: None, max: None, default: json!(""), scopes: &["server"], applies: "next_turn", advanced: false,
+        });
+    }
+    defs
 }
 
 pub fn def(key: &str) -> Option<SettingDef> {
@@ -627,10 +611,12 @@ pub fn def(key: &str) -> Option<SettingDef> {
 
 pub fn validate(d: &SettingDef, v: &Value) -> ApiResult<()> {
     let ok = match d.kind {
+        "model" => crate::models::ModelSelection::parse(v).is_ok(),
         "bool" => v.is_boolean(),
         "int" => v.as_i64().is_some_and(|n| d.min.is_none_or(|m| n >= m) && d.max.is_none_or(|m| n <= m)),
-        "string" | "text" => v.is_null() || v.as_str().is_some_and(|s| s.chars().count() <= d.max.unwrap_or(200) as usize),
-        "enum" => v.as_str().is_some_and(|s| d.options.contains(&s)),
+        "string" => v.is_null() || v.as_str().is_some_and(|s| s.chars().count() <= d.max.unwrap_or(200) as usize),
+        // 기존 concise 저장값과 이전 클라이언트는 simple의 호환 별칭으로 받는다.
+        "enum" => v.as_str().is_some_and(|s| d.options.contains(&s) || (d.key == "output.style" && s == "concise")),
         // 알려진 도구 이름만(오타로 정책이 조용히 무시되지 않게)
         "tool_list" => v.is_null() || v.as_str().is_some_and(|s| s.len() <= 500 && tool_names(s).all(|n| crate::tools::spec(n).is_some())),
         _ => false,
@@ -680,12 +666,6 @@ fn exec_option_reason(key: &str, value: &str) -> Option<String> {
             });
             (!executable).then(|| format!("{program} 실행 파일이 서버 PATH에 없거나 실행할 수 없습니다"))
         }
-        "exec.isolation" => match value {
-            "none" => Some("프로세스 소유권·트리 정리는 해제할 수 없습니다".into()),
-            "sandbox" => Some("파일·네트워크 sandbox는 아직 구현되지 않았습니다".into()),
-            "process_tree" if !cfg!(any(unix, windows)) => Some("이 서버 OS에서는 프로세스 트리 격리를 지원하지 않습니다".into()),
-            _ => None,
-        },
         _ => None,
     }
 }
@@ -828,19 +808,8 @@ pub fn full_access(c: &Connection, project: &str, session: &str) -> ApiResult<bo
 pub async fn get_registry(_p: Principal) -> Json<Vec<Value>> {
     Json(registry().iter().map(|d| {
         let mut value = json!(d);
-        if matches!(d.key, "exec.shell" | "exec.isolation") {
-            let choices = if d.key == "exec.isolation" { &["process_tree", "none", "sandbox"][..] } else { d.options };
-            let mut available = vec![];
-            let mut unavailable = vec![];
-            for &choice in choices {
-                if let Some(reason) = exec_option_reason(d.key, choice) {
-                    unavailable.push(json!({ "value": choice, "reason": reason }));
-                } else {
-                    available.push(choice);
-                }
-            }
-            value["options"] = json!(available);
-            value["unavailable_options"] = json!(unavailable);
+        if d.key == "exec.shell" {
+            value["options"] = json!(d.options.iter().filter(|choice| exec_option_reason(d.key, choice).is_none()).collect::<Vec<_>>());
         }
         if matches!(d.key, "exec.max_memory_mb" | "exec.max_cpu_seconds")
             && !cfg!(any(target_os = "linux", windows))
@@ -895,9 +864,6 @@ pub async fn put(
     Json(b): Json<PutSetting>,
 ) -> ApiResult<Response> {
     let d = def(&key).ok_or_else(|| ApiError::not_found("알 수 없는 설정입니다"))?;
-    if key == crate::computer::ENABLED && !p.is_owner {
-        return Err(ApiError::forbidden("서버 PC 제어는 소유자만 설정할 수 있습니다"));
-    }
     if !d.scopes.contains(&scope.as_str()) {
         return Err(ApiError::invalid(format!("{}은(는) {scope} 범위에서 바꿀 수 없습니다", d.label)));
     }
@@ -927,9 +893,11 @@ pub async fn put(
         if key == crate::agent_policy::ROLES && !b.value.is_null() {
             crate::agent_policy::validate_roles(tx, &b.value)?;
         }
-        if matches!(key.as_str(), "model.default_profile" | "context.summary_profile")
-            && let Some(profile) = b.value.as_str().filter(|value| !value.is_empty())
-        {
+        if d.kind == "model" && !b.value.is_null() {
+            if let Some(selection) = crate::models::ModelSelection::parse(&b.value)? {
+                selection.runtime(tx)?;
+            }
+        } else if key == "model.default_profile" && let Some(profile) = b.value.as_str().filter(|s| !s.is_empty()) {
             crate::models::get_enabled_profile(tx, profile)?;
         }
         if key == "exec.default_cwd" && let Some(value) = b.value.as_str() {
@@ -943,31 +911,29 @@ pub async fn put(
             };
             if let Some(root) = root { checked_cwd(&root, value)?; }
         }
-        tx.execute(
-            "INSERT INTO settings (scope, scope_id, key, value, revision, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
-             ON CONFLICT(scope, scope_id, key) DO UPDATE SET value = ?4, revision = ?5, updated_at = ?6",
-            params![scope, scope_id, key, (!b.value.is_null()).then(|| b.value.to_string()), cur + 1, now],
-        )?;
+        record_change(tx, now, &actor, (&scope, &scope_id, &key), (project.as_deref(), session.as_deref()), &b, old_value)?;
         let v = resolve_key(tx, &d, project.as_deref(), session.as_deref())?;
-        events::append(tx, now, "setting.changed", project.as_deref(), session.as_deref(), &json!({ "scope": scope, "scope_id": scope_id, "key": key }))?;
-        // 프로필 원문은 감사 로그에 중복 저장하지 않는다.
-        let audit = if key == "user.profile" {
-            json!({"old_present":old_value.as_str().is_some_and(|s| !s.trim().is_empty()),
-                "new_present":b.value.as_str().is_some_and(|s| !s.trim().is_empty()),"revision":cur + 1})
-        } else {
-            json!({"old":old_value,"new":b.value,"revision":cur + 1})
-        };
-        crate::audit::record(
-            tx,
-            now,
-            &actor,
-            "setting.changed",
-            &format!("{scope}:{scope_id}:{key}"),
-            audit,
-        )?;
         Ok((StatusCode::OK, json!({ "item": v, "applies": d.applies })))
     })
     .await
+}
+
+/// 이미 검증한 변경을 같은 transaction의 설정·이벤트·감사 기록에 저장한다.
+pub(crate) fn record_change(
+    tx: &rusqlite::Transaction<'_>, now: &str, actor: &Principal,
+    (scope, scope_id, key): (&str, &str, &str), (project, session): (Option<&str>, Option<&str>),
+    change: &PutSetting, old_value: Value,
+) -> ApiResult<()> {
+    let revision = change.expected_revision + 1;
+    tx.execute(
+        "INSERT INTO settings (scope, scope_id, key, value, revision, updated_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+         ON CONFLICT(scope, scope_id, key) DO UPDATE SET value = ?4, revision = ?5, updated_at = ?6",
+        params![scope, scope_id, key, (!change.value.is_null()).then(|| change.value.to_string()), revision, now],
+    )?;
+    events::append(tx, now, "setting.changed", project, session, &json!({ "scope": scope, "scope_id": scope_id, "key": key }))?;
+    crate::audit::record(tx, now, actor, "setting.changed", &format!("{scope}:{scope_id}:{key}"),
+        json!({"old":old_value,"new":change.value,"revision":revision}))?;
+    Ok(())
 }
 
 #[cfg(test)]

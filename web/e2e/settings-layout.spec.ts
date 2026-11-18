@@ -59,8 +59,9 @@ for (const width of [320, 390, 1280]) {
                     });
                     expect(shown, "설정 메뉴는 한 화면에 최소 두 항목이 온전히 보여야 한다").toBeGreaterThanOrEqual(2);
                 }
-                for (const [area, name] of [["daemon", "모델·키"], ["daemon", "에이전트·워크플로우"],
-                    ["local", "화면·입력"], ["local", "기기·연결"], ["daemon", "기기·연결"], ["daemon", "서버·데이터"]] as const) {
+                for (const [area, name] of [["daemon", "모델·키"], ["daemon", "대화·컨텍스트"], ["daemon", "워크플로우·메모리"], ["daemon", "위임 에이전트"],
+                    ["daemon", "도구·권한"], ["daemon", "실행·한도"],
+                    ["local", "화면·입력"], ["local", "알림"], ["local", "단축키"], ["local", "기기·연결"], ["daemon", "기기·연결"], ["daemon", "서버·데이터"]] as const) {
                     await settings.getByRole("tab", { name: area === "local" ? "로컬 설정" : "데몬 설정", exact: true }).click();
                     const button = settings.getByRole("button", { name, exact: true });
                     await button.click();

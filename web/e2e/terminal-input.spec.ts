@@ -46,7 +46,7 @@ async function openTerminal(page: Page) {
     return { view, id: terminal.id };
 }
 
-test("모바일 보조키·한글 확정·붙여넣기를 실제 PTY 바이트로 한 번씩 전달한다", async ({ page }) => {
+test("모바일 보조키·한글 확정·붙여넣기를 실제 PTY 바이트로 한 번씩 전달한다", async ({ page }, info) => {
     const { view, id } = await openTerminal(page);
     try {
         const textarea = view.locator("textarea.xterm-helper-textarea");
@@ -85,10 +85,16 @@ test("모바일 보조키·한글 확정·붙여넣기를 실제 PTY 바이트�
         await received("ed959ceab880");
         await paste(textarea, "붙임");
         await received("1b5b3230307eebb699ec9e841b5b3230317e");
-        page.once("dialog", (dialog) => dialog.dismiss());
         await paste(textarea, "reject\nthis");
-        page.once("dialog", (dialog) => dialog.accept());
+        const confirmation = page.getByRole("dialog", { name: "여러 줄 붙여넣기", exact: true });
+        await expect(confirmation).toBeVisible();
+        await confirmation.getByRole("checkbox", { name: "다시 묻지 않기", exact: true }).check();
+        await page.screenshot({ path: info.outputPath("terminal-paste-confirm-390.png"), animations: "disabled" });
+        await confirmation.getByRole("button", { name: "취소", exact: true }).click();
         await paste(textarea, "a\nb");
+        await expect(confirmation).toBeVisible();
+        await expect(confirmation.getByRole("checkbox", { name: "다시 묻지 않기", exact: true })).not.toBeChecked();
+        await confirmation.getByRole("button", { name: "붙여넣기", exact: true }).click();
         await received("1b5b3230307e610d621b5b3230317e");
         // 다음 입력의 누적 값이 취소한 paste 및 중복 조합 문자열의 부재도 확인한다.
         await page.keyboard.press("Control+C");

@@ -22,10 +22,6 @@ export function useSettingsLink(
         setRequest(null);
         setError(null);
     }, []);
-    const open = useCallback((key: string) => {
-        cancel();
-        setRequest({ key, scope, prepared: false });
-    }, [cancel, scope]);
 
     useEffect(() => {
         if (!request) return;
@@ -63,7 +59,7 @@ export function useSettingsLink(
     }, [scope]);
 
     return {
-        root, open, cancel, ready, error,
+        root, cancel, ready, error,
         pending: request !== null && request.scope === scope,
         key: request?.prepared && request.scope === scope ? request.key : undefined,
     };

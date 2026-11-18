@@ -1,11 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { apiCall, ensureProjects, login, selectChoice } from "./helpers";
 
-type P = { id: string; revision: number; pinned_at: string | null };
 type L = { id: string; name: string; revision: number };
 
-// PROJECT-008: 프로젝트 고정, 라벨 만들기·다중 할당·필터(라벨 없음 포함)·이름/색 수정·충돌 오류·삭제 영향 확인.
-test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지운다", async ({ page }) => {
+// PROJECT-008: 라벨 하위 메뉴에서 만들기·다중 할당·필터(라벨 없음 포함)·이름/색 수정·충돌 오류·삭제 영향 확인.
+test("Label 하위 메뉴에서 라벨을 붙이고 거르며 고치고 지운다", async ({ page }) => {
     const { a, b } = await ensureProjects();
     const suffix = Date.now().toString(36);
     const urgent = `급함${suffix}`, front = `화면${suffix}`;
@@ -15,31 +14,32 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
         const row = (name: string) => side.getByTestId("project-row").filter({ hasText: name }).first();
         const projectButton = row(a.name).getByRole("button", { name: new RegExp(a.name) }).first();
 
-        // 고정하면 맨 위, 새로고침 뒤에도 유지
-        await row(b.name).getByRole("button", { name: "프로젝트 메뉴" }).click();
-        await page.getByRole("dialog", { name: `${b.name} 메뉴`, exact: true }).getByRole("button", { name: "맨 위에 고정" }).click();
-        await expect(side.getByTestId("project-row").first()).toContainText(b.name);
-        await expect(row(b.name).getByLabel("고정됨")).toBeVisible();
-        await page.getByRole("dialog", { name: `${b.name} 메뉴`, exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
-
-        // 메뉴에서 새 라벨 만들고 붙이기
+        // Label 하위 메뉴에서 새 라벨 만들고 붙이기
         await row(a.name).getByRole("button", { name: "프로젝트 메뉴" }).click();
         const menu = page.getByRole("dialog", { name: `${a.name} 메뉴` });
+        await expect(menu.getByRole("button", { name: "+ 새 라벨" })).toBeHidden();
+        await menu.getByRole("button", { name: "Label", exact: true }).click();
         await menu.getByRole("button", { name: "+ 새 라벨" }).click();
         await menu.getByLabel("새 라벨 이름").fill(urgent);
         await selectChoice(menu.getByLabel("라벨 색"), "red");
         await menu.getByRole("button", { name: "만들고 붙이기" }).click();
         await expect(projectButton.getByTestId(`label-chip-${urgent}`)).toBeVisible();
         await expect(menu.getByTestId(`label-assign-${urgent}`)).toHaveAttribute("aria-checked", "true");
+        await menu.getByTestId(`label-assign-${urgent}`).click();
+        await expect(menu.getByTestId(`label-assign-${urgent}`)).toHaveAttribute("aria-checked", "false");
+        await expect(projectButton.getByTestId(`label-chip-${urgent}`)).toHaveCount(0);
+        await menu.getByTestId(`label-assign-${urgent}`).click();
+        await expect(menu.getByTestId(`label-assign-${urgent}`)).toHaveAttribute("aria-checked", "true");
         // 같은 이름(대소문자·공백 무시)은 거절하고 입력을 보존한다
         await menu.getByRole("button", { name: "+ 새 라벨" }).click();
         await menu.getByLabel("새 라벨 이름").fill(` ${urgent} `);
         await menu.getByRole("button", { name: "만들고 붙이기" }).click();
-        await expect(menu.getByRole("alert")).toContainText("같은 이름");
+        await expect(page.getByRole("dialog", { name: "Label", exact: true }).getByRole("alert")).toContainText("같은 이름");
         await expect(menu.getByLabel("새 라벨 이름")).toHaveValue(` ${urgent} `);
         await menu.getByLabel("새 라벨 이름").fill(front);
         await menu.getByRole("button", { name: "만들고 붙이기" }).click();
         await expect(projectButton.getByTestId(`label-chip-${front}`)).toBeVisible();
+        await page.keyboard.press("Escape");
         await menu.getByRole("button", { name: "닫기" }).click();
 
         // 필터: 라벨 하나, 라벨 없음, 해제. 필터는 새로고침 뒤에도 유지된다
@@ -81,7 +81,5 @@ test("프로젝트를 고정하고 라벨로 거르며 라벨을 고치고 지�
     } finally {
         const labels = await apiCall<L[]>("GET", "/labels");
         for (const l of labels.filter((x) => x.name.endsWith(suffix))) await apiCall("DELETE", `/labels/${l.id}?expected_revision=${l.revision}`);
-        const cur = await apiCall<P>("GET", `/projects/${b.id}`);
-        if (cur.pinned_at) await apiCall("PATCH", `/projects/${b.id}`, { expected_revision: cur.revision, pinned: false });
     }
 });

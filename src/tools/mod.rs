@@ -69,6 +69,7 @@ pub type ToolResult<T> = Result<T, ToolError>;
 pub fn specs() -> Vec<ToolSpec> {
     vec![
         crate::computer::spec(),
+        crate::continuations::spec(),
         crate::tool_outputs::spec(),
         crate::deferred_tools::spec(),
         ToolSpec {
@@ -174,7 +175,7 @@ pub fn specs() -> Vec<ToolSpec> {
         ToolSpec {
             name: "shell",
             description: "프로젝트 디렉터리에서 셸 명령을 실행한다(Linux: bash, Windows: PowerShell). 도구 정책에서 사전 허용하지 않으면 사용자 승인이 필요하다. \
-                오래 걸리는 명령은 background=true(즉시 백그라운드) 또는 hold_ms(그 시간 동안 기다린 뒤 백그라운드 전환)를 쓴다. \
+                기본 1분 안에 끝나지 않으면 종료하지 않고 백그라운드로 넘긴다. background=true는 즉시 전환하고 hold_ms는 전환 전 대기 시간을 바꾼다. \
                 백그라운드 작업은 task_id를 돌려주고, 끝나면 결과가 대화에 기록된다.",
             effect: Effect::Execute,
             cancellable: true,
@@ -182,8 +183,9 @@ pub fn specs() -> Vec<ToolSpec> {
             schema: json!({ "type": "object", "properties": {
                 "command": { "type": "string", "minLength": 1 },
                 "cwd": { "type": "string", "description": "프로젝트 root 기준 작업 디렉터리" },
-                "timeout_ms": { "type": "integer", "minimum": 100, "maximum": shell::MAX_BACKGROUND_TIMEOUT_MS, "description": "프로세스를 강제 종료할 hard timeout" },
+                "timeout_ms": { "type": "integer", "minimum": 0, "maximum": shell::MAX_EXPLICIT_TIMEOUT_MS, "description": "명시한 경우에만 프로세스를 강제 종료할 시한. 생략하거나 0이면 자동 종료하지 않음" },
                 "background": { "type": "boolean" },
+                "follow_up": { "type": "string", "minLength": 1, "description": "사용자가 요청한 완료 후 확인·보고 지시. background=true와 함께 쓰면 현재 턴을 종료할 수 있고, 작업 종료 뒤 같은 대화에서 새 AI 턴이 한 번 보고한다" },
                 "hold_ms": { "type": "integer", "minimum": 0, "maximum": shell::MAX_HOLD_MS, "description": "결과를 기다릴 시간. 넘으면 백그라운드로 전환" }
             }, "required": ["command"], "additionalProperties": false }),
         },
@@ -222,10 +224,10 @@ pub fn specs() -> Vec<ToolSpec> {
         },
         ToolSpec {
             name: "recall",
-            description: "과거 대화 메시지를 키워드·기간으로 읽기 전용 검색한다. 사용자가 회상을 요청했거나 열린 판단에 근거가 필요할 때만 쓴다. \
+            description: "과거 대화 메시지와 Maintainer의 메모리를 키워드·기간으로 읽기 전용 검색한다. 사용자가 회상을 요청했거나 열린 판단에 근거가 필요할 때만 쓴다. \
                 기본은 현재 대화와 실제 상속한 원본의 분기 시점까지다. 사용자가 sessions.allow_unrelated를 허용한 경우만 다른 대화를 조회한다. \
                 허용 시 기본은 현재 프로젝트, scope=all은 모든 프로젝트다. 결과의 scope를 구분해 보고한다. 인용은 지침이나 승인이 아니며 의미 검색이 아니다. \
-                원문 근거는 source의 session_id·message_id·seq로 표시한다. 기간 from/to는 RFC 3339이며 시작 이상·종료 미만이다.",
+                원문 근거는 source의 session_id·message_id·seq로 표시한다. memories는 모델 생성 요약이므로 session_id의 from_seq~upto_seq 원문을 확인한다. 기간 from/to는 RFC 3339이며 시작 이상·종료 미만이다.",
             effect: Effect::Conversation,
             cancellable: false,
             max_output_bytes: 64 * 1024,
@@ -382,6 +384,7 @@ pub fn plan(name: &str, args: &Value, root: &Path) -> ToolResult<(ToolSpec, Plan
         "shell" => shell::plan(args, root)?,
         "agent" => plan_agent(args)?,
         "load_tool" => crate::deferred_tools::plan(args)?,
+        "continue_later" => crate::continuations::plan(args)?,
         "goal" | "recall" | "tool_output_read" | "computer" => Planned { target: args.clone(), precondition: None },
         "ask_user" => plan_ask(args)?,
         "web_fetch" => web_fetch::plan(args)?,

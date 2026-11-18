@@ -1,14 +1,14 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProfile, login, openDetails, profileAction, state } from "./helpers";
+import { apiCall, ensureProfile, login, openDetails, openSettings, profileAction, state } from "./helpers";
 
 // AUTH-001: 설정에서 모델 프로필의 연결 상태를 확인한다(생성 요청 없이).
 test("모델 프로필 연결 확인은 생성 요청 없이 상태와 지연을 보인다", async ({ page }) => {
     await ensureProfile();
     const before = ((await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json()) as unknown[]).length;
     await login(page);
-    await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    await openSettings(page);
     await page.getByLabel("설정 검색").fill("프로필");
-    const item = page.locator("li").filter({ hasText: "fixture-model" }).first();
+    const item = page.getByTestId("model-profile").filter({ hasText: "fixture-model" }).first();
     await openDetails(item);
     await profileAction(item, "연결 확인");
     await expect(item.getByTestId("profile-check")).toContainText("연결됨");
@@ -26,7 +26,7 @@ test("모델과 공유 키를 다른 화면에서 바꾸면 예전 연결 성공
     });
     try {
         await login(page);
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await openSettings(page);
         await page.getByLabel("설정 검색").fill("프로필");
         const row = page.getByTestId("model-profile").filter({ hasText: name });
         await openDetails(row);

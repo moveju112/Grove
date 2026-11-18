@@ -1,16 +1,18 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
-import { useRef, useState } from "react";
+import { lazy, Suspense, useRef, useState } from "react";
 import { ApiError, api, newKey } from "../api/client";
 import type { AgentBackendCatalog, ModelProfile } from "../api/generated";
 import { useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useCapability } from "../state/capabilities";
-import { AgentLogin } from "./AgentLogin";
+import { LoadingBar } from "./LoadingScreen";
 import { DetailDialog } from "./ui/Controls";
 import { HintText } from "../design/HintText";
 import { Icon } from "./icons";
+
+const AgentLogin = lazy(async () => ({ default: (await import("./AgentLogin")).AgentLogin }));
 
 /// 에이전트 연결만 준비한다. 대화 생성과 모델 호출은 사용자가 보내기를 눌러야 시작된다.
 export function AgentConnect({ disabled, onConnected }: { disabled: boolean; onConnected: (profile: ModelProfile) => void }) {
@@ -38,7 +40,7 @@ export function AgentConnect({ disabled, onConnected }: { disabled: boolean; onC
             onConnected(profile);
         } catch (cause) {
             setError(cause instanceof ApiError && cause.status === 403
-                ? "소유자 기기에서 에이전트를 연결해 주세요."
+                ? "등록한 기기에서 에이전트를 연결해 주세요."
                 : cause instanceof Error ? cause.message : "에이전트 연결 실패");
         } finally {
             busy.current = false;
@@ -56,13 +58,15 @@ export function AgentConnect({ disabled, onConnected }: { disabled: boolean; onC
             ))}
         {catalog.data && <HintText type="supporting" color="secondary"
             hint={catalog.data.backends.every((backend) => !backend.read_only)
-                ? "보낸 코딩 요청은 CLI 자체 도구로 프로젝트 수정·검사를 실행해요. Grove의 개별 도구 승인은 거치지 않으며 중단해도 이미 바뀐 파일은 유지돼요."
+                ? "Codex는 Grove의 도구 권한 설정을 따라요. Claude Code는 자체 도구를 사용해요. 중단해도 이미 바뀐 파일은 유지돼요."
                 : "프로젝트 수정·검사를 사용하려면 서버 업데이트가 필요해요."}>
             {catalog.data.backends.every((backend) => !backend.read_only) ? "코딩 가능" : "서버 CLI"}
         </HintText>}
         {authSupported && <DetailDialog label="에이전트 계정 로그인" title="계정 로그인" trigger={<Icon name="user" size={16} />} appearance="icon" onOpenChange={setAccountsOpen}>
-            {accountsOpen && catalog.data?.backends.filter((backend) => backend.installed).map((backend) =>
-                <AgentLogin key={backend.protocol} protocol={backend.protocol} name={backend.name} disabled={disabled} />)}
+            {accountsOpen && <Suspense fallback={<LoadingBar label="계정 로그인 여는 중…" />}>
+                {catalog.data?.backends.filter((backend) => backend.installed).map((backend) =>
+                    <AgentLogin key={backend.protocol} protocol={backend.protocol} name={backend.name} disabled={disabled} />)}
+            </Suspense>}
         </DetailDialog>}
         {!catalog.data && !catalog.error && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">에이전트 확인 중…</GroveText>}
         {!!catalog.error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">에이전트를 확인하지 못했어요. <GroveButton type="button" variant="secondary" density="compact" onClick={catalog.reload}>다시 확인</GroveButton></GroveText>}

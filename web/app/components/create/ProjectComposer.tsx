@@ -27,6 +27,10 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
         const focusInput = () => {
             const node = ref.current;
             if (!node || node.closest("[hidden], [inert]")) return;
+            if (node.closest('[data-testid="pane"]')?.getAttribute("data-focused") === "false") {
+                document.removeEventListener("close", focusInput, true);
+                return;
+            }
             const input = node.querySelector("textarea");
             input?.focus();
             if (input === document.activeElement) document.removeEventListener("close", focusInput, true);
@@ -54,7 +58,7 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
                 true, { result_unknown: true, idempotency_key: key });
         }
         if (o.mode === "save") await api.post(`/sessions/${s.id}/messages`, { text, attachments }, { key: `${key}:send` });
-        else await api.post(`/sessions/${s.id}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier }, { key: `${key}:send`, requires: modelOptionCapabilities(o) });
+        else await api.post(`/sessions/${s.id}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, { key: `${key}:send`, requires: modelOptionCapabilities(o) });
         open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
     };
     return <Grid ref={ref} gap={1} xstyle={chatLayout.surface} data-testid="compose-surface">
@@ -63,6 +67,6 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
                 options={[{ value: "", label: "워크스페이스: 프로젝트 폴더" },
                     ...spaces.map((w) => ({ value: w.id, label: `워크스페이스: ${w.name}` }))]} />
         )}
-        <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId={tabId} onSend={start} disabled={disabled} />
+        <Composer projectId={projectId} resourceKey={`project:${projectId}`} copyId={tabId} onSend={start} disabled={disabled} worktreeId={target || undefined} />
     </Grid>;
 }

@@ -36,35 +36,29 @@ fn manifest(root: &std::path::Path, key: &SigningKey, channel: &str, version: &s
 }
 
 #[tokio::test]
-async fn defaults_are_notification_only_and_devices_are_read_only() {
+async fn defaults_enable_auto_apply_and_devices_are_read_only() {
     let s = TestServer::start().await;
     let (status, initial) = s.get(SETTINGS).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(initial["server"], json!({
         "version": grove::VERSION, "protocol": grove::PROTOCOL_VERSION, "schema": grove::store::MIGRATIONS.len(),
     }));
-    assert_eq!(initial["settings"], json!({ "channel": "stable", "auto_apply": "notify_only", "revision": 0 }));
+    assert_eq!(initial["settings"], json!({ "channel": "stable", "auto_apply": "minor", "revision": 0 }));
     assert_eq!(initial["last_check"], Value::Null);
     assert_eq!(initial["automatic_application"], "not_enabled");
     assert_eq!(initial["can_manage"], true);
-    let (_, device) = s.post("/api/v1/devices", json!({ "name": "update-read-only" })).await;
+    let device = s.registered_device("update settings").await;
     let token = device["token"].as_str().unwrap();
     let response = s.raw(Method::GET, SETTINGS, None, None, Some(token)).await;
     assert_eq!(response.status(), StatusCode::OK);
     let read: Value = response.json().await.unwrap();
-    assert_eq!(read["can_manage"], false);
+    assert_eq!(read["can_manage"], true);
     assert_eq!(read["server"], initial["server"]);
-    for (method, path, body) in [
-        (Method::PUT, SETTINGS, json!({ "channel": "beta", "auto_apply": "minor", "expected_revision": 0 })),
-        (Method::POST, CHECK, json!({ "expected_revision": 0 })),
-    ] {
-        let response = s.raw(method, path, Some(body), Some("device-cannot-write"), Some(token)).await;
-        assert_eq!(response.status(), StatusCode::FORBIDDEN);
-        let error: Value = response.json().await.unwrap();
-        assert_eq!(error["error"]["code"], "forbidden");
-    }
+    let response = s.raw(Method::PUT, SETTINGS,
+        Some(json!({ "channel": "beta", "auto_apply": "minor", "expected_revision": 0 })), Some("device-write"), Some(token)).await;
+    assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(s.raw(Method::GET, SETTINGS, None, None, Some("")).await.status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(s.get(SETTINGS).await.1["settings"], initial["settings"]);
+    assert_eq!(s.get(SETTINGS).await.1["settings"]["channel"], "beta");
     assert_eq!(s.get(SETTINGS).await.1["last_check"], Value::Null);
 }
 
@@ -91,9 +85,10 @@ async fn owner_saves_with_revision_idempotency_and_restart_persistence() {
     }
     s.restart().await;
     assert_eq!(s.get(SETTINGS).await.1["settings"], json!({ "channel": "beta", "auto_apply": "patch", "revision": 1 }));
-    let (status, _) = s.send(Method::PUT, SETTINGS, json!({ "channel": "stable", "auto_apply": "minor", "expected_revision": 1 })).await;
+    let (status, _) = s.send(Method::PUT, SETTINGS, json!({ "channel": "stable", "auto_apply": "notify_only", "expected_revision": 1 })).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(s.get(SETTINGS).await.1["automatic_application"], "not_enabled");
+    s.restart().await;
+    assert_eq!(s.get(SETTINGS).await.1["settings"], json!({ "channel": "stable", "auto_apply": "notify_only", "revision": 2 }));
 }
 
 #[tokio::test]

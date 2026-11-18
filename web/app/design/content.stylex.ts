@@ -17,7 +17,6 @@ export const contentStyles = stylex.create({
     // QR과 원문 이미지·텍스트는 전문 renderer의 native 출력이다.
     qr: { display: "block", maxWidth: "100%", height: "auto" },
     previewImage: { maxWidth: "100%", maxHeight: "70dvh", objectFit: "contain" },
-    attachmentImage: { maxWidth: "min(100%, 360px)", maxHeight: 280, objectFit: "contain" },
     attachmentText: { maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
     // 외부 문서 격리용 iframe은 Astryx에 대응 표면이 없다.
     artifactFrame: {

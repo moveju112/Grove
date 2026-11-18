@@ -16,8 +16,15 @@ export function elapsedMs(sample: TimingSample, monotonicNow: number, advance: b
     return Math.max(0, sample.timing.total_ms) + (advance && sample.timing.running ? Math.max(0, monotonicNow - sample.receivedAt) : 0);
 }
 
-export function seconds(ms: number): string {
-    return `${Math.floor(Math.max(0, ms) / 1000)}초`;
+export function formatDuration(ms: number): string {
+    const totalSeconds = Math.floor(Math.max(0, ms) / 1000);
+    if (totalSeconds < 60) return `${totalSeconds}초`;
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor(totalSeconds / 60) % 60;
+    const seconds = totalSeconds % 60;
+    return hours > 0
+        ? `${hours}h ${minutes}m ${seconds}s`
+        : `${minutes}m ${seconds}s`;
 }
 
 export function startTimingTimer(enabled: boolean, tick: () => void): () => void {

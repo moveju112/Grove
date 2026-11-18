@@ -11,20 +11,26 @@
 
 업데이트는 release 패키지 → 로컬 키로 서명한 manifest → `grove update apply`다.
 실행 중 작업이 있으면 updater가 적용을 미루며(deferred), 실패하면 이전 release로 복구한다.
+현재 대화만 실행 중인 것이 확인되면 대화 완료 후 독립 프로세스가 같은 패키지의 배포를 이어간다.
 
 로컬 반영 뒤에는 같은 패키지의 웹 자산을 Cloudflare Pages(폰이 여는 공개 주소)에도 배포하고 실제 제공 자산을 대조한다.
 """
 import argparse
+from contextlib import closing
 import hashlib
 import json
 import os
+from pathlib import Path
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import time
 import tempfile
+from typing import NamedTuple
 import urllib.request
+import uuid
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOME = os.path.expanduser("~")
@@ -39,6 +45,9 @@ UNIT_DIR = os.path.join(HOME, ".config", "systemd", "user")
 TARGET = "linux-x64"
 PAGES_PROJECT = "grove"
 PAGES_ORIGIN = "https://grove.choondoggy.com"
+# 줄바꿈 없는 current에서 실패하던 기존 Grove launcher의 SHA-256.
+PREVIOUS_CLI_LAUNCHER_SHA256 = "8db69f1c9d911f65bdbf01a8a5ded011879422a3973003816123ff69fee14424"
+BUSY_KEYS = {"active_turns", "awaiting_approval", "running_tasks", "running_terminals", "schedules_within_10m", "running_schedule_runs"}
 
 RUN_SH = f"""#!/bin/sh
 # grove-opus.service 진입점: current 포인터의 release를 실행한다(deploy_local.py가 생성).
@@ -140,17 +149,255 @@ def package():
 
 
 def daemon_pids():
-    """설치 디렉터리의 release를 실행 중인 grove 프로세스."""
+    """설치 디렉터리의 release를 serve 모드로 실행 중인 데몬."""
     out = []
     prefix = os.path.join(INSTALL, "releases") + os.sep
     for pid in filter(str.isdigit, os.listdir("/proc")):
         try:
             exe = os.readlink(f"/proc/{pid}/exe")
+            if not exe.startswith(prefix):
+                continue
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                args = f.read().split(b"\0")
         except OSError:
             continue
-        if exe.startswith(prefix):
+        if args[1:2] == [b"serve"]:
             out.append(int(pid))
     return out
+
+
+def process_info(pid):
+    with open(f"/proc/{pid}/status") as f:
+        parent = next(int(line.split()[1]) for line in f if line.startswith("PPid:"))
+    with open(f"/proc/{pid}/cmdline", "rb") as f:
+        args = [os.fsdecode(arg) for arg in f.read().split(b"\0") if arg]
+    return parent, args
+
+
+class DeploymentCaller(NamedTuple):
+    turn_id: str
+    task_id: str | None = None
+
+
+def process_task_id(pid):
+    # 호출자의 환경이 아닌 설치 데몬 직속 프로세스의 서버 실행 표식을 읽는다.
+    with open(f"/proc/{pid}/environ", "rb") as f:
+        prefix = b"GROVE_TASK_ID="
+        return next((os.fsdecode(entry[len(prefix):]) for entry in f.read().split(b"\0") if entry.startswith(prefix)), None)
+
+
+def deployment_caller():
+    """Grove 셸 실행 기록 또는 외부 CLI의 native 매핑을 실행 중 턴과 대조한다."""
+    native = {os.environ[key] for key in ("CODEX_THREAD_ID", "CODEX_SESSION_ID") if os.environ.get(key)}
+    pid = os.getpid()
+    try:
+        daemons = set(daemon_pids())
+        for _ in range(64):
+            if pid <= 1 or pid in daemons:
+                return None
+            parent, args = process_info(pid)
+            # Claude의 신규 대화와 이어쓰기 모두 공식 CLI 인자에서 식별한다.
+            if any(os.path.basename(arg) == "claude" or arg.endswith("/@anthropic-ai/claude-code/cli.js") for arg in args[:2]):
+                for flag in ("--session-id", "--resume"):
+                    if flag in args and args.index(flag) + 1 < len(args):
+                        native.add(args[args.index(flag) + 1])
+            if parent in daemons:
+                break
+            pid = parent
+        else:
+            return None
+        task_id = process_task_id(pid)
+        database = Path(DATA, "grove.db").resolve().as_uri() + "?mode=ro"
+        with closing(sqlite3.connect(database, uri=True, timeout=2)) as connection:
+            if task_id is not None:
+                row = connection.execute(
+                    "SELECT t.id FROM tasks k JOIN tool_calls c ON c.id=k.call_id AND c.session_id=k.session_id "
+                    "JOIN turns t ON t.id=c.turn_id AND t.session_id=c.session_id "
+                    "WHERE k.id=? AND k.pid=? AND k.status='running' AND c.name='shell' AND t.status='running'",
+                    (task_id, pid),
+                ).fetchone()
+                return DeploymentCaller(row[0], task_id) if row else None
+            if not native:
+                return None
+            rows = connection.execute(
+                "SELECT DISTINCT t.id FROM turns t JOIN cli_sessions c ON c.session_id=t.session_id AND c.profile_id=t.profile_id "
+                "WHERE t.status='running' AND c.native_id IN (" + ",".join("?" for _ in native) + ")", tuple(native),
+            ).fetchall()
+        return DeploymentCaller(rows[0][0]) if len(rows) == 1 else None
+    except (OSError, StopIteration, ValueError, sqlite3.Error):
+        return None
+
+
+def update_readiness():
+    token = Path(DATA, "owner-token").read_text().strip()
+    request = urllib.request.Request(f"http://{DAEMON}/api/v1/admin/update-readiness", headers={"Authorization": "Bearer " + token})
+    with urllib.request.urlopen(request, timeout=5) as response:
+        return json.load(response)
+
+
+def continuation_api(path, body, key):
+    """Local authenticated, idempotent receipt calls; never print credentials or replay deployment."""
+    token = Path(DATA, "owner-token").read_text().strip()
+    request = urllib.request.Request(f"http://{DAEMON}/api/v1/{path}", data=json.dumps(body).encode(),
+                                     headers={"Authorization": "Bearer " + token, "Content-Type": "application/json", "Idempotency-Key": key})
+    with urllib.request.urlopen(request, timeout=10) as response:
+        return json.load(response)
+
+
+def reserve_deployment_report(turn_id, unit):
+    try:
+        return continuation_api(f"turns/{turn_id}/continuations", {
+            "action": "external", "request_id": unit, "delay_seconds": 86400,
+            "prompt": "사용자가 요청한 배포의 실제 결과를 확인해서 같은 대화에 보고해줘. 서버·CLI·웹 검증 범위를 구분하고 미완료·실패·결과 불명도 정확히 알려줘. 새 배포나 수정 명령은 실행하지 마.",
+        }, unit + "-reserve")["id"]
+    except urllib.error.HTTPError as error:
+        # First upgrade from a version without this capability: register after cutover.
+        if error.code != 404:
+            raise
+        return None
+
+
+def report_deployment(directory, request, state, **details):
+    """The outer deployment, including Pages verification, owns the completion signal."""
+    turn = request.get("turn_id")
+    unit = request.get("unit")
+    if not turn or not unit:
+        return
+    try:
+        continuation = request.get("continuation_id")
+        if not continuation:
+            continuation = reserve_deployment_report(turn, unit)
+            if not continuation:
+                raise RuntimeError("continuations_unavailable")
+            request["continuation_id"] = continuation
+            write(os.path.join(directory, "request.json"), json.dumps(request, indent=2) + "\n", mode=0o600)
+        result = "completed" if state == "applied" else "unknown" if state == "incomplete" else "failed"
+        continuation_api(f"continuations/{continuation}/complete", {
+            "status": result, "detail": json.dumps({"deployment_state": state, **details}, ensure_ascii=False),
+        }, unit + "-complete")
+        write(os.path.join(directory, "report.json"), json.dumps({"status": "accepted", "continuation_id": continuation}) + "\n", mode=0o600)
+    except Exception as error:
+        # Deployment outcome remains intact. A failed callback must never rerun deployment.
+        write(os.path.join(directory, "report.json"), json.dumps({"status": "unconfirmed", "error_type": type(error).__name__}) + "\n", mode=0o600)
+        print("배포 결과의 AI 보고 접수를 확인하지 못했습니다. report.json과 원래 대화의 후속 작업 상태를 확인하세요", file=sys.stderr)
+
+
+def work_matches(readiness, active_turns, running_tasks=0):
+    if not isinstance(readiness, dict):
+        return False
+    busy = readiness.get("busy")
+    expected = {"active_turns": active_turns, "running_tasks": running_tasks}
+    return (isinstance(busy, dict) and BUSY_KEYS.issubset(busy)
+            and readiness.get("idle") is (active_turns == 0 and running_tasks == 0)
+            and all(type(value) is int and value == expected.get(key, 0) for key, value in busy.items()))
+
+
+def deployment_state(directory, state, **details):
+    write(os.path.join(directory, "state.json"), json.dumps({
+        "state": state, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **details,
+    }, ensure_ascii=False, indent=2) + "\n", mode=0o600)
+
+
+def check_archive(archive, receipt):
+    with open(archive, "rb") as f:
+        digest = hashlib.file_digest(f, "sha256").hexdigest()
+    if digest != receipt["archive_sha256"] or os.path.getsize(archive) != receipt["size"]:
+        sys.exit("준비한 배포 패키지의 크기·hash가 receipt와 다릅니다")
+
+
+def queue_deployment(archive, receipt, manifest, turn_id, skip_pages):
+    """완성된 패키지만 보관하고 서버 자손이 아닌 systemd user unit으로 인계한다."""
+    check_archive(archive, receipt)
+    parent = os.path.join(INSTALL, "deployments")
+    os.makedirs(parent, mode=0o700, exist_ok=True)
+    directory = tempfile.mkdtemp(prefix="deploy-", dir=parent)
+    unit = "grove-deploy-" + uuid.uuid4().hex[:12]
+    manifest = dict(manifest)
+    if not skip_pages and not manifest.get("commit"):
+        manifest["commit"] = subprocess.check_output(["git", "-C", REPO, "rev-parse", "HEAD"], text=True).strip()
+    for name in ("deploy_local.py", "grove_local.sh"):
+        destination = os.path.join(directory, "scripts", name)
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        shutil.copyfile(os.path.join(REPO, "scripts", name), destination)
+    if not skip_pages:
+        dependencies = os.path.join(REPO, "relay", "node_modules")
+        if not os.path.isfile(os.path.join(dependencies, ".bin", "wrangler")):
+            sys.exit("배포 인계에는 기존 relay/node_modules의 Wrangler가 필요합니다")
+        os.makedirs(os.path.join(directory, "relay"))
+        os.symlink(os.path.realpath(dependencies), os.path.join(directory, "relay", "node_modules"))
+    frozen = os.path.join(directory, os.path.basename(archive))
+    shutil.copyfile(archive, frozen)
+    check_archive(frozen, receipt)
+    request = {"archive": frozen, "receipt": receipt, "manifest": manifest, "turn_id": turn_id,
+               "previous_release": Path(INSTALL, "current").read_text().strip(), "skip_pages": skip_pages, "unit": unit}
+    request["continuation_id"] = reserve_deployment_report(turn_id, unit)
+    write(os.path.join(directory, "request.json"), json.dumps(request, indent=2) + "\n", mode=0o600)
+    deployment_state(directory, "waiting_for_turn", unit=unit)
+    log = os.path.join(directory, "deployment.log")
+    write(log, "", mode=0o600)
+    command = ["systemd-run", "--user", "--unit=" + unit, "--collect", "--property=UMask=0077",
+               "--property=StandardOutput=append:" + log, "--property=StandardError=inherit", "--working-directory=" + directory,
+               "--setenv=PATH=" + os.environ.get("PATH", os.defpath), sys.executable,
+               os.path.join(directory, "scripts", "deploy_local.py"), "--resume-deployment", directory]
+    try:
+        subprocess.run(command, check=True, capture_output=True)
+    except (OSError, subprocess.CalledProcessError):
+        deployment_state(directory, "failed", reason="handoff_start_failed")
+        report_deployment(directory, request, "failed", reason="handoff_start_failed")
+        sys.exit("독립 배포 프로세스를 시작하지 못했습니다. 운영 서버는 유지됩니다")
+    print(json.dumps({"deployment": "waiting_for_turn", "message": "현재 대화 완료 후 유휴 상태에서 서버·CLI·웹 배포를 이어갑니다",
+                      "directory": directory, "unit": unit}, ensure_ascii=False, indent=2))
+
+
+def wait_for_deployment(request, timeout=1800):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        try:
+            database = Path(DATA, "grove.db").resolve().as_uri() + "?mode=ro"
+            with closing(sqlite3.connect(database, uri=True, timeout=2)) as connection:
+                row = connection.execute("SELECT status FROM turns WHERE id=?", (request["turn_id"],)).fetchone()
+            if not row or row[0] not in ("queued", "running", "awaiting_approval", "completed"):
+                return "caller_not_completed"
+            if row[0] == "completed" and work_matches(update_readiness(), 0):
+                return None
+        except (OSError, ValueError, sqlite3.Error):
+            pass
+        time.sleep(2)
+    return "idle_timeout"
+
+
+def resume_deployment(directory):
+    request = {}
+    try:
+        request = json.loads(Path(directory, "request.json").read_text())
+        reason = wait_for_deployment(request)
+        if reason:
+            deployment_state(directory, "deferred", reason=reason)
+            report_deployment(directory, request, "deferred", reason=reason)
+            return 3
+        expected = f"{request['manifest']['version']}-{request['receipt']['archive_sha256'][:12]}"
+        current = Path(INSTALL, "current").read_text().strip()
+        if current not in (request["previous_release"], expected):
+            deployment_state(directory, "deferred", reason="operating_release_changed")
+            report_deployment(directory, request, "deferred", reason="operating_release_changed")
+            return 3
+        check_archive(request["archive"], request["receipt"])
+        deployment_state(directory, "applying")
+        deploy_prepared(request["archive"], request["receipt"], request["manifest"], skip_pages=request["skip_pages"])
+        deployment_state(directory, "applied", release=expected, pages=None if request["skip_pages"] else PAGES_ORIGIN)
+        report_deployment(directory, request, "applied", release=expected, pages=None if request["skip_pages"] else PAGES_ORIGIN)
+        return 0
+    except SystemExit as error:
+        code = error.code if isinstance(error.code, int) and error.code else 1
+        if isinstance(error.code, str):
+            print(error.code, file=sys.stderr)
+        deployment_state(directory, "deferred" if code == 3 else "incomplete", exit_code=code)
+        report_deployment(directory, request, "deferred" if code == 3 else "incomplete", exit_code=code)
+        return code
+    except Exception as error:
+        deployment_state(directory, "incomplete", reason="deployment_failed", error_type=type(error).__name__)
+        report_deployment(directory, request, "incomplete", reason="deployment_failed")
+        return 1
 
 
 def port_busy(addr):
@@ -180,6 +427,9 @@ def status():
         "browser": f"http://{WEB}/", "web_status": web, "proxied_health": proxied,
         "daemon_processes": pids, "release": open(os.path.join(INSTALL, "current")).read().strip() if os.path.exists(os.path.join(INSTALL, "current")) else None,
     }
+    jobs = sorted(Path(INSTALL, "deployments").glob("deploy-*/state.json"), key=lambda p: p.stat().st_mtime, reverse=True)[:5]
+    if jobs:
+        out["deployment_jobs"] = [{"directory": str(p.parent), **json.loads(p.read_text())} for p in jobs]
     print(json.dumps(out, ensure_ascii=False, indent=2))
     return out
 
@@ -293,7 +543,10 @@ def main():
     ap.add_argument("--install-cli", metavar="BINARY", help="검증한 CLI만 설치하고 grove 명령 등록(데몬·웹·DB 변경 없음)")
     ap.add_argument("--force", action="store_true", help="실행 중 작업이 있어도 적용(작업 중단)")
     ap.add_argument("--skip-pages", action="store_true", help="공개 Pages 배포 생략(완료 보고에 미반영으로 표시)")
+    ap.add_argument("--resume-deployment", help=argparse.SUPPRESS)
     a = ap.parse_args()
+    if a.resume_deployment:
+        sys.exit(resume_deployment(os.path.abspath(a.resume_deployment)))
     if a.status:
         status()
         return
@@ -301,12 +554,28 @@ def main():
         install_cli(os.path.abspath(a.install_cli))
         return
     archive, receipt, manifest = package()
+    current = Path(INSTALL, "current")
+    expected = f"{manifest['version']}-{receipt['archive_sha256'][:12]}"
+    if not a.force and current.exists() and current.read_text().strip() != expected:
+        caller = deployment_caller()
+        if caller:
+            try:
+                readiness = update_readiness()
+            except (OSError, ValueError):
+                readiness = {}
+            if work_matches(readiness, 1, running_tasks=int(caller.task_id is not None)):
+                queue_deployment(archive, receipt, manifest, caller.turn_id, a.skip_pages)
+                return
+    deploy_prepared(archive, receipt, manifest, force=a.force, skip_pages=a.skip_pages)
+
+
+def deploy_prepared(archive, receipt, manifest, force=False, skip_pages=False):
     if not os.path.exists(os.path.join(INSTALL, "current")):
         first_install(archive)
     else:
         signed = signed_manifest(grove_bin(), archive, receipt, manifest)
         cmd = [grove_bin(), "update", "apply", "--install", INSTALL, "--manifest", signed]
-        if a.force:
+        if force:
             cmd.append("--force")
         r = subprocess.run(cmd, capture_output=True, text=True)
         print(r.stdout.strip() or r.stderr.strip())
@@ -321,7 +590,7 @@ def main():
     if out["release"] != f"{manifest['version']}-{receipt['archive_sha256'][:12]}":
         sys.exit(f"운영 release가 새 패키지가 아닙니다(적용 보류 또는 실패): {out['release']}")
     install_cli(grove_bin())
-    if a.skip_pages:
+    if skip_pages:
         print("공개 Pages: 미반영(--skip-pages)")
     else:
         publish_pages(archive, manifest)
@@ -338,7 +607,8 @@ def install_cli(binary):
         if os.path.islink(launcher):
             sys.exit(f"다른 grove 명령을 덮어쓰지 않았습니다: {launcher}")
         with open(launcher, "rb") as current, open(template, "rb") as expected:
-            if current.read() != expected.read():
+            installed = current.read()
+            if installed != expected.read() and hashlib.sha256(installed).hexdigest() != PREVIOUS_CLI_LAUNCHER_SHA256:
                 sys.exit(f"다른 grove 명령을 덮어쓰지 않았습니다: {launcher}")
     targets = [(binary, os.path.join(INSTALL, "cli", "grove")), (template, launcher)]
     for source, target in targets:

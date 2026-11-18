@@ -135,7 +135,7 @@ test("파일 올리기 응답을 잃고 새로고침해도 원문 없이 같은 
     expect(stored).toContain(name);
     expect(stored).not.toContain("data_base64");
     await page.reload();
-    files = await openFiles();
+    await expect(files).toBeVisible();
     await files.getByRole("button", { name: "같은 업로드 결과 확인" }).click();
     await expect(files.getByRole("button", { name: "같은 업로드 결과 확인" })).toBeHidden();
     expect(sent).toHaveLength(2);

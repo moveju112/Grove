@@ -4,6 +4,28 @@ use crate::provider::{self, ChatMsg, ToolCall};
 use rusqlite::Connection;
 use serde_json::{Value, json};
 
+/// 완료된 실제 요청과 마지막 공개 답변만 뽑는다. 도구·추론·중간 답변은 보조 모델에 보내지 않는다.
+pub(crate) fn completed_exchanges(c: &Connection, session_id: &str, after: i64, limit: i64, recent: bool) -> ApiResult<Vec<Value>> {
+    let order = if recent { "DESC" } else { "ASC" };
+    let mut st = c.prepare(&format!(
+        "SELECT t.id,u.seq,a.seq,substr(json_extract(u.content,'$.text'),1,2000), \
+         substr(json_extract(a.content,'$.text'),1,4000),a.created_at \
+         FROM turns t JOIN message_history u ON u.id=t.request_message_id \
+         JOIN message_history a ON a.turn_id=t.id AND a.session_id=t.session_id AND a.role='assistant' \
+         AND a.seq=(SELECT MAX(m.seq) FROM messages m WHERE m.turn_id=t.id AND m.role='assistant' AND m.rewound_at IS NULL) \
+         WHERE t.session_id=?1 AND t.status='completed' AND u.rewound_at IS NULL AND a.rewound_at IS NULL \
+         AND u.role='user' AND u.seq>?2 AND length(trim(COALESCE(json_extract(a.content,'$.text'),'')))>0 \
+         ORDER BY u.seq {order} LIMIT ?3"
+    ))?;
+    let mut rows = st.query_map(rusqlite::params![session_id, after, limit], |r| Ok(json!({
+        "turn_id":r.get::<_,String>(0)?, "from_seq":r.get::<_,i64>(1)?, "upto_seq":r.get::<_,i64>(2)?,
+        "user":r.get::<_,Option<String>>(3)?.unwrap_or_default(), "assistant":r.get::<_,String>(4)?,
+        "source_at":r.get::<_,String>(5)?,
+    })))?.collect::<Result<Vec<_>,_>>()?;
+    if recent { rows.reverse(); }
+    Ok(rows)
+}
+
 mod dedup;
 
 const PREVIEW_CHARS: usize = 4000;
@@ -45,12 +67,13 @@ struct Output {
     items: Vec<Entry>,
     total: usize,
     estimated_chars: usize,
+    attachment_messages: Vec<String>,
 }
 
 impl Output {
     fn new(page: Option<(usize, usize)>) -> Self {
         let (offset, limit) = page.unwrap_or((0, usize::MAX));
-        Self { preview: page.is_some(), offset, limit, current: None, items: vec![], total: 0, estimated_chars: 0 }
+        Self { preview: page.is_some(), offset, limit, current: None, items: vec![], total: 0, estimated_chars: 0, attachment_messages: vec![] }
     }
 
     fn selected(&self) -> bool {
@@ -251,10 +274,16 @@ fn read(conn: &Connection, session: &str, upto: Option<i64>, page: Option<(usize
     // 본문을 모으지 않고 제한된 fingerprint만 먼저 수집한다. 분기·되감기·압축 경계는
     // 실제 입력과 같은 visitor를 쓰므로 경계 밖 결과로 중복을 판단하지 않는다.
     let mut duplicates = dedup::Duplicates::default();
-    crate::sessions::visit_model_history(conn, session, upto, &mut |role, input| duplicates.observe(role, input))?;
+    crate::sessions::visit_model_history(conn, session, upto, &mut |_, role, input| {
+        duplicates.observe(role, input);
+        Ok(())
+    })?;
     let replacements = duplicates.replacements(conn)?;
     let mut builder = Builder::new(page);
-    crate::sessions::visit_model_history(conn, session, upto, &mut |role, input| {
+    crate::sessions::visit_model_history(conn, session, upto, &mut |message, role, input| {
+        if !builder.output.preview && role == "user" {
+            if let Some(message) = message { builder.output.attachment_messages.push(message.to_owned()); }
+        }
         if let Some(output) = (role == "tool").then(|| input["call_id"].as_str())
             .flatten().and_then(|id| replacements.get(id)) {
             let mut reduced = input.clone();
@@ -263,6 +292,7 @@ fn read(conn: &Connection, session: &str, upto: Option<i64>, page: Option<(usize
         } else {
             builder.feed(role, input);
         }
+        Ok(())
     })?;
     Ok(builder.finish())
 }
@@ -271,26 +301,44 @@ pub(crate) fn model_chat(conn: &Connection, session: &str, upto: Option<i64>) ->
     Ok(read(conn, session, upto, None)?.items.into_iter().map(|entry| entry.message).collect())
 }
 
+pub(crate) fn runtime_chat(conn: &Connection, session: &str, data: &std::path::Path) -> ApiResult<Vec<ChatMsg>> {
+    runtime_output(conn, data, read(conn, session, None, None)?)
+}
+
+fn runtime_output(conn: &Connection, data: &std::path::Path, output: Output) -> ApiResult<Vec<ChatMsg>> {
+    let mut messages: Vec<ChatMsg> = output.items.into_iter().map(|entry| entry.message).collect();
+    crate::attachments::hydrate_local_paths(conn, data, &output.attachment_messages, &mut messages)?;
+    Ok(messages)
+}
+
 /// CLI resume은 이번 요청만 전달한다. 이전 취소 요청과 이번 user 메시지가 병합되면
 /// 중단한 지시를 다시 실행할 수 있으므로 접수된 메시지 경계 양쪽을 따로 정규화한다.
-pub(crate) fn cli_chat(conn: &Connection, session: &str, request_message: &str) -> ApiResult<Vec<ChatMsg>> {
+pub(crate) fn cli_chat(
+    conn: &Connection, session: &str, request_message: &str, data: &std::path::Path,
+) -> ApiResult<Vec<ChatMsg>> {
     let start: i64 = conn.query_row(
         "SELECT seq FROM messages WHERE id=?1 AND session_id=?2 AND rewound_at IS NULL",
         rusqlite::params![request_message, session], |row| row.get(0),
     )?;
-    let mut messages = model_chat(conn, session, Some(start - 1))?;
+    let mut output = read(conn, session, Some(start - 1), None)?;
     let mut builder = Builder::new(None);
     let mut statement = conn.prepare(
-        "SELECT role, CASE WHEN model_input IS NOT NULL AND json_valid(model_input) THEN model_input ELSE content END \
-         FROM messages WHERE session_id=?1 AND rewound_at IS NULL AND seq>=?2 ORDER BY seq",
+        "SELECT id, role, CASE WHEN model_input IS NOT NULL AND json_valid(model_input) THEN model_input ELSE content END \
+         FROM message_history WHERE session_id=?1 AND rewound_at IS NULL AND seq>=?2 ORDER BY seq",
     )?;
-    let rows = statement.query_map(rusqlite::params![session, start], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    let rows = statement.query_map(rusqlite::params![session, start], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?))
+    })?;
     for row in rows {
-        let (role, input) = row?;
-        builder.feed(&role, &serde_json::from_str(&input).unwrap_or(Value::Null));
+        let (message, role, input) = row?;
+        let input = serde_json::from_str(&input).unwrap_or(Value::Null);
+        if role == "user" { builder.output.attachment_messages.push(message); }
+        builder.feed(&role, &input);
     }
-    messages.extend(builder.finish().items.into_iter().map(|entry| entry.message));
-    Ok(messages)
+    let current = builder.finish();
+    output.items.extend(current.items);
+    output.attachment_messages.extend(current.attachment_messages);
+    runtime_output(conn, data, output)
 }
 
 pub(crate) fn estimated_tokens(conn: &Connection, session: &str) -> ApiResult<u64> {
@@ -322,6 +370,58 @@ pub(crate) fn preview(conn: &Connection, session: &str, offset: usize, limit: us
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cli_resume_receives_historical_attachment_paths_in_the_current_user_input() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().to_path_buf();
+        let db = crate::store::Db::open(&data.join("grove.db")).unwrap();
+        db.call_sync(move |c| {
+            let now = "2026-01-01T00:00:00Z";
+            c.execute(
+                "INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES ('p','fixture',?1,?2,?2)",
+                rusqlite::params![data.to_str().unwrap(), now],
+            )?;
+            c.execute(
+                "INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES ('s','p','fixture',?1,?1)",
+                [now],
+            )?;
+            let bytes = b"\0video fixture";
+            let sha = crate::util::sha256_hex(bytes);
+            let path = crate::attachments::blob_path(&data, &sha);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, bytes).unwrap();
+            c.execute(
+                "INSERT INTO attachments(id,project_id,owner_id,name,mime,size,sha256,storage_key,created_at) \
+                 VALUES ('a','p','owner','recording.mp4','application/octet-stream',?1,?2,?3,?4)",
+                rusqlite::params![bytes.len() as i64, sha, format!("{}/{}", &sha[..2], sha), now],
+            )?;
+            // 기존 저장 형식에도 새 경로 필드는 필요하지 않다.
+            let old = crate::sessions::append_message(
+                c, now, "s", "user", &json!({"text":"영상을 확인해"}), None,
+                Some(&json!({"text":"영상을 확인해\n[Binary attachment: contents are not included in this text input]"})),
+            )?;
+            c.execute(
+                "INSERT INTO attachment_refs(attachment_id,message_id) VALUES ('a',?1)",
+                [old.id.as_str()],
+            )?;
+            crate::sessions::append_message(c, now, "s", "assistant", &json!({"text":"확인 중"}), None, None)?;
+            let current = crate::sessions::append_message(
+                c, now, "s", "user", &json!({"text":"이어서 확인해"}), None, None,
+            )?;
+            let request = current.id.as_str();
+            for messages in [cli_chat(c, "s", request, &data)?, runtime_chat(c, "s", &data)?] {
+                let ChatMsg::User { text: first, .. } = &messages[0] else { panic!("user expected") };
+                assert!(!first.contains("local_path"), "옛 메시지 본문을 고치지 않는다");
+                let ChatMsg::User { text, .. } = messages.last().unwrap() else { panic!("user expected") };
+                assert!(text.starts_with("이어서 확인해"));
+                assert!(text.contains(&serde_json::to_string(&crate::util::canonical(&path).unwrap()).unwrap()));
+                assert!(text.contains("recording.mp4"));
+                assert_eq!(text.matches("\"local_path\"").count(), 1);
+            }
+            Ok(())
+        }).unwrap();
+    }
 
     #[test]
     fn result_notes_quote_role_spoofing_as_data_without_losing_the_original_content() {

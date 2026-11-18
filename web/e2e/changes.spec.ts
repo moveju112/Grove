@@ -4,12 +4,11 @@ import { dirname, join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { apiCall, ensureProjects, login, openTool, state } from "./helpers";
 
-type Call = { id: string; status: string; revision: number };
+type Call = { id: string; status: string };
 
-/// 사용자 직접 도구 요청을 만들고 승인한 뒤 끝날 때까지 기다린다(모델 없이).
+/// 기본 전체 권한으로 자동 실행되는 직접 도구 요청이 끝날 때까지 기다린다(모델 없이).
 async function runTool(sid: string, name: string, args: object) {
     const c = await apiCall<Call>("POST", `/sessions/${sid}/tool-requests`, { name, args });
-    await apiCall("POST", `/tool-calls/${c.id}/decision`, { decision: "approve", expected_revision: c.revision });
     for (let i = 0; i < 100; i++) {
         const cur = await apiCall<Call>("GET", `/tool-calls/${c.id}`);
         if (cur.status === "succeeded") return;
@@ -20,7 +19,10 @@ async function runTool(sid: string, name: string, args: object) {
 }
 
 // GIT-011~014: 파일 변경 이력에서 patch를 보고, 되돌리고 다시 적용하며, 바깥 변경은 충돌로 알린다.
-test("파일 변경 이력에서 patch를 보고 되돌리기·다시 적용하며 바깥 변경은 충돌로 알린다", async ({ page }) => {
+for (const width of [1400, 390]) {
+test.describe(`${width}px 변경 이력`, () => {
+test.use({ viewport: { width, height: 844 }, isMobile: width === 390, hasTouch: width === 390 });
+test("파일 변경 이력에서 patch를 보고 되돌리기·다시 적용하며 바깥 변경은 충돌로 알린다", async ({ page }, info) => {
     const { a } = await ensureProjects();
     const projects = await apiCall<{ id: string; root_path: string }[]>("GET", "/projects");
     const root = projects.find((p) => p.id === a.id)!.root_path;
@@ -33,6 +35,7 @@ test("파일 변경 이력에서 patch를 보고 되돌리기·다시 적용하�
     expect(readFileSync(join(root, file), "utf8")).toBe("v2\n");
 
     await login(page);
+    if (width === 390) await page.getByRole("button", { name: "사이드바", exact: true }).click();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const panel = page.getByTestId("session-view").getByTestId("changes-panel");
     await openTool(page.getByTestId("session-view"), "변경");
@@ -40,6 +43,15 @@ test("파일 변경 이력에서 patch를 보고 되돌리기·다시 적용하�
     await expect(rows).toHaveCount(2);
     await rows.first().getByRole("button", { name: "patch" }).click();
     await expect(panel.getByTestId("change-diff")).toContainText("+v1");
+    await expect(panel.getByTestId("change-diff").locator('[data-diff="added"]')).toHaveText("+v1");
+    await rows.nth(1).getByRole("button", { name: "patch" }).click();
+    const diff = panel.getByTestId("change-diff");
+    await expect(diff.locator('[data-diff="removed"]')).toHaveText("-v1");
+    await expect(diff.locator('[data-diff="added"]')).toHaveText("+v2");
+    if (width === 390) {
+        await diff.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: info.outputPath("changes-diff-390.png"), animations: "disabled" });
+    }
 
     // 요청 묶음 전체 되돌리기 → 파일 없음, 다시 적용 → v2
     await panel.getByRole("button", { name: "이 요청의 변경 되돌리기" }).click();
@@ -58,7 +70,10 @@ test("파일 변경 이력에서 patch를 보고 되돌리기·다시 적용하�
     // 전체 검토: 처음(없음)과 지금 비교
     await panel.getByRole("button", { name: /대화 전체 검토/ }).click();
     await expect(panel.getByTestId("review")).toContainText("+outside");
+    await expect(panel.getByTestId("review").locator('[data-diff="added"]')).toHaveText("+outside");
 });
+});
+}
 
 for (const phase of ["before", "after", "commit"] as const) {
     test(`변경 적용 ${phase} 실패는 같은 키로 확인하고 이중 클릭은 한 번만 보낸다`, async ({ page }) => {
@@ -80,6 +95,7 @@ for (const phase of ["before", "after", "commit"] as const) {
         const sent: { op: string; key: string }[] = [];
         await page.route(`**/api/v1/sessions/${session.id}/file-changes/*`, async (route) => {
             const request = route.request();
+            if (request.method() !== "POST") return route.fallback();
             sent.push({ op: request.url().split("/").pop()!, key: request.headers()["idempotency-key"] ?? "" });
             if (sent.length === 1 && phase === "commit") {
                 const db = join(dirname(state().projA), "data", "grove.db");

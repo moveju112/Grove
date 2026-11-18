@@ -2,12 +2,12 @@ import * as stylex from "@stylexjs/stylex";
 
 // Composer 자체가 입력 표면이므로 TextArea의 제어 상자 테두리는 중복해서 그리지 않는다.
 export const composerStyles = stylex.create({
-    toolbar: { gridTemplateColumns: "32px minmax(0, 1fr) 32px 36px", alignItems: "center" },
+    content: { padding: "var(--spacing-2)" },
+    toolbar: { gridTemplateColumns: "32px minmax(0, 1fr) auto", alignItems: "center" },
     modelSlot: { gridColumn: "2", gridRow: "1", minWidth: 0 },
     expandedModel: { gridColumn: "1 / -1" },
     attachmentSlot: { gridColumn: "1", gridRow: "1", minWidth: 0 },
-    menuSlot: { gridColumn: "3", gridRow: "1" },
-    sendSlot: { gridColumn: "4", gridRow: "1" },
+    sendSlot: { gridColumn: "3", gridRow: "1" },
     secondRow: { gridRow: "2" },
     modelControl: { minWidth: 0 },
     modelTrigger: { minWidth: 0, minHeight: 32, height: "auto", paddingInline: 8, textAlign: "start" },

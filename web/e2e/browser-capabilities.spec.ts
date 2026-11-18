@@ -37,7 +37,9 @@ for (const allowed of [true, false]) {
                 await expect(section).toContainText("Ctrl+C");
                 await page.getByLabel("설정 검색").fill("알림·소리");
                 const notify = page.getByTestId("setting-notify");
-                await selectChoice(notify.getByLabel("작업 완료·실패"), "true");
+                const done = notify.getByLabel("작업 완료·실패");
+                await selectChoice(done, "false");
+                await selectChoice(done, "true");
                 await expect(notify).toContainText("브라우저 사이트 설정");
                 expect(await page.evaluate(() => (window as unknown as { __capabilityCalls: string[] }).__capabilityCalls)).toEqual([]);
             }

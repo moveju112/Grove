@@ -63,6 +63,24 @@ describe("assistant 이름·아이콘 표시", () => {
         expect(html).not.toContain('role="img"');
     });
 
+    it.each(["작업 중…", "추론 중…", "응답 중…", "모델 · fixture-model"])(
+        "이름과 보조 문구를 함께 표시한다: %s",
+        (detail) => {
+            const html = render({ name: "그로브", detail });
+            expect(html).toContain('data-testid="assistant-name">그로브</span>');
+            expect(html).toContain(`>${detail}</span>`);
+            expect(html).not.toContain("aria-label=");
+        },
+    );
+
+    it("보조 문구도 HTML로 해석하지 않고 avatar·decorative 용도에는 표시하지 않는다", () => {
+        const detail = "<b>작업 중…</b>";
+        expect(render({ name: "그로브", detail })).toContain("&lt;b&gt;작업 중…&lt;/b&gt;");
+        for (const purpose of ["avatar", "decorative"] as const) {
+            expect(render({ name: "그로브", detail, purpose })).not.toContain("작업 중");
+        }
+    });
+
     it("avatar 단독 용도는 이름이 있고 decorative 용도는 전체가 숨겨진다", () => {
         const avatar = render({ name: "사진 없는 봇", purpose: "avatar" });
         expect(avatar).toContain('role="img"');

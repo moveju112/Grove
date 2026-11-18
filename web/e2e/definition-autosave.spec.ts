@@ -8,7 +8,7 @@ test("정의 본문은 blur 때 저장하고 기본값 복원 없이 새로고�
     try {
         await login(page);
         await openSettings(page);
-        await page.getByLabel("설정 검색").fill("에이전트·워크플로우 편집");
+        await page.getByLabel("설정 검색").fill("위임 에이전트");
         await page.getByTestId("definition-list").getByRole("button", { name: new RegExp(id) }).click();
         const editor = page.getByTestId("definition-editor");
         const body = editor.getByLabel("정의 본문", { exact: true });
@@ -20,7 +20,7 @@ test("정의 본문은 blur 때 저장하고 기본값 복원 없이 새로고�
         await expect(editor.getByRole("button", { name: /저장|기본값.*적용|기본값.*비교/ })).toHaveCount(0);
         await page.reload();
         await openSettings(page);
-        await page.getByLabel("설정 검색").fill("에이전트·워크플로우 편집");
+        await page.getByLabel("설정 검색").fill("위임 에이전트");
         await page.getByTestId("definition-list").getByRole("button", { name: new RegExp(id) }).click();
         await expect(body).toHaveValue("after");
     } finally {

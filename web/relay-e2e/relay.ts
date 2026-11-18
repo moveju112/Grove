@@ -1,6 +1,7 @@
 // relay 시험 공용 도구. 대상 정보는 상태 파일(scripts/relay_stack.py 또는 스테이징 배포)이 정한다.
 import { expect, type Page } from "@playwright/test";
 import { readFileSync } from "node:fs";
+import { finishSetup } from "../e2e/helpers";
 
 export type Target = {
     target: "local" | "staging";
@@ -20,7 +21,7 @@ export function target(): Target {
 
 const token = () => readFileSync(target().token_file, "utf8").trim();
 
-/// 시험 준비는 데몬 loopback API로 직접 한다(소유자 토큰). 화면 동작은 브라우저의 relay 경로로만 확인한다.
+/// 시험 준비는 데몬 loopback API로 직접 한다. 화면 동작은 브라우저의 relay 경로로만 확인한다.
 export async function api<T>(method: string, path: string, body?: unknown): Promise<T> {
     const r = await fetch(`${target().api}/api/v1${path}`, {
         method,
@@ -38,13 +39,27 @@ export async function net(action: "cut" | "delay" | "blackhole", value?: number 
     await fetch(`${control}/${action}${query}`, { method: "POST" });
 }
 
-/// 연결 링크로 들어가 소유자 토큰으로 로그인한다. 이후 모든 API는 암호화 relay 경로로 간다.
+/// 페어링과 로그인은 브라우저의 암호화 relay 경로로 진행한다.
 export async function enter(page: Page) {
     const t = target();
-    await page.goto(t.page);
+    const password = "relay e2e pairing password";
+    const link = await api<{ id: string; code: string }>("POST", "/pairings", { name: "Relay E2E", password });
+    const url = new URL(t.page);
+    const parameters = new URLSearchParams(url.hash.slice(1));
+    parameters.set("pairing", link.code);
+    url.hash = parameters.toString();
+    await page.goto(url.href);
     await page.getByRole("button", { name: "서버 확인 후 연결" }).click();
-    await page.getByLabel("토큰").fill(token());
-    await page.getByRole("button", { name: "로그인" }).click();
+    await page.getByRole("button", { name: "연결", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "연결 비밀번호" });
+    await dialog.getByLabel("비밀번호", { exact: true }).fill(password);
+    await dialog.getByRole("button", { name: "연결 요청" }).click();
+    const code = await page.getByTestId("pairing-code").innerText();
+    const rows = await api<{ id: string; requests: { id: string; verification_code: string }[] }[]>("GET", "/pairings");
+    const request = rows.find((row) => row.id === link.id)!.requests.find((item) => item.verification_code === code)!;
+    await api("POST", `/pairings/${link.id}/requests/${request.id}`, {});
+    // 스테이징의 공유 설정은 변경하지 않는다.
+    await finishSetup(page, t.target === "local");
     await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 20_000 });
 }
 

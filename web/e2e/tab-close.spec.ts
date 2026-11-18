@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, apiText, composerOption, ensureProfile, ensureProjects, login, openDetails, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, apiText, composerCommand, composerOption, ensureProfile, ensureProjects, login, openDetails, requireToolApproval, script, selectChoice, sessionView, state } from "./helpers";
 
 type CloseMode = "tab" | "context" | "browser";
 type Turn = { id: string; status: string; error?: { code: string } };
@@ -37,8 +37,9 @@ async function client(runner: Browser, mode: CloseMode) {
 }
 
 async function conversation(page: Page) {
-    const profile = await ensureProfile();
+    await ensureProfile();
     const { a } = await ensureProjects();
+    await requireToolApproval(a.id);
     const title = `tab-close-${randomUUID()}`;
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
@@ -46,8 +47,8 @@ async function conversation(page: Page) {
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
-    await composerOption(view, "모델 프로필", profile);
-    return { profile, project: a, title, sid: session.id, view };
+    await composerCommand(view, "/model fixture");
+    return { project: a, title, sid: session.id, view };
 }
 
 async function cleanup(sid: string) {
@@ -120,6 +121,7 @@ for (const mode of ["tab", "context", "browser"] as const) {
                 const terminal = await apiCall<{ id: string }>("POST", `/projects/${project.id}/terminals`, { name: terminalName });
                 terminalId = terminal.id;
                 await c.page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
+                await c.page.getByTestId("navigation-context").getByRole("button", { name: /프로젝트 화면으로$/ }).click();
                 const terminals = c.page.getByTestId("terminal-list");
                 await openDetails(terminals, "터미널");
                 await terminals.getByRole("button", { name: terminalName, exact: true }).click();
@@ -148,9 +150,8 @@ for (const mode of ["tab", "context", "browser"] as const) {
                 await page.keyboard.type("printf '\\nreconnected-%s\\n' \"$((40+3))\"");
                 await page.keyboard.press("Enter");
                 await expect(restoredTerminal.locator(".xterm-rows")).toContainText("reconnected-43");
-                page.once("dialog", (dialog) => dialog.accept());
-                await restoredTerminal.getByRole("button", { name: "종료", exact: true }).click();
-                await expect(restoredTerminal).toHaveAttribute("data-conn", "readonly");
+                await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+                await expect(restoredTerminal).toHaveCount(0);
                 const list = await apiCall<{ terminals: { id: string; status: string; reason: string }[] }>("GET", `/projects/${project.id}/terminals`);
                 expect(list.terminals.find((t) => t.id === terminalId)).toMatchObject({ status: "exited", reason: "사용자가 종료함" });
 
@@ -158,9 +159,9 @@ for (const mode of ["tab", "context", "browser"] as const) {
                 const restored = sessionView(page, sid);
                 await expect(restored.getByTestId("msg-assistant").last()).toContainText("셸 완료 확인");
                 if (background) {
-                    const result = restored.getByTestId("msg-task-result");
-                    await openDetails(result);
-                    await expect(result.locator("pre").first()).toHaveText("offline shell result");
+                    const messages = await apiCall<{ items: { content: { type?: string; stdout_tail?: string } }[] }>("GET", `/sessions/${sid}/messages`);
+                    expect(messages.items.find((m) => m.content.type === "task_result")?.content.stdout_tail?.trim()).toBe("offline shell result");
+                    await expect(restored).not.toContainText("offline shell result");
                 }
                 expect(await apiCall<Turn[]>("GET", `/sessions/${sid}/turns`)).toHaveLength(1);
                 // 복원이 프로세스 재실행이 아닌지 실제 side effect로 확인한다.

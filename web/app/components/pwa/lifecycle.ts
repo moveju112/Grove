@@ -26,10 +26,10 @@ function update(patch: Partial<LifecycleState>) {
 onProtocolMismatch((protocol) => update({ protocol }));
 
 export function serverBlockReason(value: LifecycleState): string | null {
-    if (!value.online) return "오프라인에서는 초안만 작성할 수 있습니다. 전송·승인·도구 실행은 연결 후 직접 다시 시도하세요.";
+    if (!value.online) return "오프라인에서는 입력만 할 수 있습니다. 전송·승인·도구 실행은 연결 후 직접 다시 시도하세요.";
     if (value.protocol !== null) return `서버 protocol ${value.protocol}과 화면 protocol ${PROTOCOL}이 달라 요청을 보낼 수 없습니다. UI를 업데이트하세요.`;
-    if (value.connection === "checking") return "서버 호환성을 확인하고 있습니다. 초안은 계속 작성할 수 있습니다.";
-    if (value.connection === "unreachable") return "서버에 연결할 수 없어 전송할 수 없습니다. 초안은 계속 작성할 수 있습니다.";
+    if (value.connection === "checking") return "서버 호환성을 확인하고 있습니다. 입력은 계속할 수 있습니다.";
+    if (value.connection === "unreachable") return "서버에 연결할 수 없어 전송할 수 없습니다. 입력은 계속할 수 있습니다.";
     return null;
 }
 
@@ -65,32 +65,32 @@ export function storageFailure(error: unknown): Exclude<StorageIssue, null | "mi
 
 const MARKER = "grove.pwa.storage-seen";
 let seenStorage = false;
-type DraftStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
-let draftStorage: DraftStorage | null = null;
+type RecoveryStorage = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
+let recoveryStorage: RecoveryStorage | null = null;
 
-/** 기존 초안 구현에 주입하는 대역. 원본 Storage와 오류를 그대로 유지하며 실패만 안내에 반영한다. */
-export function localDraftStorage(): DraftStorage | null {
+/** 이미 보낸 요청의 확인 기록을 보관하며 저장 실패를 안내한다. */
+export function localRecoveryStorage(): RecoveryStorage | null {
     if (typeof window === "undefined") return null;
-    if (draftStorage) return draftStorage;
+    if (recoveryStorage) return recoveryStorage;
     try {
         const storage = window.localStorage;
         const observe = <T>(operation: () => T): T => {
             try { return operation(); }
             catch (error) { update({ storageIssue: storageFailure(error) }); throw error; }
         };
-        draftStorage = {
+        recoveryStorage = {
             get length() { return observe(() => storage.length); },
             key: (index) => observe(() => storage.key(index)),
             getItem: (key) => observe(() => storage.getItem(key)),
             removeItem: (key) => observe(() => storage.removeItem(key)),
             setItem: (key, value) => observe(() => {
-                // 저장 전에 감지해야 삭제된 초안이 새 입력으로 대체된 사실을 놓치지 않는다.
+                // 새 기록을 쓰기 전에 기존 저장소의 유실을 확인한다.
                 inspectLocalStorage(storage);
                 storage.setItem(key, value);
-                if (key.startsWith("grove.draft.") && state.storageIssue === "quota") update({ storageIssue: null });
+                if (key.startsWith("grove.send.") && state.storageIssue === "quota") update({ storageIssue: null });
             }),
         };
-        return draftStorage;
+        return recoveryStorage;
     } catch (error) {
         update({ storageIssue: storageFailure(error) });
         return null;
@@ -99,7 +99,7 @@ export function localDraftStorage(): DraftStorage | null {
 
 function inspectLocalStorage(storage: Storage) {
     // sessionStorage까지 함께 지워진 뒤의 첫 방문과 eviction은 구분할 수 없다.
-    // 관측한 유실만 알리고 원인이나 이전 초안의 복구 가능성을 단정하지 않는다.
+    // 관측한 유실만 알리고 원인이나 복구 가능성을 단정하지 않는다.
     let seenInTab = false;
     try { seenInTab = sessionStorage.getItem(MARKER) === "1"; } catch { /* 메모리 표식으로만 감지 */ }
     if (storage.getItem(MARKER) === null && (seenStorage || seenInTab)) update({ storageIssue: "missing" });
@@ -108,7 +108,7 @@ function inspectLocalStorage(storage: Storage) {
     try { sessionStorage.setItem(MARKER, "1"); } catch { /* 다른 탭/재시작 이후 감지에는 한계가 있음 */ }
 }
 
-export function inspectLocalDrafts() {
+export function inspectLocalStorageState() {
     try { inspectLocalStorage(window.localStorage); }
     catch (error) { update({ storageIssue: storageFailure(error) }); }
 }
@@ -158,14 +158,14 @@ export function startLifecycle(): () => void {
     // controllerchange는 document 갱신이 아니다. 시작할 때의 shell 버전을 계속 보고한다.
     const version = document.querySelector<HTMLMetaElement>('meta[name="grove-shell-version"]')?.content ?? null;
     const inspect = () => {
-        inspectLocalDrafts();
+        inspectLocalStorageState();
         if ("serviceWorker" in navigator) navigator.serviceWorker.controller?.postMessage({ type: "shell-status", version });
         else update({ shell: "unsupported" });
     };
     const refresh = () => { if (!stopped) { inspect(); void checkCompatibility(); } };
     const visibility = () => { if (document.visibilityState === "visible") refresh(); };
     const offline = () => update({ online: false });
-    const storage = (event: StorageEvent) => { if (event.key === null || event.key === MARKER) inspectLocalDrafts(); };
+    const storage = (event: StorageEvent) => { if (event.key === null || event.key === MARKER) inspectLocalStorageState(); };
     const message = (event: MessageEvent) => {
         if (event.source === navigator.serviceWorker.controller && event.data?.type === "shell-status" && typeof event.data.cached === "boolean") {
             update({ shell: event.data.cached ? "ready" : "missing" });

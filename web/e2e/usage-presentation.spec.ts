@@ -1,117 +1,86 @@
-import { expect, test, type Page } from "@playwright/test";
-import type { UsageReport, UsageRow } from "../app/components/usage/model";
-import { expectChoice, login, selectChoice } from "./helpers";
+import { expect, test } from "@playwright/test";
+import { apiCall, ensureProjects, login, openUsage, sessionView } from "./helpers";
+import { checkDashboard, metrics, report } from "./usage-dashboard-checks";
 
-const makeRow = (key: string, fields: Partial<UsageRow> = {}): UsageRow => ({
-    key, label: key, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0,
-    reasoning_tokens: 0, reasoning_unreported_responses: 0, responses: 1,
-    estimated_cost: [], unpriced_tokens: 0, ...fields,
+test("PC 통합 사용량은 공급자를 합쳐 토큰·속도·그래프·정렬·기간을 제공한다", async ({ page }, info) => {
+    await checkDashboard(page, info);
 });
-const report: UsageReport = {
-    rows: [
-        makeRow("A", { input_tokens: 80, output_tokens: 20, cache_read_tokens: 40, reasoning_tokens: 5, responses: 2, estimated_cost: [{ currency: "USD", amount: 2 }, { currency: "EUR", amount: 1 }] }),
-        makeRow("B", { input_tokens: 20, output_tokens: 30, responses: 2, reasoning_unreported_responses: 1, unpriced_tokens: 50, estimated_cost: [{ currency: "USD", amount: 0 }] }),
-        makeRow("C", { reasoning_unreported_responses: 1 }),
-    ],
-    total: makeRow("total", { input_tokens: 100, output_tokens: 50, cache_read_tokens: 40, reasoning_tokens: 5, reasoning_unreported_responses: 2, responses: 5, unpriced_tokens: 50, estimated_cost: [{ currency: "USD", amount: 2 }, { currency: "EUR", amount: 1 }] }),
-    pricing_versions: ["presentation-v1"],
-};
 
-async function openUsage(page: Page) {
+test("320~1920px에서 긴 모델명·큰 토큰 수를 표시하고 대화 입력을 보존한다", async ({ page }, info) => {
+    const large = { ...report, total: { ...report.total, input_tokens: 9_000_000_000_000, output_tokens: 1_000_000_000_000 },
+        models: report.models.map((row) => ({ ...row, label: `${row.label}-${"long-model-name".repeat(12)}` })) };
+    await page.route("**/api/v1/usage/dashboard?*", (route) => route.fulfill({ json: large }));
+    const { a } = await ensureProjects();
+    const title = `사용량 복귀 ${Date.now()}`;
+    const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.getByRole("button", { name: "설정", exact: true }).click();
-    await page.getByLabel("설정 검색").fill("사용량");
-    return page.getByTestId("usage-panel");
-}
-
-test("카드·입출력 비율·통화별 정렬·키보드·기간과 묶음을 보존한다", async ({ page }) => {
-    const queries: URL[] = [];
-    await page.route("**/api/v1/usage?*", async (route) => {
-        queries.push(new URL(route.request().url()));
-        await route.fulfill({ json: report });
-    });
-    const panel = await openUsage(page);
-    await expect(panel.getByTestId("usage-total")).toContainText("150");
-    await expect(panel.getByTestId("usage-total")).toContainText("2 USD · 1 EUR");
-    await expect(panel.getByTestId("usage-donut")).toContainText("입력 100 tokens · 66.7%");
-    await expect(panel.getByTestId("usage-donut")).toContainText("출력 50 tokens · 33.3%");
-    const table = panel.getByTestId("usage-table");
-    await expect(table).toContainText("100 tokens · 66.7%");
-    await expect(table).toContainText("가격 미설정 50 tokens");
-    await expect(table).toContainText("미보고 응답 1개");
-    await expect(table.locator("tbody th")).toHaveText(["A", "B", "C"]);
-    await selectChoice(panel.getByLabel("정렬 기준"), "cost:USD");
-    await selectChoice(panel.getByLabel("정렬 방향"), "asc");
-    await expect(table.locator("tbody th")).toHaveText(["B", "A", "C"]);
-    await selectChoice(panel.getByLabel("정렬 기준"), "cost:EUR");
-    await expect(table.locator("tbody th")).toHaveText(["A", "B", "C"]);
-    const direction = panel.getByRole("combobox", { name: "정렬 방향", exact: true });
-    await direction.focus();
-    await direction.press("Enter");
-    await direction.press("Home");
-    await direction.press("Enter");
-    await expectChoice(direction, "desc");
-    await expect(direction).toBeFocused();
-    const comparison = panel.getByRole("group", { name: "사용량 비교 표", exact: true });
-    // Astryx Table은 실제 가로 스크롤이 필요할 때만 자체 viewport를 Tab 순서에 넣는다.
-    const scrollable = await comparison.evaluate((node) => node.scrollWidth > node.clientWidth + 1);
-    await direction.press("Tab");
-    await expect.poll(() => comparison.evaluate((node) => node === document.activeElement)).toBe(scrollable);
-    await selectChoice(panel.getByLabel("기간", { exact: true }), "30");
-    await expect.poll(() => queries.at(-1)?.searchParams.get("group_by")).toBe("day");
-    await expect.poll(() => {
-        const query = queries.at(-1);
-        return query ? (Date.parse(query.searchParams.get("to")!) - Date.parse(query.searchParams.get("from")!)) / 86_400_000 : 0;
-    }).toBeGreaterThan(29);
-    await selectChoice(panel.getByLabel("묶음", { exact: true }), "model");
-    await expect.poll(() => queries.at(-1)?.searchParams.get("group_by")).toBe("model");
-    await expect(table.locator("caption")).toContainText("모델별");
-    await expect(panel).toContainText("presentation-v1");
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
+    const view = sessionView(page, session.id);
+    await view.getByLabel("메시지 입력", { exact: true }).fill("사용량 확인 후에도 보존할 입력");
+    const originalURL = page.url();
+    const originalTabs = await page.getByRole("tab").count();
+    const composerBounds = await view.getByTestId("composer").boundingBox();
+    let panel = await openUsage(page);
+    expect(page.url()).toBe(originalURL);
+    expect(await view.getByTestId("composer").boundingBox()).toEqual(composerBounds);
+    await expect(page.getByRole("tab")).toHaveCount(originalTabs);
+    await panel.getByRole("button", { name: "사용량 새로고침", exact: true }).focus();
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    await expect(page.getByRole("button", { name: "사용량", exact: true })).toBeFocused();
+    panel = await openUsage(page);
+    await expect(view).toBeVisible();
+    await expect(view.getByLabel("메시지 입력", { exact: true })).toHaveValue("사용량 확인 후에도 보존할 입력");
+    await panel.getByRole("button", { name: "사용량 닫기", exact: true }).click();
+    await expect(view.getByLabel("메시지 입력", { exact: true })).toHaveValue("사용량 확인 후에도 보존할 입력");
+    panel = await openUsage(page);
+    for (const width of [320, 390, 760, 768, 1024, 1920]) {
+        await page.setViewportSize({ width, height: 900 });
+        await expect(panel).toBeVisible();
+        const list = panel.getByTestId("usage-table");
+        await expect(list).toBeVisible();
+        await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+        const token = panel.locator('[data-testid="usage-token-total"]:visible');
+        expect(await token.evaluate((node) => {
+            const cell = node.closest("td")!;
+            return cell.scrollWidth <= cell.clientWidth + 1;
+        })).toBe(true);
+        const card = panel.getByTestId("usage-providers");
+        expect(await card.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme: "dark" });
+    await panel.getByRole("heading", { name: "사용량", exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath("usage-dark-mobile.png") });
 });
 
-test("로딩·실패·빈 결과·0 token 응답과 stale 실패를 구분하고 다시 조회한다", async ({ page }) => {
-    let mode: "loading" | "error" | "empty" | "zero" = "loading";
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const zero = makeRow("zero", { responses: 1, reasoning_unreported_responses: 1 });
-    await page.route("**/api/v1/usage?*", async (route) => {
-        if (mode === "loading") await gate;
-        if (mode === "error") {
-            await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "fixture unavailable", retryable: false } } });
-        } else {
-            await route.fulfill({ json: mode === "zero"
-                ? { rows: [zero], total: zero, pricing_versions: [] }
-                : { rows: [], total: makeRow("total", { responses: 0 }), pricing_versions: [] } });
-        }
+test("조회 실패·빈 기록·미측정 속도·갱신 실패를 구분하고 다시 조회한다", async ({ page }) => {
+    let mode: "error" | "empty" | "zero" = "error";
+    await page.route("**/api/v1/usage/dashboard?*", async (route) => {
+        if (mode === "error") await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "fixture unavailable", retryable: false } } });
+        else await route.fulfill({ json: { ...report, total: metrics({ responses: mode === "zero" ? 1 : 0 }) } });
     });
-    try {
-        const panel = await openUsage(page);
-        await expect(panel.getByRole("status").filter({ hasText: /\S/ })).toContainText("불러오는 중");
-        await expect(panel.getByText("이 기간에 사용량이 없습니다.", { exact: true })).toHaveCount(0);
-        mode = "error";
-        release();
-        await expect(panel.getByRole("alert")).toContainText("사용량 조회 실패");
-        await expect(panel.getByTestId("usage-total")).toHaveCount(0);
-        mode = "empty";
-        await panel.getByRole("button", { name: "다시 시도", exact: true }).click();
-        await expect(panel.getByText("이 기간에 사용량이 없습니다.", { exact: true })).toBeVisible();
-        mode = "zero";
-        await panel.getByRole("button", { name: "새로고침", exact: true }).click();
-        await expect(panel.getByTestId("usage-table")).toBeVisible();
-        await expect(panel.getByTestId("usage-donut")).toContainText("총 token이 0이라 비율을 계산하지 않습니다.");
-        await expect(panel.getByText("이 기간에 사용량이 없습니다.", { exact: true })).toHaveCount(0);
-        mode = "error";
-        await panel.getByRole("button", { name: "새로고침", exact: true }).click();
-        await expect(panel.getByRole("alert")).toContainText("마지막 조회값 표시");
-        await expect(panel.getByTestId("usage-table")).toBeVisible();
-    } finally {
-        release();
-    }
+    await login(page);
+    const panel = await openUsage(page);
+    await expect(panel.getByRole("alert")).toContainText("사용량을 불러오지 못했어요.");
+    await expect(panel.getByTestId("usage-total")).toHaveCount(0);
+    mode = "empty";
+    await panel.getByRole("button", { name: "사용량 새로고침", exact: true }).click();
+    await expect(panel.getByText("이 기간에 기록된 사용량이 없어요.", { exact: true })).toBeVisible();
+    mode = "zero";
+    await panel.getByRole("button", { name: "사용량 새로고침", exact: true }).click();
+    await expect(panel.locator('[data-testid="usage-speed-total"]:visible')).toHaveText("— tok/s");
+    await expect(panel.getByTestId("usage-table")).toBeVisible();
+    mode = "error";
+    await panel.getByRole("button", { name: "사용량 새로고침", exact: true }).click();
+    await expect(panel.getByRole("alert")).toContainText("마지막 조회값을 표시해요.");
+    await expect(panel.getByTestId("usage-table")).toBeVisible();
 });
 
 test("실행 용량·대기 이유·취소 오류와 재시도를 유지한다", async ({ page }) => {
     let cancels = 0;
-    await page.route("**/api/v1/usage?*", (route) => route.fulfill({ json: report }));
+    await page.route("**/api/v1/usage/dashboard?*", (route) => route.fulfill({ json: report }));
     await page.route("**/api/v1/usage/capacity", (route) => route.fulfill({ json: {
         limits: { max_active: 1, max_queued_per_owner: 2, max_queued_total: 3 },
         server: { running: 1, waiting: cancels < 2 ? 1 : 0 },
@@ -124,7 +93,9 @@ test("실행 용량·대기 이유·취소 오류와 재시도를 유지한다",
             ? route.fulfill({ status: 409, json: { error: { code: "fixture_cancel", message: "취소 시험 오류", retryable: false } } })
             : route.fulfill({ json: {} });
     });
+    await login(page);
     const panel = await openUsage(page);
+    await panel.getByRole("button", { name: "실행 현황·추정 비용", exact: true }).click();
     const capacity = panel.getByTestId("usage-capacity");
     await expect(capacity).toContainText("서버 전체: 실행 1/1");
     await expect(capacity).toContainText("공급자 한도 1/1 · 앞에 2개");

@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, expectChoice, login, openDetails, openTool, selectChoice, sessionView, state, useWorkspaces } from "./helpers";
+import { finishSetup, apiCall, expectChoice, login, openDetails, openTool, registerBrowser, selectChoice, sessionView, state, useWorkspaces } from "./helpers";
 
 /// 다른 시험과 저장소를 공유하지 않도록 새 프로젝트 폴더에 저장소를 만든다.
 async function freshRepo(tag: string) {
@@ -31,13 +31,12 @@ test("서버가 worktree 기능을 알리지 않으면 화면에서 숨긴다(�
         }),
     );
     // 가짜 stream은 hello 뒤 바로 끝나므로 연결 상태 대신 화면이 열리는지로 로그인 완료를 본다.
+    await registerBrowser(page);
     await page.goto("/");
     await page.locator("html[data-hydrated=true]").waitFor({ state: "attached" });
-    await page.getByLabel("토큰").fill(state().token);
-    await page.getByRole("button", { name: "로그인" }).click();
+    await finishSetup(page);
     await page.getByTestId("sidebar").getByTestId("projects").getByRole("button", { name: new RegExp(p.name) }).first().click();
-    await openTool(page, "휴지통");
-    await expect(page.getByTestId("trash-panel")).toBeVisible();
+    await openTool(page, "워크스페이스");
     await expect(page.getByTestId("worktrees-panel")).toHaveCount(0);
 });
 
@@ -68,7 +67,7 @@ test("worktree를 변경 처리 선택 후 만들고, 대화를 그 위치에서
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: p.id, resource_id: sess.id });
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /wt 대화/ }).first().click();
     const view = sessionView(page, sess.id);
-    await view.getByRole("button", { name: "대화 작업", exact: true }).click();
+    await openTool(view, "대화");
     const where = view.getByLabel("워크스페이스");
     await expectChoice(where, "");
     await selectChoice(where, wt.id);
@@ -88,7 +87,7 @@ test("worktree를 변경 처리 선택 후 만들고, 대화를 그 위치에서
     await expect(row).toContainText("대화 1개");
     await expect(row.getByRole("button", { name: "제거" })).toBeDisabled();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /wt 대화/ }).first().click();
-    await view.getByRole("button", { name: "대화 작업", exact: true }).click();
+    await openTool(view, "대화");
     await selectChoice(where, "");
     await expectChoice(where, "");
     await page.keyboard.press("Escape");

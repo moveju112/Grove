@@ -3,7 +3,6 @@ import type { EventRecord } from "../api/generated";
 import { attentionFor, claimAttention, showAttention } from "./attention";
 import { defaultPrefs } from "./device";
 
-const all = { ...defaultPrefs, notifyDone: true, notifyApproval: true, notifyServer: true };
 const event = (kind: string, payload: unknown): EventRecord => ({ seq: 1, created_at: "2026-01-01T00:00:00Z", kind, project_id: "p", session_id: "s", payload });
 const memory = () => {
     const data = new Map<string, string>();
@@ -11,19 +10,20 @@ const memory = () => {
 };
 
 describe("이 기기 알림 판단", () => {
-    it("켠 종류만 알리고 대화 내용 없이 대상 대화를 가리킨다", () => {
-        expect(attentionFor(event("turn.updated", { id: "t", status: "completed", error: "secret" }), all)).toMatchObject({ kind: "done", tag: "turn:t", projectId: "p", sessionId: "s" });
-        expect(attentionFor(event("turn.updated", { id: "t", status: "interrupted" }), all)?.kind).toBe("failed");
-        expect(attentionFor(event("turn.updated", { id: "t", status: "awaiting_approval" }), all)?.tag).toBe("approval:t");
-        expect(attentionFor(event("notification.created", { id: "n", title: "예약 완료" }), all)).toMatchObject({ kind: "server", title: "예약 완료" });
-        expect(JSON.stringify(attentionFor(event("turn.updated", { id: "t", status: "completed", error: "secret" }), all))).not.toContain("secret");
+    it("기본으로 모든 종류를 알리고 대화 내용 없이 대상 대화를 가리킨다", () => {
+        expect(attentionFor(event("turn.updated", { id: "t", status: "completed", error: "secret" }), defaultPrefs)).toMatchObject({ kind: "done", tag: "turn:t", projectId: "p", sessionId: "s" });
+        expect(attentionFor(event("turn.updated", { id: "t", status: "interrupted" }), defaultPrefs)?.kind).toBe("failed");
+        expect(attentionFor(event("turn.updated", { id: "t", status: "awaiting_approval" }), defaultPrefs)?.tag).toBe("approval:t");
+        expect(attentionFor(event("notification.created", { id: "n", title: "예약 완료" }), defaultPrefs)).toMatchObject({ kind: "server", title: "예약 완료" });
+        expect(JSON.stringify(attentionFor(event("turn.updated", { id: "t", status: "completed", error: "secret" }), defaultPrefs))).not.toContain("secret");
     });
-    it("기본값·꺼진 종류·진행 중·사용자 취소는 알리지 않는다", () => {
-        expect(attentionFor(event("turn.updated", { id: "t", status: "completed" }), defaultPrefs)).toBeNull();
-        expect(attentionFor(event("turn.updated", { id: "t", status: "awaiting_approval" }), { ...all, notifyApproval: false })).toBeNull();
-        expect(attentionFor(event("turn.updated", { id: "t", status: "running" }), all)).toBeNull();
-        expect(attentionFor(event("turn.updated", { id: "t", status: "cancelled" }), all)).toBeNull();
-        expect(attentionFor(event("message.created", { id: "m" }), all)).toBeNull();
+    it("꺼진 종류·진행 중·사용자 취소는 알리지 않는다", () => {
+        expect(attentionFor(event("turn.updated", { id: "t", status: "completed" }), { ...defaultPrefs, notifyDone: false })).toBeNull();
+        expect(attentionFor(event("turn.updated", { id: "t", status: "awaiting_approval" }), { ...defaultPrefs, notifyApproval: false })).toBeNull();
+        expect(attentionFor(event("notification.created", { id: "n" }), { ...defaultPrefs, notifyServer: false })).toBeNull();
+        expect(attentionFor(event("turn.updated", { id: "t", status: "running" }), defaultPrefs)).toBeNull();
+        expect(attentionFor(event("turn.updated", { id: "t", status: "cancelled" }), defaultPrefs)).toBeNull();
+        expect(attentionFor(event("message.created", { id: "m" }), defaultPrefs)).toBeNull();
     });
     it("같은 사건은 여러 탭에서 한 번만 알리고 오래된 기록은 정리한다", () => {
         const storage = memory();

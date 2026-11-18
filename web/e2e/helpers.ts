@@ -5,6 +5,10 @@ export function sessionView(page: Page, sessionId: string): Locator {
     return page.locator(`[data-testid="session-view"][data-session="${sessionId}"]`);
 }
 
+export function settingsGroupHeader(row: Locator): Locator {
+    return row.locator("xpath=ancestor::*[@data-ui='settings-group'][1]").locator(":scope > header");
+}
+
 export async function openAddMenu(page: Page) {
     const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
     if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
@@ -12,6 +16,21 @@ export async function openAddMenu(page: Page) {
     const menu = page.getByRole("menu").filter({ visible: true });
     await expect(menu.getByRole("menuitem", { name: "프로젝트 추가", exact: true })).toBeVisible();
     return menu;
+}
+
+export async function openUsage(page: Page) {
+    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
+    if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
+    await page.getByRole("button", { name: "사용량", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "사용량", exact: true });
+    await expect(dialog).toBeVisible();
+    await expect(dialog).toHaveJSProperty("open", true);
+    expect(await dialog.evaluate((node) => node.matches(":modal"))).toBe(true);
+    await expect.poll(() => dialog.evaluate((node) => new DOMMatrixReadOnly(getComputedStyle(node).transform).isIdentity)).toBe(true);
+    const panel = dialog.getByTestId("usage-panel");
+    await expect(panel).toBeVisible();
+    if (page.viewportSize()!.width <= 760) await expect(page.getByTestId("mobile-drawer-left")).toBeHidden();
+    return panel;
 }
 
 export async function openAddProject(page: Page) {
@@ -23,8 +42,32 @@ export async function openAddProject(page: Page) {
 }
 
 export async function startProjectConversation(view: Locator) {
-    await view.getByRole("button", { name: "새 대화", exact: true }).click();
+    if (view.page().viewportSize()!.width > 760) {
+        const back = view.page().getByTestId("navigation-context").getByRole("button", { name: /프로젝트 화면으로$/ });
+        if (await back.isVisible()) await back.click();
+        await view.getByLabel("메시지 입력", { exact: true }).click();
+    }
+    else await view.page().getByRole("banner").getByRole("button", { name: "새 대화", exact: true }).click();
     await expect(view.getByLabel("메시지 입력", { exact: true })).toBeFocused();
+}
+
+export async function splitNewConversation(pane: Locator, edge: "right" | "bottom") {
+    const target = pane.page().locator(`[data-testid="pane"][data-leaf="${await pane.getAttribute("data-leaf")}"]`);
+    await target.getByRole("button", { name: "새 대화 탭", exact: true }).click();
+    const bounds = (await target.boundingBox())!;
+    await target.getByRole("tab", { selected: true }).getByTestId("tab-title").dragTo(target, {
+        targetPosition: edge === "right"
+            ? { x: bounds.width - 12, y: bounds.height / 2 }
+            : { x: bounds.width / 2, y: bounds.height - 12 },
+    });
+}
+
+export async function splitRecentItem(row: Locator) {
+    const pane = row.page().getByTestId("pane").and(row.page().locator('[data-focused="true"]')).filter({ visible: true });
+    const bounds = (await pane.boundingBox())!;
+    await row.getByRole("button").first().dragTo(pane, {
+        targetPosition: { x: bounds.width - 12, y: bounds.height / 2 },
+    });
 }
 
 // 승인 대기 시험은 기본 전체 권한에 기대지 않고 격리된 시험 프로젝트의 정책을 명시한다.
@@ -61,18 +104,24 @@ export async function openDetails(panel: Locator, tool?: string, scope: Locator 
     await expect(panel).toBeVisible();
 }
 
-/// 도구 탭은 헤더의 "도구 패널" 버튼 뒤에 있다. 탭이 숨겨져 있으면 같은 작업 영역의 버튼으로 먼저 연다.
+/// 탭이 숨겨져 있으면 같은 pane의 패널 버튼으로 먼저 연다.
 async function openToolDock(tab: Locator) {
     if (await tab.isVisible()) return;
     const workbench = tab.locator("xpath=ancestor::*[@data-ui='workbench'][1]");
-    await workbench.getByRole("button", { name: "도구 패널", exact: true }).click();
+    await workbench.locator("xpath=ancestor::*[@data-testid='pane'][1]").getByRole("button", { name: "도구 패널", exact: true }).click();
     await expect(tab).toBeVisible();
+}
+
+/// 데스크톱 탭 줄과 모바일 본문 헤더에서 같은 pane의 패널 버튼을 찾는다.
+export function toolTrigger(scope: Locator | Page) {
+    const bench = scope.locator('[data-ui="workbench"]').filter({ visible: true }).first();
+    return bench.locator("xpath=ancestor::*[@data-testid='pane'][1]").getByRole("button", { name: "도구 패널", exact: true });
 }
 
 /// 보이는 대화·프로젝트 화면의 도구 탭을 연다.
 export async function openTool(scope: Locator | Page, name: string) {
     const bench = scope.locator('[data-ui="workbench"]').filter({ visible: true }).first();
-    const trigger = bench.getByRole("button", { name: "도구 패널", exact: true });
+    const trigger = toolTrigger(scope);
     if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
     const tab = bench.getByRole("tab", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`) });
     await expect(tab).toBeVisible();
@@ -80,17 +129,40 @@ export async function openTool(scope: Locator | Page, name: string) {
     await expect(tab).toHaveAttribute("aria-selected", "true");
 }
 
-/// 프로젝트 파일을 별도 탭으로 연다(프로젝트 작업 메뉴).
+export async function openContext(view: Locator) {
+    await view.getByRole("button", { name: "context 사용량", exact: true }).click();
+    const panel = view.page().getByRole("dialog", { name: "context 사용량", exact: true });
+    await expect(panel).toBeVisible();
+    return panel;
+}
+
+/// 프로젝트 도구에서 파일을 별도 탭으로 연다.
 export async function openProjectFiles(page: Page) {
     const head = page.getByTestId("project-view").filter({ visible: true }).first();
-    await head.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
+    await openTool(head, "파일");
     await page.getByRole("button", { name: "파일 탭으로 열기", exact: true }).filter({ visible: true }).click();
 }
 
-export async function inputOptions(view: Locator) {
-    const trigger = view.getByRole("button", { name: "초안·스킬", exact: true });
-    if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
-    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+export async function openProjectTerminal(page: Page, projectName: string, terminalName: string) {
+    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
+    if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
+    await page.getByTestId("project-row").getByRole("button", { name: projectName, exact: true }).click();
+    const projectScreen = page.getByTestId("navigation-context").getByRole("button", { name: /프로젝트 화면으로$/ });
+    if (await projectScreen.isVisible()) await projectScreen.click();
+    const project = page.getByTestId("project-view").filter({ visible: true }).first();
+    const list = project.getByTestId("terminal-list");
+    await openDetails(list, "터미널", project);
+    await list.getByRole("button", { name: terminalName, exact: true }).click();
+}
+
+/// 현재 프로젝트의 행 메뉴에서 프로젝트 범위 설정을 연다.
+export async function openProjectSettings(page: Page) {
+    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
+    if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
+    const row = page.getByTestId("project-row").filter({ has: page.locator('button[aria-current="page"]') });
+    await row.getByRole("button", { name: "프로젝트 메뉴", exact: true }).click();
+    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    await expect(page.getByTestId("settings")).toBeVisible();
 }
 
 export async function modelSettings(scope: Locator | Page) {
@@ -104,13 +176,13 @@ export async function modelSettings(scope: Locator | Page) {
 }
 
 export async function composerSetting(scope: Locator | Page, label: string) {
-    return (await modelSettings(scope)).getByRole(label === "모델 프로필" ? "button" : "combobox", { name: label, exact: true });
+    return (await modelSettings(scope)).getByRole(label === "모델 프로필" ? "button" : label === "Fast" ? "switch" : "combobox", { name: label, exact: true });
 }
 
 export async function closeModelSettings(scope: Locator | Page) {
     const page = "page" in scope ? scope.page() : scope;
     const panel = page.getByTestId("model-settings").filter({ visible: true });
-    await panel.getByRole("button", { name: "모델 설정 닫기", exact: true }).click();
+    await page.keyboard.press("Escape");
     await expect(panel).toBeHidden();
     await expect(scope.getByRole("button", { name: "모델 설정", exact: true })).toBeFocused();
 }
@@ -118,7 +190,9 @@ export async function closeModelSettings(scope: Locator | Page) {
 export async function expectComposerSetting(scope: Locator | Page, label: string, value: string) {
     const page = "page" in scope ? scope.page() : scope;
     const focused = await page.evaluateHandle(() => document.activeElement as HTMLElement);
-    await expectChoice(await composerSetting(scope, label), value);
+    const control = await composerSetting(scope, label);
+    if (label === "Fast") await expect(control).toBeChecked({ checked: value === "true" });
+    else await expectChoice(control, value);
     await closeModelSettings(scope);
     // 조회용 단언이 다른 pane을 활성화한 채 남기지 않는다.
     await focused.evaluate((node) => node.focus());
@@ -131,18 +205,21 @@ export async function composerOption(view: Locator, label: string, value: string
         await composerCommand(view, command);
         return;
     }
-    if (label === "실행 중 보내기 방식") {
-        await inputOptions(view);
-        await selectChoice(view.getByLabel(label, { exact: true }), String(value));
-        await view.getByRole("button", { name: "초안·스킬", exact: true }).click();
-        return;
-    }
     if (["모델 프로필", "추론", "Fast"].includes(label)) {
-        await selectChoice(await composerSetting(view, label), String(value));
+        const control = await composerSetting(view, label);
+        if (label === "Fast") await control.setChecked(String(value) === "true");
+        else await selectChoice(control, String(value));
         await closeModelSettings(view);
         return;
     }
     await selectChoice(view.getByLabel(label, { exact: true }), String(value));
+}
+
+export async function runningSendMode(page: Page, value: "queue" | "steer" | "interrupt") {
+    await openSettings(page, "local");
+    await page.getByLabel("설정 검색", { exact: true }).fill("실행 중 보내기 방식");
+    await selectChoice(page.getByTestId("setting-running-send").getByLabel("실행 중 보내기 방식", { exact: true }), value);
+    await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
 }
 
 export async function composerCommand(view: Locator, command: string) {
@@ -165,7 +242,7 @@ export async function profileAction(row: Locator, label: string) {
 import { readFileSync } from "node:fs";
 import { STATE } from "./global-setup";
 
-export type E2EState = { token: string; projA: string; projB: string; fixturePort: number; cliDir?: string };
+export type E2EState = { work: string; token: string; projA: string; projB: string; fixturePort: number; cliDir?: string };
 
 export function state(): E2EState {
     return JSON.parse(readFileSync(STATE, "utf8")) as E2EState;
@@ -174,11 +251,15 @@ export function state(): E2EState {
 const BASE = "http://127.0.0.1:17741";
 let n = 0;
 
-/// 시험 준비용 API 호출(소유자 토큰). UI 동작 검증은 브라우저로 한다.
+/// 시험 준비용 로컬 API 호출. UI 동작 검증은 브라우저로 한다.
 export async function apiCall<T>(method: string, path: string, body?: unknown): Promise<T> {
-    const r = await fetch(BASE + "/api/v1" + path, {
+    return apiCallAt<T>(BASE, state().token, method, path, body);
+}
+
+async function apiCallAt<T>(base: string, token: string, method: string, path: string, body?: unknown): Promise<T> {
+    const r = await fetch(new URL("/api/v1" + path, base), {
         method,
-        headers: { authorization: `Bearer ${state().token}`, "content-type": "application/json", "idempotency-key": `e2e-${Date.now()}-${n++}` },
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "idempotency-key": `e2e-${Date.now()}-${n++}` },
         body: body === undefined ? undefined : JSON.stringify(body),
     });
     const t = await r.text();
@@ -225,12 +306,36 @@ export async function ensureProfile(): Promise<string> {
     return p.id;
 }
 
+export async function registerBrowser(page: Page, base = BASE, local = state().token, name = "E2E 테스트 브라우저") {
+    const password = "test-only browser pairing password";
+    const link = await apiCallAt<{ id: string; code: string }>(base, local, "POST", "/pairings", { name, password });
+    const request = await apiCallAt<{ code: string }>(base, local, "POST", "/auth/pairing", { code: link.code, password, name });
+    const { device_id: id } = await apiCallAt<{ device_id: string }>(base, local, "POST", `/pairings/${link.id}/requests/${request.code.split(".")[0]}`, {});
+    const response = await page.request.post(new URL("/api/v1/auth/pairing/claim", base).href, { data: { code: request.code } });
+    expect(response.status()).toBe(200);
+    const { access_token: token } = await response.json() as { access_token: string };
+    return { id, token };
+}
+
 export async function login(page: Page) {
+    const device = await registerBrowser(page);
     await page.goto("/");
     await page.locator("html[data-hydrated=true]").waitFor({ state: "attached" });
-    await page.getByLabel("토큰").fill(state().token);
-    await page.getByRole("button", { name: "로그인" }).click();
+    await finishSetup(page);
     await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
+    return device;
+}
+
+export async function finishSetup(page: Page, allowDaemon = true) {
+    const wizard = page.getByTestId("setup-wizard");
+    const conn = page.getByTestId("conn");
+    for (let step = 0; step < (allowDaemon ? 5 : 2); step++) {
+        const next = wizard.getByRole("button", { name: /^(다음|설정 완료)$/ });
+        await expect(next.or(conn).first()).toBeVisible({ timeout: 15_000 });
+        if (await conn.isVisible()) return;
+        if (!allowDaemon) await expect(wizard).toContainText("로컬 설정");
+        await next.click();
+    }
 }
 
 export async function openBots(page: Page) {
@@ -246,7 +351,8 @@ export async function openSettings(page: Page, area: "local" | "daemon" = "daemo
         const drawer = page.getByTestId("mobile-drawer-left");
         await drawer.getByRole("button", { name: "설정", exact: true }).click();
         await expect(drawer).toHaveJSProperty("open", false);
-    } else await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+    } else await page.getByTestId("sidebar").or(page.getByTestId("sidebar-rail"))
+        .getByRole("button", { name: "설정", exact: true }).click();
     await page.getByTestId("settings").getByRole("tab", { name: area === "local" ? "로컬 설정" : "데몬 설정", exact: true }).click();
 }
 
@@ -270,6 +376,14 @@ export async function closeMobileSidebar(page: Page) {
 export async function selectChoice(control: Locator, value: string) {
     control = control.and(control.page().locator("button"));
     if (await control.getAttribute("aria-haspopup") === "menu") {
+        if (value === "" || value === "__role_disabled__") {
+            if (await control.getAttribute("aria-expanded") !== "true") await control.click();
+            const id = await control.getAttribute("aria-controls");
+            await control.page().locator(`[id=${JSON.stringify(id)}]`).getByRole("menuitemradio")
+                .and(control.page().locator(`[data-option-value=${JSON.stringify(value)}]`)).click();
+            await expect(control).toHaveAttribute("data-selected-value", value);
+            return;
+        }
         const profileId = value.startsWith("[") ? (JSON.parse(value) as string[])[0]! : value;
         const choices = await modelChoices(control, profileId);
         await choices.and(control.page().locator(`[data-option-value=${JSON.stringify(value)}]`)).click();

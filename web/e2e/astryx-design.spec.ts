@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, composerOption, ensureProjects, login, openSettings, selectChoice } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openSettings, selectChoice, toolTrigger } from "./helpers";
 
 for (const width of [390, 1400]) {
     for (const theme of ["light", "dark"] as const) {
         test.describe(`${width}px Astryx ${theme}`, () => {
             test.use({ viewport: { width, height: 960 }, isMobile: width < 760, hasTouch: width < 760 });
-            test("새싹·폰트·홈·설정·대화를 같은 테마로 유지한다", async ({ page }, info) => {
+            test("새싹·폰트·탐색·설정·대화를 같은 테마로 유지한다", async ({ page }, info) => {
                 await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
                 const errors: string[] = [];
                 page.on("pageerror", (error) => errors.push(error.message));
@@ -26,15 +26,15 @@ for (const width of [390, 1400]) {
                 await login(page);
                 await page.evaluate(() => document.fonts.ready);
                 expect(await page.evaluate(() => [...document.fonts].some((font) => font.family === "Pretendard" && font.status === "loaded"))).toBe(true);
-                const home = page.getByRole("region", { name: "홈 최근", exact: true });
-                await expect(home.getByRole("heading", { name: "최근" })).toBeVisible();
+                if (width < 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
+                const recent = page.getByRole("region", { name: "최근", exact: true });
+                await expect(recent.getByRole("heading", { name: "최근" })).toBeVisible();
                 expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-                await page.screenshot({ path: info.outputPath("home.png"), fullPage: true });
-                const item = home.getByTestId("home-recent-item").filter({ hasText: title });
-                await item.getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-                await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "고정", exact: true }).click();
-                await expect(item.getByRole("button", { name: "최근 항목 관리", exact: true })).toHaveAttribute("aria-expanded", "false");
-                await home.getByRole("button", { name: new RegExp(title) }).click();
+                await page.screenshot({ path: info.outputPath("navigation.png"), fullPage: true });
+                const item = recent.getByTestId("recent-item").filter({ hasText: title });
+                await expect(item.getByRole("button", { name: "최근에서 숨기기", exact: true })).toBeVisible();
+                await expect(item.getByRole("button")).toHaveCount(2);
+                await recent.getByRole("button", { name: new RegExp(title) }).click();
                 const view = page.getByTestId("session-view");
                 await composerOption(view, "보내기 방식", "save");
                 await view.getByLabel("메시지 입력").fill("기존 대화 입력과 저장을 유지한다.");
@@ -42,7 +42,7 @@ for (const width of [390, 1400]) {
                 await expect(view.getByTestId("msg-user")).toContainText("기존 대화 입력과 저장");
                 // 도구 탭은 열기 전까지 화면 높이를 차지하지 않는다.
                 await expect(view.getByTestId("tool-dock")).toBeHidden();
-                await expect(view.getByRole("button", { name: "도구 패널", exact: true })).toBeVisible();
+                await expect(toolTrigger(view)).toBeVisible();
                 await page.screenshot({ path: info.outputPath("conversation.png"), fullPage: true });
                 await openSettings(page, "local");
                 await page.getByRole("button", { name: "화면·입력", exact: true }).click();
@@ -50,6 +50,7 @@ for (const width of [390, 1400]) {
                 expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
                 await page.screenshot({ path: info.outputPath("settings.png"), fullPage: true });
                 await page.reload();
+                await openSettings(page, "local");
                 await page.getByLabel("설정 검색").fill("Enter로 보내기");
                 await expect(page.getByRole("combobox", { name: "Enter로 보내기", exact: true })).toHaveAttribute("data-selected-value", "true");
                 expect(errors).toEqual([]);

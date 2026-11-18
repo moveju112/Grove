@@ -8,8 +8,7 @@ use serde_json::{Value, json};
 async fn devices(s: &TestServer) -> [String; 2] {
     let mut tokens = [String::new(), String::new()];
     for (index, name) in ["desktop", "phone"].into_iter().enumerate() {
-        let (status, device) = s.post("/api/v1/devices", json!({ "name": name })).await;
-        assert_eq!(status, StatusCode::CREATED);
+        let device = s.registered_device(name).await;
         tokens[index] = device["token"].as_str().unwrap().to_string();
     }
     tokens
@@ -24,8 +23,8 @@ async fn send(s: &TestServer, token: &str, method: Method, path: &str, key: &str
 async fn concurrent_settings_keep_the_winner_and_idempotency_is_scoped_to_each_device() {
     let s = TestServer::start().await;
     let tokens = devices(&s).await;
-    let path = "/api/v1/settings/server/-/output.language";
-    let bodies = [json!({ "expected_revision": 0, "value": "desktop-value" }), json!({ "expected_revision": 0, "value": "phone-value" })];
+    let path = "/api/v1/settings/server/-/output.style";
+    let bodies = [json!({ "expected_revision": 0, "value": "concise" }), json!({ "expected_revision": 0, "value": "detailed" })];
     let (a, b) = tokio::join!(
         send(&s, &tokens[0], Method::PUT, path, "shared-key", bodies[0].clone()),
         send(&s, &tokens[1], Method::PUT, path, "shared-key", bodies[1].clone()),
@@ -41,11 +40,11 @@ async fn concurrent_settings_keep_the_winner_and_idempotency_is_scoped_to_each_d
     assert_eq!(replay, results[winner], "같은 기기의 재전송은 이전 성공 응답");
     // 다른 기기가 같은 문자열 key를 써도 원래 기기의 저장된 응답을 받지 않는다.
     let (status, updated) = send(&s, &tokens[loser], Method::PUT, path, "shared-key", json!({
-        "expected_revision": 1, "value": "explicit-resolution",
+        "expected_revision": 1, "value": "default",
     })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(updated["item"]["layers"]["server"]["revision"], 2);
-    assert_eq!(updated["item"]["effective"], "explicit-resolution");
+    assert_eq!(updated["item"]["effective"], "default");
 }
 
 #[cfg(unix)]

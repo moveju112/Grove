@@ -126,7 +126,7 @@ describe("공유 recent 저장 계약", () => {
     it("읽음은 클릭 때 실제로 본 seq까지만 저장한다", async () => {
         await markSessionRead(item);
         expect(api.post).toHaveBeenCalledExactlyOnceWith("/recent/touch", {
-            kind: "session", project_id: "p", resource_id: "s", view_state: { last_seen_seq: 7 },
+            kind: "session", project_id: "p", resource_id: "s", reopen: false, view_state: { last_seen_seq: 7 },
         });
         expect(invalidate).toHaveBeenCalledWith("recent");
     });

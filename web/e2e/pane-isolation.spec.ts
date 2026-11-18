@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerCommand, composerOption, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, inputOptions, login, openDetails, requireToolApproval, script, selectChoice, startProjectConversation, state } from "./helpers";
+import { splitRecentItem, apiCall, composerCommand, composerOption, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, requireToolApproval, script, selectChoice, splitNewConversation, startProjectConversation, state } from "./helpers";
 
 async function fixture() {
     const { a, b } = await ensureProjects();
@@ -27,8 +27,7 @@ async function session(project: string, title: string) {
 async function openPair(page: Page, first: { title: string }, second: { title: string }) {
     const recent = page.getByRole("region", { name: "최근", exact: true });
     await recent.getByTestId("recent-item").filter({ hasText: first.title }).getByRole("button", { name: new RegExp(first.title) }).click();
-    await recent.getByTestId("recent-item").filter({ hasText: second.title }).getByRole("button", { name: "최근 항목 관리", exact: true }).click();
-    await page.getByRole("dialog", { name: "최근 항목 관리", exact: true }).getByRole("button", { name: "오른쪽에 열기", exact: true }).click();
+    await splitRecentItem(recent.getByTestId("recent-item").filter({ hasText: second.title }));
     await expect(page.getByTestId("pane")).toHaveCount(2);
 }
 
@@ -50,7 +49,7 @@ test("pane별 모델·effort·도구 선택은 초점·탭 전환·새로고침 
         await composerOption(right, "도구", false);
         await left.getByLabel("메시지 입력").click();
         await expectComposerSetting(right, "모델 프로필", f.secondary);
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
         await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
         await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`^${first.title}`) }).click();
         await expectComposerSetting(left, "모델 프로필", f.primary);
@@ -76,7 +75,7 @@ test("pane별 모델·effort·도구 선택은 초점·탭 전환·새로고침 
     } finally { await f.cleanup(); }
 });
 
-test("같은 프로젝트의 분할 입력도 각 탭의 초안·모델 선택을 독립적으로 복원한다", async ({ page }) => {
+test("같은 프로젝트의 분할 모델 선택과 미전송 입력은 탐색·설정 전환 뒤에도 독립적으로 유지한다", async ({ page }) => {
     const f = await fixture();
     try {
         await apiCall("POST", "/recent/touch", { kind: "project", project_id: f.a.id, resource_id: f.a.id });
@@ -87,7 +86,7 @@ test("같은 프로젝트의 분할 입력도 각 탭의 초안·모델 선택�
         await startProjectConversation(left);
         await composerOption(left, "모델 프로필", f.primary);
         await left.getByLabel("메시지 입력").fill("project left draft fixture");
-        await leftPane.getByRole("button", { name: "오른쪽으로 분할", exact: true }).click();
+        await splitNewConversation(leftPane, "right");
         const rightPane = page.getByTestId("pane").filter({ visible: true }).nth(1);
         const right = rightPane.getByTestId("project-view");
         await startProjectConversation(right);
@@ -99,8 +98,9 @@ test("같은 프로젝트의 분할 입력도 각 탭의 초안·모델 선택�
         await recentProject.click();
         await expect(right.getByLabel("메시지 입력")).toHaveValue("project right draft fixture");
         await expectComposerSetting(right, "모델 프로필", f.secondary);
+        await startProjectConversation(left);
         await left.getByLabel("메시지 입력").click();
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
         await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
         await recentProject.click();
         await expect(left.getByLabel("메시지 입력")).toHaveValue("project left draft fixture");
@@ -109,7 +109,7 @@ test("같은 프로젝트의 분할 입력도 각 탭의 초안·모델 선택�
     } finally { await f.cleanup(); }
 });
 
-test("이전 공유 프로젝트 초안은 지우거나 다른 탭에 자동 배정하지 않고 사본 선택으로 복구한다", async ({ page }) => {
+test("이전 공유 프로젝트 초안은 사용하지 않으며 복원 메뉴도 제공하지 않는다", async ({ page }) => {
     const { a } = await ensureProjects();
     await page.addInitScript((id) => localStorage.setItem(`grove.draft.project:${id}#new`, JSON.stringify({
         text: "legacy shared project draft fixture", baseRevision: 0, updatedAt: 1,
@@ -119,12 +119,8 @@ test("이전 공유 프로젝트 초안은 지우거나 다른 탭에 자동 배
     const project = page.getByTestId("project-view");
     await startProjectConversation(project);
     await expect(project.getByLabel("메시지 입력")).toHaveValue("");
-    await expect(project.getByTestId("draft-copies")).toBeHidden();
-    await inputOptions(project);
-    await openDetails(project.getByTestId("draft-copies"));
-    await project.getByTestId("draft-copy").filter({ hasText: "legacy shared project draft fixture" })
-        .getByRole("button", { name: "이 사본 이어받기", exact: true }).click();
-    await expect(project.getByLabel("메시지 입력")).toHaveValue("legacy shared project draft fixture");
+    await expect(project.getByTestId("draft-copies")).toHaveCount(0);
+    await expect(project.getByRole("button", { name: "초안", exact: true })).toHaveCount(0);
 });
 
 test("모델을 바꾼 같은 글은 원래 저장 요청을 확인한 뒤에도 새 입력으로 보존한다", async ({ page }) => {
@@ -156,7 +152,7 @@ test("모델을 바꾼 같은 글은 원래 저장 요청을 확인한 뒤에도
         await expectComposerSetting(view, "모델 프로필", f.secondary);
         expect(sent).toHaveLength(2);
         expect(sent[1]).toEqual(sent[0]);
-        await page.getByRole("banner").getByRole("button", { name: "설정", exact: true }).click();
+        await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
         await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
         await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(s.title) }).click();
         await expect(view.getByLabel("메시지 입력")).toHaveValue("same text with a different model intent");
@@ -210,12 +206,12 @@ test("다른 프로젝트를 선택한 뒤 승인해도 cwd·파일 변경·stre
         await expect.poll(() => held).toBe(true);
         await show(second);
         release();
+        await expect.poll(async () => (await apiCall<{ status: string }[]>("GET", `/sessions/${first.id}/turns?limit=1`))[0]?.status).toBe("completed");
         await expect(right).not.toContainText("pane a complete");
-        await expect(left.getByTestId("msg-assistant").filter({ hasText: "pane a complete" })).toHaveCount(1);
         await show(first);
-        await openDetails(left.getByTestId("msg-tool"));
-        await expect(left.getByTestId("msg-tool")).toContainText(a.root_path);
-        await page.keyboard.press("Escape");
+        await expect(left.getByTestId("msg-assistant").filter({ hasText: "pane a complete" })).toHaveCount(1);
+        expect(JSON.stringify(await apiCall("GET", `/tool-calls/${call.id}`))).toContain(a.root_path);
+        await expect(left.getByTestId("msg-tool")).toHaveCount(0);
         expect(readFileSync(join(a.root_path, name), "utf8")).toBe("a-after");
         expect(readFileSync(join(b.root_path, name), "utf8")).toBe("b-before");
         await show(second);
@@ -223,9 +219,8 @@ test("다른 프로젝트를 선택한 뒤 승인해도 cwd·파일 변경·stre
         await script({ frames: frames.text(["pane b complete"]) });
         await right.getByTestId("approval").getByRole("button", { name: "이번만 승인", exact: true }).click();
         await expect(right.getByTestId("msg-assistant").filter({ hasText: "pane b complete" })).toHaveCount(1);
-        await openDetails(right.getByTestId("msg-tool"));
-        await expect(right.getByTestId("msg-tool")).toContainText(b.root_path);
-        await page.keyboard.press("Escape");
+        expect(JSON.stringify(await apiCall("GET", `/tool-calls?session_id=${second.id}`))).toContain(b.root_path);
+        await expect(right.getByTestId("msg-tool")).toHaveCount(0);
         expect(readFileSync(join(a.root_path, name), "utf8")).toBe("a-after");
         expect(readFileSync(join(b.root_path, name), "utf8")).toBe("b-after");
         const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as { model: string; messages: unknown[] }[];

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { frames } from "./fixture";
-import { apiCall, closeModelSettings, composerSetting, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, script, selectChoice, startProjectConversation, state } from "./helpers";
+import { apiCall, closeModelSettings, composerSetting, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, openProjectSettings, script, selectChoice, startProjectConversation, state } from "./helpers";
 
 type Effective = { items: { key: string; effective: unknown; layers: Record<string, { value: unknown; revision: number }> }[] };
 const defaultsKey = "model.default_profile";
@@ -9,8 +9,9 @@ const summaryKey = "context.summary_profile";
 
 async function setting(project: string, key: string, value: unknown) {
     const effective = await apiCall<Effective>("GET", `/settings/effective?project_id=${project}`);
-    const revision = effective.items.find((item) => item.key === key)?.layers.project?.revision ?? 0;
-    return apiCall("PUT", `/settings/project/${project}/${key}`, { expected_revision: revision, value });
+    const scope = key === summaryKey ? "server" : "project";
+    const revision = effective.items.find((item) => item.key === key)?.layers[scope]?.revision ?? 0;
+    return apiCall("PUT", `/settings/${scope}/${scope === "server" ? "-" : project}/${key}`, { expected_revision: revision, value });
 }
 async function fixture() {
     await ensureProfile();
@@ -24,7 +25,7 @@ async function fixture() {
     for (const [project, key] of [[a.id, defaultsKey], [a.id, summaryKey], [b.id, defaultsKey],
         [a.id, "context.auto_compact_percent"], [a.id, "context.input_reserve_tokens"], [a.id, "context.auto_clear_minutes"]]) {
         const effective = await apiCall<Effective>("GET", `/settings/effective?project_id=${project}`);
-        backups.push({ project: project!, key: key!, value: effective.items.find((item) => item.key === key)?.layers.project?.value ?? null });
+        backups.push({ project: project!, key: key!, value: effective.items.find((item) => item.key === key)?.layers[key === summaryKey ? "server" : "project"]?.value ?? null });
     }
     const removed = new Set<string>();
     return { a, b, primary, secondary, prefix, removed, cleanup: async () => {
@@ -35,8 +36,7 @@ async function fixture() {
 async function openSettings(page: Page, project: { id: string; name: string }) {
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    await openProjectSettings(page);
 }
 
 test("프로젝트 기본값은 새 입력창에만 적용하고 기기 선택·다른 프로젝트·기존 탭을 바꾸지 않는다", async ({ page }) => {
@@ -92,7 +92,7 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
         await search.fill("압축 요약 모델");
         const summary = page.getByTestId(`setting-${summaryKey}`);
         await selectChoice(summary.getByLabel("압축 요약 모델", { exact: true }), f.primary.id);
-        await expect(summary.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
+        await expect(page.getByTestId("workflow-context-compressor")).toContainText("저장됨");
         const effective = await apiCall<Effective>("GET", `/settings/effective?project_id=${f.a.id}`);
         expect(effective.items.find((item) => item.key === summaryKey)?.effective).toBe(f.primary.id);
         const session = await apiCall<{ id: string }>("POST", `/projects/${f.a.id}/sessions`, { title: `${f.prefix} context` });
@@ -122,12 +122,12 @@ test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충
         expect(requests.filter((request) => JSON.stringify(request.messages).includes(f.prefix)).map((request) => request.model)).toEqual(["fixture-default-a"]);
         await search.fill("압축 요약 모델");
         await selectChoice(summary.getByLabel("압축 요약 모델", { exact: true }), "");
-        await expect(summary).toContainText("저장됨");
+        await expect(page.getByTestId("workflow-context-compressor")).toContainText("저장됨");
         await expectChoice(summary.getByLabel("압축 요약 모델", { exact: true }), "");
     } finally { await f.cleanup(); }
 });
 
-test("선택한 프로필이 삭제돼도 다른 공급자로 보내지 않고 입력·선택을 복원한다", async ({ page }) => {
+test("선택한 프로필이 삭제돼도 다른 공급자로 보내지 않고 선택은 유지하되 미전송 입력은 복원하지 않는다", async ({ page }) => {
     const f = await fixture();
     try {
         await setting(f.a.id, defaultsKey, "");
@@ -146,8 +146,10 @@ test("선택한 프로필이 삭제돼도 다른 공급자로 보내지 않고 �
         await expectComposerSetting(page, "모델 프로필", f.primary.id);
         await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
         await page.reload();
+        await startProjectConversation(page.getByTestId("project-view").filter({ visible: true }));
         await expect(page.getByTestId("profile-missing")).toBeVisible();
-        await expect(area).toHaveValue(`${f.prefix} never send implicitly`);
+        await expect(area).toHaveValue("");
+        await area.fill(`${f.prefix} never send implicitly`);
         const mutations: string[] = [];
         page.on("request", (request) => {
             if (request.method() === "POST" && /\/(sessions|turns)$/.test(new URL(request.url()).pathname)) mutations.push(request.url());

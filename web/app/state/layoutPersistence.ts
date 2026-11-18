@@ -2,17 +2,20 @@ import { ApiError, isTransportError } from "../api/client";
 import { emptyLayout, isValid, type Layout } from "./layout";
 
 type Attempt = { layout: Layout; expected_revision: number; key: string };
-type Copy = { format: 1; layout: Layout; revision: number; dirty: boolean; edit: string; attempt?: Attempt };
+type Copy = { format: 1; layout: Layout; revision: number; dirty: boolean; edit: string; attempt?: Attempt; base?: Layout };
 type Store = Pick<Storage, "getItem" | "setItem">;
-type Remote = { layout: unknown; revision: number };
+export type RemoteLayout = { layout: unknown; revision: number };
 type Options = {
     store: Store;
-    get: (signal: AbortSignal) => Promise<Remote>;
+    get: (signal: AbortSignal) => Promise<RemoteLayout>;
     put: (attempt: Attempt, signal: AbortSignal) => Promise<{ revision: number }>;
     newKey: () => string;
     active: () => boolean;
     notice: (message: string) => void;
     initial?: () => Layout;
+    seed?: (layout: Layout) => boolean;
+    merge?: (base: Layout, edited: Layout, remote: Layout) => Layout;
+    onRemote?: (layout: Layout) => void;
 };
 
 const validRevision = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
@@ -27,11 +30,12 @@ function parseCopy(raw: string | null): Copy | null {
             || typeof v.dirty !== "boolean" || typeof v.edit !== "string" || !v.edit) return null;
         if (v.attempt !== undefined && (!v.attempt || !v.dirty || !isValid(v.attempt.layout) || !validRevision(v.attempt.expected_revision)
             || typeof v.attempt.key !== "string" || !v.attempt.key)) return null;
+        if (v.base !== undefined && !isValid(v.base)) return null;
         return v;
     } catch { return null; }
 }
 
-// 하나의 기기/화면 폭에 속하는 저장 수명. 폐기·로그아웃 뒤의 응답은 사본을 다시 만들지 않는다.
+// 키 하나의 저장 수명. 폐기·로그아웃 뒤의 응답은 사본을 다시 만들지 않는다.
 export class LayoutPersistence {
     private copy: Copy | null = null;
     private timer: ReturnType<typeof setTimeout> | null = null;
@@ -39,6 +43,7 @@ export class LayoutPersistence {
     private busy = false;
     private closed = false;
     private writtenEdit: string | null = null;
+    private pendingRemote: RemoteLayout | null = null;
     private storageKey: string;
 
     constructor(public readonly key: string, private options: Options) {
@@ -81,7 +86,7 @@ export class LayoutPersistence {
     async restore(): Promise<Layout | null> {
         let local = this.read();
         const originalEdit = local?.edit;
-        let remote: Remote | null = null;
+        let remote: RemoteLayout | null = null;
         try { remote = await this.options.get(this.controller.signal); }
         catch { /* 통신 실패 시 검증된 로컬 사본을 쓴다. */ }
         if (!this.active()) return null;
@@ -90,12 +95,17 @@ export class LayoutPersistence {
         let server: Layout | null = null;
         try { if (remote && validRevision(remote.revision) && isValid(remote.layout)) server = remote.layout; }
         catch { /* 잘못된 서버 배치는 복원하지 않는다. */ }
-        this.copy = local && (local.dirty || local.edit !== originalEdit) ? local : server && remote ? {
-            format: 1, layout: server, revision: remote.revision, dirty: false, edit: this.options.newKey(),
-        } : local ?? {
-            format: 1, layout: this.options.initial?.() ?? emptyLayout(), revision: validRevision(remote?.revision) ? remote.revision : 0,
-            dirty: !!this.options.initial && remote?.layout === null && remote.revision === 0, edit: this.options.newKey(),
-        };
+        if (local && (local.dirty || local.edit !== originalEdit)) this.copy = local;
+        else if (server && remote) this.copy = { format: 1, layout: server, revision: remote.revision, dirty: false, edit: this.options.newKey() };
+        else if (local) this.copy = local;
+        else {
+            const layout = this.options.initial?.() ?? emptyLayout();
+            const dirty = !!this.options.initial && remote?.layout === null && remote.revision === 0 && (this.options.seed?.(layout) ?? true);
+            this.copy = {
+                format: 1, layout, revision: validRevision(remote?.revision) ? remote.revision : 0, dirty, edit: this.options.newKey(),
+                base: this.options.merge && !server ? emptyLayout() : undefined,
+            };
+        }
         this.writtenEdit = local?.edit ?? null;
         if (this.write() && this.copy.dirty) this.schedule();
         return this.copy.layout;
@@ -103,9 +113,25 @@ export class LayoutPersistence {
 
     change(layout: Layout) {
         if (!this.active() || !this.copy) return;
-        this.copy = { ...this.copy, layout, dirty: true, edit: this.options.newKey() };
+        const base = this.options.merge ? this.copy.base ?? this.copy.layout : undefined;
+        this.copy = { ...this.copy, layout, base, dirty: true, edit: this.options.newKey() };
         if (this.write()) this.schedule();
     }
+
+    acceptRemote(remote: RemoteLayout) {
+        if (!this.active() || !this.copy || !validRevision(remote.revision) || remote.revision <= this.copy.revision || !isValid(remote.layout)) return;
+        if (this.busy || this.copy.dirty) {
+            if (!this.pendingRemote || remote.revision > this.pendingRemote.revision) this.pendingRemote = remote;
+            return;
+        }
+        // 공유 키의 다른 창이 미저장 편집을 보존 중이면 해당 사본은 그대로 둔다.
+        const local = this.read();
+        this.copy = { format: 1, layout: remote.layout, revision: remote.revision, dirty: false, edit: this.options.newKey() };
+        if (!local?.dirty) this.write();
+        this.options.onRemote?.(remote.layout);
+    }
+
+    snapshot() { return this.copy?.layout; }
 
     async flush(): Promise<void> {
         if (this.timer) clearTimeout(this.timer);
@@ -125,18 +151,27 @@ export class LayoutPersistence {
                 try {
                     const result = await this.options.put(attempt, this.controller.signal);
                     if (!this.active() || !this.ownsCopy()) return;
+                    const dirty: boolean = !sameLayout(this.copy.layout, attempt.layout);
                     this.copy = {
-                        ...this.copy, revision: result.revision, attempt: undefined,
-                        dirty: !sameLayout(this.copy.layout, attempt.layout),
+                        ...this.copy, revision: result.revision, attempt: undefined, dirty,
+                        base: this.options.merge && dirty ? attempt.layout : undefined,
                     };
                     if (!this.write()) return;
                 } catch (error) {
                     if (!this.active() || !this.ownsCopy()) return;
                     const current = error instanceof ApiError && error.code === "revision_conflict"
-                        ? (error.details as { current?: { revision?: unknown } })?.current : undefined;
+                        ? (error.details as { current?: { revision?: unknown; layout?: unknown } })?.current : undefined;
                     if (!rebased && validRevision(current?.revision)) {
-                        // 기존 배치 정책: 같은 기기 창 사이에는 마지막 저장 우선. CAS 재시도는 한 번만 한다.
                         rebased = true;
+                        if (this.options.merge && isValid(current.layout)) {
+                            const layout = this.options.merge(this.copy.base ?? emptyLayout(), this.copy.layout, current.layout);
+                            const dirty: boolean = !sameLayout(layout, current.layout);
+                            this.copy = { ...this.copy, layout, revision: current.revision, attempt: undefined,
+                                base: dirty ? current.layout : undefined, dirty };
+                            if (!this.write()) return;
+                            this.options.onRemote?.(layout);
+                            continue;
+                        }
                         this.copy = { ...this.copy, revision: current.revision, attempt: undefined };
                         if (!this.write()) return;
                         this.notice("다른 창에서 바뀐 배치를 이 창의 배치로 덮어씁니다");
@@ -152,7 +187,14 @@ export class LayoutPersistence {
                 }
                 this.retryDelay = 0;
             }
-        } finally { this.busy = false; }
+        } finally {
+            this.busy = false;
+            if (this.pendingRemote) {
+                const remote = this.pendingRemote;
+                this.pendingRemote = null;
+                this.acceptRemote(remote);
+            }
+        }
     }
 
     private retryDelay = 0;

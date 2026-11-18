@@ -58,6 +58,9 @@ async fn notes(s: &TestServer, sid: &str) -> Vec<Value> {
 #[tokio::test]
 async fn spawn_requires_approval_by_default_and_result_reaches_parent_once() {
     let (s, f, prof, _pid, sid) = setup().await;
+    let (status, settings) = s.send(Method::PUT, "/api/v1/settings/server/-/agents.profile.reviewer",
+        json!({ "expected_revision": 0, "value": { "profile_id": prof, "model": "review-small", "effort": "medium" } })).await;
+    assert_eq!(status, StatusCode::OK, "{settings}");
     f.push(fixture::tool_calls(&[("a1", "agent", json!({ "action": "spawn", "agent_id": "reviewer", "brief": "README를 검토해" }))]));
     f.push(fixture::text("자식에게 맡겼어"));
     f.push(fixture::text("검토 결과를 확인했어"));
@@ -98,8 +101,10 @@ async fn spawn_requires_approval_by_default_and_result_reaches_parent_once() {
     assert_eq!(n[0]["content"]["text"], "검토 결과: 문제 없음 XYZ");
     // 자식 요청에는 위임 지침과 reviewer 정의 본문이 들어간다
     let reqs = f.requests();
-    let child_req = reqs.iter().find(|r| r.to_string().contains(CHILD)).expect("자식 요청").to_string();
-    assert!(child_req.contains("README를 검토해"));
+    let child_req = reqs.iter().find(|r| r.to_string().contains(CHILD)).expect("자식 요청");
+    assert!(child_req.to_string().contains("README를 검토해"));
+    assert_eq!(child_req["model"], "review-small");
+    assert_eq!(child_req["reasoning_effort"], "medium");
     // 사용자가 자식 세션에 직접 보낸 턴은 부모에 보고하지 않는다
     f.push(fixture::text("직접 대화"));
     let (st, v) = s.post(&format!("/api/v1/sessions/{child}/turns"), json!({ "text": "추가 질문", "profile_id": prof })).await;

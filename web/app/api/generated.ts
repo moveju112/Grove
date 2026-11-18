@@ -4,11 +4,27 @@ export type EventRecord = { seq: number, created_at: string, kind: string, proje
 
 export type ComputerStatus = { enabled: boolean, target: string, platform: string, platform_supported: boolean, desktop_session_present: boolean, backend: string, note: string, };
 
+export type SetupPreferences = { output_style: string, output_style_revision: number, output_style_options: Array<string>, computer_enabled: boolean, computer_revision: number, };
+
+export type SetupStatus = { required: boolean,
+/**
+ * 미완료 데몬의 등록 기기에 보내는 설정.
+ */
+preferences: SetupPreferences | null, };
+
 export type DeviceInfo = { id: string, kind: string, name: string, created_at: string, last_used_at: string | null, revoked_at: string | null, parent_id: string | null, expires_at: string | null, current: boolean, };
 
 export type PairingRequestInfo = { id: string, name: string, verification_code: string, created_at: string, expires_at: string, };
 
 export type PairingInfo = { id: string, name: string, created_at: string, expires_at: string | null, revoked_at: string | null, consumed_at: string | null, device_id: string | null, failed_attempts: number, locked_at: string | null, requests: Array<PairingRequestInfo>, };
+
+export type Followup = { id: string, session_id: string, kind: string, text: string, profile_id: string, agent_id: string | null, tools: boolean, created_at: string, effort: string | null, model: string | null, service_tier: string | null, native_command: string | null,
+/**
+ * 자동 시작이 막힌 이유(예: 결과 불명 작업 검토 필요). 사용자가 시작하거나 지울 때까지 남는다.
+ */
+last_error: { code: string, message: string } | null, attachments: unknown[], delivery_state: "pending" | "sending" | "rejected" | "unknown", };
+
+export type Continuation = { id: string, session_id: string, origin_turn_id: string, kind: string, prompt: string, task_id: string | null, due_at: string, status: string, result_turn_id: string | null, error_code: string | null, created_at: string, };
 
 export type Notification = { id: string, kind: string, title: string, body: string, project_id: string | null, session_id: string | null, ref_id: string | null, created_at: string, delivered_at: string | null, read_at: string | null, };
 
@@ -122,13 +138,15 @@ last_activity_at: string, };
 
 export type RecentPage = { items: Array<RecentItem>, next_offset: number | null, total: number, };
 
-export type Draft = { resource_key: string, text: string, revision: number, device_name: string, updated_at: string | null, };
-
 export type Definition = { kind: string, id: string, name: string, description: string, body: string, builtin: boolean,
 /**
  * 기본 원문과 다른 필드 목록(builtin일 때)
  */
-modified_fields: Array<string>, enabled: boolean, revision: number, body_sha256: string,
+modified_fields: Array<string>, enabled: boolean,
+/**
+ * background | helper | orchestrated | workflow
+ */
+execution: string, profile_key: string | null, revision: number, body_sha256: string,
 /**
  * 기본 원문 파일 sha256(builtin일 때)
  */
@@ -138,7 +156,11 @@ export type DefinitionDetail = { baseline_name: string | null, baseline_descript
 /**
  * 기본 원문과 다른 필드 목록(builtin일 때)
  */
-modified_fields: Array<string>, enabled: boolean, revision: number, body_sha256: string,
+modified_fields: Array<string>, enabled: boolean,
+/**
+ * background | helper | orchestrated | workflow
+ */
+execution: string, profile_key: string | null, revision: number, body_sha256: string,
 /**
  * 기본 원문 파일 sha256(builtin일 때)
  */
@@ -152,6 +174,8 @@ export type ModelProfile = { id: string, name: string, protocol: string, base_ur
  */
 last_check: { ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null, enabled: boolean, capabilities: ModelCapabilities, };
 
+export type ModelSelection = { profile_id: string, model: string | null, effort?: string, };
+
 export type AgentBackend = { protocol: string, name: string, installed: boolean, read_only: boolean, };
 
 export type AgentBackendCatalog = { backends: Array<AgentBackend>, };
@@ -159,6 +183,28 @@ export type AgentBackendCatalog = { backends: Array<AgentBackend>, };
 export type LoginAttempt = { id: string, state: string, url: string | null, code: string | null, };
 
 export type AgentAuthStatus = { authenticated: boolean | null, attempt: LoginAttempt | null, };
+
+export type AccountUsageLimit = { label: string, remaining_percent: number | null, remaining: string | null, resets_at: string | null, };
+
+export type AccountUsage = { protocol: string, name: string,
+/**
+ * available | unsupported | authentication_required | unavailable | rate_limited
+ */
+status: string, limits: Array<AccountUsageLimit>, checked_at: string, };
+
+export type AccountUsageReport = { accounts: Array<AccountUsage>, };
+
+export type UsageMetrics = { input_tokens: number, output_tokens: number, cache_read_tokens: number, cache_write_tokens: number, reasoning_tokens: number, cache_write_unreported_responses: number, reasoning_unreported_responses: number, responses: number, unreported_responses: number, measured_responses: number, measured_output_tokens: number, response_ms: number, cli_measured_responses: number, tok_per_second: number | null, low10_tok_per_second: number | null, high10_tok_per_second: number | null, };
+
+export type UsageCost = { currency: string, amount: number, };
+
+export type UsageEffortContext = { agent: string | null, model: string, effort: string | null, fast: boolean | null, };
+
+export type UsageSlice = { key: string, label: string, provider: string, metrics: UsageMetrics, context?: UsageEffortContext, };
+
+export type UsageBucket = { start: string, total: UsageMetrics, providers: Array<UsageSlice>, };
+
+export type UsageDashboard = { from: string, to: string, interval: string, total: UsageMetrics, providers: Array<UsageSlice>, models: Array<UsageSlice>, projects: Array<UsageSlice>, agents: Array<UsageSlice>, workflows: Array<UsageSlice>, sessions: Array<UsageSlice>, efforts: Array<UsageSlice>, series: Array<UsageBucket>, estimated_cost: Array<UsageCost>, unpriced_tokens: number, pricing_versions: Array<string>, };
 
 export type ModelCapabilities = { context_tokens: number | null, max_output_tokens: number | null, images: boolean | null, tools: boolean | null,
 /**
@@ -168,9 +214,15 @@ native_tools?: boolean, effort: boolean | null, temperature: boolean | null, pdf
 
 export type AvailableModel = { id: string, name: string, reasoning_efforts?: Array<string>, default_reasoning_effort?: string, service_tiers?: Array<ModelServiceTier>, is_default?: boolean, };
 
+export type ContextUsage = { tokens: number | null, context_window: number | null, };
+
 export type ModelServiceTier = { id: string, name: string, description: string, };
 
 export type ModelCatalog = { profile_id: string, profile_revision: number, models: Array<AvailableModel>, fetched_at: string, };
+
+export type NativeCommand = { id: string, name: string, description: string, argument_hint: string, };
+
+export type NativeCommandCatalog = { project_id: string, profile_id: string, protocol: string, commands: Array<NativeCommand>, has_errors: boolean, };
 
 export type Turn = { id: string, session_id: string, status: string, request_message_id: string, profile_id: string | null, agent_id: string | null, workflow_id: string | null, tools_enabled: boolean, error: unknown, usage: unknown, step: number, created_at: string, updated_at: string, finished_at: string | null, definition: unknown,
 /**
@@ -202,6 +254,24 @@ op: string, before_sha: string | null, after_sha: string | null,
  * 내용을 보관해 diff·undo/redo가 가능한지
  */
 stored: boolean, undone_at: string | null, created_at: string, seq: number, };
+
+export type FileChangeGroup = { turn_id: string | null, applied: number, undone: number, };
+
+export type FileChangePage = { items: Array<FileChange>, groups: Array<FileChangeGroup>, total: number, applied: number, through_seq: number, next_before_seq: number | null, };
+
+export type FileEntry = { name: string, path: string, kind: "dir" | "file" | "link_outside" | "other", symlink: boolean, size: number | null, mtime: string | null, };
+
+export type FileList = { path: string, entries: Array<FileEntry>, truncated: boolean, total: number, offset: number, has_more: boolean, };
+
+export type FileContent = { path: string, size: number, sha256: string | null, preview: "text" | "image" | "svg" | "pdf" | "html", text: string | null, mtime?: string, reason?: string, stamp?: string, };
+
+export type FileUnchanged = { unchanged: true, stamp: string, };
+
+export type FileRead = FileContent | FileUnchanged;
+
+export type GitEntry = { path: string, index: string, worktree: string, kind: string, orig_path?: string, };
+
+export type GitStatusPage = { entries: Array<GitEntry>, total: number, unfiltered_total: number, offset: number, has_more: boolean, fingerprint: string | null, };
 
 export type Worktree = { id: string, project_id: string, name: string, path: string, branch: string, base: string | null,
 /**

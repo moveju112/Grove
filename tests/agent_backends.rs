@@ -45,9 +45,9 @@ async fn connect_reconciles_concurrent_requests_and_keeps_owner_boundary() {
     }
     let (_, profiles) = server.get("/api/v1/model-profiles").await;
     assert_eq!(profiles.as_array().unwrap().len(), 1);
-    let (_, device) = server.post("/api/v1/devices", json!({"name":"phone"})).await;
+    let device = server.registered_device("phone").await;
     let response = server.raw(Method::POST, "/api/v1/agent-backends/codex_cli/connect", Some(json!({})), Some("device-connect"), device["token"].as_str()).await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::OK);
     let (status, _) = server.post("/api/v1/agent-backends/not-a-program/connect", json!({})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }
@@ -69,8 +69,8 @@ async fn connect_uses_runtime_catalog_and_replays_without_duplicates() {
         let created: Value = response.json().await.unwrap();
         assert_eq!(created["model"], "default");
         assert_eq!(created["secret_id"], Value::Null);
-        assert_eq!(created["capabilities"]["native_tools"], true);
-        assert_eq!(created["capabilities"]["tools"], false, "CLI 자체 도구를 Grove 루프로 중복 실행하지 않는다");
+        assert_eq!(created["capabilities"]["native_tools"], protocol == "claude_code");
+        assert_eq!(created["capabilities"]["tools"], protocol == "codex_oauth");
         let replay: Value = server.raw(Method::POST, &path, Some(json!({})), Some(&key), None).await.json().await.unwrap();
         assert_eq!(replay["id"], created["id"]);
         let (_, again) = server.post(&path, json!({})).await;

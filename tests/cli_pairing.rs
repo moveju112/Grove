@@ -113,6 +113,10 @@ fn cli_pairing_creates_links_checks_codes_and_preserves_approval_boundaries() {
         out
     };
     let password = "test-only!";
+    let local = run(&["create", "local bootstrap", "--password-stdin", "--json"], Some(&format!("{password}\n")));
+    assert!(local.status.success());
+    let local: Value = serde_json::from_slice(&local.stdout).unwrap();
+    assert!(local["link"].as_str().unwrap().starts_with(&format!("http://{listen}/#pairing=")));
     let create = |name: &str| {
         let out = run(&["create", name, "--endpoint", "wss://example.test/api/e2ee", "--password-stdin", "--json"], Some(&format!("{password}\n")));
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));

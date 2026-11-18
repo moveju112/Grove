@@ -56,8 +56,8 @@ describe("현재 위치의 접근성·오류 표시", () => {
     it("긴 이름 전체를 접근성 이름과 tooltip에 남긴다", () => {
         const name = "긴이름".repeat(100);
         const html = render({ projects: [{ ...project, name }] });
-        expect(html).toContain(`aria-label="프로젝트: ${name} (p) 대화 목록으로"`);
-        expect(html).toContain(`title="프로젝트: ${name} (p) 대화 목록으로"`);
+        expect(html).toContain(`aria-label="프로젝트: ${name} (p) 프로젝트 화면으로"`);
+        expect(html).toContain(`title="프로젝트: ${name} (p) 프로젝트 화면으로"`);
     });
     it("배치 로딩·빈 pane을 구분한다", () => {
         expect(render({ layout: undefined })).toContain("배치 불러오는 중…");

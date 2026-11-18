@@ -127,6 +127,37 @@ describe("연결 문제 조회", () => {
 });
 
 describe("중복 viewer의 조회 구독(PANE-007)", () => {
+    it("첫 조회 중 이벤트가 몰려도 한 요청과 후속 재검증 한 번으로 합친다", async () => {
+        const releases: ((value: string) => void)[] = [];
+        const fetcher = vi.fn(() => new Promise<string>((resolve) => releases.push(resolve)));
+        const off = subscribeQuery("burst", fetcher, () => undefined);
+        try {
+            for (let i = 0; i < 10; i++) invalidate("burst");
+            expect(fetcher).toHaveBeenCalledTimes(1);
+            releases[0]!("old");
+            await settle();
+            expect(fetcher).toHaveBeenCalledTimes(2);
+            expect(querySnapshot("burst").data).toBeUndefined();
+            releases[1]!("latest");
+            await settle();
+            expect(querySnapshot("burst")).toEqual({ data: "latest", error: null, loading: false });
+        } finally { off(); clearServerCache(); }
+    });
+    it("조회 중 마지막 구독자가 닫히면 후속 요청을 미루고 다시 열 때만 갱신한다", async () => {
+        let release!: (value: string) => void;
+        const fetcher = vi.fn(() => new Promise<string>((resolve) => { release = resolve; }));
+        const off = subscribeQuery("hidden-burst", fetcher, () => undefined);
+        invalidate("hidden-burst");
+        off();
+        release("stale");
+        await settle();
+        expect(fetcher).toHaveBeenCalledTimes(1);
+        const again = subscribeQuery("hidden-burst", async () => "fresh", () => undefined);
+        try {
+            await settle();
+            expect(querySnapshot("hidden-burst").data).toBe("fresh");
+        } finally { again(); clearServerCache(); }
+    });
     it("같은 대화를 여러 pane에서 보면 한 번 읽고 무효화도 한 번만 다시 읽는다", async () => {
         const fetcher = vi.fn(async () => "data");
         const a = vi.fn();

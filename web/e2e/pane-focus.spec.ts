@@ -4,17 +4,17 @@ import { apiCall, composerOption, ensureProfile, ensureProjects, login } from ".
 import type { Layout } from "../app/state/layout";
 
 test("키보드로 들어간 pane이 열기·붙여넣기 첨부·입력의 대상이 되고 다른 pane에는 섞이지 않는다", async ({ page }) => {
-    const { a, b } = await ensureProjects();
+    const { a } = await ensureProjects();
     await ensureProfile();
     const left = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title: `focus-left-${randomUUID()}` });
-    const right = await apiCall<{ id: string; title: string }>("POST", `/projects/${b.id}/sessions`, { title: `focus-right-${randomUUID()}` });
+    const right = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title: `focus-right-${randomUUID()}` });
     const opened = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title: `focus-open-${randomUUID()}` });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: opened.id, title: opened.title });
     const device = `focus-${randomUUID()}`;
     const layout: Layout = { schema: 1, focused_leaf: "left", root: {
         type: "split", direction: "row", ratio: 0.5, children: [
             { type: "leaf", id: "left", active_tab: "l", tabs: [{ id: "l", kind: "session", project_id: a.id, resource_id: left.id, title: left.title }] },
-            { type: "leaf", id: "right", active_tab: "r", tabs: [{ id: "r", kind: "session", project_id: b.id, resource_id: right.id, title: right.title }] },
+            { type: "leaf", id: "right", active_tab: "r", tabs: [{ id: "r", kind: "session", project_id: a.id, resource_id: right.id, title: right.title }] },
         ],
     } };
     await apiCall("PUT", `/layouts/${device}`, { expected_revision: 0, layout });
@@ -23,6 +23,7 @@ test("키보드로 들어간 pane이 열기·붙여넣기 첨부·입력의 대�
     const leftPane = page.locator('[data-leaf="left"]');
     const rightPane = page.locator('[data-leaf="right"]');
     await expect(leftPane.getByTestId("session-view")).toBeVisible();
+    await expect(rightPane.getByTestId("session-view")).toBeVisible();
     await expect(leftPane).toHaveAttribute("data-focused", "true");
 
     // 키보드 포커스만으로 오른쪽 pane에 들어간다(pointer 없음).

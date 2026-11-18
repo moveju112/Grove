@@ -5,17 +5,16 @@ import { mkdtempSync, readFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiCall, ensureProfile, ensureProjects, login, script, selectChoice, sessionView, state } from "./helpers";
+import { finishSetup, apiCall, ensureProfile, ensureProjects, login, registerBrowser, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 type Detail = { id: string; status: string; timing: { total_ms: number; running: boolean } };
 
-async function timingSetting(page: Page, title: string, enabled: boolean) {
+async function timingSetting(page: Page, enabled: boolean) {
     await page.getByRole("button", { name: "설정", exact: true }).first().click();
     await page.getByLabel("설정 검색", { exact: true }).fill("턴 경과");
     await selectChoice(page.getByRole("combobox", { name: "턴 시간 표시", exact: true }), String(enabled));
-    // 탭 버튼 이름은 "프로젝트 이름 + 대화 제목"이다.
-    await page.getByRole("tab").getByRole("button", { name: title }).click();
+    await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
 }
 
 test("진행·완료 시간은 기기 시계 ±5분에도 서버와 같고 끄기는 새로고침 뒤에도 유지된다", async ({ page }) => {
@@ -46,12 +45,12 @@ test("진행·완료 시간은 기기 시계 ±5분에도 서버와 같고 끄�
                 return Math.abs(displayed - server.timing.total_ms);
             }).toBeLessThan(3000);
         }
-        await timingSetting(page, title, false);
+        await timingSetting(page, false);
         await expect(timing).toHaveCount(0);
         await page.reload();
         await expect(view).toBeVisible();
         await expect(timing).toHaveCount(0);
-        await timingSetting(page, title, true);
+        await timingSetting(page, true);
         await expect(timing).toHaveAttribute("data-running", "true");
         await apiCall("POST", `/turns/${active}/cancel`);
         await expect(timing).toHaveAttribute("data-running", "false");
@@ -65,7 +64,7 @@ test("진행·완료 시간은 기기 시계 ±5분에도 서버와 같고 끄�
         active = undefined;
         const detail = await apiCall<Detail>("GET", `/turns/${done.turn.id}`);
         await expect(timing).toHaveAttribute("data-elapsed-ms", String(detail.timing.total_ms));
-        await expect(timing).toContainText("요청");
+        await expect(timing).toContainText("소요 시간");
         await page.reload();
         await expect(view.getByTestId("turn-timing")).toHaveAttribute("data-elapsed-ms", String(detail.timing.total_ms));
     } finally {
@@ -129,9 +128,9 @@ test("격리 서버를 실제 재시작하면 진행 턴은 중단으로 복구�
             name: "timing fixture", protocol: "openai", base_url: `http://127.0.0.1:${state().fixturePort}/v1`, model: "fixture-model",
         });
         await request("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
+        await registerBrowser(page, base, token);
         await page.goto(base);
-        await page.getByLabel("토큰").fill(token);
-        await page.getByRole("button", { name: "로그인" }).click();
+        await finishSetup(page);
         await expect(page.getByTestId("conn")).toHaveText("연결됨");
         await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
         await script({ frames: frames.text(["재시작 전"]).slice(0, 1), hang: true, marker: title });
@@ -147,7 +146,9 @@ test("격리 서버를 실제 재시작하면 진행 턴은 중단으로 복구�
         expect(restored.timing.running).toBe(false);
         await page.reload();
         const timing = view.getByTestId("turn-timing");
-        await expect(timing).toContainText("중단");
+        await expect(view.getByTestId("turn-ended")).toContainText("요청이 중단했어요");
+        await expect(view.getByTestId("turn-ended").getByTestId("turn-timing")).toContainText("소요 시간");
+        await expect(timing).not.toContainText("중단");
         await expect(timing).toHaveAttribute("data-elapsed-ms", String(restored.timing.total_ms));
         await page.clock.install();
         await page.clock.fastForward(60_000);

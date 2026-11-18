@@ -75,7 +75,7 @@ fn link(bridge: &Bridge) -> Value {
 }
 
 #[tokio::test]
-async fn default_off_owner_only_and_exact_once_approval_even_with_allow_policy() {
+async fn default_off_registered_devices_can_enable_and_session_approval_remains_scoped() {
     let s = TestServer::start().await;
     let sid = session(&s).await;
     let (st, status) = s.get("/api/v1/computer/status").await;
@@ -84,12 +84,12 @@ async fn default_off_owner_only_and_exact_once_approval_even_with_allow_policy()
     assert_eq!(status["target"], "server");
     assert_eq!(status["platform"],std::env::consts::OS);
     assert_eq!(status["backend"],match std::env::consts::OS{
-        "windows"=>"win32_window_messages","linux"=>"x11_window_messages",_=>"unsupported",
+        "windows"=>"win32_window_messages","linux"=>"x11_xtest",_=>"unsupported",
     });
     let call = request(&s, &sid, json!({"target":"server","action":"list"})).await;
     assert_eq!(call["status"], "failed");
     assert_eq!(call["result"]["error"]["code"], "computer_disabled");
-    let (_, device) = s.post("/api/v1/devices", json!({"name":"phone"})).await;
+    let device = s.registered_device("phone").await;
     let token = device["token"].as_str().unwrap();
     let response = s
         .raw(
@@ -100,8 +100,7 @@ async fn default_off_owner_only_and_exact_once_approval_even_with_allow_policy()
             Some(token),
         )
         .await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    enable(&s, 0, true).await;
+    assert_eq!(response.status(), StatusCode::OK);
     // 도구 allow 정책도 PC 전체에 대한 포괄 승인으로 해석하지 않는다.
     let (st, v) = s
         .send(
@@ -115,20 +114,43 @@ async fn default_off_owner_only_and_exact_once_approval_even_with_allow_policy()
     assert_eq!(call["status"], "pending_approval");
     assert_eq!(call["needs_approval"], true);
     let id = call["id"].as_str().unwrap();
-    let (st, _) = s
+    let (st, approved) = s
         .post(
             &format!("/api/v1/tool-calls/{id}/decision"),
             json!({"expected_revision":call["revision"],"decision":"approve_session"}),
         )
         .await;
-    assert_eq!(st, StatusCode::BAD_REQUEST);
-    let (st, _) = s
-        .post(
-            &format!("/api/v1/tool-calls/{id}/decision"),
-            json!({"expected_revision":call["revision"],"decision":"deny"}),
-        )
-        .await;
+    assert_eq!(st, StatusCode::OK, "{approved}");
+    assert_eq!(approved["approval_scope"], "session");
+    let (st, grants) = s.get(&format!("/api/v1/sessions/{sid}/tool-grants")).await;
     assert_eq!(st, StatusCode::OK);
+    assert!(grants.to_string().contains("computer"), "{grants}");
+
+    // allow 정책이 있어도 실제 사용자 승인 범위(session)를 보존한다.
+    for _ in 0..2 {
+        let next = request(&s, &sid, json!({"target":"server","action":"list"})).await;
+        assert_eq!(next["status"], "approved", "{next}");
+        assert_eq!(next["needs_approval"], false);
+        assert_eq!(next["approval_scope"], "session");
+    }
+    let other = s.create_session(call["project_id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    assert_eq!(request(&s, &other, json!({"target":"server","action":"list"})).await["status"], "pending_approval");
+
+    // 대화 승인보다 금지 정책이 우선한다.
+    let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/tools.deny"),
+        json!({"expected_revision":0,"value":"computer"})).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let blocked = request(&s, &sid, json!({"target":"server","action":"list"})).await;
+    assert_eq!(blocked["status"], "failed");
+    assert_eq!(blocked["result"]["error"]["code"], "policy_denied");
+    s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/tools.deny"),
+        json!({"expected_revision":1,"value":""})).await;
+
+    let (st, v) = s.send(Method::DELETE, &format!("/api/v1/sessions/{sid}/tool-grants/computer"), json!({})).await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let next = request(&s, &sid, json!({"target":"server","action":"list"})).await;
+    assert_eq!(next["status"], "pending_approval");
+
 }
 
 #[tokio::test]

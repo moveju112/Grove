@@ -31,6 +31,7 @@ for (const theme of ["light", "dark"] as const) {
                 await composerOption(view, "모델 프로필", profiles[0]!.id);
                 await expect(view.getByTestId("model-summary")).toHaveText(profiles[0]!.model);
                 await expect(toolbar.getByRole("button")).toHaveCount(4);
+                await expect(toolbar.getByRole("button", { name: "context 사용량", exact: true })).toBeVisible();
                 await expect(toolbar.getByRole("combobox")).toHaveCount(0);
                 await composerOption(view, "추론", "high");
                 const settings = await modelSettings(view);
@@ -40,6 +41,13 @@ for (const theme of ["light", "dark"] as const) {
                 await page.screenshot({ path: info.outputPath(`model-settings-${theme}-${width}.png`) });
                 await page.keyboard.press("Escape");
                 await expect(view.getByRole("button", { name: "모델 설정", exact: true })).toBeFocused();
+                await expect.poll(() => toolbar.evaluate((node) => {
+                    const trigger = node.querySelector<HTMLButtonElement>('button[aria-label="모델 설정"]')!;
+                    const summary = node.querySelector<HTMLElement>('[data-testid="model-summary"]')!;
+                    const effort = node.querySelector<HTMLElement>('[data-testid="model-effort"]')!;
+                    return trigger.getBoundingClientRect().width - summary.getBoundingClientRect().width - effort.getBoundingClientRect().width;
+                }), { message: "짧은 모델 버튼은 내용과 여백만큼만 너비를 사용한다" }).toBeLessThanOrEqual(32);
+                await page.screenshot({ path: info.outputPath(`composer-${theme}-${width}-compact.png`) });
 
                 await composerOption(view, "모델 프로필", profiles[1]!.id);
                 for (const height of [844, 460, 844]) {

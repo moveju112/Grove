@@ -1,11 +1,11 @@
-//! 소유자만 조회하며 경로는 서버 환경과 등록된 프로젝트에서 결정한다.
+//! 등록 기기가 조회하며 경로는 서버 환경과 등록된 프로젝트에서 결정한다.
 
 use super::{
     ReadErrorCode, SourceId, SourceResource, SourceSettings, SourceState,
     read_codex_user_agents, read_resources, read_source,
 };
 use crate::App;
-use crate::auth::Owner;
+use crate::auth::Principal;
 use crate::error::{ApiError, ApiResult};
 use axum::Json;
 use axum::extract::{Query, State, rejection::QueryRejection};
@@ -28,7 +28,7 @@ pub struct SourceList {
 /// 클라이언트는 프로젝트 식별자만 지정한다. source 목록·파일명·root는 고정한다.
 pub async fn list(
     State(app): State<App>,
-    _owner: Owner,
+    _p: Principal,
     query: Result<Query<SourceQuery>, QueryRejection>,
 ) -> ApiResult<Json<SourceList>> {
     let Query(query) = query.map_err(|_| ApiError::invalid("원본 설정 조회 인자가 올바르지 않습니다"))?;
@@ -36,8 +36,7 @@ pub async fn list(
         if id.is_empty() {
             return Err(ApiError::invalid("프로젝트 식별자가 필요합니다"));
         }
-        // Grove는 단일 사용자 모델이다. Owner는 모든 등록 프로젝트의 관리자이며
-        // 일반 기기에는 원본 설정 접근 권한을 부여하지 않는다.
+        // Grove는 단일 사용자 모델이다. 등록 기기는 모든 프로젝트를 관리할 수 있다.
         Some(app.db.call(move |c| crate::projects::active_root(c, &id)).await?)
     } else {
         None

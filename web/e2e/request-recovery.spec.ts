@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiCall, choiceOptions, closeModelSettings, composerOption, composerSetting, ensureProfile, ensureProjects, expectComposerSetting, inputOptions, login, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, closeModelSettings, composerOption, composerSetting, ensureProfile, ensureProjects, expectComposerSetting, login, runningSendMode, script, selectChoice, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 async function open(page: Page, title: string) {
@@ -7,7 +7,7 @@ async function open(page: Page, title: string) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
-    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title, exact: true }).click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
     return { session, view };
@@ -41,9 +41,7 @@ test("응답 유실 뒤 실행 중 화면으로 바뀌어도 새 followup 대신
         await view.getByLabel("메시지 입력").fill(text);
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("send-unsure")).toBeVisible();
-        await inputOptions(view);
-        await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toBeVisible();
-        await view.getByRole("button", { name: "초안·스킬", exact: true }).click();
+        await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toHaveCount(0);
         await expect.poll(async () => JSON.stringify(await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json())).toContain(text);
         await expect(view.getByLabel("메시지 입력")).toHaveValue(text);
         lost = false;
@@ -66,8 +64,10 @@ test("followup 응답 유실 뒤 실행이 종료돼도 같은 전송 위치와 
     const profile = await ensureProfile();
     const title = `followup recovery ${Date.now()}`;
     const { session, view } = await open(page, title);
+    await runningSendMode(page, "queue");
     await composerOption(view, "모델 프로필", profile);
     const keys: string[] = [];
+    const kinds: string[] = [];
     const turnRequests: string[] = [];
     let lost = true;
     let original: string | undefined;
@@ -78,6 +78,7 @@ test("followup 응답 유실 뒤 실행이 종료돼도 같은 전송 위치와 
     await page.route(`**/api/v1/sessions/${session.id}/followups`, async (route) => {
         if (route.request().method() !== "POST") return route.fallback();
         keys.push(route.request().headers()["idempotency-key"] ?? "");
+        kinds.push(route.request().postDataJSON().kind);
         if (lost) {
             await route.fetch();
             return route.abort("connectionreset");
@@ -91,12 +92,11 @@ test("followup 응답 유실 뒤 실행이 종료돼도 같은 전송 위치와 
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         original = ((await (await response).json()) as { turn: { id: string } }).turn.id;
         await expect.poll(async () => JSON.stringify(await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json())).toContain(title);
-        await inputOptions(view);
-        await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toBeVisible();
-        await view.getByRole("button", { name: "초안·스킬", exact: true }).click();
+        await expect(view.getByRole("combobox", { name: "실행 중 보내기 방식", exact: true })).toHaveCount(0);
         await view.getByLabel("메시지 입력").fill("queued once");
-        await view.getByRole("button", { name: "대기열에 추가", exact: true }).click();
+        await view.getByRole("button", { name: "대기열", exact: true }).click();
         await expect(view.getByTestId("send-unsure")).toBeVisible();
+        await runningSendMode(page, "interrupt");
         await apiCall("POST", `/turns/${original}/cancel`);
         original = undefined;
         await expect(view.getByTestId("turn-status")).toHaveCount(0);
@@ -107,6 +107,7 @@ test("followup 응답 유실 뒤 실행이 종료돼도 같은 전송 위치와 
         expect(keys).toHaveLength(2);
         expect(keys[0]).toBeTruthy();
         expect(keys[1]).toBe(keys[0]);
+        expect(kinds).toEqual(["queue", "queue"]);
         expect(turnRequests).toHaveLength(1);
         const queued = await apiCall<{ items: { text: string }[] }>("GET", `/sessions/${session.id}/followups`);
         expect(queued.items.filter((item) => item.text === "queued once")).toHaveLength(1);
@@ -137,7 +138,8 @@ test("기본값으로 보낸 모델은 사용 선택으로 고정되고 다른 �
             name, protocol: "openai", base_url, model: "other-model",
         });
         added = other.id;
-        await expect((await choiceOptions(await composerSetting(view, "모델 프로필"))).filter({ hasText: name })).toHaveCount(1);
+        await (await composerSetting(view, "모델 프로필")).click();
+        await expect(page.getByRole("menu", { name: "모델 프로필", exact: true }).getByRole("menuitem", { name, exact: true })).toBeVisible();
         await page.keyboard.press("Escape");
         await expectComposerSetting(view, "모델 프로필", preferred.id);
     } finally {

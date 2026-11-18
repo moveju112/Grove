@@ -1,9 +1,27 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Locator } from "@playwright/test";
 import { frames } from "./fixture";
 import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script } from "./helpers";
 
+async function expectFailureLayout(view: Locator, width: number) {
+    const err = view.getByTestId("turn-ended");
+    await expect(err).toBeVisible();
+    await expect(view.getByTestId("composer")).toBeVisible();
+    await expect(err.getByTestId("turn-timing")).toContainText("소요 시간");
+    await expect(view.getByTestId("turn-timing")).toHaveCount(1);
+    await expect(err.getByTestId("turn-timing")).not.toContainText("실패");
+    await expect(view.locator("[data-session-msgs]").getByTestId("msg-turn-ended")).toHaveCount(0);
+    const error = (await err.boundingBox())!;
+    const composer = (await view.getByTestId("composer").boundingBox())!;
+    expect(Math.abs(error.x - composer.x)).toBeLessThan(2);
+    expect(Math.abs(error.width - composer.width)).toBeLessThan(2);
+    expect(error.x).toBeGreaterThanOrEqual(0);
+    expect(error.x + error.width).toBeLessThanOrEqual(width);
+    expect(error.y + error.height).toBeLessThanOrEqual(composer.y);
+    expect(await err.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+}
+
 // UI-006: 실패한 요청은 원인 메시지와 함께 오류로 표시하고, 자동으로 다시 실행하지 않는다고 알린다.
-test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ page }) => {
+test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ page }, info) => {
     const { a } = await ensureProjects();
     await ensureProfile();
     const title = `오류 대화 ${Date.now()}`;
@@ -24,21 +42,27 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     const err = view.getByTestId("turn-ended");
     await expect(err).toBeVisible({ timeout: 15_000 });
     await expect(err).toHaveAttribute("role", "alert");
-    await expect(err).toContainText("마지막 요청이 실패했습니다");
+    await expect(err).toContainText("요청이 실패했어요");
     await expect(err).toContainText("token 한도 1");
-    await expect(err).toContainText("자동으로 다시 실행하지 않습니다");
+    await expect(err).toContainText("자동으로 다시 실행하지 않아요");
+    // 같은 실패는 입력창 위 한 곳에만 표시하고, 모바일에서도 입력창과 읽기 폭을 맞춘다.
+    await expect(view.locator("[data-session-msgs]").getByTestId("msg-turn-ended")).toHaveCount(0);
+    await expectFailureLayout(view, 1400);
+    await page.screenshot({ path: info.outputPath("turn-error-1400.png") });
     const cause = view.getByTestId("msg-turn-ended").first();
-    await expect(cause).toContainText("budget_exceeded");
     await openDetails(cause);
+    await expect(cause).toContainText("budget_exceeded");
     await expect(cause).toContainText("발생 시각:");
     await expect(cause).toContainText("마지막 진행:");
     await expect(cause).toContainText("적용 예산: 1 tokens");
-    // RUN-024: 미완료 범위와 다음 조치를 배너·기록에 보여 주고 새로고침 뒤에도 같다
-    await expect(cause.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계 · 최종 답변 없음 · 도구 호출 없음");
-    await expect(err.getByTestId("end-scope")).toContainText("다음 조치:");
+    // RUN-024: 진행 범위·다음 조치는 상세에 보존하고 새로고침 뒤에도 같다.
+    await expect(cause.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계 · 최종 답변 없음");
+    await expect(cause.getByTestId("end-scope")).toContainText("다음 조치:");
     await page.reload();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
-    await expect(err.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계");
+    await openDetails(cause);
+    await expect(cause.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계");
+    await page.keyboard.press("Escape");
 
     // RUN-019: 예산을 풀고 '다시 실행'하면 같은 글로 새 요청을 보낸다
     await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_tokens`, { expected_revision: 1, value: null });
@@ -57,16 +81,51 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await view.getByLabel("메시지 입력").fill("또 길게");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("turn-ended")).toBeVisible({ timeout: 15_000 });
-    await view.getByTestId("turn-ended").getByRole("button", { name: "새 요청 쓰기" }).click();
-    await expect(view.getByLabel("메시지 입력")).toBeFocused();
+    await expect(err.getByRole("button", { name: "새 요청 쓰기", exact: true })).toHaveCount(0);
+    const input = view.getByLabel("메시지 입력");
+    await input.fill("입력창에서 바로 작성");
+    await expect(input).toHaveValue("입력창에서 바로 작성");
     await view.getByTestId("turn-ended").getByRole("button", { name: "닫기(포기)" }).click();
     await expect(view.getByTestId("turn-ended")).toHaveCount(0);
+    await expect(input).toHaveValue("입력창에서 바로 작성");
     await page.reload();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     await expect(page.getByTestId("session-view").getByTestId("msg-user").filter({ hasText: "또 길게" })).toHaveCount(1);
     await expect(page.getByTestId("session-view").getByTestId("turn-ended")).toHaveCount(0);
     await expect(page.getByTestId("session-view").getByTestId("msg-turn-ended")).toHaveCount(2);
     await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_tokens`, { expected_revision: 3, value: null });
+});
+
+test("390px에서도 오류·복구 버튼은 입력창 폭 안에 표시된다", async ({ page }, info) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
+    const { a } = await ensureProjects();
+    await ensureProfile();
+    const title = `모바일 오류 ${Date.now()}`;
+    const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    await login(page);
+    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
+    if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
+    const view = page.getByTestId("session-view");
+    await script({ frames: [JSON.stringify({ choices: [{ delta: { content: "끊기기 전 문장" } }] })] });
+    await composerOption(view, "보내기 방식", "model");
+    await view.getByLabel("메시지 입력").fill("중단 오류 확인");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    const err = view.getByTestId("turn-ended");
+    await expect(err).toBeVisible({ timeout: 15_000 });
+    await expectFailureLayout(view, 390);
+    await expect(err.getByTestId("turn-evidence")).toContainText("확정되지 않은 응답 · 8자");
+    await expect(err.getByRole("button", { name: "다시 실행", exact: true })).toBeVisible();
+    await expect(err.getByRole("button", { name: "새 요청 쓰기", exact: true })).toHaveCount(0);
+    await expect(err.locator("header").getByRole("button", { name: "닫기(포기)", exact: true })).toBeVisible();
+    await expect(err.locator("footer").getByRole("button", { name: "오류 상세", exact: true })).toBeVisible();
+    await page.screenshot({ path: info.outputPath("turn-error-390.png") });
+    const details = err.getByTestId("msg-turn-ended");
+    await openDetails(details);
+    await expect(details.getByRole("dialog")).toContainText(/모델 응답 대기 한도\(설정\): \d+초/);
+    await expect(details.getByRole("dialog")).not.toContainText("Codex 이벤트:");
 });
 
 // REC-009·010: 별도 확인 필요 메뉴 없이도 대화의 실패·중단 증거와 명시적 확인 절차는 유지한다.
@@ -87,7 +146,7 @@ test("끊긴 응답의 중단 증거는 다른 대화·reload 뒤에도 보존�
     const err = view.getByTestId("turn-ended");
     await expect(err).toBeVisible({ timeout: 15_000 });
     const evidence = err.getByTestId("turn-evidence");
-    await expect(evidence).toContainText("중단 전까지 받은 응답(확정되지 않음 · 8자");
+    await expect(evidence).toContainText("확정되지 않은 응답 · 8자");
     await openDetails(evidence);
     await expect(evidence.locator("pre code")).toHaveText("끊기기 전 문장");
     await expect(view.getByTestId("msg-assistant")).toHaveCount(0);

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, login, state } from "./helpers";
+import { apiCall, login, openProjectSettings, registerBrowser, state } from "./helpers";
 
 const roots: string[] = [];
 test.afterEach(() => {
@@ -33,15 +33,23 @@ async function project() {
     return { ...item, root, original };
 }
 
-test("프로젝트 설정은 실제 인증 API에서 안전한 원본 정보만 표시한다", async ({ page }) => {
+test("프로젝트 설정은 기본으로 접고 실제 인증 API에서 안전한 원본 정보만 표시한다", async ({ page }, testInfo) => {
     const item = await project();
+    await page.setViewportSize({ width: 390, height: 844 });
     await login(page);
+    await page.getByRole("button", { name: "사이드바", exact: true }).click();
     await page.getByTestId("project-row").getByRole("button", { name: item.name, exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    await openProjectSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("원본");
     const panel = page.getByTestId("source-settings");
+    const toggle = panel.getByRole("button", { name: "원본 설정 보기", exact: true });
+    await expect(toggle).toHaveAttribute("aria-expanded", "false");
     const source = panel.getByRole("region", { name: "Claude · 프로젝트 원본", exact: true });
+    await expect(source).toBeHidden();
+    await expect(panel.getByRole("button", { name: "원본 출처 다시 조회", exact: true })).toBeHidden();
+    await page.screenshot({ path: testInfo.outputPath("source-settings-mobile.png") });
+    await toggle.click();
+    await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect(source).toContainText("13일");
     const skill = source.getByRole("button", { name: "source-review", exact: true });
     await expect(source.getByText("Read-only source review", { exact: true })).toBeHidden();
@@ -53,21 +61,28 @@ test("프로젝트 설정은 실제 인증 API에서 안전한 원본 정보만 
     await expect(detail).not.toContainText("source-private-marker");
     await page.keyboard.press("Escape");
     await expect(skill).toBeFocused();
-    await expect(source).toContainText("PreToolUse");
-    await expect(source).toContainText("Bash|Read");
-    await expect(source).toContainText("명령 있음");
+    await expect(source.getByText("PreToolUse", { exact: true })).toBeHidden();
+    const hooks = source.getByRole("button", { name: "자동 실행 1개", exact: true });
+    await hooks.click();
+    const hookDetail = source.getByRole("dialog", { name: "자동 실행 상세", exact: true });
+    await expect(hookDetail).toContainText("PreToolUse");
+    await expect(hookDetail).toContainText("Bash|Read");
+    await expect(hookDetail).toContainText("명령 있음");
+    await page.keyboard.press("Escape");
+    await expect(hooks).toBeFocused();
     const codex = panel.getByRole("region", { name: "Codex · 프로젝트 원본", exact: true });
     await codex.getByRole("button", { name: "codex-review", exact: true }).click();
     await expect(codex.getByRole("dialog")).toContainText("Codex source review");
     await page.keyboard.press("Escape");
-    await expect(codex).toContainText("Stop");
+    await expect(codex.getByText("Stop", { exact: true })).toBeHidden();
+    await expect(codex.getByRole("button", { name: "자동 실행 1개", exact: true })).toBeVisible();
     await expect(panel).toContainText("읽기 전용 · Grove 적용값 아님");
     await expect(panel).not.toContainText("Grove 실제 적용 설정은");
     await expect(panel).toContainText("미지원 형식(TOML)");
     await expect(panel).not.toContainText("source-private-marker");
     await expect(panel).not.toContainText(item.root);
     await expect(panel.locator("input, textarea, select")).toHaveCount(0);
-    await expect(panel.getByRole("button", { name: /저장|적용|실행/, exact: false })).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: /저장|적용|^실행$/, exact: false })).toHaveCount(0);
     expect(readFileSync(join(item.root, ".claude/settings.json"), "utf8")).toBe(item.original);
     expect(existsSync(join(item.root, "must-not-exist"))).toBe(false);
 
@@ -81,18 +96,18 @@ test("프로젝트 설정은 실제 인증 API에서 안전한 원본 정보만 
     await expect(source).toContainText("17일");
 });
 
-test("원본 API는 인증·소유자 경계를 지키고 root 입력과 다른 프로젝트 접근을 거부한다", async ({ request }) => {
+test("원본 API는 등록 기기에 열리고 임의 root와 미등록 프로젝트는 거부한다", async ({ request, page }) => {
     const a = await project();
     const b = await project();
     const base = "http://127.0.0.1:17741/api/v1";
-    const owner = { authorization: `Bearer ${state().token}` };
-    const device = await apiCall<{ id: string; token: string }>("POST", "/devices", { name: "source-settings-fixture" });
+    const device = await registerBrowser(page);
+    const owner = { authorization: `Bearer ${device.token}` };
     try {
         for (const suffix of ["", `?project_id=${a.id}`, `?project_id=${b.id}`]) {
             expect((await request.get(`${base}/source-settings${suffix}`)).status()).toBe(401);
             expect((await request.get(`${base}/source-settings${suffix}`, {
                 headers: { authorization: `Bearer ${device.token}` },
-            })).status()).toBe(403);
+            })).status()).toBe(200);
         }
         const response = await request.get(`${base}/source-settings?project_id=${a.id}&root=source-private-marker`, { headers: owner });
         expect(response.status()).toBe(400);
@@ -134,10 +149,10 @@ test("리소스 형식 오류와 symlink는 원문 없이 표시하고 재조회
     writeFileSync(join(item.root, ".codex/hooks.json"), "source-private-marker malformed");
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: item.name, exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    await openProjectSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("원본");
     const panel = page.getByTestId("source-settings");
+    await panel.getByRole("button", { name: "원본 설정 보기", exact: true }).click();
     const source = panel.getByRole("region", { name: "Claude · 프로젝트 원본", exact: true });
     const codex = panel.getByRole("region", { name: "Codex · 프로젝트 원본", exact: true });
     await expect(source).toContainText("일부 항목은 형식");
@@ -154,8 +169,11 @@ test("리소스 형식 오류와 symlink는 원문 없이 표시하고 재조회
     await expect(detail).not.toContainText("source-private-marker");
     await page.keyboard.press("Escape");
     await expect(codex.getByRole("alert")).toHaveCount(0);
-    await expect(codex).toContainText("명령 있음");
-    await expect(codex).toContainText("[redacted]");
+    await codex.getByRole("button", { name: "자동 실행 1개", exact: true }).click();
+    const hookDetail = codex.getByRole("dialog", { name: "자동 실행 상세", exact: true });
+    await expect(hookDetail).toContainText("명령 있음");
+    await expect(hookDetail).toContainText("[redacted]");
+    await page.keyboard.press("Escape");
     await expect(panel).not.toContainText("source-private-marker");
 });
 
@@ -167,10 +185,10 @@ test("조회 실패 화면은 서버 오류 본문을 숨기고 다시 조회할
     }));
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: item.name, exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    await openProjectSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("원본");
     const panel = page.getByTestId("source-settings");
+    await panel.getByRole("button", { name: "원본 설정 보기", exact: true }).click();
     await expect(panel.getByRole("alert")).toContainText("원본 출처 목록을 가져오지 못했습니다");
     await expect(panel).not.toContainText("source-private-marker");
     await page.unroute("**/api/v1/source-settings?*");

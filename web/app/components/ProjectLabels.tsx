@@ -1,17 +1,20 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Badge } from "@astryxdesign/core/Badge";
 import { Card } from "@astryxdesign/core/Card";
+import { DropdownMenu, DropdownMenuCheckboxItem } from "@astryxdesign/core/DropdownMenu";
 import { labelStyles } from "./project-labels.stylex";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useState } from "react";
 import { api } from "../api/client";
-import type { Label, Project, ProjectFolder } from "../api/generated";
+import type { Label, Project } from "../api/generated";
 import { UNLABELLED } from "../state/projectLabels";
 import { invalidate, useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { TextInput } from "../design/Fields";
 import { Select } from "../design/Select";
+import { Icon } from "./icons";
+import { useServerBlockReason } from "./pwa/lifecycle";
 
 /// 작업공간(프로젝트) 고정·색상 라벨(PROJECT-008). 서버 팔레트(`src/labels.rs::COLORS`)와 같은 순서.
 export const LABEL_COLORS: Record<string, [string, string]> = {
@@ -43,12 +46,14 @@ function ColorPicker({ value, onChange, name }: { value: string; onChange: (c: s
         options={Object.entries(LABEL_COLORS).map(([key, [, title]]) => ({ value: key, label: title }))} />;
 }
 
-/// 프로젝트 행 메뉴: 고정 전환과 라벨 할당·새 라벨 만들기. 실패하면 입력·선택을 보존하고 오류를 보인다.
-export function ProjectMenu({ project, labels, folders, onClose, onSplit }: {
-    project: Project; labels: Label[]; folders?: ProjectFolder[]; onClose: () => void; onSplit?: (how: "right" | "down") => void;
+/// 프로젝트 행 메뉴: 라벨 선택·생성은 하위 메뉴로 모은다. 실패하면 입력·선택을 보존하고 오류를 보인다.
+export function ProjectMenu({ project, labels, onClose, onHistory, onRename, onSettings }: {
+    project: Project; labels: Label[]; onClose: () => void; onHistory: () => void; onRename: () => void; onSettings: () => void;
 }) {
+    const serverBlocked = useServerBlockReason();
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    const [labelsOpen, setLabelsOpen] = useState(false);
     const [creating, setCreating] = useState<{ name: string; color: string } | null>(null);
     const run = async (fn: () => Promise<unknown>, fallback: string) => {
         setBusy(true);
@@ -66,45 +71,38 @@ export function ProjectMenu({ project, labels, folders, onClose, onSplit }: {
         }
     };
     return <GroveStack gap={1}>
-        {onSplit && <>
-            <GroveButton type="button" variant="secondary" density="compact" onClick={() => { onSplit("right"); onClose(); }}>오른쪽에 열기</GroveButton>
-            <GroveButton type="button" variant="secondary" density="compact" onClick={() => { onSplit("down"); onClose(); }}>아래에 열기</GroveButton>
-        </>}
-        {folders && <Select label="폴더 이동" value={project.folder_id ?? ""} disabled={busy}
-            onChange={(value) => void run(() => api.patch(`/projects/${project.id}`,
-                { expected_revision: project.revision, folder_id: value || null }, { requires: ["project_folders_v1"] }), "폴더 이동 실패")
-                .then((ok) => { if (ok) onClose(); })}
-            options={[{ value: "", label: "폴더 없음" }, ...folders.map((folder) => ({ value: folder.id, label: folder.name }))]} />}
-        <ServerActionButton type="button" variant="secondary" density="compact" disabled={busy}
-            onClick={() => void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, pinned: !project.pinned_at }), "고정 변경 실패")}>
-            {project.pinned_at ? "고정 해제" : "맨 위에 고정"}
-        </ServerActionButton>
-        {!creating && <>
-            <GroveStack direction="horizontal" wrap="wrap" gap={1} role="group" aria-label="라벨">
-                {labels.map((l) => {
-                    const on = project.labels.includes(l.id);
-                    return <ServerActionButton key={l.id} type="button" role="menuitemcheckbox" aria-checked={on} variant="secondary" density="compact" disabled={busy}
-                        data-testid={`label-assign-${l.name}`}
-                        onClick={() => void run(() => api.put(`/projects/${project.id}/labels/${l.id}`, { assigned: !on }), "라벨 변경 실패")}>
-                        {on ? "☑" : "☐"} <LabelChip label={l} />
-                    </ServerActionButton>;
-                })}
-            </GroveStack>
-            <GroveButton type="button" variant="secondary" density="compact" onClick={() => { setCreating({ name: "", color: "violet" }); setError(null); }}>+ 새 라벨</GroveButton>
-        </>}
-        {creating && <GroveStack as="form" gap={2} onSubmit={async (e) => {
-            e.preventDefault();
-            if (await run(() => api.post("/labels", { name: creating.name, color: creating.color, project_id: project.id }), "라벨 만들기 실패")) setCreating(null);
-        }}>
-            <TextInput size="sm" label="새 라벨 이름" isLabelHidden maxLength={40} value={creating.name} hasAutoFocus
-                onChange={(value) => setCreating({ ...creating, name: value })} />
-            <ColorPicker name={`new-label-${project.id}`} value={creating.color} onChange={(color) => setCreating({ ...creating, color })} />
-            <GroveStack direction="horizontal" align="center" gap={1.5}>
-                <ServerActionButton type="submit" disabled={busy || !creating.name.trim()}>만들고 붙이기</ServerActionButton>
-                <GroveButton type="button" variant="secondary" onClick={() => setCreating(null)}>취소</GroveButton>
-            </GroveStack>
-        </GroveStack>}
-        {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
+        <ServerActionButton type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onRename(); }}>이름 변경</ServerActionButton>
+        <GroveButton type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onHistory(); }}>기록</GroveButton>
+        <GroveButton type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onSettings(); }}>프로젝트 설정</GroveButton>
+        <DropdownMenu placement="end" alignment="start" menuWidth={240} isMenuOpen={labelsOpen} onOpenChange={setLabelsOpen}
+            renderTrigger={(props) => <GroveButton {...props} type="button" appearance="navigation" width="100%">
+                <GroveStack as="span" direction="horizontal" align="center" justify="between" width="100%">
+                    Label <Icon name="chevronRight" size={14} />
+                </GroveStack>
+            </GroveButton>}
+            footer={<GroveStack gap={2}>
+                {!creating && <ServerActionButton type="button" variant="secondary" density="compact"
+                    onClick={() => { setCreating({ name: "", color: "violet" }); setError(null); }}>+ 새 라벨</ServerActionButton>}
+                {creating && <GroveStack as="form" gap={2} onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (await run(() => api.post("/labels", { name: creating.name, color: creating.color, project_id: project.id }), "라벨 만들기 실패")) setCreating(null);
+                }}>
+                    <TextInput size="sm" label="새 라벨 이름" isLabelHidden maxLength={40} value={creating.name} hasAutoFocus
+                        onChange={(value) => setCreating({ ...creating, name: value })} />
+                    <ColorPicker name={`new-label-${project.id}`} value={creating.color} onChange={(color) => setCreating({ ...creating, color })} />
+                    <GroveStack direction="horizontal" align="center" gap={1.5}>
+                        <ServerActionButton type="submit" disabled={busy || !creating.name.trim()}>만들고 붙이기</ServerActionButton>
+                        <GroveButton type="button" variant="secondary" onClick={() => setCreating(null)}>취소</GroveButton>
+                    </GroveStack>
+                </GroveStack>}
+                {error && labelsOpen && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
+            </GroveStack>}>
+            {labels.map((l) => <DropdownMenuCheckboxItem key={l.id} label={<LabelChip label={l} />}
+                value={project.labels.includes(l.id)} isDisabled={busy || !!serverBlocked}
+                aria-description={serverBlocked ?? undefined} data-testid={`label-assign-${l.name}`}
+                onChange={(assigned) => void run(() => api.put(`/projects/${project.id}/labels/${l.id}`, { assigned }), "라벨 변경 실패")} />)}
+        </DropdownMenu>
+        {error && !labelsOpen && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
         <ServerActionButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => {
             if (!confirm(`${project.name}을(를) 보관할까요? 목록에서만 빠지고 폴더·대화는 그대로이며 "보관됨"에서 복원할 수 있습니다.`)) return;
             void run(() => api.patch(`/projects/${project.id}`, { expected_revision: project.revision, archived: true }), "보관 실패").then((ok) => { if (ok) onClose(); });

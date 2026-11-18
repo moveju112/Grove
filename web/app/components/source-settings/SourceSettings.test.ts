@@ -58,7 +58,7 @@ describe("인증된 원본 설정 조회 연결", () => {
         });
         const html = renderToStaticMarkup(createElement(SourceSettings, { projectId: "project-a" }));
         expect(html).toContain("원본 출처 목록을 가져오지 못했습니다");
-        expect(html).toContain("소유자 전용");
+        expect(html).toContain("읽기 전용 · Grove 적용값 아님");
         expect(html).not.toContain("source-private-marker");
         expect(html).not.toContain("123456");
     });

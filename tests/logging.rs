@@ -70,7 +70,9 @@ fn file_log_rotates_at_startup_and_records_normal_shutdown() {
         .output()
         .unwrap();
     assert!(!duplicate.status.success());
-    assert!(String::from_utf8_lossy(&duplicate.stderr).contains("다른 서버"));
+    assert_eq!(duplicate.status.code(), Some(15));
+    let error = String::from_utf8_lossy(&duplicate.stderr);
+    assert!(error.contains(path.to_str().unwrap()) && error.contains("조치:"), "{error}");
     assert!(!second_data.exists());
     assert_eq!(std::fs::read(&path).unwrap(), first);
     let token = std::fs::read_to_string(data.join("owner-token")).unwrap();
@@ -167,7 +169,9 @@ fn invalid_log_target_fails_before_server_data_is_created() {
         .output()
         .unwrap();
     assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("로그 준비 실패"));
+    assert_eq!(out.status.code(), Some(15));
+    let error = String::from_utf8_lossy(&out.stderr);
+    assert!(error.contains(d.path().to_str().unwrap()) && error.contains("조치:"), "{error}");
     assert!(!data.exists());
     let out = grove()
         .args(["serve", "--data-dir"])

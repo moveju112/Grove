@@ -38,6 +38,7 @@ test("같은 계정의 모델 요청은 한도를 표시하며 기다리고 취�
         await view.getByRole("button", { name: "보내기", exact: true }).click();
         await expect(view.getByTestId("turn-status")).toContainText("계정 한도 1/1");
         expect(await requests()).not.toContain(`${marker}-queued`);
+        page.once("dialog", (dialog) => dialog.accept());
         await view.getByTestId("turn-status").getByRole("button", { name: "취소", exact: true }).click();
         await expect(view.getByTestId("turn-status")).toHaveCount(0);
         expect((await apiCall<{ status: string }>("GET", `/turns/${held}`)).status).toBe("running");

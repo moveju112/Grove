@@ -36,7 +36,7 @@ for (const theme of ["light", "dark"] as const) {
         await login(page);
         await page.getByRole("button", { name: "사이드바", exact: true }).click();
         const sidebar = page.getByRole("complementary", { name: "탐색" });
-        const tree = sidebar.locator(`[data-project-id="${project.id}"]`);
+        const tree = sidebar.locator(`[data-testid="sidebar-project"][data-project-id="${project.id}"]`);
         await expect(tree.getByTestId("sidebar-session")).toHaveCount(12);
         await tree.scrollIntoViewIfNeeded();
         await expect(tree).toBeInViewport();

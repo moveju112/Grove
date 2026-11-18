@@ -14,7 +14,11 @@ import { applyPrefs, loadPrefs } from "./state/device";
 import { installAuthCleanup } from "./state/cleanup";
 import { deployment } from "./deployment";
 import { LifecycleBanner } from "./components/pwa/LifecycleBanner";
+import { ProtocolBanner, UpdateBanner } from "./components/pwa";
+import { noticeStyles } from "./design/notices.stylex";
 import { LoadingScreen } from "./components/LoadingScreen";
+import { useAppViewport } from "./components/useAppViewport";
+import { appStyles } from "./design/app.stylex";
 
 // 로그인 화면을 포함해 첫 화면부터 이 기기 테마를 적용한다(빌드 시 prerender에서는 document가 없다).
 if (typeof document !== "undefined") {
@@ -27,8 +31,9 @@ export function Layout({ children }: { children: React.ReactNode }) {
         <html lang="ko" data-astryx-theme="grove">
             <head>
                 <meta charSet="utf-8" />
-                <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+                <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
                 <meta name="theme-color" content="#f7f7f8" />
+                <link rel="preload" href="/fonts/PretendardVariable.woff2" as="font" type="font/woff2" crossOrigin="anonymous" />
                 <link rel="manifest" href={deployment.manifest} />
                 <link rel="icon" href={deployment.icon} type="image/svg+xml" />
                 <link rel="apple-touch-icon" href={deployment.appleTouchIcon} />
@@ -46,11 +51,17 @@ export function Layout({ children }: { children: React.ReactNode }) {
 }
 
 export default function Root() {
+    const viewport = useAppViewport();
     // hydration 완료 표시. 그 전의 입력은 React가 다시 그리며 지워질 수 있다.
     useEffect(() => {
         document.documentElement.dataset.hydrated = "true";
     }, []);
-    return <Stack gap={0} height="100dvh"><LifecycleBanner /><StackItem size="fill"><Outlet /></StackItem></Stack>;
+    return <Stack ref={viewport} gap={0} height="100dvh" isScrollable xstyle={appStyles.viewport}>
+        <Stack as="aside" gap={2} xstyle={noticeStyles.global} aria-label="앱 알림" data-testid="app-notices">
+            <LifecycleBanner /><ProtocolBanner /><UpdateBanner />
+        </Stack>
+        <StackItem size="fill"><Outlet /></StackItem>
+    </Stack>;
 }
 
 // 빌드 시 루트 렌더링 동안 보이는 화면(브라우저 API는 여기서 쓰지 않는다).

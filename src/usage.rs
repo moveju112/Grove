@@ -17,6 +17,9 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 use time::{Duration, OffsetDateTime, UtcOffset};
 
+mod dashboard;
+pub use dashboard::{UsageBucket, UsageCost, UsageDashboard, UsageEffortContext, UsageMetrics, UsageSlice};
+
 #[derive(Default, Clone)]
 struct Acc {
     input: u64,
@@ -103,7 +106,7 @@ pub fn estimate_cost(usage: &Value, pricing: &Value) -> f64 {
 pub struct UsageQuery {
     pub from: String,
     pub to: String,
-    /// provider | model | profile | agent | workflow | session | project | day | week | month
+    /// provider | model | profile | agent | workflow | session | project | hour | day | week | month
     pub group_by: String,
     /// 클라이언트 시간대(UTC 기준 분). 예: 한국 540
     pub tz_offset_minutes: Option<i32>,
@@ -118,6 +121,7 @@ fn bucket(t: OffsetDateTime, by: &str, off: UtcOffset) -> String {
     let local = t.to_offset(off);
     let d = local.date();
     match by {
+        "hour" => format!("{}T{:02}:00", d, local.hour()),
         "day" => d.to_string(),
         "week" => (d - Duration::days(d.weekday().number_days_from_monday() as i64)).to_string(),
         _ => format!("{:04}-{:02}", d.year(), d.month() as u8),
@@ -126,12 +130,16 @@ fn bucket(t: OffsetDateTime, by: &str, off: UtcOffset) -> String {
 
 /// 집계 본체(시험에서 직접 호출).
 pub fn aggregate(c: &Connection, q: &UsageQuery) -> ApiResult<Value> {
+    Ok(aggregate_all(c, q)?.0)
+}
+
+fn aggregate_all(c: &Connection, q: &UsageQuery) -> ApiResult<(Value, UsageDashboard)> {
     let (from, to) = (parse(&q.from, "from")?, parse(&q.to, "to")?);
     if to <= from || to - from > Duration::days(400) {
         return Err(ApiError::invalid("기간은 to > from 이고 400일 이하여야 합니다"));
     }
     let by = q.group_by.as_str();
-    if !["provider", "model", "profile", "agent", "workflow", "session", "project", "day", "week", "month"].contains(&by) {
+    if !["provider", "model", "profile", "agent", "workflow", "session", "project", "hour", "day", "week", "month"].contains(&by) {
         return Err(ApiError::invalid("group_by가 올바르지 않습니다"));
     }
     let off_min = q.tz_offset_minutes.unwrap_or(0);
@@ -139,6 +147,7 @@ pub fn aggregate(c: &Connection, q: &UsageQuery) -> ApiResult<Value> {
         return Err(ApiError::invalid("tz_offset_minutes는 -840~840입니다"));
     }
     let off = UtcOffset::from_whole_seconds(off_min * 60).map_err(|_| ApiError::invalid("시간대 offset이 올바르지 않습니다"))?;
+    let mut dashboard = dashboard::Builder::new(from, to, off, by == "hour");
     // 프로필별 protocol·가격(현재 가격표 기준 추정)
     let mut profiles: BTreeMap<String, (String, String, Option<Value>)> = BTreeMap::new();
     {
@@ -153,7 +162,7 @@ pub fn aggregate(c: &Connection, q: &UsageQuery) -> ApiResult<Value> {
     // 모델 응답(assistant)과 압축 요약(note)
     let sql = "SELECT m.created_at, m.content, COALESCE(t.profile_id, json_extract(m.content, '$.profile_id')), \
                CASE WHEN m.role = 'note' THEN '(압축 요약)' ELSE t.agent_id END, t.workflow_id, m.session_id, s.project_id, s.title, p.name \
-               FROM messages m JOIN sessions s ON s.id = m.session_id JOIN projects p ON p.id = s.project_id LEFT JOIN turns t ON t.id = m.turn_id \
+               FROM message_history m JOIN sessions s ON s.id = m.session_id JOIN projects p ON p.id = s.project_id LEFT JOIN turns t ON t.id = m.turn_id \
                WHERE m.created_at >= ?1 AND m.created_at < ?2 AND (?3 IS NULL OR s.project_id = ?3) \
                AND (m.role = 'assistant' OR (m.role = 'note' AND json_extract(m.content, '$.type') = 'compaction'))";
     let mut st = c.prepare(sql)?;
@@ -179,6 +188,7 @@ pub fn aggregate(c: &Connection, q: &UsageQuery) -> ApiResult<Value> {
         let usage = &content["usage"];
         let p = prof.as_ref().and_then(|id| profiles.get(id));
         let pricing = p.and_then(|x| x.2.as_ref());
+        dashboard.add(&at, &content, pricing, p.map(|p| p.1.as_str()).unwrap_or("unknown"), agent.as_deref(), wf.as_deref(), &pid, &pname, &sid, &title);
         if let Some(v) = pricing.and_then(|p| p["version"].as_str()) {
             versions.insert(v.to_string());
         }
@@ -224,18 +234,29 @@ pub fn aggregate(c: &Connection, q: &UsageQuery) -> ApiResult<Value> {
         })
         .collect();
     // 기간 묶음은 시간순, 나머지는 사용량 큰 순
-    if !matches!(by, "day" | "week" | "month") {
+    if !matches!(by, "hour" | "day" | "week" | "month") {
         out.sort_by_key(|v| std::cmp::Reverse(v["input_tokens"].as_u64().unwrap_or(0) + v["output_tokens"].as_u64().unwrap_or(0)));
     }
-    Ok(json!({
+    Ok((json!({
         "from": q.from, "to": q.to, "group_by": by, "tz_offset_minutes": off_min,
         "rows": out, "total": total.to_json(),
         "pricing_versions": versions, "cost_is_estimate": true,
-    }))
+    }), dashboard.finish()))
 }
 
 pub async fn get_usage(State(app): State<App>, _p: Principal, Query(q): Query<UsageQuery>) -> ApiResult<Json<Value>> {
     Ok(Json(app.db.call(move |c| aggregate(c, &q)).await?))
+}
+
+pub async fn get_dashboard(State(app): State<App>, _p: Principal, Query(q): Query<UsageQuery>) -> ApiResult<Json<UsageDashboard>> {
+    // 분 단위 장기간 요청으로 거대한 시계열을 만들지 않는다.
+    if !matches!(q.group_by.as_str(), "hour" | "day") {
+        return Err(ApiError::invalid("사용량 추이는 hour 또는 day로 조회합니다"));
+    }
+    if q.group_by == "hour" && parse(&q.to, "to")? - parse(&q.from, "from")? > Duration::days(2) {
+        return Err(ApiError::invalid("시간별 조회는 2일 이하여야 합니다"));
+    }
+    Ok(Json(app.db.call(move |c| Ok(aggregate_all(c, &q)?.1)).await?))
 }
 
 /// 실행 용량(FAIR-011). 서버 전체는 실행·대기 합계와 한도만, 요청별 상세(대화·대기 이유·순서)는

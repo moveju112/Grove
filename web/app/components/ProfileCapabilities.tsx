@@ -43,6 +43,7 @@ export function ProfileCapabilities({ profile }: { profile: ModelProfile }) {
 
 function CapabilitiesEditor({ profile }: { profile: ModelProfile }) {
     const cli = profile.protocol === "claude_code" || profile.protocol === "codex_cli";
+    const fixedGeneration = cli || profile.protocol === "codex_oauth";
     const state = useProfileDraft("capabilities", profile, draft, (draft) => {
         const options = { ...draft.options };
         const caps = { ...(options.capabilities as Record<string, unknown> | undefined) };
@@ -60,10 +61,10 @@ function CapabilitiesEditor({ profile }: { profile: ModelProfile }) {
             <SentenceText text="소유자가 확인한 값만 입력하세요. Fast는 Codex 모델이 제공한 속도 목록에서 선택합니다. native PDF는 지원하지 않습니다." />
         </HelpTip></Stack>
         <DraftInput type="number" min={1} step={1} label="context token 수" value={value.context} onChange={(context) => state.change({ ...value, context })} onBlur={state.blur} />
-        <DraftInput type="number" min={1} max={4294967295} step={1} label="모델 출력 상한" value={value.output} isDisabled={cli} onChange={(output) => state.change({ ...value, output })} onBlur={state.blur} />
-        <DraftInput type="number" min={1} max={4294967295} step={1} label="요청 출력 token 수" value={value.requested} isDisabled={cli} onChange={(requested) => state.change({ ...value, requested })} onBlur={state.blur} />
-        <DraftInput type="number" min={0} max={2} step="any" label="요청 temperature" value={value.temperature} isDisabled={cli} onChange={(temperature) => state.change({ ...value, temperature })} onBlur={state.blur} />
-        {FEATURES.map(([key, label]) => <Select key={key} label={`${label} 지원 여부`} value={value.features[key]} disabled={cli && key !== "effort" && key !== "images"}
+        <DraftInput type="number" min={1} max={4294967295} step={1} label="모델 출력 상한" value={value.output} isDisabled={fixedGeneration} onChange={(output) => state.change({ ...value, output })} onBlur={state.blur} />
+        <DraftInput type="number" min={1} max={4294967295} step={1} label="요청 출력 token 수" value={value.requested} isDisabled={fixedGeneration} onChange={(requested) => state.change({ ...value, requested })} onBlur={state.blur} />
+        <DraftInput type="number" min={0} max={2} step="any" label="요청 temperature" value={value.temperature} isDisabled={fixedGeneration} onChange={(temperature) => state.change({ ...value, temperature })} onBlur={state.blur} />
+        {FEATURES.map(([key, label]) => <Select key={key} label={`${label} 지원 여부`} value={value.features[key]} disabled={(cli && key !== "effort" && key !== "images") || (fixedGeneration && key === "temperature")}
             onChange={(next) => { state.change({ ...value, features: { ...value.features, [key]: next } }); state.commit(); }}
             options={[{ value: "", label: "미확인" }, { value: "true", label: "지원" }, { value: "false", label: "미지원" }]} />)}
         <AutosaveStatus state={state} />

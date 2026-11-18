@@ -2,9 +2,14 @@ import { defineTheme } from "@astryxdesign/core/theme";
 import { neutralTheme } from "@astryxdesign/theme-neutral/built";
 
 // 전문 편집기와 공용 UI도 같은 팔레트를 사용한다. 새싹의 도형과 초록색은 보존한다.
+const uiFont = {
+    family: "Pretendard",
+    fallbacks: '-apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Segoe UI", "Malgun Gothic", "Noto Sans KR", system-ui, sans-serif',
+};
+export const uiFontStack = `"${uiFont.family}", ${uiFont.fallbacks}`;
 const typography = {
-    "--font-family-body": '"Pretendard", sans-serif',
-    "--font-family-heading": '"Pretendard", sans-serif',
+    "--font-family-body": uiFontStack,
+    "--font-family-heading": uiFontStack,
     "--text-body-size": "var(--font-size)",
     "--text-supporting-size": "0.85em",
     "--text-supporting-leading": "inherit",
@@ -64,8 +69,8 @@ export default defineTheme({
     name: "grove",
     extends: neutralTheme,
     typography: {
-        body: { family: "Pretendard", fallbacks: "sans-serif" },
-        heading: { family: "Pretendard", fallbacks: "sans-serif" },
+        body: uiFont,
+        heading: uiFont,
     },
     tokens,
     components: {

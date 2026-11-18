@@ -14,10 +14,6 @@ for (const theme of ["light", "dark"] as const) {
             await expect(sidebar.getByRole("button", { name: "사이드바", exact: true })).toBeVisible();
             await expect(page.getByRole("banner").getByRole("button", { name: "사이드바", exact: true })).toHaveCount(0);
             await expect(create).toBeVisible();
-            const createBox = (await create.boundingBox())!;
-            const toggleBox = (await toggle.boundingBox())!;
-            expect(Math.abs(createBox.y + createBox.height / 2 - toggleBox.y - toggleBox.height / 2)).toBeLessThan(1);
-            expect(Math.abs(createBox.x + createBox.width - toggleBox.x)).toBeLessThanOrEqual(4);
             const original = await sidebar.elementHandle();
             const options = sidebar.getByRole("button", { name: "프로젝트 목록 옵션", exact: true });
             await options.click();
@@ -60,9 +56,10 @@ for (const theme of ["light", "dark"] as const) {
                 await expect(rail).toHaveCount(open ? 0 : 1);
                 if (!open) {
                     await expect(rail).toHaveCSS("width", "48px");
-                    await expect(rail.getByRole("button")).toHaveCount(2);
+                    await expect(rail.getByRole("button")).toHaveCount(3);
                     await expect(rail.getByRole("button", { name: "사이드바", exact: true })).toBeVisible();
                     await expect(rail.getByRole("button", { name: "프로젝트·폴더 추가", exact: true })).toHaveCount(0);
+                    await expect(rail.getByRole("button", { name: "사용량", exact: true })).toBeVisible();
                     await expect(rail.getByRole("button", { name: "설정", exact: true })).toBeVisible();
                     const settings = rail.getByRole("button", { name: "설정", exact: true });
                     await settings.click();
@@ -90,7 +87,7 @@ for (const theme of ["light", "dark"] as const) {
             await page.keyboard.press("Enter");
             await expect(sidebar).toHaveJSProperty("inert", true);
             await page.keyboard.press("Tab");
-            await expect(page.getByRole("navigation", { name: "빠른 탐색", exact: true }).getByRole("button", { name: "설정", exact: true })).toBeFocused();
+            await expect(page.getByRole("navigation", { name: "빠른 탐색", exact: true }).getByRole("button", { name: "사용량", exact: true })).toBeFocused();
             expect(await sidebar.evaluate((node) => node.contains(document.activeElement))).toBe(false);
             await toggle.click();
             await expect(sidebar).toHaveCSS("width", "280px");

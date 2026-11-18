@@ -2,17 +2,14 @@ import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProjects, openProjectFiles, selectChoice, state } from "./helpers";
+import { apiCall, ensureProjects, login, openProjectFiles, selectChoice } from "./helpers";
 
 async function openFile(page: Page) {
     const { a } = await ensureProjects();
     const project = await apiCall<{ root_path: string }>("GET", `/projects/${a.id}`);
     const name = `external-editor-${randomUUID()}.txt`;
     writeFileSync(join(project.root_path, name), "saved text\n");
-    await page.goto("/");
-    await page.locator("html[data-hydrated=true]").waitFor({ state: "attached" });
-    await page.getByLabel("토큰").fill(state().token);
-    await page.getByRole("button", { name: "로그인" }).click();
+    await login(page);
     await page.getByRole("button", { name: a.name, exact: true }).first().click();
     await openProjectFiles(page);
     const files = page.getByTestId("files-view");

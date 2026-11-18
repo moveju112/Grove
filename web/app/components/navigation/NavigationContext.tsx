@@ -39,8 +39,8 @@ export function NavigationContext({ layout, projects, open, onBrowseProjects, si
             ? <HintText type="inherit" color="inherit" maxLines={1} xstyle={navigationStyles.project}
                 aria-current="page" aria-label={projectLabel} hint={projectLabel}>{projectName}</HintText>
             : <GroveButton type="button" appearance="link" xstyle={navigationStyles.project}
-            aria-label={`${projectLabel} 대화 목록으로`}
-            title={`${projectLabel} 대화 목록으로`} onClick={() => open(parentProject)}>
+            aria-label={`${projectLabel} 프로젝트 화면으로`}
+            title={`${projectLabel} 프로젝트 화면으로`} onClick={() => open(parentProject)}>
             <HintText type="inherit" color="inherit" maxLines={1} hint={projectLabel}>{projectName}</HintText>
         </GroveButton> : <GroveButton type="button" appearance="link" onClick={onBrowseProjects}
             aria-label="프로젝트 탐색" aria-expanded={sidebarOpen}>Grove</GroveButton>}

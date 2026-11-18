@@ -1,16 +1,18 @@
-import { useEffect, useState } from "react";
-import { onAuthChange, refresh } from "../api/client";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { needsAuthRecovery, onAuthChange, refresh } from "../api/client";
 import { Login } from "../components/Login";
-import { Workspace } from "../components/Workspace";
-import { ProtocolBanner, UpdateBanner, registerServiceWorker } from "../components/pwa";
+import { registerServiceWorker } from "../components/pwa";
 import { PairingLogin } from "../components/Pairing";
 import { AuthRecovery } from "../components/pwa/AuthRecovery";
 import { checkCompatibility, lifecycleSnapshot, serverBlockReason, useLifecycle } from "../components/pwa/lifecycle";
 import { EncryptedConnection } from "../components/EncryptedConnection";
 import { LoadingScreen } from "../components/LoadingScreen";
+import { SetupGate } from "../components/SetupWizard";
+
+const Workspace = lazy(async () => ({ default: (await import("../components/Workspace")).Workspace }));
 
 export default function AppRoute() {
-    return <EncryptedConnection><ConnectedApp /></EncryptedConnection>;
+    return <EncryptedConnection><Suspense fallback={<LoadingScreen label="작업 공간 여는 중…" />}><ConnectedApp /></Suspense></EncryptedConnection>;
 }
 
 function ConnectedApp() {
@@ -33,7 +35,10 @@ function ConnectedApp() {
             setDeferredAuth(!!serverBlockReason(lifecycleSnapshot()));
             return refresh();
         }).then((s) => {
-            if (!stopped) setState(s ? "in" : "out");
+            if (!stopped) {
+                setDeferredAuth(needsAuthRecovery() || !!serverBlockReason(lifecycleSnapshot()));
+                setState(s ? "in" : "out");
+            }
         });
         window.addEventListener("hashchange", receivePairing);
         registerServiceWorker();
@@ -45,16 +50,14 @@ function ConnectedApp() {
     }, []);
     return (
         <>
-            <ProtocolBanner />
-            <UpdateBanner />
             {pairing ? <PairingLogin key={pairing} initialLink={pairing} checking={state === "checking"} onDone={() => setPairing(null)} onCancel={() => {
                 setPairing(null);
             }} /> : state !== "in" && lifecycle.online && lifecycle.connection === "checking" ? <LoadingScreen label="서버 연결 확인 중…" />
             : state !== "in" && state !== "checking" && (deferredAuth || serverBlockReason(lifecycle)) ? <AuthRecovery recover={async () => {
                 const session = await refresh();
                 setState(session ? "in" : "out");
-                if (!serverBlockReason(lifecycleSnapshot())) setDeferredAuth(false);
-            }} /> : state === "checking" ? <LoadingScreen label="로그인 확인 중…" /> : state === "in" ? <Workspace /> : <Login />}
+                setDeferredAuth(needsAuthRecovery() || !!serverBlockReason(lifecycleSnapshot()));
+            }} /> : state === "checking" ? <LoadingScreen label="로그인 확인 중…" /> : state === "in" ? <SetupGate><Workspace /></SetupGate> : <Login />}
         </>
     );
 }

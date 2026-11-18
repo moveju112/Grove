@@ -148,7 +148,7 @@ pub(crate) fn binding(c: &Connection, sid: &str, text: &str, source: Option<&Val
             "SELECT current_turn_id,status FROM bot_room_dispatches WHERE message_id=?1 AND session_id=?2", params![mid,sid], |r| Ok((r.get(0)?,r.get(1)?)))?;
         if status != "active" || crate::runner::get_turn(c, &tid)?.status != "completed" { return Err(ApiError::busy("그룹의 답변이 이미 종료됐습니다")); }
         let id = source.and_then(|s| s["room_bot_id"].as_str()).ok_or_else(|| ApiError::invalid("답변할 봇이 없습니다"))?;
-        let m = c.query_row("SELECT id,session_id,seq,role,content,turn_id,created_at FROM messages WHERE id=?1 AND session_id=?2 AND rewound_at IS NULL", params![mid,sid], |r| {
+        let m = c.query_row("SELECT id,session_id,seq,role,content,turn_id,created_at FROM message_history WHERE id=?1 AND session_id=?2 AND rewound_at IS NULL", params![mid,sid], |r| {
             Ok(crate::sessions::Message { id:r.get(0)?,session_id:r.get(1)?,seq:r.get(2)?,role:r.get(3)?,content:serde_json::from_str(&r.get::<_,String>(4)?).unwrap_or(Value::Null),turn_id:r.get(5)?,created_at:r.get(6)? })
         })?;
         (vec![id.to_string()], Some(m))
@@ -186,7 +186,7 @@ pub(crate) fn on_turn_finished(c: &Connection, now: &str, tid: &str, status: &st
     }
     let t = crate::runner::get_turn(c, tid)?;
     let (epoch, owner): (String, String) = c.query_row("SELECT owner_epoch,owner_key FROM turns WHERE id=?1", [tid], |r| Ok((r.get(0)?,r.get(1)?)))?;
-    let text: String = c.query_row("SELECT json_extract(content,'$.text') FROM messages WHERE id=?1", [&mid], |r| r.get(0))?;
+    let text: String = c.query_row("SELECT json_extract(content,'$.text') FROM message_history WHERE id=?1", [&mid], |r| r.get(0))?;
     c.execute_batch("SAVEPOINT room_next")?;
     let next = (|| -> ApiResult<()> {
         c.execute("UPDATE bot_room_dispatches SET remaining_ids=?2 WHERE message_id=?1", params![mid,serde_json::to_string(&ids[1..])?])?;

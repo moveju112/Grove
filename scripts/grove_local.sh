@@ -7,7 +7,7 @@ export GROVE_LISTEN="${GROVE_LISTEN:-127.0.0.1:49120}"
 if [ "${1:-}" = pairing ]; then
     exec "$root/cli/grove" "$@"
 fi
-IFS= read -r release < "$root/current"
+release=$(cat "$root/current")
 case "$release" in
     ""|*[!a-zA-Z0-9._-]*|.|..) printf '%s\n' '설치 release 식별자 오류' >&2; exit 1 ;;
 esac

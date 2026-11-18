@@ -34,19 +34,24 @@ struct Overrides {
 
 pub fn resolve(protocol: &str, options: &Value) -> ModelCapabilities {
     let cli = crate::provider::cli::is_cli(protocol);
+    let codex_api = protocol == crate::provider::codex_oauth::PROTOCOL;
     let overrides: Overrides = options.get("capabilities").cloned().and_then(|v| serde_json::from_value(v).ok()).unwrap_or_default();
     ModelCapabilities {
         context_tokens: options["context_window"].as_u64(),
-        max_output_tokens: if cli { None } else { overrides.max_output_tokens },
-        images: overrides.images.or(cli.then_some(true)),
-        tools: if cli { Some(false) } else { overrides.tools },
+        max_output_tokens: if cli || codex_api { None } else { overrides.max_output_tokens },
+        images: overrides.images.or((cli || codex_api).then_some(true)),
+        tools: if cli { Some(false) } else { overrides.tools.or(codex_api.then_some(true)) },
         native_tools: Some(cli),
-        effort: overrides.effort.or(cli.then_some(true)),
-        temperature: if cli { Some(false) } else { overrides.temperature },
+        effort: overrides.effort.or((cli || codex_api).then_some(true)),
+        temperature: if cli || codex_api { Some(false) } else { overrides.temperature },
         // Codex 속도 선택은 실제 모델 목록의 serviceTiers로 제한한다.
         pdf: false,
-        fast: protocol == "codex_cli" && overrides.fast != Some(false),
+        fast: is_codex(protocol) && overrides.fast != Some(false),
     }
+}
+
+pub(crate) fn is_codex(protocol: &str) -> bool {
+    matches!(protocol, "codex_cli" | crate::provider::codex_oauth::PROTOCOL)
 }
 
 pub fn validate_options(protocol: &str, options: &Value) -> ApiResult<()> {
@@ -60,13 +65,17 @@ pub fn validate_options(protocol: &str, options: &Value) -> ApiResult<()> {
     if overrides.max_output_tokens == Some(0) {
         return Err(ApiError::invalid("capabilities.max_output_tokens는 양의 정수여야 합니다"));
     }
-    if overrides.pdf == Some(true) || (overrides.fast == Some(true) && protocol != "codex_cli") {
+    if overrides.pdf == Some(true) || (overrides.fast == Some(true) && !is_codex(protocol)) {
         return Err(ApiError::unsupported("native PDF 또는 이 어댑터의 Fast 모드는 지원하지 않습니다"));
     }
     if cli && (overrides.tools == Some(true)
         || overrides.temperature == Some(true) || overrides.max_output_tokens.is_some()
         || options.get("max_tokens").is_some() || options.get("temperature").is_some()) {
         return Err(ApiError::unsupported("CLI 어댑터의 Grove 도구 루프·출력 token 상한·temperature 옵션은 지원하지 않습니다"));
+    }
+    if protocol == crate::provider::codex_oauth::PROTOCOL && (overrides.temperature == Some(true)
+        || overrides.max_output_tokens.is_some() || options.get("max_tokens").is_some()) {
+        return Err(ApiError::unsupported("Codex API 연결은 출력 token 상한과 temperature를 지정할 수 없습니다"));
     }
     let caps = resolve(protocol, options);
     if caps.temperature == Some(false) && options.get("temperature").is_some() {
@@ -81,8 +90,12 @@ pub fn validate_options(protocol: &str, options: &Value) -> ApiResult<()> {
 }
 
 impl ModelProfile {
+    pub(crate) fn turn_tools(&self, requested: Option<bool>) -> bool {
+        requested.unwrap_or(self.capabilities.tools != Some(false))
+    }
+
     pub fn check_capabilities(&self, tools: bool, effort: Option<&str>, images: bool) -> ApiResult<()> {
-        if effort.is_some_and(|e| matches!(e, "xhigh" | "max" | "ultra")) && self.protocol != "codex_cli" {
+        if effort.is_some_and(|e| matches!(e, "xhigh" | "max" | "ultra")) && !is_codex(&self.protocol) {
             return Err(ApiError::unsupported("이 추론 옵션은 Codex 모델에서 선택하세요"));
         }
         for (unsupported, label) in [
@@ -129,7 +142,11 @@ mod tests {
         for capabilities in [json!({"pdf":true}), json!({"fast":true}), json!({"max_output_tokens":0}), json!({"images":"yes"}), json!({"extra":true})] {
             assert!(validate_options("openai", &json!({"capabilities":capabilities})).is_err());
         }
-        for capabilities in [json!({"images":true}), json!({"tools":true}), json!({"temperature":true}), json!({"max_output_tokens":100})] {
+        // 두 CLI는 이미지 입력을 실제 전송하므로 허용한다. Grove 도구 루프·생성 상한은 별개다.
+        assert!(validate_options("codex_cli", &json!({"capabilities":{"images":true}})).is_ok());
+        assert!(validate_options("claude_code", &json!({"capabilities":{"images":true}})).is_ok());
+        assert_eq!(resolve("codex_cli", &json!({"capabilities":{"images":true}})).images, Some(true));
+        for capabilities in [json!({"tools":true}), json!({"temperature":true}), json!({"max_output_tokens":100})] {
             assert!(validate_options("codex_cli", &json!({"capabilities":capabilities})).is_err());
         }
     }

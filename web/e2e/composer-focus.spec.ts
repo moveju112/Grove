@@ -23,7 +23,7 @@ for (const width of [390, 1280]) {
                 const style = getComputedStyle(node);
                 return { outline: style.outlineWidth, border: style.borderColor, width: style.borderWidth, shadow: style.boxShadow };
             });
-            await page.getByRole("banner").getByRole("button", { name: width < 760 ? "열린 세션" : "설정", exact: true }).focus();
+            await page.getByRole("button", { name: width < 760 ? "열린 세션" : "설정", exact: true }).focus();
             const normal = await frame();
             for (const mode of ["pointer", "keyboard"]) {
                 if (mode === "pointer") await input.click();

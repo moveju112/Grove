@@ -9,6 +9,8 @@ import { identityStyles as styles } from "./identity.stylex";
 
 export type AssistantIdentityProps = {
     name: string;
+    /** 상태·모델 정보는 이름과 같은 텍스트 흐름에 넣어 글꼴별 기준선 차이를 막는다. */
+    detail?: string;
     /** 인증된 PNG 응답으로 호출자가 만든 same-origin object URL. 소유·폐기도 호출자 책임이다. */
     imageUrl?: string | null;
     size?: "sm" | "md" | "lg";
@@ -35,7 +37,7 @@ function Avatar({ src, size }: { src: string | null; size: "sm" | "md" | "lg" })
 }
 
 /** API 호출·설정 저장 없이 전달받은 identity만 표시한다. */
-export function AssistantIdentity({ name, imageUrl, size = "md", purpose = "label" }: AssistantIdentityProps) {
+export function AssistantIdentity({ name, detail, imageUrl, size = "md", purpose = "label" }: AssistantIdentityProps) {
     const displayName = name.trim() || "어시스턴트";
     const src = safeAssistantImageUrl(imageUrl, typeof window === "undefined" ? "" : window.location.origin);
     return <Stack as="span" direction="horizontal" align="center" gap={2} maxWidth="100%"
@@ -49,6 +51,9 @@ export function AssistantIdentity({ name, imageUrl, size = "md", purpose = "labe
     >
         {/* URL 교체 때만 상태를 초기화한다. 실패한 URL은 rerender로 재시도하지 않는다. */}
         <Avatar key={src ?? "default"} src={src} size={size} />
-        {purpose === "label" && <GroveText type="inherit" color="inherit" xstyle={styles.name} dir="auto" data-testid="assistant-name">{displayName}</GroveText>}
+        {purpose === "label" && <GroveText type="inherit" color="inherit" xstyle={styles.name}>
+            <GroveText type="inherit" color="inherit" dir="auto" data-testid="assistant-name">{displayName}</GroveText>
+            {detail && <> <GroveText type="inherit" color="inherit" dir="auto">{detail}</GroveText></>}
+        </GroveText>}
     </Stack>;
 }

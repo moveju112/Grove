@@ -55,8 +55,9 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
                 .getByTestId("project-row").getByRole("button").first().click();
             if (viewport.width <= 760) await closeMobileSidebar(page);
             let project = page.getByTestId("project-view").filter({ visible: true });
-            await expect(project.getByTestId("composer")).toHaveCount(0);
-            await twice(project.getByRole("button", { name: "새 대화", exact: true }));
+            await expect(project.getByTestId("composer")).toBeVisible();
+            await startProjectConversation(project);
+            await startProjectConversation(project);
             await expect(project.getByLabel("메시지 입력")).toBeFocused();
             await project.getByLabel("메시지 입력").fill("보존할 입력");
             await startChat(page, a.id);
@@ -145,8 +146,8 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
             await expect(dialog).toBeVisible();
             await twice(retry);
             await expect(dialog).toHaveCount(0);
-            await expect(page.getByTestId("project-view").filter({ visible: true }).getByRole("button", { name: "새 대화", exact: true })).toBeVisible();
-            await expect(page.getByTestId("project-view").filter({ visible: true }).getByTestId("composer")).toHaveCount(0);
+            await expect(page.getByTestId("project-view").filter({ visible: true }).getByTestId("composer")).toBeVisible();
+            await expect(page.getByTestId("project-view").filter({ visible: true }).getByTestId("composer")).toHaveCount(1);
             expect(keys).toHaveLength(2);
             expect(keys[1]).toBe(keys[0]);
             const projects = await apiCall<{ id: string; root_path: string }[]>("GET", "/projects");

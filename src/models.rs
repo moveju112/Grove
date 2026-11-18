@@ -2,7 +2,7 @@
 //! 비밀 원문은 응답·이벤트·로그에 노출하지 않고 끝 4자리 마스킹만 보여준다.
 
 use crate::App;
-use crate::auth::{Owner, Principal};
+use crate::auth::Principal;
 use crate::error::{ApiError, ApiResult};
 use crate::events;
 use crate::idem;
@@ -40,7 +40,7 @@ pub struct AgentBackendCatalog {
 }
 
 const AGENT_BACKENDS: &[(&str, &str, &str)] = &[
-    ("codex_cli", "Codex", "codex"),
+    (provider::codex_oauth::PROTOCOL, "Codex", "codex"),
     ("claude_code", "Claude Code", "claude"),
 ];
 
@@ -57,8 +57,9 @@ pub async fn agent_backends(_p: Principal) -> Json<AgentBackendCatalog> {
 }
 
 /// 명시적 연결은 프로필 관리 권한을 따른다. 동시 탭·응답 유실 후 재시도도 같은 기본 연결로 수렴한다.
-pub async fn connect_agent_backend(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Path(protocol): Path<String>) -> ApiResult<Response> {
+pub async fn connect_agent_backend(State(app): State<App>, p: Principal, headers: HeaderMap, Path(protocol): Path<String>) -> ApiResult<Response> {
     let (_, name, program) = AGENT_BACKENDS.iter().find(|(id, _, _)| *id == protocol)
+        .or_else(|| (protocol == "codex_cli").then_some(&("codex_cli", "Codex CLI", "codex")))
         .ok_or_else(|| ApiError::invalid("지원하지 않는 에이전트입니다"))?;
     let hash = idem::body_hash("agent_backend.connect", &json!({ "protocol": protocol }));
     if let Some(response) = idem::replay(&app, &p, &headers, &hash).await? { return Ok(response); }
@@ -128,7 +129,7 @@ fn validate_secret(label: &str, value: &str) -> ApiResult<()> {
     Ok(())
 }
 
-pub async fn create_secret(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Json(b): Json<PutSecret>) -> ApiResult<Response> {
+pub async fn create_secret(State(app): State<App>, p: Principal, headers: HeaderMap, Json(b): Json<PutSecret>) -> ApiResult<Response> {
     validate_secret(&b.label, &b.value)?;
     // idempotency hash에는 비밀 원문 대신 hash만 넣는다.
     let h = idem::body_hash("secret.create", &json!({ "l": b.label, "v": crate::util::sha256_hex(b.value.as_bytes()) }));
@@ -149,7 +150,7 @@ pub async fn create_secret(State(app): State<App>, Owner(p): Owner, headers: Hea
 /// 키 교체. 저장이 실패하면 transaction이 롤백되어 이전 키가 그대로 남는다(LOGIN-001).
 pub async fn replace_secret(
     State(app): State<App>,
-    Owner(p): Owner,
+    p: Principal,
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(b): Json<PutSecret>,
@@ -181,7 +182,7 @@ pub async fn replace_secret(
     .await
 }
 
-pub async fn delete_secret(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
+pub async fn delete_secret(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
     let h = idem::body_hash("secret.delete", &json!({ "id": id }));
     let actor = p.clone();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
@@ -198,7 +199,7 @@ pub async fn delete_secret(State(app): State<App>, Owner(p): Owner, headers: Hea
     .await
 }
 
-pub async fn list_secrets(State(app): State<App>, Owner(_p): Owner) -> ApiResult<Json<Vec<SecretInfo>>> {
+pub async fn list_secrets(State(app): State<App>, _p: Principal) -> ApiResult<Json<Vec<SecretInfo>>> {
     Ok(Json(
         app.db
             .call(|c| {
@@ -316,7 +317,7 @@ pub struct ModelCatalog {
     pub fetched_at: String,
 }
 
-pub async fn catalog(State(app): State<App>, Owner(_p): Owner, Path(id): Path<String>) -> ApiResult<Json<ModelCatalog>> {
+pub async fn catalog(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<ModelCatalog>> {
     fetch_catalog(&app, id, false).await
 }
 
@@ -359,6 +360,49 @@ async fn fetch_catalog(app: &App, id: String, enabled_only: bool) -> ApiResult<J
 /// 실행용 provider 설정(비밀 원문 포함). 서버 내부에서만 사용한다.
 pub fn runtime_profile(c: &Connection, id: &str) -> ApiResult<(ModelProfile, Profile)> {
     provider_profile(c, get_enabled_profile(c, id)?)
+}
+
+/// 역할별 선택은 연결 프로필을 공유하되 모델과 추론 강도는 독립적으로 고정한다.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+pub struct ModelSelection {
+    pub profile_id: String,
+    pub model: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub effort: Option<String>,
+}
+
+impl ModelSelection {
+    pub(crate) fn from_profile(profile_id: String) -> Self {
+        Self { profile_id, model: None, effort: None }
+    }
+
+    pub fn parse(value: &Value) -> ApiResult<Option<Self>> {
+        let mut selection = if let Some(id) = value.as_str() {
+            if id.is_empty() { return Ok(None); }
+            Self::from_profile(id.into())
+        } else {
+            serde_json::from_value::<Self>(value.clone()).map_err(|_| ApiError::invalid("모델 선택 형식이 잘못됐습니다"))?
+        };
+        if selection.profile_id.is_empty() || selection.profile_id.len() > 200 {
+            return Err(ApiError::invalid("모델 연결을 선택하세요"));
+        }
+        crate::runner::parse_model(selection.model.as_deref())?;
+        selection.effort = provider::parse_effort(selection.effort.as_deref()).map_err(ApiError::invalid)?;
+        Ok(Some(selection))
+    }
+
+    pub fn runtime(&self, c: &Connection) -> ApiResult<(ModelProfile, Profile)> {
+        let (mut mp, mut rp) = runtime_profile(c, &self.profile_id)?;
+        if let Some(model) = &self.model {
+            provider::validate_profile(&mp.protocol, &mp.base_url, model).map_err(ApiError::invalid)?;
+            mp.model = model.clone();
+            rp.model = model.clone();
+        }
+        mp.check_capabilities(false, self.effort.as_deref(), false)?;
+        Ok((mp, rp))
+    }
 }
 
 fn configured_profile(c: &Connection, id: &str) -> ApiResult<(ModelProfile, Profile)> {
@@ -456,6 +500,9 @@ fn validate_options(protocol: &str, o: &Value) -> ApiResult<()> {
                 }
             }
             "headers" => {
+                if protocol == provider::codex_oauth::PROTOCOL {
+                    return Err(ApiError::unsupported("Codex API 연결은 사용자 지정 헤더를 쓰지 않습니다"));
+                }
                 crate::model_headers::validate(v)?;
             }
             "context_window" => {
@@ -503,8 +550,11 @@ fn validate_options(protocol: &str, o: &Value) -> ApiResult<()> {
     crate::model_capabilities::validate_options(protocol, o)
 }
 
-pub async fn create_profile(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Json(b): Json<CreateProfile>) -> ApiResult<Response> {
+pub async fn create_profile(State(app): State<App>, p: Principal, headers: HeaderMap, Json(b): Json<CreateProfile>) -> ApiResult<Response> {
     provider::validate_profile(&b.protocol, &b.base_url, &b.model).map_err(ApiError::invalid)?;
+    if b.protocol == provider::codex_oauth::PROTOCOL && b.secret_id.is_some() {
+        return Err(ApiError::invalid("Codex API 연결은 서버의 Codex 로그인을 씁니다"));
+    }
     if b.name.trim().is_empty() || b.name.chars().count() > 80 {
         return Err(ApiError::invalid("이름은 1~80자여야 합니다"));
     }
@@ -552,7 +602,7 @@ pub struct UpdateProfile {
 
 pub async fn update_profile(
     State(app): State<App>,
-    Owner(p): Owner,
+    p: Principal,
     headers: HeaderMap,
     Path(id): Path<String>,
     Json(b): Json<UpdateProfile>,
@@ -591,6 +641,9 @@ pub async fn update_profile(
             Some(s) => s,
             None => cur.secret_id.clone(),
         };
+        if cur.protocol == provider::codex_oauth::PROTOCOL && secret.is_some() {
+            return Err(ApiError::invalid("Codex API 연결은 서버의 Codex 로그인을 씁니다"));
+        }
         if let Some(s) = &secret {
             secret_info(tx, s)?;
         }
@@ -610,7 +663,7 @@ pub async fn update_profile(
     .await
 }
 
-pub async fn delete_profile(State(app): State<App>, Owner(p): Owner, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
+pub async fn delete_profile(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
     let h = idem::body_hash("profile.delete", &json!({ "id": id }));
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         get_profile(tx, &id)?;

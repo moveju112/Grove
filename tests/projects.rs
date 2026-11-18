@@ -210,7 +210,12 @@ async fn permanent_session_delete_requires_archive_title_and_no_dependents() {
     s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
     s.post(&format!("/api/v1/sessions/{sid}/goals"), json!({ "title": "g" })).await;
     s.post("/api/v1/recent/touch", json!({ "kind": "session", "project_id": pid, "resource_id": sid })).await;
-    s.send(Method::PUT, &format!("/api/v1/drafts/session:{sid}"), json!({ "expected_revision": 0, "text": "초안", "device_name": "t" })).await;
+    // API가 없어진 뒤에도 이전 버전에서 남긴 내용은 영구 삭제 범위에 포함한다.
+    let legacy_key = format!("session:{sid}");
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        c.execute("INSERT INTO drafts(resource_key,text,revision,device_name,updated_at) VALUES(?1,'legacy',1,'old','t')", [legacy_key])?;
+        Ok(())
+    }).await.unwrap();
     // 분기 대화
     let (_, fork) = s.post(&format!("/api/v1/sessions/{sid}/fork"), json!({ "from_seq": 1, "inherit_context": true })).await;
     let fid = fork["id"].as_str().unwrap().to_string();
@@ -252,8 +257,7 @@ async fn permanent_session_delete_requires_archive_title_and_no_dependents() {
         let n: i64 = db.query_row(&format!("SELECT COUNT(*) FROM {table} WHERE {col} = ?1"), [&sid], |r| r.get(0)).unwrap();
         assert_eq!(n, 0, "{table}에 남음");
     }
-    let n: i64 = db.query_row("SELECT COUNT(*) FROM drafts WHERE resource_key = ?1", [format!("session:{sid}")], |r| r.get(0)).unwrap();
-    assert_eq!(n, 0);
+    assert_eq!(db.query_row("SELECT COUNT(*) FROM drafts WHERE resource_key = ?1", [format!("session:{sid}")], |r| r.get::<_, i64>(0)).unwrap(), 0);
     let ok: String = db.query_row("PRAGMA foreign_key_check", [], |r| r.get(0)).unwrap_or_else(|_| "ok".into());
     assert_eq!(ok, "ok");
 }

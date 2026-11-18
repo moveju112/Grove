@@ -3,7 +3,7 @@ import type { AvailableModel, ModelCapabilities } from "../api/generated";
 /// effort(UI-020): auto면 provider 기본값(아무것도 보내지 않음).
 export const EFFORTS = ["auto", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
 export type Effort = typeof EFFORTS[number];
-export type SendOptions = { mode: "model" | "save"; profileId: string | null; model?: string | null; agentId: string | null; tools: boolean; effort?: Effort; serviceTier?: string | null };
+export type SendOptions = { mode: "model" | "save"; profileId: string | null; model?: string | null; agentId: string | null; tools?: boolean; toolOverride?: boolean; effort?: Effort; serviceTier?: string | null; nativeCommand?: string };
 export type FollowKind = "queue" | "steer" | "interrupt";
 
 // Fast 꺼짐은 지원 프로필에만 default를 보낸다. 다른 공급자에 속도 override를 넘기지 않는다.
@@ -32,8 +32,10 @@ export function initialProfile(configured: unknown, deviceProfile: string | null
 export function sendOptionsSignature(o: SendOptions, attachments: readonly string[]): string {
     const normalized = {
         mode: o.mode, profileId: o.profileId, agentId: o.agentId, tools: o.tools, effort: o.effort ?? "auto",
+        ...(o.toolOverride !== undefined ? { toolOverride: o.toolOverride } : {}),
         ...(o.model ? { model: o.model } : {}),
         ...(o.serviceTier ? { serviceTier: o.serviceTier } : {}),
+        ...(o.nativeCommand ? { nativeCommand: o.nativeCommand } : {}),
     } satisfies SendOptions;
     return JSON.stringify([normalized, attachments]);
 }
@@ -42,6 +44,7 @@ export function modelOptionCapabilities(o: SendOptions): string[] {
     return [
         ...(o.model ? ["turn_model_selection_v1"] : []),
         ...(o.serviceTier || (o.effort && ["xhigh", "max", "ultra"].includes(o.effort)) ? ["turn_model_options_v1"] : []),
+        ...(o.nativeCommand ? ["native_skills_v1"] : []),
     ];
 }
 

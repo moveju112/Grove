@@ -125,31 +125,28 @@ async fn delivery_requires_authentication_and_rejects_unbounded_batches() {
         let (status, _) = server.post("/api/v1/notifications/delivered", json!({ "ids": ids })).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
-    let (_, device) = server.post("/api/v1/devices", json!({ "name": "receiver" })).await;
+    let device = server.registered_device("receiver").await;
     let response = server.raw(Method::POST, "/api/v1/notifications/delivered", Some(json!({ "ids": [id] })), Some("device-ack"), device["token"].as_str()).await;
     assert_eq!(response.status(), StatusCode::OK, "기기 인증도 기존 공유 알림을 확인할 수 있다");
 }
 
 #[tokio::test]
 async fn ref_filter_and_legacy_read_migration_preserve_the_delivery_boundary() {
-    let mut server = TestServer::start().await;
-    let id = seed(&server, "legacy read").await;
-    let other = seed(&server, "another command").await;
-    server.server.as_ref().unwrap().app.db.call(move |c| {
-        c.execute("UPDATE notifications SET ref_id='command-2' WHERE id=?1", [other])?;
-        c.execute("UPDATE notifications SET read_at='2026-01-01T00:01:00Z' WHERE id=?1", [id])?;
-        Ok(())
-    }).await.unwrap();
-    let (_, filtered) = server.get("/api/v1/notifications?ref_id=command-1").await;
-    assert_eq!(filtered["items"].as_array().unwrap().len(), 1);
-    assert_eq!(filtered["items"][0]["title"], "legacy read");
-    server.stop().await;
-    let db = rusqlite::Connection::open(server.data_dir().join("grove.db")).unwrap();
-    db.execute_batch("DROP TABLE mcp_oauth_attempts; DROP TABLE mcp_oauth_credentials; DROP TABLE hook_runs; DROP TABLE hook_events; DROP TABLE skill_states; DROP TABLE session_skills; DROP TABLE hook_definitions; ALTER TABLE projects DROP COLUMN workspace_mode; ALTER TABLE turns DROP COLUMN provider_started_at; ALTER TABLE turns DROP COLUMN provider_ms; DROP TABLE mcp_checks; DROP TABLE mcp_servers;").unwrap();
-    db.execute_batch("ALTER TABLE schedules DROP COLUMN quiet_policy; ALTER TABLE schedule_runs DROP COLUMN result_class; ALTER TABLE schedule_runs DROP COLUMN result_sha256; ALTER TABLE schedule_runs DROP COLUMN result_evidence; ALTER TABLE schedule_runs DROP COLUMN notified; DROP TABLE webhook_receipts; DROP TABLE schedule_webhooks; DROP INDEX schedules_bot; ALTER TABLE schedules DROP COLUMN bot_id; DROP TABLE bot_avatars; DROP TABLE setup_runs; ALTER TABLE projects DROP COLUMN setup_script_id; DROP TABLE project_labels; DROP TABLE labels; ALTER TABLE projects DROP COLUMN pinned_at; DROP TABLE remote_watches; ALTER TABLE turns DROP COLUMN evidence; ALTER TABLE schedules DROP COLUMN max_runs; ALTER TABLE schedules DROP COLUMN end_at; ALTER TABLE schedules DROP COLUMN pause_after_failures; ALTER TABLE schedules DROP COLUMN consecutive_failures; ALTER TABLE schedules DROP COLUMN last_failed_at; ALTER TABLE schedules DROP COLUMN paused_reason; ALTER TABLE recent_items DROP COLUMN hidden_at; ALTER TABLE tasks DROP COLUMN script_snapshot; DROP TABLE project_scripts; DROP TABLE memories; ALTER TABLE cli_sessions DROP COLUMN system_sha256; DROP TABLE credential_backfills; ALTER TABLE model_profiles DROP COLUMN enabled; DROP INDEX notifications_ref_created; ALTER TABLE notifications DROP COLUMN delivered_at; PRAGMA user_version=37;").unwrap();
+    // Build the actual old schema instead of trying to undo every later migration.
+    let dir = tempfile::tempdir().unwrap();
+    let cfg = common::config(&dir.path().join("data"));
+    std::fs::create_dir_all(&cfg.data_dir).unwrap();
+    let db = rusqlite::Connection::open(cfg.data_dir.join("grove.db")).unwrap();
+    for migration in &grove::store::MIGRATIONS[..37] { db.execute_batch(migration).unwrap(); }
+    db.execute_batch("PRAGMA user_version=37;
+        INSERT INTO notifications(id,kind,title,body,ref_id,created_at,read_at) VALUES
+        ('legacy','test','legacy read','body','command-1','2026-01-01T00:00:00Z','2026-01-01T00:01:00Z'),
+        ('other','test','another command','body','command-2','2026-01-01T00:00:00Z',NULL);").unwrap();
     drop(db);
-    server.restart().await;
+    let server = TestServer::start_with(dir,cfg).await;
     let (_, page) = server.get("/api/v1/notifications?ref_id=command-1").await;
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["items"][0]["title"], "legacy read");
     assert_eq!(page["items"][0]["delivered_at"], "2026-01-01T00:01:00Z");
     assert_eq!(page["items"][0]["read_at"], "2026-01-01T00:01:00Z");
     let (_, other) = server.get("/api/v1/notifications?ref_id=command-2").await;

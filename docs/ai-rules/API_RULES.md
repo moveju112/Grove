@@ -3,9 +3,8 @@
 - **MUST** 새 API는 기존 Origin·protocol·기능 협상 middleware를 통과시킨다.
   - why: 다른 전송 경로가 공통 보안 경계를 우회하지 않아야 한다.
   - ✅ `router`의 공통 layer와 `CAPABILITIES` 등록. `evidence: src/lib.rs:209`, `evidence: src/web.rs`.
-- **MUST** 일반 인증 API에는 `Principal`, 소유자 관리에는 `Owner`를 적용한다. 공개 인증 진입점은 별도의 Origin·자격 검증을 유지한다.
-  - why: 소유자·등록 기기·승인 전 브라우저는 서로 다른 권한이다.
-  - ✅ CLI 계정 관리의 `Owner`와 페어링의 `auth::check_origin`. `evidence: src/agent_auth.rs:131`, `evidence: src/pairing.rs`.
+- **MUST** 모든 등록 기기는 같은 관리 권한을 가지며, 인증 API는 `Principal`을 사용한다. 브라우저 로그인은 페어링만 지원하고, 서버 계정의 로컬 관리 자격은 브라우저·원격 암호화 연결에 전달하지 않는다.
+  - ✅ 첫 기기는 서버 터미널의 `grove pairing create`로 등록한다. 페어링의 `auth::check_origin`과 쿠키·접근 자격 검사를 유지한다. `evidence: src/auth.rs`, `evidence: src/cli_pairing.rs`, `evidence: src/pairing.rs`.
 - **MUST** 인증된 영속 mutation은 기존 idempotency 경로로 처리하고 자원별 revision 계약을 적용한다.
   - why: 재전송으로 중복 부작용이 생기거나 동시 수정이 유실되면 안 된다.
   - ✅ `idem::run`·`run_redacted`와 설정의 `expected_revision`. `evidence: src/idem.rs`, `evidence: src/settings.rs:874`.
@@ -18,7 +17,7 @@
 
 ## 페어링과 CLI 계정
 
-- **MUST** 링크·비밀번호 확인은 등록 요청만 만들고, 확인 코드를 대조한 소유자 승인 뒤 기기 한 대에만 세션을 발급한다.
+- **MUST** 링크·비밀번호 확인은 등록 요청만 만들고, 등록 기기나 서버 터미널에서 확인 코드를 대조해 승인하면 기기 한 대만 등록한다.
   - why: 같은 링크·비밀번호를 가진 다른 브라우저가 승인된 요청의 자격을 가져가면 안 된다.
   - ✅ 요청별 비밀, 단일 승인, 다른 요청 거절, 일회용 claim. `evidence: src/pairing.rs`, `evidence: tests/pairing.rs`.
 - **MUST** 링크별 누적 5회 실패 잠금을 영속화하고 재시작·정답 입력으로 초기화하지 않는다.

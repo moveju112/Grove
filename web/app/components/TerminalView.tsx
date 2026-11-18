@@ -5,7 +5,6 @@ import "@xterm/xterm/css/xterm.css";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, rawGet } from "../api/client";
 import { terminalSocket, type TerminalSocket } from "../api/transport";
-import { TerminalCapture } from "./TerminalCapture";
 import { guardComposition, NO_MODIFIERS, TerminalInput, type Modifiers } from "./terminal/input";
 import { TerminalKeys } from "./terminal/TerminalKeys";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -13,23 +12,24 @@ import { useServerBlockReason } from "./pwa/lifecycle";
 import { terminalAction } from "./pwa/terminalAction";
 import { Stack } from "@astryxdesign/core/Stack";
 import { terminalLayout } from "./terminal/terminal-layout.stylex";
+import { useTerminalClipboard } from "./terminal/useTerminalClipboard";
 
 type TerminalRow = { id: string; name: string; status: "running" | "exited" | "lost"; exit_code: number | null; reason: string | null; revision: number };
 
 /// 터미널 탭. 실행 중이면 일회용 티켓으로 WebSocket에 붙고, 끝났으면 저장된 화면을 읽기 전용으로 보여 준다.
-export function TerminalView({ projectId, terminalId }: { projectId: string; terminalId: string }) {
+export function TerminalView({ projectId, terminalId, focused }: { projectId: string; terminalId: string; focused: boolean }) {
     const serverBlocked = useServerBlockReason();
     const [inputBlocked, setInputBlocked] = useState<string | null>(null);
     const blockedReason = serverBlocked ?? inputBlocked;
     const host = useRef<HTMLDivElement>(null);
     const sock = useRef<TerminalSocket | null>(null);
-    const [row, setRow] = useState<TerminalRow | null>(null);
     const [conn, setConn] = useState<"connecting" | "open" | "closed" | "readonly" | "missing" | "error">("connecting");
     const [retry, setRetry] = useState(0);
     const [err, setErr] = useState<string | null>(null);
     const [modifiers, setModifiers] = useState<Modifiers>(NO_MODIFIERS);
     const input = useRef<TerminalInput | null>(null);
     const terminal = useRef<XTerm | null>(null);
+    const { bindClipboard, clipboardUI } = useTerminalClipboard(focused, conn === "open", blockedReason, setInputBlocked);
 
     const send = (data: string) => {
         const s = sock.current;
@@ -41,6 +41,9 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
         if (terminal.current) terminal.current.options.disableStdin = conn !== "open" || !!blockedReason;
         if (blockedReason) input.current?.reset();
     }, [conn, blockedReason]);
+    useEffect(() => {
+        if (focused && conn === "open" && !blockedReason) terminal.current?.focus();
+    }, [focused, conn, blockedReason]);
 
     useEffect(() => {
         const term = new XTerm({ convertEol: false, cursorBlink: true, fontSize: 13, scrollback: 5000, disableStdin: true });
@@ -53,18 +56,8 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
         input.current = keyboard;
         keyboard.reset();
         const removeCompositionGuard = guardComposition(host.current!);
-        const paste = (event: ClipboardEvent) => {
-            if (!event.clipboardData) return;
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            if (term.options.disableStdin) return;
-            const text = event.clipboardData.getData("text/plain");
-            terminalAction(() => keyboard.paste(text,
-                () => confirm("여러 줄을 붙여넣으면 명령이 실행될 수 있어요. 붙여넣을까요?"),
-                (text) => term.paste(text)), setInputBlocked);
-        };
         const element = host.current!;
-        element.addEventListener("paste", paste, true);
+        const removeClipboard = bindClipboard(element, term, keyboard);
         let closed = false;
         const controller = new AbortController();
         let attempt = 0;
@@ -102,7 +95,6 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             const list = await api.get<{ terminals: TerminalRow[] }>(`/projects/${projectId}/terminals`, { signal: controller.signal });
             if (closed) return;
             const r = list.terminals.find((t) => t.id === terminalId) ?? null;
-            setRow(r);
             if (!r) {
                 setErr("터미널이 없습니다(삭제됨)");
                 setConn("missing");
@@ -168,7 +160,7 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             controller.abort();
             if (reconnect !== null) clearTimeout(reconnect);
             ro.disconnect();
-            element.removeEventListener("paste", paste, true);
+            removeClipboard();
             removeCompositionGuard();
             input.current = null;
             terminal.current = null;
@@ -176,30 +168,17 @@ export function TerminalView({ projectId, terminalId }: { projectId: string; ter
             sock.current = null;
             term.dispose();
         };
-    }, [projectId, terminalId, retry]);
+    }, [projectId, terminalId, retry, bindClipboard]);
 
-    const kill = async () => {
-        if (!confirm("터미널 프로세스를 종료할까요?")) return;
-        await api.post(`/terminals/${terminalId}/kill`);
-    };
-    const statusText =
-        conn === "missing" ? "터미널 없음 · 자동 재생성 안 함" : conn === "error" ? "연결 실패 · 자동 실행 안 함"
-            : conn === "open" ? "연결됨" : conn === "connecting" ? "연결 중…" : conn === "closed" ? "끊김 · 다시 연결 중"
-                : row?.status === "lost" ? "서버 재시작으로 종료됨 · 화면만 복원" : `종료됨${row?.exit_code != null ? ` (코드 ${row.exit_code})` : ""}`;
     return (
         <Stack gap={1.5} height="100%" minHeight={0} data-testid="terminal-view" data-conn={conn}>
-            <Stack direction="horizontal" align="center" gap={1.5}>
-                <strong>{row?.name ?? "터미널"}</strong>
-                <GroveText type="inherit" color="secondary" data-testid="terminal-status">{statusText}</GroveText>
-                {row?.status === "running" && <ServerActionButton variant="secondary" density="compact" onClick={() => void kill()}>종료</ServerActionButton>}
-            </Stack>
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             {blockedReason && <GroveText as="p" display="block" type="inherit" color="warning" role="status" data-testid="terminal-blocked">
                 {blockedReason} 터미널 입력·크기 전송을 멈췄습니다. PTY를 종료하지 않았으며 차단 중 입력은 복구 후 다시 보내지 않습니다.
             </GroveText>}
             {(conn === "missing" || conn === "error") && <ServerActionButton variant="secondary" density="compact" onClick={() => setRetry((n) => n + 1)}>터미널 다시 확인</ServerActionButton>}
             <Stack gap={0} padding={1} xstyle={terminalLayout.host} ref={host} />
-            <TerminalCapture key={terminalId} terminalId={terminalId} enabled={conn === "open" || conn === "readonly"} />
+            {clipboardUI}
             {conn === "open" && (
                 <TerminalKeys modifiers={modifiers} blockedReason={blockedReason}
                     onToggle={(key) => { terminalAction(() => input.current?.toggle(key), setInputBlocked); terminal.current?.focus(); }}

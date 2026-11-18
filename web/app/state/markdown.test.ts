@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { fileRef, parseInline, parseMarkdown, safeHref } from "./markdown";
-import { Markdown } from "../components/Markdown";
+import { fileLink, fileRef, imageFile, parseInline, parseMarkdown, safeHref } from "./markdown";
+import { FileLinkContext, FileRefContext, Markdown } from "../components/Markdown";
 
 const html = (s: string) => renderToStaticMarkup(createElement(Markdown, { text: s }));
 
@@ -56,6 +56,8 @@ describe("markdown", () => {
         expect(fileRef("web/app/x.test.ts:3:7")).toEqual({ path: "web/app/x.test.ts", line: 3 });
         expect(fileRef("Cargo.toml")).toEqual({ path: "Cargo.toml" });
         expect(fileRef("dist/a.7z")).toEqual({ path: "dist/a.7z" });
+        expect(fileRef("dist/legacy.com")).toEqual({ path: "dist/legacy.com" });
+        expect(fileRef("legacy.com:2")).toEqual({ path: "legacy.com", line: 2 });
         for (const no of ["/etc/passwd", "../secret.txt", "a/../b.txt", "https://x.y/a.js", "foo()", "npm run build", "x", "v1.2", "3.14"]) {
             expect(fileRef(no), no).toBeNull();
         }
@@ -66,5 +68,66 @@ describe("markdown", () => {
         expect(out).toContain("복사");
         expect(out.replace(/<[^>]+>/g, "")).toContain("const a = &#x27;&lt;b&gt;&#x27;;");
         expect(out).not.toContain("<b>");
+    });
+
+    it("parses local Markdown links including angle-wrapped paths with spaces", () => {
+        expect(parseInline("[구현 코드](/project/src/app.rs:12) · [문서](<docs/my notes.md>)")).toEqual([
+            { t: "file", href: "/project/src/app.rs:12", c: [{ t: "text", v: "구현 코드" }] },
+            { t: "text", v: " · " },
+            { t: "file", href: "docs/my notes.md", c: [{ t: "text", v: "문서" }] },
+        ]);
+        expect(fileLink("/project/src/app.rs:12:4", "/project/")).toEqual({ path: "src/app.rs", line: 12 });
+        expect(fileLink("docs/my%20notes.md", "/project")).toEqual({ path: "docs/my notes.md" });
+        expect(fileLink("/my project/docs/note.md", "/my project")).toEqual({ path: "docs/note.md" });
+    });
+
+    it("rejects links outside the project and encoded traversal or URL schemes", () => {
+        for (const href of ["/etc/passwd", "/project-other/file.rs", "/project", "../secret.txt", "/project/../secret.txt",
+            "docs/%2e%2e/secret.txt", "//example.com/file.rs", "javascript:alert(1)", "file:///project/app.rs",
+            "data:text/html,x", "src/a.rs?x=1", "src/a.rs#x", "a%00.txt", "a%5cb.txt", "%ZZ", "a.rs:0", "a.rs:9007199254740992"]) {
+            expect(fileLink(href, "/project"), href).toBeNull();
+        }
+    });
+
+    it("renders local links as actions only inside the matching project", () => {
+        const text = "[구현 코드](/project/src/app.rs:12) · [외부 파일](/other/app.rs) · `grove.choondoggy.com` · [공개 웹](https://grove.choondoggy.com)";
+        const out = renderToStaticMarkup(createElement(FileRefContext.Provider, { value: () => undefined },
+            createElement(FileLinkContext.Provider, { value: { projectId: "project", rootPath: "/project" } },
+                createElement(Markdown, { text }))));
+        expect(out.match(/data-testid="file-link"/g)).toHaveLength(1);
+        expect(out).toContain('title="src/app.rs 변경점"');
+        expect(out).not.toContain('href="/project');
+        expect(out).not.toContain('href="/other');
+        expect(out).not.toContain('data-testid="file-ref"');
+        expect(out).toContain('href="https://grove.choondoggy.com"');
+        expect(html(text)).not.toContain('data-testid="file-link"');
+    });
+
+    it("parses images without interpreting alt text as HTML or formatting", () => {
+        expect(parseInline('![**시안** <img>](/project/dark.png) ![](<light view.WEBP>)')).toEqual([
+            { t: "image", href: "/project/dark.png", alt: "**시안** <img>" },
+            { t: "text", v: " " },
+            { t: "image", href: "light view.WEBP", alt: "" },
+        ]);
+        expect(parseInline("`![코드](dark.png)`")).toEqual([{ t: "code", v: "![코드](dark.png)" }]);
+        for (const href of ["javascript:alert(1)", "data:image/png;base64,x", "../secret.png", "https://example.com/a.png"]) {
+            expect(parseInline(`![위험](${href})`).every((node) => node.t === "text")).toBe(true);
+        }
+    });
+
+    it("uses project boundaries and image MIME types for both image and file links", () => {
+        expect(imageFile("/project/previews/dark.PNG", "/project")).toEqual({ path: "previews/dark.PNG", mime: "image/png" });
+        expect(imageFile("light%20view.webp", "/project")).toEqual({ path: "light view.webp", mime: "image/webp" });
+        for (const href of ["/other/dark.png", "../dark.png", "a.png:2", "a.txt", "a.constructor", "a.__proto__"]) {
+            expect(imageFile(href, "/project"), href).toBeNull();
+        }
+        const text = "![다크 시안](/project/dark.png) [라이트 시안 보기](light.png) ![외부](/other/dark.png)";
+        const out = renderToStaticMarkup(createElement(FileLinkContext.Provider,
+            { value: { projectId: "project", rootPath: "/project" } }, createElement(Markdown, { text })));
+        expect(out.match(/data-testid="markdown-image"/g)).toHaveLength(2);
+        expect(out).toContain('aria-label="다크 시안 미리보기"');
+        expect(out).toContain('aria-label="라이트 시안 보기 미리보기"');
+        expect(out).not.toContain('data-testid="file-link"');
+        expect(html(text)).not.toContain('data-testid="markdown-image"');
     });
 });

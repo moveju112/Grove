@@ -1,12 +1,28 @@
 import { describe, expect, it } from "vitest";
 import {
     allTabs, closeLeaf, closeTab, emptyLayout, fileTarget, focusedLeaf, isValid, leaves, markMissing, MAX_LEAVES, mobileView, moveTab, openAtEdge, openResource, openTab,
-    parseOpenTarget, placeTab, setDirection, setRatio, splitLeaf,
-    type Layout,
+    parseOpenTarget, placeTab, replaceTab, setDirection, setRatio, splitLeaf, tabTitle,
+    type Layout, type Node,
 } from "./layout";
 
 const sA = { kind: "session" as const, project_id: "A", resource_id: "sa", title: "A 대화" };
 const sB = { kind: "session" as const, project_id: "B", resource_id: "sb", title: "B 대화" };
+
+describe("탭 표시 제목", () => {
+    it("프로젝트명으로 저장된 첫 탭과 새 입력 탭을 모두 새 대화로 표시한다", () => {
+        for (const resource_id of ["A", undefined]) {
+            const tab = { id: "project", kind: "project" as const, project_id: "A", resource_id, title: "프로젝트 이름" };
+            expect(tabTitle(tab)).toBe("새 대화");
+            expect(tab.title).toBe("프로젝트 이름");
+            expect(tab.resource_id).toBe(resource_id);
+        }
+    });
+    it("기존 대화·파일·터미널·설정의 제목은 유지한다", () => {
+        for (const kind of ["session", "file", "terminal", "settings"] as const) {
+            expect(tabTitle({ kind, title: "원래 제목" })).toBe("원래 제목");
+        }
+    });
+});
 
 function twoPanes(dir: "row" | "column" = "row"): Layout {
     let l = emptyLayout();
@@ -15,8 +31,45 @@ function twoPanes(dir: "row" | "column" = "row"): Layout {
     return l;
 }
 
+function shares(node: Node, direction: "row" | "column", size = 1): number[] {
+    if (node.type !== "split" || node.direction !== direction) return [size];
+    return [...shares(node.children[0], direction, size * node.ratio), ...shares(node.children[1], direction, size * (1 - node.ratio))];
+}
+
 describe("탭 drag/drop·메뉴 이동", () => {
     const sC = { kind: "session" as const, project_id: "A", resource_id: "sc", title: "C 대화" };
+
+    it.each([["row", "right"], ["column", "bottom"]] as const)("%s 끝에 추가할 때 2~5개 영역을 균등하게 나눈다", (direction, edge) => {
+        let l = emptyLayout();
+        l = openTab(l, l.focused_leaf, sA);
+        for (let count = 2; count <= 5; count++) {
+            l = openAtEdge(l, l.focused_leaf, edge, { ...sB, resource_id: `s${count}` });
+            const sizes = shares(l.root, direction);
+            expect(sizes).toHaveLength(count);
+            for (const size of sizes) expect(size).toBeCloseTo(1 / count, 10);
+            expect(isValid(l)).toBe(true);
+        }
+    });
+
+    it("탭을 가장자리로 옮기면 빈 영역을 닫은 뒤 남은 영역을 균등하게 나눈다", () => {
+        const pair = twoPanes();
+        const three = openAtEdge(pair, pair.focused_leaf, "right", sC);
+        const [left, , right] = leaves(three.root);
+        const tab = left!.tabs[0]!;
+        const moved = placeTab(three, tab.id, right!.id, "right");
+        expect(allTabs(moved).map((t) => t.resource_id)).toEqual(["sb", "sc", "sa"]);
+        expect(focusedLeaf(moved).active_tab).toBe(tab.id);
+        for (const size of shares(moved.root, "row")) expect(size).toBeCloseTo(1 / 3, 10);
+    });
+
+    it("반대 방향으로 나뉜 영역의 내부 비율은 유지한다", () => {
+        const pair = setRatio(twoPanes("column"), [], 0.35);
+        const first = openAtEdge(pair, pair.focused_leaf, "left", sC);
+        const next = openAtEdge(first, first.focused_leaf, "left", { ...sC, resource_id: "sd" });
+        expect(next.root).toMatchObject({ type: "split", direction: "column", ratio: 0.35 });
+        if (next.root.type !== "split") throw new Error("Expected a column split");
+        for (const size of shares(next.root.children[1], "row")) expect(size).toBeCloseTo(1 / 3, 10);
+    });
     it("같은 pane 안에서 순서를 바꾸고 tab ID를 유지한다", () => {
         let l = emptyLayout();
         for (const t of [sA, sB, sC]) l = openTab(l, l.focused_leaf, t);
@@ -84,6 +137,37 @@ function validAfter(l: Layout) {
 }
 
 describe("layout", () => {
+    it("새 대화는 같은 프로젝트에서도 별도 탭으로 열고 전송 후 같은 탭을 세션으로 바꾼다", () => {
+        let l = emptyLayout();
+        const draft = { kind: "project" as const, project_id: "A", title: "새 대화" };
+        l = openTab(l, l.focused_leaf, draft);
+        const first = focusedLeaf(l).active_tab!;
+        l = openTab(l, l.focused_leaf, draft);
+        const second = focusedLeaf(l).active_tab!;
+        expect(allTabs(l)).toHaveLength(2);
+        expect(first).not.toBe(second);
+        const next = replaceTab(l, first, sA);
+        expect(allTabs(next)).toEqual([{ ...sA, id: first }, { ...draft, id: second }]);
+        expect(focusedLeaf(next).active_tab).toBe(second);
+        expect(isValid(next)).toBe(true);
+        expect(replaceTab(next, "closed-tab", sA)).toBe(next);
+    });
+
+    it("새 대화 분할은 기존 세션을 복사하지 않고 선택한 방향에 빈 입력 탭을 만든다", () => {
+        for (const [edge, direction] of [["right", "row"], ["bottom", "column"]] as const) {
+            let l = emptyLayout();
+            l = openTab(l, l.focused_leaf, sA);
+            const original = focusedLeaf(l);
+            const next = openAtEdge(l, original.id, edge, { kind: "project", project_id: "A", title: "새 대화" });
+            expect(next.root).toMatchObject({ type: "split", direction });
+            expect(leaves(next.root)[0]).toEqual(original);
+            expect(focusedLeaf(next).tabs).toEqual([expect.objectContaining({ kind: "project", project_id: "A", title: "새 대화" })]);
+            expect(focusedLeaf(next).tabs[0]!.resource_id).toBeUndefined();
+            expect(allTabs(next).filter((tab) => tab.resource_id === sA.resource_id)).toHaveLength(1);
+            expect(isValid(next)).toBe(true);
+        }
+    });
+
     it("다른 pane의 열린 자원으로 이동하고 모바일에서도 그 탭을 표시한다", () => {
         const l = twoPanes();
         const original = leaves(l.root)[0]!.tabs[0]!;
@@ -191,6 +275,44 @@ describe("layout", () => {
         expect(leaves(next.root)[0]).toEqual(leaves(l.root)[0]);
         expect(next.root.type === "split" && next.root.ratio).toBe(0.35);
         expect(isValid(next)).toBe(true);
+    });
+
+    it.each([["column", "row", "right"], ["row", "column", "bottom"]] as const)(
+        "%s 아래의 오른쪽/아래쪽 영역을 닫으면 %s 방향만 균등하게 다시 나눈다", (outer, inner, edge) => {
+            const pair = setRatio(twoPanes(outer), [], 0.35);
+            const [first, second] = leaves(pair.root);
+            const fill = (layout: Layout, id: string) => {
+                for (let i = 0; i < 3; i++) {
+                    layout = openAtEdge(layout, id, edge, sA);
+                    id = layout.focused_leaf;
+                }
+                return layout;
+            };
+            const grid = fill(fill(pair, first!.id), second!.id);
+            const panes = leaves(grid.root);
+            expect(panes).toHaveLength(8);
+            const next = closeLeaf(closeTab(grid, panes[3]!.tabs[0]!.id), panes[7]!.id);
+            expect(leaves(next.root)).toHaveLength(6);
+            expect(allTabs(next)).toHaveLength(7);
+            expect(next.root).toMatchObject({ type: "split", direction: outer, ratio: 0.35 });
+            if (next.root.type !== "split") throw new Error("Expected a split");
+            for (const child of next.root.children) {
+                const sizes = shares(child, inner);
+                expect(sizes).toHaveLength(3);
+                for (const size of sizes) expect(size).toBeCloseTo(1 / 3, 10);
+            }
+        },
+    );
+
+    it("영역이 남는 탭 닫기는 비율을 보존하고 같은 축에서 첫 영역까지 닫으면 다시 균등하게 나눈다", () => {
+        const pair = twoPanes();
+        const three = openAtEdge(pair, pair.focused_leaf, "right", sA);
+        const first = leaves(three.root)[0]!;
+        const adjusted = setRatio(three, [1], 0.7);
+        const withExtra = openTab(adjusted, first.id, sB);
+        const tabOnly = closeTab(withExtra, leaves(withExtra.root)[0]!.tabs[1]!.id);
+        expect(shares(tabOnly.root, "row")).toEqual(shares(adjusted.root, "row"));
+        expect(shares(closeTab(tabOnly, first.tabs[0]!.id).root, "row")).toEqual([0.5, 0.5]);
     });
 
     it("빈 pane도 안전하게 합치고 마지막 pane 또는 없는 대상은 그대로 둔다", () => {

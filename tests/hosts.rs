@@ -2,20 +2,13 @@ mod common;
 
 use common::TestServer;
 use reqwest::{Response, StatusCode, header};
-use serde_json::json;
 
 fn cookie_pair(response: &Response) -> String {
     response.headers().get(header::SET_COOKIE).unwrap().to_str().unwrap().split(';').next().unwrap().to_owned()
 }
 
 async fn login(server: &TestServer) -> String {
-    let response = server
-        .client
-        .post(format!("{}/api/v1/auth/browser-login", server.base))
-        .json(&json!({ "token": server.token, "name": "multi-host" }))
-        .send()
-        .await
-        .unwrap();
+    let (_, response) = server.pair_browser("multi-host").await;
     assert_eq!(response.status(), StatusCode::OK);
     cookie_pair(&response)
 }

@@ -222,6 +222,7 @@ export function BotsPanel({ open }: { open: Opener }) {
                             {b.model_state !== "ok" && b.status !== "deleted" &&
                                 <GroveText type="supporting" color="secondary">{MODEL_STATE[b.model_state]}</GroveText>}
                         </ServerActionButton>
+                    </>} endContent={
                         <ActionMenu label={`${b.name} 관리`}>
                             {b.status !== "deleted" && <GroveButton variant="secondary" density="compact" onClick={() => setEditing(b)}>편집</GroveButton>}
                             {b.status !== "deleted" && <ServerActionButton variant="secondary" density="compact" onClick={() => void enter(b, "right")}>오른쪽에 열기</ServerActionButton>}
@@ -238,7 +239,7 @@ export function BotsPanel({ open }: { open: Opener }) {
                             )}
                             {b.status === "deleted" && <ServerActionButton variant="secondary" density="compact" onClick={() => void status(b, "restore")}>복원</ServerActionButton>}
                         </ActionMenu>
-                    </>} />
+                    } />
                 ))}
             </GroveList>
             <GroveStack direction="horizontal" align="center" gap={1.5}>

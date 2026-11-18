@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { apiCall, composerOption, login, openDetails, openSettings, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, composerOption, login, openContext, openDetails, openSettings, script, selectChoice, sessionView, state, useWorkspaces } from "./helpers";
 import { frames } from "./fixture";
 
 async function profile(name: string) {
@@ -16,6 +16,7 @@ test("idle context 초기화는 다음 요청만 바꾸고 화면 이력·파일
     const model = await profile(name);
     const root = mkdtempSync(join(dirname(state().projA), "context-clear-"));
     const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+    await useWorkspaces(project.id);
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: name });
     const file = join(root, "keep.txt");
     writeFileSync(file, "user file fixture");
@@ -34,8 +35,8 @@ c.close()
 `, join(dirname(state().projA), "data", "grove.db"), session.id]);
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
     await login(page);
-    await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
-    await page.getByTestId("project-view").getByRole("button", { name: new RegExp(`${name}$`) }).click();
+    await page.locator(`[data-testid="sidebar-project"][data-project-id="${project.id}"]`)
+        .locator(`[data-session="${session.id}"]`).getByTestId("sidebar-session-open").click();
     const view = sessionView(page, session.id);
     await composerOption(view, "보내기 방식", "model");
     await composerOption(view, "모델 프로필", model.id);
@@ -46,8 +47,8 @@ c.close()
     await expect(view.getByTestId("msg-context-clear")).toContainText("화면 이력·파일은 남아");
     await expect(view.getByTestId("msg-context-clear")).toContainText("요약 없이");
     await expect(view.getByTestId("msg-assistant").first()).toContainText("OLD_ANSWER_CONTEXT_FIXTURE");
-    await view.getByRole("button", { name: "대화 작업", exact: true }).click();
-    await expect(view.getByTestId("context-cleared")).toBeVisible();
+    const context = await openContext(view);
+    await expect(context.getByTestId("context-cleared")).toBeVisible();
     await page.keyboard.press("Escape");
     const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as { messages: { content: string }[] }[];
     const sent = [...requests].reverse().find((r) => r.messages.some((m) => m.content.includes("NEW_CONTEXT_QUESTION_FIXTURE")))!;

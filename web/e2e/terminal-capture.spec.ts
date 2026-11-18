@@ -1,61 +1,125 @@
 import { expect, test } from "@playwright/test";
-import { readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { apiCall, ensureProjects, login, openDetails, openTool } from "./helpers";
+import { apiCall, ensureProjects, login, openProjectTerminal } from "./helpers";
 
-test("제어문자를 해석한 화면을 읽기 전용으로 캡처하고 동결된 사본을 다운로드한다", async ({ page }) => {
+test("터미널은 최근에 표시되지 않고 앱의 탭 닫기 단축키로 종료한다", async ({ page }) => {
+    await page.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true }));
     const { a } = await ensureProjects();
-    const name = `capture-${randomUUID()}`;
+    const name = `terminal-shortcut-${randomUUID()}`;
     const terminal = await apiCall<{ id: string }>("POST", `/projects/${a.id}/terminals`, { name });
     await login(page);
-    await page.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
-    await openTool(page, "터미널");
-    const list = page.getByTestId("terminal-list");
-    await openDetails(list, "터미널");
-    await list.getByRole("button", { name, exact: true }).click();
+    const recentRow = page.getByRole("region", { name: "최근", exact: true }).getByTestId("recent-item").filter({ hasText: name });
+    await openProjectTerminal(page, a.name, name);
     const view = page.getByTestId("terminal-view");
     await expect(view).toHaveAttribute("data-conn", "open");
-    await view.locator(".xterm").click();
-    await page.keyboard.type("stty -echo; printf '\\033[2J\\033[Hold\\r\\033[2K\\033[31m");
-    await page.keyboard.insertText("한글 캡처");
-    await page.keyboard.type("\\033[m\\n'; printf 'capture-%s\\n' \"$((41+1))\"");
-    await page.keyboard.press("Enter");
-    await expect(view.locator(".xterm-rows")).toContainText("capture-42");
-    const panel = view.getByTestId("terminal-capture");
-    await openDetails(panel);
-    await panel.getByRole("button", { name: "지금 캡처", exact: true }).click();
-    const text = panel.getByTestId("terminal-capture-text");
-    await expect(text).toContainText("한글 캡처");
-    await expect(text).toContainText("capture-42");
-    const frozen = await text.textContent();
-    expect(frozen).not.toContain("\u001b");
-    expect(frozen).not.toContain("old");
-    const download = page.waitForEvent("download");
-    await panel.getByRole("link", { name: "캡처 텍스트 다운로드", exact: true }).click();
-    const file = await download;
-    expect(file.suggestedFilename()).toBe(`terminal-${terminal.id}.txt`);
-    expect(readFileSync((await file.path())!, "utf8")).toBe(frozen);
-    await page.keyboard.press("Escape");
-    await view.locator(".xterm").click();
-    await page.keyboard.type("printf 'later-%s\\n' \"$((42+1))\"");
-    await page.keyboard.press("Enter");
-    await expect(view.locator(".xterm-rows")).toContainText("later-43");
-    await openDetails(panel);
-    await expect(text).toHaveText(frozen!);
-    await panel.getByLabel("캡처 시작 줄", { exact: true }).fill("0");
-    await panel.getByLabel("캡처 끝 줄", { exact: true }).fill("0");
-    await panel.getByRole("button", { name: "지금 캡처", exact: true }).click();
-    await expect(text).toHaveText("한글 캡처");
-    await page.keyboard.press("Escape");
-    page.once("dialog", (dialog) => dialog.accept());
-    await view.getByRole("button", { name: "종료", exact: true }).click();
-    await expect(view).toHaveAttribute("data-conn", "readonly");
-    await page.reload();
-    await expect(view).toHaveAttribute("data-conn", "readonly");
-    await openDetails(panel);
-    await panel.getByRole("button", { name: "지금 캡처", exact: true }).click();
-    await expect(panel.getByTestId("terminal-capture-result")).toContainText("보존된 화면 사본");
-    await expect(text).toContainText("later-43");
-    await panel.getByRole("button", { name: "캡처 닫기", exact: true }).click();
-    await expect(text).toHaveCount(0);
+    await expect(recentRow).toHaveCount(0);
+    await page.getByRole("button", { name: "새 대화 탭", exact: true }).click();
+    await expect(view).toHaveCount(0);
+    const rows = await apiCall<{ terminals: { id: string; status: string }[] }>("GET", `/projects/${a.id}/terminals`);
+    expect(rows.terminals.find((row) => row.id === terminal.id)?.status).toBe("running");
+    await page.getByRole("tab").getByTestId("tab-title").filter({ hasText: name }).click();
+    await expect(view).toHaveAttribute("data-conn", "open");
+    await page.keyboard.press("Control+w");
+    await expect(view).toHaveCount(0);
+    await expect(page.getByRole("tab").getByTestId("tab-title").filter({ hasText: name })).toHaveCount(0);
+    await expect(recentRow).toHaveCount(0);
+    const ended = await apiCall<{ terminals: { id: string; status: string }[] }>("GET", `/projects/${a.id}/terminals`);
+    expect(ended.terminals.find((row) => row.id === terminal.id)?.status).toBe("exited");
 });
+
+test("종료 실패 시 탭을 유지하고 재시도 중 중복 종료를 보내지 않는다", async ({ page }) => {
+    await page.addInitScript(() => Object.defineProperty(navigator, "standalone", { value: true }));
+    const { a } = await ensureProjects();
+    const name = `terminal-close-error-${randomUUID()}`;
+    const terminal = await apiCall<{ id: string }>("POST", `/projects/${a.id}/terminals`, { name });
+    await login(page);
+    await openProjectTerminal(page, a.name, name);
+    const view = page.getByTestId("terminal-view");
+    await expect(view).toHaveAttribute("data-conn", "open");
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let kills = 0;
+    const path = `**/api/v1/terminals/${terminal.id}/kill`;
+    await page.route(path, async (route) => {
+        kills++;
+        if (kills === 1) return route.fulfill({ status: 409, json: { error: { code: "fixture_close", message: "종료 시험 오류", retryable: false } } });
+        const response = await route.fetch();
+        await gate;
+        await route.fulfill({ response });
+    });
+    try {
+        const close = page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true });
+        await close.click();
+        await expect(page.getByTestId("tab-close-error")).toContainText("종료 시험 오류");
+        await expect(view).toHaveAttribute("data-conn", "open");
+        await close.click();
+        await expect(close).toBeDisabled();
+        await expect(close).toHaveAttribute("aria-busy", "true");
+        await page.keyboard.press("Control+w");
+        await page.keyboard.press("Control+w");
+        await expect.poll(() => kills).toBe(2);
+        await expect(view).toBeVisible();
+        release();
+        await expect(view).toHaveCount(0);
+        await expect(page.getByTestId("tab-close-error")).toHaveCount(0);
+        expect(kills).toBe(2);
+    } finally {
+        release();
+        await page.unroute(path);
+        await apiCall("POST", `/terminals/${terminal.id}/kill`);
+    }
+});
+
+for (const width of [390, 1400]) {
+    test.describe(`${width}px 터미널`, () => {
+        test.use({ viewport: { width, height: 844 }, isMobile: width < 760, hasTouch: width < 760 });
+
+        test("캡처·상태 헤더 없이 터미널을 쓰고 탭을 닫으면 종료한다", async ({ page }, info) => {
+            const { a } = await ensureProjects();
+            const name = `terminal-${randomUUID()}`;
+            const terminal = await apiCall<{ id: string }>("POST", `/projects/${a.id}/terminals`, { name });
+            const captures: string[] = [];
+            page.on("request", (request) => {
+                if (new URL(request.url()).pathname === `/api/v1/terminals/${terminal.id}/capture`) captures.push(request.url());
+            });
+            await login(page);
+            await openProjectTerminal(page, a.name, name);
+            const view = page.getByTestId("terminal-view");
+            await expect(view).toHaveAttribute("data-conn", "open");
+            await expect(view.getByRole("button", { name: "화면 텍스트 캡처", exact: true })).toHaveCount(0);
+            await expect(view.getByTestId("terminal-capture")).toHaveCount(0);
+            await expect(view.getByTestId("terminal-status")).toHaveCount(0);
+            await expect(view.getByRole("button", { name: "종료", exact: true })).toHaveCount(0);
+            await expect(view.locator("strong")).toHaveCount(0);
+            await view.locator(".xterm").click();
+            await page.keyboard.type("stty -echo; printf '\\033[2J\\033[Hold\\r\\033[2K\\033[31m");
+            await page.keyboard.insertText("한글 출력");
+            await page.keyboard.type("\\033[m\\n'; printf 'terminal-%s\\n' \"$((41+1))\"");
+            await page.keyboard.press("Enter");
+            await expect(view.locator(".xterm-rows")).toContainText("한글 출력");
+            await expect(view.locator(".xterm-rows")).toContainText("terminal-42");
+            await page.screenshot({ path: info.outputPath(`terminal-${width}.png`) });
+            await page.reload();
+            await expect(view).toHaveAttribute("data-conn", "open");
+            await expect(view.locator(".xterm-rows")).toContainText("terminal-42");
+            if (width < 760) {
+                await page.getByRole("banner").getByRole("button", { name: "열린 세션", exact: true }).click();
+                await page.getByRole("button", { name: `${name} 탭 닫기`, exact: true }).click();
+            } else {
+                await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+            }
+            await expect(view).toHaveCount(0);
+            const rows = await apiCall<{ terminals: { id: string; status: string }[] }>("GET", `/projects/${a.id}/terminals`);
+            expect(rows.terminals.find((row) => row.id === terminal.id)?.status).toBe("exited");
+            if (width < 760) {
+                await page.getByRole("button", { name: "열린 세션 닫기", exact: true }).click();
+            }
+            await openProjectTerminal(page, a.name, name);
+            await expect(view).toHaveAttribute("data-conn", "readonly");
+            await expect(view.locator(".xterm-rows")).toContainText("terminal-42");
+            await expect(view.getByRole("button", { name: "화면 텍스트 캡처", exact: true })).toHaveCount(0);
+            await expect(view.getByTestId("terminal-capture")).toHaveCount(0);
+            expect(captures).toEqual([]);
+        });
+    });
+}

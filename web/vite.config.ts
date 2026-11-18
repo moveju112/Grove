@@ -21,6 +21,13 @@ export default defineConfig(({ mode }) => ({
     build: {
         target: "es2022",
         sourcemap: false,
+        rollupOptions: {
+            output: {
+                manualChunks(id) {
+                    if (/\/node_modules\/(?:react|react-dom|react-router|scheduler)\//.test(id)) return "react-vendor";
+                },
+            },
+        },
     },
     test: {
         include: ["app/**/*.test.{ts,tsx}"],

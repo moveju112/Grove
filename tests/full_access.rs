@@ -3,6 +3,7 @@
 mod common;
 
 use common::TestServer;
+use common::fixture::{self, Fixture};
 use reqwest::{Method, StatusCode};
 use serde_json::{Value, json};
 use std::time::Duration;
@@ -39,6 +40,7 @@ async fn full_access_is_the_default_and_automates_file_changes_and_both_shell_pa
     let (s, project, sid) = setup().await;
     let root = std::path::Path::new(project["root_path"].as_str().unwrap());
     let (_, registry) = s.get("/api/v1/settings/registry").await;
+    assert!(!registry.as_array().unwrap().iter().any(|row| row["key"] == "tools.default_enabled"));
     let definition = registry.as_array().unwrap().iter().find(|row| row["key"] == "tools.full_access").unwrap();
     assert_eq!(definition["default"], true);
     assert_eq!(definition["scopes"], json!(["server", "project"]));
@@ -59,6 +61,31 @@ async fn full_access_is_the_default_and_automates_file_changes_and_both_shell_pa
     assert_eq!(std::fs::read_to_string(root.join("patched.txt")).unwrap(), "PATCHED\n");
     assert_eq!(std::fs::read_to_string(root.join("background.txt")).unwrap(), "BACKGROUND\n");
     assert_eq!(std::fs::read_to_string(root.parent().unwrap().join("outside-probe.txt")).unwrap(), "BOUND\n");
+}
+
+#[tokio::test]
+async fn new_turn_and_followup_use_tools_by_default_but_allow_an_explicit_opt_out() {
+    let (s, project, sid) = setup().await;
+    let root = std::path::Path::new(project["root_path"].as_str().unwrap());
+    let fixture = Fixture::start().await;
+    let profile = s.fixture_profile(&fixture.base).await;
+    for (endpoint, field, filename) in [("turns", "turn", "first.txt"), ("followups", "started_turn", "followup.txt")] {
+        fixture.push(fixture::tool_calls(&[("w1", "write", json!({"path":filename,"content":"written\n"}))]));
+        fixture.push(fixture::text("done"));
+        let (status, body) = s.post(&format!("/api/v1/sessions/{sid}/{endpoint}"),
+            json!({"kind":"queue","text":"파일 써","profile_id":profile})).await;
+        assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+        assert_eq!(body[field]["tools_enabled"], true);
+        s.wait_status(body[field]["id"].as_str().unwrap(), "completed").await;
+        assert_eq!(std::fs::read_to_string(root.join(filename)).unwrap(), "written\n");
+    }
+    fixture.push(fixture::text("text only"));
+    let (status, body) = s.post(&format!("/api/v1/sessions/{sid}/turns"),
+        json!({"text":"말로만 답해","profile_id":profile,"tools":false})).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body["turn"]["tools_enabled"], false);
+    s.wait_status(body["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert!(fixture.requests().last().unwrap().get("tools").is_none());
 }
 
 #[tokio::test]

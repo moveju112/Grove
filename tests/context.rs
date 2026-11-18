@@ -32,6 +32,58 @@ async fn notes_of(s: &TestServer, sid: &str, kind: &str) -> Vec<Value> {
 }
 
 #[tokio::test]
+async fn native_context_uses_reported_window_survives_restart_and_excludes_old_profile_and_boundary() {
+    let mut s = TestServer::start().await;
+    let (_, profile) = s.post("/api/v1/model-profiles", json!({"name":"native-context","protocol":"codex_cli","base_url":"","model":"default"})).await;
+    let (_, other) = s.post("/api/v1/model-profiles", json!({"name":"other-context","protocol":"codex_cli","base_url":"","model":"default"})).await;
+    let p = s.create_project("native-context").await;
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_owned();
+    let pid = profile["id"].as_str().unwrap().to_owned();
+    let path = format!("/api/v1/sessions/{sid}/context?profile_id={pid}");
+    assert!(s.get(&path).await.1["percent"].is_null());
+    for (step, tokens) in [(1, 25_000), (2, 5_000), (3, 0)] {
+        let now = s.server.as_ref().unwrap().app.now();
+        let (sid, pid) = (sid.clone(), pid.clone());
+        s.server.as_ref().unwrap().app.db.call(move |c| {
+            let tx = c.transaction()?;
+            let message = grove::sessions::append_message(&tx, &now, &sid, "user", &json!({"text":"next"}), None, None)?;
+            let turn = format!("context-turn-{step}");
+            tx.execute("INSERT INTO turns(id,session_id,status,request_message_id,profile_id,created_at,updated_at,finished_at,owner_epoch) \
+                VALUES(?1,?2,'completed',?3,?4,?5,?5,?5,'fixture')", rusqlite::params![turn,sid,message.id,pid,now])?;
+            grove::sessions::append_message(&tx, &now, &sid, "assistant", &json!({
+                "text":"history ".repeat(20_000), "usage":{"input_tokens":900_000,"output_tokens":100_000},
+                "context_usage":{"tokens":tokens,"context_window":100_000},
+            }), Some(&turn), None)?;
+            tx.commit()?;
+            Ok(())
+        }).await.unwrap();
+        let (status, usage) = s.get(&path).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(usage["basis"], "native");
+        assert_eq!(usage["tokens"], tokens);
+        assert_eq!(usage["percent"], tokens as f64 / 1000.0);
+        assert!(usage["estimated_tokens"].as_u64().unwrap() > tokens);
+        assert!(usage["measured_input_tokens"].is_null(), "과금 누적량을 실측 문맥으로 쓰지 않는다");
+        if step == 1 {
+            s.restart().await;
+            assert_eq!(s.get(&path).await.1["percent"], 25.0);
+        }
+    }
+    let other_path = format!("/api/v1/sessions/{sid}/context?profile_id={}", other["id"].as_str().unwrap());
+    assert!(s.get(&other_path).await.1["percent"].is_null());
+    let unspecified = s.get(&format!("/api/v1/sessions/{sid}/context")).await.1;
+    assert!(unspecified["measured_input_tokens"].is_null(), "프로필 없는 조회도 native 과금 누적값을 제외한다");
+    let now = s.server.as_ref().unwrap().app.now();
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        grove::sessions::append_message(c, &now, &sid, "note", &json!({"type":"context_clear","upto_seq":6}), None, None)?;
+        Ok(())
+    }).await.unwrap();
+    let usage = s.get(&path).await.1;
+    assert!(usage["percent"].is_null());
+    assert_eq!(usage["basis"], "estimated");
+}
+
+#[tokio::test]
 async fn manual_compaction_replaces_old_history_and_keeps_tool_pairs() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;
@@ -440,4 +492,38 @@ async fn display_and_model_input_share_identity_but_keep_distinct_content_after_
     let (display, model): (String, String) = db.query_row("SELECT content, model_input FROM messages WHERE id = ?1", [id], |r| Ok((r.get(0)?,r.get(1)?))).unwrap();
     assert_eq!(serde_json::from_str::<Value>(&display).unwrap()["text"], "화면에 보존할 원본 기록");
     assert_eq!(serde_json::from_str::<Value>(&model).unwrap()["text"], "모델에 전달할 입력 표현");
+}
+
+#[tokio::test]
+async fn disabled_compressor_uses_main_but_selected_compressor_failure_has_no_fallback() {
+    let s=TestServer::start().await;
+    let main=Fixture::start().await;
+    let aux=Fixture::start().await;
+    let profile=profile_with_window(&s,&main.base,100_000).await;
+    let model=profile_with_window(&s,&aux.base,100_000).await;
+    let pid=s.create_project("compressor-route").await["id"].as_str().unwrap().to_string();
+    let sid=s.create_session(&pid).await["id"].as_str().unwrap().to_string();
+    for text in ["첫 질문","둘째 질문"] {
+        main.push(fixture::text(&"충분히 긴 대화 근거 ".repeat(100)));
+        turn(&s,&sid,&profile,text,false).await;
+    }
+    s.send(Method::PUT,"/api/v1/settings/server/-/context.summary_profile",json!({"expected_revision":0,"value":model})).await;
+    let (_,def)=s.get("/api/v1/definitions/agent/context-compressor").await;
+    s.send(Method::PUT,"/api/v1/definitions/agent/context-compressor",json!({"expected_revision":def["revision"],"enabled":false,"body":"CUSTOM_COMPRESSOR_INSTRUCTIONS"})).await;
+    main.push_for(SUMMARY,fixture::text("기본 대화 압축"));
+    let (status,result)=s.post(&format!("/api/v1/sessions/{sid}/compact"),json!({"profile_id":profile})).await;
+    assert_eq!(status,StatusCode::CREATED,"{result}");
+    assert!(aux.requests().is_empty());
+    assert!(!main.requests().last().unwrap().to_string().contains("CUSTOM_COMPRESSOR_INSTRUCTIONS"));
+    main.push(fixture::text(&"다음 근거 ".repeat(100)));
+    turn(&s,&sid,&profile,"셋째 질문",false).await;
+    let (_,def)=s.get("/api/v1/definitions/agent/context-compressor").await;
+    s.send(Method::PUT,"/api/v1/definitions/agent/context-compressor",json!({"expected_revision":def["revision"],"enabled":true})).await;
+    let before=main.requests().len();
+    aux.push(fixture::Step::Error(400,"fixture unavailable".into()));
+    let (status,result)=s.post(&format!("/api/v1/sessions/{sid}/compact"),json!({"profile_id":profile})).await;
+    assert_eq!(status,StatusCode::BAD_GATEWAY,"{result}");
+    assert_eq!(main.requests().len(),before,"선택한 모델 실패 후 대화 모델을 호출하지 않는다");
+    assert_eq!(notes_of(&s,&sid,"compaction").await.len(),1);
+    assert!(aux.requests()[0].to_string().contains("CUSTOM_COMPRESSOR_INSTRUCTIONS"));
 }

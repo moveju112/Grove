@@ -1,4 +1,5 @@
 import { createContext, useContext, useId, useRef, useState, useSyncExternalStore, type HTMLAttributes, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { CreationDialog } from "../create/CreationDialog";
 import { Icon } from "../icons";
 import { PaneVisibility, usePaneVisible } from "../../state/paneVisibility";
@@ -82,16 +83,20 @@ function subscribeCompact(notify: () => void) {
 
 type WorkbenchState = { open: boolean; toggle: () => void; activity: number };
 const WorkbenchContext = createContext<WorkbenchState | null>(null);
+export const PaneToolsTarget = createContext<HTMLElement | null>(null);
 
-// 도구 목록은 기본 화면에 늘어놓지 않고 헤더의 버튼 하나 뒤에 둔다. 진행 중 작업 수는 버튼에 표시한다.
-export function ToolsTrigger() {
+// 넓은 화면은 pane의 탭 줄, 좁은 화면은 본문 헤더에서 같은 패널을 연다.
+export function ToolsTrigger({ inlineHeader = false }: { inlineHeader?: boolean }) {
     const state = useContext(WorkbenchContext);
+    const target = useContext(PaneToolsTarget);
     if (!state) return null;
-    return <Button type="button" variant="secondary" appearance="icon" xstyle={controlStyles.toolTrigger} aria-label="도구 패널" title="도구 패널"
+    const button = <Button type="button" variant="secondary" appearance="icon" xstyle={controlStyles.toolTrigger} aria-label="도구 패널" title="도구 패널"
         aria-expanded={state.open} onClick={state.toggle}>
         <Icon name="panel" />
         {state.activity > 0 && <Badge label={String(state.activity)} xstyle={controlStyles.toolActivity} aria-label={`진행 중 ${state.activity}개`} />}
     </Button>;
+    if (target) return createPortal(button, target);
+    return inlineHeader ? <Stack as="header" direction="horizontal" align="center" justify="end">{button}</Stack> : button;
 }
 
 // 각 패널을 숨긴 채 유지해 탭 전환으로 미저장 입력·결과 불명 요청을 잃지 않는다.

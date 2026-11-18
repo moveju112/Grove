@@ -27,16 +27,17 @@ async fn browser_origin_scheme_follows_the_explicit_tls_boundary_not_forwarded_h
             assert_eq!(response.status(), StatusCode::UPGRADE_REQUIRED);
             continue;
         }
-        let response = server.client.post(format!("{}/api/v1/auth/browser-login", server.base))
+        let response = server.client.post(format!("{}/api/v1/auth/pairing", server.base))
             .header("origin", &rejected)
             .header("x-forwarded-proto", if terminated { "https" } else { "http" })
             .header("forwarded", format!("proto={};host={authority}", if terminated { "https" } else { "http" }))
-            .json(&json!({ "token": server.token, "name": "wrong-scheme" }))
+            .json(&json!({ "code": "invalid", "password": "test only password", "name": "wrong-scheme" }))
             .send().await.unwrap();
         assert_eq!(response.status(), StatusCode::FORBIDDEN, "HTTP와 HTTPS는 같은 origin이 아니다");
-        let response = server.client.post(format!("{}/api/v1/auth/browser-login", server.base))
-            .header("origin", expected).json(&json!({ "token": server.token, "name": "expected-scheme" }))
-            .send().await.unwrap();
+        let (_, enrolled) = server.pair_browser("expected-scheme").await;
+        let cookie = enrolled.headers()["set-cookie"].to_str().unwrap().split(';').next().unwrap();
+        let response = server.client.post(format!("{}/api/v1/auth/refresh", server.base))
+            .header("origin", expected).header("cookie", cookie).send().await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
         let cookie = response.headers()["set-cookie"].to_str().unwrap();
         assert_eq!(cookie.contains("; Secure"), terminated);
@@ -85,8 +86,10 @@ async fn explicit_development_origin_is_preserved_but_cross_site_fetch_is_reject
     let mut cfg = config(&dir.path().join("data"));
     cfg.allowed_origins = vec!["http://localhost:5173".into()];
     let server = TestServer::start_with(dir, cfg).await;
+    let device = server.registered_device("development browser").await;
+    let access = device["token"].as_str().unwrap();
     let response = server.client.get(format!("{}/api/v1/projects", server.base))
-        .header("origin", "http://localhost:5173").bearer_auth(&server.token).send().await.unwrap();
+        .header("origin", "http://localhost:5173").bearer_auth(access).send().await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let response = server.client.get(format!("{}/api/v1/projects", server.base))
         .header("origin", "http://localhost:5173").header("sec-fetch-site", "cross-site")

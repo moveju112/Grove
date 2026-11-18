@@ -39,12 +39,14 @@ test("서버에 아직 저장하지 못한 탭·분할 방향·비율·활성 pa
     await page.getByTestId("pane").first().getByRole("tablist").getByRole("tab").click();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
     await expect(page.getByTestId("pane").first().getByRole("tablist").getByRole("tab", { selected: true })).toContainText(title);
+    await expect(page.getByTestId("pane").first()).toHaveAttribute("data-focused", "true");
+    await expect.poll(() => page.evaluate((key) => JSON.parse(localStorage.getItem(`grove.layout.${key}`)!).layout.focused_leaf, projectDevice)).toBe("left");
     await page.reload();
     await expect(page.getByTestId("split-column")).toBeVisible();
     await expect(page.getByRole("separator").and(page.locator("[aria-valuenow]"))).toHaveAttribute("aria-valuenow", "45");
     await expect(page.getByTestId("pane").first()).toHaveAttribute("data-focused", "true");
     await expect(page.getByTestId("pane").first().getByRole("tablist").getByRole("tab", { selected: true })).toContainText(title);
-    await page.getByTestId("pane").first().getByTestId("tab-title").filter({ hasText: a.name }).click();
+    await page.getByTestId("pane").first().getByTestId("tab-title").filter({ hasText: "새 대화" }).click();
     await startProjectConversation(page.getByTestId("pane").first().getByTestId("project-view"));
     await expect(page.getByTestId("pane").first().getByLabel("메시지 입력")).toBeEnabled();
     const server = await apiCall<{ revision: number; layout: Layout }>("GET", `/layouts/${projectDevice}`);

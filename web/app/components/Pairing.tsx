@@ -4,7 +4,7 @@ import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Link } from "@astryxdesign/core/Link";
 import { Button as GroveButton } from "../design/Button";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { When } from "./When";
 import { ApiError, api, isLoggedIn, redeemPairing, requestPairing, type PendingPairing } from "../api/client";
 import type { PairingInfo } from "../api/generated";
@@ -51,15 +51,23 @@ function PairingQr({ link }: { link: string }) {
 
 export function Pairings({ showHeading = true }: { showHeading?: boolean }) {
     const list = useQuery<PairingInfo[]>("pairings", () => api.get("/pairings"));
+    const [issueOpen, setIssueOpen] = useState(false);
     const [name, setName] = useState("");
     const [password, setPassword] = useState("");
-    const passwordInput = useRef<HTMLInputElement>(null);
     const [replacing, setReplacing] = useState<string>();
     const [endpoint, setEndpoint] = useState(() => connection()?.endpoint ?? "");
     const [issued, setIssued] = useState<Issued | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const lock = useRef(false);
+    const issueOpener = useRef<HTMLButtonElement | null>(null);
+    useLayoutEffect(() => {
+        if (!issueOpen && !busy && issueOpener.current) {
+            // 중첩 modal을 제거하면 브라우저가 설정창 자체로 돌려놓기도 하므로 실제 발급 버튼으로 복귀한다.
+            issueOpener.current.focus({ preventScroll: true });
+            issueOpener.current = null;
+        }
+    }, [issueOpen, busy]);
     const [now, setNow] = useState(Date.now());
     useEffect(() => {
         const timer = setInterval(() => setNow(Date.now()), 1000);
@@ -93,31 +101,52 @@ export function Pairings({ showHeading = true }: { showHeading?: boolean }) {
         setIssued(result.code ? { ...result, encrypted } : null);
         setPassword("");
         setReplacing(undefined);
-        if (!result.code) setError("이미 발급한 요청입니다. 비밀은 다시 표시하지 않습니다. 새 비밀번호로 재발급하세요.");
+        if (result.code) {
+            setIssueOpen(false);
+            setName("");
+        } else setError("이미 발급한 요청입니다. 비밀은 다시 표시하지 않습니다. 새 비밀번호로 재발급하세요.");
+    };
+    const closeIssue = () => {
+        setIssueOpen(false);
+        setName("");
+        setPassword("");
+        setReplacing(undefined);
+        setError(null);
     };
     const link = issued?.code ? (issued.encrypted ? connectionLink(issued.encrypted, issued.code) : pairingLink(location.origin, issued.code)) : null;
     return (
         <GroveStack as="section" gap={3} aria-label="기기 페어링">
             {showHeading && <GroveHeading level={3} color="inherit">기기 페어링</GroveHeading>}
-            <GroveText as="p" display="block" type="supporting" color="secondary">만료 없음 · 링크당 기기 1대 · 비밀번호 5회 실패 시 잠금</GroveText>
+            <GroveText as="p" display="block" type="supporting" color="secondary">링크당 기기 1대만 등록할 수 있어요. 등록한 기기는 모두 같은 관리 권한을 가져요.</GroveText>
             {insecureRemote(location.origin) && <GroveText as="p" display="block" type="inherit" color="warning"><SentenceText text="HTTP로는 비밀번호가 노출될 수 있습니다. HTTPS 또는 신뢰하는 VPN에서 사용하세요." /></GroveText>}
             {["localhost", "127.0.0.1", "[::1]"].includes(location.hostname) && <GroveText as="p" display="block" type="supporting" color="warning">다른 기기 등록은 접속 가능한 HTTPS·VPN 주소에서 발급하세요.</GroveText>}
-            <GroveStack as="form" gap={3} aria-label="페어링 링크 발급" onSubmit={(e) => { e.preventDefault(); void run(issue); }}>
-                <TextInput label="등록할 기기 이름" value={name} maxLength={80} isRequired onChange={setName} />
-                <TextInput label="링크 비밀번호" ref={passwordInput} type="password" autoComplete="new-password" value={password} minLength={10} maxLength={256} placeholder="10자 이상" isRequired onChange={setPassword} />
-                <DetailDialog label="고급 연결 설정" title="고급 연결 설정">
-                    <TextInput label="외부 암호화 연결 주소" value={endpoint} placeholder="wss://서버/api/e2ee" onChange={setEndpoint} />
-                </DetailDialog>
-                <ServerActionButton type="submit" disabled={busy || !name.trim() || [...password].length < 10}>페어링 링크 발급</ServerActionButton>
-            </GroveStack>
-            {replacing && <GroveText as="p" display="block" type="supporting" color="inherit">새 링크를 발급하면 선택한 이전 링크가 폐기됩니다. <GroveButton type="button" variant="secondary" density="compact" onClick={() => setReplacing(undefined)}>재발급 취소</GroveButton></GroveText>}
+            <ServerActionButton type="button" disabled={busy} onClick={(event) => {
+                issueOpener.current = event.currentTarget;
+                setName(""); setPassword(""); setReplacing(undefined); setError(null); setIssueOpen(true);
+            }}>페어링 링크 발급</ServerActionButton>
+            <DetailDialog label="고급 연결 설정" title="고급 연결 설정">
+                <TextInput label="외부 암호화 연결 주소" value={endpoint} placeholder="wss://서버/api/e2ee" onChange={setEndpoint} />
+            </DetailDialog>
+            {issueOpen && <CreationDialog label="페어링 링크 발급" onClose={closeIssue} busy={busy}>
+                <GroveHeading level={2}>페어링 링크 발급</GroveHeading>
+                <GroveStack as="form" gap={3} aria-label="페어링 링크 발급" onSubmit={(e) => { e.preventDefault(); void run(issue); }}>
+                    <TextInput label="표시할 이름" value={name} maxLength={80} isRequired hasAutoFocus onChange={setName} />
+                    <TextInput label="링크 비밀번호" type="password" autoComplete="new-password" value={password} minLength={10} maxLength={256} placeholder="10자 이상" isRequired onChange={setPassword} />
+                    {replacing && <GroveText as="p" type="supporting" color="warning">새 링크를 발급하면 선택한 이전 링크가 폐기됩니다.</GroveText>}
+                    {error && <GroveText as="p" color="error" role="alert">{error}</GroveText>}
+                    <GroveStack direction="horizontal" justify="end" gap={2}>
+                        <GroveButton type="button" variant="secondary" onClick={closeIssue}>취소</GroveButton>
+                        <ServerActionButton type="submit" disabled={busy || !name.trim() || [...password].length < 10}>발급</ServerActionButton>
+                    </GroveStack>
+                </GroveStack>
+            </CreationDialog>}
             {link && issued && <GroveStack gap={3} paddingBlock={4}>
                 <PairingQr link={link} />
                 <TextInput label="페어링 링크" isReadOnly value={link} controlXstyle={contentStyles.selectable} />
                 <GroveText as="p" display="block" type="supporting" color="secondary">비밀번호는 링크와 따로 전달하세요.</GroveText>
                 <GroveButton type="button" variant="secondary" density="compact" onClick={() => setIssued(null)}>링크 숨기기</GroveButton>
             </GroveStack>}
-            {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
+            {error && !issueOpen && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
             {!!list.error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">페어링 목록을 읽지 못했습니다.</GroveText>}
             <GroveList density="compact" edge="flush" hasDividers>
                 {(list.data ?? []).map((info) => <GroveListItem key={info.id} data-testid="pairing-row" label={<>
@@ -128,8 +157,9 @@ export function Pairings({ showHeading = true }: { showHeading?: boolean }) {
                                 await api.del(`/pairings/${info.id}`, { requires: ["pairing_approval_v1"] });
                                 if (issued?.id === info.id) setIssued(null);
                             })}>링크 폐기</ServerActionButton>}
-                            <GroveButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => {
-                                setReplacing(info.id); setName(info.name); setPassword(""); passwordInput.current?.focus();
+                            <GroveButton type="button" variant="secondary" density="compact" disabled={busy} onClick={(event) => {
+                                issueOpener.current = event.currentTarget;
+                                setReplacing(info.id); setName(info.name); setPassword(""); setError(null); setIssueOpen(true);
                             }}>링크 재발급</GroveButton>
                         </GroveStack>
                     </GroveStack>
@@ -237,9 +267,9 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                 <GroveText type="inherit" color="brand" aria-hidden="true"><Icon name="shield" size={28} /></GroveText>
                 <GroveHeading level={1} color="inherit">기기 연결</GroveHeading>
                 {pending ? <GroveStack gap={4} role="status">
-                    <GroveText as="p" display="block" type="inherit" color="inherit">소유자 승인 대기 중</GroveText>
+                    <GroveText as="p" display="block" type="inherit" color="inherit">기기 승인 대기 중</GroveText>
                     <Card variant="muted" padding={4}><Code data-testid="pairing-code">{pending.verification_code}</Code></Card>
-                    <GroveText as="p" display="block" type="supporting" color="secondary">소유자의 기기에서 설정 · 기기 페어링을 열고 이 코드를 확인해 승인하세요.</GroveText>
+                    <GroveText as="p" display="block" type="supporting" color="secondary">등록된 기기의 설정에서 이 코드를 대조해 승인하세요. 첫 기기는 서버 터미널에서 승인해 주세요.</GroveText>
                     <GroveText as="p" display="block" type="supporting" color="secondary">승인 요청 만료 <When at={pending.expires_at} absolute /></GroveText>
                 </GroveStack> : <>
                     <GroveStack direction="horizontal" gap={1} role="group" aria-label="연결 방식">
@@ -265,7 +295,7 @@ export function PairingLogin({ initialLink = "", checking = false, onDone, onCan
                         : <ServerActionButton type="submit" disabled={busy || checking || loggedIn || !link.trim()}>{busy ? (encryptedTarget ? "이동 중…" : "확인 중…") : encryptedTarget ? "대상 서버로 이동" : "연결"}</ServerActionButton>}
                 </>}
                 {error && !passwordOpen && <GroveText as="p" display="block" type="inherit" color="error" role="alert"><SentenceText text={error} /></GroveText>}
-                <GroveButton type="button" variant="secondary" disabled={busy} onClick={onCancel}>토큰 로그인으로 돌아가기</GroveButton>
+                <GroveButton type="button" variant="secondary" disabled={busy} onClick={onCancel}>돌아가기</GroveButton>
             </GroveStack></Card>
             {passwordOpen && <PairingPasswordDialog busy={busy} error={error} onClose={() => { setPasswordOpen(false); setError(null); }}
                 onSubmit={async (password) => {
@@ -304,6 +334,6 @@ function PairingPasswordDialog({ busy, error, onClose, onSubmit }: {
 
 function pairingError(e: unknown): string {
     const unknown = e instanceof ApiError && (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true;
-    return unknown ? "연결 결과를 확인하지 못했습니다. 새로고침해 로그인을 확인하세요. 실패하면 소유자가 요청·기기 목록을 확인한 뒤 폐기·재발급하세요. 자동 재등록하지 않습니다."
+    return unknown ? "연결 결과를 확인하지 못했어요. 새로고침한 뒤에도 로그인되지 않으면 등록된 기기나 서버 터미널에서 새 링크를 발급하세요."
         : e instanceof Error ? e.message : "연결하지 못했습니다.";
 }

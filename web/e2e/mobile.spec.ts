@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { audit } from "./a11y-audit";
-import { apiCall, apiText, composerOption, ensureProjects, login } from "./helpers";
+import { apiCall, apiText, composerOption, ensureProjects, login, openProjectTerminal } from "./helpers";
 
 // 좁은 화면: PC 분할을 강제로 복사하지 않고 단일 pane으로 보인다(FLOW-12).
 test("좁은 화면은 기기별 배치를 따로 쓰고 한 pane만 보여 준다", async ({ page }) => {
@@ -19,10 +19,8 @@ test("좁은 화면은 기기별 배치를 따로 쓰고 한 pane만 보여 준�
 test("모바일 터미널 보조 키로 Ctrl+C와 화살표를 보낼 수 있다", async ({ page }) => {
     const { a } = await ensureProjects();
     const t = await apiCall<{ id: string; name: string }>("POST", `/projects/${a.id}/terminals`, { name: "폰 터미널" });
-    await apiCall("POST", "/recent/touch", { kind: "terminal", project_id: a.id, resource_id: t.id, title: "폰 터미널" });
     await login(page);
-    await page.getByRole("button", { name: "사이드바" }).click();
-    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /폰 터미널/ }).first().click();
+    await openProjectTerminal(page, a.name, t.name);
     const view = page.getByTestId("terminal-view");
     await expect(view).toHaveAttribute("data-conn", "open");
     const keys = view.getByLabel("보조 키");

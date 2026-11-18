@@ -9,7 +9,6 @@ use crate::auth::Principal;
 use crate::error::{ApiError, ApiResult};
 use crate::events;
 use crate::idem;
-use crate::util::sha256_hex;
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -18,10 +17,58 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use std::path::PathBuf;
 use std::time::Duration;
+use std::sync::Arc;
+use std::collections::HashMap;
+use std::hash::Hash;
+use std::time::Instant;
+use sha2::{Digest, Sha256};
+use tokio::io::AsyncReadExt;
 
 const MAX_DIFF: usize = 512 * 1024;
 
 pub type RepoLocks = crate::project_resources::ProjectQueues;
+
+type ReadSlot<V> = Arc<tokio::sync::Mutex<Option<(Instant, Duration, V)>>>;
+
+/// 동시 조회를 공유하거나 짧은 TTL을 사용한다. 변경 직전의 검증에는 사용하지 않는다.
+pub struct ReadCache<K, V> {
+    slots: tokio::sync::Mutex<HashMap<K, ReadSlot<V>>>,
+}
+
+impl<K, V> Default for ReadCache<K, V> {
+    fn default() -> Self { Self { slots: Default::default() } }
+}
+
+impl<K: Eq + Hash + Clone, V: Clone> ReadCache<K, V> {
+    pub async fn matching(&self, key: &K, age: Duration, matches: impl FnOnce(&V) -> bool) -> Option<V> {
+        let slot = self.slots.lock().await.get(key).cloned()?;
+        let result = slot.lock().await;
+        result.as_ref().filter(|(finished, _, value)| finished.elapsed() < age && matches(value)).map(|(_, _, value)| value.clone())
+    }
+
+    pub async fn read<F, Fut>(&self, key: K, force: bool, read: F) -> ApiResult<V>
+    where F: FnOnce() -> Fut, Fut: std::future::Future<Output = ApiResult<(V, Duration)>> {
+        let started = Instant::now();
+        let slot = {
+            let mut slots = self.slots.lock().await;
+            if let Some(slot) = slots.get(&key) { slot.clone() } else {
+                if slots.len() >= 64 {
+                    if let Some(idle) = slots.iter().find(|(_, slot)| Arc::strong_count(slot) == 1).map(|(key, _)| key.clone()) { slots.remove(&idle); }
+                }
+                let slot = Arc::new(tokio::sync::Mutex::new(None));
+                if slots.len() < 64 { slots.insert(key, slot.clone()); }
+                slot
+            }
+        };
+        let mut result = slot.lock().await;
+        if let Some((finished, ttl, value)) = &*result {
+            if *finished >= started || (!force && finished.elapsed() < *ttl) { return Ok(value.clone()); }
+        }
+        let (value, ttl) = read().await?;
+        *result = Some((Instant::now(), ttl, value.clone()));
+        Ok(value)
+    }
+}
 
 pub struct GitOut {
     pub code: i32,
@@ -29,7 +76,7 @@ pub struct GitOut {
     pub stderr: String,
 }
 
-pub async fn git(root: &std::path::Path, args: &[&str], read_only: bool) -> ApiResult<GitOut> {
+fn command(root: &std::path::Path, args: &[&str], read_only: bool) -> tokio::process::Command {
     let mut cmd = tokio::process::Command::new("git");
     if read_only {
         cmd.arg("--no-optional-locks");
@@ -42,6 +89,11 @@ pub async fn git(root: &std::path::Path, args: &[&str], read_only: bool) -> ApiR
         .env("LC_ALL", "C")
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
+    cmd
+}
+
+pub async fn git(root: &std::path::Path, args: &[&str], read_only: bool) -> ApiResult<GitOut> {
+    let mut cmd = command(root, args, read_only);
     let out = tokio::time::timeout(Duration::from_secs(60), cmd.output())
         .await
         .map_err(|_| ApiError::new(StatusCode::GATEWAY_TIMEOUT, "timeout", "git 명령이 60초 안에 끝나지 않았습니다"))?
@@ -159,33 +211,117 @@ async fn diff_text(root: &std::path::Path, staged: bool, path: Option<&str>) -> 
 /// 사용자가 본 상태를 식별하는 fingerprint: 전체 diff(작업 트리·index)와 untracked 목록과 HEAD.
 async fn fingerprint(root: &std::path::Path) -> ApiResult<String> {
     let st = git(root, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], true).await?;
-    let wt = git(root, &["diff", "--no-ext-diff", "--binary"], true).await?;
-    let ix = git(root, &["diff", "--no-ext-diff", "--binary", "--cached"], true).await?;
-    for (out,what) in [(&st,"status 확인"),(&wt,"작업 트리 확인"),(&ix,"index 확인")] {
-        if out.code!=0 { return Err(fail(out,what)); }
-    }
-    let mut buf = st.stdout;
-    buf.extend_from_slice(b"\n--wt--\n");
-    buf.extend_from_slice(&wt.stdout);
-    buf.extend_from_slice(b"\n--ix--\n");
-    buf.extend_from_slice(&ix.stdout);
-    Ok(sha256_hex(&buf))
+    if st.code != 0 { return Err(fail(&st, "status 확인")); }
+    fingerprint_from_status(root, &st.stdout).await
 }
 
-pub async fn status(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Value>> {
+async fn hash_diff(root: &std::path::Path, args: &[&str], hash: &mut Sha256) -> ApiResult<()> {
+    let mut cmd = command(root, args, true);
+    cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::null());
+    let mut child = cmd.spawn().map_err(|e| spawn_err(&e, "Git diff"))?;
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    tokio::time::timeout(Duration::from_secs(60), async {
+        let mut bytes = [0u8; 64 * 1024];
+        loop {
+            let n = stdout.read(&mut bytes).await.map_err(|e| spawn_err(&e, "Git diff 읽기"))?;
+            if n == 0 { break; }
+            hash.update(&bytes[..n]);
+        }
+        let status = child.wait().await.map_err(|e| spawn_err(&e, "Git diff 확인"))?;
+        if !status.success() { return Err(fail(&GitOut { code: status.code().unwrap_or(-1), stdout: vec![], stderr: String::new() }, "diff 확인")); }
+        Ok(())
+    }).await.map_err(|_| ApiError::new(StatusCode::GATEWAY_TIMEOUT, "timeout", "git 명령이 60초 안에 끝나지 않았습니다"))?
+}
+
+async fn fingerprint_from_status(root: &std::path::Path, status: &[u8]) -> ApiResult<String> {
+    let mut hash = Sha256::new();
+    hash.update(status);
+    hash.update(b"\n--wt--\n");
+    hash_diff(root, &["diff", "--no-ext-diff", "--binary"], &mut hash).await?;
+    hash.update(b"\n--ix--\n");
+    hash_diff(root, &["diff", "--no-ext-diff", "--binary", "--cached"], &mut hash).await?;
+    Ok(crate::util::hex(&hash.finalize()))
+}
+
+#[derive(Deserialize)]
+pub struct StatusQuery {
+    #[serde(default)]
+    pub summary: bool,
+    pub staged: Option<bool>,
+    pub offset: Option<usize>,
+    pub limit: Option<usize>,
+    pub filter: Option<String>,
+    pub snapshot: Option<String>,
+}
+
+#[derive(Clone, serde::Serialize, Deserialize, ts_rs::TS)]
+pub struct GitEntry {
+    pub path: String,
+    pub index: String,
+    pub worktree: String,
+    pub kind: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub orig_path: Option<String>,
+}
+
+#[derive(serde::Serialize, ts_rs::TS)]
+pub struct GitStatusPage {
+    pub entries: Vec<GitEntry>,
+    pub total: usize,
+    pub unfiltered_total: usize,
+    pub offset: usize,
+    pub has_more: bool,
+    pub fingerprint: Option<String>,
+}
+
+pub async fn status(State(app): State<App>, p: Principal, Path(id): Path<String>, Query(q): Query<StatusQuery>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
-    let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
-    if !is_repo(&root).await? {
-        return Ok(Json(json!({ "is_repo": false })));
+    let _resource = app.project_resources.ui_read(&app, &id, &p).await?;
+    // 페이지·검색은 사용자가 보고 있는 fingerprint의 스냅샷을 공유한다.
+    // 새로고침(요약 조회)과 변경 직전 검증은 항상 새 상태를 읽는다.
+    let cached = if q.staged.is_some() && !q.summary {
+        if let Some(fp) = &q.snapshot {
+            app.git_reads.matching(&root, Duration::from_secs(30), |value| value["fingerprint"].as_str() == Some(fp)).await
+        } else { None }
+    } else { None };
+    let snapshot = if let Some(value) = cached { value } else { app.git_reads.read(root.clone(), false, || async {
+        if !is_repo(&root).await? { return Ok((Arc::new(json!({ "is_repo": false })), Duration::ZERO)); }
+        let o = git(&root, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], true).await?;
+        if o.code != 0 { return Err(fail(&o, "status")); }
+        let mut value = parse_status(&o.stdout);
+        value["is_repo"] = json!(true);
+        value["fingerprint"] = json!(fingerprint_from_status(&root, &o.stdout).await?);
+        Ok((Arc::new(value), Duration::ZERO))
+    }).await? };
+    crate::auth::revalidate(&app, &p).await?;
+    let empty = vec![];
+    let entries = snapshot["entries"].as_array().unwrap_or(&empty);
+    let staged = |e: &&Value| !matches!(e["index"].as_str(), Some("." | "?"));
+    let unstaged = |e: &&Value| e["worktree"] != "." || e["index"] == "?";
+    if q.summary {
+        return Ok(Json(json!({
+            "is_repo": snapshot["is_repo"], "branch": snapshot["branch"], "fingerprint": snapshot["fingerprint"],
+            "counts": { "staged": entries.iter().filter(staged).count(), "unstaged": entries.iter().filter(unstaged).count(), "tracked": entries.iter().any(|e| e["kind"] != "untracked") }
+        })));
     }
-    let o = git(&root, &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], true).await?;
-    if o.code != 0 {
-        return Err(fail(&o, "status"));
+    if let Some(is_staged) = q.staged {
+        let filter = q.filter.unwrap_or_default().trim().to_lowercase();
+        let relevant = entries.iter().filter(|e| if is_staged { staged(e) } else { unstaged(e) });
+        let unfiltered_total = relevant.clone().count();
+        let filtered: Vec<_> = relevant.filter(|e| filter.is_empty() || e["path"].as_str().is_some_and(|p| p.to_lowercase().contains(&filter))
+            || e["orig_path"].as_str().is_some_and(|p| p.to_lowercase().contains(&filter))).collect();
+        let total = filtered.len();
+        let offset = q.offset.unwrap_or(0);
+        let limit = q.limit.unwrap_or(50).clamp(1, 200);
+        let page = GitStatusPage {
+            entries: filtered.into_iter().skip(offset).take(limit).map(|e| serde_json::from_value(e.clone()).map_err(|e| ApiError::internal(e.to_string()))).collect::<ApiResult<_>>()?,
+            total, unfiltered_total, offset, has_more: offset.saturating_add(limit) < total,
+            fingerprint: snapshot["fingerprint"].as_str().map(str::to_string),
+        };
+        return Ok(Json(serde_json::to_value(page).map_err(|e| ApiError::internal(e.to_string()))?));
     }
-    let mut v = parse_status(&o.stdout);
-    v["is_repo"] = json!(true);
-    v["fingerprint"] = json!(fingerprint(&root).await?);
-    Ok(Json(v))
+    Ok(Json((*snapshot).clone()))
 }
 
 pub async fn diff(State(app): State<App>, _p: Principal, Path(id): Path<String>, Query(q): Query<DiffQuery>) -> ApiResult<Json<Value>> {
@@ -1020,6 +1156,39 @@ pub async fn compare(State(app): State<App>, _p: Principal, Path(id): Path<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn read_cache_shares_overlapping_reads_but_revalidates_later_reads() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let cache = ReadCache::<String, usize>::default();
+        let calls = AtomicUsize::new(0);
+        let read = || async {
+            let value = calls.fetch_add(1, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+            Ok((value, Duration::ZERO))
+        };
+        let (a, b) = tokio::join!(cache.read("repo".into(), false, read), cache.read("repo".into(), false, read));
+        assert_eq!((a.unwrap(), b.unwrap()), (0, 0));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(cache.read("repo".into(), false, read).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn streaming_fingerprint_preserves_the_full_binary_diff_contract() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(git(root.path(), &["init", "-q"], false).await.unwrap().code, 0);
+        std::fs::write(root.path().join("a"), b"before\n").unwrap();
+        assert_eq!(git(root.path(), &["add", "a"], false).await.unwrap().code, 0);
+        assert_eq!(git(root.path(), &["-c", "user.email=test@example.invalid", "-c", "user.name=Fixture", "commit", "-qm", "base"], false).await.unwrap().code, 0);
+        std::fs::write(root.path().join("a"), vec![0u8; 128 * 1024]).unwrap();
+        std::fs::write(root.path().join("untracked"), "keep").unwrap();
+        let mut reference = git(root.path(), &["status", "--porcelain=v2", "-z", "--branch", "--untracked-files=all"], true).await.unwrap().stdout;
+        reference.extend_from_slice(b"\n--wt--\n");
+        reference.extend_from_slice(&git(root.path(), &["diff", "--no-ext-diff", "--binary"], true).await.unwrap().stdout);
+        reference.extend_from_slice(b"\n--ix--\n");
+        reference.extend_from_slice(&git(root.path(), &["diff", "--no-ext-diff", "--binary", "--cached"], true).await.unwrap().stdout);
+        assert_eq!(fingerprint(root.path()).await.unwrap(), crate::util::sha256_hex(&reference));
+    }
 
     #[tokio::test]
     async fn fingerprint_rejects_failed_git_metadata_reads_instead_of_hashing_empty_output() {

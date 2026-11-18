@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, login, openDetails, requireToolApproval, script, sessionView, state } from "./helpers";
+import { apiCall, ensureProfile, login, openDetails, openProjectSettings, requireToolApproval, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
 async function setup(page: Page) {
@@ -12,9 +12,8 @@ async function setup(page: Page) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: project.name });
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 작업", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
-    await page.getByLabel("설정 검색", { exact: true }).fill("셸·자원");
+    await openProjectSettings(page);
+    await page.getByLabel("설정 검색", { exact: true }).fill("명령 실행");
     const panel = page.getByTestId("exec-settings");
     const row = panel.getByTestId("setting-exec.default_cwd");
     const save = async (value: string) => {
@@ -40,7 +39,7 @@ test("설정 화면에서 바꾼 cwd는 다음 모델 셸에만 적용되고 명
     const { root, session, panel, save } = await setup(page);
     const profile = await ensureProfile();
     await expect(panel).toContainText("실행 root(worktree 포함)");
-    await expect(panel).toContainText("실제 실행 root 기준");
+    await expect(panel).toContainText("명시한 cwd가 우선");
     for (const background of [false, true]) {
         await save("work");
         for (const explicit of [false, true]) {

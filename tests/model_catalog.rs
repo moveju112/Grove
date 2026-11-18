@@ -166,9 +166,9 @@ async fn active_turns_prevent_disabling_and_devices_cannot_refresh_owner_catalog
         json!({ "profile_id": pid, "text": "hold", "tools": false })).await;
     let (status, _) = s.send(Method::PUT, &format!("/api/v1/model-profiles/{pid}"), json!({ "expected_revision": 1, "enabled": false })).await;
     assert_eq!(status, StatusCode::CONFLICT);
-    let (_, device) = s.post("/api/v1/devices", json!({ "name": "device" })).await;
+    let device = s.registered_device("catalog device").await;
     let response = s.raw(Method::GET, &format!("/api/v1/model-profiles/{pid}/models"), None, None, Some(device["token"].as_str().unwrap())).await;
-    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert_eq!(response.status(), StatusCode::OK);
     let response = s.raw(Method::GET, &format!("/api/v1/model-profiles/{pid}/available-models"), None, None, Some(device["token"].as_str().unwrap())).await;
     assert_eq!(response.status(), StatusCode::OK);
     assert!(!response.json::<Value>().await.unwrap()["models"].as_array().unwrap().is_empty());
