@@ -5,7 +5,7 @@ import { LayoutPersistence, type RemoteLayout } from "./layoutPersistence";
 import { projectLayout, projectLayoutKey } from "./projectLayout";
 import { querySnapshot, subscribeQuery } from "./store";
 import { applyWorkspaceTabs, mergeWorkspaceTabs, workspaceTabs, workspaceTabsKey } from "./workspaceTabs";
-import { readWorkspaceResume, selectionKey } from "./workspaceStartup";
+import { readConversation, readWorkspaceResume, selectionKey } from "./workspaceStartup";
 import { hasPendingInput } from "../components/pwa/pendingInput";
 
 type Target = Omit<L.Tab, "id">;
@@ -227,19 +227,25 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
     }, [active, projectSnapshot, publish]);
     const openAt = useCallback(async (source: string, target: Target, how: How = "here", restore = false) => {
         if (!target.project_id || !active()) return;
-        const from = entries.current.get(source);
-        const baseId = from?.base ?? source;
-        const id = projectLayoutKey(baseId, target.project_id);
-        // 숨긴 프로젝트에서 늦게 완료된 생성은 그 프로젝트만 갱신하고 현재 화면을 빼앗지 않는다.
-        if (!from || from.projectId !== target.project_id) select(baseId, target.project_id);
-        const entry = loadProject(baseId, target.project_id);
-        await entry.ready;
-        const layout = await updateAt(id, (layout) => {
-            if (restore && L.allTabs(layout).length > 0) return layout;
-            if (how === "here" || baseId.endsWith("-narrow") || L.allTabs(layout).length === 0) return L.openResource(layout, target);
-            return L.splitLeaf(layout, layout.focused_leaf, how === "right" ? "row" : "column", target);
-        });
-        if (layout) return { id, layout };
+        // 선택한 대화의 본문 서버 읽기와 배치 복원을 동시에 시작한다.
+        const sid = target.kind === "session" ? target.resource_id : undefined;
+        const release = sid && /^[a-z0-9-]{1,64}$/i.test(sid)
+            ? subscribeQuery(`messages:${sid}`, () => readConversation.messages(sid), () => undefined) : undefined;
+        try {
+            const from = entries.current.get(source);
+            const baseId = from?.base ?? source;
+            const id = projectLayoutKey(baseId, target.project_id);
+            // 숨긴 프로젝트에서 늦게 완료된 생성은 그 프로젝트만 갱신하고 현재 화면을 빼앗지 않는다.
+            if (!from || from.projectId !== target.project_id) select(baseId, target.project_id);
+            const entry = loadProject(baseId, target.project_id);
+            await entry.ready;
+            const layout = await updateAt(id, (layout) => {
+                if (restore && L.allTabs(layout).length > 0) return layout;
+                if (how === "here" || baseId.endsWith("-narrow") || L.allTabs(layout).length === 0) return L.openResource(layout, target);
+                return L.splitLeaf(layout, layout.focused_leaf, how === "right" ? "row" : "column", target);
+            });
+            if (layout) return { id, layout };
+        } finally { release?.(); }
     }, [active, loadProject, select, updateAt]);
     const flush = useCallback(() => {
         for (const entry of entries.current.values()) void entry.store.flush();

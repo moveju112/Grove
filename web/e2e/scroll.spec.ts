@@ -11,7 +11,7 @@ test("과거 메시지를 읽는 동안 자동 스크롤하지 않고, 이전 �
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
-    const view = page.getByTestId("session-view");
+    const view = page.locator(`[data-testid="session-view"][data-session="${s.id}"]`).filter({ visible: true });
     const body = page.getByTestId("pane-body").filter({ has: view });
     // 처음엔 맨 아래
     await expect(view.getByText("줄 159", { exact: true })).toBeInViewport();
@@ -132,7 +132,7 @@ test("내가 보내면 직접 스크롤하기 전까지 레이아웃이 바뀌�
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
-    const view = page.getByTestId("session-view");
+    const view = page.locator(`[data-testid="session-view"][data-session="${s.id}"]`).filter({ visible: true });
     const body = page.getByTestId("pane-body").filter({ has: view });
     await expect(view.getByTestId("msg-user").last()).toContainText("기록 119");
     await composerOption(view, "모델 프로필", profile);
