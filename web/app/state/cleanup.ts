@@ -6,6 +6,8 @@
 
 import { lastAuthEnd, onAuthChange } from "../api/client";
 import { clearServerCache } from "./store";
+import { clearContentCaches } from "./contentCache";
+import { clearKeptPages } from "./conversationPages";
 
 /// 로그아웃 때 지우는 localStorage key 접두사.
 export const SENSITIVE_PREFIXES = ["grove.draft.", "grove.send.", "grove.file.", "grove.layout.", "grove.script.", "grove.scroll.", "grove.composer.options", "grove.bots.hidden"];
@@ -33,6 +35,8 @@ export function installAuthCleanup() {
         if (!wasIn) return;
         wasIn = false;
         clearServerCache();
+        clearContentCaches();
+        clearKeptPages();
         if (lastAuthEnd() === "logout") clearDeviceCopies(localStorage);
         sessionStorage.clear();
     });

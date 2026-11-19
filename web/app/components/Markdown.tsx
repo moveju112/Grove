@@ -162,8 +162,8 @@ function block(b: Block, k: number): ReactNode {
             return <Stack as="blockquote" gap={2} paddingInlineStart={3} xstyle={contentStyles.quote} key={k}>{b.blocks.map(block)}</Stack>;
         case "table":
             return (
-                <ScrollableArea axis="inline" label="답변 표" maxWidth="100%" key={k} data-swipe-blocked="true" data-testid="md-table">
-                    <Table density="compact">
+                <ScrollableArea axis="inline" label="답변 표" maxWidth="100%" key={k} data-testid="md-table">
+                    <Table density="compact" xstyle={contentStyles.markdownTable(b.head.length)}>
                         <TableHeader>
                             <TableRow isHeaderRow>
                                 {b.head.map((h, j) => (

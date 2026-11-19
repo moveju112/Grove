@@ -8,8 +8,18 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 
 export type MobilePanel = "left" | "right";
 type Drag = { side: MobilePanel; progress: number };
+const PANEL_SWIPE_SURFACE = '[data-ui="workspace-header"], [data-testid="session-view"] [data-ui="workbench-main"], [data-testid="project-view"] [data-ui="workbench-main"]';
+const SWIPE_SLOP = 8;
 
-// 채팅 본문에서는 양방향, 다른 화면에서는 가장자리에서 연다. 세로 스크롤·편집·텍스트 선택은 보존한다.
+// 표 안에 그 방향으로 더 읽을 내용이 있으면 터치를 브라우저에 맡긴다.
+function canScrollTable(node: Element, dx: number) {
+    const range = node.scrollWidth - node.clientWidth;
+    const rtl = getComputedStyle(node).direction === "rtl";
+    const left = node.scrollLeft + (rtl ? range : 0);
+    return dx > 0 ? left > 1 : left < range - 1;
+}
+
+// 상단 바·채팅 본문에서는 양방향, 그 외에는 가장자리에서 연다. 세로 스크롤·편집·텍스트 선택은 보존한다.
 export function useMobilePanels(enabled: boolean) {
     const [panel, setPanel] = useState<MobilePanel | null>(null);
     const [drag, setDrag] = useState<Drag | null>(null);
@@ -17,7 +27,7 @@ export function useMobilePanels(enabled: boolean) {
     useLayoutEffect(() => { current.current = panel; }, [panel]);
     useEffect(() => {
         if (!enabled) { setPanel(null); setDrag(null); return; }
-        type Gesture = { x: number; y: number; at: number; origin: MobilePanel | null; chat: boolean; side?: MobilePanel; progress: number };
+        type Gesture = { x: number; y: number; at: number; origin: MobilePanel | null; fromSurface: boolean; tableScrollers: Element[]; side?: MobilePanel; progress: number };
         let gesture: Gesture | null = null;
         let frame = 0;
         const cancel = () => {
@@ -33,14 +43,17 @@ export function useMobilePanels(enabled: boolean) {
             const target = event.target as Element;
             if (document.getSelection()?.isCollapsed === false) return;
             if (target.closest("input, textarea, select, [contenteditable=true], .xterm, [data-testid=md-code], [data-swipe-blocked]")) return;
-            if (!current.current && target.closest("button, a[href], summary")) return;
+            const table = target.closest('[data-testid="md-table"]');
+            const tableScrollers: Element[] = [];
             for (let node: Element | null = target; node && node !== document.body; node = node.parentElement) {
-                if (node.scrollWidth > node.clientWidth + 1 && ["auto", "scroll"].includes(getComputedStyle(node).overflowX)) return;
+                if (node.scrollWidth <= node.clientWidth + 1 || !["auto", "scroll"].includes(getComputedStyle(node).overflowX)) continue;
+                if (!table?.contains(node)) return;
+                tableScrollers.push(node);
             }
             const touch = event.touches[0]!;
-            const chat = !!target.closest('[data-testid="session-view"] [data-ui="workbench-main"], [data-testid="project-view"] [data-ui="workbench-main"]');
-            if (!current.current && !chat && touch.clientX > 32 && touch.clientX < innerWidth - 32) return;
-            gesture = { x: touch.clientX, y: touch.clientY, at: performance.now(), origin: current.current, chat, progress: current.current ? 1 : 0 };
+            const fromSurface = !!target.closest(PANEL_SWIPE_SURFACE);
+            if (!current.current && !fromSurface && touch.clientX > 32 && touch.clientX < innerWidth - 32) return;
+            gesture = { x: touch.clientX, y: touch.clientY, at: performance.now(), origin: current.current, fromSurface, tableScrollers, progress: current.current ? 1 : 0 };
         };
         const move = (event: TouchEvent) => {
             if (!gesture) return;
@@ -49,10 +62,11 @@ export function useMobilePanels(enabled: boolean) {
             const dx = touch.clientX - gesture.x, dy = touch.clientY - gesture.y;
             if (!gesture.side) {
                 if (document.getSelection()?.isCollapsed === false || performance.now() - gesture.at > 500) { gesture = null; return; }
-                if (Math.abs(dy) > 10 && Math.abs(dy) >= Math.abs(dx)) { gesture = null; return; }
-                if (Math.abs(dx) < 10 || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+                if (Math.abs(dy) > SWIPE_SLOP && Math.abs(dy) >= Math.abs(dx)) { gesture = null; return; }
+                if (Math.abs(dx) < SWIPE_SLOP || Math.abs(dx) < Math.abs(dy) * 1.4) return;
+                if (!event.cancelable || gesture.tableScrollers.some((node) => canScrollTable(node, dx))) { gesture = null; return; }
                 const side = gesture.origin ?? (dx > 0 ? "left" : "right");
-                if (!gesture.origin && !gesture.chat && ((side === "left" && gesture.x > 32) || (side === "right" && gesture.x < innerWidth - 32))) {
+                if (!gesture.origin && !gesture.fromSurface && ((side === "left" && gesture.x > 32) || (side === "right" && gesture.x < innerWidth - 32))) {
                     gesture = null; return;
                 }
                 gesture.side = side;

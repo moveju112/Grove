@@ -88,29 +88,30 @@ export function TerminalView({ projectId, terminalId, focused }: { projectId: st
             setConn("readonly");
         };
 
+        const missing = () => {
+            setErr("터미널이 없습니다(삭제됨)");
+            setConn("missing");
+        };
         const connect = async () => {
             if (closed) return;
             setConn("connecting");
             setErr(null);
-            const list = await api.get<{ terminals: TerminalRow[] }>(`/projects/${projectId}/terminals`, { signal: controller.signal });
-            if (closed) return;
-            const r = list.terminals.find((t) => t.id === terminalId) ?? null;
-            if (!r) {
-                setErr("터미널이 없습니다(삭제됨)");
-                setConn("missing");
-                return;
-            }
-            if (r.status !== "running") {
-                await showSaved();
-                return;
-            }
+            // 실행 중인 터미널은 티켓 발급이 곧 상태 확인이다. 목록을 먼저 읽지 않고 바로 티켓을 요청하고,
+            // 실행 중이 아니라는 응답을 받았을 때만 목록으로 저장 화면·삭제 여부를 구분한다.
             let url: string;
             try {
                 url = (await api.post<{ url: string }>(`/terminals/${terminalId}/ticket`, {}, { signal: controller.signal })).url;
             } catch (e) {
                 if (closed) return;
-                if (e instanceof ApiError && e.code === "not_running") return void connect();
-                throw e;
+                if (e instanceof ApiError && e.status === 404) return missing();
+                if (!(e instanceof ApiError && e.code === "not_running")) throw e;
+                const list = await api.get<{ terminals: TerminalRow[] }>(`/projects/${projectId}/terminals`, { signal: controller.signal });
+                if (closed) return;
+                const r = list.terminals.find((t) => t.id === terminalId) ?? null;
+                if (!r) return missing();
+                if (r.status !== "running") { await showSaved(); return; }
+                // 목록에서는 실행 중인데 티켓이 거부됐으면 상태가 바뀌는 중이다. 기존처럼 다시 확인한다.
+                return void connect();
             }
             if (closed) return;
             const ws = terminalSocket(url);

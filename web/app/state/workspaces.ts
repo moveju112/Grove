@@ -20,8 +20,17 @@ export function useWorkspaceMode(projectId: string): "single" | "project" | null
     return mode === "single" || mode === "project" ? mode : null;
 }
 
+/// 선택용 가벼운 목록. worktree별 Git 변경 개수·소유 아님·복원 후보는 관리 화면(WorkspaceList)에서만 계산한다.
+/// 구버전 서버는 select를 무시하고 전체 목록을 보내지만 같은 필드로 읽을 수 있다.
+export type WorkspaceChoice = Worktree & { exists: boolean };
+export type WorkspaceChoices = { is_repo: boolean; worktrees: WorkspaceChoice[] };
+
+export function useWorkspaceChoices(projectId: string, enabled = true) {
+    return useQuery<WorkspaceChoices>(enabled ? `worktrees:${projectId}:select` : null, () => api.get(`/projects/${projectId}/worktrees?select=true`, { requires: WT }));
+}
+
 /// 대화를 시작·이동할 수 있는 워크스페이스(active·경로 존재). 프로젝트 모드가 아니면 조회하지 않는다.
-export function useWorkspaces(projectId: string, enabled: boolean): WorkspaceRow[] {
-    const q = useQuery<WorkspaceList>(enabled ? `worktrees:${projectId}` : null, () => api.get(`/projects/${projectId}/worktrees`, { requires: WT }));
+export function useWorkspaces(projectId: string, enabled: boolean): WorkspaceChoice[] {
+    const q = useWorkspaceChoices(projectId, enabled);
     return enabled ? (q.data?.worktrees ?? []).filter((w) => w.status === "active" && w.exists) : [];
 }

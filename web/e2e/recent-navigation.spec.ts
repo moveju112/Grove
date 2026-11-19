@@ -46,6 +46,9 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     const recent = page.getByRole("region", { name: "최근", exact: true });
     const firstItem = recent.getByTestId("recent-item").filter({ hasText: `${prefix} first` });
     const secondItem = recent.getByTestId("recent-item").filter({ hasText: `${prefix} second` });
+    // 다른 시험이 저장한 탭은 제외하고 이 시험에서 만든 대화의 사본만 센다.
+    const sessionTabs = page.locator('[role="tablist"][aria-label="열린 대화와 화면"] [role="tab"]')
+        .filter({ has: page.getByTestId("tab-title").filter({ hasText: prefix }) });
     const touched = (id: string, seen: boolean) => page.waitForResponse((r) =>
         r.url().endsWith("/api/v1/recent/touch") && r.request().method() === "POST"
         && r.request().postDataJSON().resource_id === id && (r.request().postDataJSON().view_state !== undefined) === seen);
@@ -68,7 +71,7 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     await expect(firstView.getByLabel("메시지 입력")).toHaveValue("first pane draft fixture");
     await expect(secondView.getByLabel("메시지 입력")).toHaveValue("second pane draft fixture");
     await expect(page.getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ visible: true }).filter({ has: firstView })).toHaveCount(1);
-    await expect(page.locator('[role="tablist"][aria-label="열린 대화와 화면"] [role="tab"]')).toHaveCount(2);
+    await expect(sessionTabs).toHaveCount(2);
     await splitRecentItem(firstItem);
     await expect(page.getByTestId("pane")).toHaveCount(3);
     await expect(firstView).toHaveCount(2);
@@ -77,7 +80,7 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     await firstItem.getByRole("button", { name: new RegExp(`${prefix} first`) }).click();
     await expect(page.getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ visible: true }).getByLabel("메시지 입력")).toHaveValue("explicit copy draft fixture");
     await expect(firstView).toHaveCount(2);
-    await expect(page.locator('[role="tablist"][aria-label="열린 대화와 화면"] [role="tab"]')).toHaveCount(3);
+    await expect(sessionTabs).toHaveCount(3);
 });
 
 test("열기·보내기는 최근 시각을 바꾸지 않고 답변이 도착해야 순서와 표시 시각이 갱신된다", async ({ page }) => {
@@ -115,6 +118,65 @@ test("열기·보내기는 최근 시각을 바꾸지 않고 답변이 도착해
 
 test.describe("390px 탐색 더보기", () => {
     test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+    test("최근 대화 열기 응답을 잃어도 탐색과 대화에 연결 오류가 남지 않는다", async ({ page }) => {
+        const { first, prefix } = await sessions();
+        await login(page);
+        const toggler = page.getByRole("button", { name: "사이드바", exact: true });
+        await toggler.click();
+        const drawer = page.getByTestId("mobile-drawer-left");
+        let opens = 0;
+        await page.route("**/api/v1/recent/touch", async (route) => {
+            const body = route.request().postDataJSON();
+            if (body.resource_id !== first.id) return route.continue();
+            if (!body.view_state) opens++;
+            // 실제로 저장은 됐지만 브라우저가 응답을 받지 못한 상태.
+            expect((await route.fetch()).ok()).toBe(true);
+            await route.abort("connectionreset");
+        });
+        const failed = (hasViewState: boolean) => page.waitForEvent("requestfailed", { predicate: (r) =>
+            r.url().endsWith("/recent/touch") && r.postDataJSON()?.resource_id === first.id
+                && Boolean(r.postDataJSON().view_state) === hasViewState });
+        const lostOpen = failed(false);
+        const lostRead = failed(true);
+        await drawer.getByRole("button", { name: `${prefix} first`, exact: true }).click();
+        await Promise.all([lostOpen, lostRead]);
+        const view = sessionView(page, first.id);
+        await expect(view).toBeVisible();
+        await expect(view.getByText("서버 응답을 받지 못했습니다", { exact: false })).toHaveCount(0);
+        await expect(page.getByTestId("tab-close-error")).toHaveCount(0);
+        await toggler.click();
+        await expect(drawer.getByRole("button", { name: `${prefix} first`, exact: true })).toBeVisible();
+        await expect(drawer.getByRole("region", { name: "최근", exact: true }).getByRole("alert")).toHaveCount(0);
+        expect(opens).toBe(1);
+    });
+
+    test("최근 숨기기 응답을 잃으면 행이 사라져도 같은 요청을 확인해 오류를 지운다", async ({ page }) => {
+        const { first } = await sessions();
+        await login(page);
+        await page.getByRole("button", { name: "사이드바", exact: true }).click();
+        const recent = page.getByRole("region", { name: "최근", exact: true });
+        const row = recent.locator(`[data-testid="recent-item"][data-session="${first.id}"]`);
+        const requests: { key?: string; body: unknown }[] = [];
+        await page.route("**/api/v1/recent/*", async (route) => {
+            const request = route.request();
+            if (request.method() !== "PATCH") return route.continue();
+            requests.push({ key: request.headers()["idempotency-key"], body: request.postDataJSON() });
+            if (requests.length !== 1) return route.continue();
+            expect((await route.fetch()).ok()).toBe(true);
+            await route.abort("connectionreset");
+        });
+        await row.getByRole("button", { name: "최근에서 숨기기", exact: true }).click();
+        await expect(recent.getByRole("alert")).toHaveText("최근에서 숨겼는지 확인하지 못했습니다.");
+        await expect(row).toHaveCount(0);
+        expect(requests).toHaveLength(1);
+        await recent.getByRole("button", { name: "같은 요청 결과 확인", exact: true }).click();
+        await expect(recent.getByRole("alert")).toHaveCount(0);
+        expect(requests).toHaveLength(2);
+        expect(requests[0]?.key).toBeTruthy();
+        expect(requests[1]).toEqual(requests[0]);
+    });
+
     for (const theme of ["light", "dark"] as const) {
         test(`${theme}: 최근은 작은 x만 표시하고 세션·프로젝트 메뉴는 동작 명칭을 표시한다`, async ({ page }, info) => {
             await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });

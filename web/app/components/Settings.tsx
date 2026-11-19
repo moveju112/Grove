@@ -18,7 +18,7 @@ import { NotificationTests } from "./NotificationTests";
 import { notificationPermission } from "../state/attention";
 import { MAX_RECENT_WINDOWS, normalizeRecentWindows, RECENT_WINDOW_OPTIONS, recentWindowLabel } from "../state/recentWindow";
 import { invalidate, useLive, useQuery } from "../state/store";
-import { type SettingDef, type SettingsTarget, ScopedSettings, isRoleProfile, useEffectiveSettings } from "./ScopedSettings";
+import { type SettingDef, type SettingsTarget, ScopedSettings, isRoleProfile, useEffectiveSettings, useModelProfiles } from "./ScopedSettings";
 import { RoleModelChoice } from "./settings/RoleModelChoice";
 import { isWorkflowSetting, WorkflowSettings } from "./settings/WorkflowSettings";
 import { DeviceConnections } from "./Pairing";
@@ -134,6 +134,10 @@ export function Settings({ projectId, projectName, sessionId, initialMenu, open 
     const registry = useQuery<SettingDef[]>("settings-registry", () => api.get("/settings/registry"));
     const session = useQuery<{ title: string } | null>(`session:${sessionId ?? "-"}`, () => (sessionId ? api.get(`/sessions/${sessionId}`) : Promise.resolve(null)));
     const target: SettingsTarget = { projectId, projectName, sessionId, sessionTitle: session.data?.title };
+    // 서버 설정 값과 모델 목록은 항목 정의에 의존하지 않는다. 정의를 받은 뒤 각 행이 요청하지 않도록 화면 진입 시 함께 시작하고,
+    // 같은 cache key를 각 행이 공유한다.
+    useEffectiveSettings(target, area === "daemon");
+    useModelProfiles(area === "daemon");
 
     // 직접 링크(#setting-<key>): 해당 메뉴를 열고 고급 항목이면 펼친 뒤 그 항목으로 이동한다(SETTINGS-021).
     const prepareLink = useCallback((d: SettingDef) => {

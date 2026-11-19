@@ -9,8 +9,10 @@ const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}
 const MAX_FRAME = 32 * 1024 * 1024;
 // 서버의 20초 heartbeat 세 번을 놓쳐도 여유를 둔다. 로그인·페어링 수명과는 무관하다.
 const CONTROL_LEASE_MS = 70_000;
+// 새 제어 연결에 자리를 넘긴 연결에 보내는 close code. 서버는 이 code로 교체를 구분한다.
+const REPLACED = 4000;
 const fail = (status) => new Response(null, { status });
-const close = (ws) => { if (ws.readyState !== 3) ws.close(1008, "relay disconnected"); };
+const close = (ws, code = 1008, reason = "relay disconnected") => { if (ws.readyState !== 3) ws.close(code, reason); };
 
 async function authorized(request, env) {
     const value = request.headers.get("Authorization") ?? "";
@@ -86,7 +88,9 @@ export class GroveRelay {
         const role = path.includes("/api/e2ee/") ? "client" : path.endsWith("/control") ? "control" : "data";
         let id = role === "data" ? path.split("/").at(-1) : crypto.randomUUID();
         if (role === "data" && (!ID.test(id) || this.sockets(`data:${id}`).length || !this.sockets(`client:${id}`).length)) return fail(409);
-        if (role === "control" && this.sockets("control").length) return fail(409);
+        // 제어 연결은 데몬 비밀로만 열린다. 끊김을 감지하지 못해 OPEN으로 남은 이전 연결이
+        // lease 만료까지 재접속을 막지 않도록, 새 연결이 이전 세대를 즉시 대체한다.
+        if (role === "control") for (const old of this.sockets("control")) this.disconnect(old, REPLACED, "control replaced");
         if (role === "client") {
             if (!this.sockets("control").length) return fail(503);
             if (this.sockets("client").length >= 64) return fail(429);
@@ -144,7 +148,7 @@ export class GroveRelay {
             ws.serializeAttachment({ ...state, hello: message });
         } else this.disconnect(ws);
     }
-    disconnect(ws) {
+    disconnect(ws, code, reason) {
         const state = ws.deserializeAttachment();
         if (state.retired) { close(ws); return; }
         const peers = state.role === "control" ? this.ctx.getWebSockets(`generation:${state.id}`) :
@@ -152,11 +156,14 @@ export class GroveRelay {
         ws.serializeAttachment({ ...state, retired: true });
         for (const peer of peers) {
             const attachment = peer.deserializeAttachment();
+            // 제어 연결은 자기 세대 tag에도 속한다. 자신은 아래에서 지정한 code로 닫는다.
+            // hibernation 뒤에는 객체 동일성이 보장되지 않아 attachment로 구분한다.
+            if (attachment.role === state.role && attachment.id === state.id) continue;
             if (attachment.generation !== state.generation) continue;
             peer.serializeAttachment({ ...attachment, retired: true });
             close(peer);
         }
-        close(ws);
+        close(ws, code, reason);
     }
     webSocketClose(ws) {
         return this.ctx.blockConcurrencyWhile(async () => {

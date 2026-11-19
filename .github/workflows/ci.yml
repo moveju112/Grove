@@ -1,0 +1,52 @@
+# PR·main 변경의 Rust·웹 계약 검사. 배포는 Cloudflare Pages 연동이 따로 맡는다.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npx vitest run
+      - run: npm run theme:check
+
+  rust:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      # ts_bindings 시험이 web의 node·typescript로 계약 metadata를 생성·대조한다.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci
+        working-directory: web
+      # rust-toolchain.toml의 고정 버전을 rustup이 설치한다.
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+      # 실제 CLI 시험은 #[ignore]라 계정 없이 건너뛴다.
+      - run: cargo test --locked --no-fail-fast

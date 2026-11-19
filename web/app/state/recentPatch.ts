@@ -1,4 +1,4 @@
-import { ApiError, api } from "../api/client";
+import { ApiError, api, newKey } from "../api/client";
 import type { RecentItem } from "../api/generated";
 
 // 최근 항목 고정·숨김의 기기 간 동시 변경(RECENT-006).
@@ -13,16 +13,32 @@ export function retryIntent(current: Current, intent: RecentIntent): ({ expected
     return { expected_revision: current.revision, ...Object.fromEntries(pending.map((k) => [k, intent[k]])) };
 }
 
+export function prepareRecentPatch(item: Pick<RecentItem, "id" | "revision">, intent: RecentIntent): () => Promise<void> {
+    let body = { expected_revision: item.revision, ...intent };
+    let key = newKey();
+    let rebased = false;
+    return async () => {
+        for (;;) {
+            try {
+                await api.patch(`/recent/${item.id}`, body, { key });
+                return;
+            } catch (error) {
+                const current = !rebased && error instanceof ApiError && error.code === "revision_conflict"
+                    ? (error.details as { current?: RecentItem } | undefined)?.current : undefined;
+                if (!current) throw error;
+                const again = retryIntent(current, intent);
+                if (!again) return;
+                // 충돌로 본문을 바꿀 때만 새 키를 쓴다. 응답을 잃으면 마지막 본문과 키 그대로 확인한다.
+                body = again;
+                key = newKey();
+                rebased = true;
+            }
+        }
+    };
+}
+
 export async function patchRecent(item: RecentItem, intent: RecentIntent): Promise<void> {
-    try {
-        await api.patch(`/recent/${item.id}`, { expected_revision: item.revision, ...intent });
-    } catch (error) {
-        const current = error instanceof ApiError && error.code === "revision_conflict"
-            ? (error.details as { current?: RecentItem } | undefined)?.current : undefined;
-        if (!current) throw error;
-        const again = retryIntent(current, intent);
-        if (again) await api.patch(`/recent/${item.id}`, again);
-    }
+    await prepareRecentPatch(item, intent)();
 }
 
 export async function hideSessionRecent(projectId: string, sessionId: string): Promise<void> {

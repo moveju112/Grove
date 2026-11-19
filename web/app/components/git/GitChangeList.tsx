@@ -16,17 +16,22 @@ import { useDebouncedValue } from "../../state/useDebouncedValue";
 const PAGE_SIZE = 50;
 
 /** 검색은 전체 상태에 적용하고, 페이지를 옮겨도 Git 작업의 대상과 fingerprint는 바꾸지 않는다. */
-export function GitChangeList({ title, projectId, snapshot, staged, renderRow }: {
-    title: string; projectId: string; snapshot?: string; staged: boolean; renderRow: (entry: GitEntry, fingerprint: string | null) => ReactNode;
+export function GitChangeList({ title, projectId, snapshot, staged, initial, renderRow }: {
+    title: string; projectId: string; snapshot?: string; staged: boolean;
+    /** 요약 응답에 함께 온 같은 스냅샷의 첫 페이지. 있으면 첫 페이지를 다시 요청하지 않는다. */
+    initial?: GitStatusPage;
+    renderRow: (entry: GitEntry, fingerprint: string | null) => ReactNode;
 }) {
     const [view, setView] = useState({ query: "", page: 0 });
     const scroll = useRef<HTMLDivElement>(null);
     const settledQuery = useDebouncedValue(view.query);
     const query = settledQuery.trim().toLocaleLowerCase();
     const scope = `git:${projectId}:entries:${snapshot ?? "none"}:${staged}:${query}`;
-    const result = useQuery<GitStatusPage>(`${scope}:${view.page}`,
+    const seeded = view.page === 0 && !query && !view.query && !!initial && !!snapshot && initial.fingerprint === snapshot ? initial : undefined;
+    const fetched = useQuery<GitStatusPage>(seeded ? null : `${scope}:${view.page}`,
         () => api.getContract("GitStatusPage", `/projects/${projectId}/git/status?staged=${staged}&offset=${view.page * PAGE_SIZE}&limit=${PAGE_SIZE}&filter=${encodeURIComponent(query)}${snapshot ? `&snapshot=${encodeURIComponent(snapshot)}` : ""}`, { requires: ["paged_reads_v1"] }),
         { keepPreviousData: true, scope });
+    const result = seeded ? { data: seeded, loading: false, error: null as unknown } : fetched;
     const data = result.data;
     const total = data?.unfiltered_total ?? 0;
     const filtered = data?.total ?? 0;

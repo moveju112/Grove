@@ -18,6 +18,14 @@ export const readConversation = {
     calls: (id: string, signal?: AbortSignal) => api.get<ToolCallRow[]>(`/tool-calls?session_id=${id}&limit=200`, { signal }),
 };
 
+/// 대화 화면이 쓰는 조회를 기존 query cache로 먼저 시작한다. 배치 복원을 기다리지 않고 본문을 병행해 받는다.
+/// 반환한 함수로 구독을 놓으면 받은 값은 cache에 남고, 그 사이 이벤트로 바뀐 항목만 화면이 열릴 때 다시 읽는다.
+export function prefetchConversation(id: string, resources: (keyof typeof readConversation)[] = ["messages", "turns", "session", "calls"]): () => void {
+    if (!/^[a-z0-9-]{1,64}$/i.test(id)) return () => undefined;
+    const off = resources.map((resource) => subscribeQuery(`${resource}:${id}`, () => readConversation[resource](id), () => undefined));
+    return () => off.forEach((release) => release());
+}
+
 let warm: { generation: number; resume: Promise<RemoteLayout> } | null = null;
 
 // 로그인 직후 읽기만 시작한다. 초기 설정 확인 전에 배치를 적용하거나 편집하지 않는다.

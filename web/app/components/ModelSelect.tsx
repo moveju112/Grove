@@ -10,7 +10,7 @@ import type { AvailableModel, ModelCatalog, ModelFavorite, ModelProfile } from "
 import { api } from "../api/client";
 import { useQuery } from "../state/store";
 import { useCapability } from "../state/capabilities";
-import { sortModels } from "./model-catalog";
+import { prefetchProfiles, readRecentProfiles, rememberRecentProfile, sortModels } from "./model-catalog";
 import type { SendOptions } from "../state/sendOptions";
 import { FavoriteChips, FavoriteStar, useModelFavorites } from "./ModelFavorites";
 
@@ -18,6 +18,12 @@ export function useModelCatalog(profile: ModelProfile | undefined, bound = false
     const supported = useCapability("turn_model_selection_v1");
     return useQuery<ModelCatalog>(supported === false || bound || !profile?.enabled ? null : `models:${profile.id}:${profile.revision}`,
         () => api.getContract("ModelCatalog", `/model-profiles/${profile!.id}/available-models`, { requires: ["turn_model_selection_v1"], timeoutMs: 35_000 }));
+}
+
+/// 모델 설정을 여는 동안 하위 메뉴와 같은 cache key로 목록을 미리 받아 둔다.
+function CatalogPrefetch({ profile }: { profile: ModelProfile }) {
+    useModelCatalog(profile);
+    return null;
 }
 
 function isAutomatic(profile: ModelProfile | undefined) {
@@ -107,6 +113,13 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
     const concreteModel = selected?.id ?? model ?? (!automatic ? profile?.model : null);
     const currentFavorite = !save && profile?.enabled && concreteModel
         ? { profile_id: profile.id, model: concreteModel, effort: effort ?? "auto", fast: shownFast } : null;
+    // 하위 메뉴를 열기 전, 최근 사용·즐겨찾기 공급자의 모델 목록을 병렬로 받아 둔다.
+    const prefetch = popover.isOpen && !bound && ready
+        ? prefetchProfiles(profiles, profileId, readRecentProfiles(), favorites.state.value.map((item) => item.profile_id)) : [];
+    const choose = (id: string, next: string | null) => {
+        rememberRecentProfile(id);
+        onChange(id, next);
+    };
     const description = [summary, shownEffort, shownFast ? "Fast" : null].filter(Boolean).join(" · ");
     // 버튼의 자연 폭으로 판단한다. 두 줄 배치에서도 같은 폭을 재므로 크기 경계에서 왕복하지 않는다.
     useLayoutEffect(() => {
@@ -138,10 +151,11 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
                 <ModelSummary name={summary} effort={shownEffort} fast={shownFast} measuring />
             </GroveText>
         </Button>
+        {prefetch.map((item) => <CatalogPrefetch key={item.id} profile={item} />)}
         {popover.render(<GroveStack gap={1} data-testid="model-settings">
                 {!bound && <FavoriteChips favorites={favorites} current={currentFavorite} profiles={profiles} currentName={summary}
                     labelFor={(item) => (item.profile_id === profileId ? catalog.data?.models.find((m) => m.id === item.model)?.name : undefined) ?? item.model}
-                    onApply={onFavorite} />}
+                    onApply={(favorite) => { rememberRecentProfile(favorite.profile_id); onFavorite(favorite); }} />}
                 <GroveStack direction="horizontal" align="center" justify="between" gap={2} minHeight={44}>
                     <GroveText type="inherit" color="secondary">모델</GroveText>
                     <GroveStack direction="horizontal" align="center" justify="end" gap={1} xstyle={composerStyles.modelControl}>
@@ -157,7 +171,7 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
                             <Icon name="chevronDown" size={16} />
                         </Button>}>
                         {profiles.map((item) => <ProfileModels key={item.id} profile={item} profileId={profileId}
-                            model={model} onChange={onChange} />)}
+                            model={model} onChange={choose} />)}
                     </DropdownMenu>
                     {!bound && <FavoriteStar favorites={favorites} current={currentFavorite} profiles={profiles} />}
                     </GroveStack>

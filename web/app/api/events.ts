@@ -31,13 +31,14 @@ export class EventStream {
     private wake: (() => void) | null = null;
     private lastByteAt = 0;
     private resumeTimer: ReturnType<typeof setTimeout> | undefined;
+    private resumeCheck = 0;
     private wasHidden = false;
     private onOnline = () => this.resume();
     private onVisibility = () => {
         const hidden = document.visibilityState === "hidden";
         const resumed = this.wasHidden && !hidden;
         this.wasHidden = hidden;
-        if (hidden) this.clearResumeTimer();
+        if (hidden) this.cancelResumeCheck();
         if (resumed) this.resume();
     };
     private onPageShow = (event: PageTransitionEvent) => {
@@ -71,12 +72,17 @@ export class EventStream {
         if (this.stopped || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
         const active = this.abort;
         const waiting = this.wake !== null;
-        this.clearResumeTimer();
+        this.cancelResumeCheck();
+        const check = this.resumeCheck;
         this.retryNow();
+        if (!active || waiting || this.wasHidden) return;
+        const current = () => !this.stopped && !this.wasHidden && this.abort === active
+            && !active.signal.aborted && this.resumeCheck === check;
         void probeResumedTransport().then((result) => {
-            if (this.stopped || this.wasHidden || !active || this.abort !== active || waiting) return;
+            if (!current()) return;
             const restart = () => {
-                if (this.stopped || this.wasHidden || this.abort !== active || active.signal.aborted) return;
+                if (!current()) return;
+                this.cancelResumeCheck();
                 if (this.wake) this.retryNow();
                 else {
                     this.transportInterrupted = true;
@@ -94,7 +100,9 @@ export class EventStream {
         });
     }
 
-    private clearResumeTimer() {
+    private cancelResumeCheck() {
+        // 타이머뿐 아니라 아직 응답하지 않은 이전 복귀 검사도 무효화한다.
+        this.resumeCheck++;
         clearTimeout(this.resumeTimer);
         this.resumeTimer = undefined;
     }
@@ -116,7 +124,7 @@ export class EventStream {
 
     stop() {
         this.stopped = true;
-        this.clearResumeTimer();
+        this.cancelResumeCheck();
         if (typeof window !== "undefined") {
             window.removeEventListener("online", this.onOnline);
             window.removeEventListener("pageshow", this.onPageShow);
@@ -169,7 +177,7 @@ export class EventStream {
                     if (this.stopped || signal.aborted) break;
                     if (done) break;
                     this.lastByteAt = Date.now();
-                    this.clearResumeTimer();
+                    this.cancelResumeCheck();
                     const events: EventRecord[] = [];
                     const flush = () => { if (events.length) this.h.onEvents(events.splice(0)); };
                     for (const f of parser.push(value)) {
@@ -208,7 +216,7 @@ export class EventStream {
             } catch {
                 // 아래에서 재접속
             } finally {
-                this.clearResumeTimer();
+                this.cancelResumeCheck();
                 if (reader) {
                     try { await reader.cancel(); }
                     catch { /* 이미 오류·abort로 닫힌 reader의 cancel은 다시 거절될 수 있다. */ }

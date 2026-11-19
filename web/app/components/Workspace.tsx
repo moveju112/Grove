@@ -44,7 +44,7 @@ import { ProjectFolderDialog, ProjectFolderTree, useProjectFolders } from "./Pro
 import { requestNewConversation } from "../state/newConversation";
 import { CreationRequest, projectTarget } from "./create/creation";
 import { NavigationContext } from "./navigation/NavigationContext";
-import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
+import { checkCompatibility, requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { Select } from "../design/Select";
 import { Button } from "../design/Button";
@@ -339,9 +339,13 @@ export function Workspace() {
                     }
                 });
             }
-            if (t.kind === "session" && t.project_id && t.resource_id && !serverBlocked) {
+            // 최근 패널은 클릭한 완료 ID와 함께 자체적으로 접근을 기록한다.
+            if (!fromRecent && t.kind === "session" && t.project_id && t.resource_id && !serverBlocked) {
                 void api.post("/recent/touch", { kind: "session", project_id: t.project_id, resource_id: t.resource_id })
-                    .catch((error) => setCloseError(error instanceof ApiError ? error.message : "최근 목록을 갱신하지 못했어요."));
+                    .catch((error) => {
+                        if (isTransportError(error, true)) void checkCompatibility();
+                        else setCloseError(error instanceof ApiError ? error.message : "최근 목록을 갱신하지 못했어요.");
+                    });
             }
             if (small) setSidebar(false);
         },
@@ -614,7 +618,7 @@ export function Workspace() {
                 </LayoutPanel>
             </MobileDrawer>
             <StackItem size="fill"><Stack gap={0} height="100%" xstyle={workspaceStyles.main}>
-            <LayoutHeader height={40} padding={0} hasDivider role="banner">
+            <LayoutHeader height={40} padding={0} hasDivider role="banner" data-ui="workspace-header">
             <Stack direction="horizontal" align="center" height="100%" gap={narrow ? 1 : 2} paddingInline={narrow ? 2 : 4}>
                 {narrow && sidebarControl}
                 {(narrow || !wideSidebar) && brand}

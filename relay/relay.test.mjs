@@ -62,12 +62,18 @@ test("PAGES_ORIGIN replaces the production origin instead of adding to it; inval
 });
 test("authenticated daemon pairs isolated opaque channels; disconnect closes peers and supports reconnect", async () => {
     const auth = { Authorization: `Bearer ${token}` };
+    const previous = await socket(`/relay/${room}/control`, auth);
+    // 새 제어 연결이 이전 연결을 대체하고, 브라우저 연결은 새 제어 연결로만 전달된다.
+    // close code(4000)는 lease 시험과 실제 소켓을 쓰는 서버 시험(src/relay.rs)에서 확인한다.
+    // 프로세스 내부 소켓은 서버 쪽 close를 dispose 때까지 전달하지 않는다.
     let control = await socket(`/relay/${room}/control`, auth);
-    assert.equal((await request(`/relay/${room}/control`, { Upgrade: "websocket", ...auth })).status, 409);
+    let stale = false;
+    previous.addEventListener("message", () => { stale = true; });
     const opened = next(control);
     const client = await socket(`/api/e2ee/${room}`, { Origin: origin });
     const { id, type } = JSON.parse((await opened).data);
     assert.equal(type, "open");
+    assert.equal(stale, false);
     client.send('{"version":1,"key":"public-handshake"}');
     const data = await socket(`/relay/${room}/data/${id}`, auth);
     assert.equal((await next(data)).data, '{"version":1,"key":"public-handshake"}');
@@ -109,7 +115,7 @@ async function leaseFixture(t, attachments = []) {
         deserializeAttachment() { return structuredClone(this.attachment); },
         serializeAttachment(value) { this.attachment = structuredClone(value); },
         send(value) { this.messages.push(value); },
-        close() { this.closes++; },
+        close(code) { this.closes++; this.closeCode = code; },
     });
     const NativeResponse = globalThis.Response;
     t.mock.method(globalThis, "Response", function (body, init) {
@@ -194,14 +200,16 @@ test("a late heartbeat cannot revive an expired generation", async (t) => {
     assert.equal(f.relay.sockets("control").length, 0);
 });
 
-test("reconnect retires a stale OPEN socket; delayed old events do not close the replacement", async (t) => {
-    const f = await leaseFixture(t, [controlState()]);
-    assert.equal((await f.request("control")).status, 409);
-    f.at(1_070_000);
+test("reconnect replaces a stale OPEN control before its lease ends; delayed old events do not close the replacement", async (t) => {
+    const f = await leaseFixture(t, [controlState(), { role: "client", id: "stream", generation: "old", pending: false }]);
+    // lease가 남아 있어도 기다리지 않는다.
     assert.equal((await f.request("control")).status, 101);
     const current = f.relay.sockets("control")[0];
     assert.notEqual(current, f.sockets[0]);
     assert.equal(f.relay.sockets("control").length, 1);
+    assert.equal(f.sockets[0].closeCode, 4000);
+    // 이전 세대의 브라우저 연결은 함께 닫아 새 제어 연결과 섞이지 않게 한다.
+    assert.equal(f.sockets[1].closeCode, 1008);
     await f.relay.webSocketClose(f.sockets[0]);
     await f.relay.webSocketError(f.sockets[0]);
     await f.relay.webSocketMessage(f.sockets[0], "ping");
@@ -209,12 +217,13 @@ test("reconnect retires a stale OPEN socket; delayed old events do not close the
     assert.equal(f.relay.sockets("control").length, 1);
 });
 
-test("simultaneous reconnects admit one control, not two", async (t) => {
+test("simultaneous reconnects leave one control, not two", async (t) => {
     const f = await leaseFixture(t, [controlState()]);
-    f.at(1_070_000);
     const responses = await Promise.all([f.request("control"), f.request("control")]);
-    assert.deepEqual(responses.map((r) => r.status).sort(), [101, 409]);
+    assert.deepEqual(responses.map((r) => r.status), [101, 101]);
     assert.equal(f.relay.sockets("control").length, 1);
+    // 나중에 들어온 연결이 남는다.
+    assert.equal(f.relay.sockets("control")[0], f.sockets.at(-1));
 });
 
 test("client admission reaps stale controls even when the alarm has not run", async (t) => {

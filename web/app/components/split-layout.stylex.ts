@@ -107,7 +107,11 @@ export const splitStyles = stylex.create({
         "--pane-inset": "var(--spacing-3)",
         padding: "var(--pane-inset)",
         // 입력 표면이 하단 가림 영역을 소유한다. scroll container는 추가 여백을 만들지 않는다.
-        ':has(> [data-testid="session-view"]), :has(> [data-testid="project-view"])': { paddingBottom: 0 },
+        ':has(> [data-testid="session-view"]), :has(> [data-testid="project-view"])': {
+            paddingBottom: 0,
+            // 채팅 pane은 세로 스크롤만 소유한다. 넓은 표·코드 등은 자체 viewport에서 움직인다.
+            overflowX: "hidden",
+        },
         containerType: "inline-size",
     },
 });

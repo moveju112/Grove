@@ -29,3 +29,31 @@ export function sortModels(models: readonly AvailableModel[]): AvailableModel[] 
             || a.id.localeCompare(b.id, "en", { numeric: true });
     });
 }
+
+/// 기기에서 최근 고른 모델 프로필. 로그아웃 정리 접두사(grove.composer.options) 아래에 둔다.
+export const RECENT_PROFILES_KEY = "grove.composer.options.recent-profiles";
+const RECENT_LIMIT = 4;
+
+export function readRecentProfiles(): string[] {
+    try {
+        const value: unknown = JSON.parse(localStorage.getItem(RECENT_PROFILES_KEY) ?? "[]");
+        return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string").slice(0, RECENT_LIMIT) : [];
+    } catch { return []; }
+}
+
+export function rememberRecentProfile(id: string) {
+    try { localStorage.setItem(RECENT_PROFILES_KEY, JSON.stringify([id, ...readRecentProfiles().filter((item) => item !== id)].slice(0, RECENT_LIMIT))); }
+    catch { /* 저장하지 못해도 다음 메뉴에서 미리 조회만 생략된다. */ }
+}
+
+/// 모델 메뉴를 열 때 하위 메뉴보다 먼저 목록을 받아 둘 프로필. 최근 사용 → 즐겨찾기 순, 현재 프로필과 꺼진 프로필은 뺀다.
+export function prefetchProfiles(profiles: readonly ModelProfile[], currentId: string | null, recent: readonly string[],
+    favorites: readonly string[], limit = 3): ModelProfile[] {
+    const result: ModelProfile[] = [];
+    for (const id of [...recent, ...favorites]) {
+        if (result.length >= limit) break;
+        const profile = profiles.find((item) => item.id === id);
+        if (profile?.enabled && id !== currentId && !result.includes(profile)) result.push(profile);
+    }
+    return result;
+}

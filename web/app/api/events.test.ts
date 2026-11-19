@@ -41,9 +41,11 @@ describe("화면 복귀", () => {
         } finally { stream.stop(); vi.useRealTimers(); }
     });
 
-    it.each([false, true])("17초 전에 돌아온 직접 연결의 무응답을 확인한다 (keep-alive=%s)", async (heartbeat) => {
+    it.each([false, true])("복귀 이벤트가 겹쳐도 직접 연결을 한 번만 검사한다 (keep-alive=%s)", async (heartbeat) => {
         const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+        const win = new EventTarget();
         vi.stubGlobal("document", doc);
+        vi.stubGlobal("window", win);
         let body!: ReadableStreamDefaultController<Uint8Array>;
         const fetcher = vi.fn((_url: string, init: RequestInit) => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
             start(c) {
@@ -66,8 +68,11 @@ describe("화면 복귀", () => {
             await vi.advanceTimersByTimeAsync(10_000);
             doc.visibilityState = "visible";
             doc.dispatchEvent(new Event("visibilitychange"));
+            win.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true }));
+            win.dispatchEvent(new Event("online"));
             await vi.advanceTimersByTimeAsync(2_000);
             expect(fetcher).toHaveBeenCalledTimes(1);
+            expect(vi.getTimerCount()).toBe(1);
             if (heartbeat) body.enqueue(new TextEncoder().encode(": hb\n\n"));
             await vi.advanceTimersByTimeAsync(6_000);
             expect(fetcher).toHaveBeenCalledTimes(heartbeat ? 1 : 2);

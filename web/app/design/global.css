@@ -37,9 +37,16 @@ body > [data-astryx-theme] { min-height: 100%; }
 /* Astryx의 바깥 제어 상자가 아니라 실제 입력 요소의 브라우저 크기 조절을 끈다. */
 [data-ui="composer"] textarea { resize: none; }
 /* 메시지 입력은 캐럿으로 위치를 표시한다. 입력 카드 안에 초점 테두리를 중복해서 그리지 않는다. */
-[data-ui="composer"] textarea:focus-visible { outline: none; }
+[data-ui="composer"] [data-composer-input]:focus-visible { outline: none; }
 /* 스와이프 탐색이 브라우저의 가로 뒤로 가기로 전달되지 않게 한다. */
 html:has([data-viewport-mode="narrow"]) { overscroll-behavior-x: contain; }
+/* 브라우저가 가로 이동을 먼저 가져가지 않게 상단 바와 채팅의 세로 viewport에서 선언한다.
+   표·코드의 자체 스크롤 viewport에는 적용하지 않아 내부 가로 스크롤을 유지한다. */
+[data-viewport-mode="narrow"] [data-ui="workspace-header"],
+[data-viewport-mode="narrow"] [data-testid="pane-body"]:has(> :is([data-testid="session-view"], [data-testid="project-view"])),
+[data-viewport-mode="narrow"] [data-testid="md-table"]:not([data-scrollable-inline], :has([data-scrollable-inline])) .astryx-table-scroll-wrapper {
+    touch-action: pan-y pinch-zoom;
+}
 pre:not(.astryx-code-block) {
     white-space: pre-wrap;
     overflow-wrap: anywhere;

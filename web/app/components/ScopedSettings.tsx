@@ -61,7 +61,7 @@ export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortC
     d: SettingDef; value: unknown; disabled: boolean; edit: (value: unknown) => void; roleEnabled?: boolean;
     onEffortChange?: (selection: ModelSelection) => void; workflow?: boolean;
 }) {
-    const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
+    const profiles = useModelProfiles();
     const selection = value && typeof value === "object" ? value as ModelSelection : undefined;
     const id = selection?.profile_id ?? String(value ?? "");
     const selected = profiles.data?.find((profile) => profile.id === id);
@@ -130,11 +130,16 @@ export function initialScope(d: SettingDef, target: SettingsTarget) {
         : target.projectId && d.scopes.includes("project") ? "project" : "server";
 }
 
-export function useEffectiveSettings(target: SettingsTarget) {
+export function useEffectiveSettings(target: SettingsTarget, enabled = true) {
     const p = new URLSearchParams();
     if (target.sessionId) p.set("session_id", target.sessionId);
     else if (target.projectId) p.set("project_id", target.projectId);
-    return useQuery<{ items: Item[] }>(`settings:${target.sessionId ?? target.projectId ?? "-"}`, () => api.get(`/settings/effective?${p}`));
+    return useQuery<{ items: Item[] }>(enabled ? `settings:${target.sessionId ?? target.projectId ?? "-"}` : null, () => api.get(`/settings/effective?${p}`));
+}
+
+/// 모델 프로필 목록. 설정 화면 진입 시 항목 정의와 함께 미리 시작하고, 모델 선택 행이 같은 key를 공유한다.
+export function useModelProfiles(enabled = true) {
+    return useQuery<ModelProfile[]>(enabled ? "profiles" : null, () => api.get("/model-profiles"));
 }
 
 export function ScopedSettings({ defs, target, linkedKey, onLinkReady, grouped = false }: {

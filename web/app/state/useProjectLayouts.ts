@@ -5,7 +5,7 @@ import { LayoutPersistence, type RemoteLayout } from "./layoutPersistence";
 import { projectLayout, projectLayoutKey } from "./projectLayout";
 import { querySnapshot, subscribeQuery } from "./store";
 import { applyWorkspaceTabs, mergeWorkspaceTabs, workspaceTabs, workspaceTabsKey } from "./workspaceTabs";
-import { readConversation, readWorkspaceResume, selectionKey } from "./workspaceStartup";
+import { prefetchConversation, readWorkspaceResume, selectionKey } from "./workspaceStartup";
 import { hasPendingInput } from "../components/pwa/pendingInput";
 
 type Target = Omit<L.Tab, "id">;
@@ -24,7 +24,7 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
     const owner = useRef(authGeneration());
     const closed = useRef(false);
     const startupBase = useRef(base);
-    const resumeProject = useRef<string | undefined>(undefined);
+    const resumeProject = useRef<{ base: string; projectId: string; canApply: () => boolean } | null>(null);
     const userSelected = useRef(new Set<string>());
     const active = useCallback(() => !closed.current && owner.current === authGeneration() && isLoggedIn(), []);
     const home = useMemo(() => L.emptyLayout(), [base]);
@@ -116,7 +116,8 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
             if (!restored || !active()) return;
             const local = L.withoutSettingsTabs(restored);
             const snapshot = sync.store.snapshot();
-            const resume = (startupBase.current === baseId && resumeProject.current === projectId)
+            const candidate = resumeProject.current;
+            const resume = (candidate?.base === baseId && candidate.projectId === projectId && candidate.canApply())
                 || !L.allTabs(local).some((tab) => tab.kind === "session");
             const next = snapshot ? applyWorkspaceTabs(local, snapshot, resume) : local;
             entry.hydrated = true;
@@ -140,8 +141,13 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
         const controller = new AbortController();
         let interacted = false;
         const markInteraction = (event: Event) => { if (event.isTrusted) interacted = true; };
-        document.addEventListener("pointerdown", markInteraction, true);
-        document.addEventListener("keydown", markInteraction, true);
+        const interactionEvents = ["pointerdown", "keydown", "input"];
+        for (const type of interactionEvents) document.addEventListener(type, markInteraction, true);
+        const canApply = () => !cancelled && active() && !userSelected.current.has(base) && !interacted && !hasPendingInput();
+        const cleanUp = () => {
+            for (const type of interactionEvents) document.removeEventListener(type, markInteraction, true);
+            if (resumeProject.current?.canApply === canApply) resumeProject.current = null;
+        };
         void (async () => {
             let remote: string | undefined;
             if (startupBase.current === base) {
@@ -157,30 +163,34 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
                 fallback = leaf?.tabs.find((tab) => tab.id === leaf.active_tab)?.project_id ?? null;
             }
             if (cancelled || !active()) return;
-            const canResume = !userSelected.current.has(base) && (!stored || (!interacted && !hasPendingInput()));
-            if (remote && canResume) {
-                resumeProject.current = remote;
+            if (remote && canApply()) {
+                resumeProject.current = { base, projectId: remote, canApply };
                 const entry = loadProject(base, remote);
+                if (!entry.hydrated) {
+                    // 보이는 로컬 대화는 유지한다. 공유 배치가 실제로 준비될 때 입력·조작을 다시 확인한다.
+                    await entry.ready;
+                }
+            }
+            if (cancelled || !active()) return;
+            const resume = remote && canApply() ? remote : undefined;
+            if (resume) {
                 // 서버 배치가 먼저 도착한 경우에도 공유 대화 선택을 한 번 반영한다.
-                const id = projectLayoutKey(base, remote);
+                const id = projectLayoutKey(base, resume);
+                const entry = entries.current.get(id);
                 const current = layoutsRef.current[id];
-                const snapshot = shared.current.get(remote)?.store.snapshot();
-                if (entry.hydrated && current && snapshot) {
+                const snapshot = shared.current.get(resume)?.store.snapshot();
+                if (entry?.hydrated && current && snapshot) {
                     const next = applyWorkspaceTabs(current, snapshot, true);
                     if (next !== current) { entry.store.change(next); publish(id, next); }
                 }
             }
-            setSelected((cur) => userSelected.current.has(base) || (base in cur && !(remote && canResume))
-                ? cur : { ...cur, [base]: (canResume ? remote : undefined) ?? fallback });
-        })().finally(() => {
-            document.removeEventListener("pointerdown", markInteraction, true);
-            document.removeEventListener("keydown", markInteraction, true);
-        });
+            setSelected((cur) => userSelected.current.has(base) || (base in cur && !resume)
+                ? cur : { ...cur, [base]: resume ?? fallback });
+        })().finally(cleanUp);
         return () => {
             cancelled = true;
             controller.abort();
-            document.removeEventListener("pointerdown", markInteraction, true);
-            document.removeEventListener("keydown", markInteraction, true);
+            cleanUp();
         };
     }, [active, base, loadBase, loadProject, publish]);
     const projectId = selected[base];
@@ -197,7 +207,7 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
     const select = useCallback((baseId: string, id: string) => {
         if (!active()) return;
         userSelected.current.add(baseId);
-        if (startupBase.current === baseId) resumeProject.current = undefined;
+        if (resumeProject.current?.base === baseId) resumeProject.current = null;
         setSelected((cur) => ({ ...cur, [baseId]: id }));
         try { localStorage.setItem(selectionKey(baseId), id); }
         catch { notice("이 기기에 선택한 프로젝트를 보존하지 못했습니다. 저장 공간을 확인하세요."); }
@@ -227,25 +237,22 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
     }, [active, projectSnapshot, publish]);
     const openAt = useCallback(async (source: string, target: Target, how: How = "here", restore = false) => {
         if (!target.project_id || !active()) return;
-        // 선택한 대화의 본문 서버 읽기와 배치 복원을 동시에 시작한다.
-        const sid = target.kind === "session" ? target.resource_id : undefined;
-        const release = sid && /^[a-z0-9-]{1,64}$/i.test(sid)
-            ? subscribeQuery(`messages:${sid}`, () => readConversation.messages(sid), () => undefined) : undefined;
-        try {
-            const from = entries.current.get(source);
-            const baseId = from?.base ?? source;
-            const id = projectLayoutKey(baseId, target.project_id);
-            // 숨긴 프로젝트에서 늦게 완료된 생성은 그 프로젝트만 갱신하고 현재 화면을 빼앗지 않는다.
-            if (!from || from.projectId !== target.project_id) select(baseId, target.project_id);
-            const entry = loadProject(baseId, target.project_id);
-            await entry.ready;
-            const layout = await updateAt(id, (layout) => {
-                if (restore && L.allTabs(layout).length > 0) return layout;
-                if (how === "here" || baseId.endsWith("-narrow") || L.allTabs(layout).length === 0) return L.openResource(layout, target);
-                return L.splitLeaf(layout, layout.focused_leaf, how === "right" ? "row" : "column", target);
-            });
-            if (layout) return { id, layout };
-        } finally { release?.(); }
+        const from = entries.current.get(source);
+        const baseId = from?.base ?? source;
+        const id = projectLayoutKey(baseId, target.project_id);
+        // 숨긴 프로젝트에서 늦게 완료된 생성은 그 프로젝트만 갱신하고 현재 화면을 빼앗지 않는다.
+        if (!from || from.projectId !== target.project_id) select(baseId, target.project_id);
+        const entry = loadProject(baseId, target.project_id);
+        // 처음 여는 프로젝트의 배치 복원과 대상 대화 본문 조회를 병행한다. 탭이 열린 뒤 화면 구독이 이어받는다.
+        const release = target.kind === "session" && target.resource_id && !entry.hydrated ? prefetchConversation(target.resource_id) : null;
+        try { await entry.ready; }
+        finally { if (release) setTimeout(release, 1000); }
+        const layout = await updateAt(id, (layout) => {
+            if (restore && L.allTabs(layout).length > 0) return layout;
+            if (how === "here" || baseId.endsWith("-narrow") || L.allTabs(layout).length === 0) return L.openResource(layout, target);
+            return L.splitLeaf(layout, layout.focused_leaf, how === "right" ? "row" : "column", target);
+        });
+        if (layout) return { id, layout };
     }, [active, loadProject, select, updateAt]);
     const flush = useCallback(() => {
         for (const entry of entries.current.values()) void entry.store.flush();

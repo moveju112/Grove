@@ -300,6 +300,9 @@ pub struct GitStatusPage {
     pub fingerprint: Option<String>,
 }
 
+/// 요약 응답에 함께 싣는 첫 목록 페이지 크기. 웹 목록의 페이지 크기와 같다.
+const SUMMARY_PAGE_LIMIT: usize = 50;
+
 pub async fn status(State(app): State<App>, p: Principal, Path(id): Path<String>, Query(q): Query<StatusQuery>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &id).await?;
     let _resource = app.project_resources.ui_read(&app, &id, &p).await?;
@@ -324,26 +327,33 @@ pub async fn status(State(app): State<App>, p: Principal, Path(id): Path<String>
     let entries = snapshot["entries"].as_array().unwrap_or(&empty);
     let staged = |e: &&Value| !matches!(e["index"].as_str(), Some("." | "?"));
     let unstaged = |e: &&Value| e["worktree"] != "." || e["index"] == "?";
-    if q.summary {
-        return Ok(Json(json!({
-            "is_repo": snapshot["is_repo"], "branch": snapshot["branch"], "fingerprint": snapshot["fingerprint"],
-            "counts": { "staged": entries.iter().filter(staged).count(), "unstaged": entries.iter().filter(unstaged).count(), "tracked": entries.iter().any(|e| e["kind"] != "untracked") }
-        })));
-    }
-    if let Some(is_staged) = q.staged {
-        let filter = q.filter.unwrap_or_default().trim().to_lowercase();
+    let page_of = |is_staged: bool, filter: &str, offset: usize, limit: usize| -> ApiResult<GitStatusPage> {
         let relevant = entries.iter().filter(|e| if is_staged { staged(e) } else { unstaged(e) });
         let unfiltered_total = relevant.clone().count();
-        let filtered: Vec<_> = relevant.filter(|e| filter.is_empty() || e["path"].as_str().is_some_and(|p| p.to_lowercase().contains(&filter))
-            || e["orig_path"].as_str().is_some_and(|p| p.to_lowercase().contains(&filter))).collect();
+        let filtered: Vec<_> = relevant.filter(|e| filter.is_empty() || e["path"].as_str().is_some_and(|p| p.to_lowercase().contains(filter))
+            || e["orig_path"].as_str().is_some_and(|p| p.to_lowercase().contains(filter))).collect();
         let total = filtered.len();
-        let offset = q.offset.unwrap_or(0);
-        let limit = q.limit.unwrap_or(50).clamp(1, 200);
-        let page = GitStatusPage {
+        Ok(GitStatusPage {
             entries: filtered.into_iter().skip(offset).take(limit).map(|e| serde_json::from_value(e.clone()).map_err(|e| ApiError::internal(e.to_string()))).collect::<ApiResult<_>>()?,
             total, unfiltered_total, offset, has_more: offset.saturating_add(limit) < total,
             fingerprint: snapshot["fingerprint"].as_str().map(str::to_string),
-        };
+        })
+    };
+    if q.summary {
+        let mut summary = json!({
+            "is_repo": snapshot["is_repo"], "branch": snapshot["branch"], "fingerprint": snapshot["fingerprint"],
+            "counts": { "staged": entries.iter().filter(staged).count(), "unstaged": entries.iter().filter(unstaged).count(), "tracked": entries.iter().any(|e| e["kind"] != "untracked") }
+        });
+        // 화면이 요약 뒤에 목록을 다시 요청하지 않도록 같은 status 스냅샷의 첫 페이지를 함께 보낸다.
+        if snapshot["is_repo"] == true {
+            let first = |is_staged| page_of(is_staged, "", 0, SUMMARY_PAGE_LIMIT).and_then(|p| serde_json::to_value(p).map_err(|e| ApiError::internal(e.to_string())));
+            summary["first_pages"] = json!({ "staged": first(true)?, "unstaged": first(false)? });
+        }
+        return Ok(Json(summary));
+    }
+    if let Some(is_staged) = q.staged {
+        let filter = q.filter.unwrap_or_default().trim().to_lowercase();
+        let page = page_of(is_staged, &filter, q.offset.unwrap_or(0), q.limit.unwrap_or(50).clamp(1, 200))?;
         return Ok(Json(serde_json::to_value(page).map_err(|e| ApiError::internal(e.to_string()))?));
     }
     Ok(Json((*snapshot).clone()))

@@ -7,9 +7,10 @@ import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, api, newKey } from "../api/client";
+import { ApiError, api, authGeneration, newKey } from "../api/client";
 import { Panel } from "./ui/Controls";
 import { useQuery } from "../state/store";
+import { createContentCache, textBytes } from "../state/contentCache";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { TextInput } from "../design/Fields";
 
@@ -121,48 +122,65 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
 }
 
 type Chunk = { data: string; next_offset: number; eof: boolean; stored_bytes: number; dropped_bytes: number };
+type OutputView = { text: string; next: number; info: Chunk };
+
+/// 최근 본 작업 출력. 로그는 offset 뒤에만 덧붙으므로, 다시 열면 보관한 출력을 바로 보여 주고 끝 offset부터 이어 읽는다.
+const taskOutputs = createContentCache<OutputView>({ maxBytes: 4 * 1024 * 1024, maxEntries: 30, size: (v) => textBytes(v.text) });
 
 function TaskOutput({ id }: { id: string }) {
     const [stream, setStream] = useState<"stdout" | "stderr">("stdout");
-    const [text, setText] = useState("");
-    const [next, setNext] = useState(0);
-    const [info, setInfo] = useState<Chunk | null>(null);
+    const [view, setView] = useState<OutputView | null>(() => taskOutputs.get(`${id}\n${"stdout"}`) ?? null);
     const [error, setError] = useState<string | null>(null);
     const request = useRef(0);
-    const load = async (s: "stdout" | "stderr", offset: number, append: boolean) => {
+    const shown = useRef(view);
+    shown.current = view;
+    // reload: 처음부터 다시 읽기, more: 다음 조각 이어 읽기, resume: 보관한 출력을 먼저 보여 주고 서버에서 이어서 확인.
+    const load = async (s: "stdout" | "stderr", mode: "reload" | "more" | "resume") => {
         const current = ++request.current;
+        const owner = authGeneration();
+        const key = `${id}\n${s}`;
         setError(null);
-        if (!append) { setText(""); setInfo(null); }
+        const base = mode === "reload" ? null : mode === "resume" ? taskOutputs.get(key) ?? null : shown.current;
+        shown.current = base;
+        setView(base);
+        // 끝까지 읽어 둔 출력은 새로 덧붙은 부분을 읽고, 중간까지 본 출력은 범위를 늘리지 않고 로그 상태만 다시 확인한다.
+        const limit = mode === "resume" && base && base.next < base.info.stored_bytes ? 0 : 65536;
         try {
-            const c = await api.get<Chunk>(`/tasks/${id}/output?stream=${s}&offset=${offset}&limit=65536`);
+            const c = await api.get<Chunk>(`/tasks/${id}/output?stream=${s}&offset=${base?.next ?? 0}&limit=${limit}`);
             if (current !== request.current) return;
-            setText((t) => (append ? t + c.data : c.data));
-            setNext(c.next_offset);
-            setInfo(c);
+            const next = { text: (base?.text ?? "") + c.data, next: c.next_offset, info: c };
+            shown.current = next;
+            setView(next);
+            taskOutputs.set(key, next, owner);
         } catch (e) {
             if (current !== request.current) return;
             const state = e instanceof ApiError ? (e.details as { state?: string } | undefined)?.state : undefined;
+            // 보관한 출력을 다시 확인하지 못하면 이전 출력을 최신처럼 남기지 않는다.
+            if (mode === "resume" && base) { setView(null); shown.current = null; }
+            if (mode !== "more" || state) taskOutputs.delete(key);
             setError(state === "expired" ? "보존 기간이 지나 로그가 삭제됐습니다."
                 : state === "missing" ? "로그 원문이 없습니다."
                 : e instanceof ApiError ? e.message : "작업 출력을 불러오지 못했습니다.");
         }
     };
     useEffect(() => {
-        void load("stdout", 0, false);
+        void load("stdout", "resume");
         return () => { request.current++; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [id]);
+    const text = view?.text ?? "";
+    const info = view?.info ?? null;
     return (
         <GroveStack gap={0}>
             <GroveStack direction="horizontal" align="center" gap={1.5}>
                 {(["stdout", "stderr"] as const).map((s) => (
-                    <GroveButton key={s} appearance="choice" aria-pressed={stream === s} onClick={() => { setStream(s); void load(s, 0, false); }}>{s}</GroveButton>
+                    <GroveButton key={s} appearance="choice" aria-pressed={stream === s} onClick={() => { setStream(s); void load(s, "resume"); }}>{s}</GroveButton>
                 ))}
-                <GroveButton variant="secondary" density="compact" onClick={() => void load(stream, 0, false)}>새로고침</GroveButton>
+                <GroveButton variant="secondary" density="compact" onClick={() => void load(stream, "reload")}>새로고침</GroveButton>
             </GroveStack>
             {error && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{error}</GroveText>}
             <CodeBlock data-testid="task-output" code={text || (error ? "" : "(출력 없음)")} />
-            {info && !info.eof && <GroveButton variant="secondary" density="compact" onClick={() => void load(stream, next, true)}>더 보기</GroveButton>}
+            {info && !info.eof && <GroveButton variant="secondary" density="compact" onClick={() => void load(stream, "more")}>더 보기</GroveButton>}
             {info && info.dropped_bytes > 0 && <GroveText as="p" display="block" type="supporting" color="secondary">출력이 커서 앞부분 {info.stored_bytes}바이트만 보관했습니다({info.dropped_bytes}바이트 생략).</GroveText>}
         </GroveStack>
     );

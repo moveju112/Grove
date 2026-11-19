@@ -20,12 +20,13 @@ import { useComposerMemory } from "../state/useComposerMemory";
 import { clearInvalidRecovery, loadRecovery, saveRecovery, settleRecovery, validSendOptions, type PendingSend } from "../state/sendRecovery";
 import { EFFORTS, type FollowKind, type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, serviceTierForProfile } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
-import { invalidate, useQuery } from "../state/store";
+import { useQuery } from "../state/store";
 
 import { AttachmentPicker, AttachmentSelection, useAttachments } from "./Attachments";
 import { AgentConnect } from "./AgentConnect";
 import { nativeCommands } from "../api/nativeCommands";
 import { nativeSlashCommands, type NativeSlashCommand } from "../state/nativeCommands";
+import { useNativeCommandCatalog } from "../state/useNativeCommandCatalog";
 import { useCapability } from "../state/capabilities";
 import { ModelSelect, useModelCatalog } from "./ModelSelect";
 import { catalogModel, modelEfforts } from "./model-catalog";
@@ -108,6 +109,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const [busy, setBusy] = useComposerMemory(resourceKey, copyId, "busy", () => false);
     const [msg, setMsg] = useState<string | null>(null);
     const [expandedModel, setExpandedModel] = useState(false);
+    const [inputFocused, setInputFocused] = useState(false);
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const defaults = useQuery<{ items: { key: string; effective: unknown }[] }>(boundProfileId === undefined ? `settings:${projectId}` : null,
         () => api.get(`/settings/effective?project_id=${encodeURIComponent(projectId)}`));
@@ -143,15 +145,15 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         serviceTier: serviceTierForProfile(bound.serviceTier, selectedProfile?.capabilities) };
     const catalog = useModelCatalog(selectedProfile);
     const nativeSupported = useCapability("native_skills_v1");
-    const nativeActive = eff.mode === "model" && ready && nativeSupported === true && !disabled
-        && ["claude_code", "codex_cli"].includes(selectedProfile?.protocol ?? "")
-        && text.trimStart().startsWith("/") && !text.trimStart().startsWith("//");
+    // 선택한 CLI의 명령 목록은 입력창을 쓰기 시작하면 미리 받고, "/" 입력 때 오래된 목록만 갱신한다.
+    const nativeEligible = eff.mode === "model" && ready && nativeSupported === true && !disabled
+        && ["claude_code", "codex_cli"].includes(selectedProfile?.protocol ?? "");
+    const slashMode = text.trimStart().startsWith("/") && !text.trimStart().startsWith("//");
+    const nativeActive = nativeEligible && slashMode;
     const nativeSession = resourceKey.startsWith("session:") ? resourceKey.slice(8) : undefined;
-    const nativeKey = nativeActive ? `native-commands:${JSON.stringify([projectId, resourceKey, worktreeId, selectedProfile!.id, selectedProfile!.revision])}` : null;
-    const nativeCatalog = useQuery(nativeKey, () => nativeCommands(projectId, selectedProfile!.id, nativeSession, worktreeId));
-    useEffect(() => () => {
-        if (nativeKey) invalidate(nativeKey);
-    }, [nativeKey]);
+    const nativeKey = nativeEligible ? `native-commands:${JSON.stringify([projectId, resourceKey, worktreeId, selectedProfile!.id, selectedProfile!.revision])}` : null;
+    const nativeCatalog = useNativeCommandCatalog(nativeKey, inputFocused, slashMode,
+        () => nativeCommands(projectId, selectedProfile!.id, nativeSession, worktreeId));
     const selectedModel = catalogModel(catalog.data?.models, selectedProfile, eff.model);
     const efforts = modelEfforts(selectedProfile, selectedModel);
     const tiers = selectedProfile?.capabilities.fast ? selectedModel?.service_tiers ?? [] : [];
@@ -403,7 +405,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     </>}
                 </Notice>
             )}
-            {nativeActive && nativeCatalog.loading && <GroveText type="supporting" color="secondary" role="status">CLI 스킬·명령을 읽는 중…</GroveText>}
+            {nativeActive && nativeCatalog.loading && !nativeCatalog.data && <GroveText type="supporting" color="secondary" role="status">CLI 스킬·명령을 읽는 중…</GroveText>}
             {nativeActive && nativeCatalog.error instanceof Error && <GroveText type="supporting" color="error" role="alert">{nativeCatalog.error.message}</GroveText>}
             {nativeActive && nativeCatalog.data?.has_errors && <GroveText type="supporting" color="warning" role="status">일부 스킬을 읽지 못했어요. CLI 설정을 확인하세요.</GroveText>}
             {sugg.length > 0 && (
@@ -439,8 +441,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     setHideSugg(false);
                     setSel(0);
                 }}
-                onBlur={() => setHideSugg(true)}
-                onFocus={() => setHideSugg(false)}
+                onBlur={() => { setHideSugg(true); setInputFocused(false); }}
+                onFocus={() => { setHideSugg(false); setInputFocused(true); }}
                 aria-autocomplete={sugg.length > 0 ? "list" : undefined}
                 aria-controls={sugg.length > 0 ? commandListId : undefined}
                 aria-activedescendant={activeCommandId}
@@ -454,7 +456,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
             />
             <Grid gap={1} xstyle={[chatLayout.bar, composerStyles.toolbar]} data-testid="composer-bar" data-model-expanded={expandedModel}>
                 <Stack gap={0} data-composer-fixed xstyle={[composerStyles.attachmentSlot, expandedModel && composerStyles.secondRow]}>
-                    <AttachmentPicker draft={attachments} disabled={busy || !!disabled} onIssue={setMsg} />
+                    <AttachmentPicker key={resourceKey} draft={attachments} disabled={busy || !!disabled} onIssue={setMsg} />
                 </Stack>
                 <Stack gap={0} xstyle={[composerStyles.modelSlot, expandedModel && composerStyles.expandedModel]}>
                 {((profiles.data?.length ?? 0) > 0 || eff.mode === "save" || eff.profileId) && <ModelSelect

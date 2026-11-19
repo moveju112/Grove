@@ -4,12 +4,12 @@ import { dirname, join } from "node:path";
 import { apiCall, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
 
-async function swipe(page: Page, x: number, y: number, toX: number, toY = y) {
+async function swipe(page: Page, x: number, y: number, toX: number, toY = y, steps = 8) {
     const cdp = await page.context().newCDPSession(page);
     try {
         await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y }] });
-        for (let step = 1; step <= 8; step++) {
-            await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + (toX - x) * step / 8, y: y + (toY - y) * step / 8 }] });
+        for (let step = 1; step <= steps; step++) {
+            await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x + (toX - x) * step / steps, y: y + (toY - y) * step / steps }] });
         }
         await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     } finally { await cdp.detach(); }
@@ -174,6 +174,104 @@ test("본문 스와이프는 입력·선택·코드의 가로 스크롤과 세�
     await expect.poll(() => pane.evaluate((node) => node.scrollTop)).toBeGreaterThan(0);
     await expect(drawers).toHaveCount(0);
     await expect(input).toHaveValue("스와이프로 보내거나 지우지 않을 초안");
+});
+
+test("모바일 표와 버튼에서 서랍을 열 수 있고 넓은 표는 본문 대신 내부만 가로 스크롤한다", async ({ page }, info) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const { a } = await ensureProjects();
+    const profile = await ensureProfile();
+    const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `표 스와이프 ${crypto.randomUUID()}` });
+    const prompt = `swipe-table-${session.id}`;
+    const columns = Array.from({ length: 24 }, (_, i) => `열 ${i + 1}`);
+    const row = (cells: string[]) => `| ${cells.join(" | ")} |`;
+    const answer = [
+        "| 항목 | 확인 결과 | 수정 |",
+        "|---|---|---|",
+        "| 프로젝트 | 기본 동작 | 확인 완료 |",
+        "",
+        row(columns),
+        row(columns.map(() => "---")),
+        row(columns.map(() => "확인")),
+        "",
+        `본문의 긴 식별자 \`${"unbroken_identifier_".repeat(25)}\``,
+        "",
+        `변경 파일 \`${"folder/".repeat(20)}very-long-file-name.ts:17\``,
+    ].join("\n");
+    await script({ marker: prompt, frames: frames.text([answer]) });
+    const turn = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`, { text: prompt, profile_id: profile, tools: false });
+    await expect.poll(async () => (await apiCall<{ status: string }>("GET", `/turns/${turn.turn.id}`)).status).toBe("completed");
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
+    await login(page);
+    await page.getByRole("button", { name: "사이드바", exact: true }).tap();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /표 스와이프/ }).first().tap();
+
+    const view = sessionView(page, session.id);
+    const pane = page.getByTestId("pane-body").filter({ has: view });
+    const tables = view.getByTestId("md-table");
+    const left = page.getByTestId("mobile-drawer-left");
+    const right = page.getByTestId("mobile-drawer-right");
+    await expect(tables).toHaveCount(2);
+    await expect(left).toHaveJSProperty("open", false);
+    await expect(pane).toHaveCSS("overflow-x", "hidden");
+    await expect(pane).toHaveCSS("touch-action", "pan-y pinch-zoom");
+    for (const width of [360, 390]) {
+        await page.setViewportSize({ width, height: 844 });
+        await expect.poll(() => pane.evaluate((node) => ({
+            pageOverflow: document.documentElement.scrollWidth - innerWidth,
+            paneOverflow: node.scrollWidth - node.clientWidth,
+        }))).toEqual({ pageOverflow: 0, paneOverflow: 0 });
+    }
+    await page.screenshot({ path: info.outputPath("markdown-table-390.png") });
+
+    const cell = tables.first().getByRole("cell", { name: "기본 동작" });
+    await cell.scrollIntoViewIfNeeded();
+    await expect(cell).toBeInViewport({ ratio: 1 });
+    await expect.poll(() => cell.evaluate((node) => {
+        const { x, y, width, height } = node.getBoundingClientRect();
+        return node.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+    })).toBe(true);
+    const small = (await cell.boundingBox())!;
+    const cellY = small.y + small.height / 2;
+    await swipe(page, small.x + small.width / 2, cellY, 365, cellY + 7, 20);
+    await expect(left).toHaveJSProperty("open", true);
+    await left.getByRole("button", { name: "탐색 메뉴 닫기", exact: true }).tap();
+    await expect(left).toHaveJSProperty("open", false);
+
+    const wide = tables.last();
+    await wide.scrollIntoViewIfNeeded();
+    const area = (await wide.boundingBox())!;
+    const tableScroller = wide.locator("[data-scrollable-inline=true]").or(wide.and(page.locator("[data-scrollable-inline=true]")));
+    await expect(tableScroller).toHaveCount(1);
+    await swipe(page, area.x + 40, area.y + area.height / 2, area.x + area.width - 40);
+    await expect(left).toHaveJSProperty("open", true);
+    await left.getByRole("button", { name: "탐색 메뉴 닫기", exact: true }).tap();
+    await expect(left).toHaveJSProperty("open", false);
+    await swipe(page, area.x + area.width - 40, area.y + area.height / 2, area.x + 40);
+    await expect.poll(() => tableScroller.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0);
+    await expect(pane).toHaveJSProperty("scrollLeft", 0);
+    await expect(right).toHaveJSProperty("open", false);
+
+    const button = view.getByRole("button", { name: "도구 패널", exact: true });
+    await button.scrollIntoViewIfNeeded();
+    const box = (await button.boundingBox())!;
+    await swipe(page, box.x + box.width / 2, box.y + box.height / 2, 35);
+    await expect(right).toHaveJSProperty("open", true);
+    await expect(view.getByTestId("tool-dock")).toBeHidden();
+    await right.getByRole("button", { name: "열린 세션 닫기", exact: true }).tap();
+    await expect(right).toHaveJSProperty("open", false);
+    const headerButton = page.getByRole("banner").getByRole("button", { name: "새 대화", exact: true });
+    await expect.poll(() => headerButton.evaluate((node) => {
+        const { x, y, width, height } = node.getBoundingClientRect();
+        return node.contains(document.elementFromPoint(x + width / 2, y + height / 2));
+    })).toBe(true);
+    const headerBox = (await headerButton.boundingBox())!;
+    const headerY = headerBox.y + headerBox.height / 2;
+    await swipe(page, headerBox.x + headerBox.width / 2, headerY, 35, headerY + 6, 24);
+    await expect(right).toHaveJSProperty("open", true);
+    await right.getByRole("button", { name: "열린 세션 닫기", exact: true }).tap();
+    await expect(view).toBeVisible();
+    await button.tap();
+    await expect(view.getByTestId("tool-dock")).toBeVisible();
 });
 
 test("최근 시간 범위는 느린 재조회 중에도 목록·높이를 유지하고 방문한 범위는 재요청하지 않는다", async ({ page }) => {

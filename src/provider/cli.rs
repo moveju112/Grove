@@ -355,9 +355,72 @@ struct CliStream {
     final_text: Option<String>,
     claude_partial: Option<ClaudePartial>,
     claude_context_input: Option<u64>,
+    claude_completion: ClaudeCompletion,
     codex_messages: Vec<(String, String)>,
     codex_reasoning: Vec<(String, String)>,
     native_activity: Vec<(String, Value)>,
+}
+
+#[derive(Default)]
+struct ClaudeCompletion {
+    active: Option<ClaudeReply>,
+    completed: Option<String>,
+    tasks: std::collections::HashSet<String>,
+}
+
+#[derive(Default)]
+struct ClaudeReply {
+    text: String,
+    end_turn: bool,
+}
+
+impl ClaudeCompletion {
+    fn invalidate(&mut self) {
+        self.active = None;
+        self.completed = None;
+    }
+
+    fn observe(&mut self, event: &Value) {
+        let kind = event["type"].as_str();
+        if kind == Some("rate_limit_event") { return; }
+        if kind == Some("system") && let Some(id) = event["task_id"].as_str() {
+            if event["subtype"] == "task_started" { self.tasks.insert(id.to_string()); }
+            else if event["subtype"] == "task_notification" && matches!(event["status"].as_str(), Some("completed" | "failed" | "stopped")) {
+                self.tasks.remove(id);
+            }
+        }
+        // 완료 후 새 활동이 시작되면 앞선 메시지를 턴의 최종 답변으로 복구하지 않는다.
+        self.completed = None;
+        if !event["parent_tool_use_id"].is_null() { return; }
+        match kind {
+            Some("stream_event") => {
+                let e = &event["event"];
+                match e["type"].as_str() {
+                    Some("message_start") => self.active = Some(ClaudeReply::default()),
+                    Some("message_delta") => {
+                        if let Some(reason) = e["delta"]["stop_reason"].as_str() && let Some(reply) = &mut self.active {
+                            reply.end_turn = reason == "end_turn";
+                        }
+                    }
+                    Some("message_stop") => {
+                        self.completed = self.active.take().filter(|r| r.end_turn && !r.text.trim().is_empty()).map(|r| r.text);
+                    }
+                    _ => {}
+                }
+            }
+            Some("assistant") if event["error"].is_null() && event["message"]["error"].is_null() => {
+                if let Some(reply) = &mut self.active {
+                    for text in event["message"]["content"].as_array().into_iter().flatten()
+                        .filter(|c| c["type"] == "text").filter_map(|c| c["text"].as_str()).filter(|t| !t.is_empty())
+                    {
+                        if !reply.text.is_empty() { reply.text.push_str("\n\n"); }
+                        reply.text.push_str(text);
+                    }
+                }
+            }
+            _ => self.active = None,
+        }
+    }
 }
 
 struct ClaudePartial {
@@ -380,6 +443,7 @@ impl CliStream {
     }
 
     fn apply(&mut self, protocol: &str, event: &Value) -> Result<(), ProviderError> {
+        if protocol == "claude_code" { self.claude_completion.observe(event); }
         if protocol == "claude_code" && event["type"] == "stream_event" {
             let e = &event["event"];
             if event["parent_tool_use_id"].is_null() {
@@ -484,6 +548,8 @@ impl CliStream {
         }
         if self.output.text.len() + self.output.reasoning.len() > super::MAX_OUTPUT_BYTES
             || self.final_text.as_ref().is_some_and(|text| text.len() > super::MAX_OUTPUT_BYTES)
+            || self.claude_completion.active.as_ref().is_some_and(|r| r.text.len() > super::MAX_OUTPUT_BYTES)
+            || self.claude_completion.tasks.len() > MAX_ACTIVITY
             || self.output.activity.len() > MAX_ACTIVITY
             || self.codex_messages.len() + self.codex_reasoning.len() > MAX_ACTIVITY
             || self.native_activity.len() > MAX_ACTIVITY || self.output.response_parts.len() > MAX_ACTIVITY
@@ -500,16 +566,20 @@ async fn read_line<R: tokio::io::AsyncRead + Unpin>(reader: &mut BufReader<R>) -
 }
 
 async fn read_line_limited<R: tokio::io::AsyncRead + Unpin>(reader: &mut BufReader<R>, max: usize) -> Result<Option<Vec<u8>>, ProviderError> {
-    let mut line = Vec::new();
+    read_line_into(reader, &mut Vec::new(), max).await
+}
+
+// timeout이 읽기를 취소해도 미완성 줄을 남긴다. 중간에 끊긴 결과를 유실로 오인하지 않는다.
+async fn read_line_into<R: tokio::io::AsyncRead + Unpin>(reader: &mut BufReader<R>, line: &mut Vec<u8>, max: usize) -> Result<Option<Vec<u8>>, ProviderError> {
     loop {
         let bytes = reader.fill_buf().await.map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
-        if bytes.is_empty() { return Ok((!line.is_empty()).then_some(line)); }
+        if bytes.is_empty() { return Ok((!line.is_empty()).then(|| std::mem::take(line))); }
         let len = bytes.iter().position(|b| *b == b'\n').map_or(bytes.len(), |i| i + 1);
         if line.len() + len > max { return Err(ProviderError::new("output_too_large", "에이전트 출력 줄이 너무 큽니다")); }
         let complete = bytes[len - 1] == b'\n';
         line.extend_from_slice(&bytes[..len]);
         reader.consume(len);
-        if complete { return Ok(Some(line)); }
+        if complete { return Ok(Some(std::mem::take(line))); }
     }
 }
 
@@ -814,60 +884,76 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     });
     let mut stream = CliStream::default();
     let mut lines = BufReader::new(stdout);
+    let mut pending_line = Vec::new();
     // 무진행 감시(RUN-022): 전체 실행 시간이 아니라 출력 줄 사이의 무응답 시간만 프로필 timeout으로 제한한다.
     // 출력이 계속 오는 긴 작업은 끊지 않는다(HTTP provider의 read timeout과 같은 기준).
     let idle = profile.timeout;
-    let body = async {
-        loop {
-            let next = match tokio::time::timeout(idle, read_line(&mut lines)).await {
-                Err(_) if req.cli.as_ref().is_some_and(CliContext::waiting_for_grove_tool) => continue,
-                Err(_) => {
-                    return Err(ProviderError {
-                        code: "idle_timeout",
-                        message: format!("{prog}가 {}초 동안 아무 출력도 없어 중단했습니다", idle.as_secs()),
-                        status: None,
-                        retryable: true,
-                        retry_after_secs: None,
-                        stream_failure: None,
-                    });
+    let recovered = loop {
+        let next = match tokio::time::timeout(idle, read_line_into(&mut lines, &mut pending_line, MAX_LINE_BYTES)).await {
+            Err(_) if req.cli.as_ref().is_some_and(CliContext::waiting_for_grove_tool) => continue,
+            Err(_) => {
+                // Claude Code는 모델의 완료 메시지를 보낸 뒤 CLI result 없이 멈출 수 있다.
+                // hook·도구에 기존 대기 한도를 주고, 진행 중인 도구나 불완전한 결과가 없을 때만 복구한다.
+                if profile.protocol == "claude_code" && stream.output.finish_reason.is_empty() && pending_line.is_empty()
+                    && stream.claude_completion.tasks.is_empty()
+                    && !stream.output.activity.iter().any(|item| item["status"] == "running")
+                    && let Some(text) = stream.claude_completion.completed.take()
+                    && child.try_wait().map_err(|e| ProviderError::new("cli_failed", e.to_string()))?.is_none()
+                {
+                    tracing::warn!(idle_secs = idle.as_secs(), "Claude Code result 누락: 완료된 모델 답변을 복구합니다");
+                    stream.final_text = Some(text);
+                    // CLI의 전체 턴 사용량은 result 없이는 알 수 없다.
+                    stream.output.finish_reason = "claude_end_turn".into();
+                    break true;
                 }
-                Ok(r) => r?,
-            };
-            let Some(line) = next else { break };
-            let Ok(e) = serde_json::from_slice::<Value>(&line) else { continue };
-            stream.apply(&profile.protocol, &e)?;
-            on_delta(&stream.output);
-        }
-        Ok::<(), ProviderError>(())
+                return Err(ProviderError {
+                    code: "idle_timeout",
+                    message: format!("{prog}가 {}초 동안 아무 출력도 없어 중단했습니다", idle.as_secs()),
+                    status: None,
+                    retryable: true,
+                    retry_after_secs: None,
+                    stream_failure: None,
+                });
+            }
+            Ok(r) => r?,
+        };
+        let Some(line) = next else { break false };
+        let Ok(e) = serde_json::from_slice::<Value>(&line) else {
+            stream.claude_completion.invalidate();
+            continue;
+        };
+        stream.apply(&profile.protocol, &e)?;
+        on_delta(&stream.output);
     };
-    body.await?;
-    let status = tokio::time::timeout(idle, child.wait()).await
-        .map_err(|_| ProviderError::new("idle_timeout", "에이전트 프로세스가 종료되지 않았습니다"))?
-        .map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
-    let stderr_text = tokio::time::timeout(idle, err_task).await
-        .map_err(|_| ProviderError::new("idle_timeout", "에이전트 출력 정리가 끝나지 않았습니다"))?
-        .map_err(|e| ProviderError::new("cli_failed", e.to_string()))?
-        .map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
-    let mut out = stream.output;
-    if !status.success() || out.finish_reason.is_empty() {
-        // 결과 없이 끝난 프로세스는 일반 실패와 구분한다(RUN-023: 프로세스 종료 원인).
-        let tail: String = stderr_text.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" / ");
-        #[cfg(unix)]
-        let sig = {
-            use std::os::unix::process::ExitStatusExt;
-            status.signal()
-        };
-        #[cfg(not(unix))]
-        let sig: Option<i32> = None;
-        let how = match (status.code(), sig) {
-            (_, Some(s)) => format!("신호 {s}"),
-            (Some(c), _) => format!("종료 코드 {c}"),
-            _ => status.to_string(),
-        };
-        return Err(ProviderError::new("cli_exited", format!("{prog} 프로세스가 결과 없이 끝났습니다({how}): {tail}")));
+    if !recovered {
+        let status = tokio::time::timeout(idle, child.wait()).await
+            .map_err(|_| ProviderError::new("idle_timeout", "에이전트 프로세스가 종료되지 않았습니다"))?
+            .map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
+        let stderr_text = tokio::time::timeout(idle, err_task).await
+            .map_err(|_| ProviderError::new("idle_timeout", "에이전트 출력 정리가 끝나지 않았습니다"))?
+            .map_err(|e| ProviderError::new("cli_failed", e.to_string()))?
+            .map_err(|e| ProviderError::new("cli_failed", e.to_string()))?;
+        if !status.success() || stream.output.finish_reason.is_empty() {
+            // 결과 없이 끝난 프로세스는 일반 실패와 구분한다(RUN-023: 프로세스 종료 원인).
+            let tail: String = stderr_text.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" / ");
+            #[cfg(unix)]
+            let sig = {
+                use std::os::unix::process::ExitStatusExt;
+                status.signal()
+            };
+            #[cfg(not(unix))]
+            let sig: Option<i32> = None;
+            let how = match (status.code(), sig) {
+                (_, Some(s)) => format!("신호 {s}"),
+                (Some(c), _) => format!("종료 코드 {c}"),
+                _ => status.to_string(),
+            };
+            return Err(ProviderError::new("cli_exited", format!("{prog} 프로세스가 결과 없이 끝났습니다({how}): {tail}")));
+        }
     }
     input_task.await.map_err(|e| ProviderError::new("cli_failed", e.to_string()))?
         .map_err(|e| ProviderError::new("cli_failed", format!("에이전트 입력 전달 실패: {e}")))?;
+    let mut out = stream.output;
     if let Some(t) = stream.final_text {
         out.text = t;
     }
@@ -1192,6 +1278,54 @@ echo '{{"type":"result","result":"ok"}}'"#);
         request.cli = None;
         let result = stream_with(&prof("codex_cli"), &request, &mut |_| {}, Some(&fake_cli(dir.path(), script))).await;
         assert_eq!(result.unwrap_err().code, "cli_exited");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_recovers_only_a_completed_reply_when_result_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut profile = prof("claude_code");
+        profile.timeout = Duration::from_millis(500);
+        let mut request = req(None);
+        request.cli.as_mut().unwrap().cwd = dir.path().to_path_buf();
+        // Claude Code 2.1.328은 본문 snapshot 뒤에 end_turn, message_stop, rate_limit_event를 보낸다.
+        let reply = r#"{"type":"system","subtype":"init","session_id":"native"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"앞선 진행 설명"}]}}
+{"type":"stream_event","event":{"type":"message_start"}}
+{"type":"stream_event","event":{"type":"content_block_start","content_block":{"type":"text","text":""}}}
+{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"text_delta","text":"완료"}}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"완료"}]}}
+{"type":"stream_event","event":{"type":"message_delta","delta":{"stop_reason":"end_turn"}}}
+{"type":"stream_event","event":{"type":"message_stop"}}
+{"type":"rate_limit_event"}"#;
+        let run = |data: &str, tail: &str| fake_cli(dir.path(), &format!("cat <<'EVENTS'\n{data}\nEVENTS\n{tail}"));
+        let path = run(reply, "sleep 10");
+        let out = stream_with(&profile, &request, &mut |_| {}, Some(&path)).await.unwrap();
+        assert_eq!(out.text, "완료");
+        assert_eq!(out.response_parts, ["앞선 진행 설명", "완료"]);
+        assert_eq!(out.finish_reason, "claude_end_turn");
+        assert_eq!(out.native_session.as_deref(), Some("native"));
+        assert_eq!(out.usage.output_tokens, 0, "받지 못한 전체 사용량을 추정하지 않는다");
+
+        for (data, tail, code) in [
+            (reply.replace(r#""stop_reason":"end_turn""#, r#""stop_reason":"tool_use""#), "sleep 10", "idle_timeout"),
+            (reply.lines().take(7).collect::<Vec<_>>().join("\n"), "sleep 10", "idle_timeout"),
+            (reply.replace(r#""type":"stream_event""#, r#""type":"stream_event","parent_tool_use_id":"agent""#), "sleep 10", "idle_timeout"),
+            (format!("{reply}\n{}", r#"{"type":"stream_event","event":{"type":"message_start"}}"#), "sleep 10", "idle_timeout"),
+            (format!("{}\n{reply}", r#"{"type":"system","subtype":"task_started","task_id":"background"}"#), "sleep 10", "idle_timeout"),
+            (format!("{}\n{reply}", r#"{"type":"assistant","message":{"content":[{"type":"tool_use","id":"running","name":"Bash"}]}}"#), "sleep 10", "idle_timeout"),
+            (reply.into(), "printf '{\"type\":\"result\",'; sleep 10", "idle_timeout"),
+            (reply.into(), "exit 7", "cli_exited"),
+            (format!("{reply}\n{}", r#"{"type":"result","is_error":true,"result":"fixture error"}"#), "sleep 10", "cli_failed"),
+        ] {
+            let path = run(&data, tail);
+            let err = stream_with(&profile, &request, &mut |_| {}, Some(&path)).await.unwrap_err();
+            assert_eq!(err.code, code, "{err:?}");
+        }
+
+        let path = run(reply, r#"sleep 0.1; echo '{"type":"result","is_error":false,"result":"CLI 결과","usage":{"output_tokens":12}}'"#);
+        let out = stream_with(&profile, &request, &mut |_| {}, Some(&path)).await.unwrap();
+        assert_eq!((out.text.as_str(), out.finish_reason.as_str(), out.usage.output_tokens), ("CLI 결과", "stop", 12));
     }
 
     #[test]

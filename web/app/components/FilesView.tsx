@@ -28,11 +28,15 @@ import { contentStyles } from "../design/content.stylex";
 import * as stylex from "@stylexjs/stylex";
 import type { FileList as Listing } from "../api/generated";
 import { useDebouncedValue } from "../state/useDebouncedValue";
+import { createContentCache, textBytes } from "../state/contentCache";
 
 const enc = encodeURIComponent;
 
 /// 서버 `files::MAX_UPLOAD`와 같은 값.
 const MAX_UPLOAD = 5 * 1024 * 1024;
+
+/// 최근 연 파일 본문. 다시 열 때 먼저 보여 주고, 서버 최신 본문을 받기 전까지는 편집·저장을 막는다.
+const fileContents = createContentCache<Content>({ maxBytes: 8 * 1024 * 1024, maxEntries: 40, size: (c) => textBytes(c.text, c.path) });
 
 const COPY_ERROR ="이 기기에 편집 사본을 보관하지 못했습니다. 화면을 떠나기 전에 저장하거나 내용을 복사하세요.";
 type AttemptCache = { key: string; restoreKey?: string; endpoint: string; method: FileAttempt["method"]; path?: string };
@@ -234,8 +238,13 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
     const visible = usePaneVisible();
     const isNew = path.startsWith("new:");
     const real = isNew ? path.slice(4) : path;
-    const [c, setC] = useState<Content | null>(null);
     const [saved] = useState(() => loadFileBuffer(localStorage, projectId, path, copyId));
+    const cacheKey = JSON.stringify([projectId, real]);
+    // 기기 편집 사본은 서버 원문과 비교해 복원해야 하므로, 사본이 있으면 cache로 먼저 열지 않는다.
+    const [cached] = useState(() => isNew || saved?.buffer.text != null ? undefined : fileContents.get(cacheKey));
+    const [c, setC] = useState<Content | null>(cached ?? null);
+    // cache 본문을 표시하는 동안에는 서버 최신 본문으로 교체될 때까지 읽기 전용이다. 저장 기준(sha256)은 항상 서버 응답에서 정한다.
+    const [pending, setPending] = useState(!!cached);
     const [copyError, setCopyError] = useState(false);
     const area = useRef<HTMLTextAreaElement | null>(null);
     const refreshingPosition = useRef<{ start: number; end: number; direction: "forward" | "backward" | "none"; top: number; left: number } | null>(null);
@@ -269,8 +278,8 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
             el.scrollLeft = b.left;
         }
     }, [c, line]);
-    const [text, setText] = useState("");
-    const [base, setBase] = useState<string | null>(null);
+    const [text, setText] = useState(cached?.text ?? "");
+    const [base, setBase] = useState<string | null>(cached?.sha256 ?? null);
     const [msg, setMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
     const [watchError, setWatchError] = useState<string | null>(null);
     const [watchReady, setWatchReady] = useState(false);
@@ -296,7 +305,12 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
             return;
         }
         const v = await api.get<Content>(`/projects/${projectId}/files/content?path=${enc(real)}`);
+        const el = area.current;
+        if (pending && el) refreshingPosition.current = {
+            start: el.selectionStart, end: el.selectionEnd, direction: el.selectionDirection, top: el.scrollTop, left: el.scrollLeft,
+        };
         setC(v);
+        setPending(false);
         const hasDraft = draft?.text != null && draft.text !== v.text;
         setText(hasDraft ? draft.text! : v.text ?? "");
         setBase(hasDraft ? draft.base : v.sha256);
@@ -308,7 +322,14 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
         if (!restore) mutation.clear();
         void api.post("/recent/touch", { kind: "file", project_id: projectId, resource_id: real, title: real }).catch(() => undefined);
     };
-    const loadFailed = (e: unknown) => setMsg({ kind: "err", text: e instanceof ApiError ? e.message : "열기 실패" });
+    const loadFailed = (e: unknown) => {
+        // cache 본문을 보여 주던 중 실패하면 이전 본문을 남기지 않고 기존 오류 화면으로 돌아간다.
+        if (pending) { fileContents.delete(cacheKey); setC(null); setPending(false); }
+        setMsg({ kind: "err", text: e instanceof ApiError ? e.message : "열기 실패" });
+    };
+    useEffect(() => {
+        if (!pending && c && !isNew) fileContents.set(cacheKey, c);
+    }, [c, pending]); // eslint-disable-line react-hooks/exhaustive-deps
     useEffect(() => {
         load(true).catch(loadFailed);
         // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -333,7 +354,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
     };
     useEffect(() => {
         setWatchReady(false);
-        if (isNew || !c || !visible) return;
+        if (isNew || !c || !visible || pending) return;
         return watchFile(projectId, c.path, {
             value: (content) => { setWatchReady(true); setWatchError(null); receive.current(content); },
             error: (error) => {
@@ -341,7 +362,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
                 setWatchError(`파일 변경을 확인하지 못했습니다. 편집은 유지합니다. ${error instanceof ApiError ? error.message : "서버 연결을 확인하세요."}`);
             },
         }, c);
-    }, [projectId, c?.path, isNew, visible]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [projectId, c?.path, isNew, visible, pending]); // eslint-disable-line react-hooks/exhaustive-deps
     // <img>·새 탭은 인증 헤더를 못 보내므로 5분짜리 파일 티켓을 받아 쓴다.
     const [ticket, setTicket] = useState<string | null>(null);
     const [previewUrl, setPreviewUrl] = useState<string | null>(null);
@@ -414,7 +435,7 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
     </Stack> : <GroveText as="p" display="block" type="inherit" color="secondary">여는 중…</GroveText>;
     const raw = encrypted ? previewUrl : ticket;
     const save = () => {
-        if (disabled || mutation.locked) return;
+        if (disabled || mutation.locked || pending) return;
         setMsg(null);
         void mutation.act({ method: "put", path: `/projects/${projectId}/files/content`, body: { path: real, expected_sha256: base, text }, key: newKey() });
     };
@@ -438,11 +459,11 @@ function FileEditor({ copyId, projectId, path, onSaved, line, disabled, onLock }
                 <GroveText as="p" display="block" type="inherit" color="secondary">{c.reason === "too_large" ? "편집 한도를 넘는 파일이니 내려받아 확인하세요." : "텍스트가 아닌 파일입니다."}</GroveText>
             ) : (
                 <>
-                    <TextArea ref={area} label="파일 내용" isLabelHidden hasSpellCheck={false} isReadOnly={mutation.locked || disabled} value={text} rows={16}
+                    <TextArea ref={area} label="파일 내용" isLabelHidden hasSpellCheck={false} isReadOnly={mutation.locked || disabled || pending} value={text} rows={16}
                         onChange={(value) => { setText(value); capture(value); }}
                         onSelect={() => capture()} onScroll={() => capture()} onBlur={() => capture()} />
                     <Stack direction="horizontal" align="center" gap={1.5}>
-                        <ServerActionButton disabled={disabled || mutation.locked || (!dirty && !isNew)} onClick={() => void save()}>저장</ServerActionButton>
+                        <ServerActionButton disabled={disabled || mutation.locked || pending || (!dirty && !isNew)} onClick={() => void save()}>저장</ServerActionButton>
                         {conflict && <GroveButton variant="secondary" onClick={() => { if (confirm("내 편집을 버리고 최신 내용을 불러올까요?")) void load(); }}>최신 내용 불러오기</GroveButton>}
                     </Stack>
                     {isArtifact(real) && <ArtifactPreview path={real} text={text} dirty={dirty} />}

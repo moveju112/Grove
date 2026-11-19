@@ -17,9 +17,13 @@ import { GitContextOverview } from "./git-context/GitContextOverview";
 import { HelpTip } from "./HelpTip";
 import { TextInput, TextArea } from "../design/Fields";
 import { GitChangeList, type GitEntry } from "./git/GitChangeList";
+import type { GitStatusPage } from "../api/generated";
+import { parseContract } from "../api/validation";
 import { gitPanelStyles } from "./git/git-panel.stylex";
 
-type Status = { is_repo: boolean; branch?: { head?: string; oid?: string; ahead?: number; behind?: number }; counts?: { staged: number; unstaged: number; tracked: boolean }; fingerprint?: string };
+type Status = { is_repo: boolean; branch?: { head?: string; oid?: string; ahead?: number; behind?: number }; counts?: { staged: number; unstaged: number; tracked: boolean }; fingerprint?: string;
+    // 같은 스냅샷의 첫 목록 페이지. 구버전 서버는 보내지 않으므로 목록이 직접 조회한다.
+    first_pages?: { staged: GitStatusPage; unstaged: GitStatusPage } };
 type GitRequest =
     | { op: "stage" | "unstage"; body: { paths: string[]; expected_fingerprint: string | undefined } }
     | { op: "stage-hunks"; body: { path: string; hunks: number[]; unstage: boolean; expected_fingerprint: string | undefined } }
@@ -34,9 +38,19 @@ const LABEL: Record<GitRequest["op"], string> = {
     "stash-save": "stash 저장", confirm: "확인한 Git 작업",
 };
 
+/// 첫 페이지가 계약과 다르면 버리고, 목록이 기존 페이지 API로 직접 조회하게 둔다.
+function withFirstPages(status: Status): Status {
+    if (!status.first_pages) return status;
+    try {
+        return { ...status, first_pages: { staged: parseContract("GitStatusPage", status.first_pages.staged), unstaged: parseContract("GitStatusPage", status.first_pages.unstaged) } };
+    } catch {
+        return { ...status, first_pages: undefined };
+    }
+}
+
 /// 프로젝트 Git 변경 패널. 사용자가 본 상태(fingerprint)와 다르면 서버가 stage·commit을 거부한다.
 export function GitPanel({ projectId }: { projectId: string }) {
-    const status = useQuery<Status>(`git:${projectId}:status`, () => api.get(`/projects/${projectId}/git/status?summary=true`, { requires: ["paged_reads_v1"] }));
+    const status = useQuery<Status>(`git:${projectId}:status`, () => api.get<Status>(`/projects/${projectId}/git/status?summary=true`, { requires: ["paged_reads_v1"] }).then(withFirstPages));
     const stashes = useQuery<{ stashes: Stash[] }>(`git:${projectId}:stashes`, () => api.get(`/projects/${projectId}/git/stashes`));
     const [diff, setDiff] = useState<{ path: string; staged: boolean; text: string; hunks?: string[]; fingerprint?: string } | null>(null);
     const [msg, setMsg] = useState("");
@@ -203,8 +217,8 @@ export function GitPanel({ projectId }: { projectId: string }) {
                     endContent={<GroveStack direction="horizontal" align="center" gap={2} xstyle={gitPanelStyles.actions}>
                     <ServerActionButton variant="secondary" density="compact" disabled={blocked} onClick={() => void prepare({ operation: "stash_pop", stash_oid: stash.oid })}>stash pop</ServerActionButton>
                 </GroveStack>} />)}</GroveList>}
-            <GitChangeList key={`${projectId}:staged`} title="커밋할 변경" projectId={projectId} snapshot={s.fingerprint} staged renderRow={(entry, fingerprint) => row(entry, true, fingerprint)} />
-            <GitChangeList key={`${projectId}:unstaged`} title="작업 트리 변경" projectId={projectId} snapshot={s.fingerprint} staged={false} renderRow={(entry, fingerprint) => row(entry, false, fingerprint)} />
+            <GitChangeList key={`${projectId}:staged`} title="커밋할 변경" projectId={projectId} snapshot={s.fingerprint} staged initial={s.first_pages?.staged} renderRow={(entry, fingerprint) => row(entry, true, fingerprint)} />
+            <GitChangeList key={`${projectId}:unstaged`} title="작업 트리 변경" projectId={projectId} snapshot={s.fingerprint} staged={false} initial={s.first_pages?.unstaged} renderRow={(entry, fingerprint) => row(entry, false, fingerprint)} />
             {diff && (
                 <Panel title={<>{diff.path} {diff.staged ? "(stage됨)" : ""}</>}>
                     {diff.hunks ? (

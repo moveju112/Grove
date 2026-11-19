@@ -34,6 +34,13 @@ async fn status_pages_share_the_viewed_snapshot_but_writes_always_check_live_fil
     let fingerprint = summary["fingerprint"].as_str().unwrap();
     assert_eq!(summary["counts"]["unstaged"], 122);
     assert!(summary.get("entries").is_none());
+    // 요약은 같은 스냅샷의 첫 페이지를 함께 실어 목록 재조회 없이 표시할 수 있다.
+    let first = &summary["first_pages"]["unstaged"];
+    assert_eq!(first["entries"].as_array().unwrap().len(), 50);
+    assert_eq!(first["total"], 122);
+    assert_eq!(first["has_more"], true);
+    assert_eq!(first["fingerprint"], fingerprint);
+    assert_eq!(summary["first_pages"]["staged"]["total"], 0);
     std::fs::write(root.join("a.txt"), "changed after viewing\n").unwrap();
     let (_, page) = s.get(&format!("/api/v1/projects/{pid}/git/status?staged=false&limit=50&offset=50&snapshot={fingerprint}")).await;
     assert_eq!(page["entries"].as_array().unwrap().len(), 50);

@@ -7,7 +7,7 @@ import { ApiError, api, newKey } from "../api/client";
 import type { Worktree } from "../api/generated";
 import { useCapability } from "../state/capabilities";
 import { useQuery } from "../state/store";
-import { WT, useProject, useWorkspaceMode, type WorkspaceList as List } from "../state/workspaces";
+import { WT, useProject, useWorkspaceChoices, useWorkspaceMode, type WorkspaceList as List } from "../state/workspaces";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useServerBlockReason } from "./pwa/lifecycle";
 import { Panel } from "./ui/Controls";
@@ -289,7 +289,8 @@ export function WorktreeSelect(props: { projectId: string; sessionId: string; cu
 
 function WorktreeSelectBody({ projectId, sessionId, current, disabled, onError }: { projectId: string; sessionId: string; current: string | null; disabled: boolean; onError: (m: string) => void }) {
     const serverBlocked = useServerBlockReason();
-    const q = useQuery<List>(`worktrees:${projectId}`, () => api.get(`/projects/${projectId}/worktrees`, { requires: WT }));
+    // 선택에는 이름·상태만 필요하므로 worktree별 Git 변경 개수를 계산하지 않는 가벼운 목록을 쓴다.
+    const q = useWorkspaceChoices(projectId);
     const rows = (q.data?.worktrees ?? []).filter((w) => w.status === "active" || w.id === current);
     if (!q.data?.is_repo || (rows.length === 0 && !current)) return null;
     return (

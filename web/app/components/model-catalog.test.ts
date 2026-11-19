@@ -1,6 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AvailableModel, ModelProfile } from "../api/generated";
-import { catalogModel, modelEfforts, sortModels } from "./model-catalog";
+import { catalogModel, modelEfforts, prefetchProfiles, readRecentProfiles, rememberRecentProfile, RECENT_PROFILES_KEY, sortModels } from "./model-catalog";
 
 const model = (id: string, name = id): AvailableModel => ({ id, name });
 
@@ -48,5 +48,27 @@ describe("모델 선택 목록 정렬", () => {
             model("gpt-6.1", "GPT"), model("custom", "Custom"),
         ]).map((row) => row.id)).toEqual(["gpt-6.1", "claude-opus-5-10", "claude-opus-5-2", "custom"]);
         expect(sortModels([])).toEqual([]);
+    });
+});
+
+describe("모델 목록 미리 조회 대상", () => {
+    const profile = (id: string, enabled = true) => ({ id, enabled }) as ModelProfile;
+    const profiles = [profile("a"), profile("b"), profile("c", false), profile("d"), profile("e")];
+    afterEach(() => vi.unstubAllGlobals());
+
+    it("최근 사용 → 즐겨찾기 순으로 현재·꺼진·중복 프로필을 빼고 상한까지만 고른다", () => {
+        expect(prefetchProfiles(profiles, "a", ["a", "c", "d", "missing"], ["d", "b", "e"]).map((p) => p.id)).toEqual(["d", "b", "e"]);
+        expect(prefetchProfiles(profiles, null, [], ["e", "b"], 1).map((p) => p.id)).toEqual(["e"]);
+    });
+
+    it("최근 고른 프로필을 앞에 두고 4개까지 기기에 기억한다", () => {
+        const store = new Map<string, string>([[RECENT_PROFILES_KEY, JSON.stringify(["x", "y", "z", "w"])]]);
+        vi.stubGlobal("localStorage", { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) });
+        rememberRecentProfile("z");
+        expect(readRecentProfiles()).toEqual(["z", "x", "y", "w"]);
+        rememberRecentProfile("n");
+        expect(readRecentProfiles()).toEqual(["n", "z", "x", "y"]);
+        store.set(RECENT_PROFILES_KEY, "{broken");
+        expect(readRecentProfiles()).toEqual([]);
     });
 });

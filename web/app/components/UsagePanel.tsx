@@ -11,7 +11,7 @@ import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { UsageDashboard } from "./usage/UsageDashboard";
 import { usageRange, number, type Period } from "./usage/dashboardModel";
 import { dashboardStyles } from "./usage/dashboard.stylex";
-import { SidebarUsage } from "./sidebar/SidebarUsage";
+import { SidebarUsage, useAccountUsage } from "./sidebar/SidebarUsage";
 import { TextInput } from "../design/Fields";
 import { usePrefs } from "../state/device";
 import { absoluteTime } from "../state/time";
@@ -89,6 +89,8 @@ export function UsagePanel({ onClose, onAuthenticate }: { onClose: () => void; o
         const range = usageRange(period, start, end)!;
         return api.getContract("UsageDashboard", `/usage/dashboard?${new URLSearchParams(range)}`);
     }, { keepPreviousData: true, scope: "usage:dashboard" });
+    // 계정 한도는 통계와 독립적이므로 통계 응답 뒤가 아니라 화면 진입 시 함께 조회한다.
+    useAccountUsage();
     const reload = useRef(q.reload);
     reload.current = q.reload;
     useEffect(() => {

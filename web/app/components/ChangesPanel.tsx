@@ -6,9 +6,10 @@ import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { useRef, useState } from "react";
 import { Panel } from "./ui/Controls";
-import { ApiError, api, newKey } from "../api/client";
+import { ApiError, api, authGeneration, newKey } from "../api/client";
 import type { FileChange, FileChangePage } from "../api/generated";
 import { useQuery } from "../state/store";
+import { createContentCache, textBytes } from "../state/contentCache";
 import type { Opener } from "./Workspace";
 import { isArtifact } from "../state/artifactPreview";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -18,6 +19,9 @@ import { gitPanelStyles } from "./git/git-panel.stylex";
 const OP: Record<string, string> = { created: "새 파일", modified: "수정", deleted: "삭제" };
 
 type Attempt = { op: "undo" | "redo"; ids: string[]; key: string };
+
+/// 최근 연 파일 변경 patch(변경 ID별).
+const changeDiffs = createContentCache<string>({ maxBytes: 2 * 1024 * 1024, maxEntries: 100, size: (text) => textBytes(text) });
 
 type Review = { files: { path: string; diff?: string; unavailable?: string; unchanged: boolean }[] };
 
@@ -35,6 +39,7 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
     const [attempt, setAttempt] = useState<Attempt | null>(null);
     const [busy, setBusy] = useState(false);
     const active = useRef(false);
+    const diffRequest = useRef(0);
     const locked = disabled || busy || attempt !== null;
     const list = q.data?.items ?? [];
     if (list.length === 0 && cursors.length === 1) return <Panel data-testid="changes-panel" title="파일 변경 이력">
@@ -79,9 +84,22 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
         }
     };
     const showDiff = async (id: string) => {
+        const current = ++diffRequest.current;
         if (diff?.id === id) return setDiff(null);
-        const d = await api.get<{ diff: string | null; unavailable?: string }>(`/file-changes/${id}/diff`);
-        setDiff({ id, text: d.diff ?? (d.unavailable === "binary" ? "(텍스트가 아닌 파일)" : "(내용을 보관하지 않음)") });
+        // 최근 연 patch는 바로 보여 주고, 같은 시점에 서버에서 다시 받아 교체한다.
+        const cached = changeDiffs.get(id);
+        if (cached !== undefined) setDiff({ id, text: cached });
+        const owner = authGeneration();
+        try {
+            const d = await api.get<{ diff: string | null; unavailable?: string }>(`/file-changes/${id}/diff`);
+            const text = d.diff ?? (d.unavailable === "binary" ? "(텍스트가 아닌 파일)" : "(내용을 보관하지 않음)");
+            changeDiffs.set(id, text, owner);
+            if (current === diffRequest.current) setDiff({ id, text });
+        } catch {
+            // 다시 확인하지 못한 patch는 보관본을 최신처럼 남기지 않는다.
+            changeDiffs.delete(id);
+            if (current === diffRequest.current && cached !== undefined) setDiff(null);
+        }
     };
     return (
         <Panel data-testid="changes-panel" title={<GroveStack as="span" direction="horizontal" align="center" gap={1.5}>

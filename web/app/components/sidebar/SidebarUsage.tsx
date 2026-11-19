@@ -117,9 +117,14 @@ function UsageQuotaCards({ report, failed, now, onAuthenticate }: {
     </Stack>;
 }
 
+/// 계정 한도 조회. 사용량 화면은 통계 응답을 기다리지 않고 진입 시 함께 시작하며, 한도 카드가 같은 key를 공유한다.
+export function useAccountUsage() {
+    return useQuery("usage:accounts", () => api.getContract("AccountUsageReport", "/usage/accounts"));
+}
+
 export function SidebarUsage({ onAuthenticate, showEmpty = false, presentation = "summary" }: { onAuthenticate: (protocol: string) => void; showEmpty?: boolean; presentation?: "summary" | "cards" }) {
     const active = usePaneVisible();
-    const usage = useQuery("usage:accounts", () => api.getContract("AccountUsageReport", "/usage/accounts"));
+    const usage = useAccountUsage();
     const [now, setNow] = useState(Date.now);
     const reload = useRef(usage.reload);
     reload.current = usage.reload;

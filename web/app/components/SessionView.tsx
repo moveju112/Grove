@@ -16,9 +16,9 @@ import { usePrefs } from "../state/device";
 import { When } from "./When";
 import { useFocusRequest } from "../state/focus";
 import { queueText } from "../state/queue";
-import { ApiError, api, authGeneration, isLoggedIn } from "../api/client";
+import { ApiError, api, isLoggedIn, isTransportError } from "../api/client";
 import { readConversation } from "../state/workspaceStartup";
-import { mergeMessagePages, readAroundMessage, readMessagePage, type HistoryWindow } from "../state/messagePages";
+import { keepOlderPages, mergeMessages, readMessageRange, singleFlight, takeOlderPages } from "../state/conversationPages";
 import type { BotRoom, Definition, Followup as FollowupInfo, Message, MessagePage, Project, RecentItem, Session, ToolCallRow, Turn } from "../api/generated";
 import { useLive, useQuery } from "../state/store";
 import { Composer, type FollowKind, type RunCommand, type SendOptions } from "./Composer";
@@ -43,7 +43,7 @@ import { subscribeSecondTick } from "../state/secondTick";
 import { AssistantIdentity } from "./assistant-identity";
 import { ApprovalCard, currentApprovalContract } from "./approvals";
 import { TurnTiming } from "./turn-timing/TurnTiming";
-import { useServerBlockReason } from "./pwa/lifecycle";
+import { checkCompatibility, useServerBlockReason } from "./pwa/lifecycle";
 import { MessageCopyButton as CopyButton } from "./capabilities/MessageCopyButton";
 import { CompactionDetails, type CompactionRecord } from "./compaction/CompactionDetails";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -87,15 +87,10 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         const snapshot = live.partials[sessionId] as (ResponseContent & { turn_id: string; tool_calls: string[] }) | null | undefined;
         return visible && active?.status === "running" && snapshot?.turn_id === active.id ? snapshot : undefined;
     });
-    const [older, setOlder] = useState<Message[]>([]);
-    const [olderMore, setOlderMore] = useState<boolean | null>(null);
-    const [history, setHistory] = useState<HistoryWindow | null>(null);
-    const historyRef = useRef<HistoryWindow | null>(null);
-    const pagingEpoch = useRef(0);
-    const pageFlight = useRef<symbol | null>(null);
-    const [paging, setPaging] = useState(false);
-    const cancelPaging = () => { pagingEpoch.current++; pageFlight.current = null; setPaging(false); };
-    useEffect(() => () => { pagingEpoch.current++; pageFlight.current = null; }, [sessionId]);
+    // 탭 전환으로 내려갔다 돌아오면 읽던 과거 구간을 다시 받지 않고 이어 붙인다.
+    const [initialOlder] = useState(() => latest.data ? takeOlderPages(sessionId, latest.data) : null);
+    const [older, setOlder] = useState<Message[]>(initialOlder?.items ?? []);
+    const [olderMore, setOlderMore] = useState<boolean | null>(initialOlder?.more ?? null);
     const latestRef = useRef(latest.data);
     latestRef.current = latest.data;
     const [err, setErr] = useState<string | null>(null);
@@ -130,7 +125,10 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                     reopen: false,
                     ...(completedTurnId ? { seen_completed_turn_id: completedTurnId } : {}),
                 })
-                .catch((error) => setErr(error instanceof ApiError ? error.message : "대화 확인 상태를 저장하지 못했습니다."));
+                .catch((error) => {
+                    if (isTransportError(error, true)) void checkCompatibility();
+                    else setErr(error instanceof ApiError ? error.message : "대화 확인 상태를 저장하지 못했습니다.");
+                });
         }, 300);
         return () => clearTimeout(t);
     }, [visible, pageVisible, serverBlocked, sessionId, projectId, lastSeq, completedTurnId, !!s]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -193,7 +191,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             if (!el.clientHeight || !el.clientWidth) return;
             // 메시지 끝 표시가 스크롤 영역 아래쪽 80px 안에 보이면 '맨 아래를 보는 중'이다(아래 패널·입력창 높이와 무관).
             const b = bottom.current?.getBoundingClientRect();
-            stick.current = pinned.current || (!historyRef.current && !!b && b.top <= messageViewportBottom() + 80);
+            stick.current = pinned.current || (!!b && b.top <= messageViewportBottom() + 80);
             if (stick.current) setUnseen(false);
             capturePosition();
         };
@@ -224,17 +222,11 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         };
     }, [!!s, !!latest.data]); // eslint-disable-line react-hooks/exhaustive-deps
     const toBottom = () => {
-        if (historyRef.current || focusSeq != null) {
-            cancelPaging();
-            focusDone();
-            setHistory(null);
-        }
         clearPendingPosition();
         stick.current = true;
         setUnseen(false);
         scrollEnd();
     };
-    useLayoutEffect(() => { if (!history && stick.current && visible) scrollEnd(); }, [history]);
     useEffect(() => {
         if (!visible || pendingPosition.current) return;
         if (stick.current) scrollEnd();
@@ -259,9 +251,9 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     const [seenLatest, setSeenLatest] = useState(latest.data);
     if (latest.data !== seenLatest) {
         if (latest.data?.timeline_revision !== seenLatest?.timeline_revision) {
-            setOlder([]);
-            setOlderMore(null);
-            setHistory(null);
+            const kept = !seenLatest && latest.data ? takeOlderPages(sessionId, latest.data) : null;
+            setOlder(kept?.items ?? []);
+            setOlderMore(kept?.more ?? null);
         } else {
             const first = latest.data?.items[0]?.seq;
             const slid = first == null ? [] : (seenLatest?.items ?? []).filter((m) => m.seq < first);
@@ -273,47 +265,53 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         setSeenLatest(latest.data);
     }
     const latestFirst = latest.data?.items[0]?.seq ?? Number.MAX_SAFE_INTEGER;
-    const past = history?.revision === latest.data?.timeline_revision ? history : null;
-    historyRef.current = past;
-    const connectedToLatest = !!past && ((past.items.at(-1)?.seq ?? 0) >= latestFirst || !past.after);
-    const messages = past ? connectedToLatest ? mergeMessagePages(past.items, latest.data?.items ?? []) : past.items
-        : [...older.filter((m) => m.seq < latestFirst), ...(latest.data?.items ?? [])];
-    const liveResponse = (past && !connectedToLatest) || partial?.text === undefined ? undefined : partial;
+    const messages = [...older.filter((m) => m.seq < latestFirst), ...(latest.data?.items ?? [])];
+    const liveResponse = partial?.text === undefined ? undefined : partial;
     const showProgress = prefs.progressVisibility !== "hidden";
     const transcript = assistantTranscript(messages, liveResponse, showProgress);
     const isActiveTurn = (turnId: string | null) => !!active && active.id === turnId;
     const progressOpen = (turnId: string | null) => prefs.progressVisibility === "expanded" || isActiveTurn(turnId);
     const groupedSeq = (seq: number | null) => seq === null ? null : transcript.anchors.get(seq) ?? seq;
-    const hasOlder = past ? past.before : olderMore ?? latest.data?.has_more_before;
-    const hasNewer = !!past && !connectedToLatest;
-    const loadAdjacent = async (direction: "before" | "after") => {
-        const edge = (direction === "before" ? messages[0] : messages.at(-1))?.seq;
+    // 앞에 붙인 페이지와 측정 높이의 위치 보정은 VirtualMessages가 같은 읽기 anchor로 처리한다.
+    // 이전 페이지 조회는 대화마다 하나만 진행한다. 첫 응답 전에 다시 눌러도 같은 요청을 공유하고, 도착한 페이지는 seq로 합친다.
+    const olderFlight = useRef(singleFlight()).current;
+    const [loadingOlder, setLoadingOlder] = useState(false);
+    const fetchOlder = (task: (first: number, revision: number) => Promise<{ items: Message[]; more: boolean } | null>) => {
+        const first = messages[0]?.seq;
         const revision = latest.data?.timeline_revision;
-        if (pageFlight.current || !edge || revision == null) return;
-        const flight = Symbol();
-        pageFlight.current = flight;
-        setPaging(true);
-        const owner = authGeneration();
-        const current = () => authGeneration() === owner && pageFlight.current === flight && latestRef.current?.timeline_revision === revision;
-        try {
-            const page = await readMessagePage(sessionId, `limit=100&${direction}_seq=${edge}`);
-            if (!current()) return;
-            if (page.timeline_revision !== revision) { latest.reload(); return; }
-            if (past) setHistory((window) => window && ({ ...window, items: mergeMessagePages(window.items, page.items),
-                ...(direction === "before" ? { before: page.has_more_before } : { after: page.has_more_after }) }));
-            else if (direction === "before") {
-                setOlder((items) => mergeMessagePages(page.items, items));
-                setOlderMore(page.has_more_before);
+        if (!first || revision == null) return Promise.resolve();
+        setLoadingOlder(true);
+        return olderFlight.run(sessionId, async () => {
+            try {
+                const page = await task(first, revision);
+                if (!page || revision !== latestRef.current?.timeline_revision) return;
+                setOlder((o) => mergeMessages(page.items, o));
+                setOlderMore(page.more);
+            } finally {
+                setLoadingOlder(false);
             }
-        } catch (error) {
-            if (current()) setErr(error instanceof ApiError ? error.message : "메시지를 불러오지 못했어요.");
-        } finally {
-            if (pageFlight.current === flight) { pageFlight.current = null; setPaging(false); }
-        }
+        });
     };
+    const loadOlder = () => fetchOlder(async (first) => {
+        const page = await api.get<MessagePage>(`/sessions/${sessionId}/messages?limit=100&before_seq=${first}`);
+        return page.timeline_revision === latestRef.current?.timeline_revision ? { items: page.items, more: page.has_more_before } : null;
+    });
+    // 목적지가 정해진 이동은 100개씩 거슬러 올라가지 않고, 목적지 주변과 사이 구간을 한 번에 병렬로 읽는다.
+    const loadThrough = (seq: number) => fetchOlder((first, revision) => readMessageRange(sessionId, seq, first, revision));
+    const hasOlder = olderMore ?? latest.data?.has_more_before;
+    // 화면이 내려가면 읽던 과거 구간을 보관해 돌아올 때 다시 받지 않는다.
+    const keepRef = useRef({ sessionId, older, olderMore, latest: latest.data });
+    keepRef.current = { sessionId, older, olderMore, latest: latest.data };
+    useEffect(() => () => {
+        const { older, olderMore, latest } = keepRef.current;
+        if (!latest || older.length === 0 || keepRef.current.sessionId !== sessionId || latest.items[0]?.session_id !== sessionId) return;
+        const first = latest.items[0]?.seq ?? Number.MAX_SAFE_INTEGER;
+        keepOlderPages(sessionId, latest.timeline_revision, [...older.filter((m) => m.seq < first), ...latest.items], olderMore ?? latest.has_more_before);
+    }, [sessionId]);
 
-    // 검색 위치나 저장된 읽기 위치로 이동할 때 최신 위치와 떨어진 구간을 별도의 창으로 보여 준다.
+    // 검색 결과에서 연 메시지로 이동(UI-026): 그 메시지가 나올 때까지 이전 페이지를 읽고, 가운데로 옮겨 잠시 강조한다.
     const [focusSeq, focusDone] = useFocusRequest(sessionId);
+    // 검색 결과로 이동하면 보낸 직후의 맨 아래 고정을 풀고 그 메시지를 보여준다.
     if (focusSeq != null) pinned.current = false;
     const [highlight, setHighlight] = useState<number | null>(null);
     const [focusMiss, setFocusMiss] = useState(false);
@@ -332,7 +330,9 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         if (messages.some((message) => message.seq === position.anchorSeq)) {
             // 실제 위치는 VirtualMessages가 행 측정과 함께 복원한다.
             return;
-        } else if (!hasOlder || position.anchorSeq == null || (messages[0]?.seq ?? 0) <= position.anchorSeq) {
+        } else if (hasOlder && position.anchorSeq != null && (messages[0]?.seq ?? 0) > position.anchorSeq) {
+            void loadThrough(position.anchorSeq);
+        } else {
             clearPendingPosition();
             stick.current = true;
             bottom.current?.scrollIntoView({ block: "end" });
@@ -343,35 +343,19 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         const t = setTimeout(() => setHighlight(null), 4000);
         return () => clearTimeout(t);
     }, [highlight]);
-    const restoreSeq = pendingPosition.current?.anchorSeq ?? null;
-    const targetSeq = focusSeq ?? restoreSeq;
-    const targetLoaded = messages.some((message) => message.seq === targetSeq);
-    const revision = latest.data?.timeline_revision;
     useEffect(() => {
-        if (focusSeq != null) setFocusMiss(false);
-        if (!visible || targetSeq == null || revision == null || targetLoaded) return;
-        const epoch = ++pagingEpoch.current;
-        const owner = authGeneration();
-        const current = () => epoch === pagingEpoch.current && authGeneration() === owner && revision === latestRef.current?.timeline_revision;
-        const fail = (missing: boolean) => {
-            if (focusSeq != null) { setFocusMiss(missing); focusDone(); }
-            else { clearPendingPosition(); stick.current = true; scrollEnd(); }
-        };
-        void readAroundMessage(sessionId, targetSeq, revision).then((window) => {
-            if (!current()) return;
-            if (window === undefined) { latest.reload(); fail(false); return; }
-            if (window === null) { fail(true); return; }
-            cancelPaging();
-            stick.current = false;
-            setHistory(window);
-        }).catch((error) => {
-            if (!current()) return;
-            setErr(error instanceof ApiError ? error.message : "메시지 위치를 불러오지 못했어요.");
-            fail(false);
-        });
-        return () => { if (pagingEpoch.current === epoch) pagingEpoch.current++; };
+        if (focusSeq == null || !latest.data) return;
+        if (messages.some((message) => message.seq === focusSeq)) return;
+        const first = messages[0]?.seq;
+        if (first != null && first > focusSeq && hasOlder) {
+            if (!olderFlight.busy(sessionId)) void loadThrough(focusSeq);
+        } else {
+            // 지워졌거나 범위를 벗어남: 이동할 수 없음을 알린다.
+            setFocusMiss(true);
+            focusDone();
+        }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [visible, sessionId, targetSeq, focusSeq, targetLoaded, revision]);
+    }, [focusSeq, messages.length, latest.data]);
 
     const timedTurn = active ?? lastTurn;
     const pending = (calls.data ?? []).filter((c) => c.status === "pending_approval");
@@ -531,7 +515,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                 </GroveText>
             )}
             <Stack gap={4} width="100%" maxWidth={CHAT_COLUMN_WIDTH} xstyle={chatLayout.messages} aria-live="polite" data-session-msgs={sessionId} ref={msgsRef}>
-                {hasOlder && <GroveButton variant="secondary" disabled={paging} onClick={() => void loadAdjacent("before")}>이전 메시지</GroveButton>}
+                {hasOlder && <GroveButton variant="secondary" disabled={loadingOlder} onClick={() => void loadOlder()}>이전 메시지</GroveButton>}
                 <FileRefContext.Provider
                     value={(path, line) => open({ kind: "file", project_id: projectId, resource_id: path, filePath: path, fileLine: line, title: line ? `${path}:${line}` : path }, "right")}
                 >
@@ -592,10 +576,9 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                     </FileLinkContext.Provider>
                 </FileRefContext.Provider>
             </Stack>
-            {hasNewer && <GroveButton variant="secondary" disabled={paging} onClick={() => void loadAdjacent("after")}>이후 메시지</GroveButton>}
-            {(unseen || hasNewer) && (
+            {unseen && (
                 <GroveButton xstyle={chatLayout.below} data-testid="new-below" onClick={toBottom}>
-                    {hasNewer ? "최신 메시지로" : "새 메시지 ↓"}
+                    새 메시지 ↓
                 </GroveButton>
             )}
             {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}

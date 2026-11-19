@@ -1,4 +1,5 @@
 import { Tooltip } from "@astryxdesign/core/Tooltip";
+import { Popover } from "@astryxdesign/core/Popover";
 import { FileInput } from "../design/Fields";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
@@ -6,7 +7,7 @@ import { contentStyles } from "../design/content.stylex";
 import * as stylex from "@stylexjs/stylex";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { attachmentStyles } from "./attachments.stylex";
 import { Icon } from "./icons";
 import { ActionMenu } from "./ui/Controls";
@@ -83,18 +84,59 @@ export function useAttachments(projectId: string, resourceKey: string, copyId: s
 
 export function AttachmentPicker({ draft, disabled, onIssue }: { draft: ReturnType<typeof useAttachments>; disabled: boolean; onIssue: (issue: string | null) => void }) {
     const input = useRef<HTMLInputElement>(null);
+    const [open, setOpen] = useState(false);
+    const [reading, setReading] = useState(false);
+    const latest = useRef<{ blocked: boolean; add: typeof draft.add; onIssue: typeof onIssue } | null>(null);
+    useLayoutEffect(() => {
+        latest.current = { blocked: disabled || draft.busy, add: draft.add, onIssue };
+        return () => { latest.current = null; };
+    });
+    const canReadImage = /Android/.test(navigator.userAgent) && window.isSecureContext && typeof navigator.clipboard?.read === "function";
+    const blocked = disabled || draft.busy || reading;
+    const pickFile = () => {
+        setOpen(false);
+        const issue = attachmentIssue();
+        onIssue(issue);
+        if (!issue) {
+            try { input.current?.click(); }
+            catch { onIssue("파일 선택 창을 열지 못했습니다. 브라우저 설정을 확인하거나 파일 내용을 메시지에 붙여 넣으세요."); }
+        }
+    };
+    const pasteImage = async () => {
+        if (blocked || !canReadImage) return;
+        setOpen(false);
+        onIssue(null);
+        setReading(true);
+        const owner = authGeneration();
+        try {
+            // 버튼을 누를 때만 읽고, 텍스트나 HTML은 꺼내지 않는다.
+            const items = await navigator.clipboard.read();
+            const item = items.find((entry) => entry.types.some((type) => IMAGE_MIMES.includes(type)));
+            const mime = item?.types.find((type) => IMAGE_MIMES.includes(type));
+            const image = item && mime ? await item.getType(mime) : null;
+            const current = latest.current;
+            if (!current || current.blocked || authGeneration() !== owner) return;
+            if (image?.size && mime) {
+                const ext = mime === "image/jpeg" ? "jpg" : mime.slice("image/".length);
+                void current.add([new File([image], `clipboard.${ext}`, { type: mime })]);
+            } else current.onIssue("클립보드에 붙여넣을 사진이 없습니다. 사진을 복사하거나 파일에서 선택하세요.");
+        } catch {
+            if (authGeneration() === owner) latest.current?.onIssue("클립보드 사진을 읽지 못했습니다. 브라우저 권한을 확인하거나 파일에서 선택하세요.");
+        } finally {
+            if (latest.current) setReading(false);
+        }
+    };
+    const trigger = <GroveButton type="button" variant="secondary" appearance="icon" aria-label="파일 첨부" title="파일 첨부 · 최대 8개, 파일당 32MiB, 전체 128MiB · 미전송 파일은 24시간 뒤 만료"
+        disabled={blocked} onClick={canReadImage ? undefined : pickFile}><Icon name="attachment" /></GroveButton>;
     return <GroveStack direction="horizontal" align="center" gap={0} width={32} data-testid="attachment-picker">
         <GroveStack hidden><FileInput ref={input} isMultiple label="첨부파일 선택" isLabelHidden
             isDisabled={disabled || draft.busy} value={null}
             onChange={(files) => { if (files) void draft.add(Array.isArray(files) ? files : [files]); }} /></GroveStack>
-        <GroveButton variant="secondary" appearance="icon" aria-label="파일 첨부" title="파일 첨부 · 최대 8개, 파일당 32MiB, 전체 128MiB · 미전송 파일은 24시간 뒤 만료" disabled={disabled || draft.busy} onClick={() => {
-            const issue = attachmentIssue();
-            onIssue(issue);
-            if (!issue) {
-                try { input.current?.click(); }
-                catch { onIssue("파일 선택 창을 열지 못했습니다. 브라우저 설정을 확인하거나 파일 내용을 메시지에 붙여 넣으세요."); }
-            }
-        }}><Icon name="attachment" /></GroveButton>
+        {canReadImage ? <Popover label="첨부 방식" isOpen={open && !blocked} onOpenChange={setOpen} placement="above" alignment="start"
+            width={208} padding={2} isModal={false} content={<GroveStack gap={1}>
+                <GroveButton type="button" variant="secondary" onClick={pickFile}>파일 선택</GroveButton>
+                <GroveButton type="button" variant="secondary" onClick={() => void pasteImage()}>클립보드 사진 붙여넣기</GroveButton>
+            </GroveStack>}>{trigger}</Popover> : trigger}
     </GroveStack>;
 }
 

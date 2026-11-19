@@ -15,6 +15,7 @@ use crate::events;
 use crate::git::{fail, git, is_repo, root_of};
 use crate::idem;
 use axum::Json;
+use futures_util::StreamExt;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -145,11 +146,35 @@ async fn finish(
 
 // ---------------- 목록 ----------------
 
-pub async fn list(State(app): State<App>, _p: Principal, Path(project_id): Path<String>) -> ApiResult<Json<Value>> {
+#[derive(Deserialize, Default)]
+pub struct ListQuery {
+    /// 대화의 워크스페이스 선택용 가벼운 목록: 이름·상태·경로 존재만 읽고 Git 변경 개수·소유 아님·복원 후보는 계산하지 않는다.
+    #[serde(default)]
+    pub select: bool,
+}
+
+/// 관리 화면의 변경 개수 계산을 동시에 실행하는 worktree 수 상한.
+const DIRTY_COUNT_CONCURRENCY: usize = 4;
+
+pub async fn list(State(app): State<App>, _p: Principal, Path(project_id): Path<String>, Query(q): Query<ListQuery>) -> ApiResult<Json<Value>> {
     let root = root_of(&app, &project_id).await?;
     let _resource = app.project_resources.ui_read(&app,&project_id,&_p).await?;
     if !is_repo(&root).await? {
         return Ok(Json(json!({ "is_repo": false, "worktrees": [], "unowned": [], "removed": [] })));
+    }
+    if q.select {
+        let pid = project_id.clone();
+        let rows: Vec<Worktree> = app.db.call(move |c| {
+            let mut st = c.prepare(&format!("SELECT {COLS} FROM worktrees WHERE project_id = ?1 AND status != 'removed' ORDER BY created_at"))?;
+            Ok(st.query_map(params![pid], from_row)?.collect::<rusqlite::Result<Vec<_>>>()?)
+        }).await?;
+        let rows = rows.into_iter().map(|w| {
+            let exists = FsPath::new(&w.path).is_dir();
+            let mut v = serde_json::to_value(&w)?;
+            v["exists"] = json!(exists);
+            Ok(v)
+        }).collect::<ApiResult<Vec<_>>>()?;
+        return Ok(Json(json!({ "is_repo": true, "worktrees": rows })));
     }
     let pid = project_id.clone();
     let (rows, users, removed): (Vec<Worktree>, Vec<(String, i64)>, Vec<Worktree>) = app
@@ -189,17 +214,19 @@ pub async fn list(State(app): State<App>, _p: Principal, Path(project_id): Path<
             }
         }
     }
-    let mut out = vec![];
-    for w in rows {
-        let exists = FsPath::new(&w.path).is_dir();
-        let dirty = if exists && w.status == "active" { dirty_paths(FsPath::new(&w.path)).await.map(|d| d.len()).ok() } else { None };
+    // 각 worktree의 git status는 서로 독립적이므로 상한 안에서 동시에 실행하고 원래 순서로 모은다.
+    let out: Vec<Value> = futures_util::stream::iter(rows.into_iter().map(|w| {
         let sessions = users.iter().find(|(id, _)| id == &w.id).map(|(_, n)| *n).unwrap_or(0);
-        let mut v = serde_json::to_value(&w)?;
-        v["exists"] = json!(exists);
-        v["dirty_count"] = json!(dirty);
-        v["sessions"] = json!(sessions);
-        out.push(v);
-    }
+        async move {
+            let exists = FsPath::new(&w.path).is_dir();
+            let dirty = if exists && w.status == "active" { dirty_paths(FsPath::new(&w.path)).await.map(|d| d.len()).ok() } else { None };
+            let mut v = serde_json::to_value(&w)?;
+            v["exists"] = json!(exists);
+            v["dirty_count"] = json!(dirty);
+            v["sessions"] = json!(sessions);
+            Ok::<_, ApiError>(v)
+        }
+    })).buffered(DIRTY_COUNT_CONCURRENCY).collect::<Vec<_>>().await.into_iter().collect::<ApiResult<_>>()?;
     Ok(Json(json!({ "is_repo": true, "worktrees": out, "unowned": unowned, "removed": removed })))
 }
 

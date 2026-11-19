@@ -3,6 +3,7 @@ import { apiCall, ensureProfile, ensureProjects, login, script, sessionView } fr
 import { frames } from "./fixture";
 import { projectLayoutKey } from "../app/state/projectLayout";
 import { workspaceTabsKey } from "../app/state/workspaceTabs";
+import type { Layout, Tab } from "../app/state/layout";
 
 test.use({ viewport: { width: 390, height: 844 } });
 
@@ -65,3 +66,60 @@ test("재실행 중 서버 위치와 도구 조회가 늦어도 최신 답변을
         await page.unrouteAll({ behavior: "wait" });
     }
 });
+
+for (const typing of [true, false]) {
+    test(`재개 위치보다 공유 배치가 늦을 때 ${typing ? "현재 대화와 입력을 지킨다" : "조작이 없으면 서버 대화를 복원한다"}`, async ({ page }) => {
+        const { a } = await ensureProjects();
+        const makeTab = async (title: string): Promise<Tab> => {
+            const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `${title} ${Date.now()}` });
+            return { id: `tab-${session.id}`, kind: "session", project_id: a.id, resource_id: session.id, title };
+        };
+        const first = await makeTab("기기에 열려 있던 대화");
+        const second = await makeTab("서버에서 이어갈 대화");
+        const layout = (tabs: Tab[], selected: Tab): Layout => ({ schema: 1, focused_leaf: "resume-test",
+            root: { type: "leaf", id: "resume-test", active_tab: selected.id, tabs } });
+        const local = layout([first], first);
+        const remote = layout([first, second], second);
+        await login(page);
+        const base = await page.evaluate(() => `${localStorage.getItem("grove.device.id")}-narrow`);
+        const device = projectLayoutKey(base, a.id);
+        const shared = workspaceTabsKey(a.id);
+        const put = async (key: string, value: Layout) => {
+            const { revision } = await apiCall<{ revision: number }>("GET", `/layouts/${key}`);
+            await apiCall("PUT", `/layouts/${key}`, { expected_revision: revision, layout: value });
+        };
+        await page.evaluate(({ base, id, device, local }) => {
+            localStorage.setItem(`grove.layout.selected.${base}`, id);
+            localStorage.setItem(`grove.layout.${device}`, JSON.stringify(local));
+        }, { base, id: a.id, device, local });
+        await page.goto("about:blank");
+        await put(device, local);
+        await put(shared, remote);
+
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        await page.route(`**/api/v1/layouts/${shared}`, async (route) => {
+            if (route.request().method() === "GET") await gate;
+            await route.continue();
+        });
+        try {
+            const resume = page.waitForResponse((r) => r.url().endsWith("/layouts/workspace-resume") && r.ok());
+            await page.goto("/", { waitUntil: "domcontentloaded" });
+            expect((await (await resume).json()).layout).toEqual(remote);
+            const input = sessionView(page, first.resource_id!).getByLabel("메시지 입력");
+            await expect(input).toBeVisible();
+            const draft = "공유 배치 응답을 기다리는 사이에 쓴 초안";
+            if (typing) await input.fill(draft);
+            release();
+            // 공유 대화 조회·병합 자체는 생략하지 않고 기기 배치에 새 탭을 반영한다.
+            await expect.poll(() => page.evaluate((key) => localStorage.getItem(`grove.layout.${key}`), device)).toContain(second.resource_id!);
+            if (typing) {
+                await expect(input).toHaveValue(draft);
+                await expect(sessionView(page, second.resource_id!)).toBeHidden();
+            } else await expect(sessionView(page, second.resource_id!)).toBeVisible();
+        } finally {
+            release();
+            await page.unrouteAll({ behavior: "wait" });
+        }
+    });
+}

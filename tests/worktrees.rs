@@ -65,6 +65,18 @@ async fn single_mode_blocks_workspaces_and_switch_back_requires_cleanup() {
     assert_eq!(st, StatusCode::CREATED, "{w}");
     let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/worktree"), json!({ "worktree_id": w["id"] })).await;
     assert_eq!(st, StatusCode::OK, "{v}");
+    // 선택용 목록은 이름·상태·경로 존재만 주고 Git 변경 개수와 관리용 목록은 계산하지 않는다.
+    let dirty = PathBuf::from(w["path"].as_str().unwrap()).join("dirty.txt");
+    std::fs::write(&dirty, "x").unwrap();
+    let (_, choices) = s.get(&format!("/api/v1/projects/{pid}/worktrees?select=true")).await;
+    assert_eq!(choices["is_repo"], true, "{choices}");
+    assert_eq!(choices["worktrees"][0]["id"], w["id"]);
+    assert_eq!(choices["worktrees"][0]["exists"], true);
+    assert!(choices["worktrees"][0].get("dirty_count").is_none(), "{choices}");
+    assert!(choices.get("unowned").is_none() && choices.get("removed").is_none(), "{choices}");
+    let (_, full) = s.get(&format!("/api/v1/projects/{pid}/worktrees")).await;
+    assert_eq!(full["worktrees"][0]["dirty_count"], 1, "{full}");
+    std::fs::remove_file(&dirty).unwrap();
 
     // 워크스페이스가 남아 있으면 단일 모드로 못 돌아가고, 아무것도 바뀌지 않는다.
     let switch = |rev: Value| json!({ "expected_revision": rev, "workspace_mode": "single" });

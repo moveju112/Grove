@@ -3,6 +3,8 @@ import * as stylex from "@stylexjs/stylex";
 export const contentStyles = stylex.create({
     // Item의 목록 label도 답변 본문의 행간을 사용한다. 앱의 탐색 목록에는 적용하지 않는다.
     markdown: { lineHeight: 1.5, "--text-body-leading": "1.5" },
+    // 열이 많은 표는 셀을 글자 한 자 폭으로 압축하지 않고 표 안에서 스크롤한다.
+    markdownTable: (columns: number) => ({ minWidth: `${columns * 5}em` }),
     inlineLink: { minHeight: 0, fontSize: "inherit", lineHeight: "inherit", verticalAlign: "baseline" },
     // Text의 wrap 속성은 입력 원문의 개행 보존을 제공하지 않는다.
     plainText: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" },

@@ -39,7 +39,7 @@ test("이전 메시지를 연달아 눌러도 요청과 행이 한 번만 생긴
     expect(reads).toHaveLength(1);
 });
 
-// 오래된 검색 결과는 목적지 양쪽 창만 읽는다. 배치 읽기가 완료되기 전 최신 본문 요청도 시작한다.
+// 오래된 검색 결과는 100개씩 거슬러 올라가지 않고 목적지 주변과 사이 구간을 병렬로 읽는다.
 test("오래된 검색 결과로 이동할 때 목적지 주변을 바로 읽는다", async ({ page }) => {
     const project = await apiCall<{ id: string; name: string }>("POST", "/projects", {
         root_path: mkdtempSync(join(dirname(state().projA), "conversation-pages-")),
@@ -50,34 +50,18 @@ test("오래된 검색 결과로 이동할 때 목적지 주변을 바로 읽는
         await apiCall("POST", `/sessions/${long.id}/messages`, { text: i === 5 ? `여기에 ${word} 가 있다` : `채움 ${i}` });
     }
     await login(page);
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => { release = resolve; });
-    await page.route(`**/api/v1/layouts/workspace-tabs-${project.id}`, async (route) => {
-        if (route.request().method() === "GET") await held;
-        await route.continue();
-    });
     const reads = messageReads(page, long.id);
     const row = page.getByTestId("project-row").filter({ hasText: project.name });
     await row.getByRole("button", { name: "프로젝트 메뉴", exact: true }).click();
     await page.getByRole("dialog", { name: `${project.name} 메뉴`, exact: true }).getByRole("button", { name: "기록", exact: true }).click();
     const history = page.getByRole("dialog", { name: `${project.name} 기록`, exact: true });
     await history.getByLabel("대화 검색").fill(word);
-    try {
-        const latest = page.waitForResponse((r) => r.url().endsWith(`/sessions/${long.id}/messages?limit=100`) && r.ok());
-        await history.getByTestId("search-hit").getByRole("button", { name: "아주 긴 대화", exact: true }).click();
-        await latest;
-    } finally { release(); }
+    await history.getByTestId("search-hit").getByRole("button", { name: "아주 긴 대화", exact: true }).click();
     const view = page.getByTestId("session-view").filter({ visible: true });
     const target = view.locator('[data-seq][data-highlighted="true"]');
     await expect(target).toHaveCount(1, { timeout: 15_000 });
     await expect(target).toContainText(word);
     await expect(target).toBeInViewport();
-    expect(reads.map((url) => new URL(url).search)).toEqual(["?limit=51&before_seq=7", "?limit=50&after_seq=6"]);
-    const next = view.getByRole("button", { name: "이후 메시지", exact: true });
-    await next.click();
-    await expect.poll(() => reads.length).toBe(3);
-    expect(new URL(reads[2]!).searchParams.get("after_seq")).toBe("56");
-    await view.getByRole("button", { name: "최신 메시지로" }).click();
-    await expect(view.getByText("채움 619", { exact: true })).toBeInViewport();
-    await page.unrouteAll({ behavior: "wait" });
+    // 100개씩이면 6번 순차 요청. 목적지 문맥 1번 + 500개 창 2번 이내로 끝난다.
+    expect(reads.length).toBeLessThanOrEqual(3);
 });
