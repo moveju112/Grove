@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, composerOption, ensureProjects, login, openDetails, openTool, sessionView } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openDetails, openTool, sessionView, state } from "./helpers";
 
 async function openDraft(page: Page, name: string) {
     const { a } = await ensureProjects();
@@ -51,7 +51,7 @@ test("오프라인에서 화면 입력은 유지하고 버튼·단축키 전송�
 });
 
 test("다른 탭의 업데이트 후 유일하게 남은 구 문서의 lazy asset을 보존하고 모든 문서가 전환한 뒤 회수한다", async ({ page }) => {
-    const path = join(process.cwd(), "build/client/sw.js");
+    const path = join(state().work, "web/sw.js");
     const original = readFileSync(path, "utf8");
     const version = original.match(/const VERSION = "([^"]+)"/)![1]!;
     let second: Page | undefined;
@@ -207,7 +207,7 @@ test("저장 데이터 유실과 앱 cache 삭제를 별도로 알리고 남아 
 });
 
 test("구 worker는 동의 전 입력을 유지하고 동의 후 한 번 전환하며 미전송 입력은 복원하지 않는다", async ({ page }) => {
-    const path = join(process.cwd(), "build/client/sw.js");
+    const path = join(state().work, "web/sw.js");
     const original = readFileSync(path, "utf8");
     try {
         const { session, view } = await openDraft(page, "update");

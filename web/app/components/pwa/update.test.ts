@@ -30,6 +30,13 @@ afterEach(() => {
 });
 
 describe("입력 유무에 따른 worker 전환", () => {
+    it("이미 제어되는 시작 화면은 캐시를 표시하면서 새 버전을 확인한다", async () => {
+        registration.waiting = null;
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        expect(registration.update).toHaveBeenCalledOnce();
+        expect(reload).not.toHaveBeenCalled();
+    });
     it("등록이 끝날 때 이미 설치 중인 worker도 상태를 관찰한다", async () => {
         const worker = new Worker();
         worker.state = "installing";
@@ -155,12 +162,14 @@ describe("상태 점의 수동 웹 확인", () => {
         registration.waiting = null;
         const worker = new Worker();
         worker.state = "installing";
+        // 시작 확인은 새 버전 없음으로 끝나고, 사용자의 수동 확인에서만 설치한다.
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        registration.update.mockClear();
         registration.update.mockImplementation(async () => {
             registration.installing = worker;
             registration.dispatchEvent(new Event("updatefound"));
         });
-        pwa.registerServiceWorker();
-        await Promise.resolve();
         const check = pwa.checkWebUpdate();
         expect(pwa.checkWebUpdate()).toBe(check);
         await Promise.resolve();

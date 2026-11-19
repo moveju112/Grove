@@ -10,7 +10,7 @@ import { usePageVisible, usePaneVisible } from "./paneVisibility";
 
 // stale: 보는 화면이 없어 무효화를 미뤄 둔 항목. 다시 구독하면 그때 한 번 읽는다(PANE-007).
 // waiting: 연결 문제로 읽지 못한 항목. 화면에는 오류 대신 기존 값과 로딩 상태를 두고, 연결이 돌아오면 다시 읽는다.
-type Flight = { again: boolean };
+type Flight = { again: boolean; discard: boolean };
 type Entry = { data: unknown; error: unknown; loading: boolean; version: number; stale: boolean; waiting?: boolean; flight?: Flight; fetcher: () => Promise<unknown> };
 /// 구독자가 없는 cache 항목의 최대 보관 수. 넘으면 오래된 것부터 버린다.
 export const IDLE_ENTRY_LIMIT = 200;
@@ -28,14 +28,15 @@ let onTransportFailure: (() => void) | null = null;
 /// 연결 상태 소유자(lifecycle)가 등록한다. 조회가 연결 문제로 실패하면 연결 확인을 요청한다.
 export function setTransportFailureHandler(handler: (() => void) | null) { onTransportFailure = handler; }
 
-async function load(key: string) {
+async function load(key: string, keepPending = false) {
     const e = entries.get(key);
     if (!e) return;
     if (e.flight) {
         e.flight.again = true;
+        e.flight.discard ||= !keepPending;
         return;
     }
-    const flight: Flight = { again: false };
+    const flight: Flight = { again: false, discard: false };
     e.flight = flight;
     ++e.version;
     const g = generation;
@@ -45,7 +46,7 @@ async function load(key: string) {
     try {
         const data = await e.fetcher();
         const current = entries.get(key);
-        if (g === generation && current?.flight === flight && !flight.again) {
+        if (g === generation && current?.flight === flight && !flight.discard) {
             current.data = data;
             current.error = null;
             current.waiting = false;
@@ -76,8 +77,8 @@ async function load(key: string) {
 }
 
 /// 보고 있는 key만 다시 읽고, 닫힌 화면의 key는 stale로 표시해 불필요한 요청을 보내지 않는다.
-function refresh(k: string) {
-    if (subs.get(k)?.size) void load(k);
+function refresh(k: string, keepPending = false) {
+    if (subs.get(k)?.size) void load(k, keepPending);
     else {
         const e = entries.get(k);
         if (e) e.stale = true;
@@ -389,13 +390,14 @@ export function applyEvent(e: EventRecord) {
 
 /// 연결이 돌아오면 연결 문제로 읽지 못한 조회만 다시 읽는다. 보이지 않는 항목은 다시 볼 때 읽는다.
 export function retryWaiting() {
-    for (const [k, e] of entries) if (e.waiting) refresh(k);
+    for (const [k, e] of entries) if (e.waiting && !e.flight) refresh(k);
 }
 
 /// 재동기화: 모든 조회를 다시 읽는다(NET-008).
-export function resyncAll() {
+export function resyncAll(keepPending = false) {
     resetStreamPartials();
-    for (const k of [...entries.keys()].sort((a, b) => refreshPriority(a) - refreshPriority(b))) refresh(k);
+    // 단순 연결 재검증은 진행 중인 정상 응답을 먼저 표시할 수 있다. 실제 변경 이벤트는 이전 결과를 버린다.
+    for (const k of [...entries.keys()].sort((a, b) => refreshPriority(a) - refreshPriority(b))) refresh(k, keepPending);
     refreshFiles();
 }
 

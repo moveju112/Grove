@@ -6,6 +6,7 @@ import { projectLayout, projectLayoutKey } from "./projectLayout";
 import { querySnapshot, subscribeQuery } from "./store";
 import { applyWorkspaceTabs, mergeWorkspaceTabs, workspaceTabs, workspaceTabsKey } from "./workspaceTabs";
 import { readWorkspaceResume, selectionKey } from "./workspaceStartup";
+import { hasPendingInput } from "../components/pwa/pendingInput";
 
 type Target = Omit<L.Tab, "id">;
 type How = "here" | "right" | "down";
@@ -24,6 +25,7 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
     const closed = useRef(false);
     const startupBase = useRef(base);
     const resumeProject = useRef<string | undefined>(undefined);
+    const userSelected = useRef(new Set<string>());
     const active = useCallback(() => !closed.current && owner.current === authGeneration() && isLoggedIn(), []);
     const home = useMemo(() => L.emptyLayout(), [base]);
     const publish = useCallback((id: string, layout: L.Layout) => {
@@ -71,18 +73,19 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
         }
         return pending;
     }, [makeStore]);
-    const loadShared = useCallback((projectId: string, local: L.Layout): Shared => {
+    const loadShared = useCallback((projectId: string, deviceLayout: Promise<L.Layout | null>): Shared => {
         const existing = shared.current.get(projectId);
         if (existing) return existing;
         const id = workspaceTabsKey(projectId);
         const query = `workspace-layout:${id}`;
         let initial: Promise<RemoteLayout> | undefined;
         const fetchLayout = () => api.get<RemoteLayout>(`/layouts/${id}`, { timeoutMs: 10_000 });
-        const store = makeStore(id, () => workspaceTabs(local), {
+        let local: L.Layout | null = null;
+        const store = makeStore(id, () => local ? workspaceTabs(local) : L.emptyLayout(), {
             get: () => initial ??= fetchLayout(),
             onRemote: (snapshot) => projectSnapshot(projectId, snapshot),
         });
-        const ready = store.restore();
+        const ready = store.restore(deviceLayout.then((layout) => { local = layout; }));
         const accept = () => {
             const { data } = querySnapshot<RemoteLayout>(query);
             if (data) store.acceptRemote(data);
@@ -106,15 +109,12 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
         const store = makeStore(id, () => legacy ? projectLayout(legacy, projectId) : L.emptyLayout());
         const cached = store.restoreLocal();
         if (cached) publish(id, L.withoutSettingsTabs(cached));
-        const ready = (cached ? Promise.resolve(null) : loadBase(baseId)).then(async (layout) => {
-            if (!active()) return;
-            legacy = layout;
-            const restored = await store.restore();
+        const migration = cached ? undefined : loadBase(baseId).then((layout) => { legacy = layout; });
+        const deviceLayout = store.restore(migration);
+        const sync = loadShared(projectId, deviceLayout);
+        const ready = Promise.all([deviceLayout, sync.ready]).then(([restored]) => {
             if (!restored || !active()) return;
             const local = L.withoutSettingsTabs(restored);
-            const sync = loadShared(projectId, local);
-            await sync.ready;
-            if (!active()) return;
             const snapshot = sync.store.snapshot();
             const resume = (startupBase.current === baseId && resumeProject.current === projectId)
                 || !L.allTabs(local).some((tab) => tab.kind === "session");
@@ -132,7 +132,16 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
         let cancelled = false;
         let stored: string | null = null;
         try { stored = localStorage.getItem(selectionKey(base)); } catch { /* 서버 배치의 위치로 복원한다. */ }
+        if (stored && !/^[a-z0-9-]{1,64}$/i.test(stored)) stored = null;
+        if (stored && active() && !userSelected.current.has(base)) {
+            loadProject(base, stored);
+            setSelected((cur) => base in cur ? cur : { ...cur, [base]: stored });
+        }
         const controller = new AbortController();
+        let interacted = false;
+        const markInteraction = (event: Event) => { if (event.isTrusted) interacted = true; };
+        document.addEventListener("pointerdown", markInteraction, true);
+        document.addEventListener("keydown", markInteraction, true);
         void (async () => {
             let remote: string | undefined;
             if (startupBase.current === base) {
@@ -148,11 +157,32 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
                 fallback = leaf?.tabs.find((tab) => tab.id === leaf.active_tab)?.project_id ?? null;
             }
             if (cancelled || !active()) return;
-            resumeProject.current = remote;
-            setSelected((cur) => base in cur ? cur : { ...cur, [base]: remote ?? fallback });
-        })();
-        return () => { cancelled = true; controller.abort(); };
-    }, [active, base, loadBase]);
+            const canResume = !userSelected.current.has(base) && (!stored || (!interacted && !hasPendingInput()));
+            if (remote && canResume) {
+                resumeProject.current = remote;
+                const entry = loadProject(base, remote);
+                // 서버 배치가 먼저 도착한 경우에도 공유 대화 선택을 한 번 반영한다.
+                const id = projectLayoutKey(base, remote);
+                const current = layoutsRef.current[id];
+                const snapshot = shared.current.get(remote)?.store.snapshot();
+                if (entry.hydrated && current && snapshot) {
+                    const next = applyWorkspaceTabs(current, snapshot, true);
+                    if (next !== current) { entry.store.change(next); publish(id, next); }
+                }
+            }
+            setSelected((cur) => userSelected.current.has(base) || (base in cur && !(remote && canResume))
+                ? cur : { ...cur, [base]: (canResume ? remote : undefined) ?? fallback });
+        })().finally(() => {
+            document.removeEventListener("pointerdown", markInteraction, true);
+            document.removeEventListener("keydown", markInteraction, true);
+        });
+        return () => {
+            cancelled = true;
+            controller.abort();
+            document.removeEventListener("pointerdown", markInteraction, true);
+            document.removeEventListener("keydown", markInteraction, true);
+        };
+    }, [active, base, loadBase, loadProject, publish]);
     const projectId = selected[base];
     useEffect(() => {
         if (projectId) loadProject(base, projectId);
@@ -166,6 +196,8 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
 
     const select = useCallback((baseId: string, id: string) => {
         if (!active()) return;
+        userSelected.current.add(baseId);
+        if (startupBase.current === baseId) resumeProject.current = undefined;
         setSelected((cur) => ({ ...cur, [baseId]: id }));
         try { localStorage.setItem(selectionKey(baseId), id); }
         catch { notice("이 기기에 선택한 프로젝트를 보존하지 못했습니다. 저장 공간을 확인하세요."); }

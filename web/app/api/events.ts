@@ -13,7 +13,7 @@ const SSE_QUIET_MS = 17_000;
 export type StreamHandlers = {
     onEvents: (events: EventRecord[]) => void;
     onPartial: (sessionId: string, snapshot: unknown) => void;
-    onResync: (full: boolean) => void;
+    onResync: (kind: "initial" | "reset" | "reconnect" | "subscription") => void;
     /// connecting: 처음 연결 중, live: 연결됨, reconnecting: 끊긴 뒤 다시 연결 중, offline: 끊김(retryAt에 재시도),
     /// auth_expired: 인증이 만료되어 재시도하지 않음.
     onStatus: (s: StreamStatus, retryAt?: number) => void;
@@ -30,12 +30,14 @@ export class EventStream {
     private everLive = false;
     private wake: (() => void) | null = null;
     private lastByteAt = 0;
+    private resumeTimer: ReturnType<typeof setTimeout> | undefined;
     private wasHidden = false;
-    private onOnline = () => this.retryNow();
+    private onOnline = () => this.resume();
     private onVisibility = () => {
         const hidden = document.visibilityState === "hidden";
         const resumed = this.wasHidden && !hidden;
         this.wasHidden = hidden;
+        if (hidden) this.clearResumeTimer();
         if (resumed) this.resume();
     };
     private onPageShow = (event: PageTransitionEvent) => {
@@ -69,17 +71,32 @@ export class EventStream {
         if (this.stopped || (typeof navigator !== "undefined" && navigator.onLine === false)) return;
         const active = this.abort;
         const waiting = this.wake !== null;
+        this.clearResumeTimer();
         this.retryNow();
         void probeResumedTransport().then((result) => {
-            if (this.stopped || this.abort !== active || waiting) return;
-            if (result === "dead" || (result === "direct" && Date.now() - this.lastByteAt >= SSE_QUIET_MS)) {
+            if (this.stopped || this.wasHidden || !active || this.abort !== active || waiting) return;
+            const restart = () => {
+                if (this.stopped || this.wasHidden || this.abort !== active || active.signal.aborted) return;
                 if (this.wake) this.retryNow();
                 else {
+                    this.transportInterrupted = true;
                     this.restartNow = true;
-                    active?.abort();
+                    active.abort();
                 }
+            };
+            if (result === "dead") restart();
+            if (result === "direct") {
+                const remaining = SSE_QUIET_MS - (Date.now() - this.lastByteAt);
+                if (remaining <= 0) restart();
+                // 복귀가 keep-alive 경계보다 빨라도 한번 더 확인한다. 새 byte가 오면 정상 연결이다.
+                else this.resumeTimer = setTimeout(restart, remaining);
             }
         });
+    }
+
+    private clearResumeTimer() {
+        clearTimeout(this.resumeTimer);
+        this.resumeTimer = undefined;
     }
 
     /// 상세 stream을 받을 세션 목록 변경(화면에 보이는 세션만, NET-009). 연결을 다시 맺는다.
@@ -95,9 +112,11 @@ export class EventStream {
     }
 
     private restartNow = false;
+    private transportInterrupted = false;
 
     stop() {
         this.stopped = true;
+        this.clearResumeTimer();
         if (typeof window !== "undefined") {
             window.removeEventListener("online", this.onOnline);
             window.removeEventListener("pageshow", this.onPageShow);
@@ -150,6 +169,7 @@ export class EventStream {
                     if (this.stopped || signal.aborted) break;
                     if (done) break;
                     this.lastByteAt = Date.now();
+                    this.clearResumeTimer();
                     const events: EventRecord[] = [];
                     const flush = () => { if (events.length) this.h.onEvents(events.splice(0)); };
                     for (const f of parser.push(value)) {
@@ -157,14 +177,16 @@ export class EventStream {
                         if (f.event !== "event") flush();
                         if (f.event === "hello") {
                             this.attempt = 0;
-                            this.everLive = true;
                             this.h.onStatus("live");
                             const c = JSON.parse(f.data) as { cursor: number; capabilities?: unknown };
                             setCapabilities(c.capabilities);
                             const full = this.cursor.seq === null;
                             if (full) this.cursor.seq = c.cursor;
-                            // 확정 상태는 cursor로 따라잡고, 비영속 partial은 접속마다 교체한다.
-                            this.h.onResync(full);
+                            const kind = full ? (this.everLive ? "reset" : "initial")
+                                : this.transportInterrupted ? "reconnect" : "subscription";
+                            this.everLive = true;
+                            this.transportInterrupted = false;
+                            this.h.onResync(kind);
                         } else if (f.event === "event") {
                             try {
                                 const e = parseContract("EventRecord", JSON.parse(f.data));
@@ -186,6 +208,7 @@ export class EventStream {
             } catch {
                 // 아래에서 재접속
             } finally {
+                this.clearResumeTimer();
                 if (reader) {
                     try { await reader.cancel(); }
                     catch { /* 이미 오류·abort로 닫힌 reader의 cancel은 다시 거절될 수 있다. */ }
@@ -204,6 +227,7 @@ export class EventStream {
                 continue;
             }
             const wait = backoff(this.attempt++);
+            this.transportInterrupted = true;
             await new Promise<void>((r) => {
                 const t = setTimeout(r, wait);
                 this.wake = () => {

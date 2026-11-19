@@ -10,6 +10,7 @@ import { workspaceTabsKey } from "../app/state/workspaceTabs";
 import { api, enter, expectNoConnectionNoise, freeze, net, target } from "./relay";
 
 const local = () => target().target === "local";
+const fixtureProjects = new Set<string>();
 
 /// relay endpoint로 열린 WebSocket 수. HTTP 요청은 모두 하나의 다중화 연결을 공유해야 한다.
 function countRelaySockets(page: Page) {
@@ -22,7 +23,9 @@ function countRelaySockets(page: Page) {
 async function project(name: string, files: Record<string, string> = {}) {
     const root = mkdtempSync(join(local() ? target().work : tmpdir(), `${name}-`));
     for (const [file, content] of Object.entries(files)) writeFileSync(join(root, file), content);
-    return api<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+    const created = await api<{ id: string; name: string }>("POST", "/projects", { root_path: root });
+    if (local()) fixtureProjects.add(created.id);
+    return created;
 }
 
 async function openProject(page: Page, name: string) {
@@ -36,7 +39,16 @@ async function openProject(page: Page, name: string) {
 }
 
 test.afterEach(async () => {
-    if (local()) { await net("delay", 0); await net("blackhole", false); }
+    if (!local()) return;
+    await net("delay", 0);
+    await net("blackhole", false);
+    // 공용 이어보기는 모든 기기의 최근 공유 탭을 읽는다. 격리 스택의 이전 시험만 보관한다.
+    for (const id of fixtureProjects) {
+        const path = `/projects/${id}`;
+        const { revision } = await api<{ revision: number }>("GET", path);
+        await api("PATCH", path, { expected_revision: revision, archived: true });
+        fixtureProjects.delete(id);
+    }
 });
 
 test("첫 화면·프로젝트·메시지 저장은 암호화 연결 하나로 동작한다", async ({ page }, info) => {

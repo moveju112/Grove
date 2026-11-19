@@ -98,6 +98,17 @@ describe.each(["/", "/grove/", "/grove/child/"])("worker at %s", (base) => {
         expect(await response!.text()).toBe("not found");
     });
 
+    it("opens the installed start document immediately, but preserves network responses for other navigations", async () => {
+        const w = worker(base);
+        await w.dispatch("install");
+        w.fetch.mockImplementation(() => new Promise(() => undefined));
+        const response = await w.dispatch("fetch", w.request(`${base}#connect=fixture`, "GET", "navigate"));
+        expect(await response!.text()).toBe(`shell:${base}`);
+        expect(w.fetch).not.toHaveBeenCalled();
+        w.fetch.mockResolvedValue(new Response("unavailable", { status: 503 }));
+        expect((await w.dispatch("fetch", w.request(`${base}?custom=1`, "GET", "navigate")))!.status).toBe(503);
+    });
+
     it("keeps navigation on the controlling worker's shell until the user activates the update", async () => {
         const w = worker(base);
         await w.dispatch("install");

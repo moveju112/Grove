@@ -202,6 +202,23 @@ describe("연결 문제 조회", () => {
 });
 
 describe("중복 viewer의 조회 구독(PANE-007)", () => {
+    it("연결 재검증 중 같은 대화의 진행 중 응답을 먼저 표시하되 후속 조회는 유지한다", async () => {
+        const releases: ((v: string) => void)[] = [];
+        const load = vi.fn(() => new Promise<string>((resolve) => releases.push(resolve)));
+        const off = subscribeQuery("messages:resume", load, () => undefined);
+        try {
+            resyncAll(true);
+            resyncAll(true);
+            expect(load).toHaveBeenCalledTimes(1);
+            releases[0]!("first");
+            await settle();
+            expect(querySnapshot("messages:resume").data).toBe("first");
+            expect(load).toHaveBeenCalledTimes(2);
+            releases[1]!("current");
+            await settle();
+            expect(querySnapshot("messages:resume").data).toBe("current");
+        } finally { off(); clearServerCache(); }
+    });
     it("첫 조회 중 이벤트가 몰려도 한 요청과 후속 재검증 한 번으로 합친다", async () => {
         const releases: ((value: string) => void)[] = [];
         const fetcher = vi.fn(() => new Promise<string>((resolve) => releases.push(resolve)));

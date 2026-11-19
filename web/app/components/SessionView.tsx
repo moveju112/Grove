@@ -17,6 +17,7 @@ import { When } from "./When";
 import { useFocusRequest } from "../state/focus";
 import { queueText } from "../state/queue";
 import { ApiError, api, isLoggedIn } from "../api/client";
+import { readConversation } from "../state/workspaceStartup";
 import type { BotRoom, Definition, Followup as FollowupInfo, Message, MessagePage, Project, RecentItem, Session, ToolCallRow, Turn } from "../api/generated";
 import { useLive, useQuery } from "../state/store";
 import { Composer, type FollowKind, type RunCommand, type SendOptions } from "./Composer";
@@ -68,18 +69,18 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     const serverBlocked = useServerBlockReason();
     useEffect(() => visible ? deliveryTiming.watch(sessionId) : undefined, [visible, sessionId]);
     const prefs = usePrefs();
-    const session = useQuery<Session>(`session:${sessionId}`, () => api.get(`/sessions/${sessionId}`));
+    const session = useQuery<Session>(`session:${sessionId}`, () => readConversation.session(sessionId));
     useEffect(() => {
         if (session.data) onTitleChange(session.data.title);
     }, [session.data?.title, onTitleChange]);
     const project = useQuery<Project>(`project:${projectId}`, () => api.get(`/projects/${projectId}`));
-    const latest = useQuery<MessagePage>(`messages:${sessionId}`, () => api.get(`/sessions/${sessionId}/messages?limit=100`));
-    const turns = useQuery<Turn[]>(`turns:${sessionId}`, () => api.get(`/sessions/${sessionId}/turns?limit=5`));
+    const latest = useQuery<MessagePage>(`messages:${sessionId}`, () => readConversation.messages(sessionId));
+    const turns = useQuery<Turn[]>(`turns:${sessionId}`, () => readConversation.turns(sessionId));
     const lastTurn = turns.data?.[0];
     const active = turns.data?.find((t) => ["queued", "running", "awaiting_approval"].includes(t.status));
     const failedTurn = !active && lastTurn && ["failed", "interrupted"].includes(lastTurn.status) && !lastTurn.acknowledged_at ? lastTurn : undefined;
     const completedTurnId = lastTurn?.status === "completed" ? lastTurn.id : undefined;
-    const calls = useQuery<ToolCallRow[]>(`calls:${sessionId}`, () => api.get(`/tool-calls?session_id=${sessionId}&limit=200`));
+    const calls = useQuery<ToolCallRow[]>(`calls:${sessionId}`, () => readConversation.calls(sessionId));
     const workflows = useQuery<Definition[]>("definitions:workflow", () => api.get("/definitions?kind=workflow"));
     const partial = useLive((live) => {
         const snapshot = live.partials[sessionId] as (ResponseContent & { turn_id: string; tool_calls: string[] }) | null | undefined;

@@ -34,7 +34,10 @@ test("이벤트 연결이 끊기면 재시도 시간을 보이고, 지금 재연
 });
 
 test("refresh가 거부되면 재시도를 멈추고 로그인 화면에서 만료를 안내한다", async ({ page }) => {
-    await ensureProjects();
+    const { a } = await ensureProjects();
+    const title = `만료 검사 ${Date.now()}`;
+    const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
     await expect(page.getByTestId("conn")).toHaveText("연결됨");
     // access token이 만료되고 refresh도 거부되는 상황
@@ -45,11 +48,11 @@ test("refresh가 거부되면 재시도를 멈추고 로그인 화면에서 만�
         if (r.url().includes("/api/v1/events?")) events += 1;
     });
     // 구독을 바꿔 다시 연결하게 한다
-    await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
-    await page.route("**/api/v1/**", (r) => (r.request().url().includes("/auth/") || r.request().url().includes("/events?") ? r.fallback() : r.fulfill({ status: 401, body: "" })));
-    await expect(page.getByRole("form", { name: "로그인" })).toBeVisible({ timeout: 10_000 });
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title, exact: true }).click();
+    await expect(page.getByRole("button", { name: "페어링 링크·QR로 등록", exact: true })).toBeVisible({ timeout: 10_000 });
     await expect(page.getByTestId("auth-expired")).toContainText("로그인이 만료");
     const n = events;
+    expect(n).toBeGreaterThan(0);
     await page.waitForTimeout(1500);
     expect(events, "만료 뒤에는 이벤트 재연결을 반복하지 않는다").toBe(n);
 });

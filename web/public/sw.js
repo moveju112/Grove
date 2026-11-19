@@ -92,11 +92,12 @@ self.addEventListener("fetch", (event) => {
     const url = new URL(event.request.url);
     if (event.request.method !== "GET" || !inScope(url)) return;
     // 제어 중인 worker와 같은 빌드의 HTML을 유지한다. 서버에 새 HTML이 있어도 사용자 확인 전에는 섞지 않는다.
-    // 온라인 404/오류를 성공한 shell로 바꾸지는 않는다.
+    // 앱 시작 주소만 즉시 표시한다. 다른 경로의 온라인 오류는 실제 응답을 유지한다.
     if (event.request.mode === "navigate") {
         event.respondWith((async () => {
             const cache = await caches.open(CACHE);
             const shell = await cache.match(SCOPE.href, { ignoreSearch: true });
+            if (shell && url.pathname === BASE && !url.search) return documentShell(shell);
             try {
                 const response = await fetch(event.request);
                 if (!response.ok) return response;

@@ -28,7 +28,7 @@ describe("화면 복귀", () => {
         const stream = new EventStream(h);
         try {
             stream.start(10);
-            await vi.waitFor(() => expect(h.onResync).toHaveBeenCalledExactlyOnceWith(false));
+            await vi.waitFor(() => expect(h.onResync).toHaveBeenCalledExactlyOnceWith("subscription"));
             change("hidden");
             change("visible");
             await Promise.resolve();
@@ -38,6 +38,43 @@ describe("화면 복귀", () => {
             change("visible");
             await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
             expect(fetcher.mock.calls[1]?.[0]).toContain("cursor=10");
+        } finally { stream.stop(); vi.useRealTimers(); }
+    });
+
+    it.each([false, true])("17초 전에 돌아온 직접 연결의 무응답을 확인한다 (keep-alive=%s)", async (heartbeat) => {
+        const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+        vi.stubGlobal("document", doc);
+        let body!: ReadableStreamDefaultController<Uint8Array>;
+        const fetcher = vi.fn((_url: string, init: RequestInit) => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+            start(c) {
+                body = c;
+                c.enqueue(hello);
+                init.signal!.addEventListener("abort", () => c.error(new DOMException("fixture abort", "AbortError")), { once: true });
+            },
+        }))));
+        vi.stubGlobal("fetch", fetcher);
+        let live!: () => void;
+        const ready = new Promise<void>((resolve) => { live = resolve; });
+        const h = handlers((status) => { if (status === "live") live(); });
+        const stream = new EventStream(h);
+        vi.useFakeTimers();
+        try {
+            stream.start(10);
+            await ready;
+            doc.visibilityState = "hidden";
+            doc.dispatchEvent(new Event("visibilitychange"));
+            await vi.advanceTimersByTimeAsync(10_000);
+            doc.visibilityState = "visible";
+            doc.dispatchEvent(new Event("visibilitychange"));
+            await vi.advanceTimersByTimeAsync(2_000);
+            expect(fetcher).toHaveBeenCalledTimes(1);
+            if (heartbeat) body.enqueue(new TextEncoder().encode(": hb\n\n"));
+            await vi.advanceTimersByTimeAsync(6_000);
+            expect(fetcher).toHaveBeenCalledTimes(heartbeat ? 1 : 2);
+            if (!heartbeat) {
+                expect(fetcher.mock.calls[1]?.[0]).toContain("cursor=10");
+                expect(h.onResync).toHaveBeenLastCalledWith("reconnect");
+            }
         } finally { stream.stop(); vi.useRealTimers(); }
     });
 
@@ -145,7 +182,7 @@ describe("대화 상세 stream 소유권", () => {
             controller.error(new TypeError("fixture connection lost"));
             await secondLive;
             expect(new URL(urls[1]!, "http://fixture").searchParams.get("cursor")).toBe("10");
-            expect(onResync.mock.calls).toEqual([[true], [false]]);
+            expect(onResync.mock.calls).toEqual([["initial"], ["reconnect"]]);
             expect(snapshots).toEqual({});
             controller.enqueue(new TextEncoder().encode('event: partial\ndata: {"session_id":"s","snapshot":{"turn_id":"next","text":"다음 응답"}}\n\n'));
             await partialReceived;

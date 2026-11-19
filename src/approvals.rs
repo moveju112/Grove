@@ -697,14 +697,23 @@ pub struct ListQuery {
     pub limit: Option<i64>,
 }
 
+fn list_sql(q: &ListQuery) -> String {
+    // OR로 선택 조건을 합치면 SQLite가 대화별 인덱스를 타지 못한다.
+    let filter = match (q.session_id.is_some(), q.status.is_some()) {
+        (true, true) => "WHERE session_id = ?1 AND status = ?2",
+        (true, false) => "WHERE session_id = ?1",
+        (false, true) => "WHERE status = ?2",
+        (false, false) => "",
+    };
+    format!("SELECT {COLS} FROM tool_calls {filter} ORDER BY created_at DESC, id DESC LIMIT ?3")
+}
+
 pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<ListQuery>) -> ApiResult<Json<Vec<ToolCallRow>>> {
     let limit = q.limit.unwrap_or(100).clamp(1, 500);
     Ok(Json(
         app.db
             .call(move |c| {
-                let mut st = c.prepare(&format!(
-                    "SELECT {COLS} FROM tool_calls WHERE (?1 IS NULL OR session_id = ?1) AND (?2 IS NULL OR status = ?2) ORDER BY created_at DESC, id DESC LIMIT ?3"
-                ))?;
+                let mut st = c.prepare_cached(&list_sql(&q))?;
                 let v = st.query_map(params![q.session_id, q.status, limit], row)?.collect::<Result<Vec<_>, _>>()?;
                 Ok(v)
             })
@@ -1054,6 +1063,25 @@ pub async fn expire_due(app: &App) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_tool_call_list_uses_session_index_with_or_without_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("grove.db");
+        let _db = crate::store::Db::open(&path).unwrap();
+        let c = Connection::open(&path).unwrap();
+        for session_id in [None, Some("s".to_owned())] {
+            for status in [None, Some("pending_approval".to_owned())] {
+                let q = ListQuery { session_id: session_id.clone(), status, limit: Some(200) };
+                let mut plan = c.prepare(&format!("EXPLAIN QUERY PLAN {}", list_sql(&q))).unwrap();
+                let rows = plan.query_map(params![q.session_id, q.status, q.limit], |r| r.get::<_, String>(3))
+                    .unwrap().collect::<Result<Vec<_>, _>>().unwrap();
+                if session_id.is_some() {
+                    assert!(rows.iter().any(|r| r.contains("SEARCH tool_calls USING INDEX tool_calls_session (session_id=?)")), "{rows:?}");
+                }
+            }
+        }
+    }
 
     #[test]
     fn parallel_execution_requires_known_read_only_effects() {

@@ -63,6 +63,8 @@ export function registerServiceWorker() {
         };
         reg.addEventListener("updatefound", observeInstalling);
         observeInstalling();
+        // 시작 HTML은 cache에서 즉시 표시할 수 있다. 새 버전 확인은 화면 표시·인증과 별도로 진행한다.
+        if (navigator.serviceWorker.controller && navigator.onLine && !reg.installing && !reg.waiting && !updateRequested) void checkForUpdate();
         setInterval(() => {
             if (navigator.onLine) void checkForUpdate();
         }, 30 * 60 * 1000);

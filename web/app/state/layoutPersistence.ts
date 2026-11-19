@@ -89,12 +89,14 @@ export class LayoutPersistence {
         return local.layout;
     }
 
-    async restore(): Promise<Layout | null> {
+    async restore(beforeApply?: Promise<void>): Promise<Layout | null> {
         let local = this.read();
         const originalEdit = local?.edit;
         let remote: RemoteLayout | null = null;
         try { remote = await this.options.get(this.controller.signal); }
         catch { /* 통신 실패 시 검증된 로컬 사본을 쓴다. */ }
+        // 서버 조회는 즉시 시작하고, 이관/초기값 의존성은 응답 적용에만 사용한다.
+        if (beforeApply) await beforeApply;
         if (!this.active()) return null;
         // GET을 기다리는 동안 다른 창에서 저장한 더 최신 사본도 포함한다.
         local = this.read() ?? local;

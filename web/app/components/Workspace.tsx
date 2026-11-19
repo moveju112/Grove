@@ -289,9 +289,9 @@ export function Workspace() {
                 }
             }),
             onPartial: queuePartial,
-            onResync: (full) => {
-                if (full) resyncAll();
-                else { resetStreamPartials(); retryWaiting(); }
+            onResync: (kind) => {
+                if (kind === "subscription") { resetStreamPartials(); retryWaiting(); }
+                else resyncAll(kind !== "reset");
             },
             onStatus: (status, retryAt) => setLive((l) => ({ ...l, status, retryAt })),
         });
