@@ -198,10 +198,8 @@ async fn unborn_detached_linked_nested_and_actual_device_authority() {
     git(&root, &["remote", "remove", "origin"]);
     let (_, expected) = s.get(&format!("/api/v1/projects/{id}/git/context?head=(initial)")).await;
     assert_eq!(expected["status"], "ok");
-    // read_only 모델 정책은 직접 Git 변경 API의 권한과 혼동하지 않는다.
-    let (status, _) = s.send(Method::PUT, "/api/v1/settings/server/-/tools.mode", json!({"expected_revision": 0, "value": "read_only"})).await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{id}/tools.mode"), json!({"expected_revision": 0, "value": "ask"})).await;
+    // 모델 도구 모드는 직접 Git 변경 API의 권한과 별개다.
+    let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{id}/tools.mode"), json!({"expected_revision": 0, "value": "bypass"})).await;
     assert_eq!(status, StatusCode::OK);
     let device = s.registered_device("fixture-device").await;
     let token = device["token"].as_str().unwrap();
@@ -209,7 +207,7 @@ async fn unborn_detached_linked_nested_and_actual_device_authority() {
     assert_eq!(response.status(), StatusCode::OK);
     let data: Value = response.json().await.unwrap();
     assert!(data["authority"].get("is_owner").is_none());
-    assert_eq!(data["authority"]["tool_mode"], "read_only");
+    assert_eq!(data["authority"]["tool_mode"], "bypass");
     assert_eq!(data["authority"]["direct_git"], "authenticated");
     let (_, status) = s.get(&format!("/api/v1/projects/{id}/git/status")).await;
     let response = s.raw(Method::POST, &format!("/api/v1/projects/{id}/git/commit"),

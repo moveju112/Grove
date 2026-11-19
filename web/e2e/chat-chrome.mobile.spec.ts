@@ -66,7 +66,13 @@ for (const theme of ["light", "dark"] as const) {
         const view = sessionView(page, session.id);
         const pane = page.getByTestId("pane-body").filter({ has: view });
         const input = view.getByLabel("메시지 입력", { exact: true });
+        await expect(input).toHaveCSS("resize", "none");
+        const inputHeight = () => input.evaluate((node) => node.getBoundingClientRect().height);
+        const oneLineHeight = await inputHeight();
+        await input.fill("첫 줄\n둘째 줄\n셋째 줄");
+        await expect.poll(inputHeight).toBeGreaterThan(oneLineHeight);
         await input.fill("화면 크기가 바뀌어도 보존할 초안");
+        await expect.poll(inputHeight).toBe(oneLineHeight);
 
         for (const height of [844, 620, 844]) {
             await page.setViewportSize({ width: 390, height });

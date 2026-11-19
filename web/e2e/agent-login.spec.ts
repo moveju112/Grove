@@ -23,7 +23,17 @@ test("등록 기기가 모바일에서 공식 인증을 시작하고 재접속·
     await expect(codex.getByRole("status").filter({ hasText: /\S/ })).toHaveText("로그인 필요");
     await codex.getByRole("button", { name: "로그인", exact: true }).click();
     await expect(codex.getByLabel("기기 인증 코드")).toHaveText("ABCD-12345");
-    await expect(codex.getByRole("link")).toHaveAttribute("href", "https://auth.openai.com/codex/device");
+    await expect(codex.getByText("OpenAI 페이지에 코드 입력", { exact: true })).toBeVisible();
+    const openai = codex.getByRole("link", { name: /^OpenAI 인증 페이지 열기/ });
+    await expect(openai).toHaveAttribute("href", "https://auth.openai.com/codex/device");
+    await expect(openai).toHaveAttribute("referrerpolicy", "no-referrer");
+    await expect(codex.getByLabel("일회용 인증 코드")).toHaveCount(0);
+    await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+    await codex.getByRole("button", { name: "복사", exact: true }).click();
+    await expect(codex.getByText("기기 코드를 복사했어요.")).toBeVisible();
+    expect(await page.evaluate(() => navigator.clipboard.readText())).toBe("ABCD-12345");
+    await codex.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath("codex-login-mobile.png") });
     const attempt = await apiCall<{ attempt: { id: string } }>("GET", "/agent-backends/codex_cli/auth");
     const start = readFileSync(join(state().cliDir!, "codex-login-start"), "utf8");
     await apiCall("POST", "/agent-backends/codex_cli/login", { id: attempt.attempt.id, previous_id: null });
@@ -32,7 +42,7 @@ test("등록 기기가 모바일에서 공식 인증을 시작하고 재접속·
     await open();
     await expect(codex.getByLabel("기기 인증 코드")).toHaveText("ABCD-12345");
     const pid = Number(readFileSync(join(state().cliDir!, "codex-login-pid"), "utf8"));
-    await codex.getByRole("button", { name: "취소", exact: true }).click();
+    await codex.getByRole("button", { name: "인증 취소", exact: true }).click();
     await expect(codex.getByText("로그인 취소됨", { exact: true })).toBeVisible();
     await expect.poll(() => {
         try { process.kill(pid, 0); return false; }
@@ -44,7 +54,9 @@ test("등록 기기가 모바일에서 공식 인증을 시작하고 재접속·
     writeFileSync(join(state().cliDir!, "approve-codex"), "approve");
     await expect(codex.getByRole("status").filter({ hasText: /\S/ })).toHaveText("로그인됨");
     await claude.getByRole("button", { name: "로그인", exact: true }).click();
-    await expect(claude.getByRole("link")).toHaveAttribute("href", "https://claude.com/cai/oauth/authorize?state=fixture");
+    await expect(claude.getByRole("link", { name: /^Claude 인증 페이지 열기/ })).toHaveAttribute("href", "https://claude.com/cai/oauth/authorize?state=fixture");
+    await expect(claude.getByText("Grove에 코드 붙여넣기", { exact: true })).toBeVisible();
+    await expect(claude.getByRole("button", { name: "인증 완료", exact: true })).toBeDisabled();
     await claude.scrollIntoViewIfNeeded();
     expect(await claude.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath("agent-login-mobile.png") });
@@ -56,7 +68,7 @@ test("등록 기기가 모바일에서 공식 인증을 시작하고 재접속·
     expect(await claude.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
     await page.screenshot({ path: info.outputPath("agent-login-desktop.png") });
     await claude.getByLabel("일회용 인증 코드").fill("fixture-code");
-    await claude.getByRole("button", { name: "확인", exact: true }).click();
+    await claude.getByRole("button", { name: "인증 완료", exact: true }).click();
     await expect(claude.getByRole("status").filter({ hasText: /\S/ })).toHaveText("로그인됨");
     await expect(claude.getByLabel("일회용 인증 코드")).toHaveCount(0);
     const data = await apiCall("GET", "/agent-backends/claude_code/auth");

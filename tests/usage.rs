@@ -172,3 +172,72 @@ async fn provider_timing_includes_cancelled_calls_and_is_preserved_after_restart
     assert_eq!(restored["timing"], finished["timing"]);
     assert_eq!(f.requests().len(), 1, "다시 시작해도 공급자를 재호출하지 않는다");
 }
+
+#[tokio::test]
+async fn auxiliary_title_memory_and_discarded_summary_calls_are_counted_by_their_own_model() {
+    let s = TestServer::start().await;
+    let main = Fixture::start().await;
+    let aux = Fixture::start().await;
+    let prof = s.fixture_profile(&main.base).await;
+    let aux_prof = s.fixture_profile(&aux.base).await;
+    let p = s.create_project("aux usage").await;
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    for (key, value) in [
+        ("session.title_profile", json!({ "profile_id": aux_prof, "model": "title-small" })),
+        ("context.summary_profile", json!({ "profile_id": aux_prof, "model": "summary-large" })),
+        ("memory.profile", json!({ "profile_id": aux_prof, "model": "memory-small", "effort": "medium" })),
+        ("memory.enabled", json!(true)),
+        ("session.auto_title", json!(false)),
+    ] {
+        let (st, v) = s.send(reqwest::Method::PUT, &format!("/api/v1/settings/server/-/{key}"), json!({ "expected_revision": 0, "value": value })).await;
+        assert!(st.is_success(), "{key}: {v}");
+    }
+    for text in ["첫 답", "둘째 답"] {
+        main.push(fixture::text(text));
+        turn(&s, &sid, &prof, None).await;
+    }
+    aux.push(fixture::text("\"보조 제목\""));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/title"), json!({})).await;
+    assert!(st.is_success() && v["applied"] == true, "{v}");
+    // 원문보다 긴 요약은 버려지지만 모델 사용량은 생긴다.
+    aux.push(fixture::text(&"긴 요약 ".repeat(2000)));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/compact"), json!({ "profile_id": prof })).await;
+    assert_eq!(st, StatusCode::BAD_GATEWAY, "{v}");
+    aux.push(fixture::text("결정: 보조 사용량을 기록한다."));
+    let app = &s.server.as_ref().unwrap().app;
+    grove::memory::tick(app).await.unwrap();
+    // 응답을 받지 못한 실패는 원인만 남기고 사용량에는 넣지 않는다.
+    aux.push(fixture::Step::Error(400, "model unavailable".into()));
+    let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/title"), json!({})).await;
+    assert_eq!(v["reason"], "model_error", "{v}");
+    assert_eq!(aux.requests().len(), 4);
+
+    let calls = app.db.call(|c| {
+        let mut st = c.prepare("SELECT kind, status, error_code, model, usage IS NOT NULL FROM aux_model_calls ORDER BY created_at, rowid")?;
+        Ok(st.query_map([], |r| Ok(json!([r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<String>>(2)?, r.get::<_, String>(3)?, r.get::<_, bool>(4)?])))?
+            .collect::<Result<Vec<_>, _>>()?)
+    }).await.unwrap();
+    assert_eq!(calls, vec![
+        json!(["title", "applied", null, "title-small", true]),
+        json!(["compaction", "discarded", "summary_not_shorter", "summary-large", true]),
+        json!(["maintainer", "applied", null, "memory-small", true]),
+        json!(["title", "failed", "model_error", "title-small", false]),
+    ]);
+
+    let now = time::OffsetDateTime::now_utc();
+    let fmt = |t: time::OffsetDateTime| t.format(&time::format_description::well_known::Rfc3339).unwrap();
+    let (from, to) = (fmt(now - time::Duration::days(1)), fmt(now + time::Duration::days(1)));
+    let (_, models) = s.get(&format!("/api/v1/usage?from={from}&to={to}&group_by=model")).await;
+    assert_eq!(models["total"]["responses"], 5, "대화 응답 2개와 보조 응답 3개: {models}");
+    assert_eq!(models["total"]["input_tokens"], 55);
+    for model in ["title-small", "summary-large", "memory-small"] {
+        assert_eq!(row(&models, model)["responses"], 1, "{model}: {models}");
+    }
+    let (_, agents) = s.get(&format!("/api/v1/usage?from={from}&to={to}&group_by=agent")).await;
+    for agent in ["(제목 생성)", "(압축 요약)", "(메모리 정리)"] {
+        assert_eq!(row(&agents, agent)["responses"], 1, "{agent}: {agents}");
+    }
+    let (_, dashboard) = s.get(&format!("/api/v1/usage/dashboard?from={from}&to={to}&group_by=hour")).await;
+    assert_eq!(dashboard["total"]["responses"], 5, "{dashboard}");
+    assert!(dashboard["models"].as_array().unwrap().iter().any(|m| m["key"] == "memory-small"), "{dashboard}");
+}

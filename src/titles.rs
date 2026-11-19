@@ -66,16 +66,38 @@ async fn generate_inner(app: &App, session_id: &str, profile_id: Option<String>,
         temperature: None, effort: selection.effort.clone(), cli: None,
     };
     let mut cancel = app.shutdown_rx.clone();
+    let started = std::time::Instant::now();
     let out = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let _permit = crate::model_limits::auxiliary(app, session_id, &rp, &mut cancel).await?;
         provider::stream(&rp, &req, &mut cancel, &mut |_| {}).await.map_err(|_| ApiError::conflict("model_error", "제목을 생성하지 못했습니다"))
     }).await;
-    let title = match out {
-        Ok(Ok(o)) => clean(&provider::scrub_provider_text(&rp, &o.text)),
-        Ok(Err(_)) => return Ok(json!({ "applied": false, "reason": "model_error" })),
-        Err(_) => return Ok(json!({ "applied": false, "reason": "timeout" })),
+    let provider_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
+    let (usage, outcome) = match out {
+        Ok(Ok(o)) => {
+            let title = clean(&provider::scrub_provider_text(&rp, &o.text));
+            (Some(o.usage), match title {
+                Some(title) => apply(app, session_id, title, rev, seq, auto, selection.clone(), def_rev).await,
+                None => Ok(json!({ "applied": false, "reason": "empty_output" })),
+            })
+        }
+        Ok(Err(_)) => (None, Ok(json!({ "applied": false, "reason": "model_error" }))),
+        Err(_) => (None, Ok(json!({ "applied": false, "reason": "timeout" }))),
     };
-    let Some(title) = title else { return Ok(json!({ "applied": false, "reason": "empty_output" })); };
+    let reason = match &outcome {
+        Ok(v) if v["applied"] == true => None,
+        Ok(v) => Some(v["reason"].as_str().unwrap_or("changed")),
+        Err(e) => Some(e.code),
+    };
+    crate::aux_usage::record(app, crate::aux_usage::Record {
+        kind: crate::aux_usage::Kind::Title, session_id, profile_id: &selection.profile_id, runtime: &rp,
+        effort: selection.effort.as_deref(), usage: usage.as_ref(), provider_ms, discarded: reason,
+    }).await;
+    outcome
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn apply(app: &App, session_id: &str, title: String, rev: i64, seq: i64, auto: bool,
+    selection: crate::models::ModelSelection, def_rev: i64) -> ApiResult<Value> {
     let (sid, now, t2) = (session_id.to_string(), app.now(), title.clone());
     let applied = app.db.call(move |c| {
         let tx = c.transaction()?;

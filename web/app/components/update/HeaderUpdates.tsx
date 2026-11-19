@@ -74,7 +74,10 @@ export function HeaderUpdates({ connected, online }: { connected: boolean; onlin
     async function runWeb() {
         setCheckingWeb(true);
         setWebResult(null);
-        setWebResult(await checkWebUpdate());
+        const result = await checkWebUpdate();
+        // 새 버전의 전역 안내 위에 연결 팝오버를 남겨 두지 않는다.
+        if (result === "available") hide();
+        setWebResult(result);
         setCheckingWeb(false);
     }
 

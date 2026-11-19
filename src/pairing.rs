@@ -1,4 +1,7 @@
-//! 만료 없는 링크 + 별도 비밀번호 + 등록 기기 또는 로컬 CLI의 승인.
+//! 서버 발급 비밀번호와 기기 등록용 링크 비밀번호를 분리한다.
+
+pub(crate) mod issuance;
+pub use issuance::set_password as set_issuance_password;
 
 use crate::App;
 use crate::auth::{self, Principal};
@@ -49,6 +52,8 @@ pub struct PairingInfo {
 pub struct CreatePairing {
     pub name: String,
     pub password: String,
+    #[serde(default)]
+    pub issuance_password: String,
     pub replace_id: Option<String>,
 }
 
@@ -118,7 +123,9 @@ pub async fn create(
     }
     // 등록 기기·요청 키마다 고유한 salt. 재전송 hash에도 빠른 비밀번호 hash를 남기지 않는다.
     let salt = format!("grove-pairing:{}:{}", p.root_id, crate::idem::key_from(&headers)?);
-    let password = password_hash(body.password, salt.clone()).await?;
+    // 발급·재발급·재전송 모두 검증한다. 발급 비밀번호는 idempotency 입력에도 남기지 않는다.
+    let link_password = app.pairing_issuance.verify(body.issuance_password, body.password).await?;
+    let password = password_hash(link_password, salt.clone()).await?;
     let hash = crate::idem::body_hash("pairing.create", &json!({ "name": name, "replace_id": body.replace_id, "password": password }));
     let issuer = p.root_id.clone();
     let response = crate::idem::run_redacted(&app, &p.clone(), &headers, &hash, &["code"], move |tx, now| {

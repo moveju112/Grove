@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { registerBrowser, selectChoice, state } from "./helpers";
+import { configurePairing } from "./global-setup";
 
 async function signIn(page: Page, url: string, token: string) {
     await registerBrowser(page, url, token);
@@ -16,6 +17,7 @@ async function signIn(page: Page, url: string, token: string) {
 test("새 데몬의 5단계, 재접속, 추가 브라우저의 로컬 전용 설정", async ({ page, browser }, info) => {
     const data = mkdtempSync(join(tmpdir(), "grove-setup-e2e-"));
     const cliDir = state().cliDir;
+    configurePairing(process.env.GROVE_BIN!, data);
     const child = spawn(process.env.GROVE_BIN!, ["serve", "--json", "--listen", "127.0.0.1:0", "--data-dir", data], {
         env: { ...process.env, GROVE_WEB_DIR: join(state().work, "web"), GROVE_LOG: "off",
             ...(cliDir ? { PATH: `${cliDir}:${process.env.PATH}`, CLI_FIXTURE_DIR: cliDir } : {}) },

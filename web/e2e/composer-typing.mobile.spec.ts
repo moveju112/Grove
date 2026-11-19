@@ -5,6 +5,8 @@ test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true
 
 for (const theme of ["light", "dark"] as const) {
     test(`${theme}: 여러 줄 입력 중 대화 위치를 보존하고 입력·삭제·폭 변경에 맞춰 높이를 조절한다`, async ({ page }, info) => {
+        const android = theme === "dark";
+        if (android) await page.addInitScript(() => Object.defineProperty(navigator, "userAgent", { value: "Mozilla/5.0 (Linux; Android 14) Chrome/157.0.0.0 Mobile Safari/537.36" }));
         await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
         await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
         const { a } = await ensureProjects();
@@ -21,6 +23,10 @@ for (const theme of ["light", "dark"] as const) {
         await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title }).first().click();
         const view = sessionView(page, session.id);
         const input = view.getByLabel("메시지 입력", { exact: true });
+        const expectText = async (value: string) => {
+            if (android) await expect.poll(() => input.innerText()).toBe(value);
+            else await expect(input).toHaveValue(value);
+        };
         await composerOption(view, "보내기 방식", "save");
         const geometry = () => input.evaluate((node) => {
             const pane = node.closest<HTMLElement>('[data-testid="pane-body"]')!;
@@ -46,7 +52,7 @@ for (const theme of ["light", "dark"] as const) {
                     expect(Math.abs(current.y - before.y)).toBeLessThanOrEqual(1);
                     expect(current.height).toBe(before.height);
                 }
-                await expect(input).toHaveValue(text + "abcdefgh");
+                await expectText(text + "abcdefgh");
                 await settle();
                 const after = await geometry();
                 expect(Math.abs(after.scroll - before.scroll)).toBeLessThanOrEqual(1);
@@ -68,7 +74,7 @@ for (const theme of ["light", "dark"] as const) {
         try {
             for (const text of ["ㅎ", "하", "한"]) {
                 await ime.send("Input.imeSetComposition", { text, selectionStart: 1, selectionEnd: 1 });
-                await expect(input).toHaveValue(prefix + text);
+                await expectText(prefix + text);
                 await settle();
                 const current = await geometry();
                 expect(Math.abs(current.scroll - composing.scroll)).toBeLessThanOrEqual(1);
@@ -76,7 +82,7 @@ for (const theme of ["light", "dark"] as const) {
                 expect(current.height).toBe(composing.height);
             }
             await ime.send("Input.insertText", { text: "한" });
-            await expect(input).toHaveValue(prefix + "한");
+            await expectText(prefix + "한");
         } finally { await ime.detach(); }
         // 빈 입력·붙여넣기·삭제로 실제 내용이 달라지면 늘어나고 다시 줄어든다.
         await input.fill("");
@@ -96,10 +102,10 @@ for (const theme of ["light", "dark"] as const) {
         await page.setViewportSize({ width: 390, height: 844 });
         await settle();
         expect((await geometry()).height).toBeGreaterThan(wide.height);
-        await expect(input).toHaveValue(long);
+        await expectText(long);
         await page.screenshot({ path: info.outputPath(`typing-${theme}-390.png`), animations: "disabled" });
         await view.getByRole("button", { name: "보내기", exact: true }).click();
-        await expect(input).toHaveValue("");
+        await expectText("");
         await expect.poll(async () => (await geometry()).height).toBe(empty.height);
         await expect(view.getByTestId("msg-user").last()).toContainText(long.trim());
     });

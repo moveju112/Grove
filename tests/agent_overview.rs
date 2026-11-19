@@ -156,12 +156,11 @@ async fn scoped_policy_uses_actual_deny_allow_delegation_and_depth() {
     let automatic = overview(&s, &query).await;
     assert_eq!(automatic["delegation"]["mode"], "auto");
     assert_eq!(automatic["delegation"]["source"], "session");
-    setting(&s, "server", "-", "tools.mode", json!("read_only")).await;
+    setting(&s, "project", pid, "tools.mode", json!("bypass")).await;
     assert_eq!(
         role(&overview(&s, &query).await, "worker")["availability"],
-        "policy_denied"
+        "available"
     );
-    setting(&s, "server", "-", "tools.mode", json!("ask")).await;
     setting(&s, "project", pid, "tools.deny", json!("agent")).await;
     assert_eq!(
         overview(&s, &query).await["delegation"]["approval"],

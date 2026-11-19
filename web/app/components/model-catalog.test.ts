@@ -1,8 +1,24 @@
 import { describe, expect, it } from "vitest";
-import type { AvailableModel } from "../api/generated";
-import { sortModels } from "./model-catalog";
+import type { AvailableModel, ModelProfile } from "../api/generated";
+import { catalogModel, modelEfforts, sortModels } from "./model-catalog";
 
 const model = (id: string, name = id): AvailableModel => ({ id, name });
+
+describe("모델별 추론 옵션", () => {
+    it("Claude의 기본 모델과 명시적으로 고른 모델 각각의 목록을 사용한다", () => {
+        const profile = { protocol: "claude_code", model: "default" } as ModelProfile;
+        const opus = ["low", "medium", "high", "xhigh", "max"];
+        const rows = [
+            { ...model("default", "Opus 5.5"), reasoning_efforts: opus },
+            { ...model("claude-opus-4-6"), reasoning_efforts: ["low", "medium", "high", "max"] },
+            { ...model("unsupported"), reasoning_efforts: [] },
+        ];
+        expect(modelEfforts(profile, catalogModel(rows, profile))).toEqual(opus);
+        expect(modelEfforts(profile, catalogModel(rows, profile, "claude-opus-4-6"))).not.toContain("xhigh");
+        expect(modelEfforts(profile, catalogModel(rows, profile, "unsupported"))).toEqual([]);
+        expect(modelEfforts(profile, undefined)).toEqual(["low", "medium", "high"]);
+    });
+});
 
 describe("모델 선택 목록 정렬", () => {
     it("버전을 숫자로 비교해 높은 버전부터 정렬하고 원본과 선택 정보를 보존한다", () => {

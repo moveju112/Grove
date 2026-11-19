@@ -302,7 +302,7 @@ async fn failed_unknown_and_unreadable_originals_never_become_successful_origina
 }
 
 #[tokio::test]
-async fn existing_auth_policy_read_only_and_execution_root_guards_apply_to_retrieval() {
+async fn existing_auth_policy_and_execution_root_guards_apply_to_retrieval() {
     let s = TestServer::start().await;
     let project = s.create_project("guards").await;
     let pid = project["id"].as_str().unwrap();
@@ -312,9 +312,6 @@ async fn existing_auth_policy_read_only_and_execution_root_guards_apply_to_retri
     let body = json!({"name":"tool_output_read","args":{"call_id":id}});
     let unauth = s.raw(Method::POST, &path, Some(body), Some("unauth"), Some("")).await;
     assert_eq!(unauth.status(), StatusCode::UNAUTHORIZED);
-    let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/tools.mode"),
-        json!({"expected_revision":0,"value":"read_only"})).await;
-    assert_eq!(status, StatusCode::OK);
     assert_eq!(read(&s, &sid, &id, 0, 100).await["status"], "succeeded");
     s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/tools.deny"),
         json!({"expected_revision":0,"value":"tool_output_read"})).await;

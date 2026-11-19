@@ -143,17 +143,7 @@ async fn pc_fixture() {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = s.post(&route, json!({"editor_id":"vscode","path":file,"args":["--wait"]})).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    let (status, _) = s.send(Method::PUT, "/api/v1/settings/server/-/tools.mode", json!({"value":"read_only","expected_revision":0})).await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _) = s.post(&route, body.clone()).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, _) = s.send(Method::PUT, "/api/v1/settings/server/-/tools.mode", json!({"value":"ask","expected_revision":1})).await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{id}/tools.mode"), json!({"value":"read_only","expected_revision":0})).await;
-    assert_eq!(status, StatusCode::OK);
-    let (status, _) = s.post(&route, body.clone()).await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{id}/tools.mode"), json!({"value":"ask","expected_revision":1})).await;
+    let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{id}/tools.mode"), json!({"value":"ask","expected_revision":0})).await;
     assert_eq!(status, StatusCode::OK);
     let record = std::path::PathBuf::from(std::env::var_os("EDITOR_RECORD").unwrap());
     assert!(!record.exists(), "거절된 요청은 실행하지 않는다");

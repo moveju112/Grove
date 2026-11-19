@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { frames } from "./fixture";
-import { apiCall, closeModelSettings, composerSetting, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, openProjectSettings, script, selectChoice, startProjectConversation, state } from "./helpers";
+import { apiCall, closeModelSettings, composerCommand, composerOption, composerSetting, ensureProfile, ensureProjects, expectChoice, expectComposerSetting, login, openProjectSettings, script, selectChoice, sessionView, startProjectConversation, state } from "./helpers";
 
 type Effective = { items: { key: string; effective: unknown; layers: Record<string, { value: unknown; revision: number }> }[] };
 const defaultsKey = "model.default_profile";
@@ -38,6 +38,46 @@ async function openSettings(page: Page, project: { id: string; name: string }) {
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
     await openProjectSettings(page);
 }
+
+test("다른 대화에서 모델만 바꿔도 새 대화에 사용할 최신 추론 강도는 유지된다", async ({ page, context }) => {
+    test.setTimeout(45_000);
+    const f = await fixture();
+    const second = await context.newPage();
+    try {
+        await setting(f.a.id, defaultsKey, f.primary.id);
+        const sessions = await Promise.all(["first", "second", "new"].map(async (role) => {
+            const title = `${role} ${f.prefix}`;
+            const session = await apiCall<{ id: string }>("POST", `/projects/${f.a.id}/sessions`, { title });
+            await apiCall("POST", "/recent/touch", { kind: "session", project_id: f.a.id, resource_id: session.id });
+            return { ...session, title };
+        }));
+        const open = async (target: Page, index: number) => {
+            const session = sessions[index]!;
+            await target.bringToFront();
+            const sidebar = target.getByRole("button", { name: "사이드바", exact: true });
+            if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
+            await target.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: session.title, exact: true }).click();
+            return sessionView(target, session.id);
+        };
+        await login(page);
+        const firstView = await open(page, 0);
+        await composerOption(firstView, "추론", "low");
+        await second.goto("/");
+        await expect(second.getByTestId("conn")).toHaveText("연결됨");
+        const secondView = await open(second, 1);
+        await expectComposerSetting(secondView, "추론", "low");
+
+        await composerOption(firstView, "추론", "high");
+        await composerCommand(secondView, `/model ${f.prefix}-b`);
+        await expectComposerSetting(secondView, "모델 프로필", f.secondary.id);
+        await expectComposerSetting(secondView, "추론", "low");
+        await expectComposerSetting(firstView, "추론", "high");
+        const newView = await open(second, 2);
+        await expectComposerSetting(newView, "추론", "high");
+        await second.reload();
+        await expectComposerSetting(newView, "추론", "high");
+    } finally { await second.close(); await f.cleanup(); }
+});
 
 test("프로젝트 기본값은 새 입력창에만 적용하고 기기 선택·다른 프로젝트·기존 탭을 바꾸지 않는다", async ({ page }) => {
     const f = await fixture();
@@ -145,7 +185,10 @@ test("선택한 프로필이 삭제돼도 다른 공급자로 보내지 않고 �
         await expect(page.getByTestId("profile-missing")).toBeVisible();
         await expectComposerSetting(page, "모델 프로필", f.primary.id);
         await expect(page.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
+        const draftTab = page.getByRole("tab", { selected: true }).getByTestId("tab-title").filter({ visible: true });
+        const draftTitle = (await draftTab.innerText()).trim();
         await page.reload();
+        await page.getByRole("tab").getByRole("button", { name: draftTitle, exact: true }).click();
         await startProjectConversation(page.getByTestId("project-view").filter({ visible: true }));
         await expect(page.getByTestId("profile-missing")).toBeVisible();
         await expect(area).toHaveValue("");

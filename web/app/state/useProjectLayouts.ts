@@ -4,13 +4,13 @@ import * as L from "./layout";
 import { LayoutPersistence, type RemoteLayout } from "./layoutPersistence";
 import { projectLayout, projectLayoutKey } from "./projectLayout";
 import { querySnapshot, subscribeQuery } from "./store";
-import { applyWorkspaceTabs, mergeWorkspaceTabs, workspaceResumeKey, workspaceTabs, workspaceTabsKey } from "./workspaceTabs";
+import { applyWorkspaceTabs, mergeWorkspaceTabs, workspaceTabs, workspaceTabsKey } from "./workspaceTabs";
+import { readWorkspaceResume, selectionKey } from "./workspaceStartup";
 
 type Target = Omit<L.Tab, "id">;
 type How = "here" | "right" | "down";
 type Entry = { base: string; projectId: string; store: LayoutPersistence; ready: Promise<void>; hydrated: boolean };
 type Shared = { store: LayoutPersistence; ready: Promise<L.Layout | null>; unsubscribe: () => void };
-const selectionKey = (base: string) => `grove.layout.selected.${base}`;
 
 export function useProjectLayouts(base: string, notice: (message: string) => void) {
     const [saved, setSaved] = useState<Record<string, L.Layout>>({});
@@ -137,7 +137,7 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
             let remote: string | undefined;
             if (startupBase.current === base) {
                 try {
-                    const { layout } = await api.get<RemoteLayout>(`/layouts/${workspaceResumeKey}`, { signal: controller.signal, timeoutMs: 10_000 });
+                    const { layout } = await readWorkspaceResume(controller.signal);
                     if (L.isValid(layout)) remote = L.allTabs(layout)[0]?.project_id;
                 } catch { /* 연결되지 않으면 이 화면에서 마지막으로 연 프로젝트를 복원한다. */ }
             }

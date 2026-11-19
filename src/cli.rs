@@ -14,7 +14,8 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
 
 사용법:
   grove [serve] [--listen 주소:포트] [--data-dir 경로]   foreground 서버 실행(기본)
-                [--log-file 경로]                      파일당 2MiB·보관본 3개, 이벤트당 16KiB 로그
+                [--log-file 경로]                      기본 파일당 8MiB·보관본 7개·최대 7일
+                                                       GROVE_LOG_MAX_MIB / GROVE_LOG_KEEP_DAYS로 조절
                 [--json]                               준비·실패 안내(JSON); 시작 오류 종료 코드 10~17
   grove status [--listen 주소:포트]                      실행 중 서버 상태 확인(health)
   grove doctor [--listen 주소:포트] [--data-dir 경로]    프로세스·API 준비·인증·모델 설정을 각각 진단(문제 있으면 종료 코드 1)
@@ -413,6 +414,10 @@ fn serve_config(log_file: &Option<PathBuf>, cfg: Config, json_output: bool) -> R
     let first_start = !cfg.db_path().exists();
     let file_log = log_file.is_some();
     let (writer, maintenance) = crate::logging::writer(log_file.as_deref()).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::InvalidInput {
+            if !json_output { eprintln!("로그 설정 오류: {e}"); }
+            return StartupError::new(FailureKind::Configuration, log_file.as_deref());
+        }
         log_file.as_deref().map(|path| StartupError::io(&e, path)).unwrap_or_else(|| StartupError::new(FailureKind::Runtime, None))
     })?;
     tracing_subscriber::fmt()
@@ -422,6 +427,7 @@ fn serve_config(log_file: &Option<PathBuf>, cfg: Config, json_output: bool) -> R
         .with_writer(writer)
         .init();
     tracing::debug!("개발용 상세 로그 활성화");
+    if let Some(log) = &maintenance { log.log_policy(); }
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .max_blocking_threads(64)
@@ -433,8 +439,11 @@ fn serve_config(log_file: &Option<PathBuf>, cfg: Config, json_output: bool) -> R
             let mut interval = tokio::time::interval(crate::logging::MAINTENANCE_INTERVAL);
             loop {
                 interval.tick().await;
-                if let Err(e) = maintenance.run() {
-                    eprintln!("로그 보관 정리 실패: {e}");
+                let log = maintenance.clone();
+                match tokio::task::spawn_blocking(move || log.run()).await {
+                    Ok(Err(e)) => eprintln!("로그 보관 정리 실패: {e}"),
+                    Ok(Ok(())) => {},
+                    Err(_) => break,
                 }
             }
         }));

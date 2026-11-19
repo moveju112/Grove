@@ -30,10 +30,22 @@ fn busy() -> ApiError {
     ApiError::conflict("resource_busy", "이 프로젝트에서 다른 파일·Git 작업 또는 프로세스가 실행 중입니다. 작업을 끝내거나 취소한 뒤 다시 시도하세요")
 }
 
+/// UI 파일/Git 작업은 모든 실행 중 task와 충돌한다(`resource_busy`로 즉시 거절).
 async fn processes_running(app: &App, project: &str) -> ApiResult<bool> {
+    running_tasks(app, project, true).await
+}
+
+/// 자동 도구는 hold 중인 직접 실행만 기다린다. 백그라운드로 전환된 task(dev server·에뮬레이터·watch)는
+/// 끝나지 않을 수 있어, 기다리면 같은 프로젝트의 모든 세션 도구가 무기한 멈춘다.
+async fn foreground_running(app: &App, project: &str) -> ApiResult<bool> {
+    running_tasks(app, project, false).await
+}
+
+async fn running_tasks(app: &App, project: &str, include_detached: bool) -> ApiResult<bool> {
     let project = project.to_string();
     app.db.call(move |c| Ok(c.query_row(
-        "SELECT EXISTS(SELECT 1 FROM tasks WHERE project_id=?1 AND status='running')", [project], |r| r.get(0),
+        "SELECT EXISTS(SELECT 1 FROM tasks WHERE project_id=?1 AND status='running' AND (?2 OR detached=0))",
+        rusqlite::params![project, include_detached], |r| r.get(0),
     )?)).await
 }
 
@@ -103,10 +115,11 @@ impl ProjectResources {
             lease = acquire => lease,
         };
         // guard를 가진 동안 새 프로세스 접수는 막힌다. 기존 프로세스의 종료·취소·로그 조회는 guard가 필요 없다.
+        // hold가 끝나 백그라운드로 전환되면 tool_call 종료 이벤트로 깨어나 대기를 끝낸다.
         loop {
             if *cancel.borrow() { return Err(ToolError::new("cancelled","프로젝트 자원 대기 중 취소됐습니다")); }
             if *shutdown.borrow() { return Err(ToolError::new("interrupted","서버 종료로 프로젝트 작업을 시작하지 않았습니다")); }
-            if !processes_running(app,project).await.map_err(|e|ToolError::new(e.code,e.message))? { return Ok(Some(lease)); }
+            if !foreground_running(app,project).await.map_err(|e|ToolError::new(e.code,e.message))? { return Ok(Some(lease)); }
             tokio::select! {
                 _ = cancel.wait_for(|v| *v) => return Err(ToolError::new("cancelled","프로젝트 자원 대기 중 취소됐습니다")),
                 _ = shutdown.wait_for(|v| *v) => return Err(ToolError::new("interrupted","서버 종료로 프로젝트 작업을 시작하지 않았습니다")),

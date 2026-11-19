@@ -11,7 +11,7 @@ import { contentStyles } from "../design/content.stylex";
 import { CodeBlock as DisplayCodeBlock } from "../design/CodeBlock";
 // 모델 답 표시(UI-010·011). 문법 트리를 React 요소로만 그린다: HTML 문자열을 넣지 않으므로 답 안의 <script>·onerror 등은 글자로 보인다.
 import { Button as GroveButton } from "../design/Button";
-import { createContext, useContext, useMemo, useState, type ReactNode } from "react";
+import { createContext, memo, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { fileLink, fileRef, imageFile, parseMarkdown, type Block, type Inline } from "../state/markdown";
 import { CreationDialog } from "./create/CreationDialog";
 import { FileChangePreview } from "./files/FileChangePreview";
@@ -188,7 +188,22 @@ function block(b: Block, k: number): ReactNode {
     }
 }
 
-export function Markdown({ text }: { text: string }) {
-    const blocks = useMemo(() => parseMarkdown(text), [text]);
-    return <Stack gap={2} width="100%" maxWidth="100%" xstyle={contentStyles.markdown} data-testid="markdown">{blocks.map(block)}</Stack>;
-}
+const MarkdownBlock = memo(function MarkdownBlock({ value }: { value: Block }) {
+    return block(value, 0);
+});
+
+/// 응답이 이어서 도착하면 바뀌지 않은 앞 블록은 이전 객체를 그대로 넘겨 다시 그리지 않는다.
+export const Markdown = memo(function Markdown({ text }: { text: string }) {
+    const previous = useRef<{ blocks: Block[]; keys: string[] }>({ blocks: [], keys: [] });
+    const blocks = useMemo(() => {
+        const parsed = parseMarkdown(text);
+        const keys = parsed.map((b) => JSON.stringify(b));
+        const last = previous.current;
+        const stable = parsed.map((b, i) => last.keys[i] === keys[i] ? last.blocks[i]! : b);
+        previous.current = { blocks: stable, keys };
+        return stable;
+    }, [text]);
+    return <Stack gap={2} width="100%" maxWidth="100%" xstyle={contentStyles.markdown} data-testid="markdown">
+        {blocks.map((b, i) => <MarkdownBlock key={i} value={b} />)}
+    </Stack>;
+});

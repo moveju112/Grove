@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall } from "./helpers";
+import { apiCall, issueTestPairing } from "./helpers";
 
 for (const theme of ["light", "dark"] as const) {
     test(`데스크톱 ${theme} 페어링의 빈 화면과 긴 링크를 가운데 정렬한다`, async ({ page }, info) => {
@@ -16,7 +16,7 @@ for (const theme of ["light", "dark"] as const) {
         await expect(form.getByText("QR 사진 선택", { exact: true })).toBeVisible();
         await form.getByRole("button", { name: "페어링 링크", exact: true }).click();
         await page.screenshot({ path: info.outputPath("pairing-desktop-empty.png"), fullPage: true });
-        const pair = await apiCall<{ code: string; id: string }>("POST", "/pairings", { name: `layout-${theme}`, password: "desktop test-only password" });
+        const pair = await issueTestPairing(`layout-${theme}`, "desktop test-only password");
         try {
             await form.getByRole("textbox", { name: "페어링 링크", exact: true }).fill(`http://127.0.0.1:17741/#pairing=${pair.code}`);
             await expect(form.getByText("등록 대상:")).toContainText("127.0.0.1:17741");

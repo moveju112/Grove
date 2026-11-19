@@ -122,7 +122,7 @@ async fn recall_tool_defaults_to_current_project_and_quoted_results_do_not_autho
 }
 
 #[tokio::test]
-async fn read_only_mode_allows_recall_but_an_explicit_deny_prevents_exposing_results() {
+async fn an_explicit_deny_prevents_recall_from_exposing_results() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;
     let profile = s.fixture_profile(&f.base).await;
@@ -130,8 +130,6 @@ async fn read_only_mode_allows_recall_but_an_explicit_deny_prevents_exposing_res
     let pid = p["id"].as_str().unwrap();
     let sid = s.create_session(pid).await["id"].as_str().unwrap().to_string();
     seed(&s,&sid,"2020-01-01T00:00:00Z","user","PolicyRecallFixture").await;
-    assert_eq!(s.send(Method::PUT,&format!("/api/v1/settings/project/{pid}/tools.mode"),
-        json!({"expected_revision":0,"value":"read_only"})).await.0,StatusCode::OK);
     for (denied,status) in [(false,"succeeded"),(true,"failed")] {
         if denied {
             assert_eq!(s.send(Method::PUT,&format!("/api/v1/settings/project/{pid}/tools.deny"),

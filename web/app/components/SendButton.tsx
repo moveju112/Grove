@@ -12,11 +12,13 @@ const styles = stylex.create({
 
 export const FOLLOW_LABEL: Record<FollowKind, string> = { queue: "대기열", steer: "합치기", interrupt: "중단 후 전송" };
 
-export function SendButton({ label, title, disabled, follow, onSend }: {
+export function SendButton({ label, title, disabled, follow, steerHint, describedBy, onSend }: {
     label: string;
     title: string;
     disabled: boolean;
     follow?: FollowKind;
+    steerHint?: string;
+    describedBy?: string;
     onSend: (follow?: FollowKind) => void;
 }) {
     const [open, setOpen] = useState(false);
@@ -33,6 +35,7 @@ export function SendButton({ label, title, disabled, follow, onSend }: {
         }}
         items={(Object.keys(FOLLOW_LABEL) as FollowKind[]).map((kind) => ({
             id: kind, label: FOLLOW_LABEL[kind], isDisabled: !available || kind === follow,
+            description: kind === "steer" ? steerHint : undefined,
             onClick: () => {
                 if (!available || kind === follow) return;
                 setOpen(false);
@@ -49,6 +52,7 @@ export function SendButton({ label, title, disabled, follow, onSend }: {
             <Button ref={props.ref} id={props.id} type="button"
                 appearance="send" width="100%" aria-label={label} title={disabled ? undefined : title} disabled={disabled}
                 xstyle={disabled && styles.disabledTrigger}
+                aria-describedby={describedBy}
                 aria-haspopup={available ? "menu" : undefined}
                 aria-expanded={available ? open : undefined}
                 aria-controls={available ? props["aria-controls"] : undefined}

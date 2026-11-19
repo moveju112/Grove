@@ -1,12 +1,26 @@
 import * as stylex from "@stylexjs/stylex";
 
 // Paseodog usage-monitor의 치수. 14px 루트 rem 기준이며 사용자 글자 크기와 함께 확대된다.
-// 앱의 테마 색과 글꼴은 공유하고 원본의 16px 여백·12px 본문·140px 차트 높이를 유지한다.
+// 앱의 테마 색과 글꼴을 공유하고 좁은 화면에서는 가로 여백만 줄인다.
+const narrow = "@media (max-width: 760px)";
+const dialogGutter = "max(var(--spacing-1), env(safe-area-inset-left), env(safe-area-inset-right))";
 export const dashboardStyles = stylex.create({
+    dialog: {
+        maxWidth: { default: null, [narrow]: `calc(100dvw - 2 * ${dialogGutter})` },
+        "--astryx-dialog-padding-inline": { default: null, [narrow]: "var(--spacing-1)" },
+    },
     page: { minWidth: 0, outline: "none" },
-    content: { width: "100%", minWidth: 0, padding: "calc(16rem / 14)", gap: "calc(12rem / 14)", containerType: "inline-size", containerName: "usage" },
+    content: {
+        width: "100%", minWidth: 0,
+        paddingBlock: "calc(16rem / 14)",
+        paddingInline: { default: "calc(16rem / 14)", [narrow]: "var(--spacing-1)" },
+        // 표의 가장자리 확장은 실제 컨테이너 안쪽 여백에 맞춰야 스크롤 영역에서 잘리지 않는다.
+        "--container-padding-inline-start": { default: null, [narrow]: "0px" },
+        "--container-padding-inline-end": { default: null, [narrow]: "0px" },
+        gap: "calc(12rem / 14)", containerType: "inline-size", containerName: "usage",
+    },
     flow: { gap: "calc(12rem / 14)", minWidth: 0 },
-    card: { backgroundColor: "var(--panel)", borderWidth: 1, borderStyle: "solid", borderColor: "var(--line)", borderRadius: "calc(12rem / 14)", padding: "calc(14rem / 14)", gap: "calc(10rem / 14)", minWidth: 0 },
+    card: { backgroundColor: "var(--panel)", borderWidth: 1, borderStyle: "solid", borderColor: "var(--line)", borderRadius: "calc(12rem / 14)", paddingBlock: "calc(14rem / 14)", paddingInline: { default: "calc(14rem / 14)", [narrow]: "var(--spacing-1)" }, gap: "calc(10rem / 14)", minWidth: 0 },
     sectionTitle: { fontSize: "calc(16rem / 14)", fontWeight: 600, lineHeight: 1.4, marginBlockStart: "calc(4rem / 14)" },
     cardTitle: { fontSize: "calc(15rem / 14)", fontWeight: 600, lineHeight: 1.4 },
     text: { fontSize: "calc(14rem / 14)", lineHeight: 1.4 },

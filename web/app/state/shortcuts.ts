@@ -88,6 +88,11 @@ export function formatShortcut(binding: string | null, mac: boolean): string {
     return [...parsed.modifiers.map((modifier) => modifier === "Meta" ? "Cmd" : modifier), key].join("+");
 }
 
+/// Astryx `Kbd`의 keys 형식(소문자, `+` 구분)으로 바꾼다. Cmd는 Kbd의 meta 키다.
+export function kbdKeys(binding: string | null, mac: boolean): string {
+    return formatShortcut(binding, mac).split("+").map((key) => key === "Cmd" ? "meta" : key.toLowerCase()).join("+");
+}
+
 // 빈칸은 해제, undefined는 잘못된 조합이다. 표시용 입력을 저장 형식으로 정규화한다.
 export function parseShortcut(text: string): string | null | undefined {
     if (!text.trim()) return null;

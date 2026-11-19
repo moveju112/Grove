@@ -51,15 +51,20 @@ pub fn build_body(profile: &Profile, req: &ModelRequest) -> Value {
     if !req.tools.is_empty() {
         body["tools"] = super::prompt_cache::tools(req).into_iter().map(|t| json!({ "name": t.name, "description": t.description, "input_schema": t.schema })).collect();
     }
-    if let Some(t) = req.temperature {
+    let native_effort = super::anthropic_uses_native_effort(&profile.model);
+    if let Some(t) = req.temperature && !native_effort {
         body["temperature"] = json!(t);
     }
     if let Some(e) = &req.effort {
-        let b = super::effort_budget(e);
-        body["thinking"] = json!({ "type": "enabled", "budget_tokens": b });
-        body["max_tokens"] = json!(req.max_tokens.unwrap_or(8192).max(b + 4096));
-        if let Some(o) = body.as_object_mut() {
-            o.remove("temperature");
+        if native_effort {
+            body["output_config"] = json!({ "effort": e });
+        } else {
+            let b = super::effort_budget(e);
+            body["thinking"] = json!({ "type": "enabled", "budget_tokens": b });
+            body["max_tokens"] = json!(req.max_tokens.unwrap_or(8192).max(b + 4096));
+            if let Some(o) = body.as_object_mut() {
+                o.remove("temperature");
+            }
         }
     }
     super::prompt_cache::anthropic(profile, &mut body);

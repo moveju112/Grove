@@ -4,6 +4,8 @@ use serde_json::{Value, json};
 use std::io::Write;
 use std::process::{Command, Stdio};
 
+const ISSUANCE_PASSWORD: &str = "test-issue";
+
 struct Daemon(std::process::Child);
 impl Drop for Daemon {
     fn drop(&mut self) { let _ = self.0.kill(); let _ = self.0.wait(); }
@@ -50,13 +52,14 @@ fn check_password_terminal(data: &std::path::Path, listen: &str, cancel: bool) {
     rx.recv_timeout(std::time::Duration::from_secs(10)).expect("비밀번호 프롬프트");
     assert_eq!(flags() & libc::ECHO, 0, "비밀번호 입력 중 echo는 꺼져야 한다");
     if cancel { assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGINT) }, 0); }
-    else { master.write_all(b"pty-only-fixture-password\n").unwrap(); }
+    else { master.write_all(format!("{ISSUANCE_PASSWORD}\npty-only-fixture-password\n").as_bytes()).unwrap(); }
     let status = child.wait().unwrap();
     let restored = flags() & libc::ECHO == original & libc::ECHO;
     drop(slave);
     let output = output.join().unwrap();
     assert!(restored, "종료·취소 후 터미널 echo를 복원해야 한다");
     assert!(!output.windows(b"pty-only-fixture-password".len()).any(|part| part == b"pty-only-fixture-password"));
+    assert!(!output.windows(ISSUANCE_PASSWORD.len()).any(|part| part == ISSUANCE_PASSWORD.as_bytes()));
     if cancel { assert_eq!(status.code(), Some(130)); } else { assert!(status.success()); }
 }
 
@@ -84,6 +87,16 @@ fn cli_pairing_creates_links_checks_codes_and_preserves_approval_boundaries() {
     let data = temp.path().join("data");
     let listen = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().to_string();
     let base = format!("http://{listen}/api/v1");
+    for (password, accepted) in [("test-issu", false), (ISSUANCE_PASSWORD, true)] {
+        let mut setup = Command::new(env!("CARGO_BIN_EXE_grove"))
+            .args(["pairing", "set-password", "--password-stdin", "--data-dir"]).arg(&data)
+            .stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().unwrap();
+        setup.stdin.take().unwrap().write_all(format!("{password}\n").as_bytes()).unwrap();
+        let setup = setup.wait_with_output().unwrap();
+        assert_eq!(setup.status.success(), accepted);
+        assert!(!String::from_utf8_lossy(&setup.stdout).contains(password));
+        assert!(!String::from_utf8_lossy(&setup.stderr).contains(password));
+    }
     let client = Client::builder().no_proxy().timeout(std::time::Duration::from_secs(5)).build().unwrap();
     let mut server = Command::new(env!("CARGO_BIN_EXE_grove"));
     server.args(["serve", "--listen", &listen, "--data-dir"]).arg(&data).stdout(Stdio::null()).stderr(Stdio::null());
@@ -110,15 +123,18 @@ fn cli_pairing_creates_links_checks_codes_and_preserves_approval_boundaries() {
         let out = child.wait_with_output().unwrap();
         assert!(!String::from_utf8_lossy(&out.stdout).contains(owner.trim()));
         assert!(!String::from_utf8_lossy(&out.stderr).contains(owner.trim()));
+        assert!(!String::from_utf8_lossy(&out.stdout).contains(ISSUANCE_PASSWORD));
+        assert!(!String::from_utf8_lossy(&out.stderr).contains(ISSUANCE_PASSWORD));
         out
     };
     let password = "test-only!";
-    let local = run(&["create", "local bootstrap", "--password-stdin", "--json"], Some(&format!("{password}\n")));
+    let input = format!("{ISSUANCE_PASSWORD}\n{password}\n");
+    let local = run(&["create", "local bootstrap", "--password-stdin", "--json"], Some(&input));
     assert!(local.status.success());
     let local: Value = serde_json::from_slice(&local.stdout).unwrap();
     assert!(local["link"].as_str().unwrap().starts_with(&format!("http://{listen}/#pairing=")));
     let create = |name: &str| {
-        let out = run(&["create", name, "--endpoint", "wss://example.test/api/e2ee", "--password-stdin", "--json"], Some(&format!("{password}\n")));
+        let out = run(&["create", name, "--endpoint", "wss://example.test/api/e2ee", "--password-stdin", "--json"], Some(&input));
         assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
         assert!(!String::from_utf8_lossy(&out.stdout).contains(password));
         assert!(!String::from_utf8_lossy(&out.stderr).contains(password));

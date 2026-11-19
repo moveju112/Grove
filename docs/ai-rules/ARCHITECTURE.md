@@ -25,6 +25,7 @@ HTTP 인증·Origin·호환성 검사 → 도메인 처리 → SQLite transactio
 프로젝트별로 열린 대화와 이어갈 대화는 데몬에 저장한다. 분할 배치와 표시 설정은 기기별로 유지한다.
 
 기본 Codex 연결(`codex_oauth`)은 Grove 이력과 도구 루프를 Codex Responses API에 연결한다. `store: false`로 호출하며 Codex CLI의 스레드를 시작하거나 재개하지 않는다. CLI 로그인 파일의 계정 자격은 메모리에서만 사용하고, 필요한 갱신은 계정 전용 CLI 호출에 맡긴다. `evidence: src/provider/codex_oauth.rs`.
+같은 턴의 모델 단계는 WebSocket을 우선 재사용한다. 요청 설정과 이력 앞부분이 같을 때만 `previous_response_id`와 새 입력을 보내며, 새 연결과 HTTP/SSE 폴백은 Grove 이력 전체를 보낸다. 과부하 재시도는 부분 출력이 없는 모델 단계에만 적용한다. `evidence: src/provider/codex_oauth/ws.rs`, `src/provider/mod.rs`.
 
 - **MUST** 서버에 전역적인 현재 프로젝트·대화 상태를 추가하지 않고 요청마다 실행 대상을 명시한다.
   - why: 여러 pane과 기기의 요청 대상이 서로 덮어써지면 안 된다.

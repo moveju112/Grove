@@ -326,7 +326,7 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
             return Err(ApiError::unsupported("선택한 모델 프로필은 속도 선택을 지원하지 않습니다"));
         }
         let prepared=crate::attachments::prepare(tx,&data,&root_owner,&s.project_id,&b.text,&b.attachments)?;
-        profile.check_capabilities(tools, effort.as_deref(), prepared.model_input["images"].as_array().is_some_and(|v| !v.is_empty()))?;
+        profile.check_model_capabilities(model.as_deref().unwrap_or(&profile.model), tools, effort.as_deref(), prepared.model_input["images"].as_array().is_some_and(|v| !v.is_empty()))?;
         let Some(active) = active_turn_id(tx, &session_id)? else {
             // 그 사이 턴이 끝났다: 바로 시작한다.
             let (t, msg) = crate::runner::enqueue_with_attachments(tx, now, &epoch, &owner, &session_id, &b.text, &b.profile_id, b.agent_id.as_deref(), Some(tools), None, (!prepared.items.is_empty()).then_some(&prepared))?;

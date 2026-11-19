@@ -74,7 +74,7 @@ export async function checkDashboard(page: Page, info: TestInfo) {
     await expect(listing).toBeVisible();
     await expect(panel.getByRole("table", { name: "개발 에이전트 사용량" })).toContainText("켜짐");
     const quotas = panel.getByRole("region", { name: "OAuth 한도", exact: true });
-    await expect(quotas.getByRole("img", { name: "Codex 5시간 사용 25.0%" })).toBeVisible();
+    await expect(quotas.getByRole("img", { name: "Codex CLI 5시간 사용 25.0%", exact: true })).toBeVisible();
     await expect(quotas).toContainText("한도 조회 미지원");
     await selectChoice(panel.getByLabel("정렬 기준", { exact: true }), "speed");
     await expect(listing.getByRole("button").first()).toHaveText("Claude · claude-sonnet");

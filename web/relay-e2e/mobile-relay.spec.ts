@@ -5,6 +5,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { composerOption, openProjectFiles } from "../e2e/helpers";
 import { projectLayoutKey } from "../app/state/projectLayout";
+import { emptyLayout } from "../app/state/layout";
+import { workspaceTabsKey } from "../app/state/workspaceTabs";
 import { api, enter, expectNoConnectionNoise, freeze, net, target } from "./relay";
 
 const local = () => target().target === "local";
@@ -101,6 +103,53 @@ test("백그라운드 중 소켓이 정리돼도 복귀 후 오류 없이 다시
     await expect(view.getByLabel("메시지 입력", { exact: true })).toBeEnabled();
     await expectNoConnectionNoise(page);
     expect(sockets.length).toBeGreaterThanOrEqual(2);
+});
+
+test("온라인 표시가 유지된 절전 복귀에서 죽은 소켓을 교체하고 새 대화 내용을 자동으로 받는다", async ({ page }, info) => {
+    test.skip(!local(), "네트워크 조건을 주입하는 로컬 시험");
+    const p = await project("relay-silent-resume");
+    let connections = 0, blockFirstSocket = false;
+    await page.routeWebSocket((url) => url.href === target().endpoint, (socket) => {
+        const first = ++connections === 1;
+        const relay = socket.connectToServer();
+        socket.onMessage((data) => { if (!first || !blockFirstSocket) relay.send(data); });
+        relay.onMessage((data) => { if (!first || !blockFirstSocket) socket.send(data); });
+    });
+    await enter(page);
+    const view = await openProject(page, p.name);
+    await composerOption(view, "보내기 방식", "save");
+    const original = "복귀 전에 연 대화";
+    await view.getByLabel("메시지 입력", { exact: true }).fill(original);
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    const sessionView = page.getByTestId("session-view").filter({ visible: true });
+    await expect(sessionView.getByTestId("msg-user")).toHaveText(original);
+    const rows = await api<{ items: { id: string }[] }>("GET", `/projects/${p.id}/sessions`);
+    const sid = rows.items[0]!.id;
+    const fixtureTabs = `/layouts/${workspaceTabsKey(p.id)}`;
+    try {
+        await expect.poll(async () => (await api<{ revision: number }>("GET", fixtureTabs)).revision).toBeGreaterThan(0);
+        const fresh = "화면이 꺼진 사이 도착한 메시지";
+        let resumedAt = 0;
+        await freeze(page, async () => {
+            blockFirstSocket = true;
+            await api("POST", `/sessions/${sid}/messages`, { text: fresh });
+            resumedAt = performance.now();
+        });
+        expect(await page.evaluate(() => navigator.onLine)).toBe(true);
+        await expect.poll(() => connections, { timeout: 4_000 }).toBe(2);
+        const reconnectMs = Math.round(performance.now() - resumedAt);
+        await expect(sessionView.getByTestId("msg-user").last()).toHaveText(fresh, { timeout: 4_000 });
+        const refreshedMs = Math.round(performance.now() - resumedAt);
+        info.annotations.push({ type: "resume-ms", description: JSON.stringify({ reconnectMs, refreshedMs }) });
+        console.log(JSON.stringify({ scenario: "relay resume with silent old socket", reconnectMs, refreshedMs }));
+        await expect(page.getByTestId("conn")).toHaveText("연결됨");
+        await expectNoConnectionNoise(page);
+    } finally {
+        await page.close();
+        // 이 시험이 만든 공유 배치를 비워 다음 시험의 서버 공용 이어보기에 영향을 주지 않는다.
+        const { revision } = await api<{ revision: number }>("GET", fixtureTabs);
+        if (revision) await api("PUT", fixtureTabs, { expected_revision: revision, layout: emptyLayout() });
+    }
 });
 
 test("응답 없는 죽은 연결은 확인 후 새로 연결하고 화면별 오류를 띄우지 않는다", async ({ page }, info) => {

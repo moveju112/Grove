@@ -201,7 +201,8 @@ fn human_guidance_covers_first_start_restart_paths_and_wildcard_address() {
         let ready = server.ready(false);
         assert!(ready.contains(&format!("서버 준비 완료 ({mode})")));
         assert!(ready.contains(&format!("데이터 위치: {}", data.display())));
-        assert!(ready.contains("첫 기기 등록: 서버 터미널에서 grove pairing create"));
+        assert!(ready.contains("첫 기기 등록: 서버 터미널에서 grove pairing set-password"));
+        assert!(ready.contains("grove pairing create"));
         assert!(ready.contains("재시작:"));
         assert!(ready.contains("grove doctor --data-dir"));
         let url = ready.lines().find_map(|l| l.strip_prefix("접속 주소: ")).unwrap();

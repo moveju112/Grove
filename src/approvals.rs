@@ -163,7 +163,7 @@ pub enum PolicyDecision {
     Default,
 }
 
-/// 도구 정책(SEC-006, 007). 우선순위: deny > read_only > 사전 허용(tools.allow·일반 도구 전체 권한) > 기본.
+/// 도구 정책(SEC-006, 007). 우선순위: deny > 보조 역할 제한 > 사전 허용(bypass·tools.allow·일반 도구 전체 권한) > 기본.
 /// 계획 단계에서 확정된 정식 도구 이름(spec.name)으로 판단하므로 별칭·재시도·승인 후 실행에도 같은 결과다.
 pub fn tool_policy(c: &Connection, project_id: &str, session_id: &str, spec: &tools::ToolSpec) -> ApiResult<PolicyDecision> {
     use crate::settings::{all_layers, tool_names};
@@ -181,9 +181,14 @@ pub fn tool_policy(c: &Connection, project_id: &str, session_id: &str, spec: &to
     if listed("tools.deny")? {
         return Ok(PolicyDecision::Deny("policy_denied", format!("도구 정책(tools.deny)으로 {}을(를) 쓸 수 없습니다", spec.name)));
     }
-    let read_only = crate::agents::is_helper_session(c, session_id)? || all_layers(c, "tools.mode", p, s)?.iter().any(|v| v == "read_only");
-    if read_only && !matches!(spec.effect, tools::Effect::Read | tools::Effect::Conversation) {
-        return Ok(PolicyDecision::Deny("read_only", format!("읽기 전용 역할 또는 설정이라 {}을(를) 실행할 수 없습니다", spec.name)));
+    if !matches!(spec.effect, tools::Effect::Read | tools::Effect::Conversation)
+        && crate::agents::is_helper_session(c, session_id)?
+    {
+        return Ok(PolicyDecision::Deny("read_only", format!("보조 에이전트 역할에서는 {}을(를) 실행할 수 없습니다", spec.name)));
+    }
+    // bypass는 일반 도구 승인만 생략한다. PC 제어·위임의 별도 동의는 넓히지 않는다.
+    if !matches!(spec.name, "computer" | "agent") && crate::settings::effective(c, "tools.mode", p, s)? == "bypass" {
+        return Ok(PolicyDecision::Allow);
     }
     if listed("tools.allow")? {
         return Ok(PolicyDecision::Allow);
@@ -721,8 +726,8 @@ pub async fn decide(
     Path(id): Path<String>,
     Json(b): Json<Decision>,
 ) -> ApiResult<Response> {
-    if !matches!(b.decision.as_str(), "approve" | "approve_session" | "deny") {
-        return Err(ApiError::invalid("decision은 approve, approve_session 또는 deny여야 합니다"));
+    if !matches!(b.decision.as_str(), "approve" | "approve_session" | "approve_always" | "deny") {
+        return Err(ApiError::invalid("decision은 approve, approve_session, approve_always 또는 deny여야 합니다"));
     }
     let approving = b.decision != "deny";
     let actor = p.clone();
@@ -748,6 +753,9 @@ pub async fn decide(
         if b.decision == "approve_session" && cur.name == "agent" {
             return Err(ApiError::invalid("자식 에이전트 위임은 대화 범위로 허용할 수 없습니다(위임 정책 agents.delegation을 쓰세요)"));
         }
+        if b.decision == "approve_always" && matches!(cur.name.as_str(), "agent" | "computer") {
+            return Err(ApiError::invalid("PC 제어·자식 에이전트 위임은 영구 승인할 수 없습니다. 별도 승인 정책을 사용하세요"));
+        }
         if approving
             && let Some(spec) = tools::spec(&cur.name)
             && let PolicyDecision::Deny(code, msg) = tool_policy(tx, &cur.project_id, &cur.session_id, &spec)?
@@ -759,7 +767,30 @@ pub async fn decide(
             return Ok((StatusCode::CONFLICT, json!({ "error": { "code": code, "message": msg, "retryable": false }, "call": c })));
         }
         let call = if approving {
-            let scope = if b.decision == "approve_session" { "session" } else { "once" };
+            let scope = match b.decision.as_str() {
+                "approve_session" => "session",
+                "approve_always" => "policy",
+                _ => "once",
+            };
+            if b.decision == "approve_always" {
+                // 기존 설정 경로를 재사용해 재시작 후에도 유지하고 설정에서 해제한다.
+                // 승인 결정과 설정·revision·이벤트·감사는 같은 transaction에서 기록한다.
+                let d = crate::settings::def("tools.allow").expect("tools.allow registry");
+                let resolved = crate::settings::resolve_key(tx, &d, None, None)?;
+                let layer = &resolved["layers"]["server"];
+                let old_value = layer["value"].clone();
+                let mut names: Vec<&str> = crate::settings::tool_names(old_value.as_str().unwrap_or("")).collect();
+                if !names.contains(&cur.name.as_str()) {
+                    names.push(&cur.name);
+                    crate::settings::record_change(
+                        tx, now, &actor, ("server", "-", "tools.allow"), (None, None),
+                        &crate::settings::PutSetting {
+                            expected_revision: layer["revision"].as_i64().unwrap_or(0),
+                            value: json!(names.join(", ")),
+                        }, old_value,
+                    )?;
+                }
+            }
             tx.execute(
                 "UPDATE tool_calls SET status = 'approved', decided_at = ?2, updated_at = ?2, revision = revision + 1, approval_scope = ?3 WHERE id = ?1",
                 params![id, now, scope],

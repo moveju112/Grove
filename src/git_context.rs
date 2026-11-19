@@ -226,11 +226,7 @@ pub async fn show(State(app): State<App>, p: Principal, Path(id): Path<String>, 
         || !matches!(now_remote.code, 0 | 1) || remote != String::from_utf8_lossy(&now_remote.stdout).trim();
     crate::auth::revalidate(&app, &p).await?;
     let pid = id.clone();
-    let tool_mode = app.db.call(move |c| {
-        Ok(if crate::settings::all_layers(c, "tools.mode", Some(&pid), None)?.iter().any(|v| v == "read_only") {
-            "read_only"
-        } else { "ask" })
-    }).await?;
+    let tool_mode = app.db.call(move |c| crate::settings::effective(c, "tools.mode", Some(&pid), None)).await?;
     if stale { prs = state("stale"); checks = state("stale"); }
     Ok(Json(json!({
         "project_id": id, "status": if stale { "stale" } else { "ok" }, "observed_at": app.now(),

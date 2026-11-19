@@ -39,4 +39,13 @@ describe("공유 대화 탭", () => {
         expect(applyWorkspaceTabs(duplicate, shared, false)).toBe(duplicate);
         expect(ids(applyWorkspaceTabs(duplicate, workspaceTabs(L.emptyLayout()), false))).toEqual([]);
     });
+
+    it("공유 대화를 이어갈 때도 기기에서 선택한 새 대화 탭을 유지한다", () => {
+        const initial = open(L.emptyLayout(), "A");
+        const local = L.openTab(initial, initial.focused_leaf, { id: "new-chat", kind: "project", project_id: "project", title: "새 대화" });
+        const shared = workspaceTabs(open(initial, "B"));
+        const restored = applyWorkspaceTabs(local, shared, true);
+        expect(L.focusedLeaf(restored).active_tab).toBe("new-chat");
+        expect(L.allTabs(restored).map((item) => item.id)).toEqual(["A", "new-chat", "B"]);
+    });
 });

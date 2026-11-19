@@ -128,12 +128,14 @@ fn bucket(t: OffsetDateTime, by: &str, off: UtcOffset) -> String {
     }
 }
 
-/// 집계 본체(시험에서 직접 호출).
-pub fn aggregate(c: &Connection, q: &UsageQuery) -> ApiResult<Value> {
-    Ok(aggregate_all(c, q)?.0)
+struct UsageRange {
+    from: OffsetDateTime,
+    to: OffsetDateTime,
+    off: UtcOffset,
+    off_min: i32,
 }
 
-fn aggregate_all(c: &Connection, q: &UsageQuery) -> ApiResult<(Value, UsageDashboard)> {
+fn usage_range(q: &UsageQuery) -> ApiResult<UsageRange> {
     let (from, to) = (parse(&q.from, "from")?, parse(&q.to, "to")?);
     if to <= from || to - from > Duration::days(400) {
         return Err(ApiError::invalid("기간은 to > from 이고 400일 이하여야 합니다"));
@@ -147,9 +149,28 @@ fn aggregate_all(c: &Connection, q: &UsageQuery) -> ApiResult<(Value, UsageDashb
         return Err(ApiError::invalid("tz_offset_minutes는 -840~840입니다"));
     }
     let off = UtcOffset::from_whole_seconds(off_min * 60).map_err(|_| ApiError::invalid("시간대 offset이 올바르지 않습니다"))?;
-    let mut dashboard = dashboard::Builder::new(from, to, off, by == "hour");
+    Ok(UsageRange { from, to, off, off_min })
+}
+
+struct UsageRow {
+    at: String,
+    content: Value,
+    profile_id: Option<String>,
+    agent: Option<String>,
+    workflow: Option<String>,
+    session_id: String,
+    project_id: String,
+    session_title: String,
+    project_name: String,
+}
+
+type UsageProfile = (String, String, Option<Value>);
+
+fn for_each_usage(
+    c: &Connection, q: &UsageQuery, range: &UsageRange, mut add: impl FnMut(UsageRow, Option<&UsageProfile>),
+) -> ApiResult<()> {
     // 프로필별 protocol·가격(현재 가격표 기준 추정)
-    let mut profiles: BTreeMap<String, (String, String, Option<Value>)> = BTreeMap::new();
+    let mut profiles: BTreeMap<String, UsageProfile> = BTreeMap::new();
     {
         let mut st = c.prepare("SELECT id, name, protocol, options FROM model_profiles")?;
         let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, String>(2)?, r.get::<_, String>(3)?)))?;
@@ -165,57 +186,82 @@ fn aggregate_all(c: &Connection, q: &UsageQuery) -> ApiResult<(Value, UsageDashb
                FROM message_history m JOIN sessions s ON s.id = m.session_id JOIN projects p ON p.id = s.project_id LEFT JOIN turns t ON t.id = m.turn_id \
                WHERE m.created_at >= ?1 AND m.created_at < ?2 AND (?3 IS NULL OR s.project_id = ?3) \
                AND (m.role = 'assistant' OR (m.role = 'note' AND json_extract(m.content, '$.type') = 'compaction'))";
-    let mut st = c.prepare(sql)?;
-    let rows = st.query_map(params![crate::util::fmt_time(from), crate::util::fmt_time(to), q.project_id], |r| {
-        Ok((
-            r.get::<_, String>(0)?,
-            r.get::<_, String>(1)?,
-            r.get::<_, Option<String>>(2)?,
-            r.get::<_, Option<String>>(3)?,
-            r.get::<_, Option<String>>(4)?,
-            r.get::<_, String>(5)?,
-            r.get::<_, String>(6)?,
-            r.get::<_, String>(7)?,
-            r.get::<_, String>(8)?,
-        ))
+    let from = crate::util::fmt_time(range.from);
+    let to = crate::util::fmt_time(range.to);
+    let mut visit = |row: UsageRow| {
+        let profile = row.profile_id.as_ref().and_then(|id| profiles.get(id));
+        add(row, profile);
+    };
+    {
+        let mut st = c.prepare(sql)?;
+        let rows = st.query_map(params![from, to, q.project_id], |r| {
+            Ok(UsageRow {
+                at: r.get(0)?,
+                content: serde_json::from_str(&r.get::<_, String>(1)?).unwrap_or(Value::Null),
+                profile_id: r.get(2)?, agent: r.get(3)?, workflow: r.get(4)?,
+                session_id: r.get(5)?, project_id: r.get(6)?, session_title: r.get(7)?, project_name: r.get(8)?,
+            })
+        })?;
+        for row in rows { visit(row?); }
+    }
+    // 대화 메시지에 남지 않는 보조 모델 호출(제목 생성·메모리 정리·버린 압축). 응답을 받지 못한 실패는 사용량이 없어 제외한다.
+    let mut st = c.prepare(
+        "SELECT a.created_at, a.usage, a.profile_id, a.kind, a.protocol, a.model, a.effort, a.provider_ms, a.session_id, s.project_id, s.title, p.name \
+         FROM aux_model_calls a JOIN sessions s ON s.id = a.session_id JOIN projects p ON p.id = s.project_id \
+         WHERE a.created_at >= ?1 AND a.created_at < ?2 AND (?3 IS NULL OR s.project_id = ?3) AND a.usage IS NOT NULL",
+    )?;
+    let aux = st.query_map(params![from, to, q.project_id], |r| {
+        let usage: Value = serde_json::from_str(&r.get::<_, String>(1)?).unwrap_or(Value::Null);
+        let content = json!({ "usage": usage, "protocol": r.get::<_, String>(4)?, "model": r.get::<_, String>(5)?,
+            "effort": r.get::<_, Option<String>>(6)?, "provider_ms": r.get::<_, i64>(7)? });
+        Ok(UsageRow {
+            at: r.get(0)?, content, profile_id: Some(r.get(2)?),
+            agent: Some(crate::aux_usage::Kind::label(&r.get::<_, String>(3)?).to_string()), workflow: None,
+            session_id: r.get(8)?, project_id: r.get(9)?, session_title: r.get(10)?, project_name: r.get(11)?,
+        })
     })?;
+    for row in aux { visit(row?); }
+    Ok(())
+}
+
+/// 집계 본체(시험에서 직접 호출).
+pub fn aggregate(c: &Connection, q: &UsageQuery) -> ApiResult<Value> {
+    let range = usage_range(q)?;
+    let by = q.group_by.as_str();
     let mut groups: BTreeMap<String, (String, Acc)> = BTreeMap::new();
     let mut total = Acc::default();
     let mut versions = std::collections::BTreeSet::new();
-    for row in rows {
-        let (at, content, prof, agent, wf, sid, pid, title, pname) = row?;
-        let content: Value = serde_json::from_str(&content).unwrap_or(Value::Null);
+    for_each_usage(c, q, &range, |row, p| {
+        let UsageRow { at, content, profile_id, agent, workflow, session_id, project_id, session_title, project_name } = row;
         let usage = &content["usage"];
-        let p = prof.as_ref().and_then(|id| profiles.get(id));
         let pricing = p.and_then(|x| x.2.as_ref());
-        dashboard.add(&at, &content, pricing, p.map(|p| p.1.as_str()).unwrap_or("unknown"), agent.as_deref(), wf.as_deref(), &pid, &pname, &sid, &title);
         if let Some(v) = pricing.and_then(|p| p["version"].as_str()) {
             versions.insert(v.to_string());
         }
-        let none = "(없음)".to_string();
+        let none = || "(없음)".to_string();
         let (key, label) = match by {
             "provider" => {
                 let k = p.map(|x| x.1.clone()).unwrap_or_else(|| "(삭제된 프로필)".into());
                 (k.clone(), k)
             }
             "model" => {
-                let k = content["model"].as_str().map(str::to_string).unwrap_or(none.clone());
+                let k = content["model"].as_str().map(str::to_string).unwrap_or_else(none);
                 (k.clone(), k)
             }
-            "profile" => (prof.clone().unwrap_or(none.clone()), p.map(|x| x.0.clone()).unwrap_or_else(|| "(삭제된 프로필)".into())),
+            "profile" => (profile_id.unwrap_or_else(none), p.map(|x| x.0.clone()).unwrap_or_else(|| "(삭제된 프로필)".into())),
             "agent" => {
-                let k = agent.unwrap_or(none.clone());
+                let k = agent.unwrap_or_else(none);
                 (k.clone(), k)
             }
             "workflow" => {
-                let k = wf.unwrap_or(none.clone());
+                let k = workflow.unwrap_or_else(none);
                 (k.clone(), k)
             }
-            "session" => (sid, title),
-            "project" => (pid, pname),
+            "session" => (session_id, session_title),
+            "project" => (project_id, project_name),
             _ => {
-                let t = crate::util::parse_time(&at).unwrap_or(from);
-                let b = bucket(t, by, off);
+                let t = crate::util::parse_time(&at).unwrap_or(range.from);
+                let b = bucket(t, by, range.off);
                 (b.clone(), b)
             }
         };
@@ -223,7 +269,7 @@ fn aggregate_all(c: &Connection, q: &UsageQuery) -> ApiResult<(Value, UsageDashb
         one.add(usage, pricing);
         total.merge(&one);
         groups.entry(key).or_insert_with(|| (label, Acc::default())).1.merge(&one);
-    }
+    })?;
     let mut out: Vec<Value> = groups
         .into_iter()
         .map(|(k, (label, a))| {
@@ -237,11 +283,21 @@ fn aggregate_all(c: &Connection, q: &UsageQuery) -> ApiResult<(Value, UsageDashb
     if !matches!(by, "hour" | "day" | "week" | "month") {
         out.sort_by_key(|v| std::cmp::Reverse(v["input_tokens"].as_u64().unwrap_or(0) + v["output_tokens"].as_u64().unwrap_or(0)));
     }
-    Ok((json!({
-        "from": q.from, "to": q.to, "group_by": by, "tz_offset_minutes": off_min,
+    Ok(json!({
+        "from": q.from, "to": q.to, "group_by": by, "tz_offset_minutes": range.off_min,
         "rows": out, "total": total.to_json(),
         "pricing_versions": versions, "cost_is_estimate": true,
-    }), dashboard.finish()))
+    }))
+}
+
+fn aggregate_dashboard(c: &Connection, q: &UsageQuery) -> ApiResult<UsageDashboard> {
+    let range = usage_range(q)?;
+    let mut builder = dashboard::Builder::new(range.from, range.to, range.off, q.group_by == "hour");
+    for_each_usage(c, q, &range, |r, p| {
+        builder.add(&r.at, &r.content, p.and_then(|p| p.2.as_ref()), p.map(|p| p.1.as_str()).unwrap_or("unknown"),
+            r.agent.as_deref(), r.workflow.as_deref(), &r.project_id, &r.project_name, &r.session_id, &r.session_title);
+    })?;
+    Ok(builder.finish())
 }
 
 pub async fn get_usage(State(app): State<App>, _p: Principal, Query(q): Query<UsageQuery>) -> ApiResult<Json<Value>> {
@@ -256,7 +312,7 @@ pub async fn get_dashboard(State(app): State<App>, _p: Principal, Query(q): Quer
     if q.group_by == "hour" && parse(&q.to, "to")? - parse(&q.from, "from")? > Duration::days(2) {
         return Err(ApiError::invalid("시간별 조회는 2일 이하여야 합니다"));
     }
-    Ok(Json(app.db.call(move |c| Ok(aggregate_all(c, &q)?.1)).await?))
+    Ok(Json(app.db.call(move |c| aggregate_dashboard(c, &q)).await?))
 }
 
 /// 실행 용량(FAIR-011). 서버 전체는 실행·대기 합계와 한도만, 요청별 상세(대화·대기 이유·순서)는

@@ -221,7 +221,8 @@ fn finish_turn(c: &Connection, now: &str, id: &str, from: &[&str], to: &str, err
     if n > 0 {
         crate::followups::live::on_turn_finished(c, now, id)?;
         // 미결 도구 요청은 같은 transaction에서 정리한다(실행 중인 것은 실행 경로가 기록).
-        let mut st = c.prepare("SELECT id FROM tool_calls WHERE turn_id = ?1 AND status IN ('pending_approval','awaiting_input','approved')")?;
+        // 기존 상태 인덱스의 순회를 명시해 조회 계획이 바뀌어도 취소 이벤트 순서를 유지한다.
+        let mut st = c.prepare("SELECT id FROM tool_calls WHERE turn_id = ?1 AND status IN ('pending_approval','awaiting_input','approved') ORDER BY status, rowid")?;
         let ids = st.query_map(params![id], |r| r.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
         drop(st);
         for cid in ids {
@@ -697,9 +698,25 @@ async fn drive(app: App, turn_id: String) {
     crate::titles::after_turn(&app, &turn_id).await;
 }
 
+/// 표시 시각은 각 조각의 첫 텍스트가 도착했을 때만 기록한다.
+fn record_part_times(times: &mut Vec<Option<String>>, output: &provider::ModelOutput, now: impl FnOnce() -> String) {
+    let parts = if output.response_parts.is_empty() && !output.text.is_empty() {
+        std::slice::from_ref(&output.text)
+    } else { &output.response_parts };
+    times.resize(parts.len(), None);
+    let mut at = None;
+    let mut now = Some(now);
+    for (time, text) in times.iter_mut().zip(parts) {
+        if time.is_none() && !text.trim().is_empty() {
+            *time = Some(at.get_or_insert_with(|| now.take().expect("part time")()).clone());
+        }
+    }
+}
+
 async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<bool>) -> Option<String> {
     let mut session_for_partial = None;
     let mut auto_compact_checked = false;
+    let mut codex = provider::codex_oauth::Session::default();
     loop {
         let (tid, epoch) = (turn_id.to_string(), app.epoch.clone());
         // queued → running 전이(처음 시작)
@@ -859,7 +876,10 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             })
         };
         let mut fallback_emitted = native_execution;
+        let mut part_times = Vec::new();
+        let clock = &app.clock;
         let mut on_delta = |o: &provider::ModelOutput| {
+            record_part_times(&mut part_times, o, || crate::util::fmt_time(clock.now()));
             if !o.text.is_empty() || !o.reasoning.is_empty() || !o.tool_calls.is_empty() || !o.activity.is_empty() || !o.generated_images.is_empty() {
                 fallback_emitted = true;
                 let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
@@ -873,6 +893,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             partials.stage(
                 &sid,
                 json!({ "turn_id": tid2, "text": o.text, "response_parts": o.response_parts,
+                        "response_part_times": part_times, "response_steers": o.response_steers,
                         "profile_id": input.profile_id, "context_usage": o.context_usage,
                         "reasoning_chars": o.reasoning.chars().count(), "reasoning": reasoning_stored(&o.reasoning),
                         "tool_calls": o.tool_calls.iter().map(|c| c.name.clone()).collect::<Vec<_>>() }),
@@ -904,7 +925,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             if input.profile.protocol == "codex_cli" && let Some(context) = &mut input.request.cli {
                 context.steers = Some(crate::followups::live::LiveSteers::new(app, turn_id));
             }
-            let stream = provider::stream_with_service_tier(&input.profile, &input.request, input.service_tier.as_deref(), &mut cancel_rx, &mut on_delta);
+            let stream = provider::stream_with_service_tier(&input.profile, &input.request, input.service_tier.as_deref(), &mut codex, &mut cancel_rx, &mut on_delta);
             tokio::pin!(stream);
             let mut interval = tokio::time::interval(Duration::from_millis(50));
             loop {
@@ -982,6 +1003,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             return session_for_partial;
         }
         // 확정: 답변 저장 + 도구 호출 계획을 한 transaction으로
+        record_part_times(&mut part_times, &out, || crate::util::fmt_time(app.clock.now()));
         let ttl = app.cfg.approval_ttl_secs;
         let model = input.profile.model.clone();
         let system_hash = crate::util::sha256_hex(input.request.system.as_bytes());
@@ -1058,12 +1080,14 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                     "provider_ms": provider_ms,
                     "protocol": input.profile.protocol,
                     "effort": input.request.effort,
-                    "service_tier": input.request.cli.as_ref().and_then(|context| context.service_tier.clone()),
+                    "service_tier": requested_service_tier(&input.profile.protocol, input.request.cli.as_ref(), input.service_tier.as_deref()),
                     "reasoning_chars": out.reasoning.chars().count(),
                     // 표시 전용(UI-012). 서명된 공급자 입력은 별도 model_input에 보존한다.
                     "reasoning": reasoning_stored(&out.reasoning),
                 });
                 if !parts.is_empty() { content["response_parts"] = json!(parts); }
+                if !part_times.is_empty() { content["response_part_times"] = json!(part_times); }
+                if !out.response_steers.is_empty() { content["response_steers"] = json!(out.response_steers); }
                 if let Some(context) = &out.context_usage { content["context_usage"] = json!(context); }
                 if !images.items.is_empty() { content["attachments"] = json!(images.items); }
                 if completion_pending { content["pending_work"] = pending_work.clone(); }
@@ -1394,14 +1418,26 @@ pub fn set_turn_effort(tx: &Connection, turn_id: &str, effort: Option<&str>) -> 
     let turn = get_turn(tx, turn_id)?;
     let Some(profile_id) = turn.profile_id.as_deref() else { return Ok(()) };
     let profile = crate::models::get_enabled_profile(tx, profile_id)?;
+    let selection = &turn.definition["model_selection"];
+    let model = selection["model"].as_str().filter(|_| selection["profile_id"] == profile_id).unwrap_or(&profile.model);
     if let Some(e) = effort {
-        profile.check_capabilities(false, Some(e), false)?;
+        profile.check_model_capabilities(model, false, Some(e), false)?;
         tx.execute("UPDATE turns SET definition_snapshot = json_set(definition_snapshot, '$.effort', ?2) WHERE id = ?1", params![turn_id, e])?;
     }
     // 요청값과 provider에 실제로 보내는 값을 함께 고정한다(EFF-002·009).
-    let applied = provider::effort_application(&profile.protocol, effort);
+    let applied = provider::effort_application(&profile.protocol, model, effort);
     tx.execute("UPDATE turns SET definition_snapshot = json_set(definition_snapshot, '$.effort_applied', json(?2)) WHERE id = ?1", params![turn_id, applied.to_string()])?;
     Ok(())
+}
+
+/// 응답 기록에 남길 요청 service tier. CLI는 실행 문맥에 넣은 값, Codex OAuth는 Responses 요청에 넣은 값이다.
+/// 다른 공급자는 tier를 전달하지 않으므로 기록하지 않는다(미기록).
+fn requested_service_tier(protocol: &str, cli: Option<&provider::cli::CliContext>, requested: Option<&str>) -> Option<String> {
+    match cli {
+        Some(context) => context.service_tier.clone(),
+        None if protocol == provider::codex_oauth::PROTOCOL => requested.map(str::to_owned),
+        None => None,
+    }
 }
 
 pub(crate) fn set_turn_service_tier(tx: &Connection, turn_id: &str, tier: Option<&str>) -> ApiResult<()> {
@@ -1681,12 +1717,35 @@ pub async fn list(State(app): State<App>, _p: Principal, Path(session_id): Path<
 
 const RETRYABLE_END: &[&str] = &["failed", "interrupted", "cancelled"];
 
-/// 끝난 요청 다시 실행(RUN-019). 그 대화의 가장 최근 요청이 실패·중단·취소로 끝났을 때만, 같은 글·프로필·에이전트·도구·강도로
-/// 새 요청을 만든다(출처 retry). 원래 요청은 확인한 것으로 표시한다. 같은 Idempotency-Key 재전송은 한 번만 만든다.
-pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>) -> ApiResult<Response> {
+#[derive(Deserialize)]
+pub struct RetryTurn {
+    model_selection: Option<RetryModelSelection>,
+}
+
+#[derive(Deserialize)]
+struct RetryModelSelection {
+    profile_id: String,
+    model: Option<String>,
+    effort: Option<String>,
+    service_tier: Option<String>,
+}
+
+/// 최신 실패·중단·취소 요청의 글과 첨부로 새 요청을 만든다(RUN-019).
+/// 모델 선택을 보낸 일반 대화는 그 선택을 적용하고, 생략하면 원래 실행 설정을 유지한다.
+pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Path(id): Path<String>, body: Option<Json<RetryTurn>>) -> ApiResult<Response> {
+    let selection = body.and_then(|Json(b)| b.model_selection).map(|selection| {
+        let model = parse_model(selection.model.as_deref())?;
+        let effort = provider::parse_effort(selection.effort.as_deref()).map_err(ApiError::invalid)?;
+        let service_tier = provider::parse_service_tier(selection.service_tier.as_deref()).map_err(ApiError::invalid)?;
+        Ok::<_, ApiError>(RetryModelSelection { profile_id: selection.profile_id, model, effort, service_tier })
+    }).transpose()?;
+    let mut body = json!({ "id": id });
+    if let Some(s) = &selection {
+        body["model_selection"] = json!({ "profile_id": s.profile_id, "model": s.model, "effort": s.effort, "service_tier": s.service_tier });
+    }
     let data = app.cfg.data_dir.clone();
     let uploader = p.root_id.clone();
-    let h = idem::body_hash("turn.retry", &json!({ "id": id }));
+    let h = idem::body_hash("turn.retry", &body);
     let epoch = app.epoch.clone();
     let owner = format!("token:{}", p.root_id);
     let resp = idem::run(&app, &p, &headers, &h, move |tx, now| {
@@ -1708,16 +1767,34 @@ pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         let ids: Vec<String> = content["attachments"].as_array().into_iter().flatten().filter_map(|a| a["id"].as_str().map(str::to_owned)).collect();
         let session = crate::sessions::get_active(tx, &old.session_id)?;
         let prepared = crate::attachments::prepare(tx, &data, &uploader, &session.project_id, &text, &ids)?;
-        let profile = old.profile_id.clone().ok_or_else(|| ApiError::invalid("모델 프로필이 없는 요청입니다"))?;
+        let previous_profile = old.profile_id.as_deref();
+        let profile = selection.as_ref().map(|s| s.profile_id.as_str()).or(previous_profile)
+            .ok_or_else(|| ApiError::invalid("모델 프로필이 없는 요청입니다"))?;
+        let native_command = old.definition["native_command"].as_str();
+        let mut tools = old.tools_enabled;
+        if Some(profile) != previous_profile {
+            if native_command.is_some() {
+                return Err(ApiError::invalid("다른 프로필에서는 CLI 명령을 다시 선택해 새 요청으로 보내세요"));
+            }
+            // 기존에 끈 도구는 켜지 않고, 새 프로필이 지원하지 않는 Grove 도구는 넘기지 않는다.
+            tools &= crate::models::get_enabled_profile(tx, profile)?.capabilities.tools != Some(false);
+        }
         let mut src = json!({ "kind": "retry", "turn_id": old.id });
         if old.definition.get("bot_room").is_some() { src["room_retry_bot"] = old.definition["bot"]["id"].clone(); }
-        let (t, msg) = enqueue_with_attachments(tx, now, &epoch, &owner, &old.session_id, &text, &profile, old.agent_id.as_deref(), Some(old.tools_enabled), Some(&src), Some(&prepared))?;
-        if old.definition["model_selection"]["profile_id"] == profile.as_str() {
-            set_turn_model(tx, &t.id, old.definition["model_selection"]["model"].as_str())?;
-        }
-        set_turn_effort(tx, &t.id, old.definition["effort"].as_str())?;
-        set_turn_service_tier(tx, &t.id, old.definition["service_tier"].as_str())?;
-        set_turn_native_command(tx, &t.id, old.definition["native_command"].as_str())?;
+        let (t, msg) = enqueue_with_attachments(tx, now, &epoch, &owner, &old.session_id, &text, profile, old.agent_id.as_deref(), Some(tools), Some(&src), Some(&prepared))?;
+        let (model, effort, tier) = if let Some(s) = &selection {
+            if t.definition.get("bot").is_some() {
+                return Err(ApiError::invalid("봇 모델은 봇 설정에서 변경하세요"));
+            }
+            (s.model.as_deref(), s.effort.as_deref(), s.service_tier.as_deref())
+        } else {
+            let model = old.definition["model_selection"]["model"].as_str().filter(|_| old.definition["model_selection"]["profile_id"] == profile);
+            (model, old.definition["effort"].as_str(), old.definition["service_tier"].as_str())
+        };
+        set_turn_model(tx, &t.id, model)?;
+        set_turn_effort(tx, &t.id, effort)?;
+        set_turn_service_tier(tx, &t.id, tier)?;
+        set_turn_native_command(tx, &t.id, native_command)?;
         tx.execute("UPDATE turns SET acknowledged_at = COALESCE(acknowledged_at, ?2) WHERE id = ?1", params![old.id, now])?;
         emit_turn(tx, now, &old.id)?;
         let t = get_turn(tx, &t.id)?;
@@ -1902,7 +1979,7 @@ async fn cancel_running_calls(app: &App, turn_id: &str) {
     let ids: Vec<String> = app
         .db
         .call(move |c| {
-            let mut st = c.prepare("SELECT id FROM tool_calls WHERE turn_id = ?1 AND status = 'running'")?;
+            let mut st = c.prepare("SELECT id FROM tool_calls WHERE turn_id = ?1 AND status = 'running' ORDER BY rowid")?;
             let v = st.query_map(params![tid], |r| r.get(0))?.collect::<Result<Vec<String>, _>>()?;
             Ok(v)
         })
@@ -1916,6 +1993,17 @@ async fn cancel_running_calls(app: &App, turn_id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Codex OAuth로 보낸 Fast(priority) 요청도 CLI처럼 응답 기록에 남아 사용량에서 미기록으로 빠지지 않는다.
+    #[test]
+    fn requested_service_tier_records_codex_oauth_and_cli_requests() {
+        let oauth = provider::codex_oauth::PROTOCOL;
+        assert_eq!(requested_service_tier(oauth, None, Some("priority")).as_deref(), Some("priority"));
+        assert_eq!(requested_service_tier(oauth, None, None), None);
+        let cli = provider::cli::CliContext { service_tier: Some("default".into()), ..Default::default() };
+        assert_eq!(requested_service_tier("codex_cli", Some(&cli), Some("priority")).as_deref(), Some("default"), "CLI는 실행 문맥 값(역할 실행의 standard 고정 포함)");
+        assert_eq!(requested_service_tier("openai", None, Some("priority")), None, "tier를 전달하지 않는 공급자는 기록하지 않는다");
+    }
 
     /// RUN-001: 종료 상태에서는 나가지 않고, 전이표의 상태는 DB CHECK의 상태와 같다.
     #[test]

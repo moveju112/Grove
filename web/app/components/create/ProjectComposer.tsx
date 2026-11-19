@@ -31,7 +31,7 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
                 document.removeEventListener("close", focusInput, true);
                 return;
             }
-            const input = node.querySelector("textarea");
+            const input = node.querySelector<HTMLElement>("[data-composer-input]");
             input?.focus();
             if (input === document.activeElement) document.removeEventListener("close", focusInput, true);
         };

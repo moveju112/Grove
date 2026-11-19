@@ -43,7 +43,10 @@ export function mergeWorkspaceTabs(base: L.Layout, edited: L.Layout, current: L.
 // 기존 사본의 탭 ID·분할·파일·터미널을 보존한다. 공유 목록은 대화의 열림 여부만 정한다.
 export function applyWorkspaceTabs(local: L.Layout, shared: L.Layout, resume: boolean): L.Layout {
     const tabs = bySession(shared);
-    const active = L.focusedLeaf(local).active_tab;
+    const focused = L.focusedLeaf(local);
+    const active = focused.active_tab;
+    // 기기에만 있는 새 대화는 첫 전송 전까지 공유 세션으로 대체하지 않는다.
+    const newConversation = focused.tabs.some((tab) => tab.id === active && tab.kind === "project" && !tab.resource_id);
     let next = local;
     for (const tab of L.allTabs(local)) {
         if (isSession(tab) && !tabs.has(tab.resource_id)) next = L.closeTab(next, tab.id);
@@ -53,7 +56,7 @@ export function applyWorkspaceTabs(local: L.Layout, shared: L.Layout, resume: bo
     for (const [id, tab] of tabs) {
         if (!existing.has(id)) next = L.openTab(next, leaf, tab);
     }
-    const selection = resume ? bySession(next).get(activeSession(shared) ?? "")?.id : undefined;
+    const selection = resume && !newConversation ? bySession(next).get(activeSession(shared) ?? "")?.id : undefined;
     if (selection) return L.focusedLeaf(next).active_tab === selection ? next : L.activate(next, selection);
     if (active && L.focusedLeaf(next).active_tab !== active && L.allTabs(next).some((tab) => tab.id === active)) return L.activate(next, active);
     return next;

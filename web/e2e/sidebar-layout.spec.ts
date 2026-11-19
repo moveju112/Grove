@@ -16,6 +16,9 @@ for (const width of [390, 1280]) {
                 if (await toggle.getAttribute("aria-expanded") === "false") await toggle.click();
                 const side = page.getByRole("complementary", { name: "탐색" });
                 await expect(side.getByText("최근 항목 없음", { exact: true })).toBeVisible();
+                const recentScroll = side.getByTestId("recent-scroll");
+                const emptyRecentHeight = (await recentScroll.boundingBox())!.height;
+                expect(emptyRecentHeight).toBe(144);
                 await expect(side.getByTestId("bots-panel")).toHaveCount(0);
                 await expect(side.getByLabel("최근 검색·필터")).toHaveCount(0);
                 await expect(side.getByRole("combobox", { name: "프로젝트 정렬", exact: true })).toBeHidden();
@@ -32,7 +35,10 @@ for (const width of [390, 1280]) {
                 if (width < 760) {
                     await expect(side.getByRole("button", { name: "프로젝트·폴더 추가", exact: true })).toHaveCount(0);
                     await expect(side.getByRole("button", { name: "설정", exact: true })).toHaveCount(0);
-                    await expect(side.getByRole("button", { name: "사용량", exact: true })).toHaveText("사용량");
+                    await expect(side.getByRole("button", { name: "사용량", exact: true })).toHaveCount(0);
+                    const usage = navigation.getByTestId("mobile-drawer-header").getByRole("button", { name: "사용량", exact: true });
+                    await expect(usage).toBeVisible();
+                    await expect(usage).toHaveText("");
                 } else {
                     const settings = side.getByRole("button", { name: "설정", exact: true });
                     const usage = side.getByRole("button", { name: "사용량", exact: true });
@@ -74,6 +80,7 @@ for (const width of [390, 1280]) {
                 expect(await side.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
                 const bounds = await row.boundingBox();
                 expect(bounds!.height).toBe(24);
+                expect((await recentScroll.boundingBox())!.height).toBe(emptyRecentHeight);
                 await expect(row.getByRole("button", { name: "최근에서 숨기기", exact: true })).toBeVisible();
                 await expect(row.getByRole("button")).toHaveCount(2);
                 await page.screenshot({ path: info.outputPath("populated.png") });

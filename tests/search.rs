@@ -6,7 +6,7 @@ use reqwest::StatusCode;
 use serde_json::{Value, json};
 
 fn titles(v: &Value) -> Vec<String> {
-    let mut t: Vec<String> = v["items"].as_array().unwrap().iter().map(|x| x["title"].as_str().unwrap().to_string()).collect();
+    let mut t: Vec<String> = v["items"].as_array().unwrap().iter().map(|x| x["session"]["title"].as_str().unwrap().to_string()).collect();
     t.sort();
     t
 }

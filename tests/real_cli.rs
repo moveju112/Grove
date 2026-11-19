@@ -193,7 +193,7 @@ async fn cli_profile_check_reports_installed_version() {
     eprintln!("CLI check: {r}");
 }
 
-// UI-020: 설치된 CLI가 effort 설정(Codex `-c model_reasoning_effort`, Claude Code `MAX_THINKING_TOKENS`)을 받아 정상 응답한다.
+// UI-020: 설치된 CLI가 effort 설정(Codex `-c model_reasoning_effort`, Claude Code `CLAUDE_CODE_EFFORT_LEVEL`)을 받아 정상 응답한다.
 #[tokio::test]
 #[ignore]
 async fn cli_backend_accepts_effort() {

@@ -1,15 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
 
 // FLOW-16: 새 PWA 버전이 발행돼도 진행 중인 stream과 입력을 끊지 않고, 사용자가 고를 때만 전환한다.
-// 서버는 web/build/client를 매번 디스크에서 읽으므로(sw.js는 no-cache) 파일을 바꾸면 새 버전 발행과 같다.
-const SW = join(process.cwd(), "build/client/sw.js");
-
 test("새 버전 발행 중에도 stream과 초안이 유지되고, 사용자가 고를 때만 새 버전으로 바뀐다", async ({ page }) => {
-    const original = readFileSync(SW, "utf8");
+    // E2E 서버가 제공하는 격리된 정적 웹 복사본에서 새 버전을 발행한다.
+    const sw = join(dirname(state().projA), "web", "sw.js");
+    const original = readFileSync(sw, "utf8");
     try {
         const { b } = await ensureProjects();
         await ensureProfile();
@@ -31,7 +30,7 @@ test("새 버전 발행 중에도 stream과 초안이 유지되고, 사용자가
         await view.getByLabel("메시지 입력").fill("업데이트 중에 쓰는 글");
 
         // 2) 새 버전 발행 → 확인(update)만 하고 적용하지 않는다
-        writeFileSync(SW, original.replace(/const VERSION = "([^"]+)"/, 'const VERSION = "$1-next"'));
+        writeFileSync(sw, original.replace(/const VERSION = "([^"]+)"/, 'const VERSION = "$1-next"'));
         await page.evaluate(async () => {
             const reg = await navigator.serviceWorker.getRegistration();
             await reg!.update();
@@ -75,6 +74,6 @@ test("새 버전 발행 중에도 stream과 초안이 유지되고, 사용자가
         const turns = await apiCall<{ id: string }[] | { items: { id: string }[] }>("GET", `/sessions/${s.id}/turns`);
         expect(Array.isArray(turns) ? turns.length : turns.items.length).toBe(1);
     } finally {
-        writeFileSync(SW, original);
+        writeFileSync(sw, original);
     }
 });

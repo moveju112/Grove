@@ -53,4 +53,22 @@ describe("서버 기준 턴 시간", () => {
         expect(tick).toHaveBeenCalledTimes(3);
         expect(vi.getTimerCount()).toBe(0);
     });
+
+    it("동시에 표시되는 경과 시간들이 타이머 하나를 공유한다", () => {
+        vi.useFakeTimers();
+        const first = vi.fn();
+        const second = vi.fn();
+        const stopFirst = startTimingTimer(true, first);
+        const stopSecond = startTimingTimer(true, second);
+        expect(vi.getTimerCount()).toBe(1);
+        expect(first).toHaveBeenCalledTimes(1);
+        expect(second).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(1000);
+        stopFirst();
+        vi.advanceTimersByTime(1000);
+        expect(first).toHaveBeenCalledTimes(2);
+        expect(second).toHaveBeenCalledTimes(3);
+        stopSecond();
+        expect(vi.getTimerCount()).toBe(0);
+    });
 });

@@ -1,6 +1,6 @@
 import { expect, test, type Locator } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script, sessionView, state } from "./helpers";
 
 async function expectFailureLayout(view: Locator, width: number) {
     const err = view.getByTestId("turn-ended");
@@ -94,6 +94,42 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await expect(page.getByTestId("session-view").getByTestId("turn-ended")).toHaveCount(0);
     await expect(page.getByTestId("session-view").getByTestId("msg-turn-ended")).toHaveCount(2);
     await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_tokens`, { expected_revision: 3, value: null });
+});
+
+test("다시 실행은 바꾼 프로필과 모델로 원래 메시지를 보내고 작성 중인 초안을 보존한다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    const target = await ensureProfile();
+    const title = `retry-model-${Date.now()}`;
+    const original = await apiCall<{ id: string }>("POST", "/model-profiles", {
+        name: title, protocol: "openai", base_url: `http://127.0.0.1:${state().fixturePort}/v1`, model: "original-model",
+    });
+    const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    try {
+        await login(page);
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title, exact: true }).click();
+        const view = sessionView(page, s.id);
+        await composerOption(view, "모델 프로필", original.id);
+        await script({ marker: title, frames: [JSON.stringify({ choices: [{ delta: { content: "중단된 응답" } }] })] });
+        const input = view.getByLabel("메시지 입력");
+        await input.fill(title);
+        await view.getByRole("button", { name: "보내기", exact: true }).click();
+        const retry = view.getByTestId("turn-ended").getByRole("button", { name: "다시 실행", exact: true });
+        await expect(retry).toBeVisible({ timeout: 15_000 });
+        await input.fill("보내지 않은 새 초안");
+        await composerOption(view, "모델 프로필", target);
+        await script({ marker: title, frames: frames.text(["바꾼 모델의 답변"]) });
+        await retry.click();
+        await expect(view.getByTestId("msg-assistant").last()).toContainText("바꾼 모델의 답변");
+        await expect(input).toHaveValue("보내지 않은 새 초안");
+        const turns = await apiCall<{ profile_id: string }[]>("GET", `/sessions/${s.id}/turns`);
+        expect(turns).toHaveLength(2);
+        expect(turns.some((t) => t.profile_id === target)).toBe(true);
+        const requests = await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json() as { model: string; messages: unknown[] }[];
+        expect(requests.filter((r) => JSON.stringify(r.messages).includes(title)).map((r) => r.model)).toEqual(["original-model", "fixture-model"]);
+    } finally {
+        await apiCall("DELETE", `/model-profiles/${original.id}`);
+    }
 });
 
 test("390px에서도 오류·복구 버튼은 입력창 폭 안에 표시된다", async ({ page }, info) => {

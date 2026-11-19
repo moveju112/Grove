@@ -1,5 +1,5 @@
 // 시험용 grove 서버와 로컬 모델 fixture를 띄운다. 데이터는 매번 새 임시 디렉터리에 둔다.
-import { spawn } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, copyFileSync, cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,6 +7,13 @@ import { startFixture } from "./fixture";
 
 export const STATE = join(tmpdir(), "grove-e2e-state.json");
 const PORT = 17741;
+export const ISSUANCE_PASSWORD = "test-only e2e issuance password";
+
+export function configurePairing(bin: string, data: string) {
+    execFileSync(bin, ["pairing", "set-password", "--password-stdin", "--data-dir", data], {
+        input: `${ISSUANCE_PASSWORD}\n`,
+    });
+}
 
 export default async function globalSetup() {
     const root = new URL("../..", import.meta.url).pathname;
@@ -17,6 +24,7 @@ export default async function globalSetup() {
     cpSync(join(root, "web/build/client"), web, { recursive: true });
     const fixture = await startFixture(17742);
     const bin = process.env.GROVE_BIN ?? join(root, "target/debug/grove");
+    configurePairing(bin, data);
     const cliDir = process.env.GROVE_E2E_FAKE_CLI === "1" ? mkdtempSync(join(work, "cli-")) : undefined;
     if (cliDir) {
         copyFileSync(join(root, "web/e2e/fixtures/codex.mjs"), join(cliDir, "codex"));

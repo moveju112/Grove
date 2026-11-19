@@ -15,18 +15,20 @@ export function SettingsDialog({ target, projectName, open, onClose }: {
 }) {
     const agent = target.resource_id === "agent-auth:claude_code" ? { protocol: "claude_code", name: "Claude Code" }
         : target.resource_id === "agent-auth:codex_cli" ? { protocol: "codex_cli", name: "Codex" } : null;
-    return <CreationDialog label={target.title || "설정"} onClose={onClose} width={agent ? "36em" : "76em"}>
+    const label = agent ? `${agent.name} 로그인` : target.title || "설정";
+    return <CreationDialog label={label} onClose={onClose} width={agent ? "36em" : "76em"}>
         <Stack as="header" direction="horizontal" align="center" justify="between" gap={2}>
-            <Heading level={2}>{target.title || "설정"}</Heading>
-            <Button type="button" appearance="icon" aria-label="설정 닫기" onClick={onClose}>
+            <Heading level={2}>{label}</Heading>
+            <Button type="button" appearance="icon" aria-label={agent ? "로그인 창 닫기" : "설정 닫기"} onClick={onClose}>
                 <Icon name="close" size={16} />
             </Button>
         </Stack>
         <Stack height={agent ? undefined : "min(48em, calc(100dvh - 9em))"} isScrollable={Boolean(agent)}>
             <Suspense fallback={<LoadingBar label="설정 여는 중…" />}>
-                {agent ? <AgentLogin key={agent.protocol} protocol={agent.protocol} name={agent.name} disabled={false} />
+                {agent ? <AgentLogin key={agent.protocol} protocol={agent.protocol} name={agent.name} disabled={false} showName={false} />
                     : <Settings projectId={target.project_id} projectName={projectName}
                     sessionId={target.resource_id?.startsWith("session:") ? target.resource_id.slice(8) : undefined}
+                    initialMenu={target.resource_id === "shortcuts" ? "shortcuts" : undefined}
                     open={(next, how) => { if (next.kind !== "settings") onClose(); open(next, how); }} />}
             </Suspense>
         </Stack>

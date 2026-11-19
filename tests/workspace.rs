@@ -588,6 +588,37 @@ async fn large_recent_list_search_sort_and_window_stay_correct_and_bounded() {
 }
 
 #[tokio::test]
+async fn recent_filters_before_paging_in_pinned_activity_and_id_order() {
+    let s = TestServer::start().await;
+    let project = s.create_project("p").await["id"].as_str().unwrap().to_owned();
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        for (id, at, pinned, hidden) in [
+            ("a", "2026-01-01T00:00:00Z", false, false),
+            ("b", "2026-01-01T09:00:00+09:00", false, false),
+            ("c", "2026-01-02T00:00:00Z", false, false),
+            ("d", "2025-01-01T00:00:00Z", true, false),
+            ("e", "2026-01-03T00:00:00Z", true, true),
+        ] {
+            c.execute("INSERT INTO recent_items (id, kind, project_id, resource_id, title, last_access_at, pinned, hidden) \
+                VALUES (?1, 'file', ?2, 'src/match-' || ?1, '파일', ?3, ?4, ?5)", rusqlite::params![id, project, at, pinned, hidden])?;
+        }
+        Ok(())
+    }).await.unwrap();
+    let query = "/api/v1/recent?q=MATCH&since=2026-01-01T00:00:00Z&limit=2";
+    let (st, first) = s.get(query).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(first["total"], 4);
+    assert_eq!(first["next_offset"], 2);
+    assert_eq!(first["items"][0]["id"], "d");
+    assert_eq!(first["items"][1]["id"], "c");
+    let (st, second) = s.get(&format!("{query}&offset=2")).await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(second["next_offset"], Value::Null);
+    assert_eq!(second["items"][0]["id"], "b");
+    assert_eq!(second["items"][1]["id"], "a");
+}
+
+#[tokio::test]
 async fn recent_pagination_offsets() {
     let s = TestServer::start().await;
     let p = s.create_project("p").await;

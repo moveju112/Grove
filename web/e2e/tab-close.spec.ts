@@ -79,6 +79,7 @@ for (const mode of ["tab", "context", "browser"] as const) {
             const page = await reopen();
             const restored = sessionView(page, sid);
             await expect(restored.getByTestId("partial")).toContainText("닫아도 진행 중");
+            page.once("dialog", (dialog) => dialog.accept());
             await restored.getByRole("button", { name: "취소", exact: true }).click();
             await expect.poll(async () => (await apiCall<Turn>("GET", `/turns/${turn!.id}`)).status).toBe("cancelled");
             expect((await apiCall<Turn>("GET", `/turns/${turn!.id}`)).error?.code).toBe("user_stop");

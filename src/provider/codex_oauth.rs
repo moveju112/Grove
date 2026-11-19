@@ -1,10 +1,13 @@
 //! Codex Responses 호출. 대화와 도구 실행은 Grove가 소유한다.
-use super::{AvailableModel, ChatMsg, ContextUsage, ModelOutput, ModelRequest, ModelServiceTier, NativeContent, OnDelta,
+use super::{AvailableModel, ChatMsg, ModelOutput, ModelRequest, ModelServiceTier, NativeContent, OnDelta,
     Profile, ProviderError, ToolCall, Usage, parse_arguments};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::{collections::HashSet, path::PathBuf, time::Duration};
 use tokio::io::AsyncReadExt;
+
+mod ws;
+pub(crate) use ws::Session;
 
 pub(crate) const PROTOCOL: &str = "codex_oauth";
 pub(crate) const BASE: &str = "https://chatgpt.com/backend-api/codex";
@@ -228,8 +231,10 @@ fn response_failure(event: &'static str, value: &Value) -> ProviderError {
     let mut error = match code.or(reason) {
         Some("context_length_exceeded" | "context_window_exceeded") => ProviderError::new("context_length_exceeded", "Codex 모델의 문맥 용량을 초과했습니다"),
         Some("content_filter") => ProviderError::new("blocked", "Codex가 응답을 차단했습니다"),
+        Some("server_is_overloaded") => ProviderError::new("provider_failed", "Codex 서버가 일시적으로 과부하 상태입니다"),
         _ => ProviderError::new("provider_failed", "Codex API가 응답을 완료하지 못했습니다"),
     };
+    error.retryable = matches!(code, Some("server_is_overloaded" | "server_error" | "temporarily_unavailable"));
     error.stream_failure = Some(super::StreamFailure {
         event,
         code: code.map(str::to_owned),
@@ -282,7 +287,8 @@ fn complete(out: &mut ModelOutput, response: &Value, model: &str, scope: Option<
         reasoning_tokens: usage["output_tokens_details"]["reasoning_tokens"].as_u64(),
         ..Default::default()
     };
-    if input.is_some() { out.context_usage = Some(ContextUsage { tokens: input, context_window: None }); }
+    // input_tokens는 이 요청의 입력량이다. 현재 문맥 점유량(CLI의 context_usage)으로 보고하지 않고,
+    // context 계산의 실측 경로(실측 입력 + 이후 메시지 추정)가 usage로 처리한다.
     if !reasoning.is_empty() {
         // protocol·endpoint·프로필 모델은 공용 provider stream에서 채운다.
         out.native = Some(NativeContent { protocol: String::new(), base_url: String::new(), model: String::new(), blocks: reasoning });
@@ -291,29 +297,34 @@ fn complete(out: &mut ModelOutput, response: &Value, model: &str, scope: Option<
     Ok(())
 }
 
-async fn read_response(resp: reqwest::Response, model: &str, scope: Option<&str>, on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
+// 한 응답이 완료되기 전에는 도구 호출을 runner에 넘기지 않는다.
+fn read_event(value: &Value, out: &mut ModelOutput, model: &str, scope: Option<&str>, on_delta: OnDelta<'_>) -> Result<bool, ProviderError> {
+    match value["type"].as_str() {
+        Some("response.completed") => {
+            complete(out, &value["response"], model, scope)?;
+            return Ok(true);
+        }
+        Some("response.failed") => return Err(response_failure("response.failed", value)),
+        Some("response.incomplete") => return Err(response_failure("response.incomplete", value)),
+        Some("error") => return Err(response_failure("error", value)),
+        Some("response.output_text.delta" | "response.refusal.delta") => {
+            out.text.push_str(value["delta"].as_str().ok_or_else(invalid)?);
+        }
+        Some("response.reasoning_summary_text.delta") => {
+            out.reasoning.push_str(value["delta"].as_str().ok_or_else(invalid)?);
+        }
+        _ => return Ok(false),
+    }
+    on_delta(out);
+    Ok(false)
+}
+
+async fn read_response(resp: reqwest::Response, model: &str, scope: Option<&str>, mut on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
     let mut out = ModelOutput::default();
     let completed = super::sse::read_events(resp, |frame| {
         if frame.data.is_empty() || frame.data == "[DONE]" { return Ok(false); }
         let value: Value = serde_json::from_str(&frame.data).map_err(|_| invalid())?;
-        match value["type"].as_str() {
-            Some("response.completed") => {
-                complete(&mut out, &value["response"], model, scope)?;
-                return Ok(true);
-            }
-            Some("response.failed") => return Err(response_failure("response.failed", &value)),
-            Some("response.incomplete") => return Err(response_failure("response.incomplete", &value)),
-            Some("error") => return Err(response_failure("error", &value)),
-            Some("response.output_text.delta" | "response.refusal.delta") => {
-                out.text.push_str(value["delta"].as_str().ok_or_else(invalid)?);
-            }
-            Some("response.reasoning_summary_text.delta") => {
-                out.reasoning.push_str(value["delta"].as_str().ok_or_else(invalid)?);
-            }
-            _ => return Ok(false),
-        }
-        on_delta(&out);
-        Ok(false)
+        read_event(&value, &mut out, model, scope, &mut on_delta)
     }).await?;
     if !completed {
         return Err(ProviderError::new("stream_incomplete", "Codex 응답이 완료 신호 없이 끊겼습니다"));
@@ -322,7 +333,15 @@ async fn read_response(resp: reqwest::Response, model: &str, scope: Option<&str>
 }
 
 pub(super) async fn stream(client: &reqwest::Client, profile: &Profile, req: &ModelRequest,
-    service_tier: Option<&str>, on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
+    service_tier: Option<&str>, session: &mut Session, on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
+    #[cfg(test)]
+    let fixture = session.fixture.clone();
+    #[cfg(test)]
+    let mut auth = match &fixture {
+        Some(_) => Credentials { access_token: "fixture".into(), account_id: Some("test-account".into()) },
+        None => credentials().await?,
+    };
+    #[cfg(not(test))]
     let mut auth = credentials().await?;
     let resolved;
     let model = if profile.model == "default" {
@@ -331,8 +350,16 @@ pub(super) async fn stream(client: &reqwest::Client, profile: &Profile, req: &Mo
     } else { &profile.model };
     let scope = auth.scope();
     let body = request_body(model, req, service_tier, scope.as_deref());
-    let response = send_with_refresh(client.post(format!("{BASE}/responses")).header("accept", "text/event-stream").json(&body), &mut auth).await?;
-    read_response(response, model, scope.as_deref(), on_delta).await
+    if let Some(out) = session.send(&auth, &body, model, scope.as_deref(), profile.timeout, on_delta).await? {
+        return Ok(out);
+    }
+    stream_sse(client, &mut auth, &body, model, scope.as_deref(), &session.sse_url(), on_delta).await
+}
+
+async fn stream_sse(client: &reqwest::Client, auth: &mut Credentials, body: &Value, model: &str,
+    scope: Option<&str>, url: &str, on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
+    let response = send_with_refresh(client.post(url).header("accept", "text/event-stream").json(body), auth).await?;
+    read_response(response, model, scope, on_delta).await
 }
 
 #[cfg(test)]

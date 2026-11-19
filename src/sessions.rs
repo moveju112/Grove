@@ -549,9 +549,8 @@ pub struct SearchQuery {
     pub offset: Option<i64>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ts_rs::TS)]
 pub struct SearchHit {
-    #[serde(flatten)]
     pub session: Session,
     pub project_name: String,
     /// 본문에서 찾았으면 그 메시지 seq와 앞뒤 발췌
@@ -577,7 +576,14 @@ fn excerpt(text: &str, needle: &str) -> String {
 }
 
 /// 프로젝트를 가로지르는 세션 검색(SESSION-005). 제목·본문·날짜·프로젝트·상태 필터.
-pub async fn search(State(app): State<App>, _p: Principal, Query(q): Query<SearchQuery>) -> ApiResult<Json<Value>> {
+#[derive(Serialize, ts_rs::TS)]
+pub struct SearchPage {
+    pub items: Vec<SearchHit>,
+    /// 필터에 맞는 전체 세션 수(offset·limit 적용 전)
+    pub total: i64,
+}
+
+pub async fn search(State(app): State<App>, _p: Principal, Query(q): Query<SearchQuery>) -> ApiResult<Json<SearchPage>> {
     let limit = q.limit.unwrap_or(30).clamp(1, 100);
     let offset = q.offset.unwrap_or(0).max(0);
     let needle = q.q.clone().unwrap_or_default().trim().to_lowercase();
@@ -591,7 +597,7 @@ pub async fn search(State(app): State<App>, _p: Principal, Query(q): Query<Searc
         }
     }
     let status = q.status.clone().unwrap_or_default();
-    if !matches!(status.as_str(), "" | "active" | "running" | "awaiting_approval" | "unknown_result" | "archived") {
+    if !matches!(status.as_str(), "" | "active" | "running" | "awaiting_approval" | "awaiting_input" | "unknown_result" | "archived") {
         return Err(ApiError::invalid("알 수 없는 상태 필터입니다"));
     }
     let v = app
@@ -647,7 +653,7 @@ pub async fn search(State(app): State<App>, _p: Principal, Query(q): Query<Searc
                 let snippet = text.as_deref().map(|t| excerpt(t, &needle));
                 hits.push(SearchHit { session: s, project_name, match_seq: seq, snippet });
             }
-            Ok(json!({ "items": hits, "total": total }))
+            Ok(SearchPage { items: hits, total })
         })
         .await?;
     Ok(Json(v))

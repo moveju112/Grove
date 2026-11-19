@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login, openDetails } from "./helpers";
+import { apiCall, ensureProjects, login, openDetails, openSettings } from "./helpers";
 
 test("기기를 폐기하면 연결 중인 브라우저와 터미널이 차단되고 다른 기기의 공유 실행은 남는다", async ({ page, browser }) => {
     const { a } = await ensureProjects();
@@ -18,7 +18,17 @@ test("기기를 폐기하면 연결 중인 브라우저와 터미널이 차단�
         await expect(other.getByTestId("terminal-view")).toHaveAttribute("data-conn", "open");
         const list = await apiCall<{ terminals: { id: string; status: string }[] }>("GET", `/projects/${a.id}/terminals`);
         terminalId = list.terminals.find((terminal) => !before.terminals.some((previous) => previous.id === terminal.id))!.id;
-        await apiCall("DELETE", `/devices/${device.id}`);
+        await openSettings(page);
+        const settings = page.getByTestId("settings");
+        await settings.getByRole("button", { name: "기기·연결", exact: true }).click();
+        const rows = settings.getByRole("list", { name: "기기·등록 링크 목록" });
+        const deviceRow = rows.locator(`[data-device-id="${device.id}"]`);
+        await expect(rows.getByTitle("현재", { exact: true })).toHaveCount(1);
+        await expect(deviceRow).toHaveCount(1);
+        page.once("dialog", (dialog) => dialog.accept());
+        await deviceRow.getByRole("button", { name: "폐기", exact: true }).click();
+        await expect(deviceRow).toHaveCount(0);
+        await expect(rows.getByTitle("현재", { exact: true })).toHaveCount(1);
         await expect(other.getByRole("button", { name: "페어링 링크·QR로 등록" })).toBeVisible({ timeout: 15_000 });
         await expect(other.getByTestId("terminal-view")).toHaveCount(0);
         await expect(page.getByTestId("conn")).toHaveText("연결됨");

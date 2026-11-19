@@ -9,6 +9,7 @@ for (const theme of ["light", "dark"] as const) {
     test(`390px ${theme}: 추론은 숨기고 진행 설명은 턴이 끝나면 접는다`, async ({ page }, info) => {
         await page.setViewportSize({ width: 390, height: 844 });
         await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
+        await page.addInitScript(() => localStorage.setItem("grove.device.prefs", JSON.stringify({ progressVisibility: "collapse" })));
         const { a } = await ensureProjects();
         const profile = await apiCall<{ id: string }>("POST", "/agent-backends/codex_cli/connect");
         const title = `진행 설명 구분 ${theme}`;
@@ -30,7 +31,7 @@ for (const theme of ["light", "dark"] as const) {
             const pid = Number(readFileSync(join(state().cliDir!, "last-pid"), "utf8"));
             await expect.poll(() => existsSync(join(state().cliDir!, `response-ready-${pid}`))).toBe(true);
             const live = view.getByTestId("partial");
-            await expect(live.getByTestId("progress-step")).toHaveText([progress]);
+            await expect(live.getByTestId("progress-step").getByRole("paragraph")).toHaveText([progress]);
             await expect(live).not.toContainText(summary);
             await expect(live.getByTestId("partial-answer")).toHaveCount(0);
             await page.screenshot({ path: info.outputPath("progress-streaming.png"), animations: "disabled" });
@@ -40,7 +41,7 @@ for (const theme of ["light", "dark"] as const) {
             await expect.poll(() => existsSync(join(state().cliDir!, `response-answer-ready-${pid}`))).toBe(true);
             await expect(live.getByTestId("partial-answer")).toContainText(final);
             await expect(live.getByTestId("partial-answer")).not.toContainText(progress);
-            await expect(live.getByTestId("progress-step")).toHaveText([progress]);
+            await expect(live.getByTestId("progress-step").getByRole("paragraph")).toHaveText([progress]);
             await expect(live).not.toContainText(summary);
 
             writeFileSync(join(state().cliDir!, `response-finish-${pid}`), "");
@@ -66,7 +67,7 @@ for (const theme of ["light", "dark"] as const) {
             expect(progressStart).toBeCloseTo(answerStart, 0);
             await openDetails(details);
             const dialog = page.getByRole("dialog", { name: "진행 설명" });
-            await expect(dialog.getByTestId("progress-step")).toHaveText([progress]);
+            await expect(dialog.getByTestId("progress-step").getByRole("paragraph")).toHaveText([progress]);
             await expect(dialog).not.toContainText(summary);
             await page.keyboard.press("Escape");
             await page.reload();

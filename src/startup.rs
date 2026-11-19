@@ -138,7 +138,7 @@ pub(crate) fn print_ready(cfg: &Config, first_start: bool, json_output: bool) {
         println!("서버 준비 완료 ({})", if first_start { "첫 시작" } else { "재시작" });
         println!("데이터 위치: {}\nDB: {}", cfg.data_dir.display(), cfg.db_path().display());
         println!("접속 주소: {}\n준비 확인: {}", report["url"].as_str().unwrap_or(""), report["health_url"].as_str().unwrap_or(""));
-        println!("첫 기기 등록: 서버 터미널에서 grove pairing create");
+        println!("첫 기기 등록: 서버 터미널에서 grove pairing set-password로 발급 비밀번호를 설정한 뒤 재시작하고 grove pairing create를 실행하세요");
         println!("재시작: Ctrl-C 또는 서비스 관리 명령으로 정상 종료한 뒤 같은 환경 설정·데이터 경로로 grove serve를 다시 실행하세요");
         println!("상세 진단: grove doctor --data-dir {:?} --listen {}", cfg.data_dir, cfg.listen);
     }

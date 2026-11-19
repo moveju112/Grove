@@ -5,9 +5,8 @@ import { Notice } from "../design/Notice";
 import { CHAT_COLUMN_WIDTH, chatLayout } from "./chat-layout.stylex";
 import { Select } from "../design/Select";
 import { Switch } from "@astryxdesign/core/Switch";
-import { TextArea } from "../design/Fields";
 import { composerStyles } from "./composer.stylex";
-import { useComposerAutosize } from "./useComposerAutosize";
+import { ComposerInput } from "./ComposerInput";
 import { CommandPaletteList, CommandPaletteItem } from "@astryxdesign/core/CommandPalette";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
@@ -52,6 +51,7 @@ type Props = {
     disabled?: string | null;
     /// 이 대화에서 턴이 실행 중이면 기기 설정의 대기열·steer·중단 후 보내기 방식을 쓴다(UI-021).
     running?: boolean;
+    runningProfileId?: string | null;
     /// key: 이 전송의 Idempotency-Key. 결과를 모르는 실패 뒤 같은 내용을 다시 보내면 같은 key를 넘겨 서버가 중복 실행하지 않는다.
     /// follow: 실행 중일 때 고른 방식(없으면 일반 전송).
     onSend: (text: string, o: SendOptions, key: string, follow?: FollowKind, attachments?: string[]) => Promise<void>;
@@ -60,6 +60,7 @@ type Props = {
     /// 봇 대화는 서버가 결합한 실제 프로필을 쓰며 로컬 선택을 변경하지 않는다.
     boundProfileId?: string | null;
     worktreeId?: string;
+    beforeComposer?: (modelOptions: SendOptions | null, disabled: boolean) => ReactNode;
     sendAccessory?: ReactNode;
     statusAccessory?: ReactNode;
 };
@@ -70,20 +71,19 @@ export type RunCommand = SlashCommand & { run: (arg: string, o: SendOptions) => 
 export type { FollowKind } from "../state/sendOptions";
 
 /// 작성 중인 입력은 메모리에만 둔다. 이미 보낸 요청의 결과 확인에만 기기 저장소를 쓴다.
-export function Composer({ projectId, resourceKey, copyId, disabled: parentDisabled, running, onSend, commands, boundProfileId, worktreeId, sendAccessory, statusAccessory }: Props) {
+export function Composer({ projectId, resourceKey, copyId, disabled: parentDisabled, running, runningProfileId, onSend, commands, boundProfileId, worktreeId, beforeComposer, sendAccessory, statusAccessory }: Props) {
     const serverBlocked = useServerBlockReason();
     const disabled = parentDisabled ?? serverBlocked;
     const store = localRecoveryStorage();
     const selectionKey = `${OPT_KEY}.${resourceKey}#${copyId}`;
     const [initial] = useState(() => loadRecovery(store, resourceKey, copyId));
     const [text, setText] = useComposerMemory(resourceKey, copyId, "text", () => initial.pending?.raw ?? "");
-    const input = useComposerAutosize();
     const [pending, setPending] = useComposerMemory<PendingSend | null>(resourceKey, copyId, "pending", () => initial.pending);
     const [pendingInvalid, setPendingInvalid] = useComposerMemory(resourceKey, copyId, "pendingInvalid", () => initial.invalid);
     const attachments = useAttachments(projectId, resourceKey, copyId, initial.pending?.attachments);
     const [sending] = useComposerMemory(resourceKey, copyId, "sending", () => ({ current: false }));
     const [checking] = useComposerMemory(resourceKey, copyId, "checking", () => ({ current: false }));
-    const [deviceOptions, setDeviceOptions] = useState(loadOpts);
+    const [deviceOptions] = useState(loadOpts);
     const [selectionState, setSelectionState] = useState<{ phase: "loading" | "ready"; options: SendOptions }>(() => {
         let restored = initial.pending?.intent;
         if (!restored) {
@@ -130,12 +130,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         });
     }, [ready, profiles.data, defaults.data, deviceOptions.profileId]);
 
-    useEffect(() => {
-        if (!isLoggedIn() || authGeneration() !== owner) return;
-        try { localStorage.setItem(OPT_KEY, JSON.stringify(deviceOptions)); }
-        catch { setMsg("이 기기의 모델 선택을 저장하지 못했어요."); }
-    }, [deviceOptions, owner]);
-
     // 화면 선택과 보내는 값이 같도록 매 렌더 계산한다(기본 프로필을 상태로 복사하지 않음).
     const resolved = resolveOptions(
         opts,
@@ -169,13 +163,20 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         (item.attachment?.mime ?? item.file?.type)?.startsWith("image/")), selectedModel);
     const update = (patch: Partial<SendOptions>) => {
         setOpts((o) => ({ ...o, ...patch }));
-        // 범위별 자동 기본값은 기기 기본값으로 승격하지 않는다. 직접 바꾼 필드만 공유한다.
-        setDeviceOptions((o) => ({ ...o, ...patch }));
+        // 다른 탭이 저장한 값을 오래된 입력창의 초기값으로 덮어쓰지 않는다.
+        if (!isLoggedIn() || authGeneration() !== owner) return;
+        try { localStorage.setItem(OPT_KEY, JSON.stringify({ ...loadOpts(), ...patch })); }
+        catch { setMsg("이 기기의 모델 선택을 저장하지 못했어요."); }
     };
     // 모바일(터치) 키보드에는 Shift가 불편하므로 Enter는 항상 줄바꿈이고, 보내기 버튼으로 보낸다.
     const enterSends = prefs.enterToSend && !(typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches);
     // 결과를 알 수 없는 전송(네트워크 끊김·서버 오류)의 key. 같은 내용·옵션으로 다시 보낼 때만 재사용한다(UI-028).
     const recovering = pending?.raw === text && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null;
+    const runningFollow = running && eff.mode === "model" && !recovering ? follow : undefined;
+    const steerHint = runningFollow && profiles.data?.find((p) => p.id === runningProfileId)?.protocol === "claude_code"
+        ? "현재 Claude 실행이 끝난 뒤 반영돼요." : undefined;
+    const showSteerHint = steerHint && runningFollow === "steer" && (text.trim() || attachments.items.length > 0);
+    const steerHintId = useId();
     // slash command: 공통 명령 + 화면 명령. 등록된 이름만 명령이고 나머지 "/"는 보내지 않는다(//로 시작하면 글).
     const builtins: RunCommand[] = [
         {
@@ -370,7 +371,11 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         }
     };
 
-    return (
+    const retryOptions = boundProfileId === undefined && eff.mode === "model" ? eff : null;
+    const retryDisabled = !!disabled || busy || !!(retryOptions && (!ready || !selectedProfile || profileDisabled
+        || capabilityProblem(selectedProfile.capabilities, { ...retryOptions, tools: undefined }, false, selectedModel)));
+    return <>
+        {beforeComposer?.(retryOptions, retryDisabled)}
         <Card width="100%" maxWidth={CHAT_COLUMN_WIDTH} padding={0} elevation="low" xstyle={chatLayout.composer} data-ui="composer" data-testid="composer">
         {statusAccessory}
         <Grid gap={1} xstyle={composerStyles.content}>
@@ -427,10 +432,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 }} />
             )}
             <AttachmentSelection draft={attachments} disabled={busy || !!disabled} />
-            <TextArea label="메시지 입력" isLabelHidden controlXstyle={composerStyles.inputControl}
-                onDragOver={(e) => { if (e.dataTransfer.types.includes("Files")) e.preventDefault(); }}
-                onDrop={(e) => { if (e.dataTransfer.files.length) { e.preventDefault(); if (!busy && !disabled) void attachments.add(Array.from(e.dataTransfer.files)); } }}
-                onPaste={(e) => { if (e.clipboardData.files.length && !busy && !disabled) { e.preventDefault(); void attachments.add(Array.from(e.clipboardData.files)); } }}
+            <ComposerInput onFiles={(files) => { if (!busy && !disabled) void attachments.add(files); }}
                 value={text}
                 onChange={(value) => {
                     setText(value);
@@ -448,9 +450,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 enterKeyHint={enterSends ? "send" : "enter"}
                 // 연결 차단 사유는 상단 연결 토스트가 알린다. 여기에는 이 대화 고유의 사유만 보인다.
                 placeholder={parentDisabled ?? "메시지를 입력하세요"}
-                aria-label="메시지 입력"
-                rows={1}
-                ref={input}
                 isDisabled={!!parentDisabled}
             />
             <Grid gap={1} xstyle={[chatLayout.bar, composerStyles.toolbar]} data-testid="composer-bar" data-model-expanded={expandedModel}>
@@ -463,6 +462,11 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     effort={eff.mode === "model" ? eff.effort ?? "auto" : undefined} fast={fastEnabled}
                     save={eff.mode === "save"} bound={boundProfileId !== undefined}
                     onExpandedChange={setExpandedModel}
+                    onFavorite={(favorite) => {
+                        update({ profileId: favorite.profile_id, model: favorite.model, mode: "model",
+                            effort: favorite.effort as SendOptions["effort"], serviceTier: favorite.fast ? "priority" : "default" });
+                        setMsg(null);
+                    }}
                     onChange={(profileId, model) => { update({ profileId, model, mode: "model" }); setMsg(null); }}>
                     {eff.mode === "model" && <Stack direction="horizontal" align="center" justify="between" gap={2} minHeight={44}>
                         <GroveText type="inherit" color="secondary">추론</GroveText>
@@ -490,12 +494,15 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 <SendButton
                     label={busy ? checking.current ? "확인 중…" : "보내는 중…" : recovering ? "같은 요청 확인" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
                     onSend={(once) => void send(once)}
-                    follow={running && eff.mode === "model" && !recovering ? follow : undefined}
+                    follow={runningFollow}
+                    steerHint={steerHint}
+                    describedBy={showSteerHint ? steerHintId : undefined}
                     disabled={busy || pendingInvalid || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (!!problem || (eff.mode === "model" && (!ready || !eff.profileId || profileDisabled || profileMissing)) || (!!running && eff.mode === "save")))}
                     title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다" : `${running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"} · ${enterSends ? "Enter" : "Ctrl+Enter"}`}
                 />
                 </Stack>
             </Grid>
+            {showSteerHint && <GroveText as="p" id={steerHintId} display="block" type="supporting" color="secondary">{steerHint}</GroveText>}
             {msg && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">{msg}</GroveText>}
             {problem && <GroveText as="p" display="block" type="supporting" color="warning" role="status">{problem}</GroveText>}
             {eff.mode === "model" && profileDisabled && <GroveText as="p" display="block" type="supporting" color="warning" role="status" data-testid="profile-disabled">선택한 모델 프로필이 비활성화돼 있습니다. 다른 모델로 자동 전환하지 않습니다.</GroveText>}
@@ -507,5 +514,5 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
             </GroveText>}
         </Grid>
         </Card>
-    );
+    </>;
 }

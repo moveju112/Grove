@@ -3,11 +3,30 @@ import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Link } from "@astryxdesign/core/Link";
 import { Button as GroveButton } from "../design/Button";
 import { useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
+import * as stylex from "@stylexjs/stylex";
 import { ApiError, api, newKey } from "../api/client";
 import type { AgentAuthStatus } from "../api/generated";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { TextInput } from "../design/Fields";
 import { invalidate } from "../state/store";
+
+const styles = stylex.create({
+    steps: { borderTop: "1px solid var(--line)", paddingTop: "var(--spacing-4)" },
+    stepNumber: {
+        display: "grid", placeItems: "center", width: 20, height: 20, flexShrink: 0,
+        border: "1px solid var(--line-strong)", borderRadius: "var(--radius-full)",
+    },
+    stepBody: { flexGrow: 1, minWidth: 0 },
+    external: {
+        display: "flex", justifyContent: "center", alignItems: "center", minHeight: 40,
+        paddingInline: "var(--spacing-3)", textAlign: "center", borderRadius: "var(--radius-element)",
+        backgroundColor: "var(--accent)", color: "var(--on-accent)",
+        outline: { default: null, ":focus-visible": "2px solid var(--focus)" }, outlineOffset: 2,
+    },
+    codeBox: { border: "1px solid var(--line-strong)", backgroundColor: "var(--raised)", borderRadius: "var(--radius-element)" },
+    form: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "end" },
+});
 
 const active = (status: AgentAuthStatus | null) =>
     ["starting", "waiting", "verifying"].includes(status?.attempt?.state ?? "");
@@ -17,8 +36,8 @@ const labels: Record<string, string> = {
     failed: "로그인 실패. 다시 시도해 주세요.",
 };
 
-export function AgentLogin({ protocol, name, disabled, signInOnly = false }: {
-    protocol: string; name: string; disabled: boolean; signInOnly?: boolean;
+export function AgentLogin({ protocol, name, disabled, signInOnly = false, showName = true }: {
+    protocol: string; name: string; disabled: boolean; signInOnly?: boolean; showName?: boolean;
 }) {
     const [status, setStatus] = useState<AgentAuthStatus | null>(null);
     const [error, setError] = useState<string | null>(null);
@@ -85,36 +104,88 @@ export function AgentLogin({ protocol, name, disabled, signInOnly = false }: {
         }
     };
     const attempt = status?.attempt;
+    const isActive = active(status);
     return <GroveStack as="section" gap={2} paddingBlock={2} aria-label={`${name} 계정`}>
         <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
-            <strong>{name}</strong>
+            {showName && <strong>{name}</strong>}
             <GroveText type="supporting" color="secondary" role="status">
-                {active(status) ? labels[attempt!.state] : status?.authenticated === true ? "로그인됨"
+                {isActive ? labels[attempt!.state] : status?.authenticated === true ? "로그인됨"
                     : status?.authenticated === false ? "로그인 필요" : "상태 확인 필요"}
             </GroveText>
-            {!active(status) && !(signInOnly && status?.authenticated) && <>
+            {!isActive && !(signInOnly && status?.authenticated) && <>
                 <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy || !status}
                     onClick={() => void act("login")}>{status?.authenticated ? "다시 로그인" : "로그인"}</ServerActionButton>
                 {status?.authenticated && <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy}
                     onClick={() => void act("logout")}>로그아웃</ServerActionButton>}
             </>}
-            {active(status) && <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy}
-                onClick={() => void act("login/cancel")}>취소</ServerActionButton>}
         </GroveStack>
-        {attempt?.url && <>
-            <GroveText as="p" display="block" type="supporting" color="inherit">이 서버에서 사용할 계정으로 인증해 주세요.</GroveText>
-            <Link type="inherit" href={attempt.url} target="_blank" rel="noopener noreferrer" referrerPolicy="no-referrer">인증 페이지 열기</Link>
-            {attempt.code && <GroveText as="p" display="block" type="inherit" color="inherit"><code aria-label="기기 인증 코드">{attempt.code}</code></GroveText>}
-            {protocol === "claude_code" && <GroveStack as="form" gap={1.5} direction="horizontal" align="center" wrap="wrap" onSubmit={(event) => { event.preventDefault(); void act("login/code"); }}>
-                <TextInput label="일회용 인증 코드" isLabelHidden type="password" autoComplete="off" hasSpellCheck={false}
-                    value={code} onChange={setCode} placeholder="인증 페이지의 코드"
-                    isDisabled={disabled || busy} />
-                <ServerActionButton type="submit" disabled={disabled || busy || !code.trim()}>확인</ServerActionButton>
-            </GroveStack>}
-        </>}
+        {attempt?.url && <GroveStack gap={3} xstyle={styles.steps}>
+            {protocol === "claude_code" ? <>
+                <LoginStep number={1} label="Claude에서 계정 인증">
+                    <AuthLink url={attempt.url} provider="Claude" />
+                </LoginStep>
+                <LoginStep number={2} label="Grove에 코드 붙여넣기">
+                    <GroveStack as="form" gap={2} xstyle={styles.form} onSubmit={(event) => { event.preventDefault(); void act("login/code"); }}>
+                        <TextInput label="일회용 인증 코드" type="password" autoComplete="off" hasSpellCheck={false}
+                            width="100%" value={code} onChange={setCode} placeholder="Claude에서 받은 코드"
+                            isDisabled={disabled || busy} />
+                        <ServerActionButton type="submit" disabled={disabled || busy || !code.trim()}>인증 완료</ServerActionButton>
+                    </GroveStack>
+                </LoginStep>
+            </> : <>
+                {attempt.code && <LoginStep number={1} label="기기 코드 복사">
+                    <DeviceCode key={attempt.id} code={attempt.code} />
+                </LoginStep>}
+                <LoginStep number={attempt.code ? 2 : 1} label="OpenAI 페이지에 코드 입력">
+                    <AuthLink url={attempt.url} provider="OpenAI" />
+                </LoginStep>
+            </>}
+        </GroveStack>}
+        {isActive && <GroveStack direction="horizontal" justify="end">
+            <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy}
+                onClick={() => void act("login/cancel")}>인증 취소</ServerActionButton>
+        </GroveStack>}
         {attempt && ["failed", "expired", "cancelled"].includes(attempt.state) && <GroveText as="p" display="block" type="supporting" color="inherit" role="status">{labels[attempt.state]}</GroveText>}
         {error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">{error}</GroveText>}
-        {!active(status) && (error || status?.authenticated == null) &&
+        {!isActive && (error || status?.authenticated == null) &&
             <GroveButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => setRefresh((n) => n + 1)}>상태 확인</GroveButton>}
     </GroveStack>;
+}
+
+function LoginStep({ number, label, children }: { number: number; label: string; children: ReactNode }) {
+    return <GroveStack direction="horizontal" align="start" gap={2}>
+        <GroveText type="supporting" xstyle={styles.stepNumber}>{number}</GroveText>
+        <GroveStack gap={1} xstyle={styles.stepBody}>
+            <GroveText type="label">{label}</GroveText>
+            {children}
+        </GroveStack>
+    </GroveStack>;
+}
+
+function AuthLink({ url, provider }: { url: string; provider: string }) {
+    return <Link xstyle={styles.external} type="label" weight="semibold" href={url} isExternalLink
+        newTabLabel="(새 탭에서 열기)" referrerPolicy="no-referrer">{provider} 인증 페이지 열기</Link>;
+}
+
+function DeviceCode({ code }: { code: string }) {
+    const [result, setResult] = useState<"copied" | "failed" | null>(null);
+    const copy = async () => {
+        try {
+            await navigator.clipboard.writeText(code);
+            setResult("copied");
+        } catch {
+            setResult("failed");
+        }
+    };
+    return <>
+        <GroveStack direction="horizontal" align="center" justify="between" wrap="wrap" gap={2} padding={2} xstyle={styles.codeBox}>
+            <GroveText type="code" weight="semibold"><code aria-label="기기 인증 코드">{code}</code></GroveText>
+            <GroveButton type="button" variant="secondary" density="compact" onClick={() => void copy()}>
+                {result === "copied" ? "복사됨" : "복사"}
+            </GroveButton>
+        </GroveStack>
+        {result && <GroveText type="supporting" color="secondary" aria-live="polite" role="status">
+            {result === "copied" ? "기기 코드를 복사했어요." : "복사할 수 없어요. 표시된 코드를 직접 입력해 주세요."}
+        </GroveText>}
+    </>;
 }

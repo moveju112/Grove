@@ -464,6 +464,7 @@ pub fn observe(planned: &Planned, root: &Path) -> Value {
 
 /// 간단한 줄 단위 unified diff(LCS). 승인 화면 표시용.
 pub fn unified_diff(a: &str, b: &str, ctx: usize) -> String {
+    const PREVIEW_BYTES: usize = 32 * 1024;
     let al: Vec<&str> = a.lines().collect();
     let bl: Vec<&str> = b.lines().collect();
     // 공통 접두·접미를 잘라 LCS 크기를 줄인다.
@@ -517,8 +518,8 @@ pub fn unified_diff(a: &str, b: &str, ctx: usize) -> String {
     for l in &al[al.len() - suf..(al.len() - suf + ctx).min(al.len())] {
         out.push_str(&format!(" {l}\n"));
     }
-    if out.len() > 32 * 1024 {
-        out.truncate(32 * 1024);
+    if out.len() > PREVIEW_BYTES {
+        out.truncate(out.floor_char_boundary(PREVIEW_BYTES));
         out.push_str("\n…(diff 생략)\n");
     }
     out
@@ -703,5 +704,17 @@ mod tests {
     fn diff_shows_changes() {
         let d = unified_diff("a\nb\nc\n", "a\nB\nc\n", 1);
         assert!(d.contains("-b\n") && d.contains("+B\n"), "{d}");
+    }
+
+    #[test]
+    fn diff_truncates_at_utf8_boundary() {
+        let limit = 32 * 1024;
+        let header = "@@ -1,0 +1,1 @@\n+";
+        let prefix = "a".repeat(limit - header.len() - 1);
+        assert_eq!(unified_diff("", &prefix, 3), format!("{header}{prefix}\n"));
+        for ch in ['é', '한', '🙂'] {
+            let content = format!("{prefix}{ch}끝");
+            assert_eq!(unified_diff("", &content, 3), format!("{header}{prefix}\n…(diff 생략)\n"));
+        }
     }
 }

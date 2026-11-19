@@ -12,6 +12,8 @@ async fn health_is_public_and_api_requires_token() {
     let v: Value = r.json().await.unwrap();
     assert_eq!(v["status"], "ready");
     assert_eq!(v["protocol"], 1);
+    // 로그인 전 화면이 연결 링크가 이 서버의 것인지 대조하는 공개키다(연결 링크에 실리는 값과 같다).
+    assert_eq!(v["e2ee_key"], s.server.as_ref().unwrap().app.e2ee.public_key());
 
     // 토큰 없음 / 잘못된 토큰 / 형식 오류
     for t in ["", "grv_nope.nope", "garbage"] {

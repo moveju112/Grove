@@ -142,6 +142,51 @@ test("Ctrl+Shift+T는 현재 프로젝트에 새 터미널을 열고 바로 입�
     }
 });
 
+test("탭을 모두 닫은 영역에서 새 대화·새 터미널과 단축키 설정을 연다", async ({ page }) => {
+    const { project } = await setup(page);
+    const before = await apiCall<{ terminals: { id: string }[] }>("GET", `/projects/${project.id}/terminals`);
+    const previous = new Set(before.terminals.map((terminal) => terminal.id));
+    const empty = page.getByTestId("empty-pane");
+    try {
+        await page.keyboard.press("Control+w");
+        await expect(page.getByRole("tab")).toHaveCount(0);
+        await expect(empty).toBeVisible();
+        const conversation = empty.getByRole("button", { name: /새 대화/ });
+        const terminal = empty.getByRole("button", { name: /새 터미널/ });
+        await expect(conversation.locator("kbd")).toHaveText(["Ctrl", "T"]);
+        await expect(terminal.locator("kbd")).toHaveText(["Ctrl", "Shift", "T"]);
+        // 탭 줄의 + 버튼과 같은 진입점을 두 번 보이지 않는다.
+        await expect(page.getByRole("button", { name: "새 대화 탭" })).toHaveCount(0);
+
+        await empty.getByRole("button", { name: "키 설정" }).click();
+        await expect(page.getByTestId("settings").getByTestId("shortcut-settings")).toBeVisible();
+        await page.getByRole("button", { name: "설정 닫기" }).click();
+
+        await conversation.click();
+        await expect(page.getByTestId("project-view").getByLabel("메시지 입력")).toBeVisible();
+        await expect(empty).toHaveCount(0);
+        await page.keyboard.press("Control+w");
+        await expect(empty).toBeVisible();
+
+        await empty.getByRole("button", { name: /새 터미널/ }).click();
+        await expect(page.getByTestId("terminal-view")).toHaveAttribute("data-conn", "open");
+        await expect(page.getByRole("tab")).toHaveCount(1);
+    } finally {
+        const rows = await apiCall<{ terminals: { id: string; status: string }[] }>("GET", `/projects/${project.id}/terminals`);
+        for (const terminal of rows.terminals.filter((terminal) => !previous.has(terminal.id) && terminal.status === "running"))
+            await apiCall("POST", `/terminals/${terminal.id}/kill`);
+    }
+});
+
+test("일반 브라우저의 빈 영역은 동작하지 않는 단축키를 표시하지 않는다", async ({ page }) => {
+    await setup(page, false);
+    await page.getByRole("button", { name: "탭 닫기" }).click();
+    const empty = page.getByTestId("empty-pane");
+    await expect(empty.getByRole("button", { name: /새 대화/ })).toBeVisible();
+    await expect(empty.getByRole("button", { name: /새 터미널/ })).toBeVisible();
+    await expect(empty.locator("kbd")).toHaveCount(0);
+});
+
 test("터미널을 여는 동안 연속 단축키는 중복 생성하지 않는다", async ({ page }) => {
     const { project } = await setup(page);
     let release!: () => void;

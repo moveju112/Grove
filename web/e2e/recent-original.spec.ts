@@ -79,10 +79,10 @@ test("다른 기기가 먼저 고정해도 이 기기의 숨김은 오류 없이
 });
 
 for (const theme of ["light", "dark", "soft"] as const) {
-test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 세션은 파란 묶음으로 구분한다`, async ({ page }, info) => {
+test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 묶음에는 파란 왼쪽 선만 남긴다`, async ({ page }, info) => {
     await page.emulateMedia({ colorScheme: theme === "dark" ? "dark" : "light", reducedMotion: "reduce" });
     await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
-    const { a } = await ensureProjects();
+    const { a, b } = await ensureProjects();
     await ensureProfile();
     const make = async (title: string) => {
         const s = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title });
@@ -92,6 +92,8 @@ test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 세션은 
     const one = await make(`linked-one-${randomUUID()}`);
     const two = await make(`linked-two-${randomUUID()}`);
     const hidden = await make(`revive-${randomUUID()}`);
+    const outside = await apiCall<{ id: string; title: string }>("POST", `/projects/${b.id}/sessions`, { title: `outside-${randomUUID()}` });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: b.id, resource_id: outside.id });
     const device = `recent-${randomUUID()}`;
     const layout: Layout = { schema: 1, focused_leaf: "l", root: { type: "split", direction: "row", ratio: 0.5, children: [
         { type: "leaf", id: "l", active_tab: "t1", tabs: [{ id: "t1", kind: "session", project_id: a.id, resource_id: one.id, title: one.title }] },
@@ -103,7 +105,8 @@ test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 세션은 
     await apiCall("PUT", sharedPath, { expected_revision: shared.revision, layout: workspaceTabs(layout) });
     await page.addInitScript(({ device, project }) => {
         localStorage.setItem("grove.device.id", device);
-        localStorage.setItem(`grove.layout.selected.${device}`, project);
+        const key = `grove.layout.selected.${device}`;
+        if (!localStorage.getItem(key)) localStorage.setItem(key, project);
     }, { device, project: a.id });
     await login(page);
     const recent = page.getByRole("region", { name: "최근", exact: true });
@@ -124,31 +127,58 @@ test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 세션은 
             context.fillRect(0, 0, 1, 1);
             return [...context.getImageData(0, 0, 1, 1).data].slice(0, 3);
         };
-        const luminance = (channels: number[]) => channels.map((channel) => {
-            const value = channel / 255;
-            return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-        }).reduce((sum, value, index) => sum + value * [0.2126, 0.7152, 0.0722][index]!, 0);
-        const style = getComputedStyle(node);
-        const background = rgb(style.backgroundColor);
+        const line = getComputedStyle(node, "::after");
+        const lineColor = rgb(line.borderInlineStartColor);
         return {
-            blue: background[2]! > background[0]!,
-            border: parseFloat(getComputedStyle(node, "::after").borderInlineStartWidth),
-            contrasts: [style.color, style.getPropertyValue("--muted")].map((color) => {
-                const values = [luminance(rgb(color)), luminance(background)].sort((a, b) => b - a);
-                return (values[0]! + 0.05) / (values[1]! + 0.05);
-            }),
+            background: getComputedStyle(node).backgroundColor,
+            blue: lineColor[2]! > lineColor[0]!,
+            border: parseFloat(line.borderInlineStartWidth),
         };
     });
+    expect(colors.background).toBe("rgba(0, 0, 0, 0)");
     expect(colors.blue).toBe(true);
     expect(colors.border).toBeGreaterThanOrEqual(3);
-    expect(colors.contrasts.every((contrast) => contrast >= 4.5), JSON.stringify(colors)).toBe(true);
     await page.screenshot({ path: info.outputPath(`recent-split-${theme}.png`) });
+
+    const rightPane = page.locator('[data-leaf="r"]');
+    await rightPane.getByRole("button", { name: "새 대화 탭", exact: true }).click();
+    await expect(rightPane.getByRole("tab", { selected: true })).toContainText("새 대화");
+    await expect(group.getByTestId("recent-item")).toHaveCount(2);
+    await expect(group).toContainText(one.title);
+    await expect(group).toContainText(two.title);
+    await rightPane.getByTestId("tab-title").filter({ hasText: two.title }).click();
+    await expect(group.getByTestId("recent-item")).toHaveCount(2);
+
+    if (theme === "dark") {
+        const outsideRow = recent.getByTestId("recent-item").filter({ hasText: outside.title });
+        await outsideRow.getByRole("button", { name: outside.title, exact: true }).click();
+        await expect(page.getByTestId("session-view").filter({ visible: true })).toHaveAttribute("data-session", outside.id);
+        await expect(rightPane).toBeHidden();
+        await expect(group.getByTestId("recent-item")).toHaveCount(2);
+        await expect(group).not.toContainText(outside.title);
+        // 다른 프로젝트에서 다시 열어도 로컬에 저장된 이전 분할을 읽는다.
+        await expect.poll(async () => {
+            const resume = await apiCall<{ layout: Layout | null }>("GET", "/layouts/workspace-resume");
+            return resume.layout?.root.type === "leaf" ? resume.layout.root.tabs[0]?.project_id : undefined;
+        }).toBe(b.id);
+        await page.reload();
+        await expect(page.getByTestId("session-view").filter({ visible: true })).toHaveAttribute("data-session", outside.id);
+        await expect(rightPane).toHaveCount(0);
+        await expect(group.getByTestId("recent-item")).toHaveCount(2);
+        await group.locator(`[data-testid="recent-item"][data-session="${two.id}"]`).getByRole("button", { name: new RegExp(two.title) }).click();
+        await expect(rightPane).toBeVisible();
+    }
 
     await row.getByRole("button", { name: "최근에서 숨기기", exact: true }).click();
     await expect(row).toHaveCount(0);
     await apiCall("POST", `/sessions/${hidden.id}/messages`, { text: "다시 보여 줘" });
     await expect(row).toHaveCount(1);
-    await page.locator('[data-leaf="r"]').getByRole("button", { name: "영역 닫기", exact: true }).click();
+    const leftPane = page.locator('[data-leaf="l"]');
+    while (await rightPane.getByTestId("tab-title").count()) {
+        const count = await rightPane.getByTestId("tab-title").count();
+        await rightPane.getByTestId("tab-title").first().dragTo(leftPane.getByTestId("tab-title").first());
+        await expect(rightPane.getByTestId("tab-title")).toHaveCount(count - 1);
+    }
     await expect(group).toHaveCount(0);
     await expect(recent.getByTestId("recent-item").filter({ hasText: one.title })).toHaveCount(1);
     await expect(recent.getByTestId("recent-item").filter({ hasText: two.title })).toHaveCount(1);

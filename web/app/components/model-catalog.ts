@@ -6,7 +6,7 @@ export function catalogModel(models: readonly AvailableModel[] | undefined, prof
 }
 
 export function modelEfforts(profile: ModelProfile | undefined, model: AvailableModel | undefined) {
-    return profile?.protocol === "codex_cli" || profile?.protocol === "codex_oauth" ? model?.reasoning_efforts ?? [] : ["low", "medium", "high"];
+    return model?.reasoning_efforts ?? (profile?.protocol === "codex_cli" || profile?.protocol === "codex_oauth" ? [] : ["low", "medium", "high"]);
 }
 
 function version(model: AvailableModel): number[] {

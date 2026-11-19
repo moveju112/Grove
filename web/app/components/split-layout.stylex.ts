@@ -4,6 +4,11 @@ export const SPLIT_DIVIDER_SIZE = 6;
 export const PANE_REVEAL_DURATION = 1000;
 const TAB_ROW_HEIGHT = 32;
 const compactTabs = "@container split-pane (max-width: 192px)";
+// 원 위의 호를 옮기는 대신 원 전체를 돌린다. 모양은 같고 transform만 바뀌어 메인 스레드가 다시 그리지 않는다.
+const tabSpin = stylex.keyframes({
+    from: { transform: "rotate(0deg)" },
+    to: { transform: "rotate(360deg)" },
+});
 const recentReveal = stylex.keyframes({
     from: { opacity: 1 },
     to: { opacity: 0 },
@@ -68,6 +73,11 @@ export const splitStyles = stylex.create({
         overflowX: { default: "scroll", [compactTabs]: "visible" },
         overflowY: { default: "hidden", [compactTabs]: "visible" }, scrollbarWidth: "thin",
     },
+    emptyList: { maxWidth: 324 },
+    emptyHeader: { paddingBlockEnd: "var(--spacing-2)", borderBottomWidth: 1, borderBottomStyle: "solid", borderBottomColor: "var(--line)" },
+    emptyItem: { gap: "var(--spacing-3)", borderRadius: 0, borderBottomWidth: 1, borderBottomStyle: "solid", borderBottomColor: "var(--line)" },
+    emptyLabel: { flexGrow: 1, textAlign: "start" },
+    emptySettings: { gap: "var(--spacing-1)", fontSize: 12, color: "var(--muted)", textDecoration: "none" },
     newConversation: { flexShrink: 0, width: 32, minWidth: 32, height: TAB_ROW_HEIGHT, minHeight: TAB_ROW_HEIGHT },
     tabActions: { flexShrink: 0, minHeight: TAB_ROW_HEIGHT, marginInlineStart: "auto", paddingInline: "var(--spacing-1)" },
     tab: {
@@ -81,6 +91,17 @@ export const splitStyles = stylex.create({
     },
     title: { flexGrow: 1, flexBasis: "auto", minWidth: 0, height: "100%", minHeight: 0, borderRadius: 0, overflow: "hidden", paddingInline: "var(--spacing-3)", whiteSpace: "nowrap", cursor: "grab", fontSize: 12, color: "inherit", fontWeight: "inherit" },
     titleText: { minWidth: 0, flexGrow: 1, textAlign: "start" },
+    tabStatus: { display: "inline-flex", flexShrink: 0, width: 12, height: 12, marginInlineStart: "var(--spacing-1)", color: "var(--text-2)" },
+    tabRing: { fill: "none", stroke: { default: "currentColor", "@media (forced-colors: active)": "CanvasText" }, strokeWidth: 1.5 },
+    tabRingTrack: { opacity: { default: 1, "@media (prefers-reduced-motion: no-preference)": 0.32 } },
+    tabRingSpin: {
+        animationName: { default: "none", "@media (prefers-reduced-motion: no-preference)": tabSpin },
+        animationDuration: "1.3s", animationTimingFunction: "linear", animationIterationCount: "infinite",
+    },
+    tabRingSweep: {
+        display: { default: "none", "@media (prefers-reduced-motion: no-preference)": "inline" },
+        strokeDasharray: "28 72", strokeLinecap: "round",
+    },
     close: { flexShrink: 0, width: 24, minWidth: 24, height: 24, minHeight: 24, marginInlineEnd: "var(--spacing-1)", opacity: "var(--tab-close-opacity)" },
     body: {
         "--pane-inset": "var(--spacing-3)",

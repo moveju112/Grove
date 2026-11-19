@@ -7,14 +7,36 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tracing_subscriber::fmt::MakeWriter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 
-pub(crate) const FILE_BYTES: u64 = 2 * 1024 * 1024;
-pub(crate) const ARCHIVES: usize = 3;
+const MIB: u64 = 1024 * 1024;
+const FILE_BYTES: u64 = 8 * MIB;
+const MAX_FILE_BYTES: u64 = 64 * MIB;
+const ARCHIVES: usize = 7;
 const EVENT_BYTES: usize = 16 * 1024;
 const TRUNCATED: &[u8] = b" [grove: log event truncated]\n";
 const TRIM_HEADER: &[u8] = b"[grove-log-tail:v1]\n";
 const DAY_SECONDS: u64 = 24 * 60 * 60;
 const RETENTION: Duration = Duration::from_secs(7 * DAY_SECONDS);
 pub(crate) const MAINTENANCE_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+#[derive(Clone, Copy)]
+struct Limits {
+    bytes: u64,
+    retention: Duration,
+}
+
+impl Limits {
+    fn from_env() -> io::Result<Self> {
+        fn setting(name: &str, default: u64, max: u64) -> io::Result<u64> {
+            let Some(value) = std::env::var_os(name) else { return Ok(default); };
+            value.to_str().and_then(|v| v.parse::<u64>().ok()).filter(|n| (1..=max).contains(n))
+                .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, format!("{name}: 1~{max} 사이 정수가 필요합니다")))
+        }
+        Ok(Self {
+            bytes: setting("GROVE_LOG_MAX_MIB", FILE_BYTES / MIB, MAX_FILE_BYTES / MIB)? * MIB,
+            retention: Duration::from_secs(setting("GROVE_LOG_KEEP_DAYS", RETENTION.as_secs() / DAY_SECONDS, 30)? * DAY_SECONDS),
+        })
+    }
+}
 
 /// fmt layer의 thread-local String에 적재하기 전에 제한한다. writer에서만 자르면
 /// 디스크는 제한해도 큰 field를 포맷한 버퍼는 스레드마다 계속 남는다.
@@ -82,9 +104,16 @@ pub(crate) fn writer(path: Option<&Path>) -> io::Result<(BoxMakeWriter, Option<M
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Maintenance(FileLog);
 
 impl Maintenance {
+    pub(crate) fn log_policy(&self) {
+        let limits = self.0.0.lock().expect("log mutex").limits;
+        tracing::info!(file_mib = limits.bytes / MIB, archive_count = ARCHIVES,
+            keep_days = limits.retention.as_secs() / DAY_SECONDS, "데몬 로그 보관 설정");
+    }
+
     pub(crate) fn run(&self) -> io::Result<()> {
         self.0.0.lock().expect("log mutex").maintain(SystemTime::now())
     }
@@ -105,6 +134,7 @@ struct Rolling {
     file: Option<File>,
     size: u64,
     day: u64,
+    limits: Limits,
     // 파일 교체와 무관한 별도 잠금을 서버 수명 동안 소유한다.
     _lock: File,
 }
@@ -174,19 +204,20 @@ fn open(path: &Path, new: bool) -> io::Result<File> {
     Ok(f)
 }
 
-/// 이전 무제한 로그는 끝 2MiB만 복사한다. 실패하면 원본을 남긴다.
+/// 이전 대용량 로그는 설정 상한만큼 끝부분을 복사한다. 실패하면 원본을 남긴다.
 /// 일반 atomic_write는 staging에 쓴 뒤 권한을 맞추므로, 로그는 생성부터 0600인 파일을 쓴다.
-fn trim(path: &Path) -> io::Result<()> {
+fn trim(path: &Path, limit: u64) -> io::Result<()> {
     let Some(meta) = regular(path)? else {
         return Ok(());
     };
-    if meta.len() <= FILE_BYTES {
+    if meta.len() <= limit {
         return Ok(());
     }
     let temporary = sibling(path, ".grove-tail.tmp");
     if let Some(m) = regular(&temporary)? {
         // 고정 slot만 사용한다. 이름만으로 지우지 않고 소유 형식·크기·권한을 검증한다.
-        let mut owned = m.len() <= FILE_BYTES;
+        // 설정 상한을 내리기 전에 중단된 자체 staging도 회수할 수 있다.
+        let mut owned = m.len() <= MAX_FILE_BYTES;
         #[cfg(unix)]
         {
             use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -212,7 +243,7 @@ fn trim(path: &Path) -> io::Result<()> {
         std::fs::remove_file(&temporary)?;
     }
     let mut source = open(path, false)?;
-    let tail_bytes = FILE_BYTES - TRIM_HEADER.len() as u64;
+    let tail_bytes = limit - TRIM_HEADER.len() as u64;
     source.seek(SeekFrom::End(-(tail_bytes as i64)))?;
     let target = open(&temporary, true)?; // 생성하지 못한 파일은 오류 정리 대상이 아니다.
     let result = (|| {
@@ -237,6 +268,10 @@ fn trim(path: &Path) -> io::Result<()> {
 
 impl FileLog {
     fn open(path: &Path) -> io::Result<Self> {
+        Self::open_with(path, Limits::from_env()?)
+    }
+
+    fn open_with(path: &Path, limits: Limits) -> io::Result<Self> {
         let parent = path
             .parent()
             .filter(|p| !p.as_os_str().is_empty())
@@ -267,9 +302,9 @@ impl FileLog {
         for i in 1..=ARCHIVES {
             regular(&sibling(path, &format!(".{i}")))?;
         }
-        trim(path)?;
+        trim(path, limits.bytes)?;
         for i in 1..=ARCHIVES {
-            trim(&sibling(path, &format!(".{i}")))?;
+            trim(&sibling(path, &format!(".{i}")), limits.bytes)?;
         }
         let now = SystemTime::now();
         let file = open(path, false)?;
@@ -280,6 +315,7 @@ impl FileLog {
             file: Some(file),
             size,
             day,
+            limits,
             _lock: lock,
         };
         rolling.maintain(now)?;
@@ -295,7 +331,7 @@ impl Rolling {
                 let path = if i == 0 { self.path.clone() } else { sibling(&self.path, &format!(".{i}")) };
                 let expired = regular(&path)?
                     .map(|meta| meta.modified().map(|modified| {
-                        now.duration_since(modified).is_ok_and(|age| age >= RETENTION)
+                        now.duration_since(modified).is_ok_and(|age| age >= self.limits.retention)
                     }))
                     .transpose()?
                     .unwrap_or(false);
@@ -353,9 +389,9 @@ impl Rolling {
             self.day = day(file.metadata()?.modified()?);
             self.file = Some(file);
         }
-        if self.size + bytes.len() as u64 > FILE_BYTES || (self.size > 0 && day(now) > self.day) {
+        if self.size + bytes.len() as u64 > self.limits.bytes || (self.size > 0 && day(now) > self.day) {
             self.maintain(now)?;
-            if self.size + bytes.len() as u64 > FILE_BYTES {
+            if self.size + bytes.len() as u64 > self.limits.bytes {
                 self.rotate(now)?;
             }
         }
@@ -370,6 +406,11 @@ impl Rolling {
 #[cfg(test)]
 mod tests {
     use super::*;
+    // 작은 파일로 운영 설정과 같은 회전·보관 경계를 검사한다.
+    const FILE_BYTES: u64 = MIB;
+    fn fixture_log(path: &Path) -> io::Result<FileLog> {
+        FileLog::open_with(path, Limits { bytes: FILE_BYTES, retention: RETENTION })
+    }
 
     fn record(log: &FileLog, bytes: &[u8]) {
         log.make_writer().write_all(bytes).unwrap();
@@ -393,7 +434,7 @@ mod tests {
         std::fs::write(&recent, b"recent detail\n").unwrap();
         let unrelated = d.path().join("unrelated.log");
         std::fs::write(&unrelated, b"keep").unwrap();
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         assert!(std::fs::read(&path).unwrap().is_empty());
         assert!(!sibling(&path, ".1").exists());
         assert_eq!(std::fs::read(&recent).unwrap(), b"recent detail\n");
@@ -416,7 +457,7 @@ mod tests {
         let yesterday = SystemTime::now() - Duration::from_secs(DAY_SECONDS);
         file.set_modified(yesterday).unwrap();
         drop(file);
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         assert!(std::fs::read(&path).unwrap().is_empty());
         let archived = sibling(&path, ".1");
         assert_eq!(std::fs::read(&archived).unwrap(), b"yesterday\n");
@@ -436,7 +477,7 @@ mod tests {
     fn retention_checks_every_slot_before_removing_expired_files() {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("server.log");
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         record(&log, b"keep on unsafe slot\n");
         let old = SystemTime::now() - RETENTION - Duration::from_secs(60);
         log.0.lock().unwrap().file.as_ref().unwrap().set_modified(old).unwrap();
@@ -453,7 +494,7 @@ mod tests {
     fn large_events_are_bounded_and_the_next_event_is_retained() {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("server.log");
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         let subscriber = tracing_subscriber::fmt()
             .without_time()
             .with_ansi(false)
@@ -490,13 +531,13 @@ mod tests {
     }
 
     #[test]
-    fn rotation_keeps_only_four_bounded_files_and_recent_records() {
+    fn rotation_keeps_only_bounded_files_and_recent_records() {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("server.log");
         let unrelated = d.path().join("unrelated.log");
         std::fs::write(&unrelated, b"preserve").unwrap();
-        let log = FileLog::open(&path).unwrap();
-        // 9MiB 이상 기록해 한 번 이상 모든 보관 slot을 교체한다.
+        let log = fixture_log(&path).unwrap();
+        // 9MiB를 기록해 한 번 이상 모든 보관 slot을 교체한다.
         for n in 0..2304 {
             let mut bytes = format!("record {n:04} ").into_bytes();
             bytes.resize(4095, b'x');
@@ -541,7 +582,7 @@ mod tests {
             f.seek(SeekFrom::End(-4)).unwrap();
             f.write_all(b"tail").unwrap();
         }
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         for i in 0..=ARCHIVES {
             let p = if i == 0 {
                 path.clone()
@@ -552,9 +593,9 @@ mod tests {
             assert_eq!(bytes.len() as u64, FILE_BYTES);
             assert!(bytes.ends_with(b"tail"));
         }
-        assert!(FileLog::open(&path).is_err());
+        assert!(fixture_log(&path).is_err());
         drop(log);
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         record(&log, b"reopened\n");
         assert_eq!(std::fs::read(&path).unwrap(), b"reopened\n");
         assert!(
@@ -573,7 +614,7 @@ mod tests {
         std::fs::write(&path, &original).unwrap();
         let stage = sibling(&path, ".grove-tail.tmp");
         std::fs::write(&stage, b"unrelated content").unwrap();
-        assert!(FileLog::open(&path).is_err());
+        assert!(fixture_log(&path).is_err());
         assert_eq!(std::fs::read(&path).unwrap(), original);
         assert_eq!(std::fs::read(&stage).unwrap(), b"unrelated content");
         // 이 fixture가 소유한 파일을 제품의 중단 형식으로 바꾼다.
@@ -582,7 +623,7 @@ mod tests {
         owned.write_all(TRIM_HEADER).unwrap();
         owned.write_all(b"partial tail").unwrap();
         drop(owned);
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         assert!(!stage.exists());
         assert_eq!(std::fs::metadata(&path).unwrap().len(), FILE_BYTES);
         let bytes = std::fs::read(&path).unwrap();
@@ -595,7 +636,7 @@ mod tests {
     fn concurrent_events_do_not_interleave() {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("server.log");
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         std::thread::scope(|scope| {
             for n in 0..4 {
                 let log = log.clone();
@@ -623,7 +664,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let path = d.path().join("server.log");
         std::fs::write(&path, vec![b'x'; FILE_BYTES as usize]).unwrap();
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         let bad = sibling(&path, ".2");
         std::fs::create_dir(&bad).unwrap();
         assert!(log.make_writer().write_all(b"next\n").is_err());
@@ -647,16 +688,16 @@ mod tests {
         std::fs::write(&target, b"preserve").unwrap();
         let path = d.path().join("server.log");
         symlink(&target, &path).unwrap();
-        assert!(FileLog::open(&path).is_err());
+        assert!(fixture_log(&path).is_err());
         std::fs::remove_file(&path).unwrap();
         std::fs::hard_link(&target, &path).unwrap();
-        assert!(FileLog::open(&path).is_err());
+        assert!(fixture_log(&path).is_err());
         std::fs::remove_file(&path).unwrap();
         let fifo = std::ffi::CString::new(path.as_os_str().as_encoded_bytes()).unwrap();
         assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
-        assert!(FileLog::open(&path).is_err());
+        assert!(fixture_log(&path).is_err());
         std::fs::remove_file(&path).unwrap();
-        let log = FileLog::open(&path).unwrap();
+        let log = fixture_log(&path).unwrap();
         record(&log, b"private\n");
         assert_eq!(
             std::fs::metadata(&path).unwrap().permissions().mode() & 0o777,
@@ -665,7 +706,7 @@ mod tests {
         assert_eq!(std::fs::read(target).unwrap(), b"preserve");
         let dir = d.path().join("linked-dir");
         symlink(d.path(), &dir).unwrap();
-        assert!(FileLog::open(&dir.join("other.log")).is_err());
+        assert!(fixture_log(&dir.join("other.log")).is_err());
     }
 }
 

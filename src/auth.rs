@@ -110,7 +110,18 @@ pub(crate) fn verify_row(conn: &Connection, id: &str, secret: Option<&str>, now:
                     valid_until = valid_until.into_iter().chain(exp.as_deref().and_then(parse_time)).min();
                     p
                 }
-                _ => return Err(ApiError::unauthorized("상위 기기 토큰이 만료되었거나 폐기되었습니다")),
+                _ => {
+                    // 소유자 토큰 로그인으로 만든 세션은 등록 기기가 아니어서 더 이상 받지 않는다.
+                    // 로그인 화면이 단순 만료와 구분해 다시 등록하라고 안내할 수 있게 code를 나눈다.
+                    let owner_parent = conn
+                        .query_row("SELECT kind FROM tokens WHERE id=?1", params![p], |r| r.get::<_, String>(0))
+                        .optional()?
+                        .is_some_and(|kind| kind == "owner");
+                    if owner_parent {
+                        return Err(ApiError::new(StatusCode::UNAUTHORIZED, "login_retired", "이전 로그인 방식이 종료됐어요. 이 브라우저를 다시 등록하세요."));
+                    }
+                    return Err(ApiError::unauthorized("상위 기기 토큰이 만료되었거나 폐기되었습니다"));
+                }
             }
         }
         ("owner" | "device", None) => id.to_string(),

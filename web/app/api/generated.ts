@@ -118,6 +118,18 @@ timeline_revision: number,
  */
 rewind_boundary_seq: number | null, };
 
+export type SearchHit = { session: Session, project_name: string,
+/**
+ * 본문에서 찾았으면 그 메시지 seq와 앞뒤 발췌
+ */
+match_seq: number | null, snippet: string | null, };
+
+export type SearchPage = { items: Array<SearchHit>,
+/**
+ * 필터에 맞는 전체 세션 수(offset·limit 적용 전)
+ */
+total: number, };
+
 export type RecentItem = { id: string, kind: string, project_id: string, project_name: string, resource_id: string, title: string, last_access_at: string, pinned: boolean, hidden: boolean, view_state: unknown, revision: number,
 /**
  * 서버 상태로 계산한 값: active | queued | running | awaiting_approval | awaiting_input | completed | failed | interrupted | cancelled | unknown_result | archived | missing | project_unavailable
@@ -175,6 +187,8 @@ export type ModelProfile = { id: string, name: string, protocol: string, base_ur
 last_check: { ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null, enabled: boolean, capabilities: ModelCapabilities, };
 
 export type ModelSelection = { profile_id: string, model: string | null, effort?: string, };
+
+export type ModelFavorite = { profile_id: string, model: string, effort: string, fast: boolean, };
 
 export type AgentBackend = { protocol: string, name: string, installed: boolean, read_only: boolean, };
 

@@ -19,6 +19,8 @@ type Props = {
     onRestored: () => void;
     presentationKey: string;
     stick: RefObject<boolean>;
+    /** 사용자가 직접 스크롤하기 전까지 맨 아래 고정을 유지한다. */
+    pinned: RefObject<boolean>;
     bottom: RefObject<HTMLDivElement | null>;
     onNavigate: () => void;
     render: (message: Message) => ReactNode;
@@ -39,7 +41,7 @@ function MeasuredMessage({ message, position, size, register, children }: {
 }
 
 /// 화면 주변·검색/복원 대상·현재 초점 행만 유지한다. 높이 갱신은 같은 읽기 anchor에 맞춘다.
-export function VirtualMessages({ messages, targetSeq, onTargetReached, restorePosition, onRestored, presentationKey, stick, bottom, onNavigate, render }: Props) {
+export function VirtualMessages({ messages, targetSeq, onTargetReached, restorePosition, onRestored, presentationKey, stick, pinned, bottom, onNavigate, render }: Props) {
     const visible = usePaneVisible();
     const wasVisible = useRef(visible);
     const root = useRef<HTMLDivElement>(null);
@@ -93,7 +95,7 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
             if (root.current && geometry.current && Math.abs(el.scrollTop - geometry.current.scrollTop) > 1) {
                 const marker = bottom.current;
                 const margin = marker ? parseFloat(getComputedStyle(marker).scrollMarginBottom) || 0 : 0;
-                stick.current = !!marker && marker.getBoundingClientRect().top <= el.getBoundingClientRect().bottom - margin + 80;
+                stick.current = pinned.current || (!!marker && marker.getBoundingClientRect().top <= el.getBoundingClientRect().bottom - margin + 80);
                 geometry.current = geometryOf(el, root.current);
                 updateViewport();
             }

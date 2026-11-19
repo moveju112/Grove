@@ -3,37 +3,53 @@ import { SPLIT_DIVIDER_SIZE, splitStyles } from "./split-layout.stylex";
 import { Divider } from "@astryxdesign/core/Divider";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
+import * as stylex from "@stylexjs/stylex";
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from "react";
-import type { Project } from "../api/generated";
+import type { Project, RecentPage } from "../api/generated";
+import { api } from "../api/client";
+import { useQuery } from "../state/store";
 import * as L from "../state/layout";
-import { PaneVisibility } from "../state/paneVisibility";
+import { PaneVisibility, usePageVisible } from "../state/paneVisibility";
 import { FilesView } from "./FilesView";
+import { ProjectView } from "./ProjectView";
 import type { Opener } from "./Workspace";
 import { LoadingBar } from "./LoadingScreen";
 import { Icon } from "./icons";
 import { DRAG_PROJECT, parseProjectDrag } from "../state/projectOrder";
 import { SessionActivityIndicator } from "./session-activity/SessionActivityIndicator";
 import { PaneToolsTarget } from "./ui/Controls";
+import { Kbd } from "@astryxdesign/core/Kbd";
+import { usePrefs, type Prefs } from "../state/device";
+import { kbdKeys, macShortcuts, shortcutBinding } from "../state/shortcuts";
+import { shortcutWindow } from "./shortcuts/useWorkspaceShortcuts";
+import { ServerActionButton } from "./pwa/ServerActionButton";
 
 const TerminalView = lazy(async () => ({ default: (await import("./TerminalView")).TerminalView }));
-const ProjectView = lazy(async () => ({ default: (await import("./ProjectView")).ProjectView }));
 const SessionView = lazy(async () => ({ default: (await import("./SessionView")).SessionView }));
 
 export type RecentPaneReveal = { leafId: string; tabId: string; request: number };
 type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; visible: boolean; projects: Project[];
     closeTab: (tabId: string) => void; closingTabs: ReadonlySet<string>;
     projectLabel?: string; recentReveal?: RecentPaneReveal;
+    /** 이 배치의 프로젝트. 탭을 모두 닫은 빈 pane에서 새 탭을 열 때 쓴다. */
+    projectId?: string; onNewTerminal?: () => void;
     onProjectDrop?: (target: Omit<L.Tab, "id">, edge: L.DropEdge) => void; onCloseProject?: () => void };
-type ViewProps = Props & { maximized: string | null; toggleMaximize: (leafId: string) => void };
+type ViewProps = Props & { maximized: string | null; toolLeaf?: string; toggleMaximize: (leafId: string) => void; activityDisplay: Prefs["activityDisplay"]; pageVisible: boolean };
 
 export function SplitView(p: Props) {
+    const { activityDisplay } = usePrefs();
+    const pageVisible = usePageVisible();
     const [maximized, setMaximized] = useState<string | null>(null);
     useEffect(() => {
         setMaximized((id) => p.narrow || id !== p.layout.focused_leaf ? null : id);
     }, [p.narrow, p.layout.focused_leaf]);
     // 전체 보기는 배치를 바꾸지 않는다. 다른 자원으로 이동하면 숨겨진 pane에 갇히지 않도록 해제한다.
     const zoom = !p.narrow && maximized === p.layout.focused_leaf && L.leaves(p.layout.root).length > 1 ? maximized : null;
-    const view: ViewProps = { ...p, maximized: zoom, toggleMaximize: (id) => {
+    // 프로젝트별로 하나만 표시한다. 파일·터미널에는 도구가 없으므로 보이는 다른 대화 영역을 사용한다.
+    const toolPanes = L.leaves(p.layout.root).filter((leaf) => (!zoom || leaf.id === zoom) && leaf.tabs.some((tab) =>
+        tab.id === leaf.active_tab && (tab.kind === "project" || tab.kind === "session")));
+    const toolLeaf = toolPanes.find((leaf) => leaf.id === p.layout.focused_leaf)?.id ?? toolPanes[0]?.id;
+    const view: ViewProps = { ...p, maximized: zoom, toolLeaf, activityDisplay, pageVisible, toggleMaximize: (id) => {
         p.update((l) => L.focus(l, id));
         setMaximized(zoom === id ? null : id);
     } };
@@ -140,8 +156,20 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     const maximizeLabel = maximized ? "분할 복원" : "영역 전체 보기";
     const projectName = (id?: string) => p.projects.find((x) => x.id === id)?.name;
     const visible = p.visible && (!p.narrow || focused) && (!p.maximized || p.maximized === leaf.id);
+    const animateTabRing = visible && !p.narrow && p.pageVisible && p.activityDisplay === "animated";
     const reveal = visible && focused && !p.narrow && (p.onCloseProject || (!p.maximized && others.length > 0))
         && p.recentReveal?.leafId === leaf.id && p.recentReveal.tabId === leaf.active_tab ? p.recentReveal : undefined;
+    // 대화 탭의 진행·완료 확인 상태는 최근 목록의 서버 상태를 그대로 쓴다. 같은 key라 pane끼리 한 요청을 공유한다.
+    const hasSessionTab = leaf.tabs.some((t) => t.kind === "session" && t.resource_id);
+    const recent = useQuery<RecentPage>(hasSessionTab ? "recent:tabs" : null, () => api.get("/recent?filter=all&limit=200"));
+    const tabStatus = (t: L.Tab): "running" | "completed" | null => {
+        if (t.kind !== "session" || !t.resource_id) return null;
+        const item = recent.data?.items.find((it) => it.kind === "session" && it.resource_id === t.resource_id);
+        if (item?.status === "running") return "running";
+        // 보고 있는 탭은 곧바로 확인한 것으로 보고 표시하지 않는다. 서버 확인 기록은 SessionView가 남긴다.
+        if (item?.completion_unread && !(visible && t.id === leaf.active_tab)) return "completed";
+        return null;
+    };
     const [zone, setZone] = useState<L.DropEdge | null>(null);
     const [toolsTarget, setToolsTarget] = useState<HTMLElement | null>(null);
     const tabRow = useRef<HTMLDivElement>(null);
@@ -195,7 +223,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     };
     return (
         <PaneVisibility.Provider value={visible}>
-        <PaneToolsTarget.Provider value={p.narrow ? null : toolsTarget}>
+        <PaneToolsTarget.Provider value={p.narrow ? null : p.toolLeaf === leaf.id && (toolsTarget ?? false)}>
         <Stack as="section" gap={0} xstyle={splitStyles.pane} data-focused={focused} data-testid="pane" data-leaf={leaf.id}
             // pointer뿐 아니라 키보드(Tab) 포커스 진입도 현재 pane으로 삼아, 사이드바에서 여는 항목이 입력 중인 pane에 열리게 한다(PANE-006).
             onPointerDownCapture={() => !focused && p.update((l) => L.focus(l, leaf.id))}
@@ -226,7 +254,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
             >
                 {p.projectLabel && <GroveText type="supporting" color="secondary" maxLines={1} xstyle={splitStyles.projectName}>{p.projectLabel}</GroveText>}
                 <Stack ref={tabList} direction="horizontal" align="center" gap={0} xstyle={splitStyles.tabList} role="tablist" aria-label="열린 대화와 화면">
-                {leaf.tabs.map((t, i) => (
+                {leaf.tabs.map((t, i) => { const status = tabStatus(t); return (
                     <Stack direction="horizontal" align="center" gap={0.5} key={t.id} xstyle={splitStyles.tab} role="tab" aria-selected={t.id === leaf.active_tab}
                         onDragOver={(e) => {
                             if (!draggable(e)) return;
@@ -236,7 +264,8 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                         }}
                         onDrop={(e) => draggable(e) && drop(e, "center", i)}
                     >
-                        <GroveButton type="button" appearance="disclosure" density="compact" xstyle={splitStyles.title} data-testid="tab-title" onClick={() => p.update((l) => L.activate(l, t.id))} title={`${projectName(t.project_id) ?? ""} · ${L.tabTitle(t)} · 끌어서 다른 영역이나 가장자리로 이동(Alt+Shift+←/→ 순서 변경)`}
+                        <GroveButton type="button" appearance="disclosure" density="compact" xstyle={splitStyles.title} data-testid="tab-title"
+                            aria-description={status === "running" ? "실행 중" : status === "completed" ? "완료 · 확인 안 함" : undefined} onClick={() => p.update((l) => L.activate(l, t.id))} title={`${projectName(t.project_id) ?? ""} · ${L.tabTitle(t)} · 끌어서 다른 영역이나 가장자리로 이동(Alt+Shift+←/→ 순서 변경)`}
                             draggable
                             onDragStart={(e) => {
                                 e.dataTransfer.setData(DRAG_TAB, t.id);
@@ -252,6 +281,13 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                             <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} xstyle={splitStyles.titleText}>
                                 {L.tabTitle(t)}
                             </GroveText>
+                            {status === "running" && p.activityDisplay !== "hidden" && <svg role="img" aria-label="실행 중" data-testid="tab-running" viewBox="0 0 12 12" {...stylex.props(splitStyles.tabStatus, animateTabRing && splitStyles.tabRingSpin)}>
+                                <circle {...stylex.props(splitStyles.tabRing, animateTabRing && splitStyles.tabRingTrack)} cx="6" cy="6" r="4.5" />
+                                {animateTabRing && <circle {...stylex.props(splitStyles.tabRing, splitStyles.tabRingSweep)} cx="6" cy="6" r="4.5" pathLength="100" />}
+                            </svg>}
+                            {status === "completed" && <Stack as="span" role="img" aria-label="완료 · 확인 안 함" data-testid="tab-completed" xstyle={splitStyles.tabStatus}>
+                                <Icon name="check" size={12} />
+                            </Stack>}
                         </GroveButton>
                         <GroveButton appearance="icon" density="compact" xstyle={splitStyles.close} aria-label="탭 닫기"
                             title={p.closingTabs.has(t.id) ? "탭 닫는 중…" : t.kind === "terminal" ? "탭을 닫고 터미널 프로세스를 종료합니다" : t.kind === "session" ? "탭을 닫고 최근 목록에서 숨깁니다(대화·작업은 유지)" : "화면만 닫습니다(작업은 계속)"}
@@ -259,7 +295,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                             {p.closingTabs.has(t.id) ? "…" : <Icon name="close" size={12} />}
                         </GroveButton>
                     </Stack>
-                ))}
+                ); })}
                 </Stack>
                 {projectId && <GroveButton variant="secondary" appearance="icon" density="compact" xstyle={splitStyles.newConversation}
                     aria-label="새 대화 탭" title="새 대화" disabled={L.allTabs(p.layout).length >= L.MAX_TABS}
@@ -267,23 +303,21 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 <Stack direction="horizontal" align="center" gap={1} xstyle={splitStyles.tabActions} data-testid="pane-tab-actions">
                 {p.onCloseProject && <GroveButton variant="secondary" appearance="icon" density="compact" aria-label="프로젝트 분할 닫기"
                     title="프로젝트 화면만 닫습니다. 실행은 계속되며 작성 중인 입력은 저장되지 않습니다." onClick={p.onCloseProject}><Icon name="close" size={12} /></GroveButton>}
-                {others.length > 0 && (
-                    <>
-                        {!p.narrow && <GroveButton appearance="icon" density="compact" aria-label={maximizeLabel}
+                {others.length > 0 && !p.narrow && <GroveButton appearance="icon" density="compact" aria-label={maximizeLabel}
                             aria-pressed={maximized} title={`${maximizeLabel} · 화면 배치만 변경합니다(작업은 계속)`}
                             onClick={() => p.toggleMaximize(leaf.id)}>
                             <Icon name={maximized ? "minimize" : "maximize"} size={16} />
                         </GroveButton>}
-                        <GroveButton variant="secondary" density="compact" title="영역 닫기(탭은 인접 영역으로 합침, 작업은 계속)" aria-label="영역 닫기"
-                            onClick={() => p.update((l) => L.closeLeaf(l, leaf.id))}>⊠</GroveButton>
-                    </>
-                )}
-                <Stack as="div" ref={setToolsTarget} direction="horizontal" gap={0} data-testid="pane-tools-trigger" />
+                {!p.narrow && (p.toolLeaf === leaf.id || others.length > 0) && <Stack as="div" ref={p.toolLeaf === leaf.id ? setToolsTarget : undefined}
+                    direction="horizontal" gap={0} width={32} data-testid={p.toolLeaf === leaf.id ? "pane-tools-trigger" : undefined} />}
                 </Stack>
             </Stack>
             <Stack gap={0} xstyle={splitStyles.viewport} data-testid="pane-viewport">
             <StackItem ref={viewport} size="fill" isScrollable xstyle={splitStyles.body} data-testid="pane-body">
                 <Suspense fallback={<LoadingBar label="화면 여는 중…" />}>
+                {!active && p.projectId && <EmptyPane newConversation={() => p.update((l) =>
+                    L.openAtEdge(l, leaf.id, "center", { kind: "project", project_id: p.projectId!, title: "새 대화" }))}
+                    newTerminal={p.onNewTerminal} openShortcuts={() => p.open({ kind: "settings", resource_id: "shortcuts", title: "설정" })} />}
                 {active?.kind === "session" && active.resource_id && active.project_id && (
                     <SessionView key={active.id} tabId={active.id} sessionId={active.resource_id} projectId={active.project_id} open={p.open} onTitleChange={syncTitle} />
                 )}
@@ -301,10 +335,40 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 </Suspense>
             </StackItem>
             {active?.kind === "session" && active.resource_id &&
-                <SessionActivityIndicator key={active.id} sessionId={active.resource_id} visible={visible} viewportRef={viewport} />}
+                <SessionActivityIndicator key={active.id} sessionId={active.resource_id} visible={visible} focused={focused} viewportRef={viewport} />}
             </Stack>
         </Stack>
         </PaneToolsTarget.Provider>
         </PaneVisibility.Provider>
     );
+}
+
+/// 탭을 모두 닫은 영역. 새 탭 진입점과 현재 단축키를 함께 보인다.
+function EmptyPane({ newConversation, newTerminal, openShortcuts }: {
+    newConversation: () => void; newTerminal?: () => void; openShortcuts: () => void;
+}) {
+    const { keyboardShortcuts } = usePrefs();
+    const [keys] = useState(() => shortcutWindow() ? { mac: macShortcuts() } : null);
+    const shortcut = (action: "newSession" | "newTerminal") => {
+        const binding = keys && shortcutBinding(keyboardShortcuts, action);
+        return binding ? <Kbd keys={kbdKeys(binding, keys.mac)} /> : null;
+    };
+    return <Stack align="center" justify="center" height="100%" padding={6} data-testid="empty-pane">
+        <Stack gap={0} width="100%" xstyle={splitStyles.emptyList} role="group" aria-label="새 탭 열기">
+            <Stack direction="horizontal" align="center" justify="between" gap={2} xstyle={splitStyles.emptyHeader}>
+                <GroveText type="supporting" color="secondary" weight="medium">새 탭 열기</GroveText>
+                <GroveButton type="button" appearance="link" onClick={openShortcuts} xstyle={splitStyles.emptySettings}>
+                    <Icon name="keyboard" size={14} />키 설정
+                </GroveButton>
+            </Stack>
+            <GroveButton type="button" appearance="navigation" density="touch" xstyle={splitStyles.emptyItem} onClick={newConversation}>
+                <Icon name="chat" size={16} /><GroveText type="inherit" color="inherit" weight="medium" xstyle={splitStyles.emptyLabel}>새 대화</GroveText>
+                {shortcut("newSession")}
+            </GroveButton>
+            {newTerminal && <ServerActionButton type="button" appearance="navigation" density="touch" xstyle={splitStyles.emptyItem} onClick={newTerminal}>
+                <Icon name="terminal" size={16} /><GroveText type="inherit" color="inherit" weight="medium" xstyle={splitStyles.emptyLabel}>새 터미널</GroveText>
+                {shortcut("newTerminal")}
+            </ServerActionButton>}
+        </Stack>
+    </Stack>;
 }

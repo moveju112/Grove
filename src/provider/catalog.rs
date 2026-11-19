@@ -61,7 +61,9 @@ fn page(protocol: &str, value: &Value) -> Result<(Vec<AvailableModel>, Option<St
             Some(Value::String(name)) => name,
             _ => return Err(invalid()),
         };
-        models.push(AvailableModel { id: id.into(), name: name.chars().take(200).collect(), ..Default::default() });
+        let reasoning_efforts = (protocol == "anthropic" && super::anthropic_uses_native_effort(id))
+            .then(|| super::CLAUDE_EFFORTS.iter().map(|e| e.to_string()).collect());
+        models.push(AvailableModel { id: id.into(), name: name.chars().take(200).collect(), reasoning_efforts, ..Default::default() });
     }
     let next = match protocol {
         "anthropic" => match value["has_more"].as_bool() {
@@ -90,7 +92,7 @@ async fn fetch(profile: &Profile) -> Result<Vec<AvailableModel>, ProviderError> 
         return super::codex_oauth::list_models().await;
     }
     if super::cli::is_cli(&profile.protocol) {
-        return super::cli::list_models(&profile.protocol).await;
+        return super::cli::list_models(profile).await;
     }
     let base = profile.base_url.trim_end_matches('/');
     let url = match profile.protocol.as_str() {
@@ -141,4 +143,18 @@ async fn fetch(profile: &Profile) -> Result<Vec<AvailableModel>, ProviderError> 
         cursor = Some(next);
     }
     Err(ProviderError::new("catalog_too_large", "모델 목록 페이지 제한을 넘었습니다. 일부 목록을 완전한 결과로 표시하지 않습니다"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn opus_5_5_catalog_exposes_native_effort_without_changing_legacy_models() {
+        let (models, _) = page("anthropic", &serde_json::json!({"data":[
+            {"id":"claude-opus-5-5","display_name":"Opus 5.5"}, {"id":"legacy"}
+        ],"has_more":false})).unwrap();
+        assert_eq!(models[0].reasoning_efforts.as_deref().unwrap(), super::super::CLAUDE_EFFORTS);
+        assert!(models[1].reasoning_efforts.is_none());
+    }
 }

@@ -101,6 +101,32 @@ pub async fn git(root: &std::path::Path, args: &[&str], read_only: bool) -> ApiR
     Ok(GitOut { code: out.status.code().unwrap_or(-1), stdout: out.stdout, stderr: String::from_utf8_lossy(&out.stderr).trim().to_string() })
 }
 
+async fn git_patch_preview(root: &std::path::Path, args: &[&str]) -> ApiResult<(GitOut, bool)> {
+    let mut cmd = command(root, args, true);
+    cmd.stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+    let mut child = cmd.spawn().map_err(|e| spawn_err(&e, "git"))?;
+    let mut stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    let preview = async {
+        let mut prefix = Vec::new();
+        (&mut stdout).take(MAX_DIFF as u64).read_to_end(&mut prefix).await?;
+        // 파이프를 끝까지 읽되 표시 한도를 넘긴 바이트는 보관하지 않는다.
+        let truncated = tokio::io::copy(&mut stdout, &mut tokio::io::sink()).await? != 0;
+        Ok((prefix, truncated))
+    };
+    let diagnostics = async {
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes).await?;
+        Ok(bytes)
+    };
+    let (status, (stdout, truncated), stderr) = tokio::time::timeout(Duration::from_secs(60), async {
+        tokio::try_join!(child.wait(), preview, diagnostics)
+    }).await
+        .map_err(|_| ApiError::new(StatusCode::GATEWAY_TIMEOUT, "timeout", "git 명령이 60초 안에 끝나지 않았습니다"))?
+        .map_err(|e| spawn_err(&e, "git"))?;
+    Ok((GitOut { code: status.code().unwrap_or(-1), stdout, stderr: String::from_utf8_lossy(&stderr).trim().to_string() }, truncated))
+}
+
 /// git 실행 실패: 실행 파일이 없으면 설치 안내(ARCH-018), 그 밖은 내부 오류.
 fn spawn_err(e: &std::io::Error, what: &str) -> ApiError {
     if crate::deps::is_missing("git", Some(e)) {
@@ -196,12 +222,11 @@ async fn diff_text(root: &std::path::Path, staged: bool, path: Option<&str>) -> 
     if let Some(p) = path {
         args.push(p);
     }
-    let o = git(root, &args, true).await?;
+    let (o, truncated) = git_patch_preview(root, &args).await?;
     if o.code != 0 {
         return Err(fail(&o, "diff"));
     }
-    let truncated = o.stdout.len() > MAX_DIFF;
-    let mut text = String::from_utf8_lossy(&o.stdout[..o.stdout.len().min(MAX_DIFF)]).to_string();
+    let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
     if truncated {
         text.push_str("\n…(diff가 너무 커서 생략)\n");
     }
@@ -1120,11 +1145,10 @@ pub async fn show_commit(State(app): State<App>, _p: Principal, Path((id, rev)):
             i += 2;
         }
     }
-    let patch = git(&root, &["show", "--format=", "--patch", "--no-ext-diff", "--find-renames", &rev, "--"], true).await?;
-    let truncated = patch.stdout.len() > MAX_DIFF;
+    let (patch, truncated) = git_patch_preview(&root, &["show", "--format=", "--patch", "--no-ext-diff", "--find-renames", &rev, "--"]).await?;
     Ok(Json(json!({
         "hash": f.first(), "author": f.get(1), "date": f.get(2), "message": f.get(3).map(|s| s.trim()),
-        "files": list, "diff": String::from_utf8_lossy(&patch.stdout[..patch.stdout.len().min(MAX_DIFF)]), "truncated": truncated,
+        "files": list, "diff": String::from_utf8_lossy(&patch.stdout), "truncated": truncated,
     })))
 }
 
@@ -1141,7 +1165,7 @@ pub async fn compare(State(app): State<App>, _p: Principal, Path(id): Path<Strin
     let root = root_of(&app, &id).await?;
     let range = format!("{}...HEAD", q.base);
     let _resource = app.project_resources.ui_read(&app,&id,&_p).await?;
-    let o = git(&root, &["diff", "--no-ext-diff", "--find-renames", &range, "--"], true).await?;
+    let (o, truncated) = git_patch_preview(&root, &["diff", "--no-ext-diff", "--find-renames", &range, "--"]).await?;
     if o.code != 0 {
         return Err(fail(&o, "비교"));
     }
@@ -1150,7 +1174,7 @@ pub async fn compare(State(app): State<App>, _p: Principal, Path(id): Path<Strin
         .lines()
         .filter_map(|l| l.split_once('\u{1f}').map(|(h, s)| json!({ "hash": h, "subject": s })))
         .collect();
-    Ok(Json(json!({ "base": q.base, "commits": commits, "diff": String::from_utf8_lossy(&o.stdout[..o.stdout.len().min(MAX_DIFF)]), "truncated": o.stdout.len() > MAX_DIFF })))
+    Ok(Json(json!({ "base": q.base, "commits": commits, "diff": String::from_utf8_lossy(&o.stdout), "truncated": truncated })))
 }
 
 #[cfg(test)]
@@ -1171,6 +1195,30 @@ mod tests {
         assert_eq!((a.unwrap(), b.unwrap()), (0, 0));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(cache.read("repo".into(), false, read).await.unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn patch_preview_keeps_the_original_byte_prefix_and_git_errors() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(git(root.path(), &["init", "-q"], false).await.unwrap().code, 0);
+        let file = root.path().join("a");
+        std::fs::write(&file, "before\n").unwrap();
+        assert_eq!(git(root.path(), &["add", "a"], false).await.unwrap().code, 0);
+        for content in ["짧은 변경\n".to_owned(), "긴 변경\n".repeat(MAX_DIFF / 6)] {
+            std::fs::write(&file, content).unwrap();
+            let full = git(root.path(), &["diff", "--no-ext-diff", "--patch", "--find-renames", "--", "a"], true).await.unwrap();
+            assert_eq!(full.code, 0);
+            let truncated = full.stdout.len() > MAX_DIFF;
+            let mut expected = String::from_utf8_lossy(&full.stdout[..full.stdout.len().min(MAX_DIFF)]).into_owned();
+            if truncated { expected.push_str("\n…(diff가 너무 커서 생략)\n"); }
+            assert_eq!(diff_text(root.path(), false, Some("a")).await.unwrap(), (expected, truncated));
+        }
+        let args = ["diff", "--not-a-real-option"];
+        let full = git(root.path(), &args, true).await.unwrap();
+        let (preview, truncated) = git_patch_preview(root.path(), &args).await.unwrap();
+        assert_ne!(full.code, 0);
+        assert!(!full.stderr.is_empty());
+        assert_eq!((preview.code, preview.stderr, truncated), (full.code, full.stderr, false));
     }
 
     #[tokio::test]

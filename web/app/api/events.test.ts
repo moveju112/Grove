@@ -4,7 +4,59 @@ import { EventStream, type StreamHandlers } from "./events";
 afterEach(() => vi.unstubAllGlobals());
 const hello = new TextEncoder().encode('event: hello\ndata: {"cursor":0,"capabilities":[]}\n\n');
 const handlers = (onStatus: StreamHandlers["onStatus"], onPartial: StreamHandlers["onPartial"] = vi.fn()): StreamHandlers => ({
-    onStatus, onPartial, onEvent: vi.fn(), onResync: vi.fn(),
+    onStatus, onPartial, onEvents: vi.fn(), onResync: vi.fn(),
+});
+
+describe("화면 복귀", () => {
+    it("최근 SSE 데이터는 유지하고, 오래 멈춘 직접 연결은 마지막 cursor로 즉시 복구한다", async () => {
+        vi.useFakeTimers({ toFake: ["Date"] });
+        const doc = Object.assign(new EventTarget(), { visibilityState: "visible" });
+        vi.stubGlobal("document", doc);
+        vi.stubGlobal("window", new EventTarget());
+        const change = (visibilityState: string) => {
+            doc.visibilityState = visibilityState;
+            doc.dispatchEvent(new Event("visibilitychange"));
+        };
+        const fetcher = vi.fn((_url: string, init: RequestInit) => Promise.resolve(new Response(new ReadableStream<Uint8Array>({
+            start(c) {
+                c.enqueue(hello);
+                init.signal!.addEventListener("abort", () => c.error(new DOMException("fixture abort", "AbortError")), { once: true });
+            },
+        }))));
+        vi.stubGlobal("fetch", fetcher);
+        const h = handlers(vi.fn());
+        const stream = new EventStream(h);
+        try {
+            stream.start(10);
+            await vi.waitFor(() => expect(h.onResync).toHaveBeenCalledExactlyOnceWith(false));
+            change("hidden");
+            change("visible");
+            await Promise.resolve();
+            expect(fetcher).toHaveBeenCalledTimes(1);
+            change("hidden");
+            vi.setSystemTime(Date.now() + 20_000);
+            change("visible");
+            await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+            expect(fetcher.mock.calls[1]?.[0]).toContain("cursor=10");
+        } finally { stream.stop(); vi.useRealTimers(); }
+    });
+
+    it("네트워크 상태 변화 없이 화면이 켜지면 backoff를 바로 건너뛴다", async () => {
+        const doc = Object.assign(new EventTarget(), { visibilityState: "hidden" });
+        vi.stubGlobal("document", doc);
+        const fetcher = vi.fn().mockRejectedValue(new TypeError("not connected"));
+        vi.stubGlobal("fetch", fetcher);
+        let offline!: () => void;
+        const waiting = new Promise<void>((resolve) => { offline = resolve; });
+        const stream = new EventStream(handlers((status) => { if (status === "offline") offline(); }));
+        try {
+            stream.start(null);
+            await waiting;
+            doc.visibilityState = "visible";
+            doc.dispatchEvent(new Event("visibilitychange"));
+            await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2), { timeout: 200 });
+        } finally { stream.stop(); }
+    });
 });
 
 describe("대화 상세 stream 소유권", () => {
@@ -93,7 +145,7 @@ describe("대화 상세 stream 소유권", () => {
             controller.error(new TypeError("fixture connection lost"));
             await secondLive;
             expect(new URL(urls[1]!, "http://fixture").searchParams.get("cursor")).toBe("10");
-            expect(onResync).toHaveBeenCalledTimes(2);
+            expect(onResync.mock.calls).toEqual([[true], [false]]);
             expect(snapshots).toEqual({});
             controller.enqueue(new TextEncoder().encode('event: partial\ndata: {"session_id":"s","snapshot":{"turn_id":"next","text":"다음 응답"}}\n\n'));
             await partialReceived;

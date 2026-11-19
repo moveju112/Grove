@@ -6,6 +6,23 @@ const render = (text: string, live = true) =>
     renderToStaticMarkup(<AssistantResponse content={{ text }} live={live} />);
 
 describe("스트리밍 답변 Markdown", () => {
+    it("진행 제목에는 시각이 있는 마지막 진행 항목만 쓰고 답변 시각은 제외한다", () => {
+        const html = renderToStaticMarkup(<AssistantResponse live content={{
+            response_parts: ["첫 설명", "두 번째 설명", "기록 없는 설명", "답변"],
+            response_part_times: ["2026-01-12T01:23:45Z", "2026-01-12T01:24:56Z", null, "2026-01-12T01:25:57Z"],
+        }} />);
+        expect(html).toMatch(/진행 설명 · 최근 <time[^>]*dateTime="2026-01-12T01:24:56Z"/);
+        expect(html.match(/<time\b/g)).toHaveLength(1);
+        expect(html).toContain("기록 없는 설명");
+    });
+
+    it("진행 시각 기록이 없으면 제목만 표시한다", () => {
+        const html = renderToStaticMarkup(<AssistantResponse live content={{ response_parts: ["설명", "답변"] }} />);
+        expect(html).toContain("진행 설명");
+        expect(html).not.toContain("· 최근");
+        expect(html).not.toContain("<time");
+    });
+
     it("진행 설명을 가려도 답변은 스트리밍한다", () => {
         const html = renderToStaticMarkup(<AssistantResponse live showProgress={false}
             content={{ response_parts: ["파일을 확인할게.", "확인했어."] }} />);

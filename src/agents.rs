@@ -105,7 +105,7 @@ pub fn running_for_parent(c: &Connection, parent_session_id: &str) -> ApiResult<
 }
 
 fn list_for_parent(c: &Connection, parent_session_id: &str) -> ApiResult<Vec<AgentRun>> {
-    let mut st = c.prepare(&format!("SELECT {COLS} FROM agent_runs WHERE parent_session_id = ?1 ORDER BY created_at DESC LIMIT 100"))?;
+    let mut st = c.prepare(&format!("SELECT {COLS} FROM agent_runs WHERE parent_session_id = ?1 ORDER BY (status = 'running') DESC, created_at DESC LIMIT 100"))?;
     let v = st.query_map(params![parent_session_id], from_row)?.collect::<Result<_, _>>()?;
     Ok(v)
 }
@@ -257,6 +257,18 @@ fn role_profile(c: &Connection, session: &crate::sessions::Session, role: &str, 
     Ok(selection)
 }
 
+/// 새 자식 턴을 실행 상태로 만들기 전 동시 실행 한도(부모별·서버 전체). spawn과 send가 같은 transaction에서 검사한다.
+fn check_running_limits(tx: &Connection, parent_session_id: &str) -> ApiResult<()> {
+    if running_for_parent(tx, parent_session_id)? >= MAX_PER_PARENT {
+        return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "limit", format!("한 대화에서 자식 에이전트는 동시에 {MAX_PER_PARENT}개까지 실행할 수 있습니다")));
+    }
+    let total: i64 = tx.query_row("SELECT COUNT(*) FROM agent_runs WHERE status = 'running'", [], |r| r.get(0))?;
+    if total >= MAX_RUNNING {
+        return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "limit", format!("서버 전체 자식 에이전트 동시 실행 한도({MAX_RUNNING})에 도달했습니다")));
+    }
+    Ok(())
+}
+
 /// spawn: 자식 세션·run·첫 턴을 한 transaction에서 만든다.
 #[allow(clippy::too_many_arguments)]
 fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str, parent_turn_id: &str, parent_call_id: &str, agent_id: &str, brief: &str) -> ApiResult<AgentRun> {
@@ -267,13 +279,7 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
     if depth > MAX_DEPTH {
         return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "limit", format!("자식 에이전트는 {MAX_DEPTH}단계까지만 만들 수 있습니다")));
     }
-    if running_for_parent(tx, parent_session_id)? >= MAX_PER_PARENT {
-        return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "limit", format!("한 대화에서 자식 에이전트는 동시에 {MAX_PER_PARENT}개까지 실행할 수 있습니다")));
-    }
-    let total: i64 = tx.query_row("SELECT COUNT(*) FROM agent_runs WHERE status = 'running'", [], |r| r.get(0))?;
-    if total >= MAX_RUNNING {
-        return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "limit", format!("서버 전체 자식 에이전트 동시 실행 한도({MAX_RUNNING})에 도달했습니다")));
-    }
+    check_running_limits(tx, parent_session_id)?;
     let def = crate::definitions::resolve(tx, "agent", agent_id)?;
     if !def.def.enabled {
         return Err(ApiError::conflict("disabled", format!("비활성화된 에이전트입니다: {agent_id}")));
@@ -316,9 +322,7 @@ fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str
     if run.status == "running" {
         return Err(ApiError::busy("자식 작업이 아직 실행 중입니다. wait로 기다리거나 cancel 후 다시 지시하세요"));
     }
-    if running_for_parent(tx, &run.parent_session_id)? >= MAX_PER_PARENT {
-        return Err(ApiError::new(axum::http::StatusCode::CONFLICT, "limit", format!("한 대화에서 자식 에이전트는 동시에 {MAX_PER_PARENT}개까지 실행할 수 있습니다")));
-    }
+    check_running_limits(tx, &run.parent_session_id)?;
     let parent = crate::sessions::get_active(tx, &run.parent_session_id)?;
     let fallback = parent_turn_id.map(|id| crate::runner::get_turn(tx,id)).transpose()?.and_then(|t| t.profile_id).unwrap_or_else(||run.profile_id.clone());
     let selection = role_profile(tx, &parent, &run.agent_id, &fallback)?;
@@ -338,7 +342,8 @@ fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str
     Ok(run)
 }
 
-/// 진행 단계(SESSION-012): accepted(접수됨, 실행 차례 대기) · running(실행 중) · awaiting_approval(사용자 승인 대기) · done(끝남).
+/// 진행 단계(SESSION-012): accepted(접수됨, 실행 차례 대기) · running(실행 중) · awaiting_approval(사용자 승인 대기)
+/// · awaiting_input(사용자 답변 대기) · done(끝남).
 pub fn phase(run: &AgentRun) -> &'static str {
     if run.status != "running" {
         return "done";
@@ -346,6 +351,7 @@ pub fn phase(run: &AgentRun) -> &'static str {
     match run.turn_status.as_deref() {
         Some("queued") | None => "accepted",
         Some("awaiting_approval") => "awaiting_approval",
+        Some("awaiting_input") => "awaiting_input",
         _ => "running",
     }
 }
@@ -358,6 +364,7 @@ fn summary(run: &AgentRun) -> Value {
         "note": match (run.status.as_str(), phase) {
             (_, "accepted") => "접수만 되었고 아직 시작하지 않았습니다. 완료로 보고하지 마세요.",
             (_, "awaiting_approval") => "사용자 승인을 기다리는 중입니다. 완료로 보고하지 마세요.",
+            (_, "awaiting_input") => "자식 대화의 질문에 사용자 답변을 기다리는 중입니다. 완료로 보고하지 마세요.",
             ("running", _) => "아직 실행 중입니다. 완료로 보고하지 마세요.",
             ("completed", _) => "완료되었습니다.",
             _ => "완료되지 않았습니다(실패·취소·중단).",
@@ -557,11 +564,58 @@ mod tests {
         assert_eq!(phase(&run("running", None)), "accepted");
         assert_eq!(phase(&run("running", Some("running"))), "running");
         assert_eq!(phase(&run("running", Some("awaiting_approval"))), "awaiting_approval");
+        assert_eq!(phase(&run("running", Some("awaiting_input"))), "awaiting_input");
         assert_eq!(phase(&run("completed", Some("completed"))), "done");
         assert_eq!(phase(&run("failed", Some("failed"))), "done");
-        for (s, t) in [("running", "queued"), ("running", "running"), ("running", "awaiting_approval")] {
+        for (s, t) in [("running", "queued"), ("running", "running"), ("running", "awaiting_approval"), ("running", "awaiting_input")] {
             assert!(summary(&run(s, Some(t)))["note"].as_str().unwrap().contains("완료로 보고하지 마세요"), "{s}/{t}");
         }
         assert_eq!(summary(&run("completed", Some("completed")))["note"], "완료되었습니다.");
+    }
+
+    fn database() -> Connection {
+        let c = Connection::open_in_memory().unwrap();
+        for migration in crate::store::MIGRATIONS {
+            c.execute_batch(migration).unwrap();
+        }
+        c.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','agents','/fixture','t','t')", []).unwrap();
+        c
+    }
+
+    fn insert_run(c: &Connection, id: &str, parent: &str, status: &str, created_at: &str) {
+        for sid in [parent, id] {
+            c.execute("INSERT OR IGNORE INTO sessions(id,project_id,title,created_at,updated_at) VALUES(?1,'p',?1,'t','t')", [sid]).unwrap();
+        }
+        c.execute(
+            "INSERT INTO agent_runs(id,parent_session_id,child_session_id,agent_id,profile_id,tools_enabled,depth,status,created_at,updated_at) \
+             VALUES(?1,?2,?1,'reviewer','prof',1,1,?3,?4,?4)",
+            params![id, parent, status, created_at],
+        ).unwrap();
+    }
+
+    /// AGENT-007: 후속 지시(send)도 spawn과 같은 한도 검사를 거친다. 다른 부모의 실행으로 서버 전체 한도가 차면 부모별 여유가 있어도 거절한다.
+    #[test]
+    fn running_limits_count_whole_server_not_only_parent() {
+        let c = database();
+        check_running_limits(&c, "idle").unwrap();
+        for i in 0..MAX_RUNNING {
+            insert_run(&c, &format!("busy-{i}"), &format!("parent-{}", i / MAX_PER_PARENT), "running", "t");
+        }
+        let err = check_running_limits(&c, "idle").unwrap_err();
+        assert_eq!(err.code, "limit");
+        assert!(err.message.contains(&MAX_RUNNING.to_string()), "{}", err.message);
+    }
+
+    /// 진행 중 자식은 종료 이력이 많아도 부모 목록에서 빠지지 않는다(확인·취소 가능).
+    #[test]
+    fn parent_list_keeps_running_runs_beyond_recent_history() {
+        let c = database();
+        insert_run(&c, "old-running", "parent", "running", "2026-01-01T00:00:00Z");
+        for i in 0..100 {
+            insert_run(&c, &format!("done-{i:03}"), "parent", "completed", &format!("2026-01-02T00:00:{:02}.{i:03}Z", i % 60));
+        }
+        let list = list_for_parent(&c, "parent").unwrap();
+        assert_eq!(list.len(), 100);
+        assert_eq!(list[0].id, "old-running");
     }
 }

@@ -210,22 +210,20 @@ async fn invalid_defaults_and_post_plan_symlink_escape_never_execute_outside_roo
 }
 
 #[tokio::test]
-async fn cwd_defaults_do_not_bypass_deny_or_read_only_rechecks() {
-    for (key, value, code) in [("tools.deny", "shell", "policy_denied"), ("tools.mode", "read_only", "read_only")] {
-        let (s, pid, sid, root) = setup().await;
-        cwd_setting(&s, "project", &pid, 0, json!("session")).await;
-        let pending = request(&s, &sid, json!({"command": "printf unsafe > marker"})).await;
-        setting(&s, "project", &pid, key, 0, json!(value)).await;
-        let blocked = request(&s, &sid, json!({"command": "printf unsafe > marker"})).await;
-        assert_eq!(blocked["target"]["cwd"], "session");
-        assert_eq!(blocked["status"], "failed");
-        assert_eq!(blocked["result"]["error"]["code"], code);
-        let id = pending["id"].as_str().unwrap();
-        let (status, result) = s.post(&format!("/api/v1/tool-calls/{id}/decision"),
-            json!({"decision": "approve", "expected_revision": pending["revision"]})).await;
-        assert!(!status.is_success(), "{result}");
-        assert!(!root.join("session/marker").exists());
-    }
+async fn cwd_defaults_do_not_bypass_deny_rechecks() {
+    let (s, pid, sid, root) = setup().await;
+    cwd_setting(&s, "project", &pid, 0, json!("session")).await;
+    let pending = request(&s, &sid, json!({"command": "printf unsafe > marker"})).await;
+    setting(&s, "project", &pid, "tools.deny", 0, json!("shell")).await;
+    let blocked = request(&s, &sid, json!({"command": "printf unsafe > marker"})).await;
+    assert_eq!(blocked["target"]["cwd"], "session");
+    assert_eq!(blocked["status"], "failed");
+    assert_eq!(blocked["result"]["error"]["code"], "policy_denied");
+    let id = pending["id"].as_str().unwrap();
+    let (status, result) = s.post(&format!("/api/v1/tool-calls/{id}/decision"),
+        json!({"decision": "approve", "expected_revision": pending["revision"]})).await;
+    assert!(!status.is_success(), "{result}");
+    assert!(!root.join("session/marker").exists());
 }
 
 #[tokio::test]

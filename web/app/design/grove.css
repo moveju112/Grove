@@ -320,6 +320,7 @@
     --on-accent: light-dark(#ffffff, #14161b);
     --warn-weak: light-dark(#fdf3e3, #2e2615);
     --err-weak: light-dark(#fcefed, #3a1f1d);
+    --ok-weak: light-dark(#e6f4ec, #183126);
     --brand: light-dark(#2f7d55, #5fbf8a);
     --shadow-float: light-dark(0 8px 24px rgb(0 0 0 / 0.08), 0 12px 32px rgb(0 0 0 / 0.35));
     --color-background-wash: var(--bg);

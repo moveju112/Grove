@@ -48,6 +48,17 @@ test("320~1920px에서 긴 모델명·큰 토큰 수를 표시하고 대화 입�
         })).toBe(true);
         const card = panel.getByTestId("usage-providers");
         expect(await card.evaluate((node) => node.scrollWidth <= node.clientWidth + 1)).toBe(true);
+        if (width <= 760) {
+            const dialog = page.getByRole("dialog", { name: "사용량", exact: true });
+            await expect.poll(async () => (await dialog.boundingBox())!.width).toBeGreaterThanOrEqual(width - 10);
+            const summary = card.getByRole("table", { name: "전체 사용량 요약", exact: true });
+            const cardBounds = (await card.boundingBox())!;
+            const summaryBounds = (await summary.boundingBox())!;
+            expect(cardBounds.x).toBeLessThanOrEqual(16);
+            expect(width - (cardBounds.x + cardBounds.width)).toBeLessThanOrEqual(16);
+            expect(summaryBounds.x).toBeGreaterThanOrEqual(cardBounds.x);
+            expect(summaryBounds.x + summaryBounds.width).toBeLessThanOrEqual(cardBounds.x + cardBounds.width + 1);
+        }
     }
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ colorScheme: "dark" });

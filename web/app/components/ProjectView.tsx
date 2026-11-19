@@ -50,6 +50,10 @@ export function ProjectView({ tabId, projectId, open }: { tabId: string; project
                 </Stack> },
                 { id: "scripts", label: "스크립트", content: <ProjectScripts projectId={projectId} projectName={project.data?.name ?? projectId} open={open} /> },
                 { id: "worktrees", label: "워크스페이스", content: <WorktreesPanel key={`worktrees:${projectId}`} projectId={projectId} /> },
+                { id: "settings", label: "설정", content: (close) => <GroveButton variant="secondary" density="compact" aria-haspopup="dialog"
+                    onClick={() => { close(); open({ kind: "settings", project_id: projectId, resource_id: "settings", title: `설정 · ${project.data?.name ?? projectId}` }); }}>
+                    프로젝트 설정
+                </GroveButton> },
             ]}>
             <ToolsTrigger inlineHeader />
                 {project.data && !project.data.available && (

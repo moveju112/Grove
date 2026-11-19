@@ -1,9 +1,5 @@
 import * as stylex from "@stylexjs/stylex";
 
-const recentOrbit = stylex.keyframes({
-    from: { strokeDashoffset: "0" },
-    to: { strokeDashoffset: "-100" },
-});
 const RECENT_ROW_HEIGHT = 24;
 const RECENT_VISIBLE_ROWS = 6;
 
@@ -43,7 +39,7 @@ export const workspaceStyles = stylex.create({
     }),
     recentDock: { flexShrink: 0, minHeight: 0 },
     recentPanel: { flexShrink: 1, minHeight: 0 },
-    recentItems: { maxHeight: RECENT_ROW_HEIGHT * RECENT_VISIBLE_ROWS, minHeight: 0, overflowY: "auto", overflowX: "hidden", overscrollBehaviorY: "contain" },
+    recentItems: { height: RECENT_ROW_HEIGHT * RECENT_VISIBLE_ROWS, minHeight: 0, overflowY: "auto", overflowX: "hidden", overscrollBehaviorY: "contain" },
     recentList: { rowGap: 0 },
     recentRow: { minHeight: RECENT_ROW_HEIGHT, paddingBlock: 0 },
     recentRowControl: { height: RECENT_ROW_HEIGHT, minHeight: RECENT_ROW_HEIGHT, paddingBlock: 0 },
@@ -51,32 +47,26 @@ export const workspaceStyles = stylex.create({
     recentActions: { flexShrink: 0 },
     recentClose: { minWidth: "var(--spacing-8)", paddingInline: 0 },
     recentTime: {
-        position: "relative",
         minWidth: "var(--spacing-8)",
         paddingInline: "var(--spacing-1)",
         textAlign: "center",
         fontVariantNumeric: "tabular-nums",
     },
-    recentRing: { position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" },
-    recentRingOutline: {
-        width: "calc(100% - 2px)", height: "calc(100% - 2px)", fill: "none",
-        stroke: { default: "var(--split-line)", "@media (forced-colors: active)": "CanvasText" },
-        strokeWidth: 1.25,
-    },
-    recentRingTrack: { opacity: { default: 1, "@media (prefers-reduced-motion: no-preference)": 0.32 } },
-    recentRingSweep: {
-        display: { default: "none", "@media (prefers-reduced-motion: no-preference)": "inline" },
-        animationName: { default: "none", "@media (prefers-reduced-motion: no-preference)": recentOrbit },
-        animationDuration: "1.3s", animationTimingFunction: "linear", animationIterationCount: "infinite",
-        strokeDasharray: "28 72", strokeLinecap: "round",
-    },
-    recentCheck: {
-        position: "absolute", insetInlineEnd: "calc(-1 * var(--spacing-1))", insetBlockStart: 0,
-        color: "var(--text-2)", pointerEvents: "none",
+    // 실행·미확인 완료는 행 배경으로만 표시한다. 상태가 바뀌어도 제목·시간·숨김 버튼은 움직이지 않는다.
+    recentState: {
+        borderRadius: 6,
+        backgroundColor: {
+            default: null,
+            ':is([data-recent-state="running"])': "var(--split-bg)",
+            ':is([data-recent-state="completed"])': "var(--ok-weak)",
+        },
+        // 강제 색상 모드는 배경을 지우므로 상태 행에만 테두리를 남긴다.
+        outline: { default: null, ":is([data-recent-state])": { default: null, "@media (forced-colors: active)": "1px solid CanvasText" } },
+        outlineOffset: -1,
     },
     recentGroup: {
         position: "relative",
-        backgroundColor: "var(--split-bg)",
+        backgroundColor: "transparent",
         borderWidth: 0,
         borderRadius: 6,
         overflow: "hidden",

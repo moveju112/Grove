@@ -1,7 +1,7 @@
 import type { ToolCallRow } from "../../api/generated";
 
 export type ApprovalEffect = "read" | "write" | "execute" | "delegate" | "conversation";
-export type ApprovalDecision = "approve" | "approve_session" | "deny";
+export type ApprovalDecision = "approve" | "approve_session" | "approve_always" | "deny";
 export type ApprovalIdentity = Pick<ToolCallRow, "id" | "session_id" | "revision">;
 export type ApprovalRequest = ApprovalIdentity & { decision: ApprovalDecision };
 export type ApprovalFailure = { kind: "expired" | "processed" | "permission" | "unknown" | "failed"; message: string };
@@ -20,7 +20,8 @@ export function currentApprovalContract(name: string): { effect: ApprovalEffect 
     return {
         effect,
         choices: !effect || name === "ask_user" ? [] : name === "agent"
-            ? ["approve", "deny"] : ["approve", "approve_session", "deny"],
+            ? ["approve", "deny"] : name === "computer" ? ["approve", "approve_session", "deny"]
+                : ["approve", "approve_session", "approve_always", "deny"],
     };
 }
 

@@ -42,6 +42,7 @@ test("두 줄로 나뉜 대화 영역은 창 너비와 사이드바 변경 뒤�
     await page.setViewportSize({ width: 800, height: 700 });
     await expect.poll(fits).toEqual(noOverflow);
     // 좁은 탭 줄에서도 마지막 버튼은 스크롤로 접근할 수 있다.
+    await panes.last().getByTestId("tab-title").focus();
     const tool = panes.last().getByRole("button", { name: "도구 패널", exact: true });
     await tool.focus();
     await expect(tool).toBeInViewport();
@@ -64,7 +65,7 @@ test("오른쪽 위아래를 닫으면 남은 두 줄의 세 열이 각각 같�
     const panes = await openGrid(page);
     await panes.nth(3).getByRole("button", { name: "탭 닫기", exact: true }).click();
     await expect(panes).toHaveCount(7);
-    await panes.last().getByRole("button", { name: "영역 닫기", exact: true }).click();
+    await panes.last().getByRole("button", { name: "탭 닫기", exact: true }).click();
     await expect(panes).toHaveCount(6);
     await expect.poll(() => panes.evaluateAll((nodes) => {
         const widths = nodes.map((node) => node.getBoundingClientRect().width);

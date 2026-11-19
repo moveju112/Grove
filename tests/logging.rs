@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 fn grove() -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_grove"));
-    cmd.env("GROVE_LOG", "info");
+    cmd.env("GROVE_LOG", "info").env_remove("GROVE_LOG_MAX_MIB").env_remove("GROVE_LOG_KEEP_DAYS");
     cmd
 }
 
@@ -22,7 +22,10 @@ fn file_log_rotates_at_startup_and_records_normal_shutdown() {
     let data = d.path().join("data");
     let path = d.path().join("logs/server.log");
     std::fs::create_dir(path.parent().unwrap()).unwrap();
-    std::fs::write(&path, vec![b'x'; 2 * 1024 * 1024]).unwrap();
+    std::fs::write(&path, vec![b'x'; 3 * 1024 * 1024]).unwrap();
+    let expired = std::fs::File::create(path.with_file_name("server.log.7")).unwrap();
+    expired.set_modified(std::time::SystemTime::now() - Duration::from_secs(4 * 24 * 60 * 60)).unwrap();
+    drop(expired);
     let port = std::net::TcpListener::bind("127.0.0.1:0")
         .unwrap()
         .local_addr()
@@ -31,6 +34,9 @@ fn file_log_rotates_at_startup_and_records_normal_shutdown() {
     let listen = format!("127.0.0.1:{port}");
     let mut server = Server(
         grove()
+            .env("GROVE_LOG_MAX_MIB", "3")
+            .env("GROVE_LOG_KEEP_DAYS", "3")
+            .env("GROVE_LOG", "info,grove::web=debug")
             .args(["serve", "--data-dir"])
             .arg(&data)
             .args(["--listen", &listen, "--log-file"])
@@ -76,6 +82,11 @@ fn file_log_rotates_at_startup_and_records_normal_shutdown() {
     assert!(!second_data.exists());
     assert_eq!(std::fs::read(&path).unwrap(), first);
     let token = std::fs::read_to_string(data.join("owner-token")).unwrap();
+    let request = client
+        .get(format!("http://{listen}/api/v1/sessions/sensitive-fixture-id/messages?query=sensitive-fixture-query"))
+        .header("x-request-id", "b3999d21-5311-4f4c-93c3-7bcecf2c0ecd")
+        .bearer_auth(token.trim()).send().unwrap();
+    assert_eq!(request.status(), reqwest::StatusCode::NOT_FOUND);
     let response = client
         .post(format!("http://{listen}/api/v1/admin/shutdown"))
         .bearer_auth(token.trim())
@@ -94,12 +105,17 @@ fn file_log_rotates_at_startup_and_records_normal_shutdown() {
     let text = std::fs::read_to_string(&path).unwrap();
     assert!(text.contains("서버 준비 완료") && text.contains("서버 종료 중"));
     assert!(text.contains(grove::VERSION));
+    assert!(text.contains("file_mib=3") && text.contains("archive_count=7") && text.contains("keep_days=3"), "{text}");
+    let api_log = text.lines().find(|line| line.contains("b3999d21-5311-4f4c-93c3-7bcecf2c0ecd")).expect("API log");
+    assert!(api_log.contains("/sessions/{id}/messages") && api_log.contains("status=404") && api_log.contains("elapsed_ms="), "{api_log}");
+    assert!(!text.contains("sensitive-fixture"));
+    assert!(!path.with_file_name("server.log.7").exists());
     assert!(!text.contains('\x1b') && !text.contains(token.trim()));
     assert_eq!(
         std::fs::metadata(path.with_file_name("server.log.1"))
             .unwrap()
             .len(),
-        2 * 1024 * 1024
+        3 * 1024 * 1024
     );
 }
 
@@ -152,9 +168,23 @@ fn detailed_logging_is_opt_in_and_expired_slots_are_removed_before_startup() {
         assert!(!out.status.success());
         let text = std::fs::read_to_string(path).unwrap();
         assert!(text.contains("서버 실행 실패"), "{text}");
+        assert!(text.contains("file_mib=8") && text.contains("keep_days=7"), "{text}");
         assert_eq!(text.contains("개발용 상세 로그 활성화"), matches!(level, Some("debug" | "trace")), "{text}");
         assert!(!archive.exists());
     }
+}
+
+#[test]
+fn invalid_log_policy_is_rejected_before_creating_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let log = dir.path().join("logs/server.log");
+    let data = dir.path().join("data");
+    let out = grove().env("GROVE_LOG_MAX_MIB", "65")
+        .args(["serve", "--data-dir"]).arg(&data).arg("--log-file").arg(&log)
+        .output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("GROVE_LOG_MAX_MIB"));
+    assert!(!log.exists() && !data.exists());
 }
 
 #[test]

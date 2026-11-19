@@ -34,6 +34,8 @@ body > [data-astryx-theme] { min-height: 100%; }
     min-width: 0;
 }
 :focus-visible { outline: 2px solid var(--focus); outline-offset: 1px; }
+/* Astryx의 바깥 제어 상자가 아니라 실제 입력 요소의 브라우저 크기 조절을 끈다. */
+[data-ui="composer"] textarea { resize: none; }
 /* 메시지 입력은 캐럿으로 위치를 표시한다. 입력 카드 안에 초점 테두리를 중복해서 그리지 않는다. */
 [data-ui="composer"] textarea:focus-visible { outline: none; }
 /* 스와이프 탐색이 브라우저의 가로 뒤로 가기로 전달되지 않게 한다. */

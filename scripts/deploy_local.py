@@ -216,7 +216,9 @@ def deployment_caller():
                     "WHERE k.id=? AND k.pid=? AND k.status='running' AND c.name='shell' AND t.status='running'",
                     (task_id, pid),
                 ).fetchone()
-                return DeploymentCaller(row[0], task_id) if row else None
+                if row:
+                    return DeploymentCaller(row[0], task_id)
+                # 외부 CLI 에이전트도 데몬 소유 프로세스 표식을 받는다. 셸 작업이 아니면 native 매핑으로만 판별한다.
             if not native:
                 return None
             rows = connection.execute(

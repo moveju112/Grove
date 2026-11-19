@@ -288,7 +288,7 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 비신뢰 콘텐츠(SEC-022): 모델 텍스트·문서/웹 내용·도구 결과·백그라운드/자식 에이전트 결과는 데이터이며 시스템 지침이나 사용자 승인으로 승격하지 않는다. 공통 시스템 프롬프트에 이 경계를 명시하고, 일반 도구 결과는 provider의 tool 메시지 내용으로 전달한다. 역할·승인 JSON처럼 보이는 문자열도 메시지 배열이나 승인 API로 재해석하지 않는다. 비동기 결과는 provider 호환성을 위해 user 메시지에 실릴 수 있지만 비신뢰 데이터 표식과 JSON 문자열 인용을 붙이며, 실제 사용자의 승인으로 간주하지 않는다. 모델도 추가할 수 있는 Goal 제목은 다음 시스템 알림에서 JSON 데이터로 인용해 줄바꿈·헤더를 통한 지침 삽입을 막고 저장 원문은 보존한다.
 
-쓰기 승인 상태·대화 범위 허용은 기존 서버 정책과 인증된 명시적 승인 API만 변경한다. 모델 도구 인자의 `approved`·`approval_scope` 같은 미지원 필드와 알 수 없는 도구는 거부한다. 생성 텍스트의 승인 주장은 파일 실행·승인 전환·grant 생성을 일으키지 않는다. CLI는 기존 읽기 전용 강제 정책을 유지한다. `tests/trust_boundary.rs`의 로컬 fixture와 history·runner·CLI·Goal 회귀는 이 구조적 계약의 근거이며 실모델의 prompt-injection 저항성 평가나 외부 웹 fetch 기능의 인수 증거는 아니다.
+쓰기 승인 상태·대화 범위 허용은 기존 서버 정책과 인증된 명시적 승인 API만 변경한다. 모델 도구 인자의 `approved`·`approval_scope` 같은 미지원 필드와 알 수 없는 도구는 거부한다. 생성 텍스트의 승인 주장은 파일 실행·승인 전환·grant 생성을 일으키지 않는다. `grove exec`의 명시적 도구 허용 계약은 일반 대화의 기본 모드와 별개다. `tests/trust_boundary.rs`의 로컬 fixture와 history·runner·CLI·Goal 회귀는 이 구조적 계약의 근거이며 실모델의 prompt-injection 저항성 평가나 외부 웹 fetch 기능의 인수 증거는 아니다.
 
 외부 주소·redirect 정책(SEC-021): 모델 요청·연결 확인은 소유자가 등록한 HTTP(S) 프로필의 endpoint만 사용한다. 로컬 모델·LAN/VPN 사용을 위해 loopback·private 주소를 일괄 차단하지 않으며, 이는 소유자가 서버의 네트워크 접근 대상을 명시하는 신뢰 경계다. 일반 요청은 프로필 ID를 선택할 뿐 임의 URL을 전달하는 프록시가 아니고 기기는 프로필 endpoint를 변경할 수 없다. 모델·문서·도구 결과의 URL을 서버가 자동 접속 대상으로 승격하지 않는다.
 
@@ -296,16 +296,17 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 웹 fetch 도구와 Grove 자체 OAuth callback은 아직 구현하지 않았다. 이를 추가할 때는 비신뢰 URL을 위 소유자 프로필 권한과 혼동하지 않고 별도 허용 대상·DNS/redirect 후 주소 검증으로 loopback·private·link-local/metadata·비HTTP scheme 접근을 기본 거부해야 한다. OAuth callback은 등록한 redirect URI의 scheme·host·port·path, state·PKCE·고정 만료·취소를 확인하고 임의 return/next URL로 토큰을 보내지 않는다. 현재 문서의 정책 정의·기존 경로 회귀를 미구현 fetch/OAuth의 완료로 취급하지 않는다. 서명된 설치 산출물 다운로드의 별도 전송 경로를 이 인증/상태 제어 검사로 검증했다고 주장하지 않는다.
 
-설정 `tools.mode`(ask|read_only, server·project·session), `tools.deny`(도구 이름 목록, server·project·session), `tools.allow`(server·project만). 가장 구체적인 값 하나가 아니라 **모든 범위를 합쳐** 판단한다.
+설정 `tools.mode`(ask|bypass, 기본 bypass, server·project·session), `tools.deny`(도구 이름 목록, server·project·session), `tools.allow`(server·project만). 금지는 모든 범위에서 검사한다. 폐지된 `read_only` 설정값은 저장소 migration으로 상속 상태로 되돌린다.
 
 1. `tools.deny`에 있으면 금지(`policy_denied`) — 읽기 도구 포함, 최우선
-2. 어느 범위든 `read_only`면 Read·Conversation 외 금지(`read_only`) — allow보다 우선, 하위 범위의 `ask`로 풀 수 없음
-3. `tools.allow`에 있으면 승인 없이 실행(대화 범위에서는 넓힐 수 없음)
-4. 그 외 기본: 변경 도구는 승인 필요
+2. 보조 에이전트 역할에서는 Read·Conversation 외 금지(`read_only`) — 일반 대화의 설정과 별개
+3. 가장 구체적인 `tools.mode`가 `bypass`면 일반 도구 승인을 생략한다. PC 제어·위임의 별도 정책과 도구 자체의 대상 검증은 유지한다.
+4. `tools.allow`에 있거나 `tools.full_access`로 포괄 허용되는 일반 도구는 승인 없이 실행한다.
+5. 그 외 기본: 변경·실행 도구는 승인 필요
 
-승인 범위(SEC-009): `approve`=이번만(`approval_scope=once`), `approve_session`=이 대화에서 그 도구를 계속 허용(`session_tool_grants`, 이후 호출은 `approval_scope=session`), `tools.allow`로 건너뛴 호출은 `policy`. 대화 범위 허용은 그 대화에만 적용되고, 금지·읽기 전용이 우선하며, 위임(agent)에는 쓸 수 없다. `DELETE /sessions/{id}/tool-grants/{tool}`로 해제(멱등), 대화 삭제 시 함께 삭제. 화면은 버튼을 "이번만 승인"/"이 대화에서 계속 허용"으로 나누고 도구 결과에 범위를 표시한다. 시험: `tests/turns.rs::session_scoped_approval_is_limited_to_that_session_and_revocable`, e2e workspace 쓰기 도구 흐름.
+승인 범위(SEC-009): `approve`=이번만(`approval_scope=once`), `approve_session`=이 대화에서 계속 허용(`session_tool_grants`, `approval_scope=session`), `approve_always`=항상 승인(서버 `tools.allow`에 정식 도구 이름을 추가, `approval_scope=policy`). 항상 승인은 승인 결정과 같은 transaction에 저장되고 재시작 후에도 유지된다. 서버 설정의 `tools.allow`에서 도구 이름을 지워 해제하며 PC 제어·위임에는 사용할 수 없다. 대화 범위 허용은 위임에는 쓸 수 없으며 `DELETE /sessions/{id}/tool-grants/{tool}` 또는 대화 삭제로 해제된다. 명시적 금지와 보조 역할 제한이 우선한다. 시험: `tests/permission_modes.rs`, `tests/turns.rs::session_scoped_approval_is_limited_to_that_session_and_revocable`, `web/e2e/permission-modes.spec.ts`.
 
-판단은 계획 단계에서 확정된 정식 도구 이름으로 하고, 승인 시점에 다시 확인한다(대기 중 정책이 바뀌면 승인해도 실행하지 않고 409). 알 수 없는 도구 이름은 설정 저장 시 거부한다. 시험: `tests/turns.rs::tool_policy_deny_wins_and_read_only_cannot_be_loosened`, `policy_change_while_pending_blocks_approval`.
+판단은 계획 단계에서 확정된 정식 도구 이름으로 하고, 승인 시점에 다시 확인한다(대기 중 정책이 바뀌면 승인해도 실행하지 않고 409). 알 수 없는 도구 이름은 설정 저장 시 거부한다. 시험: `tests/turns.rs::tool_policy_deny_wins_over_allow_and_bypass`, `policy_change_while_pending_blocks_approval`.
 
 ## 18. 공정 실행 (FAIR)
 
@@ -435,7 +436,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 ### 협력적 프로젝트 자원 경계 (RUN-005·006)
 
 - `ProjectResources`는 등록한 project_id마다 공유 읽기/배타 변경 guard를 둔다. 모델 read/list/glob/find/grep와 UI 파일/Git 조회는 공유 읽기이며, 파일 변경·셸 실행·Git/worktree 변경은 배타다. 자식은 같은 project_id를 물려받으므로 파일 도구도 같은 guard를 쓴다. worktree가 달라도 공유 Git metadata 때문에 같은 프로젝트로 묶는다.
-- 모델의 background/hold 셸은 task 접수/실제 spawn 전에 guard를 얻고, spawn 후에는 영속 running task 기록이 프로젝트 사용을 나타낸다. 자동 도구는 구독 후 상태를 재확인해 기존 task 종료를 기다린다. UI 파일/Git 작업은 실행 중 task와 충돌하면 `resource_busy`로 거절하며 입력을 버리지 않는다. 작업 취소·출력·상태 조회와 결과 저장은 이 guard를 요구하지 않는다.
+- 모델의 background/hold 셸은 task 접수/실제 spawn 전에 guard를 얻고, spawn 후에는 영속 running task 기록이 프로젝트 사용을 나타낸다. 자동 도구는 구독 후 상태를 재확인해 hold 중인 직접 실행 task(`detached=0`)의 종료나 백그라운드 전환만 기다린다. 백그라운드 task(dev server·에뮬레이터·watch)는 끝나지 않을 수 있으므로 자동 도구의 대기 조건에서 제외한다. 기다리면 같은 프로젝트의 모든 세션 도구가 무기한 멈춘다. UI 파일/Git 작업은 실행 중 task와 충돌하면 `resource_busy`로 거절하며 입력을 버리지 않는다. 작업 취소·출력·상태 조회와 결과 저장은 이 guard를 요구하지 않는다.
 - 사용자 직접 병렬 프로세스는 기존대로 허용한다. 접수 큐는 프로젝트별이며 guard를 얻은 뒤 receipt·task·로그·이벤트를 commit하므로 같은 키는 한 번만 시작한다. 저장 공간 전역 lock보다 프로젝트 guard를 먼저 얻고 대기 후 receipt를 재확인한다. 기존 Git 변경 큐는 같은 프로젝트 API 요청의 순서·fingerprint·재전송 의미를 유지한다.
 - 짧은 서버 조회와 변경은 충돌 오류로 재시도시키지 않고 guard에서 순서대로 기다린다. 대기 뒤 인증을 다시 확인하고, 모델 도구는 현재 정책·승인·중지 접수를 다시 확인한다. 중지·서버 종료 대기 해제는 실제 payload 시작 전에 처리한다.
 - 이 경계는 임의 셸의 파일시스템 sandbox가 아니다. project_id가 다른 명령이 승인된 절대 경로·전역 Git 설정·공유 프로세스 등 같은 외부 자원을 만질 수 있다. 직접 병렬 명령·터미널·외부 편집기까지의 독립성은 보장하지 않으며, 현재 권한을 조용히 줄이거나 전역 직렬화로 바꾸지 않는다. 그 정책과 OS별 격리 계약은 미결정이다.
@@ -511,10 +512,11 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 
 ## 26. 서버 파일 로그와 유지보수 자원(DB-019)
 
-- `grove serve --log-file <path>`는 현재 파일과 `.1`~`.3` 보관본을 각 2MiB 이내로 유지한다(합계 최대 8MiB). `tracing`의 기본 formatter를 사용하되 내부 문자열 버퍼에 적재하기 전에 이벤트를 16KiB 이내로 제한한다. 초과 표식을 남기고 UTF-8 경계를 보존한다. 파일에는 ANSI escape를 쓰지 않으며 시작·종료·시작 실패를 기록한다.
-- 상세 로그는 기본 끔(info)이며 `GROVE_LOG=debug` 또는 `trace`로 명시한다. 파일 로그는 UTC 날짜 변경에도 회전해 오래된 내용이 계속 append되어 남지 않게 한다. 마지막 수정 시각으로 7일 지난 현재/보관 slot을 시작 시·회전 시·실행 중 매시간 정리하며 기록이 없는 유휴 시간에도 적용한다. 정리 시각 전까지 최대 한 검사 주기의 지연이 있고, 중지된 프로세스의 파일은 다음 시작 때 정리한다. 미래 시각 파일은 시계 역행으로 삭제하지 않는다. tail 정규화와 회전은 원래 mtime을 보존한다. stderr/systemd 보관은 해당 로그 관리자의 정책이다.
+- `grove serve --log-file <path>`는 현재 파일과 `.1`~`.7` 보관본을 기본 각 8MiB 이내로 유지한다(합계 최대 64MiB). `GROVE_LOG_MAX_MIB`(1~64)와 `GROVE_LOG_KEEP_DAYS`(1~30, 기본 7)를 데몬 환경에 설정할 수 있다. 보관본 개수와 용량 상한이 날짜보다 먼저 찰 수 있다. 이벤트는 내부 포맷 버퍼에 넣기 전에 16KiB에서 UTF-8 경계를 지켜 자르고 표식을 남긴다. 파일에는 ANSI escape를 쓰지 않는다.
+- API 진단은 응답 헤더까지 걸린 시간, 등록된 경로 템플릿, 상태 코드, 전송 유형, 검증된 요청 ID만 남긴다. 5xx는 warn, 500ms 이상은 info, 일반 응답과 이벤트 스트림 연결·재동기화 및 암호화 연결 단계는 debug다. 상세 로그는 `GROVE_LOG=debug` 또는 `GROVE_LOG=info,grove::web=debug,grove::events=debug,grove::e2ee=debug`로 켠다. 요청 원문·쿼리·쿠키·토큰·암호화 메시지와 화면 렌더링 시간은 데몬이 기록하지 않는다.
+- 파일 로그는 크기 상한·UTC 날짜 변경에 회전한다. 마지막 수정 시각으로 설정된 보관 기간이 지난 slot을 시작 시·회전 시·실행 중 매시간 정리한다. 유휴 상태에도 적용하며 중지된 프로세스의 파일은 다음 시작 때 정리한다. 미래 시각 파일은 시계 역행으로 삭제하지 않는다. tail 정규화와 회전은 원래 mtime을 보존한다. stderr/systemd 보관은 해당 로그 관리자의 정책이다.
 - 일반 파일만 사용하고 Unix는 symlink·hardlink·특수 파일을 거부한다. 신규 로그 폴더는 0700, 생성·append 파일은 0600이다. `.lock` 파일의 OS 잠금을 서버 수명 동안 유지하며 이벤트 전체를 직렬화한다. 회전 전에 handle을 닫아 Windows에서도 같은 경로를 교체한다. 위험한 보관 경로는 파일 이동 전에 모두 검사한다.
-- 이전 대용량 로그는 각 파일의 끝부분만 최대 2MiB 복사한다. `.grove-tail.tmp` 고정 slot에 `[grove-log-tail:v1]` header와 tail을 쓰고 sync 후 교체한다. 생성부터 0600이며 각 staging도 최대 2MiB다. 중단 파일은 일반 파일·header·크기와 Unix 소유자/권한을 확인한 후에만 재사용한다. 대용량 정리 중 다른 내용·종류·권한의 staging을 발견하면 보존하고 시작을 거부한다. 각 로그 slot에 staging 하나만 두어 반복 중단 시 새 임시 파일이 계속 늘지 않게 한다. 복사·교체 실패 시 기존 로그 원문을 유지한다.
+- 이전 대용량 로그는 설정된 파일 상한 이내에서 끝부분만 복사한다. `.grove-tail.tmp` 고정 slot에 `[grove-log-tail:v1]` header와 tail을 쓰고 sync 후 교체한다. 생성부터 0600이다. 중단 파일은 일반 파일·header·최대 크기와 Unix 소유자/권한을 확인한 후에만 재사용한다. 대용량 정리 중 다른 내용·종류·권한의 staging을 발견하면 보존하고 시작을 거부한다. 각 로그 slot에 staging 하나만 두어 반복 중단 시 새 임시 파일이 계속 늘지 않게 한다. 복사·교체 실패 시 기존 로그 원문을 유지한다.
 - 새 관리 CLI의 `process` 시작은 기존 `version --json`의 `features: ["file_log_rotation_v1"]`를 확인해 `--log-file`을 전달한다. 시작 전에 파일 준비 오류를 보고하고, 이미 응답하는 서버가 있으면 PID·로그를 바꾸지 않는다. 기능 표식이 없는 이전 release는 기존 stdout/stderr append 방식으로 실행한다. 옵션 없는 foreground와 systemd는 stderr를 유지한다. 기존 CLI로 기동한 서버는 새 관리 CLI로 정상 재시작해야 파일 회전이 적용된다.
 - 자원 회귀: 파일 정리 관련 Rust 통합 72개(`api` 19·`attachments` 15·`cli` 6·`files` 4·`logging` 3·`projects` 5·`storage` 13·`task_logs` 7), logging 7·storage 4·update 4 단위 시험과 Chrome 휴지통 2개 통과. 큰 metadata와 깊은 stack은 실패를 재현한 뒤 수정했고, 빈 폴더를 포함한 scan 예산·cursor도 확인했다. Windows x64·Linux ARM64 교차 빌드, 격리 Wine의 1GiB tail 정규화·중단 staging·writer 잠금·5회 시작/종료·보관본 교체·8MiB 상한·다른 staging 보존을 확인했다. 실제 Windows/ARM64 실행과 프로세스 전체 RSS 상한은 이 검증의 범위 밖이다.
 - `scripts/test_update.py`는 격리한 실제 A/B/C/D 실행 파일로 새 설치·이전 append 로그에서 새 회전 로그로 전환·변경 없음·활성 작업 유예·고장 버전 snapshot 복구·중복 시작/PID 보존을 검증한다. 임시 소스 경로가 달라도 고정 target/build-dir의 의존성 cache를 사용하고 offline 빌드한다. 운영 서비스·데이터를 사용하지 않는다.
@@ -548,7 +550,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 ## 29. 키워드 메시지 회상(MEMORY-004)
 
 - 인증된 `/recall`과 `recall` 도구는 과거 사용자/assistant의 표시 본문만 조회한다. 문구 부분 일치이며 ASCII 대소문자만 구분하지 않는다. 의미 검색·embedding·자동 기억 추출·모델 호출을 수행하지 않는다. `%`·`_`·따옴표는 검색 문법이 아닌 원문이다.
-- 기간은 대화 갱신 시각이 아니라 메시지 작성 시각의 RFC 3339 시작 이상·종료 미만이다. 보관된 대화/프로젝트는 기본 제외하고 명시적으로 포함할 수 있다. 모델 도구는 §31의 기본 차단을 따르며 사용자 설정으로 허용됐을 때만 현재 프로젝트 또는 `scope=all`의 모든 프로젝트를 조회한다. 금지 정책이 우선하며 읽기 전용 모드에서 조회할 수 있다.
+- 기간은 대화 갱신 시각이 아니라 메시지 작성 시각의 RFC 3339 시작 이상·종료 미만이다. 보관된 대화/프로젝트는 기본 제외하고 명시적으로 포함할 수 있다. 모델 도구는 §31의 기본 차단을 따르며 사용자 설정으로 허용됐을 때만 현재 프로젝트 또는 `scope=all`의 모든 프로젝트를 조회한다. 금지 정책이 우선한다.
 - 발췌는 SQL에서 일치한 위치 주변 최대 320자로 자르고 원문 session ID·message ID·seq·역할·시각을 제공한다. API 페이지는 최대 50개, 도구는 최대 10개다. 모델의 reasoning·native metadata·도구 결과는 회상 검색 대상이 아니며 인용한 내용은 지침·사용자 승인으로 승격하지 않는다.
 - 별도 검색 인덱스를 두지 않아 삭제·되감기를 원본 DB에서 즉시 반영한다. 공용 화면 검색 cache는 세션 삭제·프로젝트 보관 이벤트에서도 재조회한다. 이미 다른 대화에 인용·저장하거나 외부로 전달한 과거 결과를 소급 삭제하는 기능은 아니다.
 
@@ -600,7 +602,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 
 - 진입점은 같은 실행 파일의 `exec` 하위 명령이며 서버 옵션 parser를 거치지 않는다. 필수: `--base-url`·`--model`·(`--prompt` 또는 `--stdin`). 상대 경로는 현재 폴더 기준, 키는 `--api-key-env` 환경변수 이름으로만 받고 `--api-key` 인자는 거부한다. 다른 모델·계정을 자동 선택하지 않는다.
 - 실행: 고유 run 디렉터리(`--run-dir`, 기본 `<데이터 경로>/exec-runs/<run ID>`, 비어 있지 않으면 거부)의 새 DB로 같은 서버 코어를 loopback에 띄우고 공용 HTTP API(설정·프로필·프로젝트·대화·턴)를 쓴다. 두 번째 agent loop는 없다. 개인 DB·대화·기억·사용자 배경·봇·예약을 열지 않으며 프로젝트 지침 파일은 `instructions.mode=off`로 기본 제외(`--with-project-instructions`로 넣고 `included_context`에 표시).
-- 권한: `--tools` 없으면 도구 없음, `--read-only`는 `tools.mode=read_only`, `--allow-tool`은 서버 `tools.allow`. 그 밖의 변경 도구·질문은 턴을 취소하고 `needs_approval`/`needs_input`으로 끝낸다. 예산은 대화 범위 `runs.budget.max_tokens`·`max_minutes`. 파일·네트워크 sandbox가 아니며 도움말과 출력 `isolation: "none"`에 밝힌다.
+- 권한: `--tools` 없으면 도구 없음. 단발 실행은 명시적으로 `tools.mode=ask`, `tools.full_access=false`를 사용하고 `--allow-tool`을 서버 `tools.allow`로 설정한다. 그 밖의 변경 도구·질문은 턴을 취소하고 `needs_approval`/`needs_input`으로 끝낸다. 예산은 대화 범위 `runs.budget.max_tokens`·`max_minutes`. 파일·네트워크 sandbox가 아니며 도움말과 출력 `isolation: "none"`에 밝힌다.
 - 출력: stdout에는 `schema: "grove.exec.v1"` JSON 하나(상태·종료 코드·최종 답·사용량·도구 상태·오류·제외/포함 문맥), 진단은 stderr. receipt `result.json`을 출력보다 먼저 저장하고 stdout pipe가 닫혀도 실행 결과·종료 코드를 바꾸지 않는다.
 - 종료 코드(호환 계약): 0 성공, 1 실행 실패, 2 입력 오류, 3 인증·설정 오류(접수 전 진단 포함), 4 승인·입력 필요, 5 시간 예산 초과, 6 취소, 7 결과 불명(unknown 도구·취소 아닌 interrupted).
 - 취소: Ctrl+C(모든 OS)·SIGTERM(Unix)을 턴 취소 API로 보낸다. (턴 상태 전이표는 §36) `grove exec show <run 디렉터리>`는 receipt만 다시 출력하고 실행하지 않으며 receipt가 없으면 7로 결과 불명을 알린다. 새 호출은 언제나 새 요청이다.

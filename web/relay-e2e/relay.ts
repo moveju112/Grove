@@ -10,6 +10,7 @@ export type Target = {
     endpoint: string;
     key: string;
     token_file: string;
+    pairing_issuance_password_file?: string;
     page: string;
     control?: string;
     work: string;
@@ -43,7 +44,9 @@ export async function net(action: "cut" | "delay" | "blackhole", value?: number 
 export async function enter(page: Page) {
     const t = target();
     const password = "relay e2e pairing password";
-    const link = await api<{ id: string; code: string }>("POST", "/pairings", { name: "Relay E2E", password });
+    if (!t.pairing_issuance_password_file) throw new Error("relay 시험 상태에 pairing_issuance_password_file을 지정하세요");
+    const issuance_password = readFileSync(t.pairing_issuance_password_file, "utf8").trimEnd();
+    const link = await api<{ id: string; code: string }>("POST", "/pairings", { name: "Relay E2E", password, issuance_password });
     const url = new URL(t.page);
     const parameters = new URLSearchParams(url.hash.slice(1));
     parameters.set("pairing", link.code);
@@ -66,10 +69,20 @@ export async function enter(page: Page) {
 /// 백그라운드 전환: 페이지를 얼린다(JS·타이머 정지). 모바일 브라우저가 탭을 뒤로 보낼 때와 같다.
 export async function freeze(page: Page, during: () => Promise<void>) {
     const cdp = await page.context().newCDPSession(page);
+    await page.evaluate(() => {
+        Object.defineProperty(document, "visibilityState", { configurable: true, value: "hidden" });
+        document.dispatchEvent(new Event("visibilitychange"));
+    });
     await cdp.send("Page.setWebLifecycleState", { state: "frozen" });
     try { await during(); }
-    finally { await cdp.send("Page.setWebLifecycleState", { state: "active" }); }
-    await page.evaluate(() => document.dispatchEvent(new Event("visibilitychange")));
+    finally {
+        await cdp.send("Page.setWebLifecycleState", { state: "active" });
+        await page.evaluate(() => {
+            Reflect.deleteProperty(document, "visibilityState");
+            document.dispatchEvent(new Event("visibilitychange"));
+        });
+        await cdp.detach();
+    }
 }
 
 /// 연결 문제를 화면 곳곳에 따로 띄우지 않는다(DESIGN.md 「연결 오류 표시」).

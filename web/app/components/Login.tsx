@@ -22,6 +22,11 @@ export function Login() {
                 <GroveText type="inherit" color="brand" aria-hidden="true" data-testid="brand-mark"><Icon name="sprout" size={28} /></GroveText>
                 <GroveHeading level={1} color="inherit"><RevealText text="Grove" /></GroveHeading>
                 <Hosts />
+                {lastAuthEnd() === "retired" && (
+                    <GroveText as="p" display="block" type="inherit" color="warning" role="status" data-testid="auth-retired">
+                        <SentenceText text="이전 로그인 방식이 종료됐어요. 이 브라우저를 다시 등록해 주세요." />
+                    </GroveText>
+                )}
                 {lastAuthEnd() === "expired" && (
                     <GroveText as="p" display="block" type="inherit" color="warning" role="status" data-testid="auth-expired">
                         <SentenceText text="로그인이 만료됐거나 이 기기의 접근이 해제됐어요. 다시 등록해 주세요." />

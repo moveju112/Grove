@@ -121,6 +121,13 @@ def up(a):
         fd = os.open(relay_json, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
         with os.fdopen(fd, "w") as f:
             json.dump({"url": f"ws://127.0.0.1:{ports['proxy']}", "token": token}, f)
+        password = secrets.token_urlsafe(32)
+        subprocess.run([binary, "pairing", "set-password", "--password-stdin", "--data-dir", data],
+                       input=password + "\n", text=True, capture_output=True, check=True)
+        state["pairing_issuance_password_file"] = os.path.join(work, "test-pairing-issuance-password")
+        fd = os.open(state["pairing_issuance_password_file"], os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(password)
         state["pids"]["daemon"] = spawn([binary, "serve", "--listen", f"127.0.0.1:{daemon_port}", "--data-dir", data],
                                         os.path.join(work, "daemon.log"),
                                         {"GROVE_WEB_DIR": web, "GROVE_LOG": "warn"})

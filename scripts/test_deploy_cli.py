@@ -105,6 +105,13 @@ class DeploymentHandoff(unittest.TestCase):
                 with self.subTest(command=command, flag=flag):
                     self.assertEqual(self.identify(cli=command + ["-p", flag, "native-own"]), ("own-turn", None))
 
+    def test_cli_agent_with_daemon_process_marker_is_identified_by_native_session(self):
+        # Grove는 Claude/Codex CLI 프로세스에도 GROVE_TASK_ID를 붙인다. 셸 작업이 아닌 표식은 native 매핑으로 판별한다.
+        claude = ["/usr/bin/claude", "-p", "--resume", "native-own"]
+        self.assertEqual(self.identify(cli=claude, task_id="cli-process-marker"), ("own-turn", None))
+        self.assertIsNone(self.identify(cli=["/usr/bin/claude", "-p", "--resume", "native-other"], task_id="cli-process-marker"))
+        self.assertIsNone(self.identify(task_id="cli-process-marker"))
+
     def test_missing_native_mapping_and_disappearing_process_are_not_self(self):
         with sqlite3.connect(self.database) as c:
             c.execute("DELETE FROM cli_sessions")

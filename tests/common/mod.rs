@@ -12,6 +12,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+pub const ISSUANCE_PASSWORD: &str = "test-only server issuance password";
+
 pub struct TestServer {
     pub server: Option<Server>,
     pub base: String,
@@ -60,7 +62,9 @@ impl TestServer {
         let db = grove::store::Db::open(&cfg.data_dir.join("grove.db")).unwrap();
         let now = grove::util::fmt_time(time::OffsetDateTime::now_utc());
         db.call_sync(move |c| {
-            c.execute("INSERT INTO settings(scope,scope_id,key,value,revision,updated_at) VALUES('server','-','tools.full_access','false',1,?1)", [&now])?;
+            c.execute("INSERT INTO settings(scope,scope_id,key,value,revision,updated_at) VALUES
+                ('server','-','tools.full_access','false',1,?1),
+                ('server','-','tools.mode','\"ask\"',1,?1)", [&now])?;
             Ok(())
         }).unwrap();
         drop(db);
@@ -68,6 +72,8 @@ impl TestServer {
     }
 
     pub async fn start_with(dir: tempfile::TempDir, cfg: Config) -> Self {
+        assert!(cfg.data_dir.starts_with(dir.path()));
+        grove::pairing::set_issuance_password(&cfg.data_dir, ISSUANCE_PASSWORD).unwrap();
         let server = grove::server::start(cfg, Arc::new(SystemClock))
             .await
             .expect("server start");
@@ -142,7 +148,7 @@ impl TestServer {
 
     pub async fn pair_browser(&self, name: &str) -> (String, reqwest::Response) {
         let password = "test-only pairing password";
-        let (status, link) = self.post("/api/v1/pairings", json!({ "name": name, "password": password })).await;
+        let (status, link) = self.post("/api/v1/pairings", json!({ "name": name, "password": password, "issuance_password": ISSUANCE_PASSWORD })).await;
         assert_eq!(status, StatusCode::CREATED, "{link}");
         let (status, request) = self.post("/api/v1/auth/pairing", json!({ "code": link["code"], "password": password, "name": name })).await;
         assert_eq!(status, StatusCode::ACCEPTED, "{request}");

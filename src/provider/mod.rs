@@ -133,6 +133,8 @@ pub struct ModelOutput {
     pub text: String,
     /// CLI가 보낸 개별 응답. 앞선 진행 설명과 마지막 답변의 표시 경계를 보존한다.
     pub response_parts: Vec<String>,
+    /// native 합치기 ACK별 (followup ID, 그 전에 시작한 응답 개수). 화면에만 쓴다.
+    pub response_steers: Vec<(String, usize)>,
     pub reasoning: String,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Usage,
@@ -382,13 +384,14 @@ pub async fn stream(
     cancel: &mut watch::Receiver<bool>,
     on_delta: OnDelta<'_>,
 ) -> Result<ModelOutput, ProviderError> {
-    stream_with_service_tier(profile, req, None, cancel, on_delta).await
+    stream_with_service_tier(profile, req, None, &mut codex_oauth::Session::default(), cancel, on_delta).await
 }
 
 pub(crate) async fn stream_with_service_tier(
     profile: &Profile,
     req: &ModelRequest,
     service_tier: Option<&str>,
+    codex: &mut codex_oauth::Session,
     cancel: &mut watch::Receiver<bool>,
     on_delta: OnDelta<'_>,
 ) -> Result<ModelOutput, ProviderError> {
@@ -421,7 +424,7 @@ pub(crate) async fn stream_with_service_tier(
         let fut = async {
             match profile.protocol.as_str() {
                 "claude_code" | "codex_cli" => cli::stream(profile, req, &mut wrapped).await,
-                codex_oauth::PROTOCOL => codex_oauth::stream(&client, profile, req, service_tier, &mut wrapped).await,
+                codex_oauth::PROTOCOL => codex_oauth::stream(&client, profile, req, service_tier, codex, &mut wrapped).await,
                 "openai" => openai::stream(&client, profile, req, &mut wrapped).await,
                 "anthropic" => anthropic::stream(&client, profile, req, &mut wrapped).await,
                 "gemini" => gemini::stream(&client, profile, req, &mut wrapped).await,
@@ -469,6 +472,11 @@ pub fn parse_effort(v: Option<&str>) -> Result<Option<String>, String> {
     }
 }
 
+pub(crate) const CLAUDE_EFFORTS: &[&str] = &["low", "medium", "high", "xhigh", "max"];
+
+// Opus 5.5는 adaptive thinking이 항상 켜져 있으며 토큰 예산 대신 effort를 받는다.
+pub(crate) fn anthropic_uses_native_effort(model: &str) -> bool { model == "claude-opus-5-5" }
+
 pub fn parse_service_tier(value: Option<&str>) -> Result<Option<String>, String> {
     value.map(|tier| {
         if tier.is_empty() || tier.len() > 40 || !tier.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-') {
@@ -479,23 +487,24 @@ pub fn parse_service_tier(value: Option<&str>) -> Result<Option<String>, String>
 
 /// 요청한 effort가 이 protocol에서 실제로 어떤 값으로 보내지는지(EFF-002·009). auto는 아무것도 보내지 않는다.
 /// 요청값·적용값을 화면·사용량에서 구분하는 데 쓴다. 턴 접수 때 고정하며 턴 도중 바꾸지 않는다.
-pub fn effort_application(protocol: &str, effort: Option<&str>) -> serde_json::Value {
+pub fn effort_application(protocol: &str, model: &str, effort: Option<&str>) -> serde_json::Value {
     let Some(e) = effort else {
         return serde_json::json!({ "requested": "auto", "field": null, "value": null });
     };
     let (field, value) = match protocol {
         "openai" => ("reasoning_effort", serde_json::json!(e)),
+        "anthropic" if anthropic_uses_native_effort(model) => ("output_config.effort", serde_json::json!(e)),
         "anthropic" => ("thinking.budget_tokens", serde_json::json!(effort_budget(e))),
         "gemini" => ("thinkingConfig.thinkingBudget", serde_json::json!(effort_budget(e))),
         "codex_cli" => ("model_reasoning_effort", serde_json::json!(e)),
         codex_oauth::PROTOCOL => ("reasoning.effort", serde_json::json!(e)),
-        "claude_code" => ("MAX_THINKING_TOKENS", serde_json::json!(effort_budget(e))),
+        "claude_code" => ("CLAUDE_CODE_EFFORT_LEVEL", serde_json::json!(e)),
         _ => return serde_json::json!({ "requested": e, "field": null, "value": null }),
     };
     serde_json::json!({ "requested": e, "field": field, "value": value })
 }
 
-/// 생각 token 예산으로 표현하는 provider(Anthropic thinking·Gemini thinkingBudget·Claude Code)의 effort 환산.
+/// 생각 token 예산으로 표현하는 provider(이전 Anthropic thinking·Gemini thinkingBudget)의 effort 환산.
 pub fn effort_budget(effort: &str) -> u32 {
     match effort {
         "low" => 1024,
@@ -698,13 +707,28 @@ mod effort_tests {
     #[test]
     fn effort_application_matches_what_each_adapter_sends() {
         for e in ["low", "medium", "high"] {
-            let a = effort_application("openai", Some(e));
+            let a = effort_application("openai", "m", Some(e));
             assert_eq!(openai::build_body(&prof("openai"), &req(Some(e)))["reasoning_effort"], a["value"]);
-            let a = effort_application("anthropic", Some(e));
+            let a = effort_application("anthropic", "m", Some(e));
             assert_eq!(anthropic::build_body(&prof("anthropic"), &req(Some(e)))["thinking"]["budget_tokens"], a["value"]);
-            assert_eq!(gemini::build_body(&req(Some(e)))["generationConfig"]["thinkingConfig"]["thinkingBudget"], effort_application("gemini", Some(e))["value"]);
+            assert_eq!(gemini::build_body(&req(Some(e)))["generationConfig"]["thinkingConfig"]["thinkingBudget"], effort_application("gemini", "m", Some(e))["value"]);
         }
-        let auto = effort_application("openai", None);
+        let auto = effort_application("openai", "m", None);
         assert!(auto["field"].is_null() && auto["value"].is_null() && auto["requested"] == "auto");
+    }
+
+    #[test]
+    fn opus_5_5_effort_is_native_and_keeps_the_output_limit() {
+        let mut profile = prof("anthropic");
+        profile.model = "claude-opus-5-5".into();
+        for &e in CLAUDE_EFFORTS {
+            let body = anthropic::build_body(&profile, &req(Some(e)));
+            assert_eq!(body["output_config"]["effort"], e);
+            assert_eq!(body["max_tokens"], 1000);
+            assert!(body.get("thinking").is_none() && body.get("temperature").is_none());
+            assert_eq!(effort_application("anthropic", &profile.model, Some(e)), json!({"requested":e,"field":"output_config.effort","value":e}));
+        }
+        let auto = anthropic::build_body(&profile, &req(None));
+        assert!(auto.get("output_config").is_none() && auto.get("thinking").is_none());
     }
 }

@@ -4,7 +4,7 @@ use crate::App;
 use crate::error::ApiError;
 use axum::Json;
 use axum::Router;
-use axum::extract::{Request, State};
+use axum::extract::{MatchedPath, Request, State};
 use axum::http::{HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
@@ -22,6 +22,8 @@ pub async fn health(State(app): State<App>) -> Json<serde_json::Value> {
         "capabilities": crate::CAPABILITIES,
         "db": db_ok,
         "schema": app.db.schema_version(),
+        // 서버 공개키는 이미 연결 링크에 실려 공개되는 값이다. 로그인 전 화면이 링크가 이 서버의 것인지 대조한다.
+        "e2ee_key": app.e2ee.public_key(),
         // 진단용(UI-031): 실행 중인 빌드 대상
         "target": format!("{}-{}", std::env::consts::ARCH, std::env::consts::OS),
     }))
@@ -51,6 +53,14 @@ pub const REQUEST_ID_HEADER: &str = "x-request-id";
 /// 응답 대기 timeout으로 서버의 변경 처리를 중단하지 않는다. 취소는 자원별 cancel API가 담당한다.
 pub async fn request_context(mut req: Request, next: Next) -> Response {
     use tracing::Instrument;
+    let began = std::time::Instant::now();
+    // 요청의 실제 URI·query·비표준 method 대신 서버에 등록된 템플릿과 고정 분류만 기록한다.
+    let route = req.extensions().get::<MatchedPath>().cloned();
+    let transport = if req.extensions().get::<crate::e2ee::Encrypted>().is_some() { "encrypted" } else { "http" };
+    let method = match *req.method() {
+        Method::GET => "GET", Method::HEAD => "HEAD", Method::POST => "POST", Method::PATCH => "PATCH",
+        Method::PUT => "PUT", Method::DELETE => "DELETE", Method::OPTIONS => "OPTIONS", _ => "other",
+    };
     let id = req.headers().get(REQUEST_ID_HEADER)
         .and_then(|h| h.to_str().ok())
         .and_then(|s| uuid::Uuid::parse_str(s).ok())
@@ -58,7 +68,7 @@ pub async fn request_context(mut req: Request, next: Next) -> Response {
         .to_string();
     let header_id = HeaderValue::from_str(&id).expect("UUID header");
     req.headers_mut().insert(REQUEST_ID_HEADER, header_id.clone());
-    let span = tracing::info_span!("http_request", request_id = %id, method = %req.method());
+    let span = tracing::info_span!("http_request", request_id = %id, method);
     let mut response = next.run(req).instrument(span).await;
     // Axum extractor·라우터·body limit의 비정형 오류도 공통 형태로 만든다. 원문은 노출하지 않는다.
     let status = response.status();
@@ -83,6 +93,17 @@ pub async fn request_context(mut req: Request, next: Next) -> Response {
         }
     }
     response.headers_mut().insert(REQUEST_ID_HEADER, header_id);
+    let elapsed_ms = began.elapsed().as_millis() as u64;
+    let route = route.as_ref().map(MatchedPath::as_str).unwrap_or("unmatched");
+    let status_code = status.as_u16();
+    // 스트리밍은 전체 수명이 아니라 응답 헤더까지의 소요 시간이다.
+    if status.is_server_error() {
+        tracing::warn!(request_id = %id, method, route, transport, status = status_code, elapsed_ms, "API 응답");
+    } else if elapsed_ms >= 500 {
+        tracing::info!(request_id = %id, method, route, transport, status = status_code, elapsed_ms, "느린 API 응답");
+    } else {
+        tracing::debug!(request_id = %id, method, route, transport, status = status_code, elapsed_ms, "API 응답");
+    }
     response
 }
 

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProjects, openProjectFiles } from "./helpers";
+import { apiCall, ensureProjects, finishSetup, issueTestPairing, openProjectFiles } from "./helpers";
 
 const endpoint = "ws://127.0.0.1:17741/api/e2ee";
 
@@ -37,7 +37,7 @@ test.describe("모바일 암호화 페어링", () => {
     test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     test("이미 연결한 서버의 페어링 링크는 이동 없이 이 화면에서 비밀번호를 받는다", async ({ page }) => {
         const identity = await apiCall<{ key: string }>("GET", "/e2ee/identity");
-        const pairing = await apiCall<{ code: string }>("POST", "/pairings", { name: "same-server", password: "same server test password" });
+        const pairing = await issueTestPairing("same-server", "same server test password");
         await page.goto("/#" + new URLSearchParams({ connect: endpoint, key: identity.key }));
         await page.getByRole("button", { name: "서버 확인 후 연결" }).click();
         await page.getByRole("button", { name: "페어링 링크·QR로 등록" }).click();
@@ -54,7 +54,7 @@ test.describe("모바일 암호화 페어링", () => {
     test("일회용 등록·재접속·파일 미리보기·다운로드에서 티켓과 본문을 평문 전송하지 않는다", async ({ page }) => {
         const identity = await apiCall<{ key: string }>("GET", "/e2ee/identity");
         const password = "encrypted test-only password";
-        const pairing = await apiCall<{ code: string; id: string }>("POST", "/pairings", { name: "encrypted-mobile", password });
+        const pairing = await issueTestPairing("encrypted-mobile", password);
         const { a } = await ensureProjects();
         const project = await apiCall<{ root_path: string }>("GET", `/projects/${a.id}`);
         const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
@@ -81,6 +81,7 @@ test.describe("모바일 암호화 페어링", () => {
         const pairs = await apiCall<{ id: string; requests: { id: string; verification_code: string }[] }[]>("GET", "/pairings");
         const request = pairs.find((pair) => pair.id === pairing.id)!.requests.find((request) => request.verification_code === code)!;
         await apiCall("POST", `/pairings/${pairing.id}/requests/${request.id}`, {});
+        await finishSetup(page, false);
         await expect(page.getByTestId("conn")).toHaveText("연결됨");
         await page.reload();
         await expect(page.getByTestId("conn")).toHaveText("연결됨");

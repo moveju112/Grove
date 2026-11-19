@@ -603,6 +603,7 @@ async fn live_steers_reach_active_native_turn_once_in_order_without_losing_parti
     live_followup(&app, "live-second", "second addition").await;
     let out = task.await.unwrap().unwrap();
     assert_eq!(out.text, "첫 조각");
+    assert_eq!(out.response_steers, [("live-first".into(), 1), ("live-second".into(), 1)]);
     let requests = wire(dir.path());
     let delivered: Vec<_> = requests.iter().filter(|v| v["method"]=="turn/steer").collect();
     assert_eq!(delivered.len(), 2);

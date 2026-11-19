@@ -190,11 +190,14 @@ async fn a_legacy_token_login_must_pair_before_getting_device_permissions() {
         }
         Ok(())
     }).await.unwrap();
-    for browser in ["from-local", "from-device"] {
+    // 소유자 토큰 로그인으로 만든 세션은 다시 등록하라고 구분해 알리고, 미등록 기기 세션은 일반 인증 실패로 남는다.
+    for (browser, code) in [("from-local", "login_retired"), ("from-device", "unauthorized")] {
         let token = grove::auth::format_token(browser, "fixture-legacy-secret");
         let response = s.client.post(format!("{}/api/v1/auth/refresh", s.base))
             .header("cookie", format!("grove_refresh={token}")).send().await.unwrap();
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        let body: serde_json::Value = response.json().await.unwrap();
+        assert_eq!(body["error"]["code"], code, "{browser}");
     }
 }
 

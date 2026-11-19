@@ -711,9 +711,14 @@ pub(super) async fn run<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
             if accepted && event["result"]["turnId"].as_str() != state.turn.as_deref() {
                 return Err(invalid());
             }
+            let boundary = accepted.then(|| (delivery.id.clone(), state.messages.len()));
             let images = live.as_ref().expect("합치기 연결").acknowledge(delivery, accepted).await
                 .map_err(|e| ProviderError::new(e.code, e.message))?;
-            if accepted { retained_images.push(images); }
+            if let Some(boundary) = boundary {
+                retained_images.push(images);
+                state.output.response_steers.push(boundary);
+                on_delta(&state.output);
+            }
             continue;
         }
         notification(writer, &event, &mut state, on_delta).await?;

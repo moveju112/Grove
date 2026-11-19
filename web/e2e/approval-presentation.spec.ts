@@ -5,10 +5,13 @@ import type { ToolCallRow } from "../app/api/generated";
 import { apiCall, ensureProjects, login, requireToolApproval, sessionView, state } from "./helpers";
 
 // SessionView에서 새 ApprovalCard를 연결한 뒤 실행하는 실제 서버/브라우저 인수 시험.
-async function openApproval(page: Parameters<typeof login>[0]) {
+async function openApproval(page: Parameters<typeof login>[0], history = 0) {
     const { a } = await ensureProjects();
     await requireToolApproval(a.id);
     const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `승인 표현 ${test.info().testId}` });
+    for (let i = 0; i < history; i++) {
+        await apiCall("POST", `/sessions/${session.id}/messages`, { text: `이전 대화 ${i}\n${"승인 카드 위에 쌓이는 본문입니다. ".repeat(12)}` });
+    }
     const path = `approval-presentation-${session.id}.txt`;
     const call = await apiCall<ToolCallRow>("POST", `/sessions/${session.id}/tool-requests`, {
         name: "write", args: { path, content: "approval-private-content" },
@@ -49,7 +52,7 @@ test("오프라인에서는 승인·거부를 잠그고 복구 후에도 자동�
     });
     try {
         await page.context().setOffline(true);
-        for (const name of ["이번만 승인", "이 대화에서 승인", "거부"]) {
+        for (const name of ["이번만 승인", "이 대화에서 승인", "항상 승인", "거부"]) {
             await expect(card.getByRole("button", { name, exact: true })).toBeDisabled();
         }
         await expect(card.getByTestId("approval-status")).toContainText("오프라인");
@@ -81,7 +84,7 @@ test("응답 대기 중 승인·거부를 잠가 요청을 중복 전송하지 �
         await card.getByRole("button", { name: "거부", exact: true }).click();
         await requestArrived;
         await expect(card.getByTestId("approval-status")).toContainText("처리 중");
-        for (const name of ["이번만 승인", "이 대화에서 승인", "거부"]) {
+        for (const name of ["이번만 승인", "이 대화에서 승인", "항상 승인", "거부"]) {
             await expect(card.getByRole("button", { name, exact: true })).toBeDisabled();
         }
         expect(requests).toBe(1);
@@ -128,4 +131,20 @@ test("전송 오류는 결과 불명으로 알리고 재승인하지 않는다",
     await expect(card).not.toContainText("private-refresh-error");
     expect(requests).toBe(1);
     await apiCall("POST", `/tool-calls/${call.id}/decision`, { decision: "deny", expected_revision: call.revision });
+});
+
+test("화면이 낮아도 맨 아래 고정은 승인 카드를 입력창 뒤로 밀지 않는다", async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 520 });
+    const { card, view } = await openApproval(page, 6);
+    const surface = view.getByTestId("compose-surface");
+    const approve = card.getByRole("button", { name: "이번만 승인", exact: true });
+    const covered = async () => {
+        const button = (await approve.boundingBox())!;
+        return button.y + button.height - (await surface.boundingBox())!.y;
+    };
+    await expect.poll(covered).toBeLessThanOrEqual(0);
+    await page.mouse.move(640, 100);
+    await page.mouse.wheel(0, 2000);
+    await page.waitForTimeout(1500);
+    expect(await covered()).toBeLessThanOrEqual(0);
 });

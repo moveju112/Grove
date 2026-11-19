@@ -217,6 +217,7 @@ const PING_TIMEOUT_MS = 10_000;
 /// 백그라운드 복귀처럼 오래 조용했던 연결은 쓰기 전에 짧게 확인한다.
 const QUIET_MS = 20_000;
 const RESUME_PING_MS = 3_000;
+const FOREGROUND_PING_MS = 1_500;
 /// 서버가 이미 닫았을 시간이 지나면 확인 없이 새로 연결한다.
 const EXPIRED_MS = 55_000;
 
@@ -314,12 +315,12 @@ export class Mux {
     }
 
     /// 쓰기 전에 연결이 살아 있는지 판단한다. 오래 조용했으면 짧게 확인하고, 죽었으면 닫는다.
-    async usable(): Promise<boolean> {
+    async usable(foreground = false): Promise<boolean> {
         if (this.dead) return false;
         const quiet = Date.now() - this.lastSeen;
         if (quiet >= EXPIRED_MS) { this.fail(new TypeError("암호화 연결이 만료됐습니다.")); return false; }
-        if (quiet < QUIET_MS) return true;
-        this.checking ??= this.ping(RESUME_PING_MS).finally(() => { this.checking = null; });
+        if (quiet < QUIET_MS && !foreground && !this.checking) return true;
+        this.checking ??= this.ping(foreground ? FOREGROUND_PING_MS : RESUME_PING_MS).finally(() => { this.checking = null; });
         const alive = await this.checking;
         if (!alive) this.fail(new TypeError("암호화 연결 응답이 없습니다."));
         return alive;
@@ -450,6 +451,18 @@ function transportError(error: unknown): Error {
 }
 
 function scopeOf(config: Connection) { return `${config.endpoint}|${config.key}`; }
+/// 복귀할 때는 최근 frame이 있었더라도 응답 없는 소켓을 빨리 식별한다.
+/// 진행 중인 연결을 공유하고, 새 연결 생성은 기존 muxFor 경로에 맡긴다.
+export async function probeResumedTransport(): Promise<"direct" | "alive" | "dead"> {
+    try {
+        const config = connection();
+        if (!config) return "direct";
+        if (shared?.scope !== scopeOf(config)) return "dead";
+        const mux = await shared.mux;
+        return await mux.usable(true) ? "alive" : "dead";
+    } catch { return "dead"; }
+}
+
 /// pin과 연결 transcript에 결합된 protocol만 반환한다. 구형 서버·로컬 HTTP는 기존 health 확인을 쓴다.
 export async function transportProtocol(): Promise<number | null> {
     const config = connection();

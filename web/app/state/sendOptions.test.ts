@@ -72,6 +72,13 @@ describe("capabilityProblem", () => {
         expect(capabilityProblem(codex, { ...base, serviceTier: "priority" }, false, model)).toContain("속도");
         expect(capabilityProblem(codex, { ...base, effort: "high", serviceTier: "default" }, false, model)).toBeNull();
     });
+    it("Claude 목록에 있는 xhigh와 max는 전송할 수 있다", () => {
+        const opus = { id: "opus", name: "Opus 5.5", reasoning_efforts: ["low", "medium", "high", "xhigh", "max"] };
+        for (const effort of ["xhigh", "max"] as const) {
+            expect(capabilityProblem(unknown, { ...base, effort }, false, opus)).toBeNull();
+        }
+        expect(capabilityProblem(unknown, { ...base, effort: "ultra" }, false, opus)).toContain("추론 옵션");
+    });
 });
 
 describe("새 입력창의 기본 모델", () => {

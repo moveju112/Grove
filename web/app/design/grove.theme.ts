@@ -46,6 +46,7 @@ const tokens = {
     "--on-accent": ["#ffffff", "#14161b"],
     "--warn-weak": ["#fdf3e3", "#2e2615"],
     "--err-weak": ["#fcefed", "#3a1f1d"],
+    "--ok-weak": ["#e6f4ec", "#183126"],
     "--brand": ["#2f7d55", "#5fbf8a"],
     "--shadow-float": ["0 8px 24px rgb(0 0 0 / 0.08)", "0 12px 32px rgb(0 0 0 / 0.35)"],
     "--color-background-body": "var(--bg)",

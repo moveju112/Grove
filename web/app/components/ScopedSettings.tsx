@@ -44,6 +44,7 @@ type Item = SettingItem;
 const ENUM_LABEL: Record<string, Record<string, string>> = {
     "output.style": { default: "디폴트", detailed: "디테일", simple: "심플", minimal: "미니멀", "extreme-minimal": "익스트림 미니멀" },
     "exec.shell": { default: "기본 셸" },
+    "tools.mode": { ask: "ask · 승인 요청", bypass: "bypass · 승인 생략" },
     "agents.orchestration": { solo: "Solo · 기본 역할만", delegated: "켜짐 · 에이전트 위임" },
 };
 const PROFILE_KEYS = new Set(["model.default_profile", "context.summary_profile", "session.title_profile", "memory.profile"]);
@@ -68,7 +69,7 @@ export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortC
     const fallback = d.key === "context.summary_profile" ? "대화 모델로 압축"
         : d.key.startsWith("agents.profile.") ? "부모 대화 모델 사용" : "기기 선택 또는 첫 활성 모델";
     const effortProfile = (workflow || roleEnabled) && onEffortChange && selected?.enabled && selected.capabilities.effort !== false ? selected : undefined;
-    const catalog = useModelCatalog(effortProfile?.protocol === "codex_cli" || effortProfile?.protocol === "codex_oauth" ? effortProfile : undefined);
+    const catalog = useModelCatalog(effortProfile && ["codex_cli", "codex_oauth", "claude_code", "anthropic"].includes(effortProfile.protocol) ? effortProfile : undefined);
     const efforts = modelEfforts(effortProfile, catalogModel(catalog.data?.models, effortProfile, selection?.model));
     const effort = selection?.effort ?? "auto";
     return <GroveStack gap={1} width={workflow ? "100%" : 220} maxWidth="100%">
@@ -248,13 +249,18 @@ function SettingValue({ d, it, t, reload, scope, scopes, setScope }: {
                 {((d.kind === "string" && !(PROFILE_KEYS.has(d.key) || d.key.startsWith("agents.profile."))) || d.kind === "tool_list") && (
                     <TextInput
                         label={d.label} isLabelHidden
-                        placeholder={d.kind === "tool_list" ? "예: shell, write_file" : undefined}
+                        placeholder={d.kind === "tool_list" ? "예: web_fetch, shell" : undefined}
                         value={String(value ?? "")}
                         onChange={edit}
                         onBlur={state.blur}
                     />
                 )}
             </GroveStack>
+            {d.key === "tools.mode" && (value === "bypass" || it.effective === "bypass") && (
+                <GroveText as="p" display="block" type="supporting" color="warning">
+                    <SentenceText text="파일 변경·명령 실행·외부 요청을 확인 없이 허용해요. 금지한 도구와 PC 제어·위임의 별도 정책은 유지돼요." />
+                </GroveText>
+            )}
             {d.key === "tools.full_access" && (Boolean(value) || Boolean(it.effective)) && (
                 <GroveText as="p" display="block" type="supporting" color="warning">
                     셸이 프로젝트 밖 파일·네트워크·서버 계정의 자격증명에 접근할 수 있어요. 임의 명령을 허용하므로 신뢰하는 작업에만 켜세요.

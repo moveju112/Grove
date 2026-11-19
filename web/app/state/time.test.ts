@@ -12,6 +12,12 @@ describe("시각 표시 설정", () => {
         expect(absoluteTime(afternoon, { clock: "12h", timeStyle: "absolute" }, "time")).toMatch(/PM|오후/);
         expect(absoluteTime(afternoon, { clock: "system", timeStyle: "absolute" })).toBe(new Date(afternoon).toLocaleString());
     });
+    it("분 단위 시각은 시계 설정을 유지하고 초만 생략한다", () => {
+        const at = new Date(2026, 0, 12, 15, 4, 59).toISOString();
+        expect(displayTime(at, relative, now, { absolute: true, part: "minute" })).toBe("15:04");
+        expect(absoluteTime(at, { ...relative, clock: "12h" }, "minute")).toMatch(/3:04/);
+        expect(absoluteTime(at, { ...relative, clock: "12h" }, "minute")).not.toContain(":59");
+    });
     it("상대 표시는 7일 이내 지난 시각에만 쓰고 미래·고정 시각은 절대 시각으로 둔다", () => {
         expect(displayTime(new Date(now - 30_000).toISOString(), relative, now)).toBe("방금 전");
         expect(displayTime(new Date(now + 30_000).toISOString(), relative, now)).toBe("방금 전");

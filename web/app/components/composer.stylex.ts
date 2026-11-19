@@ -10,6 +10,15 @@ export const composerStyles = stylex.create({
     sendSlot: { gridColumn: "3", gridRow: "1" },
     secondRow: { gridRow: "2" },
     modelControl: { minWidth: 0 },
+    favoritesSection: { borderBottom: "1px solid var(--line)" },
+    favoriteGrid: {
+        display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "var(--spacing-1)",
+    },
+    favoriteChip: { minHeight: 44, height: "auto", minWidth: 0, border: "1px solid var(--line-strong)", paddingInline: "var(--spacing-2)" },
+    activeFavoriteChip: { borderColor: "var(--focus)", backgroundColor: "var(--sel)" },
+    favoriteChipText: { minWidth: 0, flexGrow: 1, overflow: "hidden" },
+    favoriteStar: { minHeight: 44, flexShrink: 0 },
+    activeFavoriteStar: { color: "var(--warn)" },
     modelTrigger: { minWidth: 0, minHeight: 32, height: "auto", paddingInline: 8, textAlign: "start" },
     modelName: { flexGrow: 1, minWidth: 0, whiteSpace: "normal", overflowWrap: "anywhere" },
     modelMeasurement: {
@@ -25,8 +34,18 @@ export const composerStyles = stylex.create({
         minHeight: 32,
         maxHeight: 160,
         lineHeight: "24px",
-        resize: "none",
         overflowY: "auto",
         ":focus-within": { boxShadow: "none", outline: "none" },
+    },
+    androidInput: {
+        position: "relative",
+        minWidth: 0,
+        whiteSpace: "pre-wrap",
+        overflowWrap: "anywhere",
+        outline: "none",
+        "::before": {
+            content: "attr(data-placeholder)", position: "absolute", insetInlineStart: 0, top: 0,
+            pointerEvents: "none", color: "var(--muted)",
+        },
     },
 });

@@ -1,5 +1,5 @@
 import { useEffect, useRef, type ReactNode } from "react";
-import { Dialog } from "@astryxdesign/core/Dialog";
+import { Dialog, type DialogProps } from "@astryxdesign/core/Dialog";
 import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { usePaneVisible } from "../../state/paneVisibility";
 
@@ -23,8 +23,9 @@ export function containCreationTab(dialog: HTMLDialogElement, event: KeyboardEve
 }
 
 // 표면·중첩 레이어·Escape·초점 복귀는 Astryx가 소유한다.
-export function CreationDialog({ label, onClose, children, footer, busy = false, width = "36em", isOpen = true }: {
+export function CreationDialog({ label, onClose, children, footer, busy = false, width = "36em", isOpen = true, xstyle }: {
     label: string; onClose: () => void; children: ReactNode; footer?: ReactNode; busy?: boolean; width?: number | string; isOpen?: boolean;
+    xstyle?: DialogProps["xstyle"];
 }) {
     const ref = useRef<HTMLDialogElement>(null);
     const visible = usePaneVisible();
@@ -48,7 +49,7 @@ export function CreationDialog({ label, onClose, children, footer, busy = false,
             document.removeEventListener("keydown", contain);
         };
     }, [visible]);
-    return <Dialog ref={ref} isOpen={visible && isOpen} width={width} maxHeight="calc(100dvh - 24px)" padding={4}
+    return <Dialog ref={ref} isOpen={visible && isOpen} width={width} maxHeight="calc(100dvh - 24px)" xstyle={xstyle}
         aria-label={label} aria-busy={busy} onOpenChange={(open) => { if (!open) close.current(); }}>
         <StackItem size="fill" isScrollable aria-label={`${label} 내용`}>
             <Stack gap={2}>{children}</Stack>

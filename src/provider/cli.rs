@@ -353,11 +353,23 @@ fn summarize(v: &Value) -> Value {
 struct CliStream {
     output: ModelOutput,
     final_text: Option<String>,
-    claude_partial: Option<(usize, usize, bool)>,
+    claude_partial: Option<ClaudePartial>,
     claude_context_input: Option<u64>,
     codex_messages: Vec<(String, String)>,
     codex_reasoning: Vec<(String, String)>,
     native_activity: Vec<(String, Value)>,
+}
+
+struct ClaudePartial {
+    text_len: usize,
+    reasoning_len: usize,
+    parts_len: usize,
+}
+
+impl ClaudePartial {
+    fn start(output: &ModelOutput) -> Self {
+        Self { text_len: output.text.len(), reasoning_len: output.reasoning.len(), parts_len: output.response_parts.len() }
+    }
 }
 
 impl CliStream {
@@ -389,22 +401,27 @@ impl CliStream {
                 self.activity(id, json!({"kind":"tool","name":c["name"],"input":summarize(&c["input"]),"status":"running"}));
             }
             if e["type"] == "message_start" {
-                self.claude_partial = Some((self.output.text.len(), self.output.reasoning.len(), false));
+                self.claude_partial = Some(ClaudePartial::start(&self.output));
                 self.output.response_parts.push(String::new());
             }
             let text = if e["type"] == "content_block_delta" { e["delta"]["text"].as_str() }
-                else if e["type"] == "content_block_start" { e["content_block"]["text"].as_str() } else { None };
+                else if e["type"] == "content_block_start" { e["content_block"]["text"].as_str() } else { None }
+                .filter(|text| !text.is_empty());
             let thinking = if e["type"] == "content_block_delta" { e["delta"]["thinking"].as_str() }
-                else if e["type"] == "content_block_start" { e["content_block"]["thinking"].as_str() } else { None };
-            let state = self.claude_partial.get_or_insert((self.output.text.len(), self.output.reasoning.len(), false));
-            if let Some(text) = text.filter(|text| !text.is_empty()) {
-                if self.output.response_parts.is_empty() { self.output.response_parts.push(String::new()); }
-                self.output.response_parts.last_mut().unwrap().push_str(text);
-                if !state.2 && !self.output.text.is_empty() { self.output.text.push_str("\n\n"); }
-                state.2 = true;
-                self.output.text.push_str(text);
+                else if e["type"] == "content_block_start" { e["content_block"]["thinking"].as_str() } else { None }
+                .filter(|text| !text.is_empty());
+            if text.is_some() || thinking.is_some() {
+                // Claude는 한 message_start 안에서도 블록별 assistant snapshot을 보낸다.
+                // 다음 delta는 확정된 마지막 항목이 아닌 새 부분 응답에 붙인다.
+                let state = self.claude_partial.get_or_insert_with(|| ClaudePartial::start(&self.output));
+                if let Some(text) = text {
+                    if self.output.response_parts.len() == state.parts_len { self.output.response_parts.push(String::new()); }
+                    self.output.response_parts[state.parts_len].push_str(text);
+                    if self.output.text.len() == state.text_len && state.text_len > 0 { self.output.text.push_str("\n\n"); }
+                    self.output.text.push_str(text);
+                }
+                if let Some(thinking) = thinking { self.output.reasoning.push_str(thinking); }
             }
-            if let Some(thinking) = thinking { self.output.reasoning.push_str(thinking); }
         } else if protocol == "codex_cli" && matches!(event["type"].as_str(), Some("item.started" | "item.updated" | "item.completed"))
             && matches!(event["item"]["type"].as_str(), Some("agent_message" | "reasoning"))
             && event["item"]["id"].is_string()
@@ -429,11 +446,11 @@ impl CliStream {
             if let Some(item) = activity.activity.pop() { self.activity(id, item); }
         } else {
             if protocol == "claude_code" && event["type"] == "assistant"
-                && let Some((text, reasoning, _)) = self.claude_partial.take()
+                && let Some(partial) = self.claude_partial.take()
             {
-                self.output.text.truncate(text);
-                self.output.reasoning.truncate(reasoning);
-                self.output.response_parts.pop();
+                self.output.text.truncate(partial.text_len);
+                self.output.reasoning.truncate(partial.reasoning_len);
+                self.output.response_parts.truncate(partial.parts_len);
             }
             let mut snapshot = event.clone();
             if protocol == "claude_code" && event["type"] == "assistant"
@@ -506,8 +523,8 @@ impl Drop for GroupGuard {
 }
 
 /// 공식 CLI의 초기화/control 응답만 읽는다. 사용자 prompt·생성 요청·프로젝트 설정은 보내지 않는다.
-pub async fn list_models(protocol: &str) -> Result<Vec<super::AvailableModel>, ProviderError> {
-    list_models_with(protocol, None).await
+pub async fn list_models(profile: &Profile) -> Result<Vec<super::AvailableModel>, ProviderError> {
+    list_models_with(&profile.protocol, &profile.model, None).await
 }
 
 fn claude_catalog_name(row: &Value, id: &str) -> String {
@@ -524,7 +541,17 @@ fn claude_catalog_name(row: &Value, id: &str) -> String {
     name.chars().take(200).collect()
 }
 
-async fn list_models_with(protocol: &str, executable: Option<&std::path::Path>) -> Result<Vec<super::AvailableModel>, ProviderError> {
+fn claude_catalog_efforts(row: &Value) -> Option<Vec<String>> {
+    if row["supportsEffort"].as_bool() == Some(false) { return Some(vec![]); }
+    let levels = row["supportedEffortLevels"].as_array()?;
+    // CLI가 새 값을 추가해도 Grove가 아는 값만 노출하고, 공급자가 보고한 순서를 유지한다.
+    let mut seen = std::collections::HashSet::new();
+    Some(levels.iter().filter_map(Value::as_str)
+        .filter(|e| super::CLAUDE_EFFORTS.contains(e) && seen.insert(*e))
+        .map(str::to_string).collect())
+}
+
+async fn list_models_with(protocol: &str, configured_model: &str, executable: Option<&std::path::Path>) -> Result<Vec<super::AvailableModel>, ProviderError> {
     let scratch = tempfile::Builder::new().prefix("grove-catalog-").tempdir()
         .map_err(|_| ProviderError::new("catalog_failed", "목록 조회 임시 디렉터리를 만들지 못했습니다"))?;
     let prog = executable.map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| program(protocol).into());
@@ -557,6 +584,7 @@ async fn list_models_with(protocol: &str, executable: Option<&std::path::Path>) 
     };
     input.write_all(format!("{init}\n").as_bytes()).await.map_err(|_| ProviderError::new("catalog_failed", "CLI 목록 조회가 끊겼습니다"))?;
     let mut models = std::collections::BTreeMap::new();
+    let mut resolved_configured = None;
     let mut pages = 0;
     let mut bytes = 0;
     let mut cursors = std::collections::HashSet::new();
@@ -588,7 +616,12 @@ async fn list_models_with(protocol: &str, executable: Option<&std::path::Path>) 
             let name = if claude { claude_catalog_name(row, id) }
                 else { row["displayName"].as_str().unwrap_or(id).chars().take(200).collect() };
             let mut model = super::AvailableModel { id: id.into(), name, ..Default::default() };
-            if !claude {
+            if claude {
+                model.reasoning_efforts = claude_catalog_efforts(row);
+                if id != "default" && row["resolvedModel"].as_str() == Some(configured_model) && id != configured_model {
+                    resolved_configured = Some(super::AvailableModel { id: configured_model.into(), ..model.clone() });
+                }
+            } else {
                 if let Some(efforts) = row.get("supportedReasoningEfforts") {
                     let efforts = efforts.as_array().ok_or_else(|| ProviderError::new("catalog_invalid", "CLI 추론 옵션 형식 오류"))?;
                     let parsed = efforts.iter().map(|e| e["reasoningEffort"].as_str()
@@ -610,6 +643,10 @@ async fn list_models_with(protocol: &str, executable: Option<&std::path::Path>) 
                 }
             }
             models.insert(id.to_string(), model);
+        }
+        // CLI가 alias만 나열해도 버전을 직접 지정한 프로필에는 해당 모델의 옵션을 표시한다.
+        if let Some(model) = resolved_configured.take() {
+            models.entry(model.id.clone()).or_insert(model);
         }
         if models.len() > 2000 { return Err(ProviderError::new("catalog_too_large", "CLI 모델 목록 개수 제한을 넘었습니다")); }
         let next = result["nextCursor"].as_str().filter(|cursor| !cursor.is_empty());
@@ -704,12 +741,12 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     }
     for key in ["TMPDIR", "TMP", "TEMP"] { cmd.env(key, scratch.path()); }
     if profile.protocol == "claude_code" {
-        if service_tier(req) == Some(STANDARD_SERVICE_TIER) {
+        let standard = service_tier(req) == Some(STANDARD_SERVICE_TIER);
+        if standard {
             cmd.env("CLAUDE_CODE_DISABLE_FAST_MODE", "1");
-            cmd.env("CLAUDE_CODE_EFFORT_LEVEL", req.effort.as_deref().unwrap_or("auto"));
         }
-        if let Some(e) = &req.effort {
-            cmd.env("MAX_THINKING_TOKENS", super::effort_budget(e).to_string());
+        if let Some(effort) = req.effort.as_deref().or(standard.then_some("auto")) {
+            cmd.env("CLAUDE_CODE_EFFORT_LEVEL", effort);
         }
     }
     let tag = crate::util::new_id();
@@ -918,7 +955,7 @@ echo '{"type":"result","subtype":"success","result":"image received","usage":{"i
         for (protocol, script) in [
             ("claude_code", r#"read -r init
 [[ "$init" == *'"subtype":"initialize"'* ]] || exit 7
-echo '{"type":"control_response","response":{"request_id":"grove-models","subtype":"success","response":{"models":[{"value":"fixture-claude","resolvedModel":"claude-opus-5-5","displayName":"Opus"}]}}}'
+echo '{"type":"control_response","response":{"request_id":"grove-models","subtype":"success","response":{"models":[{"value":"fixture-claude","resolvedModel":"claude-opus-5-5","displayName":"Opus","supportsEffort":true,"supportedEffortLevels":["low","medium","high","xhigh","max"]}]}}}'
 "#),
             ("codex_cli", r#"read -r init
 [[ "$init" == *'"method":"initialize"'* ]] || exit 7
@@ -936,12 +973,15 @@ echo '{"id":2,"result":{"data":[{"model":"fixture-codex-2","displayName":"Second
             let path = dir.path().join("cli");
             std::fs::write(&path, format!("#!/bin/bash\n{script}")).unwrap();
             std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
-            let result = tokio::time::timeout(Duration::from_secs(5), list_models_with(protocol, Some(&path))).await.unwrap().unwrap();
-            assert_eq!(result.len(), if protocol == "claude_code" { 1 } else { 2 });
-            assert!(result.iter().all(|m| m.id.starts_with("fixture-")));
+            let result = tokio::time::timeout(Duration::from_secs(5), list_models_with(protocol, "claude-opus-5-5", Some(&path))).await.unwrap().unwrap();
+            assert_eq!(result.len(), 2);
             if protocol == "claude_code" {
-                assert_eq!(result[0].id, "fixture-claude");
-                assert_eq!(result[0].name, "Opus 5.5");
+                assert_eq!(result[0].id, "claude-opus-5-5");
+                assert_eq!(result[1].id, "fixture-claude");
+                for model in &result {
+                    assert_eq!(model.name, "Opus 5.5");
+                    assert_eq!(model.reasoning_efforts.as_ref().unwrap(), super::super::CLAUDE_EFFORTS);
+                }
             }
             if protocol == "codex_cli" {
                 assert_eq!(result[0].reasoning_efforts.as_ref().unwrap(), &["low", "xhigh", "max"]);
@@ -950,6 +990,27 @@ echo '{"id":2,"result":{"data":[{"model":"fixture-codex-2","displayName":"Second
                 let tiers = result[0].service_tiers.as_ref().unwrap();
                 assert_eq!((&tiers[0].id[..], &tiers[0].name[..]), ("priority", "Fast"));
             }
+        }
+    }
+    #[test]
+    fn claude_catalog_effort_distinguishes_unknown_from_unsupported() {
+        assert_eq!(claude_catalog_efforts(&json!({})), None);
+        assert_eq!(claude_catalog_efforts(&json!({"supportsEffort":false})), Some(vec![]));
+        assert_eq!(claude_catalog_efforts(&json!({"supportedEffortLevels":["high","max","ultra","max"]})).unwrap(), ["high", "max"]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn claude_stream_passes_native_effort_with_and_without_resume() {
+        let dir = tempfile::tempdir().unwrap();
+        for (effort, resume) in [("xhigh", None), ("max", Some("old-session"))] {
+            let mut request = req(resume);
+            request.effort = Some(effort.into());
+            let script = format!(r#"cat >/dev/null
+[[ "$CLAUDE_CODE_EFFORT_LEVEL" == "{effort}" ]] || exit 7
+echo '{{"type":"result","result":"ok"}}'"#);
+            let out = stream_with(&prof("claude_code"), &request, &mut |_| {}, Some(&fake_cli(dir.path(), &script))).await.unwrap();
+            assert_eq!(out.text, "ok");
         }
     }
     #[test]
@@ -1164,6 +1225,29 @@ echo '{"id":2,"result":{"data":[{"model":"fixture-codex-2","displayName":"Second
         state.apply("codex_cli", &json!({"type":"item.completed","item":{"id":"m2","type":"agent_message","text":"둘째 답"}})).unwrap();
         assert_eq!(state.output.text, "첫 답\n\n둘째 답");
         assert_eq!(state.output.response_parts, ["첫 답", "둘째 답"]);
+    }
+
+    #[test]
+    fn claude_progress_survives_block_snapshots_within_a_message() {
+        let mut state = CliStream::default();
+        let parts = ["빈 화면을 확인할게.", "버튼 이력을 확인 중이야.", "원인을 찾았어."];
+        for (index, text) in parts.iter().enumerate() {
+            let message = format!("message-{index}");
+            for event in [
+                json!({"type":"stream_event","event":{"type":"message_start","message":{"id":message}}}),
+                json!({"type":"assistant","message":{"id":message,"content":[{"type":"thinking","thinking":"fixture"}]}}),
+                json!({"type":"stream_event","event":{"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}}),
+                json!({"type":"stream_event","event":{"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":text}}}),
+            ] {
+                state.apply("claude_code", &event).unwrap();
+            }
+            let expected = &parts[..=index];
+            assert_eq!(state.output.response_parts.as_slice(), expected, "스트리밍 중 이전 설명을 보존한다");
+            state.apply("claude_code", &json!({"type":"assistant","message":{"id":message,"content":[{"type":"text","text":text}]}})).unwrap();
+            assert_eq!(state.output.response_parts.as_slice(), expected, "확정 이벤트는 현재 조각만 교체한다");
+        }
+        state.apply("claude_code", &json!({"type":"result","result":"원인을 찾았어."})).unwrap();
+        assert_eq!(state.output.response_parts, parts);
     }
 
     #[test]

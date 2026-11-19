@@ -302,12 +302,15 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
         })
         .await?;
     let Some((b, used_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks), generation, pricing, system, effort)) = prepared else { return Ok(None) };
+    let (record_profile, record_effort, record_runtime) = (used_profile.clone(), effort.clone(), rp.clone());
     let req = ModelRequest { system, messages: msgs, tools: vec![], max_tokens: Some(max_tokens), temperature: None, effort, cli: None };
     let permit = crate::model_limits::auxiliary(app, session_id, &rp, cancel).await?;
     let provider_started = std::time::Instant::now();
     let out = provider::stream(&rp, &req, cancel, &mut |_| {}).await;
     let provider_ms = provider_started.elapsed().as_millis().min(i64::MAX as u128) as i64;
     drop(permit);
+    // 빈 응답·버린 요약도 모델 사용량이 생긴다. 응답을 받지 못한 실패는 사용량 없이 원인만 남는다.
+    let returned = out.as_ref().ok().map(|o| o.usage.clone());
     let (sid, now) = (session_id.to_string(), app.now());
     let result = match out {
         Ok(o) if !o.text.trim().is_empty() => {
@@ -359,6 +362,18 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
         Err(e) if e.code == "cancelled" => Err(ApiError::new(StatusCode::CONFLICT, "cancelled", "압축이 취소되어 아무것도 바꾸지 않았습니다")),
         Err(e) => Err(ApiError::new(StatusCode::BAD_GATEWAY, "summary_failed", format!("요약 실패(아무것도 바꾸지 않음): {}", e.message))),
     };
+    // 적용된 압축은 요약 note가 사용량을 갖는다. 그 밖의 결과만 따로 기록한다.
+    let discarded = match &result {
+        Ok(Some(_)) => None,
+        Ok(None) => Some("already_compacted"),
+        Err(e) => Some(e.code),
+    };
+    if let Some(code) = discarded {
+        crate::aux_usage::record(app, crate::aux_usage::Record {
+            kind: crate::aux_usage::Kind::Compaction, session_id, profile_id: &record_profile, runtime: &record_runtime,
+            effort: record_effort.as_deref(), usage: returned.as_ref(), provider_ms, discarded: Some(code),
+        }).await;
+    }
     app.notify_events().await;
     result
 }

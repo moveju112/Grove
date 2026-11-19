@@ -73,7 +73,7 @@ export function ActionMenu({ label, trigger = "⋯", children, xstyle, ...props 
     </Stack>;
 }
 
-export type DockTool = { id: string; label: string; icon?: "changes" | "file" | "terminal"; activity?: number; lazy?: boolean; content: ReactNode };
+export type DockTool = { id: string; label: string; icon?: "changes" | "file" | "terminal"; activity?: number; lazy?: boolean; content: ReactNode | ((close: () => void) => ReactNode) };
 
 function subscribeCompact(notify: () => void) {
     const media = window.matchMedia("(max-width: 760px)");
@@ -83,13 +83,13 @@ function subscribeCompact(notify: () => void) {
 
 type WorkbenchState = { open: boolean; toggle: () => void; activity: number };
 const WorkbenchContext = createContext<WorkbenchState | null>(null);
-export const PaneToolsTarget = createContext<HTMLElement | null>(null);
+export const PaneToolsTarget = createContext<HTMLElement | null | false>(null);
 
 // 넓은 화면은 pane의 탭 줄, 좁은 화면은 본문 헤더에서 같은 패널을 연다.
 export function ToolsTrigger({ inlineHeader = false }: { inlineHeader?: boolean }) {
     const state = useContext(WorkbenchContext);
     const target = useContext(PaneToolsTarget);
-    if (!state) return null;
+    if (!state || target === false) return null;
     const button = <Button type="button" variant="secondary" appearance="icon" xstyle={controlStyles.toolTrigger} aria-label="도구 패널" title="도구 패널"
         aria-expanded={state.open} onClick={state.toggle}>
         <Icon name="panel" />
@@ -136,7 +136,7 @@ export function Workbench({ children, tools, label }: { children: ReactNode; too
             {tools.map((tool) => <Stack gap={0} key={tool.id} id={`${id}-${tool.id}`} role="tabpanel" aria-labelledby={`${id}-${tool.id}-tab`}
                 hidden={active !== tool.id} maxWidth="100%">
                 <PaneVisibility.Provider value={visible && active === tool.id}>
-                    {(tool.lazy === false || visited.has(tool.id)) && tool.content}
+                    {(tool.lazy === false || visited.has(tool.id)) && (typeof tool.content === "function" ? tool.content(close) : tool.content)}
                 </PaneVisibility.Provider>
             </Stack>)}
             </Stack>

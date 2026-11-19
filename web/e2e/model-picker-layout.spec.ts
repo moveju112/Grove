@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, choiceOptions, closeModelSettings, composerOption, composerSetting, ensureProfile, ensureProjects, login, openDetails, openSettings, script, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, choiceOptions, closeModelSettings, composerOption, composerSetting, ensureProfile, ensureProjects, login, modelSettings, openDetails, openSettings, script, selectChoice, sessionView, state } from "./helpers";
 
 test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
@@ -65,6 +65,39 @@ test("작은 모델 선택기에서 공급자 모델을 골라 보내고 초안�
     }
 });
 
+test("모바일에서 모델 설정 바깥을 탭하면 닫히고 초안은 남는다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    await ensureProfile();
+    const title = `picker-dismiss-${Date.now()}`;
+    const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
+    await login(page);
+    await page.getByRole("button", { name: "사이드바", exact: true }).tap();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title }).tap();
+    await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
+    const view = sessionView(page, session.id);
+    const input = view.getByLabel("메시지 입력", { exact: true });
+    const trigger = view.getByRole("button", { name: "모델 설정", exact: true });
+    await input.tap();
+    await expect(input).toBeFocused();
+    await input.fill("보존할 초안");
+    await expect(input).toHaveValue("보존할 초안");
+
+    const panel = await modelSettings(view);
+    await panel.getByText("모델", { exact: true }).tap();
+    await expect(panel).toBeVisible();
+    const chat = await view.locator('[data-ui="workbench-main"]').boundingBox();
+    expect(chat).not.toBeNull();
+    await page.touchscreen.tap(chat!.x + chat!.width / 2, chat!.y + 30);
+    await expect(panel).toBeHidden();
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+
+    await modelSettings(view);
+    await input.tap();
+    await expect(panel).toBeHidden();
+    await expect(input).toHaveValue("보존할 초안");
+});
+
 for (const theme of ["light", "dark"] as const) {
     test(`${theme}: 모델 설정은 상세·도움말로 정리하고 고정 검색창 위로 본문이 비치지 않는다`, async ({ page }, info) => {
         await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
@@ -119,8 +152,9 @@ for (const theme of ["light", "dark"] as const) {
             await expect(context).toHaveValue("12345");
             await expect(row.getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
             await page.screenshot({ path: info.outputPath(`profiles-${theme}-390.png`) });
-            const pane = settings.locator("..");
+            const pane = settings.getByTestId("settings-scroll");
             await pane.evaluate((node) => { node.scrollTop = 300; });
+            await expect.poll(() => pane.evaluate((node) => node.scrollTop)).toBe(300);
             const paneBox = (await pane.boundingBox())!;
             const covered = await page.evaluate(({ x, y }) =>
                 Boolean(document.elementFromPoint(x, y)?.closest('[aria-label="설정 메뉴"]')),

@@ -15,7 +15,7 @@ async function iconOnly(button: Locator) {
 for (const width of [390, 1400]) {
     test.describe(`${width}px 설정 아이콘`, () => {
         test.use({ viewport: { width, height: 844 }, isMobile: width < 760, hasTouch: width < 760 });
-        test("전체·대화 설정 아이콘과 프로젝트 설정 메뉴가 대상을 유지한다", async ({ page }, info) => {
+        test("전체·대화 설정 아이콘과 프로젝트 도구 패널이 설정 대상을 유지한다", async ({ page }, info) => {
             const { a } = await ensureProjects();
             const title = `대화 설정 아이콘 ${width}`;
             const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });

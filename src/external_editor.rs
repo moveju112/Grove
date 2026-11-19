@@ -222,13 +222,7 @@ pub async fn open(
     let editor = available.editors.into_iter().find(|e| e.id == body.editor_id)
         .ok_or_else(|| ApiError::invalid("설치된 편집기 ID를 선택하세요"))?;
     let pid = id.clone();
-    let root = app.db.call(move |c| {
-        let root = crate::projects::active_root(c, &pid)?;
-        if crate::settings::all_layers(c, "tools.mode", Some(&pid), None)?.iter().any(|v| v == "read_only") {
-            return Err(ApiError::forbidden("읽기 전용 모드에서는 외부 편집기를 열 수 없습니다"));
-        }
-        Ok(root)
-    }).await?;
+    let root = app.db.call(move |c| crate::projects::active_root(c, &pid)).await?;
     if let Some(response) = idem::replay(&app, &p, &headers, &hash).await? { return Ok(response); }
     file_path(&root, &body.path)?;
     let unknown = ApiError::conflict("result_unknown", "편집기 실행 결과를 확인하지 못했습니다. 서버 PC에서 확인하세요.");
@@ -239,9 +233,6 @@ pub async fn open(
         let tx = c.transaction()?;
         if crate::projects::active_root(&tx, &id)? != root {
             return Err(ApiError::conflict("project_changed", "프로젝트 경로가 변경되어 편집기를 열지 않았습니다"));
-        }
-        if crate::settings::all_layers(&tx, "tools.mode", Some(&id), None)?.iter().any(|v| v == "read_only") {
-            return Err(ApiError::forbidden("읽기 전용 모드에서는 외부 편집기를 열 수 없습니다"));
         }
         let (status, result) = match launch(&editor, &root, &body.path) {
             Ok(()) => (StatusCode::ACCEPTED, json!({"launched":true})),

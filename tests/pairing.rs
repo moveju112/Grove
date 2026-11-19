@@ -1,13 +1,13 @@
 mod common;
 
-use common::TestServer;
+use common::{ISSUANCE_PASSWORD, TestServer};
 use reqwest::{Method, Response, StatusCode, header};
 use serde_json::{Value, json};
 
 const PASSWORD: &str = "test-only pairing password";
 
 async fn issue(server: &TestServer, name: &str, replace_id: Option<&str>) -> Value {
-    let (status, value) = server.post("/api/v1/pairings", json!({ "name": name, "password": PASSWORD, "replace_id": replace_id })).await;
+    let (status, value) = server.post("/api/v1/pairings", json!({ "name": name, "password": PASSWORD, "issuance_password": ISSUANCE_PASSWORD, "replace_id": replace_id })).await;
     assert_eq!(status, StatusCode::CREATED, "{value}");
     assert!(value["expires_at"].is_null());
     value
@@ -44,6 +44,38 @@ async fn claim(server: &TestServer, request: &Value) -> Response {
 }
 
 #[tokio::test]
+async fn only_the_configured_issuance_password_can_create_or_replace_a_link() {
+    let mut server = TestServer::start().await;
+    let original = issue(&server, "original", None).await;
+    let id = original["id"].as_str().unwrap();
+    let new_link = |issuance_password| json!({ "name": "replacement", "password": PASSWORD, "issuance_password": issuance_password, "replace_id": id });
+    let verifier = server.data_dir().join("pairing-issuance-v1.json");
+    let stored = std::fs::read_to_string(&verifier).unwrap();
+    assert!(!stored.contains(ISSUANCE_PASSWORD));
+    assert_eq!(server.raw(Method::POST, "/api/v1/pairings", Some(new_link(ISSUANCE_PASSWORD)), Some("not-authenticated"), Some("")).await.status(), StatusCode::UNAUTHORIZED);
+    let (status, error) = server.post("/api/v1/pairings", new_link(PASSWORD)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error["error"]["code"], "pairing_issuance_password");
+    assert_eq!(server.post("/api/v1/pairings", new_link(ISSUANCE_PASSWORD)).await.0, StatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(request_pair_status(&server, &original).await, StatusCode::ACCEPTED);
+
+    std::fs::remove_file(&verifier).unwrap();
+    server.restart().await;
+    let (status, error) = server.post("/api/v1/pairings", new_link(ISSUANCE_PASSWORD)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(error["error"]["code"], "pairing_issuance_unconfigured");
+
+    const ROTATED: &str = "new test-only issuance password";
+    grove::pairing::set_issuance_password(&server.data_dir(), ROTATED).unwrap();
+    server.restart().await;
+    let same = json!({ "name": "bad separation", "password": ROTATED, "issuance_password": ROTATED, "replace_id": id });
+    assert_eq!(server.post("/api/v1/pairings", same).await.0, StatusCode::BAD_REQUEST);
+    assert_eq!(server.post("/api/v1/pairings", new_link(ROTATED)).await.0, StatusCode::CREATED);
+    assert_eq!(request_pair_status(&server, &original).await, StatusCode::GONE);
+    assert_eq!(server.post("/api/v1/pairings", new_link(ISSUANCE_PASSWORD)).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
 async fn password_requires_ten_characters_and_keeps_the_byte_limit() {
     let server = TestServer::start().await;
     for (password, expected) in [
@@ -53,7 +85,7 @@ async fn password_requires_ten_characters_and_keeps_the_byte_limit() {
         ("가".repeat(10), StatusCode::CREATED),
         ("x".repeat(257), StatusCode::BAD_REQUEST),
     ] {
-        let (status, body) = server.post("/api/v1/pairings", json!({ "name": "length boundary", "password": password })).await;
+        let (status, body) = server.post("/api/v1/pairings", json!({ "name": "length boundary", "password": password, "issuance_password": ISSUANCE_PASSWORD })).await;
         assert_eq!(status, expected);
         if expected == StatusCode::CREATED {
             assert_eq!(request(&server, body["code"].as_str().unwrap(), &password).await.status(), StatusCode::ACCEPTED);
@@ -88,9 +120,14 @@ async fn password_requests_access_and_pairing_registers_a_full_access_browser() 
         let response = server.raw(Method::GET, &format!("/api/v1{route}"), None, None, Some(access)).await;
         assert_eq!(response.status(), StatusCode::OK);
     }
-    let new_link = server.raw(Method::POST, "/api/v1/pairings",
-        Some(json!({ "name": "next device", "password": PASSWORD })), Some("registered-browser-issues"), Some(access)).await;
-    assert_eq!(new_link.status(), StatusCode::CREATED);
+    let issue_from_browser = |issuance_password: Option<&str>| {
+        let mut body = json!({ "name": "next device", "password": PASSWORD });
+        if let Some(password) = issuance_password { body["issuance_password"] = json!(password); }
+        server.raw(Method::POST, "/api/v1/pairings", Some(body), Some("registered-browser-issues"), Some(access))
+    };
+    assert_eq!(issue_from_browser(None).await.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(issue_from_browser(Some(ISSUANCE_PASSWORD)).await.status(), StatusCode::CREATED);
+    assert_eq!(issue_from_browser(None).await.status(), StatusCode::BAD_REQUEST);
     assert_eq!(claim(&server, &request).await.status(), StatusCode::GONE);
     assert_eq!(request_pair_status(&server, &pair).await, StatusCode::GONE);
     let (status, _) = server.send(Method::DELETE, &format!("/api/v1/devices/{}", approved["device_id"].as_str().unwrap()), json!({})).await;
@@ -194,7 +231,7 @@ async fn concurrent_wrong_passwords_never_exceed_five_and_never_allow_approval()
 #[tokio::test]
 async fn secrets_are_hashed_and_redacted_from_replay_listing_events_and_audit() {
     let server = TestServer::start().await;
-    let create = || server.raw(Method::POST, "/api/v1/pairings", Some(json!({ "name": "redaction", "password": PASSWORD })), Some("same-pairing"), None);
+    let create = || server.raw(Method::POST, "/api/v1/pairings", Some(json!({ "name": "redaction", "password": PASSWORD, "issuance_password": ISSUANCE_PASSWORD })), Some("same-pairing"), None);
     let response = create().await;
     assert_eq!(response.status(), StatusCode::CREATED);
     assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
@@ -203,7 +240,7 @@ async fn secrets_are_hashed_and_redacted_from_replay_listing_events_and_audit() 
     assert_eq!(replay["id"], pair["id"]);
     assert_eq!(replay["code_redacted"], true);
     assert!(replay.get("code").is_none());
-    let different = server.raw(Method::POST, "/api/v1/pairings", Some(json!({ "name": "redaction", "password": "different test password" })), Some("same-pairing"), None).await;
+    let different = server.raw(Method::POST, "/api/v1/pairings", Some(json!({ "name": "redaction", "password": "different test password", "issuance_password": ISSUANCE_PASSWORD })), Some("same-pairing"), None).await;
     assert_eq!(different.status(), StatusCode::CONFLICT);
     let request = pending(&server, &pair).await;
     let (_, list) = server.get("/api/v1/pairings").await;
@@ -217,7 +254,7 @@ async fn secrets_are_hashed_and_redacted_from_replay_listing_events_and_audit() 
         assert_eq!(stored, grove::util::sha256_hex(secret.as_bytes()));
         assert_eq!(verifier.len(), 32);
         ring::pbkdf2::verify(ring::pbkdf2::PBKDF2_HMAC_SHA256, std::num::NonZeroU32::new(600_000).unwrap(), salt.as_bytes(), PASSWORD.as_bytes(), &verifier).unwrap();
-        for sensitive in [&secret, &request_secret, PASSWORD] {
+        for sensitive in [&secret, &request_secret, PASSWORD, ISSUANCE_PASSWORD] {
             for (table, field) in [("idempotency", "response"), ("events", "payload"), ("audit_log", "detail")] {
                 let count: i64 = c.query_row(&format!("SELECT COUNT(*) FROM {table} WHERE instr({field},?1)>0"), [sensitive], |r| r.get(0))?;
                 assert_eq!(count, 0, "{table}");
@@ -299,14 +336,14 @@ async fn pending_limit_and_atomic_reissue_do_not_leave_extra_active_links() {
         let pair = issue(&server, &format!("pending-{i}"), None).await;
         if first.is_none() { first = Some(pair); }
     }
-    let (status, error) = server.post("/api/v1/pairings", json!({ "name": "excess", "password": PASSWORD })).await;
+    let (status, error) = server.post("/api/v1/pairings", json!({ "name": "excess", "password": PASSWORD, "issuance_password": ISSUANCE_PASSWORD })).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(error["error"]["code"], "pairing_limit");
     let old = first.unwrap();
     let fresh = issue(&server, "replacement", old["id"].as_str()).await;
     assert_eq!(request_pair_status(&server, &old).await, StatusCode::GONE);
     pending(&server, &fresh).await;
-    let (status, _) = server.post("/api/v1/pairings", json!({ "name": "invalid", "password": PASSWORD, "replace_id": "missing" })).await;
+    let (status, _) = server.post("/api/v1/pairings", json!({ "name": "invalid", "password": PASSWORD, "issuance_password": ISSUANCE_PASSWORD, "replace_id": "missing" })).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
 

@@ -273,19 +273,14 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
     let page = app
         .db
         .call(move |c| {
-            // 상태 필터는 서버 상태로 계산하므로 전체를 정렬한 뒤 걸러낸다. PERF(port): 항목 수가 매우 많으면 SQL 조건으로 내린다.
             let sql = format!(
-                "SELECT {RCOLS} {RFROM} WHERE r.kind != 'terminal' AND (?1 IS NULL OR r.project_id = ?1) \
-                 ORDER BY r.pinned DESC, r.id DESC"
+                "SELECT {RCOLS} {RFROM} WHERE r.kind != 'terminal' AND (?1 IS NULL OR r.project_id = ?1)"
             );
             let mut st = c.prepare(&sql)?;
-            let mut all = st.query_map(params![project], recent_from_row)?.collect::<Result<Vec<_>, _>>()?;
-            // 고정 먼저, 그다음 마지막 확정 답변(다른 자원은 접근) 최신순. 같은 시각은 ID 순서를 유지한다.
-            let activity = |i: &RecentItem| parse_time(&i.last_activity_at);
-            all.sort_by(|a, b| b.pinned.cmp(&a.pinned).then_with(|| activity(b).cmp(&activity(a))));
-            let filtered: Vec<RecentItem> = all
-                .into_iter()
-                .filter(|i| match filter.as_str() {
+            let mut filtered = Vec::new();
+            for row in st.query_map(params![project], recent_from_row)? {
+                let i = row?;
+                let matches_status = match filter.as_str() {
                     "hidden" => i.hidden,
                     _ if i.hidden => false,
                     "pinned" => i.pinned,
@@ -294,23 +289,26 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
                     "awaiting_input" => i.status == "awaiting_input",
                     "unread" => i.unread,
                     _ => true,
-                })
-                .filter(|i| {
-                    let Some(since) = since else { return true };
-                    i.pinned
-                        || matches!(i.status.as_str(), "queued" | "running" | "awaiting_approval" | "awaiting_input")
-                        || parse_time(&i.last_activity_at).is_some_and(|t| t >= since)
-                })
-                .filter(|i| {
-                    needle.is_empty()
-                        || i.title.to_lowercase().contains(&needle)
-                        || i.project_name.to_lowercase().contains(&needle)
-                        // 파일은 경로로도 찾되, 세션·프로젝트의 내부 UUID는 검색 대상이 아니다.
-                        || (i.kind == "file" && i.resource_id.to_lowercase().contains(&needle))
-                })
-                .collect();
+                };
+                // 파일은 경로로도 찾되, 세션·프로젝트의 내부 UUID는 검색 대상이 아니다.
+                if !matches_status || !(needle.is_empty()
+                    || i.title.to_lowercase().contains(&needle)
+                    || i.project_name.to_lowercase().contains(&needle)
+                    || (i.kind == "file" && i.resource_id.to_lowercase().contains(&needle))) {
+                    continue;
+                }
+                let activity = parse_time(&i.last_activity_at);
+                if since.is_some_and(|since| !i.pinned
+                    && !matches!(i.status.as_str(), "queued" | "running" | "awaiting_approval" | "awaiting_input")
+                    && activity.is_none_or(|at| at < since)) {
+                    continue;
+                }
+                filtered.push((i, activity));
+            }
+            // 고정 우선, 활동 최신순, 동률이면 기존 SQL 순서와 같은 ID 내림차순.
+            filtered.sort_unstable_by(|(a, at), (b, bt)| b.pinned.cmp(&a.pinned).then_with(|| bt.cmp(at)).then_with(|| b.id.cmp(&a.id)));
             let total = filtered.len() as i64;
-            let items: Vec<RecentItem> = filtered.into_iter().skip(offset as usize).take(limit as usize).collect();
+            let items: Vec<RecentItem> = filtered.into_iter().skip(offset as usize).take(limit as usize).map(|(item, _)| item).collect();
             let next = (offset + (items.len() as i64) < total).then_some(offset + items.len() as i64);
             Ok(RecentPage { items, next_offset: next, total })
         })

@@ -39,17 +39,24 @@ export function recentWindowLabel(window: RecentWindow): string {
     return m < 60 ? `${m}분` : `${m / 60}시간`;
 }
 
-/// 분할로 함께 연 대화 묶음: 목록 순서를 유지하되 묶음의 나머지는 가장 앞선(최근) 항목 바로 아래로 모은다.
-export function groupBySplit<T extends { kind: string; resource_id: string }>(items: readonly T[], linked: ReadonlySet<string>): { item: T; linked: T[] }[] {
-    const isLinked = (it: T) => it.kind === "session" && linked.has(it.resource_id);
-    const members = items.filter(isLinked);
-    const out: { item: T; linked: T[] }[] = [];
-    for (const it of items) {
-        if (members.length > 1 && isLinked(it)) {
-            if (it === members[0]) out.push({ item: it, linked: members.slice(1) });
-            continue;
-        }
-        out.push({ item: it, linked: [] });
+export type RecentSplitGroup = readonly ReadonlySet<string>[];
+
+/// 각 분할을 독립된 묶음으로 유지하고, 묶음 안의 나머지만 가장 최근 항목 아래에 모은다.
+export function groupBySplit<T extends { kind: string; resource_id: string }>(items: readonly T[], groups: readonly RecentSplitGroup[]): { item: T; linked: T[] }[] {
+    const listed = new Set(items.filter((it) => it.kind === "session").map((it) => it.resource_id));
+    const membership = new Map<string, T[]>();
+    for (const panes of groups) {
+        const represented = panes.map((pane) => [...pane].filter((id) => listed.has(id) && !membership.has(id))).filter((ids) => ids.length > 0);
+        // 같은 영역의 탭끼리만 보이거나 같은 대화의 복사본뿐이면 묶지 않는다.
+        if (represented.length < 2) continue;
+        const ids = new Set(represented.flat());
+        if (ids.size < 2) continue;
+        const members = items.filter((it) => it.kind === "session" && ids.has(it.resource_id));
+        for (const id of ids) membership.set(id, members);
     }
-    return out;
+    return items.flatMap((item) => {
+        const members = item.kind === "session" ? membership.get(item.resource_id) : undefined;
+        if (!members) return [{ item, linked: [] }];
+        return members[0] === item ? [{ item, linked: members.slice(1) }] : [];
+    });
 }

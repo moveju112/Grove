@@ -156,6 +156,11 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
                 });
             }
             emit({ id: request.id, result: { turnId: activeTurn.turnId } });
+            if (activeTurn.text.includes("fixture-steer-timeline")) {
+                emit({ method: "item/completed", params: { threadId, turnId: activeTurn.turnId, item: { type: "agentMessage", id: "after-1", text: "합친 뒤 첫 확인." } } });
+                emit({ method: "item/completed", params: { threadId, turnId: activeTurn.turnId, item: { type: "agentMessage", id: "after-2", text: "합친 뒤 두 번째 확인." } } });
+                emit({ method: "item/started", params: { threadId, turnId: activeTurn.turnId, item: { type: "agentMessage", id: "answer", text: "" } } });
+            }
             continue;
         }
         if (request.method === "turn/start") {
@@ -200,6 +205,10 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
             if (text.includes("fixture-followup-")) {
                 const active = { turnId, text };
                 activeTurn = active;
+                if (text.includes("fixture-steer-timeline")) {
+                    emit({ method: "item/completed", params: { threadId, turnId, item: { type: "agentMessage", id: "before-1", text: "합치기 전 첫 확인." } } });
+                    emit({ method: "item/completed", params: { threadId, turnId, item: { type: "agentMessage", id: "before-2", text: "합치기 전 두 번째 확인." } } });
+                }
                 // 실행 완료를 기다리는 동안에도 stdio 입력을 받아 native steer를 처리한다.
                 void followupBoundary(text).then(() => {
                     if (activeTurn !== active) return;

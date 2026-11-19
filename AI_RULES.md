@@ -12,7 +12,8 @@ UI 변경에는 `DESIGN.md`를 적용한다. 핵심은 심플하고 깔끔한 �
 - 영속 접수·이벤트·결과 불명은 [DB 규칙](docs/ai-rules/DB_RULES.md)을 따른다.
 - 계약 변경은 [응답 계약](docs/ai-rules/RESPONSE_KEYS.md)의 Rust·TypeScript·metadata 결합을 유지한다.
 - Grove 런타임이 호출하는 외부 CLI의 프로젝트 수정·실행 권한과 파일 경계는 [구현 규칙](docs/ai-rules/CODING_RULES.md)을 따른다.
-- 검사 범위와 결과 보고는 [검증 규칙](docs/ai-rules/CODING_RULES.md)을 따른다.
+- 작업 범위의 검사가 실패하면 원인을 바로잡고 재검사에서 통과를 확인해야 완료다. 검사 범위와 결과 보고는 [검증 규칙](docs/ai-rules/CODING_RULES.md#검증-범위)을 따른다.
+- 장시간 애니메이션·타이머·스트리밍 UI는 [웹 UI 지속 작업 규칙](docs/ai-rules/CODING_RULES.md#웹-ui-지속-작업)을 따른다.
 - commit·push·배포·서비스 중단은 요청된 승인 범위에서만 한다. "컴파일만·푸시만·로컬만·배포 금지" 같은 명시적 제한이 우선한다. 제한이 없으면 "빌드·배포·반영"은 컴파일·로컬 서버·CLI·Pages 배포까지, "푸시"는 commit·push와 그 전체 배포까지 진행한다. [배포 규칙](docs/ai-rules/DEPLOY.md) 참조.
 
 ## 실행 명령

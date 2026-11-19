@@ -52,7 +52,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
             const button = (await claude.boundingBox())!;
             expect(button.height).toBeGreaterThanOrEqual(32);
             await claude.click();
-            const dialog = page.getByRole("dialog", { name: "설정", exact: true });
+            const dialog = page.getByRole("dialog", { name: "Claude Code 로그인", exact: true });
             await expect(dialog).toBeVisible();
             if (width < 760) await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
             const account = dialog.getByRole("region", { name: "Claude Code 계정", exact: true });
@@ -64,13 +64,14 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
             await page.keyboard.press("Escape");
             await expect(dialog).toHaveCount(0);
             await openUsage(page);
-            const codex = page.getByRole("button", { name: "Codex 인증 설정 열기", exact: true });
+            const codex = page.getByRole("button", { name: "Codex CLI 인증 설정 열기", exact: true });
             await codex.focus();
             await codex.press("Enter");
-            await expect(dialog.getByRole("region", { name: "Codex 계정", exact: true })).toBeVisible();
-            await expect(dialog.getByRole("region", { name: "Claude Code 계정", exact: true })).toHaveCount(0);
+            const codexDialog = page.getByRole("dialog", { name: "Codex 로그인", exact: true });
+            await expect(codexDialog.getByRole("region", { name: "Codex 계정", exact: true })).toBeVisible();
+            await expect(codexDialog.getByRole("region", { name: "Claude Code 계정", exact: true })).toHaveCount(0);
             expect(mutations).toEqual([]);
-            await dialog.getByRole("button", { name: "설정 닫기", exact: true }).click();
+            await codexDialog.getByRole("button", { name: "로그인 창 닫기", exact: true }).click();
             await openSettings(page);
             await expect(page.getByRole("tab", { name: "데몬 설정", exact: true })).toBeVisible();
         });

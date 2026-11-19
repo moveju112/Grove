@@ -74,7 +74,7 @@ export function SessionRow({ item, open, narrow }: { item: SidebarSession; open:
         </ActionMenu>} />;
 }
 
-/// children은 Workspace의 기존 프로젝트 메뉴·라벨·분할 열기다. 최근 탭의 렌더링은 바꾸지 않는다.
+/// children은 Workspace의 프로젝트 메뉴·분할 열기다. 최근 탭의 렌더링은 바꾸지 않는다.
 export function SidebarProject({ project, children, open, narrow }: {
     project: Project; children: ReactNode; open: Opener; narrow: boolean;
 }) {

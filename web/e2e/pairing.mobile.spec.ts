@@ -1,10 +1,10 @@
 import { expect, test } from "@playwright/test";
-import { apiCall } from "./helpers";
+import { apiCall, issueTestPairing } from "./helpers";
 
 for (const theme of ["light", "dark"] as const) {
     test(`${theme} 페어링은 긴 링크·오류·승인 대기에서도 좌우 여백과 글꼴을 유지한다`, async ({ page }, info) => {
         const password = "mobile-only test password";
-        const pair = await apiCall<{ code: string; id: string }>("POST", "/pairings", { name: `mobile-${theme}`, password });
+        const pair = await issueTestPairing(`mobile-${theme}`, password);
         const link = `http://127.0.0.1:17741/#pairing=${pair.code}`;
         await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
         await page.goto("/");

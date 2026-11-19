@@ -54,4 +54,45 @@ describe("한 요청의 어시스턴트 화면", () => {
         expect(assistantTranscript([...messages, progress]).rows.map((m) => m.seq)).toEqual([1, 2, 7]);
         expect(assistantTranscript([...messages, progress], undefined, false).rows.map((m) => m.seq)).toEqual([1, 2]);
     });
+
+    const steer = (seq: number, id: string) => message(seq, "user", { text: "추가 지시", source: { kind: "steer", followup_id: id } });
+
+    it("합치기 전후의 별도 모델 호출을 사용자 메시지 양쪽에 놓는다", () => {
+        const front = [messages[0]!, messages[1]!, steer(3, "merge")];
+        const live = { turn_id: "turn", response_parts: ["다시 확인할게.", "새 답변"] };
+        const running = assistantTranscript(front, live);
+        expect(running.rows.map((m) => m.seq)).toEqual([1, 2, 3]);
+        expect(running.assistants.get("m2")?.live).toBe(false);
+        expect(running.liveTail).toMatchObject({ start: 2, content: live });
+        const saved = assistantTranscript([...front, message(4, "assistant", live)], live);
+        expect(saved.rows.map((m) => m.seq)).toEqual([1, 2, 3, 4]);
+        expect(saved.anchors.get(4)).toBe(4);
+        expect(saved.liveTail).toBeUndefined();
+        expect(saved.assistants.get("m4")).toMatchObject({ progressStart: 2, content: live });
+    });
+
+    it("native 합치기 경계마다 진행을 나누고 번호와 시각을 유지한다", () => {
+        const front = [messages[0]!, steer(2, "first"), steer(3, "second"), steer(4, "empty")];
+        const content = { response_parts: ["하나", "둘", "", "셋", "넷", "답변"],
+            response_part_times: ["t1", "t2", null, "t3", "t4", "t5"],
+            response_steers: [["first", 2], ["second", 4], ["empty", 4]] as [string, number][] };
+        const live = { turn_id: "turn", ...content };
+        const during = assistantTranscript(front, live);
+        const after = assistantTranscript([...front, message(5, "assistant", content)], live);
+        for (const view of [during, after]) {
+            expect(view.preceding.get("m2")).toMatchObject({ start: 1, content: { response_parts: ["하나", "둘"], response_part_times: ["t1", "t2"] } });
+            expect(view.preceding.get("m3")).toMatchObject({ start: 3, content: { response_parts: ["셋"], response_part_times: ["t3"] } });
+            expect(view.preceding.has("m4")).toBe(false);
+        }
+        expect(during.liveTail).toMatchObject({ start: 4, content: { response_parts: ["넷", "답변"] } });
+        expect(after.liveTail).toBeUndefined();
+        expect(after.assistants.get("m5")).toMatchObject({ progressStart: 4, content: { response_parts: ["넷", "답변"] } });
+    });
+
+    it("경계가 없는 예전 응답은 추정해서 분리하지 않고 최종 답변을 합친 메시지 뒤에 둔다", () => {
+        const saved = assistantTranscript([messages[0]!, steer(2, "merge"), message(3, "assistant", { response_parts: ["진행", "답변"] })]);
+        expect(saved.rows.map((m) => m.seq)).toEqual([1, 2, 3]);
+        expect(saved.preceding.size).toBe(0);
+        expect(saved.assistants.get("m3")?.content.response_parts).toEqual(["진행", "답변"]);
+    });
 });

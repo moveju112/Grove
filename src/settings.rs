@@ -18,7 +18,36 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 pub const FULL_ACCESS: &str = "tools.full_access";
+const MODEL_FAVORITES: &str = "model.favorites";
+const MODEL_FAVORITES_LIMIT: usize = 24;
 pub const DEFAULT_MODEL_CONCURRENCY: u64 = 10;
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
+#[serde(deny_unknown_fields)]
+pub struct ModelFavorite {
+    pub profile_id: String,
+    pub model: String,
+    pub effort: String,
+    pub fast: bool,
+}
+
+fn model_favorites(value: &Value) -> ApiResult<Vec<ModelFavorite>> {
+    let rows: Vec<ModelFavorite> = serde_json::from_value(value.clone())
+        .map_err(|_| ApiError::invalid("즐겨찾기 형식이 잘못됐습니다"))?;
+    if rows.len() > MODEL_FAVORITES_LIMIT {
+        return Err(ApiError::invalid("즐겨찾기는 24개까지 저장할 수 있습니다"));
+    }
+    let mut seen = std::collections::HashSet::new();
+    for row in &rows {
+        if row.profile_id.is_empty() || row.profile_id.len() > 200 || !seen.insert(row) {
+            return Err(ApiError::invalid("비어 있거나 중복된 즐겨찾기입니다"));
+        }
+        crate::runner::parse_model(Some(&row.model))?;
+        if row.effort.is_empty() { return Err(ApiError::invalid("추론 옵션을 선택하세요")); }
+        crate::provider::parse_effort(Some(&row.effort)).map_err(ApiError::invalid)?;
+    }
+    Ok(rows)
+}
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SettingDef {
@@ -62,6 +91,12 @@ pub fn registry() -> Vec<SettingDef> {
             scopes: &["server", "project"],
             applies: "next_turn",
             advanced: false,
+        },
+        SettingDef {
+            key: MODEL_FAVORITES,
+            menu: "composer", label: "모델 즐겨찾기", description: "같은 서버에 연결된 기기가 공유하는 모델 조합입니다.",
+            keywords: "", kind: "model_favorites", options: &[], min: None, max: None,
+            default: json!([]), scopes: &["server"], applies: "immediate", advanced: false,
         },
         SettingDef {
             key: "output.style",
@@ -202,13 +237,13 @@ pub fn registry() -> Vec<SettingDef> {
             key: "tools.mode",
             menu: "workflow",
             label: "도구 실행 모드",
-            description: "Grove 도구에 적용합니다. 일반 파일 수정·셸 실행은 기본으로 자동 허용합니다. ask=사전 허용하지 않은 도구는 승인 후 실행, read_only=읽기 도구만 허용합니다. 일반 도구 전체 권한을 끄면 파일 수정·셸도 승인 후 실행합니다. 외부 CLI는 이 승인 모드와 별개로 sandbox 없이 실행합니다.",
-            keywords: "read-only 읽기 전용 도구 정책 policy",
+            description: "기본값인 bypass는 일반 도구를 승인 없이 실행해요. ask 모드에서는 사전 허용하지 않은 도구에 승인을 요청해요. 금지한 도구와 PC 제어·에이전트 위임의 별도 정책은 유지돼요. 외부 CLI는 이 설정과 별개로 실행돼요.",
+            keywords: "bypass 자동 승인 도구 정책 policy",
             kind: "enum",
-            options: &["ask", "read_only"],
+            options: &["ask", "bypass"],
             min: None,
             max: None,
-            default: json!("ask"),
+            default: json!("bypass"),
             scopes: &["server", "project", "session"],
             applies: "immediate",
             advanced: false,
@@ -217,7 +252,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: FULL_ACCESS,
             menu: "workflow",
             label: "일반 도구 전체 권한",
-            description: "기본으로 사용합니다. 파일 수정·셸 실행을 매번 승인하지 않고 허용합니다. 끄면 일반 도구도 개별 사전 허용이나 승인이 필요합니다. 셸은 서버 계정 권한으로 프로젝트 밖 파일·네트워크·SSH agent·환경변수의 자격증명에 접근할 수 있습니다. Grove 내부 환경변수는 전달하지 않습니다. 금지 도구·읽기 전용·PC 제어·에이전트 위임 정책은 유지합니다.",
+            description: "기본으로 켜져 있어요. ask 모드에서 끄면 파일 수정·셸 실행에 개별 사전 허용이나 승인이 필요해요. 켜면 셸에 서버 계정의 환경변수를 전달해 SSH·배포 작업에 쓸 수 있어요. Grove 내부 환경변수는 전달하지 않아요. 금지한 도구와 PC 제어·에이전트 위임의 별도 정책은 유지돼요.",
             keywords: "full access permission 권한 자동 승인 파일 셸 실행 SSH 배포 Release",
             kind: "bool",
             options: &[],
@@ -247,8 +282,8 @@ pub fn registry() -> Vec<SettingDef> {
             key: "tools.allow",
             menu: "workflow",
             label: "승인 없이 실행할 도구",
-            description: "쉼표로 구분한 도구 이름. 금지·읽기 전용이 아닐 때만 승인을 건너뛴다(대화 범위에서는 넓힐 수 없음)",
-            keywords: "allow 허용 자동 승인 도구 정책 policy",
+            description: "도구 이름을 쉼표로 구분해 입력해요. 항상 승인한 도구도 여기에 저장돼요. 이름을 지우면 영구 승인이 해제돼요. 금지한 도구와 PC 제어·위임의 별도 정책은 유지되고, 대화 범위에서는 이 목록을 넓힐 수 없어요.",
+            keywords: "allow always 영구 항상 허용 자동 승인 도구 정책 policy",
             kind: "tool_list",
             options: &[],
             min: None,
@@ -610,6 +645,7 @@ pub fn def(key: &str) -> Option<SettingDef> {
 }
 
 pub fn validate(d: &SettingDef, v: &Value) -> ApiResult<()> {
+    if d.key == MODEL_FAVORITES { return model_favorites(v).map(|_| ()); }
     let ok = match d.kind {
         "model" => crate::models::ModelSelection::parse(v).is_ok(),
         "bool" => v.is_boolean(),
@@ -806,7 +842,7 @@ pub fn full_access(c: &Connection, project: &str, session: &str) -> ApiResult<bo
 }
 
 pub async fn get_registry(_p: Principal) -> Json<Vec<Value>> {
-    Json(registry().iter().map(|d| {
+    Json(registry().iter().filter(|d| d.key != MODEL_FAVORITES).map(|d| {
         let mut value = json!(d);
         if d.key == "exec.shell" {
             value["options"] = json!(d.options.iter().filter(|choice| exec_option_reason(d.key, choice).is_none()).collect::<Vec<_>>());
@@ -896,6 +932,18 @@ pub async fn put(
         if d.kind == "model" && !b.value.is_null() {
             if let Some(selection) = crate::models::ModelSelection::parse(&b.value)? {
                 selection.runtime(tx)?;
+            }
+        } else if key == MODEL_FAVORITES && !b.value.is_null() {
+            let previous = model_favorites(&old_value).unwrap_or_default();
+            for favorite in model_favorites(&b.value)?.into_iter().filter(|favorite| !previous.contains(favorite)) {
+                let selection = crate::models::ModelSelection {
+                    profile_id: favorite.profile_id, model: Some(favorite.model),
+                    effort: crate::provider::parse_effort(Some(&favorite.effort)).map_err(ApiError::invalid)?,
+                };
+                let (profile, _) = selection.runtime(tx)?;
+                if favorite.fast && !profile.capabilities.fast {
+                    return Err(ApiError::invalid("이 모델 연결은 Fast를 지원하지 않습니다"));
+                }
             }
         } else if key == "model.default_profile" && let Some(profile) = b.value.as_str().filter(|s| !s.is_empty()) {
             crate::models::get_enabled_profile(tx, profile)?;

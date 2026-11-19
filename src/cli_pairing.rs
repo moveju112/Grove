@@ -1,4 +1,4 @@
-//! 실행 중인 로컬 데몬의 승인형 페어링 API만 사용한다. DB를 직접 변경하지 않는다.
+//! 서버 OS 계정이 발급 비밀번호를 설정한다. 발급·승인은 로컬 데몬 API를 사용한다.
 use super::{local_base, owner_token, print_json};
 use crate::config::Config;
 use reqwest::{Client, Method, Url};
@@ -7,6 +7,7 @@ use std::io::{BufRead, IsTerminal, Read, Write};
 
 const HELP: &str = "grove pairing — 비밀번호·확인 코드로 기기 등록
 
+  grove pairing set-password [--password-stdin]
   grove pairing create [이름] [--endpoint wss://주소] [--password-stdin] [--json]
   grove pairing list
   grove pairing approve <링크 ID> <요청 ID> <확인 코드>
@@ -14,9 +15,10 @@ const HELP: &str = "grove pairing — 비밀번호·확인 코드로 기기 등�
   grove pairing revoke <링크 ID>
 
 공통: --data-dir 경로, --listen 주소:포트
-create는 기본적으로 터미널에서 비밀번호를 숨김 입력받습니다(10자 이상).
-자동화에는 --password-stdin을 쓰세요. 비밀번호 인자·환경변수는 받지 않습니다.
-링크와 비밀번호는 따로 전달하고, 양쪽 기기의 확인 코드를 대조한 뒤 승인하세요.
+set-password로 서버 발급 비밀번호(10자 이상)를 설정한 뒤 데몬을 재시작하세요.
+create는 발급 비밀번호와 새 링크 비밀번호(10자 이상)를 순서대로 숨김 입력받습니다.
+자동화에는 --password-stdin으로 같은 순서로 한 줄씩 입력하세요(set-password는 한 줄).
+받는 기기에는 링크와 링크 비밀번호만 따로 전달하고, 양쪽 확인 코드를 대조한 뒤 승인하세요.
 릴레이가 없으면 서버 PC에서 열 수 있는 로컬 링크를 발급합니다.
 revoke는 링크만 폐기합니다. 등록된 기기의 접근은 기기 관리에서 따로 폐기하세요.";
 
@@ -52,7 +54,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     let count = opts.args.len();
     let valid = match opts.args.first().map(String::as_str) {
         Some("create") => (1..=2).contains(&count),
-        Some("list") => count == 1,
+        Some("list" | "set-password") => count == 1,
         Some("approve") => count == 4,
         Some("reject") => count == 3,
         Some("revoke") => count == 2,
@@ -60,7 +62,7 @@ fn parse(args: &[String]) -> Result<Options, String> {
     };
     if !valid { return Err(format!("명령 또는 인자 수를 확인하세요\n\n{HELP}")); }
     if opts.args[0] != "create" {
-        if opts.stdin || opts.endpoint.is_some() { return Err("발급 옵션은 create에서만 사용할 수 있습니다".into()); }
+        if (opts.stdin && opts.args[0] != "set-password") || opts.endpoint.is_some() { return Err("지원하지 않는 발급 옵션입니다".into()); }
         for id in opts.args.iter().skip(1).take(if opts.args[0] == "approve" { 2 } else { count - 1 }) {
             uuid::Uuid::parse_str(id).map_err(|_| "올바른 링크·요청 ID가 필요합니다")?;
         }
@@ -92,18 +94,40 @@ async fn request(client: &Client, base: &str, token: &str, method: Method, path:
     let mut request = client.request(method, format!("{base}/api/v1{path}"))
         .bearer_auth(token)
         .header("idempotency-key", crate::util::new_id())
-        .header("x-grove-require", "pairing_approval_v1")
+        .header("x-grove-require", if path == "/e2ee/identity" || (path == "/pairings" && body.is_some()) {
+            "pairing_approval_v1,pairing_issue_password_v1"
+        } else { "pairing_approval_v1" })
         .header(crate::web::PROTOCOL_HEADER, crate::PROTOCOL_VERSION.to_string());
     if let Some(body) = body { request = request.json(&body); }
     let response = request.send().await.map_err(|_| "로컬 데몬에 연결하지 못했습니다")?;
     let status = response.status();
     // 서버 오류 본문에는 사용자 입력·비밀이 섞일 수 있어 그대로 출력하지 않는다.
-    if !status.is_success() { return Err(format!("페어링 API 실패(HTTP {})", status.as_u16())); }
+    if !status.is_success() {
+        let body: Value = response.json().await.unwrap_or_default();
+        return Err(match body["error"]["code"].as_str() {
+            Some("pairing_issuance_unconfigured") => "서버에서 `grove pairing set-password`로 발급 비밀번호를 설정한 뒤 데몬을 재시작하세요.".into(),
+            Some("pairing_issuance_password") => "서버 발급 비밀번호가 틀렸습니다.".into(),
+            Some("pairing_issuance_throttled") => "잠시 후 발급 비밀번호를 다시 확인하세요.".into(),
+            Some("capability_missing") => "페어링 발급 비밀번호를 지원하는 데몬으로 업데이트하세요.".into(),
+            _ => format!("페어링 API 실패(HTTP {})", status.as_u16()),
+        });
+    }
     response.json().await.map_err(|_| "페어링 응답 형식 오류".into())
 }
 
 fn execute(opts: Options) -> Result<(), String> {
     let cfg = Config::from_env(opts.data, opts.listen)?;
+    if opts.args[0] == "set-password" {
+        let mut prompts = vec![("서버 발급 비밀번호(10자 이상): ", crate::pairing::issuance::MIN_LENGTH)];
+        if !opts.stdin { prompts.push(("서버 발급 비밀번호 확인: ", crate::pairing::issuance::MIN_LENGTH)); }
+        let values = passwords(opts.stdin, &prompts)?;
+        if values.get(1).is_some_and(|confirmation| confirmation != &values[0]) {
+            return Err("입력한 발급 비밀번호가 서로 다릅니다".into());
+        }
+        crate::pairing::set_issuance_password(&cfg.data_dir, &values[0]).map_err(|_| "발급 비밀번호 설정을 저장하지 못했습니다")?;
+        println!("발급 비밀번호를 설정했습니다. 데몬을 재시작하면 적용됩니다.");
+        return Ok(());
+    }
     if !cfg.listen.ip().is_loopback() && !cfg.listen.ip().is_unspecified() {
         return Err("관리 명령은 loopback 주소의 로컬 데몬만 사용할 수 있습니다".into());
     }
@@ -121,8 +145,12 @@ fn execute(opts: Options) -> Result<(), String> {
                 let key = identity["key"].as_str().ok_or("서버 공개키 응답 형식 오류")?;
                 let name = opts.args.get(1).map(String::as_str).unwrap_or("새 기기");
                 if name.trim().is_empty() || name.trim().chars().count() > 80 { return Err("기기 이름은 1~80자여야 합니다".into()); }
-                let password = password(opts.stdin)?;
-                let issued = request(&client, &base, &token, Method::POST, "/pairings", Some(json!({"name": name, "password": password}))).await?;
+                let values = passwords(opts.stdin, &[
+                    ("서버 발급 비밀번호: ", crate::pairing::issuance::MIN_LENGTH),
+                    ("새 링크 비밀번호(10자 이상): ", 10),
+                ])?;
+                if values[0] == values[1] { return Err("링크 비밀번호는 서버 발급 비밀번호와 달라야 합니다".into()); }
+                let issued = request(&client, &base, &token, Method::POST, "/pairings", Some(json!({"name": name, "issuance_password": values[0], "password": values[1]}))).await?;
                 let code = issued["code"].as_str().ok_or("링크 비밀을 받지 못했습니다. 목록을 확인한 뒤 필요하면 폐기하세요")?;
                 let link = if let Some(address) = address {
                     let query = Url::parse_with_params("https://unused.invalid", &[("connect", address.as_str()), ("key", key), ("pairing", code)]).unwrap();
@@ -160,30 +188,34 @@ fn execute(opts: Options) -> Result<(), String> {
     })
 }
 
-fn password(from_stdin: bool) -> Result<String, String> {
+fn passwords(from_stdin: bool, prompts: &[(&str, usize)]) -> Result<Vec<String>, String> {
     if !from_stdin && !std::io::stdin().is_terminal() {
         return Err("터미널이 필요합니다. 자동화에는 --password-stdin을 지정하세요".into());
     }
-    let echo = if from_stdin { None } else {
-        let guard = EchoGuard::hide()?;
-        eprint!("링크 비밀번호(10자 이상): ");
-        std::io::stderr().flush().map_err(|_| "터미널 출력 실패")?;
-        Some(guard)
-    };
-    let mut bytes = Vec::new();
+    let _echo = if from_stdin { None } else { Some(EchoGuard::hide()?) };
     let mut input = std::io::stdin().lock();
-    let result = Read::by_ref(&mut input).take(258).read_until(b'\n', &mut bytes).and_then(|_| {
+    prompts.iter().map(|&(prompt, min)| {
+        if !from_stdin {
+            eprint!("{prompt}");
+            std::io::stderr().flush().map_err(|_| "터미널 출력 실패")?;
+        }
+        let result = read_password(&mut input, min);
+        if !from_stdin { eprintln!(); }
+        result
+    }).collect()
+}
+
+fn read_password(input: &mut impl BufRead, min: usize) -> Result<String, String> {
+    let mut bytes = Vec::new();
+    Read::by_ref(input).take(258).read_until(b'\n', &mut bytes).and_then(|_| {
         // 너무 긴 입력의 뒷부분이 명령 종료 후 셸 입력으로 넘어가지 않게 같은 줄을 소비한다.
         if bytes.len() == 258 && !bytes.ends_with(b"\n") { input.skip_until(b'\n')?; }
         Ok(())
-    });
-    drop(echo);
-    if !from_stdin { eprintln!(); }
-    result.map_err(|_| "비밀번호 입력 실패")?;
+    }).map_err(|_| "비밀번호 입력 실패")?;
     let mut value = String::from_utf8(bytes).map_err(|_| "비밀번호는 UTF-8이어야 합니다")?;
     if value.ends_with('\n') { value.pop(); if value.ends_with('\r') { value.pop(); } }
-    if value.chars().count() < 10 || value.len() > 256 {
-        return Err("비밀번호는 10자 이상, 256바이트 이하여야 합니다".into());
+    if value.chars().count() < min || value.len() > 256 {
+        return Err(format!("비밀번호는 {min}자 이상, 256바이트 이하여야 합니다"));
     }
     Ok(value)
 }

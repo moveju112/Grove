@@ -95,8 +95,15 @@ impl ModelProfile {
     }
 
     pub fn check_capabilities(&self, tools: bool, effort: Option<&str>, images: bool) -> ApiResult<()> {
-        if effort.is_some_and(|e| matches!(e, "xhigh" | "max" | "ultra")) && !is_codex(&self.protocol) {
-            return Err(ApiError::unsupported("이 추론 옵션은 Codex 모델에서 선택하세요"));
+        self.check_model_capabilities(&self.model, tools, effort, images)
+    }
+
+    pub(crate) fn check_model_capabilities(&self, model: &str, tools: bool, effort: Option<&str>, images: bool) -> ApiResult<()> {
+        let native_anthropic = self.protocol == "anthropic" && crate::provider::anthropic_uses_native_effort(model);
+        if effort.is_some_and(|e| matches!(e, "xhigh" | "max" | "ultra")
+            && !is_codex(&self.protocol)
+            && !((self.protocol == "claude_code" || native_anthropic) && crate::provider::CLAUDE_EFFORTS.contains(&e))) {
+            return Err(ApiError::unsupported("선택한 모델은 이 추론 옵션을 지원하지 않습니다"));
         }
         for (unsupported, label) in [
             (tools && self.capabilities.tools == Some(false), "Grove 도구 루프"),
@@ -106,7 +113,7 @@ impl ModelProfile {
             if unsupported { return Err(ApiError::unsupported(format!("선택한 모델 프로필은 {label}을 지원하지 않습니다"))); }
         }
         // Anthropic은 thinking budget보다 충분히 큰 max_tokens를 요구한다.
-        if self.protocol == "anthropic" {
+        if self.protocol == "anthropic" && !native_anthropic {
             if let (Some(effort), Some(limit)) = (effort, self.capabilities.max_output_tokens) {
                 if crate::provider::effort_budget(effort) + 4096 > limit {
                     return Err(ApiError::unsupported("선택한 추론 강도는 확인된 모델 출력 상한을 초과합니다. auto 또는 더 낮은 강도를 선택하세요"));

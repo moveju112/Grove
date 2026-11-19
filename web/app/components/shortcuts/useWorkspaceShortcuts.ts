@@ -1,15 +1,21 @@
 import { useEffect, useRef } from "react";
 import { macShortcuts, shortcutFor, type KeyboardShortcuts, type ShortcutAction } from "../../state/shortcuts";
 
+const APP_WINDOW = "(display-mode: standalone), (display-mode: window-controls-overlay)";
+
+/// 작업 공간 단축키는 설치된 앱 창에서만 동작한다.
+export function shortcutWindow(): boolean {
+    return window.matchMedia(APP_WINDOW).matches || !!(navigator as Navigator & { standalone?: boolean }).standalone;
+}
+
 export function useWorkspaceShortcuts(settings: KeyboardShortcuts, run: (action: ShortcutAction) => void) {
     const current = useRef({ settings, run });
     current.current = { settings, run };
     useEffect(() => {
-        const appWindow = window.matchMedia("(display-mode: standalone), (display-mode: window-controls-overlay)");
         const mac = macShortcuts();
         const key = (event: KeyboardEvent) => {
             // 일반 브라우저의 탭·창 단축키는 그대로 둔다. 설치된 앱 창에서만 가로챈다.
-            if ((!appWindow.matches && !(navigator as Navigator & { standalone?: boolean }).standalone) || event.defaultPrevented) return;
+            if (!shortcutWindow() || event.defaultPrevented) return;
             if (document.querySelector("dialog[open]") || [...document.querySelectorAll<HTMLElement>('[role="dialog"][aria-modal="true"]:not(dialog)')]
                 .some((dialog) => dialog.getClientRects().length > 0)) return;
             const action = shortcutFor(event, current.current.settings, mac);

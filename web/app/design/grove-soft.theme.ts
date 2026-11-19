@@ -26,6 +26,7 @@ const tokens = {
     "--on-accent": "#ffffff",
     "--warn-weak": "#f1e7d6",
     "--err-weak": "#f3dfdb",
+    "--ok-weak": "#d9ebe0",
     "--brand": "#2f7d55",
 } as const;
 

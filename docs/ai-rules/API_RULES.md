@@ -20,6 +20,9 @@
 - **MUST** 링크·비밀번호 확인은 등록 요청만 만들고, 등록 기기나 서버 터미널에서 확인 코드를 대조해 승인하면 기기 한 대만 등록한다.
   - why: 같은 링크·비밀번호를 가진 다른 브라우저가 승인된 요청의 자격을 가져가면 안 된다.
   - ✅ 요청별 비밀, 단일 승인, 다른 요청 거절, 일회용 claim. `evidence: src/pairing.rs`, `evidence: tests/pairing.rs`.
+- **MUST** 링크 발급·재발급은 인증된 기기 또는 로컬 CLI라도 서버 발급 비밀번호를 매번 확인한다. 미설정 상태는 발급을 차단한다. 새 기기에는 별도 링크 비밀번호만 전달한다.
+  - ✅ 서버 터미널에서 `grove pairing set-password` 실행 후 데몬을 재시작한다. 기본과 다른 데이터 디렉터리를 쓰면 동일한 `--data-dir`을 지정한다. 서버에는 salt를 둔 PBKDF2 검증값만 저장하고 발급 암호는 API 응답·감사·이벤트·요청 재전송 기록에 남기지 않는다. `evidence: src/pairing/issuance.rs`, `evidence: src/pairing.rs`, `evidence: tests/pairing.rs`.
+  - 발급 단계의 보호다. 기존 링크와 기기에는 소급 적용되지 않는다. 서버 OS 계정 권한(같은 권한으로 셸을 실행하는 기기 포함)은 별도 신뢰 경계다.
 - **MUST** 링크별 누적 5회 실패 잠금을 영속화하고 재시작·정답 입력으로 초기화하지 않는다.
   - why: 재시작이나 성공 요청을 끼워 넣어 시도 제한을 우회할 수 없어야 한다.
   - ✅ `failed_attempts`·`locked_at` 저장과 재발급 경로. `evidence: src/pairing.rs`, `evidence: tests/pairing.rs`.

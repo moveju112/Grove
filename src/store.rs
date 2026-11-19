@@ -1222,11 +1222,72 @@ pub const MIGRATIONS: &[&str] = &[
     r#"
     CREATE INDEX pairings_registered_device ON pairings(device_id) WHERE consumed_at IS NOT NULL;
     "#,
+    // 제목 생성·Maintainer·압축처럼 대화 메시지에 남지 않는 보조 모델 호출의 사용량과 실패 원인.
+    r#"
+    CREATE TABLE aux_model_calls (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL CHECK(kind IN ('title','maintainer','compaction')),
+        profile_id TEXT NOT NULL,
+        protocol TEXT NOT NULL,
+        model TEXT NOT NULL,
+        effort TEXT,
+        status TEXT NOT NULL CHECK(status IN ('applied','discarded','failed')),
+        error_code TEXT,
+        usage TEXT,
+        provider_ms INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        CHECK((status='failed') = (usage IS NULL))
+    );
+    CREATE INDEX aux_model_calls_time ON aux_model_calls(created_at);
+    "#,
+    // 턴의 도구 상태·시간 분해와 마지막 모델 응답 조회.
+    r#"
+    CREATE INDEX tool_calls_turn_status ON tool_calls(turn_id, status);
+    CREATE INDEX messages_turn_role_seq ON messages(turn_id, role, seq DESC);
+    "#,
+    // 제거된 도구 모드는 상속으로 되돌리고 기존 설정 revision은 무효화한다.
+    r#"
+    UPDATE settings SET value = NULL, revision = revision + 1,
+        updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    WHERE key = 'tools.mode' AND value = '"read_only"';
+    "#,
 ];
 
 #[cfg(test)]
 mod tests {
     const MIGRATIONS_1_5_SHA16: &str = "40371687b4936aac";
+
+    #[test]
+    fn removed_tool_mode_migration_clears_only_read_only_overrides() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        let (migration, previous) = super::MIGRATIONS.split_last().unwrap();
+        for sql in previous { c.execute_batch(sql).unwrap(); }
+        c.execute_batch(r#"
+            INSERT INTO settings VALUES
+                ('server','-','tools.mode','"read_only"',3,'old'),
+                ('project','p','tools.mode','"read_only"',4,'old'),
+                ('session','s','tools.mode','"read_only"',5,'old'),
+                ('project','ask','tools.mode','"ask"',6,'old'),
+                ('project','bypass','tools.mode','"bypass"',7,'old'),
+                ('project','p','tools.deny','"write"',8,'old');
+        "#).unwrap();
+        c.execute_batch(migration).unwrap();
+        let mode = crate::settings::def("tools.mode").unwrap();
+        let layers = crate::settings::resolve_key(&c, &mode, Some("p"), Some("s")).unwrap();
+        assert_eq!(layers["effective"], "bypass");
+        assert_eq!(layers["source"], "default");
+        for (scope, revision) in [("server", 4), ("project", 5), ("session", 6)] {
+            assert!(layers["layers"][scope]["value"].is_null());
+            assert_eq!(layers["layers"][scope]["revision"], revision);
+        }
+        for (id, revision) in [("ask", 6), ("bypass", 7)] {
+            let layers = crate::settings::resolve_key(&c, &mode, Some(id), None).unwrap();
+            assert_eq!(layers["effective"], id);
+            assert_eq!(layers["layers"]["project"]["revision"], revision);
+        }
+        assert_eq!(crate::settings::all_layers(&c, "tools.deny", Some("p"), None).unwrap(), [serde_json::json!("write")]);
+    }
 
     #[test]
     fn basic_workflow_migration_preserves_old_titles_and_memory_has_session_ownership() {

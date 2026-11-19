@@ -23,6 +23,7 @@ mod startup;
 pub mod config;
 pub mod deps;
 pub mod context;
+pub mod aux_usage;
 pub mod computer;
 pub mod recall;
 pub mod memory;
@@ -123,12 +124,14 @@ pub const CAPABILITIES: &[&str] = &[
     "dependency_hints_v1",
     "pairing_v1",
     "pairing_approval_v1",
+    "pairing_issue_password_v1",
     "notification_delivery_v1",
     "web_push_v1",
     "web_push_tests_v1",
     "model_management_v1",
     "turn_model_selection_v1",
     "turn_model_options_v1",
+    "turn_retry_model_selection_v1",
     "model_capabilities_v1",
     "context_auto_clear_v1",
     "recall_keyword_v1",
@@ -148,6 +151,7 @@ pub struct App {
     pub db: store::Db,
     pub clock: util::SharedClock,
     pub access: Arc<auth::AccessTokens>,
+    pub(crate) pairing_issuance: Arc<pairing::issuance::Gate>,
     pub auth_tx: Arc<watch::Sender<()>>,
     pub partials: Arc<events::Partials>,
     pub cancels: Arc<runner::Cancels>,
@@ -184,6 +188,7 @@ impl App {
             computer: Arc::new(computer::Computer::default()),
             agent_logins: Arc::new(agent_auth::Logins::default()),
             e2ee: Arc::new(e2ee::Transport::load(&cfg.data_dir)?),
+            pairing_issuance: Arc::new(pairing::issuance::Gate::load(&cfg.data_dir)),
             cfg: Arc::new(cfg),
             db,
             clock,

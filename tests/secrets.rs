@@ -42,15 +42,16 @@ async fn secrets_are_encrypted_at_rest_and_in_snapshots() {
     let bytes = std::fs::read(&snap).unwrap();
     assert!(!bytes.windows(KEY.len()).any(|w| w == KEY.as_bytes()), "snapshot에 평문 키가 있다");
     // 키 파일 없이 복원한 서버: 목록은 '해독 불가', 실행은 명확한 오류
-    let restored = s.dir.path().join("restored");
+    let restored_dir = tempfile::tempdir().unwrap();
+    let restored = restored_dir.path().join("data");
     let out = std::process::Command::new(env!("CARGO_BIN_EXE_grove")).arg("restore").arg(&snap).arg(&restored).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     s.stop().await;
-    let mut r = TestServer::start_with(tempfile::tempdir().unwrap(), common::config(&restored)).await;
+    let mut r = TestServer::start_with(restored_dir, common::config(&restored)).await;
     let (_, list) = r.get("/api/v1/secrets").await;
     assert!(list[0]["masked"].as_str().unwrap().contains("해독 불가"), "{list}");
     let (_, sessions) = r.get("/api/v1/sessions/search").await;
-    let sid2 = sessions["items"][0]["id"].as_str().unwrap();
+    let sid2 = sessions["items"][0]["session"]["id"].as_str().unwrap();
     let (st, e) = r.post(&format!("/api/v1/sessions/{sid2}/turns"), json!({ "text": "q", "profile_id": prof })).await;
     assert_eq!(st, StatusCode::ACCEPTED, "{e}");
     let tv = r.wait_status(e["turn"]["id"].as_str().unwrap(), "failed").await;

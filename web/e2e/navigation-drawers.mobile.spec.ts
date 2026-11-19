@@ -40,8 +40,8 @@ for (const theme of ["light", "dark"] as const) {
         await expect(left).toHaveCSS("transform", "matrix(1, 0, 0, 1, 0, 0)");
         await expect(left.getByRole("button", { name: "설정", exact: true })).toBeVisible();
         const header = left.getByTestId("mobile-drawer-header");
-        await expect(header.getByRole("button")).toHaveCount(3);
-        for (const [index, name] of ["프로젝트·폴더 추가", "설정", "탐색 메뉴 닫기"].entries()) {
+        await expect(header.getByRole("button")).toHaveCount(4);
+        for (const [index, name] of ["프로젝트·폴더 추가", "사용량", "설정", "탐색 메뉴 닫기"].entries()) {
             await expect(header.getByRole("button").nth(index)).toHaveAccessibleName(name);
         }
         const controls = await header.getByRole("button").evaluateAll((buttons) => buttons.map((button) => {
@@ -58,6 +58,7 @@ for (const theme of ["light", "dark"] as const) {
         await expect(page.getByRole("menuitem", { name: "프로젝트 추가", exact: true })).toBeVisible();
         await expect(page.getByRole("menuitem", { name: "폴더 추가", exact: true })).toBeVisible();
         await page.keyboard.press("Escape");
+        await expect(page.locator("[popover]:popover-open")).toHaveCount(0);
         await expect(header.getByRole("button", { name: "프로젝트·폴더 추가", exact: true })).toBeFocused();
         const project = left.locator(`[data-testid="sidebar-project"][data-project-id="${a.id}"]`);
         await expect(project.getByTestId("sidebar-session")).toHaveCount(0);

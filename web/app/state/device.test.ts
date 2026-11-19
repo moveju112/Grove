@@ -73,25 +73,35 @@ describe("알림의 기기 설정", () => {
     });
 });
 
-describe("대기 중 새싹 표시의 기기 설정", () => {
+describe("진행 중 표시의 기기 설정", () => {
     it("기존 기기에서는 기본 길이·속도로 켜고 다른 설정을 보존한다", () => {
         saved({ theme: "dark", fontSize: 15 });
         expect(loadPrefs()).toMatchObject({
-            theme: "dark", fontSize: 15, sessionVines: true, sessionVineLength: "medium", sessionVineSpeed: "normal", sessionVineGroups: 2,
+            theme: "dark", fontSize: 15, activityDisplay: "animated", sessionVineLength: "medium", sessionVineSpeed: "normal", sessionVineGroups: 2,
         });
     });
-    it("끄기와 길이·속도 선택을 유지한다", () => {
+    it("세 표시 모드를 보존하고 이전 켜기·끄기 설정을 읽는다", () => {
+        for (const activityDisplay of ["animated", "static", "hidden"]) {
+            saved({ activityDisplay, sessionVines: false });
+            expect(loadPrefs().activityDisplay).toBe(activityDisplay);
+        }
+        saved({ sessionVines: true });
+        expect(loadPrefs().activityDisplay).toBe("animated");
+        saved({ sessionVines: false });
+        expect(loadPrefs().activityDisplay).toBe("hidden");
+    });
+    it("숨김 상태에서도 길이·속도 선택을 유지한다", () => {
         for (const sessionVineLength of ["short", "medium", "long"]) {
             for (const sessionVineSpeed of ["slow", "normal", "fast"]) {
-                saved({ sessionVines: false, sessionVineLength, sessionVineSpeed });
-                expect(loadPrefs()).toMatchObject({ sessionVines: false, sessionVineLength, sessionVineSpeed });
+                saved({ activityDisplay: "hidden", sessionVineLength, sessionVineSpeed });
+                expect(loadPrefs()).toMatchObject({ activityDisplay: "hidden", sessionVineLength, sessionVineSpeed });
             }
         }
     });
     it("잘못된 저장값은 기본값으로 읽는다", () => {
         for (const value of [null, 7, "", {}, []]) {
-            saved({ sessionVines: value, sessionVineLength: value, sessionVineSpeed: value });
-            expect(loadPrefs()).toMatchObject({ sessionVines: true, sessionVineLength: "medium", sessionVineSpeed: "normal" });
+            saved({ activityDisplay: value, sessionVines: value, sessionVineLength: value, sessionVineSpeed: value });
+            expect(loadPrefs()).toMatchObject({ activityDisplay: "animated", sessionVineLength: "medium", sessionVineSpeed: "normal" });
         }
     });
     it("잎 무리는 2~7개를 유지하고 범위 밖 값은 기존 기본값 2개로 읽는다", () => {

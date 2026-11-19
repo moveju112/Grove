@@ -14,7 +14,8 @@ for (const width of [390, 1280]) {
                     await page.route("**/api/v1/devices", async (route) => {
                         const response = await route.fetch();
                         const devices = await response.json() as DeviceInfo[];
-                        await route.fulfill({ response, json: devices.filter((item) => item.current || item.id === device.id) });
+                        const current = devices.find((item) => item.current);
+                        await route.fulfill({ response, json: devices.filter((item) => item.current || item.id === current?.parent_id || item.id === device.id) });
                     });
                     await page.route("**/api/v1/pairings", (route) => {
                         expect(route.request().method()).toBe("GET");
@@ -23,13 +24,13 @@ for (const width of [390, 1280]) {
                     await openSettings(page);
                     const settings = page.getByTestId("settings");
                     await settings.getByRole("button", { name: "기기·연결", exact: true }).click();
-                    const pairing = settings.getByTestId("setting-pairing");
+                    const pairing = settings.getByTestId("setting-devices");
                     const capabilities = settings.getByTestId("setting-browser-capabilities");
                     await expect(settings.getByTestId("setting-devices")).toContainText("레이아웃 확인용 기기");
                     const input = page.getByRole("dialog", { name: "페어링 링크 발급", exact: true }).getByLabel("표시할 이름", { exact: true });
                     await expect(input).toHaveCount(0);
                     await expect(pairing.getByLabel("링크 비밀번호", { exact: true })).toHaveCount(0);
-                    await pairing.getByRole("heading", { name: "QR·링크로 기기 등록", exact: true }).click();
+                    await pairing.getByRole("heading", { name: "기기·등록 링크", exact: true }).click();
                     await expect(pairing.getByRole("button", { name: "페어링 링크 발급", exact: true })).toBeVisible();
                     await pairing.getByRole("button", { name: "고급 연결 설정", exact: true }).click();
                     const dialog = pairing.getByRole("dialog", { name: "고급 연결 설정", exact: true });
@@ -61,8 +62,8 @@ for (const width of [390, 1280]) {
                     expect(await settings.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
                     await page.screenshot({ path: info.outputPath("devices.png"), fullPage: true });
                     await settings.getByRole("tab", { name: "데몬 설정", exact: true }).click();
-                    await settings.getByLabel("설정 검색").fill("기기 토큰");
-                    await expect(settings.getByRole("button", { name: "기기 토큰 발급" })).toBeVisible();
+                    await settings.getByLabel("설정 검색").fill("QR 링크");
+                    await expect(pairing.getByRole("button", { name: "페어링 링크 발급" })).toBeVisible();
                 } finally {
                     await apiCall("DELETE", `/devices/${device.id}`);
                 }
@@ -77,8 +78,7 @@ for (const width of [390, 1280]) {
                 const settings = page.getByTestId("settings");
                 await settings.getByRole("button", { name: "기기·연결", exact: true }).click();
                 await expect(settings.getByTestId("setting-devices").locator("li")).toHaveCount(0);
-                await expect(settings.getByRole("button", { name: "기기 토큰 발급" })).toBeVisible();
-                const pairing = settings.getByTestId("setting-pairing");
+                const pairing = settings.getByTestId("setting-devices");
                 await expect(pairing.getByRole("button", { name: "페어링 링크 발급", exact: true })).toBeVisible();
                 await expect(pairing.getByLabel("표시할 이름", { exact: true })).toHaveCount(0);
                 expect(await settings.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);

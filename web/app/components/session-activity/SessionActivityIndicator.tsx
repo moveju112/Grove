@@ -4,6 +4,7 @@ import { Stack } from "@astryxdesign/core/Stack";
 import type { Turn } from "../../api/generated";
 import { api } from "../../api/client";
 import { usePrefs, type Prefs } from "../../state/device";
+import { usePageVisible } from "../../state/paneVisibility";
 import { useQuery } from "../../state/store";
 import { activityStyles } from "./activity.stylex";
 import { orbitDelay, orbitKeyframes, perimeterGeometry } from "./vineGeometry";
@@ -18,19 +19,15 @@ export function isWaitingForResponse(status: Turn["status"]): boolean {
 }
 
 // 탭 아래 viewport에만 겹치며 스크롤바 영역은 제외한다.
-export function SessionActivityIndicator({ sessionId, visible, viewportRef }: {
-    sessionId: string; visible: boolean; viewportRef: RefObject<HTMLDivElement | null>;
+// 덩굴은 포커스한 영역에서만 움직이고, 다른 분할 영역은 같은 자리에 정지 프레임을 둔다.
+export function SessionActivityIndicator({ sessionId, visible, focused = true, viewportRef }: {
+    sessionId: string; visible: boolean; focused?: boolean; viewportRef: RefObject<HTMLDivElement | null>;
 }) {
     const prefs = usePrefs();
-    const [pageVisible, setPageVisible] = useState(() => document.visibilityState === "visible");
-    useEffect(() => {
-        const changed = () => setPageVisible(document.visibilityState === "visible");
-        document.addEventListener("visibilitychange", changed);
-        return () => document.removeEventListener("visibilitychange", changed);
-    }, []);
-    const turns = useQuery<Turn[]>(visible && prefs.sessionVines ? `turns:${sessionId}` : null,
+    const pageVisible = usePageVisible();
+    const enabled = visible && pageVisible && prefs.activityDisplay !== "hidden";
+    const turns = useQuery<Turn[]>(enabled ? `turns:${sessionId}` : null,
         () => api.get(`/sessions/${sessionId}/turns?limit=5`));
-    const enabled = visible && pageVisible && prefs.sessionVines;
     const active = enabled && !!turns.data?.some((turn) => isWaitingForResponse(turn.status));
     const [present, setPresent] = useState(false);
     useLayoutEffect(() => {
@@ -39,12 +36,12 @@ export function SessionActivityIndicator({ sessionId, visible, viewportRef }: {
     }, [active, enabled]);
     const exited = useCallback(() => setPresent(false), []);
     if (!enabled || (!active && !present)) return null;
-    return <SessionVines active={active} onExited={exited} viewportRef={viewportRef}
+    return <SessionVines active={active} still={!focused || prefs.activityDisplay === "static"} onExited={exited} viewportRef={viewportRef}
         length={prefs.sessionVineLength} speed={prefs.sessionVineSpeed} groups={prefs.sessionVineGroups} />;
 }
 
-export function SessionVines({ active, onExited, viewportRef, length, speed, groups }: {
-    active: boolean; onExited: () => void; length: Prefs["sessionVineLength"]; speed: Prefs["sessionVineSpeed"];
+export function SessionVines({ active, still = false, onExited, viewportRef, length, speed, groups }: {
+    active: boolean; still?: boolean; onExited: () => void; length: Prefs["sessionVineLength"]; speed: Prefs["sessionVineSpeed"];
     viewportRef: RefObject<HTMLDivElement | null>; groups: Prefs["sessionVineGroups"];
 }) {
     const root = useRef<HTMLDivElement>(null);
@@ -83,6 +80,7 @@ export function SessionVines({ active, onExited, viewportRef, length, speed, gro
         observeContent();
         return () => { observer.disconnect(); contentObserver.disconnect(); };
     }, [viewportRef]);
+    const staticFrame = reduced || still;
     useLayoutEffect(() => {
         const node = root.current!;
         const target = active ? "1" : "0";
@@ -90,7 +88,7 @@ export function SessionVines({ active, onExited, viewportRef, length, speed, gro
             node.style.opacity = target;
             if (!active) onExited();
         };
-        if (reduced) {
+        if (staticFrame) {
             finish();
             return;
         }
@@ -103,12 +101,12 @@ export function SessionVines({ active, onExited, viewportRef, length, speed, gro
             animation.onfinish = null;
             animation.cancel();
         };
-    }, [active, reduced, onExited]);
+    }, [active, staticFrame, onExited]);
     const pixels = VINE_LENGTHS[length];
     const duration = VINE_DURATIONS[speed];
     const leafCount = Math.floor((pixels - VINE_LEAF_SPACING) / VINE_LEAF_SPACING);
     return <Stack ref={root} xstyle={activityStyles.overlay} data-testid="session-activity" data-state={active ? "active" : "leaving"} aria-hidden="true">
-        {size && (reduced ? <StaticVineFrame width={size.width} height={size.height} />
+        {size && (staticFrame ? <StaticVineFrame width={size.width} height={size.height} />
             : <VineOrbit width={size.width} height={size.height} pixels={pixels} duration={duration} leafCount={leafCount} groups={groups} />)}
     </Stack>;
 }

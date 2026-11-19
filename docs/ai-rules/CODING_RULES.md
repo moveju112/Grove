@@ -18,11 +18,21 @@
   - ✅ sandbox 실행용 bubblewrap·socat은 필요하지 않다. 취소는 변경 rollback이 아니며 중단 기록과 실제 파일을 확인한 뒤 계속한다. `evidence: src/provider/cli.rs`, `evidence: tests/real_cli.rs`.
 - **MUST** 일반 대화의 전역·프로젝트 지침은 각 외부 CLI의 기본 로더에 맡긴다. Grove는 `AGENTS.md`·`CLAUDE.md`를 직접 읽어 중복 주입하거나 전달 모드를 제공하지 않는다. API 모델과 `grove exec`에도 지침 파일을 자동 주입하지 않는다.
   - ✅ 일반 대화의 스킬·장기 기억·hook·MCP도 외부 CLI의 원래 설정에 맡긴다. 스킬은 실제 CLI 목록을 조회해 `/이름`으로 호출하고 Grove는 본문·활성화·영속 선택을 별도 관리하거나 중복 주입하지 않는다. 제목·요약 같은 내부 호출만 사용자 hook·MCP·설정을 제외한다. `evidence: src/provider/cli.rs`, `evidence: src/native_commands.rs`, `evidence: tests/native_integrations.rs`.
-- **MUST** `tools.full_access`는 기본으로 켜진 일반 도구의 포괄 허용이다. 별도 설정 없이 파일 수정·셸 실행은 자동 승인하고 foreground·background 셸에 계정 환경변수를 상속하되 `GROVE_*`는 제외한다. 서버·프로젝트에서 명시적으로 끄거나 지정한 deny·read_only와 PC 제어·위임의 별도 정책은 유지하며, 대기 중 전체 권한이 철회되면 자격증명 사용 계획을 실행하지 않는다. 파일 API의 `ProjectFs` 경계는 넓히지 않는다.
+- **MUST** Grove 일반 도구의 기본 모드는 `bypass`이며, `tools.mode`의 `ask`는 범위별로 선택할 수 있다. 모드를 바꿔도 명시적 deny, 보조 역할 제한, PC 제어·위임의 별도 정책은 유지한다. `tools.full_access`는 기본으로 켜지며 `ask`에서 일반 도구를 포괄 허용한다. 모드와 별개로 `tools.full_access`가 켜지면 foreground·background 셸에 계정 환경변수를 상속하되 `GROVE_*`는 제외한다. 대기 중 전체 권한이 철회되면 자격증명 사용 계획을 실행하지 않는다. 파일 API의 `ProjectFs` 경계는 넓히지 않는다.
   - why: 일반 코딩·SSH·Release 작업은 반복 승인 없이 허용하면서, 서버 내부 설정이나 별도 승인 기능까지 포괄 허용으로 오인하지 않는다. 셸 자체는 프로젝트 밖·네트워크 접근이나 위험 명령을 차단하는 sandbox가 아니다.
-  - ✅ 기본값은 전체 허용이며 저장된 제한 설정은 덮어쓰지 않는다. 승인·제한 회귀 시험은 제한을 명시해 해당 정책을 검사한다. `evidence: src/settings.rs`, `evidence: src/approvals.rs`, `evidence: src/tools/shell.rs`, `evidence: src/tasks.rs`.
-- **MUST** Computer Use는 소유자가 켠 서버 PC만 대상으로 하며, 관찰도 포함해 최초 승인이 필요하며 명시적 대화 범위 승인은 해당 대화에서만 재사용한다. `tools.allow`만으로 최초 승인을 생략하지 않으며 금지·읽기 전용 정책과 승인 해제가 우선한다. CLI의 기본 MCP·hook과 별개로 Grove는 턴 한정 Computer Use MCP를 추가하며, 이 내부 연결의 승인 경계를 바꾸지 않는다.
+  - ✅ 폐지한 `read_only` 값은 migration으로 상속 상태로 되돌린다. 나머지 저장 설정은 유지한다. 승인·제한 회귀 시험은 제한을 명시해 해당 정책을 검사한다. `evidence: src/settings.rs`, `evidence: src/approvals.rs`, `evidence: src/tools/shell.rs`, `evidence: src/tasks.rs`.
+- **MUST** Computer Use는 소유자가 켠 서버 PC만 대상으로 하며, 관찰도 포함해 최초 승인이 필요하고 명시적 대화 범위 승인은 해당 대화에서만 재사용한다. `tools.allow`나 `bypass`만으로 최초 승인을 생략하지 않으며 명시적 금지, 보조 역할 제한과 승인 해제가 우선한다. CLI의 기본 MCP·hook과 별개로 Grove는 턴 한정 Computer Use MCP를 추가하며, 이 내부 연결의 승인 경계를 바꾸지 않는다.
   - ✅ `src/computer/`, `tests/computer.rs`, 격리 Xvfb 검사 `python3 tests/fixtures/computer_x11.py /절대/경로/grove`.
+
+## 웹 UI 지속 작업
+
+- **MUST** 오래 표시되는 상태는 정적 배경·테두리·아이콘을 기본으로 한다. 반복 모션이 필요하면 `transform`·`opacity`처럼 합성 단계에서 처리할 수 있는 속성을 우선하고, 프레임마다 React 상태 갱신·레이아웃·페인트가 발생하는 방식은 피한다. 무한 SVG `stroke-dashoffset`이나 크기·위치 애니메이션을 목록 행마다 두지 않는다. `will-change`도 모든 항목에 상시 적용하지 않는다.
+  - ✅ 최근 목록은 정적 배경, 상단 원형 링은 호가 들어 있는 원 전체를 `transform`으로 회전시킨다. `evidence: web/app/components/workspace.stylex.ts`, `evidence: web/app/components/split-layout.stylex.ts`.
+- **MUST** 숨겨진 브라우저 탭·영역·스크롤 밖 항목에서는 장식용 반복 작업을 멈춘다. 동시에 여러 영역에 표시되는 무거운 효과는 포커스된 영역에서만 움직이고, 나머지 표시 중인 영역과 `prefers-reduced-motion`에서는 같은 상태를 정적으로 전달한다. 종료·숨김·언마운트 시 해당 애니메이션·타이머·`requestAnimationFrame`을 정리한다. 화면 표시를 멈추더라도 서버 작업·상태 기록·완료 확인은 유지한다.
+  - ✅ 덩굴은 활성 분할 영역에서만 움직이고, 포커스하지 않은 분할 영역은 정지 프레임을 사용한다. `evidence: web/app/components/session-activity/SessionActivityIndicator.tsx`.
+- **MUST** 초 단위 표시처럼 갱신 주기가 같은 화면 타이머는 공유하고 마지막 구독자가 사라지면 멈춘다. 스트리밍처럼 빈번한 임시 갱신은 필요한 화면 범위에서 표시 주기에 맞춰 묶고 변경된 부분만 다시 그린다. 이 최적화로 최종 응답·상태 이벤트를 버리거나 순서를 바꾸지 않는다.
+  - ✅ `evidence: web/app/state/secondTick.ts`, `evidence: web/app/state/store.ts`.
+- **MUST** 지속 효과를 추가·변경하면 단일 화면뿐 아니라 여러 실행 세션·긴 목록과 숨김·포커스 전환·모션 줄이기에서 동작을 확인한다. 반복 작업이 생기는 변경이나 CPU 개선 작업은 Chromium DevTools Performance에서 해당 Grove 탭을 확인한 뒤, 같은 조건에서 초기 전환이 끝난 구간의 CPU·Script·Layout/Paint·합성 비용을 비교한다. 측정하지 못했으면 미측정으로 명시한다.
 
 ## 스타일
 
@@ -32,6 +42,9 @@
 
 ## 검증 범위
 
+- **MUST** 작업 범위의 테스트·검증이 실패하면 실패 보고만으로 끝내지 않는다. 원인을 확인하고 필요한 코드·시험·fixture·실행 환경을 바로잡은 뒤, 실패한 검사와 수정의 영향을 받는 검사를 다시 실행해 통과를 확인해야 완료다.
+  - 실패를 감추기 위해 검사를 건너뛰거나 판정 기준을 낮추지 않는다. 시험이 현재 계약과 어긋났다면 근거를 확인하고 시험을 수정한다.
+  - 외부 장애·권한·범위 밖 변경 때문에 정상화할 수 없으면 완료로 보고하지 않는다. 해결한 범위와 남은 실패 또는 미검증 범위, 필요한 조치를 구분해 알린다.
 - **MUST** 검증 근거는 관련 소스·시험·설정·fixture와 실행 조건이 유지되는 동안 재사용하고, 실패하거나 무효화된 검사만 다시 실행한다. 의존성 잠금 파일·도구/runtime 버전·관련 환경변수가 바뀌면 영향받는 검사만 다시 실행한다.
   - why: 무조건적인 전체 재검사와 오래된 성공 근거 재사용을 모두 피한다.
   - 근거는 명령·대상·관련 소스 상태(commit·관련 미커밋 변경 등)·실행 조건·결과를 대화나 기존 실행 로그에 남긴다. 비밀값은 기록하지 않으며, 별도 기록 파일을 의무화하지 않는다.

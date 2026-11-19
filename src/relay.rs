@@ -62,6 +62,21 @@ enum SessionError {
     InvalidControl,
     #[error("control_closed")]
     ControlClosed,
+    #[error("control_replaced")]
+    ControlReplaced,
+}
+
+/// 릴레이가 새 제어 연결에 자리를 넘긴 이전 연결을 닫을 때 쓰는 close code(`relay/worker.mjs`의 REPLACED).
+const REPLACED_CLOSE_CODE: u16 = 4000;
+/// 409는 릴레이가 끊긴 이전 제어 연결을 아직 붙잡고 있다는 뜻이다. 간격을 늘리면 그 연결이 풀린 뒤에도
+/// 오래 기다리게 되므로 고정된 짧은 간격으로 다시 시도한다.
+const CONFLICT_RETRY_SECONDS: u64 = 2;
+const MAX_RETRY_SECONDS: u64 = 60;
+
+/// 이번 대기 시간과 다음 실패에 쓸 기본 간격을 정한다.
+fn retry_delay(reason: &str, delay: u64) -> (u64, u64) {
+    if reason == "control_conflict" { (CONFLICT_RETRY_SECONDS, delay) }
+    else { (delay, (delay * 2).min(MAX_RETRY_SECONDS)) }
 }
 
 // 원본 오류에는 URL·응답 헤더가 포함될 수 있다. 로그에는 분류와 HTTP 상태만 남긴다.
@@ -71,6 +86,7 @@ fn failure_details(error: &Error) -> (&'static str, Option<u16>) {
             SessionError::HeartbeatTimeout => "heartbeat_timeout",
             SessionError::InvalidControl => "invalid_control",
             SessionError::ControlClosed => "control_closed",
+            SessionError::ControlReplaced => "control_replaced",
         }, None);
     }
     if error.is::<tokio::time::error::Elapsed>() { return ("timeout", None); }
@@ -188,6 +204,11 @@ async fn session(settings: Arc<Settings>, addr: SocketAddr) -> Result<(), Error>
                             });
                         }
                     }
+                    // 다른 연결이 이 방을 이어받았다. 같은 데이터 디렉터리의 다른 인스턴스와 번갈아 빼앗지 않도록
+                    // 일반 실패처럼 간격을 늘려 다시 시도한다.
+                    Message::Close(Some(frame)) if u16::from(frame.code) == REPLACED_CLOSE_CODE => {
+                        return Err(SessionError::ControlReplaced.into());
+                    }
                     Message::Close(_) => break,
                     Message::Ping(_) | Message::Pong(_) => {},
                     _ => return Err(SessionError::InvalidControl.into()),
@@ -212,12 +233,13 @@ pub fn spawn(settings: Arc<Settings>, addr: SocketAddr, mut shutdown: watch::Rec
             if *shutdown.borrow() { break; }
             if began.elapsed() > Duration::from_secs(60) { delay = 1; }
             let (reason, http_status) = result.as_ref().err().map(failure_details).unwrap_or(("control_closed", None));
-            tracing::warn!(reason, http_status, retry_after_seconds = delay, "릴레이 연결이 종료됐습니다. 다시 연결합니다");
+            let (wait, next) = retry_delay(reason, delay);
+            tracing::warn!(reason, http_status, retry_after_seconds = wait, "릴레이 연결이 종료됐습니다. 다시 연결합니다");
             tokio::select! {
                 _ = shutdown.wait_for(|v| *v) => break,
-                _ = tokio::time::sleep(Duration::from_secs(delay)) => {},
+                _ = tokio::time::sleep(Duration::from_secs(wait)) => {},
             }
-            delay = (delay * 2).min(60);
+            delay = next;
         }
     })
 }
@@ -237,6 +259,80 @@ mod tests {
         assert_eq!(failure_details(&error), ("heartbeat_timeout", None));
         let error: Error = SessionError::InvalidControl.into();
         assert_eq!(failure_details(&error), ("invalid_control", None));
+        let error: Error = SessionError::ControlReplaced.into();
+        assert_eq!(failure_details(&error), ("control_replaced", None));
+    }
+
+    #[test]
+    fn conflicts_retry_quickly_without_growing_the_backoff() {
+        // 네트워크 단절 뒤 이전 연결이 남아 409가 이어져도 대기 간격이 커지지 않는다.
+        let mut delay = 1;
+        let mut waits = Vec::new();
+        for reason in ["network", "control_conflict", "control_conflict", "control_conflict", "control_conflict", "network"] {
+            let (wait, next) = retry_delay(reason, delay);
+            waits.push(wait);
+            delay = next;
+        }
+        assert_eq!(waits, [1, 2, 2, 2, 2, 2]);
+        // 그 밖의 실패와 다른 인스턴스의 교체는 기존처럼 간격을 늘리되 상한을 지킨다.
+        let mut delay = 1;
+        for _ in 0..10 { delay = retry_delay("control_replaced", delay).1; }
+        assert_eq!(delay, MAX_RETRY_SECONDS);
+    }
+
+    /// 네트워크가 끊겨도 릴레이에는 이전 제어 연결이 OPEN으로 남을 수 있다.
+    /// 재접속한 데몬은 그 연결의 lease 만료를 기다리지 않고 즉시 자리를 이어받아 브라우저 요청을 받아야 한다.
+    #[tokio::test]
+    async fn reconnect_replaces_a_stale_control_without_waiting_for_its_lease() {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = crate::config::Config::from_env(Some(dir.path().into()), Some("127.0.0.1:0".parse().unwrap())).unwrap();
+        let server = crate::server::start(cfg, Arc::new(crate::util::SystemClock)).await.unwrap();
+        let identity = server.app.e2ee.identity_for_test();
+        let room: String = Sha256::digest(identity).iter().map(|b| format!("{b:02x}")).collect();
+        let token = crate::util::random_secret(32);
+        let token: String = Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect();
+        let mut fixture = tokio::process::Command::new("node").arg("relay/fixture.mjs")
+            .env("TEST_ROOM", &room).env("TEST_TOKEN", &token)
+            .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::inherit()).kill_on_drop(true).spawn().unwrap();
+        let mut lines = BufReader::new(fixture.stdout.take().unwrap()).lines();
+        let url = tokio::time::timeout(Duration::from_secs(15), lines.next_line()).await.unwrap().unwrap().unwrap();
+        let base = url.trim_end_matches('/').replace("http:", "ws:");
+        let settings = Arc::new(Settings { base: base.clone(), token, room: room.clone() });
+        // heartbeat·close 없이 남은 이전 제어 연결. lease(70초)가 아직 남아 있다.
+        let mut stale = connect(&settings, "control").await.unwrap();
+        let (_stop, stop_rx) = watch::channel(false);
+        let relay = spawn(settings, server.addr, stop_rx);
+        let closed = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match stale.next().await {
+                    Some(Ok(Message::Close(frame))) => return frame.map(|f| u16::from(f.code)),
+                    Some(Ok(_)) => continue,
+                    _ => return None,
+                }
+            }
+        }).await.expect("이전 제어 연결은 lease 만료 전에 교체돼야 한다");
+        assert_eq!(closed, Some(REPLACED_CLOSE_CODE));
+        let mut request = format!("{base}/api/e2ee/{room}").into_client_request().unwrap();
+        request.headers_mut().insert("Origin", crate::e2ee::PAGES_ORIGIN.parse().unwrap());
+        // 교체 직후 새 제어 연결이 열리는 순간까지만 기다린다. lease 만료(70초)보다 훨씬 짧다.
+        let connected = tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                match tokio_tungstenite::connect_async(request.clone()).await {
+                    Ok((socket, _)) => return socket,
+                    Err(tokio_tungstenite::tungstenite::Error::Http(r)) if r.status() == 503 => {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    }
+                    Err(e) => panic!("릴레이 접속 실패: {e}"),
+                }
+            }
+        }).await.expect("브라우저 접속이 이전 제어 연결 때문에 막히면 안 된다");
+        drop(connected);
+        relay.abort();
+        server.stop().await;
+        drop(fixture.stdin.take());
+        let _ = tokio::time::timeout(Duration::from_secs(10), fixture.wait()).await;
     }
 
     #[test]

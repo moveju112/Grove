@@ -1,3 +1,5 @@
+import { subscribeSecondTick } from "../../state/secondTick";
+
 export type Timing = {
     total_ms: number;
     approval_wait_ms: number;
@@ -28,8 +30,5 @@ export function formatDuration(ms: number): string {
 }
 
 export function startTimingTimer(enabled: boolean, tick: () => void): () => void {
-    if (!enabled) return () => {};
-    tick();
-    const timer = setInterval(tick, 1000);
-    return () => clearInterval(timer);
+    return enabled ? subscribeSecondTick(tick) : () => {};
 }

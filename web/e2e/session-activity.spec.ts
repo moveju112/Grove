@@ -147,17 +147,30 @@ for (const width of [390, 1400]) {
 
                 await openSettings(page, "local");
                 await page.getByLabel("설정 검색").fill("새싹");
-                const enabled = page.getByRole("combobox", { name: "대기 중 새싹 표시", exact: true });
+                const display = page.getByRole("combobox", { name: "진행 중 표시", exact: true });
                 const groups = page.getByRole("combobox", { name: "잎 무리 수", exact: true });
                 const length = page.getByRole("combobox", { name: "잎 무리 길이", exact: true });
                 const speed = page.getByRole("combobox", { name: "잎 회전 속도", exact: true });
-                await selectChoice(enabled, "false");
+                const ring = pane.getByTestId("tab-running");
+                if (width >= 760) await expect(ring).toHaveCSS("animation-iteration-count", "infinite");
+                await selectChoice(display, "static");
+                await expect(indicator.getByTestId("session-activity-static")).toBeVisible();
+                await expect(head).toHaveCount(0);
+                expect(await indicator.evaluate((node) => node.getAnimations({ subtree: true }).length)).toBe(0);
+                await expect(groups).toBeDisabled();
+                if (width >= 760) {
+                    await expect(ring).toBeAttached();
+                    await expect(ring).toHaveCSS("animation-name", "none");
+                    await expect(ring.locator("circle")).toHaveCount(1);
+                }
+                await selectChoice(display, "hidden");
                 await expect(indicator).toHaveCount(0);
+                await expect(ring).toHaveCount(0);
                 expect(await contentBounds()).toEqual(idleBounds);
                 await expect(length).toBeDisabled();
                 await expect(speed).toBeDisabled();
                 await expect(groups).toBeDisabled();
-                await selectChoice(enabled, "true");
+                await selectChoice(display, "animated");
                 await selectChoice(length, "long");
                 await selectChoice(speed, "fast");
                 await expect(indicator.locator("[data-vine-leaf]")).toHaveCount(36);
@@ -178,7 +191,7 @@ for (const width of [390, 1400]) {
                 await page.reload();
                 await openSettings(page, "local");
                 await page.getByLabel("설정 검색").fill("새싹");
-                await expectChoice(enabled, "true");
+                await expectChoice(display, "animated");
                 await expectChoice(groups, "7");
                 await expectChoice(length, "long");
                 await expectChoice(speed, "fast");
@@ -295,7 +308,7 @@ for (const width of [390, 1400]) {
                     const frame = (await indicator.boundingBox())!;
                     return frame.x + frame.width <= client.right - 4 && frame.y + frame.height <= client.bottom;
                 }).toBe(true);
-                expect(await head.evaluate((node) => Number(node.getAnimations()[0]!.startTime))).toBe(startTime);
+                expect(await head.evaluate((node) => Number(node.getAnimations()[0]!.startTime))).toBeCloseTo(startTime, 3);
                 await page.screenshot({ path: info.outputPath("native-scrollbar-clearance.png") });
                 await body.evaluate((node, previous) => {
                     (node.firstElementChild as HTMLElement).style.minWidth = previous;
@@ -313,6 +326,25 @@ for (const width of [390, 1400]) {
                 const idlePane = sessionView(page, idle.id).locator("xpath=ancestor::*[@data-testid='pane'][1]");
                 await expect(idlePane.getByTestId("session-activity")).toHaveCount(0);
                 await expect(page.getByTestId("session-activity").filter({ visible: true })).toHaveCount(1);
+                const staticFrame = (owner: typeof pane) => owner.getByTestId("session-activity-static");
+                const runners = (owner: typeof pane) => owner.getByTestId("session-vine-runner");
+                await expect(staticFrame(pane)).toBeVisible();
+                await expect(runners(pane)).toHaveCount(0);
+
+                const otherMarker = "second-sprout-running";
+                await script({ marker: otherMarker, frames: frames.text([otherMarker]).slice(0, 1), hang: true });
+                const other = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${idle.id}/turns`, { text: otherMarker, profile_id: profile });
+                try {
+                    await expect(idlePane.locator("[data-vine-head]").first()).toBeVisible();
+                    await pane.getByRole("tab", { selected: true }).getByTestId("tab-title").click();
+                    await expect(pane).toHaveAttribute("data-focused", "true");
+                    await expect(head).toBeVisible();
+                    await expect(runners(idlePane)).toHaveCount(0);
+                    await expect(staticFrame(idlePane)).toBeVisible();
+                    await expect(staticFrame(pane)).toHaveCount(0);
+                } finally {
+                    await apiCall("POST", `/turns/${other.turn.id}/cancel`);
+                }
             } finally {
                 await apiCall("POST", `/turns/${turn.turn.id}/cancel`);
             }
@@ -379,10 +411,10 @@ test.describe("390px 안쪽 잎 시안", () => {
             }
             await openSettings(page, "local");
             await page.getByLabel("설정 검색").fill("새싹");
-            const enabled = page.getByRole("combobox", { name: "대기 중 새싹 표시", exact: true });
-            await selectChoice(enabled, "false");
+            const display = page.getByRole("combobox", { name: "진행 중 표시", exact: true });
+            await selectChoice(display, "hidden");
             await expect(indicator).toHaveCount(0);
-            await selectChoice(enabled, "true");
+            await selectChoice(display, "animated");
             await expect(staticFrame).toBeVisible();
             await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
         } finally {

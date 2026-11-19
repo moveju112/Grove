@@ -74,10 +74,12 @@ export async function splitRecentItem(row: Locator) {
 export async function requireToolApproval(projectId: string) {
     const settings = await apiCall<{ items: { key: string; layers: { project?: { revision: number } } }[] }>(
         "GET", `/settings/effective?project_id=${projectId}`);
-    const permission = settings.items.find((item) => item.key === "tools.full_access")!;
-    await apiCall("PUT", `/settings/project/${projectId}/tools.full_access`, {
-        expected_revision: permission.layers.project?.revision ?? 0, value: false,
-    });
+    for (const [key, value] of [["tools.mode", "ask"], ["tools.full_access", false]] as const) {
+        const permission = settings.items.find((item) => item.key === key)!;
+        await apiCall("PUT", `/settings/project/${projectId}/${key}`, {
+            expected_revision: permission.layers.project?.revision ?? 0, value,
+        });
+    }
 }
 
 /// 탭 패널 또는 상세 대화상자의 실제 사용자 진입점을 연다.
@@ -108,6 +110,7 @@ export async function openDetails(panel: Locator, tool?: string, scope: Locator 
 async function openToolDock(tab: Locator) {
     if (await tab.isVisible()) return;
     const workbench = tab.locator("xpath=ancestor::*[@data-ui='workbench'][1]");
+    await focusToolPane(workbench);
     await workbench.locator("xpath=ancestor::*[@data-testid='pane'][1]").getByRole("button", { name: "도구 패널", exact: true }).click();
     await expect(tab).toBeVisible();
 }
@@ -118,9 +121,16 @@ export function toolTrigger(scope: Locator | Page) {
     return bench.locator("xpath=ancestor::*[@data-testid='pane'][1]").getByRole("button", { name: "도구 패널", exact: true });
 }
 
+async function focusToolPane(bench: Locator) {
+    const pane = bench.locator("xpath=ancestor::*[@data-testid='pane'][1]");
+    const activeTab = pane.getByRole("tablist", { name: "열린 대화와 화면" }).getByRole("tab", { selected: true }).getByTestId("tab-title");
+    if (await pane.getAttribute("data-focused") === "false" && await activeTab.isVisible()) await activeTab.focus();
+}
+
 /// 보이는 대화·프로젝트 화면의 도구 탭을 연다.
 export async function openTool(scope: Locator | Page, name: string) {
     const bench = scope.locator('[data-ui="workbench"]').filter({ visible: true }).first();
+    await focusToolPane(bench);
     const trigger = toolTrigger(scope);
     if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
     const tab = bench.getByRole("tab", { name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`) });
@@ -155,13 +165,16 @@ export async function openProjectTerminal(page: Page, projectName: string, termi
     await list.getByRole("button", { name: terminalName, exact: true }).click();
 }
 
-/// 현재 프로젝트의 행 메뉴에서 프로젝트 범위 설정을 연다.
+/// 현재 프로젝트 화면의 도구 패널에서 프로젝트 범위 설정을 연다.
 export async function openProjectSettings(page: Page) {
-    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
-    if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
-    const row = page.getByTestId("project-row").filter({ has: page.locator('button[aria-current="page"]') });
-    await row.getByRole("button", { name: "프로젝트 메뉴", exact: true }).click();
-    await page.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
+    const pane = page.locator('[data-testid="pane"][data-focused="true"]').filter({ visible: true });
+    const view = pane.getByTestId("project-view").filter({ visible: true });
+    const back = page.getByTestId("navigation-context").getByRole("button", { name: /프로젝트 화면으로$/ }).filter({ visible: true });
+    await expect(view.or(back).first()).toBeVisible();
+    if (!await view.isVisible()) await back.click();
+    await expect(view).toBeVisible();
+    await openTool(view, "설정");
+    await view.getByRole("button", { name: "프로젝트 설정", exact: true }).click();
     await expect(page.getByTestId("settings")).toBeVisible();
 }
 
@@ -225,11 +238,12 @@ export async function runningSendMode(page: Page, value: "queue" | "steer" | "in
 export async function composerCommand(view: Locator, command: string) {
     await expect(view.page().locator("[data-mobile-drawer][open]")).toHaveCount(0);
     const box = view.getByLabel("메시지 입력", { exact: true });
-    const text = await box.inputValue();
+    const text = () => box.evaluate((node) => node instanceof HTMLTextAreaElement ? node.value : (node as HTMLElement).innerText);
+    const draft = await text();
     await box.fill(command);
     await box.press("Control+Enter");
-    await expect(box).toHaveValue("");
-    await box.fill(text);
+    await expect.poll(text).toBe("");
+    await box.fill(draft);
 }
 
 export async function profileAction(row: Locator, label: string) {
@@ -240,7 +254,7 @@ export async function profileAction(row: Locator, label: string) {
     await popup.getByRole("button", { name: label, exact: true }).click();
 }
 import { readFileSync } from "node:fs";
-import { STATE } from "./global-setup";
+import { ISSUANCE_PASSWORD, STATE } from "./global-setup";
 
 export type E2EState = { work: string; token: string; projA: string; projB: string; fixturePort: number; cliDir?: string };
 
@@ -265,6 +279,11 @@ async function apiCallAt<T>(base: string, token: string, method: string, path: s
     const t = await r.text();
     if (!r.ok) throw new Error(`${method} ${path}: ${r.status} ${t}`);
     return (t ? JSON.parse(t) : null) as T;
+}
+
+/// 시험용 링크는 격리 데몬에 미리 설정한 발급 비밀번호를 함께 보낸다.
+export function issueTestPairing<T = { id: string; code: string }>(name: string, password: string, base = BASE, token = state().token) {
+    return apiCallAt<T>(base, token, "POST", "/pairings", { name, password, issuance_password: ISSUANCE_PASSWORD });
 }
 
 /// 프로젝트를 워크스페이스(worktree)를 쓰는 프로젝트 모드로 바꾼다. 새 프로젝트는 단일 모드다.
@@ -308,7 +327,7 @@ export async function ensureProfile(): Promise<string> {
 
 export async function registerBrowser(page: Page, base = BASE, local = state().token, name = "E2E 테스트 브라우저") {
     const password = "test-only browser pairing password";
-    const link = await apiCallAt<{ id: string; code: string }>(base, local, "POST", "/pairings", { name, password });
+    const link = await issueTestPairing(name, password, base, local);
     const request = await apiCallAt<{ code: string }>(base, local, "POST", "/auth/pairing", { code: link.code, password, name });
     const { device_id: id } = await apiCallAt<{ device_id: string }>(base, local, "POST", `/pairings/${link.id}/requests/${request.code.split(".")[0]}`, {});
     const response = await page.request.post(new URL("/api/v1/auth/pairing/claim", base).href, { data: { code: request.code } });

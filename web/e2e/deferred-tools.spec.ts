@@ -123,22 +123,22 @@ test("제한된 첫 schema에서 로딩·다음 요청·실제 승인·결과 �
     }
 });
 
-test("읽기 전용에서 금지된 schema는 명시적으로 실패하고 tools=false는 목록도 보내지 않는다", async ({ page }) => {
+test("금지한 도구의 schema는 명시적으로 실패하고 tools=false는 목록도 보내지 않는다", async ({ page }) => {
     const flow = await setup(page);
     try {
-        await apiCall("PUT", `/settings/session/${flow.session.id}/tools.mode`, { expected_revision: 0, value: "read_only" });
+        await apiCall("PUT", `/settings/session/${flow.session.id}/tools.deny`, { expected_revision: 0, value: "write, edit" });
         flow.replies.push(
             frames.tool("forbidden-load", "load_tool", { names: ["write"] }),
-            frames.text(["CTX-013 읽기 전용 유지"]),
+            frames.text(["CTX-013 도구 금지 유지"]),
         );
-        await flow.send("읽기 전용 schema 로딩 거부를 확인해");
-        await expect(flow.view.getByTestId("msg-assistant").last()).toContainText("CTX-013 읽기 전용 유지");
+        await flow.send("금지한 도구의 schema 로딩 거부를 확인해");
+        await expect(flow.view.getByTestId("msg-assistant").last()).toContainText("CTX-013 도구 금지 유지");
         const first = flow.request(0);
         expect(first.tools!.some((t) => t.function.name === "edit")).toBe(false);
         expect(first.tools!.find((t) => t.function.name === "load_tool")!.function.description).not.toContain("write:");
         const failure = (await flow.turn()).tool_calls[0]!;
         expect(failure.status).toBe("failed");
-        expect(JSON.stringify(failure.result)).toContain("read_only");
+        expect(JSON.stringify(failure.result)).toContain("policy_denied");
         await expect(flow.view.getByTestId("msg-tool")).toHaveCount(0);
         await expect(flow.view.getByTestId("approval")).toHaveCount(0);
         await composerOption(flow.view, "도구", false);

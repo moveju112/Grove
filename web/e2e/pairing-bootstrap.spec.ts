@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { apiCall } from "./helpers";
+import { apiCall, finishSetup, issueTestPairing } from "./helpers";
 
 const password = "bootstrap-only password";
 
@@ -16,6 +16,7 @@ async function register(page: Page, form: Locator, id: string) {
     await expect.poll(async () => (await requests()).some((request) => request.verification_code === verification)).toBe(true);
     const request = (await requests()).find((item) => item.verification_code === verification)!;
     await apiCall("POST", `/pairings/${id}/requests/${request.id}`, {});
+    await finishSetup(page, false);
     await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
 }
 
@@ -25,7 +26,7 @@ for (const width of [1400, 390]) {
 
         test("암호화 연결 확인 뒤 발급된 링크로 비밀번호·소유자 승인까지 진행한다", async ({ page }) => {
             const identity = await apiCall<{ key: string }>("GET", "/e2ee/identity");
-            const pair = await apiCall<{ id: string; code: string }>("POST", "/pairings", { name: `bootstrap ${width}`, password });
+            const pair = await issueTestPairing(`bootstrap ${width}`, password);
             const plaintextAuth: string[] = [];
             page.on("request", (request) => {
                 if (new URL(request.url()).pathname.startsWith("/api/v1/auth/")) plaintextAuth.push(request.method());
@@ -48,7 +49,7 @@ for (const width of [1400, 390]) {
         });
 
         test("첫 연결 실패도 페어링 입력을 가리지 않고 명시적 재확인 뒤 등록한다", async ({ page }) => {
-            const pair = await apiCall<{ id: string; code: string }>("POST", "/pairings", { name: `retry ${width}`, password });
+            const pair = await issueTestPairing(`retry ${width}`, password);
             const registrations: string[] = [];
             page.on("request", (request) => {
                 if (new URL(request.url()).pathname === "/api/v1/auth/pairing") registrations.push(request.method());

@@ -5,6 +5,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { finishSetup, apiCall, ensureProjects, login, openSettings, registerBrowser } from "./helpers";
+import { configurePairing } from "./global-setup";
 
 type Remote = { origin: string; token: string; projectId: string };
 const test = base.extend<{}, { remote: Remote }>({
@@ -13,6 +14,7 @@ const test = base.extend<{}, { remote: Remote }>({
         const data = join(work, "data");
         const root = new URL("../..", import.meta.url).pathname;
         const origin = "http://127.0.0.1:17743";
+        configurePairing(process.env.GROVE_BIN!, data);
         const child = spawn(process.env.GROVE_BIN!, ["serve", "--listen", "127.0.0.1:17743", "--data-dir", data], {
             env: { ...process.env, GROVE_WEB_DIR: join(root, "web/build/client"), GROVE_LOG: "warn" },
             stdio: ["ignore", "inherit", "inherit"],

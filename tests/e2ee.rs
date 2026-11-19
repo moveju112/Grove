@@ -114,7 +114,7 @@ async fn encrypted_attachment_accepts_maximum_size_and_downloads_original() {
 async fn encrypted_login_api_idempotency_and_stream_preserve_existing_contracts() {
     let server = TestServer::start().await;
     let password = "test-only encrypted pairing password";
-    let (status, link) = server.post("/api/v1/pairings", json!({ "name": "encrypted browser", "password": password })).await;
+    let (status, link) = server.post("/api/v1/pairings", json!({ "name": "encrypted browser", "password": password, "issuance_password": common::ISSUANCE_PASSWORD })).await;
     assert_eq!(status, reqwest::StatusCode::CREATED);
     let mut c = Channel::open(&server, None, Some("https://grove.choondoggy.com")).await;
     let meta = c.request("POST", "/api/v1/auth/pairing",

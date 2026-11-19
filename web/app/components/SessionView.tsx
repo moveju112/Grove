@@ -37,6 +37,7 @@ import { usePaneVisible } from "../state/paneVisibility";
 import { deliveryTiming } from "../state/deliveryTiming";
 import { useBotAvatar } from "../state/botAvatar";
 import { useCapability } from "../state/capabilities";
+import { subscribeSecondTick } from "../state/secondTick";
 import { AssistantIdentity } from "./assistant-identity";
 import { ApprovalCard, currentApprovalContract } from "./approvals";
 import { TurnTiming } from "./turn-timing/TurnTiming";
@@ -138,6 +139,8 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         restoredPosition((version) => version + 1);
     };
     const stick = useRef(savedPosition?.atBottom ?? true);
+    // 내가 보낸 뒤에는 직접 스크롤하기 전까지 맨 아래에 고정한다. 레이아웃 변화로 생긴 scroll은 고정을 풀지 않는다.
+    const pinned = useRef(false);
     const [unseen, setUnseen] = useState(false);
     const scroller = () => msgsRef.current?.closest('[data-testid="pane-body"]') as HTMLElement | null;
     const composerElement = () => msgsRef.current?.closest('[data-testid="session-view"]')?.querySelector<HTMLElement>('[data-testid="compose-surface"]');
@@ -181,7 +184,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             if (!el.clientHeight || !el.clientWidth) return;
             // 메시지 끝 표시가 스크롤 영역 아래쪽 80px 안에 보이면 '맨 아래를 보는 중'이다(아래 패널·입력창 높이와 무관).
             const b = bottom.current?.getBoundingClientRect();
-            stick.current = !!b && b.top <= messageViewportBottom() + 80;
+            stick.current = pinned.current || (!!b && b.top <= messageViewportBottom() + 80);
             if (stick.current) setUnseen(false);
             capturePosition();
         };
@@ -189,9 +192,25 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         // 위쪽에 붙이는 이전 페이지는 직접 보정하므로 이 영역에서는 끈다.
         const prevAnchor = el.style.overflowAnchor;
         el.style.overflowAnchor = "none";
+        // 입력창 안의 조작(초안 스크롤·Enter 전송)은 대화 스크롤 의도가 아니다.
+        const outsideComposer = (e: Event) => !(e.target instanceof Element && e.target.closest('[data-testid="compose-surface"]'));
+        const release = (e: Event) => { if (outsideComposer(e)) pinned.current = false; };
+        const releaseKey = (e: KeyboardEvent) => {
+            const editable = e.target instanceof HTMLElement && (e.target.isContentEditable || e.target.matches("input, textarea, select"));
+            if (!editable && ["PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown", " "].includes(e.key)) release(e);
+        };
+        const scrollbar = (e: PointerEvent) => { if (e.target === el) release(e); };
         el.addEventListener("scroll", on, { passive: true });
+        el.addEventListener("wheel", release, { passive: true });
+        el.addEventListener("touchmove", release, { passive: true });
+        el.addEventListener("keydown", releaseKey);
+        el.addEventListener("pointerdown", scrollbar);
         return () => {
             el.removeEventListener("scroll", on);
+            el.removeEventListener("wheel", release);
+            el.removeEventListener("touchmove", release);
+            el.removeEventListener("keydown", releaseKey);
+            el.removeEventListener("pointerdown", scrollbar);
             el.style.overflowAnchor = prevAnchor;
         };
     }, [!!s, !!latest.data]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -242,6 +261,8 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     const liveResponse = partial?.text === undefined ? undefined : partial;
     const showProgress = prefs.progressVisibility !== "hidden";
     const transcript = assistantTranscript(messages, liveResponse, showProgress);
+    const isActiveTurn = (turnId: string | null) => !!active && active.id === turnId;
+    const progressOpen = (turnId: string | null) => prefs.progressVisibility === "expanded" || isActiveTurn(turnId);
     const groupedSeq = (seq: number | null) => seq === null ? null : transcript.anchors.get(seq) ?? seq;
     // 앞에 붙인 페이지와 측정 높이의 위치 보정은 VirtualMessages가 같은 읽기 anchor로 처리한다.
     const loadOlder = async () => {
@@ -256,6 +277,8 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
 
     // 검색 결과에서 연 메시지로 이동(UI-026): 그 메시지가 나올 때까지 이전 페이지를 읽고, 가운데로 옮겨 잠시 강조한다.
     const [focusSeq, focusDone] = useFocusRequest(sessionId);
+    // 검색 결과로 이동하면 보낸 직후의 맨 아래 고정을 풀고 그 메시지를 보여준다.
+    if (focusSeq != null) pinned.current = false;
     const [highlight, setHighlight] = useState<number | null>(null);
     const [focusMiss, setFocusMiss] = useState(false);
     const loadingOlder = useRef(false);
@@ -325,7 +348,8 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
 
     const send = async (text: string, o: SendOptions, key: string, follow?: FollowKind, attachments: string[] = []) => {
         const request = { key, requires: [...modelOptionCapabilities(o), ...(room.data ? ["bot_rooms_v1"] : [])] };
-        // 내가 보낸 글과 그 답은 따라간다.
+        // 내가 보낸 글과 그 답은 직접 스크롤하기 전까지 따라간다.
+        pinned.current = true;
         toBottom();
         if (follow) {
             // 실행 중 추가 메시지(RUN-007): 서버가 실행 상태를 다시 확인하고, 그 사이 끝났으면 바로 새 요청으로 시작한다.
@@ -335,6 +359,12 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         if (o.mode === "save") await api.post(`/sessions/${sessionId}/messages`, { text, attachments }, { key });
         else await api.post(`/sessions/${sessionId}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, request);
     };
+
+    const retry = (turnId: string, options: SendOptions | null) => act(() => options
+        ? api.post(`/turns/${turnId}/retry`, { model_selection: {
+            profile_id: options.profileId, model: options.model, effort: options.effort ?? "auto", service_tier: options.serviceTier,
+        } }, { requires: ["turn_retry_model_selection_v1", ...modelOptionCapabilities(options)] })
+        : api.post(`/turns/${turnId}/retry`));
 
     const rewind = (m: Message) => {
         if (!s || !confirm("이 사용자 메시지와 이후 대화를 활성 이력에서 제외할까요?\n파일·Git 변경과 실행 기록은 되돌리지 않습니다.\n원문은 DB에 보관되지만 이 화면에서 자동 복원할 수 없습니다.")) return;
@@ -479,12 +509,19 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                             setUnseen(!!position && (latest.data?.items.at(-1)?.seq ?? 0) > position.lastSeq || !!partial?.text);
                             capturePosition();
                         }}
-                        stick={stick} bottom={bottom} onNavigate={() => { clearPendingPosition(); stick.current = false; }}
-                        render={(m) => (
+                        stick={stick} pinned={pinned} bottom={bottom} onNavigate={() => { clearPendingPosition(); pinned.current = false; stick.current = false; }}
+                        render={(m) => {
+                            const preceding = transcript.preceding.get(m.id);
+                            return (
                         <Stack gap={0} key={m.id} xstyle={highlight === m.seq && chatLayout.focusHit} data-seq={m.seq} data-highlighted={highlight === m.seq}>
+                            {preceding && <ChatMessage sender="assistant" density="compact" data-testid="pre-steer-progress"
+                                name={<AssistantIdentity name={assistantName} imageUrl={assistantImage} />}>
+                                <AssistantResponse content={preceding.content} progressStart={preceding.start}
+                                    progressOpen={progressOpen(m.turn_id)} progressActive={isActiveTurn(m.turn_id)} />
+                            </ChatMessage>}
                             {m.role === "assistant"
                                 ? <AssistantTurn row={transcript.assistants.get(m.id)!} name={assistantName} image={assistantImage}
-                                    showProgress={showProgress} progressOpen={!!active && active.id === m.turn_id} />
+                                    showProgress={showProgress} progressOpen={progressOpen(m.turn_id)} progressActive={isActiveTurn(m.turn_id)} />
                                 : <MessageView m={m} />}
                             {m.role === "user" && (
                                 <Stack direction="horizontal" align="center" gap={1} xstyle={chatLayout.actions}>
@@ -501,17 +538,16 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                                 </Stack>
                             )}
                         </Stack>
-                    )} />
-                {liveResponse && !transcript.handlesLive && (
+                    ); }} />
+                {transcript.liveTail && (
                     <ChatMessage sender="assistant" density="compact" data-testid="partial"
                         name={<AssistantIdentity name={assistantName} imageUrl={assistantImage}
-                            detail={liveResponse.text?.trim() ? "응답 중…" : "작업 중…"} />}>
-                        <AssistantResponse content={liveResponse} live showProgress={showProgress} />
+                            detail={transcript.liveTail.content.text?.trim() ? "응답 중…" : "작업 중…"} />}>
+                        <AssistantResponse content={transcript.liveTail.content} progressStart={transcript.liveTail.start} live showProgress={showProgress} />
                     </ChatMessage>
                 )}
                     </FileLinkContext.Provider>
                 </FileRefContext.Provider>
-                <Stack gap={0} ref={bottom} />
             </Stack>
             {unseen && (
                 <GroveButton xstyle={chatLayout.below} data-testid="new-below" onClick={toBottom}>
@@ -536,7 +572,11 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                 </Stack>
             )}
             {unknown.map((c) => <UnknownCard key={c.id} c={c} act={act} />)}
+            {/* 승인·질문 카드도 '맨 아래'에 포함해야 고정 스크롤이 카드를 입력창 뒤로 밀지 않는다. */}
+            <Stack gap={0} ref={bottom} />
             <Stack gap={1} xstyle={chatLayout.surface} data-testid="compose-surface">
+            <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands}
+                beforeComposer={(options, retryDisabled) => <>
             {failedTurn && (
                 <Card variant="muted" padding={3} xstyle={chatLayout.turnError} role="alert" data-testid="turn-ended">
                     <Stack gap={2}>
@@ -562,8 +602,8 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                         <Stack as="footer" direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                             {failedTurn.evidence && <TurnEvidence e={failedTurn.evidence} compact />}
                             <TurnEndRecord status={failedTurn.status} error={(failedTurn.error ?? {}) as EndErrorData} compact />
-                            <ServerActionButton type="button" variant="primary" density="compact" disabled={archived} xstyle={chatLayout.turnErrorRetry}
-                                onClick={() => void act(() => api.post(`/turns/${failedTurn.id}/retry`))}>
+                            <ServerActionButton type="button" variant="primary" density="compact" disabled={retryDisabled} xstyle={chatLayout.turnErrorRetry}
+                                onClick={() => void retry(failedTurn.id, options)}>
                                 <Icon name="restore" size={14} />다시 실행
                             </ServerActionButton>
                         </Stack>
@@ -576,7 +616,8 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                 messagesReady={latest.data?.items.some((m) => m.turn_id === timedTurn.id && m.created_at === timedTurn.finished_at) ?? false} /></Stack>}
             <BudgetNote sessionId={sessionId} active={active} />
             <FollowupsPanel sessionId={sessionId} running={!!active} onError={setErr} />
-            <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands}
+                </>}
+                runningProfileId={active?.profile_id}
                 statusAccessory={active && <Stack direction="horizontal" align="center" justify="between" gap={2} paddingInline={2} paddingBlock={1}
                     xstyle={chatLayout.turnStatus} data-testid="turn-status">
                     <Stack direction="horizontal" align="center" gap={2} xstyle={chatLayout.turnStatusSummary}>
@@ -638,8 +679,8 @@ function TurnEvidence({ e, compact = false }: { e: NonNullable<Turn["evidence"]>
     );
 }
 
-function AssistantTurn({ row, name, image, showProgress, progressOpen }: {
-    row: AssistantRow; name: string; image: string | null; showProgress: boolean; progressOpen: boolean;
+function AssistantTurn({ row, name, image, showProgress, progressOpen, progressActive }: {
+    row: AssistantRow; name: string; image: string | null; showProgress: boolean; progressOpen: boolean; progressActive: boolean;
 }) {
     const { latest, content, prior, attachments, live } = row;
     const meta = latest.content as { model?: string; bot?: { name?: string } };
@@ -650,7 +691,8 @@ function AssistantTurn({ row, name, image, showProgress, progressOpen }: {
         name={<GroveText type="inherit" color="secondary" data-testid="msg-who">
             <AssistantIdentity name={meta.bot?.name || name} imageUrl={meta.bot?.name ? null : image} detail={detail} />
         </GroveText>}>
-        <AssistantResponse content={content} prior={prior} live={live} showProgress={showProgress} progressOpen={progressOpen} />
+        <AssistantResponse content={content} prior={prior} live={live} showProgress={showProgress} progressOpen={progressOpen}
+            progressActive={progressActive} progressStart={row.progressStart} />
         {!live && answer.trim() && <Stack direction="horizontal" align="center" gap={2}>
             <CopyButton text={answer} />
             <When at={latest.created_at} absolute part="time" titlePart="datetime" />
@@ -942,12 +984,11 @@ const SOURCE: Record<string, string> = { session: "이 대화", project: "프로
 /// 예산이 없으면(기본) 아무것도 표시하지 않는다: 정상 진행을 시간으로 끊지 않는다.
 function BudgetNote({ sessionId, active }: { sessionId: string; active?: Turn }) {
     const eff = useQuery<Eff>(`settings:effective:session:${sessionId}`, () => api.get(`/settings/effective?session_id=${sessionId}`));
-    const [now, setNow] = useState(Date.now());
+    const [now, setNow] = useState(Date.now);
     const fixed = (active as unknown as { definition?: { budget?: { max_tokens?: number; max_minutes?: number; max_cost_cents?: number; currency?: string } } } | undefined)?.definition?.budget;
     useEffect(() => {
         if (!fixed?.max_minutes) return;
-        const t = setInterval(() => setNow(Date.now()), 1000);
-        return () => clearInterval(t);
+        return subscribeSecondTick(() => setNow(Date.now()));
     }, [fixed?.max_minutes]);
     if (active) {
         if (!fixed) return null;

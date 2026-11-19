@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as L from "./layout";
 import {
-    DEFAULT_SHORTCUTS, SHORTCUT_ACTIONS, applyTabShortcut, conflictingShortcut, formatShortcut,
+    DEFAULT_SHORTCUTS, SHORTCUT_ACTIONS, applyTabShortcut, conflictingShortcut, formatShortcut, kbdKeys,
     normalizeShortcuts, parseShortcut, physicalBinding, shortcutBinding, shortcutFor,
 } from "./shortcuts";
 
@@ -17,6 +17,14 @@ function layout() {
 }
 
 describe("키보드 프리셋과 사용자 지정", () => {
+    it("빈 영역의 단축키 표시는 플랫폼별 실제 조합을 Kbd 형식으로 바꾼다", () => {
+        expect(kbdKeys("Mod+KeyT", false)).toBe("ctrl+t");
+        expect(kbdKeys("Mod+KeyT", true)).toBe("meta+t");
+        expect(kbdKeys("Ctrl+Shift+KeyT", true)).toBe("ctrl+shift+t");
+        expect(kbdKeys("Mod+Comma", false)).toBe("ctrl+,");
+        expect(kbdKeys(null, false)).toBe("");
+    });
+
     it("기본 프리셋은 Windows/Linux에서 Ctrl, Mac에서 Cmd를 쓴다", () => {
         expect(shortcutFor(key("KeyW", { ctrlKey: true }), DEFAULT_SHORTCUTS, false)).toBe("closeTab");
         expect(shortcutFor(key("KeyT", { metaKey: true }), DEFAULT_SHORTCUTS, true)).toBe("newSession");

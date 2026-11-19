@@ -11,6 +11,7 @@ import {
 } from "./projection";
 import { Card } from "@astryxdesign/core/Card";
 import { KeyValues } from "../../design/KeyValues";
+import { SentenceText } from "../HelpTip";
 
 export type ApprovalFeedback = ApprovalIdentity & (
     | { phase: "pending" }
@@ -122,16 +123,18 @@ function ApprovalCardInstance({ call, effect, choices, onDecision, feedback, onR
             ) : <>
                 <KeyValues data-testid="approval-target" items={projection.fields.map((field) => [field.label, <code>{field.value}</code>])} />
                 <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="approval-effect">{effectInfo?.consequence ?? "도구 분류를 확인할 수 없어 승인할 수 없습니다."}</GroveText>
+                {choices.includes("approve_always") && <GroveText as="p" display="block" type="supporting" color="warning"><SentenceText text="항상 승인은 모든 프로젝트·대화의 이 도구 전체에 적용됩니다. 설정의 ‘승인 없이 실행할 도구’에서 해제할 수 있습니다." /></GroveText>}
                 {projection.notices.map((notice) => <GroveText as="p" display="block" type="supporting" color="secondary" key={notice}>{notice}</GroveText>)}
                 {choices.includes("approve_session") && <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="approval-allowed-scope">대화 승인은 이 대화의 <code>{displayText(call.name, 80)}</code> 도구 전체에 적용됩니다.</GroveText>}
             </>}
             <GroveText as="p" display="block" type="inherit" color="inherit" id={statusId} role={failure || policyBlocked ? "alert" : "status"} aria-live={failure || policyBlocked ? "assertive" : "polite"} aria-atomic="true" data-testid="approval-status">
                 {policyBlocked ? "권한 또는 도구 정책으로 실행이 차단되었습니다." : !disabled && !pending ? null : status}
             </GroveText>
-            {effective.approval_scope && <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="approval-scope">{effective.approval_scope === "once" ? "이번만 승인" : effective.approval_scope === "session" ? "이 대화에서 허용됨" : effective.approval_scope === "policy" ? "정책(tools.allow)으로 허용" : "허용 범위 확인 필요"}</GroveText>}
+            {effective.approval_scope && <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="approval-scope">{effective.approval_scope === "once" ? "이번만 승인" : effective.approval_scope === "session" ? "이 대화에서 허용됨" : effective.approval_scope === "policy" ? "정책으로 허용" : "허용 범위 확인 필요"}</GroveText>}
             <GroveStack gap={2} direction="horizontal" align="center" wrap="wrap">
                 {choices.includes("approve_session") && <GroveButton disabled={disabled || !effect} onClick={() => submit("approve_session")}>이 대화에서 승인</GroveButton>}
                 {choices.includes("approve") && <GroveButton variant={choices.includes("approve_session") ? "secondary" : "primary"} disabled={disabled || !effect} onClick={() => submit("approve")}>이번만 승인</GroveButton>}
+                {choices.includes("approve_always") && <GroveButton variant="secondary" disabled={disabled || !effect} onClick={() => submit("approve_always")}>항상 승인</GroveButton>}
                 {choices.includes("deny") && <GroveButton ref={deny} variant="secondary" disabled={disabled} onClick={() => submit("deny")}>거부</GroveButton>}
                 {onRefresh && (failure || expired || closed) && <GroveButton variant="secondary" disabled={refreshing} onClick={() => void refresh()}>{refreshing ? "최신 상태 확인 중" : "최신 상태 확인"}</GroveButton>}
             </GroveStack>

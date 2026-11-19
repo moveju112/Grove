@@ -40,7 +40,6 @@ pub const HELP: &str = "grove exec — 개인 문맥 없이 명시한 모델로 
   --api-key-env 변수        API 키를 읽을 환경변수 이름(키 원문은 인자로 받지 않음)
   --tools                   Grove 도구 사용(읽기 도구는 바로, 변경 도구는 --allow-tool에 있어야 실행)
   --allow-tool 이름         승인 없이 실행할 변경 도구(여러 번 지정)
-  --read-only               읽기 도구만 허용
   --effort low|medium|high  추론 강도(기본: 보내지 않음)
   --max-tokens N            요청 token 예산   --max-minutes N   요청 시간 예산
   --run-dir 경로            작업 데이터·receipt 저장 위치(없거나 빈 폴더, 기본 <데이터 경로>/exec-runs/<run ID>)
@@ -61,7 +60,6 @@ struct Opts {
     project: Option<PathBuf>,
     tools: bool,
     allow: Vec<String>,
-    read_only: bool,
     effort: Option<String>,
     max_tokens: Option<i64>,
     max_minutes: Option<i64>,
@@ -84,7 +82,6 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             "--project" => o.project = Some(PathBuf::from(val(&mut it, a)?)),
             "--tools" => o.tools = true,
             "--allow-tool" => o.allow.push(val(&mut it, a)?),
-            "--read-only" => o.read_only = true,
             "--effort" => o.effort = Some(val(&mut it, a)?),
             "--max-tokens" => o.max_tokens = Some(num(val(&mut it, a)?, a)?),
             "--max-minutes" => o.max_minutes = Some(num(val(&mut it, a)?, a)?),
@@ -107,9 +104,6 @@ fn parse(args: &[String]) -> Result<Opts, String> {
     }
     if !o.allow.is_empty() && !o.tools {
         return Err("--allow-tool은 --tools와 함께 씁니다".into());
-    }
-    if o.read_only && !o.allow.is_empty() {
-        return Err("--read-only와 --allow-tool은 함께 쓸 수 없습니다".into());
     }
     Ok(o)
 }
@@ -307,10 +301,8 @@ async fn drive(api: &Api, o: &Opts, prompt: &str, project: &Path, api_key: Optio
     if let Err(e) = api.setting("server/-", crate::settings::FULL_ACCESS, json!(false)).await {
         return config_err(e);
     }
-    if o.read_only {
-        if let Err(e) = api.setting("server/-", "tools.mode", json!("read_only")).await {
-            return config_err(e);
-        }
+    if let Err(e) = api.setting("server/-", "tools.mode", json!("ask")).await {
+        return config_err(e);
     }
     if !o.allow.is_empty() {
         if let Err(e) = api.setting("server/-", "tools.allow", json!(o.allow.join(","))).await {
@@ -441,7 +433,7 @@ mod tests {
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--stdin"])).is_err());
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--api-key", "sk"])).is_err(), "키 원문 인자 거부");
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--allow-tool", "write"])).is_err(), "--tools 없이 허용 목록");
-        assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--tools", "--read-only", "--allow-tool", "write"])).is_err());
+        assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--tools", "--read-only"])).is_err());
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--protocol", "cohere"])).is_err());
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--max-tokens", "0"])).is_err());
         let o = parse(&args(&["--base-url", "http://x", "--model", "m", "--stdin", "--tools", "--allow-tool", "write", "--max-minutes", "3"])).unwrap();

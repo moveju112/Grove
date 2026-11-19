@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, ensureProjects, login } from "./helpers";
+import { frames } from "./fixture";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script } from "./helpers";
 
 // UI-008·009: 위를 읽는 중에는 새 메시지가 와도 위치를 지키고 알림만 띄우며, 이전 페이지를 붙여도 읽던 위치를 유지한다.
 test("과거 메시지를 읽는 동안 자동 스크롤하지 않고, 이전 페이지를 불러와도 읽던 메시지가 그 자리에 남는다", async ({ page }) => {
@@ -119,4 +120,48 @@ test("앱을 닫았다 다시 열어도(탭 저장소 없음) 대화의 마지�
     } finally {
         await restarted.close();
     }
+});
+
+test("내가 보내면 직접 스크롤하기 전까지 레이아웃이 바뀌어도 맨 아래를 따라간다", async ({ page }) => {
+    test.setTimeout(90_000);
+    const { a } = await ensureProjects();
+    const profile = await ensureProfile();
+    const title = `보낸 뒤 고정 ${Date.now()}`;
+    const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    for (let i = 0; i < 120; i++) await apiCall("POST", `/sessions/${s.id}/messages`, { text: `기록 ${i}\n\n${"길이가 다른 문단입니다. ".repeat(i % 7 === 0 ? 300 : 4)}` });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    await login(page);
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
+    const view = page.getByTestId("session-view");
+    const body = page.getByTestId("pane-body").filter({ has: view });
+    await expect(view.getByTestId("msg-user").last()).toContainText("기록 119");
+    await composerOption(view, "모델 프로필", profile);
+    const atBottom = () => body.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop < 4);
+    const input = view.getByLabel("메시지 입력");
+
+    // 위를 읽다가 보낸 뒤, 사용자 입력이 아닌 scroll(레이아웃 보정 등)이 생겨도 답을 끝까지 따라간다.
+    await body.evaluate((el) => (el.scrollTop = el.scrollHeight / 4));
+    await script({ frames: frames.text(["고정 답변 문단입니다.\n\n".repeat(60), "고정 답변 끝"]), delayMs: 600, marker: "고정 질문" });
+    await input.fill("고정 질문");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    await expect(view.getByTestId("msg-user").last()).toContainText("고정 질문");
+    await body.evaluate((el) => (el.scrollTop = 0));
+    await expect(view.getByText("고정 답변 끝")).toBeVisible();
+    await expect.poll(atBottom).toBe(true);
+    await expect(view.getByText("고정 답변 끝")).toBeInViewport();
+    await expect(view.getByTestId("new-below")).toHaveCount(0);
+
+    // 직접 휠로 올리면 고정을 풀고 읽던 위치를 지킨다.
+    await script({ frames: frames.text(["해제 답변 문단입니다.\n\n".repeat(60), "해제 답변 끝"]), delayMs: 800, marker: "해제 질문" });
+    await input.fill("해제 질문");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    await expect(view.getByTestId("msg-user").last()).toContainText("해제 질문");
+    const box = (await body.boundingBox())!;
+    await page.mouse.move(box.x + box.width / 2, box.y + 100);
+    await page.mouse.wheel(0, -3000);
+    // 화면 밖 메시지는 가상 목록에서 그리지 않으므로 답이 끝날 시간을 기다린다.
+    await expect(view.getByTestId("new-below")).toBeVisible();
+    await page.waitForTimeout(2500);
+    expect(await atBottom()).toBe(false);
+    await expect(view.getByTestId("new-below")).toBeVisible();
 });

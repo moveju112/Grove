@@ -92,6 +92,7 @@ async fn new_turn_and_followup_use_tools_by_default_but_allow_an_explicit_opt_ou
 async fn explicit_restriction_survives_restart_and_clearing_it_restores_the_default() {
     let (mut s, project, sid) = setup().await;
     let root = std::path::PathBuf::from(project["root_path"].as_str().unwrap());
+    setting(&s, "server", "-", "tools.mode", 0, json!("ask")).await;
     setting(&s, "server", "-", "tools.full_access", 0, json!(false)).await;
     s.restart().await;
     for (name, args) in [
@@ -110,9 +111,10 @@ async fn explicit_restriction_survives_restart_and_clearing_it_restores_the_defa
 }
 
 #[tokio::test]
-async fn full_access_can_be_scoped_and_never_overrides_explicit_deny_or_read_only() {
+async fn full_access_can_be_scoped_and_never_overrides_explicit_deny() {
     let (s, project, sid) = setup().await;
     let pid = project["id"].as_str().unwrap();
+    setting(&s, "project", pid, "tools.mode", 0, json!("ask")).await;
     setting(&s, "server", "-", "tools.full_access", 0, json!(true)).await;
     let (status, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/tools.full_access"),
         json!({"expected_revision":0,"value":true})).await;
@@ -121,15 +123,8 @@ async fn full_access_can_be_scoped_and_never_overrides_explicit_deny_or_read_onl
     let call = request(&s, &sid, "write", json!({"path":"pending.txt","content":"no"})).await;
     assert_eq!(call["status"], "pending_approval");
     setting(&s, "project", pid, "tools.full_access", 1, json!(true)).await;
-    setting(&s, "server", "-", "tools.mode", 0, json!("read_only")).await;
-    let call = request(&s, &sid, "write", json!({"path":"blocked.txt","content":"no"})).await;
-    assert_eq!(call["result"]["error"]["code"], "read_only");
-    setting(&s, "session", &sid, "tools.mode", 0, json!("ask")).await;
-    let call = request(&s, &sid, "shell", json!({"command":"printf forbidden"})).await;
-    assert_eq!(call["result"]["error"]["code"], "read_only", "상위 읽기 전용을 하위에서 해제하지 않는다");
-    setting(&s, "server", "-", "tools.mode", 1, json!("ask")).await;
     setting(&s, "session", &sid, "tools.deny", 0, json!("shell")).await;
-    let call = request(&s, &sid, "shell", json!({"command":"printf forbidden"})).await;
+    let call = request(&s, &sid, "shell", json!({"command":"printf forbidden > blocked.txt"})).await;
     assert_eq!(call["result"]["error"]["code"], "policy_denied");
     let call = request(&s, &sid, "write", json!({"path":"allowed.txt","content":"YES\n"})).await;
     assert_eq!(call["status"], "succeeded");

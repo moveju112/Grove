@@ -55,6 +55,17 @@ describe("HTTP 요청 식별·timeout·취소 계약", () => {
         expect(fetch).toHaveBeenCalledTimes(2);
     });
 
+    it("종료된 로그인 방식의 401은 새로고침 직후에도 재등록 안내로 남는다", async () => {
+        const retired = { error: { code: "login_retired", message: "이전 로그인 방식이 종료됐어요." } };
+        const fetch = vi.fn().mockResolvedValueOnce(new Response(JSON.stringify(retired), { status: 401 }));
+        vi.stubGlobal("fetch", fetch);
+        // 로그인 세션이 없는 새로고침 직후 상태에서 시작한다.
+        expect(await client.refresh()).toBeNull();
+        expect(client.isLoggedIn()).toBe(false);
+        expect(client.lastAuthEnd()).toBe("retired");
+        expect(client.needsAuthRecovery()).toBe(false);
+    });
+
     it.each(["json", "binary"] as const)("headers 뒤에 인증이 바뀌어도 늦은 %s 오류 본문을 전달하지 않는다", async (kind) => {
         let body!: ReadableStreamDefaultController<Uint8Array>;
         const response = new Response(new ReadableStream<Uint8Array>({ start(controller) { body = controller; } }), { status: 403 });

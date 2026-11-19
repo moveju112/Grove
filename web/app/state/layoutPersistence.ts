@@ -20,6 +20,7 @@ type Options = {
 
 const validRevision = (v: unknown): v is number => Number.isSafeInteger(v) && (v as number) >= 0;
 const sameLayout = (a: Layout, b: Layout) => JSON.stringify(a) === JSON.stringify(b);
+const layoutStorageKey = (key: string) => `grove.layout.${key}`;
 
 // 기존의 배치 JSON도 읽는다. 새 사본만 revision·미반영 여부·원래 요청 키를 함께 보관한다.
 function parseCopy(raw: string | null): Copy | null {
@@ -35,6 +36,11 @@ function parseCopy(raw: string | null): Copy | null {
     } catch { return null; }
 }
 
+export function readStoredLayout(store: Pick<Storage, "getItem">, key: string): Layout | null {
+    try { return parseCopy(store.getItem(layoutStorageKey(key)))?.layout ?? null; }
+    catch { return null; }
+}
+
 // 키 하나의 저장 수명. 폐기·로그아웃 뒤의 응답은 사본을 다시 만들지 않는다.
 export class LayoutPersistence {
     private copy: Copy | null = null;
@@ -47,7 +53,7 @@ export class LayoutPersistence {
     private storageKey: string;
 
     constructor(public readonly key: string, private options: Options) {
-        this.storageKey = `grove.layout.${key}`;
+        this.storageKey = layoutStorageKey(key);
     }
 
     private active() { return !this.closed && this.options.active(); }

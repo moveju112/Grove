@@ -4,6 +4,13 @@ import { parseOpenTarget } from "./layout";
 export const DRAG_PROJECT = "application/x-grove-project";
 export const PROJECT_ORDER = "grove.layout.projectOrder";
 export type ProjectSort = "name" | "recent" | "manual";
+
+export const PROJECT_SORT = "grove.projectSort";
+
+export function readProjectSort(storage: Pick<Storage, "getItem">): ProjectSort {
+    const value = storage.getItem(PROJECT_SORT);
+    return value === "manual" || value === "recent" ? value : "name";
+}
 export type ProjectDrop = { kind: "order"; id: string; after: boolean } | { kind: "folder"; folderId: string | null };
 type Item = Pick<Project, "id" | "folder_id">;
 

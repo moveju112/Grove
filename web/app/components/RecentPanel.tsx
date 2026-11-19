@@ -3,12 +3,11 @@ import { Card } from "@astryxdesign/core/Card";
 import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { useEffect, useRef, useState } from "react";
-import * as stylex from "@stylexjs/stylex";
 import { ApiError, api } from "../api/client";
 import type { RecentItem, RecentPage } from "../api/generated";
 import { loadPrefs, savePrefs, usePrefs } from "../state/device";
 import { type RecentIntent, patchRecent } from "../state/recentPatch";
-import { effectiveRecentWindow, groupBySplit, recentSince, recentWindowLabel } from "../state/recentWindow";
+import { effectiveRecentWindow, groupBySplit, recentSince, recentWindowLabel, type RecentSplitGroup } from "../state/recentWindow";
 import { When } from "./When";
 import { invalidate, useQuery } from "../state/store";
 import { DRAG_OPEN } from "../state/layout";
@@ -33,7 +32,7 @@ const STATUS: Record<string, string> = {
     cancelled: "취소됨",
 };
 
-const NO_LINKED: ReadonlySet<string> = new Set();
+const NO_SPLITS: readonly RecentSplitGroup[] = [];
 
 /// 분 단위 현재 시각. 시간 범위 하한을 1분마다 다시 계산한다.
 function useMinute(): Date {
@@ -45,9 +44,8 @@ function useMinute(): Date {
     return now;
 }
 
-/// linked: 현재 배치에서 분할로 함께 열린 대화 ID. 원본처럼 한 묶음으로 보여 준다.
-export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar" }: {
-    open: Opener; linked?: ReadonlySet<string>; presentation?: "sidebar" | "home";
+export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sidebar" }: {
+    open: Opener; splitGroups?: readonly RecentSplitGroup[]; presentation?: "sidebar" | "home";
 }) {
     const [limit, setLimit] = useState(30);
     const [err, setErr] = useState<string | null>(null);
@@ -117,12 +115,12 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
                 {recent.error instanceof ApiError ? recent.error.message : "최근 목록을 불러오지 못했습니다."}
             </GroveText>}
             <GroveList density="compact" edge="flush" xstyle={presentation === "sidebar" && workspaceStyles.recentList} data-testid="recent-list" aria-busy={recent.loading}>
-                {groupBySplit(items ?? [], linked).map(({ item, linked: members }) => members.length === 0 ? row(item) : (
+                {groupBySplit(items ?? [], splitGroups).map(({ item, linked: members }) => members.length === 0 ? row(item) : (
                     <GroveListItem key={item.id} xstyle={presentation === "sidebar" && workspaceStyles.recentRow} data-testid="recent-split-group" aria-label="분할로 함께 연 대화" label={
                         <Card variant="muted" padding={0} xstyle={workspaceStyles.recentGroup} data-testid="recent-split-surface">
                         <GroveList density="compact" edge="flush" xstyle={presentation === "sidebar" && workspaceStyles.recentList}>
                             {row(item, members.map((m) => m.title).join(", "))}
-                            {members.map((m) => row(m, item.title))}
+                            {members.map((m) => row(m, [item, ...members].filter((other) => other !== m).map((other) => other.title).join(", ")))}
                         </GroveList>
                         </Card>
                     } />
@@ -142,7 +140,9 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
         const running = it.kind === "session" && it.status === "running";
         const completed = it.kind === "session" && it.completion_unread;
         return (
-                    <GroveListItem key={it.id} xstyle={presentation === "sidebar" && workspaceStyles.recentRow} data-testid={presentation === "home" ? "home-recent-item" : "recent-item"}
+                    <GroveListItem key={it.id} xstyle={[presentation === "sidebar" && workspaceStyles.recentRow, workspaceStyles.recentState]}
+                        data-testid={presentation === "home" ? "home-recent-item" : "recent-item"}
+                        data-recent-state={running ? "running" : completed ? "completed" : undefined}
                         data-session={it.kind === "session" ? it.resource_id : undefined} label={
                         <Button type="button" appearance="navigation" density={presentation === "home" ? "touch" : undefined}
                             xstyle={presentation === "sidebar" && [workspaceStyles.recentRowControl, workspaceStyles.recentTitle]}
@@ -165,16 +165,8 @@ export function RecentPanel({ open, linked = NO_LINKED, presentation = "sidebar"
                         </Button>
                     } endContent={
                         <Stack direction="horizontal" align="center" gap={0} xstyle={workspaceStyles.recentActions}>
-                            <GroveText type="supporting" color="secondary" textWrap="nowrap" data-testid="recent-time" xstyle={workspaceStyles.recentTime}>
+                            <GroveText type="supporting" color="secondary" textWrap="nowrap" xstyle={workspaceStyles.recentTime} data-testid="recent-time">
                                 <When at={it.last_activity_at} relative compact />
-                                {running && <svg role="progressbar" aria-label="실행 중" {...stylex.props(workspaceStyles.recentRing)}>
-                                    <rect {...stylex.props(workspaceStyles.recentRingOutline, workspaceStyles.recentRingTrack)} x="1" y="1" rx="7" />
-                                    <rect {...stylex.props(workspaceStyles.recentRingOutline, workspaceStyles.recentRingSweep)} x="1" y="1" rx="7" pathLength="100" />
-                                </svg>}
-                                {completed && <Stack as="span" role="img" aria-label="완료 · 확인 안 함" data-testid="recent-completed"
-                                    xstyle={workspaceStyles.recentCheck}>
-                                    <Icon name="check" size={10} />
-                                </Stack>}
                             </GroveText>
                             <ServerActionButton appearance="icon" density="compact" width="var(--spacing-8)"
                                 xstyle={[workspaceStyles.recentClose, presentation === "sidebar" && workspaceStyles.recentRowControl]}

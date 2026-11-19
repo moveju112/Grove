@@ -52,6 +52,11 @@ async fn single_choice_question_waits_for_input_then_resumes_with_answer() {
     let (_, r) = s.get("/api/v1/recent").await;
     let item = r["items"].as_array().or(r.as_array()).unwrap().iter().find(|i| i["resource_id"] == sid.as_str()).unwrap().clone();
     assert_eq!(item["status"], "awaiting_input", "{item}");
+    // 검색의 상태 필터도 같은 분류를 받는다
+    let (st, found) = s.get("/api/v1/sessions/search?status=awaiting_input").await;
+    assert_eq!(st, StatusCode::OK, "{found}");
+    assert_eq!(found["total"], 1);
+    assert_eq!(found["items"][0]["session"]["id"], sid.as_str());
     // 잘못된 답: 없는 선택지·여러 개·직접 입력 불가·빈 답·오래된 revision
     assert_eq!(answer(&s, &c, json!({ "choices": ["MySQL"] })).await.0, StatusCode::BAD_REQUEST);
     assert_eq!(answer(&s, &c, json!({ "choices": ["SQLite", "Postgres"] })).await.0, StatusCode::BAD_REQUEST);

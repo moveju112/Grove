@@ -294,7 +294,24 @@ fn headers_frame(parts: &axum::http::response::Parts) -> Vec<u8> {
 }
 
 async fn serve(app: &App, host: &str, ws: &mut WebSocket) -> Result<(), Failure> {
-    let (mut rx, mut tx, version) = tokio::time::timeout(HANDSHAKE, handshake(app, ws)).await??;
+    let began = std::time::Instant::now();
+    let connection_id = crate::util::new_id();
+    let (rx, tx, version) = match tokio::time::timeout(HANDSHAKE, handshake(app, ws)).await {
+        Ok(Ok(keys)) => keys,
+        result => {
+            let outcome = if result.is_err() { "timeout" } else { "rejected_or_closed" };
+            tracing::debug!(%connection_id, outcome, elapsed_ms = began.elapsed().as_millis() as u64, "암호화 연결 확인 실패");
+            return result?.map(|_| ());
+        }
+    };
+    tracing::debug!(%connection_id, version, elapsed_ms = began.elapsed().as_millis() as u64, "암호화 연결 준비");
+    let result = serve_verified(app, host, ws, rx, tx, version).await;
+    let outcome = if result.is_ok() { "closed" } else { "interrupted" };
+    tracing::debug!(%connection_id, version, outcome, elapsed_ms = began.elapsed().as_millis() as u64, "암호화 연결 종료");
+    result
+}
+
+async fn serve_verified(app: &App, host: &str, ws: &mut WebSocket, mut rx: Cipher, mut tx: Cipher, version: u8) -> Result<(), Failure> {
     if version == 2 { return mux::serve(app, host, ws, rx, tx).await; }
     let plain = tokio::time::timeout(HANDSHAKE, receive(ws, &mut rx)).await??;
     let op: Operation = serde_json::from_slice(&plain)?;

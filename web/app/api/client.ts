@@ -91,9 +91,10 @@ export function onAuthChange(fn: (s: Session | null) => void): () => void {
     return () => listeners.delete(fn);
 }
 
-/// 마지막으로 로그인이 끝난 이유(로그인 화면 안내용, UI-027). expired: refresh 실패로 만료, logout: 사용자가 로그아웃.
-let authEnd: "expired" | "logout" | null = null;
-export function lastAuthEnd(): "expired" | "logout" | null {
+/// 마지막으로 로그인이 끝난 이유(로그인 화면 안내용, UI-027). expired: refresh 실패로 만료, logout: 사용자가 로그아웃,
+/// retired: 종료된 소유자 토큰 로그인으로 만든 세션이라 기기 등록이 필요함.
+let authEnd: "expired" | "logout" | "retired" | null = null;
+export function lastAuthEnd(): "expired" | "logout" | "retired" | null {
     return authEnd;
 }
 
@@ -200,7 +201,10 @@ export function refresh(): Promise<Session | null> {
                         if (owner !== authEpoch || lastAuthEnd() === "logout") return current;
                         if (resp.status === 401) {
                             clearRefreshRequestKey(key);
-                            if (current) authEnd = "expired";
+                            const body = await parse(resp) as { error?: { code?: unknown } } | null;
+                            // 새로고침 직후(current 없음)에도 종료된 로그인 방식이면 다시 등록하라고 알린다.
+                            if (body?.error?.code === "login_retired") authEnd = "retired";
+                            else if (current) authEnd = "expired";
                             setSession(null);
                             return null;
                         }

@@ -6,6 +6,7 @@ import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { finishSetup, apiCall, ensureProfile, ensureProjects, login, registerBrowser, script, selectChoice, sessionView, state } from "./helpers";
+import { configurePairing } from "./global-setup";
 import { frames } from "./fixture";
 
 type Detail = { id: string; status: string; timing: { total_ms: number; running: boolean } };
@@ -98,6 +99,7 @@ test("격리 서버를 실제 재시작하면 진행 턴은 중단으로 복구�
     const port = await freePort();
     const base = `http://127.0.0.1:${port}`;
     const bin = process.env.GROVE_BIN ?? join(root, "target/debug/grove");
+    configurePairing(bin, data);
     const launch = () => spawn(bin, ["serve", "--listen", `127.0.0.1:${port}`, "--data-dir", data], {
         env: { ...process.env, GROVE_WEB_DIR: join(root, "web/build/client"), GROVE_LOG: "warn" },
         stdio: ["ignore", "ignore", "inherit"],

@@ -166,7 +166,7 @@ async fn parallel_load_calls_choose_by_model_call_order_and_do_not_leak_to_anoth
 #[tokio::test]
 async fn policy_unavailable_mcp_and_invalid_arguments_are_explicit_errors_not_execution() {
     for (key,value,names,code) in [
-        ("tools.mode","read_only",json!(["write"]),"read_only"),
+        ("tools.deny","write",json!(["write"]),"policy_denied"),
         ("tools.deny","shell",json!(["shell"]),"policy_denied"),
         ("tools.deny","load_tool",json!(["write"]),"policy_denied"),
         ("tools.mode","ask",json!(["mcp_call"]),"unsupported_tool"),
@@ -186,10 +186,6 @@ async fn policy_unavailable_mcp_and_invalid_arguments_are_explicit_errors_not_ex
         let first = &f.requests()[0];
         let descriptions = first["tools"].to_string();
         assert!(!descriptions.contains("mcp_call:"));
-        if key == "tools.mode" && value == "read_only" {
-            assert!(!tool_names(first).contains(&"edit"));
-            assert!(!descriptions.contains("write:"));
-        }
         if key == "tools.deny" {
             assert!(!tool_names(first).contains(&value));
             assert!(!descriptions.contains(&format!("{value}:")));

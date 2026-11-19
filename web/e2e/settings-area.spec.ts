@@ -88,8 +88,8 @@ for (const width of [390, 1280]) {
             await openSettings(page, "local");
             const settings = page.getByTestId("settings");
             const leaves = settings.getByTestId("setting-leaves");
-            const trigger = leaves.getByRole("button", { name: /^잎 애니메이션/ });
-            const enabled = leaves.getByRole("combobox", { name: "대기 중 새싹 표시", exact: true });
+            const trigger = leaves.getByRole("button", { name: /^진행 중 효과/ });
+            const enabled = leaves.getByRole("combobox", { name: "진행 중 표시", exact: true });
             const groups = leaves.getByRole("combobox", { name: "잎 무리 수", exact: true });
             const speed = leaves.getByRole("combobox", { name: "잎 회전 속도", exact: true });
             await expect(trigger).toHaveAttribute("aria-expanded", "false");
@@ -98,7 +98,7 @@ for (const width of [390, 1280]) {
             await page.screenshot({ path: info.outputPath(`leaf-settings-collapsed-${width}.png`) });
             await trigger.click();
             await expect(enabled).toBeVisible();
-            await selectChoice(enabled, "true");
+            await selectChoice(enabled, "animated");
             await selectChoice(groups, "4");
             await selectChoice(speed, "fast");
             await page.screenshot({ path: info.outputPath(`leaf-settings-expanded-${width}.png`) });
@@ -112,6 +112,7 @@ for (const width of [390, 1280]) {
             await expect(speed).toBeVisible();
             await expect(speed).toHaveAttribute("data-selected-value", "fast");
             await expect(groups).toHaveAttribute("data-selected-value", "4");
+            await selectChoice(enabled, "static");
             await page.emulateMedia({ reducedMotion: "reduce" });
             await trigger.click();
             await trigger.click();
@@ -123,6 +124,8 @@ for (const width of [390, 1280]) {
             await expect(trigger).toHaveAttribute("aria-expanded", "false");
             await settings.getByLabel("설정 검색", { exact: true }).fill("새싹");
             await expect(groups).toBeVisible();
+            await expect(enabled).toHaveAttribute("data-selected-value", "static");
+            await expect(groups).toBeDisabled();
             await expect(groups).toHaveAttribute("data-selected-value", "4");
             await expect(speed).toHaveAttribute("data-selected-value", "fast");
         });
@@ -153,7 +156,6 @@ for (const width of [390, 1280]) {
             }
             await expect(settings.getByTestId("setting-client-status")).toHaveCount(0);
             await expect(settings.getByTestId("setting-devices")).toHaveCount(0);
-            await expect(settings.getByTestId("setting-pairing")).toHaveCount(0);
 
             await daemon.click();
             await expect(daemon).toHaveAttribute("aria-selected", "true");
@@ -162,7 +164,7 @@ for (const width of [390, 1280]) {
             await expect(settings.getByRole("button", { name: "화면·입력", exact: true })).toHaveCount(0);
             await settings.getByRole("button", { name: "기기·연결", exact: true }).click();
             await expect(settings.getByTestId("setting-devices")).toBeVisible();
-            await expect(settings.getByTestId("setting-pairing")).toBeVisible();
+            await expect(settings.getByTestId("setting-devices").getByRole("button", { name: "페어링 링크 발급" })).toBeVisible();
             for (const id of ["hosts", "device-name", "browser-capabilities", "logout"]) {
                 await expect(settings.getByTestId(`setting-${id}`)).toHaveCount(0);
             }

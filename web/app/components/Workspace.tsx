@@ -23,12 +23,13 @@ import { useProjectLayouts } from "../state/useProjectLayouts";
 import { useProjectSplits } from "../state/useProjectSplits";
 import { activeProjectSplits, placeProject, projectGeometry } from "../state/projectSplits";
 import { projectLayoutKey } from "../state/projectLayout";
-import { DRAG_PROJECT, PROJECT_ORDER, loadProjectOrder, moveProject, orderProjects, parseProjectDrag, projectFolderDropAt, type ProjectDrop, type ProjectSort } from "../state/projectOrder";
-import { applyEvent, resyncAll, setLive, useLive, useQuery } from "../state/store";
+import { readStoredLayout } from "../state/layoutPersistence";
+import { DRAG_PROJECT, PROJECT_ORDER, PROJECT_SORT, loadProjectOrder, moveProject, orderProjects, parseProjectDrag, projectFolderDropAt, readProjectSort, type ProjectDrop, type ProjectSort } from "../state/projectOrder";
+import { getWorkspaceProjects } from "../state/workspaceStartup";
+import { applyEvent, batchEventQueries, queuePartial, resetStreamPartials, resyncAll, retryWaiting, setLive, useLive, useQuery } from "../state/store";
 import { AddProjectDialog } from "./AddProject";
 import { ArchivedProjects } from "./ArchivedProjects";
-import { LabelChips, LabelFilter, ProjectMenu, useLabels } from "./ProjectLabels";
-import { filterProjects } from "../state/projectLabels";
+import { ProjectMenu } from "./ProjectMenu";
 import { RecentPanel } from "./RecentPanel";
 import { SplitView, type RecentPaneReveal } from "./SplitView";
 import { ProjectSplitDividers } from "./ProjectSplitDividers";
@@ -56,6 +57,7 @@ import { ComposerMemoryProvider } from "../state/useComposerMemory";
 import { hideSessionRecent } from "../state/recentPatch";
 import { LoadingBar } from "./LoadingScreen";
 import { UsagePanel } from "./UsagePanel";
+import { dashboardStyles } from "./usage/dashboard.stylex";
 import { CreationDialog } from "./create/CreationDialog";
 import { useUsageNavigation } from "./usage/useUsageNavigation";
 import { PaneVisibility } from "../state/paneVisibility";
@@ -64,8 +66,6 @@ import { HeaderUpdates } from "./update/HeaderUpdates";
 export type OpenTarget = Omit<L.Tab, "id">;
 export type Opener = (t: OpenTarget, how?: "here" | "right" | "down") => void;
 
-const PROJECT_SORT = "grove.projectSort";
-const LABEL_FILTER = "grove.labelFilter";
 const NO_PROJECTS: Project[] = [];
 
 type LayoutActions = {
@@ -75,18 +75,21 @@ type LayoutActions = {
     onOpen: (id: string, target: OpenTarget, how?: "here" | "right" | "down") => void;
     onProjectDrop: (id: string, target: OpenTarget, edge: L.DropEdge) => void;
     onCloseProject?: (id: string) => void;
+    onNewTerminal: (id: string) => void;
 };
-const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, projectLabel, recentReveal, onUpdate, onCloseTab, closingTabs, onOpen, onProjectDrop, onCloseProject }: LayoutActions & {
-    id: string; layout: L.Layout; visible: boolean; projects: Project[]; projectLabel?: string; recentReveal?: RecentPaneReveal;
+const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, projectId, projectLabel, recentReveal, onUpdate, onCloseTab, closingTabs, onOpen, onProjectDrop, onCloseProject, onNewTerminal }: LayoutActions & {
+    id: string; layout: L.Layout; visible: boolean; projects: Project[]; projectId?: string; projectLabel?: string; recentReveal?: RecentPaneReveal;
 }) {
     const update = useCallback((f: (layout: L.Layout) => L.Layout) => onUpdate(id, f), [id, onUpdate]);
     const open: Opener = useCallback((target, how) => onOpen(id, target, how), [id, onOpen]);
     const drop = useCallback((target: OpenTarget, edge: L.DropEdge) => onProjectDrop(id, target, edge), [id, onProjectDrop]);
     const close = useCallback(() => onCloseProject?.(id), [id, onCloseProject]);
     const closeTab = useCallback((tabId: string) => onCloseTab(id, tabId), [id, onCloseTab]);
+    const newTerminal = useCallback(() => onNewTerminal(id), [id, onNewTerminal]);
     return <ComposerMemoryProvider copies={L.allTabs(layout).map((tab) => tab.id)}>
         <SplitView layout={layout} update={update} closeTab={closeTab} closingTabs={closingTabs} open={open} narrow={id.endsWith("-narrow")} visible={visible} projects={projects}
-            projectLabel={projectLabel} recentReveal={recentReveal} onProjectDrop={drop} onCloseProject={onCloseProject ? close : undefined} />
+            projectLabel={projectLabel} recentReveal={recentReveal} onProjectDrop={drop} onCloseProject={onCloseProject ? close : undefined}
+            projectId={projectId} onNewTerminal={newTerminal} />
     </ComposerMemoryProvider>;
 });
 
@@ -186,34 +189,30 @@ export function Workspace() {
     useEffect(() => {
         for (const pane of geometry.panes) ensureProject(baseKey, pane.projectId);
     }, [baseKey, geometry, ensureProject]);
-    // 현재 배치의 각 영역에 보이는 대화가 둘 이상이면 최근 목록에서 한 묶음으로 보여 준다(원본 최근 탭).
-    const splitSessions = useMemo(() => {
-        const ids = new Set([...placements.keys()].flatMap((id) => layouts[id] ? L.leaves(layouts[id].root) : [])
-            .filter((leaf) => !narrow || leaf.id === layout?.focused_leaf).map((leaf) => leaf.tabs.find((t) => t.id === leaf.active_tab))
-            .filter((t): t is L.Tab => t?.kind === "session" && !!t.resource_id).map((t) => t.resource_id!));
-        return ids.size > 1 ? ids : new Set<string>();
-    }, [layout, layouts, placements, narrow]);
     // 프로젝트 목록 정렬은 기기별 선택(PROJECT-002): 이름순 또는 최근 활동순.
-    const [projectSort, setProjectSort] = useState<ProjectSort>(() => {
-        const value = localStorage.getItem(PROJECT_SORT);
-        return value === "manual" || value === "recent" ? value : "name";
-    });
+    const [projectSort, setProjectSort] = useState<ProjectSort>(() => readProjectSort(localStorage));
     const [projectOrder, setProjectOrder] = useState(() => loadProjectOrder(localStorage));
     const [draggingProject, setDraggingProject] = useState<string | null>(null);
     const [desktopDrop, setDesktopDrop] = useState<ProjectDrop | null>(null);
-    const projects = useQuery<Project[]>(`projects:${projectSort}`, () => api.get(`/projects?sort=${projectSort === "recent" ? "recent" : "name"}`),
+    const projects = useQuery<Project[]>(`projects:${projectSort}`, () => getWorkspaceProjects(projectSort),
         { keepPreviousData: true, scope: "projects" });
-    // 라벨 필터는 기기별 선택(PROJECT-008). 삭제된 라벨 id는 필터에서 무시한다.
-    const labels = useLabels();
+    const splitGroups = useMemo(() => {
+        if (narrow) return [];
+        const keys = new Set((projects.data ?? NO_PROJECTS).map((project) => projectLayoutKey(baseKey, project.id)));
+        const together = projectSplits.splitProjects.map((id) => projectLayoutKey(baseKey, id)).filter((id) => keys.has(id));
+        const panes = (id: string) => {
+            // 새로고침 후 열지 않은 프로젝트도 검증된 기기 사본으로 읽는다. 조회 때문에 배치를 열거나 편집하지 않는다.
+            const saved = layouts[id] ?? readStoredLayout(localStorage, id);
+            return saved ? L.leaves(saved.root).map((leaf) => new Set(leaf.tabs.flatMap((tab) =>
+                tab.kind === "session" && tab.resource_id ? [tab.resource_id] : []))) : [];
+        };
+        for (const id of together) keys.delete(id);
+        return [together.flatMap(panes), ...[...keys].map(panes)].filter((group) => group.length >= 2);
+    }, [baseKey, layouts, narrow, projectSplits.splitProjects, projects.data]);
     const folders = useProjectFolders();
     const [folderMoveRequest] = useState(() => new CreationRequest<Project, `/projects/${string}`>("patch"));
     const [folderMoveBusy, setFolderMoveBusy] = useState(false);
     const [folderMoveError, setFolderMoveError] = useState<string | null>(null);
-    const [labelFilter, setLabelFilterState] = useState<string[]>(() => {
-        try { const v = JSON.parse(localStorage.getItem(LABEL_FILTER) ?? "[]"); return Array.isArray(v) ? v.filter((x) => typeof x === "string") : []; } catch { return []; }
-    });
-    const setLabelFilter = (next: string[]) => { localStorage.setItem(LABEL_FILTER, JSON.stringify(next)); setLabelFilterState(next); };
-    const [filtering, setFiltering] = useState(labelFilter.length > 0);
     const [menuFor, setMenuFor] = useState<string | null>(null);
     const [historyProject, setHistoryProject] = useState<Project | null>(null);
     const [renamingProject, setRenamingProject] = useState<Project | null>(null);
@@ -227,7 +226,7 @@ export function Workspace() {
         requestAnimationFrame(() => projectMenuTrigger.current?.focus({ preventScroll: true }));
     };
     const [showArchived, setShowArchived] = useState(false);
-    const shown = filterProjects(projectSort === "manual" ? orderProjects(projects.data ?? NO_PROJECTS, projectOrder) : projects.data ?? NO_PROJECTS, labelFilter, labels);
+    const shown = projectSort === "manual" ? orderProjects(projects.data ?? NO_PROJECTS, projectOrder) : projects.data ?? NO_PROJECTS;
     const reorder = (sourceId: string, targetId: string, after: boolean) => {
         const all = projects.data ?? NO_PROJECTS;
         const source = all.find((p) => p.id === sourceId), target = all.find((p) => p.id === targetId);
@@ -283,12 +282,17 @@ export function Workspace() {
     const stream = useRef<EventStream | null>(null);
     useEffect(() => {
         const s = new EventStream({
-            onEvent: (e) => {
-                applyEvent(e);
-                notifyAttention(e);
+            onEvents: (events) => batchEventQueries(() => {
+                for (const event of events) {
+                    applyEvent(event);
+                    notifyAttention(event);
+                }
+            }),
+            onPartial: queuePartial,
+            onResync: (full) => {
+                if (full) resyncAll();
+                else { resetStreamPartials(); retryWaiting(); }
             },
-            onPartial: (sid, snap) => setLive((l) => ({ ...l, partials: { ...l.partials, [sid]: snap } })),
-            onResync: () => resyncAll(),
             onStatus: (status, retryAt) => setLive((l) => ({ ...l, status, retryAt })),
         });
         stream.current = s;
@@ -408,15 +412,18 @@ export function Workspace() {
         </Button>
     );
     const usageControl = (
-        <Button type="button" appearance={narrow ? "navigation" : "icon"}
-            aria-label="사용량" title={narrow ? undefined : "사용량"} aria-haspopup="dialog" aria-expanded={usageOpen}
+        <Button type="button" appearance="icon"
+            aria-label="사용량" title="사용량" aria-haspopup="dialog" aria-expanded={usageOpen}
             onClick={() => { openUsage(); if (narrow) mobile.setPanel(null); }}>
-            <Icon name="usage" size={16} />{narrow && "사용량"}
+            <Icon name="usage" size={16} />
         </Button>
     );
-    const newTerminal = async () => {
-        if (!selectedProjectId || !layout || terminalPending.current || serverBlocked) return;
-        if (L.allTabs(layout).length >= L.MAX_TABS) {
+    // 빈 영역의 버튼은 그 영역이 속한 프로젝트 배치에 연다. 단축키는 현재 프로젝트에 연다.
+    const newTerminal = async (id = key) => {
+        const projectId = projectAt(id) ?? (id === key ? selectedProjectId : undefined);
+        const target = layouts[id];
+        if (!projectId || !target || terminalPending.current || serverBlocked) return;
+        if (L.allTabs(target).length >= L.MAX_TABS) {
             setCloseError("열린 탭이 많아요. 탭을 닫고 다시 시도해 주세요.");
             return;
         }
@@ -424,8 +431,8 @@ export function Workspace() {
         setOpeningTerminal(true);
         setCloseError(null);
         try {
-            const terminal = await api.post<{ id: string; name: string }>(`/projects/${selectedProjectId}/terminals`, { name: "터미널" });
-            openAt(key, { kind: "terminal", project_id: selectedProjectId, resource_id: terminal.id, title: terminal.name });
+            const terminal = await api.post<{ id: string; name: string }>(`/projects/${projectId}/terminals`, { name: "터미널" });
+            openAt(id, { kind: "terminal", project_id: projectId, resource_id: terminal.id, title: terminal.name });
         } catch (error) {
             setCloseError(error instanceof ApiError ? error.message : "터미널을 열지 못했어요.");
         } finally {
@@ -433,6 +440,9 @@ export function Workspace() {
             setOpeningTerminal(false);
         }
     };
+    const latestNewTerminal = useRef(newTerminal);
+    latestNewTerminal.current = newTerminal;
+    const newTerminalAt = useCallback((id: string) => { void latestNewTerminal.current(id); }, []);
     useWorkspaceShortcuts(keyboardShortcuts, (action) => {
         if (action === "settings") {
             open({ kind: "settings", title: "설정" });
@@ -501,15 +511,13 @@ export function Workspace() {
                     title={`${p.root_path} · ${narrow ? "길게 눌러 끌기" : "끌어서 순서 변경, 폴더 이동 또는 프로젝트 분할"} (Alt+Shift+↑/↓ 순서 변경)`}>
                     {p.pinned_at && <HintText aria-label="고정됨" hint="고정됨">📌</HintText>}
                     {p.icon && <GroveText type="inherit" color="inherit" aria-hidden>{p.icon}</GroveText>} <GroveText type="inherit" color="inherit" maxLines={1}>{p.name}</GroveText> {!p.available && <GroveText type="supporting" color="warning">(경로 없음)</GroveText>}
-                    <LabelChips project={p} labels={labels} />
                 </Button>
                 <StackItem size="static">
                     <Popover label={`${p.name} 메뉴`} isOpen={menuFor === p.id}
                         onOpenChange={(value) => setMenuFor(value ? p.id : null)}
                         placement="below" alignment="end" width={240} padding={2} isModal={false} hasCloseButton={false}
-                        content={menuFor === p.id ? <ProjectMenu project={p} labels={labels} onClose={() => setMenuFor(null)} onHistory={() => setHistoryProject(p)}
-                            onRename={() => setRenamingProject(p)}
-                            onSettings={() => open({ kind: "settings", project_id: p.id, resource_id: "settings", title: `설정 · ${p.name}` })} /> : null}>
+                        content={menuFor === p.id ? <ProjectMenu project={p} onClose={() => setMenuFor(null)} onHistory={() => setHistoryProject(p)}
+                            onRename={() => setRenamingProject(p)} /> : null}>
                         <Button type="button" variant="secondary" appearance="icon" width={32}
                             aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} onClick={(event) => { projectMenuTrigger.current = event.currentTarget; }}>⋯</Button>
                     </Popover>
@@ -528,7 +536,7 @@ export function Workspace() {
                 </Stack>
             </LayoutPanel>}
             <MobileDrawer enabled={narrow} side="left" open={mobile.panel === "left"} drag={mobile.drag}
-                label="탐색 메뉴" headerActions={<>{create()}{settingsControl}</>} onClose={() => mobile.setPanel(null)}>
+                label="탐색 메뉴" headerActions={<>{create()}{usageControl}{settingsControl}</>} onClose={() => mobile.setPanel(null)}>
                 <LayoutPanel width={narrow ? "100%" : undefined} resizable={narrow ? undefined : navigation}
                     hasDivider={!narrow} padding={0} isScrollable={false}
                     role="complementary" label="탐색" data-testid="sidebar" xstyle={workspaceStyles.navigation}>
@@ -571,8 +579,7 @@ export function Workspace() {
                                     <Heading level={2} type="navigation" color="secondary">{showUnfiledDrop ? "폴더 밖으로 이동" : "프로젝트"}</Heading>
                                 </StackItem>
                                 {!narrow && create()}
-                                <ActionMenu label="프로젝트 목록 옵션"
-                                    trigger={<>⋯{labelFilter.length > 0 && <StatusDot variant="accent" label="라벨 필터 적용 중" />}</>}>
+                                <ActionMenu label="프로젝트 목록 옵션">
                                     <Stack gap={1}>
                                 <Select
                                     label="프로젝트 정렬" hideLabel
@@ -584,15 +591,10 @@ export function Workspace() {
                                     }}
                                     options={[{ value: "name", label: "이름순" }, { value: "recent", label: "최근 활동순" }, { value: "manual", label: "직접 정렬" }]}
                                 />
-                                <Button type="button" variant="secondary" density="compact" aria-expanded={filtering} aria-label="라벨 필터"
-                                    onClick={() => setFiltering((f) => !f)}>
-                                    라벨{labelFilter.length > 0 ? ` (${labelFilter.length})` : ""}
-                                </Button>
                                 <Button type="button" variant="secondary" density="compact" aria-expanded={showArchived} onClick={() => setShowArchived((v) => !v)}>보관됨</Button>
                                     </Stack>
                                 </ActionMenu>
                             </Stack>
-                            {filtering && <LabelFilter labels={labels} selected={labelFilter} onChange={setLabelFilter} />}
                             {showArchived && <ArchivedProjects />}
                             {Boolean(folders.error) && <GroveText type="supporting" color="error" role="alert">폴더를 불러오지 못했어요. <Button type="button" appearance="link" onClick={folders.reload}>다시 확인</Button></GroveText>}
                             {folderMoveBusy && <GroveText type="supporting" role="status">프로젝트 이동 중…</GroveText>}
@@ -601,18 +603,12 @@ export function Workspace() {
                             </>}</GroveText>}
                             <VisuallyHidden role="status">{touchOrder ? `${shown.find((p) => p.id === touchOrder.id)?.name ?? ""} 이동 중` : ""}</VisuallyHidden>
                             <ProjectFolderTree projects={shown} folders={folders.data ?? []} dropFolderId={dropFolderId} renderProject={renderProject} />
-                            {!!projects.data?.length && shown.length === 0 && (
-                                <GroveText as="p" display="block" type="inherit" color="secondary" role="status">
-                                    라벨 조건에 맞는 프로젝트가 없습니다. <Button type="button" variant="secondary" density="compact" onClick={() => setLabelFilter([])}>필터 해제</Button>
-                                </GroveText>
-                            )}
                         </Stack>
                     </Stack>
                     </ScrollableArea>
                     </StackItem>
                     <Stack gap={0} paddingInline={2} xstyle={workspaceStyles.recentDock}>
-                        <RecentPanel open={openRecent} linked={splitSessions} />
-                        {narrow && usageControl}
+                        <RecentPanel open={openRecent} splitGroups={splitGroups} />
                     </Stack>
                     </Stack>
                 </LayoutPanel>
@@ -655,7 +651,7 @@ export function Workspace() {
             {closeError && <Banner status="error" role="alert" title={closeError} data-testid="tab-close-error"
                 endContent={<Button variant="secondary" onClick={() => setCloseError(null)}>닫기</Button>} />}
             {openingTerminal && <LoadingBar label="터미널 여는 중…" />}
-            {usageVisited && <CreationDialog label="사용량" isOpen={usageOpen} onClose={closeUsage} width="88em">
+            {usageVisited && <CreationDialog label="사용량" isOpen={usageOpen} onClose={closeUsage} width="88em" xstyle={dashboardStyles.dialog}>
                 <PaneVisibility value={usageOpen}><UsagePanel onClose={closeUsage}
                     onAuthenticate={(protocol) => { leaveUsage(); open({ kind: "settings", resource_id: `agent-auth:${protocol}`, title: "설정" }); }} /></PaneVisibility>
             </CreationDialog>}
@@ -672,6 +668,7 @@ export function Workspace() {
                             onFocusCapture={() => rect && projectId !== selectedProjectId && focusAt(id)}>
                             <SavedLayout id={id} layout={saved} onUpdate={updateAt} onCloseTab={closeTab} closingTabs={closingTabs} onOpen={openAt} onProjectDrop={dropProject}
                                 onCloseProject={geometry.panes.length > 1 ? closeProject : undefined} projectLabel={label}
+                                projectId={projectId} onNewTerminal={newTerminalAt}
                                 recentReveal={recentReveal?.layoutId === id && id === key ? recentReveal : undefined}
                                 visible={!!rect} projects={projects.data ?? NO_PROJECTS} />
                         </Stack>;

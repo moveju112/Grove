@@ -66,10 +66,14 @@ async fn maintain(app: &App, session_id: &str) -> ApiResult<bool> {
         Ok(Some((selection,def,timeline,from,upto,source_at,source,now,s.last_message_seq)))
     }).await?;
     let Some((selection,def,timeline,from,upto,source_at,source,attempted_at,last_seq)) = prepared else { return Ok(false) };
+    // 모델을 부른 뒤의 결과는 저장 여부와 무관하게 사용량 기록에 남긴다.
+    let mut called: Option<(provider::Profile, Option<provider::Usage>, i64)> = None;
+    let (record_profile, record_effort) = (selection.profile_id.clone(), selection.effort.clone());
     let result = async {
         let selected = selection.clone();
         let profile_id = selection.profile_id.clone();
         let (mp, rp) = app.db.call(move |c| selected.runtime(c)).await?;
+        called = Some((rp.clone(), None, 0));
         let req = ModelRequest {
             system: format!("{}\n{SYSTEM}", crate::definitions::instructions(&def)),
             messages: vec![ChatMsg::User { text: json!({"conversation":source}).to_string(), images: vec![] }],
@@ -77,10 +81,15 @@ async fn maintain(app: &App, session_id: &str) -> ApiResult<bool> {
             temperature: None, effort: selection.effort.clone(), cli: None,
         };
         let mut cancel = app.shutdown_rx.clone();
+        let started = std::time::Instant::now();
         let out = tokio::time::timeout(Duration::from_secs(60), async {
             let _permit = crate::model_limits::auxiliary(app, session_id, &rp, &mut cancel).await?;
             provider::stream(&rp, &req, &mut cancel, &mut |_| {}).await.map_err(|_| crate::error::ApiError::conflict("model_error", "메모리를 정리하지 못했습니다"))
-        }).await.map_err(|_| crate::error::ApiError::conflict("timeout", "메모리 정리 시간이 초과됐습니다"))??;
+        }).await;
+        let elapsed = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
+        if let Some(call) = called.as_mut() { call.2 = elapsed; }
+        let out = out.map_err(|_| crate::error::ApiError::conflict("timeout", "메모리 정리 시간이 초과됐습니다"))??;
+        if let Some(call) = called.as_mut() { call.1 = Some(out.usage.clone()); }
         let text = provider::scrub_provider_text(&rp, out.text.trim());
         if text.is_empty() || text.chars().count()>12_000 { return Err(crate::error::ApiError::invalid("메모리 요약 형식이 올바르지 않습니다")); }
         let (sid,now,claim) = (session_id.to_string(),app.now(),attempted_at.clone());
@@ -91,19 +100,27 @@ async fn maintain(app: &App, session_id: &str) -> ApiResult<bool> {
             let selected = route(&tx, &s)?;
             // 설정 철회·되감기·새 요청 이후의 응답은 저장하지 않는다.
             if s.archived_at.is_some() || s.active_turn.is_some() || s.last_message_seq!=last_seq || current!=timeline
-                || !selected.is_some_and(|(profile,d)| profile==selection && d.revision==def.revision) { return Ok(()); }
+                || !selected.is_some_and(|(profile,d)| profile==selection && d.revision==def.revision) { return Ok(false); }
             crate::models::get_enabled_profile(&tx, &profile_id)?;
             let n = tx.execute("UPDATE memory_checkpoints SET upto_seq=?3,error_code=NULL WHERE session_id=?1 AND timeline_revision=?2 AND attempted_at=?4 AND upto_seq=?5", params![sid,timeline,upto,claim,from])?;
-            if n==0 { return Ok(()); }
+            if n==0 { return Ok(false); }
             if text!="NONE" {
                 tx.execute("INSERT INTO memory_notes(id,session_id,timeline_revision,from_seq,upto_seq,source_at,body,profile_id,created_at) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9)",
                     params![crate::util::new_id(),sid,timeline,source.first().unwrap()["from_seq"].as_i64(),upto,source_at,text,profile_id,now])?;
             }
             crate::events::append(&tx,&now,"memory.updated",Some(&s.project_id),Some(&sid),&json!({"session_id":sid,"upto_seq":upto}))?;
             tx.commit()?;
-            Ok(())
+            Ok(true)
         }).await
     }.await;
+    if let Some((rp, usage, provider_ms)) = &called {
+        let discarded = match &result { Ok(true) => None, Ok(false) => Some("changed"), Err(e) => Some(e.code) };
+        // 시간 초과·모델 오류가 아닌 형식 오류는 응답을 받은 뒤라 사용량이 있다.
+        crate::aux_usage::record(app, crate::aux_usage::Record {
+            kind: crate::aux_usage::Kind::Maintainer, session_id, profile_id: &record_profile, runtime: rp,
+            effort: record_effort.as_deref(), usage: usage.as_ref(), provider_ms: *provider_ms, discarded,
+        }).await;
+    }
     if let Err(e) = result {
         let (sid,claim,code,now) = (session_id.to_string(),attempted_at,e.code.to_string(),app.now());
         app.db.call(move |c| {

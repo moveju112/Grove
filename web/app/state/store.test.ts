@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyEvent, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, querySnapshot, resyncAll, retryWaiting, setLive, setTransportFailureHandler, subscribeQuery } from "./store";
+import { applyEvent, batchEventQueries, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, PARTIAL_FLUSH_MS, queuePartial, querySnapshot, resyncAll, retryWaiting, setLive, setTransportFailureHandler, subscribeQuery } from "./store";
 import { ApiError, isTransportError } from "../api/client";
 import { deliveryTiming } from "./deliveryTiming";
 
@@ -33,6 +33,50 @@ describe("임시 응답의 수명", () => {
             turn("next", "running");
             expect(partials()).toEqual({ s: next });
         } finally { clearServerCache(); }
+    });
+    it("연속 snapshot은 묶어서 대화별 최신 것만 한 번에 반영한다", () => {
+        vi.useFakeTimers();
+        try {
+            let renders = 0;
+            const count = () => setLive((l) => { renders += 1; return l; });
+            queuePartial("a", { turn_id: "t", text: "첫" });
+            expect(partials()).toEqual({ a: { turn_id: "t", text: "첫" } });
+            renders = 0;
+            queuePartial("a", { turn_id: "t", text: "첫 응" });
+            queuePartial("b", { turn_id: "u", text: "다른" });
+            queuePartial("a", { turn_id: "t", text: "첫 응답" });
+            count();
+            expect(renders).toBe(1);
+            expect(partials()).toEqual({ a: { turn_id: "t", text: "첫" } });
+            vi.advanceTimersByTime(PARTIAL_FLUSH_MS);
+            expect(partials()).toEqual({ a: { turn_id: "t", text: "첫 응답" }, b: { turn_id: "u", text: "다른" } });
+        } finally { clearServerCache(); vi.useRealTimers(); }
+    });
+    it("확정 이벤트는 앞서 받은 snapshot을 먼저 반영한 뒤 적용한다", () => {
+        vi.useFakeTimers();
+        try {
+            queuePartial("s", { turn_id: "done", text: "첫" });
+            queuePartial("s", { turn_id: "done", text: "마지막" });
+            turn("done", "completed");
+            expect(partials()).toEqual({});
+            vi.advanceTimersByTime(PARTIAL_FLUSH_MS);
+            expect(partials()).toEqual({});
+        } finally { clearServerCache(); vi.useRealTimers(); }
+    });
+    it("재동기화·로그아웃은 아직 반영하지 않은 snapshot도 버린다", () => {
+        vi.useFakeTimers();
+        try {
+            queuePartial("s", { turn_id: "t", text: "첫" });
+            queuePartial("s", { turn_id: "t", text: "이전 연결" });
+            resyncAll();
+            vi.advanceTimersByTime(PARTIAL_FLUSH_MS);
+            expect(partials()).toEqual({});
+            queuePartial("s", { turn_id: "t", text: "이전 세대" });
+            queuePartial("s", { turn_id: "t", text: "이전 세대 2" });
+            clearServerCache();
+            vi.advanceTimersByTime(PARTIAL_FLUSH_MS);
+            expect(partials()).toEqual({});
+        } finally { clearServerCache(); vi.useRealTimers(); }
     });
     it("재동기화하면 삭제 신호를 놓친 숨겨진 대화의 임시 응답도 비운다", () => {
         try {
@@ -80,6 +124,37 @@ it("종료 이벤트의 화면 반영 측정은 재동기화·로그아웃 때 �
         clearServerCache();
         expect(deliveryTiming.applied("cancelled")).toBeNull();
     } finally { off(); clearServerCache(); }
+});
+
+describe("이벤트 무효화 범위", () => {
+    it("같은 이벤트 묶음의 조회를 합치고 대화 본문·실행 상태를 우선 갱신한다", async () => {
+        const order: string[] = [];
+        const offs = ["recent", "session:s", "messages:s", "turns:s"].map((key) =>
+            subscribeQuery(key, async () => { order.push(key); return {}; }, () => undefined));
+        try {
+            await settle();
+            order.length = 0;
+            const event = { session_id: "s", project_id: "p", seq: 1, created_at: "2026-01-01T00:00:00Z" };
+            batchEventQueries(() => {
+                applyEvent({ ...event, kind: "message.created", payload: {} });
+                applyEvent({ ...event, kind: "message.created", seq: 2, payload: {} });
+                applyEvent({ ...event, kind: "turn.updated", seq: 3, payload: { status: "completed", id: "t" } });
+            });
+            await settle();
+            expect(order).toEqual(["messages:s", "turns:s", "session:s", "recent"]);
+        } finally { offs.forEach((off) => off()); clearServerCache(); }
+    });
+
+    it("새 응답 이벤트가 사용량 대시보드 조회를 다시 읽게 한다", async () => {
+        const fetcher = vi.fn(async () => "usage");
+        const off = subscribeQuery("usage:dashboard:range-7d", fetcher, () => undefined);
+        try {
+            await settle();
+            applyEvent({ kind: "message.created", session_id: null, project_id: null, payload: {}, seq: 1, created_at: "2026-01-01T00:00:00Z" });
+            await settle();
+            expect(fetcher).toHaveBeenCalledTimes(2);
+        } finally { off(); clearServerCache(); }
+    });
 });
 
 describe("연결 문제 조회", () => {

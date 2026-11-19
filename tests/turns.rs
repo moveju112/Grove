@@ -241,7 +241,7 @@ async fn read_tool_runs_automatically_and_result_reaches_model() {
 }
 
 #[tokio::test]
-async fn tool_policy_deny_wins_and_read_only_cannot_be_loosened() {
+async fn tool_policy_deny_wins_over_allow_and_bypass() {
     let (s, f, prof, sid, root) = setup().await;
     let (_, sess) = s.get(&format!("/api/v1/sessions/{sid}")).await;
     let pid = sess["project_id"].as_str().or(sess["session"]["project_id"].as_str()).unwrap().to_string();
@@ -262,10 +262,10 @@ async fn tool_policy_deny_wins_and_read_only_cannot_be_loosened() {
     assert_eq!(t["tool_calls"][0]["status"], "succeeded", "{t}");
     assert_eq!(t["tool_calls"][0]["needs_approval"], false);
 
-    // 2) 프로젝트 read_only + 대화 ask: read_only가 이긴다(allow보다도 우선), 파일은 생기지 않는다
-    let (p, b) = put(format!("/api/v1/settings/project/{pid}/tools.mode"), json!("read_only"));
+    // 2) 프로젝트 deny는 allow와 대화 bypass보다 우선하며 파일은 생기지 않는다.
+    let (p, b) = put(format!("/api/v1/settings/project/{pid}/tools.deny"), json!("write"));
     assert_eq!(s.send(Method::PUT, &p, b).await.0, StatusCode::OK);
-    let (p, b) = put(format!("/api/v1/settings/session/{sid}/tools.mode"), json!("ask"));
+    let (p, b) = put(format!("/api/v1/settings/session/{sid}/tools.mode"), json!("bypass"));
     assert_eq!(s.send(Method::PUT, &p, b).await.0, StatusCode::OK);
     f.push(fixture::tool_calls(&[("w2", "write", json!({ "path": "b.txt", "content": "B" })), ("r2", "list", json!({}))]));
     f.push(fixture::text("ok"));
@@ -274,12 +274,12 @@ async fn tool_policy_deny_wins_and_read_only_cannot_be_loosened() {
     let calls = t["tool_calls"].as_array().unwrap();
     let w2 = calls.iter().find(|c| c["name"] == "write").unwrap();
     assert_eq!(w2["status"], "failed");
-    assert_eq!(w2["result"]["error"]["code"], "read_only", "{w2}");
+    assert_eq!(w2["result"]["error"]["code"], "policy_denied", "{w2}");
     assert_eq!(calls.iter().find(|c| c["name"] == "list").unwrap()["status"], "succeeded", "읽기 도구는 허용");
     assert!(!std::path::Path::new(&format!("{root}/b.txt")).exists());
     // 모델은 거부 사유를 본다
     let last = f.requests().last().cloned().unwrap();
-    assert!(last.to_string().contains("read_only"), "모델 입력에 정책 거부가 들어간다");
+    assert!(last.to_string().contains("policy_denied"), "모델 입력에 정책 거부가 들어간다");
 
     // 3) 대화 범위 deny: 읽기 도구도 막는다(deny 최우선)
     let (p, b) = put(format!("/api/v1/settings/session/{sid}/tools.deny"), json!("list"));
@@ -338,15 +338,15 @@ async fn session_scoped_approval_is_limited_to_that_session_and_revocable() {
     assert_eq!(s.wait_status(&tid2, "awaiting_approval").await["tool_calls"][0]["status"], "pending_approval");
     s.post(&format!("/api/v1/turns/{tid2}/cancel"), json!({})).await;
 
-    // 5) 읽기 전용은 대화 범위 허용보다 우선
-    let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/tools.mode"), json!({ "expected_revision": 0, "value": "read_only" })).await;
+    // 5) 명시적 금지는 대화 범위 허용보다 우선
+    let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/tools.deny"), json!({ "expected_revision": 0, "value": "write" })).await;
     assert_eq!(st, StatusCode::OK);
     f.push(fixture::tool_calls(&[("w5", "write", json!({ "path": "e.txt", "content": "E" }))]));
     f.push(fixture::text("ok"));
     let v = start_turn(&s, &sid, &prof, "5", true).await;
     let t = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
-    assert_eq!(t["tool_calls"][0]["result"]["error"]["code"], "read_only");
-    let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/tools.mode"), json!({ "expected_revision": 1, "value": "ask" })).await;
+    assert_eq!(t["tool_calls"][0]["result"]["error"]["code"], "policy_denied");
+    let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/tools.deny"), json!({ "expected_revision": 1, "value": null })).await;
     assert_eq!(st, StatusCode::OK);
 
     // 6) 해제하면 다시 묻는다(멱등)
@@ -372,14 +372,14 @@ async fn policy_change_while_pending_blocks_approval() {
     let tid = v["turn"]["id"].as_str().unwrap().to_string();
     let t = s.wait_status(&tid, "awaiting_approval").await;
     let call = t["tool_calls"][0].clone();
-    // 대기 중에 읽기 전용으로 전환
-    let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/tools.mode"), json!({ "expected_revision": 0, "value": "read_only" })).await;
+    // 대기 중에 쓰기 도구를 금지
+    let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/tools.deny"), json!({ "expected_revision": 0, "value": "write" })).await;
     assert_eq!(st, StatusCode::OK);
     let (st, r) = s
         .post(&format!("/api/v1/tool-calls/{}/decision", call["id"].as_str().unwrap()), json!({ "decision": "approve", "expected_revision": call["revision"] }))
         .await;
     assert_eq!(st, StatusCode::CONFLICT, "{r}");
-    assert_eq!(r["error"]["code"], "read_only");
+    assert_eq!(r["error"]["code"], "policy_denied");
     let t = s.wait_status(&tid, "completed").await;
     assert_eq!(t["tool_calls"][0]["status"], "failed");
     assert!(!std::path::Path::new(&format!("{root}/late.txt")).exists(), "승인했어도 실행되지 않는다");
@@ -868,6 +868,35 @@ async fn cancelling_turn_cancels_pending_approvals() {
     assert_eq!(f.requests().len(), 1, "취소 후 모델을 다시 부르지 않는다");
 }
 
+#[tokio::test]
+async fn cancelling_turn_emits_pending_call_events_in_status_and_insertion_order() {
+    let (s, f, prof, sid, _) = setup().await;
+    f.push(fixture::tool_calls(&[
+        ("w1", "write", json!({ "path": "first.txt", "content": "x" })),
+        ("q1", "ask_user", json!({ "question": "계속할까요?" })),
+        ("w2", "write", json!({ "path": "second.txt", "content": "x" })),
+    ]));
+    let v = start_turn(&s, &sid, &prof, "계속", true).await;
+    let tid = v["turn"]["id"].as_str().unwrap();
+    s.wait_status(tid, "awaiting_approval").await;
+    let db = &s.server.as_ref().unwrap().app.db;
+    let db_tid = tid.to_owned();
+    let (cursor, expected) = db.call(move |c| {
+        let mut st = c.prepare("SELECT id, status FROM tool_calls WHERE turn_id=?1 ORDER BY rowid")?;
+        let calls = st.query_map([db_tid], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?.collect::<Result<Vec<_>, _>>()?;
+        assert_eq!(calls.iter().map(|c| c.1.as_str()).collect::<Vec<_>>(), ["pending_approval", "awaiting_input", "pending_approval"]);
+        Ok((grove::events::latest_seq(c)?, [calls[1].0.clone(), calls[0].0.clone(), calls[2].0.clone()]))
+    }).await.unwrap();
+    let (st, _) = s.post(&format!("/api/v1/turns/{tid}/cancel"), json!({})).await;
+    assert_eq!(st, StatusCode::ACCEPTED);
+    let actual = db.call(move |c| {
+        Ok(grove::events::read_after(c, cursor, 200)?.into_iter()
+            .filter(|e| e.kind == "tool_call.updated" && e.payload["status"] == "cancelled")
+            .map(|e| e.payload["id"].as_str().unwrap().to_owned()).collect::<Vec<_>>())
+    }).await.unwrap();
+    assert_eq!(actual, expected);
+}
+
 // RUN-010: 턴 중지는 실행 중인 도구 프로세스까지 멈춘다(모델 호출 취소·자식 에이전트는 다른 시험).
 #[tokio::test]
 async fn cancelling_turn_stops_running_tool_process() {
@@ -1298,6 +1327,32 @@ async fn disabled_or_deleted_workflow_never_changes_active_turn_and_next_turn_us
 }
 
 // RUN-019: 끝난(실패·중단·취소) 요청은 다시 실행하거나 포기(확인)할 수 있다.
+#[tokio::test]
+async fn retry_applies_new_model_and_effort_on_the_same_profile() {
+    let (s, f, profile, sid, _) = setup().await;
+    f.push(fixture::truncated());
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({
+        "profile_id": profile, "text": "다시 실행할 원문", "model": "old-model", "effort": "high",
+    })).await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let old = v["turn"]["id"].as_str().unwrap();
+    s.wait_status(old, "failed").await;
+    f.push(fixture::text("다른 모델의 답"));
+    let path = format!("/api/v1/turns/{old}/retry");
+    let request = json!({ "model_selection": { "profile_id": profile, "model": "new-model", "effort": "auto" } });
+    let retry = s.raw(Method::POST, &path, Some(request.clone()), Some("retry-model"), None).await;
+    assert_eq!(retry.status(), StatusCode::ACCEPTED);
+    let result: Value = retry.json().await.unwrap();
+    s.wait_status(result["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert_eq!(f.requests().last().unwrap()["model"], "new-model");
+    assert!(f.requests().last().unwrap().get("reasoning_effort").is_none());
+    let mut changed = request;
+    changed["model_selection"]["model"] = json!("different-model");
+    let conflict = s.raw(Method::POST, &path, Some(changed), Some("retry-model"), None).await;
+    assert_eq!(conflict.status(), StatusCode::CONFLICT);
+    assert_eq!(conflict.json::<Value>().await.unwrap()["error"]["code"], "idempotency_conflict");
+}
+
 #[tokio::test]
 async fn ended_turn_can_be_retried_once_or_acknowledged() {
     let (s, f, prof, sid, _) = setup().await;

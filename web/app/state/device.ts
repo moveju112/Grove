@@ -33,6 +33,11 @@ export function deviceName(): string {
 }
 
 export const VINE_GROUPS = [2, 3, 4, 5, 6, 7] as const;
+export const activityDisplayOptions = [
+    { value: "animated", label: "애니메이션" },
+    { value: "static", label: "정지 표시" },
+    { value: "hidden", label: "숨김" },
+] as const;
 
 /// 이 기기 표시 설정.
 export type Prefs = {
@@ -43,8 +48,8 @@ export type Prefs = {
     confirmTerminalPaste: boolean;
     keyboardShortcuts: KeyboardShortcuts;
     runningSendMode: FollowKind;
-    progressVisibility: "collapse" | "hidden";
-    sessionVines: boolean;
+    progressVisibility: "expanded" | "collapse" | "hidden";
+    activityDisplay: (typeof activityDisplayOptions)[number]["value"];
     sessionVineLength: "short" | "medium" | "long";
     sessionVineSpeed: "slow" | "normal" | "fast";
     sessionVineGroups: (typeof VINE_GROUPS)[number];
@@ -74,9 +79,9 @@ export const defaultPrefs: Prefs = {
     notifyDone: true, notifyApproval: true, notifyServer: true, notifySound: true, notifyVibrate: true, notifyPush: true,
     recentWindows: [...DEFAULT_RECENT_WINDOWS], recentWindow: DEFAULT_RECENT_WINDOW,
     runningSendMode: "steer",
-    progressVisibility: "collapse",
+    progressVisibility: "expanded",
     keyboardShortcuts: DEFAULT_SHORTCUTS,
-    sessionVines: true, sessionVineLength: "medium", sessionVineSpeed: "normal", sessionVineGroups: 2,
+    activityDisplay: "animated", sessionVineLength: "medium", sessionVineSpeed: "normal", sessionVineGroups: 2,
 };
 const CLOCKS: readonly Prefs["clock"][] = ["system", "24h", "12h"];
 const TIME_STYLES: readonly Prefs["timeStyle"][] = ["absolute", "relative"];
@@ -87,17 +92,19 @@ const PREFS_EVENT = "grove-prefs";
 
 export function loadPrefs(): Prefs {
     try {
-        const { reasoning: _legacyReasoning, ...saved } = JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as Partial<Prefs> & { reasoning?: unknown };
+        const { reasoning: _legacyReasoning, sessionVines, ...saved } = JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as Partial<Prefs> & { reasoning?: unknown; sessionVines?: unknown };
         const prefs = { ...defaultPrefs, ...saved };
         // 다른 버전이 남긴 알 수 없는 시간 형식은 기본값으로 읽는다(저장값은 사용자가 바꿀 때까지 그대로 둔다).
         if (!CLOCKS.includes(prefs.clock)) prefs.clock = defaultPrefs.clock;
         if (!TIME_STYLES.includes(prefs.timeStyle)) prefs.timeStyle = defaultPrefs.timeStyle;
         if (!RUNNING_SEND_MODES.includes(prefs.runningSendMode)) prefs.runningSendMode = defaultPrefs.runningSendMode;
-        if (prefs.progressVisibility !== "collapse" && prefs.progressVisibility !== "hidden") prefs.progressVisibility = defaultPrefs.progressVisibility;
+        if (!["expanded", "collapse", "hidden"].includes(prefs.progressVisibility)) prefs.progressVisibility = defaultPrefs.progressVisibility;
         prefs.keyboardShortcuts = normalizeShortcuts(prefs.keyboardShortcuts);
         if (typeof prefs.confirmTerminalPaste !== "boolean") prefs.confirmTerminalPaste = defaultPrefs.confirmTerminalPaste;
         if (typeof prefs.notifyPush !== "boolean") prefs.notifyPush = defaultPrefs.notifyPush;
-        if (typeof prefs.sessionVines !== "boolean") prefs.sessionVines = defaultPrefs.sessionVines;
+        if (!activityDisplayOptions.some(({ value }) => saved.activityDisplay === value)) {
+            prefs.activityDisplay = sessionVines === false ? "hidden" : defaultPrefs.activityDisplay;
+        }
         if (!VINE_LENGTHS.includes(prefs.sessionVineLength)) prefs.sessionVineLength = defaultPrefs.sessionVineLength;
         if (!VINE_SPEEDS.includes(prefs.sessionVineSpeed)) prefs.sessionVineSpeed = defaultPrefs.sessionVineSpeed;
         if (!VINE_GROUPS.includes(prefs.sessionVineGroups)) prefs.sessionVineGroups = defaultPrefs.sessionVineGroups;

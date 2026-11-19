@@ -89,25 +89,36 @@ async fn model_tools_share_the_project_boundary_across_sessions_and_waiting_is_c
 }
 
 #[tokio::test]
-async fn an_automatic_read_waits_for_a_background_process_and_cancellation_keeps_the_independent_process() {
+async fn automatic_tools_do_not_wait_for_a_long_lived_background_process() {
     let s=TestServer::start().await;
     let f=Fixture::start().await;
     let profile=s.fixture_profile(&f.base).await;
     let project=s.create_project("background-read").await;
     let pid=project["id"].as_str().unwrap();
     std::fs::write(std::path::Path::new(project["root_path"].as_str().unwrap()).join("shared.txt"),b"original").unwrap();
+    s.send(Method::PUT,&format!("/api/v1/settings/project/{pid}/tools.allow"),json!({"expected_revision":0,"value":"shell"})).await;
     let sid=s.create_session(pid).await["id"].as_str().unwrap().to_string();
-    let (_,task)=s.post(&format!("/api/v1/sessions/{sid}/tasks"),json!({"command":"sleep 10"})).await;
+    // UI에서 띄운 백그라운드 작업.
+    let (_,task)=s.post(&format!("/api/v1/sessions/{sid}/tasks"),json!({"command":"sleep 30"})).await;
     let task=task["id"].as_str().unwrap();
-    f.push(fixture::tool_calls(&[("reader","read",json!({"path":"shared.txt"}))]));
-    let (_,turn)=s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":"read","profile_id":profile,"tools":true})).await;
-    let tid=turn["turn"]["id"].as_str().unwrap();
-    s.wait_turn(tid,|t|t["tool_calls"].as_array().is_some_and(|calls|calls.iter().any(|c|c["status"]=="running"))).await;
-    s.post(&format!("/api/v1/turns/{tid}/cancel"),json!({})).await;
-    let done=s.wait_status(tid,"cancelled").await;
-    assert_eq!(done["tool_calls"][0]["status"],"cancelled");
+    // 모델 셸이 hold를 넘겨 백그라운드로 전환된 뒤에도 같은 턴과 다른 세션의 도구가 이어진다.
+    f.push_for("SERVER_MARK",fixture::tool_calls(&[("server","shell",json!({"command":"sleep 30","hold_ms":100}))]));
+    f.push_for("SERVER_MARK",fixture::tool_calls(&[("reader","read",json!({"path":"shared.txt"}))]));
+    f.push_for("SERVER_MARK",fixture::text("server started"));
+    let (_,turn)=s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":"SERVER_MARK","profile_id":profile,"tools":true})).await;
+    let done=s.wait_turn(turn["turn"]["id"].as_str().unwrap(),|t|t["tool_calls"].as_array().is_some_and(|calls|calls.iter().any(|c|c["name"]=="read"&&c["status"]=="succeeded"))).await;
+    assert!(done["tool_calls"].to_string().contains("original"),"{done}");
+    let other=s.create_session(pid).await["id"].as_str().unwrap().to_string();
+    f.push_for("OTHER_MARK",fixture::tool_calls(&[("other","read",json!({"path":"shared.txt"}))]));
+    f.push_for("OTHER_MARK",fixture::text("other done"));
+    let (_,turn)=s.post(&format!("/api/v1/sessions/{other}/turns"),json!({"text":"OTHER_MARK","profile_id":profile,"tools":true})).await;
+    s.wait_turn(turn["turn"]["id"].as_str().unwrap(),|t|t["tool_calls"][0]["status"]=="succeeded").await;
+    // 백그라운드 작업은 도구 진행과 무관하게 계속 실행된다.
     assert_eq!(s.get(&format!("/api/v1/tasks/{task}")).await.1["status"],"running");
-    s.post(&format!("/api/v1/tasks/{task}/cancel"),json!({})).await;
+    let (_,tasks)=s.get(&format!("/api/v1/sessions/{sid}/tasks")).await;
+    for t in tasks["tasks"].as_array().into_iter().flatten() {
+        if t["status"]=="running" { s.post(&format!("/api/v1/tasks/{}/cancel",t["id"].as_str().unwrap()),json!({})).await; }
+    }
 }
 
 #[tokio::test]
@@ -149,8 +160,15 @@ async fn permissions_revoked_during_project_wait_are_checked_before_foreground_o
         let root=std::path::Path::new(project["root_path"].as_str().unwrap());
         s.send(Method::PUT,&format!("/api/v1/settings/project/{pid}/tools.allow"),json!({"expected_revision":0,"value":"shell"})).await;
         let sid=s.create_session(pid).await["id"].as_str().unwrap().to_string();
-        let (_,task)=s.post(&format!("/api/v1/sessions/{sid}/tasks"),json!({"command":"sleep 10"})).await;
-        let task=task["id"].as_str().unwrap();
+        // 다른 세션의 hold 중인 직접 셸이 끝날 때까지 모델 셸이 기다린다.
+        let holder=s.create_session(pid).await["id"].as_str().unwrap().to_string();
+        f.push_for("HOLD_MARK",fixture::tool_calls(&[("holder","shell",json!({
+            "command":"printf entered > entered; while [ ! -f release ]; do sleep 0.02; done","timeout_ms":10000
+        }))]));
+        f.push_for("HOLD_MARK",fixture::text("holder done"));
+        let (_,hold)=s.post(&format!("/api/v1/sessions/{holder}/turns"),json!({"text":"HOLD_MARK","profile_id":profile,"tools":true})).await;
+        let hold=hold["turn"]["id"].as_str().unwrap().to_string();
+        s.wait_turn(&hold,|_|root.join("entered").exists()).await;
         f.push(fixture::tool_calls(&[("writer","shell",json!({
             "command":"printf forbidden > forbidden.txt","background":background,"timeout_ms":5000
         }))]));
@@ -158,15 +176,16 @@ async fn permissions_revoked_during_project_wait_are_checked_before_foreground_o
         let (_,turn)=s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":"write","profile_id":profile,"tools":true})).await;
         let tid=turn["turn"]["id"].as_str().unwrap();
         s.wait_turn(tid,|t|t["tool_calls"].as_array().is_some_and(|calls|calls.iter().any(|c|c["status"]=="running"))).await;
-        let (status,body)=s.send(Method::PUT,&format!("/api/v1/settings/project/{pid}/tools.mode"),json!({"expected_revision":0,"value":"read_only"})).await;
+        let (status,body)=s.send(Method::PUT,&format!("/api/v1/settings/project/{pid}/tools.deny"),json!({"expected_revision":0,"value":"shell"})).await;
         assert_eq!(status,StatusCode::OK,"{body}");
-        s.post(&format!("/api/v1/tasks/{task}/cancel"),json!({})).await;
+        std::fs::write(root.join("release"),b"go").unwrap();
+        s.wait_status(&hold,"completed").await;
         let done=s.wait_status(tid,"completed").await;
         assert_eq!(done["tool_calls"][0]["status"],"failed","{done}");
-        assert_eq!(done["tool_calls"][0]["result"]["error"]["code"],"read_only","{done}");
+        assert_eq!(done["tool_calls"][0]["result"]["error"]["code"],"policy_denied","{done}");
         assert!(!root.join("forbidden.txt").exists());
         let tasks=s.get(&format!("/api/v1/sessions/{sid}/tasks")).await.1;
-        assert_eq!(tasks["tasks"].as_array().unwrap().len(),1,"권한 없는 모델 task를 접수하지 않았다");
+        assert!(tasks["tasks"].as_array().unwrap().is_empty(),"권한 없는 모델 task를 접수하지 않았다");
     }
 }
 

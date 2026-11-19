@@ -56,7 +56,14 @@ for (const width of [1280, 390]) {
         const row = settings.getByTestId("setting-tools.mode");
         await expect(row).toBeInViewport();
         await expect(row.getByRole("heading", { name: "도구 실행 모드", exact: true })).toBeVisible();
-        await expect(row.getByRole("combobox", { name: "도구 실행 모드", exact: true })).toBeVisible();
+        const mode = row.getByRole("combobox", { name: "도구 실행 모드", exact: true });
+        await expect(mode).toBeVisible();
+        await expect(row).toContainText("bypass");
+        await mode.click();
+        await expect(page.getByRole("option", { name: "ask · 승인 요청", exact: true })).toBeVisible();
+        await expect(page.getByRole("option", { name: "bypass · 승인 생략", exact: true })).toBeVisible();
+        await expect(page.getByRole("option", { name: /read_only/ })).toHaveCount(0);
+        await page.keyboard.press("Escape");
         await expect(settings.locator('a[href^="#setting-"]')).toHaveCount(0);
         await page.screenshot({ path: info.outputPath(`settings-without-link-icons-${width}.png`) });
     });

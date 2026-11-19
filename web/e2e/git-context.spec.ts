@@ -30,7 +30,7 @@ async function select(page: Page, project: { name: string }) {
 test("실제 Git 위치·권한·detached·dirty를 조회하고 index와 입력·미확정 요청을 보존한다", async ({ page }) => {
     const { root, run, project } = await repository("actual");
     const before = readFileSync(join(root, ".git/index"));
-    await apiCall("PUT", `/settings/project/${project.id}/tools.mode`, { expected_revision: 0, value: "read_only" });
+    await apiCall("PUT", `/settings/project/${project.id}/tools.mode`, { expected_revision: 0, value: "ask" });
     await login(page);
     await select(page, project);
     const overview = page.getByTestId("git-context").filter({ visible: true });
@@ -38,7 +38,7 @@ test("실제 Git 위치·권한·detached·dirty를 조회하고 index와 입력
     await expect(overview).toContainText(run("rev-parse", "HEAD"));
     await expect(overview).toContainText("주 worktree");
     await expect(overview).toContainText("origin 없음");
-    await expect(overview.locator("dt").filter({ hasText: "모델 도구 정책:" }).locator("..")).toContainText("read_only");
+    await expect(overview.locator("dt").filter({ hasText: "모델 도구 정책:" }).locator("..")).toContainText("ask");
     await expect(overview).toContainText("조회 결과는 실행 허가가 아닙니다.");
     await overview.getByRole("button", { name: "Git 실행 권한 도움말", exact: true }).focus();
     await page.keyboard.press("Enter");

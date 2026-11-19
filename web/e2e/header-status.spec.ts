@@ -65,7 +65,7 @@ test("웹 확인은 최신과 새 버전을 구분하며 빈 탭도 새로고침
         await expect(panel).toContainText("웹은 최신 버전이에요");
         writeFileSync(sw, `${original}\n// header-update-test\n`);
         await web.click();
-        await expect(panel).toContainText("새 웹 버전이 준비됐어요");
+        await expect(panel).toBeHidden();
         await expect(page.getByRole("button", { name: "업데이트", exact: true })).toBeVisible();
         expect(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting)).toBe(true);
     } finally {
@@ -75,6 +75,27 @@ test("웹 확인은 최신과 새 버전을 구분하며 빈 탭도 새로고침
 
 test.describe("모바일 업데이트 확인", () => {
     test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+
+    test("새 웹 버전을 찾으면 확인 팝오버를 닫아 업데이트 안내를 바로 누를 수 있다", async ({ page }) => {
+        const sw = join(dirname(state().projA), "web", "sw.js");
+        const original = readFileSync(sw, "utf8");
+        try {
+            await login(page);
+            await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
+            const trigger = page.getByRole("button", { name: "업데이트 확인", exact: true });
+            const panel = page.getByRole("dialog", { name: "업데이트 확인", exact: true });
+            await trigger.tap();
+            writeFileSync(sw, `${original}\n// mobile-header-update-test\n`);
+            await panel.getByRole("button", { name: "웹 업데이트 확인" }).tap();
+            await expect(panel).toBeHidden();
+            await expect(trigger).toHaveAttribute("aria-expanded", "false");
+            await page.getByRole("button", { name: "업데이트", exact: true }).tap({ trial: true });
+            // 확인만으로는 새 버전을 적용하거나 탭을 다시 로드하지 않는다.
+            expect(await page.evaluate(async () => !!(await navigator.serviceWorker.getRegistration())?.waiting)).toBe(true);
+        } finally {
+            writeFileSync(sw, original);
+        }
+    });
 
     test("초록점을 탭하면 화면 안에 두 확인 버튼이 열리고 바깥 탭으로 닫힌다", async ({ page }, info) => {
         await login(page);

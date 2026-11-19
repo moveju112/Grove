@@ -74,7 +74,7 @@ async fn approval_barriers_preserve_order_and_denial_does_not_block_later_author
 
 #[tokio::test]
 async fn queued_tools_revalidate_revoked_permissions_and_turn_cancellation_before_starting() {
-    for mode in ["read_only","revoke","cancel","full_access","full_access_with_allow"] {
+    for mode in ["deny","revoke","cancel","full_access","full_access_with_allow"] {
         let (s,f,profile,sid,project) = setup(mode!="full_access").await;
         if mode.starts_with("full_access") {
             let (st,body) = s.send(Method::PUT,&format!("/api/v1/settings/project/{}/tools.full_access",project["id"].as_str().unwrap()),
@@ -93,7 +93,7 @@ async fn queued_tools_revalidate_revoked_permissions_and_turn_cancellation_befor
         if mode=="cancel" {
             s.post(&format!("/api/v1/turns/{tid}/cancel"),json!({})).await;
         } else {
-            let (key,revision,value) = if mode=="read_only" { ("tools.mode",0,json!("read_only")) }
+            let (key,revision,value) = if mode=="deny" { ("tools.deny",0,json!("shell")) }
                 else if mode.starts_with("full_access") { ("tools.full_access",1,json!(false)) }
                 else { ("tools.allow",1,json!("")) };
             let (st,body) = s.send(Method::PUT,&format!("/api/v1/settings/project/{}/{key}",project["id"].as_str().unwrap()),
@@ -107,7 +107,7 @@ async fn queued_tools_revalidate_revoked_permissions_and_turn_cancellation_befor
         assert!(second["started_at"].is_null(),"{mode}: {second}");
         if mode!="cancel" {
             assert_eq!(second["status"],"failed");
-            assert_eq!(second["result"]["error"]["code"],if mode=="read_only" {"read_only"} else {"approval_revoked"});
+            assert_eq!(second["result"]["error"]["code"],if mode=="deny" {"policy_denied"} else {"approval_revoked"});
         } else {
             assert_eq!(second["status"],"cancelled");
         }

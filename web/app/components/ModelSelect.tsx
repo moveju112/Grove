@@ -1,17 +1,18 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
-import { Popover } from "@astryxdesign/core/Popover";
-import { useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { usePopover } from "@astryxdesign/core/Popover";
+import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { DropdownMenu, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSubMenu } from "@astryxdesign/core/DropdownMenu";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button } from "../design/Button";
 import { Icon } from "./icons";
 import { composerStyles } from "./composer.stylex";
-import type { AvailableModel, ModelCatalog, ModelProfile } from "../api/generated";
+import type { AvailableModel, ModelCatalog, ModelFavorite, ModelProfile } from "../api/generated";
 import { api } from "../api/client";
 import { useQuery } from "../state/store";
 import { useCapability } from "../state/capabilities";
 import { sortModels } from "./model-catalog";
 import type { SendOptions } from "../state/sendOptions";
+import { FavoriteChips, FavoriteStar, useModelFavorites } from "./ModelFavorites";
 
 export function useModelCatalog(profile: ModelProfile | undefined, bound = false) {
     const supported = useCapability("turn_model_selection_v1");
@@ -70,17 +71,24 @@ function ModelSummary({ name, effort, fast, measuring = false }: {
     </GroveStack>;
 }
 
-export function ModelSelect({ profiles, profileId, model, effort, fast = false, ready, bound, save, onChange, children, onExpandedChange }: {
+export function ModelSelect({ profiles, profileId, model, effort, fast = false, ready, bound, save, onChange, onFavorite, children, onExpandedChange }: {
     profiles: ModelProfile[]; profileId: string | null; model?: string | null;
     effort?: SendOptions["effort"]; fast?: boolean;
     ready: boolean; bound: boolean; save: boolean;
     onChange: (profileId: string, model: string | null) => void;
+    onFavorite: (favorite: ModelFavorite) => void;
     children?: ReactNode;
     onExpandedChange: (expanded: boolean) => void;
 }) {
-    const [open, setOpen] = useState(false);
+    // 터치 등장 애니메이션의 투명 가림막 없이 Astryx의 바깥 탭·Escape·초점 복귀를 유지한다.
+    const popover = usePopover({ dialogLabel: "모델 설정", closeButtonLabel: "모델 설정 닫기", padding: 3 });
     const [menuClearance, setMenuClearance] = useState(0);
-    const trigger = useRef<HTMLButtonElement>(null!);
+    const trigger = useRef<HTMLButtonElement>(null);
+    const { triggerRef } = popover;
+    const attachTrigger = useCallback((node: HTMLButtonElement | null) => {
+        trigger.current = node;
+        triggerRef(node);
+    }, [triggerRef]);
     const measurement = useRef<HTMLSpanElement>(null);
     const profile = profiles.find((p) => p.id === profileId);
     const catalog = useModelCatalog(profile, bound);
@@ -95,6 +103,10 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
         ? summary : `${summary} · ${profile.name}`;
     const shownEffort = save ? undefined : effort;
     const shownFast = !save && fast;
+    const favorites = useModelFavorites(ready && !bound);
+    const concreteModel = selected?.id ?? model ?? (!automatic ? profile?.model : null);
+    const currentFavorite = !save && profile?.enabled && concreteModel
+        ? { profile_id: profile.id, model: concreteModel, effort: effort ?? "auto", fast: shownFast } : null;
     const description = [summary, shownEffort, shownFast ? "Fast" : null].filter(Boolean).join(" · ");
     // 버튼의 자연 폭으로 판단한다. 두 줄 배치에서도 같은 폭을 재므로 크기 경계에서 왕복하지 않는다.
     useLayoutEffect(() => {
@@ -119,18 +131,20 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
         return () => observer.disconnect();
     }, [summary, shownEffort, shownFast, onExpandedChange]);
     return <GroveStack gap={0} width="fit-content" maxWidth="100%" xstyle={composerStyles.modelControl}>
-        <Button ref={trigger} type="button" appearance="disclosure" width="100%" aria-label="모델 설정" title={description} xstyle={composerStyles.modelTrigger}>
+        <Button {...popover.triggerProps} ref={attachTrigger}
+            onClick={popover.toggle} type="button" appearance="disclosure" width="100%" aria-label="모델 설정" title={description} xstyle={composerStyles.modelTrigger}>
             <ModelSummary name={summary} effort={shownEffort} fast={shownFast} />
             <GroveText as="span" type="inherit" ref={measurement} aria-hidden="true" xstyle={composerStyles.modelMeasurement}>
                 <ModelSummary name={summary} effort={shownEffort} fast={shownFast} measuring />
             </GroveText>
         </Button>
-        <Popover anchorRef={trigger} label="모델 설정" data-testid="model-settings" placement="above" alignment="start"
-            presentation="popover" width={304} padding={3} isOpen={open} onOpenChange={setOpen}
-            closeButtonLabel="모델 설정 닫기" style={{ marginBlock: `calc(${menuClearance}px + var(--spacing-2))` }}
-            content={<GroveStack gap={1}>
+        {popover.render(<GroveStack gap={1} data-testid="model-settings">
+                {!bound && <FavoriteChips favorites={favorites} current={currentFavorite} profiles={profiles} currentName={summary}
+                    labelFor={(item) => (item.profile_id === profileId ? catalog.data?.models.find((m) => m.id === item.model)?.name : undefined) ?? item.model}
+                    onApply={onFavorite} />}
                 <GroveStack direction="horizontal" align="center" justify="between" gap={2} minHeight={44}>
                     <GroveText type="inherit" color="secondary">모델</GroveText>
+                    <GroveStack direction="horizontal" align="center" justify="end" gap={1} xstyle={composerStyles.modelControl}>
                     <DropdownMenu placement="above" alignment="end"
                         renderTrigger={(props) => <Button {...props} type="button" appearance="disclosure"
                             style={{ minWidth: 0, minHeight: 44, fontSize: "inherit" }} title={detail}
@@ -145,10 +159,16 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
                         {profiles.map((item) => <ProfileModels key={item.id} profile={item} profileId={profileId}
                             model={model} onChange={onChange} />)}
                     </DropdownMenu>
+                    {!bound && <FavoriteStar favorites={favorites} current={currentFavorite} profiles={profiles} />}
+                    </GroveStack>
                 </GroveStack>
                 {catalog.error instanceof Error && <GroveText type="supporting" color="error" role="alert">{catalog.error.message}</GroveText>}
                 {bound && <GroveText type="supporting" color="secondary">모델은 봇 설정에서 변경해요.</GroveText>}
                 {children}
-            </GroveStack>} />
+            </GroveStack>, {
+            placement: "above", alignment: "start",
+            offset: `calc(${menuClearance}px + var(--spacing-2))`,
+            style: { inlineSize: "min(304px, calc(100vw - 2 * var(--spacing-3)))" },
+        })}
     </GroveStack>;
 }

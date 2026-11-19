@@ -9,8 +9,8 @@ import { ActionMenu, DetailDialog } from "./ui/Controls";
 import { HelpTip } from "./HelpTip";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
-import type { Definition, DefinitionDetail, DeviceInfo, ModelProfile, SecretInfo } from "../api/generated";
-import { type Prefs, loadPrefs, savePrefs, usePrefs, VINE_GROUPS } from "../state/device";
+import type { Definition, DefinitionDetail, ModelProfile, SecretInfo } from "../api/generated";
+import { activityDisplayOptions, type Prefs, loadPrefs, savePrefs, usePrefs, VINE_GROUPS } from "../state/device";
 import { When } from "./When";
 import { PushNotifications, PushStatusContext } from "./PushNotifications";
 import { AppNotificationPermission } from "./AppNotificationPermission";
@@ -21,7 +21,7 @@ import { invalidate, useLive, useQuery } from "../state/store";
 import { type SettingDef, type SettingsTarget, ScopedSettings, isRoleProfile, useEffectiveSettings } from "./ScopedSettings";
 import { RoleModelChoice } from "./settings/RoleModelChoice";
 import { isWorkflowSetting, WorkflowSettings } from "./settings/WorkflowSettings";
-import { Pairings } from "./Pairing";
+import { DeviceConnections } from "./Pairing";
 import { Hosts } from "./Hosts";
 import { ProfileCatalog } from "./ProfileCatalog";
 import { LocalModelConnection } from "./local-models/LocalModelConnection";
@@ -111,8 +111,8 @@ export const ITEMS: Item[] = [
     { id: "notify", menu: "notifications", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜 턴 경과 소요 대기", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "진행사항 보기 진행 설명 완료 시 접기 progress", scope: "이 기기" },
-    { id: "leaves", menu: "display", label: "잎 애니메이션", keywords: "대기 중 새싹 표시 잎 무리 수 잎 무리 길이 잎 회전 속도 줄기 인디케이터", scope: "이 기기" },
-    { id: "devices", menu: "devices", label: "등록 기기", keywords: "device token pair 기기 토큰 페어링 폐기 분실", scope: "서버 전체" },
+    { id: "leaves", menu: "display", label: "진행 중 효과", keywords: "대기 중 새싹 표시 잎 애니메이션 정지 표시 숨김 상단 탭 링 잎 무리 수 잎 무리 길이 잎 회전 속도", scope: "이 기기" },
+    { id: "devices", menu: "devices", label: "기기·등록 링크", keywords: "device token pair 등록 기기 토큰 QR 링크 페어링 폐기 분실", scope: "서버 전체" },
     { id: "hosts", menu: "devices", label: "데몬 연결", keywords: "host 서버 연결 주소 별명 데몬", scope: "이 기기" },
     { id: "device-name", menu: "devices", label: "클라이언트 이름", keywords: "이 기기 이름 device name 클라이언트", scope: "이 기기" },
     { id: "browser-capabilities", menu: "devices", label: "브라우저 기능·권한", keywords: "이 기기 browser notification clipboard 알림 복사 붙여넣기 파일 첨부 드래그 HTTPS 보안 권한", scope: "이 기기" },
@@ -121,9 +121,11 @@ export const ITEMS: Item[] = [
     { id: "server-update", menu: "server", label: "서버 업데이트", keywords: "update automatic on off 자동 업데이트", scope: "서버 전체" },
 ];
 
-export function Settings({ projectId, projectName, sessionId, open }: { projectId?: string; projectName?: string; sessionId?: string; open: Opener }) {
-    const [area, setArea] = useState<SettingsArea>(projectId ? "daemon" : "local");
-    const [menu, setMenu] = useState<Menu>(projectId ? "workflow" : "display");
+export function Settings({ projectId, projectName, sessionId, initialMenu, open }: {
+    projectId?: string; projectName?: string; sessionId?: string; initialMenu?: "shortcuts"; open: Opener;
+}) {
+    const [area, setArea] = useState<SettingsArea>(projectId && !initialMenu ? "daemon" : "local");
+    const [menu, setMenu] = useState<Menu>(initialMenu ?? (projectId ? "workflow" : "display"));
     const panelId = useId();
     const scroll = useRef<HTMLDivElement>(null);
     const [q, setQ] = useState("");
@@ -229,7 +231,7 @@ export function Settings({ projectId, projectName, sessionId, open }: { projectI
                 {(["theme", "font", "enter", "terminal-paste", "shortcuts", "running-send", "recent", "notify", "time", "transcript", "leaves"] as const).some(visible)
                     && <DisplayPrefs show={visible} leavesOpen={leavesOpen} onLeavesOpenChange={setLeavesOpen} />}
                 {visible("bots") && <Section item="bots"><BotsPanel open={open} /></Section>}
-                {visible("devices") && <Devices />}
+                {visible("devices") && <Section item="devices"><DeviceConnections /></Section>}
                 {visible("hosts") && <Section item="hosts"><Hosts /></Section>}
                 {visible("device-name") && <Section item="device-name"><CurrentDeviceName onSaved={() => invalidate("devices")} /></Section>}
                 {visible("browser-capabilities") && <Section item="browser-capabilities"><BrowserCapabilitiesSettings /></Section>}
@@ -395,28 +397,28 @@ function DisplayPrefs({ show, leavesOpen, onLeavesOpenChange }: {
                 <Section item="transcript">
                     <Select label="진행사항 보기" value={p.progressVisibility}
                         onChange={(value) => set({ ...p, progressVisibility: value as Prefs["progressVisibility"] })}
-                        options={[{ value: "collapse", label: "완료 시 접기" }, { value: "hidden", label: "안 보기" }]} />
+                        options={[{ value: "expanded", label: "항상 펼치기" }, { value: "collapse", label: "완료 후 접기" }, { value: "hidden", label: "안 보기" }]} />
                 </Section>
             )}
             {show("leaves") && (
                 <Card id="setting-leaves" data-testid="setting-leaves" data-ui="settings-group" role="region"
-                    aria-label="잎 애니메이션" padding={3} xstyle={settingsStyles.group}>
+                    aria-label="진행 중 효과" padding={3} xstyle={settingsStyles.group}>
                     <Collapsible isOpen={leavesOpen} onOpenChange={onLeavesOpenChange} trigger={
                         <Stack as="span" direction="horizontal" justify="between" gap={2}>
-                            <Text as="span">잎 애니메이션</Text>
+                            <Text as="span">진행 중 효과</Text>
                             <Text as="span" type="supporting" color="secondary">이 기기</Text>
                         </Stack>
                     }>
                         <Stack gap={2} paddingBlockStart={2}>
-                            <BooleanSelect label="대기 중 새싹 표시" value={p.sessionVines}
-                                onChange={(value) => set({ ...p, sessionVines: value })} />
-                            <Select label="잎 무리 수" value={String(p.sessionVineGroups)} disabled={!p.sessionVines}
+                            <Select label="진행 중 표시" value={p.activityDisplay} options={[...activityDisplayOptions]}
+                                onChange={(value) => set({ ...p, activityDisplay: value as Prefs["activityDisplay"] })} />
+                            <Select label="잎 무리 수" value={String(p.sessionVineGroups)} disabled={p.activityDisplay !== "animated"}
                                 onChange={(value) => set({ ...p, sessionVineGroups: Number(value) as Prefs["sessionVineGroups"] })}
                                 options={VINE_GROUPS.map((count) => ({ value: String(count), label: `${count}개` }))} />
-                            <Select label="잎 무리 길이" value={p.sessionVineLength} disabled={!p.sessionVines}
+                            <Select label="잎 무리 길이" value={p.sessionVineLength} disabled={p.activityDisplay !== "animated"}
                                 onChange={(value) => set({ ...p, sessionVineLength: value as Prefs["sessionVineLength"] })}
                                 options={[{ value: "short", label: "짧게" }, { value: "medium", label: "기본" }, { value: "long", label: "길게" }]} />
-                            <Select label="잎 회전 속도" value={p.sessionVineSpeed} disabled={!p.sessionVines}
+                            <Select label="잎 회전 속도" value={p.sessionVineSpeed} disabled={p.activityDisplay !== "animated"}
                                 onChange={(value) => set({ ...p, sessionVineSpeed: value as Prefs["sessionVineSpeed"] })}
                                 options={[{ value: "slow", label: "느리게" }, { value: "normal", label: "기본" }, { value: "fast", label: "빠르게" }]} />
                         </Stack>
@@ -738,35 +740,6 @@ function DeviceNameInput({ name, reload }: { name: string; reload: () => void })
         <TextInput size="sm" label="이 기기 이름" value={state.value} isRequired onChange={state.change} onBlur={state.blur} maxLength={80} />
         <AutosaveStatus state={state} />
     </>;
-}
-
-function Devices() {
-    const list = useQuery<DeviceInfo[]>("devices", () => api.get("/devices"));
-    const save = useSave();
-    const pairing = useCapability("pairing_approval_v1");
-    return (
-        <>
-            <Section item="devices">
-            {Boolean(list.error) && <Text as="p" display="block" type="inherit" color="error" role="alert">기기 목록을 읽지 못했습니다.</Text>}
-            <Text as="p" display="block" type="supporting" color="secondary">등록한 기기는 프로젝트와 파일에 접근하고, 명령을 실행하거나 다른 기기를 관리할 수 있어요.</Text>
-            <List density="compact" edge="flush" hasDividers>
-                {(list.data ?? []).filter((d) => d.kind !== "browser" || !d.revoked_at).map((d) => (
-                    <ListItem key={d.id} startContent={<Icon name="monitor" size={16} />}
-                        label={<>{d.name}{d.current && <> <StatusBadge>현재</StatusBadge></>}</>}
-                        description={<>{d.kind === "device" ? "기기" : "브라우저 로그인"}
-                            {d.last_used_at && <> · <When at={d.last_used_at} /></>}</>}
-                        endContent={d.revoked_at ? <Text as="span" type="supporting" color="secondary">폐기됨</Text> : (
-                            <ServerActionButton variant="secondary" density="compact" onClick={() => { if (confirm(`${d.name}의 접근을 폐기할까요? 연결·티켓은 차단하지만 이미 시작한 작업·터미널은 종료하지 않습니다.`)) void save.run(() => api.del(`/devices/${d.id}`)); }}>폐기</ServerActionButton>
-                        )} />
-                ))}
-            </List>
-            {save.view}
-            </Section>
-            {pairing !== false && <SettingsGroup title="QR·링크로 기기 등록" scope="서버 전체" icon="link" testId="setting-pairing">
-                <Pairings showHeading={false} />
-            </SettingsGroup>}
-        </>
-    );
 }
 
 /// 이 화면의 빌드 버전(service worker 자산 hash). 개발 서버·SW 없음이면 "dev".

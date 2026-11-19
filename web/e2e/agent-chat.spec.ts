@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, closeModelSettings, composerSetting, login, openDetails, removeProfiles, sessionView, startProjectConversation, state } from "./helpers";
+import { apiCall, closeModelSettings, composerSetting, issueTestPairing, login, openDetails, removeProfiles, sessionView, startProjectConversation, state } from "./helpers";
 
 test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "전용 CLI fixture로 실행: GROVE_E2E_FAKE_CLI=1");
 
@@ -148,7 +148,7 @@ test("등록한 모바일 기기는 암호화 연결로 에이전트와 대화�
         socket.on("framereceived", ({ payload }) => wire.push(Buffer.from(payload)));
     });
     try {
-        const pairing = await apiCall<{ code: string; id: string }>("POST", "/pairings", { name: "agent-chat-mobile", password });
+        const pairing = await issueTestPairing("agent-chat-mobile", password);
         await page.goto("/#" + new URLSearchParams({ connect: "ws://127.0.0.1:17741/api/e2ee", key: identity.key, pairing: pairing.code }));
         await page.getByRole("button", { name: "서버 확인 후 연결" }).click();
         await page.getByRole("button", { name: "연결", exact: true }).click();

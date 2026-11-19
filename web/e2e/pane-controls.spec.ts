@@ -65,29 +65,29 @@ test("탭이 넘쳐도 양쪽 영역의 본문 높이가 어긋나지 않고 아
     expect(await contentTop()).toEqual(before);
 });
 
-test("도구 버튼은 각 영역의 탭 줄에서 해당 패널만 열고 미전송 입력을 보존한다", async ({ page }, info) => {
+test("프로젝트에 도구 버튼 하나만 표시하고 선택한 영역의 패널을 연다", async ({ page }, info) => {
     const { left, right } = await setup(page);
     await left.getByLabel("메시지 입력").fill("왼쪽 입력");
     await right.getByLabel("메시지 입력").fill("오른쪽 입력");
     for (const pane of [left, right]) {
-        await expect(pane.getByTestId("pane-tab-actions").getByRole("button", { name: "도구 패널", exact: true })).toHaveCount(1);
         await expect(pane.getByTestId("pane-body").getByRole("button", { name: "도구 패널", exact: true })).toHaveCount(0);
+        await expect(pane.getByRole("button", { name: "영역 닫기", exact: true })).toHaveCount(0);
     }
     await openTool(right, "파일");
     await expect(toolTrigger(right)).toHaveAttribute("aria-expanded", "true");
-    await expect(toolTrigger(left)).toHaveAttribute("aria-expanded", "false");
+    await expect(toolTrigger(left)).toHaveCount(0);
     await right.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
     await expect(toolTrigger(right)).toBeFocused();
     await openTool(left, "변경");
     await expect(toolTrigger(left)).toHaveAttribute("aria-expanded", "true");
-    await expect(toolTrigger(right)).toHaveAttribute("aria-expanded", "false");
+    await expect(toolTrigger(right)).toHaveCount(0);
     await left.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
     await expect(left.getByTestId("tool-dock")).toHaveJSProperty("open", false);
     await expect(left.getByLabel("메시지 입력")).toHaveValue("왼쪽 입력");
     await expect(right.getByLabel("메시지 입력")).toHaveValue("오른쪽 입력");
     await page.setViewportSize({ width: 932, height: 700 });
     await expect(toolTrigger(left)).toBeVisible();
-    await expect(toolTrigger(right)).toBeVisible();
+    await expect(toolTrigger(right)).toHaveCount(0);
     await page.screenshot({ path: info.outputPath("pane-tools-desktop.png"), animations: "disabled" });
 });
 
@@ -124,10 +124,16 @@ test("전체 보기에서 Escape는 모달부터 닫고 다음에 분할을 복�
     await expect(right.getByLabel("메시지 입력")).toHaveValue("right draft");
 });
 
-test("숨긴 실행 pane을 닫아 합쳐도 승인·작업은 취소하지 않고 같은 탭에서 한 번만 이어진다", async ({ page }) => {
+async function moveSessionTab(left: ReturnType<Page["locator"]>, right: ReturnType<Page["locator"]>) {
+    await left.getByTestId("tab-title").dragTo(right.getByTestId("tab-title").first());
+    await expect(left).toHaveCount(0);
+}
+
+test("실행 중인 탭을 옮겨도 승인·작업은 취소하지 않고 한 번만 이어진다", async ({ page }) => {
     const { s, title, left, right, project } = await setup(page);
     // 일반 작업은 기본 자동 허용이므로 승인 상태의 보존 검사는 프로젝트 제한을 명시한다.
     const projectId = project.id;
+    await apiCall("PUT", `/settings/project/${projectId}/tools.mode`, { expected_revision: 0, value: "ask" });
     await apiCall("PUT", `/settings/project/${projectId}/tools.full_access`, { expected_revision: 0, value: false });
     const mutations: string[] = [];
     page.on("request", (r) => {
@@ -147,7 +153,7 @@ test("숨긴 실행 pane을 닫아 합쳐도 승인·작업은 취소하지 않�
     try {
         expect(turns[0]?.status).toBe("awaiting_approval");
         await right.getByRole("button", { name: "분할 복원", exact: true }).click();
-        await left.getByRole("button", { name: "영역 닫기", exact: true }).click();
+        await moveSessionTab(left, right);
         await expect(page.getByTestId("pane")).toHaveCount(1);
         await expect(right.getByTestId("approval")).toBeVisible();
         await expect(right.getByLabel("메시지 입력")).toHaveValue("keep after merge");
@@ -165,10 +171,11 @@ test("숨긴 실행 pane을 닫아 합쳐도 승인·작업은 취소하지 않�
         if (current[0] && ["queued", "running", "awaiting_approval", "awaiting_input"].includes(current[0].status))
             await apiCall("POST", `/turns/${current[0].id}/cancel`, {});
         await apiCall("PUT", `/settings/project/${projectId}/tools.full_access`, { expected_revision: 1, value: null });
+        await apiCall("PUT", `/settings/project/${projectId}/tools.mode`, { expected_revision: 1, value: null });
     }
 });
 
-test("영역 합치기는 입력·진행 중 첨부를 탭별로 유지하고 탭 닫기·새로고침은 미전송 입력을 버린다", async ({ page }) => {
+test("탭 이동은 입력·진행 중 첨부를 유지하고 탭 닫기·새로고침은 미전송 입력을 버린다", async ({ page }) => {
     const { left, right, title, project, s } = await setup(page);
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: s.id });
     await left.getByLabel("메시지 입력").fill("합쳐도 유지할 입력");
@@ -184,7 +191,7 @@ test("영역 합치기는 입력·진행 중 첨부를 탭별로 유지하고 �
             name: "merge-note.txt", mimeType: "text/plain", buffer: Buffer.from("merge attachment"),
         });
         await expect(left.getByRole("button", { name: "merge-note.txt 첨부 제거", exact: true })).toBeDisabled();
-        await left.getByRole("button", { name: "영역 닫기", exact: true }).click();
+        await moveSessionTab(left, right);
         await expect(right.getByLabel("메시지 입력")).toHaveValue("합쳐도 유지할 입력");
         release();
         await expect(right.getByRole("button", { name: "merge-note.txt 첨부 제거", exact: true })).toBeEnabled();
@@ -210,7 +217,7 @@ test("영역 합치기는 입력·진행 중 첨부를 탭별로 유지하고 �
     }
 });
 
-test("전송 중 영역을 합쳐도 중복 전송하지 않고 늦은 응답이 새 입력을 지우지 않는다", async ({ page }) => {
+test("전송 중 탭을 옮겨도 중복 전송하지 않고 늦은 응답이 새 입력을 지우지 않는다", async ({ page }) => {
     const { left, right, s } = await setup(page);
     await composerOption(left, "보내기 방식", "save");
     await left.getByLabel("메시지 입력").fill("합치기 전에 보낸 메시지");
@@ -230,7 +237,7 @@ test("전송 중 영역을 합쳐도 중복 전송하지 않고 늦은 응답이
     try {
         await left.getByRole("button", { name: "보내기", exact: true }).click();
         await stored;
-        await left.getByRole("button", { name: "영역 닫기", exact: true }).click();
+        await moveSessionTab(left, right);
         await expect(right.getByRole("button", { name: "보내는 중…", exact: true })).toBeDisabled();
         await right.getByLabel("메시지 입력").fill("응답 전에 새로 작성한 입력");
         release();
@@ -319,6 +326,8 @@ test("탭 옆 +는 새 대화를 추가하고 첫 전송은 그 탭만 새 세�
     await page.getByRole("button", { name: "사이드바", exact: true }).click();
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
     await expect(page.getByTestId("mobile-drawer-left")).toBeHidden();
+    // 프로젝트 행은 마지막 대화를 복원하므로 현재 위치에서 프로젝트 화면을 직접 연다.
+    await page.getByTestId("navigation-context").getByRole("button", { name: /프로젝트 화면으로$/ }).click();
     await expect(page.getByTestId("project-view").filter({ visible: true }).getByLabel("메시지 입력")).toBeVisible();
     await expect(page.getByRole("tablist", { name: "열린 대화와 화면" })).toBeHidden();
     await expect(page.getByRole("button", { name: "새 대화 탭", exact: true })).toBeHidden();

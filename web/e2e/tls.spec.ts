@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createServer } from "node:tls";
 import { finishSetup, openTool } from "./helpers";
+import { configurePairing, ISSUANCE_PASSWORD } from "./global-setup";
 
 type Reply = { status: number; body: unknown };
 type TlsHost = {
@@ -61,6 +62,7 @@ const test = base.extend<{}, { tlsHost: TlsHost }>({
             req.end(body === undefined ? undefined : JSON.stringify(body));
         });
         const root = new URL("../..", import.meta.url).pathname;
+        configurePairing(process.env.GROVE_BIN!, join(work, "data"));
         const child = spawn(process.env.GROVE_BIN!, ["serve", "--listen", "127.0.0.1:17745", "--data-dir", join(work, "data")], {
             env: { ...process.env, GROVE_WEB_DIR: join(root, "web/build/client"), GROVE_TLS_TERMINATED: "1", GROVE_ALLOWED_ORIGINS: "", GROVE_ALLOWED_HOSTS: `127.0.0.1:${port}`, GROVE_LOG: "warn" },
             stdio: ["ignore", "inherit", "inherit"],
@@ -80,7 +82,7 @@ const test = base.extend<{}, { tlsHost: TlsHost }>({
             ], { encoding: "utf8", input });
             const password = "TLS pairing fixture password";
             const issued = JSON.parse(cli(["create", "TLS 테스트", "--endpoint", origin.replace("https:", "wss:") + "/api/e2ee",
-                "--password-stdin", "--json"], password + "\n")) as { id: string; link: string };
+                "--password-stdin", "--json"], `${ISSUANCE_PASSWORD}\n${password}\n`)) as { id: string; link: string };
             const approve = (verification: string) => {
                 const rows = JSON.parse(cli(["list"])) as { id: string; requests: { id: string; verification_code: string }[] }[];
                 const pending = rows.find((row) => row.id === issued.id)!.requests.find((item) => item.verification_code === verification)!;

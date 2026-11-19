@@ -7,7 +7,7 @@ import {
 
 describe("승인 projection과 현재 서버 계약", () => {
     it("서버의 도구 effect와 대화 허용 제외를 유지한다", () => {
-        expect(currentApprovalContract("read")).toEqual({ effect: "read", choices: ["approve", "approve_session", "deny"] });
+        expect(currentApprovalContract("read")).toEqual({ effect: "read", choices: ["approve", "approve_session", "approve_always", "deny"] });
         expect(currentApprovalContract("write").effect).toBe("write");
         expect(currentApprovalContract("shell").effect).toBe("execute");
         expect(currentApprovalContract("agent")).toEqual({ effect: "delegate", choices: ["approve", "deny"] });
@@ -41,7 +41,7 @@ describe("승인 projection과 현재 서버 계약", () => {
     });
 
     it("웹 조회는 실행 승인으로 URL의 query를 숨기고 본문 상한을 보여준다", () => {
-        expect(currentApprovalContract("web_fetch")).toEqual({ effect: "execute", choices: ["approve", "approve_session", "deny"] });
+        expect(currentApprovalContract("web_fetch")).toEqual({ effect: "execute", choices: ["approve", "approve_session", "approve_always", "deny"] });
         const p = projectApproval(approvalFixture({
             name: "web_fetch",
             target: { tool: "web_fetch", url: "https://example.com/page?token=query-sentinel", max_bytes: 2048 },

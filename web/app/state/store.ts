@@ -84,8 +84,28 @@ function refresh(k: string) {
     }
 }
 
+let invalidated: Set<string> | null = null;
+
+function refreshPriority(key: string) {
+    return /^(messages|turns):/.test(key) ? 0 : /^session:/.test(key) ? 1 : 2;
+}
+
 export function invalidate(prefix: string) {
-    for (const k of entries.keys()) if (k === prefix || k.startsWith(prefix + ":")) refresh(k);
+    for (const k of entries.keys()) if (k === prefix || k.startsWith(prefix + ":")) {
+        if (invalidated) invalidated.add(k);
+        else refresh(k);
+    }
+}
+
+/// 한 SSE 묶음에서 여러 이벤트가 무효화한 조회는 한 번만, 대화 본문·턴부터 다시 읽는다.
+export function batchEventQueries(apply: () => void) {
+    if (invalidated) { apply(); return; }
+    const batch = invalidated = new Set<string>();
+    try { apply(); }
+    finally {
+        invalidated = null;
+        for (const key of [...batch].sort((a, b) => refreshPriority(a) - refreshPriority(b))) refresh(key);
+    }
 }
 
 /// 같은 key의 여러 viewer는 한 항목·한 요청을 공유한다. 반환한 함수로 각 viewer를 해제한다.
@@ -162,6 +182,8 @@ export function querySnapshot<T>(key: string | null): { data: T | undefined; err
 
 /// 이벤트 종류 → 무효화할 key 접두사.
 export function applyEvent(e: EventRecord) {
+    // 같은 stream에서 먼저 받은 임시 응답을 반영한 뒤 확정 이벤트를 적용해 순서를 지킨다.
+    flushPartials();
     const sid = e.session_id;
     const pid = e.project_id;
     switch (e.kind) {
@@ -171,7 +193,7 @@ export function applyEvent(e: EventRecord) {
             break;
         }
         case "message.created":
-            invalidate("usage:dashboard:");
+            invalidate("usage:dashboard");
             if (sid) {
                 invalidate(`messages:${sid}`);
                 invalidate(`context:${sid}`);
@@ -372,10 +394,15 @@ export function retryWaiting() {
 
 /// 재동기화: 모든 조회를 다시 읽는다(NET-008).
 export function resyncAll() {
-    deliveryTiming.clear();
-    setLive((l) => ({ ...l, partials: {} }));
-    for (const k of entries.keys()) refresh(k);
+    resetStreamPartials();
+    for (const k of [...entries.keys()].sort((a, b) => refreshPriority(a) - refreshPriority(b))) refresh(k);
     refreshFiles();
+}
+
+export function resetStreamPartials() {
+    deliveryTiming.clear();
+    dropPendingPartials();
+    setLive((l) => ({ ...l, partials: {} }));
 }
 
 // ---- 연결 상태·중간 응답(메모리) ----
@@ -387,6 +414,40 @@ const liveSubs = new Set<() => void>();
 export function setLive(f: (l: Live) => Live) {
     live = f(live);
     for (const s of liveSubs) s();
+}
+
+// 서버는 대화마다 최대 50ms 간격으로 응답 전체 snapshot을 보낸다. 여러 대화가 동시에 응답하면
+// 대화 화면과 Markdown을 그만큼 다시 그리므로, 화면 반영은 대화와 무관하게 PARTIAL_FLUSH_MS에 한 번으로 묶는다.
+// 묶음 사이에 온 같은 대화의 snapshot은 최신 것만 남긴다. 첫 snapshot은 기다리지 않고 바로 반영한다.
+export const PARTIAL_FLUSH_MS = 100;
+let pendingPartials = new Map<string, unknown>();
+let partialTimer: ReturnType<typeof setTimeout> | null = null;
+let lastPartialFlush = -Infinity;
+
+export function queuePartial(sessionId: string, snapshot: unknown) {
+    pendingPartials.set(sessionId, snapshot);
+    if (partialTimer) return;
+    const wait = lastPartialFlush + PARTIAL_FLUSH_MS - performance.now();
+    if (wait <= 0) flushPartials();
+    else partialTimer = setTimeout(flushPartials, wait);
+}
+
+export function flushPartials() {
+    if (partialTimer) clearTimeout(partialTimer);
+    partialTimer = null;
+    if (pendingPartials.size === 0) return;
+    const next = pendingPartials;
+    pendingPartials = new Map();
+    lastPartialFlush = performance.now();
+    setLive((l) => ({ ...l, partials: { ...l.partials, ...Object.fromEntries(next) } }));
+}
+
+// 새 연결·인증 세대의 첫 snapshot은 이전 묶음 시각과 무관하게 바로 보인다.
+function dropPendingPartials() {
+    if (partialTimer) clearTimeout(partialTimer);
+    partialTimer = null;
+    pendingPartials = new Map();
+    lastPartialFlush = -Infinity;
 }
 
 const subscribeLive = (cb: () => void) => {
@@ -406,6 +467,7 @@ export function useLive<T>(select: (value: Live) => T): T {
 /// 로그아웃·인증 만료(UI-032): 서버에서 읽은 모든 상태와 중간 응답을 메모리에서 지운다.
 export function clearServerCache() {
     deliveryTiming.clear();
+    dropPendingPartials();
     generation += 1;
     entries.clear();
     for (const k of [...subs.keys()]) notify(k);

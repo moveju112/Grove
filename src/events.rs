@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -84,6 +84,14 @@ pub fn prune(conn: &Connection) -> ApiResult<usize> {
     Ok(n + m)
 }
 
+/// cursor 다음 이벤트가 이미 정리되어 이어 읽으면 누락이 생기는지.
+fn cursor_expired(cursor: i64, oldest: Option<i64>, latest: i64) -> bool {
+    match oldest {
+        Some(o) => cursor < o - 1,
+        None => cursor < latest,
+    }
+}
+
 pub fn oldest_retained(conn: &Connection) -> ApiResult<Option<i64>> {
     Ok(conn.query_row("SELECT MIN(seq) FROM events", [], |r| r.get(0))?)
 }
@@ -91,9 +99,11 @@ pub fn oldest_retained(conn: &Connection) -> ApiResult<Option<i64>> {
 /// 세션별 모델 중간 응답 snapshot(메모리 전용). 서버 재시작 시 복원하지 않는다.
 #[derive(Default)]
 pub struct Partials {
-    map: Mutex<HashMap<String, Value>>,
-    tx: Option<broadcast::Sender<(String, Value)>>,
+    map: Mutex<HashMap<String, Arc<Value>>>,
+    tx: Option<broadcast::Sender<PartialUpdate>>,
 }
+
+type PartialUpdate = (String, Option<Arc<Value>>);
 
 impl Partials {
     pub fn new() -> Self {
@@ -101,35 +111,49 @@ impl Partials {
         Self { map: Mutex::new(HashMap::new()), tx: Some(tx) }
     }
     pub fn set(&self, session_id: &str, snapshot: Value) {
+        let snapshot = Arc::new(snapshot);
         self.map.lock().expect("partials").insert(session_id.to_string(), snapshot.clone());
         if let Some(tx) = &self.tx {
-            let _ = tx.send((session_id.to_string(), snapshot));
+            let _ = tx.send((session_id.to_string(), Some(snapshot)));
         }
     }
     /// 재접속은 항상 최신 snapshot을 읽고, 기존 구독자 fanout은 별도로 묶어서 보낸다.
     pub fn stage(&self, session_id: &str, snapshot: Value) {
-        self.map.lock().expect("partials").insert(session_id.to_string(), snapshot);
+        self.map.lock().expect("partials").insert(session_id.to_string(), Arc::new(snapshot));
     }
     pub fn publish(&self, session_id: &str) {
         let map = self.map.lock().expect("partials");
         if let (Some(tx), Some(snapshot)) = (&self.tx, map.get(session_id)) {
-            let _ = tx.send((session_id.to_string(), snapshot.clone()));
+            let _ = tx.send((session_id.to_string(), Some(snapshot.clone())));
         }
     }
     pub fn clear(&self, session_id: &str) {
         let removed = self.map.lock().expect("partials").remove(session_id).is_some();
         if removed {
             if let Some(tx) = &self.tx {
-                let _ = tx.send((session_id.to_string(), Value::Null));
+                let _ = tx.send((session_id.to_string(), None));
             }
         }
     }
-    pub fn get(&self, session_id: &str) -> Option<Value> {
+    pub fn get(&self, session_id: &str) -> Option<Arc<Value>> {
         self.map.lock().expect("partials").get(session_id).cloned()
     }
-    fn subscribe(&self) -> broadcast::Receiver<(String, Value)> {
+    fn subscribe(&self) -> broadcast::Receiver<PartialUpdate> {
         self.tx.as_ref().expect("partials tx").subscribe()
     }
+}
+
+#[derive(Serialize)]
+struct PartialFrame<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lagged: Option<bool>,
+    session_id: &'a str,
+    snapshot: Option<&'a Value>,
+}
+
+fn partial_event(session_id: &str, snapshot: Option<&Value>, lagged: bool) -> Event {
+    let frame = PartialFrame { lagged: lagged.then_some(true), session_id, snapshot };
+    Event::default().event("partial").data(serde_json::to_string(&frame).expect("partial JSON"))
 }
 
 #[derive(Deserialize)]
@@ -155,6 +179,9 @@ pub async fn stream(
         .and_then(|v| v.to_str().ok())
         .and_then(|s| s.parse::<i64>().ok());
     let start = header_cursor.or(q.cursor);
+    let request_id = headers.get(crate::web::REQUEST_ID_HEADER).and_then(|value| value.to_str().ok())
+        .and_then(|value| uuid::Uuid::parse_str(value).ok());
+    let began = std::time::Instant::now();
     let sessions: HashSet<String> =
         q.sessions.unwrap_or_default().split(',').filter(|s| !s.is_empty()).map(String::from).collect();
 
@@ -164,11 +191,12 @@ pub async fn stream(
     let mut partial_rx = app.partials.subscribe();
     let partials = app.partials.clone();
     let mut shutdown = app.shutdown_rx.clone();
-    let partials_now: Vec<(String, Value)> =
+    let partials_now: Vec<_> =
         sessions.iter().filter_map(|s| app.partials.get(s).map(|v| (s.clone(), v))).collect();
 
     let invalid = crate::auth::wait_until_invalid(app.clone(), p.clone());
     let producer = async move {
+        let session_count = sessions.len();
         // 시작 cursor 결정과 보존 범위 검사
         let mut cursor = match start {
             Some(c) => c,
@@ -181,22 +209,22 @@ pub async fn stream(
         if tx.send(Out::Event(Event::default().event("hello").data(hello.to_string()))).await.is_err() {
             return;
         }
+        tracing::debug!(?request_id, resume = start.is_some(), session_count,
+            elapsed_ms = began.elapsed().as_millis() as u64, "이벤트 스트림 준비");
         if start.is_some() {
             let oldest = db.call(|c| oldest_retained(c)).await.ok().flatten();
             let latest = db.call(|c| latest_seq(c)).await.unwrap_or(0);
-            let too_old = match oldest {
-                Some(o) => cursor < o - 1,
-                None => cursor < latest,
-            };
-            if too_old || cursor > latest {
-                let data = json!({ "reason": if cursor > latest { "cursor_ahead" } else { "cursor_expired" }, "latest": latest });
+            if cursor_expired(cursor, oldest, latest) || cursor > latest {
+                let reason = if cursor > latest { "cursor_ahead" } else { "cursor_expired" };
+                tracing::debug!(?request_id, reason, "이벤트 스트림 전체 재동기화 요청");
+                let data = json!({ "reason": reason, "latest": latest });
                 let _ = tx.send(Out::Event(Event::default().event("resync").data(data.to_string()))).await;
                 let _ = tx.send(Out::End).await;
                 return;
             }
         }
         for (sid, snap) in partials_now {
-            let ev = Event::default().event("partial").data(json!({ "session_id": sid, "snapshot": snap }).to_string());
+            let ev = partial_event(&sid, Some(&snap), false);
             if tx.send(Out::Event(ev)).await.is_err() {
                 return;
             }
@@ -205,8 +233,17 @@ pub async fn stream(
             // 영속 이벤트를 모두 따라잡는다. bounded channel이 느린 클라이언트의 backpressure가 된다.
             loop {
                 let after = cursor;
-                let batch = match db.call(move |c| read_after(c, after, BATCH)).await {
-                    Ok(b) => b,
+                // 연결 중에도 정리(prune)가 cursor 뒤의 이벤트를 지웠으면 건너뛰지 않고 재동기화를 요구한다(NET-008).
+                let read = db.call(move |c| Ok((read_after(c, after, BATCH)?, oldest_retained(c)?, latest_seq(c)?))).await;
+                let batch = match read {
+                    Ok((_, oldest, latest)) if cursor_expired(after, oldest, latest) => {
+                        tracing::debug!(?request_id, reason = "cursor_expired", "이벤트 스트림 전체 재동기화 요청");
+                        let data = json!({ "reason": "cursor_expired", "latest": latest });
+                        let _ = tx.send(Out::Event(Event::default().event("resync").data(data.to_string()))).await;
+                        let _ = tx.send(Out::End).await;
+                        return;
+                    }
+                    Ok((b, _, _)) => b,
                     Err(_) => return,
                 };
                 let n = batch.len() as i64;
@@ -229,15 +266,15 @@ pub async fn stream(
                     match msg {
                         Ok((sid, snap)) => {
                             if sessions.contains(&sid) {
-                                let ev = Event::default().event("partial").data(json!({ "session_id": sid, "snapshot": snap }).to_string());
+                                let ev = partial_event(&sid, snap.as_deref(), false);
                                 if tx.send(Out::Event(ev)).await.is_err() { return; }
                             }
                         }
                         Err(broadcast::error::RecvError::Lagged(_)) => {
                             // 놓친 partial은 현재 snapshot으로 대체한다.
                             for sid in &sessions {
-                                let snap = partials.get(sid).unwrap_or(Value::Null);
-                                let ev = Event::default().event("partial").data(json!({ "session_id": sid, "snapshot": snap, "lagged": true }).to_string());
+                                let snap = partials.get(sid);
+                                let ev = partial_event(sid, snap.as_deref(), true);
                                 if tx.send(Out::Event(ev)).await.is_err() { return; }
                             }
                         }
@@ -264,4 +301,50 @@ pub async fn stream(
         }
     });
     Ok(Sse::new(stream).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("hb")))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn partials_share_snapshots_between_subscribers_without_changing_clear() {
+        let partials = Partials::new();
+        let (mut a, mut b) = (partials.subscribe(), partials.subscribe());
+        partials.stage("s", json!({ "text": "first" }));
+        assert!(matches!(a.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
+        let first = partials.get("s").unwrap();
+        partials.publish("s");
+        for receiver in [&mut a, &mut b] {
+            let (sid, snapshot) = receiver.try_recv().unwrap();
+            assert_eq!(sid, "s");
+            assert!(Arc::ptr_eq(&first, &snapshot.unwrap()));
+        }
+        partials.stage("s", json!({ "text": "next" }));
+        assert_eq!(first["text"], "first");
+        assert_eq!(partials.get("s").unwrap()["text"], "next");
+        partials.clear("s");
+        assert!(partials.get("s").is_none());
+        assert!(a.try_recv().unwrap().1.is_none());
+        assert!(b.try_recv().unwrap().1.is_none());
+    }
+
+    #[test]
+    fn partial_frame_keeps_null_and_optional_lagged_flag() {
+        let normal = PartialFrame { lagged: None, session_id: "s", snapshot: None };
+        assert_eq!(serde_json::to_value(normal).unwrap(), json!({ "session_id": "s", "snapshot": null }));
+        let snapshot = json!({ "text": "다음" });
+        let lagged = PartialFrame { lagged: Some(true), session_id: "s", snapshot: Some(&snapshot) };
+        assert_eq!(serde_json::to_value(lagged).unwrap(), json!({ "session_id": "s", "snapshot": snapshot, "lagged": true }));
+    }
+
+    /// NET-008: 다음에 읽을 이벤트(cursor+1)가 정리됐을 때만 재동기화한다. 연결 중 배치 조회도 같은 판정을 쓴다.
+    #[test]
+    fn cursor_expires_only_when_next_event_was_pruned() {
+        assert!(!cursor_expired(9, Some(10), 20), "다음 이벤트 10이 남아 있다");
+        assert!(cursor_expired(8, Some(10), 20), "이벤트 9가 정리됐다");
+        assert!(!cursor_expired(20, Some(10), 20));
+        assert!(!cursor_expired(0, None, 0), "이벤트가 아직 없다");
+        assert!(cursor_expired(3, None, 7), "모두 정리됐다");
+    }
 }
