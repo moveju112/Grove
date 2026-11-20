@@ -1106,24 +1106,10 @@ async fn repeated_failing_call_and_identical_loop_are_stopped() {
     s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
 }
 
-// RUN-012·021: 예산은 사용자가 정한 경우에만 적용하고(기본 제한 없음), 원인을 구분해 기록한다.
+// RUN-021: 시간 예산은 사용자가 정한 경우에만 적용하고(기본 제한 없음), 원인을 기록한다.
 #[tokio::test]
-async fn explicit_token_and_time_budgets_stop_turn_with_distinct_causes() {
+async fn explicit_time_budget_stops_turn_with_its_cause() {
     let (s, f, prof, sid, root) = setup().await;
-    // token 예산: 응답 usage 14 > 10
-    let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_tokens"), json!({ "expected_revision": 0, "value": 10 })).await;
-    assert_eq!(st, StatusCode::OK, "{v}");
-    f.push(fixture::text("길게 답함"));
-    let v = start_turn(&s, &sid, &prof, "답해", false).await;
-    let t = s.wait_status(v["turn"]["id"].as_str().unwrap(), "failed").await;
-    assert_eq!(t["error"]["code"], "budget_exceeded");
-    assert_eq!(t["error"]["source"], "user");
-    assert_eq!(t["error"]["budget"]["max_tokens"], 10);
-    assert!(t["error"]["at"].is_string());
-    assert!(t["error"]["last_progress_at"].is_string());
-    let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_tokens"), json!({ "expected_revision": 1, "value": 0 })).await;
-    assert_eq!(st, StatusCode::OK);
-
     // 시간 예산 1분: 승인 대기 중 시작 시각을 59.5초 전으로 당긴 뒤 승인 → 모델 응답이 끝나지 않으면 남은 0.5초 뒤 멈춤
     let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_minutes"), json!({ "expected_revision": 0, "value": 1 })).await;
     assert_eq!(st, StatusCode::OK);
@@ -1157,38 +1143,6 @@ async fn explicit_token_and_time_budgets_stop_turn_with_distinct_causes() {
     let v = start_turn(&s, &sid, &prof, "다시", false).await;
     let t = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
     assert!(t["definition"]["budget"].is_null());
-}
-
-// RUN-012: 비용 예산은 가격표로 추정하고, 가격표가 없으면 잴 수 없으므로 접수를 거절한다.
-#[tokio::test]
-async fn cost_budget_needs_pricing_and_stops_when_estimate_exceeds() {
-    let (s, f, prof, sid, _) = setup().await;
-    let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_cost_cents"), json!({ "expected_revision": 0, "value": 100 })).await;
-    assert_eq!(st, StatusCode::OK);
-    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "답해", "profile_id": prof })).await;
-    assert_eq!(st, StatusCode::BAD_REQUEST, "{v}");
-    assert!(v["error"]["message"].as_str().unwrap().contains("가격표"));
-    // 가격표: 입력 백만 token당 100000 USD → 응답 usage(입력 11) ≈ 1.1 USD > 1.00 USD
-    let (_, p) = s.get("/api/v1/model-profiles").await;
-    let cur = p.as_array().unwrap().iter().find(|x| x["id"] == prof.as_str()).unwrap().clone();
-    let mut opts = cur["options"].clone();
-    opts["pricing"] = json!({ "currency": "USD", "version": "t", "input_per_mtok": 100000.0, "output_per_mtok": 0.0 });
-    let (st, v) = s.send(Method::PUT, &format!("/api/v1/model-profiles/{prof}"), json!({ "expected_revision": cur["revision"], "options": opts })).await;
-    assert_eq!(st, StatusCode::OK, "{v}");
-    f.push(fixture::text("비싼 답"));
-    let v = start_turn(&s, &sid, &prof, "답해", false).await;
-    let t = s.wait_status(v["turn"]["id"].as_str().unwrap(), "failed").await;
-    assert_eq!(t["error"]["code"], "budget_exceeded");
-    assert_eq!(t["error"]["kind"], "cost");
-    assert_eq!(t["error"]["currency"], "USD");
-    assert!((t["error"]["estimated_cost"].as_f64().unwrap() - 1.1).abs() < 1e-9, "{t}");
-    assert_eq!(t["definition"]["budget"]["pricing"]["version"], "t", "접수 시점 가격표 고정");
-    // 예산 안이면 정상 완료
-    let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_cost_cents"), json!({ "expected_revision": 1, "value": 200 })).await;
-    assert_eq!(st, StatusCode::OK);
-    f.push(fixture::text("적당한 답"));
-    let v = start_turn(&s, &sid, &prof, "다시", false).await;
-    s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
 }
 
 // UI-020: 추론 강도는 접수 때 고정되어 모델 요청에 들어가고, auto면 보내지 않는다.
@@ -1398,8 +1352,7 @@ async fn ended_turn_can_be_retried_once_or_acknowledged() {
     assert_eq!(v["error"]["code"], "not_retryable");
 
     // 포기(확인): 실패한 요청의 배너만 닫는다
-    let (_, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_tokens"), json!({ "expected_revision": 0, "value": 1 })).await;
-    f.push(fixture::text("예산 초과"));
+    f.push(Step::Error(400, "실패 fixture".into()));
     let v = start_turn(&s, &sid, &prof, "실패할 요청", false).await;
     let ft = v["turn"]["id"].as_str().unwrap();
     s.wait_status(ft, "failed").await;

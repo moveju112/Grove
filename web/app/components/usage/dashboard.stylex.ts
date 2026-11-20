@@ -10,6 +10,8 @@ export const dashboardStyles = stylex.create({
         "--astryx-dialog-padding-inline": { default: null, [narrow]: "var(--spacing-1)" },
     },
     page: { minWidth: 0, outline: "none" },
+    // 닫기 버튼의 확장된 터치 영역이 좁은 모달의 경계를 넘지 않게 한다.
+    header: { paddingInlineEnd: { default: null, [narrow]: "var(--spacing-2)" } },
     content: {
         width: "100%", minWidth: 0,
         paddingBlock: "calc(16rem / 14)",

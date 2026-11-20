@@ -1,7 +1,37 @@
 import { expect, test, type Page } from "@playwright/test";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { apiCall, ensureProjects, login, state } from "./helpers";
+
+test("도구 기록이 많아도 대화를 열 때 최근 질문과 답변을 함께 보여 준다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    const title = `도구 기록이 긴 대화 ${Date.now()}`;
+    const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", `/sessions/${s.id}/messages`, { text: "앞서 나눈 질문" });
+    await apiCall("POST", `/sessions/${s.id}/messages`, { text: "작업을 시작한 질문" });
+    // 격리된 DB에 모델 호출 없이 긴 내부 도구 이력을 만든다.
+    const db = new DatabaseSync(join(state().work, "data", "grove.db"));
+    try {
+        db.exec("PRAGMA busy_timeout=5000; BEGIN IMMEDIATE");
+        const add = db.prepare("INSERT INTO messages (id, session_id, seq, role, content, created_at) VALUES (?,?,?,?,?,?)");
+        const now = new Date().toISOString();
+        for (let seq = 3; seq <= 512; seq++) add.run(`${s.id}-${seq}`, s.id, seq, "tool", '{"output":"숨긴 로그"}', now);
+        add.run(`${s.id}-513`, s.id, 513, "assistant", '{"text":"마지막 작업 답변"}', now);
+        db.prepare("UPDATE sessions SET last_message_seq=513 WHERE id=?").run(s.id);
+        db.exec("COMMIT");
+    } finally { db.close(); }
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
+    await login(page);
+    const reads = messageReads(page, s.id);
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
+    const view = page.locator(`[data-testid=session-view][data-session="${s.id}"]`);
+    for (const text of ["마지막 작업 답변", "작업을 시작한 질문", "앞서 나눈 질문"]) {
+        await expect(view.getByText(text, { exact: true })).toBeInViewport();
+    }
+    await expect(view.getByRole("button", { name: "이전 메시지", exact: true })).toHaveCount(0);
+    expect(reads).toEqual([]);
+});
 
 function messageReads(page: Page, sessionId: string) {
     const urls: string[] = [];

@@ -12,18 +12,7 @@ async function setup(page: Page) {
     const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: project.name });
     await login(page);
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
-    await openProjectSettings(page);
-    await page.getByLabel("설정 검색", { exact: true }).fill("명령 실행");
-    const panel = page.getByTestId("exec-settings");
-    const row = panel.getByTestId("setting-exec.default_cwd");
-    const save = async (value: string) => {
-        await row.getByLabel("기본 작업 위치", { exact: true }).fill(value);
-        const response = page.waitForResponse((r) => r.request().method() === "PUT" && r.url().endsWith("/exec.default_cwd"));
-        await row.getByLabel("기본 작업 위치", { exact: true }).blur();
-        expect((await response).ok()).toBe(true);
-        await expect(row.getByRole("status").filter({ hasText: /\S/ })).toContainText("저장됨");
-    };
-    return { root, project, session, panel, save };
+    return { root, project, session };
 }
 
 type Call = {
@@ -35,33 +24,33 @@ type Call = {
 type Turn = { status: string; step: number; tool_calls: Call[] };
 type Task = { id: string; cwd: string; status: string; stdout_tail: string };
 
-test("설정 화면에서 바꾼 cwd는 다음 모델 셸에만 적용되고 명시한 점은 root를 유지한다", async ({ page }) => {
-    const { root, session, panel, save } = await setup(page);
+test("기본 작업 위치 설정은 없고 cwd를 생략한 모델 셸은 실행 root, 명시한 cwd는 그 위치에서 실행한다", async ({ page }) => {
+    const { root, session } = await setup(page);
+    await openProjectSettings(page);
+    await page.getByLabel("설정 검색", { exact: true }).fill("명령 실행");
+    await expect(page.getByTestId("exec-settings").getByTestId("setting-exec.shell")).toBeVisible();
+    await expect(page.getByTestId("settings").getByTestId("setting-exec.default_cwd")).toHaveCount(0);
     const profile = await ensureProfile();
-    await expect(panel).toContainText("실행 root(worktree 포함)");
-    await expect(panel).toContainText("명시한 cwd가 우선");
     for (const background of [false, true]) {
-        await save("work");
         for (const explicit of [false, true]) {
             const release = `release-${explicit}`;
             await script({ frames: frames.tool("cwd", "shell", {
                 command: background ? `while [ ! -f '${release}' ]; do sleep 0.02; done; pwd -P` : "pwd -P",
                 ...(background ? { background: true, timeout_ms: 10000 } : {}),
-                ...(explicit ? { cwd: "." } : {}),
+                ...(explicit ? { cwd: "work" } : {}),
             }) });
             await script({ frames: frames.text(["끝"]) });
             const { turn } = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`,
                 { text: "run", profile_id: profile, tools: true });
             await expect.poll(async () => (await apiCall<Turn>("GET", `/turns/${turn.id}`)).status).toBe("awaiting_approval");
             const pending = (await apiCall<Turn>("GET", `/turns/${turn.id}`)).tool_calls[0]!;
-            expect(pending.target.cwd).toBe(explicit ? "." : "work");
-            if (!explicit) await save("next");
+            expect(pending.target.cwd).toBe(explicit ? "work" : ".");
             await apiCall("POST", `/tool-calls/${pending.id}/decision`, { decision: "approve", expected_revision: pending.revision });
             if (background) {
                 // 작업 결과를 보지 못한 첫 final은 보류된다. 그 경계를 확인한 뒤 완료 응답과 해제 표식을 준다.
                 await expect.poll(() => apiCall<Turn>("GET", `/turns/${turn.id}`)).toMatchObject({ status: "running", step: 2 });
                 await script({ frames: frames.text(["작업 결과 확인"]) });
-                writeFileSync(join(root, explicit ? "." : "work", release), "release");
+                writeFileSync(join(root, explicit ? "work" : ".", release), "release");
             }
             await expect.poll(() => apiCall<Turn>("GET", `/turns/${turn.id}`)).toMatchObject({ status: "completed" });
             const done = (await apiCall<Turn>("GET", `/turns/${turn.id}`)).tool_calls[0]!;
@@ -69,14 +58,13 @@ test("설정 화면에서 바꾼 cwd는 다음 모델 셸에만 적용되고 명
             const result = done.result.background
                 ? await apiCall<Task>("GET", `/tasks/${done.result.task_id}/wait?timeout_ms=10000`)
                 : done.result;
-            expect("stdout" in result ? result.stdout : result.stdout_tail).toBe(`${explicit ? root : join(root, "work")}\n`);
+            expect("stdout" in result ? result.stdout : result.stdout_tail).toBe(`${explicit ? join(root, "work") : root}\n`);
         }
     }
 });
 
-test("작업 접수 응답을 잃어도 같은 키는 바뀐 기본 cwd를 적용하거나 중복 실행하지 않는다", async ({ page }) => {
-    const { root, project, session, save } = await setup(page);
-    await save("work");
+test("작업 접수 응답을 잃어도 같은 키는 중복 실행하지 않고 실행 root를 유지한다", async ({ page }) => {
+    const { root, project, session } = await setup(page);
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
     await page.reload();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(project.name) }).click();
@@ -89,7 +77,6 @@ test("작업 접수 응답을 잃어도 같은 키는 바뀐 기본 cwd를 적�
         if (keys.length !== 1) return route.fallback();
         const accepted = await route.fetch();
         expect(accepted.status()).toBe(201);
-        await apiCall("PUT", `/settings/project/${project.id}/exec.default_cwd`, { expected_revision: 1, value: "next" });
         await route.abort("connectionreset");
     });
     await panel.getByLabel("백그라운드 명령").fill("pwd -P; printf once >> counter");
@@ -105,8 +92,7 @@ test("작업 접수 응답을 잃어도 같은 키는 바뀐 기본 cwd를 적�
     expect(list.tasks).toHaveLength(1);
     const ended = await apiCall<Task>("GET", `/tasks/${list.tasks[0]!.id}/wait?timeout_ms=10000`);
     expect(ended.status).toBe("completed");
-    expect(ended.cwd).toBe("work");
-    expect(ended.stdout_tail).toBe(`${join(root, "work")}\n`);
-    expect(readFileSync(join(root, "work/counter"), "utf8")).toBe("once");
-    await expect(panel.getByTestId("task-cwd")).toHaveText("실행 위치: work");
+    expect(ended.cwd).toBe(".");
+    expect(ended.stdout_tail).toBe(`${root}\n`);
+    expect(readFileSync(join(root, "counter"), "utf8")).toBe("once");
 });

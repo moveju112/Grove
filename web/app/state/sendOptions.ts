@@ -16,11 +16,9 @@ export function serviceTierForProfile(value: SendOptions["serviceTier"], capabil
 /// 저장된 선택값을 현재 목록에 맞춰 실제로 쓸 값으로 바꾼다.
 /// 선택값을 effect로 상태에 복사하지 않고 렌더마다 계산해, 화면에 보이는 선택과 보내는 값이 항상 같게 한다.
 /// - 프로필: 명시적 저장값은 없어져도 보존한다. 선택이 없을 때만 첫 프로필을 쓴다.
-/// - 에이전트: 목록을 아직 못 불러왔으면 저장값 유지, 불러왔는데 없으면 null
-export function resolveOptions(o: SendOptions, profileIds: string[] | undefined, agentIds: string[] | undefined): SendOptions {
+export function resolveOptions(o: SendOptions, profileIds: string[] | undefined): SendOptions {
     const profileId = profileIds === undefined ? null : o.profileId || profileIds[0] || null;
-    const agentId = o.agentId && agentIds !== undefined && !agentIds.includes(o.agentId) ? null : o.agentId;
-    return { ...o, profileId, agentId };
+    return { ...o, profileId };
 }
 
 // 기존 탭의 명시적 선택은 호출 전에 복원한다. 새 입력창에만 범위별 기본값 → 기기 선택 → 첫 모델을 적용한다.

@@ -1,4 +1,5 @@
 import { Grid } from "@astryxdesign/core/Grid";
+import { Link } from "@astryxdesign/core/Link";
 import { Stack } from "@astryxdesign/core/Stack";
 import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { Text as GroveText } from "@astryxdesign/core/Text";
@@ -110,8 +111,14 @@ function UsageQuotaCards({ report, failed, now, onAuthenticate }: {
                     {limit.resets_at && <GroveText color="secondary" xstyle={dashboardStyles.hint}>초기화 {absoluteTime(limit.resets_at, prefs)}</GroveText>}
                 </Stack>;
             }) : account.status === "authentication_required" && <Button type="button" appearance="link" xstyle={usageStyles.authAction} aria-label={`${providerName(account.protocol)} 인증 설정 열기`} onClick={() => onAuthenticate(account.protocol)}>인증 설정 열기</Button>}
-            {account.limits.length === 0 && <GroveText color="secondary" xstyle={dashboardStyles.small}>현재 사용량 결과 없음</GroveText>}
-            <Stack xstyle={dashboardStyles.quotaFooter}><GroveText color="secondary" xstyle={dashboardStyles.hint}>마지막 갱신 {absoluteTime(account.checked_at, prefs)}</GroveText></Stack>
+            {account.limits.length === 0 && account.protocol !== "claude_code" && <GroveText color="secondary" xstyle={dashboardStyles.small}>현재 사용량 결과 없음</GroveText>}
+            <Stack xstyle={dashboardStyles.quotaFooter}>
+                {account.protocol === "claude_code" && account.status !== "authentication_required"
+                    && (failed || account.status !== "available" || periods.some((period) => !account.limits.some((limit) =>
+                        limit.label === period && limit.remaining_percent !== null && (!limit.resets_at || Date.parse(limit.resets_at) > now))))
+                    && <Link type="inherit" href="https://claude.ai/settings/usage" target="_blank" rel="noopener noreferrer">Claude에서 확인</Link>}
+                <GroveText color="secondary" xstyle={dashboardStyles.hint}>마지막 조회 {absoluteTime(account.checked_at, prefs)}</GroveText>
+            </Stack>
         </Stack>)}
         {connected.length === 0 && <GroveText xstyle={dashboardStyles.small} color="secondary">연결된 OAuth 계정 없음</GroveText>}
     </Stack>;

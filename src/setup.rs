@@ -7,15 +7,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 const OUTPUT_STYLE: &str = "output.style";
-const COMPUTER: &str = crate::computer::ENABLED;
 
 #[derive(Serialize, ts_rs::TS)]
 pub struct SetupPreferences {
     pub output_style: String,
     pub output_style_revision: i64,
     pub output_style_options: Vec<String>,
-    pub computer_enabled: bool,
-    pub computer_revision: i64,
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -44,13 +41,10 @@ pub async fn show(State(app): State<App>, _p: Principal) -> ApiResult<Json<Setup
         let required = required(c)?;
         let preferences = if required {
             let (style, output) = setting(c, OUTPUT_STYLE)?;
-            let (_, computer) = setting(c, COMPUTER)?;
             Some(SetupPreferences {
                 output_style: output["effective"].as_str().ok_or_else(|| ApiError::internal("invalid output style"))?.into(),
                 output_style_revision: revision(&output)?,
                 output_style_options: style.options.iter().map(|v| v.to_string()).collect(),
-                computer_enabled: computer["effective"].as_bool().ok_or_else(|| ApiError::internal("invalid computer setting"))?,
-                computer_revision: revision(&computer)?,
             })
         } else { None };
         Ok(SetupStatus { required, preferences })
@@ -62,8 +56,6 @@ pub async fn show(State(app): State<App>, _p: Principal) -> ApiResult<Json<Setup
 pub struct FinishSetup {
     output_style: String,
     output_style_revision: i64,
-    computer_enabled: bool,
-    computer_revision: i64,
 }
 
 pub async fn complete(
@@ -74,18 +66,14 @@ pub async fn complete(
     crate::idem::run(&app, &p, &headers, &hash, move |tx, now| {
         // 먼저 완료한 탭의 설정을 뒤늦은 요청으로 덮어쓰지 않는다.
         if required(tx)? {
-            for (key, value, expected_revision) in [
-                (OUTPUT_STYLE, json!(body.output_style), body.output_style_revision),
-                (COMPUTER, json!(body.computer_enabled), body.computer_revision),
-            ] {
-                let (def, item) = setting(tx, key)?;
-                settings::validate(&def, &value)?;
-                if revision(&item)? != expected_revision { return Err(ApiError::revision_conflict(item)); }
-                if item["effective"] != value {
-                    let old_value = item["layers"]["server"]["value"].clone();
-                    settings::record_change(tx, now, &actor, ("server", "-", key), (None, None),
-                        &PutSetting { value, expected_revision }, old_value)?;
-                }
+            let (value, expected_revision) = (json!(body.output_style), body.output_style_revision);
+            let (def, item) = setting(tx, OUTPUT_STYLE)?;
+            settings::validate(&def, &value)?;
+            if revision(&item)? != expected_revision { return Err(ApiError::revision_conflict(item)); }
+            if item["effective"] != value {
+                let old_value = item["layers"]["server"]["value"].clone();
+                settings::record_change(tx, now, &actor, ("server", "-", OUTPUT_STYLE), (None, None),
+                    &PutSetting { value, expected_revision }, old_value)?;
             }
             tx.execute("UPDATE daemon_setup SET completed=1 WHERE id=1", [])?;
             crate::events::append(tx, now, "daemon_setup.completed", None, None, &json!({}))?;

@@ -315,8 +315,8 @@ async fn invalid_options_references_confirmation_and_cli_are_rejected() {
 }
 
 #[tokio::test]
-async fn candidate_capabilities_input_and_cost_limits_are_not_bypassed() {
-    for kind in ["tools", "context", "cost", "currency", "missing_price"] {
+async fn candidate_capabilities_input_and_currency_limits_are_not_bypassed() {
+    for kind in ["tools", "context", "currency"] {
         let s = TestServer::start().await;
         let a = Fixture::start().await;
         let b = Fixture::start().await;
@@ -328,20 +328,13 @@ async fn candidate_capabilities_input_and_cost_limits_are_not_bypassed() {
         match kind {
             "tools" => target["capabilities"] = json!({"tools":false}),
             "context" => target["context_window"] = json!(1),
-            "cost" => target["pricing"]["output_per_mtok"] = json!(1_000_000),
             "currency" => target["pricing"]["currency"] = json!("KRW"),
-            "missing_price" => target = json!({}),
             _ => unreachable!(),
         }
         options(&s, &pb, target.clone()).await;
         enable(&s, &pa, &[&pb]).await;
         let sid = session(&s).await;
-        if matches!(kind, "cost" | "currency" | "missing_price") {
-            let (status, body) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_cost_cents"),
-                json!({"expected_revision":0,"value":1})).await;
-            assert_eq!(status, StatusCode::OK, "{body}");
-        }
-        if matches!(kind, "currency" | "missing_price") {
+        if kind == "currency" {
             let (status, _) = s.post(&format!("/api/v1/sessions/{sid}/turns"),
                 json!({"profile_id":pa,"text":"reject currency boundary"})).await;
             assert!(status.is_client_error());
@@ -352,14 +345,8 @@ async fn candidate_capabilities_input_and_cost_limits_are_not_bypassed() {
         b.push(fixture::text("expensive response"));
         let tid = start(&s, &sid, &pa, kind == "tools").await;
         let failed = s.wait_status(&tid, "failed").await;
-        if kind == "cost" {
-            assert_eq!(b.requests().len(), 1);
-            assert_eq!(failed["error"]["code"], "budget_exceeded");
-            assert_eq!(failed["definition"]["budget"]["pricing"], target["pricing"]);
-            assert_eq!(failed["definition"]["fallback"]["candidates"][1]["pricing"], target["pricing"]);
-        } else {
-            assert!(b.requests().is_empty(), "{kind}");
-        }
+        let _ = failed;
+        assert!(b.requests().is_empty(), "{kind}");
     }
 }
 
@@ -416,25 +403,13 @@ async fn fallback_reenters_provider_fair_queue_and_cancel_never_calls_the_waitin
 }
 
 #[tokio::test]
-async fn token_and_original_deadline_limits_survive_switching() {
+async fn original_deadline_limit_survives_switching() {
     let s = TestServer::start().await;
     let a = Fixture::start().await;
     let b = Fixture::start().await;
     let pa = s.fixture_profile(&a.base).await;
     let pb = s.fixture_profile(&b.base).await;
     enable(&s, &pa, &[&pb]).await;
-    let sid = session(&s).await;
-    let (status, body) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_tokens"),
-        json!({"expected_revision":0,"value":1})).await;
-    assert_eq!(status, StatusCode::OK, "{body}");
-    errors(&a, 503);
-    b.push(fixture::text("bounded tokens"));
-    let tid = start(&s, &sid, &pa, false).await;
-    let failed = s.wait_status(&tid, "failed").await;
-    assert_eq!(failed["error"]["code"], "budget_exceeded");
-    assert_eq!(failed["definition"]["budget"]["max_tokens"], 1);
-    assert_eq!(b.requests().len(), 1);
-
     let timed_sid = session(&s).await;
     let (status, body) = s.send(Method::PUT, &format!("/api/v1/settings/session/{timed_sid}/runs.budget.max_minutes"),
         json!({"expected_revision":0,"value":1})).await;
@@ -452,5 +427,5 @@ async fn token_and_original_deadline_limits_survive_switching() {
     grove::runner::kick_queued(&app).await;
     let failed = s.wait_status(&tid, "failed").await;
     assert_eq!(failed["error"]["code"], "time_budget_exceeded");
-    assert_eq!(b.requests().len(), 1, "시간 예산이 지난 요청은 후보를 호출하지 않는다");
+    assert!(a.requests().is_empty() && b.requests().is_empty(), "시간 예산이 지난 요청은 후보를 호출하지 않는다");
 }

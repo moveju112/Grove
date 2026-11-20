@@ -12,13 +12,15 @@ const directory = process.env.CLI_FIXTURE_DIR;
 if (!directory) throw new Error("fixture directory missing");
 const provider = basename(process.argv[1]) === "claude" ? "claude" : "codex";
 const authPath = join(directory, `${provider}-auth`);
-if (args[0] === "auth" || args[0] === "login" || args[0] === "logout") {
-    const action = provider === "claude" ? args[1] : args[0] === "logout" ? "logout" : args[1] === "status" ? "status" : "login";
+const authIndex = args[0] === "auth" ? 0 : args[0] === "--settings" ? args.indexOf("auth", 2) : -1;
+if (authIndex >= 0 || args[0] === "login" || args[0] === "logout") {
+    const action = provider === "claude" ? args[authIndex + 1] : args[0] === "logout" ? "logout" : args[1] === "status" ? "status" : "login";
     if (action === "status") {
         let authenticated = false;
         try { authenticated = (await readFile(authPath, "utf8")) === "in"; }
         catch (error) { if (error.code !== "ENOENT") throw error; }
-        console.log(provider === "claude" ? JSON.stringify({ loggedIn: authenticated, email: "must-not-be-returned@fixture.invalid" })
+        console.log(provider === "claude" ? JSON.stringify({ loggedIn: authenticated, authMethod: authenticated ? "claude.ai" : "none",
+            apiProvider: "firstParty", subscriptionType: authenticated ? "max" : null, email: "must-not-be-returned@fixture.invalid" })
             : authenticated ? "Logged in using ChatGPT" : "Not logged in");
         process.exit(authenticated ? 0 : 1);
     }
@@ -82,9 +84,10 @@ async function pauseResponse(signal, ready) {
     });
 }
 async function claudeAnswer(input) {
-    await appendFile(join(directory, "native-turns.jsonl"), JSON.stringify({ provider, cwd: process.cwd(), text: input, args }) + "\n");
     const session = args.indexOf("--session-id");
     const id = args.includes("--resume") ? args[args.indexOf("--resume") + 1] : session >= 0 ? args[session + 1] : randomUUID();
+    await appendFile(join(directory, "native-turns.jsonl"), JSON.stringify({ provider, cwd: process.cwd(), text: input, args,
+        pid: process.pid, threadId: id }) + "\n");
     const ordinary = await nextAnswer(id);
     const answer = input.includes("fixture-project-media")
         ? "결과를 첨부했어.\n\n```grove-media\npreview.gif\npreview.webm\n```"
@@ -102,25 +105,56 @@ async function claudeAnswer(input) {
     });
 }
 if (args.includes("--version")) {
-    console.log("codex-cli fixture");
+    console.log(provider === "claude" ? "2.1.328 (Claude Code)" : "codex-cli fixture");
     process.exit(0);
 }
 if (args[0] === "app-server" || args.includes("--input-format")) {
     let threadId;
     let activeTurn;
+    let usageReady = false;
+    let claudeSession = false;
     for await (const line of createInterface({ input: process.stdin })) {
         const request = JSON.parse(line);
         if (provider === "claude") {
+            if (request.request_id === "grove-usage" && request.request?.subtype === "initialize") {
+                if ((await readFile(authPath, "utf8")) !== "in" || !args.includes("--safe-mode") || !args.includes("--no-session-persistence")
+                    || args[args.indexOf("--max-turns") + 1] !== "0" || args[args.indexOf("--tools") + 1] !== "") process.exit(1);
+                emit({ type: "control_response", response: { request_id: request.request_id, subtype: "success",
+                    response: { commands: [{ name: "usage", builtin: true }] } } });
+                usageReady = true;
+                continue;
+            }
+            if (usageReady) {
+                if (request.type !== "user" || request.message?.content?.[0]?.text !== "/usage") process.exit(1);
+                await appendFile(join(directory, "claude-usage-requests"), "usage\n");
+                emit({ type: "assistant", message: { content: [{ type: "text", text: "private-fixture-usage-output" }] }, usage_report: {
+                    rate_limits: { limits: [
+                        { kind: "session", percent: 12.5, resets_at: "2100-01-01T00:00:00Z" },
+                        { kind: "weekly_all", percent: 70, resets_at: "2100-01-02T00:00:00Z" },
+                        { kind: "weekly_scoped", percent: 88, scope: { model: { display_name: "Opus" } } },
+                    ] },
+                } });
+                emit({ type: "result", subtype: "success", is_error: false, num_turns: 0, duration_api_ms: 0 });
+                break;
+            }
             if (request.type === "user") {
                 await claudeAnswer(request.message.content.find((item) => item.type === "text")?.text ?? "");
-                break;
+                if (!claudeSession) break;
+                continue;
+            }
+            if (request.request?.subtype === "mcp_set_servers") {
+                emit({ type: "control_response", response: { request_id: request.request_id, subtype: "success",
+                    response: { errors: {}, added: Object.keys(request.request.servers) } } });
+                continue;
             }
             emit({ type: "control_response", response: { request_id: request.request_id, subtype: "success",
                 response: { commands: await nativeSkills(), models: [
                     { value: "fixture-claude", displayName: "Fixture Claude" },
                     { value: "opus", resolvedModel: "claude-opus-5-5", displayName: "Opus" },
                 ] } } });
-            break;
+            claudeSession = args.includes("--session-id") || args.includes("--resume");
+            if (!claudeSession) break;
+            continue;
         }
         await appendFile(join(directory, "app-server-requests.jsonl"), JSON.stringify(request) + "\n");
         if (request.method === "initialize") emit({ id: request.id, result: {} });

@@ -132,15 +132,13 @@ async fn full_access_can_be_scoped_and_never_overrides_explicit_deny() {
 }
 
 #[tokio::test]
-async fn full_access_keeps_computer_and_delegation_policies_separate() {
+async fn full_access_keeps_delegation_policy_separate() {
     let (s, project, sid) = setup().await;
     let pid = project["id"].as_str().unwrap().to_string();
     setting(&s, "server", "-", "tools.full_access", 0, json!(true)).await;
     s.server.as_ref().unwrap().app.db.call(move |c| {
-        for name in ["computer", "agent"] {
-            let spec = grove::tools::spec(name).unwrap();
-            assert_eq!(grove::approvals::tool_policy(c, &pid, &sid, &spec)?, grove::approvals::PolicyDecision::Default, "{name}");
-        }
+        let spec = grove::tools::spec("agent").unwrap();
+        assert_eq!(grove::approvals::tool_policy(c, &pid, &sid, &spec)?, grove::approvals::PolicyDecision::Default);
         Ok(())
     }).await.unwrap();
 }

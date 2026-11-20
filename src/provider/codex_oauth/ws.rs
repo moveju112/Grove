@@ -1,5 +1,6 @@
 //! 턴 안에서만 연결과 응답 체인을 재사용한다. 재연결·SSE에는 Grove 이력 전체를 보낸다.
-use super::{BASE, CLIENT_VERSION, Credentials, ModelOutput, OnDelta, ProviderError, auth_required, invalid, read_event};
+use super::{BASE, CLIENT_VERSION, Credentials, ModelOutput, OnDelta, ProviderError, RequestDiagnostics,
+    auth_required, invalid, observe_request_id, read_event};
 use futures_util::{SinkExt, StreamExt};
 use serde::Serialize;
 use serde_json::Value;
@@ -174,7 +175,7 @@ impl Connection {
     }
 
     async fn exchange(&mut self, body: &Value, model: &str, scope: Option<&str>, wait: Duration,
-        mut on_delta: OnDelta<'_>) -> Result<ModelOutput, Failure> {
+        diagnostics: &mut RequestDiagnostics, mut on_delta: OnDelta<'_>) -> Result<ModelOutput, Failure> {
         let options = body.as_object().ok_or_else(invalid)?.iter().filter(|(k, _)| *k != "input")
             .map(|(k, v)| (k.as_str(), v)).collect::<BTreeMap<_, _>>();
         let input = body["input"].as_array().ok_or_else(invalid)?;
@@ -184,6 +185,7 @@ impl Connection {
             input: delta.as_ref().map_or(input.as_slice(), |(_, tail)| *tail),
             previous_response_id: delta.as_ref().map(|(id, _)| id.as_str()) };
         let text = serde_json::to_string(&frame).map_err(|_| invalid())?;
+        diagnostics.frame_input_items = Some(frame.input.len());
         tracing::debug!(incremental = delta.is_some(), "Codex WebSocket 요청");
         timeout(wait, self.socket.send(Message::text(text))).await.map_err(|_| Failure::link(true))?
             .map_err(Failure::wire)?;
@@ -196,6 +198,7 @@ impl Connection {
                 return Err(ProviderError::new("output_too_large", "Codex 응답이 너무 큽니다").into());
             }
             let event: Value = serde_json::from_str(text.as_str()).map_err(|_| invalid())?;
+            observe_request_id(&mut diagnostics.request_id, &event);
             let completed = read_event(&event, &mut out, model, scope, &mut on_delta).map_err(|mut error| {
                 // 이 소켓에서만 유효한 anchor가 사라지면 다음 시도는 새 연결에 full frame으로 간다.
                 let code = error.stream_failure.as_ref().and_then(|f| f.code.as_deref());
@@ -246,6 +249,7 @@ impl Session {
         let identity = (crate::util::sha256_hex(auth.access_token.as_bytes()), scope.map(str::to_owned));
         // in-flight 소켓의 유일한 소유권을 future로 이동한다. 취소·시간 예산·실패 시 소켓을 버린다.
         let mut emitted = false;
+        let mut diagnostics = RequestDiagnostics::default();
         let result = async {
             let mut connection = match std::mem::take(&mut self.transport) {
                 Transport::Sse => {
@@ -255,13 +259,16 @@ impl Session {
                 Transport::WebSocket(c) if c.identity == identity => c,
                 _ => Box::new(Connection::open(&self.ws_url(), auth, identity, wait).await?),
             };
-            let output = connection.exchange(body, model, scope, wait, &mut |delta| {
+            let output = connection.exchange(body, model, scope, wait, &mut diagnostics, &mut |delta| {
                 emitted |= !delta.text.is_empty() || !delta.reasoning.is_empty();
                 on_delta(delta);
             }).await?;
             self.transport = Transport::WebSocket(connection);
             Ok::<_, Failure>(Some(output))
         }.await;
+        if let Err(f) = &result {
+            diagnostics.log_failure("websocket", body, model, auth, &f.error);
+        }
         match result {
             Ok(output) => Ok(output),
             Err(f) if f.fallback && !emitted => {

@@ -3,15 +3,15 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
 
 for (const mobile of [false, true]) {
     test.describe(mobile ? "390px 파일 링크" : "파일 링크", () => {
         if (mobile) test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
 
-        test("절대경로 링크에서 stage·작업 트리·새 파일을 읽고 원문으로 이동한다", async ({ page }, info) => {
+        test("파일 링크와 줄 앵커에서 변경점을 확인하고 원문으로 이동한다", async ({ page }, info) => {
             await ensureProjects();
-            await ensureProfile();
+            const profile = await ensureProfile();
             const root = mkdtempSync(join(dirname(state().projA), "file-links-"));
             const git = (...args: string[]) => execFileSync("git", args, { cwd: root, encoding: "utf8" });
             git("init", "-q", "-b", "main");
@@ -32,15 +32,16 @@ for (const mobile of [false, true]) {
             // 탐색 서랍은 기존 모바일 동선을 사용한다.
             if (mobile) await page.getByRole("button", { name: "사이드바", exact: true }).click();
             await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`파일 링크 ${mobile}`) }).first().click();
-            const view = page.getByTestId("session-view");
+            const view = sessionView(page, session.id);
+            await expect(view).toBeVisible();
             await script({ frames: frames.text([
-                `[구현 코드](${root}/app.rs:2) · [새 문서](<${root}/new notes.md>) · [외부 파일](/etc/passwd) · \`app.rs:2\``,
+                `[구현 코드](app.rs#L2) · [새 문서](<${root}/new notes.md>) · [외부 파일](/etc/passwd#L1) · \`app.rs:2\``,
             ]) });
-            await composerOption(view, "보내기 방식", "model");
-            await view.getByLabel("메시지 입력").fill("변경 파일 보여줘");
-            await view.getByRole("button", { name: "보내기", exact: true }).click();
+            await apiCall("POST", `/sessions/${session.id}/turns`, { profile_id: profile, text: "변경 파일 보여줘" });
             const answer = view.getByTestId("msg-assistant").last();
             await expect(answer.getByTestId("file-link")).toHaveCount(2, { timeout: 15_000 });
+            await expect(answer).not.toContainText("#L2");
+            if (mobile) await page.screenshot({ path: info.outputPath("file-citation-390.png"), animations: "disabled" });
             await answer.getByRole("button", { name: "구현 코드", exact: true }).click();
             const dialog = page.getByRole("dialog", { name: "app.rs 변경점", exact: true });
             await expect(dialog).toContainText("-base");

@@ -14,7 +14,7 @@ import { Button as GroveButton } from "../design/Button";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { DetailDialog } from "./ui/Controls";
 import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../api/client";
-import type { Definition, ModelProfile } from "../api/generated";
+import type { ModelProfile } from "../api/generated";
 import { usePrefs } from "../state/device";
 import { useComposerMemory } from "../state/useComposerMemory";
 import { clearInvalidRecovery, loadRecovery, saveRecovery, settleRecovery, validSendOptions, type PendingSend } from "../state/sendRecovery";
@@ -37,9 +37,10 @@ export type { SendOptions };
 
 const OPT_KEY = "grove.composer.options";
 
+/// 입력창에는 역할 선택이 없다. 예전 화면이 저장한 역할은 보이지 않은 채 요청에 실리므로 복원하지 않는다.
 function loadOpts(): SendOptions {
     try {
-        return { mode: "model", profileId: null, agentId: null, ...(JSON.parse(localStorage.getItem(OPT_KEY) ?? "{}") as Partial<SendOptions>) };
+        return { mode: "model", profileId: null, ...(JSON.parse(localStorage.getItem(OPT_KEY) ?? "{}") as Partial<SendOptions>), agentId: null };
     } catch {
         return { mode: "model", profileId: null, agentId: null };
     }
@@ -90,7 +91,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         if (!restored) {
             try {
                 const saved = JSON.parse(localStorage.getItem(selectionKey) ?? "null");
-                if (validSendOptions(saved)) restored = saved;
+                if (validSendOptions(saved)) restored = { ...saved, agentId: null };
             } catch { /* 모델 선택 저장소를 사용할 수 없으면 기본값을 쓴다. */ }
         }
         return { phase: boundProfileId !== undefined || restored?.profileId ? "ready" : "loading",
@@ -113,7 +114,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const defaults = useQuery<{ items: { key: string; effective: unknown }[] }>(boundProfileId === undefined ? `settings:${projectId}` : null,
         () => api.get(`/settings/effective?project_id=${encodeURIComponent(projectId)}`));
-    const agents = useQuery<Definition[]>("definitions:agent", () => api.get("/definitions?kind=agent"));
     const prefs = usePrefs();
     const follow = prefs.runningSendMode;
     const ready = boundProfileId !== undefined || selectionState.phase === "ready";
@@ -136,7 +136,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const resolved = resolveOptions(
         opts,
         profiles.data && [...profiles.data].sort((a, b) => Number(a.enabled === false) - Number(b.enabled === false)).map((p) => p.id),
-        agents.data?.map((a) => a.id),
     );
     const bound = boundProfileId === undefined ? resolved : { ...resolved, profileId: boundProfileId, model: null, agentId: null };
     const selectedProfile = profiles.data?.find((p) => p.id === bound.profileId);

@@ -729,6 +729,13 @@ pub struct MessagesQuery {
     pub before_seq: Option<i64>,
     pub after_seq: Option<i64>,
     pub limit: Option<i64>,
+    pub view: Option<MessageView>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MessageView {
+    Conversation,
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -742,28 +749,51 @@ pub struct MessagePage {
     pub rewind_boundary_seq: Option<i64>,
 }
 
+const MAX_MESSAGE_PAGE: i64 = 500;
+const CONVERSATION_USER_CONTEXT: i64 = 8;
+// 대화 투영(assistantTranscript)에서 항상 숨기는 행은 본문 페이지 예산을 쓰지 않는다.
+const CONVERSATION_FILTER: &str = " AND CASE role WHEN 'tool' THEN 0 \
+    WHEN 'note' THEN COALESCE(json_extract(content,'$.type'),'') NOT IN ('cli_activity','task_result') ELSE 1 END";
+
 pub async fn messages(
     State(app): State<App>,
     _p: Principal,
     Path(id): Path<String>,
     Query(q): Query<MessagesQuery>,
 ) -> ApiResult<Json<MessagePage>> {
-    let limit = q.limit.unwrap_or(100).clamp(1, 500);
+    let limit = q.limit.unwrap_or(100).clamp(1, MAX_MESSAGE_PAGE);
     let now = crate::util::fmt_time(app.clock.now());
     let page = app
         .db
         .call(move |c| {
-            get(c, &id)?;
+            let session = get(c, &id)?;
             let timeline_revision = c.query_row("SELECT timeline_revision FROM sessions WHERE id = ?1", params![id], |r| r.get(0))?;
             let rewind_boundary_seq = crate::context::latest_compaction(c, &id, None)?.map(|cp| cp.upto_seq);
             let cols = "id, session_id, seq, role, content, turn_id, created_at";
+            let filter = if q.view.is_some() { CONVERSATION_FILTER } else { "" };
+            let mut limit = limit;
+            if q.view.is_some() && q.before_seq.is_none() && q.after_seq.is_none() && limit < MAX_MESSAGE_PAGE {
+                // 작업이 긴 턴의 중간 응답이 사용자 질문을 밀어내면 최신 창만 제한적으로 넓힌다.
+                let oldest_user: Option<i64> = c.query_row(
+                    "SELECT MIN(seq) FROM (SELECT seq FROM messages WHERE session_id = ?1 AND rewound_at IS NULL \
+                     AND role = 'user' ORDER BY seq DESC LIMIT ?2)",
+                    params![id, CONVERSATION_USER_CONTEXT], |r| r.get(0),
+                )?;
+                if let Some(first) = oldest_user.filter(|first| session.last_message_seq - first >= limit) {
+                    let context: i64 = c.query_row(&format!(
+                        "SELECT COUNT(*) FROM (SELECT seq FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL \
+                         AND seq >= ?2{filter} ORDER BY seq DESC LIMIT ?3)"
+                    ), params![id, first, MAX_MESSAGE_PAGE], |r| r.get(0))?;
+                    limit = limit.max(context);
+                }
+            }
             let mut items = if let Some(after) = q.after_seq {
-                let mut st = c.prepare(&format!("SELECT {cols} FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL AND seq > ?2 ORDER BY seq LIMIT ?3"))?;
+                let mut st = c.prepare(&format!("SELECT {cols} FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL AND seq > ?2{filter} ORDER BY seq LIMIT ?3"))?;
                 st.query_map(params![id, after, limit + 1], msg_from_row)?.collect::<Result<Vec<_>, _>>()?
             } else {
                 let before = q.before_seq.unwrap_or(i64::MAX);
                 let mut st = c.prepare(&format!(
-                    "SELECT {cols} FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL AND seq < ?2 ORDER BY seq DESC LIMIT ?3"
+                    "SELECT {cols} FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL AND seq < ?2{filter} ORDER BY seq DESC LIMIT ?3"
                 ))?;
                 let mut v = st.query_map(params![id, before, limit + 1], msg_from_row)?.collect::<Result<Vec<_>, _>>()?;
                 v.reverse();
@@ -775,15 +805,19 @@ pub async fn messages(
                     items.truncate(limit as usize);
                 }
                 let first = items.first().map(|m| m.seq).unwrap_or(0);
-                let before: bool = c.query_row("SELECT EXISTS(SELECT 1 FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND seq < ?2)", params![id, first], |r| r.get(0))?;
+                let before: bool = c.query_row(&format!(
+                    "SELECT EXISTS(SELECT 1 FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL AND seq < ?2{filter})"
+                ), params![id, first], |r| r.get(0))?;
                 (before, more)
             } else {
                 if more {
                     items.remove(0);
                 }
                 let last = items.last().map(|m| m.seq).unwrap_or(0);
-                let max: i64 = c.query_row("SELECT COALESCE(MAX(seq),0) FROM messages WHERE session_id = ?1 AND rewound_at IS NULL", params![id], |r| r.get(0))?;
-                (more, last < max)
+                let after: bool = c.query_row(&format!(
+                    "SELECT EXISTS(SELECT 1 FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL AND seq > ?2{filter})"
+                ), params![id, last], |r| r.get(0))?;
+                (more, after)
             };
             crate::history_storage::restore_page(c, &now, &id, &items)?;
             Ok(MessagePage { items, has_more_before, has_more_after, timeline_revision, rewind_boundary_seq })

@@ -3,6 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { apiCall, ensureProfile, login, openContext, openDetails, script, sessionView, state } from "./helpers";
 import { frames } from "./fixture";
+import { conversationPagePath } from "../app/state/conversationPages";
 
 type Effective = { items: { key: string; layers: Record<string, { value: unknown; revision: number }> }[] };
 
@@ -36,7 +37,7 @@ test("실제 압축의 생성 당시 모델·비용을 보존하고 페이지 �
         response.splice(response.length - 1, 0, JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 3 } }));
         await script({ frames: response, marker: "You compress a conversation" });
         const applied = page.waitForResponse((r) => r.request().method() === "POST" && r.url().endsWith(`/sessions/${s.id}/compact`));
-        const refreshed = page.waitForResponse(async (r) => r.request().method() === "GET" && r.url().endsWith(`/sessions/${s.id}/messages?limit=100`)
+        const refreshed = page.waitForResponse(async (r) => r.request().method() === "GET" && r.url().endsWith(conversationPagePath(s.id))
             && (await r.json()).items.some((m: { content: { type?: string } }) => m.content.type === "compaction"));
         const context = await openContext(view);
         await context.getByRole("button", { name: "압축", exact: true }).click();
@@ -134,7 +135,7 @@ test("자동 압축 성공과 적용 거절을 구분하고 legacy 기록을 소
         await expect(view).toContainText("자동 압축 실패(적용하지 않음");
         await expect(view).toContainText("요약(");
         // 과거 서버의 note 형태로 읽어도 현재 프로필을 과거 실행값으로 보충하지 않는다.
-        await page.route(`**/api/v1/sessions/${s.id}/messages?limit=100`, async (route) => {
+        await page.route(`**/api/v1${conversationPagePath(s.id)}`, async (route) => {
             const response = await route.fetch();
             const data = await response.json();
             for (const message of data.items) {
@@ -145,6 +146,7 @@ test("자동 압축 성공과 적용 거절을 구분하고 legacy 기록을 소
             await route.fulfill({ response, json: data });
         });
         await page.reload();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /CMP-011 자동 기록/ }).first().click();
         await openDetails(note);
         await expect(note.getByTestId("compaction-model")).toContainText("생성 당시 모델 정보 미기록");
         await expect(note.getByTestId("compaction-cost")).toContainText("생성 당시 가격 기준 미기록");

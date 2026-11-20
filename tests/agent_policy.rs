@@ -374,3 +374,22 @@ async fn solo_helpers_use_role_model_reject_writes_and_do_not_delegate() {
     assert_eq!(done["definition"]["model_selection"]["model"],"helper-followup");
     assert_eq!(main.requests().last().unwrap()["model"],"helper-followup");
 }
+
+/// 내부 유지관리 역할(압축·제목·기억)은 사용자 대화 요청을 맡지 않는다.
+#[tokio::test]
+async fn background_roles_cannot_run_conversation_requests() {
+    let (s, f, profile, _project, session) = setup().await;
+    for role in ["context-compressor", "title-generator", "maintainer"] {
+        let (status, value) = s.post(&format!("/api/v1/sessions/{session}/turns"), json!({"text":"수정해", "profile_id":profile, "agent_id":role, "tools":true})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{role}: {value}");
+        let (status, value) = s.post(&format!("/api/v1/sessions/{session}/followups"), json!({"kind":"queue", "text":"수정해", "profile_id":profile, "agent_id":role, "tools":true})).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{role}: {value}");
+    }
+    let (_, messages) = s.get(&format!("/api/v1/sessions/{session}/messages")).await;
+    assert!(!messages.to_string().contains("수정해"), "{messages}");
+    f.push(fixture::text("작업 역할 응답"));
+    let (status, value) = s.post(&format!("/api/v1/sessions/{session}/turns"), json!({"text":"작업", "profile_id":profile, "agent_id":"worker", "tools":true})).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{value}");
+    let done = s.wait_status(value["turn"]["id"].as_str().unwrap(), "completed").await;
+    assert_eq!(done["agent_id"], "worker");
+}

@@ -24,7 +24,6 @@ pub mod config;
 pub mod deps;
 pub mod context;
 pub mod aux_usage;
-pub mod computer;
 pub mod recall;
 pub mod memory;
 mod history;
@@ -107,7 +106,6 @@ pub const CAPABILITIES: &[&str] = &[
     "account_usage_v1",
     "native_skills_v1",
     "project_folders_v1",
-    "computer_use_v1",
     "bot_rooms_v1",
     "agent_auth_v1",
     "agent_backends_v1",
@@ -144,8 +142,8 @@ pub const CAPABILITIES: &[&str] = &[
 #[derive(Clone)]
 pub struct App {
     pub account_usage: Arc<account_usage::Cache>,
-    pub computer: Arc<computer::Computer>,
     pub agent_logins: Arc<agent_auth::Logins>,
+    pub(crate) claude_sessions: Arc<provider::cli::claude_session::Sessions>,
     pub e2ee: Arc<e2ee::Transport>,
     pub cfg: Arc<config::Config>,
     pub db: store::Db,
@@ -185,8 +183,8 @@ impl App {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         Ok(Self {
             account_usage: Arc::new(account_usage::Cache::default()),
-            computer: Arc::new(computer::Computer::default()),
             agent_logins: Arc::new(agent_auth::Logins::default()),
+            claude_sessions: Arc::default(),
             e2ee: Arc::new(e2ee::Transport::load(&cfg.data_dir)?),
             pairing_issuance: Arc::new(pairing::issuance::Gate::load(&cfg.data_dir)),
             cfg: Arc::new(cfg),
@@ -240,7 +238,6 @@ pub fn router(app: App) -> Router {
         .route("/auth/whoami", get(auth::whoami))
         .route("/auth/device", get(auth::current_device).put(auth::rename_current_device))
         .route("/agent-overview", get(agent_overview::show))
-        .route("/computer/status", get(computer::status))
         .route("/devices", get(auth::list_devices))
         .route("/devices/{id}", delete(auth::revoke_device))
         .route("/events", get(events::stream))

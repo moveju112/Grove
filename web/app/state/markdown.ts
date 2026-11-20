@@ -184,11 +184,16 @@ export function imageFile(href: string, rootPath?: string): { path: string; mime
 /// Markdown 파일 링크. 절대 경로는 표시할 프로젝트 루트에 속할 때만 상대 경로로 바꾼다.
 /// 브라우저 URL로 이동시키지 않으며 서버의 파일·Git API가 권한과 경계를 다시 검사한다.
 export function fileLink(href: string, rootPath?: string): { path: string; line?: number } | null {
+    // 소스 인용에서 쓰는 #L12, #L12-L18도 기존 단일 줄 열기에 연결한다.
+    const fragment = href.match(/#L(\d+)(?:-L(\d+))?$/);
+    const start = fragment ? Number(fragment[1]) : undefined;
+    const end = fragment?.[2] ? Number(fragment[2]) : undefined;
+    if (start !== undefined && (!Number.isSafeInteger(start) || start < 1 || (end !== undefined && (!Number.isSafeInteger(end) || end < start)))) return null;
     let value: string;
-    try { value = decodeURIComponent(href); } catch { return null; }
+    try { value = decodeURIComponent(fragment ? href.slice(0, fragment.index) : href); } catch { return null; }
     if (!value || /[\x00-\x1f\x7f\\<>?#]/.test(value) || value.startsWith("//")) return null;
     const match = value.match(/^(.*?)(?::(\d+)(?::\d+)?)?$/);
-    if (!match) return null;
+    if (!match || (fragment && match[2])) return null;
     let path = match[1]!;
     if (path.includes(":")) return null;
     if (path.startsWith("/") && rootPath !== undefined) {
@@ -198,7 +203,7 @@ export function fileLink(href: string, rootPath?: string): { path: string; line?
     }
     const parts = path.replace(/^\//, "").split("/");
     if (parts.some((part) => !part || part === "." || part === "..") || path.startsWith("-")) return null;
-    const line = match[2] ? Number(match[2]) : undefined;
+    const line = match[2] ? Number(match[2]) : start;
     if (line !== undefined && (!Number.isSafeInteger(line) || line < 1)) return null;
     return { path, ...(line === undefined ? {} : { line }) };
 }

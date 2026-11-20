@@ -186,8 +186,8 @@ pub fn tool_policy(c: &Connection, project_id: &str, session_id: &str, spec: &to
     {
         return Ok(PolicyDecision::Deny("read_only", format!("보조 에이전트 역할에서는 {}을(를) 실행할 수 없습니다", spec.name)));
     }
-    // bypass는 일반 도구 승인만 생략한다. PC 제어·위임의 별도 동의는 넓히지 않는다.
-    if !matches!(spec.name, "computer" | "agent") && crate::settings::effective(c, "tools.mode", p, s)? == "bypass" {
+    // bypass는 일반 도구 승인만 생략한다. 위임의 별도 동의는 넓히지 않는다.
+    if spec.name != "agent" && crate::settings::effective(c, "tools.mode", p, s)? == "bypass" {
         return Ok(PolicyDecision::Allow);
     }
     if listed("tools.allow")? {
@@ -219,15 +219,13 @@ pub fn create_call(
     let mut scope: Option<&str> = None;
     let plan=tools::plan(name,args,root).and_then(|(spec,mut planned)| {
         if spec.name == "shell" && args.get("cwd").is_none() {
-            // 생략한 cwd만 범위별 기본값으로 해석해 최초 승인 대상에 고정한다.
+            // 생략한 cwd는 실행 root로 해석해 최초 승인 대상에 고정한다.
             // root는 호출자가 sessions::exec_root로 확정한 실제 실행 위치다.
-            let cwd = crate::settings::execution_cwd(c, root, Some(project_id), Some(session_id), None)
+            let cwd = crate::settings::execution_cwd(root, None)
                 .map_err(|e| tools::ToolError::new(e.code, e.message))?;
             planned.target["cwd"] = json!(tools::fs::rel_display(root, &cwd));
         }
-        if spec.name == crate::computer::NAME {
-            crate::computer::plan(c,args).map(|p|(spec,p)).map_err(|e|tools::ToolError::new(e.code,e.message))
-        } else if spec.name==crate::tool_outputs::NAME {
+        if spec.name==crate::tool_outputs::NAME {
             crate::tool_outputs::plan(c,session_id,args).map(|p|(spec,p))
         } else { Ok((spec,planned)) }
     });
@@ -237,8 +235,6 @@ pub fn create_call(
             if spec.name == "shell" {
                 let choice = crate::settings::effective(c, "exec.shell", Some(project_id), Some(session_id))?;
                 planned.target["shell"] = json!(tools::shell::resolve_shell(choice.as_str().unwrap_or("default")));
-                // 자원 한도도 승인 대상에 고정한다(SEC-017).
-                planned.target["limits"] = crate::procs::Limits::effective(c, Some(project_id), Some(session_id))?.to_json();
                 // 환경변수 자격증명 사용도 이번 계획에 고정하고, 실행 직전 철회 여부를 재검사한다.
                 planned.target["inherit_credentials"] = json!(crate::settings::full_access(c, project_id, session_id)?);
             }
@@ -256,11 +252,6 @@ pub fn create_call(
                     .is_some();
             let decision = match (&policy, base) {
                 (PolicyDecision::Deny(..), _) => None,
-                (_, Some(true)) if spec.name == "computer" => {
-                    // PC 제어는 tools.allow가 아니라 사용자의 명시적 대화 승인만 재사용한다.
-                    if granted { scope = Some("session"); }
-                    Some(!granted)
-                },
                 (PolicyDecision::Allow, Some(true)) => {
                     scope = Some("policy");
                     Some(false)
@@ -290,7 +281,6 @@ pub fn create_call(
         }
         Err(e) => ("failed", false, json!({}), None, Some(e.to_json())),
     };
-    let ttl_secs = if name=="computer" {ttl_secs.min(300)}else{ttl_secs};
     let expires = needs.then(|| {
         let t = crate::util::parse_time(now).unwrap_or_else(time::OffsetDateTime::now_utc) + time::Duration::seconds(ttl_secs);
         crate::util::fmt_time(t)
@@ -403,8 +393,6 @@ pub(crate) fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiRes
         _ if call.name=="shell" && call.target["inherit_credentials"]==true
             && !crate::settings::full_access(c,&call.project_id,&call.session_id)? =>
             Some(("approval_revoked","일반 도구 전체 권한이 해제돼 계정 자격증명을 사용하는 명령을 실행하지 않았습니다".into())),
-        _ if call.name=="computer" && call.approval_scope.as_deref()!=Some("once") && !granted =>
-            Some(("approval_revoked","PC 제어 승인이 해제돼 실행하지 않았습니다. 새 승인이 필요합니다".into())),
         _ if needs.is_none() => Some(("delegation_disabled","위임 정책이 변경돼 실행하지 않았습니다".into())),
         PolicyDecision::Allow => None,
         _ if needs==Some(true) && call.approval_scope.as_deref()!=Some("once") && !granted =>
@@ -412,9 +400,6 @@ pub(crate) fn execution_permission(c: &Connection, call: &ToolCallRow) -> ApiRes
         _ => None,
     };
     if let Some((code,message))=blocked { return Ok(Some(tools::ToolError::new(code,message))); }
-    if call.name=="computer" && let Err(e)=crate::computer::validate_call(c,call) {
-        return Ok(Some(tools::ToolError::new(e.code,e.message)));
-    }
     Ok(None)
 }
 
@@ -524,7 +509,6 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
             _ if *cancel_rx.borrow() => Err(tools::ToolError::new("cancelled","실행 전에 취소돼 시작하지 않았습니다")),
             Err(e) => Err(tools::ToolError::new("project_unavailable", e.message)),
             Ok(_) if call.name == "agent" => crate::agents::execute_tool(&app, &call, cancel_rx).await,
-            Ok(_) if call.name == crate::computer::NAME => crate::computer::execute(&app, &call, cancel_rx).await,
             Ok(_) if call.name == crate::deferred_tools::NAME => {
                 let call = call.clone();
                 app.db.call(move |c| crate::deferred_tools::execute_tool(c, &call)).await
@@ -568,7 +552,6 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                     session_id: call.session_id.clone(),
                     call_id: Some(call.id.clone()),
                     shell: call.target["shell"].as_str().unwrap_or("default").to_string(),
-                    limits: crate::procs::Limits::from_json(&call.target["limits"]),
                     inherit_credentials: call.target["inherit_credentials"].as_bool().unwrap_or(false),
                     command: call.target["command"].as_str().unwrap_or("").to_string(),
                     cwd_rel: call.target["cwd"].as_str().unwrap_or(".").to_string(),
@@ -762,8 +745,8 @@ pub async fn decide(
         if b.decision == "approve_session" && cur.name == "agent" {
             return Err(ApiError::invalid("자식 에이전트 위임은 대화 범위로 허용할 수 없습니다(위임 정책 agents.delegation을 쓰세요)"));
         }
-        if b.decision == "approve_always" && matches!(cur.name.as_str(), "agent" | "computer") {
-            return Err(ApiError::invalid("PC 제어·자식 에이전트 위임은 영구 승인할 수 없습니다. 별도 승인 정책을 사용하세요"));
+        if b.decision == "approve_always" && cur.name == "agent" {
+            return Err(ApiError::invalid("자식 에이전트 위임은 영구 승인할 수 없습니다. 별도 승인 정책을 사용하세요"));
         }
         if approving
             && let Some(spec) = tools::spec(&cur.name)

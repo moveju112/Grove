@@ -18,9 +18,9 @@ pub(super) async fn request(executable: &std::path::Path, method: &str, params: 
             if key.to_str().is_some_and(|key| key.starts_with("GROVE_")) { command.env_remove(key); }
         }
         let tag = crate::util::new_id();
-        crate::procs::prepare(&mut command, &tag, Default::default());
+        crate::procs::prepare(&mut command, &tag);
         let mut child = command.spawn().map_err(|_| "unavailable")?;
-        let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag, Default::default()).map_err(|_| "unavailable")?);
+        let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag).map_err(|_| "unavailable")?);
         let mut input = child.stdin.take().expect("stdin");
         let mut output = BufReader::new(child.stdout.take().expect("stdout"));
         let init = json!({"id":1,"method":"initialize","params":{"clientInfo":{"name":"grove","version":crate::VERSION}}});

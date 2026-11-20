@@ -1,4 +1,4 @@
-//! SETTINGS-011: 실제 셸·직접 작업의 cwd 계획 고정과 기존 실행 경계.
+//! 실제 셸·직접 작업의 cwd 계획 고정과 기존 실행 경계. cwd를 생략하면 실행 root(worktree 포함)에서 실행한다.
 #![cfg(unix)]
 mod common;
 
@@ -25,10 +25,6 @@ async fn setting(s: &TestServer, scope: &str, id: &str, key: &str, revision: i64
     let (status, result) = s.send(Method::PUT, &format!("/api/v1/settings/{scope}/{id}/{key}"),
         json!({"expected_revision": revision, "value": value})).await;
     assert_eq!(status, StatusCode::OK, "{result}");
-}
-
-async fn cwd_setting(s: &TestServer, scope: &str, id: &str, revision: i64, value: Value) {
-    setting(s, scope, id, "exec.default_cwd", revision, value).await;
 }
 
 async fn request(s: &TestServer, sid: &str, args: Value) -> Value {
@@ -69,12 +65,9 @@ fn output(root: &Path, cwd: &str) -> String {
 }
 
 #[tokio::test]
-async fn inherited_and_explicit_cwd_reaches_shell_and_direct_tasks() {
-    let (s, pid, sid, root) = setup().await;
-    cwd_setting(&s, "server", "-", 0, json!("server")).await;
-    cwd_setting(&s, "project", &pid, 0, json!("project")).await;
-    cwd_setting(&s, "session", &sid, 0, json!("session")).await;
-    for (explicit, expected) in [(None, "session"), (Some("."), "."), (Some("next"), "next")] {
+async fn omitted_and_explicit_cwd_reaches_shell_and_direct_tasks() {
+    let (s, _pid, sid, root) = setup().await;
+    for (explicit, expected) in [(None, "."), (Some("."), "."), (Some("next"), "next")] {
         let mut args = json!({"command": "pwd -P"});
         if let Some(cwd) = explicit { args["cwd"] = json!(cwd); }
         let done = task(&s, &sid, args.clone()).await;
@@ -86,65 +79,53 @@ async fn inherited_and_explicit_cwd_reaches_shell_and_direct_tasks() {
         assert_eq!(done["status"], "succeeded", "{done}");
         assert_eq!(done["result"]["stdout"], output(&root, expected));
     }
-    for (scope, id, expected) in [("session", sid.as_str(), "project"), ("project", pid.as_str(), "server"), ("server", "-", ".")] {
-        cwd_setting(&s, scope, id, 1, Value::Null).await;
-        let done = task(&s, &sid, json!({"command": "pwd -P"})).await;
-        assert_eq!(done["cwd"], expected);
-        assert_eq!(done["stdout_tail"], output(&root, expected));
-        let planned = request(&s, &sid, json!({"command": "pwd -P"})).await;
-        assert_eq!(planned["target"]["cwd"], expected);
-        assert_eq!(approve(&s, &planned).await["result"]["stdout"], output(&root, expected));
-    }
+    let (_, registry) = s.get("/api/v1/settings/registry").await;
+    assert!(!registry.as_array().unwrap().iter().any(|def| def["key"] == "exec.default_cwd"));
+    let (status, _) = s.send(Method::PUT, "/api/v1/settings/server/-/exec.default_cwd",
+        json!({"expected_revision": 0, "value": "next"})).await;
+    assert!(status.is_client_error(), "기본 작업 위치는 설정할 수 없다");
 }
 
 #[tokio::test]
-async fn model_foreground_hold_and_background_freeze_cwd_before_approval_changes() {
+async fn model_foreground_hold_and_background_pin_root_cwd_before_approval() {
     let (s, _pid, sid, root) = setup().await;
     let f = Fixture::start().await;
     let profile = s.fixture_profile(&f.base).await;
-    let mut revision = 0;
     for mode in ["foreground", "hold", "background"] {
-        cwd_setting(&s, "session", &sid, revision, json!("session")).await;
-        revision += 1;
-        for next in [false, true] {
-            let mut args = json!({"command": "pwd -P"});
-            match mode {
-                "hold" => args["hold_ms"] = json!(5000),
-                "background" => args["background"] = json!(true),
-                _ => {}
-            }
-            f.push(fixture::tool_calls(&[("cwd", "shell", args)]));
-            f.push(fixture::text("끝"));
-            let (status, accepted) = s.post(&format!("/api/v1/sessions/{sid}/turns"),
-                json!({"text": "run", "profile_id": profile, "tools": true})).await;
-            assert!(status.is_success(), "{accepted}");
-            let tid = accepted["turn"]["id"].as_str().unwrap();
-            let pending = s.wait_status(tid, "awaiting_approval").await;
-            let call = &pending["tool_calls"][0];
-            let cwd = if next { "next" } else { "session" };
-            assert_eq!(call["target"]["cwd"], cwd);
-            assert!(call["args"].get("cwd").is_none(), "원래 모델 인자는 보존");
-            if !next {
-                cwd_setting(&s, "session", &sid, revision, json!("next")).await;
-                revision += 1;
-            }
-            let done = approve(&s, call).await;
-            assert_eq!(done["target"], call["target"]);
-            assert_eq!(done["status"], "succeeded", "{done}");
-            let mut result = done["result"].clone();
-            if result["background"] == true {
-                let (_, ended) = s.get(&format!("/api/v1/tasks/{}/wait?timeout_ms=10000", result["task_id"].as_str().unwrap())).await;
-                result = ended;
-            }
-            let stdout = result["stdout"].as_str().or(result["stdout_tail"].as_str()).unwrap();
-            assert_eq!(stdout, output(&root, cwd), "{mode}: {result}");
-            s.wait_status(tid, "completed").await;
+        let mut args = json!({"command": "pwd -P"});
+        match mode {
+            "hold" => args["hold_ms"] = json!(5000),
+            "background" => args["background"] = json!(true),
+            _ => {}
         }
+        f.push(fixture::tool_calls(&[("cwd", "shell", args)]));
+        f.push(fixture::text("끝"));
+        // 백그라운드 결과는 같은 턴의 완료 보류 뒤 한 번 더 모델에 전달된다.
+        if mode == "background" { f.push(fixture::text("결과 반영")); }
+        let (status, accepted) = s.post(&format!("/api/v1/sessions/{sid}/turns"),
+            json!({"text": "run", "profile_id": profile, "tools": true})).await;
+        assert!(status.is_success(), "{accepted}");
+        let tid = accepted["turn"]["id"].as_str().unwrap();
+        let pending = s.wait_status(tid, "awaiting_approval").await;
+        let call = &pending["tool_calls"][0];
+        assert_eq!(call["target"]["cwd"], ".");
+        assert!(call["args"].get("cwd").is_none(), "원래 모델 인자는 보존");
+        let done = approve(&s, call).await;
+        assert_eq!(done["target"], call["target"]);
+        assert_eq!(done["status"], "succeeded", "{done}");
+        let mut result = done["result"].clone();
+        if result["background"] == true {
+            let (_, ended) = s.get(&format!("/api/v1/tasks/{}/wait?timeout_ms=10000", result["task_id"].as_str().unwrap())).await;
+            result = ended;
+        }
+        let stdout = result["stdout"].as_str().or(result["stdout_tail"].as_str()).unwrap();
+        assert_eq!(stdout, output(&root, "."), "{mode}: {result}");
+        s.wait_status(tid, "completed").await;
     }
 }
 
 #[tokio::test]
-async fn worktree_defaults_use_actual_execution_root_and_never_fall_back() {
+async fn worktree_cwd_uses_actual_execution_root_and_never_falls_back() {
     let (s, pid, _sid, root) = setup().await;
     std::fs::write(root.join("session/tracked"), "fixture").unwrap();
     for args in [
@@ -164,35 +145,33 @@ async fn worktree_defaults_use_actual_execution_root_and_never_fall_back() {
     let (status, sess) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({"worktree_id": wt["id"]})).await;
     assert_eq!(status, StatusCode::CREATED, "{sess}");
     let sid = sess["id"].as_str().unwrap();
-    cwd_setting(&s, "project", &pid, 0, json!("session")).await;
-    let done = task(&s, sid, json!({"command": "pwd -P; printf x >> marker"})).await;
+    let done = task(&s, sid, json!({"command": "pwd -P; printf x >> marker", "cwd": "session"})).await;
     assert_eq!(done["stdout_tail"], output(&wt_root, "session"));
     assert_eq!(std::fs::read_to_string(wt_root.join("session/marker")).unwrap(), "x");
     assert!(!root.join("session/marker").exists());
     let call = request(&s, sid, json!({"command": "pwd -P"})).await;
-    assert_eq!(call["target"]["cwd"], "session");
-    assert_eq!(approve(&s, &call).await["result"]["stdout"], output(&wt_root, "session"));
-    cwd_setting(&s, "project", &pid, 1, json!("project")).await;
-    let (status, _) = s.post(&format!("/api/v1/sessions/{sid}/tasks"), json!({"command": "pwd -P"})).await;
+    assert_eq!(call["target"]["cwd"], ".");
+    assert_eq!(approve(&s, &call).await["result"]["stdout"], output(&wt_root, "."));
+    let (status, _) = s.post(&format!("/api/v1/sessions/{sid}/tasks"), json!({"command": "pwd -P", "cwd": "project"})).await;
     assert_eq!(status, StatusCode::BAD_REQUEST, "프로젝트에는 있지만 worktree에는 없는 cwd");
-    assert_eq!(request(&s, sid, json!({"command": "pwd -P"})).await["status"], "failed");
-    assert_eq!(task(&s, sid, json!({"command": "pwd -P", "cwd": "."})).await["stdout_tail"], output(&wt_root, "."));
+    assert_eq!(request(&s, sid, json!({"command": "pwd -P", "cwd": "project"})).await["status"], "failed");
+    assert_eq!(task(&s, sid, json!({"command": "pwd -P"})).await["stdout_tail"], output(&wt_root, "."));
 }
 
 #[tokio::test]
-async fn invalid_defaults_and_post_plan_symlink_escape_never_execute_outside_root() {
-    let (s, pid, sid, root) = setup().await;
-    cwd_setting(&s, "project", &pid, 0, json!("session")).await;
-    let call = request(&s, &sid, json!({"command": "printf unsafe > escaped"})).await;
+async fn invalid_cwd_and_post_plan_symlink_escape_never_execute_outside_root() {
+    let (s, _pid, sid, root) = setup().await;
+    let unsafe_args = json!({"command": "printf unsafe > escaped", "cwd": "session"});
+    let call = request(&s, &sid, unsafe_args.clone()).await;
     std::fs::rename(root.join("session"), root.join("old-session")).unwrap();
     std::os::unix::fs::symlink(s.dir.path(), root.join("session")).unwrap();
     let done = approve(&s, &call).await;
     assert_eq!(done["target"], call["target"]);
     assert_eq!(done["status"], "failed", "{done}");
-    assert_eq!(done["result"]["error"]["code"], "outside_project");
-    let failed = request(&s, &sid, json!({"command": "printf unsafe > escaped"})).await;
+    assert!(done["result"]["error"]["message"].as_str().unwrap().contains("프로젝트 밖 경로"), "{done}");
+    let failed = request(&s, &sid, unsafe_args.clone()).await;
     assert_eq!(failed["status"], "failed");
-    let (status, _) = s.post(&format!("/api/v1/sessions/{sid}/tasks"), json!({"command": "printf unsafe > escaped"})).await;
+    let (status, _) = s.post(&format!("/api/v1/sessions/{sid}/tasks"), unsafe_args).await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
     assert!(!s.dir.path().join("escaped").exists());
     assert_eq!(task(&s, &sid, json!({"command": "pwd -P", "cwd": "."})).await["stdout_tail"], output(&root, "."));
@@ -202,20 +181,16 @@ async fn invalid_defaults_and_post_plan_symlink_escape_never_execute_outside_roo
         assert_eq!(request(&s, &sid, args.clone()).await["status"], "failed", "{cwd}");
         assert_eq!(s.post(&format!("/api/v1/sessions/{sid}/tasks"), args).await.0, StatusCode::BAD_REQUEST);
     }
-    cwd_setting(&s, "server", "-", 0, json!("missing")).await;
-    cwd_setting(&s, "project", &pid, 1, Value::Null).await;
-    assert_eq!(request(&s, &sid, json!({"command": "pwd -P"})).await["status"], "failed");
-    assert_eq!(s.post(&format!("/api/v1/sessions/{sid}/tasks"), json!({"command": "pwd -P"})).await.0, StatusCode::BAD_REQUEST);
     assert!(!root.join("escaped").exists());
 }
 
 #[tokio::test]
-async fn cwd_defaults_do_not_bypass_deny_rechecks() {
+async fn explicit_cwd_does_not_bypass_deny_rechecks() {
     let (s, pid, sid, root) = setup().await;
-    cwd_setting(&s, "project", &pid, 0, json!("session")).await;
-    let pending = request(&s, &sid, json!({"command": "printf unsafe > marker"})).await;
+    let args = json!({"command": "printf unsafe > marker", "cwd": "session"});
+    let pending = request(&s, &sid, args.clone()).await;
     setting(&s, "project", &pid, "tools.deny", 0, json!("shell")).await;
-    let blocked = request(&s, &sid, json!({"command": "printf unsafe > marker"})).await;
+    let blocked = request(&s, &sid, args).await;
     assert_eq!(blocked["target"]["cwd"], "session");
     assert_eq!(blocked["status"], "failed");
     assert_eq!(blocked["result"]["error"]["code"], "policy_denied");
@@ -227,16 +202,13 @@ async fn cwd_defaults_do_not_bypass_deny_rechecks() {
 }
 
 #[tokio::test]
-async fn accepted_task_replay_keeps_cwd_after_lost_body_and_changed_defaults() {
+async fn accepted_task_replay_keeps_cwd_after_lost_body() {
     let (s, _pid, sid, root) = setup().await;
-    cwd_setting(&s, "session", &sid, 0, json!("session")).await;
     let path = format!("/api/v1/sessions/{sid}/tasks");
-    let body = json!({"command": "pwd -P; printf x >> counter"});
+    let body = json!({"command": "pwd -P; printf x >> counter", "cwd": "session"});
     let response = s.raw(Method::POST, &path, Some(body.clone()), Some("lost-body"), None).await;
     assert_eq!(response.status(), StatusCode::CREATED);
     drop(response); // 접수 응답 본문을 소비하지 않아도 같은 키만 재사용한다.
-    cwd_setting(&s, "session", &sid, 1, json!("next")).await;
-    std::fs::rename(root.join("next"), root.join("old-next")).unwrap();
     let replay = s.raw(Method::POST, &path, Some(body.clone()), Some("lost-body"), None).await;
     assert_eq!(replay.status(), StatusCode::CREATED);
     assert_eq!(replay.headers()["idempotent-replayed"], "true");
@@ -252,14 +224,13 @@ async fn accepted_task_replay_keeps_cwd_after_lost_body_and_changed_defaults() {
 }
 
 #[tokio::test]
-async fn unknown_receipt_and_restart_keep_task_cwd_without_resolving_defaults_again() {
+async fn unknown_receipt_and_restart_keep_task_cwd() {
     let (mut s, _pid, sid, root) = setup().await;
-    cwd_setting(&s, "session", &sid, 0, json!("session")).await;
     let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
     db.execute_batch("CREATE TRIGGER fail_cwd_receipt BEFORE UPDATE ON idempotency WHEN NEW.status=201
         BEGIN SELECT RAISE(ABORT,'fixture final receipt failure'); END;").unwrap();
     let path = format!("/api/v1/sessions/{sid}/tasks");
-    let body = json!({"command": "pwd -P; printf x >> counter"});
+    let body = json!({"command": "pwd -P; printf x >> counter", "cwd": "session"});
     let response = s.raw(Method::POST, &path, Some(body.clone()), Some("unknown-cwd"), None).await;
     assert_eq!(response.status(), StatusCode::CONFLICT);
     let first: Value = response.json().await.unwrap();
@@ -268,7 +239,6 @@ async fn unknown_receipt_and_restart_keep_task_cwd_without_resolving_defaults_ag
     let id = first["error"]["details"]["task_id"].as_str().unwrap();
     let (_, done) = s.get(&format!("/api/v1/tasks/{id}/wait?timeout_ms=10000")).await;
     assert_eq!(done["stdout_tail"], output(&root, "session"));
-    cwd_setting(&s, "session", &sid, 1, json!("next")).await;
     // crash 복구 입력: 완료한 격리 fixture 작업의 영속 상태만 running으로 되돌린다.
     db.execute("UPDATE tasks SET status='running', ended_at=NULL, result_message_id=NULL WHERE id=?1", [id]).unwrap();
     drop(db);
@@ -287,9 +257,8 @@ async fn unknown_receipt_and_restart_keep_task_cwd_without_resolving_defaults_ag
 }
 
 #[tokio::test]
-async fn confirmed_project_script_stays_at_root_instead_of_inheriting_default_cwd() {
+async fn confirmed_project_script_runs_at_root() {
     let (s, pid, sid, root) = setup().await;
-    cwd_setting(&s, "session", &sid, 0, json!("session")).await;
     let (status, script) = s.post(&format!("/api/v1/projects/{pid}/scripts"),
         json!({"name": "root check", "command": "pwd -P; printf x >> root-counter"})).await;
     assert_eq!(status, StatusCode::CREATED, "{script}");
@@ -305,7 +274,6 @@ async fn confirmed_project_script_stays_at_root_instead_of_inheriting_default_cw
     assert_eq!(done["stdout_tail"], output(&root, "."));
     assert_eq!(std::fs::read_to_string(root.join("root-counter")).unwrap(), "x");
     assert!(!root.join("session/root-counter").exists());
-    cwd_setting(&s, "session", &sid, 1, json!("next")).await;
     let replay = s.raw(Method::POST, &path, Some(body), Some("script-root"), None).await;
     assert_eq!(replay.headers()["idempotent-replayed"], "true");
     assert_eq!(replay.json::<Value>().await.unwrap()["id"], accepted["id"]);

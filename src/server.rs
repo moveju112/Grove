@@ -71,6 +71,19 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
 
     let mut background = vec![];
     {
+        let mut shutdown = app.shutdown_rx.clone();
+        let sessions = app.claude_sessions.clone();
+        background.push(tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(30));
+            loop {
+                tokio::select! {
+                    _ = shutdown.wait_for(|closing| *closing) => { sessions.close(); break; }
+                    _ = tick.tick() => sessions.expire(),
+                }
+            }
+        }));
+    }
+    {
         let app = app.clone();
         let mut recovery = app.db.recovery_receiver();
         background.push(tokio::spawn(async move {
@@ -154,6 +167,7 @@ impl Server {
     /// 연결 종료 대기 시간만 다르고 순서는 같다(ARCH-013). OS가 곧 강제 종료하는 경우 짧게 기다려 flush까지 끝낸다.
     pub async fn stop_within(self, connection_wait: Duration) {
         self.app.shutdown_tx.send_replace(true);
+        self.app.claude_sessions.close();
         crate::runner::cancel_all_for_shutdown(&self.app).await;
         crate::tasks::stop_all(&self.app).await;
         crate::terminals::stop_all(&self.app).await;

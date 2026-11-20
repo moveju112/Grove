@@ -446,11 +446,23 @@ pub fn to_chat(history: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg> {
     crate::history::from_rows(history)
 }
 
-fn native_resume(c: &Connection, session: &str, profile: &str, system: &str, shared_room: bool) -> ApiResult<Option<String>> {
+fn native_resume(c: &Connection, turn: &Turn, profile: &str, protocol: &str, system: &str, shared_room: bool) -> ApiResult<Option<String>> {
     // 그룹은 다른 봇이 쓴 이력까지 매번 전달해야 한다. CLI의 마지막 요청만 재개하면 공유 문맥을 잃는다.
     if shared_room { return Ok(None); }
-    Ok(c.query_row("SELECT native_id FROM cli_sessions WHERE session_id=?1 AND profile_id=?2 AND system_sha256=?3",
-        params![session,profile,crate::util::sha256_hex(system.as_bytes())],|r|r.get(0)).optional()?)
+    // 새 요청 바로 앞 응답까지 반영한 CLI만 재개한다. 다른 모델의 응답, 중단된 요청,
+    // 비동기 결과 등이 사이에 있으면 새 native 세션에 Grove 이력을 전달한다.
+    Ok(c.query_row(
+        "SELECT b.native_id FROM cli_sessions b \
+         JOIN message_history a ON a.session_id=b.session_id AND a.seq=b.assistant_seq \
+         JOIN messages req ON req.id=?4 AND req.session_id=b.session_id AND req.rewound_at IS NULL \
+         WHERE b.session_id=?1 AND b.profile_id=?2 AND b.system_sha256=?3 \
+           AND a.role='assistant' AND a.rewound_at IS NULL AND json_extract(a.content,'$.protocol')=?5 \
+           AND ((?6=0 AND a.seq=req.seq-1) OR (?6>0 AND a.turn_id=?7 AND a.seq>req.seq)) \
+           AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.session_id=b.session_id \
+             AND m.rewound_at IS NULL AND m.seq>a.seq AND m.role IN ('assistant','tool'))",
+        params![turn.session_id, profile, crate::util::sha256_hex(system.as_bytes()), turn.request_message_id, protocol, turn.step, turn.id],
+        |r| r.get(0),
+    ).optional()?)
 }
 
 // Paseodog의 Mixdog 스타일 본문·공통 형식을 그대로 사용한다(assets/output-styles/README.md).
@@ -582,8 +594,6 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
     crate::tools::image_read::hydrate(&mut messages, &root)
         .map_err(|e| ApiError::new(axum::http::StatusCode::BAD_REQUEST, e.code, e.message))?;
-    crate::computer::hydrate(data, &t.session_id, &mut messages)
-        .map_err(|e| ApiError::new(axum::http::StatusCode::BAD_REQUEST, e.code, e.message))?;
     mp.check_capabilities(t.tools_enabled, def["effort"].as_str(), messages.iter().any(|m| matches!(m, ChatMsg::User { images, .. } if !images.is_empty())))?;
     let (max_tokens, temperature) = mp.generation_options();
     let deadline = def["budget"]["max_minutes"]
@@ -617,7 +627,6 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             Do not substitute a text mockup merely because the model has no native image output. \
             Supported types include PNG, JPEG, GIF, WebP, MP4, WebM, MOV, WAV and MP3; at most 8 files, 32 MiB per file, 128 MiB total.\n");
     }
-    // 시스템 입력이 바뀌면 옛 입력을 품은 native 대화를 재사용하지 않는다.
     let cli = if cli_backend {
         let role_run = def["agent_run"].is_object()
             || (t.agent_id.is_some() && crate::agents::run_by_child(c, &s.id)?.is_some());
@@ -627,12 +636,13 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             def["service_tier"].as_str()
         };
         Some(crate::provider::cli::CliContext {
-            cwd:root.clone(),resume:native_resume(c,&t.session_id,&profile_id,&system,def.get("bot_room").is_some())?,
+            cwd: root.clone(),
+            resume: native_resume(c, &t, &profile_id, &rp.protocol, &system, def.get("bot_room").is_some())?,
             service_tier: service_tier.map(str::to_owned),
-            computer: None,
             continuations: None,
             native_command: def["native_command"].as_str().map(str::to_string),
             steers: None,
+            claude_session: None,
         })
     } else { None };
     let tools: Vec<ToolDef> = if t.tools_enabled && !cli_backend {
@@ -908,24 +918,27 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 && app.agent_logins.active(&input.profile.protocol).await {
                 return Err(provider::ProviderError::new("authentication_in_progress", "에이전트 로그인을 완료한 뒤 다시 보내 주세요"));
             }
-            let _computer_bridge = if provider::cli::is_cli(&input.profile.protocol) {
-                let bridge = crate::computer::bridge::Bridge::start(app, turn_id, &input.session_id, cancel_rx.clone()).await
-                    .map_err(|e| provider::ProviderError::new(e.code,e.message))?;
-                if let Some(bridge) = &bridge && let Some(context) = &mut input.request.cli {
-                    context.computer = Some(bridge.link.clone());
-                }
-                bridge
-            } else { None };
             let _continuation_bridge = if provider::cli::is_cli(&input.profile.protocol) {
                 let bridge=crate::continuations::bridge::Bridge::start(app,turn_id,cancel_rx.clone()).await
                     .map_err(|e|provider::ProviderError::new(e.code,e.message))?;
                 if let Some(bridge)=&bridge && let Some(context)=&mut input.request.cli { context.continuations=Some(bridge.link.clone()); }
                 bridge
             } else { None };
-            if input.profile.protocol == "codex_cli" && let Some(context) = &mut input.request.cli {
+            if matches!(input.profile.protocol.as_str(), "codex_cli" | "claude_code") && let Some(context) = &mut input.request.cli {
                 context.steers = Some(crate::followups::live::LiveSteers::new(app, turn_id));
             }
+            if input.profile.protocol == "claude_code" && let Some(context) = &mut input.request.cli {
+                context.claude_session = Some(provider::cli::claude_session::Handle {
+                    sessions: app.claude_sessions.clone(), session: sid.clone(), profile: input.profile_id.clone(),
+                });
+            }
+            use tracing::Instrument;
+            let span = if input.profile.protocol == provider::codex_oauth::PROTOCOL {
+                tracing::warn_span!(parent: None, "codex_step", turn_id, session_id = %input.session_id,
+                    step = input.step, history_through_seq = input.input_seq)
+            } else { tracing::Span::none() };
             let stream = provider::stream_with_service_tier(&input.profile, &input.request, input.service_tier.as_deref(), &mut codex, &mut cancel_rx, &mut on_delta);
+            let stream = stream.instrument(span);
             tokio::pin!(stream);
             let mut interval = tokio::time::interval(Duration::from_millis(50));
             loop {
@@ -948,6 +961,12 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         };
         let provider_ms = provider_started.elapsed().as_millis().min(i64::MAX as u128) as i64;
         progress_writer.abort();
+        let claude = input.request.cli.as_ref().and_then(|context| context.claude_session.clone());
+        let discard_native = || {
+            if let Some(claude) = &claude {
+                claude.discard();
+            }
+        };
         // 응답 없이 끝나면(취소·종료·오류) 마지막 중단 증거를 종료 기록보다 먼저 남긴다. 성공은 확정 commit이 증거를 지운다.
         if result.is_err() {
             let ev = evidence.lock().unwrap_or_else(|e| e.into_inner()).clone();
@@ -966,6 +985,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             )?;
             Ok(())
         }).await {
+            discard_native();
             fail(app, turn_id, json!({"code":e.code,"message":e.message})).await;
             return session_for_partial;
         }
@@ -999,6 +1019,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         };
         if *cancel_rx.borrow() {
             // 완료 직후 도착한 취소: 확정하지 않는다(중간 응답 비저장).
+            discard_native();
             end_cancelled(app, turn_id, last_progress_at).await;
             return session_for_partial;
         }
@@ -1104,10 +1125,20 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 let message = crate::sessions::append_message(&tx, &now, &t.session_id, "assistant", &content, Some(&tid), model_input.as_ref())?;
                 crate::attachments::bind(&tx, &now, &message.id, &images)?;
                 if let (Some(native), Some(pid)) = (&out.native_session, &t.profile_id) {
+                    // 호출 중 도착한 메시지 중 CLI가 확인한 live steer만 반영된 것으로 본다.
+                    let unseen = s.last_message_seq > input.input_seq && tx.query_row(
+                        "SELECT EXISTS(SELECT 1 FROM message_history m WHERE m.session_id=?1 AND m.rewound_at IS NULL \
+                         AND m.seq>?2 AND m.seq<=?3 AND NOT EXISTS (SELECT 1 FROM json_each(?4) steer \
+                         WHERE m.role='user' AND m.turn_id=?5 AND json_extract(steer.value,'$[0]')=json_extract(m.content,'$.source.followup_id')))",
+                        params![t.session_id, input.input_seq, s.last_message_seq, json!(out.response_steers).to_string(), tid],
+                        |r| r.get::<_, bool>(0),
+                    )?;
+                    let assistant_seq = (!unseen).then_some(message.seq);
                     tx.execute(
-                        "INSERT INTO cli_sessions (session_id, profile_id, native_id, updated_at,system_sha256) VALUES (?1, ?2, ?3, ?4,?5) \
-                         ON CONFLICT(session_id, profile_id) DO UPDATE SET native_id = ?3, updated_at = ?4,system_sha256=?5",
-                        params![t.session_id, pid, native, now,system_hash],
+                        "INSERT INTO cli_sessions (session_id, profile_id, native_id, updated_at, system_sha256, assistant_seq) \
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6) ON CONFLICT(session_id, profile_id) DO UPDATE SET \
+                         native_id=excluded.native_id, updated_at=excluded.updated_at, system_sha256=excluded.system_sha256, assistant_seq=excluded.assistant_seq",
+                        params![t.session_id, pid, native, now, system_hash, assistant_seq],
                     )?;
                 }
                 let mut usage: provider::Usage = serde_json::from_value(t.usage.clone()).unwrap_or_default();
@@ -1116,27 +1147,14 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 // 답변 확정과 같은 transaction에서만 이 단계의 중단 증거를 지운다(REC-006).
                 tx.execute("UPDATE turns SET usage = ?2, step = ?3, updated_at = ?4, evidence = NULL WHERE id = ?1", params![tid, serde_json::to_string(&usage)?, step, now])?;
                 let limits = &t.definition["limits"];
-                // 예약 한도와 사용자 예산 중 작은 쪽. 어느 쪽인지 원인에 남긴다(RUN-023).
-                let caps = [("schedule", limits["max_total_tokens"].as_i64()), ("user", t.definition["budget"]["max_tokens"].as_i64())];
-                if let Some((src, max)) = caps.iter().filter_map(|(s, m)| m.map(|m| (*s, m))).min_by_key(|(_, m)| *m)
+                // 예약 token 한도(RUN-023).
+                if let Some(max) = limits["max_total_tokens"].as_i64()
                     && (usage.input_tokens + usage.output_tokens) as i64 > max
                 {
-                    // 남은 도구 호출은 계획하지 않는다(예산 초과 뒤 mutation 금지).
-                    finish_turn(&tx, &now, &tid, &["running"], "failed", Some(json!({ "code": "budget_exceeded", "source": src, "kind": "tokens", "message": format!("token 한도 {max}를 넘어 중단했습니다") })))?;
+                    // 남은 도구 호출은 계획하지 않는다(한도 초과 뒤 mutation 금지).
+                    finish_turn(&tx, &now, &tid, &["running"], "failed", Some(json!({ "code": "budget_exceeded", "source": "schedule", "kind": "tokens", "message": format!("token 한도 {max}를 넘어 중단했습니다") })))?;
                     tx.commit()?;
                     return Ok(Some((false, vec![])));
-                }
-                let b = &t.definition["budget"];
-                if let Some(max) = b["max_cost_cents"].as_i64() {
-                    let cost = crate::usage::estimate_cost(&serde_json::to_value(&usage)?, &b["pricing"]);
-                    if cost * 100.0 > max as f64 {
-                        let cur = b["currency"].as_str().unwrap_or("USD");
-                        finish_turn(&tx, &now, &tid, &["running"], "failed", Some(json!({ "code": "budget_exceeded", "source": "user", "kind": "cost",
-                            "estimated_cost": cost, "currency": cur,
-                            "message": format!("비용 예산 {:.2} {cur}를 넘어(추정 {cost:.4} {cur}) 중단했습니다", max as f64 / 100.0) })))?;
-                        tx.commit()?;
-                        return Ok(Some((false, vec![])));
-                    }
                 }
                 if out.tool_calls.is_empty() {
                     if completion_pending {
@@ -1210,8 +1228,12 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
         app.notify_events().await;
         let (waiting, approved) = match committed {
             Ok(Some(x)) => x,
-            Ok(None) => return session_for_partial,
+            Ok(None) => {
+                discard_native();
+                return session_for_partial;
+            }
             Err(e) => {
+                discard_native();
                 fail(app, turn_id, json!({ "code": e.code, "message": e.message })).await;
                 return session_for_partial;
             }
@@ -1562,7 +1584,7 @@ pub(crate) fn enqueue_with_attachments(
         def["workflow"]["disabled_selection"] = json!(selected);
     }
     if let Some(a) = agent_id {
-        let ad = crate::definitions::resolve(tx, "agent", a)?;
+        let ad = crate::definitions::resolve_turn_agent(tx, a)?;
         def["agent"] = json!({ "id": a, "revision": ad.def.revision, "body_sha256": ad.def.body_sha256, "body": ad.def.body });
     }
     if let Some((_, b)) = &bot {
@@ -1572,27 +1594,11 @@ pub(crate) fn enqueue_with_attachments(
         def["bot_room"] = json!({"session_id":session_id,"members":room.room.members});
     }
     def["output_style"] = crate::settings::effective(tx, "output.style", Some(&s.project_id), Some(session_id))?;
-    // 사용자가 명시한 예산만 고정한다(0 = 제한 없음, RUN-021). 실행 중 설정 변경은 다음 요청부터.
-    let mut budget = json!({});
-    for (k, key) in [("max_tokens", "runs.budget.max_tokens"), ("max_minutes", "runs.budget.max_minutes")] {
-        if let Some(n) = crate::settings::effective(tx, key, Some(&s.project_id), Some(session_id))?.as_i64().filter(|n| *n > 0) {
-            budget[k] = json!(n);
-        }
+    // 사용자가 명시한 시간 예산만 고정한다(0 = 제한 없음, RUN-021). 실행 중 설정 변경은 다음 요청부터.
+    if let Some(n) = crate::settings::effective(tx, "runs.budget.max_minutes", Some(&s.project_id), Some(session_id))?.as_i64().filter(|n| *n > 0) {
+        def["budget"] = json!({ "max_minutes": n });
     }
-    // 비용 예산: 접수 시점 가격표를 고정한다. 가격표가 없으면 잴 수 없으므로 조용히 무시하지 않고 거절한다.
-    if let Some(n) = crate::settings::effective(tx, "runs.budget.max_cost_cents", Some(&s.project_id), Some(session_id))?.as_i64().filter(|n| *n > 0) {
-        let p = crate::models::get_profile(tx, profile_id)?;
-        let pricing = p.options.get("pricing").filter(|v| v.is_object()).cloned().ok_or_else(|| {
-            ApiError::invalid("비용 예산(runs.budget.max_cost_cents)을 쓰려면 이 모델 프로필에 가격표(options.pricing)를 설정하세요")
-        })?;
-        budget["max_cost_cents"] = json!(n);
-        budget["currency"] = pricing["currency"].clone();
-        budget["pricing"] = pricing;
-    }
-    if budget.as_object().is_some_and(|o| !o.is_empty()) {
-        def["budget"] = budget;
-    }
-    if let Some(fallback) = crate::model_fallback::snapshot(tx, &profile, &def["budget"])? {
+    if let Some(fallback) = crate::model_fallback::snapshot(tx, &profile)? {
         def["fallback"] = fallback;
     }
     // 부모 에이전트가 보낸 지시 턴에만 위임 규칙을 넣는다. 사용자가 자식 대화에 직접 보낸 턴은 부모에 보고되지 않으므로 넣지 않는다.
@@ -1781,7 +1787,9 @@ pub async fn retry(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
         }
         let mut src = json!({ "kind": "retry", "turn_id": old.id });
         if old.definition.get("bot_room").is_some() { src["room_retry_bot"] = old.definition["bot"]["id"].clone(); }
-        let (t, msg) = enqueue_with_attachments(tx, now, &epoch, &owner, &old.session_id, &text, profile, old.agent_id.as_deref(), Some(tools), Some(&src), Some(&prepared))?;
+        // 예전 화면에 남은 숨은 선택으로 내부 유지관리 역할이 붙은 요청은 기본 역할로 다시 실행한다.
+        let agent = old.agent_id.as_deref().filter(|a| crate::definitions::execution("agent", a) != "background");
+        let (t, msg) = enqueue_with_attachments(tx, now, &epoch, &owner, &old.session_id, &text, profile, agent, Some(tools), Some(&src), Some(&prepared))?;
         let (model, effort, tier) = if let Some(s) = &selection {
             if t.definition.get("bot").is_some() {
                 return Err(ApiError::invalid("봇 모델은 봇 설정에서 변경하세요"));
@@ -2022,17 +2030,13 @@ mod tests {
     }
 
     #[test]
-    fn native_style_changes_reset_resume_and_default_drops_the_style() {
-        let c = Connection::open_in_memory().unwrap();
-        c.execute_batch("CREATE TABLE cli_sessions(session_id TEXT,profile_id TEXT,native_id TEXT,system_sha256 TEXT);").unwrap();
+    fn native_output_style_changes_the_system_prompt_and_default_drops_the_style() {
         let styles = ["default", "detailed", "simple", "minimal", "extreme-minimal"];
         for before in styles {
             let original = system_prompt(&json!({"output_style":before}), "/fixture", false);
-            c.execute("DELETE FROM cli_sessions", []).unwrap();
-            c.execute("INSERT INTO cli_sessions VALUES ('s','p','native',?1)", [crate::util::sha256_hex(original.as_bytes())]).unwrap();
             for after in styles {
                 let next = system_prompt(&json!({"output_style":after}), "/fixture", false);
-                assert_eq!(native_resume(&c, "s", "p", &next, false).unwrap().is_some(), before == after);
+                assert_eq!(original == next, before == after);
             }
         }
         assert_eq!(system_prompt(&json!({"output_style":"concise"}), "/fixture", false),
@@ -2044,17 +2048,59 @@ mod tests {
     }
 
     #[test]
-    fn native_resume_requires_the_same_system_context_and_does_not_accept_legacy_unknown_context() {
-        let c = Connection::open_in_memory().unwrap();
-        c.execute_batch("CREATE TABLE cli_sessions(session_id TEXT,profile_id TEXT,native_id TEXT,system_sha256 TEXT);").unwrap();
-        c.execute("INSERT INTO cli_sessions VALUES ('s','p','native',NULL)",[]).unwrap();
-        assert!(native_resume(&c,"s","p","before",false).unwrap().is_none());
-        let hash = crate::util::sha256_hex(b"before");
-        c.execute("UPDATE cli_sessions SET system_sha256=?1",[hash]).unwrap();
-        assert_eq!(native_resume(&c,"s","p","before",false).unwrap().as_deref(),Some("native"));
-        assert!(native_resume(&c,"s","p","before",true).unwrap().is_none(),"그룹은 native 대화 대신 공유 이력을 전달한다");
-        assert!(native_resume(&c,"s","p","after memory deletion",false).unwrap().is_none());
-        assert!(native_resume(&c,"other","p","before",false).unwrap().is_none());
+    fn native_resume_rebuilds_the_prompt_after_switching_profiles() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().to_path_buf();
+        let db = crate::store::Db::open(&data.join("grove.db")).unwrap();
+        db.call_sync(move |c| {
+            let now = "2026-01-01T00:00:00Z";
+            c.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES ('p','fixture',?1,?2,?2)", params![data.to_str().unwrap(), now])?;
+            c.execute("INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES ('s','p','fixture',?1,?1)", [now])?;
+            for (id, protocol) in [("claude", "claude_code"), ("codex", "codex_cli")] {
+                c.execute("INSERT INTO model_profiles(id,name,protocol,base_url,model,created_at,updated_at) \
+                           VALUES (?1,?1,?2,'','default',?3,?3)", params![id, protocol, now])?;
+            }
+            let start = |id: &str, profile: &str, text: &str| -> ApiResult<ModelRequest> {
+                let msg = crate::sessions::append_message(c, now, "s", "user", &json!({"text":text}), None, None)?;
+                c.execute("INSERT INTO turns(id,session_id,status,request_message_id,profile_id,owner_epoch,created_at,updated_at) \
+                           VALUES (?1,'s','running',?2,?3,'epoch',?4,?4)", params![id, msg.id, profile, now])?;
+                Ok(load_step(c, id, "epoch", &data)?.unwrap().request)
+            };
+            let answer = |id: &str, profile: &str, protocol: &str, req: &ModelRequest, text: &str| -> ApiResult<()> {
+                let msg = crate::sessions::append_message(c, now, "s", "assistant", &json!({"text":text,"protocol":protocol}), Some(id), None)?;
+                c.execute("INSERT OR REPLACE INTO cli_sessions(session_id,profile_id,native_id,updated_at,system_sha256,assistant_seq) \
+                           VALUES ('s',?1,?2,?3,?4,?5)", params![profile, id, now, crate::util::sha256_hex(req.system.as_bytes()), msg.seq])?;
+                c.execute("UPDATE turns SET status='completed', step=1 WHERE id=?1", [id])?;
+                Ok(())
+            };
+            let claude = start("a1", "claude", "Claude question")?;
+            answer("a1", "claude", "claude_code", &claude, "Claude answer")?;
+            let adjacent = start("a2", "claude", "Adjacent question")?;
+            assert_eq!(adjacent.cli.as_ref().unwrap().resume.as_deref(), Some("a1"));
+            assert_eq!(provider::cli::prompt(&adjacent, false), "Adjacent question");
+            let t = get_turn(c, "a2")?;
+            assert!(native_resume(c, &t, "claude", "claude_code", &adjacent.system, true)?.is_none());
+            assert!(native_resume(c, &t, "claude", "claude_code", "changed system", false)?.is_none());
+            assert!(native_resume(c, &t, "claude", "codex_cli", &adjacent.system, false)?.is_none());
+            c.execute("UPDATE cli_sessions SET assistant_seq=NULL WHERE profile_id='claude'", [])?;
+            assert!(load_step(c, "a2", "epoch", &data)?.unwrap().request.cli.unwrap().resume.is_none());
+            answer("a2", "claude", "claude_code", &adjacent, "Adjacent answer")?;
+
+            let codex = start("b1", "codex", "Codex question")?;
+            assert!(codex.cli.as_ref().unwrap().resume.is_none());
+            assert!(provider::cli::prompt(&codex, true).contains("Adjacent answer"));
+            answer("b1", "codex", "codex_cli", &codex, "Codex answer")?;
+            let returned = start("a3", "claude", "Return question")?;
+            assert!(returned.cli.as_ref().unwrap().resume.is_none());
+            let prompt = provider::cli::prompt(&returned, false);
+            assert!(prompt.find(r#"{"role":"user","text":"Codex question"}"#).unwrap()
+                < prompt.find(r#"{"role":"assistant","text":"Codex answer"}"#).unwrap());
+            assert!(prompt.ends_with("\n</previous_conversation>\n\nReturn question"));
+            answer("a3", "claude", "claude_code", &returned, "New Claude answer")?;
+            let next = start("a4", "claude", "Next question")?;
+            assert_eq!(next.cli.as_ref().unwrap().resume.as_deref(), Some("a3"));
+            Ok(())
+        }).unwrap();
     }
 
     /// 도구 결과를 기다리는 사이 기록된 비동기 결과 note는 tool 짝을 깨지 않고 그 뒤에 들어간다.

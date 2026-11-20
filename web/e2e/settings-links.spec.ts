@@ -125,7 +125,7 @@ test("effective 응답을 보류해도 실제 고급 행이 렌더된 뒤 이동
     }
 });
 
-for (const key of [advancedKey, "exec.max_memory_mb"]) {
+for (const key of [advancedKey, "runs.budget.max_minutes"]) {
     test(`같은 항목 ${key}도 대화별 설정 창의 대상과 초안을 섞지 않고 작업 탭을 유지한다`, async ({ page }) => {
         const { a, b } = await ensureProjects();
         const leftTitle = `링크 왼쪽 ${Date.now()}`;
@@ -175,8 +175,8 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
             const rightRow = settings.getByTestId(`setting-${key}`);
             await expect(rightRow).toBeInViewport();
             await expect(rightRow.locator("input").filter({ visible: true })).not.toHaveValue(draft);
-            // context 여유분은 프로젝트까지, exec 한도는 대화 범위까지 지원한다.
-            const sessionScope = key === "exec.max_memory_mb";
+            // context 여유분은 프로젝트까지, 시간 예산은 대화 범위까지 지원한다.
+            const sessionScope = key === "runs.budget.max_minutes";
             await expect(settingsGroupHeader(rightRow)).toContainText(sessionScope ? `대화 “${rightTitle}”` : `프로젝트 “${b.name}”`);
             await expectChoice(rightRow.getByRole("combobox"), sessionScope ? "session" : "project");
             await expect(settings.getByTestId("settings-origin")).toContainText(rightTitle);
@@ -204,10 +204,10 @@ for (const key of [advancedKey, "exec.max_memory_mb"]) {
 test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로 드러난다", async ({ page }) => {
     const gate = await holdEffective(page);
     try {
-        const settings = await openSettings(page, "exec.max_memory_mb");
+        const settings = await openSettings(page, "exec.shell");
         await gate.seen;
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toBeVisible();
-        const row = settings.getByTestId("exec-settings").getByTestId("setting-exec.max_memory_mb");
+        const row = settings.getByTestId("exec-settings").getByTestId("setting-exec.shell");
         await expect(row).toHaveCount(0);
         await gate.deliver();
         // 명령 실행이 원본 설정보다 앞에 있어, 원본 조회와 무관하게 이동할 수 있다.
@@ -218,11 +218,11 @@ test("실행 설정의 지연된 행도 전용 영역 안에서 직접 링크로
         await expect(row).toBeInViewport();
         await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
         const current = await apiCall<{ items: { key: string; layers: Record<string, { revision: number }> }[] }>("GET", "/settings/effective");
-        const item = current.items.find((entry) => entry.key === "exec.max_memory_mb")!;
+        const item = current.items.find((entry) => entry.key === "exec.shell")!;
         await scrollTop(page);
         const refreshed = page.waitForResponse((response) => new URL(response.url()).pathname === effectivePath);
-        // 0(제한 없음)을 그대로 저장해 격리 서버의 한도는 바꾸지 않고 재조회만 유도한다.
-        await apiCall("PUT", "/settings/server/-/exec.max_memory_mb", { expected_revision: item.layers.server!.revision, value: 0 });
+        // 기본 셸을 그대로 저장해 격리 서버의 실행 방식은 바꾸지 않고 재조회만 유도한다.
+        await apiCall("PUT", "/settings/server/-/exec.shell", { expected_revision: item.layers.server!.revision, value: "default" });
         await refreshed;
         await expect(settingsGroupHeader(row)).toContainText("서버 전체");
         await expect.poll(() => page.getByTestId("settings-scroll").evaluate((element) => element.scrollTop)).toBe(0);

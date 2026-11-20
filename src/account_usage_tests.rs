@@ -48,10 +48,35 @@ fn missing_windows_are_not_full_or_zero_and_durations_are_not_assumed() {
 }
 
 #[test]
-fn claude_distinguishes_official_auth_status_without_inventing_limits() {
-    assert!(claude_limits(Some(true)).unwrap().is_empty());
-    assert_eq!(claude_limits(Some(false)).unwrap_err(), "authentication_required");
-    assert_eq!(claude_limits(None).unwrap_err(), "unavailable");
+fn claude_uses_only_unscoped_session_and_weekly_meters() {
+    let report = json!({"rate_limits":{"limits":[
+        {"kind":"weekly_scoped","percent":72,"scope":{"model":{"display_name":"Opus"}}},
+        {"kind":"session","percent":91,"scope":{"surface":{"display_name":"CLI"}}},
+        {"kind":"weekly_all","percent":100,"resets_at":null},
+        {"kind":"session","percent":12.5,"resets_at":"2026-11-20T14:00:00+09:00"},
+    ]}, "session":{"private":"must-not-be-returned"}});
+    let limits = claude_limits(&report).unwrap();
+    assert_eq!(limits.len(), 2);
+    assert_eq!(limits[0].label, "5시간");
+    assert_eq!(limits[0].remaining_percent, Some(87.5));
+    assert_eq!(limits[0].resets_at.as_deref(), Some("2026-11-20T05:00:00Z"));
+    assert_eq!(limits[1].label, "주간");
+    assert_eq!(limits[1].remaining_percent, Some(0.0));
+    assert!(!serde_json::to_string(&limits).unwrap().contains("must-not-be-returned"));
+}
+
+#[test]
+fn claude_does_not_invent_missing_meters_or_reuse_invalid_rows() {
+    assert!(claude_limits(&json!({"rate_limits":null})).is_err());
+    assert!(claude_limits(&json!({"rate_limits":{"limits":[]}})).unwrap().is_empty());
+    let limits = claude_limits(&json!({"rate_limits":{"limits":[
+        {"kind":"session","percent":101}, {"kind":"session","percent":null},
+        {"kind":"session","percent":33,"resets_at":"invalid"},
+        {"kind":"weekly_all","percent":0,"resets_at":null},
+    ]}})).unwrap();
+    assert_eq!(limits.len(), 1);
+    assert_eq!(limits[0].label, "주간");
+    assert_eq!(limits[0].remaining_percent, Some(100.0));
 }
 
 #[tokio::test]

@@ -90,7 +90,7 @@ export function UsagePanel({ onClose, onAuthenticate }: { onClose: () => void; o
         return api.getContract("UsageDashboard", `/usage/dashboard?${new URLSearchParams(range)}`);
     }, { keepPreviousData: true, scope: "usage:dashboard" });
     // 계정 한도는 통계와 독립적이므로 통계 응답 뒤가 아니라 화면 진입 시 함께 조회한다.
-    useAccountUsage();
+    const accountUsage = useAccountUsage();
     const reload = useRef(q.reload);
     reload.current = q.reload;
     useEffect(() => {
@@ -111,7 +111,7 @@ export function UsagePanel({ onClose, onAuthenticate }: { onClose: () => void; o
     const report = q.data;
     return <GroveStack as="section" gap={0} data-testid="usage-panel" aria-label="사용량">
         <GroveStack xstyle={dashboardStyles.content}>
-            <GroveStack as="header" direction="horizontal" align="center" justify="between" gap={2}>
+            <GroveStack as="header" direction="horizontal" align="center" justify="between" gap={2} xstyle={dashboardStyles.header}>
                 <GroveStack direction="horizontal" align="center" gap={2}>
                     <GroveHeading level={2} ref={heading} tabIndex={-1} xstyle={dashboardStyles.page}>사용량</GroveHeading>
                     <GroveText type="supporting" color="secondary">서버 전체</GroveText>
@@ -124,7 +124,7 @@ export function UsagePanel({ onClose, onAuthenticate }: { onClose: () => void; o
                         {PERIODS.map((item) => <GroveButton key={item.value} type="button" appearance="choice" aria-pressed={period === item.value}
                             xstyle={[dashboardStyles.period, period === item.value && dashboardStyles.periodSelected]} onClick={() => setPeriod(item.value as Period)}>{item.label}</GroveButton>)}
                     </GroveStack>
-                    <GroveButton type="button" variant="secondary" xstyle={dashboardStyles.refresh} aria-label="사용량 새로고침" disabled={!valid || q.loading} onClick={q.reload}>{q.loading ? "조회 중…" : q.error ? "다시 시도" : "↻ 새로고침"}</GroveButton>
+                    <GroveButton type="button" variant="secondary" xstyle={dashboardStyles.refresh} aria-label="사용량 새로고침" disabled={!valid || q.loading} onClick={() => { q.reload(); accountUsage.reload(); }}>{q.loading ? "조회 중…" : q.error ? "다시 시도" : "↻ 새로고침"}</GroveButton>
                 </GroveStack>
                 {period === "custom" && <GroveStack direction="horizontal" gap={2} wrap="wrap">
                     <GroveStack xstyle={dashboardStyles.date}><TextInput type="date" label="시작일" value={start} onChange={setStart} /></GroveStack>

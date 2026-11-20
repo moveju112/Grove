@@ -39,7 +39,7 @@ test("새 데몬의 5단계, 재접속, 추가 브라우저의 로컬 전용 설
         const workspace = page.getByTestId("conn");
         await expect(heading("테마")).toBeVisible();
         await expect(workspace).toHaveCount(0);
-        await expect(wizard).toContainText("로컬 설정 · 1/5");
+        await expect(wizard).toContainText("로컬 설정 · 1/4");
         await selectChoice(choice("테마"), "soft");
         await expect(page.locator("html")).toHaveAttribute("data-theme", "soft");
         await page.screenshot({ path: info.outputPath("setup-theme-390.png") });
@@ -68,8 +68,7 @@ test("새 데몬의 5단계, 재접속, 추가 브라우저의 로컬 전용 설
         const style = choice("출력 스타일");
         await expect(style).toHaveAttribute("data-selected-value", "default");
         await selectChoice(style, "simple");
-        await next.click();
-        await expect(choice("서버 PC 제어")).toHaveAttribute("data-selected-value", "false");
+        await expect(wizard.getByRole("heading", { name: "서버 PC 제어" })).toHaveCount(0);
         await expect(workspace).toHaveCount(0);
         await wizard.getByRole("button", { name: "설정 완료", exact: true }).click();
         await expect(workspace).toHaveText("연결됨");
@@ -88,7 +87,7 @@ test("새 데몬의 5단계, 재접속, 추가 브라우저의 로컬 전용 설
         const response = await fetch(`${url}api/v1/settings/effective`, { headers: { authorization: `Bearer ${owner}` } });
         const { items } = await response.json() as { items: { key: string; effective: unknown }[] };
         expect(items.find(({ key }) => key === "output.style")?.effective).toBe("simple");
-        expect(items.find(({ key }) => key === "computer.enabled")?.effective).toBe(false);
+        expect(items.some(({ key }) => key === "computer.enabled")).toBe(false);
     } finally {
         await other.close();
         child.kill();

@@ -117,16 +117,12 @@ function ApprovalCardInstance({ call, effect, choices, onDecision, feedback, onR
         <Card variant="orange" padding={3} role="region" aria-labelledby={title} aria-describedby={statusId}
             aria-busy={pending} data-testid="approval" data-approval-id={call.id} data-revision={call.revision}>
             <GroveStack gap={2}>
-            <Heading level={3} id={title} tabIndex={-1} ref={heading}>{call.name === "computer" ? "PC 제어" : displayText(call.name, 80)} 승인 요청</Heading>
-            {call.name === "computer" ? (
-                <GroveText as="p" display="block" type="inherit" color="inherit">서버 PC 화면 공유·조작을 이 대화에서 계속 허용합니다.</GroveText>
-            ) : <>
-                <KeyValues data-testid="approval-target" items={projection.fields.map((field) => [field.label, <code>{field.value}</code>])} />
-                <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="approval-effect">{effectInfo?.consequence ?? "도구 분류를 확인할 수 없어 승인할 수 없습니다."}</GroveText>
-                {choices.includes("approve_always") && <GroveText as="p" display="block" type="supporting" color="warning"><SentenceText text="항상 승인은 모든 프로젝트·대화의 이 도구 전체에 적용됩니다. 설정의 ‘승인 없이 실행할 도구’에서 해제할 수 있습니다." /></GroveText>}
-                {projection.notices.map((notice) => <GroveText as="p" display="block" type="supporting" color="secondary" key={notice}>{notice}</GroveText>)}
-                {choices.includes("approve_session") && <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="approval-allowed-scope">대화 승인은 이 대화의 <code>{displayText(call.name, 80)}</code> 도구 전체에 적용됩니다.</GroveText>}
-            </>}
+            <Heading level={3} id={title} tabIndex={-1} ref={heading}>{displayText(call.name, 80)} 승인 요청</Heading>
+            <KeyValues data-testid="approval-target" items={projection.fields.map((field) => [field.label, <code>{field.value}</code>])} />
+            <GroveText as="p" display="block" type="inherit" color="inherit" data-testid="approval-effect">{effectInfo?.consequence ?? "도구 분류를 확인할 수 없어 승인할 수 없습니다."}</GroveText>
+            {choices.includes("approve_always") && <GroveText as="p" display="block" type="supporting" color="warning"><SentenceText text="항상 승인은 모든 프로젝트·대화의 이 도구 전체에 적용됩니다. 설정의 ‘승인 없이 실행할 도구’에서 해제할 수 있습니다." /></GroveText>}
+            {projection.notices.map((notice) => <GroveText as="p" display="block" type="supporting" color="secondary" key={notice}>{notice}</GroveText>)}
+            {choices.includes("approve_session") && <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="approval-allowed-scope">대화 승인은 이 대화의 <code>{displayText(call.name, 80)}</code> 도구 전체에 적용됩니다.</GroveText>}
             <GroveText as="p" display="block" type="inherit" color="inherit" id={statusId} role={failure || policyBlocked ? "alert" : "status"} aria-live={failure || policyBlocked ? "assertive" : "polite"} aria-atomic="true" data-testid="approval-status">
                 {policyBlocked ? "권한 또는 도구 정책으로 실행이 차단되었습니다." : !disabled && !pending ? null : status}
             </GroveText>

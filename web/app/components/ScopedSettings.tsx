@@ -263,7 +263,7 @@ function SettingValue({ d, it, t, reload, scope, scopes, setScope }: {
             </GroveStack>
             {d.key === "tools.mode" && (value === "bypass" || it.effective === "bypass") && (
                 <GroveText as="p" display="block" type="supporting" color="warning">
-                    <SentenceText text="파일 변경·명령 실행·외부 요청을 확인 없이 허용해요. 금지한 도구와 PC 제어·위임의 별도 정책은 유지돼요." />
+                    <SentenceText text="파일 변경·명령 실행·외부 요청을 확인 없이 허용해요. 금지한 도구와 위임의 별도 정책은 유지돼요." />
                 </GroveText>
             )}
             {d.key === "tools.full_access" && (Boolean(value) || Boolean(it.effective)) && (

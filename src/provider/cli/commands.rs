@@ -113,23 +113,20 @@ pub(super) async fn list_with(protocol: &str, cwd: &Path, executable: Option<&Pa
     if !super::is_cli(protocol) { return Err(ProviderError::new("native_commands_unsupported", "CLI 모델에서만 스킬·명령을 사용할 수 있습니다")); }
     let result = tokio::time::timeout(Duration::from_secs(15), async {
         let prog = executable.map(|path| path.to_string_lossy().into_owned()).unwrap_or_else(|| program(protocol).into());
-        let mut cmd = tokio::process::Command::new(&prog);
+        let mut cmd = super::cli_command(protocol, &prog);
         if protocol == "claude_code" {
             cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
-                "--tools", "", "--settings", r#"{"disableAllHooks":true}"#, "--strict-mcp-config", "--no-session-persistence"]);
+                "--tools", "", "--strict-mcp-config", "--no-session-persistence"]);
+            cmd.arg("--settings").arg(super::claude::settings(json!({"disableAllHooks":true})));
         } else { cmd.arg("app-server"); }
         cmd.current_dir(cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
-        for (key, _) in std::env::vars_os() {
-            if key.to_str().is_some_and(|key| key.starts_with("GROVE_")) { cmd.env_remove(key); }
-        }
         let tag = crate::util::new_id();
-        let limits = crate::procs::Limits::default();
-        crate::procs::prepare(&mut cmd, &tag, limits);
+        crate::procs::prepare(&mut cmd, &tag);
         let mut child = cmd.spawn().map_err(|error| {
             if crate::deps::is_missing(&prog, Some(&error)) { ProviderError::new("cli_not_found", crate::deps::message(&prog)) }
             else { ProviderError::new("native_commands_failed", "CLI 명령 목록 프로세스를 시작하지 못했습니다") }
         })?;
-        let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ProviderError::new("native_commands_failed", e))?);
+        let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag).map_err(|e| ProviderError::new("native_commands_failed", e))?);
         let mut input = child.stdin.take().expect("stdin");
         let mut output = BufReader::new(child.stdout.take().expect("stdout"));
         let claude = protocol == "claude_code";

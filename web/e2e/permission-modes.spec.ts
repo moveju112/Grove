@@ -68,7 +68,7 @@ for (const width of [390, 1280]) {
                 await selectChoice(row.getByLabel("도구 실행 모드", { exact: true }), "bypass");
                 await expect(row).toContainText("저장됨");
                 await expect(row).toContainText("확인 없이 허용");
-                await expect(row).toContainText("PC 제어·위임의 별도 정책은 유지");
+                await expect(row).toContainText("금지한 도구와 위임의 별도 정책은 유지");
                 const effective = await apiCall<Effective>("GET", `/settings/effective?project_id=${project.id}`);
                 expect(effective.items.find((item) => item.key === "tools.mode")!.effective).toBe("bypass");
                 await page.screenshot({ path: info.outputPath("bypass-settings.png") });

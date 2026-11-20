@@ -15,10 +15,9 @@ test("예산이 없으면 표시하지 않고, 정하면 실행 전과 실행 �
     await expect(view.getByTestId("budget-next")).toHaveCount(0);
 
     await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_minutes`, { expected_revision: 0, value: 2 });
-    await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_tokens`, { expected_revision: 0, value: 5000 });
     await expect(view.getByTestId("budget-next")).toContainText("시간 2분");
     await expect(view.getByTestId("budget-next")).toContainText("이 대화 설정");
-    await expect(view.getByTestId("budget-next")).toContainText("token 5000");
+    await expect(view.getByTestId("budget-next")).not.toContainText("token");
 
     const before = (await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json()).length as number;
     await script({ frames: frames.text(["진행 중"]).slice(0, 1), hang: true });
@@ -29,13 +28,11 @@ test("예산이 없으면 표시하지 않고, 정하면 실행 전과 실행 �
     await expect(live).toContainText("시간 2분");
     await expect(live).toContainText("시작 기준");
     await expect(live).toContainText(/남은 1분 \d+초/);
-    await expect(live).toContainText("token 5000 중");
     await expect.poll(async () => (await (await fetch(`http://127.0.0.1:${state().fixturePort}/requests`)).json()).length).toBe(before + 1);
     await view.getByTestId("turn-status").getByRole("button", { name: "취소" }).click();
     await expect(view.getByTestId("turn-status")).toHaveCount(0);
     await expect(view.getByTestId("budget-next")).toBeVisible();
     // 정리: 공유 시험 서버의 다른 대화에는 영향이 없지만 이 대화 예산도 지운다
     await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_minutes`, { expected_revision: 1, value: null });
-    await apiCall("PUT", `/settings/session/${s.id}/runs.budget.max_tokens`, { expected_revision: 1, value: null });
     await expect(view.getByTestId("budget-next")).toHaveCount(0);
 });

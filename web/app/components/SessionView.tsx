@@ -18,7 +18,7 @@ import { useFocusRequest } from "../state/focus";
 import { queueText } from "../state/queue";
 import { ApiError, api, isLoggedIn, isTransportError } from "../api/client";
 import { readConversation } from "../state/workspaceStartup";
-import { keepOlderPages, mergeMessages, readMessageRange, singleFlight, takeOlderPages } from "../state/conversationPages";
+import { CONVERSATION_PAGE_SIZE, conversationPagePath, keepOlderPages, mergeMessages, readMessageRange, singleFlight, takeOlderPages } from "../state/conversationPages";
 import type { BotRoom, Definition, Followup as FollowupInfo, Message, MessagePage, Project, RecentItem, Session, ToolCallRow, Turn } from "../api/generated";
 import { useLive, useQuery } from "../state/store";
 import { Composer, type FollowKind, type RunCommand, type SendOptions } from "./Composer";
@@ -293,7 +293,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         });
     };
     const loadOlder = () => fetchOlder(async (first) => {
-        const page = await api.get<MessagePage>(`/sessions/${sessionId}/messages?limit=100&before_seq=${first}`);
+        const page = await api.get<MessagePage>(conversationPagePath(sessionId, CONVERSATION_PAGE_SIZE, { before: first }));
         return page.timeline_revision === latestRef.current?.timeline_revision ? { items: page.items, more: page.has_more_before } : null;
     });
     // 목적지가 정해진 이동은 100개씩 거슬러 올라가지 않고, 목적지 주변과 사이 구간을 한 번에 병렬로 읽는다.
@@ -820,7 +820,7 @@ const MessageView = memo(function MessageView({ m }: { m: Message }) {
 
 type EndErrorData = {
     code?: string; message?: string; at?: string; last_progress_at?: string;
-    budget?: { max_tokens?: number; max_minutes?: number; max_cost_cents?: number; currency?: string };
+    budget?: { max_minutes?: number };
     settings?: { provider_timeout_secs?: number };
     provider_stream?: { event: string; code?: string; incomplete_reason?: string };
     scope?: EndScopeData;
@@ -833,12 +833,7 @@ function TurnEndRecord({ status, error: e, compact = false }: { status: string; 
         <GroveText as="p" display="block" type="inherit">상태: {status} · <code>{e.code}</code></GroveText>
         {e.at && <GroveText as="p" display="block" type="inherit">발생 시각: <time dateTime={e.at}>{e.at}</time></GroveText>}
         {e.last_progress_at && <GroveText as="p" display="block" type="inherit">마지막 진행: <time dateTime={e.last_progress_at}>{e.last_progress_at}</time></GroveText>}
-        {e.budget && <GroveText as="p" display="block" type="inherit">
-            적용 예산:
-            {e.budget.max_tokens != null && ` ${e.budget.max_tokens} tokens`}
-            {e.budget.max_minutes != null && ` ${e.budget.max_minutes}분`}
-            {e.budget.max_cost_cents != null && ` ${e.budget.max_cost_cents / 100} ${e.budget.currency ?? "USD"}`}
-        </GroveText>}
+        {e.budget?.max_minutes != null && <GroveText as="p" display="block" type="inherit">적용 예산: {e.budget.max_minutes}분</GroveText>}
         {e.provider_stream && <GroveText as="p" display="block" type="inherit">Codex 이벤트: <code>{e.provider_stream.event}</code></GroveText>}
         {e.provider_stream?.code && <GroveText as="p" display="block" type="inherit">Codex 오류 코드: <code>{e.provider_stream.code}</code></GroveText>}
         {e.provider_stream?.incomplete_reason && <GroveText as="p" display="block" type="inherit">미완료 사유: <code>{e.provider_stream.incomplete_reason}</code></GroveText>}
@@ -1007,49 +1002,33 @@ function QuestionCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unkno
 type Eff = { items: { key: string; effective: unknown; source: string }[] };
 const SOURCE: Record<string, string> = { session: "이 대화", project: "프로젝트", server: "서버", default: "기본" };
 
-/// 사용자가 정한 예산(RUN-021). 실행 전에는 다음 요청에 적용될 값과 출처를, 실행 중에는 접수 때 고정된 값·기준 시각·남은 시간·사용량을 보인다.
+/// 사용자가 정한 시간 예산(RUN-021). 실행 전에는 다음 요청에 적용될 값과 출처를, 실행 중에는 접수 때 고정된 값·기준 시각·남은 시간을 보인다.
 /// 예산이 없으면(기본) 아무것도 표시하지 않는다: 정상 진행을 시간으로 끊지 않는다.
 function BudgetNote({ sessionId, active }: { sessionId: string; active?: Turn }) {
     const eff = useQuery<Eff>(`settings:effective:session:${sessionId}`, () => api.get(`/settings/effective?session_id=${sessionId}`));
     const [now, setNow] = useState(Date.now);
-    const fixed = (active as unknown as { definition?: { budget?: { max_tokens?: number; max_minutes?: number; max_cost_cents?: number; currency?: string } } } | undefined)?.definition?.budget;
+    const fixed = (active as unknown as { definition?: { budget?: { max_minutes?: number } } } | undefined)?.definition?.budget;
     useEffect(() => {
         if (!fixed?.max_minutes) return;
         return subscribeSecondTick(() => setNow(Date.now()));
     }, [fixed?.max_minutes]);
     if (active) {
-        if (!fixed) return null;
+        if (!fixed?.max_minutes) return null;
         const base = new Date(active.created_at).getTime();
-        const usage = (active.usage ?? {}) as { input_tokens?: number; output_tokens?: number };
-        const used = (usage.input_tokens ?? 0) + (usage.output_tokens ?? 0);
-        const left = fixed.max_minutes ? Math.max(0, Math.round((base + fixed.max_minutes * 60_000 - now) / 1000)) : null;
+        const left = Math.max(0, Math.round((base + fixed.max_minutes * 60_000 - now) / 1000));
         return (
             <GroveText as="p" display="block" type="supporting" color="secondary" role="status" data-testid="budget-live">
-                예산(접수 시 고정):
-                {fixed.max_minutes && (
-                    <>
-                        {" "}시간 {fixed.max_minutes}분 · <When at={active.created_at} absolute part="time" /> 시작 기준 · 남은 {Math.floor(left! / 60)}분 {left! % 60}초
-                    </>
-                )}
-                {fixed.max_tokens && <> · token {fixed.max_tokens} 중 {used} 사용</>}
-                {fixed.max_cost_cents && <> · 추정 비용 {(fixed.max_cost_cents / 100).toFixed(2)} {fixed.currency ?? "USD"} 이내</>} · 넘으면 남은 작업을 멈춥니다
+                예산(접수 시 고정): 시간 {fixed.max_minutes}분 · <When at={active.created_at} absolute part="time" /> 시작 기준 · 남은 {Math.floor(left / 60)}분 {left % 60}초 · 넘으면 남은 작업을 멈춥니다
             </GroveText>
         );
     }
     const get = (k: string) => eff.data?.items.find((i) => i.key === k);
     const mins = get("runs.budget.max_minutes");
-    const toks = get("runs.budget.max_tokens");
-    const cost = get("runs.budget.max_cost_cents");
     const m = Number(mins?.effective ?? 0);
-    const t = Number(toks?.effective ?? 0);
-    const c = Number(cost?.effective ?? 0);
-    if (!m && !t && !c) return null;
+    if (!mins || !m) return null;
     return (
         <GroveText as="p" display="block" type="supporting" color="secondary" data-testid="budget-next">
-            다음 요청 예산:
-            {m > 0 && <> 시간 {m}분(시작부터, 승인·답변 대기 포함 · {SOURCE[mins!.source] ?? mins!.source} 설정)</>}
-            {t > 0 && <> · token {t}({SOURCE[toks!.source] ?? toks!.source} 설정)</>}
-            {c > 0 && <> · 추정 비용 {(c / 100).toFixed(2)}(프로필 가격표 통화, {SOURCE[cost!.source] ?? cost!.source} 설정)</>} · 넘으면 남은 작업을 멈춥니다
+            다음 요청 예산: 시간 {m}분(시작부터, 승인·답변 대기 포함 · {SOURCE[mins.source] ?? mins.source} 설정) · 넘으면 남은 작업을 멈춥니다
         </GroveText>
     );
 }

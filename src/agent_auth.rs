@@ -5,6 +5,7 @@ use axum::{Json, extract::{Path, State}, response::{IntoResponse, Response}};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, process::Stdio, sync::{Arc, Mutex}, time::Duration};
 use tokio::{io::{AsyncRead, AsyncReadExt, AsyncWriteExt}, sync::{mpsc, watch}};
+use crate::provider::cli::claude;
 
 const TTL: Duration = Duration::from_secs(15 * 60);
 const OUTPUT_LIMIT: usize = 32 * 1024;
@@ -65,11 +66,16 @@ fn response(value: AgentAuthStatus) -> Response {
     ([("cache-control", "no-store")], Json(value)).into_response()
 }
 fn command(program: &str) -> tokio::process::Command {
-    let mut cmd = tokio::process::Command::new(program);
+    let mut cmd = if program == "claude" {
+        claude::command(program)
+    } else {
+        let mut cmd = tokio::process::Command::new(program);
+        for (key, _) in std::env::vars_os() {
+            if key.to_str().is_some_and(|key| key.starts_with("GROVE_")) { cmd.env_remove(key); }
+        }
+        cmd
+    };
     cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
-    for (key, _) in std::env::vars_os() {
-        if key.to_str().is_some_and(|key| key.starts_with("GROVE_")) { cmd.env_remove(key); }
-    }
     // 공식 CLI의 브라우저 실행을 억제한다. 링크는 요청한 기기에만 전달한다.
     cmd.env("BROWSER", "/bin/true");
     cmd
@@ -93,15 +99,18 @@ async fn bounded<R: AsyncRead + Unpin>(reader: R) -> std::io::Result<Vec<u8>> {
 async fn run_short(protocol: &str, logout: bool) -> ApiResult<Option<bool>> {
     let executable = program(protocol)?;
     if crate::deps::find_in_path(executable).is_none() { return Err(crate::deps::missing(executable)); }
+    if protocol == "claude_code" && !logout {
+        let settings = claude::settings(serde_json::json!({}));
+        return Ok(claude::authenticated(std::path::Path::new(executable), None, &settings, None).await.ok().flatten());
+    }
     let mut cmd = command(executable);
     if protocol == "codex_cli" {
         if logout { cmd.arg("logout"); } else { cmd.args(["login", "status"]); }
-    } else if logout { cmd.args(["auth", "logout"]); }
-    else { cmd.args(["auth", "status", "--json"]); }
+    } else { cmd.args(["auth", "logout"]); }
     let tag = crate::util::new_id();
-    crate::procs::prepare(&mut cmd, &tag, Default::default());
+    crate::procs::prepare(&mut cmd, &tag);
     let mut child = cmd.spawn().map_err(|_| ApiError::invalid("인증 상태를 확인하지 못했습니다"))?;
-    let owned = crate::procs::adopt(&mut child, &tag, Default::default()).map_err(|_| ApiError::invalid("인증 프로세스를 격리하지 못했습니다"))?;
+    let owned = crate::procs::adopt(&mut child, &tag).map_err(|_| ApiError::invalid("인증 프로세스를 격리하지 못했습니다"))?;
     let stdout = child.stdout.take().expect("stdout");
     let stderr = child.stderr.take().expect("stderr");
     let mut process = Process { child, owned };
@@ -110,11 +119,6 @@ async fn run_short(protocol: &str, logout: bool) -> ApiResult<Option<bool>> {
     }).await;
     let Ok(Ok((status, stdout, stderr))) = result else { return Ok(None); };
     if logout { return Ok(status.success().then_some(false)); }
-    if protocol == "claude_code" {
-        return Ok(serde_json::from_slice::<serde_json::Value>(&stdout).ok()
-            .and_then(|value| value["loggedIn"].as_bool())
-            .filter(|logged_in| !logged_in || status.success()));
-    }
     let text = format!("{}{}", String::from_utf8_lossy(&stdout), String::from_utf8_lossy(&stderr));
     Ok(if status.success() && text.contains("Logged in") { Some(true) }
         else if text.contains("Not logged in") { Some(false) } else { None })
@@ -174,12 +178,15 @@ pub async fn start(State(app): State<App>, _p: Principal, Path(protocol): Path<S
     if crate::deps::find_in_path(executable).is_none() { return Err(crate::deps::missing(executable)); }
     let mut cmd = command(executable);
     if protocol == "codex_cli" { cmd.args(["login", "--device-auth"]); }
-    else { cmd.args(["auth", "login"]); }
+    else {
+        app.claude_sessions.clear();
+        cmd.arg("--settings").arg(claude::settings(serde_json::json!({}))).args(["auth", "login"]);
+    }
     cmd.stdin(Stdio::piped());
     let tag = crate::util::new_id();
-    crate::procs::prepare(&mut cmd, &tag, Default::default());
+    crate::procs::prepare(&mut cmd, &tag);
     let mut child = cmd.spawn().map_err(|_| ApiError::invalid("로그인을 시작하지 못했습니다"))?;
-    let owned = crate::procs::adopt(&mut child, &tag, Default::default()).map_err(|_| ApiError::invalid("인증 프로세스를 격리하지 못했습니다"))?;
+    let owned = crate::procs::adopt(&mut child, &tag).map_err(|_| ApiError::invalid("인증 프로세스를 격리하지 못했습니다"))?;
     let initial = LoginAttempt { id: req.id, state: "starting".into(), url: None, code: None };
     let view = Arc::new(Mutex::new(initial.clone()));
     let (input, rx) = mpsc::channel(1);
@@ -237,6 +244,7 @@ pub async fn logout(State(app): State<App>, _p: Principal, Path(protocol): Path<
     if current.as_ref().is_some_and(LoginAttempt::active)
         || current.as_ref().map(|a| &a.id) != req.attempt_id.as_ref() { return Err(busy()); }
     ensure_idle(&app, &protocol).await?;
+    if protocol == "claude_code" { app.claude_sessions.clear(); }
     let authenticated = run_short(&protocol, true).await?;
     app.account_usage.clear(&protocol).await;
     if authenticated.is_none() { return Err(ApiError::invalid("로그아웃 결과를 확인하지 못했습니다. 상태를 다시 확인해 주세요")); }
@@ -257,8 +265,7 @@ fn challenge(protocol: &str, output: &str) -> (Option<String>, Option<String>) {
         match protocol {
             "codex_cli" => url.host_str() == Some("auth.openai.com") && url.path() == "/codex/device",
             "claude_code" => matches!((url.host_str(), url.path()),
-                (Some("claude.com"), "/cai/oauth/authorize") | (Some("claude.ai"), "/oauth/authorize") |
-                (Some("console.anthropic.com"), "/oauth/authorize")),
+                (Some("claude.com"), "/cai/oauth/authorize") | (Some("claude.ai"), "/oauth/authorize")),
             _ => false,
         }
     }).map(str::to_owned);

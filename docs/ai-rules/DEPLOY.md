@@ -21,7 +21,7 @@
 - **MUST** 실행 중 작업으로 적용이 `deferred`되면 성공 배포로 보고하지 않는다.
   - why: 패키지 준비와 실제 전환은 다르다.
   - ✅ readiness·적용 상태와 운영 release를 확인한다. `evidence: src/update.rs:754`, `evidence: scripts/deploy_local.py:165`.
-- **MUST** 실행 중 작업이 있으면 설치된 `serve` 데몬의 자손인지와 실행 중 턴의 일치를 함께 확인한다. Grove 셸은 데몬 직속 셸의 실행 표식과 PID를 `tasks`에 대조한 뒤 `tool_calls`로 턴을 찾고, 외부 Codex/Claude CLI는 native 대화 ID와 `cli_sessions`로 턴을 찾는다. 프로세스 이름·개수만으로 판단하지 않고 보조 `computer-mcp`는 데몬 수에 넣지 않는다.
+- **MUST** 실행 중 작업이 있으면 설치된 `serve` 데몬의 자손인지와 실행 중 턴의 일치를 함께 확인한다. Grove 셸은 데몬 직속 셸의 실행 표식과 PID를 `tasks`에 대조한 뒤 `tool_calls`로 턴을 찾고, 외부 Codex/Claude CLI는 native 대화 ID와 `cli_sessions`로 턴을 찾는다. 프로세스 이름·개수만으로 판단하지 않고 보조 `continuation-mcp`는 데몬 수에 넣지 않는다.
   - 현재 턴과 그 턴에서 배포를 호출한 셸 작업(해당하는 경우)만 실행 중이면 추가 강제 종료 승인 없이 `scripts/deploy_local.py`의 독립 systemd user unit에 검증된 패키지를 인계한다. 현재 응답이 저장되어 턴이 `completed`가 되고, 전체 readiness가 유휴 상태인 것을 확인한 뒤 기존 서명·updater·CLI·Pages 경로로 이어간다. 인계 뒤 소스를 다시 빌드하거나 `--force`로 자기 턴을 제외하지 않는다.
   - 다른 작업이 있거나 현재 세션을 확실히 식별할 수 없으면 기존 보류를 유지한다. native 대화 매핑이 아직 없는 첫 호출도 추측하지 않는다. 대화 취소·실패·중단, 30분 내 유휴 상태 미도달, 대기 중 운영 release 변경·패키지 hash 불일치는 성공으로 처리하지 않는다.
   - 인계는 배포 완료가 아니다. `python3 scripts/deploy_local.py --status`의 `deployment_jobs`와 해당 디렉터리의 `state.json`·`deployment.log`로 실제 서버 전환·공개 웹 자산 확인 결과를 보고한다.

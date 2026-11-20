@@ -68,7 +68,6 @@ pub type ToolResult<T> = Result<T, ToolError>;
 
 pub fn specs() -> Vec<ToolSpec> {
     vec![
-        crate::computer::spec(),
         crate::continuations::spec(),
         crate::tool_outputs::spec(),
         crate::deferred_tools::spec(),
@@ -385,7 +384,7 @@ pub fn plan(name: &str, args: &Value, root: &Path) -> ToolResult<(ToolSpec, Plan
         "agent" => plan_agent(args)?,
         "load_tool" => crate::deferred_tools::plan(args)?,
         "continue_later" => crate::continuations::plan(args)?,
-        "goal" | "recall" | "tool_output_read" | "computer" => Planned { target: args.clone(), precondition: None },
+        "goal" | "recall" | "tool_output_read" => Planned { target: args.clone(), precondition: None },
         "ask_user" => plan_ask(args)?,
         "web_fetch" => web_fetch::plan(args)?,
         _ => unreachable!(),

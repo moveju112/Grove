@@ -42,7 +42,7 @@ fn final_reply() -> Value {
 }
 
 #[derive(Clone, Copy)]
-enum Scenario { Happy, Stale, Overloaded, Partial, LinkDown, LinkDownAfterPartial, ChangedPrefix }
+enum Scenario { Happy, Stale, Overloaded, Partial, LinkDown, LinkDownAfterPartial, ChangedPrefix, Policy, SsePolicy }
 
 #[derive(Default)]
 struct Requests {
@@ -87,7 +87,9 @@ async fn start(scenario: Scenario) -> (Session, Fixture, tokio::task::JoinHandle
                     (1, _) => tool_reply(),
                     (2, Scenario::Stale) => json!({"type":"error","error":{"code":"previous_response_not_found"}}),
                     (2, Scenario::Overloaded | Scenario::Partial) => json!({"type":"error","code":"server_is_overloaded","message":"private"}),
-                    (2, Scenario::LinkDown | Scenario::LinkDownAfterPartial) => {
+                    (2, Scenario::Policy) => json!({"type":"error","request_id":"req_ws_fixture",
+                        "error":{"code":"misalignment_policy_violation","message":"private provider text"}}),
+                    (2, Scenario::LinkDown | Scenario::LinkDownAfterPartial | Scenario::SsePolicy) => {
                         socket.send(Message::Close(None)).await.unwrap();
                         return;
                     }
@@ -100,7 +102,11 @@ async fn start(scenario: Scenario) -> (Session, Fixture, tokio::task::JoinHandle
     async fn sse(State(f): State<Fixture>, headers: HeaderMap, Json(value): Json<Value>) -> impl axum::response::IntoResponse {
         assert_eq!(headers["authorization"], "Bearer fixture");
         f.requests.lock().unwrap().sse.push(value);
-        ([("content-type", "text/event-stream")], format!("data: {}\n\n", final_reply()))
+        let reply = if matches!(f.scenario, Scenario::SsePolicy) {
+            json!({"type":"error","request_id":"Bearer should-not-log",
+                "error":{"code":"misalignment_policy_violation","message":"private provider text"}})
+        } else { final_reply() };
+        ([("content-type", "text/event-stream"), ("x-request-id", "req_sse_fixture")], format!("data: {reply}\n\n"))
     }
     let fixture = Fixture { scenario, requests: Default::default() };
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -191,6 +197,57 @@ async fn connection_loss_before_text_falls_back_to_sse() { run(Scenario::LinkDow
 
 #[tokio::test]
 async fn connection_loss_after_text_does_not_fall_back_to_sse() { run(Scenario::LinkDownAfterPartial).await; }
+
+#[test]
+fn policy_failure_logs_wire_context_without_payload_on_both_transports() {
+    // subscriber를 런타임 전체에 붙여 span 생성과 서버·클라이언트 poll이 같은 범위를 쓰게 한다.
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+    let output = tempfile::NamedTempFile::new().unwrap();
+    let subscriber = tracing_subscriber::fmt().with_max_level(tracing::Level::WARN)
+        .with_ansi(false).event_format(crate::logging::EventFormat(true))
+        .with_writer(output.reopen().unwrap()).finish();
+    tracing::subscriber::with_default(subscriber, || runtime.block_on(assert_policy_failure_logs(output.path())));
+}
+
+async fn assert_policy_failure_logs(log_path: &std::path::Path) {
+    use tracing::Instrument;
+    for (scenario, transport, request_id, item_count, start_index) in [
+        (Scenario::Policy, "websocket", "req_ws_fixture", 1, 3),
+        (Scenario::SsePolicy, "sse", "req_sse_fixture", 4, 0),
+    ] {
+        let (mut session, fixture, task) = start(scenario).await;
+        let mut req = request();
+        let profile = profile("gpt-fixture");
+        let (_tx, mut rx) = watch::channel(false);
+        let first = stream_with_service_tier(&profile, &req, None, &mut session, &mut rx, &mut |_| {}).await.unwrap();
+        append_tool_result(&mut req, first);
+        let span = tracing::warn_span!("codex_step", turn_id = "turn-fixture", history_through_seq = 12);
+        let error = stream_with_service_tier(&profile, &req, None, &mut session, &mut rx, &mut |_| {})
+            .instrument(span).await.unwrap_err();
+        assert!(!error.retryable);
+        assert_eq!(error.to_json()["provider_stream"]["code"], "misalignment_policy_violation");
+        let requests = fixture.requests.lock().unwrap();
+        assert_eq!(requests.frames.len(), 2);
+        assert_eq!(requests.sse.len(), usize::from(transport == "sse"));
+        let logs = std::fs::read_to_string(log_path).unwrap();
+        let transport_field = format!("transport=\"{transport}\"");
+        let line = logs.lines().find(|line| line.contains("misalignment_policy_violation") && line.contains(&transport_field))
+            .unwrap_or_else(|| panic!("{transport} 정책 오류 로그 누락: {logs}"));
+        for expected in [
+            "turn_id=\"turn-fixture\"".into(), "history_through_seq=12".into(),
+            "model=\"gpt-fixture\"".into(), format!("provider_request_id=\"{request_id}\""),
+            "context_input_items=4".into(), format!("frame_input_items={item_count}"), format!("frame_input_start={start_index}"),
+            "user_items=1".into(), "tool_calls=1".into(), "tool_results=1".into(), "reasoning_items=1".into(),
+        ] {
+            assert!(line.contains(&expected), "누락: {expected} / {line}");
+        }
+        for private in ["Use get_fixture", "Call get_fixture", "GROVE_FIXTURE_731", "private provider text",
+            "Bearer", "test-account", "resp_tool", "get_fixture"] {
+            assert!(!logs.contains(private), "로그에 원문 노출: {private}");
+        }
+        task.abort();
+    }
+}
 
 #[tokio::test]
 #[ignore = "실제 Codex 구독을 사용하는 수동 검증"]

@@ -4,7 +4,6 @@ import type { Schema } from "./validation";
 
 export type ContractTypes = {
     EventRecord: Types.EventRecord;
-    ComputerStatus: Types.ComputerStatus;
     SetupPreferences: Types.SetupPreferences;
     SetupStatus: Types.SetupStatus;
     DeviceInfo: Types.DeviceInfo;
@@ -74,8 +73,7 @@ export type ContractTypes = {
 
 export const contractMetadata = {
     "EventRecord": {"kind":"object","fields":{"seq":{"optional":false,"schema":{"kind":"number"}},"created_at":{"optional":false,"schema":{"kind":"string"}},"kind":{"optional":false,"schema":{"kind":"string"}},"project_id":{"optional":false,"schema":{"kind":"union","options":[{"kind":"string"},{"kind":"literal","value":null}]}},"session_id":{"optional":false,"schema":{"kind":"union","options":[{"kind":"string"},{"kind":"literal","value":null}]}},"payload":{"optional":false,"schema":{"kind":"unknown"}}}},
-    "ComputerStatus": {"kind":"object","fields":{"enabled":{"optional":false,"schema":{"kind":"boolean"}},"target":{"optional":false,"schema":{"kind":"string"}},"platform":{"optional":false,"schema":{"kind":"string"}},"platform_supported":{"optional":false,"schema":{"kind":"boolean"}},"desktop_session_present":{"optional":false,"schema":{"kind":"boolean"}},"backend":{"optional":false,"schema":{"kind":"string"}},"note":{"optional":false,"schema":{"kind":"string"}}}},
-    "SetupPreferences": {"kind":"object","fields":{"output_style":{"optional":false,"schema":{"kind":"string"}},"output_style_revision":{"optional":false,"schema":{"kind":"number"}},"output_style_options":{"optional":false,"schema":{"kind":"array","item":{"kind":"string"}}},"computer_enabled":{"optional":false,"schema":{"kind":"boolean"}},"computer_revision":{"optional":false,"schema":{"kind":"number"}}}},
+    "SetupPreferences": {"kind":"object","fields":{"output_style":{"optional":false,"schema":{"kind":"string"}},"output_style_revision":{"optional":false,"schema":{"kind":"number"}},"output_style_options":{"optional":false,"schema":{"kind":"array","item":{"kind":"string"}}}}},
     "SetupStatus": {"kind":"object","fields":{"required":{"optional":false,"schema":{"kind":"boolean"}},"preferences":{"optional":false,"schema":{"kind":"union","options":[{"kind":"ref","name":"SetupPreferences"},{"kind":"literal","value":null}]}}}},
     "DeviceInfo": {"kind":"object","fields":{"id":{"optional":false,"schema":{"kind":"string"}},"kind":{"optional":false,"schema":{"kind":"string"}},"name":{"optional":false,"schema":{"kind":"string"}},"created_at":{"optional":false,"schema":{"kind":"string"}},"last_used_at":{"optional":false,"schema":{"kind":"union","options":[{"kind":"string"},{"kind":"literal","value":null}]}},"revoked_at":{"optional":false,"schema":{"kind":"union","options":[{"kind":"string"},{"kind":"literal","value":null}]}},"parent_id":{"optional":false,"schema":{"kind":"union","options":[{"kind":"string"},{"kind":"literal","value":null}]}},"expires_at":{"optional":false,"schema":{"kind":"union","options":[{"kind":"string"},{"kind":"literal","value":null}]}},"current":{"optional":false,"schema":{"kind":"boolean"}}}},
     "PairingRequestInfo": {"kind":"object","fields":{"id":{"optional":false,"schema":{"kind":"string"}},"name":{"optional":false,"schema":{"kind":"string"}},"verification_code":{"optional":false,"schema":{"kind":"string"}},"created_at":{"optional":false,"schema":{"kind":"string"}},"expires_at":{"optional":false,"schema":{"kind":"string"}}}},

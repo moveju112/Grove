@@ -352,7 +352,7 @@ fn validate(c: &Connection, project_id: &str, b: &SpecBody, now: OffsetDateTime)
     crate::projects::active_root(c, project_id)?;
     crate::models::get_profile(c, &b.profile_id)?;
     if let Some(a) = &b.agent_id {
-        crate::definitions::resolve(c, "agent", a)?;
+        crate::definitions::resolve_turn_agent(c, a)?;
     }
     if let Some(list) = &b.allowed_tools {
         if !b.tools {

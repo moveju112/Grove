@@ -80,7 +80,7 @@ async fn stale_revision_and_new_restrictions_cannot_save_always_approval() {
 }
 
 #[tokio::test]
-async fn bypass_is_default_but_deny_and_computer_consent_still_win() {
+async fn bypass_is_default_but_deny_still_wins() {
     let s = TestServer::start_default_permissions().await;
     let p = s.create_project("bypass").await;
     let pid = p["id"].as_str().unwrap().to_string();
@@ -122,13 +122,6 @@ async fn bypass_is_default_but_deny_and_computer_consent_still_win() {
     setting(&s,"project",&pid,"tools.deny",0,json!("write")).await;
     let blocked = write(&s,&sid,"denied.txt").await;
     assert_eq!(blocked["result"]["error"]["code"],"policy_denied");
-    setting(&s,"server","-","computer.enabled",0,json!(true)).await;
-    let (_, computer) = s.post(&format!("/api/v1/sessions/{sid}/tool-requests"),
-        json!({"name":"computer","args":{"target":"server","action":"list"}})).await;
-    assert_eq!(computer["status"],"pending_approval");
-    let (status, _) = s.post(&format!("/api/v1/tool-calls/{}/decision",computer["id"].as_str().unwrap()),
-        json!({"decision":"approve_always","expected_revision":computer["revision"]})).await;
-    assert_eq!(status,StatusCode::BAD_REQUEST);
     assert_eq!(allow(&s).await["effective"],"");
 }
 

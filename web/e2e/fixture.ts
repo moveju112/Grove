@@ -3,7 +3,8 @@
 import { createServer, type Server } from "node:http";
 
 // marker가 있으면 요청 본문에 그 문자열이 있을 때만 쓴다(동시에 도는 부모·자식 턴 구분).
-type Step = { frames: string[]; delayMs?: number; hang?: boolean; marker?: string };
+// status가 있으면 frames 대신 그 HTTP 오류를 돌려준다(재시도하지 않는 4xx로 실패 경로를 만든다).
+type Step = { frames: string[]; delayMs?: number; hang?: boolean; marker?: string; status?: number; error?: string };
 
 export async function startFixture(port: number): Promise<{ close: () => void }> {
     const script: Step[] = [];
@@ -35,6 +36,12 @@ export async function startFixture(port: number): Promise<{ close: () => void }>
             if (!step) {
                 res.statusCode = 500;
                 res.end(JSON.stringify({ error: { message: "script exhausted" } }));
+                return;
+            }
+            if (step.status) {
+                res.statusCode = step.status;
+                res.setHeader("content-type", "application/json");
+                res.end(JSON.stringify({ error: { message: step.error ?? "fixture error" } }));
                 return;
             }
             res.setHeader("content-type", "text/event-stream");

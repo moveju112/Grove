@@ -35,7 +35,7 @@ for (const protocol of ["codex_cli", "claude_code"] as const) {
             expect(turns).toEqual([expect.objectContaining({ id: initial.turn.id })]);
             const pending = await apiCall<{ items: unknown[] }>("GET", `/sessions/${session.id}/followups`);
             expect(pending.items).toEqual([]);
-            type NativeCall = { provider: string; cwd: string; threadId?: string; input?: { text?: string }[]; text?: string; args?: string[] };
+            type NativeCall = { provider: string; cwd: string; threadId?: string; input?: { text?: string }[]; text?: string; pid?: number };
             const calls = readFileSync(join(state().cliDir!, "native-turns.jsonl"), "utf8").trim().split("\n")
                 .map((line) => JSON.parse(line) as NativeCall).filter((call) => call.cwd === root);
             if (protocol === "codex_cli") {
@@ -47,9 +47,10 @@ for (const protocol of ["codex_cli", "claude_code"] as const) {
                 expect(calls).toHaveLength(2);
                 const next = calls[1]!.text!;
                 for (const text of ["native-steer-one", "native-steer-two"]) expect(next.split(text)).toHaveLength(2);
-                const first = calls[0]!.args!;
-                const second = calls[1]!.args!;
-                expect(second[second.indexOf("--resume") + 1]).toBe(first[first.indexOf("--session-id") + 1]);
+                expect(calls[0]!.threadId).toBeTruthy();
+                expect(calls[1]!.threadId).toBe(calls[0]!.threadId);
+                expect(calls[0]!.pid).toBeGreaterThan(0);
+                expect(calls[1]!.pid).toBe(calls[0]!.pid);
             }
         } finally {
             writeFileSync(release, "");

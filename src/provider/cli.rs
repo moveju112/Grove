@@ -5,8 +5,8 @@
 //! - CLI 자체 도구로 프로젝트 파일을 수정하고 검사 명령을 실행한다. Grove 도구 루프와 중복 실행하지 않는다.
 //!   두 CLI 모두 sandbox·권한 확인 없이 서버 계정 권한으로 실행한다.
 //!   전역·프로젝트 지침·기억·hook·MCP는 CLI 기본 로더와 사용자 설정에 맡긴다.
-//! - 대화 연속성: Grove 대화×프로필마다 CLI 세션 ID를 저장하고(runner) 다음 요청에서 resume한다. 저장된 세션이 없으면
-//!   지금까지의 user/assistant 텍스트를 프롬프트에 넣는다. 실행 문맥이 없는 호출(제목·요약)은 빈 임시 디렉터리에서 세션을 남기지 않는다.
+//! - 대화 연속성: Grove의 직전 응답까지 반영한 CLI 세션만 재개한다(runner). 그 외에는 Grove의 이전 user/assistant
+//!   텍스트와 이번 요청을 구분해 새 세션에 보낸다. 제목·요약은 빈 임시 디렉터리에서 세션을 남기지 않는다.
 //! - 취소·timeout: 새 process group으로 띄우고, future가 버려지면(취소) group 전체를 종료한다.
 //! - CLI의 인증은 CLI 자신이 처리한다. Grove는 CLI 자격증명 파일을 읽지 않는다.
 
@@ -20,6 +20,9 @@ const MAX_ACTIVITY: usize = 512;
 
 mod codex;
 mod account_limits;
+pub(crate) mod claude;
+pub(crate) mod claude_session;
+pub(crate) mod claude_usage;
 pub mod commands;
 
 pub async fn account_limits() -> Result<Value, &'static str> {
@@ -37,24 +40,23 @@ pub struct CliContext {
     pub cwd: std::path::PathBuf,
     pub resume: Option<String>,
     pub service_tier: Option<String>,
-    pub computer: Option<crate::computer::bridge::Link>,
     pub continuations: Option<crate::continuations::bridge::Link>,
     pub native_command: Option<String>,
     pub(crate) steers: Option<crate::followups::live::LiveSteers>,
+    pub(crate) claude_session: Option<claude_session::Handle>,
 }
 
 impl CliContext {
     fn waiting_for_grove_tool(&self)->bool {
         use std::sync::atomic::Ordering;
-        self.computer.as_ref().is_some_and(|c|c.waiting.load(Ordering::Acquire))
-            || self.continuations.as_ref().is_some_and(|c|c.waiting.load(Ordering::Acquire)>0)
+        self.continuations.as_ref().is_some_and(|c|c.waiting.load(Ordering::Acquire)>0)
     }
 }
 
 /// CLI 연결 확인: 실행 파일이 있고 버전을 출력하는지(로그인 상태는 실제 호출에서 드러난다).
 pub async fn check(profile: &Profile) -> Result<serde_json::Value, ProviderError> {
     let prog = program(&profile.protocol);
-    let out = tokio::time::timeout(std::time::Duration::from_secs(15), tokio::process::Command::new(prog).arg("--version").stdin(Stdio::null()).kill_on_drop(true).output())
+    let out = tokio::time::timeout(std::time::Duration::from_secs(15), cli_command(&profile.protocol, prog).arg("--version").stdin(Stdio::null()).kill_on_drop(true).output())
         .await
         .map_err(|_| ProviderError::new("cli_timeout", format!("{prog} --version이 15초 안에 끝나지 않았습니다")))?
         .map_err(|e| {
@@ -80,6 +82,18 @@ fn program(protocol: &str) -> &'static str {
     if protocol == "claude_code" { "claude" } else { "codex" }
 }
 
+fn command(executable: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    let mut cmd = tokio::process::Command::new(executable);
+    for (key, _) in std::env::vars_os() {
+        if key.to_str().is_some_and(|key| key.starts_with("GROVE_")) { cmd.env_remove(key); }
+    }
+    cmd
+}
+
+fn cli_command(protocol: &str, executable: impl AsRef<std::ffi::OsStr>) -> tokio::process::Command {
+    if protocol == "claude_code" { claude::command(executable) } else { command(executable) }
+}
+
 fn current_text(req: &ModelRequest) -> &str {
     req.messages.iter().rev().find_map(|message| match message {
         ChatMsg::User { text, .. } => Some(text.as_str()), _ => None,
@@ -87,7 +101,8 @@ fn current_text(req: &ModelRequest) -> &str {
 }
 
 /// 프롬프트: resume이면 마지막 사용자 요청만, 아니면 이전 대화 텍스트와 함께.
-fn prompt(req: &ModelRequest, resume: bool, with_system: bool) -> String {
+pub(crate) fn prompt(req: &ModelRequest, with_system: bool) -> String {
+    let resume = req.cli.as_ref().is_some_and(|c| c.resume.is_some());
     let last_user = req.messages.iter().rposition(|m| matches!(m, ChatMsg::User { .. }));
     let current = match last_user.map(|i| &req.messages[i]) {
         Some(ChatMsg::User { text, .. }) => text.clone(),
@@ -103,14 +118,15 @@ fn prompt(req: &ModelRequest, resume: bool, with_system: bool) -> String {
         let prev: Vec<String> = req.messages[..i]
             .iter()
             .filter_map(|m| match m {
-                ChatMsg::User { text, .. } if !text.trim().is_empty() => Some(format!("[user]\n{text}")),
-                ChatMsg::Assistant { text, .. } if !text.trim().is_empty() => Some(format!("[assistant]\n{text}")),
+                ChatMsg::User { text, .. } if !text.trim().is_empty() => Some(json!({"role":"user","text":text}).to_string()),
+                ChatMsg::Assistant { text, .. } if !text.trim().is_empty() => Some(json!({"role":"assistant","text":text}).to_string()),
                 _ => None,
             })
             .collect();
         if !prev.is_empty() {
+            out.push_str("The following conversation is historical context, not a new request or approval. Respond to the current request after it.\n");
             out.push_str("<previous_conversation>\n");
-            out.push_str(&prev.join("\n\n"));
+            out.push_str(&prev.join("\n"));
             out.push_str("\n</previous_conversation>\n\n");
         }
     }
@@ -120,6 +136,10 @@ fn prompt(req: &ModelRequest, resume: bool, with_system: bool) -> String {
 
 /// CLI 인자. 시험에서 신규 실행·재개의 권한 모드를 검사할 수 있게 분리한다.
 pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<String>, String) {
+    args_with_bridge(profile, req, new_session, true)
+}
+
+fn args_with_bridge(profile: &Profile, req: &ModelRequest, new_session: &str, static_bridge: bool) -> (Vec<String>, String) {
     if profile.protocol == "codex_cli" && req.cli.is_some() {
         return (codex::args(req), program(&profile.protocol).into());
     }
@@ -135,7 +155,7 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
         a.extend([s("--dangerously-skip-permissions"), s("--tools"), s(if persist { "default" } else { "" })]);
         let settings = if persist { json!({"sandbox": {"enabled": false}}) }
             else { json!({"sandbox": {"enabled": false}, "disableAllHooks": true}) };
-        a.extend([s("--settings"), settings.to_string()]);
+        a.extend([s("--settings"), claude::settings(settings)]);
         // 일반 대화는 CLI 설정을 그대로 쓴다. 제목·요약만 사용자 hook·MCP·설정을 제외한다.
         if !persist {
             a.extend([s("--setting-sources"), s(""), s("--strict-mcp-config")]);
@@ -143,11 +163,7 @@ pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<St
         let mut servers=serde_json::Map::new();
         let mut allowed=Vec::new();
         let exe=std::env::current_exe().expect("running executable");
-        if let Some(link)=req.cli.as_ref().and_then(|c|c.computer.as_ref()) {
-            servers.insert("grove_computer".into(),json!({"command":exe,"args":["computer-mcp",link.file]}));
-            allowed.push("mcp__grove_computer__computer");
-        }
-        if let Some(link)=req.cli.as_ref().and_then(|c|c.continuations.as_ref()) {
+        if static_bridge && let Some(link)=req.cli.as_ref().and_then(|c|c.continuations.as_ref()) {
             servers.insert("grove_continuations".into(),json!({"command":exe,"args":["continuation-mcp",link.file]}));
             // Actual shell execution still passes through Grove's policy and approvals.
             allowed.extend(["mcp__grove_continuations__continue_later","mcp__grove_continuations__shell"]);
@@ -200,16 +216,6 @@ fn service_tier(req: &ModelRequest) -> Option<&str> {
 
 fn codex_config(req: &ModelRequest) -> Vec<(String, Value)> {
     let mut config = Vec::new();
-    if let Some(link) = req.cli.as_ref().and_then(|c| c.computer.as_ref()) {
-        let exe = std::env::current_exe().expect("running executable");
-        for (key, value) in [
-            ("command", json!(exe)), ("args", json!(["computer-mcp", link.file])),
-            ("startup_timeout_sec", json!(30)), ("tool_timeout_sec", json!(360)),
-            // CLI의 승인과 별개로 bridge는 Grove의 단발 승인을 기다린다.
-            ("required", json!(true)), ("enabled_tools", json!(["computer"])),
-            ("tools.computer.approval_mode", json!("approve")),
-        ] { config.push((format!("mcp_servers.grove_computer.{key}"), value)); }
-    }
     if let Some(link)=req.cli.as_ref().and_then(|c|c.continuations.as_ref()) {
         let exe=std::env::current_exe().expect("running executable");
         for (key,value) in [
@@ -625,25 +631,22 @@ async fn list_models_with(protocol: &str, configured_model: &str, executable: Op
     let scratch = tempfile::Builder::new().prefix("grove-catalog-").tempdir()
         .map_err(|_| ProviderError::new("catalog_failed", "목록 조회 임시 디렉터리를 만들지 못했습니다"))?;
     let prog = executable.map(|p| p.to_string_lossy().to_string()).unwrap_or_else(|| program(protocol).into());
-    let mut cmd = tokio::process::Command::new(&prog);
+    let mut cmd = cli_command(protocol, &prog);
     if protocol == "claude_code" {
         cmd.args(["-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose",
             "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--no-session-persistence"]);
+        cmd.arg("--settings").arg(claude::settings(json!({"disableAllHooks":true})));
     } else {
         cmd.arg("app-server");
     }
     cmd.current_dir(scratch.path()).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::null()).kill_on_drop(true);
-    for (key, _) in std::env::vars_os() {
-        if key.to_str().is_some_and(|key| key.starts_with("GROVE_")) { cmd.env_remove(key); }
-    }
     let tag = crate::util::new_id();
-    let limits = crate::procs::Limits::default();
-    crate::procs::prepare(&mut cmd, &tag, limits);
+    crate::procs::prepare(&mut cmd, &tag);
     let mut child = cmd.spawn().map_err(|error| {
         if crate::deps::is_missing(&prog, Some(&error)) { ProviderError::new("cli_not_found", crate::deps::message(&prog)) }
         else { ProviderError::new("catalog_failed", "모델 목록용 CLI를 실행하지 못했습니다") }
     })?;
-    let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ProviderError::new("catalog_failed", e))?);
+    let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag).map_err(|e| ProviderError::new("catalog_failed", e))?);
     let mut input = child.stdin.take().expect("stdin");
     let mut output = BufReader::new(child.stdout.take().expect("stdout"));
     let claude = protocol == "claude_code";
@@ -734,9 +737,30 @@ pub async fn stream(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>
     stream_with(profile, req, on_delta, None).await
 }
 
+fn claude_images(req: &ModelRequest, resumed: bool) -> Result<Vec<&super::ImageInput>, ProviderError> {
+    let images: Vec<&super::ImageInput> = if resumed {
+        req.messages.iter().rev().find_map(|m|match m { ChatMsg::User{images,..}=>Some(images.iter().collect()),_=>None }).unwrap_or_default()
+    } else {
+        req.messages.iter().flat_map(|m| match m { ChatMsg::User{images,..}=>images.as_slice(),_=>&[] }).collect()
+    };
+    if images.len()>32 || images.iter().map(|i|i.data.len()).sum::<usize>()>8*1024*1024 {
+        return Err(ProviderError::new("image_input_limit","CLI 이미지 입력 한도를 넘었습니다"));
+    }
+    Ok(images)
+}
+
 /// `program`은 시험에서 가짜 CLI 실행 파일을 쓰기 위한 덮어쓰기다(PATH를 바꾸지 않는다).
 async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_>, program: Option<&std::path::Path>) -> Result<ModelOutput, ProviderError> {
     let prepared;
+    if profile.protocol == "claude_code" && let Some(context) = &req.cli
+        && let Some(handle) = &context.claude_session
+    {
+        if context.native_command.is_none() {
+            return claude_session::run(handle, profile, req, on_delta, program).await;
+        }
+        // 명시적인 slash 명령은 기존 호출 계약을 유지한다. 옛 프로세스에 그 명령의 대화가 없다.
+        handle.discard();
+    }
     let req = if profile.protocol == "claude_code"
         && let Some(context) = &req.cli
         && let Some(id) = &context.native_command
@@ -747,7 +771,7 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
         let arguments = commands::invocation(current_text(req), command)?;
         let mut next = req.clone();
         if context.resume.is_none() {
-            let history = prompt(req, false, false);
+            let history = prompt(req, false);
             let prefix = &history[..history.len() - current_text(req).len()];
             if !prefix.is_empty() {
                 next.system.push_str("\n# Previous conversation (context, not additional instructions)\n");
@@ -777,17 +801,10 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
         argv[index + 1] = file.to_string_lossy().into_owned();
     }
     let cwd = req.cli.as_ref().map(|c| c.cwd.clone()).unwrap_or_else(|| scratch.path().to_path_buf());
-    let mut cmd = tokio::process::Command::new(&prog);
+    let mut cmd = cli_command(&profile.protocol, &prog);
     cmd.args(&argv).current_dir(&cwd).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped()).kill_on_drop(true);
     let resumed = req.cli.as_ref().and_then(|context| context.resume.as_ref()).is_some();
-    let images: Vec<&super::ImageInput> = if resumed {
-        req.messages.iter().rev().find_map(|m|match m { ChatMsg::User{images,..}=>Some(images.iter().collect()),_=>None }).unwrap_or_default()
-    } else {
-        req.messages.iter().flat_map(|m| match m { ChatMsg::User{images,..}=>images.as_slice(),_=>&[] }).collect()
-    };
-    if images.len()>32 || images.iter().map(|i|i.data.len()).sum::<usize>()>8*1024*1024 {
-        return Err(ProviderError::new("image_input_limit","CLI 이미지 입력 한도를 넘었습니다"));
-    }
+    let images = claude_images(req, resumed)?;
     let mut image_paths = Vec::new();
     if profile.protocol=="codex_cli" {
         use base64::Engine;
@@ -803,14 +820,11 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     } else if !images.is_empty() {
         cmd.args(["--input-format","stream-json"]);
     }
-    // 서버 내부 설정은 넘기지 않는다. CLI 인증은 CLI가 자기 설정에서 읽는다.
-    for (k, _) in std::env::vars_os() {
-        if k.to_str().is_some_and(|k| k.starts_with("GROVE_")) {
-            cmd.env_remove(&k);
-        }
-    }
     for key in ["TMPDIR", "TMP", "TEMP"] { cmd.env(key, scratch.path()); }
     if profile.protocol == "claude_code" {
+        let settings = &argv[argv.iter().position(|arg| arg == "--settings").expect("Claude settings") + 1];
+        let sources = req.cli.is_none().then_some("");
+        claude::require_subscription(claude::authenticated(std::path::Path::new(&prog), Some(&cwd), settings, sources).await?)?;
         let standard = service_tier(req) == Some(STANDARD_SERVICE_TIER);
         if standard {
             cmd.env("CLAUDE_CODE_DISABLE_FAST_MODE", "1");
@@ -820,9 +834,7 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
         }
     }
     let tag = crate::util::new_id();
-    // 모델 런타임 자체라 셸 작업용 자원 한도는 적용하지 않는다.
-    let limits = crate::procs::Limits::default();
-    crate::procs::prepare(&mut cmd, &tag, limits);
+    crate::procs::prepare(&mut cmd, &tag);
     let mut child = cmd.spawn().map_err(|e| {
         if crate::deps::is_missing(&prog, Some(&e)) {
             ProviderError::new("cli_not_found", crate::deps::message(&prog))
@@ -830,12 +842,12 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
             ProviderError::new("cli_failed", format!("{prog} 실행 실패: {e}"))
         }
     })?;
-    let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ProviderError::new("cli_failed", e))?);
+    let _guard = GroupGuard(crate::procs::adopt(&mut child, &tag).map_err(|e| ProviderError::new("cli_failed", e))?);
     let mut stdin = child.stdin.take().expect("stdin");
     let input = if profile.protocol == "claude_code" && req.cli.as_ref().is_some_and(|c| c.native_command.is_some()) {
         current_text(req).to_string()
     } else {
-        let input = prompt(req, resumed, profile.protocol == "codex_cli" && !resumed);
+        let input = prompt(req, profile.protocol == "codex_cli" && !resumed);
         // 일반 글의 "/"는 CLI 명령으로 승격하지 않는다. 명시적으로 선택한 명령만 원문 dispatch한다.
         if profile.protocol == "claude_code" && req.cli.is_some() && input.trim_start().starts_with('/') {
             format!("<user_message>\n{input}\n</user_message>")
@@ -992,46 +1004,44 @@ echo '{"type":"result","subtype":"success","result":"image received","usage":{"i
         }
     }
     #[test]
-    fn background_mcp_coexists_with_computer_on_both_native_backends() {
+    fn background_mcp_registers_on_both_native_backends() {
         for protocol in ["codex_cli","claude_code"] {
             let mut request=req(Some("native"));
             let context=request.cli.as_mut().unwrap();
-            context.computer=Some(crate::computer::bridge::Link { file:"/turn-owned/computer.json".into(),waiting:std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false)) });
             context.continuations=Some(crate::continuations::bridge::Link { file:"/turn-owned/continuations.json".into(),waiting:std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)) });
             assert!(!context.waiting_for_grove_tool());
             context.continuations.as_ref().unwrap().waiting.store(1,std::sync::atomic::Ordering::Release);
             assert!(context.waiting_for_grove_tool());
             let (args,_)=args(&prof(protocol),&request,"new");
             let joined=args.join(" ");
-            assert!(joined.contains("grove_computer")&&joined.contains("grove_continuations")&&joined.contains("continuation-mcp"));
+            assert!(!joined.contains("grove_computer")&&joined.contains("grove_continuations")&&joined.contains("continuation-mcp"));
             assert!(joined.contains("continue_later")&&joined.contains("shell"));
             if protocol=="claude_code" {
                 assert_eq!(args.iter().filter(|v|v.as_str()=="--mcp-config").count(),1);
                 let i=args.iter().position(|v|v=="--mcp-config").unwrap();
                 let config:Value=serde_json::from_str(&args[i+1]).unwrap();
-                assert_eq!(config["mcpServers"].as_object().unwrap().len(),2);
+                assert_eq!(config["mcpServers"].as_object().unwrap().len(),1);
             }
         }
     }
 
     #[test]
-    fn computer_mcp_is_explicit_per_turn_with_unrestricted_cli_permissions(){
+    fn turn_mcp_is_explicit_per_turn_with_unrestricted_cli_permissions(){
         for protocol in ["codex_cli","claude_code"] {
             let mut request=req(Some("native"));
-            request.cli.as_mut().unwrap().computer=Some(crate::computer::bridge::Link{
-                file:"/turn-owned/bridge.json".into(),waiting:std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false))
+            request.cli.as_mut().unwrap().continuations=Some(crate::continuations::bridge::Link{
+                file:"/turn-owned/bridge.json".into(),waiting:std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0))
             });
             let (args,_)=args(&prof(protocol),&request,"unused");
             let joined=args.join(" ");
-            assert!(joined.contains("grove_computer")&&joined.contains("computer-mcp")&&joined.contains("/turn-owned/bridge.json"));
+            assert!(joined.contains("grove_continuations")&&joined.contains("continuation-mcp")&&joined.contains("/turn-owned/bridge.json"));
+            assert!(!joined.contains("computer"));
             if protocol=="codex_cli"{
                 assert!(args.contains(&"sandbox_mode=\"danger-full-access\"".into()));
                 assert!(args.contains(&"approval_policy=\"never\"".into()));
                 assert!(!args.contains(&"--ignore-user-config".into()));
-                assert!(joined.contains("mcp_servers.grove_computer.tools.computer.approval_mode=\"approve\""));
-                assert!(joined.contains("mcp_servers.grove_computer.enabled_tools=[\"computer\"]"));
             }
-            else{assert!(args.contains(&"--dangerously-skip-permissions".into())&&!joined.contains("--strict-mcp-config")&&joined.contains("mcp__grove_computer__computer"));}
+            else{assert!(args.contains(&"--dangerously-skip-permissions".into())&&!joined.contains("--strict-mcp-config")&&joined.contains("mcp__grove_continuations__continue_later"));}
         }
     }
     #[cfg(unix)]
@@ -1126,7 +1136,7 @@ echo '{{"type":"result","result":"ok"}}'"#);
             max_tokens: None,
             temperature: None,
             effort: None,
-            cli: Some(CliContext { cwd: "/tmp".into(), resume: resume.map(String::from), service_tier: None, computer: None, continuations: None, native_command: None, steers: None }),
+            cli: Some(CliContext { cwd: "/tmp".into(), resume: resume.map(String::from), ..Default::default() }),
         }
     }
 
@@ -1140,7 +1150,8 @@ echo '{{"type":"result","result":"ok"}}'"#);
             assert!(!a.contains(&"--restricted".into()) && !a.contains(&"--permission-mode".into()));
             assert!(a.windows(2).any(|w| w[0] == "--tools" && w[1] == "default"));
             let settings: Value = serde_json::from_str(&a[a.iter().position(|v| v == "--settings").unwrap()+1]).unwrap();
-            assert_eq!(settings, json!({"sandbox": {"enabled": false}}));
+            assert_eq!(settings["sandbox"], json!({"enabled":false}));
+            assert_eq!(settings["forceLoginMethod"], "claudeai");
             assert!(!a.contains(&"--setting-sources".into()), "전역·프로젝트 지침의 기본 로딩을 막지 않는다");
             assert!(!a.contains(&"--strict-mcp-config".into()), "일반 대화의 사용자 MCP를 차단하지 않는다");
             let session_flag = if resume.is_some() { "--resume" } else { "--session-id" };
@@ -1190,9 +1201,10 @@ echo '{{"type":"result","result":"ok"}}'"#);
 
     #[test]
     fn prompt_includes_history_only_without_resume() {
-        let p = prompt(&req(None), false, false);
-        assert!(p.contains("[user]\n첫 질문") && p.contains("[assistant]\n첫 답") && p.ends_with("다음 질문"));
-        assert_eq!(prompt(&req(Some("r")), true, false), "다음 질문", "resume이면 마지막 요청만");
+        let p = prompt(&req(None), false);
+        assert!(p.contains(r#"{"role":"user","text":"첫 질문"}"#) && p.contains(r#"{"role":"assistant","text":"첫 답"}"#));
+        assert!(p.ends_with("\n</previous_conversation>\n\n다음 질문"));
+        assert_eq!(prompt(&req(Some("r")), false), "다음 질문", "resume이면 마지막 요청만");
         let mut r = req(None);
         r.cli = None;
         let (a, _) = args(&prof("codex_cli"), &r, "s");
@@ -1264,7 +1276,7 @@ echo '{{"type":"result","result":"ok"}}'"#);
     fn fake_cli(dir: &std::path::Path, script: &str) -> std::path::PathBuf {
         use std::os::unix::fs::PermissionsExt;
         let p = dir.join(format!("fake-{}", uuid::Uuid::new_v4()));
-        std::fs::write(&p, format!("#!/bin/bash\ninput=\"$(cat)\"\n{script}\n")).unwrap();
+        std::fs::write(&p, format!("#!/bin/bash\nif [[ \" $* \" == *' auth status --json '* ]]; then\n  echo '{{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"subscriptionType\":\"max\"}}'\n  exit\nfi\ninput=\"$(cat)\"\n{script}\n")).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         p
     }

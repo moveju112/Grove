@@ -159,8 +159,6 @@ pub struct Spawn {
     pub call_id: Option<String>,
     /// `exec.shell` 선택값(EXEC-001). 승인된 도구 호출은 계획 때 고정한 값을 쓴다.
     pub shell: String,
-    /// 자원 한도(SEC-017). 승인된 도구 호출은 계획 때 고정한 값을 쓴다.
-    pub limits: crate::procs::Limits,
     pub inherit_credentials: bool,
     pub command: String,
     pub cwd_rel: String,
@@ -268,10 +266,10 @@ async fn launch(app: &App, s: Spawn, id: String, root: PathBuf, _resource: Optio
     }
     let started = match resolve(&root, &s.cwd_rel) {
         // 작업 ID가 실행 표식이다: 재시작 때 잔여 프로세스를 PID 재사용과 무관하게 찾는다(EXEC-010).
-        Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.shell, &s.command, &cwd, &id, s.limits, s.inherit_credentials)
+        Ok(cwd) if cwd.is_dir() => crate::tools::shell::command(&s.shell, &s.command, &cwd, &id, s.inherit_credentials)
             .spawn()
             .map_err(|e| crate::tools::shell::spawn_message(&s.shell, &e).1)
-            .and_then(|mut c| crate::procs::adopt(&mut c, &id, s.limits).map(|o| (c, o))),
+            .and_then(|mut c| crate::procs::adopt(&mut c, &id).map(|o| (c, o))),
         Ok(_) => Err("cwd 디렉터리가 없습니다".into()),
         Err(e) => Err(e.message),
     };
@@ -583,19 +581,18 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     }
     let sid = session_id.clone();
     let (intent,command,explicit_cwd)=(b.script.clone(),b.command.clone(),b.cwd.clone());
-    let (root, cwd_rel, shell, limits, project, script) = app
+    let (root, cwd_rel, shell, project, script) = app
         .db
         .call(move |c| {
             let s = crate::sessions::get_active(c, &sid)?;
             let shell = crate::settings::effective(c, "exec.shell", Some(&s.project_id), Some(&sid))?;
-            let limits = crate::procs::Limits::effective(c, Some(&s.project_id), Some(&sid))?;
             let shell = crate::tools::shell::resolve_shell(shell.as_str().unwrap_or("default")).to_string();
             let root = crate::sessions::exec_root(c, &sid)?;
             // 최초 계획에서만 설정을 읽는다. receipt 재전송·실제 spawn에는 고정한 상대 경로를 쓴다.
-            let cwd = crate::settings::execution_cwd(c, &root, Some(&s.project_id), Some(&sid), explicit_cwd.as_deref())?;
+            let cwd = crate::settings::execution_cwd(&root, explicit_cwd.as_deref())?;
             let cwd_rel = rel_display(&root, &cwd);
             let script = intent.as_ref().map(|intent| crate::project_scripts::prepare(c,&s.project_id,intent,&command,&root,&shell)).transpose()?;
-            Ok((root,cwd_rel,shell,limits,s.project_id,script))
+            Ok((root,cwd_rel,shell,s.project_id,script))
         })
         .await?;
     let queue=app.tasks.admission.get(&project);
@@ -610,7 +607,7 @@ pub async fn start(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     let id=crate::util::new_id();
     let unknown=ApiError::conflict("result_unknown","작업 접수 결과를 확정하지 못했습니다. 작업 목록에서 상태를 확인하세요")
         .with_details(json!({"task_id":id,"session_id":session_id}));
-    let s=Spawn { session_id, call_id:None,shell,limits,inherit_credentials:false,command:b.command,cwd_rel:rel_display(&root,&cwd),timeout_ms:timeout,detached:true,script,setup:b.setup };
+    let s=Spawn { session_id, call_id:None,shell,inherit_credentials:false,command:b.command,cwd_rel:rel_display(&root,&cwd),timeout_ms:timeout,detached:true,script,setup:b.setup };
     let (plan, record_id, pending)=(s.clone(),id.clone(),unknown.body());
     let expected_root=root.clone();
     // receipt·작업·로그·이벤트를 먼저 commit한다. 경합한 요청은 저장된 ID만 받고 실행하지 않는다.
@@ -818,7 +815,7 @@ mod tests {
             let intent = crate::project_scripts::Intent { id:"script".into(),expected_revision:1,expected_execution:execution };
             let snapshot = crate::project_scripts::prepare(c,"p",&intent,"echo fixture",&root,shell)?;
             let plan = Spawn {
-                session_id:"s".into(),call_id:None,shell:shell.into(),limits:crate::procs::Limits::default(),inherit_credentials:false,
+                session_id:"s".into(),call_id:None,shell:shell.into(),inherit_credentials:false,
                 command:"echo fixture".into(),cwd_rel:".".into(),timeout_ms:1000,detached:true,script:Some(snapshot),setup:false,
             };
             let changed = if shell == "sh" { "bash" } else { "sh" };
@@ -847,7 +844,7 @@ mod tests {
             c.execute("INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES('s','p','fixture',?1,?1)", [&now])?;
             let plan = Spawn {
                 session_id: "s".into(), call_id: None, shell: "default".into(),
-                limits: crate::procs::Limits::default(), inherit_credentials: false, command: "echo fixture".into(),
+                inherit_credentials: false, command: "echo fixture".into(),
                 cwd_rel: ".".into(), timeout_ms: 1000, detached: true,
                 script: None, setup: false,
             };

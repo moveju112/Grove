@@ -23,7 +23,7 @@ class DaemonProcesses(unittest.TestCase):
         root = "/test/grove/releases/current/grove"
         executables = {"1": root, "2": root, "3": "/other/grove", "4": root}
         commands = {"1": b"grove\0serve\0--listen\0localhost:49120\0",
-                    "2": b"grove\0computer-mcp\0", "4": b"grove\0"}
+                    "2": b"grove\0continuation-mcp\0", "4": b"grove\0"}
         with patch.object(deploy, "INSTALL", "/test/grove"), \
                 patch.object(deploy.os, "listdir", return_value=["1", "2", "3", "4", "self"]), \
                 patch.object(deploy.os, "readlink", side_effect=lambda p: executables[p.split("/")[2]]), \

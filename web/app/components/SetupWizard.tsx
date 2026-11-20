@@ -26,7 +26,7 @@ const readyStatus: SetupStatus = { required: false, preferences: null };
 const styleLabels: Record<string, string> = {
     default: "디폴트", detailed: "디테일", simple: "심플", minimal: "미니멀", "extreme-minimal": "익스트림 미니멀",
 };
-const label = { theme: "테마", enter: "Enter로 보내기", accounts: "계정 로그인", output: "출력 스타일", computer: "서버 PC 제어" };
+const label = { theme: "테마", enter: "Enter로 보내기", accounts: "계정 로그인", output: "출력 스타일" };
 type Step = keyof typeof label;
 
 async function getStatus() {
@@ -65,7 +65,7 @@ export function SetupGate({ children }: { children: ReactNode }) {
         return <LoadingScreen label="초기 설정 확인 중…" />;
     }
     return <SetupWizard status={status} needsLocal={needsLocal}
-        key={`${status.preferences?.output_style_revision}:${status.preferences?.computer_revision}`}
+        key={`${status.preferences?.output_style_revision}`}
         onLocalSaved={() => setLocalComplete(true)} onDone={(saved) => { setData("daemon-setup", saved); setDone(true); }}
         onCheck={query.reload} conflict={conflict}
         onConflict={() => { setConflict(true); setNeedsLocal(!hasLocalSetup()); query.reload(); }} />;
@@ -89,13 +89,12 @@ function SetupWizard({ status, needsLocal, onLocalSaved, onDone, onCheck, confli
 }) {
     const server: SetupPreferences | null = status.preferences;
     const steps: Step[] = [...(needsLocal ? ["theme", "enter"] as const : []),
-        ...(server ? ["accounts", "output", "computer"] as const : [])];
+        ...(server ? ["accounts", "output"] as const : [])];
     const [position, setPosition] = useState(0);
     const step = steps[position];
     const local = step === "theme" || step === "enter";
     const [prefs, setPrefs] = useState(loadPrefs);
     const [outputStyle, setOutputStyle] = useState(server?.output_style ?? "default");
-    const [computerEnabled, setComputerEnabled] = useState(server?.computer_enabled ?? false);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [uncertain, setUncertain] = useState(false);
@@ -116,13 +115,12 @@ function SetupWizard({ status, needsLocal, onLocalSaved, onDone, onCheck, confli
             }
             onLocalSaved();
         }
-        if (step === "computer" && server) {
+        if (step === "output" && server) {
             setSaving(true);
             attempt.current ??= newKey();
             try {
                 const saved = await api.put<SetupStatus>(PATH, {
                     output_style: outputStyle, output_style_revision: server.output_style_revision,
-                    computer_enabled: computerEnabled, computer_revision: server.computer_revision,
                 }, { requires, key: attempt.current, contract: "SetupStatus", timeoutMs: 15_000 });
                 onDone(saved);
             } catch (cause) {
@@ -161,18 +159,14 @@ function SetupWizard({ status, needsLocal, onLocalSaved, onDone, onCheck, confli
             help="Shift+Enter로 줄바꿈해요. 터치 키보드는 Enter도 줄바꿈이에요." onChange={(value) => setPrefs({ ...prefs, enterToSend: value })} />}
         {step === "accounts" && <SetupAccounts />}
         {step === "output" && server && <Select label="출력 스타일" hideLabel width="100%" value={outputStyle} onChange={setOutputStyle}
+            disabled={saving || uncertain}
             options={server.output_style_options.map((value) => ({ value, label: styleLabels[value] ?? value }))} />}
-        {step === "computer" && <Stack gap={2}>
-            <BooleanSelect label="서버 PC 제어" hideLabel value={computerEnabled} disabled={saving || uncertain}
-                onChange={setComputerEnabled} trueLabel="켜기" falseLabel="끄기" />
-            <Text type="supporting" color="secondary"><SentenceText text="켜더라도 처음 제어할 때는 별도 승인이 필요해요. 캡처한 화면은 모델 제공자에게 전달되고 대화에 보관돼요." /></Text>
-        </Stack>}
         {error && <Text role="alert" color="error"><SentenceText text={error} /></Text>}
         <Stack direction="horizontal" align="center" justify="between" gap={2}>
             {position > 0 && step
                 ? <Button variant="secondary" disabled={saving || uncertain} onClick={() => { setError(null); setPosition(position - 1); }}>뒤로</Button>
                 : <Button variant="ghost" onClick={() => void logout()}>로그아웃</Button>}
-            {step === "computer" ? <ServerActionButton disabled={saving} onClick={() => void next()}>
+            {step === "output" ? <ServerActionButton disabled={saving} onClick={() => void next()}>
                 {saving ? "저장 중…" : uncertain ? "저장 결과 확인" : "설정 완료"}
             </ServerActionButton> : step ? <Button onClick={() => void next()}>
                 {position === steps.length - 1 && !status.required ? "설정 완료" : "다음"}

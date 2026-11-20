@@ -139,7 +139,7 @@ fn remove_env(name: &str, inherit_credentials: bool) -> bool {
 
 /// 셸 명령. 전체 권한을 명시한 계획만 계정 자격증명을 상속하며 Grove 내부 환경변수는 항상 제거한다.
 /// 소유권 표식·process group·Job Object는 `procs::prepare`/`procs::adopt`가 맡는다(`tag`는 실행 표식).
-pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str, limits: crate::procs::Limits, inherit_credentials: bool) -> tokio::process::Command {
+pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str, inherit_credentials: bool) -> tokio::process::Command {
     let (program, args) = shell_argv(shell);
     let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).arg(command);
@@ -150,7 +150,7 @@ pub fn command(shell: &str, command: &str, cwd: &Path, tag: &str, limits: crate:
         }
     }
     cmd.env("GROVE_SHELL", "1");
-    crate::procs::prepare(&mut cmd, tag, limits);
+    crate::procs::prepare(&mut cmd, tag);
     cmd
 }
 
@@ -159,15 +159,14 @@ pub async fn execute(planned: &Planned, root: &Path, mut cancel: watch::Receiver
     let command = planned.target["command"].as_str().unwrap_or("");
     let timeout_ms = planned.target["timeout_ms"].as_u64().unwrap_or(0);
     let tag = crate::util::new_id();
-    let limits = crate::procs::Limits::from_json(&planned.target["limits"]);
     let shell = planned.target["shell"].as_str().unwrap_or("default");
-    let mut cmd = self::command(shell, command, &cwd, &tag, limits, planned.target["inherit_credentials"].as_bool().unwrap_or(false));
+    let mut cmd = self::command(shell, command, &cwd, &tag, planned.target["inherit_credentials"].as_bool().unwrap_or(false));
     let started = std::time::Instant::now();
     let mut child = cmd.spawn().map_err(|e| {
         let (code, msg) = spawn_message(shell, &e);
         ToolError::new(code, msg)
     })?;
-    let owned = crate::procs::adopt(&mut child, &tag, limits).map_err(|e| ToolError::new("isolation_failed", e))?;
+    let owned = crate::procs::adopt(&mut child, &tag).map_err(|e| ToolError::new("isolation_failed", e))?;
     let out_h = tokio::spawn(capture(child.stdout.take().expect("stdout")));
     let err_h = tokio::spawn(capture(child.stderr.take().expect("stderr")));
     enum End {

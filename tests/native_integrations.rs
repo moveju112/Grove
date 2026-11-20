@@ -9,7 +9,7 @@ use serde_json::{Value, json};
 async fn retired_features_are_not_advertised_or_routable() {
     let s = TestServer::start().await;
     let (_, health) = s.get("/api/v1/health").await;
-    for capability in ["user_memories_v1", "mcp_settings_v1", "mcp_check_v1", "mcp_tools_v1", "bot_connections_v1"] {
+    for capability in ["user_memories_v1", "mcp_settings_v1", "mcp_check_v1", "mcp_tools_v1", "bot_connections_v1", "computer_use_v1"] {
         assert!(!health["capabilities"].as_array().unwrap().iter().any(|value| value == capability));
     }
     for (method, path) in [
@@ -20,16 +20,14 @@ async fn retired_features_are_not_advertised_or_routable() {
         (Method::GET, "/api/v1/mcp/servers"), (Method::POST, "/api/v1/mcp/servers"),
         (Method::POST, "/api/v1/mcp/servers/old/check"), (Method::POST, "/api/v1/mcp/servers/old/oauth/connect"),
         (Method::GET, "/api/v1/bots/old/connections"), (Method::PUT, "/api/v1/bots/old/connections"),
-        (Method::GET, "/api/mcp-oauth/callback/old"),
+        (Method::GET, "/api/mcp-oauth/callback/old"), (Method::GET, "/api/v1/computer/status"),
     ] {
         let response = s.raw(method, path, Some(json!({})), Some("retired-route"), None).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND, "{path}");
     }
-    for name in ["hook", "mcp_tools", "mcp_call", "memory"] {
+    for name in ["hook", "mcp_tools", "mcp_call", "memory", "computer"] {
         assert!(grove::tools::spec(name).is_none());
     }
-    assert!(grove::CAPABILITIES.contains(&"computer_use_v1"));
-    assert!(grove::tools::spec("computer").is_some());
 }
 
 #[tokio::test]

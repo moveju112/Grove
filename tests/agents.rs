@@ -121,12 +121,12 @@ async fn spawn_requires_approval_by_default_and_result_reaches_parent_once() {
     assert!(last.contains("[child agent result]") && last.contains("XYZ"), "{last}");
 }
 
-/// AGENT-007: 부모 대화당 동시 자식 수 한도를 넘는 위임은 실행하지 않고 limit으로 실패하며, 자식 턴도 프로젝트 예산을 그대로 받는다.
+/// AGENT-007: 부모 대화당 동시 자식 수 한도를 넘는 위임은 실행하지 않고 limit으로 실패하며, 자식 턴도 프로젝트 시간 예산을 그대로 받는다.
 #[tokio::test]
 async fn per_parent_limit_refuses_extra_children_and_children_inherit_budget() {
     let (s, f, prof, pid, sid) = setup().await;
     set_policy(&s, "auto").await;
-    let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/runs.budget.max_tokens"), json!({ "expected_revision": 0, "value": 99_999 })).await;
+    let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/runs.budget.max_minutes"), json!({ "expected_revision": 0, "value": 9_999 })).await;
     assert_eq!(st, StatusCode::OK, "{v}");
     let n = grove::agents::MAX_PER_PARENT as usize + 1;
     let calls: Vec<(String, Value)> = (0..n).map(|i| (format!("a{i}"), json!({ "action": "spawn", "agent_id": "reviewer", "brief": format!("일 {i}") }))).collect();
@@ -153,7 +153,7 @@ async fn per_parent_limit_refuses_extra_children_and_children_inherit_budget() {
     // 자식 턴의 예산 snapshot은 프로젝트 설정을 따른다
     let child_turn = list[0]["last_turn_id"].as_str().unwrap();
     let (_, ct) = s.get(&format!("/api/v1/turns/{child_turn}")).await;
-    assert_eq!(ct["definition"]["budget"]["max_tokens"], 99_999, "{ct}");
+    assert_eq!(ct["definition"]["budget"]["max_minutes"], 9_999, "{ct}");
     for g in gates {
         g.send_replace(true);
     }

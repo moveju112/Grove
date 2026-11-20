@@ -6,6 +6,8 @@ import { apiCall, login, openSettings, registerBrowser, state } from "./helpers"
 
 test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "격리된 CLI 인증 fixture 필요");
 test.use({ trace: "retain-on-failure" });
+test.beforeEach(() => writeFileSync(join(state().cliDir!, "claude-auth"), "out"));
+test.afterEach(() => writeFileSync(join(state().cliDir!, "claude-auth"), "in"));
 
 test("등록 기기가 모바일에서 공식 인증을 시작하고 재접속·취소·재로그인·로그아웃한다", async ({ page }, info) => {
     await page.setViewportSize({ width: 390, height: 844 });

@@ -71,13 +71,6 @@ pub struct SettingDef {
 pub fn registry() -> Vec<SettingDef> {
     let mut defs = vec![
         SettingDef {
-            key: crate::computer::ENABLED, menu: "workflow", label: "서버 PC 제어",
-            description: "서버 PC의 Windows 또는 Linux X11 앱 창을 전환하고 제어합니다. Linux X11에서는 마우스 포인터가 움직입니다. 한 번 승인하면 해당 대화에서 계속 허용하며 대화 설정에서 해제할 수 있습니다. 로그인된 사용자 화면이 필요하며 휴대전화·다른 PC·Windows 서비스 Session 0·잠금 화면·Wayland는 제어하지 않습니다. 화면은 선택한 모델 제공자에게 전달되고 대화에 보관됩니다.",
-            keywords: "computer use desktop screen capture 컴퓨터 화면 마우스 키보드",
-            kind: "bool", options: &[], min: None, max: None, default: json!(false),
-            scopes: &["server"], applies: "next_turn", advanced: false,
-        },
-        SettingDef {
             key: "model.default_profile",
             menu: "model",
             label: "기본 모델 프로필",
@@ -237,7 +230,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: "tools.mode",
             menu: "workflow",
             label: "도구 실행 모드",
-            description: "기본값인 bypass는 일반 도구를 승인 없이 실행해요. ask 모드에서는 사전 허용하지 않은 도구에 승인을 요청해요. 금지한 도구와 PC 제어·에이전트 위임의 별도 정책은 유지돼요. 외부 CLI는 이 설정과 별개로 실행돼요.",
+            description: "기본값인 bypass는 일반 도구를 승인 없이 실행해요. ask 모드에서는 사전 허용하지 않은 도구에 승인을 요청해요. 금지한 도구와 에이전트 위임의 별도 정책은 유지돼요. 외부 CLI는 이 설정과 별개로 실행돼요.",
             keywords: "bypass 자동 승인 도구 정책 policy",
             kind: "enum",
             options: &["ask", "bypass"],
@@ -252,7 +245,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: FULL_ACCESS,
             menu: "workflow",
             label: "일반 도구 전체 권한",
-            description: "기본으로 켜져 있어요. ask 모드에서 끄면 파일 수정·셸 실행에 개별 사전 허용이나 승인이 필요해요. 켜면 셸에 서버 계정의 환경변수를 전달해 SSH·배포 작업에 쓸 수 있어요. Grove 내부 환경변수는 전달하지 않아요. 금지한 도구와 PC 제어·에이전트 위임의 별도 정책은 유지돼요.",
+            description: "기본으로 켜져 있어요. ask 모드에서 끄면 파일 수정·셸 실행에 개별 사전 허용이나 승인이 필요해요. 켜면 셸에 서버 계정의 환경변수를 전달해 SSH·배포 작업에 쓸 수 있어요. Grove 내부 환경변수는 전달하지 않아요. 금지한 도구와 에이전트 위임의 별도 정책은 유지돼요.",
             keywords: "full access permission 권한 자동 승인 파일 셸 실행 SSH 배포 Release",
             kind: "bool",
             options: &[],
@@ -282,7 +275,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: "tools.allow",
             menu: "workflow",
             label: "승인 없이 실행할 도구",
-            description: "도구 이름을 쉼표로 구분해 입력해요. 항상 승인한 도구도 여기에 저장돼요. 이름을 지우면 영구 승인이 해제돼요. 금지한 도구와 PC 제어·위임의 별도 정책은 유지되고, 대화 범위에서는 이 목록을 넓힐 수 없어요.",
+            description: "도구 이름을 쉼표로 구분해 입력해요. 항상 승인한 도구도 여기에 저장돼요. 이름을 지우면 영구 승인이 해제돼요. 금지한 도구와 위임의 별도 정책은 유지되고, 대화 범위에서는 이 목록을 넓힐 수 없어요.",
             keywords: "allow always 영구 항상 허용 자동 승인 도구 정책 policy",
             kind: "tool_list",
             options: &[],
@@ -339,21 +332,6 @@ pub fn registry() -> Vec<SettingDef> {
             advanced: true,
         },
         SettingDef {
-            key: "runs.budget.max_tokens",
-            menu: "server",
-            label: "요청당 token 예산",
-            description: "요청 하나(도구 단계 포함)가 쓸 수 있는 입력+출력 token 합계. 넘으면 남은 도구를 실행하지 않고 멈춘다. 0이면 제한 없음(기본)",
-            keywords: "budget token limit 예산 한도 비용",
-            kind: "int",
-            options: &[],
-            min: Some(0),
-            max: Some(100_000_000),
-            default: json!(0),
-            scopes: &["server", "project", "session"],
-            applies: "next_turn",
-            advanced: true,
-        },
-        SettingDef {
             key: "runs.budget.max_minutes",
             menu: "server",
             label: "요청당 시간 예산(분)",
@@ -369,51 +347,6 @@ pub fn registry() -> Vec<SettingDef> {
             advanced: true,
         },
         SettingDef {
-            key: "runs.budget.max_cost_cents",
-            menu: "server",
-            label: "요청당 비용 예산(1/100 통화 단위)",
-            description: "요청 하나의 추정 비용 한도(모델 프로필 가격표 기준, 예: 150 = 1.50 USD). 넘으면 남은 도구를 실행하지 않고 멈춘다. 가격표가 없는 프로필로는 요청을 받지 않는다. 0이면 제한 없음(기본)",
-            keywords: "budget cost price limit 비용 예산 한도 금액",
-            kind: "int",
-            options: &[],
-            min: Some(0),
-            max: Some(100_000_000),
-            default: json!(0),
-            scopes: &["server", "project", "session"],
-            applies: "next_turn",
-            advanced: true,
-        },
-        SettingDef {
-            key: "runs.max_queued_per_owner",
-            menu: "server",
-            label: "소유자별 대기 한도",
-            description: "한 기기·예약 등 소유자가 동시에 쌓아 둘 수 있는 실행 중·대기 턴 수. 넘치면 접수를 거부한다(다시 시도 가능)",
-            keywords: "fair queue limit 대기 한도",
-            kind: "int",
-            options: &[],
-            min: Some(1),
-            max: Some(1000),
-            default: json!(16),
-            scopes: &["server"],
-            applies: "immediate",
-            advanced: true,
-        },
-        SettingDef {
-            key: "runs.max_queued_total",
-            menu: "server",
-            label: "전체 대기 한도",
-            description: "서버 전체의 실행 중·대기 턴 수 상한. 넘치면 접수를 거부한다(다시 시도 가능)",
-            keywords: "fair queue limit 전체 한도",
-            kind: "int",
-            options: &[],
-            min: Some(1),
-            max: Some(10_000),
-            default: json!(64),
-            scopes: &["server"],
-            applies: "immediate",
-            advanced: true,
-        },
-        SettingDef {
             key: "exec.shell",
             menu: "workflow",
             label: "명령 실행 셸",
@@ -424,51 +357,6 @@ pub fn registry() -> Vec<SettingDef> {
             min: None,
             max: None,
             default: json!("default"),
-            scopes: &["server", "project", "session"],
-            applies: "next_turn",
-            advanced: false,
-        },
-        SettingDef {
-            key: "exec.max_memory_mb",
-            menu: "workflow",
-            label: "명령 메모리 한도(MB)",
-            description: "모델 셸 도구·백그라운드 작업의 메모리 한도. 0이면 제한 없음. Linux는 프로세스마다 주소 공간, Windows는 작업 트리 합계 기준",
-            keywords: "memory ram limit 메모리 한도 셸 작업",
-            kind: "int",
-            options: &[],
-            min: Some(0),
-            max: Some(1_048_576),
-            default: json!(0),
-            scopes: &["server", "project", "session"],
-            applies: "next_turn",
-            advanced: true,
-        },
-        SettingDef {
-            key: "exec.max_cpu_seconds",
-            menu: "workflow",
-            label: "명령 CPU 시간 한도(초)",
-            description: "모델 셸 도구·백그라운드 작업이 쓸 수 있는 CPU 시간. 0이면 제한 없음. 경과 시간 제한(timeout)과 별개. Linux는 프로세스마다, Windows는 작업 트리 합계 기준",
-            keywords: "cpu limit 한도 셸 작업 시간",
-            kind: "int",
-            options: &[],
-            min: Some(0),
-            max: Some(86_400),
-            default: json!(0),
-            scopes: &["server", "project", "session"],
-            applies: "next_turn",
-            advanced: true,
-        },
-        SettingDef {
-            key: "exec.default_cwd",
-            menu: "workflow",
-            label: "기본 작업 위치",
-            description: "cwd를 생략한 새 모델 셸·대화 작업의 실행 root(worktree 포함) 안 상대 디렉터리입니다. '/'로 구분하고 '..'·절대 경로는 사용할 수 없습니다. 명시한 cwd가 우선하며 기본값 '.'은 실행 root입니다. 프로젝트 script는 확인한 root에서 실행합니다. 터미널·외부 CLI에는 적용하지 않습니다",
-            keywords: "exec cwd directory working default 기본 작업 위치 디렉터리",
-            kind: "string",
-            options: &[],
-            min: None,
-            max: Some(4096),
-            default: json!("."),
             scopes: &["server", "project", "session"],
             applies: "next_turn",
             advanced: false,
@@ -668,15 +556,6 @@ pub fn validate(d: &SettingDef, v: &Value) -> ApiResult<()> {
     {
         return Err(ApiError::invalid(reason));
     }
-    if d.key == "exec.default_cwd" && !v.is_null() {
-        validate_default_cwd(v.as_str().unwrap())?;
-    }
-    if matches!(d.key, "exec.max_memory_mb" | "exec.max_cpu_seconds")
-        && v.as_u64().is_some_and(|n| n > 0)
-        && !cfg!(any(target_os = "linux", windows))
-    {
-        return Err(ApiError::invalid("이 서버 OS에서는 메모리·CPU 자원 한도를 지원하지 않습니다"));
-    }
     Ok(())
 }
 
@@ -706,17 +585,6 @@ fn exec_option_reason(key: &str, value: &str) -> Option<String> {
     }
 }
 
-fn validate_default_cwd(value: &str) -> ApiResult<()> {
-    use std::path::{Component, Path};
-    if value.is_empty()
-        || value.contains(['\0', '\\', ':'])
-        || Path::new(value).components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir))
-    {
-        return Err(ApiError::invalid("기본 작업 위치는 프로젝트 안 상대 경로여야 합니다('/' 구분, '..'·절대 경로 금지)"));
-    }
-    Ok(())
-}
-
 fn checked_cwd(root: &std::path::Path, value: &str) -> ApiResult<std::path::PathBuf> {
     let path = crate::tools::fs::resolve(root, value).map_err(|e| ApiError::invalid(e.message))?;
     if !path.is_dir() {
@@ -725,22 +593,10 @@ fn checked_cwd(root: &std::path::Path, value: &str) -> ApiResult<std::path::Path
     Ok(path)
 }
 
-/// 새 실행을 계획할 때만 호출한다. 명시적 cwd가 우선하며 승인된 target에는 다시 적용하지 않는다.
-/// 실행 root(worktree 포함)를 호출자가 넘기고 기존 프로젝트 경계 검사를 재사용한다.
-pub fn execution_cwd(
-    c: &Connection,
-    root: &std::path::Path,
-    project: Option<&str>,
-    session: Option<&str>,
-    explicit: Option<&str>,
-) -> ApiResult<std::path::PathBuf> {
-    if let Some(value) = explicit {
-        return checked_cwd(root, value);
-    }
-    let value = effective(c, "exec.default_cwd", project, session)?;
-    let value = value.as_str().ok_or_else(|| ApiError::invalid("기본 작업 위치가 문자열이 아닙니다"))?;
-    validate_default_cwd(value)?;
-    checked_cwd(root, value)
+/// 새 실행을 계획할 때만 호출한다. 명시적 cwd가 없으면 실행 root(worktree 포함)에서 실행한다.
+/// 실행 root는 호출자가 넘기고 기존 프로젝트 경계 검사를 재사용한다.
+pub fn execution_cwd(root: &std::path::Path, explicit: Option<&str>) -> ApiResult<std::path::PathBuf> {
+    checked_cwd(root, explicit.unwrap_or("."))
 }
 
 fn row(c: &Connection, scope: &str, id: &str, key: &str) -> ApiResult<Option<(Value, i64)>> {
@@ -847,11 +703,6 @@ pub async fn get_registry(_p: Principal) -> Json<Vec<Value>> {
         if d.key == "exec.shell" {
             value["options"] = json!(d.options.iter().filter(|choice| exec_option_reason(d.key, choice).is_none()).collect::<Vec<_>>());
         }
-        if matches!(d.key, "exec.max_memory_mb" | "exec.max_cpu_seconds")
-            && !cfg!(any(target_os = "linux", windows))
-        {
-            value["disabled_reason"] = json!("이 서버 OS에서는 메모리·CPU 자원 한도를 지원하지 않습니다");
-        }
         value
     }).collect())
 }
@@ -947,17 +798,6 @@ pub async fn put(
             }
         } else if key == "model.default_profile" && let Some(profile) = b.value.as_str().filter(|s| !s.is_empty()) {
             crate::models::get_enabled_profile(tx, profile)?;
-        }
-        if key == "exec.default_cwd" && let Some(value) = b.value.as_str() {
-            let root = if let Some(session) = &session {
-                Some(crate::sessions::exec_root(tx, session)?)
-            } else if let Some(project) = &project {
-                Some(std::path::PathBuf::from(crate::projects::get(tx, project)?.root_path))
-            } else {
-                // 전역 상대 경로는 프로젝트마다 다르므로 새 실행 계획 시 실제 root에서 다시 검사한다.
-                None
-            };
-            if let Some(root) = root { checked_cwd(&root, value)?; }
         }
         record_change(tx, now, &actor, (&scope, &scope_id, &key), (project.as_deref(), session.as_deref()), &b, old_value)?;
         let v = resolve_key(tx, &d, project.as_deref(), session.as_deref())?;

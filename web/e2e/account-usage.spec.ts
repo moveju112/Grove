@@ -1,7 +1,9 @@
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { AccountUsageLimit, AccountUsageReport } from "../app/api/generated";
-import { apiCall, login, openDetails, openSettings, openUsage, profileAction } from "./helpers";
+import { apiCall, login, openDetails, openSettings, openUsage, profileAction, state } from "./helpers";
 
 const limit = (label: string, remaining_percent: number): AccountUsageLimit =>
     ({ label, remaining_percent, remaining: null, resets_at: "2100-01-01T00:00:00Z" });
@@ -9,6 +11,13 @@ const report: AccountUsageReport = { accounts: [
     { protocol: "codex_cli", name: "Codex", status: "available", checked_at: "2026-01-01T00:00:00Z", limits: [limit("5시간", 82), limit("주간", 39)] },
     { protocol: "claude_code", name: "Claude", status: "unsupported", checked_at: "2026-01-01T00:00:00Z", limits: [] },
 ] };
+
+test.beforeEach(async () => {
+    if (process.env.GROVE_E2E_FAKE_CLI === "1") await writeFile(join(state().cliDir!, "claude-auth"), "out");
+});
+test.afterEach(async () => {
+    if (process.env.GROVE_E2E_FAKE_CLI === "1") await writeFile(join(state().cliDir!, "claude-auth"), "in");
+});
 
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
     test.describe(`${width}px ${theme} 잔여 사용량`, () => {
@@ -25,9 +34,10 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
             expect(queries).toBe(0);
             const panel = await openUsage(page);
             const quotas = panel.getByRole("region", { name: "OAuth 한도", exact: true });
-            await expect(quotas.getByRole("img", { name: "Codex 5시간 사용 18.0%", exact: true })).toBeVisible();
-            await expect(quotas.getByRole("img", { name: "Codex 주간 사용 61.0%", exact: true })).toBeVisible();
+            await expect(quotas.getByRole("img", { name: "Codex CLI 5시간 사용 18.0%", exact: true })).toBeVisible();
+            await expect(quotas.getByRole("img", { name: "Codex CLI 주간 사용 61.0%", exact: true })).toBeVisible();
             await expect(quotas.getByText("한도 조회 미지원", { exact: true })).toBeVisible();
+            await expect(quotas.getByRole("link", { name: "Claude에서 확인" })).toHaveAttribute("href", "https://claude.ai/settings/usage");
             await expect(quotas.getByRole("img", { name: /^Claude/ })).toHaveCount(0);
             expect(await panel.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
             await quotas.scrollIntoViewIfNeeded();
@@ -92,7 +102,7 @@ test("실제 계정 API는 CLI 읽기 응답만 반환하고 같은 공급자의
     expect(JSON.stringify(response)).not.toContain("private-fixture-account");
 });
 
-test("Claude는 공식 CLI 인증 상태만 읽고 로그인·로그아웃 후 한도 상태를 갱신한다", async ({ page }, info) => {
+test("Claude는 로그인 후 공식 CLI의 두 한도를 표시하고 로그아웃하면 캐시를 비운다", async ({ page }, info) => {
     test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "격리된 CLI 인증 fixture 필요");
     const profile = await apiCall<{ id: string }>("POST", "/model-profiles", {
         name: "Claude policy-safe", protocol: "claude_code", base_url: "", model: "default",
@@ -101,12 +111,12 @@ test("Claude는 공식 CLI 인증 상태만 읽고 로그인·로그아웃 후 �
     const quota = async () => {
         const report = await apiCall<AccountUsageReport>("GET", "/usage/accounts");
         const claude = report.accounts.find((account) => account.protocol === "claude_code")!;
-        expect(claude.limits).toEqual([]);
         expect(JSON.stringify(report)).not.toContain("must-not-be-returned");
-        return claude.status;
+        expect(JSON.stringify(report)).not.toContain("private-fixture-usage-output");
+        return claude;
     };
     try {
-        expect(await quota()).toBe("authentication_required");
+        expect(await quota()).toMatchObject({ status: "authentication_required", limits: [] });
         await page.setViewportSize({ width: 390, height: 844 });
         await login(page);
         await openSettings(page);
@@ -123,9 +133,21 @@ test("Claude는 공식 CLI 인증 상태만 읽고 로그인·로그아웃 후 �
         await expect.poll(async () => (await apiCall<{ attempt: { state: string } }>("GET", `${base}/auth`)).attempt.state).toBe("waiting");
         await apiCall("POST", `${base}/login/code`, { id, code: "fixture-code" });
         await expect.poll(async () => (await apiCall<{ authenticated: boolean }>("GET", `${base}/auth`)).authenticated).toBe(true);
-        await expect.poll(quota).toBe("unsupported");
+        await expect.poll(quota).toMatchObject({ status: "available", limits: [
+            limit("5시간", 87.5), { ...limit("주간", 30), resets_at: "2100-01-02T00:00:00Z" },
+        ] });
+        await page.keyboard.press("Escape");
+        const panel = await openUsage(page);
+        await expect(panel.getByRole("img", { name: "Claude 5시간 사용 12.5%", exact: true })).toBeVisible();
+        await expect(panel.getByRole("img", { name: "Claude 주간 사용 70.0%", exact: true })).toBeVisible();
+        await expect(panel.getByRole("link", { name: "Claude에서 확인" })).toHaveCount(0);
+        await panel.getByRole("button", { name: "사용량 새로고침" }).click();
+        const cached = await Promise.all([quota(), quota()]);
+        expect(cached[0]).toEqual(cached[1]);
+        expect(await readFile(join(state().cliDir!, "claude-usage-requests"), "utf8")).toBe("usage\n");
+        await page.screenshot({ path: info.outputPath("claude-usage-mobile.png") });
         await apiCall("POST", `${base}/logout`, { attempt_id: id });
-        expect(await quota()).toBe("authentication_required");
+        expect(await quota()).toMatchObject({ status: "authentication_required", limits: [] });
     } finally {
         await apiCall("DELETE", `/model-profiles/${profile.id}`);
     }

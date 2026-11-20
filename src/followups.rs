@@ -318,6 +318,7 @@ pub async fn post_add(State(app): State<App>, p: Principal, headers: HeaderMap, 
         let profile_id = room.as_ref().map(|(_,profile)| profile.as_str())
             .or_else(|| binding.as_ref().map(|(profile,_)|profile.as_str())).unwrap_or(&b.profile_id);
         let profile = crate::models::get_enabled_profile(tx, profile_id)?;
+        if let Some(a) = &b.agent_id { crate::definitions::resolve_turn_agent(tx, a)?; }
         let tools = profile.turn_tools(b.tools);
         if native_command.is_some() && !crate::provider::cli::is_cli(&profile.protocol) {
             return Err(ApiError::unsupported("CLI 모델에서만 스킬·명령을 사용할 수 있습니다"));
@@ -403,7 +404,7 @@ pub async fn delete(State(app): State<App>, _p: Principal, Path((session_id, fid
                 "SELECT EXISTS(SELECT 1 FROM followups WHERE id=?1 AND session_id=?2 AND delivery_state='sending')",
                 params![fid, session_id], |r| r.get(0),
             )?;
-            if sending { return Err(ApiError::conflict("steer_delivery_in_progress", "Codex에 전달 중입니다. 결과를 확인한 뒤 삭제하세요")); }
+            if sending { return Err(ApiError::conflict("steer_delivery_in_progress", "에이전트에 전달 중입니다. 결과를 확인한 뒤 삭제하세요")); }
             if tx.execute("DELETE FROM followups WHERE id = ?1 AND session_id = ?2", params![fid, session_id])? == 0 {
                 return Err(ApiError::not_found("대기 메시지가 없습니다(이미 반영·시작되었을 수 있습니다)"));
             }

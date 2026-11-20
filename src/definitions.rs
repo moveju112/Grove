@@ -81,6 +81,15 @@ pub fn execution(kind: &str, id: &str) -> &'static str {
     }
 }
 
+/// 대화 요청(턴·대기 메시지·예약)에 지정할 역할을 확인한다.
+/// 내부 유지관리 역할은 압축·제목·기억 경로로만 실행하며 사용자 대화를 맡지 않는다.
+pub fn resolve_turn_agent(conn: &Connection, id: &str) -> ApiResult<DefinitionDetail> {
+    if execution("agent", id) == "background" {
+        return Err(ApiError::invalid(format!("{id}은(는) 내부 유지관리 역할이라 대화 요청에 지정할 수 없습니다")));
+    }
+    resolve(conn, "agent", id)
+}
+
 pub const ROLE_PROFILES: &[(&str, &str, &str)] = &[
     ("context-explorer", "agents.profile.context-explorer", "Context Explorer 모델"),
     ("failure-analyst", "agents.profile.failure-analyst", "Failure Analyst 모델"),

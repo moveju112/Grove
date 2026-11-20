@@ -2,9 +2,7 @@
 
 export type EventRecord = { seq: number, created_at: string, kind: string, project_id: string | null, session_id: string | null, payload: unknown, };
 
-export type ComputerStatus = { enabled: boolean, target: string, platform: string, platform_supported: boolean, desktop_session_present: boolean, backend: string, note: string, };
-
-export type SetupPreferences = { output_style: string, output_style_revision: number, output_style_options: Array<string>, computer_enabled: boolean, computer_revision: number, };
+export type SetupPreferences = { output_style: string, output_style_revision: number, output_style_options: Array<string>, };
 
 export type SetupStatus = { required: boolean,
 /**

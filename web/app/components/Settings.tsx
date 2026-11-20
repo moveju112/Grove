@@ -42,7 +42,6 @@ import { UpdateSettings } from "./update/UpdateSettings";
 import { useSettingsLink } from "./settings-links/useSettingsLink";
 import type { SettingLinkReady } from "./settings-links/reveal";
 import { useDefinitionDraft } from "./definition-updates/useDefinitionDraft";
-import { MemoryActivity } from "./memory/MemoryActivity";
 import { AgentOverview } from "./agent-overview/AgentOverview";
 import { BotsPanel } from "./BotsPanel";
 import { AgentConnect } from "./AgentConnect";
@@ -86,7 +85,7 @@ const AREA_MENUS: Record<SettingsArea, Menu[]> = {
 };
 const SETTING_MENUS: Record<string, Menu> = {
     output: "conversation", session: "conversation", sessions: "conversation", context: "conversation",
-    computer: "permissions", tools: "permissions", approval: "permissions",
+    tools: "permissions", approval: "permissions",
     exec: "execution", runs: "execution",
     "agents.allowed_roles": "agents", "agents.delegation": "agents",
 };
@@ -94,13 +93,12 @@ const settingMenu = (def: SettingDef) => isWorkflowSetting(def.key) ? "workflow"
     : SETTING_MENUS[def.key] ?? SETTING_MENUS[def.key.split(".")[0]!] ?? def.menu;
 export const ITEMS: Item[] = [
     { id: "basic-definitions", menu: "workflow", label: "기본 역할·워크플로우", keywords: "기본 보조 메모리 maintainer title generator compressor solo 컨텍스트 압축 컨텍스트 탐색 실패 분석 인계 요약", scope: "서버 전체" },
-    { id: "memory", menu: "workflow", label: "메모리 기록", keywords: "memory recap maintainer 기억 메모리 정리 결과 실패", scope: "전역·프로젝트" },
     { id: "bots", menu: "workflow", label: "봇", keywords: "bot persona 봇", scope: "서버 전체" },
     { id: "secrets", menu: "model", label: "API 키", keywords: "key secret 비밀 openai anthropic gemini", scope: "서버 전체" },
     { id: "profiles", menu: "model", label: "모델 프로필", keywords: "model provider endpoint url 모델 timeout temperature max_tokens", scope: "서버 전체" },
     { id: "definitions", menu: "agents", label: "위임 에이전트", keywords: "agent workflow prompt 지침", scope: "서버 전체" },
     { id: "source-settings", menu: "execution", label: "원본 Claude/Codex 설정", keywords: "원본 출처 읽기 전용 claude codex source settings 스킬 skill hook", scope: "전역·프로젝트" },
-    { id: "exec-settings", menu: "execution", label: "명령 실행", keywords: "exec shell limits cwd bash sh cpu memory 셸 자원 한도 기본 작업 위치 대화", scope: "전역·프로젝트" },
+    { id: "exec-settings", menu: "execution", label: "명령 실행", keywords: "exec shell bash sh 셸 대화", scope: "전역·프로젝트" },
     { id: "theme", menu: "display", label: "테마", keywords: "dark light 다크 라이트 색", scope: "이 기기" },
     { id: "font", menu: "display", label: "글자 크기", keywords: "font size 글꼴", scope: "이 기기" },
     { id: "enter", menu: "display", label: "Enter로 보내기", keywords: "enter send 입력 단축키", scope: "이 기기" },
@@ -227,7 +225,6 @@ export function Settings({ projectId, projectName, sessionId, initialMenu, open 
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
                 {(visible("definitions") || agentModelMatches) && <Section item="definitions"><Definitions target={target} kind="agent"
                     defs={registry.data ?? []} modelSearch={needle && agentModelMatches ? needle : undefined} linkedKey={link.key} hasLinkError={Boolean(link.error)} onLinkReady={onLinkReady} /></Section>}
-                {visible("memory") && <Section item="memory"><MemoryActivity target={target} /></Section>}
                 {(visible("exec-settings") || serverDefs.some(isExecSetting)) && <Section item="exec-settings"><ExecSettings
                     linkedKey={link.key} onLinkReady={onLinkReady}
                     defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} /></Section>}

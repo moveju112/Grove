@@ -74,7 +74,7 @@ fn identity(p: &ModelProfile) -> Value {
 }
 
 /// 접수 transaction 안에서만 호출한다. 후보의 fallback 옵션은 따라가지 않는다.
-pub fn snapshot(c: &Connection, source: &ModelProfile, budget: &Value) -> ApiResult<Option<Value>> {
+pub fn snapshot(c: &Connection, source: &ModelProfile) -> ApiResult<Option<Value>> {
     let Some(value) = source.options.get("fallback") else { return Ok(None) };
     validate(&source.protocol, value)?;
     let o = options(value)?;
@@ -85,9 +85,8 @@ pub fn snapshot(c: &Connection, source: &ModelProfile, budget: &Value) -> ApiRes
         let (p, _) = models::runtime_profile(c, &candidate.profile_id)?;
         let currency = &source.options["pricing"]["currency"];
         let next_currency = &p.options["pricing"]["currency"];
-        if (!currency.is_null() && !next_currency.is_null() && currency != next_currency)
-            || (budget["max_cost_cents"].is_number() && (next_currency.is_null() || next_currency != &budget["currency"])) {
-            return Err(ApiError::invalid("fallback 가격표가 없거나 통화가 달라 비용 예산을 유지할 수 없습니다"));
+        if !currency.is_null() && !next_currency.is_null() && currency != next_currency {
+            return Err(ApiError::invalid("fallback 가격표의 통화가 달라 비용을 합산할 수 없습니다"));
         }
         candidates.push(identity(&p));
     }
@@ -161,9 +160,6 @@ pub fn after_error(
         def["fallback"]["attempts"].as_array_mut().unwrap().push(json!({
             "profile_id": id, "reason": error.code, "status": error.status, "selected_at": now,
         }));
-        if def["budget"]["max_cost_cents"].is_number() {
-            def["budget"]["pricing"] = next["pricing"].clone();
-        }
         tx.execute("UPDATE turns SET profile_id=?2 WHERE id=?1", params![turn_id, id])?;
         let from = def["fallback"]["candidates"][index - 1].clone();
         crate::sessions::append_message(&tx, &now, &session, "note", &json!({

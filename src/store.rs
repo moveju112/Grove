@@ -1252,6 +1252,10 @@ pub const MIGRATIONS: &[&str] = &[
         updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
     WHERE key = 'tools.mode' AND value = '"read_only"';
     "#,
+    // 이 CLI 세션에 반영됐다고 확인한 마지막 Grove 응답. 이전 binding은 반영 범위를 알 수 없다.
+    r#"
+    ALTER TABLE cli_sessions ADD COLUMN assistant_seq INTEGER;
+    "#,
 ];
 
 #[cfg(test)]
@@ -1261,8 +1265,8 @@ mod tests {
     #[test]
     fn removed_tool_mode_migration_clears_only_read_only_overrides() {
         let c = rusqlite::Connection::open_in_memory().unwrap();
-        let (migration, previous) = super::MIGRATIONS.split_last().unwrap();
-        for sql in previous { c.execute_batch(sql).unwrap(); }
+        let index = super::MIGRATIONS.iter().position(|sql| sql.contains("WHERE key = 'tools.mode' AND value")).unwrap();
+        for sql in &super::MIGRATIONS[..index] { c.execute_batch(sql).unwrap(); }
         c.execute_batch(r#"
             INSERT INTO settings VALUES
                 ('server','-','tools.mode','"read_only"',3,'old'),
@@ -1272,7 +1276,7 @@ mod tests {
                 ('project','bypass','tools.mode','"bypass"',7,'old'),
                 ('project','p','tools.deny','"write"',8,'old');
         "#).unwrap();
-        c.execute_batch(migration).unwrap();
+        c.execute_batch(super::MIGRATIONS[index]).unwrap();
         let mode = crate::settings::def("tools.mode").unwrap();
         let layers = crate::settings::resolve_key(&c, &mode, Some("p"), Some("s")).unwrap();
         assert_eq!(layers["effective"], "bypass");

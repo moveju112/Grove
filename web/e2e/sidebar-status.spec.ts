@@ -83,10 +83,7 @@ test("실제 턴의 실행 중·승인 대기·완료·오류를 프로젝트와
         await sessionView(page, session.id).getByTestId("approval").getByRole("button", { name: "거부", exact: true }).click();
         await expect(item.getByTestId("sidebar-status")).toHaveText("✓ 완료");
 
-        await apiCall("PUT", `/settings/session/${session.id}/runs.budget.max_tokens`, { expected_revision: 0, value: 1 });
-        const response = frames.text(["예산 초과"]);
-        response.splice(1, 0, JSON.stringify({ choices: [], usage: { prompt_tokens: 11, completion_tokens: 3 } }));
-        await script({ frames: response, marker: `${marker}-failure` });
+        await script({ frames: [], status: 400, error: "fixture rejected request", marker: `${marker}-failure` });
         await apiCall("POST", `/sessions/${session.id}/turns`, { text: `${marker}-failure`, profile_id: profile, tools: false });
         await expect(item.getByTestId("sidebar-status")).toHaveText("× 오류");
         await expect(project(page, a.id).getByTestId("sidebar-project-summary")).toContainText("오류");

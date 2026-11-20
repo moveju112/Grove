@@ -325,8 +325,8 @@ pub async fn capacity(State(app): State<App>, p: Principal) -> ApiResult<Json<Va
             let lim = |k: &str| -> ApiResult<Value> { crate::settings::effective(c, k, None, None) };
             let limits = json!({
                 "max_active": lim("runs.max_active")?,
-                "max_queued_per_owner": lim("runs.max_queued_per_owner")?,
-                "max_queued_total": lim("runs.max_queued_total")?,
+                "max_queued_per_owner": crate::fair::MAX_QUEUED_PER_OWNER,
+                "max_queued_total": crate::fair::MAX_QUEUED_TOTAL,
             });
             let mut st = c.prepare(
                 "SELECT t.id, t.status, t.session_id, s.title, s.project_id, t.created_at FROM turns t JOIN sessions s ON s.id = t.session_id \

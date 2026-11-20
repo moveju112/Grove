@@ -84,9 +84,26 @@ describe("markdown", () => {
     it("rejects links outside the project and encoded traversal or URL schemes", () => {
         for (const href of ["/etc/passwd", "/project-other/file.rs", "/project", "../secret.txt", "/project/../secret.txt",
             "docs/%2e%2e/secret.txt", "//example.com/file.rs", "javascript:alert(1)", "file:///project/app.rs",
-            "data:text/html,x", "src/a.rs?x=1", "src/a.rs#x", "a%00.txt", "a%5cb.txt", "%ZZ", "a.rs:0", "a.rs:9007199254740992"]) {
+            "data:text/html,x", "src/a.rs?x=1", "src/a.rs#x", "a%00.txt", "a%5cb.txt", "%ZZ", "a.rs:0", "a.rs:9007199254740992",
+            "../secret.txt#L1", "docs/%2e%2e/secret.txt#L1", "/project-other/file.rs#L1", "//other/file.rs#L1",
+            "a.rs%23L5", "a.rs#L0", "a.rs#L9-L3", "a.rs#L2-L9007199254740992", "a.rs:2#L3", "a.rs#L2#L3"]) {
             expect(fileLink(href, "/project"), href).toBeNull();
         }
+    });
+
+    it("renders source citations with GitHub-style line anchors as project file actions", () => {
+        expect(fileLink("src/runner.rs#L449")).toEqual({ path: "src/runner.rs", line: 449 });
+        expect(fileLink("/project/src/provider/cli.rs#L103-L117", "/project")).toEqual({ path: "src/provider/cli.rs", line: 103 });
+        expect(safeHref("https://example.com/src/runner.rs#L449")).toBe("https://example.com/src/runner.rs#L449");
+        const text = "[세션 재개 조건](src/runner.rs#L449)과 [프롬프트 구성](src/provider/cli.rs#L103)";
+        const out = renderToStaticMarkup(createElement(FileRefContext.Provider, { value: () => undefined },
+            createElement(FileLinkContext.Provider, { value: { projectId: "project", rootPath: "/project" } },
+                createElement(Markdown, { text }))));
+        expect(out.match(/data-testid="file-link"/g)).toHaveLength(2);
+        expect(out).toContain("세션 재개 조건");
+        expect(out).toContain("프롬프트 구성");
+        expect(out).not.toContain("#L449");
+        expect(out).not.toContain("#L103");
     });
 
     it("renders local links as actions only inside the matching project", () => {

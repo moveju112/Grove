@@ -31,6 +31,7 @@ export default async function globalSetup() {
         chmodSync(join(cliDir, "codex"), 0o700);
         copyFileSync(join(root, "web/e2e/fixtures/codex.mjs"), join(cliDir, "claude"));
         chmodSync(join(cliDir, "claude"), 0o700);
+        writeFileSync(join(cliDir, "claude-auth"), "in");
     }
     const child = spawn(bin, ["serve", "--listen", `127.0.0.1:${PORT}`, "--data-dir", data], {
         // 원격 감시 시험은 loopback 평문 fixture를 쓴다(그 밖의 대상은 여전히 HTTPS만).
@@ -55,7 +56,7 @@ export default async function globalSetup() {
     const setup = await fetch(`http://127.0.0.1:${PORT}/api/v1/daemon-setup`, {
         method: "PUT",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json", "idempotency-key": "e2e-initial-setup" },
-        body: JSON.stringify({ output_style: "default", output_style_revision: 0, computer_enabled: false, computer_revision: 0 }),
+        body: JSON.stringify({ output_style: "default", output_style_revision: 0 }),
     });
     if (!setup.ok) { child.kill(); fixture.close(); throw new Error(`시험용 데몬 초기 설정 실패: ${setup.status}`); }
     // 프로젝트 디렉터리 두 개

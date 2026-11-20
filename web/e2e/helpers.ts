@@ -299,7 +299,7 @@ export async function apiText(path: string): Promise<string> {
     return r.text();
 }
 
-export async function script(step: { frames: string[]; delayMs?: number; hang?: boolean; marker?: string }) {
+export async function script(step: { frames: string[]; delayMs?: number; hang?: boolean; marker?: string; status?: number; error?: string }) {
     await fetch(`http://127.0.0.1:${state().fixturePort}/script`, { method: "POST", body: JSON.stringify(step) });
 }
 

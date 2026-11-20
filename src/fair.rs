@@ -225,12 +225,15 @@ impl Fair {
     }
 }
 
+/// 한 기기·예약 등 소유자가 동시에 쌓아 둘 수 있는 실행 중·대기 턴 수.
+pub const MAX_QUEUED_PER_OWNER: i64 = 16;
+/// 서버 전체의 실행 중·대기 턴 수 상한.
+pub const MAX_QUEUED_TOTAL: i64 = 64;
+
 /// 접수 한도 검사(FAIR-003). 턴 접수와 같은 transaction에서 부른다.
 pub fn admit(c: &rusqlite::Connection, owner: &str) -> crate::error::ApiResult<()> {
     use crate::error::ApiError;
-    let lim = |k: &str| -> crate::error::ApiResult<i64> { Ok(crate::settings::effective(c, k, None, None)?.as_i64().unwrap_or(i64::MAX)) };
-    let per_owner = lim("runs.max_queued_per_owner")?;
-    let total = lim("runs.max_queued_total")?;
+    let (per_owner, total) = (MAX_QUEUED_PER_OWNER, MAX_QUEUED_TOTAL);
     let (mine, all): (i64, i64) = c.query_row(
         "SELECT COALESCE(SUM(owner_key = ?1), 0), COUNT(*) FROM turns WHERE status IN ('queued','running')",
         rusqlite::params![owner],
@@ -418,5 +421,23 @@ mod tests {
         drop(assigned);
         assert_eq!(f.counts(), (0, 0));
         let _next = f.acquire_scoped("B", "4", 1, Some(resource("p", "a", 1, 1)), &mut cb).await.unwrap();
+    }
+
+    #[test]
+    fn admission_rejects_past_the_fixed_owner_and_server_queue_limits() {
+        let c = rusqlite::Connection::open_in_memory().unwrap();
+        c.execute_batch("CREATE TABLE turns(owner_key TEXT, status TEXT)").unwrap();
+        let add = |owner: &str, n: i64| for _ in 0..n {
+            c.execute("INSERT INTO turns VALUES(?1,'queued')", [owner]).unwrap();
+        };
+        add("a", MAX_QUEUED_PER_OWNER - 1);
+        assert!(admit(&c, "a").is_ok());
+        add("a", 1);
+        let e = admit(&c, "a").unwrap_err();
+        assert_eq!((e.code, e.details.as_ref().map(|d| d["limit"].clone())), ("queue_full", Some(serde_json::json!(MAX_QUEUED_PER_OWNER))));
+        assert!(admit(&c, "b").is_ok(), "다른 소유자는 자기 한도로 접수한다");
+        for i in 0..(MAX_QUEUED_TOTAL - MAX_QUEUED_PER_OWNER) { add(&format!("o{i}"), 1); }
+        let e = admit(&c, "b").unwrap_err();
+        assert_eq!(e.details.as_ref().map(|d| d["limit"].clone()), Some(serde_json::json!(MAX_QUEUED_TOTAL)));
     }
 }

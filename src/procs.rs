@@ -12,65 +12,13 @@
 /// 소유 프로세스와 자손이 물려받는 실행 표식.
 pub const OWNER_ENV: &str = "GROVE_TASK_ID";
 
-/// 자원 한도(SEC-017). 0은 제한 없음.
-/// Linux: 프로세스마다 주소 공간(`RLIMIT_AS`)·CPU 시간(`RLIMIT_CPU`, 초과 시 SIGXCPU 뒤 SIGKILL).
-/// Windows: Job 전체(트리 합계)의 메모리·사용자 CPU 시간.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Limits {
-    pub memory_mb: u64,
-    pub cpu_seconds: u64,
-}
-
-impl Limits {
-    pub fn from_json(v: &serde_json::Value) -> Self {
-        Limits { memory_mb: v["memory_mb"].as_u64().unwrap_or(0), cpu_seconds: v["cpu_seconds"].as_u64().unwrap_or(0) }
-    }
-    pub fn to_json(self) -> serde_json::Value {
-        serde_json::json!({ "memory_mb": self.memory_mb, "cpu_seconds": self.cpu_seconds })
-    }
-    /// 범위별 설정(`exec.max_memory_mb`·`exec.max_cpu_seconds`)의 실제 적용값.
-    pub fn effective(c: &rusqlite::Connection, project: Option<&str>, session: Option<&str>) -> crate::error::ApiResult<Self> {
-        let get = |k: &str| -> crate::error::ApiResult<u64> {
-            let value = crate::settings::effective(c, k, project, session)?;
-            crate::settings::validate(&crate::settings::def(k).expect("registered resource limit"), &value)?;
-            value.as_u64().ok_or_else(|| crate::error::ApiError::invalid("자원 한도가 올바른 정수가 아닙니다"))
-        };
-        Ok(Limits { memory_mb: get("exec.max_memory_mb")?, cpu_seconds: get("exec.max_cpu_seconds")? })
-    }
-}
-
-/// 실행 전 준비: 표식·새 process group·자원 한도(Linux), 일시정지 생성(Windows; 한도는 `adopt`의 Job에 건다).
-pub fn prepare(cmd: &mut tokio::process::Command, tag: &str, limits: Limits) {
+/// 실행 전 준비: 표식·새 process group(Linux), 일시정지 생성(Windows; `adopt`에서 Job에 넣고 재개한다).
+pub fn prepare(cmd: &mut tokio::process::Command, tag: &str) {
     cmd.env(OWNER_ENV, tag);
     #[cfg(unix)]
-    {
-        cmd.process_group(0);
-        if limits != Limits::default() {
-            // SAFETY: fork 뒤 exec 전에는 async-signal-safe 함수(setrlimit)만 호출한다.
-            unsafe {
-                cmd.pre_exec(move || {
-                    let set = |res, soft: u64, hard: u64| {
-                        let r = libc::rlimit { rlim_cur: soft as libc::rlim_t, rlim_max: hard as libc::rlim_t };
-                        if libc::setrlimit(res, &r) != 0 { Err(std::io::Error::last_os_error()) } else { Ok(()) }
-                    };
-                    if limits.memory_mb > 0 {
-                        let b = limits.memory_mb.saturating_mul(1024 * 1024);
-                        set(libc::RLIMIT_AS, b, b)?;
-                    }
-                    if limits.cpu_seconds > 0 {
-                        // soft 초과 시 SIGXCPU, 5초 뒤 hard에서 SIGKILL.
-                        set(libc::RLIMIT_CPU, limits.cpu_seconds, limits.cpu_seconds + 5)?;
-                    }
-                    Ok(())
-                });
-            }
-        }
-    }
+    cmd.process_group(0);
     #[cfg(windows)]
-    {
-        let _ = limits;
-        cmd.creation_flags(windows::CREATE_SUSPENDED | windows::CREATE_NEW_PROCESS_GROUP);
-    }
+    cmd.creation_flags(windows::CREATE_SUSPENDED | windows::CREATE_NEW_PROCESS_GROUP);
 }
 
 /// 시작한 프로세스 트리의 소유권. Windows에서는 drop하면 남은 트리가 함께 끝난다.
@@ -83,13 +31,13 @@ pub struct Owned {
 }
 
 /// 시작 직후 소유권을 확보한다. 실패하면 프로세스를 끝내고 오류를 돌려준다(격리 없는 실행 금지, SEC-015).
-pub fn adopt(child: &mut tokio::process::Child, tag: &str, limits: Limits) -> Result<Owned, String> {
+pub fn adopt(child: &mut tokio::process::Child, tag: &str) -> Result<Owned, String> {
     let Some(pid) = child.id() else {
         return Err("프로세스가 시작 직후 끝났습니다".into());
     };
     #[cfg(windows)]
     {
-        let job = match windows::Job::new(limits).and_then(|j| j.assign_and_resume(pid).map(|_| j)) {
+        let job = match windows::Job::new().and_then(|j| j.assign_and_resume(pid).map(|_| j)) {
             Ok(j) => j,
             Err(e) => {
                 let _ = child.start_kill();
@@ -100,7 +48,7 @@ pub fn adopt(child: &mut tokio::process::Child, tag: &str, limits: Limits) -> Re
     }
     #[cfg(not(windows))]
     {
-        let _ = (child, limits);
+        let _ = child;
         Ok(Owned { pid, tag: tag.to_string() })
     }
 }
@@ -240,7 +188,7 @@ mod tests {
             let marker = dir.path().join("payload-ran");
             let mut command = tokio::process::Command::new("bash");
             command.args(["-c", "printf ran > \"$1\"", "isolation-fixture"]).arg(&marker).kill_on_drop(true);
-            prepare(&mut command, &crate::util::new_id(), Limits::default());
+            prepare(&mut command, &crate::util::new_id());
             if fail_group {
                 // setpgid가 거부할 음수 PGID를 만들어 실제 process-group 생성 실패를 유도한다.
                 command.process_group(-1);
@@ -260,7 +208,7 @@ mod tests {
         let mut c = tokio::process::Command::new("bash");
         c.args(["-c", script]).env_remove(OWNER_ENV).kill_on_drop(true);
         match tag {
-            Some(t) => prepare(&mut c, t, Limits::default()),
+            Some(t) => prepare(&mut c, t),
             None => {
                 c.process_group(0);
             }
@@ -288,7 +236,7 @@ mod tests {
         assert!(foreign.try_wait().unwrap().is_none(), "다른 표식 그룹은 유지");
         // 우리 표식: leader가 끝난 뒤 그룹에 남은 자식(표식을 지운 env -i 자식 포함)까지 종료
         let mut mine = spawn(Some("t-mine"), "sleep 30 & env -i sleep 31 & sleep 0.2");
-        let o = adopt(&mut mine, "t-mine", Limits::default()).unwrap();
+        let o = adopt(&mut mine, "t-mine").unwrap();
         mine.wait().await.unwrap();
         let leftovers: Vec<u32> = std::fs::read_dir("/proc")
             .unwrap()
@@ -313,9 +261,9 @@ mod tests {
         let mut command = tokio::process::Command::new("bash");
         command.args(["-c", "setsid sh -c 'echo $$; exec sleep 30' &"])
             .stdout(std::process::Stdio::piped()).kill_on_drop(true);
-        prepare(&mut command, &tag, Limits::default());
+        prepare(&mut command, &tag);
         let mut child = command.spawn().unwrap();
-        let owned = adopt(&mut child, &tag, Limits::default()).unwrap();
+        let owned = adopt(&mut child, &tag).unwrap();
         let mut pid = String::new();
         BufReader::new(child.stdout.take().unwrap()).read_line(&mut pid).await.unwrap();
         let descendant: u32 = pid.trim().parse().unwrap();
@@ -355,32 +303,20 @@ mod win_tests {
         let plain = cmd("echo plain").output().await.unwrap();
         assert!(String::from_utf8_lossy(&plain.stdout).contains("plain"), "기준: Job 없이 실행");
         let mut c = cmd("echo owned");
-        prepare(&mut c, "t-win", Limits::default());
+        prepare(&mut c, "t-win");
         let mut child = c.spawn().unwrap();
-        let _o = adopt(&mut child, "t-win", Limits::default()).unwrap();
+        let _o = adopt(&mut child, "t-win").unwrap();
         let out = tokio::time::timeout(std::time::Duration::from_secs(20), child.wait_with_output()).await.expect("재개되지 않아 끝나지 않음").unwrap();
         assert!(String::from_utf8_lossy(&out.stdout).contains("owned"), "{out:?}");
-    }
-
-    /// 한도를 건 Job도 만들어지고 실행된다(한도 강제 자체는 실제 Windows에서 확인 필요).
-    #[tokio::test]
-    async fn limited_job_runs() {
-        let l = Limits { memory_mb: 512, cpu_seconds: 30 };
-        let mut c = cmd("echo limited");
-        prepare(&mut c, "t-win3", l);
-        let mut child = c.spawn().unwrap();
-        let _o = adopt(&mut child, "t-win3", l).unwrap();
-        let out = tokio::time::timeout(std::time::Duration::from_secs(20), child.wait_with_output()).await.unwrap().unwrap();
-        assert!(String::from_utf8_lossy(&out.stdout).contains("limited"), "{out:?}");
     }
 
     /// 트리 종료는 손자까지 끝낸다.
     #[tokio::test]
     async fn kill_tree_ends_grandchildren() {
         let mut c = cmd("cmd /c ping -n 300 127.0.0.1");
-        prepare(&mut c, "t-win2", Limits::default());
+        prepare(&mut c, "t-win2");
         let mut child = c.spawn().unwrap();
-        let o = adopt(&mut child, "t-win2", Limits::default()).unwrap();
+        let o = adopt(&mut child, "t-win2").unwrap();
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
         assert!(child.try_wait().unwrap().is_none(), "실행 중");
         o.kill_tree(true);
@@ -394,7 +330,7 @@ mod windows {
     use windows_sys::Win32::Foundation::{CloseHandle, HANDLE, INVALID_HANDLE_VALUE};
     use windows_sys::Win32::System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First, Thread32Next};
     use windows_sys::Win32::System::JobObjects::{
-        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_JOB_MEMORY, JOB_OBJECT_LIMIT_JOB_TIME, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
         JobObjectExtendedLimitInformation, SetInformationJobObject, TerminateJobObject,
     };
@@ -412,7 +348,7 @@ mod windows {
     }
 
     impl Job {
-        pub fn new(limits: super::Limits) -> std::io::Result<Job> {
+        pub fn new() -> std::io::Result<Job> {
             // SAFETY: 이름 없는 Job 생성, 반환 handle은 Drop에서 닫는다.
             unsafe {
                 let h = CreateJobObjectW(std::ptr::null(), std::ptr::null());
@@ -422,15 +358,6 @@ mod windows {
                 let job = Job(h);
                 let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
                 info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-                if limits.memory_mb > 0 {
-                    info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_MEMORY;
-                    info.JobMemoryLimit = limits.memory_mb.saturating_mul(1024 * 1024) as usize;
-                }
-                if limits.cpu_seconds > 0 {
-                    // 100ns 단위. 초과하면 Job의 모든 프로세스가 종료된다.
-                    info.BasicLimitInformation.LimitFlags |= JOB_OBJECT_LIMIT_JOB_TIME;
-                    info.BasicLimitInformation.PerJobUserTimeLimit = (limits.cpu_seconds as i64).saturating_mul(10_000_000);
-                }
                 let ok = SetInformationJobObject(
                     h,
                     JobObjectExtendedLimitInformation,

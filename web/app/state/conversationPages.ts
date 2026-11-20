@@ -9,6 +9,12 @@ export const RANGE_WINDOW = 500;
 export const RANGE_CONTEXT = 50;
 /// 구간 채우기의 동시 요청 수. 순차 대기는 없애되 연결 하나를 한꺼번에 막지 않는다.
 export const RANGE_CONCURRENCY = 4;
+export const CONVERSATION_PAGE_SIZE = 100;
+
+export function conversationPagePath(sessionId: string, limit = CONVERSATION_PAGE_SIZE, cursor?: { before: number } | { after: number }) {
+    const edge = !cursor ? "" : "before" in cursor ? `&before_seq=${cursor.before}` : `&after_seq=${cursor.after}`;
+    return `/sessions/${sessionId}/messages?limit=${limit}${edge}&view=conversation`;
+}
 
 type Get = (path: string) => Promise<MessagePage>;
 const defaultGet: Get = (path) => api.get<MessagePage>(path);
@@ -36,13 +42,12 @@ async function pool<T>(jobs: (() => Promise<T>)[], limit: number): Promise<T[]> 
 /// `target`부터 `upper`(미포함) 직전까지를 한 번에 읽는다. 목적지 앞 문맥과 사이 구간을 seq 범위로 나눠 병렬 조회한다.
 /// 같은 timeline이 아니면(되감기 등) null을 돌려준다.
 export async function readMessageRange(sessionId: string, target: number, upper: number, revision: number, get: Get = defaultGet): Promise<{ items: Message[]; more: boolean } | null> {
-    const base = `/sessions/${sessionId}/messages`;
-    const head = () => get(`${base}?limit=${RANGE_CONTEXT}&before_seq=${Math.min(target + 1, upper)}`);
+    const head = () => get(conversationPagePath(sessionId, RANGE_CONTEXT, { before: Math.min(target + 1, upper) }));
     const windows: (() => Promise<MessagePage>)[] = [];
     // 각 창은 (a, a+500] 범위의 seq를 모두 담는다. seq는 대화 안에서 유일하므로 한 창이 500개를 넘지 않는다.
     for (let a = target; a < upper - 1; a += RANGE_WINDOW) {
         const from = a;
-        windows.push(() => get(`${base}?limit=${RANGE_WINDOW}&after_seq=${from}`).then((page) => ({
+        windows.push(() => get(conversationPagePath(sessionId, RANGE_WINDOW, { after: from })).then((page) => ({
             ...page, items: page.items.filter((m) => m.seq <= from + RANGE_WINDOW && m.seq < upper),
         })));
     }

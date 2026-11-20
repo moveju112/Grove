@@ -15,7 +15,6 @@ fn generate() -> String {
     let mut out = String::from("// 이 파일은 tests/ts_bindings.rs가 Rust 계약에서 생성한다. 직접 수정하지 않는다.\n\n");
     let decls = [
         decl::<grove::events::EventRecord>(),
-        decl::<grove::computer::ComputerStatus>(),
         decl::<grove::setup::SetupPreferences>(),
         decl::<grove::setup::SetupStatus>(),
         decl::<grove::auth::DeviceInfo>(),

@@ -28,20 +28,6 @@ describe("승인 카드 표현", () => {
         expect(html).not.toContain("항상 승인");
     });
 
-    it("PC 제어는 짧은 범위 안내와 대화 승인을 먼저 표시한다", () => {
-        const html = render({ call: approvalFixture({ name: "computer", target: {
-            action: "act", window_id: "46137423", frame_id: "frame-private", actions: [{ type: "click", x: 168, y: 32 }],
-        } }) });
-        expect(html).toContain("PC 제어 승인 요청");
-        expect(html).not.toContain("항상 승인");
-        expect(html).toContain("서버 PC 화면 공유·조작을 이 대화에서 계속 허용합니다.");
-        expect(html.indexOf("이 대화에서 승인")).toBeLessThan(html.indexOf("이번만 승인"));
-        for (const text of ["revision", "승인 기한", "46137423", "frame-private", "부작용", "비밀값 보호", "입력 내용은 표시하지 않습니다", "허용 범위:"]) {
-            expect(html).not.toContain(text === "revision" ? "· revision" : text);
-        }
-        expect(html).not.toContain('data-testid="approval-target"');
-    });
-
     it.each(["expired", "denied", "failed", "unknown", "approved", "running", "succeeded", "cancelled"])("%s에서 재승인을 막고 상태를 구분한다", (status) => {
         const html = render({ call: approvalFixture({ status }) });
         expect(html.match(/disabled=""/g)).toHaveLength(4);

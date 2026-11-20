@@ -41,7 +41,7 @@ pub const HELP: &str = "grove exec — 개인 문맥 없이 명시한 모델로 
   --tools                   Grove 도구 사용(읽기 도구는 바로, 변경 도구는 --allow-tool에 있어야 실행)
   --allow-tool 이름         승인 없이 실행할 변경 도구(여러 번 지정)
   --effort low|medium|high  추론 강도(기본: 보내지 않음)
-  --max-tokens N            요청 token 예산   --max-minutes N   요청 시간 예산
+  --max-minutes N           요청 시간 예산
   --run-dir 경로            작업 데이터·receipt 저장 위치(없거나 빈 폴더, 기본 <데이터 경로>/exec-runs/<run ID>)
 
 기본 제외: 기존 대화·장기 기억·사용자 배경·프로젝트 지침 파일·봇·예약·자식 에이전트 자동 시작.
@@ -61,7 +61,6 @@ struct Opts {
     tools: bool,
     allow: Vec<String>,
     effort: Option<String>,
-    max_tokens: Option<i64>,
     max_minutes: Option<i64>,
     run_dir: Option<PathBuf>,
 }
@@ -83,7 +82,6 @@ fn parse(args: &[String]) -> Result<Opts, String> {
             "--tools" => o.tools = true,
             "--allow-tool" => o.allow.push(val(&mut it, a)?),
             "--effort" => o.effort = Some(val(&mut it, a)?),
-            "--max-tokens" => o.max_tokens = Some(num(val(&mut it, a)?, a)?),
             "--max-minutes" => o.max_minutes = Some(num(val(&mut it, a)?, a)?),
             "--run-dir" => o.run_dir = Some(PathBuf::from(val(&mut it, a)?)),
             "--api-key" => return Err("API 키는 인자로 받지 않습니다. --api-key-env로 환경변수 이름을 주세요".into()),
@@ -334,12 +332,10 @@ async fn drive(api: &Api, o: &Opts, prompt: &str, project: &Path, api_key: Optio
         Err(e) => return ("failed", code::FAILED, json!({ "error": api_error(e) })),
     };
     let sid = session["id"].as_str().unwrap_or("").to_string();
-    for (key, v) in [("runs.budget.max_tokens", o.max_tokens), ("runs.budget.max_minutes", o.max_minutes)] {
-        if let Some(v) = v {
-            if let Err(e) = api.setting(&format!("session/{sid}"), key, json!(v)).await {
-                return ("input_error", code::INPUT, json!({ "error": api_error(e) }));
-            }
-        }
+    if let Some(v) = o.max_minutes
+        && let Err(e) = api.setting(&format!("session/{sid}"), "runs.budget.max_minutes", json!(v)).await
+    {
+        return ("input_error", code::INPUT, json!({ "error": api_error(e) }));
     }
     let body = json!({ "text": prompt, "profile_id": profile["id"], "tools": o.tools, "effort": o.effort.clone().unwrap_or_else(|| "auto".into()) });
     let turn = match api.call(Method::POST, &format!("/sessions/{sid}/turns"), Some(body)).await {
@@ -435,7 +431,7 @@ mod tests {
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--allow-tool", "write"])).is_err(), "--tools 없이 허용 목록");
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--tools", "--read-only"])).is_err());
         assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--protocol", "cohere"])).is_err());
-        assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--max-tokens", "0"])).is_err());
+        assert!(parse(&args(&["--base-url", "http://x", "--model", "m", "--prompt", "x", "--max-minutes", "0"])).is_err());
         let o = parse(&args(&["--base-url", "http://x", "--model", "m", "--stdin", "--tools", "--allow-tool", "write", "--max-minutes", "3"])).unwrap();
         assert!(o.stdin && o.tools && o.allow == ["write"] && o.max_minutes == Some(3));
     }

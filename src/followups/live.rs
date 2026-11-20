@@ -1,4 +1,4 @@
-//! Codex 호출 도중의 합치기. DB 접수 → wire 전송 → native ACK → 메시지 commit.
+//! CLI(Codex·Claude Code) 호출 도중의 합치기. DB 접수 → wire 전송 → native ACK → 메시지 commit.
 //! sending 상태는 재실행하지 않으며, 종료·재시작 시 결과 불명으로 남긴다.
 use super::*;
 use crate::provider::ChatMsg;
@@ -21,7 +21,10 @@ impl std::fmt::Debug for LiveSteers {
 
 pub struct Delivery {
     pub id: String,
+    /// Codex app-server 입력(text·localImage).
     pub input: Vec<Value>,
+    /// Claude Code stream-json user content(text·base64 image).
+    pub content: Vec<Value>,
     prepared: crate::attachments::Prepared,
     // localImage는 ACK와 호출 종료까지 원문을 유지해야 한다.
     _scratch: tempfile::TempDir,
@@ -80,8 +83,10 @@ impl LiveSteers {
             let scratch = tempfile::Builder::new().prefix("grove-steer-").tempdir()
                 .map_err(|_| ApiError::internal("추가 메시지 임시 디렉터리 생성 실패"))?;
             let mut input = vec![json!({"type":"text","text":text})];
+            let mut content = input.clone();
             use base64::Engine;
             for (i, image) in images.into_iter().enumerate() {
+                content.push(json!({"type":"image","source":{"type":"base64","media_type":&image.mime,"data":&image.data}}));
                 let bytes = base64::engine::general_purpose::STANDARD.decode(image.data)
                     .map_err(|_| ApiError::internal("추가 이미지 입력 형식 오류"))?;
                 let path = scratch.path().join(format!("image-{i}.jpg"));
@@ -91,7 +96,7 @@ impl LiveSteers {
             tx.execute("UPDATE followups SET delivery_state='sending',delivery_turn_id=?2 WHERE id=?1", params![id, tid])?;
             emit(&tx, &now, &f.session_id)?;
             tx.commit()?;
-            Ok(Some(Delivery { id, input, prepared, _scratch: scratch }))
+            Ok(Some(Delivery { id, input, content, prepared, _scratch: scratch }))
         }).await?;
         self.app.notify_events().await;
         Ok(result)

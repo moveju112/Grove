@@ -18,11 +18,9 @@
   - ✅ sandbox 실행용 bubblewrap·socat은 필요하지 않다. 취소는 변경 rollback이 아니며 중단 기록과 실제 파일을 확인한 뒤 계속한다. `evidence: src/provider/cli.rs`, `evidence: tests/real_cli.rs`.
 - **MUST** 일반 대화의 전역·프로젝트 지침은 각 외부 CLI의 기본 로더에 맡긴다. Grove는 `AGENTS.md`·`CLAUDE.md`를 직접 읽어 중복 주입하거나 전달 모드를 제공하지 않는다. API 모델과 `grove exec`에도 지침 파일을 자동 주입하지 않는다.
   - ✅ 일반 대화의 스킬·장기 기억·hook·MCP도 외부 CLI의 원래 설정에 맡긴다. 스킬은 실제 CLI 목록을 조회해 `/이름`으로 호출하고 Grove는 본문·활성화·영속 선택을 별도 관리하거나 중복 주입하지 않는다. 제목·요약 같은 내부 호출만 사용자 hook·MCP·설정을 제외한다. `evidence: src/provider/cli.rs`, `evidence: src/native_commands.rs`, `evidence: tests/native_integrations.rs`.
-- **MUST** Grove 일반 도구의 기본 모드는 `bypass`이며, `tools.mode`의 `ask`는 범위별로 선택할 수 있다. 모드를 바꿔도 명시적 deny, 보조 역할 제한, PC 제어·위임의 별도 정책은 유지한다. `tools.full_access`는 기본으로 켜지며 `ask`에서 일반 도구를 포괄 허용한다. 모드와 별개로 `tools.full_access`가 켜지면 foreground·background 셸에 계정 환경변수를 상속하되 `GROVE_*`는 제외한다. 대기 중 전체 권한이 철회되면 자격증명 사용 계획을 실행하지 않는다. 파일 API의 `ProjectFs` 경계는 넓히지 않는다.
+- **MUST** Grove 일반 도구의 기본 모드는 `bypass`이며, `tools.mode`의 `ask`는 범위별로 선택할 수 있다. 모드를 바꿔도 명시적 deny, 보조 역할 제한, 위임의 별도 정책은 유지한다. `tools.full_access`는 기본으로 켜지며 `ask`에서 일반 도구를 포괄 허용한다. 모드와 별개로 `tools.full_access`가 켜지면 foreground·background 셸에 계정 환경변수를 상속하되 `GROVE_*`는 제외한다. 대기 중 전체 권한이 철회되면 자격증명 사용 계획을 실행하지 않는다. 파일 API의 `ProjectFs` 경계는 넓히지 않는다.
   - why: 일반 코딩·SSH·Release 작업은 반복 승인 없이 허용하면서, 서버 내부 설정이나 별도 승인 기능까지 포괄 허용으로 오인하지 않는다. 셸 자체는 프로젝트 밖·네트워크 접근이나 위험 명령을 차단하는 sandbox가 아니다.
   - ✅ 폐지한 `read_only` 값은 migration으로 상속 상태로 되돌린다. 나머지 저장 설정은 유지한다. 승인·제한 회귀 시험은 제한을 명시해 해당 정책을 검사한다. `evidence: src/settings.rs`, `evidence: src/approvals.rs`, `evidence: src/tools/shell.rs`, `evidence: src/tasks.rs`.
-- **MUST** Computer Use는 소유자가 켠 서버 PC만 대상으로 하며, 관찰도 포함해 최초 승인이 필요하고 명시적 대화 범위 승인은 해당 대화에서만 재사용한다. `tools.allow`나 `bypass`만으로 최초 승인을 생략하지 않으며 명시적 금지, 보조 역할 제한과 승인 해제가 우선한다. CLI의 기본 MCP·hook과 별개로 Grove는 턴 한정 Computer Use MCP를 추가하며, 이 내부 연결의 승인 경계를 바꾸지 않는다.
-  - ✅ `src/computer/`, `tests/computer.rs`, 격리 Xvfb 검사 `python3 tests/fixtures/computer_x11.py /절대/경로/grove`.
 
 ## 웹 UI 지속 작업
 

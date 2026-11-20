@@ -156,6 +156,52 @@ async fn sessions_messages_and_pagination() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn conversation_page_keeps_recent_questions_when_activity_fills_the_tail() {
+    let s = TestServer::start().await;
+    let project = s.create_project("transcript").await;
+    let session = s.create_session(project["id"].as_str().unwrap()).await;
+    let sid = session["id"].as_str().unwrap().to_owned();
+    let data_sid = sid.clone();
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        let tx = c.transaction()?;
+        let mut seq = 0;
+        let mut append = |role: &str, content: Value, rewound: bool| {
+            seq += 1;
+            tx.execute("INSERT INTO messages (id, session_id, seq, role, content, created_at, rewound_at) VALUES (?1,?2,?3,?4,?5,?6,?7)",
+                rusqlite::params![format!("context-{seq}"), data_sid, seq, role, content.to_string(), "2026-01-01T00:00:00Z",
+                    rewound.then_some("2026-01-02T00:00:00Z")])
+        };
+        for i in 1..=12 { append("user", json!({"text":format!("질문 {i}")}), false)?; }
+        append("note", json!({"type":"context_cleared"}), false)?;
+        for i in 0..116 { append("assistant", json!({"text":format!("응답 {i}")}), false)?; }
+        for _ in 0..510 { append("tool", json!({"output":"내부 도구 로그"}), false)?; }
+        append("note", json!({"type":"cli_activity"}), false)?;
+        append("note", json!({"type":"task_result"}), false)?;
+        append("user", json!({"text":"되감긴 질문"}), true)?;
+        tx.execute("UPDATE sessions SET last_message_seq = ?2 WHERE id = ?1", rusqlite::params![data_sid, seq])?;
+        tx.commit()?;
+        Ok(())
+    }).await.unwrap();
+
+    let base = format!("/api/v1/sessions/{sid}/messages");
+    let seqs = |p: &Value| p["items"].as_array().unwrap().iter().map(|m| m["seq"].as_i64().unwrap()).collect::<Vec<_>>();
+    let (status, latest) = s.get(&format!("{base}?limit=100&view=conversation")).await;
+    assert_eq!(status, StatusCode::OK, "{latest}");
+    assert_eq!(seqs(&latest), (5..=129).collect::<Vec<_>>());
+    assert_eq!(latest["has_more_before"], true);
+    assert_eq!(latest["has_more_after"], false);
+    let (_, older) = s.get(&format!("{base}?limit=100&before_seq=5&view=conversation")).await;
+    assert_eq!(seqs(&older), [1, 2, 3, 4]);
+    assert_eq!(older["has_more_before"], false);
+    let (_, after) = s.get(&format!("{base}?limit=3&after_seq=126&view=conversation")).await;
+    assert_eq!(seqs(&after), [127, 128, 129]);
+    assert_eq!(after["has_more_after"], false);
+    let (_, raw) = s.get(&format!("{base}?limit=3")).await;
+    assert_eq!(seqs(&raw), [639, 640, 641]);
+    assert_eq!(raw["items"][0]["role"], "tool");
+}
+
 fn urlenc(s: &str) -> String {
     s.replace('|', "%7C").replace('+', "%2B").replace(':', "%3A")
 }

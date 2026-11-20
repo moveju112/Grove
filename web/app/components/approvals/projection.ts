@@ -11,7 +11,7 @@ export type ApprovalFailure = { kind: "expired" | "processed" | "permission" | "
 const effects: Readonly<Record<string, ApprovalEffect>> = {
     read: "read", list: "read", glob: "read", find: "read", grep: "read",
     write: "write", edit: "write", apply_patch: "write",
-    shell: "execute", web_fetch: "execute", computer: "execute", agent: "delegate",
+    shell: "execute", web_fetch: "execute", agent: "delegate",
     goal: "conversation", recall: "conversation", ask_user: "conversation",
 };
 
@@ -20,8 +20,7 @@ export function currentApprovalContract(name: string): { effect: ApprovalEffect 
     return {
         effect,
         choices: !effect || name === "ask_user" ? [] : name === "agent"
-            ? ["approve", "deny"] : name === "computer" ? ["approve", "approve_session", "deny"]
-                : ["approve", "approve_session", "approve_always", "deny"],
+            ? ["approve", "deny"] : ["approve", "approve_session", "approve_always", "deny"],
     };
 }
 
@@ -97,22 +96,6 @@ export function projectApproval(call: Pick<ToolCallRow, "name" | "target">): App
         if (typeof destination.endpoint === "string") fields.push({ label: "외부 목적지", value: displayText(destination.endpoint) });
         if (typeof destination.command === "string") fields.push({ label: "서버 실행 명령", value: displayText(destination.command) });
         notices.push("원격 read-only 표시는 권한 근거가 아닙니다. 외부 부작용이 발생할 수 있습니다.");
-    }
-    if (call.name === "computer") {
-        fields.push({ label: "제어할 PC", value: "Grove 서버 PC (이 기기가 아님)" });
-        text("action", "동작");
-        text("window_id", "대상 창");
-        text("frame_id", "관찰 화면");
-        if (Array.isArray(target.actions)) {
-            for (const entry of target.actions.slice(0, 6)) {
-                const step = record(entry);
-                const kind = typeof step.type === "string" ? displayText(step.type) : "알 수 없는 동작";
-                const detail = step.type === "type" ? `입력 ${typeof step.text === "string" ? Array.from(step.text).length : 0}자`
-                    : step.type === "key" ? displayText(String(step.key ?? ""))
-                    : `${step.x}, ${step.y}${step.type === "scroll" ? ` · ${step.direction} ${step.amount}` : ` · ${step.button ?? "left"}`}`;
-                fields.push({ label: kind, value: detail });
-            }
-        }
     }
     if (call.name === "web_fetch") {
         text("url", "요청 URL", 1000);

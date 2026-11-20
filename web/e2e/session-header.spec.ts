@@ -13,12 +13,12 @@ for (const width of [390, 1400]) {
             const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
             await script({ frames: frames.text(["헤더 확인 응답"]), marker: title });
             const started = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`, {
-                text: title, profile_id: profile, agent_id: "context-compressor", tools: false,
+                text: title, profile_id: profile, agent_id: "worker", tools: false,
             });
             await expect.poll(async () => {
                 const turn = await apiCall<{ status: string; agent_id: string }>("GET", `/turns/${started.turn.id}`);
                 return { status: turn.status, agent: turn.agent_id };
-            }).toEqual({ status: "completed", agent: "context-compressor" });
+            }).toEqual({ status: "completed", agent: "worker" });
             await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
             await login(page);
             if (width === 390) await page.getByRole("button", { name: "사이드바", exact: true }).click();
@@ -28,7 +28,7 @@ for (const width of [390, 1400]) {
             await expect(view.getByRole("heading", { name: title, exact: true })).toHaveCount(0);
             await expect(view.getByRole("button", { name: title, exact: true })).toHaveCount(0);
             await expect(view.getByTestId("msg-assistant")).toContainText("헤더 확인 응답");
-            await expect(view.locator("header").getByText("에이전트: context-compressor", { exact: true })).toHaveCount(0);
+            await expect(view.locator("header").getByText("에이전트: worker", { exact: true })).toHaveCount(0);
             await expect(view.getByRole("button", { name: "대화 작업", exact: true })).toHaveCount(0);
             await expect(toolTrigger(view)).toBeVisible();
             const trigger = view.getByRole("button", { name: "context 사용량", exact: true });

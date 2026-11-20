@@ -5,6 +5,9 @@ from pathlib import Path
 import sys
 
 args = sys.argv[1:]
+if "auth" in args and "status" in args:
+    print(json.dumps({"loggedIn": True, "authMethod": "claude.ai", "apiProvider": "firstParty", "subscriptionType": "max"}))
+    sys.exit(0)
 if "--input-format" in args:
     request = json.loads(sys.stdin.readline())
     if request["type"] == "control_request":

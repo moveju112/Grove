@@ -10,6 +10,8 @@ use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
+use std::io::{BufRead, Read, Write};
+use std::time::Duration;
 use tokio::sync::watch;
 
 #[derive(Clone)]
@@ -260,5 +262,123 @@ async fn call(
 pub fn mcp_main(file: Option<&String>) -> i32 {
     let mut shell = crate::tools::spec("shell").expect("registered shell");
     shell.description = "사용자가 요청한 다운로드·설치 등 오래 걸리는 명령을 Grove 소유 백그라운드 작업으로 시작하고, 끝나면 follow_up 지시로 같은 대화에서 AI가 한 번 보고한다. background=true와 follow_up이 필수다. 명령 실행은 Grove의 기존 정책·승인을 거치며 이 도구 자체는 새 사용자 승인이 아니다. 서버 재시작으로 결과가 불명이면 명령을 재실행하지 않는다.";
-    crate::computer::bridge::stdio_main(file, "grove-continuations", vec![super::spec(), shell])
+    stdio_main(file, "grove-continuations", vec![super::spec(), shell])
+}
+
+/// 응답 본문 상한. 넘으면 결과 불명으로 돌려준다.
+const MAX_REPLY: usize = 8 * 1024 * 1024;
+
+/// Shared bounded stdio transport; the HTTP bridges retain independent authorization boundaries.
+fn stdio_main(file:Option<&String>,server_name:&str,specs:Vec<crate::tools::ToolSpec>) -> i32 {
+    let result = (|| -> Result<(), String> {
+        let file = file.ok_or("턴 연결 파일이 필요합니다")?;
+        let mut bytes = vec![];
+        std::fs::File::open(file)
+            .and_then(|f| f.take(8193).read_to_end(&mut bytes))
+            .map_err(|_| "턴 연결을 읽지 못했습니다")?;
+        if bytes.len() > 8192 {
+            return Err("턴 연결이 너무 큽니다".into());
+        }
+        let link: Value =
+            serde_json::from_slice(&bytes).map_err(|_| "턴 연결 형식이 잘못됐습니다")?;
+        let url = link["url"]
+            .as_str()
+            .ok_or("턴 연결 주소가 없습니다")?
+            .to_string();
+        let parsed = reqwest::Url::parse(&url).map_err(|_| "턴 연결 주소가 잘못됐습니다")?;
+        if parsed.scheme() != "http"
+            || parsed.host_str() != Some("127.0.0.1")
+            || parsed.path() != "/"
+            || !parsed.username().is_empty()
+            || parsed.password().is_some()
+        {
+            return Err("loopback 턴 연결만 허용합니다".into());
+        }
+        let token = link["token"]
+            .as_str()
+            .ok_or("턴 연결 자격이 없습니다")?
+            .to_string();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|_| "MCP 실행기를 시작하지 못했습니다")?;
+        let client = reqwest::Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(Duration::from_secs(360))
+            .build()
+            .map_err(|_| "턴 연결을 시작하지 못했습니다")?;
+        let mut input = std::io::stdin().lock();
+        loop {
+            let mut line = String::new();
+            let n = input
+                .by_ref()
+                .take(32 * 1024 + 1)
+                .read_line(&mut line)
+                .map_err(|_| "MCP 입력을 읽지 못했습니다")?;
+            if n == 0 {
+                break;
+            }
+            if n > 32 * 1024 {
+                return Err("MCP 입력 한도를 넘었습니다".into());
+            }
+            let request: Value =
+                serde_json::from_str(&line).map_err(|_| "MCP 입력 형식이 잘못됐습니다")?;
+            let Some(id) = request.get("id") else {
+                continue;
+            };
+            let answer = match request["method"].as_str() {
+                Some("initialize") => {
+                    json!({"protocolVersion":"2024-11-05","capabilities":{"tools":{}},"serverInfo":{"name":server_name,"version":crate::VERSION}})
+                }
+                Some("ping") => json!({}),
+                Some("tools/list") => {
+                    json!({"tools":specs.iter().map(|s|json!({"name":s.name,"description":s.description,"inputSchema":s.schema})).collect::<Vec<_>>()})
+                }
+                Some("tools/call") if specs.iter().any(|s|request["params"]["name"]==s.name) => {
+                    let body = json!({"request_id":crate::util::new_id(),"name":request["params"]["name"],"arguments":request["params"]["arguments"]});
+                    // 변경 요청은 자동 재시도하지 않는다. 응답 유실은 결과 불명으로 반환한다.
+                    rt.block_on(async {
+                        let response=client.post(&url).bearer_auth(&token).json(&body).send().await;
+                        match response {
+                            Ok(response) if response.status().is_success()=>{
+                                let bytes=response.bytes().await.ok().filter(|b|b.len()<=MAX_REPLY);
+                                bytes.and_then(|b|serde_json::from_slice::<Value>(&b).ok()).unwrap_or_else(unknown_result)
+                            },
+                            Ok(response)=>{
+                                let status=response.status();
+                                match response.json::<Value>().await{
+                                    Ok(error)=>json!({"content":[{"type":"text","text":format!("Tool request refused (HTTP {}): {}",status.as_u16(),error["error"]["code"])}],"isError":true}),
+                                    Err(_)=>unknown_result(),
+                                }
+                            },
+                            Err(_)=>unknown_result(),
+                        }
+                    })
+                }
+                _ => {
+                    println!(
+                        "{}",
+                        json!({"jsonrpc":"2.0","id":id,"error":{"code":-32601,"message":"Unsupported method"}})
+                    );
+                    continue;
+                }
+            };
+            println!("{}", json!({"jsonrpc":"2.0","id":id,"result":answer}));
+            std::io::stdout()
+                .flush()
+                .map_err(|_| "MCP 연결이 끊겼습니다")?;
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        eprintln!("턴 도구 MCP 연결을 종료했습니다");
+        1
+    } else {
+        0
+    }
+}
+
+fn unknown_result() -> Value {
+    json!({"content":[{"type":"text","text":"Tool request outcome is unknown or unavailable. Do not replay input. Inspect the approval/call and continuation/task status, then fresh target state."}],"isError":true})
 }

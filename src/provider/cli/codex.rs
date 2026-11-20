@@ -49,7 +49,7 @@ fn thread_params(profile: &Profile, req: &ModelRequest) -> Value {
 fn turn_params(profile: &Profile, req: &ModelRequest, thread: &str, images: &[PathBuf]) -> Value {
     let context = req.cli.as_ref().expect("Codex 대화 문맥");
     let mut input = vec![json!({
-        "type": "text", "text": super::prompt(req, context.resume.is_some(), context.resume.is_none()),
+        "type": "text", "text": super::prompt(req, context.resume.is_none()),
     })];
     input.extend(
         images
@@ -562,7 +562,7 @@ async fn call<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
     }
 }
 
-async fn next_steer(live: &Option<crate::followups::live::LiveSteers>) -> Result<String, ProviderError> {
+pub(super) async fn next_steer(live: &Option<crate::followups::live::LiveSteers>) -> Result<String, ProviderError> {
     match live {
         Some(live) => live.next().await.map_err(|e| ProviderError::new(e.code, e.message)),
         None => std::future::pending().await,
@@ -728,4 +728,4 @@ pub(super) async fn run<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
 
 #[cfg(test)]
 #[path = "codex_tests.rs"]
-mod tests;
+pub(super) mod tests;

@@ -51,7 +51,6 @@ async fn newcomer_runs_next_queue_limits_and_control_stays_responsive() {
     let f = Fixture::start().await;
     let prof = s.fixture_profile(&f.base).await;
     set(&s, "runs.max_active", 1).await;
-    set(&s, "runs.max_queued_per_owner", 3).await;
     let p = s.create_project("fair").await;
     let pid = p["id"].as_str().unwrap().to_string();
     let mut sids = vec![];
@@ -76,13 +75,6 @@ async fn newcomer_runs_next_queue_limits_and_control_stays_responsive() {
     tokio::time::sleep(Duration::from_millis(80)).await;
     let a2 = start(sids[1].clone(), "MARK_A2").await.1["turn"]["id"].as_str().unwrap().to_string();
     let a3 = start(sids[2].clone(), "MARK_A3").await.1["turn"]["id"].as_str().unwrap().to_string();
-    // 소유자별 대기 한도 3: 네 번째는 접수 전에 거부(기록 없음, 다시 시도 가능)
-    let (st, r) = start(sids[3].clone(), "MARK_A4").await;
-    assert_eq!(st, StatusCode::TOO_MANY_REQUESTS, "{r}");
-    assert_eq!(r["error"]["code"], "queue_full");
-    assert_eq!(r["error"]["retryable"], true);
-    let (_, msgs) = s.get(&format!("/api/v1/sessions/{}/messages", sids[3])).await;
-    assert_eq!(msgs["items"].as_array().unwrap().len(), 0, "거부된 요청은 메시지도 남기지 않는다");
     // 기기 B는 자기 한도로 접수된다
     tokio::time::sleep(Duration::from_millis(80)).await;
     let (st, b) = as_device(&s, &dev_token, Method::POST, &format!("/api/v1/sessions/{}/turns", sids[4]), Some(json!({ "text": "MARK_B1", "profile_id": prof })), "b1").await;

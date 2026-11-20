@@ -495,10 +495,7 @@ fn request(root: &std::path::Path, resume: Option<&str>, text: &str) -> ModelReq
             cwd: root.into(),
             resume: resume.map(String::from),
             service_tier: Some("priority".into()),
-            computer: None,
-            continuations: None,
-            native_command: None,
-            steers: None,
+            ..Default::default()
         }),
     }
 }
@@ -550,7 +547,7 @@ fn wire(root: &std::path::Path) -> Vec<Value> {
 }
 
 #[cfg(unix)]
-fn live_app(root: &std::path::Path) -> (crate::App, String) {
+pub(crate) fn live_app(root: &std::path::Path) -> (crate::App, String) {
     let cfg = crate::config::Config {
         data_dir: root.join("data"), listen: "127.0.0.1:0".parse().unwrap(),
         allowed_origins: vec![], allowed_hosts: vec![], tls_terminated: false, web_dir: None, web_base: "/".into(),
@@ -572,7 +569,7 @@ fn live_app(root: &std::path::Path) -> (crate::App, String) {
 }
 
 #[cfg(unix)]
-async fn live_followup(app: &crate::App, id: &str, text: &str) {
+pub(crate) async fn live_followup(app: &crate::App, id: &str, text: &str) {
     let (id, text, now) = (id.to_string(), text.to_string(), app.now());
     app.db.call(move |c| {
         c.execute("INSERT INTO followups(id,session_id,kind,text,profile_id,owner_key,created_at) VALUES(?1,'live-session','steer',?2,'live-profile','token:fixture-owner',?3)",

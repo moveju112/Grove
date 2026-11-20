@@ -11,10 +11,9 @@ describe("승인 projection과 현재 서버 계약", () => {
         expect(currentApprovalContract("write").effect).toBe("write");
         expect(currentApprovalContract("shell").effect).toBe("execute");
         expect(currentApprovalContract("agent")).toEqual({ effect: "delegate", choices: ["approve", "deny"] });
-        for (const name of ["mcp_call", "mcp_tools", "hook"]) {
+        for (const name of ["mcp_call", "mcp_tools", "hook", "computer"]) {
             expect(currentApprovalContract(name)).toEqual({ effect: null, choices: [] });
         }
-        expect(currentApprovalContract("computer")).toEqual({ effect: "execute", choices: ["approve", "approve_session", "deny"] });
         expect(currentApprovalContract("future-tool")).toEqual({ effect: null, choices: [] });
         expect(currentApprovalContract("__proto__")).toEqual({ effect: null, choices: [] });
         expect(currentApprovalContract("ask_user").choices).toEqual([]);
@@ -52,20 +51,6 @@ describe("승인 projection과 현재 서버 계약", () => {
         ]);
         expect(JSON.stringify(p)).not.toContain("sentinel");
         expect(p.notices.join(" ")).toContain("익명 GET");
-    });
-
-    it("PC 제어는 서버 PC·대상 창·각 동작을 표시하고 입력 원문은 노출하지 않는다", () => {
-        const p = projectApproval(approvalFixture({
-            name: "computer",
-            target: { target: "server", action: "act", window_id: "42", frame_id: "fresh",
-                actions: [{ type: "click", x: 10, y: 20 }, { type: "type", text: "private-input" }, { type: "key", key: "Enter" }] },
-        }));
-        expect(p.fields).toContainEqual({ label: "제어할 PC", value: "Grove 서버 PC (이 기기가 아님)" });
-        expect(p.fields).toContainEqual({ label: "대상 창", value: "42" });
-        expect(p.fields).toContainEqual({ label: "click", value: "10, 20 · left" });
-        expect(p.fields).toContainEqual({ label: "type", value: "입력 13자" });
-        expect(p.notices).toEqual([]);
-        expect(JSON.stringify(p)).not.toContain("private-input");
     });
 
     it("알려진 credential을 자르기 전에 가리고 제어문자와 긴 인자를 제한한다", () => {

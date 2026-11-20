@@ -67,8 +67,10 @@ fn authorize(request: reqwest::RequestBuilder, auth: &Credentials) -> reqwest::R
     }
 }
 
-async fn send_authorized(request: reqwest::RequestBuilder, auth: &Credentials) -> Result<reqwest::Response, ProviderError> {
+async fn send_authorized(request: reqwest::RequestBuilder, auth: &Credentials, request_id: &mut Option<String>) -> Result<reqwest::Response, ProviderError> {
     let response = super::send(authorize(request, auth)).await?;
+    *request_id = response.headers().get("x-request-id").and_then(|id| id.to_str().ok())
+        .and_then(safe_request_id).map(str::to_owned);
     if !response.status().is_success() {
         let status = response.status().as_u16();
         let mut error = super::http_error(response).await;
@@ -80,9 +82,9 @@ async fn send_authorized(request: reqwest::RequestBuilder, auth: &Credentials) -
     Ok(response)
 }
 
-async fn send_with_refresh(request: reqwest::RequestBuilder, auth: &mut Credentials) -> Result<reqwest::Response, ProviderError> {
+async fn send_with_refresh(request: reqwest::RequestBuilder, auth: &mut Credentials, request_id: &mut Option<String>) -> Result<reqwest::Response, ProviderError> {
     let first = request.try_clone().ok_or_else(invalid)?;
-    match send_authorized(first, auth).await {
+    match send_authorized(first, auth, request_id).await {
         Err(error) if error.status == Some(401) => {
             // Desktop과 같은 refresh token을 직접 갱신하지 않는다. 공식 계정 경로만 사용한다.
             static REFRESH: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
@@ -98,7 +100,8 @@ async fn send_with_refresh(request: reqwest::RequestBuilder, auth: &mut Credenti
             }
             *auth = current;
             drop(lock);
-            send_authorized(request, auth).await
+            *request_id = None;
+            send_authorized(request, auth, request_id).await
         }
         result => result,
     }
@@ -151,7 +154,7 @@ pub(super) async fn list_models() -> Result<Vec<AvailableModel>, ProviderError> 
 
 async fn catalog(auth: &mut Credentials) -> Result<Vec<AvailableModel>, ProviderError> {
     let client = super::http_client(Duration::from_secs(15));
-    let mut response = send_with_refresh(client.get(format!("{BASE}/models")).query(&[("client_version", CLIENT_VERSION)]), auth).await?;
+    let mut response = send_with_refresh(client.get(format!("{BASE}/models")).query(&[("client_version", CLIENT_VERSION)]), auth, &mut None).await?;
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(super::transport_error)? {
         if bytes.len() + chunk.len() > 8 * 1024 * 1024 { return Err(catalog_invalid()); }
@@ -209,6 +212,63 @@ fn request_body(model: &str, req: &ModelRequest, service_tier: Option<&str>, sco
 
 fn invalid() -> ProviderError {
     ProviderError::new("bad_frame", "Codex 응답 형식이 올바르지 않습니다")
+}
+
+fn safe_request_id(id: &str) -> Option<&str> {
+    (id.len() <= 80 && (id.strip_prefix("req_").is_some_and(|tail| !tail.is_empty()
+        && tail.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_')))
+        || uuid::Uuid::parse_str(id).is_ok())).then_some(id)
+}
+
+fn observe_request_id(slot: &mut Option<String>, event: &Value) {
+    if slot.is_none() {
+        *slot = [&event["request_id"], &event["error"]["request_id"], &event["response"]["request_id"]]
+            .into_iter().filter_map(Value::as_str).find_map(safe_request_id).map(str::to_owned);
+    }
+}
+
+#[derive(Default)]
+struct RequestDiagnostics {
+    frame_input_items: Option<usize>,
+    request_id: Option<String>,
+}
+
+impl RequestDiagnostics {
+    fn log_failure(&self, transport: &'static str, body: &Value, model: &str, auth: &Credentials, error: &ProviderError) {
+        // 마지막 JSON의 구조만 기록한다. 지침·본문·도구 인자/출력·reasoning은 기록하지 않는다.
+        let input = body["input"].as_array().map_or(&[][..], Vec::as_slice);
+        let (mut users, mut assistants, mut calls, mut results, mut reasoning, mut images) = (0, 0, 0, 0, 0, 0);
+        for item in input {
+            match (item["type"].as_str(), item["role"].as_str()) {
+                (Some("function_call"), _) => calls += 1,
+                (Some("function_call_output"), _) => results += 1,
+                (Some("reasoning"), _) => reasoning += 1,
+                (_, Some("assistant")) => assistants += 1,
+                (_, Some("user")) => {
+                    users += 1;
+                    images += item["content"].as_array().into_iter().flatten()
+                        .filter(|part| part["type"] == "input_image").count();
+                }
+                _ => {}
+            }
+        }
+        let contains_credential = |value: &str| value == auth.access_token
+            || (auth.access_token.len() >= 16 && value.contains(&auth.access_token))
+            || auth.account_id.as_deref().is_some_and(|id| !id.is_empty() && value.contains(id));
+        let model = (model.len() <= 200 && model.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-' | b':'))
+            && !model.starts_with("sk-") && !model.starts_with("sk_") && !contains_credential(model)).then_some(model);
+        let stream = error.stream_failure.as_ref();
+        tracing::warn!(transport, model, provider_request_id = self.request_id.as_deref().filter(|id| !contains_credential(id)),
+            error_code = error.code, http_status = error.status, retryable = error.retryable,
+            provider_event = stream.map(|f| f.event),
+            provider_code = stream.and_then(|f| f.code.as_deref()).filter(|code| !contains_credential(code)),
+            incomplete_reason = stream.and_then(|f| f.incomplete_reason.as_deref()).filter(|reason| !contains_credential(reason)),
+            context_input_items = input.len(), frame_input_items = self.frame_input_items,
+            frame_input_start = self.frame_input_items.map(|n| input.len() - n),
+            user_items = users, assistant_items = assistants, tool_calls = calls, tool_results = results,
+            reasoning_items = reasoning, image_parts = images, tool_defs = body["tools"].as_array().map_or(0, Vec::len),
+            "Codex 요청 실패");
+    }
 }
 
 /// 자유 형식 메시지·URL·토큰을 제외하고 짧은 기계 식별자만 기록한다.
@@ -319,11 +379,12 @@ fn read_event(value: &Value, out: &mut ModelOutput, model: &str, scope: Option<&
     Ok(false)
 }
 
-async fn read_response(resp: reqwest::Response, model: &str, scope: Option<&str>, mut on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
+async fn read_response(resp: reqwest::Response, model: &str, scope: Option<&str>, request_id: &mut Option<String>, mut on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
     let mut out = ModelOutput::default();
     let completed = super::sse::read_events(resp, |frame| {
         if frame.data.is_empty() || frame.data == "[DONE]" { return Ok(false); }
         let value: Value = serde_json::from_str(&frame.data).map_err(|_| invalid())?;
+        observe_request_id(request_id, &value);
         read_event(&value, &mut out, model, scope, &mut on_delta)
     }).await?;
     if !completed {
@@ -358,8 +419,17 @@ pub(super) async fn stream(client: &reqwest::Client, profile: &Profile, req: &Mo
 
 async fn stream_sse(client: &reqwest::Client, auth: &mut Credentials, body: &Value, model: &str,
     scope: Option<&str>, url: &str, on_delta: OnDelta<'_>) -> Result<ModelOutput, ProviderError> {
-    let response = send_with_refresh(client.post(url).header("accept", "text/event-stream").json(body), auth).await?;
-    read_response(response, model, scope, on_delta).await
+    let mut diagnostics = RequestDiagnostics {
+        frame_input_items: body["input"].as_array().map(Vec::len), ..Default::default()
+    };
+    let result = async {
+        let response = send_with_refresh(client.post(url).header("accept", "text/event-stream").json(body), auth, &mut diagnostics.request_id).await?;
+        read_response(response, model, scope, &mut diagnostics.request_id, on_delta).await
+    }.await;
+    if let Err(error) = &result {
+        diagnostics.log_failure("sse", body, model, auth, error);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -477,9 +547,9 @@ mod tests {
         let server = tokio::spawn(async move { axum::serve(listener, Router::new().route("/{mode}", post(fixture))).await.unwrap(); });
         let auth = Credentials { access_token: "fixture".into(), account_id: Some("test-account".into()) };
         let client = super::super::http_client(Duration::from_secs(5));
-        let resp = send_authorized(client.post(format!("http://{addr}/complete")), &auth).await.unwrap();
+        let resp = send_authorized(client.post(format!("http://{addr}/complete")), &auth, &mut None).await.unwrap();
         let mut deltas = 0;
-        let out = read_response(resp, "gpt-test", Some("fixture-scope"), &mut |delta| {
+        let out = read_response(resp, "gpt-test", Some("fixture-scope"), &mut None, &mut |delta| {
             deltas += 1;
             assert_eq!(delta.text, "checking");
             assert!(delta.tool_calls.is_empty());
@@ -494,15 +564,15 @@ mod tests {
             ("incomplete", json!({"event":"response.incomplete","incomplete_reason":"max_output_tokens"})),
             ("error", json!({"event":"error","code":"rate_limit_exceeded"})),
         ] {
-            let resp = send_authorized(client.post(format!("http://{addr}/{mode}")), &auth).await.unwrap();
-            let error = read_response(resp, "gpt-test", Some("fixture-scope"), &mut |_| {}).await.unwrap_err();
+            let resp = send_authorized(client.post(format!("http://{addr}/{mode}")), &auth, &mut None).await.unwrap();
+            let error = read_response(resp, "gpt-test", Some("fixture-scope"), &mut None, &mut |_| {}).await.unwrap_err();
             let stored = error.to_json();
             assert_eq!(stored["code"], "provider_failed");
             assert_eq!(stored["provider_stream"], detail);
             assert!(!stored.to_string().contains("private provider text"));
         }
-        let resp = send_authorized(client.post(format!("http://{addr}/eof")), &auth).await.unwrap();
-        let error = read_response(resp, "gpt-test", Some("fixture-scope"), &mut |_| {}).await.unwrap_err();
+        let resp = send_authorized(client.post(format!("http://{addr}/eof")), &auth, &mut None).await.unwrap();
+        let error = read_response(resp, "gpt-test", Some("fixture-scope"), &mut None, &mut |_| {}).await.unwrap_err();
         assert_eq!(error.code, "stream_incomplete");
         assert!(error.to_json().get("provider_stream").is_none());
         server.abort();

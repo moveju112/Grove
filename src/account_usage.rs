@@ -5,6 +5,8 @@ use serde::Serialize;
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
+const CLAUDE_USAGE_TTL: Duration = Duration::from_secs(5 * 60);
+
 #[derive(Clone, Debug, Serialize, ts_rs::TS)]
 pub struct AccountUsageLimit {
     pub label: String,
@@ -50,11 +52,11 @@ impl Cache {
         let result = if protocol == "codex_cli" {
             crate::provider::cli::account_limits().await.and_then(|value| codex_limits(&value))
         } else {
-            claude_limits(crate::agent_auth::authenticated(protocol).await.ok().flatten())
+            read_claude().await
         };
         let (limits, status) = match result {
             Ok(limits) if !limits.is_empty() => (limits, "available"),
-            Ok(_) => (vec![], "unsupported"),
+            Ok(_) | Err("unsupported") => (vec![], "unsupported"),
             Err("authentication_required") => (vec![], "authentication_required"),
             Err("rate_limited") => (vec![], "rate_limited"),
             Err(_) => (vec![], "unavailable"),
@@ -64,7 +66,11 @@ impl Cache {
             name: if protocol == "codex_cli" { "Codex" } else { "Claude" }.into(),
             status: status.into(), limits, checked_at: now.into(),
         };
-        *cache = Some((Instant::now() + Duration::from_secs(60), usage.clone()));
+        // 탭·기기·수동 새로고침과 무관하게 `/usage` 요청의 빈도를 제한한다.
+        let ttl = if protocol == "claude_code" && status != "authentication_required" {
+            CLAUDE_USAGE_TTL
+        } else { Duration::from_secs(60) };
+        *cache = Some((Instant::now() + ttl, usage.clone()));
         usage
     }
 }
@@ -143,13 +149,30 @@ pub(crate) fn codex_limits(value: &Value) -> Result<Vec<AccountUsageLimit>, &'st
     Ok(limits)
 }
 
-fn claude_limits(authenticated: Option<bool>) -> Result<Vec<AccountUsageLimit>, &'static str> {
-    // Claude Code 인증·갱신은 공식 CLI에 맡긴다. 한도 조회를 위한 별도 모델 호출도 하지 않는다.
-    match authenticated {
-        Some(true) => Ok(vec![]),
-        Some(false) => Err("authentication_required"),
-        None => Err("unavailable"),
+async fn read_claude() -> Result<Vec<AccountUsageLimit>, &'static str> {
+    let report = crate::provider::cli::claude_usage::read(std::path::Path::new("claude")).await?;
+    claude_limits(&report)
+}
+
+fn claude_limits(report: &Value) -> Result<Vec<AccountUsageLimit>, &'static str> {
+    let rows = report["rate_limits"]["limits"].as_array().ok_or("unavailable")?;
+    let mut limits = Vec::new();
+    // 모델·제품 전용 한도가 아니라 전체 계정의 두 창만 사용한다.
+    for (kind, label) in [("session", "5시간"), ("weekly_all", "주간")] {
+        for row in rows.iter().filter(|row| row["kind"] == kind && row["scope"].is_null()) {
+            let Some(used) = row["percent"].as_f64().filter(|v| (0.0..=100.0).contains(v)) else { continue; };
+            let resets_at = match &row["resets_at"] {
+                Value::Null => None,
+                value => {
+                    let Some(time) = value.as_str().and_then(crate::util::parse_time) else { continue; };
+                    Some(crate::util::fmt_time(time.to_offset(time::UtcOffset::UTC)))
+                }
+            };
+            limits.push(AccountUsageLimit { label: label.into(), remaining_percent: Some(100.0 - used), remaining: None, resets_at });
+            break;
+        }
     }
+    Ok(limits)
 }
 
 #[cfg(test)]
