@@ -23,6 +23,8 @@ impl ProjectFs {
         Ok(Self { root, dir })
     }
 
+    pub fn root(&self) -> &Path { &self.root }
+
     pub fn relative(&self, path: &Path) -> io::Result<PathBuf> {
         let relative = path.strip_prefix(&self.root).map_err(|_| io::Error::new(io::ErrorKind::PermissionDenied, "프로젝트 밖 경로입니다"))?;
         if relative.components().any(|c| !matches!(c, Component::Normal(_) | Component::CurDir)) {

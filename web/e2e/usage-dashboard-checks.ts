@@ -42,9 +42,9 @@ export async function checkDashboard(page: Page, info: TestInfo) {
     await login(page);
     const panel = await openUsage(page);
     await expect(panel.getByRole("heading", { name: "사용량", exact: true })).toBeFocused();
-    await expect(panel.locator('[data-testid="usage-token-total"]:visible')).toHaveAttribute("aria-label", "1,500 토큰");
-    await expect(panel.locator('[data-testid="usage-speed-total"]:visible')).toHaveText("38.5 tok/s");
-    await expect(panel.getByText(/평균 응답 속도:.*측정 3\/5개 응답/)).toBeVisible();
+    await expect(panel.locator('[data-testid="usage-token-codex_cli"]:visible')).toHaveAttribute("aria-label", "1,000 토큰");
+    await expect(panel.locator('[data-testid="usage-speed-codex_cli"]:visible')).toHaveText("20.0 tok/s");
+    await expect(panel.getByText(/평균 모델 속도:.*측정 3\/5개 응답/)).toBeVisible();
     await expect(panel.getByTestId("usage-providers")).toContainText("Codex");
     await expect(panel.getByTestId("usage-providers")).toContainText("Claude");
     await expect(panel.getByRole("tab")).toHaveCount(0);
@@ -54,7 +54,7 @@ export async function checkDashboard(page: Page, info: TestInfo) {
     const tokenChart = panel.getByTestId("usage-chart-tokens");
     const svg = tokenChart.getByRole("group", { name: "시간별 토큰 사용량" });
     expect((await svg.boundingBox())!.height).toBe(140);
-    const summary = panel.getByRole("table", { name: mobile ? "전체 사용량 요약" : "제공자별 사용량 요약", exact: true });
+    const summary = panel.getByRole("table", { name: mobile ? "Codex CLI 사용량 요약" : "제공자별 사용량 요약", exact: true });
     const columns = await summary.getByRole("columnheader").evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
     expect(columns[mobile ? 1 : 4]).toBeGreaterThanOrEqual(112);
     const cardStyle = await panel.getByTestId("usage-providers").evaluate((node) => {
@@ -63,7 +63,9 @@ export async function checkDashboard(page: Page, info: TestInfo) {
     });
     expect(cardStyle).toEqual({ padding: "14px", radius: "12px", border: "1px" });
     await expect(summary).toContainText("10.0 tok/s");
-    await expect(summary).toContainText("100.0 tok/s");
+    await expect(summary).toContainText("30.0 tok/s");
+    const claudeSummary = mobile ? panel.getByRole("table", { name: "Claude 사용량 요약", exact: true }) : summary;
+    await expect(claudeSummary).toContainText("100.0 tok/s");
     expect(await summary.getByRole("columnheader").first().evaluate((node) => getComputedStyle(node).fontSize)).toBe("11px");
     await tokenChart.getByRole("button").first().click();
     await expect(tokenChart.locator("output")).toContainText("1,000 토큰 · 20.0 tok/s");
@@ -81,8 +83,10 @@ export async function checkDashboard(page: Page, info: TestInfo) {
     await selectChoice(panel.getByLabel("공급자 필터", { exact: true }), "codex_cli");
     await expect(listing.getByRole("button")).toHaveCount(1);
     await listing.getByRole("button").first().click();
-    await expect(listing).toContainText("입력 800 · 출력 200");
-    await expect(panel.locator('[data-testid="usage-speed-total"]:visible')).toHaveText("38.5 tok/s");
+    await expect(listing).toContainText("새 입력 400 · 출력 200");
+    await expect(listing.getByRole("columnheader", { name: "캐시 읽기", exact: true })).toBeVisible();
+    await expect(listing.getByRole("columnheader", { name: "캐시 쓰기", exact: true })).toBeVisible();
+    await expect(panel.locator('[data-testid="usage-speed-codex_cli"]:visible')).toHaveText("20.0 tok/s");
     await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await listing.scrollIntoViewIfNeeded();
     await page.screenshot({ path: info.outputPath(mobile ? "usage-details-mobile.png" : "usage-details-desktop.png") });
@@ -116,7 +120,7 @@ export async function checkDashboard(page: Page, info: TestInfo) {
     await page.reload();
     await expect(page.getByRole("dialog", { name: "사용량", exact: true })).toHaveCount(0);
     await openUsage(page);
-    await expect(page.locator('[data-testid="usage-speed-total"]:visible')).toHaveText("38.5 tok/s");
+    await expect(page.locator('[data-testid="usage-speed-codex_cli"]:visible')).toHaveText("20.0 tok/s");
     await expect(charts).toBeVisible();
     // 입력에 초점이 있어도 Escape로 닫고, 모션 줄이기에서도 빠른 재열기와 닫기를 유지한다.
     for (const reducedMotion of ["no-preference", "reduce"] as const) {

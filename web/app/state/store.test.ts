@@ -1,9 +1,32 @@
 import { describe, expect, it, vi } from "vitest";
-import { applyEvent, batchEventQueries, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, PARTIAL_FLUSH_MS, queuePartial, querySnapshot, resyncAll, retryWaiting, setLive, setTransportFailureHandler, subscribeQuery } from "./store";
+import { applyEvent, batchEventQueries, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, PARTIAL_FLUSH_MS, queuePartial, querySnapshot, resyncAll, revalidateQuery, retryWaiting, setLive, setTransportFailureHandler, subscribeQuery } from "./store";
 import { ApiError, isTransportError } from "../api/client";
 import { deliveryTiming } from "./deliveryTiming";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+it("최근 조회는 선조회를 공유하고 오래된 요청은 결과를 유지한 채 한 번만 재확인한다", async () => {
+    const clock = vi.spyOn(Date, "now").mockReturnValue(0);
+    let finish!: (data: string) => void;
+    const get = vi.fn(() => new Promise<string>((resolve) => { finish = resolve; }));
+    const key = "recent:range:4h:30";
+    subscribeQuery(key, get, () => undefined)();
+    const off = subscribeQuery(key, get, () => undefined);
+    try {
+        revalidateQuery(key, 750);
+        expect(get).toHaveBeenCalledTimes(1);
+        clock.mockReturnValue(3_000);
+        revalidateQuery(key, 750);
+        revalidateQuery(key, 750);
+        finish("보관된 목록");
+        await settle();
+        expect(get).toHaveBeenCalledTimes(2);
+        expect(querySnapshot(key)).toMatchObject({ data: "보관된 목록", loading: true });
+        finish("최신 목록");
+        await settle();
+        expect(querySnapshot(key)).toMatchObject({ data: "최신 목록", loading: false });
+    } finally { off(); clearServerCache(); clock.mockRestore(); }
+});
 
 describe("임시 응답의 수명", () => {
     function partials() {

@@ -93,6 +93,7 @@ fn token_usage(value: &Value) -> Usage {
         cache_read_tokens: value["cachedInputTokens"].as_u64().unwrap_or(0),
         cache_write_tokens: value["cacheWriteInputTokens"].as_u64(),
         reasoning_tokens: value["reasoningOutputTokens"].as_u64(),
+        ..Default::default()
     }
 }
 
@@ -420,6 +421,7 @@ impl State {
                     cache_read_tokens: usage.cache_read_tokens.saturating_sub(base.cache_read_tokens),
                     cache_write_tokens: usage.cache_write_tokens.map(|n| n.saturating_sub(base.cache_write_tokens.unwrap_or(0))),
                     reasoning_tokens: usage.reasoning_tokens.map(|n| n.saturating_sub(base.reasoning_tokens.unwrap_or(0))),
+                    ..Default::default()
                 };
             }
             "error" if p["willRetry"] != true => {

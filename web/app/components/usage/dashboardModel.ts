@@ -2,10 +2,12 @@ import type { UsageDashboard, UsageMetrics, UsageSlice } from "../../api/generat
 
 export const providerName = (protocol: string) => ({ codex_cli: "Codex CLI", codex_oauth: "Codex", claude_code: "Claude", openai: "OpenAI API", anthropic: "Anthropic API", gemini: "Gemini API", unknown: "공급자 미기록" }[protocol] ?? protocol);
 export const tokens = (metrics: Pick<UsageMetrics, "input_tokens" | "output_tokens">) => metrics.input_tokens + metrics.output_tokens;
+export const freshInput = (metrics: UsageMetrics) => Math.max(0, metrics.input_tokens - metrics.cache_read_tokens - metrics.cache_write_tokens);
 export const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 0 });
 export const compact = (value: number) => value >= 1e9 ? `${(value / 1e9).toFixed(1)}B` : value >= 1e6 ? `${(value / 1e6).toFixed(1)}M` : value >= 1e3 ? `${(value / 1e3).toFixed(1)}K` : String(Math.round(value));
 export const speed = (value: number | null | undefined) => value == null ? "—" : value.toFixed(1);
-export const cacheHit = (metrics: UsageMetrics) => metrics.input_tokens > 0 ? `${(metrics.cache_read_tokens / metrics.input_tokens * 100).toFixed(1)}%` : "—";
+export const cacheHit = (metrics: UsageMetrics) => metrics.input_tokens > 0 && metrics.unreported_responses === 0
+    ? `${(metrics.cache_read_tokens / metrics.input_tokens * 100).toFixed(1)}%` : "—";
 export type Group = "models" | "projects" | "agents" | "workflows" | "sessions" | "efforts";
 export type Sort = "tokens" | "speed";
 

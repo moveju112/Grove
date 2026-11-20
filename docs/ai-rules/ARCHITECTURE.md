@@ -29,6 +29,8 @@ HTTP 인증·Origin·호환성 검사 → 도메인 처리 → SQLite transactio
 
 Claude Code는 데몬 계정에 설치되어 구독으로 로그인한 `claude`만 실행한다. Grove는 Anthropic API에 직접 요청하지 않고 CLI 자격을 읽지 않는다. 재개가 가능하고 실행 설정이 같으면 열린 SDK JSONL 연결에 새 메시지만 보낸다. 연결이 만료되거나 실행 설정이 바뀌면 재개 가능한 CLI 세션 ID로 다시 연결한다. 턴 전용 MCP 연결은 각 턴에서 교체·해제하고, 취소·오류·로그아웃·서버 종료 때는 프로세스를 보존하지 않는다. 제목·요약은 별도 호출을 유지한다. `evidence: src/provider/cli/claude_session.rs`, `evidence: src/provider/cli/claude.rs`.
 
+사용량 화면의 tok/s는 출력 토큰과 짝이 맞는 모델 요청 시간만 사용한다. Claude Code는 `result.duration_api_ms`를 사용하며, 재사용한 프로세스에선 직전 누적값을 뺀다. 시간 미보고 CLI·과거 기록에 전체 턴 시간을 대신 넣지 않는다. 저장된 입력 총량에는 캐시 읽기·쓰기가 포함되고, 화면은 새 입력과 캐시를 분리해서 표시한다. `evidence: src/provider/cli/claude_session.rs`, `evidence: src/usage/dashboard.rs`, `evidence: web/app/components/usage/dashboardModel.ts`.
+
 외부 CLI는 같은 프로필·프로토콜·시스템 지침에서 Grove의 직전 응답까지 반영한 세션만 재개한다. 중간에 다른 모델을 썼거나 반영 범위가 확인되지 않으면 새 CLI 세션을 시작하고 Grove 이력을 이번 요청과 구분해 전달한다. CLI 자체 세션 기록을 병합하지 않는다. `evidence: src/runner.rs`, `evidence: src/provider/cli.rs`.
 
 - **MUST** 서버에 전역적인 현재 프로젝트·대화 상태를 추가하지 않고 요청마다 실행 대상을 명시한다.

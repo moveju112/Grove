@@ -6,7 +6,7 @@ import type { FollowKind } from "../state/sendOptions";
 import { Icon } from "./icons";
 
 const styles = stylex.create({
-    trigger: { display: "grid", width: 36 },
+    trigger: { display: "grid", width: 36, WebkitTouchCallout: "none", userSelect: "none" },
     disabledTrigger: { pointerEvents: "none" },
 });
 
@@ -23,7 +23,13 @@ export function SendButton({ label, title, disabled, follow, steerHint, describe
 }) {
     const [open, setOpen] = useState(false);
     const suppressClick = useRef(false);
+    const rightPress = useRef<"down" | "context" | null>(null);
     const available = follow !== undefined && !disabled;
+    const openMenu = () => {
+        if (!available) return;
+        suppressClick.current = true;
+        setOpen(true);
+    };
     useEffect(() => {
         if (!available) setOpen(false);
     }, [available]);
@@ -43,11 +49,26 @@ export function SendButton({ label, title, disabled, follow, steerHint, describe
             },
         }))}
         renderTrigger={(props) => <div {...stylex.props(styles.trigger)} title={disabled ? title : undefined}
+            data-swipe-blocked
+            onPointerDown={(event) => {
+                rightPress.current = event.pointerType === "mouse" && event.button === 2 ? "down" : null;
+                suppressClick.current = false;
+            }}
+            onPointerUp={(event) => {
+                if (event.button === 2 && rightPress.current === "context") openMenu();
+                rightPress.current = null;
+            }}
+            onPointerLeave={() => { rightPress.current = null; }}
+            onPointerCancel={() => { rightPress.current = null; }}
             onContextMenuCapture={(event) => {
                 event.preventDefault();
                 if (!available) return;
-                suppressClick.current = true;
-                setOpen(true);
+                // 터치는 메뉴의 길게 누르기 처리에만 맡겨, 같은 제스처가 메뉴를 두 번 열지 않게 한다.
+                if ((event.nativeEvent as PointerEvent).pointerType === "touch") return;
+                // 누르는 순간 contextmenu가 오는 브라우저는 우클릭을 놓은 뒤 연다.
+                // 여는 데 쓴 pointerup이 팝오버를 곧바로 닫지 않아야 한다.
+                if (event.button === 2 && rightPress.current !== null) rightPress.current = "context";
+                else openMenu();
             }}>
             <Button ref={props.ref} id={props.id} type="button"
                 appearance="send" width="100%" aria-label={label} title={disabled ? undefined : title} disabled={disabled}
@@ -58,7 +79,6 @@ export function SendButton({ label, title, disabled, follow, steerHint, describe
                 aria-controls={available ? props["aria-controls"] : undefined}
                 onClickCapture={props.onClickCapture}
                 onPointerDown={(event) => {
-                    suppressClick.current = false;
                     if (available && event.pointerType !== "mouse") props.onPointerDown(event);
                 }}
                 onKeyDown={(event) => {

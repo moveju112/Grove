@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UsageDashboard, UsageMetrics, UsageSlice } from "../../api/generated";
-import { compact, providerRows, sortedRows, speed, tokens, usageRange } from "./dashboardModel";
+import { cacheHit, compact, freshInput, providerRows, sortedRows, speed, tokens, usageRange } from "./dashboardModel";
 
 const metrics = (patch: Partial<UsageMetrics> = {}): UsageMetrics => ({
     input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0,
@@ -12,7 +12,11 @@ const row = (key: string, provider: string, patch: Partial<UsageMetrics>): Usage
 
 describe("통합 사용량 표시", () => {
     it("캐시·reasoning을 총 토큰에 중복 가산하지 않는다", () => {
-        expect(tokens(metrics({ input_tokens: 100, output_tokens: 20, cache_read_tokens: 80, reasoning_tokens: 10 }))).toBe(120);
+        const usage = metrics({ input_tokens: 100, output_tokens: 20, cache_read_tokens: 80, cache_write_tokens: 15, reasoning_tokens: 10 });
+        expect(tokens(usage)).toBe(120);
+        expect(freshInput(usage)).toBe(5);
+        expect(cacheHit(usage)).toBe("80.0%");
+        expect(cacheHit({ ...usage, unreported_responses: 1 })).toBe("—");
         expect(speed(null)).toBe("—");
         expect(speed(20)).toBe("20.0");
         expect(compact(1000)).toBe("1.0K");

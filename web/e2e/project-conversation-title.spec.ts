@@ -29,6 +29,12 @@ for (const width of [390, 1280]) {
                 const tab = page.getByTestId("mobile-open-tab");
                 await expect(tab.getByRole("button", { name: "새 대화", exact: true })).toBeVisible();
                 await expect(tab.getByRole("button", { name: "새 대화 탭 닫기", exact: true })).toBeVisible();
+                const drawer = page.getByTestId("mobile-drawer-right");
+                const bottomGap = await tab.evaluate((row) =>
+                    row.closest("dialog")!.getBoundingClientRect().bottom - row.getBoundingClientRect().bottom);
+                expect(bottomGap).toBeGreaterThanOrEqual(0);
+                expect(bottomGap).toBeLessThanOrEqual(16);
+                await drawer.screenshot({ path: info.outputPath("new-conversation-drawer-390.png") });
                 await tab.getByRole("button", { name: "새 대화", exact: true }).click();
             } else {
                 await expect(page.getByTestId("tab-title").filter({ visible: true })).toHaveText(["새 대화"]);
@@ -46,11 +52,15 @@ for (const width of [390, 1280]) {
                 name: `저장된 프로젝트 ${width}`,
                 root_path: mkdtempSync(join(dirname(state().projA), "legacy-title-")),
             });
-            const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: "보존할 대화 제목" });
+            const titles = ["보존할 대화 제목", ...Array.from({ length: width < 760 ? 11 : 0 }, (_, i) => `열린 대화 ${i + 1}`)];
+            const tabs = await Promise.all(titles.map(async (title, i) => {
+                const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title });
+                return { id: `old-session-${i}`, kind: "session" as const, project_id: project.id, resource_id: session.id, title };
+            }));
             const layout: Layout = { schema: 1, focused_leaf: "saved", root: {
                 type: "leaf", id: "saved", active_tab: "old-project", tabs: [
                     { id: "old-project", kind: "project", project_id: project.id, resource_id: project.id, title: project.name },
-                    { id: "old-session", kind: "session", project_id: project.id, resource_id: session.id, title: "보존할 대화 제목" },
+                    ...tabs,
                 ],
             } };
             await apiCall("PUT", `/layouts/${width < 760 ? `${device}-narrow` : device}`, { expected_revision: 0, layout });
@@ -60,10 +70,18 @@ for (const width of [390, 1280]) {
             await expect(view.getByLabel("메시지 입력", { exact: true })).toBeVisible();
             await expect(view.getByRole("heading", { name: project.name, exact: true })).toHaveCount(0);
             if (width < 760) {
+                await page.setViewportSize({ width, height: 390 });
                 await page.getByRole("button", { name: "열린 세션", exact: true }).click();
-                const tabs = page.getByTestId("mobile-open-tab");
-                await expect(tabs.getByRole("button", { name: "새 대화", exact: true })).toBeVisible();
-                await expect(tabs.getByRole("button", { name: "보존할 대화 제목", exact: true })).toBeVisible();
+                const drawer = page.getByTestId("mobile-drawer-right");
+                const draft = drawer.getByRole("button", { name: "새 대화", exact: true });
+                const sessions = drawer.getByRole("group", { name: "현재 프로젝트 세션" });
+                await expect(sessions.getByRole("button", { name: "보존할 대화 제목", exact: true })).toBeInViewport();
+                await expect(draft).toBeInViewport({ ratio: 1 });
+                const initialTop = await draft.evaluate((button) => button.getBoundingClientRect().top);
+                await sessions.evaluate((list) => { list.scrollTop = list.scrollHeight; });
+                await expect(sessions.getByRole("button", { name: titles.at(-1)!, exact: true })).toBeInViewport();
+                await expect(sessions.getByRole("button", { name: "보존할 대화 제목", exact: true })).not.toBeInViewport();
+                expect(await draft.evaluate((button) => button.getBoundingClientRect().top)).toBe(initialTop);
             } else {
                 await expect(page.getByTestId("tab-title").filter({ visible: true })).toHaveText(["새 대화", "보존할 대화 제목"]);
             }

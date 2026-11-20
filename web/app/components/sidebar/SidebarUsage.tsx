@@ -124,6 +124,32 @@ function UsageQuotaCards({ report, failed, now, onAuthenticate }: {
     </Stack>;
 }
 
+/** 첫 조회 전에도 카드 높이를 미리 잡아 한도가 도착할 때 아래 통계가 밀리지 않게 한다. */
+function UsageQuotaPlaceholder() {
+    return <Stack direction="horizontal" wrap="wrap" xstyle={dashboardStyles.quotaCards} aria-label="OAuth 한도" aria-busy="true">
+        {accounts.map(({ protocol }) => <Stack key={protocol} xstyle={[dashboardStyles.card, dashboardStyles.quotaCard]}>
+            <Stack direction="horizontal" justify="between" align="center" gap={2}>
+                <GroveText xstyle={dashboardStyles.cardTitle}>{providerName(protocol)}</GroveText>
+                <Stack direction="horizontal" align="center" xstyle={dashboardStyles.status}>
+                    <svg width={7} height={7} aria-hidden="true"><circle cx={3.5} cy={3.5} r={3.5} fill="currentColor" /></svg>
+                    <GroveText type="inherit" color="inherit">조회 중</GroveText>
+                </Stack>
+            </Stack>
+            {periods.map((period) => <Stack key={period} xstyle={dashboardStyles.quotaWindow} aria-hidden="true">
+                <Stack direction="horizontal" justify="between" gap={2}>
+                    <GroveText xstyle={dashboardStyles.small}>{period}</GroveText>
+                    <GroveText xstyle={[dashboardStyles.small, dashboardStyles.quotaValue("var(--muted)")]} weight="semibold">—</GroveText>
+                </Stack>
+                <svg height={6} width="100%"><rect width="100%" height={6} rx={3} fill="var(--raised)" /></svg>
+                <GroveText color="secondary" xstyle={dashboardStyles.hint}>{"\u00a0"}</GroveText>
+            </Stack>)}
+            <Stack xstyle={dashboardStyles.quotaFooter}>
+                <GroveText color="secondary" xstyle={dashboardStyles.hint}>마지막 조회 —</GroveText>
+            </Stack>
+        </Stack>)}
+    </Stack>;
+}
+
 /// 계정 한도 조회. 사용량 화면은 통계 응답을 기다리지 않고 진입 시 함께 시작하며, 한도 카드가 같은 key를 공유한다.
 export function useAccountUsage() {
     return useQuery("usage:accounts", () => api.getContract("AccountUsageReport", "/usage/accounts"));
@@ -147,7 +173,7 @@ export function SidebarUsage({ onAuthenticate, showEmpty = false, presentation =
     if (usage.data) return showEmpty && !usage.data.accounts.some((account) => accounts.some(({ protocol }) => account.protocol === protocol))
         ? <GroveText type="supporting" color="secondary">연결된 CLI 계정이 없어요.</GroveText>
         : <UsageSummary report={usage.data} failed={failed} now={now} onAuthenticate={onAuthenticate} />;
-    if (!failed) return null;
+    if (!failed) return presentation === "cards" ? <UsageQuotaPlaceholder /> : null;
     return <Stack as="section" padding={2} aria-label="남은 사용량" data-testid="sidebar-usage">
         <GroveText type="supporting" color="warning">사용량 조회 실패</GroveText>
     </Stack>;

@@ -51,6 +51,8 @@ async fn reuses_one_process_and_replaces_turn_mcp_then_resumes_with_changed_effo
     assert_eq!(second.native_session, first.native_session);
     assert_eq!(second.text, "second");
     assert_eq!(second.usage.output_tokens, 1);
+    assert_eq!(first.usage.model_request_ms, Some(10));
+    assert_eq!(second.usage.model_request_ms, Some(10));
     let wire = records(root.path());
     assert_eq!(wire.iter().map(|e| e["event"].as_str().unwrap()).collect::<Vec<_>>(),
         ["spawn", "mcp", "user", "mcp", "mcp", "user", "mcp"]);
@@ -72,6 +74,22 @@ async fn reuses_one_process_and_replaces_turn_mcp_then_resumes_with_changed_effo
     assert_ne!(changed.native_session, first.native_session);
     handle.sessions.close();
     assert_eq!(run(&handle, &profile, &req, &mut |_| {}, Some(&cli)).await.unwrap_err().code, "cancelled");
+}
+
+#[tokio::test]
+async fn missing_api_time_keeps_tokens_but_does_not_invent_speed() {
+    let root = tempfile::tempdir().unwrap();
+    let cli = fixture(root.path());
+    let handle = handle();
+    let profile = profile(Duration::from_secs(3));
+    let mut resume = None;
+    for (prompt, ms) in [("first", Some(10)), ("untimed", None), ("recover baseline", None), ("timed again", Some(10))] {
+        let out = run(&handle, &profile, &request(root.path(), resume, prompt), &mut |_| {}, Some(&cli)).await.unwrap();
+        assert_eq!(out.usage.output_tokens, 1);
+        assert_eq!(out.usage.model_request_ms, ms, "{prompt}");
+        resume = out.native_session;
+    }
+    assert_eq!(records(root.path()).iter().filter(|row| row["event"] == "spawn").count(), 1);
 }
 
 #[tokio::test]
@@ -143,6 +161,7 @@ async fn live_steer_reaches_the_running_turn_at_a_tool_boundary_or_the_next_cli_
         assert_eq!(out.response_steers, [(id.clone(), parts)], "{prompt}");
         assert_eq!(out.response_parts.last().map(String::as_str), Some("merged"), "{prompt}");
         assert_eq!(out.usage.output_tokens, output_tokens, "{prompt}");
+        assert_eq!(out.usage.model_request_ms, Some(if prompt == "steer-after" { 30 } else { 10 }), "{prompt}");
         let wire = records(root.path());
         let steer = wire.iter().find(|e| e["event"] == "steer").unwrap();
         assert_eq!((steer["text"].as_str(), steer["uuid"].as_str()), (Some("addition"), Some(id.as_str())));

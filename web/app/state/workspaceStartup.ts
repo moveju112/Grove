@@ -1,11 +1,13 @@
 import { api, authGeneration, isLoggedIn } from "../api/client";
 import type { MessagePage, Project, Session, ToolCallRow, Turn } from "../api/generated";
 import { conversationPagePath } from "./conversationPages";
-import { layoutKey } from "./device";
+import { layoutKey, loadPrefs } from "./device";
 import { focusedLeaf } from "./layout";
 import { readStoredLayout, type RemoteLayout } from "./layoutPersistence";
 import { projectLayoutKey } from "./projectLayout";
 import { readProjectSort, type ProjectSort } from "./projectOrder";
+import { RECENT_PAGE_SIZE, readRecentRange, recentRangeKey } from "./recentQuery";
+import { effectiveRecentWindow } from "./recentWindow";
 import { subscribeQuery } from "./store";
 import { workspaceResumeKey } from "./workspaceTabs";
 
@@ -32,6 +34,10 @@ let warm: { generation: number; resume: Promise<RemoteLayout> } | null = null;
 // 로그인 직후 읽기만 시작한다. 초기 설정 확인 전에 배치를 적용하거나 편집하지 않는다.
 export function primeWorkspaceStartup() {
     if (!isLoggedIn()) return;
+    const { recentWindow, recentWindows } = loadPrefs();
+    const range = effectiveRecentWindow(recentWindow, recentWindows);
+    // 첫 목록을 먼저 받아 두되, 닫힌 모바일 서랍을 계속 구독하지는 않는다.
+    subscribeQuery(recentRangeKey(range, RECENT_PAGE_SIZE), () => readRecentRange(range, RECENT_PAGE_SIZE), () => undefined)();
     const controller = new AbortController();
     const resume = getResume(controller.signal);
     const entry = warm = { generation: authGeneration(), resume };

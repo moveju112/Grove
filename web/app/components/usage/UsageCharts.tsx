@@ -5,7 +5,7 @@ import * as stylex from "@stylexjs/stylex";
 import type { UsageDashboard } from "../../api/generated";
 import { usePrefs } from "../../state/device";
 import { absoluteTime } from "../../state/time";
-import { compact, number, speed, tokens } from "./dashboardModel";
+import { compact, freshInput, number, speed, tokens } from "./dashboardModel";
 import { dashboardStyles as styles } from "./dashboard.stylex";
 
 /** 원본의 140px 합계 막대·구성 차트에 터치/키보드 구간 조회를 보존한다. */
@@ -37,7 +37,7 @@ export function UsageCharts({ report }: { report: UsageDashboard }) {
     const m = report.total;
     // Grove의 정규화된 입력에는 캐시가 포함된다. 구성에서 한 번만 집계한다.
     const breakdown = [
-        { label: "입력", value: Math.max(0, m.input_tokens - m.cache_read_tokens - m.cache_write_tokens), color: "var(--accent)" },
+        { label: "새 입력", value: freshInput(m), color: "var(--accent)" },
         { label: "출력", value: m.output_tokens, color: "var(--ok)" },
         { label: "캐시 읽기", value: m.cache_read_tokens, color: "var(--warn)" },
         { label: "캐시 쓰기", value: m.cache_write_tokens, color: "var(--muted)" },

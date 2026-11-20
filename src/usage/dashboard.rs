@@ -101,8 +101,8 @@ impl UsageMetrics {
         self.reasoning_unreported_responses += u64::from(usage["reasoning_tokens"].as_u64().is_none());
         self.responses += 1;
         self.unreported_responses += u64::from(input.is_none() || output.is_none());
-        // provider의 과거 0 정규화는 미보고와 구분할 수 없다. 속도를 0으로 꾸미지 않는다.
-        if let (Some(output), Some(ms)) = (output.filter(|n| *n > 0), content["provider_ms"].as_u64().filter(|n| *n > 0)) {
+        // 전체 턴 시간(provider_ms)은 CLI 내 도구 실행 등을 포함한다. 과거 기록도 대체값으로 쓰지 않는다.
+        if let (Some(output), Some(ms)) = (output.filter(|n| *n > 0), usage["model_request_ms"].as_u64().filter(|n| *n > 0)) {
             self.speed_samples.push(output as f64 * 1000.0 / ms as f64);
             self.measured_responses += 1;
             self.measured_output_tokens += output;
@@ -217,22 +217,23 @@ mod tests {
     #[test]
     fn speed_uses_matched_output_and_time_without_reusing_turn_totals() {
         let mut metrics = UsageMetrics::default();
-        metrics.add(&json!({"usage":{"input_tokens":100,"output_tokens":10,"cache_read_tokens":40},"provider_ms":1000}), "codex_cli");
-        metrics.add(&json!({"usage":{"input_tokens":20,"output_tokens":90},"provider_ms":3000}), "claude_code");
-        metrics.add(&json!({"usage":{"input_tokens":200,"output_tokens":900}}), "claude_code");
+        metrics.add(&json!({"usage":{"input_tokens":100,"output_tokens":10,"cache_read_tokens":40,"model_request_ms":1000},"provider_ms":50000}), "openai");
+        metrics.add(&json!({"usage":{"input_tokens":20,"output_tokens":90,"model_request_ms":3000},"provider_ms":60000}), "claude_code");
+        metrics.add(&json!({"usage":{"input_tokens":200,"output_tokens":900},"provider_ms":2000}), "codex_cli");
         metrics.add(&json!({"provider_ms":5000}), "claude_code");
         assert_eq!(metrics.input_tokens + metrics.output_tokens, 1320);
         assert_eq!(metrics.tok_per_second, Some(25.0));
         let metrics = metrics.finish();
         assert_eq!(metrics.low10_tok_per_second, Some(10.0));
         assert_eq!(metrics.high10_tok_per_second, Some(30.0));
-        assert_eq!((metrics.measured_responses, metrics.cli_measured_responses, metrics.responses, metrics.unreported_responses), (2, 2, 4, 1));
+        assert_eq!((metrics.measured_responses, metrics.cli_measured_responses, metrics.responses, metrics.unreported_responses), (2, 1, 4, 1));
+        assert_eq!((metrics.measured_output_tokens, metrics.response_ms), (100, 4000));
     }
 
     #[test]
     fn tail_means_round_samples_up_and_do_not_leak_them() {
         let mut metrics = UsageMetrics::default();
-        for output in 1..=11 { metrics.add(&json!({"usage":{"output_tokens":output},"provider_ms":1000}), "openai"); }
+        for output in 1..=11 { metrics.add(&json!({"usage":{"output_tokens":output,"model_request_ms":1000}}), "openai"); }
         let metrics = metrics.finish();
         assert_eq!(metrics.low10_tok_per_second, Some(1.5));
         assert_eq!(metrics.high10_tok_per_second, Some(10.5));

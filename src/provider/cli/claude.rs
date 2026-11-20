@@ -27,6 +27,8 @@ pub(crate) fn command(executable: impl AsRef<std::ffi::OsStr>) -> Command {
     }
     cmd.env_remove("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST")
         .env_remove("CLAUDECODE").env_remove("CLAUDE_CODE_ENTRYPOINT");
+    // CLI 내장 백그라운드 작업은 Grove 턴이 끝나면 추적·보고되지 않는다. 턴을 넘기는 작업은 Grove 셸로만 연다.
+    cmd.env("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1");
     cmd
 }
 
@@ -35,8 +37,11 @@ pub(crate) fn settings(mut settings: Value) -> String {
     // 관리 정책은 CLI의 자체 우선순위에 맡기고, 실행 전에 인증 방식이 일치하는지 확인한다.
     settings["forceLoginMethod"] = json!("claudeai");
     settings["apiKeyHelper"] = json!("");
-    settings["env"] = Value::Object(PROVIDER_OVERRIDES.iter()
-        .map(|&key| (key.into(), json!(""))).collect());
+    let mut env: serde_json::Map<String, Value> = PROVIDER_OVERRIDES.iter()
+        .map(|&key| (key.into(), json!(""))).collect();
+    // 사용자 settings.json env가 실행 환경의 백그라운드 차단을 되돌리지 못하게 한다.
+    env.insert("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS".into(), json!("1"));
+    settings["env"] = Value::Object(env);
     settings.to_string()
 }
 

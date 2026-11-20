@@ -11,7 +11,7 @@ test("과거 메시지를 읽는 동안 자동 스크롤하지 않고, 이전 �
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
-    const view = page.getByTestId("session-view");
+    const view = page.locator(`[data-testid=session-view][data-session="${s.id}"]`);
     const body = page.getByTestId("pane-body").filter({ has: view });
     // 처음엔 맨 아래
     await expect(view.getByText("줄 159", { exact: true })).toBeInViewport();
@@ -122,7 +122,7 @@ test("앱을 닫았다 다시 열어도(탭 저장소 없음) 대화의 마지�
     }
 });
 
-test("내가 보내면 직접 스크롤하기 전까지 레이아웃이 바뀌어도 맨 아래를 따라간다", async ({ page }) => {
+test("내가 보내면 직접 스크롤하기 전까지 답을 따라가되 보낸 질문이 화면 위에 닿으면 멈춘다", async ({ page }) => {
     test.setTimeout(90_000);
     const { a } = await ensureProjects();
     const profile = await ensureProfile();
@@ -139,14 +139,35 @@ test("내가 보내면 직접 스크롤하기 전까지 레이아웃이 바뀌�
     const atBottom = () => body.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop < 4);
     const input = view.getByLabel("메시지 입력");
 
-    // 위를 읽다가 보낸 뒤, 사용자 입력이 아닌 scroll(레이아웃 보정 등)이 생겨도 답을 끝까지 따라간다.
+    // 짧은 답은 사용자 입력이 아닌 scroll(레이아웃 보정 등)이 생겨도 끝까지 따라간다.
     await body.evaluate((el) => (el.scrollTop = el.scrollHeight / 4));
+    await script({ frames: frames.text(["짧은 답변", " 끝"]), delayMs: 600, marker: "짧은 질문" });
+    await input.fill("짧은 질문");
+    await view.getByRole("button", { name: "보내기", exact: true }).click();
+    await expect(view.getByTestId("msg-user").last()).toContainText("짧은 질문");
+    await body.evaluate((el) => (el.scrollTop = 0));
+    await expect(view.getByText("짧은 답변 끝")).toBeVisible();
+    await expect.poll(atBottom).toBe(true);
+    await expect(view.getByText("짧은 답변 끝")).toBeInViewport();
+    await expect(view.getByTestId("new-below")).toHaveCount(0);
+
+    // 긴 답은 보낸 질문의 시작이 화면 위에 닿으면 멈추고, 아래 새 내용은 알림으로 이어 본다.
     await script({ frames: frames.text(["고정 답변 문단입니다.\n\n".repeat(60), "고정 답변 끝"]), delayMs: 600, marker: "고정 질문" });
     await input.fill("고정 질문");
     await view.getByRole("button", { name: "보내기", exact: true }).click();
-    await expect(view.getByTestId("msg-user").last()).toContainText("고정 질문");
+    const prompt = view.getByTestId("msg-user").last();
+    await expect(prompt).toContainText("고정 질문");
     await body.evaluate((el) => (el.scrollTop = 0));
-    await expect(view.getByText("고정 답변 끝")).toBeVisible();
+    // 끝난 답의 아래쪽은 가상 목록에서 그리지 않을 수 있으므로 답이 끝날 시간을 기다린다.
+    await expect(view.getByTestId("new-below")).toBeVisible();
+    await page.waitForTimeout(2500);
+    const promptOffset = async () => (await prompt.boundingBox())!.y - (await body.boundingBox())!.y;
+    await expect.poll(promptOffset).toBeGreaterThanOrEqual(8);
+    expect(await promptOffset()).toBeLessThanOrEqual(16);
+    await expect(view.getByText("고정 답변 끝")).not.toBeInViewport();
+    expect(await atBottom()).toBe(false);
+    await expect(view.getByTestId("new-below")).toBeVisible();
+    await view.getByTestId("new-below").click();
     await expect.poll(atBottom).toBe(true);
     await expect(view.getByText("고정 답변 끝")).toBeInViewport();
     await expect(view.getByTestId("new-below")).toHaveCount(0);

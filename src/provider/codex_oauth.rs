@@ -82,8 +82,9 @@ async fn send_authorized(request: reqwest::RequestBuilder, auth: &Credentials, r
     Ok(response)
 }
 
-async fn send_with_refresh(request: reqwest::RequestBuilder, auth: &mut Credentials, request_id: &mut Option<String>) -> Result<reqwest::Response, ProviderError> {
+async fn send_with_refresh(request: reqwest::RequestBuilder, auth: &mut Credentials, request_id: &mut Option<String>) -> Result<(reqwest::Response, std::time::Instant), ProviderError> {
     let first = request.try_clone().ok_or_else(invalid)?;
+    let started = std::time::Instant::now();
     match send_authorized(first, auth, request_id).await {
         Err(error) if error.status == Some(401) => {
             // Desktop과 같은 refresh token을 직접 갱신하지 않는다. 공식 계정 경로만 사용한다.
@@ -101,9 +102,10 @@ async fn send_with_refresh(request: reqwest::RequestBuilder, auth: &mut Credenti
             *auth = current;
             drop(lock);
             *request_id = None;
-            send_authorized(request, auth, request_id).await
+            let started = std::time::Instant::now();
+            send_authorized(request, auth, request_id).await.map(|response| (response, started))
         }
-        result => result,
+        result => result.map(|response| (response, started)),
     }
 }
 
@@ -154,7 +156,7 @@ pub(super) async fn list_models() -> Result<Vec<AvailableModel>, ProviderError> 
 
 async fn catalog(auth: &mut Credentials) -> Result<Vec<AvailableModel>, ProviderError> {
     let client = super::http_client(Duration::from_secs(15));
-    let mut response = send_with_refresh(client.get(format!("{BASE}/models")).query(&[("client_version", CLIENT_VERSION)]), auth, &mut None).await?;
+    let (mut response, _) = send_with_refresh(client.get(format!("{BASE}/models")).query(&[("client_version", CLIENT_VERSION)]), auth, &mut None).await?;
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await.map_err(super::transport_error)? {
         if bytes.len() + chunk.len() > 8 * 1024 * 1024 { return Err(catalog_invalid()); }
@@ -423,8 +425,10 @@ async fn stream_sse(client: &reqwest::Client, auth: &mut Credentials, body: &Val
         frame_input_items: body["input"].as_array().map(Vec::len), ..Default::default()
     };
     let result = async {
-        let response = send_with_refresh(client.post(url).header("accept", "text/event-stream").json(body), auth, &mut diagnostics.request_id).await?;
-        read_response(response, model, scope, &mut diagnostics.request_id, on_delta).await
+        let (response, started) = send_with_refresh(client.post(url).header("accept", "text/event-stream").json(body), auth, &mut diagnostics.request_id).await?;
+        let mut out = read_response(response, model, scope, &mut diagnostics.request_id, on_delta).await?;
+        out.usage.model_request_ms = Some(started.elapsed().as_millis() as u64);
+        Ok(out)
     }.await;
     if let Err(error) = &result {
         diagnostics.log_failure("sse", body, model, auth, error);

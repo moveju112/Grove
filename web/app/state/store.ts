@@ -11,7 +11,7 @@ import { usePageVisible, usePaneVisible } from "./paneVisibility";
 // stale: 보는 화면이 없어 무효화를 미뤄 둔 항목. 다시 구독하면 그때 한 번 읽는다(PANE-007).
 // waiting: 연결 문제로 읽지 못한 항목. 화면에는 오류 대신 기존 값과 로딩 상태를 두고, 연결이 돌아오면 다시 읽는다.
 type Flight = { again: boolean; discard: boolean };
-type Entry = { data: unknown; error: unknown; loading: boolean; version: number; stale: boolean; waiting?: boolean; flight?: Flight; fetcher: () => Promise<unknown> };
+type Entry = { data: unknown; error: unknown; loading: boolean; version: number; stale: boolean; waiting?: boolean; flight?: Flight; startedAt?: number; fetcher: () => Promise<unknown> };
 /// 구독자가 없는 cache 항목의 최대 보관 수. 넘으면 오래된 것부터 버린다.
 export const IDLE_ENTRY_LIMIT = 200;
 
@@ -38,6 +38,7 @@ async function load(key: string, keepPending = false) {
     }
     const flight: Flight = { again: false, discard: false };
     e.flight = flight;
+    e.startedAt = Date.now();
     ++e.version;
     const g = generation;
     e.loading = true;
@@ -83,6 +84,15 @@ function refresh(k: string, keepPending = false) {
         const e = entries.get(k);
         if (e) e.stale = true;
     }
+}
+
+/// 화면에 다시 들어왔을 때는 캐시를 유지하며 확인한다. 방금 시작한 선조회·복귀 조회는 재사용한다.
+export function revalidateQuery(key: string, freshMs: number) {
+    const e = entries.get(key);
+    if (!e) return;
+    const age = Date.now() - (e.startedAt ?? -Infinity);
+    if (!e.waiting && age >= 0 && age < freshMs) return;
+    refresh(key, true);
 }
 
 let invalidated: Set<string> | null = null;

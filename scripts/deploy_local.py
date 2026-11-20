@@ -294,6 +294,37 @@ def work_matches(readiness, active_turns, running_tasks=0):
             and all(type(value) is int and value == expected.get(key, 0) for key, value in busy.items()))
 
 
+def turn_status(turn_id):
+    database = Path(DATA, "grove.db").resolve().as_uri() + "?mode=ro"
+    with closing(sqlite3.connect(database, uri=True, timeout=2)) as connection:
+        row = connection.execute("SELECT status FROM turns WHERE id=?", (turn_id,)).fetchone()
+    return row[0] if row else None
+
+
+def handoff_state(caller):
+    """빌드 전에 식별한 호출 턴과 그 셸 작업만 남았는지 본다.
+
+    턴이 아직 실행 중이면 그 턴 하나, 빌드 중 턴이 완료됐으면 실행 중 턴 없이 호출 셸 작업만 허용한다.
+    턴 상태가 readiness 조회 전후로 바뀌면 다시 확인하고, 끝내 일치하지 않으면 기존 보류 경로를 쓴다.
+    """
+    tasks = int(caller.task_id is not None)
+    for _ in range(3):
+        try:
+            before = turn_status(caller.turn_id)
+            readiness = update_readiness()
+            after = turn_status(caller.turn_id)
+        except (OSError, ValueError, sqlite3.Error):
+            return "busy"
+        if before != after:
+            continue
+        if before == "running":
+            return "handoff" if work_matches(readiness, 1, running_tasks=tasks) else "busy"
+        if before == "completed":
+            return "handoff" if work_matches(readiness, 0, running_tasks=tasks) else "busy"
+        return "caller_ended" if before in ("failed", "cancelled", "interrupted") else "busy"
+    return "busy"
+
+
 def deployment_state(directory, state, **details):
     write(os.path.join(directory, "state.json"), json.dumps({
         "state": state, "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), **details,
@@ -355,12 +386,10 @@ def wait_for_deployment(request, timeout=1800):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            database = Path(DATA, "grove.db").resolve().as_uri() + "?mode=ro"
-            with closing(sqlite3.connect(database, uri=True, timeout=2)) as connection:
-                row = connection.execute("SELECT status FROM turns WHERE id=?", (request["turn_id"],)).fetchone()
-            if not row or row[0] not in ("queued", "running", "awaiting_approval", "completed"):
+            status = turn_status(request["turn_id"])
+            if status not in ("queued", "running", "awaiting_approval", "completed"):
                 return "caller_not_completed"
-            if row[0] == "completed" and work_matches(update_readiness(), 0):
+            if status == "completed" and work_matches(update_readiness(), 0):
                 return None
         except (OSError, ValueError, sqlite3.Error):
             pass
@@ -555,19 +584,19 @@ def main():
     if a.install_cli:
         install_cli(os.path.abspath(a.install_cli))
         return
-    archive, receipt, manifest = package()
     current = Path(INSTALL, "current")
+    # 빌드는 수 분 걸린다. 그 사이 호출 턴이 끝나도 인계할 수 있도록 실행 중일 때 먼저 식별한다.
+    caller = deployment_caller() if not a.force and current.exists() else None
+    archive, receipt, manifest = package()
     expected = f"{manifest['version']}-{receipt['archive_sha256'][:12]}"
-    if not a.force and current.exists() and current.read_text().strip() != expected:
-        caller = deployment_caller()
-        if caller:
-            try:
-                readiness = update_readiness()
-            except (OSError, ValueError):
-                readiness = {}
-            if work_matches(readiness, 1, running_tasks=int(caller.task_id is not None)):
-                queue_deployment(archive, receipt, manifest, caller.turn_id, a.skip_pages)
-                return
+    if caller and current.read_text().strip() != expected:
+        state = handoff_state(caller)
+        if state == "handoff":
+            queue_deployment(archive, receipt, manifest, caller.turn_id, a.skip_pages)
+            return
+        if state == "caller_ended":
+            print("배포를 요청한 대화가 취소·실패·중단되어 적용하지 않습니다. 운영 서버는 유지됩니다", file=sys.stderr)
+            sys.exit(3)
     deploy_prepared(archive, receipt, manifest, force=a.force, skip_pages=a.skip_pages)
 
 

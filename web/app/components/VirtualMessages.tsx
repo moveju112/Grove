@@ -4,6 +4,7 @@ import type { Message } from "../api/generated";
 import { messageOffsets, messageRange } from "../state/virtualMessages";
 import { usePaneVisible } from "../state/paneVisibility";
 
+const PROMPT_MARGIN = 12;
 type Anchor = { id: string; offset: number };
 type Geometry = { width: number; height: number; origin: number; scrollTop: number };
 const geometryOf = (el: HTMLElement, root: HTMLElement): Geometry => ({
@@ -22,6 +23,11 @@ type Props = {
     /** 사용자가 직접 스크롤하기 전까지 맨 아래 고정을 유지한다. */
     pinned: RefObject<boolean>;
     bottom: RefObject<HTMLDivElement | null>;
+    /** 이 seq 뒤에 보낸 사용자 메시지는 고정 중 화면 위로 넘기지 않는다. */
+    promptAfter: RefObject<number | null>;
+    /** 부모의 맨 아래 이동도 같은 질문 고정 규칙을 쓰도록 노출한다. true면 질문에서 멈췄다. */
+    follow: RefObject<(() => boolean) | null>;
+    onHeld: () => void;
     onNavigate: () => void;
     render: (message: Message) => ReactNode;
 };
@@ -41,7 +47,7 @@ function MeasuredMessage({ message, position, size, register, children }: {
 }
 
 /// 화면 주변·검색/복원 대상·현재 초점 행만 유지한다. 높이 갱신은 같은 읽기 anchor에 맞춘다.
-export function VirtualMessages({ messages, targetSeq, onTargetReached, restorePosition, onRestored, presentationKey, stick, pinned, bottom, onNavigate, render }: Props) {
+export function VirtualMessages({ messages, targetSeq, onTargetReached, restorePosition, onRestored, presentationKey, stick, pinned, bottom, promptAfter, follow, onHeld, onNavigate, render }: Props) {
     const visible = usePaneVisible();
     const wasVisible = useRef(visible);
     const root = useRef<HTMLDivElement>(null);
@@ -137,6 +143,27 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
         messages.findIndex((m) => m.id === anchor.current?.id),
     ]) if (index >= 0) indices.add(index);
     const ordered = [...indices].sort((a, b) => a - b);
+    // 보낸 직후 고정 중에는 맨 아래를 따라가되, 방금 보낸 질문의 시작이 화면 위로 사라지기 전에 멈춘다.
+    // 긴 답을 받아도 질문부터 읽을 수 있고, 직접 스크롤하면 pinned가 풀려 일반 맨 아래 따라가기로 돌아간다.
+    const followEnd = () => {
+        bottom.current?.scrollIntoView({ block: "end" });
+        const el = pane();
+        const after = promptAfter.current;
+        if (!pinned.current || after === null || !el || !root.current) return false;
+        let index = -1;
+        for (let i = messages.length - 1; i >= 0; i--) {
+            if (messages[i]!.seq <= after) break;
+            if (messages[i]!.role === "user") { index = i; break; }
+        }
+        if (index < 0) return false;
+        const node = nodes.current.get(messages[index]!.id);
+        const top = node ? node.getBoundingClientRect().top : root.current.getBoundingClientRect().top + offsets[index]!;
+        const limit = el.getBoundingClientRect().top + PROMPT_MARGIN;
+        if (top >= limit) return false;
+        el.scrollTop -= limit - top;
+        return true;
+    };
+    follow.current = followEnd;
 
     useLayoutEffect(() => {
         const el = pane();
@@ -210,7 +237,7 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
             // 스크롤로 표시 범위만 바뀌면 위치를 보정하지 않는다.
             // 맨 아래 80px 안에서는 stick이 유지되므로 매번 끝으로 맞추면 느린 터치 스크롤을 되돌린다.
             const point = adjustment.current?.point ?? anchor.current;
-            if (stick.current) bottom.current?.scrollIntoView({ block: "end" });
+            if (stick.current) { if (followEnd()) onHeld(); }
             else if (point) {
                 const node = nodes.current.get(point.id);
                 if (node) el.scrollTop += node.getBoundingClientRect().top - el.getBoundingClientRect().top - point.offset;

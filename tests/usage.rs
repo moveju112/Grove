@@ -136,6 +136,15 @@ async fn turn_timing_separates_approval_wait_from_tool_and_model() {
     assert!(measured_ms >= 400 && measured_ms <= provider + 2, "승인 대기·Grove 도구 시간을 속도 분모에 넣지 않는다: {dashboard}");
     let output = dashboard["total"]["measured_output_tokens"].as_f64().unwrap();
     assert!((dashboard["total"]["tok_per_second"].as_f64().unwrap() - output * 1000.0 / measured_ms as f64).abs() < 0.000001);
+    let db_tid = tid.clone();
+    s.server.as_ref().unwrap().app.db.call(move |c| {
+        let model_ms: i64 = c.query_row(
+            "SELECT json_extract(content,'$.usage.model_request_ms') FROM messages WHERE turn_id=?1 AND role='assistant' AND json_extract(content,'$.usage.output_tokens')=20",
+            [&db_tid], |r| r.get(0),
+        )?;
+        assert_eq!(model_ms, measured_ms, "대시보드는 저장된 모델 시간만 쓴다");
+        Ok(())
+    }).await.unwrap();
     // 이전 버전 또는 강제 중단으로 구간이 미확정이면 0으로 만들지 않는다.
     let db_tid = tid.clone();
     s.server.as_ref().unwrap().app.db.call(move |c| {

@@ -10,6 +10,7 @@ pub mod source_settings;
 pub mod native_commands;
 pub mod approvals;
 mod project_fs;
+mod project_guidance;
 pub mod auth;
 pub mod e2ee;
 pub mod relay;

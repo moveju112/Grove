@@ -3,19 +3,33 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { apiCall, ensureProfile, login, runningSendMode, script, sessionView, state } from "./helpers";
 
-async function hold(page: Page, button: Locator, cancel = false) {
+async function hold(page: Page, button: Locator, cancel?: "touch" | "move") {
     const client = await page.context().newCDPSession(page);
     const bounds = (await button.boundingBox())!;
-    await client.send("Input.dispatchTouchEvent", {
-        type: "touchStart", touchPoints: [{ x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 }],
-    });
-    if (cancel) {
-        await client.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
-    } else {
-        await expect(page.getByRole("menu")).toBeVisible();
-        await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    const point = { x: bounds.x + bounds.width / 2, y: bounds.y + bounds.height / 2 };
+    try {
+        await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [point] });
+        if (cancel === "touch") {
+            // 일부 브라우저는 길게 누르기 처리와 별개로 터치 contextmenu를 보낸다.
+            await button.evaluate((target) => target.dispatchEvent(new PointerEvent("contextmenu", {
+                bubbles: true, cancelable: true, button: 2, pointerType: "touch",
+            })));
+        }
+        if (cancel === "move") {
+            await client.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ ...point, y: point.y - 28 }] });
+            // 손가락을 떼기 전에 길게 누르기 시간이 지나도 메뉴가 열리지 않아야 한다.
+            await page.waitForTimeout(650);
+            await expect(page.getByRole("menu")).toBeHidden();
+        }
+        if (cancel) {
+            await client.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+        } else {
+            await expect(page.getByRole("menu")).toBeVisible();
+            await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        }
+    } finally {
+        await client.detach();
     }
-    await client.detach();
 }
 
 async function expectContextMenuDefault(page: Page, target: Locator, prevented: boolean, offsetX = 0) {
@@ -82,7 +96,8 @@ for (const width of [390, 1280]) {
                 };
                 await input.fill("취소해도 남는 입력");
                 if (width === 390) {
-                    await hold(page, emptyButton, true);
+                    await hold(page, emptyButton, "touch");
+                    await hold(page, emptyButton, "move");
                     await expect(menu).toBeHidden();
                     expect(sent).toHaveLength(0);
                 }
@@ -93,6 +108,14 @@ for (const width of [390, 1280]) {
                 await expect(menu).toBeHidden();
                 await expect(input).toHaveValue("취소해도 남는 입력");
                 expect(sent).toHaveLength(0);
+                if (width !== 390) {
+                    await emptyButton.press("Shift+F10");
+                    await expect(menu).toBeVisible();
+                    await page.keyboard.press("Escape");
+                    await expect(menu).toBeHidden();
+                    await expect(emptyButton).toBeFocused();
+                    expect(sent).toHaveLength(0);
+                }
 
                 const cases = [
                     { setting: "queue", label: "대기열", once: "steer", choice: "합치기" },

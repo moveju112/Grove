@@ -465,7 +465,18 @@ export function Workspace() {
         }
     });
     const selectedProject = projects.data?.find((p) => p.id === selectedProjectId);
-    const mobileTabs = layout ? L.allTabs(layout).filter((tab) => tab.project_id === selectedProjectId || !tab.project_id) : [];
+    const mobileTabs = narrow && layout ? L.allTabs(layout).filter((tab) => tab.project_id === selectedProjectId) : [];
+    const mobileDrafts = mobileTabs.filter((tab) => tab.kind === "project");
+    const renderMobileTab = (tab: L.Tab) => <Stack direction="horizontal" align="center" gap={0} key={tab.id} data-testid="mobile-open-tab">
+        <Button type="button" appearance="navigation" aria-current={layout && L.focusedLeaf(layout).active_tab === tab.id ? "page" : undefined}
+            onClick={() => { leaveUsage(); updateAt(key, (current) => L.activate(current, tab.id)); mobile.setPanel(null); }}>
+            {L.tabTitle(tab)}
+        </Button>
+        <Button type="button" variant="secondary" appearance="icon" aria-label={`${L.tabTitle(tab)} 탭 닫기`}
+            title={closingTabs.has(tab.id) ? "탭 닫는 중…" : tab.kind === "session" ? "탭을 닫고 최근 목록에서 숨깁니다. 대화와 실행 중인 작업은 유지됩니다." : "화면만 닫습니다. 실행은 계속되며 작성 중인 입력은 저장되지 않습니다."}
+            disabled={closingTabs.has(tab.id)} aria-busy={closingTabs.has(tab.id)}
+            onClick={() => closeTab(key, tab.id)}>{closingTabs.has(tab.id) ? "…" : "×"}</Button>
+    </Stack>;
     const renderProject = (p: Project) => (
         <SidebarProject key={p.id} project={p} open={open} narrow={narrow}>
             <Stack direction="horizontal" align="center" gap={0} minHeight={32} data-testid="project-row" data-project={p.name} data-project-order-id={p.id}
@@ -612,7 +623,7 @@ export function Workspace() {
                     </ScrollableArea>
                     </StackItem>
                     <Stack gap={0} paddingInline={2} xstyle={workspaceStyles.recentDock}>
-                        <RecentPanel open={openRecent} splitGroups={splitGroups} />
+                        <RecentPanel open={openRecent} splitGroups={splitGroups} shown={sidebar} />
                     </Stack>
                     </Stack>
                 </LayoutPanel>
@@ -687,24 +698,14 @@ export function Workspace() {
             </Stack></StackItem>
             <MobileDrawer enabled={narrow} side="right" open={mobile.panel === "right"} drag={mobile.drag}
                 label="열린 세션" onClose={() => mobile.setPanel(null)}>
-                {narrow && <Stack as="nav" gap={1} padding={2} aria-label="현재 프로젝트 열린 탭">
-                    {selectedProject && <Heading level={2} type="navigation">{selectedProject.name}</Heading>}
-                    {(["session", "other"] as const).map((kind) => {
-                        const tabs = mobileTabs.filter((tab) => kind === "session" ? tab.kind === "session" : tab.kind !== "session");
-                        return tabs.length > 0 && <section key={kind} aria-label={kind === "session" ? "대화" : "다른 화면"}>
-                            {kind === "other" && <Heading level={3} type="navigation">다른 화면</Heading>}
-                            {tabs.map((tab) => <Stack direction="horizontal" align="center" gap={0} key={tab.id} data-testid="mobile-open-tab">
-                                <Button type="button" appearance="navigation" aria-current={layout && L.focusedLeaf(layout).active_tab === tab.id ? "page" : undefined}
-                                    onClick={() => { leaveUsage(); updateAt(key, (current) => L.activate(current, tab.id)); mobile.setPanel(null); }}>
-                                    {L.tabTitle(tab)}
-                                </Button>
-                                <Button type="button" variant="secondary" appearance="icon" aria-label={`${L.tabTitle(tab)} 탭 닫기`}
-                                    title={closingTabs.has(tab.id) ? "탭 닫는 중…" : tab.kind === "terminal" ? "탭을 닫고 터미널 프로세스를 종료합니다" : tab.kind === "session" ? "탭을 닫고 최근 목록에서 숨깁니다. 대화와 실행 중인 작업은 유지됩니다." : "화면만 닫습니다. 실행은 계속되며 작성 중인 입력은 저장되지 않습니다."}
-                                    disabled={closingTabs.has(tab.id)} aria-busy={closingTabs.has(tab.id)}
-                                    onClick={() => closeTab(key, tab.id)}>{closingTabs.has(tab.id) ? "…" : "×"}</Button>
-                            </Stack>)}
-                        </section>;
-                    })}
+                {narrow && <Stack as="nav" gap={0} height="100%" aria-label="현재 프로젝트 열린 탭">
+                    <StackItem size="fill" isScrollable aria-label="현재 프로젝트 세션">
+                        <Stack gap={1} padding={2}>{mobileTabs.filter((tab) => tab.kind === "session").map(renderMobileTab)}</Stack>
+                    </StackItem>
+                    {mobileDrafts.length > 0 && <Stack as="section" gap={1} padding={2} isScrollable
+                        aria-label="새 대화 탭" xstyle={workspaceStyles.mobileDraftDock}>
+                        {mobileDrafts.map(renderMobileTab)}
+                    </Stack>}
                 </Stack>}
             </MobileDrawer>
         </Stack>

@@ -285,6 +285,7 @@ pub fn apply_event(protocol: &str, e: &Value, out: &mut ModelOutput, final_text:
                     cache_read_tokens: u["cache_read_input_tokens"].as_u64().unwrap_or(0),
                     cache_write_tokens: u["cache_creation_input_tokens"].as_u64(),
                     reasoning_tokens: u["output_tokens_details"]["thinking_tokens"].as_u64(),
+                    model_request_ms: e["duration_api_ms"].as_u64(),
                 };
                 for d in e["permission_denials"].as_array().into_iter().flatten() {
                     out.activity.push(json!({ "kind": "denied", "name": d["tool_name"], "input": summarize(&d["tool_input"]) }));
@@ -326,6 +327,7 @@ pub fn apply_event(protocol: &str, e: &Value, out: &mut ModelOutput, final_text:
                     cache_read_tokens: u["cached_input_tokens"].as_u64().unwrap_or(0),
                     cache_write_tokens: u["cache_write_input_tokens"].as_u64(),
                     reasoning_tokens: u["reasoning_output_tokens"].as_u64(),
+                    ..Default::default()
                 };
                 out.finish_reason = "stop".into();
             }
@@ -1152,6 +1154,7 @@ echo '{{"type":"result","result":"ok"}}'"#);
             let settings: Value = serde_json::from_str(&a[a.iter().position(|v| v == "--settings").unwrap()+1]).unwrap();
             assert_eq!(settings["sandbox"], json!({"enabled":false}));
             assert_eq!(settings["forceLoginMethod"], "claudeai");
+            assert_eq!(settings["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1", "CLI 내장 백그라운드는 턴 종료 뒤 추적되지 않는다");
             assert!(!a.contains(&"--setting-sources".into()), "전역·프로젝트 지침의 기본 로딩을 막지 않는다");
             assert!(!a.contains(&"--strict-mcp-config".into()), "일반 대화의 사용자 MCP를 차단하지 않는다");
             let session_flag = if resume.is_some() { "--resume" } else { "--session-id" };
@@ -1219,13 +1222,14 @@ echo '{{"type":"result","result":"ok"}}'"#);
             r#"{"type":"system","subtype":"init","session_id":"S1"}"#,
             r#"{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{"file_path":"a"}}]}}"#,
             r#"{"type":"assistant","message":{"content":[{"type":"text","text":"답"}]}}"#,
-            r#"{"type":"result","subtype":"success","is_error":false,"result":"최종 답","session_id":"S1","usage":{"input_tokens":4,"cache_read_input_tokens":10,"cache_creation_input_tokens":6,"output_tokens":7},"permission_denials":[{"tool_name":"Write","tool_input":{}}]}"#,
+            r#"{"type":"result","subtype":"success","is_error":false,"result":"최종 답","session_id":"S1","duration_ms":4000,"duration_api_ms":170,"usage":{"input_tokens":4,"cache_read_input_tokens":10,"cache_creation_input_tokens":6,"output_tokens":7},"permission_denials":[{"tool_name":"Write","tool_input":{}}]}"#,
         ] {
             apply_event("claude_code", &serde_json::from_str(l).unwrap(), &mut o, &mut f).unwrap();
         }
         assert_eq!(o.native_session.as_deref(), Some("S1"));
         assert_eq!(f.as_deref(), Some("최종 답"));
         assert_eq!((o.usage.input_tokens, o.usage.output_tokens, o.usage.cache_read_tokens), (20, 7, 10));
+        assert_eq!(o.usage.model_request_ms, Some(170));
         assert!(o.tool_calls.is_empty(), "CLI 도구는 Grove가 실행하지 않는다");
         assert_eq!(o.activity.len(), 2);
         assert_eq!(o.activity[1]["kind"], "denied");

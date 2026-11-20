@@ -103,6 +103,9 @@ pub struct Usage {
     pub cache_write_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_tokens: Option<u64>,
+    /// 이 사용량과 짝이 되는 모델 요청 시간. CLI 턴 전체 시간으로 대체하지 않는다.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_request_ms: Option<u64>,
 }
 
 impl Usage {
@@ -422,13 +425,21 @@ pub(crate) async fn stream_with_service_tier(
             on_delta(o)
         };
         let fut = async {
+            let started = std::time::Instant::now();
             match profile.protocol.as_str() {
                 "claude_code" | "codex_cli" => cli::stream(profile, req, &mut wrapped).await,
                 codex_oauth::PROTOCOL => codex_oauth::stream(&client, profile, req, service_tier, codex, &mut wrapped).await,
-                "openai" => openai::stream(&client, profile, req, &mut wrapped).await,
-                "anthropic" => anthropic::stream(&client, profile, req, &mut wrapped).await,
-                "gemini" => gemini::stream(&client, profile, req, &mut wrapped).await,
-                other => Err(ProviderError::new("unsupported", format!("지원하지 않는 protocol: {other}"))),
+                protocol => {
+                    let mut out = match protocol {
+                        "openai" => openai::stream(&client, profile, req, &mut wrapped).await,
+                        "anthropic" => anthropic::stream(&client, profile, req, &mut wrapped).await,
+                        "gemini" => gemini::stream(&client, profile, req, &mut wrapped).await,
+                        other => Err(ProviderError::new("unsupported", format!("지원하지 않는 protocol: {other}"))),
+                    }?;
+                    // HTTP 공급자의 성공한 요청 한 건만 잰다. 바깥 재시도 대기와 Grove 도구는 포함하지 않는다.
+                    out.usage.model_request_ms = Some(started.elapsed().as_millis() as u64);
+                    Ok(out)
+                }
             }
         };
         let r = tokio::select! {

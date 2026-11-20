@@ -87,6 +87,7 @@ impl Accumulator {
                 cache_read_tokens: u["prompt_tokens_details"]["cached_tokens"].as_u64().unwrap_or(0),
                 cache_write_tokens: u["prompt_tokens_details"]["cache_write_tokens"].as_u64(),
                 reasoning_tokens: u["completion_tokens_details"]["reasoning_tokens"].as_u64(),
+                ..Default::default()
             };
         }
         let Some(choice) = chunk["choices"].get(0) else { return Ok(()) };

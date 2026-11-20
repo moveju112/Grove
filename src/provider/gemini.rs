@@ -90,6 +90,7 @@ impl Accumulator {
                 cache_read_tokens: u["cachedContentTokenCount"].as_u64().unwrap_or(0),
                 cache_write_tokens: None,
                 reasoning_tokens: u["thoughtsTokenCount"].as_u64(),
+                ..Default::default()
             };
         }
         if let Some(fb) = v["promptFeedback"]["blockReason"].as_str() {

@@ -8,7 +8,9 @@ import sys
 args = sys.argv[1:]
 settings = json.loads(args[args.index("--settings") + 1])
 assert settings["forceLoginMethod"] == "claudeai"
-assert all(key not in os.environ for key in settings["env"])
+assert all(key not in os.environ for key, value in settings["env"].items() if value == "")
+# CLI 내장 백그라운드는 실행 환경과 --settings 양쪽에서 끈다.
+assert os.environ["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == settings["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"
 
 def record(**entry):
     with Path("wire.jsonl").open("a") as wire:
@@ -27,6 +29,7 @@ resumed = "--resume" in args
 session = args[args.index("--resume" if resumed else "--session-id") + 1]
 record(event="spawn", session=session, resumed=resumed)
 link = None
+api_total = 0
 for line in sys.stdin:
     data = json.loads(line)
     if data["type"] == "control_request":
@@ -53,9 +56,15 @@ for line in sys.stdin:
         assert steer["type"] == "user" and steer["session_id"] == session and steer["uuid"]
         record(event="steer", text=steer["message"]["content"][0]["text"], uuid=steer["uuid"])
         if text == "steer-after":
-            emit(type="result", subtype="success", session_id=session, result="started", usage={"output_tokens": 2})
+            api_total += 20
+            emit(type="result", subtype="success", session_id=session, result="started", duration_ms=1000, duration_api_ms=api_total,
+                 usage={"output_tokens": 2})
             emit(type="system", subtype="init", session_id=session)
         emit(type="user", isReplay=True, uuid=steer["uuid"], message=steer["message"], session_id=session)
         emit(type="assistant", message={"content": [{"type": "text", "text": "merged"}]})
         text = "merged"
-    emit(type="result", subtype="success", session_id=session, result=text, usage={"output_tokens": 1})
+    api_total += 10
+    timing = {"duration_ms": 999}
+    if not text.endswith("untimed"):
+        timing["duration_api_ms"] = api_total
+    emit(type="result", subtype="success", session_id=session, result=text, usage={"output_tokens": 1}, **timing)

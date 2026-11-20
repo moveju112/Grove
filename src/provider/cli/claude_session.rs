@@ -97,6 +97,7 @@ struct Process {
     lines: BufReader<ChildStdout>,
     pending: Vec<u8>,
     native_id: String,
+    api_ms_total: Option<u64>,
     _scratch: tempfile::TempDir,
 }
 
@@ -164,7 +165,7 @@ async fn start(key: &Key, mut argv: Vec<String>, native_id: String) -> Result<Pr
     let mut child = cmd.spawn().map_err(|e| ProviderError::new("cli_failed", format!("Claude Code 실행 실패: {e}")))?;
     let owned = crate::procs::adopt(&mut child, &tag).map_err(|e| ProviderError::new("cli_failed", e))?;
     Ok(Process { stdin: child.stdin.take().expect("stdin"), lines: BufReader::new(child.stdout.take().expect("stdout")),
-        child, owned, pending: Vec::new(), native_id, _scratch: scratch })
+        child, owned, pending: Vec::new(), native_id, api_ms_total: Some(0), _scratch: scratch })
 }
 
 pub(super) async fn run(
@@ -212,7 +213,8 @@ pub(super) async fn run(
     // 합치기 ACK 전에 끝난 CLI 턴의 답변과 사용량. 남은 합치기는 CLI가 이어지는 턴으로 처리한다.
     let mut answers: Vec<String> = Vec::new();
     let mut usage = super::super::Usage::default();
-    let Process { stdin, lines, pending: buffer, child, .. } = &mut process;
+    let mut model_ms = Some(0u64);
+    let Process { stdin, lines, pending: buffer, child, api_ms_total, .. } = &mut process;
     let stdin = tokio::sync::Mutex::new(stdin);
     let write = async {
         let mut stdin = stdin.lock().await;
@@ -275,6 +277,15 @@ pub(super) async fn run(
             }
             stream.apply("claude_code", &event)?;
             if event["type"] == "result" {
+                // CLI의 duration_api_ms는 열린 프로세스의 누적값이다. 이전 result 이후의 시간만 이 출력에 붙인다.
+                let total = stream.output.usage.model_request_ms;
+                let previous = std::mem::replace(api_ms_total, total);
+                let elapsed = total.zip(previous).and_then(|(now, before)| now.checked_sub(before));
+                stream.output.usage.model_request_ms = elapsed.filter(|&ms| ms > 0);
+                // 출력이 있는 모든 결과에 시간이 있어야 합산 출력과 짝을 맞출 수 있다.
+                if stream.output.usage.output_tokens > 0 {
+                    model_ms = model_ms.zip(stream.output.usage.model_request_ms).and_then(|(sum, ms)| sum.checked_add(ms));
+                }
                 usage.add(&stream.output.usage);
                 if sent.is_empty() { return Ok(true); }
                 // 도구 경계 없이 끝난 턴 뒤에는 CLI가 남은 합치기를 이어지는 턴으로 처리한다.
@@ -285,6 +296,7 @@ pub(super) async fn run(
         }
     };
     let (_, complete) = tokio::try_join!(write, read)?;
+    usage.model_request_ms = model_ms.filter(|&ms| complete && ms > 0);
     stream.output.usage = usage;
     if !answers.is_empty() {
         answers.extend(stream.final_text.take());

@@ -330,6 +330,70 @@ with patch.dict(caller.__globals__, DATA=str(data), daemon_pids=lambda: [os.getp
                 if expected_queue:
                     queue.assert_called_once_with(str(self.archive), self.receipt, self.manifest, "own-turn", False)
 
+    def run_main(self, caller, readiness, during_build=None):
+        def build():
+            if during_build:
+                during_build()
+            return str(self.archive), self.receipt, self.manifest
+        order = []
+        with patch.object(sys, "argv", ["deploy_local.py"]), \
+                patch.object(deploy, "package", side_effect=lambda: order.append("package") or build()), \
+                patch.object(deploy, "deployment_caller", side_effect=lambda: order.append("caller") or caller), \
+                patch.object(deploy, "update_readiness", side_effect=readiness), \
+                patch.object(deploy, "queue_deployment") as queue, patch.object(deploy, "deploy_prepared") as prepared:
+            try:
+                deploy.main()
+                code = 0
+            except SystemExit as error:
+                code = error.code
+        return order, queue, prepared, code
+
+    def test_caller_is_identified_before_build_and_survives_turn_completion(self):
+        shell = deploy.DeploymentCaller("own-turn", "deploy-task")
+        cli = deploy.DeploymentCaller("own-turn")
+        for caller, counts, expected_queue in (
+            (shell, {"running_tasks": 1}, True),
+            (shell, {}, False),
+            (shell, {"running_tasks": 2}, False),
+            (shell, {"active_turns": 1, "running_tasks": 1}, False),
+            (cli, {}, True),
+            (cli, {"active_turns": 1}, False),
+        ):
+            with self.subTest(caller=caller, counts=counts):
+                self.turn_status("running")
+                order, queue, prepared, code = self.run_main(
+                    caller, lambda: self.readiness(**counts), during_build=lambda: self.turn_status("completed"))
+                self.assertEqual(order, ["caller", "package"])
+                self.assertEqual((queue.called, prepared.called, code), (expected_queue, not expected_queue, 0))
+                if expected_queue:
+                    queue.assert_called_once_with(str(self.archive), self.receipt, self.manifest, "own-turn", False)
+
+    def test_ended_caller_turn_never_applies(self):
+        shell = deploy.DeploymentCaller("own-turn", "deploy-task")
+        for status in ("failed", "cancelled", "interrupted"):
+            with self.subTest(status=status):
+                self.turn_status("running")
+                _, queue, prepared, code = self.run_main(
+                    shell, lambda: self.readiness(running_tasks=1), during_build=lambda: self.turn_status(status))
+                self.assertEqual((queue.called, prepared.called, code), (False, False, 3))
+
+    def test_turn_change_during_readiness_is_rechecked(self):
+        shell = deploy.DeploymentCaller("own-turn", "deploy-task")
+        def finishing():
+            self.turn_status("completed")
+            return self.readiness(active_turns=1, running_tasks=1)
+        steps = iter([finishing, lambda: self.readiness(running_tasks=1)])
+        _, queue, _, _ = self.run_main(shell, lambda: next(steps)())
+        queue.assert_called_once()
+        # 계속 바뀌는 상태나 readiness 오류는 추측하지 않고 updater 보류 경로로 넘긴다.
+        self.turn_status("running")
+        flips = iter(["completed", "running"] * 3)
+        with patch.object(deploy, "turn_status", side_effect=lambda _: next(flips)):
+            _, queue, prepared, _ = self.run_main(shell, lambda: self.readiness(running_tasks=1))
+        self.assertEqual((queue.called, prepared.called), (False, True))
+        _, queue, prepared, _ = self.run_main(shell, OSError())
+        self.assertEqual((queue.called, prepared.called), (False, True))
+
     def test_first_install_and_unchanged_release_keep_existing_path(self):
         for current in (None, f"0.1.0-{self.receipt['archive_sha256'][:12]}"):
             if current is None:
@@ -340,7 +404,8 @@ with patch.dict(caller.__globals__, DATA=str(data), daemon_pids=lambda: [os.getp
                     patch.object(deploy, "package", return_value=(str(self.archive), self.receipt, self.manifest)), \
                     patch.object(deploy, "deployment_caller") as caller, patch.object(deploy, "deploy_prepared") as prepared:
                 deploy.main()
-            caller.assert_not_called()
+            # 첫 설치는 인계 대상이 없고, 같은 release는 식별 결과와 무관하게 기존 경로를 쓴다.
+            self.assertEqual(caller.called, current is not None)
             prepared.assert_called_once()
 
     def test_updater_deferral_does_not_install_cli_or_publish_pages(self):

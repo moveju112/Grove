@@ -148,6 +148,9 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     const stick = useRef(savedPosition?.atBottom ?? true);
     // 내가 보낸 뒤에는 직접 스크롤하기 전까지 맨 아래에 고정한다. 레이아웃 변화로 생긴 scroll은 고정을 풀지 않는다.
     const pinned = useRef(false);
+    // 고정 중 화면 위에 남길 질문은 이 seq 뒤에 새로 보낸 사용자 메시지다.
+    const promptAfter = useRef<number | null>(null);
+    const followEnd = useRef<(() => boolean) | null>(null);
     const [unseen, setUnseen] = useState(false);
     const scroller = () => msgsRef.current?.closest('[data-testid="pane-body"]') as HTMLElement | null;
     const composerElement = () => msgsRef.current?.closest('[data-testid="session-view"]')?.querySelector<HTMLElement>('[data-testid="compose-surface"]');
@@ -165,7 +168,8 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     };
     const scrollEnd = () => {
         updateScrollMargin();
-        bottom.current?.scrollIntoView({ block: "end" });
+        if (!followEnd.current) bottom.current?.scrollIntoView({ block: "end" });
+        else if (followEnd.current()) setUnseen(true);
     };
     const capturePosition = () => {
         const el = scroller();
@@ -191,8 +195,10 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             if (!el.clientHeight || !el.clientWidth) return;
             // 메시지 끝 표시가 스크롤 영역 아래쪽 80px 안에 보이면 '맨 아래를 보는 중'이다(아래 패널·입력창 높이와 무관).
             const b = bottom.current?.getBoundingClientRect();
-            stick.current = pinned.current || (!!b && b.top <= messageViewportBottom() + 80);
-            if (stick.current) setUnseen(false);
+            const near = !!b && b.top <= messageViewportBottom() + 80;
+            stick.current = pinned.current || near;
+            // 질문에서 멈춘 고정 상태는 아래에 새 내용이 남아 있으므로 알림을 지우지 않는다.
+            if (near) setUnseen(false);
             capturePosition();
         };
         // 브라우저 scroll anchoring이 아래에 내용이 늘 때 위치를 고치며 scroll 이벤트를 내면 '맨 아래 보는 중'이 꺼진다.
@@ -223,6 +229,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     }, [!!s, !!latest.data]); // eslint-disable-line react-hooks/exhaustive-deps
     const toBottom = () => {
         clearPendingPosition();
+        pinned.current = false;
         stick.current = true;
         setUnseen(false);
         scrollEnd();
@@ -375,9 +382,10 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
 
     const send = async (text: string, o: SendOptions, key: string, follow?: FollowKind, attachments: string[] = []) => {
         const request = { key, requires: [...modelOptionCapabilities(o), ...(room.data ? ["bot_rooms_v1"] : [])] };
-        // 내가 보낸 글과 그 답은 직접 스크롤하기 전까지 따라간다.
-        pinned.current = true;
+        // 내가 보낸 글과 그 답은 직접 스크롤하기 전까지 따라가되, 보낸 질문이 화면 위로 사라지기 전에 멈춘다.
         toBottom();
+        promptAfter.current = latestRef.current?.items.at(-1)?.seq ?? 0;
+        pinned.current = true;
         if (follow) {
             // 실행 중 추가 메시지(RUN-007): 서버가 실행 상태를 다시 확인하고, 그 사이 끝났으면 바로 새 요청으로 시작한다.
             await api.post(`/sessions/${sessionId}/followups`, { kind: follow, text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, request);
@@ -536,7 +544,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                             setUnseen(!!position && (latest.data?.items.at(-1)?.seq ?? 0) > position.lastSeq || !!partial?.text);
                             capturePosition();
                         }}
-                        stick={stick} pinned={pinned} bottom={bottom} onNavigate={() => { clearPendingPosition(); pinned.current = false; stick.current = false; }}
+                        stick={stick} pinned={pinned} bottom={bottom} promptAfter={promptAfter} follow={followEnd} onHeld={() => setUnseen(true)} onNavigate={() => { clearPendingPosition(); pinned.current = false; stick.current = false; }}
                         render={(m) => {
                             const preceding = transcript.preceding.get(m.id);
                             return (

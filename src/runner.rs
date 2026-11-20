@@ -600,6 +600,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
         .as_i64()
         .and_then(|m| Some(crate::util::parse_time(&t.created_at)? + time::Duration::minutes(m)));
     let mut system = system_prompt(&def, &root.to_string_lossy(), t.tools_enabled);
+    crate::project_guidance::append(&mut system, &rp.protocol, &root);
     if rp.protocol == provider::codex_oauth::PROTOCOL && t.tools_enabled {
         system.push_str("\n# User-facing progress\n\
             For multi-stage work, give a brief user-facing progress update before the first tool call and when the work changes phase. \
@@ -2045,6 +2046,38 @@ mod tests {
         for absent in [json!({}), json!({"output_style":null}), json!({"output_style":"unknown"})] {
             assert_eq!(system_prompt(&absent, "/fixture", false), default);
         }
+    }
+
+    #[test]
+    fn model_step_loads_only_the_active_api_backends_project_guidance() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().to_path_buf();
+        std::fs::create_dir(data.join(".claude")).unwrap();
+        for (path, marker) in [("AGENTS.md", "codex-marker"), ("CLAUDE.md", "claude-marker"),
+            (".claude/CLAUDE.md", "claude-dot-marker"), ("CLAUDE.local.md", "private-marker")]
+        {
+            std::fs::write(data.join(path), marker).unwrap();
+        }
+        let db = crate::store::Db::open(&data.join("grove.db")).unwrap();
+        db.call_sync(move |c| {
+            let now = "2026-01-01T00:00:00Z";
+            c.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES ('p','fixture',?1,?2,?2)", params![data.to_str().unwrap(), now])?;
+            c.execute("INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES ('s','p','fixture',?1,?1)", [now])?;
+            let msg = crate::sessions::append_message(c, now, "s", "user", &json!({"text":"fixture"}), None, None)?;
+            for protocol in ["codex_oauth", "anthropic", "codex_cli", "claude_code", "openai"] {
+                c.execute("INSERT INTO model_profiles(id,name,protocol,base_url,model,created_at,updated_at) \
+                           VALUES (?1,?1,?1,'http://127.0.0.1','default',?2,?2)", params![protocol, now])?;
+                c.execute("INSERT INTO turns(id,session_id,status,request_message_id,profile_id,owner_epoch,created_at,updated_at) \
+                           VALUES ('t','s','running',?1,?2,'epoch',?3,?3)", params![msg.id, protocol, now])?;
+                let request = load_step(c, "t", "epoch", &data)?.unwrap().request;
+                assert_eq!(request.system.contains("codex-marker"), protocol == "codex_oauth", "{protocol}");
+                assert_eq!(request.system.contains("claude-marker"), protocol == "anthropic", "{protocol}");
+                assert_eq!(request.system.contains("claude-dot-marker"), protocol == "anthropic", "{protocol}");
+                assert!(!request.system.contains("private-marker"), "{protocol}");
+                c.execute("DELETE FROM turns WHERE id='t'", [])?;
+            }
+            Ok(())
+        }).unwrap();
     }
 
     #[test]

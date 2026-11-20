@@ -37,6 +37,7 @@ export const workspaceStyles = stylex.create({
         borderRadius: "var(--radius-element)",
         pointerEvents: "none",
     }),
+    mobileDraftDock: { flexShrink: 0, maxHeight: "40%", paddingBlockEnd: "calc(var(--spacing-2) + env(safe-area-inset-bottom, 0px))" },
     recentDock: { flexShrink: 0, minHeight: 0 },
     recentPanel: { flexShrink: 1, minHeight: 0 },
     recentItems: { height: RECENT_ROW_HEIGHT * RECENT_VISIBLE_ROWS, minHeight: 0, overflowY: "auto", overflowX: "hidden", overscrollBehaviorY: "contain" },

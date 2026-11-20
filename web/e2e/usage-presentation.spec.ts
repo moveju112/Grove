@@ -2,12 +2,13 @@ import { expect, test } from "@playwright/test";
 import { apiCall, ensureProjects, login, openUsage, sessionView } from "./helpers";
 import { checkDashboard, metrics, report } from "./usage-dashboard-checks";
 
-test("PC 통합 사용량은 공급자를 합쳐 토큰·속도·그래프·정렬·기간을 제공한다", async ({ page }, info) => {
+test("PC 사용량은 공급자별 토큰·속도·그래프·정렬·기간을 제공한다", async ({ page }, info) => {
     await checkDashboard(page, info);
 });
 
 test("320~1920px에서 긴 모델명·큰 토큰 수를 표시하고 대화 입력을 보존한다", async ({ page }, info) => {
     const large = { ...report, total: { ...report.total, input_tokens: 9_000_000_000_000, output_tokens: 1_000_000_000_000 },
+        providers: report.providers.map((row) => ({ ...row, metrics: { ...row.metrics, input_tokens: 9_000_000_000_000, output_tokens: 1_000_000_000_000 } })),
         models: report.models.map((row) => ({ ...row, label: `${row.label}-${"long-model-name".repeat(12)}` })) };
     await page.route("**/api/v1/usage/dashboard?*", (route) => route.fulfill({ json: large }));
     const { a } = await ensureProjects();
@@ -41,7 +42,7 @@ test("320~1920px에서 긴 모델명·큰 토큰 수를 표시하고 대화 입�
         const list = panel.getByTestId("usage-table");
         await expect(list).toBeVisible();
         await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
-        const token = panel.locator('[data-testid="usage-token-total"]:visible');
+        const token = panel.locator('[data-testid="usage-token-codex_cli"]:visible');
         expect(await token.evaluate((node) => {
             const cell = node.closest("td")!;
             return cell.scrollWidth <= cell.clientWidth + 1;
@@ -51,7 +52,7 @@ test("320~1920px에서 긴 모델명·큰 토큰 수를 표시하고 대화 입�
         if (width <= 760) {
             const dialog = page.getByRole("dialog", { name: "사용량", exact: true });
             await expect.poll(async () => (await dialog.boundingBox())!.width).toBeGreaterThanOrEqual(width - 10);
-            const summary = card.getByRole("table", { name: "전체 사용량 요약", exact: true });
+            const summary = card.getByRole("table", { name: "Codex CLI 사용량 요약", exact: true });
             const cardBounds = (await card.boundingBox())!;
             const summaryBounds = (await summary.boundingBox())!;
             expect(cardBounds.x).toBeLessThanOrEqual(16);
@@ -70,7 +71,8 @@ test("조회 실패·빈 기록·미측정 속도·갱신 실패를 구분하고
     let mode: "error" | "empty" | "zero" = "error";
     await page.route("**/api/v1/usage/dashboard?*", async (route) => {
         if (mode === "error") await route.fulfill({ status: 503, json: { error: { code: "unavailable", message: "fixture unavailable", retryable: false } } });
-        else await route.fulfill({ json: { ...report, total: metrics({ responses: mode === "zero" ? 1 : 0 }) } });
+        else await route.fulfill({ json: { ...report, total: metrics({ responses: mode === "zero" ? 1 : 0 }),
+            providers: mode === "zero" ? report.providers.map((row) => ({ ...row, metrics: metrics({ responses: 1 }) })) : report.providers } });
     });
     await login(page);
     const panel = await openUsage(page);
@@ -81,7 +83,7 @@ test("조회 실패·빈 기록·미측정 속도·갱신 실패를 구분하고
     await expect(panel.getByText("이 기간에 기록된 사용량이 없어요.", { exact: true })).toBeVisible();
     mode = "zero";
     await panel.getByRole("button", { name: "사용량 새로고침", exact: true }).click();
-    await expect(panel.locator('[data-testid="usage-speed-total"]:visible')).toHaveText("— tok/s");
+    await expect(panel.locator('[data-testid="usage-speed-codex_cli"]:visible')).toHaveText("— tok/s");
     await expect(panel.getByTestId("usage-table")).toBeVisible();
     mode = "error";
     await panel.getByRole("button", { name: "사용량 새로고침", exact: true }).click();
@@ -115,4 +117,30 @@ test("실행 용량·대기 이유·취소 오류와 재시도를 유지한다",
     await capacity.getByRole("button", { name: "취소", exact: true }).click();
     await expect(capacity).toContainText("이 기기에서 실행·대기 중인 요청이 없습니다.");
     expect(cancels).toBe(2);
+});
+
+test("OAuth 한도 조회 전에도 카드 자리를 잡아 도착 시 아래 통계가 밀리지 않는다", async ({ page }) => {
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const limits = [
+        { label: "5시간", remaining_percent: 70, remaining: null, resets_at: "2099-11-17T00:00:00Z" },
+        { label: "주간", remaining_percent: 40, remaining: null, resets_at: "2099-11-20T00:00:00Z" },
+    ];
+    await page.route("**/api/v1/usage/dashboard?*", (route) => route.fulfill({ json: report }));
+    await page.route("**/api/v1/usage/accounts", async (route) => {
+        await held;
+        await route.fulfill({ json: { accounts: [
+            { protocol: "claude_code", name: "Claude", status: "available", checked_at: "2026-11-17T00:00:00Z", limits },
+            { protocol: "codex_cli", name: "Codex", status: "available", checked_at: "2026-11-17T00:00:00Z", limits },
+        ] } });
+    });
+    await login(page);
+    const panel = await openUsage(page);
+    const quotas = panel.getByRole("region", { name: "OAuth 한도", exact: true });
+    await expect(quotas).toContainText("조회 중");
+    const charts = panel.getByTestId("usage-charts");
+    const before = (await charts.boundingBox())!.y;
+    release();
+    await expect(quotas.getByRole("img", { name: "Codex CLI 주간 사용 60.0%", exact: true })).toBeVisible();
+    expect(Math.abs((await charts.boundingBox())!.y - before)).toBeLessThanOrEqual(1);
 });

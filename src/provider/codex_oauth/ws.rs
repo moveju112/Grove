@@ -187,6 +187,7 @@ impl Connection {
         let text = serde_json::to_string(&frame).map_err(|_| invalid())?;
         diagnostics.frame_input_items = Some(frame.input.len());
         tracing::debug!(incremental = delta.is_some(), "Codex WebSocket 요청");
+        let started = std::time::Instant::now();
         timeout(wait, self.socket.send(Message::text(text))).await.map_err(|_| Failure::link(true))?
             .map_err(Failure::wire)?;
         let mut bytes = 0;
@@ -207,6 +208,7 @@ impl Connection {
                 Failure::from(error)
             })?;
             if completed {
+                out.usage.model_request_ms = Some(started.elapsed().as_millis() as u64);
                 let response = &event["response"];
                 self.chain = response["id"].as_str().filter(|id| !id.is_empty() && id.len() <= 256)
                     .zip(replay_items(response, scope)).map(|(id, replay)| Chain {

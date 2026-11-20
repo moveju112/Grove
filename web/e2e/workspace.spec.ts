@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { frames } from "./fixture";
 import { splitRecentItem, apiCall, composerOption, ensureProfile, ensureProjects, expectChoice, login, openUsage, openBots, openContext, openDetails, openProjectFiles, openTool, requireToolApproval, script, selectChoice, sessionView, settingsGroupHeader, startProjectConversation, state } from "./helpers";
 
@@ -51,10 +51,18 @@ test("두 프로젝트를 좌우·위아래로 열고 각 탭이 자기 프로�
     const recent = page.getByRole("region", { name: "최근", exact: true });
     await recent.getByRole("button", { name: /A의 대화/ }).click();
     await expect(page.getByTestId("session-view")).toHaveAttribute("data-session", sa.id);
-    // B를 오른쪽에 분할로 열기
-    await splitRecentItem(recent.getByTestId("recent-item").filter({ hasText: "B의 대화" }));
-    await expect(page.getByTestId("pane")).toHaveCount(2);
-    await expect(page.getByTestId("split-row")).toBeVisible();
+    // 프로젝트 자체를 오른쪽에 배치한 뒤 같은 영역에서 B의 대화를 연다.
+    const aPane = page.locator(`[data-project-pane="${a.id}"]`).getByTestId("pane");
+    const bPane = page.locator(`[data-project-pane="${b.id}"]`).getByTestId("pane");
+    const bounds = (await aPane.boundingBox())!;
+    await page.getByTestId("projects").getByRole("button", { name: b.name, exact: true }).dragTo(aPane, {
+        targetPosition: { x: bounds.width - 12, y: bounds.height / 2 },
+    });
+    await expect(bPane).toBeVisible();
+    await recent.getByRole("button", { name: "B의 대화", exact: true }).click();
+    await expect(page.getByTestId("pane").filter({ visible: true })).toHaveCount(2);
+    const divider = page.getByTestId("project-divider");
+    await expect(divider).toHaveAttribute("data-direction", "row");
     const views = page.getByTestId("session-view");
     await expect(views.nth(0)).toHaveAttribute("data-session", sa.id);
     await expect(views.nth(1)).toHaveAttribute("data-session", sb.id);
@@ -71,19 +79,25 @@ test("두 프로젝트를 좌우·위아래로 열고 각 탭이 자기 프로�
     expect(ma.items.map((m) => m.content.text)).toEqual(["왼쪽에서"]);
     expect(mb.items.map((m) => m.content.text)).toEqual(["오른쪽에서"]);
     // 위아래로 전환
-    await page.getByRole("separator").and(page.locator("[aria-valuenow]")).dblclick();
-    await expect(page.getByTestId("split-column")).toBeVisible();
+    await divider.dblclick();
+    await expect(divider).toHaveAttribute("data-direction", "column");
     // 서버 저장 대기 후 새로고침 → 복원
     await page.waitForTimeout(900);
     await page.reload();
     await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
-    await expect(page.getByTestId("split-column")).toBeVisible();
-    await expect(page.getByTestId("session-view").nth(1)).toHaveAttribute("data-session", sb.id);
-    // 탭 닫기는 화면만 닫는다
-    await page.getByTestId("pane").nth(1).getByRole("button", { name: "탭 닫기" }).click();
-    await expect(page.getByTestId("pane")).toHaveCount(1);
+    await expect(divider).toHaveAttribute("data-direction", "column");
+    await expect(aPane.getByTestId("session-view")).toHaveAttribute("data-session", sa.id);
+    await expect(bPane.getByTestId("session-view")).toHaveAttribute("data-session", sb.id);
+    expect((await bPane.boundingBox())!.y).toBeGreaterThan((await aPane.boundingBox())!.y);
+    // 연결된 프로젝트 영역은 남지만 B 대화 탭만 사라진다.
+    await bPane.getByRole("tab", { name: /B의 대화/ }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+    await expect(bPane.getByTestId("session-view")).toHaveCount(0);
+    await expect(aPane.getByTestId("session-view")).toHaveAttribute("data-session", sa.id);
     const still = await apiCall<{ archived_at: string | null }>("GET", `/sessions/${sb.id}`);
     expect(still.archived_at).toBeNull();
+    // 새 브라우저에서도 서버 배치를 복원하므로 시험에서 연 분할은 닫아 둔다.
+    await bPane.getByRole("button", { name: "프로젝트 분할 닫기", exact: true }).click();
+    await expect(divider).toHaveCount(0);
 });
 
 test("모델 응답이 중간 표시 후 확정되고, 쓰기 도구 거부 시 파일이 생기지 않는다", async ({ page }) => {
@@ -210,25 +224,24 @@ test("Goal을 추가·완료·순서 변경하고 다른 화면의 변경이 실
 });
 
 test("Git 변경에서 hunk 하나만 올리고 커밋하면 나머지 변경은 작업 트리에 남는다", async ({ page }) => {
-    const { b } = await ensureProjects();
-    const proj = await apiCall<{ root_path: string }>("GET", `/projects/${b.id}`);
-    const run = (...args: string[]) => execFileSync("git", args, { cwd: proj.root_path, encoding: "utf8" });
-    if (!existsSync(join(proj.root_path, ".git"))) {
-        run("init", "-q", "-b", "main");
-        run("config", "user.email", "e2e@example.invalid");
-        run("config", "user.name", "E2E");
-    }
+    const root_path = mkdtempSync(join(dirname(state().projA), "git-hunks-"));
+    const run = (...args: string[]) => execFileSync("git", args, { cwd: root_path, encoding: "utf8" });
+    run("init", "-q", "-b", "main");
+    run("config", "user.email", "e2e@example.invalid");
+    run("config", "user.name", "E2E");
     const lines = Array.from({ length: 30 }, (_, i) => `line${i + 1}\n`);
-    writeFileSync(join(proj.root_path, "h.txt"), lines.join(""));
+    writeFileSync(join(root_path, "h.txt"), lines.join(""));
     run("add", "h.txt");
     run("commit", "-qm", "base");
     lines[1] = "LINE2\n";
     lines[27] = "LINE28\n";
-    writeFileSync(join(proj.root_path, "h.txt"), lines.join(""));
+    writeFileSync(join(root_path, "h.txt"), lines.join(""));
+    const project = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path });
     await login(page);
-    await page.getByRole("button", { name: b.name, exact: true }).first().click();
-    await openTool(page, "변경");
-    const panel = page.getByTestId("git-panel");
+    await page.getByTestId("projects").getByRole("button", { name: project.name, exact: true }).click();
+    const pane = page.locator(`[data-project-pane="${project.id}"]`);
+    await openTool(pane, "변경");
+    const panel = pane.getByTestId("git-panel");
     await panel.getByRole("button", { name: "h.txt" }).first().click();
     await expect(panel.getByTestId("hunk")).toHaveCount(2);
     await panel.getByTestId("hunk").nth(1).getByRole("button", { name: "이 부분 올리기" }).click();
@@ -303,7 +316,7 @@ test("작성 중인 입력은 저장하지 않으며 새로고침 뒤 복원하�
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: b.id, resource_id: s.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /초안 대화/ }).first().click();
-    const view = page.getByTestId("session-view");
+    const view = sessionView(page, s.id);
     await view.getByLabel("메시지 입력").fill("아직 안 보낸 글");
     await page.reload();
     await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
@@ -340,7 +353,11 @@ test("파일 화면에서 열고 고쳐 저장하며, 외부 변경은 충돌로
     // 1x1 PNG
     writeFileSync(join(proj.root_path, "dot.png"), Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
     await login(page);
-    await page.getByRole("button", { name: a.name, exact: true }).first().click();
+    await page.getByTestId("projects").getByRole("button", { name: a.name, exact: true }).click();
+    const projectScreen = page.getByTestId("navigation-context").getByRole("button", { name: /프로젝트 화면으로$/ });
+    const projectView = page.getByTestId("project-view").filter({ visible: true });
+    await expect(projectView.or(projectScreen).first()).toBeVisible();
+    if (!await projectView.isVisible()) await projectScreen.click();
     await openProjectFiles(page);
     const files = page.getByTestId("files-view");
     await files.getByRole("button", { name: "note.md", exact: true }).click();
@@ -392,27 +409,37 @@ test("백그라운드 작업은 시작·취소할 수 있지만 결과는 작업
 });
 
 test("터미널을 열어 입력·출력하고 새로고침으로 복원한 뒤 탭을 닫아 종료한다", async ({ page }) => {
-    const { a } = await ensureProjects();
+    const root_path = mkdtempSync(join(dirname(state().projA), "terminal-restore-"));
+    const a = await apiCall<{ id: string; name: string }>("POST", "/projects", { root_path });
     await login(page);
-    await page.getByRole("button", { name: a.name, exact: true }).first().click();
-    const list = page.getByTestId("terminal-list");
-    await openTool(page, "터미널");
-    await openDetails(list);
+    await page.getByTestId("projects").getByRole("button", { name: a.name, exact: true }).click();
+    const projectScreen = page.getByTestId("navigation-context").getByRole("button", { name: /프로젝트 화면으로$/ });
+    const projectView = page.getByTestId("project-view").filter({ visible: true });
+    await expect(projectView.or(projectScreen).first()).toBeVisible();
+    if (!await projectView.isVisible()) await projectScreen.click();
+    const list = projectView.getByTestId("terminal-list");
+    await openTool(projectView, "터미널");
+    await openDetails(list, "터미널", projectView);
     await list.getByRole("button", { name: "새 터미널" }).click();
     const view = page.getByTestId("terminal-view");
     await expect(view).toHaveAttribute("data-conn", "open");
     await view.locator(".xterm").click();
-    await page.keyboard.type("echo e2e-$((20+22))");
+    await page.keyboard.type("stty -echo; printf '\\033[2J\\033[He2e-%s\\n' \"$((20+22))\"");
     await page.keyboard.press("Enter");
     await expect(view.locator(".xterm-rows")).toContainText("e2e-42");
-    // 새로고침 → 레이아웃 복원 + snapshot으로 이전 출력 복원
+    // 새로고침은 마지막 공유 대화를 먼저 열 수 있다. 프로젝트를 다시 선택하되 새 터미널은 열지 않는다.
     await page.reload();
     await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
-    await expect(page.getByTestId("terminal-view")).toHaveAttribute("data-conn", "open");
-    await expect(page.getByTestId("terminal-view").locator(".xterm-rows")).toContainText("e2e-42");
+    await page.getByTestId("projects").getByRole("button", { name: a.name, exact: true }).click();
+    await expect(view).toBeVisible();
+    await expect(view).toHaveAttribute("data-conn", "open");
+    await expect(view.locator(".xterm-rows")).toContainText("e2e-42");
     const terminals = await apiCall<{ terminals: { id: string; status: string }[] }>("GET", `/projects/${a.id}/terminals`);
     const terminal = terminals.terminals.find((item) => item.status === "running")!;
-    await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+    const close = page.locator(`[data-project-pane="${a.id}"]`).getByRole("tab", { selected: true })
+        .getByRole("button", { name: "탭 닫기", exact: true });
+    await expect(close).toBeVisible();
+    await close.click();
     await expect(view).toHaveCount(0);
     const ended = await apiCall<{ terminals: { id: string; status: string }[] }>("GET", `/projects/${a.id}/terminals`);
     expect(ended.terminals.find((item) => item.id === terminal.id)?.status).toBe("exited");
@@ -542,8 +569,8 @@ test("사용량 패널은 기간·묶음별 token과 가격 미설정 상태를 
     await expect(view.getByTestId("ui-delivery")).toHaveCount(0);
     await detail.getByRole("button", { name: "닫기", exact: true }).click();
     const panel = await openUsage(page);
-    await expect(panel.getByTestId("usage-total")).toContainText("응답");
-    await expect(panel.locator('[data-testid="usage-speed-total"]:visible')).not.toHaveText("— tok/s");
+    await expect(panel.getByTestId("usage-total")).toContainText("평균 모델 속도");
+    await expect(panel.locator('[data-testid^="usage-speed-"]:visible').first()).not.toHaveText("— tok/s");
     await panel.getByRole("button", { name: "실행 현황·추정 비용", exact: true }).click();
     await expect(panel).toContainText("가격 미설정");
     await selectChoice(panel.getByLabel("묶음"), "models");

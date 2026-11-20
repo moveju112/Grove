@@ -7,9 +7,10 @@ import { ApiError, api, isTransportError } from "../api/client";
 import type { RecentItem, RecentPage } from "../api/generated";
 import { loadPrefs, savePrefs, usePrefs } from "../state/device";
 import { prepareRecentPatch } from "../state/recentPatch";
-import { effectiveRecentWindow, groupBySplit, recentSince, recentWindowLabel, type RecentSplitGroup } from "../state/recentWindow";
+import { RECENT_PAGE_SIZE, readRecentRange, recentRangeKey } from "../state/recentQuery";
+import { effectiveRecentWindow, groupBySplit, recentWindowLabel, type RecentSplitGroup } from "../state/recentWindow";
 import { When } from "./When";
-import { invalidate, useQuery } from "../state/store";
+import { revalidateQuery, useQuery } from "../state/store";
 import { usePageVisible, usePaneVisible } from "../state/paneVisibility";
 import { prefetchConversation } from "../state/workspaceStartup";
 import { DRAG_OPEN } from "../state/layout";
@@ -36,21 +37,13 @@ const STATUS: Record<string, string> = {
 };
 
 const NO_SPLITS: readonly RecentSplitGroup[] = [];
+// 앱 복귀·서랍 열기·첫 화면 선조회가 거의 동시에 일어나면 같은 요청을 쓴다.
+const RECENT_REFRESH_COALESCE_MS = 750;
 
-/// 분 단위 현재 시각. 시간 범위 하한을 1분마다 다시 계산한다.
-function useMinute(): Date {
-    const [now, setNow] = useState(() => new Date());
-    useEffect(() => {
-        const timer = setInterval(() => setNow(new Date()), 60_000);
-        return () => clearInterval(timer);
-    }, []);
-    return now;
-}
-
-export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sidebar" }: {
-    open: Opener; splitGroups?: readonly RecentSplitGroup[]; presentation?: "sidebar" | "home";
+export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sidebar", shown = true }: {
+    open: Opener; splitGroups?: readonly RecentSplitGroup[]; presentation?: "sidebar" | "home"; shown?: boolean;
 }) {
-    const [limit, setLimit] = useState(30);
+    const [limit, setLimit] = useState(RECENT_PAGE_SIZE);
     const [accessError, setAccessError] = useState<string | null>(null);
     const accessAttempt = useRef(0);
     const [hideError, setHideError] = useState<{ message: string; retry?: () => Promise<void> } | null>(null);
@@ -58,28 +51,29 @@ export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sid
     const serverBlocked = useServerBlockReason();
     const prefs = usePrefs();
     const range = effectiveRecentWindow(prefs.recentWindow, prefs.recentWindows);
-    const now = useMinute();
-    const since = recentSince(range, now);
-    const query = new URLSearchParams({ filter: "all", limit: String(limit), since }).toString();
-    // 시각은 요청에만 쓰고 cache key는 범위별로 고정한다. 같은 범위는 즉시 다시 연다.
-    const recent = useQuery<RecentPage>(`recent:range:${range}:${limit}`, () => api.get(`/recent?${query}`),
+    const key = recentRangeKey(range, limit);
+    const recent = useQuery<RecentPage>(key, () => readRecentRange(range, limit),
         { keepPreviousData: true, scope: "recent:range" });
     // 이전 데몬에서 반환하는 터미널 기록도 최근 목록에 표시하지 않는다.
     const items = recent.data?.items.filter((it) => it.kind !== "terminal");
     // 목록을 보는 동안 열 가능성이 높은 대화(실행 중·새 완료 우선, 상위 몇 개)의 본문을 미리 받아 둔다. 한 번 받고 구독은 바로 놓는다.
     const paneVisible = usePaneVisible();
     const pageVisible = usePageVisible();
-    const visible = paneVisible && pageVisible;
+    const visible = shown && paneVisible && pageVisible;
     const likely = visible ? likelySessions(items ?? []).join(" ") : "";
     useEffect(() => {
         for (const id of likely ? likely.split(" ") : []) prefetchConversation(id, ["messages", "turns", "session"])();
     }, [likely]);
-    const previousMinute = useRef(now);
     useEffect(() => {
-        if (previousMinute.current === now) return;
-        previousMinute.current = now;
-        invalidate("recent:range");
-    }, [now]);
+        if (!visible) return;
+        const refresh = () => revalidateQuery(key, RECENT_REFRESH_COALESCE_MS);
+        // 실시간 이벤트 연결이 복구될 때까지 기다리지 않는다.
+        refresh();
+        const restore = (event: PageTransitionEvent) => { if (event.persisted && !document.hidden) refresh(); };
+        window.addEventListener("pageshow", restore);
+        const timer = setInterval(refresh, 60_000);
+        return () => { window.removeEventListener("pageshow", restore); clearInterval(timer); };
+    }, [key, visible]);
 
     const hide = async (request: () => Promise<void>, confirming = false) => {
         setHiding(true);
@@ -165,7 +159,7 @@ export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sid
             </GroveList>
             {!recent.loading && items?.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">최근 항목 없음</GroveText>}
             {recent.data?.next_offset != null && (
-                <Button variant="secondary" onClick={() => setLimit((l) => l + 30)}>
+                <Button variant="secondary" onClick={() => setLimit((l) => l + RECENT_PAGE_SIZE)}>
                     더 보기
                 </Button>
             )}
