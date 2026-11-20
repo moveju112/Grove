@@ -179,10 +179,10 @@ function SetupAccounts() {
     const catalog = useQuery<AgentBackendCatalog>("agent-backends", () =>
         api.getContract("AgentBackendCatalog", "/agent-backends", { requires: ["agent_backends_v1"] }));
     return <Stack gap={2}>
-        <Text type="supporting" color="secondary">지금 로그인하지 않아도 돼요. 나중에 데몬 설정에서 로그인할 수 있어요.</Text>
-        {([["claude_code", "Claude Code"], ["codex_oauth", "Codex"]] as const).map(([protocol, name]) => {
-            const backend = catalog.data?.backends.find((item) => item.protocol === protocol);
-            return backend?.installed ? <AgentLogin key={protocol} protocol={protocol} name={name} disabled={false} signInOnly />
+        <Text type="supporting" color="secondary">지금 인증하지 않아도 돼요.</Text>
+        {([["claude_code", "Claude Code"], ["codex_cli", "Codex"]] as const).map(([protocol, name]) => {
+            const backend = catalog.data?.backends.find((item) => item.protocol === protocol || (protocol === "codex_cli" && item.protocol === "codex_oauth"));
+            return backend?.installed ? <AgentLogin key={protocol} protocol={backend.protocol} name={name} disabled={false} signInOnly />
                 : <Stack key={protocol} direction="horizontal" align="center" gap={2} paddingBlock={2}>
                     <Text>{name}</Text>
                     <Text type="supporting" color="secondary">{catalog.data ? "서버에 CLI 설치 필요" : catalog.loading ? "확인 중…" : null}</Text>

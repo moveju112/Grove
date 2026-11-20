@@ -824,9 +824,6 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     }
     for key in ["TMPDIR", "TMP", "TEMP"] { cmd.env(key, scratch.path()); }
     if profile.protocol == "claude_code" {
-        let settings = &argv[argv.iter().position(|arg| arg == "--settings").expect("Claude settings") + 1];
-        let sources = req.cli.is_none().then_some("");
-        claude::require_subscription(claude::authenticated(std::path::Path::new(&prog), Some(&cwd), settings, sources).await?)?;
         let standard = service_tier(req) == Some(STANDARD_SERVICE_TIER);
         if standard {
             cmd.env("CLAUDE_CODE_DISABLE_FAST_MODE", "1");
@@ -1153,7 +1150,9 @@ echo '{{"type":"result","result":"ok"}}'"#);
             assert!(a.windows(2).any(|w| w[0] == "--tools" && w[1] == "default"));
             let settings: Value = serde_json::from_str(&a[a.iter().position(|v| v == "--settings").unwrap()+1]).unwrap();
             assert_eq!(settings["sandbox"], json!({"enabled":false}));
-            assert_eq!(settings["forceLoginMethod"], "claudeai");
+            assert!(settings.get("forceLoginMethod").is_none());
+            assert!(settings.get("apiKeyHelper").is_none());
+            assert!(settings["env"].get("ANTHROPIC_API_KEY").is_none());
             assert_eq!(settings["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1", "CLI 내장 백그라운드는 턴 종료 뒤 추적되지 않는다");
             assert!(!a.contains(&"--setting-sources".into()), "전역·프로젝트 지침의 기본 로딩을 막지 않는다");
             assert!(!a.contains(&"--strict-mcp-config".into()), "일반 대화의 사용자 MCP를 차단하지 않는다");

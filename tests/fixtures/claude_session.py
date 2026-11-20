@@ -7,7 +7,7 @@ import sys
 
 args = sys.argv[1:]
 settings = json.loads(args[args.index("--settings") + 1])
-assert settings["forceLoginMethod"] == "claudeai"
+assert "forceLoginMethod" not in settings and "apiKeyHelper" not in settings
 assert all(key not in os.environ for key, value in settings["env"].items() if value == "")
 # CLI 내장 백그라운드는 실행 환경과 --settings 양쪽에서 끈다.
 assert os.environ["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == settings["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] == "1"

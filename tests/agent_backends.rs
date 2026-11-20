@@ -13,6 +13,7 @@ async fn backend_catalog_requires_auth_and_never_claims_login_readiness() {
     assert_eq!(status, StatusCode::OK);
     let backends = catalog["backends"].as_array().unwrap();
     assert_eq!(backends.len(), 2);
+    assert_eq!(backends[0]["protocol"], "codex_cli");
     for backend in backends {
         assert_eq!(backend["read_only"], false);
         assert!(backend["installed"].is_boolean());
@@ -36,7 +37,7 @@ async fn connect_reconciles_concurrent_requests_and_keeps_owner_boundary() {
         "name":"Codex", "protocol":"codex_cli", "base_url":"", "model":"default",
     })).await;
     let (first, second) = tokio::join!(
-        server.post("/api/v1/agent-backends/codex_cli/connect", json!({})),
+        server.post("/api/v1/agent-backends/codex_oauth/connect", json!({})),
         server.post("/api/v1/agent-backends/codex_cli/connect", json!({})),
     );
     for (status, value) in [first, second] {
@@ -69,11 +70,24 @@ async fn connect_uses_runtime_catalog_and_replays_without_duplicates() {
         let created: Value = response.json().await.unwrap();
         assert_eq!(created["model"], "default");
         assert_eq!(created["secret_id"], Value::Null);
-        assert_eq!(created["capabilities"]["native_tools"], protocol == "claude_code");
-        assert_eq!(created["capabilities"]["tools"], protocol == "codex_oauth");
+        assert_eq!(created["capabilities"]["native_tools"], true);
+        assert_eq!(created["capabilities"]["tools"], false);
         let replay: Value = server.raw(Method::POST, &path, Some(json!({})), Some(&key), None).await.json().await.unwrap();
         assert_eq!(replay["id"], created["id"]);
         let (_, again) = server.post(&path, json!({})).await;
         assert_eq!(again["id"], created["id"]);
+    }
+}
+
+#[tokio::test]
+async fn subscriptions_are_not_relayed_through_grove() {
+    let server = TestServer::start().await;
+    let (status, _) = server.post("/api/v1/model-profiles", json!({
+        "name":"Codex", "protocol":"codex_oauth", "base_url":"", "model":"default",
+    })).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    for (path, body) in [("login", json!({"id":uuid::Uuid::new_v4().to_string()})), ("logout", json!({}))] {
+        let (status, _) = server.post(&format!("/api/v1/agent-backends/claude_code/{path}"), body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
     }
 }

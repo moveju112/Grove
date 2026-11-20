@@ -126,16 +126,14 @@ async fn cancellation_and_timeout_discard_the_process_without_replaying_the_turn
 }
 
 #[tokio::test]
-async fn api_key_and_missing_login_do_not_start_a_model_process() {
-    let root = tempfile::tempdir().unwrap();
-    let cli = fixture(root.path());
-    let handle = handle();
+async fn native_session_accepts_non_subscription_cli_authentication() {
     let profile = profile(Duration::from_secs(3));
-    for method in ["api_key", "api_key_helper", "oauth_token", "third_party", "none"] {
+    for method in ["api_key", "api_key_helper", "third_party"] {
+        let root = tempfile::tempdir().unwrap();
+        let cli = fixture(root.path());
         std::fs::write(root.path().join("auth-method"), method).unwrap();
-        let result = run(&handle, &profile, &request(root.path(), None, "must not send"), &mut |_| {}, Some(&cli)).await;
-        assert_eq!(result.unwrap_err().code, "auth_failed");
-        assert!(!root.path().join("wire.jsonl").exists());
+        run(&handle(), &profile, &request(root.path(), None, "send"), &mut |_| {}, Some(&cli)).await.unwrap();
+        assert!(records(root.path()).iter().any(|e| e["event"] == "user" && e["text"] == "send"));
     }
 }
 

@@ -58,7 +58,7 @@ export function AgentConnect({ disabled, onConnected }: { disabled: boolean; onC
             ))}
         {catalog.data && <HintText type="supporting" color="secondary"
             hint={catalog.data.backends.every((backend) => !backend.read_only)
-                ? "Codex는 Grove의 도구 권한 설정을 따라요. Claude Code는 자체 도구를 사용해요. 중단해도 이미 바뀐 파일은 유지돼요."
+                ? "서버 CLI는 자체 도구를 사용해요. 중단해도 이미 바뀐 파일은 유지돼요."
                 : "프로젝트 수정·검사를 사용하려면 서버 업데이트가 필요해요."}>
             {catalog.data.backends.every((backend) => !backend.read_only) ? "코딩 가능" : "서버 CLI"}
         </HintText>}

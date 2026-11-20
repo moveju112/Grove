@@ -424,7 +424,6 @@ pub fn router(app: App) -> Router {
         .route("/agent-backends/{protocol}/connect", post(models::connect_agent_backend))
         .route("/agent-backends/{protocol}/auth", get(agent_auth::status))
         .route("/agent-backends/{protocol}/login", post(agent_auth::start))
-        .route("/agent-backends/{protocol}/login/code", post(agent_auth::submit))
         .route("/agent-backends/{protocol}/login/cancel", post(agent_auth::cancel))
         .route("/agent-backends/{protocol}/logout", post(agent_auth::logout))
         .route("/model-profiles/{id}", axum::routing::put(models::update_profile).delete(models::delete_profile))

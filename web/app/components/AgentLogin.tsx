@@ -8,7 +8,6 @@ import * as stylex from "@stylexjs/stylex";
 import { ApiError, api, newKey } from "../api/client";
 import type { AgentAuthStatus } from "../api/generated";
 import { ServerActionButton } from "./pwa/ServerActionButton";
-import { TextInput } from "../design/Fields";
 import { invalidate } from "../state/store";
 
 const styles = stylex.create({
@@ -25,7 +24,6 @@ const styles = stylex.create({
         outline: { default: null, ":focus-visible": "2px solid var(--focus)" }, outlineOffset: 2,
     },
     codeBox: { border: "1px solid var(--line-strong)", backgroundColor: "var(--raised)", borderRadius: "var(--radius-element)" },
-    form: { display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", alignItems: "end" },
 });
 
 const active = (status: AgentAuthStatus | null) =>
@@ -42,11 +40,11 @@ export function AgentLogin({ protocol, name, disabled, signInOnly = false, showN
     const [status, setStatus] = useState<AgentAuthStatus | null>(null);
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
-    const [code, setCode] = useState("");
     const [refresh, setRefresh] = useState(0);
     const pending = useRef<{ id: string; previous_id: string | null } | null>(null);
     const mounted = useRef(false);
     const base = `/agent-backends/${protocol}`;
+    const terminalOnly = protocol === "claude_code";
     const requirements = { requires: ["agent_auth_v1"] };
     useEffect(() => {
         if (status && !active(status)) invalidate("usage:accounts");
@@ -63,7 +61,6 @@ export function AgentLogin({ protocol, name, disabled, signInOnly = false, showN
                 if (controller.signal.aborted) return;
                 setStatus(value);
                 setError(null);
-                if (!active(value)) setCode("");
                 if (active(value)) timer = setTimeout(load, 1000);
             } catch (cause) {
                 if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : "인증 상태 확인 실패");
@@ -73,8 +70,8 @@ export function AgentLogin({ protocol, name, disabled, signInOnly = false, showN
         return () => { mounted.current = false; controller.abort(); clearTimeout(timer); };
     }, [base, refresh]);
 
-    const act = async (action: "login" | "login/code" | "login/cancel" | "logout") => {
-        if (busy || disabled) return;
+    const act = async (action: "login" | "login/cancel" | "logout") => {
+        if (busy || disabled || terminalOnly) return;
         if (action === "logout" && !confirm(`${name}의 서버 계정에서 로그아웃할까요? 같은 OS 계정을 사용하는 CLI와 모든 기기의 새 대화에 영향을 줍니다.`)) return;
         setBusy(true);
         setError(null);
@@ -82,8 +79,6 @@ export function AgentLogin({ protocol, name, disabled, signInOnly = false, showN
         if (action === "login") {
             pending.current ??= { id: newKey(), previous_id: status?.attempt?.id ?? null };
             body = pending.current;
-        } else if (action === "login/code") {
-            body = { id: status?.attempt?.id, code: code.trim() };
         } else if (action === "login/cancel") body = { id: status?.attempt?.id };
         else if (action === "logout") body = { attempt_id: status?.attempt?.id ?? null };
         try {
@@ -91,7 +86,6 @@ export function AgentLogin({ protocol, name, disabled, signInOnly = false, showN
             if (!mounted.current) return;
             pending.current = null;
             setStatus(value);
-            setCode("");
             setRefresh((n) => n + 1);
         } catch (cause) {
             if (cause instanceof ApiError && (cause.status === 400 || cause.status === 409)) {
@@ -103,43 +97,30 @@ export function AgentLogin({ protocol, name, disabled, signInOnly = false, showN
             if (mounted.current) setBusy(false);
         }
     };
-    const attempt = status?.attempt;
-    const isActive = active(status);
+    const attempt = terminalOnly ? null : status?.attempt;
+    const isActive = !terminalOnly && active(status);
     return <GroveStack as="section" gap={2} paddingBlock={2} aria-label={`${name} 계정`}>
         <GroveStack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
             {showName && <strong>{name}</strong>}
             <GroveText type="supporting" color="secondary" role="status">
-                {isActive ? labels[attempt!.state] : status?.authenticated === true ? "로그인됨"
-                    : status?.authenticated === false ? "로그인 필요" : "상태 확인 필요"}
+                {isActive ? labels[attempt!.state] : status?.authenticated === true ? terminalOnly ? "인증됨" : "로그인됨"
+                    : status?.authenticated === false ? terminalOnly ? "인증 필요" : "로그인 필요" : "상태 확인 필요"}
             </GroveText>
-            {!isActive && !(signInOnly && status?.authenticated) && <>
+            {!terminalOnly && !isActive && !(signInOnly && status?.authenticated) && <>
                 <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy || !status}
                     onClick={() => void act("login")}>{status?.authenticated ? "다시 로그인" : "로그인"}</ServerActionButton>
                 {status?.authenticated && <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy}
                     onClick={() => void act("logout")}>로그아웃</ServerActionButton>}
             </>}
         </GroveStack>
+        {terminalOnly && <GroveText type="supporting" color="secondary">서버 터미널의 <code>claude auth login</code> 또는 Claude Code의 API 키 설정을 사용하세요.</GroveText>}
         {attempt?.url && <GroveStack gap={3} xstyle={styles.steps}>
-            {protocol === "claude_code" ? <>
-                <LoginStep number={1} label="Claude에서 계정 인증">
-                    <AuthLink url={attempt.url} provider="Claude" />
-                </LoginStep>
-                <LoginStep number={2} label="Grove에 코드 붙여넣기">
-                    <GroveStack as="form" gap={2} xstyle={styles.form} onSubmit={(event) => { event.preventDefault(); void act("login/code"); }}>
-                        <TextInput label="일회용 인증 코드" type="password" autoComplete="off" hasSpellCheck={false}
-                            width="100%" value={code} onChange={setCode} placeholder="Claude에서 받은 코드"
-                            isDisabled={disabled || busy} />
-                        <ServerActionButton type="submit" disabled={disabled || busy || !code.trim()}>인증 완료</ServerActionButton>
-                    </GroveStack>
-                </LoginStep>
-            </> : <>
                 {attempt.code && <LoginStep number={1} label="기기 코드 복사">
                     <DeviceCode key={attempt.id} code={attempt.code} />
                 </LoginStep>}
                 <LoginStep number={attempt.code ? 2 : 1} label="OpenAI 페이지에 코드 입력">
                     <AuthLink url={attempt.url} provider="OpenAI" />
                 </LoginStep>
-            </>}
         </GroveStack>}
         {isActive && <GroveStack direction="horizontal" justify="end">
             <ServerActionButton variant="secondary" density="compact" disabled={disabled || busy}
@@ -147,7 +128,7 @@ export function AgentLogin({ protocol, name, disabled, signInOnly = false, showN
         </GroveStack>}
         {attempt && ["failed", "expired", "cancelled"].includes(attempt.state) && <GroveText as="p" display="block" type="supporting" color="inherit" role="status">{labels[attempt.state]}</GroveText>}
         {error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">{error}</GroveText>}
-        {!isActive && (error || status?.authenticated == null) &&
+        {!isActive && (terminalOnly || error || status?.authenticated == null) &&
             <GroveButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => setRefresh((n) => n + 1)}>상태 확인</GroveButton>}
     </GroveStack>;
 }

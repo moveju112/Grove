@@ -522,9 +522,9 @@ function Profiles() {
     const save = useSave();
     const management = useCapability("model_management_v1");
     const [agentSetup, setAgentSetup] = useState(false);
-    const presets: Record<string, string> = { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com", claude_code: "", codex_oauth: "" };
+    const presets: Record<string, string> = { openai: "https://api.openai.com/v1", anthropic: "https://api.anthropic.com", gemini: "https://generativelanguage.googleapis.com", claude_code: "", codex_cli: "" };
     // 서버에 설치된 CLI 백엔드는 endpoint·키가 없다(CLI가 자기 로그인을 쓴다). 저가형 기본 모델을 제안한다.
-    const accountModels: Record<string, string> = { claude_code: "haiku", codex_oauth: "default" };
+    const accountModels: Record<string, string> = { claude_code: "haiku", codex_cli: "default" };
     const isAccountModel = f.protocol in accountModels;
     return (
         <>
@@ -541,7 +541,7 @@ function Profiles() {
                             <Stack gap={1} width="100%"><strong>{p.name}</strong><Text type="code" color="secondary" wordBreak="break-word" data-testid="profile-model">{p.model}</Text></Stack>
                             {p.enabled === false && <Text as="span" type="supporting" color="warning"> · 비활성</Text>}
                             <HelpTip label={`${p.name} 연결 정보`}>
-                                <Text as="span" type="inherit" color="inherit">{p.protocol === "codex_oauth" ? "Codex · 계정 로그인" : p.protocol}{p.base_url ? ` · ${p.base_url}` : p.protocol === "codex_oauth" ? "" : " · 서버 CLI 계정 · 프로젝트 수정·검사 가능"}</Text>
+                                <Text as="span" type="inherit" color="inherit">{p.protocol === "codex_cli" ? "Codex CLI" : p.protocol}{p.base_url ? ` · ${p.base_url}` : accountModels[p.protocol] ? " · 서버 CLI · 프로젝트 수정·검사 가능" : ""}</Text>
                             </HelpTip>
                             <ActionMenu label={`${p.name} 관리`}>
                                 <ServerActionButton variant="secondary" density="compact" onClick={() => {
@@ -588,7 +588,7 @@ function Profiles() {
                     }}
                     options={[{ value: "openai", label: "OpenAI 호환" }, { value: "anthropic", label: "Anthropic" },
                         { value: "gemini", label: "Gemini" }, { value: "claude_code", label: "Claude Code(서버 설치 CLI)" },
-                        { value: "codex_oauth", label: "Codex(계정 로그인)" }]} />
+                        { value: "codex_cli", label: "Codex(서버 설치 CLI)" }]} />
                 {!isAccountModel && <TextInput size="sm" placeholder="Base URL" value={f.base_url} onChange={(value) => setF({ ...f, base_url: value })} label="Base URL" isLabelHidden isRequired />}
                 <TextInput size="sm" placeholder="모델" value={f.model} onChange={(value) => setF({ ...f, model: value })} label="모델" isLabelHidden isRequired />
                 {!isAccountModel && (
@@ -597,7 +597,7 @@ function Profiles() {
                 )}
                 {isAccountModel && (
                     <Text as="span" type="supporting" color="secondary" data-testid="cli-note">
-                        {f.protocol === "codex_oauth" ? "Codex Desktop에 새 대화가 생기지 않아요." : "서버 CLI 계정 · 프로젝트 수정·검사 가능"}
+                        서버 CLI · 프로젝트 수정·검사 가능
                     </Text>
                 )}
                 <ServerActionButton type="submit">추가</ServerActionButton>

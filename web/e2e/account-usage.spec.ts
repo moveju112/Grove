@@ -1,5 +1,4 @@
 import { expect, test } from "@playwright/test";
-import { randomUUID } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AccountUsageLimit, AccountUsageReport } from "../app/api/generated";
@@ -66,7 +65,8 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
             await expect(dialog).toBeVisible();
             if (width < 760) await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
             const account = dialog.getByRole("region", { name: "Claude Code 계정", exact: true });
-            await expect(account.getByRole("button", { name: "로그인", exact: true })).toBeEnabled();
+            await expect(account.getByText("claude auth login", { exact: true })).toBeVisible();
+            await expect(account.getByRole("button", { name: "로그인", exact: true })).toHaveCount(0);
             await expect(dialog.getByRole("region", { name: "Codex 계정", exact: true })).toHaveCount(0);
             expect(mutations).toEqual([]);
             expect(await dialog.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
@@ -102,12 +102,12 @@ test("실제 계정 API는 CLI 읽기 응답만 반환하고 같은 공급자의
     expect(JSON.stringify(response)).not.toContain("private-fixture-account");
 });
 
-test("Claude는 로그인 후 공식 CLI의 두 한도를 표시하고 로그아웃하면 캐시를 비운다", async ({ page }, info) => {
+test("Claude는 서버 CLI 인증의 두 구독 한도를 표시하고 캐시한다", async ({ page }, info) => {
     test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "격리된 CLI 인증 fixture 필요");
     const profile = await apiCall<{ id: string }>("POST", "/model-profiles", {
         name: "Claude policy-safe", protocol: "claude_code", base_url: "", model: "default",
     });
-    const base = "/agent-backends/claude_code";
+    const auth = join(state().cliDir!, "claude-auth");
     const quota = async () => {
         const report = await apiCall<AccountUsageReport>("GET", "/usage/accounts");
         const claude = report.accounts.find((account) => account.protocol === "claude_code")!;
@@ -116,7 +116,6 @@ test("Claude는 로그인 후 공식 CLI의 두 한도를 표시하고 로그아
         return claude;
     };
     try {
-        expect(await quota()).toMatchObject({ status: "authentication_required", limits: [] });
         await page.setViewportSize({ width: 390, height: 844 });
         await login(page);
         await openSettings(page);
@@ -127,12 +126,7 @@ test("Claude는 로그인 후 공식 CLI의 두 한도를 표시하고 로그아
         await expect(row.getByTestId("profile-check")).toContainText("설치됨");
         await expect(row.getByTestId("profile-check")).not.toContainText("연결됨");
         await page.screenshot({ path: info.outputPath("claude-installed-mobile.png") });
-        const before = await apiCall<{ attempt: { id: string } | null }>("GET", `${base}/auth`);
-        const id = randomUUID();
-        await apiCall("POST", `${base}/login`, { id, previous_id: before.attempt?.id ?? null });
-        await expect.poll(async () => (await apiCall<{ attempt: { state: string } }>("GET", `${base}/auth`)).attempt.state).toBe("waiting");
-        await apiCall("POST", `${base}/login/code`, { id, code: "fixture-code" });
-        await expect.poll(async () => (await apiCall<{ authenticated: boolean }>("GET", `${base}/auth`)).authenticated).toBe(true);
+        await writeFile(auth, "in");
         await expect.poll(quota).toMatchObject({ status: "available", limits: [
             limit("5시간", 87.5), { ...limit("주간", 30), resets_at: "2100-01-02T00:00:00Z" },
         ] });
@@ -146,9 +140,8 @@ test("Claude는 로그인 후 공식 CLI의 두 한도를 표시하고 로그아
         expect(cached[0]).toEqual(cached[1]);
         expect(await readFile(join(state().cliDir!, "claude-usage-requests"), "utf8")).toBe("usage\n");
         await page.screenshot({ path: info.outputPath("claude-usage-mobile.png") });
-        await apiCall("POST", `${base}/logout`, { attempt_id: id });
-        expect(await quota()).toMatchObject({ status: "authentication_required", limits: [] });
     } finally {
+        await writeFile(auth, "out");
         await apiCall("DELETE", `/model-profiles/${profile.id}`);
     }
 });

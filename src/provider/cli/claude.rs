@@ -1,61 +1,26 @@
-//! Claude Code 인증은 설치된 CLI의 구독 로그인에만 맡긴다.
+//! 설치된 Claude Code가 사용자의 CLI 인증과 모델 공급자 설정을 관리한다.
 use super::{GroupGuard, ProviderError};
 use serde_json::{Value, json};
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
 
-// CLI의 비대화형 모드는 로그인보다 외부 키·토큰을 우선할 수 있다.
-const PROVIDER_OVERRIDES: &[&str] = &[
-    "ANTHROPIC_API_KEY",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_CUSTOM_HEADERS",
-    "ANTHROPIC_PROFILE",
-    "CLAUDE_CODE_OAUTH_TOKEN",
-    "CLAUDE_CODE_OAUTH_TOKEN_FD",
-    "CLAUDE_CODE_API_KEY_FD",
-    "CLAUDE_CODE_USE_BEDROCK",
-    "CLAUDE_CODE_USE_VERTEX",
-    "CLAUDE_CODE_USE_FOUNDRY",
-    "CLAUDE_CODE_USE_ANTHROPIC_AWS",
-];
-
 pub(crate) fn command(executable: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut cmd = super::command(executable);
-    for key in PROVIDER_OVERRIDES {
-        cmd.env_remove(key);
-    }
-    cmd.env_remove("CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST")
-        .env_remove("CLAUDECODE").env_remove("CLAUDE_CODE_ENTRYPOINT");
+    cmd.env_remove("CLAUDECODE").env_remove("CLAUDE_CODE_ENTRYPOINT");
     // CLI 내장 백그라운드 작업은 Grove 턴이 끝나면 추적·보고되지 않는다. 턴을 넘기는 작업은 Grove 셸로만 연다.
     cmd.env("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS", "1");
     cmd
 }
 
 pub(crate) fn settings(mut settings: Value) -> String {
-    // --settings가 사용자·프로젝트 settings.json의 env와 key helper도 덮어쓴다.
-    // 관리 정책은 CLI의 자체 우선순위에 맡기고, 실행 전에 인증 방식이 일치하는지 확인한다.
-    settings["forceLoginMethod"] = json!("claudeai");
-    settings["apiKeyHelper"] = json!("");
-    let mut env: serde_json::Map<String, Value> = PROVIDER_OVERRIDES.iter()
-        .map(|&key| (key.into(), json!(""))).collect();
-    // 사용자 settings.json env가 실행 환경의 백그라운드 차단을 되돌리지 못하게 한다.
-    env.insert("CLAUDE_CODE_DISABLE_BACKGROUND_TASKS".into(), json!("1"));
-    settings["env"] = Value::Object(env);
+    settings["env"] = json!({"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":"1"});
     settings.to_string()
 }
 
-fn subscription(status: &Value) -> Option<bool> {
-    Some(status["loggedIn"].as_bool()?
-        && status["authMethod"] == "claude.ai"
-        && status["apiProvider"] == "firstParty"
-        && status["subscriptionType"].as_str().is_some_and(|plan| !plan.is_empty() && plan != "free"))
-}
-
-/// 프롬프트를 보내기 전에 동일한 cwd·설정에서 공식 CLI가 선택한 인증 방식을 확인한다.
+/// 공식 CLI가 선택한 인증 방식을 확인한다. 구독 한도 조회는 구독 인증에만 해당한다.
 /// 계정 정보가 포함된 원문은 반환하거나 기록하지 않는다.
 pub(crate) async fn authenticated(
-    executable: &Path, cwd: Option<&Path>, settings: &str, setting_sources: Option<&str>,
+    executable: &Path, cwd: Option<&Path>, settings: &str, setting_sources: Option<&str>, subscription_only: bool,
 ) -> Result<Option<bool>, ProviderError> {
     let mut cmd = command(executable);
     cmd.args(["--settings", settings]);
@@ -82,17 +47,11 @@ pub(crate) async fn authenticated(
         let exit = child.wait().await.ok()?;
         if !exit.success() && exit.code() != Some(1) { return None; }
         let report: Value = serde_json::from_slice(&bytes).ok()?;
-        let logged_in = subscription(&report)?;
+        let logged_in = report["loggedIn"].as_bool()? && (!subscription_only
+            || (report["authMethod"] == "claude.ai" && report["apiProvider"] == "firstParty"
+                && report["subscriptionType"].as_str().is_some_and(|plan| !plan.is_empty() && plan != "free")));
         if logged_in && !exit.success() { return None; }
         Some(logged_in)
     }).await.ok().flatten();
     Ok(report)
-}
-
-pub(super) fn require_subscription(authenticated: Option<bool>) -> Result<(), ProviderError> {
-    match authenticated {
-        Some(true) => Ok(()),
-        Some(false) => Err(ProviderError::new("auth_failed", "서버의 Claude Code에 구독 계정으로 로그인하세요 (`claude auth login`). API 키·Console·게이트웨이 연결은 사용하지 않습니다")),
-        None => Err(ProviderError::new("auth_failed", "Claude Code 구독 로그인을 확인할 수 없습니다. CLI를 업데이트하고 `claude auth status`를 확인하세요")),
-    }
 }

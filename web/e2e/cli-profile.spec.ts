@@ -12,7 +12,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
     await expect(page.getByLabel("Base URL")).toHaveCount(0);
     await expect(page.getByLabel("API 키")).toHaveCount(0);
     await expect(page.getByLabel("모델", { exact: true })).toHaveValue("haiku");
-    await expect(page.getByTestId("cli-note")).toContainText("서버 CLI 계정 · 프로젝트 수정·검사 가능");
+    await expect(page.getByTestId("cli-note")).toContainText("서버 CLI · 프로젝트 수정·검사 가능");
     const name = `cli-${Date.now()}`;
     try {
         await page.getByLabel("프로필 이름").fill(name);
@@ -21,13 +21,17 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
         const list = await apiCall<{ name: string; protocol: string; base_url: string; model: string }[]>("GET", "/model-profiles");
         const p = list.find((x) => x.name === name)!;
         expect([p.protocol, p.base_url, p.model]).toEqual(["claude_code", "", "haiku"]);
-        // Codex 계정 연결은 API에서 기본 모델을 확인한다.
-        await selectChoice(page.getByLabel("protocol"), "codex_oauth");
+        await selectChoice(page.getByLabel("protocol"), "codex_cli");
         await expect(page.getByLabel("Base URL")).toHaveCount(0);
         await expect(page.getByLabel("API 키")).toHaveCount(0);
         await expect(page.getByLabel("모델", { exact: true })).toHaveValue("default");
+        await page.getByLabel("프로필 이름").fill(`${name}-codex`);
+        await page.getByRole("form", { name: "모델 프로필 추가", exact: true }).getByRole("button", { name: "추가", exact: true }).click();
+        await expect(page.getByText(`${name}-codex`, { exact: true })).toBeVisible();
+        const profiles = await apiCall<typeof list>("GET", "/model-profiles");
+        expect(profiles.find((x) => x.name === `${name}-codex`)).toMatchObject({ protocol: "codex_cli", base_url: "", model: "default" });
     } finally {
-        await removeProfiles((n) => n === name);
+        await removeProfiles((n) => n === name || n === `${name}-codex`);
     }
 });
 

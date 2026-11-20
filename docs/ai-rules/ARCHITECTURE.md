@@ -24,10 +24,9 @@ HTTP 인증·Origin·호환성 검사 → 도메인 처리 → SQLite transactio
 웹은 API snapshot과 SSE 이벤트를 통해 서버 상태를 투영한다.
 프로젝트별로 열린 대화와 이어갈 대화는 데몬에 저장한다. 분할 배치와 표시 설정은 기기별로 유지한다.
 
-기본 Codex 연결(`codex_oauth`)은 Grove 이력과 도구 루프를 Codex Responses API에 연결한다. `store: false`로 호출하며 Codex CLI의 스레드를 시작하거나 재개하지 않는다. CLI 로그인 파일의 계정 자격은 메모리에서만 사용하고, 필요한 갱신은 계정 전용 CLI 호출에 맡긴다. `evidence: src/provider/codex_oauth.rs`.
-같은 턴의 모델 단계는 WebSocket을 우선 재사용한다. 요청 설정과 이력 앞부분이 같을 때만 `previous_response_id`와 새 입력을 보내며, 새 연결과 HTTP/SSE 폴백은 Grove 이력 전체를 보낸다. 과부하 재시도는 부분 출력이 없는 모델 단계에만 적용한다. `evidence: src/provider/codex_oauth/ws.rs`, `src/provider/mod.rs`.
+기본 Codex 연결(`codex_cli`)은 데몬 계정에 설치된 `codex app-server`와 표준 입출력으로 연결한다. 자격은 CLI가 관리하며 Grove는 `item/agentMessage/delta`를 전달한다. 이전 `codex_oauth` 프로필은 ID와 Grove 이력을 유지한 채 CLI로 전환하고, 전환 이전의 CLI 스레드에 다시 붙지 않는다. CLI로 바뀐 프로필이 후보인 HTTP fallback은 비활성화한다. `evidence: src/provider/cli/codex.rs`, `src/models.rs`, `src/store.rs`.
 
-Claude Code는 데몬 계정에 설치되어 구독으로 로그인한 `claude`만 실행한다. Grove는 Anthropic API에 직접 요청하지 않고 CLI 자격을 읽지 않는다. 재개가 가능하고 실행 설정이 같으면 열린 SDK JSONL 연결에 새 메시지만 보낸다. 연결이 만료되거나 실행 설정이 바뀌면 재개 가능한 CLI 세션 ID로 다시 연결한다. 턴 전용 MCP 연결은 각 턴에서 교체·해제하고, 취소·오류·로그아웃·서버 종료 때는 프로세스를 보존하지 않는다. 제목·요약은 별도 호출을 유지한다. `evidence: src/provider/cli/claude_session.rs`, `evidence: src/provider/cli/claude.rs`.
+Claude Code는 데몬 계정에 설치된 `claude`를 실행한다. 공식 CLI가 인증을 관리하며, Grove는 Claude 구독 인증을 강제하거나 로그인 코드를 중계하지 않는다. 재개가 가능하고 실행 설정이 같으면 열린 SDK JSONL 연결에 새 메시지만 보낸다. 연결이 만료되거나 실행 설정이 바뀌면 재개 가능한 CLI 세션 ID로 다시 연결한다. 턴 전용 MCP 연결은 각 턴에서 교체·해제하고, 취소·오류·서버 종료 때는 프로세스를 보존하지 않는다. 제목·요약은 별도 호출을 유지한다. `evidence: src/provider/cli/claude_session.rs`, `evidence: src/provider/cli/claude.rs`.
 
 사용량 화면의 tok/s는 출력 토큰과 짝이 맞는 모델 요청 시간만 사용한다. Claude Code는 `result.duration_api_ms`를 사용하며, 재사용한 프로세스에선 직전 누적값을 뺀다. 시간 미보고 CLI·과거 기록에 전체 턴 시간을 대신 넣지 않는다. 저장된 입력 총량에는 캐시 읽기·쓰기가 포함되고, 화면은 새 입력과 캐시를 분리해서 표시한다. `evidence: src/provider/cli/claude_session.rs`, `evidence: src/usage/dashboard.rs`, `evidence: web/app/components/usage/dashboardModel.ts`.
 

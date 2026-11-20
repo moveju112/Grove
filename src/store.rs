@@ -1256,6 +1256,29 @@ pub const MIGRATIONS: &[&str] = &[
     r#"
     ALTER TABLE cli_sessions ADD COLUMN assistant_seq INTEGER;
     "#,
+    // 프로필 ID와 Grove 이력은 유지하되 API 전환 전에 만들어진 Codex 스레드를 재개하지 않는다.
+    r#"
+    DELETE FROM cli_sessions WHERE profile_id IN (SELECT id FROM model_profiles WHERE protocol='codex_oauth');
+    DELETE FROM profile_checks WHERE profile_id IN (SELECT id FROM model_profiles WHERE protocol='codex_oauth');
+    UPDATE model_profiles
+       SET options=json_set(options, '$.fallback.enabled', json('false'), '$.fallback.candidates', (
+           SELECT json_group_array(json(candidate.value))
+           FROM json_each(model_profiles.options, '$.fallback.candidates') AS candidate
+           WHERE NOT EXISTS (SELECT 1 FROM model_profiles AS target WHERE target.protocol='codex_oauth'
+               AND target.id=json_extract(candidate.value, '$.profile_id'))
+       )), revision=revision+1,
+           updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+     WHERE EXISTS (
+         SELECT 1 FROM json_each(model_profiles.options, '$.fallback.candidates') AS candidate
+         JOIN model_profiles AS target ON target.id=json_extract(candidate.value, '$.profile_id')
+         WHERE target.protocol='codex_oauth'
+     );
+    UPDATE model_profiles
+       SET protocol='codex_cli', base_url='', secret_id=NULL, revision=revision+1,
+           options=json_remove(options, '$.headers', '$.capabilities.tools'),
+           updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+     WHERE protocol='codex_oauth';
+    "#,
 ];
 
 #[cfg(test)]
@@ -1427,6 +1450,24 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(text, "existing message");
+        assert!(!c.prepare("PRAGMA foreign_key_check").unwrap().exists([]).unwrap());
+        c.execute_batch(r#"
+            INSERT INTO model_profiles(id,name,protocol,base_url,model,options,created_at,updated_at)
+                VALUES ('http','HTTP','openai','https://example.com','fixture',
+                    '{"fallback":{"enabled":true,"destination_change_confirmed":true,"candidates":[{"profile_id":"p","revision":8}]}}','t','t');
+        "#).unwrap();
+        for migration in &super::MIGRATIONS[last + 1..] { c.execute_batch(migration).unwrap(); }
+        let profile = super::super::models::get_profile(&c, "p").unwrap();
+        assert_eq!(profile.protocol, "codex_cli");
+        assert_eq!(profile.revision, 9);
+        assert_eq!(profile.capabilities.native_tools, Some(true));
+        assert!(!profile.capabilities.fast);
+        assert!(super::super::models::get_profile(&c, "other").unwrap().last_check.is_some());
+        assert!(!c.prepare("SELECT 1 FROM cli_sessions WHERE profile_id='p'").unwrap().exists([]).unwrap());
+        assert!(c.prepare("SELECT 1 FROM turns WHERE id='turn' AND profile_id='p' AND request_message_id='m'").unwrap().exists([]).unwrap());
+        let http = super::super::models::get_profile(&c, "http").unwrap();
+        assert_eq!(http.options["fallback"]["enabled"], false);
+        assert_eq!(http.options["fallback"]["candidates"], serde_json::json!([]));
         assert!(!c.prepare("PRAGMA foreign_key_check").unwrap().exists([]).unwrap());
     }
 

@@ -48,10 +48,6 @@ impl std::fmt::Debug for Handle {
 }
 
 impl Sessions {
-    pub(crate) fn clear(&self) {
-        self.0.lock().expect("Claude sessions").idle.clear();
-    }
-
     pub(crate) fn close(&self) {
         let mut state = self.0.lock().expect("Claude sessions");
         state.closed = true;
@@ -144,8 +140,6 @@ impl Process {
 }
 
 async fn start(key: &Key, mut argv: Vec<String>, native_id: String) -> Result<Process, ProviderError> {
-    let settings = &argv[argv.iter().position(|arg| arg == "--settings").expect("Claude settings") + 1];
-    claude::require_subscription(claude::authenticated(&key.program, Some(&key.cwd), settings, None).await?)?;
     // 실행 중 합치기는 CLI가 대화에 넣을 때 같은 uuid로 replay한 user 이벤트를 ACK로 쓴다.
     argv.extend(["--input-format".into(), "stream-json".into(), "--replay-user-messages".into()]);
     if key.bridge {

@@ -40,7 +40,7 @@ pub struct AgentBackendCatalog {
 }
 
 const AGENT_BACKENDS: &[(&str, &str, &str)] = &[
-    (provider::codex_oauth::PROTOCOL, "Codex", "codex"),
+    ("codex_cli", "Codex", "codex"),
     ("claude_code", "Claude Code", "claude"),
 ];
 
@@ -58,8 +58,9 @@ pub async fn agent_backends(_p: Principal) -> Json<AgentBackendCatalog> {
 
 /// 명시적 연결은 프로필 관리 권한을 따른다. 동시 탭·응답 유실 후 재시도도 같은 기본 연결로 수렴한다.
 pub async fn connect_agent_backend(State(app): State<App>, p: Principal, headers: HeaderMap, Path(protocol): Path<String>) -> ApiResult<Response> {
+    // 이전 웹 클라이언트의 연결 요청도 공식 CLI를 선택한다.
+    let protocol = if protocol == provider::codex_oauth::PROTOCOL { "codex_cli".to_owned() } else { protocol };
     let (_, name, program) = AGENT_BACKENDS.iter().find(|(id, _, _)| *id == protocol)
-        .or_else(|| (protocol == "codex_cli").then_some(&("codex_cli", "Codex CLI", "codex")))
         .ok_or_else(|| ApiError::invalid("지원하지 않는 에이전트입니다"))?;
     let hash = idem::body_hash("agent_backend.connect", &json!({ "protocol": protocol }));
     if let Some(response) = idem::replay(&app, &p, &headers, &hash).await? { return Ok(response); }
@@ -551,10 +552,10 @@ fn validate_options(protocol: &str, o: &Value) -> ApiResult<()> {
 }
 
 pub async fn create_profile(State(app): State<App>, p: Principal, headers: HeaderMap, Json(b): Json<CreateProfile>) -> ApiResult<Response> {
-    provider::validate_profile(&b.protocol, &b.base_url, &b.model).map_err(ApiError::invalid)?;
-    if b.protocol == provider::codex_oauth::PROTOCOL && b.secret_id.is_some() {
-        return Err(ApiError::invalid("Codex API 연결은 서버의 Codex 로그인을 씁니다"));
+    if b.protocol == provider::codex_oauth::PROTOCOL {
+        return Err(ApiError::unsupported("Codex는 서버에 설치된 Codex CLI로 연결해 주세요"));
     }
+    provider::validate_profile(&b.protocol, &b.base_url, &b.model).map_err(ApiError::invalid)?;
     if b.name.trim().is_empty() || b.name.chars().count() > 80 {
         return Err(ApiError::invalid("이름은 1~80자여야 합니다"));
     }

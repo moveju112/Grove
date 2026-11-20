@@ -12,7 +12,7 @@ pub(crate) async fn read(executable: &Path) -> Result<Value, &'static str> {
     tokio::time::timeout(Duration::from_secs(12), async {
         let scratch = tempfile::Builder::new().prefix("grove-usage-").tempdir().map_err(|_| "unavailable")?;
         let settings = claude::settings(json!({"disableAllHooks":true}));
-        match claude::authenticated(executable, Some(scratch.path()), &settings, Some("")).await {
+        match claude::authenticated(executable, Some(scratch.path()), &settings, Some(""), true).await {
             Ok(Some(true)) => (),
             Ok(Some(false)) => return Err("authentication_required"),
             _ => return Err("unavailable"),
