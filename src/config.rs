@@ -26,9 +26,15 @@ pub struct Config {
     pub remote_watch_insecure_loopback: bool,
     /// GitHub CLI 실행 파일(PROJECT-012 저장소 검색). 기본 `gh`(PATH), `GROVE_GH`로 바꾼다.
     pub gh_command: String,
+    /// 내부 보조 명령(`continuation-mcp`)에 쓸 grove 실행 파일. None이면 현재 실행 파일을 쓴다.
+    pub internal_exe: Option<PathBuf>,
 }
 
 impl Config {
+    pub fn internal_exe(&self) -> Option<PathBuf> {
+        self.internal_exe.clone().or_else(|| std::env::current_exe().ok())
+    }
+
     pub fn from_env(data_dir: Option<PathBuf>, listen: Option<SocketAddr>) -> Result<Self, String> {
         let data_dir = match data_dir.or_else(|| std::env::var_os("GROVE_DATA_DIR").map(PathBuf::from)) {
             Some(d) => d,
@@ -57,6 +63,7 @@ impl Config {
             scheduler_tick_ms: std::env::var("GROVE_SCHEDULER_TICK_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(15_000).clamp(100, 600_000),
             remote_watch_insecure_loopback: std::env::var("GROVE_REMOTE_WATCH_INSECURE_LOOPBACK").is_ok_and(|v| v == "1"),
             gh_command: std::env::var("GROVE_GH").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "gh".into()),
+            internal_exe: None,
         })
     }
 
@@ -124,7 +131,7 @@ mod tests {
             web_base: "/".into(),
             approval_ttl_secs: 60,
             scheduler_tick_ms: 15_000,
-            remote_watch_insecure_loopback: false, gh_command: "gh".into(),
+            remote_watch_insecure_loopback: false, gh_command: "gh".into(), internal_exe: None,
         }
     }
     /// OS별 데이터 경로 규칙(ARCH-009). 절대 경로 판정은 실행 OS 기준이라 Unix 형식 값으로 확인한다.

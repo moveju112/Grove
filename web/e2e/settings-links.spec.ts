@@ -80,12 +80,11 @@ test("제목 모델 링크를 열면 자동 생성 설정과 함께 표시한다
     await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
 });
 
-test("접힌 보조 기능의 모델 링크는 해당 워크플로우 행을 펼친다", async ({ page }) => {
+test("보조 기능의 모델 링크는 해당 워크플로우 행으로 이동한다", async ({ page }) => {
     const settings = await openSettings(page, "agents.profile.handoff-summarizer");
     const row = settings.getByTestId("workflow-handoff-summarizer");
-    await expect(row.getByRole("button", { name: "인계 요약 접기", exact: true })).toHaveAttribute("aria-expanded", "true");
+    await expect(row.getByRole("button", { name: "인계 요약 접기", exact: true })).toHaveCount(0);
     await expect(row.getByTestId("setting-agents.profile.handoff-summarizer")).toBeInViewport();
-    await expect(settings.getByTestId("setting-session.title_profile")).toHaveCount(0);
     await expect(settings.getByText("링크한 설정을 불러오는 중…")).toHaveCount(0);
 });
 
@@ -99,8 +98,6 @@ test("effective 응답을 보류해도 실제 고급 행이 렌더된 뒤 이동
         const settings = page.getByTestId("settings");
         await gate.seen;
         await expect(settings.getByRole("button", { name: "대화·컨텍스트", exact: true })).toHaveAttribute("aria-current", "page");
-        await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toHaveCount(0);
-        await expect(settings.getByTestId(`setting-${advancedKey}`)).toHaveCount(0);
         // 실제 sleep 없이 느린 조회 중에도 시간이 흐르는 상황을 고정한다.
         await page.clock.runFor(1_000);
         await gate.deliver();
@@ -263,8 +260,7 @@ test("닫은 설정의 늦은 응답은 다시 연 설정의 기본 접힘을 �
         await expect(settings.getByTestId(`setting-${advancedKey}`)).toHaveCount(0);
         await settings.getByRole("tab", { name: "데몬 설정", exact: true }).click();
         await settings.getByRole("button", { name: "대화·컨텍스트", exact: true }).click();
-        await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toBeVisible();
-        await settings.getByLabel("설정 검색").fill("입력 여유");
+        await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toHaveCount(0);
         await expect(settings.getByTestId(`setting-${advancedKey}`)).toBeVisible();
     } finally {
         gate.release();
@@ -302,8 +298,7 @@ for (const hash of ["#setting-does.not.exist", "#setting-%E0%A4%A", "#setting-%2
         const settings = page.getByTestId("settings");
         await settings.getByRole("tab", { name: "데몬 설정", exact: true }).click();
         await settings.getByRole("button", { name: "대화·컨텍스트", exact: true }).click();
-        await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toBeVisible();
-        await settings.getByLabel("설정 검색").fill("입력 여유");
+        await expect(settings.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toHaveCount(0);
         await expect(settings.getByTestId(`setting-${advancedKey}`)).toBeVisible();
         expect(errors).toEqual([]);
     });

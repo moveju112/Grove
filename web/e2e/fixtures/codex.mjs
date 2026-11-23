@@ -75,6 +75,18 @@ async function followupBoundary(text) {
 const responseReasoning = () => "링크 대상을 확인한다.\n" + "추론 내용을 생략하지 않고 표시한다.\n".repeat(120);
 const responseProgress = "심볼릭 링크인지, 실제로 어느 파일을 가리키는지 확인할게.";
 const responseAnswer = "맞아. 확인 결과 심볼릭 링크야.";
+function scheduleAnswer(input) {
+    if (!input.includes("fixture-schedule-")) return undefined;
+    const action = /fixture-schedule-(read|write|denied|off)/.exec(input)?.[1];
+    if (action === "off") return { answer: "예약 도구 꺼짐", tool: "", arguments_json: "" };
+    if (input.includes('"role":"tool"')) {
+        if (action === "read" && !input.includes("GROVE_SCHEDULE_FILE")) throw new Error("missing Grove read result");
+        return { answer: "Grove 예약 완료", tool: "", arguments_json: "" };
+    }
+    const tool = action === "read" ? "read" : "write";
+    return { answer: "", tool, arguments_json: JSON.stringify({ path: tool === "read" ? "cli-schedule-check.txt" : "cli-schedule-write.txt",
+        ...(tool === "write" ? { content: "새 불필요 파일" } : {}) }) };
+}
 async function pauseResponse(signal, ready) {
     await new Promise((resolve, reject) => {
         const watcher = watch(directory, (_event, name) => {
@@ -89,9 +101,12 @@ async function claudeAnswer(input) {
     await appendFile(join(directory, "native-turns.jsonl"), JSON.stringify({ provider, cwd: process.cwd(), text: input, args,
         pid: process.pid, threadId: id }) + "\n");
     const ordinary = await nextAnswer(id);
-    const answer = input.includes("fixture-project-media")
+    const scheduled = scheduleAnswer(input);
+    if (scheduled && (!args.includes("--safe-mode") || args.includes("--dangerously-skip-permissions")
+        || !args.includes("--strict-mcp-config") || args[args.indexOf("--tools") + 1] !== "")) process.exit(1);
+    const answer = scheduled?.answer ?? (input.includes("fixture-project-media")
         ? "결과를 첨부했어.\n\n```grove-media\npreview.gif\npreview.webm\n```"
-        : ordinary;
+        : ordinary);
     emit({ type: "system", subtype: "init", session_id: id });
     const context = /fixture-context-(\d+|unknown)/.exec(input)?.[1];
     const contextTokens = context === "unknown" ? 10_000 : Number(context) * 1_000;
@@ -101,6 +116,7 @@ async function claudeAnswer(input) {
     emit({ type: "assistant", message: { content: [{ type: "text", text: answer }], ...(context ? { usage } : {}) } });
     emit({ type: "result", subtype: "success", session_id: id, result: answer,
         usage: context ? { input_tokens: 900_000, output_tokens: 100_000 } : { input_tokens: 10, output_tokens: 5 },
+        ...(scheduled && args.includes("--json-schema") ? { structured_output: scheduled } : {}),
         ...(context ? { modelUsage: { fixture: { contextWindow: context === "unknown" ? null : 100_000 } } } : {}),
     });
 }
@@ -111,6 +127,7 @@ if (args.includes("--version")) {
 if (args[0] === "app-server" || args.includes("--input-format")) {
     let threadId;
     let activeTurn;
+    let pendingQuestion;
     let usageReady = false;
     let claudeSession = false;
     for await (const line of createInterface({ input: process.stdin })) {
@@ -157,6 +174,20 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
             continue;
         }
         await appendFile(join(directory, "app-server-requests.jsonl"), JSON.stringify(request) + "\n");
+        if (pendingQuestion && request.id === pendingQuestion.id && !request.method) {
+            const { turnId, id } = pendingQuestion;
+            pendingQuestion = undefined;
+            const reply = request.result?.answers;
+            if (reply?.action?.answers?.[0] !== "적용" || reply?.extra?.answers?.length !== 0) {
+                throw new Error(`unexpected response to ${id}`);
+            }
+            await writeFile(join(process.cwd(), "snapshot-edit.txt"), "CLI 수정\n");
+            await writeFile(join(process.cwd(), "snapshot-new.txt"), "CLI 새 파일\n", { mode: 0o755 });
+            emit({ method: "serverRequest/resolved", params: { threadId, requestId: id } });
+            emit({ method: "item/completed", params: { threadId, turnId, item: { type: "commandExecution", id: "active-check", status: "completed" } } });
+            emit({ method: "item/completed", params: { threadId, turnId, item: { type: "agentMessage", id: "answer", text: "질문 답변 확인" } } });
+            emit({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed", items: [] } } });
+        }
         if (request.method === "initialize") emit({ id: request.id, result: {} });
         if (request.method === "account/rateLimits/read") {
             emit({ id: request.id, result: {
@@ -174,6 +205,11 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
         if (request.method === "thread/start" || request.method === "thread/resume") {
             threadId = request.params.threadId ?? randomUUID();
             emit({ id: request.id, result: { thread: { id: threadId } } });
+        }
+        if (request.method === "thread/unsubscribe") {
+            threadId = undefined;
+            activeTurn = undefined;
+            emit({ id: request.id, result: { status: "unsubscribed" } });
         }
         if (request.method === "turn/steer") {
             if (!activeTurn || request.params.threadId !== threadId || request.params.expectedTurnId !== activeTurn.turnId) {
@@ -204,6 +240,18 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
             const turnId = randomUUID();
             emit({ id: request.id, result: { turn: { id: turnId } } });
             emit({ method: "turn/started", params: { threadId, turn: { id: turnId, status: "inProgress", items: [] } } });
+            if (text.endsWith("fixture-native-question")) {
+                const id = `question-${turnId}`;
+                pendingQuestion = { id, turnId };
+                emit({ method: "item/started", params: { threadId, turnId, item: {
+                    type: "commandExecution", id: "active-check", status: "inProgress", command: "fixture raw command",
+                } } });
+                emit({ id, method: "item/tool/requestUserInput", params: { threadId, turnId, itemId: "questions", questions: [
+                    { id: "action", header: "작업", question: "수정을 적용할까요?", options: [{ label: "적용", description: "파일을 수정" }] },
+                    { id: "extra", header: "메모", question: "메모를 추가할까요?", options: null },
+                ] } });
+                continue;
+            }
             const context = /fixture-context-(\d+|unknown)/.exec(text)?.[1];
             if (context) emit({ method: "thread/tokenUsage/updated", params: { threadId, turnId, tokenUsage: {
                 total: { inputTokens: 900_000, outputTokens: 100_000 },
@@ -319,13 +367,15 @@ if (provider === "claude") {
     await claudeAnswer(input);
     process.exit(0);
 }
-if (provider === "codex" && (!args.includes("--dangerously-bypass-approvals-and-sandbox")
-    || args.some((arg) => arg.startsWith("sandbox_") || arg.startsWith("approval_policy=")))) {
-    emit({ type: "turn.failed", error: { message: "fixture: unrestricted coding policy missing" } });
-    process.exit(1);
-}
 let input = "";
 for await (const bytes of process.stdin) input += bytes.toString();
+const scheduled = scheduleAnswer(input);
+const restricted = args.includes("--ephemeral");
+if (restricted ? !args.includes("--ignore-user-config") || args.includes("--dangerously-bypass-approvals-and-sandbox")
+    || args[args.indexOf("--sandbox") + 1] !== "read-only" : !args.includes("--dangerously-bypass-approvals-and-sandbox")) {
+    emit({ type: "turn.failed", error: { message: "fixture: wrong coding policy" } });
+    process.exit(1);
+}
 const resume = args.includes("resume");
 const id = resume ? args.at(-2) : randomUUID();
 if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error("fixture session ID invalid");
@@ -353,7 +403,7 @@ if (input.includes("fixture-hold")) {
     emit({ type: "item.updated", item: { ...item, text: "중단 대기 중" } });
     setInterval(() => {}, 60_000);
 } else {
-    const text = `에이전트 답변 ${state.turns}`;
+    const text = scheduled ? args.includes("--output-schema") ? JSON.stringify(scheduled) : scheduled.answer : `에이전트 답변 ${state.turns}`;
     emit({ type: "item.updated", item: { ...item, text: "에이전트" } });
     emit({ type: "item.completed", item: { ...item, text } });
     emit({ type: "turn.completed", usage: { input_tokens: 10, output_tokens: 5 } });

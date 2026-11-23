@@ -35,6 +35,10 @@ jobs:
   rust:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      CARGO_PROFILE_TEST_DEBUG: '0'
     steps:
       - uses: actions/checkout@v4
       # ts_bindings 시험이 web의 node·typescript로 계약 metadata를 생성·대조한다.
@@ -48,5 +52,45 @@ jobs:
       # rust-toolchain.toml의 고정 버전을 rustup이 설치한다.
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: 'false'
       # 실제 CLI 시험은 #[ignore]라 계정 없이 건너뛴다.
       - run: cargo test --locked --no-fail-fast
+
+  browser:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            web/package-lock.json
+            relay/package-lock.json
+      - run: npm ci
+        working-directory: web
+      - run: npm ci
+        working-directory: relay
+      - run: rustup toolchain install
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-targets: 'false'
+      - name: Mobile browser tests
+        run: |
+          export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+          python3 scripts/build.py test --e2e 'e2e/.*\.mobile\.spec\.ts' --e2e-regression
+      - name: Codex browser test
+        if: ${{ !cancelled() }}
+        run: |
+          export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+          GROVE_E2E_FAKE_CLI=1 python3 scripts/build.py test --e2e e2e/cli-turn.spec.ts --e2e-regression
+      - name: Relay browser tests
+        if: ${{ !cancelled() }}
+        run: |
+          export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
+          python3 scripts/build.py test --relay-e2e

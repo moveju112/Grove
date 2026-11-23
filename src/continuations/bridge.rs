@@ -17,7 +17,15 @@ use tokio::sync::watch;
 #[derive(Clone)]
 pub struct Link {
     pub file: std::path::PathBuf,
+    /// 턴 MCP를 띄울 grove 실행 파일(`continuation-mcp`).
+    pub exe: std::path::PathBuf,
     pub waiting: Arc<AtomicUsize>,
+    pub tools: Vec<&'static str>,
+}
+impl Link {
+    pub(crate) fn claude_tools(&self) -> String {
+        self.tools.iter().map(|name| format!("mcp__grove_continuations__{name}")).collect::<Vec<_>>().join(",")
+    }
 }
 impl std::fmt::Debug for Link {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -72,6 +80,7 @@ struct Scope {
     cancel: watch::Receiver<bool>,
     revoked: watch::Receiver<bool>,
     waiting: Arc<AtomicUsize>,
+    tools: Vec<&'static str>,
 }
 
 impl Bridge {
@@ -81,16 +90,22 @@ impl Bridge {
         cancel: watch::Receiver<bool>,
     ) -> ApiResult<Option<Self>> {
         let tid = turn.to_string();
-        let enabled = app
+        let tools = app
             .db
             .call(move |c| {
                 let t = crate::runner::get_turn(c, &tid)?;
-                Ok(super::check_permission(c, &t, super::NAME).is_ok())
+                if t.definition["limits"].is_object() { return Ok(vec![]); }
+                Ok([super::NAME, "shell", "agent"].into_iter()
+                    .filter(|name| super::check_permission(c, &t, name).is_ok()
+                        && (*name != "shell" || super::check_permission(c, &t, super::NAME).is_ok()))
+                    .collect::<Vec<_>>())
             })
             .await?;
-        if !enabled {
+        if tools.is_empty() {
             return Ok(None);
         }
+        let exe = app.cfg.internal_exe()
+            .ok_or_else(|| ApiError::internal("턴 도구 실행 경로를 확인하지 못했습니다"))?;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .map_err(|_| ApiError::internal("후속 작업 연결을 시작하지 못했습니다"))?;
@@ -98,7 +113,7 @@ impl Bridge {
             .local_addr()
             .map_err(|_| ApiError::internal("후속 작업 주소를 확인하지 못했습니다"))?;
         let token = crate::util::random_secret(32);
-        let credentials = json!({"url":format!("http://{addr}/"),"token":token}).to_string();
+        let credentials = json!({"url":format!("http://{addr}/"),"token":token,"tools":tools}).to_string();
         let (dir, file) = tokio::task::spawn_blocking(move || -> ApiResult<_> {
             let dir = tempfile::Builder::new()
                 .prefix("grove-continuation-")
@@ -120,6 +135,7 @@ impl Bridge {
             cancel,
             revoked,
             waiting: waiting.clone(),
+            tools: tools.clone(),
         };
         let router = Router::new()
             .route("/", post(call))
@@ -132,7 +148,7 @@ impl Bridge {
             task,
             _dir: dir,
             revoke,
-            link: Link { file, waiting },
+            link: Link { file, exe, waiting, tools },
             app: app.clone(),
             turn: turn.into(),
         }))
@@ -162,7 +178,7 @@ async fn call(
     scope.waiting.fetch_add(1, Ordering::AcqRel);
     let _waiting = Waiting(scope.waiting.clone());
     let name = body["name"].as_str().unwrap_or("").to_string();
-    if !matches!(name.as_str(), super::NAME | "shell") {
+    if !scope.tools.contains(&name.as_str()) {
         return Err(ApiError::invalid("지원하지 않는 도구입니다"));
     }
     let args = body["arguments"].clone();
@@ -194,7 +210,11 @@ async fn call(
             if owner != epoch {
                 return Err(ApiError::conflict("turn_ended", "이 서버의 턴이 아닙니다"));
             }
+            if t.definition["limits"].is_object() {
+                return Err(ApiError::forbidden("예약 턴의 도구는 Grove 실행 루프를 사용합니다"));
+            }
             super::check_permission(&tx, &t, &name)?;
+            if name == "shell" { super::check_permission(&tx, &t, super::NAME)?; }
             let provider_id = format!("continuation-cli:{request}");
             let existing: Option<String> = tx
                 .query_row(
@@ -262,7 +282,9 @@ async fn call(
 pub fn mcp_main(file: Option<&String>) -> i32 {
     let mut shell = crate::tools::spec("shell").expect("registered shell");
     shell.description = "사용자가 요청한 다운로드·설치 등 오래 걸리는 명령을 Grove 소유 백그라운드 작업으로 시작하고, 끝나면 follow_up 지시로 같은 대화에서 AI가 한 번 보고한다. background=true와 follow_up이 필수다. 명령 실행은 Grove의 기존 정책·승인을 거치며 이 도구 자체는 새 사용자 승인이 아니다. 서버 재시작으로 결과가 불명이면 명령을 재실행하지 않는다.";
-    stdio_main(file, "grove-continuations", vec![super::spec(), shell])
+    let mut agent = crate::tools::spec("agent").expect("registered agent");
+    agent.description = "Grove 자식 에이전트에게 위임한다. spawn(agent_id·brief), send(run_id·brief), status/wait(run_id), list, cancel(run_id)을 쓴다. 위임은 Grove 정책과 승인을 따른다. status와 wait는 즉시 현재 상태를 반환한다. 응답을 보내면 Grove가 모델 호출 슬롯을 반환하고 이 턴이 시작한 자식의 결과를 기다린 뒤 알려준다.";
+    stdio_main(file, "grove-continuations", vec![super::spec(), shell, agent])
 }
 
 /// 응답 본문 상한. 넘으면 결과 불명으로 돌려준다.
@@ -281,6 +303,8 @@ fn stdio_main(file:Option<&String>,server_name:&str,specs:Vec<crate::tools::Tool
         }
         let link: Value =
             serde_json::from_slice(&bytes).map_err(|_| "턴 연결 형식이 잘못됐습니다")?;
+        let granted = link["tools"].as_array().ok_or("턴 도구 권한 목록이 없습니다")?;
+        let specs: Vec<_> = specs.into_iter().filter(|spec| granted.iter().any(|name| name == spec.name)).collect();
         let url = link["url"]
             .as_str()
             .ok_or("턴 연결 주소가 없습니다")?

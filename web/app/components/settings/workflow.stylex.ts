@@ -5,7 +5,6 @@ export const workflowStyles = stylex.create({
         minWidth: 0,
         borderColor: "var(--line)",
     },
-    expandedRow: { borderColor: "var(--line-strong)" },
     header: { minHeight: 36, paddingInline: 12 },
     label: { minWidth: 0, flex: "1 1 auto", fontWeight: 600 },
     icon: { flexShrink: 0, display: "inline-flex" },

@@ -19,9 +19,16 @@ pub(crate) fn settings(mut settings: Value) -> String {
 
 /// 공식 CLI가 선택한 인증 방식을 확인한다. 구독 한도 조회는 구독 인증에만 해당한다.
 /// 계정 정보가 포함된 원문은 반환하거나 기록하지 않는다.
-pub(crate) async fn authenticated(
-    executable: &Path, cwd: Option<&Path>, settings: &str, setting_sources: Option<&str>, subscription_only: bool,
-) -> Result<Option<bool>, ProviderError> {
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Account {
+    SignedOut,
+    Subscription,
+    OtherProvider,
+}
+
+pub(crate) async fn account(
+    executable: &Path, cwd: Option<&Path>, settings: &str, setting_sources: Option<&str>,
+) -> Result<Option<Account>, ProviderError> {
     let mut cmd = command(executable);
     cmd.args(["--settings", settings]);
     if let Some(sources) = setting_sources { cmd.args(["--setting-sources", sources]); }
@@ -47,11 +54,15 @@ pub(crate) async fn authenticated(
         let exit = child.wait().await.ok()?;
         if !exit.success() && exit.code() != Some(1) { return None; }
         let report: Value = serde_json::from_slice(&bytes).ok()?;
-        let logged_in = report["loggedIn"].as_bool()? && (!subscription_only
-            || (report["authMethod"] == "claude.ai" && report["apiProvider"] == "firstParty"
-                && report["subscriptionType"].as_str().is_some_and(|plan| !plan.is_empty() && plan != "free")));
-        if logged_in && !exit.success() { return None; }
-        Some(logged_in)
+        if !report["loggedIn"].as_bool()? { return Some(Account::SignedOut); }
+        if !exit.success() { return None; }
+        if report["authMethod"] == "claude.ai" && report["apiProvider"] == "firstParty"
+            && report["subscriptionType"].as_str().is_some_and(|plan| !plan.is_empty() && plan != "free")
+        {
+            Some(Account::Subscription)
+        } else {
+            Some(Account::OtherProvider)
+        }
     }).await.ok().flatten();
     Ok(report)
 }

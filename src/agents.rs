@@ -303,7 +303,8 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, 'running', ?10, ?10)",
         params![run_id, parent_session_id, parent_turn_id, parent_call_id, child_id, agent_id, profile, pt.tools_enabled, depth, now],
     )?;
-    let src = json!({ "kind": "agent_run", "run_id": run_id, "parent_session_id": parent_session_id, "parent_turn_id": parent_turn_id });
+    let src = json!({ "kind": "agent_run", "run_id": run_id, "parent_session_id": parent_session_id, "parent_turn_id": parent_turn_id,
+        "limits":pt.definition["limits"] });
     // 자식은 부모 턴의 소유자를 물려받는다(위임으로 한도를 우회하지 못하게).
     let owner = parent_owner(tx, parent_session_id)?;
     let (t, _) = crate::runner::enqueue_turn(tx, now, epoch, &owner, &child_id, brief, &profile, Some(agent_id), pt.tools_enabled, Some(&src))?;
@@ -324,12 +325,16 @@ fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str
     }
     check_running_limits(tx, &run.parent_session_id)?;
     let parent = crate::sessions::get_active(tx, &run.parent_session_id)?;
-    let fallback = parent_turn_id.map(|id| crate::runner::get_turn(tx,id)).transpose()?.and_then(|t| t.profile_id).unwrap_or_else(||run.profile_id.clone());
+    let parent_turn = parent_turn_id.map(|id| crate::runner::get_turn(tx,id)).transpose()?;
+    let fallback = parent_turn.as_ref().and_then(|t| t.profile_id.clone()).unwrap_or_else(||run.profile_id.clone());
     let selection = role_profile(tx, &parent, &run.agent_id, &fallback)?;
     let profile = &selection.profile_id;
-    let src = json!({ "kind": "agent_run", "run_id": run.id, "parent_session_id": run.parent_session_id, "parent_turn_id": parent_turn_id });
+    let limits = parent_turn.as_ref().map(|t| &t.definition["limits"]).filter(|v| v.is_object());
+    let src = json!({ "kind": "agent_run", "run_id": run.id, "parent_session_id": run.parent_session_id, "parent_turn_id": parent_turn_id,
+        "limits":limits });
     let owner = parent_owner(tx, &run.parent_session_id)?;
-    let (t, _) = crate::runner::enqueue_turn(tx, now, epoch, &owner, &run.child_session_id, brief, &profile, Some(&run.agent_id), run.tools_enabled, Some(&src))?;
+    let tools = run.tools_enabled && parent_turn.as_ref().is_none_or(|t| !t.definition["limits"].is_object() || t.tools_enabled);
+    let (t, _) = crate::runner::enqueue_turn(tx, now, epoch, &owner, &run.child_session_id, brief, &profile, Some(&run.agent_id), tools, Some(&src))?;
     crate::runner::set_turn_model(tx, &t.id, selection.model.as_deref())?;
     crate::runner::set_turn_effort(tx, &t.id, selection.effort.as_deref())?;
     tx.execute(
@@ -480,7 +485,12 @@ pub async fn execute_tool(app: &App, call: &crate::approvals::ToolCallRow, mut c
         "wait" => {
             let run = get_run(t["run_id"].as_str().unwrap_or("").to_string()).await?;
             owned(&run)?;
-            let timeout = Duration::from_millis(t["timeout_ms"].as_u64().unwrap_or(60_000).min(600_000));
+            // Native MCP still owns a model slot. The runner waits for owned children after
+            // releasing that slot, so this call returns the current state immediately.
+            let native_bridge = call.provider_call_id.as_deref().is_some_and(|id| id.starts_with("continuation-cli:"));
+            let timeout = if native_bridge { Duration::ZERO } else {
+                Duration::from_millis(t["timeout_ms"].as_u64().unwrap_or(60_000).min(600_000))
+            };
             let (run, timed_out) = wait_run(app, &run.id, timeout, &mut cancel).await.map_err(|e| ToolError::new("cancelled", e.message))?;
             let mut v = summary(&run);
             v["wait_timed_out"] = json!(timed_out);

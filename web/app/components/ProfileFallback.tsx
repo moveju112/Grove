@@ -39,7 +39,9 @@ export function ProfileFallback({ profile, profiles }: { profile: ModelProfile; 
     if (!http(profile)) return null;
     const current = fallbackOptions(profile);
     return <GroveStack gap={0} role="group" aria-label={`${profile.name} fallback`} data-testid="profile-fallback">
-        <GroveText type="supporting" color="secondary">fallback: {current.enabled ? `${current.candidates.length}개 명시적 HTTP 순서` : "꺼짐"}</GroveText>
+        <GroveText type="supporting" color="secondary">{current.enabled
+            ? `fallback · ${current.candidates.length}개 HTTP 후보`
+            : "fallback 꺼짐 · HTTP 후보를 확인하면 켤 수 있어요"}</GroveText>
         {editing ? <FallbackEditor profile={profile} profiles={profiles} />
             : <GroveButton type="button" variant="secondary" density="compact" onClick={() => setEditing(true)}>fallback 설정</GroveButton>}
     </GroveStack>;
@@ -49,8 +51,8 @@ function FallbackEditor({ profile, profiles }: { profile: ModelProfile; profiles
     const state = useProfileDraft("fallback", profile, (profile) => {
         const current = fallbackOptions(profile);
         return { options: profile.options as Record<string, unknown>, profiles,
-            ids: current.enabled ? current.candidates.map((candidate) => candidate.profile_id) : [],
-            confirmed: current.destination_change_confirmed };
+            ids: current.candidates.map((candidate) => candidate.profile_id),
+            confirmed: current.enabled && current.destination_change_confirmed };
     }, (draft) => fallbackPayload({ ...profile, options: draft.options }, draft.profiles, draft.ids, draft.confirmed).options, [], false);
     const editing = state.value;
     const busy = state.phase === "saving" || state.phase === "uncertain";
@@ -60,7 +62,7 @@ function FallbackEditor({ profile, profiles }: { profile: ModelProfile; profiles
     };
     return <GroveStack gap={2}>
             <GroveStack direction="horizontal" align="center" gap={1.5}>전환 조건 <HelpTip label="fallback 전환 조건 도움말">
-                <SentenceText text="동일 모델 재시도 후 첫 응답 전 HTTP 429·provider 5xx일 때만 전환합니다. 취소·인증·입력 오류·timeout·연결 유실·부분 응답·도구 실행 뒤에는 전환하지 않으며 권한과 예산은 유지됩니다." />
+                <SentenceText text="동일 모델 재시도 후 첫 응답 전 HTTP 429·provider 5xx일 때만 전환합니다. 취소·인증·입력 오류·timeout·연결 유실·부분 응답·도구 실행 뒤에는 전환하지 않으며 권한과 예산은 유지됩니다. 후보가 CLI로 바뀌었다면 HTTP 후보를 골라 전송 대상을 다시 확인하세요." />
             </HelpTip></GroveStack>
             {editing.ids.map((id, index) => {
                 const target = editing.profiles.find((p) => p.id === id);

@@ -1,7 +1,6 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
-import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { getSourceSettings } from "../../api/sourceSettings";
 import { useQuery } from "../../state/store";
 import { SourceSettingsPanel } from "./SourceSettingsPanel";
@@ -17,11 +16,7 @@ export function SourceSettings({ projectId }: { projectId?: string }) {
             : { status: "ready", items: query.data.items, resources: query.data.resources };
     return <GroveStack gap={2} data-testid="source-settings">
         <GroveText as="p" display="block" type="supporting" color="secondary">Claude와 Codex에서 관리하는 설정이에요.</GroveText>
-        <Collapsible trigger="원본 설정 보기" defaultIsOpen={false}>
-            <GroveStack gap={2}>
-                <SourceSettingsPanel view={view} />
-                <GroveButton variant="secondary" disabled={query.loading} onClick={query.reload}>원본 출처 다시 조회</GroveButton>
-            </GroveStack>
-        </Collapsible>
+        <SourceSettingsPanel view={view} />
+        <GroveButton variant="secondary" disabled={query.loading} onClick={query.reload}>원본 출처 다시 조회</GroveButton>
     </GroveStack>;
 }

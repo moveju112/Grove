@@ -12,7 +12,7 @@ use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 const MAX_IMAGE_EVENT_BYTES: usize = (crate::attachments::MAX_MESSAGE_BYTES as usize).div_ceil(3)
     * 4 + super::super::MAX_OUTPUT_BYTES + super::MAX_LINE_BYTES;
 
-pub(super) fn args(req: &ModelRequest) -> Vec<String> {
+pub(super) fn args(req: &ModelRequest, static_bridge: bool) -> Vec<String> {
     let mut args = vec!["app-server".into(), "--listen".into(), "stdio://".into()];
     // exec의 --dangerously-bypass-approvals-and-sandbox와 같은 권한 계약이다.
     for (key, value) in [
@@ -20,7 +20,9 @@ pub(super) fn args(req: &ModelRequest) -> Vec<String> {
         ("approval_policy".into(), json!("never")),
     ]
     .into_iter()
-    .chain(super::codex_config(req))
+    .chain(super::codex_config(req).into_iter().filter(|(key, _)| static_bridge || !key.starts_with("mcp_servers.")))
+    .chain(req.cli.as_ref().and_then(|c| c.codex_questions.as_ref())
+        .map(|_| ("features.default_mode_request_user_input".into(), json!(true))))
     {
         args.extend(["-c".into(), format!("{key}={value}")]);
     }
@@ -76,6 +78,7 @@ fn turn_params(profile: &Profile, req: &ModelRequest, thread: &str, images: &[Pa
 struct State {
     output: ModelOutput,
     usage_baseline: Usage,
+    usage_total: Usage,
     thread: String,
     cwd: PathBuf,
     turn: Option<String>,
@@ -84,6 +87,8 @@ struct State {
     activity: Vec<(String, Value)>,
     viewed_images: std::collections::HashSet<String>,
     completed: bool,
+    questions: Option<super::codex_question::Handle>,
+    pending_questions: super::codex_question::Queue,
 }
 
 fn token_usage(value: &Value) -> Usage {
@@ -365,7 +370,8 @@ impl State {
         }
         // resume은 이전 턴의 누적 사용량을 replay한다. 새 턴 전의 기준값만 보관한다.
         if method == "thread/tokenUsage/updated" && self.turn.is_none() {
-            self.usage_baseline = token_usage(&p["tokenUsage"]["total"]);
+            self.usage_total = token_usage(&p["tokenUsage"]["total"]);
+            self.usage_baseline = self.usage_total.clone();
             return Ok(false);
         }
         if method == "turn/started" {
@@ -413,7 +419,8 @@ impl State {
                 });
                 // total은 thread 전체 누적값이므로 이번 호출에서 증가한 양만 기록한다.
                 // 한 턴의 여러 모델 호출·반복 알림도 같은 기준값으로 차감한다.
-                let usage = token_usage(&p["tokenUsage"]["total"]);
+                self.usage_total = token_usage(&p["tokenUsage"]["total"]);
+                let usage = &self.usage_total;
                 let base = &self.usage_baseline;
                 self.output.usage = Usage {
                     input_tokens: usage.input_tokens.saturating_sub(base.input_tokens),
@@ -483,12 +490,15 @@ async fn receive<R: AsyncRead + Unpin>(
     reader: &mut BufReader<R>,
     profile: &Profile,
     req: &ModelRequest,
+    questions: std::sync::Arc<std::sync::atomic::AtomicUsize>,
 ) -> Result<Value, ProviderError> {
+    let mut partial = Vec::new();
     let line = loop {
-        match tokio::time::timeout(profile.timeout, super::read_line_limited(reader, MAX_IMAGE_EVENT_BYTES)).await {
+        match tokio::time::timeout(profile.timeout, super::read_line_into(reader, &mut partial, MAX_IMAGE_EVENT_BYTES)).await {
             Ok(result) => break result?,
             Err(_)
-                if req.cli.as_ref().is_some_and(super::CliContext::waiting_for_grove_tool) =>
+                if req.cli.as_ref().is_some_and(super::CliContext::waiting_for_grove_tool)
+                    || questions.load(std::sync::atomic::Ordering::Acquire) > 0 =>
             {
                 continue;
             }
@@ -512,7 +522,32 @@ async fn notification<W: AsyncWrite + Unpin>(
     state: &mut State,
     on_delta: OnDelta<'_>,
 ) -> Result<(), ProviderError> {
+    if event["method"] == "serverRequest/resolved" && event["params"]["threadId"].as_str() == Some(state.thread.as_str()) {
+        state.pending_questions.resolve(&event["params"]["requestId"]).await
+            .map_err(|error| ProviderError::new(error.code, error.message))?;
+        return Ok(());
+    }
     if event.get("id").is_some() && event.get("method").is_some() {
+        if event["method"] == "item/tool/requestUserInput"
+            && let Some(handle) = state.questions.as_ref()
+        {
+            let params = &event["params"];
+            let turn = params["turnId"].as_str().filter(|id| !id.is_empty());
+            if state.thread.is_empty() || params["threadId"].as_str() != Some(state.thread.as_str())
+                || turn.is_none() || state.turn.as_deref().is_some_and(|id| Some(id) != turn) || state.completed
+            {
+                return Err(invalid());
+            }
+            state.turn = turn.map(str::to_owned);
+            let response = match state.pending_questions.open(handle, &event["id"], params).await {
+                Ok(()) => return Ok(()),
+                Err(error) if matches!(error.code, "invalid_request" | "forbidden" | "policy_denied" | "read_only" | "bot_inactive") =>
+                    json!({"id": event["id"], "error": {"code": -32602, "message": "Grove could not present this question"}}),
+                Err(error) => return Err(ProviderError::new(error.code, error.message)),
+            };
+            send(writer, &response).await?;
+            return Ok(());
+        }
         // 답변·승인을 지어내거나 관리 정책을 우회하지 않고 지원하지 않는 요청을 명시적으로 끝낸다.
         send(writer, &json!({"id":event["id"],"error":{"code":-32601,"message":"Grove does not support interactive app-server requests"}})).await?;
         return Err(ProviderError::new(
@@ -525,6 +560,16 @@ async fn notification<W: AsyncWrite + Unpin>(
         state.rebuild()?;
         on_delta(&state.output);
     }
+    Ok(())
+}
+
+async fn answer<W: AsyncWrite + Unpin>(
+    writer: &mut W, state: &mut State,
+    (id, answers, calls): (Value, crate::error::ApiResult<serde_json::Map<String, Value>>, Vec<String>),
+) -> Result<(), ProviderError> {
+    let answers = answers.map_err(|error| ProviderError::new(error.code, error.message))?;
+    send(writer, &json!({"id": id, "result": {"answers": answers}})).await?;
+    state.output.native_question_calls.extend(calls);
     Ok(())
 }
 
@@ -549,7 +594,15 @@ async fn call<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
     )
     .await?;
     loop {
-        let event = receive(reader, profile, req).await?;
+        let read = receive(reader, profile, req, state.pending_questions.count.clone());
+        tokio::pin!(read);
+        let event = loop {
+            tokio::select! {
+                biased;
+                event = &mut read => break event?,
+                response = state.pending_questions.next() => answer(writer, state, response).await?,
+            }
+        };
         if event["id"].as_u64() == Some(request.id) && event.get("method").is_none() {
             if event.get("error").is_some() {
                 // 인증·프로젝트 경로 등이 포함될 수 있는 원문 오류는 복제하지 않는다. 자동 재접수도 하지 않는다.
@@ -579,28 +632,54 @@ pub(super) async fn run<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
     images: &[PathBuf],
     on_delta: OnDelta<'_>,
 ) -> Result<ModelOutput, ProviderError> {
+    run_turn(writer, reader, profile, req, images, on_delta, Connection::OneShot)
+        .await
+        .map(|(output, _)| output)
+}
+
+pub(super) enum Connection { OneShot, Fresh, Reused(Usage) }
+
+pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
+    writer: &mut W,
+    reader: &mut BufReader<R>,
+    profile: &Profile,
+    req: &ModelRequest,
+    images: &[PathBuf],
+    on_delta: OnDelta<'_>,
+    connection: Connection,
+) -> Result<(ModelOutput, Usage), ProviderError> {
+    // 이미 로드된 thread는 resume에서 기준 사용량을 다시 보내지 않을 수 있다.
+    let usage_baseline = match &connection {
+        Connection::Reused(total) => total.clone(),
+        _ => Usage::default(),
+    };
     let mut state = State {
         cwd: req.cli.as_ref().expect("Codex 대화 문맥").cwd.clone(),
+        questions: req.cli.as_ref().and_then(|context| context.codex_questions.clone()),
+        usage_total: usage_baseline.clone(),
+        usage_baseline,
         ..State::default()
     };
-    call(
-        writer,
-        reader,
-        profile,
-        req,
-        Call {
-            id: 1,
-            method: "initialize",
-            params: json!({
-                "clientInfo":{"name":"grove","title":"Grove","version":crate::VERSION},
-                "capabilities":{"experimentalApi":true},
-            }),
-        },
-        &mut state,
-        on_delta,
-    )
-    .await?;
-    send(writer, &json!({"method":"initialized"})).await?;
+    if !matches!(connection, Connection::Reused(_)) {
+        call(
+            writer,
+            reader,
+            profile,
+            req,
+            Call {
+                id: 1,
+                method: "initialize",
+                params: json!({
+                    "clientInfo":{"name":"grove","title":"Grove","version":crate::VERSION},
+                    "capabilities":{"experimentalApi":true},
+                }),
+            },
+            &mut state,
+            on_delta,
+        )
+        .await?;
+        send(writer, &json!({"method":"initialized"})).await?;
+    }
     let command = if let Some(id) = req.cli.as_ref().and_then(|context| context.native_command.as_ref()) {
         let cwd = &req.cli.as_ref().expect("CLI context").cwd;
         let result = call(writer, reader, profile, req, Call {
@@ -627,6 +706,10 @@ pub(super) async fn run<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
     };
     // resume 응답보다 먼저 도착하는 사용량 replay도 현재 thread로 식별한다.
     state.thread = req.cli.as_ref().and_then(|context| context.resume.clone()).unwrap_or_default();
+    let mut params = thread_params(profile, req);
+    if !matches!(connection, Connection::OneShot) && let Some(bridge) = super::codex_bridge(req) {
+        params["config"] = json!({"mcp_servers": {"grove_continuations": bridge}});
+    }
     let result = call(
         writer,
         reader,
@@ -635,7 +718,7 @@ pub(super) async fn run<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
         Call {
             id: 2,
             method,
-            params: thread_params(profile, req),
+            params,
         },
         &mut state,
         on_delta,
@@ -680,12 +763,13 @@ pub(super) async fn run<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
     while !state.completed || pending.is_some() {
         // receive는 개행 전까지 버퍼를 소유한다. 합치기가 와도 이 future를 버리지 않는다.
         let event = {
-            let read = receive(reader, profile, req);
+            let read = receive(reader, profile, req, state.pending_questions.count.clone());
             tokio::pin!(read);
             loop {
                 tokio::select! {
                     biased;
                     event = &mut read => break event?,
+                    response = state.pending_questions.next() => answer(writer, &mut state, response).await?,
                     id = &mut next, if pending.is_none() && !state.completed => {
                         let link = live.as_ref().expect("합치기 연결");
                         if let Some(delivery) = link.claim(&id?).await.map_err(|e| ProviderError::new(e.code, e.message))? {
@@ -725,7 +809,19 @@ pub(super) async fn run<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
         }
         notification(writer, &event, &mut state, on_delta).await?;
     }
-    Ok(state.output)
+    Ok((state.output, state.usage_total))
+}
+
+pub(super) async fn unsubscribe<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
+    writer: &mut W, reader: &mut BufReader<R>, profile: &Profile, req: &ModelRequest, thread: &str,
+) -> bool {
+    let mut state = State { completed: true, ..State::default() };
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), call(
+        writer, reader, profile, req, Call {
+            id: 5, method: "thread/unsubscribe", params: json!({"threadId": thread}),
+        }, &mut state, &mut |_| {},
+    )).await;
+    matches!(result, Ok(Ok(value)) if value["status"] == "unsubscribed")
 }
 
 #[cfg(test)]

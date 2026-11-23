@@ -100,7 +100,8 @@ async fn run_short(protocol: &str, logout: bool) -> ApiResult<Option<bool>> {
     if crate::deps::find_in_path(executable).is_none() { return Err(crate::deps::missing(executable)); }
     if protocol == "claude_code" {
         let settings = claude::settings(serde_json::json!({}));
-        return Ok(claude::authenticated(std::path::Path::new(executable), None, &settings, None, false).await.ok().flatten());
+        return Ok(claude::account(std::path::Path::new(executable), None, &settings, None).await.ok().flatten()
+            .map(|account| account != claude::Account::SignedOut));
     }
     let mut cmd = command(executable);
     if logout { cmd.arg("logout"); } else { cmd.args(["login", "status"]); }
@@ -174,6 +175,7 @@ pub async fn start(State(app): State<App>, _p: Principal, Path(protocol): Path<S
     }
     ensure_idle(&app, &protocol).await?;
     if crate::deps::find_in_path(executable).is_none() { return Err(crate::deps::missing(executable)); }
+    app.codex_sessions.invalidate();
     let mut cmd = command(executable);
     cmd.args(["login", "--device-auth"]);
     let tag = crate::util::new_id();
@@ -222,6 +224,7 @@ pub async fn logout(State(app): State<App>, _p: Principal, Path(protocol): Path<
     if current.as_ref().is_some_and(LoginAttempt::active)
         || current.as_ref().map(|a| &a.id) != req.attempt_id.as_ref() { return Err(busy()); }
     ensure_idle(&app, &protocol).await?;
+    app.codex_sessions.invalidate();
     let authenticated = run_short(&protocol, true).await?;
     app.account_usage.clear(&protocol).await;
     if authenticated.is_none() { return Err(ApiError::invalid("로그아웃 결과를 확인하지 못했습니다. 상태를 다시 확인해 주세요")); }

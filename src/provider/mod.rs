@@ -138,6 +138,8 @@ pub struct ModelOutput {
     pub response_parts: Vec<String>,
     /// native 합치기 ACK별 (followup ID, 그 전에 시작한 응답 개수). 화면에만 쓴다.
     pub response_steers: Vec<(String, usize)>,
+    /// 답변을 native CLI에 전달한 Grove 질문 호출들.
+    pub(crate) native_question_calls: Vec<String>,
     pub reasoning: String,
     pub tool_calls: Vec<ToolCall>,
     pub usage: Usage,

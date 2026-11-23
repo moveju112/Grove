@@ -36,6 +36,7 @@ pub fn config(data_dir: &Path) -> Config {
         scheduler_tick_ms: 100,
         remote_watch_insecure_loopback: true,
         gh_command: "gh".into(),
+        internal_exe: Some(env!("CARGO_BIN_EXE_grove").into()),
     }
 }
 

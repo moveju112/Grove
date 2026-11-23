@@ -143,7 +143,7 @@ async fn start(key: &Key, mut argv: Vec<String>, native_id: String) -> Result<Pr
     // 실행 중 합치기는 CLI가 대화에 넣을 때 같은 uuid로 replay한 user 이벤트를 ACK로 쓴다.
     argv.extend(["--input-format".into(), "stream-json".into(), "--replay-user-messages".into()]);
     if key.bridge {
-        argv.extend(["--allowedTools".into(), "mcp__grove_continuations__continue_later,mcp__grove_continuations__shell".into()]);
+        argv.extend(["--allowedTools".into(), "mcp__grove_continuations__*".into()]);
     }
     let scratch = tempfile::Builder::new().prefix("grove-claude-").tempdir()
         .map_err(|_| ProviderError::new("cli_failed", "Claude Code 임시 디렉터리를 만들지 못했습니다"))?;
@@ -189,8 +189,7 @@ pub(super) async fn run(
         }
     };
     if let Some(link) = &ctx.continuations {
-        let exe = std::env::current_exe().map_err(|_| ProviderError::new("cli_failed", "턴 도구 실행 경로를 확인하지 못했습니다"))?;
-        process.mcp(json!({"grove_continuations":{"type":"stdio","command":exe,"args":["continuation-mcp",link.file]}}), profile.timeout).await?;
+        process.mcp(json!({"grove_continuations":{"type":"stdio","command":link.exe,"args":["continuation-mcp",link.file]}}), profile.timeout).await?;
     }
     let resumed = ctx.resume.is_some();
     let text = prompt(req, false);

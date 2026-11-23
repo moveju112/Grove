@@ -8,7 +8,6 @@ import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react"
 import { api } from "../../api/client";
 import type { Definition } from "../../api/generated";
 import { useQuery } from "../../state/store";
-import { Button } from "../../design/Button";
 import { Select } from "../../design/Select";
 import { Icon, type IconName } from "../icons";
 import { HelpTip, SentenceText } from "../HelpTip";
@@ -41,7 +40,6 @@ export function WorkflowSettings({ defs, target, linkedKey, matchedKeys, search,
 }) {
     const panelId = useId();
     const [tab, setTab] = useState("workflow");
-    const [open, setOpen] = useState<string | null>(FEATURES[0]!.id);
     const roles = useQuery<Definition[]>("definitions:agent", () => api.get("/definitions?kind=agent"));
     const server = useEffectiveSettings({});
     // 자동 제목과 메모리 정리만 프로젝트 override를 지원한다. 모델은 항상 서버 전체다.
@@ -50,11 +48,8 @@ export function WorkflowSettings({ defs, target, linkedKey, matchedKeys, search,
     const match = search ? FEATURES.find(({ label, model, flag }) => matchedKeys.includes(model)
         || (flag && matchedKeys.includes(flag)) || label.toLowerCase().includes(search)) : undefined;
     useLayoutEffect(() => {
-        if (linked || match) {
-            setTab("workflow");
-            setOpen((linked ?? match)!.id);
-        }
-    }, [linked, match, search]);
+        if (linked || match) setTab("workflow");
+    }, [linked, match]);
 
     const error = Boolean(roles.error || server.error || project.error);
     const loaded = Boolean(roles.data && server.data && project.data && defs.length);
@@ -86,8 +81,8 @@ export function WorkflowSettings({ defs, target, linkedKey, matchedKeys, search,
                 </Card>;
             }) : <>
                 {rows.map(({ feature, role, model, item, scoped }) => <WorkflowRow key={feature.id} feature={feature} role={role}
-                    model={model} item={item} scoped={scoped} target={target} expanded={open === feature.id}
-                    onExpand={() => setOpen(open === feature.id ? null : feature.id)} linkedKey={linkedKey} onLinkReady={onLinkReady}
+                    model={model} item={item} scoped={scoped} target={target}
+                    linkedKey={linkedKey} onLinkReady={onLinkReady}
                     reloadServer={server.reload} reloadProject={project.reload} />)}
                 {!search && definitions}
             </>}
@@ -100,7 +95,7 @@ function isPending(phase: string) { return phase === "saving" || phase === "unce
 type WorkflowRowProps = {
     feature: Feature; role: Definition; model: SettingDef; item: SettingItem; target: SettingsTarget;
     scoped?: { d: SettingDef; projectFlag: SettingItem; serverFlag: SettingItem };
-    expanded: boolean; onExpand: () => void; linkedKey?: string; onLinkReady: SettingLinkReady;
+    linkedKey?: string; onLinkReady: SettingLinkReady;
     reloadServer: () => void; reloadProject: () => void;
 };
 
@@ -149,12 +144,11 @@ function ScopedWorkflowRow({ scoped, enabled, saveEnabled, ...props }: WorkflowR
         </Stack>} />;
 }
 
-function WorkflowRowView({ feature, model, item, expanded, onExpand, linkedKey, onLinkReady, reloadServer,
+function WorkflowRowView({ feature, model, item, linkedKey, onLinkReady, reloadServer,
     on, toggle, locked, targetLabel, extra, statuses }: WorkflowRowProps & {
     on: boolean; toggle: (value: boolean) => void; locked: boolean;
     targetLabel?: string; extra?: ReactNode; statuses: ReactNode;
 }) {
-    const id = useId();
     const header = useRef<HTMLDivElement>(null);
     const detail = useRef<HTMLDivElement>(null);
     const reason = useServerBlockReason();
@@ -165,10 +159,10 @@ function WorkflowRowView({ feature, model, item, expanded, onExpand, linkedKey, 
     };
     useLayoutEffect(() => {
         if (linkedKey === feature.flag && linkedKey) onLinkReady(linkedKey, header.current);
-        if (linkedKey === model.key && expanded) onLinkReady(linkedKey, detail.current);
-    }, [linkedKey, expanded, feature.flag, model.key, onLinkReady]);
+        if (linkedKey === model.key) onLinkReady(linkedKey, detail.current);
+    }, [linkedKey, feature.flag, model.key, onLinkReady]);
 
-    return <Card padding={0} data-testid={`workflow-${feature.id}`} xstyle={[styles.row, expanded && styles.expandedRow]}>
+    return <Card padding={0} data-testid={`workflow-${feature.id}`} xstyle={styles.row}>
         <Stack ref={header} direction="horizontal" align="center" gap={2} xstyle={styles.header}
             data-setting-key={feature.flag} data-settings-target={targetLabel} data-testid={feature.flag ? `setting-${feature.flag}` : undefined}>
             <span {...stylex.props(styles.icon)}><Icon name={feature.icon} size={14} color="secondary" /></span>
@@ -177,22 +171,16 @@ function WorkflowRowView({ feature, model, item, expanded, onExpand, linkedKey, 
                 <Text type="supporting" color={on ? "inherit" : "secondary"} aria-hidden="true">{on ? "켜짐" : "꺼짐"}</Text>
                 <Switch label={`${feature.label} 사용`} isLabelHidden value={on} size="sm" isDisabled={locked || !!reason}
                     disabledMessage={reason ?? undefined} onChange={toggle} />
-                <Button type="button" appearance="icon" density="compact" aria-label={`${feature.label} ${expanded ? "접기" : "펼치기"}`}
-                    aria-expanded={expanded} aria-controls={id} onClick={onExpand}>
-                    <Icon name={expanded ? "chevronDown" : "chevronRight"} size={14} />
-                </Button>
             </Stack>
         </Stack>
-        <div id={id} hidden={!expanded}>
-            {expanded && <Stack ref={detail} gap={2} padding={3} xstyle={styles.details}
-                data-setting-key={model.key} data-testid={`setting-${model.key}`} data-settings-target="서버 전체">
-                <ProfileChoice d={model} value={selection.value} disabled={!!reason || isPending(selection.phase) || selection.phase === "conflict"}
-                    edit={chooseModel} onEffortChange={saveSelection} workflow />
-                {model.key === "session.title_profile" && !selection.value &&
-                    <Text type="supporting" color="secondary">모델을 선택하기 전에는 기존 제목이 유지돼요.</Text>}
-                {extra}
-            </Stack>}
-        </div>
+        <Stack ref={detail} gap={2} padding={3} xstyle={styles.details}
+            data-setting-key={model.key} data-testid={`setting-${model.key}`} data-settings-target="서버 전체">
+            <ProfileChoice d={model} value={selection.value} disabled={!!reason || isPending(selection.phase) || selection.phase === "conflict"}
+                edit={chooseModel} onEffortChange={saveSelection} workflow />
+            {model.key === "session.title_profile" && !selection.value &&
+                <Text type="supporting" color="secondary">모델을 선택하기 전에는 기존 제목이 유지돼요.</Text>}
+            {extra}
+        </Stack>
         <Stack gap={1} xstyle={styles.statuses}>
             <AutosaveStatus state={selection} applies={APPLIES[model.applies]} />
             {statuses}

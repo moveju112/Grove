@@ -21,9 +21,8 @@ async function openProject(page: Page, item: { id: string; name: string }) {
     await openProjectSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
     const panel = page.getByTestId("agent-overview");
-    await expect(panel.getByRole("button", { name: "역할 상세", exact: true })).toHaveAttribute("aria-expanded", "false");
+    await expect(panel.getByRole("button", { name: "역할 상세", exact: true })).toHaveCount(0);
     await expect(page.getByTestId("definition-worker").getByRole("button", { name: /^Worker / }).and(page.locator("[aria-pressed]"))).toBeVisible();
-    await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
     await expect(panel.getByRole("heading", { name: /등록된 역할/ })).toBeVisible();
     return panel;
 }
@@ -57,7 +56,6 @@ test("실제 설정 개요에서 override·비활성 지침을 읽고 기존 편
         await page.reload();
         await openProjectSettings(page);
         await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
-        await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
         await panel.getByRole("article", { name: "역할 worker", exact: true }).getByRole("button", { name: "비활성 정의 지침 (실행에 사용 안 함)", exact: true }).click();
         await expect(panel.getByLabel("worker 지침", { exact: true })).toHaveText("overview 기존 편집 저장 지침");
         await expect(page.getByTestId("settings-origin")).toContainText(item.name);
@@ -84,7 +82,6 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await sessionView(page, session.id).getByRole("button", { name: "대화 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
     const panel = page.getByTestId("agent-overview");
-    await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
     await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
     await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
     await splitRecentItem(page.getByTestId("recent-item").filter({ hasText: "overview other session" }));
@@ -94,7 +91,6 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await openTool(sessionView(page, other.id), "대화");
     await sessionView(page, other.id).getByRole("button", { name: "대화 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
-    await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
     await panel.getByRole("button", { name: "개요 다시 조회", exact: true }).click();
     await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
     await expect(page.getByTestId("settings-origin")).toContainText("overview other session");
@@ -107,7 +103,6 @@ test("대화 범위를 보존하고 다른 프로젝트 선택·reload 후에도
     await openTool(sessionView(page, session.id), "대화");
     await sessionView(page, session.id).getByRole("button", { name: "대화 설정", exact: true }).click();
     await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
-    await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
     await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("위임 금지");
     await expect(panel.getByTestId("overview-target")).toContainText("이 대화 기준");
     expect(await apiCall<unknown[]>("GET", `/sessions/${session.id}/turns`)).toHaveLength(0);
@@ -226,7 +221,6 @@ test("닫힌 개요의 늦은 응답은 다시 연 개요의 최신값을 덮어
         await expect(panel).toHaveCount(0);
         await setting("project", item.id, "agents.delegation", "auto");
         await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
-        await panel.getByRole("button", { name: "역할 상세", exact: true }).click();
         await expect(panel.getByRole("article", { name: "역할 worker", exact: true })).toContainText("대화에서 사용 가능 여부 확인 필요");
         const late = page.waitForResponse((response) => response.url().includes("/agent-overview?") && response.status() === 200);
         release();

@@ -102,7 +102,7 @@ function SourceCard({ item, resources }: { item: SourceSettings; resources: read
 
 /** 인증된 서버 projection만 주입한다. 이 UI는 조회 API·쓰기·적용 동작을 호출하지 않는다. */
 export function SourceSettingsPanel({ view }: SourceSettingsPanelProps) {
-    return <GroveStack as="section" gap={3} aria-label="원본 Claude/Codex 설정">
+    return <GroveStack gap={3}>
         <GroveText as="p" display="block" type="supporting" color="secondary">읽기 전용 · Grove 적용값 아님</GroveText>
         {view.status === "loading" && <GroveText as="p" display="block" type="inherit" color="inherit" role="status">원본 출처를 확인하는 중입니다.</GroveText>}
         {view.status === "error" && <GroveText as="p" display="block" type="inherit" color="error" role="alert">원본 출처 목록을 가져오지 못했습니다.</GroveText>}

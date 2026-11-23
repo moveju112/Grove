@@ -10,7 +10,6 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
     await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
     await page.getByRole("tab", { name: "데몬 설정", exact: true }).click();
     await page.getByLabel("설정 검색").fill("프로필");
-    await page.getByRole("button", { name: "모델 프로필 추가", exact: true }).click();
     const form = page.locator("form").filter({ has: page.getByLabel("프로필 이름") });
     await form.getByLabel("프로필 이름").fill(name);
     await form.getByLabel("Base URL").fill(base);

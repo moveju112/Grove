@@ -42,14 +42,10 @@ test("프로젝트 설정은 기본으로 접고 실제 인증 API에서 안전�
     await openProjectSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("원본");
     const panel = page.getByTestId("source-settings");
-    const toggle = panel.getByRole("button", { name: "원본 설정 보기", exact: true });
-    await expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await expect(panel.getByRole("button", { name: "원본 설정 보기", exact: true })).toHaveCount(0);
     const source = panel.getByRole("region", { name: "Claude · 프로젝트 원본", exact: true });
-    await expect(source).toBeHidden();
-    await expect(panel.getByRole("button", { name: "원본 출처 다시 조회", exact: true })).toBeHidden();
+    await expect(panel.getByRole("button", { name: "원본 출처 다시 조회", exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("source-settings-mobile.png") });
-    await toggle.click();
-    await expect(toggle).toHaveAttribute("aria-expanded", "true");
     await expect(source).toContainText("13일");
     const skill = source.getByRole("button", { name: "source-review", exact: true });
     await expect(source.getByText("Read-only source review", { exact: true })).toBeHidden();
@@ -152,7 +148,6 @@ test("리소스 형식 오류와 symlink는 원문 없이 표시하고 재조회
     await openProjectSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("원본");
     const panel = page.getByTestId("source-settings");
-    await panel.getByRole("button", { name: "원본 설정 보기", exact: true }).click();
     const source = panel.getByRole("region", { name: "Claude · 프로젝트 원본", exact: true });
     const codex = panel.getByRole("region", { name: "Codex · 프로젝트 원본", exact: true });
     await expect(source).toContainText("일부 항목은 형식");
@@ -188,7 +183,6 @@ test("조회 실패 화면은 서버 오류 본문을 숨기고 다시 조회할
     await openProjectSettings(page);
     await page.getByLabel("설정 검색", { exact: true }).fill("원본");
     const panel = page.getByTestId("source-settings");
-    await panel.getByRole("button", { name: "원본 설정 보기", exact: true }).click();
     await expect(panel.getByRole("alert")).toContainText("원본 출처 목록을 가져오지 못했습니다");
     await expect(panel).not.toContainText("source-private-marker");
     await page.unroute("**/api/v1/source-settings?*");

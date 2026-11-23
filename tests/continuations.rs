@@ -365,6 +365,11 @@ async fn native_bridge_is_turn_scoped_and_honors_policy_and_idempotency() {
         assert_eq!(v["isError"], false, "{v}");
     }
     assert_eq!(items(&s, &sid).await.len(), 1);
+    let agent_call = s.client.post(url).bearer_auth(token)
+        .json(&json!({"name":"agent","request_id":"bridge-agent-list","arguments":{"action":"list"}})).send().await.unwrap();
+    assert_eq!(agent_call.status(), StatusCode::OK);
+    let agent_call: Value = agent_call.json().await.unwrap();
+    assert_eq!(agent_call["isError"], false, "{agent_call}");
     release.send_replace(true);
     s.wait_status(&turn, "completed").await;
     assert_eq!(
@@ -597,13 +602,13 @@ async fn missing_external_signal_reports_unknown_and_cannot_claim_success() {
 }
 
 #[test]
-fn native_mcp_stdio_lists_only_the_two_background_tools() {
+fn native_mcp_stdio_lists_only_tools_granted_to_the_turn() {
     use std::io::Write;
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("link.json");
     std::fs::write(
         &file,
-        br#"{"url":"http://127.0.0.1:9/","token":"fixture-with-no-authority"}"#,
+        br#"{"url":"http://127.0.0.1:9/","token":"fixture-with-no-authority","tools":["continue_later","agent"]}"#,
     )
     .unwrap();
     let mut child = std::process::Command::new(env!("CARGO_BIN_EXE_grove"))
@@ -628,5 +633,5 @@ fn native_mcp_stdio_lists_only_the_two_background_tools() {
     let tools = rows[1]["result"]["tools"].as_array().unwrap();
     assert_eq!(tools.len(), 2);
     assert_eq!(tools[0]["name"], "continue_later");
-    assert_eq!(tools[1]["name"], "shell");
+    assert_eq!(tools[1]["name"], "agent");
 }

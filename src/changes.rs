@@ -20,11 +20,109 @@ use axum::response::{IntoResponse, Response};
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path as FsPath, PathBuf};
 
 /// 내용을 보관할 최대 파일 크기. 넘으면 sha만 남기고 undo/redo·diff를 제공하지 않는다.
 pub const MAX_STORED: u64 = 16 * 1024 * 1024;
+const MAX_NATIVE_FILES: usize = 20_000;
+const MAX_NATIVE_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_INVENTORY_ENTRIES: usize = 80_000;
+
+pub(crate) struct WorkspaceSnapshot {
+    files: HashMap<String, FileState>,
+    inventory: Option<HashSet<PathBuf>>,
+}
+
+fn native_mode(file: &std::fs::File) -> std::io::Result<Option<u32>> {
+    let meta = file.metadata()?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        let mode = meta.permissions().mode() & 0o7777;
+        Ok((meta.nlink() == 1 && mode & 0o7000 == 0).then_some(mode))
+    }
+    #[cfg(not(unix))]
+    { Ok((!meta.permissions().readonly()).then_some(0)) }
+}
+
+fn inventory_key(path: PathBuf) -> PathBuf {
+    // 대소문자만 달라진 기존 파일을 새 파일로 분류하면 복원 시 삭제될 수 있다.
+    if cfg!(any(windows, target_os = "macos")) { PathBuf::from(path.to_string_lossy().to_lowercase()) } else { path }
+}
+
+impl WorkspaceSnapshot {
+    pub(crate) fn capture(root: &FsPath, data_dir: &FsPath, baseline: bool) -> std::io::Result<Self> {
+        use std::io::Read;
+        let scope = crate::project_fs::ProjectFs::open(root)?;
+        let root = scope.root();
+        let data_dir = crate::util::canonical(data_dir)?;
+        if root.starts_with(&data_dir) { return Ok(Self { files: HashMap::new(), inventory: None }); }
+        let mut files = HashMap::new();
+        let mut remaining = MAX_NATIVE_BYTES;
+        for entry in crate::tools::search::walker_excluding(root, root, false, Some(data_dir.clone())) {
+            let entry = entry.map_err(std::io::Error::other)?;
+            if !entry.file_type().is_some_and(|kind| kind.is_file()) { continue; }
+            let path = entry.path();
+            let Some(relative) = path.strip_prefix(root).ok().and_then(FsPath::to_str) else { continue; };
+            let name = entry.file_name().to_string_lossy();
+            if name == ".env" || name.starts_with(".env.") { continue; }
+            if files.len() >= MAX_NATIVE_FILES {
+                return Err(std::io::Error::other("CLI 변경 이력의 파일 수 한도를 넘었습니다"));
+            }
+            let file = match scope.open_regular_file(path, true) {
+                Ok(file) => file,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => return Err(error),
+            };
+            if file.metadata()?.len() > MAX_STORED { continue; }
+            let Some(mode) = native_mode(&file)? else { continue; };
+            let mut bytes = Vec::new();
+            file.take(remaining.min(MAX_STORED) + 1).read_to_end(&mut bytes)?;
+            if bytes.len() as u64 > remaining.min(MAX_STORED) {
+                return Err(std::io::Error::other("CLI 변경 이력의 용량 한도를 넘었습니다"));
+            }
+            remaining -= bytes.len() as u64;
+            files.insert(relative.replace(std::path::MAIN_SEPARATOR, "/"), FileState { sha: sha256_hex(&bytes), bytes: Some(bytes), mode: Some(mode) });
+        }
+        // 무시 규칙이 바뀌어 드러난 기존 파일을 새 파일로 기록하면 undo에서 삭제될 수 있다.
+        let inventory = baseline.then(|| {
+            let mut paths = HashSet::new();
+            for entry in crate::tools::search::walker_excluding(root, root, true, Some(data_dir)) {
+                let entry = entry.ok()?;
+                if paths.len() >= MAX_INVENTORY_ENTRIES { return None; }
+                paths.insert(inventory_key(entry.into_path()));
+            }
+            Some(paths)
+        }).flatten();
+        Ok(Self { files, inventory })
+    }
+
+    pub(crate) fn changes(self, after: Self, root: &FsPath, data_dir: &FsPath) -> std::io::Result<Vec<Rec>> {
+        let scope = crate::project_fs::ProjectFs::open(root)?;
+        let mut after = after.files;
+        let mut records = Vec::new();
+        for (path, before) in self.files {
+            let current = after.remove(&path);
+            // 파일이 커지거나 ignore·symlink 설정이 바뀌어 목록에서 빠진 경우 삭제로 기록하지 않는다.
+            if current.is_none() && !scope.symlink_metadata(&scope.root().join(&path)).is_err_and(|e| e.kind() == std::io::ErrorKind::NotFound) {
+                continue;
+            }
+            if current.as_ref().is_none_or(|current| current.sha != before.sha || current.mode != before.mode) {
+                records.push(Rec::store(data_dir, path, Some(before), current));
+            }
+        }
+        if let Some(inventory) = self.inventory {
+            for (path, current) in after {
+                if !inventory.contains(&inventory_key(scope.root().join(&path))) {
+                    records.push(Rec::store(data_dir, path, None, Some(current)));
+                }
+            }
+        }
+        records.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(records)
+    }
+}
 
 /// 도구 호출이 바꿀 수 있는 파일(프로젝트 상대 경로).
 pub fn affected_paths(name: &str, target: &Value, pre: Option<&Value>) -> Vec<String> {
@@ -50,6 +148,7 @@ pub fn affected_paths(name: &str, target: &Value, pre: Option<&Value>) -> Vec<St
 pub struct FileState {
     pub sha: String,
     pub bytes: Option<Vec<u8>>,
+    mode: Option<u32>,
 }
 
 fn read_state(root: &FsPath, p: &FsPath) -> Option<FileState> {
@@ -58,16 +157,16 @@ fn read_state(root: &FsPath, p: &FsPath) -> Option<FileState> {
     let mut file = scope.open_file(p).ok()?;
     let m = file.metadata().ok()?;
     if m.len() > MAX_STORED {
-        return crate::tools::fs::reader_sha(file).ok().map(|sha| FileState { sha, bytes: None });
+        return crate::tools::fs::reader_sha(file).ok().map(|sha| FileState { sha, bytes: None, mode: None });
     }
     let mut bytes = Vec::new();
     (&mut file).take(MAX_STORED + 1).read_to_end(&mut bytes).ok()?;
     if bytes.len() as u64 > MAX_STORED {
         use std::io::{Seek, SeekFrom};
         file.seek(SeekFrom::Start(0)).ok()?;
-        return crate::tools::fs::reader_sha(file).ok().map(|sha| FileState { sha, bytes: None });
+        return crate::tools::fs::reader_sha(file).ok().map(|sha| FileState { sha, bytes: None, mode: None });
     }
-    Some(FileState { sha: sha256_hex(&bytes), bytes: Some(bytes) })
+    Some(FileState { sha: sha256_hex(&bytes), bytes: Some(bytes), mode: None })
 }
 
 /// 실행 직전 상태.
@@ -88,6 +187,18 @@ pub struct Rec {
     after: Option<FileState>,
 }
 
+impl Rec {
+    fn store(data_dir: &FsPath, path: String, mut before: Option<FileState>, mut after: Option<FileState>) -> Self {
+        for state in [&mut before, &mut after].into_iter().flatten() {
+            if let Some(bytes) = &state.bytes && put_blob(data_dir, &state.sha, bytes).is_err() {
+                // 파일 변경과 원문 보관 성공은 구분한다.
+                state.bytes = None;
+            }
+        }
+        Self { path, before, after }
+    }
+}
+
 /// 실행 성공 직후: 변경 후 상태를 읽고 바뀐 파일만 남기며 blob을 저장한다(transaction 밖, 파일 작업).
 pub fn finalize(data_dir: &FsPath, b: Before) -> Vec<Rec> {
     let mut out = vec![];
@@ -96,17 +207,7 @@ pub fn finalize(data_dir: &FsPath, b: Before) -> Vec<Rec> {
         if before.as_ref().map(|s| &s.sha) == after.as_ref().map(|s| &s.sha) {
             continue;
         }
-        let mut before = before;
-        let mut after = after;
-        for s in [&mut before, &mut after].into_iter().flatten() {
-            if let Some(bytes) = &s.bytes {
-                if put_blob(data_dir, &s.sha, bytes).is_err() {
-                    // 파일 작업 성공과 되돌리기 원문 보관 성공은 구분한다.
-                    s.bytes = None;
-                }
-            }
-        }
-        out.push(Rec { path: rel, before, after });
+        out.push(Rec::store(data_dir, rel, before, after));
     }
     out
 }
@@ -180,7 +281,7 @@ fn get_blob(data_dir: &FsPath, sha: &str) -> Option<Vec<u8>> {
 }
 
 /// 도구 결과 확정과 같은 transaction에서 기록한다.
-pub fn insert(tx: &Connection, now: &str, session_id: &str, turn_id: Option<&str>, call_id: &str, tool: &str, recs: &[Rec]) -> ApiResult<()> {
+pub fn insert(tx: &Connection, now: &str, session_id: &str, turn_id: Option<&str>, call_id: Option<&str>, tool: &str, recs: &[Rec]) -> ApiResult<()> {
     if recs.is_empty() {
         return Ok(());
     }
@@ -194,8 +295,8 @@ pub fn insert(tx: &Connection, now: &str, session_id: &str, turn_id: Option<&str
             }
         }
         tx.execute(
-            "INSERT INTO file_changes (id, session_id, turn_id, call_id, tool, path, before_sha, after_sha, stored, created_at, seq) \
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO file_changes (id, session_id, turn_id, call_id, tool, path, before_sha, after_sha, stored, created_at, seq, before_mode, after_mode) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 crate::util::new_id(),
                 session_id,
@@ -207,7 +308,9 @@ pub fn insert(tx: &Connection, now: &str, session_id: &str, turn_id: Option<&str
                 r.after.as_ref().map(|s| &s.sha),
                 stored as i64,
                 now,
-                seq
+                seq,
+                r.before.as_ref().and_then(|s| s.mode),
+                r.after.as_ref().and_then(|s| s.mode),
             ],
         )?;
     }
@@ -219,6 +322,7 @@ pub fn insert(tx: &Connection, now: &str, session_id: &str, turn_id: Option<&str
 pub struct FileChange {
     pub id: String,
     pub turn_id: Option<String>,
+    /// Grove 도구 호출 ID. CLI 턴 스냅샷은 빈 문자열로 전달한다.
     pub call_id: String,
     pub tool: String,
     pub path: String,
@@ -231,9 +335,15 @@ pub struct FileChange {
     pub undone_at: Option<String>,
     pub created_at: String,
     pub seq: i64,
+    #[serde(skip)]
+    #[ts(skip)]
+    before_mode: Option<u32>,
+    #[serde(skip)]
+    #[ts(skip)]
+    after_mode: Option<u32>,
 }
 
-const COLS: &str = "id, turn_id, call_id, tool, path, before_sha, after_sha, stored, undone_at, created_at, seq";
+const COLS: &str = "id, turn_id, call_id, tool, path, before_sha, after_sha, stored, undone_at, created_at, seq, before_mode, after_mode";
 
 fn row(r: &rusqlite::Row) -> rusqlite::Result<FileChange> {
     let (b, a): (Option<String>, Option<String>) = (r.get(5)?, r.get(6)?);
@@ -245,7 +355,7 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<FileChange> {
     Ok(FileChange {
         id: r.get(0)?,
         turn_id: r.get(1)?,
-        call_id: r.get(2)?,
+        call_id: r.get::<_, Option<String>>(2)?.unwrap_or_default(),
         tool: r.get(3)?,
         path: r.get(4)?,
         op: op.into(),
@@ -255,6 +365,8 @@ fn row(r: &rusqlite::Row) -> rusqlite::Result<FileChange> {
         undone_at: r.get(8)?,
         created_at: r.get(9)?,
         seq: r.get(10)?,
+        before_mode: r.get(11)?,
+        after_mode: r.get(12)?,
     })
 }
 
@@ -287,6 +399,9 @@ pub struct FileChangeGroup {
     pub turn_id: Option<String>,
     pub applied: usize,
     pub undone: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub has_cli_snapshot: Option<bool>,
 }
 
 #[derive(Serialize, ts_rs::TS)]
@@ -317,11 +432,13 @@ pub async fn page(State(app): State<App>, _p: Principal, Path(id): Path<String>,
         // 표시한 턴의 전체 건수만 구한다. 페이지 밖의 원문·행을 내려받지 않아도 그룹 작업의 의미는 유지한다.
         let mut st = c.prepare(
             "WITH visible AS (SELECT turn_id FROM file_changes WHERE session_id = ?1 AND seq < ?2 ORDER BY seq DESC LIMIT ?3) \
-             SELECT turn_id, COALESCE(SUM(stored AND undone_at IS NULL), 0), COALESCE(SUM(stored AND undone_at IS NOT NULL), 0) \
+             SELECT turn_id, COALESCE(SUM(stored AND undone_at IS NULL), 0), COALESCE(SUM(stored AND undone_at IS NOT NULL), 0), \
+             MAX(stored AND call_id IS NULL) \
              FROM file_changes WHERE session_id = ?1 AND seq <= ?4 AND \
              (turn_id IN (SELECT turn_id FROM visible) OR (turn_id IS NULL AND EXISTS(SELECT 1 FROM visible WHERE turn_id IS NULL))) GROUP BY turn_id")?;
         let groups = st.query_map(params![id, before, limit, through_seq], |r| Ok(FileChangeGroup {
             turn_id: r.get(0)?, applied: r.get(1)?, undone: r.get(2)?,
+            has_cli_snapshot: r.get::<_, bool>(3)?.then_some(true),
         }))?.collect::<Result<_, _>>()?;
         Ok(FileChangePage { items, groups, total, applied, through_seq, next_before_seq })
     }).await?;
@@ -478,13 +595,32 @@ fn prepare_apply(tx: &Connection, session_id: &str, ids: &[String], undo: bool) 
     sel.sort_by_key(|c| if undo { -c.seq } else { c.seq });
     // 1) 확인: 파일별 예상 현재 상태를 순서대로 계산한다.
     let mut expect: HashMap<String, Option<String>> = HashMap::new();
+    let mut modes: HashMap<String, Option<u32>> = HashMap::new();
     let mut abs: HashMap<String, PathBuf> = HashMap::new();
     let mut conflicts = vec![];
+    let scope = crate::project_fs::ProjectFs::open(&root).map_err(|e| ApiError::invalid(e.to_string()))?;
     for c in &sel {
         let p = resolve(&root, &c.path).map_err(|e| ApiError::invalid(e.message))?;
+        let (from, to, from_mode, to_mode) = if undo {
+            (&c.after_sha, &c.before_sha, c.after_mode, c.before_mode)
+        } else {
+            (&c.before_sha, &c.after_sha, c.before_mode, c.after_mode)
+        };
+        if c.call_id.is_empty() {
+            let expected = scope.root().join(&c.path);
+            let actual = match scope.open_regular_file(&expected, true) {
+                Ok(file) => native_mode(&file).ok().flatten().map(Some),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
+                Err(_) => None,
+            };
+            if p != expected || actual.is_none() || *modes.entry(c.path.clone()).or_insert(actual.flatten()) != from_mode {
+                conflicts.push(json!({ "path": c.path }));
+                continue;
+            }
+        }
+        if c.call_id.is_empty() || to.is_none() { modes.insert(c.path.clone(), to_mode); }
         let cur = expect.entry(c.path.clone()).or_insert_with(|| read_state(&root, &p).map(|s| s.sha)).clone();
         abs.insert(c.path.clone(), p);
-        let (from, to) = if undo { (&c.after_sha, &c.before_sha) } else { (&c.before_sha, &c.after_sha) };
         if cur != *from {
             conflicts.push(json!({ "path": c.path, "expected_sha": from, "current_sha": cur }));
         }
@@ -530,10 +666,11 @@ async fn apply(app: App, p: Principal, headers: HeaderMap, session_id: String, i
         let sel = plan.selected;
         let abs = plan.paths;
         // 2) 쓰기: 실패하면 이미 쓴 파일을 원래대로 되돌린다.
-        let mut done: Vec<(PathBuf, Option<Vec<u8>>)> = vec![];
+        let mut done: Vec<(PathBuf, Option<Vec<u8>>, Option<u32>)> = vec![];
         for c in &sel {
             let p = &abs[&c.path];
-            let to = if undo { &c.before_sha } else { &c.after_sha };
+            let (to, from_mode, to_mode) = if undo { (&c.before_sha, c.after_mode, c.before_mode) }
+                else { (&c.after_sha, c.before_mode, c.after_mode) };
             let prev = scope.read(p, MAX_STORED).ok();
             let res = match to {
                 None => scope.remove_file(p).map_err(|e| e.to_string()),
@@ -543,20 +680,20 @@ async fn apply(app: App, p: Principal, headers: HeaderMap, session_id: String, i
                         if let Some(parent) = p.parent() {
                             scope.create_dir_all(parent)?;
                         }
-                        scope.atomic_write(p, &bytes)
+                        scope.restore_file(p, &bytes, to_mode)
                     })().map_err(|e| e.to_string()),
                 },
             };
             if let Err(e) = res {
-                for (q, old) in done.into_iter().rev() {
+                for (q, old, mode) in done.into_iter().rev() {
                     let _ = match old {
-                        Some(b) => scope.atomic_write(&q, &b).map_err(|e| e.to_string()),
+                        Some(b) => scope.restore_file(&q, &b, mode).map_err(|e| e.to_string()),
                         None => scope.remove_file(&q).map_err(|e| e.to_string()),
                     };
                 }
                 return Err(ApiError::new(StatusCode::INTERNAL_SERVER_ERROR, "write_failed", format!("{}: {e} (원본과 변경 이력을 확인하세요)", c.path)));
             }
-            done.push((p.clone(), prev));
+            done.push((p.clone(), prev, from_mode));
         }
 
         for change in &sel {
@@ -575,6 +712,32 @@ async fn apply(app: App, p: Principal, headers: HeaderMap, session_id: String, i
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_snapshot_distinguishes_new_files_from_preexisting_untracked_content() {
+        let root = tempfile::tempdir().unwrap();
+        let data = root.path().join("grove-data");
+        std::fs::create_dir(&data).unwrap();
+        let ignore = root.path().join(".gitignore");
+        let ignored = root.path().join("ignored.txt");
+        let large = root.path().join("large.txt");
+        let deleted = root.path().join("deleted.txt");
+        std::fs::write(&ignore, "ignored.txt\n").unwrap();
+        std::fs::write(&ignored, "existing ignored file").unwrap();
+        std::fs::write(&deleted, "working file").unwrap();
+        std::fs::File::create(&large).unwrap().set_len(MAX_STORED + 1).unwrap();
+        std::fs::write(data.join("db.txt"), "existing database").unwrap();
+        let before = WorkspaceSnapshot::capture(root.path(), &data, true).unwrap();
+        std::fs::write(&ignore, "").unwrap();
+        std::fs::write(&large, "now small").unwrap();
+        std::fs::remove_file(deleted).unwrap();
+        std::fs::write(root.path().join("new.txt"), "new file").unwrap();
+        std::fs::write(data.join("db.txt"), "new database contents").unwrap();
+        let after = WorkspaceSnapshot::capture(root.path(), &data, false).unwrap();
+        let records = before.changes(after, root.path(), &data).unwrap();
+        assert_eq!(records.iter().map(|r| (r.path.as_str(), r.before.is_some(), r.after.is_some())).collect::<Vec<_>>(),
+            [(".gitignore", true, true), ("deleted.txt", true, false), ("new.txt", false, true)]);
+    }
 
     #[test]
     fn blob_reads_and_writes_reject_oversize_and_invalid_keys() {

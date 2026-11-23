@@ -16,7 +16,6 @@ async function setup(page: Page) {
     await page.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
     await openProjectSettings(page);
     await page.getByTestId("settings-menu").getByRole("button", { name: "실행·한도", exact: true }).click();
-    await page.getByTestId("settings").getByRole("button", { name: /고급 항목 \d+개 펼치기/ }).click();
     return { project, session, panel: page.getByTestId("exec-settings") };
 }
 

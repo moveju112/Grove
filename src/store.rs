@@ -1279,6 +1279,34 @@ pub const MIGRATIONS: &[&str] = &[
            updated_at=strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
      WHERE protocol='codex_oauth';
     "#,
+    // CLI 파일 이력은 Grove 도구 호출 없이 실제 턴에 연결한다.
+    r#"
+    ALTER TABLE file_changes RENAME TO file_changes_legacy;
+    CREATE TABLE file_changes (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id),
+        turn_id TEXT,
+        call_id TEXT REFERENCES tool_calls(id),
+        tool TEXT NOT NULL,
+        path TEXT NOT NULL,
+        before_sha TEXT,
+        after_sha TEXT,
+        stored INTEGER NOT NULL DEFAULT 1,
+        undone_at TEXT,
+        created_at TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        before_mode INTEGER,
+        after_mode INTEGER
+    );
+    INSERT INTO file_changes (id, session_id, turn_id, call_id, tool, path, before_sha, after_sha, stored, undone_at, created_at, seq)
+    SELECT id, session_id, turn_id, call_id, tool, path, before_sha, after_sha, stored, undone_at, created_at, seq FROM file_changes_legacy;
+    DROP TABLE file_changes_legacy;
+    CREATE INDEX file_changes_session ON file_changes(session_id, seq);
+    CREATE INDEX file_changes_turn ON file_changes(turn_id);
+    CREATE INDEX file_changes_before ON file_changes(before_sha);
+    CREATE INDEX file_changes_after ON file_changes(after_sha);
+    CREATE INDEX file_changes_stored ON file_changes(stored) WHERE stored = 1;
+    "#,
 ];
 
 #[cfg(test)]

@@ -182,6 +182,8 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
         if (changed) {
             adjustment.current ??= { point: anchor.current };
             measured((version) => version + 1);
+            // 추정 spacer가 실제 높이로 바뀐 뒤에 읽던 행을 맞춘다.
+            return;
         }
         if (!wasVisible.current || !sameGeometry(geometry.current, geometryOf(el, root.current))) {
             adjustment.current = { point: anchor.current };

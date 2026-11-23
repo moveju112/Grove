@@ -608,7 +608,7 @@ pub fn spawn_execute(app: &App, call_id: String) -> JoinHandle<()> {
                 };
                 let finished = finish(&tx, &now, &id, &["running"], to, Some(result))?;
                 if finished.is_some() {
-                    crate::changes::insert(&tx, &now, &sid, turn_for_rec.as_deref(), &id, &tool, &file_recs)?;
+                    crate::changes::insert(&tx, &now, &sid, turn_for_rec.as_deref(), Some(&id), &tool, &file_recs)?;
                 }
                 tx.commit()?;
                 if let Some(call) = finished { crate::tool_outputs::store_copy(&output_data, &call); }

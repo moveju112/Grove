@@ -41,8 +41,8 @@ test.describe("Android 앱 알림 권한 안내", () => {
             }) };
             PushManager.prototype.getSubscription = async () => subscription as unknown as PushSubscription;
         }, { endpoint, publicKey: config.public_key });
+        const { token } = await login(page);
         try {
-            await login(page);
             await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
             await openSettings(page, "local");
             await page.getByRole("button", { name: "알림", exact: true }).click();
@@ -51,7 +51,7 @@ test.describe("Android 앱 알림 권한 안내", () => {
             const guide = page.getByRole("dialog", { name: "휴대폰 앱 알림 권한", exact: true });
             await expect(guide).toBeVisible();
             await guide.getByRole("button", { name: "앱 알림 권한 안내 닫기", exact: true }).click();
-            const revision = async () => (await apiCall<{ subscriptions: { endpoint: string; revision: number }[] }>("GET", "/web-push"))
+            const revision = async () => (await apiCall<{ subscriptions: { endpoint: string; revision: number }[] }>("GET", "/web-push", undefined, token))
                 .subscriptions.find((item) => item.endpoint === endpoint)?.revision ?? 0;
             await expect.poll(revision).toBeGreaterThan(0);
             const previousRevision = await revision();
@@ -60,7 +60,7 @@ test.describe("Android 앱 알림 권한 안내", () => {
             await expect.poll(revision).toBeGreaterThan(previousRevision);
             await expect(guide).toHaveCount(0);
         } finally {
-            await apiCall("DELETE", `/web-push?endpoint=${encodeURIComponent(endpoint)}`);
+            await apiCall("DELETE", `/web-push?endpoint=${encodeURIComponent(endpoint)}`, undefined, token);
         }
     });
 });

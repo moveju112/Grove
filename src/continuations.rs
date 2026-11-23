@@ -394,7 +394,7 @@ pub(crate) fn check_permission(
         .map(|id| crate::models::get_profile(c, id))
         .transpose()?
         .is_some_and(|p| crate::provider::cli::is_cli(&p.protocol));
-    if (!t.tools_enabled && !native)
+    if (!t.tools_enabled && (!native || t.definition["limits"].is_object()))
         || t.definition["limits"]["allowed_tools"]
             .as_array()
             .is_some_and(|a| !a.iter().any(|v| v == name))

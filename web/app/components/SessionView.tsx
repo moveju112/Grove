@@ -410,6 +410,12 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         }));
     };
 
+    // 선택한 응답까지의 대화와 모델 컨텍스트를 이어받는 새 대화를 연다. 원본 대화와 파일은 바꾸지 않는다.
+    const forkAt = (seq: number) => void act(async () => {
+        const n = await api.post<Session>(`/sessions/${sessionId}/fork`, { from_seq: seq, inherit_context: true });
+        open({ kind: "session", project_id: projectId, resource_id: n.id, title: n.title }, "right");
+    });
+
     // 대화 명령(UI-024). 실패는 Composer 상태 줄에 보인다.
     const commands: RunCommand[] = [
         {
@@ -556,7 +562,8 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                             </ChatMessage>}
                             {m.role === "assistant"
                                 ? <AssistantTurn row={transcript.assistants.get(m.id)!} name={assistantName} image={assistantImage}
-                                    showProgress={showProgress} progressOpen={progressOpen(m.turn_id)} progressActive={isActiveTurn(m.turn_id)} />
+                                    showProgress={showProgress} progressOpen={progressOpen(m.turn_id)} progressActive={isActiveTurn(m.turn_id)}
+                                    onFork={archived ? undefined : () => forkAt(transcript.assistants.get(m.id)!.latest.seq)} />
                                 : <MessageView m={m} />}
                             {m.role === "user" && (
                                 <Stack direction="horizontal" align="center" gap={1} xstyle={chatLayout.actions}>
@@ -714,8 +721,9 @@ function TurnEvidence({ e, compact = false }: { e: NonNullable<Turn["evidence"]>
     );
 }
 
-function AssistantTurn({ row, name, image, showProgress, progressOpen, progressActive }: {
+function AssistantTurn({ row, name, image, showProgress, progressOpen, progressActive, onFork }: {
     row: AssistantRow; name: string; image: string | null; showProgress: boolean; progressOpen: boolean; progressActive: boolean;
+    onFork?: () => void;
 }) {
     const { latest, content, prior, attachments, live } = row;
     const meta = latest.content as { model?: string; bot?: { name?: string } };
@@ -731,6 +739,9 @@ function AssistantTurn({ row, name, image, showProgress, progressOpen, progressA
         {!live && answer.trim() && <Stack direction="horizontal" align="center" gap={2}>
             <CopyButton text={answer} />
             <When at={latest.created_at} absolute part="time" titlePart="datetime" />
+            {onFork && <ActionMenu label="응답 작업">
+                <ServerActionButton variant="secondary" density="compact" onClick={onFork}>여기에서 채팅 분기</ServerActionButton>
+            </ActionMenu>}
         </Stack>}
         {attachments.length > 0 && <AttachmentList attachments={attachments} />}
     </ChatMessage>;

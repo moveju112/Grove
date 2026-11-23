@@ -640,7 +640,7 @@ test("다른 pane의 대화가 갱신돼도 열린 설정의 대상과 입력은
     await expect(right.getByLabel("메시지 입력")).toHaveValue("오른쪽 입력");
 });
 
-test("설정 직접 링크는 접힌 고급 항목도 펼쳐서 보여 준다", async ({ page }) => {
+test("설정 직접 링크는 고급 항목으로 바로 이동한다", async ({ page }) => {
     await login(page);
     await page.evaluate(() => (location.hash = "#setting-context.input_reserve_tokens"));
     await page.getByRole("button", { name: "설정", exact: true }).click();
@@ -663,10 +663,9 @@ test("서버 범위 설정은 대상·적용 시점을 보여 주고 저장 후 
     await expect(row.getByLabel("요청당 시간 예산(분)", { exact: true })).toHaveValue("30");
     const eff = await apiCall<{ items: { key: string; effective: unknown }[] }>("GET", "/settings/effective");
     expect(eff.items.find((i) => i.key === "runs.budget.max_minutes")?.effective).toBe(30);
-    // 고급 항목은 검색 없이 접혀 있다
+    // 고급 항목도 펼치기 없이 메뉴에 바로 보인다
     await page.getByLabel("설정 검색").fill("");
     await page.getByRole("button", { name: "도구·권한", exact: true }).click();
-    await expect(page.getByTestId("setting-approval.ttl_secs")).toHaveCount(0);
-    await page.getByRole("button", { name: /고급 항목 \d+개 펼치기/ }).click();
+    await expect(page.getByRole("button", { name: /고급 항목 \d+개 펼치기/ })).toHaveCount(0);
     await expect(page.getByTestId("setting-approval.ttl_secs")).toBeVisible();
 });

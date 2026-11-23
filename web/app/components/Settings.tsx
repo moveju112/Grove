@@ -54,7 +54,6 @@ import { Grid } from "@astryxdesign/core/Grid";
 import { settingsStyles } from "../design/settings.stylex";
 import { Heading, Text } from "@astryxdesign/core/Text";
 import { List, ListItem } from "@astryxdesign/core/List";
-import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { Tab, TabList } from "@astryxdesign/core/TabList";
 import { TextInput, TextArea, DraftInput } from "../design/Fields";
 import { Slider } from "@astryxdesign/core/Slider";
@@ -127,8 +126,6 @@ export function Settings({ projectId, projectName, sessionId, initialMenu, open 
     const panelId = useId();
     const scroll = useRef<HTMLDivElement>(null);
     const [q, setQ] = useState("");
-    const [showAdvanced, setShowAdvanced] = useState(false);
-    const [leavesOpen, setLeavesOpen] = useState(false);
     const registry = useQuery<SettingDef[]>("settings-registry", () => api.get("/settings/registry"));
     const session = useQuery<{ title: string } | null>(`session:${sessionId ?? "-"}`, () => (sessionId ? api.get(`/sessions/${sessionId}`) : Promise.resolve(null)));
     const target: SettingsTarget = { projectId, projectName, sessionId, sessionTitle: session.data?.title };
@@ -137,14 +134,13 @@ export function Settings({ projectId, projectName, sessionId, initialMenu, open 
     useEffectiveSettings(target, area === "daemon");
     useModelProfiles(area === "daemon");
 
-    // 직접 링크(#setting-<key>): 해당 메뉴를 열고 고급 항목이면 펼친 뒤 그 항목으로 이동한다(SETTINGS-021).
+    // 직접 링크(#setting-<key>): 해당 메뉴를 열고 그 항목으로 이동한다(SETTINGS-021).
     const prepareLink = useCallback((d: SettingDef) => {
         const nextMenu = AREA_MENUS.daemon.find((id) => id === settingMenu(d));
         if (!nextMenu) return false;
         setQ("");
         setArea("daemon");
         setMenu(nextMenu);
-        if (d.advanced) setShowAdvanced(true);
         return true;
     }, []);
     const link = useSettingsLink(registry, JSON.stringify([projectId, sessionId]), prepareLink);
@@ -153,13 +149,9 @@ export function Settings({ projectId, projectName, sessionId, initialMenu, open 
     const matchesArea = (item: Item) => (item.scope === "이 기기" ? "local" : "daemon") === area;
     const results = useMemo(() => (needle ? ITEMS.filter((i) => (i.scope === "이 기기" ? "local" : "daemon") === area
         && (i.label + " " + i.keywords).toLowerCase().includes(needle)) : null), [area, needle]);
-    useEffect(() => {
-        if (results?.some((item) => item.id === "leaves")) setLeavesOpen(true);
-    }, [results]);
     const serverDefs = area === "daemon" ? (registry.data ?? []).filter((d) =>
-        needle ? (d.label + " " + d.keywords + " " + d.description).toLowerCase().includes(needle) : settingMenu(d) === menu && (showAdvanced || !d.advanced),
+        needle ? (d.label + " " + d.keywords + " " + d.description).toLowerCase().includes(needle) : settingMenu(d) === menu,
     ) : [];
-    const hiddenAdvanced = area === "daemon" && !needle ? (registry.data ?? []).filter((d) => settingMenu(d) === menu && d.advanced).length : 0;
     const roleModels = serverDefs.filter((d) => isRoleProfile(d.key));
     const agentModelMatches = roleModels.some((d) => settingMenu(d) === "agents");
     const workflowKeys = serverDefs.filter((d) => isWorkflowSetting(d.key)).map((d) => d.key);
@@ -213,14 +205,12 @@ export function Settings({ projectId, projectName, sessionId, initialMenu, open 
                     renderRoleName={(role) => <DetailDialog label={role.name} title={role.name}>
                         <DefinitionEditor kind="agent" id={role.id} />
                     </DetailDialog>}
-                    definitions={<Collapsible trigger="워크플로우 정의" defaultIsOpen={false}>
+                    definitions={<Stack gap={2}>
+                        <Heading level={4} color="inherit">워크플로우 정의</Heading>
                         <Definitions target={target} kind="workflow" defs={[]} onLinkReady={onLinkReady} />
-                    </Collapsible>} /></Section>}
+                    </Stack>} /></Section>}
                 {standaloneDefs.length > 0 && <ScopedSettings grouped defs={standaloneDefs} target={target}
                     linkedKey={link.key} onLinkReady={onLinkReady} />}
-                {hiddenAdvanced > 0 && !showAdvanced && (
-                    <Button variant="secondary" onClick={() => setShowAdvanced(true)}>고급 항목 {hiddenAdvanced}개 펼치기</Button>
-                )}
                 {visible("secrets") && <Section item="secrets"><Secrets /></Section>}
                 {visible("profiles") && <Section item="profiles"><Profiles /></Section>}
                 {(visible("definitions") || agentModelMatches) && <Section item="definitions"><Definitions target={target} kind="agent"
@@ -230,7 +220,7 @@ export function Settings({ projectId, projectName, sessionId, initialMenu, open 
                     defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} /></Section>}
                 {visible("source-settings") && <Section item="source-settings"><SourceSettings projectId={projectId} /></Section>}
                 {(["theme", "font", "enter", "terminal-paste", "shortcuts", "running-send", "recent", "notify", "time", "transcript", "leaves"] as const).some(visible)
-                    && <DisplayPrefs show={visible} leavesOpen={leavesOpen} onLeavesOpenChange={setLeavesOpen} />}
+                    && <DisplayPrefs show={visible} />}
                 {visible("bots") && <Section item="bots"><BotsPanel open={open} /></Section>}
                 {visible("devices") && <Section item="devices"><DeviceConnections /></Section>}
                 {visible("hosts") && <Section item="hosts"><Hosts /></Section>}
@@ -309,8 +299,8 @@ function FontSize({ value }: { value: number }) {
     </Stack>;
 }
 
-function DisplayPrefs({ show, leavesOpen, onLeavesOpenChange }: {
-    show: (id: string) => boolean; leavesOpen: boolean; onLeavesOpenChange: (open: boolean) => void;
+function DisplayPrefs({ show }: {
+    show: (id: string) => boolean;
 }) {
     const p = usePrefs();
     const set = (n: Prefs) => {
@@ -404,26 +394,23 @@ function DisplayPrefs({ show, leavesOpen, onLeavesOpenChange }: {
             {show("leaves") && (
                 <Card id="setting-leaves" data-testid="setting-leaves" data-ui="settings-group" role="region"
                     aria-label="진행 중 효과" padding={3} xstyle={settingsStyles.group}>
-                    <Collapsible isOpen={leavesOpen} onOpenChange={onLeavesOpenChange} trigger={
-                        <Stack as="span" direction="horizontal" justify="between" gap={2}>
-                            <Text as="span">진행 중 효과</Text>
-                            <Text as="span" type="supporting" color="secondary">이 기기</Text>
-                        </Stack>
-                    }>
-                        <Stack gap={2} paddingBlockStart={2}>
-                            <Select label="진행 중 표시" value={p.activityDisplay} options={[...activityDisplayOptions]}
-                                onChange={(value) => set({ ...p, activityDisplay: value as Prefs["activityDisplay"] })} />
-                            <Select label="잎 무리 수" value={String(p.sessionVineGroups)} disabled={p.activityDisplay !== "animated"}
-                                onChange={(value) => set({ ...p, sessionVineGroups: Number(value) as Prefs["sessionVineGroups"] })}
-                                options={VINE_GROUPS.map((count) => ({ value: String(count), label: `${count}개` }))} />
-                            <Select label="잎 무리 길이" value={p.sessionVineLength} disabled={p.activityDisplay !== "animated"}
-                                onChange={(value) => set({ ...p, sessionVineLength: value as Prefs["sessionVineLength"] })}
-                                options={[{ value: "short", label: "짧게" }, { value: "medium", label: "기본" }, { value: "long", label: "길게" }]} />
-                            <Select label="잎 회전 속도" value={p.sessionVineSpeed} disabled={p.activityDisplay !== "animated"}
-                                onChange={(value) => set({ ...p, sessionVineSpeed: value as Prefs["sessionVineSpeed"] })}
-                                options={[{ value: "slow", label: "느리게" }, { value: "normal", label: "기본" }, { value: "fast", label: "빠르게" }]} />
-                        </Stack>
-                    </Collapsible>
+                    <Stack direction="horizontal" justify="between" gap={2}>
+                        <Text as="span">진행 중 효과</Text>
+                        <Text as="span" type="supporting" color="secondary">이 기기</Text>
+                    </Stack>
+                    <Stack gap={2} paddingBlockStart={2}>
+                        <Select label="진행 중 표시" value={p.activityDisplay} options={[...activityDisplayOptions]}
+                            onChange={(value) => set({ ...p, activityDisplay: value as Prefs["activityDisplay"] })} />
+                        <Select label="잎 무리 수" value={String(p.sessionVineGroups)} disabled={p.activityDisplay !== "animated"}
+                            onChange={(value) => set({ ...p, sessionVineGroups: Number(value) as Prefs["sessionVineGroups"] })}
+                            options={VINE_GROUPS.map((count) => ({ value: String(count), label: `${count}개` }))} />
+                        <Select label="잎 무리 길이" value={p.sessionVineLength} disabled={p.activityDisplay !== "animated"}
+                            onChange={(value) => set({ ...p, sessionVineLength: value as Prefs["sessionVineLength"] })}
+                            options={[{ value: "short", label: "짧게" }, { value: "medium", label: "기본" }, { value: "long", label: "길게" }]} />
+                        <Select label="잎 회전 속도" value={p.sessionVineSpeed} disabled={p.activityDisplay !== "animated"}
+                            onChange={(value) => set({ ...p, sessionVineSpeed: value as Prefs["sessionVineSpeed"] })}
+                            options={[{ value: "slow", label: "느리게" }, { value: "normal", label: "기본" }, { value: "fast", label: "빠르게" }]} />
+                    </Stack>
                 </Card>
             )}
         </>
@@ -556,22 +543,20 @@ function Profiles() {
                             </ActionMenu>
                         </Stack>
                         {p.last_check?.ok === false && <CheckStatus c={p.last_check} />}
-                        <Collapsible trigger="상세 설정" defaultIsOpen={false}>
-                            <Stack gap={2}>
-                                <Text as="span" type="supporting" color="secondary">{p.protocol}{p.base_url && ` · ${p.base_url}`}</Text>
-                                {p.last_check?.ok !== false && <CheckStatus c={p.last_check} />}
-                                <ProfileCapabilities profile={p} />
-                                <ProfileContextPolicy profile={p} />
-                                <ProfileFallback profile={p} profiles={list.data ?? []} />
-                                <ProfileCatalog profile={p} onChoose={(model, revision) => void save.run(() =>
-                                    api.put(`/model-profiles/${p.id}`, { expected_revision: revision, model }, { requires: ["model_management_v1"] })
-                                )} />
-                            </Stack>
-                        </Collapsible>
+                        <Stack gap={2}>
+                            <Text as="span" type="supporting" color="secondary">{p.protocol}{p.base_url && ` · ${p.base_url}`}</Text>
+                            {p.last_check?.ok !== false && <CheckStatus c={p.last_check} />}
+                            <ProfileCapabilities profile={p} />
+                            <ProfileContextPolicy profile={p} />
+                            <ProfileFallback profile={p} profiles={list.data ?? []} />
+                            <ProfileCatalog profile={p} onChoose={(model, revision) => void save.run(() =>
+                                api.put(`/model-profiles/${p.id}`, { expected_revision: revision, model }, { requires: ["model_management_v1"] })
+                            )} />
+                        </Stack>
                     </Stack></Card>} />
                 ))}
             </List>
-            <Collapsible trigger="모델 프로필 추가" defaultIsOpen={false}>
+            <Heading level={4} color="inherit">모델 프로필 추가</Heading>
             <Stack as="form" gap={2} maxWidth={480} aria-label="모델 프로필 추가" onSubmit={(e) => {
                 e.preventDefault();
                 void save.run(async () => {
@@ -602,7 +587,6 @@ function Profiles() {
                 )}
                 <ServerActionButton type="submit">추가</ServerActionButton>
             </Stack>
-            </Collapsible>
             {save.view}
         </>
     );

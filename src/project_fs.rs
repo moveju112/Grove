@@ -41,13 +41,21 @@ impl ProjectFs {
     }
 
     pub fn open_file(&self, path: &Path) -> io::Result<File> {
+        self.open_regular_file(path, false)
+    }
+
+    pub(crate) fn open_regular_file(&self, path: &Path, no_link: bool) -> io::Result<File> {
         let mut options = OpenOptions::new();
         options.read(true);
         #[cfg(unix)]
         {
             use cap_std::fs::OpenOptionsExt;
             // FIFO·장치로 교체돼도 open에서 멈추지 않고 열린 객체의 종류로 거절한다.
-            options.custom_flags(libc::O_NONBLOCK);
+            options.custom_flags(libc::O_NONBLOCK | if no_link { libc::O_NOFOLLOW } else { 0 });
+        }
+        #[cfg(not(unix))]
+        if no_link && self.symlink_metadata(path)?.file_type().is_symlink() {
+            return Err(io::Error::new(io::ErrorKind::InvalidInput, "심볼릭 링크입니다"));
         }
         let file = self.dir.open_with(self.relative(path)?, &options)?.into_std();
         let meta = file.metadata()?;
@@ -95,14 +103,18 @@ impl ProjectFs {
     }
 
     pub fn write_new(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        self.publish(path, bytes, false)
+        self.publish(path, bytes, false, None)
     }
 
     pub fn atomic_write(&self, path: &Path, bytes: &[u8]) -> io::Result<()> {
-        self.publish(path, bytes, true)
+        self.publish(path, bytes, true, None)
     }
 
-    fn publish(&self, path: &Path, bytes: &[u8], replace: bool) -> io::Result<()> {
+    pub(crate) fn restore_file(&self, path: &Path, bytes: &[u8], mode: Option<u32>) -> io::Result<()> {
+        self.publish(path, bytes, true, mode)
+    }
+
+    fn publish(&self, path: &Path, bytes: &[u8], replace: bool, mode: Option<u32>) -> io::Result<()> {
         let (parent, name) = self.parent(path)?;
         let permissions = match parent.metadata(&name) {
             Ok(meta) => Some(meta.permissions()),
@@ -115,6 +127,13 @@ impl ProjectFs {
         let mut file = parent.open_with(&temp, &options)?;
         let result = (|| {
             file.write_all(bytes)?;
+            #[cfg(unix)]
+            let permissions = mode.map(|mode| {
+                use cap_std::fs::PermissionsExt;
+                cap_std::fs::Permissions::from_mode(mode & 0o777)
+            }).or(permissions);
+            #[cfg(not(unix))]
+            let _ = mode;
             if let Some(permissions) = permissions { file.set_permissions(permissions)?; }
             file.sync_all()?;
             drop(file);

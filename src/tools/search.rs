@@ -43,7 +43,11 @@ pub fn plan(args: &Value, root: &Path, name: &str) -> ToolResult<Planned> {
     Ok(Planned { target: json!({ "paths": resolved, "tool": name }), precondition: None })
 }
 
-fn walker(root: &Path, base: &Path, include_noise: bool) -> ignore::Walk {
+pub(crate) fn walker(root: &Path, base: &Path, include_noise: bool) -> ignore::Walk {
+    walker_excluding(root, base, include_noise, None)
+}
+
+pub(crate) fn walker_excluding(root: &Path, base: &Path, include_noise: bool, excluded: Option<PathBuf>) -> ignore::Walk {
     let mut b = ignore::WalkBuilder::new(base);
     b.hidden(false).follow_links(false).require_git(false);
     if include_noise {
@@ -51,7 +55,8 @@ fn walker(root: &Path, base: &Path, include_noise: bool) -> ignore::Walk {
     }
     // .git 디렉터리 자체는 항상 제외
     let root = root.to_path_buf();
-    b.filter_entry(move |e| e.file_name() != ".git" || e.path() == root);
+    b.filter_entry(move |e| (e.file_name() != ".git" || e.path() == root)
+        && !excluded.as_ref().is_some_and(|path| e.path().starts_with(path)));
     b.build()
 }
 

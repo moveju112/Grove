@@ -76,7 +76,7 @@ async fn cli_backend_codes_repairs_tests_resumes_and_allows_external_files_and_l
     assert_eq!(diff.status.code(), Some(1), "실제 변경 diff가 있어야 한다");
     let (_, messages) = s.get(&format!("/api/v1/sessions/{sid}/messages")).await;
     assert!(messages["items"].as_array().unwrap().iter().any(|m|
-        m["content"]["type"] == "cli_activity" && m["content"]["items"].as_array().is_some_and(|items| items.iter().any(|i|
+        m["role"] == "assistant" && m["content"]["cli_activity"].as_array().is_some_and(|items| items.iter().any(|i|
             i["kind"] == "command" || i["name"] == "Bash"))), "CLI 명령 실행 기록이 있어야 한다");
     let u = &t["usage"];
     assert!(u["output_tokens"].as_u64().unwrap_or(0) > 0, "사용량 기록: {u}");

@@ -19,8 +19,8 @@ test("기본 푸시는 설정을 열기 전에 등록되고 기기에서 끈 선
             return subscription as unknown as PushSubscription;
         };
     }, { endpoint, publicKey: config.public_key });
-    await login(page);
-    const subscribed = async () => (await apiCall<{ subscriptions: { endpoint: string }[] }>("GET", "/web-push")).subscriptions.some((s) => s.endpoint === endpoint);
+    const { token } = await login(page);
+    const subscribed = async () => (await apiCall<{ subscriptions: { endpoint: string }[] }>("GET", "/web-push", undefined, token)).subscriptions.some((s) => s.endpoint === endpoint);
     await expect.poll(subscribed).toBe(true);
     await openSettings(page, "local");
     await page.getByRole("button", { name: "알림", exact: true }).click();
@@ -59,9 +59,9 @@ test("푸시 기본 사용은 권한을 자동 요청하지 않고 알림 허용
             endpoint, toJSON: () => ({ endpoint, keys: { p256dh: publicKey, auth: "AAAAAAAAAAAAAAAAAAAAAA" } }),
         }) as unknown as PushSubscription;
     }, { endpoint, publicKey });
-    const subscribed = async () => (await apiCall<{ subscriptions: { endpoint: string }[] }>("GET", "/web-push")).subscriptions.some((s) => s.endpoint === endpoint);
+    const { token } = await login(page);
+    const subscribed = async () => (await apiCall<{ subscriptions: { endpoint: string }[] }>("GET", "/web-push", undefined, token)).subscriptions.some((s) => s.endpoint === endpoint);
     try {
-        await login(page);
         await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
         await openSettings(page, "local");
         await page.getByRole("button", { name: "알림", exact: true }).click();
@@ -71,7 +71,7 @@ test("푸시 기본 사용은 권한을 자동 요청하지 않고 알림 허용
         await context.grantPermissions(["notifications"], { origin: baseURL! });
         await expect.poll(subscribed).toBe(true);
     } finally {
-        await apiCall("DELETE", `/web-push?endpoint=${encodeURIComponent(endpoint)}`);
+        await apiCall("DELETE", `/web-push?endpoint=${encodeURIComponent(endpoint)}`, undefined, token);
     }
 });
 
@@ -143,12 +143,12 @@ test("실제 Push 시험은 인증된 서버에 접수하고 응답 유실은 �
         }) };
         PushManager.prototype.getSubscription = async () => subscription as unknown as PushSubscription;
     }, { endpoint, publicKey: config.public_key });
-    await login(page);
+    const { token } = await login(page);
     await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
     await openSettings(page, "local");
     await page.getByRole("button", { name: "알림", exact: true }).click();
     const panel = page.getByTestId("setting-notify");
-    await expect.poll(async () => (await apiCall<{ subscriptions: { endpoint: string }[] }>("GET", "/web-push")).subscriptions.some((s) => s.endpoint === endpoint)).toBe(true);
+    await expect.poll(async () => (await apiCall<{ subscriptions: { endpoint: string }[] }>("GET", "/web-push", undefined, token)).subscriptions.some((s) => s.endpoint === endpoint)).toBe(true);
     let first = true;
     let receiptId = "";
     const keys: string[] = [];
@@ -160,7 +160,7 @@ test("실제 Push 시험은 인증된 서버에 접수하고 응답 유실은 �
         if (first) {
             first = false; receiptId = receipt.id;
             // Remove the delayed outbox immediately: this test must never contact FCM.
-            await apiCall("DELETE", `/web-push?endpoint=${encodeURIComponent(endpoint)}`);
+            await apiCall("DELETE", `/web-push?endpoint=${encodeURIComponent(endpoint)}`, undefined, token);
             await route.fulfill({ status: 503, json: { error: { code: "test_response_lost", message: "isolated response loss" } } });
         } else {
             expect(receipt.id).toBe(receiptId);

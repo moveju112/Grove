@@ -86,8 +86,6 @@ export async function requireToolApproval(projectId: string) {
 export async function openDetails(panel: Locator, tool?: string, scope: Locator | Page = panel.page()) {
     if (tool) await openTool(scope, tool);
     await expect(panel).toBeAttached();
-    const disclosure = panel.getByRole("button", { name: "상세 설정", exact: true }).first();
-    if (await disclosure.count() && await disclosure.getAttribute("aria-expanded") === "false") await disclosure.click();
     const tab = panel.locator("xpath=ancestor-or-self::*[@role='tabpanel' and ancestor::*[@data-ui='workbench']]").first();
     if (await tab.count()) {
         const button = panel.page().locator(`[role=tab][aria-controls="${await tab.getAttribute("id")}"]`);
@@ -266,8 +264,8 @@ const BASE = "http://127.0.0.1:17741";
 let n = 0;
 
 /// 시험 준비용 로컬 API 호출. UI 동작 검증은 브라우저로 한다.
-export async function apiCall<T>(method: string, path: string, body?: unknown): Promise<T> {
-    return apiCallAt<T>(BASE, state().token, method, path, body);
+export async function apiCall<T>(method: string, path: string, body?: unknown, token = state().token): Promise<T> {
+    return apiCallAt<T>(BASE, token, method, path, body);
 }
 
 async function apiCallAt<T>(base: string, token: string, method: string, path: string, body?: unknown): Promise<T> {

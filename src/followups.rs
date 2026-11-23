@@ -177,7 +177,7 @@ fn start_item(tx: &Connection, now: &str, epoch: &str, f: &Followup, owner: &str
             &f.profile_id,
             f.agent_id.as_deref(),
             Some(f.tools),
-            None,
+            Some(&json!({"kind":"followup"})),
             (!prepared.items.is_empty()).then_some(&prepared),
         )?;
         crate::runner::set_turn_model(tx, &t.id, f.model.as_deref())?;

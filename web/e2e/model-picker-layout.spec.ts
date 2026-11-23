@@ -137,9 +137,8 @@ for (const theme of ["light", "dark"] as const) {
             const rowBox = (await row.boundingBox())!;
             const nextBox = (await nextRow.boundingBox())!;
             expect(nextBox.y - rowBox.y - rowBox.height, "카드 사이에는 별도 여백이 있어야 한다").toBeGreaterThanOrEqual(12);
-            await expect(row.getByTestId("model-capabilities")).toBeHidden();
-            await expect(row.getByText("CLI fallback 미지원")).toBeHidden();
-            await expect(settings.getByRole("form", { name: "모델 프로필 추가", exact: true })).toBeHidden();
+            await expect(row.getByRole("button", { name: "상세 설정", exact: true })).toHaveCount(0);
+            await expect(settings.getByRole("form", { name: "모델 프로필 추가", exact: true })).toBeVisible();
             await row.getByRole("button", { name: `${profiles[0]!.name} 연결 정보` }).click();
             await expect(page.getByRole("tooltip")).toContainText("서버 CLI 계정");
             await page.keyboard.press("Escape");
@@ -147,8 +146,6 @@ for (const theme of ["light", "dark"] as const) {
             await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
             const context = row.getByLabel("context token 수", { exact: true });
             await context.fill("12345");
-            await row.getByRole("button", { name: "상세 설정", exact: true }).click();
-            await row.getByRole("button", { name: "상세 설정", exact: true }).click();
             await expect(context).toHaveValue("12345");
             await expect(row.getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
             await page.screenshot({ path: info.outputPath(`profiles-${theme}-390.png`) });

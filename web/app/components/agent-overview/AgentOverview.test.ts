@@ -31,7 +31,7 @@ function render(value: AgentOverviewData = data, status = "ready", key = '["p","
 describe("역할 개요", () => {
     it("모델·실행 요약을 숨기고 역할 지침과 정책 상태를 표시한다", () => {
         const html = render();
-        for (const text of ["역할 상세", "override 수정됨", "현재 정책상 사용 가능", "worker 기존 편집 열기"]) expect(html).toContain(text);
+        for (const text of ["등록된 역할", "override 수정됨", "현재 정책상 사용 가능", "worker 기존 편집 열기"]) expect(html).toContain(text);
         for (const text of ["모델·실행 정보", "모델 연결", "부모 모델", "다음 모델", "위임 실행 규칙", "현재 대화의 시작 승인", "최대 깊이", "자동 재실행하지 않습니다"]) expect(html).not.toContain(text);
         expect(html).toContain("&lt;script&gt;");
         expect(html).not.toContain("<script>");

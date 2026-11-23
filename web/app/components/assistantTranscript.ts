@@ -101,7 +101,8 @@ export function assistantTranscript(messages: readonly Message[], live?: LiveRes
         const prior = liveHere ? saved : saved.slice(0, -1);
         const attachments = [...new Map(saved.flatMap((step) => (step.attachments ?? []).map((a) => [a.id, a] as const))).values()];
         const view = foldResponseEntries(content, prior);
-        if (!liveHere && !attachments.length && !view.answer.trim() && (!showProgress || !view.progress.length)) continue;
+        const hasActivity = saved.some((step) => !!step.cli_activity?.length);
+        if (!liveHere && !attachments.length && !view.answer.trim() && (!showProgress || (!view.progress.length && !hasActivity))) continue;
         assistants.set(message.id, { latest: group.at(-1)!, content, prior, attachments, live: liveHere,
             progressStart: number(message.turn_id, view.progress.length) });
         for (const step of group) anchors.set(step.seq, message.seq);

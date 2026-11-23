@@ -591,7 +591,7 @@ mod tests {
             data_dir: dir.path().to_path_buf(), listen: "127.0.0.1:0".parse().unwrap(),
             allowed_origins: vec![], allowed_hosts: vec![], tls_terminated: false, web_dir: None,
             web_base: "/".into(),
-            approval_ttl_secs: 1800, scheduler_tick_ms: 100, remote_watch_insecure_loopback: false, gh_command: "gh".into(),
+            approval_ttl_secs: 1800, scheduler_tick_ms: 100, remote_watch_insecure_loopback: false, gh_command: "gh".into(), internal_exe: None,
         };
         let app = App::new(cfg, clock.clone()).unwrap();
         let local = ensure_owner_token(&app).unwrap();

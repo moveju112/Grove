@@ -17,6 +17,7 @@ import { HelpTip, SentenceText } from "./HelpTip";
 import { gitPanelStyles } from "./git/git-panel.stylex";
 
 const OP: Record<string, string> = { created: "새 파일", modified: "수정", deleted: "삭제" };
+const CLI_SNAPSHOT = "턴 실행 중 작업 폴더가 바뀐 내용입니다. 다른 프로그램의 수정도 포함될 수 있습니다. 변경 내용을 확인했나요?";
 
 type Attempt = { op: "undo" | "redo"; ids: string[]; key: string };
 
@@ -44,7 +45,7 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
     const list = q.data?.items ?? [];
     if (list.length === 0 && cursors.length === 1) return <Panel data-testid="changes-panel" title="파일 변경 이력">
         <GroveText as="p" display="block" type="supporting" color={q.error ? "error" : "secondary"} role={q.error ? "alert" : "status"}>
-            {q.loading ? "불러오는 중…" : q.error ? "파일 변경 이력을 읽지 못했습니다." : "변경 없음"}
+            {q.loading ? "불러오는 중…" : q.error ? "파일 변경 이력을 읽지 못했습니다." : "기록된 변경 없음"}
         </GroveText>
     </Panel>;
     // 턴(요청)별로 묶는다. 사용자가 직접 만든 도구 요청은 turn_id가 없다.
@@ -104,7 +105,7 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
     return (
         <Panel data-testid="changes-panel" title={<GroveStack as="span" direction="horizontal" align="center" gap={1.5}>
             파일 변경 이력 · {q.data?.applied ?? 0}/{q.data?.total ?? 0}
-            <HelpTip label="파일 변경 복원 도움말"><SentenceText text="대화 되감기와 별개로 파일만 복원합니다. 기록 뒤 파일이 바뀌었으면 충돌로 알리고 아무것도 바꾸지 않습니다." /></HelpTip>
+            <HelpTip label="파일 변경 복원 도움말"><SentenceText text="대화 되감기와 별개로 파일을 복원합니다. 기록 뒤 파일이 바뀌면 적용을 중단합니다. CLI는 턴 전후의 작업 폴더를 비교하며 무시된 파일과 보관 한도를 넘긴 파일은 제외합니다." /></HelpTip>
         </GroveStack>}>
             {err && (
                 <GroveText as="p" display="block" type="inherit" color="error" role="alert">
@@ -119,14 +120,21 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
             </GroveStack>}
             {groups.map((g, gi) => {
                 const total = totals.get(g.turn);
+                const cliSnapshot = total?.has_cli_snapshot || g.items.some((item) => !item.call_id);
                 return (
                     <GroveStack gap={1} paddingBlock={1} key={g.turn ?? `manual-${gi}`} data-testid="change-group">
                         <GroveStack direction="horizontal" align="center" wrap="wrap" gap={2}>
                             <GroveText type="supporting" weight="bold">{g.turn ? `요청 ${gi + 1}` : "직접 요청"}</GroveText>
-                            <ServerActionButton variant="secondary" density="compact" disabled={locked || !total?.applied} onClick={() => void act({ op: "undo", turn: g.turn, through: q.data!.through_seq })}>
+                            <ServerActionButton variant="secondary" density="compact" disabled={locked || !total?.applied} onClick={() => {
+                                if (cliSnapshot && !confirm(CLI_SNAPSHOT)) return;
+                                void act({ op: "undo", turn: g.turn, through: q.data!.through_seq });
+                            }}>
                                 이 요청의 변경 되돌리기
                             </ServerActionButton>
-                            <ServerActionButton variant="secondary" density="compact" disabled={locked || !total?.undone} onClick={() => void act({ op: "redo", turn: g.turn, through: q.data!.through_seq })}>
+                            <ServerActionButton variant="secondary" density="compact" disabled={locked || !total?.undone} onClick={() => {
+                                if (cliSnapshot && !confirm(CLI_SNAPSHOT)) return;
+                                void act({ op: "redo", turn: g.turn, through: q.data!.through_seq });
+                            }}>
                                 다시 적용
                             </ServerActionButton>
                         </GroveStack>
@@ -134,7 +142,7 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
                             {g.items.map((c) => (
                                 <GroveListItem key={c.id} align="first-line" data-testid="change-row" data-state={c.undone_at ? "undone" : "applied"} label={<GroveStack gap={1} xstyle={gitPanelStyles.shrink}>
                                     <GroveText type="supporting" maxLines={1}><code title={c.path}>{c.path}</code></GroveText>
-                                    <GroveText type="supporting" color="secondary">{OP[c.op] ?? c.op} · {c.tool}</GroveText>
+                                    <GroveText type="supporting" color="secondary">{OP[c.op] ?? c.op} · {c.call_id ? c.tool : "CLI 턴의 작업 폴더"}</GroveText>
                                     {c.undone_at && <GroveText type="supporting"> 되돌림</GroveText>}
                                     {!c.stored && <GroveText type="supporting"> (파일이 커서 되돌릴 수 없음)</GroveText>}
                                     {diff?.id === c.id && <CodeBlock data-testid="change-diff" code={diff.text} language="plaintext" isDiff isWrapped={false} />}
@@ -146,7 +154,10 @@ export function ChangesPanel({ sessionId, projectId, open, disabled }: { session
                                         산출물 열기
                                     </GroveButton>}
                                     {c.stored && (
-                                        <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => void act({ op: c.undone_at ? "redo" : "undo", ids: [c.id], key: newKey() })}>
+                                        <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => {
+                                            if (!c.call_id && !confirm(CLI_SNAPSHOT)) return;
+                                            void act({ op: c.undone_at ? "redo" : "undo", ids: [c.id], key: newKey() });
+                                        }}>
                                             {c.undone_at ? "다시 적용" : "되돌리기"}
                                         </GroveButton>
                                     )}

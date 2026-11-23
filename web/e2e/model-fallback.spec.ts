@@ -5,7 +5,7 @@ import { frames } from "./fixture";
 import { apiCall, composerOption, ensureProjects, login, openDetails, openSettings, selectChoice, sessionView } from "./helpers";
 
 test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과 이유를 표시한다", async ({ page, browser }) => {
-    const prefix = `fallback-${randomUUID()}`;
+    const prefix = `fallback-${randomUUID().slice(0, 8)}`;
     const requests: { model: string }[] = [];
     const fixture = createServer((req, res) => {
         if (req.method === "GET" && req.url === "/v1/models") {
@@ -56,14 +56,14 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         const stored = (await apiCall<{ id: string; options: { fallback: { enabled: boolean; candidates: { profile_id: string }[] } } }[]>("GET", "/model-profiles")).find((p) => p.id === primary.id)!;
         expect(stored.options.fallback.enabled).toBe(true);
         expect(stored.options.fallback.candidates.map((c) => c.profile_id)).toEqual([backup.id]);
+        await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
 
         const { a } = await ensureProjects();
         const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: prefix });
         await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
         const app = await context.newPage();
         await login(app);
-        await app.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
-        await app.getByTestId("project-view").getByRole("button", { name: new RegExp(`${prefix}$`) }).click();
+        await app.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: prefix, exact: true }).click();
         const view = sessionView(app, session.id);
         await composerOption(view, "보내기 방식", "model");
         await composerOption(view, "모델 프로필", primary.id);

@@ -4,16 +4,14 @@ import { login, openSettings } from "./helpers";
 for (const width of [390, 1400]) {
     test.describe(`${width}px 편집 설정`, () => {
         test.use({ viewport: { width, height: 900 }, isMobile: width < 760, hasTouch: width < 760 });
-        test("역할 설명을 접고 편집 목록과 초안을 유지한다", async ({ page }, info) => {
+        test("역할 설명을 펼친 채 편집 목록과 초안을 유지한다", async ({ page }, info) => {
             await page.emulateMedia({ reducedMotion: "reduce" });
             await login(page);
             await openSettings(page);
             await page.getByLabel("설정 검색", { exact: true }).fill("위임 에이전트");
             const overview = page.getByTestId("agent-overview");
-            const details = overview.getByRole("button", { name: "역할 상세", exact: true });
-            await expect(details).toHaveAttribute("aria-expanded", "false");
+            await expect(overview.getByRole("button", { name: "역할 상세", exact: true })).toHaveCount(0);
             const roles = overview.getByRole("heading", { name: /등록된 역할/ });
-            await expect(roles).toBeHidden();
             const list = page.getByTestId("definition-list");
             const worker = list.getByTestId("definition-worker").getByRole("button", { name: /^Worker / }).and(page.locator("[aria-pressed]"));
             await expect(worker).toBeVisible();
@@ -33,17 +31,13 @@ for (const width of [390, 1400]) {
             await worker.click();
             const body = page.getByTestId("definition-editor").getByLabel("정의 본문", { exact: true });
             const original = await body.inputValue();
-            await details.click();
-            await expect(details).toHaveAttribute("aria-expanded", "true");
             await expect(roles).toBeVisible();
             await expect(overview.getByRole("heading", { name: "모델 연결", exact: true })).toHaveCount(0);
             await expect(overview.getByRole("heading", { name: "위임 실행 규칙", exact: true })).toHaveCount(0);
-            await details.click();
-            await expect(roles).toBeHidden();
             await expect(body).toHaveValue(original);
             await page.getByLabel("설정 검색", { exact: true }).fill("");
             await page.getByTestId("settings").getByRole("button", { name: "워크플로우·메모리", exact: true }).click();
-            await page.getByTestId("settings").getByRole("button", { name: "워크플로우", exact: true }).click();
+            await expect(page.getByRole("heading", { name: "워크플로우 정의", exact: true })).toBeVisible();
             await expect(list.getByRole("button")).not.toHaveCount(0);
             await page.screenshot({ path: info.outputPath("workflows-compact.png"), fullPage: true });
         });

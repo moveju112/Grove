@@ -257,7 +257,11 @@ export type ToolCallRow = { id: string, session_id: string, project_id: string, 
  */
 approval_scope: string | null, };
 
-export type FileChange = { id: string, turn_id: string | null, call_id: string, tool: string, path: string,
+export type FileChange = { id: string, turn_id: string | null,
+/**
+ * Grove 도구 호출 ID. CLI 턴 스냅샷은 빈 문자열로 전달한다.
+ */
+call_id: string, tool: string, path: string,
 /**
  * created | modified | deleted
  */
@@ -267,7 +271,7 @@ op: string, before_sha: string | null, after_sha: string | null,
  */
 stored: boolean, undone_at: string | null, created_at: string, seq: number, };
 
-export type FileChangeGroup = { turn_id: string | null, applied: number, undone: number, };
+export type FileChangeGroup = { turn_id: string | null, applied: number, undone: number, has_cli_snapshot?: boolean, };
 
 export type FileChangePage = { items: Array<FileChange>, groups: Array<FileChangeGroup>, total: number, applied: number, through_seq: number, next_before_seq: number | null, };
 

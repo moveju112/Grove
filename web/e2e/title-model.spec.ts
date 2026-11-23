@@ -35,7 +35,7 @@ for (const width of [390, 1280]) {
             const auto = title.getByTestId("setting-session.auto_title");
             const toggle = auto.getByRole("switch", { name: "대화 제목 자동 생성 사용", exact: true });
             const choice = row.getByRole("button", { name: "제목 생성 모델", exact: true });
-            const expand = title.getByRole("button", { name: /대화 제목 자동 생성 (접기|펼치기)/ });
+            await expect(title.getByRole("button", { name: /대화 제목 자동 생성 (접기|펼치기)/ })).toHaveCount(0);
             const workflow = basic.getByRole("tab", { name: "워크플로우", exact: true });
             await expect(basic.getByRole("switch")).toHaveCount(6);
             await expect(basic.getByRole("switch").first()).toHaveAccessibleName("대화 제목 자동 생성 사용");
@@ -72,12 +72,10 @@ for (const width of [390, 1280]) {
             await expect.poll(() => effective("session.title_profile", false)).toBe(profile);
             await expect(toggle).not.toBeChecked();
             const serverFlag = await effective("session.auto_title", false);
-            await expand.click();
             await toggle.click();
             await expect.poll(() => effective("session.auto_title")).toBe(true);
             await expect(toggle).toBeChecked();
-            await expect(expand).toHaveAttribute("aria-expanded", "false");
-            await expect(row).toHaveCount(0);
+            await expect(row).toBeVisible();
             await toggle.click();
             await expect.poll(() => effective("session.auto_title")).toBe(false);
             expect(await effective("session.auto_title", false)).toBe(serverFlag);

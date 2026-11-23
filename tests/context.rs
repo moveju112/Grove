@@ -167,7 +167,7 @@ async fn manual_compaction_replaces_old_history_and_keeps_tool_pairs() {
 async fn compaction_is_refused_while_a_turn_runs() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;
-    let prof = profile_with_window(&s, &f.base, 1000).await;
+    let prof = profile_with_window(&s, &f.base, 16_000).await;
     let p = s.create_project("busy").await;
     let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
     f.push(fixture::hang_after("..."));

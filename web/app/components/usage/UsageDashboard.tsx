@@ -71,7 +71,7 @@ export function UsageDashboard({ report, quotas }: { report: Report; quotas?: Re
     const summaries = providers.map((row) => ({ key: row.provider, label: providerName(row.provider), metrics: row.metrics }));
     const tokenWidth = Math.max(120, ...summaries.map((row) => number(tokens(row.metrics)).length * 7 + 12));
     const summaryCells = (m: UsageMetrics, key: string) => [
-        <Text key="speed" as="span" type="inherit" data-testid={`usage-speed-${key}`}>{speed(m.tok_per_second)} tok/s</Text>,
+        <Text key="speed" as="span" type="inherit" data-testid={`usage-speed-${key}`}>{m.tok_per_second === null ? "미측정" : `${speed(m.tok_per_second)} tok/s`}</Text>,
         `${speed(m.low10_tok_per_second)} tok/s`, `${speed(m.high10_tok_per_second)} tok/s`,
         <Text key="tokens" as="span" type="inherit" aria-label={`${number(tokens(m))} 토큰`} data-testid={`usage-token-${key}`}>{number(tokens(m))}</Text>,
         number(m.responses), cacheHit(m),
@@ -93,7 +93,7 @@ export function UsageDashboard({ report, quotas }: { report: Report; quotas?: Re
         <Stack gap={0.5}>
             <Stack direction="horizontal" align="center" gap={1}>
                 <Text xstyle={styles.hint} color="secondary">평균 모델 속도: 출력 토큰 / 모델 요청 시간 · 측정 {number(total.measured_responses)}/{number(total.responses)}개 응답</Text>
-                <HelpTip label="tok/s 계산 기준"><Text>로컬 도구 실행과 대기열 시간은 제외해요. Claude Code는 CLI가 보고한 API 요청 시간의 합을 써요. 모델 시간이 없는 응답(과거 기록 포함)이나 출력이 없는 응답은 제외해요.</Text></HelpTip>
+                <HelpTip label="tok/s 계산 기준"><Text>로컬 도구 실행과 대기열 시간은 제외해요. Claude Code는 CLI가 보고한 API 요청 시간의 합을 써요. Codex CLI는 모델 요청 시간을 제공하지 않아 토큰 수만 집계해요.</Text></HelpTip>
             </Stack>
             <Text xstyle={styles.hint} color="secondary">하위·상위 10%: 느린·빠른 응답의 평균 속도</Text>
         </Stack>

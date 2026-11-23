@@ -40,7 +40,7 @@ async fn reuses_one_process_and_replaces_turn_mcp_then_resumes_with_changed_effo
     let mut req = request(root.path(), None, "first");
     let set_link = |req: &mut ModelRequest, name| {
         req.cli.as_mut().unwrap().continuations = Some(crate::continuations::bridge::Link {
-            file: root.path().join(name), waiting: Arc::default(),
+            file: root.path().join(name), exe: std::env::current_exe().unwrap(), waiting: Arc::default(), tools: vec!["continue_later", "shell", "agent"],
         });
     };
     set_link(&mut req, "turn-one");

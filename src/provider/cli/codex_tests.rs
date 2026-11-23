@@ -335,7 +335,7 @@ async fn generated_images_receive_events_larger_than_text_line_limit() {
     let mut bytes = serde_json::to_vec(&event).unwrap();
     bytes.push(b'\n');
     let mut reader = BufReader::new(bytes.as_slice());
-    let received = receive(&mut reader, &profile(), &request(root.path(), None, "image")).await.unwrap();
+    let received = receive(&mut reader, &profile(), &request(root.path(), None, "image"), Default::default()).await.unwrap();
     let mut state = State { thread: "thread".into(), turn: Some("turn".into()), ..State::default() };
     state.notification(&received).unwrap();
     assert_eq!(state.output.generated_images.len(), 1);
@@ -552,7 +552,7 @@ pub(crate) fn live_app(root: &std::path::Path) -> (crate::App, String) {
         data_dir: root.join("data"), listen: "127.0.0.1:0".parse().unwrap(),
         allowed_origins: vec![], allowed_hosts: vec![], tls_terminated: false, web_dir: None, web_base: "/".into(),
         approval_ttl_secs: 1800, scheduler_tick_ms: 100,
-        remote_watch_insecure_loopback: false, gh_command: "gh".into(),
+        remote_watch_insecure_loopback: false, gh_command: "gh".into(), internal_exe: None,
     };
     std::fs::create_dir_all(&cfg.data_dir).unwrap();
     let app = crate::App::new(cfg, std::sync::Arc::new(crate::util::SystemClock)).unwrap();
@@ -992,8 +992,14 @@ async fn installed_cli_streams_local_responses_before_completion_and_resumes() {
                         };
                         let id = format!("response_{index}");
                         let item = format!("message_{index}");
+                        let (first, last) = if index < gates.len() {
+                            ("STREAM", "_DONE")
+                        } else {
+                            ("{\"answer\":\"restricted answer\",\"tool\":\"\",\"arguments_json\":\"\"}", "")
+                        };
+                        let text = format!("{first}{last}");
                         let message = json!({"id":item,"type":"message","role":"assistant","status":"completed",
-                        "content":[{"type":"output_text","text":"STREAM_DONE","annotations":[]}]});
+                        "content":[{"type":"output_text","text":text,"annotations":[]}]});
                         emit("response.created", json!({"type":"response.created","response":{"id":id,"status":"in_progress","output":[]}})).await;
                         emit("response.output_item.added", json!({"type":"response.output_item.added","output_index":0,
                         "item":{"id":item,"type":"message","role":"assistant","status":"in_progress","content":[]}})).await;
@@ -1002,21 +1008,19 @@ async fn installed_cli_streams_local_responses_before_completion_and_resumes() {
                         emit(
                             "response.output_text.delta",
                             json!({"type":"response.output_text.delta","item_id":item,
-                        "output_index":0,"content_index":0,"delta":"STREAM"}),
+                        "output_index":0,"content_index":0,"delta":first}),
                         )
                         .await;
                         // Grove가 실제 부분 출력을 받은 뒤에만 공급자가 나머지 결과를 보낸다.
-                        gates[index].notified().await;
-                        emit(
-                            "response.output_text.delta",
-                            json!({"type":"response.output_text.delta","item_id":item,
-                        "output_index":0,"content_index":0,"delta":"_DONE"}),
-                        )
-                        .await;
+                        if let Some(gate) = gates.get(index) {
+                            gate.notified().await;
+                            emit("response.output_text.delta", json!({"type":"response.output_text.delta","item_id":item,
+                                "output_index":0,"content_index":0,"delta":last})).await;
+                        }
                         emit(
                             "response.output_text.done",
                             json!({"type":"response.output_text.done","item_id":item,
-                        "output_index":0,"content_index":0,"text":"STREAM_DONE"}),
+                        "output_index":0,"content_index":0,"text":text}),
                         )
                         .await;
                         emit("response.output_item.done", json!({"type":"response.output_item.done","output_index":0,"item":message})).await;
@@ -1040,18 +1044,26 @@ async fn installed_cli_streams_local_responses_before_completion_and_resumes() {
     });
     let executable = dir.path().join("isolated-codex");
     let quoted_home = home.to_string_lossy().replace('\'', "'\\''");
+    let launches = dir.path().join("app-server-launches");
+    let quoted_launches = launches.to_string_lossy().replace('\'', "'\\''");
     std::fs::write(&executable, format!(
         "#!/bin/sh\nexport CODEX_HOME='{quoted_home}'\nunset OPENAI_API_KEY CODEX_API_KEY\n\
+         if [ \"$1\" = app-server ]; then printf '%s\\n' \"$$\" >> '{quoted_launches}'; fi\n\
          exec codex \"$@\" -c 'model_provider=\"grove_fixture\"' -c 'model_providers.grove_fixture={{name=\"Grove fixture\",base_url=\"{base}\",wire_api=\"responses\",requires_openai_auth=false,supports_websockets=false}}' -c 'web_search=\"disabled\"'\n"
     )).unwrap();
     std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o755)).unwrap();
     let catalog = super::super::commands::list_with("codex_cli", dir.path(), Some(&executable)).await.unwrap();
     let selected = catalog.commands.iter().find(|command| command.native_name == "grove-native-check")
         .expect("설치된 Codex가 프로젝트 스킬을 발견해야 한다");
+    let initial_launches = std::fs::read_to_string(&launches).unwrap_or_default().lines().count();
+    let handle = super::super::codex_session::Handle {
+        sessions: Arc::default(), session: "fixture-session".into(), profile: "fixture-profile".into(),
+    };
     let mut native = None;
     for index in 0..2 {
         let mut req = request(dir.path(), native.as_deref(), "/grove-native-check local fixture only");
         req.cli.as_mut().unwrap().native_command = Some(selected.info.id.clone());
+        req.cli.as_mut().unwrap().codex_session = Some(handle.clone());
         let mut profile = profile();
         profile.timeout = Duration::from_secs(15);
         let mut observed = false;
@@ -1081,11 +1093,21 @@ async fn installed_cli_streams_local_responses_before_completion_and_resumes() {
             assert_eq!(output.native_session, native);
         }
     }
+    assert_eq!(std::fs::read_to_string(launches).unwrap().lines().count(), initial_launches + 1);
+    handle.discard();
+    let mut managed = request(dir.path(), None, "restricted fixture");
+    managed.cli.as_mut().unwrap().managed = true;
+    managed.tools.push(super::super::super::ToolDef {
+        name: "read".into(), description: "Read fixture data".into(), schema: json!({"type":"object"}),
+    });
+    let output = super::super::stream_with(&profile(), &managed, &mut |_| {}, Some(&executable)).await.unwrap();
+    assert_eq!(output.text, "restricted answer");
+    assert!(output.native_session.is_none());
     server.abort();
     let requests = requests.lock().unwrap();
     assert_eq!(
         requests.len(),
-        2,
+        3,
         "실패·완료한 모델 호출을 재접수하지 않는다"
     );
     assert!(
@@ -1096,4 +1118,9 @@ async fn installed_cli_streams_local_responses_before_completion_and_resumes() {
         requests[1]["input"].to_string().contains("STREAM_DONE"),
         "재개한 thread에 이전 응답이 보존된다"
     );
+    let request = &requests[2];
+    assert_eq!(request["text"]["format"]["type"], "json_schema");
+    assert!(!request["input"].to_string().contains("GROVE_NATIVE_SKILL_BODY_CANARY"));
+    let tools = request["tools"].as_array().unwrap().iter().filter_map(|tool| tool["name"].as_str()).collect::<Vec<_>>();
+    assert!(tools.iter().all(|name| matches!(*name, "update_plan" | "request_user_input")), "unexpected native execution tools: {tools:?}");
 }

@@ -83,7 +83,7 @@ test("조회 실패·빈 기록·미측정 속도·갱신 실패를 구분하고
     await expect(panel.getByText("이 기간에 기록된 사용량이 없어요.", { exact: true })).toBeVisible();
     mode = "zero";
     await panel.getByRole("button", { name: "사용량 새로고침", exact: true }).click();
-    await expect(panel.locator('[data-testid="usage-speed-codex_cli"]:visible')).toHaveText("— tok/s");
+    await expect(panel.locator('[data-testid="usage-speed-codex_cli"]:visible')).toHaveText("미측정");
     await expect(panel.getByTestId("usage-table")).toBeVisible();
     mode = "error";
     await panel.getByRole("button", { name: "사용량 새로고침", exact: true }).click();

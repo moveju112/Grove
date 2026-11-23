@@ -1,7 +1,6 @@
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Card } from "@astryxdesign/core/Card";
-import { Collapsible } from "@astryxdesign/core/Collapsible";
 import { CodeBlock } from "../../design/CodeBlock";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../../design/Button";
@@ -82,7 +81,6 @@ export function AgentOverview({ target, basic = false, onEdit }: {
         {!connected ? <GroveText as="p" display="block" type="inherit" color="inherit" role="status">연결 확인 중 · 이전 조회값은 현재 설정으로 표시하지 않습니다.</GroveText>
             : view.status === "error" ? <GroveText as="p" display="block" type="inherit" color="inherit" role="alert">개요를 읽지 못했습니다. 인증·조회 대상을 확인하고 다시 조회하세요.</GroveText>
                 : view.status === "loading" ? <GroveText as="p" display="block" type="inherit" color="inherit" role="status">개요를 읽는 중입니다.</GroveText> : null}
-        <Collapsible trigger="역할 상세" defaultIsOpen={false}>
         <GroveStack gap={3}>
         {ready && <>
             <GroveHeading level={4} color="inherit">등록된 역할 {roles.length}개</GroveHeading>
@@ -98,6 +96,5 @@ export function AgentOverview({ target, basic = false, onEdit }: {
         </>}
         <GroveButton variant="secondary" disabled={!connected || view.status === "loading"} onClick={reload}>개요 다시 조회</GroveButton>
         </GroveStack>
-        </Collapsible>
     </GroveStack>;
 }

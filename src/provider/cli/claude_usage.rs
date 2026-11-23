@@ -12,9 +12,10 @@ pub(crate) async fn read(executable: &Path) -> Result<Value, &'static str> {
     tokio::time::timeout(Duration::from_secs(12), async {
         let scratch = tempfile::Builder::new().prefix("grove-usage-").tempdir().map_err(|_| "unavailable")?;
         let settings = claude::settings(json!({"disableAllHooks":true}));
-        match claude::authenticated(executable, Some(scratch.path()), &settings, Some(""), true).await {
-            Ok(Some(true)) => (),
-            Ok(Some(false)) => return Err("authentication_required"),
+        match claude::account(executable, Some(scratch.path()), &settings, Some("")).await {
+            Ok(Some(claude::Account::Subscription)) => (),
+            Ok(Some(claude::Account::SignedOut)) => return Err("authentication_required"),
+            Ok(Some(claude::Account::OtherProvider)) => return Err("unsupported"),
             _ => return Err("unavailable"),
         }
         {
@@ -109,6 +110,22 @@ mod tests {
         }
         for line in ["2.1.99 (Claude Code)", "2.1.272", "2.1.273-pre", "other CLI", ""] {
             assert!(!supported_version(line.as_bytes()));
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn api_key_is_authenticated_but_has_no_subscription_meter() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("claude");
+        for (auth, code, expected) in [
+            (r#"{"loggedIn":true,"authMethod":"apiKey","apiProvider":"firstParty"}"#, 0, "unsupported"),
+            (r#"{"loggedIn":false,"authMethod":"none"}"#, 1, "authentication_required"),
+        ] {
+            std::fs::write(&executable, format!("#!/bin/sh\ncase \" $* \" in\n *' auth status --json '*) printf '%s\\n' '{auth}'; exit {code};;\nesac\nexit 99\n")).unwrap();
+            std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+            assert_eq!(read(&executable).await.unwrap_err(), expected);
         }
     }
 }
