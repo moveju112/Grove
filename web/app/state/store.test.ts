@@ -28,6 +28,26 @@ it("최근 조회는 선조회를 공유하고 오래된 요청은 결과를 유
     } finally { off(); clearServerCache(); clock.mockRestore(); }
 });
 
+it("구독자가 없는 선조회 중 도착한 변경도 다음 구독에서 다시 확인한다", async () => {
+    const key = "recent:range:4h:30";
+    let finish!: (value: string) => void;
+    const get = vi.fn(() => new Promise<string>((resolve) => { finish = resolve; }));
+    subscribeQuery(key, get, () => undefined)();
+    try {
+        invalidate("recent");
+        finish("이전 목록");
+        await settle();
+        expect(get).toHaveBeenCalledTimes(1);
+        const off = subscribeQuery(key, get, () => undefined);
+        try {
+            expect(get).toHaveBeenCalledTimes(2);
+            finish("바뀐 목록");
+            await settle();
+            expect(querySnapshot(key).data).toBe("바뀐 목록");
+        } finally { off(); }
+    } finally { clearServerCache(); }
+});
+
 describe("임시 응답의 수명", () => {
     function partials() {
         let result: Record<string, unknown> = {};
@@ -166,6 +186,28 @@ describe("이벤트 무효화 범위", () => {
             await settle();
             expect(order).toEqual(["messages:s", "turns:s", "session:s", "recent"]);
         } finally { offs.forEach((off) => off()); clearServerCache(); }
+    });
+
+    it.each([true, false])("같은 묶음에 숨김 이벤트가 있으면 뒤늦은 목록을 표시하지 않는다 (숨김 먼저 %s)", async (hideFirst) => {
+        const key = "recent:range:4h:30";
+        let finish!: (value: string[]) => void;
+        const get = vi.fn(() => new Promise<string[]>((resolve) => { finish = resolve; }));
+        const off = subscribeQuery(key, get, () => undefined);
+        try {
+            batchEventQueries(() => {
+                for (const [index, hidden] of [hideFirst, !hideFirst].entries()) {
+                    applyEvent({ kind: "recent.updated", payload: { hidden }, seq: index + 1,
+                        session_id: null, project_id: "p", created_at: "2026-01-01T00:00:00Z" });
+                }
+            });
+            finish(["숨긴 항목"]);
+            await settle();
+            expect(get).toHaveBeenCalledTimes(2);
+            expect(querySnapshot(key).data).toBeUndefined();
+            finish([]);
+            await settle();
+            expect(querySnapshot(key).data).toEqual([]);
+        } finally { off(); clearServerCache(); }
     });
 
     it("새 응답 이벤트가 사용량 대시보드 조회를 다시 읽게 한다", async () => {

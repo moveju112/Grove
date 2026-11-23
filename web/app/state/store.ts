@@ -79,7 +79,8 @@ async function load(key: string, keepPending = false) {
 
 /// 보고 있는 key만 다시 읽고, 닫힌 화면의 key는 stale로 표시해 불필요한 요청을 보내지 않는다.
 function refresh(k: string, keepPending = false) {
-    if (subs.get(k)?.size) void load(k, keepPending);
+    // 선조회가 구독을 놓은 뒤에도 진행 중인 요청에 재검증을 기록한다.
+    if (subs.get(k)?.size || entries.get(k)?.flight) void load(k, keepPending);
     else {
         const e = entries.get(k);
         if (e) e.stale = true;
@@ -95,27 +96,30 @@ export function revalidateQuery(key: string, freshMs: number) {
     refresh(key, true);
 }
 
-let invalidated: Set<string> | null = null;
+let invalidated: Map<string, boolean> | null = null;
 
 function refreshPriority(key: string) {
     return /^(messages|turns):/.test(key) ? 0 : /^session:/.test(key) ? 1 : 2;
 }
 
-export function invalidate(prefix: string) {
+export function invalidate(prefix: string, keepPending = false) {
     for (const k of entries.keys()) if (k === prefix || k.startsWith(prefix + ":")) {
-        if (invalidated) invalidated.add(k);
-        else refresh(k);
+        // 같은 묶음에 삭제·숨김도 있으면 이전 응답을 버리는 쪽이 우선이다.
+        if (invalidated) invalidated.set(k, keepPending && invalidated.get(k) !== false);
+        else refresh(k, keepPending);
     }
 }
 
 /// 한 SSE 묶음에서 여러 이벤트가 무효화한 조회는 한 번만, 대화 본문·턴부터 다시 읽는다.
 export function batchEventQueries(apply: () => void) {
     if (invalidated) { apply(); return; }
-    const batch = invalidated = new Set<string>();
+    const batch = invalidated = new Map<string, boolean>();
     try { apply(); }
     finally {
         invalidated = null;
-        for (const key of [...batch].sort((a, b) => refreshPriority(a) - refreshPriority(b))) refresh(key);
+        for (const [key, keepPending] of [...batch].sort(([a], [b]) => refreshPriority(a) - refreshPriority(b))) {
+            refresh(key, keepPending);
+        }
     }
 }
 
@@ -209,7 +213,8 @@ export function applyEvent(e: EventRecord) {
                 invalidate(`messages:${sid}`);
                 invalidate(`context:${sid}`);
             }
-            invalidate("recent");
+            // 목록은 도착한 스냅샷을 표시하면서 겹친 활동을 후속 조회로 따라잡는다.
+            invalidate("recent", true);
             invalidate("bots");
             invalidate("search");
             break;
@@ -246,7 +251,7 @@ export function applyEvent(e: EventRecord) {
                 invalidate(`session:${sid}`);
             }
             invalidate("usage-capacity");
-            invalidate("recent");
+            invalidate("recent", true);
             invalidate("bots");
             invalidate("recovery");
             break;
@@ -255,7 +260,7 @@ export function applyEvent(e: EventRecord) {
                 invalidate(`calls:${sid}`);
                 invalidate(`session:${sid}`);
             }
-            invalidate("recent");
+            invalidate("recent", true);
             invalidate("recovery");
             break;
         case "file_changes.updated":
@@ -270,7 +275,7 @@ export function applyEvent(e: EventRecord) {
             if (pid) invalidate(`sessions:${pid}`);
             if (pid) invalidate(`worktrees:${pid}`);
             if (sid) invalidate(`session:${sid}`);
-            invalidate("recent");
+            invalidate("recent", true);
             invalidate("search");
             invalidate("bot-rooms");
             if (sid) invalidate(`bot-room:${sid}`);
@@ -294,11 +299,11 @@ export function applyEvent(e: EventRecord) {
             // 워크스페이스 모드 등 프로젝트 화면·입력창이 쓰는 단건 조회도 갱신한다(다른 기기의 변경 포함).
             if (pid) invalidate(`project:${pid}`);
             if (pid) invalidate(`setup:${pid}`);
-            invalidate("recent");
+            invalidate("recent", true);
             invalidate("search");
             break;
         case "recent.updated":
-            invalidate("recent");
+            invalidate("recent", (e.payload as { hidden?: boolean } | null)?.hidden === false);
             break;
         case "label.changed":
         case "label.deleted":
