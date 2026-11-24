@@ -55,6 +55,7 @@ RUN_SH = f"""#!/bin/sh
 set -eu
 R="{INSTALL}"
 id=$(cat "$R/current")
+export PATH="$HOME/.local/bin:$PATH"
 export GROVE_WEB_DIR="$R/releases/$id/web"
 exec "$R/releases/$id/grove" serve --listen {DAEMON} --data-dir "{DATA}" --log-file "$R/logs/server.log"
 """
