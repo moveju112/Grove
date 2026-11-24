@@ -108,6 +108,15 @@ def release_build_env(source, parent):
     return env
 
 
+def rust_test_command(env):
+    # nextest는 시험 파일 사이까지 병렬로 돌린다. 직렬화가 필요한 시험은 .config/nextest.toml의 test-group에 둔다.
+    probe = subprocess.run(["cargo", "nextest", "--version"], env=env, capture_output=True)
+    if probe.returncode == 0:
+        return ("cargo", "nextest", "run", "--locked", "--no-fail-fast")
+    print("cargo-nextest가 없어 cargo test로 검사합니다(느림). 설치: cargo install cargo-nextest --locked", file=sys.stderr)
+    return ("cargo", "test", "--locked", "--no-fail-fast")
+
+
 def fresh_member(member, directory):
     # 과거 커밋의 타임스탬프로 파일을 복원하면 Cargo가 이전 바이너리를 그대로 쓸 수 있다.
     safe = tarfile.data_filter(member, directory)
@@ -132,7 +141,8 @@ def prepare_package(commit, version, parent, verifier):
         env.pop("GROVE_UPDATE_BINDINGS", None)  # 계약 파일을 다시 쓰지 않고 커밋과 대조한다.
         for directory in ("web", "relay"):
             run("npm", "ci", "--no-audit", "--no-fund", cwd=source / directory, pass_fds=(lock_fd,))
-        run("cargo", "test", "--locked", "--no-fail-fast", cwd=source, env=env, pass_fds=(lock_fd,))
+        with build.rust_test_tmp() as tmp_env:
+            run(*rust_test_command(env), cwd=source, env={**env, **tmp_env}, pass_fds=(lock_fd,))
         if dest.is_dir():
             # 이전 절차로 준비한 패키지는 해당 커밋의 검사를 통과한 뒤에만 재사용한다.
             (dest / checked).write_text(commit)

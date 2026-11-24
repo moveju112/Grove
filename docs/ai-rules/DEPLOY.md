@@ -11,7 +11,7 @@
   3. Cloudflare Pages production 배포
   - `python3 scripts/deploy_local.py`가 2~3을 수행한다.
 - **MUST** 제한 없는 "푸시"는 요청한 개발 변경을 먼저 커밋하고 `python3 scripts/push_release.py`를 실행한다. 최신 공식 태그에서 patch를 한 번 올리고(예: `v0.1.0`, `v0.1.1`, `v0.1.2`), 고정한 커밋으로 빌드·실행 검증한 뒤 main과 태그, GitHub Releases, 로컬 서버·CLI·Pages에 반영한다. 재시도는 기존 태그·패키지를 확인한다. 실제 게시와 로컬 적용 상태를 각각 확인한다.
-- 평소에는 변경한 기능에 해당하는 테스트를 로컬에서 실행한다. PR·main의 GitHub Actions는 웹·브라우저 검사를 맡는다. 공개 릴리즈는 고정한 커밋에서 로컬 Rust 전체 검사(`cargo test --locked --no-fail-fast`)가 통과해야 태그를 푸시하고 게시할 수 있다. 재시도는 같은 커밋의 검사 통과 기록과 패키지를 재사용한다.
+- 평소에는 변경한 기능에 해당하는 테스트를 로컬에서 실행한다. PR·main의 GitHub Actions는 웹·브라우저 검사를 맡는다. 공개 릴리즈는 고정한 커밋에서 로컬 Rust 전체 검사(`cargo nextest run --locked --no-fail-fast`, nextest가 없으면 `cargo test`)가 통과해야 태그를 푸시하고 게시할 수 있다. nextest는 시험마다 별도 프로세스로 실행하므로 서로 직렬화해야 하는 시험은 프로세스 안 잠금이 아니라 `.config/nextest.toml`의 test-group으로 묶는다. Rust 시험은 임시 데이터를 메모리 파일 시스템(`/dev/shm`)에 두고(`build.rust_test_tmp`) 의존성만 최적화해(`profile.test.package."*"`) 실행 시간을 줄인다. nextest는 doctest를 실행하지 않으며, doctest를 추가하면 릴리즈 검사에 `cargo test --doc`을 함께 넣는다. 재시도는 같은 커밋의 검사 통과 기록과 패키지를 재사용한다.
 - 로컬 개발 머신에서는 `python3 scripts/push_release.py --install-hook`으로 현재 checkout에 Git 훅을 연결하면 일반 `git push origin main`도 같은 절차를 이어간다. 새 clone마다 한 번 연결한다. fetch·다른 브랜치 푸시는 릴리즈 대상이 아니다. 최초 main 전송 뒤 후속 작업이 실패하면 `python3 scripts/push_release.py`로 재개한다.
 - 공식 업데이트 소스는 GitHub Releases의 서명된 `release.json`이다. stable은 latest, beta는 공개 prerelease를 사용한다. 배포 호스트에는 기존 릴리즈 서명 키와 GitHub 쓰기 권한이 필요하다. 설치 파일과 SHA256SUMS, 패키지 manifest, SBOM, 서명 manifest를 게시하고 같은 압축본을 로컬과 Pages에 사용한다. push 경로는 유휴 상태에서 즉시 적용하고 다른 작업이 있으면 검증한 패키지를 기존 독립 배포 unit에서 유휴 상태까지 기다린다.
 - 이 문구들이 곧 해당 범위의 승인이다. 각 단계마다 다시 묻지 않는다. 릴레이 Worker 배포, 강제 push·이력 재작성, 실행 중 작업을 중단하는 `--force` 적용은 이 범위에 포함하지 않으며 따로 요청받았을 때만 한다.

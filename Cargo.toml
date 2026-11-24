@@ -66,6 +66,10 @@ reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"
 debug = "line-tables-only"
 incremental = false
 
+# 시험 시간 대부분은 SQLite·암호화 같은 의존성 안에서 쓴다. 의존성만 최적화하고 grove 자체는 빠른 컴파일을 유지한다.
+[profile.test.package."*"]
+opt-level = 3
+
 [profile.release]
 lto = "thin"
 codegen-units = 4

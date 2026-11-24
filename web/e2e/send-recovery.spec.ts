@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { apiCall, composerOption, ensureProjects, login } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, sessionView } from "./helpers";
 
 async function openSession(page: Page) {
     const { a } = await ensureProjects();
@@ -9,9 +9,13 @@ async function openSession(page: Page) {
     await login(page);
     const recent = page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) });
     await recent.click();
-    const view = page.getByTestId("session-view");
+    const view = sessionView(page, session.id);
+    const pane = page.getByTestId("pane").filter({ has: view });
     const reopen = async () => {
-        await page.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+        await pane.getByRole("tab", { selected: true }).getByRole("button", { name: "탭 닫기", exact: true }).click();
+        // 탭을 닫으면 최근 항목도 숨긴다. 같은 대화를 다시 열 수 있게 최근에 올린다.
+        await expect(recent).toHaveCount(0);
+        await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
         await recent.click();
     };
     return { project: a, session, view, reopen };
@@ -86,7 +90,7 @@ test("로그아웃 뒤 늦게 도착한 업로드 완료가 민감 사본을 다
             await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
             await page.getByLabel("설정 검색").fill("로그아웃");
             await page.getByRole("button", { name: "이 브라우저에서 로그아웃" }).click();
-            await expect(page.getByRole("form", { name: "로그인" })).toBeVisible();
+            await expect(page.getByText("페어링 링크 또는 QR과 비밀번호로 기기를 등록하세요.")).toBeVisible();
         });
         const finished = page.waitForEvent("requestfinished", (r) => r.url().endsWith(`/projects/${project.id}/attachments`));
         deliver();

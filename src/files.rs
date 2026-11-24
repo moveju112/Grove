@@ -618,7 +618,12 @@ fn execute_mutation(work: FileWork) -> ApiResult<()> {
 
 async fn mutate(app: App, p: Principal, headers: HeaderMap, id: String, mutation: FileMutation) -> ApiResult<Response> {
     let h = idem::body_hash("files.mutate", &json!({"project_id":id,"request":mutation.hash_input()}));
-    if let Some(response) = idem::replay(&app, &p, &headers, &h).await? { return Ok(response); }
+    if let Some(response) = idem::replay(&app, &p, &headers, &h).await? {
+        if response.status() != StatusCode::CONFLICT { return Ok(response); }
+        // 같은 키의 작업이 진행 중이면 접수 때 저장한 임시 result_unknown이 보인다. 진행 중인 변경이 끝난 뒤의 기록으로 답한다.
+        let _settled = app.storage.mutations.lock().await;
+        if let Some(response) = idem::replay(&app, &p, &headers, &h).await? { return Ok(response); }
+    }
     let _resource = app.project_resources.ui_write(&app,&id,&p).await?;
     let _guard = app.storage.mutations.lock().await;
     if let Some(response) = idem::replay(&app,&p,&headers,&h).await? { return Ok(response); }

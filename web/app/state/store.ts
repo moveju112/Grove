@@ -177,6 +177,23 @@ export function setData(key: string, data: unknown) {
     }
 }
 
+/// 서버 응답으로 이미 받은 변경을 먼저 반영한다. 그 전에 시작한 조회는 이 변경을 모르므로 결과를 버리고 다시 읽는다.
+export function patchData<T>(key: string, update: (data: T) => T) {
+    const e = entries.get(key);
+    if (!e || e.data === undefined) return;
+    const data = update(e.data as T);
+    if (data === e.data) return;
+    if (e.flight) { e.flight.again = true; e.flight.discard = true; }
+    e.data = data;
+    notify(key);
+}
+
+/// 아직 조회한 적 없는 항목을 이미 아는 값으로 채운다. 화면이 구독하면 그 값을 보인 채 한 번 다시 읽는다.
+export function seedQuery(key: string, data: unknown, fetcher: () => Promise<unknown>) {
+    if (entries.has(key)) return;
+    entries.set(key, { data, error: null, loading: false, version: 0, stale: true, fetcher });
+}
+
 export function useQuery<T>(key: string | null, fetcher: () => Promise<T>, options?: { keepPreviousData: true; scope: string }): { data: T | undefined; error: unknown; loading: boolean; isPreviousData: boolean; reload: () => void } {
     const paneVisible = usePaneVisible();
     const pageVisible = usePageVisible();

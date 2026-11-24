@@ -483,11 +483,14 @@ async fn trash_validates_key_and_restores_legacy_directories() {
 async fn trash_round_trip_across_filesystems_keeps_directory_and_links() {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let s = TestServer::start().await;
-    let root = tempfile::tempdir_in("/dev/shm").expect("Linux cross-filesystem fixture");
-    assert_ne!(
-        root.path().metadata().unwrap().dev(),
-        s.data_dir().metadata().unwrap().dev()
-    );
+    // 데이터 디렉터리(TMPDIR)가 tmpfs에 있어도 서로 다른 파일 시스템 조합을 고른다.
+    let data_dev = s.data_dir().metadata().unwrap().dev();
+    let root = ["/dev/shm", "/var/tmp", "/tmp"]
+        .into_iter()
+        .filter(|dir| std::fs::metadata(dir).is_ok_and(|m| m.dev() != data_dev))
+        .find_map(|dir| tempfile::tempdir_in(dir).ok())
+        .expect("Linux cross-filesystem fixture");
+    assert_ne!(root.path().metadata().unwrap().dev(), data_dev);
     let (st, p) = s
         .post(
             "/api/v1/projects",

@@ -21,6 +21,7 @@ import { clearInvalidRecovery, loadRecovery, saveRecovery, settleRecovery, valid
 import { EFFORTS, type FollowKind, type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, serviceTierForProfile } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
+import { addOutgoing, outgoingResource, removeOutgoing, type DraftFile } from "../state/outgoing";
 
 import { AttachmentPicker, AttachmentSelection, useAttachments } from "./Attachments";
 import { AgentConnect } from "./AgentConnect";
@@ -102,8 +103,9 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         const options = typeof value === "function" ? value(current.options) : value;
         return { phase: options.profileId ? "ready" : current.phase, options };
     });
-    const [selection] = useComposerMemory(resourceKey, copyId, "selection", () => ({ current: { options: opts, ids: attachments.ids } }));
-    selection.current = { options: opts, ids: attachments.ids };
+    // 응답을 기다리는 동안 다른 영역으로 옮겨 다시 그려도, 보낸 쪽은 지금 입력창의 글·첨부를 본다.
+    const [selection] = useComposerMemory(resourceKey, copyId, "selection", () => ({ current: { options: opts, ids: attachments.ids, text, files: attachments.items.length } }));
+    selection.current = { options: opts, ids: attachments.ids, text, files: attachments.items.length };
     const [owner] = useState(authGeneration);
     const alive = useRef(true);
     useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -245,7 +247,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     };
 
     const send = async (once?: FollowKind) => {
-        if ((!text.trim() && attachments.items.length === 0) || busy || sending.current || attachments.busy || !attachments.ready || !!disabled || pendingInvalid) return;
+        if ((!text.trim() && attachments.items.length === 0) || busy || sending.current || (attachments.failed && !recovering) || !!disabled || pendingInvalid) return;
         try { requireServerAction(); } catch (e) { setMsg((e as Error).message); return; }
         if (recovering) { await sendText(recovering.body, text); return; }
         const parsed = parseSlash(text, allCmds.map((c) => c.name.toLowerCase()));
@@ -278,12 +280,14 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         await sendText(parsed.text, text, undefined, undefined, once);
     };
 
-    /// body: 실제로 보낼 글("//" 이스케이프를 푼 값), raw: 입력창 원문(보낸 뒤 비울지 판단).
+    /// body: 실제로 보낼 글("//" 이스케이프를 푼 값), raw: 입력창 원문.
+    /// 새 전송은 누른 즉시 입력창을 비우고 보낸 글을 대화에 먼저 보인다. 서버가 받지 못하면 입력창으로 되돌린다.
+    /// 결과 확인(같은 요청 키)은 입력을 그대로 두고, 접수가 확인된 뒤에만 비운다.
     const sendText = async (body: string, raw: string, original?: PendingSend, nativeCommand?: string, once?: FollowKind) => {
-        if (busy || sending.current || attachments.busy || !!disabled || pendingInvalid) return;
+        if (busy || sending.current || !!disabled || pendingInvalid) return;
         try { requireServerAction(); } catch (e) { setMsg((e as Error).message); return; }
         const confirmation = original ?? (pending?.raw === raw && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null);
-        const ids = confirmation?.attachmentIds ?? attachments.ids;
+        if (!confirmation && attachments.failed) return;
         if (!confirmation && eff.mode === "model" && (!ready || profileDisabled || profileMissing)) {
             setMsg(!ready ? "기본 모델 설정을 확인한 뒤 보내세요." : "선택한 모델 프로필을 사용할 수 없습니다. 다른 프로필을 명시적으로 선택하세요.");
             return;
@@ -302,44 +306,72 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
             intent = { ...opts, profileId: options.profileId };
             setOpts(intent);
         }
-        const sig = confirmation?.sig ?? sendOptionsSignature(intent, ids);
         const key = confirmation?.key ?? newKey();
-        selection.current = { options: intent, ids: attachments.ids };
-        const snapshot: PendingSend = { body: requestBody, raw, sig, key, intent: confirmation?.intent ?? intent,
-            options: { ...options }, follow: kind, attachmentIds: [...ids],
-            attachments: confirmation?.attachments ?? attachments.items.flatMap((i) => i.attachment ? [i.attachment] : []) };
+        selection.current = { ...selection.current, options: intent };
+        const draft = confirmation ? null : attachments.take();
+        // 기다리는 동안 새로 쓴 글·첨부는 지우지 않고, 보내지 못한 내용을 그 앞에 돌려놓는다.
+        const giveBack = (files: DraftFile[]) => {
+            setText((cur) => (raw && cur ? `${raw}\n${cur}` : raw || cur));
+            attachments.restore(files);
+        };
         try {
-            if (!store) throw new Error("send recovery storage unavailable");
-            saveRecovery(store, resourceKey, copyId, snapshot);
-        } catch {
-            sending.current = false;
-            setBusy(false);
-            setMsg("전송 사본을 보관하지 못해 보내지 않았습니다. 기기 저장 공간을 확인하세요.");
-            return;
-        }
-        setPending(snapshot);
-        try {
-            await onSend(requestBody, options, key, kind, ids);
-            if (authGeneration() !== owner) return;
-            const sameSelection = sendOptionsSignature(selection.current.options, selection.current.ids) === sig;
-            settleRecovery(store, resourceKey, key);
-            attachments.clearSent(ids);
-            setPending(null);
-            // 보내는 동안 새로 입력한 글은 지우지 않는다(보낸 글 그대로일 때만 비움).
-            setText((cur) => (sameSelection && cur === raw ? "" : cur));
-        } catch (e) {
-            if (authGeneration() !== owner) return;
-            // 응답을 못 받았거나 서버 오류면 실제로 처리됐는지 모른다: 입력을 남기고 자동 재전송하지 않는다.
-            const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408
-                || (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true;
-            if (unknown) {
-                setPending(snapshot);
-            } else {
+            let files: DraftFile[] = [];
+            if (draft) {
+                setText((cur) => (cur === raw ? "" : cur));
+                selection.current = { ...selection.current, text: "", files: 0 };
+                addOutgoing({ key, resource: outgoingResource(resourceKey, copyId), copyId, text: requestBody, files: draft.items, follow: kind });
+                // 올리는 중인 첨부가 있으면 다 올라간 뒤에 보낸다. 글과 사진은 이미 대화에 보인다.
+                files = await draft.settled;
+                if (authGeneration() !== owner) return;
+                if (files.some((file) => !file.attachment)) {
+                    giveBack(files);
+                    if (alive.current) setMsg("첨부를 올리지 못해 보내지 않았어요.");
+                    return;
+                }
+            }
+            const sent = confirmation?.attachments ?? files.map((file) => file.attachment!);
+            const ids = confirmation?.attachmentIds ?? sent.map((attachment) => attachment.id);
+            const sig = confirmation?.sig ?? sendOptionsSignature(intent, ids);
+            const snapshot: PendingSend = { body: requestBody, raw, sig, key, intent: confirmation?.intent ?? intent,
+                options: { ...options }, follow: kind, attachmentIds: [...ids], attachments: sent };
+            try {
+                if (!store) throw new Error("send recovery storage unavailable");
+                saveRecovery(store, resourceKey, copyId, snapshot);
+            } catch {
+                if (draft) giveBack(files);
+                setMsg("전송 사본을 보관하지 못해 보내지 않았습니다. 기기 저장 공간을 확인하세요.");
+                return;
+            }
+            setPending(snapshot);
+            try {
+                await onSend(requestBody, options, key, kind, ids);
+                if (authGeneration() !== owner) return;
                 settleRecovery(store, resourceKey, key);
                 setPending(null);
-                if (alive.current) setMsg(e.message);
+                if (!draft) {
+                    const sameSelection = sendOptionsSignature(selection.current.options, selection.current.ids) === sig;
+                    attachments.clearSent(ids);
+                    // 확인하는 동안 새로 입력한 글은 지우지 않는다(확인한 글 그대로일 때만 비움).
+                    setText((cur) => (sameSelection && cur === raw ? "" : cur));
+                }
+            } catch (e) {
+                if (authGeneration() !== owner) return;
+                // 응답을 못 받았거나 서버 오류면 실제로 처리됐는지 모른다: 자동 재전송하지 않고 같은 요청 키로 확인하게 한다.
+                const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408
+                    || (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true;
+                if (unknown) {
+                    setPending(snapshot);
+                    // 그사이 다음 글을 쓰기 시작했으면 섞지 않는다. 원래 요청은 안내의 '원래 요청 결과 확인'으로 확인한다.
+                    if (draft && selection.current.text === "" && selection.current.files === 0) giveBack(files);
+                } else {
+                    settleRecovery(store, resourceKey, key);
+                    setPending(null);
+                    if (draft) giveBack(files);
+                    if (alive.current) setMsg(e.message);
+                }
             }
         } finally {
+            removeOutgoing(key);
             sending.current = false;
             setBusy(false);
         }
@@ -398,7 +430,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                         <DetailDialog label="원래 전송 요청" title="원래 요청 보기"><pre>{pending.raw}</pre>
                             <GroveText as="p" display="block" type="supporting" color="inherit">모델: {pending.options.profileId ?? "없음"} · 첨부 {pending.attachmentIds.length}개 · {pending.follow ? FOLLOW_LABEL[pending.follow] : pending.options.mode === "save" ? "메시지만 저장" : "모델로 보내기"}</GroveText>
                         </DetailDialog>
-                        <GroveButton variant="secondary" density="compact" disabled={busy || attachments.busy || !!disabled}
+                        <GroveButton variant="secondary" density="compact" disabled={busy || !!disabled}
                             onClick={() => void sendText(pending.body, pending.raw, pending)}>원래 요청 결과 확인</GroveButton>
                         <GroveText type="supporting" color="inherit">현재 입력과 새 첨부는 보존합니다. 현재 내용을 보내면 별도의 새 요청입니다.</GroveText>
                     </>}
@@ -432,8 +464,8 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     update({ profileId: profile.id, mode: "model", toolOverride: undefined });
                 }} />
             )}
-            <AttachmentSelection draft={attachments} disabled={busy || !!disabled} />
-            <ComposerInput onFiles={(files) => { if (!busy && !disabled) void attachments.add(files); }}
+            <AttachmentSelection draft={attachments} disabled={!!disabled} />
+            <ComposerInput onFiles={(files) => { if (!disabled) void attachments.add(files); }}
                 value={text}
                 onChange={(value) => {
                     setText(value);
@@ -455,7 +487,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
             />
             <Grid gap={1} xstyle={[chatLayout.bar, composerStyles.toolbar]} data-testid="composer-bar" data-model-expanded={expandedModel}>
                 <Stack gap={0} data-composer-fixed xstyle={[composerStyles.attachmentSlot, expandedModel && composerStyles.secondRow]}>
-                    <AttachmentPicker key={resourceKey} draft={attachments} disabled={busy || !!disabled} onIssue={setMsg} />
+                    <AttachmentPicker key={resourceKey} draft={attachments} disabled={!!disabled} onIssue={setMsg} />
                 </Stack>
                 <Stack gap={0} xstyle={[composerStyles.modelSlot, expandedModel && composerStyles.expandedModel]}>
                 {((profiles.data?.length ?? 0) > 0 || eff.mode === "save" || eff.profileId) && <ModelSelect
@@ -498,7 +530,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     follow={runningFollow}
                     steerHint={steerHint}
                     describedBy={showSteerHint ? steerHintId : undefined}
-                    disabled={busy || pendingInvalid || attachments.busy || !attachments.ready || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (!!problem || (eff.mode === "model" && (!ready || !eff.profileId || profileDisabled || profileMissing)) || (!!running && eff.mode === "save")))}
+                    disabled={busy || pendingInvalid || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (attachments.failed || !!problem || (eff.mode === "model" && (!ready || !eff.profileId || profileDisabled || profileMissing)) || (!!running && eff.mode === "save")))}
                     title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다" : `${running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"} · ${enterSends ? "Enter" : "Ctrl+Enter"}`}
                 />
                 </Stack>

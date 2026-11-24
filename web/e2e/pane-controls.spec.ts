@@ -190,10 +190,14 @@ test("탭 이동은 입력·진행 중 첨부를 유지하고 탭 닫기·새로
         await left.getByTestId("attachment-picker").locator('input[type="file"]').setInputFiles({
             name: "merge-note.txt", mimeType: "text/plain", buffer: Buffer.from("merge attachment"),
         });
-        await expect(left.getByRole("button", { name: "merge-note.txt 첨부 제거", exact: true })).toBeDisabled();
+        // 올리는 중에도 첨부를 뺄 수 있다. 진행 중인 업로드는 목록의 상태 문구로 확인한다.
+        await expect(left.getByLabel("선택한 첨부파일")).toContainText("업로드 중…");
+        await expect(left.getByRole("button", { name: "merge-note.txt 첨부 제거", exact: true })).toBeEnabled();
         await moveSessionTab(left, right);
+        await expect(right.getByLabel("선택한 첨부파일")).toContainText("업로드 중…");
         await expect(right.getByLabel("메시지 입력")).toHaveValue("합쳐도 유지할 입력");
         release();
+        await expect(right.getByLabel("선택한 첨부파일")).not.toContainText("업로드 중…");
         await expect(right.getByRole("button", { name: "merge-note.txt 첨부 제거", exact: true })).toBeEnabled();
         await right.getByRole("tab").filter({ hasText: "새 대화" }).getByTestId("tab-title").click();
         await expect(right.getByLabel("메시지 입력")).toHaveValue("다른 탭의 입력");

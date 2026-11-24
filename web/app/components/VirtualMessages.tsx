@@ -160,8 +160,10 @@ export function VirtualMessages({ messages, targetSeq, onTargetReached, restoreP
         const top = node ? node.getBoundingClientRect().top : root.current.getBoundingClientRect().top + offsets[index]!;
         const limit = el.getBoundingClientRect().top + PROMPT_MARGIN;
         if (top >= limit) return false;
+        // 대화가 화면보다 짧으면 더 올릴 곳이 없다. 이때는 아래에 가려진 내용도 없으므로 멈춘 것으로 보지 않는다.
+        const before = el.scrollTop;
         el.scrollTop -= limit - top;
-        return true;
+        return el.scrollTop !== before;
     };
     follow.current = followEnd;
 

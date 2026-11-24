@@ -21,6 +21,7 @@ package 동작
 - 패키지는 임시 위치에 풀어 실제로 실행·health·웹 응답을 확인한다(BUILD-019). 실행할 수 없는 target은 정적 검사만 하고 표시한다.
 """
 import argparse
+from contextlib import contextmanager
 import hashlib
 import json
 import os
@@ -71,6 +72,22 @@ def env():
                 e["CARGO_BUILD_BUILD_DIR"] = configured
     e["PATH"] = os.pathsep.join([os.path.join(e["CARGO_HOME"], "bin"), os.path.join(DEV, "bin"), os.path.join(DEV, "venv", "bin"), e.get("PATH", "")])
     return e
+
+
+@contextmanager
+def rust_test_tmp():
+    """Rust 시험의 임시 데이터를 메모리 파일 시스템에 두는 환경 변수를 준다.
+
+    시험마다 SQLite를 새로 만들어 디스크 fsync 대기가 실행 시간의 대부분을 차지한다(측정: 345초 → 86초).
+    쓸 수 없는 환경에서는 빈 값을 주어 기존 TMPDIR을 그대로 쓴다.
+    """
+    base = "/dev/shm"
+    if not (sys.platform.startswith("linux") and os.path.isdir(base) and os.access(base, os.W_OK)
+            and shutil.disk_usage(base).free >= 2 * 1024 ** 3):
+        yield {}
+        return
+    with tempfile.TemporaryDirectory(prefix="grove-test-", dir=base) as tmp:
+        yield {"TMPDIR": tmp}
 
 
 def files_of(paths):
@@ -242,6 +259,9 @@ def cmd_test(a):
                 # Chrome 소켓 경로 한도 때문에 짧은 TMPDIR을 쓴다(일반 e2e와 같은 이유).
                 with tempfile.TemporaryDirectory(prefix="gpr-", dir="/tmp") as tmp:
                     run(name, cmd, cwd=cwd, extra_env={"TMPDIR": tmp})
+            elif name == "rust tests":
+                with rust_test_tmp() as tmp_env:
+                    run(name, cmd, cwd=cwd, extra_env=tmp_env)
             else:
                 run(name, cmd, cwd=cwd)
         except (SystemExit, subprocess.CalledProcessError, OSError):

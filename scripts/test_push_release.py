@@ -73,14 +73,15 @@ class ReleasePush(unittest.TestCase):
                 elif args[0] == "npm":
                     self.assertIn(kwargs["cwd"], (parent / "source/web", parent / "source/relay"))
                 else:
-                    self.assertEqual(args, ("cargo", "test", "--locked", "--no-fail-fast"))
+                    self.assertEqual(args, ("cargo", "nextest", "run", "--locked", "--no-fail-fast"))
                     self.assertEqual(kwargs["cwd"], parent / "source")
                     self.assertNotIn("GROVE_UPDATE_BINDINGS", kwargs["env"])
                     if fail_tests:
                         raise subprocess.CalledProcessError(101, args)
 
             with patch.object(push, "run", side_effect=run), patch.object(
-                    push, "release_build_env", return_value={"GROVE_UPDATE_BINDINGS": "1"}):
+                    push, "release_build_env", return_value={"GROVE_UPDATE_BINDINGS": "1"}), patch.object(
+                    push, "rust_test_command", return_value=("cargo", "nextest", "run", "--locked", "--no-fail-fast")):
                 with self.assertRaises(subprocess.CalledProcessError):
                     push.prepare_package(commit, version, parent, None)
                 self.assertEqual(list(dest.iterdir()), [])

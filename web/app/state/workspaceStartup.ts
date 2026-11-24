@@ -1,5 +1,5 @@
 import { api, authGeneration, isLoggedIn } from "../api/client";
-import type { MessagePage, Project, Session, ToolCallRow, Turn } from "../api/generated";
+import type { Message, MessagePage, Project, Session, ToolCallRow, Turn } from "../api/generated";
 import { conversationPagePath } from "./conversationPages";
 import { layoutKey, loadPrefs } from "./device";
 import { focusedLeaf } from "./layout";
@@ -8,7 +8,7 @@ import { projectLayoutKey } from "./projectLayout";
 import { readProjectSort, type ProjectSort } from "./projectOrder";
 import { RECENT_PAGE_SIZE, readRecentRange, recentRangeKey } from "./recentQuery";
 import { effectiveRecentWindow } from "./recentWindow";
-import { subscribeQuery } from "./store";
+import { seedQuery, subscribeQuery } from "./store";
 import { workspaceResumeKey } from "./workspaceTabs";
 
 export const selectionKey = (base: string) => `grove.layout.selected.${base}`;
@@ -43,6 +43,16 @@ export function prefetchConversation(id: string, resources: (keyof typeof readCo
     if (!/^[a-z0-9-]{1,64}$/i.test(id)) return () => undefined;
     const off = resources.map((resource) => subscribeQuery(`${resource}:${id}`, () => readConversation[resource](id), () => undefined));
     return () => off.forEach((release) => release());
+}
+
+/// 방금 만든 대화는 응답으로 받은 내용부터 보이고, 화면이 열리면 서버에서 다시 읽어 확인한다.
+export function seedConversation(session: Session, sent: { message?: Message | null; turn?: Turn | null }) {
+    const id = session.id;
+    seedQuery(`session:${id}`, session, () => readConversation.session(id));
+    if (sent.message) seedQuery(`messages:${id}`, {
+        items: [sent.message], has_more_before: false, has_more_after: false, timeline_revision: 0, rewind_boundary_seq: null,
+    } satisfies MessagePage, () => readConversation.messages(id));
+    if (sent.turn) seedQuery(`turns:${id}`, [sent.turn], () => readConversation.turns(id));
 }
 
 let warm: { generation: number; resume: Promise<RemoteLayout> } | null = null;

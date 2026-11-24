@@ -1,0 +1,14 @@
+# 릴리즈 전 Rust 전체 검사를 시험 파일 사이까지 병렬로 실행한다.
+# nextest는 시험마다 별도 프로세스라서 프로세스 안 Mutex로 맞춘 직렬화가 통하지 않는다.
+
+[profile.default]
+# 부하에 민감한 시험 하나 때문에 전체를 다시 돌리지 않는다. 재시도로 통과한 시험은 FLAKY로 표시된다.
+retries = 1
+
+[test-groups]
+# 실제 relay fixture(Node·Miniflare)는 시작 비용이 커서 동시에 하나만 띄운다.
+relay-fixture = { max-threads = 1 }
+
+[[profile.default.overrides]]
+filter = 'test(/^relay::tests::(reconnect_replaces_|real_relay_)/)'
+test-group = 'relay-fixture'

@@ -8,7 +8,8 @@ import { StatusBadge } from "../design/StatusBadge";
 import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
-import { AttachmentList, type Attachment } from "./Attachments";
+import { AttachmentList, OutgoingAttachments, type Attachment } from "./Attachments";
+import { OutgoingMessage } from "./OutgoingMessage";
 import { ActionMenu, DetailDialog, Panel, ToolsTrigger, Workbench } from "./ui/Controls";
 import { Suspense, lazy, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileLinkContext, FileRefContext, Markdown } from "./Markdown";
@@ -20,7 +21,8 @@ import { ApiError, api, isLoggedIn, isTransportError } from "../api/client";
 import { readConversation } from "../state/workspaceStartup";
 import { CONVERSATION_PAGE_SIZE, conversationPagePath, keepOlderPages, mergeMessages, readMessageRange, singleFlight, takeOlderPages } from "../state/conversationPages";
 import type { BotRoom, Definition, Followup as FollowupInfo, Message, MessagePage, Project, RecentItem, Session, ToolCallRow, Turn } from "../api/generated";
-import { useLive, useQuery } from "../state/store";
+import { patchData, useLive, useQuery } from "../state/store";
+import { acceptSent, acceptedInFollowups, acceptedInMessages, useOutgoing, type Outgoing } from "../state/outgoing";
 import { Composer, type FollowKind, type RunCommand, type SendOptions } from "./Composer";
 import { modelOptionCapabilities } from "../state/sendOptions";
 import { Icon } from "./icons";
@@ -152,6 +154,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     const promptAfter = useRef<number | null>(null);
     const followEnd = useRef<(() => boolean) | null>(null);
     const [unseen, setUnseen] = useState(false);
+    const sentKey = useOutgoing(`session:${sessionId}`).filter((entry) => entry.copyId === tabId).at(-1)?.key;
     const scroller = () => msgsRef.current?.closest('[data-testid="pane-body"]') as HTMLElement | null;
     const composerElement = () => msgsRef.current?.closest('[data-testid="session-view"]')?.querySelector<HTMLElement>('[data-testid="compose-surface"]');
     const messageViewportBottom = () => {
@@ -239,7 +242,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         if (stick.current) scrollEnd();
         else if (!savedPosition || (latest.data?.items.at(-1)?.seq ?? 0) > savedPosition.lastSeq || partial?.text) setUnseen(true);
         // 최신 페이지는 항상 최근 N개라 개수가 아니라 마지막 메시지로 새 글을 판단한다.
-    }, [visible, !!s, latest.data?.items.at(-1)?.seq, partial?.text]);
+    }, [visible, !!s, latest.data?.items.at(-1)?.seq, partial?.text, sentKey]);
 
     useLayoutEffect(() => {
         const composer = composerElement();
@@ -276,6 +279,21 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     const liveResponse = partial?.text === undefined ? undefined : partial;
     const showProgress = prefs.progressVisibility !== "hidden";
     const transcript = assistantTranscript(messages, liveResponse, showProgress);
+    // 방금 보낸 글은 서버 응답 전에도 대화 끝에 보인다. 실행 중에 보낸 추가 메시지는 대기 목록에 보인다.
+    const outgoing = useOutgoing(`session:${sessionId}`);
+    const sendingRows: Message[] = outgoing.filter((entry) => !entry.follow && !acceptedInMessages(entry, messages)).map((entry, index) => ({
+        id: `outgoing:${entry.key}`, session_id: sessionId, seq: (messages.at(-1)?.seq ?? 0) + index + 1, role: "user",
+        content: { text: entry.text, outgoing: entry }, turn_id: null, created_at: entry.createdAt,
+    }));
+    // 이 영역에서 보낸 글은 누른 즉시 맨 아래로 따라가고, 답이 길어져도 보낸 글이 화면 위로 사라지기 전에 멈춘다.
+    const followedSend = useRef<string | undefined>(undefined);
+    useLayoutEffect(() => {
+        if (!sentKey || followedSend.current === sentKey) return;
+        followedSend.current = sentKey;
+        toBottom();
+        promptAfter.current = latestRef.current?.items.at(-1)?.seq ?? 0;
+        pinned.current = true;
+    }, [sentKey]); // eslint-disable-line react-hooks/exhaustive-deps
     const isActiveTurn = (turnId: string | null) => !!active && active.id === turnId;
     const progressOpen = (turnId: string | null) => prefs.progressVisibility === "expanded" || isActiveTurn(turnId);
     const groupedSeq = (seq: number | null) => seq === null ? null : transcript.anchors.get(seq) ?? seq;
@@ -386,13 +404,15 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         toBottom();
         promptAfter.current = latestRef.current?.items.at(-1)?.seq ?? 0;
         pinned.current = true;
+        // 응답에 담긴 메시지·실행 상태는 이벤트를 기다리지 않고 바로 화면에 반영한다.
         if (follow) {
             // 실행 중 추가 메시지(RUN-007): 서버가 실행 상태를 다시 확인하고, 그 사이 끝났으면 바로 새 요청으로 시작한다.
-            await api.post(`/sessions/${sessionId}/followups`, { kind: follow, text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, request);
+            const added = await api.post<{ started_turn?: Turn; message?: Message; followup?: FollowupInfo }>(`/sessions/${sessionId}/followups`, { kind: follow, text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, request);
+            acceptSent(sessionId, { turn: added?.started_turn, message: added?.message, followup: added?.followup });
             return;
         }
-        if (o.mode === "save") await api.post(`/sessions/${sessionId}/messages`, { text, attachments }, { key });
-        else await api.post(`/sessions/${sessionId}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, request);
+        if (o.mode === "save") acceptSent(sessionId, { message: await api.post<Message>(`/sessions/${sessionId}/messages`, { text, attachments }, { key }) });
+        else acceptSent(sessionId, await api.post<{ turn?: Turn; message?: Message }>(`/sessions/${sessionId}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, request) ?? {});
     };
 
     const retry = (turnId: string, options: SendOptions | null) => act(() => options
@@ -534,8 +554,8 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                     value={project.data ? (path, line) => open({ kind: "file", project_id: projectId, resource_id: path, filePath: path, fileLine: line, title: line ? `${path}:${line}` : path }, "right") : null}
                 >
                     <FileLinkContext.Provider value={project.data ? { projectId, rootPath: project.data.root_path } : null}>
-                    <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={transcript.rows.filter((m) =>
-                        !(failedTurn && m.turn_id === failedTurn.id && m.role === "note" && (m.content as { type?: string }).type === "turn_ended"))}
+                    <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={[...transcript.rows.filter((m) =>
+                        !(failedTurn && m.turn_id === failedTurn.id && m.role === "note" && (m.content as { type?: string }).type === "turn_ended")), ...sendingRows]}
                         targetSeq={groupedSeq(focusSeq ?? position?.anchorSeq ?? null)} presentationKey={JSON.stringify([prefs.progressVisibility, prefs.timeStyle, prefs.clock, prefs.fontSize, prefs.theme])}
                         onTargetReached={(seq) => {
                             if (focusSeq == null) return;
@@ -552,6 +572,14 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                         }}
                         stick={stick} pinned={pinned} bottom={bottom} promptAfter={promptAfter} follow={followEnd} onHeld={() => setUnseen(true)} onNavigate={() => { clearPendingPosition(); pinned.current = false; stick.current = false; }}
                         render={(m) => {
+                            const sending = (m.content as { outgoing?: Outgoing }).outgoing;
+                            if (sending) return <Stack gap={0} key={m.id} data-seq={m.seq}>
+                                <OutgoingMessage message={sending} />
+                                <Stack direction="horizontal" align="center" gap={1} xstyle={chatLayout.actions}>
+                                    <When at={m.created_at} absolute part="time" titlePart="datetime" />
+                                    {!!sending.text && <CopyButton text={sending.text} />}
+                                </Stack>
+                            </Stack>;
                             const preceding = transcript.preceding.get(m.id);
                             return (
                         <Stack gap={0} key={m.id} xstyle={highlight === m.seq && chatLayout.focusHit} data-seq={m.seq} data-highlighted={highlight === m.seq}>
@@ -921,7 +949,10 @@ const FOLLOW_KIND: Record<FollowKind, string> = { queue: "대기열", steer: "�
 function FollowupsPanel({ sessionId, running, onError }: { sessionId: string; running: boolean; onError: (m: string) => void }) {
     const q = useQuery<{ items: Followup[] }>(`followups:${sessionId}`, () => api.get(`/sessions/${sessionId}/followups`));
     const items = q.data?.items ?? [];
-    if (items.length === 0) return null;
+    // 방금 보낸 추가 메시지는 서버 응답 전에도 목록 끝에 보인다.
+    const sending = useOutgoing(`session:${sessionId}`).filter((entry) => entry.follow && !acceptedInFollowups(entry, items));
+    if (items.length === 0 && sending.length === 0) return null;
+    const kinds = [...items.map((item) => item.kind), ...sending.map((entry) => entry.follow!)];
     const run = async (f: () => Promise<unknown>) => {
         try {
             await f();
@@ -935,10 +966,10 @@ function FollowupsPanel({ sessionId, running, onError }: { sessionId: string; ru
             data-testid="followups" role="region" aria-label="대기 중인 메시지"><Stack gap={2}>
             <GroveText as="div" display="block" type="supporting" color="secondary">
                 {items.some((item) => item.delivery_state === "unknown" || item.delivery_state === "rejected") ? "합치기 전달 결과를 확인해 주세요"
-                    : !running ? "이전 실행이 완료되지 않아 멈췄습니다. 직접 시작하거나 지우세요"
+                    : !running && items.length > 0 ? "이전 실행이 완료되지 않아 멈췄습니다. 직접 시작하거나 지우세요"
                     : items.some((item) => item.delivery_state === "sending") ? "실행 중인 응답에 전달하고 있습니다"
-                    : items.every((item) => item.kind === "steer") ? "합치기 전달을 기다리고 있습니다"
-                    : items.every((item) => item.kind === "queue") ? "실행이 끝나면 순서대로 보냅니다"
+                    : kinds.every((kind) => kind === "steer") ? "합치기 전달을 기다리고 있습니다"
+                    : kinds.every((kind) => kind === "queue") ? "실행이 끝나면 순서대로 보냅니다"
                     : "선택한 방식으로 추가 메시지를 보냅니다"}
             </GroveText>
             <GroveList density="compact" edge="flush" listStyle="decimal">
@@ -956,9 +987,22 @@ function FollowupsPanel({ sessionId, running, onError }: { sessionId: string; ru
                                 지금 시작
                             </ServerActionButton>
                         )}
-                        <ServerActionButton variant="secondary" density="compact" disabled={f.delivery_state === "sending"} aria-label={`대기 메시지 삭제: ${f.text.slice(0, 20)}`} onClick={() => void run(() => api.del(`/sessions/${sessionId}/followups/${f.id}`))}>
+                        <ServerActionButton variant="secondary" density="compact" disabled={f.delivery_state === "sending"} aria-label={`대기 메시지 삭제: ${f.text.slice(0, 20)}`} onClick={() => {
+                            // 누른 즉시 목록에서 빼고, 서버가 거절하면 다시 읽어 되돌린다.
+                            patchData<{ items: Followup[] }>(`followups:${sessionId}`, (page) => ({ ...page, items: page.items.filter((item) => item.id !== f.id) }));
+                            void run(() => api.del(`/sessions/${sessionId}/followups/${f.id}`));
+                        }}>
                             삭제
                         </ServerActionButton>
+                    </Stack>} />
+                ))}
+                {sending.map((entry) => (
+                    <GroveListItem key={entry.key} data-testid="followup-outgoing" label={<Stack gap={1}>
+                        <Stack direction="horizontal" align="start" gap={1.5} xstyle={chatLayout.bar}>
+                            <StatusBadge>{FOLLOW_KIND[entry.follow!]}</StatusBadge>
+                            <GroveText type="inherit" color="inherit" xstyle={[contentStyles.plainText, chatLayout.sessionPreview]}>{entry.text.length > 120 ? `${entry.text.slice(0, 120)}…` : entry.text}</GroveText>
+                        </Stack>
+                        {entry.files.length > 0 && <OutgoingAttachments files={entry.files} />}
                     </Stack>} />
                 ))}
             </GroveList>

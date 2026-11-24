@@ -17,27 +17,28 @@ import { parseAttachments, type Attachment } from "../state/sendRecovery";
 import { attachmentIssue } from "./capabilities/browser";
 import { useLive } from "../state/store";
 import { useComposerMemory } from "../state/useComposerMemory";
+import { fileUrl, rememberSentFile, sentFile, type DraftFile } from "../state/outgoing";
 
 export type { Attachment } from "../state/sendRecovery";
-type Pending = { key: string; file?: File; attachment?: Attachment; error?: string };
+type Pending = DraftFile;
 const MAX_FILE = 32 * 1024 * 1024;
 const MAX_TOTAL = 128 * 1024 * 1024;
+const MAX_PARALLEL_UPLOADS = 3;
 const IMAGE_MIMES = ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
-// 미전송 첨부는 화면 메모리에만 둔다.
+// 미전송 첨부는 화면 메모리에만 둔다. 올리는 동안에도 더 고르거나 뺄 수 있다.
 export function useAttachments(projectId: string, resourceKey: string, copyId: string, initial?: Attachment[]) {
     const [owner] = useState(authGeneration);
     const entries = (saved: unknown): Pending[] => parseAttachments(saved).filter((a) => a.project_id === projectId).map((a) => ({ key: newKey(), attachment: a }));
     const [items, setItems] = useComposerMemory<Pending[]>(resourceKey, copyId, "attachments", () => entries(initial));
-    const [busy, setBusy] = useComposerMemory(resourceKey, copyId, "uploading", () => false);
     const [error, setError] = useComposerMemory<string | null>(resourceKey, copyId, "attachmentError", () => null);
+    // 진행 중인 업로드는 영역을 옮겨 다시 그린 입력창이 그대로 이어받는다.
+    const [uploads] = useComposerMemory(resourceKey, copyId, "uploads", () => ({ flights: new Map<string, Promise<Pending>>(), running: 0, waiting: [] as (() => void)[] }));
     const current = useRef(items);
     current.current = items;
-    const lock = useRef(false);
-    const replace = (next: Pending[]) => {
+    const update = (change: (items: Pending[]) => Pending[]) => {
         if (authGeneration() !== owner) return;
-        current.current = next;
-        setItems(next);
+        setItems(change);
     };
     const upload = async (entry: Pending): Promise<Pending> => {
         try {
@@ -45,40 +46,69 @@ export function useAttachments(projectId: string, resourceKey: string, copyId: s
             let binary = "";
             for (let i = 0; i < data.length; i += 8192) binary += String.fromCharCode(...data.subarray(i, i + 8192));
             const attachment = await api.post<Attachment>(`/projects/${projectId}/attachments`, { name: entry.file!.name, data_base64: btoa(binary) }, { key: entry.key });
+            if (authGeneration() === owner && IMAGE_MIMES.includes(attachment.mime)) rememberSentFile(attachment.id, entry.file!);
             return { key: entry.key, file: entry.file, attachment };
         } catch (e) {
             return { ...entry, error: e instanceof ApiError ? e.message : "업로드 응답을 받지 못했습니다. 같은 요청으로 다시 시도하세요" };
         }
     };
-    const process = async (entries: Pending[]) => {
-        if (lock.current || busy) return;
-        lock.current = true;
-        setBusy(true);
-        try {
-            for (const entry of entries) {
-                const result = await upload(entry);
-                replace(current.current.map((i) => i.key === entry.key ? result : i));
+    const start = (entry: Pending): Promise<Pending> => {
+        const flight = (async () => {
+            // 한꺼번에 많이 골라도 동시에 올리는 수를 제한한다. 끝난 자리는 기다리던 업로드가 바로 이어받는다.
+            if (uploads.running >= MAX_PARALLEL_UPLOADS) await new Promise<void>((resume) => uploads.waiting.push(resume));
+            else uploads.running++;
+            try { return await upload(entry); }
+            finally {
+                const next = uploads.waiting.shift();
+                if (next) next();
+                else uploads.running--;
             }
-        } finally { lock.current = false; setBusy(false); }
+        })().then((result) => {
+            // 그사이 뺀 첨부나 이미 보낸 첨부는 목록에 없으므로 되살리지 않는다.
+            if (uploads.flights.get(entry.key) === flight) update((list) => list.map((i) => i.key === entry.key ? result : i));
+            return result;
+        });
+        uploads.flights.set(entry.key, flight);
+        return flight;
     };
     const add = async (files: File[]) => {
-        if (lock.current || busy || !projectId || files.length === 0) return;
+        if (!projectId || files.length === 0) return;
         setError(null);
         if (current.current.length + files.length > 8 || files.some((f) => f.size > MAX_FILE) || current.current.reduce((n, i) => n + (i.attachment?.size ?? i.file?.size ?? 0), 0) + files.reduce((n, f) => n + f.size, 0) > MAX_TOTAL) {
             setError("첨부는 최대 8개, 파일당 32MiB, 전체 128MiB까지 선택할 수 있습니다");
             return;
         }
         const added = files.map((file) => ({ key: newKey(), file }));
-        replace([...current.current, ...added]);
-        await process(added);
+        current.current = [...current.current, ...added];
+        update((list) => [...list, ...added]);
+        await Promise.all(added.map(start));
     };
     const remove = (key: string) => {
-        if (lock.current || busy) return;
         // 서버의 미참조 원문은 유예 후 GC가 정리한다. 불명 전송 직후 이미 연결된 원문도 안전하다.
-        replace(current.current.filter((i) => i.key !== key));
+        uploads.flights.delete(key);
+        update((list) => list.filter((i) => i.key !== key));
     };
-    return { items, busy, error, add, remove, retry: (i: Pending) => process([i]),
-        clearSent: (ids: string[]) => replace(current.current.filter((i) => !i.attachment || !ids.includes(i.attachment.id))),
+    /// 보내기: 지금 목록을 입력창에서 비우고 넘긴다. settled는 올리는 중이던 첨부까지 끝난 결과다.
+    const take = () => {
+        const taken = current.current;
+        const keys = new Set(taken.map((i) => i.key));
+        const settled = Promise.all(taken.map((i) => uploads.flights.get(i.key) ?? i));
+        for (const key of keys) uploads.flights.delete(key);
+        current.current = [];
+        update((list) => list.filter((i) => !keys.has(i.key)));
+        return { items: taken, settled };
+    };
+    /// 보내지 못한 첨부를 그사이 새로 고른 첨부 앞에 돌려놓는다.
+    const restore = (files: Pending[]) => update((list) => [...files.filter((file) => !list.some((i) => i.key === file.key)), ...list]);
+    const retry = (i: Pending) => {
+        const entry = { key: i.key, file: i.file };
+        update((list) => list.map((item) => item.key === i.key ? entry : item));
+        return start(entry);
+    };
+    return { items, error, add, remove, retry, take, restore,
+        /// busy: 아직 올리는 중인 첨부가 있다. failed: 올리지 못한 첨부가 있어 빼거나 다시 올려야 한다.
+        busy: items.some((i) => !i.attachment && !i.error), failed: items.some((i) => !!i.error),
+        clearSent: (ids: string[]) => update((list) => list.filter((i) => !i.attachment || !ids.includes(i.attachment.id))),
         ids: items.flatMap((i) => i.attachment ? [i.attachment.id] : []), ready: items.every((i) => !!i.attachment) };
 }
 
@@ -88,11 +118,11 @@ export function AttachmentPicker({ draft, disabled, onIssue }: { draft: ReturnTy
     const [reading, setReading] = useState(false);
     const latest = useRef<{ blocked: boolean; add: typeof draft.add; onIssue: typeof onIssue } | null>(null);
     useLayoutEffect(() => {
-        latest.current = { blocked: disabled || draft.busy, add: draft.add, onIssue };
+        latest.current = { blocked: disabled, add: draft.add, onIssue };
         return () => { latest.current = null; };
     });
     const canReadImage = /Android/.test(navigator.userAgent) && window.isSecureContext && typeof navigator.clipboard?.read === "function";
-    const blocked = disabled || draft.busy || reading;
+    const blocked = disabled || reading;
     const pickFile = () => {
         setOpen(false);
         const issue = attachmentIssue();
@@ -133,7 +163,7 @@ export function AttachmentPicker({ draft, disabled, onIssue }: { draft: ReturnTy
         disabled={blocked} onClick={canReadImage ? undefined : pickFile}><Icon name="attachment" /></GroveButton>;
     return <GroveStack direction="horizontal" align="center" gap={0} width={32} data-testid="attachment-picker">
         <GroveStack hidden><FileInput ref={input} isMultiple label="첨부파일 선택" isLabelHidden
-            isDisabled={disabled || draft.busy} value={null}
+            isDisabled={disabled} value={null}
             onChange={(files) => { if (files) void draft.add(Array.isArray(files) ? files : [files]); }} /></GroveStack>
         {canReadImage ? <Popover label="첨부 방식" isOpen={open && !blocked} onOpenChange={setOpen} placement="above" alignment="start"
             width={208} padding={2} isModal={false} content={<GroveStack gap={1}>
@@ -149,7 +179,7 @@ export function AttachmentSelection({ draft, disabled }: { draft: ReturnType<typ
     const files = draft.items.filter((i) => !images.includes(i));
     const remove = (i: Pending, image = false) => <GroveButton type="button" appearance="icon"
         xstyle={image && attachmentStyles.removeImage} aria-label={`${i.attachment?.name ?? i.file?.name} 첨부 제거`}
-        disabled={disabled || draft.busy} onClick={() => draft.remove(i.key)}><Icon name="close" size={14} /></GroveButton>;
+        disabled={disabled} onClick={() => draft.remove(i.key)}><Icon name="close" size={14} /></GroveButton>;
     return <GroveStack gap={1} xstyle={attachmentStyles.row} data-testid="attachment-selection">
         {draft.error && <GroveText as="div" display="block" type="inherit" color="error" role="alert">{draft.error}</GroveText>}
         {!!images.length && <GroveStack direction="horizontal" gap={2} xstyle={attachmentStyles.strip} role="list" aria-label="선택한 이미지" data-swipe-blocked>
@@ -159,11 +189,11 @@ export function AttachmentSelection({ draft, disabled }: { draft: ReturnType<typ
         {!!files.length && <List density="compact" edge="flush" aria-label="선택한 첨부파일">
             {files.map((i) => <ListItem key={i.key} label={i.attachment
                 ? <AttachmentCard attachment={i.attachment} trailing={remove(i)} />
-                : <AttachmentRow name={i.file?.name ?? ""} detail={draft.busy && !i.error ? "업로드 중…" : "업로드되지 않음"} actions={remove(i)} />} />)}
+                : <AttachmentRow name={i.file?.name ?? ""} detail={i.error ? "업로드되지 않음" : "업로드 중…"} actions={remove(i)} />} />)}
         </List>}
         {draft.items.filter((i) => i.error).map((i) => <GroveStack key={i.key} gap={1}>
             <GroveText type="supporting" color="error" role="alert">{i.attachment?.name ?? i.file?.name}: {i.error}</GroveText>
-            <GroveButton type="button" disabled={disabled || draft.busy} onClick={() => void draft.retry(i)}>업로드 다시 시도</GroveButton>
+            <GroveButton type="button" disabled={disabled} onClick={() => void draft.retry(i)}>업로드 다시 시도</GroveButton>
         </GroveStack>)}
     </GroveStack>;
 }
@@ -177,6 +207,20 @@ export function AttachmentList({ attachments, gallery = false }: { attachments: 
                 : images.map((a) => <ImageAttachment key={a.id} name={a.name} attachment={a} />)}
         </GroveStack>}
         {!!files.length && <List density="compact" edge="flush">{files.map((a) => <ListItem key={a.id} label={<AttachmentCard attachment={a} />} />)}</List>}
+    </GroveStack>;
+}
+
+/// 보내는 중인 메시지의 첨부. 올리는 중인 파일도 고른 즉시 보인다.
+export function OutgoingAttachments({ files }: { files: DraftFile[] }) {
+    const images = files.filter((i) => IMAGE_MIMES.includes(i.attachment?.mime ?? i.file?.type ?? ""));
+    const rest = files.filter((i) => !images.includes(i));
+    return <GroveStack gap={1} xstyle={attachmentStyles.row} role="group" aria-label="메시지 첨부파일">
+        {!!images.length && <GroveStack direction="horizontal" gap={2} xstyle={attachmentStyles.strip} role="list" aria-label="첨부 이미지" data-swipe-blocked>
+            {images.map((i) => <ImageAttachment key={i.key} name={i.attachment?.name ?? i.file!.name} file={i.file} attachment={i.attachment} />)}
+        </GroveStack>}
+        {!!rest.length && <List density="compact" edge="flush">{rest.map((i) => <ListItem key={i.key} label={i.attachment
+            ? <AttachmentCard attachment={i.attachment} />
+            : <AttachmentRow name={i.file?.name ?? ""} detail={`${((i.file?.size ?? 0) / 1024).toFixed(1)}KiB`} actions={null} />} />)}</List>}
     </GroveStack>;
 }
 
@@ -207,7 +251,9 @@ export function ImageAttachment({ name, file, attachment, trailing, projectFile,
     onSelect?: (id: string) => void; onSource?: (id: string, source: PreviewSource | null) => void;
     projectFile?: { projectId: string; path: string; mime: string }; inline?: boolean;
 }) {
-    const [url, setUrl] = useState<string | null>(null);
+    // 방금 올린 사진은 서버에서 다시 받지 않고 고른 파일로 보인다.
+    const local = file ?? (attachment ? sentFile(attachment.id) : undefined);
+    const [url, setUrl] = useState<string | null>(() => local ? fileUrl(local) : null);
     const [error, setError] = useState<string | null>(null);
     const [open, setOpen] = useState(false);
     const [attempt, setAttempt] = useState(0);
@@ -226,21 +272,22 @@ export function ImageAttachment({ name, file, attachment, trailing, projectFile,
     useEffect(() => {
         let active = true;
         let objectUrl: string | undefined;
-        setUrl(null); setError(null);
+        setError(null);
+        if (local) { setUrl(fileUrl(local)); return; }
+        setUrl(null);
         const show = (blob: Blob) => {
             if (!active) return;
             objectUrl = URL.createObjectURL(blob);
             setUrl(objectUrl);
         };
-        if (file) show(file);
-        else if (stored || projectId) void rawGet(projectId
+        if (stored || projectId) void rawGet(projectId
             ? `/projects/${encodeURIComponent(projectId)}/files/raw?path=${encodeURIComponent(path!)}`
             : `/attachments/${id}/content`)
             .then((data) => show(new Blob([data], { type: mime })))
             .catch((e) => { if (active && !isTransportError(e)) setError(e instanceof ApiError ? e.message : "이미지를 불러오지 못했어요."); });
         else setError("원문이 누락되었습니다");
         return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
-    }, [file, id, stored, mime, projectId, path, attempt]);
+    }, [local, id, stored, mime, projectId, path, attempt]);
     const retry = useCallback(() => setAttempt((n) => n + 1), []);
     const retryRead = stored || projectId ? retry : undefined;
     useLayoutEffect(() => {
