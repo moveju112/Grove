@@ -6,6 +6,7 @@ import { api } from "../api/client";
 import type { Project } from "../api/generated";
 import { invalidate, useQuery } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { ProjectIcon } from "./ProjectIcon";
 
 type Recovery = { kind: "recoverable"; action: "unarchive" | "unarchive_relink"; message?: string } | { kind: "unavailable"; message: string };
 
@@ -30,7 +31,7 @@ function ArchivedRow({ project }: { project: Project }) {
         try { await fn(); } catch (e) { setError(e instanceof Error ? e.message : fallback); } finally { setBusy(false); }
     };
     return <GroveStack direction="horizontal" align="center" gap={1.5} data-testid="archived-project">
-        <GroveText type="inherit" color="inherit">{project.icon} {project.name}</GroveText>
+        <ProjectIcon project={project} /><GroveText type="inherit" color="inherit">{project.name}</GroveText>
         {!state && <GroveButton type="button" variant="secondary" density="compact" disabled={busy}
             onClick={() => void run(async () => setState(await api.get<Recovery>(`/projects/${project.id}/recovery`)), "복원 검사 실패")}>복원 검사</GroveButton>}
         {state?.kind === "recoverable" && <>

@@ -26,6 +26,76 @@ async fn repo() -> (TestServer, String, std::path::PathBuf) {
 }
 
 #[tokio::test]
+async fn file_selection_uses_literal_names_for_diff_stage_and_unstage() {
+    let (s, pid, root) = repo().await;
+    let selected = "file[1].txt";
+    let neighbor = "file1.txt";
+    for path in [selected, neighbor] {
+        std::fs::write(root.join(path), "base\n").unwrap();
+    }
+    sh(&root, &["add", "-A"]);
+    sh(&root, &["commit", "-qm", "fixture files"]);
+    std::fs::write(root.join(selected), "selected edit\n").unwrap();
+    std::fs::write(root.join(neighbor), "neighbor edit\n").unwrap();
+    let api = format!("/api/v1/projects/{pid}/git");
+    let (status, preview) = s.get(&format!("{api}/diff?path=file%5B1%5D.txt")).await;
+    assert_eq!(status, StatusCode::OK);
+    let diff = preview["diff"].as_str().unwrap();
+    assert!(diff.contains("+selected edit") && !diff.contains("+neighbor edit"), "{diff}");
+    let (status, staged) = s.post(&format!("{api}/stage"), json!({
+        "paths": [selected], "expected_fingerprint": preview["fingerprint"]
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{staged}");
+    assert_eq!(sh(&root, &["diff", "--cached", "--name-only"]).trim(), selected);
+    sh(&root, &["add", "--", neighbor]);
+    let (_, state) = s.get(&format!("{api}/status")).await;
+    let (status, unstaged) = s.post(&format!("{api}/unstage"), json!({
+        "paths": [selected], "expected_fingerprint": state["fingerprint"]
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{unstaged}");
+    assert_eq!(sh(&root, &["diff", "--cached", "--name-only"]).trim(), neighbor);
+}
+
+#[tokio::test]
+async fn nested_project_file_actions_match_the_path_returned_by_status() {
+    let (s, _, root) = repo().await;
+    let nested = root.join("sub");
+    std::fs::create_dir_all(nested.join("sub")).unwrap();
+    for path in ["sub/a.txt", "sub/sub/a.txt"] {
+        std::fs::write(root.join(path), "base\n").unwrap();
+    }
+    sh(&root, &["add", "sub"]);
+    sh(&root, &["commit", "-qm", "nested files"]);
+    let (status, project) = s.post("/api/v1/projects", json!({"root_path": nested})).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let api = format!("/api/v1/projects/{}/git", project["id"].as_str().unwrap());
+    std::fs::write(nested.join("a.txt"), "selected\n").unwrap();
+    std::fs::write(nested.join("sub/a.txt"), "different\n").unwrap();
+    let (_, state) = s.get(&format!("{api}/status")).await;
+    let path = "sub/a.txt";
+    assert!(state["entries"].as_array().unwrap().iter().any(|entry| entry["path"] == path));
+    let (_, preview) = s.get(&format!("{api}/hunks?path={path}")).await;
+    assert!(preview["hunks"][0].as_str().unwrap().contains("+selected"));
+    let (status, staged) = s.post(&format!("{api}/stage"), json!({
+        "paths": [path], "expected_fingerprint": state["fingerprint"]
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{staged}");
+    assert_eq!(sh(&root, &["diff", "--cached", "--name-only"]).trim(), path);
+    let (status, review) = s.post(&format!("{api}/review"), json!({"operation": "discard", "paths": [path]})).await;
+    assert_eq!(status, StatusCode::OK, "{review}");
+    let (status, result) = s.post(&format!("{api}/confirm"), json!({
+        "action": review["action"], "expected_fingerprint": review["expected_fingerprint"], "confirmed": true
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(std::fs::read_to_string(nested.join("a.txt")).unwrap(), "base\n");
+    assert_eq!(std::fs::read_to_string(nested.join("sub/a.txt")).unwrap(), "different\n");
+    let (status, _) = s.post(&format!("{api}/stage"), json!({
+        "paths": ["a.txt"], "expected_fingerprint": result["fingerprint"]
+    })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
 async fn status_pages_share_the_viewed_snapshot_but_writes_always_check_live_files() {
     let (s, pid, root) = repo().await;
     std::fs::write(root.join("a.txt"), "viewed\n").unwrap();
@@ -133,6 +203,29 @@ async fn unstage_keeps_worktree_and_branch_switch_never_discards_changes() {
     assert_eq!(st, StatusCode::CONFLICT, "{v}");
     assert_eq!(std::fs::read_to_string(root.join("a.txt")).unwrap(), "changed\n", "사용자 변경 보존(GIT-006)");
     assert_eq!(sh(&root, &["branch", "--show-current"]).trim(), "main");
+}
+
+#[tokio::test]
+async fn staging_a_hunk_preserves_non_utf8_file_content() {
+    let (s, pid, root) = repo().await;
+    let content = b"one\nprice: \xa3";
+    std::fs::write(root.join("a.txt"), content).unwrap();
+    let api = format!("/api/v1/projects/{pid}/git");
+    let (_, preview) = s.get(&format!("{api}/hunks?path=a.txt")).await;
+    assert_eq!(preview["hunks"].as_array().unwrap().len(), 1);
+    let (status, staged) = s.post(&format!("{api}/stage-hunks"), json!({
+        "path": "a.txt", "hunks": [0], "expected_fingerprint": preview["fingerprint"]
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{staged}");
+    let indexed = Command::new("git").args(["show", ":a.txt"]).current_dir(&root).output().unwrap();
+    assert!(indexed.status.success());
+    assert_eq!(indexed.stdout, content);
+    let (status, result) = s.post(&format!("{api}/stage-hunks"), json!({
+        "path": "a.txt", "hunks": [0], "unstage": true, "expected_fingerprint": staged["fingerprint"]
+    })).await;
+    assert_eq!(status, StatusCode::OK, "{result}");
+    assert_eq!(sh(&root, &["show", ":a.txt"]), "one\n");
+    assert_eq!(std::fs::read(root.join("a.txt")).unwrap(), content);
 }
 
 #[tokio::test]

@@ -46,9 +46,13 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: web/package-lock.json
+          cache-dependency-path: |
+            web/package-lock.json
+            relay/package-lock.json
       - run: npm ci
         working-directory: web
+      - run: npm ci
+        working-directory: relay
       # rust-toolchain.toml의 고정 버전을 rustup이 설치한다.
       - run: rustup toolchain install
       - uses: Swatinem/rust-cache@v2
@@ -81,6 +85,8 @@ jobs:
         with:
           cache-targets: 'false'
       - name: Mobile browser tests
+        env:
+          GROVE_E2E_FAKE_CLI: '1'
         run: |
           export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"
           python3 scripts/build.py test --e2e 'e2e/.*\.mobile\.spec\.ts' --e2e-regression

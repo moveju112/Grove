@@ -1,8 +1,30 @@
 //! 설치된 Claude Code가 사용자의 CLI 인증과 모델 공급자 설정을 관리한다.
 use super::{GroupGuard, ProviderError};
+use crate::project_fs::ProjectFs;
+use crate::source_settings::{MAX_SOURCE_BYTES, SourceId, user_root};
 use serde_json::{Value, json};
 use std::{path::Path, process::Stdio, time::Duration};
 use tokio::{io::AsyncReadExt, process::Command};
+
+pub(super) const CODE_MODE_ENV: &str = "CLAUDE_CODE_EXPERIMENTAL_CODE_MODE";
+
+pub(super) async fn code_mode_enabled() -> bool {
+    tokio::task::spawn_blocking(|| {
+        user_root(SourceId::ClaudeUser, |key| std::env::var_os(key))
+            .and_then(|root| user_code_mode_enabled(&root))
+            .unwrap_or(false)
+    })
+    .await
+    .unwrap_or(false)
+}
+
+pub(super) fn user_code_mode_enabled(root: &Path) -> Option<bool> {
+    let fs = ProjectFs::open(root).ok()?;
+    let file = fs.root().join(SourceId::ClaudeUser.relative_path());
+    let bytes = fs.read(&file, MAX_SOURCE_BYTES).ok()?;
+    let settings: Value = serde_json::from_slice(&bytes).ok()?;
+    Some(settings["env"][CODE_MODE_ENV].as_str() == Some("1"))
+}
 
 pub(crate) fn command(executable: impl AsRef<std::ffi::OsStr>) -> Command {
     let mut cmd = super::command(executable);
@@ -13,7 +35,7 @@ pub(crate) fn command(executable: impl AsRef<std::ffi::OsStr>) -> Command {
 }
 
 pub(crate) fn settings(mut settings: Value) -> String {
-    settings["env"] = json!({"CLAUDE_CODE_DISABLE_BACKGROUND_TASKS":"1"});
+    settings["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"] = json!("1");
     settings.to_string()
 }
 

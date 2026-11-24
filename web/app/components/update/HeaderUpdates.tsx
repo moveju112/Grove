@@ -14,10 +14,11 @@ import { updateResultUnknown, updateStatusKey } from "./updateState";
 
 const label = "업데이트 확인";
 const webResults = {
+    published: "새 웹 릴리즈가 있어요. 이 서버에 적용되기를 기다리고 있어요.",
     available: "새 웹 버전이 준비됐어요.",
     up_to_date: "웹은 최신 버전이에요.",
     unavailable: "이 화면에서는 웹 업데이트를 확인할 수 없어요.",
-    failed: "웹 업데이트 확인에 실패했어요.",
+    failed: "웹 릴리즈를 확인하지 못했어요.",
 };
 
 function daemonResult(check: UpdateCheck): string {

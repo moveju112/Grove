@@ -142,10 +142,15 @@ pub(crate) fn prompt(req: &ModelRequest, with_system: bool) -> String {
 
 /// CLI 인자. 시험에서 신규 실행·재개의 권한 모드를 검사할 수 있게 분리한다.
 pub fn args(profile: &Profile, req: &ModelRequest, new_session: &str) -> (Vec<String>, String) {
-    args_with_bridge(profile, req, new_session, true)
+    args_with_bridge(profile, req, new_session, true, false)
 }
 
-fn args_with_bridge(profile: &Profile, req: &ModelRequest, new_session: &str, static_bridge: bool) -> (Vec<String>, String) {
+async fn args_for_run(profile: &Profile, req: &ModelRequest, new_session: &str, static_bridge: bool) -> (Vec<String>, String) {
+    let code_mode = profile.protocol == "claude_code" && interactive(req) && claude::code_mode_enabled().await;
+    args_with_bridge(profile, req, new_session, static_bridge, code_mode)
+}
+
+fn args_with_bridge(profile: &Profile, req: &ModelRequest, new_session: &str, static_bridge: bool, claude_code_mode: bool) -> (Vec<String>, String) {
     if profile.protocol == "codex_cli" && interactive(req) {
         return (codex::args(req, static_bridge), program(&profile.protocol).into());
     }
@@ -162,8 +167,12 @@ fn args_with_bridge(profile: &Profile, req: &ModelRequest, new_session: &str, st
         } else {
             a.extend([s("--safe-mode"), s("--disable-slash-commands"), s("--permission-mode"), s("dontAsk"), s("--tools"), s("")]);
         }
-        let settings = if persist { json!({"sandbox": {"enabled": false}}) }
+        let mut settings = if persist { json!({"sandbox": {"enabled": false}}) }
             else { json!({"sandbox": {"enabled": false}, "disableAllHooks": true}) };
+        // Claude Code의 비대화형 실행은 사용자 opt-in을 inline --settings에도 요구한다.
+        if persist && claude_code_mode {
+            settings["env"][claude::CODE_MODE_ENV] = json!("1");
+        }
         a.extend([s("--settings"), claude::settings(settings)]);
         // 일반 대화는 CLI 설정을 그대로 쓴다. 제목·요약만 사용자 hook·MCP·설정을 제외한다.
         if !persist {
@@ -876,7 +885,7 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
     let app_server = profile.protocol == "codex_cli" && interactive(req);
     let structured = req.cli.as_ref().is_some_and(|c| c.managed) && !req.tools.is_empty();
     let new_session = uuid::Uuid::new_v4().to_string();
-    let (mut argv, name) = args(profile, req, &new_session);
+    let (mut argv, name) = args_for_run(profile, req, &new_session, true).await;
     let prog = program.map(|p| p.to_string_lossy().to_string()).unwrap_or(name);
     // 이미지·임시 산출물은 호출별 temp에 모으고 종료 시 정리한다.
     // 제목·요약은 프로젝트가 아닌 이 빈 디렉터리에서 실행한다.
@@ -1293,6 +1302,49 @@ echo '{{"type":"result","result":"ok"}}'"#);
         assert!(a.windows(2).any(|w| w == ["--disable", "shell_tool"]));
         assert!(a.contains(&"--ephemeral".into()));
         assert!(a.contains(&"service_tier=\"default\"".into()));
+    }
+
+    #[test]
+    fn claude_code_mode_tracks_user_opt_in_for_chat_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path();
+        let path = root.join("settings.json");
+        let launch_settings = |req: &ModelRequest, static_bridge| {
+            let enabled = claude::user_code_mode_enabled(root).unwrap_or(false);
+            let (argv, _) = args_with_bridge(&prof("claude_code"), req, "sid", static_bridge, enabled);
+            let argument = argv.windows(2).find(|pair| pair[0] == "--settings").unwrap();
+            serde_json::from_str::<Value>(&argument[1]).unwrap()
+        };
+
+        for (file, enabled) in [
+            (None, false),
+            (Some(json!({"env": {(claude::CODE_MODE_ENV): "1", "UNRELATED_ENV": "ignored"}})), true),
+            (Some(json!({"env": {(claude::CODE_MODE_ENV): "0"}})), false),
+            (Some(json!({"env": {(claude::CODE_MODE_ENV): true}})), false),
+            (Some(json!({"env": {(claude::CODE_MODE_ENV): "1"}})), true),
+            (None, false),
+        ] {
+            if let Some(file) = file {
+                std::fs::write(&path, file.to_string()).unwrap();
+            } else if path.exists() {
+                std::fs::remove_file(&path).unwrap();
+            }
+
+            for resume in [None, Some("previous-session")] {
+                let mut request = req(resume);
+                for static_bridge in [true, false] {
+                    let settings = launch_settings(&request, static_bridge);
+                    assert_eq!(settings["env"][claude::CODE_MODE_ENV].as_str(), enabled.then_some("1"));
+                    assert_eq!(settings["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1");
+                    assert!(settings["env"].get("UNRELATED_ENV").is_none());
+                }
+                request.cli.as_mut().unwrap().managed = true;
+                assert!(launch_settings(&request, true)["env"].get(claude::CODE_MODE_ENV).is_none());
+            }
+            let mut summary = req(None);
+            summary.cli = None;
+            assert!(launch_settings(&summary, true)["env"].get(claude::CODE_MODE_ENV).is_none());
+        }
     }
 
     #[test]

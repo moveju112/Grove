@@ -88,6 +88,40 @@ for (const theme of ["light", "dark"] as const) {
     });
 }
 
+for (const width of [390, 844]) {
+    test(`${width}px 터치 화면에서 행 오른쪽을 길게 잡고 이웃 행 가운데에 놓아 순서를 바꾼다`, async ({ page }) => {
+        await page.setViewportSize({ width, height: width === 390 ? 844 : 390 });
+        const [a, b] = await create(2) as [Project, Project];
+        await login(page);
+        if (width === 390) await showSidebar(page);
+        const source = row(page, a);
+        const target = row(page, b);
+        await target.scrollIntoViewIfNeeded();
+        const menu = source.getByRole("button", { name: "프로젝트 메뉴" });
+        const cdp = await page.context().newCDPSession(page);
+        try {
+            const start = (await menu.boundingBox())!;
+            await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: start.x + start.width / 2, y: start.y + start.height / 2 }] });
+            await expect(source).toHaveAttribute("data-order-dragging", "true");
+            const end = (await target.boundingBox())!;
+            await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: end.x + end.width / 2, y: end.y + end.height / 2 - 1 }] });
+            await expect(target).toHaveAttribute("data-order-drop", "after");
+            await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+            await expect.poll(() => order(page, [a, b])).toEqual([b.id, a.id]);
+            const dialog = page.getByRole("dialog", { name: `${a.name} 메뉴`, exact: true });
+            await expect(dialog).toHaveCount(0);
+            if (width > 390) {
+                await hold(cdp, source);
+                await move(cdp, target);
+                await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+                await expect.poll(() => order(page, [a, b])).toEqual([a.id, b.id]);
+            }
+            await menu.tap();
+            await expect(dialog).toBeVisible();
+        } finally { await cdp.detach(); }
+    });
+}
+
 test("길게 누르기 전에는 세로 스크롤하고, 들어 올린 뒤에는 목록 가장자리에서 자동 스크롤한다", async ({ page }) => {
     const projects = await create(22);
     await login(page);

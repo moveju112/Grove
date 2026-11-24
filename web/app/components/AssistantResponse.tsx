@@ -12,7 +12,6 @@ export type ResponseContent = {
     response_steers?: [followupId: string, partsBefore: number][];
     tool_calls?: unknown[];
     pending_work?: unknown;
-    cli_activity?: { kind: string; name: string; status: string | null }[];
 };
 
 const NO_PRIOR: readonly ResponseContent[] = [];
@@ -57,20 +56,7 @@ export function AssistantResponse({ content, prior, live = false, showProgress =
         // 시각이 없는 항목은 건너뛰되 진행 설명의 순서는 유지한다.
         for (let i = progress.length - 1; i >= 0 && !latestAt; i--) latestAt = progress[i]?.at;
     }
-    const activity = [...(prior ?? NO_PRIOR), content].flatMap((step) => step.cli_activity ?? []);
     return <Stack gap={2} width="100%" maxWidth="100%">
-        {showProgress && activity.length > 0 && <DetailDialog data-testid={`${prefix}-cli-activity`}
-            label="도구 활동" title="도구 활동" inline={progressOpen}>
-            <List density="compact" edge="flush" aria-label="도구 활동">
-                {activity.map(({ kind, name, status }, index) => <ListItem key={index}
-                    label={kind === "command" || name === "Bash" ? "명령 실행" : kind === "file_change" ? "파일 수정" : name}
-                    endContent={status && <Text type="supporting" color="secondary">{
-                        status === "running" || status === "inProgress" || status === "in_progress" ? "실행 중"
-                            : status === "completed" || status === "succeeded" ? "완료"
-                            : status === "failed" ? "실패" : status
-                    }</Text>} />)}
-            </List>
-        </DetailDialog>}
         {showProgress && progress.length > 0 && <DetailDialog key={`progress-${progressOpen}`} data-testid={`${prefix}-progress`}
             label="진행 설명" inline={progressOpen} title={latestAt
                 ? <>진행 설명 · 최근 <When at={latestAt} absolute part="minute" titlePart="datetime" /></> : "진행 설명"}>

@@ -2,9 +2,9 @@ import { expect, test } from "@playwright/test";
 import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { FileChange } from "../app/api/generated";
-import { apiCall, ensureProjects, login, openDetails, openTool, selectChoice, sessionView, state } from "./helpers";
+import { apiCall, ensureProjects, login, openTool, sessionView, state } from "./helpers";
 
-test("Codex 질문에 답하고 CLI 활동과 파일 복구를 확인한 뒤 같은 프로세스에서 이어간다", async ({ page }) => {
+test("CLI 활동 목록 없이 Codex 질문에 답하고 파일을 복구한 뒤 같은 프로세스에서 이어간다", async ({ page }) => {
     test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "격리된 CLI fixture 필요");
     await ensureProjects();
     const root = await mkdtemp(join(state().projA, "cli-turn-"));
@@ -26,21 +26,17 @@ test("Codex 질문에 답하고 CLI 활동과 파일 복구를 확인한 뒤 같
     const pid = () => readFile(join(state().cliDir!, "last-pid"), "utf8");
     const start = (text: string) => apiCall("POST", `${sessionApi}/turns`, { profile_id: profile.id, text, tools: false });
     await start("fixture-native-question");
-    const live = view.getByTestId("partial-cli-activity");
-    await expect(live).toContainText("실행 중");
-    await expect(live).not.toContainText("fixture raw command");
     const question = view.getByTestId("question").filter({ hasText: "수정을 적용할까요?" });
-    await selectChoice(question.getByLabel("답변 선택"), "적용");
-    await question.getByRole("button", { name: "답하기", exact: true }).click();
+    await expect(question).toBeVisible();
+    await expect(view.getByTestId("partial")).toBeVisible();
+    await expect(view).not.toContainText(/도구 활동|fixture raw command/);
+    await question.getByRole("button", { name: "적용", exact: true }).click();
     const extra = view.getByTestId("question").filter({ hasText: "메모를 추가할까요?" });
     await extra.getByRole("button", { name: "답하지 않고 닫기" }).click();
     const answer = view.getByTestId("msg-assistant").last();
     await expect(answer).toContainText("질문 답변 확인");
     const firstPid = await pid();
-    const activity = answer.getByTestId("msg-cli-activity");
-    await openDetails(activity);
-    await expect(activity.getByRole("dialog")).toContainText("완료");
-    await page.keyboard.press("Escape");
+    await expect(answer).not.toContainText("도구 활동");
 
     const changes = await apiCall<FileChange[]>("GET", `${sessionApi}/file-changes`);
     expect(changes.map(({ path, op }) => [path, op])).toEqual([

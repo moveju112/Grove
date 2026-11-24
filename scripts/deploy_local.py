@@ -16,7 +16,8 @@
 로컬 반영 뒤에는 같은 패키지의 웹 자산을 Cloudflare Pages(폰이 여는 공개 주소)에도 배포하고 실제 제공 자산을 대조한다.
 """
 import argparse
-from contextlib import closing
+from contextlib import closing, contextmanager
+import fcntl
 import hashlib
 import json
 import os
@@ -363,7 +364,7 @@ def queue_deployment(archive, receipt, manifest, turn_id, skip_pages):
     check_archive(frozen, receipt)
     request = {"archive": frozen, "receipt": receipt, "manifest": manifest, "turn_id": turn_id,
                "previous_release": Path(INSTALL, "current").read_text().strip(), "skip_pages": skip_pages, "unit": unit}
-    request["continuation_id"] = reserve_deployment_report(turn_id, unit)
+    request["continuation_id"] = reserve_deployment_report(turn_id, unit) if turn_id else None
     write(os.path.join(directory, "request.json"), json.dumps(request, indent=2) + "\n", mode=0o600)
     deployment_state(directory, "waiting_for_turn", unit=unit)
     log = os.path.join(directory, "deployment.log")
@@ -386,7 +387,7 @@ def wait_for_deployment(request, timeout=1800):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         try:
-            status = turn_status(request["turn_id"])
+            status = turn_status(request["turn_id"]) if request["turn_id"] else "completed"
             if status not in ("queued", "running", "awaiting_approval", "completed"):
                 return "caller_not_completed"
             if status == "completed" and work_matches(update_readiness(), 0):
@@ -395,6 +396,19 @@ def wait_for_deployment(request, timeout=1800):
             pass
         time.sleep(2)
     return "idle_timeout"
+
+
+@contextmanager
+def published_target(manifest):
+    """같은 호스트의 릴리즈 전환과 대기 요청의 최신 대상 선정을 직렬화한다."""
+    if not manifest.get("published_tag"):
+        yield None
+        return
+    directory = Path(INSTALL, "deployments")
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (directory / "published.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        yield directory / "published-target"
 
 
 def resume_deployment(directory):
@@ -407,14 +421,19 @@ def resume_deployment(directory):
             report_deployment(directory, request, "deferred", reason=reason)
             return 3
         expected = f"{request['manifest']['version']}-{request['receipt']['archive_sha256'][:12]}"
-        current = Path(INSTALL, "current").read_text().strip()
-        if current not in (request["previous_release"], expected):
-            deployment_state(directory, "deferred", reason="operating_release_changed")
-            report_deployment(directory, request, "deferred", reason="operating_release_changed")
-            return 3
-        check_archive(request["archive"], request["receipt"])
-        deployment_state(directory, "applying")
-        deploy_prepared(request["archive"], request["receipt"], request["manifest"], skip_pages=request["skip_pages"])
+        with published_target(request["manifest"]) as target:
+            if target and target.read_text().strip() != expected:
+                deployment_state(directory, "deferred", reason="superseded_by_release")
+                report_deployment(directory, request, "deferred", reason="superseded_by_release")
+                return 3
+            current = Path(INSTALL, "current").read_text().strip()
+            if current not in (request["previous_release"], expected):
+                deployment_state(directory, "deferred", reason="operating_release_changed")
+                report_deployment(directory, request, "deferred", reason="operating_release_changed")
+                return 3
+            check_archive(request["archive"], request["receipt"])
+            deployment_state(directory, "applying")
+            deploy_prepared(request["archive"], request["receipt"], request["manifest"], skip_pages=request["skip_pages"])
         deployment_state(directory, "applied", release=expected, pages=None if request["skip_pages"] else PAGES_ORIGIN)
         report_deployment(directory, request, "applied", release=expected, pages=None if request["skip_pages"] else PAGES_ORIGIN)
         return 0
@@ -587,17 +606,27 @@ def main():
     current = Path(INSTALL, "current")
     # 빌드는 수 분 걸린다. 그 사이 호출 턴이 끝나도 인계할 수 있도록 실행 중일 때 먼저 식별한다.
     caller = deployment_caller() if not a.force and current.exists() else None
-    archive, receipt, manifest = package()
+    apply_package(*package(), caller, force=a.force, skip_pages=a.skip_pages)
+
+
+def apply_package(archive, receipt, manifest, caller, *, force=False, skip_pages=False, wait_if_busy=False):
+    current = Path(INSTALL, "current")
     expected = f"{manifest['version']}-{receipt['archive_sha256'][:12]}"
-    if caller and current.read_text().strip() != expected:
-        state = handoff_state(caller)
-        if state == "handoff":
-            queue_deployment(archive, receipt, manifest, caller.turn_id, a.skip_pages)
+    with published_target(manifest) as target:
+        if target:
+            write(str(target), expected, mode=0o600)
+        if caller and current.read_text().strip() != expected:
+            state = handoff_state(caller)
+            if state == "handoff":
+                queue_deployment(archive, receipt, manifest, caller.turn_id, skip_pages)
+                return
+            if state == "caller_ended":
+                print("배포를 요청한 대화가 취소·실패·중단되어 적용하지 않습니다. 운영 서버는 유지됩니다", file=sys.stderr)
+                sys.exit(3)
+        if wait_if_busy and current.exists() and current.read_text().strip() != expected and not work_matches(update_readiness(), 0):
+            queue_deployment(archive, receipt, manifest, caller.turn_id if caller else None, skip_pages)
             return
-        if state == "caller_ended":
-            print("배포를 요청한 대화가 취소·실패·중단되어 적용하지 않습니다. 운영 서버는 유지됩니다", file=sys.stderr)
-            sys.exit(3)
-    deploy_prepared(archive, receipt, manifest, force=a.force, skip_pages=a.skip_pages)
+        deploy_prepared(archive, receipt, manifest, force=force, skip_pages=skip_pages)
 
 
 def deploy_prepared(archive, receipt, manifest, force=False, skip_pages=False):

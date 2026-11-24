@@ -22,6 +22,15 @@ pub struct RecentItem {
     pub kind: String,
     pub project_id: String,
     pub project_name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub project_icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icon_color: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icon_photo_sha256: Option<String>,
     pub resource_id: String,
     pub title: String,
     pub last_access_at: String,
@@ -56,7 +65,7 @@ const RCOLS: &str = "r.id, r.kind, r.project_id, p.name, r.resource_id, r.title,
     COALESCE((SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'assistant' \
         AND m.rewound_at IS NULL AND m.history_has_text=1 \
         ORDER BY m.seq DESC LIMIT 1), s.created_at, r.last_access_at), \
-    recent_turn.status, recent_turn.id, recent_request.seq";
+    recent_turn.status, recent_turn.id, recent_request.seq, p.icon, p.icon_color, p.icon_photo_sha256";
 
 const RFROM: &str = "FROM recent_items r JOIN projects p ON p.id = r.project_id \
     LEFT JOIN sessions s ON r.kind = 'session' AND s.id = r.resource_id \
@@ -117,6 +126,9 @@ fn recent_from_row(r: &Row) -> rusqlite::Result<RecentItem> {
         kind,
         project_id: r.get(2)?,
         project_name: r.get(3)?,
+        project_icon: r.get(26)?,
+        icon_color: r.get(27)?,
+        icon_photo_sha256: r.get(28)?,
         resource_id: r.get(4)?,
         title: r.get(19)?,
         last_activity_at: r.get(22)?,
@@ -273,8 +285,15 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
     let page = app
         .db
         .call(move |c| {
+            // 숨김 해제·실행 상태·읽음은 아래에서 판정하되, 해당될 수 없는 행은 조인 전에 제외한다.
+            let candidates = match filter.as_str() {
+                "pinned" => " AND r.pinned != 0",
+                "hidden" => " AND r.hidden != 0",
+                "running" | "awaiting_approval" | "awaiting_input" | "unread" => " AND r.kind = 'session'",
+                _ => "",
+            };
             let sql = format!(
-                "SELECT {RCOLS} {RFROM} WHERE r.kind != 'terminal' AND (?1 IS NULL OR r.project_id = ?1)"
+                "SELECT {RCOLS} {RFROM} WHERE r.kind != 'terminal'{candidates} AND (?1 IS NULL OR r.project_id = ?1)"
             );
             let mut st = c.prepare(&sql)?;
             let mut filtered = Vec::new();
@@ -283,7 +302,6 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<RecentQ
                 let matches_status = match filter.as_str() {
                     "hidden" => i.hidden,
                     _ if i.hidden => false,
-                    "pinned" => i.pinned,
                     "running" => i.status == "running",
                     "awaiting_approval" => i.status == "awaiting_approval",
                     "awaiting_input" => i.status == "awaiting_input",
@@ -355,7 +373,11 @@ pub async fn update(
             ],
         )?;
         let item = get_recent(tx, &id)?;
-        events::append(tx, now, "recent.updated", Some(&item.project_id), None, &serde_json::to_value(&item)?)?;
+        let mut event = serde_json::to_value(&item)?;
+        if item.kind == "session" && item.pinned != cur.pinned {
+            event["session_pin_changed"] = json!(true);
+        }
+        events::append(tx, now, "recent.updated", Some(&item.project_id), None, &event)?;
         Ok((StatusCode::OK, serde_json::to_value(item)?))
     })
     .await

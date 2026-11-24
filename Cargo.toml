@@ -62,6 +62,10 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 rusqlite = { version = "0.37", features = ["bundled", "backup", "functions"] }
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "stream", "json", "blocking"] }
 
+[profile.test]
+debug = "line-tables-only"
+incremental = false
+
 [profile.release]
 lto = "thin"
 codegen-units = 4

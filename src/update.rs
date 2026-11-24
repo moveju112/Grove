@@ -25,8 +25,9 @@ use std::time::{Duration, Instant};
 
 const B64: base64::engine::GeneralPurpose = base64::engine::general_purpose::STANDARD;
 
-/// 빌드에 내장하는 신뢰 키. 실제 배포 서명 키는 소유자가 만들어 넣는다(비어 있으면 설치 시 `--trust-key` 필요).
-const BUILTIN_KEYS: &[(&str, &str)] = &[];
+/// 공식 릴리즈 서명자의 Ed25519 공개키.
+const BUILTIN_KEYS: &[(&str, &str)] = &[("674f00fcff73adba", "3B4sJL9D7lN+z2cp/7NT8x/4gKICzuGliLBWV0MxgGw=")];
+pub const STABLE_MANIFEST: &str = "https://github.com/moveju112/Grove/releases/latest/download/release.json";
 
 // ---------- 공통 ----------
 
@@ -180,6 +181,9 @@ pub fn verify_manifest(text: &str, trust: &mut Trust) -> Result<Release, String>
     if r.product != "grove" {
         return Err(format!("다른 제품의 manifest입니다: {}", r.product));
     }
+    if r.artifacts.values().any(|a| a.size == 0 || a.sha256.len() != 64 || !a.sha256.bytes().all(|b| b.is_ascii_hexdigit())) {
+        return Err("배포 파일의 크기 또는 SHA256 형식이 올바르지 않습니다".into());
+    }
     for k in &r.rotate_keys {
         if !trust.keys.iter().any(|x| x.key_id == k.key_id) {
             trust.keys.push(k.clone());
@@ -191,6 +195,10 @@ pub fn verify_manifest(text: &str, trust: &mut Trust) -> Result<Release, String>
         }
     }
     Ok(r)
+}
+
+pub fn verify_published(text: &str) -> Result<Release, String> {
+    verify_manifest(text, &mut running_trust()?)
 }
 
 pub fn sign_release(release: &Value, keys: &[SigningKey]) -> Value {
@@ -232,8 +240,8 @@ impl Install {
     pub fn cfg(&self) -> Result<InstallCfg, String> {
         read_json(&self.root.join("install.json"))
     }
-    pub fn trust(&self) -> Trust {
-        read_json::<Trust>(&self.root.join("trusted-keys.json")).unwrap_or_default().with_builtin()
+    pub fn trust(&self) -> Result<Trust, String> {
+        read_json::<Trust>(&self.root.join("trusted-keys.json")).map(Trust::with_builtin)
     }
     fn save_trust(&self, t: &Trust) -> Result<(), String> {
         write_atomic(&self.root.join("trusted-keys.json"), &serde_json::to_vec_pretty(t).unwrap())
@@ -545,7 +553,9 @@ fn fetch(src: &str, dest: &Path) -> Result<(), String> {
     if src.starts_with("http://") || src.starts_with("https://") {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
         let bytes = rt.block_on(async {
-            let r = reqwest::get(src).await.map_err(|e| e.to_string())?;
+            let client = reqwest::Client::builder().user_agent("Grove updater")
+                .timeout(Duration::from_secs(120)).build().map_err(|e| e.to_string())?;
+            let r = client.get(src).send().await.map_err(|e| e.to_string())?;
             if !r.status().is_success() {
                 return Err(format!("다운로드 실패: HTTP {}", r.status()));
             }
@@ -597,15 +607,18 @@ pub fn check(root: &Path, manifest_src: &str) -> Result<Value, String> {
     let cur = inst.pointer("current").ok_or("설치되어 있지 않습니다(`grove install`)")?;
     let cm = inst.release_manifest(&cur)?;
     let cv = cm["version"].as_str().unwrap_or("0");
-    let out = inspect_manifest(&inst, manifest_src, cv, None)?;
+    let out = inspect_manifest(&inst, manifest_src, cv, (manifest_src == STABLE_MANIFEST).then_some("stable"))?;
     inst.set_state(if out["kind"] == "upgrade" && out["artifact"] == true { "available" } else { "idle" }, out["available"].as_str(), out.clone());
     Ok(out)
 }
 
 // CLI와 설정 화면은 같은 서명·제품·버전 비교 경로를 쓴다. 설정 조회는 설치 상태를 쓰지 않는다.
 fn inspect_manifest(inst: &Install, manifest_src: &str, cv: &str, channel: Option<&str>) -> Result<Value, String> {
-    let mut trust = inst.trust();
-    let r = verify_manifest(&read_source(manifest_src)?, &mut trust)?;
+    inspect_release(inst.trust()?, &read_source(manifest_src)?, cv, channel)
+}
+
+fn inspect_release(mut trust: Trust, text: &str, cv: &str, channel: Option<&str>) -> Result<Value, String> {
+    let r = verify_manifest(text, &mut trust)?;
     if channel.is_some_and(|c| c != r.channel) {
         return Err("선택한 업데이트 채널과 manifest 채널이 다릅니다".into());
     }
@@ -716,8 +729,8 @@ struct SettingsSource {
 
 /// 서버 관리자가 로컬에 준비한 서명 manifest만 확인한다. API에서 URL·경로·신뢰 키를 받지 않는다.
 /// 외부 릴리스 서버 접근, 패키지 다운로드, 설치 상태 변경은 하지 않는다.
-fn local_settings_check(data_dir: &Path, channel: UpdateChannel) -> Result<Value, &'static str> {
-    let source: SettingsSource = read_json(&data_dir.join("update-source.json")).map_err(|_| "local_source_unavailable")?;
+fn local_settings_check(config: &Path, channel: UpdateChannel) -> Result<Value, &'static str> {
+    let source: SettingsSource = read_json(config).map_err(|_| "local_source_unavailable")?;
     let manifest = source.manifests.get(channel.name()).ok_or("channel_source_unavailable")?;
     if !source.root.is_absolute() || !manifest.is_absolute() {
         return Err("local_source_required");
@@ -726,9 +739,55 @@ fn local_settings_check(data_dir: &Path, channel: UpdateChannel) -> Result<Value
         .map_err(|_| "manifest_check_failed")
 }
 
-pub fn check_settings(c: &rusqlite::Connection, data_dir: &Path, revision: i64, now: &str) -> crate::error::ApiResult<Value> {
+/// 관리자가 명시한 오프라인 미러 외에는 Grove의 공식 릴리즈만 조회한다.
+pub async fn published_release(mirror: Option<PathBuf>, channel: UpdateChannel) -> Result<Value, &'static str> {
+    if let Some(config) = mirror {
+        return tokio::task::spawn_blocking(move || local_settings_check(&config, channel))
+            .await.map_err(|_| "manifest_check_failed")?;
+    }
+    let client = reqwest::Client::builder().user_agent("Grove updater").https_only(true)
+        .timeout(Duration::from_secs(12)).build().map_err(|_| "release_unavailable")?;
+    let url = match channel {
+        UpdateChannel::Stable => STABLE_MANIFEST.to_owned(),
+        UpdateChannel::Beta => {
+            // GitHub의 latest는 prerelease를 제외한다. beta는 게시 순서로 첫 prerelease를 찾는다.
+            let mut page = 1;
+            loop {
+                let rows: Vec<Value> = client.get(format!("https://api.github.com/repos/moveju112/Grove/releases?per_page=100&page={page}"))
+                    .send().await.and_then(|r| r.error_for_status()).map_err(|_| "release_unavailable")?
+                    .json().await.map_err(|_| "release_unavailable")?;
+                if let Some(tag) = rows.iter().find(|r| r["draft"] == false && r["prerelease"] == true)
+                    .and_then(|r| r["tag_name"].as_str()) {
+                    if !tag.starts_with('v') || !tag.bytes().all(|b| b.is_ascii_alphanumeric() || b".-+".contains(&b)) {
+                        return Err("manifest_check_failed");
+                    }
+                    break format!("https://github.com/moveju112/Grove/releases/download/{tag}/release.json");
+                }
+                if rows.len() < 100 { return Err("channel_source_unavailable"); }
+                page += 1;
+            }
+        }
+    };
+    let response = client.get(url).send().await.and_then(|r| r.error_for_status()).map_err(|_| "release_unavailable")?;
+    let text = response.text().await.map_err(|_| "release_unavailable")?;
+    let trust = running_trust().map_err(|_| "manifest_check_failed")?;
+    inspect_release(trust, &text, crate::VERSION, Some(channel.name())).map_err(|_| "manifest_check_failed")
+}
+
+// 설치된 데몬은 updater와 같은 키 회전·폐기 기록을 따른다. 독립 실행은 내장 키를 사용한다.
+fn running_trust() -> Result<Trust, String> {
+    let exe = std::env::current_exe().ok();
+    if let Some(releases) = exe.as_deref().and_then(Path::parent).and_then(Path::parent)
+        && releases.file_name().is_some_and(|n| n == "releases")
+        && let Some(root) = releases.parent() {
+        return Install { root: root.to_owned() }.trust();
+    }
+    Ok(Trust::default().with_builtin())
+}
+
+pub fn check_settings(c: &rusqlite::Connection, revision: i64, now: &str, release: Result<Value, &'static str>) -> crate::error::ApiResult<Value> {
     let s = require_revision(c, revision)?;
-    let result = match local_settings_check(data_dir, s.channel) {
+    let result = match release {
         Ok(release) => json!({
             "status": if release["kind"] == "upgrade" { "available" } else { "up_to_date" },
             "release": release,
@@ -759,8 +818,11 @@ pub fn apply(root: &Path, manifest_src: &str, o: &ApplyOpts) -> Result<Value, St
         return Err("다른 업데이트가 진행 중입니다(update.lock)".into());
     }
     let id = crate::util::new_id();
-    let mut trust = inst.trust();
+    let mut trust = inst.trust()?;
     let r = verify_manifest(&read_source(manifest_src)?, &mut trust)?;
+    if manifest_src == STABLE_MANIFEST && r.channel != "stable" {
+        return Err("정식 릴리즈 채널이 아닙니다".into());
+    }
     let cur = inst.pointer("current").ok_or("설치되어 있지 않습니다")?;
     let cm = inst.release_manifest(&cur)?;
     let from = cm["version"].as_str().unwrap_or("0").to_string();
@@ -990,7 +1052,7 @@ pub fn status(root: &Path) -> Result<Value, String> {
         "current": cur, "previous": inst.pointer("previous"),
         "installed_version": cm.as_ref().map(|m| m["version"].clone()),
         "running": health(&inst), "state": inst.state(), "platform": platform(),
-        "trusted_keys": inst.trust().keys.iter().map(|k| k.key_id.clone()).collect::<Vec<_>>(),
+        "trusted_keys": inst.trust()?.keys.iter().map(|k| k.key_id.clone()).collect::<Vec<_>>(),
     }))
 }
 

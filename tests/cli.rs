@@ -1,5 +1,8 @@
 //! 실제 실행 파일의 명령행 계약(ARCH-007 일부)과 snapshot/restore(DB-016/017).
 
+#[cfg(unix)]
+#[path = "common/cli_process.rs"]
+mod cli_process;
 use std::process::Command;
 
 fn grove() -> Command {
@@ -92,32 +95,19 @@ fn signals_take_the_same_graceful_shutdown_path() {
     for (sig, cause) in [("INT", "Interrupt"), ("TERM", "Terminate"), ("HUP", "ConsoleClosed")] {
         let d = tempfile::tempdir().unwrap();
         let data = d.path().join("data");
-        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let listen = format!("127.0.0.1:{port}");
-        let server = grove()
-            .args(["serve", "--data-dir"])
-            .arg(&data)
-            .args(["--listen", &listen])
-            .env("NO_COLOR", "1")
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .unwrap();
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
-        loop {
-            let out = grove().args(["doctor", "--data-dir"]).arg(&data).args(["--listen", &listen]).output().unwrap();
-            if json_out(&out)["api"]["status"] == "ready" {
-                break;
-            }
-            assert!(std::time::Instant::now() < deadline, "서버 준비 시간 초과");
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
+        let mut cmd = grove();
+        cmd.args(["serve", "--data-dir"]).arg(&data)
+            .args(["--listen", "127.0.0.1:0", "--json"])
+            .env("NO_COLOR", "1").env("GROVE_LOG", "info");
+        let mut server = cli_process::Running::spawn(cmd);
+        let ready: serde_json::Value = serde_json::from_str(&server.ready(true)).unwrap();
+        assert_eq!(ready["ready"], true);
         let st = Command::new("kill").args(["-s", sig, &server.id().to_string()]).status().unwrap();
         assert!(st.success());
         let started = std::time::Instant::now();
-        let out = server.wait_with_output().unwrap();
-        let log = format!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        assert!(out.status.success(), "SIG{sig}: 정상 종료 코드여야 한다: {:?}\n{log}", out.status);
+        let (status, stdout, stderr) = server.finish();
+        let log = format!("{stdout}{stderr}");
+        assert!(status.success(), "SIG{sig}: 정상 종료 코드여야 한다: {status:?}\n{log}");
         assert!(started.elapsed() < std::time::Duration::from_secs(10), "SIG{sig}: 종료가 늦다");
         assert!(log.contains(cause), "SIG{sig}: 종료 원인 기록: {log}");
         assert!(log.contains("서버 종료 완료"), "SIG{sig}: 정리 경로 완료: {log}");

@@ -23,7 +23,9 @@ export const chatLayout = stylex.create({
     },
     turnErrorMeta: { flexShrink: 0, whiteSpace: "nowrap" },
     turnErrorRetry: { flexShrink: 0, marginInlineStart: "auto" },
-    sessionTitle: { flexShrink: 0, maxWidth: "60%" },
+    historyTitle: { maxWidth: "100%", minWidth: 0 },
+    historyText: { whiteSpace: "normal", overflowWrap: "anywhere", textAlign: "start" },
+    historyPreview: { borderInlineStart: "2px solid var(--line-strong)" },
     sessionPreview: { flexGrow: 1, flexBasis: 0, minWidth: 0 },
     messages: { flexGrow: 1, alignSelf: "center" },
     surface: {

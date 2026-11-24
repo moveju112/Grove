@@ -8,7 +8,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 
 export type MobilePanel = "left" | "right";
 type Drag = { side: MobilePanel; progress: number };
-const PANEL_SWIPE_SURFACE = '[data-ui="workspace-header"], [data-testid="session-view"] [data-ui="workbench-main"], [data-testid="project-view"] [data-ui="workbench-main"]';
+const PANEL_SWIPE_SURFACE = '[data-ui="workspace-header"], [data-testid="empty-pane"], [data-testid="session-view"] [data-ui="workbench-main"], [data-testid="project-view"] [data-ui="workbench-main"]';
 const SWIPE_SLOP = 8;
 
 // 표 안에 그 방향으로 더 읽을 내용이 있으면 터치를 브라우저에 맡긴다.
@@ -19,7 +19,7 @@ function canScrollTable(node: Element, dx: number) {
     return dx > 0 ? left > 1 : left < range - 1;
 }
 
-// 상단 바·채팅 본문에서는 양방향, 그 외에는 가장자리에서 연다. 세로 스크롤·편집·텍스트 선택은 보존한다.
+// 상단 바·빈 탭·채팅 본문에서는 양방향, 그 외에는 가장자리에서 연다. 세로 스크롤·편집·텍스트 선택은 보존한다.
 export function useMobilePanels(enabled: boolean) {
     const [panel, setPanel] = useState<MobilePanel | null>(null);
     const [drag, setDrag] = useState<Drag | null>(null);

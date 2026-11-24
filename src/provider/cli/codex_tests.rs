@@ -115,7 +115,7 @@ async fn invalid_and_symlink_escape_previews_are_reported_without_importing_cont
 
 #[test]
 fn context_usage_uses_latest_request_instead_of_billing_totals_and_can_shrink() {
-    let mut state = State { thread: "thread".into(), turn: Some("turn".into()), ..State::default() };
+    let mut state = State { thread: "thread".into(), turn: Some("turn".into()), usage_baseline: Some(Usage::default()), ..State::default() };
     let event = |thread, turn, tokens, window| json!({"method":"thread/tokenUsage/updated","params":{
         "threadId":thread,"turnId":turn,"tokenUsage":{
             "total":{"inputTokens":900_000,"outputTokens":100_000},
@@ -552,7 +552,7 @@ pub(crate) fn live_app(root: &std::path::Path) -> (crate::App, String) {
         data_dir: root.join("data"), listen: "127.0.0.1:0".parse().unwrap(),
         allowed_origins: vec![], allowed_hosts: vec![], tls_terminated: false, web_dir: None, web_base: "/".into(),
         approval_ttl_secs: 1800, scheduler_tick_ms: 100,
-        remote_watch_insecure_loopback: false, gh_command: "gh".into(), internal_exe: None,
+        remote_watch_insecure_loopback: false, gh_command: "gh".into(), release_mirror: None, internal_exe: None,
     };
     std::fs::create_dir_all(&cfg.data_dir).unwrap();
     let app = crate::App::new(cfg, std::sync::Arc::new(crate::util::SystemClock)).unwrap();
@@ -669,7 +669,7 @@ async fn lost_native_steer_ack_is_unknown_after_restart_and_never_automatically_
 #[tokio::test]
 async fn real_process_streams_deltas_before_completion_and_preserves_resume_settings_and_images() {
     use base64::Engine;
-    for resume in [None, Some("existing-exec-thread")] {
+    for resume in [None, Some("existing-exec-thread"), Some("no-usage-replay")] {
         let dir = tempfile::tempdir().unwrap();
         let mut req = request(dir.path(), resume, "current user");
         let mut image = std::io::Cursor::new(Vec::new());
@@ -737,6 +737,7 @@ async fn real_process_streams_deltas_before_completion_and_preserves_resume_sett
             (100, 5, 60)
         );
         assert_eq!(output.usage.reasoning_tokens, Some(3));
+        assert_eq!(output.usage.cache_write_tokens, Some(2));
         assert_eq!(output.finish_reason, "stop");
         let wire = wire(dir.path());
         assert_eq!(
@@ -759,8 +760,8 @@ async fn real_process_streams_deltas_before_completion_and_preserves_resume_sett
         assert_eq!(thread["sandbox"], "danger-full-access");
         assert_eq!(thread["model"], "fixture-model");
         assert_eq!(thread["serviceTier"], "priority");
-        if resume.is_some() {
-            assert_eq!(thread["threadId"], "existing-exec-thread");
+        if let Some(id) = resume {
+            assert_eq!(thread["threadId"], id);
         }
         let turn = &wire[3]["params"];
         assert_eq!(turn["effort"], "xhigh");

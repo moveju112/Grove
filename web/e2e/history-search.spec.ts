@@ -27,7 +27,16 @@ for (const width of [1400, 390]) {
         await history.getByLabel("대화 검색").fill(word);
         const hit = history.getByTestId("search-hit");
         await expect(hit).toHaveCount(1);
-        await expect(hit).toContainText(word);
+        const snippet = hit.getByText(new RegExp(word));
+        await expect(snippet).toBeHidden();
+        await hit.getByRole("button", { name: "긴 대화 미리보기 펼치기" }).click();
+        await expect(snippet).toBeVisible();
+        await hit.getByRole("button", { name: "상단 고정", exact: true }).click();
+        await expect(hit.getByRole("button", { name: "상단 고정 해제", exact: true })).toHaveAttribute("aria-pressed", "true");
+        const pinned = await apiCall<{ items: { id: string; resource_id: string; revision: number }[] }>("GET", `/recent?project_id=${project.id}&filter=pinned`);
+        const recent = pinned.items.find((item) => item.resource_id === long.id)!;
+        await apiCall("PATCH", `/recent/${recent.id}`, { expected_revision: recent.revision, pinned: false });
+        await expect(hit.getByRole("button", { name: "상단 고정", exact: true })).toHaveAttribute("aria-pressed", "false");
         await expect(history.getByRole("button", { name: "검색되지 않을 대화", exact: true })).toHaveCount(0);
         await page.screenshot({ path: info.outputPath(`history-search-${width}.png`) });
 

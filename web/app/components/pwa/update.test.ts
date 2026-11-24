@@ -4,6 +4,11 @@ class Worker extends EventTarget {
     state = "installed";
     postMessage = vi.fn();
 }
+const release = vi.hoisted(() => vi.fn());
+vi.mock("../../api/client", async (load) => {
+    const client = await load<typeof import("../../api/client")>();
+    return { ...client, accessToken: () => "paired", api: { ...client.api, get: release } };
+});
 let pwa: typeof import("../pwa");
 let service: EventTarget & { register: ReturnType<typeof vi.fn>; controller: Worker | null };
 let registration: EventTarget & { waiting: Worker | null; installing: Worker | null; update: ReturnType<typeof vi.fn> };
@@ -13,6 +18,7 @@ vi.mock("./pendingInput", () => ({ trackPendingInput: () => undefined, hasPendin
 beforeEach(async () => {
     vi.resetModules();
     input.pending = true;
+    release.mockReset().mockResolvedValue({ newer: false });
     vi.stubEnv("DEV", false);
     vi.useFakeTimers();
     reload = vi.fn();
@@ -192,6 +198,11 @@ describe("상태 점의 수동 웹 확인", () => {
         pwa.registerServiceWorker();
         await Promise.resolve();
         await expect(pwa.checkWebUpdate()).resolves.toBe("up_to_date");
+        release.mockResolvedValueOnce({ newer: true });
+        await expect(pwa.checkWebUpdate()).resolves.toBe("published");
+        expect(release).toHaveBeenCalledWith(expect.stringContaining("/updates/web-release?version="), { requires: ["published_updates_v1"] });
+        release.mockRejectedValueOnce(new Error());
+        await expect(pwa.checkWebUpdate()).resolves.toBe("failed");
         registration.update.mockRejectedValueOnce(new Error());
         await expect(pwa.checkWebUpdate()).resolves.toBe("failed");
     });

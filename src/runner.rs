@@ -86,6 +86,10 @@ pub struct Turn {
     pub created_at: String,
     pub updated_at: String,
     pub finished_at: Option<String>,
+    /// 완료 이벤트에만 포함하는 최종 답변 미리보기.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub completion_preview: Option<String>,
     #[ts(type = "unknown")]
     pub definition: Value,
     /// 실패·중단된 요청을 사용자가 확인(포기·다시 실행)한 시각(RUN-019). null이면 아직 확인 전.
@@ -144,6 +148,7 @@ fn turn_row(r: &Row) -> rusqlite::Result<(Turn, String)> {
             created_at: r.get(11)?,
             updated_at: r.get(12)?,
             finished_at: r.get(13)?,
+            completion_preview: None,
             definition: def,
             acknowledged_at: r.get(16)?,
             evidence: read_evidence(r.get(17)?),
@@ -177,7 +182,15 @@ fn emit_turn_queue(c: &Connection, now: &str, turn_id: &str, queue: Option<crate
 }
 
 fn emit_turn(c: &Connection, now: &str, turn_id: &str) -> ApiResult<Turn> {
-    let t = get_turn(c, turn_id)?;
+    let mut t = get_turn(c, turn_id)?;
+    if t.status == "completed" {
+        // 채팅과 같은 마지막 응답 조각을 고른다. text에는 CLI의 진행 설명도 합쳐져 있다.
+        t.completion_preview = c.query_row(
+            "SELECT COALESCE(json_extract(content,'$.response_parts[#-1]'), json_extract(content,'$.text'))
+             FROM message_history WHERE turn_id=?1 AND role='assistant' AND rewound_at IS NULL ORDER BY seq DESC LIMIT 1",
+            [turn_id], |row| row.get::<_, Option<String>>(0),
+        ).optional()?.flatten().map(|text| text.trim().chars().take(160).collect::<String>()).filter(|s| !s.is_empty());
+    }
     let pid = project_of(c, &t.session_id)?;
     events::append(c, now, "turn.updated", Some(&pid), Some(&t.session_id), &serde_json::to_value(&t)?)?;
     crate::agents::on_turn_changed(c, now, turn_id)?;
@@ -523,6 +536,7 @@ pub fn system_prompt(def: &Value, project_root: &str, tools_enabled: bool) -> St
             .into(),
     );
     let mut env = format!("# Environment\nProject root: {project_root}\n");
+    env.push_str("When citing a known project file, use a Markdown link to its verified full path inside the project, including any subdirectories. Leave ambiguous filenames as plain text.\n");
     if tools_enabled {
         env.push_str("Paths in tool arguments are relative to the project root. Mutating tools (write, edit, shell) wait for the user's approval.\n");
     }
@@ -785,8 +799,13 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
             end_cancelled(app, turn_id, None).await;
             return session_for_partial;
         }
+        let provider_timeout = input.profile.timeout;
+        let with_settings = |mut error: Value| {
+            error["settings"] = json!({ "provider_timeout_secs": provider_timeout.as_secs() });
+            error
+        };
         if input.deadline.is_some_and(|d| d <= time::OffsetDateTime::now_utc()) {
-            fail(app, turn_id, json!({"code":"time_budget_exceeded","message":"요청 시간 예산을 넘었습니다"})).await;
+            fail(app, turn_id, with_settings(json!({"code":"time_budget_exceeded","message":"요청 시간 예산을 넘었습니다"}))).await;
             return session_for_partial;
         }
         // 첫 모델 호출 전 자동 압축(CTX-004). 압축하면 이력이 바뀌므로 다시 불러온다.
@@ -803,7 +822,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 return session_for_partial;
             }
             Err(e) => {
-                fail(app, turn_id, json!({ "code":e.code, "message":e.message })).await;
+                fail(app, turn_id, with_settings(json!({ "code":e.code, "message":e.message }))).await;
                 return session_for_partial;
             }
         }
@@ -1086,8 +1105,7 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                 }
                 let mut error = e.to_json();
                 error["last_progress_at"] = json!(last_progress_at);
-                error["settings"] = json!({ "provider_timeout_secs": input.profile.timeout.as_secs() });
-                fail(app, turn_id, error).await;
+                fail(app, turn_id, with_settings(error)).await;
                 return session_for_partial;
             }
         };
@@ -1651,7 +1669,7 @@ pub(crate) fn enqueue_with_attachments(
     let profile=crate::models::get_enabled_profile(tx, profile_id)?;
     let managed_cli = provider::cli::is_cli(&profile.protocol)
         && source.is_some_and(|s| s["limits"].is_object());
-    let inherited_tools = source.is_some_and(|s| matches!(s["kind"].as_str(), Some("retry" | "followup" | "continuation" | "agent_run"))
+    let inherited_tools = source.is_some_and(|s| matches!(s["kind"].as_str(), Some("retry" | "continuation" | "agent_run"))
         || (s["kind"] == "bot_room" && s["room_dispatch"].is_string()));
     let tools = if inherited_tools && !managed_cli && profile.capabilities.tools == Some(false) {
         false

@@ -44,6 +44,7 @@ export const workspaceStyles = stylex.create({
     recentList: { rowGap: 0 },
     recentRow: { minHeight: RECENT_ROW_HEIGHT, paddingBlock: 0 },
     recentRowControl: { height: RECENT_ROW_HEIGHT, minHeight: RECENT_ROW_HEIGHT, paddingBlock: 0 },
+    recentTitleContent: { minWidth: 0 },
     recentTitle: { paddingInlineEnd: "var(--spacing-1)" },
     recentActions: { flexShrink: 0 },
     recentClose: { minWidth: "var(--spacing-8)", paddingInline: 0 },

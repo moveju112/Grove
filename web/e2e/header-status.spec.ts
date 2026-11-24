@@ -57,6 +57,7 @@ test("웹 확인은 최신과 새 버전을 구분하며 빈 탭도 새로고침
     const original = readFileSync(sw, "utf8");
     try {
         await login(page);
+        await page.route("**/api/v1/updates/web-release?*", route => route.fulfill({ json: { newer: false, version: "0.1.0" } }));
         await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
         await page.getByRole("button", { name: "업데이트 확인", exact: true }).hover();
         const panel = page.getByRole("dialog", { name: "업데이트 확인", exact: true });

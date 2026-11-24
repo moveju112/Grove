@@ -71,7 +71,7 @@ async fn deliver(app: &App, client: &reqwest::Client) -> ApiResult<()> {
         c.execute("DELETE FROM web_push_tests WHERE created_at<?1",[retention])?;
         c.execute("DELETE FROM web_push_outbox WHERE created_at<?1 OR attempts>=6",[seconds-3600])?;
         let jobs = {
-        let mut st=c.prepare("SELECT o.endpoint,o.event_key,o.payload,s.p256dh,grove_decrypt(s.auth),s.scope,s.server,s.vibrate,o.attempts FROM web_push_outbox o
+        let mut st=c.prepare("SELECT o.endpoint,o.event_key,grove_decrypt(o.payload),s.p256dh,grove_decrypt(s.auth),s.scope,s.server,s.vibrate,o.attempts FROM web_push_outbox o
             JOIN web_push_subscriptions s ON s.endpoint=o.endpoint WHERE next_attempt<=?1 ORDER BY created_at,event_key LIMIT 8")?;
         st.query_map([seconds],|r|Ok(Job {endpoint:r.get(0)?,event:r.get(1)?,payload:r.get(2)?,public:r.get(3)?,auth:r.get(4)?,scope:r.get(5)?,server:r.get(6)?,vibrate:r.get(7)?,attempts:r.get(8)?}))?.collect::<rusqlite::Result<Vec<_>>>()?
         };
@@ -165,7 +165,7 @@ async fn transport(
         .post(url)
         .header("Authorization", authorization)
         .header("TTL", "3600")
-        .header("Urgency", "normal")
+        .header("Urgency", "high")
         .header("Content-Encoding", "aes128gcm")
         .header("Content-Type", "application/octet-stream")
         .body(body)
@@ -240,6 +240,7 @@ mod tests {
                  body: Bytes| async move {
                     assert_eq!(headers["content-encoding"], "aes128gcm");
                     assert_eq!(headers["ttl"], "3600");
+                    assert_eq!(headers["urgency"], "high");
                     assert_eq!(
                         headers["authorization"],
                         "vapid t=isolated-test-token, k=isolated-test-key"

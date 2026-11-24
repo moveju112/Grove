@@ -57,12 +57,12 @@ export function projectStatus(statuses: Record<string, number>): string {
         ?? (Object.values(statuses).some((count) => count > 0) ? "unknown" : "idle");
 }
 
-export async function pinSession(item: SidebarSession, pinned: boolean): Promise<void> {
+export async function pinSession(item: Pick<SidebarSession, "session" | "recent_id" | "recent_revision">, pinned: boolean): Promise<void> {
     try {
         // 아직 열지 않은 세션만 최근 항목을 만든다. 기존 핀 변경은 접근·읽음·숨김을 건드리지 않는다.
         const recent = item.recent_id === null
             ? await api.post<RecentItem>("/recent/touch", {
-                kind: "session", project_id: item.session.project_id, resource_id: item.session.id,
+                kind: "session", project_id: item.session.project_id, resource_id: item.session.id, reopen: false,
             })
             : { id: item.recent_id, revision: item.recent_revision! };
         try {
@@ -77,6 +77,8 @@ export async function pinSession(item: SidebarSession, pinned: boolean): Promise
     } finally {
         // 응답이 유실돼도 서버 값을 다시 읽는다. 실패를 낙관적 성공으로 표시하지 않는다.
         invalidate("recent");
+        invalidate(`sessions:${item.session.project_id}:history`);
+        invalidate(`search:${item.session.project_id}:history`);
     }
 }
 

@@ -88,6 +88,32 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
     });
 }
 
+test("통계 조회가 실패해도 Codex 주간 한도와 크레딧을 표시하고 다시 열면 오래된 값을 갱신한다", async ({ page }) => {
+    let remaining = 82;
+    const now = Date.now();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.clock.setFixedTime(now);
+    await page.route("**/api/v1/usage/dashboard?*", (route) => route.fulfill({
+        status: 500, json: { error: { code: "fixture_error", message: "통계 조회 실패", retryable: false } },
+    }));
+    await page.route("**/api/v1/usage/accounts", (route) => route.fulfill({ json: { accounts: [
+        { ...report.accounts[0], limits: [limit("주간", remaining),
+            { label: "크레딧", remaining_percent: null, remaining: "12.5", resets_at: null }] },
+    ] } }));
+    await login(page);
+    const panel = await openUsage(page);
+    await expect(panel.getByRole("alert")).toContainText("사용량을 불러오지 못했어요");
+    await expect(panel.getByText("18% 사용 · 82% 남음", { exact: true })).toBeVisible();
+    await expect(panel.getByText("12.5", { exact: true })).toBeVisible();
+    await expect(panel.getByRole("img", { name: /Codex CLI 5시간/ })).toHaveCount(0);
+    await page.keyboard.press("Escape");
+    await expect(panel).toBeHidden();
+    remaining = 63;
+    await page.clock.setFixedTime(now + 61_000);
+    await openUsage(page);
+    await expect(panel.getByText("37% 사용 · 63% 남음", { exact: true })).toBeVisible();
+});
+
 test("실제 계정 API는 CLI 읽기 응답만 반환하고 같은 공급자의 여러 프로필을 합친다", async ({ page }) => {
     test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "격리된 CLI fixture 필요");
     for (const name of ["quota-a", "quota-b"]) {

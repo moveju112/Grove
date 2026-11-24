@@ -1,21 +1,22 @@
 import { expect, test, type Page } from "@playwright/test";
 import { audit } from "./a11y-audit";
 import { frames } from "./fixture";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, selectChoice } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, requireToolApproval, script } from "./helpers";
 
 // UI-029: 주요 화면의 이름 없는 조작 요소·글자 대비를 테마별로 점검하고, 키보드로 주요 흐름을 조작할 수 있는지 본다.
 async function screens(page: Page, title: string) {
     const { a } = await ensureProjects();
-    await ensureProfile();
+    const profileId = await ensureProfile();
     const s = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
-    return { a, s };
+    return { a, s, profileId };
 }
 
 for (const theme of ["light", "dark", "soft"] as const) {
     test(`주요 화면에 이름 없는 조작 요소와 대비 부족 글자가 없다(${theme})`, async ({ page }) => {
         const title = `접근성 대화 ${theme} ${Date.now()}`;
-        await screens(page, title);
+        const { a, s, profileId } = await screens(page, title);
+        await requireToolApproval(a.id);
         await login(page);
         await page.evaluate((t) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme: t })), theme);
         await page.reload();
@@ -29,21 +30,16 @@ for (const theme of ["light", "dark", "soft"] as const) {
         await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
         const view = page.getByTestId("session-view");
         await script({ frames: frames.tool("w1", "write", { path: `a11y-${theme}.txt`, content: "x" }) });
-        await composerOption(view, "도구", true);
-        await composerOption(view, "보내기 방식", "model");
-        await view.getByLabel("메시지 입력").fill("파일 만들어");
-        await view.getByRole("button", { name: "보내기", exact: true }).click();
+        await apiCall("POST", `/sessions/${s.id}/turns`, { profile_id: profileId, tools: true, text: "파일 만들어" });
         await expect(view.getByTestId("approval")).toBeVisible({ timeout: 15_000 });
         await check("승인 대기 대화");
         await script({ frames: frames.tool("q1", "ask_user", { question: "어느 쪽?", options: [{ label: "A", description: "설명" }, { label: "B" }] }) });
-        await view.getByTestId("approval").getByRole("button", { name: "승인" }).first().click();
+        await view.getByTestId("approval").getByRole("button", { name: "이번만 승인", exact: true }).click();
         await expect(view.getByTestId("question")).toBeVisible({ timeout: 15_000 });
         await check("질문 대기 대화");
         await script({ frames: frames.text(["## 끝\n\n`코드`와 [링크](https://example.com)\n\n```js\nx\n```"]) });
-        await selectChoice(view.getByTestId("question").getByLabel("답변 선택"), "A");
-        await view.getByTestId("question").getByRole("button", { name: "답하기" }).click();
+        await view.getByTestId("question").getByRole("button", { name: "A", exact: true }).click();
         await expect(view.getByTestId("msg-assistant").last()).toContainText("끝", { timeout: 15_000 });
-        await composerOption(view, "도구", false);
         await check("완료된 대화");
         await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
         await check("설정");

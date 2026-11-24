@@ -19,6 +19,7 @@ import { ServerActionButton } from "./pwa/ServerActionButton";
 import { checkCompatibility, useServerBlockReason } from "./pwa/lifecycle";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Heading } from "@astryxdesign/core/Text";
+import { ProjectIcon } from "./ProjectIcon";
 import { Icon } from "./icons";
 import { Button } from "../design/Button";
 import { workspaceStyles } from "./workspace.stylex";
@@ -186,13 +187,17 @@ export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sid
                                 e.dataTransfer.effectAllowed = "copy";
                             }}
                         >
-                            <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} weight={completed ? "bold" : "normal"}>
-                                {it.pinned && <GroveText type="inherit" color="inherit" aria-label="고정됨">★ </GroveText>}
-                                {it.title}
-                                {STATUS[it.status] && <StatusBadge status={it.status}>{STATUS[it.status]}</StatusBadge>}
-                                {it.unread && it.status !== "running" && !it.completion_unread && <GroveText type="supporting" color="secondary" aria-label="읽지 않음"> ●</GroveText>}
-                                {linkedTo && <GroveText type="supporting" color="secondary" aria-label={`분할로 함께 열림: ${linkedTo}`}> ⧉</GroveText>}
-                            </GroveText>
+                            <Stack as="span" direction="horizontal" align="center" gap={1} xstyle={workspaceStyles.recentTitleContent} width="100%">
+                                <ProjectIcon size={12} project={{ id: it.project_id, name: it.project_name, icon: it.project_icon ?? null,
+                                    icon_color: it.icon_color, icon_photo_sha256: it.icon_photo_sha256 }} />
+                                <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} weight={completed ? "bold" : "normal"}>
+                                    {it.pinned && <GroveText type="inherit" color="inherit" aria-label="고정됨">★ </GroveText>}
+                                    {it.title}
+                                    {STATUS[it.status] && <StatusBadge status={it.status}>{STATUS[it.status]}</StatusBadge>}
+                                    {it.unread && it.status !== "running" && !it.completion_unread && <GroveText type="supporting" color="secondary" aria-label="읽지 않음"> ●</GroveText>}
+                                    {linkedTo && <GroveText type="supporting" color="secondary" aria-label={`분할로 함께 열림: ${linkedTo}`}> ⧉</GroveText>}
+                                </GroveText>
+                            </Stack>
                         </Button>
                     } endContent={
                         <Stack direction="horizontal" align="center" gap={0} xstyle={workspaceStyles.recentActions}>

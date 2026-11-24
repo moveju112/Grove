@@ -110,6 +110,10 @@ pub async fn get(State(app): State<App>, _p: Principal, Path(id): Path<String>, 
         })
         .await?;
     let (png, sha) = row.ok_or_else(|| ApiError::not_found("사용자 아바타가 없습니다(기본형 사용)"))?;
+    png_response(&headers, png, &sha)
+}
+
+pub(crate) fn png_response(headers: &HeaderMap, png: Vec<u8>, sha: &str) -> ApiResult<Response> {
     let etag = format!("\"{sha}\"");
     let mut res = if headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) == Some(etag.as_str()) {
         StatusCode::NOT_MODIFIED.into_response()

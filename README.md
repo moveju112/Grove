@@ -8,8 +8,8 @@ Grove는 내 개발 머신에서 실행하는 AI 코딩 작업공간입니다. �
 
 | 파일 | 설치와 실행 |
 | --- | --- |
-| `grove-0.1.0-linux-x64.tar.gz` | 압축을 풀고 `grove-0.1.0-linux-x64` 폴더에서 `./grove pairing set-password`를 실행한 뒤 `./grove serve`로 시작합니다. |
-| `grove_0.1.0-1_amd64.deb` | Debian·Ubuntu에서 `sudo apt install ./grove_0.1.0-1_amd64.deb`로 설치한 뒤 `/usr/bin/grove pairing set-password`와 `/usr/bin/grove serve`를 차례로 실행합니다. |
+| `grove-<버전>-linux-x64.tar.gz` | 압축을 푼 폴더에서 `./grove pairing set-password`를 실행한 뒤 `./grove serve`로 시작합니다. |
+| `grove_<버전>-1_amd64.deb` | Debian·Ubuntu에서 다운로드한 파일을 `sudo apt install ./파일명.deb`로 설치한 뒤 `/usr/bin/grove pairing set-password`와 `/usr/bin/grove serve`를 차례로 실행합니다. |
 
 ## 소스에서 빌드하기
 
@@ -41,6 +41,10 @@ GROVE_WEB_DIR="$PWD/web/build/client" ./target/debug/grove serve
 
 승인된 브라우저에서 프로젝트 폴더를 열고 새 대화를 시작하세요. 다른 기기를 연결할 때는 페어링 링크와 링크 비밀번호를 따로 전달하세요. 승인된 기기는 프로젝트 파일에 접근하고 명령을 실행할 수 있습니다.
 
+## 업데이트
+
+우측 상단의 초록불에서 데몬과 웹의 공식 릴리즈를 확인할 수 있습니다. 웹은 새 릴리즈가 현재 접속 주소에 배포되면 갱신됩니다. 자체 updater로 설치했다면 `grove update check --install 설치경로`와 `grove update apply --install 설치경로`를 사용하세요. Debian 패키지는 새 릴리즈의 `.deb`로 업데이트합니다.
+
 ## 개발과 운영
 
 사용자 계정의 기본 rustup 환경으로 아래 검사 스크립트를 실행할 때는 먼저 `export CARGO_HOME="${CARGO_HOME:-$HOME/.cargo}" RUSTUP_HOME="${RUSTUP_HOME:-$HOME/.rustup}"`을 실행합니다.
@@ -49,6 +53,7 @@ GROVE_WEB_DIR="$PWD/web/build/client" ./target/debug/grove serve
 | --- | --- |
 | Rust 페어링 테스트 | `python3 scripts/build.py test --rust pairing` |
 | 웹 타입 검사와 페어링 테스트 | `python3 scripts/build.py test --typecheck --vitest app/state/pairing.test.ts` |
+| 로컬 개발 머신에서 main 푸시·패치 릴리즈·즉시 반영 | 승인된 변경을 커밋한 뒤 `python3 scripts/push_release.py`. 일반 `git push`에도 연결하려면 이 checkout에서 `python3 scripts/push_release.py --install-hook`을 한 번 실행합니다. |
 | 서버·웹앱 구조와 데이터 흐름 | [아키텍처](docs/ai-rules/ARCHITECTURE.md) |
 | 배포 패키지 생성과 업데이트 | [빌드·배포 안내](docs/ai-rules/DEPLOY.md) |
 | Debian·Ubuntu 설치와 사용자 서비스 | [Debian 패키지 안내](assets/debian/README.Debian) |

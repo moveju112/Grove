@@ -3,15 +3,16 @@ import { randomUUID } from "node:crypto";
 import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Layout } from "../app/state/layout";
-import { apiCall, closeMobileSidebar, ensureProjects, login, state } from "./helpers";
+import { apiCall, closeMobileSidebar, login, state } from "./helpers";
 
 for (const theme of ["light", "dark"] as const) {
     test(`${theme}: 프로젝트 순서 드래그와 프로젝트별 분할은 탭·입력 DOM·초안·기기별 배치를 유지한다`, async ({ page }, info) => {
         await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
-        const { a, b } = await ensureProjects();
-        const c = await apiCall<{ id: string; name: string }>("POST", "/projects", {
-            root_path: mkdtempSync(join(dirname(state().projA), "z-order-")),
+        // 서로 다른 테마의 프로젝트가 이름순으로 섞여 키보드 한 칸 이동 사이에 끼지 않게 한다.
+        const createProject = (prefix: string) => apiCall<{ id: string; name: string }>("POST", "/projects", {
+            root_path: mkdtempSync(join(dirname(state().projA), `drag-${theme}-${prefix}`)),
         });
+        const [a, b, c] = await Promise.all([createProject("alpha-"), createProject("beta-"), createProject("z-order-")]);
         const device = `project-drag-${randomUUID()}`;
         const sessions = await Promise.all([a, b].map((p, i) =>
             apiCall<{ id: string; title: string }>("POST", `/projects/${p.id}/sessions`, { title: `${device}-${i}` })));
@@ -71,10 +72,17 @@ for (const theme of ["light", "dark"] as const) {
         await expect(panel(a).getByRole("tablist", { name: "열린 대화와 화면" }).getByRole("tab")).toHaveCount(1);
         await expect(panel(a).getByRole("tablist", { name: "열린 대화와 화면" })).toContainText(sessions[0]!.title);
         await expect(panel(b).getByRole("tablist", { name: "열린 대화와 화면" })).toContainText(sessions[1]!.title);
-        await view(0).getByLabel("메시지 입력").focus();
-        await expect(page.getByTestId("navigation-context")).toHaveAttribute("data-project-id", a.id);
+        const header = page.getByRole("banner").getByRole("navigation", { name: "현재 위치" });
+        for (const project of [a, b]) {
+            const tabRow = panel(project).getByRole("tablist", { name: "열린 대화와 화면" }).locator("..");
+            await expect(tabRow.getByText(project.name, { exact: true })).toHaveCount(0);
+        }
+        await view(0).getByLabel("메시지 입력").click();
+        await expect(header.getByText("Grove", { exact: true })).toBeVisible();
+        await expect(header.getByText(a.name, { exact: true })).toBeVisible();
         await view(1).getByLabel("메시지 입력").focus();
-        await expect(page.getByTestId("navigation-context")).toHaveAttribute("data-project-id", b.id);
+        await expect(header.getByText(b.name, { exact: true })).toBeVisible();
+        await expect(header.getByText(a.name, { exact: true })).toHaveCount(0);
         const linked = page.getByRole("listitem", { name: "분할로 함께 연 대화", exact: true });
         await expect(linked).toContainText(sessions[0]!.title);
         await expect(linked).toContainText(sessions[1]!.title);
@@ -96,6 +104,7 @@ for (const theme of ["light", "dark"] as const) {
         await page.screenshot({ path: info.outputPath(`project-split-${theme}-1400.png`) });
 
         await page.setViewportSize({ width: 390, height: 844 });
+        await expect(page.getByTestId("workspace")).toHaveAttribute("data-viewport-mode", "narrow");
         await closeMobileSidebar(page);
         await expect(page.getByTestId("pane").filter({ visible: true })).toHaveCount(1);
         await expect(divider).toHaveCount(0);

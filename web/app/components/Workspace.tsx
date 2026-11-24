@@ -52,7 +52,8 @@ import { MobileDrawer, useMobilePanels } from "./MobilePanels";
 import { SettingsDialog } from "./SettingsDialog";
 import { PushStatusContext, usePushSync } from "./PushNotifications";
 import { ProjectHistoryDialog } from "./ProjectHistoryDialog";
-import { ProjectRenameDialog } from "./ProjectRenameDialog";
+import { ProjectEditDialog } from "./ProjectEditDialog";
+import { ProjectIcon } from "./ProjectIcon";
 import { ComposerMemoryProvider } from "../state/useComposerMemory";
 import { hideSessionRecent } from "../state/recentPatch";
 import { LoadingBar } from "./LoadingScreen";
@@ -77,8 +78,8 @@ type LayoutActions = {
     onCloseProject?: (id: string) => void;
     onNewTerminal: (id: string) => void;
 };
-const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, projectId, projectLabel, recentReveal, onUpdate, onCloseTab, closingTabs, onOpen, onProjectDrop, onCloseProject, onNewTerminal }: LayoutActions & {
-    id: string; layout: L.Layout; visible: boolean; projects: Project[]; projectId?: string; projectLabel?: string; recentReveal?: RecentPaneReveal;
+const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, projectId, recentReveal, onUpdate, onCloseTab, closingTabs, onOpen, onProjectDrop, onCloseProject, onNewTerminal }: LayoutActions & {
+    id: string; layout: L.Layout; visible: boolean; projects: Project[]; projectId?: string; recentReveal?: RecentPaneReveal;
 }) {
     const update = useCallback((f: (layout: L.Layout) => L.Layout) => onUpdate(id, f), [id, onUpdate]);
     const open: Opener = useCallback((target, how) => onOpen(id, target, how), [id, onOpen]);
@@ -88,7 +89,7 @@ const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, p
     const newTerminal = useCallback(() => onNewTerminal(id), [id, onNewTerminal]);
     return <ComposerMemoryProvider copies={L.allTabs(layout).map((tab) => tab.id)}>
         <SplitView layout={layout} update={update} closeTab={closeTab} closingTabs={closingTabs} open={open} narrow={id.endsWith("-narrow")} visible={visible} projects={projects}
-            projectLabel={projectLabel} recentReveal={recentReveal} onProjectDrop={drop} onCloseProject={onCloseProject ? close : undefined}
+            recentReveal={recentReveal} onProjectDrop={drop} onCloseProject={onCloseProject ? close : undefined}
             projectId={projectId} onNewTerminal={newTerminal} />
     </ComposerMemoryProvider>;
 });
@@ -215,14 +216,14 @@ export function Workspace() {
     const [folderMoveError, setFolderMoveError] = useState<string | null>(null);
     const [menuFor, setMenuFor] = useState<string | null>(null);
     const [historyProject, setHistoryProject] = useState<Project | null>(null);
-    const [renamingProject, setRenamingProject] = useState<Project | null>(null);
+    const [editingProject, setEditingProject] = useState<{ project: Project; field: "name" | "icon" } | null>(null);
     const projectMenuTrigger = useRef<HTMLButtonElement | null>(null);
     const closeHistory = () => {
         setHistoryProject(null);
         requestAnimationFrame(() => projectMenuTrigger.current?.focus({ preventScroll: true }));
     };
-    const closeRename = () => {
-        setRenamingProject(null);
+    const closeProjectEdit = () => {
+        setEditingProject(null);
         requestAnimationFrame(() => projectMenuTrigger.current?.focus({ preventScroll: true }));
     };
     const [showArchived, setShowArchived] = useState(false);
@@ -268,11 +269,11 @@ export function Workspace() {
             void saveFolderMove(`/projects/${source.id}`, { expected_revision: source.revision, folder_id: target.folderId });
         }
     };
-    const touchOrder = useTouchProjectOrder(narrow && sidebar, shown, canMoveToFolder, applySidebarDrop);
-    const drop = narrow ? touchOrder?.target : desktopDrop;
+    const touchOrder = useTouchProjectOrder(sidebar, shown, canMoveToFolder, applySidebarDrop);
+    const drop = touchOrder ? touchOrder.target : desktopDrop;
     const projectDrop = drop?.kind === "order" ? drop : null;
     const dropFolderId = drop?.kind === "folder" ? drop.folderId : undefined;
-    const draggedId = narrow ? touchOrder?.id : draggingProject;
+    const draggedId = touchOrder?.id ?? draggingProject;
     const showUnfiledDrop = !!draggedId && canMoveToFolder(draggedId, null);
     const pendingFolderMove = folderMoveRequest.pending;
 
@@ -482,7 +483,15 @@ export function Workspace() {
             <Stack direction="horizontal" align="center" gap={0} minHeight={32} data-testid="project-row" data-project={p.name} data-project-order-id={p.id}
                 data-order-drop={projectDrop?.id === p.id ? projectDrop.after ? "after" : "before" : undefined}
                 data-order-dragging={touchOrder?.id === p.id ? "true" : undefined}
-                xstyle={[workspaceStyles.projectRow, touchOrder?.id === p.id && workspaceStyles.projectLift(touchOrder.dx, touchOrder.dy)]}
+                xstyle={[workspaceStyles.projectRow, workspaceStyles.projectDragHandle, touchOrder?.id === p.id && workspaceStyles.projectLift(touchOrder.dx, touchOrder.dy)]}
+                onContextMenu={(event) => {
+                    if (event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
+                    event.preventDefault();
+                    const trigger = event.currentTarget.querySelector<HTMLButtonElement>("[data-project-menu-trigger]");
+                    if (!trigger) return;
+                    trigger.focus({ preventScroll: true });
+                    if (menuFor !== p.id) trigger.click();
+                }}
                 onDragOver={(event) => {
                     const source = projects.data?.find((item) => item.id === draggingProject);
                     if (!event.dataTransfer.types.includes(DRAG_PROJECT) || !source || source.id === p.id
@@ -508,7 +517,7 @@ export function Workspace() {
                     setDesktopDrop(null);
                 }}>
                 <Button appearance="navigation" aria-current={selectedProjectId === p.id ? "page" : undefined}
-                    data-project-drag={p.id} data-swipe-blocked={narrow ? "true" : undefined} xstyle={workspaceStyles.projectDragHandle}
+                    data-project-drag={p.id}
                     draggable={!narrow} onDragStart={(event) => {
                         setDraggingProject(p.id);
                         event.dataTransfer.setData(DRAG_PROJECT, JSON.stringify(projectTarget(p)));
@@ -525,16 +534,16 @@ export function Workspace() {
                     onClick={() => { openProjectAt(baseKey, projectTarget(p), "here", true); if (narrow) setSidebar(false); }}
                     title={`${p.root_path} · ${narrow ? "길게 눌러 끌기" : "끌어서 순서 변경, 폴더 이동 또는 프로젝트 분할"} (Alt+Shift+↑/↓ 순서 변경)`}>
                     {p.pinned_at && <HintText aria-label="고정됨" hint="고정됨">📌</HintText>}
-                    {p.icon && <GroveText type="inherit" color="inherit" aria-hidden>{p.icon}</GroveText>} <GroveText type="inherit" color="inherit" maxLines={1}>{p.name}</GroveText> {!p.available && <GroveText type="supporting" color="warning">(경로 없음)</GroveText>}
+                    <ProjectIcon project={p} /> <GroveText type="inherit" color="inherit" maxLines={1}>{p.name}</GroveText> {!p.available && <GroveText type="supporting" color="warning">(경로 없음)</GroveText>}
                 </Button>
                 <StackItem size="static">
                     <Popover label={`${p.name} 메뉴`} isOpen={menuFor === p.id}
                         onOpenChange={(value) => setMenuFor(value ? p.id : null)}
                         placement="below" alignment="end" width={240} padding={2} isModal={false} hasCloseButton={false}
                         content={menuFor === p.id ? <ProjectMenu project={p} onClose={() => setMenuFor(null)} onHistory={() => setHistoryProject(p)}
-                            onRename={() => setRenamingProject(p)} /> : null}>
+                            onEdit={(field) => setEditingProject({ project: p, field })} /> : null}>
                         <Button type="button" variant="secondary" appearance="icon" width={32}
-                            aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} onClick={(event) => { projectMenuTrigger.current = event.currentTarget; }}>⋯</Button>
+                            data-project-menu-trigger="" aria-label="프로젝트 메뉴" title={`${p.name} 메뉴`} onClick={(event) => { projectMenuTrigger.current = event.currentTarget; }}>⋯</Button>
                     </Popover>
                 </StackItem>
             </Stack>
@@ -635,6 +644,7 @@ export function Workspace() {
                 {(narrow || !wideSidebar) && brand}
                 {/* 현재 위치는 별도 줄 대신 상단 바 안에 둔다. */}
                 <NavigationContext layout={layout} projects={projects.data ?? NO_PROJECTS}
+                    splitProject={geometry.panes.length > 1 ? selectedProject : undefined}
                     open={open} onBrowseProjects={() => setSidebar(true)} sidebarOpen={sidebar} />
                 <ConnStatus status={status} retryAt={retryAt} onRetry={() => stream.current?.retryNow()} />
                 {narrow && <Button variant="secondary" appearance="icon" aria-label="새 대화" title="새 대화"
@@ -649,9 +659,9 @@ export function Workspace() {
                 </Button>}
             </Stack>
             </LayoutHeader>
-            {historyProject && <ProjectHistoryDialog key={historyProject.id} project={historyProject} onClose={closeHistory}
+            {historyProject && <ProjectHistoryDialog key={historyProject.id} project={historyProject} narrow={narrow} onClose={closeHistory}
                 open={(target, how) => { setHistoryProject(null); open(target, how); }} />}
-            {renamingProject && <ProjectRenameDialog key={renamingProject.id} project={renamingProject} onClose={closeRename} />}
+            {editingProject && <ProjectEditDialog key={editingProject.project.id} {...editingProject} onClose={closeProjectEdit} />}
             {settingsTarget && <PushStatusContext.Provider value={pushStatus}><SettingsDialog key={`${settingsTarget.project_id ?? ""}:${settingsTarget.resource_id ?? ""}`}
                 target={settingsTarget} projectName={projects.data?.find((p) => p.id === settingsTarget.project_id)?.name}
                 open={open} onClose={() => setSettingsTarget(null)} /></PushStatusContext.Provider>}
@@ -675,14 +685,13 @@ export function Workspace() {
                     {Object.entries(layouts).map(([id, saved]) => {
                         const rect = placements.get(id);
                         const projectId = projectAt(id);
-                        const label = geometry.panes.length > 1 ? projects.data?.find((project) => project.id === projectId)?.name : undefined;
                         return <Stack key={id} direction="horizontal" gap={0} hidden={!rect} inert={!rect} data-project-pane={projectId}
                             data-project-focused={!!rect && projectId === selectedProjectId}
                             xstyle={splitStyles.projectPane(rect?.x ?? 0, rect?.y ?? 0, rect?.width ?? 1, rect?.height ?? 1)}
                             onPointerDownCapture={() => rect && projectId !== selectedProjectId && focusAt(id)}
                             onFocusCapture={() => rect && projectId !== selectedProjectId && focusAt(id)}>
                             <SavedLayout id={id} layout={saved} onUpdate={updateAt} onCloseTab={closeTab} closingTabs={closingTabs} onOpen={openAt} onProjectDrop={dropProject}
-                                onCloseProject={geometry.panes.length > 1 ? closeProject : undefined} projectLabel={label}
+                                onCloseProject={geometry.panes.length > 1 ? closeProject : undefined}
                                 projectId={projectId} onNewTerminal={newTerminalAt}
                                 recentReveal={recentReveal?.layoutId === id && id === key ? recentReveal : undefined}
                                 visible={!!rect} projects={projects.data ?? NO_PROJECTS} />
@@ -697,7 +706,12 @@ export function Workspace() {
             </StackItem>
             </Stack></StackItem>
             <MobileDrawer enabled={narrow} side="right" open={mobile.panel === "right"} drag={mobile.drag}
-                label="열린 세션" onClose={() => mobile.setPanel(null)}>
+                label="열린 세션" onClose={() => mobile.setPanel(null)}
+                headerActions={<Button type="button" variant="secondary" aria-label="새 대화 시작"
+                    disabled={!selectedProject?.available || !layout || L.allTabs(layout).length >= L.MAX_TABS}
+                    onClick={() => {
+                        if (selectedProject) open({ kind: "project", project_id: selectedProject.id, title: "새 대화" });
+                    }}><Icon name="plus" size={16} />새 대화</Button>}>
                 {narrow && <Stack as="nav" gap={0} height="100%" aria-label="현재 프로젝트 열린 탭">
                     <StackItem size="fill" isScrollable aria-label="현재 프로젝트 세션">
                         <Stack gap={1} padding={2}>{mobileTabs.filter((tab) => tab.kind === "session").map(renderMobileTab)}</Stack>

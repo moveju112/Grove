@@ -1,16 +1,12 @@
 //! PC-003: 실제 CLI의 첫 시작·재시작·시작 실패. 데이터와 프로세스는 모두 시험 소유다.
 
-mod common;
-#[path = "common/e2ee.rs"]
-mod wire;
-use common::TestServer;
+#[path = "common/cli_process.rs"]
+mod cli_process;
+use cli_process::Running;
 use serde_json::{Value, json};
-use std::io::{BufRead, BufReader};
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Output, Stdio};
-use std::sync::mpsc::{self, Receiver};
-use std::thread::JoinHandle;
-use std::time::{Duration, Instant};
+use std::process::{Command, Output};
+use std::time::Duration;
 
 fn grove() -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_grove"));
@@ -31,86 +27,6 @@ fn serve(data: &Path, listen: &str, json_output: bool) -> Command {
         command.arg("--json");
     }
     command
-}
-
-struct Running {
-    child: Child,
-    lines: Receiver<String>,
-    reader: Option<JoinHandle<String>>,
-    stderr: tempfile::NamedTempFile,
-}
-
-impl Running {
-    fn spawn(mut command: Command) -> Self {
-        let stderr = tempfile::NamedTempFile::new().unwrap();
-        let mut child = command.stdout(Stdio::piped()).stderr(stderr.reopen().unwrap()).spawn().unwrap();
-        let stdout = child.stdout.take().unwrap();
-        let (tx, lines) = mpsc::channel();
-        let reader = std::thread::spawn(move || {
-            let mut output = String::new();
-            for line in BufReader::new(stdout).lines() {
-                let line = line.unwrap();
-                output.push_str(&line);
-                output.push('\n');
-                let _ = tx.send(line);
-            }
-            output
-        });
-        Self { child, lines, reader: Some(reader), stderr }
-    }
-
-    fn ready(&self, json_output: bool) -> String {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        let mut output = String::new();
-        loop {
-            let line = self.lines.recv_timeout(deadline.saturating_duration_since(Instant::now())).expect("준비 안내가 제한 시간 안에 도착해야 한다");
-            output.push_str(&line);
-            output.push('\n');
-            if json_output || line.starts_with("상세 진단:") {
-                return output;
-            }
-        }
-    }
-
-    fn finish(&mut self) -> (ExitStatus, String, String) {
-        let deadline = Instant::now() + Duration::from_secs(20);
-        let status = loop {
-            if let Some(status) = self.child.try_wait().unwrap() {
-                break status;
-            }
-            assert!(Instant::now() < deadline, "시험 소유 서버 종료 시간 초과");
-            std::thread::sleep(Duration::from_millis(10));
-        };
-        let stdout = self.reader.take().unwrap().join().unwrap();
-        let stderr = std::fs::read_to_string(self.stderr.path()).unwrap();
-        (status, stdout, stderr)
-    }
-
-    fn stop(&mut self, data: &Path, base: &str) -> (ExitStatus, String, String) {
-        let token = std::fs::read_to_string(data.join("owner-token")).unwrap();
-        // 공개 listener의 관리 API도 암호화가 필요하다. 시험 소유 서버의 키로만 pin한다.
-        let key: [u8; 32] = std::fs::read(data.join("e2ee-identity.key")).unwrap().try_into().unwrap();
-        let identity = ed25519_dalek::SigningKey::from_bytes(&key).verifying_key().to_bytes();
-        tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap().block_on(async {
-            let mut channel = wire::Channel::open_with_identity(base, identity, None, None).await;
-            let response = channel.request("POST", "/api/v1/admin/shutdown", vec![
-                ("authorization", format!("Bearer {}", token.trim())),
-                ("x-grove-protocol", grove::PROTOCOL_VERSION.to_string()),
-                ("idempotency-key", uuid::Uuid::new_v4().to_string()),
-            ], Value::Null).await;
-            assert_eq!(response["status"], 202);
-        });
-        self.finish()
-    }
-}
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        if self.child.try_wait().ok().flatten().is_none() {
-            let _ = self.child.kill();
-            let _ = self.child.wait();
-        }
-    }
 }
 
 fn assert_no_token(output: &str, token: &str) {
@@ -163,7 +79,7 @@ fn first_start_and_replayed_restart_preserve_data_token_and_health_contract() {
     let connection = rusqlite::Connection::open(data.join("grove.db")).unwrap();
     connection.execute_batch("CREATE TABLE pc003_fixture (value TEXT); INSERT INTO pc003_fixture VALUES ('preserved')").unwrap();
     drop(connection);
-    let (status, stdout, stderr) = first.stop(&data, &base);
+    let (status, stdout, stderr) = first.stop();
     assert!(status.success());
     assert_no_token(&format!("{stdout}{stderr}"), &token);
     assert_eq!(serde_json::from_str::<Value>(&stdout).unwrap(), ready);
@@ -184,7 +100,7 @@ fn first_start_and_replayed_restart_preserve_data_token_and_health_contract() {
     let connection = rusqlite::Connection::open(data.join("grove.db")).unwrap();
     assert_eq!(connection.query_row("SELECT value FROM pc003_fixture", [], |r| r.get::<_, String>(0)).unwrap(), "preserved");
     drop(connection);
-    let (status, stdout, stderr) = restart.stop(&data, &base);
+    let (status, stdout, stderr) = restart.stop();
     assert!(status.success());
     assert_no_token(&format!("{stdout}{stderr}"), &token);
     let version: Output = grove().args(["--version", "--json"]).output().unwrap();
@@ -208,7 +124,7 @@ fn human_guidance_covers_first_start_restart_paths_and_wildcard_address() {
         let url = ready.lines().find_map(|l| l.strip_prefix("접속 주소: ")).unwrap();
         assert!(url.starts_with("http://127.0.0.1:"), "전체 바인딩은 실제 접속 가능한 loopback 주소로 안내한다");
         let token = std::fs::read_to_string(data.join("owner-token")).unwrap();
-        let (status, stdout, stderr) = server.stop(&data, url.trim_end_matches('/'));
+        let (status, stdout, stderr) = server.stop();
         assert!(status.success());
         assert_no_token(&format!("{stdout}{stderr}"), &token);
     }
@@ -239,13 +155,13 @@ fn same_data_directory_is_refused_without_changing_the_running_server() {
     let dir = tempfile::tempdir().unwrap();
     let data = dir.path().join("data");
     let mut server = Running::spawn(serve(&data, "127.0.0.1:0", true));
-    let ready: Value = serde_json::from_str(&server.ready(true)).unwrap();
+    assert_eq!(serde_json::from_str::<Value>(&server.ready(true)).unwrap()["ready"], true);
     let token = std::fs::read_to_string(data.join("owner-token")).unwrap();
     let report = failed(serve(&data, "127.0.0.1:0", false), 14, "already_running", &data);
     assert_eq!(report["error"]["path"], json!(data.join("grove.lock")));
     assert_no_token(&report.to_string(), &token);
     assert!(std::fs::read_to_string(data.join("owner-token")).unwrap() == token, "중복 시작은 토큰을 바꾸지 않는다");
-    let (status, stdout, stderr) = server.stop(&data, &format!("http://{}", ready["listen"].as_str().unwrap()));
+    let (status, stdout, stderr) = server.stop();
     assert!(status.success());
     assert_no_token(&format!("{stdout}{stderr}"), &token);
 }

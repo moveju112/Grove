@@ -42,10 +42,13 @@ describe("한 요청의 어시스턴트 화면", () => {
         expect(finished.assistants.get("m2")).toMatchObject({ live: false, content: { text: "확인했어." } });
     });
 
-    it("추론만 있는 답변은 숨기고 첨부만 있는 다른 턴은 남긴다", () => {
+    it("추론이나 CLI 활동만 있는 답변은 숨기고 첨부만 있는 턴은 남긴다", () => {
         const other = message(7, "assistant", { attachments: [attachment] }, "other");
         const reasoningOnly = message(8, "assistant", { reasoning: "요약만 있음" }, "reasoning-only");
-        const projection = assistantTranscript([...messages, other, reasoningOnly]);
+        const activityOnly = message(9, "assistant", {
+            cli_activity: [{ kind: "command", name: "shell", status: "completed" }],
+        }, "activity-only");
+        const projection = assistantTranscript([...messages, other, reasoningOnly, activityOnly]);
         expect(projection.rows.map((m) => m.seq)).toEqual([1, 2, 7]);
     });
 

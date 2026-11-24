@@ -85,7 +85,7 @@ export function PushNotifications({ enabled, onChange }: { enabled: boolean; onC
     const status = useContext(PushStatusContext);
     return <>
         <BooleanSelect label="앱을 닫아도 완료 알림" value={enabled} onChange={onChange} />
-        <Text as="p" type="supporting" color="secondary">지원되는 브라우저에서 알림을 허용하면 완료·실패를 기기 알림으로 받아요.</Text>
+        <Text as="p" type="supporting" color="secondary">완료 알림의 답변 미리보기는 잠금 화면에도 보일 수 있어요.</Text>
         {status?.error && <>
             <Text as="p" type="supporting" color="warning" role="status">{status.error}</Text>
             <Button variant="secondary" density="compact" disabled={status.busy} onClick={status.retry}>푸시 설정 다시 적용</Button>

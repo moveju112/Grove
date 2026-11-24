@@ -6,10 +6,12 @@ import type { Project } from "../api/generated";
 import { Button } from "../design/Button";
 import { invalidate } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
+import { useCapability } from "../state/capabilities";
 
-export function ProjectMenu({ project, onClose, onHistory, onRename }: {
-    project: Project; onClose: () => void; onHistory: () => void; onRename: () => void;
+export function ProjectMenu({ project, onClose, onHistory, onEdit }: {
+    project: Project; onClose: () => void; onHistory: () => void; onEdit: (field: "name" | "icon") => void;
 }) {
+    const icons = useCapability("project_icons_v1");
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
     const archive = async () => {
@@ -27,7 +29,8 @@ export function ProjectMenu({ project, onClose, onHistory, onRename }: {
         }
     };
     return <Stack gap={1}>
-        <ServerActionButton type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onRename(); }}>이름 변경</ServerActionButton>
+        <ServerActionButton type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onEdit("name"); }}>이름 변경</ServerActionButton>
+        {icons !== false && <ServerActionButton type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onEdit("icon"); }}>아이콘 변경</ServerActionButton>}
         <Button type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onHistory(); }}>기록</Button>
         {error && <Text as="p" display="block" type="inherit" color="error" role="alert">{error}</Text>}
         <ServerActionButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => void archive()}>보관</ServerActionButton>

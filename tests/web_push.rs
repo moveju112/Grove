@@ -113,8 +113,12 @@ async fn completion_enqueues_atomically_once_and_revocation_cascades_without_pla
             tx.rollback()?;
         }
         assert_eq!(c.query_row("SELECT count(*) FROM web_push_outbox",[],|r|r.get::<_,i64>(0))?,0);
-        grove::events::append(c,now,"turn.updated",Some("p"),Some("s"),&json!({"id":"t","status":"completed","text":"private answer"}))?;
+        grove::events::append(c,now,"turn.updated",Some("p"),Some("s"),&json!({"id":"t","status":"completed","completion_preview":"최종 답변","text":"private answer"}))?;
         let payload:String=c.query_row("SELECT payload FROM web_push_outbox",[],|r|r.get(0))?;
+        assert!(!payload.contains("최종 답변"));
+        let clear:String=c.query_row("SELECT grove_decrypt(payload) FROM web_push_outbox",[],|r|r.get(0))?;
+        assert_eq!(serde_json::from_str::<Value>(&clear)?["body"], "최종 답변");
+        assert!(!clear.contains("private answer"));
         assert!(!payload.contains("private answer"));
         c.execute("DELETE FROM web_push_outbox",[])?;
         grove::events::append(c,now,"turn.updated",Some("p"),Some("s"),&json!({"id":"t","status":"completed"}))?;

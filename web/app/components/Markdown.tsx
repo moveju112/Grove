@@ -13,8 +13,8 @@ import { CodeBlock as DisplayCodeBlock } from "../design/CodeBlock";
 import { Button as GroveButton } from "../design/Button";
 import { createContext, memo, useContext, useMemo, useRef, useState, type ReactNode } from "react";
 import { fileLink, fileRef, imageFile, parseMarkdown, type Block, type Inline } from "../state/markdown";
-import { CreationDialog } from "./create/CreationDialog";
-import { FileChangePreview } from "./files/FileChangePreview";
+import { Icon } from "./icons";
+import { FilePreviewDialog } from "./files/FilePreviewDialog";
 import { ImageAttachment } from "./Attachments";
 import { attachmentStyles } from "./attachments.stylex";
 
@@ -30,7 +30,14 @@ function MarkdownImage({ href, alt, inline = true }: { href: string; alt: string
         projectFile={{ projectId: project.projectId, ...ref }} />;
 }
 
-function FileLink({ href, children, testId = "file-link" }: { href: string; children: ReactNode; testId?: string }) {
+function FileLinkLabel({ children }: { children: ReactNode }) {
+    return <GroveText type="inherit" color="inherit">
+        <GroveText type="inherit" color="inherit" xstyle={contentStyles.fileIcon}><Icon name="file" size={15} /></GroveText>
+        <GroveText type="inherit" color="inherit" xstyle={contentStyles.fileCaption}>{children}</GroveText>
+    </GroveText>;
+}
+
+function FileLink({ href, children, code = false }: { href: string; children: ReactNode; code?: boolean }) {
     const project = useContext(FileLinkContext);
     const open = useContext(FileRefContext);
     const [expanded, setExpanded] = useState(false);
@@ -38,16 +45,15 @@ function FileLink({ href, children, testId = "file-link" }: { href: string; chil
     const label = <FileRefContext.Provider value={null}>{children}</FileRefContext.Provider>;
     if (!ref || !project || !open) return label;
     return <>
-        <GroveButton appearance="link" xstyle={contentStyles.inlineLink} title={`${ref.path} 변경점`}
-            aria-haspopup="dialog" aria-expanded={expanded} data-testid={testId} onClick={() => setExpanded(true)}>{label}</GroveButton>
-        {expanded && <CreationDialog label={`${ref.path} 변경점`} onClose={() => setExpanded(false)} width="64em">
-            <Stack as="header" direction="horizontal" align="center" justify="between" gap={2}>
-                <Heading level={2}>{ref.path} · 현재 변경점</Heading>
-                <GroveButton variant="secondary" density="compact" onClick={() => setExpanded(false)}>닫기</GroveButton>
-            </Stack>
-            <FileChangePreview projectId={project.projectId} path={ref.path}
-                onOpen={() => { setExpanded(false); open(ref.path, ref.line); }} />
-        </CreationDialog>}
+        <GroveButton appearance="link" xstyle={[contentStyles.inlineFileButton, !code && contentStyles.namedFileButton]} title={`${ref.path} 미리보기`}
+            aria-haspopup="dialog" aria-expanded={expanded} data-testid={code ? "file-ref" : "file-link"} onClick={() => setExpanded(true)}>
+            <FileLinkLabel>{label}</FileLinkLabel>
+        </GroveButton>
+        {expanded && <FilePreviewDialog key={`${project.projectId}:${ref.path}`} projectId={project.projectId} path={ref.path}
+            onClose={() => setExpanded(false)} onOpen={() => { setExpanded(false); open(ref.path, ref.line); }}
+            renderMarkdown={(text) => <FileLinkContext.Provider value={null}><FileRefContext.Provider value={null}>
+                <Markdown text={text} />
+            </FileRefContext.Provider></FileLinkContext.Provider>} />}
     </>;
 }
 
@@ -56,10 +62,11 @@ function InlineCode({ v }: { v: string }) {
     const project = useContext(FileLinkContext);
     const r = onRef ? fileRef(v) : null;
     if (!r || !onRef) return <Code size="inherit">{v}</Code>;
-    if (project) return <FileLink href={v} testId="file-ref"><Code size="inherit">{v}</Code></FileLink>;
+    const label = <Code size="inherit" color="inherit" xstyle={contentStyles.fileCode}>{v}</Code>;
+    if (project) return <FileLink href={v} code>{label}</FileLink>;
     return (
-        <GroveButton appearance="link" xstyle={contentStyles.inlineLink} data-testid="file-ref" title="파일 열기" onClick={() => onRef(r.path, r.line)}>
-            <Code size="inherit">{v}</Code>
+        <GroveButton appearance="link" xstyle={contentStyles.inlineFileButton} data-testid="file-ref" title="파일 열기" onClick={() => onRef(r.path, r.line)}>
+            <FileLinkLabel>{label}</FileLinkLabel>
         </GroveButton>
     );
 }
@@ -79,7 +86,7 @@ function inl(c: Inline[]): ReactNode[] {
                 // 새 창으로 열고 opener·referrer를 넘기지 않는다. 그럴듯한 문구로 다른 곳을 여는 일을 막기 위해 실제 목적지를 함께 보인다(UI-031).
                 const dest = linkDest(x.href);
                 return (
-                    <Link type="inherit" key={k} href={x.href} target="_blank" rel="noopener noreferrer nofollow" tooltip={x.href}>
+                    <Link type="inherit" hasUnderline key={k} href={x.href} target="_blank" rel="noopener noreferrer nofollow" tooltip={x.href}>
                         {inl(x.c)}
                         <GroveText type="supporting" color="inherit" data-testid="link-dest"> ↗ {dest}</GroveText>
                     </Link>

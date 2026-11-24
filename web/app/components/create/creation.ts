@@ -26,7 +26,7 @@ export class CreationRequest<T = Project, P extends CreationPath = CreationPath>
         // 고정 엔드포인트는 generic template 경로의 narrowing과 분리해서 판별한다.
         const endpoint: string = path;
         const fields = endpoint === "/projects" ? ["root_path"] : endpoint === "/projects/clone"
-            ? ["repo", "target_directory", "protocol"] : ["name", "expected_revision", "folder_id"];
+            ? ["repo", "target_directory", "protocol"] : ["name", "expected_revision", "folder_id", "icon", "icon_color", "icon_photo_base64"];
         const pending = this.pending;
         if (pending && (pending.path !== path || fields.some((field) => pending.body[field] !== body[field]))) {
             throw new Error("이전 요청의 결과를 먼저 확인하세요.");
@@ -35,7 +35,8 @@ export class CreationRequest<T = Project, P extends CreationPath = CreationPath>
         this.pending = request;
         this.busy = true;
         try {
-            const options = { key: request.key, requires: path.startsWith("/project-folders") || "folder_id" in request.body ? ["project_folders_v1"] : undefined };
+            const options = { key: request.key, requires: path.startsWith("/project-folders") || "folder_id" in request.body ? ["project_folders_v1"]
+                : "icon_color" in request.body || "icon_photo_base64" in request.body ? ["project_icons_v1"] : undefined };
             const result = endpoint === "/projects/clone"
                 ? (await api.post<{ project: T }>(path, request.body, options)).project
                 : this.method === "patch" ? await api.patch<T>(path, request.body, options)

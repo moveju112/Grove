@@ -206,9 +206,12 @@ pub(crate) fn enqueue(
     let seconds = crate::util::parse_time(now)
         .map(|v| v.unix_timestamp())
         .unwrap_or(0);
-    let data = json!({"projectId":project,"sessionId":session,"tag":format!("turn:{turn}"),"failed":status!="completed"});
+    let mut data = json!({"projectId":project,"sessionId":session,"tag":format!("turn:{turn}"),"failed":status!="completed"});
+    if status == "completed" && let Some(preview) = payload["completion_preview"].as_str() {
+        data["body"] = json!(preview);
+    }
     c.execute("INSERT OR IGNORE INTO web_push_outbox(endpoint,event_key,payload,created_at,next_attempt)
-        SELECT endpoint,?1,?2,?3,?3 FROM web_push_subscriptions s
+        SELECT endpoint,?1,grove_encrypt(?2),?3,?3 FROM web_push_subscriptions s
         WHERE NOT EXISTS(SELECT 1 FROM agent_runs WHERE child_session_id=?4)
         AND NOT EXISTS(SELECT 1 FROM web_push_receipts r WHERE r.endpoint=s.endpoint AND r.turn_id=?5)",params![format!("turn:{turn}"),data.to_string(),seconds,session,turn])?;
     c.execute("INSERT OR IGNORE INTO web_push_receipts(endpoint,turn_id)

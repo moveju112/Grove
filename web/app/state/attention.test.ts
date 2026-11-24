@@ -10,8 +10,9 @@ const memory = () => {
 };
 
 describe("이 기기 알림 판단", () => {
-    it("기본으로 모든 종류를 알리고 대화 내용 없이 대상 대화를 가리킨다", () => {
-        expect(attentionFor(event("turn.updated", { id: "t", status: "completed", error: "secret" }), defaultPrefs)).toMatchObject({ kind: "done", tag: "turn:t", projectId: "p", sessionId: "s" });
+    it("완료 알림은 최종 답변을 표시하고 미리보기가 없는 이벤트는 기본 문구를 쓴다", () => {
+        expect(attentionFor(event("turn.updated", { id: "t", status: "completed", completion_preview: "최종 답변" }), defaultPrefs)).toMatchObject({ kind: "done", tag: "turn:t", projectId: "p", sessionId: "s", body: "최종 답변" });
+        expect(attentionFor(event("turn.updated", { id: "t", status: "completed" }), defaultPrefs)?.body).toBe("대화의 요청 처리가 끝났습니다.");
         expect(attentionFor(event("turn.updated", { id: "t", status: "interrupted" }), defaultPrefs)?.kind).toBe("failed");
         expect(attentionFor(event("turn.updated", { id: "t", status: "awaiting_approval" }), defaultPrefs)?.tag).toBe("approval:t");
         expect(attentionFor(event("notification.created", { id: "n", title: "예약 완료" }), defaultPrefs)).toMatchObject({ kind: "server", title: "예약 완료" });

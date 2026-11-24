@@ -43,7 +43,7 @@ html:has([data-viewport-mode="narrow"]) { overscroll-behavior-x: contain; }
 /* 브라우저가 가로 이동을 먼저 가져가지 않게 상단 바와 채팅의 세로 viewport에서 선언한다.
    표·코드의 자체 스크롤 viewport에는 적용하지 않아 내부 가로 스크롤을 유지한다. */
 [data-viewport-mode="narrow"] [data-ui="workspace-header"],
-[data-viewport-mode="narrow"] [data-testid="pane-body"]:has(> :is([data-testid="session-view"], [data-testid="project-view"])),
+[data-viewport-mode="narrow"] [data-testid="pane-body"]:has(> :is([data-testid="empty-pane"], [data-testid="session-view"], [data-testid="project-view"])),
 [data-viewport-mode="narrow"] [data-testid="md-table"]:not([data-scrollable-inline], :has([data-scrollable-inline])) .astryx-table-scroll-wrapper {
     touch-action: pan-y pinch-zoom;
 }

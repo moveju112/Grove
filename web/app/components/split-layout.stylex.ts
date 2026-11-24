@@ -27,7 +27,6 @@ export const splitStyles = stylex.create({
     projectDivider: (left: string, top: string, width: string, height: string, row: boolean) => ({
         position: "absolute", left, top, width, height, zIndex: 2, transform: row ? "translateX(-50%)" : "translateY(-50%)",
     }),
-    projectName: { maxWidth: 100, flexShrink: 0, paddingInline: "var(--spacing-2)", fontSize: 12, lineHeight: `${TAB_ROW_HEIGHT}px` },
     child: (basis: string) => ({ flexBasis: basis, flexGrow: 0, flexShrink: 1, minWidth: 0, minHeight: 0 }),
     divider: {
         position: "relative", flexBasis: SPLIT_DIVIDER_SIZE, flexGrow: 0, flexShrink: 0,
@@ -46,7 +45,8 @@ export const splitStyles = stylex.create({
     },
     recentReveal: {
         position: "absolute", inset: 0, zIndex: 5, pointerEvents: "none",
-        borderWidth: 2, borderStyle: "solid", borderColor: "var(--focus)",
+        borderWidth: 1, borderStyle: "solid", borderColor: "color-mix(in srgb, var(--focus) 65%, transparent)",
+        boxShadow: "inset 0 0 27px 5px color-mix(in srgb, var(--focus) 40%, transparent)",
         animationName: { default: "none", "@media (prefers-reduced-motion: no-preference)": recentReveal },
         animationDuration: `${PANE_REVEAL_DURATION / 2}ms`, animationIterationCount: 2,
         animationTimingFunction: "ease-in", animationFillMode: "forwards",

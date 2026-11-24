@@ -30,6 +30,7 @@ test("최근에서 선택된 스플릿만 강조하고 재선택·모션 줄이�
     await button(rightTab).click();
     await expect(pane("right").getByTestId("recent-pane-reveal")).toBeVisible();
     await expect(reveal).toHaveCount(1);
+    await expect(reveal).toHaveCSS("box-shadow", /inset/);
     await expect(reveal).toHaveCSS("animation-iteration-count", "2");
     await expect(reveal).toHaveCSS("animation-duration", "0.5s");
     await expect(reveal).not.toHaveCSS("animation-name", "none");

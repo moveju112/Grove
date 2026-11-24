@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, state } from "./helpers";
+import { apiCall, composerOption, ensureProfile, ensureProjects, login, script, sessionView, state } from "./helpers";
 
 // UI-010·011, SEC-020: 모델 답의 Markdown은 표시하되 HTML·스크립트·위험 링크는 실행되지 않는다.
 test("모델 답의 Markdown을 표시하고 HTML·스크립트·javascript 링크는 실행하지 않는다", async ({ page }) => {
@@ -17,7 +17,7 @@ test("모델 답의 Markdown을 표시하고 HTML·스크립트·javascript 링�
     });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /마크다운 대화/ }).first().click();
-    const view = page.getByTestId("session-view");
+    const view = sessionView(page, s.id);
     const answer = [
         "## 결과",
         "",
@@ -71,7 +71,7 @@ test("모델 답의 Markdown을 표시하고 HTML·스크립트·javascript 링�
     expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(answer);
 });
 
-test("답 안의 파일:줄 참조는 변경점부터 열고 명시적으로 원문의 줄로 이동한다", async ({ page }) => {
+test("답 안의 파일:줄 참조는 본문부터 열고 명시적으로 원문의 줄로 이동한다", async ({ page }) => {
     const { a } = await ensureProjects();
     await ensureProfile();
     writeFileSync(join(state().projA, "ref-target.md"), "첫째 줄\n둘째 줄\n찾는 줄입니다\n넷째 줄\n");
@@ -79,7 +79,7 @@ test("답 안의 파일:줄 참조는 변경점부터 열고 명시적으로 원
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /파일 참조 대화/ }).first().click();
-    const view = page.getByTestId("session-view");
+    const view = sessionView(page, s.id);
     await script({ frames: frames.text(["수정할 곳은 `ref-target.md:3` 이고 `/etc/passwd`는 링크가 아니다."]) });
     await composerOption(view, "보내기 방식", "model");
     await view.getByLabel("메시지 입력").fill("어디 고쳐?");
@@ -87,10 +87,11 @@ test("답 안의 파일:줄 참조는 변경점부터 열고 명시적으로 원
     const msg = view.getByTestId("msg-assistant").last();
     await expect(msg.getByTestId("file-ref")).toHaveCount(1, { timeout: 15_000 });
     await msg.getByTestId("file-ref").click();
-    const diff = page.getByRole("dialog", { name: "ref-target.md 변경점", exact: true });
-    await expect(diff).toBeVisible();
+    const diff = page.getByRole("dialog", { name: "ref-target.md 미리보기", exact: true });
+    await expect(diff).toContainText("찾는 줄입니다");
+    await expect(diff.getByRole("tab", { name: "변경점" })).toHaveCount(0);
     await expect(page.getByTestId("files-view")).toHaveCount(0);
-    await diff.getByRole("button", { name: "파일 열기", exact: true }).click();
+    await diff.getByRole("button", { name: "편집기에서 열기", exact: true }).click();
     await expect(page.getByTestId("pane")).toHaveCount(2);
     const files = page.getByTestId("files-view");
     const area = files.getByLabel("파일 내용");

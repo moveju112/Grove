@@ -4,6 +4,8 @@ import { projectFolderDropAt, type ProjectDrop } from "../../state/projectOrder"
 
 type Drag = { id: string; dx: number; dy: number; target: ProjectDrop | null };
 type Item = Pick<Project, "id" | "folder_id">;
+const PROJECT_ROW = "[data-project-order-id]";
+
 type Gesture = {
     id: string; finger: number; row: HTMLElement; viewport: HTMLElement;
     startX: number; startY: number; scrollTop: number; x: number; y: number;
@@ -17,7 +19,7 @@ export function useTouchProjectOrder(enabled: boolean, projects: readonly Item[]
     const latest = useRef({ projects, canMoveToFolder, onDrop });
     useLayoutEffect(() => { latest.current = { projects, canMoveToFolder, onDrop }; }, [projects, canMoveToFolder, onDrop]);
     useEffect(() => {
-        if (!enabled) return;
+        if (!enabled || navigator.maxTouchPoints === 0) return;
         let gesture: Gesture | null = null;
         let timer = 0, frame = 0, suppressClickUntil = 0;
         const cancel = () => {
@@ -34,14 +36,17 @@ export function useTouchProjectOrder(enabled: boolean, projects: readonly Item[]
             if (folderId !== undefined && latest.current.canMoveToFolder(g.id, folderId)) return { kind: "folder", folderId };
             const source = latest.current.projects.find((p) => p.id === g.id);
             if (!source) return null;
-            for (const row of g.viewport.querySelectorAll<HTMLElement>('[data-testid="project-row"][data-project-order-id]')) {
+            for (const row of g.viewport.querySelectorAll<HTMLElement>(PROJECT_ROW)) {
                 const id = row.dataset.projectOrderId!;
                 if (id === g.id) continue;
                 const project = latest.current.projects.find((p) => p.id === id);
                 if (!project || (source.folder_id ?? null) !== (project.folder_id ?? null)) continue;
                 const box = row.getBoundingClientRect();
                 if (g.x >= box.left && g.x <= box.right && g.y >= box.top && g.y <= box.bottom) {
-                    return { kind: "order", id, after: g.y > box.top + box.height / 2 };
+                    // 행 가운데에서는 원래 이동 방향으로 자리를 바꾸고, 양 끝에서는 정확한 삽입 위치를 고른다.
+                    const fraction = (g.y - box.top) / box.height;
+                    const belowSource = !!(g.row.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING);
+                    return { kind: "order", id, after: fraction > 0.75 || (fraction >= 0.25 && belowSource) };
                 }
             }
             return null;
@@ -73,12 +78,11 @@ export function useTouchProjectOrder(enabled: boolean, projects: readonly Item[]
             cancel();
             suppressClickUntil = 0;
             if (event.touches.length !== 1) return;
-            const button = (event.target as Element).closest<HTMLElement>("button[data-project-drag]");
-            if (!button) return;
-            const row = button.closest<HTMLElement>('[data-testid="project-row"]')!;
-            const viewport = row.closest<HTMLElement>('[data-testid="sidebar-scroll"]')!;
+            const row = (event.target as Element).closest<HTMLElement>(PROJECT_ROW);
+            const viewport = row?.closest<HTMLElement>('[data-testid="sidebar-scroll"]');
+            if (!row || !viewport) return;
             const touch = event.touches[0]!;
-            const g: Gesture = { id: button.dataset.projectDrag!, finger: touch.identifier, row, viewport,
+            const g: Gesture = { id: row.dataset.projectOrderId!, finger: touch.identifier, row, viewport,
                 startX: touch.clientX, startY: touch.clientY, scrollTop: viewport.scrollTop,
                 x: touch.clientX, y: touch.clientY, active: false };
             gesture = g;
@@ -102,25 +106,33 @@ export function useTouchProjectOrder(enabled: boolean, projects: readonly Item[]
             }
             if (!event.cancelable) { cancel(); return; }
             event.preventDefault();
+            event.stopPropagation();
             publish(g);
         };
         const end = (event: TouchEvent) => {
             const g = gesture;
             if (!g?.active || event.touches.length !== 0) { cancel(); return; }
             event.preventDefault();
-            const touch = [...event.changedTouches].find((touch) => touch.identifier === g.finger)!;
+            const touch = event.changedTouches[0];
+            if (!touch || touch.identifier !== g.finger) { cancel(); return; }
             g.x = touch.clientX; g.y = touch.clientY;
             const target = targetAt(g);
             cancel();
             if (target) latest.current.onDrop(g.id, target);
         };
         const click = (event: MouseEvent) => {
-            if (performance.now() < suppressClickUntil && (event.target as Element).closest("button[data-project-drag]")) {
+            if (performance.now() < suppressClickUntil && (event.target as Element).closest(PROJECT_ROW)) {
                 event.preventDefault();
                 event.stopPropagation();
             }
         };
         const context = (event: Event) => { if (gesture) event.preventDefault(); };
+        const nativeDrag = (event: DragEvent) => {
+            if (gesture && gesture.row.contains(event.target as Node)) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+        };
         const key = (event: KeyboardEvent) => {
             if (event.key !== "Escape" || !gesture?.active) return;
             event.preventDefault();
@@ -128,9 +140,11 @@ export function useTouchProjectOrder(enabled: boolean, projects: readonly Item[]
             cancel();
         };
         document.addEventListener("touchstart", start, { passive: true, capture: true });
-        document.addEventListener("touchmove", move, { passive: false, capture: true });
+        // 들어 올린 행은 서랍 스와이프보다 먼저 이동을 소비한다. 짧은 스와이프는 그대로 전달한다.
+        window.addEventListener("touchmove", move, { passive: false, capture: true });
         document.addEventListener("touchend", end, { passive: false, capture: true });
         document.addEventListener("touchcancel", cancel, true);
+        document.addEventListener("dragstart", nativeDrag, true);
         document.addEventListener("click", click, true);
         document.addEventListener("contextmenu", context, true);
         document.addEventListener("keydown", key, true);
@@ -139,9 +153,10 @@ export function useTouchProjectOrder(enabled: boolean, projects: readonly Item[]
         return () => {
             cancel();
             document.removeEventListener("touchstart", start, true);
-            document.removeEventListener("touchmove", move, true);
+            window.removeEventListener("touchmove", move, true);
             document.removeEventListener("touchend", end, true);
             document.removeEventListener("touchcancel", cancel, true);
+            document.removeEventListener("dragstart", nativeDrag, true);
             document.removeEventListener("click", click, true);
             document.removeEventListener("contextmenu", context, true);
             document.removeEventListener("keydown", key, true);

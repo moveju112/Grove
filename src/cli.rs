@@ -28,11 +28,12 @@ const HELP: &str = "grove — 단일 실행 파일 에이전트 서버
   grove restore <snapshot 파일> <새 데이터 디렉터리>     snapshot을 새 디렉터리로 복원·검증
   grove install --install 설치경로 --package 압축본 --data-dir 경로 --listen 주소:포트
                 [--trust-key 공개키파일]… [--service process|systemd-user:<unit>]   새 설치
-  grove update check  --install 설치경로 --manifest URL|파일          업데이트 확인(서비스 중단 없음)
-  grove update apply  --install 설치경로 --manifest URL|파일 [--force] [--allow-downgrade]
+  grove update check  --install 설치경로 [--manifest URL|파일]          업데이트 확인(서비스 중단 없음)
+  grove update apply  --install 설치경로 [--manifest URL|파일] [--force] [--allow-downgrade]
   grove update status --install 설치경로
   grove update rollback --install 설치경로                             이전 버전으로(schema가 같을 때)
   grove start --install 설치경로 | grove stop --install 설치경로        process 방식 서비스 시작·정지
+  grove release verify 서명-manifest                         공식 릴리즈 서명 확인
   grove release keygen <개인키 파일>                                  서명 키 생성(.pub 함께)
   grove release sign --key 개인키 [--key 개인키]… <release.json> <출력>
   grove migrate-check <DB 복사본>                                      이 버전의 migration 사전 시험
@@ -111,18 +112,22 @@ fn update_cmds(o: &Opts) -> Result<i32, String> {
         }
         (Some("start"), _) => u::start_service(&u::Install { root: need(&o.install, "--install")? })?,
         (Some("stop"), _) => u::stop_service(&u::Install { root: need(&o.install, "--install")? })?,
-        (Some("update"), Some("check")) => print_json(u::check(&need(&o.install, "--install")?, &need(&o.manifest, "--manifest")?))?,
+        (Some("update"), Some("check")) => print_json(u::check(&need(&o.install, "--install")?, o.manifest.as_deref().unwrap_or(u::STABLE_MANIFEST)))?,
         (Some("update"), Some("status")) => print_json(u::status(&need(&o.install, "--install")?))?,
         (Some("update"), Some("rollback")) => print_json(u::rollback_manual(&need(&o.install, "--install")?))?,
         (Some("update"), Some("apply")) => {
             let opts = u::ApplyOpts { force: o.force, allow_downgrade: o.allow_downgrade, ready_timeout: std::time::Duration::from_secs(o.ready_timeout.unwrap_or(60)) };
-            let r = u::apply(&need(&o.install, "--install")?, &need(&o.manifest, "--manifest")?, &opts)?;
+            let r = u::apply(&need(&o.install, "--install")?, o.manifest.as_deref().unwrap_or(u::STABLE_MANIFEST), &opts)?;
             println!("{}", serde_json::to_string_pretty(&r).unwrap_or_default());
             return Ok(match r["status"].as_str() {
                 Some("applied" | "already") => 0,
                 Some("deferred") => 3,
                 _ => 4,
             });
+        }
+        (Some("release"), Some("verify")) => {
+            let text = std::fs::read_to_string(p(2).ok_or("서명 manifest가 필요합니다")?).map_err(|e| e.to_string())?;
+            print_json(u::verify_published(&text).and_then(|r| serde_json::to_value(r).map_err(|e| e.to_string())))?;
         }
         (Some("release"), Some("keygen")) => print_json(u::keygen(&PathBuf::from(p(2).ok_or("개인키 파일 경로가 필요합니다")?)))?,
         (Some("release"), Some("sign")) => {

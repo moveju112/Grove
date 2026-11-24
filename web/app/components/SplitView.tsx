@@ -30,7 +30,7 @@ const SessionView = lazy(async () => ({ default: (await import("./SessionView"))
 export type RecentPaneReveal = { leafId: string; tabId: string; request: number };
 type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; visible: boolean; projects: Project[];
     closeTab: (tabId: string) => void; closingTabs: ReadonlySet<string>;
-    projectLabel?: string; recentReveal?: RecentPaneReveal;
+    recentReveal?: RecentPaneReveal;
     /** 이 배치의 프로젝트. 탭을 모두 닫은 빈 pane에서 새 탭을 열 때 쓴다. */
     projectId?: string; onNewTerminal?: () => void;
     onProjectDrop?: (target: Omit<L.Tab, "id">, edge: L.DropEdge) => void; onCloseProject?: () => void };
@@ -252,7 +252,6 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 }}
                 onDrop={(e) => draggable(e) && drop(e, "center")}
             >
-                {p.projectLabel && <GroveText type="supporting" color="secondary" maxLines={1} xstyle={splitStyles.projectName}>{p.projectLabel}</GroveText>}
                 <Stack ref={tabList} direction="horizontal" align="center" gap={0} xstyle={splitStyles.tabList} role="tablist" aria-label="열린 대화와 화면">
                 {leaf.tabs.map((t, i) => { const status = tabStatus(t); return (
                     <Stack direction="horizontal" align="center" gap={0.5} key={t.id} xstyle={splitStyles.tab} role="tab" aria-selected={t.id === leaf.active_tab}

@@ -78,7 +78,7 @@ test("CLI 예약이 허용 목록, 사용자 승인, 토큰 한도를 Grove에�
 // 실제 CLI(opt-in): GROVE_REAL_CLI=claude_code:haiku 또는 codex_cli:gpt-6-luna
 const REAL = process.env.GROVE_REAL_CLI;
 
-test("서버에 설치된 CLI로 파일을 읽어 답하고 도구 활동을 표시한다(실제 CLI, opt-in)", async ({ page }) => {
+test("서버에 설치된 CLI로 파일을 읽어 답한다(실제 CLI, opt-in)", async ({ page }) => {
     test.skip(!REAL, "실제 CLI opt-in 시험: GROVE_REAL_CLI가 없어 건너뜀");
     if (process.env.GROVE_E2E_FAST !== "1") test.setTimeout(300_000);
     const [protocol, model] = REAL!.split(":");
@@ -102,7 +102,6 @@ test("서버에 설치된 CLI로 파일을 읽어 답하고 도구 활동을 표
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     await expect(view.getByTestId("msg-assistant").last()).toContainText("PLUM-3", { timeout: 240_000 });
     await expect(view.getByTestId("turn-status")).toHaveCount(0, { timeout: 60_000 });
-    await expect(view.getByTestId("msg-cli-activity")).toBeVisible();
     } finally {
         await removeProfiles((n) => n === prof.name);
     }

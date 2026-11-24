@@ -110,8 +110,9 @@ async fn a_pty_returning_after_shutdown_is_reaped_instead_of_admitted() {
     let (status, _) = s.send(reqwest::Method::PUT, "/api/v1/settings/server/-/exec.shell", json!({ "expected_revision": 0, "value": "sh" })).await;
     assert_eq!(status, StatusCode::OK);
     let app = s.server.as_ref().unwrap().app.clone();
+    let device = s.registered_device("late-pty").await;
     let mut headers = axum::http::HeaderMap::new();
-    headers.insert("authorization", format!("Bearer {}", s.token).parse().unwrap());
+    headers.insert("authorization", format!("Bearer {}", device["token"].as_str().unwrap()).parse().unwrap());
     headers.insert("idempotency-key", "late-pty".parse().unwrap());
     let principal = grove::auth::authenticate(&app, &headers).await.unwrap();
     app.shutdown_tx.send_replace(true);

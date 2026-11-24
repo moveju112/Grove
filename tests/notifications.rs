@@ -16,6 +16,27 @@ async fn seed(server: &TestServer, title: &str) -> String {
 }
 
 #[tokio::test]
+async fn unread_reference_pages_keep_tied_timestamps_and_global_unread_count() {
+    let server = TestServer::start().await;
+    server.server.as_ref().unwrap().app.db.call(|c| {
+        c.execute_batch("INSERT INTO notifications (id, kind, title, body, created_at, ref_id, read_at) VALUES
+            ('a','test','','','t','wanted',NULL), ('b','test','','','t','wanted','read'),
+            ('c','test','','','t','other',NULL), ('d','test','','','t','wanted',NULL)")?;
+        Ok(())
+    }).await.unwrap();
+    let path = "/api/v1/notifications?unread=true&ref_id=wanted&limit=1";
+    let (status, first) = server.get(path).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(first["items"][0]["id"], "d");
+    assert_eq!(first["next_cursor"], "t|d");
+    let (status, second) = server.get(&format!("{path}&before=t%7Cd")).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(second["items"][0]["id"], "a");
+    assert!(second["next_cursor"].is_null());
+    assert_eq!(second["unread"], 3);
+}
+
+#[tokio::test]
 async fn read_event_failure_keeps_notification_unread() {
     let server = TestServer::start().await;
     let id = seed(&server, "읽음 원자성").await;

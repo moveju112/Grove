@@ -1307,6 +1307,14 @@ pub const MIGRATIONS: &[&str] = &[
     CREATE INDEX file_changes_after ON file_changes(after_sha);
     CREATE INDEX file_changes_stored ON file_changes(stored) WHERE stored = 1;
     "#,
+    r#"
+    ALTER TABLE projects ADD COLUMN icon_color INTEGER;
+    ALTER TABLE projects ADD COLUMN icon_photo_sha256 TEXT;
+    CREATE TABLE project_icon_photos (
+        project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+        png BLOB NOT NULL
+    );
+    "#,
 ];
 
 #[cfg(test)]

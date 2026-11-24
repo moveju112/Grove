@@ -50,28 +50,32 @@ fn isolated_pc_scenarios() {
 #[ignore = "isolated_pc_scenarios가 격리된 환경으로 호출"]
 async fn pc_fixture() {
     let scenario = std::env::var("EDITOR_SCENARIO").unwrap();
-    let mut s = if matches!(scenario.as_str(), "public" | "tls") {
-        let dir = tempfile::tempdir().unwrap();
-        let mut cfg = config(&dir.path().join("data"));
+    let mut s = TestServer::start().await;
+    if matches!(scenario.as_str(), "public" | "tls") {
+        let (_, claim) = s.approved_pairing("remote editor").await;
+        let mut cfg = config(&s.data_dir());
         if scenario == "public" { cfg.listen = "0.0.0.0:0".parse().unwrap(); }
         if scenario == "tls" { cfg.tls_terminated = true; }
-        let mut s = TestServer::start_with(dir, cfg).await;
+        s.stop().await;
+        let mut s = TestServer::start_with(s.dir, cfg).await;
         s.base = format!("http://127.0.0.1:{}", s.server.as_ref().unwrap().addr.port());
-        s
-    } else { TestServer::start().await };
-    if matches!(scenario.as_str(), "public" | "tls") {
         // 공개 listener·TLS 종단의 API는 평문을 거절한다. 암호화 연결 안에서도
         // 외부 편집기의 로컬 PC 제한이 유지되는지 확인한다.
         assert_eq!(s.get("/api/v1/external-editors").await.0, StatusCode::UPGRADE_REQUIRED);
         let mut channel = wire::Channel::open(&s, None, None).await;
-        let headers = || vec![
-            ("authorization", format!("Bearer {}", s.token)),
-            ("content-type", "application/json".into()),
-            ("idempotency-key", s.key()),
-        ];
         let unauthenticated = channel.request("GET", "/api/v1/external-editors", vec![], serde_json::Value::Null).await;
         assert_eq!(unauthenticated["status"], 401);
         channel.body().await;
+        let mut channel = wire::Channel::open(&s, None, None).await;
+        let claimed = channel.request("POST", "/api/v1/auth/pairing/claim", vec![("content-type", "application/json".into())], json!({"code": claim})).await;
+        assert_eq!(claimed["status"], 200);
+        let session: serde_json::Value = serde_json::from_slice(&channel.body().await).unwrap();
+        let token = session["access_token"].as_str().unwrap();
+        let headers = || vec![
+            ("authorization", format!("Bearer {token}")),
+            ("content-type", "application/json".into()),
+            ("idempotency-key", s.key()),
+        ];
         let root = s.make_project_dir("editor");
         std::fs::write(root.join("file.txt"), "keep me").unwrap();
         // 이 wire helper의 v1 연결은 요청 하나만 처리한다.
@@ -123,11 +127,13 @@ async fn pc_fixture() {
         return;
     }
     assert_eq!(listing, json!({"available":true,"reason":null,"editors":[{"id":"vscode","name":"VS Code"}]}));
+    let device = s.registered_device("editor client").await;
+    let token = device["token"].as_str().unwrap();
     for (header, value) in [("x-forwarded-for", "127.0.0.1"), ("forwarded", "for=127.0.0.1"), ("user-agent", "Android Mobile"), ("user-agent", "iPad")] {
         let listing: serde_json::Value = s.client.get(format!("{}/api/v1/external-editors", s.base))
-            .bearer_auth(&s.token).header(header, value).send().await.unwrap().json().await.unwrap();
+            .bearer_auth(token).header(header, value).send().await.unwrap().json().await.unwrap();
         assert_eq!(listing["available"], false, "{listing}");
-        let status = s.client.post(format!("{}{route}", s.base)).bearer_auth(&s.token)
+        let status = s.client.post(format!("{}{route}", s.base)).bearer_auth(token)
             .header(header, value).header("idempotency-key", s.key()).json(&body).send().await.unwrap().status();
         assert_eq!(status, StatusCode::FORBIDDEN);
     }

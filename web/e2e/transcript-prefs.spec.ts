@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { frames } from "./fixture";
-import { apiCall, composerCommand, composerOption, ensureProfile, ensureProjects, login, openDetails, script, selectChoice } from "./helpers";
+import { apiCall, composerCommand, composerOption, ensureProfile, ensureProjects, login, openDetails, script, selectChoice, sessionView } from "./helpers";
 
 test("진행사항 표시만 설정할 수 있고 도구 기록과 추론 요약은 항상 숨긴다", async ({ page }) => {
     const { a } = await ensureProjects();
@@ -14,7 +14,7 @@ test("진행사항 표시만 설정할 수 있고 도구 기록과 추론 요약
     await page.reload();
     const openSession = () => page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     await openSession();
-    const view = page.getByTestId("session-view");
+    const view = sessionView(page, s.id);
 
     // 진행 설명과 요약을 보내고, 도구 실행 뒤 요약과 최종 답변을 보낸다.
     await script({ frames: [
@@ -36,7 +36,12 @@ test("진행사항 표시만 설정할 수 있고 도구 기록과 추론 요약
     await expect(view.getByText(/도구 호출:/)).toHaveCount(0);
     await expect(view.getByTestId("msg-assistant")).toHaveCount(1);
     await expect(view.getByTestId("msg-reasoning")).toHaveCount(0);
-    await expect(answer.getByTestId("progress-step").getByRole("paragraph")).toHaveText(["파일 목록을 확인할게."]);
+    await expect(answer.getByTestId("msg-progress").getByRole("button")).toBeVisible();
+    await expect(answer.getByTestId("progress-step")).toHaveCount(0);
+    await openDetails(answer.getByTestId("msg-progress"));
+    const progress = page.getByRole("dialog", { name: "진행 설명" });
+    await expect(progress.getByTestId("progress-step").getByRole("paragraph")).toHaveText(["파일 목록을 확인할게."]);
+    await progress.getByRole("button", { name: "닫기", exact: true }).click();
     await expect(page.getByText(/파일 목록부터 확인한다|목록을 보고 판단한다/)).toHaveCount(0);
 
     const openSettings = async () => {
@@ -46,7 +51,7 @@ test("진행사항 표시만 설정할 수 있고 도구 기록과 추론 요약
     const setting = page.getByRole("combobox", { name: "진행사항 보기", exact: true });
     const closeSettings = () => page.getByRole("button", { name: "설정 닫기", exact: true }).click();
     await openSettings();
-    await expect(setting).toContainText("항상 펼치기");
+    await expect(setting).toContainText("완료 후 접기");
     await expect(page.getByLabel("추론 보기", { exact: true })).toHaveCount(0);
     await expect(page.getByLabel("도구 실행 세부를 펼쳐서 표시", { exact: true })).toHaveCount(0);
     await expect(page.getByLabel("답만 보기", { exact: true })).toHaveCount(0);
@@ -69,9 +74,7 @@ test("진행사항 표시만 설정할 수 있고 도구 기록과 추론 요약
     await expect(view.getByTestId("msg-reasoning")).toHaveCount(0);
 
     await openSettings();
-    await selectChoice(setting, "collapse");
+    await selectChoice(setting, "expanded");
     await closeSettings();
-    await expect(answer.getByTestId("msg-progress").getByRole("button")).toBeVisible();
-    await openDetails(answer.getByTestId("msg-progress"));
-    await expect(page.getByRole("dialog", { name: "진행 설명" }).getByTestId("progress-step").getByRole("paragraph")).toHaveText(["파일 목록을 확인할게."]);
+    await expect(answer.getByTestId("progress-step").getByRole("paragraph")).toHaveText(["파일 목록을 확인할게."]);
 });

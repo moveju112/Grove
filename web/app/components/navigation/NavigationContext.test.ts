@@ -63,4 +63,11 @@ describe("현재 위치의 접근성·오류 표시", () => {
         expect(render({ layout: undefined })).toContain("배치 불러오는 중…");
         expect(render({ layout: { ...layout, root: { type: "leaf", id: "pane", active_tab: null, tabs: [] } } })).toContain("빈 영역");
     });
+    it("프로젝트 분할의 마지막 탭을 닫아도 상단에는 그 프로젝트 이름이 보인다", () => {
+        const html = render({ splitProject: project,
+            layout: { ...layout, root: { type: "leaf", id: "pane", active_tab: null, tabs: [] } } });
+        expect(html).toContain('data-project-id="p"');
+        expect(html).toContain("&lt;프로젝트&gt;");
+        expect(html).toContain("빈 영역");
+    });
 });

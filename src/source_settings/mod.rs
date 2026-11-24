@@ -7,8 +7,9 @@
 use crate::project_fs::ProjectFs;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::ffi::OsString;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 mod routes;
 mod resources;
@@ -45,6 +46,21 @@ impl SourceId {
 
     fn is_toml(self) -> bool {
         matches!(self, Self::CodexUser | Self::CodexProject)
+    }
+}
+
+pub(crate) fn user_root(source: SourceId, env: impl Fn(&str) -> Option<OsString>) -> Option<PathBuf> {
+    let (key, default) = match source {
+        SourceId::ClaudeUser => ("CLAUDE_CONFIG_DIR", ".claude"),
+        SourceId::CodexUser => ("CODEX_HOME", ".codex"),
+        _ => return None,
+    };
+    match env(key) {
+        Some(value) => Some(PathBuf::from(value)).filter(|path| path.is_absolute()),
+        None => env(if cfg!(windows) { "USERPROFILE" } else { "HOME" })
+            .map(PathBuf::from)
+            .filter(|home| home.is_absolute())
+            .map(|home| home.join(default)),
     }
 }
 

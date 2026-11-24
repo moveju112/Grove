@@ -5,7 +5,23 @@ export const contentStyles = stylex.create({
     markdown: { lineHeight: 1.5, "--text-body-leading": "1.5" },
     // 열이 많은 표는 셀을 글자 한 자 폭으로 압축하지 않고 표 안에서 스크롤한다.
     markdownTable: (columns: number) => ({ minWidth: `${columns * 5}em` }),
-    inlineLink: { minHeight: 0, fontSize: "inherit", lineHeight: "inherit", verticalAlign: "baseline" },
+    inlineFileButton: {
+        minHeight: 0,
+        maxWidth: "100%",
+        paddingInline: "var(--spacing-0-5)",
+        borderWidth: 0,
+        backgroundColor: { default: "transparent", ":hover": "transparent" },
+        color: { default: "color-mix(in srgb, var(--split-line) 70%, var(--text))", ":hover": "var(--text)" },
+        fontSize: "inherit",
+        lineHeight: "inherit",
+        verticalAlign: "baseline",
+        whiteSpace: "normal",
+        overflowWrap: "anywhere",
+    },
+    namedFileButton: { minHeight: { default: 26, "@media (pointer: coarse)": 44 } },
+    fileIcon: { display: "inline-flex", verticalAlign: "-0.15em", marginInlineEnd: "var(--spacing-1)" },
+    fileCaption: { fontWeight: 550, textDecorationLine: "underline", textDecorationThickness: "1px", textUnderlineOffset: "0.18em" },
+    fileCode: { backgroundColor: "transparent", paddingInline: 0, paddingBlock: 0 },
     // Text의 wrap 속성은 입력 원문의 개행 보존을 제공하지 않는다.
     plainText: { whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
     quote: {
@@ -18,6 +34,15 @@ export const contentStyles = stylex.create({
     selectable: { userSelect: "all" },
     // QR과 원문 이미지·텍스트는 전문 renderer의 native 출력이다.
     qr: { display: "block", maxWidth: "100%", height: "auto" },
+    previewTitle: { flexGrow: 1, minWidth: 0, overflowWrap: "anywhere" },
+    previewBody: { minWidth: 0, overflow: "auto", maxHeight: "65dvh", overflowWrap: "anywhere" },
+    previewDocument: {
+        minHeight: "min(18em, 42dvh)",
+        fontSize: "1.05em",
+        "--text-heading-3-size": "1.8em",
+        "--text-heading-4-size": "1.3em",
+        "--text-heading-5-size": "1.12em",
+    },
     previewImage: { maxWidth: "100%", maxHeight: "70dvh", objectFit: "contain" },
     attachmentText: { maxHeight: 240, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" },
     // 외부 문서 격리용 iframe은 Astryx에 대응 표면이 없다.

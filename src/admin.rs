@@ -87,11 +87,26 @@ pub async fn check_update(
     Json(request): Json<UpdateCheckRequest>,
 ) -> ApiResult<Response> {
     let hash = crate::idem::body_hash("server_update.check", &serde_json::to_value(&request)?);
-    let data_dir = app.cfg.data_dir.clone();
+    if let Some(prior) = crate::idem::replay(&app, &p, &headers, &hash).await? { return Ok(prior); }
+    let revision = request.expected_revision;
+    let channel = app.db.call(move |c| Ok(crate::update::require_revision(c, revision)?.channel)).await?;
+    let release = crate::update::published_release(app.cfg.release_mirror.clone(), channel).await;
     crate::idem::run(&app, &p, &headers, &hash, move |tx, now| {
-        let result = crate::update::check_settings(tx, &data_dir, request.expected_revision, now)?;
+        let result = crate::update::check_settings(tx, revision, now, release)?;
         Ok((StatusCode::OK, json!({ "last_check": result })))
     }).await
+}
+
+/// PWA의 자동·수동 조회는 서버 설정이나 마지막 수동 확인 기록을 변경하지 않는다.
+#[derive(serde::Deserialize)]
+pub struct WebVersion { version: String }
+
+pub async fn web_release(State(app): State<App>, _p: Principal, axum::extract::Query(web): axum::extract::Query<WebVersion>) -> ApiResult<Json<Value>> {
+    let channel = app.db.call(|c| Ok(crate::update::settings(c)?.channel)).await?;
+    let release = crate::update::published_release(app.cfg.release_mirror.clone(), channel).await
+        .map_err(|_| ApiError::new(StatusCode::BAD_GATEWAY, "release_unavailable", "공식 웹 릴리즈를 확인하지 못했습니다"))?;
+    let version = release["available"].as_str().unwrap_or_default();
+    Ok(Json(json!({ "version": version, "newer": crate::update::cmp_version(version, &web.version).is_gt() })))
 }
 
 /// 서버 자원 상태(OBS-004). 상태를 바꾸지 않는다.

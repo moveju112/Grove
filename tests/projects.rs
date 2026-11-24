@@ -80,6 +80,40 @@ async fn project_icon_and_sort_by_recent_activity() {
     assert_eq!(st, StatusCode::BAD_REQUEST);
 }
 
+#[tokio::test]
+async fn project_photo_is_revisioned_and_only_the_current_png_is_served() {
+    use base64::{Engine, engine::general_purpose::STANDARD};
+    let server = TestServer::start().await;
+    let project = server.create_project("photo").await;
+    let path = format!("/api/v1/projects/{}", project["id"].as_str().unwrap());
+    let revision = &project["revision"];
+    let patch = |body| server.send(Method::PATCH, &path, body);
+
+    let (status, _) = patch(json!({ "expected_revision": revision, "icon_color": 50 })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    let (status, _) = patch(json!({ "expected_revision": revision, "icon_photo_base64": "YnJva2Vu" })).await;
+    assert!(!status.is_success());
+    let (status, saved) = patch(json!({ "expected_revision": revision, "icon_color": 2,
+        "icon_photo_base64": STANDARD.encode(include_bytes!("fixtures/images/animated.gif")) })).await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["icon_color"], 2);
+    let photo = format!("{path}/icon/{}", saved["icon_photo_sha256"].as_str().unwrap());
+    let denied = server.raw(Method::GET, &photo, None, None, Some("")).await;
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    let (status, _) = patch(json!({ "expected_revision": revision, "icon_photo_base64": null })).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    let image = server.raw(Method::GET, &photo, None, None, None).await;
+    assert_eq!(image.status(), StatusCode::OK);
+    assert_eq!(image.headers()["content-type"], "image/png");
+    assert!(image.bytes().await.unwrap().starts_with(b"\x89PNG\r\n\x1a\n"));
+
+    let (status, reset) = patch(json!({ "expected_revision": saved["revision"], "icon_photo_base64": null, "icon_color": null })).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(reset.get("icon_photo_sha256").is_none());
+    assert!(reset.get("icon_color").is_none());
+    assert_eq!(server.get(&photo).await.0, StatusCode::NOT_FOUND);
+}
+
 /// PROJECT-008: 작업공간 고정과 색상 라벨의 생성·다중 할당·이름/색 수정·충돌 거절·삭제 영향.
 #[tokio::test]
 async fn pin_and_labels_create_assign_edit_and_delete() {

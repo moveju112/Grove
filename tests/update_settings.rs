@@ -96,6 +96,9 @@ async fn signed_local_checks_cover_new_current_failed_and_channel_selection_with
     let mut s = TestServer::start().await;
     let (root, key) = source(&s);
     manifest(&root, &key, "stable", "9999.0.0");
+    let web = "/api/v1/updates/web-release?version=1.0.0";
+    assert_eq!(s.get(web).await, (StatusCode::OK, json!({ "version": "9999.0.0", "newer": true })));
+    assert_eq!(s.get(SETTINGS).await.1["last_check"], Value::Null);
     let (status, available) = s.post(CHECK, json!({ "expected_revision": 0 })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(available["last_check"]["status"], "available");
@@ -112,6 +115,7 @@ async fn signed_local_checks_cover_new_current_failed_and_channel_selection_with
     let response = s.raw(Method::POST, CHECK, Some(json!({ "expected_revision": 0 })), Some("check-once"), None).await;
     assert_eq!(response.headers()["idempotent-replayed"], "true");
     assert_eq!(response.json::<Value>().await.unwrap(), same);
+    assert_eq!(s.get(web).await.0, StatusCode::BAD_GATEWAY);
     let (_, failed) = s.post(CHECK, json!({ "expected_revision": 0 })).await;
     assert_eq!(failed["last_check"]["status"], "failed");
     assert_eq!(failed["last_check"]["error"], "manifest_check_failed");

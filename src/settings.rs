@@ -68,6 +68,8 @@ pub struct SettingDef {
     pub advanced: bool,
 }
 
+static REGISTRY: std::sync::LazyLock<Vec<SettingDef>> = std::sync::LazyLock::new(registry);
+
 pub fn registry() -> Vec<SettingDef> {
     let mut defs = vec![
         SettingDef {
@@ -191,7 +193,7 @@ pub fn registry() -> Vec<SettingDef> {
             options: &["solo", "delegated"],
             min: None,
             max: None,
-            default: json!("delegated"),
+            default: json!("solo"),
             scopes: &["server", "project", "session"],
             applies: "immediate",
             advanced: false,
@@ -529,7 +531,7 @@ pub fn registry() -> Vec<SettingDef> {
 }
 
 pub fn def(key: &str) -> Option<SettingDef> {
-    registry().into_iter().find(|d| d.key == key)
+    REGISTRY.iter().find(|d| d.key == key).cloned()
 }
 
 pub fn validate(d: &SettingDef, v: &Value) -> ApiResult<()> {
@@ -600,8 +602,9 @@ pub fn execution_cwd(root: &std::path::Path, explicit: Option<&str>) -> ApiResul
 }
 
 fn row(c: &Connection, scope: &str, id: &str, key: &str) -> ApiResult<Option<(Value, i64)>> {
-    Ok(c.query_row(
+    Ok(c.prepare_cached(
         "SELECT value, revision FROM settings WHERE scope = ?1 AND scope_id = ?2 AND key = ?3",
+    )?.query_row(
         params![scope, id, key],
         |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)?)),
     )
@@ -621,29 +624,35 @@ pub fn resolve_key(c: &Connection, d: &SettingDef, project: Option<&str>, sessio
         let (v, rev) = r.unwrap_or((Value::Null, 0));
         layers.insert(scope.to_string(), json!({ "scope_id": id, "value": v, "revision": rev }));
     }
+    let mut ancestors = Vec::new();
     if crate::agent_policy::is_policy(d.key) && let Some(session) = session {
         let mut sid = session.to_string();
         for depth in 0..=crate::agents::MAX_DEPTH {
             let Some(run) = crate::agents::run_by_child(c, &sid)? else { break };
             if depth == crate::agents::MAX_DEPTH {
+                ancestors.push(String::from("parent:limit"));
                 layers.insert("parent:limit".into(), json!({"scope_id": sid, "value": crate::agent_policy::denied_value(d.key), "revision": 0}));
                 break;
             }
             sid = run.parent_session_id;
             let (value, revision) = row(c, "session", &sid, d.key)?.unwrap_or((Value::Null, 0));
             // 자식은 같은 프로젝트에 속한다. 부모의 원래 계층을 남겨 변경된 server/project 값을 상속한다.
-            layers.insert(format!("parent:{sid}"), json!({"scope_id": sid, "value": value, "revision": revision}));
+            let key = format!("parent:{sid}");
+            ancestors.push(key.clone());
+            layers.insert(key, json!({"scope_id": sid, "value": value, "revision": revision}));
         }
     }
-    Ok(resolve_layers(d, layers))
+    Ok(resolve_layers(d, layers, &ancestors))
 }
 
-fn resolve_local_layers(d: &SettingDef, layers: &serde_json::Map<String,Value>) -> (Value, &'static str) {
+fn resolve_local_layers(d: &SettingDef, layers: &serde_json::Map<String,Value>, session: Option<&Value>) -> (Value, &'static str) {
     let mut effective = d.default.clone();
     let mut source = "default";
-    for scope in ["server","project","session"] {
-        if let Some(layer) = layers.get(scope) && !layer["value"].is_null() {
-            let next = crate::agent_policy::inherit(d.key, &effective, &layer["value"]);
+    for (scope, layer) in [("server", layers.get("server")), ("project", layers.get("project")), ("session", session)] {
+        if let Some(layer) = layer && !layer["value"].is_null() {
+            // 기본값은 명시한 상위 범위의 제한이 아니다.
+            let upper = if source == "default" { &layer["value"] } else { &effective };
+            let next = crate::agent_policy::inherit(d.key, upper, &layer["value"]);
             if next != effective || layer["value"] == next {
                 source = scope;
             }
@@ -653,17 +662,16 @@ fn resolve_local_layers(d: &SettingDef, layers: &serde_json::Map<String,Value>) 
     (effective, source)
 }
 
-fn resolve_layers(d: &SettingDef, layers: serde_json::Map<String,Value>) -> Value {
-    let (mut effective, mut source) = resolve_local_layers(d, &layers);
-    if crate::agent_policy::is_policy(d.key) {
-        for (_, parent) in layers.iter().filter(|(key, _)| key.starts_with("parent:")) {
-            let mut parent_layers = layers.clone();
-            parent_layers.insert("session".into(), parent.clone());
-            let (inherited, inherited_source) = resolve_local_layers(d, &parent_layers);
-            let next = crate::agent_policy::inherit_parent(d.key, &effective, &inherited);
-            if next != effective { source = inherited_source; }
-            effective = next;
-        }
+fn resolve_layers(d: &SettingDef, layers: serde_json::Map<String,Value>, ancestors: &[String]) -> Value {
+    // 루트 대화부터 적용해야 부모의 실제 제한을 모든 자식이 상속한다.
+    let mut sessions = ancestors.iter().rev().map(|key| layers.get(key)).chain(std::iter::once(layers.get("session")));
+    let (mut effective, mut source) = resolve_local_layers(d, &layers, sessions.next().flatten());
+    for session in sessions {
+        let (child, child_source) = resolve_local_layers(d, &layers, session);
+        if d.key == crate::agent_policy::ORCHESTRATION && child_source == "default" { continue; }
+        let next = crate::agent_policy::inherit_parent(d.key, &child, &effective);
+        if next == child { source = child_source; }
+        effective = next;
     }
     json!({ "key": d.key, "default": d.default, "layers": layers, "effective": effective, "source": source })
 }
@@ -698,7 +706,7 @@ pub fn full_access(c: &Connection, project: &str, session: &str) -> ApiResult<bo
 }
 
 pub async fn get_registry(_p: Principal) -> Json<Vec<Value>> {
-    Json(registry().iter().filter(|d| d.key != MODEL_FAVORITES).map(|d| {
+    Json(REGISTRY.iter().filter(|d| d.key != MODEL_FAVORITES).map(|d| {
         let mut value = json!(d);
         if d.key == "exec.shell" {
             value["options"] = json!(d.options.iter().filter(|choice| exec_option_reason(d.key, choice).is_none()).collect::<Vec<_>>());
@@ -726,7 +734,7 @@ pub async fn get_effective(State(app): State<App>, _p: Principal, Query(q): Quer
                     }
                     _ => None,
                 };
-                let items: Vec<Value> = registry()
+                let items: Vec<Value> = REGISTRY
                     .iter()
                     .map(|d| resolve_key(c, d, project.as_deref(), q.session_id.as_deref()))
                     .collect::<ApiResult<_>>()?;

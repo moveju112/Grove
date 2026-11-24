@@ -17,6 +17,7 @@ async function setup(settings: Page, chat: Page) {
     await settings.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).click();
     await openProjectSettings(settings);
     await settings.getByTestId("settings-menu").getByRole("button", { name: "위임 에이전트", exact: true }).click();
+    await save(settings, "agents.orchestration", "오케스트레이션", "delegated");
     await save(settings, "agents.allowed_roles", "위임 허용 역할", "reviewer");
     await login(chat);
     await chat.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(session.title) }).click();

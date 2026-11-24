@@ -1,8 +1,8 @@
 import { pushServerId } from "./webPush";
-import type { EventRecord } from "../api/generated";
+import type { EventRecord, Turn } from "../api/generated";
 import { loadPrefs, type Prefs } from "./device";
 
-// 화면을 보고 있지 않을 때 받은 이벤트를 기기 알림으로 표시한다. 잠금 화면 노출을 막기 위해 대화 내용은 넣지 않는다.
+// 화면을 보고 있지 않을 때 받은 이벤트를 기기 알림으로 표시한다.
 export type AttentionKind = "done" | "failed" | "approval" | "server";
 export type Attention = { kind: AttentionKind; tag: string; title: string; body: string; projectId: string | null; sessionId: string | null };
 
@@ -13,11 +13,11 @@ const CLAIM_TTL = 10 * 60_000;
 export function attentionFor(e: EventRecord, p: Prefs): Attention | null {
     const base = { projectId: e.project_id, sessionId: e.session_id };
     if (e.kind === "turn.updated") {
-        const t = e.payload as { id?: string; status?: string };
+        const t = e.payload as Partial<Turn>;
         if (!t?.id) return null;
         if (t.status === "awaiting_approval" && p.notifyApproval)
             return { ...base, kind: "approval", tag: `approval:${t.id}`, title: "승인 요청", body: "대화에서 도구 실행 승인을 기다립니다." };
-        if (t.status === "completed" && p.notifyDone) return { ...base, kind: "done", tag: `turn:${t.id}`, title: "작업 완료", body: "대화의 요청 처리가 끝났습니다." };
+        if (t.status === "completed" && p.notifyDone) return { ...base, kind: "done", tag: `turn:${t.id}`, title: "작업 완료", body: t.completion_preview?.trim() || "대화의 요청 처리가 끝났습니다." };
         if ((t.status === "failed" || t.status === "interrupted") && p.notifyDone)
             return { ...base, kind: "failed", tag: `turn:${t.id}`, title: "작업 실패", body: "대화의 요청 처리가 실패하거나 중단됐습니다." };
         return null;
@@ -76,7 +76,7 @@ export async function showAttention(a: Attention, sound: boolean, vibrate = fals
         if (registration?.active) {
             const server = await pushServerId();
             const options: NotificationOptions & { vibrate: number[] } = {
-                body: a.body, tag: `${server}:${a.tag}`, data: { ...a, server },
+                body: a.body, tag: `${server}:${a.tag}`, data: { projectId: a.projectId, sessionId: a.sessionId, server },
                 vibrate: vibrate ? [180, 80, 180] : [],
             };
             await registration.showNotification(a.title, options);

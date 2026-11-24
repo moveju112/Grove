@@ -141,7 +141,7 @@ struct Process {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
-    usage_total: Usage,
+    usage_total: Option<Usage>,
     _scratch: tempfile::TempDir,
 }
 
@@ -186,7 +186,7 @@ impl Process {
             child,
             stdin,
             stdout,
-            usage_total: Usage::default(),
+            usage_total: None,
             _scratch: scratch,
         })
     }

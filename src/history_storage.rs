@@ -135,12 +135,14 @@ pub(crate) fn compress_idle(c: &mut Connection, now: OffsetDateTime) -> ApiResul
 /// 읽은 페이지만 복원한다. 실패하면 원래 압축본과 접근 시각을 모두 보존한다.
 pub(crate) fn restore_page(c: &mut Connection, now: &str, session: &str, messages: &[crate::sessions::Message]) -> ApiResult<()> {
     let tx = c.transaction()?;
-    for message in messages {
-        tx.execute(
+    {
+        let mut restore = tx.prepare_cached(
             "UPDATE messages SET content=grove_history_text(content), model_input=grove_history_text(model_input), history_checked_at=NULL \
              WHERE id=?1 AND session_id=?2 AND (typeof(content)='blob' OR typeof(model_input)='blob')",
-            params![message.id, session],
         )?;
+        for message in messages {
+            restore.execute(params![message.id, session])?;
+        }
     }
     tx.execute("UPDATE sessions SET history_accessed_at=?2 WHERE id=?1", params![session, now])?;
     tx.commit()?;

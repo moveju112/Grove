@@ -58,7 +58,7 @@ describe("E2EE connection", () => {
             await new Response(response.body).text();
             expect(sent).toEqual([0x05, 0x06, 0x06, 0x07]);
             expect(chunks.map((chunk) => chunk.length)).toEqual([1024 * 1024, 3]);
-            expect(Buffer.concat(chunks)).toEqual(Buffer.from(bytes));
+            expect(Buffer.concat(chunks).equals(bytes)).toBe(true);
         } finally { mux.fail(new TypeError("test complete")); }
     });
     it.each(["abort", "reject"])("stops sending a partial body after %s", async (action) => {

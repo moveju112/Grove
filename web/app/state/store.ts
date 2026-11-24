@@ -303,6 +303,10 @@ export function applyEvent(e: EventRecord) {
             invalidate("search");
             break;
         case "recent.updated":
+            if (pid && (e.payload as { session_pin_changed?: boolean } | null)?.session_pin_changed) {
+                invalidate(`sessions:${pid}:history`, true);
+                invalidate(`search:${pid}:history`, true);
+            }
             invalidate("recent", (e.payload as { hidden?: boolean } | null)?.hidden === false);
             break;
         case "label.changed":

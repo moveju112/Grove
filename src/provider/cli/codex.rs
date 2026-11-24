@@ -77,8 +77,8 @@ fn turn_params(profile: &Profile, req: &ModelRequest, thread: &str, images: &[Pa
 #[derive(Default)]
 struct State {
     output: ModelOutput,
-    usage_baseline: Usage,
-    usage_total: Usage,
+    usage_baseline: Option<Usage>,
+    usage_total: Option<Usage>,
     thread: String,
     cwd: PathBuf,
     turn: Option<String>,
@@ -98,6 +98,17 @@ fn token_usage(value: &Value) -> Usage {
         cache_read_tokens: value["cachedInputTokens"].as_u64().unwrap_or(0),
         cache_write_tokens: value["cacheWriteInputTokens"].as_u64(),
         reasoning_tokens: value["reasoningOutputTokens"].as_u64(),
+        ..Default::default()
+    }
+}
+
+fn usage_since(total: &Usage, baseline: &Usage) -> Usage {
+    Usage {
+        input_tokens: total.input_tokens.saturating_sub(baseline.input_tokens),
+        output_tokens: total.output_tokens.saturating_sub(baseline.output_tokens),
+        cache_read_tokens: total.cache_read_tokens.saturating_sub(baseline.cache_read_tokens),
+        cache_write_tokens: total.cache_write_tokens.map(|n| n.saturating_sub(baseline.cache_write_tokens.unwrap_or(0))),
+        reasoning_tokens: total.reasoning_tokens.map(|n| n.saturating_sub(baseline.reasoning_tokens.unwrap_or(0))),
         ..Default::default()
     }
 }
@@ -368,10 +379,9 @@ impl State {
         if p["threadId"].as_str() != Some(self.thread.as_str()) {
             return Ok(false);
         }
-        // resume은 이전 턴의 누적 사용량을 replay한다. 새 턴 전의 기준값만 보관한다.
+        // resume에서 이전 턴의 누적 사용량을 보내면 새 턴의 기준값으로 쓴다.
         if method == "thread/tokenUsage/updated" && self.turn.is_none() {
-            self.usage_total = token_usage(&p["tokenUsage"]["total"]);
-            self.usage_baseline = self.usage_total.clone();
+            self.usage_baseline = Some(token_usage(&p["tokenUsage"]["total"]));
             return Ok(false);
         }
         if method == "turn/started" {
@@ -417,19 +427,12 @@ impl State {
                     tokens: p["tokenUsage"]["last"]["totalTokens"].as_u64(),
                     context_window: p["tokenUsage"]["modelContextWindow"].as_u64().filter(|n| *n > 0),
                 });
-                // total은 thread 전체 누적값이므로 이번 호출에서 증가한 양만 기록한다.
-                // 한 턴의 여러 모델 호출·반복 알림도 같은 기준값으로 차감한다.
-                self.usage_total = token_usage(&p["tokenUsage"]["total"]);
-                let usage = &self.usage_total;
-                let base = &self.usage_baseline;
-                self.output.usage = Usage {
-                    input_tokens: usage.input_tokens.saturating_sub(base.input_tokens),
-                    output_tokens: usage.output_tokens.saturating_sub(base.output_tokens),
-                    cache_read_tokens: usage.cache_read_tokens.saturating_sub(base.cache_read_tokens),
-                    cache_write_tokens: usage.cache_write_tokens.map(|n| n.saturating_sub(base.cache_write_tokens.unwrap_or(0))),
-                    reasoning_tokens: usage.reasoning_tokens.map(|n| n.saturating_sub(base.reasoning_tokens.unwrap_or(0))),
-                    ..Default::default()
-                };
+                let total = token_usage(&p["tokenUsage"]["total"]);
+                // 재개 시 이전 누적값이 replay되지 않으면 첫 모델 요청 직전까지의 사용량을 복원한다.
+                let baseline = self.usage_baseline.get_or_insert_with(||
+                    usage_since(&total, &token_usage(&p["tokenUsage"]["last"])));
+                self.output.usage = usage_since(&total, baseline);
+                self.usage_total = Some(total);
             }
             "error" if p["willRetry"] != true => {
                 return Err(ProviderError::new(
@@ -637,7 +640,7 @@ pub(super) async fn run<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
         .map(|(output, _)| output)
 }
 
-pub(super) enum Connection { OneShot, Fresh, Reused(Usage) }
+pub(super) enum Connection { OneShot, Fresh, Reused(Option<Usage>) }
 
 pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
     writer: &mut W,
@@ -647,16 +650,16 @@ pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
     images: &[PathBuf],
     on_delta: OnDelta<'_>,
     connection: Connection,
-) -> Result<(ModelOutput, Usage), ProviderError> {
+) -> Result<(ModelOutput, Option<Usage>), ProviderError> {
     // 이미 로드된 thread는 resume에서 기준 사용량을 다시 보내지 않을 수 있다.
     let usage_baseline = match &connection {
         Connection::Reused(total) => total.clone(),
-        _ => Usage::default(),
+        _ if req.cli.as_ref().is_some_and(|context| context.resume.is_some()) => None,
+        _ => Some(Usage::default()),
     };
     let mut state = State {
         cwd: req.cli.as_ref().expect("Codex 대화 문맥").cwd.clone(),
         questions: req.cli.as_ref().and_then(|context| context.codex_questions.clone()),
-        usage_total: usage_baseline.clone(),
         usage_baseline,
         ..State::default()
     };

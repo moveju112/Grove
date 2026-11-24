@@ -10,6 +10,7 @@ use crate::error::{ApiError, ApiResult};
 use crate::events;
 use crate::idem;
 use axum::Json;
+use base64::{Engine, engine::general_purpose::STANDARD};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
@@ -30,6 +31,12 @@ pub struct Project {
     pub available: bool,
     /// 표시 아이콘(이모지·짧은 글자, PROJECT-002). 없으면 null.
     pub icon: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icon_color: Option<u8>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icon_photo_sha256: Option<String>,
     /// 마지막 활동: 프로젝트 대화 중 가장 늦은 갱신 시각, 대화가 없으면 프로젝트 갱신 시각.
     pub last_activity_at: String,
     /// 고정한 시각(PROJECT-008). 고정한 프로젝트는 목록 맨 위에 고정한 순서로 보인다.
@@ -74,7 +81,7 @@ fn workspaces_in_use(conn: &Connection, id: &str) -> ApiResult<(i64, i64)> {
 const COLS: &str = "id, name, root_path, created_at, updated_at, revision, archived_at, icon, \
     COALESCE((SELECT s.updated_at FROM sessions s WHERE s.project_id = projects.id AND julianday(s.updated_at) > julianday(projects.updated_at) \
               ORDER BY julianday(s.updated_at) DESC LIMIT 1), projects.updated_at) AS last_activity_at, pinned_at, \
-    (SELECT group_concat(label_id, ',') FROM (SELECT label_id FROM project_labels WHERE project_id = projects.id ORDER BY label_id)), setup_script_id, workspace_mode, folder_id";
+    (SELECT group_concat(label_id, ',') FROM (SELECT label_id FROM project_labels WHERE project_id = projects.id ORDER BY label_id)), setup_script_id, workspace_mode, folder_id, icon_color, icon_photo_sha256";
 
 /// 아이콘 최대 길이(문자). 이모지 조합(ZWJ·피부색)까지 담을 수 있게 넉넉히 둔다.
 const MAX_ICON_CHARS: usize = 8;
@@ -98,6 +105,8 @@ fn from_row(r: &Row) -> rusqlite::Result<Project> {
         setup_script_id: r.get(11)?,
         workspace_mode: r.get(12)?,
         folder_id: r.get(13)?,
+        icon_color: r.get(14)?,
+        icon_photo_sha256: r.get(15)?,
     })
 }
 
@@ -109,11 +118,14 @@ pub fn get(conn: &Connection, id: &str) -> ApiResult<Project> {
 
 /// 실행 가능한(보관되지 않은) 프로젝트의 root 경로.
 pub fn active_root(conn: &Connection, id: &str) -> ApiResult<std::path::PathBuf> {
-    let p = get(conn, id)?;
-    if p.archived_at.is_some() {
+    let (path, archived): (String, bool) = conn.query_row(
+        "SELECT root_path, archived_at IS NOT NULL FROM projects WHERE id = ?1",
+        [id], |r| Ok((r.get(0)?, r.get(1)?)),
+    ).optional()?.ok_or_else(|| ApiError::not_found("프로젝트가 없습니다"))?;
+    if archived {
         return Err(ApiError::conflict("archived", "보관된 프로젝트입니다"));
     }
-    let root = std::path::PathBuf::from(&p.root_path);
+    let root = std::path::PathBuf::from(path);
     if !root.is_dir() {
         return Err(ApiError::gone("프로젝트 경로에 접근할 수 없습니다"));
     }
@@ -243,6 +255,16 @@ pub async fn show(State(app): State<App>, _p: Principal, Path(id): Path<String>)
     Ok(Json(app.db.call(move |c| get(c, &id)).await?))
 }
 
+pub async fn icon_photo(State(app): State<App>, _p: Principal, Path((id, sha)): Path<(String, String)>, headers: HeaderMap) -> ApiResult<Response> {
+    let hash = sha.clone();
+    let png = app.db.call(move |c| {
+        c.query_row("SELECT i.png FROM project_icon_photos i JOIN projects p ON p.id=i.project_id
+                     WHERE p.id=?1 AND p.icon_photo_sha256=?2", params![id, hash], |r| r.get(0))
+            .optional()?.ok_or_else(|| ApiError::not_found("프로젝트 사진이 없습니다"))
+    }).await?;
+    crate::bot_avatars::png_response(&headers, png, &sha)
+}
+
 #[derive(Deserialize)]
 pub struct UpdateProject {
     pub expected_revision: i64,
@@ -253,6 +275,10 @@ pub struct UpdateProject {
     /// 아이콘 설정, null이면 해제(PROJECT-002).
     #[serde(default, deserialize_with = "crate::util::double_option")]
     pub icon: Option<Option<String>>,
+    #[serde(default, deserialize_with = "crate::util::double_option")]
+    pub icon_color: Option<Option<u8>>,
+    #[serde(default, deserialize_with = "crate::util::double_option")]
+    pub icon_photo_base64: Option<Option<String>>,
     /// 고정·해제(PROJECT-008). 이미 같은 상태면 고정 시각을 바꾸지 않는다.
     pub pinned: Option<bool>,
     /// 초기 설정 script 지정, null이면 해제(PROJECT-010). 이 프로젝트의 삭제되지 않은 script만.
@@ -358,6 +384,29 @@ pub async fn update(
     let mut mutation = json!({ "id": id, "rev": body.expected_revision, "name": name, "archived": body.archived, "root": new_root, "icon": icon, "pinned": body.pinned, "setup": body.setup_script_id, "mode": mode });
     // 새 필드가 없으면 기존 클라이언트의 미확정 요청도 같은 digest로 재확인한다.
     if let Some(folder) = &body.folder_id { mutation["folder"] = json!({ "value": folder }); }
+    if let Some(color) = body.icon_color {
+        if color.is_some_and(|value| value >= 6) {
+            return Err(ApiError::invalid("아이콘 색상을 선택해 주세요"));
+        }
+        mutation["icon_color"] = json!(color);
+    }
+    let photo = match body.icon_photo_base64 {
+        Some(Some(encoded)) => {
+            if encoded.len() > 128 * 1024 {
+                return Err(ApiError::invalid("프로젝트 아이콘 이미지가 너무 큽니다"));
+            }
+            let (png, sha) = tokio::task::spawn_blocking(move || -> ApiResult<_> {
+                let bytes = STANDARD.decode(encoded).map_err(|_| ApiError::invalid("사진 데이터가 올바르지 않습니다"))?;
+                let (png, _, _, _) = crate::bot_avatars::normalize(&bytes)?;
+                let sha = crate::util::sha256_hex(&png);
+                Ok((png, sha))
+            }).await.map_err(|e| ApiError::internal(e.to_string()))??;
+            mutation["icon_photo"] = json!(sha);
+            Some(Some((png, sha)))
+        }
+        Some(None) => { mutation["icon_photo"] = json!(null); Some(None) }
+        None => None,
+    };
     let h = idem::body_hash("project.update", &mutation);
     let setup = body.setup_script_id.clone();
     let rev = body.expected_revision;
@@ -369,6 +418,18 @@ pub async fn update(
         let cur = get(tx, &id)?;
         if cur.revision != rev {
             return Err(ApiError::revision_conflict(serde_json::to_value(&cur)?));
+        }
+        if let Some(color) = body.icon_color {
+            tx.execute("UPDATE projects SET icon_color=?2 WHERE id=?1", params![id, color])?;
+        }
+        if let Some(change) = &photo {
+            if let Some((png, _)) = change {
+                tx.execute("INSERT INTO project_icon_photos(project_id,png) VALUES(?1,?2)
+                            ON CONFLICT(project_id) DO UPDATE SET png=excluded.png", params![id, png])?;
+            } else {
+                tx.execute("DELETE FROM project_icon_photos WHERE project_id=?1", params![id])?;
+            }
+            tx.execute("UPDATE projects SET icon_photo_sha256=?2 WHERE id=?1", params![id, change.as_ref().map(|(_, sha)| sha)])?;
         }
         if let Some(folder) = &folder_id {
             if let Some(id) = folder { crate::project_folders::get(tx, id)?; }

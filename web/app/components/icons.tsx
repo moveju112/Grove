@@ -41,6 +41,7 @@ const PATHS = {
     link: <><path d="m10 13 4-4M8 16l-1 1a4.2 4.2 0 0 1-6-6l4-4a4.2 4.2 0 0 1 6 0M13 17a4.2 4.2 0 0 0 6 0l4-4a4.2 4.2 0 0 0-6-6l-1 1" /></>,
     shield: <><path d="m12 3 8 3v6c0 5-8 9-8 9s-8-4-8-9V6z" /><path d="m8 12 3 3 5-6" /></>,
     user: <><circle cx="12" cy="8" r="4" /><path d="M4 21v-2a8 8 0 0 1 16 0v2" /></>,
+    chevronLeft: <path d="m15 5-7 7 7 7" />,
     chevronRight: <path d="m9 5 7 7-7 7" />,
     chevronDown: <path d="m6 9 6 6 6-6" />,
     sprout: <><path d="M12 21v-9" /><path d="M12 12c0-3.3 2.4-6 6-6 0 3.3-2.4 6-6 6Z" /><path d="M12 14c0-3-2.2-5.5-5.5-5.5 0 3 2.2 5.5 5.5 5.5Z" /></>,
@@ -59,6 +60,8 @@ function glyph(name: IconName): IconType {
 }
 
 const GLYPHS = Object.fromEntries((Object.keys(PATHS) as IconName[]).map((name) => [name, glyph(name)])) as Record<IconName, IconType>;
+
+export const searchGlyph = GLYPHS.search;
 
 export function Icon({ name, size = 18, color = "inherit", ...props }: {
     name: IconName; size?: number | string; color?: IconColor; "data-testid"?: string;

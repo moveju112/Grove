@@ -74,6 +74,8 @@ async fn child_results_are_required_and_send_transfers_ownership_and_cancellatio
     let (st, v) = s.send(Method::PUT, "/api/v1/settings/server/-/agents.delegation", json!({"expected_revision":0,"value":"auto"})).await;
     assert_eq!(st, StatusCode::OK, "{v}");
     let p = s.create_project("child-completion").await;
+    let (status, value) = s.send(Method::PUT, "/api/v1/settings/server/-/agents.orchestration", json!({"expected_revision":0,"value":"delegated"})).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
     let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
     f.push(fixture::tool_calls(&[("spawn", "agent", json!({"action":"spawn","agent_id":"reviewer","brief":"owned child"}))]));
     f.push(fixture::text("first provisional"));
@@ -217,6 +219,8 @@ async fn steering_wakes_deferred_completion_before_the_child_finishes() {
     let prof = s.fixture_profile(&f.base).await;
     s.send(Method::PUT, "/api/v1/settings/server/-/agents.delegation", json!({"expected_revision":0,"value":"auto"})).await;
     let p = s.create_project("steer-completion").await;
+    let (status, value) = s.send(Method::PUT, "/api/v1/settings/server/-/agents.orchestration", json!({"expected_revision":0,"value":"delegated"})).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
     let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
     f.push(fixture::tool_calls(&[("spawn","agent",json!({"action":"spawn","agent_id":"reviewer","brief":"long work"}))]));
     f.push(fixture::text("waiting for child"));

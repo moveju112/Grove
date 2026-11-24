@@ -4,17 +4,17 @@ import { FileInput } from "../design/Fields";
 import { List, ListItem } from "@astryxdesign/core/List";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { contentStyles } from "../design/content.stylex";
+import { ImagePreviewDialog, type PreviewSource } from "./ImagePreviewDialog";
 import * as stylex from "@stylexjs/stylex";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { attachmentStyles } from "./attachments.stylex";
 import { Icon } from "./icons";
 import { ActionMenu } from "./ui/Controls";
 import { ApiError, api, authGeneration, isTransportError, newKey, rawGet } from "../api/client";
 import { parseAttachments, type Attachment } from "../state/sendRecovery";
 import { attachmentIssue } from "./capabilities/browser";
-import { CreationDialog } from "./create/CreationDialog";
 import { useLive } from "../state/store";
 import { useComposerMemory } from "../state/useComposerMemory";
 
@@ -165,19 +165,43 @@ export function AttachmentSelection({ draft, disabled }: { draft: ReturnType<typ
     </GroveStack>;
 }
 
-export function AttachmentList({ attachments }: { attachments: Attachment[] }) {
+export function AttachmentList({ attachments, gallery = false }: { attachments: Attachment[]; gallery?: boolean }) {
     const images = attachments.filter((a) => IMAGE_MIMES.includes(a.mime));
     const files = attachments.filter((a) => !IMAGE_MIMES.includes(a.mime));
     return <GroveStack gap={1} xstyle={attachmentStyles.row} role="group" aria-label="메시지 첨부파일">
         {!!images.length && <GroveStack direction="horizontal" gap={2} xstyle={attachmentStyles.strip} role="list" aria-label="첨부 이미지" data-swipe-blocked>
-            {images.map((a) => <ImageAttachment key={a.id} name={a.name} attachment={a} />)}
+            {gallery && images.length > 1 ? <AnswerImageGallery images={images} />
+                : images.map((a) => <ImageAttachment key={a.id} name={a.name} attachment={a} />)}
         </GroveStack>}
         {!!files.length && <List density="compact" edge="flush">{files.map((a) => <ListItem key={a.id} label={<AttachmentCard attachment={a} />} />)}</List>}
     </GroveStack>;
 }
 
-export function ImageAttachment({ name, file, attachment, trailing, projectFile, inline = false }: {
+function AnswerImageGallery({ images }: { images: Attachment[] }) {
+    const [selected, select] = useState<string | null>(null);
+    const [sources, setSources] = useState<Record<string, PreviewSource>>({});
+    const publish = useCallback((id: string, source: PreviewSource | null) => {
+        setSources((previous) => {
+            const next = { ...previous };
+            if (source) next[id] = source;
+            else delete next[id];
+            return next;
+        });
+    }, []);
+    const index = images.findIndex((image) => image.id === selected);
+    const current = images[index];
+    const source = current && sources[current.id];
+    return <>
+        {images.map((image) => <ImageAttachment key={image.id} name={image.name} attachment={image} onSelect={select} onSource={publish} />)}
+        {current && <ImagePreviewDialog name={current.name} source={source} onClose={() => select(null)}
+            onDownload={source?.url ? () => saveFile(source.url!, current.name) : undefined}
+            gallery={{ images, sources, index, select }} />}
+    </>;
+}
+
+export function ImageAttachment({ name, file, attachment, trailing, projectFile, inline = false, onSelect, onSource }: {
     name: string; file?: File; attachment?: Attachment; trailing?: ReactNode;
+    onSelect?: (id: string) => void; onSource?: (id: string, source: PreviewSource | null) => void;
     projectFile?: { projectId: string; path: string; mime: string }; inline?: boolean;
 }) {
     const [url, setUrl] = useState<string | null>(null);
@@ -214,25 +238,24 @@ export function ImageAttachment({ name, file, attachment, trailing, projectFile,
         else setError("원문이 누락되었습니다");
         return () => { active = false; if (objectUrl) URL.revokeObjectURL(objectUrl); };
     }, [file, id, stored, mime, projectId, path, attempt]);
+    const retry = useCallback(() => setAttempt((n) => n + 1), []);
+    const retryRead = stored || projectId ? retry : undefined;
+    useLayoutEffect(() => {
+        if (!onSource || !id) return;
+        onSource(id, { url, error, retry: retryRead });
+        return () => onSource(id, null);
+    }, [onSource, id, url, error, retryRead]);
     return <GroveStack as={inline ? "span" : "div"} role={inline ? undefined : "listitem"}
         xstyle={[attachmentStyles.tile, inline && attachmentStyles.inlineTile]} data-testid={projectFile ? "markdown-image" : "attachment-card"} data-image-attachment>
         <GroveButton type="button" variant="secondary" width={80} xstyle={attachmentStyles.thumbnail}
-            aria-label={`${name} 미리보기`} aria-haspopup="dialog" onClick={() => setOpen(true)}>
+            aria-label={`${name} 미리보기`} aria-haspopup="dialog" onClick={() => onSelect && id ? onSelect(id) : setOpen(true)}>
             {url && !error ? <img {...stylex.props(attachmentStyles.image)} src={url} alt={name} onError={() => setError("이미지를 표시하지 못했어요.")} />
                 : <Icon name="file" size={24} />}
         </GroveButton>
         {trailing}
         {error && <GroveText as="span" type="supporting" color="error" role="alert">{error}</GroveText>}
-        {open && <CreationDialog label={`${name} 미리보기`} width="min(56em, 100%)" onClose={() => setOpen(false)}>
-            <GroveStack direction="horizontal" justify="end" gap={0}>
-                {attachment && url && <GroveButton type="button" variant="secondary" density="compact" onClick={() => saveFile(url, name)}>원문 다운로드</GroveButton>}
-                <GroveButton type="button" appearance="icon" aria-label="미리보기 닫기" onClick={() => setOpen(false)}><Icon name="close" /></GroveButton>
-            </GroveStack>
-            {url && !error ? <img {...stylex.props(contentStyles.previewImage)} src={url} alt={name} />
-                : error ? <><GroveText color="error" role="alert">{error}</GroveText>
-                    {(stored || projectId) && <GroveButton type="button" onClick={() => setAttempt((n) => n + 1)}>다시 불러오기</GroveButton>}</>
-                    : <GroveText role="status">이미지를 불러오는 중…</GroveText>}
-        </CreationDialog>}
+        {open && <ImagePreviewDialog name={name} source={{ url, error, retry: retryRead }} onClose={() => setOpen(false)}
+            onDownload={attachment && url ? () => saveFile(url, name) : undefined} />}
     </GroveStack>;
 }
 

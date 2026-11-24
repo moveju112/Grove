@@ -96,7 +96,7 @@ export function GitContextOverview({ projectId, head, refreshSignal }: {
                         <ContextField label="기기 권한:">등록 기기</ContextField>
                         <ContextField label="모델 도구 정책:"><GroveStack as="span" direction="horizontal" align="center" justify="end" gap={1}>
                             {authority.tool_mode} <HelpTip label="Git 실행 권한 도움말">
-                                <SentenceText text="프로젝트 기준이며 대화별 정책은 별도입니다. read_only는 모델 도구만 제한하며 직접 Git 버튼의 권한은 아닙니다. 직접 Git API는 인증된 기기에 열려 있고, 실행 시 서버가 최종 판정합니다. 원격 쓰기 권한은 미확인이며 오프라인 제한은 별도입니다. 자동 fetch·로그인·PR 변경·CI 재실행은 하지 않습니다." />
+                                <SentenceText text="모델 도구 정책은 프로젝트 기준이며 대화별로 달라질 수 있습니다. 직접 Git API는 인증된 기기에 열려 있고, 실행 시 서버가 최종 판정합니다. 원격 쓰기 권한은 미확인이며 오프라인 제한은 별도입니다. 자동 fetch·로그인·PR 변경·CI 재실행은 하지 않습니다." />
                             </HelpTip>
                         </GroveStack></ContextField>
                     </GroveStack>

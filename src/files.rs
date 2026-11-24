@@ -115,10 +115,15 @@ fn listing_entry(scope: &ProjectFs, root: &FsPath, dir: &FsPath, name: String) -
     let path = dir.join(&name);
     let lm = scope.symlink_metadata(&path).ok()?;
     let is_link = lm.file_type().is_symlink();
-    let target = resolve(root, &path.to_string_lossy());
-    let target_ok = !is_link || target.is_ok();
-    let m = if is_link && target_ok { target.ok().and_then(|p| scope.metadata(&p).ok()).unwrap_or(lm) } else { lm };
-    let kind = if is_link && !target_ok { "link_outside" } else if m.is_dir() { "dir" } else if m.is_file() { "file" } else { "other" };
+    let (m, link_outside) = if is_link {
+        match resolve(root, &path.to_string_lossy()) {
+            Ok(target) => (scope.metadata(&target).unwrap_or(lm), false),
+            Err(_) => (lm, true),
+        }
+    } else {
+        (lm, false)
+    };
+    let kind = if link_outside { "link_outside" } else if m.is_dir() { "dir" } else if m.is_file() { "file" } else { "other" };
     Some(FileEntry {
         name, path: rel_display(root, &path), kind: kind.into(), symlink: is_link,
         size: m.is_file().then(|| m.len()),

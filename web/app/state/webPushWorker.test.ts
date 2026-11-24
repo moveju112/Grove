@@ -34,13 +34,16 @@ function worker(records = new Map<string, string>()) {
     return { showNotification, openWindow, client, matchAll, dispatch, records, cache, diagnostics };
 }
 describe("앱 종료 후 Push worker", () => {
-    it("암호 해제된 완료 알림은 상태·진동·대상만 표시하고 다른 scope와 잘못된 식별자는 거부한다", async () => {
+    it("완료 알림은 최종 답변과 진동을 표시하고 다른 scope와 잘못된 식별자는 거부한다", async () => {
         const w = worker();
-        await w.dispatch("push", { data: { json: () => payload } });
-        expect(w.showNotification).toHaveBeenCalledWith("작업 완료", expect.objectContaining({ tag: `${payload.server}:turn:t`, vibrate: [180, 80, 180], data: payload }));
+        await w.dispatch("push", { data: { json: () => ({ ...payload, body: "최종 답변" }) } });
+        expect(w.showNotification).toHaveBeenCalledWith("작업 완료", expect.objectContaining({ body: "최종 답변", tag: `${payload.server}:turn:t`, vibrate: [180, 80, 180],
+            data: { projectId: "p", sessionId: "s", server: payload.server } }));
         await w.dispatch("push", { data: { json: () => ({ ...payload, scope: "https://other.test/" }) } });
         await w.dispatch("push", { data: { json: () => ({ ...payload, sessionId: "../other" }) } });
         expect(w.showNotification).toHaveBeenCalledTimes(1);
+        await w.dispatch("push", { data: { json: () => payload } });
+        expect(w.showNotification).toHaveBeenLastCalledWith("작업 완료", expect.objectContaining({ body: "대화의 요청 처리가 끝났습니다." }));
     });
     it("알림을 누르면 열린 앱에 대상을 보내거나 닫힌 앱을 scope 안의 주소로 연다", async () => {
         const w = worker();

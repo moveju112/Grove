@@ -213,20 +213,42 @@ fn check_path(p: &str) -> ApiResult<()> {
     Ok(())
 }
 
-async fn diff_text(root: &std::path::Path, staged: bool, path: Option<&str>) -> ApiResult<(String, bool)> {
-    let mut args = vec!["diff", "--no-ext-diff", "--patch", "--find-renames"];
+// porcelain의 경로는 항상 저장소 기준이다. Git 인자는 등록한 프로젝트 폴더 기준으로 맞춘다.
+async fn project_file_paths<'a>(root: &std::path::Path, paths: impl IntoIterator<Item = &'a str>) -> ApiResult<Vec<&'a str>> {
+    let out = git(root, &["rev-parse", "--show-prefix"], true).await?;
+    if out.code != 0 { return Err(fail(&out, "Git 프로젝트 위치 확인")); }
+    let bytes = out.stdout.strip_suffix(b"\n").unwrap_or(&out.stdout);
+    let prefix = std::str::from_utf8(bytes).map_err(|_| ApiError::invalid("UTF-8 프로젝트 경로만 지원합니다"))?;
+    paths.into_iter().map(|path| {
+        let local = path.strip_prefix(prefix).filter(|p| !p.is_empty())
+            .ok_or_else(|| ApiError::invalid("프로젝트 폴더 안의 파일을 선택하세요"))?;
+        if std::path::Path::new(local).components().any(|part| matches!(part,
+            std::path::Component::Prefix(_) | std::path::Component::RootDir | std::path::Component::ParentDir)) {
+            return Err(ApiError::invalid("프로젝트 폴더 안의 파일을 선택하세요"));
+        }
+        Ok(local)
+    }).collect()
+}
+
+async fn diff_bytes(root: &std::path::Path, staged: bool, path: Option<&str>) -> ApiResult<(Vec<u8>, bool)> {
+    let mut args = vec!["--literal-pathspecs", "diff", "--no-ext-diff", "--patch", "--find-renames"];
     if staged {
         args.push("--cached");
     }
     args.push("--");
     if let Some(p) = path {
-        args.push(p);
+        args.extend(project_file_paths(root, [p]).await?);
     }
     let (o, truncated) = git_patch_preview(root, &args).await?;
     if o.code != 0 {
         return Err(fail(&o, "diff"));
     }
-    let mut text = String::from_utf8_lossy(&o.stdout).into_owned();
+    Ok((o.stdout, truncated))
+}
+
+async fn diff_text(root: &std::path::Path, staged: bool, path: Option<&str>) -> ApiResult<(String, bool)> {
+    let (bytes, truncated) = diff_bytes(root, staged, path).await?;
+    let mut text = String::from_utf8_lossy(&bytes).into_owned();
     if truncated {
         text.push_str("\n…(diff가 너무 커서 생략)\n");
     }
@@ -502,7 +524,8 @@ async fn review_summary(root: &std::path::Path, action: &ReviewAction) -> ApiRes
             let out = git(root, &["status", "--porcelain=v2", "-z", "--untracked-files=all"], true).await?;
             if out.code != 0 { return Err(fail(&out, "discard 대상 확인")); }
             let status = parse_status(&out.stdout);
-            for path in paths {
+            let local_paths = project_file_paths(root, paths.iter().map(String::as_str)).await?;
+            for (path, local) in paths.iter().zip(&local_paths) {
                 check_path(path)?;
                 // pathspec·디렉터리·새 untracked 파일이 선택 범위를 넓히지 못하게 한다.
                 let entries = status["entries"].as_array().unwrap();
@@ -510,11 +533,11 @@ async fn review_summary(root: &std::path::Path, action: &ReviewAction) -> ApiRes
                     || !entries.iter().any(|e| e["path"] == *path && e["kind"] != "untracked") {
                     return Err(ApiError::invalid("변경된 tracked 파일 경로만 discard할 수 있습니다"));
                 }
-                let indexed = git(root, &["--literal-pathspecs", "ls-files", "--error-unmatch", "--", path], true).await?;
+                let indexed = git(root, &["--literal-pathspecs", "ls-files", "--error-unmatch", "--", local], true).await?;
                 if indexed.code != 0 {
                     if indexed.code != 1 { return Err(fail(&indexed, "index 대상 확인")); }
                     // staged deletion 뒤 새로 생긴 ignored 파일도 untracked이므로 보존한다.
-                    match tokio::fs::symlink_metadata(root.join(path)).await {
+                    match tokio::fs::symlink_metadata(root.join(local)).await {
                         Ok(_) => return Err(ApiError::invalid("index에서 제거된 경로의 새 파일은 discard할 수 없습니다")),
                         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
                         Err(e) => return Err(ApiError::internal(e.to_string())),
@@ -522,7 +545,7 @@ async fn review_summary(root: &std::path::Path, action: &ReviewAction) -> ApiRes
                 }
             }
             let mut args = vec!["--literal-pathspecs", "diff", "--no-ext-diff", "--stat", "HEAD", "--"];
-            args.extend(paths.iter().map(String::as_str));
+            args.extend(local_paths);
             (paths.clone(), args)
         }
         ReviewAction::StashPop { stash_oid } => {
@@ -591,7 +614,7 @@ pub async fn confirm_git(State(app): State<App>, p: Principal, headers: HeaderMa
             match b.action {
                 ReviewAction::Discard { paths } => {
                     let mut args = vec!["--literal-pathspecs", "restore", "--source=HEAD", "--staged", "--worktree", "--"];
-                    args.extend(paths.iter().map(String::as_str));
+                    args.extend(project_file_paths(root, paths.iter().map(String::as_str)).await?);
                     let out = git(root, &args, false).await?;
                     if out.code != 0 { return Err(fail(&out, "discard")); }
                     Ok(json!({ "discarded": paths }))
@@ -703,8 +726,8 @@ pub async fn stage(State(app): State<App>, p: Principal, headers: HeaderMap, Pat
     let paths = b.paths.clone();
     mutate(app, p, headers, id, "git.stage", json!(b.paths), Some(b.expected_fingerprint), move |root| {
         Box::pin(async move {
-            let mut args = vec!["add", "--"];
-            args.extend(paths.iter().map(String::as_str));
+            let mut args = vec!["--literal-pathspecs", "add", "--"];
+            args.extend(project_file_paths(root, paths.iter().map(String::as_str)).await?);
             let o = git(root, &args, false).await?;
             if o.code != 0 {
                 return Err(fail(&o, "stage"));
@@ -727,8 +750,10 @@ pub async fn unstage(State(app): State<App>, p: Principal, headers: HeaderMap, P
         Box::pin(async move {
             // index만 되돌린다(작업 트리는 건드리지 않음). 커밋 없는 저장소는 rm --cached.
             let has_head = git(root, &["rev-parse", "--verify", "HEAD"], true).await?.code == 0;
-            let mut args: Vec<&str> = if has_head { vec!["restore", "--staged", "--"] } else { vec!["rm", "--cached", "--quiet", "--"] };
-            args.extend(paths.iter().map(String::as_str));
+            let mut args = vec!["--literal-pathspecs"];
+            if has_head { args.extend(["restore", "--staged", "--"]); }
+            else { args.extend(["rm", "--cached", "--quiet", "--"]); }
+            args.extend(project_file_paths(root, paths.iter().map(String::as_str)).await?);
             let o = git(root, &args, false).await?;
             if o.code != 0 {
                 return Err(fail(&o, "unstage"));
@@ -847,21 +872,24 @@ pub async fn switch_branch(State(app): State<App>, p: Principal, headers: Header
 
 /// 한 파일 diff를 머리(header)와 hunk 목록으로 나눈다.
 pub fn split_hunks(diff: &str) -> (String, Vec<String>) {
-    let mut header = String::new();
-    let mut hunks: Vec<String> = vec![];
-    for line in diff.split_inclusive('\n') {
-        if line.starts_with("@@") {
-            hunks.push(line.to_string());
-        } else if let Some(h) = hunks.last_mut() {
-            h.push_str(line);
-        } else {
-            header.push_str(line);
-        }
-    }
-    (header, hunks)
+    let (header, hunks) = patch_ranges(diff.as_bytes());
+    (diff[..header].to_owned(), hunks.into_iter().map(|range| diff[range].to_owned()).collect())
 }
 
-async fn apply_cached(root: &std::path::Path, patch: &str, reverse: bool) -> ApiResult<()> {
+// 표시와 적용에 같은 hunk 경계를 쓰되, 적용할 때는 파일의 원본 바이트를 보존한다.
+fn patch_ranges(diff: &[u8]) -> (usize, Vec<std::ops::Range<usize>>) {
+    let mut starts = Vec::new();
+    let mut offset = 0;
+    for line in diff.split_inclusive(|byte| *byte == b'\n') {
+        if line.starts_with(b"@@") { starts.push(offset); }
+        offset += line.len();
+    }
+    starts.push(diff.len());
+    let ranges = starts.windows(2).map(|pair| pair[0]..pair[1]).collect();
+    (starts[0], ranges)
+}
+
+async fn apply_cached(root: &std::path::Path, patch: &[u8], reverse: bool) -> ApiResult<()> {
     let mut cmd = tokio::process::Command::new("git");
     cmd.args(["-c", "core.quotepath=false", "apply", "--cached", "--recount", "--whitespace=nowarn"]);
     if reverse {
@@ -877,7 +905,7 @@ async fn apply_cached(root: &std::path::Path, patch: &str, reverse: bool) -> Api
     {
         use tokio::io::AsyncWriteExt;
         let mut stdin = child.stdin.take().expect("stdin");
-        stdin.write_all(patch.as_bytes()).await.map_err(|e| ApiError::internal(e.to_string()))?;
+        stdin.write_all(patch).await.map_err(|e| ApiError::internal(e.to_string()))?;
     }
     let out = child.wait_with_output().await.map_err(|e| ApiError::internal(e.to_string()))?;
     if !out.status.success() {
@@ -923,11 +951,11 @@ pub async fn stage_hunks(State(app): State<App>, p: Principal, headers: HeaderMa
     mutate(app, p, headers, id, route, json!({ "p": b.path, "h": b.hunks }), Some(b.expected_fingerprint), move |root| {
         Box::pin(async move {
             // fingerprint가 같으므로 사용자가 본 diff와 지금 diff가 같다.
-            let (text, truncated) = diff_text(root, unstage, Some(&path)).await?;
+            let (bytes, truncated) = diff_bytes(root, unstage, Some(&path)).await?;
             if truncated {
                 return Err(ApiError::invalid("diff가 너무 커서 hunk 단위로 처리할 수 없습니다"));
             }
-            let (header, hs) = split_hunks(&text);
+            let (header, hs) = patch_ranges(&bytes);
             if hs.is_empty() {
                 return Err(ApiError::invalid("이 파일에는 hunk 단위로 고를 변경이 없습니다(새 파일·binary는 파일 단위로 처리)"));
             }
@@ -937,9 +965,9 @@ pub async fn stage_hunks(State(app): State<App>, p: Principal, headers: HeaderMa
             if chosen.iter().any(|i| *i >= hs.len()) {
                 return Err(ApiError::invalid(format!("hunk 번호는 0~{} 사이여야 합니다", hs.len() - 1)));
             }
-            let mut patch = header;
+            let mut patch = bytes[..header].to_vec();
             for i in &chosen {
-                patch.push_str(&hs[*i]);
+                patch.extend_from_slice(&bytes[hs[*i].clone()]);
             }
             apply_cached(root, &patch, unstage).await?;
             Ok(json!({ "path": path, "hunks": chosen, "unstaged": unstage }))

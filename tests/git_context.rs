@@ -77,9 +77,11 @@ if "/pulls?" in endpoint:
         {"number": 8, "state": "open", "draft": False, "merged_at": None, "head": {"sha": "0" * 40}, "base": {"repo": {"full_name": "fixture/repository"}}}
     ]))
 elif "/check-runs?" in endpoint:
-    print(json.dumps({"total_count": 1, "check_runs": [{"head_sha": head, "status": "completed", "conclusion": "failure" if mode == "failure" else "success"}]}))
+    n = 100 if mode in ["full_page", "more_checks"] else 1
+    print(json.dumps({"total_count": n + (mode == "more_checks"), "check_runs": [{"head_sha": head, "status": "completed", "conclusion": "failure" if mode == "failure" else "success"}] * n}))
 elif "/status?" in endpoint:
-    print(json.dumps({"sha": head, "total_count": 1, "statuses": [{"state": "pending" if mode == "pending" else "success"}]}))
+    n = 100 if mode in ["full_page", "more_statuses"] else 1
+    print(json.dumps({"sha": head, "total_count": n + (mode == "more_statuses"), "statuses": [{"state": "pending" if mode == "pending" else "success"}] * n}))
 else: raise AssertionError("unsupported fixture operation")
 "#).unwrap();
     std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -89,6 +91,20 @@ else: raise AssertionError("unsupported fixture operation")
     git(&root, &["remote", "add", "origin", "https://secret:credential@github.com/fixture/repository.git"]);
     let id = add(&s, &root).await;
     (s, root, id)
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn ci_distinguishes_a_complete_full_page_from_a_partial_result() {
+    let (s, _, id) = fixture().await;
+    for (mode, expected) in [
+        ("full_page", json!({"status": "success", "count": 200})),
+        ("more_checks", json!({"status": "unknown"})),
+        ("more_statuses", json!({"status": "unknown"})),
+    ] {
+        std::fs::write(s.dir.path().join("mode"), mode).unwrap();
+        assert_eq!(context(&s, &id).await["github"]["ci"], expected, "{mode}");
+    }
 }
 
 #[cfg(unix)]

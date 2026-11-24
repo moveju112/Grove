@@ -3,15 +3,15 @@ import { Link } from "@astryxdesign/core/Link";
 import { Stack } from "@astryxdesign/core/Stack";
 import { ProgressBar } from "@astryxdesign/core/ProgressBar";
 import { Text as GroveText } from "@astryxdesign/core/Text";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, isTransportError } from "../../api/client";
 import type { AccountUsageReport } from "../../api/generated";
 import { HintText } from "../../design/HintText";
 import { Button } from "../../design/Button";
 import { usePrefs } from "../../state/device";
 import { absoluteTime } from "../../state/time";
-import { useQuery } from "../../state/store";
-import { usePaneVisible } from "../../state/paneVisibility";
+import { revalidateQuery, useQuery } from "../../state/store";
+import { usePageVisible, usePaneVisible } from "../../state/paneVisibility";
 import { usageStyles } from "./usage.stylex";
 import { dashboardStyles } from "../usage/dashboard.stylex";
 import { providerName } from "../usage/dashboardModel";
@@ -100,10 +100,13 @@ function UsageQuotaCards({ report, failed, now, onAuthenticate }: {
                 const expired = limit.resets_at != null && Date.parse(limit.resets_at) <= now;
                 const used = limit.remaining_percent === null || expired ? null : Math.max(0, Math.min(100, 100 - limit.remaining_percent));
                 const tone = used !== null && used >= 90 ? "var(--err)" : used !== null && used >= 70 ? "var(--warn)" : "var(--accent)";
+                const value = expired ? "갱신 대기" : used === null ? limit.remaining ?? "—"
+                    : account.protocol === "codex_cli" ? `${Number(used.toFixed(1))}% 사용 · ${Number(limit.remaining_percent!.toFixed(1))}% 남음`
+                    : `${Number(used.toFixed(1))}% 사용`;
                 return <Stack key={index} xstyle={dashboardStyles.quotaWindow}>
                     <Stack direction="horizontal" justify="between" gap={2}>
                         <GroveText xstyle={dashboardStyles.small}>{limit.label}</GroveText>
-                        <GroveText xstyle={[dashboardStyles.small, dashboardStyles.quotaValue(used === null ? "var(--muted)" : tone)]} weight="semibold">{expired ? "갱신 대기" : used === null ? "—" : `${Number(used.toFixed(1))}%`}</GroveText>
+                        <GroveText xstyle={[dashboardStyles.small, dashboardStyles.quotaValue(used === null ? "var(--muted)" : tone)]} weight="semibold">{value}</GroveText>
                     </Stack>
                     {used !== null && <svg height={6} width="100%" role="img" aria-label={`${providerName(account.protocol)} ${limit.label} 사용 ${used.toFixed(1)}%`}>
                         <rect width="100%" height={6} rx={3} fill="var(--raised)" /><rect width={`${used}%`} height={6} rx={3} fill={tone} />
@@ -150,23 +153,25 @@ function UsageQuotaPlaceholder() {
     </Stack>;
 }
 
-/// 계정 한도 조회. 사용량 화면은 통계 응답을 기다리지 않고 진입 시 함께 시작하며, 한도 카드가 같은 key를 공유한다.
+const accountUsageKey = "usage:accounts";
+const refreshInterval = 60_000;
+
 export function useAccountUsage() {
-    return useQuery("usage:accounts", () => api.getContract("AccountUsageReport", "/usage/accounts"));
+    return useQuery(accountUsageKey, () => api.getContract("AccountUsageReport", "/usage/accounts"));
 }
 
 export function SidebarUsage({ onAuthenticate, showEmpty = false, presentation = "summary" }: { onAuthenticate: (protocol: string) => void; showEmpty?: boolean; presentation?: "summary" | "cards" }) {
-    const active = usePaneVisible();
+    const paneVisible = usePaneVisible();
+    const pageVisible = usePageVisible();
+    const active = paneVisible && pageVisible;
     const usage = useAccountUsage();
     const [now, setNow] = useState(Date.now);
-    const reload = useRef(usage.reload);
-    reload.current = usage.reload;
     useEffect(() => {
         if (!active) return;
-        const timer = setInterval(() => { setNow(Date.now()); reload.current(); }, 60_000);
-        const visible = () => { if (document.visibilityState === "visible") { setNow(Date.now()); reload.current(); } };
-        document.addEventListener("visibilitychange", visible);
-        return () => { clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
+        const refresh = () => { setNow(Date.now()); revalidateQuery(accountUsageKey, refreshInterval); };
+        refresh();
+        const timer = setInterval(refresh, refreshInterval);
+        return () => clearInterval(timer);
     }, [active]);
     const failed = usage.error !== null && !isTransportError(usage.error);
     if (usage.data && presentation === "cards") return <UsageQuotaCards report={usage.data} failed={failed} now={now} onAuthenticate={onAuthenticate} />;

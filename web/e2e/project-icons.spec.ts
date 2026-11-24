@@ -1,0 +1,61 @@
+import { expect, test } from "@playwright/test";
+import { mkdtempSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { apiCall, login, state } from "./helpers";
+
+test.use({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true, reducedMotion: "reduce" });
+
+test("프로젝트와 최근 행에서 색상·사진·기본 아이콘을 공유하고 제목 폭을 보존한다", async ({ page }, info) => {
+    const root = mkdtempSync(join(dirname(state().projA), "project-icon-"));
+    const project = await apiCall<{ id: string }>("POST", "/projects", { root_path: root, name: "노트" });
+    const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title: "아이콘 너비 확인" });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
+    await login(page);
+    const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
+    const showSidebar = async () => { if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click(); };
+    await showSidebar();
+    const row = page.getByTestId("project-row").filter({ has: page.getByRole("button", { name: "노트", exact: true }) });
+    const recent = page.getByTestId("recent-item").filter({ hasText: "아이콘 너비 확인" });
+    const tile = row.getByTestId("project-icon");
+    const tiny = recent.getByTestId("project-icon");
+    await expect(tile).toHaveText("노");
+    await expect(tile).toHaveCSS("width", "16px");
+    await expect(tiny).toHaveText("노");
+    await expect(tiny).toHaveCSS("width", "12px");
+    const gap = await tiny.evaluate(el => el.nextElementSibling!.getBoundingClientRect().left - el.getBoundingClientRect().right);
+    expect(gap).toBeGreaterThanOrEqual(0);
+    expect(gap).toBeLessThanOrEqual(4);
+    const tint = () => tile.evaluate(el => getComputedStyle(el).backgroundColor);
+    const original = await tint();
+    const dialog = page.getByRole("dialog", { name: "프로젝트 아이콘", exact: true });
+    const edit = async () => {
+        await row.getByRole("button", { name: "프로젝트 메뉴" }).click();
+        await page.getByRole("button", { name: "아이콘 변경" }).click();
+    };
+    const save = async () => {
+        await dialog.getByRole("button", { name: "저장", exact: true }).click();
+        await expect(dialog).toHaveCount(0);
+    };
+    await edit();
+    const pick = dialog.getByRole("button", { name: "청록", exact: true });
+    const choice = await pick.getAttribute("aria-pressed") === "true" ? "보라" : "청록";
+    await dialog.getByRole("button", { name: choice, exact: true }).click();
+    await save();
+    await expect.poll(tint).not.toBe(original);
+    await expect(tiny).toHaveCSS("background-color", await tint());
+    await edit();
+    await dialog.locator('input[type="file"]').setInputFiles("../tests/fixtures/images/animated.gif");
+    await expect(dialog.getByTestId("project-icon").locator("img")).toBeVisible();
+    await save();
+    await expect(tiny.locator("img")).toBeVisible();
+    await page.reload();
+    await showSidebar();
+    await expect(tile.locator("img")).toBeVisible();
+    await expect(tiny.locator("img")).toHaveAttribute("src", (await tile.locator("img").getAttribute("src"))!);
+    await page.screenshot({ path: info.outputPath("project-icons-390.png") });
+    await edit();
+    await dialog.getByRole("button", { name: "기본 아이콘으로" }).click();
+    await save();
+    await expect(tiny).toHaveText("노");
+    await expect(tiny).toHaveCSS("background-color", original);
+});

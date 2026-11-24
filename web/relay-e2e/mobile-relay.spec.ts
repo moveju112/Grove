@@ -94,7 +94,7 @@ test("32MiB 첨부를 암호화 중계로 업로드하고 저장한 원문을 �
     const download = await downloadEvent;
     const chunks: Buffer[] = [];
     for await (const chunk of (await download.createReadStream())!) chunks.push(Buffer.from(chunk));
-    expect(Buffer.concat(chunks)).toEqual(bytes);
+    expect(Buffer.concat(chunks).equals(bytes)).toBe(true);
     await expectNoConnectionNoise(page);
 });
 

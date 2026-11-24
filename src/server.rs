@@ -16,7 +16,7 @@ pub struct Server {
     pub owner_token: String,
     handle: JoinHandle<()>,
     background: Vec<JoinHandle<()>>,
-    _lock: File,
+    startup_lock: File,
 }
 
 /// 데이터 디렉터리 단위 단일 실행 잠금. 프로세스가 죽으면 OS가 잠금을 해제하므로 stale lock이 남지 않는다.
@@ -156,7 +156,7 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
             })
             .await;
     });
-    Ok(Server { addr, app, owner_token, handle, background, _lock: lock })
+    Ok(Server { addr, app, owner_token, handle, background, startup_lock: lock })
 }
 
 impl Server {
@@ -182,6 +182,10 @@ impl Server {
             Ok(())
         })
         .await;
+        // fork와 exec 사이에 자식이 파일 설명자를 공유해도 종료 완료 시 잠금을 반환한다.
+        if let Err(error) = self.startup_lock.unlock() {
+            tracing::warn!(%error, "서버 시작 잠금 해제 실패");
+        }
     }
 }
 
@@ -279,5 +283,23 @@ impl Signals {
             _ = self.close.recv() => Shutdown::ConsoleClosed,
             _ = self.shutdown.recv() => Shutdown::Terminate,
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn shutdown_releases_startup_lock_even_with_a_duplicated_descriptor() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = Config::from_env(Some(dir.path().to_owned()), Some("127.0.0.1:0".parse().unwrap())).unwrap();
+        let server = start(cfg.clone(), std::sync::Arc::new(crate::util::SystemClock)).await.unwrap();
+        // fork 후 exec 전까지 자식이 같은 open file description을 참조하는 상황.
+        let inherited = server.startup_lock.try_clone().unwrap();
+        assert!(acquire_startup_lock(&cfg).is_err());
+        server.stop().await;
+        let _new_lock = acquire_startup_lock(&cfg).expect("종료가 끝나면 같은 디렉터리로 재시작할 수 있어야 한다");
+        drop(inherited);
     }
 }

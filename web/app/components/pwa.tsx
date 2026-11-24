@@ -2,7 +2,8 @@ import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 // 입력이 없는 탭은 새 버전을 바로 적용하고, 입력이 남은 탭은 사용자가 고를 때까지 기다린다.
 import { useSyncExternalStore } from "react";
-import { onProtocolMismatch } from "../api/client";
+import { version as webVersion } from "../../package.json";
+import { accessToken, api, onProtocolMismatch } from "../api/client";
 import { deployment } from "../deployment";
 import { Button } from "../design/Button";
 import { SentenceText } from "./HelpTip";
@@ -16,7 +17,7 @@ let registration: ServiceWorkerRegistration | null = null;
 let started = false;
 let updateRequested = false;
 let reloaded = false;
-type WebUpdateResult = "available" | "up_to_date" | "unavailable" | "failed";
+type WebUpdateResult = "published" | "available" | "up_to_date" | "unavailable" | "failed";
 let manualCheck: Promise<WebUpdateResult> | null = null;
 let snapshot: { worker: ServiceWorker | null; error: string | null } = { worker: null, error: null };
 const subscribers = new Set<() => void>();
@@ -73,12 +74,24 @@ export function registerServiceWorker() {
     });
 }
 
+async function publishedWeb(): Promise<"published" | "up_to_date" | "failed"> {
+    try {
+        const release = await api.get<{ newer: boolean }>(`/updates/web-release?version=${encodeURIComponent(webVersion)}`, { requires: ["published_updates_v1"] });
+        return release.newer ? "published" : "up_to_date";
+    } catch {
+        return "failed";
+    }
+}
+
 export async function checkForUpdate() {
     if (!registration || manualCheck) return;
     try {
+        const release = accessToken() ? publishedWeb() : null;
         await registration.update();
         checkWaiting(registration.waiting);
         if (registration.waiting && !updateRequested) publish(registration.waiting);
+        if (await release === "published" && !registration.waiting && !updateRequested)
+            publish(waiting, "새 웹 릴리즈가 있어요. 이 서버에 적용되면 화면을 업데이트할 수 있어요.");
     } catch {
         publish(snapshot.worker, "새 UI 확인에 실패했습니다. 현재 탭은 유지합니다. 연결과 브라우저 저장 공간을 확인하세요.");
     }
@@ -92,6 +105,7 @@ export function checkWebUpdate(): Promise<WebUpdateResult> {
     manualCheck = Promise.resolve().then(async (): Promise<WebUpdateResult> => {
         if (!navigator.onLine) return "failed";
         try {
+            const release = publishedWeb();
             await reg.update();
             const installing = reg.installing;
             if (installing) {
@@ -107,7 +121,7 @@ export function checkWebUpdate(): Promise<WebUpdateResult> {
                 if (installing.state === "redundant") return "failed";
             }
             checkWaiting(reg.waiting);
-            if (!waiting) return "up_to_date";
+            if (!waiting) return release;
             publish(waiting);
             return "available";
         } catch {

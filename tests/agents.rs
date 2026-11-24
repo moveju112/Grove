@@ -15,6 +15,8 @@ async fn setup() -> (TestServer, Fixture, String, String, String) {
     let prof = s.fixture_profile(&f.base).await;
     let p = s.create_project("ag").await;
     let pid = p["id"].as_str().unwrap().to_string();
+    let (status, value) = s.send(Method::PUT, &format!("/api/v1/settings/project/{pid}/agents.orchestration"), json!({ "expected_revision": 0, "value": "delegated" })).await;
+    assert_eq!(status, StatusCode::OK, "{value}");
     let sid = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
     (s, f, prof, pid, sid)
 }

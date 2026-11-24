@@ -16,6 +16,7 @@ import tarfile
 import tempfile
 import threading
 import time
+import tomllib
 import urllib.request
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -50,7 +51,8 @@ def variant(name, version, migrations, legacy_log=False):
         a = os.path.join(ROOT, p)
         (shutil.copytree if os.path.isdir(a) else shutil.copy2)(a, os.path.join(src, p))
     ct = os.path.join(src, "Cargo.toml")
-    t = open(ct).read().replace('version = "0.1.0"', f'version = "{version}"', 1)
+    current = tomllib.loads(open(ct).read())["package"]["version"]
+    t = open(ct).read().replace(f'version = "{current}"', f'version = "{version}"', 1)
     open(ct, "w").write(t)
     st = os.path.join(src, "src", "store.rs")
     s = open(st).read()

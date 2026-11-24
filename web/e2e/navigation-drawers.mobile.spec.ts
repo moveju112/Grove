@@ -75,8 +75,13 @@ for (const theme of ["light", "dark"] as const) {
                     .slice(0, 6).map((child) => ({ tag: child.tagName, testId: child.dataset.testid, role: child.getAttribute("role"), rect: child.getBoundingClientRect().toJSON() })) };
         });
         expect(horizontalScroll.horizontalScroll, JSON.stringify(horizontalScroll)).toBe(0);
+        const row = project.getByTestId("project-row");
+        await row.scrollIntoViewIfNeeded();
+        await expect(row).toBeInViewport({ ratio: 1 });
         await page.screenshot({ path: info.outputPath(`left-${theme}-390.png`) });
-        await swipe(page, 240, 400, 10);
+        const projectRow = (await row.boundingBox())!;
+        const swipeY = projectRow.y + projectRow.height / 2;
+        await swipe(page, projectRow.x + projectRow.width * 0.75, swipeY, projectRow.x + 4);
         await expect(left).toHaveJSProperty("open", false);
         await page.getByRole("button", { name: "사이드바", exact: true }).click();
         await left.getByRole("button", { name: `첫 대화 ${theme}`, exact: false }).first().click();
@@ -121,6 +126,47 @@ for (const theme of ["light", "dark"] as const) {
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     });
 }
+
+test("마지막 탭을 닫아도 빈 화면에서 양쪽 서랍을 열고 오른쪽에서 새 대화를 시작한다", async ({ page }, info) => {
+    const project = await apiCall<{ id: string; name: string }>("POST", "/projects", {
+        root_path: mkdtempSync(join(dirname(state().projA), "empty-drawer-")),
+    });
+    await login(page);
+    const left = page.getByTestId("mobile-drawer-left");
+    const right = page.getByTestId("mobile-drawer-right");
+    await page.getByRole("button", { name: "사이드바", exact: true }).tap();
+    await left.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).tap();
+    await expect(page.getByTestId("project-view").filter({ visible: true })).toBeVisible();
+    await page.getByRole("button", { name: "열린 세션", exact: true }).tap();
+    await right.getByRole("button", { name: "새 대화 탭 닫기", exact: true }).tap();
+    await expect(right.getByTestId("mobile-open-tab")).toHaveCount(0);
+    await right.getByRole("button", { name: "열린 세션 닫기" }).tap();
+    const empty = page.getByTestId("empty-pane").filter({ visible: true });
+    await expect.poll(() => empty.evaluate((pane) => pane.contains(document.elementFromPoint(110, 300)))).toBe(true);
+    await swipe(page, 110, 300, 350);
+    await expect(left).toHaveJSProperty("open", true);
+    await left.getByRole("button", { name: "탐색 메뉴 닫기" }).tap();
+    await expect(left).toHaveJSProperty("open", false);
+    await expect.poll(() => empty.evaluate((pane) => pane.contains(document.elementFromPoint(280, 300)))).toBe(true);
+    await swipe(page, 280, 300, 40);
+    await expect(right).toHaveJSProperty("open", true);
+    const start = right.getByRole("button", { name: "새 대화 시작", exact: true });
+    await expect(start).toBeInViewport({ ratio: 1 });
+    await page.screenshot({ path: info.outputPath("empty-pane-right-390.png") });
+    await start.tap();
+    await expect(right).toHaveJSProperty("open", false);
+    const input = page.getByTestId("project-view").filter({ visible: true }).getByLabel("메시지 입력");
+    await input.fill("첫 탭의 초안");
+    await page.getByRole("button", { name: "열린 세션", exact: true }).tap();
+    await start.tap();
+    await expect(right).toHaveJSProperty("open", false);
+    await expect(input).toHaveValue("");
+    await page.getByRole("button", { name: "열린 세션", exact: true }).tap();
+    const drafts = right.getByTestId("mobile-open-tab");
+    await expect(drafts).toHaveCount(2);
+    await drafts.first().getByRole("button", { name: "새 대화", exact: true }).tap();
+    await expect(input).toHaveValue("첫 탭의 초안");
+});
 
 test("본문 스와이프는 입력·선택·코드의 가로 스크롤과 세로 스크롤을 가로채지 않는다", async ({ page }) => {
     const { a } = await ensureProjects();
@@ -276,7 +322,8 @@ test("모바일 표와 버튼에서 서랍을 열 수 있고 넓은 표는 본�
 
 test("최근 시간 범위는 느린 재조회 중에도 목록·높이를 유지하고 방문한 범위는 재요청하지 않는다", async ({ page }) => {
     const { a } = await ensureProjects();
-    await apiCall("POST", `/projects/${a.id}/sessions`, { title: "필터 전환 중 남아 있는 대화" });
+    const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: "필터 전환 중 남아 있는 대화" });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
     await login(page);
     await page.getByRole("button", { name: "사이드바", exact: true }).click();
     const recent = page.getByTestId("sidebar").getByRole("region", { name: "최근", exact: true });

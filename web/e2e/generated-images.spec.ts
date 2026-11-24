@@ -73,6 +73,29 @@ for (const mode of ["desktop", "mobile-light", "mobile-dark"] as const) {
                     const firstFrame = await preview.getByRole("img").screenshot({ animations: "allow" });
                     await expect.poll(async () => !(await preview.getByRole("img").screenshot({ animations: "allow" })).equals(firstFrame)).toBe(true);
                 }
+                if (source === "manifest") {
+                    const dialog = page.getByRole("dialog");
+                    const strip = dialog.getByRole("group", { name: "사진 선택" });
+                    const expectPhoto = async (index: number) => {
+                        const photo = dialog.getByRole("img", { name: names[index], exact: true });
+                        await expect(photo).toBeVisible();
+                        await expect(photo).toHaveAttribute("src", (await answer.locator('[data-image-attachment] img').nth(index).getAttribute("src"))!);
+                        await expect(strip.getByRole("button").nth(index)).toHaveAttribute("aria-current", "true");
+                        await expect(dialog.getByText(`${index + 1} / 3`, { exact: true })).toBeVisible();
+                    };
+                    await dialog.getByRole("button", { name: "다음 사진" }).click();
+                    await expectPhoto(1);
+                    await page.screenshot({ path: info.outputPath(`photo-gallery-${mode}.png`) });
+                    await strip.getByRole("button").nth(2).click();
+                    await expectPhoto(2);
+                    const download = page.waitForEvent("download");
+                    await dialog.getByRole("button", { name: "원문 다운로드" }).click();
+                    expect((await download).suggestedFilename()).toBe(names[2]);
+                    await page.keyboard.press("ArrowRight");
+                    await expectPhoto(0);
+                    await dialog.getByRole("button", { name: "이전 사진" }).click();
+                    await expectPhoto(2);
+                }
                 await page.keyboard.press("Escape");
                 await page.reload();
                 await expect(answer.getByRole("img")).toHaveCount(count);

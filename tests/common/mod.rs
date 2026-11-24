@@ -36,6 +36,7 @@ pub fn config(data_dir: &Path) -> Config {
         scheduler_tick_ms: 100,
         remote_watch_insecure_loopback: true,
         gh_command: "gh".into(),
+        release_mirror: Some(data_dir.join("update-source.json")),
         internal_exe: Some(env!("CARGO_BIN_EXE_grove").into()),
     }
 }
@@ -147,7 +148,7 @@ impl TestServer {
         self.send(Method::POST, path, body).await
     }
 
-    pub async fn pair_browser(&self, name: &str) -> (String, reqwest::Response) {
+    pub async fn approved_pairing(&self, name: &str) -> (String, String) {
         let password = "test-only pairing password";
         let (status, link) = self.post("/api/v1/pairings", json!({ "name": name, "password": password, "issuance_password": ISSUANCE_PASSWORD })).await;
         assert_eq!(status, StatusCode::CREATED, "{link}");
@@ -157,10 +158,15 @@ impl TestServer {
         let request_id = claim.split_once('.').unwrap().0;
         let (status, approved) = self.post(&format!("/api/v1/pairings/{}/requests/{request_id}", link["id"].as_str().unwrap()), json!({})).await;
         assert_eq!(status, StatusCode::OK, "{approved}");
+        (approved["device_id"].as_str().unwrap().into(), claim.into())
+    }
+
+    pub async fn pair_browser(&self, name: &str) -> (String, reqwest::Response) {
+        let (device_id, claim) = self.approved_pairing(name).await;
         let response = self.client.post(format!("{}/api/v1/auth/pairing/claim", self.base))
             .json(&json!({ "code": claim })).send().await.unwrap();
         assert_eq!(response.status(), StatusCode::OK);
-        (approved["device_id"].as_str().unwrap().into(), response)
+        (device_id, response)
     }
 
     pub async fn registered_device(&self, name: &str) -> Value {

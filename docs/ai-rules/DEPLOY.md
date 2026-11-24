@@ -4,13 +4,15 @@
 
 ## 요청 문구와 배포 범위
 
-- **MUST** "컴파일만", "푸시만", "로컬만", "배포 금지" 같은 명시적 제한을 아래 일괄 흐름보다 우선한다. 컴파일만이면 컴파일에서, 푸시만이면 commit·push에서 멈춘다. 로컬 반영만이면 `--skip-pages`로 공개 Pages 배포를 생략하고, 배포 금지이면 로컬 서버·CLI 업데이트와 Pages 배포를 모두 하지 않는다.
+- **MUST** "컴파일만", "푸시만", "로컬만", "배포 금지" 같은 명시적 제한을 아래 일괄 흐름보다 우선한다. 컴파일만이면 컴파일에서, 푸시만이면 승인 범위를 커밋한 뒤 `GROVE_PUSH_ONLY=1 git push`로 릴리즈 훅을 생략한다. 로컬 반영만이면 `--skip-pages`로 공개 Pages 배포를 생략하고, 배포 금지이면 로컬 서버·CLI 업데이트와 Pages 배포를 모두 하지 않는다.
 - **MUST** 명시적 제한 없이 사용자가 "빌드", "배포", "반영"처럼 말하면 컴파일만 하고 멈추지 않는다. 아래 전체 과정을 한 번에 끝까지 진행한다.
   1. 현재 작업 폴더의 변경(미커밋 포함)으로 검증·컴파일·패키징
   2. 로컬 서버 업데이트와 독립 CLI 설치
   3. Cloudflare Pages production 배포
   - `python3 scripts/deploy_local.py`가 2~3을 수행한다.
-- **MUST** 명시적 제한 없이 사용자가 "푸시"라고 말하면 변경을 commit·push하고, 위의 빌드·로컬 반영·Pages 배포까지 모두 진행한다.
+- **MUST** 제한 없는 "푸시"는 요청한 개발 변경을 먼저 커밋하고 `python3 scripts/push_release.py`를 실행한다. 최신 공식 태그에서 patch를 한 번 올리고(예: `v0.1.0`, `v0.1.1`, `v0.1.2`), 고정한 커밋으로 빌드·실행 검증한 뒤 main과 태그, GitHub Releases, 로컬 서버·CLI·Pages에 반영한다. 재시도는 기존 태그·패키지를 확인한다. 실제 게시와 로컬 적용 상태를 각각 확인한다.
+- 로컬 개발 머신에서는 `python3 scripts/push_release.py --install-hook`으로 현재 checkout에 Git 훅을 연결하면 일반 `git push origin main`도 같은 절차를 이어간다. 새 clone마다 한 번 연결한다. fetch·다른 브랜치 푸시는 릴리즈 대상이 아니다. 최초 main 전송 뒤 후속 작업이 실패하면 `python3 scripts/push_release.py`로 재개한다.
+- 공식 업데이트 소스는 GitHub Releases의 서명된 `release.json`이다. stable은 latest, beta는 공개 prerelease를 사용한다. 배포 호스트에는 기존 릴리즈 서명 키와 GitHub 쓰기 권한이 필요하다. 설치 파일과 SHA256SUMS, 패키지 manifest, SBOM, 서명 manifest를 게시하고 같은 압축본을 로컬과 Pages에 사용한다. push 경로는 유휴 상태에서 즉시 적용하고 다른 작업이 있으면 검증한 패키지를 기존 독립 배포 unit에서 유휴 상태까지 기다린다.
 - 이 문구들이 곧 해당 범위의 승인이다. 각 단계마다 다시 묻지 않는다. 릴레이 Worker 배포, 강제 push·이력 재작성, 실행 중 작업을 중단하는 `--force` 적용은 이 범위에 포함하지 않으며 따로 요청받았을 때만 한다.
 
 ## 업데이트와 복구
@@ -64,3 +66,9 @@
 
 산출물은 `dist/release/grove-<version>-<target>/`에 압축본·`.deb`·manifest·SBOM·SHA256SUMS로 모은다.
 설치·사용자 서비스 선택·업데이트·제거 절차는 패키지의 `assets/debian/README.Debian`을 따른다.
+
+## Rust 빌드 캐시
+
+일반 개발·테스트는 현재 checkout에서 실행한다. 테스트는 줄 번호 디버그 정보만 남기고 증분 컴파일을 끈다. 릴리즈는 푸시 잠금 아래 `dist/github-releases/source`에 매번 해당 커밋을 새로 추출한다. Cargo의 소스 경로와 remap 플래그가 일정해 이전 릴리즈의 의존성을 재사용한다. 최종 바이너리는 현재 소스의 `target`에서 가져온다. 호스트가 외부 중간 캐시를 지정하지 않은 경우 `dist/github-releases/cargo-build`가 릴리즈 전용 캐시다.
+
+일회성 cold build는 `CARGO_TARGET_DIR`와 `CARGO_BUILD_BUILD_DIR`를 함께 지정한다. 관리 호스트의 기본 캐시에는 전역 유휴 정리 기준(48 GiB 초과 시 32 GiB 목표)이 적용된다. `cargo metadata --offline --no-deps --format-version 1`로 최종·중간 경로를 확인할 수 있다.

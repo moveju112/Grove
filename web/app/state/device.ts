@@ -79,7 +79,7 @@ export const defaultPrefs: Prefs = {
     notifyDone: true, notifyApproval: true, notifyServer: true, notifySound: true, notifyVibrate: true, notifyPush: true,
     recentWindows: [...DEFAULT_RECENT_WINDOWS], recentWindow: DEFAULT_RECENT_WINDOW,
     runningSendMode: "steer",
-    progressVisibility: "expanded",
+    progressVisibility: "collapse",
     keyboardShortcuts: DEFAULT_SHORTCUTS,
     activityDisplay: "animated", sessionVineLength: "medium", sessionVineSpeed: "normal", sessionVineGroups: 2,
 };

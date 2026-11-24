@@ -111,7 +111,7 @@ async fn ci(app: &App, repo: &str, head: &str) -> Value {
         Err(reason) => return state(reason),
     };
     let Some(rows) = checks["check_runs"].as_array() else { return state("unknown") };
-    if checks["total_count"].as_u64() != Some(rows.len() as u64) || rows.len() >= 100 {
+    if checks["total_count"].as_u64() != Some(rows.len() as u64) || rows.len() > 100 {
         return state("unknown");
     }
     let mut results = vec![];
@@ -135,7 +135,7 @@ async fn ci(app: &App, repo: &str, head: &str) -> Value {
     };
     if statuses["sha"] != head { return state("stale"); }
     let Some(rows) = statuses["statuses"].as_array() else { return state("unknown") };
-    if statuses["total_count"].as_u64() != Some(rows.len() as u64) || rows.len() >= 100 {
+    if statuses["total_count"].as_u64() != Some(rows.len() as u64) || rows.len() > 100 {
         return state("unknown");
     }
     for row in rows {

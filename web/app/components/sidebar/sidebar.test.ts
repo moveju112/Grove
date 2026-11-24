@@ -102,7 +102,7 @@ describe("공유 recent 저장 계약", () => {
     it("열지 않은 세션은 최근 항목을 만든 뒤 그 revision으로 고정한다", async () => {
         vi.mocked(api.post).mockResolvedValue({ id: "new", revision: 1 });
         await pinSession({ ...item, recent_id: null, recent_revision: null }, true);
-        expect(api.post).toHaveBeenCalledExactlyOnceWith("/recent/touch", { kind: "session", project_id: "p", resource_id: "s" });
+        expect(api.post).toHaveBeenCalledExactlyOnceWith("/recent/touch", { kind: "session", project_id: "p", resource_id: "s", reopen: false });
         expect(api.patch).toHaveBeenCalledExactlyOnceWith("/recent/new", { expected_revision: 1, pinned: true });
     });
     it("동시 변경은 최신 revision 위에 핀 의도만 한 번 재적용한다", async () => {

@@ -35,7 +35,7 @@ export default async function globalSetup() {
     }
     const child = spawn(bin, ["serve", "--listen", `127.0.0.1:${PORT}`, "--data-dir", data], {
         // 원격 감시 시험은 loopback 평문 fixture를 쓴다(그 밖의 대상은 여전히 HTTPS만).
-        env: { ...process.env, GROVE_WEB_DIR: web, GROVE_LOG: "warn", GROVE_REMOTE_WATCH_INSECURE_LOOPBACK: "1",
+        env: { ...process.env, GROVE_WEB_DIR: web, GROVE_RELEASE_MIRROR: join(data, "update-source.json"), GROVE_LOG: "warn", GROVE_REMOTE_WATCH_INSECURE_LOOPBACK: "1",
             ...(cliDir ? { PATH: `${cliDir}:${process.env.PATH}`, CLI_FIXTURE_DIR: cliDir,
                 AGENTS_IMAGE_CACHE: join(work, "image-downscale") } : {}) },
         stdio: ["ignore", "inherit", "inherit"],

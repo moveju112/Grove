@@ -1,5 +1,5 @@
 //! Claude Code의 SDK JSONL 연결을 같은 대화의 호환되는 턴에서 재사용한다.
-use super::{CliStream, ModelOutput, ModelRequest, OnDelta, Profile, ProviderError, args_with_bridge, claude, prompt, read_line_into};
+use super::{CliStream, ModelOutput, ModelRequest, OnDelta, Profile, ProviderError, args_for_run, claude, prompt, read_line_into};
 use serde_json::{Value, json};
 use std::{collections::HashMap, path::{Path, PathBuf}, process::Stdio, sync::{Arc, Mutex}, time::{Duration, Instant}};
 use tokio::{io::{AsyncWriteExt, BufReader}, process::{Child, ChildStdin, ChildStdout}};
@@ -167,7 +167,7 @@ pub(super) async fn run(
 ) -> Result<ModelOutput, ProviderError> {
     let ctx = req.cli.as_ref().expect("Claude context");
     let generated = uuid::Uuid::new_v4().to_string();
-    let (argv, name) = args_with_bridge(profile, req, &generated, false);
+    let (argv, name) = args_for_run(profile, req, &generated, false).await;
     // 세션 인자와 시스템 원문을 제외한 실행 옵션만 보존한다. 시스템 지침은 hash로 비교한다.
     let mut launch = argv[..argv.len() - 2].to_vec();
     if let Some(i) = launch.iter().position(|arg| arg == "--append-system-prompt") {

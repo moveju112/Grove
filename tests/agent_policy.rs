@@ -84,7 +84,7 @@ async fn request(s: &TestServer, session: &str, args: Value) -> Value {
 #[tokio::test]
 async fn discovery_respects_off_before_any_new_policy() {
     let (s, _f, _profile, _project, session) = setup().await;
-    assert!(available(&s, &session).await.contains(&"reviewer".into()));
+    assert_eq!(available(&s, &session).await, ["context-explorer", "failure-analyst", "handoff-summarizer"]);
     setting(&s, "server", "-", "agents.delegation", json!("off")).await;
     assert!(available(&s, &session).await.is_empty(), "off인데 모델에 위임 가능한 역할을 안내하면 안 된다");
 }
@@ -92,6 +92,9 @@ async fn discovery_respects_off_before_any_new_policy() {
 #[tokio::test]
 async fn restrictive_scope_matrix_and_exact_role_validation() {
     let (s, _f, _profile, project, session) = setup().await;
+    let item = setting(&s, "project", &project, MODE, json!("delegated")).await;
+    assert_eq!(item["default"], "solo");
+    assert_eq!(item["effective"], "delegated");
     let initial = available(&s, &session).await;
     assert!(initial.len() > 2);
     let item = setting(&s, "server", "-", ROLES, json!(" reviewer, worker ")).await;
@@ -142,6 +145,7 @@ async fn restrictive_scope_matrix_and_exact_role_validation() {
 #[tokio::test]
 async fn denied_spawn_and_approval_withdrawal_never_create_children() {
     let (s, f, profile, _project, session) = setup().await;
+    setting(&s, "session", &session, MODE, json!("delegated")).await;
     setting(&s, "server", "-", ROLES, json!("worker")).await;
     for mode in ["off", "ask", "auto"] {
         setting(&s, "server", "-", "agents.delegation", json!(mode)).await;
@@ -182,6 +186,7 @@ async fn denied_spawn_and_approval_withdrawal_never_create_children() {
 #[tokio::test]
 async fn child_inherits_parent_policy_and_withdrawal_preserves_results_and_cancel() {
     let (s, f, profile, _project, session) = setup().await;
+    setting(&s, "session", &session, MODE, json!("delegated")).await;
     setting(&s, "server", "-", "agents.delegation", json!("auto")).await;
     setting(&s, "session", &session, ROLES, json!("reviewer")).await;
     f.push(fixture::tool_calls(&[("start", "agent", json!({"action":"spawn","agent_id":"reviewer","brief":"완료"}))]));
@@ -192,6 +197,12 @@ async fn child_inherits_parent_policy_and_withdrawal_preserves_results_and_cance
     s.wait_status(&id, "completed").await;
     let run = run_status(&s, &session, "completed").await;
     let child = run["child_session_id"].as_str().unwrap();
+    assert_eq!(available(&s, child).await, ["reviewer"]);
+    let inherited = setting(&s, "session", child, MODE, json!("delegated")).await;
+    assert_eq!(inherited["effective"], "delegated");
+    setting(&s, "session", &session, MODE, Value::Null).await;
+    assert!(available(&s, child).await.is_empty(), "자식은 부모의 기본 solo 제한을 따른다");
+    setting(&s, "session", &session, MODE, json!("delegated")).await;
     let inherited = setting(&s, "session", child, ROLES, json!("*")).await;
     assert_eq!(inherited["effective"], "reviewer", "설정 UI 적용값과 실제 역할 안내가 같아야 한다");
     assert_eq!(inherited["layers"][format!("parent:{session}")]["scope_id"], session);
@@ -254,7 +265,7 @@ async fn child_inherits_parent_policy_and_withdrawal_preserves_results_and_cance
     let denied = tool_done(&s, pending["id"].as_str().unwrap()).await;
     assert_eq!(denied["result"]["error"]["code"], "delegation_disabled");
 
-    setting(&s, "session", &session, MODE, Value::Null).await;
+    setting(&s, "session", &session, MODE, json!("delegated")).await;
     setting(&s, "server", "-", "agents.delegation", json!("auto")).await;
     f.push_for(CHILD, fixture::hang_after("대기"));
     let sent = request(&s, &session, json!({"action":"send","run_id":run["id"],"brief":"실행 중 취소"})).await;
@@ -275,6 +286,7 @@ async fn child_inherits_parent_policy_and_withdrawal_preserves_results_and_cance
 #[tokio::test]
 async fn withdrawn_policy_survives_restart_without_replaying_work() {
     let (mut s, f, profile, _project, session) = setup().await;
+    setting(&s, "session", &session, MODE, json!("delegated")).await;
     setting(&s, "server", "-", "agents.delegation", json!("auto")).await;
     f.push(fixture::tool_calls(&[("start", "agent", json!({"action":"spawn","agent_id":"reviewer","brief":"복구"}))]));
     f.push(fixture::hang_after("부모 대기"));
@@ -301,6 +313,7 @@ async fn withdrawn_policy_survives_restart_without_replaying_work() {
 #[tokio::test]
 async fn spawn_transaction_rechecks_withdrawal_and_auto_to_ask_after_claim() {
     let (s, f, profile, project, session) = setup().await;
+    setting(&s, "server", "-", MODE, json!("delegated")).await;
     setting(&s, "server", "-", "agents.delegation", json!("auto")).await;
     f.push(fixture::hang_after("부모 실행 중"));
     let turn_id = turn(&s, &session, &profile).await;

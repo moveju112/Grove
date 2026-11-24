@@ -102,11 +102,13 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// 기능을 빼거나 의미를 바꾸면 이름의 버전(`_v2`)을 올린다.
 pub const CAPABILITIES: &[&str] = &[
     "daemon_setup_v1",
+    "published_updates_v1",
     "paged_reads_v1",
     "continuations_v1",
     "account_usage_v1",
     "native_skills_v1",
     "project_folders_v1",
+    "project_icons_v1",
     "bot_rooms_v1",
     "agent_auth_v1",
     "agent_backends_v1",
@@ -252,6 +254,7 @@ pub fn router(app: App) -> Router {
         .route("/github/repos", get(repos::search))
         .route("/projects/clone", post(repos::clone))
         .route("/projects/{id}", get(projects::show).patch(projects::update))
+        .route("/projects/{id}/icon/{sha}", get(projects::icon_photo))
         .route("/labels", get(labels::list).post(labels::create))
         .route("/project-folders", get(project_folders::list).post(project_folders::create))
         .route("/project-folders/{id}", axum::routing::patch(project_folders::update).delete(project_folders::remove))
@@ -276,6 +279,7 @@ pub fn router(app: App) -> Router {
         .route("/usage/accounts", get(account_usage::get))
         .route("/admin/update-readiness", get(admin::readiness))
         .route("/updates/settings", get(admin::update_settings).put(admin::save_update_settings))
+        .route("/updates/web-release", get(admin::web_release))
         .route("/updates/check", post(admin::check_update))
         .route("/admin/shutdown", post(admin::shutdown))
         .route("/admin/metrics", get(admin::metrics))

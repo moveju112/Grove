@@ -32,6 +32,7 @@ fn generate() -> String {
         decl::<grove::projects::Project>(),
         decl::<grove::project_folders::ProjectFolder>(),
         decl::<grove::labels::Label>(),
+        decl::<grove::sessions::SessionRecent>(),
         decl::<grove::sessions::Session>(),
         decl::<grove::sessions::SessionPage>(),
         decl::<grove::sessions::Message>(),

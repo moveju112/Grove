@@ -43,7 +43,7 @@ for line in sys.stdin:
         usage_base = {"inputTokens": 1000, "cachedInputTokens": 600, "outputTokens": 100,
                       "cacheWriteInputTokens": 20, "reasoningOutputTokens": 30, "totalTokens": 1100} if method == "thread/resume" else {}
         emit({"id": message["id"], "result": {"thread": {"id": thread}}})
-        if usage_base:
+        if usage_base and thread != "no-usage-replay":
             notify("thread/tokenUsage/updated", {"turnId": "previous-turn", "tokenUsage": {"total": usage_base}})
     elif method == "turn/start":
         params = message["params"]
@@ -107,7 +107,18 @@ for line in sys.stdin:
             "inputTokens": 100, "cachedInputTokens": 60, "outputTokens": 5,
             "cacheWriteInputTokens": 2, "reasoningOutputTokens": 3, "totalTokens": 105,
         }
-        notify("thread/tokenUsage/updated", {"tokenUsage": {"total": {key: value + usage_base.get(key, 0) for key, value in usage.items()}}})
+        def report_usage(latest, turn_total):
+            total = {key: value + usage_base.get(key, 0) for key, value in turn_total.items()}
+            notify("thread/tokenUsage/updated", {"tokenUsage": {"last": latest, "total": total}})
+
+        if thread == "no-usage-replay":
+            first = {"inputTokens": 40, "cachedInputTokens": 25, "outputTokens": 2,
+                     "cacheWriteInputTokens": 1, "reasoningOutputTokens": 1, "totalTokens": 42}
+            report_usage(first, first)
+            report_usage(first, first)
+            report_usage({key: value - first[key] for key, value in usage.items()}, usage)
+        else:
+            report_usage(usage, usage)
         # 다른 thread/turn의 delta는 현재 대화에 섞이면 안 된다.
         notify("item/agentMessage/delta", {"threadId": "foreign", "itemId": "bad", "delta": "잘못된 대화"})
         notify("item/agentMessage/delta", {"turnId": "foreign", "itemId": "bad", "delta": "잘못된 턴"})

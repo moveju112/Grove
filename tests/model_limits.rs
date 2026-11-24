@@ -153,8 +153,12 @@ async fn summary_and_title_share_inference_limits_and_release_them_before_commit
     s.wait_turn(&held, |_| f.requests().len() == 2).await;
     f.push_for("You name conversations", fixture::text("Shared title"));
     f.push_for("Summarize the conversation above", fixture::text("Shared summary"));
-    let launch = |suffix: &str, key: &str| {
-        let request = s.client.post(format!("{}/api/v1/sessions/{history}/{suffix}", s.base))
+    // 같은 세션을 요약하면 revision이 바뀌어 동시에 생성한 제목이 폐기될 수 있다.
+    let title_session = s.create_session(&project).await["id"].as_str().unwrap().to_string();
+    let (status, _) = s.post(&format!("/api/v1/sessions/{title_session}/messages"), json!({ "text":"title input" })).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let launch = |session: &str, suffix: &str, key: &str| {
+        let request = s.client.post(format!("{}/api/v1/sessions/{session}/{suffix}", s.base))
             .bearer_auth(&s.token).header("X-Grove-Protocol", "1").header("Idempotency-Key", key)
             .json(&json!({ "profile_id":p }));
         tokio::spawn(async move {
@@ -162,8 +166,8 @@ async fn summary_and_title_share_inference_limits_and_release_them_before_commit
             (response.status(), response.json::<Value>().await.unwrap())
         })
     };
-    let title = launch("title", "title-queue");
-    let summary = launch("compact", "summary-queue");
+    let title = launch(&title_session, "title", "title-queue");
+    let summary = launch(&history, "compact", "summary-queue");
     s.wait_turn(&held, |_| s.server.as_ref().unwrap().app.fair.counts().1 == 2).await;
     assert_eq!(f.requests().len(), 2);
     cancel(&s, &held).await;

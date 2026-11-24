@@ -40,6 +40,17 @@ pub struct Session {
     pub unread: bool,
     /// 이 대화가 들어가 있는 Grove worktree(없으면 프로젝트 폴더에서 실행, GIT-008)
     pub worktree_id: Option<String>,
+    /// 목록·검색에서 기존 최근 항목의 고정 상태와 변경 revision을 함께 제공한다.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub recent: Option<SessionRecent>,
+}
+
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+pub struct SessionRecent {
+    pub id: String,
+    pub revision: i64,
+    pub pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
@@ -92,7 +103,18 @@ fn from_row(r: &Row) -> rusqlite::Result<Session> {
         preview: r.get::<_, Option<String>>(16)?.map(|p| p.replace('\n', " ")),
         unread: r.get::<_, i64>(17)? < r.get::<_, i64>(11)?,
         worktree_id: r.get(18)?,
+        recent: None,
     })
+}
+
+const RECENT_JOIN: &str = "LEFT JOIN recent_items r ON r.kind = 'session' AND r.project_id = s.project_id AND r.resource_id = s.id";
+
+fn list_row(r: &Row) -> rusqlite::Result<Session> {
+    let mut session = from_row(r)?;
+    if let Some(id) = r.get(NCOLS)? {
+        session.recent = Some(SessionRecent { id, revision: r.get(NCOLS + 1)?, pinned: r.get(NCOLS + 2)? });
+    }
+    Ok(session)
 }
 
 pub fn get(conn: &Connection, id: &str) -> ApiResult<Session> {
@@ -292,7 +314,9 @@ pub async fn create(
 #[derive(Deserialize)]
 pub struct ListQuery {
     pub archived: Option<bool>,
-    /// 이전 페이지 마지막 항목의 `updated_at|id`
+    #[serde(default)]
+    pub pinned_first: bool,
+    /// 이전 페이지 마지막 항목의 updated_at|id. 고정 우선이면 pinned|updated_at|id.
     pub cursor: Option<String>,
     pub limit: Option<i64>,
     pub q: Option<String>,
@@ -312,25 +336,39 @@ pub async fn list(
 ) -> ApiResult<Json<SessionPage>> {
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let archived = q.archived.unwrap_or(false);
-    let (cur_t, cur_id) = match q.cursor.as_deref().and_then(|c| c.split_once('|')) {
-        Some((t, i)) => (t.to_string(), i.to_string()),
-        None => ("\u{10FFFF}".to_string(), String::new()),
+    let (pin, cursor) = if q.pinned_first {
+        match q.cursor.as_deref() {
+            None => (1, None),
+            Some(cursor) => {
+                let (pin, rest) = cursor.split_once('|').filter(|(p, _)| matches!(*p, "0" | "1"))
+                    .ok_or_else(|| ApiError::invalid("기록 페이지 위치가 올바르지 않습니다"))?;
+                (i64::from(pin == "1"), Some(rest))
+            }
+        }
+    } else {
+        (0, q.cursor.as_deref())
     };
+    let (cur_t, cur_id) = cursor.and_then(|c| c.split_once('|')).unwrap_or(("\u{10FFFF}", "\u{10FFFF}"));
+    let (cur_t, cur_id) = (cur_t.to_owned(), cur_id.to_owned());
     let needle = q.q.unwrap_or_default().to_lowercase();
     let page = app
         .db
         .call(move |c| {
             projects::get(c, &project_id)?;
+            let (after, order) = if q.pinned_first {
+                ("(COALESCE(r.pinned, 0), s.updated_at, s.id) < (?7, ?3, ?4)", "COALESCE(r.pinned, 0) DESC, ")
+            } else {
+                ("(s.updated_at, s.id) < (?3, ?4)", "")
+            };
             let sql = format!(
-                "SELECT {COLS} FROM sessions s WHERE s.project_id = ?1 AND (s.archived_at IS NOT NULL) = ?2 \
-                 AND (s.updated_at < ?3 OR (s.updated_at = ?3 AND s.id < ?4)) \
-                 AND (?5 = '' OR instr(lower(s.title), ?5) > 0) \
-                 ORDER BY s.updated_at DESC, s.id DESC LIMIT ?6"
+                "SELECT {COLS}, r.id, r.revision, r.pinned FROM sessions s {RECENT_JOIN} WHERE s.project_id = ?1 AND (s.archived_at IS NOT NULL) = ?2 \
+                 AND {after} AND (?5 = '' OR instr(lower(s.title), ?5) > 0) \
+                 ORDER BY {order}s.updated_at DESC, s.id DESC LIMIT ?6"
             );
             let mut st = c.prepare(&sql)?;
-            let cursor_id = if cur_id.is_empty() { "\u{10FFFF}".to_string() } else { cur_id };
+            let args = params![project_id, archived, cur_t, cur_id, needle, limit + 1, pin];
             let items = st
-                .query_map(params![project_id, archived, cur_t, cursor_id, needle, limit + 1], from_row)?
+                .query_map(&args[..st.parameter_count()], list_row)?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(items)
         })
@@ -338,7 +376,10 @@ pub async fn list(
     let mut items = page;
     let next_cursor = if items.len() as i64 > limit {
         items.truncate(limit as usize);
-        items.last().map(|s| format!("{}|{}", s.updated_at, s.id))
+        items.last().map(|s| {
+            let cursor = format!("{}|{}", s.updated_at, s.id);
+            if q.pinned_first { format!("{}|{cursor}", u8::from(s.recent.as_ref().is_some_and(|r| r.pinned))) } else { cursor }
+        })
     } else {
         None
     };
@@ -406,7 +447,7 @@ fn sidebar_page(c: &Connection, project_id: &str, q: SidebarQuery) -> ApiResult<
         "SELECT {COLS}, \
          (SELECT t.status FROM turns t WHERE t.session_id = s.id ORDER BY t.created_at DESC, t.id DESC LIMIT 1), \
          COALESCE(r.pinned, 0), r.id, r.revision \
-         FROM sessions s LEFT JOIN recent_items r ON r.kind = 'session' AND r.project_id = s.project_id AND r.resource_id = s.id \
+         FROM sessions s {RECENT_JOIN} \
          WHERE s.project_id = ?1 AND s.archived_at IS NULL \
          ORDER BY COALESCE(r.pinned, 0) DESC, s.updated_at DESC, s.id DESC"
     );
@@ -535,6 +576,8 @@ pub async fn delete_permanently(State(app): State<App>, p: Principal, headers: H
 
 #[derive(Deserialize)]
 pub struct SearchQuery {
+    #[serde(default)]
+    pub pinned_first: bool,
     pub q: Option<String>,
     /// true면 메시지 본문도 검색한다
     #[serde(default)]
@@ -603,23 +646,24 @@ pub async fn search(State(app): State<App>, _p: Principal, Query(q): Query<Searc
     let v = app
         .db
         .call(move |c| {
+            let order = if q.pinned_first { "COALESCE(r.pinned, 0) DESC, " } else { "" };
             // 시간 비교는 문자열 대신 julianday로 해 소수 초 표기 차이에 영향받지 않게 한다.
             let sql = format!(
-                "SELECT {COLS}, p.name, \
+                "SELECT {COLS}, r.id, r.revision, r.pinned, p.name, \
                    (SELECT m.seq FROM message_history m WHERE ?2 = 1 AND ?1 != '' AND m.session_id = s.id AND m.rewound_at IS NULL AND m.role IN ('user','assistant') \
                       AND (?6 IS NULL OR m.history_search_id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?6)) \
                       AND instr(lower(COALESCE(json_extract(m.content, '$.text'), '')), ?1) > 0 ORDER BY m.seq DESC LIMIT 1), \
                    (SELECT json_extract(m.content, '$.text') FROM message_history m WHERE ?2 = 1 AND ?1 != '' AND m.session_id = s.id AND m.rewound_at IS NULL AND m.role IN ('user','assistant') \
                       AND (?6 IS NULL OR m.history_search_id IN (SELECT rowid FROM message_search WHERE message_search MATCH ?6)) \
                       AND instr(lower(COALESCE(json_extract(m.content, '$.text'), '')), ?1) > 0 ORDER BY m.seq DESC LIMIT 1) \
-                 FROM sessions s JOIN projects p ON p.id = s.project_id \
+                 FROM sessions s JOIN projects p ON p.id = s.project_id {RECENT_JOIN} \
                  WHERE p.archived_at IS NULL AND (?3 IS NULL OR s.project_id = ?3) \
                    AND (?4 IS NULL OR julianday(s.updated_at) >= julianday(?4)) AND (?5 IS NULL OR julianday(s.updated_at) < julianday(?5)) \
-                 ORDER BY s.updated_at DESC, s.id DESC"
+                 ORDER BY {order}s.updated_at DESC, s.id DESC"
             );
             let mut st = c.prepare(&sql)?;
             let rows = st.query_map(params![needle, q.body, q.project_id, q.from, q.to, search_match], |r| {
-                Ok((from_row(r)?, r.get::<_, String>(NCOLS)?, r.get::<_, Option<i64>>(NCOLS + 1)?, r.get::<_, Option<String>>(NCOLS + 2)?))
+                Ok((list_row(r)?, r.get::<_, String>(NCOLS + 3)?, r.get::<_, Option<i64>>(NCOLS + 4)?, r.get::<_, Option<String>>(NCOLS + 5)?))
             })?;
             let mut hits = vec![];
             let mut total = 0i64;
@@ -766,8 +810,10 @@ pub async fn messages(
     let page = app
         .db
         .call(move |c| {
-            let session = get(c, &id)?;
-            let timeline_revision = c.query_row("SELECT timeline_revision FROM sessions WHERE id = ?1", params![id], |r| r.get(0))?;
+            let (timeline_revision, last_message_seq): (i64, i64) = c.query_row(
+                "SELECT timeline_revision, last_message_seq FROM sessions WHERE id = ?1",
+                [&id], |r| Ok((r.get(0)?, r.get(1)?)),
+            ).optional()?.ok_or_else(|| ApiError::not_found("세션이 없습니다"))?;
             let rewind_boundary_seq = crate::context::latest_compaction(c, &id, None)?.map(|cp| cp.upto_seq);
             let cols = "id, session_id, seq, role, content, turn_id, created_at";
             let filter = if q.view.is_some() { CONVERSATION_FILTER } else { "" };
@@ -779,7 +825,7 @@ pub async fn messages(
                      AND role = 'user' ORDER BY seq DESC LIMIT ?2)",
                     params![id, CONVERSATION_USER_CONTEXT], |r| r.get(0),
                 )?;
-                if let Some(first) = oldest_user.filter(|first| session.last_message_seq - first >= limit) {
+                if let Some(first) = oldest_user.filter(|first| last_message_seq - first >= limit) {
                     let context: i64 = c.query_row(&format!(
                         "SELECT COUNT(*) FROM (SELECT seq FROM message_history WHERE session_id = ?1 AND rewound_at IS NULL \
                          AND seq >= ?2{filter} ORDER BY seq DESC LIMIT ?3)"

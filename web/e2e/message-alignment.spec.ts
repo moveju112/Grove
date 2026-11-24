@@ -43,7 +43,7 @@ for (const width of [390, 1280]) {
             .evaluate((node) => getComputedStyle(node).fontSize);
         expect(nameSize).toBe(labelSize);
         expect(await markdown.getByTestId("file-ref").evaluate((node) =>
-            getComputedStyle(node).paddingInlineStart)).toBe("0px");
+            parseFloat(getComputedStyle(node).paddingInlineStart))).toBeGreaterThan(0);
         const geometry = await markdown.evaluate((node) => {
             const paragraphs = [...node.querySelectorAll("p")];
             const style = (el: Element) => {

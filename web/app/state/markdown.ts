@@ -166,8 +166,8 @@ export function fileRef(code: string): { path: string; line?: number } | null {
     if (!m) return null;
     const path = m[1]!;
     if (path.split("/").some((p) => p === ".." || p === ".")) return null;
-    // 경로·줄 표시 없는 흔한 웹 도메인은 인라인 코드로 유지한다.
-    if (!m[2] && /^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+(?:com|net|org|edu|gov|io|dev|app|co)$/i.test(path)) return null;
+    // 파일명만으로는 어느 폴더를 가리키는지 알 수 없다. 명시한 Markdown 링크는 fileLink에서 처리한다.
+    if (!m[2] && !path.includes("/")) return null;
     return m[2] ? { path, line: Number(m[2]) } : { path };
 }
 

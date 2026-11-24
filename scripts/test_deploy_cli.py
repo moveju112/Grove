@@ -73,6 +73,30 @@ class DeploymentHandoff(unittest.TestCase):
         busy.update(counts)
         return {"idle": all(n == 0 for n in busy.values()), "busy": busy}
 
+    def test_release_push_waits_for_other_work_and_applies_when_idle(self):
+        args = (str(self.archive), self.receipt, self.manifest)
+        with patch.object(deploy, "update_readiness", side_effect=[self.readiness(running_tasks=1), self.readiness()]), \
+                patch.object(deploy, "queue_deployment") as queue, patch.object(deploy, "deploy_prepared") as apply:
+            deploy.apply_package(*args, None, wait_if_busy=True)
+            queue.assert_called_once_with(*args, None, False)
+            apply.assert_not_called()
+            deploy.apply_package(*args, None, wait_if_busy=True)
+            apply.assert_called_once_with(*args, force=False, skip_pages=False)
+
+    def test_newer_release_supersedes_pending_cutover(self):
+        self.manifest["published_tag"] = "v0.1.0"
+        newer = dict(self.manifest, version="0.1.1", published_tag="v0.1.1")
+        with patch.object(deploy, "update_readiness", return_value=self.readiness(running_tasks=1)), \
+                patch.object(deploy, "queue_deployment"), patch.object(deploy, "deploy_prepared") as apply:
+            for manifest in (self.manifest, newer):
+                deploy.apply_package(str(self.archive), self.receipt, manifest, None, wait_if_busy=True)
+            with patch.object(deploy, "wait_for_deployment", return_value=None):
+                self.assertEqual(self.resume()[1]["reason"], "superseded_by_release")
+                apply.assert_not_called()
+                self.request["manifest"] = newer
+                self.assertEqual(self.resume()[1]["state"], "applied")
+                apply.assert_called_once()
+
     def turn_status(self, status):
         with sqlite3.connect(self.database) as c:
             c.execute("UPDATE turns SET status=? WHERE id='own-turn'", (status,))

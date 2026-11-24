@@ -51,7 +51,7 @@ import { Stack } from "@astryxdesign/core/Stack";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { CHAT_COLUMN_WIDTH, chatLayout } from "./chat-layout.stylex";
 import { LoadingBar } from "./LoadingScreen";
-import { TextArea } from "../design/Fields";
+import { QuestionCard } from "./QuestionCard";
 import { AssistantResponse, splitResponse, type ResponseContent } from "./AssistantResponse";
 import { assistantTranscript, type AssistantRow } from "./assistantTranscript";
 
@@ -531,7 +531,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             <Stack gap={4} width="100%" maxWidth={CHAT_COLUMN_WIDTH} xstyle={chatLayout.messages} aria-live="polite" data-session-msgs={sessionId} ref={msgsRef}>
                 {hasOlder && <GroveButton variant="secondary" disabled={loadingOlder} onClick={() => void loadOlder()}>이전 메시지</GroveButton>}
                 <FileRefContext.Provider
-                    value={(path, line) => open({ kind: "file", project_id: projectId, resource_id: path, filePath: path, fileLine: line, title: line ? `${path}:${line}` : path }, "right")}
+                    value={project.data ? (path, line) => open({ kind: "file", project_id: projectId, resource_id: path, filePath: path, fileLine: line, title: line ? `${path}:${line}` : path }, "right") : null}
                 >
                     <FileLinkContext.Provider value={project.data ? { projectId, rootPath: project.data.root_path } : null}>
                     <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={transcript.rows.filter((m) =>
@@ -596,7 +596,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                     새 메시지 ↓
                 </GroveButton>
             )}
-            {questions.map((c) => <QuestionCard key={c.id} c={c} act={act} />)}
+            {questions.map((c) => <QuestionCard key={c.id} call={c} act={act} onAnswered={calls.reload} />)}
             {pending.length > 0 && (
                 <Stack gap={2} width="100%" maxWidth={CHAT_COLUMN_WIDTH} xstyle={chatLayout.centered}>
                     {pending.map((c) => <ApprovalCard key={c.id} call={c} {...currentApprovalContract(c.name)}
@@ -743,7 +743,7 @@ function AssistantTurn({ row, name, image, showProgress, progressOpen, progressA
                 <ServerActionButton variant="secondary" density="compact" onClick={onFork}>여기에서 채팅 분기</ServerActionButton>
             </ActionMenu>}
         </Stack>}
-        {attachments.length > 0 && <AttachmentList attachments={attachments} />}
+        {attachments.length > 0 && <AttachmentList attachments={attachments} gallery />}
     </ChatMessage>;
 }
 
@@ -962,58 +962,6 @@ function FollowupsPanel({ sessionId, running, onError }: { sessionId: string; ru
                     </Stack>} />
                 ))}
             </GroveList>
-        </Stack></Card>
-    );
-}
-
-type Question = { question: string; options: { label: string; description?: string }[]; multi_select: boolean; allow_free_text: boolean };
-
-/// 모델의 질문(UI-016): 단일·복수 선택, 직접 입력, 닫기. 보낸 값은 서버가 질문의 선택지로 다시 검증한다.
-function QuestionCard({ c, act }: { c: ToolCallRow; act: (f: () => Promise<unknown>) => Promise<void> }) {
-    const q = c.target as Question;
-    const [picked, setPicked] = useState<string[]>([]);
-    const [text, setText] = useState("");
-    const canSend = picked.length > 0 || (q.allow_free_text && text.trim().length > 0);
-    const send = (body: Record<string, unknown>) => act(() => api.post(`/tool-calls/${c.id}/answer`, { expected_revision: c.revision, ...body }));
-    return (
-        <Card variant="orange" padding={2}><Stack as="form" gap={2}
-            aria-label="모델의 질문"
-            data-testid="question"
-            onSubmit={(e) => {
-                e.preventDefault();
-                if (canSend) void send({ choices: picked, text: q.allow_free_text && text.trim() ? text : null });
-            }}
-        >
-            <fieldset>
-                <legend>
-                    <strong>질문</strong> {q.question}
-                    <GroveText type="supporting" color="secondary"> · {q.multi_select ? "여러 개 선택 가능" : q.options.length > 0 ? "하나 선택" : "직접 입력"}</GroveText>
-                </legend>
-                {q.options.length > 0 && Array.from({ length: q.multi_select ? Math.min(picked.length + 1, q.options.length) : 1 }, (_, index) => (
-                    <Select key={index} label={q.multi_select ? `선택 ${index + 1}` : "답변 선택"} value={picked[index] ?? ""}
-                            onChange={(value) => setPicked((previous) => {
-                                const next = [...previous];
-                                next[index] = value;
-                                return next.filter(Boolean);
-                            })}
-                            options={[{ value: "", label: "선택 안 함" }, ...q.options.map((option) => ({
-                                value: option.label, label: option.label, description: option.description,
-                                disabled: picked.includes(option.label) && picked[index] !== option.label,
-                            }))]} />
-                ))}
-                {q.allow_free_text && (
-                    <TextArea label={q.options.length > 0 ? "직접 입력(선택)" : "답"} aria-label="직접 입력"
-                        rows={2} value={text} onChange={setText} />
-                )}
-            </fieldset>
-            <Stack direction="horizontal" align="center" gap={1.5}>
-                <ServerActionButton type="submit" disabled={!canSend}>
-                    답하기
-                </ServerActionButton>
-                <ServerActionButton type="button" variant="secondary" onClick={() => void send({ cancel: true })}>
-                    답하지 않고 닫기
-                </ServerActionButton>
-            </Stack>
         </Stack></Card>
     );
 }

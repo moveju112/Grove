@@ -157,6 +157,7 @@ test("자식 에이전트 위임을 승인하면 자식 대화가 생기고 결�
     const { a } = await ensureProjects();
     await ensureProfile();
     const s = await apiCall<{ id: string; title: string }>("POST", `/projects/${a.id}/sessions`, { title: "위임 대화" });
+    await apiCall("PUT", `/settings/session/${s.id}/agents.orchestration`, { expected_revision: 0, value: "delegated" });
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: s.id });
     await login(page);
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /위임 대화/ }).first().click();

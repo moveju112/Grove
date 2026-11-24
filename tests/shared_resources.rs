@@ -200,7 +200,8 @@ async fn queued_ui_access_revalidates_the_device_after_the_project_guard_becomes
         h.insert("authorization",format!("Bearer {token}").parse().unwrap());
         h
     };
-    let owner=grove::auth::authenticate(&app,&headers(&s.token)).await.unwrap();
+    let holder=s.registered_device("guard holder").await;
+    let owner=grove::auth::authenticate(&app,&headers(holder["token"].as_str().unwrap())).await.unwrap();
     let device=s.registered_device("queued device").await;
     let principal=grove::auth::authenticate(&app,&headers(device["token"].as_str().unwrap())).await.unwrap();
     let held=app.project_resources.ui_write(&app,pid,&owner).await.unwrap();

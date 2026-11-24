@@ -136,6 +136,7 @@ async fn scoped_policy_uses_actual_deny_allow_delegation_and_depth() {
     let session = s.create_session(pid).await;
     let sid = session["id"].as_str().unwrap();
     let query = format!("?session_id={sid}");
+    setting(&s, "project", pid, "agents.orchestration", json!("delegated")).await;
     let initial = overview(&s, &query).await;
     assert_eq!(initial["project_id"], pid);
     assert_eq!(initial["delegation"]["approval"], "ask");
@@ -241,7 +242,7 @@ async fn parent_turn_inheritance_is_not_next_request_default_and_read_does_not_r
     assert_eq!(value["parent"]["tools_enabled"], false);
     assert_eq!(value["next_request_default"]["name"], "next-request-only");
     assert_eq!(value["next_request_default"]["source"], "project");
-    assert_eq!(role(&value, "worker")["availability"], "tools_disabled");
+    assert_eq!(role(&value, "context-explorer")["availability"], "tools_disabled");
     assert_eq!(f.requests().len(), requests);
     release.send_replace(true);
     s.wait_status(tid, "completed").await;

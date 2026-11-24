@@ -43,6 +43,7 @@ test("실제 Git 위치·권한·detached·dirty를 조회하고 index와 입력
     await overview.getByRole("button", { name: "Git 실행 권한 도움말", exact: true }).focus();
     await page.keyboard.press("Enter");
     await expect(page.getByRole("tooltip")).toContainText("직접 Git API는 인증된 기기에 열려 있고");
+    await expect(page.getByRole("tooltip")).not.toContainText("read_only");
     await page.keyboard.press("Escape");
     await expect(overview.locator("tr").filter({ has: page.getByRole("rowheader", { name: "commit", exact: true }) })).toContainText("stage된 변경이 없습니다");
     expect(readFileSync(join(root, ".git/index"))).toEqual(before);

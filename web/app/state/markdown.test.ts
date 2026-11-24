@@ -54,7 +54,8 @@ describe("markdown", () => {
         expect(fileRef("src/app.ts")).toEqual({ path: "src/app.ts" });
         expect(fileRef("src/app.ts:42")).toEqual({ path: "src/app.ts", line: 42 });
         expect(fileRef("web/app/x.test.ts:3:7")).toEqual({ path: "web/app/x.test.ts", line: 3 });
-        expect(fileRef("Cargo.toml")).toEqual({ path: "Cargo.toml" });
+        expect(fileRef("Cargo.toml")).toBeNull();
+        expect(fileLink("Cargo.toml")).toEqual({ path: "Cargo.toml" });
         expect(fileRef("dist/a.7z")).toEqual({ path: "dist/a.7z" });
         expect(fileRef("dist/legacy.com")).toEqual({ path: "dist/legacy.com" });
         expect(fileRef("legacy.com:2")).toEqual({ path: "legacy.com", line: 2 });
@@ -112,7 +113,7 @@ describe("markdown", () => {
             createElement(FileLinkContext.Provider, { value: { projectId: "project", rootPath: "/project" } },
                 createElement(Markdown, { text }))));
         expect(out.match(/data-testid="file-link"/g)).toHaveLength(1);
-        expect(out).toContain('title="src/app.rs 변경점"');
+        expect(out).toContain('title="src/app.rs 미리보기"');
         expect(out).not.toContain('href="/project');
         expect(out).not.toContain('href="/other');
         expect(out).not.toContain('data-testid="file-ref"');

@@ -109,6 +109,10 @@ export function UsagePanel({ onClose, onAuthenticate }: { onClose: () => void; o
         return () => { clearInterval(timer); document.removeEventListener("visibilitychange", refresh); };
     }, [active]);
     const report = q.data;
+    const quotas = <GroveStack as="section" aria-label="OAuth 한도" xstyle={dashboardStyles.flow}>
+        <GroveHeading level={2} xstyle={dashboardStyles.sectionTitle}>OAuth 한도</GroveHeading>
+        <SidebarUsage onAuthenticate={onAuthenticate} showEmpty presentation="cards" />
+    </GroveStack>;
     return <GroveStack as="section" gap={0} data-testid="usage-panel" aria-label="사용량">
         <GroveStack xstyle={dashboardStyles.content}>
             <GroveStack as="header" direction="horizontal" align="center" justify="between" gap={2} xstyle={dashboardStyles.header}>
@@ -135,11 +139,9 @@ export function UsagePanel({ onClose, onAuthenticate }: { onClose: () => void; o
             </GroveStack>
             {valid && !report && !q.error && <GroveText role="status" color="secondary">사용량 불러오는 중…</GroveText>}
             {q.error != null && <GroveText role="alert" color="error">사용량을 불러오지 못했어요.{report ? " 마지막 조회값을 표시해요." : ""}</GroveText>}
+            {!report && quotas}
             {report && <GroveStack xstyle={dashboardStyles.flow} aria-busy={q.loading}>
-                <UsageDashboard report={report} quotas={<GroveStack as="section" aria-label="OAuth 한도" xstyle={dashboardStyles.flow}>
-                    <GroveHeading level={2} xstyle={dashboardStyles.sectionTitle}>OAuth 한도</GroveHeading>
-                    <SidebarUsage onAuthenticate={onAuthenticate} showEmpty presentation="cards" />
-                </GroveStack>} />
+                <UsageDashboard report={report} quotas={quotas} />
                 <Collapsible trigger="실행 현황·추정 비용" defaultIsOpen={false}>
                     <GroveStack gap={4} paddingBlock={3}>
                         <CapacitySection />

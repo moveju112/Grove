@@ -56,6 +56,9 @@ async fn text_turn_streams_partial_then_persists_answer() {
     assert_eq!(items[1]["role"], "assistant");
     assert_eq!(items[1]["content"]["text"], "안녕하세요!");
     let evs = reader.await.unwrap();
+    let updates = events_of(&evs, "turn.updated");
+    assert!(updates.iter().any(|e| e["payload"]["status"] == "completed" && e["payload"]["completion_preview"] == "안녕하세요!"));
+    assert!(updates.iter().filter(|e| e["payload"]["status"] != "completed").all(|e| e["payload"].get("completion_preview").is_none()));
     let partials: Vec<&Value> = evs.iter().filter(|(n, _)| n == "partial").map(|(_, v)| v).collect();
     assert!(partials.iter().any(|p| p["snapshot"]["text"].as_str().is_some_and(|t| !t.is_empty() && t != "안녕하세요!")), "완료 전 중간 응답 표시: {partials:?}");
     assert!(partials.last().unwrap()["snapshot"].is_null(), "완료 후 중간 응답 제거");
@@ -1109,8 +1112,16 @@ async fn repeated_failing_call_and_identical_loop_are_stopped() {
 // RUN-021: 시간 예산은 사용자가 정한 경우에만 적용하고(기본 제한 없음), 원인을 기록한다.
 #[tokio::test]
 async fn explicit_time_budget_stops_turn_with_its_cause() {
+    check_time_budget_after_approval(59_500).await;
+}
+
+#[tokio::test]
+async fn expired_budget_preserves_settings_without_starting_another_model_request() {
+    check_time_budget_after_approval(61_000).await;
+}
+
+async fn check_time_budget_after_approval(elapsed_ms: i64) {
     let (s, f, prof, sid, root) = setup().await;
-    // 시간 예산 1분: 승인 대기 중 시작 시각을 59.5초 전으로 당긴 뒤 승인 → 모델 응답이 끝나지 않으면 남은 0.5초 뒤 멈춤
     let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_minutes"), json!({ "expected_revision": 0, "value": 1 })).await;
     assert_eq!(st, StatusCode::OK);
     f.push(fixture::tool_calls(&[("w1", "write", json!({ "path": "t.txt", "content": "T" }))]));
@@ -1121,7 +1132,7 @@ async fn explicit_time_budget_stops_turn_with_its_cause() {
     assert_eq!(t["definition"]["budget"]["max_minutes"], 1, "접수 시점 예산을 고정");
     {
         let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
-        let back = grove::util::fmt_time(time::OffsetDateTime::now_utc() - time::Duration::milliseconds(59_500));
+        let back = grove::util::fmt_time(time::OffsetDateTime::now_utc() - time::Duration::milliseconds(elapsed_ms));
         db.execute("UPDATE turns SET created_at = ?2 WHERE id = ?1", rusqlite::params![tid, back]).unwrap();
     }
     let c = &t["tool_calls"][0];
@@ -1136,11 +1147,16 @@ async fn explicit_time_budget_stops_turn_with_its_cause() {
     assert!(started.elapsed() < std::time::Duration::from_secs(5));
     assert!(std::path::Path::new(&format!("{root}/t.txt")).exists(), "예산 전 승인된 도구는 끝까지 실행");
 
+    if elapsed_ms >= 60_000 {
+        assert_eq!(f.requests().len(), 1, "승인을 기다리는 동안 예산이 끝나면 모델을 다시 호출하지 않는다");
+    }
+
     // 예산 0(기본): 같은 대화에서 정상 완료
     let (st, _) = s.send(Method::PUT, &format!("/api/v1/settings/session/{sid}/runs.budget.max_minutes"), json!({ "expected_revision": 1, "value": 0 })).await;
     assert_eq!(st, StatusCode::OK);
-    f.push(fixture::text("완료"));
-    let v = start_turn(&s, &sid, &prof, "다시", false).await;
+    // 예산이 다음 모델 호출 직전에 끝나도 두 번째 턴은 자체 응답을 받는다.
+    f.push_for("예산 없이 다시", fixture::text("완료"));
+    let v = start_turn(&s, &sid, &prof, "예산 없이 다시", false).await;
     let t = s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
     assert!(t["definition"]["budget"].is_null());
 }

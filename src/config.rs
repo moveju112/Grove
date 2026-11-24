@@ -28,6 +28,8 @@ pub struct Config {
     pub gh_command: String,
     /// 내부 보조 명령(`continuation-mcp`)에 쓸 grove 실행 파일. None이면 현재 실행 파일을 쓴다.
     pub internal_exe: Option<PathBuf>,
+    /// 명시적으로 지정한 서명 릴리즈 오프라인 미러 설정. 기본은 GitHub Releases.
+    pub release_mirror: Option<PathBuf>,
 }
 
 impl Config {
@@ -63,6 +65,7 @@ impl Config {
             scheduler_tick_ms: std::env::var("GROVE_SCHEDULER_TICK_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(15_000).clamp(100, 600_000),
             remote_watch_insecure_loopback: std::env::var("GROVE_REMOTE_WATCH_INSECURE_LOOPBACK").is_ok_and(|v| v == "1"),
             gh_command: std::env::var("GROVE_GH").ok().filter(|v| !v.trim().is_empty()).unwrap_or_else(|| "gh".into()),
+            release_mirror: std::env::var_os("GROVE_RELEASE_MIRROR").map(PathBuf::from),
             internal_exe: None,
         })
     }
@@ -131,7 +134,7 @@ mod tests {
             web_base: "/".into(),
             approval_ttl_secs: 60,
             scheduler_tick_ms: 15_000,
-            remote_watch_insecure_loopback: false, gh_command: "gh".into(), internal_exe: None,
+            remote_watch_insecure_loopback: false, gh_command: "gh".into(), release_mirror: None, internal_exe: None,
         }
     }
     /// OS별 데이터 경로 규칙(ARCH-009). 절대 경로 판정은 실행 OS 기준이라 Unix 형식 값으로 확인한다.

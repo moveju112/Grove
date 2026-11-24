@@ -57,6 +57,18 @@ def env():
     # 공통 환경을 source한 worktree에서는 공유 툴체인을 덮어쓰지 않는다.
     e.setdefault("CARGO_HOME", os.path.join(DEV, "cargo"))
     e.setdefault("RUSTUP_HOME", os.path.join(DEV, "rustup"))
+    # 이미 실행 중인 에이전트는 호스트에서 폐기한 기본값을 상속할 수 있다.
+    # 설치된 Cargo 설정까지 새 정책과 일치할 때만 교체하고 명시적인 override는 보존한다.
+    legacy = os.path.realpath(os.path.expanduser("~/.cache/cargo-build/{workspace-path-hash}"))
+    if e.get("CARGO_BUILD_BUILD_DIR") == legacy:
+        import tomllib
+        cfg = os.path.join(e["CARGO_HOME"], "config.toml")
+        if os.path.isfile(cfg):
+            with open(cfg, "rb") as stream:
+                configured = tomllib.load(stream).get("build", {}).get("build-dir", "")
+            managed = os.path.join(os.path.dirname(legacy), "managed-v1", "{workspace-path-hash}")
+            if configured and os.path.realpath(configured) == managed:
+                e["CARGO_BUILD_BUILD_DIR"] = configured
     e["PATH"] = os.pathsep.join([os.path.join(e["CARGO_HOME"], "bin"), os.path.join(DEV, "bin"), os.path.join(DEV, "venv", "bin"), e.get("PATH", "")])
     return e
 
@@ -254,7 +266,7 @@ def cmd_bench(a):
         os.utime(p, None)
 
     try:
-        step("cold_server_debug", ["cargo", "build", "--locked"], extra={"CARGO_TARGET_DIR": cold_dir})
+        step("cold_server_debug", ["cargo", "build", "--locked"], extra={"CARGO_TARGET_DIR": cold_dir, "CARGO_BUILD_BUILD_DIR": cold_dir})
         step("cold_web", ["npm", "run", "build"], cwd=web)
         step("warm_server_nochange", ["cargo", "build", "--locked"])
         touch("src/titles.rs")

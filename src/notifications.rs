@@ -80,14 +80,15 @@ pub async fn list(State(app): State<App>, _p: Principal, Query(q): Query<ListQue
     let v = app
         .db
         .call(move |c| {
-            let mut st = c.prepare(
+            let unread = if q.unread { " AND read_at IS NULL" } else { "" };
+            let before = if bt.is_some() { " AND (created_at, id) < (?1, ?2)" } else { "" };
+            let reference = if q.ref_id.is_some() { " AND ref_id = ?3" } else { "" };
+            let mut st = c.prepare_cached(&format!(
                 "SELECT id, kind, title, body, project_id, session_id, ref_id, created_at, delivered_at, read_at FROM notifications \
-                 WHERE (?1 = 0 OR read_at IS NULL) AND (?3 IS NULL OR created_at < ?3 OR (created_at = ?3 AND id < ?4)) \
-                 AND (?5 IS NULL OR ref_id = ?5) \
-                 ORDER BY created_at DESC, id DESC LIMIT ?2",
-            )?;
+                 WHERE 1=1{unread}{before}{reference} ORDER BY created_at DESC, id DESC LIMIT ?4"
+            ))?;
             let mut rows: Vec<Notification> = st
-                .query_map(params![q.unread as i64, limit + 1, bt, bid, q.ref_id], |r| {
+                .query_map(params![bt, bid, q.ref_id, limit + 1], |r| {
                     Ok(Notification {
                         id: r.get(0)?,
                         kind: r.get(1)?,

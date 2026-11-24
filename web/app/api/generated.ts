@@ -46,7 +46,7 @@ available: boolean,
 /**
  * 표시 아이콘(이모지·짧은 글자, PROJECT-002). 없으면 null.
  */
-icon: string | null,
+icon: string | null, icon_color?: number, icon_photo_sha256?: string,
 /**
  * 마지막 활동: 프로젝트 대화 중 가장 늦은 갱신 시각, 대화가 없으면 프로젝트 갱신 시각.
  */
@@ -80,6 +80,8 @@ export type Label = { id: string, name: string, color: string, revision: number,
  */
 project_count: number, };
 
+export type SessionRecent = { id: string, revision: number, pinned: boolean, };
+
 export type Session = { id: string, project_id: string, title: string, created_at: string, updated_at: string, revision: number, archived_at: string | null, parent_session_id: string | null, fork_message_seq: number | null, fork_inherits_context: boolean, workflow_id: string | null, last_message_seq: number,
 /**
  * 진행 중 턴 상태(없으면 null). 질문 답만 기다리면 awaiting_input(턴 자체 상태는 awaiting_approval, RUN-014).
@@ -100,7 +102,11 @@ unread: boolean,
 /**
  * 이 대화가 들어가 있는 Grove worktree(없으면 프로젝트 폴더에서 실행, GIT-008)
  */
-worktree_id: string | null, };
+worktree_id: string | null,
+/**
+ * 목록·검색에서 기존 최근 항목의 고정 상태와 변경 revision을 함께 제공한다.
+ */
+recent?: SessionRecent, };
 
 export type SessionPage = { items: Array<Session>, next_cursor: string | null, };
 
@@ -128,7 +134,7 @@ export type SearchPage = { items: Array<SearchHit>,
  */
 total: number, };
 
-export type RecentItem = { id: string, kind: string, project_id: string, project_name: string, resource_id: string, title: string, last_access_at: string, pinned: boolean, hidden: boolean, view_state: unknown, revision: number,
+export type RecentItem = { id: string, kind: string, project_id: string, project_name: string, project_icon?: string, icon_color?: number, icon_photo_sha256?: string, resource_id: string, title: string, last_access_at: string, pinned: boolean, hidden: boolean, view_state: unknown, revision: number,
 /**
  * 서버 상태로 계산한 값: active | queued | running | awaiting_approval | awaiting_input | completed | failed | interrupted | cancelled | unknown_result | archived | missing | project_unavailable
  */
@@ -236,7 +242,11 @@ export type NativeCommand = { id: string, name: string, description: string, arg
 
 export type NativeCommandCatalog = { project_id: string, profile_id: string, protocol: string, commands: Array<NativeCommand>, has_errors: boolean, };
 
-export type Turn = { id: string, session_id: string, status: string, request_message_id: string, profile_id: string | null, agent_id: string | null, workflow_id: string | null, tools_enabled: boolean, error: unknown, usage: unknown, step: number, created_at: string, updated_at: string, finished_at: string | null, definition: unknown,
+export type Turn = { id: string, session_id: string, status: string, request_message_id: string, profile_id: string | null, agent_id: string | null, workflow_id: string | null, tools_enabled: boolean, error: unknown, usage: unknown, step: number, created_at: string, updated_at: string, finished_at: string | null,
+/**
+ * 완료 이벤트에만 포함하는 최종 답변 미리보기.
+ */
+completion_preview?: string, definition: unknown,
 /**
  * 실패·중단된 요청을 사용자가 확인(포기·다시 실행)한 시각(RUN-019). null이면 아직 확인 전.
  */
