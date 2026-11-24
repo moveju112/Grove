@@ -466,7 +466,7 @@ def cmd_package(a):
     jobs = a.jobs or default_jobs()
     plan = []
     for n in names:
-        inputs = hashlib.sha256(f"{server_h}{web_h}{n}{TARGETS[n]}".encode()).hexdigest()
+        inputs = tree_hash(["scripts/build.py"], f"{server_h}{web_h}{n}{TARGETS[n]}")
         rdir = os.path.join(dist, "release", f"grove-{version}-{n}")
         receipt = os.path.join(rdir, "receipt.json")
         reuse = False
@@ -519,8 +519,17 @@ def cmd_package(a):
         for f in NOTICE_FILES:
             shutil.copy2(os.path.join(ROOT, f), os.path.join(stage, "licenses"))
         subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "check_licenses.py"), "--notice", os.path.join(stage, "licenses", "THIRD_PARTY_NOTICES.txt")], env=env(), check=True, capture_output=True)
-        with open(os.path.join(stage, "README.txt"), "w") as f:
-            f.write(f"Grove {version} ({n})\n\n실행: ./{TARGETS[n][2]} serve\n브라우저에서 표시되는 주소로 접속하고 owner-token 파일의 토큰으로 로그인합니다.\n데이터 위치는 GROVE_DATA_DIR로 바꿀 수 있습니다.\n")
+        cli = f"./{TARGETS[n][2]}"
+        with open(os.path.join(stage, "README.txt"), "w", encoding="utf-8") as f:
+            f.write(
+                f"Grove {version} ({n})\n\n"
+                f"압축을 푼 폴더에서 {cli} pairing set-password 로 발급 비밀번호를 설정한 뒤 "
+                f"{cli} serve 로 서버를 실행하세요.\n"
+                f"다른 터미널에서 같은 폴더를 열고 {cli} pairing create 로 링크를 발급하세요.\n"
+                f"브라우저에서 링크를 열고 링크 비밀번호를 입력한 뒤 {cli} pairing list 로 "
+                "대기 요청을 확인하세요. 양쪽의 확인 코드가 일치하면 다음 명령으로 승인하세요.\n"
+                f"{cli} pairing approve <링크-ID> <요청-ID> <확인-코드>\n"
+            )
         bad = scan(stage)
         if bad:
             raise SystemExit(f"{n}: 패키지 검사 실패\n  " + "\n  ".join(bad))

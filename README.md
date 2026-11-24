@@ -2,7 +2,16 @@
 
 Grove는 내 개발 머신에서 실행하는 AI 코딩 작업공간입니다. 데스크톱 브라우저와 모바일 PWA에서 같은 프로젝트의 대화를 이어가고, 에이전트가 바꾼 파일과 Git diff를 확인하거나 터미널을 열 수 있습니다. Rust 서버가 작업을 실행하고 대화와 실행 기록을 SQLite에 저장합니다.
 
-## 로컬에서 시작하기
+## 릴리즈 파일로 시작하기
+
+[GitHub Releases](https://github.com/moveju112/Grove/releases/latest)에서 Linux x64용 패키지를 받으세요. 같은 릴리즈의 `SHA256SUMS`를 함께 받으면 다운로드한 폴더에서 `sha256sum --ignore-missing -c SHA256SUMS`로 파일을 확인할 수 있습니다.
+
+| 파일 | 설치와 실행 |
+| --- | --- |
+| `grove-0.1.0-linux-x64.tar.gz` | 압축을 풀고 `grove-0.1.0-linux-x64` 폴더에서 `./grove pairing set-password`를 실행한 뒤 `./grove serve`로 시작합니다. |
+| `grove_0.1.0-1_amd64.deb` | Debian·Ubuntu에서 `sudo apt install ./grove_0.1.0-1_amd64.deb`로 설치한 뒤 `/usr/bin/grove pairing set-password`와 `/usr/bin/grove serve`를 차례로 실행합니다. |
+
+## 소스에서 빌드하기
 
 Linux에서 소스를 빌드하는 예시입니다. Rust 1.93.0, Node.js 24, npm, Git이 필요합니다. Codex나 Claude Code를 사용하려면 Grove를 실행할 사용자 계정에서 해당 CLI를 설치하고 로그인하세요.
 
@@ -20,12 +29,14 @@ GROVE_WEB_DIR="$PWD/web/build/client" ./target/debug/grove serve
 
 ## 첫 브라우저 연결하기
 
-1. 서버를 켜 둔 채 같은 머신의 다른 터미널에서 저장소 루트로 이동해 `./target/debug/grove pairing create "내 브라우저"`를 실행합니다. 발급 비밀번호를 입력하고 이 링크에 쓸 별도 비밀번호를 정합니다. 두 비밀번호는 각각 10자 이상이어야 합니다.
+아래 예시는 압축을 푼 폴더에서 실행합니다. Debian 패키지로 설치했다면 `./grove` 대신 `/usr/bin/grove`를, 소스에서 빌드했다면 저장소 루트에서 `./target/debug/grove`를 사용하세요.
+
+1. 서버를 켜 둔 채 같은 머신의 다른 터미널에서 `./grove pairing create "내 브라우저"`를 실행합니다. 발급 비밀번호를 입력하고 이 링크에 쓸 별도 비밀번호를 정합니다. 두 비밀번호는 각각 10자 이상이어야 합니다.
 2. 출력된 링크를 같은 머신의 브라우저에서 열고 링크 비밀번호를 입력해 등록을 요청합니다.
-3. 터미널에서 `./target/debug/grove pairing list`를 실행합니다. 대기 요청의 확인 코드가 브라우저에 표시된 코드와 같으면 아래 명령의 자리표시자를 해당 값으로 바꿔 승인합니다.
+3. 터미널에서 `./grove pairing list`를 실행합니다. 대기 요청의 확인 코드가 브라우저에 표시된 코드와 같으면 아래 명령의 자리표시자를 해당 값으로 바꿔 승인합니다.
 
 ```sh
-./target/debug/grove pairing approve <링크-ID> <요청-ID> <확인-코드>
+./grove pairing approve <링크-ID> <요청-ID> <확인-코드>
 ```
 
 승인된 브라우저에서 프로젝트 폴더를 열고 새 대화를 시작하세요. 다른 기기를 연결할 때는 페어링 링크와 링크 비밀번호를 따로 전달하세요. 승인된 기기는 프로젝트 파일에 접근하고 명령을 실행할 수 있습니다.
