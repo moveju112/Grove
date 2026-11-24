@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { apiCall, login, openProjectFiles, openTool, state, useWorkspaces } from "./helpers";
 
@@ -21,6 +21,8 @@ for (const width of [390, 1400]) {
 
         test("파일 탐색은 페이지 밖까지 검색하고 한 번에 50개 행만 표시한다", async ({ page }, info) => {
             const p = await project();
+            mkdirSync(join(p.root, "nested"));
+            writeFileSync(join(p.root, "nested", "child.txt"), "child");
             for (let i = 0; i < 120; i++) writeFileSync(join(p.root, `item-${String(i).padStart(3, "0")}.txt`), `${i}\n`);
             await login(page);
             if (width === 390) await page.getByRole("button", { name: "사이드바", exact: true }).click();
@@ -28,7 +30,19 @@ for (const width of [390, 1400]) {
             await openProjectFiles(page);
             const files = page.getByTestId("files-view").filter({ visible: true });
             await expect(files.getByTestId("file-row")).toHaveCount(50);
-            await expect(files).toContainText("전체 121개");
+            await expect(files).toContainText("전체 122개");
+            const folder = files.getByRole("button", { name: /📁 nested/ });
+            const folderRead = (url: URL) => url.pathname.endsWith(`/projects/${p.id}/files`) && url.searchParams.get("path") === "nested";
+            const requests: string[] = [];
+            page.on("request", (request) => { if (folderRead(new URL(request.url()))) requests.push(request.url()); });
+            const warmed = page.waitForResponse((response) => folderRead(new URL(response.url())));
+            await folder.focus();
+            await warmed;
+            await expect(files.getByRole("button", { name: "child.txt", exact: true })).toHaveCount(0);
+            await folder.click();
+            await expect(files.getByRole("button", { name: "child.txt", exact: true })).toBeVisible();
+            expect(requests).toHaveLength(1);
+            await files.getByRole("button", { name: "상위 폴더" }).click();
             await files.getByRole("button", { name: "파일 다음 페이지", exact: true }).click();
             await expect(files.getByRole("button", { name: "item-049.txt", exact: true })).toBeVisible();
             await expect(files.getByTestId("file-row")).toHaveCount(50);

@@ -13,8 +13,8 @@ import { Heading } from "@astryxdesign/core/Heading";
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type SetStateAction } from "react";
 import { ApiError, api, isTransportError } from "../api/client";
 import { EventStream } from "../api/events";
-import type { Project } from "../api/generated";
-import { notifyAttention, onOpenSession } from "../state/attention";
+import type { Project, RecentPage } from "../api/generated";
+import { notifyAttention, onOpenSession, watchReadNotifications } from "../state/attention";
 import { applyPrefs, isNarrow, layoutKey, loadPrefs, usePrefs } from "../state/device";
 import { applyTabShortcut } from "../state/shortcuts";
 import { useWorkspaceShortcuts } from "./shortcuts/useWorkspaceShortcuts";
@@ -37,6 +37,7 @@ import { PANE_REVEAL_DURATION, splitStyles } from "./split-layout.stylex";
 import { Icon } from "./icons";
 import { ActionMenu } from "./ui/Controls";
 import { SidebarProject } from "./sidebar";
+import { touchOrderStyles } from "./touchOrder.stylex";
 import { useTouchProjectOrder } from "./sidebar/useTouchProjectOrder";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { CreationEntry } from "./create/CreationEntry";
@@ -55,7 +56,10 @@ import { ProjectHistoryDialog } from "./ProjectHistoryDialog";
 import { ProjectEditDialog } from "./ProjectEditDialog";
 import { ProjectIcon } from "./ProjectIcon";
 import { ComposerMemoryProvider } from "../state/useComposerMemory";
-import { hideSessionRecent } from "../state/recentPatch";
+import { createPortal } from "react-dom";
+import { noticeStyles } from "../design/notices.stylex";
+import { useRecentHides } from "../state/useRecentHides";
+import { prepareSessionHide } from "../state/recentPatch";
 import { LoadingBar } from "./LoadingScreen";
 import { UsagePanel } from "./UsagePanel";
 import { dashboardStyles } from "./usage/dashboard.stylex";
@@ -78,8 +82,8 @@ type LayoutActions = {
     onCloseProject?: (id: string) => void;
     onNewTerminal: (id: string) => void;
 };
-const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, projectId, recentReveal, onUpdate, onCloseTab, closingTabs, onOpen, onProjectDrop, onCloseProject, onNewTerminal }: LayoutActions & {
-    id: string; layout: L.Layout; visible: boolean; projects: Project[]; projectId?: string; recentReveal?: RecentPaneReveal;
+const SavedLayout = memo(function SavedLayout({ id, layout, storedLayout, visible, projects, projectId, recentReveal, onUpdate, onCloseTab, closingTabs, onOpen, onProjectDrop, onCloseProject, onNewTerminal }: LayoutActions & {
+    id: string; layout: L.Layout; storedLayout: L.Layout; visible: boolean; projects: Project[]; projectId?: string; recentReveal?: RecentPaneReveal;
 }) {
     const update = useCallback((f: (layout: L.Layout) => L.Layout) => onUpdate(id, f), [id, onUpdate]);
     const open: Opener = useCallback((target, how) => onOpen(id, target, how), [id, onOpen]);
@@ -87,8 +91,12 @@ const SavedLayout = memo(function SavedLayout({ id, layout, visible, projects, p
     const close = useCallback(() => onCloseProject?.(id), [id, onCloseProject]);
     const closeTab = useCallback((tabId: string) => onCloseTab(id, tabId), [id, onCloseTab]);
     const newTerminal = useCallback(() => onNewTerminal(id), [id, onNewTerminal]);
-    return <ComposerMemoryProvider copies={L.allTabs(layout).map((tab) => tab.id)}>
-        <SplitView layout={layout} update={update} closeTab={closeTab} closingTabs={closingTabs} open={open} narrow={id.endsWith("-narrow")} visible={visible} projects={projects}
+    const focusPreview = storedLayout === layout ? undefined : (leaf: L.Leaf) => {
+        const original = L.findLeaf(storedLayout, leaf.id);
+        if (leaf.active_tab && original?.active_tab !== leaf.active_tab) update(current => L.activate(current, leaf.active_tab!));
+    };
+    return <ComposerMemoryProvider copies={L.allTabs(storedLayout).map((tab) => tab.id)}>
+        <SplitView layout={layout} focusPreview={focusPreview} update={update} closeTab={closeTab} closingTabs={closingTabs} open={open} narrow={id.endsWith("-narrow")} visible={visible} projects={projects}
             recentReveal={recentReveal} onProjectDrop={drop} onCloseProject={onCloseProject ? close : undefined}
             projectId={projectId} onNewTerminal={newTerminal} />
     </ComposerMemoryProvider>;
@@ -109,7 +117,7 @@ export function Workspace() {
     const narrow = useNarrow();
     const { usageOpen, usageVisited, openUsage, closeUsage, leaveUsage } = useUsageNavigation();
     const serverBlocked = useServerBlockReason();
-    const { keyboardShortcuts, notifyPush, notifyVibrate } = usePrefs();
+    const { keyboardShortcuts, notifyPush, notifyVibrate } = usePrefs("keyboardShortcuts", "notifyPush", "notifyVibrate");
     const pushStatus = usePushSync(notifyPush, notifyVibrate, !!serverBlocked);
     const [settingsTarget, setSettingsTarget] = useState<OpenTarget | null>(null);
     const status = useLive((live) => live.status);
@@ -135,7 +143,13 @@ export function Workspace() {
     }, [narrow, mobile.setPanel]);
     const [notice, setNotice] = useState<string | null>(null);
     const baseKey = useMemo(() => layoutKey(), [narrow]); // eslint-disable-line react-hooks/exhaustive-deps
-    const { key, projectId: selectedProjectId, layout, layouts, updateAt, openAt: openProjectAt, flush, focusAt, projectAt, ensureProject } = useProjectLayouts(baseKey, setNotice);
+    const { key, projectId: selectedProjectId, layouts: savedLayouts, updateAt, openAt: openProjectAt, flush, focusAt, projectAt, ensureProject } = useProjectLayouts(baseKey, setNotice);
+    const recentHides = useRecentHides();
+    const pendingTabs = useMemo(() => new Set(recentHides.entries.flatMap(op =>
+        op.tabId && (!op.error || op.uncertain) ? [op.tabId] : [])), [recentHides.entries]);
+    const layouts = useMemo(() => pendingTabs.size ? Object.fromEntries(Object.entries(savedLayouts).map(
+        ([id, saved]) => [id, L.previewClosedTabs(saved, pendingTabs)])) : savedLayouts, [pendingTabs, savedLayouts]);
+    const layout = layouts[key];
     const closing = useRef(new Set<string>());
     const [closingTabs, setClosingTabs] = useState<ReadonlySet<string>>(() => new Set());
     const [closeError, setCloseError] = useState<string | null>(null);
@@ -152,33 +166,32 @@ export function Workspace() {
             updateAt(id, (current) => L.closeTab(current, tabId));
             return;
         }
+        if (session) {
+            recentHides.hide(tab, prepareSessionHide(tab.project_id!, tab.resource_id!), tab.id, async () => {
+                await updateAt(id, current => L.closeTab(current, tabId));
+            });
+            return;
+        }
         closing.current.add(tabId);
         setClosingTabs(new Set(closing.current));
         setCloseError(null);
         void (async () => {
             try {
-                if (session) {
-                    await hideSessionRecent(tab.project_id!, tab.resource_id!);
-                } else {
-                    try {
-                        const result = await api.post<{ status: string }>(`/terminals/${tab.resource_id}/kill`);
-                        if (result.status === "running") throw new Error("터미널 종료를 확인하지 못했어요. 탭을 다시 닫아 주세요.");
-                    } catch (error) {
-                        // 이미 삭제된 터미널은 종료할 프로세스가 없으므로 탭만 제거한다.
-                        if (!(error instanceof ApiError && error.status === 404)) throw error;
-                    }
+                try {
+                    const result = await api.post<{ status: string }>(`/terminals/${tab.resource_id}/kill`);
+                    if (result.status === "running") throw new Error("터미널 종료를 확인하지 못했어요.");
+                } catch (error) {
+                    if (!(error instanceof ApiError && error.status === 404)) throw error;
                 }
                 updateAt(id, (current) => L.closeTab(current, tabId));
             } catch (error) {
-                setCloseError(error instanceof ApiError ? error.message : session
-                    ? "최근 목록에서 대화를 닫지 못했어요. 탭을 다시 닫아 주세요."
-                    : "터미널 종료를 확인하지 못했어요. 탭을 다시 닫아 주세요.");
+                setCloseError(error instanceof ApiError ? error.message : "터미널 종료를 확인하지 못했어요. 탭을 다시 닫아 주세요.");
             } finally {
                 closing.current.delete(tabId);
                 setClosingTabs(new Set(closing.current));
             }
         })();
-    }, [layouts, updateAt]);
+    }, [layouts, updateAt, recentHides]);
     const projectSplits = useProjectSplits(baseKey, selectedProjectId, setNotice);
     const projectGroup = useMemo(() => narrow ? activeProjectSplits(null, selectedProjectId) : projectSplits.layout,
         [narrow, selectedProjectId, projectSplits.layout]);
@@ -342,7 +355,7 @@ export function Workspace() {
             }
             // 최근 패널은 클릭한 완료 ID와 함께 자체적으로 접근을 기록한다.
             if (!fromRecent && t.kind === "session" && t.project_id && t.resource_id && !serverBlocked) {
-                void api.post("/recent/touch", { kind: "session", project_id: t.project_id, resource_id: t.resource_id })
+                void recentHides.reopen(t, () => api.post<void>("/recent/touch", { kind: "session", project_id: t.project_id, resource_id: t.resource_id }))
                     .catch((error) => {
                         if (isTransportError(error, true)) void checkCompatibility();
                         else setCloseError(error instanceof ApiError ? error.message : "최근 목록을 갱신하지 못했어요.");
@@ -350,7 +363,7 @@ export function Workspace() {
             }
             if (small) setSidebar(false);
         },
-        [openProjectAt, serverBlocked, setSidebar, leaveUsage],
+        [openProjectAt, serverBlocked, setSidebar, leaveUsage, recentHides],
     );
     const open: Opener = useCallback((t, how) => openAt(baseKey, t, how), [baseKey, openAt]);
     const openRecent: Opener = useCallback((t, how) => openAt(baseKey, t, how, true), [baseKey, openAt]);
@@ -374,6 +387,7 @@ export function Workspace() {
     }, [baseKey, focusAt, geometry.panes.length, projectAt, projectGroup, projectSplits.update]);
     // OS 알림을 누르면 해당 대화를 현재 배치에 연다(SETTINGS-014).
     useEffect(() => onOpenSession((projectId, sessionId) => open({ kind: "session", project_id: projectId, resource_id: sessionId, title: "대화" })), [open]);
+    useEffect(() => watchReadNotifications(async () => (await api.get<RecentPage>("/recent?filter=all&limit=200")).items), []);
 
     const [adding, setAdding] = useState<"project" | "folder" | null>(null);
     const creationTrigger = useRef<HTMLButtonElement | null>(null);
@@ -462,7 +476,13 @@ export function Workspace() {
             if (tabId) closeTab(key, tabId);
         } else {
             if (usageOpen) return;
-            updateAt(key, (current) => applyTabShortcut(current, action, selectedProjectId ?? undefined));
+            updateAt(key, current => {
+                if (!pendingTabs.size || action === "newSession") return applyTabShortcut(current, action, selectedProjectId ?? undefined);
+                const shown = L.previewClosedTabs(current, pendingTabs);
+                const next = applyTabShortcut(shown, action, selectedProjectId ?? undefined);
+                const tabId = L.focusedLeaf(next).active_tab;
+                return tabId ? L.activate(current, tabId) : current;
+            });
         }
     });
     const selectedProject = projects.data?.find((p) => p.id === selectedProjectId);
@@ -483,7 +503,7 @@ export function Workspace() {
             <Stack direction="horizontal" align="center" gap={0} minHeight={32} data-testid="project-row" data-project={p.name} data-project-order-id={p.id}
                 data-order-drop={projectDrop?.id === p.id ? projectDrop.after ? "after" : "before" : undefined}
                 data-order-dragging={touchOrder?.id === p.id ? "true" : undefined}
-                xstyle={[workspaceStyles.projectRow, workspaceStyles.projectDragHandle, touchOrder?.id === p.id && workspaceStyles.projectLift(touchOrder.dx, touchOrder.dy)]}
+                xstyle={[workspaceStyles.projectRow, touchOrderStyles.handle, touchOrder?.id === p.id && touchOrderStyles.lift(touchOrder.dx, touchOrder.dy)]}
                 onContextMenu={(event) => {
                     if (event.defaultPrevented || !event.currentTarget.contains(event.target as Node)) return;
                     event.preventDefault();
@@ -550,6 +570,13 @@ export function Workspace() {
         </SidebarProject>
     );
 
+    const closeNotices = recentHides.entries.filter(op => op.tabId && op.error).map(op =>
+        <Banner key={op.key} status="error" role="alert" title={op.error!} data-testid="tab-close-error"
+            xstyle={noticeStyles.update} endContent={op.uncertain
+                ? <ServerActionButton variant="secondary" onClick={() => recentHides.retry(op)}>같은 요청 결과 확인</ServerActionButton>
+                : <Button variant="secondary" onClick={() => recentHides.dismiss(op)}>닫기</Button>} />);
+    const drawer = narrow ? mobile.panel : null;
+    const noticeHost = closeNotices.length && !drawer ? document.getElementById("app-notices") : null;
     return (
         <Stack direction="horizontal" gap={0} height="100%" data-testid="workspace" data-viewport-mode={narrow ? "narrow" : "wide"}>
             {!narrow && !wideSidebar && <LayoutPanel width={48} padding={0} isScrollable={false}
@@ -565,6 +592,7 @@ export function Workspace() {
                     hasDivider={!narrow} padding={0} isScrollable={false}
                     role="complementary" label="탐색" data-testid="sidebar" xstyle={workspaceStyles.navigation}>
                     <Stack gap={0} height="100%">
+                    {drawer === "left" && closeNotices}
                     {!narrow && <Stack direction="horizontal" align="center" justify="between" gap={0} minHeight={40} paddingInline={4}>
                         {brand}{wideSidebar && <Stack direction="horizontal" align="center" gap={0}>
                             {usageControl}{settingsControl}{sidebarControl}
@@ -632,7 +660,7 @@ export function Workspace() {
                     </ScrollableArea>
                     </StackItem>
                     <Stack gap={0} paddingInline={2} xstyle={workspaceStyles.recentDock}>
-                        <RecentPanel open={openRecent} splitGroups={splitGroups} shown={sidebar} />
+                        <RecentPanel hides={recentHides} open={openRecent} splitGroups={splitGroups} shown={sidebar} />
                     </Stack>
                     </Stack>
                 </LayoutPanel>
@@ -675,6 +703,7 @@ export function Workspace() {
             )}
             {closeError && <Banner status="error" role="alert" title={closeError} data-testid="tab-close-error"
                 endContent={<Button variant="secondary" onClick={() => setCloseError(null)}>닫기</Button>} />}
+            {noticeHost && createPortal(closeNotices, noticeHost)}
             {openingTerminal && <LoadingBar label="터미널 여는 중…" />}
             {usageVisited && <CreationDialog label="사용량" isOpen={usageOpen} onClose={closeUsage} width="88em" xstyle={dashboardStyles.dialog}>
                 <PaneVisibility value={usageOpen}><UsagePanel onClose={closeUsage}
@@ -682,7 +711,7 @@ export function Workspace() {
             </CreationDialog>}
             <StackItem size="fill">
                 <Stack as="main" ref={projectContainer} direction="horizontal" gap={0} height="100%" xstyle={splitStyles.projectRoot}>
-                    {Object.entries(layouts).map(([id, saved]) => {
+                    {Object.entries(savedLayouts).map(([id, saved]) => {
                         const rect = placements.get(id);
                         const projectId = projectAt(id);
                         return <Stack key={id} direction="horizontal" gap={0} hidden={!rect} inert={!rect} data-project-pane={projectId}
@@ -690,7 +719,7 @@ export function Workspace() {
                             xstyle={splitStyles.projectPane(rect?.x ?? 0, rect?.y ?? 0, rect?.width ?? 1, rect?.height ?? 1)}
                             onPointerDownCapture={() => rect && projectId !== selectedProjectId && focusAt(id)}
                             onFocusCapture={() => rect && projectId !== selectedProjectId && focusAt(id)}>
-                            <SavedLayout id={id} layout={saved} onUpdate={updateAt} onCloseTab={closeTab} closingTabs={closingTabs} onOpen={openAt} onProjectDrop={dropProject}
+                            <SavedLayout id={id} layout={layouts[id]!} storedLayout={saved} onUpdate={updateAt} onCloseTab={closeTab} closingTabs={closingTabs} onOpen={openAt} onProjectDrop={dropProject}
                                 onCloseProject={geometry.panes.length > 1 ? closeProject : undefined}
                                 projectId={projectId} onNewTerminal={newTerminalAt}
                                 recentReveal={recentReveal?.layoutId === id && id === key ? recentReveal : undefined}
@@ -713,6 +742,7 @@ export function Workspace() {
                         if (selectedProject) open({ kind: "project", project_id: selectedProject.id, title: "새 대화" });
                     }}><Icon name="plus" size={16} />새 대화</Button>}>
                 {narrow && <Stack as="nav" gap={0} height="100%" aria-label="현재 프로젝트 열린 탭">
+                    {drawer === "right" && closeNotices}
                     <StackItem size="fill" isScrollable aria-label="현재 프로젝트 세션">
                         <Stack gap={1} padding={2}>{mobileTabs.filter((tab) => tab.kind === "session").map(renderMobileTab)}</Stack>
                     </StackItem>

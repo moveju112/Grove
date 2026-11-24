@@ -7,17 +7,22 @@ const effectivePath = "/api/v1/settings/effective";
 // 실제 서버 응답까지 받은 뒤 브라우저에 전달하는 순간만 제어한다.
 async function holdEffective(page: Page, sessionId?: string) {
     let requested!: () => void;
-    let release!: () => void;
+    let unlock!: () => void;
+    let released = false;
     const seen = new Promise<void>((resolve) => { requested = resolve; });
-    const held = new Promise<void>((resolve) => { release = resolve; });
+    const held = new Promise<void>((resolve) => { unlock = resolve; });
+    const release = () => { released = true; unlock(); };
     const matches = (url: URL) => url.pathname === effectivePath
-        && (sessionId === undefined || url.searchParams.get("session_id") === sessionId);
+        && url.searchParams.get("session_id") === (sessionId ?? null)
+        && !url.searchParams.has("project_id");
     await page.route(matches, async (route) => {
+        // 복원된 대화도 설정을 조회한다. 검사 대상 범위의 응답은 해제 전까지 모두 보류한다.
+        if (released) return route.continue();
         const response = await route.fetch();
         requested();
         await held;
         await route.fulfill({ response });
-    }, { times: 1 });
+    });
     return {
         seen,
         release,

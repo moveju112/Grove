@@ -3,7 +3,36 @@ import { mkdtempSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Layout } from "../app/state/layout";
 import { workspaceTabsKey } from "../app/state/workspaceTabs";
-import { apiCall, login, sessionView, state } from "./helpers";
+import { apiCall, ensureProjects, login, sessionView, state } from "./helpers";
+
+test("다른 브라우저 탭에서 프로젝트를 바꿔도 새로고침은 이 탭의 대화로 돌아온다", async ({ page, context }) => {
+    const { a, b } = await ensureProjects();
+    const createSession = async (project: typeof a) => {
+        const title = `탭별 복원 ${project.id}`;
+        const { id } = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title });
+        await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: id });
+        return { id, title };
+    };
+    const [first, second] = await Promise.all([createSession(a), createSession(b)]);
+    await login(page);
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: first.title, exact: true }).click();
+    await expect(sessionView(page, first.id)).toBeVisible();
+
+    const other = await context.newPage();
+    await other.goto("/");
+    await other.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: second.title, exact: true }).click();
+    await expect(sessionView(other, second.id)).toBeVisible();
+    await expect.poll(async () => {
+        const { layout } = await apiCall<{ layout: Layout | null }>("GET", "/layouts/workspace-resume");
+        const root = layout?.root;
+        return root?.type === "leaf" && root.tabs.find((tab) => tab.id === root.active_tab)?.resource_id;
+    }).toBe(second.id);
+
+    await page.reload();
+    await expect(page.getByTestId("conn")).toHaveText("연결됨");
+    await expect(sessionView(page, first.id)).toBeVisible();
+    await expect(sessionView(other, second.id)).toBeVisible();
+});
 
 test("폰에서 열어 둔 대화 다섯 개를 PC가 시작할 때 이어가고 닫기는 열린 기기들에 반영된다", async ({ page, browser, baseURL }, info) => {
     const project = await apiCall<{ id: string }>("POST", "/projects", { root_path: mkdtempSync(join(dirname(state().projA), "handoff-")) });

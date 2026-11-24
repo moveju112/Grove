@@ -1,7 +1,7 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { usePopover } from "@astryxdesign/core/Popover";
 import { useCallback, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { DropdownMenu, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSubMenu } from "@astryxdesign/core/DropdownMenu";
+import { DropdownMenu, DropdownMenuCheckboxItem, DropdownMenuDivider, DropdownMenuItem, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuSubMenu } from "@astryxdesign/core/DropdownMenu";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button } from "../design/Button";
 import { Icon } from "./icons";
@@ -10,7 +10,8 @@ import type { AvailableModel, ModelCatalog, ModelFavorite, ModelProfile } from "
 import { api } from "../api/client";
 import { useQuery } from "../state/store";
 import { useCapability } from "../state/capabilities";
-import { prefetchProfiles, readRecentProfiles, rememberRecentProfile, sortModels } from "./model-catalog";
+import { loadPrefs, savePrefs, usePrefs } from "../state/device";
+import { latestModels, prefetchProfiles, readRecentProfiles, rememberRecentProfile, sortModels } from "./model-catalog";
 import type { SendOptions } from "../state/sendOptions";
 import { FavoriteChips, FavoriteStar, useModelFavorites } from "./ModelFavorites";
 
@@ -35,6 +36,7 @@ export function ProfileModels({ profile, profileId, model, onChange, includeDefa
     onChange: (profileId: string, model: string | null) => void;
 }) {
     const [expanded, setExpanded] = useState(false);
+    const { showAllModels } = usePrefs();
     const supported = useCapability("turn_model_selection_v1");
     const catalog = useModelCatalog(profile, !expanded);
     const automatic = isAutomatic(profile);
@@ -46,16 +48,24 @@ export function ProfileModels({ profile, profileId, model, onChange, includeDefa
     const selected = profileId === profile.id
         ? model ?? (automatic ? models.find((item) => item.is_default)?.id : profile.model)
         : undefined;
+    const sorted = sortModels(models);
+    // 이전 버전을 숨겨도 지금 고른 모델과 연결 기본 모델은 목록에 남긴다.
+    const latest = latestModels(sorted, [selected, profile.model]);
+    const older = sorted.length - latest.length;
     return <DropdownMenuSubMenu label={profile.name} isDisabled={!profile.enabled}
         data-profile-id={profile.id} onOpenChange={setExpanded} hasSpinner={catalog.loading}
         menuDataTestId={`model-profile-models-${profile.id}`}>
         <DropdownMenuRadioGroup label={`${profile.name} 모델`} value={includeDefault && !model && profileId === profile.id ? "__profile_default__" : selected}
             onChange={(id) => onChange(profile.id, id === "__profile_default__" || !includeDefault && !automatic && id === profile.model ? null : id)}>
             {includeDefault && <DropdownMenuRadioItem value="__profile_default__" label={`연결 기본 모델 · ${profile.model}`} data-option-value={profile.id} />}
-            {sortModels(models).map((item) => <DropdownMenuRadioItem key={item.id} value={item.id} label={item.name}
+            {(showAllModels ? sorted : latest).map((item) => <DropdownMenuRadioItem key={item.id} value={item.id} label={item.name}
                 data-option-value={!includeDefault && !automatic && item.id === profile.model
                     ? profile.id : JSON.stringify([profile.id, item.id])} />)}
         </DropdownMenuRadioGroup>
+        {older > 0 && <DropdownMenuDivider />}
+        {older > 0 && <DropdownMenuCheckboxItem label="전체 모델 보기" value={showAllModels}
+            endContent={showAllModels ? undefined : <GroveText as="span" type="supporting" color="secondary">+{older}</GroveText>}
+            onChange={(next) => savePrefs({ ...loadPrefs(), showAllModels: next })} />}
         {!catalog.loading && !catalog.error && models.length === 0 && <DropdownMenuItem
             label={supported === false ? "이 서버는 모델 목록 조회를 지원하지 않아요." : "사용 가능한 모델이 없어요."} isDisabled />}
         {catalog.error instanceof Error && <DropdownMenuItem isDisabled

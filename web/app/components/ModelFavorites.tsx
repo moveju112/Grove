@@ -1,5 +1,6 @@
 import { Stack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
+import { useRef } from "react";
 import { api } from "../api/client";
 import type { ModelFavorite, ModelProfile } from "../api/generated";
 import { parseContract } from "../api/validation";
@@ -8,7 +9,10 @@ import { useQuery } from "../state/store";
 import { composerStyles } from "./composer.stylex";
 import { Icon } from "./icons";
 import { useAutosave } from "./settings/useAutosave";
+import { useTouchOrder } from "./useTouchOrder";
+import { touchOrderStyles } from "./touchOrder.stylex";
 
+const CHIP = "[data-favorite-key]";
 const KEY = "model.favorites";
 const LIMIT = 24;
 const EMPTY: ModelFavorite[] = [];
@@ -50,15 +54,41 @@ type FavoritesProps = {
 };
 
 export function FavoriteChips({ favorites: { shared, state }, current, profiles, currentName, labelFor, onApply }: FavoritesProps) {
-    if (!shared) return null;
+    const grid = useRef<HTMLDivElement>(null);
     const rows = state.value.filter((item) => profiles.some((profile) => profile.id === item.profile_id));
+    const drag = useTouchOrder<string>({
+        enabled: shared && rows.length > 1 && (state.phase === "idle" || state.phase === "saved"),
+        selector: CHIP, idFor: (chip) => chip.dataset.favoriteKey!,
+        viewportFor: (chip) => {
+            if (!grid.current?.contains(chip)) return null;
+            for (let parent: HTMLElement | null = grid.current; parent; parent = parent.parentElement) {
+                if (/^(auto|scroll)$/.test(getComputedStyle(parent).overflowY) && parent.scrollHeight > parent.clientHeight) return parent;
+            }
+            return grid.current;
+        },
+        targetAt: ({ id, x, y }) => {
+            const chip = document.elementFromPoint(x, y)?.closest<HTMLElement>(CHIP);
+            return chip && grid.current?.contains(chip) && chip.dataset.favoriteKey !== id ? chip.dataset.favoriteKey! : null;
+        },
+        onDrop: (source, target) => {
+            const next = [...state.value];
+            const from = next.findIndex((item) => favoriteKey(item) === source);
+            const to = next.findIndex((item) => favoriteKey(item) === target);
+            if (from < 0 || to < 0 || from === to) return;
+            const [moved] = next.splice(from, 1);
+            next.splice(to, 0, moved!);
+            state.change(next);
+            state.commit();
+        },
+    });
+    if (!shared) return null;
     const selectedKey = current && favoriteKey(current);
     const failed = state.phase === "conflict" || state.phase === "uncertain" || state.phase === "error";
     if (!rows.length && !failed && state.phase !== "saving") return null;
     return <Stack as="section" gap={1} paddingBlockEnd={2} xstyle={composerStyles.favoritesSection} aria-label="즐겨찾기">
         {!!rows.length && <>
             <Text type="supporting" color="secondary" weight="semibold">즐겨찾기</Text>
-            <Stack gap={0} xstyle={composerStyles.favoriteGrid} data-testid="model-favorite-grid">
+            <Stack ref={grid} gap={0} xstyle={composerStyles.favoriteGrid} data-testid="model-favorite-grid">
                 {rows.map((item) => {
                     const key = favoriteKey(item);
                     const active = key === selectedKey;
@@ -66,7 +96,10 @@ export function FavoriteChips({ favorites: { shared, state }, current, profiles,
                     const label = active ? currentName : labelFor(item);
                     const meta = `${item.effort} · Fast ${item.fast ? "켜짐" : "꺼짐"}`;
                     return <Button key={key} type="button" appearance="navigation" width="100%"
-                        xstyle={[composerStyles.favoriteChip, active && composerStyles.activeFavoriteChip]}
+                        data-favorite-key={key} data-order-dragging={drag?.id === key || undefined}
+                        data-order-drop={drag?.target === key || undefined}
+                        xstyle={[composerStyles.favoriteChip, touchOrderStyles.handle, active && composerStyles.activeFavoriteChip,
+                            drag?.target === key && composerStyles.favoriteDrop, drag?.id === key && touchOrderStyles.lift(drag.dx, drag.dy)]}
                         aria-label={`${label} · ${profile.name} · ${meta}`} aria-pressed={active} disabled={!profile.enabled}
                         onClick={() => onApply(item)}>
                         <Stack as="span" gap={0} align="start" xstyle={composerStyles.favoriteChipText}>

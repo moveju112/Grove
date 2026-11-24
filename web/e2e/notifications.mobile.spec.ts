@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiCall, login, openSettings, selectChoice } from "./helpers";
+import { apiCall, ensureProjects, login, openSettings, selectChoice } from "./helpers";
 
 // Real worker notifications, isolated fake browser subscription: no production push service traffic.
 test("기본 푸시는 설정을 열기 전에 등록되고 기기에서 끈 선택은 새로고침 뒤에도 유지된다", async ({ page, context, baseURL }) => {
@@ -31,11 +31,6 @@ test("기본 푸시는 설정을 열기 전에 등록되고 기기에서 끈 선
     }
     const push = panel.getByRole("combobox", { name: "앱을 닫아도 완료 알림", exact: true });
     await expect(push).toHaveAttribute("data-selected-value", "true");
-    await panel.getByRole("button", { name: "6. 현재 설정으로 알림 시험", exact: true }).click();
-    await expect.poll(() => page.evaluate(async () => {
-        const reg = await navigator.serviceWorker.ready;
-        return (await reg.getNotifications()).map((n) => ({ title: n.title, body: n.body, tag: n.tag }));
-    })).toEqual([expect.objectContaining({ title: "Grove 알림 시험", body: "상단 알림창에서 이 알림이 보이는지 확인해줘.", tag: expect.stringContaining(":test:") })]);
     await selectChoice(push, "false");
     await expect.poll(subscribed).toBe(false);
     await page.reload();
@@ -75,7 +70,7 @@ test("푸시 기본 사용은 권한을 자동 요청하지 않고 알림 허용
     }
 });
 
-test("알림 시험은 소리·직접 진동·시스템 기본·시스템 진동을 분리하고 결과를 각각 남긴다", async ({ page, context, baseURL }, info) => {
+test("알림 시험은 소리·직접 진동·시스템 기본 알림을 분리하고 결과를 각각 남긴다", async ({ page, context, baseURL }, info) => {
     await context.grantPermissions(["notifications"], { origin: baseURL! });
     await page.addInitScript(() => {
         localStorage.setItem("grove.device.prefs", JSON.stringify({ notifyPush: false }));
@@ -92,7 +87,7 @@ test("알림 시험은 소리·직접 진동·시스템 기본·시스템 진동
     await page.getByRole("button", { name: "알림", exact: true }).click();
     const panel = page.getByTestId("setting-notify");
     const tests = panel.getByRole("group", { name: "알림 시험", exact: true });
-    await expect(tests.getByRole("button")).toHaveCount(8);
+    await expect(tests.getByRole("button")).toHaveCount(4);
     await tests.getByRole("button", { name: "1. 소리만 시험", exact: true }).click();
     await expect(tests.getByTestId("notification-test-result-sound")).toContainText("소리 재생 요청됨");
     await tests.getByRole("button", { name: "2. 진동 1초 시험", exact: true }).click();
@@ -101,12 +96,10 @@ test("알림 시험은 소리·직접 진동·시스템 기본·시스템 진동
     await expect(tests.getByTestId("notification-test-result-pattern")).toContainText("반환값: true");
     expect(await page.evaluate(() => JSON.parse(document.documentElement.dataset.vibrationTests!))).toEqual([1000, [180, 80, 180]]);
     expect(await page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).length)).toBe(0);
-    for (const [label, id] of [["4. 시스템 기본 알림 시험", "system"], ["5. 시스템 진동 알림 시험", "system-vibrate"]] as const) {
-        await tests.getByRole("button", { name: label, exact: true }).click();
-        await expect(tests.getByTestId(`notification-test-result-${id}`)).toContainText("브라우저 알림 목록에 등록됨");
-    }
-    expect(await page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => n.title).sort()))
-        .toEqual(["Grove 알림 시험 · 기본", "Grove 알림 시험 · 진동"]);
+    await tests.getByRole("button", { name: "4. 시스템 기본 알림 시험", exact: true }).click();
+    await expect(tests.getByTestId("notification-test-result-system")).toContainText("브라우저 알림 목록에 등록됨");
+    expect(await page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => n.title)))
+        .toEqual(["Grove 알림 시험 · 기본"]);
     await tests.getByRole("button", { name: "1. 소리만 시험", exact: true }).scrollIntoViewIfNeeded();
     await page.screenshot({ path: info.outputPath("notification-tests-390.png") });
     expect(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
@@ -133,51 +126,32 @@ test("지원하지 않는 진동과 브라우저 알림 거절은 해당 시험�
     await expect(tests.getByRole("button", { name: "4. 시스템 기본 알림 시험", exact: true })).toBeEnabled();
 });
 
-test("실제 Push 시험은 인증된 서버에 접수하고 응답 유실은 같은 요청으로만 확인한다", async ({ page, context, baseURL }, info) => {
+test("읽은 대화의 완료 알림은 읽음 이벤트와 앱 재시작 때 알림창에서 닫힌다", async ({ page, context, baseURL }) => {
     await context.grantPermissions(["notifications"], { origin: baseURL! });
-    const config = await apiCall<{ public_key: string }>("GET", "/web-push");
-    const endpoint = "https://fcm.googleapis.com/fcm/send/isolated-real-push-test";
-    await page.addInitScript(({ endpoint, publicKey }) => {
-        const subscription = { endpoint, options: {}, toJSON: () => ({
-            endpoint, keys: { p256dh: publicKey, auth: "AAAAAAAAAAAAAAAAAAAAAA" },
-        }) };
-        PushManager.prototype.getSubscription = async () => subscription as unknown as PushSubscription;
-    }, { endpoint, publicKey: config.public_key });
+    await page.addInitScript(() => localStorage.setItem("grove.device.prefs", JSON.stringify({ notifyPush: false })));
     const { token } = await login(page);
     await page.evaluate(() => navigator.serviceWorker.ready.then(() => true));
-    await openSettings(page, "local");
-    await page.getByRole("button", { name: "알림", exact: true }).click();
-    const panel = page.getByTestId("setting-notify");
-    await expect.poll(async () => (await apiCall<{ subscriptions: { endpoint: string }[] }>("GET", "/web-push", undefined, token)).subscriptions.some((s) => s.endpoint === endpoint)).toBe(true);
-    let first = true;
-    let receiptId = "";
-    const keys: string[] = [];
-    await page.route("**/api/v1/web-push/tests", async (route) => {
-        keys.push(route.request().headers()["idempotency-key"]!);
-        const response = await route.fetch();
-        expect(response.status()).toBe(202);
-        const receipt = await response.json() as { id: string; state: string };
-        if (first) {
-            first = false; receiptId = receipt.id;
-            // Remove the delayed outbox immediately: this test must never contact FCM.
-            await apiCall("DELETE", `/web-push?endpoint=${encodeURIComponent(endpoint)}`, undefined, token);
-            await route.fulfill({ status: 503, json: { error: { code: "test_response_lost", message: "isolated response loss" } } });
-        } else {
-            expect(receipt.id).toBe(receiptId);
-            await route.fulfill({ response });
-        }
-    });
-    await panel.getByRole("button", { name: "8. 실제 Push 10초 뒤 예약", exact: true }).click();
-    await expect(panel.getByTestId("push-test-result-10")).toContainText("접수 결과 불명");
-    await expect(panel.getByRole("button", { name: "7. 실제 Push 지금 시험", exact: true })).toBeDisabled();
-    await panel.getByRole("button", { name: "같은 Push 시험 요청 확인", exact: true }).click();
-    await expect(panel.getByTestId("push-test-result-10")).toContainText("서버에 접수됐어");
-    expect(keys).toHaveLength(2);
-    expect(keys[0]).toBe(keys[1]);
-    await expect.poll(async () => {
-        await panel.getByRole("button", { name: "8번 전송 상태 확인", exact: true }).click();
-        return panel.getByTestId("push-test-result-10").textContent();
-    }).toContain("push_subscription_expired");
-    await expect(panel.getByTestId("push-browser-result-10")).toContainText("수신 기록 없음");
-    await page.screenshot({ path: info.outputPath("real-push-tests-390.png") });
+    const { a } = await ensureProjects();
+    const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `알림 정리 ${test.info().testId}` });
+    const show = (sessionId: string, turn: string) => page.evaluate(async ({ sessionId, turn, projectId }) => {
+        const bytes = new TextEncoder().encode(JSON.stringify({ origin: location.origin }));
+        const server = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", bytes)), (b) => b.toString(16).padStart(2, "0")).join("");
+        const reg = await navigator.serviceWorker.ready;
+        await reg.showNotification("작업 완료", { tag: `${server}:turn:${turn}`, data: { projectId, sessionId, server } });
+        await reg.showNotification("승인 요청", { tag: `${server}:approval:${turn}`, data: { projectId, sessionId, server } });
+    }, { sessionId, turn, projectId: a.id });
+    const titles = () => page.evaluate(async () => (await (await navigator.serviceWorker.ready).getNotifications()).map((n) => n.title).sort());
+    const read = () => apiCall("POST", "/recent/touch", {
+        kind: "session", project_id: a.id, resource_id: session.id, reopen: false, view_state: { last_seen_seq: 0 },
+    }, token);
+
+    await show(session.id, "first");
+    expect(await titles()).toEqual(["승인 요청", "작업 완료"]);
+    await read();
+    await expect.poll(titles).toEqual(["승인 요청"]);
+
+    await show(session.id, "second");
+    await page.reload();
+    await expect.poll(titles).toEqual(["승인 요청", "승인 요청"]);
+    await page.evaluate(async () => { for (const n of await (await navigator.serviceWorker.ready).getNotifications()) n.close(); });
 });

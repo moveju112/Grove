@@ -30,10 +30,6 @@ export type PushConfig = { public_key: string, subscriptions: Array<PushSubscrip
 
 export type PushSubscription = { endpoint: string, revision: number, last_error: string | null, };
 
-export type PushTestState = "queued" | "sent" | "failed";
-
-export type PushTest = { id: string, state: PushTestState, error: string | null, created_at: string, scheduled_at: string, };
-
 export type RoomMember = { id: string, name: string, profile_id: string | null, status: string, };
 
 export type BotRoom = { session_id: string, project_id: string, name: string, members: Array<RoomMember>, };

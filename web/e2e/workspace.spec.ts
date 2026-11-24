@@ -428,10 +428,8 @@ test("터미널을 열어 입력·출력하고 새로고침으로 복원한 뒤 
     await page.keyboard.type("stty -echo; printf '\\033[2J\\033[He2e-%s\\n' \"$((20+22))\"");
     await page.keyboard.press("Enter");
     await expect(view.locator(".xterm-rows")).toContainText("e2e-42");
-    // 새로고침은 마지막 공유 대화를 먼저 열 수 있다. 프로젝트를 다시 선택하되 새 터미널은 열지 않는다.
     await page.reload();
     await expect(page.getByTestId("conn")).toHaveText("연결됨", { timeout: 15_000 });
-    await page.getByTestId("projects").getByRole("button", { name: a.name, exact: true }).click();
     await expect(view).toBeVisible();
     await expect(view).toHaveAttribute("data-conn", "open");
     await expect(view.locator(".xterm-rows")).toContainText("e2e-42");

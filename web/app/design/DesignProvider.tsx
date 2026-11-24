@@ -10,7 +10,7 @@ const messages = { "ko-KR": korean };
 
 /** OS 테마는 Astryx에 맡기고 정적 HTML과 첫 hydration 상태를 일치시킨다. */
 export function DesignProvider({ children }: { children: ReactNode }) {
-    const prefs = usePrefs();
+    const prefs = usePrefs("theme");
     const [theme, setTheme] = useState<Prefs["theme"]>("system");
     useLayoutEffect(() => setTheme(prefs.theme), [prefs.theme]);
     return <InternationalizationProvider locale="ko-KR" messages={messages}>

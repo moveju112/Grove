@@ -402,8 +402,16 @@ export async function selectChoice(control: Locator, value: string) {
             return;
         }
         const profileId = value.startsWith("[") ? (JSON.parse(value) as string[])[0]! : value;
-        const choices = await modelChoices(control, profileId);
-        await choices.and(control.page().locator(`[data-option-value=${JSON.stringify(value)}]`)).click();
+        const option = (await modelChoices(control, profileId)).and(control.page().locator(`[data-option-value=${JSON.stringify(value)}]`));
+        // 최신 버전만 보이는 목록에서 이전 버전을 고르면 사용자처럼 전체 목록을 켠다.
+        const showAll = control.page().getByTestId(`model-profile-models-${profileId}`).filter({ visible: true })
+            .getByRole("menuitemcheckbox", { name: /^전체 모델 보기/ });
+        await expect(option.or(showAll).first()).toBeVisible();
+        if (!await option.isVisible()) {
+            await showAll.click();
+            await expect(showAll).toHaveAttribute("aria-checked", "true");
+        }
+        await option.click();
         await expect(control).toHaveAttribute("data-selected-value", value);
         return;
     }

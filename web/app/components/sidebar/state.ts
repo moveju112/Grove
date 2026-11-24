@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { ApiError, api } from "../../api/client";
 import type { RecentItem, Session } from "../../api/generated";
 import { retryIntent } from "../../state/recentPatch";
@@ -57,7 +58,9 @@ export function projectStatus(statuses: Record<string, number>): string {
         ?? (Object.values(statuses).some((count) => count > 0) ? "unknown" : "idle");
 }
 
-export async function pinSession(item: Pick<SidebarSession, "session" | "recent_id" | "recent_revision">, pinned: boolean): Promise<void> {
+type PinTarget = Pick<SidebarSession, "session" | "recent_id" | "recent_revision">;
+
+export async function pinSession(item: PinTarget, pinned: boolean): Promise<RecentItem> {
     try {
         // 아직 열지 않은 세션만 최근 항목을 만든다. 기존 핀 변경은 접근·읽음·숨김을 건드리지 않는다.
         const recent = item.recent_id === null
@@ -66,13 +69,13 @@ export async function pinSession(item: Pick<SidebarSession, "session" | "recent_
             })
             : { id: item.recent_id, revision: item.recent_revision! };
         try {
-            await api.patch(`/recent/${recent.id}`, { expected_revision: recent.revision, pinned });
+            return await api.patch<RecentItem>(`/recent/${recent.id}`, { expected_revision: recent.revision, pinned });
         } catch (error) {
             const current = error instanceof ApiError && error.code === "revision_conflict"
                 ? (error.details as { current?: RecentItem } | undefined)?.current : undefined;
             if (!current) throw error;
             const pending = retryIntent(current, { pinned });
-            if (pending) await api.patch(`/recent/${recent.id}`, pending);
+            return pending ? await api.patch<RecentItem>(`/recent/${recent.id}`, pending) : current;
         }
     } finally {
         // 응답이 유실돼도 서버 값을 다시 읽는다. 실패를 낙관적 성공으로 표시하지 않는다.
@@ -80,6 +83,27 @@ export async function pinSession(item: Pick<SidebarSession, "session" | "recent_
         invalidate(`sessions:${item.session.project_id}:history`);
         invalidate(`search:${item.session.project_id}:history`);
     }
+}
+
+// 클릭한 행은 즉시 바꾸고, 저장 응답보다 오래된 목록이 도착해도 고정 표시를 되돌리지 않는다.
+export function useSessionPin(item: PinTarget, serverPinned: boolean) {
+    const [pending, setPending] = useState<boolean | null>(null);
+    const [saved, setSaved] = useState<RecentItem | null>(null);
+    const newer = saved && (!item.recent_id || saved.id === item.recent_id) && saved.revision > (item.recent_revision ?? -1) ? saved : null;
+    useEffect(() => {
+        if (saved && !newer) setSaved(null);
+    }, [saved, newer]);
+    const pinned = pending ?? newer?.pinned ?? serverPinned;
+    const toggle = async () => {
+        const next = !pinned;
+        setPending(next);
+        try {
+            setSaved(await pinSession(newer ? { ...item, recent_id: newer.id, recent_revision: newer.revision } : item, next));
+        } finally {
+            setPending(null);
+        }
+    };
+    return { pinned, toggle };
 }
 
 export async function markSessionRead(item: SidebarSession): Promise<void> {

@@ -20,7 +20,6 @@ export const workspaceStyles = stylex.create({
         ':is([data-order-drop="before"])::after': { top: 0, backgroundColor: "var(--accent)" },
         ':is([data-order-drop="after"])::after': { bottom: 0, backgroundColor: "var(--accent)" },
     },
-    projectDragHandle: { userSelect: "none", WebkitTouchCallout: "none" },
     projectListHeading: { alignSelf: "stretch", display: "flex", alignItems: "center" },
     folderDrop: {
         position: "relative",
@@ -29,14 +28,6 @@ export const workspaceStyles = stylex.create({
         borderRadius: "var(--radius-element)",
         boxShadow: "inset 0 0 0 1px var(--accent)",
     },
-    projectLift: (x: number, y: number) => ({
-        transform: `translate(${x}px, ${y}px)`,
-        zIndex: 20,
-        backgroundColor: "var(--raised)",
-        boxShadow: "var(--shadow-float)",
-        borderRadius: "var(--radius-element)",
-        pointerEvents: "none",
-    }),
     mobileDraftDock: { flexShrink: 0, maxHeight: "40%", paddingBlockEnd: "calc(var(--spacing-2) + env(safe-area-inset-bottom, 0px))" },
     recentDock: { flexShrink: 0, minHeight: 0 },
     recentPanel: { flexShrink: 1, minHeight: 0 },

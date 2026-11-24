@@ -38,9 +38,19 @@ for (const mobile of [false, true]) {
                 else { await codexCategory.focus(); await codexCategory.press("ArrowRight"); }
                 const codexModels = page.getByTestId(`model-profile-models-${codex.id}`);
                 await expect(codexModels.getByRole("menuitemradio", { name: "Fixture Light", exact: true })).toBeVisible();
+                // 기본은 계열별 최신 버전만 보이고, 목록 끝 스위치로 이전 버전까지 펼친다.
+                const allModels = codexModels.getByRole("menuitemcheckbox", { name: /^전체 모델 보기/ });
+                await expect(codexModels.getByRole("menuitemradio")).toHaveText(["GPT-6.1", "Fixture Codex", "Fixture Light"]);
+                await expect(allModels).toHaveAttribute("aria-checked", "false");
+                await expect(allModels).toContainText("+2");
+                await allModels.click();
+                await expect(allModels).toHaveAttribute("aria-checked", "true");
                 await expect(codexModels.getByRole("menuitemradio")).toHaveText([
                     "GPT-6.1", "GPT-5.10", "GPT-5.6", "Fixture Codex", "Fixture Light",
                 ]);
+                await allModels.click();
+                await expect(allModels).toHaveAttribute("aria-checked", "false");
+                await expect(codexModels.getByRole("menuitemradio")).toHaveText(["GPT-6.1", "Fixture Codex", "Fixture Light"]);
                 await expect(codexModels).not.toContainText("기본 모델");
                 await expect(picker).toHaveAttribute("data-selected-value", initial);
                 await expect(summary).toHaveText("fixture-model");
@@ -55,6 +65,7 @@ for (const mobile of [false, true]) {
                 const claudeModels = page.getByTestId(`model-profile-models-${claude.id}`);
                 await expect(claudeModels.getByRole("menuitemradio", { name: "Fixture Claude", exact: true })).toBeVisible();
                 await expect(claudeModels.getByRole("menuitemradio")).toHaveText(["Opus 5.5", "Fixture Claude"]);
+                await expect(claudeModels.getByRole("menuitemcheckbox")).toHaveCount(0);
                 await expect(claudeModels).not.toContainText("기본 모델");
                 await expect(picker).toHaveAttribute("data-selected-value", chosenCodex);
                 await expect(summary).toHaveText("Fixture Light");

@@ -114,7 +114,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const defaults = useQuery<{ items: { key: string; effective: unknown }[] }>(boundProfileId === undefined ? `settings:${projectId}` : null,
         () => api.get(`/settings/effective?project_id=${encodeURIComponent(projectId)}`));
-    const prefs = usePrefs();
+    const prefs = usePrefs("runningSendMode", "enterToSend");
     const follow = prefs.runningSendMode;
     const ready = boundProfileId !== undefined || selectionState.phase === "ready";
     useEffect(() => {

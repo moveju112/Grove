@@ -4,8 +4,9 @@ import { useEffect, useState } from "react";
 export function useDebouncedValue<T>(value: T, delay = 150): T {
     const [settled, setSettled] = useState(value);
     useEffect(() => {
+        if (value === "") { setSettled(value); return; }
         const timer = setTimeout(() => setSettled(value), delay);
         return () => clearTimeout(timer);
     }, [value, delay]);
-    return settled;
+    return value === "" ? value : settled;
 }

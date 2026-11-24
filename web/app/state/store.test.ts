@@ -48,6 +48,19 @@ it("구독자가 없는 선조회 중 도착한 변경도 다음 구독에서 �
     } finally { clearServerCache(); }
 });
 
+it("화면에 들어가기 전에 실패한 선조회는 열 때 다시 읽는다", async () => {
+    const key = "files:project:nested";
+    const read = vi.fn<() => Promise<string>>().mockRejectedValueOnce(new Error("unavailable")).mockResolvedValue("목록");
+    subscribeQuery(key, read, () => undefined)();
+    await settle();
+    const off = subscribeQuery(key, read, () => undefined);
+    try {
+        await settle();
+        expect(read).toHaveBeenCalledTimes(2);
+        expect(querySnapshot(key)).toMatchObject({ data: "목록", error: null });
+    } finally { off(); clearServerCache(); }
+});
+
 describe("임시 응답의 수명", () => {
     function partials() {
         let result: Record<string, unknown> = {};

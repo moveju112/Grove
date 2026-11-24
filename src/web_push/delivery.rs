@@ -64,10 +64,7 @@ async fn deliver(app: &App, client: &reqwest::Client) -> ApiResult<()> {
             }
         }
         for endpoint in invalid {c.execute("DELETE FROM web_push_subscriptions WHERE endpoint=?1",[endpoint])?;}
-        c.execute("UPDATE web_push_tests SET state='failed',error='push_subscription_expired'
-            WHERE state='queued' AND NOT EXISTS(SELECT 1 FROM web_push_subscriptions s WHERE s.endpoint=web_push_tests.endpoint AND s.token_id=web_push_tests.token_id)",[])?;
-        c.execute("UPDATE web_push_tests SET state='failed',error='push_delivery_expired' WHERE state='queued'
-            AND EXISTS(SELECT 1 FROM web_push_outbox o WHERE o.event_key='test:'||web_push_tests.id AND (o.created_at<?1 OR o.attempts>=6))",[seconds-3600])?;
+        // 폐기된 실제 Push 시험의 기존 기록은 원래 보존 기간(1일)이 지나면 정리한다.
         c.execute("DELETE FROM web_push_tests WHERE created_at<?1",[retention])?;
         c.execute("DELETE FROM web_push_outbox WHERE created_at<?1 OR attempts>=6",[seconds-3600])?;
         let jobs = {
@@ -101,31 +98,23 @@ async fn deliver(app: &App, client: &reqwest::Client) -> ApiResult<()> {
 }
 fn record_outcome(c: &mut Connection, job: &Job, result: Outcome, seconds: i64) -> ApiResult<()> {
     let tx = c.transaction()?;
-    let (state, error) = match result {
+    match result {
         Outcome::Gone => {
             tx.execute("DELETE FROM web_push_subscriptions WHERE endpoint=?1", [&job.endpoint])?;
-            ("failed", Some("push_subscription_expired"))
         }
         Outcome::Sent => {
             tx.execute("DELETE FROM web_push_outbox WHERE endpoint=?1 AND event_key=?2", params![job.endpoint, job.event])?;
             tx.execute("UPDATE web_push_subscriptions SET last_error=NULL WHERE endpoint=?1", [&job.endpoint])?;
-            ("sent", None)
         }
         Outcome::Failed(error, retry) => {
             tx.execute("UPDATE web_push_subscriptions SET last_error=?2 WHERE endpoint=?1", params![job.endpoint, error])?;
             if let Some(delay) = retry.filter(|_| job.attempts < 5) {
                 tx.execute("UPDATE web_push_outbox SET attempts=attempts+1,next_attempt=?3 WHERE endpoint=?1 AND event_key=?2",
                     params![job.endpoint, job.event, seconds + delay])?;
-                ("queued", Some(error))
             } else {
                 tx.execute("DELETE FROM web_push_outbox WHERE endpoint=?1 AND event_key=?2", params![job.endpoint, job.event])?;
-                ("failed", Some(error))
             }
         }
-    };
-    if let Some(id) = job.event.strip_prefix("test:") {
-        tx.execute("UPDATE web_push_tests SET state=?2,error=?3 WHERE id=?1 AND endpoint=?4 AND state='queued'",
-            params![id, state, error, job.endpoint])?;
     }
     tx.commit()?;
     Ok(())
@@ -205,27 +194,25 @@ mod tests {
         routing::post,
     };
     #[test]
-    fn test_receipts_distinguish_provider_acceptance_retry_rejection_and_expiry() {
-        for (outcome, attempts, expected, error, pending) in [
-            (Outcome::Sent, 0, "sent", None, false),
-            (Outcome::Failed("push_network_unavailable", Some(15)), 0, "queued", Some("push_network_unavailable"), true),
-            (Outcome::Failed("push_network_unavailable", Some(15)), 5, "failed", Some("push_network_unavailable"), false),
-            (Outcome::Failed("push_service_denied", None), 0, "failed", Some("push_service_denied"), false),
-            (Outcome::Gone, 0, "failed", Some("push_subscription_expired"), false),
+    fn outcomes_keep_retryable_deliveries_and_record_the_last_error() {
+        for (outcome, attempts, error, pending, subscribed) in [
+            (Outcome::Sent, 0, None, false, true),
+            (Outcome::Failed("push_network_unavailable", Some(15)), 0, Some("push_network_unavailable"), true, true),
+            (Outcome::Failed("push_network_unavailable", Some(15)), 5, Some("push_network_unavailable"), false, true),
+            (Outcome::Failed("push_service_denied", None), 0, Some("push_service_denied"), false, true),
+            (Outcome::Gone, 0, None, false, false),
         ] {
             let mut c = Connection::open_in_memory().unwrap();
             c.execute_batch("PRAGMA foreign_keys=ON;
                 CREATE TABLE web_push_subscriptions(endpoint TEXT PRIMARY KEY,last_error TEXT);
                 CREATE TABLE web_push_outbox(endpoint TEXT REFERENCES web_push_subscriptions(endpoint) ON DELETE CASCADE,event_key TEXT,attempts INTEGER,next_attempt INTEGER);
-                CREATE TABLE web_push_tests(id TEXT,endpoint TEXT,state TEXT,error TEXT);
                 INSERT INTO web_push_subscriptions VALUES('fixture',NULL);
-                INSERT INTO web_push_outbox VALUES('fixture','test:t',0,0);
-                INSERT INTO web_push_tests VALUES('t','fixture','queued',NULL);").unwrap();
-            let job = Job { endpoint: "fixture".into(), event: "test:t".into(), payload: "{}".into(),
+                INSERT INTO web_push_outbox VALUES('fixture','turn:t',0,0);").unwrap();
+            let job = Job { endpoint: "fixture".into(), event: "turn:t".into(), payload: "{}".into(),
                 public: vec![], auth: String::new(), scope: String::new(), server: String::new(), vibrate: true, attempts };
             record_outcome(&mut c, &job, outcome, 100).unwrap();
-            let row: (String, Option<String>) = c.query_row("SELECT state,error FROM web_push_tests", [], |r| Ok((r.get(0)?, r.get(1)?))).unwrap();
-            assert_eq!(row, (expected.into(), error.map(str::to_string)));
+            let last: Option<Option<String>> = c.query_row("SELECT last_error FROM web_push_subscriptions", [], |r| r.get(0)).optional().unwrap();
+            assert_eq!(last, subscribed.then(|| error.map(str::to_string)));
             assert_eq!(c.query_row("SELECT count(*) FROM web_push_outbox", [], |r| r.get::<_, i64>(0)).unwrap(), i64::from(pending));
         }
     }

@@ -20,7 +20,14 @@ for (const width of [1400, 390]) {
         if (width === 390) await page.getByRole("button", { name: "사이드바", exact: true }).click();
         const row = page.getByTestId("project-row").filter({ hasText: project.name });
         await row.getByRole("button", { name: "프로젝트 메뉴", exact: true }).click();
-        await page.getByRole("dialog", { name: `${project.name} 메뉴`, exact: true }).getByRole("button", { name: "기록", exact: true }).click();
+        const historyButton = page.getByRole("dialog", { name: `${project.name} 메뉴`, exact: true }).getByRole("button", { name: "기록", exact: true });
+        const firstPage = page.waitForResponse((r) => {
+            const url = new URL(r.url());
+            return url.pathname.endsWith(`/projects/${project.id}/sessions`) && url.searchParams.get("pinned_first") === "true";
+        });
+        await historyButton.focus();
+        await firstPage;
+        await historyButton.click();
         const history = page.getByRole("dialog", { name: `${project.name} 기록`, exact: true });
         await expect(history.getByRole("button", { name: "검색되지 않을 대화", exact: true })).toBeVisible();
 
@@ -31,7 +38,25 @@ for (const width of [1400, 390]) {
         await expect(snippet).toBeHidden();
         await hit.getByRole("button", { name: "긴 대화 미리보기 펼치기" }).click();
         await expect(snippet).toBeVisible();
-        await hit.getByRole("button", { name: "상단 고정", exact: true }).click();
+        const pinButton = hit.getByRole("button", { name: "상단 고정", exact: true });
+        const unpinButton = hit.getByRole("button", { name: "상단 고정 해제", exact: true });
+        let release!: () => void;
+        const held = new Promise<void>((resolve) => { release = resolve; });
+        const patchPath = /\/api\/v1\/recent\/(?!touch)[^/?]+$/;
+        await page.route(patchPath, async (route) => {
+            await held;
+            await route.fulfill({ status: 403, json: { error: { code: "forbidden", message: "고정할 수 없어요." } } });
+        });
+        try {
+            await pinButton.click();
+            await expect(unpinButton).toBeDisabled();
+            await expect(unpinButton).toHaveAttribute("aria-pressed", "true");
+        } finally { release(); }
+        await expect(hit.getByRole("alert")).toHaveText("고정할 수 없어요.");
+        await expect(pinButton).toBeEnabled();
+        await page.unroute(patchPath);
+        await pinButton.click();
+        await expect(unpinButton).toBeEnabled();
         await expect(hit.getByRole("button", { name: "상단 고정 해제", exact: true })).toHaveAttribute("aria-pressed", "true");
         const pinned = await apiCall<{ items: { id: string; resource_id: string; revision: number }[] }>("GET", `/recent?project_id=${project.id}&filter=pinned`);
         const recent = pinned.items.find((item) => item.resource_id === long.id)!;
@@ -41,8 +66,18 @@ for (const width of [1400, 390]) {
         await page.screenshot({ path: info.outputPath(`history-search-${width}.png`) });
 
         // 결과가 없으면 비어 있음을, 검색어를 지우면 원래 목록을 보여 준다.
-        await history.getByLabel("대화 검색").fill(`${word}없음`);
+        const missing = `${word}없음`;
+        const slowSearch = (url: URL) => url.pathname.endsWith("/sessions/search") && url.searchParams.get("q") === missing;
+        let finishSearch!: () => void;
+        const heldSearch = new Promise<void>((resolve) => { finishSearch = resolve; });
+        await page.route(slowSearch, async (route) => { await heldSearch; await route.continue(); });
+        try {
+            await history.getByLabel("대화 검색").fill(missing);
+            await expect(history.getByRole("progressbar", { name: "검색 중…" })).toBeVisible();
+            await expect(hit.getByRole("button", { name: "긴 대화", exact: true })).toBeVisible();
+        } finally { finishSearch(); }
         await expect(history.getByText("검색 결과가 없어요.")).toBeVisible();
+        await expect(hit).toHaveCount(0);
         await history.getByLabel("대화 검색").fill("");
         await expect(history.getByRole("button", { name: "검색되지 않을 대화", exact: true })).toBeVisible();
 

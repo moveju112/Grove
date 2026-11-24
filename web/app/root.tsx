@@ -57,7 +57,7 @@ export default function Root() {
         document.documentElement.dataset.hydrated = "true";
     }, []);
     return <Stack ref={viewport} gap={0} height="100dvh" isScrollable xstyle={appStyles.viewport}>
-        <Stack as="aside" gap={2} xstyle={noticeStyles.global} aria-label="앱 알림" data-testid="app-notices">
+        <Stack as="aside" gap={2} xstyle={noticeStyles.global} id="app-notices" aria-label="앱 알림" data-testid="app-notices">
             <LifecycleBanner /><ProtocolBanner /><UpdateBanner />
         </Stack>
         <StackItem size="fill"><Outlet /></StackItem>

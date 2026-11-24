@@ -8,8 +8,9 @@ import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
 import { StatusBadge } from "../design/StatusBadge";
 import { ApiError, api } from "../api/client";
-import type { Project, SearchHit, SearchPage, Session, SessionPage } from "../api/generated";
+import type { Project, SearchHit, SearchPage, Session } from "../api/generated";
 import { TextInput } from "../design/Fields";
+import { historyPage, prefetchHistory } from "../state/historyQuery";
 import { requestFocus } from "../state/focus";
 import { useQuery } from "../state/store";
 import { useDebouncedValue } from "../state/useDebouncedValue";
@@ -19,7 +20,7 @@ import { When } from "./When";
 import { Icon, searchGlyph } from "./icons";
 import { chatLayout } from "./chat-layout.stylex";
 import type { Opener } from "./Workspace";
-import { pinSession } from "./sidebar/state";
+import { useSessionPin } from "./sidebar/state";
 
 const dayLabel = new Intl.DateTimeFormat("ko-KR", { year: "numeric", month: "long", day: "numeric", weekday: "long" });
 
@@ -29,6 +30,7 @@ export function ProjectHistoryDialog({ project, narrow, open, onClose }: { proje
     const panelId = useId();
     const [query, setQuery] = useState("");
     const q = useDebouncedValue(query.trim(), 250);
+    const warmOtherList = () => { if (!query.trim()) prefetchHistory(project.id, !archived); };
     return <CreationDialog label={`${project.name} 기록`} onClose={onClose} width="56em" fullscreen={narrow}>
         <Stack as="header" direction="horizontal" align="center" justify="between" gap={2}>
             {narrow ? <Stack gap={0.5} xstyle={chatLayout.headerTitle}>
@@ -42,16 +44,16 @@ export function ProjectHistoryDialog({ project, narrow, open, onClose }: { proje
                 label="대화 검색" isLabelHidden placeholder="제목·본문 검색" maxLength={200} value={query} onChange={setQuery} /></StackItem>
             {narrow ? <TabList value={archived ? "archived" : "active"} onChange={(tab) => setArchived(tab === "archived")}
                 role="tablist" aria-label="대화 구분" hasDivider>
-                <Tab value="active" label="대화" panelId={panelId} />
-                <Tab value="archived" label="보관된 대화" panelId={panelId} />
+                <Tab value="active" label="대화" panelId={panelId} onPointerEnter={archived ? warmOtherList : undefined} onFocus={archived ? warmOtherList : undefined} />
+                <Tab value="archived" label="보관된 대화" panelId={panelId} onPointerEnter={!archived ? warmOtherList : undefined} onFocus={!archived ? warmOtherList : undefined} />
             </TabList> : <GroveButton type="button" variant="secondary" density="compact" appearance="choice" aria-pressed={archived}
-                onClick={() => setArchived(!archived)}>
+                onPointerEnter={warmOtherList} onFocus={warmOtherList} onPointerDown={warmOtherList} onClick={() => setArchived(!archived)}>
                 보관된 대화{archived && <Icon name="close" size={12} />}
             </GroveButton>}
         </Stack>
         <Stack id={panelId} role={narrow ? "tabpanel" : undefined} aria-label={narrow ? (archived ? "보관된 대화" : "대화") : undefined}>
             {q ? <GroveList density="compact" edge="flush" hasDividers aria-label="검색 결과">
-                <SearchResults key={`${q}:${archived}`} projectId={project.id} q={q} narrow={narrow} archived={archived} open={open} />
+                <SearchResultPage offset={0} key={`${project.id}:${archived}`} projectId={project.id} q={q} narrow={narrow} archived={archived} open={open} />
             </GroveList> : <GroveList density="compact" edge="flush" hasDividers>
                 <SessionPageList key={String(archived)} projectId={project.id} cursor="" previousDay="" narrow={narrow} archived={archived} open={open} />
             </GroveList>}
@@ -61,9 +63,9 @@ export function ProjectHistoryDialog({ project, narrow, open, onClose }: { proje
 
 function SessionPageList(p: { projectId: string; cursor: string; previousDay: string; narrow: boolean; archived: boolean; open: Opener }) {
     const [more, setMore] = useState(false);
-    const qs = new URLSearchParams({ limit: "30", archived: String(p.archived), pinned_first: "true" });
-    if (p.cursor) qs.set("cursor", p.cursor);
-    const page = useQuery<SessionPage>(`sessions:${p.projectId}:history:${qs}`, () => api.get(`/projects/${p.projectId}/sessions?${qs}`));
+    const { key, read } = historyPage(p.projectId, p.archived, p.cursor);
+    const page = useQuery(key, read);
+    const warmNext = () => { if (page.data?.next_cursor) prefetchHistory(p.projectId, p.archived, page.data.next_cursor); };
     const items = page.data?.items ?? [];
     const today = new Date().toDateString();
     return (
@@ -87,7 +89,7 @@ function SessionPageList(p: { projectId: string; cursor: string; previousDay: st
             {page.data?.next_cursor && (more
                 ? <SessionPageList {...p} cursor={page.data.next_cursor} previousDay={new Date(items[items.length - 1]!.updated_at).toDateString()} />
                 : <GroveListItem label={
-                    <GroveButton variant="secondary" onClick={() => setMore(true)}>
+                    <GroveButton variant="secondary" onPointerEnter={warmNext} onFocus={warmNext} onPointerDown={warmNext} onClick={() => setMore(true)}>
                         더 보기
                     </GroveButton>
                 } />
@@ -106,12 +108,14 @@ function HistoryRow({ session, preview, narrow, search = false, onOpen }: {
     const [error, setError] = useState("");
     const previewId = useId();
     const { isOpen, toggle } = useCollapsible({ isCollapsible: { defaultIsOpen: false } });
-    const pinned = session.recent?.pinned ?? false;
+    const { pinned, toggle: savePin } = useSessionPin({
+        session, recent_id: session.recent?.id ?? null, recent_revision: session.recent?.revision ?? null,
+    }, session.recent?.pinned ?? false);
     const togglePin = async () => {
         setBusy(true);
         setError("");
         try {
-            await pinSession({ session, recent_id: session.recent?.id ?? null, recent_revision: session.recent?.revision ?? null }, !pinned);
+            await savePin();
         } catch (e) {
             setError(e instanceof ApiError ? e.message : "대화 고정 상태를 변경하지 못했어요.");
         } finally {
@@ -168,13 +172,15 @@ function HistoryRow({ session, preview, narrow, search = false, onOpen }: {
 const SEARCH_PAGE = 30;
 
 // 제목과 본문을 함께 찾고, 본문에서 찾았으면 그 메시지로 이동한다.
-function SearchResults(p: { projectId: string; q: string; narrow: boolean; archived: boolean; open: Opener }) {
-    const [offsets, setOffsets] = useState([0]);
-    return <>{offsets.map((offset, i) => <SearchResultPage key={offset} {...p} offset={offset} last={i === offsets.length - 1}
-        onMore={(next) => setOffsets((current) => current.includes(next) ? current : [...current, next])} />)}</>;
+type SearchProps = { projectId: string; q: string; narrow: boolean; archived: boolean; open: Opener; offset: number };
+
+function SearchMore(p: SearchProps) {
+    const [expanded, setExpanded] = useState(false);
+    return expanded ? <SearchResultPage {...p} />
+        : <GroveListItem label={<GroveButton variant="secondary" onClick={() => setExpanded(true)}>더 보기</GroveButton>} />;
 }
 
-function SearchResultPage(p: { projectId: string; q: string; narrow: boolean; archived: boolean; open: Opener; offset: number; last: boolean; onMore: (offset: number) => void }) {
+function SearchResultPage(p: SearchProps) {
     const qs = new URLSearchParams({ q: p.q, body: "true", pinned_first: "true", project_id: p.projectId, limit: String(SEARCH_PAGE), offset: String(p.offset) });
     if (p.archived) qs.set("status", "archived");
     const page = useQuery<SearchPage>(`search:${p.projectId}:history:${qs}`, () => api.getContract("SearchPage", `/sessions/search?${qs}`),
@@ -191,13 +197,11 @@ function SearchResultPage(p: { projectId: string; q: string; narrow: boolean; ar
                 {page.error instanceof ApiError ? page.error.message : "검색 결과를 불러오지 못했어요."}
                 {" "}<GroveButton type="button" appearance="link" onClick={page.reload}>다시 확인</GroveButton>
             </GroveText>} />}
-            {(page.data?.items ?? []).map((hit) => (
+            {(!page.error || !page.isPreviousData) && (page.data?.items ?? []).map((hit) => (
                 <HistoryRow key={hit.session.id} session={hit.session} preview={hit.snippet ?? hit.session.preview}
                     narrow={p.narrow} search onOpen={() => go(hit)} />
             ))}
-            {p.last && page.data && page.data.total > next && (
-                <GroveListItem label={<GroveButton variant="secondary" onClick={() => p.onMore(next)}>더 보기</GroveButton>} />
-            )}
+            {!page.isPreviousData && page.data && page.data.total > next && <SearchMore key={p.q} {...p} offset={next} />}
             {!page.loading && !page.error && p.offset === 0 && page.data?.total === 0 && <GroveListItem
                 label={<GroveText color="secondary">검색 결과가 없어요.</GroveText>} />}
         </>

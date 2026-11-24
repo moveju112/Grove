@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EventRecord } from "../api/generated";
-import { attentionFor, claimAttention, showAttention } from "./attention";
+import { attentionFor, claimAttention, closeReadNotifications, notifyAttention, showAttention } from "./attention";
 import { defaultPrefs } from "./device";
 
 const event = (kind: string, payload: unknown): EventRecord => ({ seq: 1, created_at: "2026-01-01T00:00:00Z", kind, project_id: "p", session_id: "s", payload });
@@ -37,6 +37,45 @@ describe("이 기기 알림 판단", () => {
     });
 });
 
+
+describe("읽은 대화의 알림 정리", () => {
+    afterEach(() => vi.unstubAllGlobals());
+    const shown = async () => {
+        const server = Array.from(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(JSON.stringify({ origin: "https://grove.test" })))),
+            (b) => b.toString(16).padStart(2, "0")).join("");
+        const close = { done: vi.fn(), unread: vi.fn(), approval: vi.fn(), other: vi.fn() };
+        const getNotifications = vi.fn(async () => [
+            { tag: `${server}:turn:a`, data: { sessionId: "read", server }, close: close.done },
+            { tag: `${server}:turn:b`, data: { sessionId: "unread", server }, close: close.unread },
+            { tag: `${server}:approval:c`, data: { sessionId: "read", server }, close: close.approval },
+            { tag: `${"b".repeat(64)}:turn:d`, data: { sessionId: "read", server: "b".repeat(64) }, close: close.other },
+        ]);
+        vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => ({ getNotifications }) } });
+        vi.stubGlobal("location", { origin: "https://grove.test" });
+        vi.stubGlobal("localStorage", { getItem: () => null });
+        return { close, getNotifications };
+    };
+    const item = (id: string, unread: boolean, completion = false) => ({ kind: "session", resource_id: id, unread, completion_unread: completion });
+
+    it("읽은 대화의 완료·실패 알림만 닫고 승인 요청·다른 서버·안 읽은 대화 알림은 남긴다", async () => {
+        const { close } = await shown();
+        await closeReadNotifications(async () => [item("read", false), item("unread", false, true)]);
+        expect(close.done).toHaveBeenCalledOnce();
+        expect(close.unread).not.toHaveBeenCalled();
+        expect(close.approval).not.toHaveBeenCalled();
+        expect(close.other).not.toHaveBeenCalled();
+    });
+
+    it("다른 기기의 읽음 이벤트로도 닫고, 표시된 알림이 없으면 목록을 조회하지 않는다", async () => {
+        const { close } = await shown();
+        notifyAttention(event("recent.updated", item("read", false)));
+        await vi.waitFor(() => expect(close.done).toHaveBeenCalledOnce());
+        vi.stubGlobal("navigator", { serviceWorker: { getRegistration: async () => ({ getNotifications: async () => [] }) } });
+        const load = vi.fn(async () => []);
+        await closeReadNotifications(load);
+        expect(load).not.toHaveBeenCalled();
+    });
+});
 
 describe("모바일 시스템 알림", () => {
     afterEach(() => vi.unstubAllGlobals());

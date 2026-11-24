@@ -6,11 +6,12 @@ import { useEffect, useRef, useState } from "react";
 import { ApiError, api, isTransportError } from "../api/client";
 import type { RecentItem, RecentPage } from "../api/generated";
 import { loadPrefs, savePrefs, usePrefs } from "../state/device";
+import type { RecentHides } from "../state/useRecentHides";
 import { prepareRecentPatch } from "../state/recentPatch";
 import { RECENT_PAGE_SIZE, readRecentRange, recentRangeKey } from "../state/recentQuery";
-import { effectiveRecentWindow, groupBySplit, recentWindowLabel, type RecentSplitGroup } from "../state/recentWindow";
+import { effectiveRecentWindow, groupBySplit, recentWindowLabel, type RecentSplitGroup, type RecentWindow } from "../state/recentWindow";
 import { When } from "./When";
-import { revalidateQuery, useQuery } from "../state/store";
+import { revalidateQuery, subscribeQuery, useQuery } from "../state/store";
 import { usePageVisible, usePaneVisible } from "../state/paneVisibility";
 import { prefetchConversation } from "../state/workspaceStartup";
 import { DRAG_OPEN } from "../state/layout";
@@ -41,22 +42,21 @@ const NO_SPLITS: readonly RecentSplitGroup[] = [];
 // 앱 복귀·서랍 열기·첫 화면 선조회가 거의 동시에 일어나면 같은 요청을 쓴다.
 const RECENT_REFRESH_COALESCE_MS = 750;
 
-export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sidebar", shown = true }: {
-    open: Opener; splitGroups?: readonly RecentSplitGroup[]; presentation?: "sidebar" | "home"; shown?: boolean;
+export function RecentPanel({ hides, open, splitGroups = NO_SPLITS, presentation = "sidebar", shown = true }: {
+    hides: RecentHides; open: Opener; splitGroups?: readonly RecentSplitGroup[]; presentation?: "sidebar" | "home"; shown?: boolean;
 }) {
-    const [limit, setLimit] = useState(RECENT_PAGE_SIZE);
+    const [limits, setLimits] = useState<Partial<Record<RecentWindow, number>>>({});
     const [accessError, setAccessError] = useState<string | null>(null);
     const accessAttempt = useRef(0);
-    const [hideError, setHideError] = useState<{ message: string; retry?: () => Promise<void> } | null>(null);
-    const [hiding, setHiding] = useState(false);
     const serverBlocked = useServerBlockReason();
-    const prefs = usePrefs();
+    const prefs = usePrefs("recentWindows", "recentWindow");
     const range = effectiveRecentWindow(prefs.recentWindow, prefs.recentWindows);
+    const limit = limits[range] ?? RECENT_PAGE_SIZE;
     const key = recentRangeKey(range, limit);
     const recent = useQuery<RecentPage>(key, () => readRecentRange(range, limit),
         { keepPreviousData: true, scope: "recent:range" });
     // 이전 데몬에서 반환하는 터미널 기록도 최근 목록에 표시하지 않는다.
-    const items = recent.data?.items.filter((it) => it.kind !== "terminal");
+    const items = recent.data?.items.filter((it) => it.kind !== "terminal" && !hides.isHidden(it));
     // 목록을 보는 동안 열 가능성이 높은 대화(실행 중·새 완료 우선, 상위 몇 개)의 본문을 미리 받아 둔다. 한 번 받고 구독은 바로 놓는다.
     const paneVisible = usePaneVisible();
     const pageVisible = usePageVisible();
@@ -76,25 +76,15 @@ export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sid
         return () => { window.removeEventListener("pageshow", restore); clearInterval(timer); };
     }, [key, visible]);
 
-    const hide = async (request: () => Promise<void>, confirming = false) => {
-        setHiding(true);
-        if (!confirming) setHideError(null);
-        try {
-            await request();
-            setHideError(null);
-        } catch (e) {
-            if (isTransportError(e, true)) void checkCompatibility();
-            // 아직 전송되지 않은 경우는 연결 표시만 쓴다. 이전 결과를 확인 중이었다면 다시 확인할 수 있게 둔다.
-            if (isTransportError(e)) return;
-            const unknown = e instanceof ApiError && (e.status >= 500 || (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true);
-            setHideError(unknown
-                ? { message: "최근에서 숨겼는지 확인하지 못했습니다.", retry: request }
-                : { message: e instanceof ApiError ? e.message : "최근에서 숨기지 못했습니다." });
-        } finally {
-            setHiding(false);
-            recent.reload();
+    const windows = prefs.recentWindows;
+    const ready = recent.data !== undefined;
+    useEffect(() => {
+        if (!visible || !ready || serverBlocked) return;
+        for (const option of windows) {
+            if (option !== range) subscribeQuery(recentRangeKey(option, RECENT_PAGE_SIZE),
+                () => readRecentRange(option, RECENT_PAGE_SIZE), () => undefined)();
         }
-    };
+    }, [visible, ready, range, windows, serverBlocked]);
 
     const openItem = (it: RecentItem, how: "here" | "right" | "down" = "here") => {
         const attempt = ++accessAttempt.current;
@@ -107,11 +97,11 @@ export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sid
         // 접근 기록은 갱신하되 대화의 정렬·시간 표시는 마지막 확정 답변을 그대로 쓴다.
         // view_state를 보내지 않아 읽던 위치·읽음 정보는 그대로 둔다.
         // 완료 확인은 클릭한 요청 ID만 보낸다. 그 뒤 도착한 다른 완료까지 확인하지 않는다.
-        void api.post("/recent/touch", {
+        void hides.reopen(it, () => api.post<void>("/recent/touch", {
             kind: it.kind, project_id: it.project_id, resource_id: it.resource_id, title: it.title,
             ...(it.kind === "session" && it.completion_unread && it.completed_turn_id
                 ? { seen_completed_turn_id: it.completed_turn_id } : {}),
-        })
+        }))
             .catch((e) => {
                 // 열기는 이미 처리했다. 백그라운드 접근 기록의 응답 유실을 열린 대화의 실패처럼 남기지 않는다.
                 if (isTransportError(e, true)) void checkCompatibility();
@@ -127,7 +117,10 @@ export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sid
                 <Stack direction="horizontal" gap={0} role="group" aria-label="시간 범위">
                     {prefs.recentWindows.map((option) => (
                         <Button key={option} appearance="choice" aria-pressed={range === option}
-                            aria-label={`최근 ${recentWindowLabel(option)} 범위`} onClick={() => savePrefs({ ...loadPrefs(), recentWindow: option })}>
+                            aria-label={`최근 ${recentWindowLabel(option)} 범위`} onClick={() => {
+                                if (option === range) return;
+                                savePrefs({ ...loadPrefs(), recentWindow: option });
+                            }}>
                             {recentWindowLabel(option)}
                         </Button>
                     ))}
@@ -136,12 +129,14 @@ export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sid
             <Stack gap={0} xstyle={presentation === "sidebar" && workspaceStyles.recentItems}
                 role={presentation === "sidebar" ? "region" : undefined} aria-label={presentation === "sidebar" ? "최근 목록" : undefined}
                 tabIndex={presentation === "sidebar" ? 0 : undefined} data-testid="recent-scroll">
-            {(hideError || accessError) && <Stack direction="horizontal" align="center" wrap="wrap" gap={1}>
-                <GroveText as="p" type="supporting" color="error" role="alert">{hideError?.message ?? accessError}</GroveText>
-                {hideError?.retry && <ServerActionButton type="button" appearance="link" density="compact" disabled={hiding}
-                    onClick={() => hide(hideError.retry!, true)}>같은 요청 결과 확인</ServerActionButton>}
-                <Button type="button" appearance="link" density="compact" disabled={hiding}
-                    onClick={() => { setHideError(null); setAccessError(null); }}>닫기</Button>
+            {hides.entries.filter(op => !op.tabId && op.error).map(op => <Stack key={op.key} direction="horizontal" align="center" gap={1}>
+                <GroveText as="p" type="supporting" color="error" role="alert">{op.error}</GroveText>
+                {op.uncertain ? <ServerActionButton appearance="link" onClick={() => hides.retry(op)}>같은 요청 결과 확인</ServerActionButton>
+                    : <Button appearance="link" onClick={() => hides.dismiss(op)}>닫기</Button>}
+            </Stack>)}
+            {accessError && <Stack direction="horizontal" align="center" gap={1}>
+                <GroveText as="p" type="supporting" color="error" role="alert">{accessError}</GroveText>
+                <Button appearance="link" onClick={() => setAccessError(null)}>닫기</Button>
             </Stack>}
             {Boolean(recent.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">
                 {recent.error instanceof ApiError ? recent.error.message : "최근 목록을 불러오지 못했습니다."}
@@ -160,7 +155,7 @@ export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sid
             </GroveList>
             {!recent.loading && items?.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">최근 항목 없음</GroveText>}
             {recent.data?.next_offset != null && (
-                <Button variant="secondary" onClick={() => setLimit((l) => l + RECENT_PAGE_SIZE)}>
+                <Button variant="secondary" onClick={() => setLimits(current => ({ ...current, [range]: limit + RECENT_PAGE_SIZE }))}>
                     더 보기
                 </Button>
             )}
@@ -206,8 +201,11 @@ export function RecentPanel({ open, splitGroups = NO_SPLITS, presentation = "sid
                             </GroveText>
                             <ServerActionButton appearance="icon" density="compact" width="var(--spacing-8)"
                                 xstyle={[workspaceStyles.recentClose, presentation === "sidebar" && workspaceStyles.recentRowControl]}
-                                aria-label="최근에서 숨기기" title="최근에서 숨기기" disabled={hiding || !!hideError?.retry}
-                                onClick={() => hide(prepareRecentPatch(it, { hidden: true }))}>
+                                aria-label="최근에서 숨기기" title="최근에서 숨기기"
+                                onClick={() => {
+                                    const request = prepareRecentPatch(it, { hidden: true });
+                                    hides.hide(it, async () => { await request(); return it.id; });
+                                }}>
                                 <Icon name="close" size={12} />
                             </ServerActionButton>
                         </Stack>

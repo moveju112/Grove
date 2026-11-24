@@ -4,6 +4,7 @@ import { Text } from "@astryxdesign/core/Text";
 import { api } from "../api/client";
 import type { Project } from "../api/generated";
 import { Button } from "../design/Button";
+import { prefetchHistory } from "../state/historyQuery";
 import { invalidate } from "../state/store";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { useCapability } from "../state/capabilities";
@@ -14,6 +15,7 @@ export function ProjectMenu({ project, onClose, onHistory, onEdit }: {
     const icons = useCapability("project_icons_v1");
     const [error, setError] = useState<string | null>(null);
     const [busy, setBusy] = useState(false);
+    const warmHistory = () => prefetchHistory(project.id, false);
     const archive = async () => {
         if (!confirm(`${project.name}을(를) 보관할까요? 목록에서만 빠지고 폴더·대화는 그대로이며 "보관됨"에서 복원할 수 있습니다.`)) return;
         setBusy(true);
@@ -31,7 +33,8 @@ export function ProjectMenu({ project, onClose, onHistory, onEdit }: {
     return <Stack gap={1}>
         <ServerActionButton type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onEdit("name"); }}>이름 변경</ServerActionButton>
         {icons !== false && <ServerActionButton type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onEdit("icon"); }}>아이콘 변경</ServerActionButton>}
-        <Button type="button" variant="secondary" density="compact" aria-haspopup="dialog" onClick={() => { onClose(); onHistory(); }}>기록</Button>
+        <Button type="button" variant="secondary" density="compact" aria-haspopup="dialog" onPointerEnter={warmHistory} onFocus={warmHistory} onPointerDown={warmHistory}
+            onClick={() => { onClose(); onHistory(); }}>기록</Button>
         {error && <Text as="p" display="block" type="inherit" color="error" role="alert">{error}</Text>}
         <ServerActionButton type="button" variant="secondary" density="compact" disabled={busy} onClick={() => void archive()}>보관</ServerActionButton>
         <Button type="button" variant="secondary" density="compact" onClick={onClose}>닫기</Button>

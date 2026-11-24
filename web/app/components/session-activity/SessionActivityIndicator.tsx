@@ -23,7 +23,7 @@ export function isWaitingForResponse(status: Turn["status"]): boolean {
 export function SessionActivityIndicator({ sessionId, visible, focused = true, viewportRef }: {
     sessionId: string; visible: boolean; focused?: boolean; viewportRef: RefObject<HTMLDivElement | null>;
 }) {
-    const prefs = usePrefs();
+    const prefs = usePrefs("activityDisplay", "sessionVineLength", "sessionVineSpeed", "sessionVineGroups");
     const pageVisible = usePageVisible();
     const enabled = visible && pageVisible && prefs.activityDisplay !== "hidden";
     const turns = useQuery<Turn[]>(enabled ? `turns:${sessionId}` : null,

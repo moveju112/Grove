@@ -12,6 +12,22 @@ import { subscribeQuery } from "./store";
 import { workspaceResumeKey } from "./workspaceTabs";
 
 export const selectionKey = (base: string) => `grove.layout.selected.${base}`;
+
+function savedProject(base: string, storage: "sessionStorage" | "localStorage") {
+    try {
+        const id = window[storage].getItem(selectionKey(base));
+        return id && /^[a-z0-9-]{1,64}$/i.test(id) ? id : null;
+    } catch { return null; }
+}
+
+export function startupSelection(base: string) {
+    const navigation = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+    const reload = navigation?.type === "reload";
+    // 같은 탭의 새로고침과 새 기기에서의 이어보기를 구분한다. 이전 버전에는 기기 사본만 있다.
+    const project = (reload ? savedProject(base, "sessionStorage") : null) ?? savedProject(base, "localStorage");
+    return { project, resumeShared: !(reload && project) };
+}
+
 export const getWorkspaceProjects = (sort: ProjectSort, signal?: AbortSignal) =>
     api.get<Project[]>(`/projects?sort=${sort === "recent" ? "recent" : "name"}`, signal ? { signal } : {});
 export const readConversation = {
@@ -39,14 +55,17 @@ export function primeWorkspaceStartup() {
     // 첫 목록을 먼저 받아 두되, 닫힌 모바일 서랍을 계속 구독하지는 않는다.
     subscribeQuery(recentRangeKey(range, RECENT_PAGE_SIZE), () => readRecentRange(range, RECENT_PAGE_SIZE), () => undefined)();
     const controller = new AbortController();
-    const resume = getResume(controller.signal);
-    const entry = warm = { generation: authGeneration(), resume };
-    void resume.catch(() => undefined);
+    let entry: typeof warm = null;
     const subscriptions: (() => void)[] = [];
     try {
         const base = layoutKey();
-        const project = localStorage.getItem(selectionKey(base));
-        if (project && /^[a-z0-9-]{1,64}$/i.test(project)) {
+        const { project, resumeShared } = startupSelection(base);
+        if (resumeShared) {
+            const resume = getResume(controller.signal);
+            entry = warm = { generation: authGeneration(), resume };
+            void resume.catch(() => undefined);
+        }
+        if (project) {
             const layout = readStoredLayout(localStorage, projectLayoutKey(base, project));
             const leaf = layout && focusedLeaf(layout);
             const tab = leaf && leaf.tabs.find((item) => item.id === leaf.active_tab && item.kind === "session" && item.project_id === project);

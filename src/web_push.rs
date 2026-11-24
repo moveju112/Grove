@@ -1,7 +1,6 @@
 //! Authenticated browser subscriptions and durable, private completion notifications.
 mod crypto;
 mod delivery;
-pub mod tests_api;
 use crate::{
     App,
     auth::{self, Principal},

@@ -67,13 +67,17 @@ const AVAILABLE: Record<OverviewRole["availability"], string> = {
     tools_disabled: "부모 턴 도구 꺼짐", available: "현재 정책상 사용 가능", depth_limit: "깊이 한도 도달", needs_session: "대화에서 사용 가능 여부 확인 필요",
 };
 
-export function AgentOverview({ target, basic = false, onEdit }: {
+export function AgentOverview({ target, basic = false, onEdit, onSettled }: {
     target: OverviewTarget; basic?: boolean; onEdit: (id: string) => void;
+    /// 조회가 끝나(성공·실패) 개요 높이가 정해졌는지 알린다. 아래 행으로의 링크 이동은 이 뒤에 한다.
+    onSettled?: (settled: boolean) => void;
 }) {
     const connection = useLive((live) => live.status);
     const online = useSyncExternalStore(subscribeNetwork, () => navigator.onLine, () => true);
     const connected = connection === "live" && online;
     const { view, reload } = useOverview(target, connected);
+    const settled = connected && view.status !== "loading";
+    useEffect(() => { onSettled?.(settled); }, [settled, onSettled]);
     const ready = connected && view.status === "ready" ? view.data : null;
     const roles = ready?.roles.filter((role) => basic ? role.execution === "helper" : role.execution === "orchestrated") ?? [];
     return <GroveStack as="section" gap={2} data-testid="agent-overview" aria-label="역할 개요">

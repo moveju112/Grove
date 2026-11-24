@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import type { AvailableModel, ModelProfile } from "../api/generated";
-import { catalogModel, modelEfforts, prefetchProfiles, readRecentProfiles, rememberRecentProfile, RECENT_PROFILES_KEY, sortModels } from "./model-catalog";
+import { catalogModel, latestModels, modelEfforts, prefetchProfiles, readRecentProfiles, rememberRecentProfile, RECENT_PROFILES_KEY, sortModels } from "./model-catalog";
 
 const model = (id: string, name = id): AvailableModel => ({ id, name });
 
@@ -48,6 +48,37 @@ describe("모델 선택 목록 정렬", () => {
             model("gpt-6.1", "GPT"), model("custom", "Custom"),
         ]).map((row) => row.id)).toEqual(["gpt-6.1", "claude-opus-5-10", "claude-opus-5-2", "custom"]);
         expect(sortModels([])).toEqual([]);
+    });
+});
+
+describe("계열별 최신 모델", () => {
+    const latest = (rows: AvailableModel[], keep: string[] = []) => latestModels(sortModels(rows), keep).map((row) => row.id);
+
+    it("CLI 목록에서 계열마다 가장 높은 버전만 남긴다", () => {
+        const claude = [
+            model("claude-fable-5", "Fable 5"), model("claude-fable-5-1", "Fable 5.1"), model("claude-haiku-4-5-20251001", "Haiku 4.5"),
+            model("claude-opus-4-7", "Opus 4.7"), model("claude-opus-5", "Opus 5"), model("claude-sonnet-4-6", "Sonnet 4.6"),
+            model("fable", "Fable 5.2"), model("haiku", "Haiku 5.5"), model("opus", "Opus 5.5"), model("sonnet", "Sonnet 5.5"),
+        ];
+        expect(latest(claude)).toEqual(["haiku", "opus", "sonnet", "fable"]);
+        // 이름의 구분자가 공백이어도 같은 계열이다.
+        const codex = [
+            model("gpt-5.6-luna", "GPT-5.6-Luna"), model("gpt-5.6-terra", "GPT-5.6-Terra"), model("gpt-6-luna", "GPT-6-Luna"),
+            model("gpt-6-sol", "GPT-6-Sol"), model("gpt-6.1-terra", "GPT-6.1 Terra"), model("gpt-6.2-astra", "GPT-6.2-Astra"),
+            model("gpt-6-astra", "GPT-6-Astra"), { ...model("gpt-6.2-sol", "GPT-6.2-Sol"), is_default: true },
+        ];
+        expect(latest(codex)).toEqual(["gpt-6.2-astra", "gpt-6.2-sol", "gpt-6.1-terra", "gpt-6-luna"]);
+    });
+
+    it("날짜 고정본은 별칭과 같은 계열로 보고, 버전을 모르는 모델·기본 모델·지정한 모델은 남긴다", () => {
+        const rows = [
+            model("gpt-4o-2024-05-13"), model("gpt-4o-2024-08-06"), model("gpt-4o"), model("gpt-4-0613"),
+            model("gpt-4.1"), model("gpt-5"), { ...model("o1"), is_default: true }, model("o3"),
+            model("claude-opus-5-2", "Opus"), model("claude-opus-5-10", "Opus"), model("custom", "Custom"),
+        ];
+        expect(latest(rows, ["gpt-4.1"])).toEqual(["claude-opus-5-10", "gpt-5", "gpt-4.1", "gpt-4o", "o3", "o1", "custom"]);
+        expect(latestModels([model("gpt-4o-2024-05-13"), model("gpt-4o-2024-08-06")]).map((row) => row.id)).toEqual(["gpt-4o-2024-08-06"]);
+        expect(latestModels([])).toEqual([]);
     });
 });
 

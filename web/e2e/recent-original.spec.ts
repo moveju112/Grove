@@ -13,6 +13,9 @@ test("시간 범위 밖 항목은 기본 4시간에서 빠지고 넓은 범위·
     await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: old.id });
     // 이 기기 시계를 5시간 뒤로 두면 방금 연 항목은 4시간 범위 밖, 12시간 범위 안이다.
     await page.clock.install({ time: new Date(Date.now() + 5 * 3_600_000) });
+    const wide = (url: URL) => url.pathname === "/api/v1/recent" && !!url.searchParams.get("since")
+        && Date.parse(url.searchParams.get("since")!) < Date.now() - 6 * 3_600_000;
+    const warmed = page.waitForResponse(response => response.ok() && wide(new URL(response.url())));
     await login(page);
     const recent = page.getByRole("region", { name: "최근", exact: true });
     const ranges = recent.getByRole("group", { name: "시간 범위" });
@@ -20,8 +23,15 @@ test("시간 범위 밖 항목은 기본 4시간에서 빠지고 넓은 범위·
     await expect(ranges.getByRole("button", { name: "최근 4시간 범위" })).toHaveAttribute("aria-pressed", "true");
     const row = recent.getByTestId("recent-item").filter({ hasText: old.title });
     await expect(row).toHaveCount(0);
-    await ranges.getByRole("button", { name: "최근 12시간 범위" }).click();
-    await expect(row).toHaveCount(1);
+    await (await warmed).finished();
+    let release!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    await page.route(wide, async route => { await held; await route.continue(); });
+    try {
+        await ranges.getByRole("button", { name: "최근 12시간 범위" }).click();
+        await expect(row).toHaveCount(1);
+    } finally { release(); }
+    await page.unroute(wide);
     await expect(row.getByTestId("recent-time")).toHaveText("5h");
     await page.reload();
     await expect(recent.getByRole("group", { name: "시간 범위" }).getByRole("button", { name: "최근 12시간 범위" })).toHaveAttribute("aria-pressed", "true");
@@ -68,8 +78,11 @@ test("다른 기기가 먼저 고정해도 이 기기의 숨김은 오류 없이
         }
         await route.continue();
     });
+    const hiddenOnServer = page.waitForResponse(response => response.request().method() === "PATCH"
+        && new URL(response.url()).pathname.startsWith("/api/v1/recent/") && response.ok());
     await row.getByRole("button", { name: "최근에서 숨기기", exact: true }).click();
     await expect(row).toHaveCount(0);
+    await hiddenOnServer;
     expect(sent).toHaveLength(2);
     expect(sent[1]).toMatchObject({ hidden: true });
     expect(sent[1]).not.toHaveProperty("pinned");
@@ -169,8 +182,11 @@ test(`${theme}: 숨긴 대화는 새 메시지로 복원하고 분할 묶음에�
         await expect(rightPane).toBeVisible();
     }
 
+    const hiddenOnServer = page.waitForResponse(response => response.request().method() === "PATCH"
+        && new URL(response.url()).pathname.startsWith("/api/v1/recent/") && response.ok());
     await row.getByRole("button", { name: "최근에서 숨기기", exact: true }).click();
     await expect(row).toHaveCount(0);
+    await hiddenOnServer;
     await apiCall("POST", `/sessions/${hidden.id}/messages`, { text: "다시 보여 줘" });
     await expect(row).toHaveCount(1);
     const leftPane = page.locator('[data-leaf="l"]');

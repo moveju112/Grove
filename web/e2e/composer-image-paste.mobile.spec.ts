@@ -73,9 +73,19 @@ test("키보드 이벤트 없이 첨부 메뉴에서 실제 브라우저 클립�
     await expect(page.getByRole("button", { name: "파일 선택", exact: true })).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("clipboard-390.png"), animations: "disabled" });
     await paste.tap();
-    await expect(view.getByRole("status").filter({ hasText: "클립보드에 붙여넣을 사진이 없습니다" })).toBeVisible();
+    const issue = view.getByRole("status").filter({ hasText: "붙여넣을 사진을 찾지 못했습니다" });
+    await expect(issue).toContainText("항목 1개 · 형식 text/plain");
+    await expect(issue).not.toContainText("첨부하지 않을 텍스트");
     await expect(view.getByTestId("attachment-selection")).toHaveCount(0);
     await expect.poll(() => input.innerText()).toBe("보존할 본문");
+
+    await page.evaluate(() => Object.defineProperty(navigator.clipboard, "read", {
+        configurable: true, value: async () => [],
+    }));
+    await trigger.tap();
+    await paste.tap();
+    await expect(issue).toContainText("항목 0개 · 형식 없음");
+    await page.evaluate(() => Reflect.deleteProperty(navigator.clipboard, "read"));
 
     await page.evaluate(async (png) => {
         const blob = new Blob([Uint8Array.from(atob(png), (c) => c.charCodeAt(0))], { type: "image/png" });

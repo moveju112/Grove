@@ -119,7 +119,10 @@ export function AttachmentPicker({ draft, disabled, onIssue }: { draft: ReturnTy
             if (image?.size && mime) {
                 const ext = mime === "image/jpeg" ? "jpg" : mime.slice("image/".length);
                 void current.add([new File([image], `clipboard.${ext}`, { type: mime })]);
-            } else current.onIssue("클립보드에 붙여넣을 사진이 없습니다. 사진을 복사하거나 파일에서 선택하세요.");
+            } else {
+                const formats = [...new Set(items.flatMap((entry) => entry.types))].join(", ") || "없음";
+                current.onIssue(`붙여넣을 사진을 찾지 못했습니다 (항목 ${items.length}개 · 형식 ${formats}). 사진을 복사하거나 파일에서 선택하세요.`);
+            }
         } catch {
             if (authGeneration() === owner) latest.current?.onIssue("클립보드 사진을 읽지 못했습니다. 브라우저 권한을 확인하거나 파일에서 선택하세요.");
         } finally {

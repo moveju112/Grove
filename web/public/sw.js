@@ -53,6 +53,7 @@ self.addEventListener("install", (event) => {
 self.addEventListener("activate", (event) => {
     event.waitUntil(
         (async () => {
+            await caches.delete(RETIRED_PUSH_TEST_CACHE);
             await collectUnusedShells();
             await self.clients.claim();
         })(),
@@ -61,21 +62,6 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("message", (event) => {
     if (event.data && event.data.type === "skip-waiting") self.skipWaiting();
-    if (event.data?.type === "push-test-status" && notificationId(event.data.testId)
-        && event.source?.url?.startsWith(SCOPE.href) && event.ports?.[0]) {
-        const port = event.ports[0];
-        event.waitUntil((async () => {
-            try {
-                const cache = await caches.open(PUSH_TEST_CACHE);
-                const record = await cache.match(pushTestKey(event.data.testId));
-                port.postMessage({ type: "push-test-status", testId: event.data.testId, version: VERSION,
-                    receipt: record ? await record.json() : null, storageError: pushTestStorageError });
-            } catch {
-                port.postMessage({ type: "push-test-status", testId: event.data.testId, version: VERSION,
-                    receipt: null, storageError: true });
-            } finally { port.close(); }
-        })());
-    }
     if (event.data && event.data.type === "shell-status") {
         event.waitUntil((async () => {
             if (event.source?.id && event.source.url?.startsWith(SCOPE.href)) {
@@ -135,79 +121,43 @@ self.addEventListener("fetch", (event) => {
 });
 
 const notificationId = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(value);
-const PUSH_TEST_CACHE = `grove-push-tests-${encodeURIComponent(SCOPE.href)}`;
-const pushTestKey = (id) => new URL(`__grove_push_test__/${id}`, SCOPE).href;
-let pushTestStorageError = false;
-
-// 수신 여부와 표시 요청 결과만 기기 안에 보관한다. payload·구독 키·대화 내용은 저장하지 않는다.
-async function recordPushTest(id, stage, error = null) {
-    try {
-        const cache = await caches.open(PUSH_TEST_CACHE);
-        await cache.put(pushTestKey(id), new Response(JSON.stringify({ stage, error, version: VERSION, at: Date.now() })));
-        const keys = await cache.keys();
-        await Promise.all(keys.slice(0, Math.max(0, keys.length - 16)).map((key) => cache.delete(key)));
-    } catch {
-        // 진단 저장 실패 때문에 알림 자체를 막지 않으며, 조회 시 실패 사실을 함께 반환한다.
-        pushTestStorageError = true;
-    }
-}
+// 폐기된 실제 Push 시험의 기기 안 진단 기록. 새 worker가 활성화될 때 지운다.
+const RETIRED_PUSH_TEST_CACHE = `grove-push-tests-${encodeURIComponent(SCOPE.href)}`;
 
 self.addEventListener("push", (event) => {
     event.waitUntil((async () => {
         let data;
         try { data = event.data?.json(); } catch { return; }
-        const testId = data?.test === true && notificationId(data.testId) ? data.testId : null;
-        if (testId) await recordPushTest(testId, "received");
         if (!data || data.scope !== SCOPE.href || !/^[0-9a-f]{64}$/.test(data.server)
-            || typeof data.tag !== "string" || data.tag.length > 200) {
-            if (testId) await recordPushTest(testId, "rejected", "push_envelope_invalid");
-            return;
-        }
-        const test = data.test === true;
-        if (test ? !notificationId(data.testId) || data.tag !== `test:${data.testId}`
-            : !notificationId(data.projectId) || !notificationId(data.sessionId)) {
-            if (testId) await recordPushTest(testId, "rejected", "push_target_invalid");
-            return;
-        }
-        try {
-            await self.registration.showNotification(test ? "Grove 실제 Push 시험" : data.failed ? "작업 실패" : "작업 완료", {
-                body: test ? "서버에서 Push로 도착한 시험 알림이야." : data.failed ? "대화의 요청 처리가 실패하거나 중단됐습니다."
-                    : (typeof data.body === "string" && data.body.trim()) || "대화의 요청 처리가 끝났습니다.",
-                tag: `${data.server}:${data.tag}`,
-                data: test ? { test, testId: data.testId, scope: data.scope, tag: data.tag, server: data.server }
-                    : { projectId: data.projectId, sessionId: data.sessionId, server: data.server },
-                icon: new URL("icon-192.png", SCOPE).href,
-                vibrate: data.vibrate ? [180, 80, 180] : [],
-            });
-            if (testId) await recordPushTest(testId, "registered");
-        } catch (error) {
-            if (testId) await recordPushTest(testId, "display_failed",
-                ["NotAllowedError", "TypeError", "DataCloneError", "InvalidStateError", "SecurityError"].includes(error?.name) ? error.name : "Error");
-            throw error;
-        }
+            || typeof data.tag !== "string" || data.tag.length > 200
+            || !notificationId(data.projectId) || !notificationId(data.sessionId)) return;
+        await self.registration.showNotification(data.failed ? "작업 실패" : "작업 완료", {
+            body: data.failed ? "대화의 요청 처리가 실패하거나 중단됐습니다."
+                : (typeof data.body === "string" && data.body.trim()) || "대화의 요청 처리가 끝났습니다.",
+            tag: `${data.server}:${data.tag}`,
+            data: { projectId: data.projectId, sessionId: data.sessionId, server: data.server },
+            icon: new URL("icon-192.png", SCOPE).href,
+            vibrate: data.vibrate ? [180, 80, 180] : [],
+        });
     })());
 });
 self.addEventListener("notificationclick", (event) => {
     event.notification.close();
     const data = event.notification.data;
-    if (!data || !/^[0-9a-f]{64}$/.test(data.server)) return;
-    const test = data.test === true && notificationId(data.testId) && data.tag === `test:${data.testId}` && data.scope === SCOPE.href;
-    if (!test && (!notificationId(data.projectId) || !notificationId(data.sessionId))) return;
+    if (!data || !/^[0-9a-f]{64}$/.test(data.server) || !notificationId(data.projectId) || !notificationId(data.sessionId)) return;
     event.waitUntil((async () => {
         // The app validates the server fingerprint before opening an identifier.
         const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
         const client = clients.find((c) => c.url.startsWith(SCOPE.href));
         if (client) {
-            if (!test) client.postMessage({ type: "open-session", projectId: data.projectId, sessionId: data.sessionId, server: data.server });
+            client.postMessage({ type: "open-session", projectId: data.projectId, sessionId: data.sessionId, server: data.server });
             await client.focus();
             return;
         }
         const url = new URL(SCOPE);
-        if (!test) {
-            url.searchParams.set("notify_project", data.projectId);
-            url.searchParams.set("notify_session", data.sessionId);
-            url.searchParams.set("notify_server", data.server);
-        }
+        url.searchParams.set("notify_project", data.projectId);
+        url.searchParams.set("notify_session", data.sessionId);
+        url.searchParams.set("notify_server", data.server);
         await self.clients.openWindow(url.href);
     })());
 });

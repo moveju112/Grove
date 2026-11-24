@@ -1,5 +1,6 @@
 import { ApiError, api, newKey } from "../api/client";
-import type { RecentItem } from "../api/generated";
+import { querySnapshot } from "./store";
+import type { RecentItem, RecentPage } from "../api/generated";
 
 // 최근 항목 고정·숨김의 기기 간 동시 변경(RECENT-006).
 // 사용자가 누른 의도(바꾸려는 필드와 값)만 보내므로, 충돌하면 최신 항목에서 이미 그 값이면 그대로 두고
@@ -41,9 +42,17 @@ export async function patchRecent(item: RecentItem, intent: RecentIntent): Promi
     await prepareRecentPatch(item, intent)();
 }
 
-export async function hideSessionRecent(projectId: string, sessionId: string): Promise<void> {
-    const item = await api.post<RecentItem>("/recent/touch", {
-        kind: "session", project_id: projectId, resource_id: sessionId, reopen: false,
-    });
-    await patchRecent(item, { hidden: true });
+export function prepareSessionHide(projectId: string, sessionId: string) {
+    let item = querySnapshot<RecentPage>("recent:tabs").data?.items.find(it =>
+        it.kind === "session" && it.project_id === projectId && it.resource_id === sessionId);
+    let patch: (() => Promise<void>) | undefined;
+    const key = newKey();
+    return async () => {
+        item ??= await api.post<RecentItem>("/recent/touch", {
+            kind: "session", project_id: projectId, resource_id: sessionId, reopen: false,
+        }, { key });
+        patch ??= prepareRecentPatch(item, { hidden: true });
+        await patch();
+        return item.id;
+    };
 }

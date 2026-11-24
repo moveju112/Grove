@@ -140,13 +140,15 @@ for (const theme of ["light", "dark"] as const) {
             await expect(row.getByRole("button", { name: "상세 설정", exact: true })).toHaveCount(0);
             await expect(settings.getByRole("form", { name: "모델 프로필 추가", exact: true })).toBeVisible();
             await row.getByRole("button", { name: `${profiles[0]!.name} 연결 정보` }).click();
-            await expect(page.getByRole("tooltip")).toContainText("서버 CLI 계정");
+            await expect(page.getByRole("tooltip")).toContainText("서버 CLI · 프로젝트 수정·검사 가능");
             await page.keyboard.press("Escape");
             await openDetails(row);
             await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
             const context = row.getByLabel("context token 수", { exact: true });
             await context.fill("12345");
             await expect(context).toHaveValue("12345");
+            // 설정 입력은 포커스를 잃을 때 저장한다.
+            await context.blur();
             await expect(row.getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
             await page.screenshot({ path: info.outputPath(`profiles-${theme}-390.png`) });
             const pane = settings.getByTestId("settings-scroll");

@@ -5,7 +5,7 @@ import { LayoutPersistence, type RemoteLayout } from "./layoutPersistence";
 import { projectLayout, projectLayoutKey } from "./projectLayout";
 import { querySnapshot, subscribeQuery } from "./store";
 import { applyWorkspaceTabs, mergeWorkspaceTabs, workspaceTabs, workspaceTabsKey } from "./workspaceTabs";
-import { prefetchConversation, readWorkspaceResume, selectionKey } from "./workspaceStartup";
+import { prefetchConversation, readWorkspaceResume, selectionKey, startupSelection } from "./workspaceStartup";
 import { hasPendingInput } from "../components/pwa/pendingInput";
 
 type Target = Omit<L.Tab, "id">;
@@ -118,7 +118,7 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
             const snapshot = sync.store.snapshot();
             const candidate = resumeProject.current;
             const resume = (candidate?.base === baseId && candidate.projectId === projectId && candidate.canApply())
-                || !L.allTabs(local).some((tab) => tab.kind === "session");
+                || !L.focusedLeaf(local).active_tab;
             const next = snapshot ? applyWorkspaceTabs(local, snapshot, resume) : local;
             entry.hydrated = true;
             if (next !== local) store.change(next);
@@ -131,13 +131,12 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
 
     useEffect(() => {
         let cancelled = false;
-        let stored: string | null = null;
-        try { stored = localStorage.getItem(selectionKey(base)); } catch { /* 서버 배치의 위치로 복원한다. */ }
-        if (stored && !/^[a-z0-9-]{1,64}$/i.test(stored)) stored = null;
+        const { project: stored, resumeShared } = startupSelection(base);
         if (stored && active() && !userSelected.current.has(base)) {
             loadProject(base, stored);
             setSelected((cur) => base in cur ? cur : { ...cur, [base]: stored });
         }
+        if (!resumeShared) return;
         const controller = new AbortController();
         let interacted = false;
         const markInteraction = (event: Event) => { if (event.isTrusted) interacted = true; };
@@ -195,7 +194,10 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
     }, [active, base, loadBase, loadProject, publish]);
     const projectId = selected[base];
     useEffect(() => {
-        if (projectId) loadProject(base, projectId);
+        if (!projectId) return;
+        loadProject(base, projectId);
+        try { sessionStorage.setItem(selectionKey(base), projectId); }
+        catch { /* 탭 저장소가 없으면 새로고침 때 기기 선택을 사용한다. */ }
     }, [base, projectId, loadProject]);
     useEffect(() => () => {
         closed.current = true;

@@ -468,7 +468,7 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
             )}
             {(requestError || notificationIssue) && <Text as="p" display="block" type="supporting" color="warning" role="status">{requestError || notificationIssue}</Text>}
             {permission === "default" && <Button variant="secondary" density="compact" onClick={() => void request()}>브라우저 알림 허용</Button>}
-            <NotificationTests sound={p.notifySound} vibrate={p.notifyVibrate} />
+            <NotificationTests />
         </>
     );
 }
@@ -603,9 +603,12 @@ function Definitions({ target, kind, defs, modelSearch, linkedKey, hasLinkError,
     }, [modelSearch, linkedKey]);
     const list = useQuery<Definition[]>(`definitions:${kind}`, () => api.get(`/definitions?kind=${kind}`));
     const modelSettings = useEffectiveSettings({});
+    // 위의 역할 개요가 처음 조회를 마쳐 높이가 정해진 뒤에 역할 행으로 링크 이동한다(먼저 이동하면 개요가 커지며 행이 밀려난다).
+    const [overviewSettled, setOverviewSettled] = useState(kind !== "agent");
+    const settleOverview = useCallback((settled: boolean) => { if (settled) setOverviewSettled(true); }, []);
     return (
         <Stack gap={3}>
-            {kind === "agent" && <AgentOverview target={target} onEdit={setSel} />}
+            {kind === "agent" && <AgentOverview target={target} onEdit={setSel} onSettled={settleOverview} />}
             {kind === "agent" && !linkedKey && !hasLinkError && Boolean(modelSettings.error) && <Text type="supporting" color="error" role="alert">모델 설정을 읽지 못했어요.</Text>}
             <Grid gap={2} xstyle={settingsStyles.definitionList} data-testid="definition-list">
                 {(list.data ?? []).filter((d) => d.kind === "workflow" || d.execution === "orchestrated").map((d) => {
@@ -622,7 +625,7 @@ function Definitions({ target, kind, defs, modelSearch, linkedKey, hasLinkError,
                         </Button>
                         {d.kind === "agent" && (profile
                             ? <RoleModelChoice role={d} d={profile}
-                                settings={modelSettings} linkedKey={linkedKey} onLinkReady={onLinkReady} />
+                                settings={modelSettings} linkedKey={linkedKey} onLinkReady={overviewSettled ? onLinkReady : undefined} />
                             : <BooleanSelect label={`${d.name} 사용`} value={d.enabled} onChange={(enabled) => void save.run(() => api.put(`/definitions/agent/${d.id}`, { expected_revision: d.revision, enabled }))} />)}
                     </Card>;
                 })}

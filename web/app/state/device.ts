@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import { DEFAULT_RECENT_WINDOW, DEFAULT_RECENT_WINDOWS, isRecentWindow, normalizeRecentWindows, type RecentWindow } from "./recentWindow";
 import type { FollowKind } from "./sendOptions";
 import { DEFAULT_SHORTCUTS, normalizeShortcuts, type KeyboardShortcuts } from "./shortcuts";
@@ -63,6 +63,8 @@ export type Prefs = {
     notifyPush: boolean;
     recentWindows: RecentWindow[];
     recentWindow: RecentWindow;
+    /// 모델 목록에 계열별 최신 버전 외의 이전 모델도 보인다.
+    showAllModels: boolean;
 };
 
 // 예전 클라이언트는 작업 공간을 연 뒤에만 배치용 기기 ID를 만들었다.
@@ -78,6 +80,7 @@ export const defaultPrefs: Prefs = {
     theme: "system", fontSize: 14, enterToSend: false, confirmTerminalPaste: true, clock: "system", timeStyle: "absolute",
     notifyDone: true, notifyApproval: true, notifyServer: true, notifySound: true, notifyVibrate: true, notifyPush: true,
     recentWindows: [...DEFAULT_RECENT_WINDOWS], recentWindow: DEFAULT_RECENT_WINDOW,
+    showAllModels: false,
     runningSendMode: "steer",
     progressVisibility: "collapse",
     keyboardShortcuts: DEFAULT_SHORTCUTS,
@@ -102,6 +105,7 @@ export function loadPrefs(): Prefs {
         prefs.keyboardShortcuts = normalizeShortcuts(prefs.keyboardShortcuts);
         if (typeof prefs.confirmTerminalPaste !== "boolean") prefs.confirmTerminalPaste = defaultPrefs.confirmTerminalPaste;
         if (typeof prefs.notifyPush !== "boolean") prefs.notifyPush = defaultPrefs.notifyPush;
+        if (typeof prefs.showAllModels !== "boolean") prefs.showAllModels = defaultPrefs.showAllModels;
         if (!activityDisplayOptions.some(({ value }) => saved.activityDisplay === value)) {
             prefs.activityDisplay = sessionVines === false ? "hidden" : defaultPrefs.activityDisplay;
         }
@@ -122,22 +126,46 @@ export function savePrefs(p: Prefs) {
     window.dispatchEvent(new Event(PREFS_EVENT));
 }
 
-/// 설정이 바뀌면(같은 창의 다른 pane, 다른 탭) 다시 그린다.
-export function usePrefs(): Prefs {
-    const [p, setP] = useState<Prefs>(loadPrefs);
-    useEffect(() => {
-        const on = () => setP(loadPrefs());
-        const onStorage = (e: StorageEvent) => {
-            if (e.key === PREF_KEY) on();
-        };
-        window.addEventListener(PREFS_EVENT, on);
-        window.addEventListener("storage", onStorage);
-        return () => {
-            window.removeEventListener(PREFS_EVENT, on);
-            window.removeEventListener("storage", onStorage);
-        };
-    }, []);
-    return p;
+// 설정 변경 한 번당 저장소를 한 번 읽는다. 시간 표시·입력창처럼 많이 뜨는 화면은 쓰는 필드만 구독한다.
+const prefListeners = new Set<() => void>();
+let snapshot = defaultPrefs;
+function refreshPrefs() {
+    const next = { ...loadPrefs() };
+    // 정규화가 매번 만드는 두 객체도 내용이 같으면 구독 중인 참조를 보존한다.
+    if (JSON.stringify(next.keyboardShortcuts) === JSON.stringify(snapshot.keyboardShortcuts)) next.keyboardShortcuts = snapshot.keyboardShortcuts;
+    if (next.recentWindows.join() === snapshot.recentWindows.join()) next.recentWindows = snapshot.recentWindows;
+    snapshot = next;
+    for (const listener of prefListeners) listener();
+}
+
+function storageChanged(event: StorageEvent) {
+    if (event.key === null || event.key === PREF_KEY) refreshPrefs();
+}
+function subscribePrefs(listener: () => void) {
+    if (!prefListeners.size) {
+        window.addEventListener(PREFS_EVENT, refreshPrefs);
+        window.addEventListener("storage", storageChanged);
+        refreshPrefs();
+    }
+    prefListeners.add(listener);
+    return () => {
+        prefListeners.delete(listener);
+        if (!prefListeners.size) {
+            window.removeEventListener(PREFS_EVENT, refreshPrefs);
+            window.removeEventListener("storage", storageChanged);
+        }
+    };
+}
+
+export function usePrefs(): Prefs;
+export function usePrefs<K extends keyof Prefs>(...keys: K[]): Pick<Prefs, K>;
+export function usePrefs(...keys: (keyof Prefs)[]): Prefs {
+    const previous = useRef<Prefs | null>(null);
+    const selected = () => {
+        if (!previous.current || !keys.length || keys.some(key => previous.current![key] !== snapshot[key])) previous.current = snapshot;
+        return previous.current;
+    };
+    return useSyncExternalStore(subscribePrefs, selected, () => defaultPrefs);
 }
 
 /// 실제 적용되는 테마(system이면 OS 설정).

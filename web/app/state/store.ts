@@ -2,7 +2,7 @@
 // 소유자: 서버 상태 = 이 cache(서버가 원천), 기기별 UI 상태 = layout(localStorage), 영속 서버 상태는 API로만 변경.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { EventRecord } from "../api/generated";
+import type { EventRecord, RecentPage } from "../api/generated";
 import { refreshFiles } from "./fileWatch";
 import { deliveryTiming } from "./deliveryTiming";
 import { isTransportError } from "../api/client";
@@ -65,7 +65,7 @@ async function load(key: string, keepPending = false) {
         const current = entries.get(key);
         if (g !== generation || current?.flight !== flight) return;
         current.flight = undefined;
-        current.stale = flight.again;
+        current.stale = flight.again || (!!current.error && !subs.get(key)?.size);
         current.loading = waiting;
         if (waiting) onTransportFailure?.();
         if (flight.again && !waiting && subs.get(key)?.size) {
@@ -157,6 +157,18 @@ export function cacheStats(): { entries: number; subscribed: number } {
     return { entries: entries.size, subscribed: [...subs.values()].filter((s) => s.size > 0).length };
 }
 
+// 숨김 확정 시 다른 기간의 사본과 진행 중이던 이전 조회도 함께 정리한다.
+export function removeHiddenRecent(id: string) {
+    for (const [key, entry] of entries) {
+        if (!key.startsWith("recent:range:") && key !== "recent:tabs") continue;
+        const page = entry.data as RecentPage | undefined;
+        if (page?.items.some(item => item.id === id)) {
+            setData(key, { ...page, items: page.items.filter(item => item.id !== id), total: page.total - 1 });
+        }
+        refresh(key);
+    }
+}
+
 export function setData(key: string, data: unknown) {
     const e = entries.get(key);
     if (e) {
@@ -165,15 +177,22 @@ export function setData(key: string, data: unknown) {
     }
 }
 
-export function useQuery<T>(key: string | null, fetcher: () => Promise<T>, options?: { keepPreviousData: true; scope: string }): { data: T | undefined; error: unknown; loading: boolean; reload: () => void } {
+export function useQuery<T>(key: string | null, fetcher: () => Promise<T>, options?: { keepPreviousData: true; scope: string }): { data: T | undefined; error: unknown; loading: boolean; isPreviousData: boolean; reload: () => void } {
     const paneVisible = usePaneVisible();
     const pageVisible = usePageVisible();
     const visible = paneVisible && pageVisible;
     const [, force] = useState(0);
     const previous = useRef<{ scope: string; generation: number; data: T } | null>(null);
+    const snapshot = querySnapshot<T>(key);
+    const loading = snapshot.loading || (!!key && visible && !entries.has(key));
     useEffect(() => {
         if (!key || !visible) return;
-        return subscribeQuery(key, fetcher, () => force((x) => x + 1));
+        const update = () => force((x) => x + 1);
+        const release = subscribeQuery(key, fetcher, update);
+        // 선조회가 render와 구독 사이에 끝났어도 그 결과를 놓치지 않는다.
+        const current = querySnapshot<T>(key);
+        if (current.data !== snapshot.data || (current.error ?? null) !== (snapshot.error ?? null) || current.loading !== loading) update();
+        return release;
         // fetcher는 key가 같으면 같은 대상을 읽는다고 가정한다.
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [key, visible]);
@@ -182,12 +201,11 @@ export function useQuery<T>(key: string | null, fetcher: () => Promise<T>, optio
         const entry = key ? entries.get(key) : undefined;
         if (entry && visible) entry.fetcher = fetcher;
     });
-    const snapshot = querySnapshot<T>(key);
     if (options && snapshot.data !== undefined) previous.current = { scope: options.scope, generation, data: snapshot.data };
     const placeholder = !!key && snapshot.data === undefined && !!options
         && previous.current?.scope === options.scope && previous.current.generation === generation;
-    return { ...snapshot, data: placeholder ? previous.current!.data : snapshot.data,
-        loading: snapshot.loading || (placeholder && !entries.has(key!)), reload: () => key && refresh(key) };
+    return { ...snapshot, isPreviousData: placeholder, data: placeholder ? previous.current!.data : snapshot.data,
+        loading, reload: () => key && refresh(key) };
 }
 
 export function querySnapshot<T>(key: string | null): { data: T | undefined; error: unknown; loading: boolean } {

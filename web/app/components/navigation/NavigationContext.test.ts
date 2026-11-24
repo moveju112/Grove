@@ -21,7 +21,7 @@ const render = (overrides: Partial<NavigationContextProps> = {}) => renderToStat
 }));
 
 beforeEach(() => {
-    vi.mocked(useQuery).mockReturnValue({ data: session, error: null, loading: false, reload: vi.fn() });
+    vi.mocked(useQuery).mockReturnValue({ data: session, error: null, loading: false, isPreviousData: false, reload: vi.fn() });
 });
 
 describe("현재 위치의 접근성·오류 표시", () => {
@@ -38,7 +38,7 @@ describe("현재 위치의 접근성·오류 표시", () => {
         expect(html).not.toContain("Breadcrumb");
     });
     it("조회 실패를 알려도 다른 세션 이름이나 서버 오류 내용을 노출하지 않는다", () => {
-        vi.mocked(useQuery).mockReturnValue({ data: { ...session, id: "old" }, error: new Error("private-error"), loading: false, reload: vi.fn() });
+        vi.mocked(useQuery).mockReturnValue({ data: { ...session, id: "old" }, error: new Error("private-error"), loading: false, isPreviousData: false, reload: vi.fn() });
         const html = render();
         expect(html).toContain("세션 s");
         expect(html).toContain("조회 실패");

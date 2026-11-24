@@ -1,6 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
+import { mkdtempSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { frames } from "./fixture";
-import { apiCall, ensureProfile, ensureProjects, login, openDetails, script, sessionView, useWorkspaces } from "./helpers";
+import { apiCall, ensureProfile, ensureProjects, login, openDetails, requireToolApproval, script, sessionView, state, useWorkspaces } from "./helpers";
 
 const row = (page: Page, id: string) => page.locator(`[data-testid="sidebar-session"][data-session="${id}"]`);
 const project = (page: Page, id: string) => page.locator(`[data-testid="sidebar-project"][data-project-id="${id}"]`);
@@ -38,6 +40,9 @@ test("사이드바 핀·읽음은 다른 기기와 새로고침에 유지되고 
         await (await sessionMenu(page, session.id)).getByRole("button", { name: "읽음 표시", exact: true }).click();
         await expect(second.getByTestId("sidebar-unread")).toHaveCount(0);
         await page.reload();
+        // 빈 프로젝트는 첫 화면을 기존 영역에 연다. 오른쪽 분할의 기준이 될 탭을 먼저 연다.
+        await project(page, a.id).getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
+        await expect(page.getByRole("tab", { selected: true }).first()).toBeVisible();
         await expect((await sessionMenu(page, session.id)).getByRole("button", { name: "세션 고정 해제", exact: true })).toBeVisible();
         await expect(first.getByTestId("sidebar-unread")).toHaveCount(0);
         await apiCall("POST", `/sessions/${session.id}/messages`, { text: "읽은 뒤 새 메시지" });
@@ -45,7 +50,7 @@ test("사이드바 핀·읽음은 다른 기기와 새로고침에 유지되고 
         await expect(second.getByTestId("sidebar-unread")).toBeVisible();
         await firstTools.getByRole("button", { name: "세션 오른쪽에 열기", exact: true }).click();
         await expect(sessionView(page, session.id)).toBeVisible();
-        await expect(page.getByTestId("pane")).toHaveCount(2);
+        await expect(page.getByTestId("pane").filter({ visible: true })).toHaveCount(2);
         await expect(first.getByTestId("sidebar-unread")).toHaveCount(0);
         await expect(page.getByRole("region", { name: "최근", exact: true }).getByTestId("recent-item").filter({ hasText: title })).toBeVisible();
         await secondTools.getByRole("button", { name: "세션 고정 해제", exact: true }).click();
@@ -56,7 +61,10 @@ test("사이드바 핀·읽음은 다른 기기와 새로고침에 유지되고 
 });
 
 test("실제 턴의 실행 중·승인 대기·완료·오류를 프로젝트와 세션에 표시한다", async ({ page }) => {
-    const { a } = await ensureProjects();
+    const a = await apiCall<{ id: string }>("POST", "/projects", {
+        root_path: mkdtempSync(join(dirname(state().projA), "sidebar-approval-")),
+    });
+    await requireToolApproval(a.id);
     await useWorkspaces(a.id);
     const profile = await ensureProfile();
     const marker = `sidebar-status-${Date.now()}`;

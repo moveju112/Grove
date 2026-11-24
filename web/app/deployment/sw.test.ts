@@ -148,6 +148,18 @@ describe.each(["/", "/grove/", "/grove/child/"])("worker at %s", (base) => {
         }
     });
 
+    it("removes only this scope's retired push-test diagnostics on activation", async () => {
+        const w = worker(base);
+        const other = base === "/" ? "/grove/" : "/";
+        const retired = `grove-push-tests-${encodeURIComponent(origin + base)}`;
+        const keep = `grove-push-tests-${encodeURIComponent(origin + other)}`;
+        for (const key of [retired, keep]) w.entries.set(key, new Map());
+        await w.dispatch("install");
+        await w.dispatch("activate");
+        expect(w.entries.has(retired)).toBe(false);
+        expect(w.entries.has(keep)).toBe(true);
+    });
+
     it("deletes only the exact scope's previous versions and waits for user consent", async () => {
         const w = worker(base);
         const prefix = `grove-shell-${encodeURIComponent(origin + base)}-`;

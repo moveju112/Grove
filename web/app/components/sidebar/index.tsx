@@ -11,10 +11,10 @@ import { useId, useState, type KeyboardEvent, type ReactNode } from "react";
 import { ActionMenu } from "../ui/Controls";
 import { ApiError, api } from "../../api/client";
 import type { Project } from "../../api/generated";
-import { useQuery } from "../../state/store";
+import { subscribeQuery, useQuery } from "../../state/store";
 import type { Opener } from "../Workspace";
 import { useWorkspaces } from "../../state/workspaces";
-import { groupByWorkspace, markSessionRead, pinSession, projectStatus, STATUS, type SidebarPage, type SidebarSession } from "./state";
+import { groupByWorkspace, markSessionRead, useSessionPin, projectStatus, STATUS, type SidebarPage, type SidebarSession } from "./state";
 
 export function StatusIcon({ status }: { status: string }) {
     const value = STATUS[status] ?? STATUS.unknown!;
@@ -42,6 +42,7 @@ export function SessionRow({ item, open, narrow }: { item: SidebarSession; open:
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const s = item.session;
+    const pin = useSessionPin(item, item.pinned);
     const target = { kind: "session" as const, project_id: s.project_id, resource_id: s.id, title: s.title };
     const run = async (action: () => Promise<void>) => {
         setBusy(true);
@@ -52,17 +53,17 @@ export function SessionRow({ item, open, narrow }: { item: SidebarSession; open:
     };
     return <ListItem data-testid="sidebar-session" data-session={s.id} label={<>
         <GroveButton type="button" appearance="navigation" data-testid="sidebar-session-open" onClick={() => open(target)} title={s.preview ?? s.title}>
-            <StackItem as="span" size="fill"><GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} data-testid="sidebar-session-title">{item.pinned && <GroveText type="inherit" color="inherit" aria-label="고정됨">★ </GroveText>}{s.title}</GroveText></StackItem>
+            <StackItem as="span" size="fill"><GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} data-testid="sidebar-session-title">{pin.pinned && <GroveText type="inherit" color="inherit" aria-label="고정됨">★ </GroveText>}{s.title}</GroveText></StackItem>
             <StatusIcon status={item.status} />
             {s.unread && <GroveText type="supporting" color="secondary" weight="semibold" data-testid="sidebar-unread">● 읽지 않음</GroveText>}
         </GroveButton>
         {error && <GroveText as="p" display="block" type="supporting" color="error" role="alert">{error}</GroveText>}
     </>} endContent={<ActionMenu label={`${s.title} 도구`} data-testid="sidebar-session-actions">
             <GroveStack gap={1} role="toolbar" aria-label={`${s.title} 도구`} onKeyDown={toolbarKeys}>
-            <GroveButton type="button" appearance="navigation" disabled={busy} aria-pressed={item.pinned}
-                aria-label={item.pinned ? "세션 고정 해제" : "세션 고정"} title={item.pinned ? "고정 해제" : "고정"}
-                onClick={() => void run(() => pinSession(item, !item.pinned))}>
-                <Icon name="pin" />{item.pinned ? "고정 해제" : "고정"}
+            <GroveButton type="button" appearance="navigation" disabled={busy} aria-pressed={pin.pinned}
+                aria-label={pin.pinned ? "세션 고정 해제" : "세션 고정"} title={pin.pinned ? "고정 해제" : "고정"}
+                onClick={() => void run(pin.toggle)}>
+                <Icon name="pin" />{pin.pinned ? "고정 해제" : "고정"}
             </GroveButton>
             <GroveButton type="button" appearance="navigation" disabled={busy || !s.unread} aria-label="읽음 표시" title="읽음 표시"
                 onClick={() => void run(() => markSessionRead(item))}><Icon name="check" />읽음 표시</GroveButton>
@@ -86,6 +87,11 @@ export function SidebarProject({ project, children, open, narrow }: {
     return <ProjectWorkspaceTree project={project} open={open} narrow={narrow}>{children}</ProjectWorkspaceTree>;
 }
 
+function sidebarPage(projectId: string, offset: number, unreadOnly: boolean) {
+    const query = new URLSearchParams({ offset: String(offset), limit: "30", unread_only: String(unreadOnly) });
+    return { key: `recent:sidebar:${projectId}:${query}`, read: () => api.get<SidebarPage>(`/projects/${projectId}/sidebar?${query}`) };
+}
+
 function ProjectWorkspaceTree({ project, children, open, narrow }: {
     project: Project; children: ReactNode; open: Opener; narrow: boolean;
 }) {
@@ -93,15 +99,17 @@ function ProjectWorkspaceTree({ project, children, open, narrow }: {
     const [unreadOnly, setUnreadOnly] = useState(false);
     const [offset, setOffset] = useState(0);
     const listId = useId();
-    const query = new URLSearchParams({ offset: String(offset), limit: "30", unread_only: String(unreadOnly) });
-    // 기존 recent:* invalidation을 재사용해 메시지·턴·도구·읽음·핀 변경과 resync를 모두 받는다.
-    const page = useQuery<SidebarPage>(`recent:sidebar:${project.id}:${query}`, () => api.get(`/projects/${project.id}/sidebar?${query}`),
-        { keepPreviousData: true, scope: `sidebar:${project.id}` });
+    const query = sidebarPage(project.id, offset, unreadOnly);
+    const page = useQuery(query.key, query.read, { keepPreviousData: true, scope: `sidebar:${project.id}` });
+    const warm = (nextOffset: number, onlyUnread: boolean) => {
+        const next = sidebarPage(project.id, nextOffset, onlyUnread);
+        subscribeQuery(next.key, next.read, () => undefined)();
+    };
     const data = page.data;
     const unread = data?.unread ?? 0;
     const status = data ? projectStatus(data.statuses) : null;
     const spaces = useWorkspaces(project.id, true);
-    const groups = groupByWorkspace(data?.items ?? [], spaces);
+    const groups = groupByWorkspace((data?.items ?? []).filter(item => !unreadOnly || item.session.unread), spaces);
     return <GroveStack as="section" gap={0} aria-label={`${project.name} 탐색`} data-testid="sidebar-project" data-project-id={project.id}>
         <GroveStack direction="horizontal" align="center" gap={0}>
         <StackItem size="fill">{children}</StackItem>
@@ -117,6 +125,7 @@ function ProjectWorkspaceTree({ project, children, open, narrow }: {
                 <Icon name="chevronRight" />대화 {expanded ? "접기" : "펼치기"}{data && <GroveText hasTabularNumbers type="supporting" color="secondary">({data.total})</GroveText>}
             </GroveButton>
             <GroveButton type="button" appearance="navigation" aria-pressed={unreadOnly} aria-label="읽지 않음만" title="읽지 않음만"
+                onPointerEnter={() => warm(0, !unreadOnly)} onFocus={() => warm(0, !unreadOnly)}
                 onClick={() => { setUnreadOnly((v) => !v); setOffset(0); }}><Icon name="bell" />읽지 않음만</GroveButton>
             <GroveButton type="button" appearance="navigation" onClick={page.reload} aria-label="목록 새로고침" title="목록 새로고침"><Icon name="restore" />목록 새로고침</GroveButton>
         </GroveStack>
@@ -142,7 +151,8 @@ function ProjectWorkspaceTree({ project, children, open, narrow }: {
             {data?.items.length === 0 && unreadOnly && <GroveText as="p" display="block" type="supporting" color="secondary">읽지 않은 대화가 없습니다.</GroveText>}
             <GroveStack gap={1} direction="horizontal" align="center" wrap="wrap" role="group" aria-label="대화 페이지">
                 {offset > 0 && <GroveButton type="button" variant="secondary" density="compact" onClick={() => setOffset(Math.max(0, offset - 30))}>이전 대화</GroveButton>}
-                {data?.next_offset != null && <GroveButton type="button" variant="secondary" density="compact" onClick={() => setOffset(data.next_offset!)}>다음 대화</GroveButton>}
+                {data?.next_offset != null && <GroveButton type="button" variant="secondary" density="compact" onPointerEnter={() => warm(data.next_offset!, unreadOnly)} onFocus={() => warm(data.next_offset!, unreadOnly)}
+                    onClick={() => setOffset(data.next_offset!)}>다음 대화</GroveButton>}
             </GroveStack>
         </GroveStack>
     </GroveStack>;

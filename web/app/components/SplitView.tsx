@@ -30,14 +30,14 @@ const SessionView = lazy(async () => ({ default: (await import("./SessionView"))
 export type RecentPaneReveal = { leafId: string; tabId: string; request: number };
 type Props = { layout: L.Layout; update: (f: (l: L.Layout) => L.Layout) => void; open: Opener; narrow: boolean; visible: boolean; projects: Project[];
     closeTab: (tabId: string) => void; closingTabs: ReadonlySet<string>;
-    recentReveal?: RecentPaneReveal;
+    recentReveal?: RecentPaneReveal; focusPreview?: (leaf: L.Leaf) => void;
     /** 이 배치의 프로젝트. 탭을 모두 닫은 빈 pane에서 새 탭을 열 때 쓴다. */
     projectId?: string; onNewTerminal?: () => void;
     onProjectDrop?: (target: Omit<L.Tab, "id">, edge: L.DropEdge) => void; onCloseProject?: () => void };
 type ViewProps = Props & { maximized: string | null; toolLeaf?: string; toggleMaximize: (leafId: string) => void; activityDisplay: Prefs["activityDisplay"]; pageVisible: boolean };
 
 export function SplitView(p: Props) {
-    const { activityDisplay } = usePrefs();
+    const { activityDisplay } = usePrefs("activityDisplay");
     const pageVisible = usePageVisible();
     const [maximized, setMaximized] = useState<string | null>(null);
     useEffect(() => {
@@ -226,8 +226,15 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
         <PaneToolsTarget.Provider value={p.narrow ? null : p.toolLeaf === leaf.id && (toolsTarget ?? false)}>
         <Stack as="section" gap={0} xstyle={splitStyles.pane} data-focused={focused} data-testid="pane" data-leaf={leaf.id}
             // pointer뿐 아니라 키보드(Tab) 포커스 진입도 현재 pane으로 삼아, 사이드바에서 여는 항목이 입력 중인 pane에 열리게 한다(PANE-006).
-            onPointerDownCapture={() => !focused && p.update((l) => L.focus(l, leaf.id))}
-            onFocusCapture={() => !focused && visible && p.update((l) => L.focus(l, leaf.id))}
+            onPointerDownCapture={() => {
+                if (!focused) p.update(l => L.focus(l, leaf.id));
+                p.focusPreview?.(leaf);
+            }}
+            onFocusCapture={() => {
+                if (!visible) return;
+                if (!focused) p.update(l => L.focus(l, leaf.id));
+                p.focusPreview?.(leaf);
+            }}
             onDragOver={(e) => {
                 if (!draggable(e)) return;
                 e.preventDefault();
@@ -346,7 +353,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
 function EmptyPane({ newConversation, newTerminal, openShortcuts }: {
     newConversation: () => void; newTerminal?: () => void; openShortcuts: () => void;
 }) {
-    const { keyboardShortcuts } = usePrefs();
+    const { keyboardShortcuts } = usePrefs("keyboardShortcuts");
     const [keys] = useState(() => shortcutWindow() ? { mac: macShortcuts() } : null);
     const shortcut = (action: "newSession" | "newTerminal") => {
         const binding = keys && shortcutBinding(keyboardShortcuts, action);

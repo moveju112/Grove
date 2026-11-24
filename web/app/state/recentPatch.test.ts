@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { ApiError, api } from "../api/client";
-import { prepareRecentPatch, retryIntent } from "./recentPatch";
+import { prepareRecentPatch, prepareSessionHide, retryIntent } from "./recentPatch";
 
 describe("최근 항목 동시 변경", () => {
     it("다른 기기가 이미 같은 값으로 바꿨으면 다시 보내지 않는다", () => {
@@ -11,6 +11,26 @@ describe("최근 항목 동시 변경", () => {
     });
     it("같은 필드를 반대로 바꿨어도 사용자가 방금 누른 의도를 한 번 적용한다", () => {
         expect(retryIntent({ pinned: false, hidden: false, revision: 7 }, { pinned: true })).toEqual({ expected_revision: 7, pinned: true });
+    });
+    it("탭의 최근 항목을 처음 만들거나 숨긴 응답을 잃으면 마지막 단계의 키를 재사용한다", async () => {
+        const lost = new ApiError(0, "network_error", "응답 유실", true, { result_unknown: true });
+        const touch = vi.spyOn(api, "post").mockRejectedValueOnce(lost).mockResolvedValueOnce({ id: "r", revision: 2 });
+        const patch = vi.spyOn(api, "patch").mockRejectedValueOnce(lost).mockResolvedValueOnce({});
+        try {
+            const hide = prepareSessionHide("p", "s");
+            await expect(hide()).rejects.toBe(lost);
+            await expect(hide()).rejects.toBe(lost);
+            expect(await hide()).toBe("r");
+            expect(touch.mock.calls).toHaveLength(2);
+            expect(touch.mock.calls[1]).toEqual(touch.mock.calls[0]);
+            expect(patch.mock.calls).toHaveLength(2);
+            expect(patch.mock.calls[1]).toEqual(patch.mock.calls[0]);
+            expect(touch.mock.calls[0]![2]?.key).toBeTruthy();
+            expect(patch.mock.calls[0]![2]?.key).toBeTruthy();
+        } finally {
+            touch.mockRestore();
+            patch.mockRestore();
+        }
     });
     it("충돌로 다시 적용한 요청의 응답을 잃어도 같은 본문과 키로 확인한다", async () => {
         const patch = vi.spyOn(api, "patch")

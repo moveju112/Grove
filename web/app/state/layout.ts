@@ -373,3 +373,14 @@ export function mobileView(l: Layout): { leaf: Leaf; tab: Tab | undefined } {
     const leaf = focusedLeaf(l);
     return { leaf, tab: leaf.tabs.find((t) => t.id === leaf.active_tab) };
 }
+
+// 보류 중에는 영역과 원래 탭 배치를 보존해 실패 뒤에도 그동안의 이동·편집을 유지한다.
+export function previewClosedTabs(layout: Layout, ids: ReadonlySet<string>): Layout {
+    let root = layout.root;
+    for (const leaf of leaves(layout.root)) {
+        const hidden = leaf.tabs.filter(tab => ids.has(tab.id));
+        if (hidden.length) root = mapLeaf(root, leaf.id, () =>
+            hidden.reduce((visible, tab) => removeFromLeaf(visible, tab.id), leaf));
+    }
+    return root === layout.root ? layout : { ...layout, root };
+}

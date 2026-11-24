@@ -25,8 +25,6 @@ fn generate() -> String {
         decl::<grove::notifications::Notification>(),
         decl::<grove::web_push::PushConfig>(),
         decl::<grove::web_push::PushSubscription>(),
-        decl::<grove::web_push::tests_api::PushTestState>(),
-        decl::<grove::web_push::tests_api::PushTest>(),
         decl::<grove::bot_rooms::RoomMember>(),
         decl::<grove::bot_rooms::BotRoom>(),
         decl::<grove::projects::Project>(),

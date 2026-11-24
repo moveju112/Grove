@@ -93,12 +93,50 @@ export async function showAttention(a: Attention, sound: boolean, vibrate = fals
     } catch { return false; }
 }
 
+type RecentReadState = { kind?: unknown; resource_id?: unknown; unread?: unknown; completion_unread?: unknown };
+
+function readSessionId(item: RecentReadState): string | null {
+    return item?.kind === "session" && typeof item.resource_id === "string" && item.unread === false && item.completion_unread === false
+        ? item.resource_id : null;
+}
+
+/// 이 기기 알림창에 남은 완료·실패 알림 중 읽은 대화의 것을 닫는다. 승인 요청 알림은 승인이 끝날 때까지 유지한다.
+export async function closeReadNotifications(load: () => Promise<RecentReadState[]>): Promise<void> {
+    if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
+    const registration = await navigator.serviceWorker.getRegistration(import.meta.env.BASE_URL);
+    if (!registration) return;
+    const server = await pushServerId();
+    const shown = (await registration.getNotifications()).filter((n) => {
+        const data = n.data as { sessionId?: unknown; server?: unknown } | null;
+        return data?.server === server && typeof data.sessionId === "string" && n.tag.startsWith(`${server}:turn:`);
+    });
+    if (!shown.length) return;
+    const read = new Set((await load()).map(readSessionId).filter((id) => id !== null));
+    for (const n of shown) if (read.has((n.data as { sessionId: string }).sessionId)) n.close();
+}
+
+/// 앱을 열거나 다시 볼 때, 앱이 꺼져 있던 동안 다른 기기에서 읽은 대화의 알림도 정리한다.
+export function watchReadNotifications(load: () => Promise<RecentReadState[]>): () => void {
+    let active = true;
+    const sweep = () => {
+        if (active && document.visibilityState === "visible") void closeReadNotifications(load).catch(() => undefined);
+    };
+    sweep();
+    document.addEventListener("visibilitychange", sweep);
+    return () => { active = false; document.removeEventListener("visibilitychange", sweep); };
+}
+
 function watching(): boolean {
     return document.visibilityState === "visible" && document.hasFocus();
 }
 
 /// 이벤트 stream에서 호출한다. 사용자가 이 화면을 보고 있으면 알리지 않는다.
 export function notifyAttention(e: EventRecord) {
+    if (e.kind === "recent.updated") {
+        const item = e.payload as RecentReadState;
+        if (readSessionId(item)) void closeReadNotifications(async () => [item]).catch(() => undefined);
+        return;
+    }
     const prefs = loadPrefs();
     const a = attentionFor(e, prefs);
     if (!a || watching() || !claimAttention(a.tag, Date.now())) return;

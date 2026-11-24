@@ -9,11 +9,12 @@ import { BooleanSelect } from "./BooleanSelect";
 import { TextInput, TextArea, FileInput } from "../design/Fields";
 import { Select } from "../design/Select";
 import { ApiError, api, isLoggedIn, newKey } from "../api/client";
-import { useQuery } from "../state/store";
+import { subscribeQuery, useQuery } from "../state/store";
 import { fileAttemptKey, loadFileAttempt, loadFileBuffer, loadFileView, saveFileBuffer, saveFileView, type FileAttempt } from "../state/fileState";
 import { refreshFiles, watchFile, type FileContent as Content } from "../state/fileWatch";
 import { usePaneVisible } from "../state/paneVisibility";
 import { sha256Hex } from "../state/sha256";
+import { LoadingBar } from "./LoadingScreen";
 import { ArtifactPreview } from "./ArtifactPreview";
 import { isArtifact } from "../state/artifactPreview";
 import { ExternalEditor } from "./files/ExternalEditor";
@@ -114,10 +115,18 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
     const settledFilter = useDebouncedValue(filter);
     const [page, setPage] = useState(0);
     const [editorLocked, setEditorLocked] = useState(false);
-    const listingScope = `files:${projectId}:${dir}:${hidden}:${sort}:${settledFilter}`;
-    const listing = useQuery<Listing>(`${listingScope}:${page}`, () =>
-        api.getContract("FileList", `/projects/${projectId}/files?path=${enc(dir)}&hidden=${hidden}&sort=${sort}&offset=${page * 50}&limit=50&filter=${enc(settledFilter)}`, { requires: ["paged_reads_v1"] }),
-        { keepPreviousData: true, scope: listingScope });
+    const listPage = (path: string, offsetPage: number) => {
+        const params = new URLSearchParams({ path, hidden: String(hidden), sort, filter: settledFilter });
+        const scope = `files:${projectId}:${params}`;
+        const url = `/projects/${projectId}/files?${params}&offset=${offsetPage * 50}&limit=50`;
+        return { scope, key: `${scope}:${offsetPage}`, read: () => api.getContract("FileList", url, { requires: ["paged_reads_v1"] }) };
+    };
+    const query = listPage(dir, page);
+    const listing = useQuery<Listing>(query.key, query.read, { keepPreviousData: true, scope: query.scope });
+    const warm = (path: string, nextPage: number) => {
+        const next = listPage(path, nextPage);
+        subscribeQuery(next.key, next.read, () => undefined)();
+    };
     const changeDir = (value: string) => { setDir(value); setPage(0); };
     const mutation = useFileMutation<unknown>(() => listing.reload(), {
         key: fileAttemptKey(projectId, "", tabId, "op"), endpoint: `/projects/${projectId}/files/op`, method: "post",
@@ -126,6 +135,18 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
         key: fileAttemptKey(projectId, "", tabId, "upload"), endpoint: `/projects/${projectId}/files/upload`, method: "post",
     });
     const locked = mutation.locked || uploads.locked || editorLocked;
+    const folderTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+    const cancelWarm = () => clearTimeout(folderTimer.current);
+    useEffect(() => cancelWarm, [query.key, locked]);
+    const folderIntent = (path: string) => ({
+        onMouseEnter: () => {
+            cancelWarm();
+            if (!locked) folderTimer.current = setTimeout(() => warm(path, 0), 120);
+        },
+        onMouseLeave: cancelWarm,
+        onFocus: () => { if (!locked) warm(path, 0); },
+        onPointerDown: () => { if (!locked) warm(path, 0); },
+    });
     const op = (body: Record<string, string>) => {
         if (locked) return;
         void mutation.act({ method: "post", path: `/projects/${projectId}/files/op`, body, key: newKey() });
@@ -154,7 +175,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
             <Stack as="aside" gap={2} padding={2} isScrollable xstyle={fileLayout.tree}>
                 <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                     <Code>{dir}</Code>
-                    {parent !== null && <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => changeDir(parent)}>상위 폴더</GroveButton>}
+                    {parent !== null && <GroveButton variant="secondary" density="compact" disabled={locked} {...folderIntent(parent)} onClick={() => changeDir(parent)}>상위 폴더</GroveButton>}
                 </Stack>
                 {Boolean(listing.error) && <GroveText as="div" display="block" type="inherit" color="error" role="alert">
                     {listing.error instanceof ApiError ? listing.error.message : "폴더 목록을 불러오지 못했습니다."}
@@ -185,12 +206,14 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                     <GroveButton variant="secondary" density="compact" onClick={() => { mutation.clear(); listing.reload(); }}>원문 확인 후 닫기</GroveButton>
                     <GroveText type="supporting" color="secondary">원문과 대상 경로를 확인한 뒤 새 작업을 시작하세요.</GroveText>
                 </Stack>}
+                {listing.loading && (!listing.data || listing.isPreviousData) && <LoadingBar label="폴더 목록 불러오는 중…" />}
                 <GroveList density="compact" edge="flush" hasDividers>
                     {entries.map((e) => (
                         <GroveListItem key={e.path} data-testid="file-row" label={<>
                             <GroveButton
                                 appearance="navigation" density="compact"
                                 disabled={locked || e.kind === "link_outside" || e.kind === "other"}
+                                {...(e.kind === "dir" && folderIntent(e.path))}
                                 title={e.kind === "link_outside" ? "프로젝트 밖을 가리키는 링크" : undefined}
                                 onClick={() => (e.kind === "dir" ? changeDir(e.path) : selectPath(e.path))}
                             >
@@ -218,8 +241,10 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                 {listing.data && (listing.data.total > 50 || page > 0) && <Stack direction="horizontal" align="center" justify="between" gap={2}>
                     <GroveText type="supporting" color="secondary">전체 {listing.data.total}개 · {page + 1}페이지</GroveText>
                     <Stack direction="horizontal" align="center" gap={2}>
-                        <GroveButton type="button" variant="secondary" density="compact" aria-label="파일 이전 페이지" disabled={page === 0 || listing.loading} onClick={() => setPage((n) => n - 1)}>이전</GroveButton>
-                        <GroveButton type="button" variant="secondary" density="compact" aria-label="파일 다음 페이지" disabled={!listing.data.has_more || listing.loading} onClick={() => setPage((n) => n + 1)}>다음</GroveButton>
+                        <GroveButton type="button" variant="secondary" density="compact" aria-label="파일 이전 페이지" disabled={page === 0 || listing.loading}
+                            onPointerEnter={() => { if (page > 0) warm(dir, page - 1); }} onFocus={() => warm(dir, page - 1)} onClick={() => setPage((n) => n - 1)}>이전</GroveButton>
+                        <GroveButton type="button" variant="secondary" density="compact" aria-label="파일 다음 페이지" disabled={!listing.data.has_more || listing.loading}
+                            onPointerEnter={() => { if (listing.data?.has_more) warm(dir, page + 1); }} onFocus={() => warm(dir, page + 1)} onClick={() => setPage((n) => n + 1)}>다음</GroveButton>
                     </Stack>
                 </Stack>}
             </Stack>

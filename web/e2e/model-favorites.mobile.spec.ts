@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { apiCall, composerOption, ensureProjects, login, modelSettings, sessionView, state } from "./helpers";
 
 test("모델·추론·Fast 즐겨찾기는 두 기기에서 공유되고 두 열로 펼쳐진다", async ({ page, browser }, info) => {
@@ -98,6 +98,38 @@ test("모델·추론·Fast 즐겨찾기는 두 기기에서 공유되고 두 열
         await last.tap();
         await expect(last).toHaveAttribute("aria-pressed", "true");
         await expect(otherPanel.getByRole("combobox", { name: "추론" })).toHaveAttribute("data-selected-value", "xhigh");
+
+        await device.setViewportSize({ width: 390, height: 844 });
+        const cdp = await device.context().newCDPSession(device);
+        const center = async (button: Locator) => {
+            const box = (await button.boundingBox())!;
+            return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
+        };
+        const low = grid.getByRole("button", { name: /low · Fast 꺼짐/ });
+        const hold = async () => {
+            await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [await center(low)] });
+            await expect(low).toHaveAttribute("data-order-dragging", "true");
+        };
+        const keys = () => buttons.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-favorite-key")));
+        const before = await keys();
+        await hold();
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [await center(last)] });
+        await expect(last).toHaveAttribute("data-order-drop", "true");
+        await device.screenshot({ path: info.outputPath("model-favorite-drag-390.png"), animations: "disabled" });
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchCancel", touchPoints: [] });
+        await expect(low).not.toHaveAttribute("data-order-dragging", "true");
+        expect(await keys()).toEqual(before);
+
+        await hold();
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [await center(last)] });
+        await expect(last).toHaveAttribute("data-order-drop", "true");
+        await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+        const expected = [before[0], before[2], before[3], before[4], before[1], before[5]];
+        await expect.poll(keys).toEqual(expected);
+        await expect(otherPanel.getByRole("combobox", { name: "추론" })).toHaveAttribute("data-selected-value", "xhigh");
+        await page.bringToFront();
+        const synced = panel.getByTestId("model-favorite-grid").getByRole("button");
+        await expect.poll(() => synced.evaluateAll((nodes) => nodes.map((node) => node.getAttribute("data-favorite-key")))).toEqual(expected);
     } finally {
         await second.close();
         const current = await apiCall<{ items: { key: string; layers: { server: { revision: number } } }[] }>("GET", "/settings/effective");

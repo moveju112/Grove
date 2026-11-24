@@ -69,7 +69,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     }, []);
     const serverBlocked = useServerBlockReason();
     useEffect(() => visible ? deliveryTiming.watch(sessionId) : undefined, [visible, sessionId]);
-    const prefs = usePrefs();
+    const prefs = usePrefs("progressVisibility", "timeStyle", "clock", "fontSize", "theme");
     const session = useQuery<Session>(`session:${sessionId}`, () => readConversation.session(sessionId));
     useEffect(() => {
         if (session.data) onTitleChange(session.data.title);
@@ -536,7 +536,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                     <FileLinkContext.Provider value={project.data ? { projectId, rootPath: project.data.root_path } : null}>
                     <VirtualMessages key={`${tabId}:${latest.data?.timeline_revision ?? 0}`} messages={transcript.rows.filter((m) =>
                         !(failedTurn && m.turn_id === failedTurn.id && m.role === "note" && (m.content as { type?: string }).type === "turn_ended"))}
-                        targetSeq={groupedSeq(focusSeq ?? position?.anchorSeq ?? null)} presentationKey={JSON.stringify(prefs)}
+                        targetSeq={groupedSeq(focusSeq ?? position?.anchorSeq ?? null)} presentationKey={JSON.stringify([prefs.progressVisibility, prefs.timeStyle, prefs.clock, prefs.fontSize, prefs.theme])}
                         onTargetReached={(seq) => {
                             if (focusSeq == null) return;
                             setHighlight(seq);

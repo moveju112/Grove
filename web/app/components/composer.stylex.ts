@@ -16,6 +16,7 @@ export const composerStyles = stylex.create({
     },
     favoriteChip: { minHeight: 44, height: "auto", minWidth: 0, border: "1px solid var(--line-strong)", paddingInline: "var(--spacing-2)" },
     activeFavoriteChip: { borderColor: "var(--focus)", backgroundColor: "var(--sel)" },
+    favoriteDrop: { outline: "2px solid var(--accent)" },
     favoriteChipText: { minWidth: 0, flexGrow: 1, overflow: "hidden" },
     favoriteStar: { minHeight: 44, flexShrink: 0 },
     activeFavoriteStar: { color: "var(--warn)" },
