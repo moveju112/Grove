@@ -1,3 +1,4 @@
+import { usePendingAction } from "../state/usePendingAction";
 import { Stack } from "@astryxdesign/core/Stack";
 import { StatusBadge } from "../design/StatusBadge";
 import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
@@ -34,6 +35,7 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
     const [form, setForm] = useState({ title: "", url: "", pointer: "/status", success: "success", failure: "failure", interval: "60", timeout: "60" });
     const watches = q.data ?? [];
     const active = watches.filter((w) => w.status === "watching").length;
+    const creation = usePendingAction();
     const act = async (f: () => Promise<unknown>) => {
         setErr(null);
         try {
@@ -81,7 +83,7 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
                 <form
                     onSubmit={(e) => {
                         e.preventDefault();
-                        void act(async () => {
+                        void creation.run(() => act(async () => {
                             await api.post(`/sessions/${sessionId}/remote-watches`, {
                                 title: form.title,
                                 url: form.url,
@@ -91,8 +93,8 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
                                 interval_secs: Number(form.interval),
                                 timeout_mins: Number(form.timeout),
                             });
-                            setForm((f) => ({ ...f, title: "", url: "" }));
-                        });
+                            setForm((current) => current === form ? { ...form, title: "", url: "" } : current);
+                        }));
                     }}
                 >
                     <TextInput label="감시 이름" isLabelHidden placeholder="이름" value={form.title} onChange={(value) => setForm({ ...form, title: value })} />
@@ -102,7 +104,7 @@ export function RemoteWatchesPanel({ sessionId, disabled }: { sessionId: string;
                     <TextInput label="실패 값(쉼표 구분)" isLabelHidden value={form.failure} onChange={(value) => setForm({ ...form, failure: value })} />
                     <DraftInput label="확인 간격(초)" isLabelHidden type="number" min={10} max={3600} value={form.interval} onChange={(value) => setForm({ ...form, interval: value })} />
                     <DraftInput label="감시 시간(분)" isLabelHidden type="number" min={1} value={form.timeout} onChange={(value) => setForm({ ...form, timeout: value })} />
-                    <ServerActionButton type="submit" disabled={!form.title.trim() || !form.url.trim()}>감시 시작</ServerActionButton>
+                    <ServerActionButton type="submit" disabled={creation.busy || !form.title.trim() || !form.url.trim()}>감시 시작</ServerActionButton>
                 </form>
             )}
         </Panel>

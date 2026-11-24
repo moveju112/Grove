@@ -101,8 +101,11 @@ impl UsageMetrics {
         self.reasoning_unreported_responses += u64::from(usage["reasoning_tokens"].as_u64().is_none());
         self.responses += 1;
         self.unreported_responses += u64::from(input.is_none() || output.is_none());
-        // 전체 턴 시간(provider_ms)은 CLI 내 도구 실행 등을 포함한다. 과거 기록도 대체값으로 쓰지 않는다.
-        if let (Some(output), Some(ms)) = (output.filter(|n| *n > 0), usage["model_request_ms"].as_u64().filter(|n| *n > 0)) {
+        // Codex 본문 생성 구간에는 해당 본문의 토큰만 대응한다. 과금 토큰·턴 전체 시간과 섞지 않는다.
+        let generation = &usage["message_generation"];
+        let sample = generation["output_tokens"].as_u64().zip(generation["duration_ms"].as_u64())
+            .or_else(|| output.zip(usage["model_request_ms"].as_u64()));
+        if let Some((output, ms)) = sample.filter(|(tokens, ms)| *tokens > 0 && *ms > 0) {
             self.speed_samples.push(output as f64 * 1000.0 / ms as f64);
             self.measured_responses += 1;
             self.measured_output_tokens += output;
@@ -228,6 +231,18 @@ mod tests {
         assert_eq!(metrics.high10_tok_per_second, Some(30.0));
         assert_eq!((metrics.measured_responses, metrics.cli_measured_responses, metrics.responses, metrics.unreported_responses), (2, 1, 4, 1));
         assert_eq!((metrics.measured_output_tokens, metrics.response_ms), (100, 4000));
+    }
+
+    #[test]
+    fn codex_speed_uses_only_timed_message_tokens() {
+        let mut m = UsageMetrics::default();
+        for generation in [json!(null), json!({"output_tokens":9}), json!({"duration_ms":700}),
+            json!({"output_tokens":4,"duration_ms":0}), json!({"output_tokens":2,"duration_ms":750})] {
+            m.add(&json!({"usage":{"input_tokens":100,"output_tokens":5,"message_generation":generation},"provider_ms":8250}), "codex_cli");
+        }
+        assert_eq!((m.responses, m.measured_responses, m.cli_measured_responses), (5, 1, 1));
+        assert_eq!((m.output_tokens, m.measured_output_tokens, m.response_ms), (25, 2, 750));
+        assert_eq!(m.tok_per_second, Some(2.0 * 1000.0 / 750.0));
     }
 
     #[test]

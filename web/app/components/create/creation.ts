@@ -1,4 +1,4 @@
-import { ApiError, api, newKey } from "../../api/client";
+import { ApiError, api, authGeneration, newKey } from "../../api/client";
 import type { Project } from "../../api/generated";
 import * as L from "../../state/layout";
 
@@ -55,3 +55,24 @@ export class CreationRequest<T = Project, P extends CreationPath = CreationPath>
 }
 
 export class ProjectCreation extends CreationRequest<Project, "/projects" | "/projects/clone"> {}
+
+type TerminalTarget = { id: string; name: string };
+const terminalRequests = new Map<string, CreationRequest<TerminalTarget>>();
+let terminalOwner: number | undefined;
+
+// 목록·단축키가 같은 터미널 생성 요청을 확인한다. 접수가 확정되면 다음 생성은 새 요청이다.
+export async function createTerminal(projectId: string) {
+    const owner = authGeneration();
+    if (terminalOwner !== owner) { terminalRequests.clear(); terminalOwner = owner; }
+    const request = terminalRequests.get(projectId) ?? new CreationRequest<TerminalTarget>();
+    terminalRequests.set(projectId, request);
+    try {
+        const result = await request.run(`/projects/${projectId}/terminals`, { name: "터미널" });
+        return owner === authGeneration() ? result : undefined;
+    } catch (error) {
+        if (request.pending) throw new Error("터미널 생성 응답을 받지 못했어요. 다시 누르면 같은 요청의 결과를 확인해요.");
+        throw error;
+    } finally {
+        if (!request.pending && terminalRequests.get(projectId) === request) terminalRequests.delete(projectId);
+    }
+}

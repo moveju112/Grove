@@ -737,6 +737,7 @@ async fn real_process_streams_deltas_before_completion_and_preserves_resume_sett
             (100, 5, 60)
         );
         assert_eq!(output.usage.reasoning_tokens, Some(3));
+        assert_eq!(json!(output.usage)["message_generation"], json!({"output_tokens":2,"duration_ms":750}));
         assert_eq!(output.usage.cache_write_tokens, Some(2));
         assert_eq!(output.finish_reason, "stop");
         let wire = wire(dir.path());
@@ -1000,6 +1001,7 @@ async fn installed_cli_streams_local_responses_before_completion_and_resumes() {
                         };
                         let text = format!("{first}{last}");
                         let message = json!({"id":item,"type":"message","role":"assistant","status":"completed",
+                        "internal_chat_message_metadata_passthrough":{"content_token_count":1},
                         "content":[{"type":"output_text","text":text,"annotations":[]}]});
                         emit("response.created", json!({"type":"response.created","response":{"id":id,"status":"in_progress","output":[]}})).await;
                         emit("response.output_item.added", json!({"type":"response.output_item.added","output_index":0,
@@ -1015,6 +1017,8 @@ async fn installed_cli_streams_local_responses_before_completion_and_resumes() {
                         // Grove가 실제 부분 출력을 받은 뒤에만 공급자가 나머지 결과를 보낸다.
                         if let Some(gate) = gates.get(index) {
                             gate.notified().await;
+                            // CLI가 만드는 밀리초 단위 시작·완료 시각을 구분한다.
+                            tokio::time::sleep(Duration::from_millis(20)).await;
                             emit("response.output_text.delta", json!({"type":"response.output_text.delta","item_id":item,
                                 "output_index":0,"content_index":0,"delta":last})).await;
                         }
@@ -1088,6 +1092,9 @@ async fn installed_cli_streams_local_responses_before_completion_and_resumes() {
         assert_eq!(output.text, "STREAM_DONE");
         assert_eq!(output.finish_reason, "stop");
         assert_eq!((output.usage.input_tokens, output.usage.output_tokens), (10, 2), "resume도 이전 턴 누적 사용량을 중복 집계하지 않는다");
+        let generation = output.usage.message_generation.expect("설치된 CLI의 본문 생성 측정");
+        assert_eq!(generation.output_tokens, 1);
+        assert!(generation.duration_ms > 0);
         if index == 0 {
             native = output.native_session;
         } else {

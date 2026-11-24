@@ -8,7 +8,7 @@ use crate::{
 };
 use axum::{
     Json,
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{IntoResponse, Response},
 };
@@ -27,6 +27,9 @@ pub const MAX_FILE_BYTES: usize = 32 * 1024 * 1024;
 pub const MAX_UPLOAD_BODY_BYTES: usize = MAX_FILE_BYTES.div_ceil(3) * 4 + 4096;
 pub const MAX_ATTACHMENTS: usize = 8;
 pub(crate) const MAX_MESSAGE_BYTES: i64 = 128 * 1024 * 1024;
+// 디코딩 중 원문·픽셀 버퍼가 함께 살아 있으므로 큰 이미지의 동시 처리 수를 제한한다.
+static CONTENT_READERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(6);
+static IMAGE_WORKERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
 const UNATTACHED_TTL: Duration = Duration::from_secs(24 * 3600);
 
 
@@ -146,7 +149,7 @@ fn read_verified(data: &FsPath, v: &Value) -> ApiResult<Vec<u8>> {
 }
 
 /// 원문은 보존하고, 메모리·해상도를 제한한 첫 프레임만 모델에 보낸다.
-pub(crate) fn model_image(bytes: &[u8]) -> ApiResult<(Value, Vec<u8>)> {
+fn decode_image(bytes: &[u8]) -> ApiResult<image::DynamicImage> {
     use image::ImageDecoder;
     let invalid = || ApiError::invalid("이미지를 읽을 수 없습니다(최대 8192×8192, 1600만 픽셀)");
     let mut reader = image::ImageReader::new(std::io::Cursor::new(bytes))
@@ -165,8 +168,20 @@ pub(crate) fn model_image(bytes: &[u8]) -> ApiResult<(Value, Vec<u8>)> {
     let orientation = decoder.orientation().map_err(|_| invalid())?;
     let mut img = image::DynamicImage::from_decoder(decoder).map_err(|_| invalid())?;
     img.apply_orientation(orientation);
+    Ok(img)
+}
+
+fn model_thumbnail(bytes: &[u8]) -> ApiResult<(Value, image::DynamicImage)> {
+    let img = decode_image(bytes)?;
     let (w, h) = (img.width(), img.height());
-    let mut rgb = img.thumbnail(w.min(1024), h.min(1024)).to_rgba8();
+    let thumbnail = img.thumbnail(w.min(1024), h.min(1024));
+    let meta = json!({"width":w,"height":h,"model_width":thumbnail.width(),"model_height":thumbnail.height(),"model_mime":"image/jpeg","frame":0});
+    Ok((meta, thumbnail))
+}
+
+pub(crate) fn model_image(bytes: &[u8]) -> ApiResult<(Value, Vec<u8>)> {
+    let (meta, thumbnail) = model_thumbnail(bytes)?;
+    let mut rgb = thumbnail.to_rgba8();
     // 투명 픽셀을 흰 배경에 합성해서 JPEG의 검은 배경·숨은 RGB가 모델 입력을 바꾸지 않게 한다.
     for p in rgb.pixels_mut() {
         let a = u32::from(p[3]);
@@ -176,11 +191,10 @@ pub(crate) fn model_image(bytes: &[u8]) -> ApiResult<(Value, Vec<u8>)> {
         p[3] = 255;
     }
     let img = image::DynamicImage::ImageRgba8(rgb).to_rgb8();
-    let meta = json!({"width":w,"height":h,"model_width":img.width(),"model_height":img.height(),"model_mime":"image/jpeg","frame":0});
     let mut encoded = vec![];
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, 80)
         .encode_image(&img)
-        .map_err(|_| invalid())?;
+        .map_err(|_| ApiError::invalid("이미지를 변환할 수 없습니다"))?;
     Ok((meta, encoded))
 }
 
@@ -351,7 +365,7 @@ pub(crate) fn import_generated(c: &Connection, data: &FsPath, now: &str, project
             "image/png" => "png", "image/jpeg" => "jpg", "image/gif" => "gif", "image/webp" => "webp",
             _ => return Err(ApiError::invalid("생성 결과가 지원하는 이미지 형식이 아닙니다")),
         };
-        let meta = model_image(&bytes)?.0;
+        let meta = model_thumbnail(&bytes)?.0;
         let sha = crate::util::sha256_hex(&bytes);
         if items.iter().any(|v: &Value| v["sha256"] == sha) { continue; }
         store_blob(data, &sha, &bytes)?;
@@ -396,7 +410,7 @@ pub(crate) fn import_project_media(c: &Connection, data: &FsPath, now: &str, pro
         let Ok(bytes) = fs.read(&root.join(relative), MAX_FILE_BYTES as u64) else { skipped += 1; continue; };
         let mime = sniff(&bytes);
         let image = if mime.starts_with("image/") {
-            let Ok((meta, _)) = model_image(&bytes) else { skipped += 1; continue; };
+            let Ok((meta, _)) = model_thumbnail(&bytes) else { skipped += 1; continue; };
             Some(meta)
         } else if mime.starts_with("video/") || mime.starts_with("audio/") {
             None
@@ -456,7 +470,6 @@ pub async fn upload(
         "attachment.upload",
         &json!({"project":pid,"name":b.name,"sha256":sha}),
     );
-    let _guard = app.storage.mutations.lock().await;
     if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
         return Ok(r);
     }
@@ -468,17 +481,19 @@ pub async fn upload(
     let hash = sha.clone();
     let size = bytes.len();
     // 같은 내용은 같은 저장 경로로 수렴한다. DB 실패 후 남은 고아 파일은 유예 후 정리한다.
-    let image = tokio::task::spawn_blocking(move || -> ApiResult<Option<Value>> {
-        let image = if mime.starts_with("image/") {
-            Some(model_image(&bytes)?.0)
-        } else {
-            None
-        };
-        store_blob(&data, &hash, &bytes)?;
-        Ok(image)
-    })
-    .await
-    .map_err(|_| ApiError::internal("attachment upload worker"))??;
+    let (image, bytes) = if mime.starts_with("image/") {
+        let permit = IMAGE_WORKERS.acquire().await.map_err(|_| ApiError::internal("image worker"))?;
+        tokio::task::spawn_blocking(move || -> ApiResult<_> {
+            let _permit = permit;
+            Ok((Some(model_thumbnail(&bytes)?.0), bytes))
+        }).await.map_err(|_| ApiError::internal("image worker"))??
+    } else { (None, bytes) };
+    let _guard = app.storage.mutations.lock().await;
+    if let Some(r) = idem::replay(&app, &p, &headers, &h).await? {
+        return Ok(r);
+    }
+    tokio::task::spawn_blocking(move || store_blob(&data, &hash, &bytes))
+        .await.map_err(|_| ApiError::internal("attachment upload worker"))??;
     let owner = p.root_id.clone();
     idem::run(&app, &p, &headers, &h, move |tx, now| {
         crate::projects::active_root(tx, &pid)?;
@@ -498,30 +513,42 @@ pub async fn show(
         app.db.call(move |c| authorized(c, &id, &p.root_id)).await?,
     ))
 }
+#[derive(Deserialize)]
+pub struct ContentQuery {
+    preview: Option<String>,
+}
 pub async fn content(
     State(app): State<App>,
     p: Principal,
     Path(id): Path<String>,
+    Query(query): Query<ContentQuery>,
 ) -> ApiResult<Response> {
     let data = app.cfg.data_dir.clone();
-    let (v, bytes) = app
-        .db
-        .call(move |c| {
-            let v = authorized(c, &id, &p.root_id)?;
-            let b = read_verified(&data, &v)?;
-            Ok((v, b))
-        })
-        .await?;
+    let v = app.db.call(move |c| authorized(c, &id, &p.root_id)).await?;
+    let thumbnail = query.preview.as_deref() == Some("image") && v["mime"].as_str().is_some_and(|m| m.starts_with("image/"));
+    let permit = if thumbnail { Some(IMAGE_WORKERS.acquire().await.map_err(|_| ApiError::internal("image worker"))?) } else { None };
+    let reader = CONTENT_READERS.acquire().await.map_err(|_| ApiError::internal("attachment reader"))?;
+    let (bytes, mime) = tokio::task::spawn_blocking(move || -> ApiResult<_> {
+        let _reader = reader;
+        let _permit = permit;
+        let mut bytes = read_verified(&data, &v)?;
+        let mut mime = v["mime"].as_str().unwrap_or("application/octet-stream");
+        if thumbnail {
+            let img = decode_image(&bytes)?;
+            let thumb = img.thumbnail(img.width().min(160), img.height().min(160));
+            bytes = Vec::new();
+            thumb.write_to(&mut std::io::Cursor::new(&mut bytes), image::ImageFormat::Png)
+                .map_err(|_| ApiError::internal("thumbnail encoding"))?;
+            mime = "image/png";
+        } else if query.preview.as_deref() == Some("text") && mime == "text/plain" {
+            let text = std::str::from_utf8(&bytes).map_err(|_| ApiError::gone("첨부 텍스트 인코딩이 다릅니다"))?;
+            if let Some((end, _)) = text.char_indices().nth(8192) { bytes = bytes[..end].to_vec(); }
+        }
+        Ok((bytes, mime.to_owned()))
+    }).await.map_err(|_| ApiError::internal("attachment read worker"))??;
     let mut resp = bytes.into_response();
     let h = resp.headers_mut();
-    h.insert(
-        header::CONTENT_TYPE,
-        v["mime"]
-            .as_str()
-            .unwrap_or("application/octet-stream")
-            .parse()
-            .unwrap(),
-    );
+    h.insert(header::CONTENT_TYPE, mime.parse().unwrap());
     h.insert(header::CONTENT_DISPOSITION, "attachment".parse().unwrap());
     h.insert(
         header::CONTENT_SECURITY_POLICY,
@@ -602,8 +629,13 @@ pub fn prepare(
         }
         let bytes = read_verified(data, &v)?;
         if v["mime"].as_str().is_some_and(|m| m.starts_with("image/")) {
-            let (meta, _) = model_image(&bytes)?;
-            v["image"] = meta.clone();
+            let meta = if v["image"]["model_width"].as_u64().is_some() && v["image"]["model_height"].as_u64().is_some() {
+                v["image"].clone()
+            } else {
+                let (meta, _) = model_thumbnail(&bytes)?;
+                v["image"] = meta.clone();
+                meta
+            };
             images.push(json!({"id":id,"sha256":v["sha256"],"width":meta["model_width"],"height":meta["model_height"],"mime":"image/jpeg"}));
         } else if v["mime"] == "text/plain" {
             // 파일명은 JSON 문자열로 감싸고 발췌만 표시한다. 식별·검증 정보는 내부에 남긴다.

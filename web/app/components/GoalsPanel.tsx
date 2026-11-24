@@ -1,3 +1,4 @@
+import { usePendingAction } from "../state/usePendingAction";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { StatusBadge } from "../design/StatusBadge";
 import { useState } from "react";
@@ -23,6 +24,7 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
     const [optimistic, setOptimistic] = useState<Record<string, boolean>>({});
     const goals = q.data?.goals ?? [];
     const open = goals.filter((g) => g.status === "pending" || g.status === "in_progress").length;
+    const creation = usePendingAction();
     const act = async (f: () => Promise<unknown>) => {
         setErr(null);
         try {
@@ -71,14 +73,14 @@ export function GoalsPanel({ sessionId, disabled }: { sessionId: string; disable
                     gap={1.5} direction="horizontal" align="center"
                     onSubmit={(e) => {
                         e.preventDefault();
-                        void act(async () => {
+                        void creation.run(() => act(async () => {
                             await api.post(`/sessions/${sessionId}/goals`, { title });
-                            setTitle("");
-                        });
+                            setTitle((current) => current === title ? "" : current);
+                        }));
                     }}
                 >
                     <TextInput size="sm" label="새 Goal" isLabelHidden placeholder="할 일 추가" value={title} onChange={setTitle} />
-                    <ServerActionButton type="submit" disabled={!title.trim()}>추가</ServerActionButton>
+                    <ServerActionButton type="submit" disabled={creation.busy || !title.trim()}>추가</ServerActionButton>
                 </GroveStack>
             )}
         </Panel>

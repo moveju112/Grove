@@ -1,3 +1,4 @@
+import { usePendingAction } from "../state/usePendingAction";
 import { StatusBadge } from "../design/StatusBadge";
 import { Card } from "@astryxdesign/core/Card";
 import { Notice } from "../design/Notice";
@@ -475,8 +476,9 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
 
 function Secrets() {
     const list = useQuery<SecretInfo[]>("secrets", () => api.get("/secrets"));
-    const [label, setLabel] = useState("");
-    const [value, setValue] = useState("");
+    const [draft, setDraft] = useState({ label: "", value: "" });
+    const { label, value } = draft;
+    const creation = usePendingAction();
     const save = useSave();
     return (
         <>
@@ -492,10 +494,13 @@ function Secrets() {
                     </>} />
                 ))}
             </List>
-            <Stack as="form" gap={1.5} direction="horizontal" align="center" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post("/secrets", { label, value }); setLabel(""); setValue(""); }); }}>
-                <TextInput size="sm" placeholder="이름" value={label} onChange={setLabel} label="키 이름" isLabelHidden isRequired />
-                <TextInput size="sm" placeholder="키 값" type="password" autoComplete="off" value={value} onChange={setValue} label="키 값" isLabelHidden isRequired />
-                <ServerActionButton type="submit">추가</ServerActionButton>
+            <Stack as="form" gap={1.5} direction="horizontal" align="center" onSubmit={(e) => { e.preventDefault(); void creation.run(() => save.run(async () => {
+                await api.post("/secrets", { label, value });
+                setDraft((current) => current === draft ? { label: "", value: "" } : current);
+            })); }}>
+                <TextInput size="sm" placeholder="이름" value={label} onChange={(label) => setDraft((current) => ({ ...current, label }))} label="키 이름" isLabelHidden isRequired />
+                <TextInput size="sm" placeholder="키 값" type="password" autoComplete="off" value={value} onChange={(value) => setDraft((current) => ({ ...current, value }))} label="키 값" isLabelHidden isRequired />
+                <ServerActionButton type="submit" disabled={creation.busy}>추가</ServerActionButton>
             </Stack>
             {save.view}
         </>
@@ -506,6 +511,7 @@ function Profiles() {
     const list = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
     const secrets = useQuery<SecretInfo[]>("secrets", () => api.get("/secrets"));
     const [f, setF] = useState({ name: "", protocol: "openai", base_url: "https://api.openai.com/v1", model: "", secret_id: "" });
+    const creation = usePendingAction();
     const save = useSave();
     const management = useCapability("model_management_v1");
     const [agentSetup, setAgentSetup] = useState(false);
@@ -559,10 +565,10 @@ function Profiles() {
             <Heading level={4} color="inherit">모델 프로필 추가</Heading>
             <Stack as="form" gap={2} maxWidth={480} aria-label="모델 프로필 추가" onSubmit={(e) => {
                 e.preventDefault();
-                void save.run(async () => {
+                void creation.run(() => save.run(async () => {
                     await api.post("/model-profiles", { ...f, secret_id: f.secret_id || null });
-                    setF({ ...f, name: "", model: "" });
-                });
+                    setF((current) => current === f ? { ...f, name: "", model: "" } : current);
+                }));
             }}>
                 <TextInput size="sm" placeholder="이름" value={f.name} onChange={(value) => setF({ ...f, name: value })} label="프로필 이름" isLabelHidden isRequired />
                 <Select
@@ -585,7 +591,7 @@ function Profiles() {
                         서버 CLI · 프로젝트 수정·검사 가능
                     </Text>
                 )}
-                <ServerActionButton type="submit">추가</ServerActionButton>
+                <ServerActionButton type="submit" disabled={creation.busy}>추가</ServerActionButton>
             </Stack>
             {save.view}
         </>
@@ -692,14 +698,18 @@ function DefinitionBody({ kind, id, cur, reload }: { kind: string; id: string; c
 
 function NewDefinition({ kind }: { kind: string }) {
     const [f, setF] = useState({ id: "", name: "", body: "" });
+    const creation = usePendingAction();
     const save = useSave();
     return (
         <DetailDialog label={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`} title={`새 ${kind === "agent" ? "에이전트" : "워크플로우"}`}>
-            <Stack as="form" gap={1.5} direction="horizontal" align="center" wrap="wrap" onSubmit={(e) => { e.preventDefault(); void save.run(async () => { await api.post(`/definitions/${kind}`, f); setF({ id: "", name: "", body: "" }); }); }}>
+            <Stack as="form" gap={1.5} direction="horizontal" align="center" wrap="wrap" onSubmit={(e) => { e.preventDefault(); void creation.run(() => save.run(async () => {
+                await api.post(`/definitions/${kind}`, f);
+                setF((current) => current === f ? { id: "", name: "", body: "" } : current);
+            })); }}>
                 <TextInput size="sm" placeholder="ID (소문자-하이픈)" value={f.id} onChange={(value) => setF({ ...f, id: value })} label="ID" isLabelHidden isRequired />
                 <TextInput size="sm" placeholder="이름" value={f.name} onChange={(value) => setF({ ...f, name: value })} label="이름" isLabelHidden isRequired />
                 <TextArea placeholder="본문" value={f.body} onChange={(value) => setF({ ...f, body: value })} label="본문" isLabelHidden isRequired />
-                <ServerActionButton type="submit">만들기</ServerActionButton>
+                <ServerActionButton type="submit" disabled={creation.busy}>만들기</ServerActionButton>
             </Stack>
             {save.view}
         </DetailDialog>

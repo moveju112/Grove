@@ -3,13 +3,13 @@ import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Link } from "@astryxdesign/core/Link";
 import { Button as GroveButton } from "../design/Button";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from "react";
 import { ActionMenu } from "./ui/Controls";
 import { BooleanSelect } from "./BooleanSelect";
 import { TextInput, TextArea, FileInput } from "../design/Fields";
 import { Select } from "../design/Select";
-import { ApiError, api, isLoggedIn, newKey } from "../api/client";
-import { subscribeQuery, useQuery } from "../state/store";
+import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../api/client";
+import { invalidate, subscribeQuery, useQuery } from "../state/store";
 import { fileAttemptKey, loadFileAttempt, loadFileBuffer, loadFileView, saveFileBuffer, saveFileView, type FileAttempt } from "../state/fileState";
 import { refreshFiles, watchFile, type FileContent as Content } from "../state/fileWatch";
 import { usePaneVisible } from "../state/paneVisibility";
@@ -19,7 +19,7 @@ import { ArtifactPreview } from "./ArtifactPreview";
 import { isArtifact } from "../state/artifactPreview";
 import { ExternalEditor } from "./files/ExternalEditor";
 import { ServerActionButton } from "./pwa/ServerActionButton";
-import { useServerBlockReason } from "./pwa/lifecycle";
+import { requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 import { connection, transportFetch } from "../api/transport";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Grid } from "@astryxdesign/core/Grid";
@@ -29,6 +29,8 @@ import { contentStyles } from "../design/content.stylex";
 import * as stylex from "@stylexjs/stylex";
 import type { FileList as Listing } from "../api/generated";
 import { useDebouncedValue } from "../state/useDebouncedValue";
+import { ComposerMemory } from "../state/composerMemory";
+import { useComposerMemory, useComposerMemoryStore } from "../state/useComposerMemory";
 import { createContentCache, textBytes } from "../state/contentCache";
 
 const enc = encodeURIComponent;
@@ -43,53 +45,51 @@ const COPY_ERROR ="이 기기에 편집 사본을 보관하지 못했습니다. 
 type AttemptCache = { key: string; restoreKey?: string; endpoint: string; method: FileAttempt["method"]; path?: string };
 
 // 탐색기 작업과 편집기 저장은 응답 유실 뒤에도 요청 본문과 키를 함께 유지한다.
-function useFileMutation<T>(onSuccess: (result: T, attempt: FileAttempt) => void, cache: AttemptCache) {
-    const [attempt, setAttempt] = useState<FileAttempt | null>(() =>
-        loadFileAttempt(localStorage, cache.key, cache.endpoint, cache.method, cache.path)
-        ?? (cache.restoreKey ? loadFileAttempt(localStorage, cache.restoreKey, cache.endpoint, cache.method, cache.path) : null));
-    const [busy, setBusy] = useState(false);
-    const [error, setError] = useState<unknown>(null);
-    const active = useRef(false);
-    // 기기 사본에 넣지 않는 큰 본문(업로드 원문). 같은 키로 다시 확인할 때만 메모리에서 함께 보낸다.
-    const transient = useRef<{ key: string; body: Record<string, string> } | null>(null);
+function useFileMutation<T>(onSuccess: (result: T, attempt: FileAttempt) => void, cache: AttemptCache,
+    shared?: { memory: ComposerMemory; copyId: string }) {
+    const [local] = useState(() => new ComposerMemory());
+    const state = (shared?.memory ?? local).cell(cache.key, shared?.copyId ?? "", "fileMutation", () => ({
+        attempt: loadFileAttempt(localStorage, cache.key, cache.endpoint, cache.method, cache.path)
+            ?? (cache.restoreKey ? loadFileAttempt(localStorage, cache.restoreKey, cache.endpoint, cache.method, cache.path) : null),
+        busy: false, error: null as unknown, extra: undefined as Record<string, string> | undefined,
+    }));
+    const { attempt, busy, error } = useSyncExternalStore(state.subscribe, state.read, state.read);
     useEffect(() => {
         if (!attempt || !isLoggedIn()) return;
         try { localStorage.setItem(cache.key, JSON.stringify(attempt)); }
-        catch { setError(new ApiError(0, "local_copy_unavailable", "요청 사본을 보관하지 못했습니다. 기기 저장 공간을 확인하세요.", true)); }
+        catch { state.set((s) => ({ ...s, error: new ApiError(0, "local_copy_unavailable", "요청 사본을 보관하지 못했습니다. 기기 저장 공간을 확인하세요.", true) })); }
     }, [cache.key]); // eslint-disable-line react-hooks/exhaustive-deps
     const clear = () => {
-        localStorage.removeItem(cache.key);
-        transient.current = null;
-        setAttempt(null);
-        setError(null);
+        try { localStorage.removeItem(cache.key); }
+        catch {
+            state.set((s) => ({ ...s, busy: false, error: new ApiError(0, "local_copy_unavailable", "요청 기록을 정리하지 못했습니다. 기기 저장 공간을 확인하세요.", true) }));
+            return false;
+        }
+        state.set({ attempt: null, busy: false, error: null, extra: undefined });
+        return true;
     };
     const act = async (a: FileAttempt, extra?: Record<string, string>) => {
-        if (active.current) return;
-        active.current = true;
-        if (extra) transient.current = { key: a.key, body: extra };
-        const more = transient.current?.key === a.key ? transient.current.body : {};
-        setAttempt(a);
-        setBusy(true);
-        setError(null);
+        const current = state.read();
+        if (current.busy) return;
+        const owner = authGeneration();
+        const more = extra ?? (current.attempt?.key === a.key ? current.extra : undefined);
+        state.set({ attempt: a, busy: true, error: null, extra: more });
         try {
             try { localStorage.setItem(cache.key, JSON.stringify(a)); }
             catch { throw new ApiError(0, "local_copy_unavailable", "요청 사본을 보관하지 못해 실행하지 않았습니다. 기기 저장 공간을 확인하세요.", true); }
             const result = await api[a.method]<T>(a.path, { ...a.body, ...more }, { key: a.key });
-            clear();
+            if (owner !== authGeneration()) return;
+            if (!clear()) return;
             onSuccess(result, a);
+            return true;
         } catch (e) {
-            setError(e);
-            if (e instanceof ApiError && e.status < 500 && e.code !== "result_unknown" && !e.retryable) {
-                localStorage.removeItem(cache.key);
-                transient.current = null;
-                setAttempt(null);
-            }
-        } finally {
-            active.current = false;
-            setBusy(false);
+            if (owner !== authGeneration()) return;
+            const rejected = e instanceof ApiError && e.status < 500 && e.code !== "result_unknown" && !e.retryable;
+            if (rejected && !clear()) return;
+            state.set({ attempt: rejected ? null : a, busy: false, error: e, extra: rejected ? undefined : more });
         }
     };
-    return { attempt, busy, error, act, locked: busy || attempt !== null, clear };
+    return { attempt, busy, error, act, locked: busy || attempt !== null, hasAttempt: () => state.read().attempt !== null, clear };
 }
 
 function fileError(error: unknown): string {
@@ -122,52 +122,85 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
         return { scope, key: `${scope}:${offsetPage}`, read: () => api.getContract("FileList", url, { requires: ["paged_reads_v1"] }) };
     };
     const query = listPage(dir, page);
-    const listing = useQuery<Listing>(query.key, query.read, { keepPreviousData: true, scope: query.scope });
+    const listing = useQuery<Listing>(query.key, query.read, { keepPreviousData: true, scope: JSON.stringify([projectId, dir]) });
     const warm = (path: string, nextPage: number) => {
         const next = listPage(path, nextPage);
         subscribeQuery(next.key, next.read, () => undefined)();
     };
     const changeDir = (value: string) => { setDir(value); setPage(0); };
-    const mutation = useFileMutation<unknown>(() => listing.reload(), {
+    const mutation = useFileMutation<unknown>(() => invalidate(`files:${projectId}`), {
         key: fileAttemptKey(projectId, "", tabId, "op"), endpoint: `/projects/${projectId}/files/op`, method: "post",
     });
-    const uploads = useFileMutation<unknown>(() => listing.reload(), {
+    const copyId = tabId.replace(/:files$/, "");
+    const memory = useComposerMemoryStore();
+    const resource = `file-uploads:${projectId}:${tabId}`;
+    const uploads = useFileMutation<unknown>(() => invalidate(`files:${projectId}`), {
         key: fileAttemptKey(projectId, "", tabId, "upload"), endpoint: `/projects/${projectId}/files/upload`, method: "post",
-    });
-    const locked = mutation.locked || uploads.locked || editorLocked;
+    }, { memory, copyId });
+    const queueCell = memory.cell<{ file: File; path: string }[]>(resource, copyId, "queue", () => []);
+    const queue = useSyncExternalStore(queueCell.subscribe, queueCell.read, queueCell.read);
+    const [processing] = useComposerMemory(resource, copyId, "processing", () => ({ current: false, blocked: false }));
+    useLayoutEffect(() => { processing.blocked = mutation.locked || editorLocked; }, [processing, mutation.locked, editorLocked]);
+    const locked = mutation.locked || uploads.locked || editorLocked || queue.length > 0;
     const folderTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
     const cancelWarm = () => clearTimeout(folderTimer.current);
     useEffect(() => cancelWarm, [query.key, locked]);
     const folderIntent = (path: string) => ({
         onMouseEnter: () => {
             cancelWarm();
-            if (!locked) folderTimer.current = setTimeout(() => warm(path, 0), 120);
+            folderTimer.current = setTimeout(() => warm(path, 0), 120);
         },
         onMouseLeave: cancelWarm,
-        onFocus: () => { if (!locked) warm(path, 0); },
-        onPointerDown: () => { if (!locked) warm(path, 0); },
+        onFocus: () => { warm(path, 0); },
+        onPointerDown: () => { warm(path, 0); },
     });
     const op = (body: Record<string, string>) => {
         if (locked) return;
         void mutation.act({ method: "post", path: `/projects/${projectId}/files/op`, body, key: newKey() });
     };
     const uploadInput = useRef<HTMLInputElement>(null);
-    const [uploadError, setUploadError] = useState<string | null>(null);
-    // 업로드(FILEUI-005): 기기 사본에는 경로·내용 hash만 남기고 원문은 메모리에만 둔다. 덮어쓰지 않는다.
-    const upload = async (file: File) => {
-        setUploadError(null);
-        if (locked) return;
-        if (file.size > MAX_UPLOAD) {
-            setUploadError(`한 번에 올릴 수 있는 파일은 ${MAX_UPLOAD / 1024 / 1024}MiB까지입니다(${(file.size / 1024 / 1024).toFixed(1)}MiB).`);
-            return;
-        }
-        const bytes = new Uint8Array(await file.arrayBuffer());
-        const sha256 = await sha256Hex(bytes);
-        let binary = "";
-        for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-        void uploads.act({ method: "post", path: `/projects/${projectId}/files/upload`, body: { path: join(file.name), sha256 }, key: newKey() }, { data_base64: btoa(binary) });
-    };
+    const [uploadError, setUploadError] = useComposerMemory<string | null>(resource, copyId, "error", () => null);
     const join = (name: string) => (dir === "." ? name : `${dir}/${name}`);
+    const enqueue = (files: File[]) => {
+        setUploadError(null);
+        const valid = files.filter((file) => file.size <= MAX_UPLOAD);
+        if (valid.length !== files.length) setUploadError(`파일당 ${MAX_UPLOAD / 1024 / 1024}MiB까지 올릴 수 있어요.`);
+        queueCell.set((current) => [...current, ...valid.map((file) => ({ file, path: join(file.name) }))]);
+    };
+    // 경로는 선택할 때 고정한다. 결과 불명일 때는 기존 요청을 확인한 뒤에만 다음 파일을 처리한다.
+    useEffect(() => {
+        if (!queue.length || processing.current || uploads.locked || processing.blocked || serverBlocked) return;
+        processing.current = true;
+        const owner = authGeneration();
+        const uploadOne = async (item: { file: File; path: string }) => {
+            try {
+                const bytes = new Uint8Array(await item.file.arrayBuffer());
+                const sha256 = await sha256Hex(bytes);
+                if (!queueCell.active() || authGeneration() !== owner) return;
+                let binary = "";
+                for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+                const ok = await uploads.act({ method: "post", path: `/projects/${projectId}/files/upload`, body: { path: item.path, sha256 },
+                    key: newKey() }, { data_base64: btoa(binary) });
+                if (!ok) {
+                    setUploadError((old) => [old, `${item.path} 업로드를 확인해 주세요.`].filter(Boolean).join("\n"));
+                }
+            } catch {
+                setUploadError((old) => [old, `${item.path} 파일을 읽지 못했어요.`].filter(Boolean).join("\n"));
+            }
+        };
+        // 열린 탭에서 선택한 파일은 도구 패널을 접거나 다른 탭을 보는 동안에도 차례로 올린다.
+        void (async () => {
+            try {
+                while (queueCell.active() && owner === authGeneration() && !processing.blocked && !uploads.hasAttempt()) {
+                    const item = queueCell.read()[0];
+                    if (!item) return;
+                    try { requireServerAction(); } catch { return; }
+                    await uploadOne(item);
+                    queueCell.set((current) => current.filter((entry) => entry !== item));
+                }
+            } finally { processing.current = false; }
+        })();
+    }, [queue, queueCell, uploads.locked, mutation.locked, editorLocked, serverBlocked, projectId]);
     const parent = dir === "." ? null : dir.includes("/") ? dir.slice(0, dir.lastIndexOf("/")) : ".";
     const entries = listing.data?.entries ?? [];
     return (
@@ -175,7 +208,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
             <Stack as="aside" gap={2} padding={2} isScrollable xstyle={fileLayout.tree}>
                 <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                     <Code>{dir}</Code>
-                    {parent !== null && <GroveButton variant="secondary" density="compact" disabled={locked} {...folderIntent(parent)} onClick={() => changeDir(parent)}>상위 폴더</GroveButton>}
+                    {parent !== null && <GroveButton variant="secondary" density="compact" {...folderIntent(parent)} onClick={() => changeDir(parent)}>상위 폴더</GroveButton>}
                 </Stack>
                 {Boolean(listing.error) && <GroveText as="div" display="block" type="inherit" color="error" role="alert">
                     {listing.error instanceof ApiError ? listing.error.message : "폴더 목록을 불러오지 못했습니다."}
@@ -190,9 +223,9 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                 <Stack direction="horizontal" align="center" wrap="wrap" gap={1.5}>
                     <GroveButton variant="secondary" density="compact" disabled={locked} onClick={() => { const n = prompt("새 파일 이름"); if (n) selectPath(`new:${join(n)}`); }}>새 파일</GroveButton>
                     <ServerActionButton variant="secondary" density="compact" disabled={locked} onClick={() => { const n = prompt("새 폴더 이름"); if (n) void op({ op: "mkdir", path: join(n) }); }}>새 폴더</ServerActionButton>
-                    <ServerActionButton variant="secondary" density="compact" disabled={locked} onClick={() => uploadInput.current?.click()}>{uploads.busy ? "올리는 중…" : "파일 올리기"}</ServerActionButton>
-                    <Stack hidden><FileInput ref={uploadInput} label="올릴 파일 선택" isLabelHidden value={null}
-                        onChange={(files) => { const file = Array.isArray(files) ? files[0] : files; if (file) void upload(file); }} /></Stack>
+                    <ServerActionButton variant="secondary" density="compact" disabled={!!uploads.attempt && !uploads.busy} onClick={() => uploadInput.current?.click()}>{queue.length ? `파일 더 올리기 · ${queue.length}개 남음` : "파일 올리기"}</ServerActionButton>
+                    <Stack hidden><FileInput ref={uploadInput} isMultiple label="올릴 파일 선택" isLabelHidden value={null}
+                        onChange={(files) => { if (files) enqueue(Array.isArray(files) ? files : [files]); }} /></Stack>
                 </Stack>
                 {uploadError && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{uploadError}</GroveText>}
                 {Boolean(uploads.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{fileError(uploads.error)}</GroveText>}
@@ -212,7 +245,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                         <GroveListItem key={e.path} data-testid="file-row" label={<>
                             <GroveButton
                                 appearance="navigation" density="compact"
-                                disabled={locked || e.kind === "link_outside" || e.kind === "other"}
+                                disabled={(editorLocked && e.kind !== "dir") || e.kind === "link_outside" || e.kind === "other"}
                                 {...(e.kind === "dir" && folderIntent(e.path))}
                                 title={e.kind === "link_outside" ? "프로젝트 밖을 가리키는 링크" : undefined}
                                 onClick={() => (e.kind === "dir" ? changeDir(e.path) : selectPath(e.path))}
@@ -253,7 +286,7 @@ export function FilesView({ tabId, projectId, initial: start }: { tabId: string;
                 {openPath && !openPath.startsWith("new:") && <ExternalEditor key={`${projectId}:${openPath}`} projectId={projectId} path={openPath} disabled={locked} blockedReason={serverBlocked} />}
                 {openPath ? <FileEditor key={openPath} copyId={tabId} projectId={projectId} path={openPath}
                     onSaved={() => { listing.reload(); if (openPath.startsWith("new:")) selectPath(openPath.slice(4)); }}
-                    disabled={mutation.locked} onLock={setEditorLocked} line={openPath === start?.path ? start?.line : undefined} /> : <GroveText as="p" display="block" type="inherit" color="secondary">파일을 고르세요.</GroveText>}
+                    disabled={mutation.locked || (!!uploads.attempt && !uploads.busy)} onLock={setEditorLocked} line={openPath === start?.path ? start?.line : undefined} /> : <GroveText as="p" display="block" type="inherit" color="secondary">파일을 고르세요.</GroveText>}
             </Stack>
         </Grid>
     );

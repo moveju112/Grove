@@ -3,13 +3,13 @@ import { Stack } from "@astryxdesign/core/Stack";
 import { CHAT_COLUMN_WIDTH, chatLayout } from "../chat-layout.stylex";
 import { Select } from "../../design/Select";
 import { useEffect, useRef, useState } from "react";
-import { ApiError, api } from "../../api/client";
+import { ApiError, api, authGeneration } from "../../api/client";
 import type { Message, Session, Turn } from "../../api/generated";
 import { Composer, type SendOptions } from "../Composer";
 import { modelOptionCapabilities } from "../../state/sendOptions";
 import type { Opener } from "../Workspace";
 import { useWorkspaceMode, useWorkspaces } from "../../state/workspaces";
-import { outgoingResource, useOutgoing } from "../../state/outgoing";
+import { acceptSent, outgoingResource, useOutgoing } from "../../state/outgoing";
 import { seedConversation } from "../../state/workspaceStartup";
 import { OutgoingMessage } from "../OutgoingMessage";
 
@@ -51,10 +51,12 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
     }, [focusVersion, tabId, disabled]);
 
     // Composer가 보관한 전송 키를 단계별로 파생한다. 재확인은 생성·전송 모두 같은 키를 쓴다.
-    const start = async (text: string, o: SendOptions, key: string, _follow?: unknown, attachments: string[] = []) => {
+    const start = async (text: string, o: SendOptions, key: string, _follow?: unknown, attachments: string[] = [], moveToSession?: (id: string, deliveryKey: string) => void) => {
+        const owner = authGeneration();
         const title = text.trim().split("\n")[0]!.slice(0, 60);
         beforeMutation?.();
         const s = await api.post<Session>(`/projects/${projectId}/sessions`, { title, ...(target ? { worktree_id: target } : {}) }, { key: `${key}:session` });
+        if (owner !== authGeneration()) return;
         try {
             beforeMutation?.();
         } catch (error) {
@@ -63,12 +65,17 @@ export function ProjectComposer({ projectId, tabId, open, disabled, beforeMutati
             throw new ApiError(error.status, error.code, `${error.message} 대화 생성은 접수됐으므로 원래 요청 결과를 확인하세요.`,
                 true, { result_unknown: true, idempotency_key: key });
         }
+        const targetTab = { kind: "session" as const, project_id: projectId, resource_id: s.id, title: s.title };
+        moveToSession?.(s.id, `${key}:send`);
+        seedConversation(s, {});
+        open(targetTab);
         const sent = o.mode === "save"
             ? { message: await api.post<Message>(`/sessions/${s.id}/messages`, { text, attachments }, { key: `${key}:send` }) }
             : await api.post<{ turn?: Turn; message?: Message }>(`/sessions/${s.id}/turns`, { text, attachments, profile_id: o.profileId, model: o.model, agent_id: o.agentId, tools: o.tools, effort: o.effort ?? "auto", service_tier: o.serviceTier, native_command: o.nativeCommand }, { key: `${key}:send`, requires: modelOptionCapabilities(o) });
         // 받은 응답으로 새 대화 화면을 먼저 채워, 열자마자 보낸 글이 그대로 이어져 보이게 한다.
+        if (owner !== authGeneration()) return;
         seedConversation(s, sent ?? {});
-        open({ kind: "session", project_id: projectId, resource_id: s.id, title: s.title });
+        acceptSent(s.id, sent ?? {});
     };
     return <>
         {outgoing.length > 0 && <Stack gap={4} width="100%" maxWidth={CHAT_COLUMN_WIDTH} xstyle={chatLayout.messages} aria-live="polite">

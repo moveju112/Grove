@@ -55,8 +55,9 @@ for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 
                 .getByTestId("project-row").getByRole("button").first().click();
             if (viewport.width <= 760) await closeMobileSidebar(page);
             let project = page.getByTestId("project-view").filter({ visible: true });
-            await expect(project.getByTestId("composer")).toBeVisible();
+            // 프로젝트 전환은 이전에 열었던 탭으로 복귀할 수 있다.
             await startProjectConversation(project);
+            await expect(project.getByTestId("composer")).toBeVisible();
             await startProjectConversation(project);
             await expect(project.getByLabel("메시지 입력")).toBeFocused();
             await project.getByLabel("메시지 입력").fill("보존할 입력");

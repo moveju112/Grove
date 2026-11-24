@@ -209,11 +209,25 @@ test("Goal을 추가·완료·순서 변경하고 다른 화면의 변경이 실
     const panel = page.getByTestId("goals-panel");
     await openTool(page, "Goal");
     await openDetails(panel);
-    for (const t of ["첫째", "둘째"]) {
-        await panel.getByLabel("새 Goal").fill(t);
-        await panel.getByRole("button", { name: "추가" }).click();
-        await expect(panel.getByTestId("goal").filter({ hasText: t })).toHaveCount(1);
-    }
+    const input = panel.getByLabel("새 Goal");
+    const add = panel.getByRole("button", { name: "추가" });
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(`**/sessions/${s.id}/goals`, async (route) => {
+        if (route.request().method() === "POST") await gate;
+        await route.continue();
+    });
+    try {
+        await input.fill("첫째");
+        await add.click();
+        await expect(add).toBeDisabled();
+        await input.fill("둘째");
+        release();
+        await expect(panel.getByTestId("goal").filter({ hasText: "첫째" })).toHaveCount(1);
+        await expect(input).toHaveValue("둘째");
+        await add.click();
+        await expect(panel.getByTestId("goal").filter({ hasText: "둘째" })).toHaveCount(1);
+    } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
     await panel.getByRole("button", { name: "둘째 위로" }).click();
     await expect(panel.getByTestId("goal").first()).toContainText("둘째");
     await selectChoice(panel.getByTestId("goal").filter({ hasText: "첫째" }).getByRole("combobox"), "true");

@@ -2,7 +2,8 @@
 import { EFFORTS, sendOptionsSignature, type FollowKind, type SendOptions } from "./sendOptions";
 
 export type Attachment = { id: string; project_id: string; name: string; mime: string; size: number; stored: boolean; image?: { width: number; height: number; model_width: number; model_height: number } | null };
-export type PendingSend = { body: string; raw: string; sig: string; key: string; intent: SendOptions; options: SendOptions; attachmentIds: string[]; attachments: Attachment[]; follow?: FollowKind };
+export type MissingUpload = { index: number; name: string; size: number };
+export type PendingSend = { body: string; raw: string; sig: string; key: string; intent: SendOptions; options: SendOptions; attachmentIds: string[]; attachments: Attachment[]; missing?: MissingUpload[]; follow?: FollowKind };
 type Store = Pick<Storage, "getItem" | "setItem" | "removeItem" | "key" | "length">;
 export type Recovery = { pending: PendingSend | null; invalid: boolean };
 const prefix = (resource: string) => `grove.send.${resource}#`;
@@ -31,6 +32,11 @@ function parse(raw: string): PendingSend | null {
         return p && typeof p.raw === "string" && typeof p.body === "string" && typeof p.key === "string" && !!p.key
             && validSendOptions(p.intent) && validSendOptions(p.options) && Array.isArray(p.attachmentIds)
             && p.attachmentIds.length <= 8 && p.attachmentIds.every((id) => typeof id === "string")
+            && (p.missing === undefined || (Array.isArray(p.missing) && p.missing.length > 0
+                && p.missing.length + p.attachmentIds.length <= 8
+                && p.missing.every((m, i) => m && typeof m.name === "string" && Number.isSafeInteger(m.size) && m.size >= 0
+                    && Number.isInteger(m.index) && m.index >= i && m.index < p.attachmentIds.length + p.missing!.length
+                    && (i === 0 || p.missing![i - 1]!.index < m.index))))
             && (p.follow === undefined || ["queue", "steer", "interrupt"].includes(p.follow))
             && p.sig === sendOptionsSignature(p.intent, p.attachmentIds)
             ? { ...p, attachments: parseAttachments(p.attachments) } : null;

@@ -52,7 +52,7 @@ function withFirstPages(status: Status): Status {
 export function GitPanel({ projectId }: { projectId: string }) {
     const status = useQuery<Status>(`git:${projectId}:status`, () => api.get<Status>(`/projects/${projectId}/git/status?summary=true`, { requires: ["paged_reads_v1"] }).then(withFirstPages));
     const stashes = useQuery<{ stashes: Stash[] }>(`git:${projectId}:stashes`, () => api.get(`/projects/${projectId}/git/stashes`));
-    const [diff, setDiff] = useState<{ path: string; staged: boolean; text: string; hunks?: string[]; fingerprint?: string } | null>(null);
+    const [diff, setDiff] = useState<{ path: string; staged: boolean; text?: string; hunks?: string[]; fingerprint?: string } | null>(null);
     const [msg, setMsg] = useState("");
     const [stashMessage, setStashMessage] = useState("");
     const [review, setReview] = useState<{ phase: "loading"; projectId: string } | { phase: "ready"; projectId: string; data: GitReview } | null>(null);
@@ -65,27 +65,43 @@ export function GitPanel({ projectId }: { projectId: string }) {
     useEffect(() => { setReview(null); }, [projectId]);
     const s = status.data;
     const blocked = mutation.phase !== "idle" || review !== null;
+    const diffRequest = useRef(0);
     const show = async (path: string, isStaged: boolean) => {
-        const h = await api.get<{ hunks: string[]; fingerprint: string }>(`/projects/${projectId}/git/hunks?staged=${isStaged}&path=${encodeURIComponent(path)}`);
-        if (h.hunks.length > 0) {
-            setDiff({ path, staged: isStaged, text: "", hunks: h.hunks, fingerprint: h.fingerprint });
-            return;
+        const request = ++diffRequest.current;
+        const current = () => request === diffRequest.current && currentProject.current === projectId;
+        setErr(null);
+        setDiff({ path, staged: isStaged });
+        try {
+            const h = await api.get<{ hunks: string[]; fingerprint: string }>(`/projects/${projectId}/git/hunks?staged=${isStaged}&path=${encodeURIComponent(path)}`);
+            if (!current()) return;
+            if (h.hunks.length > 0) {
+                setDiff({ path, staged: isStaged, text: "", hunks: h.hunks, fingerprint: h.fingerprint });
+                return;
+            }
+            const d = await api.get<{ diff: string }>(`/projects/${projectId}/git/diff?staged=${isStaged}&path=${encodeURIComponent(path)}`);
+            if (current()) setDiff({ path, staged: isStaged, text: d.diff || "(텍스트 diff 없음 — 새 파일이거나 binary)" });
+        } catch (error) {
+            if (current()) {
+                setDiff(null);
+                setErr(error instanceof ApiError ? error.message : "Git diff 조회 실패");
+            }
         }
-        const d = await api.get<{ diff: string }>(`/projects/${projectId}/git/diff?staged=${isStaged}&path=${encodeURIComponent(path)}`);
-        setDiff({ path, staged: isStaged, text: d.diff || "(텍스트 diff 없음 — 새 파일이거나 binary)" });
     };
 
     const mutate = async (a: Attempt) => {
         if (sending.current) return;
         sending.current = true;
+        const selected = diffRequest.current;
         setMutation({ phase: "sending", attempt: a });
         setErr(null);
         try {
             await api.post(`/projects/${a.projectId}/git/${a.op}`, a.body, { key: a.key });
             if (a.op === "commit") setMsg((current) => current === a.body.message ? "" : current);
             if (a.op === "stash-save") setStashMessage((current) => current === a.body.message ? "" : current);
-            if (a.op === "confirm" || a.op === "stash-save") setDiff(null);
-            if (a.op === "stage-hunks") await show(a.body.path, a.body.unstage).catch(() => setDiff(null));
+            if (diffRequest.current === selected && currentProject.current === a.projectId) {
+                if (a.op === "confirm" || a.op === "stash-save") { diffRequest.current++; setDiff(null); }
+                if (a.op === "stage-hunks") void show(a.body.path, a.body.unstage);
+            }
             setMutation({ phase: "idle" });
         } catch (e) {
             const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408 || e.code === "result_unknown"
@@ -161,7 +177,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
         <GroveListItem key={(isStaged ? "s:" : "w:") + e.path} data-testid="git-change-row"
             startContent={<StatusBadge xstyle={gitPanelStyles.actions}><code>{isStaged ? e.index : e.worktree === "." ? e.index : e.worktree}</code></StatusBadge>}
             label={<GroveButton type="button" appearance="navigation" density="compact" width="100%" xstyle={gitPanelStyles.path} title={e.orig_path ? `${e.orig_path} → ${e.path}` : e.path}
-                onClick={() => void show(e.path, isStaged).catch((error) => setErr(error instanceof ApiError ? error.message : "Git diff 조회 실패"))}>
+                onClick={() => void show(e.path, isStaged)}>
                 <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} xstyle={gitPanelStyles.path}>{e.path}</GroveText>
             </GroveButton>}
             endContent={<GroveStack direction="horizontal" align="center" gap={2} xstyle={gitPanelStyles.actions}>
@@ -228,7 +244,7 @@ export function GitPanel({ projectId }: { projectId: string }) {
                                 <CodeBlock code={h} language="plaintext" isDiff isWrapped={false} />
                             </GroveStack>
                         ))
-                    ) : (
+                    ) : diff.text === undefined ? <GroveText role="status">변경 내용 불러오는 중…</GroveText> : (
                         <CodeBlock code={diff.text} language="plaintext" isDiff isWrapped={false} />
                     )}
                 </Panel>

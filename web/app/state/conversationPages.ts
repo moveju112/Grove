@@ -41,8 +41,12 @@ async function pool<T>(jobs: (() => Promise<T>)[], limit: number): Promise<T[]> 
 
 /// `target`부터 `upper`(미포함) 직전까지를 한 번에 읽는다. 목적지 앞 문맥과 사이 구간을 seq 범위로 나눠 병렬 조회한다.
 /// 같은 timeline이 아니면(되감기 등) null을 돌려준다.
-export async function readMessageRange(sessionId: string, target: number, upper: number, revision: number, get: Get = defaultGet): Promise<{ items: Message[]; more: boolean } | null> {
-    const head = () => get(conversationPagePath(sessionId, RANGE_CONTEXT, { before: Math.min(target + 1, upper) }));
+export async function readMessageRange(sessionId: string, target: number, upper: number, revision: number, get: Get = defaultGet, onTarget?: (page: MessagePage) => void): Promise<{ items: Message[]; more: boolean } | null> {
+    const head = async () => {
+        const page = await get(conversationPagePath(sessionId, RANGE_CONTEXT, { before: Math.min(target + 1, upper) }));
+        if (page.timeline_revision === revision && page.items.some((item) => item.seq === target)) onTarget?.(page);
+        return page;
+    };
     const windows: (() => Promise<MessagePage>)[] = [];
     // 각 창은 (a, a+500] 범위의 seq를 모두 담는다. seq는 대화 안에서 유일하므로 한 창이 500개를 넘지 않는다.
     for (let a = target; a < upper - 1; a += RANGE_WINDOW) {

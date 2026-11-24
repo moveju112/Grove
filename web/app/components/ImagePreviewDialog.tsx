@@ -9,7 +9,7 @@ import { attachmentStyles as styles } from "./attachments.stylex";
 import { CreationDialog } from "./create/CreationDialog";
 import { Icon } from "./icons";
 
-export type PreviewSource = { url: string | null; error: string | null; retry?: () => void };
+export type PreviewSource = { url: string | null; original?: boolean; error: string | null; retry?: () => void };
 type Gallery = { images: Attachment[]; sources: Record<string, PreviewSource>; index: number; select: (id: string) => void };
 
 export function ImagePreviewDialog({ name, source, onClose, onDownload, gallery }: {

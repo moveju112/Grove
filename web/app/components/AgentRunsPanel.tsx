@@ -7,7 +7,7 @@ import { ApiError, api } from "../api/client";
 import { Panel } from "./ui/Controls";
 import { useQuery } from "../state/store";
 import type { Opener } from "./Workspace";
-import { ServerActionButton } from "./pwa/ServerActionButton";
+import { PendingServerActionButton } from "./pwa/ServerActionButton";
 
 export type AgentRun = {
     id: string;
@@ -87,7 +87,7 @@ export function AgentRunsPanel({ sessionId, projectId, open, onError }: { sessio
                                 <GroveText type="supporting" color="secondary">{r.agent_id}</GroveText>
                                 <StatusBadge status={runLabel(r).needsUser ? "awaiting_approval" : r.status}>{runLabel(r).text}</StatusBadge>
                                 <GroveButton appearance="link" onClick={() => openSession(r.child_session_id, r.agent_id)}>자식 대화</GroveButton>
-                                {r.status === "running" && <ServerActionButton variant="secondary" density="compact" onClick={() => void cancel(r.id)}>취소</ServerActionButton>}
+                                {r.status === "running" && <PendingServerActionButton variant="secondary" density="compact" pendingLabel="취소 요청 중…" action={() => cancel(r.id)}>취소</PendingServerActionButton>}
                             </>} />
                         ))}
                     </GroveList>

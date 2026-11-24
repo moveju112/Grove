@@ -4,11 +4,11 @@
 import { useSyncExternalStore } from "react";
 import type { Followup, Message, MessagePage, Turn } from "../api/generated";
 import type { FollowKind } from "./sendOptions";
-import type { Attachment } from "./sendRecovery";
+import type { Attachment, MissingUpload } from "./sendRecovery";
 import { patchData, querySnapshot } from "./store";
 
 /// 입력창에 올린 첨부 하나. 업로드가 끝나면 attachment, 실패하면 error가 채워진다.
-export type DraftFile = { key: string; file?: File; attachment?: Attachment; error?: string };
+export type DraftFile = { key: string; file?: File; attachment?: Attachment; missing?: MissingUpload; error?: string };
 export type Outgoing = {
     key: string; resource: string; copyId: string; text: string; files: DraftFile[]; follow?: FollowKind; createdAt: string;
     /// 이 seq 뒤의 같은 글·이 목록에 없던 대기 메시지가 보이면 서버가 접수한 것이다(응답보다 이벤트가 먼저 올 때).

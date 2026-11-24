@@ -4,7 +4,9 @@ use super::{
     MAX_ACTIVITY, ChatMsg, ContextUsage, ModelOutput, ModelRequest, OnDelta, Profile, ProviderError, Usage,
     summarize,
 };
+use crate::provider::MessageGeneration;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 
@@ -74,6 +76,11 @@ fn turn_params(profile: &Profile, req: &ModelRequest, thread: &str, images: &[Pa
     params
 }
 
+struct MessageTiming {
+    started_at_ms: u64,
+    generation: Option<MessageGeneration>,
+}
+
 #[derive(Default)]
 struct State {
     output: ModelOutput,
@@ -83,6 +90,7 @@ struct State {
     cwd: PathBuf,
     turn: Option<String>,
     messages: Vec<(String, String)>,
+    message_timings: HashMap<String, MessageTiming>,
     reasoning: Vec<(String, Vec<String>)>,
     activity: Vec<(String, Value)>,
     viewed_images: std::collections::HashSet<String>,
@@ -420,7 +428,22 @@ impl State {
             // 원시 reasoning text가 아니라 CLI가 공개한 요약만 표시한다.
             // imageView에는 status가 없으므로 완료 알림에서만 파일을 첨부한다.
             "item/started" if p["item"]["type"] == "imageView" => return Ok(false),
-            "item/started" | "item/completed" => self.item(&p["item"])?,
+            "item/started" | "item/completed" => {
+                let item = &p["item"];
+                self.item(item)?;
+                if item["type"] == "agentMessage" {
+                    let id = item["id"].as_str().ok_or_else(invalid)?;
+                    if method == "item/started" && let Some(started_at_ms) = p["startedAtMs"].as_u64() {
+                        self.message_timings.entry(id.into()).or_insert(MessageTiming { started_at_ms, generation: None });
+                    } else if method == "item/completed" && let Some(timing) = self.message_timings.get_mut(id)
+                        && let Some(output_tokens) = p["contentTokenCount"].as_u64().filter(|n| *n > 0)
+                        && let Some(duration_ms) = p["completedAtMs"].as_u64()
+                            .and_then(|end| end.checked_sub(timing.started_at_ms)).filter(|ms| *ms > 0)
+                    {
+                        timing.generation.get_or_insert(MessageGeneration { output_tokens, duration_ms });
+                    }
+                }
+            }
             "thread/tokenUsage/updated" => {
                 // last는 가장 최근 요청의 점유량이며, total은 과금용 누적 사용량이다.
                 self.output.context_usage = Some(ContextUsage {
@@ -812,6 +835,12 @@ pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
         }
         notification(writer, &event, &mut state, on_delta).await?;
     }
+    // thread 누적 사용량 갱신과 독립적으로, 이번 턴에서 실제 측정된 메시지만 한 번씩 센다.
+    state.output.usage.message_generation = state.message_timings.values().filter_map(|t| t.generation)
+        .try_fold(MessageGeneration::default(), |sum, sample| Some(MessageGeneration {
+            output_tokens: sum.output_tokens.checked_add(sample.output_tokens)?,
+            duration_ms: sum.duration_ms.checked_add(sample.duration_ms)?,
+        })).filter(|sum| sum.duration_ms > 0);
     Ok((state.output, state.usage_total))
 }
 

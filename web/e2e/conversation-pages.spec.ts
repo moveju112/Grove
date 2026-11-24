@@ -81,17 +81,22 @@ test("오래된 검색 결과로 이동할 때 목적지 주변을 바로 읽는
     }
     await login(page);
     const reads = messageReads(page, long.id);
-    const row = page.getByTestId("project-row").filter({ hasText: project.name });
-    await row.getByRole("button", { name: "프로젝트 메뉴", exact: true }).click();
-    await page.getByRole("dialog", { name: `${project.name} 메뉴`, exact: true }).getByRole("button", { name: "기록", exact: true }).click();
-    const history = page.getByRole("dialog", { name: `${project.name} 기록`, exact: true });
-    await history.getByLabel("대화 검색").fill(word);
-    await history.getByTestId("search-hit").getByRole("button", { name: "아주 긴 대화", exact: true }).click();
-    const view = page.getByTestId("session-view").filter({ visible: true });
-    const target = view.locator('[data-seq][data-highlighted="true"]');
-    await expect(target).toHaveCount(1, { timeout: 15_000 });
-    await expect(target).toContainText(word);
-    await expect(target).toBeInViewport();
-    // 100개씩이면 6번 순차 요청. 목적지 문맥 1번 + 500개 창 2번 이내로 끝난다.
-    expect(reads.length).toBeLessThanOrEqual(3);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    await page.route(`**/sessions/${long.id}/messages?*after_seq*`, async (route) => { await gate; await route.continue(); });
+    try {
+        const row = page.getByTestId("project-row").filter({ hasText: project.name });
+        await row.getByRole("button", { name: "프로젝트 메뉴", exact: true }).click();
+        await page.getByRole("dialog", { name: `${project.name} 메뉴`, exact: true }).getByRole("button", { name: "기록", exact: true }).click();
+        const history = page.getByRole("dialog", { name: `${project.name} 기록`, exact: true });
+        await history.getByLabel("대화 검색").fill(word);
+        await history.getByTestId("search-hit").getByRole("button", { name: "아주 긴 대화", exact: true }).click();
+        const view = page.getByTestId("session-view").filter({ visible: true });
+        const target = view.locator('[data-seq][data-highlighted="true"]');
+        await expect(target).toHaveCount(1, { timeout: 15_000 });
+        await expect(target).toContainText(word);
+        await expect(target).toBeInViewport();
+        // 100개씩이면 6번 순차 요청. 목적지 문맥 1번 + 500개 창 2번 이내로 끝난다.
+        expect(reads.length).toBeLessThanOrEqual(3);
+    } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
 });

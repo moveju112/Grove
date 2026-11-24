@@ -328,6 +328,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                     <SessionView key={active.id} tabId={active.id} sessionId={active.resource_id} projectId={active.project_id} open={p.open} onTitleChange={syncTitle} />
                 )}
                 {active?.kind === "project" && active.project_id && <ProjectView key={active.id} tabId={active.id} projectId={active.project_id}
+                    openCreated={(target) => p.update((layout) => L.replaceTab(layout, active.id, target))}
                     open={!active.resource_id ? (target, how) => {
                         if (how && how !== "here") p.open(target, how);
                         else if (target.kind === "session" && target.project_id === active.project_id) p.update((l) => L.replaceTab(l, active.id, target));

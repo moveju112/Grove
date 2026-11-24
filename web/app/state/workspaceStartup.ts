@@ -49,8 +49,8 @@ export function prefetchConversation(id: string, resources: (keyof typeof readCo
 export function seedConversation(session: Session, sent: { message?: Message | null; turn?: Turn | null }) {
     const id = session.id;
     seedQuery(`session:${id}`, session, () => readConversation.session(id));
-    if (sent.message) seedQuery(`messages:${id}`, {
-        items: [sent.message], has_more_before: false, has_more_after: false, timeline_revision: 0, rewind_boundary_seq: null,
+    if (sent.message || session.last_message_seq === 0) seedQuery(`messages:${id}`, {
+        items: sent.message ? [sent.message] : [], has_more_before: false, has_more_after: false, timeline_revision: 0, rewind_boundary_seq: null,
     } satisfies MessagePage, () => readConversation.messages(id));
     if (sent.turn) seedQuery(`turns:${id}`, [sent.turn], () => readConversation.turns(id));
 }

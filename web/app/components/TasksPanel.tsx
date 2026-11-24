@@ -11,7 +11,7 @@ import { ApiError, api, authGeneration, newKey } from "../api/client";
 import { Panel } from "./ui/Controls";
 import { useQuery } from "../state/store";
 import { createContentCache, textBytes } from "../state/contentCache";
-import { ServerActionButton } from "./pwa/ServerActionButton";
+import { PendingServerActionButton, ServerActionButton } from "./pwa/ServerActionButton";
 import { TextInput } from "../design/Fields";
 
 export type TaskRow = {
@@ -110,7 +110,7 @@ export function TasksPanel({ sessionId, disabled }: { sessionId: string; disable
                         </StatusBadge>
                         <GroveButton variant="secondary" density="compact" onClick={() => setView(view === t.id ? null : t.id)}>출력</GroveButton>
                         {t.status === "running" && (
-                            <ServerActionButton variant="secondary" density="compact" onClick={() => void act(() => api.post(`/tasks/${t.id}/cancel`))}>취소</ServerActionButton>
+                            <PendingServerActionButton variant="secondary" density="compact" pendingLabel="취소 요청 중…" action={() => act(() => api.post(`/tasks/${t.id}/cancel`))}>취소</PendingServerActionButton>
                         )}
                         {t.status === "unknown" && <HintText type="supporting" color="secondary" hint={t.reason}>프로세스가 남아 있을 수 있습니다</HintText>}
                         {view === t.id && <TaskOutput id={t.id} />}

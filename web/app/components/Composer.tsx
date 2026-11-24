@@ -16,12 +16,12 @@ import { DetailDialog } from "./ui/Controls";
 import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../api/client";
 import type { ModelProfile } from "../api/generated";
 import { usePrefs } from "../state/device";
-import { useComposerMemory } from "../state/useComposerMemory";
+import { useComposerMemory, useComposerMemoryStore } from "../state/useComposerMemory";
 import { clearInvalidRecovery, loadRecovery, saveRecovery, settleRecovery, validSendOptions, type PendingSend } from "../state/sendRecovery";
 import { EFFORTS, type FollowKind, type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, serviceTierForProfile } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
-import { addOutgoing, outgoingResource, removeOutgoing, type DraftFile } from "../state/outgoing";
+import { addOutgoing, outgoingResource, readOutgoing, removeOutgoing, type DraftFile } from "../state/outgoing";
 
 import { AttachmentPicker, AttachmentSelection, useAttachments } from "./Attachments";
 import { AgentConnect } from "./AgentConnect";
@@ -57,7 +57,7 @@ type Props = {
     runningProfileId?: string | null;
     /// key: 이 전송의 Idempotency-Key. 결과를 모르는 실패 뒤 같은 내용을 다시 보내면 같은 key를 넘겨 서버가 중복 실행하지 않는다.
     /// follow: 실행 중일 때 고른 방식(없으면 일반 전송).
-    onSend: (text: string, o: SendOptions, key: string, follow?: FollowKind, attachments?: string[]) => Promise<void>;
+    onSend: (text: string, o: SendOptions, key: string, follow?: FollowKind, attachments?: string[], moveToSession?: (id: string, deliveryKey: string) => void) => Promise<void>;
     /// 이 화면이 제공하는 slash command(UI-024). 입력창 공통 명령(/tools·/save·/model)은 Composer가 가진다.
     commands?: RunCommand[];
     /// 봇 대화는 서버가 결합한 실제 프로필을 쓰며 로컬 선택을 변경하지 않는다.
@@ -78,12 +78,13 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const serverBlocked = useServerBlockReason();
     const disabled = parentDisabled ?? serverBlocked;
     const store = localRecoveryStorage();
+    const memory = useComposerMemoryStore();
     const selectionKey = `${OPT_KEY}.${resourceKey}#${copyId}`;
     const [initial] = useState(() => loadRecovery(store, resourceKey, copyId));
     const [text, setText] = useComposerMemory(resourceKey, copyId, "text", () => initial.pending?.raw ?? "");
     const [pending, setPending] = useComposerMemory<PendingSend | null>(resourceKey, copyId, "pending", () => initial.pending);
     const [pendingInvalid, setPendingInvalid] = useComposerMemory(resourceKey, copyId, "pendingInvalid", () => initial.invalid);
-    const attachments = useAttachments(projectId, resourceKey, copyId, initial.pending?.attachments);
+    const attachments = useAttachments(projectId, resourceKey, copyId, initial.pending?.attachments, initial.pending?.missing);
     const [sending] = useComposerMemory(resourceKey, copyId, "sending", () => ({ current: false }));
     const [checking] = useComposerMemory(resourceKey, copyId, "checking", () => ({ current: false }));
     const [deviceOptions] = useState(loadOpts);
@@ -110,7 +111,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const alive = useRef(true);
     useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
     const [busy, setBusy] = useComposerMemory(resourceKey, copyId, "busy", () => false);
-    const [msg, setMsg] = useState<string | null>(null);
+    const [msg, setMsg] = useComposerMemory<string | null>(resourceKey, copyId, "message", () => null);
     const [expandedModel, setExpandedModel] = useState(false);
     const [inputFocused, setInputFocused] = useState(false);
     const profiles = useQuery<ModelProfile[]>("profiles", () => api.get("/model-profiles"));
@@ -174,7 +175,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     // 모바일(터치) 키보드에는 Shift가 불편하므로 Enter는 항상 줄바꿈이고, 보내기 버튼으로 보낸다.
     const enterSends = prefs.enterToSend && !(typeof matchMedia === "function" && matchMedia("(pointer: coarse)").matches);
     // 결과를 알 수 없는 전송(네트워크 끊김·서버 오류)의 key. 같은 내용·옵션으로 다시 보낼 때만 재사용한다(UI-028).
-    const recovering = pending?.raw === text && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null;
+    const recovering = !pending?.missing && pending?.raw === text && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null;
     const runningFollow = running && eff.mode === "model" && !recovering ? follow : undefined;
     const steerHint = runningFollow && profiles.data?.find((p) => p.id === runningProfileId)?.protocol === "claude_code"
         ? "현재 Claude 실행이 끝난 뒤 반영돼요." : undefined;
@@ -286,7 +287,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const sendText = async (body: string, raw: string, original?: PendingSend, nativeCommand?: string, once?: FollowKind) => {
         if (busy || sending.current || !!disabled || pendingInvalid) return;
         try { requireServerAction(); } catch (e) { setMsg((e as Error).message); return; }
-        const confirmation = original ?? (pending?.raw === raw && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null);
+        const confirmation = original ?? (!pending?.missing && pending?.raw === raw && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null);
         if (!confirmation && attachments.failed) return;
         if (!confirmation && eff.mode === "model" && (!ready || profileDisabled || profileMissing)) {
             setMsg(!ready ? "기본 모델 설정을 확인한 뒤 보내세요." : "선택한 모델 프로필을 사용할 수 없습니다. 다른 프로필을 명시적으로 선택하세요.");
@@ -308,7 +309,33 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         }
         const key = confirmation?.key ?? newKey();
         selection.current = { ...selection.current, options: intent };
-        const draft = confirmation ? null : attachments.take();
+        const persistUploads = (items: DraftFile[]) => {
+            if (!store) throw new Error("send recovery storage unavailable");
+            const missing = items.flatMap((item, index) => !item.attachment && item.file
+                ? [{ index, name: item.file.name, size: item.file.size }] : []);
+            if (!missing.length) return;
+            const ready = items.flatMap((item) => item.attachment ? [item.attachment] : []);
+            const ids = ready.map((item) => item.id);
+            const record = { body: requestBody, raw, key, intent, options, follow: kind,
+                sig: sendOptionsSignature(intent, ids), attachmentIds: ids, attachments: ready, missing };
+            saveRecovery(store, resourceKey, copyId, record);
+            setPending(record);
+        };
+        if (!confirmation && attachments.busy) {
+            try { persistUploads(attachments.items); }
+            catch {
+                sending.current = false;
+                setBusy(false);
+                setMsg("전송 사본을 보관하지 못해 보내지 않았습니다. 기기 저장 공간을 확인하세요.");
+                return;
+            }
+        }
+        const draft = confirmation ? null : attachments.take((items) => {
+            if (authGeneration() === owner) {
+                // 저장 공간이 부족하면 앞서 보관한 사본을 유지한다.
+                try { persistUploads(items); } catch { /* 최종 전송 전 다시 보관한다. */ }
+            }
+        });
         // 기다리는 동안 새로 쓴 글·첨부는 지우지 않고, 보내지 못한 내용을 그 앞에 돌려놓는다.
         const giveBack = (files: DraftFile[]) => {
             setText((cur) => (raw && cur ? `${raw}\n${cur}` : raw || cur));
@@ -337,16 +364,35 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
             try {
                 if (!store) throw new Error("send recovery storage unavailable");
                 saveRecovery(store, resourceKey, copyId, snapshot);
+                if (pending?.missing && pending.key !== key) settleRecovery(store, resourceKey, pending.key);
             } catch {
                 if (draft) giveBack(files);
                 setMsg("전송 사본을 보관하지 못해 보내지 않았습니다. 기기 저장 공간을 확인하세요.");
                 return;
             }
             setPending(snapshot);
-            try {
-                await onSend(requestBody, options, key, kind, ids);
-                if (authGeneration() !== owner) return;
+            let receipt = snapshot;
+            let resource = resourceKey;
+            const moveToSession = (id: string, deliveryKey: string) => {
+                if (authGeneration() !== owner) throw new Error("인증이 변경됐어요.");
+                const destination = `session:${id}`;
+                const next = { ...snapshot, key: deliveryKey };
+                saveRecovery(store, destination, copyId, next);
                 settleRecovery(store, resourceKey, key);
+                receipt = next;
+                resource = destination;
+                setPending(next);
+                memory.move(resourceKey, destination, copyId);
+                const outgoing = readOutgoing(outgoingResource(resourceKey, copyId)).find((entry) => entry.key === key);
+                if (outgoing) {
+                    removeOutgoing(key);
+                    addOutgoing({ ...outgoing, resource: destination });
+                }
+            };
+            try {
+                await onSend(requestBody, options, key, kind, ids, moveToSession);
+                if (authGeneration() !== owner) return;
+                settleRecovery(store, resource, receipt.key);
                 setPending(null);
                 if (!draft) {
                     const sameSelection = sendOptionsSignature(selection.current.options, selection.current.ids) === sig;
@@ -360,14 +406,14 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                 const unknown = !(e instanceof ApiError) || e.status >= 500 || e.status === 408
                     || (e.details as { result_unknown?: boolean } | undefined)?.result_unknown === true;
                 if (unknown) {
-                    setPending(snapshot);
+                    setPending(receipt);
                     // 그사이 다음 글을 쓰기 시작했으면 섞지 않는다. 원래 요청은 안내의 '원래 요청 결과 확인'으로 확인한다.
                     if (draft && selection.current.text === "" && selection.current.files === 0) giveBack(files);
                 } else {
-                    settleRecovery(store, resourceKey, key);
+                    settleRecovery(store, resource, receipt.key);
                     setPending(null);
                     if (draft) giveBack(files);
-                    if (alive.current) setMsg(e.message);
+                    setMsg(e.message);
                 }
             }
         } finally {
@@ -422,7 +468,14 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     } catch { setMsg("전송 확인 기록을 정리하지 못했어요. 기기 저장소를 확인하세요."); }
                 }}>기록 확인 후 새 전송 허용</GroveButton>
             </Notice>}
-            {pending && !busy && (
+            {pending?.missing && !busy && <Notice tone="yellow" role="status">
+                업로드 도중 전송이 중단됐어요. 복원한 글과 첨부를 확인하고 보내 주세요.
+                <GroveButton variant="secondary" density="compact" onClick={() => {
+                    if (store) settleRecovery(store, resourceKey, pending.key);
+                    setPending(null);
+                }}>복구 기록 닫기</GroveButton>
+            </Notice>}
+            {pending && !pending.missing && !busy && (
                 <Notice tone="yellow" role="alert" data-testid="send-unsure">
                     보냈는지 확인할 수 없습니다(연결 문제). 입력은 그대로 보관했고 자동으로 다시 보내지 않습니다.
                     글·모델/도구 옵션·첨부를 바꾸지 않고 확인하면 원래 전송 위치·옵션·같은 요청 키를 사용합니다.

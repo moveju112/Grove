@@ -5,8 +5,18 @@ import { recentSince, type RecentWindow } from "./recentWindow";
 export const RECENT_PAGE_SIZE = 30;
 export const recentRangeKey = (range: RecentWindow, limit: number) => `recent:range:${range}:${limit}`;
 
-export function readRecentRange(range: RecentWindow, limit: number) {
-    const q = new URLSearchParams({ filter: "all", limit: String(limit), since: recentSince(range, new Date()) });
-    // 폰에서 잠들기 전에 시작한 요청이 새 목록을 오래 막지 않도록 목록 조회만 짧게 제한한다.
-    return api.get<RecentPage>(`/recent?${q}`, { timeoutMs: 10_000 });
+// 더 보기는 표시 중인 페이지의 다음 위치부터, 재검증은 같은 기간의 첫 항목부터 읽는다.
+export async function readRecentRange(range: RecentWindow, limit: number, previous?: RecentPage): Promise<RecentPage> {
+    const since = recentSince(range, new Date());
+    let offset = previous?.next_offset ?? 0;
+    const items = new Map(previous?.items.map((item) => [item.id, item]));
+    for (;;) {
+        const q = new URLSearchParams({ filter: "all", limit: String(Math.min(200, Math.max(1, limit - offset))), since });
+        if (offset) q.set("offset", String(offset));
+        const page = await api.get<RecentPage>(`/recent?${q}`, { timeoutMs: 10_000 });
+        for (const item of page.items) items.set(item.id, item);
+        const next = page.next_offset;
+        if (next == null || next <= offset || next >= limit) return { ...page, items: [...items.values()], next_offset: next != null && next <= offset ? null : next };
+        offset = next;
+    }
 }

@@ -10,10 +10,14 @@ export function ComposerMemoryProvider({ copies, children }: { copies: string[];
     return <Context.Provider value={memory}>{children}</Context.Provider>;
 }
 
-export function useComposerMemory<T>(resource: string, copyId: string, field: string, initial: () => T) {
+export function useComposerMemoryStore() {
     const memory = useContext(Context);
     if (!memory) throw new Error("ComposerMemoryProvider is required");
-    const cell = memory.cell(resource, copyId, field, initial);
+    return memory;
+}
+
+export function useComposerMemory<T>(resource: string, copyId: string, field: string, initial: () => T) {
+    const cell = useComposerMemoryStore().cell(resource, copyId, field, initial);
     const value = useSyncExternalStore(cell.subscribe, cell.read, cell.read);
     return [value, cell.set] as const;
 }

@@ -43,11 +43,12 @@ test("첨부 업로드와 전송 응답 유실 뒤 같은 요청으로 원문을
         return route.fallback();
     });
     await project.getByRole("button", { name: "보내기", exact: true }).click();
-    await expect(project).toContainText("같은 요청");
-    await expect(project.getByLabel("메시지 입력")).toHaveValue(title);
-    await expect(project.getByTestId("attachment-card")).toContainText(name);
+    const session = page.getByTestId("session-view").filter({ visible: true });
+    await expect(session.getByTestId("send-unsure")).toBeVisible();
+    await expect(session.getByLabel("메시지 입력")).toHaveValue(title);
+    await expect(session.getByTestId("attachment-selection")).toContainText(name);
     loseSend = false;
-    await project.getByRole("button", { name: "같은 요청 확인", exact: true }).click();
+    await session.getByRole("button", { name: "같은 요청 확인", exact: true }).click();
     const sent = page.getByTestId("session-view").getByLabel("메시지 첨부파일");
     await expect(sent).toContainText(name);
     expect(sendKeys).toHaveLength(2);
@@ -150,4 +151,42 @@ test("실행 중 첨부를 대기열에 넣고 취소 뒤 직접 이어서 보�
     await expect(view.getByTestId("followups")).toHaveCount(0);
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "첨부 대기열 완료" })).toBeVisible();
     await expect(view.getByLabel("메시지 첨부파일").getByRole("img", { name: "queued.png", exact: true })).toBeVisible();
+});
+
+test("큰 사진은 작은 미리보기로 열고 확대할 때만 원문을 받는다", async ({ page }) => {
+    const { a } = await ensureProjects();
+    const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: "큰 사진 미리보기" });
+    const image = await page.evaluate(() => {
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 512;
+        const ctx = canvas.getContext("2d")!;
+        const pixels = ctx.createImageData(512, 512);
+        let seed = 1;
+        for (let i = 0; i < pixels.data.length; i++) {
+            seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+            pixels.data[i] = i % 4 === 3 ? 255 : seed >>> 24;
+        }
+        ctx.putImageData(pixels, 0, 0);
+        return canvas.toDataURL().split(",")[1]!;
+    });
+    const photo = await apiCall<{ id: string; size: number }>("POST", `/projects/${a.id}/attachments`, { name: "large.png", data_base64: image });
+    expect(photo.size).toBeGreaterThan(256 * 1024);
+    await apiCall("POST", `/sessions/${session.id}/messages`, { text: "사진", attachments: [photo.id] });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
+    const reads: string[] = [];
+    page.on("request", (request) => {
+        const url = new URL(request.url());
+        if (url.pathname.endsWith(`/attachments/${photo.id}/content`)) reads.push(url.search);
+    });
+    await login(page);
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: /큰 사진 미리보기/ }).click();
+    const view = page.getByTestId("session-view").filter({ visible: true });
+    const width = (node: HTMLImageElement) => node.naturalWidth;
+    await expect.poll(() => view.getByRole("img", { name: "large.png", exact: true }).evaluate(width)).toBe(160);
+    expect(reads).toEqual(["?preview=image"]);
+    await view.getByRole("button", { name: "large.png 미리보기", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "large.png 미리보기" });
+    await expect.poll(() => dialog.getByRole("img", { name: "large.png", exact: true }).evaluate(width)).toBe(512);
+    await expect(dialog.getByRole("button", { name: "원문 다운로드" })).toBeVisible();
+    expect(reads).toEqual(["?preview=image", ""]);
 });

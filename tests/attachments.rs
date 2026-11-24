@@ -41,6 +41,32 @@ async fn gc(s: &TestServer) -> Value {
 }
 
 #[tokio::test]
+async fn previews_preserve_originals_and_check_access() {
+    let s = TestServer::start().await;
+    let project = s.create_project("preview").await;
+    let pid = project["id"].as_str().unwrap();
+    let other = s.registered_device("preview reader").await;
+    let text = "한".repeat(9000);
+    let image = png(320, 80);
+    for (name, bytes, mode) in [("text.txt", text.as_bytes(), "text"), ("image.png", image.as_slice(), "image")] {
+        let a = upload(&s, pid, name, bytes).await;
+        let path = format!("/api/v1/attachments/{}/content", a["id"].as_str().unwrap());
+        let preview = format!("{path}?preview={mode}");
+        let denied = s.raw(Method::GET, &preview, None, None, other["token"].as_str()).await;
+        assert_eq!(denied.status(), StatusCode::NOT_FOUND);
+        let result = s.raw(Method::GET, &preview, None, None, None).await;
+        assert_eq!(result.status(), StatusCode::OK);
+        if mode == "text" {
+            assert_eq!(result.text().await.unwrap(), "한".repeat(8192));
+        } else {
+            let img = image::load_from_memory(&result.bytes().await.unwrap()).unwrap();
+            assert_eq!((img.width(), img.height()), (160, 40));
+        }
+        assert_eq!(s.raw(Method::GET, &path, None, None, None).await.bytes().await.unwrap().as_ref(), bytes);
+    }
+}
+
+#[tokio::test]
 async fn final_media_is_snapshotted_and_never_reads_outside_the_project_or_past_policy() {
     let s = TestServer::start().await;
     let f = Fixture::start().await;

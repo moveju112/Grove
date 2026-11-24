@@ -11,7 +11,7 @@ import { prepareRecentPatch } from "../state/recentPatch";
 import { RECENT_PAGE_SIZE, readRecentRange, recentRangeKey } from "../state/recentQuery";
 import { effectiveRecentWindow, groupBySplit, recentWindowLabel, type RecentSplitGroup, type RecentWindow } from "../state/recentWindow";
 import { When } from "./When";
-import { revalidateQuery, subscribeQuery, useQuery } from "../state/store";
+import { querySnapshot, revalidateQuery, subscribeQuery, useQuery } from "../state/store";
 import { usePageVisible, usePaneVisible } from "../state/paneVisibility";
 import { prefetchConversation } from "../state/workspaceStartup";
 import { DRAG_OPEN } from "../state/layout";
@@ -42,8 +42,8 @@ const NO_SPLITS: readonly RecentSplitGroup[] = [];
 // 앱 복귀·서랍 열기·첫 화면 선조회가 거의 동시에 일어나면 같은 요청을 쓴다.
 const RECENT_REFRESH_COALESCE_MS = 750;
 
-export function RecentPanel({ hides, open, splitGroups = NO_SPLITS, presentation = "sidebar", shown = true }: {
-    hides: RecentHides; open: Opener; splitGroups?: readonly RecentSplitGroup[]; presentation?: "sidebar" | "home"; shown?: boolean;
+export function RecentPanel({ hides, open, warmProject, splitGroups = NO_SPLITS, presentation = "sidebar", shown = true }: {
+    hides: RecentHides; open: Opener; warmProject?: (id: string) => void; splitGroups?: readonly RecentSplitGroup[]; presentation?: "sidebar" | "home"; shown?: boolean;
 }) {
     const [limits, setLimits] = useState<Partial<Record<RecentWindow, number>>>({});
     const [accessError, setAccessError] = useState<string | null>(null);
@@ -53,7 +53,12 @@ export function RecentPanel({ hides, open, splitGroups = NO_SPLITS, presentation
     const range = effectiveRecentWindow(prefs.recentWindow, prefs.recentWindows);
     const limit = limits[range] ?? RECENT_PAGE_SIZE;
     const key = recentRangeKey(range, limit);
-    const recent = useQuery<RecentPage>(key, () => readRecentRange(range, limit),
+    const extension = useRef<{ key: string; page: RecentPage } | null>(null);
+    const recent = useQuery<RecentPage>(key, () => {
+        const previous = extension.current?.key === key ? extension.current.page : undefined;
+        extension.current = null;
+        return readRecentRange(range, limit, previous);
+    },
         { keepPreviousData: true, scope: "recent:range" });
     // 이전 데몬에서 반환하는 터미널 기록도 최근 목록에 표시하지 않는다.
     const items = recent.data?.items.filter((it) => it.kind !== "terminal" && !hides.isHidden(it));
@@ -119,6 +124,7 @@ export function RecentPanel({ hides, open, splitGroups = NO_SPLITS, presentation
                         <Button key={option} appearance="choice" aria-pressed={range === option}
                             aria-label={`최근 ${recentWindowLabel(option)} 범위`} onClick={() => {
                                 if (option === range) return;
+                                extension.current = null;
                                 savePrefs({ ...loadPrefs(), recentWindow: option });
                             }}>
                             {recentWindowLabel(option)}
@@ -155,7 +161,12 @@ export function RecentPanel({ hides, open, splitGroups = NO_SPLITS, presentation
             </GroveList>
             {!recent.loading && items?.length === 0 && <GroveText as="p" display="block" type="supporting" color="secondary">최근 항목 없음</GroveText>}
             {recent.data?.next_offset != null && (
-                <Button variant="secondary" onClick={() => setLimits(current => ({ ...current, [range]: limit + RECENT_PAGE_SIZE }))}>
+                <Button variant="secondary" disabled={recent.loading || recent.isPreviousData} onClick={() => {
+                    const next = recent.data!.next_offset! + RECENT_PAGE_SIZE;
+                    const target = recentRangeKey(range, next);
+                    extension.current = querySnapshot(target).data === undefined ? { key: target, page: recent.data! } : null;
+                    setLimits(current => ({ ...current, [range]: next }));
+                }}>
                     더 보기
                 </Button>
             )}
@@ -174,6 +185,7 @@ export function RecentPanel({ hides, open, splitGroups = NO_SPLITS, presentation
                         <Button type="button" appearance="navigation" density={presentation === "home" ? "touch" : undefined}
                             xstyle={presentation === "sidebar" && [workspaceStyles.recentRowControl, workspaceStyles.recentTitle]}
                             aria-description={running ? "실행 중" : completed ? "완료 · 확인 안 함" : undefined}
+                            onPointerDown={() => warmProject?.(it.project_id)} onFocus={() => warmProject?.(it.project_id)}
                             onClick={() => openItem(it)} title={`${it.project_name} · ${it.title}${linkedTo ? ` · 분할로 함께 열림: ${linkedTo}` : ""} · 영역이나 가장자리로 끌어서 열 수 있습니다`}
                             draggable={["session", "project", "file"].includes(it.kind)}
                             onDragStart={(e) => {

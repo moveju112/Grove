@@ -6,12 +6,18 @@ import { ApiError } from "../api/client";
 import type { Project } from "../api/generated";
 import { Button } from "../design/Button";
 import { TextInput } from "../design/Fields";
-import { invalidate } from "../state/store";
+import { invalidate, patchData } from "../state/store";
 import { CreationDialog } from "./create/CreationDialog";
 import { CreationRequest } from "./create/creation";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import { requireServerAction } from "./pwa/lifecycle";
 import { ProjectIconFields, type IconDraft } from "./ProjectIconFields";
+
+export function acceptProject(project: Project) {
+    const current = (old: Project) => old.id === project.id && old.revision <= project.revision ? project : old;
+    patchData<Project>(`project:${project.id}`, current);
+    for (const sort of ["name", "recent", "manual"]) patchData<Project[]>(`projects:${sort}`, (items) => items.map(current));
+}
 
 export function ProjectEditDialog({ project, field, onClose }: { project: Project; field: "name" | "icon"; onClose: () => void }) {
     const rename = field === "name";
@@ -36,6 +42,7 @@ export function ProjectEditDialog({ project, field, onClose }: { project: Projec
             const result = await request.run(pending?.path ?? `/projects/${project.id}`,
                 pending?.body ?? { ...(rename ? { name: name.trim() } : draft), expected_revision: revision });
             if (!result) return;
+            acceptProject(result);
             invalidate("projects");
             invalidate(`project:${project.id}`);
             invalidate("recent");
@@ -66,7 +73,7 @@ export function ProjectEditDialog({ project, field, onClose }: { project: Projec
             </Text>}
             <Stack direction="horizontal" gap={2}>
                 <ServerActionButton type="submit" disabled={busy || reading || !canSave}>
-                    {unresolved ? "같은 요청 결과 확인" : "저장"}
+                    {busy ? "저장 중…" : unresolved ? "같은 요청 결과 확인" : "저장"}
                 </ServerActionButton>
                 <Button type="button" variant="secondary" disabled={busy || unresolved} onClick={close}>취소</Button>
             </Stack>

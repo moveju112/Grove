@@ -1,3 +1,4 @@
+import { usePendingAction } from "../state/usePendingAction";
 import { HintText } from "../design/HintText";
 import { ChatMessage, ChatMessageBubble } from "@astryxdesign/core/Chat";
 import { Card } from "@astryxdesign/core/Card";
@@ -48,7 +49,7 @@ import { TurnTiming } from "./turn-timing/TurnTiming";
 import { checkCompatibility, useServerBlockReason } from "./pwa/lifecycle";
 import { MessageCopyButton as CopyButton } from "./capabilities/MessageCopyButton";
 import { CompactionDetails, type CompactionRecord } from "./compaction/CompactionDetails";
-import { ServerActionButton } from "./pwa/ServerActionButton";
+import { PendingServerActionButton, ServerActionButton } from "./pwa/ServerActionButton";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Spinner } from "@astryxdesign/core/Spinner";
 import { CHAT_COLUMN_WIDTH, chatLayout } from "./chat-layout.stylex";
@@ -92,6 +93,12 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     // 탭 전환으로 내려갔다 돌아오면 읽던 과거 구간을 다시 받지 않고 이어 붙인다.
     const [initialOlder] = useState(() => latest.data ? takeOlderPages(sessionId, latest.data) : null);
     const [older, setOlder] = useState<Message[]>(initialOlder?.items ?? []);
+    const [targetPage, setTargetPage] = useState<MessagePage | null>(null);
+    const targetRequest = useRef(0);
+    const [rangeError, setRangeError] = useState<{ seq?: number; message: string } | null>(null);
+    const previewing = !!targetPage && targetPage.timeline_revision === latest.data?.timeline_revision;
+    const previewRef = useRef(false);
+    previewRef.current = previewing;
     const [olderMore, setOlderMore] = useState<boolean | null>(initialOlder?.more ?? null);
     const latestRef = useRef(latest.data);
     latestRef.current = latest.data;
@@ -199,7 +206,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             // 메시지 끝 표시가 스크롤 영역 아래쪽 80px 안에 보이면 '맨 아래를 보는 중'이다(아래 패널·입력창 높이와 무관).
             const b = bottom.current?.getBoundingClientRect();
             const near = !!b && b.top <= messageViewportBottom() + 80;
-            stick.current = pinned.current || near;
+            stick.current = pinned.current || (!previewRef.current && near);
             // 질문에서 멈춘 고정 상태는 아래에 새 내용이 남아 있으므로 알림을 지우지 않는다.
             if (near) setUnseen(false);
             capturePosition();
@@ -231,6 +238,9 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         };
     }, [!!s, !!latest.data]); // eslint-disable-line react-hooks/exhaustive-deps
     const toBottom = () => {
+        targetRequest.current++;
+        setTargetPage(null);
+        setRangeError(null);
         clearPendingPosition();
         pinned.current = false;
         stick.current = true;
@@ -278,7 +288,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     const messages = [...older.filter((m) => m.seq < latestFirst), ...(latest.data?.items ?? [])];
     const liveResponse = partial?.text === undefined ? undefined : partial;
     const showProgress = prefs.progressVisibility !== "hidden";
-    const transcript = assistantTranscript(messages, liveResponse, showProgress);
+    const transcript = assistantTranscript(previewing ? targetPage.items : messages, previewing ? undefined : liveResponse, showProgress);
     // 방금 보낸 글은 서버 응답 전에도 대화 끝에 보인다. 실행 중에 보낸 추가 메시지는 대기 목록에 보인다.
     const outgoing = useOutgoing(`session:${sessionId}`);
     const sendingRows: Message[] = outgoing.filter((entry) => !entry.follow && !acceptedInMessages(entry, messages)).map((entry, index) => ({
@@ -301,18 +311,23 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     // 이전 페이지 조회는 대화마다 하나만 진행한다. 첫 응답 전에 다시 눌러도 같은 요청을 공유하고, 도착한 페이지는 seq로 합친다.
     const olderFlight = useRef(singleFlight()).current;
     const [loadingOlder, setLoadingOlder] = useState(false);
-    const fetchOlder = (task: (first: number, revision: number) => Promise<{ items: Message[]; more: boolean } | null>) => {
+    const fetchOlder = (task: (first: number, revision: number) => Promise<{ items: Message[]; more: boolean } | null>, seq?: number) => {
         const first = messages[0]?.seq;
         const revision = latest.data?.timeline_revision;
         if (!first || revision == null) return Promise.resolve();
         setLoadingOlder(true);
         return olderFlight.run(sessionId, async () => {
+            setRangeError(null);
             try {
                 const page = await task(first, revision);
+                setTargetPage(null);
                 if (!page || revision !== latestRef.current?.timeline_revision) return;
                 setOlder((o) => mergeMessages(page.items, o));
                 setOlderMore(page.more);
+            } catch (error) {
+                setRangeError({ seq, message: error instanceof ApiError ? error.message : "이전 메시지를 불러오지 못했어요." });
             } finally {
+                targetRequest.current++;
                 setLoadingOlder(false);
             }
         });
@@ -322,7 +337,12 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         return page.timeline_revision === latestRef.current?.timeline_revision ? { items: page.items, more: page.has_more_before } : null;
     });
     // 목적지가 정해진 이동은 100개씩 거슬러 올라가지 않고, 목적지 주변과 사이 구간을 한 번에 병렬로 읽는다.
-    const loadThrough = (seq: number) => fetchOlder((first, revision) => readMessageRange(sessionId, seq, first, revision));
+    const loadThrough = (seq: number) => fetchOlder((first, revision) => {
+        const request = ++targetRequest.current;
+        return readMessageRange(sessionId, seq, first, revision, undefined, (page) => {
+            if (request === targetRequest.current && revision === latestRef.current?.timeline_revision) setTargetPage(page);
+        });
+    }, seq);
     const hasOlder = olderMore ?? latest.data?.has_more_before;
     // 화면이 내려가면 읽던 과거 구간을 보관해 돌아올 때 다시 받지 않는다.
     const keepRef = useRef({ sessionId, older, olderMore, latest: latest.data });
@@ -356,7 +376,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             // 실제 위치는 VirtualMessages가 행 측정과 함께 복원한다.
             return;
         } else if (hasOlder && position.anchorSeq != null && (messages[0]?.seq ?? 0) > position.anchorSeq) {
-            void loadThrough(position.anchorSeq);
+            if (rangeError?.seq !== position.anchorSeq) void loadThrough(position.anchorSeq);
         } else {
             clearPendingPosition();
             stick.current = true;
@@ -373,14 +393,14 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
         if (messages.some((message) => message.seq === focusSeq)) return;
         const first = messages[0]?.seq;
         if (first != null && first > focusSeq && hasOlder) {
-            if (!olderFlight.busy(sessionId)) void loadThrough(focusSeq);
+            if (!olderFlight.busy(sessionId) && rangeError?.seq !== focusSeq) void loadThrough(focusSeq);
         } else {
             // 지워졌거나 범위를 벗어남: 이동할 수 없음을 알린다.
             setFocusMiss(true);
             focusDone();
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [focusSeq, messages.length, latest.data]);
+    }, [focusSeq, messages.length, latest.data, loadingOlder]);
 
     const timedTurn = active ?? lastTurn;
     const pending = (calls.data ?? []).filter((c) => c.status === "pending_approval");
@@ -431,9 +451,11 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
     };
 
     // 선택한 응답까지의 대화와 모델 컨텍스트를 이어받는 새 대화를 연다. 원본 대화와 파일은 바꾸지 않는다.
-    const forkAt = (seq: number) => void act(async () => {
-        const n = await api.post<Session>(`/sessions/${sessionId}/fork`, { from_seq: seq, inherit_context: true });
+    const forking = usePendingAction();
+    const fork = (seq: number, inherit: boolean) => forking.run(async () => {
+        const n = await api.post<Session>(`/sessions/${sessionId}/fork`, { from_seq: seq, inherit_context: inherit });
         open({ kind: "session", project_id: projectId, resource_id: n.id, title: n.title }, "right");
+        return `분기한 대화를 열었습니다: ${n.title}`;
     });
 
     // 대화 명령(UI-024). 실패는 Composer 상태 줄에 보인다.
@@ -453,9 +475,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             description: "지금까지를 새 대화로 분기(context: 모델 컨텍스트 계승, history: 기록만)",
             run: async (a) => {
                 if (a && a !== "context" && a !== "history") throw new Error("/fork context 또는 /fork history");
-                const n = await api.post<Session>(`/sessions/${sessionId}/fork`, { from_seq: session.data?.last_message_seq ?? 0, inherit_context: a !== "history" });
-                open({ kind: "session", project_id: projectId, resource_id: n.id, title: n.title }, "right");
-                return `분기한 대화를 열었습니다: ${n.title}`;
+                return await fork(session.data?.last_message_seq ?? 0, a !== "history") ?? "대화를 분기하는 중이에요.";
             },
         },
         {
@@ -510,13 +530,10 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                             const r = await api.post<{ applied: boolean; message?: string }>(`/sessions/${sessionId}/title`, {});
                             if (!r.applied) setErr(`제목을 바꾸지 않았습니다: ${r.message ?? ""}`);
                         })}>제목 생성</ServerActionButton>}
-                    <ServerActionButton variant="secondary" density="compact" disabled={archived} onClick={() => {
+                    <ServerActionButton variant="secondary" density="compact" disabled={archived || forking.busy} onClick={() => {
                         const inherit = confirm("모델 컨텍스트도 이어받을까요?\n확인: 대화와 컨텍스트 계승 / 취소: 대화 기록만 표시하고 새 컨텍스트");
-                        void act(async () => {
-                            const n = await api.post<Session>(`/sessions/${sessionId}/fork`, { from_seq: s.last_message_seq, inherit_context: inherit });
-                            open({ kind: "session", project_id: projectId, resource_id: n.id, title: n.title }, "right");
-                        });
-                    }}>분기</ServerActionButton>
+                        void act(() => fork(s.last_message_seq, inherit));
+                    }}>{forking.busy ? "분기 중…" : "분기"}</ServerActionButton>
                     <ServerActionButton variant="secondary" density="compact" onClick={() => void act(() => api.patch(`/sessions/${sessionId}`, { expected_revision: s.revision, archived: !archived }))}>
                         {archived ? "복원" : "보관"}
                     </ServerActionButton>
@@ -549,7 +566,11 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                 </GroveText>
             )}
             <Stack gap={4} width="100%" maxWidth={CHAT_COLUMN_WIDTH} xstyle={chatLayout.messages} aria-live="polite" data-session-msgs={sessionId} ref={msgsRef}>
-                {hasOlder && <GroveButton variant="secondary" disabled={loadingOlder} onClick={() => void loadOlder()}>이전 메시지</GroveButton>}
+                {rangeError && <GroveText color="error" role="alert">{rangeError.message}{" "}
+                    <GroveButton appearance="link" onClick={() => void (rangeError.seq == null ? loadOlder() : loadThrough(rangeError.seq))}>다시 불러오기</GroveButton>
+                </GroveText>}
+                {previewing && loadingOlder && <GroveText type="supporting" color="secondary" role="status">주변 대화를 불러오는 중…</GroveText>}
+                {hasOlder && !previewing && <GroveButton variant="secondary" disabled={loadingOlder} onClick={() => void loadOlder()}>이전 메시지</GroveButton>}
                 <FileRefContext.Provider
                     value={project.data ? (path, line) => open({ kind: "file", project_id: projectId, resource_id: path, filePath: path, fileLine: line, title: line ? `${path}:${line}` : path }, "right") : null}
                 >
@@ -591,7 +612,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                             {m.role === "assistant"
                                 ? <AssistantTurn row={transcript.assistants.get(m.id)!} name={assistantName} image={assistantImage}
                                     showProgress={showProgress} progressOpen={progressOpen(m.turn_id)} progressActive={isActiveTurn(m.turn_id)}
-                                    onFork={archived ? undefined : () => forkAt(transcript.assistants.get(m.id)!.latest.seq)} />
+                                    onFork={archived || forking.busy ? undefined : () => void act(() => fork(transcript.assistants.get(m.id)!.latest.seq, true))} />
                                 : <MessageView m={m} />}
                             {m.role === "user" && (
                                 <Stack direction="horizontal" align="center" gap={1} xstyle={chatLayout.actions}>
@@ -709,11 +730,12 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                             <TurnTiming sessionId={sessionId} turn={active} messagesReady={false} compact showStatus={false} />
                         </Stack>
                     </Stack>
-                    <ServerActionButton appearance="choice" density="compact" aria-label="취소" xstyle={chatLayout.turnStatusAction}
-                        onClick={() => {
+                    <PendingServerActionButton key={active.id} pendingLabel="취소 요청 중…" appearance="choice" density="compact" aria-label="취소" xstyle={chatLayout.turnStatusAction}
+                        action={async () => {
                             if (!confirm("진행 중인 요청을 취소할까요?\n이미 변경된 파일은 되돌리지 않아요.")) return;
-                            void act(() => api.post(`/turns/${active.id}/cancel`));
-                        }}><Icon name="stop" size={16} />취소</ServerActionButton>
+                            await act(() => api.post(`/turns/${active.id}/cancel`));
+                            turns.reload();
+                        }}><Icon name="stop" size={16} />취소</PendingServerActionButton>
                 </Stack>}
                 sendAccessory={<ContextMeter sessionId={sessionId} profileId={active?.profile_id ?? lastTurn?.profile_id ?? null} activeTurnId={active?.id} busy={!!active || archived || !!serverBlocked} onError={setErr} />}
                 boundProfileId={room.data ? room.data.members.find((m) => m.profile_id)?.profile_id ?? null : s.bot_id ? bots.data?.bots.find((bot) => bot.id === s.bot_id)?.profile_id ?? null : undefined} />

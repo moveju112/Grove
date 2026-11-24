@@ -43,7 +43,7 @@ import { ServerActionButton } from "./pwa/ServerActionButton";
 import { CreationEntry } from "./create/CreationEntry";
 import { ProjectFolderDialog, ProjectFolderTree, useProjectFolders } from "./ProjectFolders";
 import { requestNewConversation } from "../state/newConversation";
-import { CreationRequest, projectTarget } from "./create/creation";
+import { CreationRequest, createTerminal, projectTarget } from "./create/creation";
 import { NavigationContext } from "./navigation/NavigationContext";
 import { checkCompatibility, requireServerAction, useServerBlockReason } from "./pwa/lifecycle";
 import { Stack, StackItem } from "@astryxdesign/core/Stack";
@@ -53,7 +53,7 @@ import { MobileDrawer, useMobilePanels } from "./MobilePanels";
 import { SettingsDialog } from "./SettingsDialog";
 import { PushStatusContext, usePushSync } from "./PushNotifications";
 import { ProjectHistoryDialog } from "./ProjectHistoryDialog";
-import { ProjectEditDialog } from "./ProjectEditDialog";
+import { acceptProject, ProjectEditDialog } from "./ProjectEditDialog";
 import { ProjectIcon } from "./ProjectIcon";
 import { ComposerMemoryProvider } from "../state/useComposerMemory";
 import { createPortal } from "react-dom";
@@ -143,7 +143,7 @@ export function Workspace() {
     }, [narrow, mobile.setPanel]);
     const [notice, setNotice] = useState<string | null>(null);
     const baseKey = useMemo(() => layoutKey(), [narrow]); // eslint-disable-line react-hooks/exhaustive-deps
-    const { key, projectId: selectedProjectId, layouts: savedLayouts, updateAt, openAt: openProjectAt, flush, focusAt, projectAt, ensureProject } = useProjectLayouts(baseKey, setNotice);
+    const { key, projectId: selectedProjectId, layouts: savedLayouts, updateAt, openAt: openProjectAt, flush, focusAt, projectAt, ensureProject, warmProject } = useProjectLayouts(baseKey, setNotice);
     const recentHides = useRecentHides();
     const pendingTabs = useMemo(() => new Set(recentHides.entries.flatMap(op =>
         op.tabId && (!op.error || op.uncertain) ? [op.tabId] : [])), [recentHides.entries]);
@@ -183,7 +183,7 @@ export function Workspace() {
                 } catch (error) {
                     if (!(error instanceof ApiError && error.status === 404)) throw error;
                 }
-                updateAt(id, (current) => L.closeTab(current, tabId));
+                await updateAt(id, (current) => L.closeTab(current, tabId));
             } catch (error) {
                 setCloseError(error instanceof ApiError ? error.message : "터미널 종료를 확인하지 못했어요. 탭을 다시 닫아 주세요.");
             } finally {
@@ -240,7 +240,9 @@ export function Workspace() {
         requestAnimationFrame(() => projectMenuTrigger.current?.focus({ preventScroll: true }));
     };
     const [showArchived, setShowArchived] = useState(false);
-    const shown = projectSort === "manual" ? orderProjects(projects.data ?? NO_PROJECTS, projectOrder) : projects.data ?? NO_PROJECTS;
+    const [folderPreview, setFolderPreview] = useState<{ id: string; folder: string | null } | null>(null);
+    const ordered = projectSort === "manual" ? orderProjects(projects.data ?? NO_PROJECTS, projectOrder) : projects.data ?? NO_PROJECTS;
+    const shown = folderPreview ? ordered.map((p) => p.id === folderPreview.id ? { ...p, folder_id: folderPreview.folder ?? undefined } : p) : ordered;
     const reorder = (sourceId: string, targetId: string, after: boolean) => {
         const all = projects.data ?? NO_PROJECTS;
         const source = all.find((p) => p.id === sourceId), target = all.find((p) => p.id === targetId);
@@ -259,11 +261,14 @@ export function Workspace() {
         setFolderMoveError(null);
         try {
             requireServerAction();
-            await folderMoveRequest.run(path, body);
+            setFolderPreview({ id: path.slice("/projects/".length), folder: body.folder_id as string | null });
+            const saved = await folderMoveRequest.run(path, body);
+            if (saved) acceptProject(saved);
         } catch (error) {
             if (folderMoveRequest.pending) setFolderMoveError("프로젝트 이동 결과를 확인하지 못했어요.");
             else if (!isTransportError(error)) setFolderMoveError(error instanceof Error ? error.message : "프로젝트를 옮기지 못했어요.");
         } finally {
+            setFolderPreview(null);
             projects.reload();
             folders.reload();
             setFolderMoveBusy(false);
@@ -450,10 +455,10 @@ export function Workspace() {
         setOpeningTerminal(true);
         setCloseError(null);
         try {
-            const terminal = await api.post<{ id: string; name: string }>(`/projects/${projectId}/terminals`, { name: "터미널" });
-            openAt(id, { kind: "terminal", project_id: projectId, resource_id: terminal.id, title: terminal.name });
+            const terminal = await createTerminal(projectId);
+            if (terminal) openAt(id, { kind: "terminal", project_id: projectId, resource_id: terminal.id, title: terminal.name });
         } catch (error) {
-            setCloseError(error instanceof ApiError ? error.message : "터미널을 열지 못했어요.");
+            setCloseError(error instanceof Error ? error.message : "터미널을 열지 못했어요.");
         } finally {
             terminalPending.current = false;
             setOpeningTerminal(false);
@@ -494,7 +499,7 @@ export function Workspace() {
             {L.tabTitle(tab)}
         </Button>
         <Button type="button" variant="secondary" appearance="icon" aria-label={`${L.tabTitle(tab)} 탭 닫기`}
-            title={closingTabs.has(tab.id) ? "탭 닫는 중…" : tab.kind === "session" ? "탭을 닫고 최근 목록에서 숨깁니다. 대화와 실행 중인 작업은 유지됩니다." : "화면만 닫습니다. 실행은 계속되며 작성 중인 입력은 저장되지 않습니다."}
+            title={closingTabs.has(tab.id) ? "탭 닫는 중…" : tab.kind === "session" ? "탭을 닫고 최근 목록에서 숨깁니다. 대화와 실행 중인 작업은 유지됩니다." : tab.kind === "terminal" ? "터미널을 종료하고 탭을 닫습니다." : "화면만 닫습니다. 실행은 계속되며 작성 중인 입력은 저장되지 않습니다."}
             disabled={closingTabs.has(tab.id)} aria-busy={closingTabs.has(tab.id)}
             onClick={() => closeTab(key, tab.id)}>{closingTabs.has(tab.id) ? "…" : "×"}</Button>
     </Stack>;
@@ -537,6 +542,7 @@ export function Workspace() {
                     setDesktopDrop(null);
                 }}>
                 <Button appearance="navigation" aria-current={selectedProjectId === p.id ? "page" : undefined}
+                    onPointerDown={() => warmProject(p.id)} onFocus={() => warmProject(p.id)}
                     data-project-drag={p.id}
                     draggable={!narrow} onDragStart={(event) => {
                         setDraggingProject(p.id);
@@ -660,7 +666,7 @@ export function Workspace() {
                     </ScrollableArea>
                     </StackItem>
                     <Stack gap={0} paddingInline={2} xstyle={workspaceStyles.recentDock}>
-                        <RecentPanel hides={recentHides} open={openRecent} splitGroups={splitGroups} shown={sidebar} />
+                        <RecentPanel warmProject={warmProject} hides={recentHides} open={openRecent} splitGroups={splitGroups} shown={sidebar} />
                     </Stack>
                     </Stack>
                 </LayoutPanel>

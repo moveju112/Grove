@@ -1,3 +1,4 @@
+import { usePendingAction } from "../../state/usePendingAction";
 import { useServerBlockReason } from "./lifecycle";
 import { Button, type ButtonProps } from "../../design/Button";
 
@@ -5,4 +6,14 @@ import { Button, type ButtonProps } from "../../design/Button";
 export function ServerActionButton({ disabled, title, ...props }: ButtonProps) {
     const reason = useServerBlockReason();
     return <Button {...props} disabled={disabled || !!reason} title={reason ?? title} aria-description={reason ?? props["aria-description"]} />;
+}
+
+
+export function PendingServerActionButton({ action, pendingLabel, children, disabled, ...props }: Omit<ButtonProps, "onClick"> & {
+    action: () => Promise<unknown>; pendingLabel: string;
+}) {
+    const { busy, run } = usePendingAction();
+    return <ServerActionButton {...props} disabled={busy || disabled} aria-busy={busy} onClick={() => void run(action)}>
+        {busy ? pendingLabel : children}
+    </ServerActionButton>;
 }

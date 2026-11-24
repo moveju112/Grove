@@ -365,6 +365,7 @@ pub fn apply_event(protocol: &str, e: &Value, out: &mut ModelOutput, final_text:
                     cache_write_tokens: u["cache_creation_input_tokens"].as_u64(),
                     reasoning_tokens: u["output_tokens_details"]["thinking_tokens"].as_u64(),
                     model_request_ms: e["duration_api_ms"].as_u64(),
+                    ..Default::default()
                 };
                 for d in e["permission_denials"].as_array().into_iter().flatten() {
                     out.activity.push(json!({ "kind": "denied", "name": d["tool_name"], "input": summarize(&d["tool_input"]) }));

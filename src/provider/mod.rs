@@ -92,6 +92,13 @@ pub struct ModelRequest {
     pub cli: Option<cli::CliContext>,
 }
 
+/// CLI가 생성 구간과 토큰 수를 함께 보고한 답변 본문만 합산한다.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+pub struct MessageGeneration {
+    pub output_tokens: u64,
+    pub duration_ms: u64,
+}
+
 /// 사용량(USAGE-001). provider가 따로 알려 주지 않는 값은 None으로 둬 0과 구분한다.
 /// reasoning_tokens는 output_tokens에 포함된 부분이다(합산하지 않는다).
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
@@ -106,6 +113,8 @@ pub struct Usage {
     /// 이 사용량과 짝이 되는 모델 요청 시간. CLI 턴 전체 시간으로 대체하지 않는다.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model_request_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message_generation: Option<MessageGeneration>,
 }
 
 impl Usage {

@@ -5,7 +5,7 @@ import { ApiError, api, newKey } from "../../api/client";
 import type { Project } from "../../api/generated";
 import * as L from "../../state/layout";
 import { CreationEntry } from "./CreationEntry";
-import { CreationRequest, currentProjectId, projectTarget, ProjectCreation } from "./creation";
+import { CreationRequest, createTerminal, currentProjectId, projectTarget, ProjectCreation } from "./creation";
 
 vi.mock("../../api/client", () => ({
     ApiError: class extends Error {
@@ -13,6 +13,7 @@ vi.mock("../../api/client", () => ({
     },
     api: { post: vi.fn(), patch: vi.fn() },
     newKey: vi.fn(),
+    authGeneration: () => 0,
 }));
 
 const a = { id: "a", name: "프로젝트 A", available: true } as Project;
@@ -143,4 +144,15 @@ describe("프로젝트 생성 잠금·재확인", () => {
         expect(await creation.run("/projects/clone", { protocol: "https", target_directory: "/work", repo: "owner/repo" })).toEqual(a);
         expect(vi.mocked(api.post).mock.calls[1]).toEqual(vi.mocked(api.post).mock.calls[0]);
     });
+});
+
+it("터미널 생성 응답 유실 뒤 같은 요청을 확인하고 다음 생성은 새 키를 쓴다", async () => {
+    vi.mocked(api.post).mockRejectedValueOnce(new Error("response lost"))
+        .mockResolvedValueOnce({ id: "first", name: "터미널" }).mockResolvedValueOnce({ id: "next", name: "터미널" });
+    await expect(createTerminal("p")).rejects.toThrow("같은 요청");
+    expect((await createTerminal("p"))?.id).toBe("first");
+    expect((await createTerminal("p"))?.id).toBe("next");
+    const calls = vi.mocked(api.post).mock.calls;
+    expect(calls[1]).toEqual(calls[0]);
+    expect(calls[2]![2]?.key).not.toBe(calls[0]![2]?.key);
 });

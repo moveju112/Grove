@@ -44,12 +44,30 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
             publish(key, next);
         }
     }, [publish]);
+    const warmReads = useRef(new Map<string, { at: number; read: Promise<RemoteLayout> }>());
+    const readLayout = useCallback((id: string, signal?: AbortSignal) => {
+        const warm = warmReads.current.get(id);
+        warmReads.current.delete(id);
+        return warm && Date.now() - warm.at < 3000 ? warm.read : api.get<RemoteLayout>(`/layouts/${id}`, { signal, timeoutMs: 10_000 });
+    }, []);
+    const warmProject = useCallback((projectId: string) => {
+        const device = projectLayoutKey(base, projectId);
+        if (!active() || entries.current.has(device)) return;
+        for (const id of [device, workspaceTabsKey(projectId)]) {
+            const previous = warmReads.current.get(id);
+            if (previous && Date.now() - previous.at < 3000) continue;
+            const read = api.get<RemoteLayout>(`/layouts/${id}`, { timeoutMs: 10_000 });
+            warmReads.current.set(id, { at: Date.now(), read });
+            void read.catch(() => { if (warmReads.current.get(id)?.read === read) warmReads.current.delete(id); });
+        }
+        while (warmReads.current.size > 8) warmReads.current.delete(warmReads.current.keys().next().value!);
+    }, [base, active]);
     const makeStore = useCallback((id: string, initial?: () => L.Layout, synchronization?: {
         get: (signal: AbortSignal) => Promise<RemoteLayout>; onRemote: (layout: L.Layout) => void;
     }) => {
         const store = new LayoutPersistence(id, {
             store: localStorage, newKey, notice, active, initial,
-            get: (signal) => api.get(`/layouts/${id}`, { signal, timeoutMs: 10_000 }),
+            get: (signal) => readLayout(id, signal),
             put: ({ key, ...body }, signal) => api.put(`/layouts/${id}`, body, { key, signal, timeoutMs: 10_000 }),
             ...(synchronization && {
                 ...synchronization, merge: mergeWorkspaceTabs, seed: (layout) => L.allTabs(layout).length > 0,
@@ -79,7 +97,7 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
         const id = workspaceTabsKey(projectId);
         const query = `workspace-layout:${id}`;
         let initial: Promise<RemoteLayout> | undefined;
-        const fetchLayout = () => api.get<RemoteLayout>(`/layouts/${id}`, { timeoutMs: 10_000 });
+        const fetchLayout = () => readLayout(id);
         let local: L.Layout | null = null;
         const store = makeStore(id, () => local ? workspaceTabs(local) : L.emptyLayout(), {
             get: () => initial ??= fetchLayout(),
@@ -267,5 +285,5 @@ export function useProjectLayouts(base: string, notice: (message: string) => voi
     const projectAt = useCallback((id: string) => entries.current.get(id)?.projectId, []);
     const key = projectId ? projectLayoutKey(base, projectId) : base;
     const layouts = base in selected && !projectId ? { ...saved, [base]: home } : saved;
-    return { key, projectId, layout: layouts[key], layouts, openAt, updateAt, flush, focusAt, projectAt, ensureProject: loadProject };
+    return { key, projectId, layout: layouts[key], layouts, openAt, updateAt, flush, focusAt, projectAt, ensureProject: loadProject, warmProject };
 }

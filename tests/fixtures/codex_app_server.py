@@ -62,7 +62,7 @@ for line in sys.stdin:
             break
         notify("turn/started", {"turn": {"id": "turn-1", "status": "inProgress", "items": []}})
         # 응답보다 먼저 온 알림도 잃으면 안 된다.
-        notify("item/started", {"item": {"id": "m1", "type": "agentMessage", "text": ""}})
+        notify("item/started", {"startedAtMs": 1000, "item": {"id": "m1", "type": "agentMessage", "text": ""}})
         notify("item/agentMessage/delta", {"itemId": "m1", "delta": "첫"})
         if "LIVE_STEER" in text:
             live_mode = text
@@ -92,7 +92,10 @@ for line in sys.stdin:
             assert reply["id"] == "approval" and reply["error"]["code"] == -32601
             break
         notify("item/agentMessage/delta", {"itemId": "m1", "delta": " 답"})
-        notify("item/completed", {"item": {"id": "m1", "type": "agentMessage", "text": "첫 답"}})
+        first_answer = {"completedAtMs": 1500, "contentTokenCount": 1,
+                        "item": {"id": "m1", "type": "agentMessage", "text": "첫 답"}}
+        notify("item/completed", first_answer)
+        notify("item/completed", first_answer)
         notify("item/reasoning/summaryTextDelta", {"itemId": "r1", "summaryIndex": 0, "delta": "요약"})
         notify("item/reasoning/textDelta", {"itemId": "r1", "contentIndex": 0, "delta": "원시 추론은 표시 금지"})
         notify("item/completed", {"item": {"id": "r1", "type": "reasoning", "summary": ["요약"]}})
@@ -100,9 +103,11 @@ for line in sys.stdin:
                                        "command": "fixture command", "status": "inProgress"}})
         notify("item/completed", {"item": {"id": "c1", "type": "commandExecution",
                                          "command": "fixture command", "status": "completed", "exitCode": 0}})
+        notify("item/started", {"startedAtMs": 9000, "item": {"id": "m2", "type": "agentMessage", "text": ""}})
         notify("item/agentMessage/delta", {"itemId": "m2", "delta": "최종"})
         notify("item/agentMessage/delta", {"itemId": "m2", "delta": " 답"})
-        notify("item/completed", {"item": {"id": "m2", "type": "agentMessage", "text": "최종 답"}})
+        notify("item/completed", {"completedAtMs": 9250, "contentTokenCount": 1,
+                                  "item": {"id": "m2", "type": "agentMessage", "text": "최종 답"}})
         usage = {
             "inputTokens": 100, "cachedInputTokens": 60, "outputTokens": 5,
             "cacheWriteInputTokens": 2, "reasoningOutputTokens": 3, "totalTokens": 105,

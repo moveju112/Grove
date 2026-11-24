@@ -7,6 +7,7 @@ import { accessToken, api, onProtocolMismatch } from "../api/client";
 import { deployment } from "../deployment";
 import { Button } from "../design/Button";
 import { SentenceText } from "./HelpTip";
+import { Icon } from "./icons";
 import { useLifecycle } from "./pwa/lifecycle";
 import { hasPendingInput, trackPendingInput } from "./pwa/pendingInput";
 import { Banner } from "@astryxdesign/core/Banner";
@@ -170,7 +171,8 @@ export function UpdateBanner() {
     if (!current.worker && !current.error) return null;
     return (
         <GroveStack gap={2} xstyle={noticeStyles.update}>
-            {current.error && <Banner status="error" role="alert" title={current.error} />}
+            {current.error && <Banner status="error" role="alert" title={current.error} icon={<Icon name="warning" />}
+                isDismissable dismissLabel="업데이트 알림 닫기" onDismiss={() => publish(snapshot.worker)} />}
             {current.worker && <Banner status="info" role="status"
                 title={<SentenceText text="새 버전이 준비되었습니다. 업데이트하면 저장하지 않은 입력이 사라질 수 있습니다." />}
                 endContent={<GroveStack gap={2} direction="horizontal" align="center" wrap="wrap">

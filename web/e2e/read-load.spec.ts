@@ -52,6 +52,70 @@ for (const width of [390, 1400]) {
             await page.screenshot({ path: info.outputPath(`file-page-${width}.png`), animations: "disabled" });
         });
 
+        test("업로드를 기다리는 중에도 다른 폴더에 파일을 추가하고 각 파일을 고른 경로에 저장한다", async ({ page }) => {
+            const p = await project();
+            mkdirSync(join(p.root, "nested"));
+            await login(page);
+            if (width === 390) await page.getByRole("button", { name: "사이드바", exact: true }).click();
+            await page.getByTestId("project-row").getByRole("button", { name: p.name, exact: true }).click();
+            await openTool(page, "파일");
+            const files = page.getByTestId("files-view").filter({ visible: true });
+            const input = files.locator('input[type="file"]');
+            const file = (name: string) => ({ name, mimeType: "text/plain", buffer: Buffer.from(name) });
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => { release = resolve; });
+            const paths: string[] = [];
+            await page.route(`**/projects/${p.id}/files/upload`, async (route) => {
+                paths.push(route.request().postDataJSON().path);
+                await gate;
+                await route.continue();
+            });
+            try {
+                await input.setInputFiles([file("a.txt"), file("b.txt")]);
+                await expect.poll(() => paths).toEqual(["a.txt"]);
+                await files.getByRole("button", { name: /📁 nested/ }).click();
+                await expect(files.getByRole("button", { name: "상위 폴더" })).toBeVisible();
+                await input.setInputFiles(file("c.txt"));
+                await page.getByRole("button", { name: "도구 패널 닫기", exact: true }).click();
+                await expect(files).toHaveCount(0);
+                release();
+                await expect.poll(() => existsSync(join(p.root, "nested/c.txt"))).toBe(true);
+                expect(paths).toEqual(["a.txt", "b.txt", "nested/c.txt"]);
+                for (const path of paths) expect(readFileSync(join(p.root, path), "utf8")).toBe(path.split("/").at(-1));
+            } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
+        });
+
+        test("Git에서 늦게 도착한 첫 파일 응답이 다음 파일의 변경 내용을 덮지 않는다", async ({ page }) => {
+            const p = await project();
+            writeFileSync(join(p.root, "anchor.txt"), "changed\n");
+            writeFileSync(join(p.root, "second.txt"), "second\n");
+            await useWorkspaces(p.id);
+            await login(page);
+            if (width === 390) await page.getByRole("button", { name: "사이드바", exact: true }).click();
+            await page.getByTestId("project-row").getByRole("button", { name: p.name, exact: true }).click();
+            await openTool(page, "변경");
+            const git = page.getByTestId("git-panel").filter({ visible: true });
+            let release!: () => void;
+            const gate = new Promise<void>((resolve) => { release = resolve; });
+            const hunks = (url: URL) => url.pathname.endsWith(`/projects/${p.id}/git/hunks`);
+            await page.route(hunks, async (route) => {
+                const name = new URL(route.request().url()).searchParams.get("path");
+                if (name === "anchor.txt") await gate;
+                await route.fulfill({ json: { hunks: [`diff ${name}`], fingerprint: "fixture" } });
+            });
+            try {
+                await git.getByRole("button", { name: "anchor.txt", exact: true }).click();
+                await expect(git.getByText("변경 내용 불러오는 중…")).toBeVisible();
+                await git.getByRole("button", { name: "second.txt", exact: true }).click();
+                await expect(git.getByTestId("hunk")).toContainText("diff second.txt");
+                const first = page.waitForResponse((r) => hunks(new URL(r.url())) && r.url().endsWith("path=anchor.txt"));
+                release();
+                await (await first).finished();
+                await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+                await expect(git.getByTestId("hunk")).toContainText("diff second.txt");
+            } finally { release(); await page.unrouteAll({ behavior: "wait" }); }
+        });
+
         test("숨긴 Git 패널은 파일 이벤트로 조회하지 않고 다시 열면 초안과 최신 상태를 유지한다", async ({ page }) => {
             const p = await project();
             await useWorkspaces(p.id);

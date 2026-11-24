@@ -4,7 +4,7 @@ import { apiCall, composerOption, ensureProfile, ensureProjects, login, runningS
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
 
-/// 서버가 요청을 받은 뒤 응답만 붙잡아 둔다. release 전까지 화면은 응답을 모른다.
+/// 요청을 보류해 release 전 화면 상태를 확인한다.
 async function holdResponse(page: Page, url: string, method = "POST") {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
@@ -16,6 +16,34 @@ async function holdResponse(page: Page, url: string, method = "POST") {
         await route.continue();
     });
     return { release, held };
+}
+
+declare global {
+    interface Window { uploadGate?: { names: string[]; release: () => void } }
+}
+
+// 취소·새로고침은 문서와 함께 실제 fetch를 중단한다. 취소된 요청을 Playwright route에 보류하지 않는다.
+async function holdUploads(page: Page, projectId: string) {
+    await page.evaluate((id) => {
+        const fetch = window.fetch.bind(window);
+        let release!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const names: string[] = [];
+        window.uploadGate = { names, release };
+        window.fetch = async (input, init) => {
+            const url = input instanceof Request ? input.url : String(input);
+            if (init?.method === "POST" && new URL(url, location.href).pathname === `/api/v1/projects/${id}/attachments`) {
+                names.push(JSON.parse(String(init.body)).name);
+                await gate;
+                init.signal?.throwIfAborted();
+            }
+            return fetch(input, init);
+        };
+    }, projectId);
+    return {
+        names: () => page.evaluate(() => window.uploadGate?.names ?? []),
+        release: () => page.evaluate(() => window.uploadGate?.release()),
+    };
 }
 
 for (const width of [390, 1400]) {
@@ -46,7 +74,7 @@ for (const width of [390, 1400]) {
                 await expect(view.getByLabel("메시지 입력")).toHaveValue("");
                 await expect(view.getByTestId("msg-outgoing")).toHaveText(text);
                 await expect(view.getByTestId("msg-user")).toHaveCount(0);
-                expect(hold.held).toHaveLength(1);
+                await expect.poll(() => hold.held.length).toBe(1);
                 // 기다리는 동안 다음 글을 쓸 수 있고, 늦은 응답이 그 글을 지우지 않는다.
                 await view.getByLabel("메시지 입력").fill("다음 글");
                 await page.screenshot({ path: info.outputPath(`optimistic-send-${width}.png`) });
@@ -84,17 +112,20 @@ for (const width of [390, 1400]) {
 
         test("사진을 올리는 중에도 다음 사진을 고르고 빼고 보낼 수 있다", async ({ page }, info) => {
             const { project, session, view } = await openSession(page);
-            const hold = await holdResponse(page, `**/api/v1/projects/${project.id}/attachments`);
+            const hold = await holdUploads(page, project.id);
             const input = view.getByTestId("attachment-picker").locator('input[type="file"]');
             const selection = view.getByTestId("attachment-selection");
             try {
                 await input.setInputFiles({ name: "first.png", mimeType: "image/png", buffer: png });
                 await expect(selection.getByRole("img", { name: "first.png", exact: true })).toBeVisible();
-                await expect.poll(() => hold.held.length).toBe(1);
+                await expect.poll(hold.names).toEqual(["first.png"]);
                 // 첫 사진이 아직 올라가는 중이다.
                 await input.setInputFiles({ name: "second.png", mimeType: "image/png", buffer: png });
                 await input.setInputFiles({ name: "third.png", mimeType: "image/png", buffer: png });
-                await expect(selection.getByRole("img")).toHaveCount(3);
+                await expect.poll(hold.names).toHaveLength(3);
+                await input.setInputFiles({ name: "queued.png", mimeType: "image/png", buffer: png });
+                await expect(selection.getByRole("img")).toHaveCount(4);
+                await selection.getByRole("button", { name: "queued.png 첨부 제거", exact: true }).click();
                 await selection.getByRole("button", { name: "third.png 첨부 제거", exact: true }).click();
                 await expect(selection.getByRole("img")).toHaveCount(2);
                 await view.getByLabel("메시지 입력").fill("사진 두 장");
@@ -107,7 +138,7 @@ for (const width of [390, 1400]) {
                 // 화면에 다 보이는 짧은 대화에는 아래에 새 글이 있다는 안내를 띄우지 않는다.
                 await expect(view.getByTestId("new-below")).toHaveCount(0);
                 await page.screenshot({ path: info.outputPath(`optimistic-photos-${width}.png`) });
-                hold.release();
+                await hold.release();
                 const sent = view.getByTestId("msg-user");
                 await expect(sent).toContainText("사진 두 장");
                 await expect(sent.getByRole("img", { name: "first.png", exact: true })).toBeVisible();
@@ -115,8 +146,36 @@ for (const width of [390, 1400]) {
                 await expect(view.getByTestId("msg-outgoing")).toHaveCount(0);
                 const stored = await apiCall<{ items: { content: { attachments?: { name: string }[] } }[] }>("GET", `/sessions/${session.id}/messages`);
                 expect(stored.items).toHaveLength(1);
+                expect(await hold.names()).not.toContain("queued.png");
                 expect(stored.items[0]!.content.attachments?.map((item) => item.name)).toEqual(["first.png", "second.png"]);
-            } finally { hold.release(); await page.unrouteAll({ behavior: "wait" }); }
+            } finally { await hold.release(); }
+        });
+
+        test("업로드 중 새로고침하면 글과 빠진 첨부를 복원하고 다시 선택한 뒤 한 번만 보낸다", async ({ page }) => {
+            const { project, session, view } = await openSession(page);
+            const hold = await holdUploads(page, project.id);
+            const photo = { name: "restore.png", mimeType: "image/png", buffer: png };
+            try {
+                const picker = view.getByTestId("attachment-picker").locator('input[type="file"]');
+                await picker.setInputFiles(photo);
+                await view.getByLabel("메시지 입력").fill("새로고침 전 글");
+                await view.getByRole("button", { name: "보내기", exact: true }).click();
+                await expect(view.getByTestId("msg-outgoing")).toContainText("새로고침 전 글");
+                const hasManifest = () => page.evaluate((id) => Object.keys(localStorage).some((k) =>
+                    k.startsWith(`grove.send.session:${id}#`) && JSON.parse(localStorage.getItem(k)!).missing?.length === 1), session.id);
+                expect(await hasManifest()).toBe(true);
+                await page.reload();
+                expect(await hasManifest()).toBe(true);
+                await expect(view.getByLabel("메시지 입력")).toHaveValue("새로고침 전 글");
+                await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
+                await expect(view.getByTestId("attachment-selection")).toContainText(photo.name);
+                await hold.release();
+                await picker.setInputFiles(photo);
+                await view.getByRole("button", { name: "보내기", exact: true }).click();
+                await expect(view.getByTestId("msg-user")).toContainText("새로고침 전 글");
+                const stored = await apiCall<{ items: unknown[] }>("GET", `/sessions/${session.id}/messages`);
+                expect(stored.items).toHaveLength(1);
+            } finally { await hold.release(); }
         });
 
         test("올리지 못한 사진이 있으면 보내지 않고 글과 사진을 입력창으로 되돌린다", async ({ page }) => {
@@ -155,6 +214,7 @@ for (const width of [390, 1400]) {
             await page.keyboard.press("Escape");
             await composerOption(view, "모델 프로필", profile);
             const add = await holdResponse(page, `**/api/v1/sessions/${session.id}/followups`);
+            const remove = await holdResponse(page, `**/api/v1/sessions/${session.id}/followups/*`, "DELETE");
             try {
                 await view.getByLabel("메시지 입력").fill("다음에 할 일");
                 await view.getByRole("button", { name: "대기열", exact: true }).click();
@@ -164,16 +224,15 @@ for (const width of [390, 1400]) {
                 add.release();
                 await expect(view.getByTestId("followup")).toContainText("다음에 할 일");
                 await expect(view.getByTestId("followup-outgoing")).toHaveCount(0);
-                await page.unrouteAll({ behavior: "wait" });
-                const remove = await holdResponse(page, `**/api/v1/sessions/${session.id}/followups/*`, "DELETE");
                 await view.getByTestId("followup").getByRole("button", { name: /^대기 메시지 삭제/ }).click();
                 await expect(view.getByTestId("followup")).toHaveCount(0);
-                expect(remove.held).toHaveLength(1);
+                await expect.poll(() => remove.held.length).toBe(1);
                 remove.release();
                 await expect.poll(async () => (await apiCall<{ items: unknown[] }>("GET", `/sessions/${session.id}/followups`)).items.length).toBe(0);
                 await expect(view.getByTestId("followup")).toHaveCount(0);
             } finally {
                 add.release();
+                remove.release();
                 await page.unrouteAll({ behavior: "wait" });
                 await apiCall("POST", `/turns/${active.turn.id}/cancel`).catch(() => undefined);
             }
@@ -188,6 +247,7 @@ for (const width of [390, 1400]) {
             await startProjectConversation(project);
             await composerOption(project, "보내기 방식", "save");
             const hold = await holdResponse(page, `**/api/v1/projects/${a.id}/sessions`);
+            const delivery = await holdResponse(page, "**/api/v1/sessions/*/messages");
             try {
                 const text = `새 대화 첫 글 ${width} ${randomUUID()}`;
                 await project.getByLabel("메시지 입력").fill(text);
@@ -195,11 +255,15 @@ for (const width of [390, 1400]) {
                 await expect(project.getByLabel("메시지 입력")).toHaveValue("");
                 await expect(project.getByTestId("msg-outgoing")).toHaveText(text);
                 await page.screenshot({ path: info.outputPath(`optimistic-new-${width}.png`) });
+                await project.getByLabel("메시지 입력").fill("다음에 보낼 글");
                 hold.release();
                 const view = page.getByTestId("session-view").filter({ hasText: text });
+                await expect(view.getByLabel("메시지 입력")).toHaveValue("다음에 보낼 글");
+                await expect(view.getByTestId("msg-outgoing")).toHaveText(text);
+                delivery.release();
                 await expect(view.getByTestId("msg-user").filter({ hasText: text })).toHaveCount(1);
                 await expect(page.getByTestId("msg-outgoing")).toHaveCount(0);
-            } finally { hold.release(); await page.unrouteAll({ behavior: "wait" }); }
+            } finally { hold.release(); delivery.release(); await page.unrouteAll({ behavior: "wait" }); }
         });
     });
 }

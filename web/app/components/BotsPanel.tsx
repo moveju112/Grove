@@ -183,13 +183,11 @@ export function BotsPanel({ open }: { open: Opener }) {
     };
     const visible = all.filter((b) => (showDeleted ? b.status === "deleted" : b.status !== "deleted") && (showHidden || !hidden.includes(b.id)));
     const status = (b: Bot, action: string) => act(() => api.post(`/bots/${b.id}/status`, { expected_revision: b.revision, action }));
-    const enter = (b: Bot, how?: "right" | "down") =>
-        act(async () => {
-            const v = await api.post<Bot>(`/bots/${b.id}/home`);
-            const s = await api.get<{ last_message_seq: number }>(`/sessions/${v.home_session_id}`);
-            await api.post(`/bots/${b.id}/seen`, { seq: s.last_message_seq });
-            open({ kind: "session", project_id: v.project_id, resource_id: v.home_session_id!, title: v.name }, how);
-        });
+    const enter = (bot: Bot, how?: "right" | "down") => {
+        const show = (b: Bot) => open({ kind: "session", project_id: b.project_id, resource_id: b.home_session_id!, title: b.name }, how);
+        if (bot.home_session_id) { show(bot); return; }
+        return act(async () => show(await api.post<Bot>(`/bots/${bot.id}/home`)));
+    };
     const moveUp = (i: number) => {
         const ids = visible.map((b) => b.id);
         [ids[i - 1], ids[i]] = [ids[i]!, ids[i - 1]!];

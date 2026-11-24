@@ -5,7 +5,7 @@ import { api } from "../../api/client";
 import { Composer } from "../Composer";
 import { ProjectComposer } from "./ProjectComposer";
 
-vi.mock("../../api/client", () => ({ api: { post: vi.fn() } }));
+vi.mock("../../api/client", () => ({ api: { post: vi.fn() }, authGeneration: () => 0 }));
 vi.mock("../Composer", () => ({ Composer: vi.fn(() => null) }));
 
 beforeEach(() => vi.resetAllMocks());
@@ -33,16 +33,15 @@ it.each(["save", "model"] as const)("기존 %s 전송 계약·첨부·파생 키
     expect(open).toHaveBeenCalledExactlyOnceWith({ kind: "session", project_id: "project", resource_id: "session", title: "첫 줄" });
 });
 
-it("전송 응답 유실 뒤 재확인은 생성·전송 모두 같은 키이며 성공 전에는 이동하지 않는다", async () => {
+it("생성 접수 직후 실제 대화로 이동하고 응답 유실 시 그 대화의 전송 키로 확인한다", async () => {
     const { props, open } = renderComposer();
-    const session = { id: "session", title: "첫 줄" };
-    vi.mocked(api.post).mockResolvedValueOnce(session).mockRejectedValueOnce(new Error("response lost"))
-        .mockResolvedValueOnce(session).mockResolvedValueOnce({});
-    const options = { mode: "save" as const, profileId: null, agentId: null, tools: false };
-    await expect(props.onSend("첫 줄", options, "intent")).rejects.toThrow("response lost");
-    expect(open).not.toHaveBeenCalled();
-    await props.onSend("첫 줄", options, "intent");
-    expect(vi.mocked(api.post).mock.calls[2]).toEqual(vi.mocked(api.post).mock.calls[0]);
-    expect(vi.mocked(api.post).mock.calls[3]).toEqual(vi.mocked(api.post).mock.calls[1]);
-    expect(open).toHaveBeenCalledTimes(1);
+    const move = vi.fn();
+    vi.mocked(api.post).mockResolvedValueOnce({ id: "session", title: "첫 줄" }).mockImplementationOnce(async () => {
+        expect(move).toHaveBeenCalledExactlyOnceWith("session", "intent:send");
+        expect(open).toHaveBeenCalledTimes(1);
+        throw new Error("response lost");
+    });
+    await expect(props.onSend("첫 줄", { mode: "save", profileId: null, agentId: null }, "intent", undefined, [], move))
+        .rejects.toThrow("response lost");
+    expect(api.post).toHaveBeenCalledTimes(2);
 });

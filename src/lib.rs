@@ -120,6 +120,7 @@ pub const CAPABILITIES: &[&str] = &[
     "external_editor_v1",
     "trash_v1",
     "attachments_v1",
+    "attachment_previews_v1",
     "task_logs_v1",
     "worktrees_v1",
     "dependency_hints_v1",

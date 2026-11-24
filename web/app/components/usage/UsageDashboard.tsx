@@ -49,7 +49,7 @@ function TokenDetails({ metrics: m }: { metrics: UsageMetrics }) {
         <Text xstyle={styles.small}>새 입력 {number(freshInput(m))} · 출력 {number(m.output_tokens)}</Text>
         <Text xstyle={styles.small}>캐시 읽기 {number(m.cache_read_tokens)} · 쓰기 {cacheWrites(m)}{m.cache_write_unreported_responses > 0 ? ` · 쓰기 미보고 ${number(m.cache_write_unreported_responses)}개 응답` : ""}</Text>
         <Text xstyle={styles.small}>reasoning {number(m.reasoning_tokens)}{m.reasoning_unreported_responses > 0 ? ` · 미보고 ${number(m.reasoning_unreported_responses)}개 응답` : ""}</Text>
-        <Text xstyle={styles.hint} color="secondary">속도 측정 {number(m.measured_responses)}/{number(m.responses)}개 응답 · 출력 {number(m.measured_output_tokens)} 토큰 / 모델 요청 {(m.response_ms / 1000).toLocaleString()}초</Text>
+        <Text xstyle={styles.hint} color="secondary">속도 측정 {number(m.measured_responses)}/{number(m.responses)}개 응답 · 출력 {number(m.measured_output_tokens)} 토큰 / 측정 시간 {(m.response_ms / 1000).toLocaleString()}초</Text>
         {m.unreported_responses > 0 && <Text xstyle={styles.hint} color="warning">토큰 미보고 {number(m.unreported_responses)}개 응답 · 보고된 토큰만 합산했어요.</Text>}
     </Stack>;
 }
@@ -92,8 +92,8 @@ export function UsageDashboard({ report, quotas }: { report: Report; quotas?: Re
         </Stack>
         <Stack gap={0.5}>
             <Stack direction="horizontal" align="center" gap={1}>
-                <Text xstyle={styles.hint} color="secondary">평균 모델 속도: 출력 토큰 / 모델 요청 시간 · 측정 {number(total.measured_responses)}/{number(total.responses)}개 응답</Text>
-                <HelpTip label="tok/s 계산 기준"><Text>로컬 도구 실행과 대기열 시간은 제외해요. Claude Code는 CLI가 보고한 API 요청 시간의 합을 써요. Codex CLI는 모델 요청 시간을 제공하지 않아 토큰 수만 집계해요.</Text></HelpTip>
+                <Text xstyle={styles.hint} color="secondary">평균 모델 속도: 측정 구간의 초당 출력 토큰 · 측정 {number(total.measured_responses)}/{number(total.responses)}개 응답</Text>
+                <HelpTip label="tok/s 계산 기준"><Text>Codex CLI는 답변 본문의 토큰 수를 해당 본문의 생성 시간으로 나눠요. 다른 모델은 출력 토큰 수를 모델 요청 시간으로 나눠요. 로컬 도구 실행과 대기열 시간은 제외해요.</Text></HelpTip>
             </Stack>
             <Text xstyle={styles.hint} color="secondary">하위·상위 10%: 느린·빠른 응답의 평균 속도</Text>
         </Stack>

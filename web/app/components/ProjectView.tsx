@@ -1,3 +1,4 @@
+import { usePendingAction } from "../state/usePendingAction";
 import { StatusBadge } from "../design/StatusBadge";
 import { chatLayout } from "./chat-layout.stylex";
 import { List as GroveList, ListItem as GroveListItem } from "@astryxdesign/core/List";
@@ -8,6 +9,7 @@ import { useEffect, useState } from "react";
 import { ApiError, api } from "../api/client";
 import type { Project } from "../api/generated";
 import { useQuery } from "../state/store";
+import { createTerminal } from "./create/creation";
 import { ProjectComposer } from "./create/ProjectComposer";
 import { GitPanel } from "./GitPanel";
 import { FilesView } from "./FilesView";
@@ -21,13 +23,13 @@ import { Stack } from "@astryxdesign/core/Stack";
 import { Panel, ToolsTrigger, Workbench } from "./ui/Controls";
 
 // 프로젝트를 열면 바로 입력할 수 있다. 실제 대화는 첫 전송 때만 만든다.
-export function ProjectView({ tabId, projectId, open }: { tabId: string; projectId: string; open: Opener }) {
+export function ProjectView({ tabId, projectId, open, openCreated = open }: { tabId: string; projectId: string; open: Opener; openCreated?: Opener }) {
     const [composeVersion, setComposeVersion] = useState(1);
     useEffect(() => onNewConversation(projectId, () => setComposeVersion((v) => v + 1)), [projectId]);
     const project = useQuery<Project>(`project:${projectId}`, () => api.get(`/projects/${projectId}`));
 
     // 확인 중에는 입력을 막지 않는다. 경로 없음·조회 실패만 실행 차단 사유로 표시한다.
-    const composer = composeVersion > 0 ? <ProjectComposer projectId={projectId} tabId={tabId} open={open} focusVersion={composeVersion}
+    const composer = composeVersion > 0 ? <ProjectComposer projectId={projectId} tabId={tabId} open={openCreated} focusVersion={composeVersion}
         beforeMutation={requireServerAction}
         disabled={project.error ? "프로젝트를 확인할 수 없습니다" : project.data && !project.data.available ? "프로젝트 경로 없음" : null} /> : null;
     if (project.error) return <Stack as="section" data-testid="project-view" gap={2} xstyle={chatLayout.view}>
@@ -85,23 +87,24 @@ type TerminalRow = { id: string; name: string; status: "running" | "exited" | "l
 function TerminalList({ projectId, open }: { projectId: string; open: Opener }) {
     const list = useQuery<{ terminals: TerminalRow[] }>(`terminals:${projectId}`, () => api.get(`/projects/${projectId}/terminals`));
     const [err, setErr] = useState<string | null>(null);
-    const openTerm = (t: TerminalRow) => {
+    const creation = usePendingAction();
+    const openTerm = (t: Pick<TerminalRow, "id" | "name">) => {
         open({ kind: "terminal", project_id: projectId, resource_id: t.id, title: t.name });
     };
     const create = async () => {
         setErr(null);
         try {
-            const t = await api.post<TerminalRow>(`/projects/${projectId}/terminals`, { name: "터미널" });
-            openTerm(t);
+            const t = await createTerminal(projectId);
+            if (t) openTerm(t);
         } catch (e) {
-            setErr(e instanceof ApiError ? e.message : "터미널을 열지 못했습니다");
+            setErr(e instanceof Error ? e.message : "터미널을 열지 못했습니다");
         }
         list.reload();
     };
     const terms = list.data?.terminals ?? [];
     return (
         <Panel data-testid="terminal-list" title={`터미널${terms.length > 0 ? ` · ${terms.length}` : ""}`}>
-            <ServerActionButton variant="secondary" density="compact" onClick={() => void create()}>새 터미널</ServerActionButton>
+            <ServerActionButton variant="secondary" density="compact" disabled={creation.busy} onClick={() => void creation.run(create)}>{creation.busy ? "터미널 여는 중…" : "새 터미널"}</ServerActionButton>
             {err && <GroveText as="p" display="block" type="inherit" color="error" role="alert">{err}</GroveText>}
             <GroveList density="compact" edge="flush" hasDividers>
                 {terms.map((t) => (
