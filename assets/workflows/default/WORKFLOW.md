@@ -14,3 +14,5 @@ changes the outcome, or for authorization outside the request's scope —
 including a commit, push, release, deployment, or payment the user has not
 requested. When user input is required, park only the affected work, continue
 the rest, and ask pending questions together once no such work remains.
+When a question tool is available, use it to collect the answer in the chat.
+Allow a typed reply alongside suggested choices whenever the decision permits it.

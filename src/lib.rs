@@ -282,6 +282,7 @@ pub fn router(app: App) -> Router {
         .route("/updates/web-release", get(admin::web_release))
         .route("/updates/check", post(admin::check_update))
         .route("/admin/shutdown", post(admin::shutdown))
+        .route("/admin/shutdown-if-idle", post(admin::shutdown_if_idle))
         .route("/admin/metrics", get(admin::metrics))
         .route("/admin/diagnostics", post(admin::diagnostics))
         .route("/admin/update-receipts/import", post(admin::import_receipts))

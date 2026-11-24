@@ -86,7 +86,36 @@ async fn auto_title_uses_server_model_with_server_or_project_auto_title() {
 }
 
 #[tokio::test]
-async fn auto_title_requires_own_model_updates_each_turn_and_preserves_manual_titles() {
+async fn auto_title_skips_disabled_or_unconfigured_model() {
+    // 이전 턴의 후처리가 다음 시나리오의 설정을 읽지 않도록 서버를 분리한다.
+    for enabled in [false, true] {
+        let s = TestServer::start().await;
+        let main = Fixture::start().await;
+        let aux = Fixture::start().await;
+        let profile = s.fixture_profile(&main.base).await;
+        let (key, value) = if enabled {
+            ("session.auto_title", json!(true))
+        } else {
+            ("session.title_profile", json!(s.fixture_profile(&aux.base).await))
+        };
+        let (status, body) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
+            json!({"expected_revision":0,"value":value})).await;
+        assert!(status.is_success(), "{body}");
+        let project = s.create_project("title-disabled").await;
+        let session = s.create_session(project["id"].as_str().unwrap()).await;
+        let sid = session["id"].as_str().unwrap();
+        main.push(fixture::text("답변"));
+        let (_, turn) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({"text":"첫 목표","profile_id":profile})).await;
+        let tid = turn["turn"]["id"].as_str().unwrap();
+        s.wait_status(tid, "completed").await;
+        grove::titles::after_turn(&s.server.as_ref().unwrap().app, tid).await;
+        assert_eq!(main.requests().len(), 1);
+        assert!(aux.requests().is_empty());
+    }
+}
+
+#[tokio::test]
+async fn auto_title_updates_each_turn_and_preserves_manual_titles() {
     let s = TestServer::start().await;
     let main = Fixture::start().await;
     let aux = Fixture::start().await;
@@ -94,20 +123,12 @@ async fn auto_title_requires_own_model_updates_each_turn_and_preserves_manual_ti
     let title_profile = s.fixture_profile(&aux.base).await;
     let pid = s.create_project("title-flow").await["id"].as_str().unwrap().to_string();
     let sid = s.create_session(&pid).await["id"].as_str().unwrap().to_string();
-    s.send(Method::PUT, "/api/v1/settings/server/-/agents.orchestration", json!({"expected_revision":0,"value":"solo"})).await;
-    s.send(Method::PUT, "/api/v1/settings/server/-/agents.delegation", json!({"expected_revision":0,"value":"off"})).await;
-    // 자동 생성 기본 꺼짐. 켠 뒤에도 전용 모델이 없으면 대화 모델을 빌리지 않는다.
-    for enabled in [false,true] {
-        if enabled { s.send(Method::PUT, "/api/v1/settings/server/-/session.auto_title", json!({"expected_revision":0,"value":true})).await; }
-        main.push(fixture::text("답변"));
-        let (_,t) = s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":"첫 목표","profile_id":profile})).await;
-        s.wait_status(t["turn"]["id"].as_str().unwrap(),"completed").await;
-        grove::titles::after_turn(&s.server.as_ref().unwrap().app,t["turn"]["id"].as_str().unwrap()).await;
+    for (key, value) in [("session.auto_title", json!(true)), ("session.title_profile", json!(title_profile))] {
+        let (status, body) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
+            json!({"expected_revision":0,"value":value})).await;
+        assert!(status.is_success(), "{body}");
     }
-    assert_eq!(main.requests().len(),2);
-    assert!(aux.requests().is_empty());
-    s.send(Method::PUT, "/api/v1/settings/server/-/session.title_profile", json!({"expected_revision":0,"value":title_profile})).await;
-    for (prompt,title) in [("배포 스크립트 점검","배포 스크립트 점검"),("작업을 바꿔 로그인 오류 수정","로그인 오류 수정")] {
+    for (prompt,title) in [("배포 스크립트 점검","배포 절차 확인"),("작업을 바꿔 로그인 오류 수정","로그인 오류 수정")] {
         main.push(fixture::text("처리 결과"));
         aux.push(fixture::text(title));
         let (_,t) = s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":prompt,"profile_id":profile})).await;
@@ -119,7 +140,7 @@ async fn auto_title_requires_own_model_updates_each_turn_and_preserves_manual_ti
     assert!(source.contains("로그인 오류 수정"));
     assert!(source.contains("currentTitle"));
     assert!(request["tools"].is_null() || request["tools"].as_array().is_some_and(Vec::is_empty));
-    assert_eq!(main.requests().len(),4);
+    assert_eq!(main.requests().len(),2);
     let (_,session) = s.get(&format!("/api/v1/sessions/{sid}")).await;
     s.send(Method::PATCH,&format!("/api/v1/sessions/{sid}"),json!({"expected_revision":session["revision"],"title":"직접 정한 제목"})).await;
     main.push(fixture::text("후속 답변"));

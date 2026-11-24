@@ -115,6 +115,16 @@ fn update_cmds(o: &Opts) -> Result<i32, String> {
         (Some("update"), Some("check")) => print_json(u::check(&need(&o.install, "--install")?, o.manifest.as_deref().unwrap_or(u::STABLE_MANIFEST)))?,
         (Some("update"), Some("status")) => print_json(u::status(&need(&o.install, "--install")?))?,
         (Some("update"), Some("rollback")) => print_json(u::rollback_manual(&need(&o.install, "--install")?))?,
+        (Some("update"), Some("auto-apply")) => {
+            let pid = p(2).and_then(|p| p.parse().ok()).ok_or("데몬 PID가 필요합니다")?;
+            let revision = p(3).and_then(|r| r.parse().ok()).ok_or("설정 revision이 필요합니다")?;
+            let result = u::run_automatic(&need(&o.install, "--install")?, &need(&o.manifest, "--manifest")?, pid, revision)?;
+            return Ok(match result["status"].as_str() {
+                Some("applied" | "already" | "skipped") => 0,
+                Some("deferred") => 3,
+                _ => 4,
+            });
+        }
         (Some("update"), Some("apply")) => {
             let opts = u::ApplyOpts { force: o.force, allow_downgrade: o.allow_downgrade, ready_timeout: std::time::Duration::from_secs(o.ready_timeout.unwrap_or(60)) };
             let r = u::apply(&need(&o.install, "--install")?, o.manifest.as_deref().unwrap_or(u::STABLE_MANIFEST), &opts)?;
@@ -389,6 +399,12 @@ fn serve(opts: Opts) -> i32 {
         Ok(cfg) => cfg,
         Err(_) => return print_startup_error(StartupError::new(FailureKind::Configuration, None), None, json_output),
     };
+    if let Some(bundle) = crate::update::foreground::package_directory() {
+        return match crate::update::foreground::serve(&bundle, &cfg) {
+            Ok(code) => code,
+            Err(error) => { eprintln!("데몬 시작 실패: {error}"); 1 }
+        };
+    }
     match serve_config(&opts.log_file, cfg.clone(), json_output) {
         Ok(()) => 0,
         Err(error) => print_startup_error(error, Some(&cfg), json_output),

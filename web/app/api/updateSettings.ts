@@ -2,7 +2,6 @@
 export type UpdateChannel = "stable" | "beta";
 export type AutoApplyScope = "notify_only" | "patch" | "minor";
 export type ServerUpdatePreferences = { channel: UpdateChannel; auto_apply: AutoApplyScope; revision: number };
-export type SaveUpdatePreferences = Omit<ServerUpdatePreferences, "revision"> & { expected_revision: number };
 export type UpdateCheck = {
     status: "available" | "up_to_date" | "failed";
     channel: UpdateChannel;
@@ -20,5 +19,5 @@ export type ServerUpdateStatus = {
     last_check: UpdateCheck | null;
     can_manage: boolean;
     readiness: { idle: boolean; busy: Record<string, number> };
-    automatic_application: "not_enabled";
+    automatic_application: "enabled" | "external" | "not_enabled";
 };

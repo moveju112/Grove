@@ -31,3 +31,5 @@
   - ✅ 공식 challenge만 노출하고 종료 시 URL·코드를 제거한다. `evidence: src/agent_auth.rs:230`, `evidence: src/agent_auth.rs:321`.
 
 응답은 [RESPONSE_KEYS.md](RESPONSE_KEYS.md), commit 경계는 [DB_RULES.md](DB_RULES.md)를 따른다.
+
+Unix 설치의 updater는 같은 OS 계정 전용 소켓에서 owner 자격으로 유휴 상태를 확인하고 데몬을 전환한다. 공개 HTTP·프록시의 암호화 경계는 그대로 적용한다.

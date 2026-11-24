@@ -60,9 +60,11 @@ pub fn key_id(pk: &VerifyingKey) -> String {
 }
 
 fn write_atomic(path: &Path, data: &[u8]) -> Result<(), String> {
-    let tmp = path.with_extension("tmp");
-    std::fs::write(&tmp, data).map_err(|e| format!("{}: {e}", tmp.display()))?;
-    std::fs::rename(&tmp, path).map_err(|e| format!("{}: {e}", path.display()))
+    use std::io::Write;
+    let mut tmp = tempfile::NamedTempFile::new_in(path.parent().ok_or("저장 경로가 없습니다")?)
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    tmp.write_all(data).map_err(|e| format!("{}: {e}", path.display()))?;
+    tmp.persist(path).map(|_| ()).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn read_json<T: for<'a> Deserialize<'a>>(path: &Path) -> Result<T, String> {
@@ -101,7 +103,13 @@ pub fn cmp_version(a: &str, b: &str) -> std::cmp::Ordering {
         (None, None) => std::cmp::Ordering::Equal,
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (Some(_), None) => std::cmp::Ordering::Less,
-        (Some(x), Some(y)) => x.cmp(&y),
+        (Some(x), Some(y)) => {
+            fn identifier(s: &str) -> (bool, usize, &str) {
+                let numeric = s.bytes().all(|b| b.is_ascii_digit());
+                (!numeric, if numeric { s.len() } else { 0 }, s)
+            }
+            x.split('.').map(identifier).cmp(y.split('.').map(identifier))
+        }
     })
 }
 
@@ -219,7 +227,7 @@ pub fn load_signing_key(path: &Path) -> Result<SigningKey, String> {
 pub struct InstallCfg {
     pub data_dir: PathBuf,
     pub listen: String,
-    /// "process"(updater가 직접 띄움) | "systemd-user:<unit>"
+    /// "process"(독립 프로세스), "foreground"(패키지 launcher), "systemd-user:<unit>"
     pub service: String,
 }
 
@@ -266,7 +274,11 @@ impl Install {
         let _ = write_atomic(&self.root.join("update-state.json"), &serde_json::to_vec_pretty(&s).unwrap());
     }
     fn base_url(&self) -> Result<String, String> {
-        Ok(format!("http://{}/api/v1", self.cfg()?.listen))
+        let mut addr = self.cfg()?.listen.parse::<std::net::SocketAddr>().map_err(|e| e.to_string())?;
+        if addr.ip().is_unspecified() {
+            addr.set_ip(if addr.is_ipv4() { std::net::Ipv4Addr::LOCALHOST.into() } else { std::net::Ipv6Addr::LOCALHOST.into() });
+        }
+        Ok(format!("http://{addr}/api/v1"))
     }
     fn token(&self) -> Result<String, String> {
         let p = self.cfg()?.data_dir.join("owner-token");
@@ -303,6 +315,8 @@ fn extract(archive: &Path, dest: &Path) -> Result<(), String> {
     } else {
         let f = std::fs::File::open(archive).map_err(|e| e.to_string())?;
         let mut t = tar::Archive::new(flate2::read::GzDecoder::new(f));
+        // 이전 압축본도 systemd 사용자 서비스가 요구하는 읽기 전용 그룹 권한으로 설치한다.
+        t.set_mask(0o022);
         for e in t.entries().map_err(|e| e.to_string())? {
             let mut e = e.map_err(|e| e.to_string())?;
             // unpack_in은 dest 밖으로 나가는 항목을 쓰지 않고 false를 돌려준다.
@@ -410,11 +424,19 @@ fn stage_release(inst: &Install, archive: &Path, sha: &str) -> Result<(String, V
 
 // ---------- 서비스 제어 ----------
 
-fn http(method: &str, url: &str, token: Option<&str>) -> Result<(u16, Value), String> {
+fn http(inst: Option<&Install>, method: &str, url: &str, token: Option<&str>) -> Result<(u16, Value), String> {
     let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().map_err(|e| e.to_string())?;
     rt.block_on(async {
-        let c = reqwest::Client::builder().timeout(Duration::from_secs(10))
-            .redirect(reqwest::redirect::Policy::none()).build().map_err(|e| e.to_string())?;
+        let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(10))
+            .redirect(reqwest::redirect::Policy::none());
+        #[cfg(unix)]
+        let client = match inst.and_then(management::socket_path) {
+            Some(path) => client.unix_socket(path),
+            None => client,
+        };
+        #[cfg(not(unix))]
+        let _ = inst;
+        let c = client.build().map_err(|e| e.to_string())?;
         let mut rb = c.request(method.parse().unwrap(), url);
         if let Some(t) = token {
             rb = rb.bearer_auth(t).header("Idempotency-Key", crate::util::new_id());
@@ -427,12 +449,13 @@ fn http(method: &str, url: &str, token: Option<&str>) -> Result<(u16, Value), St
 }
 
 fn health(inst: &Install) -> Option<Value> {
-    http("GET", &format!("{}/health", inst.base_url().ok()?), None).ok().filter(|(s, _)| *s == 200).map(|x| x.1)
+    http(Some(inst), "GET", &format!("{}/health", inst.base_url().ok()?), None).ok().filter(|(s, _)| *s == 200).map(|x| x.1)
 }
 
 pub fn start_service(inst: &Install) -> Result<(), String> {
     let cfg = inst.cfg()?;
     let id = inst.pointer("current").ok_or("current 포인터가 없습니다")?;
+    if cfg.service == "foreground" { return foreground::request_start(inst, &id); }
     if let Some(unit) = cfg.service.strip_prefix("systemd-user:") {
         let st = std::process::Command::new("systemctl").args(["--user", "start", unit]).status().map_err(|e| e.to_string())?;
         return if st.success() { Ok(()) } else { Err(format!("systemctl start {unit} 실패")) };
@@ -482,10 +505,14 @@ pub fn stop_service(inst: &Install) -> Result<(), String> {
     if health(inst).is_none() {
         return Ok(());
     }
-    let (st, _) = http("POST", &format!("{}/admin/shutdown", inst.base_url()?), Some(&inst.token()?))?;
+    let (st, _) = http(Some(inst), "POST", &format!("{}/admin/shutdown", inst.base_url()?), Some(&inst.token()?))?;
     if st != 202 {
         return Err(format!("종료 요청 거부(HTTP {st})"));
     }
+    wait_for_stop(inst, &cfg)
+}
+
+fn wait_for_stop(inst: &Install, cfg: &InstallCfg) -> Result<(), String> {
     let t0 = Instant::now();
     while t0.elapsed() < Duration::from_secs(60) {
         if health(inst).is_none() && port_free(&cfg.listen) {
@@ -515,9 +542,9 @@ pub fn readiness(inst: &Install, want_version: &str, timeout: Duration) -> Resul
                 return Err(format!("다른 버전이 응답합니다: {}", h["version"]));
             } else {
                 let token = inst.token()?;
-                let (ps, _) = http("GET", &format!("{base}/projects"), Some(&token))?;
+                let (ps, _) = http(Some(inst), "GET", &format!("{base}/projects"), Some(&token))?;
                 let root = base.trim_end_matches("/api/v1");
-                let (ws, _) = http("GET", &format!("{root}/"), None).unwrap_or((0, Value::Null));
+                let (ws, _) = http(None, "GET", &format!("{root}/"), None).unwrap_or((0, Value::Null));
                 if ps == 200 && ws == 200 {
                     return Ok(json!({ "process": true, "health": h, "auth": ps, "web": ws }));
                 }
@@ -544,7 +571,7 @@ fn write_receipt(inst: &Install, r: &Value) {
     // 준비된 서버가 있으면 바로 알림으로 가져오게 한다(실패해도 파일은 남아 /updates로 조회 가능).
     if health(inst).is_some() {
         if let (Ok(base), Ok(tok)) = (inst.base_url(), inst.token()) {
-            let _ = http("POST", &format!("{base}/admin/update-receipts/import"), Some(&tok));
+            let _ = http(Some(inst), "POST", &format!("{base}/admin/update-receipts/import"), Some(&tok));
         }
     }
 }
@@ -631,7 +658,7 @@ fn inspect_release(mut trust: Trust, text: &str, cv: &str, channel: Option<&str>
     Ok(json!({ "kind": kind, "current": cv, "available": r.version, "channel": r.channel, "platform": platform(), "artifact": has, "schema": r.schema, "protocol": r.protocol }))
 }
 
-// ---------- 서버 업데이트 설정(실행·예약 기능 없음) ----------
+// ---------- 서버 업데이트 설정 ----------
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -671,6 +698,15 @@ pub struct SaveUpdateSettings {
     pub expected_revision: i64,
 }
 
+impl SaveUpdateSettings {
+    pub fn require_enabled(&self) -> crate::error::ApiResult<()> {
+        if matches!(self.auto_apply, AutoApplyScope::NotifyOnly) {
+            return Err(crate::error::ApiError::invalid("자동 업데이트는 항상 켜져 있습니다"));
+        }
+        Ok(())
+    }
+}
+
 pub fn settings(c: &rusqlite::Connection) -> crate::error::ApiResult<UpdateSettings> {
     use rusqlite::OptionalExtension;
     let row: Option<(String, i64)> = c.query_row(
@@ -680,6 +716,7 @@ pub fn settings(c: &rusqlite::Connection) -> crate::error::ApiResult<UpdateSetti
     match row {
         Some((value, revision)) => {
             let mut s: UpdateSettings = serde_json::from_str(&value)?;
+            if matches!(s.auto_apply, AutoApplyScope::NotifyOnly) { s.auto_apply = AutoApplyScope::Minor; }
             s.revision = revision;
             Ok(s)
         }
@@ -745,9 +782,21 @@ pub async fn published_release(mirror: Option<PathBuf>, channel: UpdateChannel) 
         return tokio::task::spawn_blocking(move || local_settings_check(&config, channel))
             .await.map_err(|_| "manifest_check_failed")?;
     }
-    let client = reqwest::Client::builder().user_agent("Grove updater").https_only(true)
-        .timeout(Duration::from_secs(12)).build().map_err(|_| "release_unavailable")?;
-    let url = match channel {
+    let client = release_client()?;
+    let url = release_url(&client, channel).await?;
+    let response = client.get(url).send().await.and_then(|r| r.error_for_status()).map_err(|_| "release_unavailable")?;
+    let text = response.text().await.map_err(|_| "release_unavailable")?;
+    let trust = running_trust().map_err(|_| "manifest_check_failed")?;
+    inspect_release(trust, &text, crate::VERSION, Some(channel.name())).map_err(|_| "manifest_check_failed")
+}
+
+fn release_client() -> Result<reqwest::Client, &'static str> {
+    reqwest::Client::builder().user_agent("Grove updater").https_only(true)
+        .timeout(Duration::from_secs(12)).build().map_err(|_| "release_unavailable")
+}
+
+async fn release_url(client: &reqwest::Client, channel: UpdateChannel) -> Result<String, &'static str> {
+    Ok(match channel {
         UpdateChannel::Stable => STABLE_MANIFEST.to_owned(),
         UpdateChannel::Beta => {
             // GitHub의 latest는 prerelease를 제외한다. beta는 게시 순서로 첫 prerelease를 찾는다.
@@ -767,11 +816,7 @@ pub async fn published_release(mirror: Option<PathBuf>, channel: UpdateChannel) 
                 page += 1;
             }
         }
-    };
-    let response = client.get(url).send().await.and_then(|r| r.error_for_status()).map_err(|_| "release_unavailable")?;
-    let text = response.text().await.map_err(|_| "release_unavailable")?;
-    let trust = running_trust().map_err(|_| "manifest_check_failed")?;
-    inspect_release(trust, &text, crate::VERSION, Some(channel.name())).map_err(|_| "manifest_check_failed")
+    })
 }
 
 // 설치된 데몬은 updater와 같은 키 회전·폐기 기록을 따른다. 독립 실행은 내장 키를 사용한다.
@@ -811,6 +856,16 @@ pub struct ApplyOpts {
 
 /// 업데이트 적용. 수동·자동 모두 이 경로(UPDATE-003). 반환 JSON의 status: applied|already|deferred|rolled_back|failed.
 pub fn apply(root: &Path, manifest_src: &str, o: &ApplyOpts) -> Result<Value, String> {
+    apply_inner(root, manifest_src, o, None)
+}
+
+mod automatic;
+#[cfg(unix)]
+pub(crate) mod management;
+pub mod foreground;
+pub use automatic::{managed_install, run_automatic, schedule_automatic};
+
+fn apply_inner(root: &Path, manifest_src: &str, o: &ApplyOpts, automatic: Option<&automatic::Attempt>) -> Result<Value, String> {
     let inst = Install { root: root.to_path_buf() };
     std::fs::create_dir_all(root.join("candidates")).map_err(|e| e.to_string())?;
     let lock = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(root.join("update.lock")).map_err(|e| e.to_string())?;
@@ -833,7 +888,18 @@ pub fn apply(root: &Path, manifest_src: &str, o: &ApplyOpts) -> Result<Value, St
         }
         v
     };
+    if let Some(attempt) = automatic {
+        attempt.validate(&inst)?;
+        if !attempt.eligible(&from, &r)? {
+            return Ok(receipt("skipped", "자동 적용할 새 버전이 없습니다".into(), json!({})));
+        }
+    }
     let art = r.artifacts.get(platform()).ok_or_else(|| format!("{} 배포물이 없습니다", platform()))?.clone();
+    let rejected = root.join("automatic-rejected.json");
+    let candidate = json!({ "from": cur, "sha256": art.sha256 });
+    if automatic.is_some() && read_json::<Value>(&rejected).ok().as_ref() == Some(&candidate) {
+        return Ok(receipt("skipped", "복구된 후보는 새 배포물이 게시될 때까지 기다립니다".into(), json!({})));
+    }
     // 이미 적용됨: 같은 artifact hash로 만든 release가 현재면 아무것도 하지 않는다(재시도 안전, UPDATE-022).
     if cur.ends_with(&art.sha256[..12]) && health(&inst).is_some_and(|h| h["version"] == r.version) {
         inst.set_state("idle", Some(&r.version), json!({ "already": true }));
@@ -842,6 +908,26 @@ pub fn apply(root: &Path, manifest_src: &str, o: &ApplyOpts) -> Result<Value, St
     if cmp_version(&r.version, &from) == std::cmp::Ordering::Less && !o.allow_downgrade {
         return Err(format!("다운그레이드({from} → {})는 --allow-downgrade가 필요합니다", r.version));
     }
+    let base = inst.base_url()?;
+    let defer_if_busy = || -> Result<Option<Value>, String> {
+        let (status, readiness) = http(Some(&inst), "GET", &format!("{base}/admin/update-readiness"), Some(&inst.token()?))?;
+        if status != 200 { return Err(format!("readiness 조회 실패: HTTP {status}")); }
+        if readiness["idle"] == true { return Ok(None); }
+        let busy = &readiness["busy"];
+        if o.force {
+            eprintln!("강제 적용: 다음 작업이 중단됩니다 {busy}");
+            return Ok(None);
+        }
+        let rc = receipt("deferred", format!("실행 중인 작업이 있어 적용을 미뤘습니다: {busy}"), json!({ "busy": busy }));
+        let previous = inst.state();
+        if automatic.is_none() || previous.state != "deferred" || previous.target.as_deref() != Some(&r.version) {
+            inst.set_state("deferred", Some(&r.version), busy.clone());
+            write_receipt(&inst, &rc);
+        }
+        Ok(Some(rc))
+    };
+    // 계속 바쁜 데몬에서는 다시 다운로드·압축 해제하거나 알림을 반복하지 않는다.
+    if automatic.is_some() && let Some(rc) = defer_if_busy()? { return Ok(rc); }
     inst.set_state("downloading", Some(&r.version), json!({}));
     let cfg = inst.cfg()?;
     let ext = if art.url.ends_with(".zip") { "zip" } else { "tar.gz" };
@@ -874,23 +960,7 @@ pub fn apply(root: &Path, manifest_src: &str, o: &ApplyOpts) -> Result<Value, St
         inst.set_state("failed", Some(&r.version), json!({ "error": "schema_downgrade" }));
         return Err(format!("현재 데이터 schema {db_schema}보다 낮은 schema {}로는 바꿀 수 없습니다. 해당 버전의 snapshot을 복원하세요", r.schema));
     }
-    // 실행 중 작업 확인(서비스 중단 없음)
-    let base = inst.base_url()?;
-    if health(&inst).is_some() {
-        let (st, rd) = http("GET", &format!("{base}/admin/update-readiness"), Some(&inst.token()?))?;
-        if st != 200 {
-            return Err(format!("readiness 조회 실패: HTTP {st}"));
-        }
-        if rd["idle"] != true {
-            if !o.force {
-                inst.set_state("deferred", Some(&r.version), rd["busy"].clone());
-                let rc = receipt("deferred", format!("실행 중인 작업이 있어 적용을 미뤘습니다: {}", rd["busy"]), json!({ "busy": rd["busy"] }));
-                write_receipt(&inst, &rc);
-                return Ok(rc);
-            }
-            eprintln!("강제 적용: 다음 작업이 중단됩니다 {}", rd["busy"]);
-        }
-    }
+    if health(&inst).is_some() && let Some(rc) = defer_if_busy()? { return Ok(rc); }
     // snapshot과 migration 사전 시험(쓰기 허용 전 검증, UPDATE-026)
     inst.set_state("verifying", Some(&r.version), json!({}));
     let backups = root.join("backups");
@@ -912,7 +982,17 @@ pub fn apply(root: &Path, manifest_src: &str, o: &ApplyOpts) -> Result<Value, St
     inst.set_state("applying", Some(&r.version), json!({ "snapshot": snap }));
     let t_cut = Instant::now();
     let old_prev = inst.pointer("previous");
-    stop_service(&inst)?;
+    if let Some(attempt) = automatic {
+        if !attempt.accept_cutover(&inst, snap_seq)? {
+            inst.set_state("deferred", Some(&r.version), json!({ "reason": "state_changed" }));
+            let _ = std::fs::remove_file(&snap);
+            return Ok(receipt("deferred", "작업 또는 설정이 바뀌어 적용을 미뤘습니다".into(), json!({})));
+        }
+        if cfg.service.starts_with("systemd-user:") { stop_service(&inst)?; }
+        else { wait_for_stop(&inst, &cfg)?; }
+    } else {
+        stop_service(&inst)?;
+    }
     inst.set_pointer("previous", &cur)?;
     inst.set_pointer("current", &new_id)?;
     let started = start_service(&inst).and_then(|_| readiness(&inst, &r.version, o.ready_timeout));
@@ -928,6 +1008,9 @@ pub fn apply(root: &Path, manifest_src: &str, o: &ApplyOpts) -> Result<Value, St
         }
         Err(why) => {
             let rc = rollback(&inst, &cur, &cm, &snap, snap_seq, &why, |s, m, e| receipt(s, m, e));
+            if automatic.is_some() && rc["status"] == "rolled_back" {
+                write_atomic(&rejected, candidate.to_string().as_bytes())?;
+            }
             // 되돌렸으면 previous도 적용 전 값으로(실패한 후보를 이전 버전으로 남기지 않는다).
             if rc["status"] == "rolled_back" {
                 match &old_prev {
@@ -1143,7 +1226,7 @@ mod tests {
         for (path, data) in [("grove-test/web/index.html", payload.as_slice()), ("grove-test/manifest.json", manifest.as_slice())] {
             let mut header = tar::Header::new_gnu();
             header.set_size(data.len() as u64);
-            header.set_mode(0o644);
+            header.set_mode(0o666);
             header.set_cksum();
             tar.append_data(&mut header, path, data).unwrap();
         }
@@ -1151,6 +1234,11 @@ mod tests {
         let candidate = dir.path().join("candidate");
         extract(&archive, &candidate).unwrap();
         let (top, _) = verify_package_dir(&candidate).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(top.join("web/index.html").metadata().unwrap().permissions().mode() & 0o022, 0);
+        }
         std::fs::write(top.join("web/index.html"), b"tampered").unwrap();
         assert!(verify_package_dir(&candidate).unwrap_err().contains("hash 불일치"));
     }
@@ -1170,7 +1258,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/api/v1/admin/shutdown", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap(); });
-        let result = tokio::task::spawn_blocking(move || http("POST", &url, Some("not-a-real-token"))).await.unwrap().unwrap();
+        let result = tokio::task::spawn_blocking(move || http(None, "POST", &url, Some("not-a-real-token"))).await.unwrap().unwrap();
         server.abort();
         assert_eq!(result.0, 307);
         assert_eq!(reached.load(Ordering::SeqCst), 0, "운영 중인 실제 서비스에는 접근하지 않는 격리 fixture다");
@@ -1246,6 +1334,8 @@ mod tests {
         assert_eq!(cmp_version("0.2.0", "0.1.9"), Greater);
         assert_eq!(cmp_version("0.1.10", "0.1.9"), Greater);
         assert_eq!(cmp_version("1.0.0-rc.1", "1.0.0"), Less);
+        assert_eq!(cmp_version("1.0.0-beta.10", "1.0.0-beta.2"), Greater);
+        assert_eq!(cmp_version("1.0.0-beta.2", "1.0.0-beta.rc"), Less);
         assert_eq!(cmp_version("1.0.0+build", "1.0.0"), Equal);
     }
 }

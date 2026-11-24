@@ -173,7 +173,7 @@ pub async fn authenticate(app: &App, headers: &HeaderMap) -> ApiResult<Principal
     authenticate_request(app, headers, false).await
 }
 
-async fn authenticate_request(app: &App, headers: &HeaderMap, local: bool) -> ApiResult<Principal> {
+pub(crate) async fn authenticate_request(app: &App, headers: &HeaderMap, local: bool) -> ApiResult<Principal> {
     let raw = headers
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())

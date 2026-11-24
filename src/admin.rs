@@ -48,6 +48,7 @@ pub async fn readiness(State(app): State<App>, _p: Principal) -> ApiResult<Json<
 
 pub async fn update_settings(State(app): State<App>, _p: Principal) -> ApiResult<Json<Value>> {
     let now = app.now();
+    let managed = crate::update::managed_install(&app.cfg).is_some();
     let value = app.db.call(move |c| {
         let b = busy(c, &now)?;
         let idle = b.as_object().is_some_and(|o| o.values().all(|v| v.as_i64() == Some(0)));
@@ -57,7 +58,7 @@ pub async fn update_settings(State(app): State<App>, _p: Principal) -> ApiResult
             "last_check": crate::update::last_check(c)?,
             "can_manage": true,
             "readiness": { "idle": idle, "busy": b },
-            "automatic_application": "not_enabled",
+            "automatic_application": if managed { "enabled" } else { "external" },
         }))
     }).await?;
     Ok(Json(value))
@@ -67,6 +68,7 @@ pub async fn save_update_settings(
     State(app): State<App>, p: Principal, headers: axum::http::HeaderMap,
     Json(request): Json<crate::update::SaveUpdateSettings>,
 ) -> ApiResult<Response> {
+    request.require_enabled()?; // 이전 OFF 요청의 저장 응답을 재생하기 전에도 현재 정책을 적용한다.
     let hash = crate::idem::body_hash("server_update.settings", &serde_json::to_value(&request)?);
     let actor = p.clone();
     crate::idem::run(&app, &p, &headers, &hash, move |tx, now| {
@@ -206,6 +208,32 @@ fn process_stats() -> Value {
 #[cfg(not(target_os = "linux"))]
 fn process_stats() -> Value {
     json!({ "rss_bytes": null, "threads": null, "cpu_seconds": null })
+}
+
+#[derive(serde::Deserialize)]
+pub struct Cutover {
+    pid: u32,
+    revision: i64,
+    snapshot_seq: i64,
+}
+
+/// 로컬 updater가 snapshot 사전 검증을 끝낸 뒤에만 호출한다.
+pub async fn shutdown_if_idle(State(app): State<App>, p: Principal, axum::extract::Query(request): axum::extract::Query<Cutover>) -> ApiResult<StatusCode> {
+    if p.kind != "owner" { return Err(ApiError::forbidden("로컬 업데이트 도구만 사용할 수 있습니다")); }
+    let db = app.db.clone();
+    let now = app.now();
+    let exit = app.exit_tx.clone();
+    app.db.call(move |c| {
+        let b = busy(c, &now)?;
+        if request.pid != std::process::id() || crate::update::settings(c)?.revision != request.revision
+            || crate::events::latest_seq(c)? != request.snapshot_seq
+            || !b.as_object().is_some_and(|b| b.values().all(|n| n.as_i64() == Some(0))) {
+            return Err(ApiError::conflict("update_deferred", "작업 또는 설정이 바뀌어 업데이트를 미뤘습니다"));
+        }
+        db.close_for_update();
+        exit.send_replace(true);
+        Ok(StatusCode::ACCEPTED)
+    }).await
 }
 
 pub async fn shutdown(State(app): State<App>, _p: Principal) -> (StatusCode, Json<Value>) {

@@ -91,6 +91,30 @@ describe("입력 유무에 따른 worker 전환", () => {
         expect(registration.waiting!.postMessage).not.toHaveBeenCalled();
     });
 
+    it("작성 중 보류한 업데이트는 입력이 끝난 다음 자동 확인에서 적용한다", async () => {
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        await pwa.checkForUpdate();
+        expect(registration.waiting!.postMessage).not.toHaveBeenCalled();
+        input.pending = false;
+        await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+        expect(registration.waiting!.postMessage).toHaveBeenCalledExactlyOnceWith({ type: "skip-waiting" });
+    });
+
+    it("다른 탭이 먼저 적용해도 작성이 끝나면 자동으로 새 화면을 연다", async () => {
+        registration.waiting = null;
+        pwa.registerServiceWorker();
+        await Promise.resolve();
+        const worker = new Worker();
+        worker.state = "activated";
+        service.controller = worker;
+        service.dispatchEvent(new Event("controllerchange"));
+        expect(reload).not.toHaveBeenCalled();
+        input.pending = false;
+        await vi.advanceTimersByTimeAsync(30 * 60 * 1000);
+        expect(reload).toHaveBeenCalledOnce();
+    });
+
     it("다른 탭이 활성화한 worker도 입력이 없으면 바로 reload한다", async () => {
         registration.waiting = null;
         pwa.registerServiceWorker();

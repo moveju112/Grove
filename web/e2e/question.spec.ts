@@ -17,6 +17,7 @@ async function askInNewSession(page: Page, args: Record<string, unknown>) {
     await login(page);
     if (page.viewportSize()!.width <= 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
+    if (page.viewportSize()!.width <= 760) await expect(page.getByTestId("mobile-drawer-left")).toBeHidden();
     const view = sessionView(page, s.id);
     await script({ frames: frames.tool("ask1", "ask_user", args) });
     await apiCall("POST", `/sessions/${s.id}/turns`, { profile_id: profileId, tools: true, text: "필요하면 물어보고 진행해" });
@@ -65,7 +66,6 @@ test("복수 선택과 직접 입력을 함께 보내고, 닫기는 답하지 �
     await card.getByRole("button", { name: "테스트", exact: true }).click();
     await card.getByRole("button", { name: "테스트", exact: true }).press("3");
     await expect(card.getByRole("button", { name: "CI", exact: true })).toHaveAttribute("aria-pressed", "true");
-    await card.getByRole("button", { name: "직접 입력" }).click();
     await card.getByLabel("직접 입력").fill("CI는 ARM도");
     let before = (await requests()).length;
     // 이어지는 모델 응답: 다시 질문 → 이번에는 닫는다
@@ -91,10 +91,14 @@ test("모바일 번호 목록에서 직접 쓴 답변을 전송한다", async ({
     const view = await askInNewSession(page, { question: "어디에서 답할까요?", options: [{ label: "대화 안에서" }, { label: "입력창 위에서" }] });
     const card = view.getByTestId("question");
     await expect(card.getByRole("button", { name: "대화 안에서" })).toBeVisible();
+    const answer = card.getByRole("textbox", { name: "직접 입력" });
+    await expect(answer).toBeVisible();
+    await expect(card.getByRole("button", { name: "답하기", exact: true })).toBeDisabled();
     await card.scrollIntoViewIfNeeded();
     await page.screenshot({ path: info.outputPath("question-390.png") });
-    await card.getByRole("button", { name: "직접 입력" }).click();
-    await card.getByRole("textbox", { name: "직접 입력" }).fill("두 곳 모두");
+    await answer.click();
+    await answer.fill("두 곳 모두");
+    await expect(answer).toHaveValue("두 곳 모두");
     const before = (await requests()).length;
     await script({ frames: frames.text(["답변을 받았어요"]) });
     await card.getByRole("button", { name: "답하기", exact: true }).click();

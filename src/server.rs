@@ -55,6 +55,7 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
         _ => StartupError::new(FailureKind::Listen, None),
     })?;
     let addr = listener.local_addr().map_err(|_| StartupError::new(FailureKind::Listen, None))?;
+    crate::update::foreground::bound_address(&cfg, addr).map_err(|_| StartupError::new(FailureKind::Configuration, None))?;
     let mut cfg = cfg;
     cfg.listen = addr;
     let app = App::new(cfg.clone(), clock).map_err(|e| StartupError::database(&cfg, &e.to_string()))?;
@@ -70,6 +71,16 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
         .map_err(|e| StartupError::api(&cfg, e))?;
 
     let mut background = vec![];
+    #[cfg(unix)]
+    let mut management = None;
+    if let Some(install) = crate::update::managed_install(&app.cfg) {
+        #[cfg(unix)]
+        {
+            management = Some(crate::update::management::listen(&install, app.clone())
+                .map_err(|_| StartupError::new(FailureKind::Runtime, None))?);
+        }
+        background.push(tokio::spawn(crate::update::schedule_automatic(app.clone(), install)));
+    }
     {
         let mut shutdown = app.shutdown_rx.clone();
         let sessions = app.claude_sessions.clone();
@@ -155,6 +166,8 @@ pub(crate) async fn start_with_diagnostics(cfg: Config, clock: SharedClock) -> R
                 let _ = shutdown.wait_for(|v| *v).await;
             })
             .await;
+        #[cfg(unix)]
+        if let Some(listener) = management { let _ = listener.await; }
     });
     Ok(Server { addr, app, owner_token, handle, background, startup_lock: lock })
 }

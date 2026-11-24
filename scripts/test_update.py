@@ -3,7 +3,7 @@
 
 소스를 임시 폴더에 복사해 버전·schema가 다른 실제 바이너리를 만든다.
   A = 현재 소스(0.1.0), B = 0.1.1 + migration 1개, C = 0.1.2 + migration 2개 + 웹 누락(readiness 실패 유도)
-실행: python3 scripts/test_update.py
+실행: python3 scripts/test_update.py [--systemd] [--deb]
 """
 import hashlib
 import json
@@ -18,12 +18,14 @@ import threading
 import time
 import tomllib
 import urllib.request
+from pathlib import Path
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 import build  # noqa: E402
 
 ENV = build.env()
+os.umask(0o077)
 TMP = tempfile.mkdtemp(prefix="gupd-", dir="/tmp")
 # 빌드 산출물은 실행마다 새로 만들지 않고 저장소 target/(큰 디스크)에서 재사용한다(실행당 수 GB가 /tmp에 쌓이지 않게).
 TARGET = os.path.join(ROOT, "target", "update-test")
@@ -84,16 +86,19 @@ def package(binary, out, web=True):
     shutil.rmtree(os.path.dirname(top), ignore_errors=True)
     os.makedirs(top)
     shutil.copy2(binary, os.path.join(top, "grove"))
+    if "--deb" in sys.argv:
+        licenses = Path(top, "licenses")
+        licenses.mkdir()
+        shutil.copyfile(Path(ROOT, "THIRD_PARTY_NOTICES.txt"), licenses / "THIRD_PARTY_NOTICES.txt")
     if web:
-        shutil.copytree(os.path.join(ROOT, "web", "build", "client"), os.path.join(top, "web"))
+        shutil.copytree(os.path.join(TMP, "web-client"), os.path.join(top, "web"))
     files = []
     for base, _, fs in os.walk(top):
         for f in fs:
             p = os.path.join(base, f)
             files.append({"path": os.path.relpath(p, top), "size": os.path.getsize(p), "sha256": build.sha256(p)})
     json.dump({"product": "grove", "version": v["version"], "protocol": v["protocol"], "schema": v["schema"], "target": "linux-x64", "files": files}, open(os.path.join(top, "manifest.json"), "w"))
-    with tarfile.open(out, "w:gz") as tf:
-        tf.add(top, arcname=os.path.basename(top))
+    build.write_tarball(out, top)
     return v
 
 
@@ -142,6 +147,11 @@ def upd(*args):
 
 
 try:
+    # 각 버전이 같은 웹 산출물을 사용한다. 다른 빌드의 중간 결과를 정상 패키지로 만들지 않는다.
+    client = Path(TMP, "web-client")
+    shutil.copytree(Path(ROOT, "web/build/client"), client)
+    if not (client / "index.html").is_file():
+        raise AssertionError("검증용 웹 빌드에 index.html이 없습니다")
     ENV["CARGO_TARGET_DIR"] = TARGET
     print("빌드: A·B·C(debug, 공용 target)", flush=True)
     A_src = variant("a", "0.1.0", [], legacy_log=True)
@@ -183,6 +193,12 @@ try:
     DATA = os.path.join(TMP, "data")
     PORT = free_port()
 
+    # 자동 검사도 일회용 키와 이 설치의 오프라인 미러만 사용한다.
+    mirror = os.path.join(TMP, "mirror.json")
+    ENV["GROVE_RELEASE_MIRROR"] = mirror
+    ENV["GROVE_LOG_MAX_MIB"] = "2"
+    with open(mirror, "w") as config:
+        json.dump({"root": INST, "manifests": {"stable": mb}}, config)
     print("새 설치", flush=True)
     r = subprocess.run([A, "install", "--install", INST, "--package", pa, "--data-dir", DATA, "--listen", f"127.0.0.1:{PORT}", "--trust-key", k1 + ".pub"], env=ENV, capture_output=True, text=True)
     ok(r.returncode == 0, f"install: {r.stdout.strip()[:120]} {r.stderr.strip()[:200]}")
@@ -200,6 +216,11 @@ try:
     code, _, err = upd("start")
     ok(code != 0 and "이미 응답" in err and open(os.path.join(INST, "server.pid")).read() == pid_a,
        "중복 시작은 기존 process·PID·로그를 교체하지 않음")
+
+    proj = os.path.join(TMP, "proj")
+    os.makedirs(proj)
+    pid = api("POST", "/projects", {"root_path": proj})["id"]
+    term = api("POST", f"/projects/{pid}/terminals", {"name": "t"})
 
     print("확인(무중단)", flush=True)
     code, c, _ = upd("update", "check", "--manifest", mb)
@@ -228,12 +249,22 @@ try:
     ok((health() or {}).get("version") == "0.1.0" and open(os.path.join(INST, "server.pid")).read() == pid_a, "거부된 시도는 서비스를 건드리지 않음")
 
     print("실행 중 작업이 있으면 보류", flush=True)
-    proj = os.path.join(TMP, "proj")
-    os.makedirs(proj)
-    pid = api("POST", "/projects", {"root_path": proj})["id"]
-    term = api("POST", f"/projects/{pid}/terminals", {"name": "t"})
-    code, rc, _ = upd("update", "apply", "--manifest", mb)
-    ok(code == 3 and rc["status"] == "deferred" and rc["busy"]["running_terminals"] == 1, f"보류: {rc and rc.get('busy')}")
+    def wait_receipt(status, timeout):
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            receipts = os.path.join(INST, "receipts")
+            for entry in os.listdir(receipts) if os.path.isdir(receipts) else []:
+                if not entry.endswith(".json"):
+                    continue
+                with open(os.path.join(receipts, entry)) as f:
+                    result = json.load(f)
+                if result["status"] == status and result["to_version"] == vb["version"]:
+                    return result
+            time.sleep(0.5)
+        raise AssertionError(f"자동 업데이트 결과 대기 만료: {status}")
+
+    rc = wait_receipt("deferred", 100)
+    ok(rc["busy"]["running_terminals"] == 1, "자동 업데이트가 실행 중인 터미널을 기다림")
     ok((health() or {}).get("version") == "0.1.0", "보류 중 서비스 유지")
     api("POST", f"/terminals/{term['id']}/kill", {})
 
@@ -245,8 +276,8 @@ try:
     # 이전 append 로그가 이미 꽉 찼어도 새 writer가 잘라 보관하고 시작한다.
     with open(log_path, "ab") as f:
         f.truncate(2 * 1024 * 1024)
-    code, rc, err = upd("update", "apply", "--manifest", mb)
-    ok(code == 0 and rc["status"] == "applied", f"B 적용: {rc and rc.get('status')} {err.strip()[:200]}")
+    rc = wait_receipt("applied", 150)
+    ok(rc["status"] == "applied", "유휴 상태에서 명령 없이 B 적용")
     h = health() or {}
     ok(h.get("version") == "0.1.1" and h.get("schema") == vb["schema"], f"B 실행 {h}")
     ok(rc and rc.get("downtime_ms", 10**9) < 30000, f"중단 시간 {rc and rc.get('downtime_ms')}ms")
@@ -310,6 +341,82 @@ try:
     ok(all(os.path.getsize(p) <= 2 * 1024 * 1024 for p in logs if os.path.isfile(p)), "업데이트·실패 복구·정지 뒤 파일별 로그 상한 유지")
     text = open(log_path).read()
     ok("서버 준비 완료" in text and "서버 종료 중" in text and "\x1b" not in text, "현재 서버 로그는 ANSI 없는 시작·종료 기록")
+
+    # 압축본 및 .deb 공용 foreground 진입점: 원본 패키지·서비스 PID와 사용자 실행 사본을 구분한다.
+    original = Path(TMP, "portable")
+    if "--deb" in sys.argv:
+        import debian
+        deb = debian.package(pa, TMP, "linux-x64", va["version"], "1")
+        sh(["dpkg-deb", "--extract", str(Path(TMP, deb["file"])), str(original)])
+        packaged = original / "usr/bin/grove"
+    else:
+        with tarfile.open(pa) as archive:
+            archive.extractall(original, filter="data")
+        packaged, = original.glob("*/grove")
+    original_digest = build.sha256(packaged)
+    state_home = Path(TMP, "portable-state")
+    DATA = os.path.join(TMP, "portable-data")
+    PORT = free_port()
+    portable_env = dict(ENV, XDG_STATE_HOME=str(state_home), GROVE_DATA_DIR=DATA)
+    command = [str(packaged), "serve", "--listen", f"127.0.0.1:{PORT}"]
+    for starting_version in (va["version"], vb["version"]):
+        with subprocess.Popen(command, env=portable_env, stdout=subprocess.DEVNULL) as launcher:
+            try:
+                for _ in range(150):
+                    if (health() or {}).get("version") == starting_version:
+                        break
+                    if launcher.poll() is not None:
+                        raise AssertionError("foreground launcher 시작 실패")
+                    time.sleep(0.2)
+                ok((health() or {}).get("version") == starting_version, f"foreground 시작 {starting_version}")
+                if starting_version == va["version"]:
+                    runtime, = (state_home / "grove" / "daemon-runtimes").iterdir()
+                    shutil.copyfile(Path(INST, "trusted-keys.json"), runtime / "trusted-keys.json")
+                    end = time.monotonic() + 120
+                    while (health() or {}).get("version") != vb["version"] and time.monotonic() < end:
+                        time.sleep(0.5)
+                    ok((health() or {}).get("version") == vb["version"] and launcher.poll() is None,
+                       "foreground PID 유지·서명한 새 데몬 자동 기동")
+                    ok(build.sha256(packaged) == original_digest, "배포 원본 보존")
+                    while not any((runtime / "receipts").glob("*.json")):
+                        if time.monotonic() >= end:
+                            raise AssertionError("foreground 적용 receipt 대기 만료")
+                        time.sleep(0.2)
+            finally:
+                launcher.terminate()
+                launcher.wait(timeout=75)
+        ok(health() is None, "foreground 종료 시 자식 데몬도 종료")
+
+    if "--systemd" in sys.argv:
+        # 두 일회성 unit만 쓴다. holder의 의존성으로 중지와 재시작 사이에도 시험 unit 정의를 유지한다.
+        unit = f"grove-test{os.getpid()}.service"
+        holder = f"grove-holder{os.getpid()}.service"
+        system_install = Path(TMP, "systemd-install")
+        DATA, PORT = os.path.join(TMP, "systemd-data"), free_port()
+        sh([A, "install", "--install", str(system_install), "--package", pa, "--data-dir", DATA,
+            "--listen", f"127.0.0.1:{PORT}", "--trust-key", k1 + ".pub", "--service", f"systemd-user:{unit}"])
+        started = []
+        try:
+            run = ["systemd-run", "--user", "--quiet", "--collect", "--property=RuntimeMaxSec=240"]
+            sh([*run, "--unit", unit, "--property=UMask=0077", "--setenv=GROVE_RELEASE_MIRROR=" + mirror,
+                sys.executable, str(Path(ROOT, "scripts/user_service.py")), "run", "--apply",
+                "--config", str(system_install / "install.json"), "--unit", unit])
+            started.append(unit)
+            sh([*run, "--unit", holder, "--property=Wants=" + unit, "sleep", "210"])
+            started.append(holder)
+            end = time.monotonic() + 120
+            while time.monotonic() < end:
+                if (health() or {}).get("version") == vb["version"] and any(
+                    json.loads(p.read_text())["status"] == "applied" for p in (system_install / "receipts").glob("*.json")
+                ):
+                    break
+                time.sleep(0.5)
+            else:
+                raise AssertionError("systemd 사용자 서비스의 자동 전환을 확인하지 못했습니다")
+            ok(True, "systemd 사용자 서비스가 유휴 상태에서 중지·갱신·재시작됨")
+        finally:
+            for name in reversed(started):
+                sh(["systemctl", "--user", "stop", name], check=False)
 except BaseException as e:  # 중단도 실패로 기록한다(성공으로 보고하지 않음)
     FAILS.append(f"예외로 중단: {e!r}")
     raise

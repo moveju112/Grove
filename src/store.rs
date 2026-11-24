@@ -1609,6 +1609,7 @@ pub struct Db {
     conn: Arc<Mutex<Connection>>,
     pub path: PathBuf,
     recovery: tokio::sync::watch::Sender<Option<&'static str>>,
+    update_cutover: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl Db {
@@ -1623,7 +1624,7 @@ impl Db {
         conn.pragma_update(None, "synchronous", "NORMAL")?;
         crate::vault::register(&conn, path.parent().unwrap_or(Path::new(".")))?;
         crate::history_storage::register(&conn)?;
-        let mut db = Self { conn: Arc::new(Mutex::new(conn)), path: path.to_path_buf(), recovery: tokio::sync::watch::channel(None).0 };
+        let mut db = Self { conn: Arc::new(Mutex::new(conn)), path: path.to_path_buf(), recovery: tokio::sync::watch::channel(None).0, update_cutover: Default::default() };
         db.migrate()?;
         restrict_permissions(path);
         Ok(db)
@@ -1684,6 +1685,11 @@ impl Db {
         })
     }
 
+    /// 최종 유휴 검사와 같은 DB 잠금 안에서 호출한다. 그 뒤 대기 중인 요청도 접수하지 않는다.
+    pub(crate) fn close_for_update(&self) {
+        self.update_cutover.store(true, std::sync::atomic::Ordering::Release);
+    }
+
     /// blocking 스레드에서 연결을 사용한다.
     pub async fn call<T, F>(&self, f: F) -> ApiResult<T>
     where
@@ -1699,6 +1705,9 @@ impl Db {
     /// 동기 문맥(시작·종료·CLI)용.
     pub fn call_sync<T>(&self, f: impl FnOnce(&mut Connection) -> ApiResult<T>) -> ApiResult<T> {
         let mut guard = self.conn.lock().map_err(|_| ApiError::internal("db mutex poisoned"))?;
+        if self.update_cutover.load(std::sync::atomic::Ordering::Acquire) {
+            return Err(ApiError::busy("데몬 업데이트로 재시작 중입니다"));
+        }
         if let Some(error) = self.recovery_error() { return Err(error); }
         let result = f(&mut guard);
         if let Err(error) = &result

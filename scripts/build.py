@@ -379,6 +379,15 @@ def sbom(target):
     return {"bomFormat": "CycloneDX", "specVersion": "1.5", "version": 1, "components": sorted(comps, key=lambda c: c["purl"])}
 
 
+def write_tarball(archive, stage):
+    def release_mode(entry):
+        entry.mode &= 0o755
+        return entry
+
+    with tarfile.open(archive, "w:gz") as bundle:
+        bundle.add(stage, arcname=os.path.basename(stage), filter=release_mode)
+
+
 def verify_package(name, archive, manifest, deb=False):
     """압축을 풀어 실제로 실행해 본다. 실행 불가 target은 이유를 남긴다."""
     triple, _, exe, fmt = TARGETS[name]
@@ -405,6 +414,8 @@ def verify_package(name, archive, manifest, deb=False):
         binp = os.path.join(tmp, "usr", "bin", "grove") if deb else os.path.join(top, exe)
         os.chmod(binp, 0o755)
         e = env()
+        e["XDG_STATE_HOME"] = os.path.join(tmp, "state")
+        e["GROVE_RELEASE_MIRROR"] = os.path.join(tmp, "offline-release.json")
         if runner:
             e["WINEPREFIX"] = os.path.join(tmp, "wine")
             e["WINEDEBUG"] = "-all"
@@ -565,8 +576,7 @@ def cmd_package(a):
                         fp = os.path.join(base, f)
                         z.write(fp, os.path.relpath(fp, stage_parent))
         else:
-            with tarfile.open(archive, "w:gz") as t:
-                t.add(stage, arcname=os.path.basename(stage))
+            write_tarball(archive, stage)
         shutil.rmtree(stage_parent)
         json.dump(manifest, open(os.path.join(rdir, "manifest.json"), "w"), indent=2, ensure_ascii=False)
         json.dump(sbom(TARGETS[n][0]), open(os.path.join(rdir, "sbom.cdx.json"), "w"), indent=1)

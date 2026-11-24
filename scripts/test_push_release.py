@@ -54,6 +54,43 @@ class ReleasePush(unittest.TestCase):
                 pass
             self.assertTrue((source / "notes").exists())
 
+    def test_cached_package_requires_passing_rust_tests_for_the_archived_commit(self):
+        commit = push.output("git", "rev-parse", "HEAD")
+        version = push.tomllib.loads(push.output("git", "show", f"{commit}:Cargo.toml"))["package"]["version"]
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp)
+            dest = parent / commit
+            dest.mkdir()
+            calls = []
+            fail_tests = True
+
+            def run(*args, **kwargs):
+                calls.append(args)
+                if args[0] == "git":
+                    self.assertEqual(args, ("git", "archive", commit))
+                    # 버전 파일만 있는 최소 커밋 사본으로 준비·재시도 경계를 검사한다.
+                    subprocess.run([*args, *push.VERSIONS], cwd=push.ROOT, check=True, **kwargs)
+                elif args[0] == "npm":
+                    self.assertIn(kwargs["cwd"], (parent / "source/web", parent / "source/relay"))
+                else:
+                    self.assertEqual(args, ("cargo", "test", "--locked", "--no-fail-fast"))
+                    self.assertEqual(kwargs["cwd"], parent / "source")
+                    self.assertNotIn("GROVE_UPDATE_BINDINGS", kwargs["env"])
+                    if fail_tests:
+                        raise subprocess.CalledProcessError(101, args)
+
+            with patch.object(push, "run", side_effect=run), patch.object(
+                    push, "release_build_env", return_value={"GROVE_UPDATE_BINDINGS": "1"}):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    push.prepare_package(commit, version, parent, None)
+                self.assertEqual(list(dest.iterdir()), [])
+                fail_tests = False
+                self.assertEqual(push.prepare_package(commit, version, parent, None), dest)
+                self.assertEqual([args[0] for args in calls], ["git", "npm", "npm", "cargo"] * 2)
+                calls.clear()
+                self.assertEqual(push.prepare_package(commit, version, parent, None), dest)
+                self.assertEqual(calls, [])
+
     def test_version_step_only_changes_the_product_versions(self):
         self.assertEqual(push.next_patch("0.1.9"), "0.1.10")
         for v in ("latest", "v0.1.0", "0.1.0-beta.1"):

@@ -116,7 +116,8 @@ def fresh_member(member, directory):
 
 def prepare_package(commit, version, parent, verifier):
     dest = parent / commit
-    if dest.is_dir():
+    checked = "rust-tests-passed"
+    if (dest / checked).is_file() and (dest / checked).read_text() == commit:
         return dest
     with release_source(parent) as (source, lock_fd):
         with tempfile.TemporaryFile() as archive:
@@ -127,8 +128,16 @@ def prepare_package(commit, version, parent, verifier):
         version_files(source, version, version)
         if (ROOT / ".dev").exists():
             (source / ".dev").symlink_to(ROOT / ".dev", target_is_directory=True)
-        run("npm", "ci", "--no-audit", "--no-fund", cwd=source / "web", pass_fds=(lock_fd,))
-        run(sys.executable, "scripts/build.py", "package", "--targets", deploy.TARGET, "--deb", cwd=source, env=release_build_env(source, parent), pass_fds=(lock_fd,))
+        env = release_build_env(source, parent)
+        env.pop("GROVE_UPDATE_BINDINGS", None)  # 계약 파일을 다시 쓰지 않고 커밋과 대조한다.
+        for directory in ("web", "relay"):
+            run("npm", "ci", "--no-audit", "--no-fund", cwd=source / directory, pass_fds=(lock_fd,))
+        run("cargo", "test", "--locked", "--no-fail-fast", cwd=source, env=env, pass_fds=(lock_fd,))
+        if dest.is_dir():
+            # 이전 절차로 준비한 패키지는 해당 커밋의 검사를 통과한 뒤에만 재사용한다.
+            (dest / checked).write_text(commit)
+            return dest
+        run(sys.executable, "scripts/build.py", "package", "--targets", deploy.TARGET, "--deb", cwd=source, env=env, pass_fds=(lock_fd,))
         pkg = source / "dist/release" / f"grove-{version}-{deploy.TARGET}"
         receipt = json.loads((pkg / "receipt.json").read_text())
         manifest = json.loads((pkg / "manifest.json").read_text())
@@ -145,6 +154,7 @@ def prepare_package(commit, version, parent, verifier):
                                        "issued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "artifacts": assets}))
         run(verifier, "release", "sign", "--key", deploy.KEY, unsigned, pkg / "release.json", stdout=subprocess.DEVNULL)
         verify_package(pkg, version, verifier)
+        (pkg / checked).write_text(commit)
         pkg.rename(dest)
     return dest
 

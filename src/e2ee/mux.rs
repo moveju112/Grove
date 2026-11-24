@@ -251,36 +251,37 @@ mod tests {
         put(&mut socket, &mut tx, PING, 7, &[]).await;
         assert_eq!(next_frame(&mut socket, &mut rx).await.0, PONG);
 
-        // 취소한 요청이 있어도 연결은 계속 쓴다. 취소한 stream의 늦은 frame은 무시해도 된다.
-        put(&mut socket, &mut tx, OPEN, 9, &get("/api/v1/health")).await;
-        put(&mut socket, &mut tx, CANCEL, 9, &[]).await;
-        put(&mut socket, &mut tx, OPEN, 11, &get("/api/v1/health")).await;
-        loop {
-            let (kind, id, _) = next_frame(&mut socket, &mut rx).await;
-            if id == 11 && kind == DATA { put(&mut socket, &mut tx, ACK, 11, &[]).await; }
-            if id == 11 && kind == END { break; }
-            assert!(id == 9 || id == 11, "다른 stream frame이 섞이면 안 된다");
-        }
-
         // 잘못된 요청은 그 stream만 실패로 알리고 연결은 유지한다.
-        put(&mut socket, &mut tx, OPEN, 13, b"{}").await;
-        assert_eq!(next_frame(&mut socket, &mut rx).await, (FAIL, 13, vec![]));
-        put(&mut socket, &mut tx, PING, 15, &[]).await;
+        put(&mut socket, &mut tx, OPEN, 9, b"{}").await;
+        assert_eq!(next_frame(&mut socket, &mut rx).await, (FAIL, 9, vec![]));
+        put(&mut socket, &mut tx, PING, 11, &[]).await;
         assert_eq!(next_frame(&mut socket, &mut rx).await.0, PONG);
 
         // 다른 연결에서 실행 중인 작업까지 서버 전체 상한에 포함한다.
         let occupied = server.app.e2ee.request_slots.clone().acquire_many_owned(128).await.unwrap();
-        put(&mut socket, &mut tx, OPEN, 17, &get("/api/v1/health")).await;
-        assert_eq!(next_frame(&mut socket, &mut rx).await, (FAIL, 17, vec![]));
+        put(&mut socket, &mut tx, OPEN, 13, &get("/api/v1/health")).await;
+        assert_eq!(next_frame(&mut socket, &mut rx).await, (FAIL, 13, vec![]));
         drop(occupied);
-        put(&mut socket, &mut tx, OPEN, 19, &get("/api/v1/health")).await;
+        put(&mut socket, &mut tx, OPEN, 15, &get("/api/v1/health")).await;
         loop {
             let (kind, id, _) = next_frame(&mut socket, &mut rx).await;
-            assert_eq!(id, 19);
+            assert_eq!(id, 15);
             if kind == DATA { put(&mut socket, &mut tx, ACK, id, &[]).await; }
             if kind == END { break; }
             assert_ne!(kind, FAIL, "실행 슬롯이 반환되면 같은 연결에서 다시 처리해야 한다");
         }
+
+        // 취소한 요청이 있어도 연결은 계속 쓴다. 취소한 stream의 늦은 frame은 무시해도 된다.
+        put(&mut socket, &mut tx, OPEN, 17, &get("/api/v1/health")).await;
+        put(&mut socket, &mut tx, CANCEL, 17, &[]).await;
+        put(&mut socket, &mut tx, OPEN, 19, &get("/api/v1/health")).await;
+        loop {
+            let (kind, id, _) = next_frame(&mut socket, &mut rx).await;
+            if id == 19 && kind == DATA { put(&mut socket, &mut tx, ACK, 19, &[]).await; }
+            if id == 19 && kind == END { break; }
+            assert!(id == 17 || id == 19, "다른 stream frame이 섞이면 안 된다");
+        }
+
         server.stop().await;
     }
 }

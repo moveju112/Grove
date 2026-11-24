@@ -45,7 +45,7 @@ async fn defaults_enable_auto_apply_and_devices_are_read_only() {
     }));
     assert_eq!(initial["settings"], json!({ "channel": "stable", "auto_apply": "minor", "revision": 0 }));
     assert_eq!(initial["last_check"], Value::Null);
-    assert_eq!(initial["automatic_application"], "not_enabled");
+    assert_eq!(initial["automatic_application"], "external");
     assert_eq!(initial["can_manage"], true);
     let device = s.registered_device("update settings").await;
     let token = device["token"].as_str().unwrap();
@@ -86,9 +86,13 @@ async fn owner_saves_with_revision_idempotency_and_restart_persistence() {
     s.restart().await;
     assert_eq!(s.get(SETTINGS).await.1["settings"], json!({ "channel": "beta", "auto_apply": "patch", "revision": 1 }));
     let (status, _) = s.send(Method::PUT, SETTINGS, json!({ "channel": "stable", "auto_apply": "notify_only", "expected_revision": 1 })).await;
-    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    s.server.as_ref().unwrap().app.db.call(|c| {
+        c.execute("UPDATE settings SET value=json_set(value,'$.auto_apply','notify_only') WHERE key='server_update.preferences'", [])?;
+        Ok(())
+    }).await.unwrap();
     s.restart().await;
-    assert_eq!(s.get(SETTINGS).await.1["settings"], json!({ "channel": "stable", "auto_apply": "notify_only", "revision": 2 }));
+    assert_eq!(s.get(SETTINGS).await.1["settings"], json!({ "channel": "beta", "auto_apply": "minor", "revision": 1 }));
 }
 
 #[tokio::test]
@@ -120,7 +124,7 @@ async fn signed_local_checks_cover_new_current_failed_and_channel_selection_with
     assert_eq!(failed["last_check"]["status"], "failed");
     assert_eq!(failed["last_check"]["error"], "manifest_check_failed");
     assert!(!failed.to_string().contains(root.to_str().unwrap()));
-    let (status, _) = s.send(Method::PUT, SETTINGS, json!({ "channel": "beta", "auto_apply": "notify_only", "expected_revision": 0 })).await;
+    let (status, _) = s.send(Method::PUT, SETTINGS, json!({ "channel": "beta", "auto_apply": "minor", "expected_revision": 0 })).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(s.get(SETTINGS).await.1["last_check"]["channel"], "stable");
     manifest(&root, &key, "beta", "9999.1.0-beta.1");
@@ -166,6 +170,11 @@ async fn active_work_is_reported_and_never_cancelled_by_checking() {
     let (_, status) = s.get(SETTINGS).await;
     assert_eq!(status["readiness"]["idle"], false);
     assert_eq!(status["readiness"]["busy"]["running_tasks"], 1);
+    let server = s.server.as_ref().unwrap();
+    let seq = server.app.db.call(|c| grove::events::latest_seq(c)).await.unwrap();
+    let cutover = format!("/api/v1/admin/shutdown-if-idle?pid={}&revision=0&snapshot_seq={seq}", std::process::id());
+    assert_eq!(s.post(&cutover, json!({})).await.0, StatusCode::CONFLICT);
+    assert!(!*server.app.exit_tx.borrow());
     let (_, existing) = s.get("/api/v1/admin/update-readiness").await;
     assert_eq!(status["readiness"]["busy"], existing["busy"]);
     s.post(CHECK, json!({ "expected_revision": 0 })).await;

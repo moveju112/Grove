@@ -1,6 +1,6 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Text as GroveText } from "@astryxdesign/core/Text";
-// 입력이 없는 탭은 새 버전을 바로 적용하고, 입력이 남은 탭은 사용자가 고를 때까지 기다린다.
+// 작성 중인 입력을 보호하고, 다음 자동 확인에서 입력이 비었으면 적용한다.
 import { useSyncExternalStore } from "react";
 import { version as webVersion } from "../../package.json";
 import { accessToken, api, onProtocolMismatch } from "../api/client";
@@ -26,7 +26,7 @@ function publish(worker: ServiceWorker | null, error: string | null = null) {
     subscribers.forEach((notify) => notify());
 }
 function checkWaiting(worker: ServiceWorker | null) {
-    if (worker && navigator.serviceWorker.controller && worker !== waiting) {
+    if (worker && navigator.serviceWorker.controller && !updateRequested) {
         waiting = worker;
         if (!manualCheck && navigator.onLine && !hasPendingInput()) applyUpdate();
         else publish(worker);
@@ -88,8 +88,7 @@ export async function checkForUpdate() {
     try {
         const release = accessToken() ? publishedWeb() : null;
         await registration.update();
-        checkWaiting(registration.waiting);
-        if (registration.waiting && !updateRequested) publish(registration.waiting);
+        checkWaiting(registration.waiting ?? (waiting === navigator.serviceWorker.controller ? waiting : null));
         if (await release === "published" && !registration.waiting && !updateRequested)
             publish(waiting, "새 웹 릴리즈가 있어요. 이 서버에 적용되면 화면을 업데이트할 수 있어요.");
     } catch {

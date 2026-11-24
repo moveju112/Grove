@@ -115,7 +115,7 @@ export const ITEMS: Item[] = [
     { id: "browser-capabilities", menu: "devices", label: "브라우저 기능·권한", keywords: "이 기기 browser notification clipboard 알림 복사 붙여넣기 파일 첨부 드래그 HTTPS 보안 권한", scope: "이 기기" },
     { id: "logout", menu: "devices", label: "로그아웃", keywords: "logout sign out", scope: "이 기기" },
     { id: "health", menu: "server", label: "서버 상태·버전·진단", keywords: "version health schema diagnostics 버전 상태 진단 정보 복사", scope: "서버 전체" },
-    { id: "server-update", menu: "server", label: "서버 업데이트", keywords: "update automatic on off 자동 업데이트", scope: "서버 전체" },
+    { id: "server-update", menu: "server", label: "서버 업데이트", keywords: "update automatic 자동 업데이트", scope: "서버 전체" },
 ];
 
 export function Settings({ projectId, projectName, sessionId, initialMenu, open }: {

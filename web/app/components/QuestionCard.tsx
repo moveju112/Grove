@@ -1,7 +1,7 @@
 import { Card } from "@astryxdesign/core/Card";
 import { Stack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useId, useRef, useState, type KeyboardEvent } from "react";
 import { api } from "../api/client";
 import type { ToolCallRow } from "../api/generated";
 import { Button } from "../design/Button";
@@ -20,18 +20,12 @@ export function QuestionCard({ call, act, onAnswered }: {
     const q = call.target as Question;
     const [picked, setPicked] = useState<string[]>([]);
     const [text, setText] = useState("");
-    const [editing, setEditing] = useState(!q.options.length && q.allow_free_text);
     const [cursor, setCursor] = useState(0);
     const [sending, setSending] = useState(false);
     const pending = useRef(false);
     const buttons = useRef<(HTMLButtonElement | null)[]>([]);
-    const input = useRef<HTMLTextAreaElement>(null);
-    const inputId = useId();
     const titleId = useId();
-    const note = editing && text.trim() ? text : null;
-    useEffect(() => {
-        if (editing && q.options.length) input.current?.focus();
-    }, [editing, q.options.length]);
+    const note = q.allow_free_text && text.trim() ? text : null;
 
     function send(answer: Answer) {
         if (pending.current) return;
@@ -99,16 +93,13 @@ export function QuestionCard({ call, act, onAnswered }: {
                             : cursor === index && <Text aria-hidden="true" color="secondary">↵</Text>}
                     </Option>)}
                 </Stack>}
-                {editing && <TextArea id={inputId} ref={input} label="직접 입력" rows={2} value={text} onChange={setText} isDisabled={sending} />}
+                {q.allow_free_text && <TextArea label="직접 입력" rows={2} value={text} onChange={setText} isDisabled={sending} />}
             </Stack>
             <Stack direction="horizontal" align="center" justify="between" wrap="wrap" gap={2} paddingInline={3} paddingBlock={2} xstyle={styles.footer}>
-                {q.allow_free_text && !!q.options.length && <Button type="button" appearance="link" density="compact"
-                    aria-expanded={editing} aria-controls={editing ? inputId : undefined} disabled={sending}
-                    onClick={() => setEditing(!editing)}><Icon name="edit" size={14} />{editing ? "입력 접기" : "직접 입력"}</Button>}
                 {!!q.options.length && <Text type="supporting" color="secondary" xstyle={styles.hint}>
                     {q.multi_select ? "↑ ↓ 이동 · Space 선택" : "↑ ↓ 이동 · Enter 답하기"}
                 </Text>}
-                {(q.multi_select || editing) && <ServerActionButton type="button" density="compact" disabled={sending || (!picked.length && !note)}
+                {(q.multi_select || q.allow_free_text) && <ServerActionButton type="button" density="compact" disabled={sending || (!picked.length && !note)}
                     onClick={() => send({ choices: picked, text: note })}>답하기</ServerActionButton>}
             </Stack>
         </Stack>
