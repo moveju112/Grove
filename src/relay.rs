@@ -247,6 +247,11 @@ pub fn spawn(settings: Arc<Settings>, addr: SocketAddr, mut shutdown: watch::Rec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // 실제 relay fixture(Node·Miniflare)는 시작 비용이 커서 전체 병렬 시험 부하에서 15초를 넘길 수 있다.
+    // fixture끼리는 순서대로 띄우고, 준비 신호(첫 stdout 줄)를 기다리는 실패 한도만 넉넉히 둔다.
+    static RELAY_FIXTURE: std::sync::LazyLock<tokio::sync::Mutex<()>> = std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
+    const FIXTURE_READY: Duration = Duration::from_secs(60);
     #[test]
     fn relay_failures_report_only_classification_and_http_status() {
         use tokio_tungstenite::tungstenite::{Error as WsError, http::Response};
@@ -284,6 +289,7 @@ mod tests {
     /// 재접속한 데몬은 그 연결의 lease 만료를 기다리지 않고 즉시 자리를 이어받아 브라우저 요청을 받아야 한다.
     #[tokio::test]
     async fn reconnect_replaces_a_stale_control_without_waiting_for_its_lease() {
+        let _fixture = RELAY_FIXTURE.lock().await;
         use tokio::io::{AsyncBufReadExt, BufReader};
         let dir = tempfile::tempdir().unwrap();
         let cfg = crate::config::Config::from_env(Some(dir.path().into()), Some("127.0.0.1:0".parse().unwrap())).unwrap();
@@ -297,7 +303,7 @@ mod tests {
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit()).kill_on_drop(true).spawn().unwrap();
         let mut lines = BufReader::new(fixture.stdout.take().unwrap()).lines();
-        let url = tokio::time::timeout(Duration::from_secs(15), lines.next_line()).await.unwrap().unwrap().unwrap();
+        let url = tokio::time::timeout(FIXTURE_READY, lines.next_line()).await.unwrap().unwrap().unwrap();
         let base = url.trim_end_matches('/').replace("http:", "ws:");
         let settings = Arc::new(Settings { base: base.clone(), token, room: room.clone() });
         // heartbeat·close 없이 남은 이전 제어 연결. lease(70초)가 아직 남아 있다.
@@ -353,6 +359,7 @@ mod tests {
 
     #[tokio::test]
     async fn real_relay_preserves_e2ee_authentication_and_shutdown() {
+        let _fixture = RELAY_FIXTURE.lock().await;
         use base64::{Engine, engine::general_purpose::STANDARD as B64};
         use curve25519_dalek::montgomery::MontgomeryPoint;
         use ed25519_dalek::{Signature, VerifyingKey};
@@ -370,7 +377,7 @@ mod tests {
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit()).kill_on_drop(true).spawn().unwrap();
         let mut lines = BufReader::new(fixture.stdout.take().unwrap()).lines();
-        let url = tokio::time::timeout(Duration::from_secs(15), lines.next_line()).await.unwrap().unwrap().unwrap();
+        let url = tokio::time::timeout(FIXTURE_READY, lines.next_line()).await.unwrap().unwrap().unwrap();
         let base = url.trim_end_matches('/').replace("http:", "ws:");
         let settings = Arc::new(Settings { base: base.clone(), token, room: room.clone() });
         // 실제 제어 연결의 완료를 기다리고 임의 sleep·접속 재시도는 쓰지 않는다.
@@ -415,6 +422,7 @@ mod tests {
     /// bridge가 릴레이 쪽 연결을 close 없이 drop하면 일부 요청이 끝 frame 없이 1008로 끊겼다.
     #[tokio::test]
     async fn real_relay_delivers_response_end_before_close() {
+        let _fixture = RELAY_FIXTURE.lock().await;
         use base64::{Engine, engine::general_purpose::STANDARD as B64};
         use curve25519_dalek::montgomery::MontgomeryPoint;
         use tokio::io::{AsyncBufReadExt, BufReader};
@@ -431,7 +439,7 @@ mod tests {
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::inherit()).kill_on_drop(true).spawn().unwrap();
         let mut lines = BufReader::new(fixture.stdout.take().unwrap()).lines();
-        let url = tokio::time::timeout(Duration::from_secs(15), lines.next_line()).await.unwrap().unwrap().unwrap();
+        let url = tokio::time::timeout(FIXTURE_READY, lines.next_line()).await.unwrap().unwrap().unwrap();
         let base = url.trim_end_matches('/').replace("http:", "ws:");
         let settings = Arc::new(Settings { base: base.clone(), token, room: room.clone() });
         // 실서비스와 같은 제어 연결 처리(session)로 요청마다 bridge를 연다.
