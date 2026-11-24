@@ -1139,11 +1139,11 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                     pending_work["unseen_results"] = json!(unseen_results);
                     if steer_pending { pending_work["steer"] = json!(true); }
                 }
-                let mut images = crate::attachments::import_generated(&tx, &data, &now, &s.project_id, &out.generated_images)?;
                 let mut text = out.text;
                 let mut parts = out.response_parts;
-                if !completion_pending && out.tool_calls.is_empty()
+                let images = if !completion_pending && out.tool_calls.is_empty()
                     && let Some((reply, paths)) = crate::attachments::media_manifest(&text) {
+                    let mut images = crate::attachments::Prepared::default();
                     let read = crate::tools::spec("read").expect("read tool");
                     let can_read = (native_execution || input.request.tools.iter().any(|tool| tool.name == read.name))
                         && !matches!(crate::approvals::tool_policy(&tx, &s.project_id, &s.id, &read)?, crate::approvals::PolicyDecision::Deny(..));
@@ -1164,7 +1164,10 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
                         *last = format_reply(part);
                     }
                     text = format_reply(reply);
-                }
+                    images
+                } else {
+                    crate::attachments::import_generated(&tx, &data, &now, &s.project_id, &out.generated_images)?
+                };
                 let mut content = json!({
                     "text": text,
                     "tool_calls": out.tool_calls.iter().map(|c| json!({ "id": c.id, "name": c.name, "arguments": c.arguments })).collect::<Vec<_>>(),

@@ -8,9 +8,9 @@ test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "GROVE_E2E_FAKE_CLI=1로 실�
 for (const mode of ["desktop", "mobile-light", "mobile-dark"] as const) {
     test.describe(mode, () => {
         test.use({ viewport: { width: mode === "desktop" ? 1400 : 390, height: 844 }, isMobile: mode !== "desktop", hasTouch: mode !== "desktop" });
-        for (const source of ["native", "tools", "cache", "animated"] as const) {
+        for (const source of ["native", "tools", "cache", "animated", "manifest"] as const) {
             test(`${source}: 이미지는 답변 첨부로 보존하고 미리보기와 새로고침을 지원한다`, async ({ page }, info) => {
-                const count = source === "tools" || source === "cache" ? 3 : 2;
+                const count = source === "native" || source === "animated" ? 2 : 3;
                 const theme = mode === "mobile-dark" ? "dark" : "light";
                 await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
                 await page.addInitScript((theme) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme })), theme);
@@ -24,25 +24,38 @@ for (const mode of ["desktop", "mobile-light", "mobile-dark"] as const) {
                 const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
                 if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
                 await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
-                const images = await page.evaluate((count) => ["#69a17e", "#4181a8", "#a88b61"].slice(0, count).map((color, index) => {
+                const images = await page.evaluate(({ count, manifest }) => ["#69a17e", "#4181a8", "#a88b61"].slice(0, count).map((color, index) => {
                     const canvas = document.createElement("canvas");
                     canvas.width = 600; canvas.height = 900;
                     const context = canvas.getContext("2d")!;
                     context.fillStyle = "#191b20"; context.fillRect(0, 0, 600, 900);
                     context.strokeStyle = color; context.lineWidth = 8; context.strokeRect(8, 8, 584, 884);
                     context.fillStyle = color; context.font = "80px sans-serif"; context.fillText(String(index + 1), 270, 460);
-                    return { id: `image-${index}`, type: "imageGeneration", status: "completed", result: canvas.toDataURL("image/png").split(",")[1] };
-                }), count);
+                    const result = canvas.toDataURL("image/png").split(",")[1]!;
+                    const preview = manifest ? canvas.toDataURL("image/jpeg").split(",")[1] : undefined;
+                    return { id: `image-${index}`, type: "imageGeneration", status: "completed", result, preview };
+                }), { count, manifest: source === "manifest" });
                 const animated = ["gif", "webp"].map((ext) => readFileSync(new URL(`../../tests/fixtures/images/animated.${ext}`, import.meta.url)));
                 if (source === "animated") images.forEach((image, index) => { image.result = animated[index]!.toString("base64"); });
-                writeFileSync(join(root, "native-generated-images.json"), JSON.stringify(images));
+                const names = ["01.png", "02.png", "03.png"];
+                if (source === "manifest") {
+                    images.forEach((image, i) => {
+                        writeFileSync(join(root, names[i]!), Buffer.from(image.result, "base64"));
+                        writeFileSync(join(root, `preview-${i}.jpg`), Buffer.from(image.preview!, "base64"));
+                    });
+                    const previews = [1, 0, 2].map((i) => ({ id: `preview-${i}`, type: "imageView", path: join(root, `preview-${i}.jpg`) }));
+                    writeFileSync(join(root, "native-generated-images.json"), JSON.stringify(previews));
+                } else {
+                    writeFileSync(join(root, "native-generated-images.json"), JSON.stringify(images));
+                }
                 const turn = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`, {
-                    profile_id: profile.id, text: `fixture-generated-images${source === "tools" || source === "cache" ? `-${source}` : ""}`, tools: false,
+                    profile_id: profile.id, text: `fixture-generated-images-${source}`, tools: false,
                 });
-                await expect.poll(async () => (await apiCall<{ status: string }>("GET", `/turns/${turn.turn.id}`)).status).toBe("completed");
+                await expect.poll(async () => (await apiCall<{ status: string }>("GET", `/turns/${turn.turn.id}`)).status,
+                    { timeout: 15_000 }).toBe("completed");
                 const view = sessionView(page, session.id);
                 const answer = view.getByTestId("msg-assistant").last();
-                await expect(answer).toContainText(source === "tools" || source === "cache" ? "시안을 다시 보여줄게." : "시안 두 개를 만들었어.");
+                await expect(answer).toContainText(source === "manifest" ? "시안 세 개를 첨부했어." : source === "tools" || source === "cache" ? "시안을 다시 보여줄게." : "시안 두 개를 만들었어.");
                 await expect(answer.getByTestId("attachment-card")).toHaveCount(count);
                 await expect.poll(() => answer.getByRole("img").evaluateAll((images, { count, width }) => images.length === count && images.every((node) => {
                     const image = node as HTMLImageElement;
@@ -52,7 +65,7 @@ for (const mode of ["desktop", "mobile-light", "mobile-dark"] as const) {
                 await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
                 await answer.scrollIntoViewIfNeeded();
                 await page.screenshot({ path: info.outputPath(`generated-images-${mode}-${source}.png`) });
-                const firstName = source === "animated" ? "generated-1.gif" : "generated-1.png";
+                const firstName = source === "manifest" ? names[0] : source === "animated" ? "generated-1.gif" : "generated-1.png";
                 await answer.getByRole("button", { name: `${firstName} 미리보기`, exact: true }).click();
                 const preview = page.getByRole("dialog", { name: `${firstName} 미리보기`, exact: true });
                 await expect(preview.getByRole("img")).toBeVisible();
@@ -63,6 +76,9 @@ for (const mode of ["desktop", "mobile-light", "mobile-dark"] as const) {
                 await page.keyboard.press("Escape");
                 await page.reload();
                 await expect(answer.getByRole("img")).toHaveCount(count);
+                if (source === "manifest") {
+                    for (const [i, name] of names.entries()) await expect(answer.getByRole("img").nth(i)).toHaveAttribute("alt", name);
+                }
                 await expect.poll(() => answer.getByRole("img").evaluateAll((images) => images.every((node) => {
                     const image = node as HTMLImageElement;
                     return image.complete && image.naturalWidth > 0;

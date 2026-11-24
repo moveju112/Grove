@@ -279,6 +279,9 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
                 }
                 for (const item of images) emit({ method: "item/completed", params: { threadId, turnId, item } });
                 const final = { id: "answer", type: "agentMessage", text: toolOutput || cacheOutput ? "시안을 다시 보여줄게." : "시안 두 개를 만들었어." };
+                if (text.includes("fixture-generated-images-manifest")) {
+                    final.text = "시안 세 개를 첨부했어.\n\n```grove-media\n01.png\n02.png\n03.png\n```";
+                }
                 emit({ method: "item/completed", params: { threadId, turnId, item: final } });
                 // 완료 snapshot에 같은 이미지가 다시 와도 중복 첨부하지 않는다.
                 emit({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed", items: [...images, final] } } });

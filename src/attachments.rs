@@ -564,6 +564,7 @@ pub async fn remove(
 }
 
 /// 참조 연결 전 검증 결과. 원문은 파일로 유지하고 모델 입력에는 명시된 크기의 발췌만 넣는다.
+#[derive(Default)]
 pub struct Prepared {
     pub items: Vec<Value>,
     pub model_input: Value,
