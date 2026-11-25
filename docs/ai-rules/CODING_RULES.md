@@ -15,9 +15,9 @@
   - ✅ `ProjectFs::open`, `read`, `atomic_write`. `evidence: src/project_fs.rs:20`, `evidence: src/project_fs.rs:99`.
 - **MUST** 일반 CLI 대화는 신규 실행과 재개 모두 서버 계정 권한을 쓴다. Codex `app-server`는 `danger-full-access`와 `never`, Claude Code는 `--dangerously-skip-permissions`와 `sandbox.enabled=false`를 사용한다.
   - why: 사용자가 요청한 Release·SSH·로컬 검사 작업을 CLI sandbox로 차단하지 않는다. CLI 자체 도구와 Grove의 승인형 도구 루프·`ProjectFs` API 경계는 별개다. OS·상위 실행 환경의 제한이나 관리 정책까지 해제하지는 않는다.
-  - ✅ sandbox 실행용 bubblewrap·socat은 필요하지 않다. 취소는 변경 rollback이 아니며 중단 기록과 실제 파일을 확인한 뒤 계속한다. `evidence: src/provider/cli.rs`, `evidence: tests/real_cli.rs`.
+  - ✅ sandbox 실행용 bubblewrap·socat은 필요하지 않다. 취소는 변경 rollback이 아니며 중단 기록과 실제 파일을 확인한 뒤 계속한다. `evidence: src/provider/cli.rs`, `evidence: tests/integration/real_cli.rs`.
 - **MUST** 일반 CLI 대화의 전역·프로젝트 지침은 각 CLI의 기본 로더에 맡기고 Grove에서 중복 전달하지 않는다. CLI 없는 일반 대화에서는 Anthropic API가 `.claude/CLAUDE.md`와 `CLAUDE.md`를 실행 루트에서 읽는다. 프로젝트 밖 파일·개인 지침·import를 자동 수집하지 않고, 다른 API 모델·`grove exec`·내부 호출에도 자동 전달하지 않는다. 지침은 사용자 승인이나 도구 권한을 추가하지 않는다. `evidence: src/project_guidance.rs`, `evidence: src/runner.rs`.
-  - ✅ 일반 대화의 스킬·장기 기억·hook·MCP도 외부 CLI의 원래 설정에 맡긴다. 스킬은 실제 CLI 목록을 조회해 `/이름`으로 호출한다. `evidence: src/provider/cli.rs`, `evidence: src/native_commands.rs`, `evidence: tests/native_integrations.rs`.
+  - ✅ 일반 대화의 스킬·장기 기억·hook·MCP도 외부 CLI의 원래 설정에 맡긴다. 스킬은 실제 CLI 목록을 조회해 `/이름`으로 호출한다. `evidence: src/provider/cli.rs`, `evidence: src/native_commands.rs`, `evidence: tests/integration/native_integrations.rs`.
 - **MUST** 예약 실행과 제목·요약·기억 등 내부 호출은 임시 작업 폴더에서 CLI 자체 도구·hook·MCP를 끄고 대화 세션을 남기지 않는다. 예약이 도구를 요청하면 Grove가 기존 허용 목록·승인 정책·토큰 한도로 판단하고 실행한다. `evidence: src/provider/cli.rs`, `evidence: src/runner.rs`.
 - **MUST** Grove 일반 도구의 기본 모드는 `bypass`이며, `tools.mode`의 `ask`는 범위별로 선택할 수 있다. 모드를 바꿔도 명시적 deny, 보조 역할 제한, 위임의 별도 정책은 유지한다. `tools.full_access`는 기본으로 켜지며 `ask`에서 일반 도구를 포괄 허용한다. 모드와 별개로 `tools.full_access`가 켜지면 foreground·background 셸에 계정 환경변수를 상속하되 `GROVE_*`는 제외한다. 대기 중 전체 권한이 철회되면 자격증명 사용 계획을 실행하지 않는다. 파일 API의 `ProjectFs` 경계는 넓히지 않는다.
   - why: 일반 코딩·SSH·Release 작업은 반복 승인 없이 허용하면서, 서버 내부 설정이나 별도 승인 기능까지 포괄 허용으로 오인하지 않는다. 셸 자체는 프로젝트 밖·네트워크 접근이나 위험 명령을 차단하는 sandbox가 아니다.
@@ -56,6 +56,7 @@
   - why: 빈 화면 검사만 통과한 채 sticky 입력창 아래로 본문이 비치고, Astryx 내부 슬롯 때문에 짧은 목록 제목이 가운데로 돌아간 적이 있다.
 
 여러 대상을 지정할 때 `--rust`, `--vitest`, `--e2e`는 각각 한 번만 쓰고 뒤에 대상들을 나열한다.
+Rust 통합 시험은 `tests/integration/`에 파일을 두고 `main.rs`에 등록해 실행 파일 하나로 링크한다. `--rust` 대상은 그 모듈 이름이며 nextest로 시험마다 별도 프로세스에서 실행한다. PATH처럼 프로세스 전역 상태를 바꾸는 시험만 `tests/` 최상위의 별도 실행 파일로 둔다(`tests/deps.rs`).
 E2E는 실제 서버와 빌드된 웹앱을 사용한다. API mock만으로 인증·복구·전송 경계를 검증했다고 하지 않는다.
 relay·암호화 다중화·모바일 복귀 변경은 `python3 scripts/build.py test --relay-e2e`로 배포 없이 검증한다.
 이 명령은 새 임시 데이터의 데몬·정적 웹·Miniflare relay·네트워크 주입 프록시를 띄우고 이번 실행이 만든 스택만 정리한다.

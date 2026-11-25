@@ -15,7 +15,7 @@ Grove는 단일 Rust crate 서버와 공용 웹앱/PWA로 구성된다.
 | 파일 경계 | `src/project_fs.rs`, `src/tools/`, `src/files.rs` |
 | 암호화 전송 | `src/e2ee.rs`, `web/app/api/transport.ts` |
 | 웹 화면·조회 투영 | `web/app/components/`, `web/app/state/store.ts` |
-| 계약 생성 | `tests/ts_bindings.rs`, `web/scripts/contract-metadata.mjs` |
+| 계약 생성 | `tests/integration/ts_bindings.rs`, `web/scripts/contract-metadata.mjs` |
 | 빌드·배포 | `scripts/build.py`, `scripts/deploy_local.py`, `src/update.rs` |
 
 ## 데이터 흐름

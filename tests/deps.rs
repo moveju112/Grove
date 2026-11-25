@@ -1,4 +1,5 @@
 //! 외부 도구가 없을 때의 안내(ARCH-018). PATH를 바꾸므로 이 파일에는 시험 하나만 둔다(같은 프로세스의 다른 시험에 영향 없음).
+#[path = "integration/common/mod.rs"]
 mod common;
 
 use common::*;

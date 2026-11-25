@@ -123,7 +123,29 @@ def fresh_member(member, directory):
     return safe.replace(mtime=None) if safe is not None else None
 
 
-def prepare_package(commit, version, parent, verifier):
+def checkout_verifier():
+    # 내려받은 패키지는 그 안의 실행 파일로 자기 서명을 확인하지 않는다. 현재 checkout으로 만든 검증기를 쓴다.
+    env = build.env()
+    run("cargo", "build", "--locked", "--bin", "grove", env=env)
+    metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version", "1"], cwd=ROOT, env=env))
+    return Path(metadata["target_directory"]) / "debug/grove"
+
+
+@contextmanager
+def package_verifier(pkg, version):
+    # 직접 만들었거나 서명을 확인한 패키지는 그 release 실행 파일로 서명·검증한다. 별도 debug 빌드(약 70초)를 기다리지 않는다.
+    with tempfile.TemporaryDirectory() as tmp, tarfile.open(pkg / file_names(version)[0]) as tar:
+        member = tar.getmember(f"grove-{version}-{deploy.TARGET}/grove")
+        if not member.isfile():
+            raise ValueError("패키지에 grove 실행 파일이 없습니다")
+        binary = Path(tmp, "grove")
+        with tar.extractfile(member) as source, binary.open("xb") as target:
+            shutil.copyfileobj(source, target)
+        binary.chmod(0o700)
+        yield binary
+
+
+def prepare_package(commit, version, parent):
     dest = parent / commit
     checked = "rust-tests-passed"
     if (dest / checked).is_file() and (dest / checked).read_text() == commit:
@@ -162,8 +184,9 @@ def prepare_package(commit, version, parent, verifier):
         unsigned.write_text(json.dumps({"product": "grove", "channel": "stable", "version": version,
                                        "protocol": manifest["protocol"], "schema": manifest["schema"],
                                        "issued_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()), "artifacts": assets}))
-        run(verifier, "release", "sign", "--key", deploy.KEY, unsigned, pkg / "release.json", stdout=subprocess.DEVNULL)
-        verify_package(pkg, version, verifier)
+        with package_verifier(pkg, version) as verifier:
+            run(verifier, "release", "sign", "--key", deploy.KEY, unsigned, pkg / "release.json", stdout=subprocess.DEVNULL)
+            verify_package(pkg, version, verifier)
         (pkg / checked).write_text(commit)
         pkg.rename(dest)
     return dest
@@ -245,10 +268,6 @@ def publish(plan_only=False):
     release = release_for(tag)
     parent = ROOT / "dist/github-releases"
     parent.mkdir(parents=True, exist_ok=True)
-    env = build.env()
-    run("cargo", "build", "--locked", "--bin", "grove", env=env)
-    metadata = json.loads(subprocess.check_output(["cargo", "metadata", "--no-deps", "--format-version", "1"], cwd=ROOT, env=env))
-    verifier = Path(metadata["target_directory"]) / "debug/grove"
     if release and not release["draft"]:
         if json.loads(gh(f"commits/{tag}"))["sha"] != head:
             raise ValueError(f"{tag}가 다른 커밋을 가리킵니다")
@@ -257,10 +276,10 @@ def publish(plan_only=False):
             with tempfile.TemporaryDirectory(dir=parent) as tmp:
                 fetched = Path(tmp, "assets")
                 run("gh", "release", "download", tag, "--repo", REPO, "--dir", fetched, *download_patterns(version))
-                verify_package(fetched, version, verifier)
+                verify_package(fetched, version, checkout_verifier())
                 fetched.rename(pkg)
     else:
-        pkg = prepare_package(head, version, parent, verifier)
+        pkg = prepare_package(head, version, parent)
         # 다른 호스트가 선점한 커밋·태그는 강제로 덮어쓰지 않는다.
         run("git", "push", "--atomic", "origin", f"{head}:refs/heads/main", f"{head}:refs/tags/{tag}",
             env={**os.environ, "GROVE_RELEASE_PUSH_INTERNAL": "1"})
@@ -268,7 +287,8 @@ def publish(plan_only=False):
             run("gh", "release", "create", tag, "--repo", REPO, "--verify-tag", "--draft", "--title", f"Grove {tag}",
                 "--notes", f"Linux x64 압축본과 Debian·Ubuntu amd64 패키지. [설치 안내](https://github.com/{REPO}/blob/{tag}/README.md)")
             release = release_for(tag)
-    signed = verify_package(pkg, version, verifier)
+    with package_verifier(pkg, version) as verifier:
+        signed = verify_package(pkg, version, verifier)
     sync_assets(tag, pkg, version, release)
     if json.loads(gh("releases/latest"))["tag_name"] != tag:
         raise ValueError("최신 공개 릴리즈가 바뀌어 로컬 반영을 중단합니다")

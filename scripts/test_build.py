@@ -125,13 +125,25 @@ class Verification(unittest.TestCase):
         calls, code, _ = self.execute("--rust", "storage", "worktrees")
         self.assertEqual(code, 0)
         self.assertEqual([cmd for _, cmd, _ in calls], [
-            ["cargo", "test", "--test", "storage", "--test", "worktrees"],
+            ["cargo", "nextest", "run", "--test", "integration", "-E", "(binary(integration) & test(/^(storage|worktrees)::/))"],
         ])
+
+    def test_standalone_and_integration_targets_are_selected_together(self):
+        calls, code, _ = self.execute("--rust", "deps", "pairing", "--lib", "--filter", "restart")
+        self.assertEqual(code, 0)
+        self.assertEqual(calls[0][1], [
+            "cargo", "nextest", "run", "--lib", "--test", "deps", "--test", "integration",
+            "-E", "kind(lib) | binary(deps) | (binary(integration) & test(/^(pairing)::/))", "restart"])
+
+    def test_unknown_rust_target_is_rejected_before_running(self):
+        calls, code, _ = self.execute("--rust", "no_such_target")
+        self.assertEqual(code, 2)
+        self.assertEqual(calls, [])
 
     def test_library_filter_is_passed_to_cargo(self):
         calls, code, _ = self.execute("--lib", "--filter", "config::tests")
         self.assertEqual(code, 0)
-        self.assertEqual(calls[0][1], ["cargo", "test", "--lib", "config::tests"])
+        self.assertEqual(calls[0][1], ["cargo", "nextest", "run", "--lib", "-E", "kind(lib)", "config::tests"])
 
     def test_filter_without_rust_scope_is_rejected(self):
         calls, code, _ = self.execute("--filter", "config")
@@ -192,7 +204,7 @@ class Verification(unittest.TestCase):
     def test_full_is_explicit_and_covers_all_suites(self):
         calls, code, _ = self.execute("--full")
         self.assertEqual(code, 0)
-        self.assertEqual(calls[0][1], ["cargo", "test", "--no-fail-fast"])
+        self.assertEqual(calls[0][1], ["cargo", "nextest", "run", "--no-fail-fast"])
         self.assertIn(["npx", "vitest", "run"], [cmd for _, cmd, _ in calls])
         self.assertEqual(calls[-1][1], ["npx", "playwright", "test"])
         self.assertEqual(calls[-1][2]["extra_env"]["GROVE_E2E_FAST"], "0")
@@ -219,7 +231,7 @@ class Verification(unittest.TestCase):
         calls, code, output = self.execute("--rust", "api", "--dry-run")
         self.assertEqual(code, 0)
         self.assertEqual(calls, [])
-        self.assertIn("cargo test --test api", output)
+        self.assertIn("cargo nextest run --test integration -E '(binary(integration) & test(/^(api)::/))'", output)
 
     def test_e2e_dry_run_displays_policy_without_running(self):
         for args, mode in [

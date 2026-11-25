@@ -1,4 +1,4 @@
-// 이 파일은 tests/ts_bindings.rs가 Rust 계약에서 생성한다. 직접 수정하지 않는다.
+// 이 파일은 tests/integration/ts_bindings.rs가 Rust 계약에서 생성한다. 직접 수정하지 않는다.
 import type * as Types from "./generated";
 import type { Schema } from "./validation";
 

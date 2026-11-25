@@ -48,7 +48,7 @@ if (declarations.length !== file.statements.length) throw new Error("계약에�
 const names = new Set(declarations.map((d) => d.name.text));
 const lines = declarations.map((d) => `    ${JSON.stringify(d.name.text)}: ${JSON.stringify(schema(d.type))},`);
 process.stdout.write(
-    "// 이 파일은 tests/ts_bindings.rs가 Rust 계약에서 생성한다. 직접 수정하지 않는다.\n" +
+    "// 이 파일은 tests/integration/ts_bindings.rs가 Rust 계약에서 생성한다. 직접 수정하지 않는다.\n" +
     'import type * as Types from "./generated";\nimport type { Schema } from "./validation";\n\n' +
     "export type ContractTypes = {\n" + declarations.map((d) => `    ${d.name.text}: Types.${d.name.text};\n`).join("") +
     "};\n\nexport const contractMetadata = {\n" + lines.join("\n") +

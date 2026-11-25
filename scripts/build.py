@@ -163,7 +163,7 @@ def classify(path):
         return "all"
     if p.endswith(".md") or p.startswith("migration/") or p in ("TODO.md", "THIRD_PARTY_NOTICES.txt"):
         return "none"
-    if p == "web/app/api/generated.ts" or p == "src/lib.rs" or p.startswith("tests/ts_bindings"):
+    if p == "web/app/api/generated.ts" or p == "src/lib.rs" or p.startswith("tests/integration/ts_bindings"):
         return "protocol"
     if p.startswith(("src/", "assets/", "tests/")):
         return "server"
@@ -191,6 +191,42 @@ def cmd_dev(_a):
     run("web build", ["npm", "run", "build"], cwd=os.path.join(ROOT, "web"))
 
 
+INTEGRATION = "integration"
+
+
+def rust_test_command(a):
+    """릴리즈 검사와 같이 nextest로 시험마다 별도 프로세스에서 실행한다.
+
+    --rust 대상은 tests/integration의 모듈 이름이거나 tests/ 최상위의 별도 실행 파일 이름이다.
+    통합 실행 파일 안의 모듈은 이름 앞부분으로 정확히 고른다(부분 일치로 cli_pairing까지 돌지 않게).
+    """
+    cmd = ["cargo", "nextest", "run"]
+    if a.full:
+        return cmd + ["--no-fail-fast"]
+    tests = os.path.join(ROOT, "tests")
+    modules = {f[:-3] for f in os.listdir(os.path.join(tests, INTEGRATION)) if f.endswith(".rs") and f != "main.rs"}
+    standalone = {f[:-3] for f in os.listdir(tests) if f.endswith(".rs")}
+    targets = a.rust or []
+    unknown = [t for t in targets if t not in modules | standalone]
+    if unknown:
+        raise ValueError(f"Rust 시험 대상이 없습니다: {', '.join(unknown)} (tests/{INTEGRATION}/*.rs 또는 tests/*.rs 이름)")
+    exprs = []
+    if a.lib:
+        cmd.append("--lib")
+        exprs.append("kind(lib)")
+    for t in (t for t in targets if t in standalone):
+        cmd += ["--test", t]
+        exprs.append(f"binary({t})")
+    chosen = [t for t in targets if t in modules]
+    if chosen:
+        cmd += ["--test", INTEGRATION]
+        exprs.append(f"(binary({INTEGRATION}) & test(/^({'|'.join(chosen)})::/))")
+    cmd += ["-E", " | ".join(exprs)]
+    if a.filter:
+        cmd.append(a.filter)
+    return cmd
+
+
 def test_steps(a):
     """범위를 추측해 전체로 넓히지 않고, 요청한 검사만 실행한다."""
     if a.e2e_regression and not a.e2e:
@@ -204,17 +240,7 @@ def test_steps(a):
     steps = []
     web = os.path.join(ROOT, "web")
     if a.full or a.rust or a.lib:
-        cmd = ["cargo", "test"]
-        if a.full:
-            cmd += ["--no-fail-fast"]
-        else:
-            if a.lib:
-                cmd += ["--lib"]
-            for target in a.rust or []:
-                cmd += ["--test", target]
-            if a.filter:
-                cmd += [a.filter]
-        steps.append(("rust tests", cmd, ROOT))
+        steps.append(("rust tests", rust_test_command(a), ROOT))
     if a.full or a.typecheck:
         steps.append(("typecheck", ["npm", "run", "typecheck"], web))
     if a.full or a.vitest:
@@ -260,6 +286,11 @@ def cmd_test(a):
                 with tempfile.TemporaryDirectory(prefix="gpr-", dir="/tmp") as tmp:
                     run(name, cmd, cwd=cwd, extra_env={"TMPDIR": tmp})
             elif name == "rust tests":
+                try:
+                    out(["cargo", "nextest", "--version"])
+                except (subprocess.CalledProcessError, OSError):
+                    print("cargo-nextest가 필요합니다. 설치: cargo install cargo-nextest --locked", file=sys.stderr, flush=True)
+                    raise SystemExit(2) from None
                 with rust_test_tmp() as tmp_env:
                     run(name, cmd, cwd=cwd, extra_env=tmp_env)
             else:
@@ -622,7 +653,7 @@ def main(argv=None):
     sp = ap.add_subparsers(dest="cmd", required=True)
     sp.add_parser("dev")
     t = sp.add_parser("test")
-    t.add_argument("--rust", nargs="+", metavar="TARGET", help="Rust integration test target 이름")
+    t.add_argument("--rust", nargs="+", metavar="TARGET", help="Rust 통합 시험 이름(tests/integration 모듈 또는 tests/ 최상위 실행 파일)")
     t.add_argument("--lib", action="store_true", help="Rust library 시험")
     t.add_argument("--filter", help="선택한 Rust 시험의 이름 필터")
     t.add_argument("--vitest", nargs="+", metavar="FILE", help="Vitest 파일")

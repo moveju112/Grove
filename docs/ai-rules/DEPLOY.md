@@ -70,6 +70,6 @@
 
 ## Rust 빌드 캐시
 
-일반 개발·테스트는 현재 checkout에서 실행한다. 테스트는 줄 번호 디버그 정보만 남기고 증분 컴파일을 끈다. 릴리즈는 푸시 잠금 아래 `dist/github-releases/source`에 매번 해당 커밋을 새로 추출한다. Cargo의 소스 경로와 remap 플래그가 일정해 이전 릴리즈의 의존성을 재사용한다. 최종 바이너리는 현재 소스의 `target`에서 가져온다. 호스트가 외부 중간 캐시를 지정하지 않은 경우 `dist/github-releases/cargo-build`가 릴리즈 전용 캐시다.
+일반 개발·테스트는 현재 checkout에서 실행한다. 테스트는 줄 번호 디버그 정보만 남기고 증분 컴파일을 끈다. 릴리즈는 푸시 잠금 아래 `dist/github-releases/source`에 매번 해당 커밋을 새로 추출한다. Cargo의 소스 경로와 remap 플래그가 일정해 이전 릴리즈의 의존성을 재사용한다. 최종 바이너리는 현재 소스의 `target`에서 가져온다. 호스트가 외부 중간 캐시를 지정하지 않은 경우 `dist/github-releases/cargo-build`가 릴리즈 전용 캐시다. 서명·검증은 만든 패키지의 release 실행 파일로 하며, 이미 게시된 릴리즈를 내려받아 재개할 때만 현재 checkout의 debug 실행 파일로 먼저 검증한다. 통합 시험을 실행 파일 하나로 묶어 시험 컴파일의 링크를 한 번으로 줄인다.
 
 일회성 cold build는 `CARGO_TARGET_DIR`와 `CARGO_BUILD_BUILD_DIR`를 함께 지정한다. 관리 호스트의 기본 캐시에는 전역 유휴 정리 기준(48 GiB 초과 시 32 GiB 목표)이 적용된다. `cargo metadata --offline --no-deps --format-version 1`로 최종·중간 경로를 확인할 수 있다.

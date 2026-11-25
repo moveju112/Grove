@@ -17,8 +17,8 @@ DB schema의 정본은 `src/store.rs`의 `MIGRATIONS`다.
   - ✅ 복구는 실행 중 도구를 `unknown`으로 남기고 자동 재실행하지 않는다. `evidence: src/runner.rs:365`.
 - **MUST** 테이블 재구성은 기존 행·외래 키·등록 기기의 자격 보존을 검사한다.
   - why: schema가 열리는 것만으로 데이터가 보존됐다고 판단할 수 없다.
-  - ✅ migration의 무결성 검사 및 기기 보존 시험. `evidence: src/store.rs`, `evidence: tests/pairing.rs`.
+  - ✅ migration의 무결성 검사 및 기기 보존 시험. `evidence: src/store.rs`, `evidence: tests/integration/pairing.rs`.
 
-DB 검사는 `tests/common/mod.rs`처럼 소유권이 분명한 임시 데이터 디렉터리에서 수행한다.
+DB 검사는 `tests/integration/common/mod.rs`처럼 소유권이 분명한 임시 데이터 디렉터리에서 수행한다.
 실사용·공유 DB를 테스트 fixture로 reset하지 않는다.
 업데이트의 DB 복구 조건은 [DEPLOY.md](DEPLOY.md)를 따른다.

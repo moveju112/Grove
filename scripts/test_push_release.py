@@ -83,13 +83,13 @@ class ReleasePush(unittest.TestCase):
                     push, "release_build_env", return_value={"GROVE_UPDATE_BINDINGS": "1"}), patch.object(
                     push, "rust_test_command", return_value=("cargo", "nextest", "run", "--locked", "--no-fail-fast")):
                 with self.assertRaises(subprocess.CalledProcessError):
-                    push.prepare_package(commit, version, parent, None)
+                    push.prepare_package(commit, version, parent)
                 self.assertEqual(list(dest.iterdir()), [])
                 fail_tests = False
-                self.assertEqual(push.prepare_package(commit, version, parent, None), dest)
+                self.assertEqual(push.prepare_package(commit, version, parent), dest)
                 self.assertEqual([args[0] for args in calls], ["git", "npm", "npm", "cargo"] * 2)
                 calls.clear()
-                self.assertEqual(push.prepare_package(commit, version, parent, None), dest)
+                self.assertEqual(push.prepare_package(commit, version, parent), dest)
                 self.assertEqual(calls, [])
 
     def test_version_step_only_changes_the_product_versions(self):

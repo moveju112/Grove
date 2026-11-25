@@ -24,7 +24,7 @@
 | ID | UUID v7 문자열(시간 정렬) | ARCH-005: 서버만 생성 |
 | 해시 | sha2 (SHA-256 hex) | 파일 revision·원문 baseline |
 | HTTP client | reqwest(rustls, stream) | provider 어댑터 |
-| 타입·검증 정보 생성 | `ts-rs`로 Rust 계약 → `web/app/api/generated.ts`, TypeScript compiler API로 `generated.metadata.ts` 생성 | NET-002. `tests/ts_bindings.rs`가 두 산출물의 drift를 검사한다. 갱신은 `GROVE_UPDATE_BINDINGS=1 python3 scripts/build.py test --rust ts_bindings`(Node·웹 개발 의존성 필요). `parseContract`는 추가 필드를 허용하되 필수·중첩 타입을 검사하고 미지원 선언은 생성 실패로 처리한다 |
+| 타입·검증 정보 생성 | `ts-rs`로 Rust 계약 → `web/app/api/generated.ts`, TypeScript compiler API로 `generated.metadata.ts` 생성 | NET-002. `tests/integration/ts_bindings.rs`가 두 산출물의 drift를 검사한다. 갱신은 `GROVE_UPDATE_BINDINGS=1 python3 scripts/build.py test --rust ts_bindings`(Node·웹 개발 의존성 필요). `parseContract`는 추가 필드를 허용하되 필수·중첩 타입을 검사하고 미지원 선언은 생성 실패로 처리한다 |
 | 시간 | `time` crate(UTC, RFC3339) | chrono 대신 경량 |
 | CLI | 직접 파싱(인자 수 적음) | 의존성 예산 |
 | 웹 | React 19 + React Router 7 framework 모드 `ssr:false` + Vite, TypeScript strict | FRAME-007, DEC-008 |
@@ -122,7 +122,7 @@ QR·링크에는 서버 origin과 `/#pairing=<id>.<일회용 비밀>`만 넣는�
 ## 5. 경로·이름
 
 - Rust 모듈: `src/<영역>.rs` 또는 `src/<영역>/mod.rs`. 영역 이름은 소문자 단수(`store`, `auth`, `events`, `sessions`, `turns`, `tools`, `provider`, `agents`, `settings`, `layout`, `shell`, `git`...).
-- Rust 통합 시험: `tests/<영역>.rs`, 공용 harness `tests/common/mod.rs`(임시 디렉터리 + 실제 서버 기동).
+- Rust 통합 시험: `tests/<영역>.rs`, 공용 harness `tests/integration/common/mod.rs`(임시 디렉터리 + 실제 서버 기동).
 - FLOW 판정 시험: `tests/flow_<nn>.rs`(서버 API 수준) 및 `web/e2e/flow-<nn>.spec.ts`(브라우저 수준).
 - 웹: `web/app/routes/*`, 상태 로직 `web/app/state/*`(순수 함수 + Vitest), API 클라이언트 `web/app/api/*`.
 - 데이터 경로: Linux `$XDG_DATA_HOME/grove`(기본 `~/.local/share/grove`), Windows `%LOCALAPPDATA%\Grove`. `GROVE_DATA_DIR`로 재정의(시험은 항상 임시 디렉터리). 비었거나 상대 경로인 환경값은 무시하고, 정할 수 없으면 추측하지 않고 시작을 거부한다(`config::data_dir_for`).
@@ -156,7 +156,7 @@ config/paths → store(migration) → auth → events → projects → sessions/
 |---|---|---|
 | HTTP API | 경로 `/api/v1`. v1 안에서는 필드·경로 추가만 허용하고, 필드 의미 변경·삭제는 `PROTOCOL_VERSION`을 올린다 | `src/lib.rs` `PROTOCOL_VERSION` |
 | 화면 ↔ 서버 | 웹앱은 같은 서버가 배포하므로 같은 버전이 기본이다. 오래 열린 탭은 모든 요청에 `X-Grove-Protocol`을 보내고, 서버는 다른 protocol의 변경 요청을 `409 protocol_mismatch`로 실행하지 않는다. 조회는 허용하고, 화면은 새로고침을 안내하며 변경 요청을 보내지 않는다 | `web::protocol_guard`, `web/app/api/client.ts` |
-| DB schema | migration은 뒤에 추가만 한다(배포된 migration 수정 금지: hash 시험). 실행 파일보다 새 schema의 DB로는 시작하지 않는다. 다운그레이드는 지원하지 않고, 업데이트 전 snapshot으로 되돌린다 | `store::migrate`, `store::tests::migrations_are_append_only`, `tests/api.rs` |
+| DB schema | migration은 뒤에 추가만 한다(배포된 migration 수정 금지: hash 시험). 실행 파일보다 새 schema의 DB로는 시작하지 않는다. 다운그레이드는 지원하지 않고, 업데이트 전 snapshot으로 되돌린다 | `store::migrate`, `store::tests::migrations_are_append_only`, `tests/integration/api.rs` |
 | 이벤트 cursor | 보존 범위 밖 cursor는 `resync_required` 후 snapshot 재조회 | `events` |
 | CLI·외부 도구 | `X-Grove-Protocol` 없이 호출하면 검사하지 않는다(사람이 쓰는 도구는 오류 메시지로 판단) | `web::protocol_guard` |
 
@@ -186,7 +186,7 @@ config/paths → store(migration) → auth → events → projects → sessions/
 | 쓰기 직렬화 | 서버 프로세스의 쓰기 연결은 1개이며 요청은 그 연결에서 순서대로 실행한다. 같은 데이터 디렉터리의 두 번째 서버는 잠금 파일로 시작을 거부한다 | `store::Db`, `server::start` |
 | busy timeout | 5초. 넘으면 `409 busy`(`retryable: true`)로 숨기지 않고 알리며, 실패한 transaction은 아무것도 남기지 않는다 | `error.rs` `From<rusqlite::Error>` |
 | checkpoint | 평소에는 SQLite 자동 checkpoint(1000 page), 정상 종료 시 `wal_checkpoint(TRUNCATE)`. 백업은 SQLite backup API로 일관된 snapshot을 만든다 | `server::Server::stop`, `backup.rs` |
-| 시험 | 외부 연결의 쓰기 잠금 1.2초 → 대기 후 성공, 6.5초 → busy 후 재시도 성공·`integrity_check` ok | `tests/db_lock.rs` |
+| 시험 | 외부 연결의 쓰기 잠금 1.2초 → 대기 후 성공, 6.5초 → busy 후 재시도 성공·`integrity_check` ok | `tests/integration/db_lock.rs` |
 
 ## 14. 빌드·패키징 (BUILD)
 
@@ -271,28 +271,28 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 | 규칙 | 내용 | 시험 |
 |---|---|---|
-| 접근 토큰 | DB에는 hash만. 한 번만 보이는 토큰 응답은 재전송 저장본에 남기지 않음 | `tests/api.rs` |
-| API 키 | 데이터 디렉터리 `secret.key`(32B, 0600)로 ChaCha20-Poly1305 암호화(`v1:` 접두어). 이전 평문은 시작 시 암호화. snapshot에는 암호문만 있으므로 복원본에서 쓰려면 키 파일을 따로 옮긴다. 키가 없거나 손상되면 목록에 "해독 불가", 실행은 `secret_unreadable` | `tests/secrets.rs`, `vault::tests` |
-| 추가 인증 헤더 | `options.headers`의 공개 값은 문자열, 비밀 값은 `/secrets`의 `{"secret_id":"..."}` 참조다(`private_model_headers_v1`). token/key/cookie 등 자격 이름의 새 평문 값은 거부한다. 공개 이름이라도 vault 참조는 비밀로 취급하며 서버에서 복호화해 전송하고 프로필·이벤트에는 원문을 넣지 않는다. 참조도 비밀 사용처·실행 중 교체 금지·상태 무효화에 포함한다 | `tests/header_credentials.rs`, `tests/profile_check_state.rs`, `web/e2e/header-credentials.spec.ts` |
-| 이전 헤더 이전 | schema 40 적용 후 API를 열기 전에 프로필·`profile.changed` 이력·profile receipt의 자격 문자열을 암호화 vault 참조로 바꾼다. 현재/과거 값은 암호화로 보존하고 원래 idempotency hash와 replay를 유지한다. 한 transaction·완료 표식·행 단위 처리·최대 256개 hash cache를 사용하며 실패하면 모두 rollback하고 다음 시작에서 재시도한다. 과거 백업은 수정하지 않는다. 이미 평문 값이 노출됐을 가능성이 있는 실키는 외부 서비스에서도 교체해야 한다 | `tests/header_legacy.rs` |
+| 접근 토큰 | DB에는 hash만. 한 번만 보이는 토큰 응답은 재전송 저장본에 남기지 않음 | `tests/integration/api.rs` |
+| API 키 | 데이터 디렉터리 `secret.key`(32B, 0600)로 ChaCha20-Poly1305 암호화(`v1:` 접두어). 이전 평문은 시작 시 암호화. snapshot에는 암호문만 있으므로 복원본에서 쓰려면 키 파일을 따로 옮긴다. 키가 없거나 손상되면 목록에 "해독 불가", 실행은 `secret_unreadable` | `tests/integration/secrets.rs`, `vault::tests` |
+| 추가 인증 헤더 | `options.headers`의 공개 값은 문자열, 비밀 값은 `/secrets`의 `{"secret_id":"..."}` 참조다(`private_model_headers_v1`). token/key/cookie 등 자격 이름의 새 평문 값은 거부한다. 공개 이름이라도 vault 참조는 비밀로 취급하며 서버에서 복호화해 전송하고 프로필·이벤트에는 원문을 넣지 않는다. 참조도 비밀 사용처·실행 중 교체 금지·상태 무효화에 포함한다 | `tests/integration/header_credentials.rs`, `tests/integration/profile_check_state.rs`, `web/e2e/header-credentials.spec.ts` |
+| 이전 헤더 이전 | schema 40 적용 후 API를 열기 전에 프로필·`profile.changed` 이력·profile receipt의 자격 문자열을 암호화 vault 참조로 바꾼다. 현재/과거 값은 암호화로 보존하고 원래 idempotency hash와 replay를 유지한다. 한 transaction·완료 표식·행 단위 처리·최대 256개 hash cache를 사용하며 실패하면 모두 rollback하고 다음 시작에서 재시도한다. 과거 백업은 수정하지 않는다. 이미 평문 값이 노출됐을 가능성이 있는 실키는 외부 서비스에서도 교체해야 한다 | `tests/integration/header_legacy.rs` |
 | OS credential store | headless 서버가 기본 대상이라 OS keyring 대신 파일 키 + 권한 제한을 쓴다(데스크톱 keyring 연동은 범위 밖, DEC 기록) | — |
 | 모델 셸 도구 환경 | 자격증명처럼 보이는 이름(`TOKEN`·`SECRET`·`PASSWORD`·`API_KEY`·`AUTH`·`CREDENTIAL` 등 포함, `SSH_AUTH_SOCK`·askpass)과 `GROVE_*`를 제거하고 `GROVE_SHELL=1`만 추가 | `tools::shell::tests::child_env_has_no_sensitive_vars` |
-| 사용자 터미널 | 사용자가 직접 여는 터미널은 사용자 환경 그대로(`TERM`, `GROVE_TERMINAL=1`만 추가). 모델이 입력할 수 없다 | `tests/terminals.rs` |
-| Git | `GIT_TERMINAL_PROMPT=0`, stdin 없음(자격증명 입력 대기 금지) | `tests/git.rs` |
+| 사용자 터미널 | 사용자가 직접 여는 터미널은 사용자 환경 그대로(`TERM`, `GROVE_TERMINAL=1`만 추가). 모델이 입력할 수 없다 | `tests/integration/terminals.rs` |
+| Git | `GIT_TERMINAL_PROMPT=0`, stdin 없음(자격증명 입력 대기 금지) | `tests/integration/git.rs` |
 
 ### 감사 기록 (SEC-023)
 
-`audit_log`(migration 15)는 이벤트와 달리 정리하지 않는다. 변경과 같은 transaction에서 행위자 토큰(owner·device·browser)·동작·대상·식별 정보만 남긴다: `tool_call.decided`·`tool_call.decision_blocked`·`tool_grant.revoked`·`setting.changed`(이전·새 값)·`device.created`·`device.revoked`·`secret.created|replaced|deleted`(label만). 비밀 값·토큰 원문·hash는 넣지 않고, 저장 전 `scrub`이 비밀처럼 보이는 key를 한 번 더 지운다. 조회 `GET /audit`(소유자만, seq cursor). 시험: `tests/audit.rs`, `audit::tests`.
+`audit_log`(migration 15)는 이벤트와 달리 정리하지 않는다. 변경과 같은 transaction에서 행위자 토큰(owner·device·browser)·동작·대상·식별 정보만 남긴다: `tool_call.decided`·`tool_call.decision_blocked`·`tool_grant.revoked`·`setting.changed`(이전·새 값)·`device.created`·`device.revoked`·`secret.created|replaced|deleted`(label만). 비밀 값·토큰 원문·hash는 넣지 않고, 저장 전 `scrub`이 비밀처럼 보이는 key를 한 번 더 지운다. 조회 `GET /audit`(소유자만, seq cursor). 시험: `tests/integration/audit.rs`, `audit::tests`.
 
 ### 도구 정책 (SEC-006, 007)
 
 비신뢰 콘텐츠(SEC-022): 모델 텍스트·문서/웹 내용·도구 결과·백그라운드/자식 에이전트 결과는 데이터이며 시스템 지침이나 사용자 승인으로 승격하지 않는다. 공통 시스템 프롬프트에 이 경계를 명시하고, 일반 도구 결과는 provider의 tool 메시지 내용으로 전달한다. 역할·승인 JSON처럼 보이는 문자열도 메시지 배열이나 승인 API로 재해석하지 않는다. 비동기 결과는 provider 호환성을 위해 user 메시지에 실릴 수 있지만 비신뢰 데이터 표식과 JSON 문자열 인용을 붙이며, 실제 사용자의 승인으로 간주하지 않는다. 모델도 추가할 수 있는 Goal 제목은 다음 시스템 알림에서 JSON 데이터로 인용해 줄바꿈·헤더를 통한 지침 삽입을 막고 저장 원문은 보존한다.
 
-쓰기 승인 상태·대화 범위 허용은 기존 서버 정책과 인증된 명시적 승인 API만 변경한다. 모델 도구 인자의 `approved`·`approval_scope` 같은 미지원 필드와 알 수 없는 도구는 거부한다. 생성 텍스트의 승인 주장은 파일 실행·승인 전환·grant 생성을 일으키지 않는다. `grove exec`의 명시적 도구 허용 계약은 일반 대화의 기본 모드와 별개다. `tests/trust_boundary.rs`의 로컬 fixture와 history·runner·CLI·Goal 회귀는 이 구조적 계약의 근거이며 실모델의 prompt-injection 저항성 평가나 외부 웹 fetch 기능의 인수 증거는 아니다.
+쓰기 승인 상태·대화 범위 허용은 기존 서버 정책과 인증된 명시적 승인 API만 변경한다. 모델 도구 인자의 `approved`·`approval_scope` 같은 미지원 필드와 알 수 없는 도구는 거부한다. 생성 텍스트의 승인 주장은 파일 실행·승인 전환·grant 생성을 일으키지 않는다. `grove exec`의 명시적 도구 허용 계약은 일반 대화의 기본 모드와 별개다. `tests/integration/trust_boundary.rs`의 로컬 fixture와 history·runner·CLI·Goal 회귀는 이 구조적 계약의 근거이며 실모델의 prompt-injection 저항성 평가나 외부 웹 fetch 기능의 인수 증거는 아니다.
 
 외부 주소·redirect 정책(SEC-021): 모델 요청·연결 확인은 소유자가 등록한 HTTP(S) 프로필의 endpoint만 사용한다. 로컬 모델·LAN/VPN 사용을 위해 loopback·private 주소를 일괄 차단하지 않으며, 이는 소유자가 서버의 네트워크 접근 대상을 명시하는 신뢰 경계다. 일반 요청은 프로필 ID를 선택할 뿐 임의 URL을 전달하는 프록시가 아니고 기기는 프로필 endpoint를 변경할 수 없다. 모델·문서·도구 결과의 URL을 서버가 자동 접속 대상으로 승격하지 않는다.
 
-모델 HTTP client는 기존처럼 redirect를 따르지 않고 `redirect_blocked`로 거부한다. `doctor`·CLI 기기 발급과 업데이트의 서버 상태/제어 HTTP도 redirect를 따르지 않는다. 같은 origin의 다른 API 경로로 옮기는 Location 역시 원래 요청한 작업의 승인이 아니므로 거부한다. 소유자 자격·provider API 키·추가 인증 헤더·본문을 새 대상으로 재전송하지 않으며, 이 계약은 외부 서비스나 운영 서비스를 건드리지 않는 실제 로컬 HTTP fixture로 확인한다(`tests/cli_redirects.rs`, `tests/provider_redirects.rs`, `update::tests::service_control_http_does_not_follow_redirects`).
+모델 HTTP client는 기존처럼 redirect를 따르지 않고 `redirect_blocked`로 거부한다. `doctor`·CLI 기기 발급과 업데이트의 서버 상태/제어 HTTP도 redirect를 따르지 않는다. 같은 origin의 다른 API 경로로 옮기는 Location 역시 원래 요청한 작업의 승인이 아니므로 거부한다. 소유자 자격·provider API 키·추가 인증 헤더·본문을 새 대상으로 재전송하지 않으며, 이 계약은 외부 서비스나 운영 서비스를 건드리지 않는 실제 로컬 HTTP fixture로 확인한다(`tests/integration/cli_redirects.rs`, `tests/integration/provider_redirects.rs`, `update::tests::service_control_http_does_not_follow_redirects`).
 
 웹 fetch 도구와 Grove 자체 OAuth callback은 아직 구현하지 않았다. 이를 추가할 때는 비신뢰 URL을 위 소유자 프로필 권한과 혼동하지 않고 별도 허용 대상·DNS/redirect 후 주소 검증으로 loopback·private·link-local/metadata·비HTTP scheme 접근을 기본 거부해야 한다. OAuth callback은 등록한 redirect URI의 scheme·host·port·path, state·PKCE·고정 만료·취소를 확인하고 임의 return/next URL로 토큰을 보내지 않는다. 현재 문서의 정책 정의·기존 경로 회귀를 미구현 fetch/OAuth의 완료로 취급하지 않는다. 서명된 설치 산출물 다운로드의 별도 전송 경로를 이 인증/상태 제어 검사로 검증했다고 주장하지 않는다.
 
@@ -304,24 +304,24 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 4. `tools.allow`에 있거나 `tools.full_access`로 포괄 허용되는 일반 도구는 승인 없이 실행한다.
 5. 그 외 기본: 변경·실행 도구는 승인 필요
 
-승인 범위(SEC-009): `approve`=이번만(`approval_scope=once`), `approve_session`=이 대화에서 계속 허용(`session_tool_grants`, `approval_scope=session`), `approve_always`=항상 승인(서버 `tools.allow`에 정식 도구 이름을 추가, `approval_scope=policy`). 항상 승인은 승인 결정과 같은 transaction에 저장되고 재시작 후에도 유지된다. 서버 설정의 `tools.allow`에서 도구 이름을 지워 해제하며 PC 제어·위임에는 사용할 수 없다. 대화 범위 허용은 위임에는 쓸 수 없으며 `DELETE /sessions/{id}/tool-grants/{tool}` 또는 대화 삭제로 해제된다. 명시적 금지와 보조 역할 제한이 우선한다. 시험: `tests/permission_modes.rs`, `tests/turns.rs::session_scoped_approval_is_limited_to_that_session_and_revocable`, `web/e2e/permission-modes.spec.ts`.
+승인 범위(SEC-009): `approve`=이번만(`approval_scope=once`), `approve_session`=이 대화에서 계속 허용(`session_tool_grants`, `approval_scope=session`), `approve_always`=항상 승인(서버 `tools.allow`에 정식 도구 이름을 추가, `approval_scope=policy`). 항상 승인은 승인 결정과 같은 transaction에 저장되고 재시작 후에도 유지된다. 서버 설정의 `tools.allow`에서 도구 이름을 지워 해제하며 PC 제어·위임에는 사용할 수 없다. 대화 범위 허용은 위임에는 쓸 수 없으며 `DELETE /sessions/{id}/tool-grants/{tool}` 또는 대화 삭제로 해제된다. 명시적 금지와 보조 역할 제한이 우선한다. 시험: `tests/integration/permission_modes.rs`, `tests/integration/turns.rs::session_scoped_approval_is_limited_to_that_session_and_revocable`, `web/e2e/permission-modes.spec.ts`.
 
-판단은 계획 단계에서 확정된 정식 도구 이름으로 하고, 승인 시점에 다시 확인한다(대기 중 정책이 바뀌면 승인해도 실행하지 않고 409). 알 수 없는 도구 이름은 설정 저장 시 거부한다. 시험: `tests/turns.rs::tool_policy_deny_wins_over_allow_and_bypass`, `policy_change_while_pending_blocks_approval`.
+판단은 계획 단계에서 확정된 정식 도구 이름으로 하고, 승인 시점에 다시 확인한다(대기 중 정책이 바뀌면 승인해도 실행하지 않고 409). 알 수 없는 도구 이름은 설정 저장 시 거부한다. 시험: `tests/integration/turns.rs::tool_policy_deny_wins_over_allow_and_bypass`, `policy_change_while_pending_blocks_approval`.
 
 ## 18. 공정 실행 (FAIR)
 
 | 규칙 | 내용 | 시험 |
 |---|---|---|
-| 적용 지점 | 모델 호출 한 번 = 슬롯 하나. provider 호출 직전에 얻고 응답 직후 반환. 승인 대기·도구 실행·상태 조회·취소·승인은 큐를 거치지 않음 | `tests/fair.rs::approval_wait_does_not_hold_a_model_slot`, 포화 중 제어 요청 300ms 이내 |
+| 적용 지점 | 모델 호출 한 번 = 슬롯 하나. provider 호출 직전에 얻고 응답 직후 반환. 승인 대기·도구 실행·상태 조회·취소·승인은 큐를 거치지 않음 | `tests/integration/fair.rs::approval_wait_does_not_hold_a_model_slot`, 포화 중 제어 요청 300ms 이내 |
 | 소유자 key | 서버가 정함: API=`token:<인증 소유 주체>`(브라우저 세션은 부모 기기로 묶임), 예약=`schedule:<id>`, 자식 에이전트=부모 턴의 소유자. 클라이언트 입력 없음 | `turns.owner_key`(migration 17) |
-| 접수 한도 | 설정 `runs.max_queued_per_owner`(16)·`runs.max_queued_total`(64)을 queued/running 기준으로 접수 transaction에서 검사, 넘치면 기록 없이 `429 queue_full`(retryable) | `tests/fair.rs` |
-| 분배 | `runs.max_active`(4). 빈 슬롯은 실행 중 호출이 가장 적은 소유자 → 가장 오래전에 받은 소유자 → 도착 순. 혼자면 전부 사용, 선점 없음 | `fair::tests::newcomer_gets_next_slot_while_one_owner_floods`, FIFO 결함 주입 시 `tests/fair.rs` 실패 |
-| 공급자·계정 | `runs.provider_max_active`·`runs.account_max_active`(각 기본 4, 1~64). 대화·요약·제목이 전역/공급자/계정 자원을 한 번에 얻는다. 포화된 대상은 다른 슬롯을 잡지 않으며 다른 대상의 배정을 막지 않는다. HTTP origin+API key hash로 계정을 공유하고 임의의 추가 헤더·secret 행 ID는 분리 근거가 아니다. key 없는 endpoint는 origin, CLI는 설치 로그인 종류로 보수적으로 묶는다. 여러 key가 같은 외부 계정인지 추측하지 않으며 OAuth 계정/실제 quota 연동은 별도다 | `tests/model_limits.rs`, `fair::tests` |
-| 보조 호출 | 요약·제목도 동일 큐를 사용하고 마지막 대화 턴의 서버 owner를 이어받는다(턴 없는 대화는 공통 system 보조 owner). 목록/연결 확인 같은 메타데이터·제어 요청은 추론 큐 밖이다 | `tests/model_limits.rs::summary_and_title_share_inference_limits_and_release_them_before_committing` |
+| 접수 한도 | 설정 `runs.max_queued_per_owner`(16)·`runs.max_queued_total`(64)을 queued/running 기준으로 접수 transaction에서 검사, 넘치면 기록 없이 `429 queue_full`(retryable) | `tests/integration/fair.rs` |
+| 분배 | `runs.max_active`(4). 빈 슬롯은 실행 중 호출이 가장 적은 소유자 → 가장 오래전에 받은 소유자 → 도착 순. 혼자면 전부 사용, 선점 없음 | `fair::tests::newcomer_gets_next_slot_while_one_owner_floods`, FIFO 결함 주입 시 `tests/integration/fair.rs` 실패 |
+| 공급자·계정 | `runs.provider_max_active`·`runs.account_max_active`(각 기본 4, 1~64). 대화·요약·제목이 전역/공급자/계정 자원을 한 번에 얻는다. 포화된 대상은 다른 슬롯을 잡지 않으며 다른 대상의 배정을 막지 않는다. HTTP origin+API key hash로 계정을 공유하고 임의의 추가 헤더·secret 행 ID는 분리 근거가 아니다. key 없는 endpoint는 origin, CLI는 설치 로그인 종류로 보수적으로 묶는다. 여러 key가 같은 외부 계정인지 추측하지 않으며 OAuth 계정/실제 quota 연동은 별도다 | `tests/integration/model_limits.rs`, `fair::tests` |
+| 보조 호출 | 요약·제목도 동일 큐를 사용하고 마지막 대화 턴의 서버 owner를 이어받는다(턴 없는 대화는 공통 system 보조 owner). 목록/연결 확인 같은 메타데이터·제어 요청은 추론 큐 밖이다 | `tests/integration/model_limits.rs::summary_and_title_share_inference_limits_and_release_them_before_committing` |
 | 반환·취소 | Permit Drop으로 모든 경로에서 반환, 대기 중 취소는 큐에서 빠지고 모델을 부르지 않음, 배정과 취소가 겹치면 즉시 반환. 대기 future 자체의 drop/abort도 예약과 이미 배정된 모든 자원을 정리한다 | `fair::tests::cancel_storm_does_not_leak_slots`, `dropping_a_wait_future_before_or_after_assignment_returns_every_resource` |
 | 재시작 | 큐는 메모리에만. 재시작 시 queued/running 턴은 interrupted, 자동 재접수 없음 | `running_turn_interrupted_by_restart_is_not_rerun` |
-| 표시 | 대기 중인 턴은 `queue{ahead, active, limit, reason?}`. reason은 `account`/`provider` 또는 생략(전역)이며 다른 소유자·자격 증명·계정 hash는 보내지 않는다. 대기 시작·끝에 `turn.updated` | `tests/fair.rs`, `web/e2e/model-limits.spec.ts` |
-| 사용량 화면 | `GET /usage/capacity`: 서버 전체는 실행·대기 합계와 한도(`runs.max_active`·`max_queued_per_owner`·`max_queued_total`)만, 요청별 상세(대화 제목·상태·`queue`)는 요청한 기기 소유자(`token:<root>`)의 queued/running/승인 대기 턴만 보여 주고 거기서 취소한다. 다른 소유자의 대화·프로젝트·순서·계정은 보내지 않는다. 대화 화면과 같은 대기 이유 문구를 쓴다 | `tests/fair.rs::newcomer_runs_next_queue_limits_and_control_stays_responsive`, `web/e2e/effort.spec.ts` |
+| 표시 | 대기 중인 턴은 `queue{ahead, active, limit, reason?}`. reason은 `account`/`provider` 또는 생략(전역)이며 다른 소유자·자격 증명·계정 hash는 보내지 않는다. 대기 시작·끝에 `turn.updated` | `tests/integration/fair.rs`, `web/e2e/model-limits.spec.ts` |
+| 사용량 화면 | `GET /usage/capacity`: 서버 전체는 실행·대기 합계와 한도(`runs.max_active`·`max_queued_per_owner`·`max_queued_total`)만, 요청별 상세(대화 제목·상태·`queue`)는 요청한 기기 소유자(`token:<root>`)의 queued/running/승인 대기 턴만 보여 주고 거기서 취소한다. 다른 소유자의 대화·프로젝트·순서·계정은 보내지 않는다. 대화 화면과 같은 대기 이유 문구를 쓴다 | `tests/integration/fair.rs::newcomer_runs_next_queue_limits_and_control_stays_responsive`, `web/e2e/effort.spec.ts` |
 | 미구현 | ARM64 실측 | — |
 
 ## 19. 실모델 시험 (opt-in, 경량 모델)
@@ -329,7 +329,7 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 사용자 지시: 실제 모델이 필요한 시험은 가벼운 모델 위주로 한다. 과금·외부 계정 없이 로컬 OpenAI 호환 서버로 실행한다.
 
 - 실행기: Ollama `v0.40.14`(고정)을 `.dev/ollama-v0.40.14/`에 풀고, 모델은 `.dev/ollama-models/`에 둔다. 시스템 서비스로 설치하지 않고, 필요할 때만 `127.0.0.1:11434`에서 사용자 권한으로 띄운다. Grove는 추론 엔진을 내장하지 않는다.
-- 시험: `tests/real_model.rs`(#[ignore], `--ignored`로 실행), `web/e2e/real-model.spec.ts`(환경변수가 없으면 skipped로 표시). 작은 모델의 답은 흔들리므로 문장 대신 상태·도구 실행·이력 전달을 판정한다.
+- 시험: `tests/integration/real_model.rs`(#[ignore], `--ignored`로 실행), `web/e2e/real-model.spec.ts`(환경변수가 없으면 skipped로 표시). 작은 모델의 답은 흔들리므로 문장 대신 상태·도구 실행·이력 전달을 판정한다.
 - 결과(2026-11-05, RTX 2060 SUPER): `qwen2.5:3b`는 대화·이력·쓰기 승인 대기·브라우저 첫 대화가 안정적으로 통과한다. `read` 도구 시험은 첫 5회가 모두 통과했지만, 이후 표본까지 합치면 **12회 중 6회 실패**(약 50%)다. 첫 결과는 표본이 작아 운이 좋았던 것으로 본다. 실패는 모델 품질 문제다: `grep`의 `pattern` 인자를 섞거나, 디렉터리·없는 파일을 지정하고, 정확한 오류를 받고도 재시도하지 않는다. `read` schema 변경(배치 `files`) 전후 A/B에서 실패율이 같아(예전 schema 4회 중 2회 실패) 제품 회귀가 아님을 확인했다. `qwen2.5:1.5b`도 같은 유형으로 실패한다. 도구 품질 비교에는 더 큰 모델이나 반복 횟수를 정한 평가(EVAL)가 필요하다.
 - 실모델로 드러나 고친 계약 결함:
   1. `read.offset`만 1부터 받아 다른 도구(0부터)와 어긋났다. 이제 0도 받고 첫 줄로 처리한다.
@@ -347,7 +347,7 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 목록은 중복 ID를 정규화하고 마지막 페이지까지 조회하되 2,000개·20페이지·누적 8MiB·총 30초를 넘기면 실패한다. 비정형 성공 응답·반복 cursor·과다 응답을 빈 목록이나 완전한 부분 목록으로 바꾸지 않는다. cursor는 같은 endpoint의 query 값일 뿐 새 URL이 아니며 redirect는 기존처럼 차단한다. 알려진 자격이 모델 ID에 포함되면 결과를 거부하고 표시명·오류에서도 자격을 가린다. 조회 중 프로필 revision이 바뀌면 결과를 거부하고 UI는 마지막 조회 목록과 실패·오래된 상태를 구분한다. 생성 요청은 하지 않는다. Gemini의 선택된 모델 ID는 생성 URL의 한 segment로 인코딩해 경로·query·fragment를 바꾸지 못하게 한다.
 
-프로필 `enabled`(migration 39)의 기본값은 true다. 기존 프로필과 기본 활성 상태 요청의 구버전 receipt 의미를 보존한다. 비활성 프로필은 설정·봇·예약의 참조를 지우지 않지만 새 턴 접수와 모델 실행에서 서버가 `profile_disabled`로 차단하며 다른 모델로 자동 대체하지 않는다. 실행 중인 프로필의 비활성화는 거부하므로 먼저 실행을 마치거나 명시적으로 취소한다. 비활성 상태의 연결 확인·목록 조회는 허용한다. Composer는 명시적으로 선택했던 비활성 프로필과 초안을 보존하고 보내기를 막는다. 봇 준비 상태도 활성 여부를 반영하며 profile 변경 이벤트가 profiles·bots cache를 함께 무효화한다. `tests/model_catalog.rs`, store·Gemini 단위, 선택 턴/봇/예약/후속/컨텍스트 및 `web/e2e/model-catalog.spec.ts`가 로컬 fixture 근거이며 실제 공급자 계정·유료 추론 인수는 별도다.
+프로필 `enabled`(migration 39)의 기본값은 true다. 기존 프로필과 기본 활성 상태 요청의 구버전 receipt 의미를 보존한다. 비활성 프로필은 설정·봇·예약의 참조를 지우지 않지만 새 턴 접수와 모델 실행에서 서버가 `profile_disabled`로 차단하며 다른 모델로 자동 대체하지 않는다. 실행 중인 프로필의 비활성화는 거부하므로 먼저 실행을 마치거나 명시적으로 취소한다. 비활성 상태의 연결 확인·목록 조회는 허용한다. Composer는 명시적으로 선택했던 비활성 프로필과 초안을 보존하고 보내기를 막는다. 봇 준비 상태도 활성 여부를 반영하며 profile 변경 이벤트가 profiles·bots cache를 함께 무효화한다. `tests/integration/model_catalog.rs`, store·Gemini 단위, 선택 턴/봇/예약/후속/컨텍스트 및 `web/e2e/model-catalog.spec.ts`가 로컬 fixture 근거이며 실제 공급자 계정·유료 추론 인수는 별도다.
 
 사용자 지시: 기존 제품처럼 서버에 설치된 Codex·Claude Code를 쓰고, 시험은 저가형 모델(`gpt-6-luna`, `haiku`)로 한다.
 
@@ -356,7 +356,7 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 | 프로필 | protocol `claude_code`(model 예: `haiku`)·`codex_cli`(예: `gpt-6-luna`), base_url·API 키 없음. CLI 인증은 CLI가 자기 설정에서 처리하고 Grove는 CLI 자격증명 파일을 읽지 않는다 | `web/e2e/cli-profile.spec.ts` |
 | **권한 강제** | 사용자 CLI 설정(이 서버의 claude는 `bypassPermissions`)과 무관하게 읽기 전용. claude: `--permission-mode default --tools Read,Glob,Grep --setting-sources "" --strict-mcp-config`(사용자 hook·MCP 미사용). codex: `-c sandbox_mode="read-only" -c approval_policy="never"`. resume에도 같은 강제 | `provider::cli::tests::read_only_flags_are_always_forced`, 실시험에서 쓰기 요청 시 파일 미생성 |
 | 도구 | CLI 내부 도구는 Grove `tool_calls`가 아니라 표시 전용 `cli_activity` note(거부된 도구 포함). Grove가 다시 실행하지 않음. Grove 도구 목록은 보내지 않음 | `events_map_text_usage_activity_and_session` |
-| 연속성 | `cli_sessions(session_id, profile_id) → native_id`(migration 18). 세션이 있으면 resume하고 마지막 요청만 보냄, 없으면 user/assistant 텍스트를 함께 보냄. 문맥 없는 호출(제목·요약)은 고유 임시 디렉터리에서 세션을 남기지 않음(claude `--no-session-persistence`, codex `--ephemeral`) | `tests/real_cli.rs` |
+| 연속성 | `cli_sessions(session_id, profile_id) → native_id`(migration 18). 세션이 있으면 resume하고 마지막 요청만 보냄, 없으면 user/assistant 텍스트를 함께 보냄. 문맥 없는 호출(제목·요약)은 고유 임시 디렉터리에서 세션을 남기지 않음(claude `--no-session-persistence`, codex `--ephemeral`) | `tests/integration/real_cli.rs` |
 | 취소·timeout | 새 process group, future drop 시 group 종료, 프로필 timeout | 실시험 취소 후 잔여 프로세스 없음 |
 | 환경 | `GROVE_*`만 제거(CLI는 HOME·자기 설정이 필요). codex는 사용자 전역 지침(`~/.codex/AGENTS.md`)을 읽는다(사용자 설정이므로 유지) | — |
 | DB | `model_profiles.protocol` CHECK 제거(migration 19, 표 재구성). 허용 값은 `validate_profile`. 재구성 migration은 `-- grove:rebuild` 표식으로 외래 키 검사를 transaction 밖에서 끄고, 끝나면 `foreign_key_check` 후 다시 켠다 | `store::tests::profile_table_rebuild_keeps_data_and_foreign_keys` |
@@ -381,7 +381,7 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 
 - 분류(`provider::classify`): `auth_failed`(401·403), `rate_limited`(429), `timeout`(408·504), `provider_unavailable`(5xx), `context_too_long`(400·413·422 중 context 초과로 보이는 오류 code·본문), `model_not_found`(404, 또는 400·422 중 모델 미지원), `bad_request`, `redirect_blocked`.
 - 재시도: 모델 호출 한 번 안에서, 응답 조각이 아직 하나도 나가지 않았고 재시도 가능한 오류일 때만 최대 2번. 대기는 `Retry-After`(초, 30초 넘으면 포기) 또는 0.5초·1초 지수 backoff + jitter. 대기 중 취소하면 다시 보내지 않는다. CLI 백엔드는 재시도하지 않는다.
-- 시험: `provider::error_tests`, `tests/turns.rs::provider_errors_are_normalized_and_retried_only_when_safe`, `cancel_during_retry_wait_stops_retrying`.
+- 시험: `provider::error_tests`, `tests/integration/turns.rs::provider_errors_are_normalized_and_retried_only_when_safe`, `cancel_during_retry_wait_stops_retrying`.
 
 ### provider별 capability (ADAPTER-008)
 
@@ -399,7 +399,7 @@ updater는 같은 실행 파일의 CLI(`grove install|update|start|stop|release`
 | 이미지 | fixture(실제 HTTP 요청) | 미검증 | fixture(요청 매핑) | fixture(요청 매핑) | 미지원(명시 오류) | 미지원(명시 오류) |
 | PDF 내용 | 미지원(파일 정보만) | 미지원(파일 정보만) | 미지원(파일 정보만) | 미지원(파일 정보만) | 미지원 | 미지원 |
 
-live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `web/e2e/real-model.spec.ts`·`cli-profile.spec.ts`. 모두 opt-in이고, 시험이 만든 프로필은 끝날 때 지운다. 남기면 공유 시험 서버의 기본 프로필(목록 첫 항목)이 바뀌어 다른 시험이 실제 모델을 부른다(2026-11-05 실제 발생, 수정).
+live 시험: `tests/integration/real_model.rs`(OpenAI 호환), `tests/integration/real_cli.rs`(CLI), `web/e2e/real-model.spec.ts`·`cli-profile.spec.ts`. 모두 opt-in이고, 시험이 만든 프로필은 끝날 때 지운다. 남기면 공유 시험 서버의 기본 프로필(목록 첫 항목)이 바뀌어 다른 시험이 실제 모델을 부른다(2026-11-05 실제 발생, 수정).
 
 ## 21. 실행 중 추가 메시지 (RUN-007·008, UI-021)
 
@@ -475,11 +475,11 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 파일 탐색기의 저장·폴더 생성·이름 변경·복제도 인증 주체 범위의 Idempotency-Key와 부작용 전 결과 불명 접수를 사용한다. 접수 전 정상 충돌을 거부하고 실행 직전 원문·경로를 다시 확인한다. 완료 receipt와 file.changed를 한 transaction에서 확정하며, 중간 종료/최종 기록 실패는 원문·대상·결과 불명을 보존하고 같은 키로 재실행하지 않는다. 접수 전/실행 시 프로젝트 root를 대조하며 GC·휴지통·undo/redo와 같은 mutation 잠금을 쓴다.
 - 이름 변경은 기존 덮어쓰기 방지 rename을 재사용한다. 복제는 대상 부모의 전용 `.grove-copy-UUID` 폴더(Unix 0700) 안에서 마친 뒤 같은 rename으로 공개한다. 생성에 성공한 자기 staging만 정리하며, 중단 staging은 결과 불명 receipt의 상대 경로로 남기고 자동 삭제하지 않는다. 화면은 본문·키를 함께 유지해 같은 요청 결과 확인·명시적 닫기를 제공하고, 미확정 동안 새 파일 작업과 편집을 잠근다.
 - 파일 탐색기 복구 검증: 네 동작×5개 실패 지점(20개 경우: 접수 SQL/실제 COMMIT·완료 SQL/실제 COMMIT·이벤트), 동시 동일 키·다른 입력 충돌·키 누락·재시작·중단 복제 원문 보존을 확인했다. 접수 실패에도 파일을 쓰고 200을 반환하던 결함을 먼저 재현한 뒤 수정했다. 최신 관련 Rust 통합 48개(`api` 19·`file_changes` 2·`files` 6·`storage` 21), 복제 충돌/다른 staging 보존 단위 1개, 웹 타입/빌드, 실제 Chrome 13개(새 파일 복구 6·변경 이력/undo 4·휴지통 1·기존 파일/도구 흐름 2), Windows x64/Linux ARM64 교차 빌드와 격리 Wine의 파일 작업 4개가 통과했다. Chrome은 서버 도착 전/처리 후 실제 transport abort·최종 receipt 실패·동일 이벤트 루프 이중 저장을 확인했다. 실제 Windows/ARM64 기기 실행은 별도 미검증이다.
-- undo/redo는 일반 충돌을 먼저 거부한 뒤 결과 불명 receipt를 부작용 전에 commit한다. 완료 receipt·변경 상태·이벤트는 같은 transaction에서 확정한다. 접수 SQL/실제 COMMIT 실패는 파일을 바꾸지 않으며, 접수 후 기록 실패는 결과 불명으로 보존하고 같은 키로 재실행하지 않는다. 화면은 동기 실행 guard와 같은 키 결과 확인·명시적 닫기를 제공하고 미확정 동안 새 적용을 잠근다. `tests/file_changes.rs`의 두 동작×5개 실패 지점(10개 경우)·재시작과 실제 Chrome의 전송 전/처리 후 transport abort·완료 receipt 실패·이중 클릭을 확인했다. 관련 Rust 통합 41개와 최신 storage/file_changes 23개, 웹 타입/빌드·Chrome 6개, Windows x64/Linux ARM64 교차 빌드가 통과했다. 격리 Wine에서도 일반 undo/redo와 두 동작×5개 실패 지점(실제 COMMIT 포함), 파일 도구의 네 실패 지점이 통과했다. 실제 Windows/ARM64 기기 실행은 별도 미검증이다.
-- 파일 도구의 blob metadata·변경 이력·이벤트·실제 COMMIT 실패는 파일과 저장된 blob을 보존하고 도구 결과·변경 이력·blob metadata·이벤트를 함께 롤백한다. 재시작은 running을 unknown으로 바꾸고 접수 재전송/재승인으로 자동 재실행하지 않는다. 새 고아 blob은 1시간 유예하며 파일 도구 running 중에는 정리하지 않고, 이후 고아만 정리해 기존 참조 원문과 사용자 파일을 유지한다(`tests/storage.rs::failed_file_change_transaction_preserves_files_and_recovers_without_reexecution`, 네 실패 지점 통과).
+- undo/redo는 일반 충돌을 먼저 거부한 뒤 결과 불명 receipt를 부작용 전에 commit한다. 완료 receipt·변경 상태·이벤트는 같은 transaction에서 확정한다. 접수 SQL/실제 COMMIT 실패는 파일을 바꾸지 않으며, 접수 후 기록 실패는 결과 불명으로 보존하고 같은 키로 재실행하지 않는다. 화면은 동기 실행 guard와 같은 키 결과 확인·명시적 닫기를 제공하고 미확정 동안 새 적용을 잠근다. `tests/integration/file_changes.rs`의 두 동작×5개 실패 지점(10개 경우)·재시작과 실제 Chrome의 전송 전/처리 후 transport abort·완료 receipt 실패·이중 클릭을 확인했다. 관련 Rust 통합 41개와 최신 storage/file_changes 23개, 웹 타입/빌드·Chrome 6개, Windows x64/Linux ARM64 교차 빌드가 통과했다. 격리 Wine에서도 일반 undo/redo와 두 동작×5개 실패 지점(실제 COMMIT 포함), 파일 도구의 네 실패 지점이 통과했다. 실제 Windows/ARM64 기기 실행은 별도 미검증이다.
+- 파일 도구의 blob metadata·변경 이력·이벤트·실제 COMMIT 실패는 파일과 저장된 blob을 보존하고 도구 결과·변경 이력·blob metadata·이벤트를 함께 롤백한다. 재시작은 running을 unknown으로 바꾸고 접수 재전송/재승인으로 자동 재실행하지 않는다. 새 고아 blob은 1시간 유예하며 파일 도구 running 중에는 정리하지 않고, 이후 고아만 정리해 기존 참조 원문과 사용자 파일을 유지한다(`tests/integration/storage.rs::failed_file_change_transaction_preserves_files_and_recovers_without_reexecution`, 네 실패 지점 통과).
 - blob 복구 검증: 변경 blob 단위 3개와 관련 Rust 통합 43개(`storage` 20·`attachments` 15·`file_changes` 1·`task_logs` 7) 통과. 손상 blob 재사용의 실패를 재현한 후 정상 원문 복구를 확인했고, 상한 초과 원문의 읽기/undo 거부·중단 staging 정리·원본/metadata 보존을 확인했다. 변경 검토/undo/redo와 휴지통 Chrome E2E 3개, Windows x64·Linux ARM64 교차 빌드, 격리 Wine의 blob 2개+완료 journal 5개 통합 시험도 통과했다. 실제 Windows/ARM64 기기 실행은 별도 미검증이다.
 - 완료 journal 검증: Rust 통합 72개(`api` 19·`attachments` 15·`files` 4·`projects` 5·`storage` 18·`task_logs` 7·`task_start` 4), store/storage 단위 7개, 실제 Chrome 휴지통 2개 통과. Windows x64·Linux ARM64 교차 빌드와 격리 Wine의 새 복구 시험 5개(intent/완료 DB 실패·중단 파일 상태·250행 cursor·34→35 이관)도 통과했다. symlink 보존은 Unix 시험에서 확인했고 실제 Windows/ARM64 기기는 별도 미검증이다.
-- 검증: `tests/storage.rs`, `tests/files.rs`, `tests/projects.rs`, `tests/api.rs`, `web/e2e/{trash,changes}.spec.ts`. Linux 교차 파일 시스템은 실제 `/dev/shm`과 일반 임시 디렉터리 사이에서 시험한다. Linux ARM64는 교차 빌드만 확인했다. Windows x64는 교차 빌드와 Wine에서 삭제·복원·영구 삭제·동일 키 재전송·충돌 거부를 확인했다. 실제 Windows OS 검증은 PC·QA 항목에서 별도다.
+- 검증: `tests/integration/storage.rs`, `tests/integration/files.rs`, `tests/integration/projects.rs`, `tests/integration/api.rs`, `web/e2e/{trash,changes}.spec.ts`. Linux 교차 파일 시스템은 실제 `/dev/shm`과 일반 임시 디렉터리 사이에서 시험한다. Linux ARM64는 교차 빌드만 확인했다. Windows x64는 교차 빌드와 Wine에서 삭제·복원·영구 삭제·동일 키 재전송·충돌 거부를 확인했다. 실제 Windows OS 검증은 PC·QA 항목에서 별도다.
 
 ## 24. 첨부 원문과 메시지 참조(DB-013·014·019)
 
@@ -493,7 +493,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - followup은 queue/steer/interrupt 모두 첨부를 받는다. 대기열 FK 참조는 GC·명시 삭제에서 보존하고, 메시지 생성·참조 이전·대기열 삭제는 같은 transaction/savepoint다. 원문 누락·시작 실패는 큐와 참조를 유지하고 last_error로 알린다. 손상된 steer도 메시지 없이 오류가 있는 queue로 남겨 재업로드/수동 재개가 가능하다.
 - Composer는 파일 선택·드롭·붙여넣기, 파일별 업로드 중/실패/동일 키 재시도, 선택 제거, 원문 미리보기·다운로드를 제공한다. 업로드 미완료 시 전송을 막고 응답을 잃은 전송도 같은 내용·첨부·옵션이면 같은 키로 재확인한다. 완료한 첨부 ID·표시 metadata만 기기 내 초안에 보존하며 원문/인증은 localStorage에 넣지 않는다. 서버 초안은 글만 공유한다. 미리보기는 인증된 rawGet 후 허용된 이미지/텍스트만 표시하고 Blob URL은 닫기·교체·unmount에서 해제한다. 미참조 선택 제거는 서버 원문을 즉시 지우지 않고 기존 24시간 유예 정리를 따른다.
 - 고아 원문·정확한 `.sha.grove-UUID.tmp` staging만 1시간 후 정리하며 알 수 없는 이름·symlink 대상은 건드리지 않는다. 미참조 metadata는 24시간 후 만료하고 참조가 있으면 기간과 무관하게 보존한다. 파일 누락·크기 불일치는 stored=false와 이벤트로 알리고, 동일 hash 원문 재업로드는 기존 metadata의 stored도 복구한다. 원문 읽기는 크기 제한과 hash를 재검증한다.
-- GC는 업로드·휴지통 변경과 직렬화한다. 첨부 파일 250개와 metadata 250행만 검사해 다음 호출로 이어가며, 재시작 후 디스크·DB 상태에서 다시 시작한다. 원문 생성 후 DB 실패로 남은 파일과 메시지 참조 삽입 중 실패를 격리 테스트에서 주입한다(`tests/attachments.rs`).
+- GC는 업로드·휴지통 변경과 직렬화한다. 첨부 파일 250개와 metadata 250행만 검사해 다음 호출로 이어가며, 재시작 후 디스크·DB 상태에서 다시 시작한다. 원문 생성 후 DB 실패로 남은 파일과 메시지 참조 삽입 중 실패를 격리 테스트에서 주입한다(`tests/integration/attachments.rs`).
 - 현재 CLI snapshot은 SQLite만 포함하며 첨부 원문을 복사하지 않는다. 첨부 bundle 백업·복원은 BOT-015-E/TRANSFER-003의 미완료 범위다.
 - 검증: 첨부 HTTP/복구 15개, 이미지 포함 압축 후 원문/참조 보존, JPEG 방향·GIF 첫 프레임·WebP 단위 2개, 관련 턴 33·컨텍스트 7·followup 5·제목 2와 기존 lib 86개, 웹 타입/빌드·Vitest 28개, 데스크톱 첨부 E2E 3개·모바일 첨부 E2E 1개 통과. 응답 유실은 실제 서버 처리 후 transport abort로 재현한다. Windows x64/ARM64 Linux 교차 빌드를 확인했다. 이전 Wine에서 4MiB·중복 원문·참조 보호를 검증했고 이미지 변경본도 격리 Wine에서 PNG 디코딩·작은 이미지 확대 방지·이미지 단독 메시지·모델 입력 ID/치수·원문 바이트 보존을 확인했다. 실제 Windows/Android 기기·ARM64 실행 및 외부 유료 모델 이미지 이해는 미검증이다.
 
@@ -505,10 +505,10 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 작업 종료 상태·로그 metadata·결과 note·이벤트를 같은 transaction에 기록한다. 최종 commit 실패 시 원문을 지우지 않으며 기존 running/writing 기록을 보존한다. 재시작은 작업을 unknown으로 바꾸고 자동 재실행하지 않는다. 이전 schema/중단 로그의 첫 검사에서는 현재 바이트의 크기·hash를 채우며 작업 unknown 상태는 유지한다.
 - `/tasks/{id}/output`은 완료 원문의 크기·hash를 확인하고 조각을 반환한다. 누락·손상·보관 실패·만료는 `410 task_log_unavailable`과 상태/원인을 반환한다. 손상 원문과 기존 fingerprint는 보존한다. 요약 tail은 최대 4KiB이며 symlink/비정규 파일을 읽지 않는다. 화면은 조회 오류를 빈 출력과 구분하고 스트림 변경 시 이전 응답이 새 선택을 덮어쓰지 않게 한다.
 - GC는 파일 250개와 metadata 250행 이내로 이어가며 이전/중단 원문 hash 계산은 호출당 최대 32MiB다. ready 로그의 주기 검사는 누락·종류·크기를 확인하고, 동일 크기 손상은 출력 조회의 hash 검증에서 확인한다. 실행 중/unknown 작업은 보존 기간 삭제 대상이 아니다. 만료해도 metadata·hash는 남긴다. 서버 파일 로그의 회전·상한은 §26을 따른다.
-- 검증: `tests/task_logs.rs` 7개(생성 실패·fingerprint/동일 크기 손상·누락/만료·최종 commit 실패/재시작·schema 33→34·hash 예산/cursor·symlink), pump 단위 2개(`/dev/full` 쓰기 실패 후 drain, 8MiB prefix hash), 관련 tasks 8·task_wait 3·storage 12·api 19·store 단위 3개 통과. 웹 타입/빌드와 새 로그 오류/기존 작업 시작·취소 Chrome E2E 2개 통과. Windows x64·Linux ARM64 교차 빌드, 격리 Wine에서 cmd 실행·SHA-256 metadata/출력 조회·손상 거부를 확인했다. 실제 Windows·ARM64 실행은 별도 미검증이다.
+- 검증: `tests/integration/task_logs.rs` 7개(생성 실패·fingerprint/동일 크기 손상·누락/만료·최종 commit 실패/재시작·schema 33→34·hash 예산/cursor·symlink), pump 단위 2개(`/dev/full` 쓰기 실패 후 drain, 8MiB prefix hash), 관련 tasks 8·task_wait 3·storage 12·api 19·store 단위 3개 통과. 웹 타입/빌드와 새 로그 오류/기존 작업 시작·취소 Chrome E2E 2개 통과. Windows x64·Linux ARM64 교차 빌드, 격리 Wine에서 cmd 실행·SHA-256 metadata/출력 조회·손상 거부를 확인했다. 실제 Windows·ARM64 실행은 별도 미검증이다.
 - 직접 사용자 작업 시작은 결과 불명 receipt·작업 ID·로그 metadata·task.changed를 한 transaction에 먼저 commit한 뒤 프로세스를 시작한다. 동일 키 경합은 저장된 작업 ID만 돌려주고 실행하지 않는다. 완료 receipt 저장 실패는 작업 ID가 있는 `409 result_unknown`을 유지하며, 정리·재시작·재전송에서도 실행하지 않는다. 접수 commit 후 실행 전 중단은 재시작 시 unknown으로 복구한다. 접수 transaction에서 사전 검증한 프로젝트 root를 대조하며 바뀌었으면 `409 project_changed`로 작업·로그·이벤트 생성 전에 거부한다. 접수 후에는 기존 프로젝트 실행 guard가 root 변경을 막는다. 이 경계는 `tasks::tests::acceptance_rejects_a_changed_project_root_without_records`에서 거부/정상 기록을 확인했다.
 - TasksPanel은 접수 중 동기 guard로 이중 submit을 막고 명령 편집을 잠근다. 네트워크/서버 오류·result_unknown은 같은 명령/키를 유지해 사용자가 결과를 확인한다. 결과 불명을 닫고 다른 명령을 입력할 때는 입력을 비우며 기존 작업을 취소하지 않는다. 세션 전환은 패널 상태를 분리한다.
-- 접수 검증: `tests/task_start.rs` 4개와 관련 tasks·task_wait·task_logs·storage·api를 합친 Rust 통합 53개, 실제 Chrome에서 서버 도착 전/처리 후 응답 유실·동일 이벤트 루프 이중 submit·최종 receipt UPDATE 실패 3개와 기존 로그 조회/작업 시작·취소 2개, 웹 타입/빌드 통과. 기존 화면의 이중 submit 결함을 실패로 재현한 후 같은 시나리오의 통과를 확인했다(EXEC-005). Windows x64·Linux ARM64 교차 빌드와 격리 Wine의 cmd 작업·같은 ID 재전송·최종 receipt 실패/결과 불명·원문 파일 1회 쓰기도 확인했다. 실제 Windows OS 실행은 별도 미검증이다.
+- 접수 검증: `tests/integration/task_start.rs` 4개와 관련 tasks·task_wait·task_logs·storage·api를 합친 Rust 통합 53개, 실제 Chrome에서 서버 도착 전/처리 후 응답 유실·동일 이벤트 루프 이중 submit·최종 receipt UPDATE 실패 3개와 기존 로그 조회/작업 시작·취소 2개, 웹 타입/빌드 통과. 기존 화면의 이중 submit 결함을 실패로 재현한 후 같은 시나리오의 통과를 확인했다(EXEC-005). Windows x64·Linux ARM64 교차 빌드와 격리 Wine의 cmd 작업·같은 ID 재전송·최종 receipt 실패/결과 불명·원문 파일 1회 쓰기도 확인했다. 실제 Windows OS 실행은 별도 미검증이다.
 
 ## 26. 서버 파일 로그와 유지보수 자원(DB-019)
 
@@ -625,7 +625,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 기본형은 색+이니셜(`bots.avatar_color`). 사용자 이미지는 `PUT /bots/{id}/avatar {data_base64}`(2MiB), `DELETE`로 기본형 복귀, `GET`으로 받는다(인증 필요). 봇 응답의 `avatar_sha256`이 현재 이미지다.
 - 형식은 내용으로만 판별한 PNG·JPEG·GIF·WebP(`unsupported`: SVG·HTML 등 능동 콘텐츠). 4096×4096·할당 64MiB 안에서 실제 디코딩하고(실패 `invalid_request`), 첫 프레임을 256px 안 PNG로 다시 인코딩해 `bot_avatars`(migration 50)에 저장한다. 원본 바이트·메타데이터는 남기지 않는다.
 - 응답은 `image/png`·`nosniff`·`default-src 'none'; sandbox`·ETag. 파일 경로 참조는 받지 않는다(서버 파일 접근 경로를 만들지 않음). 아바타 변경은 봇 revision을 올리지 않아 편집과 충돌하지 않는다.
-- 화면: 봇 편집기의 이미지 선택·기본형으로, 목록·편집기의 아바타는 인증 요청으로 받은 object URL(같은 sha는 한 번만 받음). 시험: `tests/bots.rs::avatar_upload_is_validated_reencoded_served_safely_and_removable`, `bot_avatars::tests`, `web/e2e/bot-avatar.spec.ts`.
+- 화면: 봇 편집기의 이미지 선택·기본형으로, 목록·편집기의 아바타는 인증 요청으로 받은 object URL(같은 sha는 한 번만 받음). 시험: `tests/integration/bots.rs::avatar_upload_is_validated_reencoded_served_safely_and_removable`, `bot_avatars::tests`, `web/e2e/bot-avatar.spec.ts`.
 
 ## 37. 작업공간 고정·라벨(PROJECT-008)
 
@@ -638,7 +638,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 복원(PROJECT-009): 원본 작업공간 복구처럼 검사와 실행을 나눈다. `GET /projects/{id}/recovery`는 보관 아님(`project_not_archived`)·`unarchive`·`unarchive_relink`(폴더 없음: 복원 뒤 새 경로로 다시 연결)를, `POST /projects/{id}/restore {expected_revision}`은 보관 표시만 되돌린다. 제거·유실된 Grove worktree는 `GET /worktrees/{id}/recovery`·`POST /worktrees/{id}/restore`로 남겨 둔 브랜치를 같은 경로에 다시 체크아웃한다. 불가 사유: `worktree_not_removed`, `project_not_repo`, `worktree_path_occupied`(기존 폴더 덮어쓰지 않음), `worktree_branch_missing`, `worktree_branch_in_use`. 실행은 저장소 잠금 안에서 다시 검사하고 결과 불명 처리는 다른 worktree 작업과 같다. 목록 응답의 `removed`가 복원 후보(최근 50개)다.
 - 초기 설정(PROJECT-010, migration 49): 원본 worktree setup 명령의 상태·실패·재실행 범위를 Grove의 명시적 실행 원칙에 맞춘다. 원본처럼 생성 직후 자동 실행하지 않는다. `PATCH /projects/{id}` `setup_script_id`로 이 프로젝트의 script 하나를 지정(지정만으로 실행하지 않음)하고, 실행은 기존 script 확인 실행(`/sessions/{sid}/scripts/{id}/run`)에 `setup: true`를 붙인다. 지정한 script가 아니면 `setup_script_changed`로 작업을 만들지 않는다. 작업 접수 transaction에서 `setup_runs`(task·project·worktree·script)를 기록하고 실행 위치는 그 대화의 실행 위치(프로젝트 폴더 또는 worktree)다. `GET /projects/{id}/setup`은 프로젝트 폴더와 활성 worktree별 마지막 설정 작업 상태(작업 상태 그대로, 없으면 `not_run`)·종료 코드·시도 횟수·위치별 실행 확인값을 돌려준다. 재시도는 같은 확인 실행을 새 키로 한 번 더 접수한다. 대화를 영구 삭제하면 그 작업의 설정 기록도 함께 지운다.
 - clone·저장소 검색·경로 제안(PROJECT-012, `src/repos.rs`): 검색 `GET /github/repos?q=&limit=`은 서버 PC의 `gh`(`GROVE_GH`, 기본 PATH의 gh)로만 하고 `status`를 success·unavailable(`reason: gh_missing`)·unauthenticated·error로 나눈다. 빈 검색어는 내 저장소 목록, 검색어는 `--` 뒤에 넘겨 옵션으로 해석되지 않는다. clone `POST /projects/clone {repo, protocol?, target_directory}`은 owner/name(+https|ssh 필수) 또는 https·ssh·`git@host:`·file 원격만 받고(평문 http·ext 등 거절), 대상 폴더(없으면 생성) 아래 `<저장소 이름>`이 이미 있으면 `already_exists`로 거절한다. 임시 폴더 `.grove-clone-<id>`에 받은 뒤 이름을 바꾸고 실패하면 그 임시 폴더만 지운다(`clone_failed`, 오류의 URL 자격 증명은 가림). 5분 제한, 프롬프트 없음(ssh BatchMode), 서버 전체에서 한 번에 하나. 같은 Idempotency-Key는 clone을 다시 하지 않고 등록 결과를 돌려준다. 경로 제안 `GET /fs/suggest?q=`는 폴더 경로만 돌려준다: 절대 경로·`~`면 그 폴더의 하위 폴더 접두어(점으로 시작할 때만 숨김), 이름이면 홈 아래 깊이 4·5,000개 상한(숨김·빌드 산출물 제외).
-- 화면: 사이드바 프로젝트 행 메뉴(고정, 라벨 체크, 새 라벨 만들고 붙이기, 보관), "보관됨" 목록의 복원 검사·복원, worktree 패널의 제거한 worktree 복원 검사·복원, 라벨 필터(라벨 여러 개 OR + 라벨 없음, 기기별 저장, 삭제된 라벨 id는 무시)와 라벨 관리(이름·색 수정, 영향 수 확인 뒤 삭제). 실패하면 입력·선택을 보존하고 오류를 보인다. 시험: `tests/projects.rs::pin_and_labels_create_assign_edit_and_delete`, `labels::tests`, `web/app/state/projectLabels.test.ts`, `web/e2e/project-labels.spec.ts`.
+- 화면: 사이드바 프로젝트 행 메뉴(고정, 라벨 체크, 새 라벨 만들고 붙이기, 보관), "보관됨" 목록의 복원 검사·복원, worktree 패널의 제거한 worktree 복원 검사·복원, 라벨 필터(라벨 여러 개 OR + 라벨 없음, 기기별 저장, 삭제된 라벨 id는 무시)와 라벨 관리(이름·색 수정, 영향 수 확인 뒤 삭제). 실패하면 입력·선택을 보존하고 오류를 보인다. 시험: `tests/integration/projects.rs::pin_and_labels_create_assign_edit_and_delete`, `labels::tests`, `web/app/state/projectLabels.test.ts`, `web/e2e/project-labels.spec.ts`.
 
 ## 39. MCP 등록 설정(RESOURCE-003, MCP-001)
 
@@ -651,7 +651,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 - 프로토콜: [2025-06-18 transport](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)·[lifecycle](https://modelcontextprotocol.io/specification/2025-06-18/basic/lifecycle)·[구 SSE](https://modelcontextprotocol.io/specification/2024-11-05/basic/transports)를 기준으로 한다. 지원 version은 2025-06-18·2025-03-26·2024-11-05. initialize 때 client capability는 빈 객체이며 sampling·roots·elicitation을 제공하지 않는다. 서버 `ping`은 답하고 미지원 요청은 -32601로 거절한다. tools capability가 있으면 모든 페이지를 조회하되 중복 이름·순환 cursor·object가 아닌 inputSchema를 거절한다. `<서버 이름>/<원격 이름>` namespace는 provider에 직접 노출하지 않는다(`callable:false`). 저장 registry를 `mcp_tools`로 조회하고 승인된 `mcp_call`이 호출하며, 활성 연결의 목록 변경 알림은 registry를 무효화한다.
 - 한도·정리: 설정 timeout(기본 60초)이 연결·handshake·전체 페이지 조회의 공통 hard timeout이다. 응답 전체 4MiB·단일 응답 1MiB·메시지 512개·도구 256개 상한을 둔다. timeout·서버 종료에는 pending 요청 cancellation을 시도하고 stdio 입력 종료 뒤 소유 process group/Job을 정리하며, Streamable HTTP는 받은 session ID로 DELETE(정리 대기 1초 상한)한다. 검사 종료 뒤 연결을 유지하지 않는다. stdio는 별도 고유 임시 디렉터리에서 최소 환경과 명시한 secret만 받아 실행하지만 OS 파일시스템 sandbox는 아니며 확인 화면에도 이를 밝힌다. Linux process tree·정상 종료·crash·timeout·과대 출력은 검증했고 실제 Windows·macOS는 미검증이다.
 - 비밀 경계: HTTP redirect와 환경 proxy를 사용하지 않고 구 SSE의 POST endpoint는 같은 origin이어야 한다. 원격 오류 본문·stdio stderr는 저장/로그에 내보내지 않는다. 도구/서버 정보 문자열·키에 반사된 secret은 저장/응답 전에 가린다. secret 값 교체는 참조 MCP revision을 올리고 과거 검사 결과를 무효화한다.
-- 검증: `tests/mcp.rs`, `tests/mcp_connect.rs`, `web/e2e/mcp-settings.spec.ts`; vault·권한·하위 버전 migration 회귀는 `tests/secrets.rs`, `tests/access.rs`, `tests/header_legacy.rs`, `tests/notifications.rs`, `tests/storage.rs`, `tests/task_logs.rs`다. 상세 패널은 `mcp-check` cache prefix로 갱신해 재검사 실패 때 과거 성공 목록을 유지하지 않는다.
+- 검증: `tests/mcp.rs`, `tests/mcp_connect.rs`, `web/e2e/mcp-settings.spec.ts`; vault·권한·하위 버전 migration 회귀는 `tests/integration/secrets.rs`, `tests/integration/access.rs`, `tests/integration/header_legacy.rs`, `tests/integration/notifications.rs`, `tests/integration/storage.rs`, `tests/integration/task_logs.rs`다. 상세 패널은 `mcp-check` cache prefix로 갱신해 재검사 실패 때 과거 성공 목록을 유지하지 않는다.
 - 모델 도구 gateway: `mcp_tools`는 사용 설정되고 확인된 저장 목록만 읽는 Conversation 도구다(10개 기본·50개 상한, offset·server_id, 응답 64KiB). `mcp_call {server_id,tool:<namespace>,arguments}`은 항상 Execute로 취급하고 기존 승인·deny·read-only·소유권·프로젝트 실행 guard를 통과한다. 원격 annotation은 권한을 바꾸지 않는다. 설정 변경은 소유자만 하지만 같은 사용자의 대화·기기에서는 소유자가 등록한 도구를 기존 정책 안에서 요청할 수 있다. 준비된 registry가 하나도 없으면 모델 요청에는 두 도구 정의를 보내지 않는다.
 - 승인 대상은 서버·namespace·원격 이름·인자·설정 revision·접속 대상·프로젝트/worktree cwd·자원/시간 한도로 고정한다. 실행 직전에 현재 권한·설정·cwd를 재검사하고 새 handshake/목록의 정규화 metadata hash가 승인 precondition과 같아야 tools/call을 보낸다. 다른 서버의 namespace·삭제/disable된 설정·바뀐 metadata는 호출하지 않는다. `mcp_call` 전체에 대한 `approve_session`은 서버·도구가 다른 호출을 묶으므로 거절한다. 이번만 승인 또는 사용자가 명시한 기존 `tools.allow` 정책만 사용한다.
 - registry 수명: 장기 연결을 유지하지 않고 owner 확인 결과를 영속 registry로 사용한다. 호출 전에 새 목록을 검사하고, `notifications/tools/list_changed`가 조회 중 오면 호출 전 중단한다. 호출 응답 중 변경 알림이 왔다면 확정 결과와 같은 transaction에서 registry를 무효화한다. 새 연결 확인 전에는 다시 모델에 노출하지 않는다. schema는 깊이 32·노드 4096 예산으로 일반 JSON Schema의 형태만 검사하며 외부 `$ref`를 가져오거나 코드를 실행하지 않는다. 입력값의 최종 schema 검증은 원격 서버가 수행한다.
@@ -679,7 +679,7 @@ live 시험: `tests/real_model.rs`(OpenAI 호환), `tests/real_cli.rs`(CLI), `we
 |---|---|---|
 | DEC-008 | 웹: React 19 + React Router 7 framework 모드(`ssr:false`) + Vite. 공용 UI·분할 pane 상태(`web/app/state/layout.ts`, 서버 검증 `workspace.rs`)·PWA(정적 산출물 + service worker) 경계로 확정 | 정적 SPA 빌드·CSP 해시·SW 등록·분할 복원 e2e(`web/e2e/workspace.spec.ts`), 모바일 단일 pane e2e |
 | DEC-009 | 서버: Axum 0.8 + Tokio + tower-http(limit·fs·set-header). SQLite는 rusqlite(`bundled`, 쓰기 연결 1개 직렬화), 타입 생성은 ts-rs | 단일 정적 실행 파일, Windows/ARM64는 bundled SQLite로 시스템 의존 없음. 동시성은 DB 단일 연결 + blocking 스레드로 단순화(시험: 동시 커밋 직렬화, idempotency 경쟁) |
-| DEC-014 | 구 wire 비호환·일괄 전환, 새 제품 내부 호환은 §10 | `tests/api.rs::protocol_mismatch_blocks_mutations_but_not_reads`, e2e protocol 배너 |
+| DEC-014 | 구 wire 비호환·일괄 전환, 새 제품 내부 호환은 §10 | `tests/integration/api.rs::protocol_mismatch_blocks_mutations_but_not_reads`, e2e protocol 배너 |
 
 ## 9. Deviation log
 
