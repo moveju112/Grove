@@ -2,7 +2,7 @@
 use super::{CliStream, ModelOutput, ModelRequest, OnDelta, Profile, ProviderError, args_for_run, claude, prompt, read_line_into};
 use serde_json::{Value, json};
 use std::{collections::HashMap, path::{Path, PathBuf}, process::Stdio, sync::{Arc, Mutex}, time::{Duration, Instant}};
-use tokio::{io::{AsyncWriteExt, BufReader}, process::{Child, ChildStdin, ChildStdout}};
+use tokio::{io::{AsyncWriteExt, BufReader}, process::{Child, ChildStdin}};
 
 const IDLE_TTL: Duration = Duration::from_secs(120);
 const MAX_IDLE: usize = 4;
@@ -90,9 +90,10 @@ struct Process {
     child: Child,
     owned: crate::procs::Owned,
     stdin: ChildStdin,
-    lines: BufReader<ChildStdout>,
+    lines: BufReader<Box<dyn tokio::io::AsyncRead + Unpin + Send>>,
     pending: Vec<u8>,
     native_id: String,
+    export: Option<super::rate_events::Export>,
     api_ms_total: Option<u64>,
     _scratch: tempfile::TempDir,
 }
@@ -139,7 +140,7 @@ impl Process {
     }
 }
 
-async fn start(key: &Key, mut argv: Vec<String>, native_id: String) -> Result<Process, ProviderError> {
+async fn start(key: &Key, mut argv: Vec<String>, native_id: String, data_dir: Option<&Path>) -> Result<Process, ProviderError> {
     // 실행 중 합치기는 CLI가 대화에 넣을 때 같은 uuid로 replay한 user 이벤트를 ACK로 쓴다.
     argv.extend(["--input-format".into(), "stream-json".into(), "--replay-user-messages".into()]);
     if key.bridge {
@@ -158,8 +159,9 @@ async fn start(key: &Key, mut argv: Vec<String>, native_id: String) -> Result<Pr
     crate::procs::prepare(&mut cmd, &tag);
     let mut child = cmd.spawn().map_err(|e| ProviderError::new("cli_failed", format!("Claude Code 실행 실패: {e}")))?;
     let owned = crate::procs::adopt(&mut child, &tag).map_err(|e| ProviderError::new("cli_failed", e))?;
-    Ok(Process { stdin: child.stdin.take().expect("stdin"), lines: BufReader::new(child.stdout.take().expect("stdout")),
-        child, owned, pending: Vec::new(), native_id, api_ms_total: Some(0), _scratch: scratch })
+    let export = super::rate_events::Export::new(data_dir).await;
+    Ok(Process { stdin: child.stdin.take().expect("stdin"), lines: BufReader::new(super::rate_events::observe_stdout(child.stdout.take().expect("stdout"), export.clone())),
+        child, owned, export, pending: Vec::new(), native_id, api_ms_total: Some(0), _scratch: scratch })
 }
 
 pub(super) async fn run(
@@ -183,7 +185,7 @@ pub(super) async fn run(
     let mut process = match handle.checkout(&key, ctx.resume.as_deref())? {
         Some(process) => process,
         None => {
-            let mut process = start(&key, argv, ctx.resume.clone().unwrap_or(generated)).await?;
+            let mut process = start(&key, argv, ctx.resume.clone().unwrap_or(generated), ctx.usage_data_dir.as_deref()).await?;
             process.control(json!({"subtype":"initialize"}), profile.timeout).await?;
             process
         }
@@ -191,6 +193,7 @@ pub(super) async fn run(
     if let Some(link) = &ctx.continuations {
         process.mcp(json!({"grove_continuations":{"type":"stdio","command":link.exe,"args":["continuation-mcp",link.file]}}), profile.timeout).await?;
     }
+    let usage_turn = super::rate_events::Export::turn(process.export.as_ref());
     let resumed = ctx.resume.is_some();
     let text = prompt(req, false);
     let text = if text.trim_start().starts_with('/') { format!("<user_message>\n{text}\n</user_message>") } else { text };
@@ -300,6 +303,7 @@ pub(super) async fn run(
     let clean = complete && stream.claude_completion.tasks.is_empty()
         && !out.activity.iter().any(|item| item["status"] == "running")
         && out.native_session.as_deref() == Some(process.native_id.as_str());
+    usage_turn.finish().await;
     if clean && (!key.bridge || process.mcp(json!({}), idle.min(Duration::from_secs(5))).await.is_ok()) {
         handle.park(key, process);
     }

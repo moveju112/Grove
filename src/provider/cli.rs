@@ -22,6 +22,7 @@ mod codex;
 pub(crate) mod codex_question;
 pub(crate) mod codex_session;
 mod account_limits;
+mod rate_events;
 pub(crate) mod claude;
 pub(crate) mod claude_session;
 pub(crate) mod claude_usage;
@@ -40,6 +41,7 @@ pub(super) async fn refresh_codex_account() -> Result<(), &'static str> {
 #[derive(Debug, Clone, Default)]
 pub struct CliContext {
     pub cwd: std::path::PathBuf,
+    pub(crate) usage_data_dir: Option<std::path::PathBuf>,
     pub resume: Option<String>,
     pub service_tier: Option<String>,
     pub continuations: Option<crate::continuations::bridge::Link>,
@@ -995,6 +997,10 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
             Ok(out)
         }).await.map_err(|_| ProviderError::new("idle_timeout", "Codex 프로세스가 종료되지 않았습니다"))?;
     }
+    let export = if profile.protocol == "claude_code" {
+        rate_events::Export::new(req.cli.as_ref().and_then(|c| c.usage_data_dir.as_deref())).await
+    } else { None };
+    let usage_turn = rate_events::Export::turn(export.as_ref());
     let input_task = tokio::spawn(async move {
         stdin.write_all(input.as_bytes()).await?;
         stdin.shutdown().await
@@ -1040,6 +1046,7 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
             stream.claude_completion.invalidate();
             continue;
         };
+        if let Some(export) = &export { export.observe(&e).await; }
         stream.apply(&profile.protocol, &e)?;
         if structured {
             if e["type"] == "result" { structured_output = e.get("structured_output").cloned(); }
@@ -1047,6 +1054,7 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
             on_delta(&stream.output);
         }
     };
+    usage_turn.finish().await;
     if !recovered {
         let status = tokio::time::timeout(idle, child.wait()).await
             .map_err(|_| ProviderError::new("idle_timeout", "에이전트 프로세스가 종료되지 않았습니다"))?
@@ -1447,6 +1455,26 @@ echo '{{"type":"result","result":"ok"}}'"#);
         std::fs::write(&p, format!("#!/bin/bash\nif [[ \" $* \" == *' auth status --json '* ]]; then\n  echo '{{\"loggedIn\":true,\"authMethod\":\"claude.ai\",\"apiProvider\":\"firstParty\",\"subscriptionType\":\"max\"}}'\n  exit\nfi\ninput=\"$(cat)\"\n{script}\n")).unwrap();
         std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o755)).unwrap();
         p
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn one_shot_claude_exports_only_observed_usage() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut request = req(None);
+        let ctx = request.cli.as_mut().unwrap();
+        ctx.cwd = dir.path().into();
+        ctx.usage_data_dir = Some(dir.path().into());
+        let cli = fake_cli(dir.path(), r#"cat <<'EVENTS'
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","unifiedWindows":{"five_hour":{"utilization":0.25,"resetsAt":2100000000}}}}
+{"type":"result","subtype":"success","result":"ok"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"seven_day","utilization":0}}
+EVENTS"#);
+        let out = stream_with(&prof("claude_code"), &request, &mut |_| {}, Some(&cli)).await.unwrap();
+        assert_eq!(out.text, "ok");
+        let snapshot: Value = serde_json::from_slice(&std::fs::read(dir.path().join("usage/v1/claude.json")).unwrap()).unwrap();
+        assert_eq!(snapshot["windows"]["five_hour"]["used_percent"], 25.0);
+        assert_eq!(snapshot["windows"]["seven_day"]["used_percent"], 0.0);
     }
 
     #[cfg(unix)]

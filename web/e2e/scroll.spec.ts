@@ -167,6 +167,28 @@ test("내가 보내면 직접 스크롤하기 전까지 답을 따라가되 보�
     await expect(view.getByText("고정 답변 끝")).not.toBeInViewport();
     expect(await atBottom()).toBe(false);
     await expect(view.getByTestId("new-below")).toBeVisible();
+    // 버튼은 대화 높이를 바꾸지 않는다. 바뀌면 위치 보정이 버튼 상태를 다시 바꿔 깜빡인다.
+    expect(await view.getByTestId("new-below").evaluate((node) => node.parentElement!.getBoundingClientRect().height)).toBe(0);
+    // 고정을 풀지 않은 채 끝까지 80px 안으로 내려가도, 끝이 보이기 전에는 버튼이 깜빡이지 않고 그대로 남는다.
+    const toggles = await view.evaluate((root) => {
+        const state = { count: 0 };
+        (window as unknown as { __belowToggles: typeof state }).__belowToggles = state;
+        new MutationObserver((records) => {
+            for (const record of records) for (const node of [...record.addedNodes, ...record.removedNodes]) {
+                if (node instanceof Element && (node.matches('[data-testid="new-below"]') || node.querySelector('[data-testid="new-below"]'))) state.count++;
+            }
+        }).observe(root, { childList: true, subtree: true });
+        return state.count;
+    });
+    expect(toggles).toBe(0);
+    await body.evaluate((el, marker) => {
+        const end = el.querySelector(marker)!.getBoundingClientRect().top;
+        const composer = el.querySelector('[data-testid="compose-surface"]')!.getBoundingClientRect().top - 12;
+        el.scrollTop += Math.max(0, end - Math.min(el.getBoundingClientRect().bottom, composer) - 40);
+    }, '[data-testid="msgs-bottom"]');
+    await page.waitForTimeout(1500);
+    expect(await page.evaluate(() => (window as unknown as { __belowToggles: { count: number } }).__belowToggles.count)).toBe(0);
+    await expect(view.getByTestId("new-below")).toBeVisible();
     await view.getByTestId("new-below").click();
     await expect.poll(atBottom).toBe(true);
     await expect(view.getByText("고정 답변 끝")).toBeInViewport();

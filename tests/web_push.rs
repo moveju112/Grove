@@ -132,6 +132,44 @@ async fn completion_enqueues_atomically_once_and_revocation_cascades_without_pla
 }
 
 #[tokio::test]
+async fn recent_input_on_another_device_skips_push_without_retrying() {
+    let s = TestServer::start().await;
+    let (_, config) = s.get("/api/v1/web-push").await;
+    let phone = s.registered_device("isolated phone").await;
+    let body = subscription(config["public_key"].as_str().unwrap(), "https://fcm.googleapis.com/fcm/send/isolated-presence");
+    let subscribed = s.raw(Method::PUT, "/api/v1/web-push", Some(body), Some(&s.key()), phone["token"].as_str()).await;
+    assert_eq!(subscribed.status(), StatusCode::OK);
+    // 휴대폰 자신의 입력은 휴대폰 알림을 막지 않는다. 이 시험은 PC(다른 기기)의 입력만 보낸다.
+    assert_eq!(s.send(Method::POST, "/api/v1/presence", json!({})).await.0, StatusCode::NO_CONTENT);
+    let app = &s.server.as_ref().unwrap().app;
+    let now = app.now();
+    app.db.call(move |c| {
+        c.execute_batch("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES('p','test','/isolated','now','now');
+            INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES('s','p','test','now','now');
+            INSERT INTO messages(id,session_id,seq,role,content,created_at) VALUES('m','s',1,'user','{}','now');
+            INSERT INTO turns(id,session_id,status,request_message_id,owner_epoch,created_at,updated_at) VALUES('t','s','completed','m','test','now','now');")?;
+        grove::events::append(c, &now, "turn.updated", Some("p"), Some("s"), &json!({"id":"t","status":"completed"}))?;
+        assert_eq!(c.query_row("SELECT count(*) FROM web_push_outbox", [], |r| r.get::<_, i64>(0))?, 1);
+        Ok(())
+    }).await.unwrap();
+    app.notify_events().await;
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(3);
+    loop {
+        // 실제 Push 서비스에 보냈다면 실패 기록이 남거나 재시도가 대기한다.
+        let (queued, error) = app.db.call(|c| Ok((
+            c.query_row("SELECT count(*) FROM web_push_outbox", [], |r| r.get::<_, i64>(0))?,
+            c.query_row("SELECT last_error FROM web_push_subscriptions", [], |r| r.get::<_, Option<String>>(0))?,
+        ))).await.unwrap();
+        assert_eq!(error, None, "다른 기기 사용 중에는 Push 서비스로 보내지 않는다");
+        if queued == 0 { break; }
+        assert!(tokio::time::Instant::now() < deadline, "skipped push stayed queued");
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+    let received = app.db.call(|c| Ok(c.query_row("SELECT count(*) FROM web_push_receipts", [], |r| r.get::<_, i64>(0))?)).await.unwrap();
+    assert_eq!(received, 1, "같은 완료를 나중에 다시 보내지 않는다");
+}
+
+#[tokio::test]
 async fn device_scoping_and_revocation_stop_push() {
     let s = TestServer::start().await;
     let (_, config) = s.get("/api/v1/web-push").await;

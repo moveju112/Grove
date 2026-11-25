@@ -15,6 +15,7 @@ import { ApiError, api, isTransportError } from "../api/client";
 import { EventStream } from "../api/events";
 import type { Project, RecentPage } from "../api/generated";
 import { notifyAttention, onOpenSession, watchReadNotifications } from "../state/attention";
+import { watchDeviceActivity } from "../state/deviceActivity";
 import { applyPrefs, isNarrow, layoutKey, loadPrefs, usePrefs } from "../state/device";
 import { applyTabShortcut } from "../state/shortcuts";
 import { useWorkspaceShortcuts } from "./shortcuts/useWorkspaceShortcuts";
@@ -37,6 +38,7 @@ import { PANE_REVEAL_DURATION, splitStyles } from "./split-layout.stylex";
 import { Icon } from "./icons";
 import { ActionMenu } from "./ui/Controls";
 import { SidebarProject } from "./sidebar";
+import { SidebarUsage } from "./sidebar/SidebarUsage";
 import { touchOrderStyles } from "./touchOrder.stylex";
 import { useTouchProjectOrder } from "./sidebar/useTouchProjectOrder";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -117,7 +119,7 @@ export function Workspace() {
     const narrow = useNarrow();
     const { usageOpen, usageVisited, openUsage, closeUsage, leaveUsage } = useUsageNavigation();
     const serverBlocked = useServerBlockReason();
-    const { keyboardShortcuts, notifyPush, notifyVibrate } = usePrefs("keyboardShortcuts", "notifyPush", "notifyVibrate");
+    const { keyboardShortcuts, notifyPush, notifyVibrate, showSidebarUsage } = usePrefs("keyboardShortcuts", "notifyPush", "notifyVibrate", "showSidebarUsage");
     const pushStatus = usePushSync(notifyPush, notifyVibrate, !!serverBlocked);
     const [settingsTarget, setSettingsTarget] = useState<OpenTarget | null>(null);
     const status = useLive((live) => live.status);
@@ -375,13 +377,17 @@ export function Workspace() {
     const dropProject = useCallback((source: string, target: OpenTarget, edge: L.DropEdge) => {
         if (!projects.data?.some((project) => project.id === target.project_id)) return;
         const sourceId = projectAt(source) ?? selectedProjectId;
+        const project = target.kind === "project";
         if (!narrow && sourceId) {
-            const next = placeProject(projectGroup, sourceId, target, edge);
-            if (next === projectGroup) return;
-            projectSplits.update(() => next);
+            // 프로젝트 분할에는 프로젝트 항목만 둔다. 대화·파일은 분할된 프로젝트 영역 안에서 연다.
+            const next = placeProject(projectGroup, sourceId, project ? target
+                : { kind: "project", project_id: target.project_id, resource_id: target.project_id, title: target.project_id! }, edge);
+            if (next === projectGroup && project) return;
+            if (next !== projectGroup) projectSplits.update(() => next);
         }
-        openProjectAt(baseKey, target, "here", true);
-    }, [baseKey, narrow, openProjectAt, projectAt, projectGroup, projectSplits.update, projects.data, selectedProjectId]);
+        if (project) openProjectAt(baseKey, target, "here", true);
+        else openAt(baseKey, target);
+    }, [baseKey, narrow, openAt, openProjectAt, projectAt, projectGroup, projectSplits.update, projects.data, selectedProjectId]);
     const closeProject = useCallback((id: string) => {
         const leaf = L.leaves(projectGroup.root).find((item) => item.tabs[0]?.project_id === projectAt(id));
         if (!leaf || geometry.panes.length < 2) return;
@@ -393,6 +399,8 @@ export function Workspace() {
     // OS 알림을 누르면 해당 대화를 현재 배치에 연다(SETTINGS-014).
     useEffect(() => onOpenSession((projectId, sessionId) => open({ kind: "session", project_id: projectId, resource_id: sessionId, title: "대화" })), [open]);
     useEffect(() => watchReadNotifications(async () => (await api.get<RecentPage>("/recent?filter=all&limit=200")).items), []);
+    // 이 기기를 쓰는 동안 다른 기기의 Push 알림을 생략하도록 서버에 알린다.
+    useEffect(() => watchDeviceActivity(), []);
 
     const [adding, setAdding] = useState<"project" | "folder" | null>(null);
     const creationTrigger = useRef<HTMLButtonElement | null>(null);
@@ -667,6 +675,10 @@ export function Workspace() {
                     </StackItem>
                     <Stack gap={0} paddingInline={2} xstyle={workspaceStyles.recentDock}>
                         <RecentPanel warmProject={warmProject} hides={recentHides} open={openRecent} splitGroups={splitGroups} shown={sidebar} />
+                        {/* 닫힌 탐색 영역이나 숨김 설정에서는 한도를 조회하지 않는다. */}
+                        {showSidebarUsage && <PaneVisibility value={sidebar}>
+                            <SidebarUsage onAuthenticate={(protocol) => open({ kind: "settings", resource_id: `agent-auth:${protocol}`, title: "설정" })} />
+                        </PaneVisibility>}
                     </Stack>
                     </Stack>
                 </LayoutPanel>

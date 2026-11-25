@@ -4,6 +4,7 @@ use tokio::task::JoinHandle;
 
 struct Job {
     endpoint: String,
+    device: String,
     event: String,
     payload: String,
     public: Vec<u8>,
@@ -68,9 +69,9 @@ async fn deliver(app: &App, client: &reqwest::Client) -> ApiResult<()> {
         c.execute("DELETE FROM web_push_tests WHERE created_at<?1",[retention])?;
         c.execute("DELETE FROM web_push_outbox WHERE created_at<?1 OR attempts>=6",[seconds-3600])?;
         let jobs = {
-        let mut st=c.prepare("SELECT o.endpoint,o.event_key,grove_decrypt(o.payload),s.p256dh,grove_decrypt(s.auth),s.scope,s.server,s.vibrate,o.attempts FROM web_push_outbox o
+        let mut st=c.prepare("SELECT o.endpoint,o.event_key,grove_decrypt(o.payload),s.p256dh,grove_decrypt(s.auth),s.scope,s.server,s.vibrate,o.attempts,s.root_id FROM web_push_outbox o
             JOIN web_push_subscriptions s ON s.endpoint=o.endpoint WHERE next_attempt<=?1 ORDER BY created_at,event_key LIMIT 8")?;
-        st.query_map([seconds],|r|Ok(Job {endpoint:r.get(0)?,event:r.get(1)?,payload:r.get(2)?,public:r.get(3)?,auth:r.get(4)?,scope:r.get(5)?,server:r.get(6)?,vibrate:r.get(7)?,attempts:r.get(8)?}))?.collect::<rusqlite::Result<Vec<_>>>()?
+        st.query_map([seconds],|r|Ok(Job {endpoint:r.get(0)?,event:r.get(1)?,payload:r.get(2)?,public:r.get(3)?,auth:r.get(4)?,scope:r.get(5)?,server:r.get(6)?,vibrate:r.get(7)?,attempts:r.get(8)?,device:r.get(9)?}))?.collect::<rusqlite::Result<Vec<_>>>()?
         };
         tx.commit()?;
         Ok(jobs)
@@ -88,6 +89,15 @@ async fn deliver(app: &App, client: &reqwest::Client) -> ApiResult<()> {
             Ok(token.is_some_and(|t|auth::verify_row(c,&t,None,&now).is_ok()))
         }).await?;
         if !active {
+            continue;
+        }
+        // 다른 기기를 쓰는 중이면 결과는 그 화면에서 보인다. 나중에 다시 보내지 않고 이 기기의 알림만 생략한다.
+        if app.presence.active_elsewhere(&job.device, app.clock.now().unix_timestamp()) {
+            let (endpoint, event) = (job.endpoint.clone(), job.event.clone());
+            app.db.call(move |c| {
+                c.execute("DELETE FROM web_push_outbox WHERE endpoint=?1 AND event_key=?2", params![endpoint, event])?;
+                Ok(())
+            }).await?;
             continue;
         }
         let result = send(client, &key, &job, app.clock.now().unix_timestamp()).await;
@@ -208,7 +218,7 @@ mod tests {
                 CREATE TABLE web_push_outbox(endpoint TEXT REFERENCES web_push_subscriptions(endpoint) ON DELETE CASCADE,event_key TEXT,attempts INTEGER,next_attempt INTEGER);
                 INSERT INTO web_push_subscriptions VALUES('fixture',NULL);
                 INSERT INTO web_push_outbox VALUES('fixture','turn:t',0,0);").unwrap();
-            let job = Job { endpoint: "fixture".into(), event: "turn:t".into(), payload: "{}".into(),
+            let job = Job { endpoint: "fixture".into(), device: "device".into(), event: "turn:t".into(), payload: "{}".into(),
                 public: vec![], auth: String::new(), scope: String::new(), server: String::new(), vibrate: true, attempts };
             record_outcome(&mut c, &job, outcome, 100).unwrap();
             let last: Option<Option<String>> = c.query_row("SELECT last_error FROM web_push_subscriptions", [], |r| r.get(0)).optional().unwrap();

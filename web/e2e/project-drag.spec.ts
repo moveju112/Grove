@@ -136,3 +136,35 @@ for (const theme of ["light", "dark"] as const) {
         })).toBe(true);
     });
 }
+
+test("다른 프로젝트의 최근 대화를 영역 가장자리에 놓으면 프로젝트 분할로 연다", async ({ page }) => {
+    const createProject = (prefix: string) => apiCall<{ id: string; name: string }>("POST", "/projects", {
+        root_path: mkdtempSync(join(dirname(state().projA), `drag-recent-${prefix}`)),
+    });
+    const [a, b] = await Promise.all([createProject("left-"), createProject("right-")]);
+    const tag = randomUUID().slice(0, 8);
+    const [left, right] = await Promise.all([a, b].map((p, i) =>
+        apiCall<{ id: string; title: string }>("POST", `/projects/${p.id}/sessions`, { title: `recent-split-${tag}-${i}` })));
+    for (const [p, s] of [[a, left], [b, right]] as const) {
+        await apiCall("POST", "/recent/touch", { kind: "session", project_id: p.id, resource_id: s!.id });
+    }
+    await login(page);
+    const panel = (p: { id: string }) => page.locator(`[data-project-pane="${p.id}"]`).filter({ visible: true });
+    const view = (s: { id: string }) => page.locator(`[data-testid="session-view"][data-session="${s.id}"]`).filter({ visible: true });
+    const recent = (s: { title: string }) => page.getByTestId("recent-list").getByRole("button", { name: s.title }).first();
+    await recent(left!).click();
+    await expect(view(left!)).toBeVisible();
+    const bounds = (await panel(a).boundingBox())!;
+    await recent(right!).dragTo(panel(a).getByTestId("pane"), { targetPosition: { x: bounds.width - 12, y: bounds.height / 2 } });
+    await expect(panel(a)).toBeVisible();
+    await expect(panel(b)).toBeVisible();
+    await expect(view(left!)).toBeVisible();
+    await expect(view(right!)).toBeVisible();
+    const right0 = (await panel(b).boundingBox())!;
+    expect(right0.x).toBeGreaterThan(bounds.x + bounds.width / 3);
+    // 분할 배치에는 프로젝트 항목만 저장되어 새로고침 뒤에도 유지된다.
+    await page.reload();
+    await expect(panel(a)).toBeVisible();
+    await expect(panel(b)).toBeVisible();
+    await expect(view(right!)).toBeVisible();
+});

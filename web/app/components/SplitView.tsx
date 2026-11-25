@@ -217,8 +217,10 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
         const target = L.parseOpenTarget(e.dataTransfer.getData(DRAG_OPEN));
         if (target) {
             const projectId = L.allTabs(p.layout).find((tab) => tab.project_id)?.project_id;
-            if (projectId !== target.project_id) p.open(target);
-            else p.update((l) => L.openAtEdge(l, leaf.id, edge, target));
+            // 다른 프로젝트의 항목은 놓은 가장자리에 그 프로젝트 영역을 만들고 거기서 연다.
+            if (projectId === target.project_id) p.update((l) => L.openAtEdge(l, leaf.id, edge, target));
+            else if (p.onProjectDrop) p.onProjectDrop(target, edge);
+            else p.open(target);
         }
     };
     return (

@@ -106,6 +106,7 @@ export const ITEMS: Item[] = [
     { id: "shortcuts", menu: "shortcuts", label: "키보드 단축키", keywords: "keyboard shortcut preset ctrl cmd control 단축키 프리셋 키보드 새 세션 탭 닫기", scope: "이 기기" },
     { id: "running-send", menu: "display", label: "실행 중 보내기 방식", keywords: "followup queue steer interrupt 채팅 추가 메시지 대기열 합치기 반영 중단", scope: "이 기기" },
     { id: "recent", menu: "display", label: "최근 항목 시간 범위", keywords: "recent window 최근 범위 분 시간 오늘", scope: "이 기기" },
+    { id: "sidebar-usage", menu: "display", label: "탐색 영역 사용량", keywords: "usage limit quota 사용량 한도 5시간 주간 사이드바 탐색 좌측 하단 claude codex", scope: "이 기기" },
     { id: "notify", menu: "notifications", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜 턴 경과 소요 대기", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "진행사항 보기 진행 설명 완료 시 접기 progress", scope: "이 기기" },
@@ -220,7 +221,7 @@ export function Settings({ projectId, projectName, sessionId, initialMenu, open 
                     linkedKey={link.key} onLinkReady={onLinkReady}
                     defs={(needle && visible("exec-settings") ? registry.data ?? [] : serverDefs).filter(isExecSetting)} target={target} /></Section>}
                 {visible("source-settings") && <Section item="source-settings"><SourceSettings projectId={projectId} /></Section>}
-                {(["theme", "font", "enter", "terminal-paste", "shortcuts", "running-send", "recent", "notify", "time", "transcript", "leaves"] as const).some(visible)
+                {(["theme", "font", "enter", "terminal-paste", "shortcuts", "running-send", "recent", "sidebar-usage", "notify", "time", "transcript", "leaves"] as const).some(visible)
                     && <DisplayPrefs show={visible} />}
                 {visible("bots") && <Section item="bots"><BotsPanel open={open} /></Section>}
                 {visible("devices") && <Section item="devices"><DeviceConnections /></Section>}
@@ -366,6 +367,12 @@ function DisplayPrefs({ show }: {
                                 ...RECENT_WINDOW_OPTIONS.map((option) => ({ value: option, label: recentWindowLabel(option),
                                     disabled: p.recentWindows.includes(option) && p.recentWindows[index] !== option }))]} />)}
                     </fieldset>
+                </Section>
+            )}
+            {show("sidebar-usage") && (
+                <Section item="sidebar-usage">
+                    <BooleanSelect label="사용량 표시" hideLabel trueLabel="표시" falseLabel="숨김"
+                        value={p.showSidebarUsage} onChange={(value) => set({ ...p, showSidebarUsage: value })} />
                 </Section>
             )}
             {show("notify") && (

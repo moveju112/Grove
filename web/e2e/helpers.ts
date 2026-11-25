@@ -63,7 +63,8 @@ export async function splitNewConversation(pane: Locator, edge: "right" | "botto
 }
 
 export async function splitRecentItem(row: Locator) {
-    const pane = row.page().getByTestId("pane").and(row.page().locator('[data-focused="true"]')).filter({ visible: true });
+    // 프로젝트 분할에서는 영역마다 초점 pane이 있으므로 선택된 프로젝트의 것을 고른다.
+    const pane = row.page().locator('[data-project-focused="true"]').getByTestId("pane").and(row.page().locator('[data-focused="true"]')).filter({ visible: true });
     const bounds = (await pane.boundingBox())!;
     await row.getByRole("button").first().dragTo(pane, {
         targetPosition: { x: bounds.width - 12, y: bounds.height / 2 },

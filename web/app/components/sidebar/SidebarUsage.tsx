@@ -29,18 +29,20 @@ const accounts = [
 ] as const;
 const periods = ["5시간", "주간"] as const;
 
-/** 연결된 Claude·Codex의 공용 5시간·주간 한도만 두 줄 안에 표시한다. */
+/** 연결된 Claude·Codex의 공용 5시간·주간 사용률만 두 줄 안에 표시한다. */
 export function UsageSummary({ report, failed = false, now = Date.now(), onAuthenticate }: {
     report: AccountUsageReport; failed?: boolean; now?: number; onAuthenticate?: (protocol: string) => void;
 }) {
     const prefs = usePrefs();
     const connected = accounts.flatMap(({ protocol, name }) => {
         const account = report.accounts.find((account) => account.protocol === protocol);
-        return account ? [{ ...account, name }] : [];
+        // 공용 5시간·주간 한도가 하나도 없는 계정은 빈 줄로 남기지 않는다.
+        return account && (account.status !== "available" || periods.some((period) => account.limits.some((limit) =>
+            limit.label === period && limit.remaining_percent !== null))) ? [{ ...account, name }] : [];
     });
     if (connected.length === 0) return null;
     return <Stack as="section" gap={2} paddingBlock={2} paddingInline={2}
-        aria-label="남은 사용량" data-testid="sidebar-usage" xstyle={usageStyles.summary}>
+        aria-label="사용 한도" data-testid="sidebar-usage" xstyle={usageStyles.summary}>
         {failed && <GroveText type="inherit" color="warning">갱신 실패 · 이전 값</GroveText>}
         {connected.map((account) => <Stack key={account.protocol} gap={0} data-testid="account-usage">
             {account.status !== "available" ? <Stack direction="horizontal" justify="between" gap={2}>
@@ -56,23 +58,26 @@ export function UsageSummary({ report, failed = false, now = Date.now(), onAuthe
                 {periods.map((period) => {
                     const limit = account.limits.find((limit) => limit.label === period);
                     const remaining = limit?.remaining_percent ?? null;
+                    const used = remaining === null ? null : Math.max(0, Math.min(100, 100 - remaining));
                     const expired = limit?.resets_at != null && Date.parse(limit.resets_at) <= now;
-                    const value = expired ? "갱신 대기" : remaining === null ? "—"
-                        : remaining > 0 && remaining < 0.1 ? "<0.1%"
-                        : `${remaining.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
+                    // 다 쓰지 않은 한도를 100%로, 쓰기 시작한 한도를 0%로 반올림하지 않는다.
+                    // 요금제에 없는 기간은 자리만 비워 다른 기간의 열을 유지한다.
+                    if (used === null) return <Stack key={period} aria-hidden="true" />;
+                    const value = expired ? "갱신 대기"
+                        : used > 0 && used < 0.1 ? "<0.1%" : used > 99.9 && used < 100 ? ">99.9%"
+                        : `${used.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
                     const label = `${account.name} ${period}`;
                     const reset = limit?.resets_at ? ` · 초기화 ${absoluteTime(limit.resets_at, prefs)}` : "";
                     return <Stack gap={0.5} key={period} data-testid="account-usage-limit">
                         <Stack direction="horizontal" justify="between" align="center" gap={1}>
-                            <HintText type="inherit" color="secondary" hint={`${label} 남음${reset}`} xstyle={usageStyles.label}>{label}</HintText>
+                            <HintText type="inherit" color="secondary" hint={`${label} 사용${reset}`} xstyle={usageStyles.label}>{label}</HintText>
                             <HintText type="inherit" hasTabularNumbers hint={`조회 ${absoluteTime(account.checked_at, prefs)}${reset}`}
-                                color={expired ? "secondary" : remaining !== null && remaining <= 10 ? "warning" : "primary"}
-                                aria-label={`${label} 남음 ${value}${reset}`} xstyle={usageStyles.value}>
+                                color={expired ? "secondary" : "primary"}
+                                aria-label={`${label} 사용 ${value}${reset}`} xstyle={usageStyles.value}>
                                 {value}
                             </HintText>
                         </Stack>
-                        {!expired && remaining !== null && <ProgressBar label={`${label} 남음`} isLabelHidden value={remaining} max={100}
-                            variant="accent" />}
+                        {!expired && <ProgressBar label={`${label} 사용`} isLabelHidden value={used} max={100} variant="accent" />}
                     </Stack>;
                 })}
             </Grid>}
@@ -179,7 +184,7 @@ export function SidebarUsage({ onAuthenticate, showEmpty = false, presentation =
         ? <GroveText type="supporting" color="secondary">연결된 CLI 계정이 없어요.</GroveText>
         : <UsageSummary report={usage.data} failed={failed} now={now} onAuthenticate={onAuthenticate} />;
     if (!failed) return presentation === "cards" ? <UsageQuotaPlaceholder /> : null;
-    return <Stack as="section" padding={2} aria-label="남은 사용량" data-testid="sidebar-usage">
+    return <Stack as="section" padding={2} aria-label="사용 한도" data-testid="sidebar-usage">
         <GroveText type="supporting" color="warning">사용량 조회 실패</GroveText>
     </Stack>;
 }

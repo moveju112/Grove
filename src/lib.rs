@@ -81,6 +81,7 @@ pub mod update;
 pub mod vault;
 pub mod usage;
 pub mod account_usage;
+pub mod presence;
 pub mod util;
 pub mod web;
 pub mod workspace;
@@ -140,11 +141,13 @@ pub const CAPABILITIES: &[&str] = &[
     "private_model_headers_v1",
     "project_scripts_v1",
     "terminal_capture_v1",
+    "device_activity_v1",
 ];
 
 #[derive(Clone)]
 pub struct App {
     pub account_usage: Arc<account_usage::Cache>,
+    pub presence: Arc<presence::Presence>,
     pub agent_logins: Arc<agent_auth::Logins>,
     pub(crate) claude_sessions: Arc<provider::cli::claude_session::Sessions>,
     pub(crate) codex_sessions: Arc<provider::cli::codex_session::Sessions>,
@@ -187,6 +190,7 @@ impl App {
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
         Ok(Self {
             account_usage: Arc::new(account_usage::Cache::default()),
+            presence: Arc::default(),
             agent_logins: Arc::new(agent_auth::Logins::default()),
             claude_sessions: Arc::default(),
             codex_sessions: Arc::default(),
@@ -302,6 +306,7 @@ pub fn router(app: App) -> Router {
         .route("/bots/{id}/seen", post(bots::seen))
         .route("/bot-rooms", get(bot_rooms::list).post(bot_rooms::create))
         .route("/sessions/{id}/bot-room", get(bot_rooms::show))
+        .route("/presence", post(presence::post))
         .route("/web-push", get(web_push::configuration).put(web_push::subscribe).delete(web_push::unsubscribe))
         .route("/notifications", get(notifications::list))
         .route("/notifications/delivered", post(notifications::delivered))

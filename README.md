@@ -11,6 +11,8 @@ Grove는 내 개발 머신에서 실행하는 AI 코딩 작업공간입니다. �
 | `grove-<버전>-linux-x64.tar.gz` | 압축을 푼 폴더에서 `./grove pairing set-password`를 실행한 뒤 `./grove serve`로 시작합니다. |
 | `grove_<버전>-1_amd64.deb` | Debian·Ubuntu에서 다운로드한 파일을 `sudo apt install ./파일명.deb`로 설치한 뒤 `/usr/bin/grove pairing set-password`와 `/usr/bin/grove serve`를 차례로 실행합니다. |
 
+Claude Code의 구독 한도를 다른 로컬 앱에서 읽으려면 [사용량 파일 경로와 형식](docs/claude-usage.md)을 참고하세요.
+
 ## 소스에서 빌드하기
 
 Linux에서 소스를 빌드하는 예시입니다. Rust 1.93.0, Node.js 24, npm, Git이 필요합니다. Codex나 Claude Code를 사용하려면 Grove를 실행할 사용자 계정에서 해당 CLI를 설치하고 로그인하세요.

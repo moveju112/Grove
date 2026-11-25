@@ -665,6 +665,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
         };
         Some(crate::provider::cli::CliContext {
             cwd: root.clone(),
+            usage_data_dir: Some(data.to_owned()),
             resume: if managed_cli { None } else { native_resume(c, &t, &profile_id, &rp.protocol, &system, def.get("bot_room").is_some())? },
             service_tier: service_tier.map(str::to_owned),
             continuations: None,

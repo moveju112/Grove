@@ -9,6 +9,8 @@ for (const width of [390, 1280]) {
                 await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
                 await page.route("**/api/v1/projects", (route) => route.fulfill({ json: [] }));
                 await page.route("**/api/v1/recent?*", (route) => route.fulfill({ json: { items: [], total: 0, next_offset: null } }));
+                // 연결된 계정이 없으면 사용 한도 영역과 빈 막대를 표시하지 않는다.
+                await page.route("**/api/v1/usage/accounts", (route) => route.fulfill({ json: { accounts: [] } }));
                 await login(page);
                 await page.evaluate(() => document.fonts.ready);
                 expect(await page.evaluate(() => [...document.fonts].some((font) => font.family === "Pretendard" && font.status === "loaded"))).toBe(true);

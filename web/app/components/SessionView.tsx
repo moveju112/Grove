@@ -207,8 +207,9 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             const b = bottom.current?.getBoundingClientRect();
             const near = !!b && b.top <= messageViewportBottom() + 80;
             stick.current = pinned.current || (!previewRef.current && near);
-            // 질문에서 멈춘 고정 상태는 아래에 새 내용이 남아 있으므로 알림을 지우지 않는다.
-            if (near) setUnseen(false);
+            // 질문에서 멈춘 고정 상태는 아래에 새 내용이 남아 있으므로 끝이 실제로 보일 때만 알림을 지운다.
+            // 80px 기준으로 지우면 멈춤 보정이 다시 알림을 켜며 버튼이 깜빡인다.
+            if (pinned.current ? !!b && b.top <= messageViewportBottom() + 1 : near) setUnseen(false);
             capturePosition();
         };
         // 브라우저 scroll anchoring이 아래에 내용이 늘 때 위치를 고치며 scroll 이벤트를 내면 '맨 아래 보는 중'이 꺼진다.
@@ -641,9 +642,11 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
                 </FileRefContext.Provider>
             </Stack>
             {unseen && (
-                <GroveButton xstyle={chatLayout.below} data-testid="new-below" onClick={toBottom}>
-                    새 메시지 ↓
-                </GroveButton>
+                <Stack xstyle={chatLayout.below}>
+                    <GroveButton data-testid="new-below" onClick={toBottom}>
+                        새 메시지 ↓
+                    </GroveButton>
+                </Stack>
             )}
             {questions.map((c) => <QuestionCard key={c.id} call={c} act={act} onAnswered={calls.reload} />)}
             {pending.length > 0 && (
@@ -664,7 +667,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             )}
             {unknown.map((c) => <UnknownCard key={c.id} c={c} act={act} />)}
             {/* 승인·질문 카드도 '맨 아래'에 포함해야 고정 스크롤이 카드를 입력창 뒤로 밀지 않는다. */}
-            <Stack gap={0} ref={bottom} />
+            <Stack gap={0} ref={bottom} data-testid="msgs-bottom" />
             <Stack gap={1} xstyle={chatLayout.surface} data-testid="compose-surface">
             <Composer projectId={s.project_id} resourceKey={`session:${sessionId}`} copyId={tabId} onSend={send} running={!!active} disabled={blocked} commands={commands}
                 beforeComposer={(options, retryDisabled) => <>

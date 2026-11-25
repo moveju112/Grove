@@ -18,17 +18,20 @@ const report: AccountUsageReport = { accounts: [
     ] },
 ] };
 
-describe("탐색 하단 잔여 한도", () => {
-    it("Claude·Codex의 5시간·주간 네 한도만 실제 잔여율과 게이지로 표시한다", () => {
+describe("탐색 하단 사용 한도", () => {
+    it("Claude·Codex의 5시간·주간 네 한도만 실제 사용률과 게이지로 표시한다", () => {
         const html = renderToStaticMarkup(createElement(UsageSummary, { report }));
-        for (const text of ["Claude 5시간", "Claude 주간", "Codex 5시간", "Codex 주간", "82%", "0%", "95.5%", "8%"]) {
+        for (const text of ["Claude 5시간", "Claude 주간", "Codex 5시간", "Codex 주간", ">18%<", ">100%<", ">4.5%<", ">92%<",
+            'aria-label="Codex 5시간 사용 18%"', 'aria-label="Claude 주간 사용 92%"']) {
             expect(html).toContain(text);
         }
+        expect(html).not.toContain("남음");
         for (const text of ["Spark", "Opus", "크레딧", "12.5"]) expect(html).not.toContain(text);
         expect(html).not.toContain("codex_cli");
         expect(html).not.toContain("토큰");
         expect(html.match(/role="progressbar"/g)).toHaveLength(4);
-        expect(html).toContain('aria-valuenow="0"');
+        expect(html).toContain('aria-valuenow="100"');
+        expect(html).toContain('aria-valuenow="4.5"');
         expect(html.indexOf("Claude 5시간")).toBeLessThan(html.indexOf("Codex 5시간"));
     });
 
@@ -77,21 +80,45 @@ describe("탐색 하단 잔여 한도", () => {
             ] }] } }));
         expect(html).toContain("갱신 대기");
         expect(html).toContain("갱신 실패 · 이전 값");
-        expect(html).not.toContain("15%");
+        expect(html).not.toContain("85%");
         expect(html).not.toContain('role="progressbar"');
     });
 
-    it("모델별 한도를 전체 한도로 대체하지 않고 작은 잔여율을 0%로 반올림하지 않는다", () => {
+    it("모델별 한도를 전체 한도로 대체하지 않고 조금 남은 한도를 100%로 반올림하지 않는다", () => {
         const html = renderToStaticMarkup(createElement(UsageSummary, { report: { accounts: [
             { ...report.accounts[0]!, limits: [
                 { label: "5시간", remaining_percent: 0.01, remaining: null, resets_at: null },
                 { label: "Spark 주간", remaining_percent: 70, remaining: null, resets_at: null },
             ] },
         ] } }));
-        expect(html).toContain("&lt;0.1%");
-        expect(html).toContain("Codex 주간");
-        expect(html).toContain("—");
-        expect(html).not.toContain("70%");
+        expect(html).toContain("&gt;99.9%");
+        expect(html).not.toContain("30%");
+        // 요금제에 없는 기간은 이름·줄표 없이 비워 둔다.
+        expect(html).not.toContain("Codex 주간");
+        expect(html).not.toContain("—");
         expect(html.match(/role="progressbar"/g)).toHaveLength(1);
+    });
+
+    it("5시간 한도가 없으면 그 자리를 비우고 주간은 오른쪽 열에 그대로 두며, 높은 사용률도 주의 색을 쓰지 않는다", () => {
+        const html = renderToStaticMarkup(createElement(UsageSummary, { report: { accounts: [
+            { ...report.accounts[0]!, limits: [{ label: "주간", remaining_percent: 5, remaining: null, resets_at: null }] },
+        ] } }));
+        expect(html).not.toContain("Codex 5시간");
+        expect(html).not.toContain("—");
+        expect(html).toContain(">95%<");
+        expect(html).not.toContain('data-variant="warning"');
+        expect(html.indexOf('aria-hidden="true"')).toBeLessThan(html.indexOf("Codex 주간"));
+        expect(html.match(/role="progressbar"/g)).toHaveLength(1);
+        // 공용 한도가 하나도 없는 계정은 줄 자체를 만들지 않는다.
+        expect(renderToStaticMarkup(createElement(UsageSummary, { report: { accounts: [
+            { ...report.accounts[0]!, limits: [{ label: "크레딧", remaining_percent: null, remaining: "12.5", resets_at: null }] },
+        ] } }))).toBe("");
+    });
+
+    it("쓰기 시작한 한도를 0%로 반올림하지 않는다", () => {
+        const html = renderToStaticMarkup(createElement(UsageSummary, { report: { accounts: [
+            { ...report.accounts[0]!, limits: [{ label: "5시간", remaining_percent: 99.99, remaining: null, resets_at: null }] },
+        ] } }));
+        expect(html).toContain("&lt;0.1%");
     });
 });

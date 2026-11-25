@@ -72,5 +72,7 @@ export const chatLayout = stylex.create({
     },
     actions: { alignSelf: "flex-end", minHeight: 28 },
     focusHit: { outline: "2px solid var(--focus)", outlineOffset: 2 },
-    below: { position: "sticky", bottom: "9em", alignSelf: "center", zIndex: 3 },
+    // 높이 0인 sticky 자리 위로 버튼을 띄운다. 버튼이 나타나고 사라져도 대화 높이가 바뀌지 않아야
+    // 위치 보정이 다시 버튼 상태를 바꾸는 순환이 생기지 않는다.
+    below: { position: "sticky", bottom: "9em", alignSelf: "center", zIndex: 3, height: 0, display: "flex", alignItems: "flex-end", overflow: "visible" },
 });

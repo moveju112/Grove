@@ -1,5 +1,5 @@
 import { DropdownMenu, DropdownMenuRadioGroup, DropdownMenuRadioItem } from "@astryxdesign/core/DropdownMenu";
-import { ProfileModels, useModelCatalog } from "./ModelSelect";
+import { ProfileModelMenus, useModelCatalog } from "./ModelSelect";
 import { catalogModel, modelEfforts } from "./model-catalog";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Grid } from "@astryxdesign/core/Grid";
@@ -88,9 +88,8 @@ export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortC
                 {roleEnabled !== undefined && <DropdownMenuRadioItem value={ROLE_DISABLED} label="사용 안 함" data-option-value={ROLE_DISABLED} />}
                 {!requiresModel && <DropdownMenuRadioItem value="" label={fallback} data-option-value="" />}
             </DropdownMenuRadioGroup>
-            {(profiles.data ?? []).map((profile) => <ProfileModels key={profile.id} profile={profile}
-                profileId={roleEnabled === false ? null : id} model={id === profile.id ? selection?.model : null} includeDefault
-                onChange={(profile_id, model) => edit(model ? { profile_id, model } : profile_id)} />)}
+            <ProfileModelMenus profiles={profiles.data ?? []} profileId={roleEnabled === false ? null : id}
+                model={selection?.model} includeDefault onChange={(profile_id, model) => edit(model ? { profile_id, model } : profile_id)} />
         </DropdownMenu> : <Select label={d.label} hideLabel value={roleEnabled === false ? ROLE_DISABLED : id} disabled={disabled || !profiles.data} onChange={edit}
             options={[...(roleEnabled === undefined ? [] : [{ value: ROLE_DISABLED, label: "사용 안 함" }]), { value: "", label: fallback },
                 ...(id && profiles.data && !selected ? [{ value: id, label: "사용 불가 모델(삭제됐거나 접근 불가)", disabled: true }] : []),

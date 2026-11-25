@@ -65,6 +65,8 @@ export type Prefs = {
     recentWindow: RecentWindow;
     /// 모델 목록에 계열별 최신 버전 외의 이전 모델도 보인다.
     showAllModels: boolean;
+    /// 탐색 영역 아래쪽에 Claude·Codex 사용 한도 요약을 보인다.
+    showSidebarUsage: boolean;
 };
 
 // 예전 클라이언트는 작업 공간을 연 뒤에만 배치용 기기 ID를 만들었다.
@@ -81,6 +83,7 @@ export const defaultPrefs: Prefs = {
     notifyDone: true, notifyApproval: true, notifyServer: true, notifySound: true, notifyVibrate: true, notifyPush: true,
     recentWindows: [...DEFAULT_RECENT_WINDOWS], recentWindow: DEFAULT_RECENT_WINDOW,
     showAllModels: false,
+    showSidebarUsage: true,
     runningSendMode: "steer",
     progressVisibility: "collapse",
     keyboardShortcuts: DEFAULT_SHORTCUTS,
@@ -106,6 +109,7 @@ export function loadPrefs(): Prefs {
         if (typeof prefs.confirmTerminalPaste !== "boolean") prefs.confirmTerminalPaste = defaultPrefs.confirmTerminalPaste;
         if (typeof prefs.notifyPush !== "boolean") prefs.notifyPush = defaultPrefs.notifyPush;
         if (typeof prefs.showAllModels !== "boolean") prefs.showAllModels = defaultPrefs.showAllModels;
+        if (typeof prefs.showSidebarUsage !== "boolean") prefs.showSidebarUsage = defaultPrefs.showSidebarUsage;
         if (!activityDisplayOptions.some(({ value }) => saved.activityDisplay === value)) {
             prefs.activityDisplay = sessionVines === false ? "hidden" : defaultPrefs.activityDisplay;
         }

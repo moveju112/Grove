@@ -172,3 +172,20 @@ async fn live_steer_reaches_the_running_turn_at_a_tool_boundary_or_the_next_cli_
         }).await.unwrap();
     }
 }
+
+#[tokio::test]
+async fn parked_claude_exports_late_usage_without_another_turn() {
+    let root = tempfile::tempdir().unwrap();
+    let cli = fixture(root.path());
+    let handle = handle();
+    let mut req = request(root.path(), None, "usage-after-result");
+    req.cli.as_mut().unwrap().usage_data_dir = Some(root.path().into());
+    let result = run(&handle, &profile(Duration::from_secs(3)), &req, &mut |_| {}, Some(&cli)).await.unwrap();
+    assert_eq!(result.text, "usage-after-result");
+    let path = root.path().join("usage/v1/claude.json");
+    tokio::time::timeout(Duration::from_secs(3), async {
+        while !path.is_file() { tokio::time::sleep(Duration::from_millis(10)).await; }
+    }).await.unwrap();
+    let snap: Value = serde_json::from_slice(&std::fs::read(path).unwrap()).unwrap();
+    assert_eq!(snap["windows"]["seven_day"]["used_percent"], 25.0);
+}

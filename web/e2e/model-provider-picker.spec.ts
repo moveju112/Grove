@@ -33,10 +33,23 @@ for (const mobile of [false, true]) {
                 await expect(summary).toHaveText("fixture-model");
                 await picker.click();
                 const codexCategory = page.getByRole("menuitem", { name: "Codex", exact: true });
-                await expect(codexCategory).not.toHaveAttribute("aria-checked");
-                if (mobile) await codexCategory.click();
-                else { await codexCategory.focus(); await codexCategory.press("ArrowRight"); }
+                const claudeCategory = page.getByRole("menuitem", { name: "Claude", exact: true });
+                const claudeModels = page.getByTestId(`model-profile-models-${claude.id}`);
                 const codexModels = page.getByTestId(`model-profile-models-${codex.id}`);
+                await expect(codexCategory).not.toHaveAttribute("aria-checked");
+                await claudeCategory.click();
+                await expect(claudeModels).toBeVisible();
+                if (mobile) await claudeModels.getByRole("menuitem", { name: /Back|뒤로/ }).click();
+                await codexCategory.click();
+                await expect(codexModels).toBeVisible();
+                await expect(claudeModels).toBeHidden();
+                if (!mobile) {
+                    await claudeCategory.press("ArrowRight");
+                    await expect(claudeModels).toBeVisible();
+                    await expect(codexModels).toBeHidden();
+                    await codexCategory.press("ArrowRight");
+                    await expect(claudeModels).toBeHidden();
+                }
                 await expect(codexModels.getByRole("menuitemradio", { name: "Fixture Light", exact: true })).toBeVisible();
                 // 기본은 계열별 최신 버전만 보이고, 목록 끝 스위치로 이전 버전까지 펼친다.
                 const allModels = codexModels.getByRole("menuitemcheckbox", { name: /^전체 모델 보기/ });
@@ -61,8 +74,7 @@ for (const mobile of [false, true]) {
                 await expect(summary).toHaveText("Fixture Light");
 
                 await picker.click();
-                await page.getByRole("menuitem", { name: "Claude", exact: true }).click();
-                const claudeModels = page.getByTestId(`model-profile-models-${claude.id}`);
+                await claudeCategory.click();
                 await expect(claudeModels.getByRole("menuitemradio", { name: "Fixture Claude", exact: true })).toBeVisible();
                 await expect(claudeModels.getByRole("menuitemradio")).toHaveText(["Opus 5.5", "Fixture Claude"]);
                 await expect(claudeModels.getByRole("menuitemcheckbox")).toHaveCount(0);

@@ -68,3 +68,7 @@ for line in sys.stdin:
     if not text.endswith("untimed"):
         timing["duration_api_ms"] = api_total
     emit(type="result", subtype="success", session_id=session, result=text, usage={"output_tokens": 1}, **timing)
+    if text == "usage-after-result":
+        import time
+        time.sleep(0.08)
+        emit(type="rate_limit_event", rate_limit_info={"rateLimitType": "seven_day", "utilization": 0.25})

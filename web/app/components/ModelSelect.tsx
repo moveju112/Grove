@@ -31,11 +31,30 @@ function isAutomatic(profile: ModelProfile | undefined) {
     return profile?.model === "default" && ["codex_oauth", "codex_cli", "claude_code"].includes(profile.protocol);
 }
 
-export function ProfileModels({ profile, profileId, model, onChange, includeDefault = false }: {
-    profile: ModelProfile; profileId: string | null; model?: string | null; includeDefault?: boolean;
+type ProfileModelChoice = {
+    profileId: string | null; model?: string | null; includeDefault?: boolean;
     onChange: (profileId: string, model: string | null) => void;
+};
+
+export function ProfileModelMenus({ profiles, ...choice }: ProfileModelChoice & { profiles: ModelProfile[] }) {
+    const [menus, setMenus] = useState<{ open: string | null; versions: Record<string, number> }>({ open: null, versions: {} });
+    const onOpenChange = (id: string, expanded: boolean) => setMenus((current) => {
+        const previous = current.open;
+        if (!expanded) return previous === id ? { ...current, open: null } : current;
+        if (previous === id) return current;
+        // Astryx 하위 메뉴는 자체적으로 열리므로 이전 메뉴만 다시 마운트해 닫는다.
+        const versions = previous === null ? current.versions
+            : { ...current.versions, [previous]: (current.versions[previous] ?? 0) + 1 };
+        return { open: id, versions };
+    });
+    return profiles.map((profile) => <ProfileModels key={`${profile.id}:${menus.versions[profile.id] ?? 0}`}
+        profile={profile} {...choice} expanded={menus.open === profile.id}
+        onOpenChange={(expanded) => onOpenChange(profile.id, expanded)} />);
+}
+
+function ProfileModels({ profile, profileId, model, onChange, includeDefault = false, expanded, onOpenChange }: ProfileModelChoice & {
+    profile: ModelProfile; expanded: boolean; onOpenChange: (expanded: boolean) => void;
 }) {
-    const [expanded, setExpanded] = useState(false);
     const { showAllModels } = usePrefs();
     const supported = useCapability("turn_model_selection_v1");
     const catalog = useModelCatalog(profile, !expanded);
@@ -53,7 +72,7 @@ export function ProfileModels({ profile, profileId, model, onChange, includeDefa
     const latest = latestModels(sorted, [selected, profile.model]);
     const older = sorted.length - latest.length;
     return <DropdownMenuSubMenu label={profile.name} isDisabled={!profile.enabled}
-        data-profile-id={profile.id} onOpenChange={setExpanded} hasSpinner={catalog.loading}
+        data-profile-id={profile.id} onOpenChange={onOpenChange} hasSpinner={catalog.loading}
         menuDataTestId={`model-profile-models-${profile.id}`}>
         <DropdownMenuRadioGroup label={`${profile.name} 모델`} value={includeDefault && !model && profileId === profile.id ? "__profile_default__" : selected}
             onChange={(id) => onChange(profile.id, id === "__profile_default__" || !includeDefault && !automatic && id === profile.model ? null : id)}>
@@ -180,8 +199,7 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
                             </GroveStack>}
                             <Icon name="chevronDown" size={16} />
                         </Button>}>
-                        {profiles.map((item) => <ProfileModels key={item.id} profile={item} profileId={profileId}
-                            model={model} onChange={choose} />)}
+                        <ProfileModelMenus profiles={profiles} profileId={profileId} model={model} onChange={choose} />
                     </DropdownMenu>
                     {!bound && <FavoriteStar favorites={favorites} current={currentFavorite} profiles={profiles} />}
                     </GroveStack>

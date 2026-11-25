@@ -38,3 +38,6 @@ Claude Code는 데몬 계정에 설치된 `claude`를 실행한다. 공식 CLI�
 - **MUST** 서버 상태 변경 뒤 UI 갱신은 도메인 이벤트와 조회 cache 무효화를 함께 연결한다.
   - why: API 성공만으로 다른 pane·기기의 화면이 갱신되지는 않는다.
   - ✅ `pairing.changed`와 `applyEvent`의 `invalidate("pairings")` 연결. `evidence: src/pairing.rs`, `evidence: web/app/state/store.ts`.
+- **MUST** 완료 Push는 다른 등록 기기에서 15분 안에 화면 입력이 있으면 보내지 않고 버린다. 입력 시각은 서버 메모리에만 두며, 재시작 뒤에는 다음 입력부터 다시 판단한다.
+  - why: PC에서 작업하는 동안 휴대폰에 알림이 쌓이지 않게 한다. 같은 기기의 입력은 그 기기의 알림을 막지 않는다.
+  - ✅ 웹의 `watchDeviceActivity`가 `POST /presence`를 1분에 최대 한 번 보내고, 전달 직전에 `Presence::active_elsewhere`를 확인한다. `evidence: src/presence.rs`, `evidence: src/web_push/delivery.rs`, `evidence: web/app/state/deviceActivity.ts`.

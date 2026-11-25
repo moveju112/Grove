@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AccountUsageLimit, AccountUsageReport } from "../app/api/generated";
-import { apiCall, login, openDetails, openSettings, openUsage, profileAction, state } from "./helpers";
+import { apiCall, login, openDetails, openSettings, openUsage, profileAction, selectChoice, state } from "./helpers";
 
 const limit = (label: string, remaining_percent: number): AccountUsageLimit =>
     ({ label, remaining_percent, remaining: null, resets_at: "2100-01-01T00:00:00Z" });
@@ -21,7 +21,7 @@ test.afterEach(async () => {
 for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const) {
     test.describe(`${width}px ${theme} 잔여 사용량`, () => {
         test.use({ viewport: { width, height: 844 }, isMobile: width < 760, hasTouch: width < 760 });
-        test("사이드바에 한도를 노출하지 않고 모달에서만 사용량과 조회 상태를 표시한다", async ({ page }, info) => {
+        test("최근 목록 아래에 사용률을 두 줄로 표시하고 모달에서는 상세 한도와 조회 상태를 표시한다", async ({ page }, info) => {
             let queries = 0;
             await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
             await page.route("**/api/v1/usage/accounts", (route) => {
@@ -29,8 +29,25 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
                 return route.fulfill({ json: report });
             });
             await login(page);
-            await expect(page.getByTestId("sidebar-usage")).toHaveCount(0);
-            expect(queries).toBe(0);
+            const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
+            // 닫힌 모바일 서랍은 한도를 조회하지 않는다.
+            if (width < 760) {
+                await expect(sidebar).toHaveAttribute("aria-expanded", "false");
+                expect(queries).toBe(0);
+                await sidebar.click();
+            }
+            const side = page.getByRole("complementary", { name: "탐색" });
+            const summary = side.getByRole("region", { name: "사용 한도", exact: true });
+            await expect(summary.getByLabel("Codex 5시간 사용 18%", { exact: false })).toBeVisible();
+            await expect(summary.getByLabel("Codex 주간 사용 61%", { exact: false })).toBeVisible();
+            await expect(summary.getByRole("progressbar")).toHaveCount(2);
+            await expect(summary.getByText("한도 조회 미지원", { exact: true })).toBeVisible();
+            const [recent, usage, navigation] = await Promise.all([side.getByTestId("recent-scroll"), summary, side].map((node) => node.boundingBox()));
+            expect(usage!.y).toBeGreaterThanOrEqual(recent!.y + recent!.height);
+            expect(usage!.y + usage!.height).toBeLessThanOrEqual(navigation!.y + navigation!.height);
+            expect(usage!.height).toBeLessThanOrEqual(80);
+            expect(await summary.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+            await page.screenshot({ path: info.outputPath("sidebar-usage.png") });
             const panel = await openUsage(page);
             const quotas = panel.getByRole("region", { name: "OAuth 한도", exact: true });
             await expect(quotas.getByRole("img", { name: "Codex CLI 5시간 사용 18.0%", exact: true })).toBeVisible();
@@ -43,7 +60,6 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
             await page.screenshot({ path: info.outputPath("usage-quota-modal.png") });
             await page.keyboard.press("Escape");
             await expect(panel).toBeHidden();
-            await expect(page.getByTestId("sidebar-usage")).toHaveCount(0);
         });
 
         test("인증 필요를 누르면 해당 계정 설정만 열고 로그인은 자동 시작하지 않는다", async ({ page }, info) => {
@@ -56,8 +72,17 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
                 if (request.method() === "POST" && /\/agent-backends\/[^/]+\/(?:login|logout)(?:\/|$)/.test(request.url())) mutations.push(request.url());
             });
             await login(page);
-            await openUsage(page);
-            const claude = page.getByRole("button", { name: "Claude 인증 설정 열기", exact: true });
+            // 사이드바의 인증 필요도 같은 계정 설정을 연다.
+            const sidebar = page.getByRole("button", { name: "사이드바", exact: true });
+            if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
+            await page.getByRole("complementary", { name: "탐색" }).getByRole("button", { name: "Claude 인증 설정 열기", exact: true }).click();
+            await expect(page.getByRole("dialog", { name: "Claude Code 로그인", exact: true })).toBeVisible();
+            if (width < 760) await expect(page.getByTestId("mobile-drawer-left")).toHaveJSProperty("open", false);
+            await page.keyboard.press("Escape");
+            await expect(page.getByRole("dialog", { name: "Claude Code 로그인", exact: true })).toHaveCount(0);
+            expect(mutations).toEqual([]);
+            const usagePanel = await openUsage(page);
+            const claude = usagePanel.getByRole("button", { name: "Claude 인증 설정 열기", exact: true });
             const button = (await claude.boundingBox())!;
             expect(button.height).toBeGreaterThanOrEqual(32);
             await claude.click();
@@ -73,8 +98,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
             await page.screenshot({ path: info.outputPath("claude-auth-settings.png") });
             await page.keyboard.press("Escape");
             await expect(dialog).toHaveCount(0);
-            await openUsage(page);
-            const codex = page.getByRole("button", { name: "Codex CLI 인증 설정 열기", exact: true });
+            const codex = (await openUsage(page)).getByRole("button", { name: "Codex CLI 인증 설정 열기", exact: true });
             await codex.focus();
             await codex.press("Enter");
             const codexDialog = page.getByRole("dialog", { name: "Codex 로그인", exact: true });
@@ -87,6 +111,50 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
         });
     });
 }
+
+test("사이드바는 요금제에 없는 5시간 자리를 비우고 높은 사용률에도 같은 색 막대를 쓴다", async ({ page }, info) => {
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await page.route("**/api/v1/usage/accounts", (route) => route.fulfill({ json: { accounts: [
+        { ...report.accounts[0], limits: [limit("주간", 5)] },
+        { ...report.accounts[1], status: "available", limits: [limit("5시간", 36), limit("주간", 68)] },
+    ] } }));
+    await login(page);
+    const summary = page.getByRole("complementary", { name: "탐색" }).getByRole("region", { name: "사용 한도", exact: true });
+    await expect(summary.getByLabel("Codex 주간 사용 95%", { exact: false })).toBeVisible();
+    await expect(summary.getByText("Codex 5시간", { exact: true })).toHaveCount(0);
+    await expect(summary.getByText("—", { exact: true })).toHaveCount(0);
+    const x = async (text: string) => (await summary.getByText(text, { exact: true }).boundingBox())!.x;
+    expect(await x("Codex 주간")).toBe(await x("Claude 주간"));
+    const fills = await summary.locator(".astryx-progress-bar-fill").evaluateAll((nodes) => nodes.map((node) => getComputedStyle(node).backgroundColor));
+    expect(fills).toHaveLength(3);
+    expect(new Set(fills).size).toBe(1);
+    await summary.screenshot({ path: info.outputPath("sidebar-usage-missing-period.png") });
+});
+
+test("설정에서 탐색 영역 사용량을 숨기면 요약과 조회를 멈추고 새로고침 뒤에도 유지한다", async ({ page }, info) => {
+    let queries = 0;
+    await page.setViewportSize({ width: 1280, height: 844 });
+    await page.route("**/api/v1/usage/accounts", (route) => { queries++; return route.fulfill({ json: report }); });
+    await login(page);
+    const summary = page.getByRole("complementary", { name: "탐색" }).getByRole("region", { name: "사용 한도", exact: true });
+    await expect(summary).toBeVisible();
+    await openSettings(page, "local");
+    await page.getByLabel("설정 검색").fill("사용량");
+    const setting = page.getByTestId("setting-sidebar-usage").getByRole("combobox", { name: "사용량 표시", exact: true });
+    await selectChoice(setting, "false");
+    await expect(summary).toHaveCount(0);
+    await page.screenshot({ path: info.outputPath("sidebar-usage-hidden.png") });
+    await page.reload();
+    await expect(page.getByRole("complementary", { name: "탐색" })).toBeVisible();
+    queries = 0;
+    await page.waitForTimeout(500);
+    await expect(summary).toHaveCount(0);
+    expect(queries).toBe(0);
+    await openSettings(page, "local");
+    await page.getByLabel("설정 검색").fill("사용량");
+    await selectChoice(setting, "true");
+    await expect(summary).toBeVisible();
+});
 
 test("통계 조회가 실패해도 Codex 주간 한도와 크레딧을 표시하고 다시 열면 오래된 값을 갱신한다", async ({ page }) => {
     let remaining = 82;
@@ -143,6 +211,9 @@ test("Claude는 서버 CLI 인증의 두 구독 한도를 표시하고 캐시한
     };
     try {
         await page.setViewportSize({ width: 390, height: 844 });
+        // 사이드바 요약이 로그아웃 상태를 먼저 조회하면 서버가 '인증 필요'를 60초 동안 캐시한다.
+        // 이 시험은 캐시가 비어 있는 상태에서 로그인 뒤 첫 조회를 확인하므로 그동안 화면 조회를 서버로 보내지 않는다.
+        await page.route("**/api/v1/usage/accounts", (route) => route.fulfill({ json: { accounts: [] } }));
         await login(page);
         await openSettings(page);
         await page.getByLabel("설정 검색").fill("프로필");
@@ -157,6 +228,7 @@ test("Claude는 서버 CLI 인증의 두 구독 한도를 표시하고 캐시한
             limit("5시간", 87.5), { ...limit("주간", 30), resets_at: "2100-01-02T00:00:00Z" },
         ] });
         await page.keyboard.press("Escape");
+        await page.unroute("**/api/v1/usage/accounts");
         const panel = await openUsage(page);
         await expect(panel.getByRole("img", { name: "Claude 5시간 사용 12.5%", exact: true })).toBeVisible();
         await expect(panel.getByRole("img", { name: "Claude 주간 사용 70.0%", exact: true })).toBeVisible();

@@ -59,9 +59,10 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     const secondView = page.locator(`[data-testid=session-view][data-session="${second.id}"]`);
     await firstView.getByLabel("메시지 입력").fill("first pane draft fixture");
     const secondSeen = touched(second.id, true);
+    // 다른 프로젝트의 대화는 프로젝트 분할로 나란히 열린다.
     await splitRecentItem(secondItem);
     await secondSeen;
-    await expect(page.getByTestId("pane")).toHaveCount(2);
+    await expect(page.getByTestId("pane").filter({ visible: true })).toHaveCount(2);
     await secondView.getByLabel("메시지 입력").fill("second pane draft fixture");
     const access = touched(first.id, false);
     await firstItem.getByRole("button", { name: new RegExp(`${prefix} first`) }).click();
@@ -73,12 +74,13 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     await expect(page.getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ visible: true }).filter({ has: firstView })).toHaveCount(1);
     await expect(sessionTabs).toHaveCount(2);
     await splitRecentItem(firstItem);
-    await expect(page.getByTestId("pane")).toHaveCount(3);
+    await expect(page.getByTestId("pane").filter({ visible: true })).toHaveCount(3);
     await expect(firstView).toHaveCount(2);
-    const copy = page.getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ visible: true }).getByLabel("메시지 입력");
+    const focusedPane = () => page.locator('[data-project-focused="true"]').getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ visible: true });
+    const copy = focusedPane().getByLabel("메시지 입력");
     await copy.fill("explicit copy draft fixture");
     await firstItem.getByRole("button", { name: new RegExp(`${prefix} first`) }).click();
-    await expect(page.getByTestId("pane").and(page.locator('[data-focused="true"]')).filter({ visible: true }).getByLabel("메시지 입력")).toHaveValue("explicit copy draft fixture");
+    await expect(focusedPane().getByLabel("메시지 입력")).toHaveValue("explicit copy draft fixture");
     await expect(firstView).toHaveCount(2);
     await expect(sessionTabs).toHaveCount(3);
 });

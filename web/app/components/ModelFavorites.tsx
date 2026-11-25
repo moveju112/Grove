@@ -58,7 +58,7 @@ export function FavoriteChips({ favorites: { shared, state }, current, profiles,
     const rows = state.value.filter((item) => profiles.some((profile) => profile.id === item.profile_id));
     const drag = useTouchOrder<string>({
         enabled: shared && rows.length > 1 && (state.phase === "idle" || state.phase === "saved"),
-        selector: CHIP, idFor: (chip) => chip.dataset.favoriteKey!,
+        mouse: true, selector: CHIP, idFor: (chip) => chip.dataset.favoriteKey!,
         viewportFor: (chip) => {
             if (!grid.current?.contains(chip)) return null;
             for (let parent: HTMLElement | null = grid.current; parent; parent = parent.parentElement) {

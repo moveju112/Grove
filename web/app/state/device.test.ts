@@ -20,6 +20,19 @@ describe("터미널 여러 줄 붙여넣기 확인의 기기 설정", () => {
     });
 });
 
+describe("탐색 영역 사용량 표시의 기기 설정", () => {
+    it("기존 기기와 잘못된 저장값은 표시하고 명시적인 숨김만 보존한다", () => {
+        saved({ theme: "dark" });
+        expect(loadPrefs()).toMatchObject({ showSidebarUsage: true, theme: "dark" });
+        saved({ showSidebarUsage: false });
+        expect(loadPrefs().showSidebarUsage).toBe(false);
+        for (const showSidebarUsage of [null, 0, "false", {}]) {
+            saved({ showSidebarUsage });
+            expect(loadPrefs().showSidebarUsage).toBe(true);
+        }
+    });
+});
+
 describe("최근 시간 범위의 기기 설정", () => {
     it("기존 전체 선택은 기본 시간 범위로 읽고 다른 설정은 보존한다", () => {
         saved({ recentWindow: "all", recentWindows: ["30m", "12h"], theme: "dark" });
