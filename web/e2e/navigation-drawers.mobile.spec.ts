@@ -168,6 +168,55 @@ test("마지막 탭을 닫아도 빈 화면에서 양쪽 서랍을 열고 오른
     await expect(input).toHaveValue("첫 탭의 초안");
 });
 
+test("오른쪽 서랍에서 새 터미널을 열고 다른 탭에서 실행 중인 터미널로 돌아온다", async ({ page }, info) => {
+    const project = await apiCall<{ id: string; name: string }>("POST", "/projects", {
+        root_path: mkdtempSync(join(dirname(state().projA), "terminal-drawer-")),
+    });
+    const existing = await apiCall<{ id: string; name: string }>("POST", `/projects/${project.id}/terminals`, { name: "기존 터미널" });
+    try {
+        await login(page);
+        const left = page.getByTestId("mobile-drawer-left");
+        const right = page.getByTestId("mobile-drawer-right");
+        await page.getByRole("button", { name: "사이드바", exact: true }).tap();
+        await left.getByTestId("project-row").getByRole("button", { name: project.name, exact: true }).tap();
+        await expect(page.getByTestId("project-view").filter({ visible: true })).toBeVisible();
+        await page.getByRole("button", { name: "열린 세션", exact: true }).tap();
+        const terminals = right.getByRole("region", { name: "터미널", exact: true });
+        await expect(terminals.getByRole("button", { name: "기존 터미널", exact: true })).toBeVisible();
+        const create = terminals.getByRole("button", { name: "새 터미널", exact: true });
+        await expect(create).toBeInViewport({ ratio: 1 });
+        const box = (await create.boundingBox())!;
+        expect(box.width).toBeGreaterThanOrEqual(32);
+        expect(box.height).toBeGreaterThanOrEqual(32);
+        await page.screenshot({ path: info.outputPath("terminal-drawer-390.png") });
+        await create.tap();
+        await expect(right).toHaveJSProperty("open", false);
+        const view = page.getByTestId("terminal-view").filter({ visible: true });
+        await expect(view).toHaveAttribute("data-conn", "open");
+
+        // 새 대화 탭으로 옮겨도 열린 터미널 탭과 탭 없는 실행 중 터미널로 돌아갈 수 있다.
+        await page.getByRole("button", { name: "열린 세션", exact: true }).tap();
+        await expect(terminals.getByTestId("mobile-open-tab")).toHaveCount(1);
+        await right.getByRole("region", { name: "새 대화 탭", exact: true }).getByRole("button", { name: "새 대화", exact: true }).tap();
+        await expect(page.getByTestId("project-view").filter({ visible: true })).toBeVisible();
+        await page.getByRole("button", { name: "열린 세션", exact: true }).tap();
+        await terminals.getByTestId("mobile-open-tab").getByRole("button", { name: "터미널", exact: true }).tap();
+        await expect(right).toHaveJSProperty("open", false);
+        await expect(view).toHaveAttribute("data-conn", "open");
+        await page.getByRole("button", { name: "열린 세션", exact: true }).tap();
+        await terminals.getByRole("button", { name: "기존 터미널", exact: true }).tap();
+        await expect(right).toHaveJSProperty("open", false);
+        await expect(view).toHaveAttribute("data-conn", "open");
+        await page.getByRole("button", { name: "열린 세션", exact: true }).tap();
+        await expect(terminals.getByTestId("mobile-open-tab")).toHaveCount(2);
+        await expect(terminals.getByTestId("mobile-terminal")).toHaveCount(0);
+        await expect(terminals.getByRole("button", { name: "기존 터미널 탭 닫기", exact: true })).toBeVisible();
+    } finally {
+        const list = await apiCall<{ terminals: { id: string; status: string }[] }>("GET", `/projects/${project.id}/terminals`);
+        for (const terminal of list.terminals.filter((item) => item.status === "running")) await apiCall("POST", `/terminals/${terminal.id}/kill`);
+    }
+});
+
 test("본문 스와이프는 입력·선택·코드의 가로 스크롤과 세로 스크롤을 가로채지 않는다", async ({ page }) => {
     const { a } = await ensureProjects();
     const profile = await ensureProfile();

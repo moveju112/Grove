@@ -52,6 +52,7 @@ import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { Select } from "../design/Select";
 import { Button } from "../design/Button";
 import { MobileDrawer, useMobilePanels } from "./MobilePanels";
+import { MobileTerminals } from "./MobileTerminals";
 import { SettingsDialog } from "./SettingsDialog";
 import { PushStatusContext, usePushSync } from "./PushNotifications";
 import { ProjectHistoryDialog } from "./ProjectHistoryDialog";
@@ -764,6 +765,11 @@ export function Workspace() {
                     <StackItem size="fill" isScrollable aria-label="현재 프로젝트 세션">
                         <Stack gap={1} padding={2}>{mobileTabs.filter((tab) => tab.kind === "session").map(renderMobileTab)}</Stack>
                     </StackItem>
+                    {selectedProjectId && <MobileTerminals projectId={selectedProjectId} tabs={mobileTabs.filter((tab) => tab.kind === "terminal")}
+                        renderTab={renderMobileTab} safeEnd={mobileDrafts.length === 0}
+                        open={(target) => { open(target); mobile.setPanel(null); }}
+                        newDisabled={!selectedProject?.available || openingTerminal || !layout || L.allTabs(layout).length >= L.MAX_TABS}
+                        onNewTerminal={() => { mobile.setPanel(null); void newTerminal(); }} />}
                     {mobileDrafts.length > 0 && <Stack as="section" gap={1} padding={2} isScrollable
                         aria-label="새 대화 탭" xstyle={workspaceStyles.mobileDraftDock}>
                         {mobileDrafts.map(renderMobileTab)}

@@ -28,6 +28,8 @@ export const workspaceStyles = stylex.create({
         borderRadius: "var(--radius-element)",
         boxShadow: "inset 0 0 0 1px var(--accent)",
     },
+    mobileTerminals: { flexShrink: 0, maxHeight: "30%" },
+    mobileSafeEnd: { paddingBlockEnd: "calc(var(--spacing-2) + env(safe-area-inset-bottom, 0px))" },
     mobileDraftDock: { flexShrink: 0, maxHeight: "40%", paddingBlockEnd: "calc(var(--spacing-2) + env(safe-area-inset-bottom, 0px))" },
     recentDock: { flexShrink: 0, minHeight: 0 },
     recentPanel: { flexShrink: 1, minHeight: 0 },

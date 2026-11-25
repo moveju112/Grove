@@ -110,7 +110,9 @@ test("모바일에서 첨부만 저장하고 원문을 미리본다", async ({ p
     await view.getByRole("button", { name: "보내기", exact: true }).click();
     const sent = view.getByLabel("메시지 첨부파일");
     await expect(sent).toContainText("폰-원문.txt");
-    await sent.getByRole("button", { name: "미리보기", exact: true }).click();
+    // 미리보기는 첨부 작업 메뉴 안에 있다.
+    await sent.getByRole("button", { name: "폰-원문.txt 첨부 작업", exact: true }).click();
+    await page.getByRole("group", { name: "폰-원문.txt 첨부 작업", exact: true }).getByRole("button", { name: "미리보기", exact: true }).click();
     await expect(sent.locator("pre")).toHaveText("모바일 첨부 원문");
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
