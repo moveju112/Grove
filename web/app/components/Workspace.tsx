@@ -724,7 +724,9 @@ export function Workspace() {
                 endContent={<Button variant="secondary" onClick={() => setCloseError(null)}>닫기</Button>} />}
             {noticeHost && createPortal(closeNotices, noticeHost)}
             {openingTerminal && <LoadingBar label="터미널 여는 중…" />}
-            {usageVisited && <CreationDialog label="사용량" isOpen={usageOpen} onClose={closeUsage} width="88em" xstyle={dashboardStyles.dialog}>
+            {usageVisited && <CreationDialog label="사용량" isOpen={usageOpen} onClose={closeUsage} width="88em" xstyle={dashboardStyles.dialog}
+                // 모바일은 바깥을 눌러 닫으므로 위아래에 누를 수 있는 여백을 남긴다.
+                maxHeight={narrow ? "82dvh" : undefined}>
                 <PaneVisibility value={usageOpen}><UsagePanel onClose={closeUsage}
                     onAuthenticate={(protocol) => { leaveUsage(); open({ kind: "settings", resource_id: `agent-auth:${protocol}`, title: "설정" }); }} /></PaneVisibility>
             </CreationDialog>}

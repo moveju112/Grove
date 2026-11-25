@@ -23,8 +23,9 @@ export function containCreationTab(dialog: HTMLDialogElement, event: KeyboardEve
 }
 
 // 표면·중첩 레이어·Escape·초점 복귀는 Astryx가 소유한다.
-export function CreationDialog({ label, onClose, children, footer, busy = false, width = "36em", isOpen = true, fullscreen = false, xstyle }: {
+export function CreationDialog({ label, onClose, children, footer, busy = false, width = "36em", isOpen = true, fullscreen = false, maxHeight = "calc(100dvh - 24px)", xstyle }: {
     label: string; onClose: () => void; children: ReactNode; footer?: ReactNode; busy?: boolean; width?: number | string; isOpen?: boolean; fullscreen?: boolean;
+    maxHeight?: string;
     xstyle?: DialogProps["xstyle"];
 }) {
     const ref = useRef<HTMLDialogElement>(null);
@@ -50,7 +51,7 @@ export function CreationDialog({ label, onClose, children, footer, busy = false,
         };
     }, [visible]);
     return <Dialog ref={ref} isOpen={visible && isOpen} width={width} padding={fullscreen ? 6 : undefined}
-        variant={fullscreen ? "fullscreen" : "standard"} maxHeight={fullscreen ? "100dvh" : "calc(100dvh - 24px)"} xstyle={xstyle}
+        variant={fullscreen ? "fullscreen" : "standard"} maxHeight={fullscreen ? "100dvh" : maxHeight} xstyle={xstyle}
         aria-label={label} aria-busy={busy} onOpenChange={(open) => { if (!open) close.current(); }}>
         <StackItem size="fill" isScrollable aria-label={`${label} 내용`}>
             <Stack gap={2}>{children}</Stack>

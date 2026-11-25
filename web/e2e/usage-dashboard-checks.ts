@@ -103,6 +103,11 @@ export async function checkDashboard(page: Page, info: TestInfo) {
     expect(bounds.y).toBeGreaterThan(0);
     expect(bounds.x + bounds.width).toBeLessThan(page.viewportSize()!.width);
     expect(bounds.y + bounds.height).toBeLessThan(page.viewportSize()!.height);
+    // 모바일은 바깥을 눌러 닫으므로 위아래에 손가락으로 누를 수 있는 여백이 남는다.
+    if (mobile) {
+        expect(bounds.y).toBeGreaterThanOrEqual(48);
+        expect(page.viewportSize()!.height - bounds.y - bounds.height).toBeGreaterThanOrEqual(48);
+    }
     // 모달의 양 끝에서 Tab과 Shift+Tab으로 배경 화면에 빠져나가지 않는다.
     const controls = dialog.locator('button:not(:disabled), input:not(:disabled), [tabindex="0"]').filter({ visible: true });
     await controls.last().focus();
