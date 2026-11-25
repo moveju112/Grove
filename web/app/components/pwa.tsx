@@ -1,9 +1,8 @@
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
-import { Text as GroveText } from "@astryxdesign/core/Text";
 // 작성 중인 입력을 보호하고, 다음 자동 확인에서 입력이 비었으면 적용한다.
 import { useSyncExternalStore } from "react";
 import { version as webVersion } from "../../package.json";
-import { accessToken, api, onProtocolMismatch } from "../api/client";
+import { accessToken, api } from "../api/client";
 import { deployment } from "../deployment";
 import { Button } from "../design/Button";
 import { SentenceText } from "./HelpTip";
@@ -143,18 +142,12 @@ export function applyUpdate() {
     waiting.postMessage({ type: "skip-waiting" });
 }
 
-let mismatchSnapshot: number | null = null;
-onProtocolMismatch((server) => { mismatchSnapshot = server; });
-
 export function ProtocolBanner() {
-    const server = useSyncExternalStore(
-        (notify) => onProtocolMismatch(() => notify()),
-        () => mismatchSnapshot,
-        () => null,
-    );
+    const { protocol: server } = useLifecycle();
     if (server === null) return null;
     return (
-        <Banner status="error" role="alert" data-testid="protocol-banner" xstyle={noticeStyles.update}
+        <Banner key={server} status="error" role="alert" data-testid="protocol-banner" xstyle={noticeStyles.interactive}
+            isDismissable dismissLabel="호환성 경고 닫기"
             title={<>서버가 새 버전(protocol {server})으로 바뀌어 이 화면에서는 변경 요청을 보낼 수 없습니다.
                 새 UI가 준비되면 지금 업데이트를 선택하세요. 작성 중인 입력은 저장되지 않으므로 중요한 내용은 먼저 복사하세요.</>}
             endContent={<Button onClick={() => void checkForUpdate()}>새 UI 확인</Button>} />
@@ -170,7 +163,7 @@ export function UpdateBanner() {
     );
     if (!current.worker && !current.error) return null;
     return (
-        <GroveStack gap={2} xstyle={noticeStyles.update}>
+        <GroveStack gap={2} xstyle={noticeStyles.interactive}>
             {current.error && <Banner status="error" role="alert" title={current.error} icon={<Icon name="warning" />}
                 isDismissable dismissLabel="업데이트 알림 닫기" onDismiss={() => publish(snapshot.worker)} />}
             {current.worker && <Banner status="info" role="status"

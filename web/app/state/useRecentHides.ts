@@ -7,7 +7,7 @@ type Target = { kind: string; project_id?: string; resource_id?: string };
 const identity = (target: Target) => JSON.stringify([target.kind, target.project_id, target.resource_id]);
 type Hide = {
     key: string; request: () => Promise<string>; tabId?: string; onHidden?: () => void | Promise<void>;
-    error?: string; uncertain?: boolean;
+    error?: string; uncertain?: boolean; noticeDismissed?: boolean;
 };
 
 export function useRecentHides() {
@@ -77,7 +77,9 @@ export function useRecentHides() {
                 run(retry);
             },
             dismiss(op: Hide) {
-                if (current.current.get(op.key) === op && !op.uncertain) current.current.delete(op.key);
+                if (current.current.get(op.key) !== op) return;
+                if (op.uncertain) current.current.set(op.key, { ...op, noticeDismissed: true });
+                else current.current.delete(op.key);
                 publish();
             },
             // 명시적으로 다시 열면 그 의도가 이긴다. 화면은 바로 열고 접근 기록만 숨김 뒤에 보낸다.

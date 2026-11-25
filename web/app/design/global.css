@@ -27,6 +27,8 @@ html, body {
 body > [data-astryx-theme] { min-height: 100%; }
 /* Astryx 레이아웃의 display보다 native hidden을 우선한다. */
 [hidden] { display: none !important; }
+/* 상단 배너의 닫기 버튼에 32px 터치 영역을 확보한다. */
+#app-notices { --size-element-sm: 32px; }
 /* Astryx Button의 label 슬롯까지 채워 탐색·설정의 짧은 제목도 왼쪽에 둔다.
    공용 어댑터의 콘텐츠만 선택하며 spinner·터치 확장·상태 슬롯은 건드리지 않는다. */
 .astryx-button[data-grove-button-layout="fill"] > span > span:has(> [data-grove-button-content]) {

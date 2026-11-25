@@ -135,7 +135,7 @@ export function RecentPanel({ hides, open, warmProject, splitGroups = NO_SPLITS,
             <Stack gap={0} xstyle={presentation === "sidebar" && workspaceStyles.recentItems}
                 role={presentation === "sidebar" ? "region" : undefined} aria-label={presentation === "sidebar" ? "최근 목록" : undefined}
                 tabIndex={presentation === "sidebar" ? 0 : undefined} data-testid="recent-scroll">
-            {hides.entries.filter(op => !op.tabId && op.error).map(op => <Stack key={op.key} direction="horizontal" align="center" gap={1}>
+            {hides.entries.filter(op => op.error && (!op.tabId || op.noticeDismissed)).map(op => <Stack key={op.key} direction="horizontal" align="center" gap={1}>
                 <GroveText as="p" type="supporting" color="error" role="alert">{op.error}</GroveText>
                 {op.uncertain ? <ServerActionButton appearance="link" onClick={() => hides.retry(op)}>같은 요청 결과 확인</ServerActionButton>
                     : <Button appearance="link" onClick={() => hides.dismiss(op)}>닫기</Button>}

@@ -18,6 +18,5 @@ export const noticeStyles = stylex.create({
         borderRadius: 12,
     },
     lifecycle: { flexShrink: 0, pointerEvents: "none" },
-    passiveConnection: { pointerEvents: "none" },
-    update: { flexShrink: 0, minWidth: 0, maxWidth: "100%", pointerEvents: "auto" },
+    interactive: { flexShrink: 0, minWidth: 0, maxWidth: "100%", pointerEvents: "auto" },
 });

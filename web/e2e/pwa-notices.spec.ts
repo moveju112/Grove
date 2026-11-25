@@ -1,15 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { apiCall, ensureProfile, ensureProjects, login, sessionView } from "./helpers";
-
-const SW = join(process.cwd(), "build/client/sw.js");
+import { apiCall, ensureProfile, ensureProjects, login, sessionView, state } from "./helpers";
 
 for (const width of [390, 1400]) for (const theme of ["light", "dark"] as const) {
     test.describe(`${width}px ${theme} 업데이트 알림`, () => {
         test.use({ viewport: { width, height: 844 }, isMobile: width < 760, hasTouch: width < 760 });
         test("입력창을 가리지 않고 다른 알림과 함께 표시하며 초안을 유지한다", async ({ page }, info) => {
-            const original = readFileSync(SW, "utf8");
+            const workerPath = join(state().work, "web/sw.js");
+            const original = readFileSync(workerPath, "utf8");
             try {
                 await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
                 const { a } = await ensureProjects();
@@ -24,7 +23,7 @@ for (const width of [390, 1400]) for (const theme of ["light", "dark"] as const)
                 const view = sessionView(page, session.id);
                 const input = view.getByLabel("메시지 입력", { exact: true });
                 await input.fill("업데이트 알림이 떠도 유지할 초안");
-                writeFileSync(SW, original.replace(/const VERSION = "([^"]+)"/, `const VERSION = "$1-notices-${width}-${theme}"`));
+                writeFileSync(workerPath, original.replace(/const VERSION = "([^"]+)"/, `const VERSION = "$1-notices-${width}-${theme}"`));
                 await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration())!.update(); });
                 await page.waitForFunction(async () => (await navigator.serviceWorker.getRegistration())?.waiting?.state === "installed",
                     undefined, { timeout: 15_000 });
@@ -71,7 +70,7 @@ for (const width of [390, 1400]) for (const theme of ["light", "dark"] as const)
                 await expect(offline).toBeVisible();
             } finally {
                 await page.context().setOffline(false);
-                writeFileSync(SW, original);
+                writeFileSync(workerPath, original);
             }
         });
     });
