@@ -76,6 +76,8 @@ export type Label = { id: string, name: string, color: string, revision: number,
  */
 project_count: number, };
 
+export type SessionTurnModel = { turn_id: string, profile_id: string, model: string | null, };
+
 export type SessionRecent = { id: string, revision: number, pinned: boolean, };
 
 export type Session = { id: string, project_id: string, title: string, created_at: string, updated_at: string, revision: number, archived_at: string | null, parent_session_id: string | null, fork_message_seq: number | null, fork_inherits_context: boolean, workflow_id: string | null, last_message_seq: number,
@@ -102,7 +104,11 @@ worktree_id: string | null,
 /**
  * 목록·검색에서 기존 최근 항목의 고정 상태와 변경 revision을 함께 제공한다.
  */
-recent?: SessionRecent, };
+recent?: SessionRecent,
+/**
+ * 대화 상세에서만 제공하는 마지막 사용자 턴의 모델 선택.
+ */
+last_model?: SessionTurnModel, };
 
 export type SessionPage = { items: Array<Session>, next_cursor: string | null, };
 

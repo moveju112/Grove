@@ -110,6 +110,51 @@ test("프로젝트 기본값은 새 입력창에만 적용하고 기기 선택·
     } finally { await f.cleanup(); }
 });
 
+test("폰에서 보낸 모델을 기존 PC 탭에 복원하고 다음 메시지도 그 모델로 보낸다", async ({ page, browser, baseURL }) => {
+    test.setTimeout(45_000);
+    const f = await fixture();
+    const phone = await browser.newContext({ baseURL, viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    try {
+        await setting(f.a.id, defaultsKey, f.secondary.id);
+        const title = `handoff ${f.prefix}`;
+        const session = await apiCall<{ id: string }>("POST", `/projects/${f.a.id}/sessions`, { title });
+        await apiCall("POST", "/recent/touch", { kind: "session", project_id: f.a.id, resource_id: session.id });
+        const open = async (target: Page) => {
+            await login(target);
+            const sidebar = target.getByRole("button", { name: "사이드바", exact: true });
+            if (await sidebar.getAttribute("aria-expanded") !== "true") await sidebar.click();
+            await target.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title, exact: true }).click();
+            return sessionView(target, session.id);
+        };
+        const desktop = await open(page);
+        await expect(desktop.getByTestId("model-summary")).toHaveText("fixture-default-b");
+        const mobile = await open(await phone.newPage());
+        const choice = JSON.stringify([f.primary.id, "fixture-model"]);
+        await selectChoice(await composerSetting(mobile, "모델 프로필"), choice);
+        await mobile.getByLabel("메시지 입력").tap();
+        for (const [view, marker] of [[mobile, "phone"], [desktop, "pc"]] as const) {
+            if (marker === "pc") {
+                await page.reload();
+                await expect(view.getByTestId("model-summary")).toHaveText("fixture-model");
+            }
+            const text = `${title} ${marker}`;
+            await script({ marker: text, frames: frames.text([`답변 ${marker}`]) });
+            await view.getByLabel("메시지 입력").fill(text);
+            await view.getByRole("button", { name: "보내기", exact: true }).click();
+            await expect(view.getByTestId("msg-assistant").last()).toContainText(`답변 ${marker}`);
+        }
+        const turns = await apiCall<{ profile_id: string; definition: { model_selection: { model: string } } }[]>("GET", `/sessions/${session.id}/turns`);
+        expect(turns.map(t => [t.profile_id, t.definition.model_selection.model])).toEqual([
+            [f.primary.id, "fixture-model"], [f.primary.id, "fixture-model"],
+        ]);
+        await expect(desktop.getByTestId("turn-status")).toHaveCount(0);
+        await composerCommand(desktop, `/model ${f.prefix}-b`);
+        await expect(desktop.getByTestId("model-summary")).toHaveText("fixture-default-b");
+        await page.reload();
+        await expect(desktop.getByTestId("model-summary")).toHaveText("fixture-default-b");
+    } finally { await phone.close(); await f.cleanup(); }
+});
+
 test("기본/요약 모델은 이름·전송 대상으로 고르고 revision 충돌에서 선택을 보존한다", async ({ page }) => {
     const f = await fixture();
     try {

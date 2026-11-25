@@ -14,7 +14,7 @@ import { Button as GroveButton } from "../design/Button";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { DetailDialog } from "./ui/Controls";
 import { ApiError, api, authGeneration, isLoggedIn, newKey } from "../api/client";
-import type { ModelProfile } from "../api/generated";
+import type { ModelProfile, SessionTurnModel } from "../api/generated";
 import { usePrefs } from "../state/device";
 import { useComposerMemory, useComposerMemoryStore } from "../state/useComposerMemory";
 import { clearInvalidRecovery, loadRecovery, saveRecovery, settleRecovery, validSendOptions, type PendingSend } from "../state/sendRecovery";
@@ -55,6 +55,7 @@ type Props = {
     /// 이 대화에서 턴이 실행 중이면 기기 설정의 대기열·steer·중단 후 보내기 방식을 쓴다(UI-021).
     running?: boolean;
     runningProfileId?: string | null;
+    lastModel?: SessionTurnModel;
     /// key: 이 전송의 Idempotency-Key. 결과를 모르는 실패 뒤 같은 내용을 다시 보내면 같은 key를 넘겨 서버가 중복 실행하지 않는다.
     /// follow: 실행 중일 때 고른 방식(없으면 일반 전송).
     onSend: (text: string, o: SendOptions, key: string, follow?: FollowKind, attachments?: string[], moveToSession?: (id: string, deliveryKey: string) => void) => Promise<void>;
@@ -74,7 +75,7 @@ export type RunCommand = SlashCommand & { run: (arg: string, o: SendOptions) => 
 export type { FollowKind } from "../state/sendOptions";
 
 /// 작성 중인 입력은 메모리에만 둔다. 이미 보낸 요청의 결과 확인에만 기기 저장소를 쓴다.
-export function Composer({ projectId, resourceKey, copyId, disabled: parentDisabled, running, runningProfileId, onSend, commands, boundProfileId, worktreeId, beforeComposer, sendAccessory, statusAccessory }: Props) {
+export function Composer({ projectId, resourceKey, copyId, disabled: parentDisabled, running, runningProfileId, lastModel, onSend, commands, boundProfileId, worktreeId, beforeComposer, sendAccessory, statusAccessory }: Props) {
     const serverBlocked = useServerBlockReason();
     const disabled = parentDisabled ?? serverBlocked;
     const store = localRecoveryStorage();
@@ -88,21 +89,29 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const [sending] = useComposerMemory(resourceKey, copyId, "sending", () => ({ current: false }));
     const [checking] = useComposerMemory(resourceKey, copyId, "checking", () => ({ current: false }));
     const [deviceOptions] = useState(loadOpts);
-    const [selectionState, setSelectionState] = useState<{ phase: "loading" | "ready"; options: SendOptions }>(() => {
+    const [selectionState, setSelectionState] = useState<{ phase: "loading" | "ready"; turnId?: string; options: SendOptions }>(() => {
         let restored = initial.pending?.intent;
+        let turnId: string | undefined;
         if (!restored) {
             try {
                 const saved = JSON.parse(localStorage.getItem(selectionKey) ?? "null");
-                if (validSendOptions(saved)) restored = { ...saved, agentId: null };
+                if (saved) {
+                    const { turnId: savedTurn, ...options } = saved;
+                    if (validSendOptions(options)) {
+                        restored = { ...options, agentId: null };
+                        if (typeof savedTurn === "string") turnId = savedTurn;
+                    }
+                }
             } catch { /* 모델 선택 저장소를 사용할 수 없으면 기본값을 쓴다. */ }
         }
-        return { phase: boundProfileId !== undefined || restored?.profileId ? "ready" : "loading",
+        return { turnId, phase: boundProfileId !== undefined || restored?.profileId ? "ready" : "loading",
             options: restored ?? { ...deviceOptions, profileId: null, model: null } };
     });
-    const opts = selectionState.options;
-    const setOpts = (value: SendOptions | ((options: SendOptions) => SendOptions)) => setSelectionState((current) => {
-        const options = typeof value === "function" ? value(current.options) : value;
-        return { phase: options.profileId ? "ready" : current.phase, options };
+    // 같은 턴을 보고 직접 고른 값은 탭별로 보존한다. 다른 기기에서 보낸 새 턴이 있으면 그 모델을 이어 쓴다.
+    const inherit = boundProfileId === undefined && !pending && lastModel && lastModel.turn_id !== selectionState.turnId;
+    const opts = inherit ? { ...selectionState.options, profileId: lastModel.profile_id, model: lastModel.model } : selectionState.options;
+    const setOpts = (options: SendOptions) => setSelectionState({
+        phase: options.profileId ? "ready" : selectionState.phase, turnId: lastModel?.turn_id, options,
     });
     // 응답을 기다리는 동안 다른 영역으로 옮겨 다시 그려도, 보낸 쪽은 지금 입력창의 글·첨부를 본다.
     const [selection] = useComposerMemory(resourceKey, copyId, "selection", () => ({ current: { options: opts, ids: attachments.ids, text, files: attachments.items.length } }));
@@ -119,12 +128,12 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
         () => api.get(`/settings/effective?project_id=${encodeURIComponent(projectId)}`));
     const prefs = usePrefs("runningSendMode", "enterToSend");
     const follow = prefs.runningSendMode;
-    const ready = boundProfileId !== undefined || selectionState.phase === "ready";
+    const ready = boundProfileId !== undefined || !!inherit || selectionState.phase === "ready";
     useEffect(() => {
         if (!ready || boundProfileId !== undefined || !isLoggedIn() || authGeneration() !== owner) return;
-        try { localStorage.setItem(selectionKey, JSON.stringify(opts)); }
+        try { localStorage.setItem(selectionKey, JSON.stringify({ ...selectionState.options, turnId: selectionState.turnId })); }
         catch { setMsg("이 입력창의 모델 선택을 저장하지 못했어요."); }
-    }, [ready, boundProfileId, owner, selectionKey, opts]);
+    }, [ready, boundProfileId, owner, selectionKey, selectionState]);
     useEffect(() => {
         if (ready || !profiles.data || !defaults.data) return;
         const configured = defaults.data.items.find((item) => item.key === "model.default_profile")?.effective;
@@ -166,7 +175,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const problem = capabilityProblem(selectedProfile?.capabilities, eff, attachments.items.some((item) =>
         (item.attachment?.mime ?? item.file?.type)?.startsWith("image/")), selectedModel);
     const update = (patch: Partial<SendOptions>) => {
-        setOpts((o) => ({ ...o, ...patch }));
+        setOpts({ ...opts, ...patch });
         // 다른 탭이 저장한 값을 오래된 입력창의 초기값으로 덮어쓰지 않는다.
         if (!isLoggedIn() || authGeneration() !== owner) return;
         try { localStorage.setItem(OPT_KEY, JSON.stringify({ ...loadOpts(), ...patch })); }

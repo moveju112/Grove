@@ -708,6 +708,7 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             <BudgetNote sessionId={sessionId} active={active} />
             <FollowupsPanel sessionId={sessionId} running={!!active} onError={setErr} />
                 </>}
+                lastModel={s.last_model}
                 runningProfileId={active?.profile_id}
                 statusAccessory={active && <Stack direction="horizontal" align="center" justify="between" gap={2} paddingInline={2} paddingBlock={1}
                     xstyle={chatLayout.turnStatus} data-testid="turn-status">

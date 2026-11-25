@@ -44,6 +44,17 @@ pub struct Session {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub recent: Option<SessionRecent>,
+    /// 대화 상세에서만 제공하는 마지막 사용자 턴의 모델 선택.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub last_model: Option<SessionTurnModel>,
+}
+
+#[derive(Debug, Clone, Serialize, ts_rs::TS)]
+pub struct SessionTurnModel {
+    pub turn_id: String,
+    pub profile_id: String,
+    pub model: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
@@ -104,6 +115,7 @@ fn from_row(r: &Row) -> rusqlite::Result<Session> {
         unread: r.get::<_, i64>(17)? < r.get::<_, i64>(11)?,
         worktree_id: r.get(18)?,
         recent: None,
+        last_model: None,
     })
 }
 
@@ -704,7 +716,21 @@ pub async fn search(State(app): State<App>, _p: Principal, Query(q): Query<Searc
 }
 
 pub async fn show(State(app): State<App>, _p: Principal, Path(id): Path<String>) -> ApiResult<Json<Session>> {
-    Ok(Json(app.db.call(move |c| get(c, &id)).await?))
+    Ok(Json(app.db.call(move |c| {
+        let mut session = get(c, &id)?;
+        // 사용자 요청·직접 재시도만 이어간다. 자동 후속 턴과 되감은 요청은 제외한다.
+        session.last_model = c.query_row(
+            "SELECT t.id, COALESCE(json_extract(t.definition_snapshot,'$.model_selection.profile_id'),
+                     json_extract(t.definition_snapshot,'$.fallback.original_profile_id'), t.profile_id),
+                    json_extract(t.definition_snapshot,'$.model_selection.model')
+             FROM turns t JOIN messages m ON m.id=t.request_message_id
+             WHERE t.session_id=?1 AND m.rewound_at IS NULL AND t.profile_id IS NOT NULL
+               AND COALESCE(json_extract(m.content,'$.source.kind'),'') IN ('','retry','followup')
+             ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1",
+            [&id], |r| Ok(SessionTurnModel { turn_id: r.get(0)?, profile_id: r.get(1)?, model: r.get(2)? }),
+        ).optional()?;
+        Ok(session)
+    }).await?))
 }
 
 #[derive(Deserialize)]
