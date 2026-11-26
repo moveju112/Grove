@@ -298,12 +298,12 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
                 }
                 Value::Object(public)
             });
-            Ok(Some((b, use_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks), generation, pricing, system, selection.effort)))
+            Ok(Some((b, use_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks), generation, pricing, system, selection.effort, selection.service_tier)))
         })
         .await?;
-    let Some((b, used_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks), generation, pricing, system, effort)) = prepared else { return Ok(None) };
+    let Some((b, used_profile, rp, msgs, before, timeline, max_tokens, (from, prev_record, source, count, checks), generation, pricing, system, effort, service_tier)) = prepared else { return Ok(None) };
     let (record_profile, record_effort, record_runtime) = (used_profile.clone(), effort.clone(), rp.clone());
-    let req = ModelRequest { system, messages: msgs, tools: vec![], max_tokens: Some(max_tokens), temperature: None, effort, cli: None };
+    let req = ModelRequest { system, messages: msgs, tools: vec![], max_tokens: Some(max_tokens), temperature: None, effort, cli: None, service_tier };
     let permit = crate::model_limits::auxiliary(app, session_id, &rp, cancel).await?;
     let provider_started = std::time::Instant::now();
     let out = provider::stream(&rp, &req, cancel, &mut |_| {}).await;

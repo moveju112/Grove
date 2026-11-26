@@ -227,6 +227,7 @@ mod tests {
             temperature: None,
             effort: None,
             cli: None,
+            service_tier: None,
         };
         let b = build_body(&req);
         assert_eq!(b["contents"].as_array().unwrap().len(), 3);

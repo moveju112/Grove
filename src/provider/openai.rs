@@ -242,6 +242,7 @@ mod tests {
             temperature: None,
             effort: None,
             cli: None,
+            service_tier: None,
         };
         let b = build_body(&p, &req);
         assert_eq!(b["messages"][0]["role"], "system");

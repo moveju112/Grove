@@ -1066,7 +1066,7 @@ async fn image_parts_map_to_three_http_protocols_and_cli_is_explicitly_rejected(
         max_tokens: None,
         temperature: None,
         effort: None,
-        cli: None,
+        cli: None, service_tier: None,
     };
     let mut profile = Profile {
         protocol: "openai".into(),

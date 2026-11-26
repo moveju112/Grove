@@ -157,13 +157,22 @@ for (const width of [390, 1280]) {
                     await selectChoice(effortChoice, effort);
                     await saved().toEqual({profile_id:profile.id,model,effort});
                 }
-                await expect(row.getByText("Fast", { exact: true })).toHaveCount(0);
+                // Fast는 속도 목록을 제공한 모델에서만 보이고, 추론 강도와 함께 저장된다.
+                const fast = row.getByRole("switch", { name: `${label} Fast`, exact: true });
+                const withFast = key === "context.summary_profile";
+                const selected = withFast ? {profile_id:profile.id,model,effort,service_tier:"priority"} : {profile_id:profile.id,model,...(effort ? {effort} : {})};
+                if (withFast) {
+                    await expect(fast).not.toBeChecked();
+                    await fast.click();
+                    await saved().toEqual(selected);
+                } else await expect(fast).toHaveCount(0);
                 await expect(choice).toContainText(model!);
                 await page.reload();
                 await openSettings(page);
                 await page.getByLabel("설정 검색").fill(label!);
                 await expectChoice(choice,value);
                 if (effort) await expectChoice(effortChoice, effort);
+                if (withFast) await expect(fast).toBeChecked();
                 if (key === "context.summary_profile") {
                     const role = page.getByTestId("workflow-context-compressor");
                     const toggle = role.getByRole("switch", { name: "컨텍스트 압축 사용" });
@@ -172,7 +181,7 @@ for (const width of [390, 1280]) {
                     if (!original) { await toggle.click(); await expect.poll(enabled).toBe(true); }
                     await toggle.click();
                     await expect.poll(enabled).toBe(false);
-                    await saved().toEqual({profile_id:profile.id,model,effort});
+                    await saved().toEqual(selected);
                     await expectChoice(choice, value);
                     await expectChoice(effortChoice, effort!);
                     const [modelBox, effortBox] = await Promise.all([choice.boundingBox(), effortChoice.boundingBox()]);
@@ -180,9 +189,14 @@ for (const width of [390, 1280]) {
                     expect(effortBox).not.toBeNull();
                     if (width === 390) expect(effortBox!.y).toBeGreaterThanOrEqual(modelBox!.y + modelBox!.height);
                     else expect(effortBox!.x).toBeGreaterThanOrEqual(modelBox!.x + modelBox!.width);
+                    await selectChoice(effortChoice, "high");
+                    await saved().toEqual({ ...selected, effort: "high" });
+                    await expect(fast).toBeChecked();
+                    await selectChoice(effortChoice, effort!);
                     await toggle.click();
                     await expect.poll(enabled).toBe(true);
                     await expectChoice(effortChoice, effort!);
+                    await expect(fast).toBeChecked();
                     if (!original) { await toggle.click(); await expect.poll(enabled).toBe(false); }
                     await choice.scrollIntoViewIfNeeded();
                     await page.screenshot({path:info.outputPath("role-models.png")});

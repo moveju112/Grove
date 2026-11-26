@@ -228,9 +228,12 @@ async fn role_model_selection_validates_and_preserves_atomic_profile_and_model()
     assert_eq!(s.send(Method::PUT,path,json!({"expected_revision":0,"value":selected})).await.0,StatusCode::OK);
     for invalid in [json!({"profile_id":profile,"model":"bad model"}),json!({"profile_id":"","model":"small"}),
         json!({"profile_id":profile,"model":""}), json!({"profile_id":profile,"effort":"invalid"}),
-        json!({"profile_id":profile,"model":"small","service_tier":"priority"})] {
+        json!({"profile_id":profile,"model":"small","service_tier":"bad tier"}), json!({"profile_id":profile,"model":"small","fast":true})] {
         assert_eq!(s.send(Method::PUT,path,json!({"expected_revision":1,"value":invalid})).await.0,StatusCode::BAD_REQUEST);
     }
+    // Fast는 Codex 속도 목록을 쓰는 연결에서만 고를 수 있다.
+    assert_eq!(s.send(Method::PUT,path,json!({"expected_revision":1,"value":{"profile_id":profile,"model":"small","service_tier":"priority"}})).await.0,
+        StatusCode::UNPROCESSABLE_ENTITY);
     assert_eq!(s.send(Method::PUT,path,json!({"expected_revision":1,"value":{"profile_id":"missing","model":"small"}})).await.0,StatusCode::NOT_FOUND);
     let (_,effective)=s.get("/api/v1/settings/effective").await;
     assert_eq!(item(&effective,"session.title_profile")["effective"],selected);

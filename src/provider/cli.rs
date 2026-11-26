@@ -292,7 +292,7 @@ pub(crate) const STANDARD_SERVICE_TIER: &str = "default";
 fn service_tier(req: &ModelRequest) -> Option<&str> {
     match &req.cli {
         Some(context) => context.service_tier.as_deref(),
-        None => Some(STANDARD_SERVICE_TIER),
+        None => Some(req.service_tier.as_deref().unwrap_or(STANDARD_SERVICE_TIER)),
     }
 }
 
@@ -1280,6 +1280,7 @@ echo '{{"type":"result","result":"ok"}}'"#);
             temperature: None,
             effort: None,
             cli: Some(CliContext { cwd: "/tmp".into(), resume: resume.map(String::from), ..Default::default() }),
+            service_tier: None,
         }
     }
 
@@ -1327,6 +1328,10 @@ echo '{{"type":"result","result":"ok"}}'"#);
         assert!(a.windows(2).any(|w| w == ["--disable", "shell_tool"]));
         assert!(a.contains(&"--ephemeral".into()));
         assert!(a.contains(&"service_tier=\"default\"".into()));
+        let mut fast_summary = summary.clone();
+        fast_summary.service_tier = Some("priority".into());
+        let (a, _) = args(&prof("codex_cli"), &fast_summary, "x");
+        assert!(a.contains(&"service_tier=\"priority\"".into()), "보조 호출은 워크플로우에서 고른 속도를 쓴다");
     }
 
     #[test]

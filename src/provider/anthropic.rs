@@ -303,6 +303,7 @@ mod tests {
             temperature: None,
             effort: None,
             cli: None,
+            service_tier: None,
         };
         let b = build_body(&p, &req);
         let m = b["messages"].as_array().unwrap();

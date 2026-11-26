@@ -19,7 +19,8 @@ export function isWaitingForResponse(status: Turn["status"]): boolean {
 }
 
 // 탭 아래 viewport에만 겹치며 스크롤바 영역은 제외한다.
-// 덩굴은 포커스한 영역에서만 움직이고, 다른 분할 영역은 같은 자리에 정지 프레임을 둔다.
+// 절약 모드에서는 포커스한 영역만 움직이고 다른 분할 영역은 같은 자리에 정지 프레임을 둔다.
+// 애니메이션 모드는 보이는 모든 분할 영역에서 움직인다.
 export function SessionActivityIndicator({ sessionId, visible, focused = true, viewportRef }: {
     sessionId: string; visible: boolean; focused?: boolean; viewportRef: RefObject<HTMLDivElement | null>;
 }) {
@@ -36,7 +37,7 @@ export function SessionActivityIndicator({ sessionId, visible, focused = true, v
     }, [active, enabled]);
     const exited = useCallback(() => setPresent(false), []);
     if (!enabled || (!active && !present)) return null;
-    return <SessionVines active={active} still={!focused || prefs.activityDisplay === "static"} onExited={exited} viewportRef={viewportRef}
+    return <SessionVines active={active} still={prefs.activityDisplay === "static" || (prefs.activityDisplay === "animated" && !focused)} onExited={exited} viewportRef={viewportRef}
         length={prefs.sessionVineLength} speed={prefs.sessionVineSpeed} groups={prefs.sessionVineGroups} />;
 }
 

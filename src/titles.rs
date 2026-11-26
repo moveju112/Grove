@@ -63,7 +63,7 @@ async fn generate_inner(app: &App, session_id: &str, profile_id: Option<String>,
     };
     let req = ModelRequest {
         system, messages: vec![ChatMsg::User { text, images: vec![] }], tools: vec![], max_tokens: Some(max_tokens),
-        temperature: None, effort: selection.effort.clone(), cli: None,
+        temperature: None, effort: selection.effort.clone(), cli: None, service_tier: selection.service_tier.clone(),
     };
     let mut cancel = app.shutdown_rx.clone();
     let started = std::time::Instant::now();
@@ -127,7 +127,7 @@ async fn apply(app: &App, session_id: &str, title: String, rev: i64, seq: i64, a
     Ok(if applied { json!({"applied":true,"title":title}) } else { json!({"applied":false,"reason":"changed"}) })
 }
 
-/// Paseodog처럼 완료된 턴마다 최근 목표를 반영한다. 수동 제목·자식·봇은 제외한다.
+/// 완료된 턴마다 최근 목표를 반영한다. 수동 제목·자식·봇은 제외한다.
 pub async fn after_turn(app: &App, turn_id: &str) {
     let tid = turn_id.to_string();
     let due = app.db.call(move |c| {

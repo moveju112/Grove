@@ -9,7 +9,7 @@ fn request() -> ModelRequest {
         messages: vec![ChatMsg::User { text: "Use get_fixture and return its value.".into(), images: vec![] }],
         tools: vec![ToolDef { name: "get_fixture".into(), description: "Returns a test value.".into(),
             schema: json!({"type":"object","properties":{},"additionalProperties":false}) }],
-        max_tokens: None, temperature: None, effort: None, cli: None,
+        max_tokens: None, temperature: None, effort: None, cli: None, service_tier: None,
     }
 }
 

@@ -22,6 +22,7 @@ fn request(root: &Path, resume: Option<String>, text: &str) -> ModelRequest {
     ModelRequest {
         messages: vec![ChatMsg::User { text: text.into(), images: vec![] }],
         cli: Some(CliContext { cwd: root.into(), resume, ..Default::default() }),
+        service_tier: None,
         tools: vec![], system: "instructions".into(), max_tokens: None, temperature: None, effort: None,
     }
 }

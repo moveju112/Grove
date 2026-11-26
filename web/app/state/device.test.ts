@@ -94,7 +94,7 @@ describe("진행 중 표시의 기기 설정", () => {
         });
     });
     it("세 표시 모드를 보존하고 이전 켜기·끄기 설정을 읽는다", () => {
-        for (const activityDisplay of ["animated", "static", "hidden"]) {
+        for (const activityDisplay of ["animatedAll", "animated", "static", "hidden"]) {
             saved({ activityDisplay, sessionVines: false });
             expect(loadPrefs().activityDisplay).toBe(activityDisplay);
         }

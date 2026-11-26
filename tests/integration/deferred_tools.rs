@@ -421,7 +421,7 @@ fn native_provider_conversion_uses_the_selected_registry_schema_and_preserves_ca
             }]},
             ChatMsg::Tool {call_id:"load-identity".into(),name:"load_tool".into(),content:"schemas".into(),is_error:false},
         ],
-        max_tokens:Some(128),temperature:None,effort:None,cli:None,
+        max_tokens:Some(128),temperature:None,effort:None,cli:None, service_tier: None,
     };
     let anthropic = provider::anthropic::build_body(&profile,&request);
     let write = anthropic["tools"].as_array().unwrap().iter().find(|t| t["name"] == "write").unwrap();

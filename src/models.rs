@@ -363,7 +363,7 @@ pub fn runtime_profile(c: &Connection, id: &str) -> ApiResult<(ModelProfile, Pro
     provider_profile(c, get_enabled_profile(c, id)?)
 }
 
-/// 역할별 선택은 연결 프로필을 공유하되 모델과 추론 강도는 독립적으로 고정한다.
+/// 역할별 선택은 연결 프로필을 공유하되 모델·추론 강도·속도는 독립적으로 고정한다.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
 pub struct ModelSelection {
@@ -372,11 +372,15 @@ pub struct ModelSelection {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub effort: Option<String>,
+    /// Codex 속도(service tier). 없으면 보조 호출·역할 실행은 standard로 고정한다.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub service_tier: Option<String>,
 }
 
 impl ModelSelection {
     pub(crate) fn from_profile(profile_id: String) -> Self {
-        Self { profile_id, model: None, effort: None }
+        Self { profile_id, model: None, effort: None, service_tier: None }
     }
 
     pub fn parse(value: &Value) -> ApiResult<Option<Self>> {
@@ -391,6 +395,7 @@ impl ModelSelection {
         }
         crate::runner::parse_model(selection.model.as_deref())?;
         selection.effort = provider::parse_effort(selection.effort.as_deref()).map_err(ApiError::invalid)?;
+        selection.service_tier = provider::parse_service_tier(selection.service_tier.as_deref()).map_err(ApiError::invalid)?;
         Ok(Some(selection))
     }
 
@@ -402,6 +407,9 @@ impl ModelSelection {
             rp.model = model.clone();
         }
         mp.check_capabilities(false, self.effort.as_deref(), false)?;
+        if self.service_tier.is_some() && (!crate::model_capabilities::is_codex(&mp.protocol) || !mp.capabilities.fast) {
+            return Err(ApiError::unsupported("선택한 모델 프로필은 속도 선택을 지원하지 않습니다"));
+        }
         Ok((mp, rp))
     }
 }

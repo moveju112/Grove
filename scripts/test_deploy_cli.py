@@ -451,7 +451,7 @@ class CliInstall(unittest.TestCase):
         binary = Path(os.environ["GROVE_TEST_BIN"]).resolve()
         with tempfile.TemporaryDirectory() as directory:
             home = Path(directory)
-            root = home / ".local/share/grove-opus"
+            root = home / ".local/share/grove"
             release = root / "releases/existing"
             release.mkdir(parents=True)
             shutil.copyfile(binary, release / "grove")

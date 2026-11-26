@@ -19,7 +19,7 @@ import { DRAG_PROJECT, parseProjectDrag } from "../state/projectOrder";
 import { SessionActivityIndicator } from "./session-activity/SessionActivityIndicator";
 import { PaneToolsTarget } from "./ui/Controls";
 import { Kbd } from "@astryxdesign/core/Kbd";
-import { usePrefs, type Prefs } from "../state/device";
+import { isActivityAnimated, usePrefs, type Prefs } from "../state/device";
 import { kbdKeys, macShortcuts, shortcutBinding } from "../state/shortcuts";
 import { shortcutWindow } from "./shortcuts/useWorkspaceShortcuts";
 import { ServerActionButton } from "./pwa/ServerActionButton";
@@ -128,7 +128,9 @@ function NodeView(p: ViewProps & { node: L.Node; path: number[] }) {
     );
 }
 
-const { DRAG_TAB, DRAG_OPEN } = L;
+const { DRAG_TAB, DRAG_OPEN, DRAG_NEW_CONVERSATION } = L;
+// dragover에서는 전송 데이터를 읽을 수 없으므로 끌고 있는 +의 프로젝트를 기억한다.
+let newConversationDrag: string | null = null;
 
 // pane 가장자리 25% 안이면 그 방향 분할, 아니면 그 pane에 넣는다. 좁은 화면은 분할하지 않는다.
 function dropZone(e: React.DragEvent<HTMLElement>, narrow: boolean): L.DropEdge {
@@ -141,7 +143,7 @@ function dropZone(e: React.DragEvent<HTMLElement>, narrow: boolean): L.DropEdge 
     return dist < 0.25 ? edge : "center";
 }
 
-const draggable = (e: React.DragEvent) => [DRAG_TAB, DRAG_OPEN, DRAG_PROJECT].some((kind) => e.dataTransfer.types.includes(kind));
+const draggable = (e: React.DragEvent) => [DRAG_TAB, DRAG_OPEN, DRAG_PROJECT, DRAG_NEW_CONVERSATION].some((kind) => e.dataTransfer.types.includes(kind));
 
 function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     const { leaf } = p;
@@ -156,7 +158,7 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     const maximizeLabel = maximized ? "분할 복원" : "영역 전체 보기";
     const projectName = (id?: string) => p.projects.find((x) => x.id === id)?.name;
     const visible = p.visible && (!p.narrow || focused) && (!p.maximized || p.maximized === leaf.id);
-    const animateTabRing = visible && !p.narrow && p.pageVisible && p.activityDisplay === "animated";
+    const animateTabRing = visible && !p.narrow && p.pageVisible && isActivityAnimated(p.activityDisplay);
     const reveal = visible && focused && !p.narrow && (p.onCloseProject || (!p.maximized && others.length > 0))
         && p.recentReveal?.leafId === leaf.id && p.recentReveal.tabId === leaf.active_tab ? p.recentReveal : undefined;
     // 대화 탭의 진행·완료 확인 상태는 최근 목록의 서버 상태를 그대로 쓴다. 같은 key라 pane끼리 한 요청을 공유한다.
@@ -196,14 +198,22 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
     }, [leaf.active_tab, p.narrow, visible]);
     const splittable = L.canSplit(p.layout, leaf.id);
     const projectId = active?.project_id ?? leaf.tabs.find((tab) => tab.project_id)?.project_id;
+    const layoutProject = L.allTabs(p.layout).find((tab) => tab.project_id)?.project_id ?? p.projectId;
+    const accepts = (e: React.DragEvent) => draggable(e)
+        && (!e.dataTransfer.types.includes(DRAG_NEW_CONVERSATION) || (!!newConversationDrag && newConversationDrag === layoutProject));
     const newConversation = () => {
         if (!projectId) return;
-        p.update((l) => L.openAtEdge(l, leaf.id, "center", { kind: "project", project_id: projectId, title: "새 대화" }));
+        p.update((l) => L.openAtEdge(l, leaf.id, "center", L.newConversationTab(projectId)));
     };
     const drop = (e: React.DragEvent, edge: L.DropEdge, index?: number) => {
         e.preventDefault();
         e.stopPropagation();
         setZone(null);
+        if (e.dataTransfer.types.includes(DRAG_NEW_CONVERSATION)) {
+            const source = e.dataTransfer.getData(DRAG_NEW_CONVERSATION);
+            if (source && source === layoutProject) p.update((l) => L.openAtEdge(l, leaf.id, edge, L.newConversationTab(source)));
+            return;
+        }
         if (e.dataTransfer.types.includes(DRAG_PROJECT)) {
             const target = parseProjectDrag(e.dataTransfer.getData(DRAG_PROJECT));
             if (target) p.onProjectDrop?.(target, edge);
@@ -238,14 +248,14 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 p.focusPreview?.(leaf);
             }}
             onDragOver={(e) => {
-                if (!draggable(e)) return;
+                if (!accepts(e)) return;
                 e.preventDefault();
                 e.dataTransfer.dropEffect = e.dataTransfer.types.includes(DRAG_TAB) ? "move" : "copy";
                 const next = dropZone(e, p.narrow);
                 setZone(next !== "center" && !splittable && !e.dataTransfer.types.includes(DRAG_PROJECT) ? "center" : next);
             }}
             onDragLeave={(e) => !e.currentTarget.contains(e.relatedTarget as Node | null) && setZone(null)}
-            onDrop={(e) => draggable(e) && drop(e, zone ?? "center")}
+            onDrop={(e) => accepts(e) && drop(e, zone ?? "center")}
         >
             {reveal && <Stack key={reveal.request} xstyle={splitStyles.recentReveal} data-testid="recent-pane-reveal" aria-hidden="true" />}
             {zone && <Stack xstyle={splitStyles.drop} data-testid="drop-zone" data-zone={zone} aria-hidden="true" />}
@@ -253,24 +263,24 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
             <Stack ref={tabRow} direction="horizontal" align="start" gap={0} xstyle={splitStyles.tabs} hidden={p.narrow}
                 // 탭 줄은 pane의 위쪽 가장자리여도 분할하지 않고 탭을 합친다.
                 onDragOver={(e) => {
-                    if (!draggable(e)) return;
+                    if (!accepts(e)) return;
                     e.preventDefault();
                     e.stopPropagation();
                     e.dataTransfer.dropEffect = e.dataTransfer.types.includes(DRAG_TAB) ? "move" : "copy";
                     setZone(null);
                 }}
-                onDrop={(e) => draggable(e) && drop(e, "center")}
+                onDrop={(e) => accepts(e) && drop(e, "center")}
             >
                 <Stack ref={tabList} direction="horizontal" align="center" gap={0} xstyle={splitStyles.tabList} role="tablist" aria-label="열린 대화와 화면">
                 {leaf.tabs.map((t, i) => { const status = tabStatus(t); return (
                     <Stack direction="horizontal" align="center" gap={0.5} key={t.id} xstyle={splitStyles.tab} role="tab" aria-selected={t.id === leaf.active_tab}
                         onDragOver={(e) => {
-                            if (!draggable(e)) return;
+                            if (!accepts(e)) return;
                             e.preventDefault();
                             e.stopPropagation();
                             setZone(null);
                         }}
-                        onDrop={(e) => draggable(e) && drop(e, "center", i)}
+                        onDrop={(e) => accepts(e) && drop(e, "center", i)}
                     >
                         <GroveButton type="button" appearance="disclosure" density="compact" xstyle={splitStyles.title} data-testid="tab-title"
                             aria-description={status === "running" ? "실행 중" : status === "completed" ? "완료 · 확인 안 함" : undefined} onClick={() => p.update((l) => L.activate(l, t.id))} title={`${projectName(t.project_id) ?? ""} · ${L.tabTitle(t)} · 끌어서 다른 영역이나 가장자리로 이동(Alt+Shift+←/→ 순서 변경)`}
@@ -306,8 +316,14 @@ function PaneView(p: ViewProps & { leaf: L.Leaf }) {
                 ); })}
                 </Stack>
                 {projectId && <GroveButton variant="secondary" appearance="icon" density="compact" xstyle={splitStyles.newConversation}
-                    aria-label="새 대화 탭" title="새 대화" disabled={L.allTabs(p.layout).length >= L.MAX_TABS}
-                    onClick={newConversation}><Icon name="plus" size={16} /></GroveButton>}
+                    aria-label="새 대화 탭" title="새 대화 · 끌어서 영역 가장자리에 놓으면 분할" disabled={L.allTabs(p.layout).length >= L.MAX_TABS}
+                    onClick={newConversation} draggable
+                    onDragStart={(e) => {
+                        newConversationDrag = projectId;
+                        e.dataTransfer.setData(DRAG_NEW_CONVERSATION, projectId);
+                        e.dataTransfer.effectAllowed = "copy";
+                    }}
+                    onDragEnd={() => { newConversationDrag = null; }}><Icon name="plus" size={16} /></GroveButton>}
                 <Stack direction="horizontal" align="center" gap={1} xstyle={splitStyles.tabActions} data-testid="pane-tab-actions">
                 {p.onCloseProject && <GroveButton variant="secondary" appearance="icon" density="compact" aria-label="프로젝트 분할 닫기"
                     title="프로젝트 화면만 닫습니다. 실행은 계속되며 작성 중인 입력은 저장되지 않습니다." onClick={p.onCloseProject}><Icon name="close" size={12} /></GroveButton>}

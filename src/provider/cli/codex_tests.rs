@@ -497,6 +497,7 @@ fn request(root: &std::path::Path, resume: Option<&str>, text: &str) -> ModelReq
             service_tier: Some("priority".into()),
             ..Default::default()
         }),
+        service_tier: None,
     }
 }
 

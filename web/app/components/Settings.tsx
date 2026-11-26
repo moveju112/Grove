@@ -11,7 +11,7 @@ import { HelpTip } from "./HelpTip";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, ModelProfile, SecretInfo } from "../api/generated";
-import { activityDisplayOptions, type Prefs, loadPrefs, savePrefs, usePrefs, VINE_GROUPS } from "../state/device";
+import { activityDisplayOptions, isActivityAnimated, type Prefs, loadPrefs, savePrefs, usePrefs, VINE_GROUPS } from "../state/device";
 import { When } from "./When";
 import { PushNotifications, PushStatusContext } from "./PushNotifications";
 import { AppNotificationPermission } from "./AppNotificationPermission";
@@ -409,13 +409,13 @@ function DisplayPrefs({ show }: {
                     <Stack gap={2} paddingBlockStart={2}>
                         <Select label="진행 중 표시" value={p.activityDisplay} options={[...activityDisplayOptions]}
                             onChange={(value) => set({ ...p, activityDisplay: value as Prefs["activityDisplay"] })} />
-                        <Select label="잎 무리 수" value={String(p.sessionVineGroups)} disabled={p.activityDisplay !== "animated"}
+                        <Select label="잎 무리 수" value={String(p.sessionVineGroups)} disabled={!isActivityAnimated(p.activityDisplay)}
                             onChange={(value) => set({ ...p, sessionVineGroups: Number(value) as Prefs["sessionVineGroups"] })}
                             options={VINE_GROUPS.map((count) => ({ value: String(count), label: `${count}개` }))} />
-                        <Select label="잎 무리 길이" value={p.sessionVineLength} disabled={p.activityDisplay !== "animated"}
+                        <Select label="잎 무리 길이" value={p.sessionVineLength} disabled={!isActivityAnimated(p.activityDisplay)}
                             onChange={(value) => set({ ...p, sessionVineLength: value as Prefs["sessionVineLength"] })}
                             options={[{ value: "short", label: "짧게" }, { value: "medium", label: "기본" }, { value: "long", label: "길게" }]} />
-                        <Select label="잎 회전 속도" value={p.sessionVineSpeed} disabled={p.activityDisplay !== "animated"}
+                        <Select label="잎 회전 속도" value={p.sessionVineSpeed} disabled={!isActivityAnimated(p.activityDisplay)}
                             onChange={(value) => set({ ...p, sessionVineSpeed: value as Prefs["sessionVineSpeed"] })}
                             options={[{ value: "slow", label: "느리게" }, { value: "normal", label: "기본" }, { value: "fast", label: "빠르게" }]} />
                     </Stack>

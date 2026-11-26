@@ -92,7 +92,7 @@ async fn claude_dispatch_starts_with_the_native_command_and_keeps_history_out_of
             ChatMsg::Assistant { text:"old answer".into(), tool_calls:vec![], native:None },
             ChatMsg::User { text:"/review file.rs".into(), images:vec![] },
         ], tools:vec![], max_tokens:None, temperature:None, effort:None,
-            cli:Some(CliContext { cwd:root.path().into(), resume:resume.clone(), native_command:Some(command.info.id), ..Default::default() }) };
+            cli:Some(CliContext { cwd:root.path().into(), resume:resume.clone(), native_command:Some(command.info.id), ..Default::default() }), service_tier: None };
         let out = super::super::stream_with(&profile, &req, &mut |_| {}, Some(&cli)).await.unwrap();
         assert_eq!(out.text, "native fixture");
         let wire: Value = serde_json::from_str(std::fs::read_to_string(root.path().join("claude-wire.jsonl")).unwrap().lines().next().unwrap()).unwrap();

@@ -71,7 +71,7 @@ pub static BUILTINS: &[Builtin] = &[
 
 pub const BASELINE_MANIFEST: &str = include_str!("../assets/baseline-manifest.json");
 
-/// Paseodog의 Solo 기본 역할과 내부 유지관리 역할을 위임 역할에서 구분한다.
+/// Solo 기본 역할과 내부 유지관리 역할을 위임 역할에서 구분한다.
 pub fn execution(kind: &str, id: &str) -> &'static str {
     if kind == "workflow" { return "workflow"; }
     match id {

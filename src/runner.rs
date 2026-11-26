@@ -478,7 +478,7 @@ fn native_resume(c: &Connection, turn: &Turn, profile: &str, protocol: &str, sys
     ).optional()?)
 }
 
-// Paseodog의 Mixdog 스타일 본문·공통 형식을 그대로 사용한다(assets/output-styles/README.md).
+// 가져온 답변 스타일 본문·공통 형식을 그대로 사용한다(assets/output-styles/README.md).
 fn output_style_prompt(style: Option<&str>) -> Option<String> {
     let (label, depth) = match style? {
         "detailed" => ("Detailed", include_str!("../assets/output-styles/detailed.md")),
@@ -658,11 +658,9 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     let cli = if cli_backend {
         let role_run = def["agent_run"].is_object()
             || (t.agent_id.is_some() && crate::agents::run_by_child(c, &s.id)?.is_some());
-        let service_tier = if role_run {
-            Some(crate::provider::cli::STANDARD_SERVICE_TIER)
-        } else {
-            def["service_tier"].as_str()
-        };
+        // 역할 실행은 역할 설정에서 고른 속도만 쓰고, 고르지 않았으면 standard로 고정한다.
+        let service_tier = def["service_tier"].as_str()
+            .or(role_run.then_some(crate::provider::cli::STANDARD_SERVICE_TIER));
         Some(crate::provider::cli::CliContext {
             cwd: root.clone(),
             usage_data_dir: Some(data.to_owned()),
@@ -710,6 +708,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             // 접수 때 고정한 추론 강도(UI-020). 없으면 auto.
             effort: def["effort"].as_str().map(str::to_string),
             cli,
+            service_tier: None,
         },
     }))
 }

@@ -1,6 +1,6 @@
 import * as stylex from "@stylexjs/stylex";
 
-// Paseodog usage-monitor의 치수. 14px 루트 rem 기준이며 사용자 글자 크기와 함께 확대된다.
+// 사용량 표 치수. 14px 루트 rem 기준이며 사용자 글자 크기와 함께 확대된다.
 // 앱의 테마 색과 글꼴을 공유하고 좁은 화면에서는 가로 여백만 줄인다.
 const narrow = "@media (max-width: 760px)";
 const dialogGutter = "max(var(--spacing-1), env(safe-area-inset-left), env(safe-area-inset-right))";

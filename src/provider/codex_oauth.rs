@@ -457,7 +457,7 @@ mod tests {
                 }] },
             ],
             tools: vec![ToolDef { name: "read".into(), description: "Read a file".into(), schema: json!({"type":"object"}) }],
-            max_tokens: None, temperature: None, effort: Some("high".into()), cli: None,
+            max_tokens: None, temperature: None, effort: Some("high".into()), cli: None, service_tier: None,
         };
         let body = request_body("gpt-test", &request, Some("priority"), None);
         assert_eq!(body["store"], false);

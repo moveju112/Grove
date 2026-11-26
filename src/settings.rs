@@ -814,6 +814,7 @@ pub async fn put(
                 let selection = crate::models::ModelSelection {
                     profile_id: favorite.profile_id, model: Some(favorite.model),
                     effort: crate::provider::parse_effort(Some(&favorite.effort)).map_err(ApiError::invalid)?,
+                    service_tier: None,
                 };
                 let (profile, _) = selection.runtime(tx)?;
                 if favorite.fast && !profile.capabilities.fast {

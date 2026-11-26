@@ -257,7 +257,7 @@ async fn signed_content_is_not_sent_to_a_different_endpoint_or_protocol() {
                     ChatMsg::User { text: "q".into(), images: vec![] },
                     ChatMsg::Assistant { text: "public history".into(), tool_calls: vec![], native: Some(native) },
                     ChatMsg::User { text: "next".into(), images: vec![] },
-                ], tools: vec![], max_tokens: None, temperature: None, effort: None, cli: None,
+                ], tools: vec![], max_tokens: None, temperature: None, effort: None, cli: None, service_tier: None,
             };
             let (_cancel, mut rx) = tokio::sync::watch::channel(false);
             provider::stream(&profile, &request, &mut rx, &mut |_| {}).await.unwrap();

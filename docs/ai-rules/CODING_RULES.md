@@ -27,8 +27,8 @@
 
 - **MUST** 오래 표시되는 상태는 정적 배경·테두리·아이콘을 기본으로 한다. 반복 모션이 필요하면 `transform`·`opacity`처럼 합성 단계에서 처리할 수 있는 속성을 우선하고, 프레임마다 React 상태 갱신·레이아웃·페인트가 발생하는 방식은 피한다. 무한 SVG `stroke-dashoffset`이나 크기·위치 애니메이션을 목록 행마다 두지 않는다. `will-change`도 모든 항목에 상시 적용하지 않는다.
   - ✅ 최근 목록은 정적 배경, 상단 원형 링은 호가 들어 있는 원 전체를 `transform`으로 회전시킨다. `evidence: web/app/components/workspace.stylex.ts`, `evidence: web/app/components/split-layout.stylex.ts`.
-- **MUST** 숨겨진 브라우저 탭·영역·스크롤 밖 항목에서는 장식용 반복 작업을 멈춘다. 동시에 여러 영역에 표시되는 무거운 효과는 포커스된 영역에서만 움직이고, 나머지 표시 중인 영역과 `prefers-reduced-motion`에서는 같은 상태를 정적으로 전달한다. 종료·숨김·언마운트 시 해당 애니메이션·타이머·`requestAnimationFrame`을 정리한다. 화면 표시를 멈추더라도 서버 작업·상태 기록·완료 확인은 유지한다.
-  - ✅ 덩굴은 활성 분할 영역에서만 움직이고, 포커스하지 않은 분할 영역은 정지 프레임을 사용한다. `evidence: web/app/components/session-activity/SessionActivityIndicator.tsx`.
+- **MUST** 숨겨진 브라우저 탭·영역·스크롤 밖 항목에서는 장식용 반복 작업을 멈춘다. 동시에 여러 영역에 표시되는 무거운 효과는 기본적으로 포커스된 영역에서만 움직이고(사용자가 명시적으로 고르는 전체 애니메이션 설정은 예외), 나머지 표시 중인 영역과 `prefers-reduced-motion`에서는 같은 상태를 정적으로 전달한다. 종료·숨김·언마운트 시 해당 애니메이션·타이머·`requestAnimationFrame`을 정리한다. 화면 표시를 멈추더라도 서버 작업·상태 기록·완료 확인은 유지한다.
+  - ✅ 덩굴은 기본 절약 모드에서 활성 분할 영역에서만 움직이고, 포커스하지 않은 분할 영역은 정지 프레임을 사용한다. 기기 설정의 애니메이션 모드에서만 보이는 모든 영역이 움직인다. `evidence: web/app/components/session-activity/SessionActivityIndicator.tsx`.
 - **MUST** 초 단위 표시처럼 갱신 주기가 같은 화면 타이머는 공유하고 마지막 구독자가 사라지면 멈춘다. 스트리밍처럼 빈번한 임시 갱신은 필요한 화면 범위에서 표시 주기에 맞춰 묶고 변경된 부분만 다시 그린다. 이 최적화로 최종 응답·상태 이벤트를 버리거나 순서를 바꾸지 않는다.
   - ✅ `evidence: web/app/state/secondTick.ts`, `evidence: web/app/state/store.ts`.
 - **MUST** 지속 효과를 추가·변경하면 단일 화면뿐 아니라 여러 실행 세션·긴 목록과 숨김·포커스 전환·모션 줄이기에서 동작을 확인한다. 반복 작업이 생기는 변경이나 CPU 개선 작업은 Chromium DevTools Performance에서 해당 Grove 탭을 확인한 뒤, 같은 조건에서 초기 전환이 끝난 구간의 CPU·Script·Layout/Paint·합성 비용을 비교한다. 측정하지 못했으면 미측정으로 명시한다.

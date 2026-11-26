@@ -1,5 +1,5 @@
 //! 기본 워크플로우 Maintainer: 완료된 대화의 재사용할 근거를 도구 없이 정리한다.
-//! Paseodog의 독립 모델·주기 실행을 Grove의 DB/회상 경계에 맞춘다. CLI 자체 메모리는 건드리지 않는다.
+//! 독립 모델·주기 실행을 Grove의 DB/회상 경계에 맞춘다. CLI 자체 메모리는 건드리지 않는다.
 use crate::{App, error::ApiResult, provider::{self, ChatMsg, ModelRequest}};
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Value, json};
@@ -78,7 +78,7 @@ async fn maintain(app: &App, session_id: &str) -> ApiResult<bool> {
             system: format!("{}\n{SYSTEM}", crate::definitions::instructions(&def)),
             messages: vec![ChatMsg::User { text: json!({"conversation":source}).to_string(), images: vec![] }],
             tools: vec![], max_tokens: Some(mp.capabilities.max_output_tokens.unwrap_or(2048).min(2048)),
-            temperature: None, effort: selection.effort.clone(), cli: None,
+            temperature: None, effort: selection.effort.clone(), cli: None, service_tier: selection.service_tier.clone(),
         };
         let mut cancel = app.shutdown_rx.clone();
         let started = std::time::Instant::now();

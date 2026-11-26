@@ -1,12 +1,12 @@
 # 답변 스타일 원문
 
-Paseodog에 설치된 Mixdog 1.4.1의 `src/output-styles/`에서 가져왔다.
+아래 원본 저장소 1.4.1의 `src/output-styles/`에서 가져왔다.
 원본: https://github.com/tribgames/mixdog/tree/main/src/output-styles
 Copyright (c) 2026 tribgames. Apache-2.0.
 라이선스와 NOTICE는 `../licenses/agent-baseline-LICENSE`와 `../licenses/agent-baseline-NOTICE.md`에 보존한다.
 
 변경: YAML frontmatter만 제거하고 본문은 그대로 보존했다.
-`default`는 Paseodog의 예약된 무지시 스타일이라 파일이 없다.
+`default`는 원본의 예약된 무지시 스타일이라 파일이 없다.
 `concise`는 기존 Grove 설정·턴과의 호환을 위해 `simple`로 해석한다.
 새 설치의 기본 선택은 기존 Grove의 `default`를 유지한다.
 

@@ -33,6 +33,7 @@ fn request() -> ModelRequest {
         temperature: None,
         effort: None,
         cli: None,
+        service_tier: None,
     }
 }
 

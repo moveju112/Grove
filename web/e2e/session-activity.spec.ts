@@ -342,6 +342,16 @@ for (const width of [390, 1400]) {
                     await expect(runners(idlePane)).toHaveCount(0);
                     await expect(staticFrame(idlePane)).toBeVisible();
                     await expect(staticFrame(pane)).toHaveCount(0);
+                    // 애니메이션 모드는 포커스하지 않은 분할 영역도 함께 움직인다.
+                    await page.evaluate(() => {
+                        const key = "grove.device.prefs";
+                        localStorage.setItem(key, JSON.stringify({ ...JSON.parse(localStorage.getItem(key) ?? "{}"), activityDisplay: "animatedAll" }));
+                        window.dispatchEvent(new Event("grove-prefs"));
+                    });
+                    await expect(idlePane.locator("[data-vine-head]").first()).toBeVisible();
+                    await expect(staticFrame(idlePane)).toHaveCount(0);
+                    await expect(head).toBeVisible();
+                    await expect(pane).toHaveAttribute("data-focused", "true");
                 } finally {
                     await apiCall("POST", `/turns/${other.turn.id}/cancel`);
                 }

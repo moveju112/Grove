@@ -30,7 +30,7 @@ const effortColumns: Column[] = [
 ];
 const cacheWrites = (m: UsageMetrics) => m.responses > 0 && m.cache_write_unreported_responses === m.responses ? "—" : number(m.cache_write_tokens);
 
-/** Paseodog과 같은 고정 숫자 열·우측 정렬. 좁은 화면에서도 표 안에서만 스크롤한다. */
+/** 고정 숫자 열·우측 정렬. 좁은 화면에서도 표 안에서만 스크롤한다. */
 function UsageTable({ columns, rows, label, testId }: { columns: Column[]; rows: Row[]; label: string; testId?: string }) {
     return <Table density="compact" dividers="none" textOverflow="truncate" aria-label={label} data-testid={testId}
         xstyle={styles.table(columns.reduce((sum, column) => sum + column.width, 0))}>

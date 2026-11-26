@@ -211,6 +211,9 @@ export function openAtEdge(l: Layout, toLeafId: string, edge: DropEdge, tab: Omi
 
 export const DRAG_TAB = "application/x-grove-tab";
 export const DRAG_OPEN = "application/x-grove-open";
+/// 탭 줄의 +를 끌어 놓은 위치에 새 대화를 연다. 다른 프로젝트 배치에는 놓지 않는다.
+export const DRAG_NEW_CONVERSATION = "application/x-grove-new-conversation";
+export const newConversationTab = (projectId: string): Omit<Tab, "id"> => ({ kind: "project", project_id: projectId, title: "새 대화" });
 const DROP_KINDS: readonly TabKind[] = ["session", "project", "file", "terminal"];
 const ID = /^[A-Za-z0-9_-]{1,128}$/;
 

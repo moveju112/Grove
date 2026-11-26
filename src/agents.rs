@@ -310,6 +310,7 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
     let (t, _) = crate::runner::enqueue_turn(tx, now, epoch, &owner, &child_id, brief, &profile, Some(agent_id), pt.tools_enabled, Some(&src))?;
     crate::runner::set_turn_model(tx, &t.id, selection.model.as_deref())?;
     crate::runner::set_turn_effort(tx, &t.id, selection.effort.as_deref())?;
+    crate::runner::set_turn_service_tier(tx, &t.id, selection.service_tier.as_deref())?;
     tx.execute("UPDATE agent_runs SET last_turn_id = ?2 WHERE id = ?1", params![run_id, t.id])?;
     let run = get(tx, &run_id)?;
     emit(tx, now, &run)?;
@@ -337,6 +338,7 @@ fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str
     let (t, _) = crate::runner::enqueue_turn(tx, now, epoch, &owner, &run.child_session_id, brief, &profile, Some(&run.agent_id), tools, Some(&src))?;
     crate::runner::set_turn_model(tx, &t.id, selection.model.as_deref())?;
     crate::runner::set_turn_effort(tx, &t.id, selection.effort.as_deref())?;
+    crate::runner::set_turn_service_tier(tx, &t.id, selection.service_tier.as_deref())?;
     tx.execute(
         "UPDATE agent_runs SET status = 'running', last_turn_id = ?2, result = NULL, error = NULL, ended_at = NULL, updated_at = ?3, \
          parent_turn_id=?4, parent_call_id=?5, profile_id=?6 WHERE id = ?1",

@@ -90,6 +90,8 @@ pub struct ModelRequest {
     pub effort: Option<String>,
     /// CLI 백엔드(claude_code·codex_cli)의 실행 문맥. HTTP provider는 쓰지 않는다.
     pub cli: Option<cli::CliContext>,
+    /// 대화 턴 밖의 보조 호출(제목·압축·메모리)이 고른 속도. 대화 턴은 실행 문맥·턴 snapshot 값을 쓴다.
+    pub service_tier: Option<String>,
 }
 
 /// CLI가 생성 구간과 토큰 수를 함께 보고한 답변 본문만 합산한다.
@@ -398,7 +400,7 @@ pub async fn stream(
     cancel: &mut watch::Receiver<bool>,
     on_delta: OnDelta<'_>,
 ) -> Result<ModelOutput, ProviderError> {
-    stream_with_service_tier(profile, req, None, &mut codex_oauth::Session::default(), cancel, on_delta).await
+    stream_with_service_tier(profile, req, req.service_tier.as_deref(), &mut codex_oauth::Session::default(), cancel, on_delta).await
 }
 
 pub(crate) async fn stream_with_service_tier(
@@ -687,6 +689,7 @@ mod effort_tests {
             temperature: Some(0.2),
             effort: effort.map(str::to_string),
             cli: None,
+            service_tier: None,
         }
     }
 

@@ -194,7 +194,11 @@ export type ModelProfile = { id: string, name: string, protocol: string, base_ur
  */
 last_check: { ok: boolean, code: string | null, message: string | null, latency_ms: number, checked_at: string, detail: unknown } | null, enabled: boolean, capabilities: ModelCapabilities, };
 
-export type ModelSelection = { profile_id: string, model: string | null, effort?: string, };
+export type ModelSelection = { profile_id: string, model: string | null, effort?: string,
+/**
+ * Codex 속도(service tier). 없으면 보조 호출·역할 실행은 standard로 고정한다.
+ */
+service_tier?: string, };
 
 export type ModelFavorite = { profile_id: string, model: string, effort: string, fast: boolean, };
 

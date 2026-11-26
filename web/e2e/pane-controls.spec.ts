@@ -279,6 +279,24 @@ test("분할 버튼 없이 새 대화 탭을 오른쪽·아래로 드래그해 �
     await expect(page.getByTestId("session-view")).toHaveCount(sessionsBefore);
 });
 
+test("탭 줄의 +를 영역 가장자리로 끌어 놓으면 분할하며 새 대화를 연다", async ({ page }) => {
+    const { left, s } = await setup(page);
+    const plus = left.getByRole("button", { name: "새 대화 탭", exact: true });
+    const bounds = (await left.boundingBox())!;
+    await plus.dragTo(left, { targetPosition: { x: bounds.width - 12, y: bounds.height / 2 } });
+    await expect(page.getByTestId("pane")).toHaveCount(3);
+    await expect(page.getByTestId("split-row")).toHaveCount(1);
+    await expect(left.getByRole("tab")).toHaveCount(1);
+    await expect(left.locator(`[data-session="${s.id}"]`)).toBeVisible();
+    const added = page.locator('[data-testid="pane"][data-focused="true"]');
+    await expect(added.getByRole("tab", { selected: true })).toHaveText("새 대화");
+    await expect(added.getByTestId("project-view")).toBeVisible();
+    await expect(added.getByLabel("메시지 입력")).toBeEmpty();
+    await plus.dragTo(left.getByRole("tablist"));
+    await expect(page.getByTestId("pane")).toHaveCount(3);
+    await expect(left.getByRole("tab")).toHaveCount(2);
+});
+
 test("오른쪽 끝에 탭을 드래그하면 2~5개 영역의 표시 폭이 같아진다", async ({ page }) => {
     await page.setViewportSize({ width: 1640, height: 900 });
     const { left, right } = await setup(page);

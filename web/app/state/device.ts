@@ -33,11 +33,17 @@ export function deviceName(): string {
 }
 
 export const VINE_GROUPS = [2, 3, 4, 5, 6, 7] as const;
+// "animated"는 이전 버전의 저장값을 그대로 쓰도록 포커스한 영역만 움직이는 절약 모드로 유지한다.
 export const activityDisplayOptions = [
-    { value: "animated", label: "애니메이션" },
+    { value: "animatedAll", label: "애니메이션" },
+    { value: "animated", label: "애니메이션(절약)" },
     { value: "static", label: "정지 표시" },
     { value: "hidden", label: "숨김" },
 ] as const;
+
+export function isActivityAnimated(display: Prefs["activityDisplay"]): boolean {
+    return display === "animated" || display === "animatedAll";
+}
 
 /// 이 기기 표시 설정.
 export type Prefs = {

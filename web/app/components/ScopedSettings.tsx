@@ -3,9 +3,11 @@ import { ProfileModelMenus, useModelCatalog } from "./ModelSelect";
 import { catalogModel, modelEfforts } from "./model-catalog";
 import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Grid } from "@astryxdesign/core/Grid";
+import { Switch } from "@astryxdesign/core/Switch";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Heading as GroveHeading } from "@astryxdesign/core/Heading";
 import { Button as GroveButton } from "../design/Button";
+import * as stylex from "@stylexjs/stylex";
 import { useLayoutEffect, useRef, useState } from "react";
 import { BooleanSelect } from "./BooleanSelect";
 import { Icon } from "./icons";
@@ -68,10 +70,17 @@ export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortC
     const requiresModel = d.key === "session.title_profile" || d.key === "memory.profile";
     const fallback = d.key === "context.summary_profile" ? "대화 모델로 압축"
         : d.key.startsWith("agents.profile.") ? "부모 대화 모델 사용" : "기기 선택 또는 첫 활성 모델";
-    const effortProfile = (workflow || roleEnabled) && onEffortChange && selected?.enabled && selected.capabilities.effort !== false ? selected : undefined;
-    const catalog = useModelCatalog(effortProfile && ["codex_cli", "codex_oauth", "claude_code", "anthropic"].includes(effortProfile.protocol) ? effortProfile : undefined);
-    const efforts = modelEfforts(effortProfile, catalogModel(catalog.data?.models, effortProfile, selection?.model));
+    const optionProfile = (workflow || roleEnabled) && onEffortChange && selected?.enabled ? selected : undefined;
+    const effortProfile = optionProfile?.capabilities.effort !== false ? optionProfile : undefined;
+    const catalog = useModelCatalog(optionProfile && ["codex_cli", "codex_oauth", "claude_code", "anthropic"].includes(optionProfile.protocol) ? optionProfile : undefined);
+    const catalogEntry = catalogModel(catalog.data?.models, optionProfile, selection?.model);
+    const efforts = modelEfforts(effortProfile, catalogEntry);
     const effort = selection?.effort ?? "auto";
+    const fast = selection?.service_tier;
+    const fastTier = optionProfile?.capabilities.fast ? catalogEntry?.service_tiers?.find((tier) => tier.id === "priority") : undefined;
+    // 모델을 바꾸면 추론 강도·속도는 초기화되고, 둘 중 하나만 바꿀 때는 다른 값을 유지한다.
+    const chooseOptions = (next: { effort?: string; service_tier?: string }) => onEffortChange?.({ profile_id: id, model: selection?.model ?? null,
+        ...(next.effort && next.effort !== "auto" ? { effort: next.effort } : {}), ...(next.service_tier ? { service_tier: next.service_tier } : {}) });
     return <GroveStack gap={1} width={workflow ? "100%" : 220} maxWidth="100%">
         <Grid gap={workflow ? 2 : 1} xstyle={workflow ? workflowStyles.fields : undefined} data-testid={workflow ? "workflow-fields" : undefined}>
         <GroveStack gap={1} xstyle={workflow ? workflowStyles.field : undefined}>
@@ -101,11 +110,21 @@ export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortC
                 xstyle={workflow ? workflowStyles.field : undefined}>
                 <GroveText type="supporting" color="secondary">추론 강도</GroveText>
                 <Select label={`${d.label} 추론 강도`} hideLabel variant={workflow ? undefined : "ghost"} value={effort} disabled={disabled}
-                    onChange={(value) => onEffortChange({ profile_id: id, model: selection?.model ?? null, ...(value === "auto" ? {} : { effort: value }) })}
+                    onChange={(value) => chooseOptions({ effort: value, service_tier: fast })}
                     options={[{ value: "auto", label: "auto" },
                         ...(effort !== "auto" && !efforts.includes(effort) ? [{ value: effort, label: `${effort} · 미지원`, disabled: true }] : []),
                         ...efforts.map((value) => ({ value, label: value }))]} />
             </GroveStack>}
+        {optionProfile && (fastTier || fast) && (() => {
+            const control = <Switch label={`${d.label} Fast`} isLabelHidden value={!!fast} size="sm" isDisabled={disabled || (!fast && !fastTier)}
+                labelTooltip="켜면 사용량이 늘어날 수 있어요." onChange={(on) => chooseOptions({ effort, service_tier: on ? fastTier?.id : undefined })} />;
+            return workflow ? <div {...stylex.props(workflowStyles.field, workflowStyles.fast)}>
+                <GroveText type="supporting" color="secondary">Fast</GroveText>
+                <span {...stylex.props(workflowStyles.fastControl)}>{control}</span>
+            </div> : <GroveStack direction="horizontal" align="center" gap={1.5}>
+                <GroveText type="supporting" color="secondary">Fast</GroveText>{control}
+            </GroveStack>;
+        })()}
         </Grid>
         {selected && roleEnabled === undefined && !workflow && <GroveText type="supporting" color="secondary"> 전송 대상: {selected.base_url || "서버 설치 CLI"} · {selected.model}</GroveText>}
         {id && profiles.data && (!selected || selected.enabled === false) && <GroveText as="p" display="block" type="supporting" color="warning" role="status">현재 모델을 사용할 수 없습니다. 다른 모델로 자동 전환하지 않습니다.</GroveText>}

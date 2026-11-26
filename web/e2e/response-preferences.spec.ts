@@ -27,7 +27,7 @@ test.afterEach(async () => {
 for (const width of [390, 1280]) {
     test.describe(`${width}px 답변 스타일`, () => {
         test.use({ viewport: { width, height: 900 }, isMobile: width === 390, hasTouch: width === 390 });
-        test("Paseodog의 다섯 스타일을 저장해 다음 요청과 새로고침에 반영한다", async ({ page }, info) => {
+        test("다섯 답변 스타일을 저장해 다음 요청과 새로고침에 반영한다", async ({ page }, info) => {
             const profile = await ensureProfile();
             await login(page);
             await openSettings(page);

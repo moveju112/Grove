@@ -62,11 +62,11 @@ async fn styles_follow_scope_and_reset_without_extra_personal_context() {
 }
 
 #[tokio::test]
-async fn paseodog_presets_reach_the_model_and_default_removes_all_style_instructions() {
+async fn output_style_presets_reach_the_model_and_default_removes_all_style_instructions() {
     let mut s = TestServer::start().await;
     let f = Fixture::start().await;
     let profile = s.fixture_profile(&f.base).await;
-    let project = s.create_project("paseodog-styles").await;
+    let project = s.create_project("output-styles").await;
     let session = s.create_session(project["id"].as_str().unwrap()).await;
     let sid = session["id"].as_str().unwrap();
     let (_, registry) = s.get("/api/v1/settings/registry").await;

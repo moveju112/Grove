@@ -2,8 +2,8 @@
 """이 PC의 실사용 Grove 배포(설치·업데이트 공용 경로).
 
 고정 구성
-- 데몬: 127.0.0.1:49120, systemd user unit `grove-opus.service` 하나만. 같은 데이터 디렉터리 잠금(grove.lock)이 중복 실행을 막는다.
-- 브라우저: http://127.0.0.1:4417, `grove-opus-web.service`(nginx)가 데몬으로 그대로 전달한다. 웹 파일은 데몬의 현재 release가 제공한다.
+- 데몬: 127.0.0.1:49120, systemd user unit `grove.service` 하나만. 같은 데이터 디렉터리 잠금(grove.lock)이 중복 실행을 막는다.
+- 브라우저: http://127.0.0.1:4417, `grove-web.service`(nginx)가 데몬으로 그대로 전달한다. 웹 파일은 데몬의 현재 release가 제공한다.
 
 사용
     python3 scripts/deploy_local.py            # 처음이면 설치, 이후에는 같은 명령으로 업데이트
@@ -35,13 +35,13 @@ import uuid
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOME = os.path.expanduser("~")
-INSTALL = os.path.join(HOME, ".local", "share", "grove-opus")
+INSTALL = os.path.join(HOME, ".local", "share", "grove")
 DATA = os.path.join(INSTALL, "data")
-KEY = os.path.join(HOME, ".local", "share", "grove-opus-keys", "release")
+KEY = os.path.join(HOME, ".local", "share", "grove-keys", "release")
 DAEMON = "127.0.0.1:49120"
 WEB = "127.0.0.1:4417"
-UNIT = "grove-opus.service"
-WEB_UNIT = "grove-opus-web.service"
+UNIT = "grove.service"
+WEB_UNIT = "grove-web.service"
 UNIT_DIR = os.path.join(HOME, ".config", "systemd", "user")
 TARGET = "linux-x64"
 PAGES_PROJECT = "grove"
@@ -51,7 +51,7 @@ PREVIOUS_CLI_LAUNCHER_SHA256 = "8db69f1c9d911f65bdbf01a8a5ded011879422a397300381
 BUSY_KEYS = {"active_turns", "awaiting_approval", "running_tasks", "running_terminals", "schedules_within_10m", "running_schedule_runs"}
 
 RUN_SH = f"""#!/bin/sh
-# grove-opus.service 진입점: current 포인터의 release를 실행한다(deploy_local.py가 생성).
+# grove.service 진입점: current 포인터의 release를 실행한다(deploy_local.py가 생성).
 set -eu
 R="{INSTALL}"
 id=$(cat "$R/current")
