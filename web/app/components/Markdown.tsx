@@ -169,12 +169,12 @@ function block(b: Block, k: number): ReactNode {
             return <Stack as="blockquote" gap={2} paddingInlineStart={3} xstyle={contentStyles.quote} key={k}>{b.blocks.map(block)}</Stack>;
         case "table":
             return (
-                <ScrollableArea axis="inline" label="답변 표" maxWidth="100%" key={k} data-testid="md-table">
+                <ScrollableArea axis="inline" label="답변 표" maxWidth="100%" key={k} data-testid="md-table" xstyle={contentStyles.markdownTableArea}>
                     <Table density="compact" xstyle={contentStyles.markdownTable(b.head.length)}>
                         <TableHeader>
                             <TableRow isHeaderRow>
                                 {b.head.map((h, j) => (
-                                    <TableHeaderCell scope="col" key={j}>{inl(h)}</TableHeaderCell>
+                                    <TableHeaderCell scope="col" key={j} xstyle={contentStyles.markdownCell}>{inl(h)}</TableHeaderCell>
                                 ))}
                             </TableRow>
                         </TableHeader>
@@ -182,7 +182,7 @@ function block(b: Block, k: number): ReactNode {
                             {b.rows.map((r, j) => (
                                 <TableRow key={j}>
                                     {r.map((c, n) => (
-                                        <TableCell key={n}>{inl(c)}</TableCell>
+                                        <TableCell key={n} xstyle={contentStyles.markdownCell}>{inl(c)}</TableCell>
                                     ))}
                                 </TableRow>
                             ))}

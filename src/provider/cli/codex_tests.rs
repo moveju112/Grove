@@ -1133,3 +1133,40 @@ async fn installed_cli_streams_local_responses_before_completion_and_resumes() {
     let tools = request["tools"].as_array().unwrap().iter().filter_map(|tool| tool["name"].as_str()).collect::<Vec<_>>();
     assert!(tools.iter().all(|name| matches!(*name, "update_plan" | "request_user_input")), "unexpected native execution tools: {tools:?}");
 }
+
+
+/// 새 app-server의 원격 플러그인 skill이 채워질 때까지만 기다리고, 끝내 못 채우면 1초 안에 진행한다.
+#[tokio::test]
+async fn fresh_app_server_waits_only_until_the_last_seen_skill_count() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    for (counts, expected, calls) in [(vec![30, 30, 60], 60, 3), (vec![30], 30, 1), (vec![30], 60, 0)] {
+        let dir = tempfile::tempdir().unwrap();
+        let req = request(dir.path(), None, "current");
+        let (client, server) = tokio::io::duplex(1 << 16);
+        let (server_read, mut server_write) = tokio::io::split(server);
+        let (client_read, mut client_write) = tokio::io::split(client);
+        let answered = tokio::spawn(async move {
+            let mut lines = BufReader::new(server_read).lines();
+            let mut seen = 0usize;
+            while let Ok(Some(line)) = lines.next_line().await {
+                let request: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(request["method"], "skills/list");
+                assert_eq!(request["params"]["forceReload"], false);
+                let count = counts[seen.min(counts.len() - 1)];
+                seen += 1;
+                let reply = json!({"id": request["id"], "result": {"data": [{"skills": vec![json!({}); count]}]}});
+                server_write.write_all(format!("{reply}\n").as_bytes()).await.unwrap();
+            }
+            seen
+        });
+        let mut reader = BufReader::new(client_read);
+        let mut state = State::default();
+        let started = std::time::Instant::now();
+        settle_skills(&mut client_write, &mut reader, &profile(), &req, &mut state, &mut |_| {}, expected).await.unwrap();
+        assert!(started.elapsed() < SKILLS_SETTLE + Duration::from_millis(500));
+        drop((client_write, reader));
+        let seen = answered.await.unwrap();
+        // 끝내 못 채우는 경우는 제한 시간까지 100ms 간격으로만 다시 묻는다.
+        if calls == 0 { assert!((5..=11).contains(&seen), "{seen}") } else { assert_eq!(seen, calls, "{expected}") }
+    }
+}

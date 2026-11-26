@@ -25,6 +25,8 @@ pub(crate) struct Sessions(Mutex<State>);
 #[derive(Default)]
 struct State {
     idle: HashMap<String, Idle>,
+    /// 프로필·실행 위치별로 턴을 마친 app-server가 보고한 skill 개수. 프로필마다 플러그인 구성이 다를 수 있다.
+    skills: HashMap<(String, PathBuf), usize>,
     closed: bool,
 }
 
@@ -108,6 +110,14 @@ impl Handle {
                     .filter(Option::is_none)
                     .map(|_| idle.process)
             }))
+    }
+
+    fn known_skills(&self, key: &Key) -> Option<usize> {
+        self.sessions.0.lock().expect("Codex sessions").skills.get(&(key.profile.clone(), key.cwd.clone())).copied()
+    }
+
+    fn remember_skills(&self, key: &Key, count: usize) {
+        self.sessions.0.lock().expect("Codex sessions").skills.insert((key.profile.clone(), key.cwd.clone()), count);
     }
 
     fn park(&self, key: Key, thread: String, process: Process) {
@@ -223,8 +233,9 @@ pub(super) async fn run(
             let connection = codex::Connection::Reused(process.usage_total.clone());
             (process, connection)
         }
-        None => (Process::start(&key)?, codex::Connection::Fresh),
+        None => (Process::start(&key)?, codex::Connection::Fresh(handle.known_skills(&key))),
     };
+    let fresh = matches!(connection, codex::Connection::Fresh(_));
     let (output, usage_total) = codex::run_turn(
         &mut process.stdin,
         &mut process.stdout,
@@ -235,6 +246,11 @@ pub(super) async fn run(
         connection,
     )
     .await?;
+    if fresh
+        && let Some(count) = codex::skill_count(&mut process.stdin, &mut process.stdout, profile, req).await
+    {
+        handle.remember_skills(&key, count);
+    }
     // 다음 턴의 config는 thread를 다시 불러올 때 적용한다. 이전 턴의 MCP 연결을 가진 프로세스는 보관하지 않는다.
     if let Some(thread) = output.native_session.as_ref()
         && codex::unsubscribe(

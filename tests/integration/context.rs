@@ -211,6 +211,37 @@ async fn auto_compaction_runs_before_first_model_call_over_threshold() {
     assert_eq!(notes_of(&s, &sid, "compaction_failed").await.len(), 1);
 }
 
+#[tokio::test]
+async fn automatic_compaction_stops_before_the_original_request_with_steering() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = profile_with_window(&s, &f.base, 100_000).await;
+    let project = s.create_project("auto-steer").await;
+    let sid = s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_owned();
+    f.push(fixture::text(&"earlier answer ".repeat(200)));
+    turn(&s, &sid, &profile, "earlier request", false).await;
+
+    let app = &s.server.as_ref().unwrap().app;
+    let now = app.now();
+    let (session, pid) = (sid.clone(), profile.clone());
+    let request_seq = app.db.call(move |c| {
+        let tx = c.transaction()?;
+        let request = grove::sessions::append_message(&tx, &now, &session, "user", &json!({"text":"current request"}), None, None)?;
+        tx.execute("INSERT INTO turns(id,session_id,status,request_message_id,profile_id,owner_epoch,created_at,updated_at) \
+                    VALUES ('steer-turn',?1,'running',?2,?3,'fixture',?4,?4)", rusqlite::params![session, request.id, pid, now])?;
+        grove::sessions::append_message(&tx, &now, &session, "user", &json!({"text":"current steer","source":{"kind":"steer"}}), Some("steer-turn"), None)?;
+        tx.commit()?;
+        Ok(request.seq)
+    }).await.unwrap();
+    f.push_for(SUMMARY, fixture::text("Earlier summary"));
+    let (_cancel, mut cancelled) = tokio::sync::watch::channel(false);
+    let note = grove::context::compact(app, &sid, &profile, true, &mut cancelled).await.unwrap().unwrap();
+    assert_eq!(note["content"]["upto_seq"], request_seq - 1);
+    let summary_input = f.requests().last().unwrap()["messages"].to_string();
+    assert!(summary_input.contains("earlier request"), "{summary_input}");
+    assert!(!summary_input.contains("current request") && !summary_input.contains("current steer"), "{summary_input}");
+}
+
 /// 사용률 기준 아래여도 출력·다음 입력 여유(reserve)가 모자라면 자동 압축한다(CTX-003).
 #[tokio::test]
 async fn reserve_for_output_and_next_input_triggers_compaction_below_percent() {

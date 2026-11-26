@@ -24,9 +24,13 @@ HTTP 인증·Origin·호환성 검사 → 도메인 처리 → SQLite transactio
 웹은 API snapshot과 SSE 이벤트를 통해 서버 상태를 투영한다.
 프로젝트별로 열린 대화와 이어갈 대화는 데몬에 저장한다. 분할 배치와 표시 설정은 기기별로 유지한다.
 
-기본 Codex 연결(`codex_cli`)은 데몬 계정에 설치된 `codex app-server`와 표준 입출력으로 연결한다. 자격은 CLI가 관리하며 Grove는 `item/agentMessage/delta`를 전달한다. 이전 `codex_oauth` 프로필은 ID와 Grove 이력을 유지한 채 CLI로 전환하고, 전환 이전의 CLI 스레드에 다시 붙지 않는다. CLI로 바뀐 프로필이 후보인 HTTP fallback은 비활성화한다. `evidence: src/provider/cli/codex.rs`, `src/models.rs`, `src/store.rs`.
+기본 Codex 연결(`codex_cli`)은 데몬 계정에 설치된 `codex app-server`와 표준 입출력으로 연결한다. 자격은 CLI가 관리하며 Grove는 `item/agentMessage/delta`를 전달한다. 이전 `codex_oauth` 프로필은 ID와 Grove 이력을 유지한 채 CLI로 전환하고, 전환 이전의 CLI 스레드에 다시 붙지 않는다. CLI로 바뀐 프로필이 후보인 HTTP fallback은 비활성화한다. 새 app-server는 원격 플러그인 skill을 시작 뒤 비동기로 읽으므로, 같은 프로필·실행 위치에서 턴을 마친 app-server가 보고한 skill 개수까지 최대 1초 기다린 뒤 턴을 시작한다. 짧은 목록과 긴 목록이 번갈아 대화에 들어가 문맥이 늘어나는 것을 막는다. `evidence: src/provider/cli/codex.rs`, `src/provider/cli/codex_session.rs`, `src/models.rs`, `src/store.rs`.
 
 Claude Code는 데몬 계정에 설치된 `claude`를 실행한다. 공식 CLI가 인증을 관리하며, Grove는 Claude 구독 인증을 강제하거나 로그인 코드를 중계하지 않는다. 재개가 가능하고 실행 설정이 같으면 열린 SDK JSONL 연결에 새 메시지만 보낸다. 연결이 만료되거나 실행 설정이 바뀌면 재개 가능한 CLI 세션 ID로 다시 연결한다. 턴 전용 MCP 연결은 각 턴에서 교체·해제하고, 취소·오류·서버 종료 때는 프로세스를 보존하지 않는다. 제목·요약은 별도 호출을 유지한다. `evidence: src/provider/cli/claude_session.rs`, `evidence: src/provider/cli/claude.rs`.
+
+두 CLI의 사용자 질문은 턴 MCP의 `ask_user` 하나로 받아 기존 질문 창(`awaiting_input`)에 띄우고, 답이 올 때까지 같은 턴에서 기다린다. Codex 자체 `request_user_input`은 노출하지 않으며, 그래도 들어오는 요청은 같은 질문 창으로 처리한다. 답이 `QUESTION_WAIT` 안에 오지 않거나 턴이 끝나면 질문을 닫는다. Codex 기본 지침이 권하는 `request_user_input_async`는 질문 메시지의 `questions`를 같은 질문 창으로 띄우고 본문 목록은 숨긴다. 이 도구는 답을 기다리지 않으므로 Grove 턴을 열어 둔 채 답을 실행 중이면 `turn/steer`, Codex 턴이 끝났으면 같은 thread의 `turn/start`로 보낸다. `evidence: src/provider/cli/codex.rs`.
+
+Claude Code의 `ScheduleWakeup`·`Cron*`·`PushNotification`은 대화형 세션 안에서만 실행돼 Grove의 `-p` 실행에서는 접수만 되므로 `--disallowedTools`로 숨긴다. 나중 확인은 `continue_later`, 알림은 Grove 턴 알림이 맡는다. `evidence: src/provider/cli.rs`.
 
 사용량 화면의 tok/s는 같은 구간의 출력 토큰과 시간만 사용한다. Codex CLI는 `agentMessage`의 `contentTokenCount`와 `startedAtMs`·`completedAtMs`가 짝지어진 본문 생성 구간을 합산한다. Claude Code는 `result.duration_api_ms`를 사용하며, 재사용한 프로세스에선 직전 누적값을 뺀다. 시간 미보고 CLI·과거 기록에 전체 턴 시간을 대신 넣지 않는다. 저장된 입력 총량에는 캐시 읽기·쓰기가 포함되고, 화면은 새 입력과 캐시를 분리해서 표시한다. `evidence: src/provider/cli/codex.rs`, `evidence: src/provider/cli/claude_session.rs`, `evidence: src/usage/dashboard.rs`, `evidence: web/app/components/usage/dashboardModel.ts`.
 

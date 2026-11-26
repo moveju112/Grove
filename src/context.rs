@@ -2,7 +2,7 @@
 //!
 //! - 사용량: 모델 프로필의 `context_window` 대비 마지막 모델 응답의 실측 input token(measured)과
 //!   현재 이력의 문자 수 기반 추정(estimated)을 따로 보여 준다.
-//! - 압축 경계: 마지막 사용자 메시지 직전. 사용자 메시지 앞에서 자르므로 tool call/result 짝이 갈라지지 않고,
+//! - 압축 경계: 자동은 현재 요청의 시작 직전, 수동은 마지막 사용자 메시지 직전. 사용자 메시지 앞에서 자르므로 tool call/result 짝이 갈라지지 않고,
 //!   시스템 지침은 매 턴 새로 만들어 압축과 무관하게 유지된다.
 //! - 원자성: 요약이 성공했을 때만 압축 note를 한 transaction으로 기록한다. 실패·취소는 아무것도 바꾸지 않는다(실패는 note로 알린다).
 //! - 자동 압축: 턴의 첫 모델 호출 전에 `context.auto_compact_percent`를 넘으면 먼저 압축한다(0이면 끔).
@@ -192,9 +192,16 @@ pub fn usage(c: &Connection, session_id: &str, profile_id: Option<&str>) -> ApiR
     }))
 }
 
-fn boundary(c: &Connection, session_id: &str) -> ApiResult<Option<i64>> {
+fn boundary(c: &Connection, session_id: &str, auto: bool) -> ApiResult<Option<i64>> {
+    // 첫 호출 전에 합치기 메시지가 추가되어도 처음 접수한 요청부터 현재 턴을 보존한다.
+    let sql = if auto {
+        "SELECT MAX(m.seq) FROM turns t JOIN messages m ON m.id=t.request_message_id \
+         WHERE t.session_id=?1 AND t.status='running' AND t.step=0 AND m.rewound_at IS NULL"
+    } else {
+        "SELECT MAX(seq) FROM messages WHERE session_id=?1 AND rewound_at IS NULL AND role='user'"
+    };
     let last_user: Option<i64> = c.query_row(
-        "SELECT MAX(seq) FROM messages WHERE session_id = ?1 AND rewound_at IS NULL AND role = 'user'",
+        sql,
         params![session_id],
         |r| r.get(0),
     )?;
@@ -256,7 +263,7 @@ pub async fn compact(app: &App, session_id: &str, profile_id: &str, auto: bool, 
         .db
         .call(move |c| {
             let s = crate::sessions::get_active(c, &sid)?;
-            let Some(b) = boundary(c, &sid)? else { return Ok(None) };
+            let Some(b) = boundary(c, &sid, auto)? else { return Ok(None) };
             let prev = latest_boundary(c, &sid, None)?;
             let from = prev.as_ref().map(|p| p.upto_seq).unwrap_or(0);
             let prev_record = prev.as_ref().map(|p| p.record_seq);

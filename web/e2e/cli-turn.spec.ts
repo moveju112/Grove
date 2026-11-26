@@ -75,3 +75,39 @@ test("CLI 활동 목록 없이 Codex 질문에 답하고 파일을 복구한 뒤
     await apiCall("PATCH", sessionApi, { expected_revision: current.revision, archived: true });
     await apiCall("DELETE", `/model-profiles/${profile.id}`);
 });
+
+test("Codex 비동기 질문을 질문 창으로 받고 답을 같은 프로세스의 다음 Codex 턴으로 보낸다", async ({ page }) => {
+    test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "격리된 CLI fixture 필요");
+    await ensureProjects();
+    const root = await mkdtemp(join(state().projA, "cli-async-question-"));
+    const project = await apiCall<{ id: string }>("POST", "/projects", { root_path: root });
+    const profile = await apiCall<{ id: string }>("POST", "/model-profiles", {
+        name: "CLI 비동기 질문 fixture", protocol: "codex_cli", base_url: "", model: "default",
+    });
+    const title = "CLI 비동기 질문";
+    const session = await apiCall<{ id: string }>("POST", `/projects/${project.id}/sessions`, { title });
+    const sessionApi = `/sessions/${session.id}`;
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: project.id, resource_id: session.id });
+    await login(page);
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).click();
+    const view = sessionView(page, session.id);
+    const requests = async () => (await readFile(join(state().cliDir!, "app-server-requests.jsonl"), "utf8"))
+        .trim().split("\n").map((line) => JSON.parse(line) as { method?: string; params?: { input?: { text?: string }[] } });
+    const before = (await requests().catch(() => [])).length;
+    await apiCall("POST", `${sessionApi}/turns`, { profile_id: profile.id, text: "fixture-async-question", tools: false });
+    const question = view.getByTestId("question").filter({ hasText: "배포할까?" });
+    await expect(question).toBeVisible();
+    // 질문과 선택지는 질문 창에만 보이고 본문 목록으로 반복하지 않는다.
+    await expect(view.getByText("배포할까?")).toHaveCount(1);
+    await question.getByRole("button", { name: "지금 배포", exact: true }).click();
+    const answer = view.getByTestId("msg-assistant").last();
+    await expect(answer).toContainText("비동기 답 확인 - 배포할까?: 지금 배포");
+    const turns = (await requests()).slice(before).filter((request) => request.method === "turn/start");
+    expect(turns.map((request) => request.params?.input?.[0]?.text)).toEqual([
+        expect.stringContaining("fixture-async-question"), "Reply to your request_user_input_async question:\n- 배포할까?: 지금 배포",
+    ]);
+
+    const current = await apiCall<{ revision: number }>("GET", sessionApi);
+    await apiCall("PATCH", sessionApi, { expected_revision: current.revision, archived: true });
+    await apiCall("DELETE", `/model-profiles/${profile.id}`);
+});

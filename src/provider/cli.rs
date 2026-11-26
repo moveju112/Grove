@@ -168,7 +168,8 @@ fn args_with_bridge(profile: &Profile, req: &ModelRequest, new_session: &str, st
             a.extend([s("--model"), profile.model.clone()]);
         }
         if persist {
-            a.extend([s("--dangerously-skip-permissions"), s("--tools"), s("default")]);
+            a.extend([s("--dangerously-skip-permissions"), s("--tools"), s("default"),
+                s("--disallowedTools"), CLAUDE_SESSION_ONLY_TOOLS.join(",")]);
         } else {
             a.extend([s("--safe-mode"), s("--disable-slash-commands"), s("--permission-mode"), s("dontAsk"), s("--tools"), s("")]);
         }
@@ -296,11 +297,18 @@ fn service_tier(req: &ModelRequest) -> Option<&str> {
     }
 }
 
+/// 대화형 Claude Code 세션 안에서만 동작하는 예약·터미널 알림 도구. Grove의 `-p` 실행에서는 접수만 되고
+/// 실행되지 않으므로 모델에 노출하지 않는다. 나중 확인은 Grove `continue_later`, 알림은 Grove 턴 알림이 맡는다.
+const CLAUDE_SESSION_ONLY_TOOLS: [&str; 5] = ["ScheduleWakeup", "CronCreate", "CronDelete", "CronList", "PushNotification"];
+
 fn codex_bridge(req: &ModelRequest) -> Option<Value> {
     let link = req.cli.as_ref()?.continuations.as_ref()?;
+    // 질문은 사용자 답을 기다린다. 다른 도구는 턴 MCP가 자체 한도(TOOL_WAIT)로 먼저 끝낸다.
+    let wait = if link.tools.contains(&"ask_user") { crate::continuations::bridge::QUESTION_CLIENT_WAIT }
+        else { crate::continuations::bridge::TOOL_WAIT };
     Some(json!({
         "command": link.exe, "args": ["continuation-mcp", link.file],
-        "startup_timeout_sec": 30, "tool_timeout_sec": 360,
+        "startup_timeout_sec": 30, "tool_timeout_sec": wait.as_secs() + 60,
         "required": true, "enabled_tools": link.tools,
     }))
 }
@@ -1168,6 +1176,26 @@ echo '{"type":"result","subtype":"success","result":"image received","usage":{"i
     }
 
     #[test]
+    fn shared_question_tool_reaches_both_native_backends_with_answer_wait(){
+        let link=|tools:Vec<&'static str>| crate::continuations::bridge::Link{
+            file:"/turn-owned/bridge.json".into(),exe:"/grove".into(),waiting:std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)),tools,
+        };
+        let mut request=req(Some("native"));
+        request.cli.as_mut().unwrap().continuations=Some(link(vec!["continue_later","ask_user"]));
+        let (claude,_)=args(&prof("claude_code"),&request,"unused");
+        assert!(claude.join(" ").contains("mcp__grove_continuations__ask_user"));
+        let (codex,_)=args(&prof("codex_cli"),&request,"unused");
+        let wait=crate::continuations::bridge::QUESTION_CLIENT_WAIT.as_secs();
+        assert!(codex.iter().any(|v|v.strip_prefix("mcp_servers.grove_continuations.tool_timeout_sec=")
+            .and_then(|s|s.parse::<u64>().ok()).is_some_and(|s|s>wait)), "Codex가 답을 기다리는 동안 질문을 끊지 않는다: {codex:?}");
+        assert!(codex.iter().any(|v|v.starts_with("mcp_servers.grove_continuations.enabled_tools=")&&v.contains("ask_user")));
+        request.cli.as_mut().unwrap().continuations=Some(link(vec!["continue_later"]));
+        let (codex,_)=args(&prof("codex_cli"),&request,"unused");
+        let short=crate::continuations::bridge::TOOL_WAIT.as_secs()+60;
+        assert!(codex.contains(&format!("mcp_servers.grove_continuations.tool_timeout_sec={short}")), "질문이 없으면 기존 도구 한도를 쓴다");
+    }
+
+    #[test]
     fn turn_mcp_is_explicit_per_turn_with_unrestricted_cli_permissions(){
         for protocol in ["codex_cli","claude_code"] {
             let mut request=req(Some("native"));
@@ -1299,6 +1327,10 @@ echo '{{"type":"result","result":"ok"}}'"#);
             assert!(settings.get("apiKeyHelper").is_none());
             assert!(settings["env"].get("ANTHROPIC_API_KEY").is_none());
             assert_eq!(settings["env"]["CLAUDE_CODE_DISABLE_BACKGROUND_TASKS"], "1", "CLI 내장 백그라운드는 턴 종료 뒤 추적되지 않는다");
+            let disallowed = &a[a.iter().position(|v| v == "--disallowedTools").expect("세션 전용 도구 차단")+1];
+            for tool in ["ScheduleWakeup", "CronCreate", "PushNotification"] {
+                assert!(disallowed.split(',').any(|name| name == tool), "{tool}는 -p 실행에서 동작하지 않는다: {disallowed}");
+            }
             assert!(!a.contains(&"--setting-sources".into()), "전역·프로젝트 지침의 기본 로딩을 막지 않는다");
             assert!(!a.contains(&"--strict-mcp-config".into()), "일반 대화의 사용자 MCP를 차단하지 않는다");
             let session_flag = if resume.is_some() { "--resume" } else { "--session-id" };
@@ -1321,6 +1353,7 @@ echo '{{"type":"result","result":"ok"}}'"#);
             assert!(a.contains(&"approval_policy=\"never\"".into()));
             assert!(!a.contains(&"--ignore-user-config".into()), "일반 대화는 CLI의 기억·hook·MCP 설정을 사용한다");
             assert!(!a.contains(&"exec".into()), "일반 대화는 실제 delta를 받는 app-server를 쓴다");
+            assert!(a.contains(&"features.default_mode_request_user_input=false".into()), "질문은 공통 ask_user MCP 하나로 받는다");
         }
         let (a, _) = args(&prof("codex_cli"), &summary, "x");
         assert!(!a.contains(&"--dangerously-bypass-approvals-and-sandbox".into()));

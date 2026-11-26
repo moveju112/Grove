@@ -167,6 +167,90 @@ async fn interrupted_native_work(restart: bool) {
 }
 
 /// 실행 중 취소는 실제 자식을 종료하고 이미 저장한 변경·중단 기록은 보존한다.
+/// 두 CLI 모두 선택 질문을 답변 본문이 아닌 Grove 공통 질문 창(ask_user)으로 묻고, 답을 받아 같은 턴에서 이어간다.
+#[tokio::test]
+#[ignore]
+async fn cli_backend_asks_through_shared_question_tool() {
+    let s = TestServer::start().await;
+    let prof = cli_profile(&s).await;
+    let p = s.create_project("cli-question").await;
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let (st, v) = s
+        .post(
+            &format!("/api/v1/sessions/{sid}/turns"),
+            json!({ "text": "이 빈 프로젝트에서 시안 색을 정해야 해. 파랑과 초록 중 하나를 나한테 물어보고, 내가 고른 색 이름만 한 단어로 답해줘. 다른 작업은 하지 마.", "profile_id": prof }),
+        )
+        .await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let turn = v["turn"]["id"].as_str().unwrap().to_string();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+    let call = loop {
+        let (_, t) = s.get(&format!("/api/v1/turns/{turn}")).await;
+        if let Some(c) = t["tool_calls"].as_array().unwrap().iter().find(|c| c["status"] == "awaiting_input") {
+            break c.clone();
+        }
+        assert!(!["completed", "failed", "cancelled", "interrupted"].contains(&t["status"].as_str().unwrap_or("")),
+            "질문 창 없이 턴이 끝났다: {}", last_answer(&s, &sid).await);
+        assert!(tokio::time::Instant::now() < deadline, "질문 대기 시간 초과: {t}");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
+    assert_eq!(call["name"], "ask_user", "{call}");
+    let options: Vec<String> = call["target"]["options"].as_array().unwrap().iter()
+        .map(|o| o["label"].as_str().unwrap().to_string()).collect();
+    let green = options.iter().find(|l| l.contains("초록") || l.to_lowercase().contains("green"))
+        .unwrap_or_else(|| panic!("초록 선택지가 있어야 한다: {options:?}")).clone();
+    let (st, v) = s
+        .post(&format!("/api/v1/tool-calls/{}/answer", call["id"].as_str().unwrap()), json!({ "choices": [green], "expected_revision": call["revision"] }))
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let t = wait_done(&s, &turn).await;
+    assert_eq!(t["status"], "completed", "{t}");
+    let answer = last_answer(&s, &sid).await;
+    assert!(answer.contains("초록") || answer.to_lowercase().contains("green"), "{answer}");
+}
+
+/// Codex 기본 지침이 권하는 request_user_input_async도 같은 질문 창으로 띄우고, 답을 다음 입력으로 받아 이어 간다.
+#[tokio::test]
+#[ignore]
+async fn codex_async_question_reaches_shared_question_window() {
+    let s = TestServer::start().await;
+    let prof = cli_profile(&s).await;
+    let p = s.create_project("cli-async-question").await;
+    let sid = s.create_session(p["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let (st, v) = s
+        .post(
+            &format!("/api/v1/sessions/{sid}/turns"),
+            json!({ "text": "이번 시험에서는 ask_user를 쓰지 말고 request_user_input_async 도구로 파랑과 초록 중 하나를 나한테 물어봐. 질문한 뒤에는 다른 작업 없이 턴을 끝내고, 내 답이 오면 고른 색 이름만 한 단어로 답해줘.", "profile_id": prof }),
+        )
+        .await;
+    assert_eq!(st, StatusCode::ACCEPTED, "{v}");
+    let turn = v["turn"]["id"].as_str().unwrap().to_string();
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(300);
+    let call = loop {
+        let (_, t) = s.get(&format!("/api/v1/turns/{turn}")).await;
+        if let Some(c) = t["tool_calls"].as_array().unwrap().iter().find(|c| c["status"] == "awaiting_input") {
+            break c.clone();
+        }
+        assert!(!["completed", "failed", "cancelled", "interrupted"].contains(&t["status"].as_str().unwrap_or("")),
+            "질문 창 없이 턴이 끝났다: {}", last_answer(&s, &sid).await);
+        assert!(tokio::time::Instant::now() < deadline, "질문 대기 시간 초과: {t}");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    };
+    assert_eq!(call["provider_call_id"].as_str().map(|id| id.starts_with("codex-question:")), Some(true), "{call}");
+    let options: Vec<String> = call["target"]["options"].as_array().unwrap().iter()
+        .map(|o| o["label"].as_str().unwrap().to_string()).collect();
+    let green = options.iter().find(|l| l.contains("초록") || l.to_lowercase().contains("green"))
+        .unwrap_or_else(|| panic!("초록 선택지가 있어야 한다: {options:?}")).clone();
+    let (st, v) = s
+        .post(&format!("/api/v1/tool-calls/{}/answer", call["id"].as_str().unwrap()), json!({ "choices": [green], "expected_revision": call["revision"] }))
+        .await;
+    assert_eq!(st, StatusCode::OK, "{v}");
+    let t = wait_done(&s, &turn).await;
+    assert_eq!(t["status"], "completed", "{t}");
+    let answer = last_answer(&s, &sid).await;
+    assert!(answer.contains("초록") || answer.to_lowercase().contains("green"), "{answer}");
+}
+
 #[tokio::test]
 #[ignore]
 async fn cli_backend_cancel_stops_process() {

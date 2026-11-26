@@ -386,6 +386,88 @@ async fn native_bridge_is_turn_scoped_and_honors_policy_and_idempotency() {
 }
 
 #[tokio::test]
+async fn native_bridge_question_waits_for_answer_in_shared_question_ui() {
+    let (s, f, p, sid) = setup().await;
+    let (step, release) = fixture::gated_text("질문 대기");
+    f.push(step);
+    let turn = start(&s, &sid, &p).await;
+    s.wait_status(&turn, "running").await;
+    let app = &s.server.as_ref().unwrap().app;
+    let (_cancel, rx) = tokio::sync::watch::channel(false);
+    let bridge = grove::continuations::bridge::Bridge::start(app, &turn, rx)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(bridge.link.tools.contains(&"ask_user"), "{:?}", bridge.link.tools);
+    let link: Value = serde_json::from_slice(&std::fs::read(&bridge.link.file).unwrap()).unwrap();
+    let (url, token) = (link["url"].as_str().unwrap().to_string(), link["token"].as_str().unwrap().to_string());
+    let ask = |request: &'static str, client: reqwest::Client| {
+        let (url, token) = (url.clone(), token.clone());
+        tokio::spawn(async move {
+            let body = json!({"name":"ask_user","request_id":request,"arguments":{
+                "question":"어느 쪽으로 할까?","options":[{"label":"A (Recommended)","description":"기존 구성"},{"label":"B"}]}});
+            client.post(url).bearer_auth(token).json(&body).send().await.unwrap().json::<Value>().await.unwrap()
+        })
+    };
+    let waiting_question = || async {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                let (_, t) = s.get(&format!("/api/v1/turns/{turn}")).await;
+                if let Some(c) = t["tool_calls"].as_array().unwrap().iter().find(|c| c["status"] == "awaiting_input") {
+                    return c.clone();
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("질문 창이 열려야 한다")
+    };
+
+    let answered = ask("bridge-question", s.client.clone());
+    let call = waiting_question().await;
+    assert_eq!(call["name"], "ask_user");
+    assert_eq!(call["target"]["options"][0]["label"], "A (Recommended)");
+    assert!(!answered.is_finished(), "답하기 전에는 도구가 돌아오지 않는다");
+    let (status, v) = s
+        .post(
+            &format!("/api/v1/tool-calls/{}/answer", call["id"].as_str().unwrap()),
+            json!({"choices":["B"],"text":"버튼은 오른쪽","expected_revision":call["revision"]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let reply = tokio::time::timeout(Duration::from_secs(10), answered).await.unwrap().unwrap();
+    assert_eq!(reply["isError"], false, "{reply}");
+    let result: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(result["status"], "succeeded");
+    assert_eq!(result["result"]["choices"], json!(["B"]));
+    assert_eq!(result["result"]["text"], "버튼은 오른쪽");
+
+    let closed = ask("bridge-question-closed", s.client.clone());
+    let call = waiting_question().await;
+    let (status, v) = s
+        .post(
+            &format!("/api/v1/tool-calls/{}/answer", call["id"].as_str().unwrap()),
+            json!({"cancel":true,"expected_revision":call["revision"]}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK, "{v}");
+    let reply = tokio::time::timeout(Duration::from_secs(10), closed).await.unwrap().unwrap();
+    assert_eq!(reply["isError"], true, "{reply}");
+    let result: Value = serde_json::from_str(reply["content"][0]["text"].as_str().unwrap()).unwrap();
+    assert_eq!(result["status"], "cancelled");
+    assert_eq!(result["result"]["cancelled"], true);
+
+    // 답이 없는 채로 턴이 끝나면 질문 창도 닫힌다.
+    let _pending = ask("bridge-question-abandoned", s.client.clone());
+    let call = waiting_question().await;
+    release.send_replace(true);
+    s.wait_status(&turn, "completed").await;
+    let (_, t) = s.get(&format!("/api/v1/turns/{turn}")).await;
+    let left = t["tool_calls"].as_array().unwrap().iter().find(|c| c["id"] == call["id"]).unwrap();
+    assert_eq!(left["status"], "cancelled", "{left}");
+}
+
+#[tokio::test]
 async fn native_reports_work_without_api_tool_loop_but_keep_policy_and_tool_limits() {
     for protocol in ["codex_cli", "claude_code"] {
         let (s, f, p, sid) = setup().await;

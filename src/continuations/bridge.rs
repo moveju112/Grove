@@ -14,6 +14,13 @@ use std::io::{BufRead, Read, Write};
 use std::time::Duration;
 use tokio::sync::watch;
 
+/// 턴 MCP의 일반 도구 응답 한도. 질문은 사용자 답을 기다려야 하므로 따로 둔다.
+pub(crate) const TOOL_WAIT: Duration = Duration::from_secs(360);
+/// 질문 답변 대기 한도. 넘기면 Grove가 질문을 닫고 모델에 알린다.
+pub(crate) const QUESTION_WAIT: Duration = Duration::from_secs(24 * 3600);
+/// CLI·MCP 연결 한도는 Grove가 질문을 닫고 결과를 돌려줄 여유를 더한다.
+pub(crate) const QUESTION_CLIENT_WAIT: Duration = Duration::from_secs(QUESTION_WAIT.as_secs() + 120);
+
 #[derive(Clone)]
 pub struct Link {
     pub file: std::path::PathBuf,
@@ -95,7 +102,7 @@ impl Bridge {
             .call(move |c| {
                 let t = crate::runner::get_turn(c, &tid)?;
                 if t.definition["limits"].is_object() { return Ok(vec![]); }
-                Ok([super::NAME, "shell", "agent"].into_iter()
+                Ok([super::NAME, "shell", "agent", "ask_user"].into_iter()
                     .filter(|name| super::check_permission(c, &t, name).is_ok()
                         && (*name != "shell" || super::check_permission(c, &t, super::NAME).is_ok()))
                     .collect::<Vec<_>>())
@@ -182,6 +189,7 @@ async fn call(
         return Err(ApiError::invalid("지원하지 않는 도구입니다"));
     }
     let args = body["arguments"].clone();
+    let question = name == "ask_user";
     // This bridge exposes only the background variant; normal native tools remain native.
     if name == "shell" && (args["background"] != true || args["follow_up"].as_str().is_none()) {
         return Err(ApiError::invalid(
@@ -259,6 +267,9 @@ async fn call(
     let mut events = scope.app.seq_tx.subscribe();
     let mut cancel = scope.cancel.clone();
     let mut revoked = scope.revoked.clone();
+    let timer = tokio::time::sleep(QUESTION_WAIT);
+    tokio::pin!(timer);
+    let (mut expired, mut closed) = (false, false);
     loop {
         let id = receipt.id.clone();
         let row = scope
@@ -273,10 +284,31 @@ async fn call(
         }
         tokio::select! {
             _=events.changed()=>{},
+            _=&mut timer, if question && !expired=>expired = true,
             _=cancel.wait_for(|v|*v)=>return Err(ApiError::conflict("cancelled","취소된 턴입니다")),
             _=revoked.wait_for(|v|*v)=>return Err(ApiError::conflict("turn_ended","종료된 턴입니다")),
         }
+        // select의 watch 참조가 풀린 뒤 닫는다. 다음 조회가 닫힌 결과를 돌려준다.
+        if expired && !closed {
+            closed = true;
+            close_question(scope.app.clone(), receipt.id.clone()).await?;
+        }
     }
+}
+
+/// 답이 오지 않은 질문을 닫는다. 이미 답했거나 닫혔으면 그대로 둔다.
+async fn close_question(app: App, id: String) -> ApiResult<()> {
+    let now = app.now();
+    app.db.call(move |c| {
+        let tx = c.transaction()?;
+        crate::approvals::finish(&tx, &now, &id, &["awaiting_input"], "cancelled", Some(json!({
+            "cancelled": true, "code": "question_timeout", "message": "답을 받지 못해 질문을 닫았습니다",
+        })))?;
+        tx.commit()?;
+        Ok(())
+    }).await?;
+    app.notify_events().await;
+    Ok(())
 }
 
 pub fn mcp_main(file: Option<&String>) -> i32 {
@@ -284,7 +316,9 @@ pub fn mcp_main(file: Option<&String>) -> i32 {
     shell.description = "사용자가 요청한 다운로드·설치 등 오래 걸리는 명령을 Grove 소유 백그라운드 작업으로 시작하고, 끝나면 follow_up 지시로 같은 대화에서 AI가 한 번 보고한다. background=true와 follow_up이 필수다. 명령 실행은 Grove의 기존 정책·승인을 거치며 이 도구 자체는 새 사용자 승인이 아니다. 서버 재시작으로 결과가 불명이면 명령을 재실행하지 않는다.";
     let mut agent = crate::tools::spec("agent").expect("registered agent");
     agent.description = "Grove 자식 에이전트에게 위임한다. spawn(agent_id·brief), send(run_id·brief), status/wait(run_id), list, cancel(run_id)을 쓴다. 위임은 Grove 정책과 승인을 따른다. status와 wait는 즉시 현재 상태를 반환한다. 응답을 보내면 Grove가 모델 호출 슬롯을 반환하고 이 턴이 시작한 자식의 결과를 기다린 뒤 알려준다.";
-    stdio_main(file, "grove-continuations", vec![super::spec(), shell, agent])
+    let mut ask = crate::tools::spec("ask_user").expect("registered ask_user");
+    ask.description = "사용자만 정할 수 있는 결정(선택지 고르기, 요청 범위 밖 작업 승인, 위험한 대상 확인)을 Grove 질문 창으로 묻고 답을 기다린다. 답변 본문에 질문을 글로 쓰지 말고 이 도구를 쓴다. options는 짧은 label과 한 줄 description으로 주고, allow_free_text(기본 true)면 직접 입력도 받는다. 결과는 사용자가 고른 choices와 입력한 text다. cancelled면 사용자가 답하지 않고 닫은 것이니 답을 추측하지 않는다. 스스로 알아낼 수 있는 사실은 묻지 않는다.";
+    stdio_main(file, "grove-continuations", vec![super::spec(), shell, agent, ask])
 }
 
 /// 응답 본문 상한. 넘으면 결과 불명으로 돌려준다.
@@ -329,7 +363,6 @@ fn stdio_main(file:Option<&String>,server_name:&str,specs:Vec<crate::tools::Tool
         let client = reqwest::Client::builder()
             .no_proxy()
             .redirect(reqwest::redirect::Policy::none())
-            .timeout(Duration::from_secs(360))
             .build()
             .map_err(|_| "턴 연결을 시작하지 못했습니다")?;
         let mut input = std::io::stdin().lock();
@@ -361,9 +394,10 @@ fn stdio_main(file:Option<&String>,server_name:&str,specs:Vec<crate::tools::Tool
                 }
                 Some("tools/call") if specs.iter().any(|s|request["params"]["name"]==s.name) => {
                     let body = json!({"request_id":crate::util::new_id(),"name":request["params"]["name"],"arguments":request["params"]["arguments"]});
+                    let wait = if request["params"]["name"] == "ask_user" { QUESTION_CLIENT_WAIT } else { TOOL_WAIT };
                     // 변경 요청은 자동 재시도하지 않는다. 응답 유실은 결과 불명으로 반환한다.
                     rt.block_on(async {
-                        let response=client.post(&url).bearer_auth(&token).json(&body).send().await;
+                        let response=client.post(&url).timeout(wait).bearer_auth(&token).json(&body).send().await;
                         match response {
                             Ok(response) if response.status().is_success()=>{
                                 let bytes=response.bytes().await.ok().filter(|b|b.len()<=MAX_REPLY);

@@ -1,6 +1,7 @@
 //! 모델 입력 변환의 순차 처리(DB-012). 전체 입력 생성과 페이지 미리보기가 같은 상태 기계를 쓴다.
 use crate::error::ApiResult;
 use crate::provider::{self, ChatMsg, ToolCall};
+use crate::sessions::ModelHistoryEnd;
 use rusqlite::Connection;
 use serde_json::{Value, json};
 
@@ -270,17 +271,17 @@ pub(crate) fn from_rows(rows: &[(String, Value, Option<Value>)]) -> Vec<ChatMsg>
     builder.finish().items.into_iter().map(|entry| entry.message).collect()
 }
 
-fn read(conn: &Connection, session: &str, upto: Option<i64>, page: Option<(usize, usize)>) -> ApiResult<Output> {
+fn read(conn: &Connection, session: &str, end: ModelHistoryEnd, page: Option<(usize, usize)>) -> ApiResult<Output> {
     // 본문을 모으지 않고 제한된 fingerprint만 먼저 수집한다. 분기·되감기·압축 경계는
     // 실제 입력과 같은 visitor를 쓰므로 경계 밖 결과로 중복을 판단하지 않는다.
     let mut duplicates = dedup::Duplicates::default();
-    crate::sessions::visit_model_history(conn, session, upto, &mut |_, role, input| {
+    crate::sessions::visit_model_history(conn, session, end, &mut |_, role, input| {
         duplicates.observe(role, input);
         Ok(())
     })?;
     let replacements = duplicates.replacements(conn)?;
     let mut builder = Builder::new(page);
-    crate::sessions::visit_model_history(conn, session, upto, &mut |message, role, input| {
+    crate::sessions::visit_model_history(conn, session, end, &mut |message, role, input| {
         if !builder.output.preview && role == "user" {
             if let Some(message) = message { builder.output.attachment_messages.push(message.to_owned()); }
         }
@@ -298,11 +299,11 @@ fn read(conn: &Connection, session: &str, upto: Option<i64>, page: Option<(usize
 }
 
 pub(crate) fn model_chat(conn: &Connection, session: &str, upto: Option<i64>) -> ApiResult<Vec<ChatMsg>> {
-    Ok(read(conn, session, upto, None)?.items.into_iter().map(|entry| entry.message).collect())
+    Ok(read(conn, session, ModelHistoryEnd::Snapshot(upto), None)?.items.into_iter().map(|entry| entry.message).collect())
 }
 
 pub(crate) fn runtime_chat(conn: &Connection, session: &str, data: &std::path::Path) -> ApiResult<Vec<ChatMsg>> {
-    runtime_output(conn, data, read(conn, session, None, None)?)
+    runtime_output(conn, data, read(conn, session, ModelHistoryEnd::Snapshot(None), None)?)
 }
 
 fn runtime_output(conn: &Connection, data: &std::path::Path, output: Output) -> ApiResult<Vec<ChatMsg>> {
@@ -320,7 +321,7 @@ pub(crate) fn cli_chat(
         "SELECT seq FROM messages WHERE id=?1 AND session_id=?2 AND rewound_at IS NULL",
         rusqlite::params![request_message, session], |row| row.get(0),
     )?;
-    let mut output = read(conn, session, Some(start - 1), None)?;
+    let mut output = read(conn, session, ModelHistoryEnd::BeforeCliRequest(start), None)?;
     let mut builder = Builder::new(None);
     let mut statement = conn.prepare(
         "SELECT id, role, CASE WHEN model_input IS NOT NULL AND json_valid(model_input) THEN model_input ELSE content END \
@@ -342,11 +343,11 @@ pub(crate) fn cli_chat(
 }
 
 pub(crate) fn estimated_tokens(conn: &Connection, session: &str) -> ApiResult<u64> {
-    Ok((read(conn, session, None, Some((0, 0)))?.estimated_chars as u64).div_ceil(4))
+    Ok((read(conn, session, ModelHistoryEnd::Snapshot(None), Some((0, 0)))?.estimated_chars as u64).div_ceil(4))
 }
 
 pub(crate) fn preview(conn: &Connection, session: &str, offset: usize, limit: usize) -> ApiResult<Value> {
-    let output = read(conn, session, None, Some((offset, limit)))?;
+    let output = read(conn, session, ModelHistoryEnd::Snapshot(None), Some((offset, limit)))?;
     let offset = offset.min(output.total);
     let items: Vec<Value> = output.items.into_iter().enumerate().map(|(index, entry)| {
         let cut = |text: String| {

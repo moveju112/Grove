@@ -259,6 +259,22 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
                 ] } });
                 continue;
             }
+            if (text.endsWith("fixture-async-question")) {
+                // request_user_input_async는 답을 기다리지 않는다. app-server는 질문 메시지에 questions를 싣고 턴을 끝낸다.
+                const body = "배포할까?\n- 지금 배포\n- 나중에";
+                emit({ method: "item/agentMessage/delta", params: { threadId, turnId, itemId: "async-question", delta: body } });
+                emit({ method: "item/completed", params: { threadId, turnId, item: { id: "async-question", type: "agentMessage", text: body,
+                    delivery: "async", questions: [{ title: "배포할까?", options: ["지금 배포", "나중에"] }] } } });
+                emit({ method: "item/completed", params: { threadId, turnId, item: { id: "waiting", type: "agentMessage", text: "답을 기다리고 있어." } } });
+                emit({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed", items: [] } } });
+                continue;
+            }
+            if (text.startsWith("Reply to your request_user_input_async question:")) {
+                const reply = text.split("\n").slice(1).join(" ");
+                emit({ method: "item/completed", params: { threadId, turnId, item: { id: "async-answer", type: "agentMessage", text: `비동기 답 확인 ${reply}` } } });
+                emit({ method: "turn/completed", params: { threadId, turn: { id: turnId, status: "completed", items: [] } } });
+                continue;
+            }
             const context = /fixture-context-(\d+|unknown)/.exec(text)?.[1];
             if (context) emit({ method: "thread/tokenUsage/updated", params: { threadId, turnId, tokenUsage: {
                 total: { inputTokens: 900_000, outputTokens: 100_000 },

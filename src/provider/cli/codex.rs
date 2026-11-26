@@ -23,8 +23,9 @@ pub(super) fn args(req: &ModelRequest, static_bridge: bool) -> Vec<String> {
     ]
     .into_iter()
     .chain(super::codex_config(req).into_iter().filter(|(key, _)| static_bridge || !key.starts_with("mcp_servers.")))
-    .chain(req.cli.as_ref().and_then(|c| c.codex_questions.as_ref())
-        .map(|_| ("features.default_mode_request_user_input".into(), json!(true))))
+    // 질문은 Claude Code와 같은 턴 MCP의 ask_user 하나로 받는다. Codex 자체 질문 도구는 노출하지 않고,
+    // 그래도 들어오는 requestUserInput(plan 모드 등)은 codex_question이 같은 질문 창으로 처리한다.
+    .chain(std::iter::once(("features.default_mode_request_user_input".into(), json!(false))))
     {
         args.extend(["-c".into(), format!("{key}={value}")]);
     }
@@ -97,6 +98,18 @@ struct State {
     completed: bool,
     questions: Option<super::codex_question::Handle>,
     pending_questions: super::codex_question::Queue,
+    /// request_user_input_async 질문의 질문 창 key와 제목. 이 도구는 답을 기다리지 않으므로 답은 새 입력으로 보낸다.
+    async_questions: HashMap<String, Vec<String>>,
+    /// 질문 창으로 옮긴 질문 메시지. 같은 질문과 선택지를 본문에 다시 쓰지 않는다.
+    async_messages: std::collections::HashSet<String>,
+    async_replies: Vec<String>,
+}
+
+/// Codex에 보낸 비동기 질문 답. 실행 중이면 turn/steer, 끝났으면 같은 thread의 turn/start로 보낸다.
+struct AsyncReply {
+    id: u64,
+    text: String,
+    steer: bool,
 }
 
 fn token_usage(value: &Value) -> Usage {
@@ -305,6 +318,7 @@ impl State {
                     self.image(id.into(), super::super::GeneratedImageSource::File { root, path })?;
                 }
             }
+            "agentMessage" if self.async_messages.contains(id) => self.messages.retain(|(key, _)| key != id),
             "agentMessage" => {
                 *text_slot(&mut self.messages, id) = item["text"].as_str().unwrap_or("").into()
             }
@@ -412,7 +426,9 @@ impl State {
             "item/agentMessage/delta" => {
                 let id = p["itemId"].as_str().ok_or_else(invalid)?;
                 let delta = p["delta"].as_str().ok_or_else(invalid)?;
-                text_slot(&mut self.messages, id).push_str(delta);
+                if !self.async_messages.contains(id) {
+                    text_slot(&mut self.messages, id).push_str(delta);
+                }
             }
             "item/reasoning/summaryTextDelta" => {
                 let id = p["itemId"].as_str().ok_or_else(invalid)?;
@@ -581,6 +597,7 @@ async fn notification<W: AsyncWrite + Unpin>(
             "Codex가 현재 지원하지 않는 대화형 확인을 요청했습니다",
         ));
     }
+    open_async_question(event, state).await?;
     if state.notification(event)? {
         state.snapshot_images().await?;
         state.rebuild()?;
@@ -594,9 +611,95 @@ async fn answer<W: AsyncWrite + Unpin>(
     (id, answers, calls): (Value, crate::error::ApiResult<serde_json::Map<String, Value>>, Vec<String>),
 ) -> Result<(), ProviderError> {
     let answers = answers.map_err(|error| ProviderError::new(error.code, error.message))?;
+    if let Some(titles) = state.async_questions.remove(&id.to_string()) {
+        state.output.native_question_calls.extend(calls);
+        state.async_replies.extend(async_reply(&titles, &answers));
+        return Ok(());
+    }
     send(writer, &json!({"id": id, "result": {"answers": answers}})).await?;
     state.output.native_question_calls.extend(calls);
     Ok(())
+}
+
+/// request_user_input_async는 질문을 접수만 하고 바로 돌아온다. Codex app-server가 질문 메시지에 싣는
+/// questions를 Grove 질문 창으로 띄운다. 띄울 수 없으면 Codex가 쓴 본문(질문과 선택지 목록)을 그대로 둔다.
+async fn open_async_question(event: &Value, state: &mut State) -> Result<(), ProviderError> {
+    let p = &event["params"];
+    let item = &p["item"];
+    if event["method"] != "item/completed" || item["type"] != "agentMessage" || state.turn.is_none()
+        || p["threadId"].as_str() != Some(state.thread.as_str()) || p["turnId"].as_str() != state.turn.as_deref()
+    {
+        return Ok(());
+    }
+    let (Some(handle), Some(id), Some(questions)) = (state.questions.clone(), item["id"].as_str(),
+        item["questions"].as_array().filter(|questions| !questions.is_empty())) else { return Ok(()) };
+    if state.async_messages.contains(id) {
+        return Ok(());
+    }
+    let titles = questions.iter().map(|q| q["title"].as_str().unwrap_or("").to_owned()).collect();
+    let body = json!({"questions": questions.iter().enumerate().map(|(index, q)| json!({
+        "id": format!("q{index}"), "question": q["title"], "isOther": true,
+        "options": q["options"].as_array().map(|options| options.iter().map(|label| json!({"label": label})).collect::<Vec<_>>()),
+    })).collect::<Vec<_>>()});
+    let request = json!(format!("async:{id}"));
+    match state.pending_questions.open(&handle, &request, &body).await {
+        Ok(()) => {
+            state.async_questions.insert(request.to_string(), titles);
+            state.async_messages.insert(id.to_owned());
+            Ok(())
+        }
+        Err(error) if matches!(error.code, "invalid_request" | "forbidden" | "policy_denied" | "read_only" | "bot_inactive" | "turn_ended") => Ok(()),
+        Err(error) => Err(ProviderError::new(error.code, error.message)),
+    }
+}
+
+/// Codex가 기다리는 "새 사용자 메시지" 형식의 답. 사용자가 모두 닫았으면 보내지 않는다.
+fn async_reply(titles: &[String], answers: &serde_json::Map<String, Value>) -> Option<String> {
+    let answered: Vec<_> = titles.iter().enumerate().map(|(index, title)| {
+        let values: Vec<&str> = answers.get(&format!("q{index}")).and_then(|answer| answer["answers"].as_array())
+            .into_iter().flatten().filter_map(Value::as_str).collect();
+        (title, values)
+    }).collect();
+    if answered.iter().all(|(_, values)| values.is_empty()) {
+        return None;
+    }
+    let mut text = String::from("Reply to your request_user_input_async question:");
+    for (title, values) in answered {
+        let answer = if values.is_empty() { "(closed without an answer)".to_owned() } else { values.join(", ") };
+        text.push_str(&format!("\n- {title}: {answer}"));
+    }
+    Some(text)
+}
+
+/// 비동기 질문 답을 보낸다. 실행 중이면 같은 Codex 턴에 합치고, 이미 끝났으면 남은 질문 답까지 모아 새 Codex 턴으로 보낸다.
+async fn deliver_async_reply<W: AsyncWrite + Unpin>(
+    writer: &mut W, profile: &Profile, req: &ModelRequest, state: &mut State,
+    request_id: &mut u64, reply: &mut Option<AsyncReply>, steer_closed: bool,
+) -> Result<(), ProviderError> {
+    let steer = !state.completed;
+    if reply.is_some() || state.async_replies.is_empty() || (steer && steer_closed)
+        || (!steer && !state.async_questions.is_empty())
+    {
+        return Ok(());
+    }
+    let text = state.async_replies.join("\n\n");
+    state.async_replies.clear();
+    let id = *request_id;
+    *request_id += 1;
+    let input = json!([{"type": "text", "text": text}]);
+    let message = if steer {
+        json!({"id": id, "method": "turn/steer", "params": {
+            "threadId": state.thread, "expectedTurnId": state.turn, "input": input,
+        }})
+    } else {
+        let mut params = turn_params(profile, req, &state.thread, &[]);
+        params["input"] = input;
+        state.completed = false;
+        state.turn = None;
+        json!({"id": id, "method": "turn/start", "params": params})
+    };
+    *reply = Some(AsyncReply { id, text, steer });
+    send(writer, &message).await
 }
 
 struct Call<'a> {
@@ -663,7 +766,40 @@ pub(super) async fn run<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
         .map(|(output, _)| output)
 }
 
-pub(super) enum Connection { OneShot, Fresh, Reused(Option<Usage>) }
+/// Fresh는 이 실행 위치에서 마지막으로 본 skill 개수를 가진다(처음이면 None).
+pub(super) enum Connection { OneShot, Fresh(Option<usize>), Reused(Option<Usage>) }
+
+/// 새 app-server는 원격 플러그인 skill을 시작 뒤 비동기로 읽는다(실측 0.3~0.9초).
+/// 그 전에 턴을 시작하면 짧은 skills 목록이 대화에 들어가고, 다음 재사용 턴에서 긴 목록이 다시 들어가
+/// 매번 문맥이 수천 토큰씩 늘어난다. 지난번 개수까지만 짧게 기다리고, 못 채우면 그대로 진행한다.
+const SKILLS_SETTLE: std::time::Duration = std::time::Duration::from_secs(1);
+const SKILLS_POLL: std::time::Duration = std::time::Duration::from_millis(100);
+
+fn skill_total(result: &Value) -> usize {
+    result["data"].as_array().into_iter().flatten()
+        .map(|entry| entry["skills"].as_array().map_or(0, Vec::len))
+        .sum()
+}
+
+async fn settle_skills<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
+    writer: &mut W, reader: &mut BufReader<R>, profile: &Profile, req: &ModelRequest,
+    state: &mut State, on_delta: OnDelta<'_>, expected: usize,
+) -> Result<(), ProviderError> {
+    let cwd = req.cli.as_ref().expect("Codex 대화 문맥").cwd.clone();
+    let deadline = tokio::time::Instant::now() + SKILLS_SETTLE;
+    for id in 100u64.. {
+        let result = call(writer, reader, profile, req, Call {
+            id, method: "skills/list", params: json!({"cwds": [cwd], "forceReload": false}),
+        }, state, on_delta).await;
+        // 목록 조회 실패는 턴을 막지 않는다. 목록이 덜 찬 채 진행할 뿐이다.
+        let Ok(result) = result else { return Ok(()) };
+        if skill_total(&result) >= expected || tokio::time::Instant::now() + SKILLS_POLL > deadline {
+            return Ok(());
+        }
+        tokio::time::sleep(SKILLS_POLL).await;
+    }
+    Ok(())
+}
 
 pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
     writer: &mut W,
@@ -756,6 +892,9 @@ pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
         .ok_or_else(invalid)?
         .into();
     state.output.native_session = Some(state.thread.clone());
+    if let Connection::Fresh(Some(expected)) = &connection {
+        settle_skills(writer, reader, profile, req, &mut state, on_delta, *expected).await?;
+    }
     let mut params = turn_params(profile, req, &state.thread, images);
     if let Some(command) = command {
         params["input"].as_array_mut().expect("turn input").push(json!({
@@ -786,7 +925,11 @@ pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
     let mut pending: Option<(u64, crate::followups::live::Delivery)> = None;
     let mut request_id = 10u64;
     let mut retained_images = Vec::new();
-    while !state.completed || pending.is_some() {
+    let mut reply: Option<AsyncReply> = None;
+    let mut steer_closed = false;
+    while !state.completed || pending.is_some() || reply.is_some()
+        || !state.async_questions.is_empty() || !state.async_replies.is_empty()
+    {
         // receive는 개행 전까지 버퍼를 소유한다. 합치기가 와도 이 future를 버리지 않는다.
         let event = {
             let read = receive(reader, profile, req, state.pending_questions.count.clone());
@@ -795,7 +938,10 @@ pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
                 tokio::select! {
                     biased;
                     event = &mut read => break event?,
-                    response = state.pending_questions.next() => answer(writer, &mut state, response).await?,
+                    response = state.pending_questions.next() => {
+                        answer(writer, &mut state, response).await?;
+                        deliver_async_reply(writer, profile, req, &mut state, &mut request_id, &mut reply, steer_closed).await?;
+                    }
                     id = &mut next, if pending.is_none() && !state.completed => {
                         let link = live.as_ref().expect("합치기 연결");
                         if let Some(delivery) = link.claim(&id?).await.map_err(|e| ProviderError::new(e.code, e.message))? {
@@ -833,7 +979,32 @@ pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
             }
             continue;
         }
-        notification(writer, &event, &mut state, on_delta).await?;
+        if reply.as_ref().is_some_and(|sent| event["id"].as_u64() == Some(sent.id)) && event.get("method").is_none() {
+            let sent = reply.take().expect("비동기 질문 답 전달 확인");
+            let accepted = event.get("error").is_none();
+            if sent.steer && !accepted {
+                // 실행 중인 턴이 막 끝났으면 다음 Codex 턴으로 보낸다.
+                steer_closed = true;
+                state.async_replies.insert(0, sent.text);
+            } else if sent.steer {
+                if event["result"]["turnId"].as_str() != state.turn.as_deref() {
+                    return Err(invalid());
+                }
+            } else {
+                if !accepted {
+                    return Err(ProviderError::new("cli_failed", "Codex가 질문 답을 받지 못했습니다"));
+                }
+                let turn = event["result"]["turn"]["id"].as_str().ok_or_else(invalid)?;
+                if state.turn.as_deref().is_some_and(|id| id != turn) {
+                    return Err(invalid());
+                }
+                state.turn = Some(turn.into());
+                steer_closed = false;
+            }
+        } else {
+            notification(writer, &event, &mut state, on_delta).await?;
+        }
+        deliver_async_reply(writer, profile, req, &mut state, &mut request_id, &mut reply, steer_closed).await?;
     }
     // thread 누적 사용량 갱신과 독립적으로, 이번 턴에서 실제 측정된 메시지만 한 번씩 센다.
     state.output.usage.message_generation = state.message_timings.values().filter_map(|t| t.generation)
@@ -842,6 +1013,20 @@ pub(super) async fn run_turn<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
             duration_ms: sum.duration_ms.checked_add(sample.duration_ms)?,
         })).filter(|sum| sum.duration_ms > 0);
     Ok((state.output, state.usage_total))
+}
+
+/// 턴을 마친 app-server의 skill 개수. 다음 새 프로세스가 같은 목록으로 턴을 시작하게 기억한다.
+pub(super) async fn skill_count<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(
+    writer: &mut W, reader: &mut BufReader<R>, profile: &Profile, req: &ModelRequest,
+) -> Option<usize> {
+    let cwd = req.cli.as_ref()?.cwd.clone();
+    let mut state = State { completed: true, ..State::default() };
+    let result = tokio::time::timeout(std::time::Duration::from_secs(2), call(
+        writer, reader, profile, req, Call {
+            id: 6, method: "skills/list", params: json!({"cwds": [cwd], "forceReload": false}),
+        }, &mut state, &mut |_| {},
+    )).await;
+    match result { Ok(Ok(value)) => Some(skill_total(&value)), _ => None }
 }
 
 pub(super) async fn unsubscribe<W: AsyncWrite + Unpin, R: AsyncRead + Unpin>(

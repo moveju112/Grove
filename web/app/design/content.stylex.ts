@@ -4,7 +4,11 @@ export const contentStyles = stylex.create({
     // Item의 목록 label도 답변 본문의 행간을 사용한다. 앱의 탐색 목록에는 적용하지 않는다.
     markdown: { lineHeight: 1.5, "--text-body-leading": "1.5" },
     // 열이 많은 표는 셀을 글자 한 자 폭으로 압축하지 않고 표 안에서 스크롤한다.
-    markdownTable: (columns: number) => ({ minWidth: `${columns * 5}em` }),
+    // 가로 스크롤 영역의 내용은 max-content 폭이라 표 폭은 바깥 답변 폭(cqi)을 기준으로 정한다.
+    markdownTableArea: { containerType: "inline-size" },
+    markdownTable: (columns: number) => ({ width: "100cqi", minWidth: `${columns * 5}em` }),
+    // Astryx 줄바꿈 셀의 max-width:0은 열을 균등 분배한다. 답변 표는 내용 길이에 따라 열 폭을 나눈다.
+    markdownCell: { maxWidth: "none", overflowWrap: "anywhere" },
     inlineFileButton: {
         minHeight: 0,
         maxWidth: "100%",

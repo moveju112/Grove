@@ -248,7 +248,10 @@ pub fn specs() -> Vec<ToolSpec> {
             max_output_bytes: 16 * 1024,
             schema: json!({ "type": "object", "properties": {
                 "question": { "type": "string", "minLength": 1 },
-                "options": { "type": "array", "maxItems": 8, "items": { "type": "object" } },
+                "options": { "type": "array", "maxItems": 8, "items": { "type": "object", "properties": {
+                    "label": { "type": "string", "minLength": 1, "maxLength": 80 },
+                    "description": { "type": "string", "maxLength": 300 }
+                }, "required": ["label"] } },
                 "multi_select": { "type": "boolean" },
                 "allow_free_text": { "type": "boolean" }
             }, "required": ["question"], "additionalProperties": false }),

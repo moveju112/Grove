@@ -237,16 +237,34 @@ pub fn append_message(
     Ok(m)
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum ModelHistoryEnd {
+    Snapshot(Option<i64>),
+    BeforeCliRequest(i64),
+}
+
 /// 필요한 모델 입력 구간만 한 행씩 읽는다. 표시용 content와 model_input을 중복해서 가져오지 않는다.
 /// 분기 원본도 fork 경계 이전의 압축·상위 분기를 사용해 원래 전체 이력을 재적재하지 않는다(DB-012).
 pub(crate) fn visit_model_history(
-    conn: &Connection, session_id: &str, upto: Option<i64>,
+    conn: &Connection, session_id: &str, mut range: ModelHistoryEnd,
     visit: &mut dyn FnMut(Option<&str>, &str, &Value) -> ApiResult<()>,
 ) -> ApiResult<()> {
     let mut segments = Vec::new();
-    let (mut id, mut end) = (session_id.to_string(), upto);
+    let mut id = session_id.to_string();
     loop {
-        let compaction = crate::context::latest_boundary(conn, &id, end)?;
+        let (end, compaction) = match range {
+            ModelHistoryEnd::Snapshot(upto) => (upto, crate::context::latest_boundary(conn, &id, upto)?),
+            ModelHistoryEnd::BeforeCliRequest(seq) => {
+                // 턴 시작 시 압축 기록은 요청 뒤에 생기지만, 요약 대상은 요청 앞에 있다.
+                let upto = Some(seq - 1);
+                let boundary = crate::context::latest_boundary(conn, &id, None)?;
+                let boundary = match boundary {
+                    Some(b) if b.upto_seq >= seq => crate::context::latest_boundary(conn, &id, upto)?,
+                    boundary => boundary,
+                };
+                (upto, boundary)
+            }
+        };
         let parent = if compaction.is_none() {
             let session = get(conn, &id)?;
             match (session.parent_session_id, session.fork_message_seq, session.fork_inherits_context) {
@@ -257,7 +275,7 @@ pub(crate) fn visit_model_history(
         segments.push((id, end, compaction));
         let Some((parent, seq)) = parent else { break };
         id = parent;
-        end = Some(seq);
+        range = ModelHistoryEnd::Snapshot(Some(seq));
     }
     for (id, end, compaction) in segments.into_iter().rev() {
         let start = compaction.as_ref().map_or(0, |cp| cp.upto_seq);

@@ -82,6 +82,35 @@ test("메시지 시각은 말풍선 밖에 표시하고 응답 시간의 세부 
     await expect(detail).toHaveCount(0);
 });
 
+test("답변 표는 열 폭을 내용 길이에 맞춰 나누고 긴 식별자는 셀 안에서 줄바꿈한다", async ({ page }, info) => {
+    const { view, profile, session, title } = await conversation(page);
+    const answer = [
+        "| 범위 | 확인 결과 |",
+        "|---|---|",
+        "| 서버 | `grove.service` 실행 중. 응답 상태 `ready`, 현재 release는 `0.1.13-9a3e2437712e`로 게시한 압축본과 같아. |",
+        `| CLI | \`${"/home/ubuntu/.local/bin/".repeat(4)}grove\`가 응답 |`,
+    ].join("\n");
+    await script({ marker: title, frames: frames.text([answer]) });
+    await apiCall("POST", `/sessions/${session.id}/turns`, { profile_id: profile, text: title });
+    const table = view.getByTestId("md-table").last();
+    await expect(table).toContainText("grove.service");
+    const [first, second] = await table.getByRole("columnheader").evaluateAll((cells) => cells.map((cell) => cell.getBoundingClientRect().width));
+    expect(first! * 3).toBeLessThan(second!);
+    const fit = await table.evaluate((area) => {
+        const grid = area.querySelector("table")!;
+        const cells = [...grid.querySelectorAll("td")];
+        return {
+            overflow: grid.getBoundingClientRect().width - area.clientWidth,
+            clipped: cells.some((cell) => cell.scrollWidth > cell.clientWidth + 1),
+            wrapped: cells.every((cell, i) => i % 2 === 0 || cell.getBoundingClientRect().height > parseFloat(getComputedStyle(cell).lineHeight) * 1.5),
+        };
+    });
+    expect(fit.overflow).toBeLessThanOrEqual(1);
+    expect(fit.clipped).toBe(false);
+    expect(fit.wrapped).toBe(true);
+    await page.screenshot({ path: info.outputPath("markdown-table-columns-390.png") });
+});
+
 test("모바일 도구의 탭·닫기는 화면 안에 있고 패널을 닫아도 입력 초안이 남는다", async ({ page }, info) => {
     const { view } = await conversation(page);
     const composer = view.getByLabel("메시지 입력", { exact: true });

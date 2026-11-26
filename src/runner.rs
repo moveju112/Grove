@@ -602,17 +602,8 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
     if rp.protocol == provider::codex_oauth::PROTOCOL && def["native_command"].is_string() {
         return Err(ApiError::unsupported("Codex API 연결로 바뀌어 CLI 스킬을 실행할 수 없습니다"));
     }
-    let mut messages = if cli_backend {
-        crate::history::cli_chat(c, &t.session_id, &t.request_message_id, data)?
-    } else {
-        crate::history::runtime_chat(c, &t.session_id, data)?
-    };
-    crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
-    crate::tools::image_read::hydrate(&mut messages, &root)
-        .map_err(|e| ApiError::new(axum::http::StatusCode::BAD_REQUEST, e.code, e.message))?;
     let managed_cli = cli_backend && def["limits"].is_object();
     let tools_enabled = t.tools_enabled && (!cli_backend || managed_cli);
-    mp.check_capabilities(tools_enabled && !managed_cli, def["effort"].as_str(), messages.iter().any(|m| matches!(m, ChatMsg::User { images, .. } if !images.is_empty())))?;
     if (cli_backend || def["limits"].is_object()) && crate::continuations::check_permission(c, &t, "agent").is_err()
         && let Some(def) = def.as_object_mut()
     {
@@ -655,6 +646,19 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             Do not substitute a text mockup merely because the model has no native image output. \
             Supported types include PNG, JPEG, GIF, WebP, MP4, WebM, MOV, WAV and MP3; at most 8 files, 32 MiB per file, 128 MiB total.\n");
     }
+    // 질문 창은 사용자가 보는 대화에서만 쓴다. 예약·관리 실행은 답할 사람이 없다.
+    if ((cli_backend && !managed_cli) || tools_enabled) && !def["limits"].is_object()
+        && crate::continuations::check_permission(c, &t, "ask_user").is_ok()
+    {
+        system.push_str("\n# Questions for the user\n\
+            When you need a decision only the user can make (choosing between options, approving a step outside the request's scope, or confirming a risky target), \
+            ask it with the Grove `ask_user` tool instead of writing the question in your reply. \
+            This includes a closing question that asks the user to pick or approve the next step. \
+            Give short option labels with one-line descriptions, put the recommended option first with \"(Recommended)\" in its label, and keep allow_free_text true unless a typed answer makes no sense. \
+            Ask one decision per call. The tool waits for the answer and returns the user's choices or text. \
+            A cancelled result means the user closed the question without answering: do not assume an answer. \
+            Do not use it for facts you can find out yourself or for progress updates.\n");
+    }
     let cli = if cli_backend {
         let role_run = def["agent_run"].is_object()
             || (t.agent_id.is_some() && crate::agents::run_by_child(c, &s.id)?.is_some());
@@ -676,6 +680,19 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             managed: managed_cli,
         })
     } else { None };
+    let mut messages = if cli_backend {
+        crate::history::cli_chat(c, &t.session_id, &t.request_message_id, data)?
+    } else {
+        crate::history::runtime_chat(c, &t.session_id, data)?
+    };
+    if cli.as_ref().is_some_and(|context| context.resume.is_some()) {
+        // 네이티브 재개에는 마지막 사용자 입력만 전달한다. 이력 속 이미지는 기존 세션에 있다.
+        messages = messages.into_iter().rev().find(|m| matches!(m, ChatMsg::User { .. })).into_iter().collect();
+    }
+    crate::attachments::hydrate(c,data,&s.project_id,&mut messages)?;
+    crate::tools::image_read::hydrate(&mut messages, &root)
+        .map_err(|e| ApiError::new(axum::http::StatusCode::BAD_REQUEST, e.code, e.message))?;
+    mp.check_capabilities(tools_enabled && !managed_cli, def["effort"].as_str(), messages.iter().any(|m| matches!(m, ChatMsg::User { images, .. } if !images.is_empty())))?;
     let tools: Vec<ToolDef> = if tools_enabled {
         crate::deferred_tools::model_tools(c, turn_id, &t.session_id, &def)?
     } else { vec![] };
@@ -2240,6 +2257,79 @@ mod tests {
             answer("a3", "claude", "claude_code", &returned, "New Claude answer")?;
             let next = start("a4", "claude", "Next question")?;
             assert_eq!(next.cli.as_ref().unwrap().resume.as_deref(), Some("a3"));
+
+            // 자동 압축은 현재 요청을 접수한 뒤 이전 이력에 대한 요약을 기록한다.
+            let request_seq: i64 = c.query_row("SELECT last_message_seq FROM sessions WHERE id='s'", [], |row| row.get(0))?;
+            crate::sessions::append_message(c, now, "s", "user", &json!({"text":"One more detail"}), Some("a4"), None)?;
+            crate::sessions::append_message(c, now, "s", "note", &json!({
+                "type":"compaction", "auto":true, "upto_seq":request_seq-1, "summary":"Recent decisions",
+            }), None, None)?;
+            c.execute("DELETE FROM cli_sessions WHERE session_id='s'", [])?;
+            let compacted = load_step(c, "a4", "epoch", &data)?.unwrap().request;
+            assert!(compacted.cli.as_ref().unwrap().resume.is_none());
+            let prompt = provider::cli::prompt(&compacted, false);
+            assert!(prompt.contains("Recent decisions"), "{prompt}");
+            assert!(!prompt.contains("New Claude answer") && !prompt.contains("Claude question"), "{prompt}");
+            assert!(prompt.ends_with("\n</previous_conversation>\n\nNext question\n\nOne more detail"), "{prompt}");
+            Ok(())
+        }).unwrap();
+    }
+
+    #[test]
+    fn native_resume_hydrates_only_current_images() {
+        let dir = tempfile::tempdir().unwrap();
+        let data = dir.path().to_path_buf();
+        let mut image = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::new_rgb8(1, 1).write_to(&mut image, image::ImageFormat::Png).unwrap();
+        let db = crate::store::Db::open(&data.join("grove.db")).unwrap();
+        db.call_sync(move |c| {
+            use base64::Engine;
+            let now = "2026-01-01T00:00:00Z";
+            c.execute("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES ('p','fixture',?1,?2,?2)", params![data.to_str().unwrap(), now])?;
+            c.execute("INSERT INTO sessions(id,project_id,title,created_at,updated_at) VALUES ('s','p','fixture',?1,?1)", [now])?;
+            c.execute("INSERT INTO model_profiles(id,name,protocol,base_url,model,created_at,updated_at) \
+                       VALUES ('cli','cli','codex_cli','','default',?1,?1)", [now])?;
+            let image = provider::GeneratedImage { id: "fixture".into(), source: provider::GeneratedImageSource::Base64(
+                base64::engine::general_purpose::STANDARD.encode(image.into_inner()),
+            ) };
+            let images = crate::attachments::import_generated(c, &data, now, "p", &[image])?;
+            let attachment = images.items[0]["id"].as_str().unwrap().to_owned();
+            let request = |text: &str, with_image: bool| -> ApiResult<crate::sessions::Message> {
+                let ids = if with_image { std::slice::from_ref(&attachment) } else { &[] };
+                let tx = c.unchecked_transaction()?;
+                let prepared = crate::attachments::prepare(&tx, &data, "generated", "p", text, ids)?;
+                let message = crate::sessions::append_message(&tx, now, "s", "user", &json!({"text":text}), None, Some(&prepared.model_input))?;
+                crate::attachments::bind(&tx, now, &message.id, &prepared)?;
+                tx.commit()?;
+                Ok(message)
+            };
+            let start = |id: &str, request: &crate::sessions::Message| -> ApiResult<()> {
+                c.execute("INSERT INTO turns(id,session_id,status,request_message_id,profile_id,owner_epoch,created_at,updated_at) \
+                           VALUES (?1,'s','running',?2,'cli','epoch',?3,?3)", params![id, request.id, now])?;
+                Ok(())
+            };
+            let first = request("first image", true)?;
+            start("first", &first)?;
+            let system = load_step(c, "first", "epoch", &data)?.unwrap().request.system;
+            c.execute("UPDATE turns SET status='completed', step=1 WHERE id='first'", [])?;
+            for _ in 0..32 { request("old image", true)?; }
+            let answer = crate::sessions::append_message(c, now, "s", "assistant", &json!({"text":"old answer","protocol":"codex_cli"}), Some("first"), None)?;
+            c.execute("INSERT INTO cli_sessions(session_id,profile_id,native_id,updated_at,system_sha256,assistant_seq) \
+                       VALUES ('s','cli','native',?1,?2,?3)", params![now, crate::util::sha256_hex(system.as_bytes()), answer.seq])?;
+
+            for (id, with_image) in [("text", false), ("image", true)] {
+                let current = request(id, with_image)?;
+                start(id, &current)?;
+                let input = load_step(c, id, "epoch", &data)?.unwrap().request;
+                assert_eq!(input.cli.as_ref().unwrap().resume.as_deref(), Some("native"));
+                let [ChatMsg::User { text, images }] = input.messages.as_slice() else { panic!("expected one user message") };
+                assert_eq!(text, id);
+                assert_eq!(images.len(), usize::from(with_image));
+                if let Some(image) = images.first() { assert!(!image.data.is_empty()); }
+                let answer = crate::sessions::append_message(c, now, "s", "assistant", &json!({"text":"answer","protocol":"codex_cli"}), Some(id), None)?;
+                c.execute("UPDATE cli_sessions SET assistant_seq=?1 WHERE session_id='s'", [answer.seq])?;
+                c.execute("UPDATE turns SET status='completed', step=1 WHERE id=?1", [id])?;
+            }
             Ok(())
         }).unwrap();
     }
