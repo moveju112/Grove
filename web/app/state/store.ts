@@ -463,7 +463,7 @@ export function resetStreamPartials() {
 
 // ---- 연결 상태·중간 응답(메모리) ----
 
-type Live = { status: "connecting" | "live" | "reconnecting" | "offline" | "auth_expired"; retryAt?: number; partials: Record<string, unknown> };
+type Live = { status: "connecting" | "live" | "reconnecting" | "offline" | "auth_expired"; retryAt?: number; partials: Record<string, unknown>; serverTimeZone?: string };
 let live: Live = { status: "connecting", partials: {} };
 const liveSubs = new Set<() => void>();
 

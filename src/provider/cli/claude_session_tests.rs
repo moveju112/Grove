@@ -139,7 +139,12 @@ async fn native_session_accepts_non_subscription_cli_authentication() {
 
 #[tokio::test]
 async fn live_steer_reaches_the_running_turn_at_a_tool_boundary_or_the_next_cli_turn() {
-    for (prompt, parts, output_tokens) in [("steer-tool", 1, 1), ("steer-after", 1, 3)] {
+    // `/`로 시작하는 합치기는 CLI가 슬래시 명령으로 미루지 않도록 감싸서 보낸다.
+    for (prompt, parts, output_tokens, text, wire_text) in [
+        ("steer-tool", 1, 1, "addition", "addition"),
+        ("steer-after", 1, 3, "addition", "addition"),
+        ("steer-tool", 1, 1, "/data/project 여기", "<user_message>\n/data/project 여기\n</user_message>"),
+    ] {
         let root = tempfile::tempdir().unwrap();
         let cli = fixture(root.path());
         let (app, tid) = crate::provider::cli::codex::tests::live_app(root.path());
@@ -154,7 +159,7 @@ async fn live_steer_reaches_the_running_turn_at_a_tool_boundary_or_the_next_cli_
         });
         started.await.unwrap();
         let id = crate::util::new_id();
-        crate::provider::cli::codex::tests::live_followup(&app, &id, "addition").await;
+        crate::provider::cli::codex::tests::live_followup(&app, &id, text).await;
         let out = task.await.unwrap().unwrap();
         assert_eq!(out.response_steers, [(id.clone(), parts)], "{prompt}");
         assert_eq!(out.response_parts.last().map(String::as_str), Some("merged"), "{prompt}");
@@ -162,7 +167,7 @@ async fn live_steer_reaches_the_running_turn_at_a_tool_boundary_or_the_next_cli_
         assert_eq!(out.usage.model_request_ms, Some(if prompt == "steer-after" { 30 } else { 10 }), "{prompt}");
         let wire = records(root.path());
         let steer = wire.iter().find(|e| e["event"] == "steer").unwrap();
-        assert_eq!((steer["text"].as_str(), steer["uuid"].as_str()), (Some("addition"), Some(id.as_str())));
+        assert_eq!((steer["text"].as_str(), steer["uuid"].as_str()), (Some(wire_text), Some(id.as_str())));
         app.db.call(move |c| {
             assert!(crate::followups::list(c, "live-session")?.is_empty());
             let count: i64 = c.query_row("SELECT COUNT(*) FROM messages WHERE turn_id=?1 AND json_extract(content,'$.source.followup_id')=?2",

@@ -11,9 +11,12 @@ export const composerStyles = stylex.create({
     secondRow: { gridRow: "2" },
     modelControl: { minWidth: 0 },
     favoritesSection: { borderBottom: "1px solid var(--line)" },
-    favoriteGrid: {
-        display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: "var(--spacing-1)",
+    favoriteColumns: { display: "grid", minWidth: 0 },
+    favoriteColumn: {
+        minWidth: 0,
+        ":not(:first-child)": { borderInlineStart: "1px solid var(--line)", paddingInlineStart: "var(--spacing-1)", marginInlineStart: "var(--spacing-1)" },
     },
+    favoriteHeading: { display: "flex", alignItems: "center", minWidth: 0, paddingInline: "var(--spacing-2)", paddingBlock: 2 },
     favoriteChip: { minHeight: 44, height: "auto", minWidth: 0, border: "1px solid var(--line-strong)", paddingInline: "var(--spacing-2)" },
     activeFavoriteChip: { borderColor: "var(--focus)", backgroundColor: "var(--sel)" },
     favoriteDrop: { outline: "2px solid var(--accent)" },

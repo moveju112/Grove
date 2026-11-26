@@ -45,8 +45,8 @@ for (const mode of ["expanded", "collapse"] as const) {
             const live = view.getByTestId("partial");
             await expect(live.getByTestId("progress-step").getByRole("paragraph")).toHaveText(["합친 뒤 첫 확인.", "합친 뒤 두 번째 확인."]);
             for (const block of [before.getByTestId("msg-progress"), live.getByTestId("partial-progress")]) {
-                await expect(block.locator("time")).toHaveCount(1);
-                await expect(block.getByTestId("progress-step").locator("time")).toHaveCount(0);
+                await expect(block.getByText("진행 설명", { exact: true })).toBeVisible();
+                await expect(block.locator("time")).toHaveCount(0);
             }
             await expect(live.getByRole("list", { name: "진행 설명 순서" })).toHaveAttribute("start", "3");
             await verifyOrder("partial");

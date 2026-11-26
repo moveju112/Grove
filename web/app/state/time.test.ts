@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { absoluteTime, displayTime, UNKNOWN_TIME } from "./time";
+import { absoluteTime, displayTime, serverTimeZone, UNKNOWN_TIME } from "./time";
 
 const afternoon = new Date(2026, 0, 12, 15, 4).toISOString();
 const now = new Date(2026, 0, 12, 18, 4).getTime();
@@ -45,5 +45,14 @@ describe("시각 표시 설정", () => {
     it("잘못된 시각은 Invalid Date 대신 알 수 없음으로 표시한다", () => {
         expect(displayTime("", relative, now)).toBe(UNKNOWN_TIME);
         expect(absoluteTime("not-a-date", relative)).toBe(UNKNOWN_TIME);
+    });
+    it("오류 시각은 서버 시간대로 날짜 경계를 넘겨 표시하고 시간대가 없으면 UTC를 쓴다", () => {
+        const at = "2026-11-25T22:31:39.430958164Z";
+        const seoul = serverTimeZone("Asia/Seoul");
+        expect(absoluteTime(at, relative, "datetime", seoul)).toBe(new Date("2026-11-25T22:31:39.430Z")
+            .toLocaleString(undefined, { hour12: false, timeZone: "Asia/Seoul", timeZoneName: "short" }));
+        expect(absoluteTime(at, relative, "datetime", seoul)).not.toBe(absoluteTime(at, relative, "datetime", "UTC"));
+        expect(serverTimeZone(undefined)).toBe("UTC");
+        expect(serverTimeZone("Invalid/Time_Zone")).toBe("UTC");
     });
 });

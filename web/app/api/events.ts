@@ -1,10 +1,11 @@
 // 이벤트 stream 연결. fetch 기반 SSE로 Authorization 헤더를 보내고(토큰을 URL에 넣지 않음),
 // 끊기면 backoff 후 마지막 cursor부터 이어받는다. resync를 받으면 상위가 snapshot을 다시 읽는다.
 
-import type { EventRecord } from "./generated";
+import type { EventHello, EventRecord } from "./generated";
 import { parseContract } from "./validation";
 import { accessToken, checkProtocol, isLoggedIn, refresh, setCapabilities } from "./client";
 import { Cursor, FrameParser, backoff } from "../state/events";
+import { serverTimeZone } from "../state/time";
 import { probeResumedTransport, transportFetch } from "./transport";
 
 // 데몬은 평소 15초 간격으로 SSE keep-alive를 보낸다. 평문 HTTP에서는 연결 자체를 새로 확인한다.
@@ -13,6 +14,7 @@ const SSE_QUIET_MS = 17_000;
 export type StreamHandlers = {
     onEvents: (events: EventRecord[]) => void;
     onPartial: (sessionId: string, snapshot: unknown) => void;
+    onServerTimeZone?: (timeZone: string) => void;
     onResync: (kind: "initial" | "reset" | "reconnect" | "subscription") => void;
     /// connecting: 처음 연결 중, live: 연결됨, reconnecting: 끊긴 뒤 다시 연결 중, offline: 끊김(retryAt에 재시도),
     /// auth_expired: 인증이 만료되어 재시도하지 않음.
@@ -184,9 +186,10 @@ export class EventStream {
                         if (resync || this.stopped || signal.aborted) break;
                         if (f.event !== "event") flush();
                         if (f.event === "hello") {
+                            const c = JSON.parse(f.data) as EventHello;
+                            this.h.onServerTimeZone?.(serverTimeZone(c.server_time_zone));
                             this.attempt = 0;
                             this.h.onStatus("live");
-                            const c = JSON.parse(f.data) as { cursor: number; capabilities?: unknown };
                             setCapabilities(c.capabilities);
                             const full = this.cursor.seq === null;
                             if (full) this.cursor.seq = c.cursor;

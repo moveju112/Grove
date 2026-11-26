@@ -2,6 +2,8 @@ import { expect, test, type Locator } from "@playwright/test";
 import { frames } from "./fixture";
 import { apiCall, composerOption, ensureProfile, ensureProjects, login, openDetails, script, sessionView, state } from "./helpers";
 
+test.use({ timezoneId: "Pacific/Honolulu" });
+
 async function expectFailureLayout(view: Locator, width: number) {
     const err = view.getByTestId("turn-ended");
     await expect(err).toBeVisible();
@@ -50,13 +52,23 @@ test("실패한 요청은 원인과 함께 오류로 표시된다", async ({ pag
     await expect(cause).toContainText("bad_request");
     await expect(cause).toContainText("발생 시각:");
     await expect(cause).toContainText("마지막 진행:");
-    // RUN-024: 진행 범위·다음 조치는 상세에 보존하고 새로고침 뒤에도 같다.
-    await expect(cause.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계 · 최종 답변 없음");
+    const times = cause.locator("time[datetime]");
+    await expect(times).toHaveCount(2);
+    const serverTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    for (const time of await times.all()) {
+        await expect(time).toHaveAttribute("datetime", /Z$/);
+        const local = await time.evaluate((element, timeZone) => new Date((element as HTMLTimeElement).dateTime)
+            .toLocaleString(undefined, { timeZone, timeZoneName: "short" }), serverTimeZone);
+        await expect(time).toHaveText(local);
+    }
+    // RUN-024: 첫 응답이 거절되면 완료한 모델 응답은 0단계로 기록한다.
+    const scope = "진행 범위: 모델 응답 0단계 · 최종 답변 없음";
+    await expect(cause.getByTestId("end-scope")).toContainText(scope);
     await expect(cause.getByTestId("end-scope")).toContainText("다음 조치:");
     await page.reload();
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     await openDetails(cause);
-    await expect(cause.getByTestId("end-scope")).toContainText("진행 범위: 모델 응답 1단계");
+    await expect(cause.getByTestId("end-scope")).toContainText(scope);
     await page.keyboard.press("Escape");
 
     // RUN-019: '다시 실행'하면 같은 글로 새 요청을 보낸다

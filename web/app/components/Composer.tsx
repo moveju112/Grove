@@ -18,7 +18,7 @@ import type { ModelProfile, SessionTurnModel } from "../api/generated";
 import { usePrefs } from "../state/device";
 import { useComposerMemory, useComposerMemoryStore } from "../state/useComposerMemory";
 import { clearInvalidRecovery, loadRecovery, saveRecovery, settleRecovery, validSendOptions, type PendingSend } from "../state/sendRecovery";
-import { EFFORTS, type FollowKind, type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, serviceTierForProfile } from "../state/sendOptions";
+import { EFFORTS, type FollowKind, type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, supportedServiceTier } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
 import { addOutgoing, outgoingResource, readOutgoing, removeOutgoing, type DraftFile } from "../state/outgoing";
@@ -54,7 +54,6 @@ type Props = {
     disabled?: string | null;
     /// 이 대화에서 턴이 실행 중이면 기기 설정의 대기열·steer·중단 후 보내기 방식을 쓴다(UI-021).
     running?: boolean;
-    runningProfileId?: string | null;
     lastModel?: SessionTurnModel;
     /// key: 이 전송의 Idempotency-Key. 결과를 모르는 실패 뒤 같은 내용을 다시 보내면 같은 key를 넘겨 서버가 중복 실행하지 않는다.
     /// follow: 실행 중일 때 고른 방식(없으면 일반 전송).
@@ -75,7 +74,7 @@ export type RunCommand = SlashCommand & { run: (arg: string, o: SendOptions) => 
 export type { FollowKind } from "../state/sendOptions";
 
 /// 작성 중인 입력은 메모리에만 둔다. 이미 보낸 요청의 결과 확인에만 기기 저장소를 쓴다.
-export function Composer({ projectId, resourceKey, copyId, disabled: parentDisabled, running, runningProfileId, lastModel, onSend, commands, boundProfileId, worktreeId, beforeComposer, sendAccessory, statusAccessory }: Props) {
+export function Composer({ projectId, resourceKey, copyId, disabled: parentDisabled, running, lastModel, onSend, commands, boundProfileId, worktreeId, beforeComposer, sendAccessory, statusAccessory }: Props) {
     const serverBlocked = useServerBlockReason();
     const disabled = parentDisabled ?? serverBlocked;
     const store = localRecoveryStorage();
@@ -152,9 +151,10 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const bound = boundProfileId === undefined ? resolved : { ...resolved, profileId: boundProfileId, model: null, agentId: null };
     const selectedProfile = profiles.data?.find((p) => p.id === bound.profileId);
     // 예전 로컬 기본값(tools: false)은 새 요청에 쓰지 않는다. 전송 복구는 원래 요청을 그대로 쓴다.
-    const eff = { ...bound, tools: bound.toolOverride,
-        serviceTier: serviceTierForProfile(bound.serviceTier, selectedProfile?.capabilities) };
     const catalog = useModelCatalog(selectedProfile);
+    const selectedModel = catalogModel(catalog.data?.models, selectedProfile, bound.model);
+    const eff = { ...bound, tools: bound.toolOverride,
+        serviceTier: supportedServiceTier(bound.serviceTier, selectedProfile?.capabilities, selectedModel, !!catalog.data) };
     const nativeSupported = useCapability("native_skills_v1");
     // 선택한 CLI의 명령 목록은 입력창을 쓰기 시작하면 미리 받고, "/" 입력 때 오래된 목록만 갱신한다.
     const nativeEligible = eff.mode === "model" && ready && nativeSupported === true && !disabled
@@ -165,7 +165,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     const nativeKey = nativeEligible ? `native-commands:${JSON.stringify([projectId, resourceKey, worktreeId, selectedProfile!.id, selectedProfile!.revision])}` : null;
     const nativeCatalog = useNativeCommandCatalog(nativeKey, inputFocused, slashMode,
         () => nativeCommands(projectId, selectedProfile!.id, nativeSession, worktreeId));
-    const selectedModel = catalogModel(catalog.data?.models, selectedProfile, eff.model);
     const efforts = modelEfforts(selectedProfile, selectedModel);
     const tiers = selectedProfile?.capabilities.fast ? selectedModel?.service_tiers ?? [] : [];
     const fastTier = tiers.find((tier) => tier.id === "priority");
@@ -186,10 +185,6 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     // 결과를 알 수 없는 전송(네트워크 끊김·서버 오류)의 key. 같은 내용·옵션으로 다시 보낼 때만 재사용한다(UI-028).
     const recovering = !pending?.missing && pending?.raw === text && pending.sig === sendOptionsSignature(opts, attachments.ids) ? pending : null;
     const runningFollow = running && eff.mode === "model" && !recovering ? follow : undefined;
-    const steerHint = runningFollow && profiles.data?.find((p) => p.id === runningProfileId)?.protocol === "claude_code"
-        ? "현재 Claude 실행이 끝난 뒤 반영돼요." : undefined;
-    const showSteerHint = steerHint && runningFollow === "steer" && (text.trim() || attachments.items.length > 0);
-    const steerHintId = useId();
     // slash command: 공통 명령 + 화면 명령. 등록된 이름만 명령이고 나머지 "/"는 보내지 않는다(//로 시작하면 글).
     const builtins: RunCommand[] = [
         {
@@ -590,14 +585,11 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
                     label={busy ? checking.current ? "확인 중…" : "보내는 중…" : recovering ? "같은 요청 확인" : running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"}
                     onSend={(once) => void send(once)}
                     follow={runningFollow}
-                    steerHint={steerHint}
-                    describedBy={showSteerHint ? steerHintId : undefined}
                     disabled={busy || pendingInvalid || (!text.trim() && attachments.items.length === 0) || !!disabled || (!recovering && (attachments.failed || !!problem || (eff.mode === "model" && (!ready || !eff.profileId || profileDisabled || profileMissing)) || (!!running && eff.mode === "save")))}
                     title={running && eff.mode === "save" ? "실행 중에는 메시지만 저장할 수 없습니다" : `${running && eff.mode === "model" ? FOLLOW_LABEL[follow] : "보내기"} · ${enterSends ? "Enter" : "Ctrl+Enter"}`}
                 />
                 </Stack>
             </Grid>
-            {showSteerHint && <GroveText as="p" id={steerHintId} display="block" type="supporting" color="secondary">{steerHint}</GroveText>}
             {msg && <GroveText as="p" display="block" type="supporting" color="secondary" role="status">{msg}</GroveText>}
             {problem && <GroveText as="p" display="block" type="supporting" color="warning" role="status">{problem}</GroveText>}
             {eff.mode === "model" && profileDisabled && <GroveText as="p" display="block" type="supporting" color="warning" role="status" data-testid="profile-disabled">선택한 모델 프로필이 비활성화돼 있습니다. 다른 모델로 자동 전환하지 않습니다.</GroveText>}

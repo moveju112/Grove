@@ -311,6 +311,7 @@ export function Workspace() {
                 }
             }),
             onPartial: queuePartial,
+            onServerTimeZone: (serverTimeZone) => setLive((l) => l.serverTimeZone === serverTimeZone ? l : { ...l, serverTimeZone }),
             onResync: (kind) => {
                 if (kind === "subscription") { resetStreamPartials(); retryWaiting(); }
                 else resyncAll(kind !== "reset");

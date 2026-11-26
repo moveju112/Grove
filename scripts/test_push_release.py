@@ -54,6 +54,18 @@ class ReleasePush(unittest.TestCase):
                 pass
             self.assertTrue((source / "notes").exists())
 
+    def test_external_release_cache_is_marked_to_be_trimmed_last(self):
+        with tempfile.TemporaryDirectory() as temp:
+            parent = Path(temp).resolve()
+            external = parent / "managed/ab/0123456789abcd"
+            source = parent / "source"
+            source.mkdir()
+            meta = json.dumps({"build_directory": str(external)})
+            with patch.object(push.subprocess, "check_output", return_value=meta):
+                env = push.release_build_env(source, parent)
+            self.assertNotEqual(env.get("CARGO_BUILD_BUILD_DIR"), str(parent / "cargo-build"))
+            self.assertTrue((external / ".prune-last").is_file())
+
     def test_cached_package_requires_passing_rust_tests_for_the_archived_commit(self):
         commit = push.output("git", "rev-parse", "HEAD")
         version = push.tomllib.loads(push.output("git", "show", f"{commit}:Cargo.toml"))["package"]["version"]

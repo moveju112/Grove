@@ -186,3 +186,48 @@ for (const theme of ["light", "dark"] as const) {
         }
     });
 }
+
+test("Fast를 지원하지 않는 모델로 바꾸면 Fast를 끄고 보내며, 지원 모델로 돌아오면 다시 켠다", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
+    await page.addInitScript(() => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme: "light", runningSendMode: "queue" })));
+    const { a } = await ensureProjects();
+    const profile = await apiCall<{ id: string }>("POST", "/model-profiles", {
+        name: "options-unsupported-fast", protocol: "codex_cli", base_url: "", model: "fixture-codex",
+    });
+    const title = `미지원 Fast ${Date.now()}`;
+    const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: session.id });
+    try {
+        await login(page);
+        await page.getByRole("button", { name: "사이드바", exact: true }).click();
+        await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: title, exact: true }).click();
+        const view = sessionView(page, session.id);
+        const fastIcon = view.getByRole("img", { name: "Fast 켜짐", exact: true });
+        await composerOption(view, "모델 프로필", profile.id);
+        const speed = await composerSetting(view, "Fast");
+        await speed.focus();
+        await speed.press("Space");
+        await expect(speed).toBeChecked();
+        await closeModelSettings(view);
+        await expect(fastIcon).toHaveCount(1);
+
+        await composerOption(view, "모델 프로필", JSON.stringify([profile.id, "fixture-light"]));
+        const panel = await modelSettings(view);
+        await expect(panel.getByRole("switch", { name: "Fast", exact: true })).toHaveCount(0);
+        await closeModelSettings(view);
+        await expect(fastIcon).toHaveCount(0);
+        await expect(view.getByText("선택한 모델이 지원하는 속도를 선택하세요.")).toHaveCount(0);
+        await view.getByLabel("메시지 입력").fill("Fast 미지원 모델로 보내기");
+        await view.getByRole("button", { name: "보내기", exact: true }).click();
+        await expect(view.getByTestId("msg-assistant")).toHaveCount(1);
+        const turns = await apiCall<{ definition: { service_tier: string | null } }[]>("GET", `/sessions/${session.id}/turns`);
+        expect(turns[0]!.definition.service_tier).toBe("default");
+
+        await composerOption(view, "모델 프로필", profile.id);
+        await expect(await composerSetting(view, "Fast")).toBeChecked();
+        await expect(fastIcon).toHaveCount(1);
+    } finally {
+        await apiCall("DELETE", `/model-profiles/${profile.id}`);
+    }
+});

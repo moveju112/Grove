@@ -194,10 +194,10 @@ async fn draft_endpoints_are_not_available() {
     }
 }
 
-/// RECENT-001: 마지막 확정 답변으로 정렬하고, 숨긴 뒤 새 사용자 메시지가 오면 다시 보이며,
+/// RECENT-001: 마지막 사용자 메시지·확정 답변으로 정렬하고, 숨긴 뒤 새 사용자 메시지가 오면 다시 보이며,
 /// 시간 범위 밖이어도 고정·진행 중 항목은 남는다.
 #[tokio::test]
-async fn recent_follows_last_reply_window_and_revives_hidden() {
+async fn recent_follows_last_activity_window_and_revives_hidden() {
     let s = TestServer::start().await;
     let fixture = Fixture::start().await;
     let profile = s.fixture_profile(&fixture.base).await;
@@ -210,10 +210,12 @@ async fn recent_follows_last_reply_window_and_revives_hidden() {
     let order = |list: &Value| list["items"].as_array().unwrap().iter().map(|i| i["resource_id"].as_str().unwrap().to_string()).collect::<Vec<_>>();
     let (_, list) = s.get("/api/v1/recent").await;
     assert_eq!(order(&list), [b.clone(), a.clone()]);
-    // 보내기만 하면 마지막 답변 기준 순서·시각은 바뀌지 않는다.
+    // 보내면 그 시각부터 다시 센다.
+    tokio::time::sleep(std::time::Duration::from_millis(5)).await;
     s.post(&format!("/api/v1/sessions/{a}/messages"), json!({ "text": "a" })).await;
     let (_, list) = s.get("/api/v1/recent").await;
-    assert_eq!(order(&list), [b.clone(), a.clone()]);
+    assert_eq!(order(&list), [a.clone(), b.clone()]);
+    assert_eq!(list["items"][0]["last_activity_at"], list["items"][0]["last_user_message_at"]);
     let answered_at = receive_reply(&s, &fixture, &profile, &a, "reply a").await;
     let (_, list) = s.get("/api/v1/recent").await;
     assert_eq!(order(&list), [a.clone(), b.clone()]);
@@ -232,7 +234,8 @@ async fn recent_follows_last_reply_window_and_revives_hidden() {
     let (_, list) = s.get("/api/v1/recent").await;
     assert_eq!(order(&list), [a.clone(), b.clone()]);
     assert_eq!(list["items"][0]["hidden"], false);
-    assert_eq!(list["items"][0]["last_activity_at"], answered_at, "숨김 복원과 답변 시각 갱신은 별개다");
+    assert_eq!(list["items"][0]["last_activity_at"], list["items"][0]["last_user_message_at"], "새 메시지가 마지막 활동이 된다");
+    assert_ne!(list["items"][0]["last_activity_at"], answered_at);
 
     // 시간 범위: 미래 시각 이후 활동은 없으므로 고정 항목만 남는다. 잘못된 시각은 거절한다.
     let ib = list["items"].as_array().unwrap().iter().find(|i| i["resource_id"] == b.as_str()).unwrap().clone();
@@ -283,7 +286,7 @@ async fn background_recent_touch_keeps_closed_session_hidden_until_explicit_reop
 }
 
 #[tokio::test]
-async fn recent_changes_at_reply_completion_not_open_send_or_tool_events() {
+async fn recent_changes_at_send_and_reply_not_open_or_tool_events() {
     let mut s = TestServer::start().await;
     let fixture = Fixture::start().await;
     let profile = s.fixture_profile(&fixture.base).await;
@@ -307,9 +310,10 @@ async fn recent_changes_at_reply_completion_not_open_send_or_tool_events() {
     assert_eq!(status, StatusCode::ACCEPTED, "{accepted}");
     s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "running").await;
     let (_, list) = s.get("/api/v1/recent").await;
-    assert_eq!(list["items"][0]["resource_id"], b, "전송·실행 시작은 최근 순서를 바꾸지 않는다");
-    let during = list["items"].as_array().unwrap().iter().find(|i| i["resource_id"] == a).unwrap();
-    assert_eq!(during["last_activity_at"], first_reply);
+    assert_eq!(list["items"][0]["resource_id"], a, "전송하면 그 시각부터 다시 센다");
+    let during = &list["items"][0];
+    assert_eq!(during["last_activity_at"], during["last_user_message_at"]);
+    let sent_at = during["last_activity_at"].as_str().unwrap().to_string();
     let before_release = grove::util::fmt_time(s.server.as_ref().unwrap().app.clock.now());
     release.send(true).unwrap();
     s.wait_status(accepted["turn"]["id"].as_str().unwrap(), "completed").await;
@@ -339,8 +343,8 @@ async fn recent_changes_at_reply_completion_not_open_send_or_tool_events() {
         Ok(())
     }).await.unwrap();
     let (_, list) = s.get("/api/v1/recent").await;
-    assert_eq!(list["items"][0]["resource_id"], b, "되돌린 답변은 제외한다");
-    assert_eq!(list["items"][1]["last_activity_at"], first_reply);
+    assert_eq!(list["items"][0]["resource_id"], a);
+    assert_eq!(list["items"][0]["last_activity_at"], sent_at, "되돌린 답변은 제외한다");
 }
 
 #[tokio::test]

@@ -113,6 +113,11 @@ async function claudeAnswer(input) {
     const usage = { input_tokens: contextTokens, output_tokens: 0 };
     if (context) emit({ type: "stream_event", event: { type: "message_start", message: { usage } } });
     await followupBoundary(input);
+    if (input.includes("fixture-claude-tool-activities")) {
+        const tools = ["fixture-read", "fixture-search"].map((id) => ({ type: "tool_use", id, name: "Read", input: {} }));
+        emit({ type: "assistant", message: { content: tools } });
+        emit({ type: "user", message: { content: tools.map(({ id }) => ({ type: "tool_result", tool_use_id: id })) } });
+    }
     emit({ type: "assistant", message: { content: [{ type: "text", text: answer }], ...(context ? { usage } : {}) } });
     emit({ type: "result", subtype: "success", session_id: id, result: answer,
         usage: context ? { input_tokens: 900_000, output_tokens: 100_000 } : { input_tokens: 10, output_tokens: 5 },
@@ -155,6 +160,8 @@ if (args[0] === "app-server" || args.includes("--input-format")) {
                 break;
             }
             if (request.type === "user") {
+                // 실행 중 합치기: 실제 CLI처럼 대화에 넣을 때 같은 uuid로 replay한 뒤 이어지는 턴으로 처리한다.
+                if (request.uuid) emit({ type: "user", isReplay: true, uuid: request.uuid, message: request.message, session_id: request.session_id });
                 await claudeAnswer(request.message.content.find((item) => item.type === "text")?.text ?? "");
                 if (!claudeSession) break;
                 continue;

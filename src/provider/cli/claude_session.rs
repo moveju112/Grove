@@ -104,6 +104,12 @@ impl Drop for Process {
     }
 }
 
+/// CLI는 `/`로 시작하는 입력을 슬래시 명령으로 받는다. 실행 중 합치기에서는 다음 모델 호출에 넣지 않고
+/// CLI 턴이 끝난 뒤 처리하므로, Grove가 보낸 글은 명령으로 읽히지 않게 감싼다.
+fn plain_text(text: String) -> String {
+    if text.trim_start().starts_with('/') { format!("<user_message>\n{text}\n</user_message>") } else { text }
+}
+
 fn disconnected() -> ProviderError {
     ProviderError::new("cli_exited", "Claude Code 프로세스가 턴을 끝내기 전에 종료되었습니다")
 }
@@ -195,14 +201,13 @@ pub(super) async fn run(
     }
     let usage_turn = super::rate_events::Export::turn(process.export.as_ref());
     let resumed = ctx.resume.is_some();
-    let text = prompt(req, false);
-    let text = if text.trim_start().starts_with('/') { format!("<user_message>\n{text}\n</user_message>") } else { text };
+    let text = plain_text(prompt(req, false));
     let mut content = vec![json!({"type":"text","text":text})];
     content.extend(super::claude_images(req, resumed)?.into_iter().map(|image|
         json!({"type":"image","source":{"type":"base64","media_type":image.mime,"data":image.data}})));
     let input = format!("{}\n", json!({"type":"user","parent_tool_use_id":null,"session_id":process.native_id,
         "message":{"role":"user","content":content}}));
-    let mut stream = CliStream::default();
+    let mut stream = CliStream::new(req);
     let idle = profile.timeout;
     let native_id = process.native_id.clone();
     let live = ctx.steers.clone();
@@ -228,8 +233,12 @@ pub(super) async fn run(
                     let link = live.as_ref().expect("합치기 연결");
                     if let Some(delivery) = link.claim(&id?).await.map_err(|e| ProviderError::new(e.code, e.message))? {
                         // sending 접수가 commit된 뒤에만 쓴다. 쓰기 오류는 재전송하지 않고 결과 불명으로 남긴다.
+                        let mut content = delivery.content.clone();
+                        if let Some(text) = content.first_mut().and_then(|block| block["text"].as_str().map(str::to_owned)) {
+                            content[0]["text"] = json!(plain_text(text));
+                        }
                         let message = format!("{}\n", json!({"type":"user","parent_tool_use_id":null,"session_id":native_id,
-                            "uuid":delivery.id,"message":{"role":"user","content":delivery.content}}));
+                            "uuid":delivery.id,"message":{"role":"user","content":content}}));
                         sent.push(delivery);
                         let mut stdin = stdin.lock().await;
                         tokio::time::timeout(idle, stdin.write_all(message.as_bytes())).await

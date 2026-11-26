@@ -1,5 +1,7 @@
 // 이 파일은 tests/integration/ts_bindings.rs가 Rust 계약에서 생성한다. 직접 수정하지 않는다.
 
+export type EventHello = { cursor: number, protocol: number, capabilities: Array<string>, server_time_zone?: string, };
+
 export type EventRecord = { seq: number, created_at: string, kind: string, project_id: string | null, session_id: string | null, payload: unknown, };
 
 export type SetupPreferences = { output_style: string, output_style_revision: number, output_style_options: Array<string>, };
@@ -150,7 +152,7 @@ completed_turn_id: string | null, completion_unread: boolean,
  */
 last_user_message_at: string | null,
 /**
- * 정렬·시간 범위 기준: 대화는 마지막 확정 답변 시각(없으면 생성 시각), 다른 자원은 마지막 접근 시각.
+ * 정렬·시간 범위·경과 표시 기준: 대화는 마지막 사용자 메시지나 확정 답변 중 늦은 시각(없으면 생성 시각), 다른 자원은 마지막 접근 시각.
  */
 last_activity_at: string, };
 

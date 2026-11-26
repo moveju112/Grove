@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, serviceTierForProfile } from "./sendOptions";
-import type { ModelCapabilities } from "../api/generated";
+import { type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, serviceTierForProfile, supportedServiceTier } from "./sendOptions";
+import type { AvailableModel, ModelCapabilities } from "../api/generated";
 
 const base: SendOptions = { mode: "model", profileId: null, agentId: null, tools: false };
 
@@ -47,6 +47,17 @@ describe("capabilityProblem", () => {
         expect(serviceTierForProfile(null, unknown)).toBeNull();
         expect(serviceTierForProfile("priority", unknown)).toBe("priority");
         expect(capabilityProblem(unknown, { ...base, serviceTier: serviceTierForProfile("default", unknown) }, false)).toBeNull();
+    });
+    it("지원하지 않는 모델의 Fast는 꺼진 것으로 보고, 목록을 받기 전에는 단정하지 않는다", () => {
+        const codex = { ...unknown, fast: true };
+        const fastModel = { id: "gpt", name: "gpt", service_tiers: [{ id: "priority", name: "Fast" }] } as AvailableModel;
+        const plainModel = { id: "light", name: "light", service_tiers: [] } as AvailableModel;
+        expect(supportedServiceTier("priority", codex, fastModel, true)).toBe("priority");
+        expect(supportedServiceTier("priority", codex, plainModel, true)).toBe("default");
+        expect(supportedServiceTier("priority", unknown, undefined, true)).toBeNull();
+        expect(supportedServiceTier("priority", codex, undefined, false)).toBe("priority");
+        expect(supportedServiceTier("priority", undefined, undefined, false)).toBe("priority");
+        expect(supportedServiceTier("default", unknown, undefined, true)).toBeNull();
     });
     it("미확인 지원을 미지원으로 단정하지 않는다", () => {
         expect(capabilityProblem(unknown, { ...base, tools: true, effort: "high" }, true)).toBeNull();

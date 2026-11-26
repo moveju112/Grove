@@ -3,6 +3,7 @@ import type * as Types from "./generated";
 import type { Schema } from "./validation";
 
 export type ContractTypes = {
+    EventHello: Types.EventHello;
     EventRecord: Types.EventRecord;
     SetupPreferences: Types.SetupPreferences;
     SetupStatus: Types.SetupStatus;
@@ -72,6 +73,7 @@ export type ContractTypes = {
 };
 
 export const contractMetadata = {
+    "EventHello": {"kind":"object","fields":{"cursor":{"optional":false,"schema":{"kind":"number"}},"protocol":{"optional":false,"schema":{"kind":"number"}},"capabilities":{"optional":false,"schema":{"kind":"array","item":{"kind":"string"}}},"server_time_zone":{"optional":true,"schema":{"kind":"string"}}}},
     "EventRecord": {"kind":"object","fields":{"seq":{"optional":false,"schema":{"kind":"number"}},"created_at":{"optional":false,"schema":{"kind":"string"}},"kind":{"optional":false,"schema":{"kind":"string"}},"project_id":{"optional":false,"schema":{"kind":"union","options":[{"kind":"string"},{"kind":"literal","value":null}]}},"session_id":{"optional":false,"schema":{"kind":"union","options":[{"kind":"string"},{"kind":"literal","value":null}]}},"payload":{"optional":false,"schema":{"kind":"unknown"}}}},
     "SetupPreferences": {"kind":"object","fields":{"output_style":{"optional":false,"schema":{"kind":"string"}},"output_style_revision":{"optional":false,"schema":{"kind":"number"}},"output_style_options":{"optional":false,"schema":{"kind":"array","item":{"kind":"string"}}}}},
     "SetupStatus": {"kind":"object","fields":{"required":{"optional":false,"schema":{"kind":"boolean"}},"preferences":{"optional":false,"schema":{"kind":"union","options":[{"kind":"ref","name":"SetupPreferences"},{"kind":"literal","value":null}]}}}},

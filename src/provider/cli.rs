@@ -12,11 +12,13 @@
 
 use super::{ChatMsg, ContextUsage, ModelOutput, ModelRequest, OnDelta, Profile, ProviderError, Usage};
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 const MAX_LINE_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ACTIVITY: usize = 512;
+pub(crate) const DEFAULT_CLAUDE_ACTIVITY_LIMIT: u64 = 10_000;
 
 mod codex;
 pub(crate) mod codex_question;
@@ -50,6 +52,7 @@ pub struct CliContext {
     pub(crate) claude_session: Option<claude_session::Handle>,
     pub(crate) codex_questions: Option<codex_question::Handle>,
     pub(crate) codex_session: Option<codex_session::Handle>,
+    pub(crate) claude_activity_limit: Option<u64>,
     /// 예약과 그 후속 턴의 도구는 runner가 사용량과 승인 정책을 확인한 뒤 실행한다.
     pub(crate) managed: bool,
 }
@@ -448,7 +451,8 @@ struct CliStream {
     claude_completion: ClaudeCompletion,
     codex_messages: Vec<(String, String)>,
     codex_reasoning: Vec<(String, String)>,
-    native_activity: Vec<(String, Value)>,
+    native_activity_indices: HashMap<String, usize>,
+    claude_activity_limit: Option<u64>,
 }
 
 #[derive(Default)]
@@ -526,10 +530,19 @@ impl ClaudePartial {
 }
 
 impl CliStream {
+    fn new(req: &ModelRequest) -> Self {
+        Self { claude_activity_limit: req.cli.as_ref().and_then(|ctx| ctx.claude_activity_limit), ..Self::default() }
+    }
+
     fn activity(&mut self, id: &str, item: Value) {
-        if let Some((_, value)) = self.native_activity.iter_mut().find(|(key, _)| key == id) { *value = item; }
-        else { self.native_activity.push((id.into(), item)); }
-        self.output.activity = self.native_activity.iter().map(|(_, value)| value.clone()).collect();
+        // ID 없이 추가된 활동은 다음 도구 갱신에서 제외한다.
+        self.output.activity.truncate(self.native_activity_indices.len());
+        if let Some(&index) = self.native_activity_indices.get(id) {
+            self.output.activity[index] = item;
+        } else {
+            self.native_activity_indices.insert(id.into(), self.output.activity.len());
+            self.output.activity.push(item);
+        }
     }
 
     fn apply(&mut self, protocol: &str, event: &Value) -> Result<(), ProviderError> {
@@ -620,9 +633,9 @@ impl CliStream {
             if protocol == "claude_code" && event["type"] == "user" {
                 for c in event["message"]["content"].as_array().into_iter().flatten() {
                     if c["type"] == "tool_result" && let Some(id) = c["tool_use_id"].as_str()
-                        && let Some((_, item)) = self.native_activity.iter().find(|(key, _)| key == id)
+                        && let Some(&index) = self.native_activity_indices.get(id)
                     {
-                        let mut item = item.clone();
+                        let mut item = self.output.activity[index].clone();
                         item["status"] = json!(if c["is_error"] == true { "failed" } else { "completed" });
                         self.activity(id, item);
                     }
@@ -636,13 +649,16 @@ impl CliStream {
             if let Some(last) = self.output.response_parts.last_mut() { *last = text.clone(); }
             else { self.output.response_parts.push(text.clone()); }
         }
+        let max_activity = if protocol == "claude_code" {
+            self.claude_activity_limit.unwrap_or(DEFAULT_CLAUDE_ACTIVITY_LIMIT)
+        } else { MAX_ACTIVITY as u64 };
         if self.output.text.len() + self.output.reasoning.len() > super::MAX_OUTPUT_BYTES
             || self.final_text.as_ref().is_some_and(|text| text.len() > super::MAX_OUTPUT_BYTES)
             || self.claude_completion.active.as_ref().is_some_and(|r| r.text.len() > super::MAX_OUTPUT_BYTES)
             || self.claude_completion.tasks.len() > MAX_ACTIVITY
-            || self.output.activity.len() > MAX_ACTIVITY
+            || (max_activity != 0 && self.output.activity.len() as u64 > max_activity)
             || self.codex_messages.len() + self.codex_reasoning.len() > MAX_ACTIVITY
-            || self.native_activity.len() > MAX_ACTIVITY || self.output.response_parts.len() > MAX_ACTIVITY
+            || self.output.response_parts.len() > MAX_ACTIVITY
         {
             return Err(ProviderError::new("output_too_large", "에이전트 응답 한도를 초과했습니다"));
         }
@@ -1005,7 +1021,7 @@ async fn stream_with(profile: &Profile, req: &ModelRequest, on_delta: OnDelta<'_
         stdin.write_all(input.as_bytes()).await?;
         stdin.shutdown().await
     });
-    let mut stream = CliStream::default();
+    let mut stream = CliStream::new(req);
     let mut structured_output = None;
     let mut lines = BufReader::new(stdout);
     let mut pending_line = Vec::new();
@@ -1636,6 +1652,27 @@ EVENTS"#);
         state.apply("claude_code", &json!({"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"tool-1","is_error":false,"content":"OK"}]}})).unwrap();
         assert_eq!(state.output.activity.len(), 1);
         assert_eq!(state.output.activity[0]["status"], "completed");
+    }
+
+    #[test]
+    fn claude_defaults_to_ten_thousand_activities_and_zero_disables_the_limit() {
+        let mut state = CliStream::default();
+        let mut unlimited = CliStream { claude_activity_limit: Some(0), ..CliStream::default() };
+        let tool_start = |id: usize| json!({"type":"stream_event","event":{"type":"content_block_start",
+            "content_block":{"type":"tool_use","id":id.to_string(),"name":"Read"}}});
+        for id in 0..10_000 {
+            let event = tool_start(id);
+            let result = state.apply("claude_code", &event);
+            assert!(result.is_ok(), "도구 활동 {}건에서 실패: {result:?}", id + 1);
+            unlimited.apply("claude_code", &event).unwrap();
+        }
+        state.apply("claude_code", &json!({"type":"user","message":{"content":[
+            {"type":"tool_result","tool_use_id":"0","is_error":false}]}})).unwrap();
+        assert_eq!(state.output.activity.len(), 10_000);
+        assert_eq!(state.output.activity[0]["status"], "completed");
+        assert_eq!(state.apply("claude_code", &tool_start(10_000)).unwrap_err().code, "output_too_large");
+        unlimited.apply("claude_code", &tool_start(10_000)).unwrap();
+        assert_eq!(unlimited.output.activity.len(), 10_001);
     }
 
     #[cfg(unix)]

@@ -1,6 +1,7 @@
 import { Stack } from "@astryxdesign/core/Stack";
+import * as stylex from "@stylexjs/stylex";
 import { Text } from "@astryxdesign/core/Text";
-import { useRef } from "react";
+import { useId, useRef } from "react";
 import { api } from "../api/client";
 import type { ModelFavorite, ModelProfile } from "../api/generated";
 import { parseContract } from "../api/validation";
@@ -11,6 +12,7 @@ import { Icon } from "./icons";
 import { useAutosave } from "./settings/useAutosave";
 import { useTouchOrder } from "./useTouchOrder";
 import { touchOrderStyles } from "./touchOrder.stylex";
+import { ProviderMark } from "./usage/ProviderMark";
 
 const CHIP = "[data-favorite-key]";
 const KEY = "model.favorites";
@@ -44,6 +46,14 @@ export function favoriteKey(favorite: ModelFavorite) {
     return JSON.stringify([favorite.profile_id, favorite.model, favorite.effort, favorite.fast]);
 }
 
+// 공급자 열은 Claude → Codex → 그 밖의 API 순으로 고정한다. 열 안의 순서는 저장된 순서를 따른다.
+const GROUPS = [
+    { id: "claude", label: "Claude", mark: "claude_code", protocols: ["claude_code", "anthropic"] },
+    { id: "codex", label: "Codex", mark: "codex_cli", protocols: ["codex_cli", "codex_oauth"] },
+    { id: "api", label: "API", mark: "", protocols: [] },
+] satisfies { id: string; label: string; mark: string; protocols: string[] }[];
+const groupOf = (protocol: string) => (GROUPS.find((group) => group.protocols.includes(protocol)) ?? GROUPS[2]!).id;
+
 type FavoritesProps = {
     favorites: ReturnType<typeof useModelFavorites>;
     current: ModelFavorite | null;
@@ -55,7 +65,11 @@ type FavoritesProps = {
 
 export function FavoriteChips({ favorites: { shared, state }, current, profiles, currentName, labelFor, onApply }: FavoritesProps) {
     const grid = useRef<HTMLDivElement>(null);
+    const headingId = useId();
     const rows = state.value.filter((item) => profiles.some((profile) => profile.id === item.profile_id));
+    const group = new Map(rows.map((item) => [favoriteKey(item), groupOf(profiles.find((p) => p.id === item.profile_id)!.protocol)]));
+    const columns = GROUPS.map((column) => ({ ...column, rows: rows.filter((item) => group.get(favoriteKey(item)) === column.id) }))
+        .filter((column) => column.rows.length);
     const drag = useTouchOrder<string>({
         enabled: shared && rows.length > 1 && (state.phase === "idle" || state.phase === "saved"),
         mouse: true, selector: CHIP, idFor: (chip) => chip.dataset.favoriteKey!,
@@ -68,7 +82,8 @@ export function FavoriteChips({ favorites: { shared, state }, current, profiles,
         },
         targetAt: ({ id, x, y }) => {
             const chip = document.elementFromPoint(x, y)?.closest<HTMLElement>(CHIP);
-            return chip && grid.current?.contains(chip) && chip.dataset.favoriteKey !== id ? chip.dataset.favoriteKey! : null;
+            const target = chip && grid.current?.contains(chip) ? chip.dataset.favoriteKey! : null;
+            return target && target !== id && group.get(target) === group.get(id) ? target : null; // 순서는 같은 공급자 열 안에서만 바꾼다.
         },
         onDrop: (source, target) => {
             const next = [...state.value];
@@ -86,10 +101,14 @@ export function FavoriteChips({ favorites: { shared, state }, current, profiles,
     const failed = state.phase === "conflict" || state.phase === "uncertain" || state.phase === "error";
     if (!rows.length && !failed && state.phase !== "saving") return null;
     return <Stack as="section" gap={1} paddingBlockEnd={2} xstyle={composerStyles.favoritesSection} aria-label="즐겨찾기">
-        {!!rows.length && <>
-            <Text type="supporting" color="secondary" weight="semibold">즐겨찾기</Text>
-            <Stack ref={grid} gap={0} xstyle={composerStyles.favoriteGrid} data-testid="model-favorite-grid">
-                {rows.map((item) => {
+        {!!columns.length && <div ref={grid} {...stylex.props(composerStyles.favoriteColumns)}
+            style={{ gridTemplateColumns: `repeat(${columns.length}, minmax(0, 1fr))` }} data-testid="model-favorite-grid">
+            {columns.map((column) => <Stack key={column.id} gap={1} role="group" aria-labelledby={`${headingId}-${column.id}`}
+                xstyle={composerStyles.favoriteColumn} data-favorite-group={column.id}>
+                <Text id={`${headingId}-${column.id}`} type="supporting" weight="semibold" xstyle={composerStyles.favoriteHeading}>
+                    {column.mark && <ProviderMark protocol={column.mark} />}{column.label}
+                </Text>
+                {column.rows.map((item) => {
                     const key = favoriteKey(item);
                     const active = key === selectedKey;
                     const profile = profiles.find((p) => p.id === item.profile_id)!;
@@ -109,8 +128,8 @@ export function FavoriteChips({ favorites: { shared, state }, current, profiles,
                         {active && <Icon name="check" size={14} />}
                     </Button>;
                 })}
-            </Stack>
-        </>}
+            </Stack>)}
+        </div>}
         {state.phase === "saving" && <Text type="supporting" color="secondary" role="status">즐겨찾기 저장 중…</Text>}
         {failed && <Stack gap={1}>
             <Text type="supporting" color="error" role="alert">{state.phase === "conflict" ? "다른 기기에서 즐겨찾기를 변경했어요." : state.message ?? "즐겨찾기를 저장하지 못했어요."}</Text>
@@ -131,7 +150,7 @@ export function FavoriteStar({ favorites: { shared, state }, current, profiles }
     return <Button type="button" appearance="icon" width={36} xstyle={[composerStyles.favoriteStar, active && composerStyles.activeFavoriteStar]}
         aria-label={label} title={full ? "즐겨찾기는 24개까지 저장할 수 있어요." : label} aria-pressed={active}
         disabled={full || !["idle", "saved"].includes(state.phase)} onClick={() => {
-            state.change(active ? rows.filter((item) => favoriteKey(item) !== key) : [current, ...rows]);
+            state.change(active ? rows.filter((item) => favoriteKey(item) !== key) : [...rows, current]); // 새 즐겨찾기는 맨 아래에 붙인다.
             state.commit();
         }}>
         <Icon name={active ? "starFilled" : "star"} size={18} />

@@ -13,6 +13,16 @@ export function serviceTierForProfile(value: SendOptions["serviceTier"], capabil
     return value;
 }
 
+// 지원이 확인되지 않은 모델의 Fast는 보내지 않고 꺼진 것으로 보인다. 저장된 선택은 그대로 두어 지원 모델로 돌아가면 다시 켜진다.
+// 모델 목록을 받기 전에는 판단하지 않는다. 그동안은 capabilityProblem이 전송을 막는다.
+export function supportedServiceTier(value: SendOptions["serviceTier"], capabilities: ModelCapabilities | undefined,
+    model: AvailableModel | undefined, catalogLoaded: boolean): string | null {
+    const tier = serviceTierForProfile(value, capabilities);
+    if (!tier || tier === "default" || !capabilities) return tier;
+    if (!capabilities.fast || catalogLoaded && !model?.service_tiers?.some((entry) => entry.id === tier)) return serviceTierForProfile(null, capabilities);
+    return tier;
+}
+
 /// 저장된 선택값을 현재 목록에 맞춰 실제로 쓸 값으로 바꾼다.
 /// 선택값을 effect로 상태에 복사하지 않고 렌더마다 계산해, 화면에 보이는 선택과 보내는 값이 항상 같게 한다.
 /// - 프로필: 명시적 저장값은 없어져도 보존한다. 선택이 없을 때만 첫 프로필을 쓴다.

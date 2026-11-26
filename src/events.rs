@@ -24,6 +24,16 @@ use tokio::sync::{broadcast, mpsc, watch};
 pub const RETAIN_EVENTS: i64 = 50_000;
 const BATCH: i64 = 200;
 
+#[derive(Serialize, ts_rs::TS)]
+pub struct EventHello {
+    cursor: i64,
+    protocol: u32,
+    capabilities: &'static [&'static str],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    server_time_zone: Option<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, ts_rs::TS)]
 pub struct EventRecord {
     pub seq: i64,
@@ -205,8 +215,13 @@ pub async fn stream(
                 Err(_) => return,
             },
         };
-        let hello = json!({ "cursor": cursor, "protocol": crate::PROTOCOL_VERSION, "capabilities": crate::CAPABILITIES });
-        if tx.send(Out::Event(Event::default().event("hello").data(hello.to_string()))).await.is_err() {
+        let server_time_zone = tokio::task::spawn_blocking(iana_time_zone::get_timezone).await.ok().and_then(Result::ok);
+        let hello = EventHello {
+            cursor, protocol: crate::PROTOCOL_VERSION, capabilities: crate::CAPABILITIES,
+            server_time_zone,
+        };
+        let Ok(hello) = Event::default().event("hello").json_data(hello) else { return; };
+        if tx.send(Out::Event(hello)).await.is_err() {
             return;
         }
         tracing::debug!(?request_id, resume = start.is_some(), session_count,

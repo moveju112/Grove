@@ -1,6 +1,6 @@
 import type { Prefs } from "./device";
 
-// 화면의 시각 표시. 서버 값(UTC RFC3339)은 바꾸지 않고 이 기기 설정으로만 표시 형식을 고른다.
+// 화면의 시각 표시. 서버 값(UTC RFC3339)은 바꾸지 않는다.
 export type TimePrefs = Pick<Prefs, "clock" | "timeStyle">;
 export type TimePart = "datetime" | "time" | "minute";
 
@@ -17,10 +17,18 @@ function hour12(p: TimePrefs): boolean | undefined {
     return p.clock === "system" ? undefined : p.clock === "12h";
 }
 
-export function absoluteTime(at: string, p: TimePrefs, part: TimePart = "datetime"): string {
+export function serverTimeZone(value: unknown): string {
+    if (typeof value === "string") {
+        try { return new Intl.DateTimeFormat(undefined, { timeZone: value }).resolvedOptions().timeZone; }
+        catch { /* 지원하지 않는 서버 시간대 */ }
+    }
+    return "UTC";
+}
+
+export function absoluteTime(at: string, p: TimePrefs, part: TimePart = "datetime", timeZone?: string): string {
     const date = new Date(at);
     if (Number.isNaN(date.getTime())) return UNKNOWN_TIME;
-    const options = { hour12: hour12(p) };
+    const options: Intl.DateTimeFormatOptions = { hour12: hour12(p), timeZone, timeZoneName: timeZone ? "short" : undefined };
     if (part === "minute") return date.toLocaleTimeString(undefined, { ...options, hour: "numeric", minute: "2-digit" });
     return part === "time" ? date.toLocaleTimeString(undefined, options) : date.toLocaleString(undefined, options);
 }

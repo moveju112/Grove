@@ -85,7 +85,7 @@ test("최근 항목은 다른 pane의 열린 탭으로 이동하고 명시적인
     await expect(sessionTabs).toHaveCount(3);
 });
 
-test("열기·보내기는 최근 시각을 바꾸지 않고 답변이 도착해야 순서와 표시 시각이 갱신된다", async ({ page }) => {
+test("열기는 최근 시각을 바꾸지 않고 보내기·답변 도착마다 순서와 표시 시각이 갱신된다", async ({ page }) => {
     const { prefix, first, profile, firstReply, secondReply } = await sessions();
     await login(page);
     const recent = page.getByRole("region", { name: "최근", exact: true });
@@ -96,8 +96,11 @@ test("열기·보내기는 최근 시각을 바꾸지 않고 답변이 도착해
     await expect(firstItem.getByTestId("recent-time").locator("time")).toHaveAttribute("datetime", firstReply);
     await expect(items.first()).toContainText(`${prefix} second`);
     await apiCall("POST", `/sessions/${first.id}/messages`, { text: "답변 없이 메시지만 보냄" });
-    await expect(firstItem.getByTestId("recent-time").locator("time")).toHaveAttribute("datetime", firstReply);
-    await expect(items.first()).toContainText(`${prefix} second`);
+    const sent = await apiCall<{ items: { role: string; created_at: string }[] }>("GET", `/sessions/${first.id}/messages`);
+    const sentAt = sent.items.filter((message) => message.role === "user").at(-1)!.created_at;
+    expect(sentAt).not.toBe(firstReply);
+    await expect(firstItem.getByTestId("recent-time").locator("time")).toHaveAttribute("datetime", sentAt);
+    await expect(items.first()).toContainText(`${prefix} first`);
 
     const view = sessionView(page, first.id);
     await composerOption(view, "모델 프로필", profile);

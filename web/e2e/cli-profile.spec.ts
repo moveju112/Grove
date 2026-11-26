@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { apiCall, composerOption, ensureProjects, login, removeProfiles, requireToolApproval, selectChoice, state } from "./helpers";
+import { apiCall, composerOption, ensureProjects, login, openSettings, removeProfiles, requireToolApproval, selectChoice, state } from "./helpers";
 
 // 서버에 설치된 CLI 백엔드(Claude Code·Codex) 프로필을 설정 화면에서 만든다. endpoint·API 키 입력이 없고 권한 제한을 안내한다.
 test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만들 수 있고 endpoint·키 입력은 숨겨진다", async ({ page }) => {
@@ -72,6 +72,58 @@ test("CLI 예약이 허용 목록, 사용자 승인, 토큰 한도를 Grove에�
         } finally {
             await apiCall("DELETE", `/model-profiles/${profile.id}`);
         }
+    }
+});
+
+test("Claude Code 도구 활동 상한을 설정에서 저장하고 0이면 건수로 중단하지 않는다", async ({ page }, info) => {
+    test.skip(process.env.GROVE_E2E_FAKE_CLI !== "1", "격리된 CLI fixture 필요");
+    await page.setViewportSize({ width: 390, height: 844 });
+    const { a } = await ensureProjects();
+    const key = "runs.claude_activity_limit";
+    const label = "Claude Code 도구 활동 상한(건)";
+    const serverSetting = async () => (await apiCall<{ items: { key: string; effective: number;
+        layers: { server: { revision: number; value: number | null } } }[] }>("GET", "/settings/effective"))
+        .items.find((item) => item.key === key)!;
+    const initial = await serverSetting();
+    const profile = await apiCall<{ id: string }>("POST", "/model-profiles", {
+        name: "claude-activity-limit-fixture", protocol: "claude_code", base_url: "", model: "default",
+    });
+    const openLimit = async () => {
+        await openSettings(page);
+        await page.getByRole("button", { name: "실행·한도", exact: true }).click();
+    };
+    const input = page.getByLabel(label, { exact: true });
+    try {
+        await login(page);
+        await openLimit();
+        await expect(input).toHaveValue("10000");
+        await input.scrollIntoViewIfNeeded();
+        await page.screenshot({ path: info.outputPath("claude-activity-limit-390.png") });
+        for (const [value, status, error] of [[1, "failed", "output_too_large"], [0, "completed", undefined]] as const) {
+            await input.fill(String(value));
+            await input.blur();
+            await expect.poll(async () => (await serverSetting()).effective).toBe(value);
+            const session = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `Claude 활동 한도 ${value}` });
+            const { turn } = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`, {
+                profile_id: profile.id, text: "fixture-claude-tool-activities",
+            });
+            await expect.poll(async () => {
+                const current = await apiCall<{ status: string; error?: { code: string }; definition: { claude_activity_limit: number } }>("GET", `/turns/${turn.id}`);
+                return [current.status, current.error?.code, current.definition.claude_activity_limit];
+            }).toEqual([status, error, value]);
+        }
+        await page.reload();
+        await expect(page.getByTestId("conn")).toHaveText("연결됨");
+        await openLimit();
+        await expect(input).toHaveValue("0");
+    } finally {
+        const current = await serverSetting();
+        if (current.layers.server.revision !== initial.layers.server.revision) {
+            await apiCall("PUT", `/settings/server/-/${key}`, {
+                expected_revision: current.layers.server.revision, value: initial.layers.server.value,
+            });
+        }
+        await apiCall("DELETE", `/model-profiles/${profile.id}`);
     }
 });
 

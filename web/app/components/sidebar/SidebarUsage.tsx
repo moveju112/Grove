@@ -15,6 +15,8 @@ import { usePageVisible, usePaneVisible } from "../../state/paneVisibility";
 import { usageStyles } from "./usage.stylex";
 import { dashboardStyles } from "../usage/dashboard.stylex";
 import { providerName } from "../usage/dashboardModel";
+import { ProviderMark } from "../usage/ProviderMark";
+import { VisuallyHidden } from "@astryxdesign/core/VisuallyHidden";
 
 const statuses: Record<string, string> = {
     unsupported: "한도 조회 미지원",
@@ -46,7 +48,7 @@ export function UsageSummary({ report, failed = false, now = Date.now(), onAuthe
         {failed && <GroveText type="inherit" color="warning">갱신 실패 · 이전 값</GroveText>}
         {connected.map((account) => <Stack key={account.protocol} gap={0} data-testid="account-usage">
             {account.status !== "available" ? <Stack direction="horizontal" justify="between" gap={2}>
-                <GroveText type="inherit" color="secondary">{account.name}</GroveText>
+                <GroveText type="inherit" color="secondary"><ProviderMark protocol={account.protocol} />{account.name}</GroveText>
                 {account.status === "authentication_required" && onAuthenticate ? <Button type="button" appearance="link" density="compact"
                     aria-label={`${account.name} 인증 설정 열기`} aria-haspopup="dialog" xstyle={usageStyles.authAction}
                     onClick={() => onAuthenticate(account.protocol)}>
@@ -70,7 +72,9 @@ export function UsageSummary({ report, failed = false, now = Date.now(), onAuthe
                     const reset = limit?.resets_at ? ` · 초기화 ${absoluteTime(limit.resets_at, prefs)}` : "";
                     return <Stack gap={0.5} key={period} data-testid="account-usage-limit">
                         <Stack direction="horizontal" justify="between" align="center" gap={1}>
-                            <HintText type="inherit" color="secondary" hint={`${label} 사용${reset}`} xstyle={usageStyles.label}>{label}</HintText>
+                            <HintText type="inherit" color="secondary" hint={`${label} 사용${reset}`} xstyle={usageStyles.label}>
+                                <ProviderMark protocol={account.protocol} /><VisuallyHidden>{account.name} </VisuallyHidden>{period}
+                            </HintText>
                             <HintText type="inherit" hasTabularNumbers hint={`조회 ${absoluteTime(account.checked_at, prefs)}${reset}`}
                                 color={expired ? "secondary" : "primary"}
                                 aria-label={`${label} 사용 ${value}${reset}`} xstyle={usageStyles.value}>
@@ -95,7 +99,7 @@ function UsageQuotaCards({ report, failed, now, onAuthenticate }: {
         {failed && <GroveText color="warning" xstyle={dashboardStyles.small}>갱신 실패 · 이전 값</GroveText>}
         {connected.map((account) => <Stack key={account.protocol} xstyle={[dashboardStyles.card, dashboardStyles.quotaCard]}>
             <Stack direction="horizontal" justify="between" align="center" gap={2}>
-                <GroveText xstyle={dashboardStyles.cardTitle}>{providerName(account.protocol)}</GroveText>
+                <GroveText xstyle={dashboardStyles.cardTitle}><ProviderMark protocol={account.protocol} />{providerName(account.protocol)}</GroveText>
                 <Stack direction="horizontal" align="center" xstyle={[dashboardStyles.status, account.status === "available" && dashboardStyles.connected]}>
                     <svg width={7} height={7} aria-hidden="true"><circle cx={3.5} cy={3.5} r={3.5} fill="currentColor" /></svg>
                     <GroveText type="inherit" color="inherit">{account.status === "available" ? "연결됨" : statuses[account.status] ?? "조회 실패"}</GroveText>
@@ -137,7 +141,7 @@ function UsageQuotaPlaceholder() {
     return <Stack direction="horizontal" wrap="wrap" xstyle={dashboardStyles.quotaCards} aria-label="OAuth 한도" aria-busy="true">
         {accounts.map(({ protocol }) => <Stack key={protocol} xstyle={[dashboardStyles.card, dashboardStyles.quotaCard]}>
             <Stack direction="horizontal" justify="between" align="center" gap={2}>
-                <GroveText xstyle={dashboardStyles.cardTitle}>{providerName(protocol)}</GroveText>
+                <GroveText xstyle={dashboardStyles.cardTitle}><ProviderMark protocol={protocol} />{providerName(protocol)}</GroveText>
                 <Stack direction="horizontal" align="center" xstyle={dashboardStyles.status}>
                     <svg width={7} height={7} aria-hidden="true"><circle cx={3.5} cy={3.5} r={3.5} fill="currentColor" /></svg>
                     <GroveText type="inherit" color="inherit">조회 중</GroveText>

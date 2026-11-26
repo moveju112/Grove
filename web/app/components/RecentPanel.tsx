@@ -99,7 +99,7 @@ export function RecentPanel({ hides, open, warmProject, splitGroups = NO_SPLITS,
         else if (it.kind === "file") open({ kind: "file", project_id: it.project_id, resource_id: it.resource_id, filePath: it.resource_id, title: it.title }, how);
         else return;
         if (serverBlocked) return;
-        // 접근 기록은 갱신하되 대화의 정렬·시간 표시는 마지막 확정 답변을 그대로 쓴다.
+        // 접근 기록은 갱신하되 대화의 정렬·시간 표시는 마지막 메시지·확정 답변 시각을 그대로 쓴다.
         // view_state를 보내지 않아 읽던 위치·읽음 정보는 그대로 둔다.
         // 완료 확인은 클릭한 요청 ID만 보낸다. 그 뒤 도착한 다른 완료까지 확인하지 않는다.
         void hides.reopen(it, () => api.post<void>("/recent/touch", {

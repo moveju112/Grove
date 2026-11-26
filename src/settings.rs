@@ -21,6 +21,7 @@ pub const FULL_ACCESS: &str = "tools.full_access";
 const MODEL_FAVORITES: &str = "model.favorites";
 const MODEL_FAVORITES_LIMIT: usize = 24;
 pub const DEFAULT_MODEL_CONCURRENCY: u64 = 10;
+pub(crate) const CLAUDE_ACTIVITY_LIMIT: &str = "runs.claude_activity_limit";
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, ts_rs::TS)]
 #[serde(deny_unknown_fields)]
@@ -345,6 +346,21 @@ pub fn registry() -> Vec<SettingDef> {
             max: Some(10_080),
             default: json!(0),
             scopes: &["server", "project", "session"],
+            applies: "next_turn",
+            advanced: true,
+        },
+        SettingDef {
+            key: CLAUDE_ACTIVITY_LIMIT,
+            menu: "execution",
+            label: "Claude Code 도구 활동 상한(건)",
+            description: "요청 하나에서 Claude Code가 기록할 수 있는 도구 활동 건수예요. 상한을 넘으면 요청이 중단돼요. 0을 입력하면 건수 제한을 해제해요.",
+            keywords: "claude code tool activity limit 무제한 건수 도구 활동 제한",
+            kind: "int",
+            options: &[],
+            min: Some(0),
+            max: Some(9_007_199_254_740_991),
+            default: json!(crate::provider::cli::DEFAULT_CLAUDE_ACTIVITY_LIMIT),
+            scopes: &["server"],
             applies: "next_turn",
             advanced: true,
         },

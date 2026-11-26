@@ -47,7 +47,7 @@ pub struct RecentItem {
     pub completion_unread: bool,
     /// 대화의 마지막 사용자 메시지 시각(되돌린 메시지 제외). 다른 종류는 없음.
     pub last_user_message_at: Option<String>,
-    /// 정렬·시간 범위 기준: 대화는 마지막 확정 답변 시각(없으면 생성 시각), 다른 자원은 마지막 접근 시각.
+    /// 정렬·시간 범위·경과 표시 기준: 대화는 마지막 사용자 메시지나 확정 답변 중 늦은 시각(없으면 생성 시각), 다른 자원은 마지막 접근 시각.
     pub last_activity_at: String,
 }
 
@@ -62,8 +62,8 @@ const RCOLS: &str = "r.id, r.kind, r.project_id, p.name, r.resource_id, r.title,
     (SELECT COUNT(*) FROM tool_calls c WHERE c.session_id = s.id AND c.status = 'unknown' AND c.reviewed_at IS NULL), \
     COALESCE(s.title, r.title), r.hidden_at, \
     (SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'user' AND m.rewound_at IS NULL ORDER BY m.seq DESC LIMIT 1), \
-    COALESCE((SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.role = 'assistant' \
-        AND m.rewound_at IS NULL AND m.history_has_text=1 \
+    COALESCE((SELECT m.created_at FROM messages m WHERE m.session_id = s.id AND m.rewound_at IS NULL \
+        AND (m.role = 'user' OR (m.role = 'assistant' AND m.history_has_text=1)) \
         ORDER BY m.seq DESC LIMIT 1), s.created_at, r.last_access_at), \
     recent_turn.status, recent_turn.id, recent_request.seq, p.icon, p.icon_color, p.icon_photo_sha256";
 

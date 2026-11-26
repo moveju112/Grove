@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { apiCall, composerOption, ensureProjects, login, modelSettings, sessionView, state } from "./helpers";
 
-test("모델·추론·Fast 즐겨찾기는 두 기기에서 공유되고 두 열로 펼쳐진다", async ({ page, browser }, info) => {
+test("모델·추론·Fast 즐겨찾기는 두 기기에서 공유되고 공급자별 열로 나뉜다", async ({ page, browser }, info) => {
     const { a } = await ensureProjects();
     const codex = await apiCall<{ id: string }>("POST", "/model-profiles", {
         name: "Codex", protocol: "codex_cli", base_url: "", model: "fixture-codex",
@@ -53,7 +53,8 @@ test("모델·추론·Fast 즐겨찾기는 두 기기에서 공유되고 두 열
         await expect(otherPanel.getByRole("button", { name: "모델 프로필" })).toHaveAttribute("data-selected-profile", codex.id);
         await expect(otherPanel.getByRole("combobox", { name: "추론" })).toHaveAttribute("data-selected-value", "high");
         await expect(otherPanel.getByRole("switch", { name: "Fast" })).toBeChecked();
-        const [left, right] = await Promise.all([standard.boundingBox(), fast.boundingBox()]);
+        // Codex 열이 왼쪽, 그 밖의 API 열이 오른쪽이다.
+        const [left, right] = await Promise.all([fast.boundingBox(), standard.boundingBox()]);
         expect(left!.y).toBe(right!.y);
         expect(left!.x + left!.width).toBeLessThanOrEqual(right!.x);
         await device.screenshot({ path: info.outputPath("model-favorites-390.png"), animations: "disabled" });
@@ -84,14 +85,16 @@ test("모델·추론·Fast 즐겨찾기는 두 기기에서 공유되고 두 열
             await device.setViewportSize({ width, height: 844 });
             await expect.poll(() => grid.evaluate((node) => node.scrollWidth - node.clientWidth)).toBe(0);
             const boxes = await Promise.all(Array.from({ length: 6 }, (_, index) => buttons.nth(index).boundingBox()));
-            for (const i of [0, 2, 4]) {
-                const [first, next] = [boxes[i]!, boxes[i + 1]!];
-                expect(first.y).toBe(next.y);
-                expect(first.x + first.width).toBeLessThanOrEqual(next.x);
-                if (i > 0) expect(first.y).toBeGreaterThan(boxes[i - 2]!.y);
+            // Codex 다섯 개는 왼쪽 열에 세로로, API 하나는 오른쪽 열 맨 위에 놓인다.
+            for (let i = 0; i < 6; i++) {
+                if (i > 0 && i < 5) {
+                    expect(boxes[i]!.x).toBe(boxes[0]!.x);
+                    expect(boxes[i]!.y).toBeGreaterThan(boxes[i - 1]!.y);
+                }
                 await expect(buttons.nth(i)).toBeInViewport({ ratio: 1 });
-                await expect(buttons.nth(i + 1)).toBeInViewport({ ratio: 1 });
             }
+            expect(boxes[5]!.y).toBe(boxes[0]!.y);
+            expect(boxes[0]!.x + boxes[0]!.width).toBeLessThanOrEqual(boxes[5]!.x);
             if (width === 390) await device.screenshot({ path: info.outputPath("model-favorites-grid-390.png"), animations: "disabled" });
         }
         const last = buttons.nth(4);

@@ -674,6 +674,7 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             claude_session: None,
             codex_questions: None,
             codex_session: None,
+            claude_activity_limit: def["claude_activity_limit"].as_u64(),
             managed: managed_cli,
         })
     } else { None };
@@ -1703,6 +1704,9 @@ pub(crate) fn enqueue_with_attachments(
     // 사용자가 명시한 시간 예산만 고정한다(0 = 제한 없음, RUN-021). 실행 중 설정 변경은 다음 요청부터.
     if let Some(n) = crate::settings::effective(tx, "runs.budget.max_minutes", Some(&s.project_id), Some(session_id))?.as_i64().filter(|n| *n > 0) {
         def["budget"] = json!({ "max_minutes": n });
+    }
+    if profile.protocol == "claude_code" {
+        def["claude_activity_limit"] = crate::settings::effective(tx, crate::settings::CLAUDE_ACTIVITY_LIMIT, None, None)?;
     }
     if let Some(fallback) = crate::model_fallback::snapshot(tx, &profile)? {
         def["fallback"] = fallback;

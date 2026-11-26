@@ -105,6 +105,11 @@ def release_build_env(source, parent):
                                                cwd=source, env=env))
     if Path(meta["build_directory"]).resolve().is_relative_to(source.resolve()):
         env["CARGO_BUILD_BUILD_DIR"] = str(parent / "cargo-build")
+    else:
+        # 호스트의 유휴 캐시 정리가 이 릴리즈 캐시를 다른 캐시보다 나중에 회수하게 표시한다(~/.agents 규칙).
+        external = Path(meta["build_directory"])
+        external.mkdir(parents=True, exist_ok=True)
+        (external / ".prune-last").touch()
     return env
 
 

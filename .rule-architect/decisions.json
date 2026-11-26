@@ -1,6 +1,6 @@
 {
   "schema": "rule-architect/decisions@1",
-  "root": "/data/project/paseodog_opus",
+  "root": "/data/project/grove",
   "scanSchema": "rule-architect/scan@3",
   "gitHead": "7aab4c804e2a84c35958ae8723f62b554b79b034",
   "truncated": {

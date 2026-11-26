@@ -15,6 +15,7 @@ import { ActionMenu, DetailDialog, Panel, ToolsTrigger, Workbench } from "./ui/C
 import { Suspense, lazy, memo, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { FileLinkContext, FileRefContext, Markdown } from "./Markdown";
 import { usePrefs } from "../state/device";
+import { absoluteTime } from "../state/time";
 import { When } from "./When";
 import { useFocusRequest } from "../state/focus";
 import { queueText } from "../state/queue";
@@ -712,7 +713,6 @@ export function SessionView({ tabId, sessionId, projectId, open, onTitleChange }
             <FollowupsPanel sessionId={sessionId} running={!!active} onError={setErr} />
                 </>}
                 lastModel={s.last_model}
-                runningProfileId={active?.profile_id}
                 statusAccessory={active && <Stack direction="horizontal" align="center" justify="between" gap={2} paddingInline={2} paddingBlock={1}
                     xstyle={chatLayout.turnStatus} data-testid="turn-status">
                     <Stack direction="horizontal" align="center" gap={2} xstyle={chatLayout.turnStatusSummary}>
@@ -900,12 +900,14 @@ type EndErrorData = {
 };
 
 function TurnEndRecord({ status, error: e, compact = false }: { status: string; error: EndErrorData; compact?: boolean }) {
+    const prefs = usePrefs("clock", "timeStyle");
+    const timeZone = useLive((live) => live.serverTimeZone ?? "UTC");
     return <DetailDialog surface={compact ? undefined : "orange"} appearance={compact ? "link" : undefined} data-testid="msg-turn-ended" label="요청 종료 기록"
         title={compact ? "오류 상세" : <>요청 종료 · {e.message} (<code>{e.code}</code>)</>}>
         {compact && e.message && <GroveText as="p" display="block" type="inherit">{e.message}</GroveText>}
         <GroveText as="p" display="block" type="inherit">상태: {status} · <code>{e.code}</code></GroveText>
-        {e.at && <GroveText as="p" display="block" type="inherit">발생 시각: <time dateTime={e.at}>{e.at}</time></GroveText>}
-        {e.last_progress_at && <GroveText as="p" display="block" type="inherit">마지막 진행: <time dateTime={e.last_progress_at}>{e.last_progress_at}</time></GroveText>}
+        {e.at && <GroveText as="p" display="block" type="inherit">발생 시각: <time dateTime={e.at} title={e.at}>{absoluteTime(e.at, prefs, "datetime", timeZone)}</time></GroveText>}
+        {e.last_progress_at && <GroveText as="p" display="block" type="inherit">마지막 진행: <time dateTime={e.last_progress_at} title={e.last_progress_at}>{absoluteTime(e.last_progress_at, prefs, "datetime", timeZone)}</time></GroveText>}
         {e.budget?.max_minutes != null && <GroveText as="p" display="block" type="inherit">적용 예산: {e.budget.max_minutes}분</GroveText>}
         {e.provider_stream && <GroveText as="p" display="block" type="inherit">Codex 이벤트: <code>{e.provider_stream.event}</code></GroveText>}
         {e.provider_stream?.code && <GroveText as="p" display="block" type="inherit">Codex 오류 코드: <code>{e.provider_stream.code}</code></GroveText>}

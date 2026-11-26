@@ -8,13 +8,14 @@ import { Select } from "../../design/Select";
 import type { UsageDashboard as Report, UsageMetrics } from "../../api/generated";
 import { HelpTip } from "../HelpTip";
 import { UsageCharts } from "./UsageCharts";
+import { ProviderMark } from "./ProviderMark";
 import { dashboardStyles as styles } from "./dashboard.stylex";
 import { cacheHit, freshInput, number, providerName, providerRows, sortedRows, speed, tokens, type Group, type Sort } from "./dashboardModel";
 
 type Column = { label: string; width: number; left?: boolean };
 type Row = { key: string; cells: ReactNode[]; details?: ReactNode };
 const summaryColumns: Column[] = [
-    { label: "제공자", width: 90, left: true }, { label: "평균 모델 속도", width: 116 },
+    { label: "제공자", width: 110, left: true }, { label: "평균 모델 속도", width: 116 },
     { label: "하위 10% 평균 속도", width: 142 }, { label: "상위 10% 평균 속도", width: 142 },
     { label: "토큰", width: 120 }, { label: "호출", width: 68 }, { label: "캐시 적중", width: 80 },
 ];
@@ -80,11 +81,11 @@ export function UsageDashboard({ report, quotas }: { report: Report; quotas?: Re
     return <Stack xstyle={styles.flow} aria-label="사용량 통계">
         <Stack xstyle={styles.card} data-testid="usage-providers">
             <Stack xstyle={styles.desktop} data-testid="usage-total">
-                <UsageTable columns={summaryColumns.map((column) => column.label === "토큰" ? { ...column, width: tokenWidth } : column)} label="제공자별 사용량 요약" rows={summaries.map((row) => ({ key: row.key, cells: [row.label, ...summaryCells(row.metrics, row.key)] }))} />
+                <UsageTable columns={summaryColumns.map((column) => column.label === "토큰" ? { ...column, width: tokenWidth } : column)} label="제공자별 사용량 요약" rows={summaries.map((row) => ({ key: row.key, cells: [<><ProviderMark protocol={row.key} />{row.label}</>, ...summaryCells(row.metrics, row.key)] }))} />
             </Stack>
             <Stack xstyle={[styles.mobile, styles.flow]} data-testid="usage-mobile-summary">
                 {summaries.map((row) => <Stack key={row.key} gap={2}>
-                    <Text xstyle={styles.cardTitle}>{row.label}</Text>
+                    <Text xstyle={styles.cardTitle}><ProviderMark protocol={row.key} />{row.label}</Text>
                     <UsageTable columns={[{ label: "지표", width: 148, left: true }, { label: "값", width: Math.max(112, tokenWidth) }]} label={`${row.label} 사용량 요약`}
                         rows={summaryCells(row.metrics, row.key).map((cell, i) => ({ key: summaryColumns[i + 1]!.label, cells: [summaryColumns[i + 1]!.label, cell] }))} />
                 </Stack>)}

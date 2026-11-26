@@ -50,19 +50,12 @@ export function AssistantResponse({ content, prior, live = false, showProgress =
 }) {
     const { progress, answer } = foldResponseEntries(content, prior);
     const prefix = live ? "partial" : "msg";
-    const compactProgress = progressOpen && progressActive;
-    let latestAt: string | null | undefined;
-    if (showProgress && compactProgress) {
-        // 시각이 없는 항목은 건너뛰되 진행 설명의 순서는 유지한다.
-        for (let i = progress.length - 1; i >= 0 && !latestAt; i--) latestAt = progress[i]?.at;
-    }
     return <Stack gap={2} width="100%" maxWidth="100%">
         {showProgress && progress.length > 0 && <DetailDialog key={`progress-${progressOpen}`} data-testid={`${prefix}-progress`}
-            label="진행 설명" inline={progressOpen} title={latestAt
-                ? <>진행 설명 · 최근 <When at={latestAt} absolute part="minute" titlePart="datetime" /></> : "진행 설명"}>
+            label="진행 설명" inline={progressOpen} title="진행 설명">
             <List density="compact" edge="flush" listStyle="decimal" start={progressStart} aria-label="진행 설명 순서">
                 {progress.map(({ text, at }, index) => <ListItem key={index} align="first-line" data-testid="progress-step"
-                    label={<Markdown text={text} />} endContent={!compactProgress && at && <Text type="supporting" color="secondary">
+                    label={<Markdown text={text} />} endContent={!progressActive && at && <Text type="supporting" color="secondary">
                         <When at={at} absolute part="time" titlePart="datetime" />
                     </Text>} />)}
             </List>
