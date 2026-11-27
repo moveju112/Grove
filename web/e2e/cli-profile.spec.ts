@@ -18,7 +18,7 @@ test("설정에서 Claude Code CLI 프로필을 저가형 기본 모델로 만�
     try {
         await page.getByLabel("프로필 이름").fill(name);
         await page.getByRole("form", { name: "모델 프로필 추가", exact: true }).getByRole("button", { name: "추가", exact: true }).click();
-        await expect(page.locator("li").filter({ hasText: name })).toContainText("claude_code");
+        await expect(page.getByTestId("model-profile").filter({ hasText: name })).toContainText("서버 CLI");
         const list = await apiCall<{ name: string; protocol: string; base_url: string; model: string }[]>("GET", "/model-profiles");
         const p = list.find((x) => x.name === name)!;
         expect([p.protocol, p.base_url, p.model]).toEqual(["claude_code", "", "haiku"]);

@@ -105,14 +105,13 @@ test("명시 로컬 endpoint 저장·응답 유실 확인·실제 상태·명시
         expect(profile.secret_id).toBeNull();
         await page.getByRole("dialog", { name: "로컬 HTTP 모델 연결", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
         const row = page.getByTestId("model-profile").filter({ hasText: name });
-        await openDetails(row);
         const model = row.getByTestId("profile-model");
         await expect(row.getByTestId("profile-check")).toContainText("연결 확인 안 함");
         await profileAction(row, "연결 확인");
         await expect(row.getByTestId("profile-check")).toContainText("연결됨");
         await expect(row.getByTestId("profile-check")).toContainText("이 모델 없음");
         await row.getByRole("button", { name: "모델 목록 새로고침" }).click();
-        const select = row.getByLabel(`${name} 공급자 모델`);
+        const select = row.getByRole("combobox", { name: `${name} 공급자 모델`, exact: true });
         await expect(select).toBeEnabled();
         await expect(model).toHaveText("manual-kept");
         expect(fixture.calls.every((call) => call.path === "/v1/models" && !call.authenticated)).toBe(true);
@@ -191,8 +190,7 @@ test("로컬 목록의 오류·빈 목록·늦은 응답은 수동 선택을 바
         await expect(row).toBeVisible();
         profile = (await apiCall<Profile[]>("GET", "/model-profiles")).find((p) => p.name === name)!;
         await page.getByRole("dialog", { name: "로컬 HTTP 모델 연결", exact: true }).getByRole("button", { name: "닫기", exact: true }).click();
-        await openDetails(row);
-        const select = row.getByLabel(`${name} 공급자 모델`);
+        const select = row.getByRole("combobox", { name: `${name} 공급자 모델`, exact: true });
         const refresh = row.getByRole("button", { name: "모델 목록 새로고침" });
         await refresh.click();
         await expect(select).toBeEnabled();

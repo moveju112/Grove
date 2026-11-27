@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { AccountUsageLimit, AccountUsageReport } from "../app/api/generated";
-import { apiCall, login, openDetails, openSettings, openUsage, profileAction, selectChoice, state } from "./helpers";
+import { apiCall, login, openSettings, openUsage, profileAction, selectChoice, state } from "./helpers";
 
 const limit = (label: string, remaining_percent: number): AccountUsageLimit =>
     ({ label, remaining_percent, remaining: null, resets_at: "2100-01-01T00:00:00Z" });
@@ -243,7 +243,6 @@ test("Claude는 서버 CLI 인증의 두 구독 한도를 표시하고 캐시한
         await openSettings(page);
         await page.getByLabel("설정 검색").fill("프로필");
         const row = page.getByTestId("model-profile").filter({ hasText: "Claude policy-safe" });
-        await openDetails(row);
         await profileAction(row, "연결 확인");
         await expect(row.getByTestId("profile-check")).toContainText("설치됨");
         await expect(row.getByTestId("profile-check")).not.toContainText("연결됨");

@@ -29,12 +29,14 @@ export function DetailDialog({ title, label, trigger, children, inline = false, 
     showExpand?: boolean;
     onOpenChange?: (open: boolean) => void;
     surface?: CardVariant;
-    appearance?: ButtonProps["appearance"];
+    /** plain: 일반 보조 버튼(행 안의 짧은 진입점). */
+    appearance?: ButtonProps["appearance"] | "plain";
 } & Omit<HTMLAttributes<HTMLDivElement>, "title">) {
     const [open, setOpen] = useState(false);
     const change = (value: boolean) => { setOpen(value); onOpenChange?.(value); };
     const body = <>
-        {inline ? <Text display="block" type="supporting" color="secondary">{title}</Text> : <Button type="button" variant="secondary" appearance={appearance}
+        {inline ? <Text display="block" type="supporting" color="secondary">{title}</Text> : <Button type="button" variant="secondary"
+            appearance={appearance === "plain" ? undefined : appearance} density={appearance === "plain" ? "compact" : undefined}
             aria-label={trigger === undefined ? undefined : label}
             aria-haspopup="dialog" onClick={() => change(true)}>{trigger ?? title}{showExpand && <Icon name="expand" size={14} />}</Button>}
         {inline && children}

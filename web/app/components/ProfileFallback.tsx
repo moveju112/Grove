@@ -2,7 +2,6 @@ import { Stack as GroveStack } from "@astryxdesign/core/Stack";
 import { Select } from "../design/Select";
 import { Text as GroveText } from "@astryxdesign/core/Text";
 import { Button as GroveButton } from "../design/Button";
-import { useState } from "react";
 import type { ModelProfile } from "../api/generated";
 import { BooleanSelect } from "./BooleanSelect";
 import { HelpTip, SentenceText } from "./HelpTip";
@@ -35,15 +34,13 @@ export function fallbackPayload(profile: ModelProfile, profiles: ModelProfile[],
 }
 
 export function ProfileFallback({ profile, profiles }: { profile: ModelProfile; profiles: ModelProfile[] }) {
-    const [editing, setEditing] = useState(false);
     if (!http(profile)) return null;
     const current = fallbackOptions(profile);
-    return <GroveStack gap={0} role="group" aria-label={`${profile.name} fallback`} data-testid="profile-fallback">
+    return <GroveStack gap={2} role="group" aria-label={`${profile.name} fallback`} data-testid="profile-fallback">
         <GroveText type="supporting" color="secondary">{current.enabled
             ? `fallback · ${current.candidates.length}개 HTTP 후보`
             : "fallback 꺼짐 · HTTP 후보를 확인하면 켤 수 있어요"}</GroveText>
-        {editing ? <FallbackEditor profile={profile} profiles={profiles} />
-            : <GroveButton type="button" variant="secondary" density="compact" onClick={() => setEditing(true)}>fallback 설정</GroveButton>}
+        <FallbackEditor profile={profile} profiles={profiles} />
     </GroveStack>;
 }
 

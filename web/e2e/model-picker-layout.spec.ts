@@ -137,13 +137,14 @@ for (const theme of ["light", "dark"] as const) {
             const rowBox = (await row.boundingBox())!;
             const nextBox = (await nextRow.boundingBox())!;
             expect(nextBox.y - rowBox.y - rowBox.height, "카드 사이에는 별도 여백이 있어야 한다").toBeGreaterThanOrEqual(12);
-            await expect(row.getByRole("button", { name: "상세 설정", exact: true })).toHaveCount(0);
+            const left = async (card: typeof row) => Math.round((await card.getByRole("combobox").boundingBox())!.x);
+            expect(await left(nextRow), "카드마다 모델 선택칸의 시작 위치가 같아야 한다").toBe(await left(row));
+            // 행에는 상태·모델·계정과 상세 설정·관리 진입점만 두고, 편집기는 상세 설정 대화상자 안에 둔다.
+            await expect(row.getByLabel("context token 수", { exact: true })).toHaveCount(0);
+            await expect(row.getByRole("button", { name: `${profiles[0]!.name} 관리`, exact: true })).toBeVisible();
             await expect(settings.getByRole("form", { name: "모델 프로필 추가", exact: true })).toBeVisible();
-            await row.getByRole("button", { name: `${profiles[0]!.name} 연결 정보` }).click();
-            await expect(page.getByRole("tooltip")).toContainText("서버 CLI · 프로젝트 수정·검사 가능");
-            await page.keyboard.press("Escape");
             await openDetails(row);
-            await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
+            await expect(row.getByRole("dialog")).toContainText("서버 CLI · 프로젝트 수정·검사 가능");
             const context = row.getByLabel("context token 수", { exact: true });
             await context.fill("12345");
             await expect(context).toHaveValue("12345");
@@ -151,6 +152,7 @@ for (const theme of ["light", "dark"] as const) {
             await context.blur();
             await expect(row.getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
             await page.screenshot({ path: info.outputPath(`profiles-${theme}-390.png`) });
+            await row.getByRole("dialog").getByRole("button", { name: "닫기", exact: true }).click();
             const pane = settings.getByTestId("settings-scroll");
             await pane.evaluate((node) => { node.scrollTop = 300; });
             await expect.poll(() => pane.evaluate((node) => node.scrollTop)).toBe(300);

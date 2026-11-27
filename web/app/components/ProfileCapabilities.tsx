@@ -2,13 +2,16 @@ import { Stack } from "@astryxdesign/core/Stack";
 import { Select } from "../design/Select";
 import { DraftInput } from "../design/Fields";
 import { Text } from "@astryxdesign/core/Text";
-import { Button } from "../design/Button";
-import { useState } from "react";
 import type { ModelCapabilities, ModelProfile } from "../api/generated";
 import { useCapability } from "../state/capabilities";
 import { HelpTip, SentenceText } from "./HelpTip";
 import { useProfileDraft } from "./settings/useProfileDraft";
 import { AutosaveStatus } from "./settings/AutosaveStatus";
+import * as stylex from "@stylexjs/stylex";
+
+const styles = stylex.create({
+    fields: { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: "var(--spacing-4)", alignItems: "end" },
+});
 
 const FEATURES = [
     ["images", "이미지 입력"], ["tools", "Grove 도구 루프"],
@@ -16,11 +19,10 @@ const FEATURES = [
 ] as const;
 const status = (value: boolean | null | undefined) => value == null ? "미확인" : value ? "지원" : "미지원";
 
-export function CapabilitySummary({ capabilities: c }: { capabilities?: ModelCapabilities }) {
+/// 편집 칸으로 보이지 않는 고정 기능만 요약한다.
+function FixedCapabilities({ capabilities: c }: { capabilities?: ModelCapabilities }) {
     return <Text type="supporting" color="secondary" data-testid="model-capabilities">
-        context {c?.context_tokens ?? "미확인"} · 출력 상한 {c?.max_output_tokens ?? "미확인"} ·{" "}
-        {FEATURES.map(([key, label]) => `${label} ${status(c?.[key])}`).join(" · ")}
-        {c?.native_tools && " · CLI 자체 편집·실행 지원"} · native PDF {status(c?.pdf)} · fast {status(c?.fast)}
+        {c?.native_tools && "CLI 자체 편집·실행 지원 · "}native PDF {status(c?.pdf)} · fast {status(c?.fast)}
     </Text>;
 }
 
@@ -33,11 +35,10 @@ function draft(profile: ModelProfile) {
 
 export function ProfileCapabilities({ profile }: { profile: ModelProfile }) {
     const supported = useCapability("model_capabilities_v1");
-    const [editing, setEditing] = useState(false);
     if (supported === false) return null;
     return <Stack gap={2} role="group" aria-label={`${profile.name} 모델 기능`}>
-        <CapabilitySummary capabilities={profile.capabilities} />
-        {editing ? <CapabilitiesEditor profile={profile} /> : <Button type="button" variant="secondary" density="compact" onClick={() => setEditing(true)}>모델 기능 설정</Button>}
+        <CapabilitiesEditor profile={profile} />
+        <FixedCapabilities capabilities={profile.capabilities} />
     </Stack>;
 }
 
@@ -60,6 +61,7 @@ function CapabilitiesEditor({ profile }: { profile: ModelProfile }) {
         <Stack direction="horizontal" align="center" gap={1.5}>모델 기능 <HelpTip label="모델 기능 도움말">
             <SentenceText text="소유자가 확인한 값만 입력하세요. Fast는 Codex 모델이 제공한 속도 목록에서 선택합니다. native PDF는 지원하지 않습니다." />
         </HelpTip></Stack>
+        <div {...stylex.props(styles.fields)}>
         <DraftInput type="number" min={1} step={1} label="context token 수" value={value.context} onChange={(context) => state.change({ ...value, context })} onBlur={state.blur} />
         <DraftInput type="number" min={1} max={4294967295} step={1} label="모델 출력 상한" value={value.output} isDisabled={fixedGeneration} onChange={(output) => state.change({ ...value, output })} onBlur={state.blur} />
         <DraftInput type="number" min={1} max={4294967295} step={1} label="요청 출력 token 수" value={value.requested} isDisabled={fixedGeneration} onChange={(requested) => state.change({ ...value, requested })} onBlur={state.blur} />
@@ -67,6 +69,7 @@ function CapabilitiesEditor({ profile }: { profile: ModelProfile }) {
         {FEATURES.map(([key, label]) => <Select key={key} label={`${label} 지원 여부`} value={value.features[key]} disabled={(cli && key !== "effort" && key !== "images") || (fixedGeneration && key === "temperature")}
             onChange={(next) => { state.change({ ...value, features: { ...value.features, [key]: next } }); state.commit(); }}
             options={[{ value: "", label: "미확인" }, { value: "true", label: "지원" }, { value: "false", label: "미지원" }]} />)}
+        </div>
         <AutosaveStatus state={state} />
     </Stack>;
 }

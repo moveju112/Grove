@@ -1,7 +1,5 @@
 import { Stack } from "@astryxdesign/core/Stack";
 import { Text } from "@astryxdesign/core/Text";
-import { Button } from "../design/Button";
-import { useState } from "react";
 import type { ModelProfile } from "../api/generated";
 import { useCapability } from "../state/capabilities";
 import { HelpTip, SentenceText } from "./HelpTip";
@@ -11,12 +9,11 @@ import { AutosaveStatus } from "./settings/AutosaveStatus";
 
 export function ProfileContextPolicy({ profile }: { profile: ModelProfile }) {
     const supported = useCapability("context_auto_clear_v1");
-    const [editing, setEditing] = useState(false);
     if (supported === false) return null;
     const minutes = (profile.options as Record<string, unknown>).auto_clear_minutes;
     return <Stack gap={2} role="group" aria-label={`${profile.name} context 정책`} data-testid="profile-context-policy">
         <Text type="supporting" color="secondary">idle context: {minutes == null ? "범위별 설정 상속" : minutes === 0 ? "시간 제한 없이 유지" : `${minutes}분 뒤 다음 요청에서 초기화`}</Text>
-        {editing ? <ContextEditor profile={profile} /> : <Button type="button" variant="secondary" density="compact" onClick={() => setEditing(true)}>context 정책 설정</Button>}
+        <ContextEditor profile={profile} />
     </Stack>;
 }
 

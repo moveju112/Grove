@@ -17,7 +17,8 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
     await form.getByRole("button", { name: "추가", exact: true }).click();
     const row = page.getByTestId("model-profile").filter({ hasText: name });
     await openDetails(row);
-    await expect(row).toContainText(base);
+    await expect(row.getByRole("dialog")).toContainText(base);
+    await row.getByRole("dialog").getByRole("button", { name: "닫기", exact: true }).click();
     await row.getByRole("button", { name: "모델 목록 새로고침" }).click();
     await expect(row.getByRole("combobox", { name: `${name} 공급자 모델`, exact: true })).toBeEnabled();
     await selectChoice(row.getByLabel(`${name} 공급자 모델`), "fixture-model");
@@ -28,7 +29,6 @@ test("수동 endpoint 프로필의 목록에서 모델을 선택하고 비활성
     }));
     await row.getByRole("button", { name: "모델 목록 새로고침" }).click();
     await expect(row.getByRole("alert")).toContainText("마지막 조회 목록 보존");
-    await expect(row).toContainText("1개");
     await page.unroute("**/api/v1/model-profiles/*/models");
     await row.getByRole("button", { name: "모델 목록 새로고침" }).click();
     await expect(row.getByRole("combobox", { name: `${name} 공급자 모델`, exact: true })).toBeEnabled();

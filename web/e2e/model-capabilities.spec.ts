@@ -15,27 +15,25 @@ test("모델 기능을 설정하면 다른 화면의 미지원 선택·초안은
     await page.getByLabel("설정 검색").fill("프로필");
     const row = page.getByTestId("model-profile").filter({ hasText: name });
     await openDetails(row);
-    await expect(row.getByTestId("model-capabilities")).toContainText("이미지 입력 미확인");
+    await expect(row.getByRole("combobox", { name: "이미지 입력 지원 여부", exact: true })).toContainText("미확인");
     const context = await browser.newContext();
     try {
         const app = await context.newPage();
         await login(app);
-        await app.getByTestId("project-row").getByRole("button", { name: a.name, exact: true }).click();
-        await app.getByTestId("project-view").getByRole("button", { name: new RegExp(`${name}$`) }).click();
+        await app.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(name) }).click();
         const view = sessionView(app, session.id);
         await composerOption(view, "보내기 방식", "model");
         await composerOption(view, "모델 프로필", profile.id);
         await composerOption(view, "추론", "high");
         await composerOption(view, "도구", true);
         await view.getByLabel("메시지 입력").fill("capability draft");
-        await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
         await row.getByLabel("context token 수", { exact: true }).fill("16000");
         await row.getByLabel("모델 출력 상한", { exact: true }).fill("1024");
         for (const label of ["이미지 입력", "Grove 도구 루프", "추론", "temperature"]) {
             await selectChoice(row.getByLabel(`${label} 지원 여부`, { exact: true }), "false");
         }
         await expect(row.getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
-        await expect(row.getByTestId("model-capabilities")).toContainText("context 16000");
+        await expect(row.getByLabel("context token 수", { exact: true })).toHaveValue("16000");
         await expect(row.getByTestId("model-capabilities")).toContainText("native PDF 미지원");
         await expect(view.getByRole("button", { name: "보내기", exact: true })).toBeDisabled();
         await expect(view).toContainText("Grove 도구 루프 미지원");
@@ -68,7 +66,6 @@ test("모델 기능 편집은 다른 기기의 변경 revision을 자동 인수�
         await page.getByLabel("설정 검색").fill("프로필");
         const row = page.getByTestId("model-profile").filter({ hasText: name });
         await openDetails(row);
-        await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
         await row.getByLabel("context token 수", { exact: true }).fill("32000");
         await apiCall("PUT", `/model-profiles/${profile.id}`, { expected_revision: profile.revision, options: { context_window: 8000 } });
         await row.getByLabel("context token 수", { exact: true }).blur();

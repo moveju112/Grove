@@ -72,7 +72,6 @@ test("프로필 context override는 상속·0을 구분하고 동시 변경 충�
         await openDetails(profileRow);
         const row = profileRow.getByTestId("profile-context-policy");
         await expect(row).toContainText("범위별 설정 상속");
-        await row.getByRole("button", { name: "context 정책 설정", exact: true }).click();
         await row.getByLabel("프로필 idle context 초기화(분)").fill("0");
         await row.getByLabel("프로필 idle context 초기화(분)").blur();
         await expect(row).toContainText("시간 제한 없이 유지");

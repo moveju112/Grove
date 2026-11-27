@@ -15,7 +15,6 @@ test("프로필 기능 편집은 비공개 헤더 참조를 보존하고 키 교
         await page.getByLabel("설정 검색").fill("프로필");
         const row = page.getByTestId("model-profile").filter({ hasText: name });
         await openDetails(row);
-        await row.getByRole("button", { name: "모델 기능 설정", exact: true }).click();
         await row.getByLabel("context token 수", { exact: true }).fill("16000");
         await row.getByLabel("context token 수", { exact: true }).blur();
         await expect(row.getByRole("status").filter({ hasText: "저장됨" })).toBeVisible();
@@ -25,6 +24,7 @@ test("프로필 기능 편집은 비공개 헤더 참조를 보존하고 키 교
         expect(JSON.stringify(all)).not.toContain(value);
         expect(await page.locator("body").innerText()).not.toContain(value);
         expect(await page.evaluate(() => JSON.stringify(localStorage))).not.toContain(value);
+        await row.getByRole("dialog").getByRole("button", { name: "닫기", exact: true }).click();
         await profileAction(row, "연결 확인");
         await expect(row.getByTestId("profile-check")).toContainText("연결됨");
         await apiCall("PUT", `/secrets/${secret.id}`, { label: name, value: "synthetic-rotated-header-browser-value" });

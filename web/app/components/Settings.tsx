@@ -1,18 +1,16 @@
 import { usePendingAction } from "../state/usePendingAction";
-import { StatusBadge } from "../design/StatusBadge";
 import { Card } from "@astryxdesign/core/Card";
 import { Notice } from "../design/Notice";
 import { Code } from "@astryxdesign/core/Code";
 import { contentStyles } from "../design/content.stylex";
 import { KeyValues } from "../design/KeyValues";
 import { useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from "react";
-import { ActionMenu, DetailDialog } from "./ui/Controls";
+import { DetailDialog } from "./ui/Controls";
 import { HelpTip } from "./HelpTip";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, ModelProfile, SecretInfo } from "../api/generated";
 import { activityDisplayOptions, isActivityAnimated, type Prefs, loadPrefs, savePrefs, themeOptions, usePrefs, VINE_GROUPS } from "../state/device";
-import { When } from "./When";
 import { PushNotifications, PushStatusContext } from "./PushNotifications";
 import { AppNotificationPermission } from "./AppNotificationPermission";
 import { NotificationTests } from "./NotificationTests";
@@ -24,11 +22,8 @@ import { RoleModelChoice } from "./settings/RoleModelChoice";
 import { isWorkflowSetting, WorkflowSettings } from "./settings/WorkflowSettings";
 import { DeviceConnections } from "./Pairing";
 import { Hosts } from "./Hosts";
-import { ProfileCatalog } from "./ProfileCatalog";
+import { ProfileRow } from "./settings/ProfileRow";
 import { LocalModelConnection } from "./local-models/LocalModelConnection";
-import { ProfileCapabilities } from "./ProfileCapabilities";
-import { ProfileContextPolicy } from "./ProfileContextPolicy";
-import { ProfileFallback } from "./ProfileFallback";
 import { useCapability } from "../state/capabilities";
 import { useAutosave } from "./settings/useAutosave";
 import { AutosaveStatus } from "./settings/AutosaveStatus";
@@ -533,41 +528,9 @@ function Profiles() {
             {management !== false && <LocalModelConnection secrets={secrets.data ?? []} onCreate={(body, key) =>
                 api.post("/model-profiles", body, { key, requires: ["model_management_v1"] })
             } />}
-            <List density="balanced" edge="flush">
-                {(list.data ?? []).map((p) => (
-                    <ListItem key={p.id} label={<Card width="100%" padding={5} data-testid="model-profile"><Stack gap={3}>
-                        <Stack direction="horizontal" align="center" gap={2} data-testid="profile-heading">
-                            <Stack gap={1} width="100%"><strong>{p.name}</strong><Text type="code" color="secondary" wordBreak="break-word" data-testid="profile-model">{p.model}</Text></Stack>
-                            {p.enabled === false && <Text as="span" type="supporting" color="warning"> · 비활성</Text>}
-                            <HelpTip label={`${p.name} 연결 정보`}>
-                                <Text as="span" type="inherit" color="inherit">{p.protocol === "codex_cli" ? "Codex CLI" : p.protocol}{p.base_url ? ` · ${p.base_url}` : accountModels[p.protocol] ? " · 서버 CLI · 프로젝트 수정·검사 가능" : ""}</Text>
-                            </HelpTip>
-                            <ActionMenu label={`${p.name} 관리`}>
-                                <ServerActionButton variant="secondary" density="compact" onClick={() => {
-                                    const m = prompt("모델 이름", p.model);
-                                    if (m && m !== p.model) void save.run(() => api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, model: m }));
-                                }}>모델 변경</ServerActionButton>
-                                <ServerActionButton variant="secondary" density="compact" onClick={() => void save.run(() => api.del(`/model-profiles/${p.id}`))}>삭제</ServerActionButton>
-                                <ServerActionButton variant="secondary" density="compact" onClick={() => void save.run(() => api.post(`/model-profiles/${p.id}/check`))}>연결 확인</ServerActionButton>
-                                {management !== false && <ServerActionButton variant="secondary" density="compact" onClick={() => void save.run(() =>
-                                    api.put(`/model-profiles/${p.id}`, { expected_revision: p.revision, enabled: p.enabled === false }, { requires: ["model_management_v1"] })
-                                )}>{p.enabled === false ? "활성화" : "비활성화"}</ServerActionButton>}
-                            </ActionMenu>
-                        </Stack>
-                        {p.last_check?.ok === false && <CheckStatus c={p.last_check} />}
-                        <Stack gap={2}>
-                            <Text as="span" type="supporting" color="secondary">{p.protocol}{p.base_url && ` · ${p.base_url}`}</Text>
-                            {p.last_check?.ok !== false && <CheckStatus c={p.last_check} />}
-                            <ProfileCapabilities profile={p} />
-                            <ProfileContextPolicy profile={p} />
-                            <ProfileFallback profile={p} profiles={list.data ?? []} />
-                            <ProfileCatalog profile={p} onChoose={(model, revision) => void save.run(() =>
-                                api.put(`/model-profiles/${p.id}`, { expected_revision: revision, model }, { requires: ["model_management_v1"] })
-                            )} />
-                        </Stack>
-                    </Stack></Card>} />
-                ))}
-            </List>
+            <Stack gap={4}>
+                {(list.data ?? []).map((p) => <ProfileRow key={p.id} profile={p} profiles={list.data ?? []} secrets={secrets.data ?? []} run={save.run} />)}
+            </Stack>
             <Heading level={4} color="inherit">모델 프로필 추가</Heading>
             <Stack as="form" gap={2} maxWidth={480} aria-label="모델 프로필 추가" onSubmit={(e) => {
                 e.preventDefault();
@@ -799,19 +762,3 @@ function Health() {
 }
 
 /// 마지막 연결 확인 결과(AUTH-001). 생성 요청 없이 모델 목록·CLI 버전만 확인한다.
-function CheckStatus({ c }: { c: ModelProfile["last_check"] }) {
-    if (!c) return <Text as="span" type="supporting" color="secondary" data-testid="profile-check"> · 연결 확인 안 함</Text>;
-    const d = (c.detail ?? {}) as { models?: number; model_listed?: boolean; cli_version?: string };
-    const when = <When at={c.checked_at} />;
-    return c.ok ? (
-        <Text as="span" type="supporting" color="inherit" data-testid="profile-check">
-            {" "}· <StatusBadge status="succeeded">{d.cli_version !== undefined ? "설치됨" : "연결됨"}</StatusBadge> {c.latency_ms}ms · {when}
-            {d.cli_version && ` · ${d.cli_version}`}
-            {d.models !== undefined && (d.model_listed ? " · 모델 확인됨" : ` · 목록(${d.models}개)에 이 모델 없음`)}
-        </Text>
-    ) : (
-        <Text as="span" type="supporting" color="inherit" data-testid="profile-check">
-            {" "}· <StatusBadge status="failed">실패</StatusBadge> <code>{c.code}</code> {c.message} · {when}
-        </Text>
-    );
-}

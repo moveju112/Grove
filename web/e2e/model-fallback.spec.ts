@@ -46,7 +46,6 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         await openDetails(row);
         const control = row.getByTestId("profile-fallback");
         await expect(control).toContainText("꺼짐");
-        await control.getByRole("button", { name: "fallback 설정", exact: true }).click();
         await control.getByRole("button", { name: "마지막에 후보 추가", exact: true }).click();
         await selectChoice(control.getByLabel("fallback 1", { exact: true }), backup.id);
         await expect(control).toContainText(`전송 대상: openai · ${base_url} · ${prefix}-actual`);
@@ -56,6 +55,7 @@ test("명시적 순서·전송 확인을 저장하고 retry 뒤 실제 모델과
         const stored = (await apiCall<{ id: string; options: { fallback: { enabled: boolean; candidates: { profile_id: string }[] } } }[]>("GET", "/model-profiles")).find((p) => p.id === primary.id)!;
         expect(stored.options.fallback.enabled).toBe(true);
         expect(stored.options.fallback.candidates.map((c) => c.profile_id)).toEqual([backup.id]);
+        await row.getByRole("dialog").getByRole("button", { name: "닫기", exact: true }).click();
         await page.getByRole("button", { name: "설정 닫기", exact: true }).click();
 
         const { a } = await ensureProjects();
