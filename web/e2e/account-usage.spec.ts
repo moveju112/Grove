@@ -45,7 +45,7 @@ for (const width of [390, 1280]) for (const theme of ["light", "dark"] as const)
             const [recent, usage, navigation] = await Promise.all([side.getByTestId("recent-scroll"), summary, side].map((node) => node.boundingBox()));
             expect(usage!.y).toBeGreaterThanOrEqual(recent!.y + recent!.height);
             expect(usage!.y + usage!.height).toBeLessThanOrEqual(navigation!.y + navigation!.height);
-            expect(usage!.height).toBeLessThanOrEqual(80);
+            expect(usage!.height).toBeLessThanOrEqual(88);
             expect(await summary.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
             await page.screenshot({ path: info.outputPath("sidebar-usage.png") });
             const panel = await openUsage(page);
@@ -129,6 +129,31 @@ test("사이드바는 요금제에 없는 5시간 자리를 비우고 높은 사
     expect(fills).toHaveLength(3);
     expect(new Set(fills).size).toBe(1);
     await summary.screenshot({ path: info.outputPath("sidebar-usage-missing-period.png") });
+});
+
+for (const width of [390, 1280]) test(`${width}px 사이드바는 초기화까지 남은 시간과 경과 눈금을 92px 안에 표시한다`, async ({ page }, info) => {
+    const at = (ms: number) => new Date(Date.now() + ms).toISOString();
+    const hour = 3_600_000;
+    const reset = (label: string, used: number, ms: number): AccountUsageLimit => ({ ...limit(label, 100 - used), resets_at: at(ms) });
+    await page.setViewportSize({ width, height: 844 });
+    await page.route("**/api/v1/usage/accounts", (route) => route.fulfill({ json: { accounts: [
+        { ...report.accounts[0], limits: [reset("5시간", 33, 3 * hour - 60_000), reset("주간", 35, 4 * 24 * hour + 16.5 * hour)] },
+        { ...report.accounts[1], status: "available", limits: [reset("5시간", 9, 2 * hour + 15 * 60_000), reset("주간", 16, 5 * 24 * hour + 7.5 * hour)] },
+    ] } }));
+    await login(page);
+    if (width < 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
+    const summary = page.getByRole("complementary", { name: "탐색" }).getByRole("region", { name: "사용 한도", exact: true });
+    await expect(summary.getByText(/^2시간 1[45]분 남음$/)).toBeVisible();
+    await expect(summary.getByText(/^5일 7시간 남음$/)).toBeVisible();
+    await expect(summary.getByText(/남음$/)).toHaveCount(4);
+    const tracks = await summary.locator(".astryx-progress-bar-track").evaluateAll((nodes) => nodes.map((node) => node.getBoundingClientRect().height));
+    expect(tracks).toEqual([6, 6, 6, 6]);
+    const fontSize = (text: RegExp) => summary.getByText(text).first().evaluate((node) => getComputedStyle(node).fontSize);
+    expect(await fontSize(/^5일 7시간 남음$/)).toBe("10.5px");
+    expect(await fontSize(/^5일 7시간 남음$/)).toBe(await fontSize(/^16%$/));
+    expect((await summary.boundingBox())!.height).toBeLessThanOrEqual(92);
+    expect(await summary.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+    await summary.screenshot({ path: info.outputPath("sidebar-usage-reset.png") });
 });
 
 test("설정에서 탐색 영역 사용량을 숨기면 요약과 조회를 멈추고 새로고침 뒤에도 유지한다", async ({ page }, info) => {

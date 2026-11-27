@@ -17,6 +17,7 @@ let registration: ServiceWorkerRegistration | null = null;
 let started = false;
 let updateRequested = false;
 let reloaded = false;
+const UPDATE_CHECK_FAILURE = "새 화면 업데이트를 확인하지 못했어요.";
 type WebUpdateResult = "published" | "available" | "up_to_date" | "unavailable" | "failed";
 let manualCheck: Promise<WebUpdateResult> | null = null;
 let snapshot: { worker: ServiceWorker | null; error: string | null } = { worker: null, error: null };
@@ -83,16 +84,17 @@ async function publishedWeb(): Promise<"published" | "up_to_date" | "failed"> {
     }
 }
 
-export async function checkForUpdate() {
+export async function checkForUpdate({ reportFailure = false }: { reportFailure?: boolean } = {}) {
     if (!registration || manualCheck) return;
     try {
         const release = accessToken() ? publishedWeb() : null;
         await registration.update();
         checkWaiting(registration.waiting ?? (waiting === navigator.serviceWorker.controller ? waiting : null));
+        if (snapshot.error === UPDATE_CHECK_FAILURE) publish(snapshot.worker);
         if (await release === "published" && !registration.waiting && !updateRequested)
             publish(waiting, "새 웹 릴리즈가 있어요. 이 서버에 적용되면 화면을 업데이트할 수 있어요.");
     } catch {
-        publish(snapshot.worker, "새 UI 확인에 실패했습니다. 현재 탭은 유지합니다. 연결과 브라우저 저장 공간을 확인하세요.");
+        if (reportFailure) publish(snapshot.worker, UPDATE_CHECK_FAILURE);
     }
 }
 
@@ -150,7 +152,7 @@ export function ProtocolBanner() {
             isDismissable dismissLabel="호환성 경고 닫기"
             title={<>서버가 새 버전(protocol {server})으로 바뀌어 이 화면에서는 변경 요청을 보낼 수 없습니다.
                 새 UI가 준비되면 지금 업데이트를 선택하세요. 작성 중인 입력은 저장되지 않으므로 중요한 내용은 먼저 복사하세요.</>}
-            endContent={<Button onClick={() => void checkForUpdate()}>새 UI 확인</Button>} />
+            endContent={<Button onClick={() => void checkForUpdate({ reportFailure: true })}>새 UI 확인</Button>} />
     );
 }
 

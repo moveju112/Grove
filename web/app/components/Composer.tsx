@@ -18,7 +18,7 @@ import type { ModelProfile, SessionTurnModel } from "../api/generated";
 import { usePrefs } from "../state/device";
 import { useComposerMemory, useComposerMemoryStore } from "../state/useComposerMemory";
 import { clearInvalidRecovery, loadRecovery, saveRecovery, settleRecovery, validSendOptions, type PendingSend } from "../state/sendRecovery";
-import { EFFORTS, type FollowKind, type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, supportedServiceTier } from "../state/sendOptions";
+import { EFFORTS, type FollowKind, type SendOptions, capabilityProblem, inheritTurnModel, initialProfile, resolveOptions, sendOptionsSignature, supportedServiceTier } from "../state/sendOptions";
 import { type SlashCommand, parseSlash, suggest } from "../state/slash";
 import { useQuery } from "../state/store";
 import { addOutgoing, outgoingResource, readOutgoing, removeOutgoing, type DraftFile } from "../state/outgoing";
@@ -108,7 +108,7 @@ export function Composer({ projectId, resourceKey, copyId, disabled: parentDisab
     });
     // 같은 턴을 보고 직접 고른 값은 탭별로 보존한다. 다른 기기에서 보낸 새 턴이 있으면 그 모델을 이어 쓴다.
     const inherit = boundProfileId === undefined && !pending && lastModel && lastModel.turn_id !== selectionState.turnId;
-    const opts = inherit ? { ...selectionState.options, profileId: lastModel.profile_id, model: lastModel.model } : selectionState.options;
+    const opts = inherit ? inheritTurnModel(selectionState.options, lastModel) : selectionState.options;
     const setOpts = (options: SendOptions) => setSelectionState({
         phase: options.profileId ? "ready" : selectionState.phase, turnId: lastModel?.turn_id, options,
     });

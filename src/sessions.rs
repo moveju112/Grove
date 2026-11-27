@@ -55,6 +55,12 @@ pub struct SessionTurnModel {
     pub turn_id: String,
     pub profile_id: String,
     pub model: Option<String>,
+    /// 그 턴에 고정한 추론 강도(null: auto). 예전 서버는 이 필드를 보내지 않는다.
+    #[ts(optional = nullable)]
+    pub effort: Option<String>,
+    /// 그 턴에 고정한 속도(priority·default, null: 지정 안 함). 예전 서버는 이 필드를 보내지 않는다.
+    #[ts(optional = nullable)]
+    pub service_tier: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, ts_rs::TS)]
@@ -740,12 +746,13 @@ pub async fn show(State(app): State<App>, _p: Principal, Path(id): Path<String>)
         session.last_model = c.query_row(
             "SELECT t.id, COALESCE(json_extract(t.definition_snapshot,'$.model_selection.profile_id'),
                      json_extract(t.definition_snapshot,'$.fallback.original_profile_id'), t.profile_id),
-                    json_extract(t.definition_snapshot,'$.model_selection.model')
+                    json_extract(t.definition_snapshot,'$.model_selection.model'),
+                    json_extract(t.definition_snapshot,'$.effort'), json_extract(t.definition_snapshot,'$.service_tier')
              FROM turns t JOIN messages m ON m.id=t.request_message_id
              WHERE t.session_id=?1 AND m.rewound_at IS NULL AND t.profile_id IS NOT NULL
                AND COALESCE(json_extract(m.content,'$.source.kind'),'') IN ('','retry','followup')
              ORDER BY t.created_at DESC, t.rowid DESC LIMIT 1",
-            [&id], |r| Ok(SessionTurnModel { turn_id: r.get(0)?, profile_id: r.get(1)?, model: r.get(2)? }),
+            [&id], |r| Ok(SessionTurnModel { turn_id: r.get(0)?, profile_id: r.get(1)?, model: r.get(2)?, effort: r.get(3)?, service_tier: r.get(4)? }),
         ).optional()?;
         Ok(session)
     }).await?))

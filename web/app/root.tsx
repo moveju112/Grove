@@ -4,6 +4,7 @@ import "@astryxdesign/core/reset.css";
 import "@astryxdesign/core/astryx.css";
 import "./design/grove.css";
 import "./design/grove-soft.css";
+import "./design/grove-comfort.css";
 import "./design/global.css";
 import { DesignProvider } from "./design/DesignProvider";
 import { Stack, StackItem } from "@astryxdesign/core/Stack";

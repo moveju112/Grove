@@ -40,6 +40,12 @@ test("새 데몬의 5단계, 재접속, 추가 브라우저의 로컬 전용 설
         await expect(heading("테마")).toBeVisible();
         await expect(workspace).toHaveCount(0);
         await expect(wizard).toContainText("로컬 설정 · 1/4");
+        for (const [theme, cardColor] of [["light-gray", "rgb(217, 217, 217)"], ["charcoal", "rgb(53, 60, 71)"]] as const) {
+            await selectChoice(choice("테마"), theme);
+            await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
+            await expect(wizard).toHaveCSS("background-color", cardColor);
+            await page.screenshot({ path: info.outputPath(`setup-${theme}-390.png`) });
+        }
         await selectChoice(choice("테마"), "soft");
         await expect(page.locator("html")).toHaveAttribute("data-theme", "soft");
         await page.screenshot({ path: info.outputPath("setup-theme-390.png") });

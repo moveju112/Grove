@@ -48,7 +48,7 @@ export function isActivityAnimated(display: Prefs["activityDisplay"]): boolean {
 /// 이 기기 표시 설정.
 export type Prefs = {
     initialSetupComplete?: true;
-    theme: "system" | "light" | "dark" | "soft";
+    theme: (typeof themeOptions)[number]["value"];
     fontSize: number;
     enterToSend: boolean;
     confirmTerminalPaste: boolean;
@@ -82,8 +82,23 @@ export function hasLocalSetup(): boolean {
     } catch { return false; }
 }
 
-export const themeOptions = [{ value: "system", label: "시스템" }, { value: "light", label: "밝게" },
-    { value: "dark", label: "어둡게" }, { value: "soft", label: "부드럽게" }] as const;
+export const themeOptions = [
+    { value: "system", label: "시스템" },
+    { value: "light", label: "밝게" },
+    { value: "dark", label: "어둡게" },
+    { value: "soft", label: "부드럽게" },
+    { value: "light-gray", label: "밝은 회색" },
+    { value: "charcoal", label: "차콜" },
+] as const;
+
+export const themeAppearance = {
+    system: { name: "grove", mode: "system" },
+    light: { name: "grove", mode: "light", background: "#f7f7f8" },
+    dark: { name: "grove", mode: "dark", background: "#14161b" },
+    soft: { name: "grove-soft", mode: "light", background: "#e9ebee" },
+    "light-gray": { name: "grove-comfort", mode: "light", background: "#d4d4d4" },
+    charcoal: { name: "grove-comfort", mode: "dark", background: "#242830" },
+} as const satisfies Record<Prefs["theme"], { name: string; mode: "system" | "light" | "dark"; background?: string }>;
 export const defaultPrefs: Prefs = {
     theme: "system", fontSize: 14, enterToSend: false, confirmTerminalPaste: true, clock: "system", timeStyle: "absolute",
     notifyDone: true, notifyApproval: true, notifyServer: true, notifySound: true, notifyVibrate: true, notifyPush: true,
@@ -106,6 +121,7 @@ export function loadPrefs(): Prefs {
     try {
         const { reasoning: _legacyReasoning, sessionVines, ...saved } = JSON.parse(localStorage.getItem(PREF_KEY) ?? "{}") as Partial<Prefs> & { reasoning?: unknown; sessionVines?: unknown };
         const prefs = { ...defaultPrefs, ...saved };
+        if (!themeOptions.some(({ value }) => value === prefs.theme)) prefs.theme = defaultPrefs.theme;
         // 다른 버전이 남긴 알 수 없는 시간 형식은 기본값으로 읽는다(저장값은 사용자가 바꿀 때까지 그대로 둔다).
         if (!CLOCKS.includes(prefs.clock)) prefs.clock = defaultPrefs.clock;
         if (!TIME_STYLES.includes(prefs.timeStyle)) prefs.timeStyle = defaultPrefs.timeStyle;
@@ -179,26 +195,27 @@ export function usePrefs(...keys: (keyof Prefs)[]): Prefs {
 }
 
 /// 실제 적용되는 테마(system이면 OS 설정).
-export function effectiveTheme(t: Prefs["theme"]): "light" | "dark" | "soft" {
+function effectiveTheme(t: Prefs["theme"]): Exclude<Prefs["theme"], "system"> {
     if (t !== "system") return t;
     return typeof matchMedia === "function" && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
 }
 
-// 주소창·PWA 상단 색은 각 테마의 바탕(--bg)과 같게 둔다.
-const THEME_COLOR = { light: "#f7f7f8", dark: "#14161b", soft: "#e9ebee" } as const;
+// Astryx는 시스템 모드에서 data-theme을 지우므로 주소창 색에 쓸 선택을 보존한다.
+let appliedTheme = defaultPrefs.theme;
 let osWatch: MediaQueryList | null = null;
 
 export function applyPrefs(p: Prefs) {
+    appliedTheme = p.theme;
     document.documentElement.dataset.theme = p.theme;
-    document.documentElement.dataset.astryxTheme = p.theme === "soft" ? "grove-soft" : "grove";
+    document.documentElement.dataset.astryxTheme = themeAppearance[p.theme].name;
     // 브라우저 주소창·PWA 상단 색도 테마에 맞춘다. system이면 OS 전환을 따라간다.
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", THEME_COLOR[effectiveTheme(p.theme)]);
+    if (meta) meta.setAttribute("content", themeAppearance[effectiveTheme(p.theme)].background);
     if (!osWatch && typeof matchMedia === "function") {
         osWatch = matchMedia("(prefers-color-scheme: dark)");
         osWatch.addEventListener("change", () => {
-            if (document.documentElement.dataset.theme === "system") {
-                document.querySelector('meta[name="theme-color"]')?.setAttribute("content", THEME_COLOR[effectiveTheme("system")]);
+            if (appliedTheme === "system") {
+                document.querySelector('meta[name="theme-color"]')?.setAttribute("content", themeAppearance[effectiveTheme("system")].background);
             }
         });
     }

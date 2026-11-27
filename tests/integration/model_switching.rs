@@ -50,6 +50,34 @@ async fn request_models_are_isolated_idempotent_and_preserved_for_queued_followu
     }
 }
 
+// 다른 기기의 입력창이 이어 쓰도록 대화 상세는 마지막 사용자 턴의 모델·추론·속도를 함께 준다.
+#[tokio::test]
+async fn session_detail_reports_the_last_turn_effort_and_service_tier() {
+    let s = TestServer::start().await;
+    let f = Fixture::start().await;
+    let profile = s.fixture_profile(&f.base).await;
+    let project = s.create_project("last-model").await;
+    let sid = s.create_session(project["id"].as_str().unwrap()).await["id"].as_str().unwrap().to_string();
+    let path = format!("/api/v1/sessions/{sid}/turns");
+    f.push(fixture::text("first"));
+    let (status, v) = s.post(&path, json!({"profile_id":profile,"text":"high","model":"other","effort":"high"})).await;
+    assert_eq!(status, StatusCode::ACCEPTED, "{v}");
+    let first = v["turn"]["id"].as_str().unwrap().to_string();
+    s.wait_status(&first, "completed").await;
+    let last = s.get(&format!("/api/v1/sessions/{sid}")).await.1["last_model"].clone();
+    assert_eq!(last, json!({"turn_id":first,"profile_id":profile,"model":"other","effort":"high","service_tier":null}));
+    // Codex 계열의 속도 선택은 같은 definition 위치에 고정된다.
+    rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap()
+        .execute("UPDATE turns SET definition_snapshot=json_set(definition_snapshot,'$.service_tier','priority') WHERE id=?1", [&first]).unwrap();
+    assert_eq!(s.get(&format!("/api/v1/sessions/{sid}")).await.1["last_model"]["service_tier"], "priority");
+    f.push(fixture::text("second"));
+    let (_, v) = s.post(&path, json!({"profile_id":profile,"text":"auto"})).await;
+    let second = v["turn"]["id"].as_str().unwrap().to_string();
+    s.wait_status(&second, "completed").await;
+    let last = s.get(&format!("/api/v1/sessions/{sid}")).await.1["last_model"].clone();
+    assert_eq!(last, json!({"turn_id":second,"profile_id":profile,"model":null,"effort":null,"service_tier":null}));
+}
+
 #[tokio::test]
 async fn retry_preserves_the_request_model_without_changing_the_profile_default() {
     let s = TestServer::start().await;

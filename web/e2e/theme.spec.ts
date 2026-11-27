@@ -1,10 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
 import { login, selectChoice } from "./helpers";
 
-// UI-030: light/dark/soft 테마와 OS 테마 연동, 본문·보조 글·버튼 글자의 대비(WCAG AA 4.5:1).
-type Colors = { bg: string; panel: string; text: string; muted: string; accent: string; onAccent: string; scheme: string; meta: string | null };
+const registerButton = (page: Page) => page.getByRole("button", { name: "페어링 링크·QR로 등록", exact: true });
 
-async function colors(page: Page): Promise<Colors> {
+// UI-030: 고정 테마와 OS 테마 연동, 본문·보조 글·버튼 글자의 대비(WCAG AA 4.5:1).
+async function colors(page: Page) {
     return page.evaluate(() => {
         const cs = getComputedStyle(document.documentElement);
         const v = (n: string) => {
@@ -20,10 +20,15 @@ async function colors(page: Page): Promise<Colors> {
         return {
             bg: v("--bg"),
             panel: v("--panel"),
+            hover: v("--hover"),
+            selected: v("--sel"),
             text: v("--text"),
             muted: v("--muted"),
             accent: v("--accent"),
             onAccent: v("--on-accent"),
+            codeBackground: v("--color-syntax-background"),
+            codeText: ["keyword", "string", "comment", "number", "function", "type", "variable",
+                "operator", "constant", "tag", "attribute", "property", "punctuation"].map((name) => v(`--color-syntax-${name}`)),
             scheme: cs.colorScheme,
             meta: document.querySelector('meta[name="theme-color"]')?.getAttribute("content") ?? null,
         };
@@ -43,40 +48,50 @@ const contrast = (a: string, b: string) => {
 async function setTheme(page: Page, theme: string) {
     await page.evaluate((t) => localStorage.setItem("grove.device.prefs", JSON.stringify({ theme: t })), theme);
     await page.reload();
+    await page.locator("html[data-hydrated=true]").waitFor({ state: "attached" });
 }
 
 test("테마별 대비가 AA 이상이고 system은 OS를, 고정 테마는 OS와 무관하게 따른다", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" });
     await page.goto("/");
-    const results: Record<string, Colors> = {};
-    for (const [theme, os] of [["light", "dark"], ["dark", "light"], ["soft", "dark"], ["system", "light"], ["system", "dark"]] as const) {
+    const cases = [
+        { theme: "light", os: "dark", background: "#f7f7f8", scheme: "light" },
+        { theme: "dark", os: "light", background: "#14161b", scheme: "dark" },
+        { theme: "soft", os: "dark", background: "#e9ebee", scheme: "light" },
+        { theme: "light-gray", os: "dark", background: "#d4d4d4", scheme: "light", panel: "#e0e0e0", text: "#3b3b3b", code: "#dbdbdb" },
+        { theme: "charcoal", os: "light", background: "#242830", scheme: "dark", panel: "#2d323b", text: "#e1e5eb", code: "#242932" },
+        { theme: "system", os: "light", background: "#f7f7f8", scheme: "light dark" },
+        { theme: "system", os: "dark", background: "#14161b", scheme: "light dark" },
+    ] as const;
+    for (const { theme, os, background, scheme, ...palette } of cases) {
         await page.emulateMedia({ colorScheme: os });
         await setTheme(page, theme);
         const c = await colors(page);
-        results[`${theme}/${os}`] = c;
-        const button = await page.getByRole("button", { name: "로그인", exact: true }).evaluate((node) => {
+        expect(c, `${theme}/${os}`).toMatchObject({ bg: background, scheme, meta: background });
+        const button = await registerButton(page).evaluate((node) => {
             const style = getComputedStyle(node);
             const hex = (color: string) => "#" + color.match(/[\d.]+/g)!.slice(0, 3)
                 .map((channel) => Math.round(Number(channel)).toString(16).padStart(2, "0")).join("");
             return { text: hex(style.color), background: hex(style.backgroundColor) };
         });
-        expect(contrast(button.text, button.background), `${theme}/${os} 실제 로그인 버튼`).toBeGreaterThanOrEqual(4.5);
+        expect(contrast(button.text, button.background), `${theme}/${os} 실제 등록 버튼`).toBeGreaterThanOrEqual(4.5);
         for (const [fg, bg, name] of [[c.text, c.bg, "본문"], [c.text, c.panel, "패널 본문"], [c.muted, c.panel, "보조 글"], [c.muted, c.bg, "보조 글(배경)"], [c.onAccent, c.accent, "버튼 글자"]] as const) {
             expect(contrast(fg, bg), `${theme}/${os} ${name} ${fg} on ${bg}`).toBeGreaterThanOrEqual(4.5);
         }
+        if ("panel" in palette) {
+            expect(c.panel).toBe(palette.panel);
+            expect(c.text).toBe(palette.text);
+            expect(c.codeBackground).toBe(palette.code);
+            for (const surface of [c.hover, c.selected]) {
+                for (const text of [c.text, c.muted]) {
+                    expect(contrast(text, surface), `${theme} ${text} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+                }
+            }
+            for (const text of c.codeText) {
+                expect(contrast(text, c.codeBackground), `${theme} 코드 ${text} on ${c.codeBackground}`).toBeGreaterThanOrEqual(4.5);
+            }
+        }
     }
-    // 고정 테마는 OS와 무관
-    expect(results["light/dark"]!.bg).toBe("#f7f7f8");
-    expect(results["light/dark"]!.scheme).toBe("light");
-    expect(results["soft/dark"]!.bg).toBe("#e9ebee");
-    expect(results["dark/light"]!.bg).toBe("#14161b");
-    expect(results["dark/light"]!.scheme).toBe("dark");
-    // system은 OS를 따른다
-    expect(results["system/light"]!.bg).toBe("#f7f7f8");
-    expect(results["system/dark"]!.bg).toBe("#14161b");
-    // 주소창 색
-    expect(results["dark/light"]!.meta).toBe("#14161b");
-    expect(results["soft/dark"]!.meta).toBe("#e9ebee");
     // system 사용 중 OS가 바뀌면 새로고침 없이 따라간다
     await page.emulateMedia({ colorScheme: "light" });
     await setTheme(page, "system");
@@ -86,23 +101,26 @@ test("테마별 대비가 AA 이상이고 system은 OS를, 고정 테마는 OS�
     await page.evaluate(() => localStorage.removeItem("grove.device.prefs"));
 });
 
-test("설정 화면에서 테마를 고르면 바로 적용되고 로그인 화면에도 유지된다", async ({ page }) => {
-    await page.emulateMedia({ colorScheme: "light" });
-    await login(page);
-    await page.evaluate(() => localStorage.removeItem("grove.device.prefs"));
-    await page.reload();
-    await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
-    await page.getByLabel("설정 검색").fill("테마");
-    await selectChoice(page.getByLabel("테마", { exact: true }), "soft");
-    await expect.poll(async () => (await colors(page)).bg).toBe("#e9ebee");
-    // 로그아웃 상태(로그인 화면)에서도 같은 테마
-    await page.context().clearCookies();
-    await page.evaluate(() => {
-        for (const k of Object.keys(localStorage)) if (k !== "grove.device.prefs") localStorage.removeItem(k);
-        for (const k of Object.keys(sessionStorage)) sessionStorage.removeItem(k);
+for (const [theme, label, background] of [
+    ["soft", "부드럽게", "#e9ebee"], ["light-gray", "밝은 회색", "#d4d4d4"], ["charcoal", "차콜", "#242830"],
+] as const) {
+    test(`설정의 ${label} 선택이 즉시 적용되고 로그인 화면에도 유지된다`, async ({ page }) => {
+        await page.emulateMedia({ colorScheme: "light" });
+        await login(page);
+        await page.getByTestId("sidebar").getByRole("button", { name: "설정", exact: true }).click();
+        await page.getByLabel("설정 검색").fill(label);
+        const choice = page.getByRole("combobox", { name: "테마", exact: true });
+        await selectChoice(choice, theme);
+        await expect(choice).toContainText(label);
+        await expect.poll(async () => (await colors(page)).bg).toBe(background);
+        // 로그아웃 상태(로그인 화면)에서도 같은 테마
+        await page.context().clearCookies();
+        await page.evaluate(() => {
+            for (const k of Object.keys(localStorage)) if (k !== "grove.device.prefs") localStorage.removeItem(k);
+            for (const k of Object.keys(sessionStorage)) sessionStorage.removeItem(k);
+        });
+        await page.goto("/");
+        await expect(registerButton(page)).toBeVisible();
+        expect((await colors(page)).bg).toBe(background);
     });
-    await page.goto("/");
-    await expect(page.getByRole("form", { name: "로그인" })).toBeVisible();
-    expect((await colors(page)).bg).toBe("#e9ebee");
-    await page.evaluate(() => localStorage.removeItem("grove.device.prefs"));
-});
+}

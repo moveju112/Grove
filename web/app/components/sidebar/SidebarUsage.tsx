@@ -1,3 +1,4 @@
+import * as stylex from "@stylexjs/stylex";
 import { Grid } from "@astryxdesign/core/Grid";
 import { Link } from "@astryxdesign/core/Link";
 import { Stack } from "@astryxdesign/core/Stack";
@@ -30,6 +31,20 @@ const accounts = [
     { protocol: "codex_cli", name: "Codex" },
 ] as const;
 const periods = ["5시간", "주간"] as const;
+const MINUTE = 60_000;
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+// 한도 기간의 길이. 바 위 눈금은 이 기간 중 지난 시간의 위치다.
+const windows: Record<(typeof periods)[number], number> = { "5시간": 5 * HOUR, "주간": 7 * DAY };
+
+/** 초기화까지 남은 시간을 큰 두 단위로 줄여 표시한다. */
+export function remainingTime(ms: number): string {
+    if (ms < HOUR) return `${Math.max(1, Math.ceil(ms / MINUTE))}분`;
+    const [big, unit, small, smallUnit] = ms < DAY
+        ? [Math.floor(ms / HOUR), "시간", Math.floor(ms % HOUR / MINUTE), "분"]
+        : [Math.floor(ms / DAY), "일", Math.floor(ms % DAY / HOUR), "시간"];
+    return small > 0 ? `${big}${unit} ${small}${smallUnit}` : `${big}${unit}`;
+}
 
 /** 연결된 Claude·Codex의 공용 5시간·주간 사용률만 두 줄 안에 표시한다. */
 export function UsageSummary({ report, failed = false, now = Date.now(), onAuthenticate }: {
@@ -43,10 +58,11 @@ export function UsageSummary({ report, failed = false, now = Date.now(), onAuthe
             limit.label === period && limit.remaining_percent !== null))) ? [{ ...account, name }] : [];
     });
     if (connected.length === 0) return null;
-    return <Stack as="section" gap={2} paddingBlock={2} paddingInline={2}
+    return <Stack as="section" gap={1} paddingInline={2}
         aria-label="사용 한도" data-testid="sidebar-usage" xstyle={usageStyles.summary}>
         {failed && <GroveText type="inherit" color="warning">갱신 실패 · 이전 값</GroveText>}
-        {connected.map((account) => <Stack key={account.protocol} gap={0} data-testid="account-usage">
+        {connected.map((account, index) => <Stack key={account.protocol} gap={0} data-testid="account-usage"
+            xstyle={index > 0 && usageStyles.divided}>
             {account.status !== "available" ? <Stack direction="horizontal" justify="between" gap={2}>
                 <GroveText type="inherit" color="secondary"><ProviderMark protocol={account.protocol} />{account.name}</GroveText>
                 {account.status === "authentication_required" && onAuthenticate ? <Button type="button" appearance="link" density="compact"
@@ -70,6 +86,10 @@ export function UsageSummary({ report, failed = false, now = Date.now(), onAuthe
                         : `${used.toLocaleString(undefined, { maximumFractionDigits: 1 })}%`;
                     const label = `${account.name} ${period}`;
                     const reset = limit?.resets_at ? ` · 초기화 ${absoluteTime(limit.resets_at, prefs)}` : "";
+                    const left = limit?.resets_at && !expired ? Date.parse(limit.resets_at) - now : null;
+                    const span = windows[period];
+                    // 서버 값이 기간보다 먼 초기화를 알리면 경과 위치를 꾸며내지 않는다.
+                    const elapsed = left !== null && left <= span ? (1 - left / span) * 100 : null;
                     return <Stack gap={0.5} key={period} data-testid="account-usage-limit">
                         <Stack direction="horizontal" justify="between" align="center" gap={1}>
                             <HintText type="inherit" color="secondary" hint={`${label} 사용${reset}`} xstyle={usageStyles.label}>
@@ -81,7 +101,13 @@ export function UsageSummary({ report, failed = false, now = Date.now(), onAuthe
                                 {value}
                             </HintText>
                         </Stack>
-                        {!expired && <ProgressBar label={`${label} 사용`} isLabelHidden value={used} max={100} variant="accent" />}
+                        {!expired && <Stack xstyle={usageStyles.track}>
+                            <ProgressBar label={`${label} 사용`} isLabelHidden value={used} max={100} variant="accent" />
+                            {elapsed !== null && <span aria-hidden="true" {...stylex.props(usageStyles.pace(elapsed))} />}
+                        </Stack>}
+                        {left !== null && left > 0 && <GroveText type="inherit" color="secondary" hasTabularNumbers xstyle={usageStyles.reset}>
+                            {remainingTime(left)} 남음
+                        </GroveText>}
                     </Stack>;
                 })}
             </Grid>}

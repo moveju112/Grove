@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "react-router dev",
     "build": "npm run theme:build && react-router build && node scripts/stamp-sw.mjs",
-    "theme:build": "astryx theme build app/design/grove.theme.ts --out app/design/grove.css && astryx theme build app/design/grove-soft.theme.ts --out app/design/grove-soft.css",
-    "theme:check": "astryx theme build app/design/grove.theme.ts --out app/design/grove.css --check && astryx theme build app/design/grove-soft.theme.ts --out app/design/grove-soft.css --check",
+    "theme:build": "astryx theme build app/design/grove.theme.ts --out app/design/grove.css && astryx theme build app/design/grove-soft.theme.ts --out app/design/grove-soft.css && astryx theme build app/design/grove-comfort.theme.ts --out app/design/grove-comfort.css",
+    "theme:check": "astryx theme build app/design/grove.theme.ts --out app/design/grove.css --check && astryx theme build app/design/grove-soft.theme.ts --out app/design/grove-soft.css --check && astryx theme build app/design/grove-comfort.theme.ts --out app/design/grove-comfort.css --check",
     "typecheck": "react-router typegen && tsc --noEmit",
     "test": "vitest run",
     "e2e": "playwright test"

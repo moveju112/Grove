@@ -78,7 +78,15 @@ export type Label = { id: string, name: string, color: string, revision: number,
  */
 project_count: number, };
 
-export type SessionTurnModel = { turn_id: string, profile_id: string, model: string | null, };
+export type SessionTurnModel = { turn_id: string, profile_id: string, model: string | null,
+/**
+ * 그 턴에 고정한 추론 강도(null: auto). 예전 서버는 이 필드를 보내지 않는다.
+ */
+effort?: string | null,
+/**
+ * 그 턴에 고정한 속도(priority·default, null: 지정 안 함). 예전 서버는 이 필드를 보내지 않는다.
+ */
+service_tier?: string | null, };
 
 export type SessionRecent = { id: string, revision: number, pinned: boolean, };
 

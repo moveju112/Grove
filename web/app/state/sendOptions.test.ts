@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { type SendOptions, capabilityProblem, initialProfile, resolveOptions, sendOptionsSignature, serviceTierForProfile, supportedServiceTier } from "./sendOptions";
+import { type SendOptions, capabilityProblem, inheritTurnModel, initialProfile, resolveOptions, sendOptionsSignature, serviceTierForProfile, supportedServiceTier } from "./sendOptions";
 import type { AvailableModel, ModelCapabilities } from "../api/generated";
 
 const base: SendOptions = { mode: "model", profileId: null, agentId: null, tools: false };
@@ -17,6 +17,21 @@ describe("sendOptionsSignature", () => {
         expect(sendOptionsSignature({ ...base, serviceTier: "priority" }, ["a", "b"])).not.toBe(original);
         expect(sendOptionsSignature({ ...base, serviceTier: null }, ["a", "b"])).toBe(original);
         expect(sendOptionsSignature(base, ["b", "a"])).not.toBe(original);
+    });
+});
+
+describe("inheritTurnModel", () => {
+    const local: SendOptions = { ...base, profileId: "phone", model: "old", effort: "medium", serviceTier: "default" };
+    const turn = { turn_id: "t", profile_id: "codex", model: "sol" };
+    it("다른 기기 턴의 모델·추론·Fast를 함께 이어 쓴다", () => {
+        expect(inheritTurnModel(local, { ...turn, effort: "high", service_tier: "priority" }))
+            .toMatchObject({ profileId: "codex", model: "sol", effort: "high", serviceTier: "priority" });
+        expect(inheritTurnModel(local, { ...turn, effort: null, service_tier: "default" })).toMatchObject({ effort: "auto", serviceTier: "default" });
+    });
+    it("속도를 지정하지 않은 턴과 예전 서버 응답은 이 입력창의 추론·Fast를 유지한다", () => {
+        expect(inheritTurnModel(local, { ...turn, effort: "low", service_tier: null })).toMatchObject({ effort: "low", serviceTier: "default" });
+        expect(inheritTurnModel(local, turn)).toMatchObject({ profileId: "codex", model: "sol", effort: "medium", serviceTier: "default" });
+        expect(inheritTurnModel(local, { ...turn, effort: "unknown" })).toMatchObject({ effort: "medium" });
     });
 });
 

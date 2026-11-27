@@ -1,4 +1,4 @@
-import type { AvailableModel, ModelCapabilities } from "../api/generated";
+import type { AvailableModel, ModelCapabilities, SessionTurnModel } from "../api/generated";
 
 /// effort(UI-020): auto면 provider 기본값(아무것도 보내지 않음).
 export const EFFORTS = ["auto", "low", "medium", "high", "xhigh", "max", "ultra"] as const;
@@ -21,6 +21,17 @@ export function supportedServiceTier(value: SendOptions["serviceTier"], capabili
     if (!tier || tier === "default" || !capabilities) return tier;
     if (!capabilities.fast || catalogLoaded && !model?.service_tiers?.some((entry) => entry.id === tier)) return serviceTierForProfile(null, capabilities);
     return tier;
+}
+
+/// 다른 기기에서 보낸 마지막 턴의 모델·추론·속도를 이어 쓴다. 추론 null은 auto다.
+/// 속도를 지정하지 않은 턴(미지원 프로필)과 이 값을 주지 않는 예전 서버는 이 입력창의 선택을 유지한다.
+export function inheritTurnModel(o: SendOptions, last: SessionTurnModel): SendOptions {
+    const effort = last.effort === undefined ? o.effort : last.effort ?? "auto";
+    return {
+        ...o, profileId: last.profile_id, model: last.model,
+        effort: (EFFORTS as readonly string[]).includes(effort ?? "") ? effort as Effort : o.effort,
+        ...(last.service_tier ? { serviceTier: last.service_tier } : {}),
+    };
 }
 
 /// 저장된 선택값을 현재 목록에 맞춰 실제로 쓸 값으로 바꾼다.

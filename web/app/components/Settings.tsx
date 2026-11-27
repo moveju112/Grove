@@ -11,7 +11,7 @@ import { HelpTip } from "./HelpTip";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, ModelProfile, SecretInfo } from "../api/generated";
-import { activityDisplayOptions, isActivityAnimated, type Prefs, loadPrefs, savePrefs, usePrefs, VINE_GROUPS } from "../state/device";
+import { activityDisplayOptions, isActivityAnimated, type Prefs, loadPrefs, savePrefs, themeOptions, usePrefs, VINE_GROUPS } from "../state/device";
 import { When } from "./When";
 import { PushNotifications, PushStatusContext } from "./PushNotifications";
 import { AppNotificationPermission } from "./AppNotificationPermission";
@@ -99,7 +99,7 @@ export const ITEMS: Item[] = [
     { id: "definitions", menu: "agents", label: "위임 에이전트", keywords: "agent workflow prompt 지침", scope: "서버 전체" },
     { id: "source-settings", menu: "execution", label: "원본 Claude/Codex 설정", keywords: "원본 출처 읽기 전용 claude codex source settings 스킬 skill hook", scope: "전역·프로젝트" },
     { id: "exec-settings", menu: "execution", label: "명령 실행", keywords: "exec shell bash sh 셸 대화", scope: "전역·프로젝트" },
-    { id: "theme", menu: "display", label: "테마", keywords: "dark light 다크 라이트 색", scope: "이 기기" },
+    { id: "theme", menu: "display", label: "테마", keywords: `dark light 다크 라이트 색 ${themeOptions.map(({ label }) => label).join(" ")}`, scope: "이 기기" },
     { id: "font", menu: "display", label: "글자 크기", keywords: "font size 글꼴", scope: "이 기기" },
     { id: "enter", menu: "display", label: "Enter로 보내기", keywords: "enter send 입력 단축키", scope: "이 기기" },
     { id: "terminal-paste", menu: "display", label: "터미널 여러 줄 붙여넣기 확인", keywords: "terminal clipboard paste 터미널 붙여넣기 복사 여러줄 다시 묻지 않기", scope: "이 기기" },
@@ -314,8 +314,7 @@ function DisplayPrefs({ show }: {
                 <Section item="theme">
                     <Select label="테마" hideLabel value={p.theme}
                         onChange={(value) => set({ ...p, theme: value as Prefs["theme"] })}
-                        options={[{ value: "system", label: "시스템" }, { value: "light", label: "밝게" },
-                            { value: "dark", label: "어둡게" }, { value: "soft", label: "부드럽게(soft)" }]} />
+                        options={[...themeOptions]} />
                 </Section>
             )}
             {show("font") && (

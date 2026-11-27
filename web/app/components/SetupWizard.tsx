@@ -8,6 +8,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { ApiError, api, isTransportError, logout, newKey } from "../api/client";
 import type { AgentBackendCatalog, SetupPreferences, SetupStatus } from "../api/generated";
 import { Button } from "../design/Button";
+import { GroveTheme } from "../design/DesignProvider";
 import { Select } from "../design/Select";
 import { useCapability } from "../state/capabilities";
 import { applyPrefs, hasLocalSetup, loadPrefs, savePrefs, themeOptions, type Prefs } from "../state/device";
@@ -75,12 +76,13 @@ function message(cause: unknown) {
     return cause instanceof Error ? cause.message : "설정을 저장하지 못했어요.";
 }
 
-function SetupCard({ children }: { children: ReactNode }) {
-    return <Center role="main" minHeight="100dvh" padding={4}>
+function SetupCard({ children, theme }: { children: ReactNode; theme?: Prefs["theme"] }) {
+    const card = <Center role="main" minHeight="100dvh" padding={4}>
         <Card width={520} maxWidth="100%" padding={6} data-testid="setup-wizard">
             <Stack gap={5}>{children}</Stack>
         </Card>
     </Center>;
+    return theme ? <GroveTheme theme={theme}>{card}</GroveTheme> : card;
 }
 
 function SetupWizard({ status, needsLocal, onLocalSaved, onDone, onCheck, conflict, onConflict }: {
@@ -138,7 +140,7 @@ function SetupWizard({ status, needsLocal, onLocalSaved, onDone, onCheck, confli
         setPosition(position + 1);
     };
 
-    return <SetupCard>
+    return <SetupCard theme={prefs.theme}>
         {saving && <LoadingBar label="초기 설정 저장 중…" />}
         <Stack gap={2}>
             <Stack direction="horizontal" align="center" justify="between" gap={2}>

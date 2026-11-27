@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { AccountUsageReport } from "../../api/generated";
-import { UsageSummary } from "./SidebarUsage";
+import { remainingTime, UsageSummary } from "./SidebarUsage";
 
 const report: AccountUsageReport = { accounts: [
     { protocol: "codex_cli", name: "Codex", status: "available", checked_at: "2026-01-01T00:00:00Z", limits: [
@@ -113,6 +113,32 @@ describe("탐색 하단 사용 한도", () => {
         expect(renderToStaticMarkup(createElement(UsageSummary, { report: { accounts: [
             { ...report.accounts[0]!, limits: [{ label: "크레딧", remaining_percent: null, remaining: "12.5", resets_at: null }] },
         ] } }))).toBe("");
+    });
+
+    it("초기화까지 남은 시간과 기간 중 지난 위치를 바 아래·위에 표시한다", () => {
+        const now = Date.parse("2026-11-27T12:06:00Z");
+        const html = renderToStaticMarkup(createElement(UsageSummary, { now, report: { accounts: [
+            { ...report.accounts[1]!, limits: [
+                { label: "5시간", remaining_percent: 91, remaining: null, resets_at: "2026-11-27T14:20:00Z" },
+                // 기간보다 먼 초기화는 남은 시간만 표시하고 경과 위치를 꾸며내지 않는다.
+                { label: "주간", remaining_percent: 84, remaining: null, resets_at: "2026-12-27T00:00:00Z" },
+            ] },
+        ] } }));
+        expect(html).toContain("2시간 14분 남음");
+        expect(html).toContain("29일 11시간 남음");
+        // 5시간 중 2시간 46분이 지났다.
+        expect(html).toMatch(/55\.33\d*%/);
+        expect(html.match(/<span aria-hidden="true"/g)).toHaveLength(1);
+    });
+
+    it("남은 시간을 큰 두 단위로 줄인다", () => {
+        const minute = 60_000, hour = 60 * minute, day = 24 * hour;
+        expect(remainingTime(10_000)).toBe("1분");
+        expect(remainingTime(59 * minute)).toBe("59분");
+        expect(remainingTime(2 * hour)).toBe("2시간");
+        expect(remainingTime(2 * hour + 14 * minute + 30_000)).toBe("2시간 14분");
+        expect(remainingTime(5 * day + 7 * hour + 59 * minute)).toBe("5일 7시간");
+        expect(remainingTime(3 * day)).toBe("3일");
     });
 
     it("쓰기 시작한 한도를 0%로 반올림하지 않는다", () => {

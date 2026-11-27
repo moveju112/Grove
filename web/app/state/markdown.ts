@@ -1,5 +1,5 @@
 // 작은 Markdown 파서(UI-010, SEC-020). 결과는 문법 트리이고, 화면은 React 요소로만 그린다(innerHTML 없음 → HTML 삽입 불가).
-// 지원: 문단·줄바꿈, 제목, 코드 블록(``` 닫힘 없으면 끝까지), 인라인 코드, 굵게·기울임, 외부 링크·프로젝트 파일 링크·이미지,
+// 지원: 문단·줄바꿈, 제목, 코드 블록(```·~~~ 3개 이상, 닫힘 없으면 끝까지), 인라인 코드, 굵게·기울임, 외부 링크·프로젝트 파일 링크·이미지,
 // 목록(-·*·1.), 인용, 표(| 구분 + 구분선), 구분선. 그 밖의 문법은 글자 그대로 보인다.
 
 export type Inline =
@@ -83,6 +83,19 @@ const cells = (line: string) =>
         .split("|")
         .map((c) => parseInline(c.trim()));
 
+// CommonMark 펜스: 같은 문자 3개 이상. 백틱 펜스의 info에는 백틱이 올 수 없고(```a```는 인라인 코드),
+// 닫는 줄은 같은 문자로 여는 길이 이상이며 뒤에 공백만 온다.
+function fenceOpen(line: string): { fence: string; lang: string } | null {
+    const m = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
+    if (!m || (m[1]![0] === "`" && m[2]!.includes("`"))) return null;
+    return { fence: m[1]!, lang: m[2]!.trim().split(/\s+/)[0]!.replace(/^\{\.?|\}$/g, "") };
+}
+
+function fenceClose(line: string, fence: string): boolean {
+    const m = line.match(/^ {0,3}(`{3,}|~{3,})\s*$/);
+    return !!m && m[1]![0] === fence[0] && m[1]!.length >= fence.length;
+}
+
 export function parseMarkdown(src: string): Block[] {
     const lines = src.replace(/\r\n?/g, "\n").split("\n");
     const out: Block[] = [];
@@ -90,13 +103,13 @@ export function parseMarkdown(src: string): Block[] {
     while (i < lines.length) {
         const line = lines[i]!;
         let m: RegExpMatchArray | null;
-        if ((m = line.match(/^\s*(```|~~~)\s*([\w+-]*)\s*$/))) {
-            const fence = m[1]!;
+        const open = fenceOpen(line);
+        if (open) {
             const body: string[] = [];
             i += 1;
-            while (i < lines.length && !lines[i]!.trim().startsWith(fence)) body.push(lines[i++]!);
+            while (i < lines.length && !fenceClose(lines[i]!, open.fence)) body.push(lines[i++]!);
             i += 1; // 닫는 줄(없으면 끝)
-            out.push({ t: "code", lang: m[2] ?? "", text: body.join("\n") });
+            out.push({ t: "code", lang: open.lang, text: body.join("\n") });
             continue;
         }
         if (!line.trim()) {
@@ -138,11 +151,12 @@ export function parseMarkdown(src: string): Block[] {
             continue;
         }
         // 문단: 빈 줄이나 다른 블록 시작까지. 줄바꿈은 그대로 보인다.
-        const para: string[] = [];
+        // 첫 줄은 위 블록 규칙에 걸리지 않았으므로 항상 소비한다(진행 보장).
+        const para: string[] = [lines[i++]!];
         while (
             i < lines.length &&
             lines[i]!.trim() &&
-            !/^\s*(```|~~~)/.test(lines[i]!) &&
+            !fenceOpen(lines[i]!) &&
             !/^#{1,6}\s/.test(lines[i]!) &&
             !/^\s*>/.test(lines[i]!) &&
             !ul.test(lines[i]!) &&

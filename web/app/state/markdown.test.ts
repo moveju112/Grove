@@ -21,6 +21,21 @@ describe("markdown", () => {
         expect(b[1]).toEqual({ t: "code", lang: "", text: "끝나지 않은 코드" });
     });
 
+    it("parses fence variants without hanging", () => {
+        // 백틱 4개 펜스 안의 백틱 3개는 닫는 줄이 아니다.
+        expect(parseMarkdown("````md\n```js\nx\n```\n````\n끝")).toEqual([
+            { t: "code", lang: "md", text: "```js\nx\n```" },
+            { t: "p", c: [{ t: "text", v: "끝" }] },
+        ]);
+        expect(parseMarkdown("````\n닫히지 않음")).toEqual([{ t: "code", lang: "", text: "닫히지 않음" }]);
+        expect(parseMarkdown("~~~~\na\n~~~\n~~~~")).toEqual([{ t: "code", lang: "", text: "a\n~~~" }]);
+        expect(parseMarkdown("```js title=\"a.js\"\nx\n```")).toEqual([{ t: "code", lang: "js", text: "x" }]);
+        expect(parseMarkdown("```{.py}\nx\n```")).toEqual([{ t: "code", lang: "py", text: "x" }]);
+        // info에 백틱이 있으면 펜스가 아니라 문단의 인라인 코드다.
+        expect(parseMarkdown("```foo```")).toMatchObject([{ t: "p" }]);
+        expect(parseMarkdown("문단\n```a``` 계속")).toMatchObject([{ t: "p" }]);
+    });
+
     it("parses inline", () => {
         expect(parseInline("a **b** *c* `d` [e](https://x.y)")).toEqual([
             { t: "text", v: "a " },
