@@ -13,5 +13,7 @@ export const questionStyles = stylex.create({
     },
     copy: { minWidth: 0, flexGrow: 1, overflowWrap: "anywhere", whiteSpace: "normal" },
     footer: { borderTopWidth: 1, borderTopStyle: "solid", borderTopColor: "var(--line)", backgroundColor: "var(--bg)" },
-    hint: { marginInlineStart: "auto", display: { default: "inline", "@media (pointer: coarse)": "none" } },
+    hint: { display: { default: "inline", "@media (pointer: coarse)": "none" } },
+    // 안내 문구가 없거나 숨겨져도 답하기는 오른쪽 끝에 둔다.
+    send: { marginInlineStart: "auto" },
 });

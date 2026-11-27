@@ -99,7 +99,7 @@ export function QuestionCard({ call, act, onAnswered }: {
                 {!!q.options.length && <Text type="supporting" color="secondary" xstyle={styles.hint}>
                     {q.multi_select ? "↑ ↓ 이동 · Space 선택" : "↑ ↓ 이동 · Enter 답하기"}
                 </Text>}
-                {(q.multi_select || q.allow_free_text) && <ServerActionButton type="button" density="compact" disabled={sending || (!picked.length && !note)}
+                {(q.multi_select || q.allow_free_text) && <ServerActionButton type="button" density="compact" xstyle={styles.send} disabled={sending || (!picked.length && !note)}
                     onClick={() => send({ choices: picked, text: note })}>답하기</ServerActionButton>}
             </Stack>
         </Stack>

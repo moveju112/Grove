@@ -182,6 +182,33 @@ pub async fn unsubscribe(
     })
     .await
 }
+/// 답을 기다리는 질문은 만들어질 때 한 번 알린다(질문 상태는 생성 때만 기록된다). 위임 하위 대화는 알리지 않는다.
+fn enqueue_question(
+    c: &Connection,
+    now: &str,
+    project: Option<&str>,
+    session: Option<&str>,
+    payload: &Value,
+) -> ApiResult<()> {
+    if payload["name"] != "ask_user" || payload["status"] != "awaiting_input" {
+        return Ok(());
+    }
+    let Some(call) = payload["id"].as_str() else {
+        return Ok(());
+    };
+    let seconds = crate::util::parse_time(now)
+        .map(|v| v.unix_timestamp())
+        .unwrap_or(0);
+    let mut data = json!({"projectId":project,"sessionId":session,"tag":format!("question:{call}"),"question":true});
+    if let Some(question) = payload["target"]["question"].as_str().map(str::trim).filter(|q| !q.is_empty()) {
+        data["body"] = json!(question.chars().take(120).collect::<String>());
+    }
+    c.execute("INSERT OR IGNORE INTO web_push_outbox(endpoint,event_key,payload,created_at,next_attempt)
+        SELECT endpoint,?1,grove_encrypt(?2),?3,?3 FROM web_push_subscriptions
+        WHERE NOT EXISTS(SELECT 1 FROM agent_runs WHERE child_session_id=?4)",params![format!("question:{call}"),data.to_string(),seconds,session])?;
+    Ok(())
+}
+
 pub(crate) fn enqueue(
     c: &Connection,
     now: &str,
@@ -190,6 +217,9 @@ pub(crate) fn enqueue(
     session: Option<&str>,
     payload: &Value,
 ) -> ApiResult<()> {
+    if kind == "tool_call.updated" {
+        return enqueue_question(c, now, project, session, payload);
+    }
     if kind != "turn.updated" {
         return Ok(());
     }

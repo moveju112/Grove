@@ -123,6 +123,16 @@ async fn completion_enqueues_atomically_once_and_revocation_cascades_without_pla
         c.execute("DELETE FROM web_push_outbox",[])?;
         grove::events::append(c,now,"turn.updated",Some("p"),Some("s"),&json!({"id":"t","status":"completed"}))?;
         assert_eq!(c.query_row("SELECT count(*) FROM web_push_outbox",[],|r|r.get::<_,i64>(0))?,0,"even after delivery, duplicates must not requeue");
+        // 질문은 답을 기다리는 호출이 만들어질 때 질문 문구로 알린다. 다른 도구·답한 뒤 상태는 알리지 않는다.
+        for (name,status) in [("ask_user","succeeded"),("ask_user","cancelled"),("shell","awaiting_input"),("shell","pending_approval")] {
+            grove::events::append(c,now,"tool_call.updated",Some("p"),Some("s"),&json!({"id":"q","name":name,"status":status,"target":{"question":"x"}}))?;
+        }
+        assert_eq!(c.query_row("SELECT count(*) FROM web_push_outbox",[],|r|r.get::<_,i64>(0))?,0);
+        grove::events::append(c,now,"tool_call.updated",Some("p"),Some("s"),&json!({"id":"q","turn_id":"t","name":"ask_user","status":"awaiting_input","target":{"question":"  어느 쪽으로 갈까요?  "}}))?;
+        let clear:String=c.query_row("SELECT grove_decrypt(payload) FROM web_push_outbox WHERE event_key='question:q'",[],|r|r.get(0))?;
+        let question=serde_json::from_str::<Value>(&clear)?;
+        assert_eq!((question["question"].clone(),question["tag"].clone(),question["body"].clone()),(json!(true),json!("question:q"),json!("어느 쪽으로 갈까요?")));
+        c.execute("DELETE FROM web_push_outbox",[])?;
         let secret:String=c.query_row("SELECT auth FROM web_push_subscriptions",[],|r|r.get(0))?;
         assert_ne!(secret,"AAAAAAAAAAAAAAAAAAAAAA");
         c.execute("DELETE FROM web_push_subscriptions",[])?;

@@ -19,9 +19,12 @@ async function askInNewSession(page: Page, args: Record<string, unknown>) {
     await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(title) }).first().click();
     if (page.viewportSize()!.width <= 760) await expect(page.getByTestId("mobile-drawer-left")).toBeHidden();
     const view = sessionView(page, s.id);
+    await expect(view).toBeVisible();
     await script({ frames: frames.tool("ask1", "ask_user", args) });
     await apiCall("POST", `/sessions/${s.id}/turns`, { profile_id: profileId, tools: true, text: "필요하면 물어보고 진행해" });
     await expect(view.getByTestId("question")).toBeVisible({ timeout: 15_000 });
+    // 보고 있는 대화의 질문은 카드로 충분하므로 배너를 띄우지 않는다.
+    await expect(page.getByTestId("question-notice")).toHaveCount(0);
     return view;
 }
 
@@ -94,6 +97,9 @@ test("모바일 번호 목록에서 직접 쓴 답변을 전송한다", async ({
     const answer = card.getByRole("textbox", { name: "직접 입력" });
     await expect(answer).toBeVisible();
     await expect(card.getByRole("button", { name: "답하기", exact: true })).toBeDisabled();
+    const send = (await card.getByRole("button", { name: "답하기", exact: true }).boundingBox())!;
+    const box = (await card.boundingBox())!;
+    expect(box.x + box.width - (send.x + send.width), "답하기는 카드 오른쪽 끝에 붙는다").toBeLessThanOrEqual(16);
     await card.scrollIntoViewIfNeeded();
     await page.screenshot({ path: info.outputPath("question-390.png") });
     await answer.click();
@@ -104,4 +110,49 @@ test("모바일 번호 목록에서 직접 쓴 답변을 전송한다", async ({
     await card.getByRole("button", { name: "답하기", exact: true }).click();
     await expect(card).toHaveCount(0);
     await expect.poll(async () => (await requests()).slice(before).some((r) => toolText(r).includes("두 곳 모두"))).toBe(true);
+});
+
+// 다른 대화를 보고 있을 때 새 질문은 상단 배너로 알리고, 누르면 그 대화를 연다.
+async function askElsewhere(page: Page, question: string) {
+    const { a } = await ensureProjects();
+    const profileId = await ensureProfile();
+    const stamp = Date.now();
+    const shown = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `보는 대화 ${stamp}` });
+    const asking = await apiCall<{ id: string }>("POST", `/projects/${a.id}/sessions`, { title: `묻는 대화 ${stamp}` });
+    await apiCall("POST", "/recent/touch", { kind: "session", project_id: a.id, resource_id: shown.id });
+    await login(page);
+    if (page.viewportSize()!.width <= 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();
+    await page.getByRole("region", { name: "최근", exact: true }).getByRole("button", { name: new RegExp(`보는 대화 ${stamp}`) }).first().click();
+    if (page.viewportSize()!.width <= 760) await expect(page.getByTestId("mobile-drawer-left")).toBeHidden();
+    await expect(sessionView(page, shown.id)).toBeVisible();
+    await script({ frames: frames.tool("ask-elsewhere", "ask_user", { question, options: [{ label: "예" }, { label: "아니오" }] }) });
+    await apiCall("POST", `/sessions/${asking.id}/turns`, { profile_id: profileId, tools: true, text: "필요하면 물어봐" });
+    return asking.id;
+}
+
+test("다른 대화의 질문은 상단 배너로 알리고, 누르면 그 대화를 연다", async ({ page }, info) => {
+    const asking = await askElsewhere(page, "배포 전에 마이그레이션을 먼저 실행할까요?");
+    const notice = page.getByTestId("question-notice");
+    await expect(notice).toHaveCount(1, { timeout: 15_000 });
+    await expect(notice).toContainText("질문 · 배포 전에 마이그레이션을 먼저 실행할까요?");
+    await expect(notice.getByTestId("question-notice-timer")).toBeAttached();
+    await page.screenshot({ path: info.outputPath("question-notice-desktop.png") });
+    await notice.getByRole("button", { name: /질문 · 배포 전에/ }).click();
+    await expect(notice).toHaveCount(0);
+    await expect(sessionView(page, asking).getByTestId("question")).toBeVisible({ timeout: 15_000 });
+});
+
+test("질문 배너는 모바일에서도 한 줄로 뜨고 약 10초 뒤 닫힌다", async ({ page }, info) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    await askElsewhere(page, "배포 전에 마이그레이션을 먼저 실행할까요? 실패하면 이전 스키마로 되돌릴 수 있는지도 함께 확인해야 합니다.");
+    const notice = page.getByTestId("question-notice");
+    await expect(notice).toHaveCount(1, { timeout: 15_000 });
+    const appeared = Date.now();
+    const box = (await notice.boundingBox())!;
+    expect(box.height, "한 줄 배너").toBeLessThanOrEqual(64);
+    expect(box.x + box.width).toBeLessThanOrEqual(390);
+    await page.screenshot({ path: info.outputPath("question-notice-390.png") });
+    await expect(notice).toHaveCount(0, { timeout: 14_000 });
+    expect(Date.now() - appeared).toBeGreaterThan(8_000);
 });

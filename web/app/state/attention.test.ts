@@ -18,6 +18,14 @@ describe("이 기기 알림 판단", () => {
         expect(attentionFor(event("notification.created", { id: "n", title: "예약 완료" }), defaultPrefs)).toMatchObject({ kind: "server", title: "예약 완료" });
         expect(JSON.stringify(attentionFor(event("turn.updated", { id: "t", status: "completed", error: "secret" }), defaultPrefs))).not.toContain("secret");
     });
+    it("답을 기다리는 질문은 질문 문구로 알리고 답한 질문·다른 도구는 알리지 않는다", () => {
+        const call = { id: "c", turn_id: "t", name: "ask_user", status: "awaiting_input", target: { question: "  어느 쪽으로 갈까요?  " } };
+        expect(attentionFor(event("tool_call.updated", call), defaultPrefs)).toMatchObject({ kind: "question", tag: "question:c", title: "질문", body: "어느 쪽으로 갈까요?" });
+        expect(attentionFor(event("tool_call.updated", { ...call, target: {} }), defaultPrefs)?.body).toBe("대화에서 답을 기다립니다.");
+        expect(attentionFor(event("tool_call.updated", { ...call, status: "succeeded" }), defaultPrefs)).toBeNull();
+        expect(attentionFor(event("tool_call.updated", { ...call, name: "shell" }), defaultPrefs)).toBeNull();
+        expect(attentionFor(event("tool_call.updated", call), { ...defaultPrefs, notifyApproval: false })).toBeNull();
+    });
     it("꺼진 종류·진행 중·사용자 취소는 알리지 않는다", () => {
         expect(attentionFor(event("turn.updated", { id: "t", status: "completed" }), { ...defaultPrefs, notifyDone: false })).toBeNull();
         expect(attentionFor(event("turn.updated", { id: "t", status: "awaiting_approval" }), { ...defaultPrefs, notifyApproval: false })).toBeNull();

@@ -131,9 +131,10 @@ self.addEventListener("push", (event) => {
         if (!data || data.scope !== SCOPE.href || !/^[0-9a-f]{64}$/.test(data.server)
             || typeof data.tag !== "string" || data.tag.length > 200
             || !notificationId(data.projectId) || !notificationId(data.sessionId)) return;
-        await self.registration.showNotification(data.failed ? "작업 실패" : "작업 완료", {
-            body: data.failed ? "대화의 요청 처리가 실패하거나 중단됐습니다."
-                : (typeof data.body === "string" && data.body.trim()) || "대화의 요청 처리가 끝났습니다.",
+        const body = typeof data.body === "string" && data.body.trim();
+        await self.registration.showNotification(data.question ? "질문" : data.failed ? "작업 실패" : "작업 완료", {
+            body: data.question ? body || "대화에서 답을 기다립니다."
+                : data.failed ? "대화의 요청 처리가 실패하거나 중단됐습니다." : body || "대화의 요청 처리가 끝났습니다.",
             tag: `${data.server}:${data.tag}`,
             data: { projectId: data.projectId, sessionId: data.sessionId, server: data.server },
             icon: new URL("icon-192.png", SCOPE).href,

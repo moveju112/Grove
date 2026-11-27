@@ -451,7 +451,7 @@ function NotifyPrefs({ prefs: p, set }: { prefs: Prefs; set: (n: Prefs) => void 
     };
     const kinds = [
         ["notifyDone", "작업 완료·실패"],
-        ["notifyApproval", "승인 요청"],
+        ["notifyApproval", "승인·질문 요청"],
         ["notifyServer", "예약·업데이트 알림"],
     ] as const;
     return (

@@ -18,6 +18,7 @@ import { LifecycleBanner } from "./components/pwa/LifecycleBanner";
 import { ProtocolBanner, UpdateBanner } from "./components/pwa";
 import { noticeStyles } from "./design/notices.stylex";
 import { LoadingScreen } from "./components/LoadingScreen";
+import { QuestionNotices } from "./components/QuestionNotices";
 import { useAppViewport } from "./components/useAppViewport";
 import { appStyles } from "./design/app.stylex";
 
@@ -59,7 +60,7 @@ export default function Root() {
     }, []);
     return <Stack ref={viewport} gap={0} height="100dvh" isScrollable xstyle={appStyles.viewport}>
         <Stack as="aside" gap={2} xstyle={noticeStyles.global} id="app-notices" aria-label="앱 알림" data-testid="app-notices">
-            <LifecycleBanner /><ProtocolBanner /><UpdateBanner />
+            <LifecycleBanner /><ProtocolBanner /><UpdateBanner /><QuestionNotices />
         </Stack>
         <StackItem size="fill"><Outlet /></StackItem>
     </Stack>;
