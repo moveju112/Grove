@@ -1,6 +1,6 @@
 [package]
 name = "grove"
-version = "0.1.14"
+version = "0.1.15"
 edition = "2024"
 rust-version = "1.93"
 description = "Grove: single-binary agent server with a shared web app"
