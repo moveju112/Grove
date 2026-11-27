@@ -158,7 +158,7 @@ pub fn registry() -> Vec<SettingDef> {
             key: "session.auto_title",
             menu: "workflow",
             label: "대화 제목 자동 생성",
-            description: "매 요청이 끝나면 최근 대화의 목표에 맞춰 짧은 제목을 만들어요. 전용 모델을 선택해야 하며 모델 비용이 발생해요. 직접 바꾼 제목은 유지해요",
+            description: "요청이 끝나면 짧은 제목을 만들고, 이후 요청 두 번마다 최근 대화의 목표에 맞춰 고쳐요. 전용 모델을 선택해야 하며 모델 비용이 발생해요. 직접 바꾼 제목은 유지해요",
             keywords: "title 제목 자동 생성 naming",
             kind: "bool",
             options: &[],

@@ -114,8 +114,10 @@ async fn auto_title_skips_disabled_or_unconfigured_model() {
     }
 }
 
+/// 생성된 제목은 완료 턴 두 번마다 다시 맞춘다. 실패한 시도는 다음 턴에 재시도하고,
+/// 압축·되감기 뒤에는 주기와 무관하게 바로 다시 맞춘다. 직접 바꾼 제목은 유지한다.
 #[tokio::test]
-async fn auto_title_updates_each_turn_and_preserves_manual_titles() {
+async fn auto_title_refreshes_every_other_turn_and_after_context_changes() {
     let s = TestServer::start().await;
     let main = Fixture::start().await;
     let aux = Fixture::start().await;
@@ -128,27 +130,82 @@ async fn auto_title_updates_each_turn_and_preserves_manual_titles() {
             json!({"expected_revision":0,"value":value})).await;
         assert!(status.is_success(), "{body}");
     }
-    for (prompt,title) in [("배포 스크립트 점검","배포 절차 확인"),("작업을 바꿔 로그인 오류 수정","로그인 오류 수정")] {
-        main.push(fixture::text("처리 결과"));
-        aux.push(fixture::text(title));
-        let (_,t) = s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":prompt,"profile_id":profile})).await;
-        s.wait_status(t["turn"]["id"].as_str().unwrap(),"completed").await;
-        tokio::time::timeout(Duration::from_secs(3),async { while title_of(&s,&sid).await!=title { tokio::time::sleep(Duration::from_millis(20)).await; } }).await.unwrap();
-    }
+    let app = s.server.as_ref().unwrap().app.clone();
+    let turn = |text: &'static str, answer: String| {
+        let (s, main, sid, profile) = (&s, &main, sid.clone(), profile.clone());
+        async move {
+            main.push(fixture::text(&answer));
+            let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({"text":text,"profile_id":profile})).await;
+            s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
+            t
+        }
+    };
+    let wait_title = |title: &'static str| {
+        let (s, sid) = (&s, sid.clone());
+        async move {
+            tokio::time::timeout(Duration::from_secs(3), async { while title_of(s, &sid).await != title { tokio::time::sleep(Duration::from_millis(20)).await; } })
+                .await.unwrap_or_else(|_| panic!("제목이 {title}(으)로 바뀌어야 한다"));
+        }
+    };
+    let title_calls = |status: &'static str| {
+        let db = rusqlite::Connection::open(s.data_dir().join("grove.db")).unwrap();
+        db.query_row("SELECT COUNT(*) FROM aux_model_calls WHERE kind='title' AND status=?1", [status], |r| r.get::<_, i64>(0)).unwrap()
+    };
+
+    // 임시 제목은 첫 완료 턴에 만든다.
+    aux.push(fixture::text("배포 절차 확인"));
+    turn("배포 스크립트 점검", "처리 결과".into()).await;
+    wait_title("배포 절차 확인").await;
+    // 다음 한 턴은 건너뛴다.
+    let t = turn("배포 로그도 확인", "확인 결과".into()).await;
+    grove::titles::after_turn(&app, t["turn"]["id"].as_str().unwrap()).await;
+    assert_eq!(aux.requests().len(), 1, "생성 뒤 첫 완료 턴은 제목을 다시 만들지 않는다");
+    // 두 번째 턴에서 다시 맞추되, 실패하면 표식이 남지 않아 다음 턴에 재시도한다.
+    aux.push(fixture::Step::Error(500, "boom".into()));
+    turn("작업을 바꿔 로그인 오류 수정", "수정 결과".into()).await;
+    tokio::time::timeout(Duration::from_secs(3), async { while title_calls("failed") < 1 { tokio::time::sleep(Duration::from_millis(20)).await; } }).await.unwrap();
+    assert_eq!(title_of(&s, &sid).await, "배포 절차 확인");
+    aux.push(fixture::text("로그인 오류 수정"));
+    turn("로그인 오류 원인 정리", "정리 결과".into()).await;
+    wait_title("로그인 오류 수정").await;
     let request = aux.requests().last().unwrap().clone();
     let source = request["messages"][1]["content"].as_str().unwrap();
-    assert!(source.contains("로그인 오류 수정"));
-    assert!(source.contains("currentTitle"));
+    assert!(source.contains("로그인 오류 원인 정리") && source.contains("currentTitle"));
     assert!(request["tools"].is_null() || request["tools"].as_array().is_some_and(Vec::is_empty));
-    assert_eq!(main.requests().len(),2);
-    let (_,session) = s.get(&format!("/api/v1/sessions/{sid}")).await;
-    s.send(Method::PATCH,&format!("/api/v1/sessions/{sid}"),json!({"expected_revision":session["revision"],"title":"직접 정한 제목"})).await;
-    main.push(fixture::text("후속 답변"));
-    let (_,t) = s.post(&format!("/api/v1/sessions/{sid}/turns"),json!({"text":"다른 목표","profile_id":profile})).await;
-    s.wait_status(t["turn"]["id"].as_str().unwrap(),"completed").await;
-    grove::titles::after_turn(&s.server.as_ref().unwrap().app,t["turn"]["id"].as_str().unwrap()).await;
-    assert_eq!(title_of(&s,&sid).await,"직접 정한 제목");
-    assert_eq!(aux.requests().len(),2);
+
+    // 압축 뒤 첫 완료 턴은 주기와 무관하게 다시 맞춘다.
+    main.push(fixture::text("이전 대화 요약"));
+    let (status, body) = s.post(&format!("/api/v1/sessions/{sid}/compact"), json!({"profile_id":profile})).await;
+    assert_eq!(status, reqwest::StatusCode::CREATED, "{body}");
+    aux.push(fixture::text("압축 뒤 제목"));
+    turn("압축 뒤 이어서 작업", format!("이어서 {}", "길게 ".repeat(20))).await;
+    wait_title("압축 뒤 제목").await;
+
+    // 되감기 뒤에도 바로 다시 맞춘다. 되감은 요청은 주기에 세지 않는다.
+    let rewound = turn("되감을 요청", "되감을 답".into()).await;
+    grove::titles::after_turn(&app, rewound["turn"]["id"].as_str().unwrap()).await;
+    let calls = aux.requests().len();
+    let (_, session) = s.get(&format!("/api/v1/sessions/{sid}")).await;
+    let (status, body) = s.post(&format!("/api/v1/sessions/{sid}/rewind"), json!({
+        "message_id": rewound["message"]["id"], "expected_revision": session["revision"], "expected_last_message_seq": session["last_message_seq"],
+    })).await;
+    assert!(status.is_success(), "{body}");
+    assert_eq!(aux.requests().len(), calls);
+    aux.push(fixture::text("되감은 뒤 제목"));
+    turn("되감은 뒤 새 요청", "새 답".into()).await;
+    wait_title("되감은 뒤 제목").await;
+    assert_eq!(title_calls("failed"), 1);
+
+    // 직접 바꾼 제목은 이후 자동 생성 대상이 아니다.
+    let (_, session) = s.get(&format!("/api/v1/sessions/{sid}")).await;
+    s.send(Method::PATCH, &format!("/api/v1/sessions/{sid}"), json!({"expected_revision":session["revision"],"title":"직접 정한 제목"})).await;
+    let calls = aux.requests().len();
+    for text in ["다른 목표", "또 다른 목표"] {
+        let t = turn(text, "후속 답변".into()).await;
+        grove::titles::after_turn(&app, t["turn"]["id"].as_str().unwrap()).await;
+    }
+    assert_eq!(title_of(&s, &sid).await, "직접 정한 제목");
+    assert_eq!(aux.requests().len(), calls);
 }
 
 #[tokio::test]

@@ -1315,6 +1315,11 @@ pub const MIGRATIONS: &[&str] = &[
         png BLOB NOT NULL
     );
     "#,
+    // 마지막으로 반영한 생성 제목의 대화 위치와 되감기 판본. 자동 제목의 갱신 주기를 정한다.
+    r#"
+    ALTER TABLE sessions ADD COLUMN title_seq INTEGER;
+    ALTER TABLE sessions ADD COLUMN title_timeline INTEGER;
+    "#,
 ];
 
 #[cfg(test)]

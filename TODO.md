@@ -799,7 +799,7 @@ P4의 플랫폼 통합에 앞서 Android·PC의 구조적 제약은 P0 시제품
 근거: S05, S07, S09, S11, S12.
 
 - [x] SESSION-001 세션 생성·조회·목록·열기·이름 변경을 구현한다. 검증: `tests/integration/api.rs::sessions_messages_and_pagination`, `session_rename_archive_restore`, `web/e2e/workspace.spec.ts`.
-- [x] SESSION-002 제목 직접 입력·AI 생성·생성 끄기·제목 생성 실패 fallback을 구현한다. 검증: 직접 입력(세션 PATCH), 수동 생성 `/sessions/{id}/title`, 자동 생성 `session.auto_title`(기본 꺼짐·첫 완료 턴 뒤 1회·봇/분기 제외), 실패·빈 출력 시 기존 제목 유지, 생성 중 사용자 변경은 덮어쓰지 않음(`tests/integration/titles.rs`, `titles::tests`).
+- [x] SESSION-002 제목 직접 입력·AI 생성·생성 끄기·제목 생성 실패 fallback을 구현한다. 검증: 직접 입력(세션 PATCH), 수동 생성 `/sessions/{id}/title`, 자동 생성 `session.auto_title`(기본 꺼짐·임시 제목은 완료 턴마다, 생성 제목은 완료 턴 2번마다와 되감기·압축·context 초기화 직후·봇/분기 제외), 실패·빈 출력 시 기존 제목 유지, 생성 중 사용자 변경은 덮어쓰지 않음(`tests/integration/titles.rs`, `titles::tests`).
 - [x] SESSION-003 최근 메시지 preview·활성 상태·마지막 활동·읽음/안 읽음을 표시한다. 검증: 세션 응답의 `preview`(최근 메시지 120자)·`unread`(최근 항목 읽은 위치 기준)·`active_turn`·`updated_at`, 프로젝트 대화 목록 표시(`tests/integration/search.rs::session_list_shows_preview_and_unread_until_seen`).
 - [x] SESSION-004 즐겨찾기·고정·보관·보관 해제·명시적 삭제를 구현한다. 검증: 고정(최근 항목 pin)·보관·보관 해제(`tests/integration/api.rs`, 최근 e2e), 영구 삭제는 보관 후·제목 확인·분기/위임/봇 home/예약 의존 시 거부, 관련 행·이벤트 payload·초안·작업 로그 정리(`tests/integration/projects.rs::permanent_session_delete_requires_archive_title_and_no_dependents`), 화면 "영구 삭제".
 - [x] SESSION-005 세션 검색·본문 검색·날짜/프로젝트/상태 필터를 구현한다. 검증: `/sessions/search`(제목·본문 `json_extract` 검색·발췌·프로젝트·날짜·상태 필터·페이지), `tests/integration/search.rs`, 프로젝트 기록 대화상자 검색(`web/e2e/history-search.spec.ts`).

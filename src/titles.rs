@@ -1,6 +1,7 @@
 //! 대화 제목(SESSION-002): 직접 입력은 세션 PATCH, 여기서는 모델 생성.
 //!
-//! - 자동 생성은 `session.auto_title`이 켜졌을 때 완료 턴마다(기본 꺼짐: 몰래 비용을 쓰지 않음).
+//! - 자동 생성은 `session.auto_title`이 켜졌을 때(기본 꺼짐: 몰래 비용을 쓰지 않음). 임시 제목이면 완료 턴마다,
+//!   생성된 제목은 완료 턴 `REFRESH_TURNS`번마다 다시 맞춘다. 되감기·압축·context 초기화 뒤에는 바로 다시 맞춘다.
 //! - 수동 생성은 사용자가 요청할 때만.
 //! - 실패·빈 응답·형식 오류면 기존 제목(첫 줄)을 유지한다(fallback). 생성 중 사용자가 제목을 바꿨으면 덮어쓰지 않는다.
 
@@ -11,9 +12,12 @@ use crate::events;
 use crate::provider::{self, ChatMsg, ModelRequest};
 use axum::Json;
 use axum::extract::{Path, State};
-use rusqlite::params;
+use rusqlite::{Connection, params};
 use serde::Deserialize;
 use serde_json::{Value, json};
+
+/// 생성된 제목을 다시 맞추기까지 필요한 완료 턴 수. 실패·폐기된 시도는 표식을 남기지 않아 다음 턴에 다시 시도한다.
+const REFRESH_TURNS: i64 = 2;
 
 const SYSTEM: &str = "You name conversations. Reply with a short, specific title (at most 8 words) in the same language as the conversation. \
 Output only the title on one line, without quotes or trailing punctuation.";
@@ -111,7 +115,7 @@ async fn apply(app: &App, session_id: &str, title: String, rev: i64, seq: i64, a
             if on != true || crate::models::ModelSelection::parse(&chosen)?.as_ref() != Some(&selection) { return Ok(false); }
         }
         let n = tx.execute(
-            "UPDATE sessions SET title=?2,title_origin='generated',revision=revision+1,updated_at=?3 \
+            "UPDATE sessions SET title=?2,title_origin='generated',title_seq=?5,title_timeline=timeline_revision,revision=revision+1,updated_at=?3 \
              WHERE id=?1 AND revision=?4 AND last_message_seq=?5 AND archived_at IS NULL \
              AND (?6=0 OR (title_origin IN ('provisional','generated') AND NOT EXISTS(SELECT 1 FROM turns WHERE session_id=?1 AND status IN ('queued','running','awaiting_approval'))))",
             params![sid,t2,now,rev,seq,auto],
@@ -127,7 +131,7 @@ async fn apply(app: &App, session_id: &str, title: String, rev: i64, seq: i64, a
     Ok(if applied { json!({"applied":true,"title":title}) } else { json!({"applied":false,"reason":"changed"}) })
 }
 
-/// 완료된 턴마다 최근 목표를 반영한다. 수동 제목·자식·봇은 제외한다.
+/// 완료된 턴 뒤 갱신 시점이면 최근 목표를 반영한다. 수동 제목·자식·봇은 제외한다.
 pub async fn after_turn(app: &App, turn_id: &str) {
     let tid = turn_id.to_string();
     let due = app.db.call(move |c| {
@@ -137,13 +141,30 @@ pub async fn after_turn(app: &App, turn_id: &str) {
         if s.bot_id.is_some() || s.archived_at.is_some() || s.parent_session_id.is_some()
             || c.query_row("SELECT EXISTS(SELECT 1 FROM agent_runs WHERE child_session_id=?1)",[&s.id],|r|r.get::<_,bool>(0))? { return Ok(None); }
         let on = crate::settings::effective(c, "session.auto_title", Some(&s.project_id), Some(&s.id))?;
-        Ok((on == true).then_some(s.id))
+        Ok((on == true && refresh_due(c, &s.id)?).then_some(s.id))
     }).await.ok().flatten();
     if let Some(sid) = due {
         if let Err(e) = generate_inner(app, &sid, None, true).await {
             tracing::info!(code=e.code, "제목 자동 생성 건너뜀");
         }
     }
+}
+
+/// 자동 생성 시점. 아직 생성한 적이 없거나(임시·이전 버전 제목) 마지막 생성 뒤 되감기·압축·context 초기화가 있었으면 바로,
+/// 아니면 마지막 생성 뒤 완료된 요청이 `REFRESH_TURNS`개 쌓였을 때 다시 맞춘다. 되감은 요청은 세지 않는다.
+fn refresh_due(c: &Connection, session_id: &str) -> ApiResult<bool> {
+    let (origin, seq, timeline, current): (String, Option<i64>, Option<i64>, i64) = c.query_row(
+        "SELECT title_origin,title_seq,title_timeline,timeline_revision FROM sessions WHERE id=?1",
+        [session_id], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+    )?;
+    let Some(seq) = seq.filter(|_| origin == "generated" && timeline == Some(current)) else { return Ok(true) };
+    Ok(c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM message_history WHERE session_id=?1 AND seq>?2 AND rewound_at IS NULL AND role='note' \
+           AND json_extract(content,'$.type') IN ('compaction','context_clear')) \
+         OR (SELECT COUNT(*) FROM turns t JOIN message_history u ON u.id=t.request_message_id \
+           WHERE t.session_id=?1 AND t.status='completed' AND u.seq>?2 AND u.rewound_at IS NULL)>=?3",
+        params![session_id, seq, REFRESH_TURNS], |r| r.get(0),
+    )?)
 }
 
 #[derive(Deserialize, Default)]
