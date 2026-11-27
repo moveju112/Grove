@@ -10,6 +10,7 @@ import { CreationDialog } from "../create/CreationDialog";
 import { terminalAction } from "../pwa/terminalAction";
 import { ServerActionButton } from "../pwa/ServerActionButton";
 import type { TerminalInput } from "./input";
+import { bindTouchSelection } from "./touchSelection";
 
 type PendingPaste = { terminal: Terminal; apply: () => void };
 
@@ -62,18 +63,25 @@ export function useTerminalClipboard(focused: boolean, connected: boolean, block
             event.stopImmediatePropagation();
             requestPaste(event.clipboardData.getData("text/plain"));
         };
+        const copySelection = (text: string, failure: string) => {
+            void copyMessageText(text).then((result) => {
+                if (!closed) setError(result.copied ? null : failure);
+            });
+        };
+        // 터치 선택은 우클릭 붙여넣기보다 먼저 등록해 길게 누르기의 contextmenu를 선택 시작으로 쓴다.
+        const touchSelection = bindTouchSelection(host, terminal, (text) => copySelection(text, "자동 복사하지 못했어요. 브라우저의 클립보드 권한을 확인해 주세요."));
         const startSelection = (event: MouseEvent) => { selecting = event.button === 0; };
         const finishSelection = (event: MouseEvent) => {
             if (!selecting || event.button !== 0 || closed) return;
             selecting = false;
             const text = terminal.getSelection();
-            if (!text) return;
-            void copyMessageText(text).then((result) => {
-                if (!closed) setError(result.copied ? null : "자동 복사하지 못했어요. 선택한 내용을 Ctrl+C / ⌘C로 복사해 주세요.");
-            });
+            if (text) copySelection(text, "자동 복사하지 못했어요. 선택한 내용을 Ctrl+C / ⌘C로 복사해 주세요.");
         };
         const contextMenu = (event: MouseEvent) => {
             event.preventDefault();
+            // 모바일 길게 누르기도 contextmenu를 보낸다. 우클릭 붙여넣기는 마우스에서만 한다.
+            const touched = touchSelection.touching() || (event as PointerEvent).pointerType === "touch";
+            if (touched) { event.stopImmediatePropagation(); return; }
             if (event.shiftKey || !writable()) return;
             event.stopImmediatePropagation();
             if (reading || pending.current || !terminalAction(() => {}, onBlocked)) return;
@@ -96,6 +104,7 @@ export function useTerminalClipboard(focused: boolean, connected: boolean, block
         document.addEventListener("mouseup", finishSelection);
         return () => {
             closed = true;
+            touchSelection.dispose();
             host.removeEventListener("paste", paste, true);
             host.removeEventListener("mousedown", startSelection);
             host.removeEventListener("contextmenu", contextMenu, true);
