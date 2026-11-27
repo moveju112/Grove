@@ -13,7 +13,7 @@ UI 변경에는 `DESIGN.md`를 적용한다. 핵심은 심플하고 깔끔한 �
 - Rust 개발·테스트와 릴리즈는 각각 고정된 작업 경로의 캐시를 재사용한다. 일회성 시험은 최종·중간 디렉터리를 함께 격리한다. [캐시 운영](docs/ai-rules/DEPLOY.md#rust-빌드-캐시) 참조.
 - 작업 범위의 검사가 실패하면 원인을 바로잡고 재검사에서 통과를 확인해야 완료다. 검사 범위와 결과 보고는 [검증 규칙](docs/ai-rules/CODING_RULES.md#검증-범위)을 따른다.
 - 장시간 애니메이션·타이머·스트리밍 UI는 [웹 UI 지속 작업 규칙](docs/ai-rules/CODING_RULES.md#웹-ui-지속-작업)을 따른다.
-- commit·push·배포·서비스 중단은 요청된 승인 범위에서만 한다. "컴파일만·푸시만·로컬만·배포 금지" 같은 명시적 제한이 우선한다. 제한이 없으면 "빌드·배포·반영"은 컴파일·로컬 서버·CLI·Pages 배포까지, "푸시"는 승인된 변경을 커밋한 뒤 `python3 scripts/push_release.py`로 패치 버전 증가·main/태그 푸시·GitHub Release 게시·같은 패키지의 전체 배포까지 진행한다. [배포 규칙](docs/ai-rules/DEPLOY.md) 참조.
+- commit·push·배포·서비스 중단은 요청된 승인 범위에서만 한다. "컴파일만·푸시만·로컬만·배포 금지" 같은 명시적 제한이 우선한다. "릴리즈"는 로컬 변경 전부를 커밋한 뒤 `python3 scripts/push_release.py --skip-local`로 GitHub Release까지만 게시하고 로컬에는 반영하지 않는다. "반영"·"로컬에 반영"은 로컬 변경 전부를 커밋·푸시(릴리즈 없음)한 뒤 가볍게 컴파일해 로컬 서버·CLI·Pages에 반영한다. 제한이 없으면 "빌드·배포"는 커밋 없이 컴파일·로컬 서버·CLI·Pages 배포까지, "푸시"는 승인된 변경을 커밋한 뒤 `python3 scripts/push_release.py`로 패치 버전 증가·main/태그 푸시·GitHub Release 게시·같은 패키지의 전체 배포까지 진행한다. [배포 규칙](docs/ai-rules/DEPLOY.md) 참조.
 
 ## 실행 명령
 
@@ -27,7 +27,7 @@ python3 scripts/deploy_local.py --status
 ```
 
 Schema 변경은 별도 migration CLI 대신 `src/store.rs`의 `MIGRATIONS`에 추가하고 격리된 DB로 검사한다.
-검사 명령은 작업 영향 범위의 실제 대상으로 바꾼다. 배포 명령은 빌드·배포·반영·푸시 요청이 있을 때만 실행한다.
+검사 명령은 작업 영향 범위의 실제 대상으로 바꾼다. 배포 명령은 빌드·배포·반영·릴리즈·푸시 요청이 있을 때만 실행한다.
 
 ## 작업별 참조
 

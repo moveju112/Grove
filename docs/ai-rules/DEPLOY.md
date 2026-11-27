@@ -4,13 +4,16 @@
 
 ## 요청 문구와 배포 범위
 
-- **MUST** "컴파일만", "푸시만", "로컬만", "배포 금지" 같은 명시적 제한을 아래 일괄 흐름보다 우선한다. 컴파일만이면 컴파일에서, 푸시만이면 승인 범위를 커밋한 뒤 `GROVE_PUSH_ONLY=1 git push`로 릴리즈 훅을 생략한다. 로컬 반영만이면 `--skip-pages`로 공개 Pages 배포를 생략하고, 배포 금지이면 로컬 서버·CLI 업데이트와 Pages 배포를 모두 하지 않는다.
-- **MUST** 명시적 제한 없이 사용자가 "빌드", "배포", "반영"처럼 말하면 컴파일만 하고 멈추지 않는다. 아래 전체 과정을 한 번에 끝까지 진행한다.
-  1. 현재 작업 폴더의 변경(미커밋 포함)으로 검증·컴파일·패키징
-  2. 로컬 서버 업데이트와 독립 CLI 설치
-  3. Cloudflare Pages production 배포
-  - `python3 scripts/deploy_local.py`가 2~3을 수행한다.
-- **MUST** "로컬은 두고 릴리즈만"처럼 로컬 반영을 제외하면 `python3 scripts/push_release.py --skip-local`로 main·태그·GitHub Release까지만 게시한다. 로컬 서버·CLI·Pages는 바꾸지 않으며 로컬 updater가 게시본을 받는다.
+- **MUST** "컴파일만", "푸시만", "로컬만", "배포 금지" 같은 명시적 제한을 아래 일괄 흐름보다 우선한다. 컴파일만이면 컴파일에서, 푸시만이면 승인 범위를 커밋한 뒤 `GROVE_PUSH_ONLY=1 git push`로 릴리즈 훅을 생략한다. Pages 제외면 `--skip-pages`로 공개 Pages 배포를 생략하고, 배포 금지이면 로컬 서버·CLI 업데이트와 Pages 배포를 모두 하지 않는다.
+- **MUST** "릴리즈해줘"처럼 말하면 로컬 변경 전부를 커밋하고 GitHub Release까지만 게시한다. 로컬 서버·CLI·Pages는 바꾸지 않으며 로컬 updater가 게시본을 받는다.
+  1. 현재 checkout의 변경 전부(다른 세션의 미커밋·untracked 포함, ignore 대상 제외)를 커밋
+  2. `python3 scripts/push_release.py --skip-local`로 patch 증가·전체 Rust 검사·패키징·main/태그 푸시·GitHub Release 게시
+- **MUST** "반영해줘", "로컬에 반영해줘"처럼 말하면 릴리즈 없이 커밋·푸시하고 가볍게 컴파일해 로컬에 반영한다.
+  1. 현재 checkout의 변경 전부(위와 같은 기준)를 커밋
+  2. `GROVE_PUSH_ONLY=1 git push origin main`으로 릴리즈 훅·태그·Release 없이 main만 푸시
+  3. `python3 scripts/deploy_local.py`로 릴리즈용 전체 검사 없이 패키징해 로컬 서버·CLI 업데이트와 Pages production 배포
+- **MUST** 릴리즈·반영의 커밋 전에는 `git status`로 대상을 확인한다. 비밀이 담겼을 수 있는 파일이나 수백 MB 단위의 산출물이 보이면 커밋하지 않고 멈춰 보고한다. 커밋 메시지는 변경을 한국어로 요약한다.
+- **MUST** 명시적 제한 없이 사용자가 "빌드", "배포"처럼 말하면 컴파일만 하고 멈추지 않는다. 커밋 없이 현재 작업 폴더의 변경(미커밋 포함)으로 검증·컴파일·패키징하고 `python3 scripts/deploy_local.py`로 로컬 서버·CLI·Pages까지 한 번에 진행한다.
 - **MUST** 제한 없는 "푸시"는 요청한 개발 변경을 먼저 커밋하고 `python3 scripts/push_release.py`를 실행한다. 최신 공식 태그에서 patch를 한 번 올리고(예: `v0.1.0`, `v0.1.1`, `v0.1.2`), 고정한 커밋으로 빌드·실행 검증한 뒤 main과 태그, GitHub Releases, 로컬 서버·CLI·Pages에 반영한다. 재시도는 기존 태그·패키지를 확인한다. 실제 게시와 로컬 적용 상태를 각각 확인한다.
 - 평소에는 변경한 기능에 해당하는 테스트를 로컬에서 실행한다. PR·main의 GitHub Actions는 웹·브라우저 검사를 맡는다. 공개 릴리즈는 고정한 커밋에서 로컬 Rust 전체 검사(`cargo nextest run --locked --no-fail-fast`, nextest가 없으면 `cargo test`)가 통과해야 태그를 푸시하고 게시할 수 있다. nextest는 시험마다 별도 프로세스로 실행하므로 서로 직렬화해야 하는 시험은 프로세스 안 잠금이 아니라 `.config/nextest.toml`의 test-group으로 묶는다. Rust 시험은 임시 데이터를 메모리 파일 시스템(`/dev/shm`)에 두고(`build.rust_test_tmp`) 의존성만 최적화해(`profile.test.package."*"`) 실행 시간을 줄인다. nextest는 doctest를 실행하지 않으며, doctest를 추가하면 릴리즈 검사에 `cargo test --doc`을 함께 넣는다. 재시도는 같은 커밋의 검사 통과 기록과 패키지를 재사용한다.
 - 로컬 개발 머신에서는 `python3 scripts/push_release.py --install-hook`으로 현재 checkout에 Git 훅을 연결하면 일반 `git push origin main`도 같은 절차를 이어간다. 새 clone마다 한 번 연결한다. fetch·다른 브랜치 푸시는 릴리즈 대상이 아니다. 최초 main 전송 뒤 후속 작업이 실패하면 `python3 scripts/push_release.py`로 재개한다.
@@ -43,6 +46,7 @@
 | 승인된 배포(패키지 → 로컬 서버·CLI → 공개 Pages) | `python3 scripts/deploy_local.py` |
 | 로컬 반영만(공개 Pages 미반영) | `python3 scripts/deploy_local.py --skip-pages` |
 | 릴리즈 게시만(로컬 서버·CLI·Pages 미반영) | `python3 scripts/push_release.py --skip-local` |
+| 릴리즈 없이 main만 푸시 | `GROVE_PUSH_ONLY=1 git push origin main` |
 
 고정 포트·unit·경로는 `scripts/deploy_local.py`를 정본으로 삼는다.
 
