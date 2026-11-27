@@ -5,7 +5,7 @@ import { Text as GroveText } from "@astryxdesign/core/Text";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, api, isTransportError } from "../api/client";
 import type { RecentItem, RecentPage } from "../api/generated";
-import { loadPrefs, savePrefs, usePrefs } from "../state/device";
+import { isActivityAnimated, loadPrefs, savePrefs, usePrefs } from "../state/device";
 import type { RecentHides } from "../state/useRecentHides";
 import { prepareRecentPatch } from "../state/recentPatch";
 import { RECENT_PAGE_SIZE, readRecentRange, recentRangeKey } from "../state/recentQuery";
@@ -49,7 +49,7 @@ export function RecentPanel({ hides, open, warmProject, splitGroups = NO_SPLITS,
     const [accessError, setAccessError] = useState<string | null>(null);
     const accessAttempt = useRef(0);
     const serverBlocked = useServerBlockReason();
-    const prefs = usePrefs("recentWindows", "recentWindow");
+    const prefs = usePrefs("recentWindows", "recentWindow", "activityDisplay");
     const range = effectiveRecentWindow(prefs.recentWindow, prefs.recentWindows);
     const limit = limits[range] ?? RECENT_PAGE_SIZE;
     const key = recentRangeKey(range, limit);
@@ -66,6 +66,8 @@ export function RecentPanel({ hides, open, warmProject, splitGroups = NO_SPLITS,
     const paneVisible = usePaneVisible();
     const pageVisible = usePageVisible();
     const visible = shown && paneVisible && pageVisible;
+    // 실행 줄은 목록이 보이고 진행 표시 애니메이션을 고른 경우에만 움직인다. 그 밖에는 같은 줄을 정지 상태로 둔다.
+    const runningMotion = visible && isActivityAnimated(prefs.activityDisplay);
     const likely = visible ? likelySessions(items ?? []).join(" ") : "";
     useEffect(() => {
         for (const id of likely ? likely.split(" ") : []) prefetchConversation(id, ["messages", "turns", "session"])();
@@ -177,10 +179,12 @@ export function RecentPanel({ hides, open, warmProject, splitGroups = NO_SPLITS,
     function row(it: RecentItem, linkedTo?: string) {
         const running = it.kind === "session" && it.status === "running";
         const completed = it.kind === "session" && it.completion_unread;
+        const question = it.kind === "session" && it.status === "awaiting_input";
         return (
-                    <GroveListItem key={it.id} xstyle={[presentation === "sidebar" && workspaceStyles.recentRow, workspaceStyles.recentState]}
+                    <GroveListItem key={it.id} xstyle={[presentation === "sidebar" && workspaceStyles.recentRow, workspaceStyles.recentState,
+                        running && workspaceStyles.recentRunning, running && runningMotion && workspaceStyles.recentRunningMotion]}
                         data-testid={presentation === "home" ? "home-recent-item" : "recent-item"}
-                        data-recent-state={running ? "running" : completed ? "completed" : undefined}
+                        data-recent-state={running ? "running" : question ? "question" : completed ? "completed" : undefined}
                         data-session={it.kind === "session" ? it.resource_id : undefined} label={
                         <Button type="button" appearance="navigation" density={presentation === "home" ? "touch" : undefined}
                             xstyle={presentation === "sidebar" && [workspaceStyles.recentRowControl, workspaceStyles.recentTitle]}
@@ -197,7 +201,7 @@ export function RecentPanel({ hides, open, warmProject, splitGroups = NO_SPLITS,
                             <Stack as="span" direction="horizontal" align="center" gap={1} xstyle={workspaceStyles.recentTitleContent} width="100%">
                                 <ProjectIcon size={12} project={{ id: it.project_id, name: it.project_name, icon: it.project_icon ?? null,
                                     icon_color: it.icon_color, icon_photo_sha256: it.icon_photo_sha256 }} />
-                                <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} weight={completed ? "bold" : "normal"}>
+                                <GroveText type="inherit" color="inherit" maxLines={1} hasTruncateTooltip={false} weight={completed ? "bold" : running ? "semibold" : "normal"}>
                                     {it.pinned && <GroveText type="inherit" color="inherit" aria-label="고정됨">★ </GroveText>}
                                     {it.title}
                                     {STATUS[it.status] && <StatusBadge status={it.status}>{STATUS[it.status]}</StatusBadge>}

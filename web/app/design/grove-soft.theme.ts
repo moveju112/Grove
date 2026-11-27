@@ -10,6 +10,7 @@ const tokens = {
     "--sel": "#d8dce2",
     "--split-bg": "#dce7f5",
     "--split-line": "#2f72b8",
+    "--question-bg": "#f0d9a6",
     "--line": "#d5d8de",
     "--line-strong": "#c4c8d0",
     "--text": "#2b2d33",

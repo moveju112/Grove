@@ -8,6 +8,7 @@ const tokens = {
     "--raised": ["#d9d9d9", "#353c47"],
     "--hover": ["#cecece", "#3b4451"],
     "--sel": ["#c7c7c7", "#414b59"],
+    "--question-bg": ["#e6cd96", "#55421d"],
     "--line": ["#c7c7c7", "#414b59"],
     "--line-strong": ["#b5b5b5", "#515c6c"],
     "--text": ["#3b3b3b", "#e1e5eb"],

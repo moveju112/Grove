@@ -47,6 +47,15 @@ test("단일 선택 질문: 답변 대기로 표시되고, 고른 답으로 이�
     const waiting = recent.getByTestId("recent-item").and(page.locator(`[data-session="${sessionId}"]`));
     await expect(waiting).toHaveCount(1);
     await expect(waiting.getByText("답변 대기", { exact: true })).toBeVisible();
+    await expect(waiting).toHaveAttribute("data-recent-state", "question");
+    const questionBg = await waiting.evaluate((node) => {
+        const sample = node.appendChild(document.createElement("span"));
+        sample.style.color = "var(--question-bg)";
+        const color = getComputedStyle(sample).color;
+        sample.remove();
+        return color;
+    });
+    await expect(waiting).toHaveCSS("background-color", questionBg);
     await expect(card.getByLabel("직접 입력")).toHaveCount(0);
     await expect(card.getByRole("button", { name: "답하기", exact: true })).toHaveCount(0);
     await sqlite.press("ArrowDown");
@@ -57,6 +66,7 @@ test("단일 선택 질문: 답변 대기로 표시되고, 고른 답으로 이�
     await expect(view.getByTestId("msg-assistant").filter({ hasText: "Postgres로 진행" })).toHaveCount(1, { timeout: 15_000 });
     await expect(view.getByTestId("question")).toHaveCount(0);
     await expect(waiting.getByText("답변 대기", { exact: true })).toHaveCount(0);
+    await expect(waiting).not.toHaveAttribute("data-recent-state", "question");
     const r = (await requests()).slice(before);
     expect(r).toHaveLength(1);
     expect(toolText(r[0]!)).toContain("Postgres");

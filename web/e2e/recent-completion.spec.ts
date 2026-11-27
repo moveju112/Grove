@@ -37,7 +37,7 @@ async function expectStatusBackground(row: Locator, token: string) {
     await expect(row).toHaveCSS("background-color", color);
 }
 
-test("390px: 실행 중 파란 배경을 쓰고 모션 설정에 관계없이 시간과 제목을 유지한다", async ({ page }, info) => {
+test("390px: 실행 중은 행 아래 진행 줄로 표시하고 보이지 않거나 모션 줄이기에서는 줄을 멈춘다", async ({ page }, info) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ reducedMotion: "no-preference" });
     const { session, profile, title } = await setup(page, "light");
@@ -62,16 +62,39 @@ test("390px: 실행 중 파란 배경을 쓰고 모션 설정에 관계없이 �
     const { turn } = await apiCall<{ turn: { id: string } }>("POST", `/sessions/${session.id}/turns`, { text: marker, profile_id: profile, tools: false });
     try {
         await expect(row).toHaveAttribute("data-recent-state", "running");
-        await expectStatusBackground(row, "--split-bg");
+        await expect(row).toHaveCSS("background-color", idleBackground);
+        const splitLine = await row.evaluate((node) => {
+            const sample = node.appendChild(document.createElement("span"));
+            sample.style.color = "var(--split-line)";
+            const color = getComputedStyle(sample).color;
+            sample.remove();
+            return color;
+        });
+        const line = () => row.evaluate((node) => {
+            const s = getComputedStyle(node, "::after");
+            return { color: s.backgroundColor, height: s.height, moving: s.animationName !== "none" };
+        });
+        await expect.poll(line).toEqual({ color: splitLine, height: "2px", moving: true });
         await expect(time.locator("svg")).toHaveCount(0);
         await expect(button).toHaveAccessibleDescription("실행 중");
-        await expect(label).toHaveCSS("font-weight", "400");
+        await expect(label).toHaveCSS("font-weight", "600");
         await expect(time).toHaveText("0m");
         expect(await geometry()).toEqual(idle);
-        await page.screenshot({ path: info.outputPath("recent-running-blue-390.png") });
+        await page.screenshot({ path: info.outputPath("recent-running-line-390.png") });
 
+        // 화면이 숨겨지면 줄을 멈추고 돌아오면 다시 움직인다.
+        const setHidden = (hidden: boolean) => page.evaluate((hidden) => {
+            (window as unknown as { __recentHidden: boolean }).__recentHidden = hidden;
+            document.dispatchEvent(new Event("visibilitychange"));
+        }, hidden);
+        await setHidden(true);
+        await expect.poll(line).toEqual({ color: splitLine, height: "2px", moving: false });
+        await setHidden(false);
+        await expect.poll(line).toEqual({ color: splitLine, height: "2px", moving: true });
+
+        // 모션 줄이기는 같은 줄을 정지 상태로 남긴다.
         await page.emulateMedia({ reducedMotion: "reduce" });
-        await expectStatusBackground(row, "--split-bg");
+        await expect.poll(line).toEqual({ color: splitLine, height: "2px", moving: false });
         await expect(time.locator("svg")).toHaveCount(0);
         expect(await geometry()).toEqual(idle);
     } finally {
@@ -132,7 +155,7 @@ for (const width of [390, 1280]) {
     test.describe(`${width}px 최근 상태`, () => {
         test.use({ viewport: { width, height: 844 }, isMobile: width < 760, hasTouch: width < 760 });
         for (const theme of ["light", "dark"] as const) {
-            test(`${theme}: 실행·완료를 배경으로 표시하고 클릭·현재 화면·백그라운드 복귀로 완료를 확인한다`, async ({ page }, info) => {
+            test(`${theme}: 실행은 진행 줄, 완료는 배경으로 표시하고 클릭·현재 화면·백그라운드 복귀로 완료를 확인한다`, async ({ page }, info) => {
                 await page.emulateMedia({ colorScheme: theme, reducedMotion: "no-preference" });
                 const { session, profile, title } = await setup(page, theme);
                 if (width < 760) await page.getByRole("button", { name: "사이드바", exact: true }).click();

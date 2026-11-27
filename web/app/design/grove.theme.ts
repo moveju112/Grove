@@ -30,6 +30,7 @@ const tokens = {
     "--sel": ["#e6e6ea", "#2b3039"],
     "--split-bg": ["#eaf2fc", "#1d3049"],
     "--split-line": ["#2476c5", "#75b2ef"],
+    "--question-bg": ["#fde8b4", "#4a3614"],
     "--line": ["#e4e4e8", "#262a33"],
     "--line-strong": ["#d4d4da", "#323743"],
     "--text": ["#1d1d1f", "#f2f3f5"],

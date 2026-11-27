@@ -225,6 +225,7 @@ export const groveComfortTheme = {
     "--sel": "light-dark(#c7c7c7, #414b59)",
     "--split-bg": "light-dark(#eaf2fc, #1d3049)",
     "--split-line": "light-dark(#2476c5, #75b2ef)",
+    "--question-bg": "light-dark(#e6cd96, #55421d)",
     "--line": "light-dark(#c7c7c7, #414b59)",
     "--line-strong": "light-dark(#b5b5b5, #515c6c)",
     "--text": "light-dark(#3b3b3b, #e1e5eb)",
