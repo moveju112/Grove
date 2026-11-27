@@ -180,6 +180,32 @@ class ReleasePush(unittest.TestCase):
                 push.publish(plan_only=True)
             self.assertIn(f" · {expected} · ", message.getvalue())
 
+    def test_skip_local_publishes_without_touching_local_install(self):
+        from contextlib import nullcontext, redirect_stdout
+        from io import StringIO
+        def output(*args):
+            return {("branch", "--show-current"): "main",
+                    ("remote", "get-url", "--push", "origin"): f"https://github.com/{push.REPO}.git",
+                    ("rev-parse", "HEAD"): "tagged",
+                    ("show", "HEAD:Cargo.toml"): '[package]\nversion = "0.1.1"'}[args[1:]]
+        for skip_local in (True, False):
+            with tempfile.TemporaryDirectory() as temp, self.subTest(skip_local=skip_local):
+                (Path(temp) / "dist/github-releases/tagged").mkdir(parents=True)
+                (Path(temp) / "dist/github-releases/tagged/manifest.json").write_text("{}")
+                gh = [json.dumps({"tag_name": "v0.1.1"}), '{"sha":"tagged"}', '{"sha":"tagged"}', json.dumps({"tag_name": "v0.1.1"})]
+                signed = {"artifacts": {push.deploy.TARGET: {"sha256": "x", "size": 1}}}
+                with patch.object(push, "ROOT", Path(temp)), patch.object(push, "output", side_effect=output), \
+                        patch.object(push, "gh", side_effect=gh), patch.object(push, "run"), \
+                        patch.object(push, "release_for", return_value={"draft": False}), \
+                        patch.object(push, "package_verifier", return_value=nullcontext(None)), \
+                        patch.object(push, "verify_package", return_value=signed), patch.object(push, "sync_assets"), \
+                        patch.object(push.deploy, "deployment_caller", return_value=None) as caller, \
+                        patch.object(push.deploy, "apply_package") as apply, redirect_stdout(StringIO()):
+                    push.publish(skip_local=skip_local)
+                self.assertEqual(apply.called, not skip_local)
+                if skip_local:
+                    caller.assert_not_called()
+
     def test_upload_retry_never_overwrites_a_different_asset(self):
         with tempfile.TemporaryDirectory() as temp:
             pkg = Path(temp)

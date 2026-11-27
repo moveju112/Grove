@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""승인된 main 푸시: 다음 패치 버전 → GitHub Release → 같은 패키지로 로컬 서버·CLI·Pages 반영."""
+"""승인된 main 푸시: 다음 패치 버전 → GitHub Release → 같은 패키지로 로컬 서버·CLI·Pages 반영.
+
+--skip-local은 GitHub Release 게시까지만 하고 로컬 서버·CLI·Pages는 그대로 둔다(로컬 updater가 게시본을 받는다)."""
 import argparse
 from contextlib import contextmanager
 import fcntl
@@ -239,7 +241,7 @@ def sync_assets(tag, pkg, version, release):
         run("gh", "release", "edit", tag, "--repo", REPO, "--draft=false", "--latest")
 
 
-def publish(plan_only=False):
+def publish(plan_only=False, skip_local=False):
     if output("git", "branch", "--show-current") != "main":
         raise ValueError("main 브랜치에서 실행하세요")
     origin = output("git", "remote", "get-url", "--push", "origin").removesuffix(".git")
@@ -254,14 +256,15 @@ def publish(plan_only=False):
     version = old if head == published else next_version
     if source_version not in (old, version):
         raise ValueError(f"최신 릴리즈 {latest}와 현재 소스 버전 {source_version}을 확인하세요")
+    local = "로컬 미반영" if skip_local else "로컬 반영"
     if plan_only:
         if head == published and output("git", "status", "--porcelain", "--untracked-files=no"):
-            print(f"개발 변경 커밋 후 v{next_version} · 푸시·릴리즈·로컬 반영")
+            print(f"개발 변경 커밋 후 v{next_version} · 푸시·릴리즈·{local}")
         else:
-            print(f"{head[:12]} · v{version} · {'기존 릴리즈 반영' if head == published else '푸시·릴리즈·로컬 반영'}")
+            print(f"{head[:12]} · v{version} · {'기존 릴리즈 ' + local if head == published else '푸시·릴리즈·' + local}")
         return
     run("git", "merge-base", "--is-ancestor", published, head)
-    caller = deploy.deployment_caller() if Path(deploy.INSTALL, "current").exists() else None
+    caller = None if skip_local or not Path(deploy.INSTALL, "current").exists() else deploy.deployment_caller()
     if source_version != version:
         if output("git", "status", "--porcelain", "--", *VERSIONS):
             raise ValueError("버전 파일의 개발 변경을 먼저 커밋하세요")
@@ -297,6 +300,9 @@ def publish(plan_only=False):
     sync_assets(tag, pkg, version, release)
     if json.loads(gh("releases/latest"))["tag_name"] != tag:
         raise ValueError("최신 공개 릴리즈가 바뀌어 로컬 반영을 중단합니다")
+    if skip_local:
+        print(f"{tag} 게시 완료 · 로컬 서버·CLI·Pages 미반영(--skip-local)")
+        return
     archive = pkg / file_names(version)[0]
     asset = signed["artifacts"][deploy.TARGET]
     receipt = {"archive_sha256": asset["sha256"], "size": asset["size"]}
@@ -333,13 +339,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--plan", action="store_true", help="버전과 동작만 조회")
     parser.add_argument("--install-hook", action="store_true", help="이 checkout의 일반 git push에도 릴리즈 흐름 연결")
+    parser.add_argument("--skip-local", action="store_true", help="GitHub Release까지만 게시하고 로컬 서버·CLI·Pages는 두기")
     args = parser.parse_args()
     if args.install_hook:
         install_hook()
     elif args.plan:
-        publish(True)
+        publish(True, skip_local=args.skip_local)
     else:
         # 같은 호스트의 버전 변경과 업로드·적용을 직렬화한다.
         with open(output("git", "rev-parse", "--absolute-git-dir") + "/grove-push.lock", "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            publish()
+            publish(skip_local=args.skip_local)
