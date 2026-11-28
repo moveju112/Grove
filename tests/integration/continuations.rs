@@ -405,7 +405,7 @@ async fn native_bridge_question_waits_for_answer_in_shared_question_ui() {
         let (url, token) = (url.clone(), token.clone());
         tokio::spawn(async move {
             let body = json!({"name":"ask_user","request_id":request,"arguments":{
-                "question":"어느 쪽으로 할까?","options":[{"label":"A (Recommended)","description":"기존 구성"},{"label":"B"}]}});
+                "question":"어느 쪽으로 할까?","options":[{"label":"A (추천)","description":"기존 구성"},{"label":"B"}]}});
             client.post(url).bearer_auth(token).json(&body).send().await.unwrap().json::<Value>().await.unwrap()
         })
     };
@@ -426,7 +426,7 @@ async fn native_bridge_question_waits_for_answer_in_shared_question_ui() {
     let answered = ask("bridge-question", s.client.clone());
     let call = waiting_question().await;
     assert_eq!(call["name"], "ask_user");
-    assert_eq!(call["target"]["options"][0]["label"], "A (Recommended)");
+    assert_eq!(call["target"]["options"][0]["label"], "A (추천)");
     assert!(!answered.is_finished(), "답하기 전에는 도구가 돌아오지 않는다");
     let (status, v) = s
         .post(

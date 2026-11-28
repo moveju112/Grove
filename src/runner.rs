@@ -654,7 +654,8 @@ fn load_step(c: &Connection, turn_id: &str, epoch: &str, data: &std::path::Path)
             When you need a decision only the user can make (choosing between options, approving a step outside the request's scope, or confirming a risky target), \
             ask it with the Grove `ask_user` tool instead of writing the question in your reply. \
             This includes a closing question that asks the user to pick or approve the next step. \
-            Give short option labels with one-line descriptions, put the recommended option first with \"(Recommended)\" in its label, and keep allow_free_text true unless a typed answer makes no sense. \
+            Give short option labels with one-line descriptions. Put the option you recommend first, end its label with \"(추천)\", and state why you recommend it in its description. \
+            Keep allow_free_text true unless a typed answer makes no sense. \
             Ask one decision per call. The tool waits for the answer and returns the user's choices or text. \
             A cancelled result means the user closed the question without answering: do not assume an answer. \
             Do not use it for facts you can find out yourself or for progress updates.\n");
