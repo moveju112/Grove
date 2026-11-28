@@ -1,7 +1,7 @@
 import { pushServerId } from "./webPush";
 import type { EventRecord, Turn } from "../api/generated";
 import { loadPrefs, type Prefs } from "./device";
-import { dismissQuestionNotice, showQuestionNotice } from "./questionNotices";
+import { dismissDoneNotice, dismissSessionNotice, showSessionNotice, type SessionNotice } from "./sessionNotices";
 
 // 화면을 보고 있지 않을 때 받은 이벤트를 기기 알림으로 표시한다.
 export type AttentionKind = "done" | "failed" | "approval" | "question" | "server";
@@ -11,25 +11,40 @@ const OPEN_EVENT = "grove-open-session";
 const CLAIM_KEY = "grove.attention.claims";
 const CLAIM_TTL = 10 * 60_000;
 
+// 종류마다 기기 알림을 켜는 설정과, 보고 있는 화면에 띄우는 상단 배너(종류·표시 시간 설정).
+const DEVICE_PREF = {
+    done: "notifyDone", failed: "notifyDone", approval: "notifyApproval", question: "notifyApproval", server: "notifyServer",
+} as const satisfies Record<AttentionKind, keyof Prefs>;
+const TOP_NOTICE: Partial<Record<AttentionKind, { kind: SessionNotice["kind"]; seconds: "noticeQuestionSeconds" | "noticeDoneSeconds" }>> = {
+    question: { kind: "question", seconds: "noticeQuestionSeconds" },
+    done: { kind: "done", seconds: "noticeDoneSeconds" },
+};
+
+/// 켜 둔 종류의 기기 알림만 돌려준다.
 export function attentionFor(e: EventRecord, p: Prefs): Attention | null {
+    const a = describeAttention(e);
+    return a && p[DEVICE_PREF[a.kind]] ? a : null;
+}
+
+function describeAttention(e: EventRecord): Attention | null {
     const base = { projectId: e.project_id, sessionId: e.session_id };
     if (e.kind === "turn.updated") {
         const t = e.payload as Partial<Turn>;
         if (!t?.id) return null;
-        if (t.status === "awaiting_approval" && p.notifyApproval)
+        if (t.status === "awaiting_approval")
             return { ...base, kind: "approval", tag: `approval:${t.id}`, title: "승인 요청", body: "대화에서 도구 실행 승인을 기다립니다." };
-        if (t.status === "completed" && p.notifyDone) return { ...base, kind: "done", tag: `turn:${t.id}`, title: "작업 완료", body: t.completion_preview?.trim() || "대화의 요청 처리가 끝났습니다." };
-        if ((t.status === "failed" || t.status === "interrupted") && p.notifyDone)
+        if (t.status === "completed") return { ...base, kind: "done", tag: `turn:${t.id}`, title: "작업 완료", body: t.completion_preview?.trim() || "대화의 요청 처리가 끝났습니다." };
+        if (t.status === "failed" || t.status === "interrupted")
             return { ...base, kind: "failed", tag: `turn:${t.id}`, title: "작업 실패", body: "대화의 요청 처리가 실패하거나 중단됐습니다." };
         return null;
     }
     if (e.kind === "tool_call.updated") {
         const call = questionCall(e);
-        if (!call || call.status !== "awaiting_input" || !p.notifyApproval) return null;
+        if (!call || call.status !== "awaiting_input") return null;
         const question = typeof call.target?.question === "string" ? call.target.question.trim().slice(0, 120) : "";
         return { ...base, kind: "question", tag: `question:${call.id}`, title: "질문", body: question || "대화에서 답을 기다립니다." };
     }
-    if (e.kind === "notification.created" && p.notifyServer) {
+    if (e.kind === "notification.created") {
         const n = e.payload as { id?: string; title?: string };
         if (!n?.id) return null;
         return { ...base, kind: "server", tag: `notification:${n.id}`, title: n.title || "알림", body: "Grove 알림을 확인하세요." };
@@ -172,27 +187,32 @@ export function requestOpenSession(projectId: string, sessionId: string) {
 export function notifyAttention(e: EventRecord) {
     if (e.kind === "recent.updated") {
         const item = e.payload as RecentReadState;
-        if (readSessionId(item)) void closeReadNotifications(async () => [item]).catch(() => undefined);
+        const read = readSessionId(item);
+        if (read) {
+            dismissDoneNotice(read);
+            void closeReadNotifications(async () => [item]).catch(() => undefined);
+        }
         return;
     }
     const call = e.kind === "tool_call.updated" ? questionCall(e) : null;
     if (call && call.status !== "awaiting_input") {
-        dismissQuestionNotice(call.id);
+        dismissSessionNotice(`question:${call.id}`);
         void closeQuestionNotification(call.id).catch(() => undefined);
         return;
     }
     // 질문으로 턴이 사용자 대기로 바뀌면 같은 사건을 "승인 요청"으로 한 번 더 알리지 않는다.
     if (call?.turn_id) claimAttention(`approval:${call.turn_id}`, Date.now());
     const prefs = loadPrefs();
-    const a = attentionFor(e, prefs);
+    const a = describeAttention(e);
     if (!a) return;
     if (watching()) {
-        // 보고 있는 화면에서는 기기 알림 대신 상단 배너로 질문을 알린다. 그 대화를 열어 두었으면 생략한다.
-        if (call && a.kind === "question" && a.projectId && a.sessionId && !sessionShown(a.sessionId) && claimAttention(a.tag, Date.now()))
-            showQuestionNotice({ id: call.id, projectId: a.projectId, sessionId: a.sessionId, text: a.body });
+        // 보고 있는 화면에서는 기기 알림 대신 상단 배너로 질문·답변 완료를 알린다. 그 대화를 열어 두었으면 생략한다.
+        const top = TOP_NOTICE[a.kind];
+        if (top && prefs[top.seconds] && a.projectId && a.sessionId && !sessionShown(a.sessionId) && claimAttention(a.tag, Date.now()))
+            showSessionNotice({ id: a.tag, kind: top.kind, projectId: a.projectId, sessionId: a.sessionId, text: a.body });
         return;
     }
-    if (!claimAttention(a.tag, Date.now())) return;
+    if (!prefs[DEVICE_PREF[a.kind]] || !claimAttention(a.tag, Date.now())) return;
     void showAttention(a, prefs.notifySound, prefs.notifyVibrate);
 }
 

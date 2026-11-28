@@ -45,6 +45,15 @@ export function isActivityAnimated(display: Prefs["activityDisplay"]): boolean {
     return display === "animated" || display === "animatedAll";
 }
 
+// 화면 위쪽 알림을 띄워 두는 시간(초). 0이면 그 종류를 띄우지 않는다.
+export const NOTICE_SECONDS = [0, 5, 10, 20, 30, 60] as const;
+export type NoticeSeconds = (typeof NOTICE_SECONDS)[number];
+export const topNoticeKinds = [
+    ["noticeErrorSeconds", "오류 알림"],
+    ["noticeQuestionSeconds", "질문 알림"],
+    ["noticeDoneSeconds", "답변 완료 알림"],
+] as const;
+
 /// 이 기기 표시 설정.
 export type Prefs = {
     initialSetupComplete?: true;
@@ -67,6 +76,9 @@ export type Prefs = {
     notifySound: boolean;
     notifyVibrate: boolean;
     notifyPush: boolean;
+    noticeErrorSeconds: NoticeSeconds;
+    noticeQuestionSeconds: NoticeSeconds;
+    noticeDoneSeconds: NoticeSeconds;
     recentWindows: RecentWindow[];
     recentWindow: RecentWindow;
     /// 모델 목록에 계열별 최신 버전 외의 이전 모델도 보인다.
@@ -102,6 +114,7 @@ export const themeAppearance = {
 export const defaultPrefs: Prefs = {
     theme: "system", fontSize: 14, enterToSend: false, confirmTerminalPaste: true, clock: "system", timeStyle: "absolute",
     notifyDone: true, notifyApproval: true, notifyServer: true, notifySound: true, notifyVibrate: true, notifyPush: true,
+    noticeErrorSeconds: 20, noticeQuestionSeconds: 20, noticeDoneSeconds: 20,
     recentWindows: [...DEFAULT_RECENT_WINDOWS], recentWindow: DEFAULT_RECENT_WINDOW,
     showAllModels: false,
     showSidebarUsage: true,
@@ -130,6 +143,7 @@ export function loadPrefs(): Prefs {
         prefs.keyboardShortcuts = normalizeShortcuts(prefs.keyboardShortcuts);
         if (typeof prefs.confirmTerminalPaste !== "boolean") prefs.confirmTerminalPaste = defaultPrefs.confirmTerminalPaste;
         if (typeof prefs.notifyPush !== "boolean") prefs.notifyPush = defaultPrefs.notifyPush;
+        for (const [key] of topNoticeKinds) if (!NOTICE_SECONDS.includes(prefs[key])) prefs[key] = defaultPrefs[key];
         if (typeof prefs.showAllModels !== "boolean") prefs.showAllModels = defaultPrefs.showAllModels;
         if (typeof prefs.showSidebarUsage !== "boolean") prefs.showSidebarUsage = defaultPrefs.showSidebarUsage;
         if (!activityDisplayOptions.some(({ value }) => saved.activityDisplay === value)) {

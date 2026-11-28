@@ -2,6 +2,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { EventRecord } from "../api/generated";
 import { attentionFor, claimAttention, closeReadNotifications, notifyAttention, showAttention } from "./attention";
 import { defaultPrefs } from "./device";
+import { dismissDoneNotice, dismissSessionNotice, showSessionNotice } from "./sessionNotices";
+
+vi.mock("./sessionNotices", () => ({ showSessionNotice: vi.fn(), dismissSessionNotice: vi.fn(), dismissDoneNotice: vi.fn() }));
 
 const event = (kind: string, payload: unknown): EventRecord => ({ seq: 1, created_at: "2026-01-01T00:00:00Z", kind, project_id: "p", session_id: "s", payload });
 const memory = () => {
@@ -45,6 +48,51 @@ describe("이 기기 알림 판단", () => {
     });
 });
 
+
+describe("보고 있는 화면의 상단 알림", () => {
+    afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
+    // 화면을 보고 있고, shown의 대화만 화면에 열려 있다.
+    const watch = (prefs: object = {}, shown: string[] = []) => {
+        const storage = memory();
+        storage.setItem("grove.device.prefs", JSON.stringify(prefs));
+        vi.stubGlobal("localStorage", storage);
+        vi.stubGlobal("window", { innerWidth: 1000 });
+        vi.stubGlobal("document", {
+            visibilityState: "visible", hasFocus: () => true,
+            querySelectorAll: () => shown.map((session) => ({ dataset: { session }, getBoundingClientRect: () => ({ width: 10, height: 10, left: 0, right: 10 }) })),
+        });
+    };
+    const done = event("turn.updated", { id: "t", status: "completed", completion_preview: "최종 답변" });
+    const question = { id: "c", turn_id: "t", name: "ask_user", status: "awaiting_input", target: { question: "어느 쪽으로 갈까요?" } };
+
+    it("다른 대화의 답변 완료와 질문을 한 번씩 띄우고 기기 알림 설정과는 따로 판단한다", () => {
+        watch({ notifyDone: false, notifyApproval: false });
+        notifyAttention(done);
+        notifyAttention(done);
+        expect(showSessionNotice).toHaveBeenCalledExactlyOnceWith({ id: "turn:t", kind: "done", projectId: "p", sessionId: "s", text: "최종 답변" });
+        notifyAttention(event("tool_call.updated", question));
+        expect(showSessionNotice).toHaveBeenLastCalledWith({ id: "question:c", kind: "question", projectId: "p", sessionId: "s", text: "어느 쪽으로 갈까요?" });
+    });
+    it("표시 안 함으로 둔 종류·열어 둔 대화·실패한 턴은 띄우지 않는다", () => {
+        watch({ noticeDoneSeconds: 0, noticeQuestionSeconds: 0 });
+        notifyAttention(done);
+        notifyAttention(event("tool_call.updated", question));
+        watch({}, ["s"]);
+        notifyAttention(done);
+        watch();
+        notifyAttention(event("turn.updated", { id: "t", status: "failed" }));
+        expect(showSessionNotice).not.toHaveBeenCalled();
+    });
+    it("답한 질문과 읽은 대화의 완료 알림은 지운다", () => {
+        watch();
+        notifyAttention(event("tool_call.updated", { ...question, status: "succeeded" }));
+        expect(dismissSessionNotice).toHaveBeenCalledExactlyOnceWith("question:c");
+        notifyAttention(event("recent.updated", { kind: "session", resource_id: "s", unread: false, completion_unread: true }));
+        expect(dismissDoneNotice).not.toHaveBeenCalled();
+        notifyAttention(event("recent.updated", { kind: "session", resource_id: "s", unread: false, completion_unread: false }));
+        expect(dismissDoneNotice).toHaveBeenCalledExactlyOnceWith("s");
+    });
+});
 
 describe("읽은 대화의 알림 정리", () => {
     afterEach(() => vi.unstubAllGlobals());

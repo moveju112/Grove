@@ -10,7 +10,7 @@ import { HelpTip } from "./HelpTip";
 import { ApiError, PROTOCOL, api, logout } from "../api/client";
 import { ServerActionButton } from "./pwa/ServerActionButton";
 import type { Definition, DefinitionDetail, ModelProfile, SecretInfo } from "../api/generated";
-import { activityDisplayOptions, isActivityAnimated, type Prefs, loadPrefs, savePrefs, themeOptions, usePrefs, VINE_GROUPS } from "../state/device";
+import { activityDisplayOptions, isActivityAnimated, NOTICE_SECONDS, type NoticeSeconds, type Prefs, loadPrefs, savePrefs, themeOptions, topNoticeKinds, usePrefs, VINE_GROUPS } from "../state/device";
 import { PushNotifications, PushStatusContext } from "./PushNotifications";
 import { AppNotificationPermission } from "./AppNotificationPermission";
 import { NotificationTests } from "./NotificationTests";
@@ -103,6 +103,7 @@ export const ITEMS: Item[] = [
     { id: "recent", menu: "display", label: "최근 항목 시간 범위", keywords: "recent window 최근 범위 분 시간 오늘", scope: "이 기기" },
     { id: "sidebar-usage", menu: "display", label: "탐색 영역 사용량", keywords: "usage limit quota 사용량 한도 5시간 주간 사이드바 탐색 좌측 하단 claude codex", scope: "이 기기" },
     { id: "notify", menu: "notifications", label: "알림·소리", keywords: "notification alert sound 알림 소리 완료 승인 예약 업데이트", scope: "이 기기" },
+    { id: "top-notice", menu: "notifications", label: "상단 알림", keywords: "top banner toast notice 상단 알림 배너 카드 오류 에러 질문 답변 완료 표시 시간 초 끄기 자동 닫힘", scope: "이 기기" },
     { id: "time", menu: "display", label: "시간 표시", keywords: "time clock 24 12 시계 시각 상대 날짜 턴 경과 소요 대기", scope: "이 기기" },
     { id: "transcript", menu: "display", label: "대화 표시", keywords: "진행사항 보기 진행 설명 완료 시 접기 progress", scope: "이 기기" },
     { id: "leaves", menu: "display", label: "진행 중 효과", keywords: "대기 중 새싹 표시 잎 애니메이션 정지 표시 숨김 상단 탭 링 잎 무리 수 잎 무리 길이 잎 회전 속도", scope: "이 기기" },
@@ -237,7 +238,7 @@ const GROUP_ICONS: Record<string, IconName> = {
     devices: "monitor", "browser-capabilities": "shield", logout: "user",
     hosts: "server", "device-name": "monitor",
     profiles: "server", definitions: "edit", "source-settings": "edit",
-    notify: "bell", health: "server",
+    notify: "bell", "top-notice": "bell", health: "server",
 };
 
 function Section({ item, children }: { item: string; children: React.ReactNode }) {
@@ -372,6 +373,16 @@ function DisplayPrefs({ show }: {
             {show("notify") && (
                 <Section item="notify">
                     <NotifyPrefs prefs={p} set={set} />
+                </Section>
+            )}
+            {show("top-notice") && (
+                <Section item="top-notice">
+                    {topNoticeKinds.map(([key, label]) => (
+                        <Select key={key} label={label} value={String(p[key])}
+                            onChange={(value) => set({ ...p, [key]: Number(value) as NoticeSeconds })}
+                            options={NOTICE_SECONDS.map((seconds) => ({ value: String(seconds),
+                                label: seconds === 0 ? "표시 안 함" : seconds === 60 ? "1분 표시" : `${seconds}초 표시` }))} />
+                    ))}
                 </Section>
             )}
             {show("time") && (

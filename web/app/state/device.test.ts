@@ -86,6 +86,18 @@ describe("알림의 기기 설정", () => {
     });
 });
 
+describe("상단 알림의 기기 설정", () => {
+    it("저장값이 없거나 잘못되면 20초로 읽고 표시 안 함과 고른 시간은 보존한다", () => {
+        vi.stubGlobal("localStorage", { getItem: () => null });
+        const base = { noticeErrorSeconds: 20, noticeQuestionSeconds: 20, noticeDoneSeconds: 20 };
+        expect(loadPrefs()).toMatchObject(base);
+        saved({ theme: "dark", noticeErrorSeconds: 0, noticeQuestionSeconds: 60, noticeDoneSeconds: 5 });
+        expect(loadPrefs()).toMatchObject({ theme: "dark", noticeErrorSeconds: 0, noticeQuestionSeconds: 60, noticeDoneSeconds: 5 });
+        saved({ noticeErrorSeconds: 7, noticeQuestionSeconds: "20", noticeDoneSeconds: null });
+        expect(loadPrefs()).toMatchObject(base);
+    });
+});
+
 describe("진행 중 표시의 기기 설정", () => {
     it("기존 기기에서는 기본 길이·속도로 켜고 다른 설정을 보존한다", () => {
         saved({ theme: "dark", fontSize: 15 });
