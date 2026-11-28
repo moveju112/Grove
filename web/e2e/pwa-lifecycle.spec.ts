@@ -192,7 +192,7 @@ test("격리된 Chrome origin의 실제 저장 한도에서 화면 입력을 보
     expect(mutations).toEqual([]);
 });
 
-test("저장 데이터 유실과 앱 cache 삭제를 별도로 알리고 남아 있는 메모리 초안을 보존한다", async ({ page }) => {
+test("저장 데이터 유실은 알리고 없어진 앱 cache는 알림 없이 다시 채우며 남아 있는 메모리 초안을 보존한다", async ({ page }) => {
     const { view } = await openDraft(page, "loss");
     await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
     await page.evaluate(async () => {
@@ -202,7 +202,13 @@ test("저장 데이터 유실과 앱 cache 삭제를 별도로 알리고 남아 
         window.dispatchEvent(new Event("focus"));
     });
     await expect(page.getByTestId("storage-warning")).toContainText("저장 데이터가 없어졌어요");
-    await expect(page.getByTestId("shell-warning")).toBeVisible();
+    // 서버가 같은 버전을 제공하므로 worker가 첫 화면과 자산을 다시 받는다.
+    await expect.poll(() => page.evaluate(async () => {
+        const scope = new URL("./", location.href).href;
+        const name = (await caches.keys()).find((key) => key.startsWith(`grove-shell-${encodeURIComponent(scope)}-`));
+        return name ? !!(await (await caches.open(name)).match(scope)) : false;
+    }), { timeout: 10_000 }).toBe(true);
+    await expect(page.getByTestId("shell-warning")).toHaveCount(0);
     await expect(view.getByLabel("메시지 입력")).toHaveValue("초안 loss");
 });
 

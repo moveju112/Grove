@@ -11,6 +11,7 @@ import { useLifecycle } from "./pwa/lifecycle";
 import { hasPendingInput, trackPendingInput } from "./pwa/pendingInput";
 import { Banner } from "@astryxdesign/core/Banner";
 import { noticeStyles } from "../design/notices.stylex";
+import { ErrorNotice } from "../design/TimedNotice";
 
 let waiting: ServiceWorker | null = null;
 let registration: ServiceWorkerRegistration | null = null;
@@ -148,7 +149,7 @@ export function ProtocolBanner() {
     const { protocol: server } = useLifecycle();
     if (server === null) return null;
     return (
-        <Banner key={server} status="error" role="alert" data-testid="protocol-banner" xstyle={noticeStyles.interactive}
+        <ErrorNotice key={server} data-testid="protocol-banner"
             isDismissable dismissLabel="호환성 경고 닫기"
             title={<>서버가 새 버전(protocol {server})으로 바뀌어 이 화면에서는 변경 요청을 보낼 수 없습니다.
                 새 UI가 준비되면 지금 업데이트를 선택하세요. 작성 중인 입력은 저장되지 않으므로 중요한 내용은 먼저 복사하세요.</>}
@@ -166,7 +167,7 @@ export function UpdateBanner() {
     if (!current.worker && !current.error) return null;
     return (
         <GroveStack gap={2} xstyle={noticeStyles.interactive}>
-            {current.error && <Banner status="error" role="alert" title={current.error} icon={<Icon name="warning" />}
+            {current.error && <ErrorNotice key={current.error} title={current.error} icon={<Icon name="warning" />}
                 isDismissable dismissLabel="업데이트 알림 닫기" onDismiss={() => publish(snapshot.worker)} />}
             {current.worker && <Banner status="info" role="status"
                 title={<SentenceText text="새 버전이 준비되었습니다. 업데이트하면 저장하지 않은 입력이 사라질 수 있습니다." />}

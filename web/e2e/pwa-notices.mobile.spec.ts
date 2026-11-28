@@ -24,38 +24,38 @@ async function dismiss(notice: Locator, name: string) {
     await expect(notice).toHaveCount(0);
 }
 
-test("쌓인 앱 캐시·저장소 경고는 각각 닫히고 같은 문제가 다시 확인돼도 초안을 유지한다", async ({ page }, info) => {
+test("저장소 경고는 닫히고 같은 문제가 다시 확인돼도 초안을 유지한다", async ({ page }, info) => {
     await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
-    const { input } = await openConversation(page, "캐시 경고와 초안");
+    const { input } = await openConversation(page, "저장소 경고와 초안");
     await input.fill("경고를 닫아도 남아야 할 입력");
-    await page.waitForFunction(() => navigator.serviceWorker.controller !== null);
-    await page.evaluate(async () => {
+    await page.evaluate(() => {
         localStorage.removeItem("grove.pwa.storage-seen");
-        const prefix = `grove-shell-${encodeURIComponent(new URL("./", location.href).href)}-`;
-        for (const key of await caches.keys()) if (key.startsWith(prefix)) await caches.delete(key);
         window.dispatchEvent(new Event("focus"));
     });
-    const shell = page.getByTestId("shell-warning");
     const storage = page.getByTestId("storage-warning");
-    await expect(shell).toContainText("앱 cache가 삭제됐거나");
     await expect(storage).toBeVisible();
-    await page.screenshot({ path: info.outputPath("cache-and-storage-notices-390.png") });
-    await dismiss(shell, "앱 캐시 경고 닫기");
-    await expect(storage).toBeVisible();
+    await page.screenshot({ path: info.outputPath("storage-notice-390.png") });
     await dismiss(storage, "저장소 경고 닫기");
-    const cached = await page.evaluate(() => new Promise<boolean>((resolve) => {
-        const reply = (event: MessageEvent) => {
-            if (event.source !== navigator.serviceWorker.controller || event.data?.type !== "shell-status") return;
-            navigator.serviceWorker.removeEventListener("message", reply);
-            resolve(event.data.cached);
-        };
-        navigator.serviceWorker.addEventListener("message", reply);
-        window.dispatchEvent(new Event("focus"));
-    }));
-    expect(cached).toBe(false);
-    await expect(shell).toHaveCount(0);
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
     await expect(storage).toHaveCount(0);
     await expect(input).toHaveValue("경고를 닫아도 남아야 할 입력");
+});
+
+test("오류 알림은 닫지 않아도 20초 뒤 사라지고 전송 차단은 유지한다", async ({ page }) => {
+    test.setTimeout(60_000);
+    const { view, input } = await openConversation(page, "오류 알림 자동 닫힘");
+    await input.fill("알림이 사라져도 남을 입력");
+    const send = view.getByRole("button", { name: "보내기", exact: true });
+    await page.route("**/api/v1/health", route => route.abort("connectionrefused"));
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    const connection = page.getByTestId("connection-toast");
+    await expect(connection).toBeVisible();
+    const shown = Date.now();
+    await expect(page.getByTestId("error-notice-timer")).toBeAttached();
+    await expect(connection).toHaveCount(0, { timeout: 26_000 });
+    expect(Date.now() - shown).toBeGreaterThan(18_000);
+    await expect(send).toBeDisabled();
+    await expect(input).toHaveValue("알림이 사라져도 남을 입력");
 });
 
 test("오프라인·서버 연결·호환성 알림을 닫아도 전송은 차단되고 연결을 계속 확인한다", async ({ page }) => {

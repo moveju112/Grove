@@ -34,6 +34,36 @@ async function collectUnusedShells() {
     for (const id of reportedShells.keys()) if (!live.has(id)) reportedShells.delete(id);
 }
 
+// 첫 화면 cache가 없어지면 서버가 아직 이 버전을 제공할 때만 다시 채운다. 다른 버전의 자산은 이 cache에 섞지 않는다.
+const RESTORE_RETRY_MS = 5 * 60 * 1000;
+let restoring = null;
+let restoreFailedAt = -RESTORE_RETRY_MS;
+function restoreShell() {
+    if (restoring) return restoring;
+    if (Date.now() - restoreFailedAt < RESTORE_RETRY_MS) return Promise.resolve(false);
+    const served = async () => {
+        const script = await fetch(self.location.href, { cache: "no-store" });
+        return script.ok && (await script.text()).includes(`const VERSION = "${VERSION}";`);
+    };
+    restoring = (async () => {
+        try {
+            if (!(await served())) return false;
+            await (await caches.open(CACHE)).addAll(PRECACHE);
+            // 받는 도중 배포가 바뀌었으면 섞인 자산을 남기지 않는다. 새 worker가 자기 cache를 만든다.
+            if (await served()) return true;
+            await caches.delete(CACHE);
+            return false;
+        } catch {
+            return false;
+        }
+    })().then((restored) => {
+        restoring = null;
+        if (!restored) restoreFailedAt = Date.now();
+        return restored;
+    });
+    return restoring;
+}
+
 async function documentShell(response) {
     if (!response.headers.get("content-type")?.includes("text/html")) return response;
     const html = await response.text();
@@ -69,7 +99,8 @@ self.addEventListener("message", (event) => {
                 await collectUnusedShells();
             }
             const cache = await caches.open(CACHE);
-            event.source?.postMessage({ type: "shell-status", cached: !!(await cache.match(SCOPE.href, { ignoreSearch: true })) });
+            const cached = !!(await cache.match(SCOPE.href, { ignoreSearch: true })) || await restoreShell();
+            event.source?.postMessage({ type: "shell-status", cached });
         })());
     }
 });

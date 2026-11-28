@@ -34,6 +34,7 @@ function worker(base: string, assets?: string[]) {
     };
     const self = {
         registration: { scope: origin + base, waiting: null as unknown, installing: null as unknown },
+        location: { href: origin + base + "sw.js" },
         __GROVE_ASSETS__: assets,
         clients: { claim: vi.fn(async () => undefined), matchAll: vi.fn(async () => [{ id: "one", url: origin + base }]) },
         skipWaiting: vi.fn(),
@@ -270,14 +271,42 @@ describe.each(["/", "/grove/", "/grove/child/"])("worker at %s", (base) => {
         expect(await (await w.dispatch("fetch", w.request(base, "GET", "navigate")))!.text()).toBe("<head></head>network");
     });
 
-    it("reports shell cache loss without deleting or inventing local drafts", async () => {
+    const servedScript = (text: string) => async (request: unknown) =>
+        String(request).endsWith("/sw.js") ? new Response(text) : new Response("network", { headers: { "content-type": "text/javascript" } });
+
+    it("refills a lost shell cache while the server still serves this version", async () => {
         const w = worker(base);
         await w.dispatch("install");
         await w.dispatch("message", undefined, { type: "shell-status" });
         expect(w.postMessage).toHaveBeenLastCalledWith({ type: "shell-status", cached: true });
+        expect(w.fetch).not.toHaveBeenCalled();
         w.entries.clear();
+        w.fetch.mockImplementation(servedScript(source));
+        await w.dispatch("message", undefined, { type: "shell-status" });
+        expect(w.postMessage).toHaveBeenLastCalledWith({ type: "shell-status", cached: true });
+        const shell = await w.dispatch("fetch", w.request(base, "GET", "navigate"));
+        expect(await shell!.text()).toBe(`shell:${base}`);
+    });
+
+    it("leaves a lost shell cache empty when the server serves another version, and does not ask again right away", async () => {
+        const w = worker(base);
+        await w.dispatch("install");
+        w.entries.clear();
+        w.fetch.mockImplementation(servedScript(source.replace("__GROVE_BUILD__", "next")));
+        await w.dispatch("message", undefined, { type: "shell-status" });
         await w.dispatch("message", undefined, { type: "shell-status" });
         expect(w.postMessage).toHaveBeenLastCalledWith({ type: "shell-status", cached: false });
-        expect(w.fetch).not.toHaveBeenCalled();
+        expect(w.fetch).toHaveBeenCalledTimes(1);
+        expect([...w.entries.values()].every((cache) => cache.size === 0)).toBe(true);
+    });
+
+    it("drops a refill when the deployment changes while it downloads", async () => {
+        const w = worker(base);
+        await w.dispatch("install");
+        w.entries.clear();
+        w.fetch.mockImplementationOnce(servedScript(source)).mockImplementation(servedScript(source.replace("__GROVE_BUILD__", "next")));
+        await w.dispatch("message", undefined, { type: "shell-status" });
+        expect(w.postMessage).toHaveBeenLastCalledWith({ type: "shell-status", cached: false });
+        expect([...w.entries.values()].every((cache) => cache.size === 0)).toBe(true);
     });
 });

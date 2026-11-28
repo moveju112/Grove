@@ -9,12 +9,10 @@ export type LifecycleState = {
     connection: "checking" | "ready" | "unreachable";
     protocol: number | null;
     storageIssue: StorageIssue;
-    shell: "unknown" | "ready" | "missing" | "unsupported";
 };
 
 const initial: LifecycleState = {
     online: true, connection: "checking", protocol: null, storageIssue: null,
-    shell: "unknown",
 };
 let state = initial;
 const subscribers = new Set<() => void>();
@@ -159,27 +157,19 @@ export function startLifecycle(): () => void {
     const version = document.querySelector<HTMLMetaElement>('meta[name="grove-shell-version"]')?.content ?? null;
     const inspect = () => {
         inspectLocalStorageState();
+        // worker는 이 버전으로 쓰지 않는 구 cache를 회수하고, 없어진 첫 화면 cache를 스스로 다시 채운다.
         if ("serviceWorker" in navigator) navigator.serviceWorker.controller?.postMessage({ type: "shell-status", version });
-        else update({ shell: "unsupported" });
     };
     const refresh = () => { if (!stopped) { inspect(); void checkCompatibility(); } };
     const visibility = () => { if (document.visibilityState === "visible") refresh(); };
     const offline = () => update({ online: false });
     const storage = (event: StorageEvent) => { if (event.key === null || event.key === MARKER) inspectLocalStorageState(); };
-    const message = (event: MessageEvent) => {
-        if (event.source === navigator.serviceWorker.controller && event.data?.type === "shell-status" && typeof event.data.cached === "boolean") {
-            update({ shell: event.data.cached ? "ready" : "missing" });
-        }
-    };
     window.addEventListener("online", refresh);
     window.addEventListener("offline", offline);
     window.addEventListener("focus", refresh);
     window.addEventListener("storage", storage);
     document.addEventListener("visibilitychange", visibility);
-    if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.addEventListener("message", message);
-        navigator.serviceWorker.addEventListener("controllerchange", inspect);
-    }
+    if ("serviceWorker" in navigator) navigator.serviceWorker.addEventListener("controllerchange", inspect);
     refresh();
     // 연결이 안 될 때는 5초마다, 평소에는 30초마다 확인한다. 보이지 않는 화면은 확인하지 않는다.
     let last = Date.now();
@@ -197,9 +187,6 @@ export function startLifecycle(): () => void {
         window.removeEventListener("focus", refresh);
         window.removeEventListener("storage", storage);
         document.removeEventListener("visibilitychange", visibility);
-        if ("serviceWorker" in navigator) {
-            navigator.serviceWorker.removeEventListener("message", message);
-            navigator.serviceWorker.removeEventListener("controllerchange", inspect);
-        }
+        if ("serviceWorker" in navigator) navigator.serviceWorker.removeEventListener("controllerchange", inspect);
     };
 }

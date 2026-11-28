@@ -51,6 +51,7 @@ import { checkCompatibility, requireServerAction, useServerBlockReason } from ".
 import { Stack, StackItem } from "@astryxdesign/core/Stack";
 import { Select } from "../design/Select";
 import { Button } from "../design/Button";
+import { ErrorNotice } from "../design/TimedNotice";
 import { MobileDrawer, useMobilePanels } from "./MobilePanels";
 import { MobileTerminals } from "./MobileTerminals";
 import { SettingsDialog } from "./SettingsDialog";
@@ -60,7 +61,6 @@ import { acceptProject, ProjectEditDialog } from "./ProjectEditDialog";
 import { ProjectIcon } from "./ProjectIcon";
 import { ComposerMemoryProvider } from "../state/useComposerMemory";
 import { createPortal } from "react-dom";
-import { noticeStyles } from "../design/notices.stylex";
 import { useRecentHides } from "../state/useRecentHides";
 import { prepareSessionHide } from "../state/recentPatch";
 import { LoadingBar } from "./LoadingScreen";
@@ -587,8 +587,8 @@ export function Workspace() {
     );
 
     const closeNotices = recentHides.entries.filter(op => op.tabId && op.error && !op.noticeDismissed).map(op =>
-        <Banner key={op.key} status="error" role="alert" title={op.error!} data-testid="tab-close-error"
-            xstyle={noticeStyles.interactive} isDismissable dismissLabel="탭 닫기 오류 알림 닫기" onDismiss={() => recentHides.dismiss(op)}
+        <ErrorNotice key={op.key} title={op.error!} data-testid="tab-close-error"
+            isDismissable dismissLabel="탭 닫기 오류 알림 닫기" onDismiss={() => recentHides.dismiss(op)}
             endContent={op.uncertain && <ServerActionButton variant="secondary" onClick={() => recentHides.retry(op)}>같은 요청 결과 확인</ServerActionButton>} />);
     const drawer = narrow ? mobile.panel : null;
     const noticeHost = closeNotices.length && !drawer ? document.getElementById("app-notices") : null;
@@ -720,7 +720,7 @@ export function Workspace() {
                     <Button variant="secondary" onClick={() => setNotice(null)}>닫기</Button>
                 </Stack>} />
             )}
-            {closeError && <Banner status="error" role="alert" title={closeError} data-testid="tab-close-error"
+            {closeError && <ErrorNotice key={closeError} title={closeError} data-testid="tab-close-error" onDismiss={() => setCloseError(null)}
                 endContent={<Button variant="secondary" onClick={() => setCloseError(null)}>닫기</Button>} />}
             {noticeHost && createPortal(closeNotices, noticeHost)}
             {openingTerminal && <LoadingBar label="터미널 여는 중…" />}

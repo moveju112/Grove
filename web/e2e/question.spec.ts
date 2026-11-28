@@ -152,7 +152,8 @@ test("다른 대화의 질문은 상단 배너로 알리고, 누르면 그 대�
     await expect(sessionView(page, asking).getByTestId("question")).toBeVisible({ timeout: 15_000 });
 });
 
-test("질문 배너는 모바일에서도 한 줄로 뜨고 약 10초 뒤 닫힌다", async ({ page }, info) => {
+test("질문 배너는 모바일에서도 한 줄로 뜨고 약 20초 뒤 닫힌다", async ({ page }, info) => {
+    test.setTimeout(60_000);
     await page.setViewportSize({ width: 390, height: 844 });
     await page.emulateMedia({ reducedMotion: "reduce" });
     await askElsewhere(page, "배포 전에 마이그레이션을 먼저 실행할까요? 실패하면 이전 스키마로 되돌릴 수 있는지도 함께 확인해야 합니다.");
@@ -163,6 +164,6 @@ test("질문 배너는 모바일에서도 한 줄로 뜨고 약 10초 뒤 닫힌
     expect(box.height, "한 줄 배너").toBeLessThanOrEqual(64);
     expect(box.x + box.width).toBeLessThanOrEqual(390);
     await page.screenshot({ path: info.outputPath("question-notice-390.png") });
-    await expect(notice).toHaveCount(0, { timeout: 14_000 });
-    expect(Date.now() - appeared).toBeGreaterThan(8_000);
+    await expect(notice).toHaveCount(0, { timeout: 24_000 });
+    expect(Date.now() - appeared).toBeGreaterThan(18_000);
 });
