@@ -1379,3 +1379,30 @@ async fn ended_turn_can_be_retried_once_or_acknowledged() {
     let (st, _) = s.post(&format!("/api/v1/turns/{nt}/acknowledge"), json!({})).await;
     assert_eq!(st, StatusCode::CONFLICT, "정상 완료는 확인 대상 아님");
 }
+
+// 웹은 이 두 이벤트의 payload로 대화 cache의 한 건을 갱신한다(web/app/state/store.ts). 목록 조회의 같은 행과 값이 같아야 한다.
+#[tokio::test]
+async fn message_and_tool_call_event_payloads_match_list_rows() {
+    let (s, f, profile, sid, _) = setup().await;
+    f.push(fixture::tool_calls(&[("list-1", "list", json!({}))]));
+    f.push(fixture::text("완료"));
+    let v = start_turn(&s, &sid, &profile, "목록을 봐", true).await;
+    s.wait_status(v["turn"]["id"].as_str().unwrap(), "completed").await;
+    let events = s.server.as_ref().unwrap().app.db.call(|c| grove::events::read_after(c, 0, 1000)).await.unwrap();
+    let (_, all) = s.get(&format!("/api/v1/sessions/{sid}/messages?limit=500")).await;
+    let all = all["items"].as_array().unwrap();
+    let created: Vec<&Value> = events.iter()
+        .filter(|e| e.kind == "message.created" && e.session_id.as_deref() == Some(sid.as_str())).map(|e| &e.payload).collect();
+    assert_eq!(created, all.iter().collect::<Vec<_>>());
+    assert!(all.iter().any(|m| m["role"] == "tool"), "{all:?}");
+    // 대화 보기의 숨김 규칙은 web/app/state/conversationPages.ts의 conversationVisibility와 같다.
+    let (_, view) = s.get(&format!("/api/v1/sessions/{sid}/messages?limit=500&view=conversation")).await;
+    let shown: Vec<&Value> = all.iter().filter(|m| m["role"] != "tool"
+        && !(m["role"] == "note" && ["cli_activity", "task_result"].contains(&m["content"]["type"].as_str().unwrap_or("")))).collect();
+    assert_eq!(view["items"].as_array().unwrap().iter().collect::<Vec<_>>(), shown);
+    let (_, calls) = s.get(&format!("/api/v1/tool-calls?session_id={sid}&limit=200")).await;
+    let calls = calls.as_array().unwrap();
+    assert_eq!(calls.len(), 1);
+    let last = events.iter().rev().find(|e| e.kind == "tool_call.updated" && e.payload["id"] == calls[0]["id"]).unwrap();
+    assert_eq!(last.payload, calls[0]);
+}

@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { applyEvent, batchEventQueries, cacheStats, clearServerCache, IDLE_ENTRY_LIMIT, invalidate, PARTIAL_FLUSH_MS, queuePartial, querySnapshot, resyncAll, revalidateQuery, retryWaiting, setLive, setTransportFailureHandler, subscribeQuery } from "./store";
 import { ApiError, isTransportError } from "../api/client";
 import { deliveryTiming } from "./deliveryTiming";
+import { RANGE_WINDOW } from "./conversationPages";
 
 const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 
@@ -424,6 +425,22 @@ describe("이벤트 payload로 대화 cache를 갱신", () => {
         try {
             await settle();
             created(payload());
+            await settle();
+            expect(fetcher).toHaveBeenCalledTimes(2);
+        } finally { off(); clearServerCache(); }
+    });
+
+    it("최신 창이 서버 페이지 상한까지 커지면 다시 읽어 최근 창으로 되돌린다", async () => {
+        const full = Array.from({ length: RANGE_WINDOW }, (_, index) => index + 1);
+        const fetcher = vi.fn(async () => page(full.slice(0, RANGE_WINDOW - 1)));
+        const off = subscribeQuery("messages:s", fetcher, () => undefined);
+        try {
+            await settle();
+            created(message(RANGE_WINDOW));
+            await settle();
+            expect(fetcher).toHaveBeenCalledTimes(1);
+            expect(seqs()).toHaveLength(RANGE_WINDOW);
+            created(message(RANGE_WINDOW + 1));
             await settle();
             expect(fetcher).toHaveBeenCalledTimes(2);
         } finally { off(); clearServerCache(); }

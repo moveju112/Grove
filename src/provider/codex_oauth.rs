@@ -76,6 +76,7 @@ async fn send_authorized(request: reqwest::RequestBuilder, auth: &Credentials, r
         let mut error = super::http_error(response).await;
         // 분류와 Retry-After만 쓰고 OAuth 자격이 반사될 수 있는 원문은 반환하지 않는다.
         error.message = if status == 401 { auth_required().message }
+            else if error.code == super::USAGE_LIMIT { "Codex 계정 사용 한도를 모두 썼습니다".into() }
             else { format!("Codex API 요청이 실패했습니다 (HTTP {status})") };
         return Err(error);
     }

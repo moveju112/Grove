@@ -267,3 +267,63 @@ async fn manual_generation_falls_back_on_failure_and_respects_user_rename() {
     assert_eq!(v["reason"], "changed");
     assert_eq!(title_of(&s, &sid).await, "내가 정한 제목");
 }
+
+/// 제목·압축 모델이 계정 한도로 거절되면 고른 대체 모델로 한 번만 다시 실행한다. 대체 모델이 없으면 다시 보내지 않는다.
+#[tokio::test]
+async fn usage_limit_error_retries_title_and_summary_once_on_the_chosen_fallback() {
+    let s = TestServer::start().await;
+    let main = Fixture::start().await;
+    let primary = Fixture::start().await;
+    let backup = Fixture::start().await;
+    let prof = s.fixture_profile(&main.base).await;
+    let primary_prof = s.fixture_profile(&primary.base).await;
+    let backup_prof = s.fixture_profile(&backup.base).await;
+    let p = s.create_project("limit").await;
+    let pid = p["id"].as_str().unwrap();
+    let (_, sv) = s.post(&format!("/api/v1/projects/{pid}/sessions"), json!({ "title": "원래" })).await;
+    let sid = sv["id"].as_str().unwrap().to_string();
+    for key in ["session.title_profile", "context.summary_profile"] {
+        let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"), json!({ "expected_revision": 0, "value": primary_prof })).await;
+        assert!(st.is_success(), "{key}: {v}");
+    }
+    main.push(fixture::text(&format!("첫 답 {}", "길게 ".repeat(40))));
+    let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "첫 질문", "profile_id": prof })).await;
+    s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
+    main.push(fixture::text("둘째 답"));
+    let (_, t) = s.post(&format!("/api/v1/sessions/{sid}/turns"), json!({ "text": "둘째 질문", "profile_id": prof })).await;
+    s.wait_status(t["turn"]["id"].as_str().unwrap(), "completed").await;
+
+    // 대체 모델이 없으면 한도 오류 뒤 다시 보내지 않고 기존 제목을 유지한다.
+    primary.push(fixture::Step::ErrorCode(429, "usage_limit_reached"));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/title"), json!({})).await;
+    assert!(st.is_success(), "{v}");
+    assert_eq!(v["reason"], "usage_limit", "{v}");
+    assert_eq!((primary.requests().len(), backup.requests().len()), (1, 0));
+
+    for key in ["session.title_fallback", "context.summary_fallback"] {
+        let (st, v) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
+            json!({ "expected_revision": 0, "value": {"profile_id": backup_prof, "model": "backup-small"} })).await;
+        assert!(st.is_success(), "{key}: {v}");
+    }
+    primary.push(fixture::Step::ErrorCode(429, "usage_limit_reached"));
+    backup.push(fixture::text("\"대체 제목\""));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/title"), json!({})).await;
+    assert!(st.is_success(), "{v}");
+    assert_eq!(title_of(&s, &sid).await, "대체 제목");
+    primary.push(fixture::Step::ErrorCode(429, "usage_limit_reached"));
+    backup.push(fixture::text("짧은 요약"));
+    let (st, v) = s.post(&format!("/api/v1/sessions/{sid}/compact"), json!({ "profile_id": prof })).await;
+    assert_eq!(st, reqwest::StatusCode::CREATED, "{v}");
+    // 원래 모델은 작업마다 한 번만, 대체 모델은 고른 모델로 한 번씩 받는다.
+    assert_eq!(primary.requests().len(), 3);
+    let requests = backup.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests.iter().all(|r| r["model"] == "backup-small"), "{requests:?}");
+
+    // 대체 모델도 한도 오류면 더 다시 보내지 않는다.
+    primary.push(fixture::Step::ErrorCode(429, "usage_limit_reached"));
+    backup.push(fixture::Step::ErrorCode(429, "usage_limit_reached"));
+    let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/title"), json!({})).await;
+    assert_eq!(v["reason"], "usage_limit", "{v}");
+    assert_eq!((primary.requests().len(), backup.requests().len()), (4, 3));
+}

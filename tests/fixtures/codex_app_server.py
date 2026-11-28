@@ -58,6 +58,16 @@ for line in sys.stdin:
         if "RPC_FAIL" in text:
             emit({"id": message["id"], "error": {"code": -32602, "message": "fixture refusal"}})
             continue
+        # app-server TurnError 형식(codex app-server generate-json-schema): 계정 사용 한도 소진.
+        limit_error = {"message": "You've hit your usage limit.", "codexErrorInfo": "usageLimitExceeded"}
+        if "USAGE_LIMIT_ERROR" in text:
+            emit({"id": message["id"], "result": {"turn": {"id": "turn-1", "status": "inProgress"}}})
+            notify("error", {"error": limit_error, "willRetry": False})
+            continue
+        if "USAGE_LIMIT_TURN" in text:
+            emit({"id": message["id"], "result": {"turn": {"id": "turn-1", "status": "inProgress"}}})
+            notify("turn/completed", {"turn": {"id": "turn-1", "status": "failed", "items": [], "error": limit_error}})
+            continue
         if "NO_FINAL" in text:
             break
         notify("turn/started", {"turn": {"id": "turn-1", "status": "inProgress", "items": []}})

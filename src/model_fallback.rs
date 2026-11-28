@@ -119,7 +119,7 @@ pub fn runtime(c: &Connection, definition: &Value, id: &str) -> ApiResult<(Model
 pub fn permitted(error: &ProviderError, step: i64, emitted: bool, cancelled: bool) -> bool {
     !cancelled && !emitted && step == 0
         && matches!((error.code, error.status),
-            ("rate_limited", Some(429)) | ("provider_unavailable", Some(500..=599)))
+            ("rate_limited" | crate::provider::USAGE_LIMIT, Some(429)) | ("provider_unavailable", Some(500..=599)))
 }
 
 /// 오류 기록·실제 프로필·예산 가격·화면 기록을 함께 확정한다.
@@ -185,7 +185,7 @@ mod tests {
     #[test]
     fn only_explicit_retry_exhausted_http_errors_before_any_progress() {
         for (code, status, allowed) in [
-            ("rate_limited", Some(429), true), ("provider_unavailable", Some(503), true),
+            ("rate_limited", Some(429), true), ("usage_limit", Some(429), true), ("provider_unavailable", Some(503), true),
             ("timeout", Some(504), false), ("provider_unavailable", None, false),
             ("transport_error", None, false), ("auth_failed", Some(403), false),
             ("bad_request", Some(400), false), ("unsupported", Some(503), false),

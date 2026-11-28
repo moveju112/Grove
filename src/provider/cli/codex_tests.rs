@@ -793,6 +793,8 @@ async fn rejected_requests_and_terminal_failures_never_succeed_or_replay() {
     for (text, resume, code) in [
         ("RPC_FAIL", None, "cli_failed"),
         ("TURN_FAIL", None, "cli_failed"),
+        ("USAGE_LIMIT_ERROR", None, crate::provider::USAGE_LIMIT),
+        ("USAGE_LIMIT_TURN", None, crate::provider::USAGE_LIMIT),
         ("INTERRUPTED", None, "cli_exited"),
         ("NO_FINAL", None, "cli_exited"),
         ("EXIT_FAIL", None, "cli_exited"),

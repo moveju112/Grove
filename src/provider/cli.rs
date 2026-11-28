@@ -323,6 +323,12 @@ fn codex_config(req: &ModelRequest) -> Vec<(String, Value)> {
     config
 }
 
+/// Codex 실패 문구. 계정 한도 소진은 보조 작업이 대체 모델로 넘길 수 있게 따로 분류한다.
+fn codex_failure(message: &str) -> ProviderError {
+    let code = if super::mentions_usage_limit(message) { super::USAGE_LIMIT } else { "cli_failed" };
+    ProviderError::new(code, format!("codex: {message}"))
+}
+
 /// 한 줄(JSONL 이벤트)을 누적기에 반영한다.
 pub fn apply_event(protocol: &str, e: &Value, out: &mut ModelOutput, final_text: &mut Option<String>) -> Result<(), ProviderError> {
     if protocol == "claude_code" {
@@ -383,8 +389,11 @@ pub fn apply_event(protocol: &str, e: &Value, out: &mut ModelOutput, final_text:
                 for d in e["permission_denials"].as_array().into_iter().flatten() {
                     out.activity.push(json!({ "kind": "denied", "name": d["tool_name"], "input": summarize(&d["tool_input"]) }));
                 }
-                if e["is_error"] == true {
-                    return Err(ProviderError::new("cli_failed", format!("claude: {}", e["result"].as_str().unwrap_or("오류"))));
+                let result = e["result"].as_str().unwrap_or("");
+                // 예전 Claude Code는 한도 소진을 정상 결과 글로 돌려줬다.
+                if e["is_error"] == true || result.starts_with("Claude AI usage limit reached") {
+                    let code = if super::mentions_usage_limit(result) { super::USAGE_LIMIT } else { "cli_failed" };
+                    return Err(ProviderError::new(code, format!("claude: {}", if result.is_empty() { "오류" } else { result })));
                 }
                 if let Some(r) = e["result"].as_str().filter(|r| !r.is_empty()) {
                     *final_text = Some(r.to_string());
@@ -424,8 +433,8 @@ pub fn apply_event(protocol: &str, e: &Value, out: &mut ModelOutput, final_text:
                 };
                 out.finish_reason = "stop".into();
             }
-            "turn.failed" => return Err(ProviderError::new("cli_failed", format!("codex: {}", e["error"]["message"].as_str().unwrap_or("실패")))),
-            "error" => return Err(ProviderError::new("cli_failed", format!("codex: {}", e["message"].as_str().unwrap_or("오류")))),
+            "turn.failed" => return Err(codex_failure(e["error"]["message"].as_str().unwrap_or("실패"))),
+            "error" => return Err(codex_failure(e["message"].as_str().unwrap_or("오류"))),
             _ => {}
         }
     }
@@ -1471,6 +1480,13 @@ echo '{{"type":"result","result":"ok"}}'"#);
         }
         assert_eq!((o.native_session.as_deref(), o.text.as_str(), o.usage.input_tokens, o.usage.cache_read_tokens), (Some("T1"), "KIWI", 100, 60));
         assert_eq!(o.activity[0]["kind"], "command");
+        let limited = apply_event("codex_cli", &json!({ "type": "turn.failed", "error": { "message": "You've hit your usage limit. Try again at 5:00 PM." } }), &mut o, &mut f).unwrap_err();
+        assert_eq!(limited.code, crate::provider::USAGE_LIMIT);
+        for result in [json!({"type":"result","is_error":true,"result":"5-hour limit reached ∙ resets 3pm"}),
+            json!({"type":"result","is_error":false,"result":"Claude AI usage limit reached|1760000000"})] {
+            assert_eq!(apply_event("claude_code", &result, &mut o, &mut f).unwrap_err().code, crate::provider::USAGE_LIMIT, "{result}");
+        }
+        assert_eq!(apply_event("claude_code", &json!({"type":"result","is_error":true,"result":"fixture error"}), &mut o, &mut f).unwrap_err().code, "cli_failed");
         let e = apply_event("codex_cli", &json!({ "type": "turn.failed", "error": { "message": "quota" } }), &mut o, &mut f).unwrap_err();
         assert_eq!(e.code, "cli_failed");
     }

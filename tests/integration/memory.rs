@@ -7,7 +7,7 @@ use std::time::Duration;
 
 async fn setting(s: &TestServer, pid: &str, key: &str, value: Value) {
     let (_,all) = s.get(&format!("/api/v1/settings/effective?project_id={pid}")).await;
-    let (scope, id) = if key == "memory.profile" { ("server", "-") } else { ("project", pid) };
+    let (scope, id) = if matches!(key, "memory.profile" | "memory.fallback") { ("server", "-") } else { ("project", pid) };
     let rev = all["items"].as_array().unwrap().iter().find(|i|i["key"]==key).unwrap()["layers"][scope]["revision"].clone();
     let (status,result) = s.send(Method::PUT,&format!("/api/v1/settings/{scope}/{id}/{key}"),json!({"expected_revision":rev,"value":value})).await;
     assert!(status.is_success(),"{result}");
@@ -59,6 +59,27 @@ async fn maintainer_runs_in_solo_with_own_model_and_persists_recall_checkpoint()
     assert_eq!(count,1,"실제 영속 DB를 다시 연다");
     grove::memory::tick(&reopened).await.unwrap();
     assert_eq!(aux.requests().len(),1);
+}
+
+/// Maintainer 모델이 계정 한도로 거절되면 같은 처리 위치에서 고른 대체 모델로 한 번만 다시 부른다.
+#[tokio::test]
+async fn maintainer_usage_limit_retries_once_on_fallback() {
+    let (s,_main,aux,_profile,model,pid,sid)=setup().await;
+    let backup=Fixture::start().await;
+    let backup_prof=s.fixture_profile(&backup.base).await;
+    for (key,value) in [("agents.orchestration",json!("solo")),("agents.delegation",json!("off")),("memory.enabled",json!(true)),
+        ("memory.profile",json!(model)),("memory.fallback",json!(backup_prof))] { setting(&s,&pid,key,value).await; }
+    aux.push(fixture::Step::ErrorCode(429,"usage_limit_reached"));
+    backup.push(fixture::text("결정: 대체 모델로 정리한다."));
+    let app=&s.server.as_ref().unwrap().app;
+    grove::memory::tick(app).await.unwrap();
+    let data=records(&s,&pid).await;
+    assert_eq!(data["items"].as_array().unwrap().len(),1,"{data}");
+    assert_eq!(data["checkpoints"][0]["error_code"],Value::Null);
+    assert_eq!((aux.requests().len(),backup.requests().len()),(1,1));
+    let sid2=sid.clone();
+    let used=app.db.call(move |c| Ok(c.query_row("SELECT profile_id FROM memory_notes WHERE session_id=?1",[sid2],|r| r.get::<_,String>(0))?)).await.unwrap();
+    assert_eq!(used,backup_prof,"정리 기록은 실제로 쓴 모델을 남긴다");
 }
 
 #[tokio::test]

@@ -57,6 +57,36 @@ async fn notes(s: &TestServer, sid: &str) -> Vec<Value> {
     m["items"].as_array().unwrap().iter().filter(|m| m["role"] == "note" && m["content"]["type"] == "agent_result").cloned().collect()
 }
 
+/// 보조 역할의 자식 턴이 계정 한도로 실패하면 결과를 전달하기 전에 대체 모델로 같은 지시를 한 번 다시 실행한다.
+#[tokio::test]
+async fn helper_role_usage_limit_retries_once_on_fallback_before_reporting() {
+    let (s, f, prof, _pid, sid) = setup().await;
+    let primary = Fixture::start().await;
+    let backup = Fixture::start().await;
+    let primary_prof = s.fixture_profile(&primary.base).await;
+    let backup_prof = s.fixture_profile(&backup.base).await;
+    for (key, value) in [("agents.profile.context-explorer", json!(primary_prof)), ("agents.fallback.context-explorer", json!(backup_prof))] {
+        let (status, v) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"), json!({ "expected_revision": 0, "value": value })).await;
+        assert_eq!(status, StatusCode::OK, "{key}: {v}");
+    }
+    f.push(fixture::tool_calls(&[("a1", "agent", json!({ "action": "spawn", "agent_id": "context-explorer", "brief": "관련 파일을 찾아" }))]));
+    f.push(fixture::text("탐색을 맡겼어"));
+    primary.push(fixture::Step::ErrorCode(429, "usage_limit_reached"));
+    backup.push(fixture::text("탐색 결과: src/lib.rs"));
+    let tid = turn(&s, &sid, &prof, "탐색 맡겨").await;
+    let t = s.wait_status(&tid, "awaiting_approval").await;
+    let c = &t["tool_calls"][0];
+    s.post(&format!("/api/v1/tool-calls/{}/decision", c["id"].as_str().unwrap()), json!({ "decision": "approve", "expected_revision": c["revision"] })).await;
+    let run = wait_run(&s, &sid, |r| r["status"] == "completed").await;
+    assert_eq!(run["result"], "탐색 결과: src/lib.rs", "{run}");
+    assert_eq!(run["profile_id"], backup_prof.as_str());
+    assert_eq!((primary.requests().len(), backup.requests().len()), (1, 1));
+    // 부모에는 실패 없이 최종 결과만 한 번 전달한다.
+    let n = notes(&s, &sid).await;
+    assert_eq!(n.len(), 1, "{n:?}");
+    assert_eq!(n[0]["content"]["status"], "completed");
+}
+
 #[tokio::test]
 async fn spawn_requires_approval_by_default_and_result_reaches_parent_once() {
     let (s, f, prof, _pid, sid) = setup().await;

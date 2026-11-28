@@ -554,7 +554,7 @@ pub fn registry() -> Vec<SettingDef> {
         };
         defs.push(SettingDef {
             key, menu: "workflow", label,
-            description: "이 작업 모델의 Claude·Codex 계정 한도를 다 쓰면 이 모델로 실행해요. 비우면 전환하지 않아요. 한도는 최대 5분 늦게 반영될 수 있어요.",
+            description: "이 작업 모델의 Claude·Codex 계정 한도를 다 쓰면 이 모델로 실행해요. 실행 전 사용량으로 먼저 바꾸고, 그래도 한도 오류가 나면 이 모델로 한 번 다시 실행해요. 비우면 전환하지 않아요.",
             keywords: "fallback usage limit quota 한도 소진 사용량 대체 전환 모델", kind: "model", options: &[],
             min: None, max: None, default: json!(""), scopes: &["server"], applies: "immediate", advanced: false,
         });

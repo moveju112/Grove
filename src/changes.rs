@@ -34,16 +34,15 @@ pub(crate) struct WorkspaceSnapshot {
     inventory: Option<HashSet<PathBuf>>,
 }
 
-fn native_mode(file: &std::fs::File) -> std::io::Result<Option<u32>> {
-    let meta = file.metadata()?;
+fn native_mode(meta: &std::fs::Metadata) -> Option<u32> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let mode = meta.permissions().mode() & 0o7777;
-        Ok((meta.nlink() == 1 && mode & 0o7000 == 0).then_some(mode))
+        (meta.nlink() == 1 && mode & 0o7000 == 0).then_some(mode)
     }
     #[cfg(not(unix))]
-    { Ok((!meta.permissions().readonly()).then_some(0)) }
+    { (!meta.permissions().readonly()).then_some(0) }
 }
 
 fn inventory_key(path: PathBuf) -> PathBuf {
@@ -58,15 +57,32 @@ impl WorkspaceSnapshot {
         let root = scope.root();
         let data_dir = crate::util::canonical(data_dir)?;
         if root.starts_with(&data_dir) { return Ok(Self { files: HashMap::new(), inventory: None }); }
-        let mut files = HashMap::new();
-        let mut remaining = MAX_NATIVE_BYTES;
+        // 한도를 넘는 프로젝트는 내용을 읽기 전에 목록의 크기만으로 거절한다. 읽을 때의 한도 검사는 그대로 둔다.
+        let mut candidates = Vec::new();
+        let (mut listed, mut listed_bytes) = (0usize, 0u64);
         for entry in crate::tools::search::walker_excluding(root, root, false, Some(data_dir.clone())) {
             let entry = entry.map_err(std::io::Error::other)?;
             if !entry.file_type().is_some_and(|kind| kind.is_file()) { continue; }
-            let path = entry.path();
-            let Some(relative) = path.strip_prefix(root).ok().and_then(FsPath::to_str) else { continue; };
             let name = entry.file_name().to_string_lossy();
             if name == ".env" || name.starts_with(".env.") { continue; }
+            if entry.path().strip_prefix(root).ok().and_then(FsPath::to_str).is_none() { continue; }
+            // 읽을 때 건너뛰는 파일(보관 상한 초과·특수 권한·hard link)은 세지 않는다.
+            if let Ok(meta) = entry.metadata() && meta.len() <= MAX_STORED && native_mode(&meta).is_some() {
+                listed += 1;
+                listed_bytes += meta.len();
+                if listed > MAX_NATIVE_FILES {
+                    return Err(std::io::Error::other("CLI 변경 이력의 파일 수 한도를 넘었습니다"));
+                }
+                if listed_bytes > MAX_NATIVE_BYTES {
+                    return Err(std::io::Error::other("CLI 변경 이력의 용량 한도를 넘었습니다"));
+                }
+            }
+            candidates.push(entry.into_path());
+        }
+        let mut files = HashMap::new();
+        let mut remaining = MAX_NATIVE_BYTES;
+        for path in &candidates {
+            let Some(relative) = path.strip_prefix(root).ok().and_then(FsPath::to_str) else { continue; };
             if files.len() >= MAX_NATIVE_FILES {
                 return Err(std::io::Error::other("CLI 변경 이력의 파일 수 한도를 넘었습니다"));
             }
@@ -75,8 +91,9 @@ impl WorkspaceSnapshot {
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
                 Err(error) => return Err(error),
             };
-            if file.metadata()?.len() > MAX_STORED { continue; }
-            let Some(mode) = native_mode(&file)? else { continue; };
+            let meta = file.metadata()?;
+            if meta.len() > MAX_STORED { continue; }
+            let Some(mode) = native_mode(&meta) else { continue; };
             let mut bytes = Vec::new();
             file.take(remaining.min(MAX_STORED) + 1).read_to_end(&mut bytes)?;
             if bytes.len() as u64 > remaining.min(MAX_STORED) {
@@ -609,7 +626,7 @@ fn prepare_apply(tx: &Connection, session_id: &str, ids: &[String], undo: bool) 
         if c.call_id.is_empty() {
             let expected = scope.root().join(&c.path);
             let actual = match scope.open_regular_file(&expected, true) {
-                Ok(file) => native_mode(&file).ok().flatten().map(Some),
+                Ok(file) => file.metadata().ok().and_then(|meta| native_mode(&meta)).map(Some),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => Some(None),
                 Err(_) => None,
             };
@@ -739,30 +756,20 @@ mod tests {
             [(".gitignore", true, true), ("deleted.txt", true, false), ("new.txt", false, true)]);
     }
 
-    // TEMP-BENCH(삭제 예정)
+    /// 한도 초과는 내용을 읽기 전에 목록 크기로 판정한다. 읽을 수 없는 파일도 열어 보지 않고 거절한다.
+    #[cfg(unix)]
     #[test]
-    fn temp_bench_capture() {
-        let Ok(roots) = std::env::var("GROVE_BENCH_ROOTS") else { return };
-        let data = std::path::PathBuf::from(std::env::var("GROVE_BENCH_DATA").unwrap());
-        let mut out = String::new();
-        for root in roots.split(':') {
-            let root = std::path::Path::new(root);
-            for baseline in [true, true, false] {
-                let started = std::time::Instant::now();
-                let result = WorkspaceSnapshot::capture(root, &data, baseline);
-                let ms = started.elapsed().as_millis();
-                let summary = match &result {
-                    Ok(s) => format!("ok files={} bytes={} inventory={:?}", s.files.len(),
-                        s.files.values().map(|f| f.bytes.as_ref().map_or(0, |b| b.len())).sum::<usize>(), s.inventory.as_ref().map(|i| i.len())),
-                    Err(e) => format!("err {e}"),
-                };
-                out.push_str(&format!("{} baseline={baseline} {ms}ms {summary}\n", root.display()));
-            }
+    fn over_limit_workspace_is_rejected_before_reading_contents() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().unwrap();
+        let data = tempfile::tempdir().unwrap();
+        for i in 0..=MAX_NATIVE_BYTES / MAX_STORED {
+            let path = root.path().join(format!("sparse-{i}"));
+            std::fs::File::create(&path).unwrap().set_len(MAX_STORED).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o000)).unwrap();
         }
-        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
-        out.push_str(status.lines().find(|l| l.starts_with("VmHWM")).unwrap_or("VmHWM ?"));
-        out.push('\n');
-        std::fs::write(std::env::var("GROVE_BENCH_OUT").unwrap(), out).unwrap();
+        let error = WorkspaceSnapshot::capture(root.path(), data.path(), true).err().unwrap();
+        assert_eq!(error.to_string(), "CLI 변경 이력의 용량 한도를 넘었습니다");
     }
 
     #[test]

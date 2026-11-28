@@ -41,13 +41,17 @@ pub fn clean(raw: &str) -> Option<String> {
 
 /// 수동 생성은 요청 모델을 지정할 수 있다. 자동 생성은 전용 모델만 사용한다.
 pub async fn generate(app: &App, session_id: &str, profile_id: Option<String>) -> ApiResult<Value> {
-    generate_inner(app, session_id, profile_id, false).await
+    generate_inner(app, session_id, profile_id, false, None).await
 }
 
-async fn generate_inner(app: &App, session_id: &str, profile_id: Option<String>, auto: bool) -> ApiResult<Value> {
+/// `retry`: 원래 모델이 한도 오류로 거절돼 이 대체 모델로 한 번 다시 실행하는 중이다. 더 다시 시도하지 않는다.
+async fn generate_inner(app: &App, session_id: &str, profile_id: Option<String>, auto: bool,
+    retry: Option<crate::models::ModelSelection>) -> ApiResult<Value> {
     let sid = session_id.to_string();
+    let configured = profile_id.is_none();
+    let retried = retry.is_some();
     // 직접 고른 모델은 그대로 쓴다. 설정한 제목 모델만 한도 소진 시 대체 모델로 바꾼다.
-    let exhausted = if profile_id.is_none() { crate::usage_fallback::observe(app, "session.title_fallback").await } else { Default::default() };
+    let exhausted = if configured && !retried { crate::usage_fallback::observe(app, "session.title_fallback").await } else { Default::default() };
     let prepared = app.db.call(move |c| {
         let s = crate::sessions::get_active(c, &sid)?;
         let def = crate::definitions::resolve(c, "agent", "title-generator")?.def;
@@ -59,7 +63,7 @@ async fn generate_inner(app: &App, session_id: &str, profile_id: Option<String>,
         let selection = profile_id.map(crate::models::ModelSelection::from_profile)
             .or(crate::models::ModelSelection::parse(&chosen)?);
         let Some(selection) = selection else { return Ok(None) };
-        let run = crate::usage_fallback::apply(c, "session.title_profile", selection.clone(), &exhausted)?;
+        let run = match retry { Some(run) => run, None => crate::usage_fallback::apply(c, "session.title_profile", selection.clone(), &exhausted)? };
         let (mp, rp) = run.runtime(c)?;
         let mut exchanges = crate::history::completed_exchanges(c, &sid, 0, 3, true)?;
         // 수동 생성은 아직 실행하지 않은 사용자 메시지로도 만들 수 있다.
@@ -84,7 +88,9 @@ async fn generate_inner(app: &App, session_id: &str, profile_id: Option<String>,
     let started = std::time::Instant::now();
     let out = tokio::time::timeout(std::time::Duration::from_secs(10), async {
         let _permit = crate::model_limits::auxiliary(app, session_id, &rp, &mut cancel).await?;
-        provider::stream(&rp, &req, &mut cancel, &mut |_| {}).await.map_err(|_| ApiError::conflict("model_error", "제목을 생성하지 못했습니다"))
+        provider::stream(&rp, &req, &mut cancel, &mut |_| {}).await.map_err(|e| if e.code == provider::USAGE_LIMIT {
+            ApiError::conflict(provider::USAGE_LIMIT, "제목 모델 계정의 사용 한도를 모두 썼습니다")
+        } else { ApiError::conflict("model_error", "제목을 생성하지 못했습니다") })
     }).await;
     let provider_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
     let (usage, outcome) = match out {
@@ -96,7 +102,7 @@ async fn generate_inner(app: &App, session_id: &str, profile_id: Option<String>,
                 None => Ok(json!({ "applied": false, "reason": "invalid_output" })),
             })
         }
-        Ok(Err(_)) => (None, Ok(json!({ "applied": false, "reason": "model_error" }))),
+        Ok(Err(e)) => (None, Ok(json!({ "applied": false, "reason": if e.code == provider::USAGE_LIMIT { provider::USAGE_LIMIT } else { "model_error" } }))),
         Err(_) => (None, Ok(json!({ "applied": false, "reason": "timeout" }))),
     };
     let reason = match &outcome {
@@ -108,6 +114,15 @@ async fn generate_inner(app: &App, session_id: &str, profile_id: Option<String>,
         kind: crate::aux_usage::Kind::Title, session_id, profile_id: &run.profile_id, runtime: &rp,
         effort: run.effort.as_deref(), usage: usage.as_ref(), provider_ms, discarded: reason,
     }).await;
+    if reason == Some(provider::USAGE_LIMIT) {
+        // 새 10초 창과 대체 모델의 동시 실행 허가로 처음부터 다시 실행한다.
+        if configured && !retried
+            && let Some(next) = crate::usage_fallback::retry_after_limit(app, "session.title_profile", run, &rp.protocol).await
+        {
+            return Box::pin(generate_inner(app, session_id, None, auto, Some(next))).await;
+        }
+        crate::usage_fallback::note_failure(app, &rp.protocol, provider::USAGE_LIMIT);
+    }
     outcome
 }
 
@@ -156,7 +171,7 @@ pub async fn after_turn(app: &App, turn_id: &str) {
         Ok((on == true && refresh_due(c, &s.id)?).then_some(s.id))
     }).await.ok().flatten();
     if let Some(sid) = due {
-        if let Err(e) = generate_inner(app, &sid, None, true).await {
+        if let Err(e) = generate_inner(app, &sid, None, true, None).await {
             tracing::info!(code=e.code, "제목 자동 생성 건너뜀");
         }
     }

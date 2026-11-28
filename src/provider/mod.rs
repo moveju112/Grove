@@ -302,6 +302,16 @@ mod error_tests {
         assert_eq!(classify(400, "temperature must be <= 2", None), ("bad_request", false));
         assert_eq!(classify(401, "", None), ("auth_failed", false));
         assert_eq!(classify(429, "slow down", None), ("rate_limited", true));
+        assert_eq!(classify(429, "The usage limit has been reached", Some("usage_limit_reached")), (USAGE_LIMIT, false));
+        for limited in ["Claude AI usage limit reached|1760000000", "5-hour limit reached ∙ resets 3pm", "Weekly limit reached · resets Mon 10am",
+            "You've hit your usage limit. Upgrade to Pro or try again at 5:00 PM.", "You've hit your limit · resets 2am (Asia/Seoul)",
+            "You've hit your 5-hour limit · resets 3pm (Asia/Seoul)", "You’ve hit your weekly limit · resets Mon 9am", "You've reached your Fable limit for this week.",
+            "Usage limit reached · resets 11pm"] {
+            assert!(mentions_usage_limit(limited), "{limited}");
+        }
+        for other in ["Rate limit reached for gpt-4o on tokens per min", "fixture error", "You exceeded your current quota"] {
+            assert!(!mentions_usage_limit(other), "{other}");
+        }
         assert_eq!(classify(503, "", None), ("provider_unavailable", true));
     }
 
@@ -609,6 +619,19 @@ pub fn transport_error_in(e: reqwest::Error, phase: Phase) -> ProviderError {
     ProviderError { code, message: e.without_url().to_string(), status: None, retryable: true, retry_after_secs: None, stream_failure: None }
 }
 
+/// Claude·Codex 계정의 5시간·주간 사용 한도 소진. 같은 계정으로는 재시도하지 않고 보조 작업은 대체 모델로 넘긴다.
+pub const USAGE_LIMIT: &str = "usage_limit";
+
+/// CLI가 구조화된 원인 없이 문구로만 알리는 계정 한도 소진. 짧은 오류 문구만 본다.
+/// Claude Code 2.1.332 원문 기준: `You've hit your 5-hour limit · resets 3pm`, `You've reached your Fable limit`, `Usage limit reached · …`.
+/// 예전 형식 `Claude AI usage limit reached|1760000000`과 Codex의 `You've hit your usage limit.`도 받는다.
+pub(crate) fn mentions_usage_limit(text: &str) -> bool {
+    let text = text.to_lowercase().replace('’', "'");
+    text.chars().count() <= 400 && (text.contains("usage limit")
+        || ((text.contains("you've hit your") || text.contains("you've reached your")) && text.contains("limit"))
+        || ["limit reached ∙", "limit reached ·", "limit reached |", "limit reached, resets", "limit reached. resets"].iter().any(|p| text.contains(p)))
+}
+
 /// HTTP 오류 정규화(MODEL-015). 상태 코드만으로 구분되지 않는 context 초과·모델 미지원은 provider 오류 code·본문으로 가린다.
 pub fn classify(status: u16, detail: &str, err_code: Option<&str>) -> (&'static str, bool) {
     let d = detail.to_ascii_lowercase();
@@ -623,6 +646,8 @@ pub fn classify(status: u16, detail: &str, err_code: Option<&str>) -> (&'static 
         401 | 403 => ("auth_failed", false),
         404 => ("model_not_found", false),
         408 | 504 => ("timeout", true),
+        // ChatGPT 계정(Codex OAuth)의 사용 한도. 같은 계정 재시도는 한도가 풀릴 때까지 실패한다.
+        429 if matches!(c.as_str(), "usage_limit_reached" | "usage_not_included") => (USAGE_LIMIT, false),
         429 => ("rate_limited", true),
         400 | 413 | 422 => ("bad_request", false),
         s if s >= 500 => ("provider_unavailable", true),

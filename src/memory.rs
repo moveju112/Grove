@@ -69,9 +69,13 @@ async fn maintain(app: &App, session_id: &str) -> ApiResult<bool> {
         Ok(Some((selection,run,def,timeline,from,upto,source_at,source,now,s.last_message_seq)))
     }).await?;
     let Some((selection,run,def,timeline,from,upto,source_at,source,attempted_at,last_seq)) = prepared else { return Ok(false) };
+    // 원래 모델이 계정 한도로 거절되면 대체 모델로 한 번만 다시 부른다. 처리 위치·시도 시각은 그대로 쓴다.
+    let (mut run, mut retried) = (run, false);
+    let result = loop {
     // 모델을 부른 뒤의 결과는 저장 여부와 무관하게 사용량 기록에 남긴다.
     let mut called: Option<(provider::Profile, Option<provider::Usage>, i64)> = None;
     let (record_profile, record_effort) = (run.profile_id.clone(), run.effort.clone());
+    let (source, source_at, def, selection, attempted_at) = (source.clone(), source_at.clone(), def.clone(), selection.clone(), attempted_at.clone());
     let result = async {
         let selected = run.clone();
         let profile_id = run.profile_id.clone();
@@ -87,7 +91,7 @@ async fn maintain(app: &App, session_id: &str) -> ApiResult<bool> {
         let started = std::time::Instant::now();
         let out = tokio::time::timeout(Duration::from_secs(60), async {
             let _permit = crate::model_limits::auxiliary(app, session_id, &rp, &mut cancel).await?;
-            provider::stream(&rp, &req, &mut cancel, &mut |_| {}).await.map_err(|_| crate::error::ApiError::conflict("model_error", "메모리를 정리하지 못했습니다"))
+            provider::stream(&rp, &req, &mut cancel, &mut |_| {}).await.map_err(|e| crate::error::ApiError::conflict(if e.code == provider::USAGE_LIMIT { provider::USAGE_LIMIT } else { "model_error" }, "메모리를 정리하지 못했습니다"))
         }).await;
         let elapsed = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
         if let Some(call) = called.as_mut() { call.2 = elapsed; }
@@ -124,6 +128,15 @@ async fn maintain(app: &App, session_id: &str) -> ApiResult<bool> {
             effort: record_effort.as_deref(), usage: usage.as_ref(), provider_ms: *provider_ms, discarded,
         }).await;
     }
+    if let (Err(e), Some((rp, _, _))) = (&result, &called) && e.code == provider::USAGE_LIMIT {
+        if !retried && let Some(next) = crate::usage_fallback::retry_after_limit(app, "memory.profile", run.clone(), &rp.protocol).await {
+            (run, retried) = (next, true);
+            continue;
+        }
+        crate::usage_fallback::note_failure(app, &rp.protocol, provider::USAGE_LIMIT);
+    }
+    break result;
+    };
     if let Err(e) = result {
         let (sid,claim,code,now) = (session_id.to_string(),attempted_at,e.code.to_string(),app.now());
         app.db.call(move |c| {

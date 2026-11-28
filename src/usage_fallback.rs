@@ -1,7 +1,12 @@
 //! 계속 도는 보조 작업(제목·압축·Maintainer·보조 역할)이 Claude·Codex 계정 한도 소진으로 멈추지 않게 한다.
-//! 작업별로 사용자가 고른 대체 모델만 쓴다. 한도는 공식 CLI 조회의 캐시값(최대 5분)이라 실제 소진보다 늦게 반영될 수 있다.
+//! 작업별로 사용자가 고른 대체 모델만 쓴다. 실행 전에는 공식 CLI 한도 조회의 캐시값(최대 5분)으로 판단하고,
+//! 그래도 원래 모델이 한도 오류로 거절되면 그 계정을 잠시 소진으로 기록한 뒤 대체 모델로 한 번만 다시 실행한다.
 use crate::{App, account_usage::AccountUsage, error::ApiResult, models::ModelSelection};
 use rusqlite::Connection;
+use std::time::Duration;
+
+/// 한도 오류 뒤 원래 계정을 다시 시도하기까지. 조회 캐시가 소진을 보여 주면 그 값이 이어서 막는다.
+const BLOCK: Duration = Duration::from_secs(10 * 60);
 
 /// 보조 작업 모델 설정 key와 한도 소진 시 대체 모델 설정 key.
 pub const KEYS: &[(&str, &str)] = &[
@@ -28,11 +33,19 @@ fn account(protocol: &str) -> Option<&'static str> {
 
 /// 실행 직전에 관측한 한도 소진 계정. 동기 DB 경로에 넘기려고 transaction 밖에서 만든다.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Exhausted(Vec<&'static str>);
+pub struct Exhausted(Vec<String>);
 
 impl Exhausted {
-    fn contains(&self, protocol: &str) -> bool {
-        account(protocol).is_some_and(|account| self.0.contains(&account))
+    /// 방금 한도 오류를 낸 연결 하나만 소진으로 본다. CLI 계정은 계정 단위, HTTP 연결은 그 프로필만 이번 재시도에 쓴다.
+    pub fn of(protocol: &str, profile_id: &str) -> Self { Self(vec![Self::key(protocol, profile_id)]) }
+
+    fn key(protocol: &str, profile_id: &str) -> String {
+        account(protocol).map(str::to_owned).unwrap_or_else(|| format!("profile:{profile_id}"))
+    }
+
+    fn contains(&self, protocol: &str, profile_id: &str) -> bool {
+        let key = Self::key(protocol, profile_id);
+        self.0.iter().any(|item| *item == key)
     }
 }
 
@@ -58,13 +71,29 @@ pub async fn observe(app: &App, fallback_key: &'static str) -> Exhausted {
     let now = app.now();
     let mut out = Exhausted::default();
     for protocol in accounts {
-        if exhausted(&app.account_usage.read(&protocol, &now).await, &now)
-            && let Some(account) = account(&protocol)
-        {
-            out.0.push(account);
+        let Some(account) = account(&protocol) else { continue };
+        if app.account_usage.is_blocked(account) || exhausted(&app.account_usage.read(&protocol, &now).await, &now) {
+            out.0.push(account.to_owned());
         }
     }
     out
+}
+
+/// 실행이 계정 한도 오류로 거절되면 그 계정을 잠시 소진으로 기록한다.
+pub fn note_failure(app: &App, protocol: &str, code: &str) {
+    if code == crate::provider::USAGE_LIMIT && let Some(account) = account(protocol) {
+        app.account_usage.block(account, BLOCK);
+    }
+}
+
+/// 한도 오류로 거절된 선택 대신 쓸 대체 모델. 이미 대체 모델이었거나 쓸 대체 모델이 없으면 None.
+pub async fn retry_after_limit(app: &App, profile_key: &'static str, failed: ModelSelection, protocol: &str) -> Option<ModelSelection> {
+    note_failure(app, protocol, crate::provider::USAGE_LIMIT);
+    let exhausted = Exhausted::of(protocol, &failed.profile_id);
+    app.db.call(move |c| {
+        let next = apply(c, profile_key, failed.clone(), &exhausted)?;
+        Ok((next != failed).then_some(next))
+    }).await.ok().flatten()
 }
 
 /// 원래 모델의 계정이 소진됐고 대체 모델은 쓸 수 있으면 대체 모델을 돌려준다.
@@ -73,10 +102,10 @@ pub fn apply(c: &Connection, profile_key: &str, primary: ModelSelection, exhaust
     if exhausted.0.is_empty() { return Ok(primary); }
     let Some(key) = fallback_key(profile_key) else { return Ok(primary) };
     let Ok(source) = crate::models::get_enabled_profile(c, &primary.profile_id) else { return Ok(primary) };
-    if !exhausted.contains(&source.protocol) { return Ok(primary); }
+    if !exhausted.contains(&source.protocol, &source.id) { return Ok(primary); }
     let Some(fallback) = ModelSelection::parse(&crate::settings::effective(c, key, None, None)?)? else { return Ok(primary) };
     let Ok((target, _)) = fallback.runtime(c) else { return Ok(primary) };
-    if exhausted.contains(&target.protocol) { return Ok(primary); }
+    if exhausted.contains(&target.protocol, &target.id) { return Ok(primary); }
     tracing::info!(setting = profile_key, from = %source.protocol, to = %target.protocol, "계정 한도 소진으로 대체 모델 사용");
     Ok(fallback)
 }
@@ -124,7 +153,7 @@ mod tests {
         let c = database();
         let codex = ModelSelection::from_profile("codex".into());
         let none = Exhausted::default();
-        let codex_out = Exhausted(vec!["codex_cli"]);
+        let codex_out = Exhausted::of("codex_oauth", "another-codex-profile");
         // 대체 모델을 고르지 않으면 소진돼도 원래 모델을 유지한다.
         assert_eq!(apply(&c, "session.title_profile", codex.clone(), &codex_out).unwrap(), codex);
         set(&c, "session.title_fallback", serde_json::json!({"profile_id":"claude","model":"fixture-claude"}));
@@ -134,7 +163,10 @@ mod tests {
         // 다른 작업의 대체 설정은 공유하지 않는다.
         assert_eq!(apply(&c, "memory.profile", codex.clone(), &codex_out).unwrap(), codex);
         // 대체 모델 계정도 소진됐으면 원래 모델을 유지한다.
-        assert_eq!(apply(&c, "session.title_profile", codex.clone(), &Exhausted(vec!["codex_cli", "claude_code"])).unwrap(), codex);
+        assert_eq!(apply(&c, "session.title_profile", codex.clone(), &Exhausted(vec!["codex_cli".into(), "claude_code".into()])).unwrap(), codex);
+        // HTTP 연결이 한도 오류를 내면 그 protocol만 이번 재시도 대상으로 본다.
+        let http = Exhausted::of("openai", "a");
+        assert!(http.contains("openai", "a") && !http.contains("openai", "b") && !http.contains("codex_cli", "a"));
         // 비활성 대체 모델로는 전환하지 않는다.
         set(&c, "memory.fallback", serde_json::json!("off"));
         assert_eq!(apply(&c, "memory.profile", ModelSelection::from_profile("codex".into()), &codex_out).unwrap(), codex);

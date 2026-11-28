@@ -1374,17 +1374,26 @@ async fn drive_loop(app: &App, turn_id: &str, mut cancel_rx: watch::Receiver<boo
 
 async fn fail(app: &App, turn_id: &str, error: Value) {
     let tid = turn_id.to_string();
-    let _ = app
+    let limited = error["code"] == provider::USAGE_LIMIT;
+    let protocol = app
         .db
         .call(move |c| {
             let tx = c.transaction()?;
             let now = crate::util::fmt_time(time::OffsetDateTime::now_utc());
             finish_turn(&tx, &now, &tid, &["queued", "running", "awaiting_approval"], "failed", Some(error))?;
+            // 계정 기록용 조회는 실패해도 턴 실패 기록을 되돌리지 않는다.
+            let protocol: Option<String> = tx.query_row("SELECT p.protocol FROM turns t JOIN model_profiles p ON p.id = t.profile_id WHERE t.id = ?1",
+                params![tid], |r| r.get(0)).optional().ok().flatten();
             tx.commit()?;
-            Ok(())
+            Ok(protocol)
         })
         .await;
     app.notify_events().await;
+    if limited {
+        // 계정 한도 소진을 보조 작업이 바로 알도록 기록하고, 대체 모델로 다시 접수한 보조 역할 턴을 시작한다.
+        if let Ok(Some(protocol)) = protocol { crate::usage_fallback::note_failure(app, &protocol, provider::USAGE_LIMIT); }
+        kick_queued(app).await;
+    }
 }
 
 /// 중단 증거에 남기는 응답 글자 상한. 넘으면 앞부분만 남기고 truncated로 표시한다(REC-011).

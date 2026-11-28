@@ -34,9 +34,21 @@ pub struct AccountUsageReport {
 pub struct Cache {
     codex: tokio::sync::Mutex<Option<(Instant, AccountUsage)>>,
     claude: tokio::sync::Mutex<Option<(Instant, AccountUsage)>>,
+    /// 실행이 한도 오류로 거절된 계정과 다시 시도할 시각. 조회 캐시가 따라오기 전까지 보조 작업을 대체 모델로 보낸다.
+    blocked: std::sync::Mutex<std::collections::HashMap<String, Instant>>,
 }
 
 impl Cache {
+    pub(crate) fn block(&self, account: &str, ttl: Duration) {
+        self.blocked.lock().unwrap_or_else(|e| e.into_inner()).insert(account.into(), Instant::now() + ttl);
+    }
+
+    pub(crate) fn is_blocked(&self, account: &str) -> bool {
+        let mut blocked = self.blocked.lock().unwrap_or_else(|e| e.into_inner());
+        blocked.retain(|_, until| *until > Instant::now());
+        blocked.contains_key(account)
+    }
+
     fn entry(&self, protocol: &str) -> &tokio::sync::Mutex<Option<(Instant, AccountUsage)>> {
         if protocol == "codex_cli" { &self.codex } else { &self.claude }
     }

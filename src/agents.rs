@@ -189,6 +189,20 @@ pub fn on_turn_finished(c: &Connection, now: &str, turn_id: &str, to: &str) -> A
     let text = last_assistant_text(c, turn_id)?;
     let error: Option<String> = c.query_row("SELECT error FROM turns WHERE id = ?1", params![turn_id], |r| r.get(0))?;
     let error = error.filter(|e| e != "null");
+    // 재시도 접수가 실패해도 이 턴의 실패 기록과 결과 전달은 그대로 끝낸다.
+    if status == "failed" {
+        c.execute_batch("SAVEPOINT usage_limit_retry")?;
+        match retry_after_usage_limit(c, now, &run, turn_id, error.as_deref()) {
+            Ok(retried) => {
+                c.execute_batch("RELEASE usage_limit_retry")?;
+                if retried { return Ok(()); }
+            }
+            Err(e) => {
+                c.execute_batch("ROLLBACK TO usage_limit_retry; RELEASE usage_limit_retry")?;
+                tracing::warn!(code = e.code, "보조 역할 대체 모델 재시도를 접수하지 못해 실패를 그대로 전달");
+            }
+        }
+    }
     c.execute(
         "UPDATE agent_runs SET status = ?2, result = ?3, error = ?4, delivered_turn_id = ?5, updated_at = ?6, ended_at = ?6 WHERE id = ?1",
         params![run.id, status, text, error, turn_id, now],
@@ -205,6 +219,42 @@ pub fn on_turn_finished(c: &Connection, now: &str, turn_id: &str, to: &str) -> A
     crate::sessions::append_message(c, now, &run.parent_session_id, "note", &content, None, None)?;
     emit(c, now, &run)?;
     Ok(())
+}
+
+/// 보조 역할의 자식 턴이 계정 한도로 실패하면 결과를 전달하기 전에 대체 모델로 같은 지시를 한 번 다시 실행한다.
+/// 대체 모델이 없거나 이미 대체 모델로 실패했으면 false를 돌려 원래대로 실패를 전달한다.
+fn retry_after_usage_limit(c: &Connection, now: &str, run: &AgentRun, turn_id: &str, error: Option<&str>) -> ApiResult<bool> {
+    let failed: Value = error.and_then(|e| serde_json::from_str(e).ok()).unwrap_or(Value::Null);
+    if failed["code"] != crate::provider::USAGE_LIMIT { return Ok(false); }
+    let Some(key) = crate::definitions::profile_key(&run.agent_id)
+        .filter(|key| crate::usage_fallback::fallback_key(key).is_some()) else { return Ok(false) };
+    let old = crate::runner::get_turn(c, turn_id)?;
+    let Some(profile_id) = old.profile_id.clone() else { return Ok(false) };
+    let Ok(profile) = crate::models::get_enabled_profile(c, &profile_id) else { return Ok(false) };
+    let text = |v: &Value| v.as_str().map(str::to_owned);
+    let primary = crate::models::ModelSelection {
+        profile_id, model: text(&old.definition["model_selection"]["model"]),
+        effort: text(&old.definition["effort"]), service_tier: text(&old.definition["service_tier"]),
+    };
+    let next = crate::usage_fallback::apply(c, key, primary.clone(), &crate::usage_fallback::Exhausted::of(&profile.protocol, &profile.id))?;
+    if next == primary { return Ok(false); }
+    let content: String = c.query_row("SELECT content FROM message_history WHERE id = ?1", params![old.request_message_id], |r| r.get(0))?;
+    let content: Value = serde_json::from_str(&content).map_err(|_| ApiError::internal("message content"))?;
+    let epoch: String = c.query_row("SELECT owner_epoch FROM turns WHERE id = ?1", params![turn_id], |r| r.get(0))?;
+    let src = json!({ "kind": "agent_run", "run_id": run.id, "parent_session_id": run.parent_session_id,
+        "parent_turn_id": run.parent_turn_id, "limits": old.definition["limits"], "usage_limit_retry_of": turn_id });
+    let owner = parent_owner(c, &run.parent_session_id)?;
+    let (t, _) = crate::runner::enqueue_turn(c, now, &epoch, &owner, &run.child_session_id, content["text"].as_str().unwrap_or(""),
+        &next.profile_id, Some(&run.agent_id), old.tools_enabled, Some(&src))?;
+    crate::runner::set_turn_model(c, &t.id, next.model.as_deref())?;
+    crate::runner::set_turn_effort(c, &t.id, next.effort.as_deref())?;
+    crate::runner::set_turn_service_tier(c, &t.id, next.service_tier.as_deref())?;
+    c.execute("UPDATE agent_runs SET last_turn_id = ?2, profile_id = ?3, updated_at = ?4 WHERE id = ?1", params![run.id, t.id, next.profile_id, now])?;
+    // 대신 실행했으므로 실패한 시도는 복구 목록에 남기지 않는다.
+    c.execute("UPDATE turns SET acknowledged_at = COALESCE(acknowledged_at, ?2) WHERE id = ?1", params![turn_id, now])?;
+    tracing::info!(agent = %run.agent_id, from = %profile.protocol, "계정 한도 소진으로 보조 역할을 대체 모델로 다시 실행");
+    emit(c, now, &get(c, &run.id)?)?;
+    Ok(true)
 }
 
 /// note를 모델·사람이 읽을 텍스트로.

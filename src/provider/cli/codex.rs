@@ -474,6 +474,7 @@ impl State {
                 self.usage_total = Some(total);
             }
             "error" if p["willRetry"] != true => {
+                if usage_limited(&p["error"]) { return Err(usage_limit()); }
                 return Err(ProviderError::new(
                     "cli_failed",
                     "Codex 실행 중 오류가 발생했습니다",
@@ -488,6 +489,7 @@ impl State {
                             "Codex 실행이 중단되었습니다",
                         ));
                     }
+                    _ if usage_limited(&p["turn"]["error"]) => return Err(usage_limit()),
                     _ => {
                         return Err(ProviderError::new(
                             "cli_failed",
@@ -506,6 +508,15 @@ impl State {
         self.rebuild()?;
         Ok(true)
     }
+}
+
+/// app-server TurnError의 구조화된 원인. 원문 메시지는 경로·계정 정보가 섞일 수 있어 복제하지 않는다.
+fn usage_limited(error: &Value) -> bool {
+    error["codexErrorInfo"] == "usageLimitExceeded"
+}
+
+fn usage_limit() -> ProviderError {
+    ProviderError::new(crate::provider::USAGE_LIMIT, "Codex 계정 사용 한도를 모두 썼습니다")
 }
 
 fn invalid() -> ProviderError {

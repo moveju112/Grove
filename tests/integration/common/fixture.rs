@@ -24,6 +24,8 @@ pub enum Step {
     Gated(Vec<String>, tokio::sync::watch::Receiver<bool>),
     /// HTTP 오류 응답
     Error(u16, String),
+    /// 공급자 오류 code가 있는 HTTP 오류 응답(예: 계정 사용 한도 `usage_limit_reached`)
+    ErrorCode(u16, &'static str),
 }
 
 #[derive(Default)]
@@ -125,6 +127,11 @@ async fn openai(State(f): State<Fixture>, headers: HeaderMap, body: String) -> R
         Some(Step::Error(code, msg)) => (
             StatusCode::from_u16(code).unwrap(),
             axum::Json(json!({ "error": { "message": msg } })),
+        )
+            .into_response(),
+        Some(Step::ErrorCode(status, code)) => (
+            StatusCode::from_u16(status).unwrap(),
+            axum::Json(json!({ "error": { "code": code, "message": "fixture provider error" } })),
         )
             .into_response(),
         Some(Step::Frames(frames, delay)) => {
