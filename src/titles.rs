@@ -4,6 +4,7 @@
 //!   생성된 제목은 완료 턴 `REFRESH_TURNS`번마다 다시 맞춘다. 되감기·압축·context 초기화 뒤에는 바로 다시 맞춘다.
 //! - 수동 생성은 사용자가 요청할 때만.
 //! - 실패·빈 응답·형식 오류면 기존 제목(첫 줄)을 유지한다(fallback). 생성 중 사용자가 제목을 바꿨으면 덮어쓰지 않는다.
+//!   모델이 제목 대신 대화를 이어 쓴 출력도 형식 오류다. 첫 줄을 잘라 제목으로 쓰지 않는다.
 
 use crate::App;
 use crate::auth::Principal;
@@ -22,11 +23,18 @@ const REFRESH_TURNS: i64 = 2;
 const SYSTEM: &str = "You name conversations. Reply with a short, specific title (at most 8 words) in the same language as the conversation. \
 Output only the title on one line, without quotes or trailing punctuation.";
 
+/// 제목으로 받아들이는 출력 한 줄의 최대 길이. 넘으면 제목이 아니라 답변 문장으로 본다.
+const MAX_RAW_CHARS: usize = 64;
+
 /// 모델 출력 → 제목. 쓸 수 없으면 None.
+/// 여러 줄, 긴 문장, 태그·JSON만 있는 줄은 제목이 아니라 대화를 이어 쓴 출력이므로 버린다.
 pub fn clean(raw: &str) -> Option<String> {
-    let line = raw.lines().map(str::trim).find(|l| !l.is_empty())?;
+    let mut lines = raw.lines().map(str::trim).filter(|l| !l.is_empty());
+    let line = lines.next()?;
+    if lines.next().is_some() || line.chars().count() > MAX_RAW_CHARS { return None; }
     let t = line.trim_matches(|c: char| matches!(c, '"' | '\'' | '`' | '“' | '”' | '「' | '」' | '*' | '#') || c.is_whitespace());
     let t = t.strip_prefix("Title:").or_else(|| t.strip_prefix("제목:")).unwrap_or(t).trim();
+    if (t.starts_with('<') && t.ends_with('>')) || (t.starts_with('{') && t.ends_with('}')) { return None; }
     let t: String = t.trim_end_matches(['.', '。']).chars().filter(|c| !c.is_control()).take(16).collect();
     (!t.trim().is_empty()).then(|| t.trim().to_string())
 }
@@ -78,10 +86,11 @@ async fn generate_inner(app: &App, session_id: &str, profile_id: Option<String>,
     let provider_ms = started.elapsed().as_millis().min(i64::MAX as u128) as i64;
     let (usage, outcome) = match out {
         Ok(Ok(o)) => {
-            let title = clean(&provider::scrub_provider_text(&rp, &o.text));
-            (Some(o.usage), match title {
+            let text = provider::scrub_provider_text(&rp, &o.text);
+            (Some(o.usage), match clean(&text) {
                 Some(title) => apply(app, session_id, title, rev, seq, auto, selection.clone(), def_rev).await,
-                None => Ok(json!({ "applied": false, "reason": "empty_output" })),
+                None if text.trim().is_empty() => Ok(json!({ "applied": false, "reason": "empty_output" })),
+                None => Ok(json!({ "applied": false, "reason": "invalid_output" })),
             })
         }
         Ok(Err(_)) => (None, Ok(json!({ "applied": false, "reason": "model_error" }))),
@@ -187,6 +196,17 @@ mod tests {
         assert_eq!(clean("**제목: 로그 회전**"), Some("로그 회전".into()));
         assert_eq!(clean("   \n  "), None);
         assert_eq!(clean("\"\""), None);
-        assert_eq!(clean(&"가".repeat(100)).unwrap().chars().count(), 16);
+        assert_eq!(clean(&"가".repeat(64)).unwrap().chars().count(), 16);
+    }
+
+    /// 제목 모델이 대화 속 요청을 직접 처리하려 들면 답변·도구 호출 표기가 나온다. 첫 줄을 잘라 제목으로 쓰지 않는다.
+    #[test]
+    fn rejects_output_that_continues_the_conversation() {
+        assert_eq!(clean("<invoke/>"), None);
+        assert_eq!(clean("`<invoke_tool>`"), None);
+        assert_eq!(clean("{\"title\":\"로그 회전\"}"), None);
+        assert_eq!(clean("이번 턴에서는 서버에 접속해서 설정을 확인할게.\n\n먼저 방화벽 규칙부터 볼게."), None);
+        assert_eq!(clean(&"가".repeat(65)), None);
+        assert_eq!(clean("<div> 정렬 수정"), Some("<div> 정렬 수정".into()));
     }
 }

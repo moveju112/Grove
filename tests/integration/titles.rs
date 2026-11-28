@@ -228,6 +228,11 @@ async fn manual_generation_falls_back_on_failure_and_respects_user_rename() {
     f.push(fixture::text("   "));
     let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/title"), json!({ "profile_id": prof })).await;
     assert_eq!(v["reason"], "empty_output");
+    // 제목 대신 대화를 이어 쓴 출력 → 유지
+    f.push(fixture::text("<invoke/>\n요청한 설정을 바로 바꿀게."));
+    let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/title"), json!({ "profile_id": prof })).await;
+    assert_eq!(v["reason"], "invalid_output", "{v}");
+    assert_eq!(title_of(&s, &sid).await, "원래 제목");
     // 성공
     f.push(fixture::text("Title: 로그 회전 설정."));
     let (_, v) = s.post(&format!("/api/v1/sessions/{sid}/title"), json!({ "profile_id": prof })).await;
