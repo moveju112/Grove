@@ -21,6 +21,7 @@ import { BotRooms } from "./BotRooms";
 import { useCapability } from "../state/capabilities";
 import { useAutosave } from "./settings/useAutosave";
 import { AutosaveStatus } from "./settings/AutosaveStatus";
+import { providerIcon } from "./usage/ProviderMark";
 
 type Bot = {
     id: string;
@@ -141,7 +142,7 @@ function Editor({ bot, live, onDone }: { bot: Bot | null; live: Bot | null; onDo
             <TextArea label="작업 지침" isLabelHidden placeholder="작업 지침" rows={2} value={f.instructions} onChange={(value) => setF({ ...f, instructions: value })} onBlur={bot ? state.blur : undefined} />
             <Select label="봇 모델" hideLabel value={f.profile_id} onChange={(value) => choose({ ...f, profile_id: value })}
                 options={[{ value: "", label: "모델 미설정(실행 불가)" }, ...(profiles.data ?? []).map((p) => ({
-                    value: p.id, label: `${p.name} · ${p.model}${p.enabled === false ? " · 비활성" : ""}`, disabled: p.enabled === false,
+                    value: p.id, icon: providerIcon(p.protocol), label: `${p.name} · ${p.model}${p.enabled === false ? " · 비활성" : ""}`, disabled: p.enabled === false,
                 }))]} />
             <Select label="봇 프로젝트" hideLabel value={projectId} disabled={!!bot?.home_session_id}
                 onChange={(value) => choose({ ...f, project_id: value })}

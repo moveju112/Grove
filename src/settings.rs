@@ -543,6 +543,22 @@ pub fn registry() -> Vec<SettingDef> {
             min: None, max: None, default: json!(""), scopes: &["server"], applies: "next_turn", advanced: false,
         });
     }
+    for &(source, key) in crate::usage_fallback::KEYS {
+        let label = match source {
+            "session.title_profile" => "제목 생성 한도 소진 시 모델",
+            "context.summary_profile" => "압축 요약 한도 소진 시 모델",
+            "memory.profile" => "메모리 정리 한도 소진 시 모델",
+            "agents.profile.context-explorer" => "Context Explorer 한도 소진 시 모델",
+            "agents.profile.failure-analyst" => "Failure Analyst 한도 소진 시 모델",
+            _ => "Handoff Summarizer 한도 소진 시 모델",
+        };
+        defs.push(SettingDef {
+            key, menu: "workflow", label,
+            description: "이 작업 모델의 Claude·Codex 계정 한도를 다 쓰면 이 모델로 실행해요. 비우면 전환하지 않아요. 한도는 최대 5분 늦게 반영될 수 있어요.",
+            keywords: "fallback usage limit quota 한도 소진 사용량 대체 전환 모델", kind: "model", options: &[],
+            min: None, max: None, default: json!(""), scopes: &["server"], applies: "immediate", advanced: false,
+        });
+    }
     defs
 }
 

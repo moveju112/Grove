@@ -23,6 +23,11 @@
   - why: 일반 코딩·SSH·Release 작업은 반복 승인 없이 허용하면서, 서버 내부 설정이나 별도 승인 기능까지 포괄 허용으로 오인하지 않는다. 셸 자체는 프로젝트 밖·네트워크 접근이나 위험 명령을 차단하는 sandbox가 아니다.
   - ✅ 폐지한 `read_only` 값은 migration으로 상속 상태로 되돌린다. 나머지 저장 설정은 유지한다. 승인·제한 회귀 시험은 제한을 명시해 해당 정책을 검사한다. `evidence: src/settings.rs`, `evidence: src/approvals.rs`, `evidence: src/tools/shell.rs`, `evidence: src/tasks.rs`.
 
+- **MUST** 채팅 첨부·시안처럼 작업이 남기는 산출물은 ignore된 `results/`에만 둔다. 재현용 스크립트·덤프 같은 임시 파일은 저장소 밖 고유 임시 디렉터리에 만들고 작업을 끝낼 때 정리한다. 소스 디렉터리 안에 임시 폴더를 만들지 않는다.
+  - why: 공개 저장소이고 릴리즈·반영은 untracked 파일까지 모두 커밋하므로, 남은 임시 파일이 그대로 게시될 수 있다. 첨부는 Grove가 별도 저장소에 복사하므로 프로젝트 안의 원본은 남길 필요가 없다.
+  - ✅ `results/<작업>-XXXXXX/preview.png`, `mktemp -d`. `evidence: .gitignore`, `evidence: src/attachments.rs`.
+  - ❌ `web/app/.repro-tmp/`에 다른 프로젝트의 대화 기록 덤프가 남아 릴리즈 커밋 대상에 올랐다.
+
 ## 웹 UI 지속 작업
 
 - **MUST** 오래 표시되는 상태는 정적 배경·테두리·아이콘을 기본으로 한다. 반복 모션이 필요하면 `transform`·`opacity`처럼 합성 단계에서 처리할 수 있는 속성을 우선하고, 프레임마다 React 상태 갱신·레이아웃·페인트가 발생하는 방식은 피한다. 무한 SVG `stroke-dashoffset`이나 크기·위치 애니메이션을 목록 행마다 두지 않는다. `will-change`도 모든 항목에 상시 적용하지 않는다.

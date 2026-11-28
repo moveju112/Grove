@@ -37,6 +37,9 @@ for (const mobile of [false, true]) {
                 const claudeModels = page.getByTestId(`model-profile-models-${claude.id}`);
                 const codexModels = page.getByTestId(`model-profile-models-${codex.id}`);
                 await expect(codexCategory).not.toHaveAttribute("aria-checked");
+                // 공급자 이름 앞에 Claude·Codex 기호를 붙여 구분한다.
+                await expect(claudeCategory.locator('[data-provider-mark="claude_code"]')).toBeVisible();
+                await expect(codexCategory.locator('[data-provider-mark="codex_cli"]')).toBeVisible();
                 await claudeCategory.click();
                 await expect(claudeModels).toBeVisible();
                 if (mobile) await claudeModels.getByRole("menuitem", { name: /Back|뒤로/ }).click();
@@ -72,6 +75,7 @@ for (const mobile of [false, true]) {
                 const chosenCodex = JSON.stringify([codex.id, "fixture-light"]);
                 await expect(picker).toHaveAttribute("data-selected-value", chosenCodex);
                 await expect(summary).toHaveText("Fixture Light");
+                await expect(view.getByRole("button", { name: "모델 설정" }).locator('[data-provider-mark="codex_cli"]').first()).toBeVisible();
 
                 await picker.click();
                 await claudeCategory.click();

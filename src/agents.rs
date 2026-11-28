@@ -248,11 +248,16 @@ pub(crate) fn is_helper_session(c: &Connection, session_id: &str) -> ApiResult<b
     Ok(role.is_some_and(|id| crate::definitions::execution("agent", &id)=="helper"))
 }
 
-fn role_profile(c: &Connection, session: &crate::sessions::Session, role: &str, fallback: &str) -> ApiResult<crate::models::ModelSelection> {
-    let chosen = crate::definitions::profile_key(role)
-        .map(|key| crate::settings::effective(c, key, Some(&session.project_id), Some(&session.id))).transpose()?;
+fn role_profile(c: &Connection, session: &crate::sessions::Session, role: &str, fallback: &str,
+    exhausted: &crate::usage_fallback::Exhausted) -> ApiResult<crate::models::ModelSelection> {
+    let key = crate::definitions::profile_key(role);
+    let chosen = key.map(|key| crate::settings::effective(c, key, Some(&session.project_id), Some(&session.id))).transpose()?;
     let selection = chosen.as_ref().map(crate::models::ModelSelection::parse).transpose()?.flatten()
         .unwrap_or_else(|| crate::models::ModelSelection::from_profile(fallback.into()));
+    let selection = match key {
+        Some(key) => crate::usage_fallback::apply(c, key, selection, exhausted)?,
+        None => selection,
+    };
     crate::models::get_enabled_profile(c, &selection.profile_id)?;
     Ok(selection)
 }
@@ -271,7 +276,8 @@ fn check_running_limits(tx: &Connection, parent_session_id: &str) -> ApiResult<(
 
 /// spawn: 자식 세션·run·첫 턴을 한 transaction에서 만든다.
 #[allow(clippy::too_many_arguments)]
-fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str, parent_turn_id: &str, parent_call_id: &str, agent_id: &str, brief: &str) -> ApiResult<AgentRun> {
+fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str, parent_turn_id: &str, parent_call_id: &str, agent_id: &str, brief: &str,
+    exhausted: &crate::usage_fallback::Exhausted) -> ApiResult<AgentRun> {
     let parent = crate::sessions::get_active(tx, parent_session_id)?;
     // 승인 후 실행 claim과 이 transaction 사이의 철회도 새 자식 생성 전에 재검사한다.
     crate::approvals::check_running_execution(tx, parent_call_id)?;
@@ -285,7 +291,7 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
         return Err(ApiError::conflict("disabled", format!("비활성화된 에이전트입니다: {agent_id}")));
     }
     let pt = crate::runner::get_turn(tx, parent_turn_id)?;
-    let selection = role_profile(tx, &parent, agent_id, pt.profile_id.as_deref().ok_or_else(|| ApiError::invalid("부모 턴에 모델 프로필이 없습니다"))?)?;
+    let selection = role_profile(tx, &parent, agent_id, pt.profile_id.as_deref().ok_or_else(|| ApiError::invalid("부모 턴에 모델 프로필이 없습니다"))?, exhausted)?;
     let profile = &selection.profile_id;
     let child_id = crate::util::new_id();
     let first = brief.lines().next().unwrap_or("").chars().take(50).collect::<String>();
@@ -318,7 +324,8 @@ fn spawn_in_tx(tx: &Connection, now: &str, epoch: &str, parent_session_id: &str,
 }
 
 /// send: 끝난 run에 후속 지시. 실행 중이면 거부(이중 실행 금지).
-fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str, parent_turn_id: Option<&str>, parent_call_id: &str) -> ApiResult<AgentRun> {
+fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str, parent_turn_id: Option<&str>, parent_call_id: &str,
+    exhausted: &crate::usage_fallback::Exhausted) -> ApiResult<AgentRun> {
     let run = get(tx, run_id)?;
     crate::approvals::check_running_execution(tx, parent_call_id)?;
     if run.status == "running" {
@@ -328,7 +335,7 @@ fn send_in_tx(tx: &Connection, now: &str, epoch: &str, run_id: &str, brief: &str
     let parent = crate::sessions::get_active(tx, &run.parent_session_id)?;
     let parent_turn = parent_turn_id.map(|id| crate::runner::get_turn(tx,id)).transpose()?;
     let fallback = parent_turn.as_ref().and_then(|t| t.profile_id.clone()).unwrap_or_else(||run.profile_id.clone());
-    let selection = role_profile(tx, &parent, &run.agent_id, &fallback)?;
+    let selection = role_profile(tx, &parent, &run.agent_id, &fallback, exhausted)?;
     let profile = &selection.profile_id;
     let limits = parent_turn.as_ref().map(|t| &t.definition["limits"]).filter(|v| v.is_object());
     let src = json!({ "kind": "agent_run", "run_id": run.id, "parent_session_id": run.parent_session_id, "parent_turn_id": parent_turn_id,
@@ -424,6 +431,14 @@ pub async fn cascade_cancel(app: &App, parent_turn_id: &str) {
     }
 }
 
+/// 대체 모델을 둔 보조 역할만 계정 한도를 조회한다.
+async fn observe_role(app: &App, role: &str) -> crate::usage_fallback::Exhausted {
+    match crate::definitions::profile_key(role).and_then(crate::usage_fallback::fallback_key) {
+        Some(key) => crate::usage_fallback::observe(app, key).await,
+        None => Default::default(),
+    }
+}
+
 /// agent 도구 실행(approvals::spawn_execute에서 호출).
 pub async fn execute_tool(app: &App, call: &crate::approvals::ToolCallRow, mut cancel: watch::Receiver<bool>) -> Result<Value, ToolError> {
     let t = &call.target;
@@ -440,12 +455,13 @@ pub async fn execute_tool(app: &App, call: &crate::approvals::ToolCallRow, mut c
             let parent_turn = call.turn_id.clone().ok_or_else(|| ToolError::new("invalid_context", "자식 에이전트는 모델 턴 안에서만 만들 수 있습니다"))?;
             let (sid, cid, aid, brief, epoch) =
                 (call.session_id.clone(), call.id.clone(), t["agent_id"].as_str().unwrap_or("").to_string(), t["brief"].as_str().unwrap_or("").to_string(), app.epoch.clone());
+            let exhausted = observe_role(app, &aid).await;
             let now = app.now();
             let run = app
                 .db
                 .call(move |c| {
                     let tx = c.transaction()?;
-                    let r = spawn_in_tx(&tx, &now, &epoch, &sid, &parent_turn, &cid, &aid, &brief)?;
+                    let r = spawn_in_tx(&tx, &now, &epoch, &sid, &parent_turn, &cid, &aid, &brief, &exhausted)?;
                     tx.commit()?;
                     Ok(r)
                 })
@@ -460,11 +476,12 @@ pub async fn execute_tool(app: &App, call: &crate::approvals::ToolCallRow, mut c
             owned(&run)?;
             let (rid, brief, epoch, now) = (run.id.clone(), t["brief"].as_str().unwrap_or("").to_string(), app.epoch.clone(), app.now());
             let (parent_turn, parent_call) = (call.turn_id.clone(), call.id.clone());
+            let exhausted = observe_role(app, &run.agent_id).await;
             let run = app
                 .db
                 .call(move |c| {
                     let tx = c.transaction()?;
-                    let r = send_in_tx(&tx, &now, &epoch, &rid, &brief, parent_turn.as_deref(), &parent_call)?;
+                    let r = send_in_tx(&tx, &now, &epoch, &rid, &brief, parent_turn.as_deref(), &parent_call, &exhausted)?;
                     tx.commit()?;
                     Ok(r)
                 })

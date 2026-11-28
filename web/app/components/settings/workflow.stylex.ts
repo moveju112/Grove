@@ -23,6 +23,7 @@ export const workflowStyles = stylex.create({
         },
     },
     field: { minWidth: 0 },
+    fallback: { minWidth: 0, paddingTop: 8, borderTopWidth: 1, borderTopStyle: "solid", borderTopColor: "var(--line)" },
     // 넓은 화면은 다른 열처럼 제목 아래에, 좁은 화면은 한 줄에 둔다.
     fast: {
         display: "flex",

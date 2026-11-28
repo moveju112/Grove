@@ -128,14 +128,16 @@ async fn role_models_are_server_wide_and_ignore_legacy_project_and_session_overr
 async fn profile_settings_require_an_existing_enabled_target_and_allow_inheritance() {
     let s = TestServer::start().await;
     let profile = s.fixture_profile("http://127.0.0.1:9/v1").await;
-    for key in ["model.default_profile", "context.summary_profile", "session.title_profile", "memory.profile", "agents.profile.worker"] {
+    for key in ["model.default_profile", "context.summary_profile", "session.title_profile", "memory.profile", "agents.profile.worker",
+        "session.title_fallback", "context.summary_fallback", "memory.fallback", "agents.fallback.context-explorer"] {
         let (status, value) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
             json!({ "expected_revision": 0, "value": profile })).await;
         assert_eq!(status, StatusCode::OK, "{value}");
     }
     assert_eq!(s.send(Method::PUT, &format!("/api/v1/model-profiles/{profile}"),
         json!({ "expected_revision": 1, "enabled": false })).await.0, StatusCode::OK);
-    for key in ["model.default_profile", "context.summary_profile", "session.title_profile", "memory.profile", "agents.profile.worker"] {
+    for key in ["model.default_profile", "context.summary_profile", "session.title_profile", "memory.profile", "agents.profile.worker",
+        "session.title_fallback", "context.summary_fallback", "memory.fallback", "agents.fallback.context-explorer"] {
         for (target, expected) in [("missing-profile", StatusCode::NOT_FOUND), (profile.as_str(), StatusCode::CONFLICT)] {
             let (status, value) = s.send(Method::PUT, &format!("/api/v1/settings/server/-/{key}"),
                 json!({ "expected_revision": 1, "value": target })).await;

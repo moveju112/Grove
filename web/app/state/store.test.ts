@@ -384,3 +384,91 @@ describe("중복 viewer의 조회 구독(PANE-007)", () => {
         kept();
     });
 });
+
+describe("이벤트 payload로 대화 cache를 갱신", () => {
+    const at = "2026-01-01T00:00:00Z";
+    const message = (seq: number, role = "assistant", content: unknown = { text: `m${seq}` }) =>
+        ({ id: `m${seq}`, session_id: "s", seq, role, content, turn_id: null, created_at: at });
+    const page = (seqs: number[], more = false) =>
+        ({ items: seqs.map((seq) => message(seq)), has_more_before: false, has_more_after: more, timeline_revision: 1, rewind_boundary_seq: null });
+    const created = (payload: unknown, seq = 1) => applyEvent({ kind: "message.created", session_id: "s", project_id: "p", payload, seq, created_at: at });
+    const call = (id: string, revision: number, status = "running", created = at) =>
+        ({ id, session_id: "s", revision, status, created_at: created, args: { text: "x".repeat(8) } });
+    const updated = (payload: unknown) => applyEvent({ kind: "tool_call.updated", session_id: "s", project_id: "p", payload, seq: 1, created_at: at });
+    const seqs = () => (querySnapshot<{ items: { seq: number }[] }>("messages:s").data?.items ?? []).map((item) => item.seq);
+
+    it("새 메시지는 최신 창을 다시 받지 않고 끝에 붙이며, 대화 보기에서 숨는 메시지는 건드리지 않는다", async () => {
+        const fetcher = vi.fn(async () => page([1, 2]));
+        const off = subscribeQuery("messages:s", fetcher, () => undefined);
+        try {
+            await settle();
+            created(message(3, "tool"));
+            created(message(4, "note", { type: "cli_activity" }));
+            created(message(5));
+            created(message(5));
+            await settle();
+            expect(fetcher).toHaveBeenCalledTimes(1);
+            expect(seqs()).toEqual([1, 2, 5]);
+        } finally { off(); clearServerCache(); }
+    });
+
+    it.each([
+        ["경계를 바꿀 수 있는 note", () => message(3, "note", { type: "compaction" }), page([1, 2])],
+        ["형태를 알 수 없는 payload", () => ({}), page([1, 2])],
+        ["다른 대화의 메시지", () => ({ ...message(3), session_id: "other" }), page([1, 2])],
+        ["최신 창이 아닌 페이지", () => message(3), page([1, 2], true)],
+        ["순서가 어긋난 메시지", () => ({ ...message(2), id: "unknown" }), page([1, 2])],
+    ])("%s는 기존처럼 다시 읽는다", async (_name, payload, initial) => {
+        const fetcher = vi.fn(async () => initial);
+        const off = subscribeQuery("messages:s", fetcher, () => undefined);
+        try {
+            await settle();
+            created(payload());
+            await settle();
+            expect(fetcher).toHaveBeenCalledTimes(2);
+        } finally { off(); clearServerCache(); }
+    });
+
+    it("조회 중에 온 메시지는 그 조회 결과로 덮이지 않고 한 번 더 확인한다", async () => {
+        let finish!: (value: unknown) => void;
+        const fetcher = vi.fn(() => new Promise<unknown>((resolve) => { finish = resolve; }));
+        const off = subscribeQuery("messages:s", fetcher, () => undefined);
+        try {
+            // 첫 조회 전에는 붙일 창이 없으므로 진행 중인 조회에 재확인을 기록한다.
+            created(message(3));
+            finish(page([1, 2]));
+            await settle();
+            expect(fetcher).toHaveBeenCalledTimes(2);
+            finish(page([1, 2, 3]));
+            await settle();
+            invalidate("messages:s");
+            created(message(4));
+            expect(seqs()).toEqual([1, 2, 3, 4]);
+            finish(page([1, 2, 3]));
+            await settle();
+            expect(seqs()).toEqual([1, 2, 3, 4]);
+            expect(fetcher).toHaveBeenCalledTimes(4);
+            finish(page([1, 2, 3, 4]));
+            await settle();
+            expect(seqs()).toEqual([1, 2, 3, 4]);
+        } finally { off(); clearServerCache(); }
+    });
+
+    it("도구 호출 변경은 목록을 다시 받지 않고 그 한 건만 반영한다", async () => {
+        const fetcher = vi.fn(async () => [call("b", 1, "running", "2026-01-01T00:00:02Z"), call("a", 3, "succeeded", "2026-01-01T00:00:01Z")]);
+        const off = subscribeQuery("calls:s", fetcher, () => undefined);
+        try {
+            await settle();
+            updated(call("b", 2, "succeeded", "2026-01-01T00:00:02Z"));
+            updated(call("a", 2, "running", "2026-01-01T00:00:01Z"));
+            updated(call("c", 1, "pending_approval", "2026-01-01T00:00:03Z"));
+            await settle();
+            expect(fetcher).toHaveBeenCalledTimes(1);
+            expect(querySnapshot<{ id: string; status: string }[]>("calls:s").data?.map((row) => [row.id, row.status]))
+                .toEqual([["c", "pending_approval"], ["b", "succeeded"], ["a", "succeeded"]]);
+            updated({ id: "d" });
+            await settle();
+            expect(fetcher).toHaveBeenCalledTimes(2);
+        } finally { off(); clearServerCache(); }
+    });
+});

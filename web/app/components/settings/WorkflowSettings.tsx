@@ -20,18 +20,20 @@ import { APPLIES, SCOPE_LABEL } from "./constants";
 import { useAutosave } from "./useAutosave";
 import { workflowStyles as styles } from "./workflow.stylex";
 
-type Feature = { id: string; label: string; icon: IconName; model: string; flag?: string };
+/// fallback: 이 작업 모델의 Claude·Codex 계정 한도를 다 썼을 때 쓸 모델. 지원하지 않는 서버는 항목이 없다.
+type Feature = { id: string; label: string; icon: IconName; model: string; fallback: string; flag?: string };
 const FEATURES: Feature[] = [
-    { id: "title-generator", label: "대화 제목 자동 생성", icon: "panel", model: "session.title_profile", flag: "session.auto_title" },
-    { id: "context-compressor", label: "컨텍스트 압축", icon: "changes", model: "context.summary_profile" },
-    { id: "context-explorer", label: "컨텍스트 탐색", icon: "search", model: "agents.profile.context-explorer" },
-    { id: "failure-analyst", label: "실패 분석", icon: "file", model: "agents.profile.failure-analyst" },
-    { id: "handoff-summarizer", label: "인계 요약", icon: "file", model: "agents.profile.handoff-summarizer" },
-    { id: "maintainer", label: "Maintainer", icon: "server", model: "memory.profile", flag: "memory.enabled" },
+    { id: "title-generator", label: "대화 제목 자동 생성", icon: "panel", model: "session.title_profile", fallback: "session.title_fallback", flag: "session.auto_title" },
+    { id: "context-compressor", label: "컨텍스트 압축", icon: "changes", model: "context.summary_profile", fallback: "context.summary_fallback" },
+    { id: "context-explorer", label: "컨텍스트 탐색", icon: "search", model: "agents.profile.context-explorer", fallback: "agents.fallback.context-explorer" },
+    { id: "failure-analyst", label: "실패 분석", icon: "file", model: "agents.profile.failure-analyst", fallback: "agents.fallback.failure-analyst" },
+    { id: "handoff-summarizer", label: "인계 요약", icon: "file", model: "agents.profile.handoff-summarizer", fallback: "agents.fallback.handoff-summarizer" },
+    { id: "maintainer", label: "Maintainer", icon: "server", model: "memory.profile", fallback: "memory.fallback", flag: "memory.enabled" },
 ];
+const featureKeys = ({ model, fallback, flag }: Feature) => [model, fallback, flag].filter(Boolean) as string[];
 
 export function isWorkflowSetting(key: string) {
-    return FEATURES.some(({ model, flag }) => key === model || key === flag);
+    return FEATURES.some((feature) => featureKeys(feature).includes(key));
 }
 
 export function WorkflowSettings({ defs, target, linkedKey, matchedKeys, search, onLinkReady, renderRoleName, definitions }: {
@@ -44,9 +46,9 @@ export function WorkflowSettings({ defs, target, linkedKey, matchedKeys, search,
     const server = useEffectiveSettings({});
     // 자동 제목과 메모리 정리만 프로젝트 override를 지원한다. 모델은 항상 서버 전체다.
     const project = useEffectiveSettings({ projectId: target.projectId });
-    const linked = FEATURES.find(({ model, flag }) => linkedKey && (linkedKey === model || linkedKey === flag));
-    const match = search ? FEATURES.find(({ label, model, flag }) => matchedKeys.includes(model)
-        || (flag && matchedKeys.includes(flag)) || label.toLowerCase().includes(search)) : undefined;
+    const linked = FEATURES.find((feature) => linkedKey && featureKeys(feature).includes(linkedKey));
+    const match = search ? FEATURES.find((feature) => featureKeys(feature).some((key) => matchedKeys.includes(key))
+        || feature.label.toLowerCase().includes(search)) : undefined;
     useLayoutEffect(() => {
         if (linked || match) setTab("workflow");
     }, [linked, match]);
@@ -61,7 +63,10 @@ export function WorkflowSettings({ defs, target, linkedKey, matchedKeys, search,
         const projectFlag = project.data?.items.find((d) => d.key === feature.flag);
         const serverFlag = server.data?.items.find((d) => d.key === feature.flag);
         if (!role || !model || !item || (feature.flag && (!flag || !projectFlag || !serverFlag))) return [];
-        return [{ feature, role, model, item, scoped: flag && projectFlag && serverFlag ? { d: flag, projectFlag, serverFlag } : undefined }];
+        const fallbackDef = defs.find((d) => d.key === feature.fallback);
+        const fallbackItem = server.data?.items.find((d) => d.key === feature.fallback);
+        return [{ feature, role, model, item, scoped: flag && projectFlag && serverFlag ? { d: flag, projectFlag, serverFlag } : undefined,
+            fallback: fallbackDef && fallbackItem ? { d: fallbackDef, item: fallbackItem } : undefined }];
     });
     const missing = linked && !rows.some(({ feature }) => feature === linked);
     useLayoutEffect(() => {
@@ -80,8 +85,8 @@ export function WorkflowSettings({ defs, target, linkedKey, matchedKeys, search,
                     <Stack gap={1}>{renderRoleName(role)}<Text type="supporting" color="secondary">{role.description}</Text></Stack>
                 </Card>;
             }) : <>
-                {rows.map(({ feature, role, model, item, scoped }) => <WorkflowRow key={feature.id} feature={feature} role={role}
-                    model={model} item={item} scoped={scoped} target={target}
+                {rows.map(({ feature, role, model, item, scoped, fallback }) => <WorkflowRow key={feature.id} feature={feature} role={role}
+                    model={model} item={item} scoped={scoped} fallback={fallback} target={target}
                     linkedKey={linkedKey} onLinkReady={onLinkReady}
                     reloadServer={server.reload} reloadProject={project.reload} />)}
                 {!search && definitions}
@@ -95,6 +100,7 @@ function isPending(phase: string) { return phase === "saving" || phase === "unce
 type WorkflowRowProps = {
     feature: Feature; role: Definition; model: SettingDef; item: SettingItem; target: SettingsTarget;
     scoped?: { d: SettingDef; projectFlag: SettingItem; serverFlag: SettingItem };
+    fallback?: { d: SettingDef; item: SettingItem };
     linkedKey?: string; onLinkReady: SettingLinkReady;
     reloadServer: () => void; reloadProject: () => void;
 };
@@ -144,7 +150,7 @@ function ScopedWorkflowRow({ scoped, enabled, saveEnabled, ...props }: WorkflowR
         </Stack>} />;
 }
 
-function WorkflowRowView({ feature, model, item, linkedKey, onLinkReady, reloadServer,
+function WorkflowRowView({ feature, model, item, fallback, linkedKey, onLinkReady, reloadServer,
     on, toggle, locked, targetLabel, extra, statuses }: WorkflowRowProps & {
     on: boolean; toggle: (value: boolean) => void; locked: boolean;
     targetLabel?: string; extra?: ReactNode; statuses: ReactNode;
@@ -179,6 +185,7 @@ function WorkflowRowView({ feature, model, item, linkedKey, onLinkReady, reloadS
                 edit={chooseModel} onEffortChange={saveSelection} workflow />
             {model.key === "session.title_profile" && !selection.value &&
                 <Text type="supporting" color="secondary">모델을 선택하기 전에는 기존 제목이 유지돼요.</Text>}
+            {fallback && <FallbackChoice {...fallback} linkedKey={linkedKey} onLinkReady={onLinkReady} reload={reloadServer} />}
             {extra}
         </Stack>
         <Stack gap={1} xstyle={styles.statuses}>
@@ -186,4 +193,26 @@ function WorkflowRowView({ feature, model, item, linkedKey, onLinkReady, reloadS
             {statuses}
         </Stack>
     </Card>;
+}
+
+/// 이 작업 모델의 Claude·Codex 계정 한도를 다 썼을 때 쓸 모델. 비우면 전환하지 않는다.
+function FallbackChoice({ d, item, linkedKey, onLinkReady, reload }: {
+    d: SettingDef; item: SettingItem; linkedKey?: string; onLinkReady: SettingLinkReady; reload: () => void;
+}) {
+    const row = useRef<HTMLDivElement>(null);
+    const reason = useServerBlockReason();
+    const state = useSettingAutosave({ d, it: item, t: {}, scope: "server", reload });
+    const choose = (value: unknown) => {
+        if (profileChoiceValue(value) === profileChoiceValue(state.value)) return;
+        state.change(value);
+        state.commit();
+    };
+    useLayoutEffect(() => {
+        if (linkedKey === d.key) onLinkReady(linkedKey, row.current);
+    }, [linkedKey, d.key, onLinkReady]);
+    return <Stack ref={row} gap={1} xstyle={styles.fallback} data-setting-key={d.key} data-testid={`setting-${d.key}`} data-settings-target="서버 전체">
+        <ProfileChoice d={d} value={state.value} caption="한도 소진 시" workflow edit={choose}
+            disabled={!!reason || isPending(state.phase) || state.phase === "conflict"} />
+        <AutosaveStatus state={state} applies={APPLIES[d.applies]} />
+    </Stack>;
 }

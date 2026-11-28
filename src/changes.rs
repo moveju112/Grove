@@ -739,6 +739,32 @@ mod tests {
             [(".gitignore", true, true), ("deleted.txt", true, false), ("new.txt", false, true)]);
     }
 
+    // TEMP-BENCH(삭제 예정)
+    #[test]
+    fn temp_bench_capture() {
+        let Ok(roots) = std::env::var("GROVE_BENCH_ROOTS") else { return };
+        let data = std::path::PathBuf::from(std::env::var("GROVE_BENCH_DATA").unwrap());
+        let mut out = String::new();
+        for root in roots.split(':') {
+            let root = std::path::Path::new(root);
+            for baseline in [true, true, false] {
+                let started = std::time::Instant::now();
+                let result = WorkspaceSnapshot::capture(root, &data, baseline);
+                let ms = started.elapsed().as_millis();
+                let summary = match &result {
+                    Ok(s) => format!("ok files={} bytes={} inventory={:?}", s.files.len(),
+                        s.files.values().map(|f| f.bytes.as_ref().map_or(0, |b| b.len())).sum::<usize>(), s.inventory.as_ref().map(|i| i.len())),
+                    Err(e) => format!("err {e}"),
+                };
+                out.push_str(&format!("{} baseline={baseline} {ms}ms {summary}\n", root.display()));
+            }
+        }
+        let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
+        out.push_str(status.lines().find(|l| l.starts_with("VmHWM")).unwrap_or("VmHWM ?"));
+        out.push('\n');
+        std::fs::write(std::env::var("GROVE_BENCH_OUT").unwrap(), out).unwrap();
+    }
+
     #[test]
     fn blob_reads_and_writes_reject_oversize_and_invalid_keys() {
         let data = tempfile::tempdir().unwrap();

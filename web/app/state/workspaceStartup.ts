@@ -1,6 +1,6 @@
 import { api, authGeneration, isLoggedIn } from "../api/client";
 import type { Message, MessagePage, Project, Session, ToolCallRow, Turn } from "../api/generated";
-import { conversationPagePath } from "./conversationPages";
+import { CONVERSATION_CALLS, conversationPagePath } from "./conversationPages";
 import { layoutKey, loadPrefs } from "./device";
 import { focusedLeaf } from "./layout";
 import { readStoredLayout, type RemoteLayout } from "./layoutPersistence";
@@ -34,7 +34,7 @@ export const readConversation = {
     messages: (id: string, signal?: AbortSignal) => api.get<MessagePage>(conversationPagePath(id), { signal }),
     turns: (id: string, signal?: AbortSignal) => api.get<Turn[]>(`/sessions/${id}/turns?limit=5`, { signal }),
     session: (id: string, signal?: AbortSignal) => api.get<Session>(`/sessions/${id}`, { signal }),
-    calls: (id: string, signal?: AbortSignal) => api.get<ToolCallRow[]>(`/tool-calls?session_id=${id}&limit=200`, { signal }),
+    calls: (id: string, signal?: AbortSignal) => api.get<ToolCallRow[]>(`/tool-calls?session_id=${id}&limit=${CONVERSATION_CALLS}`, { signal }),
 };
 
 /// 대화 화면이 쓰는 조회를 기존 query cache로 먼저 시작한다. 배치 복원을 기다리지 않고 본문을 병행해 받는다.

@@ -7,6 +7,7 @@ import { BooleanSelect } from "./BooleanSelect";
 import { HelpTip, SentenceText } from "./HelpTip";
 import { useProfileDraft } from "./settings/useProfileDraft";
 import { AutosaveStatus } from "./settings/AutosaveStatus";
+import { providerIcon } from "./usage/ProviderMark";
 
 type Candidate = { profile_id: string; revision: number };
 type FallbackOptions = { enabled: boolean; destination_change_confirmed: boolean; candidates: Candidate[] };
@@ -68,7 +69,7 @@ function FallbackEditor({ profile, profiles }: { profile: ModelProfile; profiles
                         onChange={(next) => change(editing.ids.map((value, i) => i === index ? next : value))}
                         options={[...(!target ? [{ value: id, label: "사용할 수 없는 프로필" }] : []),
                             ...editing.profiles.filter((p) => p.id !== profile.id && p.enabled && http(p))
-                                .map((p) => ({ value: p.id, label: `${p.name} · ${p.protocol} · ${p.model}` }))]} />
+                                .map((p) => ({ value: p.id, icon: providerIcon(p.protocol), label: `${p.name} · ${p.protocol} · ${p.model}` }))]} />
                     {target && <GroveText as="p" display="block" type="supporting" color="secondary">전송 대상: {target.protocol} · {target.base_url} · {target.model}<br />가격표: {JSON.stringify((target.options as Record<string, unknown>).pricing ?? "미설정(비용 알 수 없음)")}</GroveText>}
                     <GroveButton type="button" disabled={busy} onClick={() => change(editing.ids.filter((_, i) => i !== index))}>후보 {index + 1} 제거</GroveButton>
                 </GroveStack>;

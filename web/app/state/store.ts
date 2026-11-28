@@ -2,7 +2,8 @@
 // 소유자: 서버 상태 = 이 cache(서버가 원천), 기기별 UI 상태 = layout(localStorage), 영속 서버 상태는 API로만 변경.
 
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { EventRecord, RecentPage } from "../api/generated";
+import type { EventRecord, Message, MessagePage, RecentPage, ToolCallRow } from "../api/generated";
+import { conversationVisibility, mergeToolCall, RANGE_WINDOW } from "./conversationPages";
 import { refreshFiles } from "./fileWatch";
 import { deliveryTiming } from "./deliveryTiming";
 import { isTransportError } from "../api/client";
@@ -230,6 +231,34 @@ export function querySnapshot<T>(key: string | null): { data: T | undefined; err
     return { data: e?.data as T | undefined, error: e?.error, loading: e?.loading ?? false };
 }
 
+// 메시지·도구 호출 이벤트의 payload는 서버가 저장한 행 그대로다. 목록을 통째로 다시 받지 않고 그 한 건만 cache에 반영한다.
+// 반영할 수 없으면 false를 돌려 기존처럼 다시 읽게 한다.
+
+/// 최신 창 끝에 새 메시지를 붙인다. 창을 읽기 전이거나 경계가 바뀔 수 있는 note, 창 상한은 다시 읽는다.
+function appendCreatedMessage(sessionId: string, payload: unknown): boolean {
+    const key = `messages:${sessionId}`;
+    const page = entries.get(key)?.data as Partial<MessagePage> | undefined;
+    const message = payload as Partial<Message> | null;
+    if (!page || !Array.isArray(page.items) || page.has_more_after !== false) return false;
+    if (!message || typeof message.id !== "string" || typeof message.seq !== "number" || message.session_id !== sessionId) return false;
+    const visibility = conversationVisibility(message as Message);
+    if (visibility !== "shown") return visibility === "hidden";
+    // 전송 응답이나 그 뒤의 조회가 이미 담았으면 그대로 둔다. 순서가 어긋났으면 다시 읽는다.
+    if (message.seq <= (page.items.at(-1)?.seq ?? 0)) return page.items.some((item) => item.id === message.id);
+    if (page.items.length >= RANGE_WINDOW) return false;
+    patchData<MessagePage>(key, (current) => ({ ...current, items: [...current.items, message as Message] }));
+    return true;
+}
+
+function upsertToolCall(sessionId: string, payload: unknown): boolean {
+    const key = `calls:${sessionId}`;
+    const call = payload as Partial<ToolCallRow> | null;
+    if (!Array.isArray(entries.get(key)?.data) || !call || typeof call.id !== "string" || typeof call.revision !== "number"
+        || typeof call.created_at !== "string" || call.session_id !== sessionId) return false;
+    patchData<ToolCallRow[]>(key, (list) => mergeToolCall(list, call as ToolCallRow));
+    return true;
+}
+
 /// 이벤트 종류 → 무효화할 key 접두사.
 export function applyEvent(e: EventRecord) {
     // 같은 stream에서 먼저 받은 임시 응답을 반영한 뒤 확정 이벤트를 적용해 순서를 지킨다.
@@ -245,7 +274,7 @@ export function applyEvent(e: EventRecord) {
         case "message.created":
             invalidate("usage:dashboard");
             if (sid) {
-                invalidate(`messages:${sid}`);
+                if (!appendCreatedMessage(sid, e.payload)) invalidate(`messages:${sid}`);
                 invalidate(`context:${sid}`);
             }
             // 목록은 도착한 스냅샷을 표시하면서 겹친 활동을 후속 조회로 따라잡는다.
@@ -292,7 +321,7 @@ export function applyEvent(e: EventRecord) {
             break;
         case "tool_call.updated":
             if (sid) {
-                invalidate(`calls:${sid}`);
+                if (!upsertToolCall(sid, e.payload)) invalidate(`calls:${sid}`);
                 invalidate(`session:${sid}`);
             }
             invalidate("recent", true);

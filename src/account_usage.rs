@@ -43,7 +43,7 @@ impl Cache {
 
     pub async fn clear(&self, protocol: &str) { *self.entry(protocol).lock().await = None; }
 
-    async fn read(&self, protocol: &str, now: &str) -> AccountUsage {
+    pub(crate) async fn read(&self, protocol: &str, now: &str) -> AccountUsage {
         // 여러 기기의 동시 조회도 공급자 요청 한 번으로 합친다.
         let mut cache = self.entry(protocol).lock().await;
         if let Some((_, usage)) = cache.as_ref().filter(|(until, _)| *until > Instant::now()) {
@@ -75,12 +75,15 @@ impl Cache {
     }
 }
 
+/// 활성 프로필이 있는 CLI 계정. Codex OAuth는 Codex CLI 계정 한도를 공유한다.
+pub(crate) fn account_protocols(c: &rusqlite::Connection) -> ApiResult<Vec<String>> {
+    let mut statement = c.prepare("SELECT DISTINCT CASE WHEN protocol='codex_oauth' THEN 'codex_cli' ELSE protocol END AS account_protocol
+        FROM model_profiles WHERE enabled=1 AND deleted_at IS NULL AND protocol IN ('codex_cli','codex_oauth','claude_code') ORDER BY account_protocol")?;
+    Ok(statement.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)
+}
+
 pub async fn get(State(app): State<App>, _p: Principal) -> ApiResult<Response> {
-    let protocols = app.db.call(|c| {
-        let mut statement = c.prepare("SELECT DISTINCT CASE WHEN protocol='codex_oauth' THEN 'codex_cli' ELSE protocol END AS account_protocol
-            FROM model_profiles WHERE enabled=1 AND deleted_at IS NULL AND protocol IN ('codex_cli','codex_oauth','claude_code') ORDER BY account_protocol")?;
-        Ok(statement.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?)
-    }).await?;
+    let protocols = app.db.call(|c| account_protocols(c)).await?;
     let now = app.now();
     let accounts = futures_util::future::join_all(protocols.iter().map(|protocol| app.account_usage.read(protocol, &now))).await;
     Ok(([("cache-control", "no-store")], Json(AccountUsageReport { accounts })).into_response())

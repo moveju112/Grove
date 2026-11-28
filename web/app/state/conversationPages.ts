@@ -1,7 +1,7 @@
 // 대화의 과거 페이지 조회·병합·보관. 최신 창(messages:<id> query)은 store가 소유하고, 이 모듈은 그보다 앞의 구간만 다룬다.
 
 import { api, authGeneration } from "../api/client";
-import type { Message, MessagePage } from "../api/generated";
+import type { Message, MessagePage, ToolCallRow } from "../api/generated";
 
 /// 서버가 한 번에 돌려주는 최대 메시지 수(src/sessions.rs의 clamp와 같다).
 export const RANGE_WINDOW = 500;
@@ -10,10 +10,36 @@ export const RANGE_CONTEXT = 50;
 /// 구간 채우기의 동시 요청 수. 순차 대기는 없애되 연결 하나를 한꺼번에 막지 않는다.
 export const RANGE_CONCURRENCY = 4;
 export const CONVERSATION_PAGE_SIZE = 100;
+/// 대화 화면이 읽는 최근 도구 호출 수.
+export const CONVERSATION_CALLS = 200;
 
 export function conversationPagePath(sessionId: string, limit = CONVERSATION_PAGE_SIZE, cursor?: { before: number } | { after: number }) {
     const edge = !cursor ? "" : "before" in cursor ? `&before_seq=${cursor.before}` : `&after_seq=${cursor.after}`;
     return `/sessions/${sessionId}/messages?limit=${limit}${edge}&view=conversation`;
+}
+
+/// 대화 보기(view=conversation)에 들어가는 메시지인지. src/sessions.rs의 CONVERSATION_FILTER와 같은 판정이다.
+/// 그 밖의 note는 압축 경계처럼 페이지 정보까지 바꿀 수 있어 따로 판정하지 않는다.
+export function conversationVisibility(message: Pick<Message, "role" | "content">): "shown" | "hidden" | "unknown" {
+    if (message.role === "tool") return "hidden";
+    if (message.role === "user" || message.role === "assistant") return "shown";
+    const type = (message.content as { type?: unknown } | null)?.type;
+    return message.role === "note" && (type === "cli_activity" || type === "task_result") ? "hidden" : "unknown";
+}
+
+/// 서버 목록 순서(created_at DESC, id DESC)와 상한을 지키며 도구 호출 한 건을 반영한다. 이미 더 새 revision이 있으면 그대로 둔다.
+export function mergeToolCall(list: ToolCallRow[], call: ToolCallRow): ToolCallRow[] {
+    const at = list.findIndex((row) => row.id === call.id);
+    if (at >= 0) {
+        if (list[at]!.revision > call.revision) return list;
+        const next = list.slice();
+        next[at] = call;
+        return next;
+    }
+    const older = list.findIndex((row) => row.created_at < call.created_at || (row.created_at === call.created_at && row.id < call.id));
+    const position = older < 0 ? list.length : older;
+    if (position >= CONVERSATION_CALLS) return list;
+    return [...list.slice(0, position), call, ...list.slice(position)].slice(0, CONVERSATION_CALLS);
 }
 
 type Get = (path: string) => Promise<MessagePage>;

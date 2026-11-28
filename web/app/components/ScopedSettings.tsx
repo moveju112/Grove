@@ -23,6 +23,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { TextInput, DraftInput } from "../design/Fields";
 import { Select } from "../design/Select";
 import { workflowStyles } from "./settings/workflow.stylex";
+import { providerIcon } from "./usage/ProviderMark";
 
 export type SettingDef = {
     key: string;
@@ -51,7 +52,11 @@ const ENUM_LABEL: Record<string, Record<string, string>> = {
 };
 const PROFILE_KEYS = new Set(["model.default_profile", "context.summary_profile", "session.title_profile", "memory.profile"]);
 export const ROLE_DISABLED = "__role_disabled__";
-export const isRoleProfile = (key: string) => key !== "model.default_profile" && (PROFILE_KEYS.has(key) || key.startsWith("agents.profile."));
+/// 보조 작업의 계정 한도 소진 시 대체 모델(서버 usage_fallback::KEYS).
+export const isFallbackProfile = (key: string) => ["session.title_fallback", "context.summary_fallback", "memory.fallback"].includes(key)
+    || key.startsWith("agents.fallback.");
+export const isRoleProfile = (key: string) => key !== "model.default_profile"
+    && (PROFILE_KEYS.has(key) || key.startsWith("agents.profile.") || isFallbackProfile(key));
 
 export function profileChoiceValue(value: unknown): string {
     if (!value || typeof value !== "object") return String(value ?? "");
@@ -59,16 +64,17 @@ export function profileChoiceValue(value: unknown): string {
     return selected.model ? JSON.stringify([selected.profile_id, selected.model]) : selected.profile_id;
 }
 
-export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortChange, workflow }: {
+export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortChange, workflow, caption = "모델" }: {
     d: SettingDef; value: unknown; disabled: boolean; edit: (value: unknown) => void; roleEnabled?: boolean;
-    onEffortChange?: (selection: ModelSelection) => void; workflow?: boolean;
+    onEffortChange?: (selection: ModelSelection) => void; workflow?: boolean; caption?: string;
 }) {
     const profiles = useModelProfiles();
     const selection = value && typeof value === "object" ? value as ModelSelection : undefined;
     const id = selection?.profile_id ?? String(value ?? "");
     const selected = profiles.data?.find((profile) => profile.id === id);
     const requiresModel = d.key === "session.title_profile" || d.key === "memory.profile";
-    const fallback = d.key === "context.summary_profile" ? "대화 모델로 압축"
+    const substitute = isFallbackProfile(d.key);
+    const fallback = substitute ? "전환 안 함" : d.key === "context.summary_profile" ? "대화 모델로 압축"
         : d.key.startsWith("agents.profile.") ? "부모 대화 모델 사용" : "기기 선택 또는 첫 활성 모델";
     const optionProfile = (workflow || roleEnabled) && onEffortChange && selected?.enabled ? selected : undefined;
     const effortProfile = optionProfile?.capabilities.effort !== false ? optionProfile : undefined;
@@ -84,12 +90,15 @@ export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortC
     return <GroveStack gap={1} width={workflow ? "100%" : 220} maxWidth="100%">
         <Grid gap={workflow ? 2 : 1} xstyle={workflow ? workflowStyles.fields : undefined} data-testid={workflow ? "workflow-fields" : undefined}>
         <GroveStack gap={1} xstyle={workflow ? workflowStyles.field : undefined}>
-        {workflow && <GroveText type="supporting" color="secondary">모델</GroveText>}
+        {workflow && <GroveText type="supporting" color="secondary">{caption}</GroveText>}
         {isRoleProfile(d.key) ? <DropdownMenu renderTrigger={(props) => <GroveButton {...props} type="button" appearance="disclosure"
             aria-label={d.label} disabled={disabled || !profiles.data} width="100%"
             data-selected-value={roleEnabled === false ? ROLE_DISABLED : profileChoiceValue(value)}>
             <GroveStack as="span" width="100%" direction="horizontal" align="center" justify="between" gap={1.5}>
+                <GroveStack as="span" direction="horizontal" align="center" gap={1} style={{ minWidth: 0 }}>
+                {roleEnabled !== false && providerIcon(selected?.protocol)}
                 <GroveText as="span" type="inherit" maxLines={1}>{roleEnabled === false ? "사용 안 함" : selected ? `${selected.name} · ${selection?.model ?? selected.model}` : id ? "사용 불가 모델" : requiresModel ? "모델 선택" : fallback}</GroveText>
+                </GroveStack>
                 <Icon name="chevronDown" size={16} />
             </GroveStack>
         </GroveButton>}>
@@ -102,7 +111,7 @@ export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortC
         </DropdownMenu> : <Select label={d.label} hideLabel value={roleEnabled === false ? ROLE_DISABLED : id} disabled={disabled || !profiles.data} onChange={edit}
             options={[...(roleEnabled === undefined ? [] : [{ value: ROLE_DISABLED, label: "사용 안 함" }]), { value: "", label: fallback },
                 ...(id && profiles.data && !selected ? [{ value: id, label: "사용 불가 모델(삭제됐거나 접근 불가)", disabled: true }] : []),
-                ...(profiles.data ?? []).map((profile) => ({ value: profile.id, disabled: profile.enabled === false,
+                ...(profiles.data ?? []).map((profile) => ({ value: profile.id, disabled: profile.enabled === false, icon: providerIcon(profile.protocol),
                     label: `${profile.name} · ${profile.protocol} · ${profile.model}${profile.enabled === false ? " · 비활성" : ""}` }))]} />}
         </GroveStack>
         {effortProfile && onEffortChange && (efforts.length > 0 || effort !== "auto") &&
@@ -127,7 +136,7 @@ export function ProfileChoice({ d, value, disabled, edit, roleEnabled, onEffortC
         })()}
         </Grid>
         {selected && roleEnabled === undefined && !workflow && <GroveText type="supporting" color="secondary"> 전송 대상: {selected.base_url || "서버 설치 CLI"} · {selected.model}</GroveText>}
-        {id && profiles.data && (!selected || selected.enabled === false) && <GroveText as="p" display="block" type="supporting" color="warning" role="status">현재 모델을 사용할 수 없습니다. 다른 모델로 자동 전환하지 않습니다.</GroveText>}
+        {id && profiles.data && (!selected || selected.enabled === false) && <GroveText as="p" display="block" type="supporting" color="warning" role="status">{substitute ? "대체 모델을 사용할 수 없어 한도를 다 써도 전환하지 않아요." : "현재 모델을 사용할 수 없습니다. 다른 모델로 자동 전환하지 않습니다."}</GroveText>}
         {Boolean(profiles.error) && <GroveText as="p" display="block" type="inherit" color="error" role="alert">모델 목록을 읽지 못했습니다. <GroveButton variant="secondary" density="compact" onClick={profiles.reload}>다시 읽기</GroveButton></GroveText>}
     </GroveStack>;
 }

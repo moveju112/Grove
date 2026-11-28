@@ -41,11 +41,14 @@ pub async fn tick(app: &App) -> ApiResult<()> {
 async fn maintain(app: &App, session_id: &str) -> ApiResult<bool> {
     let sid = session_id.to_string();
     let now = app.now();
+    let exhausted = crate::usage_fallback::observe(app, "memory.fallback").await;
     let prepared = app.db.call(move |c| {
         let tx = c.transaction()?;
         let s = crate::sessions::get_active(&tx, &sid)?;
         if s.active_turn.is_some() { return Ok(None); }
         let Some((selection, def)) = route(&tx, &s)? else { return Ok(None) };
+        // 설정 철회 검사는 원래 선택으로, 실행·기록은 한도 소진 시 대체 모델로 한다.
+        let run = crate::usage_fallback::apply(&tx, "memory.profile", selection.clone(), &exhausted)?;
         let timeline: i64 = tx.query_row("SELECT timeline_revision FROM sessions WHERE id=?1", [&sid], |r| r.get(0))?;
         let checkpoint: Option<(i64,String)> = tx.query_row("SELECT upto_seq,attempted_at FROM memory_checkpoints WHERE session_id=?1 AND timeline_revision=?2", params![sid,timeline], |r| Ok((r.get(0)?,r.get(1)?))).optional()?;
         let minutes = crate::settings::effective(&tx, "memory.interval_minutes", Some(&s.project_id), Some(&sid))?.as_i64().unwrap_or(10);
@@ -63,22 +66,22 @@ async fn maintain(app: &App, session_id: &str) -> ApiResult<bool> {
             ON CONFLICT(session_id) DO UPDATE SET timeline_revision=excluded.timeline_revision,upto_seq=excluded.upto_seq,attempted_at=excluded.attempted_at,error_code=NULL",
             params![sid,timeline,from,now])?;
         tx.commit()?;
-        Ok(Some((selection,def,timeline,from,upto,source_at,source,now,s.last_message_seq)))
+        Ok(Some((selection,run,def,timeline,from,upto,source_at,source,now,s.last_message_seq)))
     }).await?;
-    let Some((selection,def,timeline,from,upto,source_at,source,attempted_at,last_seq)) = prepared else { return Ok(false) };
+    let Some((selection,run,def,timeline,from,upto,source_at,source,attempted_at,last_seq)) = prepared else { return Ok(false) };
     // 모델을 부른 뒤의 결과는 저장 여부와 무관하게 사용량 기록에 남긴다.
     let mut called: Option<(provider::Profile, Option<provider::Usage>, i64)> = None;
-    let (record_profile, record_effort) = (selection.profile_id.clone(), selection.effort.clone());
+    let (record_profile, record_effort) = (run.profile_id.clone(), run.effort.clone());
     let result = async {
-        let selected = selection.clone();
-        let profile_id = selection.profile_id.clone();
+        let selected = run.clone();
+        let profile_id = run.profile_id.clone();
         let (mp, rp) = app.db.call(move |c| selected.runtime(c)).await?;
         called = Some((rp.clone(), None, 0));
         let req = ModelRequest {
             system: format!("{}\n{SYSTEM}", crate::definitions::instructions(&def)),
             messages: vec![ChatMsg::User { text: json!({"conversation":source}).to_string(), images: vec![] }],
             tools: vec![], max_tokens: Some(mp.capabilities.max_output_tokens.unwrap_or(2048).min(2048)),
-            temperature: None, effort: selection.effort.clone(), cli: None, service_tier: selection.service_tier.clone(),
+            temperature: None, effort: run.effort.clone(), cli: None, service_tier: run.service_tier.clone(),
         };
         let mut cancel = app.shutdown_rx.clone();
         let started = std::time::Instant::now();

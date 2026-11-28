@@ -13,6 +13,7 @@ import { useProfileCatalog } from "../ProfileCatalog";
 import { ProfileCapabilities } from "../ProfileCapabilities";
 import { ProfileContextPolicy } from "../ProfileContextPolicy";
 import { fallbackOptions, ProfileFallback } from "../ProfileFallback";
+import { ProviderMark } from "../usage/ProviderMark";
 
 const AgentAccount = lazy(async () => ({ default: (await import("../AgentLogin")).AgentAccount }));
 
@@ -89,7 +90,7 @@ export function ProfileRow({ profile: p, profiles, secrets, run }: {
                 <Stack direction="horizontal" align="center" gap={2} xstyle={styles.identity}>
                     <span aria-hidden {...stylex.props(styles.dot, p.last_check?.ok === true && styles.ok, failed && styles.failed)} />
                     <Stack gap={0} xstyle={styles.name}>
-                        <Text type="label" weight="semibold" wordBreak="break-word">{p.name}</Text>
+                        <Text type="label" weight="semibold" wordBreak="break-word"><ProviderMark protocol={p.protocol} />{p.name}</Text>
                         <Text type="supporting" color="secondary" xstyle={styles.summary}>
                             {PROTOCOL_LABELS[p.protocol] ?? p.protocol}
                             {!failed && <> · <CheckSummary c={p.last_check} /></>}

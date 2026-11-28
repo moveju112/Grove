@@ -70,6 +70,15 @@ for (const width of [390, 1280]) {
             await selectChoice(choice, profile);
             await expect(title).toContainText("저장됨");
             await expect.poll(() => effective("session.title_profile", false)).toBe(profile);
+            // 한도 소진 시 대체 모델은 같은 카드에서 따로 저장하고, 기본은 전환하지 않는다.
+            const fallbackChoice = title.getByTestId("setting-session.title_fallback")
+                .getByRole("button", { name: "제목 생성 한도 소진 시 모델", exact: true });
+            await expectChoice(fallbackChoice, "");
+            await expect(fallbackChoice).toContainText("전환 안 함");
+            await selectChoice(fallbackChoice, profile);
+            await expect.poll(() => effective("session.title_fallback", false)).toBe(profile);
+            await selectChoice(fallbackChoice, "");
+            await expect.poll(() => effective("session.title_fallback", false)).toBe("");
             await expect(toggle).not.toBeChecked();
             const serverFlag = await effective("session.auto_title", false);
             await toggle.click();

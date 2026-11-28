@@ -6,18 +6,25 @@ const CODEX = "M21.55 10.004a5.416 5.416 0 00-.478-4.501c-1.217-2.09-3.662-3.166
 
 const marks: Record<string, { path: string; color: string }> = {
     claude_code: { path: CLAUDE, color: "#d97757" },
+    anthropic: { path: CLAUDE, color: "#d97757" },
     codex_cli: { path: CODEX, color: "currentColor" },
     codex_oauth: { path: CODEX, color: "currentColor" },
 };
 
 const styles = stylex.create({
-    mark: { display: "inline-block", flexShrink: 0, verticalAlign: "-0.15em", marginInlineEnd: "0.35em" },
+    mark: { display: "inline-block", flexShrink: 0, verticalAlign: "-0.15em" },
+    spaced: { marginInlineEnd: "0.35em" },
 });
 
 /** 공급자 이름 앞에 붙는 장식 기호. 이름 텍스트가 접근성 이름을 맡는다. */
-export function ProviderMark({ protocol, size = "1.1em" }: { protocol: string; size?: number | string }) {
+export function ProviderMark({ protocol, size = "1.1em", spaced = true }: { protocol: string; size?: number | string; spaced?: boolean }) {
     const mark = marks[protocol];
     if (!mark) return null;
-    return <svg {...stylex.props(styles.mark)} width={size} height={size} viewBox="0 0 24 24" fillRule="evenodd"
-        fill={mark.color} aria-hidden="true" focusable="false"><path d={mark.path} /></svg>;
+    return <svg {...stylex.props(styles.mark, spaced && styles.spaced)} width={size} height={size} viewBox="0 0 24 24" fillRule="evenodd"
+        fill={mark.color} aria-hidden="true" focusable="false" data-provider-mark={protocol}><path d={mark.path} /></svg>;
+}
+
+/** 메뉴·선택 항목의 icon 칸에 넣는 기호. 기호가 없는 공급자는 빈 칸을 만들지 않는다. */
+export function providerIcon(protocol: string | undefined) {
+    return protocol && marks[protocol] ? <ProviderMark protocol={protocol} spaced={false} /> : undefined;
 }

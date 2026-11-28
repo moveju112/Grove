@@ -11,4 +11,8 @@
 /web/playwright-report
 /artifacts
 /dist
+# 에이전트·브라우저 도구가 남기는 채팅 첨부·시안·로그. 커밋 대상이 아니다.
+/results/
+/deliverables/
+/.playwright-mcp/
 __pycache__/

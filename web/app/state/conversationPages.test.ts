@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Message, MessagePage } from "../api/generated";
-import { KEPT_SESSIONS, clearKeptPages, keepOlderPages, mergeMessages, readMessageRange, singleFlight, takeOlderPages } from "./conversationPages";
+import type { Message, MessagePage, ToolCallRow } from "../api/generated";
+import { CONVERSATION_CALLS, KEPT_SESSIONS, clearKeptPages, conversationVisibility, keepOlderPages, mergeMessages, mergeToolCall, readMessageRange, singleFlight, takeOlderPages } from "./conversationPages";
 
 const msg = (seq: number): Message => ({ id: `m${seq}`, session_id: "s", seq, role: "user", content: null, turn_id: null, created_at: "2026-01-01T00:00:00Z" });
 const page = (seqs: number[], more = false, revision = 1): MessagePage => ({ items: seqs.map(msg), has_more_before: more, has_more_after: false, timeline_revision: revision, rewind_boundary_seq: null });
@@ -92,5 +92,30 @@ describe("읽던 과거 구간 보관", () => {
         for (let i = 0; i <= KEPT_SESSIONS; i++) keepOlderPages(`s${i}`, 1, range(1, 200).map(msg), false);
         expect(takeOlderPages("s0", page(range(101, 200)))).toBeNull();
         expect(takeOlderPages(`s${KEPT_SESSIONS}`, page(range(101, 200)))).not.toBeNull();
+    });
+});
+
+describe("이벤트로 받은 한 건의 반영", () => {
+    it("대화 보기의 포함 여부를 서버 필터와 같게 판정한다", () => {
+        const visibility = (role: string, content: unknown = null) => conversationVisibility({ role, content });
+        expect([visibility("user"), visibility("assistant"), visibility("tool")]).toEqual(["shown", "shown", "hidden"]);
+        expect([visibility("note", { type: "cli_activity" }), visibility("note", { type: "task_result" })]).toEqual(["hidden", "hidden"]);
+        expect([visibility("note", { type: "compaction" }), visibility("note", null), visibility("system")]).toEqual(["unknown", "unknown", "unknown"]);
+    });
+
+    it("도구 호출은 최신순과 상한을 지키고 오래된 revision으로 되돌리지 않는다", () => {
+        const call = (id: string, revision = 1, created_at = `2026-01-01T00:00:${id.padStart(2, "0")}Z`) => ({ id, revision, created_at }) as ToolCallRow;
+        const ids = (list: ToolCallRow[]) => list.map((row) => row.id);
+        const list = [call("5"), call("3"), call("1")];
+        expect(ids(mergeToolCall(list, call("4")))).toEqual(["5", "4", "3", "1"]);
+        expect(ids(mergeToolCall(list, call("9")))).toEqual(["9", "5", "3", "1"]);
+        expect(mergeToolCall(list, call("3", 2))[1]!.revision).toBe(2);
+        expect(mergeToolCall([call("3", 4)], call("3", 2))[0]!.revision).toBe(4);
+        // 같은 시각이면 id가 큰 쪽이 앞이다(서버의 created_at DESC, id DESC).
+        expect(ids(mergeToolCall([call("b", 1, "t"), call("a", 1, "t")], call("c", 1, "t")))).toEqual(["c", "b", "a"]);
+        const full = Array.from({ length: CONVERSATION_CALLS }, (_, i) => call(String(i), 1, `t${String(CONVERSATION_CALLS - i).padStart(4, "0")}`));
+        expect(mergeToolCall(full, call("old", 1, "t0000"))).toBe(full);
+        const next = mergeToolCall(full, call("new", 1, "t9999"));
+        expect([next.length, next[0]!.id, next.at(-1)!.id]).toEqual([CONVERSATION_CALLS, "new", String(CONVERSATION_CALLS - 2)]);
     });
 });

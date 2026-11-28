@@ -81,6 +81,7 @@ pub mod update;
 pub mod vault;
 pub mod usage;
 pub mod account_usage;
+pub mod usage_fallback;
 pub mod presence;
 pub mod util;
 pub mod web;

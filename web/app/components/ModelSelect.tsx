@@ -14,6 +14,7 @@ import { loadPrefs, savePrefs, usePrefs } from "../state/device";
 import { latestModels, prefetchProfiles, readRecentProfiles, rememberRecentProfile, sortModels } from "./model-catalog";
 import type { SendOptions } from "../state/sendOptions";
 import { FavoriteChips, FavoriteStar, useModelFavorites } from "./ModelFavorites";
+import { providerIcon } from "./usage/ProviderMark";
 
 export function useModelCatalog(profile: ModelProfile | undefined, bound = false) {
     const supported = useCapability("turn_model_selection_v1");
@@ -71,7 +72,7 @@ function ProfileModels({ profile, profileId, model, onChange, includeDefault = f
     // 이전 버전을 숨겨도 지금 고른 모델과 연결 기본 모델은 목록에 남긴다.
     const latest = latestModels(sorted, [selected, profile.model]);
     const older = sorted.length - latest.length;
-    return <DropdownMenuSubMenu label={profile.name} isDisabled={!profile.enabled}
+    return <DropdownMenuSubMenu label={profile.name} icon={providerIcon(profile.protocol)} isDisabled={!profile.enabled}
         data-profile-id={profile.id} onOpenChange={onOpenChange} hasSpinner={catalog.loading}
         menuDataTestId={`model-profile-models-${profile.id}`}>
         <DropdownMenuRadioGroup label={`${profile.name} 모델`} value={includeDefault && !model && profileId === profile.id ? "__profile_default__" : selected}
@@ -94,10 +95,11 @@ function ProfileModels({ profile, profileId, model, onChange, includeDefault = f
     </DropdownMenuSubMenu>;
 }
 
-function ModelSummary({ name, effort, fast, measuring = false }: {
-    name: string; effort?: SendOptions["effort"]; fast: boolean; measuring?: boolean;
+function ModelSummary({ name, protocol, effort, fast, measuring = false }: {
+    name: string; protocol?: string; effort?: SendOptions["effort"]; fast: boolean; measuring?: boolean;
 }) {
     return <GroveStack as="span" direction="horizontal" align="center" wrap="wrap" gap={1} xstyle={composerStyles.modelName}>
+        {providerIcon(protocol)}
         <GroveText as="span" type="inherit" data-testid={measuring ? undefined : "model-summary"}>{name}</GroveText>
         {effort && <GroveText as="span" type="inherit" color="secondary" data-testid={measuring ? undefined : "model-effort"}>· {effort}</GroveText>}
         {fast && <GroveStack as="span" direction="horizontal" align="center" gap={0} role="img" aria-label="Fast 켜짐">
@@ -138,6 +140,7 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
         ? summary : `${summary} · ${profile.name}`;
     const shownEffort = save ? undefined : effort;
     const shownFast = !save && fast;
+    const shownProtocol = save ? undefined : profile?.protocol;
     const favorites = useModelFavorites(ready && !bound);
     const concreteModel = selected?.id ?? model ?? (!automatic ? profile?.model : null);
     const currentFavorite = !save && profile?.enabled && concreteModel
@@ -171,13 +174,13 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
         if (composer) observer.observe(composer);
         measure();
         return () => observer.disconnect();
-    }, [summary, shownEffort, shownFast, onExpandedChange]);
+    }, [summary, shownProtocol, shownEffort, shownFast, onExpandedChange]);
     return <GroveStack gap={0} width="fit-content" maxWidth="100%" xstyle={composerStyles.modelControl}>
         <Button {...popover.triggerProps} ref={attachTrigger}
             onClick={popover.toggle} type="button" appearance="disclosure" width="100%" aria-label="모델 설정" title={description} xstyle={composerStyles.modelTrigger}>
-            <ModelSummary name={summary} effort={shownEffort} fast={shownFast} />
+            <ModelSummary name={summary} protocol={shownProtocol} effort={shownEffort} fast={shownFast} />
             <GroveText as="span" type="inherit" ref={measurement} aria-hidden="true" xstyle={composerStyles.modelMeasurement}>
-                <ModelSummary name={summary} effort={shownEffort} fast={shownFast} measuring />
+                <ModelSummary name={summary} protocol={shownProtocol} effort={shownEffort} fast={shownFast} measuring />
             </GroveText>
         </Button>
         {prefetch.map((item) => <CatalogPrefetch key={item.id} profile={item} />)}
@@ -193,6 +196,7 @@ export function ModelSelect({ profiles, profileId, model, effort, fast = false, 
                             style={{ minWidth: 0, minHeight: 44, fontSize: "inherit" }} title={detail}
                             aria-label="모델 프로필" data-selected-value={value} data-selected-profile={profileId ?? ""}
                             disabled={!ready || bound}>
+                            {providerIcon(shownProtocol)}
                             <GroveText type="inherit" maxLines={1}>{summary}</GroveText>
                             {detail !== summary && <GroveStack gap={0} maxWidth="35%" style={{ minWidth: 0, flexShrink: 2 }}>
                                 <GroveText type="supporting" color="secondary" maxLines={1}>{" · "}{profile!.name}</GroveText>
